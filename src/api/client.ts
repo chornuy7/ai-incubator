@@ -32,3 +32,8 @@ export async function apiPost<T>(path: string, body?: unknown): Promise<T> {
   })
   return parseJson<T>(res)
 }
+
+export async function apiDelete<T>(path: string): Promise<T> {
+  const res = await fetch(path, { method: 'DELETE' })
+  return parseJson<T>(res)
+}
