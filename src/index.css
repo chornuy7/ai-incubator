@@ -1,0 +1,158 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Space+Grotesk:wght@500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ── Тема: dark (по умолчанию) ─────────────────────────────── */
+:root,
+.dark {
+  --bg: 8 11 17; /* #080b11 */
+  --surface: 15 19 28; /* #0f131c панели */
+  --elevated: 22 28 40; /* #161c28 приподнятые */
+  --line: 34 42 58; /* #222a3a границы */
+  --fg: 233 238 247; /* основной текст */
+  --muted: 148 161 184; /* вторичный текст */
+  --faint: 100 112 134; /* самый тусклый */
+}
+
+/* ── Тема: light ───────────────────────────────────────────── */
+.light {
+  --bg: 244 247 252;
+  --surface: 255 255 255;
+  --elevated: 248 250 254;
+  --line: 226 232 242;
+  --fg: 22 30 46;
+  --muted: 90 102 122;
+  --faint: 140 152 172;
+}
+
+@layer base {
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+  body {
+    @apply bg-bg text-fg antialiased;
+    font-feature-settings: 'cv02', 'cv03', 'cv04', 'cv11';
+  }
+  /* Тонкий фон-текстура «инкубатора» */
+  #root {
+    background-image: bg-grid-dark, radial-gradient(1200px 600px at 80% -10%, rgba(113, 69, 255, 0.08), transparent),
+      radial-gradient(1000px 500px at -10% 10%, rgba(14, 196, 100, 0.07), transparent);
+    background-image: radial-gradient(rgb(var(--fg) / 0.03) 1px, transparent 1px),
+      radial-gradient(1200px 600px at 85% -10%, rgba(113, 69, 255, 0.1), transparent 70%),
+      radial-gradient(900px 500px at -5% 5%, rgba(14, 196, 100, 0.08), transparent 70%);
+    background-size: 26px 26px, 100% 100%, 100% 100%;
+  }
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: rgb(var(--line)) transparent;
+  }
+  *::-webkit-scrollbar {
+    width: 9px;
+    height: 9px;
+  }
+  *::-webkit-scrollbar-thumb {
+    background: rgb(var(--line));
+    border-radius: 9px;
+    border: 2px solid transparent;
+    background-clip: padding-box;
+  }
+  *::-webkit-scrollbar-thumb:hover {
+    background: rgb(var(--muted) / 0.5);
+    background-clip: padding-box;
+  }
+}
+
+@layer components {
+  /* ── Поверхности ── */
+  .card {
+    @apply rounded-2xl border border-line bg-surface shadow-card;
+  }
+  .glass {
+    @apply rounded-2xl border border-line/80 bg-surface/70 backdrop-blur-xl;
+  }
+  .panel {
+    @apply rounded-2xl border border-line bg-elevated;
+  }
+
+  /* ── Кнопки ── */
+  .btn {
+    @apply inline-flex select-none items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-sm font-semibold transition-all
+      focus:outline-none focus-visible:ring-2 focus-visible:ring-spark-500/60 disabled:cursor-not-allowed disabled:opacity-50;
+  }
+  .btn-primary {
+    @apply btn bg-spark-gradient text-[#04150c] shadow-[0_6px_20px_-6px_rgba(14,196,100,0.6)] hover:brightness-105 active:scale-[0.98];
+  }
+  .btn-iris {
+    @apply btn bg-iris-gradient text-white shadow-[0_6px_20px_-6px_rgba(113,69,255,0.6)] hover:brightness-110 active:scale-[0.98];
+  }
+  .btn-ghost {
+    @apply btn border border-line bg-elevated text-fg hover:border-spark-500/40 hover:bg-surface active:scale-[0.98];
+  }
+  .btn-soft {
+    @apply btn bg-spark-500/12 text-spark-300 hover:bg-spark-500/20;
+  }
+  .btn-danger {
+    @apply btn bg-rose-500/90 text-white hover:bg-rose-500;
+  }
+  .btn-icon {
+    @apply inline-flex h-9 w-9 items-center justify-center rounded-lg border border-line bg-elevated text-muted transition-colors hover:border-spark-500/40 hover:text-fg;
+  }
+
+  /* ── Формы ── */
+  .input {
+    @apply w-full rounded-xl border border-line bg-elevated px-3.5 py-2.5 text-sm text-fg placeholder:text-faint
+      transition-colors focus:border-spark-500/70 focus:outline-none focus:ring-4 focus:ring-spark-500/10;
+  }
+  .label {
+    @apply mb-1.5 block text-xs font-semibold uppercase tracking-wide text-muted;
+  }
+
+  /* ── Мелочи ── */
+  .chip {
+    @apply inline-flex items-center gap-1.5 rounded-full border border-line px-3 py-1 text-xs font-semibold transition-colors;
+  }
+  .chip-active {
+    @apply border-spark-500/50 bg-spark-500/12 text-spark-300;
+  }
+  .kbd {
+    @apply rounded-md border border-line bg-elevated px-1.5 py-0.5 font-mono text-[11px] text-muted;
+  }
+  .section-title {
+    @apply font-display text-lg font-bold text-fg;
+  }
+  .stat-value {
+    @apply font-display text-2xl font-bold tracking-tight text-fg;
+  }
+
+  /* ── Skeleton ── */
+  .skeleton {
+    @apply relative overflow-hidden rounded-md bg-line/60;
+  }
+  .skeleton::after {
+    content: '';
+    @apply absolute inset-0 -translate-x-full bg-gradient-to-r from-transparent via-white/10 to-transparent;
+    animation: shimmer 1.5s infinite;
+  }
+
+  /* ── Кастомный скролл-бокс логов ── */
+  .log-scroll {
+    @apply max-h-72 overflow-y-auto rounded-xl border border-line bg-[rgb(var(--bg))] p-3 font-mono text-xs;
+  }
+}
+
+@layer utilities {
+  .text-gradient {
+    @apply bg-spark-gradient bg-clip-text text-transparent;
+  }
+  .no-scrollbar::-webkit-scrollbar {
+    display: none;
+  }
+  .no-scrollbar {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+}
