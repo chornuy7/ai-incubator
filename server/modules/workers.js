@@ -4,6 +4,8 @@ import {
   sendChannelComment,
   sendReaction,
   searchPublic,
+  searchPublicDetailed,
+  getChannelMembersCount,
   fetchParticipants,
   fetchDialogs,
   markStoriesRead,
@@ -603,6 +605,152 @@ export async function runGgr(task, store) {
   await store.saveTask(task)
 }
 
+/**
+ * Богатый парсер каналов/групп (GRAMGPT-style): поиск по ключевым словам + окончаниям,
+ * ротация аккаунтов, диапазон участников, фильтры активности/комментариев, дедуп, задержки.
+ * @param {object} task @param {object} store @param {'parsing'|'parsing-groups'} kind
+ */
+export async function runChannelParser(task, store, kind) {
+  const s = task.settings
+  task.startedAt = Date.now()
+  task.status = 'running'
+  task.results = []
+  await store.saveTask(task)
+
+  const accountIds = s.accountIds || []
+  if (!accountIds.length) {
+    task.status = 'error'
+    await store.appendLog(task, 'error', 'Нужен хотя бы один аккаунт')
+    await store.saveTask(task)
+    return
+  }
+
+  const wantGroups = kind === 'parsing-groups'
+  const unitLabel = wantGroups ? 'групп' : 'каналов'
+  const resultKind = wantGroups ? 'group' : 'channel'
+  const mul = delayMultiplier(s.protectionLevel ?? 1, s.delayPreset ?? 1)
+
+  const minMembers = Math.max(0, Number(s.minMembers ?? 0) || 0)
+  const maxMembers = Math.max(0, Number(s.maxMembers ?? 0) || 0)
+  const rawLimit = Number(s.resultLimit ?? s.limit ?? 0) || 0
+  const limit = rawLimit > 0 ? rawLimit : Infinity
+  const comments = Number(s.commentFilter ?? 0) || 0 // 0 любые / 1 открытые / 2 закрытые
+  const reqFrom = s.delays?.request?.[0] ?? 2
+  const reqTo = s.delays?.request?.[1] ?? reqFrom
+  const chFrom = s.delays?.channel?.[0] ?? 1
+  const chTo = s.delays?.channel?.[1] ?? chFrom
+
+  // Собираем поисковые запросы: ключевые слова + комбинации с окончаниями
+  const keywords = (s.keywords || []).map((k) => String(k).trim()).filter(Boolean)
+  const endings = (s.endings || []).map((e) => String(e).trim()).filter(Boolean)
+  const queries = []
+  const seenQuery = new Set()
+  const pushQuery = (q) => { const v = q.trim(); if (v && !seenQuery.has(v.toLowerCase())) { seenQuery.add(v.toLowerCase()); queries.push(v) } }
+  for (const kw of keywords) {
+    pushQuery(kw)
+    for (const end of endings) pushQuery(`${kw} ${end}`)
+  }
+  if (!queries.length) {
+    task.status = 'error'
+    await store.appendLog(task, 'error', 'Укажите хотя бы одно ключевое слово')
+    await store.saveTask(task)
+    return
+  }
+
+  const seen = new Set() // дедуп по id/username
+  const skipParsed = new Set((s.alreadyParsed || []).map((x) => String(x).toLowerCase()))
+  let accIdx = 0
+
+  async function nextAccountId() {
+    for (let i = 0; i < accountIds.length; i++) {
+      const id = accountIds[accIdx++ % accountIds.length]
+      const meta = await getAccountMeta(id)
+      if (isAccountRunnable(meta.status || 'active')) return id
+    }
+    return null
+  }
+
+  await store.appendLog(task, 'info', `Парсинг запущен · запросов: ${queries.length} · аккаунтов: ${accountIds.length}`)
+
+  try {
+    for (const q of queries) {
+      if (task.stopRequested || task.results.length >= limit) break
+
+      const accountId = await nextAccountId()
+      if (!accountId) {
+        await store.appendLog(task, 'warning', 'Нет доступных аккаунтов (все в карантине/невалидны)')
+        break
+      }
+      const meta = await getAccountMeta(accountId)
+      let client
+      try {
+        ;({ client } = await connectAccount(accountId, task.id))
+        const found = await searchPublicDetailed(client, q, 50)
+        let added = 0
+        for (const c of found) {
+          if (task.stopRequested || task.results.length >= limit) break
+
+          // тип: канал vs группа
+          if (wantGroups) { if (c.isBroadcast && !c.isMegagroup) continue }
+          else if (!c.isBroadcast) continue
+
+          const key = (c.username || c.id).toLowerCase()
+          if (!key || seen.has(key)) continue
+          if (skipParsed.has(key)) continue
+
+          // фильтр комментариев: открытые = мегагруппа/есть обсуждение, закрытые = обычный канал
+          if (comments === 1 && c.isBroadcast && !c.isMegagroup) continue
+          if (comments === 2 && c.isMegagroup) continue
+
+          // число участников (обогащаем через GetFullChannel если поиск не отдал)
+          let members = c.members
+          if (!members) {
+            members = await getChannelMembersCount(client, c.entity)
+            await sleep(pickDelay(chFrom, chTo, mul) * 1000)
+          }
+          if (minMembers && members < minMembers) continue
+          if (maxMembers && members > maxMembers) continue
+
+          seen.add(key)
+          task.results.push({
+            id: c.id,
+            title: c.title,
+            username: c.username,
+            members,
+            kind: resultKind,
+            link: c.username ? `https://t.me/${c.username}` : '',
+            hasComments: !!c.isMegagroup,
+          })
+          added += 1
+          task.progress.actionsDone = task.results.length
+          task.progress.done = task.results.length
+          task.progress.total = Math.max(task.results.length, task.progress.total || 0)
+          await store.saveTask(task)
+        }
+        await store.appendLog(task, added ? 'success' : 'info', `«${q}» → +${added} ${unitLabel} (всего ${task.results.length})`, meta.name)
+        await disconnectAccount(client, accountId)
+      } catch (err) {
+        if (client) await disconnectAccount(client, accountId)
+        if (!(await handleFlood(task, accountId, store, err, s, meta.name))) {
+          await store.appendLog(task, 'error', `«${q}»: ${mapTelegramError(err)}`, meta.name)
+        }
+      }
+
+      task = (await store.loadTask(task.id)) || task
+      await sleep(pickDelay(reqFrom, reqTo, mul) * 1000)
+    }
+
+    task.progress.total = task.results.length
+    task.status = task.stopRequested ? 'stopped' : 'done'
+    await store.appendLog(task, 'info', `Готово · найдено ${task.results.length} ${unitLabel}`)
+  } catch (err) {
+    task.status = 'error'
+    await store.appendLog(task, 'error', err instanceof Error ? err.message : 'Ошибка')
+  }
+  await store.saveTask(task)
+  await finalizeAccounts(accountIds, task.id)
+}
+
 /** @param {object} task @param {object} store @param {string} kind */
 export async function runParsing(task, store, kind) {
   const s = task.settings
@@ -668,8 +816,8 @@ export const WORKERS = {
   warming: runWarming,
   'neuro-dialogs': runNeuroDialogs,
   ggr: runGgr,
-  parsing: (t, s) => runParsing(t, s, 'parsing'),
-  'parsing-groups': (t, s) => runParsing(t, s, 'parsing-groups'),
+  parsing: (t, s) => runChannelParser(t, s, 'parsing'),
+  'parsing-groups': (t, s) => runChannelParser(t, s, 'parsing-groups'),
   'parsing-users': (t, s) => runParsing(t, s, 'parsing-users'),
   'parsing-messages': (t, s) => runParsing(t, s, 'parsing-messages'),
   'parsing-comments': (t, s) => runParsing(t, s, 'parsing-comments'),

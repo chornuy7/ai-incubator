@@ -236,6 +236,42 @@ export async function searchPublic(client, query, limit = 20) {
   return res.chats || []
 }
 
+/**
+ * Расширенный поиск публичных каналов/групп по ключевому слову.
+ * Возвращает нормализованные записи с сущностью для последующего обогащения.
+ * @param {import('telegram').TelegramClient} client @param {string} query @param {number} limit
+ */
+export async function searchPublicDetailed(client, query, limit = 50) {
+  const res = await client.invoke(new Api.contacts.Search({ q: query, limit }))
+  const chats = res.chats || []
+  return chats
+    .filter((c) => c && !c.deactivated)
+    .map((c) => ({
+      entity: c,
+      id: c.id?.toString?.() ?? '',
+      title: c.title || c.username || '—',
+      username: c.username || c.usernames?.[0]?.username || '',
+      members: Number(c.participantsCount ?? 0) || 0,
+      isBroadcast: !!c.broadcast,
+      isMegagroup: !!c.megagroup,
+      isGroup: !c.broadcast,
+      hasComments: !!c.megagroup || undefined,
+    }))
+}
+
+/**
+ * Точное число участников через GetFullChannel (когда поиск не отдал participantsCount).
+ * @param {import('telegram').TelegramClient} client @param {import('@types/telegram').Entity} entity
+ */
+export async function getChannelMembersCount(client, entity) {
+  try {
+    const full = await client.invoke(new Api.channels.GetFullChannel({ channel: entity }))
+    return Number(full.fullChat?.participantsCount ?? 0) || 0
+  } catch {
+    return 0
+  }
+}
+
 /** @param {import('telegram').TelegramClient} client @param {import('@types/telegram').Entity} chat @param {number} limit */
 export async function fetchParticipants(client, chat, limit = 100) {
   const participants = await client.getParticipants(chat, { limit })

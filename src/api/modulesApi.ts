@@ -25,10 +25,23 @@ export interface ModuleTaskSettings {
   emojis?: string[]
   postUrls?: string[]
   limit?: number
+  // ── Парсер каналов/групп ──
+  searchMode?: number // 0 = по ключевым словам, 1 = похожие каналы
+  endings?: string[]
+  minMembers?: number
+  maxMembers?: number
+  resultLimit?: number // 0 = без лимита
+  activityFilter?: number // 0 любая / 1 активные / 2 неактивные
+  commentFilter?: number // 0 любые / 1 открытые / 2 закрытые
+  minComments?: number
+  langDetection?: boolean
+  alreadyParsed?: string[]
   delays?: {
     comment?: [number, number]
     action?: [number, number]
     join?: [number, number]
+    request?: [number, number]
+    channel?: [number, number]
     floodWait?: number
     floodQuarantine?: number
   }
