@@ -1,5 +1,7 @@
 import { MODULES } from '@/shared/config/modules'
 import { LiveModule } from './LiveModule'
+import { ChannelParserModule } from './ChannelParserModule'
+import { ParsingModeSwitch } from './ParsingModeSwitch'
 import { NeuroDialogsModule } from '@/features/neuro-dialogs/NeuroDialogsModule'
 
 /** Все модули панели с реальным API-бэкендом. */
@@ -7,6 +9,10 @@ const LIVE_KEYS = new Set(Object.keys(MODULES))
 
 export function ModuleLiveRouter({ moduleKey }: { moduleKey: string }) {
   if (moduleKey === 'neuro-dialogs') return <NeuroDialogsModule />
+  // «Парсер каналов»: два режима — прямой TG + TGStat.
+  if (moduleKey === 'parsing') return <ParsingModeSwitch moduleKey={moduleKey} />
+  // «Парсер групп»: только прямой поиск по ключевым словам.
+  if (moduleKey === 'parsing-groups') return <ChannelParserModule moduleKey={moduleKey} />
   if (!LIVE_KEYS.has(moduleKey)) return null
   return <LiveModule moduleKey={moduleKey} />
 }

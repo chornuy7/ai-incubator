@@ -248,15 +248,20 @@ export function Select({
 }) {
   const [open, setOpen] = useState(false)
   const ref = useRef<HTMLDivElement>(null)
+  const menuRef = useRef<HTMLDivElement>(null)
   const [coords, setCoords] = useState<{ top: number; left: number; width: number } | null>(null)
 
   useEffect(() => {
     if (!open) return
-    const onClick = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false)
+    const onDown = (e: MouseEvent) => {
+      const t = e.target as Node
+      // Опции рендерятся в портале (вне ref) — не закрываем, если клик по ним,
+      // иначе mousedown закроет меню раньше, чем сработает выбор опции.
+      if (ref.current?.contains(t) || menuRef.current?.contains(t)) return
+      setOpen(false)
     }
-    document.addEventListener('mousedown', onClick)
-    return () => document.removeEventListener('mousedown', onClick)
+    document.addEventListener('mousedown', onDown)
+    return () => document.removeEventListener('mousedown', onDown)
   }, [open])
 
   const current = options.find((o) => o.value === value)
@@ -282,6 +287,7 @@ export function Select({
       {open && coords &&
         createPortal(
           <div
+            ref={menuRef}
             className="fixed z-[120] max-h-72 overflow-y-auto rounded-xl border border-line bg-surface p-1 shadow-pop animate-scale-in"
             style={{ top: coords.top, left: coords.left, width: coords.width }}
           >
