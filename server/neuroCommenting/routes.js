@@ -41,6 +41,17 @@ neuroCommentingRouter.post('/tasks', async (req, res) => {
     if (!settings?.channels?.length) {
       return res.status(400).json({ ok: false, error: 'Добавьте хотя бы один канал' })
     }
+    // feature 4: min <= max
+    const minC = Number(settings?.minComments ?? 0) || 0
+    const maxC = Number(settings?.maxComments ?? 0) || 0
+    if (minC && maxC && minC > maxC) {
+      return res.status(400).json({ ok: false, error: 'Минимум комментариев больше максимума' })
+    }
+    const minPA = Number(settings?.minPerAccount ?? 0) || 0
+    const maxPA = Number(settings?.maxPerAccount ?? 0) || 0
+    if (minPA && maxPA && minPA > maxPA) {
+      return res.status(400).json({ ok: false, error: 'Минимум на аккаунт больше максимума' })
+    }
 
     const task = createTask(settings)
     const lockErr = tryAcquireLocks(settings.accountIds, 'neuro-commenting', task.id)

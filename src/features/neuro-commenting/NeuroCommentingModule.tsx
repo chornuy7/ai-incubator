@@ -37,6 +37,8 @@ const DEFAULT_DELAYS = {
   floodQuarantine: 3,
 }
 
+const DURATION_MIN_BY_PROTECTION_LEVEL = [60, 45, 30]
+
 export function NeuroCommentingModule() {
   const addTask = useApp((s) => s.addTask)
   const updateTask = useApp((s) => s.updateTask)
@@ -242,6 +244,7 @@ export function NeuroCommentingModule() {
   }, [task])
 
   const intervalLabel = `${delays.comment[0]}–${delays.comment[1]}с`
+  const durationPeriodMin = Math.min(DURATION_MIN_BY_PROTECTION_LEVEL[protLevel] ?? 0, durationMinutes)
 
   return (
     <div className="space-y-4">
@@ -282,7 +285,10 @@ export function NeuroCommentingModule() {
             <div className="flex items-center gap-2 text-sm font-bold text-fg"><Clock size={15} className="text-spark-400" /> {cfg.toggleGroups![1].label}</div>
             <ToggleGroup label="" options={cfg.toggleGroups![1].options} value={g(1)} onChange={(v) => setTg(1, v)} />
             {g(1) === 1 ? (
-              <NumberField label="Длительность (мин)" value={durationMinutes} onChange={setDurationMinutes} suffix={`${durationMinutes}m`} />
+              <div>
+                <NumberField label="Длительность (мин)" value={durationMinutes} onChange={setDurationMinutes} suffix={`${durationMinutes}m`} />
+                <p className="mt-1 text-xs text-muted">Период работы: {durationPeriodMin}–{durationMinutes} мин</p>
+              </div>
             ) : (
               <div className="space-y-3">
                 <NumberField label={cfg.workModeFields!.maxLabel} value={maxComments} onChange={setMaxComments} />

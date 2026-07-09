@@ -13,6 +13,9 @@ export interface ModuleTaskSettings {
   maxActions?: number
   maxComments?: number
   maxPerAccount?: number
+  // ── (4) Минимумы: воркер выбирает цель в диапазоне [min, max] ──
+  minActions?: number
+  minPerAccount?: number
   minWords?: number
   durationMinutes?: number
   aiProtection?: boolean

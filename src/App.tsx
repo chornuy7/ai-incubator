@@ -7,6 +7,7 @@ import { SupportPage } from '@/pages/SupportPage'
 import { ModuleRunner } from '@/pages/ModuleRunner'
 import { ParsingHistoryPage } from '@/pages/ParsingHistoryPage'
 import { ProfilePage } from '@/pages/ProfilePage'
+import { AutomationPage } from '@/pages/AutomationPage'
 import { GuestLogin } from '@/pages/GuestLogin'
 
 export default function App() {
@@ -24,6 +25,7 @@ export default function App() {
     <Routes>
       <Route element={<Layout />}>
         <Route path="/panel" element={<AccountsPage />} />
+        <Route path="/panel/automation" element={<AutomationPage />} />
         <Route path="/panel/my-statistics" element={<StatisticsPage />} />
         <Route path="/panel/support" element={<SupportPage />} />
         <Route path="/panel/modules/:moduleKey" element={<ModuleRunner />} />

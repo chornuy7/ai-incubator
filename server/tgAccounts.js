@@ -95,7 +95,7 @@ export async function tgPatchAccount(accountId, patch) {
   const sessionStr = await loadSessionString(accountId)
   if (!sessionStr) throw new Error('Аккаунт не найден')
 
-  const allowed = ['role', 'project', 'country', 'status', 'proxy', 'inTrash']
+  const allowed = ['role', 'project', 'country', 'status', 'proxy', 'inTrash', 'note']
   /** @type {Record<string, unknown>} */
   const clean = {}
   for (const k of allowed) {

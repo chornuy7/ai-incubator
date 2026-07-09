@@ -7,7 +7,7 @@ import {
   MessageSquareText, AlertTriangle, Check, Star, UploadCloud, Bolt, MessageCircle, Filter, Heart, Smile,
   BarChart3 as BarChartIcon, Ban, Calendar, Cpu, MapPin, SlidersHorizontal, CheckSquare,
   Volume2, ArrowDown, Search, LayoutGrid, List, Send, ExternalLink, MessagesSquare, Trophy,
-  Tag, Activity, Database, ArrowUpDown, Pencil, RefreshCw, Radio,
+  Tag, Activity, Database, ArrowUpDown, Pencil, RefreshCw, Radio, HelpCircle,
 } from 'lucide-react'
 import { DIALOGS, type Dialog } from '@/mocks/dialogs'
 import { MODULES, LANGUAGES, type ModuleConfig } from '@/shared/config/modules'
@@ -1825,13 +1825,27 @@ function LookRow({ icon, label, sub, children }: { icon: React.ReactNode; label:
 
 /* ── Rich helpers ── */
 function SectionCard({ icon, title, badge, right, children }: { icon: React.ReactNode; title: string; badge?: string; right?: React.ReactNode; children: React.ReactNode }) {
+  const setHelpTopic = useUi((s) => s.setHelpTopic)
+  const setHelpOpen = useUi((s) => s.setHelpOpen)
+
   return (
     <div className="card p-0">
       <div className="flex flex-wrap items-center gap-3 border-b border-line px-4 py-3.5">
         <span className="grid h-9 w-9 place-items-center rounded-xl bg-spark-500/12 text-spark-400">{icon}</span>
         <span className="font-display text-base font-bold text-fg">{title}</span>
         {badge && <span className="rounded-md bg-spark-500/12 px-2 py-0.5 text-xs font-bold text-spark-300">{badge}</span>}
-        {right && <div className="ml-auto">{right}</div>}
+        <div className="ml-auto flex items-center gap-2">
+          {right && <div>{right}</div>}
+          <button
+            type="button"
+            className="grid h-8 w-8 place-items-center rounded-xl bg-spark-gradient text-[#04150c] shadow-pop transition-transform hover:scale-[1.03]"
+            title="Help Center"
+            aria-label="Help Center"
+            onClick={() => { setHelpTopic(title); setHelpOpen(true) }}
+          >
+            <HelpCircle size={16} />
+          </button>
+        </div>
       </div>
       <div className="p-4">{children}</div>
     </div>

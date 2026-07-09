@@ -29,10 +29,11 @@ import {
   sleep,
 } from '../lib/protection.js'
 import { getAccountMeta, setAccountMeta } from '../accountsMeta.js'
-import { releaseTaskLocks } from '../lib/accountLocks.js'
+import { releaseTaskLocks, markTaskLive, markTaskDone } from '../lib/accountLocks.js'
 import { loadSessionString, createClient } from '../tgAuth.js'
 import { pickCommentCandidates, trackIdlePass } from '../lib/workerLoop.js'
 import { parseTelegramPostLinks, resolvePostPeer } from '../lib/postLink.js'
+import { filterBlacklisted, isBlacklistedSync } from '../targetBlacklist.js'
 
 /** @type {Map<string, Promise<void>>} */
 const running = new Map()
@@ -40,11 +41,21 @@ const running = new Map()
 /** @param {string} taskId @param {object} store @param {(task: object, store: object) => Promise<void>} runner */
 export function startWorker(taskId, store, runner) {
   if (running.has(taskId)) return
+  markTaskLive(taskId)
   const job = (async () => {
     const task = await store.loadTask(taskId)
     if (!task) return
-    await runner(task, store)
-  })().finally(() => running.delete(taskId))
+    try {
+      await runner(task, store)
+    } finally {
+      // Страховка: любой терминальный путь воркера (в т.ч. ранний return,
+      // исключение до finalizeAccounts) обязан снять блокировки и сбросить статусы.
+      await finalizeAccounts(task.settings?.accountIds || [], taskId)
+    }
+  })().finally(() => {
+    running.delete(taskId)
+    markTaskDone(taskId)
+  })
   running.set(taskId, job)
 }
 
@@ -66,7 +77,9 @@ async function finalizeAccounts(accountIds, taskId) {
 }
 
 function targets(settings) {
-  return (settings.targets || settings.channels || []).map((t) => t.replace(/^@/, '').trim()).filter(Boolean)
+  const list = (settings.targets || settings.channels || []).map((t) => t.replace(/^@/, '').trim()).filter(Boolean)
+  // feature 10: исключаем цели из чёрного списка перед любыми действиями
+  return filterBlacklisted(list)
 }
 
 function bumpProgress(task, store) {
@@ -303,7 +316,8 @@ export async function runMassReact(task, store) {
   const mul = delayMultiplier(s.protectionLevel ?? 1, s.delayPreset ?? 1)
   const prob = effectiveProbability(s.probability ?? 50, !!s.aiProtection, s.protectionLevel ?? 1)
   const tgs = targets(s)
-  const fixedPosts = parseTelegramPostLinks(s.postUrls)
+  // feature 10: исключаем посты из ЧС по username канала
+  const fixedPosts = parseTelegramPostLinks(s.postUrls).filter((p) => !p.username || !isBlacklistedSync(p.username))
   let idx = 0
   const accountIds = s.accountIds || []
 

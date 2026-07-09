@@ -29,6 +29,7 @@ export interface TgAccount {
   tgSessionId?: string // id сессии на TG API сервере
   createdAt: number
   inTrash?: boolean
+  note?: string
   /** Аккаунт занят running-задачей другого (или этого) модуля */
   busyIn?: { moduleKey: string; taskId: string; moduleLabel: string }
 }
@@ -135,6 +136,75 @@ export interface ParseResult {
   verified?: boolean
   premium?: boolean
   lang: string
+}
+
+/** Реальная статистика аккаунта для модалки «Управление аккаунтом». */
+export interface AccountStats {
+  live: boolean
+  busyIn: { moduleKey: string; taskId: string; moduleLabel: string } | null
+  profile: {
+    id: string | null
+    firstName: string | null
+    lastName: string | null
+    username: string | null
+    phone: string | null
+    premium: boolean | null
+    geo: string | null
+    saved: boolean
+  }
+  proxy: {
+    raw: string
+    protocol: string | null
+    ip: string | null
+    port: number | null
+    login: string | null
+    configured: boolean
+    working: boolean | null
+    checkedAt: number | null
+  }
+  status: {
+    valid: boolean
+    sessionOk: boolean
+    spamblock: 'clean' | 'blocked' | 'unknown'
+    spamblockText: string | null
+    warmingDays: number
+    warmingActive: boolean
+    accountStatus: string
+  }
+  dates: {
+    addedAt: number | null
+    lastCheckAt: number | null
+    proxyCheckAt: number | null
+  }
+  health: {
+    score: number
+    label: string
+    events: { ts: string; level: string; label: string; module: string }[]
+  }
+  longevity: {
+    score: number
+    risk: 'low' | 'medium' | 'high'
+    factors: { key: string; label: string; positive: boolean }[]
+  }
+  activity: { ts: string; type: string; label: string; target?: string; level: string; module: string }[]
+  role: string | null
+  note: string
+}
+
+export interface AccountChannel {
+  id: string
+  title: string
+  username: string
+  members: number | null
+  kind: 'channel' | 'group'
+  unread: number
+}
+
+export interface AccountFolder {
+  id: number | null
+  title: string
+  included: number
+  pinned: number
 }
 
 export interface AppData {

@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react'
 import {
-  Search, Users, CheckCheck, ChevronsRight, ChevronsLeft, RefreshCw, ChevronDown, Inbox, ShieldCheck,
+  Search, Users, CheckCheck, ChevronsRight, ChevronsLeft, RefreshCw, ChevronDown, Inbox, ShieldCheck, Loader2,
 } from 'lucide-react'
 import { useApp, activeAccounts } from '@/mocks/store'
 import { Avatar, Select } from '@/shared/ui'
@@ -121,8 +121,8 @@ export function AccountPicker({
                 <div className="flex flex-wrap items-center gap-2 pt-0.5">
                   {actions.includes('Добавить все') && <button onClick={addAll} className="btn-soft h-8 text-xs"><ChevronsRight size={14} /> Добавить все</button>}
                   <Check label="Рабочие прокси" checked={workingProxies} onChange={setWorkingProxies} />
-                  <Check label="Скрыть рабочие" checked={hideWorking} onChange={setHideWorking} title="Скрыть аккаунты в работе и занятые в других модулях" />
                   <Check label="Лайт-режим" checked={liteMode} onChange={setLiteMode} />
+                  <Check label="Скрыть рабочие" checked={hideWorking} onChange={setHideWorking} title="Скрыть аккаунты в работе и занятые в других модулях" />
                 </div>
               </div>
             )}
@@ -144,7 +144,7 @@ export function AccountPicker({
                   ))}
                   {busyAvailable.length > 0 && !hideWorking && (
                     <div className="mt-2 border-t border-line pt-2">
-                      <div className="px-2 py-1 text-xs font-bold text-rose-300">Заняты в других модулях · {busyAvailable.length}</div>
+                      <div className="px-2 py-1 text-xs font-bold text-rose-300">В работе · {busyAvailable.length}</div>
                       {busyAvailable.map((a) => (
                         <AccountRow key={a.id} account={a} liteMode={liteMode} busy disabled />
                       ))}
@@ -180,9 +180,13 @@ export function AccountPicker({
                       <Avatar name={a.name} color={a.avatarColor} size={30} />
                       <div className="min-w-0 flex-1">
                         <div className="truncate text-sm font-semibold text-fg">{a.name}</div>
-                        <div className="truncate text-[11px] text-muted">
-                          @{a.username} · {a.role}
-                          {a.busyIn && <span className="text-rose-300"> · занят: {a.busyIn.moduleLabel}</span>}
+                        <div className="flex items-center gap-1 truncate text-[11px] text-muted">
+                          <span className="truncate">@{a.username} · {a.role}</span>
+                          {a.busyIn && (
+                            <span className="inline-flex items-center gap-1 whitespace-nowrap text-rose-300">
+                              · <Loader2 size={10} className="animate-spin" /> занят: {a.busyIn.moduleLabel}
+                            </span>
+                          )}
                         </div>
                       </div>
                       <MiniBadge tone={a.busyIn ? 'rose' : 'spark'}>{FLAGS[a.country]}</MiniBadge>
@@ -224,16 +228,20 @@ function AccountRow({ account: a, liteMode, onAdd, busy, disabled }: {
       <div className="min-w-0 flex-1">
         <div className="truncate text-sm font-semibold text-fg">{a.name}</div>
         {!liteMode && (
-          <div className="truncate text-[11px] text-muted">
-            {a.phone.replace('+', '')} <span className="text-iris-300/80">@{a.username}</span>
-            {a.busyIn && <span className="text-rose-300"> · {a.busyIn.moduleLabel}</span>}
+          <div className="flex items-center gap-1 truncate text-[11px] text-muted">
+            <span className="truncate">{a.phone.replace('+', '')} <span className="text-iris-300/80">@{a.username}</span></span>
+            {a.busyIn && (
+              <span className="inline-flex items-center gap-1 whitespace-nowrap text-rose-300">
+                · <Loader2 size={10} className="animate-spin" /> {a.busyIn.moduleLabel}
+              </span>
+            )}
           </div>
         )}
       </div>
       {!liteMode && (
         <div className="flex shrink-0 items-center gap-1">
           {busy && a.busyIn ? (
-            <MiniBadge tone="rose">ЗАНЯТ</MiniBadge>
+            <MiniBadge tone="rose"><Loader2 size={9} className="animate-spin" /> ЗАНЯТ</MiniBadge>
           ) : (
             <>
               {a.status === 'active' && <MiniBadge tone="spark">VALID</MiniBadge>}

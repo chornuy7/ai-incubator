@@ -13,12 +13,16 @@ import {
   pickDelay,
   effectiveProbability,
   isAccountRunnable,
-  accountLimitReached,
   sleep,
   extractFloodSeconds,
 } from './protection.js'
 import { appendLog, appendCommentHistory, saveTask } from './taskStore.js'
-import { releaseTaskLocks, assertAccountAvailable } from '../lib/accountLocks.js'
+import { releaseTaskLocks, assertAccountAvailable, markTaskLive, markTaskDone } from '../lib/accountLocks.js'
+import { resolveDurationPeriodMinutes } from '../lib/workModeDuration.js'
+import { resolveTotalTarget, resolvePerAccountTarget } from '../lib/targets.js'
+import { applyBanPolicy } from '../lib/accountRunner.js'
+import { getAiSafetySync } from '../aiSafety.js'
+import { filterBlacklisted } from '../targetBlacklist.js'
 
 /** @type {Map<string, Promise<void>>} */
 const running = new Map()
@@ -26,7 +30,22 @@ const running = new Map()
 /** @param {object} task */
 export function startTaskWorker(task) {
   if (running.has(task.id)) return
-  const job = runTask(task).finally(() => running.delete(task.id))
+  markTaskLive(task.id)
+  const job = runTask(task)
+    .catch(() => { /* runTask ловит свои ошибки; страховка от непойманного */ })
+    .finally(async () => {
+      // Страховка: снять блокировки и сбросить working-статусы на любом терминальном пути,
+      // включая ранние return (нет аккаунтов/каналов) и падение процесса воркера.
+      releaseTaskLocks(task.id)
+      try {
+        for (const accountId of task.settings?.accountIds || []) {
+          const meta = await getAccountMeta(accountId)
+          if (meta.status === 'working') await setAccountMeta(accountId, { status: 'active' })
+        }
+      } catch { /* ignore */ }
+      running.delete(task.id)
+      markTaskDone(task.id)
+    })
   running.set(task.id, job)
 }
 
@@ -43,16 +62,17 @@ export async function stopTaskWorker(taskId) {
 /** @param {object} task */
 async function runTask(task) {
   task.status = 'running'
+  task.startedAt = Date.now()
   await saveTask(task)
   await appendLog(task, 'info', 'Задача запущена', undefined)
 
   const s = task.settings
   const mul = delayMultiplier(s.protectionLevel ?? 1, s.delayPreset ?? 1)
   const prob = effectiveProbability(s.probability ?? 30, !!s.aiProtection, s.protectionLevel ?? 1)
-  const maxTotal = s.workMode === 1 ? Infinity : (s.maxComments || 100)
-  const endAt = s.workMode === 1 && s.durationMinutes
-    ? Date.now() + s.durationMinutes * 60_000
-    : null
+  // feature 4: цель в диапазоне [minComments, maxComments]
+  const maxTotal = s.workMode === 1 ? Infinity : resolveTotalTarget(s, task)
+  const durationPeriod = s.workMode === 1 ? resolveDurationPeriodMinutes(s, { taskId: task.id, startedAt: task.startedAt }) : null
+  const endAt = durationPeriod ? task.startedAt + durationPeriod.chosen * 60_000 : null
 
   const accountIds = s.accountIds || []
   if (!accountIds.length) {
@@ -62,10 +82,16 @@ async function runTask(task) {
     return
   }
 
-  const channels = (s.channels || []).map((c) => c.replace(/^@/, '').trim()).filter(Boolean)
+  const channelsRaw = (s.channels || []).map((c) => c.replace(/^@/, '').trim()).filter(Boolean)
+  // feature 10: исключаем цели из чёрного списка
+  const channels = filterBlacklisted(channelsRaw)
+  const removedByBlacklist = channelsRaw.length - channels.length
+  if (removedByBlacklist > 0) {
+    await appendLog(task, 'info', `Чёрный список: исключено ${removedByBlacklist} канал(ов)`)
+  }
   if (!channels.length) {
     task.status = 'error'
-    await appendLog(task, 'error', 'Не указаны каналы')
+    await appendLog(task, 'error', channelsRaw.length ? 'Все каналы в чёрном списке' : 'Не указаны каналы')
     await saveTask(task)
     return
   }
@@ -91,9 +117,15 @@ async function runTask(task) {
       }
 
       task.accountStats[accountId] = task.accountStats[accountId] || { comments: 0, floodWaits: 0 }
-      if (accountLimitReached(s, task.accountStats[accountId].comments)) {
+      // feature 4: цель на аккаунт в диапазоне [minPerAccount, maxPerAccount]
+      const accTarget = resolvePerAccountTarget(s, accountId, task)
+      const accReached = (id) => {
+        const t = resolvePerAccountTarget(s, id, task)
+        return t > 0 && (task.accountStats[id]?.comments || 0) >= t
+      }
+      if (accTarget > 0 && task.accountStats[accountId].comments >= accTarget) {
         await appendLog(task, 'info', 'Лимит комментариев на аккаунт достигнут', meta.name || accountId)
-        if (accountIds.every((id) => accountLimitReached(s, task.accountStats[id]?.comments || 0))) break
+        if (accountIds.every((id) => accReached(id))) break
         continue
       }
 
@@ -201,16 +233,17 @@ async function runTask(task) {
           } catch (err) {
             const floodSec = extractFloodSeconds(err)
             if (floodSec > 0) {
+              const safety = getAiSafetySync()
               task.accountStats[accountId].floodWaits += 1
-              const fwDelay = floodSec + (s.delays?.floodWait ?? 120)
+              const fwDelay = floodSec + (s.delays?.floodWait ?? safety.floodWaitExtraSeconds ?? 120)
               await appendLog(task, 'warning', `FloodWait ${floodSec}с — пауза ${fwDelay}с`, meta.name || accountId)
               await sleep(fwDelay * 1000)
-              const limit = s.delays?.floodQuarantine ?? 3
+              const limit = s.delays?.floodQuarantine ?? safety.floodQuarantineThreshold ?? 3
               if (task.accountStats[accountId].floodWaits >= limit) {
                 await setAccountMeta(accountId, { status: 'quarantine' })
                 await appendLog(task, 'error', `Карантин: ${limit} FloodWait подряд`, meta.name || accountId)
               }
-            } else {
+            } else if (!(await applyBanPolicy(task, accountId, { appendLog, saveTask }, err, meta.name || accountId))) {
               await appendLog(task, 'error', mapTelegramError(err), meta.name || accountId)
             }
           }
@@ -235,14 +268,16 @@ async function runTask(task) {
         }
         const floodSec = extractFloodSeconds(err)
         if (floodSec > 0) {
+          const safety = getAiSafetySync()
           task.accountStats[accountId] = task.accountStats[accountId] || { comments: 0, floodWaits: 0 }
           task.accountStats[accountId].floodWaits += 1
           await appendLog(task, 'warning', `FloodWait ${floodSec}с`, meta.name || accountId)
-          await sleep((floodSec + 30) * 1000)
-        } else {
+          await sleep((floodSec + (safety.floodWaitExtraSeconds ?? 30)) * 1000)
+        } else if (!(await applyBanPolicy(task, accountId, { appendLog, saveTask }, err, meta.name || accountId))) {
           await appendLog(task, 'error', mapTelegramError(err), meta.name || accountId)
         }
-        await setAccountMeta(accountId, { status: 'active' })
+        const banned = await getAccountMeta(accountId)
+        if (banned.status === 'working') await setAccountMeta(accountId, { status: 'active' })
         await saveTask(task)
       }
 

@@ -1,7 +1,7 @@
 import { useMemo, useState, useEffect } from 'react'
 import {
   Plus, UploadCloud, Server, RefreshCw, Columns3, ListChecks, Search, Filter,
-  MoreHorizontal, Trash2, KeyRound, Info, Users, Check, X, Undo2,
+  MoreHorizontal, Trash2, KeyRound, Info, Users, Check, X, Undo2, Loader2,
 } from 'lucide-react'
 import { useApp, activeAccounts, trashedAccounts, STATUS_META } from '@/mocks/store'
 import { useUi } from '@/shared/lib/uiStore'
@@ -11,10 +11,13 @@ import {
 import { AddAccountWizard } from '@/features/add-tg-account/AddAccountWizard'
 import { ImportModal } from '@/features/import-sessions/ImportModal'
 import { ProxyPoolModal } from '@/features/proxy/ProxyPoolModal'
+import { AccountManagementModal } from '@/features/account-manager/AccountManagementModal'
+import { AiSafetyModal } from '@/features/modules/shared'
 import { PaywallLock } from '@/features/paywall/Paywall'
 import { cn } from '@/shared/lib/utils'
 import { ROLES, COUNTRIES_FILTER } from '@/shared/config/modules'
 import type { AccountStatus, TgAccount } from '@/shared/types'
+import { patchAccount, releaseAccountLock } from '@/api/accountsApi'
 
 const STATUS_ORDER: AccountStatus[] = ['active', 'working', 'quarantine', 'spamblock', 'invalid', 'frozen', 'reauth']
 const COLS = [
@@ -31,8 +34,6 @@ function formatProxyLabel(proxy: string) {
   return proxy
 }
 
-const FLAGS: Record<string, string> = { ua: '🇺🇦', ru: '🇷🇺', kz: '🇰🇿', pl: '🇵🇱', de: '🇩🇪' }
-
 export function AccountsPage() {
   const data = useApp((s) => s.data)
   const isNoSub = useApp((s) => s.userState === 'no-sub')
@@ -42,6 +43,7 @@ export function AccountsPage() {
   const setAccountStatus = useApp((s) => s.setAccountStatus)
   const setAccountProxy = useApp((s) => s.setAccountProxy)
   const loadAccounts = useApp((s) => s.loadAccounts)
+  const loadAccountBusy = useApp((s) => s.loadAccountBusy)
   const accountsLoading = useApp((s) => s.accountsLoading)
   const pushToast = useApp((s) => s.pushToast)
   const setTasksOpen = useUi((s) => s.setTasksOpen)
@@ -50,6 +52,8 @@ export function AccountsPage() {
   const [statusFilter, setStatusFilter] = useState<AccountStatus | 'all'>('all')
   const [roleFilter, setRoleFilter] = useState('Все роли')
   const [countryFilter, setCountryFilter] = useState('all')
+  const [moduleFilter, setModuleFilter] = useState('all')
+  const [moveOpen, setMoveOpen] = useState(false)
   const [query, setQuery] = useState('')
   const [visibleCols, setVisibleCols] = useState<string[]>(COLS.map((c) => c.key))
   const [selected, setSelected] = useState<Set<string>>(new Set())
@@ -75,16 +79,37 @@ export function AccountsPage() {
     return c
   }, [active])
 
+  // (8) Сводка по модулям: сколько аккаунтов сейчас работают в каждом модуле.
+  const moduleSummary = useMemo(() => {
+    const map = new Map<string, { label: string; count: number }>()
+    for (const a of active) {
+      if (!a.busyIn) continue
+      const cur = map.get(a.busyIn.moduleKey) || { label: a.busyIn.moduleLabel, count: 0 }
+      cur.count += 1
+      map.set(a.busyIn.moduleKey, cur)
+    }
+    return [...map.entries()].map(([key, v]) => ({ key, ...v }))
+  }, [active])
+
   const source = tab === 'accounts' ? active : trashed
   const filtered = useMemo(() => {
-    return source.filter((a) => {
+    const list = source.filter((a) => {
       if (tab === 'accounts' && statusFilter !== 'all' && a.status !== statusFilter) return false
       if (roleFilter !== 'Все роли' && a.role !== roleFilter) return false
       if (countryFilter !== 'all' && a.country !== countryFilter) return false
+      if (tab === 'accounts' && moduleFilter !== 'all') {
+        if (moduleFilter === 'idle') { if (a.busyIn) return false }
+        else if (a.busyIn?.moduleKey !== moduleFilter) return false
+      }
       if (query && !`${a.name} ${a.username} ${a.phone}`.toLowerCase().includes(query.toLowerCase())) return false
       return true
     })
-  }, [source, tab, statusFilter, roleFilter, countryFilter, query])
+    // Свободные — сверху, занятые (в работе) — в самый низ. Стабильно сохраняем прочий порядок.
+    return list
+      .map((a, i) => ({ a, i }))
+      .sort((x, y) => (Number(!!x.a.busyIn) - Number(!!y.a.busyIn)) || (x.i - y.i))
+      .map((x) => x.a)
+  }, [source, tab, statusFilter, roleFilter, countryFilter, moduleFilter, query])
 
   const pageCount = Math.max(1, Math.ceil(filtered.length / pageSize))
   const pageItems = filtered.slice(page * pageSize, page * pageSize + pageSize)
@@ -110,6 +135,46 @@ export function AccountsPage() {
     })()
   }
 
+  // (8) Массовые действия
+  const bulkSetStatus = (status: AccountStatus, title: string) => {
+    void (async () => {
+      const ids = [...selected]
+      for (const id of ids) { try { await patchAccount(id, { status }) } catch { /* skip */ } }
+      await loadAccounts()
+      pushToast({ type: 'success', title, desc: `Аккаунтов: ${ids.length}` })
+      setSelected(new Set())
+    })()
+  }
+
+  const bulkRelease = () => {
+    void (async () => {
+      const ids = [...selected]
+      let released = 0
+      for (const id of ids) {
+        try {
+          const r = await releaseAccountLock(id)
+          if (r.released) released += 1
+          await patchAccount(id, { status: 'active' })
+        } catch { /* skip */ }
+      }
+      await loadAccounts()
+      await loadAccountBusy()
+      pushToast({ type: 'success', title: 'Остановлено/освобождено', desc: `Снято блокировок: ${released} из ${ids.length}` })
+      setSelected(new Set())
+    })()
+  }
+
+  const bulkMove = (patch: { role?: string; project?: string }) => {
+    void (async () => {
+      const ids = [...selected]
+      for (const id of ids) { try { await patchAccount(id, patch) } catch { /* skip */ } }
+      await loadAccounts()
+      pushToast({ type: 'success', title: 'Перемещено', desc: `Аккаунтов: ${ids.length}` })
+      setMoveOpen(false)
+      setSelected(new Set())
+    })()
+  }
+
   const showCol = (k: string) => visibleCols.includes(k)
   const openAdd = () => { setWizardMode('add'); setReauthTarget(null); setAddOpen(true) }
   const openReauth = (a: TgAccount) => { setWizardMode('reauth'); setReauthTarget(a); setAddOpen(true) }
@@ -123,6 +188,7 @@ export function AccountsPage() {
         icon={<Users size={22} />}
         actions={
           <>
+            <AiSafetyModal />
             <button onClick={() => setImportOpen(true)} className="btn-ghost h-10"><UploadCloud size={16} /> <span className="hidden sm:inline">Импортировать</span></button>
             <button onClick={() => setProxyPoolOpen(true)} className="btn-ghost h-10"><Server size={16} /> <span className="hidden sm:inline">Пул прокси</span></button>
             <button
@@ -161,6 +227,28 @@ export function AccountsPage() {
         })}
       </div>
 
+      {/* (8) Сводка по модулям */}
+      {moduleSummary.length > 0 && (
+        <div className="mb-4 flex flex-wrap items-center gap-2">
+          <span className="text-[11px] font-bold uppercase tracking-wide text-faint">В работе по модулям:</span>
+          <button
+            onClick={() => { setModuleFilter('all'); setPage(0) }}
+            className={cn('rounded-lg border px-2.5 py-1 text-xs font-semibold', moduleFilter === 'all' ? 'border-spark-500/50 bg-spark-500/8 text-spark-300' : 'border-line bg-elevated text-muted hover:text-fg')}
+          >
+            Все
+          </button>
+          {moduleSummary.map((m) => (
+            <button
+              key={m.key}
+              onClick={() => { setModuleFilter(m.key); setPage(0) }}
+              className={cn('rounded-lg border px-2.5 py-1 text-xs font-semibold', moduleFilter === m.key ? 'border-spark-500/50 bg-spark-500/8 text-spark-300' : 'border-line bg-elevated text-muted hover:text-fg')}
+            >
+              {m.label} <span className="opacity-70">{m.count}</span>
+            </button>
+          ))}
+        </div>
+      )}
+
       {/* Toolbar */}
       <div className="mb-4 flex flex-wrap items-center gap-2">
         <div className="inline-flex rounded-xl border border-line bg-elevated p-1">
@@ -191,8 +279,18 @@ export function AccountsPage() {
               <div className="mb-1 px-1 text-[11px] font-bold uppercase tracking-wide text-faint">Роль</div>
               <Select className="mb-3" value={roleFilter} onChange={setRoleFilter} options={ROLES.map((r) => ({ value: r, label: r }))} />
               <div className="mb-1 px-1 text-[11px] font-bold uppercase tracking-wide text-faint">Страна</div>
-              <Select value={countryFilter} onChange={setCountryFilter} options={COUNTRIES_FILTER.map((c) => ({ value: c.code, label: `${c.flag} ${c.label}`.trim() }))} />
-              <button onClick={() => { setRoleFilter('Все роли'); setCountryFilter('all') }} className="btn-ghost mt-3 h-8 w-full text-xs">Сбросить фильтры</button>
+              <Select className="mb-3" value={countryFilter} onChange={setCountryFilter} options={COUNTRIES_FILTER.map((c) => ({ value: c.code, label: `${c.flag} ${c.label}`.trim() }))} />
+              <div className="mb-1 px-1 text-[11px] font-bold uppercase tracking-wide text-faint">Модуль</div>
+              <Select
+                value={moduleFilter}
+                onChange={(v) => { setModuleFilter(v); setPage(0) }}
+                options={[
+                  { value: 'all', label: 'Все модули' },
+                  { value: 'idle', label: 'Свободные (не в работе)' },
+                  ...moduleSummary.map((m) => ({ value: m.key, label: `${m.label} (${m.count})` })),
+                ]}
+              />
+              <button onClick={() => { setRoleFilter('Все роли'); setCountryFilter('all'); setModuleFilter('all') }} className="btn-ghost mt-3 h-8 w-full text-xs">Сбросить фильтры</button>
             </div>
           )}
         </Dropdown>
@@ -231,11 +329,15 @@ export function AccountsPage() {
 
       {/* Bulk bar */}
       {selected.size > 0 && tab === 'accounts' && (
-        <div className="mb-3 flex items-center gap-3 rounded-xl border border-spark-500/40 bg-spark-500/8 px-4 py-2.5 animate-fade-in">
+        <div className="mb-3 flex flex-wrap items-center gap-2 rounded-xl border border-spark-500/40 bg-spark-500/8 px-4 py-2.5 animate-fade-in">
           <span className="text-sm font-bold text-spark-300">Выбрано: {selected.size}</span>
+          <button onClick={() => bulkSetStatus('active', 'Включено (active)')} className="btn-ghost h-8 text-xs"><Check size={14} /> Включить</button>
+          <button onClick={() => bulkSetStatus('frozen', 'Отключено (frozen)')} className="btn-ghost h-8 text-xs"><X size={14} /> Отключить</button>
+          <button onClick={bulkRelease} className="btn-ghost h-8 text-xs"><RefreshCw size={14} /> Стоп / освободить</button>
+          <button onClick={() => setMoveOpen(true)} className="btn-ghost h-8 text-xs"><Users size={14} /> Переместить</button>
           <button onClick={bulkTrash} className="btn-ghost h-8 text-xs"><Trash2 size={14} /> В корзину</button>
           <button onClick={() => { void (async () => { for (const id of selected) await setAccountStatus(id, 'reauth'); pushToast({ type: 'info', title: 'Отправлено на реавторизацию' }); setSelected(new Set()) })() }} className="btn-ghost h-8 text-xs"><KeyRound size={14} /> Реавторизация</button>
-          <button onClick={() => setSelected(new Set())} className="btn-ghost h-8 text-xs"><X size={14} /> Снять</button>
+          <button onClick={() => setSelected(new Set())} className="btn-ghost h-8 text-xs">Снять</button>
         </div>
       )}
 
@@ -316,40 +418,52 @@ export function AccountsPage() {
       <ImportModal open={importOpen} onClose={() => setImportOpen(false)} />
       <ProxyPoolModal open={proxyPoolOpen} onClose={() => setProxyPoolOpen(false)} />
 
-      {/* Details */}
-      <Modal open={!!detailAcc} onClose={() => setDetailAcc(null)} title={detailAcc?.name} subtitle={detailAcc?.phone} icon={detailAcc && <Avatar name={detailAcc.name} color={detailAcc.avatarColor} size={40} />} size="md">
-        {detailAcc && (
-          <div className="space-y-3">
-            <div className="grid grid-cols-2 gap-3">
-              {[
-                ['Username', `@${detailAcc.username}`],
-                ['Роль', detailAcc.role],
-                ['Проект', detailAcc.project],
-                ['Страна', `${FLAGS[detailAcc.country] ?? ''} ${detailAcc.country.toUpperCase()}`],
-                ['Отлёжка', detailAcc.lastSeen],
-                ['GGR', detailAcc.ggr ? `${detailAcc.ggr}/100` : '—'],
-              ].map(([k, v]) => (
-                <div key={k} className="rounded-xl border border-line bg-elevated p-3">
-                  <div className="text-xs text-muted">{k}</div>
-                  <div className="mt-0.5 font-semibold text-fg">{v}</div>
-                </div>
-              ))}
-            </div>
-            <div className="rounded-xl border border-line bg-elevated p-3">
-              <div className="text-xs text-muted">Статус</div>
-              <div className="mt-1"><StatusBadge status={detailAcc.status} /></div>
-            </div>
-            <div className="rounded-xl border border-line bg-elevated p-3">
-              <div className="text-xs text-muted">Прокси</div>
-              <div className="mt-0.5 font-mono text-sm text-fg">{formatProxyLabel(detailAcc.proxy)}</div>
-            </div>
-          </div>
-        )}
-      </Modal>
+      {/* Account Management (реальная статистика) */}
+      <AccountManagementModal account={detailAcc} onClose={() => setDetailAcc(null)} />
 
       {/* Change proxy */}
       <ChangeProxyModal acc={proxyAcc} onClose={() => setProxyAcc(null)} onSave={(id, p) => { void setAccountProxy(id, p).then(() => { pushToast({ type: 'success', title: 'Прокси обновлён' }); setProxyAcc(null) }) }} />
+
+      {/* (8) Bulk move to group */}
+      <BulkMoveModal open={moveOpen} count={selected.size} onClose={() => setMoveOpen(false)} onApply={bulkMove} />
     </div>
+  )
+}
+
+function BulkMoveModal({ open, count, onClose, onApply }: {
+  open: boolean; count: number; onClose: () => void; onApply: (patch: { role?: string; project?: string }) => void
+}) {
+  const [role, setRole] = useState('')
+  const [project, setProject] = useState('')
+  return (
+    <Modal
+      open={open}
+      onClose={onClose}
+      title="Переместить в группу"
+      subtitle={`Выбрано аккаунтов: ${count}`}
+      icon={<Users size={22} />}
+      size="sm"
+      footer={<>
+        <button onClick={onClose} className="btn-ghost h-10">Отмена</button>
+        <button
+          onClick={() => onApply({ ...(role ? { role } : {}), ...(project.trim() ? { project: project.trim() } : {}) })}
+          disabled={!role && !project.trim()}
+          className="btn-primary h-10 disabled:opacity-40"
+        >
+          Применить
+        </button>
+      </>}
+    >
+      <label className="label">Роль</label>
+      <Select
+        className="mb-3"
+        value={role}
+        onChange={setRole}
+        options={[{ value: '', label: '— не менять —' }, ...ROLES.filter((r) => r !== 'Все роли').map((r) => ({ value: r, label: r }))]}
+      />
+      <label className="label">Проект / папка</label>
+      <input value={project} onChange={(e) => setProject(e.target.value)} className="input" placeholder="Например: crypto_batch (пусто = не менять)" />
+    </Modal>
   )
 }
 
@@ -392,7 +506,7 @@ function AccountsTable(props: {
           </thead>
           <tbody>
             {pageItems.map((a) => (
-              <tr key={a.id} className={cn('border-b border-line/50 transition-colors last:border-0 hover:bg-elevated/40', selected.has(a.id) && 'bg-spark-500/5')}>
+              <tr key={a.id} className={cn('border-b border-line/50 transition-colors last:border-0 hover:bg-elevated/40', selected.has(a.id) && 'bg-spark-500/5', a.busyIn && 'opacity-60')}>
                 <td className="px-4 py-3"><input type="checkbox" checked={selected.has(a.id)} onChange={() => toggleOne(a.id)} className="h-4 w-4 rounded border-line accent-spark-500" /></td>
                 {showAccountCol && (
                 <td className="px-4 py-3">
@@ -411,6 +525,11 @@ function AccountsTable(props: {
                   <td className="px-4 py-3">
                     <div className="flex flex-col items-start gap-1.5">
                       <StatusBadge status={a.status} />
+                      {a.busyIn && (
+                        <div className="flex items-center gap-1 text-[11px] font-semibold text-rose-300">
+                          <Loader2 size={11} className="animate-spin" /> В работе: {a.busyIn.moduleLabel}
+                        </div>
+                      )}
                       {a.status === 'reauth' && props.tab === 'accounts' && (
                         <button type="button" onClick={() => props.onReauth(a)} className="text-xs font-semibold text-violet-300 hover:text-violet-200">
                           Войти снова →
@@ -433,13 +552,20 @@ function AccountsTable(props: {
       {/* Mobile cards */}
       <div className="divide-y divide-line/60 md:hidden">
         {pageItems.map((a) => (
-          <div key={a.id} className="flex items-center gap-3 p-3.5">
+          <div key={a.id} className={cn('flex items-center gap-3 p-3.5', a.busyIn && 'opacity-60')}>
             <input type="checkbox" checked={selected.has(a.id)} onChange={() => toggleOne(a.id)} className="h-4 w-4 rounded border-line accent-spark-500" />
             <Avatar name={a.name} color={a.avatarColor} />
             <div className="min-w-0 flex-1">
               <div className="truncate font-semibold text-fg">{a.name}</div>
               <div className="truncate text-xs text-muted">@{a.username} · {a.phone}</div>
-              <div className="mt-1.5"><StatusBadge status={a.status} /></div>
+              <div className="mt-1.5">
+                <StatusBadge status={a.status} />
+                {a.busyIn && (
+                  <div className="mt-1 flex items-center gap-1 text-[11px] font-semibold text-rose-300">
+                    <Loader2 size={11} className="animate-spin" /> В работе: {a.busyIn.moduleLabel}
+                  </div>
+                )}
+              </div>
             </div>
             <RowMenu a={a} {...props} />
           </div>

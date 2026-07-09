@@ -1,10 +1,14 @@
 /** Shared account protection — used by all module workers. */
+import { getAiSafetySync } from '../aiSafety.js'
+
 const LEVEL_MUL = [1.8, 1, 0.75]
 const PRESET_MUL = [0.6, 1, 1.8]
 const SKIP_STATUSES = new Set(['quarantine', 'spamblock', 'invalid', 'frozen', 'reauth'])
 
 export function delayMultiplier(level, preset) {
-  return (LEVEL_MUL[level] ?? 1) * (PRESET_MUL[preset] ?? 1)
+  const safety = getAiSafetySync()
+  const global = (safety.delayMultiplier || 1) * (safety.pacingMultiplier || 1)
+  return (LEVEL_MUL[level] ?? 1) * (PRESET_MUL[preset] ?? 1) * global
 }
 
 export function pickDelay(from, to, mul = 1) {

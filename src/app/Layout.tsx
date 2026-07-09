@@ -5,8 +5,11 @@ import { AppHeader } from '@/widgets/AppHeader'
 import { Toasts } from '@/widgets/Toasts'
 import { DevPanel } from '@/widgets/DevPanel'
 import { TasksDrawer } from '@/widgets/TasksDrawer'
+import { HelpCenterDrawer } from '@/widgets/HelpCenterDrawer'
 import { PaywallBanner } from '@/features/paywall/Paywall'
 import { useApp } from '@/mocks/store'
+import { useUi } from '@/shared/lib/uiStore'
+import { HelpCircle } from 'lucide-react'
 
 export function Layout() {
   const mobileNavOpen = useApp((s) => s.mobileNavOpen)
@@ -14,6 +17,13 @@ export function Layout() {
   const isNoSub = useApp((s) => s.userState === 'no-sub')
   const loadAccounts = useApp((s) => s.loadAccounts)
   const loadAccountBusy = useApp((s) => s.loadAccountBusy)
+  const setHelpTopic = useUi((s) => s.setHelpTopic)
+  const setHelpOpen = useUi((s) => s.setHelpOpen)
+
+  const openHelp = () => {
+    setHelpTopic('Помощь по настройкам')
+    setHelpOpen(true)
+  }
 
   useEffect(() => {
     void loadAccounts()
@@ -51,6 +61,16 @@ export function Layout() {
       <Toasts />
       <DevPanel />
       <TasksDrawer />
+      <button
+        type="button"
+        onClick={openHelp}
+        className="fixed right-5 top-24 z-[97] grid h-11 w-11 place-items-center rounded-full bg-spark-gradient text-[#04150c] shadow-pop transition-transform hover:scale-[1.04]"
+        aria-label="Help Center"
+        title="Help Center"
+      >
+        <HelpCircle size={18} />
+      </button>
+      <HelpCenterDrawer />
     </div>
   )
 }

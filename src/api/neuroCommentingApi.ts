@@ -9,6 +9,9 @@ export interface NeuroCommentingSettings {
   probability: number
   maxComments: number
   maxPerAccount: number
+  // ── (4) Минимумы: воркер выбирает цель в диапазоне [min, max] ──
+  minComments?: number
+  minPerAccount?: number
   minWords: number
   durationMinutes?: number
   aiProtection: boolean

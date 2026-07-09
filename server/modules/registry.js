@@ -31,6 +31,14 @@ export function getWorker(moduleKey) {
   return WORKERS[moduleKey] ?? null
 }
 
+/** min<=max проверка для пары полей (feature 4). */
+function checkMinMax(settings, minKey, maxKey, label) {
+  const min = Number(settings?.[minKey] ?? 0) || 0
+  const max = Number(settings?.[maxKey] ?? 0) || 0
+  if (min && max && min > max) return `Минимум больше максимума: ${label}`
+  return null
+}
+
 export function validateSettings(moduleKey, settings) {
   const def = MODULE_DEFS[moduleKey]
   if (!def) return 'Неизвестный модуль'
@@ -40,7 +48,13 @@ export function validateSettings(moduleKey, settings) {
     if (moduleKey === 'mass-react' && settings?.postUrls?.length) { /* посты вместо групп */ }
     else return `Добавьте хотя бы одну ${def.targetLabel || 'цель'}`
   }
-  return null
+  // feature 4: min <= max для всех парных лимитов
+  return (
+    checkMinMax(settings, 'minActions', 'maxActions', 'действия') ||
+    checkMinMax(settings, 'minComments', 'maxComments', 'комментарии') ||
+    checkMinMax(settings, 'minPerAccount', 'maxPerAccount', 'на аккаунт') ||
+    null
+  )
 }
 
 export function startModuleTask(moduleKey, settings) {

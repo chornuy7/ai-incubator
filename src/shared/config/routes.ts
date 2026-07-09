@@ -2,7 +2,7 @@ import type { LucideIcon } from 'lucide-react'
 import {
   LayoutGrid, BarChart3, LifeBuoy, MessageSquareText, Bot, Sparkles, Eye,
   Flame, MessagesSquare, Trophy, Radar, Users, Search, MessageCircle,
-  Hash, History, UserCog,
+  Hash, History, UserCog, CalendarClock,
 } from 'lucide-react'
 
 export interface RouteDef {
@@ -15,6 +15,7 @@ export interface RouteDef {
 
 export const ROUTES: RouteDef[] = [
   { path: '/panel', label: 'Менеджер аккаунтов', icon: LayoutGrid, group: 'main' },
+  { path: '/panel/automation', label: 'Автоматизация', icon: CalendarClock, group: 'main' },
   { path: '/panel/my-statistics', label: 'Моя статистика', icon: BarChart3, group: 'main' },
   { path: '/panel/support', label: 'Поддержка', icon: LifeBuoy, group: 'main' },
 

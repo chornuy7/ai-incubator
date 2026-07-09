@@ -1,3 +1,5 @@
+import { getGlobalSystemPromptSync } from '../aiSettings.js'
+
 const PROMPTS = {
   0: 'Напиши короткий позитивный комментарий к посту. 1-2 предложения, без хештегов.',
   1: 'Напиши тёплый, дружелюбный комментарий. 1-2 предложения.',
@@ -61,15 +63,29 @@ export async function generateComment(postText, promptIndex = 0, systemPrompt) {
   return { text: templateComment(snippet, promptIndex), mode: apiKey ? 'template_api_error' : 'template_no_key' }
 }
 
+/** Смёржить глобальный системный промпт (feature 6) с промптом карточки. @param {string} cardPrompt */
+function mergeGlobalPrompt(cardPrompt) {
+  const global = getGlobalSystemPromptSync().trim()
+  if (!global) return cardPrompt
+  if (!cardPrompt) return global
+  return `${global}\n\n${cardPrompt}`
+}
+
 /** @param {Record<string, unknown>} settings */
 export function resolveSystemPrompt(settings) {
   const idx = settings?.promptIndex ?? 0
-  if (typeof settings?.promptText === 'string' && settings.promptText.trim()) return settings.promptText.trim()
-  const overrides = settings?.promptOverrides
-  if (Array.isArray(overrides) && typeof overrides[idx] === 'string' && overrides[idx].trim()) {
-    return overrides[idx].trim()
+  let card
+  if (typeof settings?.promptText === 'string' && settings.promptText.trim()) {
+    card = settings.promptText.trim()
+  } else {
+    const overrides = settings?.promptOverrides
+    if (Array.isArray(overrides) && typeof overrides[idx] === 'string' && overrides[idx].trim()) {
+      card = overrides[idx].trim()
+    } else {
+      card = PROMPTS[idx] || PROMPTS[0]
+    }
   }
-  return PROMPTS[idx] || PROMPTS[0]
+  return mergeGlobalPrompt(card)
 }
 
 /** @param {string} postText @param {number} promptIndex */

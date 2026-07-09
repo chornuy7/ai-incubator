@@ -7,7 +7,19 @@ import { neuroCommentingRouter } from './neuroCommenting/routes.js'
 import { neuroDialogsRouter } from './neuroDialogs/routes.js'
 import { modulesRouter } from './modules/routes.js'
 import { tgstatRouter } from './tgstat/router.js'
-import { getAllAccountLocks, rebuildLocksFromRunningTasks } from './lib/accountLocks.js'
+import { featureRouter } from './featureRoutes.js'
+import { automationRouter } from './automation/routes.js'
+import { startScheduler } from './automation/scheduler.js'
+import { loadAiSettings } from './aiSettings.js'
+import { loadAiSafety } from './aiSafety.js'
+import { loadBlacklist } from './targetBlacklist.js'
+import {
+  getAllAccountLocks,
+  reconcileStaleTasksOnBoot,
+  reconcileLocks,
+  forceReleaseAccount,
+} from './lib/accountLocks.js'
+import { buildAccountStats, listAccountChannels, listAccountFolders } from './accountStats.js'
 
 const app = express()
 app.use(cors())
@@ -97,16 +109,76 @@ app.get('/api/tg/session/:accountId', async (req, res) => {
   }
 })
 
-app.get('/api/tg/accounts/busy', (_req, res) => {
+app.get('/api/tg/accounts/busy', async (_req, res) => {
+  // Самолечение: снять блокировки, чьи задачи уже не выполняются на диске / в процессе.
+  try {
+    await reconcileLocks()
+  } catch { /* ignore */ }
   res.json({ ok: true, busy: getAllAccountLocks() })
+})
+
+app.get('/api/tg/accounts/:accountId/stats', async (req, res) => {
+  try {
+    const spam = req.query.spam === '1' || req.query.spam === 'true'
+    const stats = await buildAccountStats(req.params.accountId, { spam })
+    res.json({ ok: true, stats })
+  } catch (err) {
+    res.status(500).json({ ok: false, error: err instanceof Error ? err.message : 'Ошибка' })
+  }
+})
+
+app.get('/api/tg/accounts/:accountId/channels', async (req, res) => {
+  try {
+    const result = await listAccountChannels(req.params.accountId)
+    res.json({ ok: true, ...result })
+  } catch (err) {
+    res.status(500).json({ ok: false, error: err instanceof Error ? err.message : 'Ошибка' })
+  }
+})
+
+app.get('/api/tg/accounts/:accountId/folders', async (req, res) => {
+  try {
+    const result = await listAccountFolders(req.params.accountId)
+    res.json({ ok: true, ...result })
+  } catch (err) {
+    res.status(500).json({ ok: false, error: err instanceof Error ? err.message : 'Ошибка' })
+  }
+})
+
+app.post('/api/tg/accounts/:accountId/release', async (req, res) => {
+  const released = forceReleaseAccount(req.params.accountId)
+  res.json({ ok: true, released: released ? { taskId: released.taskId, moduleLabel: released.moduleLabel } : null })
+})
+
+app.post('/api/modules/locks/reconcile', async (_req, res) => {
+  try {
+    const dropped = await reconcileLocks()
+    res.json({ ok: true, dropped })
+  } catch (err) {
+    res.status(500).json({ ok: false, error: err instanceof Error ? err.message : 'Ошибка' })
+  }
 })
 
 app.use('/api/neuro-commenting', neuroCommentingRouter)
 app.use('/api/neuro-dialogs', neuroDialogsRouter)
 app.use('/api/modules', modulesRouter)
 app.use('/api/tgstat', tgstatRouter)
+app.use('/api/automation', automationRouter)
+app.use('/api', featureRouter)
 
-await rebuildLocksFromRunningTasks()
+// Загружаем кэши глобальных настроек (промпт, ИИ-безопасность, ЧС) до старта воркеров.
+await Promise.all([
+  loadAiSettings().catch(() => {}),
+  loadAiSafety().catch(() => {}),
+  loadBlacklist().catch(() => {}),
+])
+
+const { flipped } = await reconcileStaleTasksOnBoot()
+if (flipped.length) {
+  console.log(`Reconcile: ${flipped.length} устаревших задач помечены stopped, блокировки не восстановлены`)
+}
+
+await startScheduler().catch((err) => console.warn('[automation] scheduler init failed:', err))
 
 app.listen(PORT, () => {
   console.log(`API → http://localhost:${PORT}`)

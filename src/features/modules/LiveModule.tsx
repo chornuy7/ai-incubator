@@ -1,6 +1,6 @@
 import { useCallback, useMemo, useState } from 'react'
 import {
-  Play, Sparkles, Hash, Settings2, Clock, Timer, Users, MessageSquareText,
+  Play, Sparkles, Hash, Settings2, Clock, Users, MessageSquareText,
   Heart, Eye, Shield, MessageCircle, Database, Trophy, LayoutGrid, List, Link2, Plus,
 } from 'lucide-react'
 import { MODULES, type ModuleConfig } from '@/shared/config/modules'
@@ -10,10 +10,12 @@ import { LogsPanel } from '@/widgets/LogsPanel'
 import { AccountPicker } from '@/features/account-picker/AccountPicker'
 import { useModuleTask } from './shared/useModuleTask'
 import {
-  SectionCard, NumberField, DelayFields, SingleDelayField,
+  SectionCard, NumberField,
   ProtectionBlock, TargetsEditor, LaunchPanel, PromptCards, loadPromptBodies, AiGenerationNotice,
+  FolderPicker, BlacklistEditor, GlobalPromptEditor, TimingSection,
 } from './shared'
 import type { ModuleTaskSettings } from '@/api/modulesApi'
+import { createFolder as createTargetFolder } from '@/api/featuresApi'
 
 const DEFAULT_DELAYS = {
   comment: [30, 120] as [number, number],
@@ -22,6 +24,8 @@ const DEFAULT_DELAYS = {
   floodWait: 120,
   floodQuarantine: 3,
 }
+
+const DURATION_MIN_BY_PROTECTION_LEVEL = [60, 45, 30]
 
 export function LiveModule({ moduleKey }: { moduleKey: string }) {
   const cfg = MODULES[moduleKey]
@@ -39,7 +43,9 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
   const [protLevel, setProtLevel] = useState(1)
   const [probability, setProbability] = useState(cfg.probabilitySlider?.value ?? cfg.reactionSettings?.probability.value ?? 30)
   const [maxActions, setMaxActions] = useState(cfg.workModeFields?.maxValue ?? cfg.reactionSettings?.max.value ?? 100)
+  const [minActions, setMinActions] = useState(0)
   const [maxPerAcc, setMaxPerAcc] = useState(10)
+  const [minPerAcc, setMinPerAcc] = useState(0)
   const [minWords, setMinWords] = useState(0)
   const [durationMinutes, setDurationMinutes] = useState(cfg.reactionSettings?.duration.value ?? 60)
   const [srcTab, setSrcTab] = useState(0)
@@ -66,20 +72,35 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
   const isParser = cfg.parserLayout || cfg.participantsLayout
   const isGgr = cfg.ggrLayout
 
+  const maybeSaveToFolder = (list: string[]) => {
+    // (5) Предложить сохранить добавленный список в папку.
+    if (!list.length) return
+    if (!window.confirm('Сохранить список в папку?')) return
+    const name = window.prompt('Название папки')
+    if (!name?.trim()) return
+    void createTargetFolder(name.trim(), list)
+      .then(() => pushToast({ type: 'success', title: 'Папка сохранена', desc: name.trim() }))
+      .catch((e) => pushToast({ type: 'error', title: 'Ошибка сохранения папки', desc: e instanceof Error ? e.message : '' }))
+  }
+
   const addTargets = () => {
     const parsed = input.split(/[\n,\s]+/).map((s) => s.trim().replace(/^@/, '').replace(/https?:\/\/t\.me\//i, '').split('/')[0]).filter(Boolean)
     if (!parsed.length) return pushToast({ type: 'error', title: 'Нет целей' })
-    setTargets((t) => [...new Set([...parsed, ...t])])
+    const next = [...new Set([...parsed, ...targets])]
+    setTargets(next)
     setInput('')
     pushToast({ type: 'success', title: 'Добавлено', desc: `${parsed.length}` })
+    maybeSaveToFolder(next)
   }
 
   const addPostUrls = () => {
     const parsed = postInput.split('\n').map((s) => s.trim()).filter((s) => /t\.me\/(c\/\d+\/\d+|[a-zA-Z0-9_]+\/\d+)/i.test(s))
     if (!parsed.length) return pushToast({ type: 'error', title: 'Нет ссылок', desc: 'Формат: t.me/channel/123 или t.me/c/1234567890/42' })
-    setPostUrls((p) => [...new Set([...parsed, ...p])])
+    const next = [...new Set([...parsed, ...postUrls])]
+    setPostUrls(next)
     setPostInput('')
     pushToast({ type: 'success', title: 'Посты добавлены', desc: `${parsed.length}` })
+    maybeSaveToFolder(next)
   }
 
   const buildSettings = useCallback((): ModuleTaskSettings => ({
@@ -94,6 +115,9 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
     maxActions,
     maxComments: maxActions,
     maxPerAccount: maxPerAcc,
+    minActions,
+    minComments: minActions,
+    minPerAccount: minPerAcc,
     minWords,
     durationMinutes: g(1) === 1 ? durationMinutes : undefined,
     aiProtection: aiProtect,
@@ -106,7 +130,7 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
     postUrls,
     limit: maxActions,
     delays,
-  }), [selected, targets, postUrls, toggles, probability, maxActions, maxPerAcc, minWords, durationMinutes, aiProtect, protLevel, activePrompt, promptBodies, delayPreset, palette, delays, keywords, isGgr, accounts])
+  }), [selected, targets, postUrls, toggles, probability, maxActions, minActions, maxPerAcc, minPerAcc, minWords, durationMinutes, aiProtect, protLevel, activePrompt, promptBodies, delayPreset, palette, delays, keywords, isGgr, accounts])
 
   const hasPostTargets = postUrls.length > 0
   const busySelectedCount = useMemo(
@@ -119,6 +143,8 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
   const warn = !canStart
     ? (isGgr ? 'Нет аккаунтов в панели' : busySelectedCount ? `${busySelectedCount} акк. заняты в другом модуле` : !selected.size ? 'Выберите аккаунты' : 'Добавьте группу или ссылку на пост')
     : undefined
+
+  const durationPeriodMin = Math.min(DURATION_MIN_BY_PROTECTION_LEVEL[protLevel] ?? 0, durationMinutes)
 
   const handleStart = () => void start(buildSettings(), `${cfg.title} · ${selected.size || accounts.length} акк.`)
   const handleSave = () => {
@@ -160,39 +186,22 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
             <div className="grid gap-4 lg:grid-cols-2">
               <div className="space-y-4 rounded-2xl border border-line bg-elevated/40 p-4">
                 <ToggleGroup label="Режим" options={cfg.reactionSettings.modes} value={g(0)} onChange={(v) => setTg(0, v)} />
-                <NumberField label={cfg.reactionSettings.duration.label} value={durationMinutes} onChange={setDurationMinutes} suffix={`${durationMinutes}m`} />
-                <NumberField label={cfg.reactionSettings.max.label} value={maxActions} onChange={setMaxActions} />
-                <NumberField label="На аккаунт" value={maxPerAcc} onChange={setMaxPerAcc} />
                 <div>
                   <div className="mb-1 flex justify-between text-sm text-muted"><span>{cfg.reactionSettings.probability.label}</span><span className="text-spark-300">{probability}%</span></div>
                   <input type="range" min={0} max={100} value={probability} onChange={(e) => setProbability(Number(e.target.value))} className="w-full accent-spark-500" />
                 </div>
               </div>
-              <div className="rounded-2xl border border-line bg-elevated/40 p-4 text-sm text-muted">Правила реагирования применяются на сервере с учётом защиты аккаунтов.</div>
+              <div className="rounded-2xl border border-line bg-elevated/40 p-4 text-sm text-muted">Лимиты, длительность и задержки — в секции «Тайминги и задержки» ниже.</div>
             </div>
           ) : cfg.toggleGroups ? (
-            <div className="grid gap-4 lg:grid-cols-2">
-              <div className="space-y-4 rounded-2xl border border-line bg-elevated/40 p-4">
-                <ToggleGroup label={cfg.toggleGroups[0].label} options={cfg.toggleGroups[0].options} value={g(0)} onChange={(v) => setTg(0, v)} />
-                {g(0) === 1 && <textarea value={keywords} onChange={(e) => setKeywords(e.target.value)} rows={2} className="input resize-none text-sm" placeholder="ключевые слова" />}
-                <div>
-                  <div className="mb-1 flex justify-between text-sm text-muted"><span>{cfg.probabilitySlider?.label ?? 'Вероятность'}</span><span className="text-spark-300">{probability}%</span></div>
-                  <input type="range" min={0} max={100} value={probability} onChange={(e) => setProbability(Number(e.target.value))} className="w-full accent-spark-500" />
-                </div>
-                {cfg.toggleGroups[2] && <ToggleGroup label={cfg.toggleGroups[2].label} options={cfg.toggleGroups[2].options} value={g(2)} onChange={(v) => setTg(2, v)} />}
+            <div className="rounded-2xl border border-line bg-elevated/40 p-4 space-y-4">
+              <ToggleGroup label={cfg.toggleGroups[0].label} options={cfg.toggleGroups[0].options} value={g(0)} onChange={(v) => setTg(0, v)} />
+              {g(0) === 1 && <textarea value={keywords} onChange={(e) => setKeywords(e.target.value)} rows={2} className="input resize-none text-sm" placeholder="ключевые слова" />}
+              <div>
+                <div className="mb-1 flex justify-between text-sm text-muted"><span>{cfg.probabilitySlider?.label ?? 'Вероятность'}</span><span className="text-spark-300">{probability}%</span></div>
+                <input type="range" min={0} max={100} value={probability} onChange={(e) => setProbability(Number(e.target.value))} className="w-full accent-spark-500" />
               </div>
-              <div className="space-y-4 rounded-2xl border border-line bg-elevated/40 p-4">
-                <ToggleGroup label={cfg.toggleGroups[1].label} options={cfg.toggleGroups[1].options} value={g(1)} onChange={(v) => setTg(1, v)} />
-                {g(1) === 1 ? (
-                  <NumberField label="Длительность (мин)" value={durationMinutes} onChange={setDurationMinutes} />
-                ) : (
-                  <>
-                    <NumberField label={cfg.workModeFields?.maxLabel ?? 'Макс.'} value={maxActions} onChange={setMaxActions} />
-                    <NumberField label="На аккаунт" value={maxPerAcc} onChange={setMaxPerAcc} />
-                    {cfg.workModeFields?.minWords && <NumberField label="Мин. слов" value={minWords} onChange={setMinWords} />}
-                  </>
-                )}
-              </div>
+              {cfg.toggleGroups[2] && <ToggleGroup label={cfg.toggleGroups[2].label} options={cfg.toggleGroups[2].options} value={g(2)} onChange={(v) => setTg(2, v)} />}
             </div>
           ) : isParser ? (
             <div className="space-y-3">
@@ -203,16 +212,40 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
           ) : isGgr ? (
             <p className="text-sm text-muted">Проверка всех аккаунтов панели: сессия, профиль, базовый GGR-скоринг.</p>
           ) : (
-            <div className="grid gap-3 sm:grid-cols-2">
-              <NumberField label="Макс. действий" value={maxActions} onChange={setMaxActions} />
-              <NumberField label="На аккаунт" value={maxPerAcc} onChange={setMaxPerAcc} />
-            </div>
+            <p className="text-sm text-muted">Лимиты и задержки настраиваются в секции «Тайминги и задержки» ниже.</p>
           )}
         </SectionCard>
       )}
 
+      {!isParser && !isGgr && (cfg.aiProtection || cfg.richLayout || cfg.lookingLayout || cfg.warmingLayout) && (
+        <TimingSection
+          workModeOptions={cfg.toggleGroups?.[1]?.options}
+          workMode={g(1)}
+          onWorkMode={(v) => setTg(1, v)}
+          workModeLabel={cfg.toggleGroups?.[1]?.label}
+          durationMinutes={durationMinutes}
+          onDuration={setDurationMinutes}
+          showDurationAlways={!!cfg.reactionSettings}
+          durationPeriodHint={`Период работы: ${durationPeriodMin}–${durationMinutes} мин`}
+          totalLabel={cfg.reactionSettings?.max.label ?? cfg.workModeFields?.maxLabel ?? 'Макс. действий'}
+          total={{ min: minActions, max: maxActions, onMin: setMinActions, onMax: setMaxActions }}
+          perAccount={{ min: minPerAcc, max: maxPerAcc, onMin: setMinPerAcc, onMax: setMaxPerAcc }}
+          minWords={cfg.workModeFields?.minWords ? { value: minWords, onChange: setMinWords } : null}
+          delays={delays}
+          onDelays={(updater) => setDelays(updater)}
+          showComment={!!cfg.richLayout && !cfg.reactionSettings && moduleKey === 'neuro-commenting'}
+          showAction={!(cfg.richLayout && !cfg.reactionSettings && moduleKey === 'neuro-commenting')}
+          showJoin
+          labels={{ action: cfg.reactionSettings ? 'Задержка между реакциями' : 'Задержка действия', join: 'Задержка вступления' }}
+          delayPresets={cfg.delayPresets ?? ['Мин', 'Рекомендуемые', 'Макс']}
+          delayPreset={delayPreset}
+          onDelayPreset={setDelayPreset}
+        />
+      )}
+
       {(cfg.sourceTabs || needsTargets) && !isGgr && (
         <SectionCard icon={<Hash size={18} />} title={cfg.sourceTabs?.label ?? 'Цели'} badge={String(targets.length)}>
+          <FolderPicker targets={targets} onLoad={(t) => setTargets((prev) => [...new Set([...t, ...prev])])} />
           <TargetsEditor
             tabs={cfg.sourceTabs?.tabs}
             tab={srcTab}
@@ -231,6 +264,7 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
       {cfg.postLinks && (
         <SectionCard icon={<Link2 size={18} />} title={cfg.postLinks.label} badge={String(postUrls.length)}>
           {cfg.postLinks.hint && <p className="mb-3 text-xs text-muted">{cfg.postLinks.hint}</p>}
+          <FolderPicker targets={postUrls} onLoad={(t) => setPostUrls((prev) => [...new Set([...t, ...prev])])} />
           <div className="flex gap-2">
             <textarea
               value={postInput}
@@ -270,6 +304,7 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
         <SectionCard icon={<Sparkles size={18} />} title="AI / промпты">
           <div className="space-y-3">
             <AiGenerationNotice />
+            <GlobalPromptEditor />
             <PromptCards
             moduleKey={moduleKey}
             labels={cfg.messagePrompts}
@@ -278,15 +313,6 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
             onBodiesChange={setPromptBodies}
           />
           </div>
-        </SectionCard>
-      )}
-
-      {cfg.delays && (
-        <SectionCard icon={<Timer size={18} />} title="Задержки" right={cfg.delayPresets && <Segmented size="sm" options={cfg.delayPresets} value={delayPreset} onChange={setDelayPreset} />}>
-          <DelayFields label="Действие" from={delays.action[0]} to={delays.action[1]} onFrom={(n) => setDelays((d) => ({ ...d, action: [n, d.action[1]] }))} onTo={(n) => setDelays((d) => ({ ...d, action: [d.action[0], n] }))} unit="с" />
-          <DelayFields label="Вступление" from={delays.join[0]} to={delays.join[1]} onFrom={(n) => setDelays((d) => ({ ...d, join: [n, d.join[1]] }))} onTo={(n) => setDelays((d) => ({ ...d, join: [d.join[0], n] }))} unit="с" />
-          <SingleDelayField label="FloodWait (сек)" value={delays.floodWait} onChange={(n) => setDelays((d) => ({ ...d, floodWait: n }))} />
-          <SingleDelayField label="FloodWait → карантин" value={delays.floodQuarantine} onChange={(n) => setDelays((d) => ({ ...d, floodQuarantine: n }))} />
         </SectionCard>
       )}
 
@@ -354,8 +380,8 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
         </SectionCard>
       )}
 
-      {cfg.blacklistEmpty && (
-        <div className="rounded-2xl border border-line bg-elevated/40 p-4 text-xs text-muted">{cfg.blacklistEmpty}</div>
+      {(cfg.blacklistSection || cfg.blacklistEmpty) && (
+        <BlacklistEditor title={cfg.blacklistSection ?? 'Чёрный список каналов'} />
       )}
     </div>
   )
