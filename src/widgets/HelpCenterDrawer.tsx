@@ -1,9 +1,10 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useLocation } from 'react-router-dom'
-import { BookOpen, HelpCircle, Layers, Lightbulb, Send, Sparkles, Workflow, X } from 'lucide-react'
+import { BookOpen, HelpCircle, Layers, Lightbulb, Loader2, Send, Sparkles, Workflow, X } from 'lucide-react'
 import { useUi } from '@/shared/lib/uiStore'
 import { findHelpDoc, type HelpDoc } from '@/shared/config/helpDocs'
+import { apiPost } from '@/api/client'
 import { cn } from '@/shared/lib/utils'
 
 type HelpMsg = { id: string; role: 'user' | 'assistant'; text: string }
@@ -69,25 +70,20 @@ function HelpDocView({ doc }: { doc: HelpDoc }) {
 
 function helpIntro(topic: string) {
   const clean = topic?.trim() || 'раздел'
-  return `Помощь по разделу: ${clean}\n\nПодсказка: настройки применяются на сервере и учитывают защиту аккаунтов, ограничения и тайминги. Если опишите, что именно хотите добиться, я предложу подходящую конфигурацию.`
+  return `Помощь по разделу: ${clean}\n\nЗадайте вопрос про настройки, тайминги, лимиты или безопасность аккаунтов — отвечу с учётом того, как этот раздел работает внутри.`
 }
 
-function assistantReply(topic: string, question: string) {
-  const q = question.toLowerCase()
-  const cleanTopic = topic?.trim() || 'раздел'
-
-  if (q.includes('время') || q.includes('минут') || q.includes('duration') || q.includes('workMode'.toLowerCase())) {
-    return `Если включён режим “по времени”, то длительность ограничивает общее время выполнения задачи.\nДля безопасности время разбивается на “периоды” с учётом защиты (Консервативный/Сбалансированный/Агрессивный). Раздел: ${cleanTopic}.`
-  }
-  if (q.includes('задержк') || q.includes('flood') || q.includes('скорост')) {
-    return `Задержки определяют паузы между действиями и вступлением в целевую сущность, а также реакцию на FloodWait.\nПопробуйте начать с “Рекомендуемые” задержки и затем подобрать под нужную скорость/риск. Раздел: ${cleanTopic}.`
-  }
-  if (q.includes('модуль') || q.includes('в работе') || q.includes('busy') || q.includes('аккаунт')) {
-    return `Аккаунт считается “в работе”, если у него есть активная задача (lock) в другом модуле.\nВ меню выбора/таблицах это отображается через ` +
-      `"busyIn.moduleLabel".Раздел: ${cleanTopic}.`
-  }
-
-  return `Понял задачу по ${cleanTopic}.\nСначала уточните: цель (скорость/безопасность/лимиты), и какой триггер вас интересует. Затем я подскажу конкретные значения для таймингов и лимитов.`
+/** Собирает текст документации раздела как контекст для ИИ. */
+function docContext(doc: HelpDoc | null): string {
+  if (!doc) return ''
+  return [
+    doc.title,
+    `Что это: ${doc.what}`,
+    `Как работает внутри: ${doc.how}`,
+    `Связь с другими модулями: ${doc.together}`,
+    `Пример: ${doc.example}`,
+    doc.tips?.length ? `Советы: ${doc.tips.join('; ')}` : '',
+  ].filter(Boolean).join('\n')
 }
 
 export function HelpCenterDrawer() {
@@ -98,35 +94,44 @@ export function HelpCenterDrawer() {
 
   const [messages, setMessages] = useState<HelpMsg[]>([])
   const [input, setInput] = useState('')
+  const [pending, setPending] = useState(false)
+  const messagesRef = useRef<HelpMsg[]>([])
+  messagesRef.current = messages
 
-  const doc = useMemo(
-    () => findHelpDoc(topic, moduleKeyFromPath(location.pathname)),
-    [topic, location.pathname],
-  )
+  const moduleKey = moduleKeyFromPath(location.pathname)
+  const doc = useMemo(() => findHelpDoc(topic, moduleKey), [topic, moduleKey])
   const intro = useMemo(() => helpIntro(topic), [topic])
 
   useEffect(() => {
     if (!open) return
     const first = doc
-      ? `Это документация по разделу «${doc.title}». Ниже можно задать уточняющий вопрос по настройкам.`
+      ? `Это документация по разделу «${doc.title}». Ниже можно задать уточняющий вопрос — отвечу ИИ с учётом того, как раздел устроен.`
       : intro
     setMessages([{ id: 'intro', role: 'assistant', text: first }])
     setInput('')
   }, [open, intro, doc])
 
-  const send = () => {
+  const send = async () => {
     const text = input.trim()
-    if (!text) return
+    if (!text || pending) return
 
     const userMsg: HelpMsg = { id: `${Date.now()}_${Math.random()}`, role: 'user', text }
-    const assistantMsg: HelpMsg = {
-      id: `${Date.now()}_${Math.random()}_a`,
-      role: 'assistant',
-      text: assistantReply(topic, text),
-    }
-
-    setMessages((prev) => [...prev, userMsg, assistantMsg])
+    const loadingId = `${Date.now()}_${Math.random()}_a`
+    const history = messagesRef.current.filter((m) => m.id !== 'intro').map((m) => ({ role: m.role, text: m.text }))
+    setMessages((prev) => [...prev, userMsg, { id: loadingId, role: 'assistant', text: '…' }])
     setInput('')
+    setPending(true)
+    try {
+      const data = await apiPost<{ answer: string; mode: string }>('/api/ai/help', {
+        topic, moduleKey, question: text, history, context: docContext(doc),
+      })
+      setMessages((prev) => prev.map((m) => (m.id === loadingId ? { ...m, text: data.answer } : m)))
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : 'Не удалось получить ответ'
+      setMessages((prev) => prev.map((m) => (m.id === loadingId ? { ...m, text: `⚠️ ${msg}. Проверьте, что запущен API (npm run dev).` } : m)))
+    } finally {
+      setPending(false)
+    }
   }
 
   if (!open) return null
@@ -171,22 +176,24 @@ export function HelpCenterDrawer() {
               <textarea
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
+                onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); void send() } }}
                 rows={2}
-                className="input min-h-[44px] resize-none text-sm"
+                disabled={pending}
+                className="input min-h-[44px] resize-none text-sm disabled:opacity-60"
                 placeholder="Напишите вопрос про настройки…"
               />
             </div>
             <button
               type="button"
-              onClick={send}
+              onClick={() => void send()}
               className="btn-primary h-10 w-10"
               aria-label="Отправить"
-              disabled={!input.trim()}
+              disabled={!input.trim() || pending}
             >
-              <Send size={16} />
+              {pending ? <Loader2 size={16} className="animate-spin" /> : <Send size={16} />}
             </button>
           </div>
-          <div className="mt-2 text-xs text-muted">Локальная демо-логика (без отправки на сервер).</div>
+          <div className="mt-2 text-xs text-muted">Ответы — ИИ по документации раздела. Без OPENAI_API_KEY отвечает по фактам системы.</div>
         </div>
       </div>
     </div>,

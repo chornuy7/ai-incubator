@@ -7,6 +7,7 @@ import { neuroCommentingRouter } from './neuroCommenting/routes.js'
 import { neuroDialogsRouter } from './neuroDialogs/routes.js'
 import { modulesRouter } from './modules/routes.js'
 import { tgstatRouter } from './tgstat/router.js'
+import { answerHelp } from './aiHelp.js'
 import { featureRouter } from './featureRoutes.js'
 import { automationRouter } from './automation/routes.js'
 import { startScheduler } from './automation/scheduler.js'
@@ -163,6 +164,18 @@ app.use('/api/neuro-commenting', neuroCommentingRouter)
 app.use('/api/neuro-dialogs', neuroDialogsRouter)
 app.use('/api/modules', modulesRouter)
 app.use('/api/tgstat', tgstatRouter)
+
+// AI-помощник Help Center
+app.post('/api/ai/help', async (req, res) => {
+  try {
+    const { topic, context, question, history } = req.body || {}
+    if (!question || !String(question).trim()) return res.status(400).json({ ok: false, error: 'Пустой вопрос' })
+    const { answer, mode } = await answerHelp({ topic, context, question, history })
+    res.json({ ok: true, answer, mode })
+  } catch (err) {
+    res.status(500).json({ ok: false, error: err instanceof Error ? err.message : 'Ошибка' })
+  }
+})
 app.use('/api/automation', automationRouter)
 app.use('/api', featureRouter)
 
