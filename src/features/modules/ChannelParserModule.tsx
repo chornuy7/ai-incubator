@@ -77,6 +77,8 @@ function ChannelParserInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: 
   const [minMembers, setMinMembers] = useState(cfg.defaultMinMembers ?? 100)
   const [maxMembers, setMaxMembers] = useState(100000)
   const [langDetect, setLangDetect] = useState(false)
+  const [mailingRating, setMailingRating] = useState(1)
+  const [templatesOpen, setTemplatesOpen] = useState(!cfg.templatesCollapsed)
 
   // ── задержки ──
   const [reqDelay, setReqDelay] = useState<[number, number]>([2, 2])
@@ -212,7 +214,9 @@ function ChannelParserInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: 
 
       {/* Шаблоны */}
       {cfg.templates && cfg.templates.length > 0 && (
-        <SectionCard icon={<Bookmark size={18} />} title={cfg.templatesTitle ?? 'Шаблоны'} badge={cfg.templatesBadge}>
+        <SectionCard icon={<Bookmark size={18} />} title={cfg.templatesTitle ?? 'Шаблоны'} badge={cfg.templatesBadge}
+          right={<button type="button" onClick={() => setTemplatesOpen((v) => !v)} className="btn-ghost h-8 text-xs">{templatesOpen ? 'Свернуть' : 'Развернуть'} <ChevronRight size={14} className={cn('transition-transform', templatesOpen && 'rotate-90')} /></button>}>
+          {templatesOpen && (
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
             {cfg.templates.map((t) => (
               <div key={t.name} className="flex flex-col rounded-2xl border border-line bg-elevated/40 p-3">
@@ -230,6 +234,7 @@ function ChannelParserInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: 
               </div>
             ))}
           </div>
+          )}
         </SectionCard>
       )}
 
@@ -352,6 +357,14 @@ function ChannelParserInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: 
                   <input type="number" value={maxMembers} onChange={(e) => setMaxMembers(Number(e.target.value))} className="input mt-1 h-9 text-sm" />
                 </label>
               </div>
+            </div>
+
+            <div className="rounded-2xl border border-line bg-elevated/40 p-3">
+              <div className="mb-2 flex items-center justify-between text-sm font-semibold text-fg">
+                <span className="flex items-center gap-1.5"><Database size={14} className="text-spark-400" /> Рейтинг для рассылки</span>
+                <span className="rounded-md bg-spark-500/12 px-2 py-0.5 text-xs font-bold text-spark-300">{mailingRating}/10</span>
+              </div>
+              <input type="range" min={1} max={10} value={mailingRating} onChange={(e) => setMailingRating(Number(e.target.value))} className="w-full accent-spark-500" />
             </div>
 
             <ToggleRowInline icon={<Radar size={15} />} label="Определение языка" desc="Определять язык канала по постам" checked={langDetect} onChange={setLangDetect} />

@@ -288,6 +288,7 @@ export function Select({
         createPortal(
           <div
             ref={menuRef}
+            data-select-portal=""
             className="fixed z-[120] max-h-72 overflow-y-auto rounded-xl border border-line bg-surface p-1 shadow-pop animate-scale-in"
             style={{ top: coords.top, left: coords.left, width: coords.width }}
           >
@@ -324,11 +325,15 @@ export function Dropdown({
   const ref = useRef<HTMLDivElement>(null)
   useEffect(() => {
     if (!open) return
-    const onClick = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false)
+    const onDown = (e: MouseEvent) => {
+      const t = e.target as HTMLElement | null
+      if (ref.current?.contains(t as Node)) return
+      // клик по опции вложенного Select (портал в body) не должен закрывать Dropdown
+      if (t?.closest?.('[data-select-portal]')) return
+      setOpen(false)
     }
-    document.addEventListener('mousedown', onClick)
-    return () => document.removeEventListener('mousedown', onClick)
+    document.addEventListener('mousedown', onDown)
+    return () => document.removeEventListener('mousedown', onDown)
   }, [open])
   return (
     <div ref={ref} className="relative">
