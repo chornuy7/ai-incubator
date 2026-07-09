@@ -12,7 +12,24 @@ import { AccountPicker } from '@/features/account-picker/AccountPicker'
 import { useModuleTask } from './shared/useModuleTask'
 import { SectionCard, NumberField, ProtectionBlock, DelayFields, LaunchPanel } from './shared'
 import { cn } from '@/shared/lib/utils'
-import type { ModuleTaskSettings } from '@/api/modulesApi'
+import { fetchModuleTasks, fetchModuleTask, type ModuleTaskSettings } from '@/api/modulesApi'
+
+/** Собирает username ранее спарсенных каналов/групп из истории модуля (для дедупа между запусками). */
+async function gatherAlreadyParsed(moduleKey: string): Promise<string[]> {
+  try {
+    const tasks = await fetchModuleTasks(moduleKey)
+    const done = tasks.filter((t) => t.status === 'done').slice(0, 10)
+    const names = new Set<string>()
+    for (const t of done) {
+      const full = await fetchModuleTask(moduleKey, t.id)
+      for (const r of full.results || []) {
+        const u = (r as { username?: string }).username
+        if (u) names.add(String(u).toLowerCase())
+      }
+    }
+    return [...names]
+  } catch { return [] }
+}
 
 /** Словари окончаний для комбинации с ключевыми словами (расширение поиска). */
 const ENDINGS: Record<string, string[]> = {
@@ -148,7 +165,16 @@ function ChannelParserInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: 
     ? (busySelectedCount ? `${busySelectedCount} акк. заняты в другом модуле` : !selected.size ? 'Выберите аккаунты' : 'Добавьте хотя бы одно ключевое слово')
     : undefined
 
-  const handleStart = () => { setCleared(false); void start(buildSettings(), `${cfg.title} · ${selected.size} акк.`) }
+  const handleStart = async () => {
+    setCleared(false)
+    const settings = buildSettings()
+    if (skipParsed) {
+      const seen = await gatherAlreadyParsed(moduleKey)
+      settings.alreadyParsed = seen
+      if (seen.length) pushToast({ type: 'info', title: `Исключаем ${seen.length} уже спарсенных` })
+    }
+    void start(settings, `${cfg.title} · ${selected.size} акк.`)
+  }
   const handleSave = () => { const name = window.prompt('Название шаблона настроек'); if (name?.trim()) void savePreset(name.trim(), buildSettings()) }
 
   const logs = task?.logs ?? []

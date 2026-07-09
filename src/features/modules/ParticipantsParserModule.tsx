@@ -12,7 +12,7 @@ import { AccountPicker } from '@/features/account-picker/AccountPicker'
 import { useModuleTask } from './shared/useModuleTask'
 import { SectionCard, NumberField, ProtectionBlock, LaunchPanel } from './shared'
 import { cn } from '@/shared/lib/utils'
-import type { ModuleTaskSettings } from '@/api/modulesApi'
+import { fetchModuleTasks, fetchModuleTask, type ModuleTaskSettings } from '@/api/modulesApi'
 import { fetchTgstatOptions, fetchTgstatSession, fetchTgstatTargets, type TgstatOptions, type TgstatSession } from '@/api/tgstatApi'
 
 /** Стабильные ключи фильтров/лимитов по русским лейблам (для бэкенда). */
@@ -110,6 +110,22 @@ function Inner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: string }) {
   const canStart = selected.size > 0 && busySelectedCount === 0 && targetList.length > 0
   const warn = !canStart ? (busySelectedCount ? `${busySelectedCount} акк. заняты` : !selected.size ? 'Выберите аккаунты' : `Добавьте ${P.sourceTitle.toLowerCase()}`) : undefined
 
+  const loadFromHistory = async () => {
+    try {
+      const names = new Set<string>()
+      for (const k of ['parsing', 'parsing-groups']) {
+        const tasks = await fetchModuleTasks(k)
+        for (const t of tasks.filter((x) => x.status === 'done').slice(0, 5)) {
+          const full = await fetchModuleTask(k, t.id)
+          for (const r of full.results || []) { const u = (r as { username?: string }).username; if (u) names.add(String(u)) }
+        }
+      }
+      if (!names.size) return pushToast({ type: 'info', title: 'История пуста', desc: 'Сначала спарсите каналы/группы' })
+      setTargets((t) => (t.trim() ? t.trimEnd() + '\n' : '') + [...names].map((u) => `@${u}`).join('\n'))
+      pushToast({ type: 'success', title: `Добавлено ${names.size} из истории` })
+    } catch (e) { pushToast({ type: 'error', title: 'Ошибка', desc: e instanceof Error ? e.message : '' }) }
+  }
+
   const handleStart = () => { setCleared(false); void start(buildSettings(), `${cfg.title} · ${selected.size} акк.`) }
   const handleSave = () => { const n = window.prompt('Название пресета'); if (n?.trim()) void savePreset(n.trim(), buildSettings()) }
 
@@ -167,7 +183,7 @@ function Inner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: string }) {
                 {P.formatHint && <span className="text-[11px] text-muted">{P.formatHint}</span>}
                 <div className="ml-auto flex flex-wrap gap-2">
                   <TgstatSourceButton onFill={(u) => setTargets((t) => (t.trim() ? t.trimEnd() + '\n' : '') + u.map((x) => `@${x}`).join('\n'))} />
-                  {P.historyBtn && <button type="button" onClick={() => pushToast({ type: 'info', title: P.historyBtn ?? 'История' })} className="btn-soft h-8 text-xs"><History size={13} /> {P.historyBtn}</button>}
+                  {P.historyBtn && <button type="button" onClick={() => void loadFromHistory()} className="btn-soft h-8 text-xs"><History size={13} /> {P.historyBtn}</button>}
                 </div>
               </div>
             </div>

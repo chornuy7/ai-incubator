@@ -45,7 +45,6 @@ export interface ModuleTaskSettings {
   activeStories?: boolean
   delayChat?: number
   delayItem?: number
-  fromTgstat?: { category: string; region: string | null; maxPages: number } | null
   // ── Масслукинг: что смотреть и сколько последних постов ──
   lookMode?: 'stories' | 'posts' | 'both'
   lookPostsCount?: number

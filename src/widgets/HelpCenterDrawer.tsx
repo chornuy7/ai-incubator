@@ -4,8 +4,15 @@ import { useLocation } from 'react-router-dom'
 import { BookOpen, HelpCircle, Layers, Lightbulb, Loader2, Send, Sparkles, Workflow, X } from 'lucide-react'
 import { useUi } from '@/shared/lib/uiStore'
 import { findHelpDoc, type HelpDoc } from '@/shared/config/helpDocs'
-import { apiPost } from '@/api/client'
+import { apiGet, apiPost } from '@/api/client'
 import { cn } from '@/shared/lib/utils'
+
+const QUICK_QUESTIONS = [
+  'Что делает этот раздел и когда его использовать?',
+  'Как настроить задержки, чтобы не банили?',
+  'Почему аккаунт показывает «в работе»?',
+  'Какие лимиты выставить для начала?',
+]
 
 type HelpMsg = { id: string; role: 'user' | 'assistant'; text: string }
 
@@ -95,8 +102,10 @@ export function HelpCenterDrawer() {
   const [messages, setMessages] = useState<HelpMsg[]>([])
   const [input, setInput] = useState('')
   const [pending, setPending] = useState(false)
+  const [aiActive, setAiActive] = useState<boolean | null>(null)
   const messagesRef = useRef<HelpMsg[]>([])
   messagesRef.current = messages
+  const bottomRef = useRef<HTMLDivElement>(null)
 
   const moduleKey = moduleKeyFromPath(location.pathname)
   const doc = useMemo(() => findHelpDoc(topic, moduleKey), [topic, moduleKey])
@@ -109,10 +118,14 @@ export function HelpCenterDrawer() {
       : intro
     setMessages([{ id: 'intro', role: 'assistant', text: first }])
     setInput('')
+    void apiGet<{ ai?: boolean }>('/api/health').then((h) => setAiActive(!!h.ai)).catch(() => setAiActive(null))
   }, [open, intro, doc])
 
-  const send = async () => {
-    const text = input.trim()
+  // авто-скролл к последнему сообщению
+  useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' }) }, [messages])
+
+  const send = async (override?: string) => {
+    const text = (override ?? input).trim()
     if (!text || pending) return
 
     const userMsg: HelpMsg = { id: `${Date.now()}_${Math.random()}`, role: 'user', text }
@@ -144,7 +157,14 @@ export function HelpCenterDrawer() {
           <div className="flex items-center gap-2.5">
             <HelpCircle size={20} className="text-spark-400" />
             <div>
-              <h3 className="font-display text-lg font-bold text-fg">Help Center</h3>
+              <div className="flex items-center gap-2">
+                <h3 className="font-display text-lg font-bold text-fg">Help Center</h3>
+                {aiActive !== null && (
+                  <span className={cn('inline-flex items-center gap-1 rounded-md border px-1.5 py-0.5 text-[10px] font-bold uppercase', aiActive ? 'border-spark-500/30 bg-spark-500/12 text-spark-300' : 'border-amber-500/30 bg-amber-500/12 text-amber-300')}>
+                    <Sparkles size={10} /> {aiActive ? 'ИИ активен' : 'Шаблоны'}
+                  </span>
+                )}
+              </div>
               <p className="text-xs text-muted">{doc ? 'Документация и подсказки по разделу' : 'Чат-подсказки по разделу'}</p>
             </div>
           </div>
@@ -168,6 +188,21 @@ export function HelpCenterDrawer() {
               </div>
             ))}
           </div>
+
+          {messages.length <= 1 && !pending && (
+            <div className="mt-4">
+              <div className="mb-2 text-xs font-bold uppercase tracking-wide text-muted">Быстрые вопросы</div>
+              <div className="flex flex-wrap gap-2">
+                {QUICK_QUESTIONS.map((qq) => (
+                  <button key={qq} type="button" onClick={() => void send(qq)}
+                    className="rounded-lg border border-line bg-elevated px-2.5 py-1.5 text-left text-xs text-fg transition-colors hover:border-spark-500/40 hover:text-spark-300">
+                    {qq}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+          <div ref={bottomRef} />
         </div>
 
         <div className="border-t border-line p-4">
