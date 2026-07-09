@@ -272,14 +272,24 @@ export async function getChannelMembersCount(client, entity) {
   }
 }
 
-/** @param {import('telegram').TelegramClient} client @param {import('@types/telegram').Entity} chat @param {number} limit */
-export async function fetchParticipants(client, chat, limit = 100) {
-  const participants = await client.getParticipants(chat, { limit })
+/**
+ * @param {import('telegram').TelegramClient} client @param {import('@types/telegram').Entity} chat
+ * @param {number} limit @param {{ adminsOnly?: boolean }} [opts]
+ */
+export async function fetchParticipants(client, chat, limit = 100, opts = {}) {
+  const params = { limit }
+  if (opts.adminsOnly) params.filter = new Api.ChannelParticipantsAdmins()
+  const participants = await client.getParticipants(chat, params)
   return participants.map((u) => ({
     id: u.id?.toString?.() ?? '',
     name: `${u.firstName || ''} ${u.lastName || ''}`.trim() || u.username || '—',
     username: u.username || '',
     bot: !!u.bot,
+    premium: !!u.premium,
+    hasPhoto: !!u.photo,
+    deleted: !!u.deleted,
+    scam: !!u.scam || !!u.fake,
+    verified: !!u.verified,
   }))
 }
 

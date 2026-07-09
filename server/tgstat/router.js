@@ -2,9 +2,10 @@
 import express from 'express'
 import { catalogOptions } from './constants.js'
 import {
-  getSessionDto, saveSession, clearSession, verifySession,
+  getSessionDto, saveSession, clearSession, verifySession, loadSessionRaw,
   createImport, listImports, getImportDto, getChats, cancelImport, deleteImport, loadImport,
 } from './store.js'
+import { parseTgstatChats } from './parser.js'
 
 export const tgstatRouter = express.Router()
 
@@ -13,6 +14,30 @@ const fail = (res, code, error) => res.status(code).json({ ok: false, error })
 
 // ── options ──
 tgstatRouter.get('/options', (_req, res) => ok(res, { options: catalogOptions() }))
+
+// ── целевые каналы/группы из каталога TGStat (синхронно, для «Взять цели из TGStat») ──
+tgstatRouter.post('/targets', async (req, res) => {
+  const { category, region, maxPages, minSubscribers, limit } = req.body || {}
+  if (!category) return fail(res, 400, 'Выберите категорию')
+  const session = await getSessionDto()
+  if (!session.has_session) return fail(res, 400, 'Сначала подключите TGStat (загрузите cookies).')
+  try {
+    const state = await loadSessionRaw()
+    const cap = Math.min(Number(limit) || 200, 1000)
+    const out = []
+    const seen = new Set()
+    for await (const { chat } of parseTgstatChats(category, region || null, Math.max(1, Math.min(20, Number(maxPages) || 1)), Number(minSubscribers) || 0, state, () => out.length >= cap)) {
+      if (out.length >= cap) break
+      const u = chat.chat_username
+      if (!u || seen.has(u)) continue
+      seen.add(u)
+      out.push({ username: u, title: chat.chat_name, subscribers: chat.subscribers, link: chat.chat_link })
+    }
+    ok(res, { targets: out })
+  } catch (e) {
+    fail(res, 400, e?.message || 'Не удалось получить цели из TGStat')
+  }
+})
 
 // ── session ──
 tgstatRouter.get('/session', async (_req, res) => {

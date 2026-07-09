@@ -87,3 +87,10 @@ export async function deleteTgstatImport(id: number) {
 export function tgstatExportUrl(id: number) {
   return `${base}/imports/${id}/export.csv`
 }
+
+export interface TgstatTarget { username: string; title: string; subscribers: number; link: string }
+
+/** Синхронно вытянуть каналы/группы из каталога TGStat как список целей. */
+export async function fetchTgstatTargets(payload: { category: string; region: string | null; minSubscribers?: number; maxPages?: number; limit?: number }) {
+  return (await apiPost<{ targets: TgstatTarget[] }>(`${base}/targets`, payload)).targets
+}

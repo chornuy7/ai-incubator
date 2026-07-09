@@ -39,6 +39,13 @@ export interface ModuleTaskSettings {
   minComments?: number
   langDetection?: boolean
   alreadyParsed?: string[]
+  // ── Парсер участников (users/messages/comments) ──
+  filters?: Record<string, boolean>
+  limits?: Record<string, number>
+  activeStories?: boolean
+  delayChat?: number
+  delayItem?: number
+  fromTgstat?: { category: string; region: string | null; maxPages: number } | null
   delays?: {
     comment?: [number, number]
     action?: [number, number]

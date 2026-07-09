@@ -765,61 +765,175 @@ export async function runChannelParser(task, store, kind) {
   await finalizeAccounts(accountIds, task.id)
 }
 
-/** @param {object} task @param {object} store @param {string} kind */
-export async function runParsing(task, store, kind) {
+const mapUser = (u) => ({
+  id: u?.id?.toString?.() ?? '',
+  name: `${u?.firstName || ''} ${u?.lastName || ''}`.trim() || u?.username || (u?.id?.toString?.() ?? '—'),
+  username: u?.username || '',
+  bot: !!u?.bot,
+  premium: !!u?.premium,
+  hasPhoto: !!u?.photo,
+  deleted: !!u?.deleted,
+  scam: !!(u?.scam || u?.fake),
+})
+
+/**
+ * Парсер участников: пользователи из групп / по сообщениям / из комментариев.
+ * Мульти-цели, ротация аккаунтов, фильтры (боты/удалённые/scam/username/фото/premium/админы),
+ * лимиты, ключевые слова, задержки, дедуп по id.
+ * @param {object} task @param {object} store @param {'parsing-users'|'parsing-messages'|'parsing-comments'} kind
+ */
+export async function runParticipantsParser(task, store, kind) {
   const s = task.settings
   task.startedAt = Date.now()
   task.status = 'running'
+  task.results = []
   await store.saveTask(task)
+
   const accountIds = s.accountIds || []
-  const accountId = accountIds[0]
-  if (!accountId) {
+  if (!accountIds.length) {
     task.status = 'error'
     await store.appendLog(task, 'error', 'Нужен хотя бы один аккаунт')
     await store.saveTask(task)
     return
   }
 
-  let client
-  try {
-    ;({ client } = await connectAccount(accountId, task.id))
-    const meta = await getAccountMeta(accountId)
+  const mul = delayMultiplier(s.protectionLevel ?? 1, s.delayPreset ?? 1)
+  const F = s.filters || {}
+  const L = s.limits || {}
+  const kw = (s.keywords || []).map((k) => String(k).toLowerCase().trim()).filter(Boolean)
+  const delayChatMs = Math.max(0, Number(s.delayChat ?? 5)) * 1000
+  const delayItemMs = Math.max(0, Number(s.delayItem ?? 0.5)) * 1000
+  const tgs = targets(s)
+  if (!tgs.length) {
+    task.status = 'error'
+    await store.appendLog(task, 'error', 'Укажите хотя бы один источник (группу/канал/чат)')
+    await store.saveTask(task)
+    return
+  }
 
-    if (kind === 'parsing-users' || kind === 'parsing-comments' || kind === 'parsing-messages') {
-      const src = targets(s)[0]
-      if (!src) throw new Error('Укажите группу/канал')
-      const membership = await joinTargetOrSkip(
-        client, src,
-        (level, message, acc) => store.appendLog(task, level, message, acc),
-        meta.name,
-      )
-      if (!membership?.peer) throw new Error('NOT_A_MEMBER')
-      const users = await fetchParticipants(client, membership.peer, s.limit || 100)
-      task.results = users.filter((u) => !u.bot).map((u) => ({ ...u, kind: 'user' }))
-      await store.appendLog(task, 'success', `Найдено ${task.results.length} пользователей`, meta.name)
-    } else {
-      const kw = (s.keywords || ['crypto'])[0]
-      const chats = await searchPublic(client, kw, s.limit || 20)
-      task.results = chats.map((c) => ({
-        id: c.id?.toString?.() ?? '',
-        title: c.title || c.username || '—',
-        username: c.username || '',
-        members: c.participantsCount || 0,
-        kind: kind === 'parsing-groups' ? 'group' : 'channel',
-      }))
-      await store.appendLog(task, 'success', `Найдено ${task.results.length} ${kind === 'parsing-groups' ? 'групп' : 'каналов'}`, meta.name)
-    }
+  const passUser = (u) => {
+    if (F.skipBots && u.bot) return false
+    if (F.skipDeleted && u.deleted) return false
+    if (F.skipScam && u.scam) return false
+    if (F.onlyUsername && !u.username) return false
+    if (F.onlyPhoto && !u.hasPhoto) return false
+    if (F.onlyPremium && !u.premium) return false
+    return true
+  }
+  const bump = () => {
     task.progress.actionsDone = task.results.length
     task.progress.done = task.results.length
+    task.progress.total = Math.max(task.results.length, task.progress.total || 0)
+  }
+
+  const seen = new Set()
+  let accIdx = 0
+  const nextAccountId = async () => {
+    for (let i = 0; i < accountIds.length; i++) {
+      const id = accountIds[accIdx++ % accountIds.length]
+      const meta = await getAccountMeta(id)
+      if (isAccountRunnable(meta.status || 'active')) return id
+    }
+    return null
+  }
+
+  await store.appendLog(task, 'info', `Парсинг участников: источников ${tgs.length}, аккаунтов ${accountIds.length}`)
+
+  try {
+    for (const src of tgs) {
+      if (task.stopRequested) break
+      const accountId = await nextAccountId()
+      if (!accountId) { await store.appendLog(task, 'warning', 'Нет доступных аккаунтов'); break }
+      const meta = await getAccountMeta(accountId)
+      let client
+      try {
+        ;({ client } = await connectAccount(accountId, task.id))
+        const membership = await joinTargetOrSkip(client, src, (l, m, a) => store.appendLog(task, l, m, a), meta.name)
+        if (!membership?.peer) { await disconnectAccount(client, accountId); continue }
+        const peer = membership.peer
+        let added = 0
+
+        if (kind === 'parsing-users') {
+          const users = await fetchParticipants(client, peer, L.participants || s.limit || 1000, { adminsOnly: !!F.onlyAdmins })
+          for (const u of users) {
+            if (task.stopRequested) break
+            if (!u.id || seen.has(u.id) || !passUser(u)) continue
+            seen.add(u.id)
+            task.results.push({ ...u, kind: 'user' })
+            added++
+          }
+        } else if (kind === 'parsing-messages') {
+          const days = Number(L.days || 0)
+          const minDate = days ? Math.floor(Date.now() / 1000) - days * 86400 : 0
+          const messages = await client.getMessages(peer, { limit: L.messages || 1000 })
+          const bySender = new Map()
+          for (const m of messages) {
+            if (!m?.senderId) continue
+            if (minDate && m.date && m.date < minDate) continue
+            if (!F.includeForwarded && m.fwdFrom) continue
+            const text = m.message || ''
+            if (kw.length && !kw.some((k) => text.toLowerCase().includes(k))) continue
+            const sid = m.senderId.toString()
+            const rec = bySender.get(sid) || { count: 0, first: m.date, last: m.date, sender: m.sender }
+            rec.count++; rec.first = Math.min(rec.first, m.date); rec.last = Math.max(rec.last, m.date)
+            if (!rec.sender && m.sender) rec.sender = m.sender
+            bySender.set(sid, rec)
+          }
+          for (const [sid, rec] of bySender) {
+            if (task.stopRequested || seen.has(sid)) continue
+            const u = rec.sender ? mapUser(rec.sender) : { id: sid, name: sid, username: '', bot: false }
+            if (!passUser(u)) continue
+            seen.add(sid)
+            task.results.push({ ...u, kind: 'user', messagesCount: rec.count, firstSeen: new Date(rec.first * 1000).toISOString(), lastSeen: new Date(rec.last * 1000).toISOString() })
+            added++
+          }
+        } else if (kind === 'parsing-comments') {
+          const minLen = Number(L.minCommentLen || 0)
+          const posts = await fetchPosts(client, peer, L.posts || 50)
+          for (const post of posts) {
+            if (task.stopRequested) break
+            let comments = []
+            try { comments = await client.getMessages(peer, { replyTo: post.id, limit: L.commentsPerPost || 100 }) } catch { comments = [] }
+            for (const c of comments) {
+              if (!c?.senderId) continue
+              const text = c.message || ''
+              if (minLen && text.length < minLen) continue
+              if (kw.length && !kw.some((k) => text.toLowerCase().includes(k))) continue
+              const sid = c.senderId.toString()
+              if (seen.has(sid)) continue
+              const u = c.sender ? mapUser(c.sender) : { id: sid, name: sid, username: '', bot: false }
+              if (!passUser(u)) continue
+              seen.add(sid)
+              task.results.push({ ...u, kind: 'user', ...(F.keepText ? { commentText: text.slice(0, 300) } : {}) })
+              added++
+            }
+            if (delayItemMs) await sleep(delayItemMs)
+          }
+        }
+
+        bump()
+        await store.saveTask(task)
+        await store.appendLog(task, added ? 'success' : 'info', `${src}: +${added} (всего ${task.results.length})`, meta.name)
+        await disconnectAccount(client, accountId)
+      } catch (err) {
+        if (client) await disconnectAccount(client, accountId)
+        if (!(await handleFlood(task, accountId, store, err, s, meta.name))) {
+          await store.appendLog(task, 'error', `${src}: ${mapTelegramError(err)}`, meta.name)
+        }
+      }
+      task = (await store.loadTask(task.id)) || task
+      if (!task.stopRequested) await sleep(delayChatMs || pickDelay(3, 6, mul) * 1000)
+    }
+
     task.progress.total = task.results.length
-    task.status = 'done'
-    await disconnectAccount(client, accountId)
+    task.status = task.stopRequested ? 'stopped' : 'done'
+    await store.appendLog(task, 'info', `Готово · найдено ${task.results.length} пользователей`)
   } catch (err) {
-    if (client) await disconnectAccount(client, accountId)
     task.status = 'error'
-    await store.appendLog(task, 'error', mapTelegramError(err))
+    await store.appendLog(task, 'error', err instanceof Error ? err.message : 'Ошибка')
   }
   await store.saveTask(task)
+  await finalizeAccounts(accountIds, task.id)
 }
 
 export const WORKERS = {
@@ -832,7 +946,7 @@ export const WORKERS = {
   ggr: runGgr,
   parsing: (t, s) => runChannelParser(t, s, 'parsing'),
   'parsing-groups': (t, s) => runChannelParser(t, s, 'parsing-groups'),
-  'parsing-users': (t, s) => runParsing(t, s, 'parsing-users'),
-  'parsing-messages': (t, s) => runParsing(t, s, 'parsing-messages'),
-  'parsing-comments': (t, s) => runParsing(t, s, 'parsing-comments'),
+  'parsing-users': (t, s) => runParticipantsParser(t, s, 'parsing-users'),
+  'parsing-messages': (t, s) => runParticipantsParser(t, s, 'parsing-messages'),
+  'parsing-comments': (t, s) => runParticipantsParser(t, s, 'parsing-comments'),
 }
