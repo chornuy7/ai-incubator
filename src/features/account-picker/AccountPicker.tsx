@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react'
 import {
-  Search, Users, CheckCheck, ChevronsRight, ChevronsLeft, RefreshCw, ChevronDown, Inbox, ShieldCheck, Loader2, Lock,
+  Search, Users, CheckCheck, ChevronsRight, ChevronsLeft, RefreshCw, ChevronDown, Inbox, ShieldCheck, Loader2, Lock, AlertTriangle,
 } from 'lucide-react'
 import { useApp, activeAccounts } from '@/mocks/store'
 import { Avatar, Select } from '@/shared/ui'
@@ -54,6 +54,19 @@ export function AccountPicker({
 
   const busyAvailable = useMemo(() => available.filter(isBusy), [available])
   const freeAvailable = useMemo(() => available.filter((a) => !isBusy(a)), [available])
+
+  // Сколько аккаунтов скрыто именно фильтром «Рабочие прокси» (прямое подключение, без прокси).
+  const hiddenByProxy = useMemo(() => {
+    if (!workingProxies) return 0
+    return accounts.filter((a) => {
+      if (selected.has(a.id)) return false
+      if (role !== 'Все роли' && a.role !== role) return false
+      if (country !== 'all' && a.country !== country) return false
+      if (hideWorking && (a.status === 'working' || a.busyIn)) return false
+      if (query && !`${a.name} ${a.username} ${a.phone}`.toLowerCase().includes(query.toLowerCase())) return false
+      return a.proxy === '—'
+    }).length
+  }, [accounts, selected, role, country, hideWorking, query, workingProxies])
 
   const selectedList = accounts.filter((a) => selected.has(a.id))
 
@@ -127,6 +140,14 @@ export function AccountPicker({
                   <Check label="Лайт-режим" checked={liteMode} onChange={setLiteMode} />
                   <Check label="Скрыть рабочие" checked={hideWorking} onChange={setHideWorking} title="Скрыть аккаунты в работе и занятые в других модулях" />
                 </div>
+              </div>
+            )}
+
+            {hiddenByProxy > 0 && (
+              <div className="flex flex-wrap items-center gap-2 border-b border-amber-500/20 bg-amber-500/8 px-3 py-2 text-xs text-amber-300">
+                <AlertTriangle size={14} className="shrink-0" />
+                <span>{hiddenByProxy} акк. скрыто фильтром «Рабочие прокси» (прямое подключение).</span>
+                <button type="button" onClick={() => setWorkingProxies(false)} className="ml-auto rounded-md border border-amber-500/40 bg-amber-500/12 px-2 py-1 font-semibold text-amber-200 hover:bg-amber-500/20">Показать их</button>
               </div>
             )}
 
