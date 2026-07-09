@@ -318,4 +318,74 @@ export async function markStoriesRead(client, peer) {
   return 1
 }
 
+/**
+ * @typedef {object} ViewPostsResult
+ * @property {number} viewed Количество постов, по которым зарегистрирован просмотр.
+ * @property {boolean} isChannel Является ли цель broadcast-каналом (только для них счётчик просмотров имеет смысл).
+ * @property {number|null} viewsBefore Просмотры самого нового поста до инкремента (если удалось прочитать).
+ * @property {number|null} viewsAfter Просмотры самого нового поста после инкремента (если удалось прочитать).
+ * @property {string} reason Код причины пустого результата: '', 'not_channel', 'no_posts', иначе текст ошибки.
+ */
+
+/**
+ * Просмотреть последние N постов канала: получить историю и зарегистрировать просмотры.
+ * count = 1 означает «самый новый пост». Ограничено диапазоном 1..50.
+ * Инкремент просмотров засчитывается Telegram только для broadcast-каналов и только
+ * один раз на аккаунт: повторные вызовы тем же аккаунтом счётчик не двигают.
+ * @param {import('telegram').TelegramClient} client @param {import('@types/telegram').Entity} peer @param {number} count
+ * @returns {Promise<ViewPostsResult>}
+ */
+export async function viewRecentPosts(client, peer, count = 3) {
+  const limit = Math.min(Math.max(Math.trunc(Number(count) || 0), 1), 50)
+  /** @type {ViewPostsResult} */
+  const result = { viewed: 0, isChannel: false, viewsBefore: null, viewsAfter: null, reason: '' }
+  try {
+    let entity = peer
+    try {
+      entity = await client.getEntity(peer)
+    } catch { /* используем исходный peer как есть */ }
+
+    const isBroadcast = !!(/** @type {{ broadcast?: boolean }} */ (entity)?.broadcast)
+    result.isChannel = isBroadcast
+    if (!isBroadcast) {
+      result.reason = 'not_channel'
+      return result
+    }
+
+    const history = await client.invoke(new Api.messages.GetHistory({ peer: entity, limit }))
+    const ids = (history.messages || [])
+      .filter((m) => m?.id && !m.action)
+      .map((m) => m.id)
+    if (!ids.length) {
+      result.reason = 'no_posts'
+      return result
+    }
+
+    try {
+      const before = await client.invoke(new Api.messages.GetMessagesViews({ peer: entity, id: ids, increment: false }))
+      const v = before.views?.[0]?.views
+      result.viewsBefore = typeof v === 'number' ? v : null
+    } catch { /* чтение «до» не критично */ }
+
+    try {
+      const incremented = await client.invoke(new Api.messages.GetMessagesViews({ peer: entity, id: ids, increment: true }))
+      const v = incremented.views?.[0]?.views
+      result.viewsAfter = typeof v === 'number' ? v : null
+    } catch (err) {
+      result.reason = errMsg(err) || 'views_failed'
+      return result
+    }
+
+    try {
+      await client.invoke(new Api.channels.ReadHistory({ channel: entity, maxId: Math.max(...ids) }))
+    } catch { /* дочитывание истории не критично */ }
+
+    result.viewed = ids.length
+    return result
+  } catch (err) {
+    result.reason = errMsg(err) || 'error'
+    return result
+  }
+}
+
 export { mapTelegramError }

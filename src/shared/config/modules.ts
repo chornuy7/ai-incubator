@@ -125,6 +125,11 @@ export interface ModuleConfig {
   // mass-looking специфика
   lookingLayout?: boolean
   targetHint?: string
+  lookModeLabel?: string
+  lookModeOptions?: { label: string; value: 'stories' | 'posts' | 'both' }[]
+  lookPostsLabel?: string
+  lookPostsPresets?: { label: string; value: number }[]
+  lookPostsDefault?: number
   // warming специфика
   warmingLayout?: boolean
   // neuro-dialogs специфика
@@ -373,6 +378,19 @@ export const MODULES: Record<string, ModuleConfig> = {
     aiProtection: true,
     seedTargetCount: 95,
     targetHint: 'юзеры — цель; каналы/чаты соберём в аудиторию на запуске',
+    lookModeLabel: 'Что смотреть',
+    lookModeOptions: [
+      { label: 'Истории', value: 'stories' },
+      { label: 'Посты', value: 'posts' },
+      { label: 'Истории + посты', value: 'both' },
+    ],
+    lookPostsLabel: 'Сколько последних постов смотреть',
+    lookPostsPresets: [
+      { label: 'Самый новый', value: 1 },
+      { label: 'Последние 3', value: 3 },
+      { label: 'Последние 10', value: 10 },
+    ],
+    lookPostsDefault: 3,
     primaryAction: 'Запустить просмотр',
     stopAction: 'Остановить',
     logSeedCount: 0,

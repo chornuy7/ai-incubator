@@ -1,10 +1,71 @@
 import { useEffect, useMemo, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { HelpCircle, Send, X } from 'lucide-react'
+import { useLocation } from 'react-router-dom'
+import { BookOpen, HelpCircle, Layers, Lightbulb, Send, Sparkles, Workflow, X } from 'lucide-react'
 import { useUi } from '@/shared/lib/uiStore'
+import { findHelpDoc, type HelpDoc } from '@/shared/config/helpDocs'
 import { cn } from '@/shared/lib/utils'
 
 type HelpMsg = { id: string; role: 'user' | 'assistant'; text: string }
+
+/** Достаёт ключ модуля из пути вида /panel/modules/:moduleKey. */
+function moduleKeyFromPath(pathname: string): string | undefined {
+  const m = pathname.match(/\/panel\/modules\/([^/?#]+)/)
+  return m?.[1]
+}
+
+function DocSection({ icon, title, accent, children }: {
+  icon: React.ReactNode; title: string; accent: 'spark' | 'iris'; children: React.ReactNode
+}) {
+  return (
+    <div className="rounded-2xl border border-line bg-elevated/40 p-3.5">
+      <div className="mb-1.5 flex items-center gap-2">
+        <span className={cn('grid h-7 w-7 place-items-center rounded-lg', accent === 'iris' ? 'bg-iris-500/12 text-iris-400' : 'bg-spark-500/12 text-spark-400')}>{icon}</span>
+        <span className="text-xs font-bold uppercase tracking-wide text-muted">{title}</span>
+      </div>
+      <div className="whitespace-pre-wrap text-sm leading-relaxed text-fg">{children}</div>
+    </div>
+  )
+}
+
+function HelpDocView({ doc }: { doc: HelpDoc }) {
+  const accent: 'spark' | 'iris' = doc.title.toLowerCase().includes('парс') || doc.title.toLowerCase().includes('ggr') || doc.title.toLowerCase().includes('нейродиалог')
+    ? 'iris'
+    : 'spark'
+  return (
+    <div className="space-y-3">
+      <div className={cn('rounded-2xl border p-3.5', accent === 'iris' ? 'border-iris-500/30 bg-iris-500/8' : 'border-spark-500/30 bg-spark-500/8')}>
+        <div className="flex items-center gap-2">
+          <BookOpen size={16} className={accent === 'iris' ? 'text-iris-300' : 'text-spark-300'} />
+          <span className="font-display text-base font-bold text-fg">{doc.title}</span>
+        </div>
+        <p className="mt-1 text-xs text-muted">Документация модуля — как это устроено внутри</p>
+      </div>
+
+      <DocSection icon={<Sparkles size={15} />} title="Что это" accent={accent}>{doc.what}</DocSection>
+      <DocSection icon={<Workflow size={15} />} title="Как работает внутри" accent={accent}>{doc.how}</DocSection>
+      <DocSection icon={<Layers size={15} />} title="Как работает вместе с другими модулями" accent={accent}>{doc.together}</DocSection>
+      <DocSection icon={<Lightbulb size={15} />} title="Пример результата" accent={accent}>{doc.example}</DocSection>
+
+      {doc.tips?.length ? (
+        <div className="rounded-2xl border border-line bg-elevated/40 p-3.5">
+          <div className="mb-1.5 flex items-center gap-2">
+            <Lightbulb size={15} className={accent === 'iris' ? 'text-iris-400' : 'text-spark-400'} />
+            <span className="text-xs font-bold uppercase tracking-wide text-muted">Советы</span>
+          </div>
+          <ul className="space-y-1.5">
+            {doc.tips.map((t, i) => (
+              <li key={i} className="flex gap-2 text-sm leading-relaxed text-fg">
+                <span className={accent === 'iris' ? 'text-iris-400' : 'text-spark-400'}>•</span>
+                <span>{t}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+    </div>
+  )
+}
 
 function helpIntro(topic: string) {
   const clean = topic?.trim() || 'раздел'
@@ -33,17 +94,25 @@ export function HelpCenterDrawer() {
   const open = useUi((s) => s.helpOpen)
   const topic = useUi((s) => s.helpTopic)
   const setHelpOpen = useUi((s) => s.setHelpOpen)
+  const location = useLocation()
 
   const [messages, setMessages] = useState<HelpMsg[]>([])
   const [input, setInput] = useState('')
 
+  const doc = useMemo(
+    () => findHelpDoc(topic, moduleKeyFromPath(location.pathname)),
+    [topic, location.pathname],
+  )
   const intro = useMemo(() => helpIntro(topic), [topic])
 
   useEffect(() => {
     if (!open) return
-    setMessages([{ id: 'intro', role: 'assistant', text: intro }])
+    const first = doc
+      ? `Это документация по разделу «${doc.title}». Ниже можно задать уточняющий вопрос по настройкам.`
+      : intro
+    setMessages([{ id: 'intro', role: 'assistant', text: first }])
     setInput('')
-  }, [open, intro])
+  }, [open, intro, doc])
 
   const send = () => {
     const text = input.trim()
@@ -71,13 +140,21 @@ export function HelpCenterDrawer() {
             <HelpCircle size={20} className="text-spark-400" />
             <div>
               <h3 className="font-display text-lg font-bold text-fg">Help Center</h3>
-              <p className="text-xs text-muted">Чат-подсказки по разделу</p>
+              <p className="text-xs text-muted">{doc ? 'Документация и подсказки по разделу' : 'Чат-подсказки по разделу'}</p>
             </div>
           </div>
           <button onClick={() => setHelpOpen(false)} className="btn-icon"><X size={18} /></button>
         </div>
 
         <div className="flex-1 overflow-y-auto p-4">
+          {doc && <HelpDocView doc={doc} />}
+          {doc && (
+            <div className="mb-3 mt-5 flex items-center gap-2">
+              <span className="h-px flex-1 bg-line" />
+              <span className="text-xs font-bold uppercase tracking-wide text-muted">Спросить ещё</span>
+              <span className="h-px flex-1 bg-line" />
+            </div>
+          )}
           <div className="space-y-3">
             {messages.map((m) => (
               <div key={m.id} className={cn('whitespace-pre-wrap rounded-2xl border px-4 py-3 text-sm', m.role === 'user' ? 'bg-spark-500/8 border-spark-500/30' : 'bg-elevated/40 border-line')}>

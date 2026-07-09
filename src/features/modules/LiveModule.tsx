@@ -12,10 +12,9 @@ import { useModuleTask } from './shared/useModuleTask'
 import {
   SectionCard, NumberField,
   ProtectionBlock, TargetsEditor, LaunchPanel, PromptCards, loadPromptBodies, AiGenerationNotice,
-  FolderPicker, BlacklistEditor, GlobalPromptEditor, TimingSection,
+  FolderPicker, BlacklistEditor, GlobalPromptEditor, TimingSection, SaveToFolderModal,
 } from './shared'
 import type { ModuleTaskSettings } from '@/api/modulesApi'
-import { createFolder as createTargetFolder } from '@/api/featuresApi'
 
 const DEFAULT_DELAYS = {
   comment: [30, 120] as [number, number],
@@ -61,6 +60,9 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
   const [palette, setPalette] = useState<Set<string>>(new Set(['👍', '❤️', '🔥']))
   const [viewTab, setViewTab] = useState(1)
   const [historyGrid, setHistoryGrid] = useState(true)
+  const [folderSave, setFolderSave] = useState<string[] | null>(null)
+  const [lookModeIdx, setLookModeIdx] = useState(0)
+  const [lookPostsCount, setLookPostsCount] = useState(cfg.lookPostsDefault ?? 3)
 
   const g = (i: number) => toggles[i] ?? 0
   const setTg = (i: number, v: number) => setToggles((t) => ({ ...t, [i]: v }))
@@ -73,14 +75,9 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
   const isGgr = cfg.ggrLayout
 
   const maybeSaveToFolder = (list: string[]) => {
-    // (5) Предложить сохранить добавленный список в папку.
+    // (5) Предложить сохранить добавленный список в папку через красивый модал.
     if (!list.length) return
-    if (!window.confirm('Сохранить список в папку?')) return
-    const name = window.prompt('Название папки')
-    if (!name?.trim()) return
-    void createTargetFolder(name.trim(), list)
-      .then(() => pushToast({ type: 'success', title: 'Папка сохранена', desc: name.trim() }))
-      .catch((e) => pushToast({ type: 'error', title: 'Ошибка сохранения папки', desc: e instanceof Error ? e.message : '' }))
+    setFolderSave(list)
   }
 
   const addTargets = () => {
@@ -130,7 +127,11 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
     postUrls,
     limit: maxActions,
     delays,
-  }), [selected, targets, postUrls, toggles, probability, maxActions, minActions, maxPerAcc, minPerAcc, minWords, durationMinutes, aiProtect, protLevel, activePrompt, promptBodies, delayPreset, palette, delays, keywords, isGgr, accounts])
+    ...(cfg.lookingLayout ? {
+      lookMode: cfg.lookModeOptions?.[lookModeIdx]?.value ?? 'stories',
+      lookPostsCount,
+    } : {}),
+  }), [selected, targets, postUrls, toggles, probability, maxActions, minActions, maxPerAcc, minPerAcc, minWords, durationMinutes, aiProtect, protLevel, activePrompt, promptBodies, delayPreset, palette, delays, keywords, isGgr, accounts, cfg, lookModeIdx, lookPostsCount])
 
   const hasPostTargets = postUrls.length > 0
   const busySelectedCount = useMemo(
@@ -174,6 +175,7 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
 
   return (
     <div className="space-y-4">
+      <SaveToFolderModal open={folderSave !== null} onClose={() => setFolderSave(null)} targets={folderSave ?? []} />
       {cfg.accountPicker && (
         <AccountPicker selected={selected} onChange={setSelected} actions={cfg.accountActions} withFilters={!!cfg.accountFilters} selectedTitle={cfg.selectedTitle ?? 'Выбрано'} />
       )}
@@ -211,6 +213,37 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
             </div>
           ) : isGgr ? (
             <p className="text-sm text-muted">Проверка всех аккаунтов панели: сессия, профиль, базовый GGR-скоринг.</p>
+          ) : cfg.lookingLayout && cfg.lookModeOptions ? (
+            <div className="rounded-2xl border border-line bg-elevated/40 p-4 space-y-4">
+              <ToggleGroup
+                label={cfg.lookModeLabel ?? 'Что смотреть'}
+                options={cfg.lookModeOptions.map((o) => o.label)}
+                value={lookModeIdx}
+                onChange={setLookModeIdx}
+              />
+              {cfg.lookModeOptions[lookModeIdx]?.value !== 'stories' && (
+                <div className="space-y-2">
+                  <span className="label">{cfg.lookPostsLabel ?? 'Сколько последних постов смотреть'}</span>
+                  <div className="flex flex-wrap gap-2">
+                    {(cfg.lookPostsPresets ?? []).map((p) => (
+                      <button
+                        key={p.value}
+                        type="button"
+                        onClick={() => setLookPostsCount(p.value)}
+                        className={`rounded-xl border px-3.5 py-2 text-sm font-semibold transition-all ${
+                          lookPostsCount === p.value
+                            ? 'border-spark-500/50 bg-spark-500/12 text-spark-300'
+                            : 'border-line bg-elevated text-muted hover:border-spark-500/30 hover:text-fg'
+                        }`}
+                      >
+                        {p.label}
+                      </button>
+                    ))}
+                  </div>
+                  <NumberField label="Произвольное число постов" value={lookPostsCount} onChange={setLookPostsCount} min={1} max={50} suffix="1–50" />
+                </div>
+              )}
+            </div>
           ) : (
             <p className="text-sm text-muted">Лимиты и задержки настраиваются в секции «Тайминги и задержки» ниже.</p>
           )}

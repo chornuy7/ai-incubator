@@ -59,13 +59,15 @@ export function useModuleTask(moduleKey: string) {
       setRestoring(true)
       try {
         const tasks = await fetchModuleTasks(moduleKey)
-        const id = pickTaskIdToRestore(tasks, readActiveTaskId(moduleKey))
-        if (!id || cancelled) return
+        if (cancelled || !tasks.length) return
+        // 1) активная задача текущей вкладки (running/queued);
+        // 2) иначе — последняя задача модуля, чтобы её логи не пропадали после обновления страницы.
+        const id = pickTaskIdToRestore(tasks, readActiveTaskId(moduleKey)) ?? tasks[0].id
         const t = await fetchModuleTask(moduleKey, id)
         if (cancelled) return
         setTaskId(t.id)
         setTask(t)
-        persistActiveTaskId(moduleKey, t.id)
+        if (t.status === 'running' || t.status === 'queued') persistActiveTaskId(moduleKey, t.id)
         syncBackgroundTask(t)
       } catch { /* API недоступен или задач нет */ }
       finally {

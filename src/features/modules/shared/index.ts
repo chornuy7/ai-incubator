@@ -15,7 +15,7 @@ export { DEFAULT_PROMPT_BODIES, loadPromptBodies, savePromptBodies } from './pro
 export { ProtectionBlock } from './ProtectionBlock'
 export { TargetsEditor } from './TargetsEditor'
 export { LaunchPanel } from './LaunchPanel'
-export { FolderPicker } from './FolderPicker'
+export { FolderPicker, SaveToFolderModal } from './FolderPicker'
 export { BlacklistEditor } from './BlacklistEditor'
 export { GlobalPromptEditor } from './GlobalPromptEditor'
 export { AiSafetyModal } from './AiSafetyModal'

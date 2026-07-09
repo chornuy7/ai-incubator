@@ -9,6 +9,7 @@ import {
   fetchParticipants,
   fetchDialogs,
   markStoriesRead,
+  viewRecentPosts,
   mapTelegramError,
 } from '../lib/gramHelpers.js'
 import { joinTargetOrSkip, joinChannelDiscussion, prepareTarget } from '../lib/joinTarget.js'
@@ -409,6 +410,8 @@ export async function runMassLooking(task, store) {
   const tgs = targets(s)
   let idx = 0
   const accountIds = s.accountIds || []
+  const lookMode = ['stories', 'posts', 'both'].includes(s.lookMode) ? s.lookMode : 'stories'
+  const postsCount = Math.min(Math.max(Math.trunc(Number(s.lookPostsCount) || 0) || 3, 1), 50)
 
   try {
     while (!task.stopRequested && !totalLimitReached(s, task)) {
@@ -429,11 +432,27 @@ export async function runMassLooking(task, store) {
           await disconnectAccount(client, accountId)
           continue
         }
-        const viewed = await markStoriesRead(client, membership.peer)
         task.accountStats[accountId] = task.accountStats[accountId] || { actions: 0, floodWaits: 0 }
+        if (lookMode === 'stories' || lookMode === 'both') {
+          const viewed = await markStoriesRead(client, membership.peer)
+          await store.appendLog(task, 'success', `Просмотр @${t} (${viewed})`, meta.name)
+        }
+        if (lookMode === 'posts' || lookMode === 'both') {
+          const res = await viewRecentPosts(client, membership.peer, postsCount)
+          if (!res.isChannel) {
+            await store.appendLog(task, 'warning', `Просмотр постов @${t}: цель не broadcast-канал — счётчик просмотров не применим`, meta.name)
+          } else if (res.viewed === 0) {
+            const why = res.reason === 'no_posts' ? 'посты не найдены' : 'просмотр не засчитан'
+            await store.appendLog(task, 'warning', `Просмотр постов @${t}: ${why}`, meta.name)
+          } else {
+            const delta = res.viewsBefore != null
+              ? ` (просмотры поста: было ${res.viewsBefore}${res.viewsAfter != null ? `, стало ${res.viewsAfter}` : ''})`
+              : ''
+            await store.appendLog(task, 'success', `Просмотр постов @${t}: ${res.viewed}${delta}`, meta.name)
+          }
+        }
         task.accountStats[accountId].actions += 1
         await bumpProgress(task, store)
-        await store.appendLog(task, 'success', `Просмотр @${t} (${viewed})`, meta.name)
         await disconnectAccount(client, accountId)
       } catch (err) {
         if (client) await disconnectAccount(client, accountId)

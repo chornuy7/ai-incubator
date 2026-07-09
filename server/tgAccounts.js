@@ -88,7 +88,36 @@ export async function tgListAccounts() {
   }
 
   accounts.sort((a, b) => b.createdAt - a.createdAt)
-  return accounts
+  return dedupeAccounts(accounts)
+}
+
+/**
+ * Схлопывает дубли: одна и та же Telegram-личность может иметь несколько файлов сессии
+ * (например после реавторизации). Оставляем ОДИН аккаунт на реальный userId
+ * (запасные ключи — телефон, затем username). Файлы сессий не трогаем — только список.
+ */
+function dedupeAccounts(accounts) {
+  const identityKey = (a) => {
+    if (a.userId) return `uid:${a.userId}`
+    if (a.phone && a.phone !== '—') return `tel:${a.phone.replace(/\D/g, '')}`
+    if (a.username && !a.username.startsWith('user_')) return `usr:${a.username.toLowerCase()}`
+    return `id:${a.id}`
+  }
+  // Чем выше балл, тем «лучше» запись: не в корзине > валидная сессия > есть прокси.
+  const score = (a) =>
+    (a.inTrash ? 0 : 4) +
+    (a.status !== 'reauth' && a.status !== 'invalid' ? 2 : 0) +
+    (a.proxy && a.proxy !== '—' ? 1 : 0)
+
+  const byKey = new Map()
+  for (const a of accounts) {
+    const key = identityKey(a)
+    const prev = byKey.get(key)
+    if (!prev) { byKey.set(key, a); continue }
+    const better = score(a) > score(prev) || (score(a) === score(prev) && (a.createdAt || 0) > (prev.createdAt || 0))
+    if (better) byKey.set(key, a)
+  }
+  return [...byKey.values()].sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0))
 }
 
 export async function tgPatchAccount(accountId, patch) {

@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react'
 import {
-  Search, Users, CheckCheck, ChevronsRight, ChevronsLeft, RefreshCw, ChevronDown, Inbox, ShieldCheck, Loader2,
+  Search, Users, CheckCheck, ChevronsRight, ChevronsLeft, RefreshCw, ChevronDown, Inbox, ShieldCheck, Loader2, Lock,
 } from 'lucide-react'
 import { useApp, activeAccounts } from '@/mocks/store'
 import { Avatar, Select } from '@/shared/ui'
@@ -10,6 +10,9 @@ import type { TgAccount } from '@/shared/types'
 
 const FLAGS: Record<string, string> = { ua: '🇺🇦', ru: '🇷🇺', kz: '🇰🇿', pl: '🇵🇱', de: '🇩🇪' }
 const COUNTRY_NAME: Record<string, string> = { ua: 'UA', ru: 'RU', kz: 'KZ', pl: 'PL', de: 'DE' }
+
+/** Аккаунт «в работе»: заблокирован задачей (lock) или в статусе working — выбирать нельзя. */
+const isBusy = (a: TgAccount) => !!a.busyIn || a.status === 'working'
 
 /** Двухпанельный выбор аккаунтов: Доступные | Выбрано. */
 export function AccountPicker({
@@ -49,8 +52,8 @@ export function AccountPicker({
     [accounts, selected, role, country, workingProxies, hideWorking, query],
   )
 
-  const busyAvailable = useMemo(() => available.filter((a) => a.busyIn), [available])
-  const freeAvailable = useMemo(() => available.filter((a) => !a.busyIn), [available])
+  const busyAvailable = useMemo(() => available.filter(isBusy), [available])
+  const freeAvailable = useMemo(() => available.filter((a) => !isBusy(a)), [available])
 
   const selectedList = accounts.filter((a) => selected.has(a.id))
 
@@ -77,8 +80,8 @@ export function AccountPicker({
   const removeAll = () => onChange(new Set())
   const add = (id: string) => {
     const acc = accounts.find((a) => a.id === id)
-    if (acc?.busyIn) {
-      pushToast({ type: 'error', title: 'Аккаунт занят', desc: `Сейчас в модуле «${acc.busyIn.moduleLabel}». Параллельный запуск запрещён.` })
+    if (acc && isBusy(acc)) {
+      pushToast({ type: 'error', title: 'Аккаунт занят', desc: acc.busyIn ? `Сейчас в модуле «${acc.busyIn.moduleLabel}». Параллельный запуск запрещён.` : 'Аккаунт в работе — выбрать нельзя.' })
       return
     }
     onChange(new Set([...selected, id]))
@@ -223,7 +226,10 @@ function AccountRow({ account: a, liteMode, onAdd, busy, disabled }: {
   account: TgAccount; liteMode: boolean; onAdd?: () => void; busy?: boolean; disabled?: boolean
 }) {
   return (
-    <div className={cn('group flex items-center gap-2.5 rounded-xl px-2 py-2', disabled ? 'opacity-70' : 'hover:bg-elevated')}>
+    <div
+      title={disabled ? (a.busyIn ? `В работе: ${a.busyIn.moduleLabel} — выбрать нельзя` : 'Аккаунт в работе — выбрать нельзя') : undefined}
+      className={cn('group flex items-center gap-2.5 rounded-xl px-2 py-2', disabled ? 'cursor-not-allowed select-none opacity-60' : 'hover:bg-elevated')}
+    >
       <Avatar name={a.name} color={a.avatarColor} size={liteMode ? 26 : 32} />
       <div className="min-w-0 flex-1">
         <div className="truncate text-sm font-semibold text-fg">{a.name}</div>
@@ -240,7 +246,7 @@ function AccountRow({ account: a, liteMode, onAdd, busy, disabled }: {
       </div>
       {!liteMode && (
         <div className="flex shrink-0 items-center gap-1">
-          {busy && a.busyIn ? (
+          {busy ? (
             <MiniBadge tone="rose"><Loader2 size={9} className="animate-spin" /> ЗАНЯТ</MiniBadge>
           ) : (
             <>
@@ -250,8 +256,10 @@ function AccountRow({ account: a, liteMode, onAdd, busy, disabled }: {
           )}
         </div>
       )}
-      {!disabled && onAdd && (
-        <button type="button" onClick={onAdd} className="btn-icon h-7 w-7 shrink-0 text-spark-400"><ChevronsRight size={14} /></button>
+      {disabled ? (
+        <Lock size={14} className="shrink-0 text-rose-300/70" />
+      ) : (
+        onAdd && <button type="button" onClick={onAdd} className="btn-icon h-7 w-7 shrink-0 text-spark-400"><ChevronsRight size={14} /></button>
       )}
     </div>
   )

@@ -65,6 +65,13 @@ export function startModuleTask(moduleKey, settings) {
   const err = validateSettings(moduleKey, settings)
   if (err) throw new Error(err)
 
+  if (moduleKey === 'mass-looking') {
+    settings.lookMode = ['stories', 'posts', 'both'].includes(settings.lookMode) ? settings.lookMode : 'stories'
+    if (settings.lookMode !== 'stories') {
+      settings.lookPostsCount = Math.min(Math.max(Math.trunc(Number(settings.lookPostsCount) || 0) || 3, 1), 50)
+    }
+  }
+
   const max = settings.maxActions ?? settings.maxComments ?? 100
   const task = store.createTask(settings, {
     progress: { done: 0, total: max, actionsDone: 0, commentsSent: 0 },
