@@ -12,6 +12,7 @@ import { AccountPicker } from '@/features/account-picker/AccountPicker'
 import { useModuleTask } from './shared/useModuleTask'
 import { SectionCard, NumberField, ProtectionBlock, LaunchPanel } from './shared'
 import { cn } from '@/shared/lib/utils'
+import { downloadXls } from '@/shared/lib/exportXls'
 import { fetchModuleTasks, fetchModuleTask, type ModuleTaskSettings } from '@/api/modulesApi'
 import { fetchTgstatOptions, fetchTgstatSession, fetchTgstatTargets, type TgstatOptions, type TgstatSession } from '@/api/tgstatApi'
 
@@ -42,7 +43,7 @@ const lkey = (label: string) => LIMIT_KEY[label] ?? label
 
 interface UserResult {
   id?: string; name?: string; username?: string; premium?: boolean
-  messagesCount?: number; firstSeen?: string; lastSeen?: string; kind?: string
+  messagesCount?: number; groupsCount?: number; firstSeen?: string; lastSeen?: string; kind?: string
 }
 
 export function ParticipantsParserModule({ moduleKey }: { moduleKey: string }) {
@@ -64,6 +65,7 @@ function Inner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: string }) {
   const [keywords, setKeywords] = useState('')
   const [fastWork, setFastWork] = useState(false)
   const [activeStories, setActiveStories] = useState(false)
+  const [intersection, setIntersection] = useState(false)
 
   const [filters, setFilters] = useState<Record<string, boolean>>(() => {
     const init: Record<string, boolean> = {}
@@ -101,10 +103,11 @@ function Inner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: string }) {
     filters,
     limits,
     activeStories,
+    intersectionMode: moduleKey === 'parsing-users' ? intersection : false,
     delayChat: fastWork ? 0 : delayChat,
     delayItem: fastWork ? 0 : delayItem,
     limit: limits.participants ?? limits.messages ?? limits.posts ?? 1000,
-  }), [selected, targetList, keywordList, aiProtect, protLevel, filters, limits, activeStories, fastWork, delayChat, delayItem])
+  }), [selected, targetList, keywordList, aiProtect, protLevel, filters, limits, activeStories, intersection, fastWork, delayChat, delayItem, moduleKey])
 
   const busySelectedCount = useMemo(() => [...selected].filter((id) => accounts.some((a) => a.id === id && a.busyIn)).length, [selected, accounts])
   const canStart = selected.size > 0 && busySelectedCount === 0 && targetList.length > 0
@@ -242,6 +245,10 @@ function Inner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: string }) {
               <ToggleRow icon={<Eye size={15} />} label="Только с активной историей" desc="Оставить только пользователей с активной сторис" checked={activeStories} onChange={setActiveStories} />
             )}
 
+            {moduleKey === 'parsing-users' && (
+              <ToggleRow icon={<Users size={15} />} label="Только пересечение групп" desc="Оставить только пользователей, состоящих во ВСЕХ указанных группах (уникальная фича)" checked={intersection} onChange={setIntersection} />
+            )}
+
             {!fastWork && (
               <div className="rounded-2xl border border-line bg-elevated/40 p-3">
                 <div className="mb-2 flex items-center gap-1.5 text-sm font-semibold text-fg"><Timer size={14} className="text-spark-400" /> Настройки задержек</div>
@@ -278,6 +285,7 @@ function Inner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: string }) {
           <button type="button" onClick={copyLinks} disabled={!results.length} className="btn-soft h-10 text-sm disabled:opacity-40"><Copy size={15} /> Скопировать ссылки</button>
           <button type="button" onClick={copyIds} disabled={!results.length} className="btn-soft h-10 text-sm disabled:opacity-40"><Hash size={15} /> Скопировать ID</button>
           <button type="button" onClick={() => exportData('csv')} disabled={!results.length} className="btn-primary h-10 text-sm disabled:opacity-40"><Download size={15} /> Экспорт CSV</button>
+          <button type="button" onClick={() => downloadXls(results as unknown as Record<string, unknown>[], `${moduleKey}-results`)} disabled={!results.length} className="btn-soft h-10 text-sm disabled:opacity-40"><Download size={15} /> Excel</button>
           <button type="button" onClick={() => exportData('json')} disabled={!results.length} className="btn-ghost h-10 text-sm disabled:opacity-40"><Download size={15} /> JSON</button>
         </div>
 
@@ -298,6 +306,7 @@ function Inner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: string }) {
                     <div className="flex items-center gap-2 text-xs text-muted">
                       {r.username ? <span className="text-iris-300/80">@{r.username}</span> : <span>ID: {r.id}</span>}
                       {r.messagesCount != null && <span>· {r.messagesCount} сообщ.</span>}
+                      {r.groupsCount != null && <span className="text-spark-300">· в {r.groupsCount} группах</span>}
                     </div>
                   </div>
                   {r.username && <a href={`https://t.me/${r.username}`} target="_blank" rel="noreferrer" className="btn-icon h-9 w-9 shrink-0"><ExternalLink size={15} /></a>}

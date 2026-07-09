@@ -43,6 +43,8 @@ export interface ModuleTaskSettings {
   filters?: Record<string, boolean>
   limits?: Record<string, number>
   activeStories?: boolean
+  intersectionMode?: boolean
+  intersectionMin?: number
   delayChat?: number
   delayItem?: number
   // ── Масслукинг: что смотреть и сколько последних постов ──

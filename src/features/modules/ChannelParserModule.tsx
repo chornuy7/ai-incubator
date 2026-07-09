@@ -12,6 +12,7 @@ import { AccountPicker } from '@/features/account-picker/AccountPicker'
 import { useModuleTask } from './shared/useModuleTask'
 import { SectionCard, NumberField, ProtectionBlock, DelayFields, LaunchPanel } from './shared'
 import { cn } from '@/shared/lib/utils'
+import { downloadXls } from '@/shared/lib/exportXls'
 import { fetchModuleTasks, fetchModuleTask, type ModuleTaskSettings } from '@/api/modulesApi'
 
 /** Собирает username ранее спарсенных каналов/групп из истории модуля (для дедупа между запусками). */
@@ -50,6 +51,18 @@ function fmtMembers(n: number) {
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`
   if (n >= 1000) return `${(n / 1000).toFixed(1)}K`.replace('.0K', 'K')
   return String(n)
+}
+
+/** Эвристический балл качества канала/группы 1–10 (по числу участников + открытые комментарии). */
+function qualityScore(members = 0, hasComments = false): number {
+  const tiers = [100000, 50000, 10000, 5000, 1000, 500, 100, 50]
+  let s = 2
+  for (let i = 0; i < tiers.length; i++) { if (members >= tiers[i]) { s = 10 - i; break } }
+  if (hasComments) s = Math.min(10, s + 1)
+  return s
+}
+function qualityTone(s: number): 'spark' | 'amber' | 'rose' {
+  return s >= 7 ? 'spark' : s >= 4 ? 'amber' : 'rose'
 }
 
 export function ChannelParserModule({ moduleKey }: { moduleKey: string }) {
@@ -441,6 +454,7 @@ function ChannelParserInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: 
           <button type="button" onClick={copyLinks} disabled={!results.length} className="btn-soft h-10 text-sm disabled:opacity-40"><Copy size={15} /> Скопировать ссылки</button>
           <button type="button" onClick={copyIds} disabled={!results.length} className="btn-soft h-10 text-sm disabled:opacity-40"><Hash size={15} /> Скопировать ID</button>
           <button type="button" onClick={() => exportData('csv')} disabled={!results.length} className="btn-primary h-10 text-sm disabled:opacity-40"><Download size={15} /> Экспорт CSV</button>
+          <button type="button" onClick={() => downloadXls(results as unknown as Record<string, unknown>[], `${moduleKey}-results`)} disabled={!results.length} className="btn-soft h-10 text-sm disabled:opacity-40"><Download size={15} /> Excel</button>
           <button type="button" onClick={() => exportData('json')} disabled={!results.length} className="btn-ghost h-10 text-sm disabled:opacity-40"><Download size={15} /> JSON</button>
         </div>
 
@@ -461,6 +475,7 @@ function ChannelParserInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: 
                     <div className="flex items-center gap-2 text-xs text-muted">
                       {r.username && <span className="text-iris-300/80">@{r.username}</span>}
                       <span className="inline-flex items-center gap-1"><Users size={11} /> {fmtMembers(r.members ?? 0)}</span>
+                      {(() => { const s = qualityScore(r.members ?? 0, r.hasComments); return <Badge tone={qualityTone(s)}>★ {s}/10</Badge> })()}
                     </div>
                   </div>
                   {r.link && (

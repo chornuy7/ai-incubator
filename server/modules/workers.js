@@ -846,6 +846,11 @@ export async function runParticipantsParser(task, store, kind) {
   }
 
   const seen = new Set()
+  // Пересечение аудиторий (только parsing-users): пользователь засчитывается, если встречается
+  // минимум в intersectionMin группах (по умолчанию — во всех выбранных).
+  const intersection = kind === 'parsing-users' && !!s.intersectionMode && tgs.length > 1
+  const intersectMin = intersection ? (Number(s.intersectionMin) > 0 ? Number(s.intersectionMin) : tgs.length) : 0
+  const userHits = new Map() // id -> { user, hits }
   let accIdx = 0
   const nextAccountId = async () => {
     for (let i = 0; i < accountIds.length; i++) {
@@ -856,7 +861,7 @@ export async function runParticipantsParser(task, store, kind) {
     return null
   }
 
-  await store.appendLog(task, 'info', `Парсинг участников: источников ${tgs.length}, аккаунтов ${accountIds.length}`)
+  await store.appendLog(task, 'info', `Парсинг участников: источников ${tgs.length}, аккаунтов ${accountIds.length}${intersection ? ` · режим пересечения (≥${intersectMin} групп)` : ''}`)
 
   try {
     for (const src of tgs) {
@@ -874,12 +879,24 @@ export async function runParticipantsParser(task, store, kind) {
 
         if (kind === 'parsing-users') {
           const users = await fetchParticipants(client, peer, L.participants || s.limit || 1000, { adminsOnly: !!F.onlyAdmins })
+          const seenInThisTarget = new Set()
           for (const u of users) {
             if (task.stopRequested) break
-            if (!u.id || seen.has(u.id) || !passUser(u)) continue
-            seen.add(u.id)
-            task.results.push({ ...u, kind: 'user' })
-            added++
+            if (!u.id || !passUser(u)) continue
+            if (intersection) {
+              // считаем вхождение пользователя в каждую группу не более одного раза
+              if (seenInThisTarget.has(u.id)) continue
+              seenInThisTarget.add(u.id)
+              const rec = userHits.get(u.id) || { user: u, hits: 0 }
+              rec.hits++; rec.user = rec.user || u
+              userHits.set(u.id, rec)
+              added++
+            } else {
+              if (seen.has(u.id)) continue
+              seen.add(u.id)
+              task.results.push({ ...u, kind: 'user' })
+              added++
+            }
           }
         } else if (kind === 'parsing-messages') {
           const days = Number(L.days || 0)
@@ -944,7 +961,19 @@ export async function runParticipantsParser(task, store, kind) {
       if (!task.stopRequested) await sleep(delayChatMs || pickDelay(3, 6, mul) * 1000)
     }
 
+    // Финализация пересечения: оставляем только тех, кто встретился в >= intersectMin группах.
+    if (intersection) {
+      task.results = []
+      for (const { user, hits } of userHits.values()) {
+        if (hits >= intersectMin) task.results.push({ ...user, kind: 'user', groupsCount: hits })
+      }
+      task.results.sort((a, b) => (b.groupsCount || 0) - (a.groupsCount || 0))
+      await store.appendLog(task, 'info', `Пересечение: ${task.results.length} пользователей в ≥${intersectMin} из ${tgs.length} групп`)
+    }
+
     task.progress.total = task.results.length
+    task.progress.actionsDone = task.results.length
+    task.progress.done = task.results.length
     task.status = task.stopRequested ? 'stopped' : 'done'
     await store.appendLog(task, 'info', `Готово · найдено ${task.results.length} пользователей`)
   } catch (err) {
