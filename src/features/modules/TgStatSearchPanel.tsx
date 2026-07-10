@@ -51,7 +51,7 @@ export function TgStatSearchPanel() {
   const [age, setAge] = useState<number | ''>('')
   const [flags, setFlags] = useState<Record<string, boolean>>({ noScam: true, noDead: true })
   const [sort, setSort] = useState('participants')
-  const [maxPages, setMaxPages] = useState(3)
+  const [maxPages, setMaxPages] = useState<number | ''>(3)
 
   const [loading, setLoading] = useState(false)
   const [results, setResults] = useState<TgstatChat[]>([])
@@ -89,7 +89,8 @@ export function TgStatSearchPanel() {
     if (!q.trim() && !category) return pushToast({ type: 'error', title: 'Укажите ключевое слово или категорию' })
     setLoading(true)
     try {
-      const chats = await searchTgstatChannels(filters, maxPages)
+      const pages = typeof maxPages === 'number' && maxPages > 0 ? Math.min(20, maxPages) : 3
+      const chats = await searchTgstatChannels(filters, pages)
       setResults(chats)
       pushToast({ type: chats.length ? 'success' : 'info', title: `Найдено ${chats.length} каналов` })
     } catch (e) {
@@ -147,7 +148,7 @@ export function TgStatSearchPanel() {
                 { value: 'ci', label: 'По ИЦ' },
               ]} />
             </div>
-            <NumField label="Сколько страниц (×~30)" value={maxPages} onChange={(v) => setMaxPages(typeof v === 'number' ? Math.max(1, Math.min(20, v)) : 3)} />
+            <NumField label="Сколько страниц (×~30, 1–20)" value={maxPages} onChange={setMaxPages} />
           </div>
 
           <div>
