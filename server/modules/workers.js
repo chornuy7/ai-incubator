@@ -840,12 +840,6 @@ export async function runParticipantsParser(task, store, kind) {
     if (F.onlyPremium && !u.premium) return false
     return true
   }
-  const bump = () => {
-    task.progress.actionsDone = task.results.length
-    task.progress.done = task.results.length
-    task.progress.total = Math.max(task.results.length, task.progress.total || 0)
-  }
-
   const seen = new Set()
   // Пересечение аудиторий (только parsing-users): пользователь засчитывается, если встречается
   // минимум в intersectionMin группах (по умолчанию — во всех выбранных).
@@ -862,6 +856,11 @@ export async function runParticipantsParser(task, store, kind) {
     return null
   }
 
+  let processed = 0
+  task.progress.total = tgs.length
+  task.progress.actionsDone = 0
+  task.progress.done = 0
+  await store.saveTask(task)
   await store.appendLog(task, 'info', `Парсинг участников: источников ${tgs.length}, аккаунтов ${accountIds.length}${intersection ? ` · режим пересечения (≥${intersectMin} групп)` : ''}`)
 
   try {
@@ -906,7 +905,15 @@ export async function runParticipantsParser(task, store, kind) {
             added++
           }
         } else if (kind === 'parsing-users') {
-          const users = await fetchParticipants(client, peer, L.participants || s.limit || 1000, { adminsOnly: !!F.onlyAdmins })
+          let users = []
+          try {
+            users = await fetchParticipants(client, peer, L.participants || s.limit || 1000, { adminsOnly: !!F.onlyAdmins })
+          } catch (e) {
+            const msg = mapTelegramError(e)
+            if (/ADMIN_REQUIRED|CHAT_ADMIN|CHANNEL_PRIVATE|not.*visible/i.test(msg)) {
+              await store.appendLog(task, 'warning', `${src}: список участников закрыт — используйте режим «Активные (кто писал)»`, meta.name)
+            } else { throw e }
+          }
           const seenInThisTarget = new Set()
           for (const u of users) {
             if (task.stopRequested) break
@@ -975,7 +982,6 @@ export async function runParticipantsParser(task, store, kind) {
           }
         }
 
-        bump()
         await store.saveTask(task)
         await store.appendLog(task, added ? 'success' : 'info', `${src}: +${added} (всего ${task.results.length})`, meta.name)
         await disconnectAccount(client, accountId)
@@ -985,7 +991,13 @@ export async function runParticipantsParser(task, store, kind) {
           await store.appendLog(task, 'error', `${src}: ${mapTelegramError(err)}`, meta.name)
         }
       }
+      // прогресс — по обработанным группам (а не по числу результатов)
       task = (await store.loadTask(task.id)) || task
+      processed++
+      task.progress.total = tgs.length
+      task.progress.actionsDone = processed
+      task.progress.done = processed
+      await store.saveTask(task)
       if (!task.stopRequested) await sleep(delayChatMs || pickDelay(3, 6, mul) * 1000)
     }
 
@@ -999,11 +1011,11 @@ export async function runParticipantsParser(task, store, kind) {
       await store.appendLog(task, 'info', `Пересечение: ${task.results.length} пользователей в ≥${intersectMin} из ${tgs.length} групп`)
     }
 
-    task.progress.total = task.results.length
-    task.progress.actionsDone = task.results.length
-    task.progress.done = task.results.length
+    task.progress.total = tgs.length
+    task.progress.actionsDone = processed
+    task.progress.done = processed
     task.status = task.stopRequested ? 'stopped' : 'done'
-    await store.appendLog(task, 'info', `Готово · найдено ${task.results.length} пользователей`)
+    await store.appendLog(task, 'info', `Готово · обработано ${processed}/${tgs.length} групп · найдено ${task.results.length} пользователей`)
   } catch (err) {
     task.status = 'error'
     await store.appendLog(task, 'error', err instanceof Error ? err.message : 'Ошибка')

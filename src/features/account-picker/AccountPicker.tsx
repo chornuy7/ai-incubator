@@ -35,7 +35,7 @@ export function AccountPicker({
   const [query, setQuery] = useState('')
   const [role, setRole] = useState('Все роли')
   const [country, setCountry] = useState('all')
-  const [workingProxies, setWorkingProxies] = useState(true)
+  const [workingProxies, setWorkingProxies] = useState(false)
   const [hideWorking, setHideWorking] = useState(false)
   const [liteMode, setLiteMode] = useState(false)
 
