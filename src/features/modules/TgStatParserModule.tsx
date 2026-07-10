@@ -75,8 +75,10 @@ export function TgStatParserModule() {
 
   const [category, setCategory] = useState('')
   const [region, setRegion] = useState(DEFAULT_REGION)
-  const [maxPages, setMaxPages] = useState(3)
-  const [minSubs, setMinSubs] = useState(0)
+  const [maxPages, setMaxPages] = useState<number | ''>(3)
+  const [minSubs, setMinSubs] = useState<number | ''>(0)
+  const mp = typeof maxPages === 'number' && maxPages > 0 ? maxPages : 1
+  const ms = typeof minSubs === 'number' ? minSubs : 0
 
   const [openImport, setOpenImport] = useState<TgstatImport | null>(null)
   const [chats, setChats] = useState<TgstatChat[]>([])
@@ -162,13 +164,13 @@ export function TgStatParserModule() {
 
   const handleCreate = async () => {
     if (!category) return pushToast({ type: 'error', title: 'Выберите категорию' })
-    if (maxPages > 1 && !session?.telegram_logged_in) {
+    if (mp > 1 && !session?.telegram_logged_in) {
       pushToast({ type: 'error', title: `Для >${itemsPerStep} каналов нужен вход в TGStat через Telegram (cookies с tgstat_sirk)` })
       return
     }
     setCreating(true)
     try {
-      const imp = await createTgstatImport({ category, region: region || null, max_pages: maxPages, min_subscribers: minSubs })
+      const imp = await createTgstatImport({ category, region: region || null, max_pages: mp, min_subscribers: ms })
       setImports((p) => [imp, ...p])
       pushToast({ type: 'success', title: `Импорт #${imp.id} запущен`, desc: 'Парсинг на сервере' })
     } catch (e) { pushToast({ type: 'error', title: 'Ошибка запуска', desc: e instanceof Error ? e.message : '' }) } finally { setCreating(false) }
@@ -285,14 +287,14 @@ export function TgStatParserModule() {
           </div>
           <div>
             <label className="label">Сколько страниц парсить (≈{itemsPerStep}/шаг)</label>
-            <input type="number" min={1} max={100} value={maxPages} onChange={(e) => setMaxPages(Math.max(1, Math.min(100, Number(e.target.value))))} className="input h-10" />
-            {maxPages > 1 && !session?.telegram_logged_in && (
+            <input type="number" min={1} max={100} value={maxPages} onChange={(e) => setMaxPages(e.target.value === "" ? "" : Math.max(1, Math.min(100, Number(e.target.value))))} className="input h-10" />
+            {mp > 1 && !session?.telegram_logged_in && (
               <p className="mt-1 text-xs text-amber-300">Для &gt;1 страницы нужен вход в TGStat через Telegram (cookies с tgstat_sirk).</p>
             )}
           </div>
           <div>
             <label className="label">Минимум подписчиков</label>
-            <input type="number" min={0} step={100} value={minSubs} onChange={(e) => setMinSubs(Math.max(0, Number(e.target.value)))} className="input h-10" />
+            <input type="number" min={0} step={100} value={minSubs} onChange={(e) => setMinSubs(e.target.value === "" ? "" : Math.max(0, Number(e.target.value)))} className="input h-10" />
           </div>
         </div>
         {(() => {

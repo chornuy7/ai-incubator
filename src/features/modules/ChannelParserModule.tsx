@@ -105,10 +105,10 @@ function ChannelParserInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: 
   const [activity, setActivity] = useState(cfg.defaultActivity ?? 0)
   const [commentFilter, setCommentFilter] = useState(0)
   const [minComments, setMinComments] = useState(0)
-  const [minMembers, setMinMembers] = useState(cfg.defaultMinMembers ?? 100)
-  const [maxMembers, setMaxMembers] = useState(100000)
+  const [minMembers, setMinMembers] = useState<number | ''>(cfg.defaultMinMembers ?? 100)
+  const [maxMembers, setMaxMembers] = useState<number | ''>(100000)
   const [langDetect, setLangDetect] = useState(false)
-  const [mailingRating, setMailingRating] = useState(1)
+  const [minRating, setMinRating] = useState(1)
   const [templatesOpen, setTemplatesOpen] = useState(!cfg.templatesCollapsed)
 
   // ── задержки ──
@@ -160,8 +160,8 @@ function ChannelParserInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: 
     activityFilter: activity,
     commentFilter,
     minComments,
-    minMembers,
-    maxMembers,
+    minMembers: minMembers === '' ? 0 : minMembers,
+    maxMembers: maxMembers === '' ? 0 : maxMembers,
     langDetection: langDetect,
     delays: {
       request: fastWork ? [0, 0] : reqDelay,
@@ -201,13 +201,15 @@ function ChannelParserInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: 
       const q = resQuery.toLowerCase()
       r = r.filter((x) => `${x.title} ${x.username}`.toLowerCase().includes(q))
     }
+    // Фильтр по рейтингу качества ★ (показывать только >= выбранного)
+    if (minRating > 1) r = r.filter((x) => qualityScore(x.members ?? 0, x.hasComments) >= minRating)
     const [field, dir] = sortBy.split('-')
     r = [...r].sort((a, b) => {
       const m = field === 'members' ? (a.members ?? 0) - (b.members ?? 0) : String(a.title).localeCompare(String(b.title))
       return dir === 'desc' ? -m : m
     })
     return r
-  }, [rawResults, resQuery, sortBy])
+  }, [rawResults, resQuery, sortBy, minRating])
 
   const totalPages = Math.max(1, Math.ceil(results.length / pageSize))
   const curPage = Math.min(page, totalPages)
@@ -392,20 +394,21 @@ function ChannelParserInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: 
               <div className="mb-2 flex items-center gap-1.5 text-sm font-semibold text-fg"><Users size={14} className="text-spark-400" /> Диапазон участников</div>
               <div className="grid grid-cols-2 gap-2">
                 <label className="text-xs text-muted">Минимум
-                  <input type="number" value={minMembers} onChange={(e) => setMinMembers(Number(e.target.value))} className="input mt-1 h-9 text-sm" />
+                  <input type="number" value={minMembers} onChange={(e) => setMinMembers(e.target.value === '' ? '' : Math.max(0, Number(e.target.value)))} className="input mt-1 h-9 text-sm" />
                 </label>
                 <label className="text-xs text-muted">Максимум
-                  <input type="number" value={maxMembers} onChange={(e) => setMaxMembers(Number(e.target.value))} className="input mt-1 h-9 text-sm" />
+                  <input type="number" value={maxMembers} onChange={(e) => setMaxMembers(e.target.value === '' ? '' : Math.max(0, Number(e.target.value)))} className="input mt-1 h-9 text-sm" />
                 </label>
               </div>
             </div>
 
             <div className="rounded-2xl border border-line bg-elevated/40 p-3">
               <div className="mb-2 flex items-center justify-between text-sm font-semibold text-fg">
-                <span className="flex items-center gap-1.5"><Database size={14} className="text-spark-400" /> Рейтинг для рассылки</span>
-                <span className="rounded-md bg-spark-500/12 px-2 py-0.5 text-xs font-bold text-spark-300">{mailingRating}/10</span>
+                <span className="flex items-center gap-1.5"><Database size={14} className="text-spark-400" /> Минимальный рейтинг ★</span>
+                <span className="rounded-md bg-spark-500/12 px-2 py-0.5 text-xs font-bold text-spark-300">{minRating === 1 ? 'все' : `от ${minRating}/10`}</span>
               </div>
-              <input type="range" min={1} max={10} value={mailingRating} onChange={(e) => setMailingRating(Number(e.target.value))} className="w-full accent-spark-500" />
+              <input type="range" min={1} max={10} value={minRating} onChange={(e) => setMinRating(Number(e.target.value))} className="w-full accent-spark-500" />
+              <p className="mt-1 text-[11px] text-muted">Показывать только каналы/группы с рейтингом ★ ≥ выбранного. «1» — показывать все.</p>
             </div>
 
             <ToggleRowInline icon={<Radar size={15} />} label="Определение языка" desc="Определять язык канала по постам" checked={langDetect} onChange={setLangDetect} />

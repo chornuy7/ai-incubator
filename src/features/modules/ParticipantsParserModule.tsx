@@ -393,8 +393,8 @@ function TgstatSourceButton({ onFill }: { onFill: (usernames: string[]) => void 
   const [session, setSession] = useState<TgstatSession | null>(null)
   const [category, setCategory] = useState('')
   const [region, setRegion] = useState('ukraine')
-  const [minSubs, setMinSubs] = useState(0)
-  const [limit, setLimit] = useState(200)
+  const [minSubs, setMinSubs] = useState<number | ''>(0)
+  const [limit, setLimit] = useState<number | ''>(200)
   const [loading, setLoading] = useState(false)
 
   const openModal = async () => {
@@ -406,7 +406,7 @@ function TgstatSourceButton({ onFill }: { onFill: (usernames: string[]) => void 
     if (!category) return pushToast({ type: 'error', title: 'Выберите категорию' })
     setLoading(true)
     try {
-      const t = await fetchTgstatTargets({ category, region: region || null, minSubscribers: minSubs, maxPages: 1, limit })
+      const t = await fetchTgstatTargets({ category, region: region || null, minSubscribers: typeof minSubs === 'number' ? minSubs : 0, maxPages: 1, limit: typeof limit === 'number' && limit > 0 ? limit : 200 })
       const usernames = t.map((x) => x.username).filter(Boolean)
       if (!usernames.length) { pushToast({ type: 'info', title: 'Ничего не найдено', desc: 'Попробуйте другую категорию/регион' }); return }
       onFill(usernames)
@@ -437,10 +437,10 @@ function TgstatSourceButton({ onFill }: { onFill: (usernames: string[]) => void 
           </div>
           <div className="grid grid-cols-2 gap-3">
             <label className="text-xs text-muted">Мин. подписчиков
-              <input type="number" min={0} step={100} value={minSubs} onChange={(e) => setMinSubs(Math.max(0, Number(e.target.value)))} className="input mt-1 h-9 text-sm" />
+              <input type="number" min={0} step={100} value={minSubs} onChange={(e) => setMinSubs(e.target.value === "" ? "" : Math.max(0, Number(e.target.value)))} className="input mt-1 h-9 text-sm" />
             </label>
             <label className="text-xs text-muted">Сколько взять
-              <input type="number" min={1} max={1000} value={limit} onChange={(e) => setLimit(Math.max(1, Math.min(1000, Number(e.target.value))))} className="input mt-1 h-9 text-sm" />
+              <input type="number" min={1} max={1000} value={limit} onChange={(e) => setLimit(e.target.value === "" ? "" : Math.max(1, Math.min(1000, Number(e.target.value))))} className="input mt-1 h-9 text-sm" />
             </label>
           </div>
           <button type="button" onClick={load} disabled={loading || !category || (session ? !session.has_session : false)}
