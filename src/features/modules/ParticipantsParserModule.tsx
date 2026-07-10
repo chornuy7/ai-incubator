@@ -2,7 +2,7 @@ import { useCallback, useMemo, useState } from 'react'
 import {
   Play, Users, Settings2, Filter, UserCircle2, Eye, Timer, Zap, Database, Search,
   Copy, Hash, Download, Trash2, ExternalLink, History, MessageCircle, Star, Check, Activity,
-  ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, Cookie, Loader2,
+  ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, Cookie, Loader2, FolderPlus,
 } from 'lucide-react'
 import { MODULES, type ModuleConfig } from '@/shared/config/modules'
 import { activeAccounts, useApp } from '@/mocks/store'
@@ -13,6 +13,7 @@ import { useModuleTask } from './shared/useModuleTask'
 import { SectionCard, NumberField, ProtectionBlock, LaunchPanel } from './shared'
 import { cn } from '@/shared/lib/utils'
 import { downloadXls } from '@/shared/lib/exportXls'
+import { SaveToFolderModal } from './shared/FolderPicker'
 import { fetchModuleTasks, fetchModuleTask, type ModuleTaskSettings } from '@/api/modulesApi'
 import { fetchTgstatOptions, fetchTgstatSession, fetchTgstatTargets, type TgstatOptions, type TgstatSession } from '@/api/tgstatApi'
 
@@ -87,6 +88,7 @@ function Inner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: string }) {
   const [pageSize, setPageSize] = useState(10)
   const [page, setPage] = useState(1)
   const [cleared, setCleared] = useState(false)
+  const [saveFolderOpen, setSaveFolderOpen] = useState(false)
 
   const targetList = useMemo(() => targets.split(/[\n,]+/).map((s) => s.trim()).filter(Boolean), [targets])
   const keywordList = useMemo(() => keywords.split(/[\n,]+/).map((s) => s.trim()).filter(Boolean), [keywords])
@@ -284,6 +286,7 @@ function Inner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: string }) {
           <button type="button" onClick={() => setCleared(true)} disabled={!raw.length} className="btn-danger h-10 text-sm disabled:opacity-40"><Trash2 size={15} /> Очистить</button>
           <button type="button" onClick={copyLinks} disabled={!results.length} className="btn-soft h-10 text-sm disabled:opacity-40"><Copy size={15} /> Скопировать ссылки</button>
           <button type="button" onClick={copyIds} disabled={!results.length} className="btn-soft h-10 text-sm disabled:opacity-40"><Hash size={15} /> Скопировать ID</button>
+          <button type="button" onClick={() => setSaveFolderOpen(true)} disabled={!results.length} className="btn-iris h-10 text-sm disabled:opacity-40"><FolderPlus size={15} /> Сохранить в папку</button>
           <button type="button" onClick={() => exportData('csv')} disabled={!results.length} className="btn-primary h-10 text-sm disabled:opacity-40"><Download size={15} /> Экспорт CSV</button>
           <button type="button" onClick={() => downloadXls(results as unknown as Record<string, unknown>[], `${moduleKey}-results`)} disabled={!results.length} className="btn-soft h-10 text-sm disabled:opacity-40"><Download size={15} /> Excel</button>
           <button type="button" onClick={() => exportData('json')} disabled={!results.length} className="btn-ghost h-10 text-sm disabled:opacity-40"><Download size={15} /> JSON</button>
@@ -331,6 +334,8 @@ function Inner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: string }) {
           </>
         )}
       </SectionCard>
+
+      <SaveToFolderModal open={saveFolderOpen} onClose={() => setSaveFolderOpen(false)} targets={results.map((r) => r.username || '').filter(Boolean)} />
     </div>
   )
 }

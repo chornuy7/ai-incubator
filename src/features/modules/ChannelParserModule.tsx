@@ -2,7 +2,7 @@ import { useCallback, useMemo, useState } from 'react'
 import {
   Play, Sparkles, Search, Settings2, Timer, Users, Database, Filter, Radar,
   Plus, X, Trash2, Copy, Hash, Download, ExternalLink, ChevronLeft, ChevronRight,
-  ChevronsLeft, ChevronsRight, Bookmark, Zap, SlidersHorizontal, MessageCircle, Check,
+  ChevronsLeft, ChevronsRight, Bookmark, Zap, SlidersHorizontal, MessageCircle, Check, FolderPlus,
 } from 'lucide-react'
 import { MODULES, LANGUAGES, type ModuleConfig } from '@/shared/config/modules'
 import { activeAccounts, useApp } from '@/mocks/store'
@@ -13,6 +13,7 @@ import { useModuleTask } from './shared/useModuleTask'
 import { SectionCard, NumberField, ProtectionBlock, DelayFields, LaunchPanel } from './shared'
 import { cn } from '@/shared/lib/utils'
 import { downloadXls } from '@/shared/lib/exportXls'
+import { SaveToFolderModal } from './shared/FolderPicker'
 import { fetchModuleTasks, fetchModuleTask, type ModuleTaskSettings } from '@/api/modulesApi'
 
 /** Собирает username ранее спарсенных каналов/групп из истории модуля (для дедупа между запусками). */
@@ -120,6 +121,7 @@ function ChannelParserInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: 
   const [pageSize, setPageSize] = useState(10)
   const [page, setPage] = useState(1)
   const [cleared, setCleared] = useState(false)
+  const [saveFolderOpen, setSaveFolderOpen] = useState(false)
 
   const endings = useMemo(() => {
     if (endMode === 0) return manualEndings
@@ -453,6 +455,7 @@ function ChannelParserInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: 
           <button type="button" onClick={() => setCleared(true)} disabled={!rawResults.length} className="btn-danger h-10 text-sm disabled:opacity-40"><Trash2 size={15} /> Очистить</button>
           <button type="button" onClick={copyLinks} disabled={!results.length} className="btn-soft h-10 text-sm disabled:opacity-40"><Copy size={15} /> Скопировать ссылки</button>
           <button type="button" onClick={copyIds} disabled={!results.length} className="btn-soft h-10 text-sm disabled:opacity-40"><Hash size={15} /> Скопировать ID</button>
+          <button type="button" onClick={() => setSaveFolderOpen(true)} disabled={!results.length} className="btn-iris h-10 text-sm disabled:opacity-40"><FolderPlus size={15} /> Сохранить в папку</button>
           <button type="button" onClick={() => exportData('csv')} disabled={!results.length} className="btn-primary h-10 text-sm disabled:opacity-40"><Download size={15} /> Экспорт CSV</button>
           <button type="button" onClick={() => downloadXls(results as unknown as Record<string, unknown>[], `${moduleKey}-results`)} disabled={!results.length} className="btn-soft h-10 text-sm disabled:opacity-40"><Download size={15} /> Excel</button>
           <button type="button" onClick={() => exportData('json')} disabled={!results.length} className="btn-ghost h-10 text-sm disabled:opacity-40"><Download size={15} /> JSON</button>
@@ -503,6 +506,8 @@ function ChannelParserInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: 
           </>
         )}
       </SectionCard>
+
+      <SaveToFolderModal open={saveFolderOpen} onClose={() => setSaveFolderOpen(false)} targets={results.map((r) => r.username || '').filter(Boolean)} />
     </div>
   )
 }

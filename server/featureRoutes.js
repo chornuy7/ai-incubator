@@ -3,6 +3,9 @@ import { getAiSettings, setAiSettings } from './aiSettings.js'
 import { getAiSafety, setAiSafety } from './aiSafety.js'
 import { getBlacklist, setBlacklist, addToBlacklist, removeFromBlacklist } from './targetBlacklist.js'
 import { listFolders, createFolder, updateFolder, deleteFolder } from './targetFolders.js'
+import { loadAllMeta, getAccountMeta } from './accountsMeta.js'
+import { loadSessionString, createClient } from './tgAuth.js'
+import { sleep } from './lib/protection.js'
 
 export const featureRouter = Router()
 
@@ -92,5 +95,44 @@ featureRouter.delete('/target-folders/:id', async (req, res) => {
     const ok = await deleteFolder(req.params.id)
     if (!ok) return res.status(404).json({ ok: false, error: 'Папка не найдена' })
     res.json({ ok: true })
+  } catch (err) { fail(res, err) }
+})
+
+// Валидация папки: проверяем, что каждая цель ещё существует/доступна в Telegram,
+// «мёртвые» (не резолвятся) удаляем из папки. Так база чатов остаётся рабочей.
+featureRouter.post('/target-folders/:id/validate', async (req, res) => {
+  try {
+    const folders = await listFolders()
+    const folder = folders.find((f) => f.id === req.params.id)
+    if (!folder) return res.status(404).json({ ok: false, error: 'Папка не найдена' })
+    const targets = folder.targets || []
+    if (!targets.length) return res.json({ ok: true, checked: 0, kept: 0, removed: 0, folder })
+
+    // Выбираем аккаунт: из тела запроса или первый валидный из панели.
+    let accountId = req.body?.accountId
+    if (!accountId) {
+      const meta = await loadAllMeta()
+      accountId = Object.keys(meta).find((id) => !meta[id].inTrash && (meta[id].status === 'active' || !meta[id].status))
+    }
+    if (!accountId) return res.status(400).json({ ok: false, error: 'Нет доступного аккаунта для проверки' })
+
+    const meta = await getAccountMeta(accountId)
+    const sessionStr = await loadSessionString(accountId)
+    if (!sessionStr) return res.status(400).json({ ok: false, error: 'Сессия аккаунта недоступна' })
+
+    const client = await createClient(sessionStr, meta.proxy)
+    const valid = []
+    try {
+      for (const t of targets) {
+        try { const e = await client.getEntity(t); if (e) valid.push(t) } catch { /* мёртвая цель — не сохраняем */ }
+        await sleep(400)
+      }
+    } finally {
+      try { await client.disconnect() } catch { /* */ }
+    }
+
+    const removed = targets.length - valid.length
+    const updated = await updateFolder(folder.id, { targets: valid })
+    res.json({ ok: true, checked: targets.length, kept: valid.length, removed, folder: updated })
   } catch (err) { fail(res, err) }
 })

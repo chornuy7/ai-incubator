@@ -1,14 +1,17 @@
 import { useEffect, useState } from 'react'
-import { FolderOpen, Save, Settings2, Trash2, Pencil, Check, X, Download, FolderPlus } from 'lucide-react'
-import { Modal, Select, EmptyState } from '@/shared/ui'
+import { FolderOpen, Save, Settings2, Trash2, Pencil, Check, X, Download, FolderPlus, ShieldCheck, Loader2 } from 'lucide-react'
+import { Modal, Select, Segmented, EmptyState } from '@/shared/ui'
 import { useApp } from '@/mocks/store'
 import {
-  fetchFolders, createFolder, updateFolder, deleteFolder, type TargetFolder,
+  fetchFolders, createFolder, updateFolder, deleteFolder, validateFolder, type TargetFolder,
 } from '@/api/featuresApi'
+
+const cleanTargets = (t: string[]) => [...new Set(t.map((x) => String(x || '').trim().replace(/^@/, '')).filter(Boolean))]
 
 /**
  * Красивый поп-ап «Сохранить список в папку».
- * Переиспользуется: и в FolderPicker (кнопка «В папку»), и после добавления целей в модулях.
+ * Переиспользуется: и в FolderPicker, и после парсинга. Умеет создать новую папку
+ * или дозаписать цели в существующую (чтобы «собирать большую папку чатов»).
  */
 export function SaveToFolderModal({ open, onClose, targets, onSaved }: {
   open: boolean
@@ -17,18 +20,37 @@ export function SaveToFolderModal({ open, onClose, targets, onSaved }: {
   onSaved?: (folder: TargetFolder) => void
 }) {
   const pushToast = useApp((s) => s.pushToast)
+  const clean = cleanTargets(targets)
+  const [folders, setFolders] = useState<TargetFolder[]>([])
+  const [mode, setMode] = useState(0) // 0 — новая папка, 1 — в существующую
   const [name, setName] = useState('')
+  const [folderId, setFolderId] = useState('')
   const [saving, setSaving] = useState(false)
 
-  useEffect(() => { if (open) setName('') }, [open])
+  useEffect(() => {
+    if (!open) return
+    setName(''); setMode(0)
+    void fetchFolders().then((fs) => { setFolders(fs); if (fs[0]) setFolderId(fs[0].id) }).catch(() => {})
+  }, [open])
+
+  const canSubmit = clean.length > 0 && (mode === 0 ? !!name.trim() : !!folderId)
 
   const submit = async () => {
-    if (!name.trim()) return pushToast({ type: 'error', title: 'Введите название папки' })
-    if (!targets.length) return pushToast({ type: 'error', title: 'Нет целей для сохранения' })
+    if (!clean.length) return pushToast({ type: 'error', title: 'Нет целей для сохранения' })
+    if (mode === 0 && !name.trim()) return pushToast({ type: 'error', title: 'Введите название папки' })
+    if (mode === 1 && !folderId) return pushToast({ type: 'error', title: 'Выберите папку' })
     setSaving(true)
     try {
-      const folder = await createFolder(name.trim(), targets)
-      pushToast({ type: 'success', title: 'Папка сохранена', desc: `${name.trim()} · ${targets.length} целей` })
+      let folder: TargetFolder
+      if (mode === 1) {
+        const cur = folders.find((f) => f.id === folderId)
+        const merged = cleanTargets([...(cur?.targets ?? []), ...clean])
+        folder = await updateFolder(folderId, { targets: merged })
+        pushToast({ type: 'success', title: 'Добавлено в папку', desc: `${cur?.name ?? ''} · теперь ${merged.length} целей` })
+      } else {
+        folder = await createFolder(name.trim(), clean)
+        pushToast({ type: 'success', title: 'Папка сохранена', desc: `${name.trim()} · ${clean.length} целей` })
+      }
       onSaved?.(folder)
       onClose()
     } catch (e) {
@@ -40,34 +62,47 @@ export function SaveToFolderModal({ open, onClose, targets, onSaved }: {
     <Modal
       open={open}
       onClose={onClose}
-      title="Сохранить список в папку?"
-      subtitle={`${targets.length} ${plural(targets.length, 'цель', 'цели', 'целей')} будет сохранено для повторного использования`}
+      title="Сохранить в папку"
+      subtitle={`${clean.length} ${plural(clean.length, 'цель', 'цели', 'целей')} для повторного использования и валидации`}
       icon={<FolderPlus size={22} />}
       size="sm"
       footer={
         <>
-          <button type="button" onClick={onClose} className="btn-ghost h-10 text-sm">Не сохранять</button>
-          <button type="button" onClick={submit} disabled={saving || !name.trim()} className="btn-primary h-10 text-sm disabled:opacity-40">
+          <button type="button" onClick={onClose} className="btn-ghost h-10 text-sm">Отмена</button>
+          <button type="button" onClick={submit} disabled={saving || !canSubmit} className="btn-primary h-10 text-sm disabled:opacity-40">
             <Save size={15} /> Сохранить
           </button>
         </>
       }
     >
-      <label className="mb-1.5 block text-xs font-semibold uppercase tracking-wide text-muted">Название папки</label>
-      <input
-        value={name}
-        onChange={(e) => setName(e.target.value)}
-        onKeyDown={(e) => { if (e.key === 'Enter') void submit() }}
-        autoFocus
-        placeholder="Напр. Крипто-каналы"
-        className="input h-11 w-full"
-      />
-      {targets.length > 0 && (
+      {folders.length > 0 && (
+        <div className="mb-3"><Segmented options={['Новая папка', 'В существующую']} value={mode} onChange={setMode} size="sm" /></div>
+      )}
+      {mode === 1 && folders.length > 0 ? (
+        <>
+          <label className="mb-1.5 block text-xs font-semibold uppercase tracking-wide text-muted">Папка</label>
+          <Select value={folderId} onChange={setFolderId} options={folders.map((f) => ({ value: f.id, label: `${f.name} (${f.targets.length})` }))} />
+          <p className="mt-2 text-xs text-muted">Цели добавятся к папке без дублей — так собирается большая база чатов.</p>
+        </>
+      ) : (
+        <>
+          <label className="mb-1.5 block text-xs font-semibold uppercase tracking-wide text-muted">Название папки</label>
+          <input
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            onKeyDown={(e) => { if (e.key === 'Enter') void submit() }}
+            autoFocus
+            placeholder="Напр. Крипто-каналы"
+            className="input h-11 w-full"
+          />
+        </>
+      )}
+      {clean.length > 0 && (
         <div className="mt-3 flex max-h-28 flex-wrap gap-1.5 overflow-y-auto rounded-xl border border-line bg-elevated/40 p-2.5">
-          {targets.slice(0, 40).map((t) => (
+          {clean.slice(0, 40).map((t) => (
             <span key={t} className="rounded-lg border border-line bg-surface px-2 py-0.5 text-xs text-muted">{t}</span>
           ))}
-          {targets.length > 40 && <span className="px-1 py-0.5 text-xs text-faint">+{targets.length - 40}</span>}
+          {clean.length > 40 && <span className="px-1 py-0.5 text-xs text-faint">+{clean.length - 40}</span>}
         </div>
       )}
     </Modal>
@@ -152,6 +187,18 @@ function FolderManageModal({ open, onClose, folders, onChanged, onLoad }: {
   const [editingId, setEditingId] = useState<string | null>(null)
   const [draftName, setDraftName] = useState('')
   const [confirmId, setConfirmId] = useState<string | null>(null)
+  const [validatingId, setValidatingId] = useState<string | null>(null)
+
+  const validate = async (f: TargetFolder) => {
+    setValidatingId(f.id)
+    try {
+      const r = await validateFolder(f.id)
+      await onChanged()
+      pushToast({ type: 'success', title: 'Папка проверена', desc: `Рабочих: ${r.kept} · удалено мёртвых: ${r.removed} из ${r.checked}` })
+    } catch (e) {
+      pushToast({ type: 'error', title: 'Ошибка проверки', desc: e instanceof Error ? e.message : '' })
+    } finally { setValidatingId(null) }
+  }
 
   const rename = async (f: TargetFolder) => {
     if (!draftName.trim()) return
@@ -203,6 +250,7 @@ function FolderManageModal({ open, onClose, folders, onChanged, onLoad }: {
                     <div className="text-xs text-muted">{f.targets.length} целей</div>
                   </div>
                   <button type="button" onClick={() => { onLoad(f.targets); pushToast({ type: 'success', title: 'Загружено', desc: `${f.targets.length} целей` }) }} className="btn-icon h-8 w-8" title="Загрузить в цели"><Download size={15} /></button>
+                  <button type="button" onClick={() => void validate(f)} disabled={validatingId === f.id || !f.targets.length} className="btn-icon h-8 w-8 text-spark-400 disabled:opacity-40" title="Проверить и удалить мёртвые">{validatingId === f.id ? <Loader2 size={15} className="animate-spin" /> : <ShieldCheck size={15} />}</button>
                   <button type="button" onClick={() => { setEditingId(f.id); setDraftName(f.name) }} className="btn-icon h-8 w-8" title="Переименовать"><Pencil size={15} /></button>
                   <button type="button" onClick={() => setConfirmId(f.id)} className="btn-icon h-8 w-8 text-rose-300" title="Удалить"><Trash2 size={15} /></button>
                 </>

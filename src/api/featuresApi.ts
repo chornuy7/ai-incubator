@@ -100,3 +100,11 @@ export async function deleteFolder(id: string): Promise<void> {
   const data = await res.json()
   if (!res.ok || !data.ok) throw new Error(data.error || `HTTP ${res.status}`)
 }
+
+export interface ValidateResult { checked: number; kept: number; removed: number; folder: TargetFolder }
+
+/** Проверяет цели папки в Telegram и удаляет «мёртвые». */
+export async function validateFolder(id: string): Promise<ValidateResult> {
+  const data = await apiPost<ValidateResult>(`/api/target-folders/${id}/validate`)
+  return data
+}
