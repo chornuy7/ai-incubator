@@ -1,4 +1,4 @@
-import { generateComment, resolveSystemPrompt } from '../neuroCommenting/commentGenerator.js'
+import { generateComment, isAiGenerationEnabled, resolveSystemPrompt } from '../neuroCommenting/commentGenerator.js'
 import {
   fetchPosts,
   sendChannelComment,
@@ -8,6 +8,7 @@ import {
   getChannelMembersCount,
   fetchParticipants,
   fetchDialogs,
+  readUserHistory,
   markStoriesRead,
   viewRecentPosts,
   joinDiscussionGroupIfNeeded,
@@ -31,7 +32,7 @@ import {
   sleep,
 } from '../lib/protection.js'
 import { getAccountMeta, setAccountMeta } from '../accountsMeta.js'
-import { releaseTaskLocks, markTaskLive, markTaskDone } from '../lib/accountLocks.js'
+import { releaseTaskLocks, markTaskLive, markTaskDone, assertAccountAvailable } from '../lib/accountLocks.js'
 import { loadSessionString, createClient } from '../tgAuth.js'
 import { pickCommentCandidates, trackIdlePass } from '../lib/workerLoop.js'
 import { parseTelegramPostLinks, resolvePostPeer } from '../lib/postLink.js'
@@ -105,17 +106,27 @@ export async function runNeuroCommenting(task, store) {
   const prob = effectiveProbability(s.probability ?? 30, !!s.aiProtection, s.protectionLevel ?? 1)
   const chs = targets(s)
   let idx = 0
+  // idleLap считает подряд пропущенные аккаунты. Полный круг пропусков = никто не может работать
+  // (все выбрали лимит на аккаунт или недоступны), а общий лимit при малом числе аккаунтов может быть
+  // недостижим — без этого while крутился бы вхолостую на 100% CPU. Тогда завершаем задачу.
+  let idleLap = 0
   const accountIds = s.accountIds || []
 
   try {
     while (!task.stopRequested && !totalLimitReached(s, task)) {
+      if (idleLap >= accountIds.length) {
+        await store.appendLog(task, 'info', 'Все аккаунты исчерпали лимиты на эту задачу — завершаем')
+        break
+      }
       const accountId = accountIds[idx++ % accountIds.length]
       const meta = await getAccountMeta(accountId)
       if (!isAccountRunnable(meta.status || 'active')) {
+        idleLap += 1
         await store.appendLog(task, 'warning', `Пропуск: ${meta.status}`, meta.name)
         continue
       }
-      if (perAccountLimitReached(s, accountId, task)) continue
+      if (perAccountLimitReached(s, accountId, task)) { idleLap += 1; continue }
+      idleLap = 0
 
       let client
       let progressed = false
@@ -234,13 +245,19 @@ export async function runNeuroChatting(task, store) {
   const prob = effectiveProbability(s.probability ?? 30, !!s.aiProtection, s.protectionLevel ?? 1)
   const groups = targets(s)
   let idx = 0
+  let idleLap = 0
   const accountIds = s.accountIds || []
 
   try {
     while (!task.stopRequested && !totalLimitReached(s, task)) {
+      if (idleLap >= accountIds.length) {
+        await store.appendLog(task, 'info', 'Все аккаунты исчерпали лимиты на эту задачу — завершаем')
+        break
+      }
       const accountId = accountIds[idx++ % accountIds.length]
       const meta = await getAccountMeta(accountId)
-      if (!isAccountRunnable(meta.status || 'active') || perAccountLimitReached(s, accountId, task)) continue
+      if (!isAccountRunnable(meta.status || 'active') || perAccountLimitReached(s, accountId, task)) { idleLap += 1; continue }
+      idleLap = 0
       let client
       let progressed = false
       try {
@@ -321,13 +338,19 @@ export async function runMassReact(task, store) {
   // feature 10: исключаем посты из ЧС по username канала
   const fixedPosts = parseTelegramPostLinks(s.postUrls).filter((p) => !p.username || !isBlacklistedSync(p.username))
   let idx = 0
+  let idleLap = 0
   const accountIds = s.accountIds || []
 
   try {
     while (!task.stopRequested && !totalLimitReached(s, task)) {
+      if (idleLap >= accountIds.length) {
+        await store.appendLog(task, 'info', 'Все аккаунты исчерпали лимиты на эту задачу — завершаем')
+        break
+      }
       const accountId = accountIds[idx++ % accountIds.length]
       const meta = await getAccountMeta(accountId)
-      if (!isAccountRunnable(meta.status || 'active') || perAccountLimitReached(s, accountId, task)) continue
+      if (!isAccountRunnable(meta.status || 'active') || perAccountLimitReached(s, accountId, task)) { idleLap += 1; continue }
+      idleLap = 0
       let client
       try {
         ;({ client } = await connectAccount(accountId, task.id))
@@ -410,15 +433,21 @@ export async function runMassLooking(task, store) {
   const mul = delayMultiplier(s.protectionLevel ?? 1, s.delayPreset ?? 1)
   const tgs = targets(s)
   let idx = 0
+  let idleLap = 0
   const accountIds = s.accountIds || []
   const lookMode = ['stories', 'posts', 'both'].includes(s.lookMode) ? s.lookMode : 'stories'
   const postsCount = Math.min(Math.max(Math.trunc(Number(s.lookPostsCount) || 0) || 3, 1), 50)
 
   try {
     while (!task.stopRequested && !totalLimitReached(s, task)) {
+      if (idleLap >= accountIds.length) {
+        await store.appendLog(task, 'info', 'Все аккаунты исчерпали лимиты на эту задачу — завершаем')
+        break
+      }
       const accountId = accountIds[idx++ % accountIds.length]
       const meta = await getAccountMeta(accountId)
-      if (!isAccountRunnable(meta.status || 'active') || perAccountLimitReached(s, accountId, task)) continue
+      if (!isAccountRunnable(meta.status || 'active') || perAccountLimitReached(s, accountId, task)) { idleLap += 1; continue }
+      idleLap = 0
       let client
       try {
         ;({ client } = await connectAccount(accountId, task.id))
@@ -483,12 +512,18 @@ export async function runWarming(task, store) {
   const mul = delayMultiplier(s.protectionLevel ?? 1, s.delayPreset ?? 1)
   const accountIds = s.accountIds || []
   let idx = 0
+  let idleLap = 0
 
   try {
     while (!task.stopRequested && !totalLimitReached(s, task)) {
+      if (idleLap >= accountIds.length) {
+        await store.appendLog(task, 'info', 'Нет доступных аккаунтов для прогрева — завершаем')
+        break
+      }
       const accountId = accountIds[idx++ % accountIds.length]
       const meta = await getAccountMeta(accountId)
-      if (!isAccountRunnable(meta.status || 'active')) continue
+      if (!isAccountRunnable(meta.status || 'active')) { idleLap += 1; continue }
+      idleLap = 0
       let client
       try {
         ;({ client } = await connectAccount(accountId, task.id))
@@ -526,45 +561,130 @@ export async function runWarming(task, store) {
   await finalizeAccounts(accountIds, task.id)
 }
 
+/**
+ * Системный промпт для ЛС: промпт карточки + пользовательская инструкция и цель диалога.
+ * @param {object} settings @param {string} goal
+ */
+function dialogSystemPrompt(settings, goal) {
+  const base = resolveSystemPrompt(settings)
+  const rules = 'Ты ведёшь личную переписку в Telegram от лица владельца аккаунта. Отвечай на языке собеседника, коротко (1–3 предложения), живо и по-человечески. Никогда не сообщай, что ты ИИ или бот.'
+  return goal ? `${base}\n\n${rules}\n\nИнструкция и цель диалога:\n${goal}` : `${base}\n\n${rules}`
+}
+
+/**
+ * Стенограмма последних сообщений (от старых к новым) как контекст для модели.
+ * @param {Array<{out?: boolean, message?: string}>} msgs сообщения от новых к старым
+ */
+function buildDialogPrompt(msgs) {
+  const lines = []
+  let budget = 380 // generateComment обрезает промпт до 500 символов — держим самые свежие реплики
+  for (const m of msgs) {
+    const text = (m?.message || '').trim()
+    if (!text) continue
+    const line = `${m.out ? 'Я' : 'Собеседник'}: ${text.slice(0, 200)}`
+    if (line.length > budget) break
+    budget -= line.length + 1
+    lines.unshift(line)
+  }
+  if (!lines.length) return 'Собеседник: Привет'
+  return `Переписка:\n${lines.join('\n')}\n\nНапиши следующий ответ от лица «Я».`
+}
+
 /** @param {object} task @param {object} store */
 export async function runNeuroDialogs(task, store) {
   const s = task.settings
   task.startedAt = Date.now()
   task.status = 'running'
   await store.saveTask(task)
+  const replyAll = s.replyScope === 'all'
+  await store.appendLog(
+    task,
+    'info',
+    replyAll
+      ? 'НейроДиалоги запущены · авто-ответы всем, кто писал (включая уже прочитанные ЛС), сам первым не пишет'
+      : 'НейроДиалоги запущены · авто-ответы только на непрочитанные входящие ЛС (сам первым не пишет)',
+  )
+  const goal = (s.dialogGoal || '').trim()
+  if (goal) await store.appendLog(task, 'info', `Цель диалога: ${goal.slice(0, 120)}`)
   const mul = delayMultiplier(s.protectionLevel ?? 1, s.delayPreset ?? 1)
   const accountIds = s.accountIds || []
+  // Сколько ЛС один аккаунт отвечает за один заход, прежде чем уступить очередь следующему.
+  // Пачка ответов подряд с одного номера — самый быстрый путь к PEER_FLOOD и репортам.
+  const perPassCap = [2, 4, 6][s.protectionLevel ?? 1] ?? 4
   let idx = 0
+  let skips = 0
+  // Последнее входящее сообщение, на которое уже ответили: не отвечаем дважды на одно и то же,
+  // но отвечаем снова, когда собеседник напишет новое.
+  const answeredUpTo = new Map()
 
   try {
     while (!task.stopRequested && !totalLimitReached(s, task)) {
+      // Полный круг из пропусков (лимиты выбраны, аккаунты в карантине) — не крутим цикл вхолостую.
+      if (skips >= accountIds.length) {
+        skips = 0
+        await sleep(5000)
+        continue
+      }
       const accountId = accountIds[idx++ % accountIds.length]
       const meta = await getAccountMeta(accountId)
-      if (!isAccountRunnable(meta.status || 'active')) continue
+      if (!isAccountRunnable(meta.status || 'active')) {
+        skips += 1
+        await store.appendLog(task, 'warning', `Пропуск аккаунта: ${meta.status}`, meta.name)
+        continue
+      }
+      if (perAccountLimitReached(s, accountId, task)) {
+        skips += 1
+        continue
+      }
+      skips = 0
       let client
       try {
         ;({ client } = await connectAccount(accountId, task.id))
         const dialogs = await fetchDialogs(client, 20)
-        const unread = dialogs.filter((d) => d.unread > 0)
-        if (!unread.length) {
-          await store.appendLog(task, 'info', 'Нет непрочитанных ЛС', meta.name)
+        // Авто-режим отвечает только на личные диалоги (ЛС) с людьми — каналы, группы и боты пропускаются.
+        const personal = dialogs.filter((d) => d.entity?.className === 'User' && !d.entity?.bot)
+        // «Только новые» — непрочитанные. «Всем, кто писал» — любой диалог, где последнее слово за собеседником.
+        const waiting = personal.filter((d) => {
+          if (!replyAll) return d.unread > 0
+          if (d.lastOut || !d.lastMessageId) return false
+          return (answeredUpTo.get(`${accountId}:${d.id}`) ?? 0) < d.lastMessageId
+        })
+        const pending = waiting.slice(0, perPassCap)
+        await store.appendLog(
+          task,
+          'info',
+          `Диалогов просмотрено: ${dialogs.length} · личных: ${personal.length} · ${replyAll ? 'ждут ответа' : 'непрочитанных ЛС'}: ${waiting.length}`
+            + (waiting.length > pending.length ? ` · отвечаем ${pending.length}, остальные — на следующем круге` : ''),
+          meta.name,
+        )
+        if (!pending.length) {
           await disconnectAccount(client, accountId)
           await sleep(5000)
           continue
         }
-        const d = unread[0]
-        const msgs = await client.getMessages(d.entity, { limit: 3 })
-        const last = msgs[0]
-        const { text: reply, mode } = await generateComment(last?.message || 'Привет', s.promptIndex ?? 0, resolveSystemPrompt(s))
-        if (mode !== 'openai') {
-          await store.appendLog(task, 'warning', mode === 'template_no_key' ? 'Шаблон (нет OPENAI_API_KEY)' : 'Шаблон (OpenAI недоступен)', meta.name)
+        for (const d of pending) {
+          if (task.stopRequested || totalLimitReached(s, task) || perAccountLimitReached(s, accountId, task)) break
+          const msgs = await client.getMessages(d.entity, { limit: 6 })
+          const last = msgs[0]
+          const incoming = (last?.message || '').trim()
+          // Без OpenAI сработает шаблонный ответ — ему нужна реплика собеседника, а не стенограмма.
+          const prompt = isAiGenerationEnabled() ? buildDialogPrompt(msgs) : incoming || 'Привет'
+          const { text: reply, mode } = await generateComment(prompt, s.promptIndex ?? 0, dialogSystemPrompt(s, goal))
+          if (mode !== 'openai') {
+            await store.appendLog(task, 'warning', mode === 'template_no_key' ? 'Шаблонный ответ (нет OPENAI_API_KEY в .env)' : 'Шаблонный ответ (OpenAI недоступен)', meta.name)
+          }
+          await sleep(pickDelay(s.delays?.action?.[0] ?? 5, s.delays?.action?.[1] ?? 30, mul) * 1000)
+          await client.sendMessage(d.entity, { message: reply })
+          // Помечаем прочитанным, чтобы не отвечать повторно одному и тому же собеседнику.
+          await readUserHistory(client, d.entity)
+          answeredUpTo.set(`${accountId}:${d.id}`, Math.max(last?.id ?? 0, d.lastMessageId ?? 0))
+          task.accountStats[accountId] = task.accountStats[accountId] || { actions: 0, floodWaits: 0 }
+          task.accountStats[accountId].actions += 1
+          await bumpProgress(task, store)
+          await store.appendHistory(task, { id: `${task.id}_${Date.now()}`, ts: new Date().toISOString(), accountName: meta.name, target: d.name, text: reply, status: 'sent' })
+          const inPreview = incoming ? incoming.slice(0, 60) : '[без текста]'
+          await store.appendLog(task, 'success', `Ответ в ЛС «${d.name}» → «${reply.slice(0, 60)}» (на: «${inPreview}»)`, meta.name)
         }
-        await sleep(pickDelay(s.delays?.action?.[0] ?? 5, s.delays?.action?.[1] ?? 30, mul) * 1000)
-        await client.sendMessage(d.entity, { message: reply })
-        task.accountStats[accountId] = task.accountStats[accountId] || { actions: 0, floodWaits: 0 }
-        task.accountStats[accountId].actions += 1
-        await bumpProgress(task, store)
-        await store.appendLog(task, 'success', `Ответ в «${d.name}»`, meta.name)
         await disconnectAccount(client, accountId)
       } catch (err) {
         if (client) await disconnectAccount(client, accountId)
@@ -576,7 +696,7 @@ export async function runNeuroDialogs(task, store) {
       await sleep(pickDelay(10, 25, mul) * 1000)
     }
     task.status = task.stopRequested ? 'stopped' : 'done'
-    await store.appendLog(task, 'info', 'Завершено')
+    await store.appendLog(task, 'info', task.status === 'stopped' ? 'Остановлено' : 'Завершено')
   } catch (err) {
     task.status = 'error'
     await store.appendLog(task, 'error', err instanceof Error ? err.message : 'Ошибка')
@@ -585,53 +705,79 @@ export async function runNeuroDialogs(task, store) {
   await finalizeAccounts(accountIds, task.id)
 }
 
+/** Статусы, которые GGR не имеет права перезатирать успешной проверкой сессии. */
+const GGR_PROTECTED_STATUSES = new Set(['quarantine', 'spamblock', 'banned'])
+
+/** Ошибка означает, что сессия действительно мертва (а не сеть/прокси моргнули). */
+function isDeadSessionError(err) {
+  const msg = `${err?.errorMessage || err?.message || ''}`
+  return /NO_SESSION|AUTH_KEY|SESSION_REVOKED|SESSION_EXPIRED|USER_DEACTIVATED|UNAUTHORIZED/i.test(msg)
+}
+
 /** @param {object} task @param {object} store */
 export async function runGgr(task, store) {
   const s = task.settings
   task.startedAt = Date.now()
   task.status = 'running'
-  await store.saveTask(task)
-  const accountIds = s.accountIds?.length ? s.accountIds : []
-  const allIds = accountIds.length ? accountIds : []
+  const allIds = [...(s.accountIds || [])]
 
   if (!allIds.length) {
     const { loadAllMeta } = await import('../accountsMeta.js')
     const meta = await loadAllMeta()
     allIds.push(...Object.keys(meta).filter((id) => !meta[id].inTrash))
   }
+  task.progress.total = allIds.length
+  await store.saveTask(task)
+  await store.appendLog(task, 'info', `GGR-проверка: ${allIds.length} аккаунтов`)
 
   try {
     for (const accountId of allIds) {
       if (task.stopRequested) break
       const meta = await getAccountMeta(accountId)
-      let score = 0
-      let status = 'invalid'
+
+      // Аккаунт, занятый другой задачей, не трогаем: параллельный коннект той же сессией
+      // роняет обе задачи и может выглядеть для Telegram как угон сессии.
+      try {
+        assertAccountAvailable(accountId, task.id)
+      } catch {
+        await store.appendLog(task, 'warning', 'Аккаунт занят другим модулем — пропущен', meta.name)
+        continue
+      }
+
       let client
       try {
         const sessionStr = await loadSessionString(accountId)
-        if (!sessionStr) throw new Error('no session')
+        if (!sessionStr) throw new Error('NO_SESSION')
         client = await createClient(sessionStr, meta.proxy)
         const me = await client.getMe()
-        score = 50
+        let score = 50
         if (me.username) score += 15
         if (me.phone) score += 10
-        status = 'valid'
         await client.disconnect()
-        await setAccountMeta(accountId, { status: 'active', ggrScore: score })
+        // Карантин/спамблок/бан — «сессия жива, но аккаунт наказан». Статус не понижаем и не поднимаем.
+        const nextStatus = GGR_PROTECTED_STATUSES.has(meta.status) ? meta.status : 'active'
+        await setAccountMeta(accountId, { status: nextStatus, ggrScore: score })
         task.results.push({ accountId, name: meta.name, score, status: 'valid' })
         await store.appendLog(task, 'success', `GGR ${score}/100 — ${meta.name}`, meta.name)
-      } catch {
+      } catch (err) {
         if (client) try { await client.disconnect() } catch { /* */ }
-        task.results.push({ accountId, name: meta.name, score: 0, status: 'invalid' })
-        await setAccountMeta(accountId, { status: 'reauth', ggrScore: 0 })
-        await store.appendLog(task, 'error', `Невалидная сессия — ${meta.name}`, meta.name)
+        if (isDeadSessionError(err)) {
+          task.results.push({ accountId, name: meta.name, score: 0, status: 'invalid' })
+          await setAccountMeta(accountId, { status: 'reauth', ggrScore: 0 })
+          await store.appendLog(task, 'error', `Невалидная сессия — ${meta.name}`, meta.name)
+        } else {
+          // Сеть, прокси, таймаут, FloodWait — сессия не виновата, статус и балл не трогаем.
+          task.results.push({ accountId, name: meta.name, score: meta.ggrScore ?? 0, status: 'error' })
+          await store.appendLog(task, 'warning', `Проверка не удалась: ${mapTelegramError(err)}`, meta.name)
+        }
       }
       task.progress.actionsDone = (task.progress.actionsDone || 0) + 1
       task.progress.done = task.progress.actionsDone
       await store.saveTask(task)
     }
-    task.status = 'done'
-    await store.appendLog(task, 'info', `Проверено ${task.results.length} аккаунтов`)
+    task.status = task.stopRequested ? 'stopped' : 'done'
+    const valid = task.results.filter((r) => r.status === 'valid').length
+    await store.appendLog(task, 'info', `Проверено ${task.results.length} аккаунтов · валидных ${valid}`)
   } catch (err) {
     task.status = 'error'
     await store.appendLog(task, 'error', err instanceof Error ? err.message : 'Ошибка')

@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useLocation } from 'react-router-dom'
-import { BookOpen, HelpCircle, Layers, Lightbulb, Loader2, Send, Sparkles, Workflow, X } from 'lucide-react'
+import { BookOpen, HelpCircle, Layers, Lightbulb, Loader2, Send, Shield, ShieldAlert, Sparkles, Workflow, X } from 'lucide-react'
 import { useUi } from '@/shared/lib/uiStore'
 import { findHelpDoc, type HelpDoc } from '@/shared/config/helpDocs'
+import { PROTECTION_STEPS } from '@/shared/config/protectionInfo'
 import { apiGet, apiPost } from '@/api/client'
 import { cn } from '@/shared/lib/utils'
 
@@ -55,6 +56,18 @@ function HelpDocView({ doc }: { doc: HelpDoc }) {
       <DocSection icon={<Layers size={15} />} title="Как работает вместе с другими модулями" accent={accent}>{doc.together}</DocSection>
       <DocSection icon={<Lightbulb size={15} />} title="Пример результата" accent={accent}>{doc.example}</DocSection>
 
+      {doc.risks ? (
+        <div className="rounded-2xl border border-amber-500/30 bg-amber-500/8 p-3.5">
+          <div className="mb-1.5 flex items-center gap-2">
+            <span className="grid h-7 w-7 place-items-center rounded-lg bg-amber-500/12 text-amber-400">
+              <ShieldAlert size={15} />
+            </span>
+            <span className="text-xs font-bold uppercase tracking-wide text-amber-200/80">Риски и безопасность</span>
+          </div>
+          <div className="whitespace-pre-wrap text-sm leading-relaxed text-fg">{doc.risks}</div>
+        </div>
+      ) : null}
+
       {doc.tips?.length ? (
         <div className="rounded-2xl border border-line bg-elevated/40 p-3.5">
           <div className="mb-1.5 flex items-center gap-2">
@@ -71,6 +84,34 @@ function HelpDocView({ doc }: { doc: HelpDoc }) {
           </ul>
         </div>
       ) : null}
+
+      <ProtectionDocSection />
+    </div>
+  )
+}
+
+/** Общий раздел «Защита аккаунтов» — одинаков для всех модулей, поэтому вынесен отдельно. */
+function ProtectionDocSection() {
+  return (
+    <div className="rounded-2xl border border-spark-500/30 bg-spark-500/8 p-3.5">
+      <div className="mb-2 flex items-center gap-2">
+        <span className="grid h-7 w-7 place-items-center rounded-lg bg-spark-500/15 text-spark-400">
+          <Shield size={15} />
+        </span>
+        <span className="text-xs font-bold uppercase tracking-wide text-spark-300">Защита аккаунтов — как работает</span>
+      </div>
+      <p className="mb-2 text-xs leading-relaxed text-muted">
+        Общий механизм для всех модулей. Уровень (Консервативный / Сбалансированный / Агрессивный) и пресет задержек
+        задаются в блоке «Защита аккаунтов» и секции «Тайминги и задержки» модуля; глобальные политики — в ИИ-безопасности.
+      </p>
+      <ul className="space-y-2">
+        {PROTECTION_STEPS.map((s) => (
+          <li key={s.title} className="rounded-xl border border-line bg-elevated/50 p-2.5">
+            <div className="text-xs font-bold text-fg">{s.title}</div>
+            <div className="mt-0.5 text-[11px] leading-relaxed text-muted">{s.body}</div>
+          </li>
+        ))}
+      </ul>
     </div>
   )
 }

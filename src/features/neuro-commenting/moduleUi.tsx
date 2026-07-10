@@ -13,6 +13,35 @@ function clampInt(raw: number | string, min: number, max?: number) {
   return n
 }
 
+/** Кнопка Help Center для карточек, которые не построены на SectionCard. */
+export function HelpButton({ topic, className }: { topic: string; className?: string }) {
+  const setHelpTopic = useUi((s) => s.setHelpTopic)
+  const setHelpOpen = useUi((s) => s.setHelpOpen)
+
+  return (
+    <span
+      role="button"
+      tabIndex={0}
+      title="Help Center"
+      aria-label="Help Center"
+      onClick={(e) => { e.stopPropagation(); setHelpTopic(topic); setHelpOpen(true) }}
+      onKeyDown={(e) => {
+        if (e.key !== 'Enter' && e.key !== ' ') return
+        e.preventDefault()
+        e.stopPropagation()
+        setHelpTopic(topic)
+        setHelpOpen(true)
+      }}
+      className={cn(
+        'grid h-8 w-8 shrink-0 cursor-pointer place-items-center rounded-xl bg-spark-gradient text-[#04150c] shadow-pop transition-transform hover:scale-[1.03]',
+        className,
+      )}
+    >
+      <HelpCircle size={16} />
+    </span>
+  )
+}
+
 export function SectionCard({ icon, title, badge, right, children }: {
   icon: React.ReactNode; title: string; badge?: string; right?: React.ReactNode; children: React.ReactNode
 }) {

@@ -301,7 +301,23 @@ export async function fetchDialogs(client, limit = 30) {
     name: d.title || d.name || '—',
     unread: d.unreadCount || 0,
     entity: d.entity,
+    lastOut: Boolean(d.message?.out),
+    lastMessageId: d.message?.id ?? 0,
   }))
+}
+
+/**
+ * Помечает диалог (ЛС) прочитанным по уже резолвнутому entity.
+ * Используется авто-воркером НейроДиалогов, чтобы не отвечать повторно одному собеседнику.
+ * @param {import('telegram').TelegramClient} client @param {import('@types/telegram').Entity} entity
+ */
+export async function readUserHistory(client, entity) {
+  try {
+    await client.invoke(new Api.messages.ReadHistory({ peer: entity, maxId: 0 }))
+    return true
+  } catch {
+    return false
+  }
 }
 
 /** @param {import('telegram').TelegramClient} client @param {import('@types/telegram').Entity} peer */

@@ -20,15 +20,21 @@ import {
 import { useModuleTask } from '@/features/modules/shared/useModuleTask'
 import {
   SectionCard,
+  HelpButton,
   LaunchPanel,
   PromptCards,
   loadPromptBodies,
   ProtectionBlock,
   AiGenerationNotice,
+  TimingSection,
+  type DelaysShape,
 } from '@/features/modules/shared'
 import type { ModuleTaskSettings } from '@/api/modulesApi'
 
 const cfg = MODULES['neuro-dialogs']!
+
+const GOAL_KEY = 'neuro-dialogs:goal'
+const SCOPE_KEY = 'neuro-dialogs:replyAll'
 
 function peerRef(d: Pick<InboxDialog, 'peerId' | 'accessHash' | 'username'>) {
   return { peerId: d.peerId, accessHash: d.accessHash, username: d.username || undefined }
@@ -99,20 +105,37 @@ const MessageBubble = memo(function MessageBubble({ m }: { m: DialogMessage }) {
 
 export function NeuroDialogsModule() {
   const pushToast = useApp((s) => s.pushToast)
-  const { task, running, starting, start, stop, savePreset } = useModuleTask('neuro-dialogs')
+  const { task, running, starting, start, stop, savePreset, deletePreset, presets } = useModuleTask('neuro-dialogs')
 
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [viewTab, setViewTab] = useState(0)
   const [aiOpen, setAiOpen] = useState(true)
   const [aiEnabled, setAiEnabled] = useState(true)
+  const [replyAll, setReplyAll] = useState(() => localStorage.getItem(SCOPE_KEY) === '1')
+  const [dialogGoal, setDialogGoal] = useState(() => localStorage.getItem(GOAL_KEY) ?? '')
   const [aiProtect, setAiProtect] = useState(true)
   const [protLevel, setProtLevel] = useState(1)
   const [activePrompt, setActivePrompt] = useState(0)
   const [promptBodies, setPromptBodies] = useState(() =>
     loadPromptBodies('neuro-dialogs', cfg.messagePrompts ?? []),
   )
-  const maxActions = 50
-  const maxPerAcc = 10
+  // Лимиты для ЛС. Важно: общий лимит и лимит на аккаунт — это ДИАПАЗОН [min, max],
+  // из которого воркер берёт случайное число (антидетект). Для авто-ответчика min по умолчанию
+  // равен max, иначе цель могла бы выпасть в 0–1 и задача завершалась бы после первого ответа.
+  // Лимит на аккаунт держим равным общему, чтобы один аккаунт не «упирался» раньше времени
+  // и монитор не висел в статусе «работает», ничего не отвечая.
+  const [maxActions, setMaxActions] = useState(50)
+  const [minActions, setMinActions] = useState(50)
+  const [maxPerAcc, setMaxPerAcc] = useState(50)
+  const [minPerAcc, setMinPerAcc] = useState(50)
+  const [delayPreset, setDelayPreset] = useState(1)
+  const [delays, setDelays] = useState<DelaysShape>({
+    comment: [30, 120],
+    action: [20, 90],
+    join: [84, 156],
+    floodWait: 120,
+    floodQuarantine: 3,
+  })
 
   const [search, setSearch] = useState('')
   const [dialogs, setDialogs] = useState<InboxDialog[]>([])
@@ -143,6 +166,9 @@ export function NeuroDialogsModule() {
 
   const totalUnread = useMemo(() => dialogs.reduce((s, d) => s + (d.unread || 0), 0), [dialogs])
 
+  useEffect(() => { localStorage.setItem(GOAL_KEY, dialogGoal) }, [dialogGoal])
+  useEffect(() => { localStorage.setItem(SCOPE_KEY, replyAll ? '1' : '0') }, [replyAll])
+
   const buildSettings = useCallback((): ModuleTaskSettings => ({
     accountIds,
     aiProtection: aiProtect,
@@ -151,9 +177,32 @@ export function NeuroDialogsModule() {
     promptText: promptBodies[activePrompt],
     promptOverrides: promptBodies,
     maxActions,
+    minActions,
     maxPerAccount: maxPerAcc,
+    minPerAccount: minPerAcc,
+    delayPreset,
+    delays,
     probability: aiEnabled ? 100 : 0,
-  }), [accountIds, aiProtect, protLevel, activePrompt, promptBodies, maxActions, maxPerAcc, aiEnabled])
+    replyScope: replyAll ? 'all' : 'unread',
+    dialogGoal: dialogGoal.trim(),
+  }), [accountIds, aiProtect, protLevel, activePrompt, promptBodies, maxActions, minActions, maxPerAcc, minPerAcc, delayPreset, delays, aiEnabled, replyAll, dialogGoal])
+
+  const applyPreset = useCallback((s: ModuleTaskSettings) => {
+    if (s.aiProtection !== undefined) setAiProtect(s.aiProtection)
+    if (s.protectionLevel !== undefined) setProtLevel(s.protectionLevel)
+    if (s.promptIndex !== undefined) setActivePrompt(s.promptIndex)
+    if (Array.isArray(s.promptOverrides)) setPromptBodies(s.promptOverrides)
+    if (s.maxActions !== undefined) setMaxActions(s.maxActions)
+    if (s.minActions !== undefined) setMinActions(s.minActions)
+    if (s.maxPerAccount !== undefined) setMaxPerAcc(s.maxPerAccount)
+    if (s.minPerAccount !== undefined) setMinPerAcc(s.minPerAccount)
+    if (s.delayPreset !== undefined) setDelayPreset(s.delayPreset)
+    if (s.delays) setDelays((d) => ({ ...d, ...s.delays }))
+    if (s.probability !== undefined) setAiEnabled(s.probability > 0)
+    if (s.replyScope) setReplyAll(s.replyScope === 'all')
+    if (typeof s.dialogGoal === 'string') setDialogGoal(s.dialogGoal)
+    pushToast({ type: 'success', title: 'Пресет применён' })
+  }, [pushToast])
 
   const loadInbox = useCallback(async (silent = false) => {
     if (!accountIds.length) {
@@ -260,18 +309,21 @@ export function NeuroDialogsModule() {
       />
 
       <div className="card p-0">
-        <button
-          type="button"
-          onClick={() => setAiOpen((v) => !v)}
-          className="flex w-full items-center gap-3 px-4 py-3.5 text-left"
-        >
-          <span className="grid h-9 w-9 place-items-center rounded-xl bg-iris-500/12 text-iris-400">
-            <Sparkles size={18} />
-          </span>
-          <span className="font-display text-base font-bold text-fg">ИИ авто-ответы</span>
-          <Badge tone={aiEnabled ? 'spark' : 'muted'}>{aiEnabled ? 'включено' : 'выключено'}</Badge>
-          <ChevronDown size={16} className={cn('ml-auto text-muted transition-transform', !aiOpen && '-rotate-90')} />
-        </button>
+        <div className="flex items-center gap-3 px-4 py-3.5">
+          <button
+            type="button"
+            onClick={() => setAiOpen((v) => !v)}
+            className="flex min-w-0 flex-1 items-center gap-3 text-left"
+          >
+            <span className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-iris-500/12 text-iris-400">
+              <Sparkles size={18} />
+            </span>
+            <span className="font-display text-base font-bold text-fg">ИИ авто-ответы</span>
+            <Badge tone={aiEnabled ? 'spark' : 'muted'}>{aiEnabled ? 'включено' : 'выключено'}</Badge>
+            <ChevronDown size={16} className={cn('ml-auto text-muted transition-transform', !aiOpen && '-rotate-90')} />
+          </button>
+          <HelpButton topic="НейроДиалоги" />
+        </div>
         {aiOpen && (
           <div className="space-y-4 border-t border-line p-4">
             <Switch
@@ -280,6 +332,47 @@ export function NeuroDialogsModule() {
               label="Отвечать на входящие автоматически"
               desc="ИИ генерирует ответы на новые ЛС при запущенном модуле"
             />
+            <Switch
+              checked={replyAll}
+              onChange={setReplyAll}
+              label="Отвечать всем, кто писал"
+              desc="Не только новым: ИИ ответит в каждом ЛС, где последнее сообщение от собеседника — даже если оно уже прочитано"
+            />
+
+            <div className="space-y-2">
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-sm font-semibold text-fg">Инструкция для ИИ · цель диалога</span>
+                <span className="text-[11px] text-faint">{dialogGoal.trim().length} симв.</span>
+              </div>
+              <textarea
+                value={dialogGoal}
+                onChange={(e) => setDialogGoal(e.target.value)}
+                rows={4}
+                className="input w-full resize-none text-sm"
+                placeholder={
+                  'Ты — менеджер студии Auto Mapping.\n' +
+                  'Цель: выяснить задачу клиента и пригласить на бесплатный созвон.\n' +
+                  'Отвечай коротко, на «ты», задавай один уточняющий вопрос за раз.'
+                }
+              />
+              <p className="text-xs leading-relaxed text-muted">
+                Добавляется к выбранному промпту и применяется к каждому авто-ответу: кем быть, как общаться и к чему вести диалог.
+              </p>
+            </div>
+
+            <p className="rounded-xl border border-line bg-elevated/60 px-3 py-2 text-xs leading-relaxed text-muted">
+              Авто-режим (кнопка «Запустить») отвечает {replyAll
+                ? <b className="text-fg">всем, кто написал последним</b>
+                : <b className="text-fg">только на непрочитанные входящие ЛС</b>} выбранных аккаунтов — сам первым никому не пишет.
+              Без ключа OpenAI ответы будут шаблонными и цель диалога учтена не будет. Вкладка <b className="text-fg">«Переписки»</b> ниже — ручной инбокс: читайте и отвечайте руками.
+            </p>
+            {replyAll && (
+              <p className="rounded-xl border border-amber-500/30 bg-amber-500/8 px-3 py-2 text-xs leading-relaxed text-amber-200/90">
+                Разбор накопившихся ЛС — самый рискованный режим: пачка ответов подряд с одного номера ловит PEER_FLOOD и репорты.
+                Аккаунт отвечает не более чем в {[2, 4, 6][protLevel]} диалогах за заход и уходит в конец очереди, но лимиты и задержки
+                в секции <b className="text-fg">«Тайминги и задержки»</b> всё равно стоит проверить перед первым запуском.
+              </p>
+            )}
             <ProtectionBlock enabled={aiProtect} onEnabled={setAiProtect} level={protLevel} onLevel={setProtLevel} />
             {cfg.messagePrompts && (
               <div className="space-y-3">
@@ -297,12 +390,32 @@ export function NeuroDialogsModule() {
         )}
       </div>
 
+      <TimingSection
+        totalLabel="Ответов за запуск"
+        total={{ min: minActions, max: maxActions, onMin: setMinActions, onMax: setMaxActions }}
+        perAccount={{ min: minPerAcc, max: maxPerAcc, onMin: setMinPerAcc, onMax: setMaxPerAcc }}
+        delays={delays}
+        onDelays={(updater) => setDelays(updater)}
+        showComment={false}
+        showAction
+        showJoin={false}
+        labels={{ action: 'Задержка между ответами' }}
+        delayPresets={['Мин', 'Рекомендуемые', 'Макс']}
+        delayPreset={delayPreset}
+        onDelayPreset={setDelayPreset}
+      />
+
+      <p className="rounded-xl border border-line bg-elevated/60 px-3 py-2 text-xs leading-relaxed text-muted">
+        «Ответов за запуск» и «На аккаунт» — это диапазон: воркер берёт случайное число между «от» и «до» (для маскировки под живого человека).
+        Если поставить «от» = 0, задача может случайно завершиться после первого же ответа. По умолчанию «от» = «до», то есть лимит фиксированный.
+      </p>
+
       <SectionCard icon={<Play size={18} />} title={running ? 'Мониторинг' : 'Запуск'} badge={running ? 'LIVE' : undefined}>
         <LaunchPanel
           running={running}
           starting={starting}
           canStart={canStart}
-          onStart={() => void start(buildSettings(), `${cfg.title} · ${selected.size} акк.`)}
+          onStart={() => { setViewTab(1); void start(buildSettings(), `${cfg.title} · ${selected.size} акк.`) }}
           onStop={stop}
           onSave={() => {
             const name = window.prompt('Название пресета')
@@ -317,9 +430,12 @@ export function NeuroDialogsModule() {
           ]}
           task={task}
           warn={!canStart ? 'Выберите хотя бы один аккаунт' : undefined}
+          presets={presets}
+          onApplyPreset={applyPreset}
+          onDeletePreset={deletePreset}
         />
         <div className="mt-4">
-          <Segmented options={['Переписки', 'Логи']} value={viewTab} onChange={setViewTab} size="sm" />
+          <Segmented options={['Переписки', logs.length ? `Логи · ${logs.length}` : 'Логи']} value={viewTab} onChange={setViewTab} size="sm" />
         </div>
       </SectionCard>
 
@@ -347,6 +463,7 @@ export function NeuroDialogsModule() {
               >
                 {inboxLoading ? <Loader2 size={16} className="animate-spin" /> : <RefreshCw size={15} />}
               </button>
+              <HelpButton topic="НейроДиалоги" className="h-9 w-9" />
             </div>
 
             <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain lg:max-h-[calc(100vh-280px)]">

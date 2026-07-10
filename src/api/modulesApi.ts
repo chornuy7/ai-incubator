@@ -1,5 +1,5 @@
 import type { LogEntry } from '@/shared/types'
-import { apiGet, apiPost } from './client'
+import { apiGet, apiPost, apiDelete } from './client'
 
 export interface ModuleTaskSettings {
   accountIds: string[]
@@ -48,6 +48,9 @@ export interface ModuleTaskSettings {
   userSource?: 'participants' | 'writers' // как парсить users: список участников или кто писал в чате
   delayChat?: number
   delayItem?: number
+  // ── НейроДиалоги ──
+  replyScope?: 'unread' | 'all' // 'unread' — только новые ЛС, 'all' — все, где последнее слово за собеседником
+  dialogGoal?: string // инструкция для ИИ: как себя вести и к чему вести диалог
   // ── Масслукинг: что смотреть и сколько последних постов ──
   lookMode?: 'stories' | 'posts' | 'both'
   lookPostsCount?: number
@@ -106,12 +109,24 @@ export async function stopModuleTask(moduleKey: string, taskId: string): Promise
   return data.task
 }
 
+export interface ModulePreset {
+  id: string
+  name: string
+  createdAt: number
+  settings: ModuleTaskSettings
+}
+
 export async function saveModulePreset(moduleKey: string, name: string, settings: ModuleTaskSettings) {
   return apiPost(`${base(moduleKey)}/presets`, { name, settings })
 }
 
 export async function fetchModulePresets(moduleKey: string) {
-  const data = await apiGet<{ presets: { id: string; name: string; createdAt: number }[] }>(`${base(moduleKey)}/presets`)
+  const data = await apiGet<{ presets: ModulePreset[] }>(`${base(moduleKey)}/presets`)
+  return data.presets
+}
+
+export async function deleteModulePreset(moduleKey: string, id: string) {
+  const data = await apiDelete<{ presets: Omit<ModulePreset, 'settings'>[] }>(`${base(moduleKey)}/presets/${id}`)
   return data.presets
 }
 

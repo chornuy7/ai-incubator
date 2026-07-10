@@ -34,7 +34,7 @@ export function LiveModule({ moduleKey }: { moduleKey: string }) {
 
 function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: string }) {
   const accounts = activeAccounts(useApp((s) => s.data))
-  const { task, running, starting, start, stop, savePreset, pushToast } = useModuleTask(moduleKey)
+  const { task, running, starting, start, stop, savePreset, deletePreset, presets, pushToast } = useModuleTask(moduleKey)
 
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [toggles, setToggles] = useState<Record<number, number>>({})
@@ -153,6 +153,33 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
     if (name?.trim()) void savePreset(name.trim(), buildSettings())
   }
 
+  // Восстанавливает настройки из пресета в форму (аккаунты не трогаем — они ситуативны).
+  const applyPreset = useCallback((s: ModuleTaskSettings) => {
+    setToggles({ 0: s.commentMode ?? 0, 1: s.workMode ?? 0, 2: s.postFilter ?? 0 })
+    if (s.aiProtection !== undefined) setAiProtect(s.aiProtection)
+    if (s.protectionLevel !== undefined) setProtLevel(s.protectionLevel)
+    if (s.probability !== undefined) setProbability(s.probability)
+    if (s.maxActions !== undefined) setMaxActions(s.maxActions)
+    if (s.minActions !== undefined) setMinActions(s.minActions)
+    if (s.maxPerAccount !== undefined) setMaxPerAcc(s.maxPerAccount)
+    if (s.minPerAccount !== undefined) setMinPerAcc(s.minPerAccount)
+    if (s.minWords !== undefined) setMinWords(s.minWords)
+    if (s.durationMinutes !== undefined) setDurationMinutes(s.durationMinutes)
+    if (Array.isArray(s.keywords)) setKeywords(s.keywords.join(', '))
+    if (s.promptIndex !== undefined) setActivePrompt(s.promptIndex)
+    if (Array.isArray(s.promptOverrides)) setPromptBodies(s.promptOverrides)
+    if (s.delayPreset !== undefined) setDelayPreset(s.delayPreset)
+    if (s.delays) setDelays((d) => ({ ...d, ...s.delays }))
+    if (Array.isArray(s.emojis)) setPalette(new Set(s.emojis))
+    if (Array.isArray(s.targets)) setTargets(s.targets)
+    if (s.lookMode && cfg.lookModeOptions) {
+      const i = cfg.lookModeOptions.findIndex((o) => o.value === s.lookMode)
+      if (i >= 0) setLookModeIdx(i)
+    }
+    if (s.lookPostsCount !== undefined) setLookPostsCount(s.lookPostsCount)
+    pushToast({ type: 'success', title: 'Пресет применён' })
+  }, [cfg.lookModeOptions, pushToast])
+
   const logs = task?.logs ?? []
   const history = task?.commentHistory ?? task?.history ?? []
   const results = task?.results ?? []
@@ -180,7 +207,7 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
         <AccountPicker selected={selected} onChange={setSelected} actions={cfg.accountActions} withFilters={!!cfg.accountFilters} selectedTitle={cfg.selectedTitle ?? 'Выбрано'} />
       )}
 
-      {(cfg.aiProtection || cfg.richLayout || cfg.lookingLayout || cfg.warmingLayout) && (
+      {(cfg.aiProtection || cfg.richLayout || cfg.lookingLayout || cfg.warmingLayout || isGgr) && (
         <SectionCard icon={<Settings2 size={18} />} title={cfg.settingsTitle ?? 'Настройки'} badge={targets.length ? `${targets.length} целей` : undefined}>
           {cfg.aiProtection && <ProtectionBlock enabled={aiProtect} onEnabled={setAiProtect} level={protLevel} onLevel={setProtLevel} />}
 
@@ -212,7 +239,29 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
               <NumberField label="Лимит результатов" value={maxActions} onChange={setMaxActions} />
             </div>
           ) : isGgr ? (
-            <p className="text-sm text-muted">Проверка всех аккаунтов панели: сессия, профиль, базовый GGR-скоринг.</p>
+            <div className="space-y-3 text-sm text-muted">
+              <p>
+                Проверка идёт по всем аккаунтам панели: подключаем сессию, запрашиваем профиль и складываем балл.
+                Настраивать нечего — жмите «{cfg.primaryAction ?? 'Проверить все'}».
+              </p>
+              <div className="grid gap-2 sm:grid-cols-3">
+                {[
+                  ['Живая сессия', '+50'],
+                  ['Есть @username', '+15'],
+                  ['Привязан телефон', '+10'],
+                ].map(([label, pts]) => (
+                  <div key={label} className="flex items-center justify-between rounded-xl border border-line bg-elevated/40 px-3 py-2">
+                    <span className="text-xs text-muted">{label}</span>
+                    <span className="text-sm font-bold text-iris-300">{pts}</span>
+                  </div>
+                ))}
+              </div>
+              <p className="text-xs">
+                Валидный аккаунт получает статус «активный» и сохранённый балл. Мёртвая сессия — 0 и «разавторизирован».
+                Сетевые ошибки и таймауты не понижают балл, аккаунты в карантине и спамблоке проверка не «лечит».
+                Занятые другим модулем аккаунты пропускаются.
+              </p>
+            </div>
           ) : cfg.lookingLayout && cfg.lookModeOptions ? (
             <div className="rounded-2xl border border-line bg-elevated/40 p-4 space-y-4">
               <ToggleGroup
@@ -361,6 +410,9 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
           stats={launchStats}
           task={task}
           warn={warn}
+          presets={presets}
+          onApplyPreset={applyPreset}
+          onDeletePreset={deletePreset}
         />
         <div className="mt-4 flex flex-wrap items-center gap-3">
           <Segmented options={['Визуал', 'Логи']} value={viewTab} onChange={setViewTab} size="sm" />

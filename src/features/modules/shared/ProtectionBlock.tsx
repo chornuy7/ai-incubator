@@ -1,6 +1,8 @@
-import { Shield, Settings2, Bolt, HelpCircle } from 'lucide-react'
+import { useState } from 'react'
+import { Shield, Settings2, Bolt, HelpCircle, ChevronDown } from 'lucide-react'
 import { Badge, Switch } from '@/shared/ui'
 import { cn } from '@/shared/lib/utils'
+import { PROTECTION_STEPS } from '@/shared/config/protectionInfo'
 
 const LEVELS = [
   {
@@ -51,6 +53,7 @@ function InfoTip({ text, className }: { text: string; className?: string }) {
 export function ProtectionBlock({ enabled, onEnabled, level, onLevel }: {
   enabled: boolean; onEnabled: (v: boolean) => void; level: number; onLevel: (n: number) => void
 }) {
+  const [howOpen, setHowOpen] = useState(false)
   return (
     <div className="mb-4 rounded-2xl border border-spark-500/40 bg-spark-500/8 p-4">
       <div className="flex items-center gap-3">
@@ -102,6 +105,26 @@ export function ProtectionBlock({ enabled, onEnabled, level, onLevel }: {
           })}
         </div>
       )}
+      <div className="mt-3 border-t border-spark-500/20 pt-3">
+        <button
+          type="button"
+          onClick={() => setHowOpen((v) => !v)}
+          className="flex w-full items-center gap-1.5 text-left text-xs font-bold uppercase tracking-wide text-spark-300"
+        >
+          <ChevronDown size={14} className={cn('transition-transform', !howOpen && '-rotate-90')} />
+          Как работает защита
+        </button>
+        {howOpen && (
+          <ul className="mt-2 space-y-2">
+            {PROTECTION_STEPS.map((s) => (
+              <li key={s.title} className="rounded-xl border border-line bg-elevated/50 p-2.5">
+                <div className="text-xs font-bold text-fg">{s.title}</div>
+                <div className="mt-0.5 text-[11px] leading-relaxed text-muted">{s.body}</div>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
     </div>
   )
 }

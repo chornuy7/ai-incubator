@@ -7,8 +7,10 @@ import {
   stopModuleTask,
   saveModulePreset,
   fetchModulePresets,
+  deleteModulePreset,
   type ModuleTask,
   type ModuleTaskSettings,
+  type ModulePreset,
 } from '@/api/modulesApi'
 import { persistActiveTaskId, readActiveTaskId, pickTaskIdToRestore, mapTaskStatus } from './activeTaskStorage'
 
@@ -24,7 +26,7 @@ export function useModuleTask(moduleKey: string) {
   const [task, setTask] = useState<ModuleTask | null>(null)
   const [starting, setStarting] = useState(false)
   const [restoring, setRestoring] = useState(true)
-  const [presets, setPresets] = useState<{ id: string; name: string }[]>([])
+  const [presets, setPresets] = useState<ModulePreset[]>([])
 
   const running = task?.status === 'running' || task?.status === 'queued'
 
@@ -50,7 +52,7 @@ export function useModuleTask(moduleKey: string) {
   }, [moduleKey, addTask, updateTask])
 
   useEffect(() => {
-    void fetchModulePresets(moduleKey).then((p) => setPresets(p.map((x) => ({ id: x.id, name: x.name })))).catch(() => {})
+    void fetchModulePresets(moduleKey).then(setPresets).catch(() => {})
   }, [moduleKey])
 
   useEffect(() => {
@@ -142,9 +144,21 @@ export function useModuleTask(moduleKey: string) {
   const savePreset = useCallback(async (name: string, settings: ModuleTaskSettings) => {
     await saveModulePreset(moduleKey, name, settings)
     const p = await fetchModulePresets(moduleKey)
-    setPresets(p.map((x) => ({ id: x.id, name: x.name })))
+    setPresets(p)
     pushToast({ type: 'success', title: 'Пресет сохранён', desc: name })
   }, [moduleKey, pushToast])
 
-  return { task, taskId, running, starting, restoring, start, stop, savePreset, presets, pushToast, guardNet }
+  const deletePreset = useCallback(async (id: string) => {
+    // Оптимистично убираем из списка, откатываем при ошибке.
+    const prev = presets
+    setPresets((list) => list.filter((p) => p.id !== id))
+    try {
+      await deleteModulePreset(moduleKey, id)
+    } catch (e) {
+      setPresets(prev)
+      pushToast({ type: 'error', title: 'Не удалён', desc: e instanceof Error ? e.message : '' })
+    }
+  }, [moduleKey, presets, pushToast])
+
+  return { task, taskId, running, starting, restoring, start, stop, savePreset, deletePreset, presets, pushToast, guardNet }
 }

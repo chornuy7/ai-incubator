@@ -1,5 +1,6 @@
 export {
   SectionCard,
+  HelpButton,
   NumberField,
   MinMaxField,
   ToggleRow,
@@ -20,3 +21,4 @@ export { BlacklistEditor } from './BlacklistEditor'
 export { GlobalPromptEditor } from './GlobalPromptEditor'
 export { AiSafetyModal } from './AiSafetyModal'
 export { TimingSection } from './TimingSection'
+export type { DelaysShape } from './TimingSection'

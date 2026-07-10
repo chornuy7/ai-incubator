@@ -75,7 +75,7 @@ export function ChannelParserModule({ moduleKey }: { moduleKey: string }) {
 function ChannelParserInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: string }) {
   const accounts = activeAccounts(useApp((s) => s.data))
   const pushToast = useApp((s) => s.pushToast)
-  const { task, running, starting, start, stop, savePreset } = useModuleTask(moduleKey)
+  const { task, running, starting, start, stop, savePreset, deletePreset, presets } = useModuleTask(moduleKey)
 
   const isGroups = moduleKey === 'parsing-groups'
   const resultLabel = cfg.resultLabel ?? (isGroups ? 'ГРУППА' : 'КАНАЛ')
@@ -191,6 +191,25 @@ function ChannelParserInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: 
     void start(settings, `${cfg.title} · ${selected.size} акк.`)
   }
   const handleSave = () => { const name = window.prompt('Название шаблона настроек'); if (name?.trim()) void savePreset(name.trim(), buildSettings()) }
+
+  const applyPreset = useCallback((s: ModuleTaskSettings) => {
+    if (Array.isArray(s.keywords)) setKeywords(s.keywords)
+    if (s.searchMode !== undefined) setMethod(s.searchMode)
+    if (Array.isArray(s.endings) && s.endings.length) { setEndMode(0); setManualEndings(s.endings) }
+    if (s.aiProtection !== undefined) setAiProtect(s.aiProtection)
+    if (s.protectionLevel !== undefined) setProtLevel(s.protectionLevel)
+    const lim = s.resultLimit ?? s.limit
+    if (lim !== undefined) setLimit(lim === 0 ? '∞' : lim)
+    if (s.activityFilter !== undefined) setActivity(s.activityFilter)
+    if (s.commentFilter !== undefined) setCommentFilter(s.commentFilter)
+    if (s.minComments !== undefined) setMinComments(s.minComments)
+    if (s.minMembers !== undefined) setMinMembers(s.minMembers)
+    if (s.maxMembers !== undefined) setMaxMembers(s.maxMembers)
+    if (s.langDetection !== undefined) setLangDetect(s.langDetection)
+    if (s.delays?.request) setReqDelay(s.delays.request)
+    if (s.delays?.channel) setChDelay(s.delays.channel)
+    pushToast({ type: 'success', title: 'Пресет применён' })
+  }, [pushToast])
 
   const logs = task?.logs ?? []
   const rawResults = (cleared ? [] : (task?.results ?? [])) as ParserResult[]
@@ -437,6 +456,9 @@ function ChannelParserInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: 
           stats={launchStats}
           task={task}
           warn={warn}
+          presets={presets}
+          onApplyPreset={applyPreset}
+          onDeletePreset={deletePreset}
         />
       </SectionCard>
 

@@ -82,10 +82,25 @@ modulesRouter.post('/:moduleKey/presets', async (req, res) => {
     const { name, settings } = req.body ?? {}
     if (!name?.trim()) return res.status(400).json({ ok: false, error: 'Укажите название' })
     const presets = await store.loadPresets()
+    // Тот же name перезаписывает пресет, а не плодит дубли.
+    const filtered = presets.filter((p) => p.name !== name.trim())
     const preset = { id: `pr_${Date.now()}`, name: name.trim(), settings, createdAt: Date.now() }
-    presets.unshift(preset)
-    await store.savePresets(presets.slice(0, 20))
+    filtered.unshift(preset)
+    await store.savePresets(filtered.slice(0, 20))
     res.json({ ok: true, preset })
+  } catch (err) {
+    res.status(400).json({ ok: false, error: err instanceof Error ? err.message : 'Ошибка' })
+  }
+})
+
+modulesRouter.delete('/:moduleKey/presets/:id', async (req, res) => {
+  try {
+    const store = getModuleStore(req.params.moduleKey)
+    if (!store) return res.status(404).json({ ok: false, error: 'Модуль не найден' })
+    const presets = await store.loadPresets()
+    const next = presets.filter((p) => p.id !== req.params.id)
+    await store.savePresets(next)
+    res.json({ ok: true, presets: next.map(({ settings, ...meta }) => meta) })
   } catch (err) {
     res.status(400).json({ ok: false, error: err instanceof Error ? err.message : 'Ошибка' })
   }

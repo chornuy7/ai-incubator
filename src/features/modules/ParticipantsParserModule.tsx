@@ -57,7 +57,7 @@ function Inner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: string }) {
   const P = cfg.participants!
   const accounts = activeAccounts(useApp((s) => s.data))
   const pushToast = useApp((s) => s.pushToast)
-  const { task, running, starting, start, stop, savePreset } = useModuleTask(moduleKey)
+  const { task, running, starting, start, stop, savePreset, deletePreset, presets } = useModuleTask(moduleKey)
 
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [aiProtect, setAiProtect] = useState(false)
@@ -135,6 +135,19 @@ function Inner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: string }) {
 
   const handleStart = () => { setCleared(false); void start(buildSettings(), `${cfg.title} · ${selected.size} акк.`) }
   const handleSave = () => { const n = window.prompt('Название пресета'); if (n?.trim()) void savePreset(n.trim(), buildSettings()) }
+
+  // Цели (targetList) не восстанавливаем — они ситуативны; переносим фильтры, лимиты и задержки.
+  const applyPreset = useCallback((s: ModuleTaskSettings) => {
+    if (s.aiProtection !== undefined) setAiProtect(s.aiProtection)
+    if (s.protectionLevel !== undefined) setProtLevel(s.protectionLevel)
+    if (Array.isArray(s.keywords)) setKeywords(s.keywords.join(', '))
+    if (s.filters) setFilters((f) => ({ ...f, ...s.filters }))
+    if (s.limits) setLimits((l) => ({ ...l, ...s.limits }))
+    if (s.activeStories !== undefined) setActiveStories(s.activeStories)
+    if (s.delayChat !== undefined) setDelayChat(s.delayChat)
+    if (s.delayItem !== undefined) setDelayItem(s.delayItem)
+    pushToast({ type: 'success', title: 'Пресет применён' })
+  }, [pushToast])
 
   const logs = task?.logs ?? []
   const raw = (cleared ? [] : (task?.results ?? [])) as UserResult[]
@@ -281,7 +294,8 @@ function Inner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: string }) {
 
       <SectionCard icon={<Play size={18} />} title={running ? 'Выполнение' : 'Запуск & Логи'} badge={running ? 'LIVE' : undefined}>
         <LaunchPanel running={running} starting={starting} canStart={canStart} onStart={handleStart} onStop={stop} onSave={handleSave}
-          primaryLabel={cfg.primaryAction ?? 'Начать'} stats={launchStats} task={task} warn={warn} />
+          primaryLabel={cfg.primaryAction ?? 'Начать'} stats={launchStats} task={task} warn={warn}
+          presets={presets} onApplyPreset={applyPreset} onDeletePreset={deletePreset} />
       </SectionCard>
 
       <LogsPanel logs={logs} emptyText={cfg.logEmpty ?? 'Логов пока нет'} title="Логи выполнения" live={running} />
