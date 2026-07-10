@@ -351,3 +351,87 @@ export async function* parseTgstatChats(category, region, maxPages, minSubscribe
   const chats = parsePage(htmlText, url, category, region)
   for (const chat of chats) if (chat.subscribers >= minSubscribers) yield { page: 1, chat }
 }
+
+// ── Расширенный поиск каналов (uk.tgstat.com/channels/search) с фильтрами ──
+
+/** Ключи фильтров TGStat, которые пробрасываем как есть (скаляры). */
+const SEARCH_SCALAR_KEYS = [
+  'q', 'inAbout', 'channelType', 'age', 'er', 'err', 'male', 'female',
+  'participantsCountFrom', 'participantsCountTo', 'avgReachFrom', 'avgReachTo',
+  'avgReach24From', 'avgReach24To', 'ciFrom', 'ciTo',
+  'isVerified', 'isRknVerified', 'isStoriesAvailable', 'noRedLabel', 'noScam', 'noDead', 'sort',
+]
+const SEARCH_ARRAY_KEYS = { categories: 'categories[]', countries: 'countries[]', languages: 'languages[]' }
+
+function buildSearchBody(filters, csrf, page, offset) {
+  const p = new URLSearchParams()
+  p.set('_tgstat_csrk', csrf || '')
+  for (const k of SEARCH_SCALAR_KEYS) {
+    const v = filters[k]
+    if (v === undefined || v === null || v === '' || v === false) continue
+    p.set(k, v === true ? '1' : String(v))
+  }
+  for (const [k, field] of Object.entries(SEARCH_ARRAY_KEYS)) {
+    const arr = filters[k]
+    if (Array.isArray(arr)) for (const v of arr) { if (v) p.append(field, String(v)) }
+    else if (arr) p.append(field, String(arr))
+  }
+  p.set('page', String(page))
+  p.set('offset', String(offset))
+  return p.toString()
+}
+
+/**
+ * Поиск каналов на TGStat с полным набором фильтров (охват, ER, ИЦ, аудитория и т.д.).
+ * Фильтрация выполняется на стороне TGStat — возвращаются уже подходящие каналы.
+ * @param {object} filters @param {object|null} state @param {number} maxPages @param {() => boolean} [cancelCheck]
+ */
+export async function searchTgstatChannels(filters, state, maxPages = 3, cancelCheck) {
+  const cookieHeader = cookieHeaderFromState(state)
+  if (!cookieHeader) throw new ParseError('Нет cookies TGStat — подключите сессию.')
+  const base = 'https://uk.tgstat.com/channels/search'
+  const headers = { ...DEFAULT_HEADERS, Cookie: cookieHeader }
+
+  const pageResp = await fetch(base, { headers })
+  const pageHtml = await pageResp.text()
+  if (looksLikeCloudflare(pageHtml)) throw new ParseError('Cloudflare блокирует TGStat. Обновите cookies или используйте прокси.')
+  const csrf = (pageHtml.match(/name="_tgstat_csrk"\s+value="([^"]+)"/) || [])[1] || ''
+
+  const origin = new URL(base).origin
+  const xhr = {
+    ...headers,
+    'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
+    'X-Requested-With': 'XMLHttpRequest',
+    Accept: 'application/json, text/javascript, */*; q=0.01',
+    Origin: origin,
+    Referer: base,
+  }
+
+  const out = []
+  const seen = new Set()
+  let page = 0
+  let offset = 0
+  for (let step = 0; step < Math.max(1, maxPages); step++) {
+    if (cancelCheck?.()) break
+    const body = buildSearchBody(filters, csrf, page, offset)
+    let data
+    try {
+      const resp = await fetch(base, { method: 'POST', headers: xhr, body })
+      if (!(resp.headers.get('content-type') || '').toLowerCase().includes('json')) break
+      data = await resp.json()
+    } catch { break }
+    if (!data || (data.status !== 'ok' && !data.html)) break
+    const chats = parsePage(data.html || '', base, 'search', null)
+    let added = 0
+    for (const c of chats) {
+      const k = (c.chat_username || c.chat_link).toLowerCase()
+      if (!k || seen.has(k)) continue
+      seen.add(k); out.push(c); added++
+    }
+    if (!data.hasMore || !added) break
+    page = data.nextPage ?? page + 1
+    offset = data.nextOffset ?? offset
+    await sleep(800 + Math.random() * 800)
+  }
+  return out
+}

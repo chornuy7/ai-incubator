@@ -5,7 +5,7 @@ import {
   getSessionDto, saveSession, clearSession, verifySession, loadSessionRaw,
   createImport, listImports, getImportDto, getChats, cancelImport, deleteImport, loadImport,
 } from './store.js'
-import { parseTgstatChats } from './parser.js'
+import { parseTgstatChats, searchTgstatChannels } from './parser.js'
 
 export const tgstatRouter = express.Router()
 
@@ -36,6 +36,20 @@ tgstatRouter.post('/targets', async (req, res) => {
     ok(res, { targets: out })
   } catch (e) {
     fail(res, 400, e?.message || 'Не удалось получить цели из TGStat')
+  }
+})
+
+// ── расширенный поиск каналов с фильтрами (охват/ER/ИЦ/аудитория и т.д.) ──
+tgstatRouter.post('/search', async (req, res) => {
+  try {
+    const { filters, maxPages } = req.body || {}
+    const session = await getSessionDto()
+    if (!session.has_session) return fail(res, 400, 'Сначала подключите TGStat (загрузите cookies).')
+    const state = await loadSessionRaw()
+    const chats = await searchTgstatChannels(filters || {}, state, Math.max(1, Math.min(20, Number(maxPages) || 3)))
+    ok(res, { chats })
+  } catch (e) {
+    fail(res, 400, e?.message || 'Ошибка поиска TGStat')
   }
 })
 

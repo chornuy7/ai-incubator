@@ -4,8 +4,9 @@ import {
   ExternalLink, StopCircle, CheckCircle2, XCircle, Clock, Loader2, Database, Cookie, AlertTriangle,
 } from 'lucide-react'
 import { useApp } from '@/mocks/store'
-import { Select, Badge, EmptyState } from '@/shared/ui'
+import { Select, Segmented, Badge, EmptyState } from '@/shared/ui'
 import { cn } from '@/shared/lib/utils'
+import { TgStatSearchPanel } from './TgStatSearchPanel'
 import {
   fetchTgstatOptions, fetchTgstatSession, uploadTgstatSession, verifyTgstatSession, clearTgstatSession,
   fetchTgstatImports, createTgstatImport, fetchTgstatChats, cancelTgstatImport, deleteTgstatImport, tgstatExportUrl,
@@ -64,6 +65,7 @@ function AmberCard({ icon, title, badge, right, children }: {
 
 export function TgStatParserModule() {
   const pushToast = useApp((s) => s.pushToast)
+  const [tgMode, setTgMode] = useState(0) // 0 — каталог по категориям, 1 — расширенный поиск
   const [options, setOptions] = useState<TgstatOptions | null>(null)
   const [session, setSession] = useState<TgstatSession | null>(null)
   const [imports, setImports] = useState<TgstatImport[]>([])
@@ -196,6 +198,8 @@ export function TgStatParserModule() {
       <input ref={fileRef} type="file" accept=".json,.txt,application/json,text/plain" hidden
         onChange={(e) => { const f = e.target.files?.[0]; if (f) void handleFile(f); e.target.value = '' }} />
 
+      <Segmented options={['Каталог по категориям', 'Расширенный поиск (фильтры)']} value={tgMode} onChange={setTgMode} />
+
       {/* Инструкция + загрузка cookies */}
       <AmberCard icon={<Cookie size={18} />} title="Этап 1 — подключить TGStat" badge={sessionReady ? 'готово' : 'обязательно'}>
         <ol className="mb-4 list-decimal space-y-1.5 pl-5 text-sm text-muted">
@@ -263,6 +267,9 @@ export function TgStatParserModule() {
         ) : <div className="flex justify-center py-6"><Loader2 className="animate-spin text-muted" /></div>}
       </AmberCard>
 
+      {tgMode === 1 && <TgStatSearchPanel />}
+
+      {tgMode === 0 && (<>
       {/* Новый импорт */}
       <AmberCard icon={<Plus size={18} />} title="Этап 2 — новый импорт">
         <div className="grid gap-4 lg:grid-cols-2">
@@ -388,6 +395,7 @@ export function TgStatParserModule() {
           )}
         </AmberCard>
       )}
+      </>)}
     </div>
   )
 }

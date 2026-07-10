@@ -88,6 +88,23 @@ export function tgstatExportUrl(id: number) {
   return `${base}/imports/${id}/export.csv`
 }
 
+export interface TgstatSearchFilters {
+  q?: string; inAbout?: boolean
+  categories?: string[]
+  participantsCountFrom?: number; participantsCountTo?: number
+  avgReachFrom?: number; avgReachTo?: number
+  er?: number; err?: number; ciFrom?: number; ciTo?: number
+  age?: number; male?: number; female?: number
+  isVerified?: boolean; isStoriesAvailable?: boolean; isRknVerified?: boolean
+  noRedLabel?: boolean; noScam?: boolean; noDead?: boolean
+  sort?: string
+}
+
+/** Расширенный поиск каналов TGStat с фильтрами (охват/ER/ИЦ/аудитория). */
+export async function searchTgstatChannels(filters: TgstatSearchFilters, maxPages = 3) {
+  return (await apiPost<{ chats: TgstatChat[] }>(`${base}/search`, { filters, maxPages })).chats
+}
+
 export interface TgstatTarget { username: string; title: string; subscribers: number; link: string }
 
 /** Синхронно вытянуть каналы/группы из каталога TGStat как список целей. */
