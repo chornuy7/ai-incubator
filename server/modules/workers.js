@@ -10,6 +10,7 @@ import {
   fetchDialogs,
   markStoriesRead,
   viewRecentPosts,
+  joinDiscussionGroupIfNeeded,
   mapTelegramError,
 } from '../lib/gramHelpers.js'
 import { joinTargetOrSkip, joinChannelDiscussion, prepareTarget } from '../lib/joinTarget.js'
@@ -848,7 +849,7 @@ export async function runParticipantsParser(task, store, kind) {
   const seen = new Set()
   // Пересечение аудиторий (только parsing-users): пользователь засчитывается, если встречается
   // минимум в intersectionMin группах (по умолчанию — во всех выбранных).
-  const intersection = kind === 'parsing-users' && !!s.intersectionMode && tgs.length > 1
+  const intersection = kind === 'parsing-users' && s.userSource !== 'writers' && !!s.intersectionMode && tgs.length > 1
   const intersectMin = intersection ? (Number(s.intersectionMin) > 0 ? Number(s.intersectionMin) : tgs.length) : 0
   const userHits = new Map() // id -> { user, hits }
   let accIdx = 0
@@ -877,7 +878,34 @@ export async function runParticipantsParser(task, store, kind) {
         const peer = membership.peer
         let added = 0
 
-        if (kind === 'parsing-users') {
+        if (kind === 'parsing-users' && s.userSource === 'writers') {
+          // Режим «Активные»: канал → находим чат обсуждения → парсим тех, кто писал,
+          // разбивая на админ/премиум/обычный.
+          let chatPeer = peer
+          try { const disc = await joinDiscussionGroupIfNeeded(client, peer); if (disc?.peer) { chatPeer = disc.peer; await store.appendLog(task, 'info', `${src}: найден чат обсуждения`, meta.name) } } catch { /* нет обсуждения — читаем сам peer */ }
+          // множество админов для категоризации
+          let adminIds = new Set()
+          try { const admins = await fetchParticipants(client, chatPeer, 200, { adminsOnly: true }); adminIds = new Set(admins.map((a) => a.id)) } catch { /* нет прав/список закрыт */ }
+          const messages = await client.getMessages(chatPeer, { limit: L.messages || L.participants || 1000 })
+          const bySender = new Map()
+          for (const m of messages) {
+            if (!m?.senderId) continue
+            const sid = m.senderId.toString()
+            const rec = bySender.get(sid) || { count: 0, sender: m.sender }
+            rec.count++; if (!rec.sender && m.sender) rec.sender = m.sender
+            bySender.set(sid, rec)
+          }
+          for (const [sid, rec] of bySender) {
+            if (task.stopRequested || seen.has(sid)) continue
+            const u = rec.sender ? mapUser(rec.sender) : { id: sid, name: sid, username: '', bot: false }
+            if (!passUser(u)) continue
+            const role = adminIds.has(sid) ? 'admin' : (u.premium ? 'premium' : 'user')
+            if (F.onlyAdmins && role !== 'admin') continue
+            seen.add(sid)
+            task.results.push({ ...u, kind: 'user', messagesCount: rec.count, role })
+            added++
+          }
+        } else if (kind === 'parsing-users') {
           const users = await fetchParticipants(client, peer, L.participants || s.limit || 1000, { adminsOnly: !!F.onlyAdmins })
           const seenInThisTarget = new Set()
           for (const u of users) {

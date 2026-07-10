@@ -45,6 +45,7 @@ export interface ModuleTaskSettings {
   activeStories?: boolean
   intersectionMode?: boolean
   intersectionMin?: number
+  userSource?: 'participants' | 'writers' // как парсить users: список участников или кто писал в чате
   delayChat?: number
   delayItem?: number
   // ── Масслукинг: что смотреть и сколько последних постов ──

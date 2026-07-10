@@ -6,7 +6,7 @@ import {
 } from 'lucide-react'
 import { MODULES, type ModuleConfig } from '@/shared/config/modules'
 import { activeAccounts, useApp } from '@/mocks/store'
-import { Switch, Select, Badge, EmptyState, Modal } from '@/shared/ui'
+import { Switch, Select, Segmented, Badge, EmptyState, Modal } from '@/shared/ui'
 import { LogsPanel } from '@/widgets/LogsPanel'
 import { AccountPicker } from '@/features/account-picker/AccountPicker'
 import { useModuleTask } from './shared/useModuleTask'
@@ -43,7 +43,7 @@ const fkey = (label: string) => FILTER_KEY[label] ?? label
 const lkey = (label: string) => LIMIT_KEY[label] ?? label
 
 interface UserResult {
-  id?: string; name?: string; username?: string; premium?: boolean
+  id?: string; name?: string; username?: string; premium?: boolean; role?: string
   messagesCount?: number; groupsCount?: number; firstSeen?: string; lastSeen?: string; kind?: string
 }
 
@@ -67,6 +67,7 @@ function Inner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: string }) {
   const [fastWork, setFastWork] = useState(false)
   const [activeStories, setActiveStories] = useState(false)
   const [intersection, setIntersection] = useState(false)
+  const [userSource, setUserSource] = useState<'participants' | 'writers'>('participants')
 
   const [filters, setFilters] = useState<Record<string, boolean>>(() => {
     const init: Record<string, boolean> = {}
@@ -105,11 +106,12 @@ function Inner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: string }) {
     filters,
     limits,
     activeStories,
-    intersectionMode: moduleKey === 'parsing-users' ? intersection : false,
+    intersectionMode: moduleKey === 'parsing-users' && userSource !== 'writers' ? intersection : false,
+    userSource: moduleKey === 'parsing-users' ? userSource : undefined,
     delayChat: fastWork ? 0 : delayChat,
     delayItem: fastWork ? 0 : delayItem,
     limit: limits.participants ?? limits.messages ?? limits.posts ?? 1000,
-  }), [selected, targetList, keywordList, aiProtect, protLevel, filters, limits, activeStories, intersection, fastWork, delayChat, delayItem, moduleKey])
+  }), [selected, targetList, keywordList, aiProtect, protLevel, filters, limits, activeStories, intersection, userSource, fastWork, delayChat, delayItem, moduleKey])
 
   const busySelectedCount = useMemo(() => [...selected].filter((id) => accounts.some((a) => a.id === id && a.busyIn)).length, [selected, accounts])
   const canStart = selected.size > 0 && busySelectedCount === 0 && targetList.length > 0
@@ -180,6 +182,19 @@ function Inner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: string }) {
         <div className="grid gap-4 lg:grid-cols-2">
           {/* Левая колонка: источник + ключевые слова + лимиты */}
           <div className="space-y-4">
+            {moduleKey === 'parsing-users' && (
+              <div className="rounded-2xl border border-line bg-elevated/40 p-3">
+                <div className="mb-2 flex items-center gap-1.5 text-sm font-semibold text-fg"><Filter size={14} className="text-spark-400" /> Способ сбора</div>
+                <Segmented options={['Участники группы', 'Активные (кто писал)']} value={userSource === 'writers' ? 1 : 0} onChange={(i) => setUserSource(i === 1 ? 'writers' : 'participants')} size="sm" />
+                {userSource === 'writers' && (
+                  <div className="mt-2 flex items-start gap-2 rounded-xl border border-amber-500/30 bg-amber-500/8 p-2.5 text-[11px] text-amber-200">
+                    <Activity size={13} className="mt-0.5 shrink-0" />
+                    <span>Канал → находим чат обсуждения → парсим тех, кто <b>писал</b> (за последние N сообщений), с разбивкой на админ/премиум/обычный. Внимание: чтение большого числа сообщений повышает риск FloodWait/бана — не ставьте лимит слишком высоким и включите защиту.</span>
+                  </div>
+                )}
+              </div>
+            )}
+
             <div>
               <div className="label flex items-center gap-1.5"><MessageCircle size={14} className="text-spark-400" /> {P.sourceTitle}</div>
               <p className="mb-2 text-xs text-muted">{P.sourceHint}</p>
@@ -304,7 +319,7 @@ function Inner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: string }) {
                     <div className="flex items-center gap-2">
                       <span className="truncate font-semibold text-fg">{r.name || '—'}</span>
                       {r.premium && <Star size={13} className="shrink-0 text-amber-400" fill="currentColor" />}
-                      <Badge tone="spark">ПОЛЬЗОВАТЕЛЬ</Badge>
+                      {r.role === 'admin' ? <Badge tone="iris">АДМИН</Badge> : r.role === 'premium' ? <Badge tone="amber">PREMIUM</Badge> : <Badge tone="spark">ПОЛЬЗОВАТЕЛЬ</Badge>}
                     </div>
                     <div className="flex items-center gap-2 text-xs text-muted">
                       {r.username ? <span className="text-iris-300/80">@{r.username}</span> : <span>ID: {r.id}</span>}
