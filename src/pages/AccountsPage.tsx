@@ -1,7 +1,7 @@
 import { useMemo, useState, useEffect } from 'react'
 import {
   Plus, UploadCloud, Server, RefreshCw, Columns3, ListChecks, Search, Filter,
-  MoreHorizontal, Trash2, KeyRound, Info, Users, Check, X, Undo2, Loader2,
+  MoreHorizontal, Trash2, KeyRound, Info, Users, Check, X, Undo2, Loader2, Pause,
 } from 'lucide-react'
 import { useApp, activeAccounts, trashedAccounts, STATUS_META } from '@/mocks/store'
 import { useUi } from '@/shared/lib/uiStore'
@@ -17,9 +17,9 @@ import { PaywallLock } from '@/features/paywall/Paywall'
 import { cn } from '@/shared/lib/utils'
 import { ROLES, COUNTRIES_FILTER } from '@/shared/config/modules'
 import type { AccountStatus, TgAccount } from '@/shared/types'
-import { patchAccount, releaseAccountLock } from '@/api/accountsApi'
+import { patchAccount, releaseAccountLock, setAccountStatusManual } from '@/api/accountsApi'
 
-const STATUS_ORDER: AccountStatus[] = ['active', 'working', 'quarantine', 'spamblock', 'invalid', 'frozen', 'reauth']
+const STATUS_ORDER: AccountStatus[] = ['active', 'working', 'warming', 'pause', 'floodwait', 'quarantine', 'spamblock', 'invalid', 'frozen', 'reauth']
 const COLS = [
   { key: 'avatar', label: 'Аватар' },
   { key: 'name', label: 'Имя' },
@@ -74,7 +74,7 @@ export function AccountsPage() {
   const trashed = trashedAccounts(data)
 
   const statusCounts = useMemo(() => {
-    const c: Record<AccountStatus, number> = { active: 0, working: 0, quarantine: 0, spamblock: 0, invalid: 0, frozen: 0, reauth: 0 }
+    const c: Record<AccountStatus, number> = { active: 0, working: 0, warming: 0, pause: 0, floodwait: 0, quarantine: 0, spamblock: 0, invalid: 0, frozen: 0, reauth: 0 }
     for (const a of active) c[a.status] += 1
     return c
   }, [active])
@@ -142,6 +142,23 @@ export function AccountsPage() {
       for (const id of ids) { try { await patchAccount(id, { status }) } catch { /* skip */ } }
       await loadAccounts()
       pushToast({ type: 'success', title, desc: `Аккаунтов: ${ids.length}` })
+      setSelected(new Set())
+    })()
+  }
+
+  // Ручная пауза/возврат оператором — через аудируемый эндпоинт (§3.3/§4).
+  const bulkStatusManual = (to: 'pause' | 'active', title: string) => {
+    void (async () => {
+      const ids = [...selected]
+      let ok = 0
+      for (const id of ids) {
+        try {
+          const r = await setAccountStatusManual(id, to)
+          if (r.ok) ok += 1
+        } catch { /* skip */ }
+      }
+      await loadAccounts()
+      pushToast({ type: 'success', title, desc: `Аккаунтов: ${ok} из ${ids.length}` })
       setSelected(new Set())
     })()
   }
@@ -331,7 +348,8 @@ export function AccountsPage() {
       {selected.size > 0 && tab === 'accounts' && (
         <div className="mb-3 flex flex-wrap items-center gap-2 rounded-xl border border-spark-500/40 bg-spark-500/8 px-4 py-2.5 animate-fade-in">
           <span className="text-sm font-bold text-spark-300">Выбрано: {selected.size}</span>
-          <button onClick={() => bulkSetStatus('active', 'Включено (active)')} className="btn-ghost h-8 text-xs"><Check size={14} /> Включить</button>
+          <button onClick={() => bulkStatusManual('active', 'Включено')} className="btn-ghost h-8 text-xs"><Check size={14} /> Включить</button>
+          <button onClick={() => bulkStatusManual('pause', 'На паузе')} className="btn-ghost h-8 text-xs"><Pause size={14} /> Пауза</button>
           <button onClick={() => bulkSetStatus('frozen', 'Отключено (frozen)')} className="btn-ghost h-8 text-xs"><X size={14} /> Отключить</button>
           <button onClick={bulkRelease} className="btn-ghost h-8 text-xs"><RefreshCw size={14} /> Стоп / освободить</button>
           <button onClick={() => setMoveOpen(true)} className="btn-ghost h-8 text-xs"><Users size={14} /> Переместить</button>

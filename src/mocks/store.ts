@@ -251,6 +251,9 @@ export const trashedAccounts = (d: AppData) => d.accounts.filter((a) => a.inTras
 export const STATUS_META: Record<AccountStatus, { label: string; text: string; bg: string; dot: string }> = {
   active: { label: 'Активные', text: 'text-spark-300', bg: 'bg-spark-500/12 border-spark-500/30', dot: 'bg-spark-400' },
   working: { label: 'В работе', text: 'text-iris-300', bg: 'bg-iris-500/12 border-iris-500/30', dot: 'bg-iris-400' },
+  warming: { label: 'Прогрев', text: 'text-orange-300', bg: 'bg-orange-500/12 border-orange-500/30', dot: 'bg-orange-400' },
+  pause: { label: 'На паузе', text: 'text-slate-300', bg: 'bg-slate-500/12 border-slate-500/30', dot: 'bg-slate-400' },
+  floodwait: { label: 'FloodWait', text: 'text-yellow-300', bg: 'bg-yellow-500/12 border-yellow-500/30', dot: 'bg-yellow-400' },
   quarantine: { label: 'На карантине', text: 'text-amber-300', bg: 'bg-amber-500/12 border-amber-500/30', dot: 'bg-amber-400' },
   spamblock: { label: 'Спамблок', text: 'text-rose-300', bg: 'bg-rose-500/12 border-rose-500/30', dot: 'bg-rose-400' },
   invalid: { label: 'Невалидные', text: 'text-slate-300', bg: 'bg-slate-500/12 border-slate-500/30', dot: 'bg-slate-400' },

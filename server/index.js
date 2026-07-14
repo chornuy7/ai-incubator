@@ -151,6 +151,26 @@ app.post('/api/tg/accounts/:accountId/release', async (req, res) => {
   res.json({ ok: true, released: released ? { taskId: released.taskId, moduleLabel: released.moduleLabel } : null })
 })
 
+// Ручное управление статусом оператором (§3.3 pause / §4 аудит инициатора). Только безопасный whitelist.
+app.post('/api/tg/accounts/:accountId/status', async (req, res) => {
+  try {
+    const { to, initiator } = req.body ?? {}
+    if (!['pause', 'active'].includes(to)) {
+      return res.status(400).json({ ok: false, error: 'Недопустимое ручное действие статуса (только pause/active)' })
+    }
+    const { setAccountStatus } = await import('./accountsMeta.js')
+    await setAccountStatus(req.params.accountId, to, {
+      initiator: initiator || 'operator',
+      module: 'accounts',
+      code: 'MANUAL',
+      reason: to === 'pause' ? 'Ручная пауза оператором' : 'Снятие паузы оператором',
+    })
+    res.json({ ok: true })
+  } catch (err) {
+    res.status(400).json({ ok: false, error: err instanceof Error ? err.message : 'Ошибка' })
+  }
+})
+
 app.post('/api/modules/locks/reconcile', async (_req, res) => {
   try {
     const dropped = await reconcileLocks()

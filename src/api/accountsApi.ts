@@ -72,6 +72,16 @@ export async function releaseAccountLock(accountId: string): Promise<{ ok: boole
   return parseJson(res) as Promise<{ ok: boolean; released: { taskId: string; moduleLabel: string } | null }>
 }
 
+/** Ручная смена статуса оператором (пауза/снятие) через state machine + аудит. */
+export async function setAccountStatusManual(accountId: string, to: 'pause' | 'active', initiator?: string): Promise<{ ok: boolean; error?: string }> {
+  const res = await fetch(`/api/tg/accounts/${accountId}/status`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ to, initiator }),
+  })
+  return parseJson(res) as Promise<{ ok: boolean; error?: string }>
+}
+
 export async function reconcileLocks(): Promise<{ ok: boolean; dropped: { accountId: string; taskId: string; moduleKey: string }[] }> {
   const res = await fetch('/api/modules/locks/reconcile', { method: 'POST' })
   return parseJson(res) as Promise<{ ok: boolean; dropped: { accountId: string; taskId: string; moduleKey: string }[] }>
