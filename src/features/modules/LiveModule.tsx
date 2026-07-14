@@ -30,6 +30,14 @@ const DURATION_MIN_BY_PROTECTION_LEVEL = [60, 45, 30]
 // 3 уровня прогрева (решение 14.07): длительность и «естественность» темпа.
 const WARM_LEVELS = ['Быстрый · 2 дня', 'Средний · 3–7 дней', 'Долгий · 7–14 дней']
 
+// §3.5: расчётное min/avg/max время вместо абстрактного «интервала».
+function fmtDur(sec: number): string {
+  if (!isFinite(sec) || sec <= 0) return '—'
+  if (sec < 60) return `${Math.round(sec)}с`
+  if (sec < 3600) return `${Math.round(sec / 60)} мин`
+  return `${(sec / 3600).toFixed(1)} ч`
+}
+
 export function LiveModule({ moduleKey }: { moduleKey: string }) {
   const cfg = MODULES[moduleKey]
   if (!cfg) return null
@@ -205,7 +213,15 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
     return [
       { icon: <Users size={18} />, color: '#7145ff', label: 'Аккаунты', value: String(selected.size), warn: selected.size === 0 },
       { icon: <Hash size={18} />, color: '#06b6d4', label: cfg.unit?.title ?? 'Цели', value: String(targets.length), warn: needsTargets && !targets.length && !hasPostTargets },
-      { icon: <Clock size={18} />, color: '#0ec464', label: 'Интервал', value: `${delays.action[0]}–${delays.action[1]}с` },
+      {
+        icon: <Clock size={18} />, color: '#0ec464', label: '≈ время',
+        value: (() => {
+          const accCount = Math.max(1, selected.size || accounts.length)
+          const perAcc = Math.ceil((maxActions || 0) / accCount)
+          if (!perAcc) return '—'
+          return `${fmtDur(delays.action[0] * perAcc)}–${fmtDur(delays.action[1] * perAcc)}`
+        })(),
+      },
       { icon: cfg.reactionSettings ? <Heart size={18} /> : <MessageSquareText size={18} />, color: '#f59e0b', label: 'Лимит', value: String(maxActions) },
     ]
   }, [selected, targets, postUrls, hasPostTargets, delays, maxActions, cfg, isGgr, accounts, results, task, needsTargets])
