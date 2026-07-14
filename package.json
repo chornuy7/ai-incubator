@@ -11,7 +11,7 @@
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
     "lint": "tsc --noEmit",
-    "test": "node --test server/__tests__/parser.test.js server/__tests__/aiHelp.test.js server/__tests__/accountStatus.test.js"
+    "test": "node --test server/__tests__/parser.test.js server/__tests__/aiHelp.test.js server/__tests__/accountStatus.test.js server/__tests__/auditLog.test.js"
   },
   "dependencies": {
     "cheerio": "^1.2.0",

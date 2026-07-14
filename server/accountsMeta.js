@@ -1,6 +1,8 @@
 import fs from 'fs/promises'
 import path from 'path'
 import { SESSIONS_DIR } from './config.js'
+import { buildStatusPatch, normalizeStatus } from './lib/accountStatus.js'
+import { appendAudit } from './lib/auditLog.js'
 
 const META_FILE = path.join(path.dirname(SESSIONS_DIR), 'accounts-meta.json')
 
@@ -42,6 +44,33 @@ export async function setAccountMeta(accountId, patch) {
   if (!all[accountId].createdAt) all[accountId].createdAt = Date.now()
   await saveAllMeta(all)
   return all[accountId]
+}
+
+/**
+ * Централизованная смена статуса через state machine + запись в аудит (§3.3/§4).
+ * Проверяет допустимость перехода (бросает ILLEGAL_TRANSITION), пишет причину/срок/инициатора.
+ * Используйте это вместо прямого setAccountMeta({status}) для переходов жизненного цикла.
+ * @param {string} accountId
+ * @param {string} to  целевой статус (accountStatus.STATUS.*)
+ * @param {{ reason?: string, code?: string, until?: number|null, initiator?: string, module?: string, taskId?: string }} [opts]
+ */
+export async function setAccountStatus(accountId, to, opts = {}) {
+  const current = await getAccountMeta(accountId)
+  const from = normalizeStatus(current.status)
+  const patch = buildStatusPatch(current, to, opts)
+  if (patch.status === from) return current // no-op: тот же статус
+  const saved = await setAccountMeta(accountId, patch)
+  await appendAudit({
+    action: 'account.status.change',
+    module: opts.module || 'core',
+    initiator: opts.initiator || 'system',
+    code: patch.statusCode,
+    reason: patch.statusReason,
+    account: accountId,
+    scope: { accounts: [accountId], ...(opts.taskId ? { taskId: opts.taskId } : {}) },
+    meta: { from: patch.prevStatus, to: patch.status, until: patch.statusUntil },
+  })
+  return saved
 }
 
 export async function deleteAccountMeta(accountId) {
