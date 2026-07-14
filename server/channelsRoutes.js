@@ -1,9 +1,8 @@
 /** Роуты «Каналы» (§3.7/§3.9): база каналов + ручное обновление статистики. Монтируется в /api/channels. */
 import { Router } from 'express'
-import { listChannels, getChannel, upsertChannel, recordChannelStats, deleteChannel } from './channels.js'
+import { listChannels, getChannel, upsertChannel, updateChannel, deleteChannel } from './channels.js'
 import { loadAllMeta } from './accountsMeta.js'
-import { acquireChannelLease, releaseChannelLease } from './lib/channelLease.js'
-import { normalizeStatus } from './lib/accountStatus.js'
+import { refreshOneChannel } from './channelStats.js'
 
 export const channelsRouter = Router()
 
@@ -22,6 +21,14 @@ channelsRouter.post('/', async (req, res) => {
   } catch (err) { fail(res, err) }
 })
 
+channelsRouter.put('/:id', async (req, res) => {
+  try {
+    const channel = await updateChannel(req.params.id, req.body ?? {})
+    if (!channel) return res.status(404).json({ ok: false, error: 'Канал не найден' })
+    res.json({ ok: true, channel })
+  } catch (err) { fail(res, err) }
+})
+
 channelsRouter.delete('/:id', async (req, res) => {
   try {
     const ok = await deleteChannel(req.params.id)
@@ -30,43 +37,13 @@ channelsRouter.delete('/:id', async (req, res) => {
   } catch (err) { fail(res, err) }
 })
 
-/**
- * «Обновить сейчас» (§3.9): свободный аккаунт по lease тянет актуальную статистику канала.
- * Один канал — один бот в моменте (lease). Нужен рабочий аккаунт с сессией.
- */
+/** «Обновить сейчас» (§3.9): свободный аккаунт по lease тянет актуальную статистику. */
 channelsRouter.post('/:id/refresh', async (req, res) => {
-  const channel = await getChannel(req.params.id)
-  if (!channel) return res.status(404).json({ ok: false, error: 'Канал не найден' })
-
-  // Свободный рабочий аккаунт (не в прогреве/карантине), приоритет — из тела запроса.
-  const meta = await loadAllMeta()
-  let accountId = req.body?.accountId
-  if (!accountId) {
-    accountId = Object.keys(meta).find((id) => {
-      const m = meta[id] || {}
-      return !m.inTrash && normalizeStatus(m.status) === 'active'
-    })
-  }
-  if (!accountId) return res.status(400).json({ ok: false, error: 'Нет свободного рабочего аккаунта для обновления' })
-
-  const leaseErr = acquireChannelLease(channel.id, accountId, 'stats-manual', 60_000)
-  if (leaseErr) return res.status(409).json({ ok: false, error: `Канал уже обновляет ${leaseErr.by}` })
-
-  let client
   try {
-    const { loadSessionString, createClient } = await import('./tgAuth.js')
-    const { resolvePeer, getChannelMembersCount } = await import('./lib/gramHelpers.js')
-    const sessionStr = await loadSessionString(accountId)
-    if (!sessionStr) throw new Error('У аккаунта нет сессии')
-    client = await createClient(sessionStr, meta[accountId]?.proxy)
-    const entity = await resolvePeer(client, channel.username || channel.link || channel.tgPeerId)
-    const subscribers = await getChannelMembersCount(client, entity)
-    const updated = await recordChannelStats(channel.id, { subscribers }, accountId)
+    const channel = await getChannel(req.params.id)
+    if (!channel) return res.status(404).json({ ok: false, error: 'Канал не найден' })
+    const meta = await loadAllMeta()
+    const updated = await refreshOneChannel(channel, meta, req.body?.accountId)
     res.json({ ok: true, channel: updated })
-  } catch (err) {
-    fail(res, err)
-  } finally {
-    releaseChannelLease(channel.id, 'stats-manual')
-    if (client) { try { await client.disconnect() } catch { /* ignore */ } }
-  }
+  } catch (err) { fail(res, err) }
 })

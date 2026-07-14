@@ -1,0 +1,95 @@
+/**
+ * Авто-обновление статистики каналов (§3.9, решение 14.07):
+ * раз в день; если бот в группе (channel.botInGroup) — авто ~раз в час; + ручная кнопка.
+ * Один канал — один бот в моменте (lease). Рефреш и планировщик здесь; ручной вызов — из роута.
+ */
+import { recordChannelStats } from './channels.js'
+import { acquireChannelLease, releaseChannelLease } from './lib/channelLease.js'
+import { normalizeStatus } from './lib/accountStatus.js'
+
+const HOUR = 3600_000
+const DEFAULT_PERIOD_H = 24
+
+/** Свободный рабочий аккаунт (active, не в корзине), не из exclude. Чистая. */
+export function pickFreeAccountId(meta = {}, exclude = new Set()) {
+  return Object.keys(meta).find((id) => {
+    const m = meta[id] || {}
+    return !m.inTrash && normalizeStatus(m.status) === 'active' && !exclude.has(id)
+  }) || null
+}
+
+/**
+ * Какие каналы пора обновить: ни разу (lastStatsAt пуст) или старше периода.
+ * Период: botInGroup → 1 час, иначе DEFAULT_PERIOD_H. Чистая функция.
+ * @param {object[]} channels @param {number} [now] @param {number} [defaultPeriodH]
+ */
+export function dueChannels(channels = [], now = Date.now(), defaultPeriodH = DEFAULT_PERIOD_H) {
+  return channels.filter((c) => {
+    if (!c.lastStatsAt) return true
+    const periodMs = (c.botInGroup ? 1 : defaultPeriodH) * HOUR
+    return now - c.lastStatsAt >= periodMs
+  })
+}
+
+/**
+ * Обновить статистику одного канала свободным аккаунтом по lease. Нужны сессии.
+ * @param {object} channel @param {Record<string,object>} meta @param {string} [accountId]
+ */
+export async function refreshOneChannel(channel, meta, accountId) {
+  const acc = accountId || pickFreeAccountId(meta)
+  if (!acc) throw new Error('Нет свободного рабочего аккаунта')
+  const leaseErr = acquireChannelLease(channel.id, acc, 'stats', 60_000)
+  if (leaseErr) throw new Error(`Канал уже обновляет ${leaseErr.by}`)
+  let client
+  try {
+    const { loadSessionString, createClient } = await import('./tgAuth.js')
+    const { resolvePeer, getChannelMembersCount } = await import('./lib/gramHelpers.js')
+    const sessionStr = await loadSessionString(acc)
+    if (!sessionStr) throw new Error('У аккаунта нет сессии')
+    client = await createClient(sessionStr, meta[acc]?.proxy)
+    const entity = await resolvePeer(client, channel.username || channel.link || channel.tgPeerId)
+    const subscribers = await getChannelMembersCount(client, entity)
+    return await recordChannelStats(channel.id, { subscribers }, acc)
+  } finally {
+    releaseChannelLease(channel.id, 'stats')
+    if (client) { try { await client.disconnect() } catch { /* ignore */ } }
+  }
+}
+
+/** Один тик авто-обновления: обновляет до N просроченных каналов разными аккаунтами. */
+export async function channelStatsTick(maxPerTick = 5) {
+  try {
+    const { listChannels } = await import('./channels.js')
+    const { loadAllMeta } = await import('./accountsMeta.js')
+    const due = dueChannels(await listChannels())
+    if (!due.length) return 0
+    const meta = await loadAllMeta()
+    const used = new Set()
+    let done = 0
+    for (const ch of due) {
+      if (done >= maxPerTick) break
+      const acc = pickFreeAccountId(meta, used)
+      if (!acc) break
+      used.add(acc)
+      try { await refreshOneChannel(ch, meta, acc); done++ } catch { /* канал пропускаем */ }
+    }
+    if (done) console.log(`[stats] авто-обновлено каналов: ${done}`)
+    return done
+  } catch {
+    return 0
+  }
+}
+
+let statsTimer = null
+/** Запустить авто-обновление (интервал по умолчанию 15 мин; тик сам решает, что просрочено). */
+export function startChannelStatsScheduler(intervalMs = 15 * 60_000) {
+  if (statsTimer) clearInterval(statsTimer)
+  statsTimer = setInterval(() => { void channelStatsTick() }, intervalMs)
+  setTimeout(() => { void channelStatsTick() }, 30_000)
+  console.log('[stats] авто-обновление статистики каналов включено')
+}
+
+export function stopChannelStatsScheduler() {
+  if (statsTimer) clearInterval(statsTimer)
+  statsTimer = null
+}

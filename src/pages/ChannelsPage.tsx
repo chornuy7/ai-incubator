@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { Radio, Plus, RefreshCw, Trash2, ExternalLink, MessageSquare } from 'lucide-react'
 import { useApp } from '@/mocks/store'
 import { PageHeader, Card, EmptyState, Badge } from '@/shared/ui'
-import { fetchChannels, upsertChannel, refreshChannel, deleteChannel, type Channel } from '@/api/channelsApi'
+import { fetchChannels, upsertChannel, updateChannel, refreshChannel, deleteChannel, type Channel } from '@/api/channelsApi'
 
 function fmt(n: number) {
   return n >= 1000 ? `${(n / 1000).toFixed(n >= 10000 ? 0 : 1)}K` : String(n)
@@ -52,6 +52,11 @@ export function ChannelsPage() {
     finally { setBusy(null) }
   }
 
+  const toggleBot = async (c: Channel) => {
+    try { await updateChannel(c.id, { botInGroup: !c.botInGroup }); await load() }
+    catch (err) { pushToast({ type: 'error', title: 'Ошибка', desc: err instanceof Error ? err.message : '' }) }
+  }
+
   const remove = async (c: Channel) => {
     if (!window.confirm(`Удалить канал ${c.username || c.title} из базы?`)) return
     try { await deleteChannel(c.id); await load() }
@@ -91,6 +96,9 @@ export function ChannelsPage() {
                   {c.language && <span>{c.language}</span>}
                   {c.region && <span>{c.region}</span>}
                   <span>обновлено: {ago(c.lastStatsAt)}</span>
+                  <button onClick={() => void toggleBot(c)} className={c.botInGroup ? 'text-spark-300' : 'text-white/40 hover:text-white/70'} title="Если бот в группе — авто-обновление ~раз в час, иначе раз в день">
+                    {c.botInGroup ? '🤖 бот в группе (авто ~1ч)' : 'нет бота (авто 1/день)'}
+                  </button>
                   {c.sources?.length > 1 && <span>источников: {c.sources.length}</span>}
                 </div>
               </div>

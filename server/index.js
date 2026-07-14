@@ -253,6 +253,14 @@ try {
 
 await startScheduler().catch((err) => console.warn('[automation] scheduler init failed:', err))
 
+// Авто-обновление статистики каналов (§3.9, решение 14.07: день / час-если-бот-в-группе).
+try {
+  const { startChannelStatsScheduler } = await import('./channelStats.js')
+  startChannelStatsScheduler()
+} catch (err) {
+  console.warn('[stats] scheduler init failed:', err)
+}
+
 // Безопасный дефолт: слушаем только localhost (управление TG-аккаунтами без auth не должно
 // торчать в LAN/интернет). Для доступа с другого устройства выставить API_HOST=0.0.0.0.
 const HOST = process.env.API_HOST || '127.0.0.1'

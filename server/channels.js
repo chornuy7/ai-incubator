@@ -47,6 +47,7 @@ export async function upsertChannel(input = {}, source) {
     hasComments: input.hasComments ?? null,
     rating: input.rating ?? null,
     tgPeerId: input.tgPeerId ?? null,
+    botInGroup: input.botInGroup, // true → авто ~раз в час, иначе раз в день (решение 14.07)
   }
 
   if (idx >= 0) {
@@ -56,7 +57,7 @@ export async function upsertChannel(input = {}, source) {
     const merged = { ...cur }
     // Обновляем поле только если новое значение осмысленное — непустое старое не затираем.
     for (const [k, v] of Object.entries(fields)) {
-      const meaningful = v !== '' && v !== null && !(typeof v === 'number' && v === 0)
+      const meaningful = v !== undefined && v !== '' && v !== null && !(typeof v === 'number' && v === 0)
       if (meaningful) merged[k] = v
     }
     merged.sources = [...sources]
@@ -69,6 +70,7 @@ export async function upsertChannel(input = {}, source) {
   const channel = {
     id: `ch_${crypto.randomUUID().slice(0, 8)}`,
     ...fields,
+    botInGroup: input.botInGroup ?? false,
     sources: source ? [source] : [],
     categoriesExtra: [],
     lastStatsAt: null,
@@ -91,6 +93,18 @@ export async function recordChannelStats(id, stats = {}, statsBy) {
   if (stats.hasComments != null) all[i].hasComments = stats.hasComments
   all[i].lastStatsAt = Date.now()
   all[i].statsBy = statsBy || 'system'
+  all[i].updatedAt = Date.now()
+  await writeJson(CHANNELS_FILE, all)
+  return all[i]
+}
+
+/** Обновить редактируемые поля канала (напр. botInGroup, category). @param {string} id @param {object} patch */
+export async function updateChannel(id, patch = {}) {
+  const all = await listChannels()
+  const i = all.findIndex((c) => c.id === id)
+  if (i === -1) return null
+  const EDITABLE = ['botInGroup', 'category', 'language', 'region', 'title', 'hasComments']
+  for (const k of EDITABLE) if (patch[k] !== undefined) all[i][k] = patch[k]
   all[i].updatedAt = Date.now()
   await writeJson(CHANNELS_FILE, all)
   return all[i]

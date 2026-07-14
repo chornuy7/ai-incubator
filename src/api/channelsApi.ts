@@ -15,6 +15,7 @@ export interface Channel {
   tgPeerId: string | null
   sources: string[]
   categoriesExtra: string[]
+  botInGroup: boolean
   lastStatsAt: number | null
   statsBy: string | null
   createdAt: number
@@ -28,6 +29,17 @@ export async function fetchChannels(): Promise<Channel[]> {
 
 export async function upsertChannel(input: Partial<Channel> & { source?: string }): Promise<Channel> {
   const data = await apiPost<{ ok: boolean; channel: Channel }>('/api/channels', input)
+  return data.channel
+}
+
+export async function updateChannel(id: string, patch: Partial<Channel>): Promise<Channel> {
+  const res = await fetch(`/api/channels/${id}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(patch),
+  })
+  const data = await res.json()
+  if (!res.ok || data.ok === false) throw new Error(data.error || `HTTP ${res.status}`)
   return data.channel
 }
 
