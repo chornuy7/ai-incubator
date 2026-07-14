@@ -69,11 +69,16 @@ export async function handleFlood(task, accountId, store, err, settings, account
     task.accountStats[accountId].floodWaits += 1
     const fwDelay = floodSec + (settings.delays?.floodWait ?? safety.floodWaitExtraSeconds ?? 120)
     await store.appendLog(task, 'warning', `FloodWait ${floodSec}с — пауза ${fwDelay}с`, accountName)
+    // Явный статус floodwait с длительностью (§3.3): аккаунт на паузу, никто по нему не работает.
+    await setStatus(accountId, 'floodwait', { code: `FLOOD_WAIT_${floodSec}`, reason: `FloodWait ${floodSec}с`, until: Date.now() + fwDelay * 1000, task })
     await sleep(fwDelay * 1000)
     const limit = settings.delays?.floodQuarantine ?? safety.floodQuarantineThreshold ?? 3
     if (task.accountStats[accountId].floodWaits >= limit) {
       await setStatus(accountId, 'quarantine', { code: 'FLOOD_QUARANTINE', reason: `Карантин после ${limit} FloodWait`, task })
       await store.appendLog(task, 'error', `Карантин после ${limit} FloodWait`, accountName)
+    } else {
+      // Пауза выждана — возвращаем в работу.
+      await setStatus(accountId, 'active', { code: 'FLOOD_CLEARED', reason: 'FloodWait истёк — возврат в работу', task })
     }
     await store.saveTask(task)
     return true

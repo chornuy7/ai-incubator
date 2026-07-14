@@ -45,7 +45,7 @@ Lane B — comment/chat/parser. Чужие файлы — только чере�
 ## Фаза 1 — P0: Безопасность профилей + контракт целей
 
 **Lane A — профили и статусы**
-- ◐ State machine статусов; развести `Pause/FloodWait/Quarantine/SpamBlock` (причина/длительность/действия). §3.3 _(модуль `accountStatus.js` + аудит + `setAccountStatus`; переходы в `accountRunner` (quarantine/spamblock/invalid/reauth) идут через state machine с аудитом; reconciler авто-выхода на старте. Остаётся: транзиентный `floodwait`-статус в хот-пути + `pause` в UI + ≥5 тест-профилей)_
+- ◐ State machine статусов; развести `Pause/FloodWait/Quarantine/SpamBlock` (причина/длительность/действия). §3.3 _(модуль `accountStatus.js` + аудит + `setAccountStatus`; переходы в `accountRunner` (quarantine/spamblock/invalid/reauth) идут через state machine с аудитом; reconciler авто-выхода на старте. `floodwait`-статус с длительностью в хот-пути (пауза→возврат/карантин) + skip floodwait/pause. Остаётся: ручной `pause` из UI + ≥5 тест-профилей)_
 - ☐ Настраиваемое число попыток до карантина (деф. 3) + длительность от Telegram. §3.3 _(частично: `aiSafety`, `accountRunner`)_
 - ◐ Прогрев полностью блокирует профиль для ручного/модульного назначения. §3.3 _(guard на границе запуска задачи: `canModuleUseAccount`/`assertAccountsAssignable`; UI-подсказка — след.)_
 - ☐ Авто-стоп при падении trust score → прогрев → авто-возврат. 🔒 (формула — §6). §3.3

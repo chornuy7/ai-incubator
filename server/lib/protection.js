@@ -3,7 +3,7 @@ import { getAiSafetySync } from '../aiSafety.js'
 
 const LEVEL_MUL = [1.8, 1, 0.75]
 const PRESET_MUL = [0.6, 1, 1.8]
-const SKIP_STATUSES = new Set(['quarantine', 'spamblock', 'invalid', 'frozen', 'reauth'])
+const SKIP_STATUSES = new Set(['quarantine', 'spamblock', 'invalid', 'frozen', 'reauth', 'floodwait', 'pause'])
 
 export function delayMultiplier(level, preset) {
   const safety = getAiSafetySync()
