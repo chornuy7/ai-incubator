@@ -1,5 +1,5 @@
 import { loadSessionString, createClient } from '../tgAuth.js'
-import { getAccountMeta, setAccountMeta } from '../accountsMeta.js'
+import { getAccountMeta, setAccountMeta, setAccountStatus } from '../accountsMeta.js'
 import { isAccountRunnable, extractFloodSeconds, sleep } from './protection.js'
 import { assertAccountAvailable } from './accountLocks.js'
 import { resolveDurationPeriodMinutes } from './workModeDuration.js'
@@ -15,7 +15,7 @@ export async function connectAccount(accountId, taskId) {
   }
   const sessionStr = await loadSessionString(accountId)
   if (!sessionStr) {
-    await setAccountMeta(accountId, { status: 'reauth' })
+    await setStatus(accountId, 'reauth', { code: 'NO_SESSION', reason: 'Нет сессии — нужна переавторизация', task: { id: taskId } })
     throw new Error('NO_SESSION')
   }
   await setAccountMeta(accountId, { status: 'working' })
@@ -35,6 +35,26 @@ export async function disconnectAccount(client, accountId) {
 }
 
 /**
+ * Сменить статус аккаунта через state machine + аудит (§4). Не роняет воркер:
+ * при недопустимом переходе падаем на прямую запись meta (совместимость).
+ * @param {string} accountId @param {string} to @param {{ code?: string, reason?: string, until?: number|null, task?: object }} [opts]
+ */
+async function setStatus(accountId, to, opts = {}) {
+  try {
+    await setAccountStatus(accountId, to, {
+      code: opts.code,
+      reason: opts.reason,
+      until: opts.until ?? null,
+      initiator: 'system',
+      module: opts.task?.moduleKey,
+      taskId: opts.task?.id,
+    })
+  } catch {
+    await setAccountMeta(accountId, { status: to })
+  }
+}
+
+/**
  * Обработка ошибки аккаунта: FloodWait + политики ИИ-безопасности (feature 11).
  * Возвращает true, если ошибка «обработана» (генерик-лог в воркере не нужен).
  * @param {object} task @param {string} accountId @param {object} store @param {unknown} err @param {object} settings
@@ -50,7 +70,7 @@ export async function handleFlood(task, accountId, store, err, settings, account
     await sleep(fwDelay * 1000)
     const limit = settings.delays?.floodQuarantine ?? safety.floodQuarantineThreshold ?? 3
     if (task.accountStats[accountId].floodWaits >= limit) {
-      await setAccountMeta(accountId, { status: 'quarantine' })
+      await setStatus(accountId, 'quarantine', { code: 'FLOOD_QUARANTINE', reason: `Карантин после ${limit} FloodWait`, task })
       await store.appendLog(task, 'error', `Карантин после ${limit} FloodWait`, accountName)
     }
     await store.saveTask(task)
@@ -73,12 +93,12 @@ export async function applyBanPolicy(task, accountId, store, err, accountName) {
 
   if (isSpam) {
     if (safety.onSpamblock === 'quarantine') {
-      await setAccountMeta(accountId, { status: 'quarantine' })
+      await setStatus(accountId, 'quarantine', { code: 'SPAM', reason: 'Спамблок → карантин аккаунта', task })
       await store.appendLog(task, 'error', 'Спамблок → карантин аккаунта', accountName)
       await store.saveTask(task)
       return true
     }
-    await setAccountMeta(accountId, { status: 'spamblock' })
+    await setStatus(accountId, 'spamblock', { code: 'SPAM', reason: 'Спамблок — аккаунт помечен и пропускается', task })
     await store.appendLog(task, 'warning', 'Спамблок — аккаунт помечен и пропускается', accountName)
     await store.saveTask(task)
     return true
@@ -86,18 +106,18 @@ export async function applyBanPolicy(task, accountId, store, err, accountName) {
 
   switch (safety.onBan) {
     case 'quarantine':
-      await setAccountMeta(accountId, { status: 'quarantine' })
+      await setStatus(accountId, 'quarantine', { code: 'BAN', reason: 'Бан → карантин аккаунта (политика ИИ-безопасности)', task })
       await store.appendLog(task, 'error', 'Бан → карантин аккаунта (политика ИИ-безопасности)', accountName)
       await store.saveTask(task)
       return true
     case 'stop-account':
-      await setAccountMeta(accountId, { status: 'invalid' })
+      await setStatus(accountId, 'invalid', { code: 'BAN', reason: 'Бан → аккаунт остановлен (политика ИИ-безопасности)', task })
       await store.appendLog(task, 'error', 'Бан → аккаунт остановлен (политика ИИ-безопасности)', accountName)
       await store.saveTask(task)
       return true
     case 'stop-task':
       task.stopRequested = true
-      await setAccountMeta(accountId, { status: 'invalid' })
+      await setStatus(accountId, 'invalid', { code: 'BAN', reason: 'Бан → задача остановлена (политика ИИ-безопасности)', task })
       await store.appendLog(task, 'error', 'Бан → задача остановлена (политика ИИ-безопасности)', accountName)
       await store.saveTask(task)
       return true

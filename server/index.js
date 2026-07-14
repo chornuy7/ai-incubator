@@ -191,6 +191,15 @@ if (flipped.length) {
   console.log(`Reconcile: ${flipped.length} устаревших задач помечены stopped, блокировки не восстановлены`)
 }
 
+// Авто-выход из временных статусов (floodwait/quarantine с истёкшим сроком) на старте (§3.3).
+try {
+  const { reconcileExpiredStatuses } = await import('./accountsMeta.js')
+  const back = await reconcileExpiredStatuses()
+  if (back.length) console.log(`Reconcile статусов: ${back.length} аккаунтов вернулись из временного статуса`)
+} catch (err) {
+  console.warn('[status] reconcileExpiredStatuses failed:', err)
+}
+
 await startScheduler().catch((err) => console.warn('[automation] scheduler init failed:', err))
 
 app.listen(PORT, () => {
