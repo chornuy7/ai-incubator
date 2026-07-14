@@ -49,7 +49,9 @@ async function setStatus(accountId, to, opts = {}) {
       module: opts.task?.moduleKey,
       taskId: opts.task?.id,
     })
-  } catch {
+  } catch (err) {
+    // Недопустимый переход или сбой — не роняем воркер, но не молчим (аудит-пробел виден).
+    console.warn(`[status] setAccountStatus(${accountId.slice(-6)}→${to}) fallback:`, err?.message || err)
     await setAccountMeta(accountId, { status: to })
   }
 }

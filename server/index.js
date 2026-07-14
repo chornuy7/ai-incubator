@@ -202,6 +202,9 @@ try {
 
 await startScheduler().catch((err) => console.warn('[automation] scheduler init failed:', err))
 
-app.listen(PORT, () => {
-  console.log(`API → http://localhost:${PORT}`)
+// Безопасный дефолт: слушаем только localhost (управление TG-аккаунтами без auth не должно
+// торчать в LAN/интернет). Для доступа с другого устройства выставить API_HOST=0.0.0.0.
+const HOST = process.env.API_HOST || '127.0.0.1'
+app.listen(PORT, HOST, () => {
+  console.log(`API → http://${HOST}:${PORT}`)
 })

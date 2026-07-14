@@ -1,5 +1,8 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
+import fs from 'node:fs/promises'
+import os from 'node:os'
+import path from 'node:path'
 import { buildAuditEntry } from '../lib/auditLog.js'
 
 test('buildAuditEntry: дефолты для минимального входа', () => {
@@ -38,4 +41,23 @@ test('buildAuditEntry: без account/meta — ключи не появляют�
   const e = buildAuditEntry({ action: 'task.start' })
   assert.equal('account' in e, false)
   assert.equal('meta' in e, false)
+})
+
+test('appendAudit: ротация обрезает файл до KEEP_LINES (A2)', async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'audit-'))
+  const file = path.join(dir, 'audit.jsonl')
+  process.env.AUDIT_LOG_FILE = file
+  process.env.AUDIT_MAX_BYTES = '1' // любой append превышает → триггерит ротацию
+  process.env.AUDIT_KEEP_LINES = '3'
+  // свежий инстанс модуля с этим env (обходим ESM-кеш query-строкой)
+  const mod = await import('../lib/auditLog.js?rot=' + Date.now())
+  for (let i = 0; i < 10; i++) await mod.appendAudit({ action: 'x', code: String(i) })
+  const lines = (await fs.readFile(file, 'utf8')).split('\n').filter(Boolean)
+  assert.equal(lines.length, 3, 'должно остаться ровно KEEP_LINES строк')
+  const back = await mod.readAudit()
+  assert.equal(back.length, 3)
+  assert.equal(back[0].code, '9', 'новые записи сверху')
+  delete process.env.AUDIT_LOG_FILE
+  delete process.env.AUDIT_MAX_BYTES
+  delete process.env.AUDIT_KEEP_LINES
 })

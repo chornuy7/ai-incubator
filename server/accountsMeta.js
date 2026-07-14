@@ -60,16 +60,21 @@ export async function setAccountStatus(accountId, to, opts = {}) {
   const patch = buildStatusPatch(current, to, opts)
   if (patch.status === from) return current // no-op: тот же статус
   const saved = await setAccountMeta(accountId, patch)
-  await appendAudit({
-    action: 'account.status.change',
-    module: opts.module || 'core',
-    initiator: opts.initiator || 'system',
-    code: patch.statusCode,
-    reason: patch.statusReason,
-    account: accountId,
-    scope: { accounts: [accountId], ...(opts.taskId ? { taskId: opts.taskId } : {}) },
-    meta: { from: patch.prevStatus, to: patch.status, until: patch.statusUntil },
-  })
+  // Аудит best-effort: его сбой не должен откатывать уже сохранённый статус, но и не молчит (§5.2).
+  try {
+    await appendAudit({
+      action: 'account.status.change',
+      module: opts.module || 'core',
+      initiator: opts.initiator || 'system',
+      code: patch.statusCode,
+      reason: patch.statusReason,
+      account: accountId,
+      scope: { accounts: [accountId], ...(opts.taskId ? { taskId: opts.taskId } : {}) },
+      meta: { from: patch.prevStatus, to: patch.status, until: patch.statusUntil },
+    })
+  } catch (err) {
+    console.warn(`[audit] не удалось записать account.status.change (${from}→${patch.status}):`, err?.message || err)
+  }
   return saved
 }
 

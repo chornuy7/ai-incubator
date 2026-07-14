@@ -15,6 +15,9 @@ import { fileURLToPath } from 'url'
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 /** Путь можно переопределить env (для тестов/изоляции). */
 const AUDIT_FILE = process.env.AUDIT_LOG_FILE || path.join(__dirname, '..', 'data', 'audit.log.jsonl')
+/** Ротация: при превышении размера обрезаем до последних KEEP строк (защита от роста диска). */
+const MAX_BYTES = Number(process.env.AUDIT_MAX_BYTES) || 2 * 1024 * 1024
+const KEEP_LINES = Number(process.env.AUDIT_KEEP_LINES) || 5000
 
 /**
  * Нормализовать запись аудита к контрактному виду. Чистая функция.
@@ -46,6 +49,16 @@ export async function appendAudit(input) {
   const entry = buildAuditEntry(input)
   await fs.mkdir(path.dirname(AUDIT_FILE), { recursive: true })
   await fs.appendFile(AUDIT_FILE, JSON.stringify(entry) + '\n', 'utf8')
+  // Best-effort ротация: если файл вырос — оставить последние KEEP_LINES строк.
+  try {
+    const st = await fs.stat(AUDIT_FILE)
+    if (st.size > MAX_BYTES) {
+      const lines = (await fs.readFile(AUDIT_FILE, 'utf8')).split('\n').filter(Boolean)
+      if (lines.length > KEEP_LINES) {
+        await fs.writeFile(AUDIT_FILE, lines.slice(-KEEP_LINES).join('\n') + '\n', 'utf8')
+      }
+    }
+  } catch { /* ротация не критична — пропускаем */ }
   return entry
 }
 
