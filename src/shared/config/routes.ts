@@ -2,7 +2,7 @@ import type { LucideIcon } from 'lucide-react'
 import {
   LayoutGrid, BarChart3, LifeBuoy, MessageSquareText, Bot, Sparkles, Eye,
   Flame, MessagesSquare, Trophy, Radar, Users, Search, MessageCircle,
-  Hash, History, UserCog, CalendarClock, Target, ListChecks, Contact, TrendingUp, Rocket, Radio,
+  Hash, History, UserCog, CalendarClock, Target, ListChecks, Contact, TrendingUp, Rocket, Radio, ScrollText,
 } from 'lucide-react'
 
 export interface RouteDef {
@@ -22,6 +22,7 @@ export const ROUTES: RouteDef[] = [
   { path: '/panel/crm', label: 'CRM · Лиды', icon: Contact, group: 'main' },
   { path: '/panel/analytics', label: 'Аналитика', icon: TrendingUp, group: 'main' },
   { path: '/panel/my-statistics', label: 'Моя статистика', icon: BarChart3, group: 'main' },
+  { path: '/panel/logs', label: 'Логи', icon: ScrollText, group: 'main' },
   { path: '/panel/support', label: 'Поддержка', icon: LifeBuoy, group: 'main' },
 
   { path: '/panel/modules/neuro-commenting', label: 'Нейрокомментинг', icon: MessageSquareText, group: 'modules' },
@@ -38,7 +39,7 @@ export const ROUTES: RouteDef[] = [
   { path: '/panel/modules/parsing-messages', label: 'Парсер по сообщениям', icon: MessageCircle, group: 'parsing' },
   { path: '/panel/modules/parsing-comments', label: 'Парсер комментариев', icon: Hash, group: 'parsing' },
   { path: '/panel/channels', label: 'Каналы (база)', icon: Radio, group: 'parsing' },
-  { path: '/panel/parsing-history', label: 'История парсинга', icon: History, group: 'parsing' },
+  { path: '/panel/parsing-history', label: 'Логи парсинга', icon: History, group: 'parsing' },
 
   { path: '/panel/user/profile', label: 'Мой аккаунт', icon: UserCog, group: 'account' },
 ]

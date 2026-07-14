@@ -228,6 +228,18 @@ app.use('/api/goals', goalsRouter)
 app.use('/api/leads', leadsRouter)
 app.use('/api/campaigns', campaignsRouter)
 app.use('/api/channels', channelsRouter)
+
+// Единый журнал действий/аудит (§3.1/§5): смена статусов, старт/стоп задач, перенос, кампании.
+app.get('/api/audit', async (req, res) => {
+  try {
+    const { readAudit } = await import('./lib/auditLog.js')
+    const { limit, action, initiator, account } = req.query
+    const entries = await readAudit({ limit: limit ? Number(limit) : 300, action, initiator, account })
+    res.json({ ok: true, entries })
+  } catch (err) {
+    res.status(500).json({ ok: false, error: err instanceof Error ? err.message : 'Ошибка' })
+  }
+})
 app.use('/api', featureRouter)
 
 // Загружаем кэши глобальных настроек (промпт, ИИ-безопасность, ЧС) до старта воркеров.
