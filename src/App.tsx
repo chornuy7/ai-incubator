@@ -12,6 +12,7 @@ import { GoalsPage } from '@/pages/GoalsPage'
 import { TasksPage } from '@/pages/TasksPage'
 import { LeadsPage } from '@/pages/LeadsPage'
 import { AnalyticsPage } from '@/pages/AnalyticsPage'
+import { CampaignPage } from '@/pages/CampaignPage'
 import { GuestLogin } from '@/pages/GuestLogin'
 
 export default function App() {
@@ -34,6 +35,7 @@ export default function App() {
         <Route path="/panel/tasks" element={<TasksPage />} />
         <Route path="/panel/crm" element={<LeadsPage />} />
         <Route path="/panel/analytics" element={<AnalyticsPage />} />
+        <Route path="/panel/campaign" element={<CampaignPage />} />
         <Route path="/panel/my-statistics" element={<StatisticsPage />} />
         <Route path="/panel/support" element={<SupportPage />} />
         <Route path="/panel/modules/:moduleKey" element={<ModuleRunner />} />
