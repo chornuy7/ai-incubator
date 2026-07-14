@@ -11,6 +11,7 @@ import { answerHelp } from './aiHelp.js'
 import { featureRouter } from './featureRoutes.js'
 import { automationRouter } from './automation/routes.js'
 import { goalsRouter } from './goalsRoutes.js'
+import { leadsRouter } from './leadsRoutes.js'
 import { startScheduler } from './automation/scheduler.js'
 import { loadAiSettings } from './aiSettings.js'
 import { loadAiSafety } from './aiSafety.js'
@@ -222,6 +223,7 @@ app.post('/api/ai/help', async (req, res) => {
 })
 app.use('/api/automation', automationRouter)
 app.use('/api/goals', goalsRouter)
+app.use('/api/leads', leadsRouter)
 app.use('/api', featureRouter)
 
 // Загружаем кэши глобальных настроек (промпт, ИИ-безопасность, ЧС) до старта воркеров.

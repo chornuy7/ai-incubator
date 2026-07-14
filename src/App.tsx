@@ -10,6 +10,7 @@ import { ProfilePage } from '@/pages/ProfilePage'
 import { AutomationPage } from '@/pages/AutomationPage'
 import { GoalsPage } from '@/pages/GoalsPage'
 import { TasksPage } from '@/pages/TasksPage'
+import { LeadsPage } from '@/pages/LeadsPage'
 import { GuestLogin } from '@/pages/GuestLogin'
 
 export default function App() {
@@ -30,6 +31,7 @@ export default function App() {
         <Route path="/panel/automation" element={<AutomationPage />} />
         <Route path="/panel/goals" element={<GoalsPage />} />
         <Route path="/panel/tasks" element={<TasksPage />} />
+        <Route path="/panel/crm" element={<LeadsPage />} />
         <Route path="/panel/my-statistics" element={<StatisticsPage />} />
         <Route path="/panel/support" element={<SupportPage />} />
         <Route path="/panel/modules/:moduleKey" element={<ModuleRunner />} />
