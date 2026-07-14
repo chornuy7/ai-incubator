@@ -34,5 +34,15 @@ test('upsert: дедуп по username, обновляет и добавляет
   assert.equal(s.statsBy, 'acc1')
   assert.ok(s.lastStatsAt > 0)
 
+  // upsertMany (парсер): дедуп в общей базе, обновление существующего одним батчем
+  const n = await C.upsertMany([
+    { username: 'news', subscribers: 3000 }, // существующий → обновить
+    { username: 'newone', subscribers: 500 }, // новый
+  ], 'parse:t1')
+  assert.equal(n, 2)
+  const list = await C.listChannels()
+  assert.equal(list.length, 2) // без дубля (news уже был)
+  assert.equal(list.find((c) => c.username === 'news').subscribers, 3000)
+
   delete process.env.CHANNELS_FILE
 })

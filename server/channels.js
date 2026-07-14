@@ -83,6 +83,51 @@ export async function upsertChannel(input = {}, source) {
   return channel
 }
 
+/**
+ * Пакетный upsert (для парсера): один read-modify-write на весь список.
+ * Дедуп по ключу, обновляет карточку + источник, не создаёт дубли (§3.8/§4).
+ * @param {object[]} items @param {string} [source]
+ */
+export async function upsertMany(items = [], source) {
+  if (!items.length) return 0
+  const all = await listChannels()
+  const byKey = new Map()
+  all.forEach((c, i) => { const k = channelKey(c); if (k) byKey.set(k, i) })
+  const now = Date.now()
+  let n = 0
+  for (const input of items) {
+    const key = channelKey(input)
+    if (!key) continue
+    const fields = {
+      title: input.title ?? '',
+      username: input.username ? String(input.username).replace(/^@/, '') : '',
+      link: input.link ?? (input.username ? `https://t.me/${String(input.username).replace(/^@/, '')}` : ''),
+      subscribers: Number(input.subscribers) || 0,
+      hasComments: input.hasComments ?? null,
+      tgPeerId: input.tgPeerId ?? null,
+    }
+    if (byKey.has(key)) {
+      const c = all[byKey.get(key)]
+      for (const [k, v] of Object.entries(fields)) {
+        const ok = v !== undefined && v !== '' && v !== null && !(typeof v === 'number' && v === 0)
+        if (ok) c[k] = v
+      }
+      const src = new Set(c.sources || []); if (source) src.add(source); c.sources = [...src]
+      c.updatedAt = now
+    } else {
+      const c = {
+        id: `ch_${crypto.randomUUID().slice(0, 8)}`, ...fields, category: '', language: '', region: '',
+        activity: null, rating: null, botInGroup: false, sources: source ? [source] : [], categoriesExtra: [],
+        lastStatsAt: null, statsBy: null, createdAt: now, updatedAt: now,
+      }
+      all.unshift(c); byKey.set(key, 0)
+    }
+    n += 1
+  }
+  await writeJson(CHANNELS_FILE, all)
+  return n
+}
+
 /** Записать свежую статистику канала (кто обновил, когда). @param {string} id @param {object} stats @param {string} [statsBy] */
 export async function recordChannelStats(id, stats = {}, statsBy) {
   const all = await listChannels()

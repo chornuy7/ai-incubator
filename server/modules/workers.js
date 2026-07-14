@@ -1,5 +1,6 @@
 import { generateComment, isAiGenerationEnabled, resolveSystemPrompt } from '../neuroCommenting/commentGenerator.js'
 import { buildGoalContext } from '../lib/goalContext.js'
+import { upsertMany } from '../channels.js'
 import {
   fetchPosts,
   sendChannelComment,
@@ -815,6 +816,7 @@ export async function runChannelParser(task, store, kind) {
   const wantGroups = kind === 'parsing-groups'
   const unitLabel = wantGroups ? 'групп' : 'каналов'
   const resultKind = wantGroups ? 'group' : 'channel'
+  const baseChannels = [] // копим найденное для общей базы каналов (§3.8), упсерт батчем в конце
   const mul = delayMultiplier(s.protectionLevel ?? 1, s.delayPreset ?? 1)
 
   const minMembers = Math.max(0, Number(s.minMembers ?? 0) || 0)
@@ -908,6 +910,8 @@ export async function runChannelParser(task, store, kind) {
             link: c.username ? `https://t.me/${c.username}` : '',
             hasComments: !!c.isMegagroup,
           })
+          // §3.8/§4: копим для общей базы — упсертим одним батчем в конце (без дублей).
+          baseChannels.push({ title: c.title, username: c.username, subscribers: members, hasComments: !!c.isMegagroup, tgPeerId: c.id })
           added += 1
           task.progress.actionsDone = task.results.length
           task.progress.done = task.results.length
@@ -929,6 +933,8 @@ export async function runChannelParser(task, store, kind) {
 
     task.progress.total = task.results.length
     task.status = task.stopRequested ? 'stopped' : 'done'
+    // §3.8/§4: найденные каналы — в общую базу одним батчем (дедуп, без потери данных).
+    try { const n = await upsertMany(baseChannels, `parse:${task.id}`); if (n) await store.appendLog(task, 'info', `В базу каналов: ${n}`) } catch { /* ignore */ }
     await store.appendLog(task, 'info', `Готово · найдено ${task.results.length} ${unitLabel}`)
   } catch (err) {
     task.status = 'error'
