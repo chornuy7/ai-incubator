@@ -6,6 +6,7 @@ import { PageHeader, Card, Select, Badge } from '@/shared/ui'
 import { MODULES } from '@/shared/config/modules'
 import { fetchGoals, type Goal } from '@/api/goalsApi'
 import { launchCampaign, type CampaignResult } from '@/api/campaignsApi'
+import { fetchChannels, type Channel } from '@/api/channelsApi'
 
 // Модули, которые осмысленно вести к цели (принимают целевые каналы/группы).
 const CAMPAIGN_MODULES = ['neuro-commenting', 'neuro-chatting', 'mass-react', 'mass-looking']
@@ -18,14 +19,27 @@ export function CampaignPage() {
   const [goalId, setGoalId] = useState('')
   const [mods, setMods] = useState<Set<string>>(new Set(['neuro-commenting']))
   const [targetsText, setTargetsText] = useState('')
+  const [channels, setChannels] = useState<Channel[]>([])
+  const [picked, setPicked] = useState<Set<string>>(new Set())
   const [launching, setLaunching] = useState(false)
   const [result, setResult] = useState<CampaignResult | null>(null)
 
-  useEffect(() => { void fetchGoals().then(setGoals).catch(() => {}) }, [])
+  useEffect(() => {
+    void fetchGoals().then(setGoals).catch(() => {})
+    void fetchChannels().then(setChannels).catch(() => {})
+  }, [])
 
   // Свободные аккаунты (не занятые другой задачей) — их и распределим.
   const freeIds = useMemo(() => accounts.filter((a) => !a.busyIn).map((a) => a.id), [accounts])
-  const targets = useMemo(() => targetsText.split(/[\n,;]+/).map((t) => t.trim()).filter(Boolean), [targetsText])
+  // Цели = вручную введённые + выбранные из базы каналов (без дублей).
+  const targets = useMemo(() => {
+    const typed = targetsText.split(/[\n,;]+/).map((t) => t.trim()).filter(Boolean)
+    return [...new Set([...typed, ...picked])]
+  }, [targetsText, picked])
+
+  const pickChan = (u: string) => setPicked((prev) => {
+    const n = new Set(prev); n.has(u) ? n.delete(u) : n.add(u); return n
+  })
 
   const toggle = (k: string) => setMods((prev) => {
     const n = new Set(prev); n.has(k) ? n.delete(k) : n.add(k); return n
@@ -76,7 +90,23 @@ export function CampaignPage() {
 
         <Card className="p-4">
           <div className="mb-1 text-xs text-white/50">Целевые каналы/группы (по одному на строку)</div>
-          <textarea className="input min-h-[120px]" value={targetsText} onChange={(e) => setTargetsText(e.target.value)} placeholder={'@channel1\nhttps://t.me/group2'} />
+          <textarea className="input min-h-[88px]" value={targetsText} onChange={(e) => setTargetsText(e.target.value)} placeholder={'@channel1\nhttps://t.me/group2'} />
+          {channels.length > 0 && (
+            <div className="mt-2">
+              <div className="mb-1 text-xs text-white/50">Или выбрать из базы каналов ({picked.size} выбрано)</div>
+              <div className="flex max-h-28 flex-wrap gap-1 overflow-y-auto rounded-lg border border-white/10 p-2">
+                {channels.filter((c) => c.username).map((c) => {
+                  const u = `@${c.username}`
+                  const on = picked.has(u)
+                  return (
+                    <button key={c.id} onClick={() => pickChan(u)} className={`rounded px-2 py-0.5 text-xs ${on ? 'bg-spark-500 text-black' : 'bg-white/5 text-white/70 hover:bg-white/10'}`}>
+                      {u}
+                    </button>
+                  )
+                })}
+              </div>
+            </div>
+          )}
           <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-xs text-white/50">
             <span>Свободных аккаунтов: <b className="text-white">{freeIds.length}</b></span>
             <span>Модулей: <b className="text-white">{mods.size}</b></span>
