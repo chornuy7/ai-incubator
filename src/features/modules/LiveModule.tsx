@@ -1,11 +1,12 @@
-import { useCallback, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import {
   Play, Sparkles, Hash, Settings2, Clock, Users, MessageSquareText,
-  Heart, Eye, Shield, MessageCircle, Database, Trophy, LayoutGrid, List, Link2, Plus,
+  Heart, Eye, Shield, MessageCircle, Database, Trophy, LayoutGrid, List, Link2, Plus, Target,
 } from 'lucide-react'
 import { MODULES, type ModuleConfig } from '@/shared/config/modules'
 import { activeAccounts, useApp } from '@/mocks/store'
-import { ToggleGroup, Segmented, EmptyState, Badge } from '@/shared/ui'
+import { ToggleGroup, Segmented, EmptyState, Badge, Select } from '@/shared/ui'
+import { fetchGoals, type Goal } from '@/api/goalsApi'
 import { LogsPanel } from '@/widgets/LogsPanel'
 import { AccountPicker } from '@/features/account-picker/AccountPicker'
 import { useModuleTask } from './shared/useModuleTask'
@@ -57,6 +58,9 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
   const [promptBodies, setPromptBodies] = useState(() => loadPromptBodies(moduleKey, cfg.messagePrompts ?? []))
   const [delayPreset, setDelayPreset] = useState(1)
   const [delays, setDelays] = useState(DEFAULT_DELAYS)
+  const [goals, setGoals] = useState<Goal[]>([])
+  const [goalId, setGoalId] = useState('')
+  useEffect(() => { void fetchGoals().then(setGoals).catch(() => {}) }, [])
   const [palette, setPalette] = useState<Set<string>>(new Set(['👍', '❤️', '🔥']))
   const [viewTab, setViewTab] = useState(1)
   const [historyGrid, setHistoryGrid] = useState(true)
@@ -127,11 +131,12 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
     postUrls,
     limit: maxActions,
     delays,
+    ...(goalId ? { goalId } : {}),
     ...(cfg.lookingLayout ? {
       lookMode: cfg.lookModeOptions?.[lookModeIdx]?.value ?? 'stories',
       lookPostsCount,
     } : {}),
-  }), [selected, targets, postUrls, toggles, probability, maxActions, minActions, maxPerAcc, minPerAcc, minWords, durationMinutes, aiProtect, protLevel, activePrompt, promptBodies, delayPreset, palette, delays, keywords, isGgr, accounts, cfg, lookModeIdx, lookPostsCount])
+  }), [selected, targets, postUrls, toggles, probability, maxActions, minActions, maxPerAcc, minPerAcc, minWords, durationMinutes, aiProtect, protLevel, activePrompt, promptBodies, delayPreset, palette, delays, keywords, isGgr, accounts, cfg, lookModeIdx, lookPostsCount, goalId])
 
   const hasPostTargets = postUrls.length > 0
   const busySelectedCount = useMemo(
@@ -399,6 +404,17 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
       )}
 
       <SectionCard icon={<Play size={18} />} title={running ? 'Выполнение' : 'Запуск'} badge={running ? 'LIVE' : undefined}>
+        {goals.length > 0 && !running && (
+          <div className="mb-3">
+            <label className="mb-1 block text-xs text-white/50"><Target size={11} className="mb-0.5 inline" /> Цель кампании (опционально)</label>
+            <Select
+              value={goalId}
+              onChange={setGoalId}
+              placeholder="Без цели"
+              options={[{ value: '', label: 'Без цели' }, ...goals.map((gg) => ({ value: gg.id, label: gg.name }))]}
+            />
+          </div>
+        )}
         <LaunchPanel
           running={running}
           starting={starting}

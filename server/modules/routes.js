@@ -9,6 +9,26 @@ modulesRouter.get('/', (_req, res) => {
   res.json({ ok: true, modules: listModuleKeys() })
 })
 
+// Агрегат всех задач по всем модулям (дашборд «Задачи», §3.9). До /:moduleKey/tasks.
+modulesRouter.get('/tasks', async (_req, res) => {
+  try {
+    const { listModuleKeys, getModuleStore } = await import('./registry.js')
+    const all = []
+    for (const key of listModuleKeys()) {
+      const store = getModuleStore(key)
+      if (!store) continue
+      try {
+        const tasks = await store.listTasks()
+        for (const t of tasks) all.push({ ...t, moduleKey: key })
+      } catch { /* skip module */ }
+    }
+    all.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0))
+    res.json({ ok: true, tasks: all })
+  } catch (err) {
+    res.status(500).json({ ok: false, error: err instanceof Error ? err.message : 'Ошибка' })
+  }
+})
+
 modulesRouter.get('/:moduleKey/tasks', async (req, res) => {
   try {
     const store = getModuleStore(req.params.moduleKey)
@@ -45,6 +65,7 @@ modulesRouter.post('/:moduleKey/tasks', async (req, res) => {
 
     const { store, task, worker } = startModuleTask(moduleKey, settings)
     task.initiator = settings.initiator || 'operator' // §3.9: кто запустил
+    task.goalId = settings.goalId ?? null // §3.6: к какой цели
     try {
       await store.saveTask(task)
       const { startWorker } = await import('./workers.js')
@@ -103,6 +124,7 @@ modulesRouter.post('/:moduleKey/tasks/:id/restart', async (req, res) => {
 
     const { store: s, task, worker } = startModuleTask(moduleKey, settings)
     task.initiator = settings.initiator
+    task.goalId = settings.goalId ?? null
     task.restartOf = id
     try {
       await s.saveTask(task)

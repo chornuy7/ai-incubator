@@ -48,6 +48,8 @@ export interface ModuleTaskSettings {
   userSource?: 'participants' | 'writers' // как парсить users: список участников или кто писал в чате
   delayChat?: number
   delayItem?: number
+  // ── Цель кампании (§3.6) ──
+  goalId?: string
   // ── НейроДиалоги ──
   replyScope?: 'unread' | 'all' // 'unread' — только новые ЛС, 'all' — все, где последнее слово за собеседником
   dialogGoal?: string // инструкция для ИИ: как себя вести и к чему вести диалог
@@ -76,6 +78,8 @@ export interface ModuleTask {
   id: string
   moduleKey: string
   status: 'queued' | 'running' | 'stopped' | 'done' | 'error'
+  initiator?: string | null
+  goalId?: string | null
   createdAt: number
   updatedAt: number
   progress: ModuleTaskProgress
@@ -107,6 +111,17 @@ export async function fetchModuleTask(moduleKey: string, taskId: string): Promis
 export async function stopModuleTask(moduleKey: string, taskId: string): Promise<ModuleTask> {
   const data = await apiPost<{ task: ModuleTask }>(`${base(moduleKey)}/tasks/${taskId}/stop`)
   return data.task
+}
+
+export async function restartModuleTask(moduleKey: string, taskId: string): Promise<ModuleTask> {
+  const data = await apiPost<{ task: ModuleTask }>(`${base(moduleKey)}/tasks/${taskId}/restart`)
+  return data.task
+}
+
+/** Все задачи по всем модулям (дашборд «Задачи», §3.9). */
+export async function fetchAllTasks(): Promise<ModuleTask[]> {
+  const data = await apiGet<{ tasks: ModuleTask[] }>('/api/modules/tasks')
+  return data.tasks
 }
 
 export interface ModulePreset {
