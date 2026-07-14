@@ -517,7 +517,13 @@ export async function runWarming(task, store) {
   task.startedAt = Date.now()
   task.status = 'running'
   await store.saveTask(task)
-  const mul = delayMultiplier(s.protectionLevel ?? 1, s.delayPreset ?? 1)
+  // 3 уровня прогрева (решение 14.07): чем длиннее уровень — тем медленнее/естественнее темп.
+  // 0 = 2 дня, 1 = 3–7 дней, 2 = 7–14 дней. Действия на уровень — ❓ (§8, не решено).
+  const WARM_MUL = [0.8, 1.3, 2.0]
+  const warmMul = WARM_MUL[s.warmLevel ?? 1] ?? 1.3
+  const mul = delayMultiplier(s.protectionLevel ?? 1, s.delayPreset ?? 1) * warmMul
+  const WARM_LABELS = ['Быстрый (2 дня)', 'Средний (3–7 дней)', 'Долгий (7–14 дней)']
+  await store.appendLog(task, 'info', `Прогрев запущен · уровень: ${WARM_LABELS[s.warmLevel ?? 1] || 'средний'}`)
   const accountIds = s.accountIds || []
   let idx = 0
   let idleLap = 0

@@ -27,6 +27,9 @@ const DEFAULT_DELAYS = {
 
 const DURATION_MIN_BY_PROTECTION_LEVEL = [60, 45, 30]
 
+// 3 уровня прогрева (решение 14.07): длительность и «естественность» темпа.
+const WARM_LEVELS = ['Быстрый · 2 дня', 'Средний · 3–7 дней', 'Долгий · 7–14 дней']
+
 export function LiveModule({ moduleKey }: { moduleKey: string }) {
   const cfg = MODULES[moduleKey]
   if (!cfg) return null
@@ -60,6 +63,7 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
   const [delays, setDelays] = useState(DEFAULT_DELAYS)
   const [goals, setGoals] = useState<Goal[]>([])
   const [goalId, setGoalId] = useState('')
+  const [warmLevel, setWarmLevel] = useState(1)
   useEffect(() => { void fetchGoals().then(setGoals).catch(() => {}) }, [])
   const [palette, setPalette] = useState<Set<string>>(new Set(['👍', '❤️', '🔥']))
   const [viewTab, setViewTab] = useState(1)
@@ -132,11 +136,12 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
     limit: maxActions,
     delays,
     ...(goalId ? { goalId } : {}),
+    ...(cfg.warmingLayout ? { warmLevel } : {}),
     ...(cfg.lookingLayout ? {
       lookMode: cfg.lookModeOptions?.[lookModeIdx]?.value ?? 'stories',
       lookPostsCount,
     } : {}),
-  }), [selected, targets, postUrls, toggles, probability, maxActions, minActions, maxPerAcc, minPerAcc, minWords, durationMinutes, aiProtect, protLevel, activePrompt, promptBodies, delayPreset, palette, delays, keywords, isGgr, accounts, cfg, lookModeIdx, lookPostsCount, goalId])
+  }), [selected, targets, postUrls, toggles, probability, maxActions, minActions, maxPerAcc, minPerAcc, minWords, durationMinutes, aiProtect, protLevel, activePrompt, promptBodies, delayPreset, palette, delays, keywords, isGgr, accounts, cfg, lookModeIdx, lookPostsCount, goalId, warmLevel])
 
   const hasPostTargets = postUrls.length > 0
   const busySelectedCount = useMemo(
@@ -404,6 +409,12 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
       )}
 
       <SectionCard icon={<Play size={18} />} title={running ? 'Выполнение' : 'Запуск'} badge={running ? 'LIVE' : undefined}>
+        {cfg.warmingLayout && !running && (
+          <div className="mb-3">
+            <div className="mb-1 text-xs text-white/50">Уровень прогрева <span className="text-white/30">(длиннее = естественнее)</span></div>
+            <Segmented options={WARM_LEVELS} value={warmLevel} onChange={setWarmLevel} />
+          </div>
+        )}
         {goals.length > 0 && !running && (
           <div className="mb-3">
             <label className="mb-1 block text-xs text-white/50"><Target size={11} className="mb-0.5 inline" /> Цель кампании (опционально)</label>

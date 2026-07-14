@@ -48,6 +48,8 @@ export interface ModuleTaskSettings {
   userSource?: 'participants' | 'writers' // как парсить users: список участников или кто писал в чате
   delayChat?: number
   delayItem?: number
+  // ── Прогрев: уровень (0=2д, 1=3–7д, 2=7–14д) ──
+  warmLevel?: number
   // ── Цель кампании (§3.6) ──
   goalId?: string
   // ── НейроДиалоги ──
