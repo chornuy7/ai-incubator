@@ -61,6 +61,22 @@ export function isRunnable(status) {
   return !NON_RUNNABLE.has(normalizeStatus(status))
 }
 
+/** Ключ модуля прогрева — единственный, кто легально работает по warming-аккаунтам. */
+export const WARMING_MODULE = 'warming'
+
+/**
+ * Можно ли назначить/запустить аккаунт в конкретном модуле (§3.2 «только разрешённые», §3.3
+ * «прогрев блокирует профиль для других модулей»). Прогрев может брать active/warming;
+ * остальные модули — только рабочие статусы (active). Чистая функция.
+ * @param {string} moduleKey
+ * @param {string} status
+ */
+export function canModuleUseAccount(moduleKey, status) {
+  const s = normalizeStatus(status)
+  if (moduleKey === WARMING_MODULE) return s === STATUS.ACTIVE || s === STATUS.WARMING
+  return isRunnable(s)
+}
+
 /**
  * Можно ли назначить аккаунт в рабочий модуль (ручно/оркестратором).
  * Совпадает с isRunnable; исключение «горячий лид» для warming обрабатывает вызывающий.

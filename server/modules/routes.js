@@ -1,6 +1,7 @@
 import { Router } from 'express'
 import { getModuleStore, listModuleKeys, validateSettings, startModuleTask, stopModuleTask } from './registry.js'
 import { releaseTaskLocks } from '../lib/accountLocks.js'
+import { assertAccountsAssignable } from '../accountsMeta.js'
 
 export const modulesRouter = Router()
 
@@ -37,6 +38,10 @@ modulesRouter.post('/:moduleKey/tasks', async (req, res) => {
     const settings = req.body?.settings ?? req.body
     const err = validateSettings(moduleKey, settings)
     if (err) return res.status(400).json({ ok: false, error: err })
+
+    // Guard безопасного назначения (§3.2/§3.3): не отдаём непрогретые/занятые статусом профили.
+    const assignErr = await assertAccountsAssignable(settings.accountIds, moduleKey)
+    if (assignErr) return res.status(409).json({ ok: false, error: assignErr })
 
     const { store, task, worker } = startModuleTask(moduleKey, settings)
     try {

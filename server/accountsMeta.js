@@ -1,7 +1,7 @@
 import fs from 'fs/promises'
 import path from 'path'
 import { SESSIONS_DIR } from './config.js'
-import { buildStatusPatch, normalizeStatus, nextStatusAfterExpiry } from './lib/accountStatus.js'
+import { buildStatusPatch, normalizeStatus, nextStatusAfterExpiry, canModuleUseAccount } from './lib/accountStatus.js'
 import { appendAudit } from './lib/auditLog.js'
 
 const META_FILE = path.join(path.dirname(SESSIONS_DIR), 'accounts-meta.json')
@@ -98,6 +98,27 @@ export async function reconcileExpiredStatuses(now = Date.now()) {
     } catch { /* недопустимый переход — пропускаем */ }
   }
   return flipped
+}
+
+/**
+ * Guard на границе назначения (§3.2/§3.3): вернуть текст ошибки, если хотя бы один аккаунт
+ * нельзя назначить в этот модуль по статусу (прогрев/пауза/карантин/floodwait/…),
+ * либо null если все допустимы. Не бросает — по образцу validateSettings.
+ * @param {string[]} accountIds
+ * @param {string} moduleKey
+ * @returns {Promise<string|null>}
+ */
+export async function assertAccountsAssignable(accountIds, moduleKey) {
+  if (!accountIds?.length) return null
+  const all = await loadAllMeta()
+  /** @type {string[]} */
+  const blocked = []
+  for (const id of accountIds) {
+    const status = normalizeStatus((all[id] || {}).status)
+    if (!canModuleUseAccount(moduleKey, status)) blocked.push(`${String(id).slice(-6)} (${status})`)
+  }
+  if (!blocked.length) return null
+  return `Нельзя назначить профили в статусе, недоступном для модуля: ${blocked.join(', ')}. Дождитесь выхода из прогрева/карантина или выберите другие.`
 }
 
 export async function deleteAccountMeta(accountId) {

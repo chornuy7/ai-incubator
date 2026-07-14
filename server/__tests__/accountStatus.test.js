@@ -10,6 +10,7 @@ import {
   buildStatusPatch,
   isStatusExpired,
   nextStatusAfterExpiry,
+  canModuleUseAccount,
   TERMINAL,
 } from '../lib/accountStatus.js'
 
@@ -50,6 +51,23 @@ test('canTransition: разрешённые и запрещённые', () => {
   assert.equal(canTransition(STATUS.INVALID, STATUS.ACTIVE), false)
   // pause выходит только в active
   assert.equal(canTransition(STATUS.PAUSE, STATUS.WARMING), false)
+})
+
+test('canModuleUseAccount: прогрев блокирует другие модули (§3.3)', () => {
+  // прогрев может брать active и warming
+  assert.equal(canModuleUseAccount('warming', 'active'), true)
+  assert.equal(canModuleUseAccount('warming', 'warming'), true)
+  assert.equal(canModuleUseAccount('warming', 'quarantine'), false)
+  // другие модули НЕ берут warming-аккаунт
+  assert.equal(canModuleUseAccount('neuro-commenting', 'warming'), false)
+  assert.equal(canModuleUseAccount('parsing', 'warming'), false)
+  // рабочий active — можно всем
+  assert.equal(canModuleUseAccount('neuro-commenting', 'active'), true)
+  assert.equal(canModuleUseAccount('parsing', 'working'), true) // legacy working → active
+  // нерабочие — никому (кроме warming-исключения выше)
+  for (const s of ['pause', 'floodwait', 'quarantine', 'spamblock', 'reauth', 'invalid']) {
+    assert.equal(canModuleUseAccount('neuro-commenting', s), false, `${s} не должен назначаться`)
+  }
 })
 
 test('TERMINAL содержит invalid', () => {
