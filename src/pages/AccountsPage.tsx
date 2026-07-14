@@ -128,6 +128,8 @@ export function AccountsPage() {
   }
 
   const bulkTrash = () => {
+    // Двухэтапное подтверждение опасного массового действия (§3.2).
+    if (selected.size >= 2 && !window.confirm(`Переместить в корзину ${selected.size} аккаунтов? Действие затронет все выбранные профили.`)) return
     void (async () => {
       for (const id of selected) await trashAccount(id)
       pushToast({ type: 'success', title: `В корзину: ${selected.size}`, desc: 'Аккаунты перемещены в корзину.' })

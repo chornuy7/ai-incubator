@@ -46,7 +46,30 @@ app.get('/api/tg/accounts', async (_req, res) => {
 
 app.patch('/api/tg/accounts/:accountId', async (req, res) => {
   try {
-    const account = await tgPatchAccount(req.params.accountId, req.body ?? {})
+    const patch = req.body ?? {}
+    // Перенос между ролями/проектами — зафиксировать инициатора в аудите (§3.2/§4).
+    let before = null
+    if (patch.role !== undefined || patch.project !== undefined) {
+      const { getAccountMeta } = await import('./accountsMeta.js')
+      before = await getAccountMeta(req.params.accountId)
+    }
+    const account = await tgPatchAccount(req.params.accountId, patch)
+    if (before) {
+      const changes = {}
+      if (patch.role !== undefined && patch.role !== before.role) changes.role = { from: before.role, to: patch.role }
+      if (patch.project !== undefined && patch.project !== before.project) changes.project = { from: before.project, to: patch.project }
+      if (Object.keys(changes).length) {
+        const { appendAudit } = await import('./lib/auditLog.js')
+        await appendAudit({
+          action: 'account.transfer',
+          module: 'accounts',
+          initiator: patch.initiator || 'operator',
+          account: req.params.accountId,
+          scope: { accounts: [req.params.accountId] },
+          meta: changes,
+        }).catch(() => {})
+      }
+    }
     res.json({ ok: true, account })
   } catch (err) {
     res.status(400).json({ ok: false, error: err instanceof Error ? err.message : 'Ошибка' })
