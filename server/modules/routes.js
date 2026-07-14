@@ -86,6 +86,46 @@ modulesRouter.post('/:moduleKey/tasks/:id/stop', async (req, res) => {
   }
 })
 
+// Перезапуск задачи с её же настройками (§3.9 трекер: restart). Создаёт НОВУЮ задачу.
+modulesRouter.post('/:moduleKey/tasks/:id/restart', async (req, res) => {
+  try {
+    const { moduleKey, id } = req.params
+    const store = getModuleStore(moduleKey)
+    if (!store) return res.status(404).json({ ok: false, error: 'Модуль не найден' })
+    const old = await store.loadTask(id)
+    if (!old) return res.status(404).json({ ok: false, error: 'Задача не найдена' })
+    const settings = { ...(old.settings || {}), initiator: req.body?.initiator || 'operator' }
+
+    const err = validateSettings(moduleKey, settings)
+    if (err) return res.status(400).json({ ok: false, error: err })
+    const assignErr = await assertAccountsAssignable(settings.accountIds, moduleKey)
+    if (assignErr) return res.status(409).json({ ok: false, error: assignErr })
+
+    const { store: s, task, worker } = startModuleTask(moduleKey, settings)
+    task.initiator = settings.initiator
+    task.restartOf = id
+    try {
+      await s.saveTask(task)
+      const { startWorker } = await import('./workers.js')
+      startWorker(task.id, s, worker)
+      const { appendAudit } = await import('../lib/auditLog.js')
+      await appendAudit({
+        action: 'task.restart',
+        module: moduleKey,
+        initiator: task.initiator,
+        scope: { taskId: task.id, accounts: settings.accountIds || [] },
+        reason: `Перезапуск задачи ${id}`,
+      }).catch(() => {})
+      res.json({ ok: true, task: s.taskToDto(task) })
+    } catch (e) {
+      releaseTaskLocks(task.id)
+      throw e
+    }
+  } catch (err) {
+    res.status(400).json({ ok: false, error: err instanceof Error ? err.message : 'Ошибка' })
+  }
+})
+
 modulesRouter.get('/:moduleKey/presets', async (req, res) => {
   try {
     const store = getModuleStore(req.params.moduleKey)
