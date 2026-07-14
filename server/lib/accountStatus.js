@@ -133,3 +133,22 @@ export function isStatusExpired(meta, now = Date.now()) {
   if (s !== STATUS.FLOODWAIT && s !== STATUS.QUARANTINE) return false
   return typeof meta?.statusUntil === 'number' && meta.statusUntil > 0 && now >= meta.statusUntil
 }
+
+/**
+ * Куда вернуть аккаунт после истечения временного статуса, или null если не пора.
+ * floodwait → prevStatus (если рабочий, иначе active).
+ * quarantine → warming (🔒 §6: авто-возврат по trust не определён — по таймеру не в active сразу, а на перепрогрев).
+ * @param {{ status?: string, statusUntil?: number|null, prevStatus?: string }} meta
+ * @param {number} [now]
+ * @returns {string|null}
+ */
+export function nextStatusAfterExpiry(meta, now = Date.now()) {
+  if (!isStatusExpired(meta, now)) return null
+  const s = normalizeStatus(meta?.status)
+  if (s === STATUS.FLOODWAIT) {
+    const back = normalizeStatus(meta?.prevStatus)
+    return isRunnable(back) ? back : STATUS.ACTIVE
+  }
+  if (s === STATUS.QUARANTINE) return STATUS.WARMING
+  return null
+}

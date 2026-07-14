@@ -1,7 +1,7 @@
 import fs from 'fs/promises'
 import path from 'path'
 import { SESSIONS_DIR } from './config.js'
-import { buildStatusPatch, normalizeStatus } from './lib/accountStatus.js'
+import { buildStatusPatch, normalizeStatus, nextStatusAfterExpiry } from './lib/accountStatus.js'
 import { appendAudit } from './lib/auditLog.js'
 
 const META_FILE = path.join(path.dirname(SESSIONS_DIR), 'accounts-meta.json')
@@ -71,6 +71,33 @@ export async function setAccountStatus(accountId, to, opts = {}) {
     meta: { from: patch.prevStatus, to: patch.status, until: patch.statusUntil },
   })
   return saved
+}
+
+/**
+ * Reconciler: вернуть аккаунты, у которых истёк временный статус (floodwait/quarantine),
+ * в рабочий/прогревный статус. Вызывать по интервалу и на старте API.
+ * Аудит пишется через setAccountStatus. Идемпотентно (нечего — быстрый выход).
+ * @param {number} [now]
+ * @returns {Promise<{ accountId: string, from: string, to: string }[]>}
+ */
+export async function reconcileExpiredStatuses(now = Date.now()) {
+  const all = await loadAllMeta()
+  /** @type {{ accountId: string, from: string, to: string }[]} */
+  const flipped = []
+  for (const [accountId, meta] of Object.entries(all)) {
+    const to = nextStatusAfterExpiry(meta, now)
+    if (!to) continue
+    const from = normalizeStatus(meta.status)
+    try {
+      await setAccountStatus(accountId, to, {
+        initiator: 'system',
+        reason: `Авто-выход из ${from}: срок истёк`,
+        code: 'STATUS_EXPIRED',
+      })
+      flipped.push({ accountId, from, to })
+    } catch { /* недопустимый переход — пропускаем */ }
+  }
+  return flipped
 }
 
 export async function deleteAccountMeta(accountId) {

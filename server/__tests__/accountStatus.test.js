@@ -9,6 +9,7 @@ import {
   canTransition,
   buildStatusPatch,
   isStatusExpired,
+  nextStatusAfterExpiry,
   TERMINAL,
 } from '../lib/accountStatus.js'
 
@@ -91,4 +92,17 @@ test('isStatusExpired: только временные статусы и по в
   assert.equal(isStatusExpired({ status: 'quarantine', statusUntil: 100 }, 200), true)
   assert.equal(isStatusExpired({ status: 'active', statusUntil: 100 }, 200), false) // не временный
   assert.equal(isStatusExpired({ status: 'floodwait', statusUntil: null }, 200), false) // бессрочный
+})
+
+test('nextStatusAfterExpiry: floodwait→prevStatus, quarantine→warming', () => {
+  // floodwait истёк → возврат в prevStatus (active)
+  assert.equal(nextStatusAfterExpiry({ status: 'floodwait', statusUntil: 100, prevStatus: 'active' }, 200), STATUS.ACTIVE)
+  // floodwait истёк, но prevStatus нерабочий → active
+  assert.equal(nextStatusAfterExpiry({ status: 'floodwait', statusUntil: 100, prevStatus: 'quarantine' }, 200), STATUS.ACTIVE)
+  // quarantine истёк → на перепрогрев (не сразу в active), 🔒 §6
+  assert.equal(nextStatusAfterExpiry({ status: 'quarantine', statusUntil: 100, prevStatus: 'active' }, 200), STATUS.WARMING)
+  // ещё не истёк → null
+  assert.equal(nextStatusAfterExpiry({ status: 'floodwait', statusUntil: 300, prevStatus: 'active' }, 200), null)
+  // не временный статус → null
+  assert.equal(nextStatusAfterExpiry({ status: 'active' }, 200), null)
 })
