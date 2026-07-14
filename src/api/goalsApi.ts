@@ -44,3 +44,31 @@ export async function updateGoal(id: string, patch: Partial<GoalInput>): Promise
 export async function deleteGoal(id: string): Promise<void> {
   await apiDelete(`/api/goals/${id}`)
 }
+
+// ── База знаний цели (§3.6) ──
+export interface KbItem {
+  id: string
+  goalId: string
+  kind: 'text' | 'file' | 'image'
+  title: string
+  content: string
+  fileRef: string | null
+  scope: string
+  version: number
+  createdAt: number
+  updatedAt: number
+}
+
+export async function fetchKb(goalId: string): Promise<KbItem[]> {
+  const data = await apiGet<{ ok: boolean; items: KbItem[] }>(`/api/goals/${goalId}/kb`)
+  return data.items
+}
+
+export async function createKb(goalId: string, input: { title?: string; content: string }): Promise<KbItem> {
+  const data = await apiPost<{ ok: boolean; item: KbItem }>(`/api/goals/${goalId}/kb`, input)
+  return data.item
+}
+
+export async function deleteKb(goalId: string, kbId: string): Promise<void> {
+  await apiDelete(`/api/goals/${goalId}/kb/${kbId}`)
+}
