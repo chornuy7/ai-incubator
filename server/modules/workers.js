@@ -1,4 +1,5 @@
 import { generateComment, isAiGenerationEnabled, resolveSystemPrompt } from '../neuroCommenting/commentGenerator.js'
+import { buildGoalContext } from '../lib/goalContext.js'
 import {
   fetchPosts,
   sendChannelComment,
@@ -102,6 +103,10 @@ export async function runNeuroCommenting(task, store) {
   await store.saveTask(task)
   await store.appendLog(task, 'info', 'Нейрокомментинг запущен')
 
+  // §3.6/§4: если задача привязана к цели — подмешиваем цель + базу знаний в системный промпт.
+  const goalCtx = await buildGoalContext(s.goalId)
+  if (goalCtx) await store.appendLog(task, 'info', 'Комментарии генерируются к выбранной цели (с базой знаний)')
+
   const mul = delayMultiplier(s.protectionLevel ?? 1, s.delayPreset ?? 1)
   const prob = effectiveProbability(s.probability ?? 30, !!s.aiProtection, s.protectionLevel ?? 1)
   const chs = targets(s)
@@ -175,7 +180,7 @@ export async function runNeuroCommenting(task, store) {
 
             await sleep(pickDelay(s.delays?.comment?.[0] ?? 30, s.delays?.comment?.[1] ?? 120, mul) * 1000)
             const postText = (post.message || '').trim() || (post.media ? '[медиа]' : '')
-            const { text, mode } = await generateComment(postText, s.promptIndex ?? 0, resolveSystemPrompt(s))
+            const { text, mode } = await generateComment(postText, s.promptIndex ?? 0, resolveSystemPrompt(s) + goalCtx)
             if (mode !== 'openai') {
               const hint = mode === 'template_no_key'
                 ? 'Шаблон (нет OPENAI_API_KEY в .env)'
@@ -241,6 +246,8 @@ export async function runNeuroChatting(task, store) {
   task.readyTargets = task.readyTargets || []
   await store.saveTask(task)
   await store.appendLog(task, 'info', 'Нейрочаттинг запущен')
+  const goalCtx = await buildGoalContext(s.goalId) // §3.6: диалог к цели с базой знаний
+  if (goalCtx) await store.appendLog(task, 'info', 'Ответы генерируются к выбранной цели (с базой знаний)')
   const mul = delayMultiplier(s.protectionLevel ?? 1, s.delayPreset ?? 1)
   const prob = effectiveProbability(s.probability ?? 30, !!s.aiProtection, s.protectionLevel ?? 1)
   const groups = targets(s)
@@ -288,7 +295,7 @@ export async function runNeuroChatting(task, store) {
           continue
         }
         await sleep(pickDelay(s.delays?.action?.[0] ?? 42, s.delays?.action?.[1] ?? 78, mul) * 1000)
-        const { text: reply, mode } = await generateComment(msg.message || '', s.promptIndex ?? 0, resolveSystemPrompt(s))
+        const { text: reply, mode } = await generateComment(msg.message || '', s.promptIndex ?? 0, resolveSystemPrompt(s) + goalCtx)
         if (mode !== 'openai') {
           await store.appendLog(task, 'warning', mode === 'template_no_key' ? 'Шаблон (нет OPENAI_API_KEY)' : 'Шаблон (OpenAI недоступен)', meta.name)
         }
