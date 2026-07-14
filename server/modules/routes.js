@@ -44,10 +44,19 @@ modulesRouter.post('/:moduleKey/tasks', async (req, res) => {
     if (assignErr) return res.status(409).json({ ok: false, error: assignErr })
 
     const { store, task, worker } = startModuleTask(moduleKey, settings)
+    task.initiator = settings.initiator || 'operator' // §3.9: кто запустил
     try {
       await store.saveTask(task)
       const { startWorker } = await import('./workers.js')
       startWorker(task.id, store, worker)
+      const { appendAudit } = await import('../lib/auditLog.js')
+      await appendAudit({
+        action: 'task.start',
+        module: moduleKey,
+        initiator: task.initiator,
+        scope: { taskId: task.id, accounts: settings.accountIds || [] },
+        reason: `Запуск задачи ${moduleKey}`,
+      }).catch(() => {})
       res.json({ ok: true, task: store.taskToDto(task) })
     } catch (err) {
       releaseTaskLocks(task.id)
@@ -62,6 +71,14 @@ modulesRouter.post('/:moduleKey/tasks/:id/stop', async (req, res) => {
   try {
     const task = await stopModuleTask(req.params.moduleKey, req.params.id)
     if (!task) return res.status(404).json({ ok: false, error: 'Задача не найдена' })
+    const { appendAudit } = await import('../lib/auditLog.js')
+    await appendAudit({
+      action: 'task.stop',
+      module: req.params.moduleKey,
+      initiator: req.body?.initiator || 'operator',
+      scope: { taskId: req.params.id },
+      reason: 'Остановка задачи',
+    }).catch(() => {})
     const store = getModuleStore(req.params.moduleKey)
     res.json({ ok: true, task: store.taskToDto(task) })
   } catch (err) {

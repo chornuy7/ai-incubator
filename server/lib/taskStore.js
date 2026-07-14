@@ -136,6 +136,7 @@ export function createTaskStore(moduleKey, idPrefix) {
       id: task.id,
       moduleKey: task.moduleKey || moduleKey,
       status: task.status,
+      initiator: task.initiator || null,
       createdAt: task.createdAt,
       updatedAt: task.updatedAt,
       progress: task.progress,
