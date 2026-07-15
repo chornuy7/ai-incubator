@@ -29,7 +29,6 @@ const DURATION_MIN_BY_PROTECTION_LEVEL = [60, 45, 30]
 
 // 3 уровня прогрева (решение 14.07): длительность и «естественность» темпа.
 const WARM_LEVELS = ['Быстрый · 2 дня', 'Нормальный · 3–7 дней', 'Стандартный · 7–14 дней']
-const POST_WINDOWS = [3, 5, 10, 20] // §3.5: окно последних постов для нейрокомментинга
 
 // §3.5: расчётное min/avg/max время вместо абстрактного «интервала».
 function fmtDur(sec: number): string {
@@ -454,17 +453,8 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
         )}
         {moduleKey === 'neuro-commenting' && !running && (
           <div className="mb-3">
-            <div className="mb-1 text-xs text-white/50">Окно постов <span className="text-white/30">(сколько последних постов обрабатывать, не всю историю)</span></div>
-            <div className="flex flex-wrap items-center gap-2">
-              <Segmented options={POST_WINDOWS.map(String)} value={POST_WINDOWS.indexOf(postWindow)} onChange={(i) => setPostWindow(POST_WINDOWS[i])} />
-              {/* Своё число (1–50) — не только пресеты */}
-              <input
-                type="number" min={1} max={50} inputMode="numeric"
-                value={postWindow}
-                onChange={(e) => setPostWindow(Math.max(1, Math.min(50, Math.floor(Number(e.target.value) || 1))))}
-                className={`h-9 w-20 rounded-lg border bg-elevated px-2.5 text-sm font-semibold outline-none focus:border-spark-500/50 ${POST_WINDOWS.includes(postWindow) ? 'border-line text-fg' : 'border-spark-500/50 text-spark-300'}`}
-              />
-            </div>
+            <NumberField label="Окно постов" value={postWindow} onChange={(n) => setPostWindow(Math.max(1, Math.min(50, n)))} min={1} max={50} suffix="1–50" />
+            <div className="mt-1 text-xs text-white/40">Сколько последних постов обрабатывать, не всю историю</div>
           </div>
         )}
         {moduleKey === 'neuro-commenting' && !running && (cfg.messagePrompts?.length ?? 0) > 0 && (
