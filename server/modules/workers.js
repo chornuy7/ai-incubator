@@ -300,6 +300,7 @@ export async function runNeuroChatting(task, store) {
       const accountId = accountIds[idx++ % accountIds.length]
       const meta = await getAccountMeta(accountId)
       if (!isAccountRunnable(meta.status || 'active') || perAccountLimitReached(s, accountId, task)) { idleLap += 1; continue }
+      if (await limitReached(accountId, 'comments')) { idleLap += 1; await store.appendLog(task, 'info', 'Суточный лимит сообщений достигнут (§6)', meta.name); continue }
       idleLap = 0
       let client
       let progressed = false
@@ -394,6 +395,7 @@ export async function runMassReact(task, store) {
       const accountId = accountIds[idx++ % accountIds.length]
       const meta = await getAccountMeta(accountId)
       if (!isAccountRunnable(meta.status || 'active') || perAccountLimitReached(s, accountId, task)) { idleLap += 1; continue }
+      if (await limitReached(accountId, 'reactions')) { idleLap += 1; await store.appendLog(task, 'info', 'Суточный лимит реакций достигнут (§6)', meta.name); continue }
       idleLap = 0
       let client
       try {
