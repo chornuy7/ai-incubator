@@ -55,3 +55,13 @@ export async function updateLead(id: string, patch: Partial<LeadInput>): Promise
 export async function deleteLead(id: string): Promise<void> {
   await apiDelete(`/api/leads/${id}`)
 }
+
+/** Приоритет лида (§3.6): ответивший/горячий — выше. Зеркало server/leads.js#leadPriority. */
+export function leadPriority(status: string): number {
+  return ({ hot: 4, answered: 3, target: 2, cold: 1, closed: 0 } as Record<string, number>)[status] ?? 1
+}
+
+/** Сортировка лидов по приоритету (ответившему — приоритет). Не мутирует. */
+export function sortLeadsByPriority(leads: Lead[]): Lead[] {
+  return [...leads].sort((a, b) => leadPriority(b.status) - leadPriority(a.status) || (b.updatedAt || 0) - (a.updatedAt || 0))
+}

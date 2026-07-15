@@ -3,7 +3,45 @@ import assert from 'node:assert/strict'
 import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
-import { normalizeLead, LEAD_STATUSES, hasActiveHotLead, DIALOG_MODULES } from '../leads.js'
+import { normalizeLead, LEAD_STATUSES, hasActiveHotLead, DIALOG_MODULES, activeLeadCount, leadPriority, sortLeadsByPriority } from '../leads.js'
+
+test('activeLeadCount: считает лиды в работе (cold/answered/hot), не target/closed', () => {
+  const leads = [
+    { accountId: 'a', status: 'cold' }, { accountId: 'a', status: 'answered' },
+    { accountId: 'a', status: 'hot' }, { accountId: 'a', status: 'target' },
+    { accountId: 'a', status: 'closed' }, { accountId: 'b', status: 'hot' },
+  ]
+  assert.equal(activeLeadCount(leads, 'a'), 3) // cold+answered+hot
+  assert.equal(activeLeadCount(leads, 'b'), 1)
+  assert.equal(activeLeadCount(leads, 'нет'), 0)
+})
+
+test('leadPriority + sortLeadsByPriority: ответивший/горячий — выше', () => {
+  assert.ok(leadPriority('hot') > leadPriority('answered'))
+  assert.ok(leadPriority('answered') > leadPriority('cold'))
+  const sorted = sortLeadsByPriority([
+    { id: '1', status: 'cold' }, { id: '2', status: 'hot' }, { id: '3', status: 'answered' },
+  ])
+  assert.deepEqual(sorted.map((l) => l.id), ['2', '3', '1'])
+})
+
+test('assertActiveDialogLimit: блок при превышении, только для диалоговых модулей', async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'leads-dlg-'))
+  process.env.LEADS_FILE = path.join(dir, 'leads.json')
+  const m = await import('../leads.js?dlg=' + Date.now())
+  await m.createLead({ peer: '@x', accountId: 'acc1', status: 'hot' })
+  await m.createLead({ peer: '@y', accountId: 'acc1', status: 'answered' })
+
+  // лимит 2, у acc1 — 2 активных → блок в диалоговом модуле
+  assert.match(await m.assertActiveDialogLimit(['acc1'], 'neuro-chatting', 2), /лимит активных диалогов/i)
+  // лимит 5 → ок
+  assert.equal(await m.assertActiveDialogLimit(['acc1'], 'neuro-chatting', 5), null)
+  // не-диалоговый модуль → не проверяем
+  assert.equal(await m.assertActiveDialogLimit(['acc1'], 'mass-react', 1), null)
+  // лимит 0 → без ограничения
+  assert.equal(await m.assertActiveDialogLimit(['acc1'], 'neuro-chatting', 0), null)
+  delete process.env.LEADS_FILE
+})
 
 test('hasActiveHotLead: находит горячий лид аккаунта', () => {
   const leads = [

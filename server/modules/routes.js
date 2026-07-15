@@ -2,7 +2,7 @@ import { Router } from 'express'
 import { getModuleStore, listModuleKeys, validateSettings, startModuleTask, stopModuleTask, pauseModuleTask, resumeModuleTask } from './registry.js'
 import { releaseTaskLocks } from '../lib/accountLocks.js'
 import { assertAccountsAssignable } from '../accountsMeta.js'
-import { assertNoHotLeadConflict } from '../leads.js'
+import { assertNoHotLeadConflict, assertActiveDialogLimit } from '../leads.js'
 
 export const modulesRouter = Router()
 
@@ -66,6 +66,9 @@ modulesRouter.post('/:moduleKey/tasks', async (req, res) => {
     // Guard «горячий лид» (§3.3/§4): не забираем аккаунт из активного диалога в другой модуль.
     const hotErr = await assertNoHotLeadConflict(settings.accountIds, moduleKey)
     if (hotErr) return res.status(409).json({ ok: false, error: hotErr })
+    // Guard лимита активных диалогов (§3.6): не перегружаем профиль (если задан maxActiveDialogs).
+    const dlgErr = await assertActiveDialogLimit(settings.accountIds, moduleKey, settings.maxActiveDialogs)
+    if (dlgErr) return res.status(409).json({ ok: false, error: dlgErr })
 
     const { store, task, worker } = startModuleTask(moduleKey, settings)
     task.initiator = settings.initiator || 'operator' // §3.9: кто запустил

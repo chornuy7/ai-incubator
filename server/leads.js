@@ -96,6 +96,41 @@ export async function assertNoHotLeadConflict(accountIds, moduleKey) {
   return `Профили ведут горячий лид — их нельзя забирать в другой модуль (диалог продолжается): ${blocked.join(', ')}.`
 }
 
+/** «Активный диалог» — лид в работе (не целевое действие и не закрыт). §3.6 */
+export const ACTIVE_LEAD_STATUSES = new Set(['cold', 'answered', 'hot'])
+
+/** Приоритет лида для обработки: ответивший/горячий — выше. Чистая функция. */
+export function leadPriority(status) {
+  return { hot: 4, answered: 3, target: 2, cold: 1, closed: 0 }[status] ?? 1
+}
+
+/** Сортировка лидов по приоритету (ответившему — приоритет, §3.6). Чистая, не мутирует. */
+export function sortLeadsByPriority(leads = []) {
+  return [...leads].sort((a, b) => leadPriority(b.status) - leadPriority(a.status) || (b.updatedAt || 0) - (a.updatedAt || 0))
+}
+
+/** Сколько активных диалогов ведёт аккаунт. Чистая. @param {object[]} leads @param {string} accountId */
+export function activeLeadCount(leads, accountId) {
+  return (Array.isArray(leads) ? leads : []).filter((l) => l.accountId === accountId && ACTIVE_LEAD_STATUSES.has(l.status)).length
+}
+
+/**
+ * Guard лимита активных диалогов (§3.6): нельзя грузить аккаунт в диалоговый модуль сверх
+ * лимита активных лидов. limit<=0 — без ограничения. Возвращает строку-ошибку или null.
+ * @param {string[]} accountIds @param {string} moduleKey @param {number} limit
+ */
+export async function assertActiveDialogLimit(accountIds, moduleKey, limit) {
+  const lim = Number(limit) || 0
+  if (!accountIds?.length || lim <= 0 || !DIALOG_MODULES.has(moduleKey)) return null
+  const leads = await readJson(LEADS_FILE, [])
+  const over = accountIds
+    .map((id) => ({ id, n: activeLeadCount(leads, id) }))
+    .filter((x) => x.n >= lim)
+    .map((x) => `${String(x.id).slice(-6)} (${x.n})`)
+  if (!over.length) return null
+  return `Превышен лимит активных диалогов (${lim}) у профилей: ${over.join(', ')}. Закройте часть лидов или поднимите лимит.`
+}
+
 /** Сводка по статусам (аналитика §3.6). @param {string} [goalId] */
 export async function leadStats(goalId) {
   const leads = await listLeads(goalId ? { goalId } : {})

@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { Users, Plus, Trash2, Flame } from 'lucide-react'
 import { useApp } from '@/mocks/store'
 import { PageHeader, Card, EmptyState, Select, Badge } from '@/shared/ui'
-import { fetchLeads, createLead, updateLead, deleteLead, LEAD_STATUSES, type Lead, type LeadStatus } from '@/api/leadsApi'
+import { fetchLeads, createLead, updateLead, deleteLead, sortLeadsByPriority, LEAD_STATUSES, type Lead, type LeadStatus } from '@/api/leadsApi'
 import { fetchGoals, type Goal } from '@/api/goalsApi'
 
 const STATUS: Record<LeadStatus, { label: string; tone: 'spark' | 'iris' | 'amber' | 'rose' | 'muted' }> = {
@@ -105,7 +105,8 @@ export function LeadsPage() {
         <EmptyState icon={<Users size={26} />} title="Лидов пока нет" desc="Добавьте лид вручную или он появится из диалогов кампании." />
       ) : (
         <div className="flex flex-col gap-2">
-          {leads.map((l) => (
+          {/* §3.6: приоритет ответившему — горячие/ответившие лиды выше */}
+          {sortLeadsByPriority(leads).map((l) => (
             <Card key={l.id} className="flex flex-wrap items-center gap-2 p-3">
               <Badge tone={STATUS[l.status].tone}>{STATUS[l.status].label}</Badge>
               <span className="font-semibold text-white">{l.peer}</span>

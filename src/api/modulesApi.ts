@@ -60,6 +60,7 @@ export interface ModuleTaskSettings {
   // ── НейроДиалоги ──
   replyScope?: 'unread' | 'all' // 'unread' — только новые ЛС, 'all' — все, где последнее слово за собеседником
   dialogGoal?: string // инструкция для ИИ: как себя вести и к чему вести диалог
+  maxActiveDialogs?: number // §3.6: лимит активных диалогов на аккаунт (0 = без лимита)
   // ── Масслукинг: что смотреть и сколько последних постов ──
   lookMode?: 'stories' | 'posts' | 'both'
   lookPostsCount?: number
