@@ -40,7 +40,6 @@ const ENDINGS: Record<string, string[]> = {
   ua: ['чат', 'канал', 'новини', 'офіційний', 'група', 'спільнота', 'форум', 'клуб', 'бот', 'магазин', 'сервіс', 'світ', 'зона', 'команда', 'про', 'лайв', 'дейлі', 'огляд', 'топ', 'інфо'],
 }
 
-const LIMIT_CHIPS: (number | '∞')[] = [10, 25, 50, 100, 200, 500, '∞']
 
 interface ParserResult {
   id?: string; title?: string; username?: string; members?: number
@@ -117,7 +116,7 @@ function ChannelParserInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: 
   const [fastWork, setFastWork] = useState(false)
   const [skipParsed, setSkipParsed] = useState(false)
   const [intersect, setIntersect] = useState(false) // §3.8: AND-пересечение ключевых слов
-  const [limit, setLimit] = useState<number | '∞'>(cfg.defaultLimit ?? 50)
+  const [limit, setLimit] = useState<number>(cfg.defaultLimit === '∞' ? 0 : (cfg.defaultLimit ?? 50)) // 0 = без лимита
   const [activity, setActivity] = useState(cfg.defaultActivity ?? 0)
   const [commentFilter, setCommentFilter] = useState(0)
   const [minComments, setMinComments] = useState(0)
@@ -171,8 +170,8 @@ function ChannelParserInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: 
     searchMode: method,
     aiProtection: aiProtect,
     protectionLevel: protLevel,
-    resultLimit: limit === '∞' ? 0 : limit,
-    limit: limit === '∞' ? 0 : limit,
+    resultLimit: limit,
+    limit,
     activityFilter: activity,
     commentFilter,
     minComments,
@@ -216,7 +215,7 @@ function ChannelParserInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: 
     if (s.aiProtection !== undefined) setAiProtect(s.aiProtection)
     if (s.protectionLevel !== undefined) setProtLevel(s.protectionLevel)
     const lim = s.resultLimit ?? s.limit
-    if (lim !== undefined) setLimit(lim === 0 ? '∞' : lim)
+    if (lim !== undefined) setLimit(Number(lim) || 0)
     if (s.activityFilter !== undefined) setActivity(s.activityFilter)
     if (s.commentFilter !== undefined) setCommentFilter(s.commentFilter)
     if (s.minComments !== undefined) setMinComments(s.minComments)
@@ -283,7 +282,7 @@ function ChannelParserInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: 
     { icon: <Users size={18} />, color: '#7145ff', label: 'Аккаунты', value: String(selected.size), warn: selected.size === 0 },
     { icon: <Search size={18} />, color: '#06b6d4', label: 'Ключевые слова', value: String(keywords.length) },
     { icon: <Hash size={18} />, color: '#0ec464', label: 'Запросов', value: String(queryCount) },
-    { icon: <Database size={18} />, color: '#f59e0b', label: 'Макс. результатов', value: limit === '∞' ? '∞' : String(limit) },
+    { icon: <Database size={18} />, color: '#f59e0b', label: 'Макс. результатов', value: limit === 0 ? '∞' : String(limit) },
   ]
 
   return (
@@ -406,21 +405,8 @@ function ChannelParserInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: 
             )}
 
             <div className="rounded-2xl border border-line bg-elevated/40 p-3">
-              <div className="mb-2 flex items-center gap-1.5 text-sm font-semibold text-fg"><Database size={14} className="text-spark-400" /> Лимит результатов</div>
-              <div className="flex flex-wrap items-center gap-1.5">
-                {LIMIT_CHIPS.map((c) => (
-                  <button key={String(c)} type="button" onClick={() => setLimit(c)} className={cn('rounded-lg border px-3 py-1.5 text-sm font-bold transition-colors', limit === c ? 'border-spark-500/50 bg-spark-500/12 text-spark-300' : 'border-line bg-elevated text-muted hover:text-fg')}>{c}</button>
-                ))}
-                {/* Своё число — можно вписать любой лимит (§UI: не только пресеты) */}
-                <input
-                  type="number" min={0} inputMode="numeric"
-                  value={limit === '∞' ? '' : limit}
-                  onChange={(e) => { const v = e.target.value.trim(); setLimit(v === '' ? '∞' : Math.max(0, Math.floor(Number(v) || 0))) }}
-                  placeholder="своё"
-                  className={cn('h-[34px] w-24 rounded-lg border bg-elevated px-2.5 text-sm font-semibold outline-none transition-colors focus:border-spark-500/50',
-                    typeof limit === 'number' && !LIMIT_CHIPS.includes(limit) ? 'border-spark-500/50 text-spark-300' : 'border-line text-fg')}
-                />
-              </div>
+              <NumberField label="Лимит результатов" value={limit} onChange={setLimit} step={10} />
+              <div className="mt-1.5 text-xs text-white/40">0 = без лимита (все результаты)</div>
             </div>
 
             <div className="rounded-2xl border border-line bg-elevated/40 p-3">
