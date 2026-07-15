@@ -1280,8 +1280,68 @@ export async function runMailing(task, store) {
   await store.saveTask(task)
 }
 
+/**
+ * Автопостинг (§8.10, паритет): публикация поста в СВОИ каналы/группы по расписанию.
+ * Безопасно — постим в свои каналы (аккаунт должен быть админом с правом постинга), не спам.
+ * @param {object} task @param {object} store
+ */
+export async function runAutoPosting(task, store) {
+  const s = task.settings || {}
+  const accountIds = Array.isArray(s.accountIds) ? s.accountIds : []
+  const channels = targets(s)
+  const text = String(s.promptText || s.message || '').trim()
+
+  task.status = 'running'
+  task.progress = { done: 0, total: channels.length }
+  await store.saveTask(task)
+  await store.appendLog(task, 'info', `Автопостинг: ${channels.length} каналов · ${accountIds.length} аккаунт(ов)`)
+
+  if (!channels.length) { await store.appendLog(task, 'warning', 'Нет целевых каналов'); task.status = 'done'; await store.saveTask(task); return }
+  if (!accountIds.length) { await store.appendLog(task, 'warning', 'Не выбраны аккаунты'); task.status = 'done'; await store.saveTask(task); return }
+  if (!text) { await store.appendLog(task, 'warning', 'Пустой текст поста'); task.status = 'done'; await store.saveTask(task); return }
+
+  const mul = delayMultiplier(s.protectionLevel ?? 1, s.delayPreset ?? 1)
+  const { resolvePeer } = await import('../lib/gramHelpers.js')
+  let accIdx = 0
+  try {
+    for (const ch of channels) {
+      if (task.stopRequested || task.pauseRequested) break
+      const accountId = accountIds[accIdx++ % accountIds.length]
+      const meta = await getAccountMeta(accountId)
+      if (!isAccountRunnable(meta.status || 'active')) { await store.appendLog(task, 'warning', `Пропуск: ${meta.status}`, meta.name); continue }
+      let client
+      try {
+        ;({ client } = await connectAccount(accountId, task.id))
+        const entity = await resolvePeer(client, ch)
+        await client.sendMessage(entity, { message: text })
+        task.history = task.history || []
+        task.history.unshift({ id: `${task.id}_${task.progress.done}`, ts: new Date().toISOString(), accountName: meta.name, channel: ch, text: text.slice(0, 200), status: 'sent' })
+        task.progress.done += 1
+        await store.appendLog(task, 'success', `Пост в ${ch}`, meta.name)
+        await store.saveTask(task)
+        await disconnectAccount(client, accountId)
+        await sleep(pickDelay(s.delays?.action?.[0] ?? 60, s.delays?.action?.[1] ?? 180, mul) * 1000)
+      } catch (err) {
+        if (client) await disconnectAccount(client, accountId)
+        if (!(await handleFlood(task, accountId, store, err, s, meta.name))) {
+          await store.appendLog(task, 'error', `${ch}: ${mapTelegramError(err)} (нужны права админа на постинг?)`, meta.name)
+        }
+      }
+      task = (await store.loadTask(task.id)) || task
+    }
+    task.status = statusAfterRun(task)
+    await store.appendLog(task, 'info', 'Автопостинг завершён')
+  } catch (err) {
+    task.status = 'error'
+    await store.appendLog(task, 'error', err instanceof Error ? err.message : 'Ошибка')
+  }
+  await store.saveTask(task)
+  await finalizeAccounts(accountIds, task.id)
+}
+
 export const WORKERS = {
   mailing: runMailing,
+  autoposting: runAutoPosting,
   'neuro-commenting': runNeuroCommenting,
   'neuro-chatting': runNeuroChatting,
   'mass-react': runMassReact,

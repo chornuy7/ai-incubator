@@ -12,6 +12,7 @@ const liveTasks = new Set()
 
 export const MODULE_LABELS = {
   mailing: 'Мейлинг',
+  autoposting: 'Автопостинг',
   'neuro-commenting': 'Нейрокомментинг',
   'neuro-chatting': 'Нейрочаттинг',
   'mass-react': 'Массовые реакции',

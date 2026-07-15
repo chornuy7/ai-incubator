@@ -7,7 +7,7 @@ import { findHelpDoc, HELP_DOCS, type HelpDoc } from '@/shared/config/helpDocs'
 
 // Бизнес-правила (§6) — отдельные статьи Help Center, доступные из списка «Все статьи».
 const BUSINESS_TOPICS = ['safety-limits', 'trust-autostop', 'warming-policy', 'captcha-antispam', 'mailing-rules', 'channel-rating']
-const MODULE_TOPICS = ['neuro-commenting', 'neuro-chatting', 'neuro-dialogs', 'mass-react', 'mass-looking', 'warming', 'ggr', 'parsing', 'parsing-groups', 'parsing-users', 'parsing-messages', 'parsing-comments']
+const MODULE_TOPICS = ['neuro-commenting', 'neuro-chatting', 'neuro-dialogs', 'mass-react', 'mass-looking', 'warming', 'autoposting', 'ggr', 'parsing', 'parsing-groups', 'parsing-users', 'parsing-messages', 'parsing-comments']
 import { PROTECTION_STEPS } from '@/shared/config/protectionInfo'
 import { apiGet, apiPost } from '@/api/client'
 import { cn } from '@/shared/lib/utils'
