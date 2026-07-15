@@ -62,6 +62,16 @@ export async function fetchAccountChannels(accountId: string): Promise<{ busy: b
   return parseJson(res) as Promise<{ busy: boolean; channels: AccountChannel[]; error?: string; busyIn?: { moduleLabel: string } }>
 }
 
+export type DailyActionItem = { action: 'comments' | 'dm' | 'joins' | 'reactions'; used: number; cap: number; reached: boolean }
+export type AccountDaily = { accountId: string; date: string; items: DailyActionItem[] }
+
+/** Суточные счётчики действий аккаунта против потолков (§6) — для вкладки «Здоровье». */
+export async function fetchAccountDaily(accountId: string): Promise<AccountDaily> {
+  const res = await fetch(`/api/tg/accounts/${accountId}/daily`)
+  const data = await parseJson(res)
+  return data.daily as AccountDaily
+}
+
 export async function fetchAccountFolders(accountId: string): Promise<{ busy: boolean; folders: AccountFolder[]; error?: string; busyIn?: { moduleLabel: string } }> {
   const res = await fetch(`/api/tg/accounts/${accountId}/folders`)
   return parseJson(res) as Promise<{ busy: boolean; folders: AccountFolder[]; error?: string; busyIn?: { moduleLabel: string } }>

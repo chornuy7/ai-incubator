@@ -29,6 +29,7 @@ import {
   forceReleaseAccount,
 } from './lib/accountLocks.js'
 import { buildAccountStats, listAccountChannels, listAccountFolders } from './accountStats.js'
+import { dailySummary } from './lib/dailyActions.js'
 
 const app = express()
 app.use(cors())
@@ -154,6 +155,15 @@ app.get('/api/tg/accounts/:accountId/stats', async (req, res) => {
     const spam = req.query.spam === '1' || req.query.spam === 'true'
     const stats = await buildAccountStats(req.params.accountId, { spam })
     res.json({ ok: true, stats })
+  } catch (err) {
+    res.status(500).json({ ok: false, error: err instanceof Error ? err.message : 'Ошибка' })
+  }
+})
+
+app.get('/api/tg/accounts/:accountId/daily', async (req, res) => {
+  try {
+    const summary = await dailySummary(req.params.accountId)
+    res.json({ ok: true, daily: summary })
   } catch (err) {
     res.status(500).json({ ok: false, error: err instanceof Error ? err.message : 'Ошибка' })
   }

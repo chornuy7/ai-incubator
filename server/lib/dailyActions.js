@@ -36,6 +36,21 @@ export async function limitReached(accountId, action, now = Date.now()) {
   return limitReachedFrom(await load(), accountId, action, now)
 }
 
+/**
+ * Сводка суточной активности аккаунта: сегодняшние счётчики против потолков (§6).
+ * Для UI (вкладка «Здоровье»): понятно, почему аккаунт пропускается модулями.
+ */
+export async function dailySummary(accountId, now = Date.now()) {
+  const map = await load()
+  const date = dayKey(now)
+  const items = ['comments', 'dm', 'joins', 'reactions'].map((action) => {
+    const used = countFrom(map, accountId, action, now)
+    const cap = DAILY_LIMITS[action]?.max ?? 0
+    return { action, used, cap, reached: cap ? used >= cap : false }
+  })
+  return { accountId, date, items }
+}
+
 /** Инкремент счётчика действия аккаунта на сегодня (сброс при новом дне). */
 export async function incAction(accountId, action, now = Date.now()) {
   if (!accountId || !action) return

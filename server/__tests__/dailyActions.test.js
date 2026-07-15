@@ -39,3 +39,24 @@ test('incAction: счётчик растёт, сбрасывается новы�
   assert.equal(await m.limitReached('acc1', 'comments', tomorrow), false)
   delete process.env.DAILY_ACTIONS_FILE
 })
+
+test('dailySummary: сегодняшние счётчики против потолков', async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'daily-sum-'))
+  process.env.DAILY_ACTIONS_FILE = path.join(dir, 'd.json')
+  const m = await import('../lib/dailyActions.js?t=' + Date.now() + 'sum')
+  const now = Date.now()
+  for (let i = 0; i < 30; i++) await m.incAction('accS', 'comments', now)
+  const sum = await m.dailySummary('accS', now)
+  const comments = sum.items.find((x) => x.action === 'comments')
+  assert.equal(comments.used, 30)
+  assert.equal(comments.cap, 40)
+  assert.equal(comments.reached, false)
+  const reactions = sum.items.find((x) => x.action === 'reactions')
+  assert.equal(reactions.used, 0)
+  assert.equal(reactions.cap, 200)
+  // потолок достигнут → reached=true
+  for (let i = 0; i < 200; i++) await m.incAction('accS', 'reactions', now)
+  const sum2 = await m.dailySummary('accS', now)
+  assert.equal(sum2.items.find((x) => x.action === 'reactions').reached, true)
+  delete process.env.DAILY_ACTIONS_FILE
+})

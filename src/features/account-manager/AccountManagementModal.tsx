@@ -8,6 +8,7 @@ import { cn } from '@/shared/lib/utils'
 import { useApp } from '@/mocks/store'
 import {
   fetchAccountStats, fetchAccountChannels, fetchAccountFolders, releaseAccountLock,
+  fetchAccountDaily, type AccountDaily,
 } from '@/api/accountsApi'
 import type { TgAccount, AccountStats, AccountChannel, AccountFolder } from '@/shared/types'
 
@@ -139,7 +140,7 @@ export function AccountManagementModal({ account, onClose }: { account: TgAccoun
                   onRelease={() => void runRelease()}
                 />
               )}
-              {tab === 'health' && <HealthTab stats={stats} />}
+              {tab === 'health' && <HealthTab stats={stats} accountId={account.id} />}
               {tab === 'channels' && <ChannelsTab accountId={account.id} />}
               {tab === 'folders' && <FoldersTab accountId={account.id} />}
             </div>
@@ -418,7 +419,51 @@ function ActionBtn({ onClick, loading, disabled, icon, label, tone }: {
   )
 }
 
-function HealthTab({ stats }: { stats: AccountStats | null }) {
+const DAILY_ACTION_LABELS: Record<string, string> = {
+  comments: 'Комментарии',
+  dm: 'ЛС незнакомым',
+  joins: 'Вступления',
+  reactions: 'Реакции',
+}
+
+function DailyLimitsCard({ accountId }: { accountId: string }) {
+  const [daily, setDaily] = useState<AccountDaily | null>(null)
+  useEffect(() => {
+    let alive = true
+    void fetchAccountDaily(accountId).then((d) => { if (alive) setDaily(d) }).catch(() => {})
+    return () => { alive = false }
+  }, [accountId])
+  return (
+    <SectionCard title="Суточные лимиты (§6)" icon={<BarChart3 size={15} className="text-spark-300" />}>
+      {!daily ? (
+        <div className="py-3 text-center text-sm text-muted">Загрузка…</div>
+      ) : (
+        <div className="space-y-2.5">
+          {daily.items.map((it) => {
+            const pct = it.cap ? Math.min(100, Math.round((it.used / it.cap) * 100)) : 0
+            const barColor = it.reached ? '#ef4444' : pct >= 75 ? '#f59e0b' : '#0ec464'
+            return (
+              <div key={it.action}>
+                <div className="mb-1 flex items-center justify-between text-xs">
+                  <span className="text-fg">{DAILY_ACTION_LABELS[it.action] ?? it.action}</span>
+                  <span className={cn('font-semibold tabular-nums', it.reached ? 'text-rose-300' : 'text-muted')}>
+                    {it.used} / {it.cap}{it.reached ? ' · лимит' : ''}
+                  </span>
+                </div>
+                <div className="h-1.5 w-full overflow-hidden rounded-full bg-line">
+                  <div className="h-full rounded-full transition-all" style={{ width: `${pct}%`, background: barColor }} />
+                </div>
+              </div>
+            )
+          })}
+          <div className="pt-1 text-[11px] text-faint">Сбрасывается в полночь. При достижении потолка модули пропускают аккаунт (§6).</div>
+        </div>
+      )}
+    </SectionCard>
+  )
+}
+
+function HealthTab({ stats, accountId }: { stats: AccountStats | null; accountId: string }) {
   if (!stats) return <div className="py-8 text-center text-sm text-muted">Нет данных</div>
   const { health, longevity, activity } = stats
   const riskLabel = longevity.risk === 'low' ? 'Низкий риск' : longevity.risk === 'medium' ? 'Средний риск' : 'Высокий риск'
@@ -451,6 +496,8 @@ function HealthTab({ stats }: { stats: AccountStats | null }) {
           </div>
         </SectionCard>
       </div>
+
+      <DailyLimitsCard accountId={accountId} />
 
       <SectionCard title="События здоровья" icon={<AlertCircle size={15} className="text-amber-300" />}>
         {health.events.length === 0 ? (
