@@ -37,6 +37,7 @@ import { getAccountMeta, setAccountMeta } from '../accountsMeta.js'
 import { releaseTaskLocks, markTaskLive, markTaskDone, assertAccountAvailable } from '../lib/accountLocks.js'
 import { loadSessionString, createClient } from '../tgAuth.js'
 import { pickCommentCandidates, trackIdlePass, warmingPace, pickWeightedKey } from '../lib/workerLoop.js'
+import { limitReached, incAction } from '../lib/dailyActions.js'
 import { parseTelegramPostLinks, resolvePostPeer } from '../lib/postLink.js'
 import { filterBlacklisted, isBlacklistedSync } from '../targetBlacklist.js'
 
@@ -159,6 +160,7 @@ export async function runNeuroCommenting(task, store) {
         continue
       }
       if (perAccountLimitReached(s, accountId, task)) { idleLap += 1; continue }
+      if (await limitReached(accountId, 'comments')) { idleLap += 1; await store.appendLog(task, 'info', 'Суточный лимит комментариев достигнут (§6)', meta.name); continue }
       idleLap = 0
 
       let client
@@ -225,6 +227,7 @@ export async function runNeuroCommenting(task, store) {
               task.actionKeys.push(key)
               task.accountStats[accountId] = task.accountStats[accountId] || { actions: 0, floodWaits: 0 }
               task.accountStats[accountId].actions += 1
+              await incAction(accountId, 'comments') // §6: суточный лимит действий
               await bumpProgress(task, store)
               await store.appendHistory(task, {
                 id: `${task.id}_${Date.now()}`,
@@ -335,6 +338,7 @@ export async function runNeuroChatting(task, store) {
         await client.sendMessage(peer, { message: reply, replyTo: msg.id })
         task.accountStats[accountId] = task.accountStats[accountId] || { actions: 0, floodWaits: 0 }
         task.accountStats[accountId].actions += 1
+        await incAction(accountId, 'comments') // §6: групповые сообщения — под лимит комментариев
         await bumpProgress(task, store)
         await store.appendHistory(task, { id: `${task.id}_${Date.now()}`, ts: new Date().toISOString(), accountName: meta.name, target: g, text: reply, status: 'sent' })
         await store.appendLog(task, 'success', `Ответ в @${g}`, meta.name)
@@ -441,6 +445,7 @@ export async function runMassReact(task, store) {
         await sendReaction(client, peer, postId, emoji)
         task.accountStats[accountId] = task.accountStats[accountId] || { actions: 0, floodWaits: 0 }
         task.accountStats[accountId].actions += 1
+        await incAction(accountId, 'reactions') // §6: суточный лимит реакций
         await bumpProgress(task, store)
         await store.appendHistory(task, { id: `${task.id}_${Date.now()}`, ts: new Date().toISOString(), accountName: meta.name, target: targetLabel, emoji, postId, status: 'sent' })
         await store.appendLog(task, 'success', `Реакция ${emoji} ${targetLabel} · пост #${postId}`, meta.name)

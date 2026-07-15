@@ -11,7 +11,7 @@
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
     "lint": "tsc --noEmit",
-    "test": "node --test server/__tests__/parser.test.js server/__tests__/aiHelp.test.js server/__tests__/accountStatus.test.js server/__tests__/auditLog.test.js server/__tests__/channelLease.test.js server/__tests__/goals.test.js server/__tests__/knowledgeBase.test.js server/__tests__/leads.test.js server/__tests__/campaign.test.js server/__tests__/channels.test.js server/__tests__/channelStats.test.js server/__tests__/roles.test.js server/__tests__/users.test.js server/__tests__/workLog.test.js server/__tests__/geo.test.js server/__tests__/proxies.test.js server/__tests__/campaignSchedules.test.js server/__tests__/captcha.test.js server/__tests__/targets.test.js server/__tests__/workerLoop.test.js server/__tests__/commentFilter.test.js server/__tests__/safetyLimits.test.js"
+    "test": "node --test server/__tests__/parser.test.js server/__tests__/aiHelp.test.js server/__tests__/accountStatus.test.js server/__tests__/auditLog.test.js server/__tests__/channelLease.test.js server/__tests__/goals.test.js server/__tests__/knowledgeBase.test.js server/__tests__/leads.test.js server/__tests__/campaign.test.js server/__tests__/channels.test.js server/__tests__/channelStats.test.js server/__tests__/roles.test.js server/__tests__/users.test.js server/__tests__/workLog.test.js server/__tests__/geo.test.js server/__tests__/proxies.test.js server/__tests__/campaignSchedules.test.js server/__tests__/captcha.test.js server/__tests__/targets.test.js server/__tests__/workerLoop.test.js server/__tests__/commentFilter.test.js server/__tests__/safetyLimits.test.js server/__tests__/dailyActions.test.js"
   },
   "dependencies": {
     "cheerio": "^1.2.0",
