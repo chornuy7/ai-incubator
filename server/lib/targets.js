@@ -29,7 +29,10 @@ export function seededTarget(min, max, seed = '') {
 export function resolveTotalTarget(settings, task) {
   const max = settings.maxActions ?? settings.maxComments ?? 100
   const min = settings.minActions ?? settings.minComments ?? 0
-  return seededTarget(min, max, task?.id || '')
+  const t = seededTarget(min, max, task?.id || '')
+  // Защита от «тихого нуля»: если задан положительный максимум, цель не может быть 0
+  // (иначе задача запускается и молча ничего не делает — при min=0 seed мог дать 0).
+  return max >= 1 ? Math.max(1, t) : t
 }
 
 /**
