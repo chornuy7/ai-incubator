@@ -6,12 +6,33 @@
  * @returns {{ level:number, label:string, mul:number, actionsPerDay:number }}
  */
 export function warmingPace(level) {
+  // weights — пропорция действий прогрева (§8.2, решение 15.07):
+  // просмотр постов 40% · реакции 20% · чтение/ЛС 20% · вступления 10% · подписки/ping 10%.
+  const weights = { view: 40, react: 20, read: 20, join: 10, ping: 10 }
   const plans = [
-    { level: 0, label: 'Быстрый (2 дня)', mul: 0.8, actionsPerDay: 40 },
-    { level: 1, label: 'Нормальный (3–7 дней)', mul: 1.3, actionsPerDay: 20 },
-    { level: 2, label: 'Стандартный (7–14 дней)', mul: 2.0, actionsPerDay: 10 },
+    { level: 0, label: 'Быстрый (2 дня)', mul: 0.8, actionsPerDay: 40, weights },
+    { level: 1, label: 'Нормальный (3–7 дней)', mul: 1.3, actionsPerDay: 20, weights },
+    { level: 2, label: 'Стандартный (7–14 дней)', mul: 2.0, actionsPerDay: 10, weights },
   ]
   return plans[level] || plans[1]
+}
+
+/**
+ * Взвешенный выбор ключа по весам. `r` ∈ [0,1) — для детерминизма в тестах.
+ * @param {Record<string,number>} weights @param {number} r @returns {string}
+ */
+export function pickWeightedKey(weights, r = Math.random()) {
+  const entries = Object.entries(weights || {}).filter(([, w]) => Number(w) > 0)
+  if (!entries.length) return ''
+  const total = entries.reduce((s, [, w]) => s + Number(w), 0)
+  let acc = Math.max(0, Math.min(1, r)) * total
+  for (const [k, w] of entries) { acc -= Number(w); if (acc < 0) return k }
+  return entries[entries.length - 1][0]
+}
+
+/** Попадает ли час в дневное окно активности прогрева (§8.2, ночью пауза). @param {number} hour @param {number} [startH] @param {number} [endH] */
+export function inActiveWindow(hour, startH = 9, endH = 23) {
+  return hour >= startH && hour < endH
 }
 
 /** @param {object} task @param {boolean} progressed @param {number} [maxIdle] */

@@ -36,7 +36,7 @@ import {
 import { getAccountMeta, setAccountMeta } from '../accountsMeta.js'
 import { releaseTaskLocks, markTaskLive, markTaskDone, assertAccountAvailable } from '../lib/accountLocks.js'
 import { loadSessionString, createClient } from '../tgAuth.js'
-import { pickCommentCandidates, trackIdlePass, warmingPace } from '../lib/workerLoop.js'
+import { pickCommentCandidates, trackIdlePass, warmingPace, pickWeightedKey } from '../lib/workerLoop.js'
 import { parseTelegramPostLinks, resolvePostPeer } from '../lib/postLink.js'
 import { filterBlacklisted, isBlacklistedSync } from '../targetBlacklist.js'
 
@@ -570,16 +570,19 @@ export async function runWarming(task, store) {
       let client
       try {
         ;({ client } = await connectAccount(accountId, task.id))
-        const action = ['dialogs', 'search', 'read'][Math.floor(Math.random() * 3)]
-        if (action === 'dialogs') {
+        // §8.2: тип действия выбирается по пропорции уровня (view/react/read/join/ping).
+        // Пока маппится на безопасные операции (чтение/просмотр/keepalive); реальные
+        // реакции/вступления — на live-прогоне (см. Help Center «Политика прогрева»).
+        const kind = pickWeightedKey(pace.weights)
+        if (kind === 'read') {
           const ds = await fetchDialogs(client, 10)
-          await store.appendLog(task, 'info', `Прогрев: ${ds.length} диалогов`, meta.name)
-        } else if (action === 'search') {
-          const chats = await searchPublic(client, 'news', 5)
-          await store.appendLog(task, 'info', `Прогрев: поиск (${chats.length})`, meta.name)
-        } else {
+          await store.appendLog(task, 'info', `Прогрев: чтение диалогов (${ds.length})`, meta.name)
+        } else if (kind === 'ping' || kind === 'join') {
           await client.getMe()
-          await store.appendLog(task, 'info', 'Прогрев: ping аккаунта', meta.name)
+          await store.appendLog(task, 'info', `Прогрев: keepalive · ${kind}`, meta.name)
+        } else {
+          const chats = await searchPublic(client, 'news', 5)
+          await store.appendLog(task, 'info', `Прогрев: просмотр каналов (${chats.length}) · ${kind}`, meta.name)
         }
         task.accountStats[accountId] = task.accountStats[accountId] || { actions: 0, floodWaits: 0 }
         task.accountStats[accountId].actions += 1
