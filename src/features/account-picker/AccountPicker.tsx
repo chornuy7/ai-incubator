@@ -13,6 +13,14 @@ const COUNTRY_NAME: Record<string, string> = { ua: 'UA', ru: 'RU', kz: 'KZ', pl:
 
 /** Аккаунт «в работе»: заблокирован задачей (lock) или в статусе working — выбирать нельзя. */
 const isBusy = (a: TgAccount) => !!a.busyIn || a.status === 'working'
+// §3.2/§5.1: непрогретые/нерабочие статусы нельзя назначать в работу.
+const NON_RUNNABLE = new Set(['warming', 'pause', 'floodwait', 'quarantine', 'spamblock', 'reauth', 'invalid', 'frozen'])
+const STATUS_RU: Record<string, string> = {
+  warming: 'в прогреве', pause: 'на паузе', floodwait: 'FloodWait', quarantine: 'в карантине',
+  spamblock: 'спамблок', reauth: 'нужна авторизация', invalid: 'невалидный', frozen: 'заморожен',
+}
+const statusBlocks = (a: TgAccount) => NON_RUNNABLE.has(a.status)
+const isUnavailable = (a: TgAccount) => isBusy(a) || statusBlocks(a)
 
 /** Двухпанельный выбор аккаунтов: Доступные | Выбрано. */
 export function AccountPicker({
@@ -52,8 +60,8 @@ export function AccountPicker({
     [accounts, selected, role, country, workingProxies, hideWorking, query],
   )
 
-  const busyAvailable = useMemo(() => available.filter(isBusy), [available])
-  const freeAvailable = useMemo(() => available.filter((a) => !isBusy(a)), [available])
+  const busyAvailable = useMemo(() => available.filter(isUnavailable), [available])
+  const freeAvailable = useMemo(() => available.filter((a) => !isUnavailable(a)), [available])
 
   // Сколько аккаунтов скрыто именно фильтром «Рабочие прокси» (прямое подключение, без прокси).
   const hiddenByProxy = useMemo(() => {
@@ -95,6 +103,10 @@ export function AccountPicker({
     const acc = accounts.find((a) => a.id === id)
     if (acc && isBusy(acc)) {
       pushToast({ type: 'error', title: 'Аккаунт занят', desc: acc.busyIn ? `Сейчас в модуле «${acc.busyIn.moduleLabel}». Параллельный запуск запрещён.` : 'Аккаунт в работе — выбрать нельзя.' })
+      return
+    }
+    if (acc && statusBlocks(acc)) {
+      pushToast({ type: 'error', title: 'Профиль недоступен', desc: `Аккаунт ${STATUS_RU[acc.status] || acc.status} — назначить в работу нельзя. Дождитесь возврата в «активные».` })
       return
     }
     onChange(new Set([...selected, id]))
