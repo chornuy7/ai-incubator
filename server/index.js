@@ -281,6 +281,19 @@ try {
   console.warn('[stats] scheduler init failed:', err)
 }
 
+// Планировщик кампаний по расписанию (§3.9): каждую минуту запускает «созревшие».
+try {
+  const { campaignScheduleTick } = await import('./campaignSchedules.js')
+  const { runCampaign } = await import('./campaignsRoutes.js')
+  const tick = () => campaignScheduleTick(runCampaign).then((fired) => {
+    if (fired.length) console.log(`[campaigns] запущено по расписанию: ${fired.length}`)
+  }).catch((err) => console.warn('[campaigns] schedule tick failed:', err))
+  setInterval(tick, 60 * 1000)
+  console.log('[campaigns] планировщик расписаний включён')
+} catch (err) {
+  console.warn('[campaigns] schedule scheduler init failed:', err)
+}
+
 // Безопасный дефолт: слушаем только localhost (управление TG-аккаунтами без auth не должно
 // торчать в LAN/интернет). Для доступа с другого устройства выставить API_HOST=0.0.0.0.
 const HOST = process.env.API_HOST || '127.0.0.1'

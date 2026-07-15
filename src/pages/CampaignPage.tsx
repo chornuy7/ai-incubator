@@ -1,11 +1,14 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Rocket, Check } from 'lucide-react'
+import { Rocket, Check, Clock, Power, Trash2, CalendarClock } from 'lucide-react'
 import { activeAccounts, useApp } from '@/mocks/store'
 import { PageHeader, Card, Select, Badge } from '@/shared/ui'
 import { MODULES } from '@/shared/config/modules'
 import { fetchGoals, type Goal } from '@/api/goalsApi'
-import { launchCampaign, type CampaignResult } from '@/api/campaignsApi'
+import {
+  launchCampaign, fetchSchedules, createSchedule, updateSchedule, deleteSchedule,
+  type CampaignResult, type CampaignSchedule,
+} from '@/api/campaignsApi'
 import { fetchChannels, type Channel } from '@/api/channelsApi'
 import { FolderPicker } from '@/features/modules/shared/FolderPicker'
 
@@ -24,10 +27,16 @@ export function CampaignPage() {
   const [picked, setPicked] = useState<Set<string>>(new Set())
   const [launching, setLaunching] = useState(false)
   const [result, setResult] = useState<CampaignResult | null>(null)
+  const [schedules, setSchedules] = useState<CampaignSchedule[]>([])
+  const [runAt, setRunAt] = useState('')
+  const [repeat, setRepeat] = useState<'none' | 'daily'>('none')
+  const [scheduling, setScheduling] = useState(false)
 
+  const loadSchedules = () => { void fetchSchedules().then(setSchedules).catch(() => {}) }
   useEffect(() => {
     void fetchGoals().then(setGoals).catch(() => {})
     void fetchChannels().then(setChannels).catch(() => {})
+    loadSchedules()
   }, [])
 
   // Свободные аккаунты (не занятые другой задачей) — их и распределим.
@@ -63,6 +72,36 @@ export function CampaignPage() {
     } catch (err) {
       pushToast({ type: 'error', title: 'Не удалось запустить кампанию', desc: err instanceof Error ? err.message : '' })
     } finally { setLaunching(false) }
+  }
+
+  const campaignBody = () => ({
+    goalId: goalId || null,
+    accountIds: freeIds,
+    targets,
+    modules: [...mods].map((moduleKey) => ({ moduleKey })),
+  })
+
+  const schedule = async () => {
+    const ts = runAt ? new Date(runAt).getTime() : 0
+    if (!ts) return pushToast({ type: 'error', title: 'Укажите дату и время запуска' })
+    if (mods.size === 0 || targets.length === 0) return pushToast({ type: 'error', title: 'Выберите модули и цели' })
+    setScheduling(true)
+    try {
+      await createSchedule({ name: goals.find((g) => g.id === goalId)?.name || 'Кампания', body: campaignBody(), runAt: ts, repeat })
+      pushToast({ type: 'success', title: 'Кампания запланирована', desc: new Date(ts).toLocaleString() })
+      setRunAt('')
+      loadSchedules()
+    } catch (e) { pushToast({ type: 'error', title: 'Ошибка', desc: e instanceof Error ? e.message : '' }) }
+    finally { setScheduling(false) }
+  }
+
+  const toggleSchedule = async (s: CampaignSchedule) => {
+    try { const up = await updateSchedule(s.id, { enabled: !s.enabled }); setSchedules((prev) => prev.map((x) => (x.id === up.id ? up : x))) }
+    catch (e) { pushToast({ type: 'error', title: 'Ошибка', desc: e instanceof Error ? e.message : '' }) }
+  }
+  const removeSchedule = async (s: CampaignSchedule) => {
+    try { await deleteSchedule(s.id); setSchedules((prev) => prev.filter((x) => x.id !== s.id)) }
+    catch (e) { pushToast({ type: 'error', title: 'Ошибка', desc: e instanceof Error ? e.message : '' }) }
   }
 
   return (
@@ -129,8 +168,39 @@ export function CampaignPage() {
             <Rocket size={16} /> {launching ? 'Запуск…' : 'Запустить кампанию'}
           </button>
           {freeIds.length === 0 && <div className="mt-2 text-xs text-amber-300">Нет свободных аккаунтов (все заняты или в прогреве).</div>}
+
+          {/* §3.9: расписание — запустить кампанию по времени + вкл/выкл + повтор */}
+          <div className="mt-3 rounded-xl border border-line bg-elevated/40 p-3">
+            <div className="mb-2 flex items-center gap-1.5 text-sm font-semibold text-fg"><CalendarClock size={15} className="text-iris-300" /> Запланировать</div>
+            <div className="flex flex-wrap items-center gap-2">
+              <input type="datetime-local" value={runAt} onChange={(e) => setRunAt(e.target.value)} className="input h-9 flex-1" />
+              <Select value={repeat} onChange={(v) => setRepeat(v as 'none' | 'daily')} className="w-36" options={[{ value: 'none', label: 'Один раз' }, { value: 'daily', label: 'Каждый день' }]} />
+              <button onClick={() => void schedule()} disabled={scheduling || !runAt || !mods.size || !targets.length} className="btn-iris h-9 text-sm disabled:opacity-40"><Clock size={14} /> {scheduling ? '…' : 'В расписание'}</button>
+            </div>
+          </div>
         </Card>
       </div>
+
+      {schedules.length > 0 && (
+        <Card className="mt-4 p-4">
+          <div className="mb-2 text-sm font-semibold text-fg">Запланированные кампании</div>
+          <div className="flex flex-col gap-2">
+            {schedules.map((s) => (
+              <div key={s.id} className={`flex flex-wrap items-center gap-2 rounded-xl border p-2.5 ${s.enabled ? 'border-line bg-elevated/40' : 'border-line/60 bg-elevated/20 opacity-60'}`}>
+                <Badge tone={s.enabled ? 'spark' : 'muted'}>{s.enabled ? 'вкл' : 'выкл'}</Badge>
+                <span className="truncate text-sm font-medium text-fg">{s.name}</span>
+                <Badge tone="iris">{s.repeat === 'daily' ? 'ежедневно' : 'один раз'}</Badge>
+                <span className="text-xs text-white/50"><Clock size={11} className="mb-0.5 mr-0.5 inline" />{new Date(s.runAt).toLocaleString()}</span>
+                {s.lastRunAt && <span className="text-xs text-white/40">· последний: {new Date(s.lastRunAt).toLocaleString()}{s.lastResult?.error ? ` (${s.lastResult.error})` : s.lastResult ? ` (задач: ${s.lastResult.tasks})` : ''}</span>}
+                <div className="ml-auto flex items-center gap-1">
+                  <button onClick={() => void toggleSchedule(s)} className="btn-icon h-8 w-8" aria-label="Вкл/выкл"><Power size={14} className={s.enabled ? 'text-spark-400' : 'text-white/40'} /></button>
+                  <button onClick={() => void removeSchedule(s)} className="btn-icon h-8 w-8" aria-label="Удалить"><Trash2 size={14} /></button>
+                </div>
+              </div>
+            ))}
+          </div>
+        </Card>
+      )}
 
       {result && (
         <Card className="mt-4 p-4">
