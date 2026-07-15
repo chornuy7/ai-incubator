@@ -5,6 +5,7 @@ import {
   peekMembership,
   mapTelegramError,
 } from '../lib/gramHelpers.js'
+import { resolveGroupCaptcha } from '../lib/captchaRunner.js'
 
 /**
  * Вступить в канал/группу/чат перед действием модуля.
@@ -37,6 +38,14 @@ export async function joinTargetOrSkip(client, raw, appendLog, accountName, opts
     await appendLog('error', `Не удалось вступить в ${membership.label}`, accountName)
     return null
   }
+
+  // §8.6: только что вступили → проверить капчу бота-антиспама и пройти/флагнуть/выйти.
+  if (membership.status === 'joined') {
+    try {
+      await resolveGroupCaptcha(client, membership.peer, { appendLog, accountName })
+    } catch { /* капча-хук не должен ломать вступление */ }
+  }
+
   return membership
 }
 
