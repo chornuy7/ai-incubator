@@ -40,3 +40,22 @@ test('buildCampaignPlan: goalId + общие цели + разбивка акк�
   assert.deepEqual(nch.settings.targets, ['@grp']) // свои переопределяют
   assert.equal(nch.settings.initiator, 'op1')
 })
+
+test('buildCampaignPlan: прокидывает campaign-настройки + override модуля', async () => {
+  const { buildCampaignPlan } = await import('../lib/campaign.js')
+  const plan = buildCampaignPlan({
+    goalId: 'g1', accountIds: ['a', 'b'],
+    settings: { maxActions: 5, probability: 100 },
+    modules: [
+      { moduleKey: 'neuro-commenting', targets: ['@ch'] },
+      { moduleKey: 'neuro-chatting', targets: ['@grp'], settings: { maxActions: 2 } },
+    ],
+  })
+  const nc = plan.find((p) => p.moduleKey === 'neuro-commenting')
+  const nch = plan.find((p) => p.moduleKey === 'neuro-chatting')
+  assert.equal(nc.settings.maxActions, 5) // из campaign-настроек
+  assert.equal(nc.settings.probability, 100)
+  assert.deepEqual(nc.settings.targets, ['@ch'])
+  assert.equal(nch.settings.maxActions, 2) // override модуля
+  assert.equal(nc.settings.goalId, 'g1')
+})

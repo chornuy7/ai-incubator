@@ -9,6 +9,7 @@ export interface CampaignLaunchInput {
   goalId?: string | null
   accountIds: string[]
   targets?: string[]
+  settings?: Record<string, unknown> // общие лимиты/задержки кампании (прокидываются в модули)
   modules: CampaignModuleInput[]
   initiator?: string
 }

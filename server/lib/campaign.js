@@ -23,7 +23,9 @@ export function splitAccounts(accountIds = [], moduleKeys = []) {
 
 /**
  * Построить план кампании: для каждого модуля — свои аккаунты + общие цели/каналы + goalId.
- * @param {{ goalId?: string, accountIds?: string[], targets?: string[], modules?: {moduleKey:string, targets?:string[]}[], initiator?: string }} input
+ * `settings` — общие настройки кампании (лимиты/задержки/probability) прокидываются во все
+ * модули; `m.settings` — переопределение на конкретный модуль.
+ * @param {{ goalId?: string, accountIds?: string[], targets?: string[], settings?: object, modules?: {moduleKey:string, targets?:string[], settings?:object}[], initiator?: string }} input
  * @returns {{ moduleKey: string, settings: object }[]}
  */
 export function buildCampaignPlan(input = {}) {
@@ -33,6 +35,8 @@ export function buildCampaignPlan(input = {}) {
   return modules.map((m) => ({
     moduleKey: m.moduleKey,
     settings: {
+      ...(input.settings || {}), // общие лимиты/задержки кампании
+      ...(m.settings || {}), // переопределение модуля
       accountIds: split[m.moduleKey] || [],
       targets: m.targets || input.targets || [],
       channels: m.targets || input.targets || [],
