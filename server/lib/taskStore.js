@@ -74,14 +74,22 @@ export function createTaskStore(moduleKey, idPrefix) {
     return tasks
   }
 
-  /** @param {object} task @param {'info'|'success'|'warning'|'error'} level @param {string} message @param {string} [account] */
-  async function appendLog(task, level, message, account) {
+  /**
+   * @param {object} task @param {'info'|'success'|'warning'|'error'} level @param {string} message
+   * @param {string} [account] @param {{ code?: string, reason?: string }} [opts]
+   * Поля Фазы 0 (§3.1): `module`/`initiator`/`ts` берём из контекста задачи, `code`/`reason` — опц.
+   */
+  async function appendLog(task, level, message, account, opts = {}) {
     const entry = {
       id: newLogId(),
       ts: new Date().toISOString(),
       level,
       message,
+      module: task.moduleKey,              // из какого модуля (Фаза 0)
+      initiator: task.initiator || 'system', // кто инициировал задачу (Фаза 0)
       ...(account ? { account } : {}),
+      ...(opts.code ? { code: String(opts.code) } : {}),      // машинный код события
+      ...(opts.reason ? { reason: String(opts.reason) } : {}), // причина
     }
     task.logs = task.logs || []
     task.logs.unshift(entry)

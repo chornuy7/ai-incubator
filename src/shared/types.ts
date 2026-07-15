@@ -58,6 +58,11 @@ export interface LogEntry {
   level: LogLevel
   account?: string
   message: string
+  // Поля Фазы 0 (§3.1): контекст события задачи.
+  module?: string
+  initiator?: string
+  code?: string
+  reason?: string
 }
 
 export interface Plan {
