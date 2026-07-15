@@ -29,6 +29,7 @@ const DURATION_MIN_BY_PROTECTION_LEVEL = [60, 45, 30]
 
 // 3 уровня прогрева (решение 14.07): длительность и «естественность» темпа.
 const WARM_LEVELS = ['Быстрый · 2 дня', 'Средний · 3–7 дней', 'Долгий · 7–14 дней']
+const POST_WINDOWS = [3, 5, 10, 20] // §3.5: окно последних постов для нейрокомментинга
 
 // §3.5: расчётное min/avg/max время вместо абстрактного «интервала».
 function fmtDur(sec: number): string {
@@ -72,6 +73,7 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
   const [goals, setGoals] = useState<Goal[]>([])
   const [goalId, setGoalId] = useState('')
   const [warmLevel, setWarmLevel] = useState(1)
+  const [postWindow, setPostWindow] = useState(10) // §3.5: сколько последних постов обрабатывать
   useEffect(() => { void fetchGoals().then(setGoals).catch(() => {}) }, [])
   const [palette, setPalette] = useState<Set<string>>(new Set(['👍', '❤️', '🔥']))
   const [viewTab, setViewTab] = useState(1)
@@ -145,11 +147,12 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
     delays,
     ...(goalId ? { goalId } : {}),
     ...(cfg.warmingLayout ? { warmLevel } : {}),
+    ...(moduleKey === 'neuro-commenting' ? { postWindow } : {}),
     ...(cfg.lookingLayout ? {
       lookMode: cfg.lookModeOptions?.[lookModeIdx]?.value ?? 'stories',
       lookPostsCount,
     } : {}),
-  }), [selected, targets, postUrls, toggles, probability, maxActions, minActions, maxPerAcc, minPerAcc, minWords, durationMinutes, aiProtect, protLevel, activePrompt, promptBodies, delayPreset, palette, delays, keywords, isGgr, accounts, cfg, lookModeIdx, lookPostsCount, goalId, warmLevel])
+  }), [selected, targets, postUrls, toggles, probability, maxActions, minActions, maxPerAcc, minPerAcc, minWords, durationMinutes, aiProtect, protLevel, activePrompt, promptBodies, delayPreset, palette, delays, keywords, isGgr, accounts, cfg, lookModeIdx, lookPostsCount, goalId, warmLevel, postWindow, moduleKey])
 
   const hasPostTargets = postUrls.length > 0
   const busySelectedCount = useMemo(
@@ -429,6 +432,12 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
           <div className="mb-3">
             <div className="mb-1 text-xs text-white/50">Уровень прогрева <span className="text-white/30">(длиннее = естественнее)</span></div>
             <Segmented options={WARM_LEVELS} value={warmLevel} onChange={setWarmLevel} />
+          </div>
+        )}
+        {moduleKey === 'neuro-commenting' && !running && (
+          <div className="mb-3">
+            <div className="mb-1 text-xs text-white/50">Окно постов <span className="text-white/30">(сколько последних постов обрабатывать, не всю историю)</span></div>
+            <Segmented options={POST_WINDOWS.map(String)} value={Math.max(0, POST_WINDOWS.indexOf(postWindow))} onChange={(i) => setPostWindow(POST_WINDOWS[i])} />
           </div>
         )}
         {goals.length > 0 && !running && (

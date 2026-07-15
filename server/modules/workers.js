@@ -160,7 +160,8 @@ export async function runNeuroCommenting(task, store) {
         }
         const channel = membership.peer
 
-        const posts = await fetchPosts(client, channel, 20)
+        // §3.5: окно постов — обрабатываем только последние N, не всю историю канала.
+        const posts = await fetchPosts(client, channel, Math.min(50, Math.max(1, Number(s.postWindow) || 20)))
         if (!posts.length) {
           await store.appendLog(task, 'warning', 'В канале нет постов для комментирования', meta.name)
         } else {

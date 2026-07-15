@@ -50,6 +50,8 @@ export interface ModuleTaskSettings {
   delayItem?: number
   // ── Прогрев: уровень (0=2д, 1=3–7д, 2=7–14д) ──
   warmLevel?: number
+  // ── Нейрокомментинг: окно последних постов (§3.5) ──
+  postWindow?: number
   // ── Цель кампании (§3.6) ──
   goalId?: string
   // ── НейроДиалоги ──
