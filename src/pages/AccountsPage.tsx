@@ -184,11 +184,14 @@ export function AccountsPage() {
   }
 
   const bulkMove = (patch: { role?: string; project?: string }) => {
+    // §3.2/§4: перенос профилей — подтверждение с последствиями + фиксация в аудите (initiator).
+    const label = patch.role ? `роль → «${patch.role}»` : patch.project ? `проект → «${patch.project}»` : 'перенос'
+    if (!window.confirm(`Перенести ${selected.size} профиль(ей): ${label}?\nДействие будет записано в Логи с инициатором.`)) return
     void (async () => {
       const ids = [...selected]
-      for (const id of ids) { try { await patchAccount(id, patch) } catch { /* skip */ } }
+      for (const id of ids) { try { await patchAccount(id, { ...patch, initiator: 'operator' }) } catch { /* skip */ } }
       await loadAccounts()
-      pushToast({ type: 'success', title: 'Перемещено', desc: `Аккаунтов: ${ids.length}` })
+      pushToast({ type: 'success', title: 'Перемещено', desc: `Профилей: ${ids.length}` })
       setMoveOpen(false)
       setSelected(new Set())
     })()

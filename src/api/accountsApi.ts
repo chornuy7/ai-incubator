@@ -26,7 +26,7 @@ export async function fetchAccountBusy(): Promise<AccountBusyMap> {
 
 export async function patchAccount(
   accountId: string,
-  patch: Partial<Pick<TgAccount, 'role' | 'project' | 'country' | 'status' | 'proxy' | 'inTrash' | 'note'>>,
+  patch: Partial<Pick<TgAccount, 'role' | 'project' | 'country' | 'status' | 'proxy' | 'inTrash' | 'note'>> & { initiator?: string },
 ) {
   const res = await fetch(`/api/tg/accounts/${accountId}`, {
     method: 'PATCH',
