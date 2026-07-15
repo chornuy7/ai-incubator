@@ -3,7 +3,11 @@ import { createPortal } from 'react-dom'
 import { useLocation } from 'react-router-dom'
 import { BookOpen, HelpCircle, Layers, Lightbulb, Loader2, Send, Shield, ShieldAlert, Sparkles, Workflow, X } from 'lucide-react'
 import { useUi } from '@/shared/lib/uiStore'
-import { findHelpDoc, type HelpDoc } from '@/shared/config/helpDocs'
+import { findHelpDoc, HELP_DOCS, type HelpDoc } from '@/shared/config/helpDocs'
+
+// Бизнес-правила (§6) — отдельные статьи Help Center, доступные из списка «Все статьи».
+const BUSINESS_TOPICS = ['safety-limits', 'trust-autostop', 'warming-policy', 'captcha-antispam', 'mailing-rules', 'channel-rating']
+const MODULE_TOPICS = ['neuro-commenting', 'neuro-chatting', 'neuro-dialogs', 'mass-react', 'mass-looking', 'warming', 'ggr', 'parsing', 'parsing-groups', 'parsing-users', 'parsing-messages', 'parsing-comments']
 import { PROTECTION_STEPS } from '@/shared/config/protectionInfo'
 import { apiGet, apiPost } from '@/api/client'
 import { cn } from '@/shared/lib/utils'
@@ -138,6 +142,7 @@ export function HelpCenterDrawer() {
   const open = useUi((s) => s.helpOpen)
   const topic = useUi((s) => s.helpTopic)
   const setHelpOpen = useUi((s) => s.setHelpOpen)
+  const setHelpTopic = useUi((s) => s.setHelpTopic)
   const location = useLocation()
 
   const [messages, setMessages] = useState<HelpMsg[]>([])
@@ -214,7 +219,34 @@ export function HelpCenterDrawer() {
         </div>
 
         <div className="flex-1 overflow-y-auto p-4">
+          {doc && (
+            <button onClick={() => setHelpTopic('')} className="mb-3 text-xs text-spark-300 hover:underline">◂ Все статьи</button>
+          )}
           {doc && <HelpDocView doc={doc} />}
+          {!doc && (
+            <div className="space-y-4">
+              <div>
+                <div className="mb-2 text-xs font-bold uppercase tracking-wide text-muted">Бизнес-правила</div>
+                <div className="flex flex-col gap-1.5">
+                  {BUSINESS_TOPICS.map((k) => HELP_DOCS[k] && (
+                    <button key={k} onClick={() => setHelpTopic(HELP_DOCS[k].title)} className="rounded-lg border border-line bg-elevated/40 px-3 py-2 text-left text-sm text-fg transition-colors hover:border-spark-500/40 hover:text-spark-300">
+                      {HELP_DOCS[k].title}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div>
+                <div className="mb-2 text-xs font-bold uppercase tracking-wide text-muted">Модули</div>
+                <div className="flex flex-wrap gap-1.5">
+                  {MODULE_TOPICS.map((k) => HELP_DOCS[k] && (
+                    <button key={k} onClick={() => setHelpTopic(HELP_DOCS[k].title)} className="rounded-lg border border-line bg-elevated px-2.5 py-1 text-xs text-white/70 transition-colors hover:border-spark-500/40 hover:text-spark-300">
+                      {HELP_DOCS[k].title}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+          )}
           {doc && (
             <div className="mb-3 mt-5 flex items-center gap-2">
               <span className="h-px flex-1 bg-line" />
