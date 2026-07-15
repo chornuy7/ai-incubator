@@ -7,6 +7,7 @@ import { MODULES } from '@/shared/config/modules'
 import { fetchGoals, type Goal } from '@/api/goalsApi'
 import { launchCampaign, type CampaignResult } from '@/api/campaignsApi'
 import { fetchChannels, type Channel } from '@/api/channelsApi'
+import { FolderPicker } from '@/features/modules/shared/FolderPicker'
 
 // Модули, которые осмысленно вести к цели (принимают целевые каналы/группы).
 const CAMPAIGN_MODULES = ['neuro-commenting', 'neuro-chatting', 'mass-react', 'mass-looking']
@@ -91,6 +92,17 @@ export function CampaignPage() {
         <Card className="p-4">
           <div className="mb-1 text-xs text-white/50">Целевые каналы/группы (по одному на строку)</div>
           <textarea className="input min-h-[88px]" value={targetsText} onChange={(e) => setTargetsText(e.target.value)} placeholder={'@channel1\nhttps://t.me/group2'} />
+          {/* §3.7: объединение источников — цели можно загрузить из сохранённых папок */}
+          <div className="mt-2">
+            <FolderPicker
+              targets={targets}
+              onLoad={(t) => setPicked((prev) => {
+                const next = new Set(prev)
+                t.forEach((x) => { const v = x.trim(); if (v) next.add(v.startsWith('@') || v.includes('t.me') ? v : `@${v}`) })
+                return next
+              })}
+            />
+          </div>
           {channels.length > 0 && (
             <div className="mt-2">
               <div className="mb-1 text-xs text-white/50">Или выбрать из базы каналов ({picked.size} выбрано)</div>
