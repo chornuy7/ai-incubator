@@ -1,10 +1,15 @@
 import { NavLink, useLocation } from 'react-router-dom'
-import { PanelLeftClose, PanelLeftOpen, X } from 'lucide-react'
+import { PanelLeftClose, PanelLeftOpen, X, LogOut } from 'lucide-react'
 import { ROUTES, GROUP_LABELS, type RouteDef } from '@/shared/config/routes'
 import { useApp } from '@/mocks/store'
+import { useSession } from '@/features/auth/session'
+import { can, moduleKeyFromPath } from '@/shared/lib/access'
 import { cn } from '@/shared/lib/utils'
 
 const GROUP_ORDER: RouteDef['group'][] = ['main', 'modules', 'parsing', 'account']
+
+/** Страницы только для админа (управление ролями/пользователями). §8.1 */
+const ADMIN_ONLY = new Set(['/panel/roles', '/panel/users'])
 
 function Logo({ collapsed }: { collapsed: boolean }) {
   return (
@@ -29,7 +34,22 @@ export function AppSidebar({ mobile = false }: { mobile?: boolean }) {
   const collapsed = useApp((s) => s.sidebarCollapsed) && !mobile
   const toggle = useApp((s) => s.toggleSidebar)
   const setMobileNav = useApp((s) => s.setMobileNav)
+  const sessionUser = useSession((s) => s.user)
+  const logout = useSession((s) => s.logout)
+  const setUserState = useApp((s) => s.setUserState)
   const location = useLocation()
+
+  const signOut = () => { logout(); setUserState('guest') }
+
+  // Гейтинг под роль (§8.1): нет сессии или админ → всё видно; иначе — модули по правам,
+  // админ-страницы скрыты.
+  const allowed = (r: RouteDef) => {
+    if (!sessionUser || sessionUser.isAdmin) return true
+    if (ADMIN_ONLY.has(r.path)) return false
+    const mk = moduleKeyFromPath(r.path)
+    if (!mk) return true
+    return can(sessionUser.permissions, false, 'module', mk)
+  }
 
   return (
     <aside
@@ -54,7 +74,8 @@ export function AppSidebar({ mobile = false }: { mobile?: boolean }) {
 
       <nav className="flex-1 overflow-y-auto px-3 pb-4 no-scrollbar">
         {GROUP_ORDER.map((group) => {
-          const items = ROUTES.filter((r) => r.group === group)
+          const items = ROUTES.filter((r) => r.group === group && allowed(r))
+          if (items.length === 0) return null
           return (
             <div key={group} className="mb-4">
               {!collapsed && (
@@ -99,12 +120,30 @@ export function AppSidebar({ mobile = false }: { mobile?: boolean }) {
 
       {!collapsed && (
         <div className="border-t border-line p-3">
-          <div className="rounded-xl border border-line bg-elevated p-3">
-            <div className="text-xs font-semibold text-fg">Демо-режим</div>
-            <div className="mt-0.5 text-[11px] leading-snug text-muted">
-              Все данные — моки. Ничего не отправляется на сервер.
+          {sessionUser ? (
+            <div className="rounded-xl border border-line bg-elevated p-3">
+              <div className="flex items-center justify-between gap-2">
+                <div className="min-w-0">
+                  <div className="truncate text-xs font-semibold text-fg">{sessionUser.name}</div>
+                  <div className="truncate text-[11px] text-muted">{sessionUser.email}</div>
+                </div>
+                <button onClick={signOut} className="btn-icon h-8 w-8 shrink-0" aria-label="Выйти" title="Выйти"><LogOut size={15} /></button>
+              </div>
+              <div className="mt-2">
+                <span className={cn(
+                  'inline-flex items-center rounded-md px-1.5 py-0.5 text-[10px] font-bold',
+                  sessionUser.isAdmin ? 'bg-iris-500/15 text-iris-300' : 'bg-spark-500/15 text-spark-300',
+                )}>
+                  {sessionUser.isAdmin ? 'Администратор' : `Роль: ${sessionUser.roleName || '—'}`}
+                </span>
+              </div>
             </div>
-          </div>
+          ) : (
+            <div className="rounded-xl border border-line bg-elevated p-3">
+              <div className="text-xs font-semibold text-fg">Демо-режим</div>
+              <div className="mt-0.5 text-[11px] leading-snug text-muted">Все данные — моки.</div>
+            </div>
+          )}
         </div>
       )}
     </aside>

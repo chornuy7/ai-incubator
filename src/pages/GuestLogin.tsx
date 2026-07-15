@@ -2,6 +2,8 @@ import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Zap, Eye, EyeOff, ArrowRight, ShieldCheck, Bot, Radar, Sparkles } from 'lucide-react'
 import { useApp } from '@/mocks/store'
+import { useSession } from '@/features/auth/session'
+import { loginUser } from '@/api/usersApi'
 
 const FEATURES = [
   { icon: Bot, title: 'Нейромодули', desc: 'Комментинг, чаттинг и диалоги на ИИ' },
@@ -14,20 +16,26 @@ export function GuestLogin() {
   const nav = useNavigate()
   const setUserState = useApp((s) => s.setUserState)
   const pushToast = useApp((s) => s.pushToast)
+  const signIn = useSession((s) => s.login)
   const [email, setEmail] = useState('illia@incubator.ai')
   const [pass, setPass] = useState('demo12345')
   const [show, setShow] = useState(false)
   const [loading, setLoading] = useState(false)
 
-  const login = (e: React.FormEvent) => {
+  const login = async (e: React.FormEvent) => {
     e.preventDefault()
     setLoading(true)
-    setTimeout(() => {
-      setLoading(false)
+    try {
+      const { user, role } = await loginUser(email.trim(), pass)
+      signIn(user, role && role.permissions ? { id: role.id, name: role.name, permissions: role.permissions } : null)
       setUserState('with-data')
-      pushToast({ type: 'success', title: 'Добро пожаловать!', desc: 'Вы вошли в демо AI Incubator.' })
+      pushToast({ type: 'success', title: `Добро пожаловать, ${user.name}!`, desc: role?.name ? `Роль: ${role.name}` : 'Вход выполнен.' })
       nav('/panel')
-    }, 800)
+    } catch (err) {
+      pushToast({ type: 'error', title: 'Не удалось войти', desc: err instanceof Error ? err.message : 'Проверьте e-mail и пароль' })
+    } finally {
+      setLoading(false)
+    }
   }
 
   return (

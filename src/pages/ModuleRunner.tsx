@@ -7,12 +7,14 @@ import {
   MessageSquareText, AlertTriangle, Check, Star, UploadCloud, Bolt, MessageCircle, Filter, Heart, Smile,
   BarChart3 as BarChartIcon, Ban, Calendar, Cpu, MapPin, SlidersHorizontal, CheckSquare,
   Volume2, ArrowDown, Search, LayoutGrid, List, Send, ExternalLink, MessagesSquare, Trophy,
-  Tag, Activity, Database, ArrowUpDown, Pencil, RefreshCw, Radio, HelpCircle,
+  Tag, Activity, Database, ArrowUpDown, Pencil, RefreshCw, Radio, HelpCircle, Lock,
 } from 'lucide-react'
 import { DIALOGS, type Dialog } from '@/mocks/dialogs'
 import { MODULES, LANGUAGES, type ModuleConfig } from '@/shared/config/modules'
 import { ROUTES } from '@/shared/config/routes'
 import { useApp, activeAccounts } from '@/mocks/store'
+import { useSession } from '@/features/auth/session'
+import { can } from '@/shared/lib/access'
 import { useUi } from '@/shared/lib/uiStore'
 import { seedLogs } from '@/mocks/logs'
 import { makeResults } from '@/mocks/parseResults'
@@ -51,9 +53,21 @@ export function ModuleRunner() {
   const cfg = MODULES[moduleKey]
   const route = ROUTES.find((r) => r.path === `/panel/modules/${moduleKey}`)
   const isNoSub = useApp((s) => s.userState === 'no-sub')
+  const sessionUser = useSession((s) => s.user)
   const loading = useMockLoading(450, [moduleKey])
 
   if (!cfg || !route) return <Navigate to="/panel" replace />
+
+  // RBAC-гейт (§8.1): не-админ без доступа к модулю — прямой заход по URL запрещён.
+  if (sessionUser && !sessionUser.isAdmin && !can(sessionUser.permissions, false, 'module', moduleKey)) {
+    return (
+      <div className="mx-auto mt-16 max-w-md rounded-2xl border border-line bg-elevated p-8 text-center">
+        <Lock size={28} className="mx-auto text-white/40" />
+        <div className="mt-3 text-base font-semibold text-fg">Нет доступа к модулю</div>
+        <div className="mt-1 text-sm text-muted">Ваша роль «{sessionUser.roleName || '—'}» не имеет доступа к «{cfg.title}». Обратитесь к администратору.</div>
+      </div>
+    )
+  }
 
   const inner = isLiveModule(moduleKey)
     ? <ModuleLiveRouter moduleKey={moduleKey} />
