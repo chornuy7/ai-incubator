@@ -455,7 +455,16 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
         {moduleKey === 'neuro-commenting' && !running && (
           <div className="mb-3">
             <div className="mb-1 text-xs text-white/50">Окно постов <span className="text-white/30">(сколько последних постов обрабатывать, не всю историю)</span></div>
-            <Segmented options={POST_WINDOWS.map(String)} value={Math.max(0, POST_WINDOWS.indexOf(postWindow))} onChange={(i) => setPostWindow(POST_WINDOWS[i])} />
+            <div className="flex flex-wrap items-center gap-2">
+              <Segmented options={POST_WINDOWS.map(String)} value={POST_WINDOWS.indexOf(postWindow)} onChange={(i) => setPostWindow(POST_WINDOWS[i])} />
+              {/* Своё число (1–50) — не только пресеты */}
+              <input
+                type="number" min={1} max={50} inputMode="numeric"
+                value={postWindow}
+                onChange={(e) => setPostWindow(Math.max(1, Math.min(50, Math.floor(Number(e.target.value) || 1))))}
+                className={`h-9 w-20 rounded-lg border bg-elevated px-2.5 text-sm font-semibold outline-none focus:border-spark-500/50 ${POST_WINDOWS.includes(postWindow) ? 'border-line text-fg' : 'border-spark-500/50 text-spark-300'}`}
+              />
+            </div>
           </div>
         )}
         {moduleKey === 'neuro-commenting' && !running && (cfg.messagePrompts?.length ?? 0) > 0 && (
