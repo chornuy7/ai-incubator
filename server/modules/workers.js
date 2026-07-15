@@ -188,6 +188,7 @@ export async function runNeuroCommenting(task, store) {
           continue
         }
         const channel = membership.peer
+        if (membership.status === 'joined') await incAction(accountId, 'joins') // §6: суточный лимит вступлений
 
         // §3.5: окно постов — обрабатываем только последние N, не всю историю канала.
         const posts = await fetchPosts(client, channel, Math.min(50, Math.max(1, Number(s.postWindow) || 20)))
@@ -323,6 +324,7 @@ export async function runNeuroChatting(task, store) {
           continue
         }
         const peer = membership.peer
+        if (membership.status === 'joined') await incAction(accountId, 'joins') // §6: суточный лимит вступлений
         const msgs = await fetchPosts(client, peer, 15)
         const msg = msgs[Math.floor(Math.random() * msgs.length)]
         if (!msg || Math.random() * 100 > prob) {
@@ -429,6 +431,7 @@ export async function runMassReact(task, store) {
             continue
           }
           peer = membership.peer
+          if (membership.status === 'joined') await incAction(accountId, 'joins') // §6: суточный лимит вступлений
           const posts = await fetchPosts(client, peer, 10)
           const post = posts[0]
           if (!post || Math.random() * 100 > prob) {
@@ -509,6 +512,7 @@ export async function runMassLooking(task, store) {
           await disconnectAccount(client, accountId)
           continue
         }
+        if (membership.status === 'joined') await incAction(accountId, 'joins') // §6: суточный лимит вступлений
         task.accountStats[accountId] = task.accountStats[accountId] || { actions: 0, floodWaits: 0 }
         if (lookMode === 'stories' || lookMode === 'both') {
           const viewed = await markStoriesRead(client, membership.peer)
@@ -666,6 +670,9 @@ export async function runNeuroDialogs(task, store) {
   const perPassCap = [2, 4, 6][s.protectionLevel ?? 1] ?? 4
   let idx = 0
   let skips = 0
+  // Модуль-ответчик работает долго (ждёт входящие ЛС), поэтому при суточном лимите
+  // не завершаемся, а тихо простаиваем — лог о достижении лимита пишем один раз на аккаунт.
+  const dmCapLogged = new Set()
   // Последнее входящее сообщение, на которое уже ответили: не отвечаем дважды на одно и то же,
   // но отвечаем снова, когда собеседник напишет новое.
   const answeredUpTo = new Map()
@@ -689,7 +696,16 @@ export async function runNeuroDialogs(task, store) {
         skips += 1
         continue
       }
+      if (await limitReached(accountId, 'dm')) {
+        skips += 1
+        if (!dmCapLogged.has(accountId)) {
+          dmCapLogged.add(accountId)
+          await store.appendLog(task, 'info', 'Суточный лимит ЛС достигнут (§6) — аккаунт простаивает до сброса', meta.name)
+        }
+        continue
+      }
       skips = 0
+      dmCapLogged.delete(accountId) // снова активен (лимит сброшен новым днём) — разрешаем лог заново
       let client
       try {
         ;({ client } = await connectAccount(accountId, task.id))
@@ -717,6 +733,7 @@ export async function runNeuroDialogs(task, store) {
         }
         for (const d of pending) {
           if (task.stopRequested || totalLimitReached(s, task) || perAccountLimitReached(s, accountId, task)) break
+          if (await limitReached(accountId, 'dm')) { await store.appendLog(task, 'info', 'Суточный лимит ЛС достигнут (§6)', meta.name); break }
           const msgs = await client.getMessages(d.entity, { limit: 6 })
           const last = msgs[0]
           const incoming = (last?.message || '').trim()
@@ -733,6 +750,7 @@ export async function runNeuroDialogs(task, store) {
           answeredUpTo.set(`${accountId}:${d.id}`, Math.max(last?.id ?? 0, d.lastMessageId ?? 0))
           task.accountStats[accountId] = task.accountStats[accountId] || { actions: 0, floodWaits: 0 }
           task.accountStats[accountId].actions += 1
+          await incAction(accountId, 'dm') // §6: суточный лимит ЛС
           await bumpProgress(task, store)
           await store.appendHistory(task, { id: `${task.id}_${Date.now()}`, ts: new Date().toISOString(), accountName: meta.name, target: d.name, text: reply, status: 'sent' })
           const inPreview = incoming ? incoming.slice(0, 60) : '[без текста]'
