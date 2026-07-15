@@ -1,13 +1,23 @@
 import { useEffect, useState } from 'react'
 import { Users2, Plus, Trash2, ShieldCheck } from 'lucide-react'
 import { PageHeader, Card, EmptyState, Badge, Select, Modal } from '@/shared/ui'
-import { fetchUsers, createUser, updateUser, deleteUser, type User } from '@/api/usersApi'
+import { fetchUsers, createUser, updateUser, deleteUser, fetchWorktime, type User, type WorkSummary } from '@/api/usersApi'
 import { fetchRoles, type Role } from '@/api/rolesApi'
 import { ADMIN_BYPASS_ID } from '@/shared/config/rbac'
+
+/** мс → «2ч 15м» / «12м». */
+function fmtDur(ms: number): string {
+  const min = Math.floor(ms / 60000)
+  if (min < 1) return '—'
+  const h = Math.floor(min / 60)
+  const m = min % 60
+  return h ? `${h}ч ${m}м` : `${m}м`
+}
 
 export function UsersPage() {
   const [users, setUsers] = useState<User[]>([])
   const [roles, setRoles] = useState<Role[]>([])
+  const [worktime, setWorktime] = useState<Record<string, WorkSummary>>({})
   const [loading, setLoading] = useState(true)
   const [err, setErr] = useState('')
   const [open, setOpen] = useState(false)
@@ -17,8 +27,8 @@ export function UsersPage() {
   async function load() {
     setLoading(true)
     try {
-      const [us, rs] = await Promise.all([fetchUsers(), fetchRoles()])
-      setUsers(us); setRoles(rs)
+      const [us, rs, wt] = await Promise.all([fetchUsers(), fetchRoles(), fetchWorktime().catch(() => ({}))])
+      setUsers(us); setRoles(rs); setWorktime(wt)
     } catch (e) { setErr(e instanceof Error ? e.message : 'Ошибка загрузки') }
     finally { setLoading(false) }
   }
@@ -85,6 +95,14 @@ export function UsersPage() {
                     {!u.active && <Badge tone="rose">Отключён</Badge>}
                   </div>
                   <div className="truncate text-xs text-white/50">{u.email}</div>
+                  {worktime[u.id] && (
+                    <div className="mt-1 flex items-center gap-2 text-[11px] text-white/45">
+                      {worktime[u.id].open && <span className="inline-flex items-center gap-1 text-spark-300"><span className="h-1.5 w-1.5 rounded-full bg-spark-400" /> в сети</span>}
+                      <span>сегодня {fmtDur(worktime[u.id].todayMs)}</span>
+                      <span className="text-white/25">·</span>
+                      <span>7 дней {fmtDur(worktime[u.id].weekMs)}</span>
+                    </div>
+                  )}
                 </div>
 
                 <div className="flex items-center gap-2">

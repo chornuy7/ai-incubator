@@ -16,6 +16,7 @@ import { campaignsRouter } from './campaignsRoutes.js'
 import { channelsRouter } from './channelsRoutes.js'
 import { rolesRouter } from './rolesRoutes.js'
 import { usersRouter } from './usersRoutes.js'
+import { moduleAccessGuard, moduleKeyFromModulesPath } from './lib/accessGuard.js'
 import { startScheduler } from './automation/scheduler.js'
 import { loadAiSettings } from './aiSettings.js'
 import { loadAiSafety } from './aiSafety.js'
@@ -209,9 +210,10 @@ app.post('/api/modules/locks/reconcile', async (_req, res) => {
   }
 })
 
-app.use('/api/neuro-commenting', neuroCommentingRouter)
-app.use('/api/neuro-dialogs', neuroDialogsRouter)
-app.use('/api/modules', modulesRouter)
+// RBAC-гейт (§8.1): доступ к модулю по роли из заголовка X-User-Id (см. accessGuard.js)
+app.use('/api/neuro-commenting', moduleAccessGuard(() => 'neuro-commenting'), neuroCommentingRouter)
+app.use('/api/neuro-dialogs', moduleAccessGuard(() => 'neuro-dialogs'), neuroDialogsRouter)
+app.use('/api/modules', moduleAccessGuard(moduleKeyFromModulesPath), modulesRouter)
 app.use('/api/tgstat', tgstatRouter)
 
 // AI-помощник Help Center

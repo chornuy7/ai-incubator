@@ -19,15 +19,28 @@ export async function parseJson<T>(res: Response): Promise<T> {
   return data as T
 }
 
+/** Заголовок идентификации пользователя для серверного RBAC-гейта (§8.1). */
+function authHeaders(base?: Record<string, string>): Record<string, string> {
+  const headers: Record<string, string> = { ...(base ?? {}) }
+  try {
+    const raw = localStorage.getItem('ai-incubator:session')
+    if (raw) {
+      const u = JSON.parse(raw) as { id?: string }
+      if (u?.id) headers['X-User-Id'] = u.id
+    }
+  } catch { /* ignore */ }
+  return headers
+}
+
 export async function apiGet<T>(path: string): Promise<T> {
-  const res = await fetch(path)
+  const res = await fetch(path, { headers: authHeaders() })
   return parseJson<T>(res)
 }
 
 export async function apiPost<T>(path: string, body?: unknown): Promise<T> {
   const res = await fetch(path, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: authHeaders({ 'Content-Type': 'application/json' }),
     body: body !== undefined ? JSON.stringify(body) : undefined,
   })
   return parseJson<T>(res)
@@ -36,13 +49,13 @@ export async function apiPost<T>(path: string, body?: unknown): Promise<T> {
 export async function apiPut<T>(path: string, body?: unknown): Promise<T> {
   const res = await fetch(path, {
     method: 'PUT',
-    headers: { 'Content-Type': 'application/json' },
+    headers: authHeaders({ 'Content-Type': 'application/json' }),
     body: body !== undefined ? JSON.stringify(body) : undefined,
   })
   return parseJson<T>(res)
 }
 
 export async function apiDelete<T>(path: string): Promise<T> {
-  const res = await fetch(path, { method: 'DELETE' })
+  const res = await fetch(path, { method: 'DELETE', headers: authHeaders() })
   return parseJson<T>(res)
 }

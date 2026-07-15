@@ -3,6 +3,7 @@ import { Router } from 'express'
 import { listUsers, getUser, createUser, updateUser, deleteUser, authenticate, publicUser } from './users.js'
 import { getRole } from './roles.js'
 import { appendAudit } from './lib/auditLog.js'
+import { clockIn, clockOut, summariesFor } from './workLog.js'
 
 export const usersRouter = Router()
 
@@ -27,8 +28,27 @@ usersRouter.post('/login', async (req, res) => {
       return res.status(401).json({ ok: false, error: 'Неверный e-mail или пароль' })
     }
     const role = user.roleId ? await getRole(user.roleId) : null
+    await clockIn(user.id) // учёт рабочего времени (§8.1): старт сессии труда
     await appendAudit({ action: 'user.login', module: 'auth', initiator: user.email, reason: `Вход: ${user.name}`, meta: { userId: user.id, roleId: user.roleId } })
     res.json({ ok: true, user, role })
+  } catch (err) { fail(res, err, 500) }
+})
+
+/** Выход: закрыть сессию рабочего времени. */
+usersRouter.post('/logout', async (req, res) => {
+  try {
+    const { userId } = req.body ?? {}
+    const closed = userId ? await clockOut(userId) : null
+    if (closed) await appendAudit({ action: 'user.logout', module: 'auth', initiator: userId, reason: 'Выход', meta: { userId, durationMs: closed.durationMs } })
+    res.json({ ok: true, session: closed })
+  } catch (err) { fail(res, err, 500) }
+})
+
+/** Сводка рабочего времени по всем пользователям (§8.1). */
+usersRouter.get('/worktime', async (_req, res) => {
+  try {
+    const users = await listUsers()
+    res.json({ ok: true, worktime: await summariesFor(users.map((u) => u.id)) })
   } catch (err) { fail(res, err, 500) }
 })
 

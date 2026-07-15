@@ -34,3 +34,14 @@ export async function updateUser(id: string, patch: { name?: string; roleId?: st
 export async function deleteUser(id: string): Promise<void> {
   await apiDelete(`/api/users/${id}`)
 }
+
+export async function logoutUser(userId: string): Promise<void> {
+  try { await apiPost('/api/users/logout', { userId }) } catch { /* best-effort */ }
+}
+
+export interface WorkSummary { todayMs: number; weekMs: number; open: boolean; since: number | null }
+
+export async function fetchWorktime(): Promise<Record<string, WorkSummary>> {
+  const data = await apiGet<{ worktime: Record<string, WorkSummary> }>('/api/users/worktime')
+  return data.worktime
+}

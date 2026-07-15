@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 import type { RolePermissions } from '@/api/rolesApi'
-import type { User } from '@/api/usersApi'
+import { logoutUser, type User } from '@/api/usersApi'
 import { ADMIN_BYPASS_ID } from '@/shared/config/rbac'
 
 const LS_KEY = 'ai-incubator:session'
@@ -50,5 +50,10 @@ export const useSession = create<SessionStore>((set) => ({
     persist(su)
     set({ user: su })
   },
-  logout: () => { persist(null); set({ user: null }) },
+  logout: () => {
+    const uid = useSession.getState().user?.id
+    if (uid) void logoutUser(uid) // clock-out рабочего времени (§8.1)
+    persist(null)
+    set({ user: null })
+  },
 }))
