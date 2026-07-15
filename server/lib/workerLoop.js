@@ -1,3 +1,19 @@
+/**
+ * План прогрева по уровню (§8.2). 0 = Быстрый (2 дня, интенсивнее), 1 = Нормальный (3–7),
+ * 2 = Стандартный (7–14, мягче/естественнее). Чистая функция.
+ * `mul` — множитель задержек (длиннее уровень → медленнее темп); `actionsPerDay` — ориентир
+ * дневной активности на аккаунт. @param {number} level
+ * @returns {{ level:number, label:string, mul:number, actionsPerDay:number }}
+ */
+export function warmingPace(level) {
+  const plans = [
+    { level: 0, label: 'Быстрый (2 дня)', mul: 0.8, actionsPerDay: 40 },
+    { level: 1, label: 'Нормальный (3–7 дней)', mul: 1.3, actionsPerDay: 20 },
+    { level: 2, label: 'Стандартный (7–14 дней)', mul: 2.0, actionsPerDay: 10 },
+  ]
+  return plans[level] || plans[1]
+}
+
 /** @param {object} task @param {boolean} progressed @param {number} [maxIdle] */
 export function trackIdlePass(task, progressed, maxIdle = 5) {
   if (progressed) {

@@ -36,7 +36,7 @@ import {
 import { getAccountMeta, setAccountMeta } from '../accountsMeta.js'
 import { releaseTaskLocks, markTaskLive, markTaskDone, assertAccountAvailable } from '../lib/accountLocks.js'
 import { loadSessionString, createClient } from '../tgAuth.js'
-import { pickCommentCandidates, trackIdlePass } from '../lib/workerLoop.js'
+import { pickCommentCandidates, trackIdlePass, warmingPace } from '../lib/workerLoop.js'
 import { parseTelegramPostLinks, resolvePostPeer } from '../lib/postLink.js'
 import { filterBlacklisted, isBlacklistedSync } from '../targetBlacklist.js'
 
@@ -549,13 +549,10 @@ export async function runWarming(task, store) {
   task.startedAt = Date.now()
   task.status = 'running'
   await store.saveTask(task)
-  // 3 уровня прогрева (решение 14.07): чем длиннее уровень — тем медленнее/естественнее темп.
-  // 0 = 2 дня, 1 = 3–7 дней, 2 = 7–14 дней. Действия на уровень — ❓ (§8, не решено).
-  const WARM_MUL = [0.8, 1.3, 2.0]
-  const warmMul = WARM_MUL[s.warmLevel ?? 1] ?? 1.3
-  const mul = delayMultiplier(s.protectionLevel ?? 1, s.delayPreset ?? 1) * warmMul
-  const WARM_LABELS = ['Быстрый (2 дня)', 'Средний (3–7 дней)', 'Долгий (7–14 дней)']
-  await store.appendLog(task, 'info', `Прогрев запущен · уровень: ${WARM_LABELS[s.warmLevel ?? 1] || 'средний'}`)
+  // 3 уровня прогрева (§8.2, названия заказчика): длиннее уровень — медленнее/естественнее темп.
+  const pace = warmingPace(s.warmLevel ?? 1)
+  const mul = delayMultiplier(s.protectionLevel ?? 1, s.delayPreset ?? 1) * pace.mul
+  await store.appendLog(task, 'info', `Прогрев запущен · уровень: ${pace.label} · ~${pace.actionsPerDay} действий/день на аккаунт`)
   const accountIds = s.accountIds || []
   let idx = 0
   let idleLap = 0
