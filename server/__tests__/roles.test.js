@@ -1,0 +1,92 @@
+import { test } from 'node:test'
+import assert from 'node:assert/strict'
+import fs from 'node:fs/promises'
+import os from 'node:os'
+import path from 'node:path'
+import { normalizeRole, can, ALLOW, DENY, ADMIN_ROLE_ID } from '../roles.js'
+
+test('normalizeRole: дефолты и нормализация доступов', () => {
+  const r = normalizeRole({
+    name: '  Модер  ',
+    isTemplate: 1,
+    permissions: {
+      modules: { 'neuro-commenting': 'allow', warming: 'что-то' },
+      blocks: { 'neuro-commenting:run': 'allow' },
+      resources: { folders: { fld_1: 'allow' }, timers: 'allow', searchTemplates: 'нет' },
+    },
+  })
+  assert.equal(r.name, 'Модер') // trim
+  assert.equal(r.isTemplate, true) // приведение к bool
+  assert.equal(r.permissions.modules['neuro-commenting'], ALLOW)
+  assert.equal(r.permissions.modules.warming, DENY) // мусор → deny
+  assert.equal(r.permissions.blocks['neuro-commenting:run'], ALLOW)
+  assert.equal(r.permissions.resources.folders.fld_1, ALLOW)
+  assert.equal(r.permissions.resources.timers, ALLOW)
+  assert.equal(r.permissions.resources.searchTemplates, DENY)
+  assert.deepEqual(r.permissions.resources.channels, {}) // отсутствующее → пусто
+})
+
+test('can(): админ обходит проверки, остальные — по карте, дефолт deny', () => {
+  const admin = { id: ADMIN_ROLE_ID, builtin: true, permissions: normalizeRole({}).permissions }
+  assert.equal(can(admin, 'module', 'neuro-commenting'), true) // bypass, хотя карта пустая
+  assert.equal(can(admin, 'channel', 'ch_x'), true)
+
+  const mod = normalizeRole({
+    permissions: {
+      modules: { 'neuro-commenting': 'allow' },
+      blocks: { 'neuro-commenting:run': 'allow' },
+      resources: { channels: { ch_1: 'allow' }, timers: 'allow' },
+    },
+  })
+  mod.id = 'role_x'
+  assert.equal(can(mod, 'module', 'neuro-commenting'), true)
+  assert.equal(can(mod, 'module', 'warming'), false) // нет в карте → deny
+  assert.equal(can(mod, 'block', 'neuro-commenting:run'), true)
+  assert.equal(can(mod, 'block', 'neuro-commenting:logs'), false)
+  assert.equal(can(mod, 'channel', 'ch_1'), true)
+  assert.equal(can(mod, 'channel', 'ch_2'), false)
+  assert.equal(can(mod, 'timers'), true)
+  assert.equal(can(mod, 'searchTemplates'), false)
+  assert.equal(can(null, 'module', 'x'), false)
+})
+
+test('CRUD ролей на изолированном файле + сид по умолчанию', async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'roles-'))
+  process.env.ROLES_FILE = path.join(dir, 'roles.json')
+  const r = await import('../roles.js?crud=' + Date.now())
+
+  // Первое чтение сидит админа + шаблон модератора.
+  const seed = await r.listRoles()
+  assert.equal(seed.length, 2)
+  assert.ok(seed.some((x) => x.id === r.ADMIN_ROLE_ID && x.builtin))
+  assert.ok(seed.some((x) => x.isTemplate && x.name === 'Модератор'))
+
+  const created = await r.createRole({ name: 'Контент', permissions: { modules: { 'neuro-commenting': 'allow' } } })
+  assert.ok(created.id.startsWith('role_'))
+  assert.equal(created.builtin, false)
+  assert.equal((await r.listRoles()).length, 3)
+
+  const upd = await r.updateRole(created.id, { name: 'Контент+', permissions: { modules: { 'neuro-commenting': 'deny' } } })
+  assert.equal(upd.name, 'Контент+')
+  assert.equal(upd.permissions.modules['neuro-commenting'], 'deny')
+
+  // Права админа неизменяемы (bypass), но переименование проходит.
+  const admin = await r.updateRole(r.ADMIN_ROLE_ID, { name: 'Главный', permissions: { modules: { warming: 'allow' } } })
+  assert.equal(admin.name, 'Главный')
+  assert.deepEqual(admin.permissions.modules, {}) // не изменились
+
+  await assert.rejects(() => r.deleteRole(r.ADMIN_ROLE_ID), /встроенн/i)
+  assert.equal(await r.deleteRole(created.id), true)
+  assert.equal(await r.deleteRole('нет'), false)
+  assert.equal((await r.listRoles()).length, 2)
+
+  delete process.env.ROLES_FILE
+})
+
+test('createRole без имени — ошибка', async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'roles-'))
+  process.env.ROLES_FILE = path.join(dir, 'roles.json')
+  const r = await import('../roles.js?noname=' + Date.now())
+  await assert.rejects(() => r.createRole({ permissions: {} }), /название/i)
+  delete process.env.ROLES_FILE
+})

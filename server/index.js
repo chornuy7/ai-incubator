@@ -14,6 +14,7 @@ import { goalsRouter } from './goalsRoutes.js'
 import { leadsRouter } from './leadsRoutes.js'
 import { campaignsRouter } from './campaignsRoutes.js'
 import { channelsRouter } from './channelsRoutes.js'
+import { rolesRouter } from './rolesRoutes.js'
 import { startScheduler } from './automation/scheduler.js'
 import { loadAiSettings } from './aiSettings.js'
 import { loadAiSafety } from './aiSafety.js'
@@ -228,6 +229,7 @@ app.use('/api/goals', goalsRouter)
 app.use('/api/leads', leadsRouter)
 app.use('/api/campaigns', campaignsRouter)
 app.use('/api/channels', channelsRouter)
+app.use('/api/roles', rolesRouter)
 
 // Единый журнал действий/аудит (§3.1/§5): смена статусов, старт/стоп задач, перенос, кампании.
 app.get('/api/audit', async (req, res) => {

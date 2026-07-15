@@ -16,6 +16,7 @@ import { CampaignPage } from '@/pages/CampaignPage'
 import { ChannelsPage } from '@/pages/ChannelsPage'
 import { LogsPage } from '@/pages/LogsPage'
 import { InboxPage } from '@/pages/InboxPage'
+import { RolesPage } from '@/pages/RolesPage'
 import { GuestLogin } from '@/pages/GuestLogin'
 
 export default function App() {
@@ -47,6 +48,7 @@ export default function App() {
         <Route path="/panel/modules/:moduleKey" element={<ModuleRunner />} />
         <Route path="/panel/parsing-history" element={<ParsingHistoryPage />} />
         <Route path="/panel/user/profile" element={<ProfilePage />} />
+        <Route path="/panel/roles" element={<RolesPage />} />
       </Route>
       <Route path="/" element={<Navigate to="/panel" replace />} />
       <Route path="*" element={<Navigate to="/panel" replace />} />
