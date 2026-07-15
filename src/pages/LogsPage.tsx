@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { ScrollText, RefreshCw } from 'lucide-react'
 import { useApp } from '@/mocks/store'
-import { PageHeader, Card, EmptyState, Select, Badge } from '@/shared/ui'
+import { PageHeader, Card, EmptyState, Select, Badge, Modal } from '@/shared/ui'
 import { fetchAudit, type AuditEntry } from '@/api/auditApi'
 
 // Человеческие подписи и тон по префиксу действия.
@@ -20,6 +20,7 @@ export function LogsPage() {
   const [entries, setEntries] = useState<AuditEntry[]>([])
   const [loading, setLoading] = useState(true)
   const [fAction, setFAction] = useState('')
+  const [detail, setDetail] = useState<AuditEntry | null>(null)
 
   const load = async () => {
     try { setEntries(await fetchAudit({ limit: 300 })) }
@@ -59,21 +60,61 @@ export function LogsPage() {
             const am = actionMeta(e.action)
             const accs = (e.scope?.accounts as string[] | undefined)?.length
             return (
-              <Card key={e.id} className="flex flex-wrap items-center gap-x-3 gap-y-1 p-2.5 text-sm">
-                <Badge tone={am.tone}>{am.label}</Badge>
-                <span className="text-white/80">{e.reason || e.code || e.action}</span>
-                <div className="ml-auto flex flex-wrap items-center gap-x-3 text-xs text-white/40">
-                  {e.module && e.module !== 'core' && <span>{e.module}</span>}
-                  <span>кто: {e.initiator}</span>
-                  {e.account && <span>акк: {String(e.account).slice(-6)}</span>}
-                  {accs ? <span>{accs} акк.</span> : null}
-                  <span>{new Date(e.ts).toLocaleString()}</span>
-                </div>
-              </Card>
+              <button key={e.id} onClick={() => setDetail(e)} className="w-full text-left">
+                <Card className="flex flex-wrap items-center gap-x-3 gap-y-1 p-2.5 text-sm hover:border-white/20">
+                  <Badge tone={am.tone}>{am.label}</Badge>
+                  <span className="text-white/80">{e.reason || e.code || e.action}</span>
+                  <div className="ml-auto flex flex-wrap items-center gap-x-3 text-xs text-white/40">
+                    {e.module && e.module !== 'core' && <span>{e.module}</span>}
+                    <span>кто: {e.initiator}</span>
+                    {e.account && <span>акк: {String(e.account).slice(-6)}</span>}
+                    {accs ? <span>{accs} акк.</span> : null}
+                    <span>{new Date(e.ts).toLocaleString()}</span>
+                  </div>
+                </Card>
+              </button>
             )
           })}
         </div>
       )}
+
+      <Modal open={!!detail} onClose={() => setDetail(null)} title="Запись лога" subtitle={detail?.action} icon={<ScrollText size={20} />} size="md">
+        {detail && (
+          <div className="space-y-2 text-sm">
+            {([
+              ['Действие', actionMeta(detail.action).label + ` (${detail.action})`],
+              ['Инициатор', detail.initiator],
+              ['Модуль', detail.module],
+              ['Код', detail.code || '—'],
+              ['Причина', detail.reason || '—'],
+              ['Аккаунт', detail.account || '—'],
+              ['Время', new Date(detail.ts).toLocaleString()],
+            ] as [string, string][]).map(([k, v]) => (
+              <div key={k} className="flex gap-2">
+                <span className="w-28 shrink-0 text-white/40">{k}</span>
+                <span className="text-white/90">{v}</span>
+              </div>
+            ))}
+            {detail.meta && (
+              <div className="flex gap-2">
+                <span className="w-28 shrink-0 text-white/40">Детали</span>
+                <span className="text-white/70">
+                  {detail.meta.from != null && detail.meta.to != null ? `${detail.meta.from} → ${detail.meta.to}` : JSON.stringify(detail.meta)}
+                </span>
+              </div>
+            )}
+            {Array.isArray(detail.scope?.accounts) && (detail.scope.accounts as string[]).length > 0 && (
+              <div className="flex gap-2">
+                <span className="w-28 shrink-0 text-white/40">Затронуто</span>
+                <span className="text-white/70">{(detail.scope.accounts as string[]).length} акк.: {(detail.scope.accounts as string[]).map((a) => a.slice(-6)).join(', ')}</span>
+              </div>
+            )}
+            {detail.scope?.taskId != null && (
+              <div className="flex gap-2"><span className="w-28 shrink-0 text-white/40">Задача</span><span className="font-mono text-xs text-white/70">{String(detail.scope.taskId)}</span></div>
+            )}
+          </div>
+        )}
+      </Modal>
     </div>
   )
 }
