@@ -74,6 +74,11 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
   const [goalId, setGoalId] = useState('')
   const [warmLevel, setWarmLevel] = useState(1)
   const [postWindow, setPostWindow] = useState(10) // §3.5: сколько последних постов обрабатывать
+  const [typeWeights, setTypeWeights] = useState<number[]>(() => {
+    const n = cfg.messagePrompts?.length || 0
+    return n ? Array.from({ length: n }, () => Math.round(100 / n)) : []
+  })
+  const weightSum = typeWeights.reduce((a, b) => a + (Number(b) || 0), 0)
   useEffect(() => { void fetchGoals().then(setGoals).catch(() => {}) }, [])
   const [palette, setPalette] = useState<Set<string>>(new Set(['👍', '❤️', '🔥']))
   const [viewTab, setViewTab] = useState(1)
@@ -148,11 +153,12 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
     ...(goalId ? { goalId } : {}),
     ...(cfg.warmingLayout ? { warmLevel } : {}),
     ...(moduleKey === 'neuro-commenting' ? { postWindow } : {}),
+    ...(moduleKey === 'neuro-commenting' && weightSum > 0 ? { typeWeights } : {}),
     ...(cfg.lookingLayout ? {
       lookMode: cfg.lookModeOptions?.[lookModeIdx]?.value ?? 'stories',
       lookPostsCount,
     } : {}),
-  }), [selected, targets, postUrls, toggles, probability, maxActions, minActions, maxPerAcc, minPerAcc, minWords, durationMinutes, aiProtect, protLevel, activePrompt, promptBodies, delayPreset, palette, delays, keywords, isGgr, accounts, cfg, lookModeIdx, lookPostsCount, goalId, warmLevel, postWindow, moduleKey])
+  }), [selected, targets, postUrls, toggles, probability, maxActions, minActions, maxPerAcc, minPerAcc, minWords, durationMinutes, aiProtect, protLevel, activePrompt, promptBodies, delayPreset, palette, delays, keywords, isGgr, accounts, cfg, lookModeIdx, lookPostsCount, goalId, warmLevel, postWindow, moduleKey, typeWeights, weightSum])
 
   const hasPostTargets = postUrls.length > 0
   const busySelectedCount = useMemo(
@@ -438,6 +444,23 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
           <div className="mb-3">
             <div className="mb-1 text-xs text-white/50">Окно постов <span className="text-white/30">(сколько последних постов обрабатывать, не всю историю)</span></div>
             <Segmented options={POST_WINDOWS.map(String)} value={Math.max(0, POST_WINDOWS.indexOf(postWindow))} onChange={(i) => setPostWindow(POST_WINDOWS[i])} />
+          </div>
+        )}
+        {moduleKey === 'neuro-commenting' && !running && (cfg.messagePrompts?.length ?? 0) > 0 && (
+          <div className="mb-3">
+            <div className="mb-1 flex flex-wrap items-center gap-2 text-xs text-white/50">
+              Распределение типов, %
+              <span className={weightSum === 100 ? 'text-spark-300' : 'text-amber-300'}>сумма: {weightSum}%{weightSum !== 100 ? ' — нормируется при запуске' : ''}</span>
+            </div>
+            <div className="grid gap-1 sm:grid-cols-2">
+              {(cfg.messagePrompts ?? []).map((label, i) => (
+                <div key={i} className="flex items-center gap-2">
+                  <span className="min-w-0 flex-1 truncate text-xs text-white/70">{label}</span>
+                  <input type="number" min={0} max={100} className="input h-8 w-16 text-center" value={typeWeights[i] ?? 0}
+                    onChange={(e) => setTypeWeights((w) => { const n = [...w]; while (n.length < (cfg.messagePrompts?.length ?? 0)) n.push(0); n[i] = Math.max(0, Number(e.target.value) || 0); return n })} />
+                </div>
+              ))}
+            </div>
           </div>
         )}
         {goals.length > 0 && !running && (

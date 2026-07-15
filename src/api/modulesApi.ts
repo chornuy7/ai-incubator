@@ -52,6 +52,8 @@ export interface ModuleTaskSettings {
   warmLevel?: number
   // ── Нейрокомментинг: окно последних постов (§3.5) ──
   postWindow?: number
+  // ── Распределение типов комментариев в % (§3.5), сумма ≈ 100 ──
+  typeWeights?: number[]
   // ── Цель кампании (§3.6) ──
   goalId?: string
   // ── НейроДиалоги ──

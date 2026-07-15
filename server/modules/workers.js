@@ -95,6 +95,15 @@ function bumpProgress(task, store) {
 }
 
 /** @param {object} task @param {object} store */
+/** §3.5: взвешенный выбор индекса типа комментария по распределению (сумма ≈ 100%). */
+function weightedPickIndex(weights) {
+  const total = weights.reduce((a, b) => a + (Number(b) || 0), 0)
+  if (total <= 0) return 0
+  let r = Math.random() * total
+  for (let i = 0; i < weights.length; i++) { r -= Number(weights[i]) || 0; if (r < 0) return i }
+  return weights.length - 1
+}
+
 export async function runNeuroCommenting(task, store) {
   const s = task.settings
   task.startedAt = Date.now()
@@ -182,7 +191,11 @@ export async function runNeuroCommenting(task, store) {
 
             await sleep(pickDelay(s.delays?.comment?.[0] ?? 30, s.delays?.comment?.[1] ?? 120, mul) * 1000)
             const postText = (post.message || '').trim() || (post.media ? '[медиа]' : '')
-            const { text, mode } = await generateComment(postText, s.promptIndex ?? 0, resolveSystemPrompt(s) + goalCtx)
+            // §3.5: если задано распределение типов — на каждый коммент выбираем тип по весу.
+            const useDist = Array.isArray(s.typeWeights) && s.typeWeights.some((w) => Number(w) > 0)
+            const typeIdx = useDist ? weightedPickIndex(s.typeWeights) : (s.promptIndex ?? 0)
+            const sysPrompt = useDist ? resolveSystemPrompt({ ...s, promptIndex: typeIdx, promptText: '' }) : resolveSystemPrompt(s)
+            const { text, mode } = await generateComment(postText, typeIdx, sysPrompt + goalCtx)
             if (mode !== 'openai') {
               const hint = mode === 'template_no_key'
                 ? 'Шаблон (нет OPENAI_API_KEY в .env)'
