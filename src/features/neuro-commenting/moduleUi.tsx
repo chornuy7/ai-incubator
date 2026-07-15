@@ -67,7 +67,8 @@ export function SectionCard({ icon, title, badge, right, children }: {
           </button>
         </div>
       </div>
-      <div className="p-4">{children}</div>
+      {/* Не рендерим пустой padding-блок, если тело свёрнуто (children=false) */}
+      {children ? <div className="p-4">{children}</div> : null}
     </div>
   )
 }

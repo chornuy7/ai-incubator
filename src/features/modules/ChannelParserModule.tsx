@@ -402,10 +402,19 @@ function ChannelParserInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: 
 
             <div className="rounded-2xl border border-line bg-elevated/40 p-3">
               <div className="mb-2 flex items-center gap-1.5 text-sm font-semibold text-fg"><Database size={14} className="text-spark-400" /> Лимит результатов</div>
-              <div className="flex flex-wrap gap-1.5">
+              <div className="flex flex-wrap items-center gap-1.5">
                 {LIMIT_CHIPS.map((c) => (
                   <button key={String(c)} type="button" onClick={() => setLimit(c)} className={cn('rounded-lg border px-3 py-1.5 text-sm font-bold transition-colors', limit === c ? 'border-spark-500/50 bg-spark-500/12 text-spark-300' : 'border-line bg-elevated text-muted hover:text-fg')}>{c}</button>
                 ))}
+                {/* Своё число — можно вписать любой лимит (§UI: не только пресеты) */}
+                <input
+                  type="number" min={0} inputMode="numeric"
+                  value={limit === '∞' ? '' : limit}
+                  onChange={(e) => { const v = e.target.value.trim(); setLimit(v === '' ? '∞' : Math.max(0, Math.floor(Number(v) || 0))) }}
+                  placeholder="своё"
+                  className={cn('h-[34px] w-24 rounded-lg border bg-elevated px-2.5 text-sm font-semibold outline-none transition-colors focus:border-spark-500/50',
+                    typeof limit === 'number' && !LIMIT_CHIPS.includes(limit) ? 'border-spark-500/50 text-spark-300' : 'border-line text-fg')}
+                />
               </div>
             </div>
 
