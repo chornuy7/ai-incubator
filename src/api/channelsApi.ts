@@ -24,6 +24,20 @@ export interface Channel {
   updatedAt: number
 }
 
+/**
+ * Рейтинг канала ★/10 (§3.8, B1): приоритет — активность/вовлечённость, НЕ голые подписчики.
+ * База по подписчикам + вес свежести контента (activityLabel из 2-го прохода) + открытые комменты.
+ * Маленький активный канал обгоняет большой «мёртвый».
+ */
+export function channelRating(c: Pick<Channel, 'subscribers' | 'activityLabel' | 'hasComments'>): number {
+  const subs = c.subscribers || 0
+  const base = subs >= 100000 ? 6 : subs >= 10000 ? 5 : subs >= 1000 ? 4 : subs >= 100 ? 3 : 2
+  const act = c.activityLabel
+  const actBonus = act === 'high' ? 3 : act === 'medium' ? 2 : act === 'low' ? 1 : act === 'stale' ? -1 : 0
+  const commentsBonus = c.hasComments ? 1 : 0
+  return Math.max(1, Math.min(10, base + actBonus + commentsBonus))
+}
+
 export async function fetchChannels(): Promise<Channel[]> {
   const data = await apiGet<{ ok: boolean; channels: Channel[] }>('/api/channels')
   return data.channels

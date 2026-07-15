@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { Radio, Plus, RefreshCw, Trash2, ExternalLink, MessageSquare } from 'lucide-react'
 import { useApp } from '@/mocks/store'
 import { PageHeader, Card, EmptyState, Badge } from '@/shared/ui'
-import { fetchChannels, upsertChannel, updateChannel, refreshChannel, deleteChannel, type Channel } from '@/api/channelsApi'
+import { fetchChannels, upsertChannel, updateChannel, refreshChannel, deleteChannel, channelRating, type Channel } from '@/api/channelsApi'
 
 function fmt(n: number) {
   return n >= 1000 ? `${(n / 1000).toFixed(n >= 10000 ? 0 : 1)}K` : String(n)
@@ -88,6 +88,7 @@ export function ChannelsPage() {
               <div className="min-w-0 flex-1">
                 <div className="flex items-center gap-2">
                   <span className="truncate font-semibold text-white">{c.title || c.username || c.link}</span>
+                  {(() => { const r = channelRating(c); return <span title="Рейтинг: приоритет активности, не только подписчики (§3.8)" className="cursor-help"><Badge tone={r >= 7 ? 'spark' : r >= 4 ? 'amber' : 'rose'}>★ {r}/10</Badge></span> })()}
                   {c.hasComments && <Badge tone="iris"><MessageSquare size={10} className="mb-0.5 inline" /> комменты</Badge>}
                   {c.activityLabel && <Badge tone={c.activityLabel === 'high' ? 'spark' : c.activityLabel === 'medium' ? 'amber' : c.activityLabel === 'stale' ? 'rose' : 'muted'}>{({ high: 'активный', medium: 'умеренный', low: 'редко', stale: 'нет постов' } as const)[c.activityLabel]}</Badge>}
                 </div>
