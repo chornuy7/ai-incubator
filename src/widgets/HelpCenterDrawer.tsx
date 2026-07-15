@@ -191,9 +191,10 @@ export function HelpCenterDrawer() {
   if (!open) return null
 
   return createPortal(
-    <div className="fixed inset-0 z-[96]">
-      <div className="absolute inset-0 bg-black/70 backdrop-blur-sm animate-fade-in" onClick={() => setHelpOpen(false)} />
-      <div className="absolute right-0 top-0 flex h-full w-full max-w-md flex-col border-l border-line bg-surface shadow-pop animate-fade-in">
+    // §3.1: боковая панель, не блокирующая модалка — основной интерфейс остаётся доступным.
+    // Контейнер пропускает клики (pointer-events-none), интерактивна только сама панель.
+    <div className="pointer-events-none fixed inset-0 z-[96]">
+      <div className="pointer-events-auto absolute right-0 top-0 flex h-full w-full max-w-md flex-col border-l border-line bg-surface shadow-pop animate-fade-in max-sm:bg-surface/95 max-sm:backdrop-blur-sm">
         <div className="flex items-center justify-between border-b border-line px-5 py-4">
           <div className="flex items-center gap-2.5">
             <HelpCircle size={20} className="text-spark-400" />
