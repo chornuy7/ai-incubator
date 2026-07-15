@@ -2,7 +2,7 @@ import { useCallback, useMemo, useState } from 'react'
 import {
   Play, Sparkles, Search, Settings2, Timer, Users, Database, Filter, Radar,
   Plus, X, Trash2, Copy, Hash, Download, ExternalLink, ChevronLeft, ChevronRight,
-  ChevronsLeft, ChevronsRight, Bookmark, Zap, SlidersHorizontal, MessageCircle, Check, FolderPlus,
+  ChevronsLeft, ChevronsRight, Bookmark, Zap, SlidersHorizontal, MessageCircle, Check, FolderPlus, HelpCircle,
 } from 'lucide-react'
 import { MODULES, LANGUAGES, type ModuleConfig } from '@/shared/config/modules'
 import { activeAccounts, useApp } from '@/mocks/store'
@@ -65,6 +65,21 @@ function qualityScore(members = 0, hasComments = false): number {
 function qualityTone(s: number): 'spark' | 'amber' | 'rose' {
   return s >= 7 ? 'spark' : s >= 4 ? 'amber' : 'rose'
 }
+/** Прозрачная расшифровка балла (§3.8): из чего сложился рейтинг. */
+function qualityExplain(members = 0, hasComments = false): string {
+  const tiers: [number, string][] = [
+    [100000, '100k+'], [50000, '50k+'], [10000, '10k+'], [5000, '5k+'],
+    [1000, '1k+'], [500, '500+'], [100, '100+'], [50, '50+'],
+  ]
+  let base = 2
+  let tierLabel = '<50'
+  for (let i = 0; i < tiers.length; i++) { if (members >= tiers[i][0]) { base = 10 - i; tierLabel = tiers[i][1]; break } }
+  const bonus = hasComments ? 1 : 0
+  const total = Math.min(10, base + bonus)
+  return `Подписчиков ${tierLabel} → база ${base}/10${bonus ? '; открытые комментарии +1' : ''} = ${total}/10`
+}
+/** Общая формула для легенды. */
+const QUALITY_FORMULA = 'Рейтинг ★/10 = база по числу подписчиков (100k+ → 10, 50k+ → 9, … <50 → 2) + 1 за открытые комментарии.'
 
 export function ChannelParserModule({ moduleKey }: { moduleKey: string }) {
   const cfg = MODULES[moduleKey]
@@ -490,6 +505,11 @@ function ChannelParserInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: 
           <EmptyState icon={<Radar size={22} />} title="Результатов пока нет" desc="Запустите парсинг — найденные каналы появятся здесь." />
         ) : (
           <>
+            {/* §3.8: прозрачная формула рейтинга — видно, как считается ★/10 */}
+            <div className="mb-2 flex items-start gap-1.5 rounded-lg bg-elevated/60 px-3 py-2 text-[11px] leading-snug text-muted">
+              <HelpCircle size={13} className="mt-0.5 shrink-0 text-white/40" />
+              <span>{QUALITY_FORMULA} Наведите на ★ у результата, чтобы увидеть расчёт для него.</span>
+            </div>
             <div className="space-y-2">
               {pageResults.map((r, i) => (
                 <div key={(r.username || r.id || i) as string} className="flex items-center gap-3 rounded-2xl border border-line bg-elevated/40 p-3">
@@ -503,7 +523,7 @@ function ChannelParserInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: 
                     <div className="flex items-center gap-2 text-xs text-muted">
                       {r.username && <span className="text-iris-300/80">@{r.username}</span>}
                       <span className="inline-flex items-center gap-1"><Users size={11} /> {fmtMembers(r.members ?? 0)}</span>
-                      {(() => { const s = qualityScore(r.members ?? 0, r.hasComments); return <Badge tone={qualityTone(s)}>★ {s}/10</Badge> })()}
+                      {(() => { const s = qualityScore(r.members ?? 0, r.hasComments); return <span title={qualityExplain(r.members ?? 0, r.hasComments)} className="cursor-help"><Badge tone={qualityTone(s)}>★ {s}/10</Badge></span> })()}
                     </div>
                   </div>
                   {r.link && (
