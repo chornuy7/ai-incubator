@@ -18,6 +18,7 @@ import { LogsPage } from '@/pages/LogsPage'
 import { InboxPage } from '@/pages/InboxPage'
 import { RolesPage } from '@/pages/RolesPage'
 import { UsersPage } from '@/pages/UsersPage'
+import { ProxiesPage } from '@/pages/ProxiesPage'
 import { GuestLogin } from '@/pages/GuestLogin'
 
 export default function App() {
@@ -51,6 +52,7 @@ export default function App() {
         <Route path="/panel/user/profile" element={<ProfilePage />} />
         <Route path="/panel/roles" element={<RolesPage />} />
         <Route path="/panel/users" element={<UsersPage />} />
+        <Route path="/panel/proxies" element={<ProxiesPage />} />
       </Route>
       <Route path="/" element={<Navigate to="/panel" replace />} />
       <Route path="*" element={<Navigate to="/panel" replace />} />

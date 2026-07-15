@@ -1,0 +1,192 @@
+import { useEffect, useMemo, useState } from 'react'
+import { Network, Plus, Trash2, Pencil, Link2, Check, Circle } from 'lucide-react'
+import { PageHeader, Card, EmptyState, Badge, Select, Modal } from '@/shared/ui'
+import {
+  fetchProxies, createProxy, updateProxy, deleteProxy, toProxyUrl,
+  PROXY_KIND_LABELS, type Proxy, type ProxyKind,
+} from '@/api/proxiesApi'
+import { fetchAccounts, patchAccount } from '@/api/accountsApi'
+import type { TgAccount } from '@/shared/types'
+import { COUNTRIES, FLAGS } from '@/shared/config/geo'
+
+const STATUS_META: Record<Proxy['status'], { label: string; tone: 'spark' | 'rose' | 'muted' }> = {
+  ok: { label: 'Рабочий', tone: 'spark' },
+  dead: { label: 'Мёртвый', tone: 'rose' },
+  unknown: { label: 'Не проверен', tone: 'muted' },
+}
+
+const emptyForm = (): Partial<Proxy> => ({ label: '', kind: 'static', scheme: 'socks5', host: '', port: 1080, username: '', password: '', country: '', note: '', status: 'unknown' })
+
+export function ProxiesPage() {
+  const [proxies, setProxies] = useState<Proxy[]>([])
+  const [accounts, setAccounts] = useState<TgAccount[]>([])
+  const [loading, setLoading] = useState(true)
+  const [err, setErr] = useState('')
+  const [editOpen, setEditOpen] = useState(false)
+  const [editing, setEditing] = useState<Proxy | null>(null)
+  const [form, setForm] = useState<Partial<Proxy>>(emptyForm())
+  const [saving, setSaving] = useState(false)
+  const [assignFor, setAssignFor] = useState<Proxy | null>(null)
+
+  async function load() {
+    setLoading(true)
+    try {
+      const [px, accs] = await Promise.all([fetchProxies(), fetchAccounts().catch(() => [])])
+      setProxies(px); setAccounts(accs)
+    } catch (e) { setErr(e instanceof Error ? e.message : 'Ошибка загрузки') }
+    finally { setLoading(false) }
+  }
+  useEffect(() => { void load() }, [])
+
+  const usedBy = useMemo(() => {
+    const m: Record<string, number> = {}
+    for (const p of proxies) m[p.id] = accounts.filter((a) => a.proxy && a.proxy === toProxyUrl(p)).length
+    return m
+  }, [proxies, accounts])
+
+  function openNew() { setEditing(null); setForm(emptyForm()); setEditOpen(true); setErr('') }
+  function openEdit(p: Proxy) { setEditing(p); setForm({ ...p }); setEditOpen(true); setErr('') }
+
+  async function save() {
+    setSaving(true); setErr('')
+    try {
+      if (editing) { const up = await updateProxy(editing.id, form); setProxies((prev) => prev.map((x) => (x.id === up.id ? up : x))) }
+      else { const cr = await createProxy(form); setProxies((prev) => [cr, ...prev]) }
+      setEditOpen(false)
+    } catch (e) { setErr(e instanceof Error ? e.message : 'Ошибка') }
+    finally { setSaving(false) }
+  }
+
+  async function remove(p: Proxy) {
+    if (!confirm(`Удалить прокси ${p.host}:${p.port}? Аккаунты, использующие его, останутся с этой строкой.`)) return
+    try { await deleteProxy(p.id); setProxies((prev) => prev.filter((x) => x.id !== p.id)) }
+    catch (e) { setErr(e instanceof Error ? e.message : 'Ошибка') }
+  }
+
+  const set = (k: keyof Proxy, v: unknown) => setForm((f) => ({ ...f, [k]: v }))
+
+  return (
+    <div>
+      <PageHeader
+        title="Прокси"
+        subtitle="Каталог прокси (статические / мобильные / своя ферма) и привязка к аккаунтам. §3.2/3.4"
+        icon={<Network size={22} />}
+        badge={proxies.length ? `${proxies.length}` : undefined}
+        actions={<button onClick={openNew} className="btn-primary h-10"><Plus size={16} /> Новый прокси</button>}
+      />
+
+      {err && !editOpen && <Card className="mb-3 border-rose-500/30 p-3 text-sm text-rose-300">{err}</Card>}
+
+      {loading ? (
+        <Card className="p-6 text-sm text-white/50">Загрузка…</Card>
+      ) : proxies.length === 0 ? (
+        <EmptyState icon={<Network size={26} />} title="Прокси пока нет" desc="Добавьте прокси и назначайте их аккаунтам в менеджере." />
+      ) : (
+        <div className="flex flex-col gap-2">
+          {proxies.map((p) => {
+            const sm = STATUS_META[p.status]
+            return (
+              <Card key={p.id} className="flex flex-wrap items-center gap-3 p-3">
+                <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-iris-500/12 text-iris-300"><Network size={18} /></span>
+                <div className="min-w-0 flex-1">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="truncate font-semibold text-fg">{p.label || `${p.host}:${p.port}`}</span>
+                    <Badge tone="iris">{PROXY_KIND_LABELS[p.kind]}</Badge>
+                    {p.country && <span className="text-sm">{FLAGS[p.country] || p.country.toUpperCase()}</span>}
+                    <Badge tone={sm.tone}>{sm.label}</Badge>
+                  </div>
+                  <div className="mt-0.5 truncate font-mono text-xs text-white/50">{p.scheme}://{p.username ? `${p.username}@` : ''}{p.host}:{p.port}</div>
+                </div>
+                <span className="text-xs text-white/50">аккаунтов: <b className="text-white/80">{usedBy[p.id] ?? 0}</b></span>
+                <div className="flex items-center gap-1.5">
+                  <button onClick={() => setAssignFor(p)} className="btn-ghost h-9 text-xs"><Link2 size={14} /> Назначить</button>
+                  <button onClick={() => openEdit(p)} className="btn-icon h-9 w-9" aria-label="Изменить"><Pencil size={14} /></button>
+                  <button onClick={() => void remove(p)} className="btn-icon h-9 w-9" aria-label="Удалить"><Trash2 size={14} /></button>
+                </div>
+              </Card>
+            )
+          })}
+        </div>
+      )}
+
+      {/* Создание / редактирование */}
+      <Modal open={editOpen} onClose={() => setEditOpen(false)} title={editing ? 'Изменить прокси' : 'Новый прокси'} icon={<Network size={20} />}>
+        <div className="grid grid-cols-2 gap-3">
+          <div className="col-span-2"><label className="label">Название</label><input value={form.label ?? ''} onChange={(e) => set('label', e.target.value)} className="input" placeholder="Напр. Ферма UA #1" /></div>
+          <div><label className="label">Тип</label><Select value={form.kind ?? 'static'} onChange={(v) => set('kind', v as ProxyKind)} options={(Object.keys(PROXY_KIND_LABELS) as ProxyKind[]).map((k) => ({ value: k, label: PROXY_KIND_LABELS[k] }))} /></div>
+          <div><label className="label">Протокол</label><Select value={form.scheme ?? 'socks5'} onChange={(v) => set('scheme', v)} options={[{ value: 'socks5', label: 'SOCKS5' }, { value: 'http', label: 'HTTP' }]} /></div>
+          <div><label className="label">Host / IP</label><input value={form.host ?? ''} onChange={(e) => set('host', e.target.value)} className="input" placeholder="1.2.3.4" /></div>
+          <div><label className="label">Port</label><input type="number" value={form.port ?? 0} onChange={(e) => set('port', Number(e.target.value))} className="input" placeholder="1080" /></div>
+          <div><label className="label">Логин</label><input value={form.username ?? ''} onChange={(e) => set('username', e.target.value)} className="input" placeholder="(опц.)" /></div>
+          <div><label className="label">Пароль</label><input value={form.password ?? ''} onChange={(e) => set('password', e.target.value)} className="input" placeholder="(опц.)" /></div>
+          <div><label className="label">Страна</label><Select value={form.country ?? ''} onChange={(v) => set('country', v)} options={[{ value: '', label: '—' }, ...COUNTRIES.map((c) => ({ value: c.code, label: `${c.flag} ${c.label}` }))]} /></div>
+          <div><label className="label">Статус</label><Select value={form.status ?? 'unknown'} onChange={(v) => set('status', v)} options={[{ value: 'unknown', label: 'Не проверен' }, { value: 'ok', label: 'Рабочий' }, { value: 'dead', label: 'Мёртвый' }]} /></div>
+          <div className="col-span-2"><label className="label">Заметка</label><input value={form.note ?? ''} onChange={(e) => set('note', e.target.value)} className="input" placeholder="(опц.)" /></div>
+        </div>
+        {err && editOpen && <div className="mt-2 text-sm text-rose-300">{err}</div>}
+        <div className="mt-4 flex justify-end gap-2">
+          <button onClick={() => setEditOpen(false)} className="btn-ghost h-10">Отмена</button>
+          <button onClick={() => void save()} disabled={saving || !form.host || !form.port} className="btn-primary h-10 disabled:opacity-40">{saving ? 'Сохранение…' : editing ? 'Сохранить' : 'Создать'}</button>
+        </div>
+      </Modal>
+
+      {assignFor && <AssignModal proxy={assignFor} accounts={accounts} onClose={() => setAssignFor(null)} onDone={() => { setAssignFor(null); void load() }} />}
+    </div>
+  )
+}
+
+/** Назначение прокси на аккаунты: чекбоксы, save → patchAccount(proxy=url). */
+function AssignModal({ proxy, accounts, onClose, onDone }: { proxy: Proxy; accounts: TgAccount[]; onClose: () => void; onDone: () => void }) {
+  const url = toProxyUrl(proxy)
+  const [picked, setPicked] = useState<Set<string>>(() => new Set(accounts.filter((a) => a.proxy === url).map((a) => a.id)))
+  const [saving, setSaving] = useState(false)
+  const active = accounts.filter((a) => !a.inTrash)
+
+  const toggle = (id: string) => setPicked((prev) => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n })
+
+  async function save() {
+    setSaving(true)
+    try {
+      // назначить выбранным, снять с тех, кто был на этом прокси, но снят из выбора
+      const wasOn = new Set(accounts.filter((a) => a.proxy === url).map((a) => a.id))
+      const ops: Promise<unknown>[] = []
+      for (const a of active) {
+        const shouldHave = picked.has(a.id)
+        const hasNow = wasOn.has(a.id)
+        if (shouldHave && !hasNow) ops.push(patchAccount(a.id, { proxy: url, initiator: 'operator' }))
+        else if (!shouldHave && hasNow) ops.push(patchAccount(a.id, { proxy: '—', initiator: 'operator' }))
+      }
+      await Promise.all(ops)
+      onDone()
+    } finally { setSaving(false) }
+  }
+
+  return (
+    <Modal open onClose={onClose} title="Назначить прокси" subtitle={`${proxy.label || proxy.host}:${proxy.port} → аккаунты`} icon={<Link2 size={20} />} size="md">
+      <div className="max-h-80 overflow-y-auto rounded-xl border border-line">
+        {active.length === 0 ? (
+          <div className="p-4 text-sm text-white/50">Нет аккаунтов.</div>
+        ) : active.map((a) => {
+          const on = picked.has(a.id)
+          const other = a.proxy && a.proxy !== url && a.proxy !== '—'
+          return (
+            <button key={a.id} onClick={() => toggle(a.id)} className="flex w-full items-center gap-3 border-b border-line/60 px-3 py-2 text-left last:border-0 hover:bg-elevated">
+              <span className={on ? 'text-spark-400' : 'text-white/30'}>{on ? <Check size={16} /> : <Circle size={16} />}</span>
+              <span className="min-w-0 flex-1">
+                <span className="block truncate text-sm text-fg">{a.name}</span>
+                <span className="truncate text-xs text-white/40">{FLAGS[a.country] || ''} {other ? 'уже на другом прокси' : a.proxy === url ? 'на этом прокси' : 'без прокси'}</span>
+              </span>
+            </button>
+          )
+        })}
+      </div>
+      <div className="mt-4 flex items-center justify-between">
+        <span className="text-xs text-white/40">Выбрано: {picked.size}</span>
+        <div className="flex gap-2">
+          <button onClick={onClose} className="btn-ghost h-10">Отмена</button>
+          <button onClick={() => void save()} disabled={saving} className="btn-primary h-10 disabled:opacity-40">{saving ? 'Применение…' : 'Применить'}</button>
+        </div>
+      </div>
+    </Modal>
+  )
+}
