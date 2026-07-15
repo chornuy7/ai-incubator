@@ -15,6 +15,7 @@ import { AnalyticsPage } from '@/pages/AnalyticsPage'
 import { CampaignPage } from '@/pages/CampaignPage'
 import { ChannelsPage } from '@/pages/ChannelsPage'
 import { LogsPage } from '@/pages/LogsPage'
+import { InboxPage } from '@/pages/InboxPage'
 import { GuestLogin } from '@/pages/GuestLogin'
 
 export default function App() {
@@ -40,6 +41,7 @@ export default function App() {
         <Route path="/panel/campaign" element={<CampaignPage />} />
         <Route path="/panel/channels" element={<ChannelsPage />} />
         <Route path="/panel/logs" element={<LogsPage />} />
+        <Route path="/panel/inbox" element={<InboxPage />} />
         <Route path="/panel/my-statistics" element={<StatisticsPage />} />
         <Route path="/panel/support" element={<SupportPage />} />
         <Route path="/panel/modules/:moduleKey" element={<ModuleRunner />} />

@@ -2,7 +2,7 @@ import type { LucideIcon } from 'lucide-react'
 import {
   LayoutGrid, BarChart3, LifeBuoy, MessageSquareText, Bot, Sparkles, Eye,
   Flame, MessagesSquare, Trophy, Radar, Users, Search, MessageCircle,
-  Hash, History, UserCog, CalendarClock, Target, ListChecks, Contact, TrendingUp, Rocket, Radio, ScrollText,
+  Hash, History, UserCog, CalendarClock, Target, ListChecks, Contact, TrendingUp, Rocket, Radio, ScrollText, Inbox,
 } from 'lucide-react'
 
 export interface RouteDef {
@@ -23,6 +23,7 @@ export const ROUTES: RouteDef[] = [
   { path: '/panel/analytics', label: 'Аналитика', icon: TrendingUp, group: 'main' },
   { path: '/panel/my-statistics', label: 'Моя статистика', icon: BarChart3, group: 'main' },
   { path: '/panel/logs', label: 'Логи', icon: ScrollText, group: 'main' },
+  { path: '/panel/inbox', label: 'Обзор аккаунта', icon: Inbox, group: 'main' },
   { path: '/panel/support', label: 'Поддержка', icon: LifeBuoy, group: 'main' },
 
   { path: '/panel/modules/neuro-commenting', label: 'Нейрокомментинг', icon: MessageSquareText, group: 'modules' },
