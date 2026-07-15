@@ -44,6 +44,7 @@ function defaultUsers() {
   const now = Date.now()
   return [
     {
+      // Главный админ (bypass, полный доступ). Почта — illia@incubator.ai.
       id: 'usr_admin',
       email: 'illia@incubator.ai',
       name: 'Администратор',
@@ -54,6 +55,7 @@ function defaultUsers() {
       updatedAt: now,
     },
     {
+      // Тестовый оператор для проверки выдачи прав — НЕ админ (обычная роль «Модератор»).
       id: 'usr_test',
       email: 'ya.lonk777@gmail.com',
       name: 'Тестовый модератор',
