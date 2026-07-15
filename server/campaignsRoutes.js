@@ -9,6 +9,7 @@ import { validateSettings, startModuleTask } from './modules/registry.js'
 import { startWorker } from './modules/workers.js'
 import { releaseTaskLocks } from './lib/accountLocks.js'
 import { assertAccountsAssignable } from './accountsMeta.js'
+import { assertNoHotLeadConflict } from './leads.js'
 import { appendAudit } from './lib/auditLog.js'
 
 export const campaignsRouter = Router()
@@ -30,6 +31,8 @@ campaignsRouter.post('/launch', async (req, res) => {
       if (err) { skipped.push({ moduleKey, reason: err }); continue }
       const assignErr = await assertAccountsAssignable(settings.accountIds, moduleKey)
       if (assignErr) { skipped.push({ moduleKey, reason: assignErr }); continue }
+      const hotErr = await assertNoHotLeadConflict(settings.accountIds, moduleKey)
+      if (hotErr) { skipped.push({ moduleKey, reason: hotErr }); continue }
 
       let taskRef
       try {

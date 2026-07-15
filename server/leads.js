@@ -75,6 +75,27 @@ export async function deleteLead(id) {
   return true
 }
 
+/** Модули, которые ВЕДУТ диалог — им «горячий лид» на аккаунте не мешает (это их работа). */
+export const DIALOG_MODULES = new Set(['neuro-chatting', 'neuro-dialogs'])
+
+/** Есть ли у аккаунта активный горячий лид (диалог в разгаре). Чистая функция. @param {object[]} leads @param {string} accountId */
+export function hasActiveHotLead(leads, accountId) {
+  return (Array.isArray(leads) ? leads : []).some((l) => l.accountId === accountId && l.status === 'hot')
+}
+
+/**
+ * Guard «горячий лид» (§3.3/§4): аккаунт с горячим лидом нельзя забирать в НЕ-диалоговый
+ * модуль — диалог должен продолжаться. Возвращает строку-ошибку или null. Не бросает.
+ * @param {string[]} accountIds @param {string} moduleKey
+ */
+export async function assertNoHotLeadConflict(accountIds, moduleKey) {
+  if (!accountIds?.length || DIALOG_MODULES.has(moduleKey)) return null
+  const leads = await readJson(LEADS_FILE, [])
+  const blocked = accountIds.filter((id) => hasActiveHotLead(leads, id)).map((id) => String(id).slice(-6))
+  if (!blocked.length) return null
+  return `Профили ведут горячий лид — их нельзя забирать в другой модуль (диалог продолжается): ${blocked.join(', ')}.`
+}
+
 /** Сводка по статусам (аналитика §3.6). @param {string} [goalId] */
 export async function leadStats(goalId) {
   const leads = await listLeads(goalId ? { goalId } : {})

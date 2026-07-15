@@ -2,6 +2,7 @@ import { Router } from 'express'
 import { getModuleStore, listModuleKeys, validateSettings, startModuleTask, stopModuleTask } from './registry.js'
 import { releaseTaskLocks } from '../lib/accountLocks.js'
 import { assertAccountsAssignable } from '../accountsMeta.js'
+import { assertNoHotLeadConflict } from '../leads.js'
 
 export const modulesRouter = Router()
 
@@ -62,6 +63,9 @@ modulesRouter.post('/:moduleKey/tasks', async (req, res) => {
     // Guard безопасного назначения (§3.2/§3.3): не отдаём непрогретые/занятые статусом профили.
     const assignErr = await assertAccountsAssignable(settings.accountIds, moduleKey)
     if (assignErr) return res.status(409).json({ ok: false, error: assignErr })
+    // Guard «горячий лид» (§3.3/§4): не забираем аккаунт из активного диалога в другой модуль.
+    const hotErr = await assertNoHotLeadConflict(settings.accountIds, moduleKey)
+    if (hotErr) return res.status(409).json({ ok: false, error: hotErr })
 
     const { store, task, worker } = startModuleTask(moduleKey, settings)
     task.initiator = settings.initiator || 'operator' // §3.9: кто запустил

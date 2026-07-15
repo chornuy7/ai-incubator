@@ -3,7 +3,37 @@ import assert from 'node:assert/strict'
 import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
-import { normalizeLead, LEAD_STATUSES } from '../leads.js'
+import { normalizeLead, LEAD_STATUSES, hasActiveHotLead, DIALOG_MODULES } from '../leads.js'
+
+test('hasActiveHotLead: находит горячий лид аккаунта', () => {
+  const leads = [
+    { accountId: 'a1', status: 'cold' },
+    { accountId: 'a2', status: 'hot' },
+    { accountId: 'a3', status: 'answered' },
+  ]
+  assert.equal(hasActiveHotLead(leads, 'a2'), true)
+  assert.equal(hasActiveHotLead(leads, 'a1'), false)
+  assert.equal(hasActiveHotLead(leads, 'нет'), false)
+  assert.equal(hasActiveHotLead(null, 'a2'), false)
+})
+
+test('assertNoHotLeadConflict: блокирует не-диалоговый модуль, пропускает диалоговый', async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'leads-hot-'))
+  process.env.LEADS_FILE = path.join(dir, 'leads.json')
+  const m = await import('../leads.js?hot=' + Date.now())
+  await m.createLead({ peer: '@x', accountId: 'acc123456', status: 'hot' })
+
+  // не-диалоговый модуль — блок
+  const err = await m.assertNoHotLeadConflict(['acc123456'], 'mass-react')
+  assert.match(err, /горячий лид/i)
+  // диалоговый модуль (ведёт диалог) — пропуск
+  assert.equal(await m.assertNoHotLeadConflict(['acc123456'], 'neuro-chatting'), null)
+  assert.ok(DIALOG_MODULES.has('neuro-dialogs'))
+  // аккаунт без горячего лида — пропуск
+  assert.equal(await m.assertNoHotLeadConflict(['free'], 'mass-react'), null)
+
+  delete process.env.LEADS_FILE
+})
 
 test('normalizeLead: дефолт статуса и типы', () => {
   const l = normalizeLead({ peer: ' @user ', status: 'непонятно', goalId: 'g1' })
