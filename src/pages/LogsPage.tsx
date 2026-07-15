@@ -20,6 +20,7 @@ export function LogsPage() {
   const [entries, setEntries] = useState<AuditEntry[]>([])
   const [loading, setLoading] = useState(true)
   const [fAction, setFAction] = useState('')
+  const [fInitiator, setFInitiator] = useState('')
   const [detail, setDetail] = useState<AuditEntry | null>(null)
 
   const load = async () => {
@@ -34,7 +35,8 @@ export function LogsPage() {
   }, [])
 
   const actions = useMemo(() => [...new Set(entries.map((e) => e.action))], [entries])
-  const filtered = fAction ? entries.filter((e) => e.action === fAction) : entries
+  const initiators = useMemo(() => [...new Set(entries.map((e) => e.initiator).filter((x): x is string => !!x))], [entries])
+  const filtered = entries.filter((e) => (!fAction || e.action === fAction) && (!fInitiator || e.initiator === fInitiator))
 
   return (
     <div>
@@ -48,6 +50,7 @@ export function LogsPage() {
 
       <div className="mb-3 flex flex-wrap items-center gap-2">
         <Select value={fAction} onChange={setFAction} className="w-56" options={[{ value: '', label: 'Все действия' }, ...actions.map((a) => ({ value: a, label: actionMeta(a).label + ` (${a})` }))]} />
+        <Select value={fInitiator} onChange={setFInitiator} className="w-44" options={[{ value: '', label: 'Все инициаторы' }, ...initiators.map((i) => ({ value: i, label: i }))]} />
       </div>
 
       {loading ? (
