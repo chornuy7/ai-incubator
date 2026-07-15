@@ -7,6 +7,7 @@ export interface ModuleTaskSettings {
   channels?: string[]
   keywords?: string[]
   commentMode?: number
+  stopWords?: string[] // §3.5: пропускать посты с этими словами (фильтр тональности/тем)
   workMode?: number
   postFilter?: number
   probability?: number

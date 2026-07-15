@@ -24,12 +24,23 @@ export function trackIdlePass(task, progressed, maxIdle = 5) {
   return task.idlePasses >= maxIdle
 }
 
+/** Есть ли в тексте хотя бы одно из слов (регистронезависимо). @param {string} text @param {string[]} words */
+export function postContainsAny(text, words) {
+  if (!words?.length) return false
+  const lower = (text || '').toLowerCase()
+  return words.some((w) => { const t = String(w).trim().toLowerCase(); return t && lower.includes(t) })
+}
+
 /** @param {object[]} posts @param {object} settings */
 export function pickCommentCandidates(posts, settings) {
   const textOf = (p) => (p.message || '').trim() || (p.media ? '[медиа]' : '')
   let candidates = posts.filter((p) => postMeetsMinWords(textOf(p), settings.minWords || 0))
   if (settings.commentMode === 1) {
     candidates = candidates.filter((p) => postMatchesKeywords(textOf(p), settings.keywords || []))
+  }
+  // §3.5 семантика/тональность (фильтр): пропускаем посты со стоп-словами (нежелательные темы/тон).
+  if (settings.stopWords?.length) {
+    candidates = candidates.filter((p) => !postContainsAny(textOf(p), settings.stopWords))
   }
   const postFilter = settings.postFilter ?? 0
   if (postFilter === 0 && candidates.length) {
