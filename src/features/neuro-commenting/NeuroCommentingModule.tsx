@@ -482,7 +482,7 @@ export function NeuroCommentingModule() {
         <div className="card p-0">
           <button type="button" onClick={() => setHistoryOpen((v) => !v)} className="flex w-full items-center gap-3 px-4 py-3.5 text-left">
             <span className="grid h-9 w-9 place-items-center rounded-xl bg-spark-500/12 text-spark-400"><MessageCircle size={18} /></span>
-            <span className="font-display text-base font-bold text-fg">История комментариев</span>
+            <span className="font-display text-base font-bold text-fg">Логи комментариев</span>
             <Badge tone="spark">{commentHistory.length}</Badge>
             <ChevronDown size={18} className={cn('ml-auto text-muted transition-transform', !historyOpen && '-rotate-90')} />
           </button>

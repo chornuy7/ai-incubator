@@ -524,7 +524,7 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
       {viewTab === 1 ? (
         <LogsPanel logs={logs} emptyText={cfg.logEmpty ?? 'Логов пока нет'} title="Логи выполнения" live={running} />
       ) : (
-        <SectionCard icon={<MessageCircle size={18} />} title={isParser || isGgr ? 'Результаты' : 'История'} badge={String(isParser || isGgr ? results.length : history.length)}>
+        <SectionCard icon={<MessageCircle size={18} />} title={isParser || isGgr ? 'Результаты' : 'Логи'} badge={String(isParser || isGgr ? results.length : history.length)}>
           {(isParser || isGgr) && results.length > 0 ? (
             <div className="max-h-80 overflow-y-auto">
               <table className="w-full text-sm">

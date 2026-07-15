@@ -355,7 +355,7 @@ export const MODULES: Record<string, ModuleConfig> = {
     channelReactions: true,
     settingsPresets: true,
     launchStats: true,
-    historySection: 'История реакций',
+    historySection: 'Логи реакций',
     blacklistSection: 'Чёрный список каналов',
     counters: [{ label: 'групп', value: '93' }, { label: 'интервал', value: '120с' }, { label: 'цель', value: '100' }],
     primaryAction: 'Запустить реакции',

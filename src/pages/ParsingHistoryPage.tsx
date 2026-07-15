@@ -91,8 +91,8 @@ export function ParsingHistoryPage() {
   return (
     <div>
       <PageHeader
-        title="История парсинга"
-        subtitle="Просмотр и управление историей всех запусков парсеров"
+        title="Логи парсинга"
+        subtitle="Просмотр и управление логами всех запусков парсеров"
         icon={<History size={22} />}
         actions={
           <div className="flex items-center gap-2">

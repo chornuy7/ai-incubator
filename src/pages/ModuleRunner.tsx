@@ -552,7 +552,7 @@ function RichModule({ cfg }: { cfg: ModuleConfig }) {
           </div>
           {historyOpen && (
             <div className="border-t border-line p-4">
-              <EmptyState icon={<BarChartIcon size={22} />} title="История пуста" desc="Здесь появятся прошлые запуски реакций." />
+              <EmptyState icon={<BarChartIcon size={22} />} title="Логов пока нет" desc="Здесь появятся прошлые запуски реакций." />
             </div>
           )}
         </div>
@@ -1807,7 +1807,7 @@ function LookingModule({ cfg }: { cfg: ModuleConfig }) {
       <div className="card p-0">
         <div className="flex flex-wrap items-center gap-3 px-4 py-3.5">
           <span className="grid h-9 w-9 place-items-center rounded-xl bg-iris-500/12 text-iris-400"><HistoryIcon size={18} /></span>
-          <span className="font-display text-base font-bold text-fg">История просмотров</span>
+          <span className="font-display text-base font-bold text-fg">Логи просмотров</span>
           <span className="rounded-md bg-elevated px-1.5 py-0.5 text-xs font-bold text-muted">1</span>
           <button onClick={() => pushToast({ type: 'info', title: 'Вся история', desc: 'Открываю историю (демо).' })} className="btn-ghost ml-auto h-8 text-xs">Вся история →</button>
           <button onClick={() => setHistoryOpen((v) => !v)} className="btn-icon h-8 w-8"><ChevronDown size={16} className={cn('transition-transform', !historyOpen && '-rotate-90')} /></button>
