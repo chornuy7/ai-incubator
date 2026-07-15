@@ -39,6 +39,7 @@ export interface ModuleTaskSettings {
   minComments?: number
   langDetection?: boolean
   alreadyParsed?: string[]
+  intersect?: boolean // §3.8: AND-пересечение — канал должен совпасть со ВСЕМИ ключевыми словами
   // ── Парсер участников (users/messages/comments) ──
   filters?: Record<string, boolean>
   limits?: Record<string, number>

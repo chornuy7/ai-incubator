@@ -849,16 +849,19 @@ export async function runChannelParser(task, store, kind) {
   const chFrom = s.delays?.channel?.[0] ?? 1
   const chTo = s.delays?.channel?.[1] ?? chFrom
 
-  // Собираем поисковые запросы: ключевые слова + комбинации с окончаниями
+  // Собираем поисковые запросы: ключевые слова + комбинации с окончаниями.
+  // Каждый запрос помнит индекс исходного ключевого слова (для AND-пересечения §3.8).
   const keywords = (s.keywords || []).map((k) => String(k).trim()).filter(Boolean)
   const endings = (s.endings || []).map((e) => String(e).trim()).filter(Boolean)
+  const andMode = !!s.intersect && keywords.length > 1 // §3.8: канал должен совпасть со ВСЕМИ ключами
+  const hitsByKey = new Map() // channelKey → Set<индекс ключевого слова> (для AND)
   const queries = []
   const seenQuery = new Set()
-  const pushQuery = (q) => { const v = q.trim(); if (v && !seenQuery.has(v.toLowerCase())) { seenQuery.add(v.toLowerCase()); queries.push(v) } }
-  for (const kw of keywords) {
-    pushQuery(kw)
-    for (const end of endings) pushQuery(`${kw} ${end}`)
-  }
+  const pushQuery = (q, kwIdx) => { const v = q.trim(); if (v && !seenQuery.has(v.toLowerCase())) { seenQuery.add(v.toLowerCase()); queries.push({ q: v, kwIdx }) } }
+  keywords.forEach((kw, kwIdx) => {
+    pushQuery(kw, kwIdx)
+    for (const end of endings) pushQuery(`${kw} ${end}`, kwIdx)
+  })
   if (!queries.length) {
     task.status = 'error'
     await store.appendLog(task, 'error', 'Укажите хотя бы одно ключевое слово')
@@ -882,8 +885,9 @@ export async function runChannelParser(task, store, kind) {
   await store.appendLog(task, 'info', `Парсинг запущен · запросов: ${queries.length} · аккаунтов: ${accountIds.length}`)
 
   try {
-    for (const q of queries) {
-      if (task.stopRequested || task.results.length >= limit) break
+    for (const { q, kwIdx } of queries) {
+      // В AND-режиме нельзя рано выходить по лимиту — нужно просканировать все ключи для пересечения.
+      if (task.stopRequested || (!andMode && task.results.length >= limit)) break
 
       const accountId = await nextAccountId()
       if (!accountId) {
@@ -897,19 +901,23 @@ export async function runChannelParser(task, store, kind) {
         const found = await searchPublicDetailed(client, q, 50)
         let added = 0
         for (const c of found) {
-          if (task.stopRequested || task.results.length >= limit) break
+          if (task.stopRequested || (!andMode && task.results.length >= limit)) break
 
           // тип: канал vs группа
           if (wantGroups) { if (c.isBroadcast && !c.isMegagroup) continue }
           else if (!c.isBroadcast) continue
 
           const key = (c.username || c.id).toLowerCase()
-          if (!key || seen.has(key)) continue
+          if (!key) continue
           if (skipParsed.has(key)) continue
 
           // фильтр комментариев: открытые = мегагруппа/есть обсуждение, закрытые = обычный канал
           if (comments === 1 && c.isBroadcast && !c.isMegagroup) continue
           if (comments === 2 && c.isMegagroup) continue
+
+          // §3.8 AND: отмечаем совпадение ключа — даже если канал уже добавлен другим ключом.
+          if (andMode) { let set = hitsByKey.get(key); if (!set) { set = new Set(); hitsByKey.set(key, set) } set.add(kwIdx) }
+          if (seen.has(key)) continue
 
           // число участников (обогащаем через GetFullChannel если поиск не отдал)
           let members = c.members
@@ -951,7 +959,22 @@ export async function runChannelParser(task, store, kind) {
       await sleep(pickDelay(reqFrom, reqTo, mul) * 1000)
     }
 
+    // §3.8 AND-пересечение: оставляем только каналы, совпавшие со ВСЕМИ ключевыми словами.
+    if (andMode && !task.stopRequested) {
+      const need = keywords.length
+      const before = task.results.length
+      const keep = (r) => (hitsByKey.get((r.username || r.id).toLowerCase())?.size || 0) >= need
+      task.results = task.results.filter(keep).slice(0, limit === Infinity ? undefined : limit)
+      const keepSet = new Set(task.results.map((r) => (r.username || r.id).toLowerCase()))
+      for (let i = baseChannels.length - 1; i >= 0; i--) {
+        if (!keepSet.has((baseChannels[i].username || baseChannels[i].tgPeerId || '').toString().toLowerCase())) baseChannels.splice(i, 1)
+      }
+      await store.appendLog(task, 'info', `AND-пересечение (${need} ключей): ${before} → ${task.results.length}`)
+    }
+
     task.progress.total = task.results.length
+    task.progress.done = task.results.length
+    task.progress.actionsDone = task.results.length
     task.status = task.stopRequested ? 'stopped' : 'done'
     // §3.8/§4: найденные каналы — в общую базу одним батчем (дедуп, без потери данных).
     try { const n = await upsertMany(baseChannels, `parse:${task.id}`); if (n) await store.appendLog(task, 'info', `В базу каналов: ${n}`) } catch { /* ignore */ }

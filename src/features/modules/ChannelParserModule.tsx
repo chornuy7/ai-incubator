@@ -116,6 +116,7 @@ function ChannelParserInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: 
   // ── фильтры / лимиты ──
   const [fastWork, setFastWork] = useState(false)
   const [skipParsed, setSkipParsed] = useState(false)
+  const [intersect, setIntersect] = useState(false) // §3.8: AND-пересечение ключевых слов
   const [limit, setLimit] = useState<number | '∞'>(cfg.defaultLimit ?? 50)
   const [activity, setActivity] = useState(cfg.defaultActivity ?? 0)
   const [commentFilter, setCommentFilter] = useState(0)
@@ -178,13 +179,14 @@ function ChannelParserInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: 
     minMembers: minMembers === '' ? 0 : minMembers,
     maxMembers: maxMembers === '' ? 0 : maxMembers,
     langDetection: langDetect,
+    intersect: intersect && method === 0,
     delays: {
       request: fastWork ? [0, 0] : reqDelay,
       channel: fastWork ? [0, 0] : chDelay,
       floodWait: 120,
       floodQuarantine: 3,
     },
-  }), [selected, keywords, endings, method, aiProtect, protLevel, limit, activity, commentFilter, minComments, minMembers, maxMembers, langDetect, fastWork, reqDelay, chDelay])
+  }), [selected, keywords, endings, method, aiProtect, protLevel, limit, activity, commentFilter, minComments, minMembers, maxMembers, langDetect, intersect, fastWork, reqDelay, chDelay])
 
   const busySelectedCount = useMemo(
     () => [...selected].filter((id) => accounts.some((a) => a.id === id && a.busyIn)).length,
@@ -399,6 +401,9 @@ function ChannelParserInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: 
           <div className="space-y-3">
             <ToggleRowInline icon={<Zap size={15} />} label="Быстрая работа" desc="Без задержек между запросами" checked={fastWork} onChange={setFastWork} />
             <ToggleRowInline icon={<Filter size={15} />} label="Не собирать уже спарсенные" desc="Вырежем каналы из истории парсинга" checked={skipParsed} onChange={setSkipParsed} />
+            {method === 0 && keywords.length > 1 && (
+              <ToggleRowInline icon={<Check size={15} />} label="Пересечение (AND)" desc={`Только совпавшие со ВСЕМИ ключами (${keywords.length})`} checked={intersect} onChange={setIntersect} />
+            )}
 
             <div className="rounded-2xl border border-line bg-elevated/40 p-3">
               <div className="mb-2 flex items-center gap-1.5 text-sm font-semibold text-fg"><Database size={14} className="text-spark-400" /> Лимит результатов</div>
