@@ -136,6 +136,9 @@ export async function recordChannelStats(id, stats = {}, statsBy) {
   if (stats.subscribers != null) all[i].subscribers = Number(stats.subscribers) || 0
   if (stats.activity != null) all[i].activity = stats.activity
   if (stats.hasComments != null) all[i].hasComments = stats.hasComments
+  // 2-й проход (§3.9): метка свежести контента (отдельно от числового activity парсера).
+  if (stats.activityLabel != null) all[i].activityLabel = stats.activityLabel
+  if (stats.lastPostAt != null) all[i].lastPostAt = stats.lastPostAt
   all[i].lastStatsAt = Date.now()
   all[i].statsBy = statsBy || 'system'
   all[i].updatedAt = Date.now()

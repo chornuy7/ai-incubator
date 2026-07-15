@@ -89,6 +89,7 @@ export function ChannelsPage() {
                 <div className="flex items-center gap-2">
                   <span className="truncate font-semibold text-white">{c.title || c.username || c.link}</span>
                   {c.hasComments && <Badge tone="iris"><MessageSquare size={10} className="mb-0.5 inline" /> комменты</Badge>}
+                  {c.activityLabel && <Badge tone={c.activityLabel === 'high' ? 'spark' : c.activityLabel === 'medium' ? 'amber' : c.activityLabel === 'stale' ? 'rose' : 'muted'}>{({ high: 'активный', medium: 'умеренный', low: 'редко', stale: 'нет постов' } as const)[c.activityLabel]}</Badge>}
                 </div>
                 <div className="flex flex-wrap gap-x-3 gap-y-0.5 text-xs text-white/40">
                   {c.username && <span>@{c.username}</span>}
@@ -96,6 +97,7 @@ export function ChannelsPage() {
                   {c.language && <span>{c.language}</span>}
                   {c.region && <span>{c.region}</span>}
                   <span>обновлено: {ago(c.lastStatsAt)}</span>
+                  {c.lastPostAt ? <span>последний пост: {ago(c.lastPostAt)}</span> : null}
                   <button onClick={() => void toggleBot(c)} className={c.botInGroup ? 'text-spark-300' : 'text-white/40 hover:text-white/70'} title="Если бот в группе — авто-обновление ~раз в час, иначе раз в день">
                     {c.botInGroup ? '🤖 бот в группе (авто ~1ч)' : 'нет бота (авто 1/день)'}
                   </button>

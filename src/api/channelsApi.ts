@@ -10,6 +10,8 @@ export interface Channel {
   region: string
   subscribers: number
   activity: number | null
+  activityLabel?: 'high' | 'medium' | 'low' | 'stale' | null // 2-й проход: свежесть контента
+  lastPostAt?: number | null
   hasComments: boolean | null
   rating: number | null
   tgPeerId: string | null

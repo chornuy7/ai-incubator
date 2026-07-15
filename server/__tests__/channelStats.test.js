@@ -1,8 +1,25 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { dueChannels, pickFreeAccountId } from '../channelStats.js'
+import { dueChannels, pickFreeAccountId, activityFromDates } from '../channelStats.js'
 
 const H = 3600_000
+
+test('activityFromDates (2-й проход): метка активности + последний пост', () => {
+  const now = 10_000_000 * 1000 // ms
+  const nowSec = now / 1000
+  const day = 24 * 3600
+  // нет постов → stale
+  assert.deepEqual(activityFromDates([], now), { activity: 'stale', lastPostAt: null })
+  // 6 постов за неделю → high
+  const many = [1, 2, 3, 4, 5, 6].map((i) => nowSec - i * 3600)
+  const r = activityFromDates(many, now)
+  assert.equal(r.activity, 'high')
+  assert.equal(r.lastPostAt, Math.max(...many) * 1000)
+  // 1 пост на этой неделе → medium
+  assert.equal(activityFromDates([nowSec - day], now).activity, 'medium')
+  // последний пост старше недели → low
+  assert.equal(activityFromDates([nowSec - 30 * day], now).activity, 'low')
+})
 
 test('dueChannels: не обновлялось → пора', () => {
   const due = dueChannels([{ id: '1', lastStatsAt: null }], 1000)
