@@ -19,7 +19,7 @@ export const ROUTES: RouteDef[] = [
   { path: '/panel/automation', label: 'Автоматизация', icon: CalendarClock, group: 'main' },
   { path: '/panel/goals', label: 'Цели', icon: Target, group: 'main' },
   { path: '/panel/campaign', label: 'Кампания', icon: Rocket, group: 'main' },
-  { path: '/panel/tasks', label: 'Задачи', icon: ListChecks, group: 'main' },
+  { path: '/panel/tasks', label: 'Дашборд задач', icon: ListChecks, group: 'main' },
   { path: '/panel/crm', label: 'CRM · Лиды', icon: Contact, group: 'main' },
   { path: '/panel/analytics', label: 'Аналитика', icon: TrendingUp, group: 'main' },
   { path: '/panel/my-statistics', label: 'Моя статистика', icon: BarChart3, group: 'main' },
