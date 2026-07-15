@@ -172,6 +172,15 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
     ? (isGgr ? 'Нет аккаунтов в панели' : busySelectedCount ? `${busySelectedCount} акк. заняты в другом модуле` : !selected.size ? 'Выберите аккаунты' : 'Добавьте группу или ссылку на пост')
     : undefined
 
+  // §3.5: предупреждать о математически противоречивых лимитах (макс vs аккаунты vs мин/акк).
+  const limitWarn = useMemo(() => {
+    if (isGgr || !selected.size) return null
+    if (maxActions && maxActions < selected.size) return `Общий лимит ${maxActions} меньше числа аккаунтов (${selected.size}) — часть не получит заданий.`
+    if (minPerAcc && maxPerAcc && minPerAcc > maxPerAcc) return `Минимум на аккаунт (${minPerAcc}) больше максимума (${maxPerAcc}).`
+    if (minPerAcc && maxActions && minPerAcc * selected.size > maxActions) return `Минимум на аккаунт × аккаунты (${minPerAcc * selected.size}) больше общего лимита (${maxActions}).`
+    return null
+  }, [isGgr, selected.size, maxActions, minPerAcc, maxPerAcc])
+
   const durationPeriodMin = Math.min(DURATION_MIN_BY_PROTECTION_LEVEL[protLevel] ?? 0, durationMinutes)
 
   const handleStart = () => void start(buildSettings(), `${cfg.title} · ${selected.size || accounts.length} акк.`)
@@ -434,6 +443,9 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
       )}
 
       <SectionCard icon={<Play size={18} />} title={running ? 'Выполнение' : 'Запуск'} badge={running ? 'LIVE' : undefined}>
+        {limitWarn && !running && (
+          <div className="mb-3 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-300">⚠ {limitWarn}</div>
+        )}
         {cfg.warmingLayout && !running && (
           <div className="mb-3">
             <div className="mb-1 text-xs text-white/50">Уровень прогрева <span className="text-white/30">(длиннее = естественнее)</span></div>

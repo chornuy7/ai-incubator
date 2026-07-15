@@ -139,6 +139,8 @@ export function AccountsPage() {
 
   // (8) Массовые действия
   const bulkSetStatus = (status: AccountStatus, title: string) => {
+    // §3.2: двухэтапное подтверждение опасного массового действия (отключение).
+    if (status === 'frozen' && selected.size >= 2 && !window.confirm(`Отключить ${selected.size} профилей? Они станут недоступны для всех модулей.`)) return
     void (async () => {
       const ids = [...selected]
       for (const id of ids) { try { await patchAccount(id, { status }) } catch { /* skip */ } }
