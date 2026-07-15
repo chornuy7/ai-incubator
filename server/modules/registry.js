@@ -7,6 +7,7 @@ const stores = {}
 
 /** @type {Record<string, { idPrefix: string, requiresTargets?: boolean, targetLabel?: string, initProgress?: (s: object) => object }>} */
 export const MODULE_DEFS = {
+  mailing: { idPrefix: 'mail', requiresTargets: true, targetLabel: 'номер' },
   'neuro-commenting': { idPrefix: 'nc', requiresTargets: true, targetLabel: 'канал' },
   'neuro-chatting': { idPrefix: 'nch', requiresTargets: true, targetLabel: 'группу' },
   'mass-react': { idPrefix: 'mr', requiresTargets: true, targetLabel: 'цель' },

@@ -11,6 +11,7 @@ const locks = new Map()
 const liveTasks = new Set()
 
 export const MODULE_LABELS = {
+  mailing: 'Мейлинг',
   'neuro-commenting': 'Нейрокомментинг',
   'neuro-chatting': 'Нейрочаттинг',
   'mass-react': 'Массовые реакции',

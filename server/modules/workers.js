@@ -1203,7 +1203,44 @@ export async function runParticipantsParser(task, store, kind) {
   await finalizeAccounts(accountIds, task.id)
 }
 
+/**
+ * Мейлинг: рассылка в Telegram по номерам телефонов (§8.4).
+ * КАРКАС: валидирует вход и планирует рассылку; реальная отправка реализуется на live-прогоне
+ * (см. TODO) — массовая отправка незнакомым рискованна для аккаунтов, тестируем вживую.
+ * @param {object} task @param {object} store
+ */
+export async function runMailing(task, store) {
+  const s = task.settings || {}
+  const accountIds = Array.isArray(s.accountIds) ? s.accountIds : []
+  const numbers = [...new Set((Array.isArray(s.targets) ? s.targets : []).map((x) => String(x).replace(/\D/g, '')).filter((x) => x.length >= 7))]
+  const message = String(s.promptText || s.message || '').trim()
+
+  task.status = 'running'
+  task.progress = { done: 0, total: numbers.length }
+  await store.saveTask(task)
+  await store.appendLog(task, 'info', `Мейлинг: ${numbers.length} номеров на ${accountIds.length} аккаунт(ов)`)
+
+  if (!numbers.length) { await store.appendLog(task, 'warning', 'Нет корректных номеров для рассылки'); task.status = 'done'; await store.saveTask(task); return }
+  if (!accountIds.length) { await store.appendLog(task, 'warning', 'Не выбраны аккаунты'); task.status = 'done'; await store.saveTask(task); return }
+  if (!message) { await store.appendLog(task, 'warning', 'Пустой текст рассылки'); task.status = 'done'; await store.saveTask(task); return }
+
+  const perAcc = Math.ceil(numbers.length / accountIds.length)
+  const d = s.delays?.action || [30, 90]
+  await store.appendLog(task, 'info', `План: ~${perAcc} на аккаунт · задержка ${d[0]}–${d[1]}с · лимит/акк ${s.maxPerAccount || '—'}`)
+  await store.appendLog(task, 'info', `Текст: "${message.slice(0, 80)}${message.length > 80 ? '…' : ''}"`)
+
+  // TODO(live): реальная отправка. По каждому аккаунту (round-robin по своей доле номеров):
+  //   1) contacts.ImportContacts([{phone, first_name}]) → получить users
+  //   2) для найденных — sendMessage(user, text) с задержкой [action], учётом maxPerAccount
+  //   3) FloodWait/спам-блок → пауза/карантин через state machine (как в runNeuroChatting)
+  //   4) прогресс task.progress.done++ + аудит. Требует подключённых аккаунтов (GramJS).
+  await store.appendLog(task, 'warning', 'Каркас готов. Реальная отправка — на live-прогоне с подключёнными аккаунтами (TODO в runMailing).')
+  task.status = 'done'
+  await store.saveTask(task)
+}
+
 export const WORKERS = {
+  mailing: runMailing,
   'neuro-commenting': runNeuroCommenting,
   'neuro-chatting': runNeuroChatting,
   'mass-react': runMassReact,
