@@ -55,12 +55,12 @@ Lane B — comment/chat/parser. Чужие файлы — только чере�
 > «Архитектура меняется — сделать правильно». Фиксируем интерфейсы до параллельной работы.
 
 - ☐ **A+B** Аудит текущего кода/схемы данных (см. Часть II): что есть, что переписываем → оценки в часах.
-- ☐ **A** State machine профиля: `Active/Warming/Pause/FloodWait/Quarantine/SpamBlock/Reauth/Invalid` + переходы и разрешённые действия. §3.3, §4 _(расширяет `accountsMeta.js` + `protection.js`)_
-- ☐ **A** Контракт локов/lease: `lock(accountId,taskId)`, `lease(channelId,botId,ttl)`, приоритет прогрева. §3.9, §4 _(расширяет `accountLocks.js`)_
-- ☐ **A+B** Схема сущностей: `Profile/Account/Proxy/Task/Channel/Goal/KnowledgeBase/Lead` + граница «общий слой ↔ Telegram-специфика» (адаптер, §3.10).
-- ☐ **A+B** Формат единого лога/аудита: `action, module, profile, initiator, time, reason/code, affectedScope`. §3.1, §5.
-- ☐ **B** Терминология: «Профиль/Аккаунт», «Логи» (не «История»), «Шаблоны поиска». §3.1/3.2/3.8.
-- ☐ **A+B** Документ Goals/KB/Leads (`docs/ARCH-goals-crm.md`). §3.6 (P0).
+- ☑ **A** State machine профиля: `Active/Warming/Pause/FloodWait/Quarantine/SpamBlock/Reauth/Invalid` + переходы и разрешённые действия. §3.3, §4 _(код `server/lib/accountStatus.js` + юнит-тесты + контракт [docs/CONTRACT-account-state-machine.md](./docs/CONTRACT-account-state-machine.md): таблица переходов, временные статусы, авто-возврат)_
+- ☑ **A** Контракт локов/lease: `lock(accountId,taskId)`, `lease(channelId,botId,ttl)`, приоритет прогрева. §3.9, §4 _(код `accountLocks.js`/`channelLease.js` + контракт [docs/CONTRACT-locks-lease.md](./docs/CONTRACT-locks-lease.md): API, самолечение, инварианты)_
+- ◐ **A+B** Схема сущностей: `Profile/Account/Proxy/Task/Channel/Goal/KnowledgeBase/Lead` + граница «общий слой ↔ Telegram-специфика» (адаптер, §3.10). _(задокументированы Goal/KB/Lead ([ARCH-goals-crm](./docs/ARCH-goals-crm.md)) + Account-статусы + Lock/Lease; Proxy/Task/Channel + граница адаптера — далее)_
+- ☑ **A+B** Формат единого лога/аудита: `action, module, profile, initiator, time, reason/code, affectedScope`. §3.1, §5. _(код `server/lib/auditLog.js` + контракт [docs/CONTRACT-audit-log.md](./docs/CONTRACT-audit-log.md): формат записи, словари action/initiator, ротация, инвариант append-only)_
+- ☑ **B** Терминология: «Профиль/Аккаунт», «Логи» (не «История»), «Шаблоны поиска». §3.1/3.2/3.8. _(единый экран «Логи», «Шаблоны поиска» в парсере, глоссарий в CLAUDE.md)_
+- ☑ **A+B** Документ Goals/KB/Leads ([docs/ARCH-goals-crm.md](./docs/ARCH-goals-crm.md)). §3.6 (P0). _(схемы Goal/KB/Lead, воронка, связка `Task.goalId`+`goalContext`, открытые вопросы §6)_
 
 **DoD:** согласованы схемы и API-контракты — дальше дорожки идут параллельно без пересечения файлов.
 
