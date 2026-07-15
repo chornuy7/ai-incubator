@@ -29,10 +29,23 @@ export function createTaskStore(moduleKey, idPrefix) {
   }
 
   /** @param {object} task */
-  async function saveTask(task) {
+  /**
+   * @param {object} task
+   * @param {{ control?: boolean }} [opts] control:true — операция управления (resume и т.п.),
+   *   которой РАЗРЕШЕНО сбрасывать флаги stop/pause. Обычные сохранения воркера (прогресс,
+   *   логи) НЕ должны затирать выставленные извне stopRequested/pauseRequested (гонка §3.9).
+   */
+  async function saveTask(task, opts = {}) {
     await ensureDirs()
     task.updatedAt = Date.now()
     task.moduleKey = moduleKey
+    if (!opts.control) {
+      try {
+        const prev = JSON.parse(await fs.readFile(taskPath(task.id), 'utf8'))
+        if (prev.stopRequested) task.stopRequested = true
+        if (prev.pauseRequested) task.pauseRequested = true
+      } catch { /* нет файла — первая запись */ }
+    }
     await fs.writeFile(taskPath(task.id), JSON.stringify(task, null, 2), 'utf8')
   }
 

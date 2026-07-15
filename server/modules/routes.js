@@ -1,5 +1,5 @@
 import { Router } from 'express'
-import { getModuleStore, listModuleKeys, validateSettings, startModuleTask, stopModuleTask } from './registry.js'
+import { getModuleStore, listModuleKeys, validateSettings, startModuleTask, stopModuleTask, pauseModuleTask, resumeModuleTask } from './registry.js'
 import { releaseTaskLocks } from '../lib/accountLocks.js'
 import { assertAccountsAssignable } from '../accountsMeta.js'
 import { assertNoHotLeadConflict } from '../leads.js'
@@ -106,6 +106,32 @@ modulesRouter.post('/:moduleKey/tasks/:id/stop', async (req, res) => {
     }).catch(() => {})
     const store = getModuleStore(req.params.moduleKey)
     res.json({ ok: true, task: store.taskToDto(task) })
+  } catch (err) {
+    res.status(400).json({ ok: false, error: err instanceof Error ? err.message : 'Ошибка' })
+  }
+})
+
+// Пауза задачи (§3.9): воркер выходит, статус «paused», прогресс сохранён.
+modulesRouter.post('/:moduleKey/tasks/:id/pause', async (req, res) => {
+  try {
+    const task = await pauseModuleTask(req.params.moduleKey, req.params.id)
+    if (!task) return res.status(404).json({ ok: false, error: 'Задача не найдена' })
+    const { appendAudit } = await import('../lib/auditLog.js')
+    await appendAudit({ action: 'task.pause', module: req.params.moduleKey, initiator: req.body?.initiator || 'operator', scope: { taskId: req.params.id }, reason: 'Пауза задачи' }).catch(() => {})
+    res.json({ ok: true, task: getModuleStore(req.params.moduleKey).taskToDto(task) })
+  } catch (err) {
+    res.status(400).json({ ok: false, error: err instanceof Error ? err.message : 'Ошибка' })
+  }
+})
+
+// Продолжить приостановленную задачу (§3.9): перезахват локов + запуск с сохранённым прогрессом.
+modulesRouter.post('/:moduleKey/tasks/:id/resume', async (req, res) => {
+  try {
+    const task = await resumeModuleTask(req.params.moduleKey, req.params.id)
+    if (!task) return res.status(404).json({ ok: false, error: 'Задача не найдена' })
+    const { appendAudit } = await import('../lib/auditLog.js')
+    await appendAudit({ action: 'task.resume', module: req.params.moduleKey, initiator: req.body?.initiator || 'operator', scope: { taskId: req.params.id }, reason: 'Продолжение задачи' }).catch(() => {})
+    res.json({ ok: true, task: getModuleStore(req.params.moduleKey).taskToDto(task) })
   } catch (err) {
     res.status(400).json({ ok: false, error: err instanceof Error ? err.message : 'Ошибка' })
   }

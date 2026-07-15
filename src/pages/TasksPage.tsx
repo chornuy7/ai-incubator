@@ -1,9 +1,9 @@
 import { useEffect, useMemo, useState } from 'react'
-import { ListChecks, RefreshCw, Square, RotateCw, Target, Layers, Activity, Gauge } from 'lucide-react'
+import { ListChecks, RefreshCw, Square, RotateCw, Target, Layers, Activity, Gauge, Pause, Play } from 'lucide-react'
 import { useApp } from '@/mocks/store'
 import { PageHeader, Card, EmptyState, Badge, Select, Segmented } from '@/shared/ui'
 import { MODULES } from '@/shared/config/modules'
-import { fetchAllTasks, stopModuleTask, restartModuleTask, type ModuleTask } from '@/api/modulesApi'
+import { fetchAllTasks, stopModuleTask, restartModuleTask, pauseModuleTask, resumeModuleTask, type ModuleTask } from '@/api/modulesApi'
 import { fetchGoals, type Goal } from '@/api/goalsApi'
 
 const STATUS: Record<string, { label: string; tone: 'spark' | 'iris' | 'amber' | 'rose' | 'muted' }> = {
@@ -11,6 +11,7 @@ const STATUS: Record<string, { label: string; tone: 'spark' | 'iris' | 'amber' |
   queued: { label: 'В очереди', tone: 'iris' },
   done: { label: 'Готово', tone: 'muted' },
   stopped: { label: 'Остановлена', tone: 'amber' },
+  paused: { label: 'На паузе', tone: 'amber' },
   error: { label: 'Ошибка', tone: 'rose' },
 }
 const STATUS_KEYS = ['', 'running', 'queued', 'done', 'stopped', 'error']
@@ -63,6 +64,18 @@ export function TasksPage() {
     setBusy(t.id)
     try { await restartModuleTask(t.moduleKey, t.id); pushToast({ type: 'success', title: 'Задача перезапущена' }); await load() }
     catch (err) { pushToast({ type: 'error', title: 'Ошибка перезапуска', desc: err instanceof Error ? err.message : '' }) }
+    finally { setBusy(null) }
+  }
+  const doPause = async (t: ModuleTask) => {
+    setBusy(t.id)
+    try { await pauseModuleTask(t.moduleKey, t.id); pushToast({ type: 'success', title: 'Задача на паузе' }); await load() }
+    catch (err) { pushToast({ type: 'error', title: 'Ошибка', desc: err instanceof Error ? err.message : '' }) }
+    finally { setBusy(null) }
+  }
+  const doResume = async (t: ModuleTask) => {
+    setBusy(t.id)
+    try { await resumeModuleTask(t.moduleKey, t.id); pushToast({ type: 'success', title: 'Задача продолжена' }); await load() }
+    catch (err) { pushToast({ type: 'error', title: 'Ошибка продолжения', desc: err instanceof Error ? err.message : '' }) }
     finally { setBusy(null) }
   }
 
@@ -157,23 +170,24 @@ export function TasksPage() {
               <div className="h-1.5 overflow-hidden rounded bg-white/10"><div className="h-full rounded bg-iris-500 transition-all" style={{ width: `${g.prog}%` }} /></div>
               <div className="mt-1 text-[11px] text-white/40">Прогресс к цели: {g.prog}%</div>
               <div className="mt-2 flex flex-col gap-1.5">
-                {g.tasks.map((t) => <TaskRow key={`${t.moduleKey}:${t.id}`} t={t} goalName={null} busy={busy} onStop={doStop} onRestart={doRestart} compact />)}
+                {g.tasks.map((t) => <TaskRow key={`${t.moduleKey}:${t.id}`} t={t} goalName={null} busy={busy} onStop={doStop} onRestart={doRestart} onPause={doPause} onResume={doResume} compact />)}
               </div>
             </Card>
           ))}
         </div>
       ) : (
         <div className="flex flex-col gap-2">
-          {filtered.map((t) => <TaskRow key={`${t.moduleKey}:${t.id}`} t={t} goalName={goalName(t.goalId)} busy={busy} onStop={doStop} onRestart={doRestart} />)}
+          {filtered.map((t) => <TaskRow key={`${t.moduleKey}:${t.id}`} t={t} goalName={goalName(t.goalId)} busy={busy} onStop={doStop} onRestart={doRestart} onPause={doPause} onResume={doResume} />)}
         </div>
       )}
     </div>
   )
 }
 
-function TaskRow({ t, goalName, busy, onStop, onRestart, compact }: {
+function TaskRow({ t, goalName, busy, onStop, onRestart, onPause, onResume, compact }: {
   t: ModuleTask; goalName: string | null; busy: string | null
-  onStop: (t: ModuleTask) => void; onRestart: (t: ModuleTask) => void; compact?: boolean
+  onStop: (t: ModuleTask) => void; onRestart: (t: ModuleTask) => void
+  onPause: (t: ModuleTask) => void; onResume: (t: ModuleTask) => void; compact?: boolean
 }) {
   const st = STATUS[t.status] || { label: t.status, tone: 'muted' as const }
   const p = pct(t)
@@ -187,6 +201,8 @@ function TaskRow({ t, goalName, busy, onStop, onRestart, compact }: {
           <span className="font-mono text-xs text-white/30">{t.id}</span>
         </div>
         <div className="flex items-center gap-1">
+          {running && <button onClick={() => onPause(t)} disabled={busy === t.id} className="btn-icon h-8 w-8" aria-label="Пауза" title="Пауза"><Pause size={13} /></button>}
+          {t.status === 'paused' && <button onClick={() => onResume(t)} disabled={busy === t.id} className="btn-icon h-8 w-8 text-spark-400" aria-label="Продолжить" title="Продолжить"><Play size={13} /></button>}
           {running && <button onClick={() => onStop(t)} disabled={busy === t.id} className="btn-icon h-8 w-8" aria-label="Остановить"><Square size={13} /></button>}
           <button onClick={() => onRestart(t)} disabled={busy === t.id} className="btn-icon h-8 w-8" aria-label="Перезапустить"><RotateCw size={14} /></button>
         </div>

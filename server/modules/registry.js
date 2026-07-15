@@ -1,5 +1,5 @@
 import { createTaskStore } from '../lib/taskStore.js'
-import { WORKERS, startWorker, stopWorker } from './workers.js'
+import { WORKERS, startWorker, stopWorker, pauseWorker } from './workers.js'
 import { tryAcquireLocks } from '../lib/accountLocks.js'
 
 /** @type {Record<string, ReturnType<typeof createTaskStore>>} */
@@ -95,6 +95,30 @@ export async function stopModuleTask(moduleKey, taskId) {
   const store = getModuleStore(moduleKey)
   if (!store) return null
   return stopWorker(taskId, store)
+}
+
+/** Пауза задачи (§3.9): воркер выйдет, статус станет «paused», прогресс сохранён. */
+export async function pauseModuleTask(moduleKey, taskId) {
+  const store = getModuleStore(moduleKey)
+  if (!store) return null
+  return pauseWorker(taskId, store)
+}
+
+/** Продолжить приостановленную задачу: перезахват локов + запуск воркера с сохранённым прогрессом. */
+export async function resumeModuleTask(moduleKey, taskId) {
+  const store = getModuleStore(moduleKey)
+  if (!store) return null
+  const task = await store.loadTask(taskId)
+  if (!task) return null
+  if (task.status !== 'paused') return task
+  const lockErr = tryAcquireLocks(task.settings?.accountIds || [], moduleKey, task.id)
+  if (lockErr) throw new Error(lockErr)
+  task.pauseRequested = false
+  task.stopRequested = false
+  task.status = 'running'
+  await store.saveTask(task, { control: true }) // разрешаем сбросить флаги паузы
+  startWorker(task.id, store, getWorker(moduleKey))
+  return task
 }
 
 export function listModuleKeys() {

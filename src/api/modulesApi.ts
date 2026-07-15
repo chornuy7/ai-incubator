@@ -84,7 +84,7 @@ export interface ModuleTaskProgress {
 export interface ModuleTask {
   id: string
   moduleKey: string
-  status: 'queued' | 'running' | 'stopped' | 'done' | 'error'
+  status: 'queued' | 'running' | 'stopped' | 'done' | 'error' | 'paused'
   initiator?: string | null
   goalId?: string | null
   createdAt: number
@@ -122,6 +122,16 @@ export async function stopModuleTask(moduleKey: string, taskId: string): Promise
 
 export async function restartModuleTask(moduleKey: string, taskId: string): Promise<ModuleTask> {
   const data = await apiPost<{ task: ModuleTask }>(`${base(moduleKey)}/tasks/${taskId}/restart`)
+  return data.task
+}
+
+export async function pauseModuleTask(moduleKey: string, taskId: string): Promise<ModuleTask> {
+  const data = await apiPost<{ task: ModuleTask }>(`${base(moduleKey)}/tasks/${taskId}/pause`)
+  return data.task
+}
+
+export async function resumeModuleTask(moduleKey: string, taskId: string): Promise<ModuleTask> {
+  const data = await apiPost<{ task: ModuleTask }>(`${base(moduleKey)}/tasks/${taskId}/resume`)
   return data.task
 }
 

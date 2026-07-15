@@ -73,6 +73,24 @@ export async function stopWorker(taskId, store) {
   return task
 }
 
+/**
+ * Пауза (§3.9): воркер выйдет из цикла как при стопе, но задача останется «paused»
+ * (прогресс сохранён) — можно продолжить с /resume. @param {string} taskId @param {object} store
+ */
+export async function pauseWorker(taskId, store) {
+  const task = await store.loadTask(taskId)
+  if (!task) return null
+  if (task.status !== 'running' && task.status !== 'queued') return task
+  task.pauseRequested = true
+  await store.saveTask(task)
+  return task
+}
+
+/** Итоговый статус воркера: пауза важнее стопа, стоп важнее «готово». @param {object} task */
+export function statusAfterRun(task) {
+  return task.pauseRequested ? 'paused' : task.stopRequested ? 'stopped' : 'done'
+}
+
 async function finalizeAccounts(accountIds, taskId) {
   if (taskId) releaseTaskLocks(taskId)
   for (const id of accountIds) {
@@ -128,7 +146,7 @@ export async function runNeuroCommenting(task, store) {
   const accountIds = s.accountIds || []
 
   try {
-    while (!task.stopRequested && !totalLimitReached(s, task)) {
+    while (!task.stopRequested && !task.pauseRequested && !totalLimitReached(s, task)) {
       if (idleLap >= accountIds.length) {
         await store.appendLog(task, 'info', 'Все аккаунты исчерпали лимиты на эту задачу — завершаем')
         break
@@ -243,7 +261,7 @@ export async function runNeuroCommenting(task, store) {
       await store.saveTask(task)
       await sleep(pickDelay(5, 15, mul) * 1000)
     }
-    task.status = task.stopRequested ? 'stopped' : 'done'
+    task.status = statusAfterRun(task)
     await store.appendLog(task, 'info', task.status === 'done' ? 'Завершено' : 'Остановлено')
   } catch (err) {
     task.status = 'error'
@@ -271,7 +289,7 @@ export async function runNeuroChatting(task, store) {
   const accountIds = s.accountIds || []
 
   try {
-    while (!task.stopRequested && !totalLimitReached(s, task)) {
+    while (!task.stopRequested && !task.pauseRequested && !totalLimitReached(s, task)) {
       if (idleLap >= accountIds.length) {
         await store.appendLog(task, 'info', 'Все аккаунты исчерпали лимиты на эту задачу — завершаем')
         break
@@ -337,7 +355,7 @@ export async function runNeuroChatting(task, store) {
       await store.saveTask(task)
       await sleep(pickDelay(5, 15, mul) * 1000)
     }
-    task.status = task.stopRequested ? 'stopped' : 'done'
+    task.status = statusAfterRun(task)
     await store.appendLog(task, 'info', 'Завершено')
   } catch (err) {
     task.status = 'error'
@@ -364,7 +382,7 @@ export async function runMassReact(task, store) {
   const accountIds = s.accountIds || []
 
   try {
-    while (!task.stopRequested && !totalLimitReached(s, task)) {
+    while (!task.stopRequested && !task.pauseRequested && !totalLimitReached(s, task)) {
       if (idleLap >= accountIds.length) {
         await store.appendLog(task, 'info', 'Все аккаунты исчерпали лимиты на эту задачу — завершаем')
         break
@@ -436,7 +454,7 @@ export async function runMassReact(task, store) {
       task = (await store.loadTask(task.id)) || task
       await sleep(pickDelay(5, 15, mul) * 1000)
     }
-    task.status = task.stopRequested ? 'stopped' : 'done'
+    task.status = statusAfterRun(task)
     await store.appendLog(task, 'info', 'Завершено')
   } catch (err) {
     task.status = 'error'
@@ -461,7 +479,7 @@ export async function runMassLooking(task, store) {
   const postsCount = Math.min(Math.max(Math.trunc(Number(s.lookPostsCount) || 0) || 3, 1), 50)
 
   try {
-    while (!task.stopRequested && !totalLimitReached(s, task)) {
+    while (!task.stopRequested && !task.pauseRequested && !totalLimitReached(s, task)) {
       if (idleLap >= accountIds.length) {
         await store.appendLog(task, 'info', 'Все аккаунты исчерпали лимиты на эту задачу — завершаем')
         break
@@ -515,7 +533,7 @@ export async function runMassLooking(task, store) {
       task = (await store.loadTask(task.id)) || task
       await sleep(pickDelay(10, 30, mul) * 1000)
     }
-    task.status = task.stopRequested ? 'stopped' : 'done'
+    task.status = statusAfterRun(task)
     await store.appendLog(task, 'info', 'Завершено')
   } catch (err) {
     task.status = 'error'
@@ -543,7 +561,7 @@ export async function runWarming(task, store) {
   let idleLap = 0
 
   try {
-    while (!task.stopRequested && !totalLimitReached(s, task)) {
+    while (!task.stopRequested && !task.pauseRequested && !totalLimitReached(s, task)) {
       if (idleLap >= accountIds.length) {
         await store.appendLog(task, 'info', 'Нет доступных аккаунтов для прогрева — завершаем')
         break
@@ -579,7 +597,7 @@ export async function runWarming(task, store) {
       task = (await store.loadTask(task.id)) || task
       await sleep(pickDelay(30, 90, mul) * 1000)
     }
-    task.status = task.stopRequested ? 'stopped' : 'done'
+    task.status = statusAfterRun(task)
     await store.appendLog(task, 'info', 'Прогрев завершён')
   } catch (err) {
     task.status = 'error'
@@ -646,7 +664,7 @@ export async function runNeuroDialogs(task, store) {
   const answeredUpTo = new Map()
 
   try {
-    while (!task.stopRequested && !totalLimitReached(s, task)) {
+    while (!task.stopRequested && !task.pauseRequested && !totalLimitReached(s, task)) {
       // Полный круг из пропусков (лимиты выбраны, аккаунты в карантине) — не крутим цикл вхолостую.
       if (skips >= accountIds.length) {
         skips = 0
@@ -723,7 +741,7 @@ export async function runNeuroDialogs(task, store) {
       task = (await store.loadTask(task.id)) || task
       await sleep(pickDelay(10, 25, mul) * 1000)
     }
-    task.status = task.stopRequested ? 'stopped' : 'done'
+    task.status = statusAfterRun(task)
     await store.appendLog(task, 'info', task.status === 'stopped' ? 'Остановлено' : 'Завершено')
   } catch (err) {
     task.status = 'error'
@@ -760,7 +778,7 @@ export async function runGgr(task, store) {
 
   try {
     for (const accountId of allIds) {
-      if (task.stopRequested) break
+      if (task.stopRequested || task.pauseRequested) break
       const meta = await getAccountMeta(accountId)
 
       // Аккаунт, занятый другой задачей, не трогаем: параллельный коннект той же сессией
@@ -803,7 +821,7 @@ export async function runGgr(task, store) {
       task.progress.done = task.progress.actionsDone
       await store.saveTask(task)
     }
-    task.status = task.stopRequested ? 'stopped' : 'done'
+    task.status = statusAfterRun(task)
     const valid = task.results.filter((r) => r.status === 'valid').length
     await store.appendLog(task, 'info', `Проверено ${task.results.length} аккаунтов · валидных ${valid}`)
   } catch (err) {
@@ -887,7 +905,7 @@ export async function runChannelParser(task, store, kind) {
   try {
     for (const { q, kwIdx } of queries) {
       // В AND-режиме нельзя рано выходить по лимиту — нужно просканировать все ключи для пересечения.
-      if (task.stopRequested || (!andMode && task.results.length >= limit)) break
+      if (task.stopRequested || task.pauseRequested || (!andMode && task.results.length >= limit)) break
 
       const accountId = await nextAccountId()
       if (!accountId) {
@@ -901,7 +919,7 @@ export async function runChannelParser(task, store, kind) {
         const found = await searchPublicDetailed(client, q, 50)
         let added = 0
         for (const c of found) {
-          if (task.stopRequested || (!andMode && task.results.length >= limit)) break
+          if (task.stopRequested || task.pauseRequested || (!andMode && task.results.length >= limit)) break
 
           // тип: канал vs группа
           if (wantGroups) { if (c.isBroadcast && !c.isMegagroup) continue }
@@ -975,7 +993,7 @@ export async function runChannelParser(task, store, kind) {
     task.progress.total = task.results.length
     task.progress.done = task.results.length
     task.progress.actionsDone = task.results.length
-    task.status = task.stopRequested ? 'stopped' : 'done'
+    task.status = statusAfterRun(task)
     // §3.8/§4: найденные каналы — в общую базу одним батчем (дедуп, без потери данных).
     try { const n = await upsertMany(baseChannels, `parse:${task.id}`); if (n) await store.appendLog(task, 'info', `В базу каналов: ${n}`) } catch { /* ignore */ }
     await store.appendLog(task, 'info', `Готово · найдено ${task.results.length} ${unitLabel}`)
@@ -1216,7 +1234,7 @@ export async function runParticipantsParser(task, store, kind) {
     task.progress.total = tgs.length
     task.progress.actionsDone = processed
     task.progress.done = processed
-    task.status = task.stopRequested ? 'stopped' : 'done'
+    task.status = statusAfterRun(task)
     await store.appendLog(task, 'info', `Готово · обработано ${processed}/${tgs.length} групп · найдено ${task.results.length} пользователей`)
   } catch (err) {
     task.status = 'error'
