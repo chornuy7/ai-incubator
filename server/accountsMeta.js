@@ -134,11 +134,21 @@ export async function deleteAccountMeta(accountId) {
 
 export function countryFromPhone(phone) {
   const p = (phone || '').replace(/\D/g, '')
+  // GEO-модель Европа+Украина/СНГ (§8.3). Порядок важен: длинные префиксы — раньше.
   if (p.startsWith('380')) return 'ua'
+  if (p.startsWith('420')) return 'cz'
+  if (p.startsWith('77') || p.startsWith('76')) return 'kz' // Казахстан — до кода России (7)
   if (p.startsWith('7')) return 'ru'
   if (p.startsWith('48')) return 'pl'
   if (p.startsWith('49')) return 'de'
-  if (p.startsWith('77') || p.startsWith('76')) return 'kz'
+  if (p.startsWith('44')) return 'gb'
+  if (p.startsWith('33')) return 'fr'
+  if (p.startsWith('34')) return 'es'
+  if (p.startsWith('39')) return 'it'
+  if (p.startsWith('31')) return 'nl'
+  if (p.startsWith('40')) return 'ro'
+  if (p.startsWith('370')) return 'lt'
+  if (p.startsWith('371')) return 'lv'
   return 'ua'
 }
 

@@ -5,11 +5,9 @@ import {
 import { useApp, activeAccounts } from '@/mocks/store'
 import { Avatar, Select } from '@/shared/ui'
 import { cn } from '@/shared/lib/utils'
-import { ROLES, COUNTRIES_FILTER } from '@/shared/config/modules'
+import { ROLES } from '@/shared/config/modules'
+import { COUNTRIES_FILTER, matchesGeo, FLAGS, COUNTRY_NAME } from '@/shared/config/geo'
 import type { TgAccount } from '@/shared/types'
-
-const FLAGS: Record<string, string> = { ua: '🇺🇦', ru: '🇷🇺', kz: '🇰🇿', pl: '🇵🇱', de: '🇩🇪' }
-const COUNTRY_NAME: Record<string, string> = { ua: 'UA', ru: 'RU', kz: 'KZ', pl: 'PL', de: 'DE' }
 
 /** Аккаунт «в работе»: заблокирован задачей (lock) или в статусе working — выбирать нельзя. */
 const isBusy = (a: TgAccount) => !!a.busyIn || a.status === 'working'
@@ -51,7 +49,7 @@ export function AccountPicker({
     () => accounts.filter((a) => {
       if (selected.has(a.id)) return false
       if (role !== 'Все роли' && a.role !== role) return false
-      if (country !== 'all' && a.country !== country) return false
+      if (!matchesGeo(a.country, country)) return false
       if (workingProxies && a.proxy === '—') return false
       if (hideWorking && (a.status === 'working' || a.busyIn)) return false
       if (query && !`${a.name} ${a.username} ${a.phone}`.toLowerCase().includes(query.toLowerCase())) return false
@@ -69,7 +67,7 @@ export function AccountPicker({
     return accounts.filter((a) => {
       if (selected.has(a.id)) return false
       if (role !== 'Все роли' && a.role !== role) return false
-      if (country !== 'all' && a.country !== country) return false
+      if (!matchesGeo(a.country, country)) return false
       if (hideWorking && (a.status === 'working' || a.busyIn)) return false
       if (query && !`${a.name} ${a.username} ${a.phone}`.toLowerCase().includes(query.toLowerCase())) return false
       return a.proxy === '—'

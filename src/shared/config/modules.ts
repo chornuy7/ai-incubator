@@ -598,13 +598,8 @@ export const MODULES: Record<string, ModuleConfig> = {
 }
 
 export const ROLES = ['Все роли', 'Чаттинг', 'Комментинг', 'Парсинг', 'Реакции', 'Резерв']
-export const COUNTRIES_FILTER = [
-  { code: 'all', flag: '', label: 'Все страны' },
-  { code: 'ua', flag: '🇺🇦', label: 'Украина' },
-  { code: 'ru', flag: '🇷🇺', label: 'Россия' },
-  { code: 'kz', flag: '🇰🇿', label: 'Казахстан' },
-  { code: 'pl', flag: '🇵🇱', label: 'Польша' },
-]
+// GEO-модель (§8.3) вынесена в ./geo — регионы Европа+Украина/СНГ. Ре-экспорт для совместимости.
+export { COUNTRIES_FILTER, matchesGeo, FLAGS as GEO_FLAGS, COUNTRY_NAME as GEO_NAMES } from './geo'
 export const LANGUAGES = [
   { code: 'en', flag: '🇬🇧', label: 'English' },
   { code: 'ru', flag: '🇷🇺', label: 'Русский' },

@@ -15,7 +15,8 @@ import { AccountManagementModal } from '@/features/account-manager/AccountManage
 import { AiSafetyModal } from '@/features/modules/shared'
 import { PaywallLock } from '@/features/paywall/Paywall'
 import { cn } from '@/shared/lib/utils'
-import { ROLES, COUNTRIES_FILTER } from '@/shared/config/modules'
+import { ROLES } from '@/shared/config/modules'
+import { COUNTRIES_FILTER, matchesGeo } from '@/shared/config/geo'
 import type { AccountStatus, TgAccount } from '@/shared/types'
 import { patchAccount, releaseAccountLock, setAccountStatusManual } from '@/api/accountsApi'
 
@@ -96,7 +97,7 @@ export function AccountsPage() {
     const list = source.filter((a) => {
       if (tab === 'accounts' && statusFilter !== 'all' && a.status !== statusFilter) return false
       if (roleFilter !== 'Все роли' && a.role !== roleFilter) return false
-      if (countryFilter !== 'all' && a.country !== countryFilter) return false
+      if (!matchesGeo(a.country, countryFilter)) return false
       if (tab === 'accounts' && moduleFilter !== 'all') {
         if (moduleFilter === 'idle') { if (a.busyIn) return false }
         else if (a.busyIn?.moduleKey !== moduleFilter) return false
