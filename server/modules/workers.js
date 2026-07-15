@@ -582,15 +582,44 @@ export async function runWarming(task, store) {
       try {
         ;({ client } = await connectAccount(accountId, task.id))
         // §8.2: тип действия выбирается по пропорции уровня (view/react/read/join/ping).
-        // Пока маппится на безопасные операции (чтение/просмотр/keepalive); реальные
-        // реакции/вступления — на live-прогоне (см. Help Center «Политика прогрева»).
+        // Реальные реакции/вступления выполняются под суточными лимитами §6 (при достижении
+        // потолка действие деградирует в безопасный просмотр). Бизнес-логика — Help Center «Политика прогрева».
         const kind = pickWeightedKey(pace.weights)
-        if (kind === 'read') {
+        const warmQuery = () => ['news', 'music', 'tech', 'crypto', 'sport', 'movies'][Math.floor(Math.random() * 6)]
+        if (kind === 'react' && !(await limitReached(accountId, 'reactions'))) {
+          const chats = await searchPublic(client, warmQuery(), 6)
+          const target = chats[Math.floor(Math.random() * chats.length)]
+          let reacted = false
+          if (target) {
+            try {
+              const posts = await fetchPosts(client, target, 5)
+              const post = posts[Math.floor(Math.random() * posts.length)]
+              if (post) {
+                const emoji = ['👍', '❤️', '🔥', '👏'][Math.floor(Math.random() * 4)]
+                await sendReaction(client, target, post.id, emoji)
+                await incAction(accountId, 'reactions')
+                await store.appendLog(task, 'success', `Прогрев: реакция ${emoji} в «${target.title || target.username || 'канал'}»`, meta.name)
+                reacted = true
+              }
+            } catch { /* канал без реакций/приватный — деградируем в просмотр */ }
+          }
+          if (!reacted) await store.appendLog(task, 'info', 'Прогрев: просмотр каналов · react→view', meta.name)
+        } else if (kind === 'join' && !(await limitReached(accountId, 'joins'))) {
+          const chats = await searchPublic(client, warmQuery(), 8)
+          const target = chats.find((c) => c.username)
+          let joined = false
+          if (target?.username) {
+            const m = await joinTargetOrSkip(client, target.username, (l, msg, a) => store.appendLog(task, l, msg, a), meta.name)
+            if (m?.status === 'joined') { await incAction(accountId, 'joins'); joined = true }
+            else if (m?.peer) joined = true // уже участник — тоже засчитываем заход
+          }
+          if (!joined) { await client.getMe(); await store.appendLog(task, 'info', 'Прогрев: keepalive · join→ping', meta.name) }
+        } else if (kind === 'read') {
           const ds = await fetchDialogs(client, 10)
           await store.appendLog(task, 'info', `Прогрев: чтение диалогов (${ds.length})`, meta.name)
-        } else if (kind === 'ping' || kind === 'join') {
+        } else if (kind === 'ping') {
           await client.getMe()
-          await store.appendLog(task, 'info', `Прогрев: keepalive · ${kind}`, meta.name)
+          await store.appendLog(task, 'info', 'Прогрев: keepalive · ping', meta.name)
         } else {
           const chats = await searchPublic(client, 'news', 5)
           await store.appendLog(task, 'info', `Прогрев: просмотр каналов (${chats.length}) · ${kind}`, meta.name)
