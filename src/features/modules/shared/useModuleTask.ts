@@ -27,6 +27,7 @@ export function useModuleTask(moduleKey: string) {
   const [starting, setStarting] = useState(false)
   const [restoring, setRestoring] = useState(true)
   const [presets, setPresets] = useState<ModulePreset[]>([])
+  const [justStarted, setJustStarted] = useState<ModuleTask | null>(null) // для поп-апа «задача запущена»
 
   const running = task?.status === 'running' || task?.status === 'queued'
 
@@ -116,7 +117,7 @@ export function useModuleTask(moduleKey: string) {
         accountsCount: settings.accountIds.length,
         logCount: 0,
       })
-      pushToast({ type: 'success', title: 'Задача запущена', desc: t.id })
+      setJustStarted(t) // показать поп-ап со ссылкой в Дашборд задач (там прогресс/логи/управление)
       void loadAccountBusy()
       return true
     } catch (e) {
@@ -160,5 +161,5 @@ export function useModuleTask(moduleKey: string) {
     }
   }, [moduleKey, presets, pushToast])
 
-  return { task, taskId, running, starting, restoring, start, stop, savePreset, deletePreset, presets, pushToast, guardNet }
+  return { task, taskId, running, starting, restoring, start, stop, savePreset, deletePreset, presets, pushToast, guardNet, justStarted, dismissJustStarted: () => setJustStarted(null) }
 }

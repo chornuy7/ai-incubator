@@ -27,6 +27,7 @@ import {
   ProtectionBlock,
   AiGenerationNotice,
   TimingSection,
+  TaskStartedModal,
   type DelaysShape,
 } from '@/features/modules/shared'
 import type { ModuleTaskSettings } from '@/api/modulesApi'
@@ -105,7 +106,7 @@ const MessageBubble = memo(function MessageBubble({ m }: { m: DialogMessage }) {
 
 export function NeuroDialogsModule() {
   const pushToast = useApp((s) => s.pushToast)
-  const { task, running, starting, start, stop, savePreset, deletePreset, presets } = useModuleTask('neuro-dialogs')
+  const { task, running, starting, start, stop, savePreset, deletePreset, presets, justStarted, dismissJustStarted } = useModuleTask('neuro-dialogs')
 
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [viewTab, setViewTab] = useState(0)
@@ -300,6 +301,7 @@ export function NeuroDialogsModule() {
 
   return (
     <div className="space-y-4">
+      <TaskStartedModal task={justStarted} moduleTitle={cfg.title} onClose={dismissJustStarted} />
       <AccountPicker
         selected={selected}
         onChange={setSelected}

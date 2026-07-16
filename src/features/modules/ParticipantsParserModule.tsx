@@ -10,7 +10,7 @@ import { Switch, Select, Segmented, Badge, EmptyState, Modal } from '@/shared/ui
 import { LogsPanel } from '@/widgets/LogsPanel'
 import { AccountPicker } from '@/features/account-picker/AccountPicker'
 import { useModuleTask } from './shared/useModuleTask'
-import { SectionCard, NumberField, ProtectionBlock, LaunchPanel } from './shared'
+import { SectionCard, NumberField, ProtectionBlock, LaunchPanel, TaskStartedModal } from './shared'
 import { cn } from '@/shared/lib/utils'
 import { downloadXls } from '@/shared/lib/exportXls'
 import { SaveToFolderModal } from './shared/FolderPicker'
@@ -57,7 +57,7 @@ function Inner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: string }) {
   const P = cfg.participants!
   const accounts = activeAccounts(useApp((s) => s.data))
   const pushToast = useApp((s) => s.pushToast)
-  const { task, running, starting, start, stop, savePreset, deletePreset, presets } = useModuleTask(moduleKey)
+  const { task, running, starting, start, stop, savePreset, deletePreset, presets, justStarted, dismissJustStarted } = useModuleTask(moduleKey)
 
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [aiProtect, setAiProtect] = useState(false)
@@ -187,6 +187,7 @@ function Inner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: string }) {
 
   return (
     <div className="space-y-4">
+      <TaskStartedModal task={justStarted} moduleTitle={cfg.title} onClose={dismissJustStarted} />
       <AccountPicker selected={selected} onChange={setSelected} actions={cfg.accountActions} withFilters={!!cfg.accountFilters} selectedTitle={cfg.selectedTitle ?? 'Выбрано для парсинга'} />
 
       <SectionCard icon={<Settings2 size={18} />} title="Настройки парсинга" badge={targetList.length ? `${targetList.length} целей` : undefined}>

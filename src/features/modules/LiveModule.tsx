@@ -13,7 +13,7 @@ import { useModuleTask } from './shared/useModuleTask'
 import {
   SectionCard, NumberField,
   ProtectionBlock, TargetsEditor, LaunchPanel, PromptCards, loadPromptBodies, AiGenerationNotice,
-  FolderPicker, BlacklistEditor, GlobalPromptEditor, TimingSection, SaveToFolderModal,
+  FolderPicker, BlacklistEditor, GlobalPromptEditor, TimingSection, SaveToFolderModal, TaskStartedModal,
 } from './shared'
 import type { ModuleTaskSettings } from '@/api/modulesApi'
 
@@ -46,7 +46,7 @@ export function LiveModule({ moduleKey }: { moduleKey: string }) {
 
 function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: string }) {
   const accounts = activeAccounts(useApp((s) => s.data))
-  const { task, running, starting, start, stop, savePreset, deletePreset, presets, pushToast } = useModuleTask(moduleKey)
+  const { task, running, starting, start, stop, savePreset, deletePreset, presets, pushToast, justStarted, dismissJustStarted } = useModuleTask(moduleKey)
 
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [toggles, setToggles] = useState<Record<number, number>>({})
@@ -270,6 +270,7 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
 
   return (
     <div className="space-y-4">
+      <TaskStartedModal task={justStarted} moduleTitle={cfg.title} onClose={dismissJustStarted} />
       <SaveToFolderModal open={folderSave !== null} onClose={() => setFolderSave(null)} targets={folderSave ?? []} />
       {cfg.accountPicker && (
         <AccountPicker selected={selected} onChange={setSelected} actions={cfg.accountActions} withFilters={!!cfg.accountFilters} selectedTitle={cfg.selectedTitle ?? 'Выбрано'} />

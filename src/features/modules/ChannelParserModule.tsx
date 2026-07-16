@@ -10,7 +10,7 @@ import { Segmented, Switch, Badge, Select, EmptyState } from '@/shared/ui'
 import { LogsPanel } from '@/widgets/LogsPanel'
 import { AccountPicker } from '@/features/account-picker/AccountPicker'
 import { useModuleTask } from './shared/useModuleTask'
-import { SectionCard, NumberField, ProtectionBlock, DelayFields, LaunchPanel } from './shared'
+import { SectionCard, NumberField, ProtectionBlock, DelayFields, LaunchPanel, TaskStartedModal } from './shared'
 import { cn } from '@/shared/lib/utils'
 import { downloadXls } from '@/shared/lib/exportXls'
 import { SaveToFolderModal } from './shared/FolderPicker'
@@ -89,7 +89,7 @@ export function ChannelParserModule({ moduleKey }: { moduleKey: string }) {
 function ChannelParserInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: string }) {
   const accounts = activeAccounts(useApp((s) => s.data))
   const pushToast = useApp((s) => s.pushToast)
-  const { task, running, starting, start, stop, savePreset, deletePreset, presets } = useModuleTask(moduleKey)
+  const { task, running, starting, start, stop, savePreset, deletePreset, presets, justStarted, dismissJustStarted } = useModuleTask(moduleKey)
 
   const isGroups = moduleKey === 'parsing-groups'
   const resultLabel = cfg.resultLabel ?? (isGroups ? 'ГРУППА' : 'КАНАЛ')
@@ -287,6 +287,7 @@ function ChannelParserInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: 
 
   return (
     <div className="space-y-4">
+      <TaskStartedModal task={justStarted} moduleTitle={cfg.title} onClose={dismissJustStarted} />
       {/* Выбор аккаунтов */}
       <AccountPicker selected={selected} onChange={setSelected} actions={cfg.accountActions} withFilters={!!cfg.accountFilters} selectedTitle={cfg.selectedTitle ?? 'Выбрано для парсинга'} />
 

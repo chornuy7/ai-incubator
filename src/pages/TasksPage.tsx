@@ -102,6 +102,22 @@ export function TasksPage() {
     return () => clearInterval(id)
   }, [])
 
+  // Глубокая ссылка из поп-апа запуска: /panel/tasks?task=<id> — авто-открыть детали задачи (единожды).
+  const [autoOpened, setAutoOpened] = useState(false)
+  useEffect(() => {
+    if (autoOpened || loading) return
+    const wanted = new URLSearchParams(window.location.search).get('task')
+    if (!wanted) { setAutoOpened(true); return }
+    const found = tasks.find((t) => t.id === wanted)
+    if (found) { setDetailTask(found); setAutoOpened(true) }
+  }, [tasks, loading, autoOpened])
+
+  // Детали должны обновляться из опроса (логи «живые»), а не застывать на моменте клика.
+  const liveDetail = useMemo(
+    () => (detailTask ? tasks.find((t) => t.id === detailTask.id && t.moduleKey === detailTask.moduleKey) ?? detailTask : null),
+    [detailTask, tasks],
+  )
+
   const doStop = async (t: ModuleTask) => {
     setBusy(t.id)
     try { await stopModuleTask(t.moduleKey, t.id); pushToast({ type: 'success', title: 'Задача остановлена' }); await load() }
@@ -271,8 +287,8 @@ export function TasksPage() {
         </div>
       )}
       <TaskDetailModal
-        t={detailTask}
-        goalName={detailTask ? goalName(detailTask.goalId) : null}
+        t={liveDetail}
+        goalName={liveDetail ? goalName(liveDetail.goalId) : null}
         busy={busy}
         onClose={() => setDetailTask(null)}
         onStop={doStop} onRestart={doRestart} onPause={doPause} onResume={doResume}
@@ -340,7 +356,7 @@ function TaskDetailModal({ t, goalName, busy, onClose, onStop, onRestart, onPaus
   const st = STATUS[t.status] || { label: t.status, tone: 'muted' as const }
   const p = pct(t)
   const s = t.settings || {}
-  const logs = (t.logs || []).slice(0, 15)
+  const logs = (t.logs || []).slice(0, 80)
   const results = t.results || t.commentHistory || []
   return (
     <Modal open={!!t} onClose={onClose} size="lg" title={`Задача · ${moduleTitle(t.moduleKey)}`} subtitle={t.id}
@@ -375,7 +391,7 @@ function TaskDetailModal({ t, goalName, busy, onClose, onStop, onRestart, onPaus
           {logs.length === 0 ? (
             <div className="py-3 text-center text-xs text-white/40">Логов пока нет</div>
           ) : (
-            <div className="max-h-56 space-y-1 overflow-y-auto">
+            <div className="max-h-80 space-y-1 overflow-y-auto">
               {logs.map((l, i) => (
                 <div key={i} className="flex gap-2 text-xs">
                   <span className="shrink-0 text-white/30">{new Date(l.ts).toLocaleTimeString('ru-RU')}</span>
