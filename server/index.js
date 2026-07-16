@@ -301,6 +301,16 @@ try {
   console.warn('[trust] scheduler init failed:', err)
 }
 
+// §6 (прокси): авто-проверка живости прокси при старте + каждые 30 мин.
+try {
+  const { checkAllProxies } = await import('./proxies.js')
+  const runProxy = () => checkAllProxies().then((r) => r.length && console.log(`[proxy] проверено ${r.length}, живых ${r.filter((x) => x.status === 'ok').length}`)).catch((e) => console.warn('[proxy] check failed:', e?.message || e))
+  await runProxy()
+  setInterval(runProxy, 30 * 60 * 1000)
+} catch (err) {
+  console.warn('[proxy] scheduler init failed:', err)
+}
+
 // Авто-обновление статистики каналов (§3.9, решение 14.07: день / час-если-бот-в-группе).
 try {
   const { startChannelStatsScheduler } = await import('./channelStats.js')

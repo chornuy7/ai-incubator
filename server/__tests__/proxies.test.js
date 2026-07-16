@@ -48,3 +48,33 @@ test('CRUD прокси на изолированном файле', async () =>
 
   delete process.env.PROXIES_FILE
 })
+
+test('proxyUsageMap / sharedProxies: нарушение 1:1', async () => {
+  const { proxyUsageMap, sharedProxies } = await import('../proxies.js')
+  const meta = {
+    a1: { proxy: 'socks5://1.1.1.1:1080' },
+    a2: { proxy: 'socks5://1.1.1.1:1080' }, // тот же прокси → shared
+    a3: { proxy: 'socks5://2.2.2.2:1080' },
+    a4: { proxy: '—' }, // прямое подключение — игнор
+    a5: {},
+  }
+  const usage = proxyUsageMap(meta)
+  assert.deepEqual(usage['socks5://1.1.1.1:1080'].sort(), ['a1', 'a2'])
+  assert.equal(usage['socks5://2.2.2.2:1080'].length, 1)
+  const shared = sharedProxies(meta)
+  assert.equal(shared.length, 1)
+  assert.equal(shared[0].url, 'socks5://1.1.1.1:1080')
+  assert.deepEqual(shared[0].accountIds.sort(), ['a1', 'a2'])
+})
+
+test('tcpPing: живой порт → true, закрытый → false', async () => {
+  const net = await import('node:net')
+  const { tcpPing } = await import('../proxies.js')
+  const server = net.createServer()
+  await new Promise((r) => server.listen(0, '127.0.0.1', r))
+  const port = server.address().port
+  assert.equal(await tcpPing('127.0.0.1', port, 2000), true)
+  await new Promise((r) => server.close(r))
+  assert.equal(await tcpPing('127.0.0.1', port, 1500), false) // порт закрыт
+  assert.equal(await tcpPing('', 0), false)
+})
