@@ -291,6 +291,16 @@ try {
 
 await startScheduler().catch((err) => console.warn('[automation] scheduler init failed:', err))
 
+// §3.3: держим кэш trust свежим (без сети) — чтобы assignment-gate и список были актуальны.
+try {
+  const { refreshAllTrustCache } = await import('./accountStats.js')
+  const runTrust = () => refreshAllTrustCache().then((n) => n && console.log(`[trust] обновлён кэш trust: ${n} акк.`)).catch((e) => console.warn('[trust] refresh failed:', e?.message || e))
+  await runTrust()
+  setInterval(runTrust, 10 * 60 * 1000)
+} catch (err) {
+  console.warn('[trust] scheduler init failed:', err)
+}
+
 // Авто-обновление статистики каналов (§3.9, решение 14.07: день / час-если-бот-в-группе).
 try {
   const { startChannelStatsScheduler } = await import('./channelStats.js')

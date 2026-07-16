@@ -1,5 +1,5 @@
 /** Реальная статистика аккаунта для модалки «Управление аккаунтом». */
-import { getAccountMeta } from './accountsMeta.js'
+import { getAccountMeta, loadAllMeta } from './accountsMeta.js'
 import { loadSessionString, createClient } from './tgAuth.js'
 import { parseProxy } from './proxy.js'
 import { getAccountLock } from './lib/accountLocks.js'
@@ -183,6 +183,27 @@ function computeLongevity({ ageDays, sessionOk, profileComplete, actionCount, ha
  * @param {string} accountId
  * @param {{ spam?: boolean }} [opts]
  */
+/**
+ * Периодический пересчёт trust для ВСЕХ аккаунтов без сети (по мете + активности из логов).
+ * Держит кэш trust свежим, чтобы assignment-gate и список были актуальны без открытия карточек.
+ * @returns {Promise<number>} сколько аккаунтов обновлено
+ */
+export async function refreshAllTrustCache() {
+  const all = await loadAllMeta()
+  let n = 0
+  for (const [accountId, meta] of Object.entries(all)) {
+    if (!meta || meta.inTrash) continue
+    try {
+      const activity = await collectActivity(accountId, meta.name || '', 40)
+      const ageDays = meta.createdAt ? (Date.now() - meta.createdAt) / DAY : 0
+      const t = accountTrust({ activity, status: meta.status || 'active', ageDays, ggr: meta.ggr ?? null })
+      await setTrustCache(accountId, { score: t.score, band: t.band })
+      n += 1
+    } catch { /* пропускаем проблемный аккаунт */ }
+  }
+  return n
+}
+
 export async function buildAccountStats(accountId, opts = {}) {
   const meta = await getAccountMeta(accountId)
   const sessionStr = await loadSessionString(accountId)
