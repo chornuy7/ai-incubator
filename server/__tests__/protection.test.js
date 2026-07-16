@@ -1,0 +1,59 @@
+import { test } from 'node:test'
+import assert from 'node:assert/strict'
+import {
+  pickDelay, effectiveProbability, isAccountRunnable,
+  postMeetsMinWords, postMatchesKeywords, extractFloodSeconds, mapTelegramError,
+} from '../lib/protection.js'
+
+test('pickDelay: держится в пределах [lo, hi], пол 5с', () => {
+  for (let i = 0; i < 50; i++) {
+    const v = pickDelay(10, 20, 1)
+    assert.ok(v >= 10 && v <= 20)
+  }
+  // mul=0 → пол 5с
+  assert.equal(pickDelay(10, 20, 0), 5)
+  // to не задан → берём from
+  const v = pickDelay(8, undefined, 1)
+  assert.ok(v >= 8 && v <= 8)
+})
+
+test('effectiveProbability: ИИ-защита срезает вероятность по уровню', () => {
+  assert.equal(effectiveProbability(80, false, 0), 80) // без защиты — как есть
+  assert.equal(effectiveProbability(80, true, 0), 25) // консервативный ≤25
+  assert.equal(effectiveProbability(80, true, 1), 45) // сбалансированный ≤45
+  assert.equal(effectiveProbability(80, true, 2), 80) // агрессивный не режет
+  assert.equal(effectiveProbability(10, true, 0), 10) // ниже потолка — как есть
+})
+
+test('isAccountRunnable: рабочие vs заблокированные статусы', () => {
+  assert.equal(isAccountRunnable('active'), true)
+  assert.equal(isAccountRunnable('working'), true)
+  assert.equal(isAccountRunnable('warming'), true)
+  for (const s of ['quarantine', 'spamblock', 'invalid', 'frozen', 'reauth', 'floodwait', 'pause']) {
+    assert.equal(isAccountRunnable(s), false, s)
+  }
+})
+
+test('postMeetsMinWords / postMatchesKeywords', () => {
+  assert.equal(postMeetsMinWords('one two three', 0), true) // нет требования
+  assert.equal(postMeetsMinWords('one two', 3), false)
+  assert.equal(postMeetsMinWords('one two three', 3), true)
+  assert.equal(postMatchesKeywords('любой текст', []), true) // нет ключей → любой
+  assert.equal(postMatchesKeywords('Купить КРИПТУ дёшево', ['крипт']), true) // регистронезависимо
+  assert.equal(postMatchesKeywords('про погоду', ['крипт', 'акци']), false)
+})
+
+test('extractFloodSeconds: из seconds и из текста', () => {
+  assert.equal(extractFloodSeconds({ seconds: 42 }), 42)
+  assert.equal(extractFloodSeconds({ errorMessage: 'FLOOD_WAIT_30' }), 30)
+  assert.equal(extractFloodSeconds({ message: 'A wait of 15 seconds is required' }), 15)
+  assert.equal(extractFloodSeconds({}), 0)
+  assert.equal(extractFloodSeconds(null), 0)
+})
+
+test('mapTelegramError: понятные сообщения', () => {
+  assert.match(mapTelegramError({ errorMessage: 'PEER_NOT_FOUND' }), /Контакт не найден/)
+  assert.match(mapTelegramError({ message: 'NO_DISCUSSION' }), /обсуждения/)
+  assert.match(mapTelegramError({ errorMessage: 'CHANNEL_PRIVATE' }), /Приватный/)
+  assert.equal(mapTelegramError({}), 'Ошибка Telegram')
+})
