@@ -4,6 +4,7 @@ import { loadSessionString, createClient } from './tgAuth.js'
 import { parseProxy } from './proxy.js'
 import { getAccountLock } from './lib/accountLocks.js'
 import { accountTrust } from './lib/trustScore.js'
+import { setTrustCache } from './lib/trustCache.js'
 import { countryFromPhone } from './accountsMeta.js'
 import { Api } from 'telegram/tl/index.js'
 
@@ -240,6 +241,10 @@ export async function buildAccountStats(accountId, opts = {}) {
   const warmingDays = addedAt ? Math.max(0, Math.round(ageDays)) : 0
   const warmingActive = busyIn ? true : sessionOk
 
+  const trustResult = accountTrust({ activity, status: effectiveStatus, ageDays, ggr: meta.ggr ?? null })
+  // Кэшируем trust для дешёвых проверок (assignment-gate, список) — вне сети.
+  try { await setTrustCache(accountId, { score: trustResult.score, band: trustResult.band }) } catch { /* non-fatal */ }
+
   const health = computeHealth(sessionOk || (busyIn ? valid : false), proxy, effectiveStatus, activity)
   const longevity = computeLongevity({
     ageDays,
@@ -288,7 +293,7 @@ export async function buildAccountStats(accountId, opts = {}) {
     },
     health,
     longevity,
-    trust: accountTrust({ activity, status: effectiveStatus, ageDays, ggr: meta.ggr ?? null }),
+    trust: trustResult,
     activity,
     role: meta.role || null,
     note: meta.note || '',

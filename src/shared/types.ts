@@ -29,6 +29,8 @@ export interface TgAccount {
   lastSeen: string // "отлёжка"
   proxy: string
   ggr?: number // GramGPT Рейтинг 0..100
+  trustScore?: number // §3.3 кэш trust score 0..100
+  trustBand?: 'low' | 'mid' | 'high'
   tgSessionId?: string // id сессии на TG API сервере
   createdAt: number
   inTrash?: boolean

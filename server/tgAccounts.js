@@ -4,6 +4,7 @@ import { SESSIONS_DIR } from './config.js'
 import { loadAllMeta, getAccountMeta, setAccountMeta, deleteAccountMeta, countryFromPhone, avatarColor } from './accountsMeta.js'
 import { loadSessionString, createClient } from './tgAuth.js'
 import { getAccountLock } from './lib/accountLocks.js'
+import { getAllTrustCache } from './lib/trustCache.js'
 
 async function listSessionIds() {
   await fs.mkdir(SESSIONS_DIR, { recursive: true })
@@ -59,6 +60,7 @@ function toAccountDto(accountId, meta, me, sessionOk) {
 export async function tgListAccounts() {
   const ids = await listSessionIds()
   const accounts = []
+  const trustAll = await getAllTrustCache()
 
   for (const accountId of ids) {
     let meta = await getAccountMeta(accountId)
@@ -84,7 +86,10 @@ export async function tgListAccounts() {
       sessionOk = false
     }
 
-    accounts.push(toAccountDto(accountId, meta, me, sessionOk))
+    const dto = toAccountDto(accountId, meta, me, sessionOk)
+    const t = trustAll[accountId]
+    if (t) { dto.trustScore = t.score; dto.trustBand = t.band }
+    accounts.push(dto)
   }
 
   accounts.sort((a, b) => b.createdAt - a.createdAt)

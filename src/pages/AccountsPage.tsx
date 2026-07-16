@@ -569,6 +569,17 @@ function AccountsTable(props: {
                           <Loader2 size={11} className="animate-spin" /> В работе: {a.busyIn.moduleLabel}
                         </div>
                       )}
+                      {typeof a.trustScore === 'number' && a.trustBand !== 'high' && (
+                        <span
+                          className={cn('rounded-md px-1.5 py-0.5 text-[10px] font-bold',
+                            a.trustBand === 'low' ? 'bg-rose-500/15 text-rose-300' : 'bg-amber-500/15 text-amber-300')}
+                          title={a.trustBand === 'low'
+                            ? `Trust ${a.trustScore} (<40): в боевые модули не берётся — нужен прогрев (§6).`
+                            : `Trust ${a.trustScore} (40–70): только «Консервативный» уровень защиты (§6).`}
+                        >
+                          trust {a.trustScore}{a.trustBand === 'low' ? ' · прогрев' : ''}
+                        </span>
+                      )}
                       {(() => {
                         const d = props.dailyAll?.[a.id]
                         if (!d) return null

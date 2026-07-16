@@ -1393,6 +1393,8 @@ export async function runMailing(task, store) {
         await sleep(pickDelay(dm[0], dm[1], mul) * 1000)
         await client.sendMessage(user, { message: text })
         await incAction(account, 'dm') // §6: суточный лимит ЛС
+        // Не засоряем адресную книгу аккаунта импортированными номерами.
+        try { await client.invoke(new Api.contacts.DeleteContacts({ id: [user] })) } catch { /* не критично */ }
         perAccSent[account] = (perAccSent[account] || 0) + 1
         sent += 1
         task.accountStats[account] = task.accountStats[account] || { actions: 0, floodWaits: 0 }

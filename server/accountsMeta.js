@@ -3,6 +3,12 @@ import path from 'path'
 import { SESSIONS_DIR } from './config.js'
 import { buildStatusPatch, normalizeStatus, nextStatusAfterExpiry, canModuleUseAccount } from './lib/accountStatus.js'
 import { appendAudit } from './lib/auditLog.js'
+import { getTrustCache } from './lib/trustCache.js'
+
+// Боевые модули с реальными рискованными действиями — сюда не пускаем аккаунты с trust<40
+// (§6: авто-стоп → прогрев). Прогрев/парсинг/просмотр/автопостинг в своих каналах — не гейтим.
+const TRUST_GATED_MODULES = new Set(['neuro-commenting', 'neuro-chatting', 'neuro-dialogs', 'mass-react', 'mailing'])
+const TRUST_MIN = 40
 
 const META_FILE = path.join(path.dirname(SESSIONS_DIR), 'accounts-meta.json')
 
@@ -118,12 +124,21 @@ export async function assertAccountsAssignable(accountIds, moduleKey) {
   const all = await loadAllMeta()
   /** @type {string[]} */
   const blocked = []
+  /** @type {string[]} */
+  const lowTrust = []
+  const gated = TRUST_GATED_MODULES.has(moduleKey)
   for (const id of accountIds) {
     const status = normalizeStatus((all[id] || {}).status)
-    if (!canModuleUseAccount(moduleKey, status)) blocked.push(`${String(id).slice(-6)} (${status})`)
+    if (!canModuleUseAccount(moduleKey, status)) { blocked.push(`${String(id).slice(-6)} (${status})`); continue }
+    if (gated) {
+      // Кэшированный trust (fail-open: если ни разу не считался — не блокируем).
+      const t = await getTrustCache(id)
+      if (t && Number(t.score) < TRUST_MIN) lowTrust.push(`${String(id).slice(-6)} (trust ${t.score})`)
+    }
   }
-  if (!blocked.length) return null
-  return `Нельзя назначить профили в статусе, недоступном для модуля: ${blocked.join(', ')}. Дождитесь выхода из прогрева/карантина или выберите другие.`
+  if (blocked.length) return `Нельзя назначить профили в статусе, недоступном для модуля: ${blocked.join(', ')}. Дождитесь выхода из прогрева/карантина или выберите другие.`
+  if (lowTrust.length) return `Профили с trust<${TRUST_MIN} нельзя брать в боевой модуль (§6, авто-стоп → прогрев): ${lowTrust.join(', ')}. Отправьте их на прогрев или выберите другие.`
+  return null
 }
 
 export async function deleteAccountMeta(accountId) {
