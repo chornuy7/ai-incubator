@@ -508,15 +508,24 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
             </div>
           </div>
         )}
-        {goals.length > 0 && !running && (
+        {!running && (
           <div className="mb-3">
-            <label className="mb-1 block text-xs text-white/50"><Target size={11} className="mb-0.5 inline" /> Цель кампании (опционально)</label>
-            <Select
-              value={goalId}
-              onChange={setGoalId}
-              placeholder="Без цели"
-              options={[{ value: '', label: 'Без цели' }, ...goals.map((gg) => ({ value: gg.id, label: gg.name }))]}
-            />
+            <label className="mb-1 flex items-center justify-between text-xs text-white/50">
+              <span><Target size={11} className="mb-0.5 inline" /> Цель кампании (опционально)</span>
+              <a href="/panel/goals" className="font-semibold text-spark-300 hover:underline">+ Создать цель</a>
+            </label>
+            {goals.length > 0 ? (
+              <Select
+                value={goalId}
+                onChange={setGoalId}
+                placeholder="Без цели"
+                options={[{ value: '', label: 'Без цели' }, ...goals.map((gg) => ({ value: gg.id, label: gg.name }))]}
+              />
+            ) : (
+              <div className="rounded-xl border border-line bg-elevated/40 px-3 py-2 text-xs text-white/50">
+                Целей пока нет. Нажмите «<a href="/panel/goals" className="text-spark-300 hover:underline">Создать цель</a>», чтобы вести ботов к целевому действию — иначе кампания идёт без цели.
+              </div>
+            )}
           </div>
         )}
         <LaunchPanel
