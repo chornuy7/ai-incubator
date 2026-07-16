@@ -39,6 +39,7 @@ import { loadSessionString, createClient } from '../tgAuth.js'
 import { pickCommentCandidates, trackIdlePass, warmingPace, pickWeightedKey } from '../lib/workerLoop.js'
 import { limitReached, incAction } from '../lib/dailyActions.js'
 import { cleanMailingNumbers, pickMailingAccount } from '../lib/mailing.js'
+import { listLeads, sortDialogsByLeadPriority } from '../leads.js'
 import { parseTelegramPostLinks, resolvePostPeer } from '../lib/postLink.js'
 import { filterBlacklisted, isBlacklistedSync } from '../targetBlacklist.js'
 
@@ -743,11 +744,14 @@ export async function runNeuroDialogs(task, store) {
         // Авто-режим отвечает только на личные диалоги (ЛС) с людьми — каналы, группы и боты пропускаются.
         const personal = dialogs.filter((d) => d.entity?.className === 'User' && !d.entity?.bot)
         // «Только новые» — непрочитанные. «Всем, кто писал» — любой диалог, где последнее слово за собеседником.
-        const waiting = personal.filter((d) => {
+        const waitingRaw = personal.filter((d) => {
           if (!replyAll) return d.unread > 0
           if (d.lastOut || !d.lastMessageId) return false
           return (answeredUpTo.get(`${accountId}:${d.id}`) ?? 0) < d.lastMessageId
         })
+        // §3.6: приоритет ответившему — отвечаем сначала горячим/ответившим лидам (CRM).
+        const leadsForPrio = await listLeads(s.goalId ? { goalId: s.goalId } : {})
+        const waiting = sortDialogsByLeadPriority(waitingRaw, leadsForPrio)
         const pending = waiting.slice(0, perPassCap)
         await store.appendLog(
           task,

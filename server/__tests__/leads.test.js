@@ -119,3 +119,27 @@ test('createLead без peer — ошибка', async () => {
   await assert.rejects(() => L.createLead({ goalId: 'g1' }), /контакт/i)
   delete process.env.LEADS_FILE
 })
+
+test('leadPriorityMap / dialogLeadPriority / sortDialogsByLeadPriority (§3.6 приоритет)', async () => {
+  const { leadPriorityMap, dialogLeadPriority, sortDialogsByLeadPriority } = await import('../leads.js')
+  const leads = [
+    { peer: '@hotguy', status: 'hot' },      // 4
+    { peer: 'answered_user', status: 'answered' }, // 3
+    { peer: '12345', status: 'cold' },       // 1
+  ]
+  const map = leadPriorityMap(leads)
+  assert.equal(map.hotguy, 4)
+  assert.equal(map.answered_user, 3)
+  // dialog по username (регистр/@ нормализуются)
+  assert.equal(dialogLeadPriority({ entity: { username: 'HotGuy' } }, map), 4)
+  assert.equal(dialogLeadPriority({ entity: { id: 12345 } }, map), 1)
+  assert.equal(dialogLeadPriority({ entity: { username: 'nobody' } }, map), 1) // нет лида → cold
+  // сортировка: hot → answered → без лида (стабильно)
+  const dialogs = [
+    { name: 'X', entity: { username: 'nobody' } },
+    { name: 'A', entity: { username: 'answered_user' } },
+    { name: 'H', entity: { username: 'hotguy' } },
+  ]
+  const sorted = sortDialogsByLeadPriority(dialogs, leads)
+  assert.deepEqual(sorted.map((d) => d.name), ['H', 'A', 'X'])
+})

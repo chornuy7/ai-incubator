@@ -109,6 +109,42 @@ export function sortLeadsByPriority(leads = []) {
   return [...leads].sort((a, b) => leadPriority(b.status) - leadPriority(a.status) || (b.updatedAt || 0) - (a.updatedAt || 0))
 }
 
+const normPeer = (x) => String(x ?? '').trim().toLowerCase().replace(/^@/, '')
+
+/** Карта peer→высший приоритет из лидов (для приоритезации диалогов §3.6). Чистая. */
+export function leadPriorityMap(leads = []) {
+  /** @type {Record<string, number>} */
+  const m = {}
+  for (const l of Array.isArray(leads) ? leads : []) {
+    const key = normPeer(l.peer)
+    if (!key) continue
+    const p = leadPriority(l.status)
+    if (m[key] == null || p > m[key]) m[key] = p
+  }
+  return m
+}
+
+/**
+ * Приоритет диалога по связанному лиду (по username или id). Чистая.
+ * Нет совпадения — приоритет как у «cold» (1), чтобы диалоги без лида шли после ответивших.
+ * @param {{id?:string, entity?:{username?:string,id?:unknown}}} dialog @param {Record<string,number>} map
+ */
+export function dialogLeadPriority(dialog, map = {}) {
+  const cands = [dialog?.entity?.username, dialog?.entity?.id, dialog?.id].map(normPeer).filter(Boolean)
+  let best = 1
+  for (const c of cands) if (map[c] != null && map[c] > best) best = map[c]
+  return best
+}
+
+/** Отсортировать диалоги по приоритету связанных лидов (по убыванию). Чистая, стабильная. */
+export function sortDialogsByLeadPriority(dialogs = [], leads = []) {
+  const map = leadPriorityMap(leads)
+  return [...(Array.isArray(dialogs) ? dialogs : [])]
+    .map((d, i) => ({ d, i, p: dialogLeadPriority(d, map) }))
+    .sort((a, b) => b.p - a.p || a.i - b.i) // приоритет ↓, при равенстве — исходный порядок
+    .map((x) => x.d)
+}
+
 /** Сколько активных диалогов ведёт аккаунт. Чистая. @param {object[]} leads @param {string} accountId */
 export function activeLeadCount(leads, accountId) {
   return (Array.isArray(leads) ? leads : []).filter((l) => l.accountId === accountId && ACTIVE_LEAD_STATUSES.has(l.status)).length
