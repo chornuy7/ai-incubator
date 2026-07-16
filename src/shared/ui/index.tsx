@@ -264,15 +264,31 @@ export function Select({
     return () => document.removeEventListener('mousedown', onDown)
   }, [open])
 
+  // Позиционируем меню под кнопкой и держим привязку при скролле/resize (fixed-портал
+  // иначе «плавает» при прокрутке). Флип вверх, если снизу не хватает места.
+  useEffect(() => {
+    if (!open) return
+    const reposition = () => {
+      const el = ref.current
+      if (!el) return
+      const r = el.getBoundingClientRect()
+      const menuH = Math.min(menuRef.current?.offsetHeight ?? 288, 288)
+      const spaceBelow = window.innerHeight - r.bottom
+      const openUp = spaceBelow < menuH + 8 && r.top > spaceBelow
+      setCoords({ top: openUp ? Math.max(8, r.top - menuH - 6) : r.bottom + 6, left: r.left, width: r.width })
+    }
+    reposition()
+    window.addEventListener('scroll', reposition, true) // capture — ловим скролл любого контейнера
+    window.addEventListener('resize', reposition)
+    return () => {
+      window.removeEventListener('scroll', reposition, true)
+      window.removeEventListener('resize', reposition)
+    }
+  }, [open])
+
   const current = options.find((o) => o.value === value)
 
-  const toggle = () => {
-    if (!open && ref.current) {
-      const r = ref.current.getBoundingClientRect()
-      setCoords({ top: r.bottom + 6, left: r.left, width: r.width })
-    }
-    setOpen((v) => !v)
-  }
+  const toggle = () => setOpen((v) => !v)
 
   return (
     <div ref={ref} className={cn('relative', className)}>
