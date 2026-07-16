@@ -5,8 +5,18 @@ import { useApp } from '@/mocks/store'
 import {
   fetchFolders, createFolder, updateFolder, deleteFolder, validateFolder, type TargetFolder,
 } from '@/api/featuresApi'
+import { useSession, type SessionUser } from '@/features/auth/session'
 
 const cleanTargets = (t: string[]) => [...new Set(t.map((x) => String(x || '').trim().replace(/^@/, '')).filter(Boolean))]
+
+/** Папки, доступные текущему пользователю (§8.1): админ — все; роль без выданных папок — все;
+ *  иначе только те, что админ выдал роли (permissions.resources.folders = allow). */
+function visibleFolders(folders: TargetFolder[], user: SessionUser | null): TargetFolder[] {
+  if (!user || user.isAdmin) return folders
+  const fp = user.permissions?.resources?.folders
+  if (!fp || Object.keys(fp).length === 0) return folders
+  return folders.filter((f) => fp[f.id] === 'allow')
+}
 
 /**
  * Красивый поп-ап «Сохранить список в папку».
@@ -125,31 +135,28 @@ export function FolderPicker({ targets, onLoad }: {
   onLoad: (targets: string[]) => void
 }) {
   const pushToast = useApp((s) => s.pushToast)
+  const user = useSession((s) => s.user)
   const [folders, setFolders] = useState<TargetFolder[]>([])
-  const [selectedId, setSelectedId] = useState('')
+  const [loadOpen, setLoadOpen] = useState(false)
   const [manageOpen, setManageOpen] = useState(false)
   const [saveOpen, setSaveOpen] = useState(false)
 
   const reload = async () => {
-    try {
-      const list = await fetchFolders()
-      setFolders(list)
-      if (list.length && !list.some((f) => f.id === selectedId)) setSelectedId(list[0].id)
-    } catch { /* API offline */ }
+    try { setFolders(await fetchFolders()) } catch { /* API offline */ }
   }
-
   useEffect(() => { void reload() }, [])
 
-  const loadSelected = () => {
-    const folder = folders.find((f) => f.id === selectedId)
-    if (!folder) return pushToast({ type: 'error', title: 'Папка не выбрана' })
-    onLoad(folder.targets)
-    pushToast({ type: 'success', title: 'Загружено из папки', desc: `${folder.targets.length} целей` })
-  }
+  const visible = visibleFolders(folders, user)
+  const canManage = !user || user.isAdmin // управление папками — только админ (§8.1)
 
   const saveCurrent = () => {
     if (!targets.length) return pushToast({ type: 'error', title: 'Нет целей для сохранения' })
     setSaveOpen(true)
+  }
+  const loadFolder = (f: TargetFolder) => {
+    onLoad(f.targets)
+    setLoadOpen(false)
+    pushToast({ type: 'success', title: 'Папка загружена', desc: `${f.name} · ${f.targets.length} целей` })
   }
 
   return (
@@ -157,25 +164,53 @@ export function FolderPicker({ targets, onLoad }: {
       <span className="flex items-center gap-1.5 text-xs font-bold uppercase tracking-wide text-muted">
         <FolderOpen size={14} /> Папки
       </span>
-      <Select
-        className="min-w-[180px]"
-        value={selectedId}
-        onChange={setSelectedId}
-        options={folders.length ? folders.map((f) => ({ value: f.id, label: `${f.name} (${f.targets.length})` })) : [{ value: '', label: 'Нет папок' }]}
-      />
-      <button type="button" onClick={loadSelected} disabled={!folders.length} className="btn-ghost h-9 text-xs disabled:opacity-40">
-        <Download size={14} /> Загрузить
+      <button type="button" onClick={() => setLoadOpen(true)} disabled={!visible.length} className="btn-primary h-9 text-xs disabled:opacity-40">
+        <Download size={14} /> Загрузить папку{visible.length ? ` (${visible.length})` : ''}
       </button>
       <button type="button" onClick={saveCurrent} className="btn-ghost h-9 text-xs">
-        <Save size={14} /> В папку
+        <Save size={14} /> Сохранить в папку
       </button>
-      <button type="button" onClick={() => setManageOpen(true)} className="btn-ghost h-9 text-xs">
-        <Settings2 size={14} /> Управление
-      </button>
+      {canManage && (
+        <button type="button" onClick={() => setManageOpen(true)} className="btn-ghost h-9 text-xs">
+          <Settings2 size={14} /> Управление
+        </button>
+      )}
+      {!visible.length && (
+        <span className="text-xs text-amber-300">{folders.length ? 'Нет доступных папок — попросите админа выдать доступ' : 'Папок пока нет — сохраните список кнопкой «Сохранить в папку»'}</span>
+      )}
 
+      <FolderLoadModal open={loadOpen} onClose={() => setLoadOpen(false)} folders={visible} onLoad={loadFolder} />
       <SaveToFolderModal open={saveOpen} onClose={() => setSaveOpen(false)} targets={targets} onSaved={() => void reload()} />
       <FolderManageModal open={manageOpen} onClose={() => setManageOpen(false)} folders={folders} onChanged={reload} onLoad={onLoad} />
     </div>
+  )
+}
+
+/** Чистый выбор папки: список доступных папок → клик загружает её каналы в цели. */
+function FolderLoadModal({ open, onClose, folders, onLoad }: {
+  open: boolean; onClose: () => void; folders: TargetFolder[]; onLoad: (f: TargetFolder) => void
+}) {
+  return (
+    <Modal open={open} onClose={onClose} title="Загрузить папку" subtitle="Выберите папку — её каналы попадут в цели" icon={<FolderOpen size={22} />} size="sm">
+      {folders.length === 0 ? (
+        <EmptyState icon={<FolderOpen size={22} />} title="Нет доступных папок" desc="Сохраните список в папку или попросите админа выдать доступ." />
+      ) : (
+        <ul className="space-y-2">
+          {folders.map((f) => (
+            <li key={f.id}>
+              <button type="button" onClick={() => onLoad(f)} className="flex w-full items-center gap-3 rounded-xl border border-line bg-elevated/40 p-3 text-left transition-colors hover:border-spark-500/40">
+                <span className="grid h-9 w-9 shrink-0 place-items-center rounded-lg bg-iris-500/12 text-iris-300"><FolderOpen size={16} /></span>
+                <div className="min-w-0 flex-1">
+                  <div className="truncate font-semibold text-fg">{f.name}</div>
+                  <div className="text-xs text-muted">{f.targets.length} целей / каналов</div>
+                </div>
+                <Download size={16} className="shrink-0 text-spark-400" />
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+    </Modal>
   )
 }
 
