@@ -54,6 +54,8 @@ export interface ModuleTaskSettings {
   warmLevel?: number
   // ── Нейрокомментинг: окно последних постов (§3.5) ──
   postWindow?: number
+  semanticFilter?: boolean // §3.5: комментировать только по семантически близким к цели постам
+  semanticThreshold?: number
   // ── Распределение типов комментариев в % (§3.5), сумма ≈ 100 ──
   typeWeights?: number[]
   // ── Цель кампании (§3.6) ──
