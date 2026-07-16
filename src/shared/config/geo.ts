@@ -40,6 +40,19 @@ export const COUNTRIES_FILTER: { code: string; flag: string; label: string }[] =
   ...COUNTRIES.map((c) => ({ code: c.code, flag: c.flag, label: c.label })),
 ]
 
+/** Опции фильтра ТОЛЬКО по реально присутствующим у аккаунтов странам (§3.2):
+ *  «Все страны» + регионы (если есть акки региона) + сами страны. Пустые/неизвестные отбрасываем. */
+export function countryOptionsFrom(countries: (string | null | undefined)[]): { code: string; flag: string; label: string }[] {
+  const present = new Set(countries.map((c) => (c || '').toLowerCase()).filter(Boolean))
+  const opts: { code: string; flag: string; label: string }[] = [{ code: 'all', flag: '', label: 'Все страны' }]
+  const regions = new Set<Region>()
+  for (const c of COUNTRIES) if (present.has(c.code)) regions.add(c.region)
+  if (regions.has('europe')) opts.push({ code: 'reg:europe', flag: '🇪🇺', label: 'Европа — регион' })
+  if (regions.has('cis')) opts.push({ code: 'reg:cis', flag: '🌐', label: 'СНГ — регион' })
+  for (const c of COUNTRIES) if (present.has(c.code)) opts.push({ code: c.code, flag: c.flag, label: c.label })
+  return opts
+}
+
 /** Проходит ли страна аккаунта под выбранный фильтр (страна или регион `reg:*`). */
 export function matchesGeo(country: string, filter: string): boolean {
   if (!filter || filter === 'all') return true

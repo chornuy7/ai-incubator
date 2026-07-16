@@ -7,7 +7,7 @@ import { Avatar, Select } from '@/shared/ui'
 import { HelpButton } from '@/features/neuro-commenting/moduleUi'
 import { cn } from '@/shared/lib/utils'
 import { ROLES } from '@/shared/config/modules'
-import { COUNTRIES_FILTER, matchesGeo, FLAGS, COUNTRY_NAME } from '@/shared/config/geo'
+import { countryOptionsFrom, matchesGeo, FLAGS, COUNTRY_NAME } from '@/shared/config/geo'
 import type { TgAccount } from '@/shared/types'
 
 /** Аккаунт «в работе»: заблокирован задачей (lock) или в статусе working — выбирать нельзя. */
@@ -147,7 +147,7 @@ export function AccountPicker({
                   <input value={query} onChange={(e) => setQuery(e.target.value)} className="input h-9 pl-9 text-sm" placeholder="Поиск по ID, телефону, username…" />
                 </div>
                 <div className="flex gap-2">
-                  <Select className="flex-1" value={country} onChange={setCountry} options={COUNTRIES_FILTER.map((c) => ({ value: c.code, label: `${c.flag} ${c.label}`.trim() }))} />
+                  <Select className="flex-1" value={country} onChange={setCountry} options={countryOptionsFrom(accounts.map((a) => a.country)).map((c) => ({ value: c.code, label: `${c.flag} ${c.label}`.trim() }))} />
                   <Select className="flex-1" value={role} onChange={setRole} options={ROLES.map((r) => ({ value: r, label: r }))} />
                 </div>
                 <div className="flex flex-wrap items-center gap-2 pt-0.5">

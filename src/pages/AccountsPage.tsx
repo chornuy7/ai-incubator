@@ -16,7 +16,7 @@ import { AiSafetyModal } from '@/features/modules/shared'
 import { PaywallLock } from '@/features/paywall/Paywall'
 import { cn } from '@/shared/lib/utils'
 import { ROLES } from '@/shared/config/modules'
-import { COUNTRIES_FILTER, matchesGeo } from '@/shared/config/geo'
+import { countryOptionsFrom, matchesGeo } from '@/shared/config/geo'
 import type { AccountStatus, TgAccount } from '@/shared/types'
 import { patchAccount, releaseAccountLock, setAccountStatusManual, fetchDailyAll, type DailyAllMap } from '@/api/accountsApi'
 
@@ -331,7 +331,7 @@ export function AccountsPage() {
               <div className="mb-1 px-1 text-[11px] font-bold uppercase tracking-wide text-faint">Роль</div>
               <Select className="mb-3" value={roleFilter} onChange={setRoleFilter} options={ROLES.map((r) => ({ value: r, label: r }))} />
               <div className="mb-1 px-1 text-[11px] font-bold uppercase tracking-wide text-faint">Страна</div>
-              <Select className="mb-3" value={countryFilter} onChange={setCountryFilter} options={COUNTRIES_FILTER.map((c) => ({ value: c.code, label: `${c.flag} ${c.label}`.trim() }))} />
+              <Select className="mb-3" value={countryFilter} onChange={setCountryFilter} options={countryOptionsFrom(active.map((a) => a.country)).map((c) => ({ value: c.code, label: `${c.flag} ${c.label}`.trim() }))} />
               <div className="mb-1 px-1 text-[11px] font-bold uppercase tracking-wide text-faint">Модуль</div>
               <Select
                 value={moduleFilter}
