@@ -38,6 +38,7 @@ import { releaseTaskLocks, markTaskLive, markTaskDone, assertAccountAvailable } 
 import { loadSessionString, createClient } from '../tgAuth.js'
 import { pickCommentCandidates, trackIdlePass, warmingPace, pickWeightedKey } from '../lib/workerLoop.js'
 import { limitReached, incAction } from '../lib/dailyActions.js'
+import { cleanMailingNumbers, pickMailingAccount } from '../lib/mailing.js'
 import { parseTelegramPostLinks, resolvePostPeer } from '../lib/postLink.js'
 import { filterBlacklisted, isBlacklistedSync } from '../targetBlacklist.js'
 
@@ -1308,7 +1309,7 @@ export async function runParticipantsParser(task, store, kind) {
 export async function runMailing(task, store) {
   const s = task.settings || {}
   const accountIds = Array.isArray(s.accountIds) ? s.accountIds : []
-  const numbers = [...new Set((Array.isArray(s.targets) ? s.targets : []).map((x) => String(x).replace(/\D/g, '')).filter((x) => x.length >= 7))]
+  const numbers = cleanMailingNumbers(s.targets)
   const message = String(s.promptText || s.message || '').trim()
 
   task.status = 'running'
@@ -1356,15 +1357,12 @@ export async function runMailing(task, store) {
       if (task.stopRequested || task.pauseRequested || totalLimitReached(s, task)) break
 
       // Выбрать аккаунт round-robin, у которого не исчерпан суточный лимит ЛС и maxPerAccount.
-      let account = null
-      for (let k = 0; k < usable.length; k++) {
-        const cand = usable[(idx + k) % usable.length]
-        if (await limitReached(cand, 'dm')) continue
-        if (maxPerAccount > 0 && (perAccSent[cand] || 0) >= maxPerAccount) continue
-        account = cand
-        idx = (idx + k + 1) % usable.length
-        break
-      }
+      // dm-лимит асинхронный — предвычисляем множество «исчерпавших» для чистого выбора.
+      const dmReached = new Set()
+      for (const cand of usable) if (await limitReached(cand, 'dm')) dmReached.add(cand)
+      const picked = pickMailingAccount(usable, idx, { perAccSent, maxPerAccount, isDmReached: (id) => dmReached.has(id) })
+      const account = picked.account
+      idx = picked.idx
       if (!account) { await store.appendLog(task, 'info', 'Все аккаунты исчерпали суточный лимит ЛС (§6) — завершаем'); break }
 
       const meta = await getAccountMeta(account)
