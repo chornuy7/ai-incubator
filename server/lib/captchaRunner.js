@@ -39,12 +39,18 @@ export function looksLikeCaptcha(m) {
   return knownBot || (!!m?.buttons?.length && kw) || kw
 }
 
+/** Сообщение от известного капча-бота (высокая уверенность). */
+export function isKnownCaptchaBot(fromBot) {
+  const f = String(fromBot || '').toLowerCase()
+  return CAPTCHA_BOTS.some((b) => f.includes(b))
+}
+
 /** Из недавних сообщений выбрать капчу и построить план (чистая). @returns {{message,plan}|null} */
 export function planFromMessages(messages) {
   for (const m of messages || []) {
     if (!looksLikeCaptcha(m)) continue
     const plan = classifyCaptcha({ text: m.text, buttons: m.buttons, fromBot: m.fromBot })
-    if (plan.type !== 'none') return { message: m, plan }
+    return { message: m, plan }
   }
   return null
 }
@@ -88,9 +94,14 @@ export async function resolveGroupCaptcha(client, peer, opts = {}) {
   }
 
   if (plan.action === 'skip') {
-    await leaveGroup(client, peer)
-    log('info', `Капча не распознана — вышли из группы (§8.6): ${plan.reason}`)
-    return { handled: true, ...base }
+    // Выходим ТОЛЬКО если сообщение точно от капча-бота: иначе это ложное срабатывание
+    // по ключевому слову (напр. пост «проверка связи» в канале) — остаёмся, не бросаем цель.
+    if (isKnownCaptchaBot(found.message.fromBot)) {
+      await leaveGroup(client, peer)
+      log('info', `Капча капча-бота не распознана — вышли из группы (§8.6): ${plan.reason}`)
+      return { handled: true, ...base }
+    }
+    return { handled: false, ...base }
   }
 
   // action === 'auto'
