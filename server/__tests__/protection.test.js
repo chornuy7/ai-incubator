@@ -2,7 +2,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
   pickDelay, effectiveProbability, isAccountRunnable,
-  postMeetsMinWords, postMatchesKeywords, extractFloodSeconds, mapTelegramError,
+  postMeetsMinWords, postMatchesKeywords, extractFloodSeconds, mapTelegramError, interruptibleSleep,
 } from '../lib/protection.js'
 
 test('pickDelay: держится в пределах [lo, hi], пол 5с', () => {
@@ -56,4 +56,21 @@ test('mapTelegramError: понятные сообщения', () => {
   assert.match(mapTelegramError({ message: 'NO_DISCUSSION' }), /обсуждения/)
   assert.match(mapTelegramError({ errorMessage: 'CHANNEL_PRIVATE' }), /Приватный/)
   assert.equal(mapTelegramError({}), 'Ошибка Telegram')
+})
+
+test('interruptibleSleep: прерывается по shouldStop за ~1 чанк (#6)', async () => {
+  let stop = false
+  setTimeout(() => { stop = true }, 30)
+  const t0 = Date.now()
+  const interrupted = await interruptibleSleep(5000, () => stop, 20) // чанк 20мс
+  const dt = Date.now() - t0
+  assert.equal(interrupted, true) // прервали
+  assert.ok(dt < 500, `должно прерваться быстро, а не ждать 5с (было ${dt}мс)`)
+})
+
+test('interruptibleSleep: без стопа спит полностью', async () => {
+  const t0 = Date.now()
+  const interrupted = await interruptibleSleep(60, () => false, 20)
+  assert.equal(interrupted, false)
+  assert.ok(Date.now() - t0 >= 55)
 })

@@ -32,7 +32,13 @@ import {
   postMeetsMinWords,
   postMatchesKeywords,
   sleep,
+  interruptibleSleep,
 } from '../lib/protection.js'
+
+/** #6: колбэк «пора остановиться?» — читает stop/pause с диска (свежий флаг). */
+function makeStopCheck(store, taskId) {
+  return async () => { try { const t = await store.loadTask(taskId); return !!(t?.stopRequested || t?.pauseRequested) } catch { return false } }
+}
 import { getAccountMeta, setAccountMeta } from '../accountsMeta.js'
 import { releaseTaskLocks, markTaskLive, markTaskDone, assertAccountAvailable } from '../lib/accountLocks.js'
 import { loadSessionString, createClient } from '../tgAuth.js'
@@ -191,6 +197,7 @@ export async function runNeuroCommenting(task, store) {
           joinDelay,
           task.readyTargets,
           accountId,
+          makeStopCheck(store, task.id), // #6: прерываемая задержка вступления
         )
         if (!membership?.peer) {
           await disconnectAccount(client, accountId)
@@ -224,7 +231,7 @@ export async function runNeuroCommenting(task, store) {
               continue
             }
 
-            await sleep(pickDelay(s.delays?.comment?.[0] ?? 30, s.delays?.comment?.[1] ?? 120, mul) * 1000)
+            if (await interruptibleSleep(pickDelay(s.delays?.comment?.[0] ?? 30, s.delays?.comment?.[1] ?? 120, mul) * 1000, makeStopCheck(store, task.id))) break // #6
             const postText = (post.message || '').trim() || (post.media ? '[медиа]' : '')
             // §3.5 семантика: пропускаем посты, семантически далёкие от цели кампании.
             if (goalVec) {
@@ -340,6 +347,7 @@ export async function runNeuroChatting(task, store) {
           joinDelay,
           task.readyTargets,
           accountId,
+          makeStopCheck(store, task.id), // #6
         )
         if (!membership?.peer) {
           await disconnectAccount(client, accountId)
@@ -1412,8 +1420,8 @@ export async function runMailing(task, store) {
           const gen = await generateComment(message || 'Напиши короткое дружелюбное первое сообщение по цели', s.promptIndex ?? 0, resolveSystemPrompt(s) + goalCtx)
           if (gen.text) text = gen.text
         }
-        // 3) Пауза «по-человечески» и отправка.
-        await sleep(pickDelay(dm[0], dm[1], mul) * 1000)
+        // 3) Пауза «по-человечески» и отправка (#6: прерываемая — стоп не шлёт лишнее ЛС).
+        if (await interruptibleSleep(pickDelay(dm[0], dm[1], mul) * 1000, makeStopCheck(store, task.id))) { await disconnectAccount(client, account); break }
         await client.sendMessage(user, { message: text })
         await incAction(account, 'dm') // §6: суточный лимит ЛС
         // Не засоряем адресную книгу аккаунта импортированными номерами.

@@ -65,7 +65,7 @@ export async function joinChannelDiscussion(client, raw, appendLog, accountName,
  * Подготовить цель: задержка join только при первом вступлении.
  * @returns {import('../lib/gramHelpers.js').ensureJoined extends (...args: any) => Promise<infer R> ? R | null : never}
  */
-export async function prepareTarget(client, raw, appendLog, accountName, joinDelaySec, readyKeys, accountId) {
+export async function prepareTarget(client, raw, appendLog, accountName, joinDelaySec, readyKeys, accountId, shouldStop) {
   const ch = raw.replace(/^@/, '').trim()
   const readyKey = `${accountId}:${ch}`
   const alreadyReady = readyKeys.includes(readyKey)
@@ -74,8 +74,8 @@ export async function prepareTarget(client, raw, appendLog, accountName, joinDel
     const peek = await peekMembership(client, ch)
     if (peek.status === 'need_join' && joinDelaySec > 0) {
       await appendLog('info', `Задержка перед вступлением ${joinDelaySec}с`, accountName)
-      const { sleep } = await import('../lib/protection.js')
-      await sleep(joinDelaySec * 1000)
+      const { interruptibleSleep } = await import('../lib/protection.js')
+      if (await interruptibleSleep(joinDelaySec * 1000, shouldStop)) return null // #6: прервано «Стоп»
     }
   }
 

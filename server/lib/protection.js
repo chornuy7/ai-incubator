@@ -45,6 +45,21 @@ export function sleep(ms) {
   return new Promise((r) => setTimeout(r, ms))
 }
 
+/**
+ * #6 (QA): прерываемый sleep — спит кусками и проверяет shouldStop() между ними,
+ * чтобы «Стоп» срабатывал за ~1с, а не после полного длинного ожидания (напр. 146с).
+ * @param {number} ms общая длительность @param {() => (boolean|Promise<boolean>)} [shouldStop]
+ * @returns {Promise<boolean>} true — прервано по stop/pause
+ */
+export async function interruptibleSleep(ms, shouldStop, chunkMs = 1000) {
+  const end = Date.now() + Math.max(0, ms)
+  while (Date.now() < end) {
+    await sleep(Math.min(chunkMs, end - Date.now()))
+    try { if (shouldStop && (await shouldStop())) return true } catch { /* ignore */ }
+  }
+  return false
+}
+
 export function extractFloodSeconds(err) {
   if (!err || typeof err !== 'object') return 0
   const e = /** @type {{ seconds?: number, errorMessage?: string, message?: string }} */ (err)
