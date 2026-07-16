@@ -139,9 +139,24 @@ export function AccountsPage() {
     setSelected(next)
   }
 
+  // #2 (§3.2): подтверждение массовых действий. ≤1 акк — без спроса; 2–10 — одно
+  // подтверждение; >10 — второе подтверждение вводом числа (в другом месте, защита
+  // от «прокликивания» двойным кликом в одну точку).
+  const confirmBulk = (count: number, actionText: string): boolean => {
+    if (count <= 1) return true
+    if (!window.confirm(`Вы уверены, что хотите ${actionText} ${count} аккаунт(ов)?`)) return false
+    if (count > 10) {
+      const typed = window.prompt(`Это затронет ${count} аккаунтов. Для подтверждения введите число ${count}:`)
+      if (String(typed ?? '').trim() !== String(count)) {
+        pushToast({ type: 'info', title: 'Отменено', desc: 'Число не совпало — действие не выполнено.' })
+        return false
+      }
+    }
+    return true
+  }
+
   const bulkTrash = () => {
-    // Двухэтапное подтверждение опасного массового действия (§3.2).
-    if (selected.size >= 2 && !window.confirm(`Переместить в корзину ${selected.size} аккаунтов? Действие затронет все выбранные профили.`)) return
+    if (!confirmBulk(selected.size, 'переместить в корзину')) return
     void (async () => {
       for (const id of selected) await trashAccount(id)
       pushToast({ type: 'success', title: `В корзину: ${selected.size}`, desc: 'Аккаунты перемещены в корзину.' })
@@ -151,8 +166,7 @@ export function AccountsPage() {
 
   // (8) Массовые действия
   const bulkSetStatus = (status: AccountStatus, title: string) => {
-    // §3.2: двухэтапное подтверждение опасного массового действия (отключение).
-    if (status === 'frozen' && selected.size >= 2 && !window.confirm(`Отключить ${selected.size} профилей? Они станут недоступны для всех модулей.`)) return
+    if (!confirmBulk(selected.size, status === 'frozen' ? 'отключить (frozen)' : `перевести в «${title}»`)) return
     void (async () => {
       const ids = [...selected]
       for (const id of ids) { try { await patchAccount(id, { status }) } catch { /* skip */ } }
@@ -164,6 +178,7 @@ export function AccountsPage() {
 
   // Ручная пауза/возврат оператором — через аудируемый эндпоинт (§3.3/§4).
   const bulkStatusManual = (to: 'pause' | 'active', title: string) => {
+    if (!confirmBulk(selected.size, to === 'pause' ? 'поставить на паузу' : 'включить')) return
     void (async () => {
       const ids = [...selected]
       let ok = 0
@@ -180,6 +195,7 @@ export function AccountsPage() {
   }
 
   const bulkRelease = () => {
+    if (!confirmBulk(selected.size, 'остановить / освободить')) return
     void (async () => {
       const ids = [...selected]
       let released = 0
@@ -200,7 +216,7 @@ export function AccountsPage() {
   const bulkMove = (patch: { role?: string; project?: string }) => {
     // §3.2/§4: перенос профилей — подтверждение с последствиями + фиксация в аудите (initiator).
     const label = patch.role ? `роль → «${patch.role}»` : patch.project ? `проект → «${patch.project}»` : 'перенос'
-    if (!window.confirm(`Перенести ${selected.size} профиль(ей): ${label}?\nДействие будет записано в Логи с инициатором.`)) return
+    if (!confirmBulk(selected.size, `перенести (${label})`)) return
     void (async () => {
       const ids = [...selected]
       for (const id of ids) { try { await patchAccount(id, { ...patch, initiator: 'operator' }) } catch { /* skip */ } }
