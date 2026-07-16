@@ -605,3 +605,12 @@ export const LANGUAGES = [
   { code: 'ru', flag: '🇷🇺', label: 'Русский' },
   { code: 'ua', flag: '🇺🇦', label: 'Українська' },
 ]
+
+// #4 (QA): модули с реальными действиями в Telegram — запуск/рестарт требует подтверждения.
+// Безопасные (ggr/парсеры/масслукинг) — без подтверждения.
+export const COMBAT_MODULES = new Set(['neuro-commenting', 'neuro-chatting', 'neuro-dialogs', 'mass-react', 'mailing'])
+export const isCombatModule = (key: string): boolean => COMBAT_MODULES.has(key)
+export const combatConfirmText = (key: string): string =>
+  key === 'mailing'
+    ? 'Мейлинг отправит РЕАЛЬНЫЕ личные сообщения в Telegram (риск бана). Продолжить?'
+    : 'Это выполнит РЕАЛЬНЫЕ действия в Telegram (комментарии/ответы/реакции). Продолжить?'

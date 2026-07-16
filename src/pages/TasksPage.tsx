@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { ListChecks, RefreshCw, Square, RotateCw, Target, Layers, Activity, Gauge, Pause, Play } from 'lucide-react'
 import { useApp } from '@/mocks/store'
 import { PageHeader, Card, EmptyState, Badge, Select, Segmented } from '@/shared/ui'
-import { MODULES } from '@/shared/config/modules'
+import { MODULES, isCombatModule, combatConfirmText } from '@/shared/config/modules'
 import { fetchAllTasks, stopModuleTask, restartModuleTask, pauseModuleTask, resumeModuleTask, type ModuleTask } from '@/api/modulesApi'
 import { fetchGoals, type Goal } from '@/api/goalsApi'
 
@@ -108,6 +108,8 @@ export function TasksPage() {
     finally { setBusy(null) }
   }
   const doRestart = async (t: ModuleTask) => {
+    // #4: рестарт боевого модуля = реальные действия в Telegram — подтверждаем.
+    if (isCombatModule(t.moduleKey) && !window.confirm(combatConfirmText(t.moduleKey))) return
     setBusy(t.id)
     try { await restartModuleTask(t.moduleKey, t.id); pushToast({ type: 'success', title: 'Задача перезапущена' }); await load() }
     catch (err) { pushToast({ type: 'error', title: 'Ошибка перезапуска', desc: err instanceof Error ? err.message : '' }) }

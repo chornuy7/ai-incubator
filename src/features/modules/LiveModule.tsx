@@ -3,7 +3,7 @@ import {
   Play, Sparkles, Hash, Settings2, Clock, Users, MessageSquareText,
   Heart, Eye, Shield, MessageCircle, Database, Trophy, LayoutGrid, List, Link2, Plus, Target,
 } from 'lucide-react'
-import { MODULES, type ModuleConfig } from '@/shared/config/modules'
+import { MODULES, isCombatModule, combatConfirmText, type ModuleConfig } from '@/shared/config/modules'
 import { activeAccounts, useApp } from '@/mocks/store'
 import { ToggleGroup, Segmented, EmptyState, Badge, Select } from '@/shared/ui'
 import { fetchGoals, type Goal } from '@/api/goalsApi'
@@ -197,7 +197,11 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
 
   const durationPeriodMin = Math.min(DURATION_MIN_BY_PROTECTION_LEVEL[protLevel] ?? 0, durationMinutes)
 
-  const handleStart = () => void start(buildSettings(), `${cfg.title} · ${selected.size || accounts.length} акк.`)
+  const handleStart = () => {
+    // #4: запуск боевого модуля = реальные действия в Telegram — подтверждаем.
+    if (isCombatModule(moduleKey) && !window.confirm(combatConfirmText(moduleKey))) return
+    void start(buildSettings(), `${cfg.title} · ${selected.size || accounts.length} акк.`)
+  }
   const handleSave = () => {
     const name = window.prompt('Название пресета')
     if (name?.trim()) void savePreset(name.trim(), buildSettings())
