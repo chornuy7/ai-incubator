@@ -115,7 +115,7 @@ function ChannelParserInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: 
   // ── фильтры / лимиты ──
   const [fastWork, setFastWork] = useState(false)
   const [skipParsed, setSkipParsed] = useState(false)
-  const [intersect, setIntersect] = useState(false) // §3.8: AND-пересечение ключевых слов
+  const [intersect, setIntersect] = useState(true) // #7: по умолчанию ПЕРЕСЕЧЕНИЕ (AND) — уже, точнее
   const [limit, setLimit] = useState<number>(cfg.defaultLimit === '∞' ? 0 : (cfg.defaultLimit ?? 50)) // 0 = без лимита
   const [activity, setActivity] = useState(cfg.defaultActivity ?? 0)
   const [commentFilter, setCommentFilter] = useState(0)
@@ -401,7 +401,15 @@ function ChannelParserInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: 
             <ToggleRowInline icon={<Zap size={15} />} label="Быстрая работа" desc="Без задержек между запросами" checked={fastWork} onChange={setFastWork} />
             <ToggleRowInline icon={<Filter size={15} />} label="Не собирать уже спарсенные" desc="Вырежем каналы из истории парсинга" checked={skipParsed} onChange={setSkipParsed} />
             {method === 0 && keywords.length > 1 && (
-              <ToggleRowInline icon={<Check size={15} />} label="Пересечение (AND)" desc={`Только совпавшие со ВСЕМИ ключами (${keywords.length})`} checked={intersect} onChange={setIntersect} />
+              <ToggleRowInline
+                icon={<Check size={15} />}
+                label={intersect ? 'Пересечение (AND) — уже' : 'Объединение (OR) — шире'}
+                desc={intersect
+                  ? `Только каналы, совпавшие со ВСЕМИ ${keywords.length} ключами/шаблонами (напр. и IT, и Школа)`
+                  : `Каналы, совпавшие с ЛЮБЫМ из ${keywords.length} ключей (напр. IT-каналы + Школа-каналы отдельно)`}
+                checked={intersect}
+                onChange={setIntersect}
+              />
             )}
 
             <div className="rounded-2xl border border-line bg-elevated/40 p-3">
