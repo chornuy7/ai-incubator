@@ -139,6 +139,8 @@ export async function recordChannelStats(id, stats = {}, statsBy) {
   // 2-й проход (§3.9): метка свежести контента (отдельно от числового activity парсера).
   if (stats.activityLabel != null) all[i].activityLabel = stats.activityLabel
   if (stats.lastPostAt != null) all[i].lastPostAt = stats.lastPostAt
+  if (stats.er !== undefined) all[i].er = stats.er // §6: вовлечённость (ER)
+  if (stats.avgViews != null) all[i].avgViews = stats.avgViews
   all[i].lastStatsAt = Date.now()
   all[i].statsBy = statsBy || 'system'
   all[i].updatedAt = Date.now()

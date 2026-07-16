@@ -47,6 +47,36 @@ export function activityFromDates(dates = [], now = Date.now()) {
 }
 
 /**
+ * Вовлечённость (ER) по последним постам (§6, баг B1): средние просмотры/реакции/
+ * комментарии и ER = (реакции+комментарии)/просмотры. Чистая функция.
+ * @param {{views?:number, reactions?:{results?:{count?:number}[]}, replies?:{replies?:number}}[]} posts
+ */
+export function engagementFromPosts(posts = []) {
+  const arr = Array.isArray(posts) ? posts : []
+  if (!arr.length) return { avgViews: 0, avgReactions: 0, avgComments: 0, er: null }
+  let views = 0
+  let nViews = 0
+  let reactions = 0
+  let comments = 0
+  for (const p of arr) {
+    const v = Number(p?.views || 0)
+    if (v > 0) { views += v; nViews += 1 }
+    reactions += (p?.reactions?.results || []).reduce((s, r) => s + Number(r?.count || 0), 0)
+    comments += Number(p?.replies?.replies || 0)
+  }
+  const avgViews = nViews ? views / nViews : 0
+  const avgReactions = reactions / arr.length
+  const avgComments = comments / arr.length
+  const er = avgViews > 0 ? (avgReactions + avgComments) / avgViews : null
+  return {
+    avgViews: Math.round(avgViews),
+    avgReactions: Math.round(avgReactions),
+    avgComments: Math.round(avgComments),
+    er: er == null ? null : Number(er.toFixed(4)),
+  }
+}
+
+/**
  * Обновить статистику одного канала свободным аккаунтом по lease. Нужны сессии.
  * ДВА ПРОХОДА (§3.9): (1) база — подписчики; (2) активность — свежесть контента
  * (последний пост + частота за неделю). Второй проход не критичен: его сбой не рушит первый.
@@ -74,7 +104,8 @@ export async function refreshOneChannel(channel, meta, accountId) {
     try {
       const posts = await fetchPosts(client, entity, 12)
       const a = activityFromDates(posts.map((p) => Number(p.date)))
-      enrich = { activityLabel: a.activity, lastPostAt: a.lastPostAt }
+      const eng = engagementFromPosts(posts) // §6: ER (вовлечённость)
+      enrich = { activityLabel: a.activity, lastPostAt: a.lastPostAt, er: eng.er, avgViews: eng.avgViews }
     } catch { /* второй проход опционален */ }
 
     return await recordChannelStats(channel.id, { subscribers, ...enrich }, acc)

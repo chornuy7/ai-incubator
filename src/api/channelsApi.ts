@@ -12,6 +12,8 @@ export interface Channel {
   activity: number | null
   activityLabel?: 'high' | 'medium' | 'low' | 'stale' | null // 2-й проход: свежесть контента
   lastPostAt?: number | null
+  er?: number | null // §6 (B1): вовлечённость (реакции+комменты)/просмотры
+  avgViews?: number | null
   hasComments: boolean | null
   rating: number | null
   tgPeerId: string | null
@@ -25,17 +27,24 @@ export interface Channel {
 }
 
 /**
- * Рейтинг канала ★/10 (§3.8, B1): приоритет — активность/вовлечённость, НЕ голые подписчики.
- * База по подписчикам + вес свежести контента (activityLabel из 2-го прохода) + открытые комменты.
- * Маленький активный канал обгоняет большой «мёртвый».
+ * Рейтинг канала ★/10 (§3.8, B1 · §6-решение): ПРИОРИТЕТ — вовлечённость (ER), НЕ голые
+ * подписчики. Формула: нормализованные подписчики (не доминируют) + ER + открытые комменты.
+ * Если ER ещё не посчитан (нет 2-го прохода) — fallback на метку свежести activityLabel.
+ * ER = (реакции+комментарии)/просмотры; ~4%+ = отличная вовлечённость (полный бонус).
  */
-export function channelRating(c: Pick<Channel, 'subscribers' | 'activityLabel' | 'hasComments'>): number {
+export function channelRating(c: Pick<Channel, 'subscribers' | 'activityLabel' | 'hasComments' | 'er'>): number {
   const subs = c.subscribers || 0
-  const base = subs >= 100000 ? 6 : subs >= 10000 ? 5 : subs >= 1000 ? 4 : subs >= 100 ? 3 : 2
-  const act = c.activityLabel
-  const actBonus = act === 'high' ? 3 : act === 'medium' ? 2 : act === 'low' ? 1 : act === 'stale' ? -1 : 0
+  // База по подписчикам занижена, чтобы не доминировать над ER (§6: приоритет вовлечённости).
+  const base = subs >= 100000 ? 5 : subs >= 10000 ? 4 : subs >= 1000 ? 3 : subs >= 100 ? 2 : 1
+  let engagement: number
+  if (typeof c.er === 'number' && c.er >= 0) {
+    engagement = Math.min(4, c.er * 100) // ER 4% → +4 (приоритетный сигнал)
+  } else {
+    const act = c.activityLabel // fallback: свежесть контента
+    engagement = act === 'high' ? 3 : act === 'medium' ? 2 : act === 'low' ? 1 : act === 'stale' ? -1 : 0
+  }
   const commentsBonus = c.hasComments ? 1 : 0
-  return Math.max(1, Math.min(10, base + actBonus + commentsBonus))
+  return Math.max(1, Math.min(10, Math.round(base + engagement + commentsBonus)))
 }
 
 export async function fetchChannels(): Promise<Channel[]> {
