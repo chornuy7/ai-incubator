@@ -1,9 +1,9 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Network, Plus, Trash2, Pencil, Link2, Check, Circle } from 'lucide-react'
+import { Network, Plus, Trash2, Pencil, Link2, Check, Circle, Zap, Loader2, MapPin } from 'lucide-react'
 import { PageHeader, Card, EmptyState, Badge, Select, Modal } from '@/shared/ui'
 import {
-  fetchProxies, createProxy, updateProxy, deleteProxy, toProxyUrl,
-  PROXY_KIND_LABELS, type Proxy, type ProxyKind,
+  fetchProxies, createProxy, updateProxy, deleteProxy, toProxyUrl, checkProxy,
+  PROXY_KIND_LABELS, type Proxy, type ProxyKind, type ProxyGeo,
 } from '@/api/proxiesApi'
 import { fetchAccounts, patchAccount } from '@/api/accountsApi'
 import type { TgAccount } from '@/shared/types'
@@ -27,6 +27,18 @@ export function ProxiesPage() {
   const [form, setForm] = useState<Partial<Proxy>>(emptyForm())
   const [saving, setSaving] = useState(false)
   const [assignFor, setAssignFor] = useState<Proxy | null>(null)
+  const [geoMap, setGeoMap] = useState<Record<string, ProxyGeo | null>>({})
+  const [testing, setTesting] = useState<string | null>(null)
+
+  const doTest = async (p: Proxy) => {
+    setTesting(p.id)
+    try {
+      const { proxy, geo } = await checkProxy(p.id)
+      setProxies((list) => list.map((x) => (x.id === p.id ? proxy : x)))
+      setGeoMap((m) => ({ ...m, [p.id]: geo }))
+    } catch { setGeoMap((m) => ({ ...m, [p.id]: null })) }
+    finally { setTesting(null) }
+  }
 
   async function load() {
     setLoading(true)
@@ -96,9 +108,16 @@ export function ProxiesPage() {
                     <Badge tone={sm.tone}>{sm.label}</Badge>
                   </div>
                   <div className="mt-0.5 truncate font-mono text-xs text-white/50">{p.scheme}://{p.username ? `${p.username}@` : ''}{p.host}:{p.port}</div>
+                  {geoMap[p.id] && (
+                    <div className="mt-0.5 flex items-center gap-1 truncate text-xs text-spark-300">
+                      <MapPin size={11} className="shrink-0" /> {FLAGS[geoMap[p.id]!.country] || ''} {geoMap[p.id]!.countryName}{geoMap[p.id]!.city ? `, ${geoMap[p.id]!.city}` : ''}{geoMap[p.id]!.isp ? ` · ${geoMap[p.id]!.isp}` : ''}
+                    </div>
+                  )}
+                  {geoMap[p.id] === null && testing !== p.id && <div className="mt-0.5 text-xs text-amber-300">Гео не определено (прокси мёртв или IP не резолвится)</div>}
                 </div>
                 <span className="text-xs text-white/50">аккаунтов: <b className="text-white/80">{usedBy[p.id] ?? 0}</b></span>
                 <div className="flex items-center gap-1.5">
+                  <button onClick={() => void doTest(p)} disabled={testing === p.id} className="btn-ghost h-9 text-xs disabled:opacity-50">{testing === p.id ? <Loader2 size={14} className="animate-spin" /> : <Zap size={14} />} Тест</button>
                   <button onClick={() => setAssignFor(p)} className="btn-ghost h-9 text-xs"><Link2 size={14} /> Назначить</button>
                   <button onClick={() => openEdit(p)} className="btn-icon h-9 w-9" aria-label="Изменить"><Pencil size={14} /></button>
                   <button onClick={() => void remove(p)} className="btn-icon h-9 w-9" aria-label="Удалить"><Trash2 size={14} /></button>

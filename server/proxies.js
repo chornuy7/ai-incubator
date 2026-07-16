@@ -110,6 +110,26 @@ export async function checkProxyLiveness(id, timeoutMs = 6000) {
   return updateProxy(id, { status: alive ? 'ok' : 'dead', lastCheckAt: Date.now() })
 }
 
+/** GeoIP по IP прокси (ip-api.com, без ключа) — страна/город/провайдер. Best-effort. */
+export async function probeProxyGeo(host, timeoutMs = 6000) {
+  if (!host) return null
+  try {
+    const ctrl = new AbortController()
+    const to = setTimeout(() => ctrl.abort(), timeoutMs)
+    const res = await fetch(`http://ip-api.com/json/${encodeURIComponent(host)}?fields=status,country,countryCode,city,isp,query`, { signal: ctrl.signal })
+    clearTimeout(to)
+    const d = await res.json().catch(() => null)
+    if (!d || d.status !== 'success') return null
+    return {
+      country: d.countryCode ? String(d.countryCode).toLowerCase() : '',
+      countryName: d.country || '',
+      city: d.city || '',
+      isp: d.isp || '',
+      ip: d.query || host,
+    }
+  } catch { return null }
+}
+
 /** Проверить все прокси (последовательно, чтобы не открывать сотни сокетов разом). */
 export async function checkAllProxies(timeoutMs = 6000) {
   const all = await listProxies()

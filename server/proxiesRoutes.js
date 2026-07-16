@@ -1,6 +1,6 @@
 /** CRUD-роуты сущности «Прокси» (§3.2/3.4). Монтируется в /api/proxies. */
 import { Router } from 'express'
-import { listProxies, getProxy, createProxy, updateProxy, deleteProxy, checkProxyLiveness, checkAllProxies, sharedProxies } from './proxies.js'
+import { listProxies, getProxy, createProxy, updateProxy, deleteProxy, checkProxyLiveness, checkAllProxies, sharedProxies, probeProxyGeo } from './proxies.js'
 import { loadAllMeta } from './accountsMeta.js'
 import { appendAudit } from './lib/auditLog.js'
 
@@ -36,7 +36,9 @@ proxiesRouter.post('/:id/check', async (req, res) => {
   try {
     const proxy = await checkProxyLiveness(req.params.id)
     if (!proxy) return res.status(404).json({ ok: false, error: 'Прокси не найден' })
-    res.json({ ok: true, proxy })
+    // Живой прокси — дополнительно определяем страну/город по IP (§3.4).
+    const geo = proxy.status === 'ok' ? await probeProxyGeo(proxy.host) : null
+    res.json({ ok: true, proxy, geo })
   } catch (err) { fail(res, err, 500) }
 })
 

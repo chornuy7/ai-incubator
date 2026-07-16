@@ -52,3 +52,10 @@ export async function updateProxy(id: string, patch: Partial<Proxy>): Promise<Pr
 export async function deleteProxy(id: string): Promise<void> {
   await apiDelete(`/api/proxies/${id}`)
 }
+
+export interface ProxyGeo { country: string; countryName: string; city: string; isp: string; ip: string }
+
+/** Проверить прокси (liveness) + определить страну/город по IP (§3.4). */
+export async function checkProxy(id: string): Promise<{ proxy: Proxy; geo: ProxyGeo | null }> {
+  return apiPost<{ proxy: Proxy; geo: ProxyGeo | null }>(`/api/proxies/${id}/check`)
+}
