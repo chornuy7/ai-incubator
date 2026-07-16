@@ -1,13 +1,12 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import {
   Play, Sparkles, Hash, Settings2, Clock, Users, MessageSquareText,
-  Heart, Eye, Shield, MessageCircle, Database, Trophy, LayoutGrid, List, Link2, Plus, Target,
+  Heart, Eye, Shield, MessageCircle, Database, Trophy, LayoutGrid, List, Link2, Plus, Target, Terminal, ArrowUpRight,
 } from 'lucide-react'
 import { MODULES, isCombatModule, combatConfirmText, type ModuleConfig } from '@/shared/config/modules'
 import { activeAccounts, useApp } from '@/mocks/store'
 import { ToggleGroup, Segmented, EmptyState, Badge, Select } from '@/shared/ui'
 import { fetchGoals, type Goal } from '@/api/goalsApi'
-import { LogsPanel } from '@/widgets/LogsPanel'
 import { AccountPicker } from '@/features/account-picker/AccountPicker'
 import { useModuleTask } from './shared/useModuleTask'
 import {
@@ -96,7 +95,6 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
     setMinActions(minPerAcc * accCount)
   }, [maxPerAcc, minPerAcc, accCount])
   const [palette, setPalette] = useState<Set<string>>(new Set(['👍', '❤️', '🔥']))
-  const [viewTab, setViewTab] = useState(1)
   const [historyGrid, setHistoryGrid] = useState(true)
   const [folderSave, setFolderSave] = useState<string[] | null>(null)
   const [lookModeIdx, setLookModeIdx] = useState(0)
@@ -240,7 +238,6 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
     pushToast({ type: 'success', title: 'Пресет применён' })
   }, [cfg.lookModeOptions, pushToast])
 
-  const logs = task?.logs ?? []
   const history = task?.commentHistory ?? task?.history ?? []
   const results = task?.results ?? []
   const progressDone = task?.progress.actionsDone ?? task?.progress.commentsSent ?? 0
@@ -561,20 +558,20 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
           onDeletePreset={deletePreset}
         />
         <div className="mt-4 flex flex-wrap items-center gap-3">
-          <Segmented options={['Визуал', 'Логи']} value={viewTab} onChange={setViewTab} size="sm" />
-          {viewTab === 0 && (
+          {!isParser && !isGgr && history.length > 0 && (
             <div className="inline-flex rounded-lg border border-line bg-elevated p-0.5">
               <button type="button" onClick={() => setHistoryGrid(false)} className={`rounded p-1.5 ${!historyGrid ? 'bg-surface text-fg' : 'text-muted'}`}><List size={15} /></button>
               <button type="button" onClick={() => setHistoryGrid(true)} className={`rounded p-1.5 ${historyGrid ? 'bg-surface text-fg' : 'text-muted'}`}><LayoutGrid size={15} /></button>
             </div>
           )}
+          <a href={task ? `/panel/tasks?task=${task.id}` : '/panel/tasks'} className="ml-auto inline-flex items-center gap-1 text-xs font-semibold text-spark-300 hover:underline" title="Логи по этой задаче — в Дашборде задач">
+            <Terminal size={13} /> Логи выполнения — в Дашборде задач <ArrowUpRight size={13} />
+          </a>
         </div>
       </SectionCard>
 
-      {viewTab === 1 ? (
-        <LogsPanel logs={logs} emptyText={cfg.logEmpty ?? 'Логов пока нет'} title="Логи выполнения" live={running} />
-      ) : (
-        <SectionCard icon={<MessageCircle size={18} />} title={isParser || isGgr ? 'Результаты' : 'Логи'} badge={String(isParser || isGgr ? results.length : history.length)}>
+      {(isParser || isGgr || history.length > 0) && (
+        <SectionCard icon={<MessageCircle size={18} />} title={isParser || isGgr ? 'Результаты' : 'История сообщений'} badge={String(isParser || isGgr ? results.length : history.length)}>
           {(isParser || isGgr) && results.length > 0 ? (
             <div className="max-h-80 overflow-y-auto">
               <table className="w-full text-sm">

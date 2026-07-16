@@ -2,12 +2,11 @@ import { useCallback, useMemo, useState } from 'react'
 import {
   Play, Sparkles, Search, Settings2, Timer, Users, Database, Filter, Radar,
   Plus, X, Trash2, Copy, Hash, Download, ExternalLink, ChevronLeft, ChevronRight,
-  ChevronsLeft, ChevronsRight, Bookmark, Zap, SlidersHorizontal, MessageCircle, Check, FolderPlus, HelpCircle,
+  ChevronsLeft, ChevronsRight, Bookmark, Zap, SlidersHorizontal, MessageCircle, Check, FolderPlus, HelpCircle, Terminal, ArrowUpRight,
 } from 'lucide-react'
 import { MODULES, LANGUAGES, type ModuleConfig } from '@/shared/config/modules'
 import { activeAccounts, useApp } from '@/mocks/store'
 import { Segmented, Switch, Badge, Select, EmptyState } from '@/shared/ui'
-import { LogsPanel } from '@/widgets/LogsPanel'
 import { AccountPicker } from '@/features/account-picker/AccountPicker'
 import { useModuleTask } from './shared/useModuleTask'
 import { SectionCard, NumberField, ProtectionBlock, DelayFields, LaunchPanel, TaskStartedModal } from './shared'
@@ -227,7 +226,6 @@ function ChannelParserInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: 
     pushToast({ type: 'success', title: 'Пресет применён' })
   }, [pushToast])
 
-  const logs = task?.logs ?? []
   const rawResults = (cleared ? [] : (task?.results ?? [])) as ParserResult[]
 
   const results = useMemo(() => {
@@ -486,7 +484,11 @@ function ChannelParserInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: 
         />
       </SectionCard>
 
-      <LogsPanel logs={logs} emptyText={cfg.logEmpty ?? 'Логов пока нет'} title="Логи выполнения" live={running} />
+      <div className="flex justify-end">
+        <a href={task ? `/panel/tasks?task=${task.id}` : '/panel/tasks'} className="inline-flex items-center gap-1 text-xs font-semibold text-spark-300 hover:underline" title="Логи по этой задаче — в Дашборде задач">
+          <Terminal size={13} /> Логи выполнения — в Дашборде задач <ArrowUpRight size={13} />
+        </a>
+      </div>
 
       {/* Результаты поиска */}
       <SectionCard icon={<Database size={18} />} title={cfg.resultsTitle ?? 'Результаты поиска'} badge={String(rawResults.length)}>

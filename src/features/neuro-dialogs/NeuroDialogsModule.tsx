@@ -1,12 +1,11 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   Play, Sparkles, Search, Send, MessagesSquare, Mail, Users,
-  RefreshCw, Loader2, ChevronDown, ExternalLink,
+  RefreshCw, Loader2, ChevronDown, ExternalLink, Terminal, ArrowUpRight,
 } from 'lucide-react'
 import { MODULES } from '@/shared/config/modules'
 import { useApp } from '@/mocks/store'
-import { Avatar, Badge, Segmented, Switch } from '@/shared/ui'
-import { LogsPanel } from '@/widgets/LogsPanel'
+import { Avatar, Badge, Switch } from '@/shared/ui'
 import { AccountPicker } from '@/features/account-picker/AccountPicker'
 import { cn } from '@/shared/lib/utils'
 import {
@@ -109,7 +108,6 @@ export function NeuroDialogsModule() {
   const { task, running, starting, start, stop, savePreset, deletePreset, presets, justStarted, dismissJustStarted } = useModuleTask('neuro-dialogs')
 
   const [selected, setSelected] = useState<Set<string>>(new Set())
-  const [viewTab, setViewTab] = useState(0)
   const [aiOpen, setAiOpen] = useState(true)
   const [aiEnabled, setAiEnabled] = useState(true)
   const [replyAll, setReplyAll] = useState(() => localStorage.getItem(SCOPE_KEY) === '1')
@@ -291,13 +289,12 @@ export function NeuroDialogsModule() {
   }, [loadInbox])
 
   useEffect(() => {
-    if (!accountIds.length || viewTab !== 0) return
+    if (!accountIds.length) return
     const t = setInterval(() => void loadInbox(true), 25_000)
     return () => clearInterval(t)
-  }, [accountIds.length, viewTab, loadInbox])
+  }, [accountIds.length, loadInbox])
 
   const canStart = accountIds.length > 0
-  const logs = task?.logs ?? []
 
   return (
     <div className="space-y-4">
@@ -366,7 +363,7 @@ export function NeuroDialogsModule() {
               Авто-режим (кнопка «Запустить») отвечает {replyAll
                 ? <b className="text-fg">всем, кто написал последним</b>
                 : <b className="text-fg">только на непрочитанные входящие ЛС</b>} выбранных аккаунтов — сам первым никому не пишет.
-              Без ключа OpenAI ответы будут шаблонными и цель диалога учтена не будет. Вкладка <b className="text-fg">«Переписки»</b> ниже — ручной инбокс: читайте и отвечайте руками.
+              Без ключа OpenAI ответы будут шаблонными и цель диалога учтена не будет. <b className="text-fg">Переписки</b> ниже — ручной инбокс: читайте и отвечайте руками.
             </p>
             {replyAll && (
               <p className="rounded-xl border border-amber-500/30 bg-amber-500/8 px-3 py-2 text-xs leading-relaxed text-amber-200/90">
@@ -417,7 +414,7 @@ export function NeuroDialogsModule() {
           running={running}
           starting={starting}
           canStart={canStart}
-          onStart={() => { setViewTab(1); void start(buildSettings(), `${cfg.title} · ${selected.size} акк.`) }}
+          onStart={() => { void start(buildSettings(), `${cfg.title} · ${selected.size} акк.`) }}
           onStop={stop}
           onSave={() => {
             const name = window.prompt('Название пресета')
@@ -436,15 +433,14 @@ export function NeuroDialogsModule() {
           onApplyPreset={applyPreset}
           onDeletePreset={deletePreset}
         />
-        <div className="mt-4">
-          <Segmented options={['Переписки', logs.length ? `Логи · ${logs.length}` : 'Логи']} value={viewTab} onChange={setViewTab} size="sm" />
+        <div className="mt-4 flex justify-end">
+          <a href={task ? `/panel/tasks?task=${task.id}` : '/panel/tasks'} className="inline-flex items-center gap-1 text-xs font-semibold text-spark-300 hover:underline" title="Логи по этой задаче — в Дашборде задач">
+            <Terminal size={13} /> Логи выполнения — в Дашборде задач <ArrowUpRight size={13} />
+          </a>
         </div>
       </SectionCard>
 
       <div id="nd-dialogs-anchor" className="scroll-mt-4" />
-      {viewTab === 1 ? (
-        <LogsPanel logs={logs} emptyText={cfg.logEmpty ?? 'Логов пока нет'} title="Логи выполнения" live={running} />
-      ) : (
         <div className="card grid min-h-[520px] gap-0 overflow-hidden p-0 lg:grid-cols-[minmax(280px,340px)_1fr]">
           <div className="flex flex-col border-b border-line lg:border-b-0 lg:border-r">
             <div className="flex items-center gap-2 border-b border-line p-3">
@@ -565,7 +561,6 @@ export function NeuroDialogsModule() {
             )}
           </div>
         </div>
-      )}
     </div>
   )
 }

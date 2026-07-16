@@ -2,12 +2,11 @@ import { useCallback, useMemo, useState } from 'react'
 import {
   Play, Users, Settings2, Filter, UserCircle2, Eye, Timer, Zap, Database, Search,
   Copy, Hash, Download, Trash2, ExternalLink, History, MessageCircle, Star, Check, Activity,
-  ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, Cookie, Loader2, FolderPlus,
+  ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, Cookie, Loader2, FolderPlus, Terminal, ArrowUpRight,
 } from 'lucide-react'
 import { MODULES, type ModuleConfig } from '@/shared/config/modules'
 import { activeAccounts, useApp } from '@/mocks/store'
 import { Switch, Select, Segmented, Badge, EmptyState, Modal } from '@/shared/ui'
-import { LogsPanel } from '@/widgets/LogsPanel'
 import { AccountPicker } from '@/features/account-picker/AccountPicker'
 import { useModuleTask } from './shared/useModuleTask'
 import { SectionCard, NumberField, ProtectionBlock, LaunchPanel, TaskStartedModal } from './shared'
@@ -149,7 +148,6 @@ function Inner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: string }) {
     pushToast({ type: 'success', title: 'Пресет применён' })
   }, [pushToast])
 
-  const logs = task?.logs ?? []
   const raw = (cleared ? [] : (task?.results ?? [])) as UserResult[]
   const results = useMemo(() => {
     let r = raw
@@ -299,7 +297,11 @@ function Inner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: string }) {
           presets={presets} onApplyPreset={applyPreset} onDeletePreset={deletePreset} />
       </SectionCard>
 
-      <LogsPanel logs={logs} emptyText={cfg.logEmpty ?? 'Логов пока нет'} title="Логи выполнения" live={running} />
+      <div className="flex justify-end">
+        <a href={task ? `/panel/tasks?task=${task.id}` : '/panel/tasks'} className="inline-flex items-center gap-1 text-xs font-semibold text-spark-300 hover:underline" title="Логи по этой задаче — в Дашборде задач">
+          <Terminal size={13} /> Логи выполнения — в Дашборде задач <ArrowUpRight size={13} />
+        </a>
+      </div>
 
       <SectionCard icon={<Database size={18} />} title={cfg.resultsTitle ?? 'Результаты парсинга'} badge={String(raw.length)}>
         <div className="mb-4 flex flex-wrap items-center gap-2">
