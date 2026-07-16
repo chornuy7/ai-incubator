@@ -60,9 +60,11 @@ export function LogsPanel({ logs, emptyText, title = 'Логи', live = false }:
       </div>
 
       {filtered.length === 0 ? (
-        <EmptyState icon={<Terminal size={24} />} title="Логов нет" desc={emptyText} />
+        <div className="grid min-h-[220px] place-items-center px-4">
+          <EmptyState icon={<Terminal size={24} />} title="Логов нет" desc={emptyText} />
+        </div>
       ) : (
-        <div className="log-scroll relative">
+        <div className="log-scroll relative min-h-[280px] max-h-[560px] overflow-y-auto">
           {filtered.map((l) => {
             const m = LOG_LEVEL_META[l.level]
             return (
