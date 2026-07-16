@@ -14,6 +14,10 @@ const STATUS: Record<string, { label: string; tone: 'spark' | 'iris' | 'amber' |
   paused: { label: 'На паузе', tone: 'amber' },
   error: { label: 'Ошибка', tone: 'rose' },
 }
+// Цвета для колец/диаграммы: завершено=зелёный, активно=голубой, очередь=фиолет, пауза/стоп=янтарь, ошибка=красный.
+const STATUS_COLOR: Record<string, string> = {
+  done: '#0ec464', running: '#38bdf8', queued: '#7145ff', paused: '#f59e0b', stopped: '#f59e0b', error: '#ef4444',
+}
 const STATUS_KEYS = ['', 'running', 'queued', 'done', 'stopped', 'error']
 
 function moduleTitle(key: string) { return MODULES[key]?.title || key }
@@ -23,6 +27,49 @@ function pct(t: ModuleTask) {
   return total > 0 ? Math.min(100, Math.round((done / total) * 100)) : 0
 }
 const isActive = (t: ModuleTask) => t.status === 'running' || t.status === 'queued'
+
+/** Круговое прогресс-кольцо задачи (крутится/пульсирует для активных). */
+function Ring({ value, color, size = 46, stroke = 5, pulse }: { value: number; color: string; size?: number; stroke?: number; pulse?: boolean }) {
+  const r = (size - stroke) / 2
+  const c = 2 * Math.PI * r
+  const off = c - (Math.max(0, Math.min(100, value)) / 100) * c
+  return (
+    <div className={`relative shrink-0 ${pulse ? 'animate-pulse-ring rounded-full' : ''}`} style={{ width: size, height: size }}>
+      <svg width={size} height={size} className="-rotate-90">
+        <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke="rgb(var(--line))" strokeWidth={stroke} />
+        <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke={color} strokeWidth={stroke} strokeLinecap="round" strokeDasharray={c} strokeDashoffset={off} className="transition-all duration-700" />
+      </svg>
+      <div className="absolute inset-0 grid place-items-center text-[11px] font-bold text-fg">{value}%</div>
+    </div>
+  )
+}
+
+/** Диаграмма-пончик: разбивка задач по статусам, в центре — % завершённых. */
+function Donut({ segments, size = 128, stroke = 16 }: { segments: { value: number; color: string; label: string }[]; size?: number; stroke?: number }) {
+  const r = (size - stroke) / 2
+  const c = 2 * Math.PI * r
+  const total = segments.reduce((a, s) => a + s.value, 0) || 1
+  let acc = 0
+  return (
+    <svg width={size} height={size} className="-rotate-90 shrink-0">
+      <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke="rgb(var(--line))" strokeWidth={stroke} />
+      {segments.map((s, i) => {
+        const dash = (s.value / total) * c
+        const el = (
+          <circle
+            key={i}
+            cx={size / 2} cy={size / 2} r={r} fill="none"
+            stroke={s.color} strokeWidth={stroke}
+            strokeDasharray={`${Math.max(0, dash - 2)} ${c - Math.max(0, dash - 2)}`}
+            strokeDashoffset={-acc}
+          />
+        )
+        acc += dash
+        return el
+      })}
+    </svg>
+  )
+}
 
 export function TasksPage() {
   const pushToast = useApp((s) => s.pushToast)
@@ -96,6 +143,16 @@ export function TasksPage() {
     return { goals: goalsWithTasks, tasks: filtered.length, active: active.length, modulesWorking, avg }
   }, [filtered])
 
+  // Разбивка по статусам для диаграммы завершения.
+  const dist = useMemo(() => {
+    const counts: Record<string, number> = {}
+    for (const t of filtered) counts[t.status] = (counts[t.status] || 0) + 1
+    const order = ['done', 'running', 'queued', 'paused', 'stopped', 'error']
+    const segments = order.filter((s) => counts[s]).map((s) => ({ value: counts[s], color: STATUS_COLOR[s], label: STATUS[s]?.label || s }))
+    const completion = filtered.length ? Math.round(((counts.done || 0) / filtered.length) * 100) : 0
+    return { segments, completion, done: counts.done || 0 }
+  }, [filtered])
+
   // Группировка по целям (преследование цели).
   const byGoal = useMemo(() => {
     const groups = new Map<string, ModuleTask[]>()
@@ -135,12 +192,42 @@ export function TasksPage() {
         actions={<button onClick={() => void load()} className="btn-ghost h-10"><RefreshCw size={16} /> Обновить</button>}
       />
 
-      {/* Воронка */}
-      <div className="mb-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
-        {stat(<Target size={17} />, 'Целей в работе', funnel.goals, 'text-iris-300')}
-        {stat(<ListChecks size={17} />, 'Задач (в фильтре)', funnel.tasks)}
-        {stat(<Activity size={17} />, 'Активных / модулей', `${funnel.active} / ${funnel.modulesWorking}`, 'text-amber-300')}
-        {stat(<Gauge size={17} />, 'Средний прогресс', `${funnel.avg}%`)}
+      {/* Блок 1: диаграмма завершения · Блок 2: воронка-метрики */}
+      <div className="mb-3 grid gap-2 lg:grid-cols-2">
+        <Card className="flex items-center gap-4 p-4">
+          <div className="relative grid place-items-center">
+            <Donut segments={dist.segments} />
+            <div className="absolute inset-0 grid place-items-center text-center">
+              <div>
+                <div className="text-2xl font-bold text-fg">{dist.completion}%</div>
+                <div className="text-[10px] uppercase tracking-wide text-white/40">завершено</div>
+              </div>
+            </div>
+          </div>
+          <div className="min-w-0 flex-1">
+            <div className="mb-1.5 text-sm font-bold text-fg">Завершение проекта</div>
+            {dist.segments.length === 0 ? (
+              <div className="text-xs text-white/40">Нет задач в фильтре</div>
+            ) : (
+              <div className="grid grid-cols-2 gap-x-3 gap-y-1">
+                {dist.segments.map((s) => (
+                  <div key={s.label} className="flex items-center gap-1.5 text-xs">
+                    <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ background: s.color }} />
+                    <span className="truncate text-white/70">{s.label}</span>
+                    <span className="ml-auto font-semibold tabular-nums text-fg">{s.value}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </Card>
+
+        <div className="grid grid-cols-2 gap-2">
+          {stat(<Target size={17} />, 'Целей в работе', funnel.goals, 'text-iris-300')}
+          {stat(<ListChecks size={17} />, 'Задач (в фильтре)', funnel.tasks)}
+          {stat(<Activity size={17} />, 'Активных / модулей', `${funnel.active} / ${funnel.modulesWorking}`, 'text-amber-300')}
+          {stat(<Gauge size={17} />, 'Средний прогресс', `${funnel.avg}%`)}
+        </div>
       </div>
 
       {/* Фильтры + режим */}
@@ -169,22 +256,22 @@ export function TasksPage() {
               </div>
               <div className="h-1.5 overflow-hidden rounded bg-white/10"><div className="h-full rounded bg-iris-500 transition-all" style={{ width: `${g.prog}%` }} /></div>
               <div className="mt-1 text-[11px] text-white/40">Прогресс к цели: {g.prog}%</div>
-              <div className="mt-2 flex flex-col gap-1.5">
-                {g.tasks.map((t) => <TaskRow key={`${t.moduleKey}:${t.id}`} t={t} goalName={null} busy={busy} onStop={doStop} onRestart={doRestart} onPause={doPause} onResume={doResume} compact />)}
+              <div className="mt-2 grid gap-1.5 sm:grid-cols-2">
+                {g.tasks.map((t) => <TaskCard key={`${t.moduleKey}:${t.id}`} t={t} goalName={null} busy={busy} onStop={doStop} onRestart={doRestart} onPause={doPause} onResume={doResume} compact />)}
               </div>
             </Card>
           ))}
         </div>
       ) : (
-        <div className="flex flex-col gap-2">
-          {filtered.map((t) => <TaskRow key={`${t.moduleKey}:${t.id}`} t={t} goalName={goalName(t.goalId)} busy={busy} onStop={doStop} onRestart={doRestart} onPause={doPause} onResume={doResume} />)}
+        <div className="grid gap-2 lg:grid-cols-2">
+          {filtered.map((t) => <TaskCard key={`${t.moduleKey}:${t.id}`} t={t} goalName={goalName(t.goalId)} busy={busy} onStop={doStop} onRestart={doRestart} onPause={doPause} onResume={doResume} />)}
         </div>
       )}
     </div>
   )
 }
 
-function TaskRow({ t, goalName, busy, onStop, onRestart, onPause, onResume, compact }: {
+function TaskCard({ t, goalName, busy, onStop, onRestart, onPause, onResume, compact }: {
   t: ModuleTask; goalName: string | null; busy: string | null
   onStop: (t: ModuleTask) => void; onRestart: (t: ModuleTask) => void
   onPause: (t: ModuleTask) => void; onResume: (t: ModuleTask) => void; compact?: boolean
@@ -192,27 +279,28 @@ function TaskRow({ t, goalName, busy, onStop, onRestart, onPause, onResume, comp
   const st = STATUS[t.status] || { label: t.status, tone: 'muted' as const }
   const p = pct(t)
   const running = isActive(t)
+  const ringColor = STATUS_COLOR[t.status] || '#94a3b8'
   return (
-    <Card className={compact ? 'bg-elevated/40 p-2.5' : 'p-3'}>
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <div className="flex min-w-0 items-center gap-2">
+    <Card className={compact ? 'flex items-center gap-3 bg-elevated/40 p-2.5' : 'flex items-center gap-3 p-3'}>
+      <Ring value={p} color={ringColor} size={compact ? 40 : 48} pulse={running} />
+      <div className="min-w-0 flex-1">
+        <div className="flex flex-wrap items-center gap-2">
           <Badge tone={st.tone}>{st.label}</Badge>
           <span className="truncate font-semibold text-white">{moduleTitle(t.moduleKey)}</span>
-          <span className="font-mono text-xs text-white/30">{t.id}</span>
+          <span className="font-mono text-[11px] text-white/30">{t.id}</span>
         </div>
-        <div className="flex items-center gap-1">
-          {running && <button onClick={() => onPause(t)} disabled={busy === t.id} className="btn-icon h-8 w-8" aria-label="Пауза" title="Пауза"><Pause size={13} /></button>}
-          {t.status === 'paused' && <button onClick={() => onResume(t)} disabled={busy === t.id} className="btn-icon h-8 w-8 text-spark-400" aria-label="Продолжить" title="Продолжить"><Play size={13} /></button>}
-          {running && <button onClick={() => onStop(t)} disabled={busy === t.id} className="btn-icon h-8 w-8" aria-label="Остановить"><Square size={13} /></button>}
-          <button onClick={() => onRestart(t)} disabled={busy === t.id} className="btn-icon h-8 w-8" aria-label="Перезапустить"><RotateCw size={14} /></button>
+        <div className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5 text-[11px] text-white/40">
+          <span className="tabular-nums">{t.progress?.done ?? t.progress?.actionsDone ?? 0}/{t.progress?.total ?? 0}</span>
+          {goalName && <span className="text-iris-300"><Target size={11} className="mb-0.5 inline" /> {goalName}</span>}
+          {t.initiator && <span>кто: {t.initiator}</span>}
+          <span>{new Date(t.createdAt).toLocaleString('ru-RU', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}</span>
         </div>
       </div>
-      <div className="mt-2 h-1.5 overflow-hidden rounded bg-white/10"><div className="h-full rounded bg-spark-500 transition-all" style={{ width: `${p}%` }} /></div>
-      <div className="mt-1.5 flex flex-wrap gap-x-4 gap-y-1 text-xs text-white/40">
-        <span>{p}% · {t.progress?.done ?? t.progress?.actionsDone ?? 0}/{t.progress?.total ?? 0}</span>
-        {goalName && <span className="text-iris-300"><Target size={11} className="mb-0.5 inline" /> {goalName}</span>}
-        {t.initiator && <span>кто: {t.initiator}</span>}
-        <span>{new Date(t.createdAt).toLocaleString()}</span>
+      <div className="flex shrink-0 items-center gap-1">
+        {running && <button onClick={() => onPause(t)} disabled={busy === t.id} className="btn-icon h-8 w-8" aria-label="Пауза" title="Пауза"><Pause size={13} /></button>}
+        {t.status === 'paused' && <button onClick={() => onResume(t)} disabled={busy === t.id} className="btn-icon h-8 w-8 text-spark-400" aria-label="Продолжить" title="Продолжить"><Play size={13} /></button>}
+        {running && <button onClick={() => onStop(t)} disabled={busy === t.id} className="btn-icon h-8 w-8" aria-label="Остановить" title="Остановить"><Square size={13} /></button>}
+        <button onClick={() => onRestart(t)} disabled={busy === t.id} className="btn-icon h-8 w-8" aria-label="Перезапустить" title="Перезапустить"><RotateCw size={14} /></button>
       </div>
     </Card>
   )

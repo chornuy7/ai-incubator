@@ -11,6 +11,7 @@ import {
   fetchAccountDaily, type AccountDaily,
 } from '@/api/accountsApi'
 import type { TgAccount, AccountStats, AccountChannel, AccountFolder } from '@/shared/types'
+import { FLAGS as GEO_FLAGS, COUNTRY_NAME, COUNTRIES } from '@/shared/config/geo'
 
 type TabKey = 'profile' | 'proxy' | 'status' | 'dates' | 'actions' | 'health' | 'channels' | 'folders'
 
@@ -25,7 +26,17 @@ const TABS: { key: TabKey; label: string; icon: React.ReactNode }[] = [
   { key: 'folders', label: 'Папки', icon: <FolderClosed size={15} /> },
 ]
 
-const FLAGS: Record<string, string> = { UA: '🇺🇦', RU: '🇷🇺', KZ: '🇰🇿', PL: '🇵🇱', DE: '🇩🇪' }
+// Флаг/название страны по коду (регистр не важен) — полный набор из geo.ts (14 стран).
+const flagOf = (code?: string | null) => (code ? GEO_FLAGS[code.toLowerCase()] ?? '' : '')
+const nameOf = (code?: string | null) => (code ? COUNTRY_NAME[code.toLowerCase()] ?? code.toUpperCase() : '')
+
+/** Рекомендуемое гео прокси: та же страна номера + соседи по региону (для траста, §3.4). */
+function recommendedGeo(code?: string | null) {
+  const c = (code || '').toLowerCase()
+  const self = COUNTRIES.find((x) => x.code === c)
+  const region = self?.region ?? 'europe'
+  return [...(self ? [self] : []), ...COUNTRIES.filter((x) => x.region === region && x.code !== c)].slice(0, 5)
+}
 
 function fmtDate(ts: number | null | undefined) {
   if (!ts) return '—'
@@ -126,7 +137,7 @@ export function AccountManagementModal({ account, onClose }: { account: TgAccoun
           ) : (
             <div className="animate-fade-in">
               {tab === 'profile' && <ProfileTab account={account} stats={stats} />}
-              {tab === 'proxy' && <ProxyTab stats={stats} loading={loading} onRecheck={() => void load()} />}
+              {tab === 'proxy' && <ProxyTab account={account} stats={stats} loading={loading} onRecheck={() => void load()} />}
               {tab === 'status' && <StatusTab stats={stats} spamChecking={spamChecking} onSpamCheck={() => void runSpamCheck()} />}
               {tab === 'dates' && <DatesTab stats={stats} />}
               {tab === 'actions' && (
@@ -167,7 +178,7 @@ function HeroBanner({ account, stats }: { account: TgAccount; stats: AccountStat
           <div className="mt-1 flex flex-wrap items-center gap-2 text-sm text-white/80">
             <span className="text-white/90">@{stats?.profile.username ?? account.username}</span>
             <span className="opacity-60">{stats?.profile.phone ?? account.phone}</span>
-            <span className="rounded-md bg-white/15 px-1.5 py-0.5 text-xs font-bold">{FLAGS[geo] ?? ''} {geo}</span>
+            <span className="rounded-md bg-white/15 px-1.5 py-0.5 text-xs font-bold">{flagOf(geo)} {nameOf(geo) || geo}</span>
           </div>
         </div>
         <div className="flex shrink-0 flex-col items-end gap-1.5">
@@ -247,7 +258,7 @@ function ProfileTab({ account, stats }: { account: TgAccount; stats: AccountStat
         <Field label="Premium" value={p?.premium == null ? dash : (p.premium ? 'Да' : 'Нет')} />
       </SectionCard>
       <SectionCard title="Системная информация" icon={<Globe size={15} className="text-iris-300" />}>
-        <Field label="Гео" value={p?.geo ? `${FLAGS[p.geo] ?? ''} ${p.geo}` : dash} />
+        <Field label="Гео" value={p?.geo ? `${flagOf(p.geo)} ${nameOf(p.geo)}` : dash} />
         <Field label="Сессия сохранена" value={p?.saved ? 'Да' : 'Нет'} />
         <Field label="Роль" value={stats?.role ?? account.role ?? dash} />
         <Field label="Проект" value={account.project ?? dash} />
@@ -256,17 +267,42 @@ function ProfileTab({ account, stats }: { account: TgAccount; stats: AccountStat
   )
 }
 
-function ProxyTab({ stats, loading, onRecheck }: { stats: AccountStats | null; loading: boolean; onRecheck: () => void }) {
+function GeoRecoCard({ account, stats }: { account: TgAccount; stats: AccountStats | null }) {
+  const country = stats?.profile.geo ?? account.country
+  const rec = recommendedGeo(country)
+  return (
+    <SectionCard title="Гео и рекомендации" icon={<Globe size={15} className="text-iris-300" />}>
+      <Field label="Страна номера" value={country ? <span>{flagOf(country)} {nameOf(country)}</span> : dash} />
+      <div className="mt-2 rounded-xl border border-spark-500/25 bg-spark-500/8 px-3 py-2 text-xs leading-relaxed text-muted">
+        Прокси в стране номера ({flagOf(country)} {nameOf(country)}) или соседней по региону — лучше для траста аккаунта (§3.4).
+      </div>
+      <div className="mt-2.5 text-[11px] font-bold uppercase tracking-wide text-faint">Рекомендуемое гео прокси</div>
+      <div className="mt-1.5 flex flex-wrap gap-1.5">
+        {rec.map((c) => (
+          <span key={c.code} className="inline-flex items-center gap-1.5 rounded-lg border border-line bg-elevated px-2.5 py-1 text-sm font-semibold text-fg">
+            <span className="text-base leading-none">{c.flag}</span> {c.label}
+          </span>
+        ))}
+      </div>
+    </SectionCard>
+  )
+}
+
+function ProxyTab({ account, stats, loading, onRecheck }: { account: TgAccount; stats: AccountStats | null; loading: boolean; onRecheck: () => void }) {
   const px = stats?.proxy
-  if (!px) return <div className="py-8 text-center text-sm text-muted">Нет данных</div>
-  if (!px.configured) {
+  if (!px?.configured) {
     return (
-      <SectionCard title="Прокси" icon={<Globe size={15} className="text-iris-300" />}>
-        <div className="py-6 text-center text-sm text-muted">Прямое подключение (прокси не настроен)</div>
-      </SectionCard>
+      <div className="space-y-3">
+        <GeoRecoCard account={account} stats={stats} />
+        <SectionCard title="Прокси" icon={<Globe size={15} className="text-iris-300" />}>
+          <div className="py-6 text-center text-sm text-muted">Прямое подключение (прокси не настроен)</div>
+        </SectionCard>
+      </div>
     )
   }
   return (
+    <div className="space-y-3">
+      <GeoRecoCard account={account} stats={stats} />
     <SectionCard
       title="Прокси"
       icon={<Globe size={15} className="text-iris-300" />}
@@ -294,9 +330,11 @@ function ProxyTab({ stats, loading, onRecheck }: { stats: AccountStats | null; l
         <MiniStat label="Логин" value={px.login ?? '—'} />
       </div>
     </SectionCard>
+    </div>
   )
 }
 
+/* mini-stat cell */
 function MiniStat({ label, value }: { label: string; value: string }) {
   return (
     <div className="rounded-xl border border-line bg-elevated p-2.5">

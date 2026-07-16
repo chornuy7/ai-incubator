@@ -549,13 +549,13 @@ function AccountsTable(props: {
                 <td className="px-4 py-3"><input type="checkbox" checked={selected.has(a.id)} onChange={() => toggleOne(a.id)} className="h-4 w-4 rounded border-line accent-spark-500" /></td>
                 {showAccountCol && (
                 <td className="px-4 py-3">
-                  <div className="flex items-center gap-3">
+                  <button type="button" onClick={() => props.onDetail(a)} className="group flex items-center gap-3 text-left" title="Открыть статистику аккаунта">
                     {showCol('avatar') && <Avatar name={a.name} color={a.avatarColor} />}
                     <div className="min-w-0">
-                      {showCol('name') && <div className="truncate font-semibold text-fg">{a.name}</div>}
+                      {showCol('name') && <div className="truncate font-semibold text-fg transition-colors group-hover:text-spark-300">{a.name}</div>}
                       <div className="truncate text-xs text-muted">@{a.username} · {a.phone}</div>
                     </div>
-                  </div>
+                  </button>
                 </td>
                 )}
                 {showCol('role') && <td className="px-4 py-3 text-muted">{a.role}</td>}
@@ -627,19 +627,21 @@ function AccountsTable(props: {
         {pageItems.map((a) => (
           <div key={a.id} className={cn('flex items-center gap-3 p-3.5', a.busyIn && 'opacity-60')}>
             <input type="checkbox" checked={selected.has(a.id)} onChange={() => toggleOne(a.id)} className="h-4 w-4 rounded border-line accent-spark-500" />
-            <Avatar name={a.name} color={a.avatarColor} />
-            <div className="min-w-0 flex-1">
-              <div className="truncate font-semibold text-fg">{a.name}</div>
-              <div className="truncate text-xs text-muted">@{a.username} · {a.phone}</div>
-              <div className="mt-1.5">
-                <StatusBadge status={a.status} />
+            <button type="button" onClick={() => props.onDetail(a)} className="flex min-w-0 flex-1 items-center gap-3 text-left" title="Открыть статистику аккаунта">
+              <Avatar name={a.name} color={a.avatarColor} />
+              <div className="min-w-0 flex-1">
+                <div className="truncate font-semibold text-fg">{a.name}</div>
+                <div className="truncate text-xs text-muted">@{a.username} · {a.phone}</div>
+                <div className="mt-1.5">
+                  <StatusBadge status={a.status} />
                 {a.busyIn && (
                   <div className="mt-1 flex items-center gap-1 text-[11px] font-semibold text-rose-300">
                     <Loader2 size={11} className="animate-spin" /> В работе: {a.busyIn.moduleLabel}
                   </div>
                 )}
+                </div>
               </div>
-            </div>
+            </button>
             <RowMenu a={a} {...props} />
           </div>
         ))}
