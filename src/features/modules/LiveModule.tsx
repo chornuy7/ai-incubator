@@ -89,6 +89,12 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
     setTypeWeights(Array.from({ length: n }, (_, i) => base + (i < rem ? 1 : 0)))
   }
   useEffect(() => { void fetchGoals().then(setGoals).catch(() => {}) }, [])
+  // §3.5: главное поле — «на 1 аккаунт»; общий лимит считается авто = на-аккаунт × число выбранных.
+  const accCount = selected.size || 1
+  useEffect(() => {
+    setMaxActions(maxPerAcc * accCount)
+    setMinActions(minPerAcc * accCount)
+  }, [maxPerAcc, minPerAcc, accCount])
   const [palette, setPalette] = useState<Set<string>>(new Set(['👍', '❤️', '🔥']))
   const [viewTab, setViewTab] = useState(1)
   const [historyGrid, setHistoryGrid] = useState(true)
@@ -371,8 +377,8 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
           onDuration={setDurationMinutes}
           showDurationAlways={!!cfg.reactionSettings}
           durationPeriodHint={`Период работы: ${durationPeriodMin}–${durationMinutes} мин`}
-          totalLabel={cfg.reactionSettings?.max.label ?? cfg.workModeFields?.maxLabel ?? 'Макс. действий'}
-          total={{ min: minActions, max: maxActions, onMin: setMinActions, onMax: setMaxActions }}
+          totalLabel={cfg.reactionSettings?.max.label ?? cfg.workModeFields?.maxLabel ?? 'Всего действий'}
+          computedTotal={{ value: maxActions, accounts: accCount }}
           perAccount={{ min: minPerAcc, max: maxPerAcc, onMin: setMinPerAcc, onMax: setMaxPerAcc }}
           minWords={cfg.workModeFields?.minWords ? { value: minWords, onChange: setMinWords } : null}
           delays={delays}
@@ -487,25 +493,35 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
           </div>
         )}
         {moduleKey === 'neuro-commenting' && !running && (cfg.messagePrompts?.length ?? 0) > 0 && (
-          <div className="mb-3">
-            <div className="mb-1 flex flex-wrap items-center gap-2 text-xs text-white/50">
-              Распределение типов, %
-              <span className={weightSum === 100 ? 'text-spark-300' : weightSum > 100 ? 'text-rose-300' : 'text-amber-300'}>
-                сумма: {weightSum}%{weightSum > 100 ? ' — больше 100, запуск заблокирован' : weightSum !== 100 ? ' — нормируется при запуске' : ''}
-              </span>
-              {weightSum !== 100 && (cfg.messagePrompts?.length ?? 0) > 0 && (
-                <button type="button" onClick={() => balanceTypeWeights()} className="rounded-md border border-line px-2 py-0.5 text-[11px] font-semibold text-spark-300 hover:bg-elevated">= 100%</button>
-              )}
+          <div className="mb-3 rounded-2xl border border-line bg-elevated/40 p-3">
+            <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+              <span className="text-sm font-semibold text-fg">Распределение типов комментариев</span>
+              <div className="flex items-center gap-2">
+                <span className={`rounded-md px-2 py-0.5 text-xs font-bold ${weightSum === 100 ? 'bg-spark-500/15 text-spark-300' : weightSum > 100 ? 'bg-rose-500/15 text-rose-300' : 'bg-amber-500/15 text-amber-300'}`}>
+                  сумма {weightSum}%
+                </span>
+                {weightSum !== 100 && (
+                  <button type="button" onClick={() => balanceTypeWeights()} className="rounded-md border border-line px-2 py-0.5 text-[11px] font-semibold text-spark-300 hover:bg-elevated">поровну</button>
+                )}
+              </div>
             </div>
-            <div className="grid gap-1 sm:grid-cols-2">
-              {(cfg.messagePrompts ?? []).map((label, i) => (
-                <div key={i} className="flex items-center gap-2">
-                  <span className="min-w-0 flex-1 truncate text-xs text-white/70">{label}</span>
-                  <input type="number" min={0} max={100} className="input h-8 w-16 text-center" value={typeWeights[i] ?? 0}
-                    onChange={(e) => setTypeWeights((w) => { const n = [...w]; while (n.length < (cfg.messagePrompts?.length ?? 0)) n.push(0); n[i] = Math.max(0, Number(e.target.value) || 0); return n })} />
-                </div>
-              ))}
+            <div className="grid gap-2 sm:grid-cols-2">
+              {(cfg.messagePrompts ?? []).map((label, i) => {
+                const val = typeWeights[i] ?? 0
+                const share = weightSum > 0 ? Math.round((val / weightSum) * 100) : 0
+                return (
+                  <div key={i} className="rounded-xl border border-line bg-surface/40 p-2">
+                    <div className="mb-1.5 flex items-center gap-2">
+                      <span className="min-w-0 flex-1 truncate text-xs font-medium text-fg">{label}</span>
+                      <input type="number" min={0} max={100} className="input h-7 w-14 text-center text-sm" value={val}
+                        onChange={(e) => setTypeWeights((w) => { const n = [...w]; while (n.length < (cfg.messagePrompts?.length ?? 0)) n.push(0); n[i] = Math.max(0, Number(e.target.value) || 0); return n })} />
+                    </div>
+                    <div className="h-1.5 overflow-hidden rounded-full bg-line"><div className="h-full rounded-full bg-spark-500 transition-all" style={{ width: `${share}%` }} /></div>
+                  </div>
+                )
+              })}
             </div>
+            <p className="mt-2 text-[11px] text-white/40">Доля каждого типа при запуске нормируется к 100%. «Поровну» — раскидать одинаково.</p>
           </div>
         )}
         {!running && (

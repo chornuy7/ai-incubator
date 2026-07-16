@@ -28,6 +28,8 @@ export interface TimingSectionProps {
   /** Общий лимит действий (min/max). */
   totalLabel?: string
   total?: MinMaxCtl | null
+  /** Если задан — «Всего» не редактируется, а считается авто = на-аккаунт × число аккаунтов (§3.5). */
+  computedTotal?: { value: number; accounts: number } | null
   /** Лимит на аккаунт (min/max). */
   perAccount?: MinMaxCtl | null
   /** Мин. слов в посте. */
@@ -54,7 +56,7 @@ export function TimingSection(props: TimingSectionProps) {
   const {
     workModeOptions, workMode = 0, onWorkMode, workModeLabel = 'Режим работы',
     durationMinutes = 60, onDuration, showDurationAlways, durationPeriodHint,
-    totalLabel = 'Действия', total, perAccount, minWords,
+    totalLabel = 'Действия', total, computedTotal, perAccount, minWords,
     delays, onDelays, showComment, showAction = true, showJoin = true, labels = {},
     delayPresets, delayPreset = 1, onDelayPreset,
   } = props
@@ -82,14 +84,25 @@ export function TimingSection(props: TimingSectionProps) {
                 {durationPeriodHint && <p className="mt-1 text-xs text-muted">{durationPeriodHint}</p>}
               </div>
             )}
-            {showCounts && total && (
+            {showCounts && computedTotal ? (
+              <div>
+                <div className="mb-1 text-sm text-muted">{totalLabel} — авто</div>
+                <div className="rounded-xl border border-line bg-elevated px-3 py-2.5">
+                  <div className="font-display text-lg font-bold text-fg">≈ {computedTotal.value}</div>
+                  <div className="text-[11px] text-muted">на 1 аккаунт × {computedTotal.accounts} акк.</div>
+                </div>
+                {computedTotal.accounts <= 1 && (
+                  <p className="mt-1 text-[11px] text-amber-300">Выбран 1 аккаунт — вся нагрузка ляжет на него. Добавьте аккаунты, чтобы распределить.</p>
+                )}
+              </div>
+            ) : showCounts && total ? (
               <MinMaxField label={totalLabel} min={total.min} max={total.max} onMin={total.onMin} onMax={total.onMax} />
-            )}
+            ) : null}
           </div>
 
           <div className="space-y-4 rounded-2xl border border-line bg-elevated/40 p-4">
             {perAccount && (
-              <MinMaxField label="На аккаунт" min={perAccount.min} max={perAccount.max} onMin={perAccount.onMin} onMax={perAccount.onMax} />
+              <MinMaxField label={computedTotal ? 'Сколько сделает 1 аккаунт для цели' : 'На аккаунт'} min={perAccount.min} max={perAccount.max} onMin={perAccount.onMin} onMax={perAccount.onMax} />
             )}
             {minWords && (
               <NumberField label="Мин. слов в посте" value={minWords.value} onChange={minWords.onChange} />
