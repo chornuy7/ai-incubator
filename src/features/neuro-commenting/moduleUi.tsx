@@ -164,9 +164,10 @@ export function DelayFields({ label, from, to, onFrom, onTo, unit }: {
     <div className="flex flex-wrap items-center justify-between gap-2 border-b border-line/60 pb-3 last:border-0 last:pb-0">
       <span className="text-sm font-medium text-fg">{label}</span>
       <div className="flex items-center gap-2">
-        <Stepper value={from} onChange={onFrom} suffix={u} />
+        {/* #9: «от» не больше «до», «до» не меньше «от» — макс/мин связаны */}
+        <Stepper value={from} onChange={onFrom} suffix={u} max={to} />
         <span className="text-muted">до</span>
-        <Stepper value={to} onChange={onTo} suffix={u} />
+        <Stepper value={to} onChange={onTo} suffix={u} min={from} />
       </div>
     </div>
   )

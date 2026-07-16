@@ -80,6 +80,14 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
     return n ? Array.from({ length: n }, () => Math.round(100 / n)) : []
   })
   const weightSum = typeWeights.reduce((a, b) => a + (Number(b) || 0), 0)
+  // #5: авто-выравнивание типов ровно в 100% (равномерно + остаток на первые).
+  const balanceTypeWeights = () => {
+    const n = cfg.messagePrompts?.length ?? 0
+    if (!n) return
+    const base = Math.floor(100 / n)
+    const rem = 100 - base * n
+    setTypeWeights(Array.from({ length: n }, (_, i) => base + (i < rem ? 1 : 0)))
+  }
   useEffect(() => { void fetchGoals().then(setGoals).catch(() => {}) }, [])
   const [palette, setPalette] = useState<Set<string>>(new Set(['👍', '❤️', '🔥']))
   const [viewTab, setViewTab] = useState(1)
@@ -166,12 +174,17 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
     () => [...selected].filter((id) => accounts.some((a) => a.id === id && a.busyIn)).length,
     [selected, accounts],
   )
-  const canStart = isGgr
+  // #5: сумма процентов типов не должна превышать 100 — иначе запуск блокируется.
+  const typesOver100 = moduleKey === 'neuro-commenting' && weightSum > 100
+  const canStart = (isGgr
     ? accounts.length > 0
-    : selected.size > 0 && busySelectedCount === 0 && (!needsTargets || targets.length > 0 || hasPostTargets)
-  const warn = !canStart
-    ? (isGgr ? 'Нет аккаунтов в панели' : busySelectedCount ? `${busySelectedCount} акк. заняты в другом модуле` : !selected.size ? 'Выберите аккаунты' : 'Добавьте группу или ссылку на пост')
-    : undefined
+    : selected.size > 0 && busySelectedCount === 0 && (!needsTargets || targets.length > 0 || hasPostTargets))
+    && !typesOver100
+  const warn = typesOver100
+    ? `Сумма типов комментариев ${weightSum}% > 100 — уменьшите (кнопка «= 100%»)`
+    : !canStart
+      ? (isGgr ? 'Нет аккаунтов в панели' : busySelectedCount ? `${busySelectedCount} акк. заняты в другом модуле` : !selected.size ? 'Выберите аккаунты' : 'Добавьте группу или ссылку на пост')
+      : undefined
 
   // §3.5: предупреждать о математически противоречивых лимитах (макс vs аккаунты vs мин/акк).
   const limitWarn = useMemo(() => {
@@ -469,7 +482,12 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
           <div className="mb-3">
             <div className="mb-1 flex flex-wrap items-center gap-2 text-xs text-white/50">
               Распределение типов, %
-              <span className={weightSum === 100 ? 'text-spark-300' : 'text-amber-300'}>сумма: {weightSum}%{weightSum !== 100 ? ' — нормируется при запуске' : ''}</span>
+              <span className={weightSum === 100 ? 'text-spark-300' : weightSum > 100 ? 'text-rose-300' : 'text-amber-300'}>
+                сумма: {weightSum}%{weightSum > 100 ? ' — больше 100, запуск заблокирован' : weightSum !== 100 ? ' — нормируется при запуске' : ''}
+              </span>
+              {weightSum !== 100 && (cfg.messagePrompts?.length ?? 0) > 0 && (
+                <button type="button" onClick={() => balanceTypeWeights()} className="rounded-md border border-line px-2 py-0.5 text-[11px] font-semibold text-spark-300 hover:bg-elevated">= 100%</button>
+              )}
             </div>
             <div className="grid gap-1 sm:grid-cols-2">
               {(cfg.messagePrompts ?? []).map((label, i) => (
