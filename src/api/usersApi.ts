@@ -5,7 +5,8 @@ export interface User {
   id: string
   email: string
   name: string
-  roleId: string
+  roleId: string // «первичная» роль (админская если есть, иначе первая) — для отображения/детекта
+  roleIds: string[] // мульти-роль: все роли пользователя (права суммируются)
   active: boolean
   createdAt: number
   updatedAt: number
@@ -21,12 +22,12 @@ export async function loginUser(email: string, password: string): Promise<{ user
   return { user: data.user, role: data.role }
 }
 
-export async function createUser(input: { email: string; name?: string; roleId?: string; password: string; active?: boolean }): Promise<User> {
+export async function createUser(input: { email: string; name?: string; roleId?: string; roleIds?: string[]; password: string; active?: boolean }): Promise<User> {
   const data = await apiPost<{ user: User }>('/api/users', input)
   return data.user
 }
 
-export async function updateUser(id: string, patch: { name?: string; roleId?: string; active?: boolean; password?: string }): Promise<User> {
+export async function updateUser(id: string, patch: { name?: string; roleId?: string; roleIds?: string[]; active?: boolean; password?: string }): Promise<User> {
   const data = await apiPut<{ user: User }>(`/api/users/${id}`, patch)
   return data.user
 }

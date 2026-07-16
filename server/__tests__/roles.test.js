@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
-import { normalizeRole, can, allowedFolderTargets, ALLOW, DENY, ADMIN_ROLE_ID } from '../roles.js'
+import { normalizeRole, can, allowedFolderTargets, mergePermissions, userRoleIds, hasAdminRole, ALLOW, DENY, ADMIN_ROLE_ID } from '../roles.js'
 
 test('normalizeRole: дефолты и нормализация доступов', () => {
   const r = normalizeRole({
@@ -67,6 +67,45 @@ test('allowedFolderTargets(): выдача конкретных каналов �
   // Папка выдана со списком — пересечение (нормализация @/регистра)
   const subset = normalizeRole({ name: 'x', permissions: { resources: { folders: { f1: ALLOW }, folderChannels: { f1: ['A', 'c'] } } } })
   assert.deepEqual(allowedFolderTargets(subset, 'f1', all), ['@a', 'c'])
+})
+
+test('userRoleIds/hasAdminRole: мульти-роль и обратная совместимость', () => {
+  assert.deepEqual(userRoleIds({ roleIds: ['a', 'b', 'a'] }), ['a', 'b']) // дедуп
+  assert.deepEqual(userRoleIds({ roleId: 'r1' }), ['r1']) // старый одиночный
+  assert.deepEqual(userRoleIds({}), [])
+  assert.equal(hasAdminRole(['x', ADMIN_ROLE_ID]), true)
+  assert.equal(hasAdminRole(['x']), false)
+})
+
+test('mergePermissions(): суммирование прав нескольких ролей (union)', () => {
+  const a = normalizeRole({ name: 'A', permissions: {
+    modules: { warming: ALLOW },
+    resources: { folders: { f1: ALLOW }, folderChannels: { f1: ['x', 'y'] }, timers: ALLOW },
+  } })
+  const b = normalizeRole({ name: 'B', permissions: {
+    modules: { 'neuro-commenting': ALLOW },
+    resources: { folders: { f1: ALLOW, f2: ALLOW }, folderChannels: { f1: ['z'] } },
+  } })
+  const m = mergePermissions([a, b])
+  // модули объединяются
+  assert.equal(m.modules.warming, ALLOW)
+  assert.equal(m.modules['neuro-commenting'], ALLOW)
+  // папки объединяются
+  assert.equal(m.resources.folders.f1, ALLOW)
+  assert.equal(m.resources.folders.f2, ALLOW)
+  // каналы f1 складываются: x,y ∪ z
+  assert.deepEqual([...m.resources.folderChannels.f1].sort(), ['x', 'y', 'z'])
+  // f2 выдана без списка → нет ограничения (пусто = все)
+  assert.equal(m.resources.folderChannels.f2, undefined)
+  // timers: allow из A побеждает
+  assert.equal(m.resources.timers, ALLOW)
+
+  // «Вся папка» побеждает подсписок: A даёт f1 целиком, B — подсписком
+  const whole = normalizeRole({ name: 'W', permissions: { resources: { folders: { f1: ALLOW } } } })
+  const sub = normalizeRole({ name: 'S', permissions: { resources: { folders: { f1: ALLOW }, folderChannels: { f1: ['x'] } } } })
+  const m2 = mergePermissions([whole, sub])
+  assert.equal(m2.resources.folderChannels.f1, undefined) // ограничение снято
+  assert.equal(m2.resources.searchTemplates, DENY)
 })
 
 test('CRUD ролей на изолированном файле + сид по умолчанию', async () => {

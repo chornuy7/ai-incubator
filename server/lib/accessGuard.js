@@ -7,7 +7,7 @@
  * заголовок на подписанный токен сессии (см. docs/CONTRACT-rbac.md §7).
  */
 import { getUser } from '../users.js'
-import { getRole, can, ADMIN_ROLE_ID } from '../roles.js'
+import { can, userRoleIds, hasAdminRole, rolesForUser } from '../roles.js'
 
 /**
  * Guard для монтирования на префикс модуля. `keyFrom(req)` извлекает ключ модуля.
@@ -22,10 +22,11 @@ export function moduleAccessGuard(keyFrom) {
       if (!key) return next() // не модульный путь (список задач и т.п.)
       const user = await getUser(userId)
       if (!user || !user.active) return next()
-      if (user.roleId === ADMIN_ROLE_ID) return next() // админ — bypass
-      const role = await getRole(user.roleId)
-      if (can(role, 'module', key)) return next()
-      return res.status(403).json({ ok: false, error: `Нет доступа к модулю (роль «${role?.name || '—'}»)` })
+      if (hasAdminRole(userRoleIds(user))) return next() // админ среди ролей — bypass
+      const roles = await rolesForUser(user)
+      if (roles.some((role) => can(role, 'module', key))) return next() // union: доступ даёт любая роль
+      const names = roles.map((r) => r.name).join(', ') || '—'
+      return res.status(403).json({ ok: false, error: `Нет доступа к модулю (роли «${names}»)` })
     } catch {
       return next() // guard не должен ронять запрос
     }

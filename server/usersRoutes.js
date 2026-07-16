@@ -1,7 +1,7 @@
 /** CRUD + аутентификация операторов (§8.1). Монтируется в /api/users. */
 import { Router } from 'express'
 import { listUsers, getUser, createUser, updateUser, deleteUser, authenticate, publicUser } from './users.js'
-import { getRole } from './roles.js'
+import { rolesForUser, mergePermissions, userRoleIds, hasAdminRole } from './roles.js'
 import { appendAudit } from './lib/auditLog.js'
 import { clockIn, clockOut, summariesFor } from './workLog.js'
 
@@ -27,10 +27,17 @@ usersRouter.post('/login', async (req, res) => {
       await appendAudit({ action: 'user.login.fail', module: 'auth', initiator: 'system', reason: `Неудачный вход: ${String(email || '').slice(0, 60)}` })
       return res.status(401).json({ ok: false, error: 'Неверный e-mail или пароль' })
     }
-    const role = user.roleId ? await getRole(user.roleId) : null
+    // Мульти-роль: объединяем права всех ролей пользователя (union). Админ среди ролей → bypass.
+    const ids = userRoleIds(user)
+    const roles = await rolesForUser(user)
+    const isAdmin = hasAdminRole(ids)
+    // Админ или нет разрешимых ролей → null (bypass/не гейтим, как прежде); иначе — union прав.
+    const permissions = isAdmin || roles.length === 0 ? null : mergePermissions(roles)
+    const roleName = roles.map((r) => r.name).join(' + ')
+    const role = { id: user.roleId || '', name: roleName, permissions }
     await clockIn(user.id) // учёт рабочего времени (§8.1): старт сессии труда
-    await appendAudit({ action: 'user.login', module: 'auth', initiator: user.email, reason: `Вход: ${user.name}`, meta: { userId: user.id, roleId: user.roleId } })
-    res.json({ ok: true, user, role })
+    await appendAudit({ action: 'user.login', module: 'auth', initiator: user.email, reason: `Вход: ${user.name}`, meta: { userId: user.id, roleIds: ids } })
+    res.json({ ok: true, user, role, roles })
   } catch (err) { fail(res, err, 500) }
 })
 

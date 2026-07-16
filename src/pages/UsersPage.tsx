@@ -1,9 +1,38 @@
 import { useEffect, useState } from 'react'
-import { Users2, Plus, Trash2, ShieldCheck } from 'lucide-react'
-import { PageHeader, Card, EmptyState, Badge, Select, Modal } from '@/shared/ui'
+import { Users2, Plus, Trash2, ShieldCheck, Check } from 'lucide-react'
+import { PageHeader, Card, EmptyState, Badge, Modal } from '@/shared/ui'
 import { fetchUsers, createUser, updateUser, deleteUser, fetchWorktime, type User, type WorkSummary } from '@/api/usersApi'
 import { fetchRoles, type Role } from '@/api/rolesApi'
 import { ADMIN_BYPASS_ID } from '@/shared/config/rbac'
+import { cn } from '@/shared/lib/utils'
+
+/** Мультивыбор ролей: клик по чипу добавляет/убирает роль. Права ролей суммируются (union). */
+function RolePicker({ roles, value, onChange }: { roles: Role[]; value: string[]; onChange: (ids: string[]) => void }) {
+  const toggle = (id: string) => onChange(value.includes(id) ? value.filter((x) => x !== id) : [...value, id])
+  return (
+    <div className="flex flex-wrap gap-1.5">
+      {roles.map((r) => {
+        const on = value.includes(r.id)
+        const admin = r.id === ADMIN_BYPASS_ID
+        return (
+          <button
+            key={r.id}
+            type="button"
+            onClick={() => toggle(r.id)}
+            className={cn(
+              'inline-flex items-center gap-1 rounded-lg border px-2.5 py-1 text-xs font-medium transition-colors',
+              on
+                ? admin ? 'border-iris-500/50 bg-iris-500/15 text-iris-200' : 'border-spark-500/50 bg-spark-500/15 text-spark-200'
+                : 'border-line text-white/45 hover:text-white/80',
+            )}
+          >
+            {on && <Check size={12} />}{r.name}
+          </button>
+        )
+      })}
+    </div>
+  )
+}
 
 /** мс → «2ч 15м» / «12м». */
 function fmtDur(ms: number): string {
@@ -21,7 +50,7 @@ export function UsersPage() {
   const [loading, setLoading] = useState(true)
   const [err, setErr] = useState('')
   const [open, setOpen] = useState(false)
-  const [form, setForm] = useState({ email: '', name: '', password: '', roleId: 'role_moderator' })
+  const [form, setForm] = useState<{ email: string; name: string; password: string; roleIds: string[] }>({ email: '', name: '', password: '', roleIds: ['role_moderator'] })
   const [saving, setSaving] = useState(false)
 
   async function load() {
@@ -34,9 +63,9 @@ export function UsersPage() {
   }
   useEffect(() => { void load() }, [])
 
-  async function setRole(u: User, roleId: string) {
+  async function assignRoles(u: User, roleIds: string[]) {
     try {
-      const upd = await updateUser(u.id, { roleId })
+      const upd = await updateUser(u.id, { roleIds })
       setUsers((prev) => prev.map((x) => (x.id === u.id ? upd : x)))
     } catch (e) { setErr(e instanceof Error ? e.message : 'Ошибка') }
   }
@@ -59,12 +88,10 @@ export function UsersPage() {
       const u = await createUser(form)
       setUsers((prev) => [...prev, u])
       setOpen(false)
-      setForm({ email: '', name: '', password: '', roleId: 'role_moderator' })
+      setForm({ email: '', name: '', password: '', roleIds: ['role_moderator'] })
     } catch (e) { setErr(e instanceof Error ? e.message : 'Ошибка') }
     finally { setSaving(false) }
   }
-
-  const roleOptions = roles.map((r) => ({ value: r.id, label: r.name }))
 
   return (
     <div>
@@ -85,7 +112,9 @@ export function UsersPage() {
       ) : (
         <div className="flex flex-col gap-2">
           {users.map((u) => {
-            const isAdmin = u.roleId === ADMIN_BYPASS_ID
+            const roleIds = u.roleIds?.length ? u.roleIds : (u.roleId ? [u.roleId] : [])
+            const isAdmin = roleIds.includes(ADMIN_BYPASS_ID)
+            const locked = u.id === 'usr_admin' // встроенного главного админа не трогаем
             return (
               <Card key={u.id} className="flex flex-wrap items-center gap-3 p-3">
                 <div className="min-w-0 flex-1">
@@ -106,13 +135,18 @@ export function UsersPage() {
                 </div>
 
                 <div className="flex items-center gap-2">
-                  {isAdmin ? (
+                  {locked ? (
                     <span className="flex items-center gap-1.5 rounded-lg bg-iris-500/10 px-3 py-2 text-xs text-iris-200"><ShieldCheck size={14} /> Полный доступ</span>
                   ) : (
-                    <Select value={u.roleId} onChange={(v) => void setRole(u, v)} className="w-48" options={roleOptions} />
+                    <div className="flex flex-col items-end gap-1">
+                      <RolePicker roles={roles} value={roleIds} onChange={(ids) => void assignRoles(u, ids)} />
+                      <span className="text-[11px] text-white/35">
+                        {isAdmin ? 'Полный доступ (админ-роль)' : roleIds.length > 1 ? `${roleIds.length} роли — права суммируются` : roleIds.length === 0 ? 'Нет ролей — нет доступа' : ''}
+                      </span>
+                    </div>
                   )}
                   <button onClick={() => void toggleActive(u)} className="btn-ghost h-9 text-xs">{u.active ? 'Отключить' : 'Включить'}</button>
-                  {u.id !== 'usr_admin' && (
+                  {!locked && (
                     <button onClick={() => void remove(u)} className="btn-icon h-9 w-9" aria-label="Удалить"><Trash2 size={14} /></button>
                   )}
                 </div>
@@ -137,8 +171,8 @@ export function UsersPage() {
             <input value={form.password} onChange={(e) => setForm((f) => ({ ...f, password: e.target.value }))} className="input" placeholder="••••••••" />
           </div>
           <div>
-            <label className="label">Роль</label>
-            <Select value={form.roleId} onChange={(v) => setForm((f) => ({ ...f, roleId: v }))} options={roleOptions} />
+            <label className="label">Роли <span className="font-normal text-white/40">(можно несколько — права суммируются)</span></label>
+            <RolePicker roles={roles} value={form.roleIds} onChange={(ids) => setForm((f) => ({ ...f, roleIds: ids }))} />
           </div>
           <div className="mt-1 flex justify-end gap-2">
             <button onClick={() => setOpen(false)} className="btn-ghost h-10">Отмена</button>

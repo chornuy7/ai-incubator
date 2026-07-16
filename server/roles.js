@@ -264,3 +264,61 @@ export function allowedFolderTargets(role, folderId, folderTargets = []) {
   const allow = new Set(fc.map(normTarget))
   return folderTargets.filter((t) => allow.has(normTarget(t)))
 }
+
+/** Список ролей пользователя (мульти-роль). Совместимо со старым одиночным roleId. @param {object|null} user */
+export function userRoleIds(user) {
+  if (!user) return []
+  const raw = Array.isArray(user.roleIds) ? user.roleIds : (user.roleId != null ? [user.roleId] : [])
+  return [...new Set(raw.map((x) => String(x || '').trim()).filter(Boolean))]
+}
+
+/** Есть ли у набора ролей админ (bypass). @param {string[]} ids */
+export function hasAdminRole(ids = []) {
+  return ids.includes(ADMIN_ROLE_ID)
+}
+
+/** Загрузить объекты ролей пользователя. @param {object|null} user @returns {Promise<object[]>} */
+export async function rolesForUser(user) {
+  const out = []
+  for (const id of userRoleIds(user)) {
+    const r = await getRole(id)
+    if (r) out.push(r)
+  }
+  return out
+}
+
+/**
+ * Объединить права нескольких ролей (union — «суммирование»): доступ allow, если его даёт
+ * хотя бы одна роль. Каналы внутри папки складываются; если хоть одна роль дала папку без
+ * ограничения по каналам (пустой список) — ограничение снимается (= все каналы). §8.1.
+ * @param {object[]} roles @returns {RolePermissions}
+ */
+export function mergePermissions(roles = []) {
+  const resources = { folders: {}, channels: {}, folderChannels: {}, timers: DENY, searchTemplates: DENY }
+  const merged = { modules: {}, blocks: {}, resources }
+  const wholeFolder = new Set() // папки, где хоть одна роль дала «все каналы»
+  for (const role of roles) {
+    const p = role?.permissions
+    if (!p) continue
+    const r = p.resources || {}
+    for (const [k, v] of Object.entries(p.modules || {})) if (v === ALLOW) merged.modules[k] = ALLOW
+    for (const [k, v] of Object.entries(p.blocks || {})) if (v === ALLOW) merged.blocks[k] = ALLOW
+    for (const [k, v] of Object.entries(r.channels || {})) if (v === ALLOW) resources.channels[k] = ALLOW
+    if (r.timers === ALLOW) resources.timers = ALLOW
+    if (r.searchTemplates === ALLOW) resources.searchTemplates = ALLOW
+    const fc = r.folderChannels || {}
+    for (const [folderId, v] of Object.entries(r.folders || {})) {
+      if (v !== ALLOW) continue
+      resources.folders[folderId] = ALLOW
+      const list = fc[folderId]
+      if (!Array.isArray(list) || list.length === 0) {
+        wholeFolder.add(folderId)
+      } else {
+        const cur = resources.folderChannels[folderId] || []
+        resources.folderChannels[folderId] = [...new Set([...cur, ...list.map(normTarget)])]
+      }
+    }
+  }
+  for (const folderId of wholeFolder) delete resources.folderChannels[folderId] // «вся папка» побеждает
+  return merged
+}

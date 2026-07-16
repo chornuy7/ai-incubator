@@ -10,6 +10,7 @@ export interface SessionUser {
   email: string
   name: string
   roleId: string
+  roleIds: string[]
   roleName: string
   isAdmin: boolean
   permissions: RolePermissions | null
@@ -38,13 +39,15 @@ function boot(): SessionUser | null {
 export const useSession = create<SessionStore>((set) => ({
   user: boot(),
   login: (user, role) => {
+    const roleIds = user.roleIds?.length ? user.roleIds : (user.roleId ? [user.roleId] : [])
     const su: SessionUser = {
       id: user.id,
       email: user.email,
       name: user.name,
       roleId: user.roleId,
+      roleIds,
       roleName: role?.name ?? '',
-      isAdmin: user.roleId === ADMIN_BYPASS_ID,
+      isAdmin: user.roleId === ADMIN_BYPASS_ID || roleIds.includes(ADMIN_BYPASS_ID),
       permissions: role?.permissions ?? null,
     }
     persist(su)

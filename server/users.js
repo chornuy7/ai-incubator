@@ -39,6 +39,20 @@ function normEmail(e) {
   return String(e ?? '').trim().toLowerCase()
 }
 
+/**
+ * Нормализовать роли пользователя (мульти-роль). Принимает roleIds (массив) или старый
+ * одиночный roleId. Возвращает { roleIds, roleId }, где roleId — «первичная» роль для
+ * отображения/детекта админа: админская, если она в наборе, иначе первая. §8.1.
+ * @param {{roleIds?: string[], roleId?: string}} input
+ */
+function normUserRoles(input = {}, fallback = []) {
+  const raw = Array.isArray(input.roleIds) ? input.roleIds : (input.roleId != null ? [input.roleId] : [])
+  let list = [...new Set(raw.map((x) => String(x || '').trim()).filter(Boolean))]
+  if (!list.length) list = [...fallback]
+  const roleId = list.includes(ADMIN_ROLE_ID) ? ADMIN_ROLE_ID : (list[0] || '')
+  return { roleIds: list, roleId }
+}
+
 /** Стартовые учётки: главный админ (демо) + тестовый модератор (запрошен заказчиком). */
 function defaultUsers() {
   const now = Date.now()
@@ -49,6 +63,7 @@ function defaultUsers() {
       email: 'illia@incubator.ai',
       name: 'Администратор',
       roleId: ADMIN_ROLE_ID,
+      roleIds: [ADMIN_ROLE_ID],
       active: true,
       passwordHash: hashPassword('demo12345'),
       createdAt: now,
@@ -60,6 +75,7 @@ function defaultUsers() {
       email: 'ya.lonk777@gmail.com',
       name: 'Тестовый модератор',
       roleId: 'role_moderator',
+      roleIds: ['role_moderator'],
       active: true,
       passwordHash: hashPassword('11111111'),
       createdAt: now,
@@ -75,6 +91,15 @@ export async function listUsers() {
     await writeJson(USERS_FILE, seed)
     return seed
   }
+  // Разовая миграция: старым учёткам с одиночным roleId проставляем roleIds (мульти-роль).
+  let changed = false
+  for (const u of users) {
+    if (!Array.isArray(u.roleIds)) {
+      const { roleIds, roleId } = normUserRoles(u)
+      u.roleIds = roleIds; u.roleId = roleId; changed = true
+    }
+  }
+  if (changed) await writeJson(USERS_FILE, users)
   return users
 }
 
@@ -96,11 +121,13 @@ export async function createUser(input = {}) {
   if (!input.password || String(input.password).length < 6) throw new Error('Пароль минимум 6 символов')
   if (await findByEmail(email)) throw new Error('Пользователь с таким e-mail уже есть')
   const users = await listUsers()
+  const { roleIds, roleId } = normUserRoles(input, ['role_moderator'])
   const user = {
     id: `usr_${crypto.randomUUID().slice(0, 8)}`,
     email,
     name: String(input.name ?? '').trim() || email,
-    roleId: input.roleId ? String(input.roleId) : 'role_moderator',
+    roleId,
+    roleIds,
     active: input.active !== false,
     passwordHash: hashPassword(input.password),
     createdAt: Date.now(),
@@ -117,7 +144,10 @@ export async function updateUser(id, patch = {}) {
   const i = users.findIndex((u) => u.id === id)
   if (i === -1) return null
   if (patch.name !== undefined) users[i].name = String(patch.name).trim() || users[i].name
-  if (patch.roleId !== undefined) users[i].roleId = String(patch.roleId)
+  if (patch.roleIds !== undefined || patch.roleId !== undefined) {
+    const { roleIds, roleId } = normUserRoles({ roleIds: patch.roleIds, roleId: patch.roleId })
+    users[i].roleIds = roleIds; users[i].roleId = roleId
+  }
   if (patch.active !== undefined) users[i].active = !!patch.active
   if (patch.password) {
     if (String(patch.password).length < 6) throw new Error('Пароль минимум 6 символов')
