@@ -569,14 +569,29 @@ function AccountsTable(props: {
                           <Loader2 size={11} className="animate-spin" /> В работе: {a.busyIn.moduleLabel}
                         </div>
                       )}
-                      {props.dailyAll?.[a.id]?.anyReached && (
-                        <span
-                          className="rounded-md bg-rose-500/15 px-1.5 py-0.5 text-[10px] font-bold text-rose-300"
-                          title={`Суточный лимит §6 достигнут: ${(props.dailyAll[a.id].items.filter((x) => x.reached).map((x) => DAILY_CAP_LABELS[x.action] ?? x.action).join(', '))}. Модули пропускают аккаунт до сброса в полночь.`}
-                        >
-                          §6 лимит: {props.dailyAll[a.id].items.filter((x) => x.reached).map((x) => DAILY_CAP_LABELS[x.action] ?? x.action).join(', ')}
-                        </span>
-                      )}
+                      {(() => {
+                        const d = props.dailyAll?.[a.id]
+                        if (!d) return null
+                        if (d.anyReached) {
+                          const hit = d.items.filter((x) => x.reached).map((x) => DAILY_CAP_LABELS[x.action] ?? x.action).join(', ')
+                          return (
+                            <span className="rounded-md bg-rose-500/15 px-1.5 py-0.5 text-[10px] font-bold text-rose-300" title={`Суточный лимит §6 достигнут: ${hit}. Модули пропускают аккаунт до сброса в полночь.`}>
+                              §6 лимит: {hit}
+                            </span>
+                          )
+                        }
+                        // Раннее предупреждение: ≥75% любого потолка, но ещё не заблокирован.
+                        const near = d.items.filter((x) => x.cap > 0 && !x.reached && x.used / x.cap >= 0.75)
+                        if (near.length) {
+                          const lbl = near.map((x) => `${DAILY_CAP_LABELS[x.action] ?? x.action} ${x.used}/${x.cap}`).join(', ')
+                          return (
+                            <span className="rounded-md bg-amber-500/15 px-1.5 py-0.5 text-[10px] font-bold text-amber-300" title={`Близко к суточному лимиту §6: ${lbl}. Скоро модули начнут пропускать аккаунт.`}>
+                              §6 близко: {near.map((x) => DAILY_CAP_LABELS[x.action] ?? x.action).join(', ')}
+                            </span>
+                          )
+                        }
+                        return null
+                      })()}
                       {a.status === 'reauth' && props.tab === 'accounts' && (
                         <button type="button" onClick={() => props.onReauth(a)} className="text-xs font-semibold text-violet-300 hover:text-violet-200">
                           Войти снова →
