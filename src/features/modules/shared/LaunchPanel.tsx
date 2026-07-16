@@ -1,4 +1,4 @@
-import { Play, Save, Square, AlertTriangle, Loader2, Bookmark, X } from 'lucide-react'
+import { Play, Save, Square, AlertTriangle, Loader2, Bookmark, X, ArrowUpRight } from 'lucide-react'
 import { cn } from '@/shared/lib/utils'
 import type { ModuleTask, ModulePreset, ModuleTaskSettings } from '@/api/modulesApi'
 import { LaunchStat } from './index'
@@ -39,7 +39,10 @@ export function LaunchPanel({
         </div>
         <div className="flex flex-1 justify-center gap-2">
           {running ? (
-            <button type="button" onClick={onStop} className="btn-danger h-11 min-w-[180px]"><Square size={16} /> Остановить</button>
+            <div className="flex flex-wrap items-center justify-center gap-2">
+              <button type="button" onClick={onStop} className="btn-danger h-11 min-w-[150px]"><Square size={16} /> Остановить</button>
+              <a href="/panel/tasks" className="btn-ghost h-11 text-sm" title="Задача добавлена в работу — статус и прогресс в Дашборде задач"><ArrowUpRight size={15} /> В Дашборде задач</a>
+            </div>
           ) : (
             <button type="button" onClick={onStart} disabled={starting || !canStart} className="btn-primary h-11 min-w-[180px]">
               {starting ? <Loader2 size={17} className="animate-spin" /> : <Play size={17} />} {primaryLabel}
