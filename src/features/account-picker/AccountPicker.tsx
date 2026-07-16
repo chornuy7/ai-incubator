@@ -19,6 +19,9 @@ const STATUS_RU: Record<string, string> = {
 }
 const statusBlocks = (a: TgAccount) => NON_RUNNABLE.has(a.status)
 const isUnavailable = (a: TgAccount) => isBusy(a) || statusBlocks(a)
+/** Реальная причина недоступности для бейджа/тултипа (не общее «ЗАНЯТ»). */
+const isWorking = (a: TgAccount) => !!a.busyIn || a.status === 'working'
+const unavailLabel = (a: TgAccount) => (isWorking(a) ? 'В работе' : STATUS_RU[a.status] || 'недоступен')
 
 /** Двухпанельный выбор аккаунтов: Доступные | Выбрано. */
 export function AccountPicker({
@@ -178,7 +181,7 @@ export function AccountPicker({
                   ))}
                   {busyAvailable.length > 0 && !hideWorking && (
                     <div className="mt-2 border-t border-line pt-2">
-                      <div className="px-2 py-1 text-xs font-bold text-rose-300">В работе · {busyAvailable.length}</div>
+                      <div className="px-2 py-1 text-xs font-bold text-rose-300">Недоступны · {busyAvailable.length}</div>
                       {busyAvailable.map((a) => (
                         <AccountRow key={a.id} account={a} liteMode={liteMode} busy disabled />
                       ))}
@@ -258,7 +261,7 @@ function AccountRow({ account: a, liteMode, onAdd, busy, disabled }: {
 }) {
   return (
     <div
-      title={disabled ? (a.busyIn ? `В работе: ${a.busyIn.moduleLabel} — выбрать нельзя` : 'Аккаунт в работе — выбрать нельзя') : undefined}
+      title={disabled ? (a.busyIn ? `В работе: ${a.busyIn.moduleLabel} — выбрать нельзя` : `${unavailLabel(a)} — назначить в работу нельзя`) : undefined}
       className={cn('group flex items-center gap-2.5 rounded-xl px-2 py-2', disabled ? 'cursor-not-allowed select-none opacity-60' : 'hover:bg-elevated')}
     >
       <Avatar name={a.name} color={a.avatarColor} size={liteMode ? 26 : 32} />
@@ -278,7 +281,7 @@ function AccountRow({ account: a, liteMode, onAdd, busy, disabled }: {
       {!liteMode && (
         <div className="flex shrink-0 items-center gap-1">
           {busy ? (
-            <MiniBadge tone="rose"><Loader2 size={9} className="animate-spin" /> ЗАНЯТ</MiniBadge>
+            <MiniBadge tone="rose">{isWorking(a) ? <><Loader2 size={9} className="animate-spin" /> В работе</> : unavailLabel(a)}</MiniBadge>
           ) : (
             <>
               {a.status === 'active' && <MiniBadge tone="spark">VALID</MiniBadge>}
