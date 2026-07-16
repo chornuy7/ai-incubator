@@ -294,7 +294,7 @@ await startScheduler().catch((err) => console.warn('[automation] scheduler init 
 // §3.3: держим кэш trust свежим (без сети) — чтобы assignment-gate и список были актуальны.
 try {
   const { refreshAllTrustCache } = await import('./accountStats.js')
-  const runTrust = () => refreshAllTrustCache().then((n) => n && console.log(`[trust] обновлён кэш trust: ${n} акк.`)).catch((e) => console.warn('[trust] refresh failed:', e?.message || e))
+  const runTrust = () => refreshAllTrustCache().then((r) => { if (r.updated) console.log(`[trust] обновлён кэш trust: ${r.updated} акк.${r.returned ? ` · авто-возврат из прогрева: ${r.returned}` : ''}`) }).catch((e) => console.warn('[trust] refresh failed:', e?.message || e))
   await runTrust()
   setInterval(runTrust, 10 * 60 * 1000)
 } catch (err) {

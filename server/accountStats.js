@@ -1,5 +1,5 @@
 /** Реальная статистика аккаунта для модалки «Управление аккаунтом». */
-import { getAccountMeta, loadAllMeta } from './accountsMeta.js'
+import { getAccountMeta, loadAllMeta, setAccountStatus } from './accountsMeta.js'
 import { loadSessionString, createClient } from './tgAuth.js'
 import { parseProxy } from './proxy.js'
 import { getAccountLock } from './lib/accountLocks.js'
@@ -183,14 +183,21 @@ function computeLongevity({ ageDays, sessionOk, profileComplete, actionCount, ha
  * @param {string} accountId
  * @param {{ spam?: boolean }} [opts]
  */
+/** Готов ли аккаунт вернуться из прогрева в пул (§3.3, §6: trust>70). Чистая. */
+export function readyToReturnFromWarming(status, trustScore) {
+  return status === 'warming' && Number(trustScore) > 70
+}
+
 /**
  * Периодический пересчёт trust для ВСЕХ аккаунтов без сети (по мете + активности из логов).
- * Держит кэш trust свежим, чтобы assignment-gate и список были актуальны без открытия карточек.
- * @returns {Promise<number>} сколько аккаунтов обновлено
+ * Держит кэш trust свежим (assignment-gate + список) И выполняет §6-**авто-возврат**:
+ * аккаунт в прогреве с trust>70, не занятый задачей → возвращается в active.
+ * @returns {Promise<{updated:number, returned:number}>}
  */
 export async function refreshAllTrustCache() {
   const all = await loadAllMeta()
-  let n = 0
+  let updated = 0
+  let returned = 0
   for (const [accountId, meta] of Object.entries(all)) {
     if (!meta || meta.inTrash) continue
     try {
@@ -198,10 +205,15 @@ export async function refreshAllTrustCache() {
       const ageDays = meta.createdAt ? (Date.now() - meta.createdAt) / DAY : 0
       const t = accountTrust({ activity, status: meta.status || 'active', ageDays, ggr: meta.ggr ?? null })
       await setTrustCache(accountId, { score: t.score, band: t.band })
-      n += 1
+      updated += 1
+      // §6 авто-возврат: прогрев поднял здоровье (trust>70) → назад в пул. Не трогаем занятых.
+      if (readyToReturnFromWarming(meta.status, t.score) && !getAccountLock(accountId)) {
+        await setAccountStatus(accountId, 'active', { initiator: 'system', module: 'trust', reason: `trust ${t.score} > 70 — авто-возврат из прогрева` })
+        returned += 1
+      }
     } catch { /* пропускаем проблемный аккаунт */ }
   }
-  return n
+  return { updated, returned }
 }
 
 export async function buildAccountStats(accountId, opts = {}) {
