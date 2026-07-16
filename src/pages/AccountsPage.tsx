@@ -379,20 +379,25 @@ export function AccountsPage() {
         )}
       </div>
 
-      {/* Bulk bar */}
-      {selected.size > 0 && tab === 'accounts' && (
-        <div className="mb-3 flex flex-wrap items-center gap-2 rounded-xl border border-spark-500/40 bg-spark-500/8 px-4 py-2.5 animate-fade-in">
-          <span className="text-sm font-bold text-spark-300">Выбрано: {selected.size}</span>
-          <button onClick={() => bulkStatusManual('active', 'Включено')} className="btn-ghost h-8 text-xs"><Check size={14} /> Включить</button>
-          <button onClick={() => bulkStatusManual('pause', 'На паузе')} className="btn-ghost h-8 text-xs"><Pause size={14} /> Пауза</button>
-          <button onClick={() => bulkSetStatus('frozen', 'Отключено (frozen)')} className="btn-ghost h-8 text-xs"><X size={14} /> Отключить</button>
-          <button onClick={bulkRelease} className="btn-ghost h-8 text-xs"><RefreshCw size={14} /> Стоп / освободить</button>
-          <button onClick={() => setMoveOpen(true)} className="btn-ghost h-8 text-xs"><Users size={14} /> Переместить</button>
-          <button onClick={bulkTrash} className="btn-ghost h-8 text-xs"><Trash2 size={14} /> В корзину</button>
-          <button onClick={() => { void (async () => { for (const id of selected) await setAccountStatus(id, 'reauth'); pushToast({ type: 'info', title: 'Отправлено на реавторизацию' }); setSelected(new Set()) })() }} className="btn-ghost h-8 text-xs"><KeyRound size={14} /> Реавторизация</button>
-          <button onClick={() => setSelected(new Set())} className="btn-ghost h-8 text-xs">Снять</button>
+      {/* Панель управления выбранными — всегда видна на вкладке аккаунтов; серая, если ничего не выбрано */}
+      {tab === 'accounts' && (() => {
+        const has = selected.size > 0
+        const btn = (tone: string) => `flex h-8 items-center gap-1.5 rounded-lg border px-2.5 text-xs font-semibold transition-colors disabled:cursor-not-allowed ${has ? tone : 'border-line text-white/25'}`
+        return (
+        <div className="mb-3 flex flex-wrap items-center gap-2 rounded-xl border border-line bg-elevated/40 px-4 py-2.5">
+          <span className={`text-sm font-bold ${has ? 'text-spark-300' : 'text-white/40'}`}>{has ? `Выбрано: ${selected.size}` : 'Выберите аккаунты для управления'}</span>
+          <button disabled={!has} onClick={() => bulkStatusManual('active', 'Включено')} className={btn('border-spark-500/50 bg-spark-500/12 text-spark-300 hover:bg-spark-500/20')}><Check size={14} /> Запустить</button>
+          <button disabled={!has} onClick={() => bulkStatusManual('pause', 'На паузе')} className={btn('border-amber-500/50 bg-amber-500/12 text-amber-300 hover:bg-amber-500/20')}><Pause size={14} /> Пауза</button>
+          <button disabled={!has} onClick={bulkRelease} className={btn('border-rose-500/50 bg-rose-500/12 text-rose-300 hover:bg-rose-500/20')}><RefreshCw size={14} /> Стоп / освободить</button>
+          <button disabled={!has} onClick={() => bulkSetStatus('frozen', 'Отключено (frozen)')} className={btn('border-rose-500/40 bg-rose-500/8 text-rose-300 hover:bg-rose-500/15')}><X size={14} /> Отключить</button>
+          <span className="mx-1 h-5 w-px bg-line" />
+          <button disabled={!has} onClick={() => setMoveOpen(true)} className={btn('border-line text-fg hover:bg-elevated')}><Users size={14} /> Переместить</button>
+          <button disabled={!has} onClick={bulkTrash} className={btn('border-line text-fg hover:bg-elevated')}><Trash2 size={14} /> В корзину</button>
+          <button disabled={!has} onClick={() => { void (async () => { for (const id of selected) await setAccountStatus(id, 'reauth'); pushToast({ type: 'info', title: 'Отправлено на реавторизацию' }); setSelected(new Set()) })() }} className={btn('border-line text-fg hover:bg-elevated')}><KeyRound size={14} /> Реавторизация</button>
+          {has && <button onClick={() => setSelected(new Set())} className="ml-auto text-xs text-white/50 hover:text-fg">Снять</button>}
         </div>
-      )}
+        )
+      })()}
 
       {/* Table / content */}
       {isNoSub ? (
