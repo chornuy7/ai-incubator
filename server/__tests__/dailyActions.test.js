@@ -60,3 +60,19 @@ test('dailySummary: сегодняшние счётчики против пот�
   assert.equal(sum2.items.find((x) => x.action === 'reactions').reached, true)
   delete process.env.DAILY_ACTIONS_FILE
 })
+
+test('dailySummaryAll: только сегодняшние аккаунты + anyReached', async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'daily-all-'))
+  process.env.DAILY_ACTIONS_FILE = path.join(dir, 'd.json')
+  const m = await import('../lib/dailyActions.js?t=' + Date.now() + 'all')
+  const now = Date.now()
+  for (let i = 0; i < 40; i++) await m.incAction('hit', 'comments', now) // достиг потолка
+  for (let i = 0; i < 5; i++) await m.incAction('ok', 'comments', now) // не достиг
+  const all = await m.dailySummaryAll(now)
+  assert.equal(all.hit.anyReached, true)
+  assert.equal(all.ok.anyReached, false)
+  // вчерашние записи не попадают в сводку сегодня
+  const tomorrow = now + 24 * 3600 * 1000
+  assert.equal(Object.keys(await m.dailySummaryAll(tomorrow)).length, 0)
+  delete process.env.DAILY_ACTIONS_FILE
+})

@@ -51,6 +51,27 @@ export async function dailySummary(accountId, now = Date.now()) {
   return { accountId, date, items }
 }
 
+/**
+ * Сводка по всем аккаунтам, у которых сегодня есть активность (одно чтение стора).
+ * Для индикатора §6 в списке аккаунтов — какие аккаунты «упёрлись» в потолок.
+ * @returns {Promise<Record<string, {items: {action,used,cap,reached}[], anyReached: boolean}>>}
+ */
+export async function dailySummaryAll(now = Date.now()) {
+  const map = await load()
+  const date = dayKey(now)
+  const out = {}
+  for (const [accountId, rec] of Object.entries(map)) {
+    if (!rec || rec.date !== date) continue // только сегодняшние
+    const items = ['comments', 'dm', 'joins', 'reactions'].map((action) => {
+      const used = Number(rec.counts?.[action] || 0)
+      const cap = DAILY_LIMITS[action]?.max ?? 0
+      return { action, used, cap, reached: cap ? used >= cap : false }
+    })
+    out[accountId] = { items, anyReached: items.some((x) => x.reached) }
+  }
+  return out
+}
+
 /** Инкремент счётчика действия аккаунта на сегодня (сброс при новом дне). */
 export async function incAction(accountId, action, now = Date.now()) {
   if (!accountId || !action) return

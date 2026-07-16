@@ -72,6 +72,16 @@ export async function fetchAccountDaily(accountId: string): Promise<AccountDaily
   return data.daily as AccountDaily
 }
 
+export type DailyAllEntry = { items: DailyActionItem[]; anyReached: boolean }
+export type DailyAllMap = Record<string, DailyAllEntry>
+
+/** Сводка §6 по всем активным сегодня аккаунтам — для индикатора throttle в списке. */
+export async function fetchDailyAll(): Promise<DailyAllMap> {
+  const res = await fetch('/api/tg/accounts/daily-all')
+  const data = await parseJson(res)
+  return (data.daily ?? {}) as DailyAllMap
+}
+
 export async function fetchAccountFolders(accountId: string): Promise<{ busy: boolean; folders: AccountFolder[]; error?: string; busyIn?: { moduleLabel: string } }> {
   const res = await fetch(`/api/tg/accounts/${accountId}/folders`)
   return parseJson(res) as Promise<{ busy: boolean; folders: AccountFolder[]; error?: string; busyIn?: { moduleLabel: string } }>

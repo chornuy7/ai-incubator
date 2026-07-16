@@ -29,7 +29,7 @@ import {
   forceReleaseAccount,
 } from './lib/accountLocks.js'
 import { buildAccountStats, listAccountChannels, listAccountFolders } from './accountStats.js'
-import { dailySummary } from './lib/dailyActions.js'
+import { dailySummary, dailySummaryAll } from './lib/dailyActions.js'
 
 const app = express()
 app.use(cors())
@@ -148,6 +148,14 @@ app.get('/api/tg/accounts/busy', async (_req, res) => {
     await reconcileLocks()
   } catch { /* ignore */ }
   res.json({ ok: true, busy: getAllAccountLocks() })
+})
+
+app.get('/api/tg/accounts/daily-all', async (_req, res) => {
+  try {
+    res.json({ ok: true, daily: await dailySummaryAll() })
+  } catch (err) {
+    res.status(500).json({ ok: false, error: err instanceof Error ? err.message : 'Ошибка' })
+  }
 })
 
 app.get('/api/tg/accounts/:accountId/stats', async (req, res) => {

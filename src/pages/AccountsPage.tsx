@@ -18,7 +18,7 @@ import { cn } from '@/shared/lib/utils'
 import { ROLES } from '@/shared/config/modules'
 import { COUNTRIES_FILTER, matchesGeo } from '@/shared/config/geo'
 import type { AccountStatus, TgAccount } from '@/shared/types'
-import { patchAccount, releaseAccountLock, setAccountStatusManual } from '@/api/accountsApi'
+import { patchAccount, releaseAccountLock, setAccountStatusManual, fetchDailyAll, type DailyAllMap } from '@/api/accountsApi'
 
 const STATUS_ORDER: AccountStatus[] = ['active', 'working', 'warming', 'pause', 'floodwait', 'quarantine', 'spamblock', 'invalid', 'frozen', 'reauth']
 const COLS = [
@@ -30,6 +30,7 @@ const COLS = [
   { key: 'lastSeen', label: 'Отлёжка' },
   { key: 'proxy', label: 'Прокси' },
 ]
+const DAILY_CAP_LABELS: Record<string, string> = { comments: 'комментарии', dm: 'ЛС', joins: 'вступления', reactions: 'реакции' }
 function formatProxyLabel(proxy: string) {
   if (!proxy || proxy === '—') return 'Прямое подключение'
   return proxy
@@ -73,6 +74,16 @@ export function AccountsPage() {
 
   const active = activeAccounts(data)
   const trashed = trashedAccounts(data)
+
+  // §6: сводка суточных лимитов по аккаунтам (для индикатора throttle в списке).
+  const [dailyAll, setDailyAll] = useState<DailyAllMap>({})
+  useEffect(() => {
+    let alive = true
+    const load = () => { void fetchDailyAll().then((m) => { if (alive) setDailyAll(m) }).catch(() => {}) }
+    load()
+    const t = setInterval(load, 30000)
+    return () => { alive = false; clearInterval(t) }
+  }, [])
 
   const statusCounts = useMemo(() => {
     const c: Record<AccountStatus, number> = { active: 0, working: 0, warming: 0, pause: 0, floodwait: 0, quarantine: 0, spamblock: 0, invalid: 0, frozen: 0, reauth: 0 }
@@ -415,6 +426,7 @@ export function AccountsPage() {
             onReauth={openReauth}
             onMarkReauth={(a) => { void setAccountStatus(a.id, 'reauth').then(() => pushToast({ type: 'info', title: 'Требуется реавторизация', desc: a.name })) }}
             loading={false}
+            dailyAll={dailyAll}
           />
 
           {/* Pagination */}
@@ -510,6 +522,7 @@ function AccountsTable(props: {
   onReauth: (a: TgAccount) => void
   onMarkReauth: (a: TgAccount) => void
   loading: boolean
+  dailyAll?: DailyAllMap
 }) {
   const { pageItems, showCol, selected, toggleOne, allOnPageSelected, toggleAll } = props
   const showAccountCol = showCol('name') || showCol('avatar')
@@ -555,6 +568,14 @@ function AccountsTable(props: {
                         <div className="flex items-center gap-1 text-[11px] font-semibold text-rose-300">
                           <Loader2 size={11} className="animate-spin" /> В работе: {a.busyIn.moduleLabel}
                         </div>
+                      )}
+                      {props.dailyAll?.[a.id]?.anyReached && (
+                        <span
+                          className="rounded-md bg-rose-500/15 px-1.5 py-0.5 text-[10px] font-bold text-rose-300"
+                          title={`Суточный лимит §6 достигнут: ${(props.dailyAll[a.id].items.filter((x) => x.reached).map((x) => DAILY_CAP_LABELS[x.action] ?? x.action).join(', '))}. Модули пропускают аккаунт до сброса в полночь.`}
+                        >
+                          §6 лимит: {props.dailyAll[a.id].items.filter((x) => x.reached).map((x) => DAILY_CAP_LABELS[x.action] ?? x.action).join(', ')}
+                        </span>
                       )}
                       {a.status === 'reauth' && props.tab === 'accounts' && (
                         <button type="button" onClick={() => props.onReauth(a)} className="text-xs font-semibold text-violet-300 hover:text-violet-200">
