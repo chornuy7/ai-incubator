@@ -72,21 +72,21 @@ export function normalizeRole(input = {}) {
   }
 }
 
-/** Стартовый набор ролей: главный админ (bypass) + шаблон «Модератор». */
+const moduleMap = (keys, val) => Object.fromEntries(keys.map((k) => [k, val]))
+const blockMap = (keys, blocks, val) => Object.fromEntries(keys.flatMap((k) => blocks.map((b) => [`${k}:${b}`, val])))
+
+/**
+ * Стартовый набор ролей (§6-решение: Admin / Operator / Sales / Viewer).
+ *  - Администратор — bypass (всё);
+ *  - Оператор — запуск/настройки/результаты/логи всех модулей + таймеры/шаблоны;
+ *  - Sales — только диалоговые модули на запуск + просмотр результатов/логов везде (CRM-профиль);
+ *  - Viewer — только чтение (результаты/логи), без запуска и настроек.
+ */
 function defaultRoles() {
   const now = Date.now()
-  const modKeys = Object.keys(MODULE_LABELS)
-  // Модератор: доступ к рабочим модулям (запуск/результаты/логи), без парсеров и настроек.
-  const modAllow = {}
-  const blkAllow = {}
-  for (const k of ['neuro-commenting', 'neuro-chatting', 'mass-react', 'mass-looking']) {
-    if (modKeys.includes(k)) {
-      modAllow[k] = ALLOW
-      blkAllow[`${k}:run`] = ALLOW
-      blkAllow[`${k}:results`] = ALLOW
-      blkAllow[`${k}:logs`] = ALLOW
-    }
-  }
+  const mods = Object.keys(MODULE_LABELS)
+  const SALES = mods.filter((k) => ['neuro-chatting', 'neuro-dialogs', 'mailing'].includes(k))
+  const roleTpl = (id, name, permissions) => ({ id, name, builtin: false, isTemplate: true, permissions, createdAt: now, updatedAt: now })
   return [
     {
       id: ADMIN_ROLE_ID,
@@ -97,19 +97,21 @@ function defaultRoles() {
       createdAt: now,
       updatedAt: now,
     },
-    {
-      id: 'role_moderator',
-      name: 'Модератор',
-      builtin: false,
-      isTemplate: true,
-      permissions: {
-        modules: modAllow,
-        blocks: blkAllow,
-        resources: { folders: {}, channels: {}, timers: DENY, searchTemplates: DENY },
-      },
-      createdAt: now,
-      updatedAt: now,
-    },
+    roleTpl('role_operator', 'Оператор', {
+      modules: moduleMap(mods, ALLOW),
+      blocks: blockMap(mods, ['run', 'settings', 'targets', 'results', 'logs'], ALLOW),
+      resources: { folders: {}, channels: {}, timers: ALLOW, searchTemplates: ALLOW },
+    }),
+    roleTpl('role_sales', 'Sales', {
+      modules: moduleMap(mods, ALLOW),
+      blocks: { ...blockMap(mods, ['results', 'logs'], ALLOW), ...blockMap(SALES, ['run'], ALLOW) },
+      resources: { folders: {}, channels: {}, timers: DENY, searchTemplates: DENY },
+    }),
+    roleTpl('role_viewer', 'Viewer', {
+      modules: moduleMap(mods, ALLOW),
+      blocks: blockMap(mods, ['results', 'logs'], ALLOW),
+      resources: { folders: {}, channels: {}, timers: DENY, searchTemplates: DENY },
+    }),
   ]
 }
 
@@ -119,6 +121,19 @@ export async function listRoles() {
     const seed = defaultRoles()
     await writeJson(ROLES_FILE, seed)
     return seed
+  }
+  // Разовая миграция старых инсталляций: если НЕТ ни одной из §6-ролей
+  // (Operator/Sales/Viewer) — добавляем их, не трогая существующие/пользовательские.
+  // Гейт «ни одной» защищает от воскрешения одной удалённой дефолт-роли.
+  const have = new Set(roles.map((r) => r.id))
+  const sixIds = ['role_operator', 'role_sales', 'role_viewer']
+  if (!sixIds.some((id) => have.has(id))) {
+    const missing = defaultRoles().filter((r) => r.id !== ADMIN_ROLE_ID && !have.has(r.id))
+    if (missing.length) {
+      const merged = [...roles, ...missing]
+      await writeJson(ROLES_FILE, merged)
+      return merged
+    }
   }
   return roles
 }
