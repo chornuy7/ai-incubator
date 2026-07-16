@@ -3,6 +3,7 @@ import { getAccountMeta } from './accountsMeta.js'
 import { loadSessionString, createClient } from './tgAuth.js'
 import { parseProxy } from './proxy.js'
 import { getAccountLock } from './lib/accountLocks.js'
+import { accountTrust } from './lib/trustScore.js'
 import { countryFromPhone } from './accountsMeta.js'
 import { Api } from 'telegram/tl/index.js'
 
@@ -287,6 +288,7 @@ export async function buildAccountStats(accountId, opts = {}) {
     },
     health,
     longevity,
+    trust: accountTrust({ activity, status: effectiveStatus, ageDays, ggr: meta.ggr ?? null }),
     activity,
     role: meta.role || null,
     note: meta.note || '',

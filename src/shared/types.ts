@@ -194,6 +194,14 @@ export interface AccountStats {
     risk: 'low' | 'medium' | 'high'
     factors: { key: string; label: string; positive: boolean }[]
   }
+  trust: {
+    score: number
+    band: 'low' | 'mid' | 'high'
+    action: 'autostop' | 'conservative' | 'pool'
+    label: string
+    hint: string
+    parts: { flood: number; bans: number; actions: number; age: number }
+  }
   activity: { ts: string; type: string; label: string; target?: string; level: string; module: string }[]
   role: string | null
   note: string

@@ -463,9 +463,46 @@ function DailyLimitsCard({ accountId }: { accountId: string }) {
   )
 }
 
+function TrustCard({ trust }: { trust: AccountStats['trust'] }) {
+  const tone = trust.band === 'high' ? { c: '#0ec464', chip: 'text-spark-300 bg-spark-500/15' }
+    : trust.band === 'mid' ? { c: '#f59e0b', chip: 'text-amber-300 bg-amber-500/15' }
+    : { c: '#ef4444', chip: 'text-rose-300 bg-rose-500/15' }
+  const PARTS: { key: keyof AccountStats['trust']['parts']; label: string; w: string }[] = [
+    { key: 'flood', label: 'FloodWait 24ч', w: '40%' },
+    { key: 'bans', label: 'История блоков', w: '25%' },
+    { key: 'actions', label: 'Чистые действия', w: '15%' },
+    { key: 'age', label: 'Возраст / GGR', w: '20%' },
+  ]
+  return (
+    <SectionCard title="Trust score (§6)" icon={<BarChart3 size={15} style={{ color: tone.c }} />}>
+      <div className="flex items-center gap-4 py-1">
+        <Gauge value={trust.score} color={tone.c} />
+        <div className="min-w-0">
+          <span className={cn('rounded-md px-2 py-0.5 text-xs font-bold', tone.chip)}>{trust.label}</span>
+          <div className="mt-1 text-xs text-muted">{trust.hint}</div>
+        </div>
+      </div>
+      <div className="mt-2 space-y-1.5">
+        {PARTS.map((p) => (
+          <div key={p.key}>
+            <div className="mb-0.5 flex items-center justify-between text-[11px]">
+              <span className="text-fg">{p.label} <span className="text-faint">· вес {p.w}</span></span>
+              <span className="font-semibold tabular-nums text-muted">{trust.parts[p.key]}/100</span>
+            </div>
+            <div className="h-1.5 w-full overflow-hidden rounded-full bg-line">
+              <div className="h-full rounded-full" style={{ width: `${trust.parts[p.key]}%`, background: tone.c }} />
+            </div>
+          </div>
+        ))}
+      </div>
+      <div className="pt-2 text-[11px] text-faint">Пороги §6: &lt;40 — авто-стоп → прогрев · 40–70 — консервативный режим · &gt;70 — в пул.</div>
+    </SectionCard>
+  )
+}
+
 function HealthTab({ stats, accountId }: { stats: AccountStats | null; accountId: string }) {
   if (!stats) return <div className="py-8 text-center text-sm text-muted">Нет данных</div>
-  const { health, longevity, activity } = stats
+  const { health, longevity, activity, trust } = stats
   const riskLabel = longevity.risk === 'low' ? 'Низкий риск' : longevity.risk === 'medium' ? 'Средний риск' : 'Высокий риск'
   const riskTone = longevity.risk === 'low' ? 'text-spark-300 bg-spark-500/15' : longevity.risk === 'medium' ? 'text-amber-300 bg-amber-500/15' : 'text-rose-300 bg-rose-500/15'
   const healthColor = health.score >= 80 ? '#0ec464' : health.score >= 55 ? '#f59e0b' : '#ef4444'
@@ -496,6 +533,8 @@ function HealthTab({ stats, accountId }: { stats: AccountStats | null; accountId
           </div>
         </SectionCard>
       </div>
+
+      <TrustCard trust={trust} />
 
       <DailyLimitsCard accountId={accountId} />
 
