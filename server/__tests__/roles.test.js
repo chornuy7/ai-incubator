@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
-import { normalizeRole, can, ALLOW, DENY, ADMIN_ROLE_ID } from '../roles.js'
+import { normalizeRole, can, allowedFolderTargets, ALLOW, DENY, ADMIN_ROLE_ID } from '../roles.js'
 
 test('normalizeRole: дефолты и нормализация доступов', () => {
   const r = normalizeRole({
@@ -48,6 +48,25 @@ test('can(): админ обходит проверки, остальные — 
   assert.equal(can(mod, 'timers'), true)
   assert.equal(can(mod, 'searchTemplates'), false)
   assert.equal(can(null, 'module', 'x'), false)
+})
+
+test('allowedFolderTargets(): выдача конкретных каналов внутри папки', () => {
+  const admin = { id: ADMIN_ROLE_ID, builtin: true, permissions: {} }
+  const all = ['@a', 'b', 'c']
+  // Админ — всегда все каналы
+  assert.deepEqual(allowedFolderTargets(admin, 'f1', all), all)
+  // Права папок не заданы — не ограничиваем
+  const open = normalizeRole({ name: 'x' })
+  assert.deepEqual(allowedFolderTargets(open, 'f1', all), all)
+  // Папка не выдана — пусто
+  const other = normalizeRole({ name: 'x', permissions: { resources: { folders: { f2: ALLOW } } } })
+  assert.deepEqual(allowedFolderTargets(other, 'f1', all), [])
+  // Папка выдана без списка каналов — все каналы
+  const whole = normalizeRole({ name: 'x', permissions: { resources: { folders: { f1: ALLOW } } } })
+  assert.deepEqual(allowedFolderTargets(whole, 'f1', all), all)
+  // Папка выдана со списком — пересечение (нормализация @/регистра)
+  const subset = normalizeRole({ name: 'x', permissions: { resources: { folders: { f1: ALLOW }, folderChannels: { f1: ['A', 'c'] } } } })
+  assert.deepEqual(allowedFolderTargets(subset, 'f1', all), ['@a', 'c'])
 })
 
 test('CRUD ролей на изолированном файле + сид по умолчанию', async () => {

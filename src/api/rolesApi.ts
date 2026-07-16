@@ -8,6 +8,8 @@ export interface RolePermissions {
   resources: {
     folders: Record<string, Perm>
     channels: Record<string, Perm>
+    /** Какие каналы внутри папки выданы роли: folderId → список ссылок. Пусто = все каналы папки. */
+    folderChannels: Record<string, string[]>
     timers: Perm
     searchTemplates: Perm
   }
@@ -25,7 +27,7 @@ export interface Role {
 
 export interface CatalogModule { key: string; label: string }
 export interface CatalogBlock { key: string; label: string }
-export interface CatalogResourceItem { id: string; label: string }
+export interface CatalogResourceItem { id: string; label: string; channels?: string[] }
 export interface CatalogResource {
   type: 'folders' | 'channels' | 'timers' | 'searchTemplates'
   label: string
@@ -64,5 +66,5 @@ export async function deleteRole(id: string): Promise<void> {
 
 /** Пустые права (всё deny) — для новой роли. */
 export function emptyPermissions(): RolePermissions {
-  return { modules: {}, blocks: {}, resources: { folders: {}, channels: {}, timers: 'deny', searchTemplates: 'deny' } }
+  return { modules: {}, blocks: {}, resources: { folders: {}, channels: {}, folderChannels: {}, timers: 'deny', searchTemplates: 'deny' } }
 }

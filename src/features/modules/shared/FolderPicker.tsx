@@ -18,6 +18,21 @@ function visibleFolders(folders: TargetFolder[], user: SessionUser | null): Targ
   return folders.filter((f) => fp[f.id] === 'allow')
 }
 
+const ntTarget = (t: string) => String(t || '').trim().replace(/^@/, '').toLowerCase()
+
+/** Каналы папки, доступные пользователю (§8.1): админ/без ограничений — все; иначе только
+ *  выданное подмножество (permissions.resources.folderChannels[folderId]). Пусто = все. */
+function allowedTargets(f: TargetFolder, user: SessionUser | null): string[] {
+  if (!user || user.isAdmin) return f.targets
+  const fp = user.permissions?.resources?.folders
+  if (!fp || Object.keys(fp).length === 0) return f.targets
+  if (fp[f.id] !== 'allow') return []
+  const fc = user.permissions?.resources?.folderChannels?.[f.id]
+  if (!Array.isArray(fc) || fc.length === 0) return f.targets
+  const allow = new Set(fc.map(ntTarget))
+  return f.targets.filter((t) => allow.has(ntTarget(t)))
+}
+
 /**
  * Красивый поп-ап «Сохранить список в папку».
  * Переиспользуется: и в FolderPicker, и после парсинга. Умеет создать новую папку
@@ -154,9 +169,11 @@ export function FolderPicker({ targets, onLoad }: {
     setSaveOpen(true)
   }
   const loadFolder = (f: TargetFolder) => {
-    onLoad(f.targets)
+    const allowed = allowedTargets(f, user)
+    onLoad(allowed)
     setLoadOpen(false)
-    pushToast({ type: 'success', title: 'Папка загружена', desc: `${f.name} · ${f.targets.length} целей` })
+    const hidden = f.targets.length - allowed.length
+    pushToast({ type: 'success', title: 'Папка загружена', desc: `${f.name} · ${allowed.length} целей${hidden > 0 ? ` (скрыто ${hidden})` : ''}` })
   }
 
   return (
@@ -179,7 +196,7 @@ export function FolderPicker({ targets, onLoad }: {
         <span className="text-xs text-amber-300">{folders.length ? 'Нет доступных папок — попросите админа выдать доступ' : 'Папок пока нет — сохраните список кнопкой «Сохранить в папку»'}</span>
       )}
 
-      <FolderLoadModal open={loadOpen} onClose={() => setLoadOpen(false)} folders={visible} onLoad={loadFolder} />
+      <FolderLoadModal open={loadOpen} onClose={() => setLoadOpen(false)} folders={visible} onLoad={loadFolder} user={user} />
       <SaveToFolderModal open={saveOpen} onClose={() => setSaveOpen(false)} targets={targets} onSaved={() => void reload()} />
       <FolderManageModal open={manageOpen} onClose={() => setManageOpen(false)} folders={folders} onChanged={reload} onLoad={onLoad} />
     </div>
@@ -187,8 +204,8 @@ export function FolderPicker({ targets, onLoad }: {
 }
 
 /** Чистый выбор папки: список доступных папок → клик загружает её каналы в цели. */
-function FolderLoadModal({ open, onClose, folders, onLoad }: {
-  open: boolean; onClose: () => void; folders: TargetFolder[]; onLoad: (f: TargetFolder) => void
+function FolderLoadModal({ open, onClose, folders, onLoad, user }: {
+  open: boolean; onClose: () => void; folders: TargetFolder[]; onLoad: (f: TargetFolder) => void; user: SessionUser | null
 }) {
   return (
     <Modal open={open} onClose={onClose} title="Загрузить папку" subtitle="Выберите папку — её каналы попадут в цели" icon={<FolderOpen size={22} />} size="sm">
@@ -196,18 +213,21 @@ function FolderLoadModal({ open, onClose, folders, onLoad }: {
         <EmptyState icon={<FolderOpen size={22} />} title="Нет доступных папок" desc="Сохраните список в папку или попросите админа выдать доступ." />
       ) : (
         <ul className="space-y-2">
-          {folders.map((f) => (
+          {folders.map((f) => {
+            const n = allowedTargets(f, user).length
+            return (
             <li key={f.id}>
               <button type="button" onClick={() => onLoad(f)} className="flex w-full items-center gap-3 rounded-xl border border-line bg-elevated/40 p-3 text-left transition-colors hover:border-spark-500/40">
                 <span className="grid h-9 w-9 shrink-0 place-items-center rounded-lg bg-iris-500/12 text-iris-300"><FolderOpen size={16} /></span>
                 <div className="min-w-0 flex-1">
                   <div className="truncate font-semibold text-fg">{f.name}</div>
-                  <div className="text-xs text-muted">{f.targets.length} целей / каналов</div>
+                  <div className="text-xs text-muted">{n} целей / каналов{n < f.targets.length ? ` (из ${f.targets.length})` : ''}</div>
                 </div>
                 <Download size={16} className="shrink-0 text-spark-400" />
               </button>
             </li>
-          ))}
+            )
+          })}
         </ul>
       )}
     </Modal>

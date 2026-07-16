@@ -111,11 +111,24 @@ export function RolesPage() {
   const setChannel = (id: string, p: Perm) => { setPerms((s) => ({ ...s, resources: { ...s.resources, channels: { ...s.resources.channels, [id]: p } } })); mark() }
   const setTimers = (p: Perm) => { setPerms((s) => ({ ...s, resources: { ...s.resources, timers: p } })); mark() }
   const setTemplates = (p: Perm) => { setPerms((s) => ({ ...s, resources: { ...s.resources, searchTemplates: p } })); mark() }
+  const setFolderChannels = (id: string, channels: string[]) => { setPerms((s) => ({ ...s, resources: { ...s.resources, folderChannels: { ...(s.resources.folderChannels ?? {}), [id]: channels } } })); mark() }
 
   const mPerm = (k: string): Perm => perms.modules[k] ?? 'deny'
   const bPerm = (k: string): Perm => perms.blocks[k] ?? 'deny'
   const fPerm = (id: string): Perm => perms.resources.folders[id] ?? 'deny'
   const cPerm = (id: string): Perm => perms.resources.channels[id] ?? 'deny'
+  // Выбранные каналы папки. Пусто = все каналы папки (в т.ч. будущие). Ключи нормализованы (без @, lower).
+  const ntCh = (t: string) => String(t || '').trim().replace(/^@/, '').toLowerCase()
+  const fChannels = (id: string): string[] => perms.resources.folderChannels?.[id] ?? []
+  const chChecked = (id: string, ch: string): boolean => { const cur = fChannels(id); return cur.length === 0 || cur.includes(ntCh(ch)) }
+  const toggleFolderChannel = (id: string, ch: string, all: string[]) => {
+    const allN = all.map(ntCh)
+    const cur = fChannels(id)
+    const base = cur.length === 0 ? allN : cur
+    const k = ntCh(ch)
+    const next = base.includes(k) ? base.filter((x) => x !== k) : [...base, k]
+    setFolderChannels(id, next.length === allN.length ? [] : next)
+  }
 
   const toggleExpand = (key: string) => setExpanded((s) => { const n = new Set(s); n.has(key) ? n.delete(key) : n.add(key); return n })
 
@@ -224,12 +237,34 @@ export function RolesPage() {
                           {res.perItem && (res.items?.length ? (
                             <div className="flex flex-col gap-1">
                               {res.items.map((it) => (
-                                <PermRow
-                                  key={it.id}
-                                  label={it.label}
-                                  value={res.type === 'folders' ? fPerm(it.id) : cPerm(it.id)}
-                                  onChange={(p) => (res.type === 'folders' ? setFolder(it.id, p) : setChannel(it.id, p))}
-                                />
+                                <div key={it.id}>
+                                  <PermRow
+                                    label={it.label}
+                                    value={res.type === 'folders' ? fPerm(it.id) : cPerm(it.id)}
+                                    onChange={(p) => (res.type === 'folders' ? setFolder(it.id, p) : setChannel(it.id, p))}
+                                  />
+                                  {res.type === 'folders' && fPerm(it.id) === 'allow' && (it.channels?.length ? (
+                                    <div className="ml-4 mt-1 rounded-lg border border-line bg-elevated/60 px-3 py-2">
+                                      <div className="mb-1.5 flex items-center gap-2">
+                                        <span className="text-xs font-medium text-white/60">
+                                          Каналы папки — {fChannels(it.id).length === 0 ? `все (${it.channels.length})` : `${fChannels(it.id).length} из ${it.channels.length}`}
+                                        </span>
+                                        <button type="button" onClick={() => setFolderChannels(it.id, [])} className="ml-auto text-xs font-semibold text-spark-300 hover:text-spark-200">Выбрать все</button>
+                                      </div>
+                                      <div className="flex max-h-40 flex-col gap-0.5 overflow-y-auto">
+                                        {it.channels.map((ch) => (
+                                          <label key={ch} className="flex cursor-pointer items-center gap-2 rounded px-1 py-0.5 text-xs text-white/70 hover:bg-white/5">
+                                            <input type="checkbox" checked={chChecked(it.id, ch)} onChange={() => toggleFolderChannel(it.id, ch, it.channels!)} className="accent-spark-500" />
+                                            <span className="truncate">{ch}</span>
+                                          </label>
+                                        ))}
+                                      </div>
+                                      <div className="mt-1 text-[11px] text-white/35">Ничего не выбрано = показываются все каналы папки (включая будущие).</div>
+                                    </div>
+                                  ) : (
+                                    <div className="ml-4 mt-1 text-[11px] text-white/35">В папке пока нет каналов.</div>
+                                  ))}
+                                </div>
                               ))}
                             </div>
                           ) : (

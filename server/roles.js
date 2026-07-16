@@ -42,6 +42,19 @@ function normPerm(v) {
   return v === ALLOW ? ALLOW : DENY
 }
 
+/** Нормализовать карту `folderId → string[]` (какие каналы/ссылки папки выданы роли).
+ *  Пустой массив/отсутствие для разрешённой папки = все каналы папки. @param {*} obj */
+function normFolderChannels(obj) {
+  /** @type {Record<string,string[]>} */
+  const out = {}
+  if (obj && typeof obj === 'object') {
+    for (const [k, v] of Object.entries(obj)) {
+      if (Array.isArray(v)) out[k] = [...new Set(v.map((x) => String(x || '').trim().replace(/^@/, '')).filter(Boolean))]
+    }
+  }
+  return out
+}
+
 /** Нормализовать карту `key → allow|deny`. @param {*} obj */
 function normPermMap(obj) {
   /** @type {Record<string,'allow'|'deny'>} */
@@ -65,6 +78,7 @@ export function normalizeRole(input = {}) {
       resources: {
         folders: normPermMap(r.folders),
         channels: normPermMap(r.channels),
+        folderChannels: normFolderChannels(r.folderChannels),
         timers: normPerm(r.timers),
         searchTemplates: normPerm(r.searchTemplates),
       },
@@ -201,7 +215,7 @@ export async function buildCatalog() {
   const modules = Object.entries(MODULE_LABELS).map(([key, label]) => ({ key, label }))
   const [folders, channels] = await Promise.all([listFolders(), listChannels()])
   const resources = [
-    { type: 'folders', label: 'Папки целей', perItem: true, items: folders.map((f) => ({ id: f.id, label: f.name || f.id })) },
+    { type: 'folders', label: 'Папки целей', perItem: true, items: folders.map((f) => ({ id: f.id, label: f.name || f.id, channels: f.targets || [] })) },
     { type: 'channels', label: 'Целевые каналы', perItem: true, items: channels.map((c) => ({ id: c.id, label: c.title || (c.username ? '@' + c.username : c.id) })) },
     { type: 'timers', label: 'Таймеры / планировщик', perItem: false },
     { type: 'searchTemplates', label: 'Шаблоны поиска', perItem: false },
@@ -229,4 +243,24 @@ export function can(role, kind, key) {
     case 'searchTemplates': return p.resources?.searchTemplates === ALLOW
     default: return false
   }
+}
+
+const normTarget = (t) => String(t || '').trim().replace(/^@/, '').toLowerCase()
+
+/**
+ * Какие каналы папки видит роль. Админ — все. Папка не разрешена — []. Разрешена без
+ * списка каналов — все каналы папки. Со списком — только выбранные (пересечение).
+ * @param {object|null} role @param {string} folderId @param {string[]} folderTargets
+ * @returns {string[]}
+ */
+export function allowedFolderTargets(role, folderId, folderTargets = []) {
+  if (!role) return folderTargets
+  if (role.builtin && role.id === ADMIN_ROLE_ID) return folderTargets
+  const folders = role.permissions?.resources?.folders || {}
+  if (Object.keys(folders).length === 0) return folderTargets // права папок не заданы — не ограничиваем
+  if (folders[folderId] !== ALLOW) return []
+  const fc = role.permissions?.resources?.folderChannels?.[folderId]
+  if (!Array.isArray(fc) || fc.length === 0) return folderTargets
+  const allow = new Set(fc.map(normTarget))
+  return folderTargets.filter((t) => allow.has(normTarget(t)))
 }
