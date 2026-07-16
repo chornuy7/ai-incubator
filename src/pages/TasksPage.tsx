@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { ListChecks, RefreshCw, Square, RotateCw, Target, Layers, Activity, Gauge, Pause, Play } from 'lucide-react'
 import { useApp } from '@/mocks/store'
-import { PageHeader, Card, EmptyState, Badge, Select, Segmented } from '@/shared/ui'
+import { PageHeader, Card, EmptyState, Badge, Select, Segmented, Modal } from '@/shared/ui'
 import { MODULES, isCombatModule, combatConfirmText } from '@/shared/config/modules'
 import { fetchAllTasks, stopModuleTask, restartModuleTask, pauseModuleTask, resumeModuleTask, type ModuleTask } from '@/api/modulesApi'
 import { fetchGoals, type Goal } from '@/api/goalsApi'
@@ -78,6 +78,7 @@ export function TasksPage() {
   const [loading, setLoading] = useState(true)
   const [busy, setBusy] = useState<string | null>(null)
   const [view, setView] = useState(0) // 0 — список, 1 — по целям (воронка)
+  const [detailTask, setDetailTask] = useState<ModuleTask | null>(null)
   const [fGoal, setFGoal] = useState('')
   const [fModule, setFModule] = useState('')
   const [fStatus, setFStatus] = useState('')
@@ -259,22 +260,30 @@ export function TasksPage() {
               <div className="h-1.5 overflow-hidden rounded bg-white/10"><div className="h-full rounded bg-iris-500 transition-all" style={{ width: `${g.prog}%` }} /></div>
               <div className="mt-1 text-[11px] text-white/40">Прогресс к цели: {g.prog}%</div>
               <div className="mt-2 grid gap-1.5 sm:grid-cols-2">
-                {g.tasks.map((t) => <TaskCard key={`${t.moduleKey}:${t.id}`} t={t} goalName={null} busy={busy} onStop={doStop} onRestart={doRestart} onPause={doPause} onResume={doResume} compact />)}
+                {g.tasks.map((t) => <TaskCard key={`${t.moduleKey}:${t.id}`} t={t} goalName={null} busy={busy} onOpen={setDetailTask} onStop={doStop} onRestart={doRestart} onPause={doPause} onResume={doResume} compact />)}
               </div>
             </Card>
           ))}
         </div>
       ) : (
         <div className="grid gap-2 lg:grid-cols-2">
-          {filtered.map((t) => <TaskCard key={`${t.moduleKey}:${t.id}`} t={t} goalName={goalName(t.goalId)} busy={busy} onStop={doStop} onRestart={doRestart} onPause={doPause} onResume={doResume} />)}
+          {filtered.map((t) => <TaskCard key={`${t.moduleKey}:${t.id}`} t={t} goalName={goalName(t.goalId)} busy={busy} onOpen={setDetailTask} onStop={doStop} onRestart={doRestart} onPause={doPause} onResume={doResume} />)}
         </div>
       )}
+      <TaskDetailModal
+        t={detailTask}
+        goalName={detailTask ? goalName(detailTask.goalId) : null}
+        busy={busy}
+        onClose={() => setDetailTask(null)}
+        onStop={doStop} onRestart={doRestart} onPause={doPause} onResume={doResume}
+      />
     </div>
   )
 }
 
-function TaskCard({ t, goalName, busy, onStop, onRestart, onPause, onResume, compact }: {
+function TaskCard({ t, goalName, busy, onOpen, onStop, onRestart, onPause, onResume, compact }: {
   t: ModuleTask; goalName: string | null; busy: string | null
+  onOpen: (t: ModuleTask) => void
   onStop: (t: ModuleTask) => void; onRestart: (t: ModuleTask) => void
   onPause: (t: ModuleTask) => void; onResume: (t: ModuleTask) => void; compact?: boolean
 }) {
@@ -284,6 +293,7 @@ function TaskCard({ t, goalName, busy, onStop, onRestart, onPause, onResume, com
   const ringColor = STATUS_COLOR[t.status] || '#94a3b8'
   return (
     <Card className={compact ? 'flex items-center gap-3 bg-elevated/40 p-2.5' : 'flex items-center gap-3 p-3'}>
+      <button type="button" onClick={() => onOpen(t)} className="flex min-w-0 flex-1 items-center gap-3 text-left" title="Открыть детали задачи">
       <Ring value={p} color={ringColor} size={compact ? 40 : 48} pulse={running} />
       <div className="min-w-0 flex-1">
         <div className="flex flex-wrap items-center gap-2">
@@ -298,6 +308,7 @@ function TaskCard({ t, goalName, busy, onStop, onRestart, onPause, onResume, com
           <span>{new Date(t.createdAt).toLocaleString('ru-RU', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}</span>
         </div>
       </div>
+      </button>
       <div className="flex shrink-0 items-center gap-1">
         {running && <button onClick={() => onPause(t)} disabled={busy === t.id} className="btn-icon h-8 w-8" aria-label="Пауза" title="Пауза"><Pause size={13} /></button>}
         {t.status === 'paused' && <button onClick={() => onResume(t)} disabled={busy === t.id} className="btn-icon h-8 w-8 text-spark-400" aria-label="Продолжить" title="Продолжить"><Play size={13} /></button>}
@@ -305,5 +316,76 @@ function TaskCard({ t, goalName, busy, onStop, onRestart, onPause, onResume, com
         <button onClick={() => onRestart(t)} disabled={busy === t.id} className="btn-icon h-8 w-8" aria-label="Перезапустить" title="Перезапустить"><RotateCw size={14} /></button>
       </div>
     </Card>
+  )
+}
+
+function Info({ label, value }: { label: string; value: React.ReactNode }) {
+  return (
+    <div className="rounded-xl border border-line bg-elevated/40 px-3 py-2">
+      <div className="text-[10px] font-bold uppercase tracking-wide text-white/40">{label}</div>
+      <div className="mt-0.5 truncate text-sm font-semibold text-fg">{value}</div>
+    </div>
+  )
+}
+
+const LOG_COLOR: Record<string, string> = { error: 'text-rose-300', warning: 'text-amber-300', success: 'text-spark-300', info: 'text-white/70' }
+
+/** Поп-ап с полной информацией по задаче: статус, прогресс, настройки, логи + управление. */
+function TaskDetailModal({ t, goalName, busy, onClose, onStop, onRestart, onPause, onResume }: {
+  t: ModuleTask | null; goalName: string | null; busy: string | null; onClose: () => void
+  onStop: (t: ModuleTask) => void; onRestart: (t: ModuleTask) => void
+  onPause: (t: ModuleTask) => void; onResume: (t: ModuleTask) => void
+}) {
+  if (!t) return null
+  const st = STATUS[t.status] || { label: t.status, tone: 'muted' as const }
+  const p = pct(t)
+  const s = t.settings || {}
+  const logs = (t.logs || []).slice(0, 15)
+  const results = t.results || t.commentHistory || []
+  return (
+    <Modal open={!!t} onClose={onClose} size="lg" title={`Задача · ${moduleTitle(t.moduleKey)}`} subtitle={t.id}
+      footer={<button onClick={onClose} className="btn-primary h-10">Закрыть</button>}>
+      <div className="space-y-4">
+        <div className="flex items-center gap-4 rounded-2xl border border-line bg-elevated/40 p-4">
+          <Ring value={p} color={STATUS_COLOR[t.status] || '#94a3b8'} size={66} stroke={6} pulse={isActive(t)} />
+          <div className="min-w-0 flex-1">
+            <Badge tone={st.tone}>{st.label}</Badge>
+            <div className="mt-1 text-sm text-white/60">{t.progress?.done ?? t.progress?.actionsDone ?? 0} / {t.progress?.total ?? 0} действий</div>
+          </div>
+          <div className="flex shrink-0 gap-1">
+            {isActive(t) && <button onClick={() => onPause(t)} disabled={busy === t.id} className="btn-icon h-9 w-9" title="Пауза"><Pause size={15} /></button>}
+            {t.status === 'paused' && <button onClick={() => onResume(t)} disabled={busy === t.id} className="btn-icon h-9 w-9 text-spark-400" title="Продолжить"><Play size={15} /></button>}
+            {isActive(t) && <button onClick={() => onStop(t)} disabled={busy === t.id} className="btn-icon h-9 w-9 text-rose-300" title="Стоп"><Square size={15} /></button>}
+            <button onClick={() => onRestart(t)} disabled={busy === t.id} className="btn-icon h-9 w-9" title="Перезапуск"><RotateCw size={16} /></button>
+          </div>
+        </div>
+        <div className="grid gap-2 sm:grid-cols-3">
+          <Info label="Модуль" value={moduleTitle(t.moduleKey)} />
+          <Info label="Цель" value={goalName || 'без цели'} />
+          <Info label="Инициатор" value={t.initiator || '—'} />
+          <Info label="Аккаунтов" value={String((s.accountIds || []).length)} />
+          <Info label="Каналов / целей" value={String((s.channels || s.targets || []).length)} />
+          <Info label="На аккаунт" value={`${s.minPerAccount ?? 0}–${s.maxPerAccount ?? 0}`} />
+          <Info label="Создана" value={new Date(t.createdAt).toLocaleString('ru-RU')} />
+          <Info label="Обновлена" value={new Date(t.updatedAt).toLocaleString('ru-RU')} />
+          <Info label="Результатов" value={String(results.length)} />
+        </div>
+        <div className="rounded-2xl border border-line bg-elevated/40 p-3">
+          <div className="mb-2 text-sm font-bold text-fg">Логи ({(t.logs || []).length})</div>
+          {logs.length === 0 ? (
+            <div className="py-3 text-center text-xs text-white/40">Логов пока нет</div>
+          ) : (
+            <div className="max-h-56 space-y-1 overflow-y-auto">
+              {logs.map((l, i) => (
+                <div key={i} className="flex gap-2 text-xs">
+                  <span className="shrink-0 text-white/30">{new Date(l.ts).toLocaleTimeString('ru-RU')}</span>
+                  <span className={LOG_COLOR[l.level] || 'text-white/70'}>{l.message}</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+    </Modal>
   )
 }
