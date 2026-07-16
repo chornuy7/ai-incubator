@@ -40,6 +40,7 @@ import { pickCommentCandidates, trackIdlePass, warmingPace, pickWeightedKey } fr
 import { limitReached, incAction } from '../lib/dailyActions.js'
 import { cleanMailingNumbers, pickMailingAccount } from '../lib/mailing.js'
 import { listLeads, sortDialogsByLeadPriority } from '../leads.js'
+import { isSemanticEnabled, embedText, cosineSimilarity } from '../lib/semantic.js'
 import { parseTelegramPostLinks, resolvePostPeer } from '../lib/postLink.js'
 import { filterBlacklisted, isBlacklistedSync } from '../targetBlacklist.js'
 
@@ -138,6 +139,17 @@ export async function runNeuroCommenting(task, store) {
   const goalCtx = await buildGoalContext(s.goalId)
   if (goalCtx) await store.appendLog(task, 'info', 'Комментарии генерируются к выбранной цели (с базой знаний)')
 
+  // §3.5 семантика: если включён семантический фильтр и есть цель — считаем её вектор один раз.
+  const semanticOn = !!s.semanticFilter && !!goalCtx && isSemanticEnabled()
+  const semanticThreshold = Number(s.semanticThreshold ?? 0.2)
+  let goalVec = null
+  if (semanticOn) {
+    goalVec = await embedText(goalCtx)
+    await store.appendLog(task, goalVec ? 'info' : 'warning', goalVec
+      ? `Семантический фильтр к цели включён (порог ${semanticThreshold})`
+      : 'Семантический фильтр недоступен (нет ответа embeddings) — работаем без него')
+  }
+
   const mul = delayMultiplier(s.protectionLevel ?? 1, s.delayPreset ?? 1)
   const prob = effectiveProbability(s.probability ?? 30, !!s.aiProtection, s.protectionLevel ?? 1)
   const chs = targets(s)
@@ -214,6 +226,15 @@ export async function runNeuroCommenting(task, store) {
 
             await sleep(pickDelay(s.delays?.comment?.[0] ?? 30, s.delays?.comment?.[1] ?? 120, mul) * 1000)
             const postText = (post.message || '').trim() || (post.media ? '[медиа]' : '')
+            // §3.5 семантика: пропускаем посты, семантически далёкие от цели кампании.
+            if (goalVec) {
+              const pv = await embedText(postText)
+              const sim = pv ? cosineSimilarity(pv, goalVec) : 1 // нет вектора поста → не режем
+              if (sim < semanticThreshold) {
+                await store.appendLog(task, 'info', `Пропуск по семантике (близость к цели ${sim.toFixed(2)} < ${semanticThreshold})`, meta.name)
+                continue
+              }
+            }
             // §3.5: если задано распределение типов — на каждый коммент выбираем тип по весу.
             const useDist = Array.isArray(s.typeWeights) && s.typeWeights.some((w) => Number(w) > 0)
             const typeIdx = useDist ? weightedPickIndex(s.typeWeights) : (s.promptIndex ?? 0)

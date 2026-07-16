@@ -69,6 +69,7 @@ export function NeuroCommentingModule() {
   const [sendAsChannel, setSendAsChannel] = useState(false)
   const [deletionTrack, setDeletionTrack] = useState(false)
   const [langMode, setLangMode] = useState(0)
+  const [semanticFilter, setSemanticFilter] = useState(false)
   const [alwaysOn, setAlwaysOn] = useState(true)
   const [autoResp, setAutoResp] = useState(0)
   const [delayPreset, setDelayPreset] = useState(1)
@@ -109,9 +110,10 @@ export function NeuroCommentingModule() {
     promptOverrides: promptBodies,
     aiMode,
     keywords: keywords.split(/[\n,;]+/).map((k) => k.trim()).filter(Boolean),
+    semanticFilter,
     delayPreset,
     delays,
-  }), [selected, targets, toggles, probability, maxComments, maxPerAcc, minWords, durationMinutes, aiProtect, protLevel, activePrompt, promptBodies, aiMode, keywords, delayPreset, delays])
+  }), [selected, targets, toggles, probability, maxComments, maxPerAcc, minWords, durationMinutes, aiProtect, protLevel, activePrompt, promptBodies, aiMode, keywords, semanticFilter, delayPreset, delays])
 
   useEffect(() => {
     void fetchNeuroPresets().then((p) => setPresets(p.map((x) => ({ id: x.id, name: x.name })))).catch(() => {})
@@ -366,6 +368,9 @@ export function NeuroCommentingModule() {
             <ToggleRow icon={<Eye size={16} />} label={cfg.channelToggles[1]} checked={deletionTrack} onChange={setDeletionTrack} />
           </div>
         )}
+        <div className="mt-3 grid gap-3 sm:grid-cols-2">
+          <ToggleRow icon={<Sparkles size={16} />} label="Семантический фильтр к цели (ИИ, §3.5)" checked={semanticFilter} onChange={setSemanticFilter} />
+        </div>
         <div className="mt-3 grid gap-3 sm:grid-cols-2">
           {cfg.languageDetection && (
             <div className="flex items-center justify-between rounded-xl border border-line bg-elevated/40 p-3">

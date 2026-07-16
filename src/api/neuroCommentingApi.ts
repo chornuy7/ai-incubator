@@ -21,6 +21,8 @@ export interface NeuroCommentingSettings {
   promptOverrides?: string[]
   aiMode: number
   keywords: string[]
+  semanticFilter?: boolean // §3.5: комментировать только по семантически близким к цели постам
+  semanticThreshold?: number
   delayPreset: number
   delays: {
     comment: [number, number]
