@@ -439,6 +439,7 @@ export function NeuroDialogsModule() {
         </div>
       </SectionCard>
 
+      <div id="nd-dialogs-anchor" className="scroll-mt-4" />
       {viewTab === 1 ? (
         <LogsPanel logs={logs} emptyText={cfg.logEmpty ?? 'Логов пока нет'} title="Логи выполнения" live={running} />
       ) : (

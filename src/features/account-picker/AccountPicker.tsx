@@ -4,6 +4,7 @@ import {
 } from 'lucide-react'
 import { useApp, activeAccounts } from '@/mocks/store'
 import { Avatar, Select } from '@/shared/ui'
+import { HelpButton } from '@/features/neuro-commenting/moduleUi'
 import { cn } from '@/shared/lib/utils'
 import { ROLES } from '@/shared/config/modules'
 import { COUNTRIES_FILTER, matchesGeo, FLAGS, COUNTRY_NAME } from '@/shared/config/geo'
@@ -115,9 +116,11 @@ export function AccountPicker({
   const remove = (id: string) => { const n = new Set(selected); n.delete(id); onChange(n) }
 
   return (
-    <div className="card p-0">
+    <div className="card relative p-0">
+      {/* #10: помощь по блоку — абсолютно, чтобы не вкладывать кнопку в кнопку */}
+      <div className="absolute right-3 top-3 z-10"><HelpButton topic="Выбор аккаунтов" /></div>
       {/* Header */}
-      <button onClick={() => setCollapsed((v) => !v)} className="flex w-full items-center gap-3 border-b border-line px-4 py-3.5 text-left">
+      <button onClick={() => setCollapsed((v) => !v)} className="flex w-full items-center gap-3 border-b border-line px-4 py-3.5 pr-14 text-left">
         <span className="grid h-9 w-9 place-items-center rounded-xl bg-spark-500/12 text-spark-400"><Users size={18} /></span>
         <span className="font-display text-base font-bold text-fg">Выбор аккаунтов</span>
         <span className="rounded-md bg-spark-500/12 px-2 py-0.5 text-xs font-bold text-spark-300">{selected.size} выбрано</span>

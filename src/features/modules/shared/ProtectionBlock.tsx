@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { Shield, Settings2, Bolt, HelpCircle, ChevronDown } from 'lucide-react'
 import { Badge, Switch } from '@/shared/ui'
+import { HelpButton } from '@/features/neuro-commenting/moduleUi'
 import { cn } from '@/shared/lib/utils'
 import { PROTECTION_STEPS } from '@/shared/config/protectionInfo'
 
@@ -65,6 +66,7 @@ export function ProtectionBlock({ enabled, onEnabled, level, onLevel }: {
             <span className="font-bold text-fg">Защита аккаунтов</span>
             <Badge tone="spark">AI</Badge>
             <InfoTip text={BLOCK_TIP} />
+            <HelpButton topic="Защита аккаунтов" />
           </div>
           <div className="text-xs text-muted">FloodWait → пауза → карантин · пропуск quarantine / spamblock / frozen</div>
         </div>

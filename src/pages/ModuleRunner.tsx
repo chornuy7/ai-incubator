@@ -29,6 +29,22 @@ import { ModuleLiveRouter, isLiveModule } from '@/features/modules'
 import { cn, compact, uid } from '@/shared/lib/utils'
 import type { ParseResult } from '@/shared/types'
 
+/** Плавный скролл к якорю; если нативный smooth не сработал (некоторые встроенные
+ *  браузеры/webview делают его no-op) — мгновенный доскролл, чтобы кнопка всегда работала. */
+function scrollToAnchor(id: string): boolean {
+  const el = document.getElementById(id)
+  if (!el) return false
+  const se = document.scrollingElement || document.documentElement
+  const before = se.scrollTop
+  el.scrollIntoView({ behavior: 'smooth', block: 'start' })
+  // Фолбэк на setTimeout (не rAF — он заморожен в фоновых вкладках/webview):
+  // если плавный скролл не стартовал — доскроллим мгновенно.
+  setTimeout(() => {
+    if (Math.abs(se.scrollTop - before) < 2) el.scrollIntoView({ block: 'start' })
+  }, 80)
+  return true
+}
+
 const SYSTEM_PROMPTS_FALLBACK = [
   'Дружелюбный эксперт', 'Краткий и по делу', 'Продающий копирайтер',
   'Нейтральный комментатор', 'Вовлекающий вопрос', 'Поддерживающий тон',
@@ -114,7 +130,7 @@ function HeaderActions({ cfg }: { cfg: ModuleConfig }) {
     return (
       <>
         <button onClick={() => pushToast({ type: 'info', title: 'Очистить', desc: 'Очистка диалогов (демо).' })} className="btn-ghost h-10"><Trash2 size={15} /> Очистить</button>
-        <button onClick={() => pushToast({ type: 'info', title: 'К диалогам', desc: 'Прокрутка к списку диалогов.' })} className="btn-ghost h-10"><ArrowDown size={15} /> К диалогам</button>
+        <button onClick={() => { if (!scrollToAnchor('nd-dialogs-anchor')) pushToast({ type: 'info', title: 'К диалогам', desc: 'Список диалогов ниже.' }) }} className="btn-ghost h-10"><ArrowDown size={15} /> К диалогам</button>
         <button onClick={() => pushToast({ type: 'info', title: 'Звук уведомлений', desc: 'Переключено (демо).' })} className="btn-icon h-10 w-10"><Volume2 size={16} /></button>
         <button onClick={() => pushToast({ type: 'info', title: 'Загрузить ЛС (демо)', desc: 'Импорт истории переписок.' })} className="btn-iris h-10"><UploadCloud size={16} /> Загрузить ЛС</button>
       </>
