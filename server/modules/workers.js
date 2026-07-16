@@ -1299,9 +1299,10 @@ export async function runParticipantsParser(task, store, kind) {
 }
 
 /**
- * Мейлинг: рассылка в Telegram по номерам телефонов (§8.4).
- * КАРКАС: валидирует вход и планирует рассылку; реальная отправка реализуется на live-прогоне
- * (см. TODO) — массовая отправка незнакомым рискованна для аккаунтов, тестируем вживую.
+ * Мейлинг: реальная рассылка в Telegram по номерам телефонов (§8.4).
+ * Отправка НЕ «слепая»: жёсткие предохранители §6 — только аккаунты с trust>70, суточный
+ * лимит ЛС (dm), паузы 90–300с, пропуск номеров, которых нет в Telegram, FloodWait→карантин.
+ * Номер резолвим через contacts.ImportContacts, шлём ЛС (шаблон или ИИ-текст к цели).
  * @param {object} task @param {object} store
  */
 export async function runMailing(task, store) {
@@ -1312,6 +1313,7 @@ export async function runMailing(task, store) {
 
   task.status = 'running'
   task.progress = { done: 0, total: numbers.length }
+  task.accountStats = task.accountStats || {}
   await store.saveTask(task)
   await store.appendLog(task, 'info', `Мейлинг: ${numbers.length} номеров на ${accountIds.length} аккаунт(ов)`)
 
@@ -1319,19 +1321,102 @@ export async function runMailing(task, store) {
   if (!accountIds.length) { await store.appendLog(task, 'warning', 'Не выбраны аккаунты'); task.status = 'done'; await store.saveTask(task); return }
   if (!message) { await store.appendLog(task, 'warning', 'Пустой текст рассылки'); task.status = 'done'; await store.saveTask(task); return }
 
-  const perAcc = Math.ceil(numbers.length / accountIds.length)
-  const d = s.delays?.action || [30, 90]
-  await store.appendLog(task, 'info', `План: ~${perAcc} на аккаунт · задержка ${d[0]}–${d[1]}с · лимит/акк ${s.maxPerAccount || '—'}`)
-  await store.appendLog(task, 'info', `Текст: "${message.slice(0, 80)}${message.length > 80 ? '…' : ''}"`)
+  const mul = delayMultiplier(s.protectionLevel ?? 1, s.delayPreset ?? 1)
+  const dm = s.delays?.dm || s.delays?.action || [90, 300] // §6: паузы рассылки ЛС 90–300с
+  const maxPerAccount = Number(s.maxPerAccount || 0)
+  const goalCtx = await buildGoalContext(s.goalId)
+  const useAi = !!s.aiPerRecipient && isAiGenerationEnabled()
+  await store.appendLog(task, 'info', `Текст: ${useAi ? 'ИИ-генерация к цели' : `"${message.slice(0, 70)}${message.length > 70 ? '…' : ''}"`} · паузы ${dm[0]}–${dm[1]}с · лимит/акк ${maxPerAccount || '§6'}`)
 
-  // TODO(live): реальная отправка. По каждому аккаунту (round-robin по своей доле номеров):
-  //   1) contacts.ImportContacts([{phone, first_name}]) → получить users
-  //   2) для найденных — sendMessage(user, text) с задержкой [action], учётом maxPerAccount
-  //   3) FloodWait/спам-блок → пауза/карантин через state machine (как в runNeuroChatting)
-  //   4) прогресс task.progress.done++ + аудит. Требует подключённых аккаунтов (GramJS).
-  await store.appendLog(task, 'warning', 'Каркас готов. Реальная отправка — на live-прогоне с подключёнными аккаунтами (TODO в runMailing).')
-  task.status = 'done'
+  const { Api } = await import('telegram/tl/index.js')
+  const { default: bigInt } = await import('big-integer')
+  const { buildAccountStats } = await import('../accountStats.js')
+
+  // Предохранитель §6: рассылка только с прогретых аккаунтов (trust > 70), активных.
+  const usable = []
+  for (const id of accountIds) {
+    const meta = await getAccountMeta(id)
+    if (!isAccountRunnable(meta.status || 'active')) { await store.appendLog(task, 'warning', `Пропуск: статус ${meta.status}`, meta.name); continue }
+    let trust = 0
+    try { trust = (await buildAccountStats(id)).trust?.score ?? 0 } catch { trust = 0 }
+    if (trust <= 70) { await store.appendLog(task, 'warning', `${meta.name}: trust ${trust} ≤ 70 — пропущен (§6: рассылка только с trust>70)`, meta.name); continue }
+    usable.push(id)
+  }
+  if (!usable.length) { await store.appendLog(task, 'warning', 'Нет аккаунтов с trust>70 — рассылка не запущена (§6). Прогрейте аккаунты.'); task.status = 'done'; await store.saveTask(task); return }
+  await store.appendLog(task, 'info', `К рассылке допущено аккаунтов: ${usable.length}/${accountIds.length} (trust>70)`)
+
+  let sent = 0
+  let skipped = 0
+  let idx = 0
+  const perAccSent = {}
+
+  try {
+    for (const phone of numbers) {
+      task = (await store.loadTask(task.id)) || task
+      if (task.stopRequested || task.pauseRequested || totalLimitReached(s, task)) break
+
+      // Выбрать аккаунт round-robin, у которого не исчерпан суточный лимит ЛС и maxPerAccount.
+      let account = null
+      for (let k = 0; k < usable.length; k++) {
+        const cand = usable[(idx + k) % usable.length]
+        if (await limitReached(cand, 'dm')) continue
+        if (maxPerAccount > 0 && (perAccSent[cand] || 0) >= maxPerAccount) continue
+        account = cand
+        idx = (idx + k + 1) % usable.length
+        break
+      }
+      if (!account) { await store.appendLog(task, 'info', 'Все аккаунты исчерпали суточный лимит ЛС (§6) — завершаем'); break }
+
+      const meta = await getAccountMeta(account)
+      let client
+      try {
+        ;({ client } = await connectAccount(account, task.id))
+        // 1) Резолв номера → пользователь Telegram.
+        const res = await client.invoke(new Api.contacts.ImportContacts({
+          contacts: [new Api.InputPhoneContact({ clientId: bigInt(idx * 1000 + sent + skipped), phone: `+${phone}`, firstName: 'Lead', lastName: '' })],
+        }))
+        const user = res.users?.[0]
+        if (!user) {
+          skipped += 1
+          task.progress.done = sent + skipped
+          await store.appendLog(task, 'info', `+${phone}: нет в Telegram — пропуск`, meta.name)
+          await disconnectAccount(client, account)
+          continue
+        }
+        // 2) Текст: шаблон или ИИ к цели.
+        let text = message
+        if (useAi) {
+          const gen = await generateComment(message || 'Напиши короткое дружелюбное первое сообщение по цели', s.promptIndex ?? 0, resolveSystemPrompt(s) + goalCtx)
+          if (gen.text) text = gen.text
+        }
+        // 3) Пауза «по-человечески» и отправка.
+        await sleep(pickDelay(dm[0], dm[1], mul) * 1000)
+        await client.sendMessage(user, { message: text })
+        await incAction(account, 'dm') // §6: суточный лимит ЛС
+        perAccSent[account] = (perAccSent[account] || 0) + 1
+        sent += 1
+        task.accountStats[account] = task.accountStats[account] || { actions: 0, floodWaits: 0 }
+        task.accountStats[account].actions += 1
+        task.progress.done = sent + skipped
+        await store.appendHistory(task, { id: `${task.id}_${Date.now()}`, ts: new Date().toISOString(), accountName: meta.name, target: `+${phone}`, text, status: 'sent' })
+        await store.appendLog(task, 'success', `ЛС → +${phone} (${user.firstName || 'user'})`, meta.name)
+        await bumpProgress(task, store)
+        await disconnectAccount(client, account)
+      } catch (err) {
+        if (client) await disconnectAccount(client, account)
+        if (!(await handleFlood(task, account, store, err, s, meta.name))) {
+          await store.appendLog(task, 'error', mapTelegramError(err), meta.name)
+        }
+      }
+    }
+    task.status = statusAfterRun(task)
+    await store.appendLog(task, 'info', `Мейлинг завершён · отправлено ${sent} · пропущено ${skipped} (нет в Telegram)`)
+  } catch (err) {
+    task.status = 'error'
+    await store.appendLog(task, 'error', err instanceof Error ? err.message : 'Ошибка')
+  }
   await store.saveTask(task)
+  await finalizeAccounts(accountIds, task.id)
 }
 
 /**

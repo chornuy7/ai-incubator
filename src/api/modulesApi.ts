@@ -68,12 +68,14 @@ export interface ModuleTaskSettings {
   delays?: {
     comment?: [number, number]
     action?: [number, number]
+    dm?: [number, number]
     join?: [number, number]
     request?: [number, number]
     channel?: [number, number]
     floodWait?: number
     floodQuarantine?: number
   }
+  aiPerRecipient?: boolean
 }
 
 export interface ModuleTaskProgress {

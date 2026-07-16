@@ -13,11 +13,12 @@ export function MailingPage() {
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [numbersText, setNumbersText] = useState('')
   const [message, setMessage] = useState('')
-  const [maxPerAccount, setMaxPerAccount] = useState(30)
-  const [delayMin, setDelayMin] = useState(30)
-  const [delayMax, setDelayMax] = useState(90)
+  const [maxPerAccount, setMaxPerAccount] = useState(25)
+  const [delayMin, setDelayMin] = useState(90)
+  const [delayMax, setDelayMax] = useState(300)
   const [goals, setGoals] = useState<Goal[]>([])
   const [goalId, setGoalId] = useState('')
+  const [aiPerRecipient, setAiPerRecipient] = useState(false)
   const [launching, setLaunching] = useState(false)
 
   useEffect(() => { void fetchGoals().then(setGoals).catch(() => {}) }, [])
@@ -38,7 +39,8 @@ export function MailingPage() {
         targets: numbers,
         promptText: message.trim(),
         maxPerAccount,
-        delays: { action: [delayMin, delayMax] },
+        delays: { dm: [delayMin, delayMax], action: [delayMin, delayMax] },
+        aiPerRecipient: aiPerRecipient && !!goalId,
         ...(goalId ? { goalId } : {}),
       })
       pushToast({ type: 'success', title: 'Рассылка создана', desc: `${numbers.length} номеров · ${selected.size} аккаунтов` })
@@ -54,12 +56,12 @@ export function MailingPage() {
         title="Мейлинг"
         subtitle="Рассылка в Telegram по номерам телефонов (§8.4). Резолв номера → аккаунт → ЛС."
         icon={<Mail size={22} />}
-        badge="каркас"
+        badge="live"
       />
 
       <Card className="mb-4 flex items-start gap-2 border-amber-500/30 bg-amber-500/5 p-3 text-sm text-amber-200/90">
         <AlertTriangle size={16} className="mt-0.5 shrink-0" />
-        <span>Массовая рассылка незнакомым — высокий риск спам-блока <b>ваших аккаунтов</b>. Держите лимиты низкими и задержки большими. Реальная отправка подключается на live-прогоне.</span>
+        <span>Отправка <b>реальная</b>. Массовая рассылка незнакомым — высокий риск спам-блока <b>ваших аккаунтов</b> и нарушение ToS Telegram. Предохранители §6: рассылают только аккаунты с trust&gt;70, действует суточный лимит ЛС (20–30/аккаунт) и паузы 90–300с; номера не из Telegram пропускаются. Держите лимиты низкими.</span>
       </Card>
 
       <div className="grid gap-4 lg:grid-cols-2">
@@ -83,6 +85,12 @@ export function MailingPage() {
               <div className="mt-2">
                 <div className="mb-1 text-xs text-white/50">Цель (опционально — генерация к цели)</div>
                 <Select value={goalId} onChange={setGoalId} options={[{ value: '', label: 'Без цели' }, ...goals.map((g) => ({ value: g.id, label: g.name }))]} />
+                {goalId && (
+                  <label className="mt-2 flex items-center gap-2 text-xs text-white/60">
+                    <input type="checkbox" checked={aiPerRecipient} onChange={(e) => setAiPerRecipient(e.target.checked)} className="h-4 w-4 rounded border-line accent-spark-500" />
+                    ИИ-генерация текста к цели (вместо шаблона)
+                  </label>
+                )}
               </div>
             )}
           </Card>
