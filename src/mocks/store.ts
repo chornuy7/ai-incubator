@@ -13,7 +13,8 @@ export interface Toast {
   desc?: string
 }
 
-const LS_KEY = 'ai-incubator:v2'
+// v3: сброс старого демо-кэша (фейковые задачи/статистика/тикеты убраны из сидов).
+const LS_KEY = 'ai-incubator:v3'
 
 interface Persisted {
   userState: UserState
