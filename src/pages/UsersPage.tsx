@@ -76,7 +76,7 @@ export function UsersPage() {
     } catch (e) { setErr(e instanceof Error ? e.message : 'Ошибка') }
   }
   async function remove(u: User) {
-    if (!confirm(`Удалить пользователя ${u.email}?`)) return
+    if (!confirm(`Удалить пользователя «${u.name}» (${u.email})?\n\nДействие необратимо — оператор потеряет доступ к панели.`)) return
     try {
       await deleteUser(u.id)
       setUsers((prev) => prev.filter((x) => x.id !== u.id))
@@ -147,7 +147,14 @@ export function UsersPage() {
                   )}
                   <button onClick={() => void toggleActive(u)} className="btn-ghost h-9 text-xs">{u.active ? 'Отключить' : 'Включить'}</button>
                   {!locked && (
-                    <button onClick={() => void remove(u)} className="btn-icon h-9 w-9" aria-label="Удалить"><Trash2 size={14} /></button>
+                    <button
+                      onClick={() => void remove(u)}
+                      className="grid h-9 w-9 place-items-center rounded-lg border border-rose-500/40 bg-rose-500/10 text-rose-300 transition-colors hover:bg-rose-500/20 hover:text-rose-200"
+                      aria-label="Удалить пользователя"
+                      title="Удалить пользователя"
+                    >
+                      <Trash2 size={14} />
+                    </button>
                   )}
                 </div>
               </Card>

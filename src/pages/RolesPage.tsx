@@ -6,6 +6,7 @@ import {
   type Role, type RbacCatalog, type RolePermissions, type Perm,
 } from '@/api/rolesApi'
 import { ADMIN_BYPASS_ID } from '@/shared/config/rbac'
+import { HelpButton } from '@/features/neuro-commenting/moduleUi'
 
 /** Пара чекбоксов «дать доступ / убрать доступ» (§8.1). */
 function PermToggle({ value, onChange, disabled }: { value: Perm; onChange: (p: Perm) => void; disabled?: boolean }) {
@@ -23,12 +24,16 @@ function PermToggle({ value, onChange, disabled }: { value: Perm; onChange: (p: 
   )
 }
 
-/** Строка права: подсвечивается, если доступ снят (§8.1 «выделить, если убрал»). */
-function PermRow({ label, indent, value, onChange, disabled }: { label: string; indent?: boolean; value: Perm; onChange: (p: Perm) => void; disabled?: boolean }) {
+/** Строка права: подсвечивается, если доступ снят (§8.1 «выделить, если убрал»).
+ *  helpTopic — если задан, слева от чекбоксов показывается «?» со статьёй Help Center. */
+function PermRow({ label, indent, value, onChange, disabled, helpTopic }: { label: string; indent?: boolean; value: Perm; onChange: (p: Perm) => void; disabled?: boolean; helpTopic?: string }) {
   return (
     <div className={`flex items-center justify-between gap-3 rounded-lg px-3 py-2 ${value === 'deny' ? 'bg-rose-500/8 ring-1 ring-inset ring-rose-500/20' : 'bg-elevated'} ${indent ? 'ml-6' : ''}`}>
       <span className={`truncate text-sm ${value === 'deny' ? 'text-rose-200/80' : 'text-fg'}`}>{label}</span>
-      <PermToggle value={value} onChange={onChange} disabled={disabled} />
+      <div className="flex shrink-0 items-center gap-2">
+        {helpTopic && <HelpButton topic={helpTopic} className="h-7 w-7" />}
+        <PermToggle value={value} onChange={onChange} disabled={disabled} />
+      </div>
     </div>
   )
 }
@@ -214,12 +219,15 @@ export function RolesPage() {
                                 {open ? <ChevronDown size={15} className="shrink-0 text-white/40" /> : <ChevronRight size={15} className="shrink-0 text-white/40" />}
                                 <span className={`truncate ${mPerm(m.key) === 'deny' ? 'text-rose-200/80' : ''}`}>{m.label}</span>
                               </button>
-                              <PermToggle value={mPerm(m.key)} onChange={(p) => setModule(m.key, p)} />
+                              <div className="flex shrink-0 items-center gap-2">
+                                <HelpButton topic={m.key} className="h-7 w-7" />
+                                <PermToggle value={mPerm(m.key)} onChange={(p) => setModule(m.key, p)} />
+                              </div>
                             </div>
                             {open && (
                               <div className="mt-1 flex flex-col gap-1">
                                 {catalog.blocks.map((b) => (
-                                  <PermRow key={b.key} indent label={b.label} value={bPerm(`${m.key}:${b.key}`)} onChange={(p) => setBlock(`${m.key}:${b.key}`, p)} />
+                                  <PermRow key={b.key} indent label={b.label} value={bPerm(`${m.key}:${b.key}`)} onChange={(p) => setBlock(`${m.key}:${b.key}`, p)} helpTopic={`perm-${b.key}`} />
                                 ))}
                               </div>
                             )}

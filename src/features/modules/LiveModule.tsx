@@ -5,6 +5,8 @@ import {
 } from 'lucide-react'
 import { MODULES, isCombatModule, combatConfirmText, type ModuleConfig } from '@/shared/config/modules'
 import { activeAccounts, useApp } from '@/mocks/store'
+import { useSession } from '@/features/auth/session'
+import { can } from '@/shared/lib/access'
 import { ToggleGroup, Segmented, EmptyState, Badge, Select } from '@/shared/ui'
 import { fetchGoals, type Goal } from '@/api/goalsApi'
 import { AccountPicker } from '@/features/account-picker/AccountPicker'
@@ -46,6 +48,12 @@ export function LiveModule({ moduleKey }: { moduleKey: string }) {
 function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: string }) {
   const accounts = activeAccounts(useApp((s) => s.data))
   const { task, running, starting, start, stop, savePreset, deletePreset, presets, pushToast, justStarted, dismissJustStarted } = useModuleTask(moduleKey)
+
+  // R6: гейтинг блоков внутри модуля по правам роли. Демо/админ — всё видно.
+  // run — запуск/аккаунты; settings — настройки/тайминги/защита; targets — цели/каналы;
+  // templates — промпты/эмодзи; results/logs — просмотр результатов/логов.
+  const sessionUser = useSession((s) => s.user)
+  const showBlock = (bk: string) => !sessionUser || sessionUser.isAdmin || can(sessionUser.permissions, false, 'block', `${moduleKey}:${bk}`)
 
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [toggles, setToggles] = useState<Record<number, number>>({})
@@ -269,11 +277,11 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
     <div className="space-y-4">
       <TaskStartedModal task={justStarted} moduleTitle={cfg.title} onClose={dismissJustStarted} />
       <SaveToFolderModal open={folderSave !== null} onClose={() => setFolderSave(null)} targets={folderSave ?? []} />
-      {cfg.accountPicker && (
+      {cfg.accountPicker && showBlock('run') && (
         <AccountPicker selected={selected} onChange={setSelected} actions={cfg.accountActions} withFilters={!!cfg.accountFilters} selectedTitle={cfg.selectedTitle ?? 'Выбрано'} />
       )}
 
-      {(cfg.aiProtection || cfg.richLayout || cfg.lookingLayout || cfg.warmingLayout || isGgr) && (
+      {showBlock('settings') && (cfg.aiProtection || cfg.richLayout || cfg.lookingLayout || cfg.warmingLayout || isGgr) && (
         <SectionCard icon={<Settings2 size={18} />} title={cfg.settingsTitle ?? 'Настройки'} badge={targets.length ? `${targets.length} целей` : undefined}>
           {cfg.aiProtection && <ProtectionBlock enabled={aiProtect} onEnabled={setAiProtect} level={protLevel} onLevel={setProtLevel} />}
 
@@ -365,7 +373,7 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
         </SectionCard>
       )}
 
-      {!isParser && !isGgr && (cfg.aiProtection || cfg.richLayout || cfg.lookingLayout || cfg.warmingLayout) && (
+      {showBlock('settings') && !isParser && !isGgr && (cfg.aiProtection || cfg.richLayout || cfg.lookingLayout || cfg.warmingLayout) && (
         <TimingSection
           workModeOptions={cfg.toggleGroups?.[1]?.options}
           workMode={g(1)}
@@ -391,7 +399,7 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
         />
       )}
 
-      {(cfg.sourceTabs || needsTargets) && !isGgr && (
+      {showBlock('targets') && (cfg.sourceTabs || needsTargets) && !isGgr && (
         <SectionCard icon={<Hash size={18} />} title={cfg.sourceTabs?.label ?? 'Цели'} badge={String(targets.length)}>
           <FolderPicker targets={targets} onLoad={(t) => setTargets((prev) => [...new Set([...t, ...prev])])} />
           <TargetsEditor
@@ -409,7 +417,7 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
         </SectionCard>
       )}
 
-      {cfg.postLinks && (
+      {showBlock('targets') && cfg.postLinks && (
         <SectionCard icon={<Link2 size={18} />} title={cfg.postLinks.label} badge={String(postUrls.length)}>
           {cfg.postLinks.hint && <p className="mb-3 text-xs text-muted">{cfg.postLinks.hint}</p>}
           <FolderPicker targets={postUrls} onLoad={(t) => setPostUrls((prev) => [...new Set([...t, ...prev])])} />
@@ -438,7 +446,7 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
         </SectionCard>
       )}
 
-      {cfg.reactionPalette && (
+      {showBlock('templates') && cfg.reactionPalette && (
         <SectionCard icon={<Heart size={18} />} title="Эмодзи">
           <div className="flex flex-wrap gap-2">
             {cfg.reactionPalette.map((e) => (
@@ -448,7 +456,7 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
         </SectionCard>
       )}
 
-      {cfg.messagePrompts && (
+      {showBlock('templates') && cfg.messagePrompts && (
         <SectionCard icon={<Sparkles size={18} />} title="AI / промпты">
           <div className="space-y-3">
             <AiGenerationNotice />
@@ -464,6 +472,7 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
         </SectionCard>
       )}
 
+      {showBlock('run') && (
       <SectionCard icon={<Play size={18} />} title={running ? 'Выполнение' : 'Запуск'} badge={running ? 'LIVE' : undefined}>
         {limitWarn && !running && (
           <div className="mb-3 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-300">⚠ {limitWarn}</div>
@@ -569,8 +578,9 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
           </a>
         </div>
       </SectionCard>
+      )}
 
-      {(isParser || isGgr || history.length > 0) && (
+      {(showBlock('results') || showBlock('logs')) && (isParser || isGgr || history.length > 0) && (
         <SectionCard icon={<MessageCircle size={18} />} title={isParser || isGgr ? 'Результаты' : 'История сообщений'} badge={String(isParser || isGgr ? results.length : history.length)}>
           {(isParser || isGgr) && results.length > 0 ? (
             <div className="max-h-80 overflow-y-auto">
@@ -608,8 +618,14 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
         </SectionCard>
       )}
 
-      {(cfg.blacklistSection || cfg.blacklistEmpty) && (
+      {showBlock('targets') && (cfg.blacklistSection || cfg.blacklistEmpty) && (
         <BlacklistEditor title={cfg.blacklistSection ?? 'Чёрный список каналов'} />
+      )}
+
+      {!(['run', 'settings', 'targets', 'templates', 'results', 'logs'] as const).some(showBlock) && (
+        <div className="rounded-2xl border border-line bg-elevated/40 p-6 text-center text-sm text-muted">
+          Роли выдан доступ к модулю, но не выдан ни один блок. Обратитесь к администратору, чтобы он открыл нужные блоки в «Роли и доступы».
+        </div>
       )}
     </div>
   )
