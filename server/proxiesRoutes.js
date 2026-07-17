@@ -1,6 +1,6 @@
 /** CRUD-роуты сущности «Прокси» (§3.2/3.4). Монтируется в /api/proxies. */
 import { Router } from 'express'
-import { listProxies, getProxy, createProxy, updateProxy, deleteProxy, checkProxyLiveness, checkAllProxies, sharedProxies, probeProxyGeo } from './proxies.js'
+import { listProxies, getProxy, createProxy, updateProxy, deleteProxy, checkProxyLiveness, checkAllProxies, sharedProxies, probeProxyGeo, tcpPing } from './proxies.js'
 import { loadAllMeta } from './accountsMeta.js'
 import { appendAudit } from './lib/auditLog.js'
 
@@ -29,6 +29,19 @@ proxiesRouter.post('/check-all', async (_req, res) => {
     const results = await checkAllProxies()
     await appendAudit({ action: 'proxy.check', module: 'proxy', initiator: 'operator', reason: `Проверка живости: ${results.length} прокси`, meta: { alive: results.filter((r) => r.status === 'ok').length } })
     res.json({ ok: true, results })
+  } catch (err) { fail(res, err, 500) }
+})
+
+// Реальная проверка прокси по host:port ДО сохранения (TCP-пинг + гео). До /:id.
+proxiesRouter.post('/probe', async (req, res) => {
+  try {
+    const { host, port } = req.body ?? {}
+    if (!host || !port) return res.status(400).json({ ok: false, error: 'Укажите host и port' })
+    const started = Date.now()
+    const alive = await tcpPing(String(host), Number(port))
+    const ms = Date.now() - started
+    const geo = alive ? await probeProxyGeo(String(host)) : null
+    res.json({ ok: true, alive, ms, geo })
   } catch (err) { fail(res, err, 500) }
 })
 

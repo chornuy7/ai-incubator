@@ -59,3 +59,8 @@ export interface ProxyGeo { country: string; countryName: string; city: string; 
 export async function checkProxy(id: string): Promise<{ proxy: Proxy; geo: ProxyGeo | null }> {
   return apiPost<{ proxy: Proxy; geo: ProxyGeo | null }>(`/api/proxies/${id}/check`)
 }
+
+/** Реальная проверка прокси по host:port ДО сохранения — TCP-пинг + гео (§3.4). */
+export async function probeProxy(host: string, port: number): Promise<{ alive: boolean; ms: number; geo: ProxyGeo | null }> {
+  return apiPost<{ alive: boolean; ms: number; geo: ProxyGeo | null }>('/api/proxies/probe', { host, port })
+}

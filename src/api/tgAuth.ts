@@ -54,9 +54,3 @@ export async function verifyCode(authId: string, code: string): Promise<VerifyCo
 export async function verify2fa(authId: string, password: string): Promise<{ ok: boolean; account: TgAccountPayload }> {
   return post('/api/tg/verify-2fa', { authId, password })
 }
-
-/** Мок-проверка прокси (локально, без сети) */
-export async function checkProxy(_proxy: string): Promise<{ ok: boolean; ping: number }> {
-  await new Promise((r) => setTimeout(r, 400))
-  return { ok: true, ping: 40 + Math.floor(Math.random() * 120) }
-}
