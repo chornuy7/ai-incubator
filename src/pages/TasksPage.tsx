@@ -6,6 +6,7 @@ import { MODULES, isCombatModule, combatConfirmText } from '@/shared/config/modu
 import { fetchAllTasks, fetchModuleTask, stopModuleTask, restartModuleTask, pauseModuleTask, resumeModuleTask, type ModuleTask } from '@/api/modulesApi'
 import { fetchGoals, type Goal } from '@/api/goalsApi'
 import { cn } from '@/shared/lib/utils'
+import { confirmDialog } from '@/shared/lib/dialog'
 
 const STATUS: Record<string, { label: string; tone: 'spark' | 'iris' | 'amber' | 'rose' | 'muted' }> = {
   running: { label: 'Выполняется', tone: 'spark' },
@@ -127,7 +128,7 @@ export function TasksPage() {
   }
   const doRestart = async (t: ModuleTask) => {
     // #4: рестарт боевого модуля = реальные действия в Telegram — подтверждаем.
-    if (isCombatModule(t.moduleKey) && !window.confirm(combatConfirmText(t.moduleKey))) return
+    if (isCombatModule(t.moduleKey) && !(await confirmDialog({ title: 'Реальные действия в Telegram', message: combatConfirmText(t.moduleKey), confirmLabel: 'Запустить', tone: 'danger' }))) return
     setBusy(t.id)
     try { await restartModuleTask(t.moduleKey, t.id); pushToast({ type: 'success', title: 'Задача перезапущена' }); await load() }
     catch (err) { pushToast({ type: 'error', title: 'Ошибка перезапуска', desc: err instanceof Error ? err.message : '' }) }
@@ -177,10 +178,10 @@ export function TasksPage() {
   const pauseTargets = useMemo(() => selectedTasks.filter((t) => t.status === 'running'), [selectedTasks])
   const stopTargets = useMemo(() => selectedTasks.filter((t) => t.status === 'running' || t.status === 'queued' || t.status === 'paused'), [selectedTasks])
 
-  const bulkStart = () => {
+  const bulkStart = async () => {
     // Боевые модули при перезапуске = реальные действия в Telegram — подтверждаем разово.
     if (startTargets.some((t) => t.status !== 'paused' && isCombatModule(t.moduleKey)) &&
-        !window.confirm('Перезапуск боевых модулей = реальные действия в Telegram. Продолжить?')) return
+        !(await confirmDialog({ title: 'Реальные действия в Telegram', message: 'Перезапуск боевых модулей выполнит реальные действия в Telegram (комментарии / ответы / реакции). Продолжить?', confirmLabel: 'Запустить', tone: 'danger' }))) return
     void runBulk('Запуск/возобновление', startTargets, (t) => (t.status === 'paused' ? resumeModuleTask(t.moduleKey, t.id) : restartModuleTask(t.moduleKey, t.id)))
   }
   const bulkPause = () => void runBulk('Пауза', pauseTargets, (t) => pauseModuleTask(t.moduleKey, t.id))

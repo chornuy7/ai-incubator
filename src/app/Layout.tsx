@@ -3,6 +3,7 @@ import { Outlet, useLocation, Link } from 'react-router-dom'
 import { AppSidebar } from '@/widgets/AppSidebar'
 import { AppHeader } from '@/widgets/AppHeader'
 import { Toasts } from '@/widgets/Toasts'
+import { DialogHost } from '@/widgets/DialogHost'
 import { DevPanel } from '@/widgets/DevPanel'
 import { TasksDrawer } from '@/widgets/TasksDrawer'
 import { HelpCenterDrawer } from '@/widgets/HelpCenterDrawer'
@@ -78,6 +79,7 @@ export function Layout() {
       </div>
 
       <Toasts />
+      <DialogHost />
       <DevPanel />
       <TasksDrawer />
       <button

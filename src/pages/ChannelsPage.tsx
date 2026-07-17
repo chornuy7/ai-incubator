@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { Radio, Plus, RefreshCw, Trash2, ExternalLink, MessageSquare } from 'lucide-react'
 import { useApp } from '@/mocks/store'
 import { PageHeader, Card, EmptyState, Badge } from '@/shared/ui'
+import { confirmDialog } from '@/shared/lib/dialog'
 import { fetchChannels, upsertChannel, updateChannel, refreshChannel, deleteChannel, channelRating, type Channel } from '@/api/channelsApi'
 
 function fmt(n: number) {
@@ -58,7 +59,7 @@ export function ChannelsPage() {
   }
 
   const remove = async (c: Channel) => {
-    if (!window.confirm(`Удалить канал ${c.username || c.title} из базы?`)) return
+    if (!(await confirmDialog({ title: 'Удалить канал?', message: `${c.username || c.title} будет удалён из базы.`, confirmLabel: 'Удалить', tone: 'danger' }))) return
     try { await deleteChannel(c.id); await load() }
     catch (err) { pushToast({ type: 'error', title: 'Ошибка', desc: err instanceof Error ? err.message : '' }) }
   }

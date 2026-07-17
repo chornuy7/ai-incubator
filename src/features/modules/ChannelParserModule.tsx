@@ -13,6 +13,7 @@ import { SectionCard, NumberField, ProtectionBlock, DelayFields, LaunchPanel, Ta
 import { cn } from '@/shared/lib/utils'
 import { downloadXls } from '@/shared/lib/exportXls'
 import { SaveToFolderModal } from './shared/FolderPicker'
+import { promptDialog } from '@/shared/lib/dialog'
 import { fetchModuleTasks, fetchModuleTask, type ModuleTaskSettings } from '@/api/modulesApi'
 
 /** Собирает username ранее спарсенных каналов/групп из истории модуля (для дедупа между запусками). */
@@ -205,7 +206,7 @@ function ChannelParserInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: 
     }
     void start(settings, `${cfg.title} · ${selected.size} акк.`)
   }
-  const handleSave = () => { const name = window.prompt('Название шаблона настроек'); if (name?.trim()) void savePreset(name.trim(), buildSettings()) }
+  const handleSave = async () => { const name = await promptDialog({ title: 'Сохранить шаблон', message: 'Название шаблона настроек', placeholder: 'Напр. Крипто-каналы' }); if (name) void savePreset(name, buildSettings()) }
 
   const applyPreset = useCallback((s: ModuleTaskSettings) => {
     if (Array.isArray(s.keywords)) setKeywords(s.keywords)

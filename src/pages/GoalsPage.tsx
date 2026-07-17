@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { Target, Plus, Pencil, Trash2, BookOpen } from 'lucide-react'
 import { useApp } from '@/mocks/store'
 import { PageHeader, Card, EmptyState, Modal, Badge } from '@/shared/ui'
+import { confirmDialog } from '@/shared/lib/dialog'
 import {
   fetchGoals, createGoal, updateGoal, deleteGoal, type Goal, type GoalInput,
   fetchKb, createKb, deleteKb, type KbItem,
@@ -88,7 +89,7 @@ export function GoalsPage() {
   }
 
   const remove = async (g: Goal) => {
-    if (!window.confirm(`Удалить цель «${g.name}»?`)) return
+    if (!(await confirmDialog({ title: 'Удалить цель?', message: `«${g.name}» будет удалена.`, confirmLabel: 'Удалить', tone: 'danger' }))) return
     try {
       await deleteGoal(g.id)
       pushToast({ type: 'success', title: 'Цель удалена', desc: g.name })

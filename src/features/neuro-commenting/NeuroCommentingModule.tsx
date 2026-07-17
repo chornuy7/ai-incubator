@@ -6,6 +6,7 @@ import {
 } from 'lucide-react'
 import { MODULES } from '@/shared/config/modules'
 import { useApp, activeAccounts } from '@/mocks/store'
+import { promptDialog } from '@/shared/lib/dialog'
 import {
   ToggleGroup, Segmented, EmptyState, Switch, Badge,
 } from '@/shared/ui'
@@ -228,7 +229,7 @@ export function NeuroCommentingModule() {
   }
 
   const savePreset = async () => {
-    const name = window.prompt('Название пресета настроек')
+    const name = await promptDialog({ title: 'Сохранить пресет', message: 'Название пресета настроек', placeholder: 'Напр. Крипто · агрессивный' })
     if (!name?.trim()) return
     try {
       await saveNeuroPreset(name.trim(), buildSettings())

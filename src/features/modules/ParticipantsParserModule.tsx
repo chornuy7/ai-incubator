@@ -13,6 +13,7 @@ import { SectionCard, NumberField, ProtectionBlock, LaunchPanel, TaskStartedModa
 import { cn } from '@/shared/lib/utils'
 import { downloadXls } from '@/shared/lib/exportXls'
 import { SaveToFolderModal } from './shared/FolderPicker'
+import { promptDialog } from '@/shared/lib/dialog'
 import { fetchModuleTasks, fetchModuleTask, type ModuleTaskSettings } from '@/api/modulesApi'
 import { fetchTgstatOptions, fetchTgstatSession, fetchTgstatTargets, type TgstatOptions, type TgstatSession } from '@/api/tgstatApi'
 
@@ -133,7 +134,7 @@ function Inner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: string }) {
   }
 
   const handleStart = () => { setCleared(false); void start(buildSettings(), `${cfg.title} · ${selected.size} акк.`) }
-  const handleSave = () => { const n = window.prompt('Название пресета'); if (n?.trim()) void savePreset(n.trim(), buildSettings()) }
+  const handleSave = async () => { const n = await promptDialog({ title: 'Сохранить пресет', message: 'Название пресета настроек', placeholder: 'Напр. Парсер участников' }); if (n) void savePreset(n, buildSettings()) }
 
   // Цели (targetList) не восстанавливаем — они ситуативны; переносим фильтры, лимиты и задержки.
   const applyPreset = useCallback((s: ModuleTaskSettings) => {

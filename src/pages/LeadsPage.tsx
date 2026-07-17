@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { Users, Plus, Trash2, Flame } from 'lucide-react'
 import { useApp } from '@/mocks/store'
 import { PageHeader, Card, EmptyState, Select, Badge } from '@/shared/ui'
+import { confirmDialog } from '@/shared/lib/dialog'
 import { fetchLeads, createLead, updateLead, deleteLead, sortLeadsByPriority, LEAD_STATUSES, type Lead, type LeadStatus } from '@/api/leadsApi'
 import { fetchGoals, type Goal } from '@/api/goalsApi'
 
@@ -64,7 +65,7 @@ export function LeadsPage() {
     catch (err) { pushToast({ type: 'error', title: 'Ошибка', desc: err instanceof Error ? err.message : '' }) }
   }
   const remove = async (l: Lead) => {
-    if (!window.confirm(`Удалить лида ${l.peer}?`)) return
+    if (!(await confirmDialog({ title: 'Удалить лида?', message: `${l.peer} будет удалён из CRM.`, confirmLabel: 'Удалить', tone: 'danger' }))) return
     try { await deleteLead(l.id); await load() }
     catch (err) { pushToast({ type: 'error', title: 'Ошибка', desc: err instanceof Error ? err.message : '' }) }
   }

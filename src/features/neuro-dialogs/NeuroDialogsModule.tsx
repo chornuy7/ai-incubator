@@ -8,6 +8,7 @@ import { useApp } from '@/mocks/store'
 import { Avatar, Badge, Switch } from '@/shared/ui'
 import { AccountPicker } from '@/features/account-picker/AccountPicker'
 import { cn } from '@/shared/lib/utils'
+import { promptDialog } from '@/shared/lib/dialog'
 import {
   fetchInbox,
   fetchMessages,
@@ -416,9 +417,9 @@ export function NeuroDialogsModule() {
           canStart={canStart}
           onStart={() => { void start(buildSettings(), `${cfg.title} · ${selected.size} акк.`) }}
           onStop={stop}
-          onSave={() => {
-            const name = window.prompt('Название пресета')
-            if (name?.trim()) void savePreset(name.trim(), buildSettings())
+          onSave={async () => {
+            const name = await promptDialog({ title: 'Сохранить пресет', message: 'Название пресета настроек', placeholder: 'Напр. Тёплый диалог' })
+            if (name) void savePreset(name, buildSettings())
           }}
           primaryLabel={cfg.primaryAction ?? 'Запустить'}
           stats={[

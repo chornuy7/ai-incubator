@@ -15,6 +15,7 @@ import {
   FolderPicker, BlacklistEditor, GlobalPromptEditor, TimingSection, SaveToFolderModal, TaskStartedModal,
 } from './shared'
 import type { ModuleTaskSettings } from '@/api/modulesApi'
+import { confirmDialog, promptDialog } from '@/shared/lib/dialog'
 
 const DEFAULT_DELAYS = {
   comment: [30, 120] as [number, number],
@@ -201,14 +202,14 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
 
   const durationPeriodMin = Math.min(DURATION_MIN_BY_PROTECTION_LEVEL[protLevel] ?? 0, durationMinutes)
 
-  const handleStart = () => {
+  const handleStart = async () => {
     // #4: запуск боевого модуля = реальные действия в Telegram — подтверждаем.
-    if (isCombatModule(moduleKey) && !window.confirm(combatConfirmText(moduleKey))) return
+    if (isCombatModule(moduleKey) && !(await confirmDialog({ title: 'Реальные действия в Telegram', message: combatConfirmText(moduleKey), confirmLabel: 'Запустить', tone: 'danger' }))) return
     void start(buildSettings(), `${cfg.title} · ${selected.size || accounts.length} акк.`)
   }
-  const handleSave = () => {
-    const name = window.prompt('Название пресета')
-    if (name?.trim()) void savePreset(name.trim(), buildSettings())
+  const handleSave = async () => {
+    const name = await promptDialog({ title: 'Сохранить пресет', message: 'Название пресета настроек', placeholder: 'Напр. Крипто · агрессивный' })
+    if (name) void savePreset(name, buildSettings())
   }
 
   // Восстанавливает настройки из пресета в форму (аккаунты не трогаем — они ситуативны).

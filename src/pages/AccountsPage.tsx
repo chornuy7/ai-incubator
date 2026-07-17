@@ -19,6 +19,7 @@ import { PaywallLock } from '@/features/paywall/Paywall'
 import { cn } from '@/shared/lib/utils'
 import { ROLES } from '@/shared/config/modules'
 import { countryOptionsFrom, matchesGeo } from '@/shared/config/geo'
+import { confirmDialog, promptDialog } from '@/shared/lib/dialog'
 import type { AccountStatus, TgAccount } from '@/shared/types'
 import { patchAccount, releaseAccountLock, setAccountStatusManual, fetchDailyAll, type DailyAllMap } from '@/api/accountsApi'
 
@@ -150,11 +151,11 @@ export function AccountsPage() {
   // #2 (§3.2): подтверждение массовых действий. ≤1 акк — без спроса; 2–10 — одно
   // подтверждение; >10 — второе подтверждение вводом числа (в другом месте, защита
   // от «прокликивания» двойным кликом в одну точку).
-  const confirmBulk = (count: number, actionText: string): boolean => {
+  const confirmBulk = async (count: number, actionText: string): Promise<boolean> => {
     if (count <= 1) return true
-    if (!window.confirm(`Вы уверены, что хотите ${actionText} ${count} аккаунт(ов)?`)) return false
+    if (!(await confirmDialog({ title: 'Массовое действие', message: `Вы уверены, что хотите ${actionText} ${count} аккаунт(ов)?`, confirmLabel: 'Продолжить' }))) return false
     if (count > 10) {
-      const typed = window.prompt(`Это затронет ${count} аккаунтов. Для подтверждения введите число ${count}:`)
+      const typed = await promptDialog({ title: 'Двойное подтверждение', message: `Это затронет ${count} аккаунтов. Для подтверждения введите число ${count}:`, placeholder: String(count) })
       if (String(typed ?? '').trim() !== String(count)) {
         pushToast({ type: 'info', title: 'Отменено', desc: 'Число не совпало — действие не выполнено.' })
         return false
@@ -163,8 +164,8 @@ export function AccountsPage() {
     return true
   }
 
-  const bulkTrash = () => {
-    if (!confirmBulk(selected.size, 'переместить в корзину')) return
+  const bulkTrash = async () => {
+    if (!(await confirmBulk(selected.size, 'переместить в корзину'))) return
     void (async () => {
       for (const id of selected) await trashAccount(id)
       pushToast({ type: 'success', title: `В корзину: ${selected.size}`, desc: 'Аккаунты перемещены в корзину.' })
@@ -173,8 +174,8 @@ export function AccountsPage() {
   }
 
   // (8) Массовые действия
-  const bulkSetStatus = (status: AccountStatus, title: string) => {
-    if (!confirmBulk(selected.size, status === 'frozen' ? 'отключить (frozen)' : `перевести в «${title}»`)) return
+  const bulkSetStatus = async (status: AccountStatus, title: string) => {
+    if (!(await confirmBulk(selected.size, status === 'frozen' ? 'отключить (frozen)' : `перевести в «${title}»`))) return
     void (async () => {
       const ids = [...selected]
       for (const id of ids) { try { await patchAccount(id, { status }) } catch { /* skip */ } }
@@ -185,8 +186,8 @@ export function AccountsPage() {
   }
 
   // Ручная пауза/возврат оператором — через аудируемый эндпоинт (§3.3/§4).
-  const bulkStatusManual = (to: 'pause' | 'active', title: string) => {
-    if (!confirmBulk(selected.size, to === 'pause' ? 'поставить на паузу' : 'включить')) return
+  const bulkStatusManual = async (to: 'pause' | 'active', title: string) => {
+    if (!(await confirmBulk(selected.size, to === 'pause' ? 'поставить на паузу' : 'включить'))) return
     void (async () => {
       const ids = [...selected]
       let ok = 0
@@ -202,8 +203,8 @@ export function AccountsPage() {
     })()
   }
 
-  const bulkRelease = () => {
-    if (!confirmBulk(selected.size, 'остановить / освободить')) return
+  const bulkRelease = async () => {
+    if (!(await confirmBulk(selected.size, 'остановить / освободить'))) return
     void (async () => {
       const ids = [...selected]
       let released = 0
@@ -221,10 +222,10 @@ export function AccountsPage() {
     })()
   }
 
-  const bulkMove = (patch: { role?: string; project?: string }) => {
+  const bulkMove = async (patch: { role?: string; project?: string }) => {
     // §3.2/§4: перенос профилей — подтверждение с последствиями + фиксация в аудите (initiator).
     const label = patch.role ? `роль → «${patch.role}»` : patch.project ? `проект → «${patch.project}»` : 'перенос'
-    if (!confirmBulk(selected.size, `перенести (${label})`)) return
+    if (!(await confirmBulk(selected.size, `перенести (${label})`))) return
     void (async () => {
       const ids = [...selected]
       for (const id of ids) { try { await patchAccount(id, { ...patch, initiator: 'operator' }) } catch { /* skip */ } }

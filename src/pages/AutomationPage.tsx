@@ -3,6 +3,7 @@ import {
   CalendarClock, Plus, Play, Trash2, Pencil, Power, Clock, Loader2,
 } from 'lucide-react'
 import { PageHeader, Modal, Select, Segmented, Switch, EmptyState, Badge } from '@/shared/ui'
+import { confirmDialog } from '@/shared/lib/dialog'
 import { AccountPicker } from '@/features/account-picker/AccountPicker'
 import { NumberField } from '@/features/modules/shared'
 import { MODULES } from '@/shared/config/modules'
@@ -50,7 +51,7 @@ export function AutomationPage() {
   }
 
   const remove = async (r: AutomationRule) => {
-    if (!window.confirm(`Удалить правило «${r.name}»?`)) return
+    if (!(await confirmDialog({ title: 'Удалить правило?', message: `«${r.name}» будет удалено.`, confirmLabel: 'Удалить', tone: 'danger' }))) return
     try { await deleteAutomationRule(r.id); await reload(); pushToast({ type: 'success', title: 'Правило удалено' }) } catch (e) {
       pushToast({ type: 'error', title: 'Ошибка', desc: e instanceof Error ? e.message : '' })
     }
