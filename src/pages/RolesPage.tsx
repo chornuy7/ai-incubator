@@ -107,6 +107,7 @@ export function RolesPage() {
   const mark = () => setDirty(true)
   const setModule = (key: string, p: Perm) => { setPerms((s) => ({ ...s, modules: { ...s.modules, [key]: p } })); mark() }
   const setBlock = (key: string, p: Perm) => { setPerms((s) => ({ ...s, blocks: { ...s.blocks, [key]: p } })); mark() }
+  const setSection = (key: string, p: Perm) => { setPerms((s) => ({ ...s, sections: { ...s.sections, [key]: p } })); mark() }
   const setFolder = (id: string, p: Perm) => { setPerms((s) => ({ ...s, resources: { ...s.resources, folders: { ...s.resources.folders, [id]: p } } })); mark() }
   const setChannel = (id: string, p: Perm) => { setPerms((s) => ({ ...s, resources: { ...s.resources, channels: { ...s.resources.channels, [id]: p } } })); mark() }
   const setTimers = (p: Perm) => { setPerms((s) => ({ ...s, resources: { ...s.resources, timers: p } })); mark() }
@@ -115,6 +116,7 @@ export function RolesPage() {
 
   const mPerm = (k: string): Perm => perms.modules[k] ?? 'deny'
   const bPerm = (k: string): Perm => perms.blocks[k] ?? 'deny'
+  const sPerm = (k: string): Perm => perms.sections?.[k] ?? 'deny'
   const fPerm = (id: string): Perm => perms.resources.folders[id] ?? 'deny'
   const cPerm = (id: string): Perm => perms.resources.channels[id] ?? 'deny'
   // Выбранные каналы папки. Пусто = все каналы папки (в т.ч. будущие). Ключи нормализованы (без @, lower).
@@ -224,6 +226,19 @@ export function RolesPage() {
                       })}
                     </div>
                   </section>
+
+                  {/* Разделы панели (§8.1: доступ выдаётся не только на модули) */}
+                  {catalog.sections?.length ? (
+                    <section>
+                      <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-white/40">Разделы панели</h3>
+                      <div className="mb-2 text-[11px] text-white/35">«Мой аккаунт» и «Поддержка» доступны всем всегда. «Роли и доступы» / «Пользователи» — только админу.</div>
+                      <div className="flex flex-col gap-1">
+                        {catalog.sections.map((sec) => (
+                          <PermRow key={sec.key} label={sec.label} value={sPerm(sec.key)} onChange={(p) => setSection(sec.key, p)} />
+                        ))}
+                      </div>
+                    </section>
+                  ) : null}
 
                   {/* Ресурсы */}
                   <section>

@@ -1,5 +1,5 @@
 import { useEffect } from 'react'
-import { Outlet } from 'react-router-dom'
+import { Outlet, useLocation, Link } from 'react-router-dom'
 import { AppSidebar } from '@/widgets/AppSidebar'
 import { AppHeader } from '@/widgets/AppHeader'
 import { Toasts } from '@/widgets/Toasts'
@@ -8,8 +8,22 @@ import { TasksDrawer } from '@/widgets/TasksDrawer'
 import { HelpCenterDrawer } from '@/widgets/HelpCenterDrawer'
 import { PaywallBanner } from '@/features/paywall/Paywall'
 import { useApp } from '@/mocks/store'
+import { useSession } from '@/features/auth/session'
+import { canAccessPath } from '@/shared/lib/access'
 import { useUi } from '@/shared/lib/uiStore'
-import { HelpCircle } from 'lucide-react'
+import { HelpCircle, Lock } from 'lucide-react'
+
+/** Заглушка «нет доступа» — когда роль не имеет доступа к странице (в т.ч. при заходе по прямому URL). */
+function AccessDenied() {
+  return (
+    <div className="mx-auto mt-10 max-w-md rounded-2xl border border-line bg-surface p-8 text-center">
+      <div className="mx-auto mb-4 grid h-14 w-14 place-items-center rounded-2xl bg-rose-500/12 text-rose-300"><Lock size={26} /></div>
+      <h2 className="font-display text-lg font-bold text-fg">Нет доступа к разделу</h2>
+      <p className="mt-1.5 text-sm text-muted">Ваша роль не имеет доступа к этой странице. Обратитесь к администратору, чтобы он выдал доступ в «Роли и доступы».</p>
+      <Link to="/panel/support" className="btn-primary mt-5 inline-flex h-10">В поддержку</Link>
+    </div>
+  )
+}
 
 export function Layout() {
   const mobileNavOpen = useApp((s) => s.mobileNavOpen)
@@ -17,8 +31,13 @@ export function Layout() {
   const isNoSub = useApp((s) => s.userState === 'no-sub')
   const loadAccounts = useApp((s) => s.loadAccounts)
   const loadAccountBusy = useApp((s) => s.loadAccountBusy)
+  const sessionUser = useSession((s) => s.user)
+  const location = useLocation()
   const setHelpTopic = useUi((s) => s.setHelpTopic)
   const setHelpOpen = useUi((s) => s.setHelpOpen)
+
+  // Guard: гейтим и прямой заход по URL, не только меню (§8.1). Демо (без сессии) — всё открыто.
+  const routeAllowed = !sessionUser || canAccessPath(sessionUser.permissions, sessionUser.isAdmin, location.pathname)
 
   const openHelp = () => {
     setHelpTopic('Помощь по настройкам')
@@ -54,7 +73,7 @@ export function Layout() {
         <AppHeader />
         <main className="mx-auto w-full max-w-[1400px] flex-1 px-4 py-6 sm:px-6 lg:px-8">
           {isNoSub && <PaywallBanner />}
-          <Outlet />
+          {routeAllowed ? <Outlet /> : <AccessDenied />}
         </main>
       </div>
 

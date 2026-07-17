@@ -108,6 +108,27 @@ test('mergePermissions(): суммирование прав нескольких
   assert.equal(m2.resources.searchTemplates, DENY)
 })
 
+test('sections: can() гейтит разделы, union объединяет, дефолт deny', () => {
+  const admin = normalizeRole({ name: 'Admin' })
+  admin.builtin = true; admin.id = ADMIN_ROLE_ID
+  // админ — bypass даже для секций
+  assert.equal(can(admin, 'section', '/panel/proxies'), true)
+
+  const role = normalizeRole({ name: 'R', permissions: { sections: { '/panel': ALLOW, '/panel/proxies': DENY } } })
+  assert.equal(can(role, 'section', '/panel'), true)
+  assert.equal(can(role, 'section', '/panel/proxies'), false) // явный deny
+  assert.equal(can(role, 'section', '/panel/logs'), false)    // нет в карте → deny
+  assert.equal(can(null, 'section', '/panel'), false)
+
+  // union: раздел разрешён, если его даёт хотя бы одна роль
+  const a = normalizeRole({ name: 'A', permissions: { sections: { '/panel/tasks': ALLOW } } })
+  const b = normalizeRole({ name: 'B', permissions: { sections: { '/panel/crm': ALLOW } } })
+  const m = mergePermissions([a, b])
+  assert.equal(m.sections['/panel/tasks'], ALLOW)
+  assert.equal(m.sections['/panel/crm'], ALLOW)
+  assert.equal(m.sections['/panel/proxies'], undefined) // не давали → нет
+})
+
 test('CRUD ролей на изолированном файле + сид по умолчанию', async () => {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'roles-'))
   process.env.ROLES_FILE = path.join(dir, 'roles.json')

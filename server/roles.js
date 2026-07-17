@@ -29,6 +29,27 @@ export const BLOCKS = [
   { key: 'logs', label: 'Логи' },
 ]
 
+/**
+ * Разделы навигации, доступ к которым выдаётся ролью (§8.1 «доступ на всё, не только модули»).
+ * Ключ = путь роутинга. НЕ включает: админ-страницы (роли/пользователи — только админ) и
+ * «всегда-доступный» минимум (Мой аккаунт, Поддержка). По умолчанию — deny (не показывать).
+ */
+export const SECTIONS = [
+  { key: '/panel', label: 'Менеджер аккаунтов' },
+  { key: '/panel/proxies', label: 'Прокси' },
+  { key: '/panel/automation', label: 'Автоматизация' },
+  { key: '/panel/goals', label: 'Цели' },
+  { key: '/panel/campaign', label: 'Кампания' },
+  { key: '/panel/tasks', label: 'Дашборд задач' },
+  { key: '/panel/crm', label: 'CRM · Лиды' },
+  { key: '/panel/analytics', label: 'Аналитика' },
+  { key: '/panel/my-statistics', label: 'Моя статистика' },
+  { key: '/panel/logs', label: 'Логи' },
+  { key: '/panel/inbox', label: 'Обзор аккаунта' },
+  { key: '/panel/channels', label: 'Каналы (база)' },
+  { key: '/panel/parsing-history', label: 'Логи парсинга' },
+]
+
 /** Типы ресурсов с индивидуальным доступом (§8.1). folders/channels — по элементам. */
 export const RESOURCE_TYPES = [
   { type: 'folders', label: 'Папки целей', perItem: true },
@@ -75,6 +96,7 @@ export function normalizeRole(input = {}) {
     permissions: {
       modules: normPermMap(p.modules),
       blocks: normPermMap(p.blocks), // ключ = `${moduleKey}:${blockKey}`
+      sections: normPermMap(p.sections), // ключ = путь раздела (напр. '/panel/proxies')
       resources: {
         folders: normPermMap(r.folders),
         channels: normPermMap(r.channels),
@@ -88,6 +110,8 @@ export function normalizeRole(input = {}) {
 
 const moduleMap = (keys, val) => Object.fromEntries(keys.map((k) => [k, val]))
 const blockMap = (keys, blocks, val) => Object.fromEntries(keys.flatMap((k) => blocks.map((b) => [`${k}:${b}`, val])))
+/** Карта разделов key→val. Без аргумента keys — все разделы каталога. */
+const sectionMap = (val, keys = SECTIONS.map((s) => s.key)) => Object.fromEntries(keys.map((k) => [k, val]))
 
 /**
  * Стартовый набор ролей (§6-решение: Admin / Operator / Sales / Viewer).
@@ -107,23 +131,28 @@ function defaultRoles() {
       name: 'Администратор',
       builtin: true,
       isTemplate: false,
-      permissions: { modules: {}, blocks: {}, resources: { folders: {}, channels: {}, timers: ALLOW, searchTemplates: ALLOW } },
+      permissions: { modules: {}, blocks: {}, sections: {}, resources: { folders: {}, channels: {}, timers: ALLOW, searchTemplates: ALLOW } },
       createdAt: now,
       updatedAt: now,
     },
     roleTpl('role_operator', 'Оператор', {
       modules: moduleMap(mods, ALLOW),
       blocks: blockMap(mods, ['run', 'settings', 'targets', 'results', 'logs'], ALLOW),
+      sections: sectionMap(ALLOW), // оператору — все разделы
       resources: { folders: {}, channels: {}, timers: ALLOW, searchTemplates: ALLOW },
     }),
     roleTpl('role_sales', 'Sales', {
       modules: moduleMap(mods, ALLOW),
       blocks: { ...blockMap(mods, ['results', 'logs'], ALLOW), ...blockMap(SALES, ['run'], ALLOW) },
+      // Sales — CRM-профиль: аккаунты, задачи, CRM, аналитика, статистика, обзор, логи
+      sections: sectionMap(ALLOW, ['/panel', '/panel/tasks', '/panel/crm', '/panel/analytics', '/panel/my-statistics', '/panel/inbox', '/panel/logs']),
       resources: { folders: {}, channels: {}, timers: DENY, searchTemplates: DENY },
     }),
     roleTpl('role_viewer', 'Viewer', {
       modules: moduleMap(mods, ALLOW),
       blocks: blockMap(mods, ['results', 'logs'], ALLOW),
+      // Viewer — только просмотр: дашборд, аналитика, статистика, логи, обзор
+      sections: sectionMap(ALLOW, ['/panel/tasks', '/panel/analytics', '/panel/my-statistics', '/panel/logs', '/panel/inbox']),
       resources: { folders: {}, channels: {}, timers: DENY, searchTemplates: DENY },
     }),
   ]
@@ -149,6 +178,18 @@ export async function listRoles() {
       return merged
     }
   }
+  // Миграция поля `sections` (добавлено позже). Принцип: НЕ уменьшать доступ. До появления
+  // `sections` все роли видели ВСЕ разделы — значит роли без этого поля получают весь набор
+  // (allow). Новые роли стартуют с deny (emptyPermissions), админ выдаёт разделы вручную.
+  const allSections = sectionMap(ALLOW)
+  let migrated = false
+  for (const r of roles) {
+    if (r.permissions && r.permissions.sections == null) {
+      r.permissions.sections = { ...allSections }
+      migrated = true
+    }
+  }
+  if (migrated) await writeJson(ROLES_FILE, roles)
   return roles
 }
 
@@ -220,14 +261,14 @@ export async function buildCatalog() {
     { type: 'timers', label: 'Таймеры / планировщик', perItem: false },
     { type: 'searchTemplates', label: 'Шаблоны поиска', perItem: false },
   ]
-  return { modules, blocks: BLOCKS, resources }
+  return { modules, blocks: BLOCKS, sections: SECTIONS, resources }
 }
 
 /**
  * Разрешён ли доступ роли к цели. Чистая функция (юнит-тест + будущий enforcement).
  * Админ (builtin ADMIN_ROLE_ID) — всегда true. По умолчанию — deny.
  * @param {object|null} role
- * @param {'module'|'block'|'folder'|'channel'|'timers'|'searchTemplates'} kind
+ * @param {'module'|'block'|'section'|'folder'|'channel'|'timers'|'searchTemplates'} kind
  * @param {string} [key]
  */
 export function can(role, kind, key) {
@@ -237,6 +278,7 @@ export function can(role, kind, key) {
   switch (kind) {
     case 'module': return p.modules?.[key] === ALLOW
     case 'block': return p.blocks?.[key] === ALLOW
+    case 'section': return p.sections?.[key] === ALLOW
     case 'folder': return p.resources?.folders?.[key] === ALLOW
     case 'channel': return p.resources?.channels?.[key] === ALLOW
     case 'timers': return p.resources?.timers === ALLOW
@@ -295,7 +337,7 @@ export async function rolesForUser(user) {
  */
 export function mergePermissions(roles = []) {
   const resources = { folders: {}, channels: {}, folderChannels: {}, timers: DENY, searchTemplates: DENY }
-  const merged = { modules: {}, blocks: {}, resources }
+  const merged = { modules: {}, blocks: {}, sections: {}, resources }
   const wholeFolder = new Set() // папки, где хоть одна роль дала «все каналы»
   for (const role of roles) {
     const p = role?.permissions
@@ -303,6 +345,7 @@ export function mergePermissions(roles = []) {
     const r = p.resources || {}
     for (const [k, v] of Object.entries(p.modules || {})) if (v === ALLOW) merged.modules[k] = ALLOW
     for (const [k, v] of Object.entries(p.blocks || {})) if (v === ALLOW) merged.blocks[k] = ALLOW
+    for (const [k, v] of Object.entries(p.sections || {})) if (v === ALLOW) merged.sections[k] = ALLOW
     for (const [k, v] of Object.entries(r.channels || {})) if (v === ALLOW) resources.channels[k] = ALLOW
     if (r.timers === ALLOW) resources.timers = ALLOW
     if (r.searchTemplates === ALLOW) resources.searchTemplates = ALLOW

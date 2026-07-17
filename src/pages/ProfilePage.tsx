@@ -3,6 +3,7 @@ import {
   UserCog, User, Shield, Bell, Handshake, Cable, Save, Copy, RefreshCw, Eye, EyeOff, Check, Zap,
 } from 'lucide-react'
 import { useApp } from '@/mocks/store'
+import { useSession } from '@/features/auth/session'
 import { PageHeader, Card, Switch, Badge } from '@/shared/ui'
 import { cn } from '@/shared/lib/utils'
 
@@ -20,6 +21,7 @@ export function ProfilePage() {
   const updateUser = useApp((s) => s.updateUser)
   const toggleNotification = useApp((s) => s.toggleNotification)
   const pushToast = useApp((s) => s.pushToast)
+  const sessionUser = useSession((s) => s.user)
   const [tab, setTab] = useState('profile')
 
   const [firstName, setFirstName] = useState(data.user.firstName)
@@ -56,10 +58,17 @@ export function ProfilePage() {
           {tab === 'profile' && (
             <Card>
               <div className="mb-5 flex items-center gap-4">
-                <div className="grid h-16 w-16 place-items-center rounded-2xl bg-iris-gradient text-2xl font-bold text-white">{firstName[0]}{lastName[0]}</div>
-                <div>
-                  <div className="font-display text-lg font-bold text-fg">{firstName} {lastName}</div>
-                  <div className="text-sm text-muted">@{nick} · {data.user.email}</div>
+                <div className="grid h-16 w-16 place-items-center rounded-2xl bg-iris-gradient text-2xl font-bold text-white">
+                  {(sessionUser?.name || `${firstName} ${lastName}`).trim().slice(0, 2).toUpperCase()}
+                </div>
+                <div className="min-w-0">
+                  <div className="font-display text-lg font-bold text-fg">{sessionUser?.name || `${firstName} ${lastName}`}</div>
+                  <div className="truncate text-sm text-muted">{sessionUser?.email || `@${nick} · ${data.user.email}`}</div>
+                  {sessionUser && (
+                    <Badge tone={sessionUser.isAdmin ? 'iris' : 'spark'}>
+                      {sessionUser.isAdmin ? 'Администратор' : `Роль: ${sessionUser.roleName || 'не задана'}`}
+                    </Badge>
+                  )}
                 </div>
                 <button onClick={() => pushToast({ type: 'info', title: 'Загрузка аватара (демо)' })} className="btn-ghost ml-auto h-9">Сменить фото</button>
               </div>

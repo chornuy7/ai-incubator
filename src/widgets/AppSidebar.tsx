@@ -3,13 +3,10 @@ import { PanelLeftClose, PanelLeftOpen, X, LogOut } from 'lucide-react'
 import { ROUTES, GROUP_LABELS, type RouteDef } from '@/shared/config/routes'
 import { useApp } from '@/mocks/store'
 import { useSession } from '@/features/auth/session'
-import { can, moduleKeyFromPath } from '@/shared/lib/access'
+import { canAccessPath } from '@/shared/lib/access'
 import { cn } from '@/shared/lib/utils'
 
 const GROUP_ORDER: RouteDef['group'][] = ['main', 'modules', 'parsing', 'account']
-
-/** Страницы только для админа (управление ролями/пользователями). §8.1 */
-const ADMIN_ONLY = new Set(['/panel/roles', '/panel/users'])
 
 function Logo({ collapsed }: { collapsed: boolean }) {
   return (
@@ -41,14 +38,11 @@ export function AppSidebar({ mobile = false }: { mobile?: boolean }) {
 
   const signOut = () => { logout(); setUserState('guest') }
 
-  // Гейтинг под роль (§8.1): нет сессии или админ → всё видно; иначе — модули по правам,
-  // админ-страницы скрыты.
+  // Гейтинг под роль (§8.1): нет сессии (демо) → всё видно; иначе — по правам роли
+  // (модули, разделы, админ-страницы, always-on) через единый canAccessPath.
   const allowed = (r: RouteDef) => {
-    if (!sessionUser || sessionUser.isAdmin) return true
-    if (ADMIN_ONLY.has(r.path)) return false
-    const mk = moduleKeyFromPath(r.path)
-    if (!mk) return true
-    return can(sessionUser.permissions, false, 'module', mk)
+    if (!sessionUser) return true
+    return canAccessPath(sessionUser.permissions, sessionUser.isAdmin, r.path)
   }
 
   return (

@@ -4,6 +4,7 @@ import {
   Menu, Zap, Sun, Moon, Radar, ChevronDown, UserCog, LogOut, Wallet, Check,
 } from 'lucide-react'
 import { useApp, activeAccounts } from '@/mocks/store'
+import { useSession } from '@/features/auth/session'
 import { useUi } from '@/shared/lib/uiStore'
 import { coins as fmtCoins } from '@/shared/lib/utils'
 import { Dropdown, MenuItem, Modal, Avatar } from '@/shared/ui'
@@ -25,6 +26,8 @@ export function AppHeader() {
   const setMobileNav = useApp((s) => s.setMobileNav)
   const setUserState = useApp((s) => s.setUserState)
   const pushToast = useApp((s) => s.pushToast)
+  const sessionUser = useSession((s) => s.user)
+  const logout = useSession((s) => s.logout)
   const coinsOpen = useUi((s) => s.coinsOpen)
   const setCoinsOpen = useUi((s) => s.setCoinsOpen)
   const [langOpenTick, setLangOpenTick] = useState(0)
@@ -32,6 +35,13 @@ export function AppHeader() {
   const active = activeAccounts(data).length
   const limit = data.plan.accountLimit
   const currentLang = LANGUAGES.find((l) => l.code === locale) ?? LANGUAGES[1]
+
+  // R1/R2: шапка отражает залогиненного пользователя сессии (а не мок-профиль), + его роль.
+  const displayName = sessionUser?.name || data.workspace
+  const fullName = sessionUser?.name || `${data.user.firstName} ${data.user.lastName}`
+  const email = sessionUser?.email || data.user.email
+  const roleLabel = sessionUser ? (sessionUser.isAdmin ? 'Администратор' : (sessionUser.roleName || 'Роль не задана')) : null
+  const doLogout = () => { logout(); setUserState('guest'); nav('/') }
 
   return (
     <header className="sticky top-0 z-40 border-b border-line bg-surface/80 backdrop-blur-xl">
@@ -107,8 +117,8 @@ export function AppHeader() {
             width={240}
             trigger={({ toggle }) => (
               <button onClick={toggle} className="flex items-center gap-2 rounded-xl border border-line bg-elevated py-1 pl-1 pr-2 transition-colors hover:border-spark-500/30">
-                <Avatar name={data.user.nick} color="#7145ff" size={30} />
-                <span className="hidden text-sm font-semibold text-fg sm:inline">{data.workspace}</span>
+                <Avatar name={displayName} color="#7145ff" size={30} />
+                <span className="hidden text-sm font-semibold text-fg sm:inline">{displayName}</span>
                 <ChevronDown size={14} className="hidden text-muted sm:inline" />
               </button>
             )}
@@ -116,13 +126,18 @@ export function AppHeader() {
             {(close) => (
               <>
                 <div className="border-b border-line px-3 py-2.5">
-                  <div className="text-sm font-bold text-fg">{data.user.firstName} {data.user.lastName}</div>
-                  <div className="text-xs text-muted">{data.user.email}</div>
+                  <div className="text-sm font-bold text-fg">{fullName}</div>
+                  <div className="text-xs text-muted">{email}</div>
+                  {roleLabel && (
+                    <span className={`mt-1.5 inline-flex items-center rounded-md px-1.5 py-0.5 text-[10px] font-bold ${sessionUser?.isAdmin ? 'bg-iris-500/15 text-iris-300' : 'bg-spark-500/15 text-spark-300'}`}>
+                      {sessionUser?.isAdmin ? 'Администратор' : `Роль: ${roleLabel}`}
+                    </span>
+                  )}
                 </div>
                 <div className="py-1">
                   <MenuItem icon={<UserCog size={16} />} onClick={() => { nav('/panel/user/profile'); close() }}>Мой аккаунт</MenuItem>
                   <MenuItem icon={<Wallet size={16} />} onClick={() => { setCoinsOpen(true); close() }}>Пополнить монеты</MenuItem>
-                  <MenuItem icon={<LogOut size={16} />} tone="danger" onClick={() => { setUserState('guest'); nav('/') }}>Выйти</MenuItem>
+                  <MenuItem icon={<LogOut size={16} />} tone="danger" onClick={() => { doLogout(); close() }}>Выйти</MenuItem>
                 </div>
               </>
             )}
