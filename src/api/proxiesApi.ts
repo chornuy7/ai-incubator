@@ -58,8 +58,8 @@ export interface ProxyGeo { country: string; countryName: string; city: string; 
 export type GeoSource = 'exit' | 'gateway' | null
 
 /** Проверить прокси (liveness) + определить страну/город ВЫХОДНОГО IP через прокси (§3.4). */
-export async function checkProxy(id: string): Promise<{ proxy: Proxy; geo: ProxyGeo | null; geoSource?: GeoSource }> {
-  return apiPost<{ proxy: Proxy; geo: ProxyGeo | null; geoSource?: GeoSource }>(`/api/proxies/${id}/check`)
+export async function checkProxy(id: string): Promise<{ proxy: Proxy; geo: ProxyGeo | null; geoSource?: GeoSource; ms?: number | null }> {
+  return apiPost<{ proxy: Proxy; geo: ProxyGeo | null; geoSource?: GeoSource; ms?: number | null }>(`/api/proxies/${id}/check`)
 }
 
 /** Реальная проверка прокси по host:port ДО сохранения — TCP-пинг + гео выхода (§3.4). */

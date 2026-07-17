@@ -1,6 +1,6 @@
 /** CRUD-роуты сущности «Прокси» (§3.2/3.4). Монтируется в /api/proxies. */
 import { Router } from 'express'
-import { listProxies, getProxy, createProxy, updateProxy, deleteProxy, checkProxyLiveness, checkAllProxies, sharedProxies, probeProxyGeo, probeProxyExitGeo, tcpPing } from './proxies.js'
+import { listProxies, getProxy, createProxy, updateProxy, deleteProxy, checkAllProxies, sharedProxies, probeProxyGeo, probeProxyExitGeo, tcpPing } from './proxies.js'
 import { loadAllMeta } from './accountsMeta.js'
 import { appendAudit } from './lib/auditLog.js'
 
@@ -53,8 +53,13 @@ proxiesRouter.post('/probe', async (req, res) => {
 
 proxiesRouter.post('/:id/check', async (req, res) => {
   try {
-    let proxy = await checkProxyLiveness(req.params.id)
-    if (!proxy) return res.status(404).json({ ok: false, error: 'Прокси не найден' })
+    const existing = await getProxy(req.params.id)
+    if (!existing) return res.status(404).json({ ok: false, error: 'Прокси не найден' })
+    // Пинг с замером времени + статус.
+    const t0 = Date.now()
+    const alive = await tcpPing(existing.host, existing.port)
+    const ms = Date.now() - t0
+    let proxy = (await updateProxy(existing.id, { status: alive ? 'ok' : 'dead', lastCheckAt: Date.now() })) || existing
     // Гео ВЫХОДНОГО IP (через прокси) — для мобильных/резидентных это страна выхода, а не шлюза.
     // Если через прокси не удалось — гео адреса шлюза как запасной вариант (§3.4).
     let geo = null, geoSource = null
@@ -67,7 +72,7 @@ proxiesRouter.post('/:id/check', async (req, res) => {
     if (geo?.country && geo.country !== proxy.country) {
       proxy = (await updateProxy(proxy.id, { country: geo.country })) || proxy
     }
-    res.json({ ok: true, proxy, geo, geoSource })
+    res.json({ ok: true, proxy, geo, geoSource, ms: alive ? ms : null })
   } catch (err) { fail(res, err, 500) }
 })
 

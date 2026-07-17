@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { Network, Plus, Trash2, Pencil, Link2, Check, Circle, Zap, Loader2, MapPin } from 'lucide-react'
 import { PageHeader, Card, EmptyState, Badge, Select, Modal } from '@/shared/ui'
 import {
@@ -27,6 +27,7 @@ export function ProxiesPage() {
   const [form, setForm] = useState<Partial<Proxy>>(emptyForm())
   const [saving, setSaving] = useState(false)
   const [assignFor, setAssignFor] = useState<Proxy | null>(null)
+  const [detailProxy, setDetailProxy] = useState<Proxy | null>(null)
   const [geoMap, setGeoMap] = useState<Record<string, ProxyGeo | null>>({})
   const [geoSrcMap, setGeoSrcMap] = useState<Record<string, 'exit' | 'gateway' | null>>({})
   const [testing, setTesting] = useState<string | null>(null)
@@ -104,9 +105,9 @@ export function ProxiesPage() {
             return (
               <Card key={p.id} className="flex flex-wrap items-center gap-3 p-3">
                 <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-iris-500/12 text-iris-300"><Network size={18} /></span>
-                <div className="min-w-0 flex-1">
+                <div role="button" tabIndex={0} onClick={() => setDetailProxy(p)} onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setDetailProxy(p) } }} className="group min-w-0 flex-1 cursor-pointer text-left" title="Открыть детали прокси">
                   <div className="flex flex-wrap items-center gap-2">
-                    <span className="truncate font-semibold text-fg">{p.label || `${p.host}:${p.port}`}</span>
+                    <span className="truncate font-semibold text-fg group-hover:text-spark-300">{p.label || `${p.host}:${p.port}`}</span>
                     <Badge tone="iris">{PROXY_KIND_LABELS[p.kind]}</Badge>
                     {p.country && <span className="text-sm">{FLAGS[p.country] || p.country.toUpperCase()}</span>}
                     <Badge tone={sm.tone}>{sm.label}</Badge>
@@ -158,6 +159,89 @@ export function ProxiesPage() {
       </Modal>
 
       {assignFor && <AssignModal proxy={assignFor} accounts={accounts} onClose={() => setAssignFor(null)} onDone={() => { setAssignFor(null); void load() }} />}
+
+      {detailProxy && (
+        <ProxyDetailModal
+          proxy={detailProxy}
+          accountsCount={usedBy[detailProxy.id] ?? 0}
+          onClose={() => setDetailProxy(null)}
+          onUpdated={(up) => { setProxies((prev) => prev.map((x) => (x.id === up.id ? up : x))); setDetailProxy(up) }}
+        />
+      )}
+    </div>
+  )
+}
+
+/** Детали прокси: при открытии запускает проверку и показывает всё, что смогли вытащить
+ *  (статус, пинг, страна/город/провайдер выхода, выходной IP, последняя проверка). */
+function ProxyDetailModal({ proxy, accountsCount, onClose, onUpdated }: {
+  proxy: Proxy; accountsCount: number; onClose: () => void; onUpdated?: (p: Proxy) => void
+}) {
+  const [p, setP] = useState<Proxy>(proxy)
+  const [geo, setGeo] = useState<ProxyGeo | null>(null)
+  const [geoSource, setGeoSource] = useState<'exit' | 'gateway' | null>(null)
+  const [ms, setMs] = useState<number | null>(null)
+  const [loading, setLoading] = useState(true)
+
+  const run = async () => {
+    setLoading(true)
+    try {
+      const r = await checkProxy(proxy.id)
+      setP(r.proxy); setGeo(r.geo); setGeoSource(r.geoSource ?? null); setMs(r.ms ?? null)
+      onUpdated?.(r.proxy)
+    } catch { setGeo(null) }
+    finally { setLoading(false) }
+  }
+  useEffect(() => { void run() /* авто-проверка при открытии */ }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
+  const sm = STATUS_META[p.status]
+  const fmtDate = (t: number | null | undefined) => (t ? new Date(t).toLocaleString('ru-RU') : '—')
+
+  return (
+    <Modal open onClose={onClose} title={p.label || `${p.host}:${p.port}`} subtitle="Детали прокси" icon={<Network size={20} />} size="md">
+      <div className="mb-3 flex items-center gap-2 rounded-xl border border-line bg-elevated/40 px-3 py-2">
+        <span className="font-mono text-xs text-white/70">{p.scheme}://{p.username ? `${p.username}@` : ''}{p.host}:{p.port}</span>
+        <button onClick={() => void run()} disabled={loading} className="btn-ghost ml-auto h-8 text-xs disabled:opacity-50">
+          {loading ? <Loader2 size={13} className="animate-spin" /> : <Zap size={13} />} Проверить
+        </button>
+      </div>
+
+      {loading && !geo ? (
+        <div className="flex items-center gap-2 py-6 text-sm text-white/50"><Loader2 size={16} className="animate-spin" /> Проверяем прокси и тянем гео выхода…</div>
+      ) : (
+        <div className="grid grid-cols-2 gap-2">
+          <ProxyInfo label="Статус"><Badge tone={sm.tone}>{sm.label}</Badge></ProxyInfo>
+          <ProxyInfo label="Тип">{PROXY_KIND_LABELS[p.kind]}</ProxyInfo>
+          <ProxyInfo label="Пинг">{ms != null ? `${ms} мс` : '—'}</ProxyInfo>
+          <ProxyInfo label="Назначено аккаунтов">{accountsCount}</ProxyInfo>
+          <ProxyInfo label="Страна выхода">
+            {geo ? <span>{FLAGS[geo.country] || ''} {geo.countryName || geo.country?.toUpperCase() || '—'}
+              {geoSource === 'exit'
+                ? <span className="ml-1 rounded bg-spark-500/15 px-1 text-[10px] font-semibold text-spark-300">выход</span>
+                : geoSource === 'gateway'
+                  ? <span className="ml-1 rounded bg-amber-500/15 px-1 text-[10px] font-semibold text-amber-300">шлюз</span>
+                  : null}</span> : '—'}
+          </ProxyInfo>
+          <ProxyInfo label="Город">{geo?.city || '—'}</ProxyInfo>
+          <ProxyInfo label="Провайдер (ISP)">{geo?.isp || '—'}</ProxyInfo>
+          <ProxyInfo label="Выходной IP">{geo?.ip || '—'}</ProxyInfo>
+          <ProxyInfo label="Последняя проверка">{fmtDate(p.lastCheckAt)}</ProxyInfo>
+          <ProxyInfo label="Добавлен">{fmtDate(p.createdAt)}</ProxyInfo>
+          {p.note && <div className="col-span-2"><ProxyInfo label="Заметка">{p.note}</ProxyInfo></div>}
+        </div>
+      )}
+      {!loading && p.status === 'dead' && (
+        <p className="mt-3 text-xs text-amber-300">Прокси не отвечает — гео выхода недоступно, пока он мёртв.</p>
+      )}
+    </Modal>
+  )
+}
+
+function ProxyInfo({ label, children }: { label: string; children: ReactNode }) {
+  return (
+    <div className="rounded-xl border border-line bg-elevated/40 px-3 py-2">
+      <div className="text-[10px] font-bold uppercase tracking-wide text-white/40">{label}</div>
+      <div className="mt-0.5 truncate text-sm font-semibold text-fg">{children}</div>
     </div>
   )
 }

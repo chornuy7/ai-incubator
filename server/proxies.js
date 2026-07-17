@@ -73,7 +73,10 @@ export async function updateProxy(id, patch = {}) {
   if (i === -1) return null
   const clean = normalizeProxy({ ...all[i], ...patch })
   if (!clean.host || !clean.port) throw new Error('Host и port обязательны')
-  all[i] = { ...all[i], ...clean, updatedAt: Date.now() }
+  const next = { ...all[i], ...clean, updatedAt: Date.now() }
+  // normalizeProxy не знает про lastCheckAt — сохраняем его из патча явно (иначе теряется).
+  if (patch.lastCheckAt !== undefined) next.lastCheckAt = patch.lastCheckAt
+  all[i] = next
   await writeJson(PROXIES_FILE, all)
   return all[i]
 }
