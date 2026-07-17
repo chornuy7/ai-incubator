@@ -487,7 +487,7 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
             </div>
           </div>
         )}
-        {moduleKey === 'neuro-commenting' && !running && (
+        {showBlock('settings') && moduleKey === 'neuro-commenting' && !running && (
           <div className="mb-3">
             <NumberField label="Окно постов" value={postWindow} onChange={(n) => setPostWindow(Math.max(1, Math.min(50, n)))} min={1} max={50} suffix="1–50" />
             <div className="mt-1 text-xs text-white/40">Сколько последних постов обрабатывать, не всю историю</div>
@@ -499,7 +499,7 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
             </label>
           </div>
         )}
-        {moduleKey === 'neuro-commenting' && !running && (cfg.messagePrompts?.length ?? 0) > 0 && (
+        {showBlock('templates') && moduleKey === 'neuro-commenting' && !running && (cfg.messagePrompts?.length ?? 0) > 0 && (
           <div className="mb-3 rounded-2xl border border-line bg-elevated/40 p-3">
             <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
               <span className="text-sm font-semibold text-fg">Распределение типов комментариев</span>
@@ -531,7 +531,7 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
             <p className="mt-2 text-[11px] text-white/40">Доля каждого типа при запуске нормируется к 100%. «Поровну» — раскидать одинаково.</p>
           </div>
         )}
-        {!running && (
+        {showBlock('targets') && !running && (
           <div className="mb-3">
             <label className="mb-1 flex items-center justify-between text-xs text-white/50">
               <span><Target size={11} className="mb-0.5 inline" /> Цель кампании (опционально)</span>
@@ -580,7 +580,7 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
       </SectionCard>
       )}
 
-      {(showBlock('results') || showBlock('logs')) && (isParser || isGgr || history.length > 0) && (
+      {(showBlock('results') || showBlock('logs')) && (
         <SectionCard icon={<MessageCircle size={18} />} title={isParser || isGgr ? 'Результаты' : 'История сообщений'} badge={String(isParser || isGgr ? results.length : history.length)}>
           {(isParser || isGgr) && results.length > 0 ? (
             <div className="max-h-80 overflow-y-auto">
