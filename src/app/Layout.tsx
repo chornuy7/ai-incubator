@@ -78,6 +78,9 @@ export function Layout() {
         </main>
       </div>
 
+      {/* Help Center — сайдбар в потоке: сужает страницу, а не оверлеит (§3.1). */}
+      <HelpCenterDrawer />
+
       <Toasts />
       <DialogHost />
       <DevPanel />
@@ -91,7 +94,6 @@ export function Layout() {
       >
         <HelpCircle size={18} />
       </button>
-      <HelpCenterDrawer />
     </div>
   )
 }
