@@ -1,10 +1,11 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { ListChecks, RefreshCw, Square, RotateCw, Target, Layers, Activity, Gauge, Pause, Play } from 'lucide-react'
 import { useApp } from '@/mocks/store'
 import { PageHeader, Card, EmptyState, Badge, Select, Segmented, Modal } from '@/shared/ui'
 import { MODULES, isCombatModule, combatConfirmText } from '@/shared/config/modules'
 import { fetchAllTasks, stopModuleTask, restartModuleTask, pauseModuleTask, resumeModuleTask, type ModuleTask } from '@/api/modulesApi'
 import { fetchGoals, type Goal } from '@/api/goalsApi'
+import { cn } from '@/shared/lib/utils'
 
 const STATUS: Record<string, { label: string; tone: 'spark' | 'iris' | 'amber' | 'rose' | 'muted' }> = {
   running: { label: 'Выполняется', tone: 'spark' },
@@ -145,12 +146,45 @@ export function TasksPage() {
     finally { setBusy(null) }
   }
 
+  // ── Массовый выбор задач + действия над выбранными ──
+  const [selected, setSelected] = useState<Set<string>>(new Set())
+  const toggleSel = (id: string) => setSelected((prev) => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n })
+
+  const runBulk = async (label: string, targets: ModuleTask[], fn: (t: ModuleTask) => Promise<unknown>) => {
+    if (!targets.length) { pushToast({ type: 'info', title: 'Нет подходящих задач', desc: label }); return }
+    setBusy('bulk')
+    let ok = 0, fail = 0
+    for (const t of targets) { try { await fn(t); ok++ } catch { fail++ } }
+    setBusy(null)
+    setSelected(new Set())
+    await load()
+    pushToast({ type: fail ? 'error' : 'success', title: `${label}: ${ok} задач${fail ? ` · ошибок ${fail}` : ''}` })
+  }
+
   const modules = useMemo(() => [...new Set(tasks.map((t) => t.moduleKey))], [tasks])
   const filtered = useMemo(() => tasks.filter((t) =>
     (!fGoal || (fGoal === 'none' ? !t.goalId : t.goalId === fGoal)) &&
     (!fModule || t.moduleKey === fModule) &&
     (!fStatus || t.status === fStatus),
   ), [tasks, fGoal, fModule, fStatus])
+
+  const selectedTasks = useMemo(() => filtered.filter((t) => selected.has(t.id)), [filtered, selected])
+  const allSelected = filtered.length > 0 && filtered.every((t) => selected.has(t.id))
+  const toggleAll = () => setSelected(allSelected ? new Set() : new Set(filtered.map((t) => t.id)))
+  // Кому какое действие применимо: запуск/возобновление (пауза→resume, стоп/готово/ошибка→restart),
+  // пауза (только выполняющиеся), стоп (выполняющиеся/в очереди/на паузе).
+  const startTargets = useMemo(() => selectedTasks.filter((t) => ['paused', 'stopped', 'done', 'error'].includes(t.status)), [selectedTasks])
+  const pauseTargets = useMemo(() => selectedTasks.filter((t) => t.status === 'running'), [selectedTasks])
+  const stopTargets = useMemo(() => selectedTasks.filter((t) => t.status === 'running' || t.status === 'queued' || t.status === 'paused'), [selectedTasks])
+
+  const bulkStart = () => {
+    // Боевые модули при перезапуске = реальные действия в Telegram — подтверждаем разово.
+    if (startTargets.some((t) => t.status !== 'paused' && isCombatModule(t.moduleKey)) &&
+        !window.confirm('Перезапуск боевых модулей = реальные действия в Telegram. Продолжить?')) return
+    void runBulk('Запуск/возобновление', startTargets, (t) => (t.status === 'paused' ? resumeModuleTask(t.moduleKey, t.id) : restartModuleTask(t.moduleKey, t.id)))
+  }
+  const bulkPause = () => void runBulk('Пауза', pauseTargets, (t) => pauseModuleTask(t.moduleKey, t.id))
+  const bulkStop = () => void runBulk('Стоп', stopTargets, (t) => stopModuleTask(t.moduleKey, t.id))
 
   // Воронка: Цели → Задачи → Модули → прогресс (по отфильтрованным).
   const funnel = useMemo(() => {
@@ -257,6 +291,21 @@ export function TasksPage() {
         <Select value={fStatus} onChange={setFStatus} className="w-44" options={STATUS_KEYS.map((s) => ({ value: s, label: s ? STATUS[s].label : 'Все статусы' }))} />
       </div>
 
+      {/* Массовые действия: выбор + цветные кнопки (старт/пауза/стоп). Серые и неактивные — когда некому применить. */}
+      {view === 0 && filtered.length > 0 && (
+        <div className="mb-3 flex flex-wrap items-center gap-2 rounded-xl border border-line bg-elevated/40 p-2.5">
+          <label className="flex cursor-pointer items-center gap-2 text-xs font-semibold text-white/70">
+            <input type="checkbox" checked={allSelected} onChange={toggleAll} className="h-4 w-4 accent-spark-500" />
+            {selected.size > 0 ? `Выбрано: ${selected.size}` : 'Выбрать все'}
+          </label>
+          <div className="ml-auto flex flex-wrap items-center gap-2">
+            <BulkBtn onClick={bulkStart} disabled={busy !== null || startTargets.length === 0} tone="green" icon={<Play size={13} />} label="Запустить / возобновить" count={startTargets.length} />
+            <BulkBtn onClick={bulkPause} disabled={busy !== null || pauseTargets.length === 0} tone="amber" icon={<Pause size={13} />} label="Пауза" count={pauseTargets.length} />
+            <BulkBtn onClick={bulkStop} disabled={busy !== null || stopTargets.length === 0} tone="rose" icon={<Square size={13} />} label="Стоп" count={stopTargets.length} />
+          </div>
+        </div>
+      )}
+
       {loading ? (
         <Card className="p-6 text-sm text-white/50">Загрузка…</Card>
       ) : filtered.length === 0 ? (
@@ -283,7 +332,7 @@ export function TasksPage() {
         </div>
       ) : (
         <div className="grid gap-2 lg:grid-cols-2">
-          {filtered.map((t) => <TaskCard key={`${t.moduleKey}:${t.id}`} t={t} goalName={goalName(t.goalId)} busy={busy} onOpen={setDetailTask} onStop={doStop} onRestart={doRestart} onPause={doPause} onResume={doResume} />)}
+          {filtered.map((t) => <TaskCard key={`${t.moduleKey}:${t.id}`} t={t} goalName={goalName(t.goalId)} busy={busy} onOpen={setDetailTask} onStop={doStop} onRestart={doRestart} onPause={doPause} onResume={doResume} selected={selected.has(t.id)} onToggleSelect={toggleSel} />)}
         </div>
       )}
       <TaskDetailModal
@@ -297,11 +346,33 @@ export function TasksPage() {
   )
 }
 
-function TaskCard({ t, goalName, busy, onOpen, onStop, onRestart, onPause, onResume, compact }: {
+/** Цветная кнопка массового действия: зелёная — старт/возобновление, янтарная — пауза, красная — стоп. */
+function BulkBtn({ onClick, disabled, tone, icon, label, count }: {
+  onClick: () => void; disabled: boolean; tone: 'green' | 'amber' | 'rose'; icon: ReactNode; label: string; count: number
+}) {
+  const toneCls = tone === 'green'
+    ? 'border-spark-500/30 bg-spark-500/15 text-spark-300 hover:bg-spark-500/25'
+    : tone === 'amber'
+      ? 'border-amber-500/30 bg-amber-500/15 text-amber-300 hover:bg-amber-500/25'
+      : 'border-rose-500/30 bg-rose-500/15 text-rose-300 hover:bg-rose-500/25'
+  return (
+    <button
+      onClick={onClick}
+      disabled={disabled}
+      className={cn('inline-flex h-9 items-center gap-1.5 rounded-lg border px-3 text-xs font-semibold transition-colors',
+        disabled ? 'border-line bg-elevated text-white/30' : toneCls)}
+    >
+      {icon} {label}{count > 0 ? ` (${count})` : ''}
+    </button>
+  )
+}
+
+function TaskCard({ t, goalName, busy, onOpen, onStop, onRestart, onPause, onResume, compact, selected, onToggleSelect }: {
   t: ModuleTask; goalName: string | null; busy: string | null
   onOpen: (t: ModuleTask) => void
   onStop: (t: ModuleTask) => void; onRestart: (t: ModuleTask) => void
   onPause: (t: ModuleTask) => void; onResume: (t: ModuleTask) => void; compact?: boolean
+  selected?: boolean; onToggleSelect?: (id: string) => void
 }) {
   const st = STATUS[t.status] || { label: t.status, tone: 'muted' as const }
   const p = pct(t)
@@ -309,6 +380,15 @@ function TaskCard({ t, goalName, busy, onOpen, onStop, onRestart, onPause, onRes
   const ringColor = STATUS_COLOR[t.status] || '#94a3b8'
   return (
     <Card className={compact ? 'flex items-center gap-3 bg-elevated/40 p-2.5' : 'flex items-center gap-3 p-3'}>
+      {onToggleSelect && (
+        <input
+          type="checkbox"
+          checked={!!selected}
+          onChange={() => onToggleSelect(t.id)}
+          className="h-4 w-4 shrink-0 accent-spark-500"
+          aria-label="Выбрать задачу"
+        />
+      )}
       <button type="button" onClick={() => onOpen(t)} className="flex min-w-0 flex-1 items-center gap-3 text-left" title="Открыть детали задачи">
       <Ring value={p} color={ringColor} size={compact ? 40 : 48} pulse={running} />
       <div className="min-w-0 flex-1">
@@ -326,10 +406,11 @@ function TaskCard({ t, goalName, busy, onOpen, onStop, onRestart, onPause, onRes
       </div>
       </button>
       <div className="flex shrink-0 items-center gap-1">
-        {running && <button onClick={() => onPause(t)} disabled={busy === t.id} className="btn-icon h-8 w-8" aria-label="Пауза" title="Пауза"><Pause size={13} /></button>}
-        {t.status === 'paused' && <button onClick={() => onResume(t)} disabled={busy === t.id} className="btn-icon h-8 w-8 text-spark-400" aria-label="Продолжить" title="Продолжить"><Play size={13} /></button>}
-        {running && <button onClick={() => onStop(t)} disabled={busy === t.id} className="btn-icon h-8 w-8" aria-label="Остановить" title="Остановить"><Square size={13} /></button>}
-        <button onClick={() => onRestart(t)} disabled={busy === t.id} className="btn-icon h-8 w-8" aria-label="Перезапустить" title="Перезапустить"><RotateCw size={14} /></button>
+        {t.status === 'running' && <button onClick={() => onPause(t)} disabled={busy === t.id} className="btn-icon h-8 w-8 text-amber-300 hover:bg-amber-500/12" aria-label="Пауза" title="Пауза"><Pause size={13} /></button>}
+        {t.status === 'paused' && <button onClick={() => onResume(t)} disabled={busy === t.id} className="btn-icon h-8 w-8 text-spark-400 hover:bg-spark-500/12" aria-label="Возобновить" title="Возобновить"><Play size={13} /></button>}
+        {(t.status === 'stopped' || t.status === 'done' || t.status === 'error') && <button onClick={() => onRestart(t)} disabled={busy === t.id} className="btn-icon h-8 w-8 text-spark-400 hover:bg-spark-500/12" aria-label="Запустить" title="Запустить заново"><Play size={13} /></button>}
+        {(t.status === 'running' || t.status === 'queued' || t.status === 'paused') && <button onClick={() => onStop(t)} disabled={busy === t.id} className="btn-icon h-8 w-8 text-rose-300 hover:bg-rose-500/12" aria-label="Остановить" title="Остановить"><Square size={13} /></button>}
+        {t.status === 'running' && <button onClick={() => onRestart(t)} disabled={busy === t.id} className="btn-icon h-8 w-8 text-iris-300 hover:bg-iris-500/12" aria-label="Перезапустить" title="Перезапустить"><RotateCw size={14} /></button>}
       </div>
     </Card>
   )
