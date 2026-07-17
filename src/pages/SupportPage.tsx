@@ -23,6 +23,7 @@ const FILTERS = [
 
 export function SupportPage() {
   const tickets = useApp((s) => s.data.tickets)
+  const addTicket = useApp((s) => s.addTicket)
   const pushToast = useApp((s) => s.pushToast)
   const guardNet = useApp((s) => s.guardNet)
   const [filter, setFilter] = useState('all')
@@ -36,7 +37,16 @@ export function SupportPage() {
   const createTicket = () => {
     if (!subject.trim()) return pushToast({ type: 'error', title: 'Укажите тему обращения' })
     if (!guardNet('создание тикета')) return
-    pushToast({ type: 'success', title: 'Тикет создан', desc: 'Мы ответим в течение 24 часов (демо).' })
+    const now = new Date()
+    addTicket({
+      id: `TK-${String(now.getTime()).slice(-6)}`,
+      subject: subject.trim(),
+      status: 'open',
+      updatedAt: now.toLocaleString('ru-RU', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' }),
+      messages: 1,
+      preview: body.trim() || subject.trim(),
+    })
+    pushToast({ type: 'success', title: 'Тикет создан', desc: 'Мы ответим в течение 24 часов.' })
     setNewOpen(false); setSubject(''); setBody('')
   }
 

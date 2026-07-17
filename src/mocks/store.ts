@@ -61,6 +61,7 @@ interface AppStore extends Persisted {
 
   updateUser: (patch: Partial<AppData['user']>) => void
   toggleNotification: (id: string) => void
+  addTicket: (t: import('@/shared/types').Ticket) => void
 }
 
 function parseInitialState(): UserState {
@@ -235,6 +236,7 @@ export const useApp = create<AppStore>((set, get) => {
       mutate((st) => ({ data: { ...st.data, tasks: st.data.tasks.filter((x) => x.id !== id) } })),
 
     updateUser: (patch) => mutate((st) => ({ data: { ...st.data, user: { ...st.data.user, ...patch } } })),
+    addTicket: (t) => mutate((st) => ({ data: { ...st.data, tickets: [t, ...st.data.tickets] } })),
     toggleNotification: (id) =>
       mutate((st) => ({
         data: {
