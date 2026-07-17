@@ -152,6 +152,7 @@ export function HelpCenterDrawer() {
   const messagesRef = useRef<HelpMsg[]>([])
   messagesRef.current = messages
   const bottomRef = useRef<HTMLDivElement>(null)
+  const scrollRef = useRef<HTMLDivElement>(null)
 
   const moduleKey = moduleKeyFromPath(location.pathname)
   const doc = useMemo(() => findHelpDoc(topic, moduleKey), [topic, moduleKey])
@@ -164,11 +165,16 @@ export function HelpCenterDrawer() {
       : intro
     setMessages([{ id: 'intro', role: 'assistant', text: first }])
     setInput('')
+    // Открываем статью С НАЧАЛА (сверху), а не в конце — чтобы не прокручивать вручную вверх.
+    scrollRef.current?.scrollTo({ top: 0 })
     void apiGet<{ ai?: boolean }>('/api/health').then((h) => setAiActive(!!h.ai)).catch(() => setAiActive(null))
   }, [open, intro, doc])
 
-  // авто-скролл к последнему сообщению
-  useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' }) }, [messages])
+  // Авто-скролл к последнему сообщению — ТОЛЬКО когда идёт диалог (есть вопросы/ответы,
+  // messages > 1). При открытии (только intro) остаёмся вверху статьи.
+  useEffect(() => {
+    if (messages.length > 1) bottomRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' })
+  }, [messages])
 
   const send = async (override?: string) => {
     const text = (override ?? input).trim()
@@ -218,7 +224,7 @@ export function HelpCenterDrawer() {
           <button onClick={() => setHelpOpen(false)} className="btn-icon"><X size={18} /></button>
         </div>
 
-        <div className="flex-1 overflow-y-auto p-4">
+        <div ref={scrollRef} className="flex-1 overflow-y-auto p-4">
           {doc && (
             <button onClick={() => setHelpTopic('')} className="mb-3 text-xs text-spark-300 hover:underline">◂ Все статьи</button>
           )}
