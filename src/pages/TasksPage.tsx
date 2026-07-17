@@ -1,9 +1,9 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
-import { ListChecks, RefreshCw, Square, RotateCw, Target, Layers, Activity, Gauge, Pause, Play } from 'lucide-react'
+import { ListChecks, RefreshCw, Square, RotateCw, Target, Layers, Activity, Gauge, Pause, Play, Loader2 } from 'lucide-react'
 import { useApp } from '@/mocks/store'
 import { PageHeader, Card, EmptyState, Badge, Select, Segmented, Modal } from '@/shared/ui'
 import { MODULES, isCombatModule, combatConfirmText } from '@/shared/config/modules'
-import { fetchAllTasks, stopModuleTask, restartModuleTask, pauseModuleTask, resumeModuleTask, type ModuleTask } from '@/api/modulesApi'
+import { fetchAllTasks, fetchModuleTask, stopModuleTask, restartModuleTask, pauseModuleTask, resumeModuleTask, type ModuleTask } from '@/api/modulesApi'
 import { fetchGoals, type Goal } from '@/api/goalsApi'
 import { cn } from '@/shared/lib/utils'
 
@@ -367,6 +367,28 @@ function BulkBtn({ onClick, disabled, tone, icon, label, count }: {
   )
 }
 
+/** Кнопки управления на карточке задачи: старт/возобновление (зелёная), пауза (янтарь), стоп (красная).
+ *  Активна только применимая по статусу — остальные приглушены. */
+function CardControls({ t, busy, onStop, onRestart, onPause, onResume }: {
+  t: ModuleTask; busy: string | null
+  onStop: (t: ModuleTask) => void; onRestart: (t: ModuleTask) => void
+  onPause: (t: ModuleTask) => void; onResume: (t: ModuleTask) => void
+}) {
+  const disabled = busy === t.id
+  const canStart = ['paused', 'stopped', 'done', 'error'].includes(t.status)
+  const canPause = t.status === 'running'
+  const canStop = t.status === 'running' || t.status === 'queued' || t.status === 'paused'
+  const startTitle = t.status === 'paused' ? 'Возобновить' : 'Запустить'
+  const cls = (active: boolean, tone: string) => cn('btn-icon h-8 w-8', active && !disabled ? tone : 'text-white/20')
+  return (
+    <div className="flex shrink-0 items-center gap-1">
+      <button onClick={() => (t.status === 'paused' ? onResume(t) : onRestart(t))} disabled={disabled || !canStart} className={cls(canStart, 'text-spark-400 hover:bg-spark-500/12')} aria-label={startTitle} title={startTitle}><Play size={13} /></button>
+      <button onClick={() => onPause(t)} disabled={disabled || !canPause} className={cls(canPause, 'text-amber-300 hover:bg-amber-500/12')} aria-label="Пауза" title="Пауза"><Pause size={13} /></button>
+      <button onClick={() => onStop(t)} disabled={disabled || !canStop} className={cls(canStop, 'text-rose-300 hover:bg-rose-500/12')} aria-label="Стоп" title="Стоп"><Square size={13} /></button>
+    </div>
+  )
+}
+
 function TaskCard({ t, goalName, busy, onOpen, onStop, onRestart, onPause, onResume, compact, selected, onToggleSelect }: {
   t: ModuleTask; goalName: string | null; busy: string | null
   onOpen: (t: ModuleTask) => void
@@ -405,13 +427,7 @@ function TaskCard({ t, goalName, busy, onOpen, onStop, onRestart, onPause, onRes
         </div>
       </div>
       </button>
-      <div className="flex shrink-0 items-center gap-1">
-        {t.status === 'running' && <button onClick={() => onPause(t)} disabled={busy === t.id} className="btn-icon h-8 w-8 text-amber-300 hover:bg-amber-500/12" aria-label="Пауза" title="Пауза"><Pause size={13} /></button>}
-        {t.status === 'paused' && <button onClick={() => onResume(t)} disabled={busy === t.id} className="btn-icon h-8 w-8 text-spark-400 hover:bg-spark-500/12" aria-label="Возобновить" title="Возобновить"><Play size={13} /></button>}
-        {(t.status === 'stopped' || t.status === 'done' || t.status === 'error') && <button onClick={() => onRestart(t)} disabled={busy === t.id} className="btn-icon h-8 w-8 text-spark-400 hover:bg-spark-500/12" aria-label="Запустить" title="Запустить заново"><Play size={13} /></button>}
-        {(t.status === 'running' || t.status === 'queued' || t.status === 'paused') && <button onClick={() => onStop(t)} disabled={busy === t.id} className="btn-icon h-8 w-8 text-rose-300 hover:bg-rose-500/12" aria-label="Остановить" title="Остановить"><Square size={13} /></button>}
-        {t.status === 'running' && <button onClick={() => onRestart(t)} disabled={busy === t.id} className="btn-icon h-8 w-8 text-iris-300 hover:bg-iris-500/12" aria-label="Перезапустить" title="Перезапустить"><RotateCw size={14} /></button>}
-      </div>
+      <CardControls t={t} busy={busy} onStop={onStop} onRestart={onRestart} onPause={onPause} onResume={onResume} />
     </Card>
   )
 }
@@ -433,12 +449,26 @@ function TaskDetailModal({ t, goalName, busy, onClose, onStop, onRestart, onPaus
   onStop: (t: ModuleTask) => void; onRestart: (t: ModuleTask) => void
   onPause: (t: ModuleTask) => void; onResume: (t: ModuleTask) => void
 }) {
+  // Список задач приходит БЕЗ логов (тяжело гонять) — полную задачу с логами тянем отдельно и опрашиваем.
+  const [full, setFull] = useState<ModuleTask | null>(null)
+  useEffect(() => {
+    if (!t) { setFull(null); return }
+    let cancelled = false
+    const pull = async () => {
+      try { const f = await fetchModuleTask(t.moduleKey, t.id); if (!cancelled) setFull(f) } catch { /* ignore */ }
+    }
+    void pull()
+    const iv = setInterval(pull, 3000) // живые логи, пока открыто
+    return () => { cancelled = true; clearInterval(iv) }
+  }, [t?.id, t?.moduleKey])
+
   if (!t) return null
+  const detailed = full && full.id === t.id ? full : t // с логами, если уже подгрузилось
   const st = STATUS[t.status] || { label: t.status, tone: 'muted' as const }
   const p = pct(t)
-  const s = t.settings || {}
-  const logs = (t.logs || []).slice(0, 80)
-  const results = t.results || t.commentHistory || []
+  const s = detailed.settings || t.settings || {}
+  const logs = (detailed.logs || []).slice(0, 80)
+  const results = detailed.results || detailed.commentHistory || []
   return (
     <Modal open={!!t} onClose={onClose} size="lg" title={`Задача · ${moduleTitle(t.moduleKey)}`} subtitle={t.id}
       footer={<button onClick={onClose} className="btn-primary h-10">Закрыть</button>}>
@@ -468,7 +498,7 @@ function TaskDetailModal({ t, goalName, busy, onClose, onStop, onRestart, onPaus
           <Info label="Результатов" value={String(results.length)} />
         </div>
         <div className="rounded-2xl border border-line bg-elevated/40 p-3">
-          <div className="mb-2 text-sm font-bold text-fg">Логи ({(t.logs || []).length})</div>
+          <div className="mb-2 flex items-center gap-2 text-sm font-bold text-fg">Логи ({(detailed.logs || []).length}){!full && <Loader2 size={13} className="animate-spin text-white/40" />}</div>
           {logs.length === 0 ? (
             <div className="py-3 text-center text-xs text-white/40">Логов пока нет</div>
           ) : (
