@@ -101,11 +101,13 @@ export function statusAfterRun(task) {
   return task.pauseRequested ? 'paused' : task.stopRequested ? 'stopped' : 'done'
 }
 
-async function finalizeAccounts(accountIds, taskId) {
-  if (taskId) releaseTaskLocks(taskId)
+async function finalizeAccounts(accountIds, taskId, paused = false) {
+  // На паузе аккаунты остаются зарезервированными за задачей (лок держим) и переходят в статус
+  // «pause» — чтобы в менеджере было видно, в каком модуле аккаунт на паузе. На стопе/финише — освобождаем.
+  if (taskId && !paused) releaseTaskLocks(taskId)
   for (const id of accountIds) {
     const meta = await getAccountMeta(id)
-    if (meta.status === 'working') await setAccountMeta(id, { status: 'active' })
+    if (meta.status === 'working') await setAccountMeta(id, { status: paused ? 'pause' : 'active' })
   }
 }
 
@@ -302,7 +304,7 @@ export async function runNeuroCommenting(task, store) {
     await store.appendLog(task, 'error', err instanceof Error ? err.message : 'Ошибка')
   }
   await store.saveTask(task)
-  await finalizeAccounts(accountIds, task.id)
+  await finalizeAccounts(accountIds, task.id, !!task.pauseRequested)
 }
 
 /** @param {object} task @param {object} store */
@@ -400,7 +402,7 @@ export async function runNeuroChatting(task, store) {
     await store.appendLog(task, 'error', err instanceof Error ? err.message : 'Ошибка')
   }
   await store.saveTask(task)
-  await finalizeAccounts(accountIds, task.id)
+  await finalizeAccounts(accountIds, task.id, !!task.pauseRequested)
 }
 
 /** @param {object} task @param {object} store */
@@ -502,7 +504,7 @@ export async function runMassReact(task, store) {
     await store.appendLog(task, 'error', err instanceof Error ? err.message : 'Ошибка')
   }
   await store.saveTask(task)
-  await finalizeAccounts(accountIds, task.id)
+  await finalizeAccounts(accountIds, task.id, !!task.pauseRequested)
 }
 
 /** @param {object} task @param {object} store */
@@ -582,7 +584,7 @@ export async function runMassLooking(task, store) {
     await store.appendLog(task, 'error', err instanceof Error ? err.message : 'Ошибка')
   }
   await store.saveTask(task)
-  await finalizeAccounts(accountIds, task.id)
+  await finalizeAccounts(accountIds, task.id, !!task.pauseRequested)
 }
 
 /** @param {object} task @param {object} store */
@@ -675,7 +677,7 @@ export async function runWarming(task, store) {
     await store.appendLog(task, 'error', err instanceof Error ? err.message : 'Ошибка')
   }
   await store.saveTask(task)
-  await finalizeAccounts(accountIds, task.id)
+  await finalizeAccounts(accountIds, task.id, !!task.pauseRequested)
 }
 
 /**
@@ -836,7 +838,7 @@ export async function runNeuroDialogs(task, store) {
     await store.appendLog(task, 'error', err instanceof Error ? err.message : 'Ошибка')
   }
   await store.saveTask(task)
-  await finalizeAccounts(accountIds, task.id)
+  await finalizeAccounts(accountIds, task.id, !!task.pauseRequested)
 }
 
 /** Статусы, которые GGR не имеет права перезатирать успешной проверкой сессии. */
@@ -862,7 +864,7 @@ export async function runGgr(task, store) {
   }
   task.progress.total = allIds.length
   await store.saveTask(task)
-  await store.appendLog(task, 'info', `GGR-проверка: ${allIds.length} аккаунтов`)
+  await store.appendLog(task, 'info', `AIR-проверка: ${allIds.length} аккаунтов`)
 
   try {
     for (const accountId of allIds) {
@@ -1090,7 +1092,7 @@ export async function runChannelParser(task, store, kind) {
     await store.appendLog(task, 'error', err instanceof Error ? err.message : 'Ошибка')
   }
   await store.saveTask(task)
-  await finalizeAccounts(accountIds, task.id)
+  await finalizeAccounts(accountIds, task.id, !!task.pauseRequested)
 }
 
 const mapUser = (u) => ({
@@ -1329,7 +1331,7 @@ export async function runParticipantsParser(task, store, kind) {
     await store.appendLog(task, 'error', err instanceof Error ? err.message : 'Ошибка')
   }
   await store.saveTask(task)
-  await finalizeAccounts(accountIds, task.id)
+  await finalizeAccounts(accountIds, task.id, !!task.pauseRequested)
 }
 
 /**
@@ -1449,7 +1451,7 @@ export async function runMailing(task, store) {
     await store.appendLog(task, 'error', err instanceof Error ? err.message : 'Ошибка')
   }
   await store.saveTask(task)
-  await finalizeAccounts(accountIds, task.id)
+  await finalizeAccounts(accountIds, task.id, !!task.pauseRequested)
 }
 
 /**
@@ -1508,7 +1510,7 @@ export async function runAutoPosting(task, store) {
     await store.appendLog(task, 'error', err instanceof Error ? err.message : 'Ошибка')
   }
   await store.saveTask(task)
-  await finalizeAccounts(accountIds, task.id)
+  await finalizeAccounts(accountIds, task.id, !!task.pauseRequested)
 }
 
 export const WORKERS = {

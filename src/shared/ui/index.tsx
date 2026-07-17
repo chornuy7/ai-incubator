@@ -6,7 +6,6 @@ import type { AccountStatus } from '@/shared/types'
 import { STATUS_META } from '@/mocks/store'
 
 export { Modal } from './Modal'
-export { useConfirm } from './useConfirm'
 
 /* ── Card ── */
 export function Card({ className, children }: { className?: string; children: ReactNode }) {

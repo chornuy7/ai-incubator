@@ -9,7 +9,13 @@ import { dataPath, readJson, writeJson } from './lib/jsonStore.js'
 const GOALS_FILE = process.env.GOALS_FILE || dataPath('goals.json')
 
 /** Поля, которые можно задавать/менять (остальное — служебное). */
-const FIELDS = ['name', 'description', 'targetAction', 'stages', 'completionCriteria', 'audience']
+const FIELDS = ['name', 'description', 'targetAction', 'stages', 'completionCriteria', 'audience', 'channels']
+
+/** Нормализовать список каналов/групп цели: trim, без @, без дублей. @param {*} v */
+function normChannels(v) {
+  if (!Array.isArray(v)) return []
+  return [...new Set(v.map((x) => String(x || '').trim().replace(/^@/, '')).filter(Boolean))]
+}
 
 /** Нормализовать вход в чистую цель. @param {object} input */
 export function normalizeGoal(input = {}) {
@@ -20,6 +26,7 @@ export function normalizeGoal(input = {}) {
     stages: Array.isArray(input.stages) ? input.stages.map((s) => String(s)) : [],
     completionCriteria: String(input.completionCriteria ?? ''),
     audience: String(input.audience ?? ''),
+    channels: normChannels(input.channels),
   }
 }
 
@@ -57,7 +64,9 @@ export async function updateGoal(id, patch = {}) {
     if (patch[k] !== undefined) {
       goals[i][k] = k === 'stages'
         ? (Array.isArray(patch[k]) ? patch[k].map((s) => String(s)) : goals[i].stages)
-        : (k === 'name' ? String(patch[k]).trim() : String(patch[k]))
+        : k === 'channels'
+          ? normChannels(patch[k])
+          : (k === 'name' ? String(patch[k]).trim() : String(patch[k]))
     }
   }
   if (!goals[i].name) throw new Error('Название цели не может быть пустым')

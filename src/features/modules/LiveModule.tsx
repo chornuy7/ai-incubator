@@ -7,7 +7,7 @@ import { MODULES, isCombatModule, combatConfirmText, type ModuleConfig } from '@
 import { activeAccounts, useApp } from '@/mocks/store'
 import { useSession } from '@/features/auth/session'
 import { can } from '@/shared/lib/access'
-import { ToggleGroup, Segmented, EmptyState, Badge, Select, useConfirm } from '@/shared/ui'
+import { ToggleGroup, Segmented, EmptyState, Badge, Select } from '@/shared/ui'
 import { fetchGoals, type Goal } from '@/api/goalsApi'
 import { AccountPicker } from '@/features/account-picker/AccountPicker'
 import { useModuleTask } from './shared/useModuleTask'
@@ -17,6 +17,7 @@ import {
   FolderPicker, BlacklistEditor, GlobalPromptEditor, TimingSection, SaveToFolderModal, TaskStartedModal,
 } from './shared'
 import type { ModuleTaskSettings } from '@/api/modulesApi'
+import { confirmDialog, promptDialog } from '@/shared/lib/dialog'
 
 const DEFAULT_DELAYS = {
   comment: [30, 120] as [number, number],
@@ -54,7 +55,6 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
   // templates — промпты/эмодзи; results/logs — просмотр результатов/логов.
   const sessionUser = useSession((s) => s.user)
   const showBlock = (bk: string) => !sessionUser || sessionUser.isAdmin || can(sessionUser.permissions, false, 'block', `${moduleKey}:${bk}`)
-  const { confirm, confirmEl } = useConfirm()
 
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [toggles, setToggles] = useState<Record<number, number>>({})
@@ -146,7 +146,7 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
   }
 
   const buildSettings = useCallback((): ModuleTaskSettings => ({
-    accountIds: isGgr ? accounts.map((a) => a.id) : [...selected],
+    accountIds: [...selected],
     targets,
     channels: targets,
     keywords: keywords.split(/[\n,;]+/).map((k) => k.trim()).filter(Boolean),
@@ -190,13 +190,13 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
   // #5: сумма процентов типов не должна превышать 100 — иначе запуск блокируется.
   const typesOver100 = moduleKey === 'neuro-commenting' && weightSum > 100
   const canStart = (isGgr
-    ? accounts.length > 0
+    ? selected.size > 0
     : selected.size > 0 && busySelectedCount === 0 && (!needsTargets || targets.length > 0 || hasPostTargets))
     && !typesOver100
   const warn = typesOver100
     ? `Сумма типов комментариев ${weightSum}% > 100 — уменьшите (кнопка «= 100%»)`
     : !canStart
-      ? (isGgr ? 'Нет аккаунтов в панели' : busySelectedCount ? `${busySelectedCount} акк. заняты в другом модуле` : !selected.size ? 'Выберите аккаунты' : 'Добавьте группу или ссылку на пост')
+      ? (isGgr ? 'Выберите аккаунты для проверки' : busySelectedCount ? `${busySelectedCount} акк. заняты в другом модуле` : !selected.size ? 'Выберите аккаунты' : 'Добавьте группу или ссылку на пост')
       : undefined
 
   // §3.5: предупреждать о математически противоречивых лимитах (макс vs аккаунты vs мин/акк).
@@ -211,18 +211,13 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
   const durationPeriodMin = Math.min(DURATION_MIN_BY_PROTECTION_LEVEL[protLevel] ?? 0, durationMinutes)
 
   const handleStart = async () => {
-    // #4: запуск боевого модуля = реальные действия в Telegram — подтверждаем (стильная модалка).
-    if (isCombatModule(moduleKey) && !(await confirm({
-      title: 'Реальные действия в Telegram',
-      message: combatConfirmText(moduleKey),
-      confirmLabel: 'Да, выполнить',
-      tone: 'danger',
-    }))) return
-    void start(buildSettings(), `${cfg.title} · ${selected.size || accounts.length} акк.`)
+    // #4: запуск боевого модуля = реальные действия в Telegram — подтверждаем.
+    if (isCombatModule(moduleKey) && !(await confirmDialog({ title: 'Реальные действия в Telegram', message: combatConfirmText(moduleKey), confirmLabel: 'Запустить', tone: 'danger' }))) return
+    void start(buildSettings(), `${cfg.title} · ${selected.size} акк.`)
   }
-  const handleSave = () => {
-    const name = window.prompt('Название пресета')
-    if (name?.trim()) void savePreset(name.trim(), buildSettings())
+  const handleSave = async () => {
+    const name = await promptDialog({ title: 'Сохранить пресет', message: 'Название пресета настроек', placeholder: 'Напр. Крипто · агрессивный' })
+    if (name) void savePreset(name, buildSettings())
   }
 
   // Восстанавливает настройки из пресета в форму (аккаунты не трогаем — они ситуативны).
@@ -258,7 +253,7 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
 
   const launchStats = useMemo(() => {
     if (isGgr) return [
-      { icon: <Trophy size={18} />, color: '#7145ff', label: 'Аккаунтов', value: String(accounts.length) },
+      { icon: <Trophy size={18} />, color: '#7145ff', label: 'Выбрано', value: String(selected.size), warn: selected.size === 0 },
       { icon: <Database size={18} />, color: '#06b6d4', label: 'Проверено', value: String(results.length) },
       { icon: <Shield size={18} />, color: '#0ec464', label: 'Валидных', value: String(results.filter((r) => r.status === 'valid').length) },
       { icon: <Clock size={18} />, color: '#f59e0b', label: 'Статус', value: task?.status ?? '—' },
@@ -281,7 +276,6 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
 
   return (
     <div className="space-y-4">
-      {confirmEl}
       <TaskStartedModal task={justStarted} moduleTitle={cfg.title} onClose={dismissJustStarted} />
       <SaveToFolderModal open={folderSave !== null} onClose={() => setFolderSave(null)} targets={folderSave ?? []} />
       {cfg.accountPicker && showBlock('run') && (
@@ -322,8 +316,8 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
           ) : isGgr ? (
             <div className="space-y-3 text-sm text-muted">
               <p>
-                Проверка идёт по всем аккаунтам панели: подключаем сессию, запрашиваем профиль и складываем балл.
-                Настраивать нечего — жмите «{cfg.primaryAction ?? 'Проверить все'}».
+                Проверка идёт по <b className="text-fg">выбранным аккаунтам</b> (выберите их выше): подключаем сессию,
+                запрашиваем профиль и складываем балл. Настройки не требуются — жмите «{cfg.primaryAction ?? 'Проверить'}».
               </p>
               <div className="grid gap-2 sm:grid-cols-3">
                 {[

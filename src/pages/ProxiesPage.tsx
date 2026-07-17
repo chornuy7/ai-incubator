@@ -9,6 +9,7 @@ import {
 import { fetchAccounts, patchAccount } from '@/api/accountsApi'
 import type { TgAccount } from '@/shared/types'
 import { FLAGS } from '@/shared/config/geo'
+import { confirmDialog } from '@/shared/lib/dialog'
 
 const STATUS_META: Record<Proxy['status'], { label: string; tone: 'spark' | 'rose' | 'muted' }> = {
   ok: { label: 'Рабочий', tone: 'spark' },
@@ -76,7 +77,7 @@ export function ProxiesPage() {
   }
 
   async function remove(p: Proxy) {
-    if (!confirm(`Удалить прокси ${p.host}:${p.port}? Аккаунты, использующие его, останутся с этой строкой.`)) return
+    if (!(await confirmDialog({ title: 'Удалить прокси?', message: `${p.host}:${p.port} будет удалён. Аккаунты, использующие его, останутся с этой строкой подключения.`, confirmLabel: 'Удалить', tone: 'danger' }))) return
     try { await deleteProxy(p.id); setProxies((prev) => prev.filter((x) => x.id !== p.id)) }
     catch (e) { setErr(e instanceof Error ? e.message : 'Ошибка') }
   }

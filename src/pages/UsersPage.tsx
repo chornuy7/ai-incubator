@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Users2, Plus, Trash2, ShieldCheck, Check } from 'lucide-react'
 import { PageHeader, Card, EmptyState, Badge, Modal } from '@/shared/ui'
+import { confirmDialog } from '@/shared/lib/dialog'
 import { fetchUsers, createUser, updateUser, deleteUser, fetchWorktime, type User, type WorkSummary } from '@/api/usersApi'
 import { fetchRoles, type Role } from '@/api/rolesApi'
 import { ADMIN_BYPASS_ID } from '@/shared/config/rbac'
@@ -77,7 +78,7 @@ export function UsersPage() {
     } catch (e) { setErr(e instanceof Error ? e.message : 'Ошибка') }
   }
   async function remove(u: User) {
-    if (!confirm(`Удалить пользователя «${u.name}» (${u.email})?\n\nДействие необратимо — оператор потеряет доступ к панели.`)) return
+    if (!(await confirmDialog({ title: 'Удалить пользователя?', message: `Оператор «${u.name}» (${u.email}) потеряет доступ к панели. Действие необратимо.`, confirmLabel: 'Удалить', tone: 'danger' }))) return
     try {
       await deleteUser(u.id)
       setUsers((prev) => prev.filter((x) => x.id !== u.id))

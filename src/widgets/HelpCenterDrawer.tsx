@@ -1,5 +1,4 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { createPortal } from 'react-dom'
 import { useLocation } from 'react-router-dom'
 import { BookOpen, HelpCircle, Layers, Lightbulb, Loader2, Send, Shield, ShieldAlert, Sparkles, Workflow, X } from 'lucide-react'
 import { useUi } from '@/shared/lib/uiStore'
@@ -9,7 +8,7 @@ import { findHelpDoc, HELP_DOCS, type HelpDoc } from '@/shared/config/helpDocs'
 const BUSINESS_TOPICS = ['safety-limits', 'trust-autostop', 'warming-policy', 'captcha-antispam', 'mailing-rules', 'channel-rating', 'proxy-policy', 'rbac-roles']
 const MODULE_TOPICS = ['neuro-commenting', 'neuro-chatting', 'neuro-dialogs', 'mass-react', 'mass-looking', 'warming', 'autoposting', 'ggr', 'parsing', 'parsing-groups', 'parsing-users', 'parsing-messages', 'parsing-comments']
 import { PROTECTION_STEPS } from '@/shared/config/protectionInfo'
-import { apiGet, apiPost } from '@/api/client'
+import { apiPost } from '@/api/client'
 import { cn } from '@/shared/lib/utils'
 
 const QUICK_QUESTIONS = [
@@ -148,7 +147,6 @@ export function HelpCenterDrawer() {
   const [messages, setMessages] = useState<HelpMsg[]>([])
   const [input, setInput] = useState('')
   const [pending, setPending] = useState(false)
-  const [aiActive, setAiActive] = useState<boolean | null>(null)
   const messagesRef = useRef<HelpMsg[]>([])
   messagesRef.current = messages
   const bottomRef = useRef<HTMLDivElement>(null)
@@ -167,7 +165,6 @@ export function HelpCenterDrawer() {
     setInput('')
     // Открываем статью С НАЧАЛА (сверху), а не в конце — чтобы не прокручивать вручную вверх.
     scrollRef.current?.scrollTo({ top: 0 })
-    void apiGet<{ ai?: boolean }>('/api/health').then((h) => setAiActive(!!h.ai)).catch(() => setAiActive(null))
   }, [open, intro, doc])
 
   // Авто-скролл к последнему сообщению — ТОЛЬКО когда идёт диалог (есть вопросы/ответы,
@@ -201,22 +198,16 @@ export function HelpCenterDrawer() {
 
   if (!open) return null
 
-  return createPortal(
-    // §3.1: боковая панель, не блокирующая модалка — основной интерфейс остаётся доступным.
-    // Контейнер пропускает клики (pointer-events-none), интерактивна только сама панель.
-    <div className="pointer-events-none fixed inset-0 z-[96]">
-      <div className="pointer-events-auto absolute right-0 top-0 flex h-full w-full max-w-md flex-col border-l border-line bg-surface shadow-pop animate-fade-in max-sm:bg-surface/95 max-sm:backdrop-blur-sm">
+  // §3.1: боковая панель-сайдбар — не оверлей, а колонка в потоке: сужает страницу, чтобы
+  // контент оставался виден рядом. Sticky на всю высоту экрана со своим скроллом.
+  return (
+    <aside className="sticky top-0 z-[40] flex h-screen w-full shrink-0 flex-col border-l border-line bg-surface shadow-pop animate-fade-in lg:w-[440px]">
         <div className="flex items-center justify-between border-b border-line px-5 py-4">
           <div className="flex items-center gap-2.5">
             <HelpCircle size={20} className="text-spark-400" />
             <div>
               <div className="flex items-center gap-2">
                 <h3 className="font-display text-lg font-bold text-fg">Help Center</h3>
-                {aiActive !== null && (
-                  <span className={cn('inline-flex items-center gap-1 rounded-md border px-1.5 py-0.5 text-[10px] font-bold uppercase', aiActive ? 'border-spark-500/30 bg-spark-500/12 text-spark-300' : 'border-amber-500/30 bg-amber-500/12 text-amber-300')}>
-                    <Sparkles size={10} /> {aiActive ? 'ИИ активен' : 'Шаблоны'}
-                  </span>
-                )}
               </div>
               <p className="text-xs text-muted">{doc ? 'Документация и подсказки по разделу' : 'Чат-подсказки по разделу'}</p>
             </div>
@@ -310,9 +301,7 @@ export function HelpCenterDrawer() {
           </div>
           <div className="mt-2 text-xs text-muted">Ответы — ИИ по документации раздела. Без OPENAI_API_KEY отвечает по фактам системы.</div>
         </div>
-      </div>
-    </div>,
-    document.body,
+    </aside>
   )
 }
 

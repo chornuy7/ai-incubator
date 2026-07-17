@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { ShieldCheck, Plus, Trash2, ChevronRight, ChevronDown, Save, Lock } from 'lucide-react'
 import { PageHeader, Card, EmptyState, Badge } from '@/shared/ui'
+import { confirmDialog } from '@/shared/lib/dialog'
 import {
   fetchRoles, fetchRbacCatalog, createRole, updateRole, deleteRole, emptyPermissions,
   type Role, type RbacCatalog, type RolePermissions, type Perm,
@@ -84,7 +85,7 @@ export function RolesPage() {
 
   async function removeRole(r: Role) {
     if (r.builtin) return
-    if (!confirm(`Удалить роль «${r.name}»? Действие необратимо.`)) return
+    if (!(await confirmDialog({ title: 'Удалить роль?', message: `«${r.name}» будет удалена безвозвратно. Пользователи с этой ролью потеряют её доступы.`, confirmLabel: 'Удалить', tone: 'danger' }))) return
     try {
       await deleteRole(r.id)
       const next = roles.filter((x) => x.id !== r.id)

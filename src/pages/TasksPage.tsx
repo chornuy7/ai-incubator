@@ -1,12 +1,15 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
-import { ListChecks, RefreshCw, Square, RotateCw, Target, Layers, Activity, Gauge, Pause, Play, Loader2 } from 'lucide-react'
+import { ListChecks, RefreshCw, Square, RotateCw, Target, Activity, Gauge, Pause, Play, Loader2 } from 'lucide-react'
 import { useApp } from '@/mocks/store'
-import { PageHeader, Card, EmptyState, Badge, Select, Segmented, Modal, useConfirm } from '@/shared/ui'
+import { PageHeader, Card, EmptyState, Badge, Select, Segmented, Modal } from '@/shared/ui'
 import { HelpButton } from '@/features/neuro-commenting/moduleUi'
 import { MODULES, isCombatModule, combatConfirmText } from '@/shared/config/modules'
 import { fetchAllTasks, fetchModuleTask, stopModuleTask, restartModuleTask, pauseModuleTask, resumeModuleTask, type ModuleTask } from '@/api/modulesApi'
 import { fetchGoals, type Goal } from '@/api/goalsApi'
+import { fetchAccounts } from '@/api/accountsApi'
+import type { TgAccount } from '@/shared/types'
 import { cn } from '@/shared/lib/utils'
+import { confirmDialog } from '@/shared/lib/dialog'
 
 const STATUS: Record<string, { label: string; tone: 'spark' | 'iris' | 'amber' | 'rose' | 'muted' }> = {
   running: { label: 'Выполняется', tone: 'spark' },
@@ -77,6 +80,7 @@ export function TasksPage() {
   const pushToast = useApp((s) => s.pushToast)
   const [tasks, setTasks] = useState<ModuleTask[]>([])
   const [goals, setGoals] = useState<Goal[]>([])
+  const [accounts, setAccounts] = useState<TgAccount[]>([])
   const [loading, setLoading] = useState(true)
   const [busy, setBusy] = useState<string | null>(null)
   const [view, setView] = useState(0) // 0 — список, 1 — по целям (воронка)
@@ -84,17 +88,22 @@ export function TasksPage() {
   const [fGoal, setFGoal] = useState('')
   const [fModule, setFModule] = useState('')
   const [fStatus, setFStatus] = useState('')
-  const { confirm, confirmEl } = useConfirm()
+  const [goalSel, setGoalSel] = useState<Set<string>>(new Set()) // выбор целей в виде «По целям» (пусто = все)
 
   const goalName = useMemo(() => {
     const m = new Map(goals.map((g) => [g.id, g.name]))
     return (id?: string | null) => (id ? m.get(id) || '—' : null)
   }, [goals])
 
+  const accountName = useMemo(() => {
+    const m = new Map(accounts.map((a) => [a.id, a.name || a.username || a.phone || a.id]))
+    return (id: string) => m.get(id) || id
+  }, [accounts])
+
   const load = async () => {
     try {
-      const [t, g] = await Promise.all([fetchAllTasks(), fetchGoals().catch(() => [])])
-      setTasks(t); setGoals(g)
+      const [t, g, a] = await Promise.all([fetchAllTasks(), fetchGoals().catch(() => []), fetchAccounts().catch(() => [])])
+      setTasks(t); setGoals(g); setAccounts(a)
     } catch (err) {
       pushToast({ type: 'error', title: 'Не удалось загрузить задачи', desc: err instanceof Error ? err.message : '' })
     } finally { setLoading(false) }
@@ -128,13 +137,8 @@ export function TasksPage() {
     finally { setBusy(null) }
   }
   const doRestart = async (t: ModuleTask) => {
-    // #4: рестарт боевого модуля = реальные действия в Telegram — подтверждаем (модалка).
-    if (isCombatModule(t.moduleKey) && !(await confirm({
-      title: 'Реальные действия в Telegram',
-      message: combatConfirmText(t.moduleKey),
-      confirmLabel: 'Да, перезапустить',
-      tone: 'danger',
-    }))) return
+    // #4: рестарт боевого модуля = реальные действия в Telegram — подтверждаем.
+    if (isCombatModule(t.moduleKey) && !(await confirmDialog({ title: 'Реальные действия в Telegram', message: combatConfirmText(t.moduleKey), confirmLabel: 'Запустить', tone: 'danger' }))) return
     setBusy(t.id)
     try { await restartModuleTask(t.moduleKey, t.id); pushToast({ type: 'success', title: 'Задача перезапущена' }); await load() }
     catch (err) { pushToast({ type: 'error', title: 'Ошибка перезапуска', desc: err instanceof Error ? err.message : '' }) }
@@ -185,14 +189,9 @@ export function TasksPage() {
   const stopTargets = useMemo(() => selectedTasks.filter((t) => t.status === 'running' || t.status === 'queued' || t.status === 'paused'), [selectedTasks])
 
   const bulkStart = async () => {
-    // Боевые модули при перезапуске = реальные действия в Telegram — подтверждаем разово (модалка).
+    // Боевые модули при перезапуске = реальные действия в Telegram — подтверждаем разово.
     if (startTargets.some((t) => t.status !== 'paused' && isCombatModule(t.moduleKey)) &&
-        !(await confirm({
-          title: 'Реальные действия в Telegram',
-          message: 'Перезапуск боевых модулей выполнит реальные действия в Telegram (комментарии / ответы / реакции / рассылки). Продолжить?',
-          confirmLabel: 'Да, запустить',
-          tone: 'danger',
-        }))) return
+        !(await confirmDialog({ title: 'Реальные действия в Telegram', message: 'Перезапуск боевых модулей выполнит реальные действия в Telegram (комментарии / ответы / реакции). Продолжить?', confirmLabel: 'Запустить', tone: 'danger' }))) return
     void runBulk('Запуск/возобновление', startTargets, (t) => (t.status === 'paused' ? resumeModuleTask(t.moduleKey, t.id) : restartModuleTask(t.moduleKey, t.id)))
   }
   const bulkPause = () => void runBulk('Пауза', pauseTargets, (t) => pauseModuleTask(t.moduleKey, t.id))
@@ -218,27 +217,35 @@ export function TasksPage() {
     return { segments, completion, done: counts.done || 0 }
   }, [filtered])
 
-  // Группировка по целям (преследование цели).
+  // Список целей, у которых есть задачи (для фильтра в виде «По целям»).
+  const goalsWithTasks = useMemo(() => {
+    const ids = new Set(filtered.filter((t) => t.goalId).map((t) => t.goalId as string))
+    return goals.filter((g) => ids.has(g.id))
+  }, [filtered, goals])
+
+  // Группировка по целям (преследование цели). Задачи без цели сюда НЕ попадают —
+  // «преследовать» нечего; их место — во вкладке «Список». Фильтр goalSel сужает набор.
   const byGoal = useMemo(() => {
     const groups = new Map<string, ModuleTask[]>()
     for (const t of filtered) {
-      const k = t.goalId || 'none'
-      if (!groups.has(k)) groups.set(k, [])
-      groups.get(k)!.push(t)
+      if (!t.goalId) continue // без цели — не в разрезе целей
+      if (goalSel.size && !goalSel.has(t.goalId)) continue // выбраны конкретные цели
+      if (!groups.has(t.goalId)) groups.set(t.goalId, [])
+      groups.get(t.goalId)!.push(t)
     }
     return [...groups.entries()].map(([gid, ts]) => {
       const total = ts.reduce((a, t) => a + (t.progress?.total || 0), 0)
       const done = ts.reduce((a, t) => a + (t.progress?.done ?? t.progress?.actionsDone ?? 0), 0)
       return {
         gid,
-        name: gid === 'none' ? 'Без цели' : goalName(gid) || '—',
+        name: goalName(gid) || '—',
         tasks: ts,
         active: ts.filter(isActive).length,
         modules: [...new Set(ts.map((t) => t.moduleKey))],
         prog: total > 0 ? Math.min(100, Math.round((done / total) * 100)) : 0,
       }
     }).sort((a, b) => b.active - a.active || b.tasks.length - a.tasks.length)
-  }, [filtered, goalName])
+  }, [filtered, goalName, goalSel])
 
   const stat = (icon: React.ReactNode, label: string, value: React.ReactNode, tone = 'text-spark-300') => (
     <Card className="flex items-center gap-3 p-3">
@@ -249,7 +256,6 @@ export function TasksPage() {
 
   return (
     <div>
-      {confirmEl}
       <PageHeader
         title="Дашборд задач"
         subtitle="Цели → Задачи → Модули: единый экран прогресса. Фильтры-воронка + преследование цели. §8.8"
@@ -304,6 +310,22 @@ export function TasksPage() {
         <Select value={fStatus} onChange={setFStatus} className="w-44" options={STATUS_KEYS.map((s) => ({ value: s, label: s ? STATUS[s].label : 'Все статусы' }))} />
       </div>
 
+      {/* Фильтр по целям — только в разрезе «По целям»: выбрать, какие цели смотреть (пусто = все). */}
+      {view === 1 && goalsWithTasks.length > 0 && (
+        <div className="mb-3 flex flex-wrap items-center gap-2 rounded-xl border border-line bg-elevated/40 p-2.5">
+          <span className="text-xs font-semibold text-white/60"><Target size={12} className="mb-0.5 inline" /> Цели:</span>
+          <button type="button" onClick={() => setGoalSel(new Set())} className={cn('rounded-lg border px-2.5 py-1 text-xs font-medium transition-colors', goalSel.size === 0 ? 'border-iris-500/50 bg-iris-500/15 text-iris-200' : 'border-line text-white/50 hover:text-white/80')}>Все</button>
+          {goalsWithTasks.map((g) => {
+            const on = goalSel.has(g.id)
+            return (
+              <button key={g.id} type="button" onClick={() => setGoalSel((prev) => { const n = new Set(prev); n.has(g.id) ? n.delete(g.id) : n.add(g.id); return n })} className={cn('rounded-lg border px-2.5 py-1 text-xs font-medium transition-colors', on ? 'border-iris-500/50 bg-iris-500/15 text-iris-200' : 'border-line text-white/50 hover:text-white/80')}>
+                {g.name}
+              </button>
+            )
+          })}
+        </div>
+      )}
+
       {/* Массовые действия: выбор + цветные кнопки (старт/пауза/стоп). Серые и неактивные — когда некому применить. */}
       {view === 0 && filtered.length > 0 && (
         <div className="mb-3 flex flex-wrap items-center gap-2 rounded-xl border border-line bg-elevated/40 p-2.5">
@@ -324,12 +346,15 @@ export function TasksPage() {
       ) : filtered.length === 0 ? (
         <EmptyState icon={<ListChecks size={26} />} title="Задач нет" desc="Запустите модуль или измените фильтры — задачи появятся здесь." />
       ) : view === 1 ? (
-        // По целям (воронка преследования цели)
+        // По целям (воронка преследования цели) — задачи без цели сюда не входят.
+        byGoal.length === 0 ? (
+          <EmptyState icon={<Target size={26} />} title="Нет задач с целью" desc="Задачи без цели показаны во вкладке «Список». Привяжите цель при запуске модуля, чтобы вести их к целевому действию." />
+        ) : (
         <div className="flex flex-col gap-3">
           {byGoal.map((g) => (
             <Card key={g.gid} className="p-3">
               <div className="mb-2 flex flex-wrap items-center gap-2">
-                <Badge tone={g.gid === 'none' ? 'muted' : 'iris'}>{g.gid === 'none' ? <Layers size={12} className="mb-0.5 inline" /> : <Target size={12} className="mb-0.5 inline" />} {g.name}</Badge>
+                <Badge tone="iris"><Target size={12} className="mb-0.5 inline" /> {g.name}</Badge>
                 <span className="text-xs text-white/50">{g.tasks.length} задач · {g.active} активных</span>
                 <div className="ml-auto flex flex-wrap gap-1">
                   {g.modules.map((m) => <span key={m} className="rounded bg-elevated px-1.5 py-0.5 text-[10px] text-white/50">{moduleTitle(m)}</span>)}
@@ -343,6 +368,7 @@ export function TasksPage() {
             </Card>
           ))}
         </div>
+        )
       ) : (
         <div className="grid gap-2 lg:grid-cols-2">
           {filtered.map((t) => <TaskCard key={`${t.moduleKey}:${t.id}`} t={t} goalName={goalName(t.goalId)} busy={busy} onOpen={setDetailTask} onStop={doStop} onRestart={doRestart} onPause={doPause} onResume={doResume} selected={selected.has(t.id)} onToggleSelect={toggleSel} />)}
@@ -351,6 +377,7 @@ export function TasksPage() {
       <TaskDetailModal
         t={liveDetail}
         goalName={liveDetail ? goalName(liveDetail.goalId) : null}
+        accountName={accountName}
         busy={busy}
         onClose={() => setDetailTask(null)}
         onStop={doStop} onRestart={doRestart} onPause={doPause} onResume={doResume}
@@ -445,7 +472,7 @@ function TaskCard({ t, goalName, busy, onOpen, onStop, onRestart, onPause, onRes
   )
 }
 
-function Info({ label, value }: { label: string; value: React.ReactNode }) {
+function Info({ label, value }: { label: string; value: ReactNode }) {
   return (
     <div className="rounded-xl border border-line bg-elevated/40 px-3 py-2">
       <div className="text-[10px] font-bold uppercase tracking-wide text-white/40">{label}</div>
@@ -454,11 +481,34 @@ function Info({ label, value }: { label: string; value: React.ReactNode }) {
   )
 }
 
+/** Список чипов (аккаунты / каналы / ссылки) в деталях задачи. */
+function ChipList({ title, count, items, empty, tone, mono }: {
+  title: string; count: number; items: string[]; empty: string; tone: 'iris' | 'spark'; mono?: boolean
+}) {
+  const toneCls = tone === 'iris' ? 'border-iris-500/25 bg-iris-500/10 text-iris-200' : 'border-spark-500/25 bg-spark-500/10 text-spark-200'
+  const MAX = 80
+  return (
+    <div className="rounded-2xl border border-line bg-elevated/40 p-3">
+      <div className="mb-2 text-sm font-bold text-fg">{title} <span className="text-white/40">({count})</span></div>
+      {items.length === 0 ? (
+        empty ? <div className="py-1 text-xs text-white/40">{empty}</div> : null
+      ) : (
+        <div className="flex max-h-40 flex-wrap gap-1.5 overflow-y-auto">
+          {items.slice(0, MAX).map((it, i) => (
+            <span key={i} className={cn('max-w-full truncate rounded-lg border px-2 py-0.5 text-xs', mono && 'font-mono', toneCls)}>{it}</span>
+          ))}
+          {items.length > MAX && <span className="px-1 py-0.5 text-xs text-white/40">+{items.length - MAX}</span>}
+        </div>
+      )}
+    </div>
+  )
+}
+
 const LOG_COLOR: Record<string, string> = { error: 'text-rose-300', warning: 'text-amber-300', success: 'text-spark-300', info: 'text-white/70' }
 
 /** Поп-ап с полной информацией по задаче: статус, прогресс, настройки, логи + управление. */
-function TaskDetailModal({ t, goalName, busy, onClose, onStop, onRestart, onPause, onResume }: {
-  t: ModuleTask | null; goalName: string | null; busy: string | null; onClose: () => void
+function TaskDetailModal({ t, goalName, accountName, busy, onClose, onStop, onRestart, onPause, onResume }: {
+  t: ModuleTask | null; goalName: string | null; accountName: (id: string) => string; busy: string | null; onClose: () => void
   onStop: (t: ModuleTask) => void; onRestart: (t: ModuleTask) => void
   onPause: (t: ModuleTask) => void; onResume: (t: ModuleTask) => void
 }) {
@@ -510,6 +560,27 @@ function TaskDetailModal({ t, goalName, busy, onClose, onStop, onRestart, onPaus
           <Info label="Обновлена" value={new Date(t.updatedAt).toLocaleString('ru-RU')} />
           <Info label="Результатов" value={String(results.length)} />
         </div>
+
+        {/* Какие аккаунты работают/работали в задаче */}
+        <ChipList
+          title="Аккаунты в работе"
+          count={(s.accountIds || []).length}
+          items={(s.accountIds || []).map((id) => accountName(id))}
+          empty="Аккаунты не заданы"
+          tone="iris"
+        />
+        {/* Какие каналы/цели (папки разворачиваются в этот список при запуске) */}
+        <ChipList
+          title="Каналы / цели"
+          count={(s.channels || s.targets || []).length}
+          items={(s.channels || s.targets || []).map((c) => (c.startsWith('@') || c.startsWith('http') ? c : `@${c}`))}
+          empty="Целевые каналы не заданы (модуль работает без списка)"
+          tone="spark"
+          mono
+        />
+        {(s.postUrls?.length ?? 0) > 0 && (
+          <ChipList title="Ссылки на посты" count={s.postUrls!.length} items={s.postUrls!} empty="" tone="spark" mono />
+        )}
         <div className="rounded-2xl border border-line bg-elevated/40 p-3">
           <div className="mb-2 flex items-center gap-2 text-sm font-bold text-fg">Логи ({(detailed.logs || []).length}){!full && <Loader2 size={13} className="animate-spin text-white/40" />}</div>
           {logs.length === 0 ? (

@@ -44,7 +44,7 @@ function checkMinMax(settings, minKey, maxKey, label) {
 export function validateSettings(moduleKey, settings) {
   const def = MODULE_DEFS[moduleKey]
   if (!def) return 'Неизвестный модуль'
-  if (moduleKey !== 'ggr' && !settings?.accountIds?.length) return 'Выберите хотя бы один аккаунт'
+  if (!settings?.accountIds?.length) return 'Выберите хотя бы один аккаунт'
   const tgs = settings?.targets || settings?.channels || []
   if (def.requiresTargets && !tgs.length) {
     if (moduleKey === 'mass-react' && settings?.postUrls?.length) { /* посты вместо групп */ }

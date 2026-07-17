@@ -1,8 +1,9 @@
-import { useEffect, useRef } from 'react'
+import { useEffect } from 'react'
 import { Outlet, useLocation, Link } from 'react-router-dom'
 import { AppSidebar } from '@/widgets/AppSidebar'
 import { AppHeader } from '@/widgets/AppHeader'
 import { Toasts } from '@/widgets/Toasts'
+import { DialogHost } from '@/widgets/DialogHost'
 import { DevPanel } from '@/widgets/DevPanel'
 import { TasksDrawer } from '@/widgets/TasksDrawer'
 import { HelpCenterDrawer } from '@/widgets/HelpCenterDrawer'
@@ -33,28 +34,11 @@ export function Layout() {
   const loadAccountBusy = useApp((s) => s.loadAccountBusy)
   const sessionUser = useSession((s) => s.user)
   const location = useLocation()
-  const helpOpen = useUi((s) => s.helpOpen)
   const setHelpTopic = useUi((s) => s.setHelpTopic)
   const setHelpOpen = useUi((s) => s.setHelpOpen)
 
   // Guard: гейтим и прямой заход по URL, не только меню (§8.1). Демо (без сессии) — всё открыто.
   const routeAllowed = !sessionUser || canAccessPath(sessionUser.permissions, sessionUser.isAdmin, location.pathname)
-
-  // При открытом Help Center ужимаем контент вправо (padding-right = ширина дровера 28rem),
-  // чтобы панель не перекрывала контент. Только на lg+ (≥1024px); на мобиле дровер поверх.
-  // Применяется к отдельному враппер-div (без Tailwind-паддинга), чтобы inline-стиль не конфликтовал
-  // с Tailwind important:true (lg:px-8 на <main> перебить нельзя).
-  const contentRef = useRef<HTMLDivElement>(null)
-  useEffect(() => {
-    const el = contentRef.current
-    if (!el) return
-    // Ужимаем ширину контента на ширину дровера (28rem). Через width (не padding/margin —
-    // они конфликтуют с flex/Tailwind important в этом layout). Контент прижат влево, дровер справа.
-    const apply = () => { el.style.width = helpOpen && window.innerWidth >= 1024 ? 'calc(100% - 28rem)' : '' }
-    apply()
-    window.addEventListener('resize', apply)
-    return () => window.removeEventListener('resize', apply)
-  }, [helpOpen])
 
   const openHelp = () => {
     setHelpTopic('Помощь по настройкам')
@@ -89,14 +73,16 @@ export function Layout() {
       <div className="flex min-w-0 flex-1 flex-col">
         <AppHeader />
         <main className="mx-auto w-full max-w-[1400px] flex-1 px-4 py-6 sm:px-6 lg:px-8">
-          <div ref={contentRef} className="help-shift">
-            {isNoSub && <PaywallBanner />}
-            {routeAllowed ? <Outlet /> : <AccessDenied />}
-          </div>
+          {isNoSub && <PaywallBanner />}
+          {routeAllowed ? <Outlet /> : <AccessDenied />}
         </main>
       </div>
 
+      {/* Help Center — сайдбар в потоке: сужает страницу, а не оверлеит (§3.1). */}
+      <HelpCenterDrawer />
+
       <Toasts />
+      <DialogHost />
       <DevPanel />
       <TasksDrawer />
       <button
@@ -108,7 +94,6 @@ export function Layout() {
       >
         <HelpCircle size={18} />
       </button>
-      <HelpCenterDrawer />
     </div>
   )
 }

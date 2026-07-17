@@ -24,6 +24,7 @@ import { loadAiSafety } from './aiSafety.js'
 import { loadBlacklist } from './targetBlacklist.js'
 import {
   getAllAccountLocks,
+  getAllAccountLocksDetailed,
   reconcileStaleTasksOnBoot,
   reconcileLocks,
   forceReleaseAccount,
@@ -147,7 +148,7 @@ app.get('/api/tg/accounts/busy', async (_req, res) => {
   try {
     await reconcileLocks()
   } catch { /* ignore */ }
-  res.json({ ok: true, busy: getAllAccountLocks() })
+  res.json({ ok: true, busy: await getAllAccountLocksDetailed() })
 })
 
 app.get('/api/tg/accounts/daily-all', async (_req, res) => {

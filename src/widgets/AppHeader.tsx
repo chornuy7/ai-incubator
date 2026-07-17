@@ -150,7 +150,7 @@ export function AppHeader() {
         open={coinsOpen}
         onClose={() => setCoinsOpen(false)}
         title="Баланс монет"
-        subtitle="Монеты ⚡ тратятся на запуск модулей и проверки GGR"
+        subtitle="Монеты ⚡ тратятся на запуск модулей и проверки AIR"
         icon={<Zap size={22} fill="currentColor" />}
         size="md"
       >
