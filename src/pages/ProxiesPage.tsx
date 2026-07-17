@@ -7,7 +7,7 @@ import {
 } from '@/api/proxiesApi'
 import { fetchAccounts, patchAccount } from '@/api/accountsApi'
 import type { TgAccount } from '@/shared/types'
-import { COUNTRIES, FLAGS } from '@/shared/config/geo'
+import { FLAGS } from '@/shared/config/geo'
 
 const STATUS_META: Record<Proxy['status'], { label: string; tone: 'spark' | 'rose' | 'muted' }> = {
   ok: { label: 'Рабочий', tone: 'spark' },
@@ -64,9 +64,11 @@ export function ProxiesPage() {
   async function save() {
     setSaving(true); setErr('')
     try {
-      if (editing) { const up = await updateProxy(editing.id, form); setProxies((prev) => prev.map((x) => (x.id === up.id ? up : x))) }
-      else { const cr = await createProxy(form); setProxies((prev) => [cr, ...prev]) }
+      let saved: Proxy
+      if (editing) { saved = await updateProxy(editing.id, form); setProxies((prev) => prev.map((x) => (x.id === saved.id ? saved : x))) }
+      else { saved = await createProxy(form); setProxies((prev) => [saved, ...prev]) }
       setEditOpen(false)
+      void doTest(saved) // авто-определение статуса и страны (выбирать вручную не нужно)
     } catch (e) { setErr(e instanceof Error ? e.message : 'Ошибка') }
     finally { setSaving(false) }
   }
@@ -145,10 +147,9 @@ export function ProxiesPage() {
           <div><label className="label">Port</label><input type="number" value={form.port ?? 0} onChange={(e) => set('port', Number(e.target.value))} className="input" placeholder="1080" /></div>
           <div><label className="label">Логин</label><input value={form.username ?? ''} onChange={(e) => set('username', e.target.value)} className="input" placeholder="(опц.)" /></div>
           <div><label className="label">Пароль</label><input value={form.password ?? ''} onChange={(e) => set('password', e.target.value)} className="input" placeholder="(опц.)" /></div>
-          <div><label className="label">Страна</label><Select value={form.country ?? ''} onChange={(v) => set('country', v)} options={[{ value: '', label: '—' }, ...COUNTRIES.map((c) => ({ value: c.code, label: `${c.flag} ${c.label}` }))]} /></div>
-          <div><label className="label">Статус</label><Select value={form.status ?? 'unknown'} onChange={(v) => set('status', v)} options={[{ value: 'unknown', label: 'Не проверен' }, { value: 'ok', label: 'Рабочий' }, { value: 'dead', label: 'Мёртвый' }]} /></div>
           <div className="col-span-2"><label className="label">Заметка</label><input value={form.note ?? ''} onChange={(e) => set('note', e.target.value)} className="input" placeholder="(опц.)" /></div>
         </div>
+        <p className="mt-2 text-xs text-white/40">Статус и страна определяются автоматически при проверке — выбирать вручную не нужно.</p>
         {err && editOpen && <div className="mt-2 text-sm text-rose-300">{err}</div>}
         <div className="mt-4 flex justify-end gap-2">
           <button onClick={() => setEditOpen(false)} className="btn-ghost h-10">Отмена</button>

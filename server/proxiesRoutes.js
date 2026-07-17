@@ -53,7 +53,7 @@ proxiesRouter.post('/probe', async (req, res) => {
 
 proxiesRouter.post('/:id/check', async (req, res) => {
   try {
-    const proxy = await checkProxyLiveness(req.params.id)
+    let proxy = await checkProxyLiveness(req.params.id)
     if (!proxy) return res.status(404).json({ ok: false, error: 'Прокси не найден' })
     // Гео ВЫХОДНОГО IP (через прокси) — для мобильных/резидентных это страна выхода, а не шлюза.
     // Если через прокси не удалось — гео адреса шлюза как запасной вариант (§3.4).
@@ -62,6 +62,10 @@ proxiesRouter.post('/:id/check', async (req, res) => {
       geo = await probeProxyExitGeo(proxy)
       if (geo) geoSource = 'exit'
       else { geo = await probeProxyGeo(proxy.host); if (geo) geoSource = 'gateway' }
+    }
+    // Страна выставляется автоматически из гео (руками выбирать не нужно).
+    if (geo?.country && geo.country !== proxy.country) {
+      proxy = (await updateProxy(proxy.id, { country: geo.country })) || proxy
     }
     res.json({ ok: true, proxy, geo, geoSource })
   } catch (err) { fail(res, err, 500) }
