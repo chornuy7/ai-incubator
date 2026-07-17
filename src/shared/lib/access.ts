@@ -1,6 +1,6 @@
 import type { RolePermissions, Perm } from '@/api/rolesApi'
 
-export type PermKind = 'module' | 'block' | 'section' | 'folder' | 'channel' | 'timers' | 'searchTemplates'
+export type PermKind = 'module' | 'block' | 'section' | 'account' | 'folder' | 'channel' | 'timers' | 'searchTemplates'
 
 /**
  * Клиентская проверка доступа (зеркало server/roles.js#can). Админ (isAdmin) — всегда true;
@@ -14,12 +14,24 @@ export function can(permissions: RolePermissions | null, isAdmin: boolean, kind:
     case 'module': return val(permissions.modules[key ?? ''])
     case 'block': return val(permissions.blocks[key ?? ''])
     case 'section': return val(permissions.sections?.[key ?? ''])
+    case 'account': return val(permissions.resources.accounts?.[key ?? ''])
     case 'folder': return val(permissions.resources.folders[key ?? ''])
     case 'channel': return val(permissions.resources.channels[key ?? ''])
     case 'timers': return val(permissions.resources.timers)
     case 'searchTemplates': return val(permissions.resources.searchTemplates)
     default: return false
   }
+}
+
+/**
+ * Отфильтровать аккаунты по доступу роли (R4): не-админ видит только выданные ему аккаунты.
+ * Нет сессии (демо) или админ → полный список. По умолчанию (нет выдач) не-админ видит пусто.
+ */
+export function filterAccountsByAccess<T extends { id: string }>(
+  list: T[], permissions: RolePermissions | null, isAdmin: boolean,
+): T[] {
+  if (isAdmin) return list
+  return list.filter((a) => can(permissions, false, 'account', a.id))
 }
 
 /** Извлечь ключ модуля из пути роутинга (/panel/modules/<key>). */

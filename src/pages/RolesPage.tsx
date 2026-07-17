@@ -108,6 +108,7 @@ export function RolesPage() {
   const setModule = (key: string, p: Perm) => { setPerms((s) => ({ ...s, modules: { ...s.modules, [key]: p } })); mark() }
   const setBlock = (key: string, p: Perm) => { setPerms((s) => ({ ...s, blocks: { ...s.blocks, [key]: p } })); mark() }
   const setSection = (key: string, p: Perm) => { setPerms((s) => ({ ...s, sections: { ...s.sections, [key]: p } })); mark() }
+  const setAccount = (id: string, p: Perm) => { setPerms((s) => ({ ...s, resources: { ...s.resources, accounts: { ...s.resources.accounts, [id]: p } } })); mark() }
   const setFolder = (id: string, p: Perm) => { setPerms((s) => ({ ...s, resources: { ...s.resources, folders: { ...s.resources.folders, [id]: p } } })); mark() }
   const setChannel = (id: string, p: Perm) => { setPerms((s) => ({ ...s, resources: { ...s.resources, channels: { ...s.resources.channels, [id]: p } } })); mark() }
   const setTimers = (p: Perm) => { setPerms((s) => ({ ...s, resources: { ...s.resources, timers: p } })); mark() }
@@ -117,6 +118,7 @@ export function RolesPage() {
   const mPerm = (k: string): Perm => perms.modules[k] ?? 'deny'
   const bPerm = (k: string): Perm => perms.blocks[k] ?? 'deny'
   const sPerm = (k: string): Perm => perms.sections?.[k] ?? 'deny'
+  const aPerm = (id: string): Perm => perms.resources.accounts?.[id] ?? 'deny'
   const fPerm = (id: string): Perm => perms.resources.folders[id] ?? 'deny'
   const cPerm = (id: string): Perm => perms.resources.channels[id] ?? 'deny'
   // Выбранные каналы папки. Пусто = все каналы папки (в т.ч. будущие). Ключи нормализованы (без @, lower).
@@ -255,8 +257,8 @@ export function RolesPage() {
                                 <div key={it.id}>
                                   <PermRow
                                     label={it.label}
-                                    value={res.type === 'folders' ? fPerm(it.id) : cPerm(it.id)}
-                                    onChange={(p) => (res.type === 'folders' ? setFolder(it.id, p) : setChannel(it.id, p))}
+                                    value={res.type === 'folders' ? fPerm(it.id) : res.type === 'channels' ? cPerm(it.id) : aPerm(it.id)}
+                                    onChange={(p) => (res.type === 'folders' ? setFolder(it.id, p) : res.type === 'channels' ? setChannel(it.id, p) : setAccount(it.id, p))}
                                   />
                                   {res.type === 'folders' && fPerm(it.id) === 'allow' && (it.channels?.length ? (
                                     <div className="ml-4 mt-1 rounded-lg border border-line bg-elevated/60 px-3 py-2">

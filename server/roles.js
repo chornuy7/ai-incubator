@@ -10,6 +10,7 @@ import { dataPath, readJson, writeJson } from './lib/jsonStore.js'
 import { MODULE_LABELS } from './lib/accountLocks.js'
 import { listFolders } from './targetFolders.js'
 import { listChannels } from './channels.js'
+import { loadAllMeta } from './accountsMeta.js'
 
 const ROLES_FILE = process.env.ROLES_FILE || dataPath('roles.json')
 
@@ -52,6 +53,7 @@ export const SECTIONS = [
 
 /** Типы ресурсов с индивидуальным доступом (§8.1). folders/channels — по элементам. */
 export const RESOURCE_TYPES = [
+  { type: 'accounts', label: 'Аккаунты (кто виден в менеджере/пикере)', perItem: true },
   { type: 'folders', label: 'Папки целей', perItem: true },
   { type: 'channels', label: 'Целевые каналы', perItem: true },
   { type: 'timers', label: 'Таймеры / планировщик', perItem: false },
@@ -98,6 +100,7 @@ export function normalizeRole(input = {}) {
       blocks: normPermMap(p.blocks), // ключ = `${moduleKey}:${blockKey}`
       sections: normPermMap(p.sections), // ключ = путь раздела (напр. '/panel/proxies')
       resources: {
+        accounts: normPermMap(r.accounts), // accountId → allow/deny (кто виден роли)
         folders: normPermMap(r.folders),
         channels: normPermMap(r.channels),
         folderChannels: normFolderChannels(r.folderChannels),
@@ -254,8 +257,13 @@ export async function deleteRole(id) {
  */
 export async function buildCatalog() {
   const modules = Object.entries(MODULE_LABELS).map(([key, label]) => ({ key, label }))
-  const [folders, channels] = await Promise.all([listFolders(), listChannels()])
+  const [folders, channels, meta] = await Promise.all([listFolders(), listChannels(), loadAllMeta()])
+  // Аккаунты для выдачи доступа (лёгкий список из метаданных — без подключения к Telegram).
+  const accountItems = Object.entries(meta)
+    .filter(([, m]) => m && !m.inTrash)
+    .map(([id, m]) => ({ id, label: m.name || (m.username ? '@' + m.username : id) }))
   const resources = [
+    { type: 'accounts', label: 'Аккаунты (кто виден роли)', perItem: true, items: accountItems },
     { type: 'folders', label: 'Папки целей', perItem: true, items: folders.map((f) => ({ id: f.id, label: f.name || f.id, channels: f.targets || [] })) },
     { type: 'channels', label: 'Целевые каналы', perItem: true, items: channels.map((c) => ({ id: c.id, label: c.title || (c.username ? '@' + c.username : c.id) })) },
     { type: 'timers', label: 'Таймеры / планировщик', perItem: false },
@@ -268,7 +276,7 @@ export async function buildCatalog() {
  * Разрешён ли доступ роли к цели. Чистая функция (юнит-тест + будущий enforcement).
  * Админ (builtin ADMIN_ROLE_ID) — всегда true. По умолчанию — deny.
  * @param {object|null} role
- * @param {'module'|'block'|'section'|'folder'|'channel'|'timers'|'searchTemplates'} kind
+ * @param {'module'|'block'|'section'|'account'|'folder'|'channel'|'timers'|'searchTemplates'} kind
  * @param {string} [key]
  */
 export function can(role, kind, key) {
@@ -279,6 +287,7 @@ export function can(role, kind, key) {
     case 'module': return p.modules?.[key] === ALLOW
     case 'block': return p.blocks?.[key] === ALLOW
     case 'section': return p.sections?.[key] === ALLOW
+    case 'account': return p.resources?.accounts?.[key] === ALLOW
     case 'folder': return p.resources?.folders?.[key] === ALLOW
     case 'channel': return p.resources?.channels?.[key] === ALLOW
     case 'timers': return p.resources?.timers === ALLOW
@@ -336,7 +345,7 @@ export async function rolesForUser(user) {
  * @param {object[]} roles @returns {RolePermissions}
  */
 export function mergePermissions(roles = []) {
-  const resources = { folders: {}, channels: {}, folderChannels: {}, timers: DENY, searchTemplates: DENY }
+  const resources = { accounts: {}, folders: {}, channels: {}, folderChannels: {}, timers: DENY, searchTemplates: DENY }
   const merged = { modules: {}, blocks: {}, sections: {}, resources }
   const wholeFolder = new Set() // папки, где хоть одна роль дала «все каналы»
   for (const role of roles) {
@@ -346,6 +355,7 @@ export function mergePermissions(roles = []) {
     for (const [k, v] of Object.entries(p.modules || {})) if (v === ALLOW) merged.modules[k] = ALLOW
     for (const [k, v] of Object.entries(p.blocks || {})) if (v === ALLOW) merged.blocks[k] = ALLOW
     for (const [k, v] of Object.entries(p.sections || {})) if (v === ALLOW) merged.sections[k] = ALLOW
+    for (const [k, v] of Object.entries(r.accounts || {})) if (v === ALLOW) resources.accounts[k] = ALLOW
     for (const [k, v] of Object.entries(r.channels || {})) if (v === ALLOW) resources.channels[k] = ALLOW
     if (r.timers === ALLOW) resources.timers = ALLOW
     if (r.searchTemplates === ALLOW) resources.searchTemplates = ALLOW

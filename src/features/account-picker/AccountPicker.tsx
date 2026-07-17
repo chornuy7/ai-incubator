@@ -3,8 +3,10 @@ import {
   Search, Users, CheckCheck, ChevronsRight, ChevronsLeft, RefreshCw, ChevronDown, Inbox, ShieldCheck, Loader2, Lock, AlertTriangle,
 } from 'lucide-react'
 import { useApp, activeAccounts } from '@/mocks/store'
+import { useSession } from '@/features/auth/session'
 import { Avatar, Select } from '@/shared/ui'
 import { HelpButton } from '@/features/neuro-commenting/moduleUi'
+import { filterAccountsByAccess } from '@/shared/lib/access'
 import { cn } from '@/shared/lib/utils'
 import { ROLES } from '@/shared/config/modules'
 import { countryOptionsFrom, matchesGeo, FLAGS, COUNTRY_NAME } from '@/shared/config/geo'
@@ -38,7 +40,11 @@ export function AccountPicker({
   const data = useApp((s) => s.data)
   const pushToast = useApp((s) => s.pushToast)
   const loadAccountBusy = useApp((s) => s.loadAccountBusy)
-  const accounts = activeAccounts(data)
+  const sessionUser = useSession((s) => s.user)
+  // R4: не-админ видит только выданные его роли аккаунты (без сессии/демо — все).
+  const accounts = sessionUser
+    ? filterAccountsByAccess(activeAccounts(data), sessionUser.permissions, sessionUser.isAdmin)
+    : activeAccounts(data)
   const limit = data.plan.accountLimit
 
   const [collapsed, setCollapsed] = useState(false)

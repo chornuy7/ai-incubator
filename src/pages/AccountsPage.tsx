@@ -4,6 +4,8 @@ import {
   MoreHorizontal, Trash2, KeyRound, Info, Users, Check, X, Undo2, Loader2, Pause,
 } from 'lucide-react'
 import { useApp, activeAccounts, trashedAccounts, STATUS_META } from '@/mocks/store'
+import { useSession } from '@/features/auth/session'
+import { filterAccountsByAccess } from '@/shared/lib/access'
 import { useUi } from '@/shared/lib/uiStore'
 import {
   PageHeader, Avatar, StatusBadge, EmptyState, Dropdown, MenuItem, Select, Skeleton, Modal,
@@ -48,6 +50,7 @@ export function AccountsPage() {
   const loadAccountBusy = useApp((s) => s.loadAccountBusy)
   const accountsLoading = useApp((s) => s.accountsLoading)
   const pushToast = useApp((s) => s.pushToast)
+  const sessionUser = useSession((s) => s.user)
   const setTasksOpen = useUi((s) => s.setTasksOpen)
 
   const [tab, setTab] = useState<'accounts' | 'trash'>('accounts')
@@ -72,8 +75,13 @@ export function AccountsPage() {
 
   const loading = accountsLoading
 
-  const active = activeAccounts(data)
-  const trashed = trashedAccounts(data)
+  // R4: не-админ видит в менеджере только выданные его роли аккаунты (демо/нет сессии — все).
+  const active = sessionUser
+    ? filterAccountsByAccess(activeAccounts(data), sessionUser.permissions, sessionUser.isAdmin)
+    : activeAccounts(data)
+  const trashed = sessionUser
+    ? filterAccountsByAccess(trashedAccounts(data), sessionUser.permissions, sessionUser.isAdmin)
+    : trashedAccounts(data)
 
   // §6: сводка суточных лимитов по аккаунтам (для индикатора throttle в списке).
   const [dailyAll, setDailyAll] = useState<DailyAllMap>({})

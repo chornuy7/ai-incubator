@@ -129,6 +129,26 @@ test('sections: can() гейтит разделы, union объединяет, �
   assert.equal(m.sections['/panel/proxies'], undefined) // не давали → нет
 })
 
+test('accounts: доступ на уровне аккаунта (R4) — can() + union, дефолт deny', () => {
+  const admin = normalizeRole({ name: 'Admin' })
+  admin.builtin = true; admin.id = ADMIN_ROLE_ID
+  assert.equal(can(admin, 'account', 'acc_1'), true) // админ видит все
+
+  const role = normalizeRole({ name: 'R', permissions: { resources: { accounts: { acc_1: ALLOW, acc_2: DENY } } } })
+  assert.equal(can(role, 'account', 'acc_1'), true)
+  assert.equal(can(role, 'account', 'acc_2'), false) // явный deny
+  assert.equal(can(role, 'account', 'acc_9'), false) // нет в карте → deny (нужен явный доступ)
+  assert.equal(can(null, 'account', 'acc_1'), false)
+
+  // union: аккаунт виден, если его дала хотя бы одна роль
+  const a = normalizeRole({ name: 'A', permissions: { resources: { accounts: { acc_1: ALLOW } } } })
+  const b = normalizeRole({ name: 'B', permissions: { resources: { accounts: { acc_2: ALLOW } } } })
+  const m = mergePermissions([a, b])
+  assert.equal(m.resources.accounts.acc_1, ALLOW)
+  assert.equal(m.resources.accounts.acc_2, ALLOW)
+  assert.equal(m.resources.accounts.acc_3, undefined)
+})
+
 test('CRUD ролей на изолированном файле + сид по умолчанию', async () => {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'roles-'))
   process.env.ROLES_FILE = path.join(dir, 'roles.json')

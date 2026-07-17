@@ -7,6 +7,7 @@ export interface RolePermissions {
   blocks: Record<string, Perm> // ключ = `${moduleKey}:${blockKey}`
   sections: Record<string, Perm> // ключ = путь раздела (напр. '/panel/proxies')
   resources: {
+    accounts: Record<string, Perm> // ключ = accountId (кто виден роли в менеджере/пикере)
     folders: Record<string, Perm>
     channels: Record<string, Perm>
     /** Какие каналы внутри папки выданы роли: folderId → список ссылок. Пусто = все каналы папки. */
@@ -31,7 +32,7 @@ export interface CatalogBlock { key: string; label: string }
 export interface CatalogSection { key: string; label: string }
 export interface CatalogResourceItem { id: string; label: string; channels?: string[] }
 export interface CatalogResource {
-  type: 'folders' | 'channels' | 'timers' | 'searchTemplates'
+  type: 'accounts' | 'folders' | 'channels' | 'timers' | 'searchTemplates'
   label: string
   perItem: boolean
   items?: CatalogResourceItem[]
@@ -69,5 +70,5 @@ export async function deleteRole(id: string): Promise<void> {
 
 /** Пустые права (всё deny) — для новой роли. */
 export function emptyPermissions(): RolePermissions {
-  return { modules: {}, blocks: {}, sections: {}, resources: { folders: {}, channels: {}, folderChannels: {}, timers: 'deny', searchTemplates: 'deny' } }
+  return { modules: {}, blocks: {}, sections: {}, resources: { accounts: {}, folders: {}, channels: {}, folderChannels: {}, timers: 'deny', searchTemplates: 'deny' } }
 }
