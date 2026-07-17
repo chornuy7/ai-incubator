@@ -1,7 +1,7 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
-import { History, Calendar, Eraser, Download, Eye, Loader2, CheckCircle2, XCircle, Radio, Users, Search, MessageCircle, Hash, Database, Check, RefreshCw } from 'lucide-react'
+import { Fragment, useCallback, useEffect, useMemo, useState } from 'react'
+import { History, Calendar, Eraser, Download, Eye, Loader2, CheckCircle2, XCircle, Radio, Users, Search, MessageCircle, Hash, Database, Check, RefreshCw, ChevronDown } from 'lucide-react'
 import { useApp } from '@/mocks/store'
-import { PageHeader, Card, EmptyState, Select, Modal, Badge, Skeleton } from '@/shared/ui'
+import { PageHeader, Card, EmptyState, Select, Badge, Skeleton } from '@/shared/ui'
 import { compact, cn } from '@/shared/lib/utils'
 import { fetchParsingHistory, fetchHistoryResults, type HistoryItem } from '@/api/parsingHistoryApi'
 
@@ -45,7 +45,7 @@ export function ParsingHistoryPage() {
   const [status, setStatus] = useState('all')
   const [date, setDate] = useState('')
   const [kw, setKw] = useState('')
-  const [detail, setDetail] = useState<HistoryItem | null>(null)
+  const [expandedId, setExpandedId] = useState<string | null>(null)
   const [detailRows, setDetailRows] = useState<Record<string, unknown>[] | null>(null)
   const [busyId, setBusyId] = useState<string | null>(null)
 
@@ -71,8 +71,10 @@ export function ParsingHistoryPage() {
     [items, module, status, date, kw],
   )
 
-  const openDetail = async (h: HistoryItem) => {
-    setDetail(h); setDetailRows(null)
+  // Раскрытие логов ВНИЗ под строкой (вместо поп-апа) — крупно и удобно для просмотра.
+  const toggleDetail = async (h: HistoryItem) => {
+    if (expandedId === h.id) { setExpandedId(null); return }
+    setExpandedId(h.id); setDetailRows(null)
     try { setDetailRows(await fetchHistoryResults(h)) } catch { setDetailRows([]) }
   }
 
@@ -146,8 +148,10 @@ export function ParsingHistoryPage() {
                 {filtered.map((h) => {
                   const m = STATUS_META[h.status]
                   const d = fmtDate(h.date)
+                  const open = expandedId === h.id
                   return (
-                    <tr key={h.id} className="border-b border-line/50 last:border-0 hover:bg-elevated/40">
+                    <Fragment key={h.id}>
+                    <tr className={cn('border-b border-line/50 last:border-0 hover:bg-elevated/40', open && 'bg-elevated/40')}>
                       <td className="px-4 py-3">
                         <div className="flex items-center gap-2 text-muted"><Calendar size={14} /> <span className="font-mono text-xs">{d.day}<br /><span className="text-faint">{d.time}</span></span></div>
                       </td>
@@ -164,11 +168,51 @@ export function ParsingHistoryPage() {
                       <td className="px-4 py-3 text-right"><span className="inline-flex items-center gap-1 font-mono font-bold text-spark-300"><CheckCircle2 size={13} /> {compact(h.found)}</span></td>
                       <td className="px-4 py-3">
                         <div className="flex justify-end gap-1">
-                          <button onClick={() => void openDetail(h)} className="btn-icon h-8 w-8 text-iris-300" title="Просмотр"><Eye size={14} /></button>
+                          <button onClick={() => void toggleDetail(h)} className={cn('flex h-8 items-center gap-1 rounded-lg px-2 text-iris-300 transition-colors', open ? 'bg-iris-500/15' : 'hover:bg-elevated')} title={open ? 'Свернуть логи' : 'Показать логи'}>
+                            <Eye size={14} /> <ChevronDown size={13} className={cn('transition-transform', open && 'rotate-180')} />
+                          </button>
                           <button onClick={() => void download(h)} disabled={busyId === h.id || h.found === 0} className="btn-icon h-8 w-8 text-spark-300 disabled:opacity-40" title="Скачать CSV">{busyId === h.id ? <Loader2 size={14} className="animate-spin" /> : <Download size={14} />}</button>
                         </div>
                       </td>
                     </tr>
+                    {open && (
+                      <tr className="border-b border-line/50 last:border-0">
+                        <td colSpan={6} className="bg-elevated/20 px-4 pb-4 pt-0">
+                          <div className="animate-fade-in overflow-hidden rounded-2xl border border-iris-500/25 bg-surface/70 p-4">
+                            <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+                              {[['Дата', d.day + ' ' + d.time], ['Модуль', h.moduleLabel], ['Найдено', compact(h.found)], ['Ключевые слова', h.keywords.join(', ') || '—']].map(([k, v]) => (
+                                <div key={k} className="rounded-xl border border-line bg-elevated p-3"><div className="text-xs text-muted">{k}</div><div className="mt-0.5 font-semibold text-fg">{v}</div></div>
+                              ))}
+                            </div>
+
+                            <div className="mt-3 flex items-center gap-2">
+                              <Badge tone={STATUS_META[h.status].tone}>{STATUS_META[h.status].icon} {STATUS_META[h.status].label}</Badge>
+                              <span className="text-xs text-muted">Результаты{detailRows ? ` — ${detailRows.length}` : ''}</span>
+                              <button onClick={() => void download(h)} disabled={h.found === 0} className="btn-primary ml-auto h-9 disabled:opacity-40"><Download size={14} /> Экспорт CSV</button>
+                            </div>
+
+                            <div className="mt-3 rounded-xl border border-line bg-elevated/40 p-2">
+                              {!detailRows ? (
+                                <div className="flex justify-center py-8"><Loader2 className="animate-spin text-muted" /></div>
+                              ) : detailRows.length === 0 ? (
+                                <div className="py-6 text-center text-sm text-muted">Нет сохранённых результатов.</div>
+                              ) : (
+                                <div className="max-h-[55vh] space-y-1 overflow-y-auto pr-1">
+                                  {detailRows.slice(0, 200).map((r, i) => (
+                                    <div key={i} className="flex items-center justify-between gap-3 rounded-lg border border-line/60 bg-surface px-3 py-2 text-sm">
+                                      <span className="flex items-center gap-2 truncate text-fg"><span className="text-faint">{i + 1}.</span> {String(r.chat_name ?? r.title ?? r.name ?? r.username ?? r.id ?? '—')}</span>
+                                      <span className="shrink-0 font-mono text-xs text-muted">{r.chat_username ? `@${r.chat_username}` : r.username ? `@${r.username}` : ''} {String(r.subscribers ?? r.members ?? '')}</span>
+                                    </div>
+                                  ))}
+                                  {detailRows.length > 200 && <div className="pt-2 text-center text-xs text-faint">…и ещё {detailRows.length - 200}. Полный список — в CSV.</div>}
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        </td>
+                      </tr>
+                    )}
+                    </Fragment>
                   )
                 })}
               </tbody>
@@ -177,39 +221,6 @@ export function ParsingHistoryPage() {
         </Card>
       )}
 
-      <Modal open={!!detail} onClose={() => { setDetail(null); setDetailRows(null) }} title="Детали задачи парсинга" subtitle={detail?.moduleLabel} icon={<Database size={22} />} size="md">
-        {detail && (
-          <div className="space-y-3">
-            <div className="grid grid-cols-2 gap-3">
-              {[['Дата', fmtDate(detail.date).day + ' ' + fmtDate(detail.date).time], ['Модуль', detail.moduleLabel], ['Найдено', compact(detail.found)], ['Ключевые слова', detail.keywords.join(', ') || '—']].map(([k, v]) => (
-                <div key={k} className="rounded-xl border border-line bg-elevated p-3"><div className="text-xs text-muted">{k}</div><div className="mt-0.5 font-semibold text-fg">{v}</div></div>
-              ))}
-            </div>
-            <div className="rounded-xl border border-line bg-elevated p-3"><div className="text-xs text-muted">Статус</div><div className="mt-1"><Badge tone={STATUS_META[detail.status].tone}>{STATUS_META[detail.status].icon} {STATUS_META[detail.status].label}</Badge></div></div>
-
-            <div className="rounded-xl border border-line bg-elevated p-3">
-              <div className="mb-2 text-xs text-muted">Результаты {detailRows ? `(${detailRows.length})` : ''}</div>
-              {!detailRows ? (
-                <div className="flex justify-center py-4"><Loader2 className="animate-spin text-muted" /></div>
-              ) : detailRows.length === 0 ? (
-                <div className="py-2 text-sm text-muted">Нет сохранённых результатов.</div>
-              ) : (
-                <div className="max-h-56 space-y-1 overflow-y-auto">
-                  {detailRows.slice(0, 50).map((r, i) => (
-                    <div key={i} className="flex items-center justify-between gap-2 rounded-lg border border-line/60 bg-surface px-2.5 py-1.5 text-xs">
-                      <span className="truncate text-fg">{String(r.chat_name ?? r.title ?? r.name ?? r.username ?? r.id ?? '—')}</span>
-                      <span className="shrink-0 text-muted">{r.chat_username ? `@${r.chat_username}` : r.username ? `@${r.username}` : ''} {String(r.subscribers ?? r.members ?? '')}</span>
-                    </div>
-                  ))}
-                  {detailRows.length > 50 && <div className="pt-1 text-center text-[11px] text-faint">…и ещё {detailRows.length - 50}</div>}
-                </div>
-              )}
-            </div>
-
-            <button onClick={() => void download(detail)} disabled={detail.found === 0} className="btn-primary h-10 w-full disabled:opacity-40"><Download size={15} /> Экспортировать результаты (CSV)</button>
-          </div>
-        )}
-      </Modal>
     </div>
   )
 }
