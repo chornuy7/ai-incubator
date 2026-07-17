@@ -100,6 +100,7 @@ export function CampaignPage() {
     catch (e) { pushToast({ type: 'error', title: 'Ошибка', desc: e instanceof Error ? e.message : '' }) }
   }
   const removeSchedule = async (s: CampaignSchedule) => {
+    if (!window.confirm('Удалить расписание кампании? Действие необратимо.')) return
     try { await deleteSchedule(s.id); setSchedules((prev) => prev.filter((x) => x.id !== s.id)) }
     catch (e) { pushToast({ type: 'error', title: 'Ошибка', desc: e instanceof Error ? e.message : '' }) }
   }
@@ -194,7 +195,7 @@ export function CampaignPage() {
                 {s.lastRunAt && <span className="text-xs text-white/40">· последний: {new Date(s.lastRunAt).toLocaleString()}{s.lastResult?.error ? ` (${s.lastResult.error})` : s.lastResult ? ` (задач: ${s.lastResult.tasks})` : ''}</span>}
                 <div className="ml-auto flex items-center gap-1">
                   <button onClick={() => void toggleSchedule(s)} className="btn-icon h-8 w-8" aria-label="Вкл/выкл"><Power size={14} className={s.enabled ? 'text-spark-400' : 'text-white/40'} /></button>
-                  <button onClick={() => void removeSchedule(s)} className="btn-icon h-8 w-8" aria-label="Удалить"><Trash2 size={14} /></button>
+                  <button onClick={() => void removeSchedule(s)} className="btn-icon-danger h-8 w-8" aria-label="Удалить расписание" title="Удалить расписание"><Trash2 size={14} /></button>
                 </div>
               </div>
             ))}

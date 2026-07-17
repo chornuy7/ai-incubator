@@ -119,7 +119,7 @@ export function LeadsPage() {
                   options={LEAD_STATUSES.map((s) => ({ value: s, label: STATUS[s].label }))}
                   className="w-36"
                 />
-                <button onClick={() => void remove(l)} className="btn-icon h-8 w-8" aria-label="Удалить"><Trash2 size={14} /></button>
+                <button onClick={() => void remove(l)} className="btn-icon-danger h-8 w-8" aria-label="Удалить лида" title="Удалить лида"><Trash2 size={14} /></button>
               </div>
             </Card>
           ))}

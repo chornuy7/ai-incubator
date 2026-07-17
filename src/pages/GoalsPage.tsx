@@ -58,6 +58,7 @@ export function GoalsPage() {
   }
   const removeKb = async (item: KbItem) => {
     if (!editing) return
+    if (!window.confirm('Удалить элемент базы знаний? Действие необратимо.')) return
     try {
       await deleteKb(editing.id, item.id)
       setKb(await fetchKb(editing.id))
@@ -129,7 +130,7 @@ export function GoalsPage() {
                 </div>
                 <div className="flex shrink-0 gap-1">
                   <button onClick={() => openEdit(g)} className="btn-icon h-8 w-8" aria-label="Изменить"><Pencil size={14} /></button>
-                  <button onClick={() => remove(g)} className="btn-icon h-8 w-8" aria-label="Удалить"><Trash2 size={14} /></button>
+                  <button onClick={() => remove(g)} className="btn-icon-danger h-8 w-8" aria-label="Удалить цель" title="Удалить цель"><Trash2 size={14} /></button>
                 </div>
               </div>
               {g.description && <div className="text-sm text-white/60">{g.description}</div>}
@@ -199,7 +200,7 @@ export function GoalsPage() {
                         {k.title && <div className="text-xs font-semibold text-white">{k.title}</div>}
                         <div className="truncate text-xs text-white/60">{k.content}</div>
                       </div>
-                      <button onClick={() => void removeKb(k)} className="btn-icon h-6 w-6 shrink-0" aria-label="Удалить"><Trash2 size={12} /></button>
+                      <button onClick={() => void removeKb(k)} className="btn-icon-danger h-6 w-6 shrink-0" aria-label="Удалить из базы знаний" title="Удалить"><Trash2 size={12} /></button>
                     </div>
                   ))}
                 </div>

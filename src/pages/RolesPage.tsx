@@ -175,7 +175,7 @@ export function RolesPage() {
                   </span>
                 </span>
                 {!r.builtin && (
-                  <span onClick={(e) => { e.stopPropagation(); void removeRole(r) }} className="btn-icon h-7 w-7 shrink-0 opacity-0 group-hover:opacity-100" aria-label="Удалить"><Trash2 size={13} /></span>
+                  <span onClick={(e) => { e.stopPropagation(); void removeRole(r) }} className="btn-icon-danger h-7 w-7 shrink-0 opacity-0 group-hover:opacity-100" aria-label="Удалить роль" title="Удалить роль"><Trash2 size={13} /></span>
                 )}
               </button>
             ))}

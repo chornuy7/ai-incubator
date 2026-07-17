@@ -147,12 +147,7 @@ export function UsersPage() {
                   )}
                   <button onClick={() => void toggleActive(u)} className="btn-ghost h-9 text-xs">{u.active ? 'Отключить' : 'Включить'}</button>
                   {!locked && (
-                    <button
-                      onClick={() => void remove(u)}
-                      className="grid h-9 w-9 place-items-center rounded-lg border border-rose-500/40 bg-rose-500/10 text-rose-300 transition-colors hover:bg-rose-500/20 hover:text-rose-200"
-                      aria-label="Удалить пользователя"
-                      title="Удалить пользователя"
-                    >
+                    <button onClick={() => void remove(u)} className="btn-icon-danger h-9 w-9" aria-label="Удалить пользователя" title="Удалить пользователя">
                       <Trash2 size={14} />
                     </button>
                   )}

@@ -130,7 +130,7 @@ export function ProxiesPage() {
                   <button onClick={() => void doTest(p)} disabled={testing === p.id} className="btn-ghost h-9 text-xs disabled:opacity-50">{testing === p.id ? <Loader2 size={14} className="animate-spin" /> : <Zap size={14} />} Тест</button>
                   <button onClick={() => setAssignFor(p)} className="btn-ghost h-9 text-xs"><Link2 size={14} /> Назначить</button>
                   <button onClick={() => openEdit(p)} className="btn-icon h-9 w-9" aria-label="Изменить"><Pencil size={14} /></button>
-                  <button onClick={() => void remove(p)} className="btn-icon h-9 w-9" aria-label="Удалить"><Trash2 size={14} /></button>
+                  <button onClick={() => void remove(p)} className="btn-icon-danger h-9 w-9" aria-label="Удалить прокси" title="Удалить прокси"><Trash2 size={14} /></button>
                 </div>
               </Card>
             )
