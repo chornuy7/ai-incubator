@@ -38,7 +38,7 @@ export function ProxyPoolModal({ open, onClose }: { open: boolean; onClose: () =
     if (!guardNet('проверка прокси')) return
     setChecking(true)
     try {
-      const res = await probeProxy(host.trim(), Number(port))
+      const res = await probeProxy({ host: host.trim(), port: Number(port), scheme: type, username: login.trim() || undefined })
       if (res.alive) {
         const geo = res.geo
         const where = geo ? ` · ${geo.countryName || geo.country}${geo.city ? ', ' + geo.city : ''}` : ''

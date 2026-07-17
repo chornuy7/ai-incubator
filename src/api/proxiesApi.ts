@@ -54,13 +54,15 @@ export async function deleteProxy(id: string): Promise<void> {
 }
 
 export interface ProxyGeo { country: string; countryName: string; city: string; isp: string; ip: string }
+/** exit — гео реального выходного IP (через прокси); gateway — гео адреса шлюза (запасной вариант). */
+export type GeoSource = 'exit' | 'gateway' | null
 
-/** Проверить прокси (liveness) + определить страну/город по IP (§3.4). */
-export async function checkProxy(id: string): Promise<{ proxy: Proxy; geo: ProxyGeo | null }> {
-  return apiPost<{ proxy: Proxy; geo: ProxyGeo | null }>(`/api/proxies/${id}/check`)
+/** Проверить прокси (liveness) + определить страну/город ВЫХОДНОГО IP через прокси (§3.4). */
+export async function checkProxy(id: string): Promise<{ proxy: Proxy; geo: ProxyGeo | null; geoSource?: GeoSource }> {
+  return apiPost<{ proxy: Proxy; geo: ProxyGeo | null; geoSource?: GeoSource }>(`/api/proxies/${id}/check`)
 }
 
-/** Реальная проверка прокси по host:port ДО сохранения — TCP-пинг + гео (§3.4). */
-export async function probeProxy(host: string, port: number): Promise<{ alive: boolean; ms: number; geo: ProxyGeo | null }> {
-  return apiPost<{ alive: boolean; ms: number; geo: ProxyGeo | null }>('/api/proxies/probe', { host, port })
+/** Реальная проверка прокси по host:port ДО сохранения — TCP-пинг + гео выхода (§3.4). */
+export async function probeProxy(input: { host: string; port: number; scheme?: string; username?: string; password?: string }): Promise<{ alive: boolean; ms: number; geo: ProxyGeo | null; geoSource?: GeoSource }> {
+  return apiPost<{ alive: boolean; ms: number; geo: ProxyGeo | null; geoSource?: GeoSource }>('/api/proxies/probe', input)
 }

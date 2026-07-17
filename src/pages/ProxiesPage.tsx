@@ -28,14 +28,16 @@ export function ProxiesPage() {
   const [saving, setSaving] = useState(false)
   const [assignFor, setAssignFor] = useState<Proxy | null>(null)
   const [geoMap, setGeoMap] = useState<Record<string, ProxyGeo | null>>({})
+  const [geoSrcMap, setGeoSrcMap] = useState<Record<string, 'exit' | 'gateway' | null>>({})
   const [testing, setTesting] = useState<string | null>(null)
 
   const doTest = async (p: Proxy) => {
     setTesting(p.id)
     try {
-      const { proxy, geo } = await checkProxy(p.id)
+      const { proxy, geo, geoSource } = await checkProxy(p.id)
       setProxies((list) => list.map((x) => (x.id === p.id ? proxy : x)))
       setGeoMap((m) => ({ ...m, [p.id]: geo }))
+      setGeoSrcMap((m) => ({ ...m, [p.id]: geoSource ?? null }))
     } catch { setGeoMap((m) => ({ ...m, [p.id]: null })) }
     finally { setTesting(null) }
   }
@@ -111,6 +113,11 @@ export function ProxiesPage() {
                   {geoMap[p.id] && (
                     <div className="mt-0.5 flex items-center gap-1 truncate text-xs text-spark-300">
                       <MapPin size={11} className="shrink-0" /> {FLAGS[geoMap[p.id]!.country] || ''} {geoMap[p.id]!.countryName}{geoMap[p.id]!.city ? `, ${geoMap[p.id]!.city}` : ''}{geoMap[p.id]!.isp ? ` · ${geoMap[p.id]!.isp}` : ''}
+                      {geoSrcMap[p.id] === 'exit'
+                        ? <span className="shrink-0 rounded bg-spark-500/15 px-1 text-[10px] font-semibold text-spark-300" title="Страна реального выходного IP (через прокси)">выход</span>
+                        : geoSrcMap[p.id] === 'gateway'
+                          ? <span className="shrink-0 rounded bg-amber-500/15 px-1 text-[10px] font-semibold text-amber-300" title="Не удалось определить выход — показан гео адреса шлюза">шлюз</span>
+                          : null}
                     </div>
                   )}
                   {geoMap[p.id] === null && testing !== p.id && <div className="mt-0.5 text-xs text-amber-300">Гео не определено (прокси мёртв или IP не резолвится)</div>}

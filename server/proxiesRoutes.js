@@ -1,6 +1,6 @@
 /** CRUD-роуты сущности «Прокси» (§3.2/3.4). Монтируется в /api/proxies. */
 import { Router } from 'express'
-import { listProxies, getProxy, createProxy, updateProxy, deleteProxy, checkProxyLiveness, checkAllProxies, sharedProxies, probeProxyGeo, tcpPing } from './proxies.js'
+import { listProxies, getProxy, createProxy, updateProxy, deleteProxy, checkProxyLiveness, checkAllProxies, sharedProxies, probeProxyGeo, probeProxyExitGeo, tcpPing } from './proxies.js'
 import { loadAllMeta } from './accountsMeta.js'
 import { appendAudit } from './lib/auditLog.js'
 
@@ -32,16 +32,22 @@ proxiesRouter.post('/check-all', async (_req, res) => {
   } catch (err) { fail(res, err, 500) }
 })
 
-// Реальная проверка прокси по host:port ДО сохранения (TCP-пинг + гео). До /:id.
+// Реальная проверка прокси по host:port ДО сохранения (TCP-пинг + гео выхода). До /:id.
 proxiesRouter.post('/probe', async (req, res) => {
   try {
-    const { host, port } = req.body ?? {}
+    const { host, port, scheme, username, password } = req.body ?? {}
     if (!host || !port) return res.status(400).json({ ok: false, error: 'Укажите host и port' })
     const started = Date.now()
     const alive = await tcpPing(String(host), Number(port))
     const ms = Date.now() - started
-    const geo = alive ? await probeProxyGeo(String(host)) : null
-    res.json({ ok: true, alive, ms, geo })
+    // Гео ВЫХОДНОГО IP (через прокси); если не удалось — гео адреса шлюза как запасной вариант.
+    let geo = null, geoSource = null
+    if (alive) {
+      geo = await probeProxyExitGeo({ host, port, scheme, username, password })
+      if (geo) geoSource = 'exit'
+      else { geo = await probeProxyGeo(String(host)); if (geo) geoSource = 'gateway' }
+    }
+    res.json({ ok: true, alive, ms, geo, geoSource })
   } catch (err) { fail(res, err, 500) }
 })
 
@@ -49,9 +55,15 @@ proxiesRouter.post('/:id/check', async (req, res) => {
   try {
     const proxy = await checkProxyLiveness(req.params.id)
     if (!proxy) return res.status(404).json({ ok: false, error: 'Прокси не найден' })
-    // Живой прокси — дополнительно определяем страну/город по IP (§3.4).
-    const geo = proxy.status === 'ok' ? await probeProxyGeo(proxy.host) : null
-    res.json({ ok: true, proxy, geo })
+    // Гео ВЫХОДНОГО IP (через прокси) — для мобильных/резидентных это страна выхода, а не шлюза.
+    // Если через прокси не удалось — гео адреса шлюза как запасной вариант (§3.4).
+    let geo = null, geoSource = null
+    if (proxy.status === 'ok') {
+      geo = await probeProxyExitGeo(proxy)
+      if (geo) geoSource = 'exit'
+      else { geo = await probeProxyGeo(proxy.host); if (geo) geoSource = 'gateway' }
+    }
+    res.json({ ok: true, proxy, geo, geoSource })
   } catch (err) { fail(res, err, 500) }
 })
 

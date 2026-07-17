@@ -7,6 +7,7 @@
  */
 import crypto from 'crypto'
 import net from 'net'
+import { SocksClient } from 'socks'
 import { dataPath, readJson, writeJson } from './lib/jsonStore.js'
 
 const PROXIES_FILE = process.env.PROXIES_FILE || dataPath('proxies.json')
@@ -127,6 +128,75 @@ export async function probeProxyGeo(host, timeoutMs = 6000) {
       isp: d.isp || '',
       ip: d.query || host,
     }
+  } catch { return null }
+}
+
+const IP_API_PATH = '/json/?fields=status,country,countryCode,city,isp,query'
+
+/** Собрать ответ из сокета (до close/timeout) в строку. */
+function readSocketBody(socket, timeoutMs) {
+  return new Promise((resolve) => {
+    let buf = ''
+    let done = false
+    const finish = () => { if (done) return; done = true; try { socket.destroy() } catch { /* noop */ } resolve(buf) }
+    socket.setTimeout?.(timeoutMs, finish)
+    socket.on('data', (d) => { buf += d.toString('utf8'); if (buf.length > 65536) finish() })
+    socket.on('end', finish)
+    socket.on('close', finish)
+    socket.on('error', finish)
+  })
+}
+
+/** Вытащить JSON-объект гео из HTTP-ответа ip-api. */
+function parseGeoBody(raw) {
+  const i = raw.indexOf('{'); const j = raw.lastIndexOf('}')
+  if (i === -1 || j <= i) return null
+  let d
+  try { d = JSON.parse(raw.slice(i, j + 1)) } catch { return null }
+  if (!d || d.status !== 'success') return null
+  return {
+    country: d.countryCode ? String(d.countryCode).toLowerCase() : '',
+    countryName: d.country || '',
+    city: d.city || '',
+    isp: d.isp || '',
+    ip: d.query || '',
+  }
+}
+
+/**
+ * Гео РЕАЛЬНОГО выходного IP прокси — запрос к ip-api ЧЕРЕЗ сам прокси (§3.4).
+ * Важно: у мобильных/резидентных прокси хост-шлюз (дата-центр провайдера) != страна выхода,
+ * поэтому геолоцируем именно выход, а не адрес шлюза. Возвращает null при ошибке/таймауте.
+ * @param {{scheme?:string,host:string,port:number,username?:string,password?:string,socksType?:number}} proxy
+ */
+export async function probeProxyExitGeo(proxy = {}, timeoutMs = 9000) {
+  const host = String(proxy.host || '')
+  const port = Number(proxy.port || 0)
+  if (!host || !port) return null
+  const scheme = proxy.scheme || (proxy.socksType === 4 ? 'socks4' : 'socks5')
+  try {
+    let socket
+    if (scheme === 'socks5' || scheme === 'socks4') {
+      const info = await SocksClient.createConnection({
+        proxy: { host, port, type: scheme === 'socks4' ? 4 : 5, userId: proxy.username || undefined, password: proxy.password || undefined },
+        command: 'connect',
+        destination: { host: 'ip-api.com', port: 80 },
+        timeout: timeoutMs,
+      })
+      socket = info.socket
+      socket.write(`GET ${IP_API_PATH} HTTP/1.1\r\nHost: ip-api.com\r\nUser-Agent: curl/8\r\nConnection: close\r\n\r\n`)
+    } else {
+      // HTTP-прокси: полный URL + Proxy-Authorization.
+      socket = net.connect(port, host)
+      await new Promise((resolve, reject) => {
+        socket.once('connect', resolve)
+        socket.once('error', reject)
+        socket.setTimeout(timeoutMs, () => reject(new Error('timeout')))
+      })
+      const auth = proxy.username ? `Proxy-Authorization: Basic ${Buffer.from(`${proxy.username}:${proxy.password || ''}`).toString('base64')}\r\n` : ''
+      socket.write(`GET http://ip-api.com${IP_API_PATH} HTTP/1.1\r\nHost: ip-api.com\r\n${auth}User-Agent: curl/8\r\nConnection: close\r\n\r\n`)
+    }
+    return parseGeoBody(await readSocketBody(socket, timeoutMs))
   } catch { return null }
 }
 
