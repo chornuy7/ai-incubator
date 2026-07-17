@@ -45,6 +45,18 @@ export function getAllAccountLocks() {
   return out
 }
 
+/** Как getAllAccountLocks, но с текущим статусом задачи (running/paused/…) — чтобы UI мог
+ *  показать «на паузе в модуле X», а не только «в работе». @returns {Promise<Record<string, object>>} */
+export async function getAllAccountLocksDetailed() {
+  /** @type {Record<string, object>} */
+  const out = {}
+  for (const [id, lock] of locks) {
+    const status = await findTaskStatus(lock.taskId)
+    out[id] = { ...lock, taskStatus: status || 'running' }
+  }
+  return out
+}
+
 /** @param {string[]} accountIds @param {string} moduleKey @param {string} taskId @param {{ force?: boolean }} [opts] */
 export function tryAcquireLocks(accountIds, moduleKey, taskId, opts = {}) {
   const label = moduleLabel(moduleKey)
@@ -148,7 +160,8 @@ export async function reconcileLocks() {
   for (const [accountId, lock] of [...locks]) {
     if (isTaskLive(lock.taskId)) continue
     const status = await findTaskStatus(lock.taskId)
-    if (status === 'running' || status === 'queued') continue
+    // paused — задача жива и держит аккаунты зарезервированными (возобновится с ними же).
+    if (status === 'running' || status === 'queued' || status === 'paused') continue
     locks.delete(accountId)
     dropped.push({ accountId, taskId: lock.taskId, moduleKey: lock.moduleKey })
   }

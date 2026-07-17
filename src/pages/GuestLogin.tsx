@@ -9,7 +9,7 @@ const FEATURES = [
   { icon: Bot, title: 'Нейромодули', desc: 'Комментинг, чаттинг и диалоги на ИИ' },
   { icon: Radar, title: 'Парсеры', desc: 'Каналы, группы, аудитория и комментарии' },
   { icon: Sparkles, title: 'Масс-действия', desc: 'Реакции, просмотры, прогрев аккаунтов' },
-  { icon: ShieldCheck, title: 'GGR-рейтинг', desc: 'Проверка качества и здоровья сеток' },
+  { icon: ShieldCheck, title: 'AIR — AI Rating', desc: 'Проверка качества и здоровья сеток' },
 ]
 
 export function GuestLogin() {

@@ -509,7 +509,7 @@ function TrustCard({ trust }: { trust: AccountStats['trust'] }) {
     { key: 'flood', label: 'FloodWait 24ч', w: '40%' },
     { key: 'bans', label: 'История блоков', w: '25%' },
     { key: 'actions', label: 'Чистые действия', w: '15%' },
-    { key: 'age', label: 'Возраст / GGR', w: '20%' },
+    { key: 'age', label: 'Возраст / AIR', w: '20%' },
   ]
   return (
     <SectionCard title="Trust score (§6)" icon={<BarChart3 size={15} style={{ color: tone.c }} />}>

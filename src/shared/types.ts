@@ -35,8 +35,8 @@ export interface TgAccount {
   createdAt: number
   inTrash?: boolean
   note?: string
-  /** Аккаунт занят running-задачей другого (или этого) модуля */
-  busyIn?: { moduleKey: string; taskId: string; moduleLabel: string }
+  /** Аккаунт занят задачей другого (или этого) модуля. taskStatus — running/paused/… */
+  busyIn?: { moduleKey: string; taskId: string; moduleLabel: string; taskStatus?: string }
 }
 
 export type TaskStatus = 'running' | 'paused' | 'done' | 'error' | 'queued'

@@ -1,14 +1,15 @@
 import { useEffect, useState } from 'react'
-import { Target, Plus, Pencil, Trash2, BookOpen } from 'lucide-react'
+import { Target, Plus, Pencil, Trash2, BookOpen, Hash, X } from 'lucide-react'
 import { useApp } from '@/mocks/store'
 import { PageHeader, Card, EmptyState, Modal, Badge } from '@/shared/ui'
 import { confirmDialog } from '@/shared/lib/dialog'
+import { FolderPicker } from '@/features/modules/shared'
 import {
   fetchGoals, createGoal, updateGoal, deleteGoal, type Goal, type GoalInput,
   fetchKb, createKb, deleteKb, type KbItem,
 } from '@/api/goalsApi'
 
-const EMPTY: GoalInput = { name: '', description: '', targetAction: '', stages: [], completionCriteria: '', audience: '' }
+const EMPTY: GoalInput = { name: '', description: '', targetAction: '', stages: [], completionCriteria: '', audience: '', channels: [] }
 
 export function GoalsPage() {
   const pushToast = useApp((s) => s.pushToast)
@@ -18,6 +19,8 @@ export function GoalsPage() {
   const [open, setOpen] = useState(false)
   const [form, setForm] = useState<GoalInput>(EMPTY)
   const [stagesText, setStagesText] = useState('')
+  const [channels, setChannels] = useState<string[]>([])
+  const [chInput, setChInput] = useState('')
   const [saving, setSaving] = useState(false)
   const [kb, setKb] = useState<KbItem[]>([])
   const [kbTitle, setKbTitle] = useState('')
@@ -36,15 +39,23 @@ export function GoalsPage() {
   useEffect(() => { void load() }, [])
 
   const openNew = () => {
-    setEditing(null); setForm(EMPTY); setStagesText(''); setKb([]); setOpen(true)
+    setEditing(null); setForm(EMPTY); setStagesText(''); setChannels([]); setChInput(''); setKb([]); setOpen(true)
   }
   const openEdit = (g: Goal) => {
     setEditing(g)
     setForm({ name: g.name, description: g.description, targetAction: g.targetAction, completionCriteria: g.completionCriteria, audience: g.audience })
     setStagesText((g.stages || []).join('\n'))
+    setChannels(g.channels || []); setChInput('')
     setKb([]); setKbTitle(''); setKbContent('')
     void fetchKb(g.id).then(setKb).catch(() => {})
     setOpen(true)
+  }
+
+  const addChannels = () => {
+    const parsed = chInput.split(/[\n,\s]+/).map((s) => s.trim().replace(/^@/, '').replace(/https?:\/\/t\.me\//i, '').split('/')[0]).filter(Boolean)
+    if (!parsed.length) return
+    setChannels((prev) => [...new Set([...parsed, ...prev])])
+    setChInput('')
   }
 
   const addKb = async () => {
@@ -70,7 +81,7 @@ export function GoalsPage() {
   const save = async () => {
     if (!form.name.trim()) return pushToast({ type: 'error', title: 'Укажите название цели' })
     setSaving(true)
-    const payload: GoalInput = { ...form, stages: stagesText.split('\n').map((s) => s.trim()).filter(Boolean) }
+    const payload: GoalInput = { ...form, stages: stagesText.split('\n').map((s) => s.trim()).filter(Boolean), channels }
     try {
       if (editing) {
         await updateGoal(editing.id, payload)
@@ -140,6 +151,7 @@ export function GoalsPage() {
                 </div>
               )}
               <div className="mt-1 flex flex-wrap gap-x-4 gap-y-1 text-xs text-white/40">
+                {(g.channels?.length ?? 0) > 0 && <span className="text-spark-300"><Hash size={11} className="mb-0.5 inline" /> {g.channels.length} каналов/групп</span>}
                 {g.completionCriteria && <span>Критерий: {g.completionCriteria}</span>}
                 {g.audience && <span>Аудитория: {g.audience}</span>}
               </div>
@@ -175,6 +187,25 @@ export function GoalsPage() {
           <div>
             <label className="mb-1 block text-xs text-white/50">Этапы (по одному на строку)</label>
             <textarea className="input min-h-[64px]" value={stagesText} onChange={(e) => setStagesText(e.target.value)} placeholder={'знакомство\nинтерес\nоффер'} />
+          </div>
+
+          <div>
+            <label className="mb-1 flex items-center gap-1.5 text-xs text-white/50"><Hash size={12} /> Каналы / группы цели <span className="text-white/30">— где ведём к цели ({channels.length})</span></label>
+            <FolderPicker targets={channels} onLoad={(t) => setChannels((prev) => [...new Set([...t, ...prev])])} />
+            <div className="flex gap-2">
+              <input value={chInput} onChange={(e) => setChInput(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); addChannels() } }} className="input" placeholder="@channel или t.me/channel — или загрузите папку выше" />
+              <button type="button" onClick={addChannels} className="btn-ghost h-11 shrink-0 px-4"><Plus size={15} /> Добавить</button>
+            </div>
+            {channels.length > 0 && (
+              <div className="mt-2 flex max-h-32 flex-wrap gap-1.5 overflow-y-auto rounded-xl border border-line bg-elevated/40 p-2.5">
+                {channels.map((c) => (
+                  <span key={c} className="inline-flex items-center gap-1 rounded-lg border border-line bg-surface px-2 py-0.5 text-xs font-medium text-fg">
+                    @{c}
+                    <button type="button" onClick={() => setChannels((arr) => arr.filter((x) => x !== c))} className="text-faint hover:text-rose-300"><X size={12} /></button>
+                  </span>
+                ))}
+              </div>
+            )}
           </div>
           <div className="grid gap-3 sm:grid-cols-2">
             <div>

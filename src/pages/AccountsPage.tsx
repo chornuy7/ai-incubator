@@ -594,11 +594,21 @@ function AccountsTable(props: {
                   <td className="px-4 py-3">
                     <div className="flex flex-col items-start gap-1.5">
                       <StatusBadge status={a.status} />
-                      {a.busyIn && (
-                        <div className="flex items-center gap-1 text-[11px] font-semibold text-rose-300">
-                          <Loader2 size={11} className="animate-spin" /> В работе: {a.busyIn.moduleLabel}
+                      {a.busyIn ? (
+                        a.busyIn.taskStatus === 'paused' ? (
+                          <div className="flex items-center gap-1 text-[11px] font-semibold text-amber-300">
+                            <Pause size={11} /> На паузе: {a.busyIn.moduleLabel}
+                          </div>
+                        ) : (
+                          <div className="flex items-center gap-1 text-[11px] font-semibold text-spark-300">
+                            <Loader2 size={11} className="animate-spin" /> В работе: {a.busyIn.moduleLabel}
+                          </div>
+                        )
+                      ) : a.status === 'pause' ? (
+                        <div className="flex items-center gap-1 text-[11px] font-semibold text-amber-300/70" title="Аккаунт поставлен на паузу оператором, а не задачей модуля">
+                          <Pause size={11} /> Пауза вручную · не в модуле
                         </div>
-                      )}
+                      ) : null}
                       {typeof a.trustScore === 'number' && a.trustBand !== 'high' && (
                         <span
                           className={cn('rounded-md px-1.5 py-0.5 text-[10px] font-bold',
@@ -664,11 +674,21 @@ function AccountsTable(props: {
                 <div className="truncate text-xs text-muted">@{a.username} · {a.phone}</div>
                 <div className="mt-1.5">
                   <StatusBadge status={a.status} />
-                {a.busyIn && (
-                  <div className="mt-1 flex items-center gap-1 text-[11px] font-semibold text-rose-300">
-                    <Loader2 size={11} className="animate-spin" /> В работе: {a.busyIn.moduleLabel}
+                {a.busyIn ? (
+                  a.busyIn.taskStatus === 'paused' ? (
+                    <div className="mt-1 flex items-center gap-1 text-[11px] font-semibold text-amber-300">
+                      <Pause size={11} /> На паузе: {a.busyIn.moduleLabel}
+                    </div>
+                  ) : (
+                    <div className="mt-1 flex items-center gap-1 text-[11px] font-semibold text-spark-300">
+                      <Loader2 size={11} className="animate-spin" /> В работе: {a.busyIn.moduleLabel}
+                    </div>
+                  )
+                ) : a.status === 'pause' ? (
+                  <div className="mt-1 flex items-center gap-1 text-[11px] font-semibold text-amber-300/70" title="Аккаунт поставлен на паузу оператором, а не задачей модуля">
+                    <Pause size={11} /> Пауза вручную · не в модуле
                   </div>
-                )}
+                ) : null}
                 </div>
               </div>
             </button>

@@ -5,7 +5,7 @@ import {
 import { PageHeader, Modal, Select, Segmented, Switch, EmptyState, Badge } from '@/shared/ui'
 import { confirmDialog } from '@/shared/lib/dialog'
 import { AccountPicker } from '@/features/account-picker/AccountPicker'
-import { NumberField } from '@/features/modules/shared'
+import { NumberField, FolderPicker } from '@/features/modules/shared'
 import { MODULES } from '@/shared/config/modules'
 import { useApp } from '@/mocks/store'
 import {
@@ -13,8 +13,16 @@ import {
   type AutomationRule, type AutomationRuleInput,
 } from '@/api/automationApi'
 
-// Модули, которые планировщик умеет запускать через универсальный реестр.
-const AUTOMATABLE = ['neuro-commenting', 'neuro-chatting', 'mass-react', 'mass-looking', 'warming']
+// Планировщик умеет запускать любой модуль из реестра (server/modules/registry.js) — включая парсеры.
+const AUTOMATABLE = [
+  'neuro-commenting', 'neuro-chatting', 'mass-react', 'mass-looking', 'warming', 'neuro-dialogs', 'ggr',
+  'mailing', 'autoposting', 'parsing', 'parsing-groups', 'parsing-users', 'parsing-messages', 'parsing-comments',
+]
+// Модули, которым нужны цели (каналы/группы/номера) — server MODULE_DEFS.requiresTargets.
+const NEEDS_TARGETS = new Set([
+  'neuro-commenting', 'neuro-chatting', 'mass-react', 'mass-looking',
+  'mailing', 'autoposting', 'parsing-users', 'parsing-messages', 'parsing-comments',
+])
 
 const SCHEDULE_TYPES = ['Разово', 'Интервал', 'Ежедневно']
 
@@ -147,7 +155,7 @@ function RuleEditor({ rule, onClose, onSaved }: {
   })
   const [saving, setSaving] = useState(false)
 
-  const needsTargets = useMemo(() => ['neuro-commenting', 'neuro-chatting', 'mass-react', 'mass-looking'].includes(moduleKey), [moduleKey])
+  const needsTargets = useMemo(() => NEEDS_TARGETS.has(moduleKey), [moduleKey])
 
   const save = async () => {
     if (!selected.size) return pushToast({ type: 'error', title: 'Выберите аккаунты' })
@@ -219,7 +227,14 @@ function RuleEditor({ rule, onClose, onSaved }: {
 
         {needsTargets && (
           <div>
-            <label className="label">Цели (каналы/группы, по одному на строку)</label>
+            <label className="label">Цели (каналы/группы) — из папки или по одному на строку</label>
+            <FolderPicker
+              targets={targetsText.split(/[\n,\s]+/).map((s) => s.trim()).filter(Boolean)}
+              onLoad={(t) => setTargetsText((prev) => {
+                const cur = prev.split(/[\n,\s]+/).map((s) => s.trim()).filter(Boolean)
+                return [...new Set([...t.map((x) => x.replace(/^@/, '')), ...cur])].join('\n')
+              })}
+            />
             <textarea value={targetsText} onChange={(e) => setTargetsText(e.target.value)} rows={3} className="input resize-none font-mono text-sm" placeholder="@channel или t.me/channel" />
           </div>
         )}

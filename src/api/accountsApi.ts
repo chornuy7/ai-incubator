@@ -16,7 +16,7 @@ export async function fetchAccounts(): Promise<ServerAccount[]> {
   return data.accounts as ServerAccount[]
 }
 
-export type AccountBusyMap = Record<string, { moduleKey: string; taskId: string; moduleLabel: string }>
+export type AccountBusyMap = Record<string, { moduleKey: string; taskId: string; moduleLabel: string; taskStatus?: string }>
 
 export async function fetchAccountBusy(): Promise<AccountBusyMap> {
   const res = await fetch('/api/tg/accounts/busy')

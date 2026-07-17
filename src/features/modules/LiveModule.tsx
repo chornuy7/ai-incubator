@@ -138,7 +138,7 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
   }
 
   const buildSettings = useCallback((): ModuleTaskSettings => ({
-    accountIds: isGgr ? accounts.map((a) => a.id) : [...selected],
+    accountIds: [...selected],
     targets,
     channels: targets,
     keywords: keywords.split(/[\n,;]+/).map((k) => k.trim()).filter(Boolean),
@@ -182,13 +182,13 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
   // #5: сумма процентов типов не должна превышать 100 — иначе запуск блокируется.
   const typesOver100 = moduleKey === 'neuro-commenting' && weightSum > 100
   const canStart = (isGgr
-    ? accounts.length > 0
+    ? selected.size > 0
     : selected.size > 0 && busySelectedCount === 0 && (!needsTargets || targets.length > 0 || hasPostTargets))
     && !typesOver100
   const warn = typesOver100
     ? `Сумма типов комментариев ${weightSum}% > 100 — уменьшите (кнопка «= 100%»)`
     : !canStart
-      ? (isGgr ? 'Нет аккаунтов в панели' : busySelectedCount ? `${busySelectedCount} акк. заняты в другом модуле` : !selected.size ? 'Выберите аккаунты' : 'Добавьте группу или ссылку на пост')
+      ? (isGgr ? 'Выберите аккаунты для проверки' : busySelectedCount ? `${busySelectedCount} акк. заняты в другом модуле` : !selected.size ? 'Выберите аккаунты' : 'Добавьте группу или ссылку на пост')
       : undefined
 
   // §3.5: предупреждать о математически противоречивых лимитах (макс vs аккаунты vs мин/акк).
@@ -205,7 +205,7 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
   const handleStart = async () => {
     // #4: запуск боевого модуля = реальные действия в Telegram — подтверждаем.
     if (isCombatModule(moduleKey) && !(await confirmDialog({ title: 'Реальные действия в Telegram', message: combatConfirmText(moduleKey), confirmLabel: 'Запустить', tone: 'danger' }))) return
-    void start(buildSettings(), `${cfg.title} · ${selected.size || accounts.length} акк.`)
+    void start(buildSettings(), `${cfg.title} · ${selected.size} акк.`)
   }
   const handleSave = async () => {
     const name = await promptDialog({ title: 'Сохранить пресет', message: 'Название пресета настроек', placeholder: 'Напр. Крипто · агрессивный' })
@@ -245,7 +245,7 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
 
   const launchStats = useMemo(() => {
     if (isGgr) return [
-      { icon: <Trophy size={18} />, color: '#7145ff', label: 'Аккаунтов', value: String(accounts.length) },
+      { icon: <Trophy size={18} />, color: '#7145ff', label: 'Выбрано', value: String(selected.size), warn: selected.size === 0 },
       { icon: <Database size={18} />, color: '#06b6d4', label: 'Проверено', value: String(results.length) },
       { icon: <Shield size={18} />, color: '#0ec464', label: 'Валидных', value: String(results.filter((r) => r.status === 'valid').length) },
       { icon: <Clock size={18} />, color: '#f59e0b', label: 'Статус', value: task?.status ?? '—' },
@@ -308,8 +308,8 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
           ) : isGgr ? (
             <div className="space-y-3 text-sm text-muted">
               <p>
-                Проверка идёт по всем аккаунтам панели: подключаем сессию, запрашиваем профиль и складываем балл.
-                Настраивать нечего — жмите «{cfg.primaryAction ?? 'Проверить все'}».
+                Проверка идёт по <b className="text-fg">выбранным аккаунтам</b> (выберите их выше): подключаем сессию,
+                запрашиваем профиль и складываем балл. Настройки не требуются — жмите «{cfg.primaryAction ?? 'Проверить'}».
               </p>
               <div className="grid gap-2 sm:grid-cols-3">
                 {[

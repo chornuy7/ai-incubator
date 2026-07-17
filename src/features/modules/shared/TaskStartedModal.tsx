@@ -17,15 +17,15 @@ export function TaskStartedModal({ task, moduleTitle, onClose }: {
     <Modal
       open={!!task}
       onClose={onClose}
-      size="sm"
+      size="md"
       title="Задача запущена"
       subtitle={`${moduleTitle} · ${task.id}`}
       icon={<CheckCircle2 size={22} className="text-spark-400" />}
       footer={
-        <>
+        <div className="flex w-full flex-wrap items-center justify-end gap-2">
           <button type="button" onClick={onClose} className="btn-ghost h-10 text-sm">Остаться здесь</button>
-          <a href={href} className="btn-primary h-10 text-sm"><ArrowUpRight size={15} /> Открыть в Дашборде задач</a>
-        </>
+          <a href={href} className="btn-primary h-10 whitespace-nowrap text-sm"><ArrowUpRight size={15} /> В Дашборд задач</a>
+        </div>
       }
     >
       <p className="text-sm text-muted">

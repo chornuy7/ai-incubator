@@ -8,6 +8,7 @@ export interface Goal {
   stages: string[]
   completionCriteria: string
   audience: string
+  channels: string[]
   createdAt: number
   updatedAt: number
 }
@@ -19,6 +20,7 @@ export interface GoalInput {
   stages?: string[]
   completionCriteria?: string
   audience?: string
+  channels?: string[]
 }
 
 export async function fetchGoals(): Promise<Goal[]> {
