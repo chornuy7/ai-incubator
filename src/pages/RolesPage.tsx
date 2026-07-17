@@ -148,7 +148,12 @@ export function RolesPage() {
         subtitle="Главный админ создаёт роли и раздаёт доступ к модулям, блокам и ресурсам. Снятый доступ выделен."
         icon={<ShieldCheck size={22} />}
         badge={roles.length ? `${roles.length}` : undefined}
-        actions={<button onClick={() => void addRole()} className="btn-primary h-10"><Plus size={16} /> Новая роль</button>}
+        actions={
+          <div className="flex items-center gap-2">
+            <HelpButton topic="rbac-roles" className="h-10 w-10" />
+            <button onClick={() => void addRole()} className="btn-primary h-10"><Plus size={16} /> Новая роль</button>
+          </div>
+        }
       />
 
       {err && <Card className="mb-3 border-rose-500/30 p-3 text-sm text-rose-300">{err}</Card>}

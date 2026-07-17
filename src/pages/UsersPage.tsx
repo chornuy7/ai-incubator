@@ -4,6 +4,7 @@ import { PageHeader, Card, EmptyState, Badge, Modal } from '@/shared/ui'
 import { fetchUsers, createUser, updateUser, deleteUser, fetchWorktime, type User, type WorkSummary } from '@/api/usersApi'
 import { fetchRoles, type Role } from '@/api/rolesApi'
 import { ADMIN_BYPASS_ID } from '@/shared/config/rbac'
+import { HelpButton } from '@/features/neuro-commenting/moduleUi'
 import { cn } from '@/shared/lib/utils'
 
 /** Мультивыбор ролей: клик по чипу добавляет/убирает роль. Права ролей суммируются (union). */
@@ -100,7 +101,12 @@ export function UsersPage() {
         subtitle="Операторы панели и их роли. Главный админ назначает роль и включает/отключает доступ."
         icon={<Users2 size={22} />}
         badge={users.length ? `${users.length}` : undefined}
-        actions={<button onClick={() => setOpen(true)} className="btn-primary h-10"><Plus size={16} /> Новый пользователь</button>}
+        actions={
+          <div className="flex items-center gap-2">
+            <HelpButton topic="rbac-roles" className="h-10 w-10" />
+            <button onClick={() => setOpen(true)} className="btn-primary h-10"><Plus size={16} /> Новый пользователь</button>
+          </div>
+        }
       />
 
       {err && <Card className="mb-3 border-rose-500/30 p-3 text-sm text-rose-300">{err}</Card>}
