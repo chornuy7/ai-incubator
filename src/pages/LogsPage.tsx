@@ -1,18 +1,45 @@
-import { useEffect, useMemo, useState } from 'react'
-import { ScrollText, RefreshCw, Columns3 } from 'lucide-react'
+import { useEffect, useMemo, useState, type ReactNode } from 'react'
+import {
+  ScrollText, RefreshCw, Columns3, Search, Download, LogIn, LogOut, ShieldCheck, ShieldAlert,
+  UserCog, Activity, ArrowLeftRight, Play, Square, ListChecks, Rocket, Mail, Flame, Network,
+} from 'lucide-react'
 import { useApp } from '@/mocks/store'
 import { PageHeader, Card, EmptyState, Select, Badge, Modal, Segmented } from '@/shared/ui'
+import { HelpButton } from '@/features/neuro-commenting/moduleUi'
 import { fetchAudit, type AuditEntry } from '@/api/auditApi'
 
-// Человеческие подписи и тон по префиксу действия.
-function actionMeta(action: string): { label: string; tone: 'spark' | 'iris' | 'amber' | 'rose' | 'muted' } {
-  if (action.startsWith('account.status')) return { label: 'Статус аккаунта', tone: 'amber' }
-  if (action.startsWith('account.transfer')) return { label: 'Перенос профиля', tone: 'iris' }
-  if (action.startsWith('campaign')) return { label: 'Кампания', tone: 'spark' }
-  if (action.startsWith('task.start')) return { label: 'Старт задачи', tone: 'spark' }
-  if (action.startsWith('task.stop')) return { label: 'Стоп задачи', tone: 'muted' }
-  if (action.startsWith('task')) return { label: 'Задача', tone: 'iris' }
-  return { label: action, tone: 'muted' }
+type Tone = 'spark' | 'iris' | 'amber' | 'rose' | 'muted'
+
+// Человеческие подписи, тон и иконка по типу действия (иначе видны сырые коды типа user.login).
+function actionMeta(action: string): { label: string; tone: Tone; icon: ReactNode } {
+  const i = (I: typeof LogIn) => <I size={13} />
+  if (action === 'user.login') return { label: 'Вход', tone: 'spark', icon: i(LogIn) }
+  if (action === 'user.login.fail') return { label: 'Неудачный вход', tone: 'rose', icon: i(ShieldAlert) }
+  if (action === 'user.logout') return { label: 'Выход', tone: 'muted', icon: i(LogOut) }
+  if (action.startsWith('role')) return { label: 'Роль', tone: 'iris', icon: i(ShieldCheck) }
+  if (action.startsWith('user')) return { label: 'Пользователь', tone: 'iris', icon: i(UserCog) }
+  if (action.startsWith('account.status')) return { label: 'Статус аккаунта', tone: 'amber', icon: i(Activity) }
+  if (action.startsWith('account.transfer')) return { label: 'Перенос профиля', tone: 'iris', icon: i(ArrowLeftRight) }
+  if (action.startsWith('account')) return { label: 'Аккаунт', tone: 'amber', icon: i(Activity) }
+  if (action.startsWith('campaign')) return { label: 'Кампания', tone: 'spark', icon: i(Rocket) }
+  if (action.startsWith('task.start')) return { label: 'Старт задачи', tone: 'spark', icon: i(Play) }
+  if (action.startsWith('task.stop')) return { label: 'Стоп задачи', tone: 'muted', icon: i(Square) }
+  if (action.startsWith('task')) return { label: 'Задача', tone: 'iris', icon: i(ListChecks) }
+  if (action.startsWith('mailing')) return { label: 'Мейлинг', tone: 'iris', icon: i(Mail) }
+  if (action.startsWith('warming')) return { label: 'Прогрев', tone: 'amber', icon: i(Flame) }
+  if (action.startsWith('proxy')) return { label: 'Прокси', tone: 'iris', icon: i(Network) }
+  return { label: action, tone: 'muted', icon: i(ScrollText) }
+}
+
+/** CSV из записей лога (для экспорта/отчётности). */
+function logsToCsv(rows: AuditEntry[]): string {
+  const esc = (v: unknown) => `"${String(v ?? '').replace(/"/g, '""')}"`
+  const head = ['Время', 'Действие', 'Код', 'Инициатор', 'Модуль', 'Аккаунт', 'Причина']
+  const body = rows.map((e) => [
+    new Date(e.ts).toLocaleString(), actionMeta(e.action).label, e.action,
+    e.initiator ?? '', e.module ?? '', e.account ?? '', e.reason ?? '',
+  ].map(esc).join(','))
+  return '﻿' + head.join(',') + '\n' + body.join('\n')
 }
 
 export function LogsPage() {
@@ -21,6 +48,7 @@ export function LogsPage() {
   const [loading, setLoading] = useState(true)
   const [fAction, setFAction] = useState('')
   const [fInitiator, setFInitiator] = useState('')
+  const [q, setQ] = useState('')
   const [detail, setDetail] = useState<AuditEntry | null>(null)
   const [mode, setMode] = useState(0) // 0 — список, 1 — потоки (2–3 колонки)
   const [streamActions, setStreamActions] = useState<string[]>([]) // до 3 действий-колонок
@@ -39,7 +67,16 @@ export function LogsPage() {
   const actions = useMemo(() => [...new Set(entries.map((e) => e.action))], [entries])
   const initiators = useMemo(() => [...new Set(entries.map((e) => e.initiator).filter((x): x is string => !!x))], [entries])
   const byInitiator = (e: AuditEntry) => !fInitiator || e.initiator === fInitiator
-  const filtered = entries.filter((e) => (!fAction || e.action === fAction) && byInitiator(e))
+  const matchesQ = (e: AuditEntry) => !q || `${e.action} ${e.reason ?? ''} ${e.initiator ?? ''} ${e.module ?? ''} ${actionMeta(e.action).label}`.toLowerCase().includes(q.toLowerCase())
+  const filtered = entries.filter((e) => (!fAction || e.action === fAction) && byInitiator(e) && matchesQ(e))
+
+  const exportCsv = () => {
+    if (!filtered.length) { pushToast({ type: 'info', title: 'Нечего экспортировать' }); return }
+    const blob = new Blob([logsToCsv(filtered)], { type: 'text/csv' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a'); a.href = url; a.download = `logs-${Date.now()}.csv`; a.click(); URL.revokeObjectURL(url)
+    pushToast({ type: 'success', title: 'Экспорт CSV', desc: `${filtered.length} записей` })
+  }
 
   // Потоки: выбор до 3 действий-колонок для параллельного просмотра (§3.1).
   const toggleStream = (a: string) => setStreamActions((prev) =>
@@ -51,7 +88,7 @@ export function LogsPage() {
     return (
       <button key={e.id} onClick={() => setDetail(e)} className="w-full text-left">
         <Card className="flex flex-wrap items-center gap-x-3 gap-y-1 p-2.5 text-sm hover:border-white/20">
-          <Badge tone={am.tone}>{am.label}</Badge>
+          <Badge tone={am.tone}><span className="inline-flex items-center gap-1">{am.icon} {am.label}</span></Badge>
           <span className="text-white/80">{e.reason || e.code || e.action}</span>
           <div className="ml-auto flex flex-wrap items-center gap-x-3 text-xs text-white/40">
             {e.module && e.module !== 'core' && <span>{e.module}</span>}
@@ -72,13 +109,24 @@ export function LogsPage() {
         subtitle="Единый журнал действий: смена статусов аккаунтов, старт/стоп задач, перенос профилей, кампании — с инициатором и причиной."
         icon={<ScrollText size={22} />}
         badge={entries.length ? `${entries.length}` : undefined}
-        actions={<button onClick={() => void load()} className="btn-ghost h-10"><RefreshCw size={16} /> Обновить</button>}
+        actions={
+          <div className="flex items-center gap-2">
+            <HelpButton topic="logs" className="h-10 w-10" />
+            <button onClick={exportCsv} className="btn-ghost h-10"><Download size={16} /> CSV</button>
+            <button onClick={() => void load()} className="btn-ghost h-10"><RefreshCw size={16} /> Обновить</button>
+          </div>
+        }
       />
 
       <div className="mb-3 flex flex-wrap items-center gap-2">
         <Segmented value={mode} onChange={setMode} size="sm" options={['Список', 'Потоки']} />
         {mode === 0 && <Select value={fAction} onChange={setFAction} className="w-56" options={[{ value: '', label: 'Все действия' }, ...actions.map((a) => ({ value: a, label: actionMeta(a).label + ` (${a})` }))]} />}
         <Select value={fInitiator} onChange={setFInitiator} className="w-44" options={[{ value: '', label: 'Все инициаторы' }, ...initiators.map((i) => ({ value: i, label: i }))]} />
+        <div className="relative min-w-[180px] flex-1 sm:max-w-xs">
+          <Search size={15} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted" />
+          <input value={q} onChange={(e) => setQ(e.target.value)} className="input h-9 pl-9" placeholder="Поиск по журналу…" />
+        </div>
+        {mode === 0 && <span className="text-xs text-white/40">Показано: {filtered.length}</span>}
       </div>
 
       {loading ? (
