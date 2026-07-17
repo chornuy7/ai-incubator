@@ -117,46 +117,62 @@ const blockMap = (keys, blocks, val) => Object.fromEntries(keys.flatMap((k) => b
 const sectionMap = (val, keys = SECTIONS.map((s) => s.key)) => Object.fromEntries(keys.map((k) => [k, val]))
 
 /**
- * Стартовый набор ролей (§6-решение: Admin / Operator / Sales / Viewer).
+ * Стартовый набор ролей — осмысленные шаблоны под реальные функции (не «всё подряд»).
  *  - Администратор — bypass (всё);
- *  - Оператор — запуск/настройки/результаты/логи всех модулей + таймеры/шаблоны;
- *  - Sales — только диалоговые модули на запуск + просмотр результатов/логов везде (CRM-профиль);
- *  - Viewer — только чтение (результаты/логи), без запуска и настроек.
+ *  - Оператор — универсальный исполнитель: все модули, все блоки, все разделы;
+ *  - Модератор — вовлечение/модерация: комментинг/чаттинг/диалоги/реакции/масслукинг
+ *    (запуск+настройки+цели+результаты+логи, БЕЗ редактирования шаблонов);
+ *  - Sales — аутрич/CRM: запуск чаттинга/диалогов/мейлинга целиком + просмотр остального;
+ *  - Viewer — только просмотр: результаты/логи + отчётные разделы.
+ * Каждый шаблон: аккаунты по умолчанию НЕ выданы (админ раздаёт точечно).
  */
 function defaultRoles() {
   const now = Date.now()
   const mods = Object.keys(MODULE_LABELS)
-  const SALES = mods.filter((k) => ['neuro-chatting', 'neuro-dialogs', 'mailing'].includes(k))
+  const ALL_BLOCKS = BLOCKS.map((b) => b.key)                 // run/settings/targets/templates/results/logs
+  const VIEW = ['results', 'logs']                             // только просмотр
+  const OPS = ['run', 'settings', 'targets', 'results', 'logs'] // работа без редактирования шаблонов
+  const OUTREACH = mods.filter((k) => ['neuro-chatting', 'neuro-dialogs', 'mailing'].includes(k))
+  const ENGAGE = mods.filter((k) => ['neuro-commenting', 'neuro-chatting', 'neuro-dialogs', 'mass-react', 'mass-looking'].includes(k))
   const roleTpl = (id, name, permissions) => ({ id, name, builtin: false, isTemplate: true, permissions, createdAt: now, updatedAt: now })
+  const res = (over = {}) => ({ accounts: {}, folders: {}, channels: {}, timers: DENY, searchTemplates: DENY, ...over })
   return [
     {
       id: ADMIN_ROLE_ID,
       name: 'Администратор',
       builtin: true,
       isTemplate: false,
-      permissions: { modules: {}, blocks: {}, sections: {}, resources: { folders: {}, channels: {}, timers: ALLOW, searchTemplates: ALLOW } },
+      permissions: { modules: {}, blocks: {}, sections: {}, resources: res({ timers: ALLOW, searchTemplates: ALLOW }) },
       createdAt: now,
       updatedAt: now,
     },
+    // Оператор — всё операционное: любые модули, все блоки, все разделы.
     roleTpl('role_operator', 'Оператор', {
       modules: moduleMap(mods, ALLOW),
-      blocks: blockMap(mods, ['run', 'settings', 'targets', 'results', 'logs'], ALLOW),
-      sections: sectionMap(ALLOW), // оператору — все разделы
-      resources: { folders: {}, channels: {}, timers: ALLOW, searchTemplates: ALLOW },
+      blocks: blockMap(mods, ALL_BLOCKS, ALLOW),
+      sections: sectionMap(ALLOW),
+      resources: res({ timers: ALLOW, searchTemplates: ALLOW }),
     }),
+    // Модератор — вовлечение сообщества: только engagement-модули, без шаблонов и без парсинга/рассылок.
+    roleTpl('role_moderator', 'Модератор', {
+      modules: moduleMap(ENGAGE, ALLOW),
+      blocks: blockMap(ENGAGE, OPS, ALLOW),
+      sections: sectionMap(ALLOW, ['/panel', '/panel/tasks', '/panel/crm', '/panel/analytics', '/panel/my-statistics', '/panel/logs', '/panel/inbox', '/panel/channels']),
+      resources: res({ searchTemplates: ALLOW }),
+    }),
+    // Sales — аутрич/продажи: чаттинг/диалоги/мейлинг целиком, остальное — просмотр.
     roleTpl('role_sales', 'Sales', {
       modules: moduleMap(mods, ALLOW),
-      blocks: { ...blockMap(mods, ['results', 'logs'], ALLOW), ...blockMap(SALES, ['run'], ALLOW) },
-      // Sales — CRM-профиль: аккаунты, задачи, CRM, аналитика, статистика, обзор, логи
-      sections: sectionMap(ALLOW, ['/panel', '/panel/tasks', '/panel/crm', '/panel/analytics', '/panel/my-statistics', '/panel/inbox', '/panel/logs']),
-      resources: { folders: {}, channels: {}, timers: DENY, searchTemplates: DENY },
+      blocks: { ...blockMap(mods, VIEW, ALLOW), ...blockMap(OUTREACH, ALL_BLOCKS, ALLOW) },
+      sections: sectionMap(ALLOW, ['/panel', '/panel/goals', '/panel/tasks', '/panel/crm', '/panel/analytics', '/panel/my-statistics', '/panel/inbox', '/panel/logs']),
+      resources: res({ searchTemplates: ALLOW }),
     }),
+    // Viewer — наблюдатель: результаты/логи + отчётные разделы, без запуска и настроек.
     roleTpl('role_viewer', 'Viewer', {
       modules: moduleMap(mods, ALLOW),
-      blocks: blockMap(mods, ['results', 'logs'], ALLOW),
-      // Viewer — только просмотр: дашборд, аналитика, статистика, логи, обзор
+      blocks: blockMap(mods, VIEW, ALLOW),
       sections: sectionMap(ALLOW, ['/panel/tasks', '/panel/analytics', '/panel/my-statistics', '/panel/logs', '/panel/inbox']),
-      resources: { folders: {}, channels: {}, timers: DENY, searchTemplates: DENY },
+      resources: res(),
     }),
   ]
 }
@@ -172,7 +188,7 @@ export async function listRoles() {
   // (Operator/Sales/Viewer) — добавляем их, не трогая существующие/пользовательские.
   // Гейт «ни одной» защищает от воскрешения одной удалённой дефолт-роли.
   const have = new Set(roles.map((r) => r.id))
-  const sixIds = ['role_operator', 'role_sales', 'role_viewer']
+  const sixIds = ['role_operator', 'role_moderator', 'role_sales', 'role_viewer']
   if (!sixIds.some((id) => have.has(id))) {
     const missing = defaultRoles().filter((r) => r.id !== ADMIN_ROLE_ID && !have.has(r.id))
     if (missing.length) {
