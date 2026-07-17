@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { ListChecks, RefreshCw, Square, RotateCw, Target, Layers, Activity, Gauge, Pause, Play, Loader2 } from 'lucide-react'
 import { useApp } from '@/mocks/store'
-import { PageHeader, Card, EmptyState, Badge, Select, Segmented, Modal } from '@/shared/ui'
+import { PageHeader, Card, EmptyState, Badge, Select, Segmented, Modal, useConfirm } from '@/shared/ui'
 import { HelpButton } from '@/features/neuro-commenting/moduleUi'
 import { MODULES, isCombatModule, combatConfirmText } from '@/shared/config/modules'
 import { fetchAllTasks, fetchModuleTask, stopModuleTask, restartModuleTask, pauseModuleTask, resumeModuleTask, type ModuleTask } from '@/api/modulesApi'
@@ -84,6 +84,7 @@ export function TasksPage() {
   const [fGoal, setFGoal] = useState('')
   const [fModule, setFModule] = useState('')
   const [fStatus, setFStatus] = useState('')
+  const { confirm, confirmEl } = useConfirm()
 
   const goalName = useMemo(() => {
     const m = new Map(goals.map((g) => [g.id, g.name]))
@@ -127,8 +128,13 @@ export function TasksPage() {
     finally { setBusy(null) }
   }
   const doRestart = async (t: ModuleTask) => {
-    // #4: рестарт боевого модуля = реальные действия в Telegram — подтверждаем.
-    if (isCombatModule(t.moduleKey) && !window.confirm(combatConfirmText(t.moduleKey))) return
+    // #4: рестарт боевого модуля = реальные действия в Telegram — подтверждаем (модалка).
+    if (isCombatModule(t.moduleKey) && !(await confirm({
+      title: 'Реальные действия в Telegram',
+      message: combatConfirmText(t.moduleKey),
+      confirmLabel: 'Да, перезапустить',
+      tone: 'danger',
+    }))) return
     setBusy(t.id)
     try { await restartModuleTask(t.moduleKey, t.id); pushToast({ type: 'success', title: 'Задача перезапущена' }); await load() }
     catch (err) { pushToast({ type: 'error', title: 'Ошибка перезапуска', desc: err instanceof Error ? err.message : '' }) }
@@ -178,10 +184,15 @@ export function TasksPage() {
   const pauseTargets = useMemo(() => selectedTasks.filter((t) => t.status === 'running'), [selectedTasks])
   const stopTargets = useMemo(() => selectedTasks.filter((t) => t.status === 'running' || t.status === 'queued' || t.status === 'paused'), [selectedTasks])
 
-  const bulkStart = () => {
-    // Боевые модули при перезапуске = реальные действия в Telegram — подтверждаем разово.
+  const bulkStart = async () => {
+    // Боевые модули при перезапуске = реальные действия в Telegram — подтверждаем разово (модалка).
     if (startTargets.some((t) => t.status !== 'paused' && isCombatModule(t.moduleKey)) &&
-        !window.confirm('Перезапуск боевых модулей = реальные действия в Telegram. Продолжить?')) return
+        !(await confirm({
+          title: 'Реальные действия в Telegram',
+          message: 'Перезапуск боевых модулей выполнит реальные действия в Telegram (комментарии / ответы / реакции / рассылки). Продолжить?',
+          confirmLabel: 'Да, запустить',
+          tone: 'danger',
+        }))) return
     void runBulk('Запуск/возобновление', startTargets, (t) => (t.status === 'paused' ? resumeModuleTask(t.moduleKey, t.id) : restartModuleTask(t.moduleKey, t.id)))
   }
   const bulkPause = () => void runBulk('Пауза', pauseTargets, (t) => pauseModuleTask(t.moduleKey, t.id))
@@ -238,6 +249,7 @@ export function TasksPage() {
 
   return (
     <div>
+      {confirmEl}
       <PageHeader
         title="Дашборд задач"
         subtitle="Цели → Задачи → Модули: единый экран прогресса. Фильтры-воронка + преследование цели. §8.8"

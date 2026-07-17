@@ -7,7 +7,7 @@ import { MODULES, isCombatModule, combatConfirmText, type ModuleConfig } from '@
 import { activeAccounts, useApp } from '@/mocks/store'
 import { useSession } from '@/features/auth/session'
 import { can } from '@/shared/lib/access'
-import { ToggleGroup, Segmented, EmptyState, Badge, Select } from '@/shared/ui'
+import { ToggleGroup, Segmented, EmptyState, Badge, Select, useConfirm } from '@/shared/ui'
 import { fetchGoals, type Goal } from '@/api/goalsApi'
 import { AccountPicker } from '@/features/account-picker/AccountPicker'
 import { useModuleTask } from './shared/useModuleTask'
@@ -54,6 +54,7 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
   // templates — промпты/эмодзи; results/logs — просмотр результатов/логов.
   const sessionUser = useSession((s) => s.user)
   const showBlock = (bk: string) => !sessionUser || sessionUser.isAdmin || can(sessionUser.permissions, false, 'block', `${moduleKey}:${bk}`)
+  const { confirm, confirmEl } = useConfirm()
 
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [toggles, setToggles] = useState<Record<number, number>>({})
@@ -209,9 +210,14 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
 
   const durationPeriodMin = Math.min(DURATION_MIN_BY_PROTECTION_LEVEL[protLevel] ?? 0, durationMinutes)
 
-  const handleStart = () => {
-    // #4: запуск боевого модуля = реальные действия в Telegram — подтверждаем.
-    if (isCombatModule(moduleKey) && !window.confirm(combatConfirmText(moduleKey))) return
+  const handleStart = async () => {
+    // #4: запуск боевого модуля = реальные действия в Telegram — подтверждаем (стильная модалка).
+    if (isCombatModule(moduleKey) && !(await confirm({
+      title: 'Реальные действия в Telegram',
+      message: combatConfirmText(moduleKey),
+      confirmLabel: 'Да, выполнить',
+      tone: 'danger',
+    }))) return
     void start(buildSettings(), `${cfg.title} · ${selected.size || accounts.length} акк.`)
   }
   const handleSave = () => {
@@ -275,6 +281,7 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
 
   return (
     <div className="space-y-4">
+      {confirmEl}
       <TaskStartedModal task={justStarted} moduleTitle={cfg.title} onClose={dismissJustStarted} />
       <SaveToFolderModal open={folderSave !== null} onClose={() => setFolderSave(null)} targets={folderSave ?? []} />
       {cfg.accountPicker && showBlock('run') && (
