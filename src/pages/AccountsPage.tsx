@@ -10,6 +10,7 @@ import { useUi } from '@/shared/lib/uiStore'
 import {
   PageHeader, Avatar, StatusBadge, EmptyState, Dropdown, MenuItem, Select, Skeleton, Modal,
 } from '@/shared/ui'
+import { HelpButton } from '@/features/neuro-commenting/moduleUi'
 import { AddAccountWizard } from '@/features/add-tg-account/AddAccountWizard'
 import { ImportModal } from '@/features/import-sessions/ImportModal'
 import { ProxyPoolModal } from '@/features/proxy/ProxyPoolModal'
@@ -248,6 +249,7 @@ export function AccountsPage() {
         icon={<Users size={22} />}
         actions={
           <>
+            <HelpButton topic="accounts-manager" className="h-10 w-10" />
             <AiSafetyModal />
             <button onClick={() => setImportOpen(true)} className="btn-ghost h-10"><UploadCloud size={16} /> <span className="hidden sm:inline">Импортировать</span></button>
             <button onClick={() => setProxyPoolOpen(true)} className="btn-ghost h-10"><Server size={16} /> <span className="hidden sm:inline">Пул прокси</span></button>

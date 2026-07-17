@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { TrendingUp, Flame, Target, Send, MessageSquare } from 'lucide-react'
 import { useApp } from '@/mocks/store'
 import { PageHeader, Card } from '@/shared/ui'
+import { HelpButton } from '@/features/neuro-commenting/moduleUi'
 import { fetchLeads, LEAD_STATUSES, type Lead, type LeadStatus } from '@/api/leadsApi'
 import { fetchAllTasks, type ModuleTask } from '@/api/modulesApi'
 import { fetchGoals, type Goal } from '@/api/goalsApi'
@@ -65,7 +66,7 @@ export function AnalyticsPage() {
 
   return (
     <div>
-      <PageHeader title="Аналитика" subtitle="Воронка кампаний: отправлено, ответы, активные диалоги, горячие лиды, конверсия." icon={<TrendingUp size={22} />} />
+      <PageHeader title="Аналитика" subtitle="Воронка кампаний: отправлено, ответы, активные диалоги, горячие лиды, конверсия." icon={<TrendingUp size={22} />} actions={<HelpButton topic="analytics" className="h-10 w-10" />} />
 
       {loading ? (
         <Card className="p-6 text-sm text-white/50">Загрузка…</Card>

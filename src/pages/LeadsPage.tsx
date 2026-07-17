@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { Users, Plus, Trash2, Flame } from 'lucide-react'
 import { useApp } from '@/mocks/store'
 import { PageHeader, Card, EmptyState, Select, Badge } from '@/shared/ui'
+import { HelpButton } from '@/features/neuro-commenting/moduleUi'
 import { fetchLeads, createLead, updateLead, deleteLead, sortLeadsByPriority, LEAD_STATUSES, type Lead, type LeadStatus } from '@/api/leadsApi'
 import { fetchGoals, type Goal } from '@/api/goalsApi'
 
@@ -78,6 +79,7 @@ export function LeadsPage() {
         title="CRM · Лиды"
         subtitle="Лиды кампаний: воронка по статусам, ответственный аккаунт, движение к цели."
         icon={<Users size={22} />}
+        actions={<HelpButton topic="crm" className="h-10 w-10" />}
       />
 
       <div className="mb-4 grid grid-cols-2 gap-2 sm:grid-cols-5">

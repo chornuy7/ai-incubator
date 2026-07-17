@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { LifeBuoy, Plus, Send, MessageSquare, Clock } from 'lucide-react'
 import { useApp } from '@/mocks/store'
 import { PageHeader, Card, EmptyState, Select, Modal, Badge } from '@/shared/ui'
+import { HelpButton } from '@/features/neuro-commenting/moduleUi'
 import type { Ticket, TicketStatus } from '@/shared/types'
 
 const STATUS_META: Record<TicketStatus, { label: string; tone: 'spark' | 'iris' | 'amber' | 'rose' | 'muted' }> = {
@@ -46,6 +47,7 @@ export function SupportPage() {
         subtitle="Тикеты и связь с командой AI Incubator"
         icon={<LifeBuoy size={22} />}
         actions={<>
+          <HelpButton topic="support" className="h-10 w-10" />
           <button onClick={() => pushToast({ type: 'info', title: 'Открываю Telegram', desc: '@ai_incubator_support (демо).' })} className="btn-ghost h-10"><Send size={16} /> Написать в Telegram</button>
           <button onClick={() => setNewOpen(true)} className="btn-primary h-10"><Plus size={16} /> Новый тикет</button>
         </>}

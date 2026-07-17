@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { MessagesSquare, Search, RefreshCw, Send, Check, Users, Radio } from 'lucide-react'
 import { activeAccounts, useApp } from '@/mocks/store'
 import { PageHeader, Card, EmptyState, Segmented, Badge } from '@/shared/ui'
+import { HelpButton } from '@/features/neuro-commenting/moduleUi'
 import {
   fetchInbox, fetchMessages, sendDialogMessage, markDialogRead,
   type InboxDialog, type DialogMessage, type PeerRef,
@@ -101,7 +102,7 @@ export function InboxPage() {
         subtitle="Что делает аккаунт: в каких группах и каналах состоит, все диалоги и переписка — как будто открыли его Telegram."
         icon={<MessagesSquare size={22} />}
         badge={totalUnread ? `${totalUnread} непроч.` : undefined}
-        actions={<button onClick={() => void (tab === 0 ? loadInbox() : loadGroups())} className="btn-ghost h-10"><RefreshCw size={16} className={(loadingInbox || loadingGroups) ? 'animate-spin' : ''} /> Обновить</button>}
+        actions={<div className="flex items-center gap-2"><HelpButton topic="inbox" className="h-10 w-10" /><button onClick={() => void (tab === 0 ? loadInbox() : loadGroups())} className="btn-ghost h-10"><RefreshCw size={16} className={(loadingInbox || loadingGroups) ? 'animate-spin' : ''} /> Обновить</button></div>}
       />
 
       <div className="mb-3 flex flex-wrap gap-1.5">

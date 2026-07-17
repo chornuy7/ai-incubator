@@ -3,6 +3,7 @@ import {
   CalendarClock, Plus, Play, Trash2, Pencil, Power, Clock, Loader2,
 } from 'lucide-react'
 import { PageHeader, Modal, Select, Segmented, Switch, EmptyState, Badge } from '@/shared/ui'
+import { HelpButton } from '@/features/neuro-commenting/moduleUi'
 import { AccountPicker } from '@/features/account-picker/AccountPicker'
 import { NumberField } from '@/features/modules/shared'
 import { MODULES } from '@/shared/config/modules'
@@ -72,7 +73,7 @@ export function AutomationPage() {
         title="Автоматизация"
         subtitle="Планирование запусков модулей по времени: выберите аккаунты, модуль и расписание"
         icon={<CalendarClock size={22} />}
-        actions={<button onClick={() => setEditing('new')} className="btn-primary h-10"><Plus size={16} /> Новое правило</button>}
+        actions={<div className="flex items-center gap-2"><HelpButton topic="automation" className="h-10 w-10" /><button onClick={() => setEditing('new')} className="btn-primary h-10"><Plus size={16} /> Новое правило</button></div>}
       />
 
       {loading ? (

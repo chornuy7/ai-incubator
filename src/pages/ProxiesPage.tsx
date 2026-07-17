@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { Network, Plus, Trash2, Pencil, Link2, Check, Circle, Zap, Loader2, MapPin } from 'lucide-react'
 import { PageHeader, Card, EmptyState, Badge, Select, Modal } from '@/shared/ui'
+import { HelpButton } from '@/features/neuro-commenting/moduleUi'
 import {
   fetchProxies, createProxy, updateProxy, deleteProxy, toProxyUrl, checkProxy,
   PROXY_KIND_LABELS, type Proxy, type ProxyKind, type ProxyGeo,
@@ -89,7 +90,7 @@ export function ProxiesPage() {
         subtitle="Каталог прокси (статические / мобильные / своя ферма) и привязка к аккаунтам. §3.2/3.4"
         icon={<Network size={22} />}
         badge={proxies.length ? `${proxies.length}` : undefined}
-        actions={<button onClick={openNew} className="btn-primary h-10"><Plus size={16} /> Новый прокси</button>}
+        actions={<div className="flex items-center gap-2"><HelpButton topic="proxy-policy" className="h-10 w-10" /><button onClick={openNew} className="btn-primary h-10"><Plus size={16} /> Новый прокси</button></div>}
       />
 
       {err && !editOpen && <Card className="mb-3 border-rose-500/30 p-3 text-sm text-rose-300">{err}</Card>}

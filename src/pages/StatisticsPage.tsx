@@ -5,6 +5,7 @@ import {
 import { useApp, activeAccounts } from '@/mocks/store'
 import { useMockLoading } from '@/shared/lib/hooks'
 import { PageHeader, Segmented, Tabs, Card, EmptyState, Avatar, StatusBadge, Dropdown, MenuItem, Skeleton } from '@/shared/ui'
+import { HelpButton } from '@/features/neuro-commenting/moduleUi'
 import { BarChart } from '@/shared/ui/BarChart'
 import { compact } from '@/shared/lib/utils'
 
@@ -61,6 +62,7 @@ export function StatisticsPage() {
         subtitle="Активность аккаунтов и модулей"
         icon={<BarChart3 size={22} />}
         actions={<>
+          <HelpButton topic="my-statistics" className="h-10 w-10" />
           <Segmented options={RANGES} value={range} onChange={setRange} size="sm" />
           {exportBtn}
         </>}

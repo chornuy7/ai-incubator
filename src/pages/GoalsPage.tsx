@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { Target, Plus, Pencil, Trash2, BookOpen } from 'lucide-react'
 import { useApp } from '@/mocks/store'
 import { PageHeader, Card, EmptyState, Modal, Badge } from '@/shared/ui'
+import { HelpButton } from '@/features/neuro-commenting/moduleUi'
 import {
   fetchGoals, createGoal, updateGoal, deleteGoal, type Goal, type GoalInput,
   fetchKb, createKb, deleteKb, type KbItem,
@@ -107,7 +108,7 @@ export function GoalsPage() {
         title="Цели"
         subtitle="Цель кампании: целевое действие, этапы и критерий завершения. AI-модули работают к выбранной цели."
         icon={<Target size={22} />}
-        actions={<button onClick={openNew} className="btn-primary h-10"><Plus size={16} /> Новая цель</button>}
+        actions={<div className="flex items-center gap-2"><HelpButton topic="goals" className="h-10 w-10" /><button onClick={openNew} className="btn-primary h-10"><Plus size={16} /> Новая цель</button></div>}
       />
 
       {loading ? (

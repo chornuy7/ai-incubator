@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { Rocket, Check, Clock, Power, Trash2, CalendarClock } from 'lucide-react'
 import { activeAccounts, useApp } from '@/mocks/store'
 import { PageHeader, Card, Select, Badge } from '@/shared/ui'
+import { HelpButton } from '@/features/neuro-commenting/moduleUi'
 import { MODULES } from '@/shared/config/modules'
 import { fetchGoals, type Goal } from '@/api/goalsApi'
 import {
@@ -111,6 +112,7 @@ export function CampaignPage() {
         title="Кампания"
         subtitle="Одна цель → несколько модулей на общем пуле аккаунтов. Аккаунты распределяются между модулями без конфликтов."
         icon={<Rocket size={22} />}
+        actions={<HelpButton topic="campaign" className="h-10 w-10" />}
       />
 
       <div className="grid gap-3 lg:grid-cols-2">
