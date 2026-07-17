@@ -105,6 +105,11 @@
   .btn-icon-danger {
     @apply inline-flex h-9 w-9 items-center justify-center rounded-lg border border-rose-500/40 bg-rose-500/10 text-rose-300 transition-colors hover:bg-rose-500/20 hover:text-rose-200;
   }
+  /* Плавное сжатие контента при открытом Help Center (ширина задаётся инлайном из Layout).
+     Дровер не перекрывает контент. */
+  .help-shift {
+    transition: width 0.2s ease;
+  }
 
   /* ── Формы ── */
   .input {
