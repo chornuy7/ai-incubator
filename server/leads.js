@@ -7,12 +7,25 @@ import { dataPath, readJson, writeJson } from './lib/jsonStore.js'
 
 const LEADS_FILE = process.env.LEADS_FILE || dataPath('leads.json')
 
-/** Статусы лида (§3.6): холодный → ответил → горячий → целевое действие → закрыт. */
-export const LEAD_STATUSES = ['cold', 'answered', 'hot', 'target', 'closed']
+/**
+ * Статусы лида — воронка прогрева (правки созвона 17.07, §9):
+ * холодный → только написал (первое сообщение) → прогретый → заинтересованный → горячий,
+ * плюс терминальные: целевое действие и закрыт. «Горячий» = мгновенный алерт менеджеру.
+ */
+export const LEAD_STATUSES = ['cold', 'contacted', 'warm', 'interested', 'hot', 'target', 'closed']
+
+/** Легаси-алиасы старой воронки → новая (чтобы не потерять существующие данные). */
+const LEGACY_STATUS = { answered: 'warm' }
+
+/** Нормализация статуса: легаси-алиас, затем валидация; неизвестный → cold. */
+export function mapLeadStatus(s) {
+  const mapped = LEGACY_STATUS[s] || s
+  return LEAD_STATUSES.includes(mapped) ? mapped : 'cold'
+}
 
 /** @param {object} input */
 export function normalizeLead(input = {}) {
-  const status = LEAD_STATUSES.includes(input.status) ? input.status : 'cold'
+  const status = mapLeadStatus(input.status)
   return {
     goalId: input.goalId ? String(input.goalId) : null,
     accountId: input.accountId ? String(input.accountId) : null, // ответственный аккаунт
@@ -57,7 +70,12 @@ export async function updateLead(id, patch = {}) {
   const FIELDS = ['goalId', 'accountId', 'peer', 'status', 'result', 'note']
   for (const k of FIELDS) {
     if (patch[k] !== undefined) {
-      if (k === 'status' && !LEAD_STATUSES.includes(patch[k])) continue
+      if (k === 'status') {
+        // Легаси-алиас поддерживаем; genuinely невалидный статус не затирает старый.
+        const mapped = LEGACY_STATUS[patch[k]] || patch[k]
+        if (LEAD_STATUSES.includes(mapped)) all[i].status = mapped
+        continue
+      }
       all[i][k] = k === 'peer' ? String(patch[k]).trim() : (patch[k] === null ? null : String(patch[k]))
     }
   }
@@ -97,11 +115,15 @@ export async function assertNoHotLeadConflict(accountIds, moduleKey) {
 }
 
 /** «Активный диалог» — лид в работе (не целевое действие и не закрыт). §3.6 */
-export const ACTIVE_LEAD_STATUSES = new Set(['cold', 'answered', 'hot'])
+// Активные (в работе) статусы воронки — не терминальные target/closed.
+export const ACTIVE_LEAD_STATUSES = new Set(['cold', 'contacted', 'warm', 'interested', 'hot'])
 
-/** Приоритет лида для обработки: ответивший/горячий — выше. Чистая функция. */
+/**
+ * Приоритет лида для обработки: чем горячее по воронке — тем выше. Чистая функция.
+ * hot > interested > warm > contacted > cold; target (цель достигнута) и closed — низкий.
+ */
 export function leadPriority(status) {
-  return { hot: 4, answered: 3, target: 2, cold: 1, closed: 0 }[status] ?? 1
+  return { hot: 6, interested: 5, warm: 4, contacted: 3, target: 2, cold: 1, closed: 0 }[status] ?? 1
 }
 
 /** Сортировка лидов по приоритету (ответившему — приоритет, §3.6). Чистая, не мутирует. */

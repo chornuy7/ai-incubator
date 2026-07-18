@@ -8,7 +8,8 @@ import { fetchAllTasks, type ModuleTask } from '@/api/modulesApi'
 import { fetchGoals, type Goal } from '@/api/goalsApi'
 
 const STATUS_LABEL: Record<LeadStatus, string> = {
-  cold: 'Холодные', answered: 'Ответили', hot: 'Горячие', target: 'Целевое', closed: 'Закрыты',
+  cold: 'Холодные', contacted: 'Написали', warm: 'Прогретые', interested: 'Заинтересованные',
+  hot: 'Горячие', target: 'Целевое', closed: 'Закрыты',
 }
 
 function actionsOf(t: ModuleTask) {
@@ -46,11 +47,13 @@ export function AnalyticsPage() {
     const byStatus = Object.fromEntries(LEAD_STATUSES.map((s) => [s, 0])) as Record<LeadStatus, number>
     for (const l of leads) byStatus[l.status] += 1
     const total = leads.length
-    const active = byStatus.answered + byStatus.hot
+    // Активные = все, кто прошёл дальше «холодного» (ответили/прогреваются/горячие).
+    const engaged = byStatus.contacted + byStatus.warm + byStatus.interested + byStatus.hot
+    const active = engaged
     const sent = tasks.reduce((a, t) => a + actionsOf(t), 0)
     const runningTasks = tasks.filter((t) => t.status === 'running' || t.status === 'queued').length
     const conversion = total ? Math.round((byStatus.target / total) * 100) : 0
-    const replyRate = sent ? Math.round(((byStatus.answered + byStatus.hot + byStatus.target) / sent) * 100) : 0
+    const replyRate = sent ? Math.round(((engaged + byStatus.target) / sent) * 100) : 0
     return { byStatus, total, active, sent, runningTasks, conversion, replyRate }
   }, [leads, tasks])
 

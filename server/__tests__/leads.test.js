@@ -5,22 +5,25 @@ import os from 'node:os'
 import path from 'node:path'
 import { normalizeLead, LEAD_STATUSES, hasActiveHotLead, DIALOG_MODULES, activeLeadCount, leadPriority, sortLeadsByPriority } from '../leads.js'
 
-test('activeLeadCount: считает лиды в работе (cold/answered/hot), не target/closed', () => {
+test('activeLeadCount: считает лиды в работе (вся воронка кроме target/closed)', () => {
   const leads = [
-    { accountId: 'a', status: 'cold' }, { accountId: 'a', status: 'answered' },
+    { accountId: 'a', status: 'cold' }, { accountId: 'a', status: 'contacted' },
+    { accountId: 'a', status: 'warm' }, { accountId: 'a', status: 'interested' },
     { accountId: 'a', status: 'hot' }, { accountId: 'a', status: 'target' },
     { accountId: 'a', status: 'closed' }, { accountId: 'b', status: 'hot' },
   ]
-  assert.equal(activeLeadCount(leads, 'a'), 3) // cold+answered+hot
+  assert.equal(activeLeadCount(leads, 'a'), 5) // cold+contacted+warm+interested+hot
   assert.equal(activeLeadCount(leads, 'b'), 1)
   assert.equal(activeLeadCount(leads, 'нет'), 0)
 })
 
-test('leadPriority + sortLeadsByPriority: ответивший/горячий — выше', () => {
-  assert.ok(leadPriority('hot') > leadPriority('answered'))
-  assert.ok(leadPriority('answered') > leadPriority('cold'))
+test('leadPriority + sortLeadsByPriority: горячее по воронке — выше', () => {
+  assert.ok(leadPriority('hot') > leadPriority('interested'))
+  assert.ok(leadPriority('interested') > leadPriority('warm'))
+  assert.ok(leadPriority('warm') > leadPriority('contacted'))
+  assert.ok(leadPriority('contacted') > leadPriority('cold'))
   const sorted = sortLeadsByPriority([
-    { id: '1', status: 'cold' }, { id: '2', status: 'hot' }, { id: '3', status: 'answered' },
+    { id: '1', status: 'cold' }, { id: '2', status: 'hot' }, { id: '3', status: 'interested' },
   ])
   assert.deepEqual(sorted.map((l) => l.id), ['2', '3', '1'])
 })
@@ -73,16 +76,18 @@ test('assertNoHotLeadConflict: блокирует не-диалоговый мо
   delete process.env.LEADS_FILE
 })
 
-test('normalizeLead: дефолт статуса и типы', () => {
+test('normalizeLead: дефолт статуса, легаси-алиас и типы', () => {
   const l = normalizeLead({ peer: ' @user ', status: 'непонятно', goalId: 'g1' })
   assert.equal(l.status, 'cold') // невалидный статус → cold
   assert.equal(l.peer, '@user') // trim
   assert.equal(l.goalId, 'g1')
   assert.equal(l.accountId, null)
+  // легаси-статус старой воронки нормализуется в новую
+  assert.equal(normalizeLead({ peer: '@x', status: 'answered' }).status, 'warm')
 })
 
-test('LEAD_STATUSES — воронка', () => {
-  assert.deepEqual(LEAD_STATUSES, ['cold', 'answered', 'hot', 'target', 'closed'])
+test('LEAD_STATUSES — воронка прогрева (§9)', () => {
+  assert.deepEqual(LEAD_STATUSES, ['cold', 'contacted', 'warm', 'interested', 'hot', 'target', 'closed'])
 })
 
 test('CRUD + фильтры + stats (изолированный файл)', async () => {
@@ -123,21 +128,21 @@ test('createLead без peer — ошибка', async () => {
 test('leadPriorityMap / dialogLeadPriority / sortDialogsByLeadPriority (§3.6 приоритет)', async () => {
   const { leadPriorityMap, dialogLeadPriority, sortDialogsByLeadPriority } = await import('../leads.js')
   const leads = [
-    { peer: '@hotguy', status: 'hot' },      // 4
-    { peer: 'answered_user', status: 'answered' }, // 3
-    { peer: '12345', status: 'cold' },       // 1
+    { peer: '@hotguy', status: 'hot' },          // 6
+    { peer: 'warm_user', status: 'interested' }, // 5
+    { peer: '12345', status: 'cold' },           // 1
   ]
   const map = leadPriorityMap(leads)
-  assert.equal(map.hotguy, 4)
-  assert.equal(map.answered_user, 3)
+  assert.equal(map.hotguy, 6)
+  assert.equal(map.warm_user, 5)
   // dialog по username (регистр/@ нормализуются)
-  assert.equal(dialogLeadPriority({ entity: { username: 'HotGuy' } }, map), 4)
+  assert.equal(dialogLeadPriority({ entity: { username: 'HotGuy' } }, map), 6)
   assert.equal(dialogLeadPriority({ entity: { id: 12345 } }, map), 1)
   assert.equal(dialogLeadPriority({ entity: { username: 'nobody' } }, map), 1) // нет лида → cold
   // сортировка: hot → answered → без лида (стабильно)
   const dialogs = [
     { name: 'X', entity: { username: 'nobody' } },
-    { name: 'A', entity: { username: 'answered_user' } },
+    { name: 'A', entity: { username: 'warm_user' } },
     { name: 'H', entity: { username: 'hotguy' } },
   ]
   const sorted = sortDialogsByLeadPriority(dialogs, leads)

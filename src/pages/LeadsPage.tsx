@@ -7,9 +7,12 @@ import { confirmDialog } from '@/shared/lib/dialog'
 import { fetchLeads, createLead, updateLead, deleteLead, sortLeadsByPriority, LEAD_STATUSES, type Lead, type LeadStatus } from '@/api/leadsApi'
 import { fetchGoals, type Goal } from '@/api/goalsApi'
 
+// §9: воронка прогрева. Порядок = движение к цели; «Горячий» — мгновенный алерт.
 const STATUS: Record<LeadStatus, { label: string; tone: 'spark' | 'iris' | 'amber' | 'rose' | 'muted' }> = {
   cold: { label: 'Холодный', tone: 'muted' },
-  answered: { label: 'Ответил', tone: 'iris' },
+  contacted: { label: 'Только написал', tone: 'iris' },
+  warm: { label: 'Прогретый', tone: 'amber' },
+  interested: { label: 'Заинтересованный', tone: 'spark' },
   hot: { label: 'Горячий', tone: 'rose' },
   target: { label: 'Целевое', tone: 'spark' },
   closed: { label: 'Закрыт', tone: 'muted' },
@@ -62,7 +65,14 @@ export function LeadsPage() {
   }
 
   const setStatus = async (l: Lead, status: LeadStatus) => {
-    try { await updateLead(l.id, { status }); await load() }
+    try {
+      await updateLead(l.id, { status })
+      // §9: горячий лид — мгновенный алерт менеджеру.
+      if (status === 'hot' && l.status !== 'hot') {
+        pushToast({ type: 'error', title: '🔥 Горячий лид!', desc: `${l.peer}${l.goalId ? ` · цель: ${goalName(l.goalId)}` : ''} — свяжитесь немедленно` })
+      }
+      await load()
+    }
     catch (err) { pushToast({ type: 'error', title: 'Ошибка', desc: err instanceof Error ? err.message : '' }) }
   }
   const remove = async (l: Lead) => {
@@ -83,9 +93,17 @@ export function LeadsPage() {
         actions={<HelpButton topic="crm" className="h-10 w-10" />}
       />
 
-      <div className="mb-4 grid grid-cols-2 gap-2 sm:grid-cols-5">
+      {/* §9: горячие лиды — заметный алерт-баннер, требуют немедленного внимания. */}
+      {counts.hot > 0 && (
+        <div className="mb-4 flex items-center gap-2 rounded-xl border border-rose-500/40 bg-rose-500/10 px-4 py-3 text-sm font-semibold text-rose-200">
+          <Flame size={18} className="animate-pulse text-rose-400" />
+          {counts.hot} {counts.hot === 1 ? 'горячий лид' : 'горячих лидов'} — свяжитесь немедленно
+        </div>
+      )}
+
+      <div className="mb-4 grid grid-cols-2 gap-2 sm:grid-cols-4 lg:grid-cols-7">
         {LEAD_STATUSES.map((s) => (
-          <div key={s} className="rounded-lg bg-white/5 p-3">
+          <div key={s} className={`rounded-lg p-3 ${s === 'hot' && counts.hot > 0 ? 'bg-rose-500/10 ring-1 ring-rose-500/30' : 'bg-white/5'}`}>
             <div className="text-xs text-white/50">{STATUS[s].label}</div>
             <div className="text-xl font-semibold text-white">{counts[s]}{s === 'hot' && counts.hot > 0 && <Flame size={14} className="mb-1 ml-1 inline text-rose-400" />}</div>
           </div>
@@ -120,7 +138,7 @@ export function LeadsPage() {
                   value={l.status}
                   onChange={(v) => void setStatus(l, v as LeadStatus)}
                   options={LEAD_STATUSES.map((s) => ({ value: s, label: STATUS[s].label }))}
-                  className="w-36"
+                  className="w-44"
                 />
                 <button onClick={() => void remove(l)} className="btn-icon-danger h-8 w-8" aria-label="Удалить лида" title="Удалить лида"><Trash2 size={14} /></button>
               </div>
