@@ -2,6 +2,7 @@ import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   Play, Sparkles, Search, Send, MessagesSquare, Mail, Users,
   RefreshCw, Loader2, ChevronDown, ExternalLink, Terminal, ArrowUpRight,
+  Bold, Italic, Link2,
 } from 'lucide-react'
 import { MODULES } from '@/shared/config/modules'
 import { useApp } from '@/mocks/store'
@@ -152,7 +153,19 @@ export function NeuroDialogsModule() {
 
   const msgCache = useRef<Map<string, DialogMessage[]>>(new Map())
   const scrollRef = useRef<HTMLDivElement>(null)
+  const replyRef = useRef<HTMLInputElement>(null)
   const accountIds = useMemo(() => [...selected], [selected])
+
+  // §9: редактор ответа — обернуть выделение в Telegram-разметку (жирный/курсив/ссылка).
+  const fmtReply = useCallback((before: string, after: string) => {
+    const el = replyRef.current
+    if (!el) return
+    const s = el.selectionStart ?? reply.length
+    const e = el.selectionEnd ?? reply.length
+    const sel = reply.slice(s, e) || 'текст'
+    setReply(reply.slice(0, s) + before + sel + after + reply.slice(e))
+    requestAnimationFrame(() => { el.focus(); el.setSelectionRange(s + before.length, s + before.length + sel.length) })
+  }, [reply])
 
   const activeDialog = useMemo(
     () => dialogs.find((d) => d.key === activeKey) ?? null,
@@ -549,23 +562,40 @@ export function NeuroDialogsModule() {
                   )}
                 </div>
 
-                <div className="flex items-center gap-2 border-t border-line p-3">
-                  <input
-                    value={reply}
-                    onChange={(e) => setReply(e.target.value)}
-                    onKeyDown={(e) => e.key === 'Enter' && !e.shiftKey && (e.preventDefault(), void send())}
-                    className="input min-w-0 flex-1"
-                    placeholder="Написать сообщение…"
-                    disabled={sending}
-                  />
-                  <button
-                    type="button"
-                    onClick={() => void send()}
-                    disabled={sending || !reply.trim()}
-                    className="btn-iris h-[42px] shrink-0 px-4"
-                  >
-                    {sending ? <Loader2 size={16} className="animate-spin" /> : <Send size={16} />}
-                  </button>
+                <div className="border-t border-line p-3">
+                  {/* §9: панель форматирования ответа (Telegram-разметка). */}
+                  <div className="mb-2 flex items-center gap-1">
+                    {([
+                      [<Bold size={13} />, 'Жирный', '**', '**'],
+                      [<Italic size={13} />, 'Курсив', '__', '__'],
+                      [<Link2 size={13} />, 'Ссылка', '[', '](https://)'],
+                    ] as [React.ReactNode, string, string, string][]).map(([icon, title, b, a]) => (
+                      <button key={title} type="button" title={title} onClick={() => fmtReply(b, a)}
+                        className="grid h-7 w-7 place-items-center rounded-md border border-line bg-elevated text-muted transition-colors hover:border-spark-500/40 hover:text-fg">
+                        {icon}
+                      </button>
+                    ))}
+                    <span className="ml-1 text-[10px] text-faint">**жирный** · __курсив__ · [ссылка](url)</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <input
+                      ref={replyRef}
+                      value={reply}
+                      onChange={(e) => setReply(e.target.value)}
+                      onKeyDown={(e) => e.key === 'Enter' && !e.shiftKey && (e.preventDefault(), void send())}
+                      className="input min-w-0 flex-1"
+                      placeholder="Написать сообщение…"
+                      disabled={sending}
+                    />
+                    <button
+                      type="button"
+                      onClick={() => void send()}
+                      disabled={sending || !reply.trim()}
+                      className="btn-iris h-[42px] shrink-0 px-4"
+                    >
+                      {sending ? <Loader2 size={16} className="animate-spin" /> : <Send size={16} />}
+                    </button>
+                  </div>
                 </div>
               </>
             ) : (

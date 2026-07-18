@@ -107,7 +107,11 @@ export async function fetchDialogMessages(client, peerId, limit = 60, beforeId =
 /** @param {import('telegram').TelegramClient} client @param {string} peerId @param {string} text @param {{ accessHash?: string, username?: string }} [peerOpts] */
 export async function sendDialogMessage(client, peerId, text, peerOpts = {}) {
   const entity = await resolvePeerEntity(client, peerId, peerOpts)
-  const msg = await client.sendMessage(entity, { message: text })
+  // §9: ручной ответ поддерживает Telegram-разметку (жирный/курсив/ссылка).
+  // Markdown с фолбеком на обычный текст, если разметка малформед.
+  let msg
+  try { msg = await client.sendMessage(entity, { message: text, parseMode: 'md' }) }
+  catch { msg = await client.sendMessage(entity, { message: text }) }
   return {
     id: msg.id,
     text: msg.message || text,
