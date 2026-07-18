@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import {
   Play, Sparkles, Hash, Settings2, Clock, Users, MessageSquareText,
-  Heart, Eye, Shield, MessageCircle, Database, Trophy, LayoutGrid, List, Link2, Plus, Target, Terminal, ArrowUpRight,
+  Heart, Eye, Shield, MessageCircle, Database, Trophy, Link2, Plus, Target, Terminal, ArrowUpRight,
 } from 'lucide-react'
 import { MODULES, isCombatModule, combatConfirmText, type ModuleConfig } from '@/shared/config/modules'
 import { activeAccounts, useApp } from '@/mocks/store'
@@ -104,7 +104,6 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
     setMinActions(minPerAcc * accCount)
   }, [maxPerAcc, minPerAcc, accCount])
   const [palette, setPalette] = useState<Set<string>>(new Set(['👍', '❤️', '🔥']))
-  const [historyGrid, setHistoryGrid] = useState(true)
   const [folderSave, setFolderSave] = useState<string[] | null>(null)
   const [lookModeIdx, setLookModeIdx] = useState(0)
   const [lookPostsCount, setLookPostsCount] = useState(cfg.lookPostsDefault ?? 3)
@@ -247,7 +246,6 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
     pushToast({ type: 'success', title: 'Пресет применён' })
   }, [cfg.lookModeOptions, pushToast])
 
-  const history = task?.commentHistory ?? task?.history ?? []
   const results = task?.results ?? []
   const progressDone = task?.progress.actionsDone ?? task?.progress.commentsSent ?? 0
 
@@ -280,6 +278,33 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
       <SaveToFolderModal open={folderSave !== null} onClose={() => setFolderSave(null)} targets={folderSave ?? []} />
       {cfg.accountPicker && showBlock('run') && (
         <AccountPicker selected={selected} onChange={setSelected} actions={cfg.accountActions} withFilters={!!cfg.accountFilters} selectedTitle={cfg.selectedTitle ?? 'Выбрано'} />
+      )}
+
+      {/* §7: AI-промпты — сразу под выбором аккаунтов (это основа модуля). */}
+      {showBlock('templates') && cfg.messagePrompts && (
+        <SectionCard icon={<Sparkles size={18} />} title="AI / промпты">
+          <div className="space-y-3">
+            <AiGenerationNotice />
+            <GlobalPromptEditor />
+            <PromptCards
+            moduleKey={moduleKey}
+            labels={cfg.messagePrompts}
+            activeIndex={activePrompt}
+            onActiveChange={setActivePrompt}
+            onBodiesChange={setPromptBodies}
+          />
+          </div>
+        </SectionCard>
+      )}
+
+      {showBlock('templates') && cfg.reactionPalette && (
+        <SectionCard icon={<Heart size={18} />} title="Эмодзи">
+          <div className="flex flex-wrap gap-2">
+            {cfg.reactionPalette.map((e) => (
+              <button key={e} type="button" onClick={() => { const n = new Set(palette); n.has(e) ? n.delete(e) : n.add(e); setPalette(n) }} className={`grid h-11 w-11 place-items-center rounded-xl border text-xl ${palette.has(e) ? 'border-spark-500/50 bg-spark-500/12' : 'border-line bg-elevated'}`}>{e}</button>
+            ))}
+          </div>
+        </SectionCard>
       )}
 
       {showBlock('settings') && (cfg.aiProtection || cfg.richLayout || cfg.lookingLayout || cfg.warmingLayout || isGgr) && (
@@ -374,32 +399,6 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
         </SectionCard>
       )}
 
-      {showBlock('settings') && !isParser && !isGgr && (cfg.aiProtection || cfg.richLayout || cfg.lookingLayout || cfg.warmingLayout) && (
-        <TimingSection
-          workModeOptions={cfg.toggleGroups?.[1]?.options}
-          workMode={g(1)}
-          onWorkMode={(v) => setTg(1, v)}
-          workModeLabel={cfg.toggleGroups?.[1]?.label}
-          durationMinutes={durationMinutes}
-          onDuration={setDurationMinutes}
-          showDurationAlways={!!cfg.reactionSettings}
-          durationPeriodHint={`Период работы: ${durationPeriodMin}–${durationMinutes} мин`}
-          totalLabel={cfg.reactionSettings?.max.label ?? cfg.workModeFields?.maxLabel ?? 'Всего действий'}
-          computedTotal={{ value: maxActions, accounts: accCount }}
-          perAccount={{ min: minPerAcc, max: maxPerAcc, onMin: setMinPerAcc, onMax: setMaxPerAcc }}
-          minWords={cfg.workModeFields?.minWords ? { value: minWords, onChange: setMinWords } : null}
-          delays={delays}
-          onDelays={(updater) => setDelays(updater)}
-          showComment={!!cfg.richLayout && !cfg.reactionSettings && moduleKey === 'neuro-commenting'}
-          showAction={!(cfg.richLayout && !cfg.reactionSettings && moduleKey === 'neuro-commenting')}
-          showJoin
-          labels={{ action: cfg.reactionSettings ? 'Задержка между реакциями' : 'Задержка действия', join: 'Задержка вступления' }}
-          delayPresets={cfg.delayPresets ?? ['Мин', 'Рекомендуемые', 'Макс']}
-          delayPreset={delayPreset}
-          onDelayPreset={setDelayPreset}
-        />
-      )}
-
       {showBlock('targets') && (cfg.sourceTabs || needsTargets) && !isGgr && (
         <SectionCard icon={<Hash size={18} />} title={cfg.sourceTabs?.label ?? 'Цели'} badge={String(targets.length)}>
           <FolderPicker targets={targets} onLoad={(t) => setTargets((prev) => [...new Set([...t, ...prev])])} />
@@ -415,6 +414,12 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
             onRemove={(t) => setTargets((arr) => arr.filter((x) => x !== t))}
             placeholder={cfg.sourceTabs?.placeholder ?? '@username или t.me/...'}
           />
+          {/* §7: чёрный список — компактным блоком рядом с каналами. */}
+          {(cfg.blacklistSection || cfg.blacklistEmpty) && (
+            <div className="mt-3">
+              <BlacklistEditor title={cfg.blacklistSection ?? 'Чёрный список каналов'} compact />
+            </div>
+          )}
         </SectionCard>
       )}
 
@@ -444,32 +449,6 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
               ))}
             </div>
           )}
-        </SectionCard>
-      )}
-
-      {showBlock('templates') && cfg.reactionPalette && (
-        <SectionCard icon={<Heart size={18} />} title="Эмодзи">
-          <div className="flex flex-wrap gap-2">
-            {cfg.reactionPalette.map((e) => (
-              <button key={e} type="button" onClick={() => { const n = new Set(palette); n.has(e) ? n.delete(e) : n.add(e); setPalette(n) }} className={`grid h-11 w-11 place-items-center rounded-xl border text-xl ${palette.has(e) ? 'border-spark-500/50 bg-spark-500/12' : 'border-line bg-elevated'}`}>{e}</button>
-            ))}
-          </div>
-        </SectionCard>
-      )}
-
-      {showBlock('templates') && cfg.messagePrompts && (
-        <SectionCard icon={<Sparkles size={18} />} title="AI / промпты">
-          <div className="space-y-3">
-            <AiGenerationNotice />
-            <GlobalPromptEditor />
-            <PromptCards
-            moduleKey={moduleKey}
-            labels={cfg.messagePrompts}
-            activeIndex={activePrompt}
-            onActiveChange={setActivePrompt}
-            onBodiesChange={setPromptBodies}
-          />
-          </div>
         </SectionCard>
       )}
 
@@ -568,12 +547,6 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
           onDeletePreset={deletePreset}
         />
         <div className="mt-4 flex flex-wrap items-center gap-3">
-          {!isParser && !isGgr && history.length > 0 && (
-            <div className="inline-flex rounded-lg border border-line bg-elevated p-0.5">
-              <button type="button" onClick={() => setHistoryGrid(false)} className={`rounded p-1.5 ${!historyGrid ? 'bg-surface text-fg' : 'text-muted'}`}><List size={15} /></button>
-              <button type="button" onClick={() => setHistoryGrid(true)} className={`rounded p-1.5 ${historyGrid ? 'bg-surface text-fg' : 'text-muted'}`}><LayoutGrid size={15} /></button>
-            </div>
-          )}
           <a href={`/panel/tasks?module=${moduleKey}${task ? `&task=${task.id}` : ''}`} className="ml-auto inline-flex items-center gap-1 text-xs font-semibold text-spark-300 hover:underline" title="Открыть Дашборд задач, отфильтрованный по этому модулю">
             <Terminal size={13} /> Логи выполнения — в Дашборде задач <ArrowUpRight size={13} />
           </a>
@@ -581,9 +554,38 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
       </SectionCard>
       )}
 
-      {(showBlock('results') || showBlock('logs')) && (
-        <SectionCard icon={<MessageCircle size={18} />} title={isParser || isGgr ? 'Результаты' : 'История сообщений'} badge={String(isParser || isGgr ? results.length : history.length)}>
-          {(isParser || isGgr) && results.length > 0 ? (
+      {/* §7: тайминги и задержки — вниз (меняются редко). */}
+      {showBlock('settings') && !isParser && !isGgr && (cfg.aiProtection || cfg.richLayout || cfg.lookingLayout || cfg.warmingLayout) && (
+        <TimingSection
+          workModeOptions={cfg.toggleGroups?.[1]?.options}
+          workMode={g(1)}
+          onWorkMode={(v) => setTg(1, v)}
+          workModeLabel={cfg.toggleGroups?.[1]?.label}
+          durationMinutes={durationMinutes}
+          onDuration={setDurationMinutes}
+          showDurationAlways={!!cfg.reactionSettings}
+          durationPeriodHint={`Период работы: ${durationPeriodMin}–${durationMinutes} мин`}
+          totalLabel={cfg.reactionSettings?.max.label ?? cfg.workModeFields?.maxLabel ?? 'Всего действий'}
+          computedTotal={{ value: maxActions, accounts: accCount }}
+          perAccount={{ min: minPerAcc, max: maxPerAcc, onMin: setMinPerAcc, onMax: setMaxPerAcc }}
+          minWords={cfg.workModeFields?.minWords ? { value: minWords, onChange: setMinWords } : null}
+          delays={delays}
+          onDelays={(updater) => setDelays(updater)}
+          showComment={!!cfg.richLayout && !cfg.reactionSettings && moduleKey === 'neuro-commenting'}
+          showAction={!(cfg.richLayout && !cfg.reactionSettings && moduleKey === 'neuro-commenting')}
+          showJoin
+          labels={{ action: cfg.reactionSettings ? 'Задержка между реакциями' : 'Задержка действия', join: 'Задержка вступления' }}
+          delayPresets={cfg.delayPresets ?? ['Мин', 'Рекомендуемые', 'Макс']}
+          delayPreset={delayPreset}
+          onDelayPreset={setDelayPreset}
+        />
+      )}
+
+      {/* §7: блок «История сообщений» убран. Результаты остаются только для парсера/проверки (GGR) —
+          там это фактический вывод задачи. Логи выполнения — в Дашборде задач (ссылка выше). */}
+      {(isParser || isGgr) && (showBlock('results') || showBlock('logs')) && (
+        <SectionCard icon={<MessageCircle size={18} />} title="Результаты" badge={String(results.length)}>
+          {results.length > 0 ? (
             <div className="max-h-80 overflow-y-auto">
               <table className="w-full text-sm">
                 <thead><tr className="border-b border-line text-left text-xs text-muted"><th className="py-2">Имя</th><th>Детали</th><th>Статус</th></tr></thead>
@@ -598,29 +600,10 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
                 </tbody>
               </table>
             </div>
-          ) : history.length > 0 ? (
-            historyGrid ? (
-              <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-                {history.map((h, i) => (
-                  <div key={i} className="rounded-xl border border-line bg-elevated/40 p-3 text-sm">
-                    <div className="text-xs text-muted">{String(h.accountName ?? '')} · @{String(h.channel ?? h.target ?? '')}</div>
-                    <p className="mt-1 text-fg">{String(h.comment ?? h.text ?? h.emoji ?? '')}</p>
-                  </div>
-                ))}
-              </div>
-            ) : (
-              <ul className="space-y-2">{history.map((h, i) => (
-                <li key={i} className="rounded-xl border border-line bg-elevated/40 p-3 text-sm text-fg">{String(h.comment ?? h.text ?? JSON.stringify(h))}</li>
-              ))}</ul>
-            )
           ) : (
-            <EmptyState icon={<Eye size={22} />} title="Пока пусто" desc={`Действий: ${progressDone}. Запустите модуль.`} />
+            <EmptyState icon={<Eye size={22} />} title="Пока пусто" desc={`Действий: ${progressDone}. Запустите проверку.`} />
           )}
         </SectionCard>
-      )}
-
-      {showBlock('targets') && (cfg.blacklistSection || cfg.blacklistEmpty) && (
-        <BlacklistEditor title={cfg.blacklistSection ?? 'Чёрный список каналов'} />
       )}
 
       {!(['run', 'settings', 'targets', 'templates', 'results', 'logs'] as const).some(showBlock) && (

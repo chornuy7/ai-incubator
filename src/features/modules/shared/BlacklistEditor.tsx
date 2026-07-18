@@ -8,11 +8,12 @@ import { fetchBlacklist, addBlacklistEntry, removeBlacklistEntry } from '@/api/f
  * (10) Редактор чёрного списка целей. Глобальный список исключаемых каналов/групп.
  * Воркеры фильтруют эти цели перед действиями во всех модулях.
  */
-export function BlacklistEditor({ title = 'Чёрный список каналов' }: { title?: string }) {
+export function BlacklistEditor({ title = 'Чёрный список каналов', compact = false }: { title?: string; compact?: boolean }) {
   const pushToast = useApp((s) => s.pushToast)
   const [entries, setEntries] = useState<string[]>([])
   const [input, setInput] = useState('')
   const [loading, setLoading] = useState(false)
+  const [open, setOpen] = useState(false)
 
   const reload = async () => {
     try { setEntries(await fetchBlacklist()) } catch { /* API offline */ }
@@ -37,8 +38,9 @@ export function BlacklistEditor({ title = 'Чёрный список канал�
     try { setEntries(await removeBlacklistEntry(entry)) } catch { /* ignore */ }
   }
 
-  return (
-    <SectionCard icon={<Ban size={18} />} title={title} badge={String(entries.length)}>
+  // Компактный режим (§7): маленький сворачиваемый блок рядом с каналами, а не большая секция.
+  const body = (
+    <>
       <p className="mb-3 text-xs text-muted">Эти цели будут исключены из всех модулей при выборе/обработке (нейрокомментинг, реакции, чаттинг, масслукинг).</p>
       <div className="flex gap-2">
         <textarea
@@ -62,6 +64,30 @@ export function BlacklistEditor({ title = 'Чёрный список канал�
       ) : (
         <p className="mt-3 text-xs text-muted">Чёрный список пуст.</p>
       )}
+    </>
+  )
+
+  if (compact) {
+    return (
+      <div className="rounded-xl border border-line bg-elevated/30">
+        <button
+          type="button"
+          onClick={() => setOpen((v) => !v)}
+          className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm font-semibold text-muted hover:text-fg"
+        >
+          <Ban size={15} className="text-rose-300/80" />
+          {title}
+          <span className="rounded-md bg-line/60 px-1.5 py-0.5 text-xs font-bold text-fg">{entries.length}</span>
+          <span className="ml-auto text-xs text-faint">{open ? 'скрыть ▲' : 'показать ▾'}</span>
+        </button>
+        {open && <div className="border-t border-line px-3 pb-3 pt-3">{body}</div>}
+      </div>
+    )
+  }
+
+  return (
+    <SectionCard icon={<Ban size={18} />} title={title} badge={String(entries.length)}>
+      {body}
     </SectionCard>
   )
 }
