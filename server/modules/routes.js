@@ -4,6 +4,7 @@ import { releaseTaskLocks } from '../lib/accountLocks.js'
 import { assertAccountsAssignable } from '../accountsMeta.js'
 import { assertNoHotLeadConflict, assertActiveDialogLimit } from '../leads.js'
 import { findDuplicateActiveTask } from '../lib/taskDedup.js'
+import { getGoal, isGoalExpired } from '../goals.js'
 
 export const modulesRouter = Router()
 
@@ -70,6 +71,13 @@ modulesRouter.post('/:moduleKey/tasks', async (req, res) => {
     // Guard лимита активных диалогов (§3.6): не перегружаем профиль (если задан maxActiveDialogs).
     const dlgErr = await assertActiveDialogLimit(settings.accountIds, moduleKey, settings.maxActiveDialogs)
     if (dlgErr) return res.status(409).json({ ok: false, error: dlgErr })
+    // §4: цель с истёкшим дедлайном «останавливает работу» — не даём запускать под неё новые задачи.
+    if (settings.goalId) {
+      const goal = await getGoal(settings.goalId).catch(() => null)
+      if (goal && isGoalExpired(goal)) {
+        return res.status(409).json({ ok: false, error: `Цель «${goal.name}» просрочена (дедлайн ${goal.deadline}) — работа по ней остановлена. Продлите дедлайн или уберите цель.`, goalExpired: true })
+      }
+    }
     // §7: проверка уникальности — не запускаем вторую идентичную активную задачу
     // (те же аккаунты + цель + цели/каналы), чтобы не дублировать работу.
     if (!req.body?.allowDuplicate) {
