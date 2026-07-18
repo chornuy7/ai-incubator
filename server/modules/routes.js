@@ -3,6 +3,7 @@ import { getModuleStore, listModuleKeys, validateSettings, startModuleTask, stop
 import { releaseTaskLocks } from '../lib/accountLocks.js'
 import { assertAccountsAssignable } from '../accountsMeta.js'
 import { assertNoHotLeadConflict, assertActiveDialogLimit } from '../leads.js'
+import { findDuplicateActiveTask } from '../lib/taskDedup.js'
 
 export const modulesRouter = Router()
 
@@ -69,6 +70,13 @@ modulesRouter.post('/:moduleKey/tasks', async (req, res) => {
     // Guard лимита активных диалогов (§3.6): не перегружаем профиль (если задан maxActiveDialogs).
     const dlgErr = await assertActiveDialogLimit(settings.accountIds, moduleKey, settings.maxActiveDialogs)
     if (dlgErr) return res.status(409).json({ ok: false, error: dlgErr })
+    // §7: проверка уникальности — не запускаем вторую идентичную активную задачу
+    // (те же аккаунты + цель + цели/каналы), чтобы не дублировать работу.
+    if (!req.body?.allowDuplicate) {
+      const existingStore = getModuleStore(moduleKey)
+      const dup = existingStore ? findDuplicateActiveTask(await existingStore.listTasks(), settings) : null
+      if (dup) return res.status(409).json({ ok: false, error: `Идентичная задача уже ${dup.status === 'paused' ? 'на паузе' : 'запущена'} (#${dup.id}). Дождитесь завершения или остановите её — иначе задублируете работу.`, duplicateTaskId: dup.id })
+    }
 
     const { store, task, worker } = startModuleTask(moduleKey, settings)
     task.initiator = settings.initiator || 'operator' // §3.9: кто запустил
