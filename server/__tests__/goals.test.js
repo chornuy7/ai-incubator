@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
-import { normalizeGoal } from '../goals.js'
+import { normalizeGoal, isGoalExpired } from '../goals.js'
 
 test('normalizeGoal: дефолты и типы', () => {
   const g = normalizeGoal({ name: '  Продажа  ', stages: ['знакомство', 1] })
@@ -13,6 +13,24 @@ test('normalizeGoal: дефолты и типы', () => {
   assert.equal(g.targetAction, '')
   assert.equal(g.completionCriteria, '')
   assert.equal(g.audience, '')
+  // §4: дедлайн и цель по лидам
+  assert.equal(g.deadline, null) // не задан → null
+  assert.equal(g.leadTarget, 0) // не задан → 0
+  assert.equal(normalizeGoal({ name: 'x', deadline: '2026-08-01' }).deadline, '2026-08-01')
+  assert.equal(normalizeGoal({ name: 'x', deadline: 'не дата' }).deadline, null) // невалидная → null
+  assert.equal(normalizeGoal({ name: 'x', leadTarget: '50' }).leadTarget, 50)
+  assert.equal(normalizeGoal({ name: 'x', leadTarget: -3 }).leadTarget, 0)
+})
+
+test('§4 isGoalExpired: дедлайн истекает в конце дня', () => {
+  assert.equal(isGoalExpired({ deadline: null }), false) // нет дедлайна
+  assert.equal(isGoalExpired({}), false)
+  const day = '2026-07-15'
+  const base = new Date(day).getTime()
+  assert.equal(isGoalExpired({ deadline: day }, base), false) // начало дня — не истёк
+  assert.equal(isGoalExpired({ deadline: day }, base + 23 * 3600 * 1000), false) // в течение дня — не истёк
+  assert.equal(isGoalExpired({ deadline: day }, base + 25 * 3600 * 1000), true) // следующий день — истёк
+  assert.equal(isGoalExpired({ deadline: 'мусор' }, base + 1e12), false) // невалидная дата
 })
 
 test('CRUD целей на изолированном файле', async () => {

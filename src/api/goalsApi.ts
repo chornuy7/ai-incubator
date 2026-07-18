@@ -9,6 +9,8 @@ export interface Goal {
   completionCriteria: string
   audience: string
   channels: string[]
+  deadline: string | null // §4: дедлайн (ISO-дата) или null
+  leadTarget: number // §4: сколько лидов должна привести цель (0 = не задано)
   createdAt: number
   updatedAt: number
 }
@@ -21,6 +23,16 @@ export interface GoalInput {
   completionCriteria?: string
   audience?: string
   channels?: string[]
+  deadline?: string | null
+  leadTarget?: number
+}
+
+/** §4: истёк ли дедлайн цели (зеркало server/goals.js#isGoalExpired). Дедлайн включает весь день. */
+export function isGoalExpired(goal: Pick<Goal, 'deadline'>, now = Date.now()): boolean {
+  if (!goal.deadline) return false
+  const d = new Date(goal.deadline)
+  if (isNaN(d.getTime())) return false
+  return now > d.getTime() + 24 * 60 * 60 * 1000 - 1
 }
 
 export async function fetchGoals(): Promise<Goal[]> {

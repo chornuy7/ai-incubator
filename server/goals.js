@@ -9,12 +9,26 @@ import { dataPath, readJson, writeJson } from './lib/jsonStore.js'
 const GOALS_FILE = process.env.GOALS_FILE || dataPath('goals.json')
 
 /** Поля, которые можно задавать/менять (остальное — служебное). */
-const FIELDS = ['name', 'description', 'targetAction', 'stages', 'completionCriteria', 'audience', 'channels']
+const FIELDS = ['name', 'description', 'targetAction', 'stages', 'completionCriteria', 'audience', 'channels', 'deadline', 'leadTarget']
 
 /** Нормализовать список каналов/групп цели: trim, без @, без дублей. @param {*} v */
 function normChannels(v) {
   if (!Array.isArray(v)) return []
   return [...new Set(v.map((x) => String(x || '').trim().replace(/^@/, '')).filter(Boolean))]
+}
+
+/** §4: дедлайн цели — дата ISO ('YYYY-MM-DD' и т.п.) или null, если не задан/невалиден. @param {*} v */
+function normDeadline(v) {
+  if (!v) return null
+  const s = String(v).trim()
+  const d = new Date(s)
+  return isNaN(d.getTime()) ? null : s
+}
+
+/** §4: сколько лидов должна привести цель (0 = не задано). @param {*} v */
+function normLeadTarget(v) {
+  const n = Math.floor(Number(v) || 0)
+  return n > 0 ? n : 0
 }
 
 /** Нормализовать вход в чистую цель. @param {object} input */
@@ -27,7 +41,22 @@ export function normalizeGoal(input = {}) {
     completionCriteria: String(input.completionCriteria ?? ''),
     audience: String(input.audience ?? ''),
     channels: normChannels(input.channels),
+    deadline: normDeadline(input.deadline), // §4: дедлайн (опц.)
+    leadTarget: normLeadTarget(input.leadTarget), // §4: цель по лидам (опц.)
   }
+}
+
+/**
+ * §4: истёк ли дедлайн цели. Чистая функция. По истечении дедлайна работа по цели
+ * должна останавливаться (воркеры), а цель — помечаться завершённой/просроченной.
+ * @param {{deadline?: string|null}} goal @param {number} [now]
+ */
+export function isGoalExpired(goal, now = Date.now()) {
+  if (!goal?.deadline) return false
+  const d = new Date(goal.deadline)
+  if (isNaN(d.getTime())) return false
+  // Дедлайн — конец указанного дня (включительно).
+  return now > d.getTime() + 24 * 60 * 60 * 1000 - 1
 }
 
 export async function listGoals() {
@@ -66,7 +95,11 @@ export async function updateGoal(id, patch = {}) {
         ? (Array.isArray(patch[k]) ? patch[k].map((s) => String(s)) : goals[i].stages)
         : k === 'channels'
           ? normChannels(patch[k])
-          : (k === 'name' ? String(patch[k]).trim() : String(patch[k]))
+          : k === 'deadline'
+            ? normDeadline(patch[k])
+            : k === 'leadTarget'
+              ? normLeadTarget(patch[k])
+              : (k === 'name' ? String(patch[k]).trim() : String(patch[k]))
     }
   }
   if (!goals[i].name) throw new Error('Название цели не может быть пустым')

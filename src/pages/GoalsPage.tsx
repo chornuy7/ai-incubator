@@ -6,11 +6,12 @@ import { HelpButton } from '@/features/neuro-commenting/moduleUi'
 import { confirmDialog } from '@/shared/lib/dialog'
 import { FolderPicker } from '@/features/modules/shared'
 import {
-  fetchGoals, createGoal, updateGoal, deleteGoal, type Goal, type GoalInput,
+  fetchGoals, createGoal, updateGoal, deleteGoal, isGoalExpired, type Goal, type GoalInput,
   fetchKb, createKb, deleteKb, type KbItem,
 } from '@/api/goalsApi'
+import { fetchLeads } from '@/api/leadsApi'
 
-const EMPTY: GoalInput = { name: '', description: '', targetAction: '', stages: [], completionCriteria: '', audience: '', channels: [] }
+const EMPTY: GoalInput = { name: '', description: '', targetAction: '', stages: [], completionCriteria: '', audience: '', channels: [], deadline: '', leadTarget: 0 }
 
 export function GoalsPage() {
   const pushToast = useApp((s) => s.pushToast)
@@ -26,11 +27,18 @@ export function GoalsPage() {
   const [kb, setKb] = useState<KbItem[]>([])
   const [kbTitle, setKbTitle] = useState('')
   const [kbContent, setKbContent] = useState('')
+  const [leadsByGoal, setLeadsByGoal] = useState<Record<string, number>>({}) // §4: сколько лидов у цели
 
   const load = async () => {
     setLoading(true)
     try {
       setGoals(await fetchGoals())
+      // §4: считаем лидов по каждой цели для прогресса к «цели по лидам».
+      void fetchLeads().then((leads) => {
+        const by: Record<string, number> = {}
+        for (const l of leads) if (l.goalId) by[l.goalId] = (by[l.goalId] || 0) + 1
+        setLeadsByGoal(by)
+      }).catch(() => {})
     } catch (err) {
       pushToast({ type: 'error', title: 'Не удалось загрузить цели', desc: err instanceof Error ? err.message : '' })
     } finally {
@@ -44,7 +52,7 @@ export function GoalsPage() {
   }
   const openEdit = (g: Goal) => {
     setEditing(g)
-    setForm({ name: g.name, description: g.description, targetAction: g.targetAction, completionCriteria: g.completionCriteria, audience: g.audience })
+    setForm({ name: g.name, description: g.description, targetAction: g.targetAction, completionCriteria: g.completionCriteria, audience: g.audience, deadline: g.deadline || '', leadTarget: g.leadTarget || 0 })
     setStagesText((g.stages || []).join('\n'))
     setChannels(g.channels || []); setChInput('')
     setKb([]); setKbTitle(''); setKbContent('')
@@ -152,6 +160,32 @@ export function GoalsPage() {
                   {g.stages.map((s, i) => <Badge key={i} tone="iris">{i + 1}. {s}</Badge>)}
                 </div>
               )}
+
+              {/* §4: дедлайн + прогресс по лидам */}
+              {(g.deadline || g.leadTarget > 0) && (
+                <div className="flex flex-wrap items-center gap-2">
+                  {g.deadline && (
+                    <Badge tone={isGoalExpired(g) ? 'rose' : 'amber'}>
+                      {isGoalExpired(g) ? '⏱ Дедлайн истёк' : `⏱ до ${new Date(g.deadline).toLocaleDateString('ru-RU')}`}
+                    </Badge>
+                  )}
+                  {g.leadTarget > 0 && (() => {
+                    const have = leadsByGoal[g.id] || 0
+                    const done = have >= g.leadTarget
+                    return (
+                      <span className="inline-flex min-w-[140px] flex-col gap-0.5">
+                        <span className="flex items-center justify-between text-[11px] text-white/50">
+                          <span>Лиды к цели</span><span className={done ? 'text-spark-300' : 'text-white/70'}>{have}/{g.leadTarget}</span>
+                        </span>
+                        <span className="h-1.5 overflow-hidden rounded-full bg-line">
+                          <span className="block h-full rounded-full bg-spark-500 transition-all" style={{ width: `${Math.min(100, Math.round((have / g.leadTarget) * 100))}%` }} />
+                        </span>
+                      </span>
+                    )
+                  })()}
+                </div>
+              )}
+
               <div className="mt-1 flex flex-wrap gap-x-4 gap-y-1 text-xs text-white/40">
                 {(g.channels?.length ?? 0) > 0 && <span className="text-spark-300"><Hash size={11} className="mb-0.5 inline" /> {g.channels.length} каналов/групп</span>}
                 {g.completionCriteria && <span>Критерий: {g.completionCriteria}</span>}
@@ -217,6 +251,21 @@ export function GoalsPage() {
             <div>
               <label className="mb-1 block text-xs text-white/50">Аудитория</label>
               <input className="input" value={form.audience} onChange={(e) => set({ audience: e.target.value })} placeholder="IT-предприниматели" />
+            </div>
+          </div>
+
+          {/* §4: дедлайн цели + цель по лидам (оба опциональны). */}
+          <div className="grid gap-3 sm:grid-cols-2">
+            <div>
+              <label className="mb-1 block text-xs text-white/50">Дедлайн <span className="text-white/30">(опционально — по истечении работа останавливается)</span></label>
+              <div className="flex gap-2">
+                <input type="date" className="input" value={form.deadline || ''} onChange={(e) => set({ deadline: e.target.value })} />
+                {form.deadline && <button type="button" onClick={() => set({ deadline: '' })} className="btn-ghost h-auto shrink-0 px-3 text-xs">Сбросить</button>}
+              </div>
+            </div>
+            <div>
+              <label className="mb-1 block text-xs text-white/50">Цель по лидам <span className="text-white/30">(0 = не задано)</span></label>
+              <input type="number" min={0} className="input" value={form.leadTarget || 0} onChange={(e) => set({ leadTarget: Math.max(0, Number(e.target.value) || 0) })} placeholder="Напр. 50" />
             </div>
           </div>
 
