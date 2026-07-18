@@ -5,8 +5,9 @@ import {
 } from 'lucide-react'
 import { MODULES } from '@/shared/config/modules'
 import { useApp } from '@/mocks/store'
-import { Avatar, Badge, Switch } from '@/shared/ui'
+import { Avatar, Badge, Switch, Select } from '@/shared/ui'
 import { AccountPicker } from '@/features/account-picker/AccountPicker'
+import { fetchGoals, type Goal } from '@/api/goalsApi'
 import { cn } from '@/shared/lib/utils'
 import { promptDialog } from '@/shared/lib/dialog'
 import {
@@ -35,6 +36,7 @@ import type { ModuleTaskSettings } from '@/api/modulesApi'
 const cfg = MODULES['neuro-dialogs']!
 
 const GOAL_KEY = 'neuro-dialogs:goal'
+const GOAL_ID_KEY = 'neuro-dialogs:goalId'
 const SCOPE_KEY = 'neuro-dialogs:replyAll'
 
 function peerRef(d: Pick<InboxDialog, 'peerId' | 'accessHash' | 'username'>) {
@@ -113,6 +115,8 @@ export function NeuroDialogsModule() {
   const [aiEnabled, setAiEnabled] = useState(true)
   const [replyAll, setReplyAll] = useState(() => localStorage.getItem(SCOPE_KEY) === '1')
   const [dialogGoal, setDialogGoal] = useState(() => localStorage.getItem(GOAL_KEY) ?? '')
+  const [goals, setGoals] = useState<Goal[]>([])
+  const [goalId, setGoalId] = useState(() => localStorage.getItem(GOAL_ID_KEY) ?? '') // §9: цель кампании
   const [aiProtect, setAiProtect] = useState(true)
   const [protLevel, setProtLevel] = useState(1)
   const [activePrompt, setActivePrompt] = useState(0)
@@ -167,7 +171,9 @@ export function NeuroDialogsModule() {
   const totalUnread = useMemo(() => dialogs.reduce((s, d) => s + (d.unread || 0), 0), [dialogs])
 
   useEffect(() => { localStorage.setItem(GOAL_KEY, dialogGoal) }, [dialogGoal])
+  useEffect(() => { localStorage.setItem(GOAL_ID_KEY, goalId) }, [goalId])
   useEffect(() => { localStorage.setItem(SCOPE_KEY, replyAll ? '1' : '0') }, [replyAll])
+  useEffect(() => { void fetchGoals().then(setGoals).catch(() => {}) }, [])
 
   const buildSettings = useCallback((): ModuleTaskSettings => ({
     accountIds,
@@ -185,7 +191,8 @@ export function NeuroDialogsModule() {
     probability: aiEnabled ? 100 : 0,
     replyScope: replyAll ? 'all' : 'unread',
     dialogGoal: dialogGoal.trim(),
-  }), [accountIds, aiProtect, protLevel, activePrompt, promptBodies, maxActions, minActions, maxPerAcc, minPerAcc, delayPreset, delays, aiEnabled, replyAll, dialogGoal])
+    ...(goalId ? { goalId } : {}), // §9: привязка диалога к цели кампании (наследует KB/этапы, лиды к цели)
+  }), [accountIds, aiProtect, protLevel, activePrompt, promptBodies, maxActions, minActions, maxPerAcc, minPerAcc, delayPreset, delays, aiEnabled, replyAll, dialogGoal, goalId])
 
   const applyPreset = useCallback((s: ModuleTaskSettings) => {
     if (s.aiProtection !== undefined) setAiProtect(s.aiProtection)
@@ -201,6 +208,7 @@ export function NeuroDialogsModule() {
     if (s.probability !== undefined) setAiEnabled(s.probability > 0)
     if (s.replyScope) setReplyAll(s.replyScope === 'all')
     if (typeof s.dialogGoal === 'string') setDialogGoal(s.dialogGoal)
+    if (typeof s.goalId === 'string') setGoalId(s.goalId)
     pushToast({ type: 'success', title: 'Пресет применён' })
   }, [pushToast])
 
@@ -338,6 +346,21 @@ export function NeuroDialogsModule() {
               label="Отвечать всем, кто писал"
               desc="Не только новым: ИИ ответит в каждом ЛС, где последнее сообщение от собеседника — даже если оно уже прочитано"
             />
+
+            {/* §9: привязка диалогов к цели кампании — лиды пойдут к этой цели, ИИ наследует её базу знаний и этапы. */}
+            <div className="space-y-1.5">
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-sm font-semibold text-fg">Цель кампании <span className="text-[11px] font-normal text-faint">(опционально)</span></span>
+                <a href="/panel/goals" className="text-[11px] font-semibold text-spark-300 hover:underline">+ Создать цель</a>
+              </div>
+              <Select
+                value={goalId}
+                onChange={setGoalId}
+                placeholder="Без цели"
+                options={[{ value: '', label: 'Без цели' }, ...goals.map((g) => ({ value: g.id, label: g.name }))]}
+              />
+              <p className="text-[11px] leading-relaxed text-muted">Диалоги привяжутся к цели: ИИ учтёт её этапы и базу знаний, а лиды попадут в CRM к этой цели.</p>
+            </div>
 
             <div className="space-y-2">
               <div className="flex items-center justify-between gap-2">
