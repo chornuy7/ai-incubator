@@ -574,7 +574,7 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
               <button type="button" onClick={() => setHistoryGrid(true)} className={`rounded p-1.5 ${historyGrid ? 'bg-surface text-fg' : 'text-muted'}`}><LayoutGrid size={15} /></button>
             </div>
           )}
-          <a href={task ? `/panel/tasks?task=${task.id}` : '/panel/tasks'} className="ml-auto inline-flex items-center gap-1 text-xs font-semibold text-spark-300 hover:underline" title="Логи по этой задаче — в Дашборде задач">
+          <a href={`/panel/tasks?module=${moduleKey}${task ? `&task=${task.id}` : ''}`} className="ml-auto inline-flex items-center gap-1 text-xs font-semibold text-spark-300 hover:underline" title="Открыть Дашборд задач, отфильтрованный по этому модулю">
             <Terminal size={13} /> Логи выполнения — в Дашборде задач <ArrowUpRight size={13} />
           </a>
         </div>

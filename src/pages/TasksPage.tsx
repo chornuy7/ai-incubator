@@ -124,6 +124,12 @@ export function TasksPage() {
     if (found) { setDetailTask(found); setAutoOpened(true) }
   }, [tasks, loading, autoOpened])
 
+  // Глубокая ссылка из модуля: /panel/tasks?module=<key> — предфильтр по этому модулю (§7).
+  useEffect(() => {
+    const m = new URLSearchParams(window.location.search).get('module')
+    if (m) setFModule(m)
+  }, [])
+
   // Детали должны обновляться из опроса (логи «живые»), а не застывать на моменте клика.
   const liveDetail = useMemo(
     () => (detailTask ? tasks.find((t) => t.id === detailTask.id && t.moduleKey === detailTask.moduleKey) ?? detailTask : null),
@@ -306,7 +312,7 @@ export function TasksPage() {
       <div className="mb-3 flex flex-wrap items-center gap-2">
         <Segmented value={view} onChange={setView} size="sm" options={['Список', 'По целям']} />
         <Select value={fGoal} onChange={setFGoal} className="w-48" options={[{ value: '', label: 'Все цели' }, { value: 'none', label: 'Без цели' }, ...goals.map((g) => ({ value: g.id, label: g.name }))]} />
-        <Select value={fModule} onChange={setFModule} className="w-48" options={[{ value: '', label: 'Все модули' }, ...modules.map((m) => ({ value: m, label: moduleTitle(m) }))]} />
+        <Select value={fModule} onChange={setFModule} className="w-48" options={[{ value: '', label: 'Все модули' }, ...modules.map((m) => ({ value: m, label: moduleTitle(m) })), ...(fModule && !modules.includes(fModule) ? [{ value: fModule, label: moduleTitle(fModule) }] : [])]} />
         <Select value={fStatus} onChange={setFStatus} className="w-44" options={STATUS_KEYS.map((s) => ({ value: s, label: s ? STATUS[s].label : 'Все статусы' }))} />
       </div>
 
