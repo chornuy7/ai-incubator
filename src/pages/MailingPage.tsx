@@ -4,6 +4,8 @@ import { Mail, Send, AlertTriangle } from 'lucide-react'
 import { PageHeader, Card, Select } from '@/shared/ui'
 import { useApp } from '@/mocks/store'
 import { AccountPicker } from '@/features/account-picker/AccountPicker'
+import { MessageComposer } from '@/features/composer/MessageComposer'
+import { useSession } from '@/features/auth/session'
 import { fetchGoals, type Goal } from '@/api/goalsApi'
 import { startModuleTask } from '@/api/modulesApi'
 
@@ -13,6 +15,7 @@ export function MailingPage() {
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [numbersText, setNumbersText] = useState('')
   const [message, setMessage] = useState('')
+  const [media, setMedia] = useState<string[]>([])
   const [maxPerAccount, setMaxPerAccount] = useState(25)
   const [delayMin, setDelayMin] = useState(90)
   const [delayMax, setDelayMax] = useState(300)
@@ -28,8 +31,11 @@ export function MailingPage() {
     return [...new Set(raw)]
   }, [numbersText])
 
+  // §11: рассылку/пост создаёт только один ответственный — админ (единый отправитель).
+  const me = useSession((s) => s.user)
+  const canWrite = !me || me.isAdmin
   const perAcc = selected.size ? Math.ceil(numbers.length / selected.size) : 0
-  const canLaunch = selected.size > 0 && numbers.length > 0 && message.trim().length > 0 && !launching
+  const canLaunch = canWrite && selected.size > 0 && numbers.length > 0 && message.trim().length > 0 && !launching
 
   async function launch() {
     setLaunching(true)
@@ -40,6 +46,7 @@ export function MailingPage() {
         promptText: message.trim(),
         maxPerAccount,
         delays: { dm: [delayMin, delayMax], action: [delayMin, delayMax] },
+        ...(media.length ? { mediaUrls: media } : {}),
         aiPerRecipient: aiPerRecipient && !!goalId,
         ...(goalId ? { goalId } : {}),
       })
@@ -79,8 +86,7 @@ export function MailingPage() {
           </Card>
 
           <Card className="p-4">
-            <div className="mb-1 text-xs text-white/50">Текст сообщения</div>
-            <textarea className="input min-h-[90px]" value={message} onChange={(e) => setMessage(e.target.value)} placeholder="Здравствуйте! …" />
+            <MessageComposer value={message} onChange={setMessage} media={media} onMedia={setMedia} minHeight={90} />
             {goals.length > 0 && (
               <div className="mt-2">
                 <div className="mb-1 text-xs text-white/50">Цель (опционально — генерация к цели)</div>
@@ -113,6 +119,11 @@ export function MailingPage() {
               <span>Аккаунтов: <b className="text-white">{selected.size}</b></span>
               <span>≈ на аккаунт: <b className="text-white">{perAcc}</b></span>
             </div>
+            {!canWrite && (
+              <div className="mt-3 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-200">
+                Рассылку создаёт только администратор (единый отправитель, §11). У вас нет прав на отправку.
+              </div>
+            )}
             <button onClick={() => void launch()} disabled={!canLaunch} className="btn-primary mt-3 h-10 w-full disabled:opacity-40">
               <Send size={16} /> {launching ? 'Создание…' : 'Создать рассылку'}
             </button>

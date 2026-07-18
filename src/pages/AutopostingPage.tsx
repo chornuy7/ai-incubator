@@ -4,6 +4,8 @@ import { Megaphone, Send, Info } from 'lucide-react'
 import { PageHeader, Card } from '@/shared/ui'
 import { useApp } from '@/mocks/store'
 import { AccountPicker } from '@/features/account-picker/AccountPicker'
+import { MessageComposer } from '@/features/composer/MessageComposer'
+import { useSession } from '@/features/auth/session'
 import { startModuleTask } from '@/api/modulesApi'
 
 export function AutopostingPage() {
@@ -12,6 +14,7 @@ export function AutopostingPage() {
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [channelsText, setChannelsText] = useState('')
   const [text, setText] = useState('')
+  const [media, setMedia] = useState<string[]>([])
   const [delayMin, setDelayMin] = useState(60)
   const [delayMax, setDelayMax] = useState(180)
   const [launching, setLaunching] = useState(false)
@@ -21,7 +24,10 @@ export function AutopostingPage() {
     return [...new Set(raw)]
   }, [channelsText])
 
-  const canLaunch = selected.size > 0 && channels.length > 0 && text.trim().length > 0 && !launching
+  // §11: публикацию создаёт только админ (единый отправитель).
+  const me = useSession((s) => s.user)
+  const canWrite = !me || me.isAdmin
+  const canLaunch = canWrite && selected.size > 0 && channels.length > 0 && text.trim().length > 0 && !launching
 
   async function launch() {
     setLaunching(true)
@@ -31,6 +37,7 @@ export function AutopostingPage() {
         targets: channels,
         promptText: text.trim(),
         delays: { action: [delayMin, delayMax] },
+        ...(media.length ? { mediaUrls: media } : {}),
       })
       pushToast({ type: 'success', title: 'Автопостинг создан', desc: `${channels.length} каналов · ${selected.size} аккаунтов` })
       nav('/panel/tasks')
@@ -65,8 +72,7 @@ export function AutopostingPage() {
           </Card>
 
           <Card className="p-4">
-            <div className="mb-1 text-xs text-white/50">Текст поста</div>
-            <textarea className="input min-h-[110px]" value={text} onChange={(e) => setText(e.target.value)} placeholder="Текст, который опубликуется в каналах…" />
+            <MessageComposer value={text} onChange={setText} media={media} onMedia={setMedia} label="Текст поста" placeholder="Текст, который опубликуется в каналах…" />
           </Card>
 
           <Card className="p-4">
@@ -83,6 +89,11 @@ export function AutopostingPage() {
               <span>Каналов: <b className="text-white">{channels.length}</b></span>
               <span>Аккаунтов: <b className="text-white">{selected.size}</b></span>
             </div>
+            {!canWrite && (
+              <div className="mt-3 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-200">
+                Публикацию создаёт только администратор (единый отправитель, §11). У вас нет прав на отправку.
+              </div>
+            )}
             <button onClick={() => void launch()} disabled={!canLaunch} className="btn-primary mt-3 h-10 w-full disabled:opacity-40">
               <Send size={16} /> {launching ? 'Создание…' : 'Опубликовать'}
             </button>

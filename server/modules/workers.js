@@ -1341,6 +1341,44 @@ export async function runParticipantsParser(task, store, kind) {
  * Номер резолвим через contacts.ImportContacts, шлём ЛС (шаблон или ИИ-текст к цели).
  * @param {object} task @param {object} store
  */
+/** §11: тип вложения по URL (зеркало фронтового mediaKind). */
+function mediaKindUrl(url) {
+  const u = String(url).toLowerCase().split('?')[0]
+  if (/\.(jpe?g|png|webp|gif|bmp|heic)$/.test(u)) return 'image'
+  if (/\.(mp4|mov|webm|mkv|avi|m4v)$/.test(u)) return 'video'
+  return 'link'
+}
+
+/**
+ * §11: отправка сообщения с медиа и Markdown-форматированием.
+ * Фото/видео (по URL) шлём как файлы с подписью; прочие ссылки добавляем в текст.
+ * Markdown — с фолбеком на обычный текст, если разметка малформед.
+ * @param {import('telegram').TelegramClient} client
+ */
+async function sendComposedMessage(client, peer, text, mediaUrls = []) {
+  const urls = (Array.isArray(mediaUrls) ? mediaUrls : []).filter((u) => /^https?:\/\//i.test(u))
+  const files = urls.filter((u) => mediaKindUrl(u) !== 'link')
+  const links = urls.filter((u) => mediaKindUrl(u) === 'link')
+  const caption = [text, ...links].filter(Boolean).join('\n')
+
+  const sendText = async (msg) => {
+    try { await client.sendMessage(peer, { message: msg, parseMode: 'md', linkPreview: true }) }
+    catch { await client.sendMessage(peer, { message: msg }) } // малформед markdown → плейн-текст
+  }
+
+  if (files.length) {
+    try {
+      await client.sendFile(peer, { file: files, caption, parseMode: 'md' })
+      return
+    } catch {
+      // Файлы недоступны по URL — шлём текст со всеми ссылками (Telegram сделает превью).
+      await sendText([text, ...urls].filter(Boolean).join('\n'))
+      return
+    }
+  }
+  await sendText(caption)
+}
+
 export async function runMailing(task, store) {
   const s = task.settings || {}
   const accountIds = Array.isArray(s.accountIds) ? s.accountIds : []
@@ -1362,7 +1400,8 @@ export async function runMailing(task, store) {
   const maxPerAccount = Number(s.maxPerAccount || 0)
   const goalCtx = await buildGoalContext(s.goalId)
   const useAi = !!s.aiPerRecipient && isAiGenerationEnabled()
-  await store.appendLog(task, 'info', `Текст: ${useAi ? 'ИИ-генерация к цели' : `"${message.slice(0, 70)}${message.length > 70 ? '…' : ''}"`} · паузы ${dm[0]}–${dm[1]}с · лимит/акк ${maxPerAccount || '§6'}`)
+  const mediaCount = Array.isArray(s.mediaUrls) ? s.mediaUrls.filter((u) => /^https?:\/\//i.test(u)).length : 0
+  await store.appendLog(task, 'info', `Текст: ${useAi ? 'ИИ-генерация к цели' : `"${message.slice(0, 70)}${message.length > 70 ? '…' : ''}"`}${mediaCount ? ` · медиа/ссылок: ${mediaCount}` : ''} · паузы ${dm[0]}–${dm[1]}с · лимит/акк ${maxPerAccount || '§6'}`)
 
   const { Api } = await import('telegram/tl/index.js')
   const { default: bigInt } = await import('big-integer')
@@ -1424,7 +1463,7 @@ export async function runMailing(task, store) {
         }
         // 3) Пауза «по-человечески» и отправка (#6: прерываемая — стоп не шлёт лишнее ЛС).
         if (await interruptibleSleep(pickDelay(dm[0], dm[1], mul) * 1000, makeStopCheck(store, task.id))) { await disconnectAccount(client, account); break }
-        await client.sendMessage(user, { message: text })
+        await sendComposedMessage(client, user, text, s.mediaUrls) // §11: текст + медиа/ссылки
         await incAction(account, 'dm') // §6: суточный лимит ЛС
         // Не засоряем адресную книгу аккаунта импортированными номерами.
         try { await client.invoke(new Api.contacts.DeleteContacts({ id: [user] })) } catch { /* не критично */ }
@@ -1487,7 +1526,7 @@ export async function runAutoPosting(task, store) {
       try {
         ;({ client } = await connectAccount(accountId, task.id))
         const entity = await resolvePeer(client, ch)
-        await client.sendMessage(entity, { message: text })
+        await sendComposedMessage(client, entity, text, s.mediaUrls) // §11: текст + медиа/ссылки
         task.history = task.history || []
         task.history.unshift({ id: `${task.id}_${task.progress.done}`, ts: new Date().toISOString(), accountName: meta.name, channel: ch, text: text.slice(0, 200), status: 'sent' })
         task.progress.done += 1

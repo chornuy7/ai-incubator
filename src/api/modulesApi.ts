@@ -24,6 +24,7 @@ export interface ModuleTaskSettings {
   promptIndex?: number
   promptText?: string
   promptOverrides?: string[]
+  mediaUrls?: string[] // §11: медиа (фото/видео/ссылки) для мейлинга/автопостинга
   aiMode?: number
   delayPreset?: number
   emojis?: string[]
