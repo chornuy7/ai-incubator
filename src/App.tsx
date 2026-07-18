@@ -9,7 +9,7 @@ import { ParsingHistoryPage } from '@/pages/ParsingHistoryPage'
 import { ProfilePage } from '@/pages/ProfilePage'
 import { AutomationPage } from '@/pages/AutomationPage'
 import { GoalsPage } from '@/pages/GoalsPage'
-import { TasksPage } from '@/pages/TasksPage'
+import { TasksPage, TaskDetailPage } from '@/pages/TasksPage'
 import { LeadsPage } from '@/pages/LeadsPage'
 import { AnalyticsPage } from '@/pages/AnalyticsPage'
 import { CampaignPage } from '@/pages/CampaignPage'
@@ -41,6 +41,7 @@ export default function App() {
         <Route path="/panel/automation" element={<AutomationPage />} />
         <Route path="/panel/goals" element={<GoalsPage />} />
         <Route path="/panel/tasks" element={<TasksPage />} />
+        <Route path="/panel/tasks/:id" element={<TaskDetailPage />} />
         <Route path="/panel/crm" element={<LeadsPage />} />
         <Route path="/panel/analytics" element={<AnalyticsPage />} />
         <Route path="/panel/campaign" element={<CampaignPage />} />

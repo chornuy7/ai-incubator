@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
-import { ListChecks, RefreshCw, Square, RotateCw, Target, Activity, Gauge, Pause, Play, Loader2 } from 'lucide-react'
+import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
+import { ListChecks, RefreshCw, Square, RotateCw, Target, Activity, Gauge, Pause, Play, Loader2, ArrowLeft } from 'lucide-react'
 import { useApp } from '@/mocks/store'
-import { PageHeader, Card, EmptyState, Badge, Select, Segmented, Modal } from '@/shared/ui'
+import { PageHeader, Card, EmptyState, Badge, Select, Segmented } from '@/shared/ui'
 import { HelpButton } from '@/features/neuro-commenting/moduleUi'
 import { MODULES, isCombatModule, combatConfirmText } from '@/shared/config/modules'
 import { fetchAllTasks, fetchModuleTask, stopModuleTask, restartModuleTask, pauseModuleTask, resumeModuleTask, type ModuleTask } from '@/api/modulesApi'
@@ -25,7 +26,9 @@ const STATUS_COLOR: Record<string, string> = {
 }
 const STATUS_KEYS = ['', 'running', 'queued', 'done', 'stopped', 'error']
 
-function moduleTitle(key: string) { return MODULES[key]?.title || key }
+// mailing/autoposting — отдельные страницы, их нет в MODULES; задаём читаемые названия.
+const EXTRA_MODULE_TITLES: Record<string, string> = { mailing: 'Мейлинг', autoposting: 'Автопостинг' }
+function moduleTitle(key: string) { return MODULES[key]?.title || EXTRA_MODULE_TITLES[key] || key }
 function pct(t: ModuleTask) {
   const total = t.progress?.total || 0
   const done = t.progress?.done ?? t.progress?.actionsDone ?? 0
@@ -80,11 +83,12 @@ export function TasksPage() {
   const pushToast = useApp((s) => s.pushToast)
   const [tasks, setTasks] = useState<ModuleTask[]>([])
   const [goals, setGoals] = useState<Goal[]>([])
-  const [accounts, setAccounts] = useState<TgAccount[]>([])
   const [loading, setLoading] = useState(true)
   const [busy, setBusy] = useState<string | null>(null)
   const [view, setView] = useState(0) // 0 — список, 1 — по целям (воронка)
-  const [detailTask, setDetailTask] = useState<ModuleTask | null>(null)
+  const navigate = useNavigate()
+  // §8: задача открывается отдельной вьюшкой /panel/tasks/:id, а не модалкой.
+  const openTask = (t: ModuleTask) => navigate(`/panel/tasks/${t.id}?m=${t.moduleKey}`)
   const [fGoal, setFGoal] = useState('')
   const [fModule, setFModule] = useState('')
   const [fStatus, setFStatus] = useState('')
@@ -95,15 +99,10 @@ export function TasksPage() {
     return (id?: string | null) => (id ? m.get(id) || '—' : null)
   }, [goals])
 
-  const accountName = useMemo(() => {
-    const m = new Map(accounts.map((a) => [a.id, a.name || a.username || a.phone || a.id]))
-    return (id: string) => m.get(id) || id
-  }, [accounts])
-
   const load = async () => {
     try {
-      const [t, g, a] = await Promise.all([fetchAllTasks(), fetchGoals().catch(() => []), fetchAccounts().catch(() => [])])
-      setTasks(t); setGoals(g); setAccounts(a)
+      const [t, g] = await Promise.all([fetchAllTasks(), fetchGoals().catch(() => [])])
+      setTasks(t); setGoals(g)
     } catch (err) {
       pushToast({ type: 'error', title: 'Не удалось загрузить задачи', desc: err instanceof Error ? err.message : '' })
     } finally { setLoading(false) }
@@ -121,20 +120,15 @@ export function TasksPage() {
     const wanted = new URLSearchParams(window.location.search).get('task')
     if (!wanted) { setAutoOpened(true); return }
     const found = tasks.find((t) => t.id === wanted)
-    if (found) { setDetailTask(found); setAutoOpened(true) }
-  }, [tasks, loading, autoOpened])
+    // §8: старая deep-ссылка ?task= теперь ведёт на отдельную вьюшку задачи.
+    if (found) { setAutoOpened(true); navigate(`/panel/tasks/${found.id}?m=${found.moduleKey}`, { replace: true }) }
+  }, [tasks, loading, autoOpened, navigate])
 
   // Глубокая ссылка из модуля: /panel/tasks?module=<key> — предфильтр по этому модулю (§7).
   useEffect(() => {
     const m = new URLSearchParams(window.location.search).get('module')
     if (m) setFModule(m)
   }, [])
-
-  // Детали должны обновляться из опроса (логи «живые»), а не застывать на моменте клика.
-  const liveDetail = useMemo(
-    () => (detailTask ? tasks.find((t) => t.id === detailTask.id && t.moduleKey === detailTask.moduleKey) ?? detailTask : null),
-    [detailTask, tasks],
-  )
 
   const doStop = async (t: ModuleTask) => {
     setBusy(t.id)
@@ -369,7 +363,7 @@ export function TasksPage() {
               <div className="h-1.5 overflow-hidden rounded bg-white/10"><div className="h-full rounded bg-iris-500 transition-all" style={{ width: `${g.prog}%` }} /></div>
               <div className="mt-1 text-[11px] text-white/40">Прогресс к цели: {g.prog}%</div>
               <div className="mt-2 grid gap-1.5 sm:grid-cols-2">
-                {g.tasks.map((t) => <TaskCard key={`${t.moduleKey}:${t.id}`} t={t} goalName={null} busy={busy} onOpen={setDetailTask} onStop={doStop} onRestart={doRestart} onPause={doPause} onResume={doResume} compact />)}
+                {g.tasks.map((t) => <TaskCard key={`${t.moduleKey}:${t.id}`} t={t} goalName={null} busy={busy} onOpen={openTask} onStop={doStop} onRestart={doRestart} onPause={doPause} onResume={doResume} compact />)}
               </div>
             </Card>
           ))}
@@ -377,17 +371,9 @@ export function TasksPage() {
         )
       ) : (
         <div className="grid gap-2 lg:grid-cols-2">
-          {filtered.map((t) => <TaskCard key={`${t.moduleKey}:${t.id}`} t={t} goalName={goalName(t.goalId)} busy={busy} onOpen={setDetailTask} onStop={doStop} onRestart={doRestart} onPause={doPause} onResume={doResume} selected={selected.has(t.id)} onToggleSelect={toggleSel} />)}
+          {filtered.map((t) => <TaskCard key={`${t.moduleKey}:${t.id}`} t={t} goalName={goalName(t.goalId)} busy={busy} onOpen={openTask} onStop={doStop} onRestart={doRestart} onPause={doPause} onResume={doResume} selected={selected.has(t.id)} onToggleSelect={toggleSel} />)}
         </div>
       )}
-      <TaskDetailModal
-        t={liveDetail}
-        goalName={liveDetail ? goalName(liveDetail.goalId) : null}
-        accountName={accountName}
-        busy={busy}
-        onClose={() => setDetailTask(null)}
-        onStop={doStop} onRestart={doRestart} onPause={doPause} onResume={doResume}
-      />
     </div>
   )
 }
@@ -512,35 +498,87 @@ function ChipList({ title, count, items, empty, tone, mono }: {
 
 const LOG_COLOR: Record<string, string> = { error: 'text-rose-300', warning: 'text-amber-300', success: 'text-spark-300', info: 'text-white/70' }
 
-/** Поп-ап с полной информацией по задаче: статус, прогресс, настройки, логи + управление. */
-function TaskDetailModal({ t, goalName, accountName, busy, onClose, onStop, onRestart, onPause, onResume }: {
-  t: ModuleTask | null; goalName: string | null; accountName: (id: string) => string; busy: string | null; onClose: () => void
-  onStop: (t: ModuleTask) => void; onRestart: (t: ModuleTask) => void
-  onPause: (t: ModuleTask) => void; onResume: (t: ModuleTask) => void
-}) {
-  // Список задач приходит БЕЗ логов (тяжело гонять) — полную задачу с логами тянем отдельно и опрашиваем.
-  const [full, setFull] = useState<ModuleTask | null>(null)
+/**
+ * §8: отдельная вьюшка задачи (/panel/tasks/:id?m=<moduleKey>) вместо модалки.
+ * Кнопка «Назад», заголовок = модуль + номер, полные логи + результаты + управление.
+ */
+export function TaskDetailPage() {
+  const { id = '' } = useParams()
+  const [sp] = useSearchParams()
+  const moduleKey = sp.get('m') || ''
+  const navigate = useNavigate()
+  const pushToast = useApp((s) => s.pushToast)
+
+  const [task, setTask] = useState<ModuleTask | null>(null)
+  const [notFound, setNotFound] = useState(false)
+  const [goals, setGoals] = useState<Goal[]>([])
+  const [accounts, setAccounts] = useState<TgAccount[]>([])
+  const [busy, setBusy] = useState(false)
+
   useEffect(() => {
-    if (!t) { setFull(null); return }
+    void fetchGoals().then(setGoals).catch(() => {})
+    void fetchAccounts().then(setAccounts).catch(() => {})
+  }, [])
+
+  useEffect(() => {
+    if (!id || !moduleKey) { setNotFound(true); return }
     let cancelled = false
     const pull = async () => {
-      try { const f = await fetchModuleTask(t.moduleKey, t.id); if (!cancelled) setFull(f) } catch { /* ignore */ }
+      try { const f = await fetchModuleTask(moduleKey, id); if (!cancelled) { setTask(f); if (!f) setNotFound(true) } }
+      catch { if (!cancelled) setNotFound(true) }
     }
     void pull()
     const iv = setInterval(pull, 3000) // живые логи, пока открыто
     return () => { cancelled = true; clearInterval(iv) }
-  }, [t?.id, t?.moduleKey])
+  }, [id, moduleKey])
 
-  if (!t) return null
-  const detailed = full && full.id === t.id ? full : t // с логами, если уже подгрузилось
+  const goalName = (gid?: string | null) => { const g = goals.find((x) => x.id === gid); return g?.name || (gid ? '—' : null) }
+  const accountName = (aid: string) => { const a = accounts.find((x) => x.id === aid); return a ? (a.name || a.username || a.phone || a.id) : aid }
+
+  const reload = async () => { try { setTask(await fetchModuleTask(moduleKey, id)) } catch { /* ignore */ } }
+  const run = async (fn: () => Promise<unknown>, okTitle: string) => {
+    setBusy(true)
+    try { await fn(); pushToast({ type: 'success', title: okTitle }); await reload() }
+    catch (err) { pushToast({ type: 'error', title: 'Ошибка', desc: err instanceof Error ? err.message : '' }) }
+    finally { setBusy(false) }
+  }
+  const doStop = () => void run(() => stopModuleTask(moduleKey, id), 'Задача остановлена')
+  const doPause = () => void run(() => pauseModuleTask(moduleKey, id), 'Задача на паузе')
+  const doResume = () => void run(() => resumeModuleTask(moduleKey, id), 'Задача продолжена')
+  const doRestart = async () => {
+    // #4: рестарт боевого модуля = реальные действия в Telegram — подтверждаем.
+    if (isCombatModule(moduleKey) && !(await confirmDialog({ title: 'Реальные действия в Telegram', message: combatConfirmText(moduleKey), confirmLabel: 'Запустить', tone: 'danger' }))) return
+    void run(() => restartModuleTask(moduleKey, id), 'Задача перезапущена')
+  }
+
+  const back = (
+    <button onClick={() => navigate('/panel/tasks')} className="btn-ghost mb-3 h-9"><ArrowLeft size={15} /> Назад к задачам</button>
+  )
+
+  if (!task) {
+    return (
+      <div>
+        {back}
+        <Card className="p-6 text-sm text-white/50">{notFound ? 'Задача не найдена. Возможно, она была удалена, или бэкенд перезапущен.' : 'Загрузка…'}</Card>
+      </div>
+    )
+  }
+
+  const t = task
   const st = STATUS[t.status] || { label: t.status, tone: 'muted' as const }
   const p = pct(t)
-  const s = detailed.settings || t.settings || {}
-  const logs = (detailed.logs || []).slice(0, 80)
-  const results = detailed.results || detailed.commentHistory || []
+  const s = t.settings || {}
+  const logs = (t.logs || []).slice(0, 300)
+  const results = (t.results || t.commentHistory || []) as Record<string, unknown>[]
+
   return (
-    <Modal open={!!t} onClose={onClose} size="lg" title={`Задача · ${moduleTitle(t.moduleKey)}`} subtitle={t.id}
-      footer={<button onClick={onClose} className="btn-primary h-10">Закрыть</button>}>
+    <div>
+      {back}
+      <PageHeader
+        title={`${moduleTitle(t.moduleKey)}`}
+        subtitle={`Задача #${t.id} · ${t.initiator || 'ручной запуск'}`}
+        icon={<ListChecks size={22} />}
+      />
       <div className="space-y-4">
         <div className="flex items-center gap-4 rounded-2xl border border-line bg-elevated/40 p-4">
           <Ring value={p} color={STATUS_COLOR[t.status] || '#94a3b8'} size={66} stroke={6} pulse={isActive(t)} />
@@ -549,15 +587,15 @@ function TaskDetailModal({ t, goalName, accountName, busy, onClose, onStop, onRe
             <div className="mt-1 text-sm text-white/60">{t.progress?.done ?? t.progress?.actionsDone ?? 0} / {t.progress?.total ?? 0} действий</div>
           </div>
           <div className="flex shrink-0 gap-1">
-            {isActive(t) && <button onClick={() => onPause(t)} disabled={busy === t.id} className="btn-icon h-9 w-9" title="Пауза"><Pause size={15} /></button>}
-            {t.status === 'paused' && <button onClick={() => onResume(t)} disabled={busy === t.id} className="btn-icon h-9 w-9 text-spark-400" title="Продолжить"><Play size={15} /></button>}
-            {isActive(t) && <button onClick={() => onStop(t)} disabled={busy === t.id} className="btn-icon h-9 w-9 text-rose-300" title="Стоп"><Square size={15} /></button>}
-            <button onClick={() => onRestart(t)} disabled={busy === t.id} className="btn-icon h-9 w-9" title="Перезапуск"><RotateCw size={16} /></button>
+            {isActive(t) && <button onClick={doPause} disabled={busy} className="btn-icon h-9 w-9" title="Пауза"><Pause size={15} /></button>}
+            {t.status === 'paused' && <button onClick={doResume} disabled={busy} className="btn-icon h-9 w-9 text-spark-400" title="Продолжить"><Play size={15} /></button>}
+            {isActive(t) && <button onClick={doStop} disabled={busy} className="btn-icon h-9 w-9 text-rose-300" title="Стоп"><Square size={15} /></button>}
+            <button onClick={doRestart} disabled={busy} className="btn-icon h-9 w-9" title="Перезапуск"><RotateCw size={16} /></button>
           </div>
         </div>
         <div className="grid gap-2 sm:grid-cols-3">
           <Info label="Модуль" value={moduleTitle(t.moduleKey)} />
-          <Info label="Цель" value={goalName || 'без цели'} />
+          <Info label="Цель" value={goalName(t.goalId) || 'без цели'} />
           <Info label="Инициатор" value={t.initiator || '—'} />
           <Info label="Аккаунтов" value={String((s.accountIds || []).length)} />
           <Info label="Каналов / целей" value={String((s.channels || s.targets || []).length)} />
@@ -567,15 +605,13 @@ function TaskDetailModal({ t, goalName, accountName, busy, onClose, onStop, onRe
           <Info label="Результатов" value={String(results.length)} />
         </div>
 
-        {/* Какие аккаунты работают/работали в задаче */}
         <ChipList
           title="Аккаунты в работе"
           count={(s.accountIds || []).length}
-          items={(s.accountIds || []).map((id) => accountName(id))}
+          items={(s.accountIds || []).map((aid) => accountName(aid))}
           empty="Аккаунты не заданы"
           tone="iris"
         />
-        {/* Какие каналы/цели (папки разворачиваются в этот список при запуске) */}
         <ChipList
           title="Каналы / цели"
           count={(s.channels || s.targets || []).length}
@@ -587,12 +623,32 @@ function TaskDetailModal({ t, goalName, accountName, busy, onClose, onStop, onRe
         {(s.postUrls?.length ?? 0) > 0 && (
           <ChipList title="Ссылки на посты" count={s.postUrls!.length} items={s.postUrls!} empty="" tone="spark" mono />
         )}
+
+        {results.length > 0 && (
+          <div className="rounded-2xl border border-line bg-elevated/40 p-3">
+            <div className="mb-2 text-sm font-bold text-fg">Результаты ({results.length})</div>
+            <div className="max-h-72 overflow-y-auto">
+              <table className="w-full text-sm">
+                <tbody>
+                  {results.slice(0, 200).map((r, i) => (
+                    <tr key={i} className="border-b border-line/50">
+                      <td className="py-1.5 font-medium text-fg">{String(r.name ?? r.title ?? r.username ?? r.accountName ?? '—')}</td>
+                      <td className="text-muted">{String(r.comment ?? r.text ?? (r.username ? `@${r.username}` : ''))}</td>
+                      <td className="text-right"><span className="text-xs text-white/40">{String(r.status ?? r.kind ?? '')}</span></td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+
         <div className="rounded-2xl border border-line bg-elevated/40 p-3">
-          <div className="mb-2 flex items-center gap-2 text-sm font-bold text-fg">Логи ({(detailed.logs || []).length}){!full && <Loader2 size={13} className="animate-spin text-white/40" />}</div>
+          <div className="mb-2 flex items-center gap-2 text-sm font-bold text-fg">Логи ({(t.logs || []).length}){isActive(t) && <Loader2 size={13} className="animate-spin text-white/40" />}</div>
           {logs.length === 0 ? (
             <div className="py-3 text-center text-xs text-white/40">Логов пока нет</div>
           ) : (
-            <div className="max-h-80 space-y-1 overflow-y-auto">
+            <div className="max-h-96 space-y-1 overflow-y-auto">
               {logs.map((l, i) => (
                 <div key={i} className="flex gap-2 text-xs">
                   <span className="shrink-0 text-white/30">{new Date(l.ts).toLocaleTimeString('ru-RU')}</span>
@@ -603,6 +659,6 @@ function TaskDetailModal({ t, goalName, accountName, busy, onClose, onStop, onRe
           )}
         </div>
       </div>
-    </Modal>
+    </div>
   )
 }
