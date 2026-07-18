@@ -196,12 +196,20 @@ modulesRouter.post('/:moduleKey/presets', async (req, res) => {
   try {
     const store = getModuleStore(req.params.moduleKey)
     if (!store) return res.status(404).json({ ok: false, error: 'Модуль не найден' })
-    const { name, settings } = req.body ?? {}
+    const { name, settings, color, owner } = req.body ?? {}
     if (!name?.trim()) return res.status(400).json({ ok: false, error: 'Укажите название' })
     const presets = await store.loadPresets()
     // Тот же name перезаписывает пресет, а не плодит дубли.
     const filtered = presets.filter((p) => p.name !== name.trim())
-    const preset = { id: `pr_${Date.now()}`, name: name.trim(), settings, createdAt: Date.now() }
+    // §7: цветовая метка + владелец персонального пресета (нормализуем к строке ≤40).
+    const preset = {
+      id: `pr_${Date.now()}`,
+      name: name.trim(),
+      settings,
+      createdAt: Date.now(),
+      ...(typeof color === 'string' && color ? { color: color.slice(0, 20) } : {}),
+      ...(typeof owner === 'string' && owner.trim() ? { owner: owner.trim().slice(0, 40) } : {}),
+    }
     filtered.unshift(preset)
     await store.savePresets(filtered.slice(0, 20))
     res.json({ ok: true, preset })

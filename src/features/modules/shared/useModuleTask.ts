@@ -142,11 +142,11 @@ export function useModuleTask(moduleKey: string) {
     }
   }, [taskId, moduleKey, syncBackgroundTask, pushToast, loadAccounts, loadAccountBusy])
 
-  const savePreset = useCallback(async (name: string, settings: ModuleTaskSettings) => {
-    await saveModulePreset(moduleKey, name, settings)
+  const savePreset = useCallback(async (name: string, settings: ModuleTaskSettings, color?: string, owner?: string) => {
+    await saveModulePreset(moduleKey, name, settings, color, owner)
     const p = await fetchModulePresets(moduleKey)
     setPresets(p)
-    pushToast({ type: 'success', title: 'Пресет сохранён', desc: name })
+    pushToast({ type: 'success', title: 'Пресет сохранён', desc: owner ? `${name} · ${owner}` : name })
   }, [moduleKey, pushToast])
 
   const deletePreset = useCallback(async (id: string) => {

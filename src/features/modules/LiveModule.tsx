@@ -14,10 +14,10 @@ import { useModuleTask } from './shared/useModuleTask'
 import {
   SectionCard, NumberField,
   ProtectionBlock, TargetsEditor, LaunchPanel, PromptCards, loadPromptBodies, AiGenerationNotice,
-  FolderPicker, BlacklistEditor, GlobalPromptEditor, TimingSection, SaveToFolderModal, TaskStartedModal,
+  FolderPicker, BlacklistEditor, GlobalPromptEditor, TimingSection, SaveToFolderModal, TaskStartedModal, SavePresetModal,
 } from './shared'
 import type { ModuleTaskSettings } from '@/api/modulesApi'
-import { confirmDialog, promptDialog } from '@/shared/lib/dialog'
+import { confirmDialog } from '@/shared/lib/dialog'
 
 const DEFAULT_DELAYS = {
   comment: [30, 120] as [number, number],
@@ -105,6 +105,7 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
   }, [maxPerAcc, minPerAcc, accCount])
   const [palette, setPalette] = useState<Set<string>>(new Set(['👍', '❤️', '🔥']))
   const [folderSave, setFolderSave] = useState<string[] | null>(null)
+  const [presetModalOpen, setPresetModalOpen] = useState(false)
   const [lookModeIdx, setLookModeIdx] = useState(0)
   const [lookPostsCount, setLookPostsCount] = useState(cfg.lookPostsDefault ?? 3)
 
@@ -214,10 +215,8 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
     if (isCombatModule(moduleKey) && !(await confirmDialog({ title: 'Реальные действия в Telegram', message: combatConfirmText(moduleKey), confirmLabel: 'Запустить', tone: 'danger' }))) return
     void start(buildSettings(), `${cfg.title} · ${selected.size} акк.`)
   }
-  const handleSave = async () => {
-    const name = await promptDialog({ title: 'Сохранить пресет', message: 'Название пресета настроек', placeholder: 'Напр. Крипто · агрессивный' })
-    if (name) void savePreset(name, buildSettings())
-  }
+  // §7: пресет — цветная метка + владелец; открываем модалку вместо простого prompt.
+  const handleSave = () => setPresetModalOpen(true)
 
   // Восстанавливает настройки из пресета в форму (аккаунты не трогаем — они ситуативны).
   const applyPreset = useCallback((s: ModuleTaskSettings) => {
@@ -276,6 +275,7 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
     <div className="space-y-4">
       <TaskStartedModal task={justStarted} moduleTitle={cfg.title} onClose={dismissJustStarted} />
       <SaveToFolderModal open={folderSave !== null} onClose={() => setFolderSave(null)} targets={folderSave ?? []} />
+      <SavePresetModal open={presetModalOpen} onClose={() => setPresetModalOpen(false)} onSave={(name, color, owner) => savePreset(name, buildSettings(), color, owner)} />
       {cfg.accountPicker && showBlock('run') && (
         <AccountPicker selected={selected} onChange={setSelected} actions={cfg.accountActions} withFilters={!!cfg.accountFilters} selectedTitle={cfg.selectedTitle ?? 'Выбрано'} />
       )}

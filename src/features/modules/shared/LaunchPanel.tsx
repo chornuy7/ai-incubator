@@ -2,6 +2,7 @@ import { Play, Save, AlertTriangle, Loader2, Bookmark, X, ArrowUpRight } from 'l
 import { cn } from '@/shared/lib/utils'
 import type { ModuleTask, ModulePreset, ModuleTaskSettings } from '@/api/modulesApi'
 import { LaunchStat } from './index'
+import { presetHex } from './SavePresetModal'
 
 export function LaunchPanel({
   running, starting, canStart, onStart, onSave, primaryLabel, stats, task, warn,
@@ -52,8 +53,10 @@ export function LaunchPanel({
             {presets.map((p) => (
               <span
                 key={p.id}
-                className="group inline-flex items-center gap-1.5 rounded-xl border border-line bg-surface pl-3 pr-1.5 py-1.5 text-sm font-medium text-fg transition-colors hover:border-spark-500/40"
+                className="group inline-flex items-center gap-1.5 rounded-xl border border-line bg-surface pl-2.5 pr-1.5 py-1.5 text-sm font-medium text-fg transition-colors hover:border-spark-500/40"
+                style={{ borderLeft: `3px solid ${presetHex(p.color)}` }}
               >
+                <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ background: presetHex(p.color) }} />
                 <button
                   type="button"
                   onClick={() => onApplyPreset(p.settings)}
@@ -63,6 +66,11 @@ export function LaunchPanel({
                 >
                   {p.name}
                 </button>
+                {p.owner && (
+                  <span className="shrink-0 rounded-md bg-elevated px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-muted" title="Владелец пресета">
+                    {p.owner}
+                  </span>
+                )}
                 {onDeletePreset && (
                   <button
                     type="button"
