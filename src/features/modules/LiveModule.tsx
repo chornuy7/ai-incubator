@@ -611,6 +611,28 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
           Роли выдан доступ к модулю, но не выдан ни один блок. Обратитесь к администратору, чтобы он открыл нужные блоки в «Роли и доступы».
         </div>
       )}
+
+      {/* §7: «Выполнение» — нижняя прижатая панель (всегда видна): статус текущей задачи
+          + прыжок в Дашборд, отфильтрованный по этому модулю. */}
+      {showBlock('run') && (
+        <div className="sticky bottom-0 z-30 -mx-0.5 flex flex-wrap items-center gap-x-3 gap-y-1 rounded-t-xl border border-b-0 border-line bg-surface/90 px-4 py-2.5 shadow-[0_-8px_24px_-12px_rgba(0,0,0,0.5)] backdrop-blur supports-[backdrop-filter]:bg-surface/75">
+          <span className={`h-2.5 w-2.5 shrink-0 rounded-full ${running ? 'animate-pulse bg-spark-400' : task?.status === 'done' ? 'bg-spark-500' : 'bg-faint'}`} />
+          <span className="text-sm font-semibold text-fg">
+            {running
+              ? `Выполняется · ${progressDone}${task?.progress?.total ? ` / ${task.progress.total}` : ''}`
+              : task?.status === 'done' ? 'Завершено' : 'Готов к запуску'}
+          </span>
+          {selected.size > 0 && <span className="text-xs text-muted">· {selected.size} акк.</span>}
+          {warn && !running && <span className="text-xs text-amber-300">· {warn}</span>}
+          <a
+            href={`/panel/tasks?module=${moduleKey}${task ? `&task=${task.id}` : ''}`}
+            className="ml-auto inline-flex items-center gap-1 text-xs font-semibold text-spark-300 hover:underline"
+            title="Открыть задачи этого модуля в Дашборде"
+          >
+            <Terminal size={13} /> Задачи модуля в Дашборде <ArrowUpRight size={13} />
+          </a>
+        </div>
+      )}
     </div>
   )
 }
