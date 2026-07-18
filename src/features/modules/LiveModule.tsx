@@ -8,7 +8,7 @@ import { activeAccounts, useApp } from '@/mocks/store'
 import { useSession } from '@/features/auth/session'
 import { can } from '@/shared/lib/access'
 import { ToggleGroup, Segmented, EmptyState, Badge, Select } from '@/shared/ui'
-import { fetchGoals, type Goal } from '@/api/goalsApi'
+import { fetchGoals, isGoalExpired, type Goal } from '@/api/goalsApi'
 import { AccountPicker } from '@/features/account-picker/AccountPicker'
 import { useModuleTask } from './shared/useModuleTask'
 import {
@@ -189,15 +189,22 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
   )
   // #5: сумма процентов типов не должна превышать 100 — иначе запуск блокируется.
   const typesOver100 = moduleKey === 'neuro-commenting' && weightSum > 100
+  // §4: цель с истёкшим дедлайном «останавливает работу» — не даём запуск (зеркало 409 бэкенда).
+  const goalExpired = useMemo(() => {
+    const g = goalId ? goals.find((x) => x.id === goalId) : null
+    return g ? isGoalExpired(g) : false
+  }, [goalId, goals])
   const canStart = (isGgr
     ? selected.size > 0
     : selected.size > 0 && busySelectedCount === 0 && (!needsTargets || targets.length > 0 || hasPostTargets))
-    && !typesOver100
-  const warn = typesOver100
-    ? `Сумма типов комментариев ${weightSum}% > 100 — уменьшите (кнопка «= 100%»)`
-    : !canStart
-      ? (isGgr ? 'Выберите аккаунты для проверки' : busySelectedCount ? `${busySelectedCount} акк. заняты в другом модуле` : !selected.size ? 'Выберите аккаунты' : 'Добавьте группу или ссылку на пост')
-      : undefined
+    && !typesOver100 && !goalExpired
+  const warn = goalExpired
+    ? 'Дедлайн выбранной цели истёк — работа по ней остановлена. Продлите дедлайн или уберите цель.'
+    : typesOver100
+      ? `Сумма типов комментариев ${weightSum}% > 100 — уменьшите (кнопка «= 100%»)`
+      : !canStart
+        ? (isGgr ? 'Выберите аккаунты для проверки' : busySelectedCount ? `${busySelectedCount} акк. заняты в другом модуле` : !selected.size ? 'Выберите аккаунты' : 'Добавьте группу или ссылку на пост')
+        : undefined
 
   // §3.5: предупреждать о математически противоречивых лимитах (макс vs аккаунты vs мин/акк).
   const limitWarn = useMemo(() => {
