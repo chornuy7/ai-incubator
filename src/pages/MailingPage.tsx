@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Mail, Send, AlertTriangle } from 'lucide-react'
-import { PageHeader, Card, Select } from '@/shared/ui'
+import { PageHeader, Card, Select, Segmented } from '@/shared/ui'
 import { useApp } from '@/mocks/store'
 import { AccountPicker } from '@/features/account-picker/AccountPicker'
 import { MessageComposer } from '@/features/composer/MessageComposer'
@@ -19,6 +19,8 @@ export function MailingPage() {
   const [maxPerAccount, setMaxPerAccount] = useState(25)
   const [delayMin, setDelayMin] = useState(90)
   const [delayMax, setDelayMax] = useState(300)
+  const [protLevel, setProtLevel] = useState(0) // §11: паритет с masslooking/warming — уровень защиты
+  const [delayPreset, setDelayPreset] = useState(1) // множитель задержек (Мин/Реком/Макс)
   const [goals, setGoals] = useState<Goal[]>([])
   const [goalId, setGoalId] = useState('')
   const [aiPerRecipient, setAiPerRecipient] = useState(false)
@@ -46,6 +48,8 @@ export function MailingPage() {
         promptText: message.trim(),
         maxPerAccount,
         delays: { dm: [delayMin, delayMax], action: [delayMin, delayMax] },
+        protectionLevel: protLevel,
+        delayPreset,
         ...(media.length ? { mediaUrls: media } : {}),
         aiPerRecipient: aiPerRecipient && !!goalId,
         ...(goalId ? { goalId } : {}),
@@ -103,6 +107,17 @@ export function MailingPage() {
 
           <Card className="p-4">
             <div className="mb-2 text-sm font-semibold text-fg">Безопасность</div>
+            {/* §11: паритет с masslooking/warming — уровень защиты и пресет задержек (множители пауз). */}
+            <div className="mb-3 grid gap-3 sm:grid-cols-2">
+              <div>
+                <div className="mb-1 text-xs text-white/50">Уровень защиты</div>
+                <Segmented options={['Консерв.', 'Сбаланс.', 'Агресс.']} value={protLevel} onChange={setProtLevel} size="sm" />
+              </div>
+              <div>
+                <div className="mb-1 text-xs text-white/50">Пресет задержек</div>
+                <Segmented options={['Мин', 'Реком.', 'Макс']} value={delayPreset} onChange={setDelayPreset} size="sm" />
+              </div>
+            </div>
             <div className="grid grid-cols-3 gap-3">
               <label className="text-xs text-white/50">Лимит на аккаунт
                 <input type="number" min={1} value={maxPerAccount} onChange={(e) => setMaxPerAccount(Math.max(1, Number(e.target.value) || 1))} className="input mt-1 h-9" />
