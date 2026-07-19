@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
-import { normalizeLead, LEAD_STATUSES, hasActiveHotLead, DIALOG_MODULES, activeLeadCount, leadPriority, sortLeadsByPriority } from '../leads.js'
+import { normalizeLead, LEAD_STATUSES, hasActiveHotLead, DIALOG_MODULES, activeLeadCount, leadPriority, sortLeadsByPriority, advanceLeadStatus } from '../leads.js'
 
 test('activeLeadCount: считает лиды в работе (вся воронка кроме target/closed)', () => {
   const leads = [
@@ -88,6 +88,43 @@ test('normalizeLead: дефолт статуса, легаси-алиас и т�
 
 test('LEAD_STATUSES — воронка прогрева (§9)', () => {
   assert.deepEqual(LEAD_STATUSES, ['cold', 'contacted', 'warm', 'interested', 'hot', 'target', 'closed'])
+})
+
+test('§9 advanceLeadStatus: только вперёд, терминальные не откатываются', () => {
+  assert.equal(advanceLeadStatus(null, 'contacted'), 'contacted') // новый
+  assert.equal(advanceLeadStatus('cold', 'contacted'), 'contacted') // продвижение
+  assert.equal(advanceLeadStatus('hot', 'contacted'), 'hot') // не понижаем прогретого
+  assert.equal(advanceLeadStatus('warm', 'interested'), 'interested') // выше по воронке
+  assert.equal(advanceLeadStatus('interested', 'warm'), 'interested') // назад нельзя
+  assert.equal(advanceLeadStatus('target', 'contacted'), 'target') // терминальный не трогаем
+  assert.equal(advanceLeadStatus('closed', 'hot'), 'closed') // закрытый не оживляем
+})
+
+test('§9 upsertLead: создаёт новый и продвигает существующий (изолированный файл)', async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'leads-upsert-'))
+  process.env.LEADS_FILE = path.join(dir, 'leads.json')
+  const L = await import('../leads.js?upsert=' + Date.now())
+
+  const a = await L.upsertLead({ peer: '@Client', goalId: 'g1', accountId: 'acc1', status: 'contacted' })
+  assert.equal(a.created, true)
+  assert.equal(a.lead.status, 'contacted')
+
+  // тот же peer+goal (регистр/@ нормализуются) — обновление, продвижение вперёд
+  const b = await L.upsertLead({ peer: 'client', goalId: 'g1', status: 'warm' })
+  assert.equal(b.created, false)
+  assert.equal(b.lead.id, a.lead.id) // тот же лид
+  assert.equal(b.lead.status, 'warm')
+
+  // попытка «понизить» — статус не откатывается
+  const c = await L.upsertLead({ peer: '@client', goalId: 'g1', status: 'cold' })
+  assert.equal(c.lead.status, 'warm')
+
+  // другая цель — отдельный лид
+  const d = await L.upsertLead({ peer: '@client', goalId: 'g2', status: 'contacted' })
+  assert.equal(d.created, true)
+  assert.equal((await L.listLeads()).length, 2)
+
+  delete process.env.LEADS_FILE
 })
 
 test('CRUD + фильтры + stats (изолированный файл)', async () => {

@@ -133,6 +133,46 @@ export function sortLeadsByPriority(leads = []) {
 
 const normPeer = (x) => String(x ?? '').trim().toLowerCase().replace(/^@/, '')
 
+/** Терминальные статусы — их не откатываем при авто-обновлении (§9). */
+const TERMINAL_LEAD_STATUSES = new Set(['target', 'closed'])
+
+/**
+ * §9: продвижение статуса лида ТОЛЬКО вперёд по воронке (авто-апдейт не понижает).
+ * Терминальные (цель/закрыт) не откатываем. Чистая функция.
+ * @param {string} current @param {string} next @returns {string}
+ */
+export function advanceLeadStatus(current, next) {
+  if (!current) return next
+  if (TERMINAL_LEAD_STATUSES.has(current)) return current
+  return leadPriority(next) > leadPriority(current) ? next : current
+}
+
+/**
+ * §9: авто-попадание лида в CRM — upsert по (goalId + peer). Существующий лид
+ * продвигается по воронке вперёд (не откатывается), новый создаётся.
+ * @param {object} input @returns {Promise<{lead: object, created: boolean}>}
+ */
+export async function upsertLead(input) {
+  const clean = normalizeLead(input)
+  if (!clean.peer) throw new Error('Укажите контакт лида (peer)')
+  const all = await readJson(LEADS_FILE, [])
+  const key = normPeer(clean.peer)
+  const i = all.findIndex((l) => normPeer(l.peer) === key && (l.goalId || '') === (clean.goalId || ''))
+  if (i === -1) {
+    const lead = { id: `lead_${crypto.randomUUID().slice(0, 8)}`, ...clean, isHot: clean.status === 'hot', createdAt: Date.now(), updatedAt: Date.now() }
+    all.unshift(lead)
+    await writeJson(LEADS_FILE, all)
+    return { lead, created: true }
+  }
+  const advanced = advanceLeadStatus(all[i].status, clean.status)
+  all[i].status = advanced
+  all[i].isHot = advanced === 'hot'
+  if (clean.accountId) all[i].accountId = clean.accountId
+  all[i].updatedAt = Date.now()
+  await writeJson(LEADS_FILE, all)
+  return { lead: all[i], created: false }
+}
+
 /** Карта peer→высший приоритет из лидов (для приоритезации диалогов §3.6). Чистая. */
 export function leadPriorityMap(leads = []) {
   /** @type {Record<string, number>} */

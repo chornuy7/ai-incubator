@@ -9,6 +9,7 @@ import { useApp } from '@/mocks/store'
 import { Avatar, Badge, Switch, Select } from '@/shared/ui'
 import { AccountPicker } from '@/features/account-picker/AccountPicker'
 import { fetchGoals, type Goal } from '@/api/goalsApi'
+import { upsertLead } from '@/api/leadsApi'
 import { cn } from '@/shared/lib/utils'
 import { promptDialog } from '@/shared/lib/dialog'
 import {
@@ -293,6 +294,16 @@ export function NeuroDialogsModule() {
       setDialogs((list) =>
         list.map((d) => (d.key === activeDialog.key ? { ...d, last: text, time: 'сейчас' } : d)),
       )
+      // §9: авто-попадание лида в CRM — раз мы ведём диалог под целью, фиксируем контакт.
+      // Статус только вперёд (не откатит уже прогретого/горячего). Fire-and-forget.
+      if (goalId) {
+        void upsertLead({
+          peer: activeDialog.username || String(activeDialog.peerId),
+          goalId,
+          accountId: activeDialog.accountId,
+          status: 'contacted',
+        }).catch(() => {})
+      }
       requestAnimationFrame(() => scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight }))
     } catch (err) {
       setReply(text)
@@ -304,7 +315,7 @@ export function NeuroDialogsModule() {
     } finally {
       setSending(false)
     }
-  }, [reply, activeDialog, pushToast])
+  }, [reply, activeDialog, pushToast, goalId])
 
   useEffect(() => {
     void loadInbox()

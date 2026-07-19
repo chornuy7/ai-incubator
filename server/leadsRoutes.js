@@ -1,6 +1,6 @@
 /** CRM-роуты «Лиды» (§3.6). Монтируется в /api/leads. */
 import { Router } from 'express'
-import { listLeads, createLead, updateLead, deleteLead, leadStats, LEAD_STATUSES } from './leads.js'
+import { listLeads, createLead, updateLead, deleteLead, upsertLead, leadStats, LEAD_STATUSES } from './leads.js'
 
 export const leadsRouter = Router()
 
@@ -24,6 +24,13 @@ leadsRouter.get('/stats', async (req, res) => {
 leadsRouter.post('/', async (req, res) => {
   try {
     res.json({ ok: true, lead: await createLead(req.body ?? {}) })
+  } catch (err) { fail(res, err) }
+})
+
+// §9: авто-попадание лида в CRM — upsert по (goalId+peer), статус только вперёд.
+leadsRouter.post('/upsert', async (req, res) => {
+  try {
+    res.json({ ok: true, ...(await upsertLead(req.body ?? {})) })
   } catch (err) { fail(res, err) }
 })
 

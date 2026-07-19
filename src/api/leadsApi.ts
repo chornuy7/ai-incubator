@@ -47,6 +47,11 @@ export async function createLead(input: LeadInput): Promise<Lead> {
   return data.lead
 }
 
+/** §9: авто-попадание лида в CRM — upsert по (goalId+peer), статус только вперёд по воронке. */
+export async function upsertLead(input: LeadInput): Promise<{ lead: Lead; created: boolean }> {
+  return apiPost<{ ok: boolean; lead: Lead; created: boolean }>('/api/leads/upsert', input)
+}
+
 export async function updateLead(id: string, patch: Partial<LeadInput>): Promise<Lead> {
   const res = await fetch(`/api/leads/${id}`, {
     method: 'PUT',
