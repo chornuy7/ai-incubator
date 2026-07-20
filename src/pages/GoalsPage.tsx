@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
-import { Target, Plus, Pencil, Trash2, BookOpen, Hash, X } from 'lucide-react'
+import { Target, Plus, Pencil, Trash2, BookOpen, Hash, X, ArrowLeft } from 'lucide-react'
 import { useApp } from '@/mocks/store'
-import { PageHeader, Card, EmptyState, Modal, Badge } from '@/shared/ui'
+import { PageHeader, Card, EmptyState, Badge } from '@/shared/ui'
 import { HelpButton } from '@/features/neuro-commenting/moduleUi'
 import { confirmDialog } from '@/shared/lib/dialog'
 import { FolderPicker } from '@/features/modules/shared'
@@ -124,6 +124,7 @@ export function GoalsPage() {
 
   return (
     <div>
+      {!open && (<>
       <PageHeader
         title="Цели"
         subtitle="Цель кампании: целевое действие, этапы и критерий завершения. AI-модули работают к выбранной цели."
@@ -195,18 +196,18 @@ export function GoalsPage() {
           ))}
         </div>
       )}
+      </>)}
 
-      <Modal
-        open={open}
-        onClose={() => setOpen(false)}
-        title={editing ? 'Изменить цель' : 'Новая цель'}
-        subtitle="AI будет вести кампанию к этой цели"
-        icon={<Target size={22} />}
-        footer={<>
-          <button onClick={() => setOpen(false)} className="btn-ghost h-10">Отмена</button>
-          <button onClick={save} disabled={saving} className="btn-primary h-10">{saving ? 'Сохранение…' : editing ? 'Сохранить' : 'Создать'}</button>
-        </>}
-      >
+      {/* §4: создание/редактирование цели — полноэкранная вьюшка, а не модалка. */}
+      {open && (
+      <div>
+        <button onClick={() => setOpen(false)} className="btn-ghost mb-3 h-9"><ArrowLeft size={15} /> Назад к целям</button>
+        <PageHeader
+          title={editing ? 'Изменить цель' : 'Новая цель'}
+          subtitle="AI будет вести кампанию к этой цели"
+          icon={<Target size={22} />}
+        />
+        <Card className="p-4">
         <div className="space-y-3">
           <div>
             <label className="mb-1 block text-xs text-white/50">Название *</label>
@@ -293,7 +294,13 @@ export function GoalsPage() {
             </div>
           )}
         </div>
-      </Modal>
+          <div className="mt-4 flex justify-end gap-2 border-t border-line pt-4">
+            <button onClick={() => setOpen(false)} className="btn-ghost h-10">Отмена</button>
+            <button onClick={save} disabled={saving} className="btn-primary h-10">{saving ? 'Сохранение…' : editing ? 'Сохранить' : 'Создать'}</button>
+          </div>
+        </Card>
+      </div>
+      )}
     </div>
   )
 }
