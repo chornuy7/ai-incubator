@@ -1,0 +1,62 @@
+# Автодеплой: push в ветку → сборка на раннере → выкат на сервер по SSH.
+# Сервер НЕ нуждается в доступе к приватному репо — всё собирается здесь и rsync-ится.
+#
+# ЧТО НУЖНО ОДИН РАЗ (Settings → Secrets and variables → Actions):
+#   DEPLOY_SSH_KEY  — приватный ключ (ed25519), чей ПУБЛИЧНЫЙ добавлен в ~/.ssh/authorized_keys на сервере
+#   DEPLOY_HOST     — 45.142.142.216
+#   DEPLOY_USER     — root
+# Сгенерировать пару:  ssh-keygen -t ed25519 -f deploy_key -N ""
+#   → deploy_key      кладём в секрет DEPLOY_SSH_KEY
+#   → deploy_key.pub  добавляем на сервер:  cat >> ~/.ssh/authorized_keys
+
+name: deploy
+
+on:
+  push:
+    branches: [feat/a-phase1-status-machine]
+  workflow_dispatch: {}   # можно запускать вручную из вкладки Actions
+
+concurrency:
+  group: deploy-server
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install & build
+        run: |
+          npm ci
+          npm run build
+
+      - name: SSH ключ
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.DEPLOY_SSH_KEY }}" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          ssh-keyscan -H "${{ secrets.DEPLOY_HOST }}" >> ~/.ssh/known_hosts 2>/dev/null
+
+      # Код + собранный dist на сервер. server/data (живые сессии) и .env НЕ трогаем.
+      - name: Выкат (rsync)
+        run: |
+          rsync -az --delete \
+            --exclude node_modules --exclude .git --exclude server/data --exclude .env \
+            ./ "${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}:/opt/ai-incubator/"
+
+      - name: Зависимости + рестарт
+        run: |
+          ssh "${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}" '
+            set -e
+            cd /opt/ai-incubator
+            npm ci --omit=dev --no-audit --no-fund
+            systemctl restart ai-incubator
+            sleep 2
+            curl -fsS http://127.0.0.1:3001/api/health && echo " ✅ deployed"
+          '
