@@ -10,6 +10,7 @@ import { can } from '@/shared/lib/access'
 import { ToggleGroup, Segmented, EmptyState, Badge, Select } from '@/shared/ui'
 import { fetchGoals, isGoalExpired, type Goal } from '@/api/goalsApi'
 import { fetchCampaigns, type Campaign } from '@/api/campaignsApi'
+import { createAutomationRule } from '@/api/automationApi'
 import { AccountPicker } from '@/features/account-picker/AccountPicker'
 import { useModuleTask } from './shared/useModuleTask'
 import {
@@ -115,6 +116,17 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
   const [palette, setPalette] = useState<Set<string>>(new Set(['👍', '❤️', '🔥']))
   const [folderSave, setFolderSave] = useState<string[] | null>(null)
   const [presetModalOpen, setPresetModalOpen] = useState(false)
+  // §6: настройка автоматизации прямо в модуле — запуск по времени, одно-/многоразово.
+  const [schedOpen, setSchedOpen] = useState(false)
+  const [schedMode, setSchedMode] = useState(0) // 0 — однократно, 1 — ежедневно, 2 — интервал
+  const [schedAt, setSchedAt] = useState(() => {
+    const d = new Date(Date.now() + 3600_000)
+    d.setSeconds(0, 0)
+    return new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 16)
+  })
+  const [schedTime, setSchedTime] = useState('12:00')
+  const [schedEvery, setSchedEvery] = useState(60)
+  const [schedSaving, setSchedSaving] = useState(false)
   const [lookModeIdx, setLookModeIdx] = useState(0)
   const [lookPostsCount, setLookPostsCount] = useState(cfg.lookPostsDefault ?? 3)
 
@@ -236,6 +248,31 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
   }
   // §7: пресет — цветная метка + владелец; открываем модалку вместо простого prompt.
   const handleSave = () => setPresetModalOpen(true)
+
+  // §6: создать правило автоматизации с текущими настройками модуля (не запуская сейчас).
+  const createSchedule = async () => {
+    if (!canStart) return pushToast({ type: 'error', title: 'Сначала настройте запуск', desc: warn })
+    const schedule = schedMode === 0
+      ? { type: 'once' as const, at: new Date(schedAt).getTime() }
+      : schedMode === 1
+        ? { type: 'daily' as const, time: schedTime }
+        : { type: 'interval' as const, intervalMinutes: Math.max(1, schedEvery) }
+    setSchedSaving(true)
+    try {
+      await createAutomationRule({
+        name: `${cfg.title}${campaignId ? ` · ${campaigns.find((c) => c.id === campaignId)?.name ?? ''}` : ''}`,
+        moduleKey,
+        campaignId: campaignId || null,
+        accountIds: [...selected],
+        settings: buildSettings() as unknown as Record<string, unknown>,
+        schedule,
+      })
+      pushToast({ type: 'success', title: 'Правило автоматизации создано', desc: 'Смотрите в разделе «Автоматизация»' })
+      setSchedOpen(false)
+    } catch (e) {
+      pushToast({ type: 'error', title: 'Не создано', desc: e instanceof Error ? e.message : '' })
+    } finally { setSchedSaving(false) }
+  }
 
   // Восстанавливает настройки из пресета в форму (аккаунты не трогаем — они ситуативны).
   const applyPreset = useCallback((s: ModuleTaskSettings) => {
@@ -593,6 +630,49 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
           onApplyPreset={applyPreset}
           onDeletePreset={deletePreset}
         />
+        {/* §6: автоматизация прямо в модуле — запуск по времени, одно-/многоразово. */}
+        {!running && (
+          <div className="mt-3 rounded-xl border border-line bg-elevated/30">
+            <button type="button" onClick={() => setSchedOpen((v) => !v)}
+              className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm font-semibold text-muted hover:text-fg">
+              <Clock size={15} className="text-iris-300" />
+              Запуск по расписанию
+              <span className="text-xs font-normal text-faint">— создать правило, не запуская сейчас</span>
+              <span className="ml-auto text-xs text-faint">{schedOpen ? 'скрыть ▲' : 'настроить ▾'}</span>
+            </button>
+            {schedOpen && (
+              <div className="space-y-3 border-t border-line px-3 pb-3 pt-3">
+                <Segmented options={['Однократно', 'Ежедневно', 'Каждые N минут']} value={schedMode} onChange={setSchedMode} size="sm" />
+                {schedMode === 0 && (
+                  <div>
+                    <div className="mb-1 text-xs text-white/50">Дата и время запуска</div>
+                    <input type="datetime-local" className="input h-9" value={schedAt} onChange={(e) => setSchedAt(e.target.value)} />
+                  </div>
+                )}
+                {schedMode === 1 && (
+                  <div>
+                    <div className="mb-1 text-xs text-white/50">Время ежедневного запуска</div>
+                    <input type="time" className="input h-9 w-32" value={schedTime} onChange={(e) => setSchedTime(e.target.value)} />
+                  </div>
+                )}
+                {schedMode === 2 && (
+                  <div>
+                    <div className="mb-1 text-xs text-white/50">Интервал (минуты)</div>
+                    <input type="number" min={1} className="input h-9 w-32" value={schedEvery} onChange={(e) => setSchedEvery(Math.max(1, Number(e.target.value) || 1))} />
+                  </div>
+                )}
+                <p className="text-[11px] text-white/40">
+                  Правило заберёт текущие настройки модуля{campaignId ? ' и кампанию' : ''}. Управление — в разделе «Автоматизация».
+                </p>
+                <button type="button" onClick={() => void createSchedule()} disabled={schedSaving || !canStart}
+                  className="btn-ghost h-9 text-sm disabled:opacity-40">
+                  <Clock size={14} /> {schedSaving ? 'Создание…' : 'Создать правило'}
+                </button>
+              </div>
+            )}
+          </div>
+        )}
+
         <div className="mt-4 flex flex-wrap items-center gap-3">
           <a href={`/panel/tasks?module=${moduleKey}${task ? `&task=${task.id}` : ''}`} className="ml-auto inline-flex items-center gap-1 text-xs font-semibold text-spark-300 hover:underline" title="Открыть Дашборд задач, отфильтрованный по этому модулю">
             <Terminal size={13} /> Логи выполнения — в Дашборде задач <ArrowUpRight size={13} />

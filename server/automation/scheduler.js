@@ -26,6 +26,9 @@ async function launchRule(rule) {
   if (!moduleKey) throw new Error('У правила нет ни кампании, ни модуля')
   const { task, store } = startModuleTask(moduleKey, settings)
   task.campaignId = campaign?.id ?? null
+  // §6: задача автоматизации должна быть узнаваема в Дашборде задач.
+  task.initiator = `Автоматизация: ${rule.name || rule.id}`
+  task.goalId = settings.goalId ?? null
   await launchTask(moduleKey, task, store)
   // подстраховка: убедимся, что стор существует (иначе launchTask no-op)
   if (!getModuleStore(moduleKey)) throw new Error('Модуль не поддерживается планировщиком')
