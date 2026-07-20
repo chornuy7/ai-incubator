@@ -1,5 +1,8 @@
 import express from 'express'
 import cors from 'cors'
+import fs from 'fs'
+import path from 'path'
+import { fileURLToPath } from 'url'
 import { PORT } from './config.js'
 import { tgSendCode, tgVerifyCode, tgVerify2fa, tgCheckSession } from './tgAuth.js'
 import { tgListAccounts, tgPatchAccount, tgDeleteAccount, tgEmptyTrash } from './tgAccounts.js'
@@ -333,8 +336,22 @@ try {
   console.warn('[campaigns] schedule scheduler init failed:', err)
 }
 
+// Прод-режим: отдаём собранный фронт (dist/) тем же процессом — один порт на весь сайт.
+// Включается автоматически, если рядом есть dist (после `npm run build`). SPA-fallback:
+// любой не-/api GET отдаёт index.html, чтобы работали прямые ссылки вида /panel/tasks/:id.
+const DIST_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'dist')
+if (fs.existsSync(DIST_DIR)) {
+  app.use(express.static(DIST_DIR))
+  app.use((req, res, next) => {
+    if (req.method !== 'GET' || req.path.startsWith('/api')) return next()
+    res.sendFile(path.join(DIST_DIR, 'index.html'))
+  })
+  console.log(`[web] статика фронта: ${DIST_DIR}`)
+}
+
 // Безопасный дефолт: слушаем только localhost (управление TG-аккаунтами без auth не должно
 // торчать в LAN/интернет). Для доступа с другого устройства выставить API_HOST=0.0.0.0.
+// На проде держим 127.0.0.1 и выпускаем наружу через nginx с паролем (см. docs/DEPLOY.md).
 const HOST = process.env.API_HOST || '127.0.0.1'
 app.listen(PORT, HOST, () => {
   console.log(`API → http://${HOST}:${PORT}`)

@@ -1,0 +1,34 @@
+# systemd-юнит: /etc/systemd/system/ai-incubator.service
+# Запуск:  sudo systemctl enable --now ai-incubator
+# Логи:    journalctl -u ai-incubator -f
+
+[Unit]
+Description=AI Incubator — панель управления Telegram-профилями (API + фронт)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/ai-incubator
+
+# Слушаем только localhost — наружу выпускает nginx с basic auth.
+Environment=NODE_ENV=production
+Environment=API_HOST=127.0.0.1
+Environment=API_PORT=3001
+# Остальные секреты (TELEGRAM_API_ID/HASH, OPENAI_API_KEY) читает dotenv из /opt/ai-incubator/.env
+
+ExecStart=/usr/bin/node server/index.js
+
+Restart=always
+RestartSec=5
+# Воркеры живут в памяти процесса: при рестарте running-задачи помечаются stopped
+# (reconcileStaleTasksOnBoot) — это ожидаемо.
+KillSignal=SIGTERM
+TimeoutStopSec=30
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=ai-incubator
+
+[Install]
+WantedBy=multi-user.target
