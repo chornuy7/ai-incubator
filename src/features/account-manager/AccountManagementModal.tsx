@@ -634,7 +634,7 @@ export function ChannelsTab({ accountId }: { accountId: string }) {
   const [state, setState] = useState<{ loading: boolean; busy: boolean; busyLabel?: string; error?: string; items: AccountChannel[] }>({ loading: true, busy: false, items: [] })
   useEffect(() => {
     let alive = true
-    setState((s) => ({ ...s, loading: true }))
+    setState({ loading: true, busy: false, items: [] }) // §3: не показываем каналы/папки прежнего аккаунта, пока грузим нового
     void fetchAccountChannels(accountId).then((r) => {
       if (!alive) return
       setState({ loading: false, busy: r.busy, busyLabel: r.busyIn?.moduleLabel, error: r.error, items: r.channels })
@@ -642,13 +642,26 @@ export function ChannelsTab({ accountId }: { accountId: string }) {
     return () => { alive = false }
   }, [accountId])
 
+  const [q, setQ] = useState('')
   if (state.loading) return <LiveLoading label="Загрузка каналов из Telegram…" />
   if (state.busy) return <BusyNotice label={state.busyLabel} />
   if (state.error) return <ErrorNotice error={state.error} />
   if (!state.items.length) return <div className="py-10 text-center text-sm text-muted">Каналов и групп не найдено</div>
+  // §3: фильтр внутри блока — переключаемся между диалогами, не стакая их снаружи.
+  const shown = q.trim()
+    ? state.items.filter((c) => `${c.title} ${c.username}`.toLowerCase().includes(q.trim().toLowerCase()))
+    : state.items
   return (
-    <div className="max-h-96 space-y-1.5 overflow-y-auto">
-      {state.items.map((c) => (
+    <div className="space-y-2">
+      <input
+        value={q}
+        onChange={(e) => setQ(e.target.value)}
+        className="input h-9 text-sm"
+        placeholder={`Поиск среди ${state.items.length} каналов/групп…`}
+      />
+      <div className="max-h-96 space-y-1.5 overflow-y-auto">
+      {shown.length === 0 && <div className="py-6 text-center text-sm text-muted">Ничего не найдено</div>}
+      {shown.map((c) => (
         <div key={c.id} className="flex items-center gap-3 rounded-xl border border-line bg-elevated/40 px-3 py-2.5">
           <span className={cn('grid h-8 w-8 shrink-0 place-items-center rounded-lg text-xs font-bold', c.kind === 'channel' ? 'bg-iris-500/15 text-iris-300' : 'bg-spark-500/15 text-spark-300')}>
             {c.kind === 'channel' ? <Hash size={15} /> : <User size={15} />}
@@ -660,6 +673,7 @@ export function ChannelsTab({ accountId }: { accountId: string }) {
           {c.unread > 0 && <span className="rounded-full bg-rose-500/15 px-2 py-0.5 text-[11px] font-bold text-rose-300">{c.unread}</span>}
         </div>
       ))}
+      </div>
     </div>
   )
 }
@@ -668,7 +682,7 @@ export function FoldersTab({ accountId }: { accountId: string }) {
   const [state, setState] = useState<{ loading: boolean; busy: boolean; busyLabel?: string; error?: string; items: AccountFolder[] }>({ loading: true, busy: false, items: [] })
   useEffect(() => {
     let alive = true
-    setState((s) => ({ ...s, loading: true }))
+    setState({ loading: true, busy: false, items: [] }) // §3: не показываем каналы/папки прежнего аккаунта, пока грузим нового
     void fetchAccountFolders(accountId).then((r) => {
       if (!alive) return
       setState({ loading: false, busy: r.busy, busyLabel: r.busyIn?.moduleLabel, error: r.error, items: r.folders })
