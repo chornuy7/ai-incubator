@@ -12,7 +12,7 @@
  * Хранение — JSON `data/campaigns.json`; путь через env CAMPAIGNS_FILE (тесты).
  */
 import crypto from 'crypto'
-import { dataPath, readJson, writeJson } from './lib/jsonStore.js'
+import { dataPath, readJson, writeJson, mutateJson } from './lib/jsonStore.js'
 
 const CAMPAIGNS_FILE = process.env.CAMPAIGNS_FILE || dataPath('campaigns.json')
 
@@ -57,23 +57,22 @@ export async function createCampaign(input) {
   const clean = normalizeCampaign(input)
   if (!clean.name) throw new Error('Укажите название кампании')
   if (!clean.moduleKey) throw new Error('Кампания должна настраивать модуль — выберите модуль')
-  const all = await readJson(CAMPAIGNS_FILE, [])
   const campaign = {
     id: `cmp_${crypto.randomUUID().slice(0, 8)}`,
     ...clean,
     createdAt: Date.now(),
     updatedAt: Date.now(),
   }
-  all.unshift(campaign)
-  await writeJson(CAMPAIGNS_FILE, all)
+  await mutateJson(CAMPAIGNS_FILE, (all) => { all.unshift(campaign); return all }, [])
   return campaign
 }
 
 /** @param {string} id @param {object} patch */
 export async function updateCampaign(id, patch = {}) {
-  const all = await readJson(CAMPAIGNS_FILE, [])
+  let result = null
+  await mutateJson(CAMPAIGNS_FILE, (all) => {
   const i = all.findIndex((c) => c.id === id)
-  if (i === -1) return null
+  if (i === -1) return undefined
   for (const k of FIELDS) {
     if (patch[k] === undefined) continue
     if (k === 'accountIds') all[i].accountIds = normIds(patch[k])
@@ -86,16 +85,21 @@ export async function updateCampaign(id, patch = {}) {
   if (!all[i].name) throw new Error('Название кампании не может быть пустым')
   if (!all[i].moduleKey) throw new Error('У кампании должен быть модуль')
   all[i].updatedAt = Date.now()
-  await writeJson(CAMPAIGNS_FILE, all)
-  return all[i]
+  result = all[i]
+  return all
+  }, [])
+  return result
 }
 
 export async function deleteCampaign(id) {
-  const all = await readJson(CAMPAIGNS_FILE, [])
-  const next = all.filter((c) => c.id !== id)
-  if (next.length === all.length) return false
-  await writeJson(CAMPAIGNS_FILE, next)
-  return true
+  let removed = false
+  await mutateJson(CAMPAIGNS_FILE, (all) => {
+    const next = all.filter((c) => c.id !== id)
+    if (next.length === all.length) return undefined
+    removed = true
+    return next
+  }, [])
+  return removed
 }
 
 /**

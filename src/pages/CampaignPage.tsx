@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Rocket, Check, Clock, Power, Trash2, CalendarClock, Plus, Pencil, ArrowLeft, Lock, LockOpen, Target as TargetIcon } from 'lucide-react'
-import { activeAccounts, useApp } from '@/mocks/store'
+import { activeAccounts, trashedAccounts, useApp } from '@/mocks/store'
 import { PageHeader, Card, Select, Badge } from '@/shared/ui'
 import { HelpButton } from '@/features/neuro-commenting/moduleUi'
 import { MODULES } from '@/shared/config/modules'
@@ -22,7 +22,13 @@ const CAMPAIGN_MODULES = ['neuro-commenting', 'neuro-chatting', 'mass-react', 'm
 export function CampaignPage() {
   const nav = useNavigate()
   const pushToast = useApp((s) => s.pushToast)
-  const accounts = activeAccounts(useApp((s) => s.data))
+  const appData = useApp((s) => s.data)
+  const accounts = activeAccounts(appData)
+  // §5 (fix осиротевших ссылок): считаем только РЕАЛЬНО существующие аккаунты
+  // (активные + в корзине). Полностью удалённые id, оставшиеся в кампании/группе,
+  // не раздувают счётчики. Хранилище не мутируем — только показ.
+  const knownIds = useMemo(() => new Set([...activeAccounts(appData), ...trashedAccounts(appData)].map((a) => a.id)), [appData])
+  const realCount = (ids: string[]) => ids.filter((id) => knownIds.has(id)).length
   const [goals, setGoals] = useState<Goal[]>([])
   const [goalId, setGoalId] = useState('')
   const [mods, setMods] = useState<Set<string>>(new Set(['neuro-commenting']))
@@ -275,7 +281,7 @@ export function CampaignPage() {
                         <button key={g.id} type="button"
                           onClick={() => setPickedGroups((prev) => (on ? prev.filter((x) => x !== g.id) : [...prev, g.id]))}
                           className={`rounded-lg border px-2 py-1 text-xs ${on ? 'border-spark-500/50 bg-spark-500/12 text-spark-300' : 'border-line text-white/60'}`}>
-                          {g.name} <span className="text-white/40">· {free}/{g.accountIds.length} свободны</span>
+                          {g.name} <span className="text-white/40">· {free}/{realCount(g.accountIds)} свободны</span>
                         </button>
                       )
                     })}
@@ -330,7 +336,7 @@ export function CampaignPage() {
                 <span className="text-xs text-white/50">{MODULES[c.moduleKey]?.title || c.moduleKey}</span>
                 {c.goalId && <span className="text-xs text-iris-300"><TargetIcon size={11} className="mb-0.5 inline" /> {goalNameOf(c.goalId)}</span>}
                 <span className="inline-flex items-center gap-1 text-xs text-white/50" title={c.pinned ? 'Аккаунты закреплены — вышли из общего пула' : 'Аккаунты используются без лока'}>
-                  {c.pinned ? <Lock size={11} className="text-amber-300" /> : <LockOpen size={11} />} {c.accountIds.length} акк.
+                  {c.pinned ? <Lock size={11} className="text-amber-300" /> : <LockOpen size={11} />} {realCount(c.accountIds)} акк.
                 </span>
                 <div className="ml-auto flex gap-1">
                   <button onClick={() => openEditCampaign(c)} className="btn-icon h-8 w-8" aria-label="Изменить"><Pencil size={14} /></button>

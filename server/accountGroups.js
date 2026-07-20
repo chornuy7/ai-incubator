@@ -9,7 +9,7 @@
  * Хранение — JSON `data/account-groups.json`; путь через env ACCOUNT_GROUPS_FILE.
  */
 import crypto from 'crypto'
-import { dataPath, readJson, writeJson } from './lib/jsonStore.js'
+import { dataPath, readJson, writeJson, mutateJson } from './lib/jsonStore.js'
 
 const GROUPS_FILE = process.env.ACCOUNT_GROUPS_FILE || dataPath('account-groups.json')
 
@@ -39,17 +39,16 @@ export async function getGroup(id) {
 export async function createGroup(input) {
   const clean = normalizeGroup(input)
   if (!clean.name) throw new Error('Укажите название группы')
-  const all = await readJson(GROUPS_FILE, [])
   const group = { id: `grp_${crypto.randomUUID().slice(0, 8)}`, ...clean, createdAt: Date.now(), updatedAt: Date.now() }
-  all.unshift(group)
-  await writeJson(GROUPS_FILE, all)
+  await mutateJson(GROUPS_FILE, (all) => { all.unshift(group); return all }, [])
   return group
 }
 
 export async function updateGroup(id, patch = {}) {
-  const all = await readJson(GROUPS_FILE, [])
+  let result = null
+  await mutateJson(GROUPS_FILE, (all) => {
   const i = all.findIndex((g) => g.id === id)
-  if (i === -1) return null
+  if (i === -1) return undefined
   for (const k of FIELDS) {
     if (patch[k] === undefined) continue
     if (k === 'accountIds') all[i].accountIds = normIds(patch[k])
@@ -57,16 +56,21 @@ export async function updateGroup(id, patch = {}) {
   }
   if (!all[i].name) throw new Error('Название группы не может быть пустым')
   all[i].updatedAt = Date.now()
-  await writeJson(GROUPS_FILE, all)
-  return all[i]
+  result = all[i]
+  return all
+  }, [])
+  return result
 }
 
 export async function deleteGroup(id) {
-  const all = await readJson(GROUPS_FILE, [])
-  const next = all.filter((g) => g.id !== id)
-  if (next.length === all.length) return false
-  await writeJson(GROUPS_FILE, next)
-  return true
+  let removed = false
+  await mutateJson(GROUPS_FILE, (all) => {
+    const next = all.filter((g) => g.id !== id)
+    if (next.length === all.length) return undefined
+    removed = true
+    return next
+  }, [])
+  return removed
 }
 
 /**
