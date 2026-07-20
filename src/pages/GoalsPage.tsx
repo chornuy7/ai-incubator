@@ -7,7 +7,7 @@ import { confirmDialog } from '@/shared/lib/dialog'
 import { FolderPicker } from '@/features/modules/shared'
 import {
   fetchGoals, createGoal, updateGoal, deleteGoal, isGoalExpired, type Goal, type GoalInput,
-  fetchKb, createKb, deleteKb, type KbItem,
+  fetchKb, createKb, deleteKb, uploadKbFile, kbFileUrl, type KbItem,
 } from '@/api/goalsApi'
 import { fetchLeads } from '@/api/leadsApi'
 import { fetchCampaigns, type Campaign } from '@/api/campaignsApi'
@@ -28,6 +28,7 @@ export function GoalsPage() {
   const [kb, setKb] = useState<KbItem[]>([])
   const [kbTitle, setKbTitle] = useState('')
   const [kbContent, setKbContent] = useState('')
+  const [kbUploading, setKbUploading] = useState(false) // §4: загрузка файла в КБ
   const [leadsByGoal, setLeadsByGoal] = useState<Record<string, number>>({}) // §4: сколько лидов у цели
   const [campaignsByGoal, setCampaignsByGoal] = useState<Record<string, Campaign[]>>({}) // §4: цель оркестрирует кампании
 
@@ -85,6 +86,19 @@ export function GoalsPage() {
       pushToast({ type: 'error', title: 'Ошибка базы знаний', desc: err instanceof Error ? err.message : '' })
     }
   }
+  // §4: база знаний с файлами — грузим и сразу обновляем список.
+  const addKbFile = async (file: File | undefined) => {
+    if (!editing || !file) return
+    setKbUploading(true)
+    try {
+      await uploadKbFile(editing.id, file)
+      setKb(await fetchKb(editing.id))
+      pushToast({ type: 'success', title: 'Файл добавлен в базу знаний', desc: file.name })
+    } catch (err) {
+      pushToast({ type: 'error', title: 'Файл не загружен', desc: err instanceof Error ? err.message : '' })
+    } finally { setKbUploading(false) }
+  }
+
   const removeKb = async (item: KbItem) => {
     if (!editing) return
     if (!window.confirm('Удалить элемент базы знаний? Действие необратимо.')) return
@@ -303,9 +317,19 @@ export function GoalsPage() {
                 <div className="mb-2 flex flex-col gap-1">
                   {kb.map((k) => (
                     <div key={k.id} className="flex items-start justify-between gap-2 rounded bg-white/5 px-2 py-1.5">
-                      <div className="min-w-0">
-                        {k.title && <div className="text-xs font-semibold text-white">{k.title}</div>}
-                        <div className="truncate text-xs text-white/60">{k.content}</div>
+                      <div className="flex min-w-0 items-center gap-2">
+                        {k.fileRef && k.kind === 'image' && (
+                          <img src={kbFileUrl(k.fileRef)} alt="" className="h-8 w-8 shrink-0 rounded object-cover" />
+                        )}
+                        <div className="min-w-0">
+                          {k.title && <div className="text-xs font-semibold text-white">{k.title}</div>}
+                          <div className="truncate text-xs text-white/60">{k.content}</div>
+                          {k.fileRef && (
+                            <a href={kbFileUrl(k.fileRef)} target="_blank" rel="noreferrer" className="text-[11px] font-semibold text-spark-300 hover:underline">
+                              открыть файл
+                            </a>
+                          )}
+                        </div>
                       </div>
                       <button onClick={() => void removeKb(k)} className="btn-icon-danger h-6 w-6 shrink-0" aria-label="Удалить из базы знаний" title="Удалить"><Trash2 size={12} /></button>
                     </div>
@@ -315,6 +339,19 @@ export function GoalsPage() {
               <input className="input mb-1" value={kbTitle} onChange={(e) => setKbTitle(e.target.value)} placeholder="Заголовок (опционально)" />
               <textarea className="input min-h-[52px]" value={kbContent} onChange={(e) => setKbContent(e.target.value)} placeholder="Факт о продукте / условие / ответ на частый вопрос" />
               <button onClick={() => void addKb()} disabled={!kbContent.trim()} className="btn-ghost mt-1 h-8 text-xs"><Plus size={13} /> Добавить в базу знаний</button>
+              {/* §4: файлы, а не только текст */}
+              <div className="mt-2 border-t border-line pt-2">
+                <label className="flex cursor-pointer items-center gap-2 text-xs text-white/60">
+                  <input
+                    type="file"
+                    className="hidden"
+                    accept=".png,.jpg,.jpeg,.webp,.gif,.pdf,.txt,.csv,.md,.doc,.docx,.xls,.xlsx"
+                    onChange={(e) => { void addKbFile(e.target.files?.[0]); e.target.value = '' }}
+                  />
+                  <span className="btn-ghost h-8 px-3 text-xs">{kbUploading ? 'Загрузка…' : '+ Прикрепить файл'}</span>
+                  <span className="text-white/40">картинка или документ, до 3 МБ</span>
+                </label>
+              </div>
             </div>
           )}
         </div>
