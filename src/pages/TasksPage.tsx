@@ -7,6 +7,7 @@ import { HelpButton } from '@/features/neuro-commenting/moduleUi'
 import { MODULES, isCombatModule, combatConfirmText } from '@/shared/config/modules'
 import { fetchAllTasks, fetchModuleTask, stopModuleTask, restartModuleTask, pauseModuleTask, resumeModuleTask, type ModuleTask } from '@/api/modulesApi'
 import { fetchGoals, type Goal } from '@/api/goalsApi'
+import { fetchCampaigns, type Campaign } from '@/api/campaignsApi'
 import { fetchAccounts } from '@/api/accountsApi'
 import type { TgAccount } from '@/shared/types'
 import { cn } from '@/shared/lib/utils'
@@ -513,11 +514,13 @@ export function TaskDetailPage() {
   const [notFound, setNotFound] = useState(false)
   const [goals, setGoals] = useState<Goal[]>([])
   const [accounts, setAccounts] = useState<TgAccount[]>([])
+  const [campaignsList, setCampaignsList] = useState<Campaign[]>([])
   const [busy, setBusy] = useState(false)
 
   useEffect(() => {
     void fetchGoals().then(setGoals).catch(() => {})
     void fetchAccounts().then(setAccounts).catch(() => {})
+    void fetchCampaigns().then(({ campaigns }) => setCampaignsList(campaigns)).catch(() => {})
   }, [])
 
   useEffect(() => {
@@ -596,6 +599,7 @@ export function TaskDetailPage() {
         <div className="grid gap-2 sm:grid-cols-3">
           <Info label="Модуль" value={moduleTitle(t.moduleKey)} />
           {/* §8: разводим «цель кампании» (Goal) и «каналы, куда идёт работа» — раньше путались. */}
+          <Info label="Кампания" value={t.campaignId ? (campaignsList.find((c) => c.id === t.campaignId)?.name || t.campaignId) : 'без кампании'} />
           <Info label="Цель кампании" value={goalName(t.goalId) || 'без цели'} />
           <Info label="Инициатор" value={t.initiator || '—'} />
           <Info label="Аккаунтов" value={String((s.accountIds || []).length)} />

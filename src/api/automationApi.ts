@@ -13,6 +13,7 @@ export interface AutomationRule {
   name: string
   enabled: boolean
   moduleKey: string
+  campaignId?: string | null // §6: правило под кампанией
   accountIds: string[]
   settings: Partial<ModuleTaskSettings>
   schedule: AutomationSchedule
@@ -24,7 +25,7 @@ export interface AutomationRule {
   updatedAt: number
 }
 
-export type AutomationRuleInput = Pick<AutomationRule, 'name' | 'moduleKey' | 'accountIds' | 'settings' | 'schedule'> & {
+export type AutomationRuleInput = Pick<AutomationRule, 'name' | 'moduleKey' | 'campaignId' | 'accountIds' | 'settings' | 'schedule'> & {
   enabled?: boolean
 }
 

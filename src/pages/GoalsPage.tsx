@@ -10,6 +10,7 @@ import {
   fetchKb, createKb, deleteKb, type KbItem,
 } from '@/api/goalsApi'
 import { fetchLeads } from '@/api/leadsApi'
+import { fetchCampaigns, type Campaign } from '@/api/campaignsApi'
 
 const EMPTY: GoalInput = { name: '', description: '', targetAction: '', stages: [], completionCriteria: '', audience: '', channels: [], deadline: '', leadTarget: 0 }
 
@@ -28,6 +29,7 @@ export function GoalsPage() {
   const [kbTitle, setKbTitle] = useState('')
   const [kbContent, setKbContent] = useState('')
   const [leadsByGoal, setLeadsByGoal] = useState<Record<string, number>>({}) // §4: сколько лидов у цели
+  const [campaignsByGoal, setCampaignsByGoal] = useState<Record<string, Campaign[]>>({}) // §4: цель оркестрирует кампании
 
   const load = async () => {
     setLoading(true)
@@ -38,6 +40,12 @@ export function GoalsPage() {
         const by: Record<string, number> = {}
         for (const l of leads) if (l.goalId) by[l.goalId] = (by[l.goalId] || 0) + 1
         setLeadsByGoal(by)
+      }).catch(() => {})
+      // §4: цель оркестрирует кампании — показываем их под целью.
+      void fetchCampaigns().then(({ campaigns }) => {
+        const by: Record<string, Campaign[]> = {}
+        for (const c of campaigns) if (c.goalId) (by[c.goalId] ||= []).push(c)
+        setCampaignsByGoal(by)
       }).catch(() => {})
     } catch (err) {
       pushToast({ type: 'error', title: 'Не удалось загрузить цели', desc: err instanceof Error ? err.message : '' })
@@ -184,6 +192,22 @@ export function GoalsPage() {
                       </span>
                     )
                   })()}
+                </div>
+              )}
+
+              {/* §4: кампании под этой целью — цель их оркестрирует */}
+              {(campaignsByGoal[g.id]?.length ?? 0) > 0 && (
+                <div className="rounded-lg border border-line bg-elevated/40 p-2">
+                  <div className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-muted">Кампании цели ({campaignsByGoal[g.id].length})</div>
+                  <div className="flex flex-wrap gap-1.5">
+                    {campaignsByGoal[g.id].map((c) => (
+                      <a key={c.id} href="/panel/campaign" title={`${c.moduleKey} · ${c.accountIds.length} акк.`}
+                        className="inline-flex items-center gap-1 rounded-lg border border-line bg-surface px-2 py-0.5 text-xs text-fg hover:border-spark-500/40">
+                        <span className={`h-1.5 w-1.5 rounded-full ${c.status === 'active' ? 'bg-spark-400' : c.status === 'paused' ? 'bg-amber-400' : c.status === 'done' ? 'bg-faint' : 'bg-iris-400'}`} />
+                        {c.name}
+                      </a>
+                    ))}
+                  </div>
                 </div>
               )}
 

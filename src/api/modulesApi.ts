@@ -95,6 +95,7 @@ export interface ModuleTask {
   status: 'queued' | 'running' | 'stopped' | 'done' | 'error' | 'paused'
   initiator?: string | null
   goalId?: string | null
+  campaignId?: string | null // §0: под какой кампанией идёт задача
   createdAt: number
   updatedAt: number
   progress: ModuleTaskProgress

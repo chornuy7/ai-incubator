@@ -3,6 +3,7 @@ import {
   CalendarClock, Plus, Play, Trash2, Pencil, Power, Clock, Loader2,
 } from 'lucide-react'
 import { PageHeader, Modal, Select, Segmented, Switch, EmptyState, Badge } from '@/shared/ui'
+import { fetchCampaigns, type Campaign } from '@/api/campaignsApi'
 import { HelpButton } from '@/features/neuro-commenting/moduleUi'
 import { confirmDialog } from '@/shared/lib/dialog'
 import { AccountPicker } from '@/features/account-picker/AccountPicker'
@@ -141,6 +142,12 @@ function RuleEditor({ rule, onClose, onSaved }: {
   const pushToast = useApp((s) => s.pushToast)
   const [name, setName] = useState(rule?.name ?? '')
   const [moduleKey, setModuleKey] = useState(rule?.moduleKey ?? AUTOMATABLE[0])
+  // §6: правило крепится к кампании — модуль/аккаунты/пресет берутся из неё.
+  const [campaigns, setCampaigns] = useState<Campaign[]>([])
+  const [campaignId, setCampaignId] = useState(rule?.campaignId ?? '')
+  useEffect(() => {
+    void fetchCampaigns().then(({ campaigns: cs }) => setCampaigns(cs.filter((c) => c.status !== 'done'))).catch(() => {})
+  }, [])
   const [selected, setSelected] = useState<Set<string>>(new Set(rule?.accountIds ?? []))
   const [targetsText, setTargetsText] = useState((rule?.settings?.targets ?? []).join('\n'))
   const [maxActions, setMaxActions] = useState(rule?.settings?.maxActions ?? 50)
@@ -173,6 +180,7 @@ function RuleEditor({ rule, onClose, onSaved }: {
     const input: AutomationRuleInput = {
       name: name.trim() || 'Правило автоматизации',
       moduleKey,
+      campaignId: campaignId || null,
       accountIds: [...selected],
       settings: {
         targets,
@@ -219,8 +227,20 @@ function RuleEditor({ rule, onClose, onSaved }: {
             <input value={name} onChange={(e) => setName(e.target.value)} className="input" placeholder="Утренний прогрев" />
           </div>
           <div>
-            <label className="label">Модуль</label>
-            <Select value={moduleKey} onChange={setModuleKey} options={AUTOMATABLE.map((k) => ({ value: k, label: MODULES[k]?.title ?? k }))} />
+            <label className="label">Кампания <span className="font-normal normal-case text-faint">(§6 — модуль и аккаунты возьмутся из неё)</span></label>
+            <Select
+              value={campaignId}
+              onChange={setCampaignId}
+              placeholder="Без кампании (голый модуль)"
+              options={[{ value: '', label: 'Без кампании (голый модуль)' }, ...campaigns.map((c) => ({ value: c.id, label: `${c.name} · ${MODULES[c.moduleKey]?.title ?? c.moduleKey}` }))]}
+            />
+            {campaignId && (
+              <p className="mt-1 text-[11px] text-muted">
+                Модуль, аккаунты и пресет — из кампании. Настройки ниже перекроют пресет кампании.
+              </p>
+            )}
+            <label className="label mt-3">Модуль{campaignId ? ' (из кампании)' : ''}</label>
+            <Select value={campaignId ? (campaigns.find((c) => c.id === campaignId)?.moduleKey ?? moduleKey) : moduleKey} onChange={setModuleKey} options={AUTOMATABLE.map((k) => ({ value: k, label: MODULES[k]?.title ?? k }))} />
           </div>
         </div>
 
