@@ -595,10 +595,11 @@ export function TaskDetailPage() {
         </div>
         <div className="grid gap-2 sm:grid-cols-3">
           <Info label="Модуль" value={moduleTitle(t.moduleKey)} />
-          <Info label="Цель" value={goalName(t.goalId) || 'без цели'} />
+          {/* §8: разводим «цель кампании» (Goal) и «каналы, куда идёт работа» — раньше путались. */}
+          <Info label="Цель кампании" value={goalName(t.goalId) || 'без цели'} />
           <Info label="Инициатор" value={t.initiator || '—'} />
           <Info label="Аккаунтов" value={String((s.accountIds || []).length)} />
-          <Info label="Каналов / целей" value={String((s.channels || s.targets || []).length)} />
+          <Info label="Каналов / чатов" value={String((s.channels || s.targets || []).length)} />
           <Info label="На аккаунт" value={`${s.minPerAccount ?? 0}–${s.maxPerAccount ?? 0}`} />
           <Info label="Создана" value={new Date(t.createdAt).toLocaleString('ru-RU')} />
           <Info label="Обновлена" value={new Date(t.updatedAt).toLocaleString('ru-RU')} />
@@ -613,10 +614,10 @@ export function TaskDetailPage() {
           tone="iris"
         />
         <ChipList
-          title="Каналы / цели"
+          title="Каналы / чаты — где работает модуль"
           count={(s.channels || s.targets || []).length}
           items={(s.channels || s.targets || []).map((c) => (c.startsWith('@') || c.startsWith('http') ? c : `@${c}`))}
-          empty="Целевые каналы не заданы (модуль работает без списка)"
+          empty="Каналы не заданы (модуль работает без списка)"
           tone="spark"
           mono
         />
@@ -628,17 +629,57 @@ export function TaskDetailPage() {
           <div className="rounded-2xl border border-line bg-elevated/40 p-3">
             <div className="mb-2 text-sm font-bold text-fg">Результаты ({results.length})</div>
             <div className="max-h-72 overflow-y-auto">
-              <table className="w-full text-sm">
-                <tbody>
-                  {results.slice(0, 200).map((r, i) => (
-                    <tr key={i} className="border-b border-line/50">
-                      <td className="py-1.5 font-medium text-fg">{String(r.name ?? r.title ?? r.username ?? r.accountName ?? '—')}</td>
-                      <td className="text-muted">{String(r.comment ?? r.text ?? (r.username ? `@${r.username}` : ''))}</td>
-                      <td className="text-right"><span className="text-xs text-white/40">{String(r.status ?? r.kind ?? '')}</span></td>
+              {/* §8: для AIR (проверка аккаунтов) — понятный рейтинг по каждому аккаунту, а не сырой лог. */}
+              {t.moduleKey === 'ggr' ? (
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b border-line text-left text-xs text-muted">
+                      <th className="py-1.5">Аккаунт</th><th className="w-40">Балл</th><th className="w-28 text-right">Статус</th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
+                  </thead>
+                  <tbody>
+                    {[...results]
+                      .sort((a, b) => (Number(b.score) || 0) - (Number(a.score) || 0))
+                      .slice(0, 200)
+                      .map((r, i) => {
+                        const score = Number(r.score) || 0
+                        const valid = r.status === 'valid'
+                        const color = score >= 70 ? '#0ec464' : score >= 40 ? '#f59e0b' : '#f43f5e'
+                        return (
+                          <tr key={i} className="border-b border-line/50">
+                            <td className="py-1.5 font-medium text-fg">
+                              {String(r.name ?? r.accountName ?? r.username ?? '—')}
+                              {r.username ? <span className="ml-1 text-xs text-muted">@{String(r.username)}</span> : null}
+                            </td>
+                            <td>
+                              <div className="flex items-center gap-2">
+                                <span className="h-1.5 w-20 overflow-hidden rounded-full bg-line">
+                                  <span className="block h-full rounded-full" style={{ width: `${Math.min(100, score)}%`, background: color }} />
+                                </span>
+                                <span className="font-mono text-xs font-bold" style={{ color }}>{score}</span>
+                              </div>
+                            </td>
+                            <td className="text-right">
+                              <Badge tone={valid ? 'spark' : 'rose'}>{valid ? 'валиден' : String(r.status ?? 'невалиден')}</Badge>
+                            </td>
+                          </tr>
+                        )
+                      })}
+                  </tbody>
+                </table>
+              ) : (
+                <table className="w-full text-sm">
+                  <tbody>
+                    {results.slice(0, 200).map((r, i) => (
+                      <tr key={i} className="border-b border-line/50">
+                        <td className="py-1.5 font-medium text-fg">{String(r.name ?? r.title ?? r.username ?? r.accountName ?? '—')}</td>
+                        <td className="text-muted">{String(r.comment ?? r.text ?? (r.username ? `@${r.username}` : ''))}</td>
+                        <td className="text-right"><span className="text-xs text-white/40">{String(r.status ?? r.kind ?? '')}</span></td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
             </div>
           </div>
         )}
