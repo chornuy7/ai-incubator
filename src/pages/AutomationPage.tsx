@@ -1,8 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import {
-  CalendarClock, Plus, Play, Trash2, Pencil, Power, Clock, Loader2,
-} from 'lucide-react'
-import { PageHeader, Modal, Select, Segmented, Switch, EmptyState, Badge } from '@/shared/ui'
+  CalendarClock, Plus, Play, Trash2, Pencil, Power, Clock, Loader2, ArrowLeft } from 'lucide-react'
+import { PageHeader, Card, Select, Segmented, Switch, EmptyState, Badge } from '@/shared/ui'
 import { fetchCampaigns, type Campaign } from '@/api/campaignsApi'
 import { HelpButton } from '@/features/neuro-commenting/moduleUi'
 import { confirmDialog } from '@/shared/lib/dialog'
@@ -208,18 +207,16 @@ function RuleEditor({ rule, onClose, onSaved }: {
     } finally { setSaving(false) }
   }
 
+  // §6: правило открывается вьюшкой, а не модалкой поверх списка.
   return (
-    <Modal
-      open
-      onClose={onClose}
-      title={rule ? 'Редактировать правило' : 'Новое правило автоматизации'}
-      icon={<CalendarClock size={22} />}
-      size="xl"
-      footer={<>
-        <button onClick={onClose} className="btn-ghost h-10">Отмена</button>
-        <button onClick={save} disabled={saving} className="btn-primary h-10 disabled:opacity-50">{saving ? <Loader2 size={16} className="animate-spin" /> : <Power size={16} />} Сохранить</button>
-      </>}
-    >
+    <div>
+      <button onClick={onClose} className="btn-ghost mb-3 h-9"><ArrowLeft size={15} /> Назад к автоматизации</button>
+      <PageHeader
+        title={rule ? 'Редактировать правило' : 'Новое правило автоматизации'}
+        subtitle="Правило крепится к кампании: модуль, аккаунты и пресет берутся из неё"
+        icon={<CalendarClock size={22} />}
+      />
+      <Card className="p-4">
       <div className="space-y-4">
         <div className="grid gap-3 sm:grid-cols-2">
           <div>
@@ -290,6 +287,11 @@ function RuleEditor({ rule, onClose, onSaved }: {
 
         <p className="text-xs text-muted">Планировщик запускает задачу в назначенное время, соблюдая блокировки аккаунтов. Если аккаунты заняты — запуск будет пропущен с записью в статус.</p>
       </div>
-    </Modal>
+      <div className="mt-4 flex justify-end gap-2 border-t border-line pt-4">
+        <button onClick={onClose} className="btn-ghost h-10">Отмена</button>
+        <button onClick={save} disabled={saving} className="btn-primary h-10 disabled:opacity-50">{saving ? <Loader2 size={16} className="animate-spin" /> : <Power size={16} />} Сохранить</button>
+      </div>
+      </Card>
+    </div>
   )
 }
