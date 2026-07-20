@@ -34,7 +34,7 @@ export interface CatalogBlock { key: string; label: string }
 export interface CatalogSection { key: string; label: string }
 export interface CatalogResourceItem { id: string; label: string; channels?: string[] }
 export interface CatalogResource {
-  type: 'accounts' | 'folders' | 'channels' | 'timers' | 'searchTemplates'
+  type: 'accounts' | 'accountGroups' | 'folders' | 'channels' | 'timers' | 'searchTemplates'
   label: string
   perItem: boolean
   items?: CatalogResourceItem[]

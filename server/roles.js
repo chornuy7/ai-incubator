@@ -11,6 +11,7 @@ import { MODULE_LABELS } from './lib/accountLocks.js'
 import { listFolders } from './targetFolders.js'
 import { listChannels } from './channels.js'
 import { loadAllMeta } from './accountsMeta.js'
+import { listGroups } from './accountGroups.js'
 
 const ROLES_FILE = process.env.ROLES_FILE || dataPath('roles.json')
 
@@ -282,13 +283,15 @@ export async function deleteRole(id) {
  */
 export async function buildCatalog() {
   const modules = Object.entries(MODULE_LABELS).map(([key, label]) => ({ key, label }))
-  const [folders, channels, meta] = await Promise.all([listFolders(), listChannels(), loadAllMeta()])
+  const [folders, channels, meta, groups] = await Promise.all([listFolders(), listChannels(), loadAllMeta(), listGroups()])
   // Аккаунты для выдачи доступа (лёгкий список из метаданных — без подключения к Telegram).
   const accountItems = Object.entries(meta)
     .filter(([, m]) => m && !m.inTrash)
     .map(([id, m]) => ({ id, label: m.name || (m.username ? '@' + m.username : id) }))
   const resources = [
     { type: 'accounts', label: 'Аккаунты (кто виден роли)', perItem: true, items: accountItems },
+    // §12: доступ сразу на группу — удобнее, чем отмечать аккаунты по одному.
+    { type: 'accountGroups', label: 'Группы аккаунтов (доступ на всю группу)', perItem: true, items: groups.map((g) => ({ id: g.id, label: `${g.name} · ${(g.accountIds || []).length} акк.` })) },
     { type: 'folders', label: 'Папки целей', perItem: true, items: folders.map((f) => ({ id: f.id, label: f.name || f.id, channels: f.targets || [] })) },
     { type: 'channels', label: 'Целевые каналы', perItem: true, items: channels.map((c) => ({ id: c.id, label: c.title || (c.username ? '@' + c.username : c.id) })) },
     { type: 'timers', label: 'Таймеры / планировщик', perItem: false },
