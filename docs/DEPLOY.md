@@ -1,0 +1,121 @@
+# Деплой на сервер (45.142.142.216)
+
+Панель поднимается одним Node-процессом (API + собранный фронт), наружу её выпускает
+nginx на :80 **под паролем**. Заход — по IP сервера.
+
+---
+
+## ⚠️ Безопасность — прочитать до выката
+
+Панель управляет **реальными Telegram-аккаунтами**. При этом:
+
+- API **не требует авторизации**: `moduleAccessGuard` устроен fail-open — если нет заголовка
+  `X-User-Id`, запрос **пропускается** (`server/lib/accessGuard.js`, дев-модель из `CONTRACT-rbac.md §7`);
+- CORS открыт всем (`app.use(cors())`);
+- в `server/data/sessions` лежат **живые сессии** аккаунтов — это полный доступ к ним;
+- в `.env` — `TELEGRAM_API_HASH`, при желании `OPENAI_API_KEY`.
+
+Поэтому в самом коде дефолт — слушать только `127.0.0.1` («без auth не должно торчать в интернет»).
+
+**Вывод:** голым IP выставлять нельзя. Минимум на время тестов — **basic auth в nginx**
+(в конфиге ниже уже включён). Дополнительно можно ограничить по IP (`allow/deny`) или файрволом.
+Постоянное решение — заменить fail-open guard на нормальную сессию/токен (отдельная задача).
+
+---
+
+## Шаг 0. Дать доступ по SSH (сейчас блокирует)
+
+Сервер отвечает, но наш ключ не авторизован (`Permission denied (publickey)`).
+Присланный `ssh-ed25519 AAAA…NdUkIfRX83BSnQ5ogt5Rnjt3xkt41sFQZcPa6O+NdLs` — **публичный**,
+подключиться по нему нельзя (нужна приватная половина, а её в чат слать не надо).
+
+Правильный путь — добавить **наш публичный ключ** на сервер. Выполнить на сервере
+(от того, у кого доступ есть):
+
+```bash
+mkdir -p ~/.ssh && chmod 700 ~/.ssh
+echo 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAINpF3qS42WBb4E85HQ+qnGDqwJAI7hwnk1kh7RP6Ewq9 aedobroskok@gmail.com' >> ~/.ssh/authorized_keys
+chmod 600 ~/.ssh/authorized_keys
+```
+
+Проверка с нашей стороны: `ssh root@45.142.142.216 'echo ok'`
+
+---
+
+## Шаг 1. Первичная настройка сервера (один раз)
+
+```bash
+ssh root@45.142.142.216
+
+# Node 20 + nginx + утилиты
+curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
+apt-get install -y nodejs nginx git apache2-utils
+
+# Код
+mkdir -p /opt && cd /opt
+git clone <URL-репозитория> ai-incubator      # tor2026/Myrmex или chornuy7/ai-incubator
+cd ai-incubator
+git checkout feat/a-phase1-status-machine
+
+# Секреты (НЕ в гите)
+cp .env.example .env && nano .env
+#   TELEGRAM_API_ID / TELEGRAM_API_HASH — обязательно
+#   OPENAI_API_KEY — иначе ИИ-тексты будут шаблонными
+#   API_PORT=3001, API_HOST=127.0.0.1
+
+npm ci
+npm run build          # соберёт dist/, Express отдаст его сам
+
+# Сервис
+cp deploy/ai-incubator.service /etc/systemd/system/
+systemctl daemon-reload
+systemctl enable --now ai-incubator
+systemctl status ai-incubator --no-pager
+
+# nginx + пароль
+cp deploy/nginx-ai-incubator.conf /etc/nginx/sites-available/ai-incubator
+ln -sf /etc/nginx/sites-available/ai-incubator /etc/nginx/sites-enabled/ai-incubator
+rm -f /etc/nginx/sites-enabled/default
+htpasswd -c /etc/nginx/.htpasswd incubator      # задать пароль
+nginx -t && systemctl reload nginx
+```
+
+Готово — **http://45.142.142.216** (логин `incubator` + заданный пароль).
+
+---
+
+## Шаг 2. Последующие выкаты
+
+```bash
+ssh root@45.142.142.216 'bash /opt/ai-incubator/deploy/deploy.sh'
+```
+
+Скрипт: бэкапит `server/data` → `git pull` → `npm ci` → `npm run build` → рестарт сервиса →
+проверка `/api/health`.
+
+Переменные: `APP_DIR` (по умолчанию `/opt/ai-incubator`), `BRANCH`, `REMOTE`.
+
+---
+
+## Данные и рестарты
+
+- Всё состояние — в `server/data/` (аккаунты, **сессии**, цели, кампании, задачи, прокси, роли).
+  Каталог не в гите; `deploy.sh` бэкапит его в `/var/backups/ai-incubator/` перед каждым выкатом.
+- Воркеры живут в памяти процесса: при рестарте running-задачи помечаются `stopped`
+  (`reconcileStaleTasksOnBoot`) — это ожидаемое поведение, задачи нужно перезапустить.
+
+## Диагностика
+
+```bash
+systemctl status ai-incubator          # состояние
+journalctl -u ai-incubator -f          # логи приложения
+curl http://127.0.0.1:3001/api/health  # API живой?
+tail -f /var/log/nginx/ai-incubator.error.log
+```
+
+| Симптом | Причина |
+|---|---|
+| 502 в браузере | Node не запущен → `journalctl -u ai-incubator -n 50` |
+| Открывается, но пустая страница | Не собран фронт → `npm run build` |
+| 404 на прямой ссылке `/panel/tasks/:id` | Нет SPA-fallback → обновить код (добавлен в `server/index.js`) |
+| Просит пароль повторно | Проверить `/etc/nginx/.htpasswd` |
