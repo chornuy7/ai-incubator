@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useMemo, useState, useEffect } from 'react'
 import {
   Search, Users, CheckCheck, ChevronsRight, ChevronsLeft, RefreshCw, ChevronDown, Inbox, ShieldCheck, Loader2, Lock, AlertTriangle,
 } from 'lucide-react'
@@ -7,6 +7,7 @@ import { useSession } from '@/features/auth/session'
 import { Avatar, Select } from '@/shared/ui'
 import { HelpButton } from '@/features/neuro-commenting/moduleUi'
 import { filterAccountsByAccess } from '@/shared/lib/access'
+import { fetchAccountGroups, type AccountGroup } from '@/api/accountGroupsApi'
 import { cn } from '@/shared/lib/utils'
 import { ROLES } from '@/shared/config/modules'
 import { countryOptionsFrom, matchesGeo, FLAGS, COUNTRY_NAME } from '@/shared/config/geo'
@@ -41,9 +42,12 @@ export function AccountPicker({
   const pushToast = useApp((s) => s.pushToast)
   const loadAccountBusy = useApp((s) => s.loadAccountBusy)
   const sessionUser = useSession((s) => s.user)
+  // §12: группы нужны, чтобы доступ роли «на группу» действительно применялся к пикеру.
+  const [accGroups, setAccGroups] = useState<AccountGroup[]>([])
+  useEffect(() => { if (sessionUser && !sessionUser.isAdmin) void fetchAccountGroups().then(({ groups }) => setAccGroups(groups)).catch(() => {}) }, [sessionUser])
   // R4: не-админ видит только выданные его роли аккаунты (без сессии/демо — все).
   const accounts = sessionUser
-    ? filterAccountsByAccess(activeAccounts(data), sessionUser.permissions, sessionUser.isAdmin)
+    ? filterAccountsByAccess(activeAccounts(data), sessionUser.permissions, sessionUser.isAdmin, accGroups)
     : activeAccounts(data)
   const limit = data.plan.accountLimit
 

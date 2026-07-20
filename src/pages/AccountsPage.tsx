@@ -26,6 +26,7 @@ import { confirmDialog, promptDialog } from '@/shared/lib/dialog'
 import type { AccountStatus, TgAccount } from '@/shared/types'
 import { patchAccount, releaseAccountLock, setAccountStatusManual, fetchDailyAll, type DailyAllMap } from '@/api/accountsApi'
 import { fetchCampaigns, updateCampaign, type Campaign, type PinnedMap } from '@/api/campaignsApi'
+import { fetchAccountGroups, type AccountGroup } from '@/api/accountGroupsApi'
 
 const STATUS_ORDER: AccountStatus[] = ['active', 'working', 'warming', 'pause', 'floodwait', 'quarantine', 'spamblock', 'invalid', 'frozen', 'reauth']
 const COLS = [
@@ -89,6 +90,9 @@ export function AccountsPage() {
   const [pinnedMap, setPinnedMap] = useState<PinnedMap>({})
   const [campaignFilter, setCampaignFilter] = useState('all')
   const [trashAlive, setTrashAlive] = useState(false) // §2: показать только «живые» среди удалённых
+  // §12: без списка групп доступ роли «на группу» не применялся бы (был баг — фильтр не видел групп).
+  const [accGroups, setAccGroups] = useState<AccountGroup[]>([])
+  useEffect(() => { void fetchAccountGroups().then(({ groups }) => setAccGroups(groups)).catch(() => {}) }, [])
   const loadCampaigns = () => {
     void fetchCampaigns().then(({ campaigns: cs, pinned }) => { setCampaigns(cs); setPinnedMap(pinned) }).catch(() => {})
   }
@@ -150,10 +154,10 @@ export function AccountsPage() {
 
   // R4: не-админ видит в менеджере только выданные его роли аккаунты (демо/нет сессии — все).
   const active = sessionUser
-    ? filterAccountsByAccess(activeAccounts(data), sessionUser.permissions, sessionUser.isAdmin)
+    ? filterAccountsByAccess(activeAccounts(data), sessionUser.permissions, sessionUser.isAdmin, accGroups)
     : activeAccounts(data)
   const trashed = sessionUser
-    ? filterAccountsByAccess(trashedAccounts(data), sessionUser.permissions, sessionUser.isAdmin)
+    ? filterAccountsByAccess(trashedAccounts(data), sessionUser.permissions, sessionUser.isAdmin, accGroups)
     : trashedAccounts(data)
 
   // §6: сводка суточных лимитов по аккаунтам (для индикатора throttle в списке).
