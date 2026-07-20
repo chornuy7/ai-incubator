@@ -118,10 +118,11 @@ export function ProxiesPage() {
                   {geoMap[p.id] && (
                     <div className="mt-0.5 flex items-center gap-1 truncate text-xs text-spark-300">
                       <MapPin size={11} className="shrink-0" /> {FLAGS[geoMap[p.id]!.country] || ''} {geoMap[p.id]!.countryName}{geoMap[p.id]!.city ? `, ${geoMap[p.id]!.city}` : ''}{geoMap[p.id]!.isp ? ` · ${geoMap[p.id]!.isp}` : ''}
+                      {/* §10: «выход» было непонятно — пишем словами, что именно за гео показано. */}
                       {geoSrcMap[p.id] === 'exit'
-                        ? <span className="shrink-0 rounded bg-spark-500/15 px-1 text-[10px] font-semibold text-spark-300" title="Страна реального выходного IP (через прокси)">выход</span>
+                        ? <span className="shrink-0 rounded bg-spark-500/15 px-1 text-[10px] font-semibold text-spark-300" title="Это гео РЕАЛЬНОГО IP, с которого Telegram видит аккаунт: мы сходили в интернет через сам прокси и определили его выходной адрес. Именно оно важно для антифрода.">гео реального IP</span>
                         : geoSrcMap[p.id] === 'gateway'
-                          ? <span className="shrink-0 rounded bg-amber-500/15 px-1 text-[10px] font-semibold text-amber-300" title="Не удалось определить выход — показан гео адреса шлюза">шлюз</span>
+                          ? <span className="shrink-0 rounded bg-amber-500/15 px-1 text-[10px] font-semibold text-amber-300" title="Выходной IP определить не удалось — показано гео адреса самого прокси-сервера (шлюза). Оно может отличаться от того, что видит Telegram.">гео сервера (примерно)</span>
                           : null}
                     </div>
                   )}
@@ -216,17 +217,17 @@ function ProxyDetailModal({ proxy, accountsCount, onClose, onUpdated }: {
           <ProxyInfo label="Тип">{PROXY_KIND_LABELS[p.kind]}</ProxyInfo>
           <ProxyInfo label="Пинг">{ms != null ? `${ms} мс` : '—'}</ProxyInfo>
           <ProxyInfo label="Назначено аккаунтов">{accountsCount}</ProxyInfo>
-          <ProxyInfo label="Страна выхода">
+          <ProxyInfo label="Страна, которую видит Telegram">
             {geo ? <span>{FLAGS[geo.country] || ''} {geo.countryName || geo.country?.toUpperCase() || '—'}
               {geoSource === 'exit'
-                ? <span className="ml-1 rounded bg-spark-500/15 px-1 text-[10px] font-semibold text-spark-300">выход</span>
+                ? <span className="ml-1 rounded bg-spark-500/15 px-1 text-[10px] font-semibold text-spark-300" title="Определено по реальному выходному IP — сходили в интернет через сам прокси">гео реального IP</span>
                 : geoSource === 'gateway'
-                  ? <span className="ml-1 rounded bg-amber-500/15 px-1 text-[10px] font-semibold text-amber-300">шлюз</span>
+                  ? <span className="ml-1 rounded bg-amber-500/15 px-1 text-[10px] font-semibold text-amber-300" title="Выходной IP определить не удалось — показано гео самого прокси-сервера, оно может отличаться">гео сервера (примерно)</span>
                   : null}</span> : '—'}
           </ProxyInfo>
           <ProxyInfo label="Город">{geo?.city || '—'}</ProxyInfo>
           <ProxyInfo label="Провайдер (ISP)">{geo?.isp || '—'}</ProxyInfo>
-          <ProxyInfo label="Выходной IP">{geo?.ip || '—'}</ProxyInfo>
+          <ProxyInfo label="Выходной IP (его видит Telegram)">{geo?.ip || '—'}</ProxyInfo>
           <ProxyInfo label="Последняя проверка">{fmtDate(p.lastCheckAt)}</ProxyInfo>
           <ProxyInfo label="Добавлен">{fmtDate(p.createdAt)}</ProxyInfo>
           {p.note && <div className="col-span-2"><ProxyInfo label="Заметка">{p.note}</ProxyInfo></div>}

@@ -969,6 +969,9 @@ function AssignCampaignModal({ acc, campaigns, current, onClose, onApply }: {
 function ChangeProxyModal({ acc, onClose, onSave }: { acc: TgAccount | null; onClose: () => void; onSave: (id: string, proxy: string) => void }) {
   const [useProxy, setUseProxy] = useState(true)
   const [value, setValue] = useState('')
+  // §10: чаще всего прокси уже есть в базе — предлагаем выбрать, а не вбивать заново.
+  const pool = useApp((s) => s.data.proxies)
+  const [fromPool, setFromPool] = useState(true)
 
   useEffect(() => {
     if (!acc) return
@@ -1013,8 +1016,40 @@ function ChangeProxyModal({ acc, onClose, onSave }: { acc: TgAccount | null; onC
       </div>
       {useProxy ? (
         <>
-          <label className="label">Новый прокси</label>
-          <input value={value} onChange={(e) => setValue(e.target.value)} className="input" placeholder="socks5://host:port" />
+          {/* §10: выбор из уже существующих прокси (мобильные и новые) либо ввод вручную. */}
+          <div className="mb-2 inline-flex rounded-lg border border-line bg-elevated p-0.5 text-xs">
+            <button type="button" onClick={() => setFromPool(true)}
+              className={cn('rounded-md px-2.5 py-1 font-semibold', fromPool ? 'bg-spark-gradient text-[#04150c]' : 'text-muted')}>
+              Из базы прокси
+            </button>
+            <button type="button" onClick={() => setFromPool(false)}
+              className={cn('rounded-md px-2.5 py-1 font-semibold', !fromPool ? 'bg-spark-gradient text-[#04150c]' : 'text-muted')}>
+              Ввести новый
+            </button>
+          </div>
+          {fromPool ? (
+            pool.length === 0 ? (
+              <p className="text-xs text-muted">База прокси пуста — введите новый, он попадёт в базу.</p>
+            ) : (
+              <>
+                <label className="label">Прокси из базы ({pool.length})</label>
+                <Select
+                  value={value}
+                  onChange={setValue}
+                  placeholder="Выберите прокси"
+                  options={pool.map((p) => {
+                    const url = `${p.type}://${p.host}:${p.port}`
+                    return { value: url, label: `${url}${p.status === 'dead' ? ' · не отвечает' : ''}${p.usedBy ? ` · занят ${p.usedBy}` : ' · свободен'}` }
+                  })}
+                />
+              </>
+            )
+          ) : (
+            <>
+              <label className="label">Новый прокси</label>
+              <input value={value} onChange={(e) => setValue(e.target.value)} className="input" placeholder="socks5://host:port" />
+            </>
+          )}
           <p className="mt-2 text-xs text-muted">Текущий: <span className="font-mono">{formatProxyLabel(acc?.proxy ?? '')}</span></p>
         </>
       ) : (
