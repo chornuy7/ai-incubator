@@ -89,6 +89,7 @@ modulesRouter.post('/:moduleKey/tasks', async (req, res) => {
     const { store, task, worker } = startModuleTask(moduleKey, settings)
     task.initiator = settings.initiator || 'operator' // §3.9: кто запустил
     task.goalId = settings.goalId ?? null // §3.6: к какой цели
+    task.campaignId = settings.campaignId ?? null // §0: под какой кампанией
     try {
       await store.saveTask(task)
       const { startWorker } = await import('./workers.js')
