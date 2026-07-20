@@ -4,6 +4,7 @@ import {
   MoreHorizontal, Trash2, KeyRound, Info, Users, Check, X, Undo2, Loader2, Pause,
   Lock, LockOpen, Rocket,
 } from 'lucide-react'
+import { useNavigate } from 'react-router-dom'
 import { useApp, activeAccounts, trashedAccounts, STATUS_META } from '@/mocks/store'
 import { useSession } from '@/features/auth/session'
 import { filterAccountsByAccess } from '@/shared/lib/access'
@@ -77,6 +78,7 @@ export function AccountsPage() {
   const pushToast = useApp((s) => s.pushToast)
   const sessionUser = useSession((s) => s.user)
   const setTasksOpen = useUi((s) => s.setTasksOpen)
+  const navigate = useNavigate() // §3: обзор аккаунта — вьюшка, а не модалка
 
   const [tab, setTab] = useState<'accounts' | 'trash'>('accounts')
   const [statusFilter, setStatusFilter] = useState<AccountStatus | 'all'>('all')
@@ -535,7 +537,7 @@ export function AccountsPage() {
           <button disabled={!has} onClick={() => setMoveOpen(true)} className={btn('border-line text-fg hover:bg-elevated')}><Users size={14} /> Переместить</button>
           <button disabled={!has} onClick={() => { void (async () => { for (const id of selected) await setAccountStatus(id, 'reauth'); pushToast({ type: 'info', title: 'Отправлено на реавторизацию' }); setSelected(new Set()) })() }} className={btn('border-line text-fg hover:bg-elevated')}><KeyRound size={14} /> Реавторизация</button>
           {/* §2: «Управление» — мульти-просмотр выбранных аккаунтов. */}
-          <button disabled={!has} onClick={() => { const first = active.find((a) => selected.has(a.id)); if (first) setDetailAcc(first) }} className={btn('border-iris-500/50 bg-iris-500/12 text-iris-200 hover:bg-iris-500/20')}><Users size={14} /> Управление</button>
+          <button disabled={!has} onClick={() => { const first = active.find((a) => selected.has(a.id)); if (first) navigate(`/panel/accounts/${first.id}`) }} className={btn('border-iris-500/50 bg-iris-500/12 text-iris-200 hover:bg-iris-500/20')}><Users size={14} /> Управление</button>
           {/* §2: «В корзину» — самая редкая деструктивная функция, поэтому крайняя справа. */}
           <button
             disabled={!has}
@@ -593,7 +595,7 @@ export function AccountsPage() {
             someOnPageSelected={someOnPageSelected}
             toggleAll={toggleAll}
             tab={tab}
-            onDetail={setDetailAcc}
+            onDetail={(a) => navigate(`/panel/accounts/${a.id}`)}
             onProxy={setProxyAcc}
             onTrash={(a) => { void trashAccount(a.id).then(() => pushToast({ type: 'success', title: 'В корзину', desc: a.name })) }}
             onRestore={(a) => { void restoreAccount(a.id).then(() => pushToast({ type: 'success', title: 'Восстановлено', desc: a.name })) }}

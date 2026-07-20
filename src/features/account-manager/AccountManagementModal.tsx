@@ -13,9 +13,9 @@ import {
 import type { TgAccount, AccountStats, AccountChannel, AccountFolder } from '@/shared/types'
 import { FLAGS as GEO_FLAGS, COUNTRY_NAME, COUNTRIES } from '@/shared/config/geo'
 
-type TabKey = 'profile' | 'proxy' | 'status' | 'dates' | 'actions' | 'health' | 'channels' | 'folders'
+export type TabKey = 'profile' | 'proxy' | 'status' | 'dates' | 'actions' | 'health' | 'channels' | 'folders'
 
-const TABS: { key: TabKey; label: string; icon: React.ReactNode }[] = [
+export const TABS: { key: TabKey; label: string; icon: React.ReactNode }[] = [
   { key: 'profile', label: 'Профиль', icon: <User size={15} /> },
   { key: 'proxy', label: 'Прокси', icon: <Globe size={15} /> },
   { key: 'status', label: 'Статус', icon: <BarChart3 size={15} /> },
@@ -163,7 +163,7 @@ export function AccountManagementModal({ account, onClose }: { account: TgAccoun
 }
 
 /* ── Hero ── */
-function HeroBanner({ account, stats }: { account: TgAccount; stats: AccountStats | null }) {
+export function HeroBanner({ account, stats }: { account: TgAccount; stats: AccountStats | null }) {
   const geo = stats?.profile.geo ?? account.country.toUpperCase()
   const valid = stats?.status.valid
   const spam = stats?.status.spamblock ?? 'unknown'
@@ -245,7 +245,7 @@ function SectionCard({ title, icon, children, action }: { title: string; icon?: 
 const dash = <span className="text-faint">—</span>
 
 /* ── Tabs ── */
-function ProfileTab({ account, stats }: { account: TgAccount; stats: AccountStats | null }) {
+export function ProfileTab({ account, stats }: { account: TgAccount; stats: AccountStats | null }) {
   const p = stats?.profile
   return (
     <div className="grid gap-3 md:grid-cols-2">
@@ -288,7 +288,7 @@ function GeoRecoCard({ account, stats }: { account: TgAccount; stats: AccountSta
   )
 }
 
-function ProxyTab({ account, stats, loading, onRecheck }: { account: TgAccount; stats: AccountStats | null; loading: boolean; onRecheck: () => void }) {
+export function ProxyTab({ account, stats, loading, onRecheck }: { account: TgAccount; stats: AccountStats | null; loading: boolean; onRecheck: () => void }) {
   const px = stats?.proxy
   if (!px?.configured) {
     return (
@@ -344,7 +344,7 @@ function MiniStat({ label, value }: { label: string; value: string }) {
   )
 }
 
-function StatusTab({ stats, spamChecking, onSpamCheck }: { stats: AccountStats | null; spamChecking: boolean; onSpamCheck: () => void }) {
+export function StatusTab({ stats, spamChecking, onSpamCheck }: { stats: AccountStats | null; spamChecking: boolean; onSpamCheck: () => void }) {
   const st = stats?.status
   if (!st) return <div className="py-8 text-center text-sm text-muted">Нет данных</div>
   return (
@@ -399,7 +399,7 @@ function StatusCard({ icon, tone, title, value, desc, footer, pulse }: {
   )
 }
 
-function DatesTab({ stats }: { stats: AccountStats | null }) {
+export function DatesTab({ stats }: { stats: AccountStats | null }) {
   const d = stats?.dates
   return (
     <SectionCard title="Даты" icon={<Calendar size={15} className="text-iris-300" />}>
@@ -410,7 +410,7 @@ function DatesTab({ stats }: { stats: AccountStats | null }) {
   )
 }
 
-function ActionsTab({ stats, loading, spamChecking, releasing, onRecheck, onSpamCheck, onRelease }: {
+export function ActionsTab({ stats, loading, spamChecking, releasing, onRecheck, onSpamCheck, onRelease }: {
   stats: AccountStats | null; loading: boolean; spamChecking: boolean; releasing: boolean
   onRecheck: () => void; onSpamCheck: () => void; onRelease: () => void
 }) {
@@ -538,7 +538,7 @@ function TrustCard({ trust }: { trust: AccountStats['trust'] }) {
   )
 }
 
-function HealthTab({ stats, accountId }: { stats: AccountStats | null; accountId: string }) {
+export function HealthTab({ stats, accountId }: { stats: AccountStats | null; accountId: string }) {
   if (!stats) return <div className="py-8 text-center text-sm text-muted">Нет данных</div>
   const { health, longevity, activity, trust } = stats
   const riskLabel = longevity.risk === 'low' ? 'Низкий риск' : longevity.risk === 'medium' ? 'Средний риск' : 'Высокий риск'
@@ -630,7 +630,7 @@ function Gauge({ value, color }: { value: number; color: string }) {
   )
 }
 
-function ChannelsTab({ accountId }: { accountId: string }) {
+export function ChannelsTab({ accountId }: { accountId: string }) {
   const [state, setState] = useState<{ loading: boolean; busy: boolean; busyLabel?: string; error?: string; items: AccountChannel[] }>({ loading: true, busy: false, items: [] })
   useEffect(() => {
     let alive = true
@@ -664,7 +664,7 @@ function ChannelsTab({ accountId }: { accountId: string }) {
   )
 }
 
-function FoldersTab({ accountId }: { accountId: string }) {
+export function FoldersTab({ accountId }: { accountId: string }) {
   const [state, setState] = useState<{ loading: boolean; busy: boolean; busyLabel?: string; error?: string; items: AccountFolder[] }>({ loading: true, busy: false, items: [] })
   useEffect(() => {
     let alive = true
