@@ -1,6 +1,6 @@
 import type { RolePermissions, Perm } from '@/api/rolesApi'
 
-export type PermKind = 'module' | 'block' | 'section' | 'account' | 'folder' | 'channel' | 'timers' | 'searchTemplates'
+export type PermKind = 'module' | 'block' | 'section' | 'account' | 'accountGroup' | 'folder' | 'channel' | 'timers' | 'searchTemplates'
 
 /**
  * Клиентская проверка доступа (зеркало server/roles.js#can). Админ (isAdmin) — всегда true;
@@ -15,6 +15,7 @@ export function can(permissions: RolePermissions | null, isAdmin: boolean, kind:
     case 'block': return val(permissions.blocks[key ?? ''])
     case 'section': return val(permissions.sections?.[key ?? ''])
     case 'account': return val(permissions.resources.accounts?.[key ?? ''])
+    case 'accountGroup': return val(permissions.resources.accountGroups?.[key ?? ''])
     case 'folder': return val(permissions.resources.folders[key ?? ''])
     case 'channel': return val(permissions.resources.channels[key ?? ''])
     case 'timers': return val(permissions.resources.timers)
@@ -29,9 +30,25 @@ export function can(permissions: RolePermissions | null, isAdmin: boolean, kind:
  */
 export function filterAccountsByAccess<T extends { id: string }>(
   list: T[], permissions: RolePermissions | null, isAdmin: boolean,
+  groups: { id: string; accountIds: string[] }[] = [],
 ): T[] {
   if (isAdmin) return list
-  return list.filter((a) => can(permissions, false, 'account', a.id))
+  return list.filter((a) => isAccountAllowed(permissions, a.id, groups))
+}
+
+/**
+ * §12: аккаунт доступен роли напрямую ИЛИ через разрешённую группу.
+ * Точечный deny сильнее группового allow. Зеркало server/accountGroups.js.
+ */
+export function isAccountAllowed(
+  permissions: RolePermissions | null, accountId: string,
+  groups: { id: string; accountIds: string[] }[] = [],
+): boolean {
+  if (!permissions) return false
+  const direct = permissions.resources.accounts?.[accountId]
+  if (direct === 'deny') return false // точечный запрет важнее
+  if (direct === 'allow') return true
+  return groups.some((g) => can(permissions, false, 'accountGroup', g.id) && g.accountIds.includes(accountId))
 }
 
 /** Извлечь ключ модуля из пути роутинга (/panel/modules/<key>). */

@@ -15,6 +15,7 @@ import { featureRouter } from './featureRoutes.js'
 import { automationRouter } from './automation/routes.js'
 import { goalsRouter } from './goalsRoutes.js'
 import { leadsRouter } from './leadsRoutes.js'
+import { accountGroupsRouter } from './accountGroupsRoutes.js'
 import { campaignsRouter } from './campaignsRoutes.js'
 import { channelsRouter } from './channelsRoutes.js'
 import { rolesRouter } from './rolesRoutes.js'
@@ -253,6 +254,7 @@ app.post('/api/ai/help', async (req, res) => {
 app.use('/api/automation', automationRouter)
 app.use('/api/goals', goalsRouter)
 app.use('/api/leads', leadsRouter)
+app.use('/api/account-groups', accountGroupsRouter) // §12: группы аккаунтов
 app.use('/api/campaigns', campaignsRouter)
 app.use('/api/channels', channelsRouter)
 app.use('/api/roles', rolesRouter)

@@ -8,6 +8,8 @@ export interface RolePermissions {
   sections: Record<string, Perm> // ключ = путь раздела (напр. '/panel/proxies')
   resources: {
     accounts: Record<string, Perm> // ключ = accountId (кто виден роли в менеджере/пикере)
+    /** §12: groupId → allow/deny. Доступ выдаётся сразу на группу аккаунтов. */
+    accountGroups?: Record<string, Perm>
     folders: Record<string, Perm>
     channels: Record<string, Perm>
     /** Какие каналы внутри папки выданы роли: folderId → список ссылок. Пусто = все каналы папки. */
@@ -70,5 +72,5 @@ export async function deleteRole(id: string): Promise<void> {
 
 /** Пустые права (всё deny) — для новой роли. */
 export function emptyPermissions(): RolePermissions {
-  return { modules: {}, blocks: {}, sections: {}, resources: { accounts: {}, folders: {}, channels: {}, folderChannels: {}, timers: 'deny', searchTemplates: 'deny' } }
+  return { modules: {}, blocks: {}, sections: {}, resources: { accounts: {}, accountGroups: {}, folders: {}, channels: {}, folderChannels: {}, timers: 'deny', searchTemplates: 'deny' } }
 }

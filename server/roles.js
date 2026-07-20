@@ -54,6 +54,7 @@ export const SECTIONS = [
 /** Типы ресурсов с индивидуальным доступом (§8.1). folders/channels — по элементам. */
 export const RESOURCE_TYPES = [
   { type: 'accounts', label: 'Аккаунты (кто виден в менеджере/пикере)', perItem: true },
+  { type: 'accountGroups', label: 'Группы аккаунтов (доступ сразу на группу, §12)', perItem: true },
   { type: 'folders', label: 'Папки целей', perItem: true },
   { type: 'channels', label: 'Целевые каналы', perItem: true },
   { type: 'timers', label: 'Таймеры / планировщик', perItem: false },
@@ -101,6 +102,7 @@ export function normalizeRole(input = {}) {
       sections: normPermMap(p.sections), // ключ = путь раздела (напр. '/panel/proxies')
       resources: {
         accounts: normPermMap(r.accounts), // accountId → allow/deny (кто виден роли)
+        accountGroups: normPermMap(r.accountGroups), // §12: groupId → allow/deny (доступ на всю группу)
         folders: normPermMap(r.folders),
         channels: normPermMap(r.channels),
         folderChannels: normFolderChannels(r.folderChannels),
@@ -183,6 +185,13 @@ export async function listRoles() {
     const seed = defaultRoles()
     await writeJson(ROLES_FILE, seed)
     return seed
+  }
+  // §12: у ролей, созданных до групп аккаунтов, поля нет — дошиваем пустую карту,
+  // чтобы матрица прав показывала группы (иначе нечего переключать).
+  for (const r of roles) {
+    if (r?.permissions?.resources && !r.permissions.resources.accountGroups) {
+      r.permissions.resources.accountGroups = {}
+    }
   }
   // Разовая миграция старых инсталляций: если НЕТ ни одной из §6-ролей
   // (Operator/Sales/Viewer) — добавляем их, не трогая существующие/пользовательские.
