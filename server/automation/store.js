@@ -89,6 +89,7 @@ export async function createRule(input) {
     name: String(input?.name || '').trim() || 'Правило автоматизации',
     enabled: input?.enabled !== false,
     moduleKey: String(input?.moduleKey || ''),
+    campaignId: input?.campaignId ? String(input.campaignId) : null, // §6: правило крепится к кампании
     accountIds: Array.isArray(input?.accountIds) ? input.accountIds : [],
     settings: input?.settings && typeof input.settings === 'object' ? input.settings : {},
     schedule: sanitizeSchedule(input?.schedule),
@@ -116,6 +117,7 @@ export async function updateRule(id, patch) {
     ...(patch?.name !== undefined ? { name: String(patch.name).trim() || cur.name } : {}),
     ...(patch?.enabled !== undefined ? { enabled: !!patch.enabled } : {}),
     ...(patch?.moduleKey !== undefined ? { moduleKey: String(patch.moduleKey) } : {}),
+    ...(patch?.campaignId !== undefined ? { campaignId: patch.campaignId ? String(patch.campaignId) : null } : {}),
     ...(patch?.accountIds !== undefined ? { accountIds: Array.isArray(patch.accountIds) ? patch.accountIds : [] } : {}),
     ...(patch?.settings !== undefined ? { settings: patch.settings && typeof patch.settings === 'object' ? patch.settings : {} } : {}),
     ...(patch?.schedule !== undefined ? { schedule: sanitizeSchedule(patch.schedule) } : {}),
@@ -142,4 +144,32 @@ export async function deleteRule(id) {
 /** Массовое сохранение (используется планировщиком). @param {AutomationRule[]} rules */
 export async function replaceRules(rules) {
   await saveRules(rules)
+}
+
+/**
+ * §6: автоматизация крепится к КАМПАНИИ (или к «голому» модулю — legacy).
+ * Под кампанией модуль/аккаунты/цель берём из неё: нельзя автоматизировать
+ * ненастроенный модуль. Чистая функция.
+ * @param {{moduleKey?:string, campaignId?:string|null, accountIds?:string[], settings?:object}} rule
+ * @param {{id:string, moduleKey:string, accountIds?:string[], settings?:object, goalId?:string|null}|null} campaign
+ * @returns {{moduleKey: string, settings: object}}
+ */
+export function resolveRuleTarget(rule, campaign) {
+  if (campaign) {
+    return {
+      moduleKey: campaign.moduleKey,
+      settings: {
+        ...(campaign.settings || {}),
+        ...(rule?.settings || {}),
+        // аккаунты правила приоритетнее, иначе — закреплённые за кампанией
+        accountIds: (rule?.accountIds?.length ? rule.accountIds : campaign.accountIds) || [],
+        ...(campaign.goalId ? { goalId: campaign.goalId } : {}),
+        campaignId: campaign.id,
+      },
+    }
+  }
+  return {
+    moduleKey: rule?.moduleKey,
+    settings: { ...(rule?.settings || {}), accountIds: rule?.accountIds || rule?.settings?.accountIds || [] },
+  }
 }

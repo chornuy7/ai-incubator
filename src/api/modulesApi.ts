@@ -25,6 +25,7 @@ export interface ModuleTaskSettings {
   promptText?: string
   promptOverrides?: string[]
   mediaUrls?: string[] // §11: медиа (фото/видео/ссылки) для мейлинга/автопостинга
+  campaignId?: string // §0: задача идёт под кампанией (цель наследуется от неё)
   aiMode?: number
   delayPreset?: number
   emojis?: string[]

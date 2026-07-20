@@ -16,8 +16,11 @@ automationRouter.get('/rules', async (_req, res) => {
 automationRouter.post('/rules', async (req, res) => {
   try {
     const body = req.body ?? {}
-    if (!body.moduleKey) return res.status(400).json({ ok: false, error: 'Выберите модуль' })
-    if (!Array.isArray(body.accountIds) || !body.accountIds.length) {
+    // §6: правило крепится к кампании ИЛИ (legacy) к модулю с явными аккаунтами.
+    if (!body.campaignId && !body.moduleKey) {
+      return res.status(400).json({ ok: false, error: 'Выберите кампанию (или модуль) — автоматизировать ненастроенный модуль нельзя' })
+    }
+    if (!body.campaignId && (!Array.isArray(body.accountIds) || !body.accountIds.length)) {
       return res.status(400).json({ ok: false, error: 'Выберите хотя бы один аккаунт' })
     }
     res.json({ ok: true, rule: await createRule(body) })

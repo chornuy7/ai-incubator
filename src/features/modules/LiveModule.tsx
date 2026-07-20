@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import {
   Play, Sparkles, Hash, Settings2, Clock, Users, MessageSquareText,
-  Heart, Eye, Shield, MessageCircle, Database, Trophy, Link2, Plus, Target, Terminal, ArrowUpRight,
+  Heart, Eye, Shield, MessageCircle, Database, Trophy, Link2, Plus, Target, Terminal, ArrowUpRight, Rocket,
 } from 'lucide-react'
 import { MODULES, isCombatModule, combatConfirmText, type ModuleConfig } from '@/shared/config/modules'
 import { activeAccounts, useApp } from '@/mocks/store'
@@ -9,6 +9,7 @@ import { useSession } from '@/features/auth/session'
 import { can } from '@/shared/lib/access'
 import { ToggleGroup, Segmented, EmptyState, Badge, Select } from '@/shared/ui'
 import { fetchGoals, isGoalExpired, type Goal } from '@/api/goalsApi'
+import { fetchCampaigns, type Campaign } from '@/api/campaignsApi'
 import { AccountPicker } from '@/features/account-picker/AccountPicker'
 import { useModuleTask } from './shared/useModuleTask'
 import {
@@ -79,6 +80,10 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
   const [delays, setDelays] = useState(DEFAULT_DELAYS)
   const [goals, setGoals] = useState<Goal[]>([])
   const [goalId, setGoalId] = useState('')
+  // §0: задача запускается ПОД КАМПАНИЕЙ; цель наследуется из кампании.
+  // Пока кампаний нет — остаётся прямой выбор цели (мягкая миграция, ничего не ломаем).
+  const [campaigns, setCampaigns] = useState<Campaign[]>([])
+  const [campaignId, setCampaignId] = useState('')
   const [warmLevel, setWarmLevel] = useState(1)
   const [postWindow, setPostWindow] = useState(10) // §3.5: сколько последних постов обрабатывать
   const [stopWordsText, setStopWordsText] = useState('') // §3.5: пропускать посты с этими словами
@@ -97,6 +102,10 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
     setTypeWeights(Array.from({ length: n }, (_, i) => base + (i < rem ? 1 : 0)))
   }
   useEffect(() => { void fetchGoals().then(setGoals).catch(() => {}) }, [])
+  // Кампании этого модуля (кампания настраивает ровно один модуль — §0).
+  useEffect(() => {
+    void fetchCampaigns({ moduleKey }).then(({ campaigns: cs }) => setCampaigns(cs.filter((c) => c.status !== 'done'))).catch(() => {})
+  }, [moduleKey])
   // §3.5: главное поле — «на 1 аккаунт»; общий лимит считается авто = на-аккаунт × число выбранных.
   const accCount = selected.size || 1
   useEffect(() => {
@@ -172,7 +181,9 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
     postUrls,
     limit: maxActions,
     delays,
-    ...(goalId ? { goalId } : {}),
+    // §0: под кампанией цель наследуется от неё; без кампании — прямой выбор цели.
+    ...(campaignId ? { campaignId } : {}),
+    ...((campaignId ? campaigns.find((c) => c.id === campaignId)?.goalId : goalId) ? { goalId: (campaignId ? campaigns.find((c) => c.id === campaignId)?.goalId : goalId) as string } : {}),
     ...(cfg.warmingLayout ? { warmLevel } : {}),
     ...(moduleKey === 'neuro-commenting' ? { postWindow, stopWords: stopWordsText.split(/[\n,;]+/).map((w) => w.trim()).filter(Boolean), semanticFilter } : {}),
     ...(moduleKey === 'neuro-commenting' && weightSum > 0 ? { typeWeights } : {}),
@@ -180,7 +191,7 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
       lookMode: cfg.lookModeOptions?.[lookModeIdx]?.value ?? 'stories',
       lookPostsCount,
     } : {}),
-  }), [selected, targets, postUrls, toggles, probability, maxActions, minActions, maxPerAcc, minPerAcc, minWords, durationMinutes, aiProtect, protLevel, activePrompt, promptBodies, delayPreset, palette, delays, keywords, isGgr, accounts, cfg, lookModeIdx, lookPostsCount, goalId, warmLevel, postWindow, stopWordsText, semanticFilter, moduleKey, typeWeights, weightSum])
+  }), [selected, targets, postUrls, toggles, probability, maxActions, minActions, maxPerAcc, minPerAcc, minWords, durationMinutes, aiProtect, protLevel, activePrompt, promptBodies, delayPreset, palette, delays, keywords, isGgr, accounts, cfg, lookModeIdx, lookPostsCount, goalId, campaignId, campaigns, warmLevel, postWindow, stopWordsText, semanticFilter, moduleKey, typeWeights, weightSum])
 
   const hasPostTargets = postUrls.length > 0
   const busySelectedCount = useMemo(
@@ -191,7 +202,8 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
   const typesOver100 = moduleKey === 'neuro-commenting' && weightSum > 100
   // §4: цель с истёкшим дедлайном «останавливает работу» — не даём запуск (зеркало 409 бэкенда).
   const goalExpired = useMemo(() => {
-    const g = goalId ? goals.find((x) => x.id === goalId) : null
+    const effGoalId = campaignId ? campaigns.find((c) => c.id === campaignId)?.goalId : goalId
+    const g = effGoalId ? goals.find((x) => x.id === effGoalId) : null
     return g ? isGoalExpired(g) : false
   }, [goalId, goals])
   const canStart = (isGgr
@@ -518,22 +530,50 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
             <p className="mt-2 text-[11px] text-white/40">Доля каждого типа при запуске нормируется к 100%. «Поровну» — раскидать одинаково.</p>
           </div>
         )}
+        {/* §0: задача запускается ПОД КАМПАНИЕЙ — цель наследуется от неё.
+            Пока кампаний для модуля нет, остаётся прямой выбор цели (мягкая миграция). */}
         {showBlock('targets') && !running && (
           <div className="mb-3">
             <label className="mb-1 flex items-center justify-between text-xs text-white/50">
-              <span><Target size={11} className="mb-0.5 inline" /> Цель кампании (опционально)</span>
-              <a href="/panel/goals" className="font-semibold text-spark-300 hover:underline">+ Создать цель</a>
+              <span><Rocket size={11} className="mb-0.5 inline" /> Кампания</span>
+              <a href="/panel/campaign" className="font-semibold text-spark-300 hover:underline">+ Создать кампанию</a>
             </label>
-            {goals.length > 0 ? (
-              <Select
-                value={goalId}
-                onChange={setGoalId}
-                placeholder="Без цели"
-                options={[{ value: '', label: 'Без цели' }, ...goals.map((gg) => ({ value: gg.id, label: gg.name }))]}
-              />
+            {campaigns.length > 0 ? (
+              <>
+                <Select
+                  value={campaignId}
+                  onChange={setCampaignId}
+                  placeholder="Без кампании"
+                  options={[{ value: '', label: 'Без кампании' }, ...campaigns.map((c) => ({ value: c.id, label: c.name }))]}
+                />
+                {campaignId && (
+                  <div className="mt-1 text-[11px] text-white/50">
+                    <Target size={11} className="mb-0.5 inline" /> Цель — из кампании:{' '}
+                    <b className="text-iris-300">
+                      {goals.find((g) => g.id === campaigns.find((c) => c.id === campaignId)?.goalId)?.name || 'без цели'}
+                    </b>
+                  </div>
+                )}
+              </>
             ) : (
               <div className="rounded-xl border border-line bg-elevated/40 px-3 py-2 text-xs text-white/50">
-                Целей пока нет. Нажмите «<a href="/panel/goals" className="text-spark-300 hover:underline">Создать цель</a>», чтобы вести ботов к целевому действию — иначе кампания идёт без цели.
+                Кампаний для этого модуля пока нет. <a href="/panel/campaign" className="text-spark-300 hover:underline">Создайте кампанию</a> — задачи должны идти под кампанией (§0). Пока можно выбрать цель напрямую:
+              </div>
+            )}
+
+            {/* Прямой выбор цели — fallback, пока кампания не выбрана */}
+            {!campaignId && (
+              <div className="mt-2">
+                <label className="mb-1 flex items-center justify-between text-xs text-white/50">
+                  <span><Target size={11} className="mb-0.5 inline" /> Цель напрямую (без кампании)</span>
+                  <a href="/panel/goals" className="font-semibold text-spark-300 hover:underline">+ Создать цель</a>
+                </label>
+                <Select
+                  value={goalId}
+                  onChange={setGoalId}
+                  placeholder="Без цели"
+                  options={[{ value: '', label: 'Без цели' }, ...goals.map((gg) => ({ value: gg.id, label: gg.name }))]}
+                />
               </div>
             )}
           </div>

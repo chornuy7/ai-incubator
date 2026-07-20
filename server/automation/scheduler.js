@@ -13,14 +13,22 @@ let timer = null
  */
 async function launchRule(rule) {
   const { startModuleTask, launchTask, getModuleStore } = await import('../modules/registry.js')
-  const settings = {
-    ...(rule.settings || {}),
-    accountIds: rule.accountIds || rule.settings?.accountIds || [],
+  // §6: правило под кампанией — модуль/аккаунты/цель берём из неё (нельзя
+  // автоматизировать ненастроенный модуль). Без кампании — legacy «голый модуль».
+  let campaign = null
+  if (rule.campaignId) {
+    const { getCampaign } = await import('../campaigns.js')
+    campaign = await getCampaign(rule.campaignId)
+    if (!campaign) throw new Error('Кампания правила не найдена — правило нечего запускать')
   }
-  const { task, store } = startModuleTask(rule.moduleKey, settings)
-  await launchTask(rule.moduleKey, task, store)
+  const { resolveRuleTarget } = await import('./store.js')
+  const { moduleKey, settings } = resolveRuleTarget(rule, campaign)
+  if (!moduleKey) throw new Error('У правила нет ни кампании, ни модуля')
+  const { task, store } = startModuleTask(moduleKey, settings)
+  task.campaignId = campaign?.id ?? null
+  await launchTask(moduleKey, task, store)
   // подстраховка: убедимся, что стор существует (иначе launchTask no-op)
-  if (!getModuleStore(rule.moduleKey)) throw new Error('Модуль не поддерживается планировщиком')
+  if (!getModuleStore(moduleKey)) throw new Error('Модуль не поддерживается планировщиком')
   return task.id
 }
 
