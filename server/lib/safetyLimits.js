@@ -37,3 +37,43 @@ export function withinDailyLimit(action, count) {
 export function dailyCap(action) {
   return DAILY_LIMITS[action]?.max ?? 0
 }
+
+/**
+ * §12: защита прогрева и массовых действий. Прогрев — самый дорогой процесс:
+ * случайный массовый стоп обнуляет недели работы, поэтому ставим отдельные барьеры.
+ * Числа задаёт супер-админ (пока — дефолты здесь, единый источник для UI и воркеров).
+ */
+export const MASS_ACTION = {
+  /** Со скольких задач массовый стоп требует усиленного подтверждения. */
+  doubleConfirmFrom: 100,
+  /** Прогрев можно останавливать/ставить на паузу только супер-админу. */
+  warmingSuperAdminOnly: true,
+}
+
+/** Модули, которые считаем «прогревом» (их стоп защищён). */
+export const WARMING_MODULES = new Set(['warming'])
+
+/**
+ * §12: сколько ступеней подтверждения нужно для массовой остановки. Чистая функция.
+ * 1 — обычное подтверждение; 2 — усиленное («прочитал и уверен») при большом объёме.
+ * @param {number} count @param {{doubleConfirmFrom?: number}} [limits]
+ */
+export function massStopConfirmSteps(count, limits = MASS_ACTION) {
+  const n = Number(count) || 0
+  if (n <= 0) return 0
+  return n >= (limits.doubleConfirmFrom ?? 100) ? 2 : 1
+}
+
+/**
+ * §12: можно ли этому пользователю останавливать/паузить прогрев. Чистая функция.
+ * Прогрев защищён: без прав супер-админа — нельзя.
+ * @param {boolean} isAdmin @param {{warmingSuperAdminOnly?: boolean}} [limits]
+ */
+export function canStopWarming(isAdmin, limits = MASS_ACTION) {
+  return limits.warmingSuperAdminOnly === false ? true : !!isAdmin
+}
+
+/** §12: есть ли среди задач прогрев (его стоп требует особых прав). Чистая. */
+export function containsWarming(tasks = []) {
+  return (Array.isArray(tasks) ? tasks : []).some((t) => WARMING_MODULES.has(t?.moduleKey))
+}

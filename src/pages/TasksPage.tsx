@@ -11,7 +11,9 @@ import { fetchCampaigns, type Campaign } from '@/api/campaignsApi'
 import { fetchAccounts } from '@/api/accountsApi'
 import type { TgAccount } from '@/shared/types'
 import { cn } from '@/shared/lib/utils'
-import { confirmDialog } from '@/shared/lib/dialog'
+import { confirmDialog, promptDialog } from '@/shared/lib/dialog'
+import { massStopConfirmSteps, canStopWarming, containsWarming } from '@/shared/lib/massAction'
+import { useSession } from '@/features/auth/session'
 
 const STATUS: Record<string, { label: string; tone: 'spark' | 'iris' | 'amber' | 'rose' | 'muted' }> = {
   running: { label: 'Выполняется', tone: 'spark' },
@@ -82,6 +84,7 @@ function Donut({ segments, size = 128, stroke = 16 }: { segments: { value: numbe
 
 export function TasksPage() {
   const pushToast = useApp((s) => s.pushToast)
+  const me = useSession((s) => s.user) // §12: прогрев останавливает только супер-админ
   const [tasks, setTasks] = useState<ModuleTask[]>([])
   const [goals, setGoals] = useState<Goal[]>([])
   const [loading, setLoading] = useState(true)
@@ -196,7 +199,41 @@ export function TasksPage() {
     void runBulk('Запуск/возобновление', startTargets, (t) => (t.status === 'paused' ? resumeModuleTask(t.moduleKey, t.id) : restartModuleTask(t.moduleKey, t.id)))
   }
   const bulkPause = () => void runBulk('Пауза', pauseTargets, (t) => pauseModuleTask(t.moduleKey, t.id))
-  const bulkStop = () => void runBulk('Стоп', stopTargets, (t) => stopModuleTask(t.moduleKey, t.id))
+  /**
+   * §12: массовый стоп защищён. Прогрев — только супер-админ (недели работы можно
+   * обнулить одним кликом), а большой объём требует усиленного подтверждения.
+   */
+  const bulkStop = async () => {
+    if (containsWarming(stopTargets) && !canStopWarming(!!me?.isAdmin)) {
+      return pushToast({
+        type: 'error',
+        title: 'Прогрев остановить нельзя',
+        desc: 'Среди выбранных есть задачи прогрева — их останавливает только супер-админ.',
+      })
+    }
+    const steps = massStopConfirmSteps(stopTargets.length)
+    if (steps === 0) return
+    const warmN = stopTargets.filter((t) => t.moduleKey === 'warming').length
+    const warnTail = warmN ? ` Из них прогрева: ${warmN} — прогресс будет потерян.` : ''
+    if (!(await confirmDialog({
+      title: `Остановить задач: ${stopTargets.length}?`,
+      message: `Задачи будут остановлены.${warnTail}`,
+      confirmLabel: 'Остановить',
+      tone: 'danger',
+    }))) return
+    if (steps === 2) {
+      // Второй барьер при большом объёме: осознанное подтверждение вводом числа.
+      const typed = await promptDialog({
+        title: 'Подтвердите массовую остановку',
+        message: `Это ${stopTargets.length} задач — действие необратимо. Введите число ${stopTargets.length}, если прочитали и уверены.`,
+        placeholder: String(stopTargets.length),
+      })
+      if (String(typed || '').trim() !== String(stopTargets.length)) {
+        return pushToast({ type: 'info', title: 'Отменено', desc: 'Подтверждение не совпало — ничего не остановлено.' })
+      }
+    }
+    void runBulk('Стоп', stopTargets, (t) => stopModuleTask(t.moduleKey, t.id))
+  }
 
   // Воронка: Цели → Задачи → Модули → прогресс (по отфильтрованным).
   const funnel = useMemo(() => {
@@ -337,7 +374,7 @@ export function TasksPage() {
           <div className="ml-auto flex flex-wrap items-center gap-2">
             <BulkBtn onClick={bulkStart} disabled={busy !== null || startTargets.length === 0} tone="green" icon={<Play size={13} />} label="Запустить / возобновить" count={startTargets.length} />
             <BulkBtn onClick={bulkPause} disabled={busy !== null || pauseTargets.length === 0} tone="amber" icon={<Pause size={13} />} label="Пауза" count={pauseTargets.length} />
-            <BulkBtn onClick={bulkStop} disabled={busy !== null || stopTargets.length === 0} tone="rose" icon={<Square size={13} />} label="Стоп" count={stopTargets.length} />
+            <BulkBtn onClick={() => void bulkStop()} disabled={busy !== null || stopTargets.length === 0} tone="rose" icon={<Square size={13} />} label="Стоп" count={stopTargets.length} />
           </div>
         </div>
       )}
