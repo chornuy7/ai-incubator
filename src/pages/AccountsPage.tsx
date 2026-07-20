@@ -1,4 +1,4 @@
-import { useMemo, useState, useEffect } from 'react'
+import { useMemo, useState, useEffect, useRef } from 'react'
 import {
   Plus, UploadCloud, Server, RefreshCw, Columns3, ListChecks, Search, Filter,
   MoreHorizontal, Trash2, KeyRound, Info, Users, Check, X, Undo2, Loader2, Pause,
@@ -37,6 +37,27 @@ const COLS = [
   { key: 'proxy', label: 'Прокси' },
 ]
 const DAILY_CAP_LABELS: Record<string, string> = { comments: 'комментарии', dm: 'ЛС', joins: 'вступления', reactions: 'реакции' }
+/**
+ * §2: чекбокс-заголовок с тремя состояниями. `indeterminate` в DOM нельзя выставить
+ * через атрибут — только через ref, поэтому отдельный компонент.
+ */
+function TriStateCheckbox({ checked, indeterminate, onChange, title }: {
+  checked: boolean; indeterminate: boolean; onChange: () => void; title?: string
+}) {
+  const ref = useRef<HTMLInputElement>(null)
+  useEffect(() => { if (ref.current) ref.current.indeterminate = indeterminate && !checked }, [indeterminate, checked])
+  return (
+    <input
+      ref={ref}
+      type="checkbox"
+      checked={checked}
+      onChange={onChange}
+      title={title}
+      className="h-4 w-4 rounded border-line accent-spark-500"
+    />
+  )
+}
+
 function formatProxyLabel(proxy: string) {
   if (!proxy || proxy === '—') return 'Прямое подключение'
   return proxy
@@ -65,6 +86,7 @@ export function AccountsPage() {
   const [campaigns, setCampaigns] = useState<Campaign[]>([])
   const [pinnedMap, setPinnedMap] = useState<PinnedMap>({})
   const [campaignFilter, setCampaignFilter] = useState('all')
+  const [trashAlive, setTrashAlive] = useState(false) // §2: показать только «живые» среди удалённых
   const loadCampaigns = () => {
     void fetchCampaigns().then(({ campaigns: cs, pinned }) => { setCampaigns(cs); setPinnedMap(pinned) }).catch(() => {})
   }
@@ -164,6 +186,8 @@ export function AccountsPage() {
   const filtered = useMemo(() => {
     const list = source.filter((a) => {
       if (tab === 'accounts' && statusFilter !== 'all' && a.status !== statusFilter) return false
+      // §2: в корзине можно отсеять «мёртвые» — оставить только валидные сессии.
+      if (tab === 'trash' && trashAlive && (a.status === 'invalid' || a.status === 'reauth')) return false
       if (campaignFilter === 'pool' && campaignOf(a.id)) return false
       if (campaignFilter !== 'all' && campaignFilter !== 'pool') {
         const c = campaigns.find((x) => x.id === campaignFilter)
@@ -182,15 +206,18 @@ export function AccountsPage() {
       .map((a, i) => ({ a, i }))
       .sort((x, y) => (Number(!!x.a.busyIn) - Number(!!y.a.busyIn)) || (x.i - y.i))
       .map((x) => x.a)
-  }, [source, tab, statusFilter, campaignFilter, campaigns, pinnedMap, countryFilter, moduleFilter, query])
+  }, [source, tab, statusFilter, campaignFilter, campaigns, pinnedMap, countryFilter, moduleFilter, query, trashAlive])
 
   const pageCount = Math.max(1, Math.ceil(filtered.length / pageSize))
   const pageItems = filtered.slice(page * pageSize, page * pageSize + pageSize)
 
   const allOnPageSelected = pageItems.length > 0 && pageItems.every((a) => selected.has(a.id))
+  // §2: чекбокс-заголовок 3 состояния. Частичный выбор (semi) — клик снимает ВСЁ,
+  // поэтому отдельная кнопка «Снять» больше не нужна.
+  const someOnPageSelected = pageItems.some((a) => selected.has(a.id)) && !allOnPageSelected
   const toggleAll = () => {
     const next = new Set(selected)
-    if (allOnPageSelected) pageItems.forEach((a) => next.delete(a.id))
+    if (allOnPageSelected || someOnPageSelected) pageItems.forEach((a) => next.delete(a.id))
     else pageItems.forEach((a) => next.add(a.id))
     setSelected(next)
   }
@@ -216,7 +243,32 @@ export function AccountsPage() {
     return true
   }
 
+  /** §2: аккаунт «в работе» нельзя удалять — сначала стоп (иначе уходил в корзину, не меняя статус). */
+  const busySelected = useMemo(
+    () => [...selected]
+      .map((id) => active.find((a) => a.id === id))
+      .filter((a): a is TgAccount => !!a && (!!a.busyIn || a.status === 'working' || a.status === 'warming')),
+    [selected, active],
+  )
+
+  /** §2: восстановить выбранные из корзины (раньше — только по одному). */
+  const bulkRestore = async () => {
+    const ids = [...selected]
+    if (!ids.length) return
+    if (!(await confirmBulk(ids.length, 'восстановить из корзины'))) return
+    for (const id of ids) { try { await restoreAccount(id) } catch { /* skip */ } }
+    pushToast({ type: 'success', title: `Восстановлено: ${ids.length}`, desc: 'Аккаунты вернулись в список.' })
+    setSelected(new Set())
+  }
+
   const bulkTrash = async () => {
+    if (busySelected.length) {
+      return pushToast({
+        type: 'error',
+        title: 'Сначала остановите работу',
+        desc: `${busySelected.length} акк. в работе/прогреве — удалить нельзя. Нажмите «Стоп / освободить», затем в корзину.`,
+      })
+    }
     if (!(await confirmBulk(selected.size, 'переместить в корзину'))) return
     void (async () => {
       for (const id of selected) await trashAccount(id)
@@ -450,6 +502,24 @@ export function AccountsPage() {
         )}
       </div>
 
+      {/* §2: корзина — массовое восстановление и фильтр «живых» (валидных) сессий. */}
+      {tab === 'trash' && trashed.length > 0 && (
+        <div className="mb-3 flex flex-wrap items-center gap-2 rounded-xl border border-line bg-elevated/40 px-3 py-2">
+          <button
+            disabled={selected.size === 0}
+            onClick={() => { void bulkRestore() }}
+            className={cn('flex h-8 items-center gap-1.5 rounded-lg border px-2.5 text-xs font-semibold transition-colors',
+              selected.size ? 'border-spark-500/50 bg-spark-500/12 text-spark-300 hover:bg-spark-500/20' : 'border-line text-white/25')}
+          >
+            <Undo2 size={14} /> Восстановить выбранные{selected.size ? ` (${selected.size})` : ''}
+          </button>
+          <label className="ml-auto flex cursor-pointer items-center gap-2 text-xs text-white/60">
+            <input type="checkbox" checked={trashAlive} onChange={(e) => setTrashAlive(e.target.checked)} className="h-4 w-4 rounded border-line accent-spark-500" />
+            Только «живые» (валидные сессии)
+          </label>
+        </div>
+      )}
+
       {/* Панель управления выбранными — всегда видна на вкладке аккаунтов; серая, если ничего не выбрано */}
       {tab === 'accounts' && (() => {
         const has = selected.size > 0
@@ -463,9 +533,18 @@ export function AccountsPage() {
           <button disabled={!has} onClick={() => bulkSetStatus('frozen', 'Отключено (frozen)')} className={btn('border-rose-500/40 bg-rose-500/8 text-rose-300 hover:bg-rose-500/15')}><X size={14} /> Отключить</button>
           <span className="mx-1 h-5 w-px bg-line" />
           <button disabled={!has} onClick={() => setMoveOpen(true)} className={btn('border-line text-fg hover:bg-elevated')}><Users size={14} /> Переместить</button>
-          <button disabled={!has} onClick={bulkTrash} className={btn('border-line text-fg hover:bg-elevated')}><Trash2 size={14} /> В корзину</button>
           <button disabled={!has} onClick={() => { void (async () => { for (const id of selected) await setAccountStatus(id, 'reauth'); pushToast({ type: 'info', title: 'Отправлено на реавторизацию' }); setSelected(new Set()) })() }} className={btn('border-line text-fg hover:bg-elevated')}><KeyRound size={14} /> Реавторизация</button>
-          {has && <button onClick={() => setSelected(new Set())} className="ml-auto text-xs text-white/50 hover:text-fg">Снять</button>}
+          {/* §2: «Управление» — мульти-просмотр выбранных аккаунтов. */}
+          <button disabled={!has} onClick={() => { const first = active.find((a) => selected.has(a.id)); if (first) setDetailAcc(first) }} className={btn('border-iris-500/50 bg-iris-500/12 text-iris-200 hover:bg-iris-500/20')}><Users size={14} /> Управление</button>
+          {/* §2: «В корзину» — самая редкая деструктивная функция, поэтому крайняя справа. */}
+          <button
+            disabled={!has}
+            onClick={bulkTrash}
+            title={busySelected.length ? 'Среди выбранных есть аккаунты в работе — сначала остановите' : 'Переместить выбранные в корзину'}
+            className={cn(btn('border-line text-fg hover:bg-elevated'), 'ml-auto', busySelected.length && 'opacity-60')}
+          >
+            <Trash2 size={14} /> В корзину{busySelected.length ? ` (${busySelected.length} в работе)` : ''}
+          </button>
         </div>
         )
       })()}
@@ -473,7 +552,7 @@ export function AccountsPage() {
       {/* Table / content */}
       {isNoSub ? (
         <PaywallLock>
-          <AccountsTable pageItems={active.slice(0, 3)} visibleCols={visibleCols} showCol={showCol} selected={selected} toggleOne={() => {}} allOnPageSelected={false} toggleAll={() => {}} tab="accounts" onDetail={() => {}} onProxy={() => {}} onTrash={() => {}} onRestore={() => {}} onReauth={() => {}} onMarkReauth={() => {}} loading={false} campaignOf={campaignOf} onAssign={() => {}} />
+          <AccountsTable pageItems={active.slice(0, 3)} visibleCols={visibleCols} showCol={showCol} selected={selected} toggleOne={() => {}} allOnPageSelected={false} someOnPageSelected={false} toggleAll={() => {}} tab="accounts" onDetail={() => {}} onProxy={() => {}} onTrash={() => {}} onRestore={() => {}} onReauth={() => {}} onMarkReauth={() => {}} loading={false} campaignOf={campaignOf} onAssign={() => {}} />
         </PaywallLock>
       ) : loading ? (
         <div className="card overflow-hidden p-0">
@@ -511,6 +590,7 @@ export function AccountsPage() {
             selected={selected}
             toggleOne={toggleOne}
             allOnPageSelected={allOnPageSelected}
+            someOnPageSelected={someOnPageSelected}
             toggleAll={toggleAll}
             tab={tab}
             onDetail={setDetailAcc}
@@ -614,6 +694,7 @@ function AccountsTable(props: {
   selected: Set<string>
   toggleOne: (id: string) => void
   allOnPageSelected: boolean
+  someOnPageSelected: boolean
   toggleAll: () => void
   tab: 'accounts' | 'trash'
   onDetail: (a: TgAccount) => void
@@ -637,7 +718,14 @@ function AccountsTable(props: {
         <table className="w-full text-sm">
           <thead>
             <tr className="border-b border-line bg-elevated/60 text-left text-[11px] font-bold uppercase tracking-wide text-muted">
-              <th className="w-10 px-4 py-3"><input type="checkbox" checked={allOnPageSelected} onChange={toggleAll} className="h-4 w-4 rounded border-line accent-spark-500" /></th>
+              <th className="w-10 px-4 py-3">
+                <TriStateCheckbox
+                  checked={allOnPageSelected}
+                  indeterminate={props.someOnPageSelected}
+                  onChange={toggleAll}
+                  title={props.someOnPageSelected ? 'Выбрано частично — клик снимет весь выбор' : allOnPageSelected ? 'Снять выбор' : 'Выбрать все на странице'}
+                />
+              </th>
               {showAccountCol && <th className="px-4 py-3">Аккаунт</th>}
               {showCol('campaign') && <th className="px-4 py-3">Кампания</th>}
               {showCol('project') && <th className="px-4 py-3">Проект</th>}
@@ -696,15 +784,21 @@ function AccountsTable(props: {
                           <Pause size={11} /> Пауза вручную · не в модуле
                         </div>
                       ) : null}
-                      {typeof a.trustScore === 'number' && a.trustBand !== 'high' && (
+                      {/* §2: score виден ВСЕГДА (не только у проблемных) + подсказка, где можно/нельзя. */}
+                      {typeof a.trustScore === 'number' && (
                         <span
                           className={cn('rounded-md px-1.5 py-0.5 text-[10px] font-bold',
-                            a.trustBand === 'low' ? 'bg-rose-500/15 text-rose-300' : 'bg-amber-500/15 text-amber-300')}
+                            a.trustBand === 'low' ? 'bg-rose-500/15 text-rose-300'
+                              : a.trustBand === 'high' ? 'bg-spark-500/15 text-spark-300'
+                                : 'bg-amber-500/15 text-amber-300')}
                           title={a.trustBand === 'low'
-                            ? `Trust ${a.trustScore} (<40): в боевые модули не берётся — нужен прогрев (§6).`
-                            : `Trust ${a.trustScore} (40–70): только «Консервативный» уровень защиты (§6).`}
+                            ? `Trust ${a.trustScore} (<40): в боевые модули не берётся — нужен прогрев. Мейлинг недоступен (нужен trust>70).`
+                            : a.trustBand === 'high'
+                              ? `Trust ${a.trustScore} (>70): доступны все модули, включая мейлинг.`
+                              : `Trust ${a.trustScore} (40–70): боевые модули только на «Консервативном» уровне; мейлинг недоступен (нужен trust>70).`}
                         >
-                          trust {a.trustScore}{a.trustBand === 'low' ? ' · прогрев' : ''}
+                          trust {a.trustScore}
+                          {a.trustBand === 'low' ? ' · прогрев' : a.trustBand !== 'high' ? ' · без мейлинга' : ''}
                         </span>
                       )}
                       {(() => {
