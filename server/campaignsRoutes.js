@@ -12,6 +12,7 @@ import { assertAccountsAssignable } from './accountsMeta.js'
 import { assertNoHotLeadConflict } from './leads.js'
 import { appendAudit } from './lib/auditLog.js'
 import { listSchedules, createSchedule, updateSchedule, deleteSchedule } from './campaignSchedules.js'
+import { listCampaigns, getCampaign, createCampaign, updateCampaign, deleteCampaign, pinnedAccountMap, conflictingAccounts } from './campaigns.js'
 
 export const campaignsRouter = Router()
 
@@ -98,5 +99,64 @@ campaignsRouter.delete('/schedules/:id', async (req, res) => {
     const ok = await deleteSchedule(req.params.id)
     if (!ok) return res.status(404).json({ ok: false, error: 'Расписание не найдено' })
     res.json({ ok: true })
+  } catch (e) { fail(res, e) }
+})
+
+// ── §5: CRUD сущности «Кампания». ВАЖНО: объявлено ПОСЛЕ /schedules и /launch,
+// иначе '/:id' затенил бы их. ──────────────────────────────────────────────────
+
+campaignsRouter.get('/', async (req, res) => {
+  try {
+    const { goalId, status, moduleKey } = req.query
+    const campaigns = await listCampaigns({ goalId, status, moduleKey })
+    res.json({ ok: true, campaigns, pinned: pinnedAccountMap(campaigns) })
+  } catch (e) { fail(res, e) }
+})
+
+/** §5: аккаунт закреплён кампанией → не отдаём его другой (выходит из общего пула). */
+async function assertAccountsFree(accountIds, selfId) {
+  if (!accountIds?.length) return null
+  const busy = conflictingAccounts(pinnedAccountMap(await listCampaigns()), accountIds, selfId)
+  if (!busy.length) return null
+  return `Аккаунты закреплены за другой кампанией: ${busy.map((x) => String(x).slice(-6)).join(', ')}. Освободите их или снимите закрепление.`
+}
+
+campaignsRouter.post('/', async (req, res) => {
+  try {
+    const body = req.body ?? {}
+    if (body.pinned !== false) {
+      const err = await assertAccountsFree(body.accountIds)
+      if (err) return res.status(409).json({ ok: false, error: err })
+    }
+    res.json({ ok: true, campaign: await createCampaign(body) })
+  } catch (e) { fail(res, e) }
+})
+
+campaignsRouter.get('/:id', async (req, res) => {
+  try {
+    const campaign = await getCampaign(req.params.id)
+    if (!campaign) return res.status(404).json({ ok: false, error: 'Кампания не найдена' })
+    res.json({ ok: true, campaign })
+  } catch (e) { fail(res, e) }
+})
+
+campaignsRouter.put('/:id', async (req, res) => {
+  try {
+    const body = req.body ?? {}
+    if (body.accountIds && body.pinned !== false) {
+      const err = await assertAccountsFree(body.accountIds, req.params.id)
+      if (err) return res.status(409).json({ ok: false, error: err })
+    }
+    const campaign = await updateCampaign(req.params.id, body)
+    if (!campaign) return res.status(404).json({ ok: false, error: 'Кампания не найдена' })
+    res.json({ ok: true, campaign })
+  } catch (e) { fail(res, e) }
+})
+
+campaignsRouter.delete('/:id', async (req, res) => {
+  try {
+    const ok = await deleteCampaign(req.params.id)
+    if (!ok) return res.status(404).json({ ok: false, error: 'Кампания не найдена' })
+    res.json({ ok: true }) // удаление кампании освобождает её аккаунты (лок жил в самой кампании)
   } catch (e) { fail(res, e) }
 })
