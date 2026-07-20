@@ -2,6 +2,7 @@ import { useMemo, useState, useEffect } from 'react'
 import {
   Plus, UploadCloud, Server, RefreshCw, Columns3, ListChecks, Search, Filter,
   MoreHorizontal, Trash2, KeyRound, Info, Users, Check, X, Undo2, Loader2, Pause,
+  Lock, LockOpen, Rocket,
 } from 'lucide-react'
 import { useApp, activeAccounts, trashedAccounts, STATUS_META } from '@/mocks/store'
 import { useSession } from '@/features/auth/session'
@@ -23,12 +24,13 @@ import { countryOptionsFrom, matchesGeo } from '@/shared/config/geo'
 import { confirmDialog, promptDialog } from '@/shared/lib/dialog'
 import type { AccountStatus, TgAccount } from '@/shared/types'
 import { patchAccount, releaseAccountLock, setAccountStatusManual, fetchDailyAll, type DailyAllMap } from '@/api/accountsApi'
+import { fetchCampaigns, updateCampaign, type Campaign, type PinnedMap } from '@/api/campaignsApi'
 
 const STATUS_ORDER: AccountStatus[] = ['active', 'working', 'warming', 'pause', 'floodwait', 'quarantine', 'spamblock', 'invalid', 'frozen', 'reauth']
 const COLS = [
   { key: 'avatar', label: 'Аватар' },
   { key: 'name', label: 'Имя' },
-  { key: 'role', label: 'Роль' },
+  { key: 'campaign', label: 'Кампания' },
   { key: 'project', label: 'Проект' },
   { key: 'status', label: 'Статус' },
   { key: 'lastSeen', label: 'Отлёжка' },
@@ -58,6 +60,51 @@ export function AccountsPage() {
   const [tab, setTab] = useState<'accounts' | 'trash'>('accounts')
   const [statusFilter, setStatusFilter] = useState<AccountStatus | 'all'>('all')
   const [roleFilter, setRoleFilter] = useState('Все роли')
+  // §1: «роль как группа» уходит — аккаунт работает ПОД КАМПАНИЕЙ. Закрепление живёт
+  // в самой кампании (см. server/campaigns.js), поэтому accountsMeta.role не трогаем.
+  const [campaigns, setCampaigns] = useState<Campaign[]>([])
+  const [pinnedMap, setPinnedMap] = useState<PinnedMap>({})
+  const [campaignFilter, setCampaignFilter] = useState('all')
+  const loadCampaigns = () => {
+    void fetchCampaigns().then(({ campaigns: cs, pinned }) => { setCampaigns(cs); setPinnedMap(pinned) }).catch(() => {})
+  }
+  useEffect(() => { loadCampaigns() }, [])
+  const [assignAcc, setAssignAcc] = useState<TgAccount | null>(null) // §1: назначить кампанию одному аккаунту
+  /**
+   * §1: назначить аккаунт кампании — «присвоить (лок)» или «использовать (без лока)».
+   * Правим список аккаунтов самой кампании: закрепление живёт там, а не в accountsMeta.
+   */
+  const assignToCampaign = async (accountId: string, campaignId: string, lock: boolean) => {
+    try {
+      // Сначала убираем аккаунт из прежних кампаний, чтобы не висел в двух местах.
+      for (const c of campaigns) {
+        if ((c.accountIds || []).includes(accountId) && c.id !== campaignId) {
+          await updateCampaign(c.id, { accountIds: c.accountIds.filter((x) => x !== accountId) })
+        }
+      }
+      if (campaignId) {
+        const target = campaigns.find((c) => c.id === campaignId)
+        if (target) {
+          const ids = [...new Set([...(target.accountIds || []), accountId])]
+          await updateCampaign(campaignId, { accountIds: ids, pinned: lock })
+        }
+      }
+      loadCampaigns()
+      pushToast({ type: 'success', title: campaignId ? (lock ? 'Аккаунт закреплён за кампанией' : 'Аккаунт добавлен в кампанию без лока') : 'Аккаунт возвращён в общий пул' })
+    } catch (e) {
+      pushToast({ type: 'error', title: 'Не удалось назначить', desc: e instanceof Error ? e.message : '' })
+    }
+    setAssignAcc(null)
+  }
+
+
+  /** §1: под какой кампанией аккаунт и закреплён ли (замочек). */
+  const campaignOf = (accountId: string) => {
+    const pin = pinnedMap[accountId]
+    if (pin) return { name: pin.name, locked: true }
+    const c = campaigns.find((x) => (x.accountIds || []).includes(accountId))
+    return c ? { name: c.name, locked: false } : null
+  }
   const [countryFilter, setCountryFilter] = useState('all')
   const [moduleFilter, setModuleFilter] = useState('all')
   const [moveOpen, setMoveOpen] = useState(false)
@@ -117,7 +164,11 @@ export function AccountsPage() {
   const filtered = useMemo(() => {
     const list = source.filter((a) => {
       if (tab === 'accounts' && statusFilter !== 'all' && a.status !== statusFilter) return false
-      if (roleFilter !== 'Все роли' && a.role !== roleFilter) return false
+      if (campaignFilter === 'pool' && campaignOf(a.id)) return false
+      if (campaignFilter !== 'all' && campaignFilter !== 'pool') {
+        const c = campaigns.find((x) => x.id === campaignFilter)
+        if (!c || !(c.accountIds || []).includes(a.id)) return false
+      }
       if (!matchesGeo(a.country, countryFilter)) return false
       if (tab === 'accounts' && moduleFilter !== 'all') {
         if (moduleFilter === 'idle') { if (a.busyIn) return false }
@@ -131,7 +182,7 @@ export function AccountsPage() {
       .map((a, i) => ({ a, i }))
       .sort((x, y) => (Number(!!x.a.busyIn) - Number(!!y.a.busyIn)) || (x.i - y.i))
       .map((x) => x.a)
-  }, [source, tab, statusFilter, roleFilter, countryFilter, moduleFilter, query])
+  }, [source, tab, statusFilter, campaignFilter, campaigns, pinnedMap, countryFilter, moduleFilter, query])
 
   const pageCount = Math.max(1, Math.ceil(filtered.length / pageSize))
   const pageItems = filtered.slice(page * pageSize, page * pageSize + pageSize)
@@ -339,8 +390,17 @@ export function AccountsPage() {
         >
           {() => (
             <div className="p-1.5">
-              <div className="mb-1 px-1 text-[11px] font-bold uppercase tracking-wide text-faint">Роль</div>
-              <Select className="mb-3" value={roleFilter} onChange={setRoleFilter} options={ROLES.map((r) => ({ value: r, label: r }))} />
+              <div className="mb-1 px-1 text-[11px] font-bold uppercase tracking-wide text-faint">Кампания</div>
+              <Select
+                className="mb-3"
+                value={campaignFilter}
+                onChange={setCampaignFilter}
+                options={[
+                  { value: 'all', label: 'Все кампании' },
+                  { value: 'pool', label: 'В общем пуле (не закреплены)' },
+                  ...campaigns.map((c) => ({ value: c.id, label: c.name })),
+                ]}
+              />
               <div className="mb-1 px-1 text-[11px] font-bold uppercase tracking-wide text-faint">Страна</div>
               <Select className="mb-3" value={countryFilter} onChange={setCountryFilter} options={countryOptionsFrom(active.map((a) => a.country)).map((c) => ({ value: c.code, label: `${c.flag} ${c.label}`.trim() }))} />
               <div className="mb-1 px-1 text-[11px] font-bold uppercase tracking-wide text-faint">Модуль</div>
@@ -413,7 +473,7 @@ export function AccountsPage() {
       {/* Table / content */}
       {isNoSub ? (
         <PaywallLock>
-          <AccountsTable pageItems={active.slice(0, 3)} visibleCols={visibleCols} showCol={showCol} selected={selected} toggleOne={() => {}} allOnPageSelected={false} toggleAll={() => {}} tab="accounts" onDetail={() => {}} onProxy={() => {}} onTrash={() => {}} onRestore={() => {}} onReauth={() => {}} onMarkReauth={() => {}} loading={false} />
+          <AccountsTable pageItems={active.slice(0, 3)} visibleCols={visibleCols} showCol={showCol} selected={selected} toggleOne={() => {}} allOnPageSelected={false} toggleAll={() => {}} tab="accounts" onDetail={() => {}} onProxy={() => {}} onTrash={() => {}} onRestore={() => {}} onReauth={() => {}} onMarkReauth={() => {}} loading={false} campaignOf={campaignOf} onAssign={() => {}} />
         </PaywallLock>
       ) : loading ? (
         <div className="card overflow-hidden p-0">
@@ -443,6 +503,8 @@ export function AccountsPage() {
       ) : (
         <>
           <AccountsTable
+            campaignOf={campaignOf}
+            onAssign={setAssignAcc}
             pageItems={pageItems}
             visibleCols={visibleCols}
             showCol={showCol}
@@ -492,6 +554,13 @@ export function AccountsPage() {
       <AccountManagementModal account={detailAcc} onClose={() => setDetailAcc(null)} />
 
       {/* Change proxy */}
+      <AssignCampaignModal
+        acc={assignAcc}
+        campaigns={campaigns}
+        current={assignAcc ? campaignOf(assignAcc.id) : null}
+        onClose={() => setAssignAcc(null)}
+        onApply={(cid, lock) => { void assignToCampaign(assignAcc!.id, cid, lock) }}
+      />
       <ChangeProxyModal acc={proxyAcc} onClose={() => setProxyAcc(null)} onSave={(id, p) => { void setAccountProxy(id, p).then(() => { pushToast({ type: 'success', title: 'Прокси обновлён' }); setProxyAcc(null) }) }} />
 
       {/* (8) Bulk move to group */}
@@ -555,8 +624,11 @@ function AccountsTable(props: {
   onMarkReauth: (a: TgAccount) => void
   loading: boolean
   dailyAll?: DailyAllMap
+  /** §1: под какой кампанией аккаунт и закреплён ли (замочек). */
+  campaignOf: (accountId: string) => { name: string; locked: boolean } | null
+  onAssign: (a: TgAccount) => void
 }) {
-  const { pageItems, showCol, selected, toggleOne, allOnPageSelected, toggleAll } = props
+  const { pageItems, showCol, selected, toggleOne, allOnPageSelected, toggleAll, campaignOf } = props
   const showAccountCol = showCol('name') || showCol('avatar')
   return (
     <div className="card overflow-hidden p-0">
@@ -567,7 +639,7 @@ function AccountsTable(props: {
             <tr className="border-b border-line bg-elevated/60 text-left text-[11px] font-bold uppercase tracking-wide text-muted">
               <th className="w-10 px-4 py-3"><input type="checkbox" checked={allOnPageSelected} onChange={toggleAll} className="h-4 w-4 rounded border-line accent-spark-500" /></th>
               {showAccountCol && <th className="px-4 py-3">Аккаунт</th>}
-              {showCol('role') && <th className="px-4 py-3">Роль</th>}
+              {showCol('campaign') && <th className="px-4 py-3">Кампания</th>}
               {showCol('project') && <th className="px-4 py-3">Проект</th>}
               {showCol('status') && <th className="px-4 py-3">Статус</th>}
               {showCol('lastSeen') && <th className="px-4 py-3">Отлёжка</th>}
@@ -590,7 +662,20 @@ function AccountsTable(props: {
                   </button>
                 </td>
                 )}
-                {showCol('role') && <td className="px-4 py-3 text-muted">{a.role}</td>}
+                {showCol('campaign') && (
+                  <td className="px-4 py-3">
+                    {(() => {
+                      const c = campaignOf(a.id)
+                      if (!c) return <span className="text-xs text-faint">в общем пуле</span>
+                      return (
+                        <span className="inline-flex items-center gap-1 text-xs text-fg" title={c.locked ? `Закреплён за кампанией «${c.name}» — вышел из общего пула` : `Используется кампанией «${c.name}» без закрепления`}>
+                          {c.locked ? <Lock size={11} className="shrink-0 text-amber-300" /> : <LockOpen size={11} className="shrink-0 text-faint" />}
+                          <span className="truncate">{c.name}</span>
+                        </span>
+                      )
+                    })()}
+                  </td>
+                )}
                 {showCol('project') && <td className="px-4 py-3"><span className="rounded-md bg-elevated px-2 py-0.5 text-xs font-medium text-fg">{a.project}</span></td>}
                 {showCol('status') && (
                   <td className="px-4 py-3">
@@ -702,11 +787,12 @@ function AccountsTable(props: {
   )
 }
 
-function RowMenu({ a, tab, onDetail, onProxy, onTrash, onRestore, onReauth, onMarkReauth }: {
+function RowMenu({ a, tab, onDetail, onProxy, onTrash, onRestore, onReauth, onMarkReauth, onAssign }: {
   a: TgAccount; tab: 'accounts' | 'trash'
   onDetail: (a: TgAccount) => void; onProxy: (a: TgAccount) => void
   onTrash: (a: TgAccount) => void; onRestore: (a: TgAccount) => void
   onReauth: (a: TgAccount) => void; onMarkReauth: (a: TgAccount) => void
+  onAssign: (a: TgAccount) => void
 }) {
   return (
     <Dropdown
@@ -723,6 +809,7 @@ function RowMenu({ a, tab, onDetail, onProxy, onTrash, onRestore, onReauth, onMa
               ) : (
                 <MenuItem icon={<KeyRound size={15} />} onClick={() => { onMarkReauth(a); close() }}>Отправить на реавторизацию</MenuItem>
               )}
+              <MenuItem icon={<Rocket size={15} />} onClick={() => { onAssign(a); close() }}>Кампания аккаунта</MenuItem>
               <MenuItem icon={<Server size={15} />} onClick={() => { onProxy(a); close() }}>Сменить прокси</MenuItem>
               <MenuItem icon={<Trash2 size={15} />} tone="danger" onClick={() => { onTrash(a); close() }}>В корзину</MenuItem>
             </>
@@ -732,6 +819,56 @@ function RowMenu({ a, tab, onDetail, onProxy, onTrash, onRestore, onReauth, onMa
         </>
       )}
     </Dropdown>
+  )
+}
+
+/** §1: назначить аккаунт кампании — с локом («присвоить») или без («использовать»). */
+function AssignCampaignModal({ acc, campaigns, current, onClose, onApply }: {
+  acc: TgAccount | null
+  campaigns: Campaign[]
+  current: { name: string; locked: boolean } | null
+  onClose: () => void
+  onApply: (campaignId: string, lock: boolean) => void
+}) {
+  const [cid, setCid] = useState('')
+  const [lock, setLock] = useState(true)
+  useEffect(() => {
+    if (!acc) return
+    const own = campaigns.find((c) => (c.accountIds || []).includes(acc.id))
+    setCid(own?.id ?? '')
+    setLock(current?.locked ?? true)
+  }, [acc, campaigns, current])
+  if (!acc) return null
+  return (
+    <Modal
+      open
+      onClose={onClose}
+      title="Кампания аккаунта"
+      subtitle={`${acc.name} — под какой кампанией работает`}
+      icon={<Rocket size={22} />}
+      size="sm"
+      footer={<>
+        <button onClick={onClose} className="btn-ghost h-10">Отмена</button>
+        <button onClick={() => onApply(cid, lock)} className="btn-primary h-10">Применить</button>
+      </>}
+    >
+      <label className="label">Кампания</label>
+      <Select
+        value={cid}
+        onChange={setCid}
+        placeholder="Без кампании (общий пул)"
+        options={[{ value: '', label: 'Без кампании (вернуть в общий пул)' }, ...campaigns.map((c) => ({ value: c.id, label: c.name }))]}
+      />
+      {cid && (
+        <label className="mt-3 flex items-center gap-2 text-xs text-white/70">
+          <input type="checkbox" checked={lock} onChange={(e) => setLock(e.target.checked)} className="h-4 w-4 rounded border-line accent-spark-500" />
+          Присвоить с закреплением (замок) — аккаунт выйдет из общего пула
+        </label>
+      )}
+      <p className="mt-2 text-[11px] text-muted">
+        Без галочки — «использовать без лока»: аккаунт остаётся доступен другим кампаниям.
+      </p>
+    </Modal>
   )
 }
 
