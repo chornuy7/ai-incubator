@@ -11,7 +11,8 @@ import {
   fetchCampaigns, createCampaign, updateCampaign, deleteCampaign, CAMPAIGN_STATUSES,
   type CampaignResult, type CampaignSchedule, type Campaign, type CampaignStatus, type PinnedMap,
 } from '@/api/campaignsApi'
-import { confirmDialog } from '@/shared/lib/dialog'
+import { confirmDialog, promptDialog } from '@/shared/lib/dialog'
+import { fetchAccountGroups, createAccountGroup, accountsOfGroupsLocal, type AccountGroup } from '@/api/accountGroupsApi'
 import { fetchChannels, type Channel } from '@/api/channelsApi'
 import { FolderPicker } from '@/features/modules/shared/FolderPicker'
 
@@ -49,6 +50,10 @@ export function CampaignPage() {
   const [cSaving, setCSaving] = useState(false)
   const [pickMode, setPickMode] = useState(0) // 0 — числом из пула, 1 — вручную
   const [takeN, setTakeN] = useState(5)
+  // §5: третий режим выбора аккаунтов — папкой (группой). §12: группы — отдельная сущность.
+  const [groups, setGroups] = useState<AccountGroup[]>([])
+  const [pickedGroups, setPickedGroups] = useState<string[]>([])
+  const loadGroups = () => { void fetchAccountGroups().then(({ groups: gs }) => setGroups(gs)).catch(() => {}) }
 
   const loadCampaigns = () => {
     void fetchCampaigns().then(({ campaigns: cs, pinned }) => { setCampaigns(cs); setPinnedMap(pinned) }).catch(() => {})
@@ -59,6 +64,7 @@ export function CampaignPage() {
     void fetchChannels().then(setChannels).catch(() => {})
     loadSchedules()
     loadCampaigns()
+    loadGroups()
   }, [])
 
   // Свободные аккаунты (не занятые другой задачей) — их и распределим.
@@ -153,7 +159,11 @@ export function CampaignPage() {
     if (!cName.trim()) return pushToast({ type: 'error', title: 'Укажите название кампании' })
     if (!cModule) return pushToast({ type: 'error', title: 'Кампания должна настраивать модуль' })
     // Режим «числом» — берём N свободных аккаунтов из пула.
-    const ids = pickMode === 0 ? freeForCampaign.slice(0, Math.max(0, takeN)).map((a) => a.id) : cAccounts
+    const ids = pickMode === 0
+      ? freeForCampaign.slice(0, Math.max(0, takeN)).map((a) => a.id)
+      : pickMode === 2
+        ? accountsOfGroupsLocal(groups, pickedGroups).filter((id) => freeForCampaign.some((a) => a.id === id))
+        : cAccounts
     setCSaving(true)
     try {
       const payload = { name: cName.trim(), goalId: cGoalId || null, moduleKey: cModule, accountIds: ids, pinned: cPinned, status: cStatus }
@@ -169,6 +179,19 @@ export function CampaignPage() {
     } catch (e) {
       pushToast({ type: 'error', title: 'Не сохранено', desc: e instanceof Error ? e.message : '' })
     } finally { setCSaving(false) }
+  }
+
+  // §12: создать группу прямо из выбранных аккаунтов — чтобы не заводить их в чужом экране.
+  const saveSelectionAsGroup = async () => {
+    const name = await promptDialog({ title: 'Новая группа аккаунтов', message: 'Название группы', placeholder: 'Напр. Прогрев RU' })
+    if (!name?.trim()) return
+    try {
+      await createAccountGroup({ name: name.trim(), accountIds: cAccounts })
+      loadGroups()
+      pushToast({ type: 'success', title: 'Группа создана', desc: `${name.trim()} · ${cAccounts.length} акк.` })
+    } catch (e) {
+      pushToast({ type: 'error', title: 'Не создано', desc: e instanceof Error ? e.message : '' })
+    }
   }
 
   const removeCampaign = async (c: Campaign) => {
@@ -215,7 +238,7 @@ export function CampaignPage() {
           <div>
             <div className="mb-1 text-xs text-white/50">Аккаунты — {freeForCampaign.length} свободных (не закреплены другой кампанией)</div>
             <div className="mb-2 inline-flex rounded-lg border border-line bg-elevated p-0.5 text-xs">
-              {['Числом из пула', 'Выбрать вручную'].map((l, i) => (
+              {['Числом из пула', 'Выбрать вручную', 'Группой (папкой)'].map((l, i) => (
                 <button key={l} type="button" onClick={() => setPickMode(i)} className={`rounded px-3 py-1.5 font-semibold ${pickMode === i ? 'bg-spark-gradient text-[#04150c]' : 'text-muted'}`}>{l}</button>
               ))}
             </div>
@@ -238,6 +261,32 @@ export function CampaignPage() {
                   )
                 })}
               </div>
+            )}
+            {pickMode === 2 && (
+              <div className="rounded-xl border border-line bg-elevated/40 p-2.5">
+                {groups.length === 0 ? (
+                  <p className="text-xs text-white/40">Групп аккаунтов пока нет. Выберите аккаунты вручную и сохраните их как группу — она появится здесь и в «Ролях и доступах».</p>
+                ) : (
+                  <div className="flex flex-wrap gap-1.5">
+                    {groups.map((g) => {
+                      const on = pickedGroups.includes(g.id)
+                      const free = g.accountIds.filter((id) => freeForCampaign.some((a) => a.id === id)).length
+                      return (
+                        <button key={g.id} type="button"
+                          onClick={() => setPickedGroups((prev) => (on ? prev.filter((x) => x !== g.id) : [...prev, g.id]))}
+                          className={`rounded-lg border px-2 py-1 text-xs ${on ? 'border-spark-500/50 bg-spark-500/12 text-spark-300' : 'border-line text-white/60'}`}>
+                          {g.name} <span className="text-white/40">· {free}/{g.accountIds.length} свободны</span>
+                        </button>
+                      )
+                    })}
+                  </div>
+                )}
+              </div>
+            )}
+            {pickMode === 1 && cAccounts.length > 0 && (
+              <button type="button" onClick={() => void saveSelectionAsGroup()} className="btn-ghost mt-2 h-8 text-xs">
+                + Сохранить выбранные как группу
+              </button>
             )}
             <label className="mt-2 flex items-center gap-2 text-xs text-white/60">
               <input type="checkbox" checked={cPinned} onChange={(e) => setCPinned(e.target.checked)} className="h-4 w-4 rounded border-line accent-spark-500" />
