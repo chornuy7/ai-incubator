@@ -28,6 +28,9 @@ export function MailingPage() {
   const [goalId, setGoalId] = useState('')
   const [aiPerRecipient, setAiPerRecipient] = useState(false)
   const [launching, setLaunching] = useState(false)
+  // §9: текст берётся из цели. Свой нужен, только если хочется отойти от неё —
+  // раньше он был обязательным, и запустить рассылку по цели было нельзя вообще.
+  const [ownText, setOwnText] = useState(false)
   // §9: цель ведёт весь процесс. Выбрал цель — можно сразу поднять чатинг под ней же:
   // рассылка приводит людей, чатинг ловит ответы и двигает их по воронке той же цели.
   const [withChat, setWithChat] = useState(true)
@@ -89,7 +92,11 @@ export function MailingPage() {
   }, [accounts, selected, minTrust])
   const blockedByTrust = belowTrust.length > 0 && !isAdmin
 
-  const canLaunch = canWrite && !blockedByTrust && selected.size > 0 && numbers.length > 0 && message.trim().length > 0 && !launching
+  // Текст обязателен, только когда его больше неоткуда взять: нет цели (в ней лежит
+  // первое сообщение) или человек сам выбрал писать своё.
+  const needOwnText = !goalId || ownText
+  const canLaunch = canWrite && !blockedByTrust && selected.size > 0 && numbers.length > 0
+    && (!needOwnText || message.trim().length > 0) && !launching
 
   const applyTrust = async () => {
     const n = Number(trustDraft)
@@ -124,7 +131,7 @@ export function MailingPage() {
         accountIds: [...selected],
         targets: numbers,
         threads: chatThreads,
-        promptText: message.trim(),
+        promptText: needOwnText ? message.trim() : '',
         maxPerAccount,
         delays: { dm: [delayMin, delayMax], action: [delayMin, delayMax] },
         protectionLevel: protLevel,
@@ -198,7 +205,23 @@ export function MailingPage() {
           </Card>
 
           <Card className="p-4">
-            <MessageComposer value={message} onChange={setMessage} media={media} onMedia={setMedia} minHeight={90} />
+            {goalId && (
+              <label className="mb-2 flex cursor-pointer items-start gap-2">
+                <input type="checkbox" checked={ownText} onChange={(e) => setOwnText(e.target.checked)} className="mt-0.5 h-4 w-4 accent-spark" />
+                <span>
+                  <span className="text-xs font-semibold text-fg">Свой текст сообщения</span>
+                  <span className="mt-0.5 block text-[11px] text-white/45">
+                    По умолчанию берётся из цели («Первое сообщение» в её описании). Включите, только если
+                    для этой рассылки нужен другой текст.
+                  </span>
+                </span>
+              </label>
+            )}
+            {needOwnText
+              ? <MessageComposer value={message} onChange={setMessage} media={media} onMedia={setMedia} minHeight={90} />
+              : <div className="rounded-xl border border-line bg-elevated/40 p-3 text-xs text-white/45">
+                  Текст возьмётся из цели «{goals.find((g) => g.id === goalId)?.name || ''}» — «Первое сообщение» в её описании.
+                </div>}
             {goals.length > 0 && (
               <div className="mt-2">
                 <div className="mb-1 text-xs text-white/50">Цель (опционально — генерация к цели)</div>
