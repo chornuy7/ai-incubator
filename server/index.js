@@ -22,6 +22,7 @@ import { rolesRouter } from './rolesRoutes.js'
 import { usersRouter } from './usersRoutes.js'
 import { moduleAccessGuard, moduleKeyFromModulesPath } from './lib/accessGuard.js'
 import { proxiesRouter } from './proxiesRoutes.js'
+import { importRouter } from './importRoutes.js'
 import { startScheduler } from './automation/scheduler.js'
 import { loadAiSettings } from './aiSettings.js'
 import { loadAiSafety } from './aiSafety.js'
@@ -260,6 +261,7 @@ app.use('/api/channels', channelsRouter)
 app.use('/api/roles', rolesRouter)
 app.use('/api/users', usersRouter)
 app.use('/api/proxies', proxiesRouter)
+app.use('/api/tg/import', importRouter) // §2: массовый импорт аккаунтов
 
 // Единый журнал действий/аудит (§3.1/§5): смена статусов, старт/стоп задач, перенос, кампании.
 app.get('/api/audit', async (req, res) => {

@@ -22,7 +22,8 @@ function sessionFile(accountId) {
   return path.join(SESSIONS_DIR, `${accountId}.session`)
 }
 
-async function saveSession(accountId, sessionString) {
+/** Записать строку-сессию под accountId. Экспортируется для §2 (массовый импорт). */
+export async function saveSession(accountId, sessionString) {
   await ensureSessionsDir()
   await fs.writeFile(sessionFile(accountId), sessionString, 'utf8')
 }
@@ -35,7 +36,8 @@ export async function loadSessionString(accountId) {
   }
 }
 
-function newAccountId(phone) {
+/** Новый id аккаунта. Экспортируется для §2 (массовый импорт). */
+export function newAccountId(phone) {
   const hash = crypto.createHash('sha256').update(phone + Date.now()).digest('hex').slice(0, 12)
   return `acc_${hash}`
 }
