@@ -28,6 +28,8 @@ export function ImportModal({ open, onClose, onImported }: { open: boolean; onCl
   const [items, setItems] = useState<ScannedAccount[]>([])
   const [picked, setPicked] = useState<Set<string>>(new Set())
   const [passcode, setPasscode] = useState('')
+  // §2: облачные пароли, введённые руками — только для тех, у кого не нашли рядом.
+  const [passwords, setPasswords] = useState<Record<string, string>>({})
   const [proxyMode, setProxyMode] = useState<ProxyMode>('pool')
   const [proxies, setProxies] = useState<Proxy[]>([])
   const [singleProxy, setSingleProxy] = useState('')
@@ -66,7 +68,7 @@ export function ImportModal({ open, onClose, onImported }: { open: boolean; onCl
     setScanning(true); setErr('')
     try {
       const r = await scanFolder(dir, passcode || undefined)
-      setRoot(dir); setUploadToken('')
+      setRoot(dir); setUploadToken(''); setPasswords({})
       setItems(r.items)
       // Уже заведённые по умолчанию не отмечаем — чтобы повторный скан не плодил дубли.
       setPicked(new Set(r.items.filter((i) => !i.known).map(key)))
@@ -86,7 +88,11 @@ export function ImportModal({ open, onClose, onImported }: { open: boolean; onCl
   const run = async () => {
     setBusy(true); setErr('')
     try {
-      const r = await runImport({ items: chosen, proxyMode, singleProxy, validate, passcode: passcode || undefined, root })
+      const withPasswords = chosen.map((i) => {
+        const typed = passwords[key(i)]?.trim()
+        return typed && !i.twoFA ? { ...i, twoFA: typed } : i
+      })
+      const r = await runImport({ items: withPasswords, proxyMode, singleProxy, validate, passcode: passcode || undefined, root })
       setResults(r.results)
       setStep('result')
       if (uploadToken) { void cleanupUpload(uploadToken).catch(() => {}); setUploadToken('') }
@@ -97,7 +103,7 @@ export function ImportModal({ open, onClose, onImported }: { open: boolean; onCl
 
   const close = () => {
     if (uploadToken) void cleanupUpload(uploadToken).catch(() => {})
-    setStep('pick'); setItems([]); setResults([]); setUploadToken(''); onClose()
+    setStep('pick'); setItems([]); setResults([]); setUploadToken(''); setPasswords({}); onClose()
   }
 
   /** Залить выбранную папку целиком — путь для удалённого сервера. */
@@ -217,14 +223,32 @@ export function ImportModal({ open, onClose, onImported }: { open: boolean; onCl
 
           <div className="max-h-56 overflow-y-auto rounded-xl border border-line">
             {items.map((i) => (
-              <label key={key(i)} className="flex cursor-pointer items-center gap-2 border-b border-line/60 px-3 py-2 text-sm last:border-0 hover:bg-elevated">
-                <input type="checkbox" checked={picked.has(key(i))} onChange={() => toggle(i)} className="h-4 w-4 accent-spark" />
-                {i.kind === 'tdata' ? <FolderOpen size={14} className="shrink-0 text-amber-300" /> : <Users size={14} className="shrink-0 text-iris-300" />}
-                <span className="truncate font-semibold text-white">{i.name}</span>
-                {i.phone && <span className="shrink-0 font-mono text-xs text-white/45">{i.phone}</span>}
-                {i.proxy && <Badge tone="iris">свой прокси</Badge>}
-                {i.known && <Badge tone="amber">уже есть</Badge>}
-              </label>
+              <div key={key(i)} className="border-b border-line/60 last:border-0">
+                <label className="flex cursor-pointer items-center gap-2 px-3 py-2 text-sm hover:bg-elevated">
+                  <input type="checkbox" checked={picked.has(key(i))} onChange={() => toggle(i)} className="h-4 w-4 accent-spark" />
+                  {i.kind === 'tdata' ? <FolderOpen size={14} className="shrink-0 text-amber-300" /> : <Users size={14} className="shrink-0 text-iris-300" />}
+                  <span className="truncate font-semibold text-white">{i.name}</span>
+                  {i.phone && <span className="shrink-0 font-mono text-xs text-white/45">{i.phone}</span>}
+                  {i.proxy && <Badge tone="iris">свой прокси</Badge>}
+                  {i.twoFA && <Badge tone="spark"><KeyRound size={10} /> пароль есть</Badge>}
+                  {i.known && <Badge tone="amber">уже есть</Badge>}
+                </label>
+                {/* Поле пароля показываем ТОЛЬКО там, где его не нашли рядом с аккаунтом:
+                    у остальных спрашивать нечего. Пустое поле ничего не ломает — аккаунт
+                    просто импортируется без облачного пароля. */}
+                {picked.has(key(i)) && !i.twoFA && (
+                  <div className="flex items-center gap-2 px-3 pb-2 pl-9">
+                    <input
+                      type="password"
+                      className="input h-8 max-w-[220px] text-xs"
+                      placeholder="Облачный пароль (если есть)"
+                      value={passwords[key(i)] || ''}
+                      onChange={(e) => setPasswords((p) => ({ ...p, [key(i)]: e.target.value }))}
+                    />
+                    <span className="text-xs text-white/30">не нашли рядом с аккаунтом</span>
+                  </div>
+                )}
+              </div>
             ))}
           </div>
 
@@ -278,13 +302,23 @@ export function ImportModal({ open, onClose, onImported }: { open: boolean; onCl
           <div className="flex flex-wrap items-center gap-2">
             <Badge tone="spark"><Check size={12} /> Добавлено: {results.filter((r) => r.ok).length}</Badge>
             {results.some((r) => !r.ok) && <Badge tone="rose">Не вышло: {results.filter((r) => !r.ok).length}</Badge>}
+            {results.some((r) => r.has2fa) && <Badge tone="iris"><KeyRound size={10} /> с паролем: {results.filter((r) => r.has2fa).length}</Badge>}
           </div>
+          {results.some((r) => r.needsPassword) && (
+            <div className="rounded-xl border border-amber-500/30 bg-amber-500/5 p-3 text-xs leading-relaxed text-amber-200">
+              У {results.filter((r) => r.needsPassword).length} аккаунтов включён облачный пароль, но самого пароля у нас нет.
+              Работать они будут, а вот восстановить их не выйдет, если сессия отвалится. Пароли можно дописать позже —
+              положите их в <b>password.txt</b> рядом с аккаунтом и импортируйте повторно.
+            </div>
+          )}
           <div className="max-h-64 overflow-y-auto rounded-xl border border-line">
             {results.map((r, i) => (
               <div key={i} className="flex items-center gap-2 border-b border-line/60 px-3 py-2 text-sm last:border-0">
                 {r.ok ? <Check size={13} className="shrink-0 text-spark-400" /> : <AlertTriangle size={13} className="shrink-0 text-rose-400" />}
                 <span className="truncate font-semibold text-white">{r.name}</span>
                 {r.phone && <span className="shrink-0 font-mono text-xs text-white/45">{r.phone}</span>}
+                {r.has2fa && <KeyRound size={11} className="shrink-0 text-spark-400" aria-label="пароль сохранён" />}
+                {r.needsPassword && <AlertTriangle size={11} className="shrink-0 text-amber-400" aria-label="2FA включена, пароля нет" />}
                 <span className="ml-auto shrink-0 text-xs text-white/40">{r.ok ? (r.proxy ? 'с прокси' : 'без прокси') : r.reason}</span>
               </div>
             ))}
