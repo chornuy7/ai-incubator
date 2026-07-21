@@ -633,7 +633,7 @@ export function AccountsPage() {
 
       {/* Modals */}
       <AddAccountWizard open={addOpen} onClose={closeWizard} mode={wizardMode} account={reauthTarget} />
-      <ImportModal open={importOpen} onClose={() => setImportOpen(false)} />
+      <ImportModal open={importOpen} onClose={() => setImportOpen(false)} onImported={() => void loadAccounts()} />
       <ProxyPoolModal open={proxyPoolOpen} onClose={() => setProxyPoolOpen(false)} />
 
       {/* Account Management (реальная статистика) */}
