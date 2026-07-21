@@ -1,5 +1,5 @@
 import { generateComment, isAiGenerationEnabled, resolveSystemPrompt } from '../neuroCommenting/commentGenerator.js'
-import { buildGoalContext, stageForStatus } from '../lib/goalContext.js'
+import { buildGoalContext, stageForStatus, linksFromGoal } from '../lib/goalContext.js'
 import { upsertMany } from '../channels.js'
 import {
   fetchPosts,
@@ -147,18 +147,6 @@ export async function runNeuroCommenting(task, store) {
 
   // §3.6/§4: если задача привязана к цели — подмешиваем цель + базу знаний в системный промпт.
   const goalCtx = await buildGoalContext(s.goalId)
-  // §9: заготовки первого сообщения живут в самой ЦЕЛИ («Первое сообщение:» и
-  // «Альтернативное…» в описании). Раньше текст приходилось дублировать в модуле,
-  // и он расходился с целью. Теперь: нет своего текста — берём из цели, по кругу.
-  const goalOpeners = await (async () => {
-    if (!s.goalId) return []
-    try {
-      const { getGoal } = await import('../goals.js')
-      const { firstMessagesFromGoal } = await import('../lib/goalContext.js')
-      return firstMessagesFromGoal(await getGoal(s.goalId))
-    } catch { return [] }
-  })()
-  if (goalOpeners.length) await store.appendLog(task, 'info', `Первое сообщение из цели: ${goalOpeners.length} вариант(ов), чередуем`)
   if (goalCtx) await store.appendLog(task, 'info', 'Комментарии генерируются к выбранной цели (с базой знаний)')
 
   // §3.5 семантика: если включён семантический фильтр и есть цель — считаем её вектор один раз.
@@ -330,18 +318,6 @@ export async function runNeuroChatting(task, store) {
   await store.saveTask(task)
   await store.appendLog(task, 'info', 'Нейрочаттинг запущен')
   const goalCtx = await buildGoalContext(s.goalId)
-  // §9: заготовки первого сообщения живут в самой ЦЕЛИ («Первое сообщение:» и
-  // «Альтернативное…» в описании). Раньше текст приходилось дублировать в модуле,
-  // и он расходился с целью. Теперь: нет своего текста — берём из цели, по кругу.
-  const goalOpeners = await (async () => {
-    if (!s.goalId) return []
-    try {
-      const { getGoal } = await import('../goals.js')
-      const { firstMessagesFromGoal } = await import('../lib/goalContext.js')
-      return firstMessagesFromGoal(await getGoal(s.goalId))
-    } catch { return [] }
-  })()
-  if (goalOpeners.length) await store.appendLog(task, 'info', `Первое сообщение из цели: ${goalOpeners.length} вариант(ов), чередуем`) // §3.6: диалог к цели с базой знаний
   if (goalCtx) await store.appendLog(task, 'info', 'Ответы генерируются к выбранной цели (с базой знаний)')
   const mul = delayMultiplier(s.protectionLevel ?? 1, s.delayPreset ?? 1)
   const prob = effectiveProbability(s.probability ?? 30, !!s.aiProtection, s.protectionLevel ?? 1)
@@ -745,6 +721,11 @@ function dialogSystemPrompt(settings, goal, goalObj = null, leadStatus = null, s
   // Этап из самой цели: заказчик описал воронку своими словами, ИИ должен работать
   // по НЕЙ, а не по нашим машинным статусам.
   if (stage) parts.push(`Сейчас этап ${stage.index} из ${stage.total} по цели: «${stage.name}». Веди разговор именно к нему, следующий этап — только после того, как этот пройден.`)
+  // Без этого модель пишет «[тут вставь ссылку]» — и заглушка уходит живому человеку.
+  const links = linksFromGoal(goalObj)
+  if (links.length) {
+    parts.push(`Ссылка для отправки: ${links[0]}. Когда придёт время её дать — вставь её ПОЛНОСТЬЮ, ровно в таком виде. Никаких «[ссылка]», «[тут вставь ссылку]» и прочих заглушек: собеседник видит текст как есть.`)
+  }
   if (goalObj?.name) parts.push(`Цель кампании: ${goalObj.name}.`)
   if (goal) parts.push(`Инструкция и цель диалога:\n${goal}`)
   return parts.join('\n\n')
@@ -1634,8 +1615,6 @@ export async function runMailing(task, store) {
 
   if (!mailTargets.length) { await store.appendLog(task, 'warning', 'Нет корректных целей для рассылки'); task.status = 'done'; await store.saveTask(task); return }
   if (!accountIds.length) { await store.appendLog(task, 'warning', 'Не выбраны аккаунты'); task.status = 'done'; await store.saveTask(task); return }
-  if (!message) { await store.appendLog(task, 'warning', 'Пустой текст рассылки'); task.status = 'done'; await store.saveTask(task); return }
-
   const mul = delayMultiplier(s.protectionLevel ?? 1, s.delayPreset ?? 1)
   const dm = s.delays?.dm || s.delays?.action || [90, 300] // §6: паузы рассылки ЛС 90–300с
   const maxPerAccount = Number(s.maxPerAccount || 0)
@@ -1653,6 +1632,13 @@ export async function runMailing(task, store) {
   })()
   if (goalOpeners.length) await store.appendLog(task, 'info', `Первое сообщение из цели: ${goalOpeners.length} вариант(ов), чередуем`)
   const useAi = !!s.aiPerRecipient && isAiGenerationEnabled()
+  // Пустой текст — не повод останавливаться: заготовка может лежать в самой цели
+  // («Первое сообщение:» в описании) или текст сгенерит ИИ к цели.
+  if (!message && !goalOpeners.length && !useAi) {
+    await store.appendLog(task, 'warning', 'Нет текста: задайте его в модуле или в цели («Первое сообщение:»)')
+    task.status = 'done'; await store.saveTask(task); return
+  }
+
   const mediaCount = Array.isArray(s.mediaUrls) ? s.mediaUrls.filter((u) => /^https?:\/\//i.test(u)).length : 0
   await store.appendLog(task, 'info', `Текст: ${useAi ? 'ИИ-генерация к цели' : `"${message.slice(0, 70)}${message.length > 70 ? '…' : ''}"`}${mediaCount ? ` · медиа/ссылок: ${mediaCount}` : ''} · паузы ${dm[0]}–${dm[1]}с · лимит/акк ${maxPerAccount || '§6'}`)
 

@@ -83,3 +83,15 @@ export function stageForStatus(stages, status) {
   const index = Math.min(list.length - 1, Math.round(p * (list.length - 1)))
   return { index: index + 1, total: list.length, name: list[index] }
 }
+
+/**
+ * §9: ссылки из цели (критерий завершения + описание). ИИ должен вставлять их
+ * ЦЕЛИКОМ: без явного указания он пишет заглушку «[тут вставь ссылку]» —
+ * и она уходит живому человеку.
+ * @param {object|null} goal @returns {string[]}
+ */
+export function linksFromGoal(goal) {
+  const text = [goal?.completionCriteria, goal?.description, goal?.targetAction].filter(Boolean).join('\n')
+  const found = String(text).match(/https?:\/\/[^\s<>"')]+/g) || []
+  return [...new Set(found)]
+}
