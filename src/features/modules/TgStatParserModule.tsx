@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   UploadCloud, ShieldCheck, KeyRound, RefreshCw, Plus, Search, Download, Trash2,
-  ExternalLink, StopCircle, CheckCircle2, XCircle, Clock, Loader2, Database, Cookie, AlertTriangle,
+  ExternalLink, StopCircle, CheckCircle2, XCircle, Clock, Loader2, Database, Cookie, AlertTriangle, FileSpreadsheet,
 } from 'lucide-react'
 import { useApp } from '@/mocks/store'
 import { Select, Segmented, Badge, EmptyState } from '@/shared/ui'
@@ -9,7 +9,7 @@ import { cn } from '@/shared/lib/utils'
 import { TgStatSearchPanel } from './TgStatSearchPanel'
 import {
   fetchTgstatOptions, fetchTgstatSession, uploadTgstatSession, verifyTgstatSession, clearTgstatSession,
-  fetchTgstatImports, createTgstatImport, fetchTgstatChats, cancelTgstatImport, deleteTgstatImport, tgstatExportUrl,
+  fetchTgstatImports, createTgstatImport, fetchTgstatChats, cancelTgstatImport, deleteTgstatImport, tgstatExportUrl, tgstatExportXlsxUrl,
   type TgstatOptions, type TgstatSession, type TgstatImport, type TgstatChat, type TgstatImportStatus,
 } from '@/api/tgstatApi'
 
@@ -311,7 +311,7 @@ export function TgStatParserModule() {
           )
         })()}
         {!sessionReady && <p className="mt-2 text-center text-xs text-amber-300">Сначала подключите и проверьте сессию TGStat (этап 1) — кнопка станет активной.</p>}
-        {sessionReady && <p className="mt-2 text-center text-xs text-muted">После запуска результаты появятся ниже в блоке «История импортов» (🔍 — открыть, ⭳ — экспорт CSV).</p>}
+        {sessionReady && <p className="mt-2 text-center text-xs text-muted">После запуска результаты появятся ниже в блоке «История импортов» (🔍 — открыть, ⭳ — Excel или CSV).</p>}
       </AmberCard>
 
       {/* История импортов */}
@@ -346,7 +346,10 @@ export function TgStatParserModule() {
                         <button onClick={() => openChats(imp)} className="btn-icon h-9 w-9" title="Результаты"><Search size={15} /></button>
                       )}
                       {imp.status === 'completed' && imp.total_found > 0 && (
-                        <a href={tgstatExportUrl(imp.id)} className="btn-icon h-9 w-9" title="Скачать CSV"><Download size={15} /></a>
+                        <>
+                          <a href={tgstatExportXlsxUrl(imp.id)} className="btn-icon h-9 w-9" title="Скачать Excel — с фильтрами, по убыванию ПДП"><FileSpreadsheet size={15} /></a>
+                          <a href={tgstatExportUrl(imp.id)} className="btn-icon h-9 w-9" title="Скачать CSV"><Download size={15} /></a>
+                        </>
                       )}
                       {(imp.status === 'queued' || imp.status === 'running') && (
                         <button onClick={() => handleCancel(imp.id)} className="btn-icon h-9 w-9" title="Отменить"><StopCircle size={15} /></button>
@@ -378,7 +381,8 @@ export function TgStatParserModule() {
           ) : (
             <>
               <div className="mb-3 flex justify-end">
-                <a href={tgstatExportUrl(openImport.id)} className="btn-primary h-9 text-sm"><Download size={15} /> Экспорт CSV</a>
+                <a href={tgstatExportXlsxUrl(openImport.id)} className="btn-primary h-9 text-sm"><FileSpreadsheet size={15} /> Excel</a>
+                <a href={tgstatExportUrl(openImport.id)} className="btn-ghost h-9 text-sm"><Download size={15} /> CSV</a>
               </div>
               <div className="max-h-[28rem] space-y-2 overflow-y-auto">
                 {chats.map((c) => (

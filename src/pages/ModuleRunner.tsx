@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { revealHelpBlock } from '@/features/neuro-commenting/moduleUi'
 import { useParams, Navigate } from 'react-router-dom'
 import {
@@ -18,6 +18,7 @@ import { useSession } from '@/features/auth/session'
 import { can } from '@/shared/lib/access'
 import { useUi } from '@/shared/lib/uiStore'
 import { seedLogs } from '@/mocks/logs'
+import { startModuleTask, fetchModuleTask, type ModuleTask } from '@/api/modulesApi'
 import { makeResults } from '@/mocks/parseResults'
 import { useMockLoading } from '@/shared/lib/hooks'
 import {
@@ -803,40 +804,16 @@ function ParticipantsModule({ cfg }: { cfg: ModuleConfig }) {
 }
 
 /* ══════════════════════ PARSER LAYOUT (Парсинг каналов) ══════════════════════ */
-const PARSE_CHANNELS = [
-  { name: 'Остеопрактика - остеопатия, биодинамика, массаж', u: 'osteopractika_school', m: 12700 },
-  { name: 'Body_lab_Nazarenko', u: 'massage_nazarenko', m: 327 },
-  { name: 'Лапченко | Wellness Massage', u: 'lapchenko_massage', m: 156 },
-  { name: 'Lay Back', u: 'layback_massage', m: 2100 },
-  { name: 'СТО Мастер', u: 'sto_master_ua', m: 5400 },
-  { name: 'Авторемонт Днепр', u: 'autorepair_dp', m: 890 },
-  { name: 'Dev Hunters', u: 'dev_hunters', m: 3200 },
-  { name: 'Bot Factory', u: 'bot_factory_ua', m: 1450 },
-  { name: 'Massage Space', u: 'massage_space', m: 640 },
-]
-const PARSE_GROUPS = [
-  { name: 'Машинариум: чат для бизнеса', u: 'mashinariumchat', m: 142 },
-  { name: 'Канал "МАШИНА" (обсуждение)', u: 'kanal_mashina_chat', m: 167 },
-  { name: 'КОНТЕНТ МАШИНА - Chat', u: 'content_machine_chat', m: 16 },
-  { name: 'Иномарка бозор чат', u: 'inomarka_mashina_bozor', m: 264 },
-  { name: 'СТО Профи · Чат', u: 'sto_profi_chat', m: 512 },
-  { name: 'Барбершоп Комьюнити', u: 'barber_community', m: 1230 },
-  { name: 'ЖК Новостройки · Обсуждение', u: 'jk_novostroyki', m: 3400 },
-  { name: 'Фуд-корт Днепр', u: 'foodcourt_dp', m: 780 },
-  { name: 'Авто P2P Чат', u: 'auto_p2p_chat', m: 950 },
-]
 const AI_KW = [
   { w: 'car service', p: 88 }, { w: 'auto repair', p: 85 }, { w: 'hire developer', p: 87 },
   { w: 'create bot', p: 82 }, { w: 'wellness', p: 79 }, { w: 'spa massage', p: 84 },
 ]
 
 function ParsingModule({ cfg }: { cfg: ModuleConfig }) {
-  const addTask = useApp((s) => s.addTask)
   const pushToast = useApp((s) => s.pushToast)
   const guardNet = useApp((s) => s.guardNet)
 
   const AI_SUGGEST = cfg.aiKeywords ?? AI_KW
-  const RESULT_DATA = cfg.key === 'parsing-groups' ? PARSE_GROUPS : PARSE_CHANNELS
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [tmplOpen, setTmplOpen] = useState(!cfg.templatesCollapsed)
   const [tmplSearch, setTmplSearch] = useState('')
@@ -863,6 +840,15 @@ function ParsingModule({ cfg }: { cfg: ModuleConfig }) {
   const [langDetect, setLangDetect] = useState(false)
   const [running, setRunning] = useState(false)
   const [results, setResults] = useState<{ name: string; u: string; m: number }[]>([])
+  // §3.8: запущенные задачи парсинга — их результаты подтягиваем, пока они живы.
+  const [taskIds, setTaskIds] = useState<string[]>([])
+  const [liveTasks, setLiveTasks] = useState<ModuleTask[]>([])
+  // По задаче на ключевое слово: параллельно, видно по отдельности, падение одной
+  // не уносит остальные. Для одного слова разницы нет.
+  const [splitByKeyword, setSplitByKeyword] = useState(true)
+  // Пока без отдельных контролов в этом экране: 0 = без лимита / любые комментарии.
+  const resLimit = 0
+  const commentsFilter = 0
   const [resView, setResView] = useState<'list' | 'grid'>('list')
   const [resSearch, setResSearch] = useState('')
   const [resSort, setResSort] = useState('')
@@ -873,14 +859,85 @@ function ParsingModule({ cfg }: { cfg: ModuleConfig }) {
   const filteredResults = results.filter((r) => !resSearch || `${r.name} ${r.u}`.toLowerCase().includes(resSearch.toLowerCase()))
     .sort((a, b) => resSort === 'Участники' ? b.m - a.m : resSort === 'Название' ? a.name.localeCompare(b.name) : 0)
 
-  const run = () => {
+  /**
+   * §3.8: запуск НАСТОЯЩИХ задач парсинга. Раньше здесь был мок: локальная псевдо-задача
+   * и захардкоженный список результатов через setTimeout — поэтому ничего и не сохранялось.
+   *
+   * `splitByKeyword` — по задаче на каждое ключевое слово. Так они идут параллельно,
+   * видны в дашборде по отдельности и падение одной не уносит остальные.
+   */
+  const run = async () => {
     if (!guardNet(cfg.primaryAction)) return
     if (selected.size === 0) return pushToast({ type: 'error', title: 'Аккаунты не выбраны', desc: 'Выберите хотя бы один аккаунт.' })
     if (keywords.length === 0) return pushToast({ type: 'error', title: 'Нет ключевых слов' })
+
     setRunning(true)
-    addTask({ module: cfg.key, title: `${cfg.title} · ${keywords.length} кл. слов`, status: 'running', progress: 15, accountsCount: selected.size, logCount: 0 })
-    setTimeout(() => { setResults(RESULT_DATA); setRunning(false); pushToast({ type: 'success', title: 'Парсинг завершён', desc: `Найдено ${RESULT_DATA.length} ${cfg.key === 'parsing-groups' ? 'групп' : 'каналов'}.` }) }, 1400)
+    setResults([])
+    const groups = splitByKeyword ? keywords.map((k) => [k]) : [keywords]
+    // Аккаунты делим между задачами: один аккаунт в двух задачах разом работать не может.
+    const accs = [...selected]
+    const started: string[] = []
+    const failed: string[] = []
+    for (let i = 0; i < groups.length; i++) {
+      const mine = groups.length > 1 ? accs.filter((_, j) => j % groups.length === i) : accs
+      if (!mine.length) { failed.push(`${groups[i].join(', ')}: не хватило аккаунтов`); continue }
+      try {
+        const task = await startModuleTask(cfg.key, {
+          accountIds: mine,
+          keywords: groups[i],
+          searchMode: method,
+          minMembers,
+          maxMembers,
+          resultLimit: resLimit,
+          commentFilter: commentsFilter,
+          langDetection: langDetect,
+          intersect: kwMode === 1,
+          protectionLevel: aiProtect ? 1 : 0,
+        })
+        started.push(task.id)
+      } catch (e) {
+        failed.push(`${groups[i].join(', ')}: ${e instanceof Error ? e.message : 'ошибка'}`)
+      }
+    }
+    setTaskIds(started)
+    setRunning(false)
+    if (started.length) {
+      pushToast({
+        type: 'success',
+        title: started.length > 1 ? `Запущено задач: ${started.length}` : 'Парсинг запущен',
+        desc: failed.length ? `Не запущено: ${failed.length}` : 'Результаты появятся ниже по мере поиска',
+      })
+    }
+    if (failed.length) pushToast({ type: 'error', title: 'Часть задач не запустилась', desc: failed.slice(0, 2).join('; ') })
   }
+
+  // Пока задачи живы — тянем их результаты и складываем в общий список (без дублей).
+  useEffect(() => {
+    if (!taskIds.length) return
+    let stop = false
+    const tick = async () => {
+      const tasks = await Promise.all(taskIds.map((id) => fetchModuleTask(cfg.key, id).catch(() => null)))
+      if (stop) return
+      const seen = new Set<string>()
+      const merged: { name: string; u: string; m: number }[] = []
+      for (const t of tasks) {
+        for (const r of (t?.results ?? []) as Record<string, unknown>[]) {
+          const u = String(r.username ?? '')
+          const k = u || String(r.id ?? '')
+          if (!k || seen.has(k)) continue
+          seen.add(k)
+          merged.push({ name: String(r.title ?? u), u, m: Number(r.members ?? 0) })
+        }
+      }
+      setResults(merged)
+      setLiveTasks(tasks.filter(Boolean) as ModuleTask[])
+      const done = tasks.every((t) => !t || t.status === 'done' || t.status === 'stopped' || t.status === 'error')
+      if (done) { stop = true; return }
+      setTimeout(() => { if (!stop) void tick() }, 3000)
+    }
+    void tick()
+    return () => { stop = true }
+  }, [taskIds, cfg.key])
 
   return (
     <div className="space-y-4">
@@ -1047,10 +1104,34 @@ function ParsingModule({ cfg }: { cfg: ModuleConfig }) {
         </div>
         <div className="flex flex-col items-center gap-3 rounded-2xl border border-line bg-elevated/40 p-4 sm:flex-row">
           <div className="flex items-center gap-2 text-sm font-semibold text-muted"><span className={cn('h-2.5 w-2.5 rounded-full', running ? 'bg-spark-400 animate-pulse' : 'bg-faint')} /> {running ? 'Выполняется' : 'Остановлено'}</div>
-          <div className="flex flex-1 justify-center">
-            {running ? <button className="btn-danger h-11 min-w-[180px]"><Square size={16} /> Остановить</button> : <button onClick={run} disabled={selected.size === 0} className="btn-iris h-11 min-w-[180px]"><Play size={17} /> {cfg.primaryAction}</button>}
+          <div className="flex flex-1 flex-col items-center gap-2">
+            {/* §3.8: одно ключевое слово — одна задача. Идут параллельно, каждую видно
+                в дашборде отдельно, и падение одной не уносит остальные. */}
+            {keywords.length > 1 && (
+              <label className="flex cursor-pointer items-center gap-2 text-xs text-muted">
+                <input type="checkbox" checked={splitByKeyword} onChange={(e) => setSplitByKeyword(e.target.checked)} className="h-4 w-4 accent-spark" />
+                Отдельная задача на каждое слово — запустится {keywords.length} задач параллельно
+              </label>
+            )}
+            {running
+              ? <button className="btn-danger h-11 min-w-[180px]" disabled><Square size={16} /> Запускаю…</button>
+              : <button onClick={() => void run()} disabled={selected.size === 0} className="btn-iris h-11 min-w-[180px]"><Play size={17} /> {cfg.primaryAction}</button>}
           </div>
         </div>
+
+        {/* Прогресс живых задач: раньше здесь крутился фейковый таймер на 1.4 секунды. */}
+        {liveTasks.length > 0 && (
+          <div className="mt-3 space-y-1.5">
+            {liveTasks.map((t) => (
+              <div key={t.id} className="flex items-center gap-2 rounded-lg border border-line bg-elevated/40 px-3 py-2 text-xs">
+                <span className={cn('h-2 w-2 shrink-0 rounded-full',
+                  t.status === 'running' ? 'bg-spark-400 animate-pulse' : t.status === 'error' ? 'bg-rose-400' : 'bg-faint')} />
+                <span className="truncate text-muted">{(t.settings?.keywords || []).join(', ') || t.id}</span>
+                <span className="ml-auto shrink-0 text-white/50">{t.progress?.done ?? 0} найдено · {t.status}</span>
+              </div>
+            ))}
+          </div>
+        )}
       </SectionCard>
 
       {/* 5. Results */}

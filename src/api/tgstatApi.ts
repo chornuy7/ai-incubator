@@ -88,6 +88,11 @@ export function tgstatExportUrl(id: number) {
   return `${base}/imports/${id}/export.csv`
 }
 
+/** §3.7: тот же импорт в Excel — отсортирован по ПДП, с фильтрами и кликабельными ссылками. */
+export function tgstatExportXlsxUrl(id: number): string {
+  return tgstatExportUrl(id).replace(/export\.csv$/, 'export.xlsx')
+}
+
 export interface TgstatSearchFilters {
   q?: string; inAbout?: boolean
   categories?: string[]

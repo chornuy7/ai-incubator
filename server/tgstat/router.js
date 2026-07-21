@@ -129,3 +129,49 @@ tgstatRouter.get('/imports/:id/export.csv', async (req, res) => {
   res.setHeader('Content-Disposition', `attachment; filename="tgstat-import-${imp.id}.csv"`)
   res.send('﻿' + header + rows)
 })
+
+/**
+ * §3.7: тот же список в Excel. CSV годится для импорта в другие системы, но смотреть
+ * его руками неудобно: нет сортировки и фильтров. Здесь — готовая таблица, отсортированная
+ * по числу подписчиков (ПДП) по убыванию, с включённым автофильтром и закреплённой шапкой.
+ */
+tgstatRouter.get('/imports/:id/export.xlsx', async (req, res) => {
+  const imp = await loadImport(Number(req.params.id))
+  if (!imp) return fail(res, 404, 'Импорт не найден')
+  const { default: ExcelJS } = await import('exceljs')
+
+  const wb = new ExcelJS.Workbook()
+  wb.created = new Date()
+  const ws = wb.addWorksheet('Каналы', { views: [{ state: 'frozen', ySplit: 1 }] })
+  ws.columns = [
+    { header: 'Название', key: 'name', width: 44 },
+    { header: 'Ссылка', key: 'link', width: 34 },
+    { header: 'ПДП', key: 'subs', width: 12 },
+    { header: 'Регион', key: 'region', width: 18 },
+    { header: 'Категория', key: 'category', width: 22 },
+    { header: 'Источник', key: 'src', width: 40 },
+  ]
+
+  // Сортировка по убыванию подписчиков — самое нужное сразу сверху.
+  const chats = [...(imp.chats || [])].sort((a, b) => (Number(b.subscribers) || 0) - (Number(a.subscribers) || 0))
+  for (const c of chats) {
+    const row = ws.addRow({
+      name: c.chat_name || '',
+      link: c.chat_link || '',
+      subs: Number(c.subscribers) || 0,
+      region: c.region || '',
+      category: c.category || '',
+      src: c.source_tgstat_url || '',
+    })
+    // Ссылку делаем кликабельной — иначе её приходится копировать руками.
+    if (c.chat_link) row.getCell('link').value = { text: c.chat_link, hyperlink: c.chat_link }
+  }
+
+  ws.getRow(1).font = { bold: true }
+  ws.getColumn('subs').numFmt = '# ##0' // разряды: 1 234 567 читается, 1234567 — нет
+  ws.autoFilter = { from: { row: 1, column: 1 }, to: { row: 1, column: ws.columns.length } }
+
+  res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+  res.setHeader('Content-Disposition', `attachment; filename="tgstat-import-${imp.id}.xlsx"`)
+  res.send(Buffer.from(await wb.xlsx.writeBuffer()))
+})
