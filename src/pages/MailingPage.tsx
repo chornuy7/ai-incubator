@@ -169,7 +169,7 @@ export function MailingPage() {
               </span>
               {/* Дубли и так схлопывались при разборе, но молча — человек видел «валидных
                   8500» вместо введённых 10000 и не понимал, куда делись полторы тысячи. */}
-              <DedupeButton value={numbersText} onChange={setNumbersText} mode="exact" className="btn-soft ml-auto h-7 px-2 text-xs disabled:opacity-40" />
+              <DedupeButton value={numbersText} onChange={setNumbersText} mode="auto" className="btn-soft ml-auto h-7 px-2 text-xs disabled:opacity-40" />
             </div>
             <textarea className="input min-h-[110px] font-mono text-sm" value={numbersText} onChange={(e) => setNumbersText(e.target.value)} placeholder={'+380671234567\n@username\nhttps://t.me/username'} />
           </Card>

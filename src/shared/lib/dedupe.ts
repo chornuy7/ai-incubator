@@ -15,10 +15,17 @@ export type DedupeMode =
   | 'handle'
   /** Как есть, с точностью до пробелов по краям. */
   | 'exact'
+  /**
+   * Смешанный список (мейлинг: номера + юзернеймы). Тип строки определяется так же,
+   * как на сервере: есть буквы — юзернейм, иначе номер. Без этого режим 'phone'
+   * давал юзернеймам без цифр ПУСТОЙ ключ и молча их удалял.
+   */
+  | 'auto'
 
 /** Ключ сравнения строки в выбранном режиме. */
 export function dedupeKey(line: string, mode: DedupeMode = 'exact'): string {
   const s = String(line ?? '').trim()
+  if (mode === 'auto') return /[a-zA-Zа-яА-Я_]/.test(s) ? dedupeKey(s, 'handle') : dedupeKey(s, 'phone')
   if (mode === 'phone') return s.replace(/\D/g, '')
   if (mode === 'handle') {
     return s
