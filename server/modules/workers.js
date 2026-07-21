@@ -705,7 +705,7 @@ const STAGE_HINT = {
 
 function dialogSystemPrompt(settings, goal, goalObj = null, leadStatus = null, stage = null) {
   const base = resolveSystemPrompt(settings)
-  const rules = 'Ты ведёшь личную переписку в Telegram от лица владельца аккаунта. Отвечай на языке собеседника, коротко (1–3 предложения), живо и по-человечески. Никогда не сообщай, что ты ИИ или бот.'
+  const rules = 'Ты ведёшь личную переписку в Telegram от лица владельца аккаунта. Если в переписке уже есть твоё сообщение — не здоровайся заново и не представляйся: продолжай разговор с того места, где он остановился. Отвечай на языке собеседника, коротко (1–3 предложения), живо и по-человечески. Никогда не сообщай, что ты ИИ или бот.'
   // §9: прощание — не отдельный механизм, а правило промта. ИИ видит историю переписки
   // и сам понимает, что цель достигнута; тогда благодарит и закрывает диалог, а не давит дальше.
   const finish = [
@@ -910,7 +910,17 @@ export async function runNeuroDialogs(task, store) {
           const last = msgs[0]
           const incoming = (last?.message || '').trim()
           const prompt = buildDialogPrompt(msgs)
-          const { text: reply, mode } = await generateComment(prompt, s.promptIndex ?? 0, dialogSystemPrompt(s, goal, goalObj, leadNow?.status || 'cold', stageForStatus(goalObj?.stages, leadNow?.status || 'cold')))
+          // Знакомство уже состоялось, если МЫ этому человеку писали (мейлинг отправил
+          // первое сообщение). Иначе на первом же ответе лид ещё `cold`, этап — 1/5
+          // «Знакомство», и ИИ здоровается второй раз, будто разговора не было.
+          const weWroteBefore = msgs.some((m) => m?.out && (m.message || '').trim())
+          const rawStatus = leadNow?.status || 'cold'
+          const effStatus = weWroteBefore && (rawStatus === 'cold') ? 'contacted' : rawStatus
+          const { text: reply, mode } = await generateComment(
+            prompt,
+            s.promptIndex ?? 0,
+            dialogSystemPrompt(s, goal, goalObj, effStatus, stageForStatus(goalObj?.stages, effStatus)),
+          )
           // Личная переписка — не то место, где годится шаблон-заглушка: она подставляла
           // в сообщение стенограмму диалога («По «Переписка: Я: Привет!...» — согласен»)
           // и это уходило собеседнику от имени аккаунта. Нет ИИ — молчим и идём дальше.
