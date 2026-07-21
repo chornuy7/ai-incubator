@@ -81,6 +81,10 @@ function Inner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: string }) {
   })
   const [delayChat, setDelayChat] = useState(P.delays[0]?.value ?? 5)
   const [delayItem, setDelayItem] = useState(P.delays[1]?.value ?? 0.5)
+  // §6: пауза перед ВСТУПЛЕНИЕМ. Отдельно от «между чатами»: та срабатывает после
+  // обработки, а вступления — самое рискованное действие, серия подряд даёт FloodWait.
+  const [joinMin, setJoinMin] = useState(30)
+  const [joinMax, setJoinMax] = useState(90)
 
   // результаты
   const [resQuery, setResQuery] = useState('')
@@ -108,8 +112,9 @@ function Inner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: string }) {
     intersectionMode: moduleKey === 'parsing-users' ? intersection : false,
     delayChat: fastWork ? 0 : delayChat,
     delayItem: fastWork ? 0 : delayItem,
+    delays: { join: [fastWork ? 0 : joinMin, fastWork ? 0 : joinMax] as [number, number] },
     limit: limits.participants ?? limits.messages ?? limits.posts ?? 1000,
-  }), [selected, targetList, keywordList, aiProtect, protLevel, filters, limits, activeStories, intersection, fastWork, delayChat, delayItem, moduleKey])
+  }), [selected, targetList, keywordList, aiProtect, protLevel, filters, limits, activeStories, intersection, fastWork, delayChat, delayItem, joinMin, joinMax, moduleKey])
 
   const busySelectedCount = useMemo(() => [...selected].filter((id) => accounts.some((a) => a.id === id && a.busyIn)).length, [selected, accounts])
   const canStart = selected.size > 0 && busySelectedCount === 0 && targetList.length > 0
@@ -144,6 +149,7 @@ function Inner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: string }) {
     if (s.activeStories !== undefined) setActiveStories(s.activeStories)
     if (s.delayChat !== undefined) setDelayChat(s.delayChat)
     if (s.delayItem !== undefined) setDelayItem(s.delayItem)
+    if (s.delays?.join) { setJoinMin(s.delays.join[0]); setJoinMax(s.delays.join[1]) }
     pushToast({ type: 'success', title: 'Пресет применён' })
   }, [pushToast])
 
@@ -302,6 +308,14 @@ function Inner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: string }) {
                 <div className="space-y-2">
                   <DelayRow label={P.delays[0]?.label ?? 'Задержка между чатами'} value={delayChat} onChange={setDelayChat} />
                   <DelayRow label={P.delays[1]?.label ?? 'Задержка между пользователями'} value={delayItem} onChange={setDelayItem} step={0.5} />
+                  <DelayRow label="Пауза перед вступлением, от" value={joinMin} onChange={setJoinMin} step={5} />
+                  <DelayRow label="Пауза перед вступлением, до" value={joinMax} onChange={setJoinMax} step={5} />
+                </div>
+                <div className="mt-2 rounded-xl border border-amber-500/25 bg-amber-500/5 p-2 text-[11px] leading-relaxed text-amber-200">
+                  Чтобы прочитать участников чужого чата, аккаунт должен туда <b>вступить</b> — это самое
+                  рискованное действие: серия быстрых вступлений даёт FloodWait и спам-фильтр. Пауза берётся
+                  случайной из диапазона и ждётся <b>только если реально надо вступать</b>: где аккаунт уже
+                  состоит, он читает сразу.
                 </div>
               </div>
             )}

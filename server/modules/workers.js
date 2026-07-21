@@ -1294,9 +1294,26 @@ export async function runParticipantsParser(task, store, kind) {
       let client
       try {
         ;({ client } = await connectAccount(accountId, task.id))
-        // prepareTarget: сначала смотрит, состоит ли аккаунт в чате, и ТОЛЬКО при
-        // необходимости вступать выдерживает паузу (прерываемую «Стопом»).
-        const membership = await prepareTarget(
+        // Вступление — крайняя мера. У публичных групп и каналов участники и сообщения
+        // часто читаются БЕЗ вступления: сначала пробуем просто разрешить цель и работать
+        // с ней. Если Telegram откажет — тогда вступаем, с паузой.
+        let peerNoJoin = null
+        try {
+          const { resolvePeer } = await import('../lib/gramHelpers.js')
+          peerNoJoin = await resolvePeer(client, src)
+        } catch { /* не разрешилось — пойдём обычным путём со вступлением */ }
+
+        let membership = peerNoJoin ? { peer: peerNoJoin, status: 'no_join_needed' } : null
+        if (membership) {
+          // Проверяем, что читать реально можно: пустой отказ здесь дешевле, чем вступление.
+          try {
+            await fetchParticipants(client, peerNoJoin, 1, {})
+            await store.appendLog(task, 'info', `${src}: читаем без вступления`, meta.name)
+          } catch {
+            membership = null // закрыто — придётся вступать
+          }
+        }
+        if (!membership) membership = await prepareTarget(
           client,
           src,
           (l, m, a) => store.appendLog(task, l, m, a),
