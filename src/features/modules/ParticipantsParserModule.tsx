@@ -14,6 +14,7 @@ import { cn } from '@/shared/lib/utils'
 import { downloadXls } from '@/shared/lib/exportXls'
 import { FolderPicker, SaveToFolderModal } from './shared/FolderPicker'
 import { promptDialog } from '@/shared/lib/dialog'
+import { DedupeButton } from '@/shared/ui/DedupeButton'
 import { fetchModuleTasks, fetchModuleTask, type ModuleTaskSettings } from '@/api/modulesApi'
 import { fetchTgstatOptions, fetchTgstatSession, fetchTgstatTargets, type TgstatOptions, type TgstatSession } from '@/api/tgstatApi'
 
@@ -237,6 +238,7 @@ function Inner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: string }) {
               <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
                 {P.formatHint && <span className="text-[11px] text-muted">{P.formatHint}</span>}
                 <div className="ml-auto flex flex-wrap gap-2">
+                  <DedupeButton value={targets} onChange={setTargets} mode="handle" />
                   {/* §3.9: источники можно взять готовой папкой, а не вбивать списком. */}
                   <FolderPicker
                     targets={targetList}

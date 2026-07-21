@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Mail, Send, AlertTriangle, ShieldAlert } from 'lucide-react'
 import { PageHeader, Card, Select, Segmented } from '@/shared/ui'
+import { DedupeButton } from '@/shared/ui/DedupeButton'
 import { useApp, activeAccounts } from '@/mocks/store'
 import { AccountPicker } from '@/features/account-picker/AccountPicker'
 import { MessageComposer } from '@/features/composer/MessageComposer'
@@ -134,7 +135,12 @@ export function MailingPage() {
 
         <div className="space-y-4">
           <Card className="p-4">
-            <div className="mb-1 text-xs text-white/50">Номера телефонов ({numbers.length} валидных)</div>
+            <div className="mb-1 flex items-center gap-2">
+              <span className="text-xs text-white/50">Номера телефонов ({numbers.length} валидных)</span>
+              {/* Дубли и так схлопывались при разборе, но молча — человек видел «валидных
+                  8500» вместо введённых 10000 и не понимал, куда делись полторы тысячи. */}
+              <DedupeButton value={numbersText} onChange={setNumbersText} mode="phone" className="btn-soft ml-auto h-7 px-2 text-xs disabled:opacity-40" />
+            </div>
             <textarea className="input min-h-[110px] font-mono text-sm" value={numbersText} onChange={(e) => setNumbersText(e.target.value)} placeholder={'+380671234567\n+48512345678\nпо одному на строку'} />
           </Card>
 

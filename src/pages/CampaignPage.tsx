@@ -12,6 +12,7 @@ import {
   type CampaignResult, type CampaignSchedule, type Campaign, type CampaignStatus, type PinnedMap,
 } from '@/api/campaignsApi'
 import { confirmDialog, promptDialog } from '@/shared/lib/dialog'
+import { DedupeButton } from '@/shared/ui/DedupeButton'
 import { fetchAccountGroups, createAccountGroup, accountsOfGroupsLocal, type AccountGroup } from '@/api/accountGroupsApi'
 import { fetchChannels, type Channel } from '@/api/channelsApi'
 import { FolderPicker } from '@/features/modules/shared/FolderPicker'
@@ -488,7 +489,10 @@ export function CampaignPage() {
         </Card>
 
         <Card className="p-4">
-          <div className="mb-1 text-xs text-white/50">Целевые каналы/группы (по одному на строку)</div>
+          <div className="mb-1 flex items-center gap-2">
+            <span className="text-xs text-white/50">Целевые каналы/группы (по одному на строку)</span>
+            <DedupeButton value={targetsText} onChange={setTargetsText} mode="handle" className="btn-soft ml-auto h-7 px-2 text-xs disabled:opacity-40" />
+          </div>
           <textarea className="input min-h-[88px]" value={targetsText} onChange={(e) => setTargetsText(e.target.value)} placeholder={'@channel1\nhttps://t.me/group2'} />
           {/* §3.7: объединение источников — цели можно загрузить из сохранённых папок */}
           <div className="mt-2">
