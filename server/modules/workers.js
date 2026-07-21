@@ -711,6 +711,12 @@ function buildDialogPrompt(msgs) {
 }
 
 /** @param {object} task @param {object} store */
+/** Найти лида по контакту (@username/имя) без учёта регистра и «@». @param {object[]} leads @param {string} peer */
+function findLeadByPeer(leads, peer) {
+  const k = String(peer ?? '').trim().toLowerCase().replace(/^@/, '')
+  return (leads || []).find((l) => String(l.peer ?? '').trim().toLowerCase().replace(/^@/, '') === k) || null
+}
+
 export async function runNeuroDialogs(task, store) {
   const s = task.settings
   task.startedAt = Date.now()
@@ -731,6 +737,19 @@ export async function runNeuroDialogs(task, store) {
   // Сколько ЛС один аккаунт отвечает за один заход, прежде чем уступить очередь следующему.
   // Пачка ответов подряд с одного номера — самый быстрый путь к PEER_FLOOD и репортам.
   const perPassCap = [2, 4, 6][s.protectionLevel ?? 1] ?? 4
+  // §9: сколько сообщений пишем одному лиду. 'untilTarget' — до целевого действия
+  // (ограничивают только суточные лимиты и стоп-лист), 'count' — не больше N ответов.
+  const replyLimitMode = s.replyLimitMode === 'count' ? 'count' : 'untilTarget'
+  const maxRepliesPerLead = Math.max(0, Number(s.maxRepliesPerLead || 0))
+  await store.appendLog(
+    task,
+    'info',
+    replyLimitMode === 'count'
+      ? `Лимит на лида: до ${maxRepliesPerLead || '∞'} ответов, затем диалог не продолжаем`
+      : 'Лимит на лида: пишем, пока не выполнит целевое действие (или не откажется)',
+  )
+  // Цель нужна классификатору статусов: по ней ИИ понимает, что считать «выполнено».
+  const goalObj = s.goalId ? await (async () => { try { const { getGoal } = await import('../goals.js'); return await getGoal(s.goalId) } catch { return null } })() : null
   let idx = 0
   let skips = 0
   // Модуль-ответчик работает долго (ждёт входящие ЛС), поэтому при суточном лимите
@@ -800,6 +819,32 @@ export async function runNeuroDialogs(task, store) {
         for (const d of pending) {
           if (task.stopRequested || totalLimitReached(s, task) || perAccountLimitReached(s, accountId, task)) break
           if (await limitReached(accountId, 'dm')) { await store.appendLog(task, 'info', 'Суточный лимит ЛС достигнут (§6)', meta.name); break }
+
+          // §9: сколько сообщений пишем ОДНОМУ лиду. Два режима:
+          //  'count'       — не больше maxRepliesPerLead ответов;
+          //  'untilTarget' — пишем, пока лид не выполнит целевое действие (или не откажется).
+          // В обоих режимах терминальные статусы — стоп: closed (отказ) и target (цель достигнута).
+          const peerKey = d.username ? `@${d.username}` : d.name
+          const leadNow = findLeadByPeer(leadsForPrio, peerKey)
+          if (leadNow && (leadNow.status === 'closed' || leadNow.status === 'target')) {
+            await store.appendLog(
+              task,
+              'info',
+              leadNow.status === 'closed'
+                ? `«${peerKey}» отказался — больше не пишем (стоп-лист)`
+                : `«${peerKey}» выполнил целевое действие — диалог завершён`,
+              meta.name,
+            )
+            answeredUpTo.set(`${accountId}:${d.id}`, Math.max(d.lastMessageId ?? 0, answeredUpTo.get(`${accountId}:${d.id}`) ?? 0))
+            continue
+          }
+          task.leadReplies = task.leadReplies || {}
+          const sentToLead = task.leadReplies[peerKey] || 0
+          if (replyLimitMode === 'count' && maxRepliesPerLead > 0 && sentToLead >= maxRepliesPerLead) {
+            await store.appendLog(task, 'info', `«${peerKey}»: лимит ответов на лида (${maxRepliesPerLead}) исчерпан`, meta.name)
+            answeredUpTo.set(`${accountId}:${d.id}`, Math.max(d.lastMessageId ?? 0, answeredUpTo.get(`${accountId}:${d.id}`) ?? 0))
+            continue
+          }
           const msgs = await client.getMessages(d.entity, { limit: 6 })
           const last = msgs[0]
           const incoming = (last?.message || '').trim()
@@ -816,6 +861,7 @@ export async function runNeuroDialogs(task, store) {
           answeredUpTo.set(`${accountId}:${d.id}`, Math.max(last?.id ?? 0, d.lastMessageId ?? 0))
           task.accountStats[accountId] = task.accountStats[accountId] || { actions: 0, floodWaits: 0 }
           task.accountStats[accountId].actions += 1
+          task.leadReplies[peerKey] = sentToLead + 1 // §9: счётчик ответов этому лиду
           await incAction(accountId, 'dm') // §6: суточный лимит ЛС
           await bumpProgress(task, store)
           await store.appendHistory(task, { id: `${task.id}_${Date.now()}`, ts: new Date().toISOString(), accountName: meta.name, target: d.name, text: reply, status: 'sent' })
@@ -827,15 +873,13 @@ export async function runNeuroDialogs(task, store) {
           // фактическая проверка (админ-аккаунт / инвайт-ссылки) будет отдельно.
           if (s.goalId && incoming) {
             try {
-              const peer = d.username ? `@${d.username}` : d.name
-              const cur = (await listLeads({ goalId: s.goalId })).find(
-                (l) => String(l.peer || '').trim().toLowerCase().replace(/^@/, '') === String(peer).trim().toLowerCase().replace(/^@/, ''),
-              )
+              const peer = peerKey
+              const cur = findLeadByPeer(await listLeads({ goalId: s.goalId }), peer)
               const verdict = await classifyLeadReply({
                 text: incoming,
                 currentStatus: cur?.status || 'cold',
-                goalName: goal?.name || '',
-                targetAction: goal?.targetAction || '',
+                goalName: goalObj?.name || '',
+                targetAction: goalObj?.targetAction || '',
               })
               if (shouldAdvance(cur?.status || 'cold', verdict.status)) {
                 await upsertLead({ peer, goalId: s.goalId, accountId, status: verdict.status })

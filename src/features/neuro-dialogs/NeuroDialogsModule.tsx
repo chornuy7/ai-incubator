@@ -6,7 +6,7 @@ import {
 } from 'lucide-react'
 import { MODULES } from '@/shared/config/modules'
 import { useApp } from '@/mocks/store'
-import { Avatar, Badge, Switch, Select } from '@/shared/ui'
+import { Avatar, Badge, Switch, Select, Segmented } from '@/shared/ui'
 import { AccountPicker } from '@/features/account-picker/AccountPicker'
 import { fetchGoals, type Goal } from '@/api/goalsApi'
 import { upsertLead } from '@/api/leadsApi'
@@ -24,6 +24,7 @@ import { useModuleTask } from '@/features/modules/shared/useModuleTask'
 import {
   SectionCard,
   HelpButton,
+  NumberField,
   LaunchPanel,
   PromptCards,
   loadPromptBodies,
@@ -134,6 +135,9 @@ export function NeuroDialogsModule() {
   const [minActions, setMinActions] = useState(50)
   const [maxPerAcc, setMaxPerAcc] = useState(50)
   const [minPerAcc, setMinPerAcc] = useState(50)
+  // §9: лимит переписки с ОДНИМ лидом. По умолчанию — вести до целевого действия.
+  const [replyLimitMode, setReplyLimitMode] = useState<'untilTarget' | 'count'>('untilTarget')
+  const [maxRepliesPerLead, setMaxRepliesPerLead] = useState(5)
   const [delayPreset, setDelayPreset] = useState(1)
   const [delays, setDelays] = useState<DelaysShape>({
     comment: [30, 120],
@@ -205,8 +209,11 @@ export function NeuroDialogsModule() {
     probability: aiEnabled ? 100 : 0,
     replyScope: replyAll ? 'all' : 'unread',
     dialogGoal: dialogGoal.trim(),
+    // §9: сколько сообщений пишем ОДНОМУ лиду — числом или до целевого действия.
+    replyLimitMode,
+    maxRepliesPerLead: replyLimitMode === 'count' ? maxRepliesPerLead : 0,
     ...(goalId ? { goalId } : {}), // §9: привязка диалога к цели кампании (наследует KB/этапы, лиды к цели)
-  }), [accountIds, aiProtect, protLevel, activePrompt, promptBodies, maxActions, minActions, maxPerAcc, minPerAcc, delayPreset, delays, aiEnabled, replyAll, dialogGoal, goalId])
+  }), [accountIds, aiProtect, protLevel, activePrompt, promptBodies, maxActions, minActions, maxPerAcc, minPerAcc, delayPreset, delays, aiEnabled, replyAll, dialogGoal, goalId, replyLimitMode, maxRepliesPerLead])
 
   const applyPreset = useCallback((s: ModuleTaskSettings) => {
     if (s.aiProtection !== undefined) setAiProtect(s.aiProtection)
@@ -223,6 +230,8 @@ export function NeuroDialogsModule() {
     if (s.replyScope) setReplyAll(s.replyScope === 'all')
     if (typeof s.dialogGoal === 'string') setDialogGoal(s.dialogGoal)
     if (typeof s.goalId === 'string') setGoalId(s.goalId)
+    if (s.replyLimitMode === 'count' || s.replyLimitMode === 'untilTarget') setReplyLimitMode(s.replyLimitMode)
+    if (typeof s.maxRepliesPerLead === 'number' && s.maxRepliesPerLead > 0) setMaxRepliesPerLead(s.maxRepliesPerLead)
     pushToast({ type: 'success', title: 'Пресет применён' })
   }, [pushToast])
 
@@ -436,6 +445,34 @@ export function NeuroDialogsModule() {
           </div>
         )}
       </div>
+
+      {/* §9: сколько сообщений ведём с ОДНИМ лидом — переключатель режима. */}
+      <SectionCard icon={<MessagesSquare size={18} />} title="Переписка с одним лидом">
+        <div className="flex flex-col gap-3">
+          <Segmented
+            options={['До целевого действия', 'Фиксировано']}
+            value={replyLimitMode === 'untilTarget' ? 0 : 1}
+            onChange={(i) => setReplyLimitMode(i === 0 ? 'untilTarget' : 'count')}
+          />
+          {replyLimitMode === 'untilTarget' ? (
+            <p className="rounded-xl border border-spark-500/25 bg-spark-500/8 px-3 py-2 text-xs leading-relaxed text-muted">
+              ИИ ведёт диалог, пока лид не выполнит целевое действие цели (статус «Целевое») —
+              или пока не откажется («Закрыт»). Останавливают только суточные лимиты и защита.
+            </p>
+          ) : (
+            <div className="flex flex-col gap-2">
+              <NumberField label="Максимум ответов одному лиду" value={maxRepliesPerLead} onChange={setMaxRepliesPerLead} min={1} max={50} suffix="1–50" />
+              <p className="rounded-xl border border-line bg-elevated/60 px-3 py-2 text-xs leading-relaxed text-muted">
+                После {maxRepliesPerLead} {maxRepliesPerLead === 1 ? 'ответа' : 'ответов'} диалог с этим человеком не продолжаем,
+                даже если он пишет снова. Полезно, чтобы не «переписываться вечно».
+              </p>
+            </div>
+          )}
+          <p className="text-xs text-white/40">
+            В обоих режимах отказ («не пиши мне») сразу закрывает лида — больше ему не пишем.
+          </p>
+        </div>
+      </SectionCard>
 
       <TimingSection
         totalLabel="Ответов за запуск"
