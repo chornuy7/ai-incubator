@@ -6,7 +6,8 @@ import { HelpButton } from '@/features/neuro-commenting/moduleUi'
 import { confirmDialog } from '@/shared/lib/dialog'
 import { FolderPicker } from '@/features/modules/shared'
 import {
-  fetchGoals, createGoal, updateGoal, deleteGoal, isGoalExpired, type Goal, type GoalInput,
+  fetchGoals, createGoal, updateGoal, deleteGoal, isGoalExpired, isSaneDeadline,
+  DEADLINE_MIN_YEAR, DEADLINE_MAX_YEAR, LEAD_TARGET_MAX, type Goal, type GoalInput,
   fetchKb, createKb, deleteKb, uploadKbFile, kbFileUrl, type KbItem,
 } from '@/api/goalsApi'
 import { fetchLeads } from '@/api/leadsApi'
@@ -298,13 +299,23 @@ export function GoalsPage() {
             <div>
               <label className="mb-1 block text-xs text-white/50">Дедлайн <span className="text-white/30">(опционально — по истечении работа останавливается)</span></label>
               <div className="flex gap-2">
-                <input type="date" className="input" value={form.deadline || ''} onChange={(e) => set({ deadline: e.target.value })} />
+                {/* §4: без границ в поле даты проходил год 123123 — карточка рисовала
+                    «до 24.07.123123», и цель не истекала никогда. Те же границы на сервере. */}
+                <input
+                  type="date" className="input"
+                  min={`${DEADLINE_MIN_YEAR}-01-01`} max={`${DEADLINE_MAX_YEAR}-12-31`}
+                  value={form.deadline || ''} onChange={(e) => set({ deadline: e.target.value })}
+                />
                 {form.deadline && <button type="button" onClick={() => set({ deadline: '' })} className="btn-ghost h-auto shrink-0 px-3 text-xs">Сбросить</button>}
               </div>
+              {form.deadline && !isSaneDeadline(form.deadline) && (
+                <div className="mt-1 text-xs text-rose-300">Дата вне допустимого диапазона ({DEADLINE_MIN_YEAR}–{DEADLINE_MAX_YEAR}) — проверьте год</div>
+              )}
             </div>
             <div>
-              <label className="mb-1 block text-xs text-white/50">Цель по лидам <span className="text-white/30">(0 = не задано)</span></label>
-              <input type="number" min={0} className="input" value={form.leadTarget || 0} onChange={(e) => set({ leadTarget: Math.max(0, Number(e.target.value) || 0) })} placeholder="Напр. 50" />
+              <label className="mb-1 block text-xs text-white/50">Цель по лидам <span className="text-white/30">(0 = не задано, максимум {LEAD_TARGET_MAX.toLocaleString('ru-RU')})</span></label>
+              {/* Без потолка сюда проходило 999999999999, и прогресс-бар терял смысл. */}
+              <input type="number" min={0} max={LEAD_TARGET_MAX} className="input" value={form.leadTarget || 0} onChange={(e) => set({ leadTarget: Math.min(LEAD_TARGET_MAX, Math.max(0, Number(e.target.value) || 0)) })} placeholder="Напр. 50" />
             </div>
           </div>
 

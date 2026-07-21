@@ -17,18 +17,54 @@ function normChannels(v) {
   return [...new Set(v.map((x) => String(x || '').trim().replace(/^@/, '')).filter(Boolean))]
 }
 
-/** §4: дедлайн цели — дата ISO ('YYYY-MM-DD' и т.п.) или null, если не задан/невалиден. @param {*} v */
+/** §4: разумные границы дедлайна. Прошлое разрешаем — по нему проверяют «цель просрочена». */
+export const DEADLINE_MIN_YEAR = 2000
+export const DEADLINE_MAX_YEAR = new Date().getFullYear() + 20
+
+/** §4: потолок цели по лидам. Больше миллиона — это опечатка, а не план. */
+export const LEAD_TARGET_MAX = 1_000_000
+
+/**
+ * §4: дедлайн цели — строго 'YYYY-MM-DD' в разумных годах, иначе null.
+ *
+ * Раньше проверка была «лишь бы `new Date()` распарсил», и в базу проходил
+ * год 123123 (опечатка в поле даты): на карточке рисовалось «до 24.07.123123»,
+ * а цель никогда не истекала. Год 0001 и 1899 проходили так же.
+ * @param {*} v
+ */
 function normDeadline(v) {
   if (!v) return null
   const s = String(v).trim()
-  const d = new Date(s)
-  return isNaN(d.getTime()) ? null : s
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(s)
+  if (!m) return null
+  const year = Number(m[1])
+  if (year < DEADLINE_MIN_YEAR || year > DEADLINE_MAX_YEAR) return null
+  const d = new Date(`${s}T00:00:00Z`)
+  if (isNaN(d.getTime())) return null
+  // Отсекаем несуществующие даты вроде 2026-02-31 — Date их «доворачивает» на март.
+  if (d.getUTCFullYear() !== year || d.getUTCMonth() + 1 !== Number(m[2]) || d.getUTCDate() !== Number(m[3])) return null
+  return s
 }
 
-/** §4: сколько лидов должна привести цель (0 = не задано). @param {*} v */
+/**
+ * §4: сколько лидов должна привести цель (0 = не задано).
+ * Ограничено сверху: без потолка в поле проходило `999999999999`, и прогресс-бар
+ * на карточке становился бессмысленным.
+ * @param {*} v
+ */
 function normLeadTarget(v) {
   const n = Math.floor(Number(v) || 0)
-  return n > 0 ? n : 0
+  if (n <= 0) return 0
+  return Math.min(n, LEAD_TARGET_MAX)
+}
+
+/**
+ * §4: дедлайн задали, но он не прошёл проверку. Нужен, чтобы форма показала ошибку,
+ * а не молча «забыла» дату — иначе оператор уверен, что дедлайн стоит.
+ * @param {*} input
+ */
+function rejectedDeadline(input) {
+  return Boolean(input?.deadline) && normDeadline(input.deadline) === null
 }
 
 /** Нормализовать вход в чистую цель. @param {object} input */
@@ -72,6 +108,7 @@ export async function getGoal(id) {
 export async function createGoal(input) {
   const clean = normalizeGoal(input)
   if (!clean.name) throw new Error('Укажите название цели')
+  if (rejectedDeadline(input)) throw new Error(`Проверьте дедлайн: нужна дата в формате ГГГГ-ММ-ДД, год от ${DEADLINE_MIN_YEAR} до ${DEADLINE_MAX_YEAR}`)
   const goals = await listGoals()
   const goal = {
     id: `goal_${crypto.randomUUID().slice(0, 8)}`,
@@ -89,6 +126,7 @@ export async function updateGoal(id, patch = {}) {
   const goals = await listGoals()
   const i = goals.findIndex((g) => g.id === id)
   if (i === -1) return null
+  if (rejectedDeadline(patch)) throw new Error(`Проверьте дедлайн: нужна дата в формате ГГГГ-ММ-ДД, год от ${DEADLINE_MIN_YEAR} до ${DEADLINE_MAX_YEAR}`)
   for (const k of FIELDS) {
     if (patch[k] !== undefined) {
       goals[i][k] = k === 'stages'
