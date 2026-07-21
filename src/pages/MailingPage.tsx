@@ -39,24 +39,34 @@ export function MailingPage() {
     void fetchSettings().then((s) => { setMinTrust(s.mailingMinTrust); setTrustDraft(String(s.mailingMinTrust)) }).catch(() => {})
   }, [])
 
-  const numbers = useMemo(() => {
-    const raw = numbersText.split(/[\n,;]+/).map((x) => x.replace(/\D/g, '')).filter((x) => x.length >= 7)
-    return [...new Set(raw)]
+  /**
+   * Цели рассылки: номер ИЛИ юзернейм. Правило то же, что на сервере
+   * (`server/lib/mailing.js#classifyMailingTargets`) — если разойдутся, человек
+   * увидит одно число, а уйдёт другое.
+   */
+  const targetsParsed = useMemo(() => {
+    const lines = numbersText.split(/[\n,;]+/).map((x) => x.trim()).filter(Boolean)
+    const seen = new Set<string>()
+    const phones: string[] = []
+    const handles: string[] = []
+    for (const raw of lines) {
+      const h = raw.replace(/^https?:\/\//i, '').replace(/^(www\.)?t\.me\//i, '').replace(/^@/, '').replace(/\/+$/, '')
+      if (/^[a-zA-Z][a-zA-Z0-9_]{3,31}$/.test(h)) {
+        const k = `u:${h.toLowerCase()}`
+        if (!seen.has(k)) { seen.add(k); handles.push(h) }
+        continue
+      }
+      const d = raw.replace(/\D/g, '')
+      if (d.length >= 7) {
+        const k = `p:${d}`
+        if (!seen.has(k)) { seen.add(k); phones.push(d) }
+      }
+    }
+    return { phones, handles, all: [...phones, ...handles], total: lines.length }
   }, [numbersText])
 
-  /**
-   * Что человек ввёл против того, что реально уйдёт. Раньше «21 валидных» было
-   * единственным сигналом: непохожие на телефон строки исчезали молча.
-   *
-   * Отдельно ловим юзернеймы: мейлинг вырезает из строки всё кроме цифр, поэтому
-   * «crypto_user12345678» превратится в номер 12345678 и уйдёт ЧУЖОМУ человеку.
-   */
-  const inputStats = useMemo(() => {
-    const lines = numbersText.split(/[\n,;]+/).map((x) => x.trim()).filter(Boolean)
-    const handles = lines.filter((x) => /[a-zA-Zа-яА-Я_]/.test(x))
-    const risky = handles.filter((x) => x.replace(/\D/g, '').length >= 7)
-    return { total: lines.length, handles: handles.length, risky }
-  }, [numbersText])
+  const numbers = targetsParsed.all
+
 
   // §11: рассылку/пост создаёт только один ответственный — админ (единый отправитель).
   const me = useSession((s) => s.user)
@@ -118,7 +128,7 @@ export function MailingPage() {
         ...(belowTrust.length ? { allowLowTrust: true } : {}),
         ...(goalId ? { goalId } : {}),
       })
-      pushToast({ type: 'success', title: 'Рассылка создана', desc: `${numbers.length} номеров · ${selected.size} аккаунтов` })
+      pushToast({ type: 'success', title: 'Рассылка создана', desc: `${numbers.length} целей · ${selected.size} аккаунтов` })
       nav('/panel/tasks')
     } catch (e) {
       pushToast({ type: 'error', title: 'Не удалось создать', desc: e instanceof Error ? e.message : '' })
@@ -129,7 +139,7 @@ export function MailingPage() {
     <div>
       <PageHeader
         title="Мейлинг"
-        subtitle="Рассылка в Telegram по номерам телефонов (§8.4). Резолв номера → аккаунт → ЛС."
+        subtitle="Рассылка в Telegram по номерам и юзернеймам (§8.4). Резолв цели → аккаунт → ЛС."
         icon={<Mail size={22} />}
         badge="live"
       />
@@ -151,24 +161,17 @@ export function MailingPage() {
           <Card className="p-4">
             <div className="mb-1 flex items-center gap-2">
               <span className="text-xs text-white/50">
-                Номера телефонов — введено {inputStats.total}, уйдёт в рассылку {numbers.length}
-                {inputStats.total > numbers.length && <span className="text-white/35"> · отброшено {inputStats.total - numbers.length}</span>}
+                Кому пишем — введено {targetsParsed.total}, уйдёт {numbers.length}
+                {' '}<span className="text-white/35">
+                  (номеров {targetsParsed.phones.length}, юзернеймов {targetsParsed.handles.length}
+                  {targetsParsed.total > numbers.length ? ` · отброшено ${targetsParsed.total - numbers.length}` : ''})
+                </span>
               </span>
               {/* Дубли и так схлопывались при разборе, но молча — человек видел «валидных
                   8500» вместо введённых 10000 и не понимал, куда делись полторы тысячи. */}
-              <DedupeButton value={numbersText} onChange={setNumbersText} mode="phone" className="btn-soft ml-auto h-7 px-2 text-xs disabled:opacity-40" />
+              <DedupeButton value={numbersText} onChange={setNumbersText} mode="exact" className="btn-soft ml-auto h-7 px-2 text-xs disabled:opacity-40" />
             </div>
-            <textarea className="input min-h-[110px] font-mono text-sm" value={numbersText} onChange={(e) => setNumbersText(e.target.value)} placeholder={'+380671234567\n+48512345678\nпо одному на строку'} />
-            {inputStats.handles > 0 && (
-              <div className="mt-2 rounded-lg border border-amber-500/30 bg-amber-500/8 px-3 py-2 text-xs leading-relaxed text-amber-200">
-                Похоже, среди строк {inputStats.handles} юзернеймов. <b>Мейлинг работает только по номерам телефона</b> —
-                из строки вырезается всё кроме цифр.
-                {inputStats.risky.length > 0 && (
-                  <> И это опасно: {inputStats.risky.slice(0, 2).map((x) => `«${x}» → ${x.replace(/\D/g, '')}`).join(', ')}
-                    {inputStats.risky.length > 2 ? ' и др.' : ''} — такие строки станут НОМЕРАМИ и сообщение уйдёт посторонним. Уберите их.</>
-                )}
-              </div>
-            )}
+            <textarea className="input min-h-[110px] font-mono text-sm" value={numbersText} onChange={(e) => setNumbersText(e.target.value)} placeholder={'+380671234567\n@username\nhttps://t.me/username'} />
           </Card>
 
           <Card className="p-4">

@@ -12,6 +12,40 @@ export function cleanMailingNumbers(targets) {
 }
 
 /**
+ * §8.4: цель рассылки — номер ИЛИ юзернейм. Раньше принимались только номера,
+ * а из юзернейма молча вырезались цифры: «user2457890» превращался в номер
+ * 2457890 и сообщение уходило ПОСТОРОННЕМУ. Теперь тип определяется явно.
+ *
+ * @param {string[]} targets
+ * @returns {{ kind:'phone'|'username', value:string, raw:string }[]} без дублей
+ */
+export function classifyMailingTargets(targets) {
+  const out = []
+  const seen = new Set()
+  for (const raw of Array.isArray(targets) ? targets : []) {
+    const s = String(raw ?? '').trim()
+    if (!s) continue
+    // Юзернейм: есть буквы/подчёркивание. Ссылку t.me/... тоже принимаем.
+    const handle = s.replace(/^https?:\/\//i, '').replace(/^(www\.)?t\.me\//i, '').replace(/^@/, '').replace(/\/+$/, '')
+    if (/^[a-zA-Z][a-zA-Z0-9_]{3,31}$/.test(handle)) {
+      const key = `u:${handle.toLowerCase()}`
+      if (seen.has(key)) continue
+      seen.add(key)
+      out.push({ kind: 'username', value: handle, raw: s })
+      continue
+    }
+    const digits = s.replace(/\D/g, '')
+    if (digits.length >= 7) {
+      const key = `p:${digits}`
+      if (seen.has(key)) continue
+      seen.add(key)
+      out.push({ kind: 'phone', value: digits, raw: s })
+    }
+  }
+  return out
+}
+
+/**
  * Выбрать аккаунт для следующего номера (round-robin) с учётом суточного лимита ЛС
  * и maxPerAccount. Чистая: dm-лимит передаётся предикатом isDmReached.
  * @param {string[]} usable @param {number} startIdx

@@ -45,7 +45,7 @@ import { releaseTaskLocks, markTaskLive, markTaskDone, assertAccountAvailable } 
 import { loadSessionString, createClient } from '../tgAuth.js'
 import { pickCommentCandidates, trackIdlePass, warmingPace, pickWeightedKey } from '../lib/workerLoop.js'
 import { limitReached, incAction } from '../lib/dailyActions.js'
-import { cleanMailingNumbers, pickMailingAccount } from '../lib/mailing.js'
+import { cleanMailingNumbers, classifyMailingTargets, pickMailingAccount } from '../lib/mailing.js'
 import { listLeads, sortDialogsByLeadPriority, upsertLead } from '../leads.js'
 import { classifyLeadReply, shouldAdvance } from '../lib/leadClassifier.js'
 import { isSemanticEnabled, embedText, cosineSimilarity } from '../lib/semantic.js'
@@ -1557,16 +1557,20 @@ async function sendComposedMessage(client, peer, text, mediaUrls = []) {
 export async function runMailing(task, store) {
   const s = task.settings || {}
   const accountIds = Array.isArray(s.accountIds) ? s.accountIds : []
-  const numbers = cleanMailingNumbers(s.targets)
+  // §8.4: цель рассылки — номер ИЛИ юзернейм. Раньше принимались только номера,
+  // а юзернеймы молча превращались в чужие номера (из строки вырезались цифры).
+  const mailTargets = classifyMailingTargets(s.targets)
+  const phonesCount = mailTargets.filter((t) => t.kind === 'phone').length
+  const handlesCount = mailTargets.length - phonesCount
   const message = String(s.promptText || s.message || '').trim()
 
   task.status = 'running'
-  task.progress = { done: 0, total: numbers.length }
+  task.progress = { done: 0, total: mailTargets.length }
   task.accountStats = task.accountStats || {}
   await store.saveTask(task)
-  await store.appendLog(task, 'info', `Мейлинг: ${numbers.length} номеров на ${accountIds.length} аккаунт(ов)`)
+  await store.appendLog(task, 'info', `Мейлинг: ${mailTargets.length} целей (номеров ${phonesCount}, юзернеймов ${handlesCount}) на ${accountIds.length} аккаунт(ов)`)
 
-  if (!numbers.length) { await store.appendLog(task, 'warning', 'Нет корректных номеров для рассылки'); task.status = 'done'; await store.saveTask(task); return }
+  if (!mailTargets.length) { await store.appendLog(task, 'warning', 'Нет корректных целей для рассылки'); task.status = 'done'; await store.saveTask(task); return }
   if (!accountIds.length) { await store.appendLog(task, 'warning', 'Не выбраны аккаунты'); task.status = 'done'; await store.saveTask(task); return }
   if (!message) { await store.appendLog(task, 'warning', 'Пустой текст рассылки'); task.status = 'done'; await store.saveTask(task); return }
 
@@ -1622,7 +1626,9 @@ export async function runMailing(task, store) {
   const perAccSent = {}
 
   try {
-    for (const phone of numbers) {
+    for (const tgt of mailTargets) {
+      const phone = tgt.kind === 'phone' ? tgt.value : ''
+      const label = tgt.kind === 'phone' ? `+${tgt.value}` : `@${tgt.value}`
       task = (await store.loadTask(task.id)) || task
       if (task.stopRequested || task.pauseRequested || totalLimitReached(s, task)) break
 
@@ -1639,15 +1645,21 @@ export async function runMailing(task, store) {
       let client
       try {
         ;({ client } = await connectAccount(account, task.id))
-        // 1) Резолв номера → пользователь Telegram.
-        const res = await client.invoke(new Api.contacts.ImportContacts({
-          contacts: [new Api.InputPhoneContact({ clientId: bigInt(idx * 1000 + sent + skipped), phone: `+${phone}`, firstName: 'Lead', lastName: '' })],
-        }))
-        const user = res.users?.[0]
+        // 1) Резолв цели → пользователь Telegram. Номер импортируем в контакты,
+        // юзернейм разрешаем напрямую — ImportContacts для него бессмыслен.
+        let user = null
+        if (tgt.kind === 'phone') {
+          const res = await client.invoke(new Api.contacts.ImportContacts({
+            contacts: [new Api.InputPhoneContact({ clientId: bigInt(idx * 1000 + sent + skipped), phone: `+${phone}`, firstName: 'Lead', lastName: '' })],
+          }))
+          user = res.users?.[0] || null
+        } else {
+          try { user = await client.getEntity(tgt.value) } catch { user = null }
+        }
         if (!user) {
           skipped += 1
           task.progress.done = sent + skipped
-          await store.appendLog(task, 'info', `+${phone}: нет в Telegram — пропуск`, meta.name)
+          await store.appendLog(task, 'info', `${label}: нет в Telegram — пропуск`, meta.name)
           await disconnectAccount(client, account)
           continue
         }
@@ -1668,21 +1680,21 @@ export async function runMailing(task, store) {
         task.accountStats[account] = task.accountStats[account] || { actions: 0, floodWaits: 0 }
         task.accountStats[account].actions += 1
         task.progress.done = sent + skipped
-        await store.appendHistory(task, { id: `${task.id}_${Date.now()}`, ts: new Date().toISOString(), accountName: meta.name, target: `+${phone}`, text, status: 'sent' })
+        await store.appendHistory(task, { id: `${task.id}_${Date.now()}`, ts: new Date().toISOString(), accountName: meta.name, target: label, text, status: 'sent' })
         // §9: лид сразу в CRM со статусом «холодный» — это знаменатель конверсии
         // (скольким написали). Ответит — авто-ответчик продвинет его по воронке.
         // peer берём как @username (по нему матчатся входящие диалоги), иначе — телефон.
         if (s.goalId) {
           try {
             await upsertLead({
-              peer: user.username ? `@${user.username}` : `+${phone}`,
+              peer: user.username ? `@${user.username}` : label,
               goalId: s.goalId,
               accountId: account,
               status: 'cold',
             })
           } catch (e) { await store.appendLog(task, 'warning', `Лид не записан: ${e instanceof Error ? e.message : e}`, meta.name) }
         }
-        await store.appendLog(task, 'success', `ЛС → +${phone} (${user.firstName || 'user'})`, meta.name)
+        await store.appendLog(task, 'success', `ЛС → ${label} (${user.firstName || 'user'})`, meta.name)
         await bumpProgress(task, store)
         await disconnectAccount(client, account)
       } catch (err) {
