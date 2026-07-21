@@ -799,9 +799,16 @@ export async function runNeuroDialogs(task, store) {
 
   try {
     /** Один ПОТОК: крутит свой набор аккаунтов, пока задачу не остановят. */
-    const runThread = async (myAccounts) => {
+    const runThread = async (myAccounts, threadNo = 0) => {
     let idx = 0
     let skips = 0
+    // Расфазировка потока: своя случайная «фаза» и джиттер на каждый круг. Без этого
+    // потоки быстро выравниваются и начинают стучать в Telegram синхронно — а ровный
+    // машинный ритм от нескольких аккаунтов и есть кластер, который видно со стороны.
+    // Задержки здесь маленькие (доли секунды–секунды): они не тормозят работу,
+    // а только сбивают совпадение моментов.
+    const phase = Math.random() * 2500 + threadNo * 400
+    if (phase) await sleep(phase)
     while (!task.stopRequested && !task.pauseRequested && !totalLimitReached(s, task)) {
       // Полный круг из пропусков (лимиты выбраны, аккаунты в карантине) — не крутим цикл вхолостую.
       if (skips >= myAccounts.length) {
@@ -979,7 +986,9 @@ export async function runNeuroDialogs(task, store) {
         }
       }
       task = (await store.loadTask(task.id)) || task
-      await sleep(pickDelay(10, 25, mul) * 1000)
+      // Джиттер поверх основной паузы: ±40%, чтобы круги потоков не совпадали.
+      const base = pickDelay(10, 25, mul) * 1000
+      await sleep(Math.round(base * (0.8 + Math.random() * 0.4)))
     }
     }
 
@@ -992,9 +1001,10 @@ export async function runNeuroDialogs(task, store) {
       accountIds.forEach((id, i) => groups[i % threads].push(id))
       await store.appendLog(task, 'info', `Асинхронный режим: ${threads} поток(ов) на ${accountIds.length} аккаунт(ов)`)
       await Promise.all(groups.filter((g) => g.length).map((g, i) => (async () => {
-        // Разбег стартов: одновременный залп читается как ферма.
-        if (i > 0) await sleep(pickDelay(5, 20, mul) * 1000 * (0.5 + Math.random()))
-        return runThread(g)
+        // Разбег стартов: одновременный залп читается как ферма. Пауза случайная и
+        // НЕ кратная номеру потока — иначе получился бы ровный шаг 10с, 20с, 30с.
+        if (i > 0) await sleep(Math.round(pickDelay(5, 20, mul) * 1000 * (0.4 + Math.random() * 1.2)))
+        return runThread(g, i)
       })()))
     } else {
       await runThread(accountIds)
