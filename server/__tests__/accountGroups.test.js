@@ -37,15 +37,24 @@ test('§12 groupsByAccount: карта аккаунт → его группы', 
 test('§12 isAccountAllowedViaGroups: доступ через группу, точечный запрет сильнее', () => {
   const groups = [{ id: 'g1', name: 'RU', accountIds: ['a1', 'a2'] }]
   // доступ выдан на группу — аккаунт группы разрешён
-  assert.equal(isAccountAllowedViaGroups({}, { g1: true }, groups, 'a1'), true)
+  assert.equal(isAccountAllowedViaGroups({}, { g1: 'allow' }, groups, 'a1'), true)
   // аккаунт вне группы — нет
-  assert.equal(isAccountAllowedViaGroups({}, { g1: true }, groups, 'чужой'), false)
+  assert.equal(isAccountAllowedViaGroups({}, { g1: 'allow' }, groups, 'чужой'), false)
   // группа не разрешена — нет
   assert.equal(isAccountAllowedViaGroups({}, {}, groups, 'a1'), false)
+  // явный deny на группу — нет
+  assert.equal(isAccountAllowedViaGroups({}, { g1: 'deny' }, groups, 'a1'), false)
   // точечный запрет перебивает разрешённую группу
-  assert.equal(isAccountAllowedViaGroups({ a1: false }, { g1: true }, groups, 'a1'), false)
+  assert.equal(isAccountAllowedViaGroups({ a1: 'deny' }, { g1: 'allow' }, groups, 'a1'), false)
   // точечное разрешение работает и без групп
-  assert.equal(isAccountAllowedViaGroups({ solo: true }, {}, groups, 'solo'), true)
+  assert.equal(isAccountAllowedViaGroups({ solo: 'allow' }, {}, groups, 'solo'), true)
+})
+
+test('§12 контракт значений — строки, а не boolean (регрессия: сравнение с true/false молча ломало доступ)', () => {
+  const groups = [{ id: 'g1', name: 'RU', accountIds: ['a1'] }]
+  // булевы значения — не наш контракт: доступ не выдаётся (лучше отказать, чем пустить лишнего)
+  assert.equal(isAccountAllowedViaGroups({}, { g1: true }, groups, 'a1'), false)
+  assert.equal(isAccountAllowedViaGroups({ a1: true }, {}, groups, 'a1'), false)
 })
 
 test('§12 CRUD групп на изолированном файле', async () => {

@@ -12,7 +12,7 @@
  * Хранение — JSON `data/campaigns.json`; путь через env CAMPAIGNS_FILE (тесты).
  */
 import crypto from 'crypto'
-import { dataPath, readJson, writeJson, mutateJson } from './lib/jsonStore.js'
+import { dataPath, readJson, mutateJson } from './lib/jsonStore.js'
 
 const CAMPAIGNS_FILE = process.env.CAMPAIGNS_FILE || dataPath('campaigns.json')
 

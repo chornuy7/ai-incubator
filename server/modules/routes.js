@@ -5,8 +5,21 @@ import { assertAccountsAssignable } from '../accountsMeta.js'
 import { assertNoHotLeadConflict, assertActiveDialogLimit } from '../leads.js'
 import { findDuplicateActiveTask } from '../lib/taskDedup.js'
 import { getGoal, isGoalExpired } from '../goals.js'
+import { WARMING_MODULES, canStopWarming } from '../lib/safetyLimits.js'
+import { isAdminRequest } from '../lib/accessGuard.js'
 
 export const modulesRouter = Router()
+
+/**
+ * §12: стоп/пауза прогрева — только супер-админ. Раньше это проверял ТОЛЬКО фронт
+ * (TasksPage), т.е. прямой POST в обход UI убивал недели прогрева.
+ * @returns {Promise<string|null>} текст ошибки или null, если можно
+ */
+async function warmingStopBlockReason(req, moduleKey) {
+  if (!WARMING_MODULES.has(moduleKey)) return null
+  if (canStopWarming(await isAdminRequest(req))) return null
+  return 'Останавливать и ставить на паузу прогрев может только супер-админ: это недели работы аккаунтов, откатить нельзя.'
+}
 
 modulesRouter.get('/', (_req, res) => {
   res.json({ ok: true, modules: listModuleKeys() })
@@ -114,6 +127,8 @@ modulesRouter.post('/:moduleKey/tasks', async (req, res) => {
 
 modulesRouter.post('/:moduleKey/tasks/:id/stop', async (req, res) => {
   try {
+    const blocked = await warmingStopBlockReason(req, req.params.moduleKey)
+    if (blocked) return res.status(403).json({ ok: false, error: blocked })
     const task = await stopModuleTask(req.params.moduleKey, req.params.id)
     if (!task) return res.status(404).json({ ok: false, error: 'Задача не найдена' })
     const { appendAudit } = await import('../lib/auditLog.js')
@@ -134,6 +149,8 @@ modulesRouter.post('/:moduleKey/tasks/:id/stop', async (req, res) => {
 // Пауза задачи (§3.9): воркер выходит, статус «paused», прогресс сохранён.
 modulesRouter.post('/:moduleKey/tasks/:id/pause', async (req, res) => {
   try {
+    const blocked = await warmingStopBlockReason(req, req.params.moduleKey)
+    if (blocked) return res.status(403).json({ ok: false, error: blocked })
     const task = await pauseModuleTask(req.params.moduleKey, req.params.id)
     if (!task) return res.status(404).json({ ok: false, error: 'Задача не найдена' })
     const { appendAudit } = await import('../lib/auditLog.js')

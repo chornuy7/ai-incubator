@@ -33,6 +33,26 @@ export function moduleAccessGuard(keyFrom) {
   }
 }
 
+/**
+ * §12: админ ли автор запроса (по тому же `X-User-Id`). Нужен там, где проверку нельзя
+ * оставлять фронту — например остановка прогрева (недели работы, откатить нельзя).
+ *
+ * Нет заголовка — дев/демо, считаем админом (как и `moduleAccessGuard`, который без
+ * сессии пропускает). Ошибка/неизвестный юзер — НЕ админ: тут дешевле отказать.
+ * @returns {Promise<boolean>}
+ */
+export async function isAdminRequest(req) {
+  try {
+    const userId = req.header('x-user-id')
+    if (!userId) return true // нет сессии — дев/демо
+    const user = await getUser(userId)
+    if (!user || !user.active) return false
+    return hasAdminRole(userRoleIds(user))
+  } catch {
+    return false // fail-closed: защищаем дорогое действие
+  }
+}
+
 /** Ключ модуля из /api/modules/<key>/... (первый сегмент; 'tasks' — не модуль). */
 export function moduleKeyFromModulesPath(req) {
   const seg = String(req.path || '').split('/').filter(Boolean)[0]
