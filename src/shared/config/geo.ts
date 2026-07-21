@@ -3,7 +3,7 @@
  * аккаунтов (менеджер + пикер). Регион «Европа+Украина» — цель бизнеса.
  * Коды согласованы с server/accountsMeta.js#countryFromPhone (по префиксу телефона).
  */
-export type Region = 'europe' | 'cis'
+export type Region = 'europe' | 'cis' | 'america' | 'asia'
 
 export interface GeoCountry { code: string; flag: string; label: string; region: Region }
 
@@ -24,9 +24,19 @@ export const COUNTRIES: GeoCountry[] = [
   // СНГ
   { code: 'ru', flag: '🇷🇺', label: 'Россия', region: 'cis' },
   { code: 'kz', flag: '🇰🇿', label: 'Казахстан', region: 'cis' },
+  { code: 'uz', flag: '🇺🇿', label: 'Узбекистан', region: 'cis' },
+  { code: 'ge', flag: '🇬🇪', label: 'Грузия', region: 'cis' },
+  { code: 'am', flag: '🇦🇲', label: 'Армения', region: 'cis' },
+  // Америка — американские номера у нас теперь основная масса импорта
+  { code: 'us', flag: '🇺🇸', label: 'США', region: 'america' },
+  { code: 'br', flag: '🇧🇷', label: 'Бразилия', region: 'america' },
+  // Азия
+  { code: 'tr', flag: '🇹🇷', label: 'Турция', region: 'asia' },
+  { code: 'in', flag: '🇮🇳', label: 'Индия', region: 'asia' },
+  { code: 'id', flag: '🇮🇩', label: 'Индонезия', region: 'asia' },
 ]
 
-export const REGION_LABELS: Record<Region, string> = { europe: 'Европа', cis: 'СНГ' }
+export const REGION_LABELS: Record<Region, string> = { europe: 'Европа', cis: 'СНГ', america: 'Америка', asia: 'Азия' }
 
 export const FLAGS: Record<string, string> = Object.fromEntries(COUNTRIES.map((c) => [c.code, c.flag]))
 export const COUNTRY_NAME: Record<string, string> = Object.fromEntries(COUNTRIES.map((c) => [c.code, c.label]))
@@ -37,6 +47,8 @@ export const COUNTRIES_FILTER: { code: string; flag: string; label: string }[] =
   { code: 'all', flag: '', label: 'Все страны' },
   { code: 'reg:europe', flag: '🇪🇺', label: 'Европа — регион' },
   { code: 'reg:cis', flag: '🌐', label: 'СНГ — регион' },
+  { code: 'reg:america', flag: '🌎', label: 'Америка — регион' },
+  { code: 'reg:asia', flag: '🌏', label: 'Азия — регион' },
   ...COUNTRIES.map((c) => ({ code: c.code, flag: c.flag, label: c.label })),
 ]
 
@@ -49,6 +61,8 @@ export function countryOptionsFrom(countries: (string | null | undefined)[]): { 
   for (const c of COUNTRIES) if (present.has(c.code)) regions.add(c.region)
   if (regions.has('europe')) opts.push({ code: 'reg:europe', flag: '🇪🇺', label: 'Европа — регион' })
   if (regions.has('cis')) opts.push({ code: 'reg:cis', flag: '🌐', label: 'СНГ — регион' })
+  if (regions.has('america')) opts.push({ code: 'reg:america', flag: '🌎', label: 'Америка — регион' })
+  if (regions.has('asia')) opts.push({ code: 'reg:asia', flag: '🌏', label: 'Азия — регион' })
   for (const c of COUNTRIES) if (present.has(c.code)) opts.push({ code: c.code, flag: c.flag, label: c.label })
   return opts
 }

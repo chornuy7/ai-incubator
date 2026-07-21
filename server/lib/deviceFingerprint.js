@@ -45,7 +45,23 @@ const pickBy = (hash, offset, pool) => pool[hash.readUInt32BE(offset) % pool.len
  * @param {string} seed
  * @param {{apiId?:number, apiHash?:string, langCode?:string}} [base]
  */
-export function generateFingerprint(seed, base = {}) {
+export function generateFingerprint(seed, base = {}, taken) {
+  // При совпадении с уже занятым отпечатком подсаливаем seed и пробуем снова: детерминизм
+  // сохраняется (соль зависит только от номера попытки), но пачка не склеивается.
+  for (let attempt = 0; attempt < 24; attempt++) {
+    const h = crypto.createHash('sha256').update(`${seed || 'seed'}${attempt ? `#${attempt}` : ''}`).digest()
+    const fp = {
+      apiId: Number(base.apiId) || TDESKTOP_API_ID,
+      apiHash: base.apiHash || TDESKTOP_API_HASH,
+      device: pickBy(h, 0, DEVICES),
+      system: pickBy(h, 4, SYSTEMS),
+      appVersion: pickBy(h, 8, APP_VERSIONS),
+      langCode: base.langCode || 'en',
+      systemLangCode: base.langCode ? `${base.langCode}-US` : 'en-US',
+    }
+    if (!taken || !taken.has(fingerprintKey(fp))) return fp
+  }
+  // Пул исчерпан (аккаунтов больше, чем комбинаций) — отдаём как есть, дубль лучше пустоты.
   const h = crypto.createHash('sha256').update(String(seed || 'seed')).digest()
   return {
     apiId: Number(base.apiId) || TDESKTOP_API_ID,
@@ -58,17 +74,35 @@ export function generateFingerprint(seed, base = {}) {
   }
 }
 
+/** Ключ для сравнения отпечатков: именно эту тройку Telegram и видит. */
+export const fingerprintKey = (fp) => `${fp?.device}|${fp?.system}|${fp?.appVersion}`
+
+/**
+ * Отпечатки, уже занятые другими аккаунтами — чтобы новый им не совпал.
+ * @param {Record<string, object>} allMeta карта meta по accountId
+ * @param {string} [exceptId] чей отпечаток не считать занятым (свой же)
+ */
+export function takenFingerprints(allMeta = {}, exceptId) {
+  const set = new Set()
+  for (const [id, m] of Object.entries(allMeta)) {
+    if (id === exceptId) continue
+    set.add(fingerprintKey(accountFingerprint(id, m)))
+  }
+  return set
+}
+
 /**
  * Отпечаток аккаунта: из meta, если он там есть (пришёл с аккаунтом), иначе
  * сгенерированный от accountId. Никогда не возвращает пустоту — иначе клиент уйдёт
  * с дефолтом GramJS, одинаковым у всех.
  * @param {string} accountId @param {{fingerprint?: object}} [meta]
+ * @param {Set<string>} [taken] отпечатки других аккаунтов — генерируемый им не совпадёт
  */
-export function accountFingerprint(accountId, meta = {}) {
+export function accountFingerprint(accountId, meta = {}, taken) {
   const fp = meta?.fingerprint
   // Отпечаток из json бывает частичным (например, только app_id) — недостающее дописываем
   // сгенерированным, чтобы в эфир не ушли дефолтные значения библиотеки.
-  const gen = generateFingerprint(accountId, { apiId: fp?.apiId, apiHash: fp?.apiHash, langCode: fp?.langCode })
+  const gen = generateFingerprint(accountId, { apiId: fp?.apiId, apiHash: fp?.apiHash, langCode: fp?.langCode }, taken)
   if (!fp) return gen
   return {
     apiId: fp.apiId || gen.apiId,

@@ -164,7 +164,19 @@ export function countryFromPhone(phone) {
   if (p.startsWith('40')) return 'ro'
   if (p.startsWith('370')) return 'lt'
   if (p.startsWith('371')) return 'lv'
-  return 'ua'
+  // США/Канада: по префиксу их не различить (общий план нумерации), пишем us — их подавляющее
+  // большинство. Без этой строки американские номера молча становились украинскими.
+  if (p.startsWith('1')) return 'us'
+  if (p.startsWith('90')) return 'tr'
+  if (p.startsWith('91')) return 'in'
+  if (p.startsWith('62')) return 'id'
+  if (p.startsWith('55')) return 'br'
+  if (p.startsWith('998')) return 'uz'
+  if (p.startsWith('995')) return 'ge'
+  if (p.startsWith('374')) return 'am'
+  // Неизвестный префикс — честное «не знаю». Раньше здесь стояло 'ua', и любой
+  // нераспознанный номер выдавал себя за украинский.
+  return ''
 }
 
 export function avatarColor(accountId) {

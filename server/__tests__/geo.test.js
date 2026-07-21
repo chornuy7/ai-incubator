@@ -18,6 +18,11 @@ test('countryFromPhone: GEO-модель Европа+Украина/СНГ (§8
   // СНГ: Казахстан (77x) должен резолвиться раньше России (7).
   assert.equal(countryFromPhone('+7 701 234 5678'), 'kz')
   assert.equal(countryFromPhone('+7 916 123 4567'), 'ru')
-  // неизвестный префикс — дефолт ua
-  assert.equal(countryFromPhone('+000'), 'ua')
+  // США/Канада — единый план нумерации, отдаём us.
+  assert.equal(countryFromPhone('+1 618 450 7132'), 'us')
+  assert.equal(countryFromPhone('+19518558554'), 'us')
+  // Неизвестный префикс — пусто, а не «украинский по умолчанию»:
+  // молчаливый дефолт делал все импортированные номера украинскими.
+  assert.equal(countryFromPhone('+000'), '')
+  assert.equal(countryFromPhone(''), '')
 })

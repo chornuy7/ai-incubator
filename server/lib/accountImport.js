@@ -11,6 +11,7 @@
 import { toGramjsSession, ImportError } from './sessionImport.js'
 import { saveSession, newAccountId, createClient } from '../tgAuth.js'
 import { setAccountMeta, countryFromPhone, avatarColor, loadAllMeta } from '../accountsMeta.js'
+import { accountFingerprint, takenFingerprints } from './deviceFingerprint.js'
 
 /** Режимы раздачи прокси. */
 export const PROXY_MODES = ['pool', 'single', 'sidecar', 'none']
@@ -59,6 +60,10 @@ export async function importOne(item, opts = {}) {
   }
 
   const proxy = opts.proxy || null
+  // Отпечаток: из json продавца, если он есть, иначе свой — но заведомо не совпадающий
+  // с отпечатками уже заведённых аккаунтов, иначе они склеятся в одну пачку (§6).
+  const taken = opts.taken || takenFingerprints(await loadAllMeta())
+  const fingerprint = accountFingerprint(item.path + (item.accountIdx ?? 0), { fingerprint: item.fingerprint }, taken)
   let me = null
   if (opts.validate) {
     // Единственный способ узнать, живой ли аккаунт, — сходить в Telegram его сессией.
@@ -66,7 +71,7 @@ export async function importOne(item, opts = {}) {
     // то и проверять надо оттуда же, иначе проверка ничего не доказывает.
     let client
     try {
-      client = await createClient(session, proxy || undefined, item.fingerprint || undefined)
+      client = await createClient(session, proxy || undefined, fingerprint)
       me = await client.getMe()
       if (!me) return { ok: false, reason: 'Telegram не отдал профиль — сессия мертва' }
     } catch (e) {
@@ -93,8 +98,8 @@ export async function importOne(item, opts = {}) {
     userId: Number(me?.id ?? self?.userId) || undefined,
     avatarColor: avatarColor(accountId),
     // Отпечаток храним вместе с аккаунтом: дальше ходить надо тем же устройством,
-    // которым сессия создана, иначе для Telegram это смена девайса.
-    fingerprint: item.fingerprint || null,
+    // которым сессия создана (или которое мы ему выдали), иначе для Telegram это смена девайса.
+    fingerprint,
     note: `Импортирован из ${item.kind === 'tdata' ? 'tdata' : 'файла сессии'}`,
   })
 

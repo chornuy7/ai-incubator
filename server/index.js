@@ -50,9 +50,11 @@ app.get('/api/health', (_req, res) => {
   })
 })
 
-app.get('/api/tg/accounts', async (_req, res) => {
+app.get('/api/tg/accounts', async (req, res) => {
   try {
-    const accounts = await tgListAccounts()
+    // ?verify=1 — сходить в Telegram за каждым аккаунтом. Долго (подключение на аккаунт),
+    // поэтому только по явному запросу: обычный список отдаётся из meta мгновенно.
+    const accounts = await tgListAccounts({ verify: req.query.verify === '1' || req.query.verify === 'true' })
     res.json({ ok: true, accounts })
   } catch (err) {
     res.status(500).json({ ok: false, error: err instanceof Error ? err.message : 'Ошибка' })

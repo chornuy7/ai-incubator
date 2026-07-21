@@ -128,6 +128,17 @@ export function ImportModal({ open, onClose, onImported }: { open: boolean; onCl
 
       {step === 'pick' && (
         <div className="space-y-3">
+          {/* Главное, что человек должен понять до первого клика: разбирать пачку руками не нужно. */}
+          <div className="rounded-xl border border-spark-500/25 bg-spark-500/5 p-3">
+            <div className="text-sm font-semibold text-spark-200">Просто укажите папку — разберём сами</div>
+            <ul className="mt-1.5 space-y-1 text-xs leading-relaxed text-white/55">
+              <li>• Можно указать <b className="text-white/75">папку целиком</b>, со всеми лотами вперемешку — вложенность любая.</li>
+              <li>• Сами находим <b className="text-white/75">tdata</b> и <b className="text-white/75">.session</b>, различаем форматы Telegram Desktop, Telethon и Pyrogram.</li>
+              <li>• Из <b className="text-white/75">json рядом</b> подхватываем телефон, облачный пароль и прокси, если продавец их положил.</li>
+              <li>• Каждому аккаунту выдаём <b className="text-white/75">свой прокси</b> и <b className="text-white/75">свой отпечаток устройства</b> — одинаковые склеили бы их в одну пачку для Telegram.</li>
+              <li>• Каждый аккаунт <b className="text-white/75">проверяем заходом в Telegram</b>: в систему попадут только живые, мёртвые останутся в отчёте с причиной.</li>
+            </ul>
+          </div>
           <div className="flex gap-2">
             <input
               className="input flex-1 font-mono text-xs"
@@ -243,11 +254,12 @@ export function ImportModal({ open, onClose, onImported }: { open: boolean; onCl
           <label className="flex cursor-pointer items-start gap-2.5 rounded-xl border border-line bg-elevated/40 p-3">
             <input type="checkbox" checked={validate} onChange={(e) => setValidate(e.target.checked)} className="mt-0.5 h-4 w-4 accent-spark" />
             <span>
-              <span className="text-sm font-semibold">Проверить каждый аккаунт при импорте</span>
+              <span className="text-sm font-semibold">Оставить только рабочие аккаунты</span>
               <span className="mt-0.5 block text-xs text-white/45">
-                Заходим в Telegram сессией через назначенный прокси — только так видно, что аккаунт живой,
-                и сразу подтягиваются имя, username и телефон. Несколько секунд на аккаунт; без проверки
-                мёртвые сессии попадут в список наравне с рабочими.
+                Заходим в Telegram каждой сессией — через её же прокси и с её же отпечатком устройства.
+                Только так видно, что аккаунт живой; заодно подтягиваются настоящие имя, username и телефон.
+                Пара секунд на аккаунт. Без проверки мёртвые сессии лягут в список наравне с рабочими,
+                и вы узнаете об этом уже посреди запущенной кампании.
               </span>
             </span>
           </label>

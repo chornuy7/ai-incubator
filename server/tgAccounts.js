@@ -61,7 +61,18 @@ function toAccountDto(accountId, meta, me, sessionOk) {
   }
 }
 
-export async function tgListAccounts() {
+/**
+ * Список аккаунтов.
+ *
+ * `verify` — сходить в Telegram за каждым аккаунтом и обновить профиль/статус сессии.
+ * По умолчанию ВЫКЛЮЧЕНО: это по подключению на аккаунт, и на полусотне аккаунтов
+ * страница менеджера открывалась две с половиной минуты. Профиль (имя, username,
+ * телефон, userId) и так лежит в meta с прошлой удачной проверки, поэтому обычный
+ * список отдаётся мгновенно, а проверку живости запускают отдельно и осознанно.
+ * @param {{ verify?: boolean }} [opts]
+ */
+export async function tgListAccounts(opts = {}) {
+  const verify = opts.verify === true
   const ids = await listSessionIds()
   const accounts = []
   const trustAll = await getAllTrustCache()
@@ -72,22 +83,26 @@ export async function tgListAccounts() {
     if (!sessionStr) continue
 
     let me = null
-    let sessionOk = false
-    try {
-      const client = await createClient(sessionStr, meta.proxy, accountFingerprint(accountId, meta))
-      me = await client.getMe()
-      sessionOk = true
-      await client.disconnect()
+    // Без проверки считаем сессию рабочей: файл на месте, а реальный вердикт даст
+    // либо запуск модуля, либо явная проверка. Иначе все аккаунты уехали бы в reauth.
+    let sessionOk = true
+    if (verify) {
+      try {
+        const client = await createClient(sessionStr, meta.proxy, accountFingerprint(accountId, meta))
+        me = await client.getMe()
+        sessionOk = true
+        await client.disconnect()
 
-      meta = await setAccountMeta(accountId, {
-        name: `${me.firstName || ''} ${me.lastName || ''}`.trim(),
-        username: me.username,
-        phone: me.phone,
-        userId: me.id?.toString?.(),
-        ...(meta.status === 'reauth' ? { status: 'active' } : {}),
-      })
-    } catch {
-      sessionOk = false
+        meta = await setAccountMeta(accountId, {
+          name: `${me.firstName || ''} ${me.lastName || ''}`.trim(),
+          username: me.username,
+          phone: me.phone,
+          userId: me.id?.toString?.(),
+          ...(meta.status === 'reauth' ? { status: 'active' } : {}),
+        })
+      } catch {
+        sessionOk = false
+      }
     }
 
     const dto = toAccountDto(accountId, meta, me, sessionOk)
