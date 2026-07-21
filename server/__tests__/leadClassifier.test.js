@@ -40,6 +40,20 @@ test('кириллица матчится (регресс: \\b в JS не раб
   assert.notEqual(classifyByRules('подписался').status, 'warm')
 })
 
+test('после отправки ссылки короткий отклик = выполнено (§9)', () => {
+  // «Спасибо», «+», «ок» после ссылки — это подтверждение: человеку больше нечего
+  // сказать, он её забрал. Раньше такие ответы застревали в contacted, и лид
+  // навсегда оставался hot, хотя по факту дошёл до конца.
+  for (const t of ['спасибо', '+', 'ок', 'ага']) {
+    assert.equal(classifyByRules(t, 'hot').status, 'target', t)
+  }
+  // А до отправки ссылки то же самое ничего не подтверждает.
+  assert.equal(classifyByRules('спасибо', 'warm').status, 'contacted')
+  assert.equal(classifyByRules('ок', 'cold').status, 'contacted')
+  // Отказ важнее всего и на любой стадии.
+  assert.equal(classifyByRules('не интересно', 'hot').status, 'closed')
+})
+
 test('shouldAdvance: только вперёд, терминальные не откатываются', () => {
   assert.equal(shouldAdvance('cold', 'warm'), true)
   assert.equal(shouldAdvance('warm', 'cold'), false)      // назад нельзя

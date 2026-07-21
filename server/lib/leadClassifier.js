@@ -30,14 +30,21 @@ const SHORT = /^(ок|окей|ok|ага|угу|да|нет|хм|ясно|пон
  * @param {string} text ответ лида
  * @returns {{ status: string, reason: string } | null}
  */
-export function classifyByRules(text) {
+export function classifyByRules(text, currentStatus = 'cold') {
   const t = String(text || '').trim()
   if (!t) return null
   if (REFUSE.test(t)) return { status: 'closed', reason: 'явный отказ' }
   if (DONE.test(t)) return { status: 'target', reason: 'подтвердил целевое действие словами' }
   if (HOT.test(t)) return { status: 'hot', reason: 'просит ссылку / готов действовать' }
   if (INTERESTED.test(t)) return { status: 'interested', reason: 'спрашивает подробности' }
-  if (SHORT.test(t)) return { status: 'contacted', reason: 'односложный ответ' }
+  // Ссылка уже отправлена (hot) — короткое «спасибо», «+», «ок» это ПОДТВЕРЖДЕНИЕ,
+  // а не пустая реплика: человеку больше нечего сказать, он забрал ссылку.
+  // До отправки ссылки такое же «ок» ничего не значит — там это просто отклик.
+  if (SHORT.test(t)) {
+    return currentStatus === 'hot'
+      ? { status: 'target', reason: 'подтвердил после получения ссылки' }
+      : { status: 'contacted', reason: 'односложный ответ' }
+  }
   return { status: 'warm', reason: 'ответил по делу' }
 }
 
@@ -55,7 +62,7 @@ function rank(s) {
  * @returns {Promise<{ status: string, reason: string, mode: 'openai'|'rules' }>}
  */
 export async function classifyLeadReply({ text, currentStatus = 'cold', goalName = '', targetAction = '' }) {
-  const fallback = classifyByRules(text) || { status: currentStatus, reason: 'пустой ответ' }
+  const fallback = classifyByRules(text, currentStatus) || { status: currentStatus, reason: 'пустой ответ' }
   const apiKey = process.env.OPENAI_API_KEY?.trim()
   if (!apiKey || !String(text || '').trim()) {
     return { ...fallback, mode: 'rules' }
