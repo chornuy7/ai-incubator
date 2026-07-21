@@ -1,5 +1,5 @@
 import { generateComment, isAiGenerationEnabled, resolveSystemPrompt } from '../neuroCommenting/commentGenerator.js'
-import { buildGoalContext } from '../lib/goalContext.js'
+import { buildGoalContext, stageForStatus } from '../lib/goalContext.js'
 import { upsertMany } from '../channels.js'
 import {
   fetchPosts,
@@ -727,7 +727,7 @@ const STAGE_HINT = {
   closed: 'Отказался. Извинись одним предложением и попрощайся.',
 }
 
-function dialogSystemPrompt(settings, goal, goalObj = null, leadStatus = null) {
+function dialogSystemPrompt(settings, goal, goalObj = null, leadStatus = null, stage = null) {
   const base = resolveSystemPrompt(settings)
   const rules = 'Ты ведёшь личную переписку в Telegram от лица владельца аккаунта. Отвечай на языке собеседника, коротко (1–3 предложения), живо и по-человечески. Никогда не сообщай, что ты ИИ или бот.'
   // §9: прощание — не отдельный механизм, а правило промта. ИИ видит историю переписки
@@ -742,6 +742,9 @@ function dialogSystemPrompt(settings, goal, goalObj = null, leadStatus = null) {
   const parts = [base, rules, finish]
   // Стадия лида: без неё ИИ каждый раз начинает разговор заново и воронка стоит.
   if (leadStatus && STAGE_HINT[leadStatus]) parts.push(`Стадия лида — «${leadStatus}». ${STAGE_HINT[leadStatus]}`)
+  // Этап из самой цели: заказчик описал воронку своими словами, ИИ должен работать
+  // по НЕЙ, а не по нашим машинным статусам.
+  if (stage) parts.push(`Сейчас этап ${stage.index} из ${stage.total} по цели: «${stage.name}». Веди разговор именно к нему, следующий этап — только после того, как этот пройден.`)
   if (goalObj?.name) parts.push(`Цель кампании: ${goalObj.name}.`)
   if (goal) parts.push(`Инструкция и цель диалога:\n${goal}`)
   return parts.join('\n\n')
@@ -917,7 +920,7 @@ export async function runNeuroDialogs(task, store) {
           const last = msgs[0]
           const incoming = (last?.message || '').trim()
           const prompt = buildDialogPrompt(msgs)
-          const { text: reply, mode } = await generateComment(prompt, s.promptIndex ?? 0, dialogSystemPrompt(s, goal, goalObj, leadNow?.status || 'cold'))
+          const { text: reply, mode } = await generateComment(prompt, s.promptIndex ?? 0, dialogSystemPrompt(s, goal, goalObj, leadNow?.status || 'cold', stageForStatus(goalObj?.stages, leadNow?.status || 'cold')))
           // Личная переписка — не то место, где годится шаблон-заглушка: она подставляла
           // в сообщение стенограмму диалога («По «Переписка: Я: Привет!...» — согласен»)
           // и это уходило собеседнику от имени аккаунта. Нет ИИ — молчим и идём дальше.

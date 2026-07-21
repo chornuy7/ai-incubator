@@ -61,3 +61,25 @@ export function pickFirstMessage(variants, index = 0) {
   if (!Array.isArray(variants) || !variants.length) return ''
   return variants[Math.abs(Math.floor(index)) % variants.length]
 }
+
+/**
+ * §9: этап цели по статусу лида. Статус — это и есть номер этапа: воронка одна,
+ * просто в цели этапы названы словами заказчика («Получение согласия»), а в CRM
+ * машинными статусами. Раньше этапы уходили в промпт общим списком, и ИИ не понимал,
+ * на каком из них он сейчас.
+ *
+ * Доля берётся от длины списка, поэтому работает с любым числом этапов.
+ * @param {string[]} stages @param {string} status
+ * @returns {{ index:number, total:number, name:string }|null}
+ */
+export function stageForStatus(stages, status) {
+  const list = (Array.isArray(stages) ? stages : []).map((x) => String(x || '').trim()).filter(Boolean)
+  if (!list.length) return null
+  // Доля продвижения по воронке для каждого статуса (0 — начало, 1 — конец).
+  // Подобрано под смысл статусов: согласие раньше ссылки. warm/interested — человек
+  // разговорился и спрашивает, но разрешения ещё не давал; hot — сам просит ссылку.
+  const PROGRESS = { cold: 0, contacted: 0.1, warm: 0.3, interested: 0.35, hot: 0.55, target: 1, closed: 1 }
+  const p = PROGRESS[status] ?? 0
+  const index = Math.min(list.length - 1, Math.round(p * (list.length - 1)))
+  return { index: index + 1, total: list.length, name: list[index] }
+}
