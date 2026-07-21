@@ -1,5 +1,5 @@
 import { Router } from 'express'
-import { loadMergedInbox, loadMessages, sendMessage, readDialog, mapTelegramError } from './service.js'
+import { loadMergedInbox, loadMessages, sendMessage, readDialog, loadMessageThumb, mapTelegramError } from './service.js'
 
 function peerOptsFromQuery(query) {
   const accessHash = query.accessHash ? `${query.accessHash}` : undefined
@@ -47,6 +47,24 @@ neuroDialogsRouter.post('/:accountId/messages/:peerId', async (req, res) => {
     }
     const message = await sendMessage(req.params.accountId, req.params.peerId, text, peerOpts)
     res.json({ ok: true, message })
+  } catch (err) {
+    res.status(400).json({ ok: false, error: mapTelegramError(err) })
+  }
+})
+
+/**
+ * §3: превью картинки/видео ON-DEMAND. Оригинал не храним и не качаем — отдаём
+ * самый мелкий thumb прямо из живой сессии. 404 = превью у сообщения нет
+ * (файл, голосовое), это нормальный ответ, а не ошибка.
+ */
+neuroDialogsRouter.get('/:accountId/media/:peerId/:messageId', async (req, res) => {
+  try {
+    const peerOpts = peerOptsFromQuery(req.query)
+    const buf = await loadMessageThumb(req.params.accountId, req.params.peerId, req.params.messageId, peerOpts)
+    if (!buf) return res.status(404).end()
+    res.set('Content-Type', 'image/jpeg')
+    res.set('Cache-Control', 'private, max-age=600') // столько же, сколько живёт кэш на сервере
+    res.send(buf)
   } catch (err) {
     res.status(400).json({ ok: false, error: mapTelegramError(err) })
   }

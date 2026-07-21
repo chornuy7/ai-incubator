@@ -45,7 +45,7 @@ import { loadSessionString, createClient } from '../tgAuth.js'
 import { pickCommentCandidates, trackIdlePass, warmingPace, pickWeightedKey } from '../lib/workerLoop.js'
 import { limitReached, incAction } from '../lib/dailyActions.js'
 import { cleanMailingNumbers, pickMailingAccount } from '../lib/mailing.js'
-import { listLeads, sortDialogsByLeadPriority } from '../leads.js'
+import { listLeads, sortDialogsByLeadPriority, upsertLead } from '../leads.js'
 import { isSemanticEnabled, embedText, cosineSimilarity } from '../lib/semantic.js'
 import { parseTelegramPostLinks, resolvePostPeer } from '../lib/postLink.js'
 import { filterBlacklisted, isBlacklistedSync } from '../targetBlacklist.js'
@@ -820,6 +820,23 @@ export async function runNeuroDialogs(task, store) {
           await store.appendHistory(task, { id: `${task.id}_${Date.now()}`, ts: new Date().toISOString(), accountName: meta.name, target: d.name, text: reply, status: 'sent' })
           const inPreview = incoming ? incoming.slice(0, 60) : '[без текста]'
           await store.appendLog(task, 'success', `Ответ в ЛС «${d.name}» → «${reply.slice(0, 60)}» (на: «${inPreview}»)`, meta.name)
+
+          // §9: лид попадает в CRM САМ — раньше это делал только ручной ответ из НейроДиалогов,
+          // и всё, что отвечал авто-ответчик, мимо CRM проходило. Статус `contacted` («только
+          // написал»): человек написал первым, мы ответили. Назад по воронке upsert не двигает,
+          // поэтому уже прогретый/горячий лид не будет сброшен этим вызовом.
+          if (s.goalId) {
+            try {
+              const peer = d.entity?.username ? `@${d.entity.username}` : String(d.id ?? d.name ?? '')
+              if (peer) {
+                const { created } = await upsertLead({ goalId: s.goalId, accountId, peer, status: 'contacted' })
+                if (created) await store.appendLog(task, 'info', `Новый лид в CRM: ${peer}`, meta.name)
+              }
+            } catch (e) {
+              // CRM не должна ронять переписку — диалог важнее записи о нём.
+              await store.appendLog(task, 'warning', `Лид не записан в CRM: ${e instanceof Error ? e.message : 'ошибка'}`, meta.name)
+            }
+          }
         }
         await disconnectAccount(client, accountId)
       } catch (err) {

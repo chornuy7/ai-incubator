@@ -17,6 +17,7 @@ import {
   fetchMessages,
   sendDialogMessage,
   markDialogRead,
+  dialogMediaUrl,
   type InboxDialog,
   type DialogMessage,
 } from '@/api/neuroDialogsApi'
@@ -92,7 +93,14 @@ const DialogRow = memo(function DialogRow({
   )
 })
 
-const MessageBubble = memo(function MessageBubble({ m }: { m: DialogMessage }) {
+const MessageBubble = memo(function MessageBubble({ m, dialog }: { m: DialogMessage; dialog: InboxDialog | null }) {
+  // §3: превью подгружается по запросу из живой сессии и нигде не хранится.
+  // Если превью нет (404) — прячем картинку и оставляем текстовую пометку «📷 Фото».
+  const [thumbFailed, setThumbFailed] = useState(false)
+  const thumbUrl = m.hasThumb && dialog && !thumbFailed
+    ? dialogMediaUrl(dialog.accountId, dialog.peerId, m.id, { accessHash: dialog.accessHash, username: dialog.username })
+    : null
+
   return (
     <div className={cn('flex', m.out ? 'justify-end' : 'justify-start')}>
       <div
@@ -101,6 +109,15 @@ const MessageBubble = memo(function MessageBubble({ m }: { m: DialogMessage }) {
           m.out ? 'bg-iris-gradient text-white' : 'border border-line bg-surface text-fg',
         )}
       >
+        {thumbUrl && (
+          <img
+            src={thumbUrl}
+            alt={m.media === 'video' ? 'Превью видео' : 'Превью изображения'}
+            loading="lazy"
+            onError={() => setThumbFailed(true)}
+            className="mb-1.5 max-h-52 w-full rounded-xl object-cover"
+          />
+        )}
         <span className="whitespace-pre-wrap break-words">{m.text}</span>
         <span className={cn('mt-1 block text-[10px]', m.out ? 'text-white/70' : 'text-faint')}>{m.time}</span>
       </div>
@@ -154,7 +171,7 @@ export function NeuroDialogsModule() {
 
   const msgCache = useRef<Map<string, DialogMessage[]>>(new Map())
   const scrollRef = useRef<HTMLDivElement>(null)
-  const replyRef = useRef<HTMLInputElement>(null)
+  const replyRef = useRef<HTMLTextAreaElement>(null)
   const accountIds = useMemo(() => [...selected], [selected])
 
   // §9: редактор ответа — обернуть выделение в Telegram-разметку (жирный/курсив/ссылка).
@@ -166,6 +183,15 @@ export function NeuroDialogsModule() {
     const sel = reply.slice(s, e) || 'текст'
     setReply(reply.slice(0, s) + before + sel + after + reply.slice(e))
     requestAnimationFrame(() => { el.focus(); el.setSelectionRange(s + before.length, s + before.length + sel.length) })
+  }, [reply])
+
+  // Поле ответа растёт под текст и снова сжимается после отправки (textarea с rows=1
+  // сама по себе не растёт). Потолок — как в maxHeight, дальше включается скролл.
+  useEffect(() => {
+    const el = replyRef.current
+    if (!el) return
+    el.style.height = 'auto'
+    el.style.height = `${Math.min(el.scrollHeight, 160)}px`
   }, [reply])
 
   const activeDialog = useMemo(
@@ -569,7 +595,7 @@ export function NeuroDialogsModule() {
                       <Loader2 size={18} className="animate-spin" /> Загрузка сообщений…
                     </div>
                   ) : (
-                    messages.map((m) => <MessageBubble key={m.id} m={m} />)
+                    messages.map((m) => <MessageBubble key={m.id} m={m} dialog={activeDialog} />)
                   )}
                 </div>
 
@@ -588,14 +614,19 @@ export function NeuroDialogsModule() {
                     ))}
                     <span className="ml-1 text-[10px] text-faint">**жирный** · __курсив__ · [ссылка](url)</span>
                   </div>
-                  <div className="flex items-center gap-2">
-                    <input
+                  <div className="flex items-end gap-2">
+                    {/* Было <input> — многострочный ответ физически нельзя было набрать, хотя
+                        Shift+Enter уже обрабатывался. Теперь textarea, растущая под текст:
+                        Enter отправляет, Shift+Enter — перенос строки. */}
+                    <textarea
                       ref={replyRef}
+                      rows={1}
                       value={reply}
                       onChange={(e) => setReply(e.target.value)}
                       onKeyDown={(e) => e.key === 'Enter' && !e.shiftKey && (e.preventDefault(), void send())}
-                      className="input min-w-0 flex-1"
-                      placeholder="Написать сообщение…"
+                      className="input min-h-[42px] min-w-0 flex-1 resize-none py-2.5 leading-snug"
+                      style={{ maxHeight: 160, overflowY: reply.split('\n').length > 5 ? 'auto' : 'hidden' }}
+                      placeholder="Написать сообщение…  Enter — отправить, Shift+Enter — новая строка"
                       disabled={sending}
                     />
                     <button

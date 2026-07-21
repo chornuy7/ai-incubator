@@ -3,7 +3,7 @@
  * MVP: бэкенд-скелет CRUD. Хранение — JSON data/leads.json; путь через env LEADS_FILE (тесты).
  */
 import crypto from 'crypto'
-import { dataPath, readJson, writeJson } from './lib/jsonStore.js'
+import { dataPath, readJson, writeJson, mutateJson } from './lib/jsonStore.js'
 
 const LEADS_FILE = process.env.LEADS_FILE || dataPath('leads.json')
 
@@ -155,22 +155,27 @@ export function advanceLeadStatus(current, next) {
 export async function upsertLead(input) {
   const clean = normalizeLead(input)
   if (!clean.peer) throw new Error('Укажите контакт лида (peer)')
-  const all = await readJson(LEADS_FILE, [])
   const key = normPeer(clean.peer)
-  const i = all.findIndex((l) => normPeer(l.peer) === key && (l.goalId || '') === (clean.goalId || ''))
-  if (i === -1) {
-    const lead = { id: `lead_${crypto.randomUUID().slice(0, 8)}`, ...clean, isHot: clean.status === 'hot', createdAt: Date.now(), updatedAt: Date.now() }
-    all.unshift(lead)
-    await writeJson(LEADS_FILE, all)
-    return { lead, created: true }
-  }
-  const advanced = advanceLeadStatus(all[i].status, clean.status)
-  all[i].status = advanced
-  all[i].isHot = advanced === 'hot'
-  if (clean.accountId) all[i].accountId = clean.accountId
-  all[i].updatedAt = Date.now()
-  await writeJson(LEADS_FILE, all)
-  return { lead: all[i], created: false }
+  // Через mutateJson: воркер авто-ответчика зовёт upsert параллельно по разным диалогам,
+  // и обычный read-modify-write терял бы часть лидов (последняя запись затирала файл).
+  let result = { lead: null, created: false }
+  await mutateJson(LEADS_FILE, (all) => {
+    const i = all.findIndex((l) => normPeer(l.peer) === key && (l.goalId || '') === (clean.goalId || ''))
+    if (i === -1) {
+      const lead = { id: `lead_${crypto.randomUUID().slice(0, 8)}`, ...clean, isHot: clean.status === 'hot', createdAt: Date.now(), updatedAt: Date.now() }
+      all.unshift(lead)
+      result = { lead, created: true }
+      return all
+    }
+    const advanced = advanceLeadStatus(all[i].status, clean.status)
+    all[i].status = advanced
+    all[i].isHot = advanced === 'hot'
+    if (clean.accountId) all[i].accountId = clean.accountId
+    all[i].updatedAt = Date.now()
+    result = { lead: all[i], created: false }
+    return all
+  }, [])
+  return result
 }
 
 /** Карта peer→высший приоритет из лидов (для приоритезации диалогов §3.6). Чистая. */
