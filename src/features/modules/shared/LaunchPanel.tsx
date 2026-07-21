@@ -29,7 +29,10 @@ export function LaunchPanel({
           <div className="text-sm text-rose-300">{warn}</div>
         </div>
       )}
-      <div className="flex flex-col items-center gap-3 rounded-2xl border border-line bg-elevated/40 p-4 sm:flex-row">
+      {/* Панель запуска липнет к низу экрана: настройки модулей длинные, и без этого
+          до кнопки «Начать» приходилось каждый раз прокручивать страницу вниз.
+          `bottom-2` + фон с размытием — чтобы не перекрывала содержимое наглухо. */}
+      <div className="sticky bottom-2 z-20 flex flex-col items-center gap-3 rounded-2xl border border-line bg-elevated/95 p-4 shadow-lg shadow-black/30 backdrop-blur sm:flex-row">
         <div className="flex items-center gap-2 text-sm font-semibold text-muted">
           <span className={cn('h-2.5 w-2.5 rounded-full', running ? 'bg-spark-400 animate-pulse' : 'bg-faint')} />
           {running ? 'Выполняется' : task?.status === 'done' ? 'Завершено' : 'Готов'}

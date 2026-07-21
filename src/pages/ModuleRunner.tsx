@@ -523,7 +523,8 @@ function RichModule({ cfg }: { cfg: ModuleConfig }) {
           </div>
         )}
 
-        <div className="flex flex-col items-center gap-3 rounded-2xl border border-line bg-elevated/40 p-4 sm:flex-row">
+        {/* Липнет к низу: настройки парсера длинные, кнопку не должно уносить за экран. */}
+        <div className="sticky bottom-2 z-20 flex flex-col items-center gap-3 rounded-2xl border border-line bg-elevated/95 p-4 shadow-lg shadow-black/30 backdrop-blur sm:flex-row">
           <div className="flex items-center gap-2 text-sm font-semibold text-muted">
             <span className={cn('h-2.5 w-2.5 rounded-full', running ? 'bg-spark-400 animate-pulse' : 'bg-faint')} /> {running ? 'Выполняется' : 'Остановлено'}
           </div>
@@ -757,7 +758,8 @@ function ParticipantsModule({ cfg }: { cfg: ModuleConfig }) {
           <LaunchStat icon={<Send size={18} />} color="#06b6d4" label={p.unit.title} value={String(p.unit.count)} />
           <LaunchStat icon={<Database size={18} />} color="#0ec464" label={p.unit.limitLabel} value={String(p.unit.limitValue)} />
         </div>
-        <div className="flex flex-col items-center gap-3 rounded-2xl border border-line bg-elevated/40 p-4 sm:flex-row">
+        {/* Липнет к низу: настройки парсера длинные, кнопку не должно уносить за экран. */}
+        <div className="sticky bottom-2 z-20 flex flex-col items-center gap-3 rounded-2xl border border-line bg-elevated/95 p-4 shadow-lg shadow-black/30 backdrop-blur sm:flex-row">
           <div className="flex items-center gap-2 text-sm font-semibold text-muted"><span className={cn('h-2.5 w-2.5 rounded-full', running ? 'bg-spark-400 animate-pulse' : 'bg-faint')} /> {running ? 'Выполняется' : 'Остановлено'}</div>
           <div className="flex flex-1 justify-center">{running ? <button className="btn-danger h-11 min-w-[160px]"><Square size={16} /> Остановить</button> : <button onClick={run} disabled={selected.size === 0} className="btn-iris h-11 min-w-[160px]"><Play size={17} /> {cfg.primaryAction}</button>}</div>
         </div>
@@ -1102,7 +1104,8 @@ function ParsingModule({ cfg }: { cfg: ModuleConfig }) {
           <LaunchStat icon={<Search size={18} />} color="#06b6d4" label="Ключевые слова" value={String(keywords.length)} />
           <LaunchStat icon={<Database size={18} />} color="#0ec464" label="Макс. результатов" value={limitChip === '∞' ? '∞' : String(limitChip)} />
         </div>
-        <div className="flex flex-col items-center gap-3 rounded-2xl border border-line bg-elevated/40 p-4 sm:flex-row">
+        {/* Липнет к низу: настройки парсера длинные, кнопку не должно уносить за экран. */}
+        <div className="sticky bottom-2 z-20 flex flex-col items-center gap-3 rounded-2xl border border-line bg-elevated/95 p-4 shadow-lg shadow-black/30 backdrop-blur sm:flex-row">
           <div className="flex items-center gap-2 text-sm font-semibold text-muted"><span className={cn('h-2.5 w-2.5 rounded-full', running ? 'bg-spark-400 animate-pulse' : 'bg-faint')} /> {running ? 'Выполняется' : 'Остановлено'}</div>
           <div className="flex flex-1 flex-col items-center gap-2">
             {/* §3.8: одно ключевое слово — одна задача. Идут параллельно, каждую видно
@@ -1750,7 +1753,8 @@ function WarmingModule({ cfg }: { cfg: ModuleConfig }) {
             <div><div className="text-sm font-bold text-rose-300">Проблемы с конфигурацией</div><div className="text-xs text-muted">Выберите хотя бы один аккаунт</div></div>
           </div>
         )}
-        <div className="flex flex-col items-center gap-3 rounded-2xl border border-line bg-elevated/40 p-4 sm:flex-row">
+        {/* Липнет к низу: настройки парсера длинные, кнопку не должно уносить за экран. */}
+        <div className="sticky bottom-2 z-20 flex flex-col items-center gap-3 rounded-2xl border border-line bg-elevated/95 p-4 shadow-lg shadow-black/30 backdrop-blur sm:flex-row">
           <div className="flex items-center gap-2 text-sm font-semibold text-muted">
             <span className={cn('h-2.5 w-2.5 rounded-full', running ? 'bg-spark-400 animate-pulse' : 'bg-faint')} /> {running ? 'Выполняется' : 'Остановлено'}
           </div>
@@ -1887,7 +1891,8 @@ function LookingModule({ cfg }: { cfg: ModuleConfig }) {
             <div><div className="text-sm font-bold text-rose-300">Проблемы с конфигурацией</div><div className="text-xs text-muted">Выберите хотя бы один аккаунт</div></div>
           </div>
         )}
-        <div className="flex flex-col items-center gap-3 rounded-2xl border border-line bg-elevated/40 p-4 sm:flex-row">
+        {/* Липнет к низу: настройки парсера длинные, кнопку не должно уносить за экран. */}
+        <div className="sticky bottom-2 z-20 flex flex-col items-center gap-3 rounded-2xl border border-line bg-elevated/95 p-4 shadow-lg shadow-black/30 backdrop-blur sm:flex-row">
           <div className="flex items-center gap-2 text-sm font-semibold text-muted">
             <span className={cn('h-2.5 w-2.5 rounded-full', running ? 'bg-spark-400 animate-pulse' : 'bg-faint')} /> {running ? 'Выполняется' : 'Остановлено'}
           </div>
