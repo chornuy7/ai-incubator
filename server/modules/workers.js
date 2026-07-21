@@ -45,7 +45,8 @@ import { loadSessionString, createClient } from '../tgAuth.js'
 import { pickCommentCandidates, trackIdlePass, warmingPace, pickWeightedKey } from '../lib/workerLoop.js'
 import { limitReached, incAction } from '../lib/dailyActions.js'
 import { cleanMailingNumbers, pickMailingAccount } from '../lib/mailing.js'
-import { listLeads, sortDialogsByLeadPriority } from '../leads.js'
+import { listLeads, sortDialogsByLeadPriority, upsertLead } from '../leads.js'
+import { classifyLeadReply, shouldAdvance } from '../lib/leadClassifier.js'
 import { isSemanticEnabled, embedText, cosineSimilarity } from '../lib/semantic.js'
 import { parseTelegramPostLinks, resolvePostPeer } from '../lib/postLink.js'
 import { filterBlacklisted, isBlacklistedSync } from '../targetBlacklist.js'
@@ -820,6 +821,35 @@ export async function runNeuroDialogs(task, store) {
           await store.appendHistory(task, { id: `${task.id}_${Date.now()}`, ts: new Date().toISOString(), accountName: meta.name, target: d.name, text: reply, status: 'sent' })
           const inPreview = incoming ? incoming.slice(0, 60) : '[без текста]'
           await store.appendLog(task, 'success', `Ответ в ЛС «${d.name}» → «${reply.slice(0, 60)}» (на: «${inPreview}»)`, meta.name)
+
+          // §9: по ТЕКСТУ ответа определяем стадию воронки и двигаем лида в CRM.
+          // «Верим на слово»: target ставится, если человек сам сказал, что подписался —
+          // фактическая проверка (админ-аккаунт / инвайт-ссылки) будет отдельно.
+          if (s.goalId && incoming) {
+            try {
+              const peer = d.username ? `@${d.username}` : d.name
+              const cur = (await listLeads({ goalId: s.goalId })).find(
+                (l) => String(l.peer || '').trim().toLowerCase().replace(/^@/, '') === String(peer).trim().toLowerCase().replace(/^@/, ''),
+              )
+              const verdict = await classifyLeadReply({
+                text: incoming,
+                currentStatus: cur?.status || 'cold',
+                goalName: goal?.name || '',
+                targetAction: goal?.targetAction || '',
+              })
+              if (shouldAdvance(cur?.status || 'cold', verdict.status)) {
+                await upsertLead({ peer, goalId: s.goalId, accountId, status: verdict.status })
+                await store.appendLog(
+                  task,
+                  verdict.status === 'hot' || verdict.status === 'target' ? 'success' : 'info',
+                  `Лид «${peer}»: ${cur?.status || 'новый'} → ${verdict.status} (${verdict.reason}, ${verdict.mode})`,
+                  meta.name,
+                )
+              }
+            } catch (e) {
+              await store.appendLog(task, 'warning', `Статус лида не обновлён: ${e instanceof Error ? e.message : e}`, meta.name)
+            }
+          }
         }
         await disconnectAccount(client, accountId)
       } catch (err) {
@@ -1473,6 +1503,19 @@ export async function runMailing(task, store) {
         task.accountStats[account].actions += 1
         task.progress.done = sent + skipped
         await store.appendHistory(task, { id: `${task.id}_${Date.now()}`, ts: new Date().toISOString(), accountName: meta.name, target: `+${phone}`, text, status: 'sent' })
+        // §9: лид сразу в CRM со статусом «холодный» — это знаменатель конверсии
+        // (скольким написали). Ответит — авто-ответчик продвинет его по воронке.
+        // peer берём как @username (по нему матчатся входящие диалоги), иначе — телефон.
+        if (s.goalId) {
+          try {
+            await upsertLead({
+              peer: user.username ? `@${user.username}` : `+${phone}`,
+              goalId: s.goalId,
+              accountId: account,
+              status: 'cold',
+            })
+          } catch (e) { await store.appendLog(task, 'warning', `Лид не записан: ${e instanceof Error ? e.message : e}`, meta.name) }
+        }
         await store.appendLog(task, 'success', `ЛС → +${phone} (${user.firstName || 'user'})`, meta.name)
         await bumpProgress(task, store)
         await disconnectAccount(client, account)
