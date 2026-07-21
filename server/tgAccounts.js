@@ -48,6 +48,9 @@ function toAccountDto(accountId, meta, me, sessionOk) {
     status,
     lastSeen: formatLastSeen(meta.updatedAt || meta.createdAt),
     proxy: meta.proxy || '—',
+    // note патчится через PATCH /accounts/:id, но в DTO его не было — заметка
+    // сохранялась и пропадала. Нужна, в частности, чтобы видеть источник импорта.
+    note: meta.note || '',
     inTrash: !!meta.inTrash,
     createdAt: meta.createdAt || Date.now(),
     busyIn: (() => {
