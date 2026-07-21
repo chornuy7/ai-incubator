@@ -10,6 +10,7 @@ import { useSession } from '@/features/auth/session'
 import { fetchGoals, type Goal } from '@/api/goalsApi'
 import { startModuleTask } from '@/api/modulesApi'
 import { fetchSettings, saveSettings } from '@/api/settingsApi'
+import { fetchLeads } from '@/api/leadsApi'
 import { confirmDialog } from '@/shared/lib/dialog'
 
 export function MailingPage() {
@@ -31,6 +32,15 @@ export function MailingPage() {
   // §9: текст берётся из цели. Свой нужен, только если хочется отойти от неё —
   // раньше он был обязательным, и запустить рассылку по цели было нельзя вообще.
   const [ownText, setOwnText] = useState(false)
+  // §3.3: аккаунты, ведущие горячий лид. Их нельзя забирать в рассылку — диалог
+  // должен продолжаться. Сервер это запрещает, но раньше человек узнавал об этом
+  // только по ошибке при запуске: аккаунты спокойно висели в выборке.
+  const [hotAccounts, setHotAccounts] = useState<string[]>([])
+  useEffect(() => {
+    void fetchLeads({ status: 'hot' })
+      .then((ls) => setHotAccounts([...new Set(ls.map((l) => l.accountId).filter(Boolean) as string[])]))
+      .catch(() => {})
+  }, [])
   // §9: цель ведёт весь процесс. Выбрал цель — можно сразу поднять чатинг под ней же:
   // рассылка приводит людей, чатинг ловит ответы и двигает их по воронке той же цели.
   const [withChat, setWithChat] = useState(true)
@@ -94,9 +104,11 @@ export function MailingPage() {
 
   // Текст обязателен, только когда его больше неоткуда взять: нет цели (в ней лежит
   // первое сообщение) или человек сам выбрал писать своё.
+  // Пересечение выбранных с «занятыми диалогом» — их надо убрать до запуска.
+  const pickedHot = useMemo(() => [...selected].filter((id) => hotAccounts.includes(id)), [selected, hotAccounts])
   const needOwnText = !goalId || ownText
   const canLaunch = canWrite && !blockedByTrust && selected.size > 0 && numbers.length > 0
-    && (!needOwnText || message.trim().length > 0) && !launching
+    && (!needOwnText || message.trim().length > 0) && pickedHot.length === 0 && !launching
 
   const applyTrust = async () => {
     const n = Number(trustDraft)
@@ -339,6 +351,25 @@ export function MailingPage() {
                   {savingTrust ? 'Сохраняю…' : 'Сохранить'}
                 </button>
                 <span className="text-xs text-white/30">действует для всех ролей</span>
+              </div>
+            )}
+            {pickedHot.length > 0 && (
+              <div className="mt-3 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-200">
+                <div className="flex items-start gap-2">
+                  <ShieldAlert size={14} className="mt-0.5 shrink-0" />
+                  <div className="flex-1">
+                    <b>{pickedHot.length}</b> из выбранных ведут горячий лид — у них диалог в разгаре,
+                    забирать их в рассылку нельзя:{' '}
+                    {pickedHot.slice(0, 5).map((id) => accounts.find((a) => a.id === id)?.name || id.slice(-6)).join(', ')}
+                    {pickedHot.length > 5 ? ' и др.' : ''}
+                    <button
+                      onClick={() => setSelected((prev) => new Set([...prev].filter((id) => !hotAccounts.includes(id))))}
+                      className="btn-soft ml-2 h-7 px-2 text-xs"
+                    >
+                      Исключить их
+                    </button>
+                  </div>
+                </div>
               </div>
             )}
             <button onClick={() => void launch()} disabled={!canLaunch} className="btn-primary mt-3 h-10 w-full disabled:opacity-40">
