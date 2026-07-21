@@ -138,6 +138,10 @@ export function assertAccountAvailable(accountId, taskId) {
   const lock = locks.get(accountId)
   if (!lock) return
   if (taskId && lock.taskId === taskId) return
+  // Аккаунт делят парные модули под одной целью (мейлинг + чатинг): при захвате лока
+  // вторая задача попала в `shared`. Без этой проверки она получала ACCOUNT_BUSY на
+  // каждом подключении — задача создавалась, но не могла сделать ни одного действия.
+  if (taskId && Array.isArray(lock.shared) && lock.shared.includes(taskId)) return
   throw new Error(`ACCOUNT_BUSY:${lock.moduleLabel}`)
 }
 
