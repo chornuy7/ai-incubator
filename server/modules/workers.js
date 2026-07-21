@@ -692,7 +692,18 @@ export async function runWarming(task, store) {
  * @param {string} goal текстовая инструкция диалога (s.dialogGoal)
  * @param {object|null} [goalObj] объект цели кампании — даёт ИИ понимание «что считать выполненным»
  */
-function dialogSystemPrompt(settings, goal, goalObj = null) {
+/** Что делать на каждой стадии воронки — чтобы диалог двигался, а не топтался. */
+const STAGE_HINT = {
+  cold: 'Человек ещё не отвечал по сути. Задача — завязать разговор и выяснить интерес.',
+  contacted: 'Ответил односложно. Задача — разговорить: задай один короткий вопрос по теме.',
+  warm: 'Отвечает по делу. Задача — показать пользу и подвести к целевому действию.',
+  interested: 'Спрашивает подробности. Задача — коротко ответить и предложить сделать шаг.',
+  hot: 'Готов действовать, просит ссылку или условия. Задача — дать их прямо сейчас, без лишних слов.',
+  target: 'Целевое действие выполнено. Только поблагодари и попрощайся.',
+  closed: 'Отказался. Извинись одним предложением и попрощайся.',
+}
+
+function dialogSystemPrompt(settings, goal, goalObj = null, leadStatus = null) {
   const base = resolveSystemPrompt(settings)
   const rules = 'Ты ведёшь личную переписку в Telegram от лица владельца аккаунта. Отвечай на языке собеседника, коротко (1–3 предложения), живо и по-человечески. Никогда не сообщай, что ты ИИ или бот.'
   // §9: прощание — не отдельный механизм, а правило промта. ИИ видит историю переписки
@@ -705,6 +716,8 @@ function dialogSystemPrompt(settings, goal, goalObj = null) {
     'Если собеседник отказался или попросил не писать — извинись за беспокойство одним предложением и попрощайся.',
   ].join(' ')
   const parts = [base, rules, finish]
+  // Стадия лида: без неё ИИ каждый раз начинает разговор заново и воронка стоит.
+  if (leadStatus && STAGE_HINT[leadStatus]) parts.push(`Стадия лида — «${leadStatus}». ${STAGE_HINT[leadStatus]}`)
   if (goalObj?.name) parts.push(`Цель кампании: ${goalObj.name}.`)
   if (goal) parts.push(`Инструкция и цель диалога:\n${goal}`)
   return parts.join('\n\n')
@@ -880,7 +893,7 @@ export async function runNeuroDialogs(task, store) {
           const last = msgs[0]
           const incoming = (last?.message || '').trim()
           const prompt = buildDialogPrompt(msgs)
-          const { text: reply, mode } = await generateComment(prompt, s.promptIndex ?? 0, dialogSystemPrompt(s, goal, goalObj))
+          const { text: reply, mode } = await generateComment(prompt, s.promptIndex ?? 0, dialogSystemPrompt(s, goal, goalObj, leadNow?.status || 'cold'))
           // Личная переписка — не то место, где годится шаблон-заглушка: она подставляла
           // в сообщение стенограмму диалога («По «Переписка: Я: Привет!...» — согласен»)
           // и это уходило собеседнику от имени аккаунта. Нет ИИ — молчим и идём дальше.
