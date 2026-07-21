@@ -1,6 +1,6 @@
 <title>Чек-лист тестирования — AI Incubator</title>
 <style>
-:root{--bg:#0f1117;--card:#171a22;--line:#262b36;--fg:#e8ecf4;--mut:#98a1b3;--ok:#22c55e;--bad:#ef4444;--acc:#7c8cff}
+:root{--bg:#0f1117;--card:#171a22;--line:#262b36;--fg:#e8ecf4;--mut:#98a1b3;--ok:#22c55e;--bad:#ef4444;--warn:#f59e0b;--acc:#7c8cff}
 @media (prefers-color-scheme:light){:root{--bg:#f6f7fb;--card:#fff;--line:#e2e6ef;--fg:#151922;--mut:#5d6678}}
 :root[data-theme=dark]{--bg:#0f1117;--card:#171a22;--line:#262b36;--fg:#e8ecf4;--mut:#98a1b3}
 :root[data-theme=light]{--bg:#f6f7fb;--card:#fff;--line:#e2e6ef;--fg:#151922;--mut:#5d6678}
@@ -29,8 +29,14 @@ code{background:rgba(124,140,255,.12);padding:1px 4px;border-radius:4px;font-siz
 input[type=checkbox]{width:17px;height:17px;cursor:pointer;accent-color:var(--ok)}
 tr.done{opacity:.45}tr.done .nm{text-decoration:line-through}
 tr.failed{background:rgba(239,68,68,.08)}tr.failed .id{color:var(--bad);font-weight:700}
+tr.warned{background:rgba(245,158,11,.07)}tr.warned .id{color:var(--warn);font-weight:700}
 .fail{background:none;border:1px solid var(--line);color:var(--mut);border-radius:6px;cursor:pointer;padding:1px 6px;font-size:12px}
 tr.failed .fail{border-color:var(--bad);color:var(--bad)}
+tr.note td{font-size:12.5px;line-height:1.55;padding-top:0;border-top:none}
+tr.note.warn td{color:#fbbf24;background:rgba(245,158,11,.06)}
+tr.note.fail td{color:#fca5a5;background:rgba(239,68,68,.07)}
+tr.note.ok td{color:#86efac;background:rgba(34,197,94,.06)}
+tr.note td::before{content:"Результат прогона 21.07: ";opacity:.7;font-weight:700}
 .hide{display:none}
 .rst{background:none;border:1px solid var(--line);color:var(--mut);border-radius:8px;padding:4px 10px;font-size:12px;cursor:pointer;margin-left:auto}
 button:focus-visible,input:focus-visible{outline:2px solid var(--acc);outline-offset:2px}
@@ -38,7 +44,7 @@ button:focus-visible,input:focus-visible{outline:2px solid var(--acc);outline-of
 </style>
 <div class="wrap">
 <h1>Чек-лист ручного тестирования — AI Incubator</h1>
-<div class="sub">Только РУЧНЫЕ тесты — 118 шт. API-проверки закрыты автоматически (см. QA-2026-07-21-po-TZ.md). Отметки сохраняются в браузере. Кнопка ✕ — пометить упавший тест.</div>
+<div class="sub">Только ручные тесты — 118 шт. Жёлтым — прошло с замечанием, красным — упало; под такими строками стоит результат прогона. Отметки сохраняются в браузере.</div>
 <div class="bar">
   <div class="prog"><i id="pf"></i></div>
   <div class="stats">
@@ -59,21 +65,21 @@ button:focus-visible,input:focus-visible{outline:2px solid var(--acc);outline-of
       <td class="nm">Создать <b>цель</b><div class="how">Цели → Создать: название, действие, этапы, критерий</div></td>
       <td class="ex">Цель в списке, открывается на редактирование</td>
       <td class="fx"><button class="fail" title="Отметить упавшим">✕</button></td>
-    </tr>
+    </tr><tr class="note warn" data-for="1.1"><td></td><td colspan="6">Цель создаётся. НО: дедлайн принимал год 123123 и несуществующие даты, цель по лидам — 999999999999. Такая цель не истекала бы никогда, т.е. блокировка задач под просроченную цель молча не работала. ПОЧИНЕНО (коммит 4fe0a7f) + 3 регресс-теста. Цель «Тест5» создана до фикса — дедлайн там битый, поправить руками.</td></tr>
     <tr class="t" data-p="🔴" data-ty="UI" data-id="1.2">
       <td class="c"><input type="checkbox"></td><td class="id">1.2</td><td class="p">🔴</td>
       <td class="ty">UI</td>
       <td class="nm">Создать <b>кампанию</b> под целью<div class="how">Кампания → Создать: выбрать цель, <b>выбрать модуль</b>, выбрать аккаунты</div></td>
       <td class="ex">Кампания создалась и видна на карточке цели</td>
       <td class="fx"><button class="fail" title="Отметить упавшим">✕</button></td>
-    </tr>
+    </tr><tr class="note warn" data-for="1.2"><td></td><td colspan="6">Кампания создалась (цель, один модуль, закрепление). НО на странице ДВЕ разные «кампании»: старый запускатор «одна цель → несколько модулей» живёт рядом с новой сущностью и генерит свой id camp_xxx, не связанный с cmp_xxx. Плюс поле «Статус» ничего не объясняет, хотя «Завершена» молча освобождает закреплённые аккаунты.</td></tr>
     <tr class="t" data-p="🔴" data-ty="UI" data-id="1.3">
       <td class="c"><input type="checkbox"></td><td class="id">1.3</td><td class="p">🔴</td>
       <td class="ty">UI</td>
       <td class="nm">Запустить <b>задачу</b> из модуля<div class="how">Модуль → выбрать кампанию → Начать</div></td>
       <td class="ex">Задача появилась в Дашборде со статусом и прогрессом</td>
       <td class="fx"><button class="fail" title="Отметить упавшим">✕</button></td>
-    </tr>
+    </tr><tr class="note fail" data-for="1.3"><td></td><td colspan="6">Задача запустилась и опубликовала 1 РЕАЛЬНЫЙ комментарий — но шаблонный: у OpenAI кончилась квота (429 insufficient_quota), и модуль молча деградировал в generic-текст вместо ИИ к цели. Задача при этом не остановилась (план был 100 действий) — остановили вручную. Плюс ушла с campaignId=camp_..., т.е. мимо созданной кампании.</td></tr>
     <tr class="t" data-p="🔴" data-ty="TG" data-id="1.4">
       <td class="c"><input type="checkbox"></td><td class="id">1.4</td><td class="p">🔴</td>
       <td class="ty">Telegram</td>
@@ -893,19 +899,23 @@ button:focus-visible,input:focus-visible{outline:2px solid var(--acc);outline-of
       <td class="fx"><button class="fail" title="Отметить упавшим">✕</button></td>
     </tr></tbody></table></div></section>
 </div><script>
-var KEY="aiinc-testplan-v1";
+var KEY="aiinc-testplan-v2";
+var SEED={"1.1":"warn","1.2":"warn","1.3":"fail"};
 var st=JSON.parse(localStorage.getItem(KEY)||"{}");
+// Итоги прогона задаём из файла: они общие, а не «у того, кто кликал».
+for(var k in SEED) if(!(k in st)) st[k]=SEED[k];
 var rows=[].slice.call(document.querySelectorAll("tr.t"));
 function paint(){
   var done=0,failed=0,crit=0,critDone=0;
   rows.forEach(function(r){
     var id=r.dataset.id,s=st[id]||"";
-    r.querySelector("input").checked=(s==="ok");
+    r.querySelector("input").checked=(s==="ok"||s==="warn");
     r.classList.toggle("done",s==="ok");
+    r.classList.toggle("warned",s==="warn");
     r.classList.toggle("failed",s==="fail");
-    if(s==="ok")done++;
+    if(s==="ok"||s==="warn")done++;
     if(s==="fail")failed++;
-    if(r.dataset.p==="\u{1F534}"){crit++;if(s==="ok")critDone++;}
+    if(r.dataset.p==="\u{1F534}"){crit++;if(s==="ok"||s==="warn")critDone++;}
   });
   document.getElementById("pf").style.width=(done/rows.length*100)+"%";
   document.getElementById("s1").textContent=done+" / "+rows.length;
@@ -920,19 +930,17 @@ rows.forEach(function(r){
 });
 var fp="",ft="";
 function filt(){rows.forEach(function(r){
-  var okp=!fp||r.dataset.p===fp, okt=!ft||r.dataset.ty===ft;
-  r.classList.toggle("hide",!(okp&&okt));
+  var okp=!fp||r.dataset.p===fp, okt=!ft||r.dataset.ty===ft, hide=!(okp&&okt);
+  r.classList.toggle("hide",hide);
+  var n=document.querySelector('tr.note[data-for="'+r.dataset.id+'"]');
+  if(n)n.classList.toggle("hide",hide);
 })}
 [].forEach.call(document.querySelectorAll("[data-fp]"),function(b){b.addEventListener("click",function(){
   fp=(fp===b.dataset.fp)?"":b.dataset.fp;
-  [].forEach.call(document.querySelectorAll("[data-fp]"),function(x){x.classList.toggle("on",x.dataset.fp===fp)});
-  filt();
-})});
+  [].forEach.call(document.querySelectorAll("[data-fp]"),function(x){x.classList.toggle("on",x.dataset.fp===fp)});filt();})});
 [].forEach.call(document.querySelectorAll("[data-ft]"),function(b){b.addEventListener("click",function(){
   ft=(ft===b.dataset.ft)?"":b.dataset.ft;
-  [].forEach.call(document.querySelectorAll("[data-ft]"),function(x){x.classList.toggle("on",x.dataset.ft===ft)});
-  filt();
-})});
-document.getElementById("rst").addEventListener("click",function(){if(confirm("Сбросить все отметки?")){st={};paint()}});
+  [].forEach.call(document.querySelectorAll("[data-ft]"),function(x){x.classList.toggle("on",x.dataset.ft===ft)});filt();})});
+document.getElementById("rst").addEventListener("click",function(){if(confirm("Сбросить все отметки?")){st={};for(var k in SEED)st[k]=SEED[k];paint()}});
 paint();
 </script>
