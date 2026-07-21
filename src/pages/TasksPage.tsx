@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
-import { ListChecks, RefreshCw, Square, RotateCw, Target, Activity, Gauge, Pause, Play, Loader2, ArrowLeft, Pencil } from 'lucide-react'
+import { ListChecks, RefreshCw, Square, RotateCw, Target, Activity, Gauge, Pause, Play, Loader2, ArrowLeft, Pencil, Download } from 'lucide-react'
 import { useApp } from '@/mocks/store'
 import { PageHeader, Card, EmptyState, Badge, Select, Segmented } from '@/shared/ui'
 import { HelpButton } from '@/features/neuro-commenting/moduleUi'
@@ -14,6 +14,7 @@ import { cn } from '@/shared/lib/utils'
 import { confirmDialog, promptDialog } from '@/shared/lib/dialog'
 import { massStopConfirmSteps, canStopWarming, containsWarming } from '@/shared/lib/massAction'
 import { useSession } from '@/features/auth/session'
+import { downloadXls } from '@/shared/lib/exportXls'
 
 const STATUS: Record<string, { label: string; tone: 'spark' | 'iris' | 'amber' | 'rose' | 'muted' }> = {
   running: { label: 'Выполняется', tone: 'spark' },
@@ -741,7 +742,18 @@ export function TaskDetailPage() {
 
         {results.length > 0 && (
           <div className="rounded-2xl border border-line bg-elevated/40 p-3">
-            <div className="mb-2 text-sm font-bold text-fg">Результаты ({results.length})</div>
+            <div className="mb-2 flex items-center gap-2">
+              <span className="text-sm font-bold text-fg">Результаты ({results.length})</span>
+              {/* §3.9: тот же экспорт, что в самом парсере — результаты задачи нужны
+                  так же часто, как «свежие» на экране модуля. */}
+              <button
+                type="button"
+                onClick={() => downloadXls(results, `${t.moduleKey}-${t.id}`)}
+                className="btn-soft ml-auto h-8 text-xs"
+              >
+                <Download size={13} /> Excel
+              </button>
+            </div>
             <div className="max-h-72 overflow-y-auto">
               {/* §8: для AIR (проверка аккаунтов) — понятный рейтинг по каждому аккаунту, а не сырой лог. */}
               {t.moduleKey === 'ggr' ? (

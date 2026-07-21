@@ -1355,7 +1355,7 @@ export async function runParticipantsParser(task, store, kind) {
             const role = adminIds.has(sid) ? 'admin' : (u.premium ? 'premium' : 'user')
             if (F.onlyAdmins && role !== 'admin') continue
             seen.add(String(sid))
-            task.results.push({ ...u, kind: 'user', messagesCount: rec.count, role })
+            task.results.push({ ...u, kind: 'user', source: src, messagesCount: rec.count, role })
             added++
           }
         }
@@ -1385,7 +1385,7 @@ export async function runParticipantsParser(task, store, kind) {
             } else {
               if (seen.has(String(u.id))) continue
               seen.add(String(u.id))
-              task.results.push({ ...u, kind: 'user' })
+              task.results.push({ ...u, kind: 'user', source: src })
               added++
             }
           }
@@ -1411,7 +1411,7 @@ export async function runParticipantsParser(task, store, kind) {
             const u = rec.sender ? mapUser(rec.sender) : { id: sid, name: sid, username: '', bot: false }
             if (!passUser(u)) continue
             seen.add(String(sid))
-            task.results.push({ ...u, kind: 'user', messagesCount: rec.count, firstSeen: new Date(rec.first * 1000).toISOString(), lastSeen: new Date(rec.last * 1000).toISOString() })
+            task.results.push({ ...u, kind: 'user', source: src, messagesCount: rec.count, firstSeen: new Date(rec.first * 1000).toISOString(), lastSeen: new Date(rec.last * 1000).toISOString() })
             added++
           }
         } else if (kind === 'parsing-comments') {
@@ -1431,7 +1431,7 @@ export async function runParticipantsParser(task, store, kind) {
               const u = c.sender ? mapUser(c.sender) : { id: sid, name: sid, username: '', bot: false }
               if (!passUser(u)) continue
               seen.add(String(sid))
-              task.results.push({ ...u, kind: 'user', ...(F.keepText ? { commentText: text.slice(0, 300) } : {}) })
+              task.results.push({ ...u, kind: 'user', source: src, ...(F.keepText ? { commentText: text.slice(0, 300) } : {}) })
               added++
             }
             if (delayItemMs) await sleep(delayItemMs)
@@ -1461,7 +1461,7 @@ export async function runParticipantsParser(task, store, kind) {
     if (intersection) {
       task.results = []
       for (const { user, hits } of userHits.values()) {
-        if (hits >= intersectMin) task.results.push({ ...user, kind: 'user', groupsCount: hits })
+        if (hits >= intersectMin) task.results.push({ ...user, kind: 'user', source: (user.sources || []).join(', '), groupsCount: hits })
       }
       task.results.sort((a, b) => (b.groupsCount || 0) - (a.groupsCount || 0))
       await store.appendLog(task, 'info', `Пересечение: ${task.results.length} пользователей в ≥${intersectMin} из ${tgs.length} групп`)
