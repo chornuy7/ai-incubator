@@ -8,6 +8,7 @@
  * импортируемому достаётся свой свободный прокси, и если их не хватило — импорт
  * не молчит, а честно пишет это в отчёт по каждой строке.
  */
+import { Api } from 'telegram'
 import { toGramjsSession, ImportError } from './sessionImport.js'
 import { saveSession, newAccountId, createClient } from '../tgAuth.js'
 import { setAccountMeta, countryFromPhone, avatarColor, loadAllMeta } from '../accountsMeta.js'
@@ -62,6 +63,7 @@ export async function importOne(item, opts = {}) {
   const proxy = opts.proxy || null
   // Отпечаток: из json продавца, если он есть, иначе свой — но заведомо не совпадающий
   // с отпечатками уже заведённых аккаунтов, иначе они склеятся в одну пачку (§6).
+  let has2faEnabled = null // null = не проверяли
   const taken = opts.taken || takenFingerprints(await loadAllMeta())
   const fingerprint = accountFingerprint(item.path + (item.accountIdx ?? 0), { fingerprint: item.fingerprint }, taken)
   let me = null
@@ -74,6 +76,12 @@ export async function importOne(item, opts = {}) {
       client = await createClient(session, proxy || undefined, fingerprint)
       me = await client.getMe()
       if (!me) return { ok: false, reason: 'Telegram не отдал профиль — сессия мертва' }
+      // Заодно выясняем, включён ли облачный пароль. Спрашивать его у человека имеет
+      // смысл только там, где он реально есть, — а узнать это можно лишь у Telegram.
+      try {
+        const pwd = await client.invoke(new Api.account.GetPassword())
+        has2faEnabled = !!pwd?.hasPassword
+      } catch { /* не критично: не смогли спросить — просто не знаем */ }
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e)
       return { ok: false, reason: /AUTH_KEY|UNAUTHORIZED|SESSION_REVOKED/i.test(msg) ? 'сессия отозвана Telegram' : `не подключился: ${msg}` }
@@ -100,10 +108,20 @@ export async function importOne(item, opts = {}) {
     // Отпечаток храним вместе с аккаунтом: дальше ходить надо тем же устройством,
     // которым сессия создана (или которое мы ему выдали), иначе для Telegram это смена девайса.
     fingerprint,
+    // Облачный пароль (2FA) из json или password.txt рядом. Без него аккаунт встанет
+    // на первом же запросе подтверждения — а восстановить его потом неоткуда.
+    twoFA: item.twoFA || null,
     note: `Импортирован из ${item.kind === 'tdata' ? 'tdata' : 'файла сессии'}`,
   })
 
-  return { ok: true, accountId, name, phone, alive: opts.validate ? true : undefined }
+  return {
+    ok: true, accountId, name, phone,
+    has2fa: !!item.twoFA,
+    // Телеграм говорит, что пароль включён, а у нас его нет — это стоит показать:
+    // такой аккаунт нельзя будет реавторизовать, если сессия отвалится.
+    needsPassword: has2faEnabled === true && !item.twoFA,
+    alive: opts.validate ? true : undefined,
+  }
 }
 
 /**

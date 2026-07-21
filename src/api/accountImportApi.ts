@@ -73,6 +73,10 @@ export interface ImportResultRow {
   phone?: string
   proxy?: string | null
   reason?: string
+  /** Облачный пароль сохранён вместе с аккаунтом. */
+  has2fa?: boolean
+  /** У аккаунта включена 2FA, но пароля мы не знаем — реавторизация будет невозможна. */
+  needsPassword?: boolean
 }
 
 export async function runImport(input: ImportRunInput): Promise<{ results: ImportResultRow[]; imported: number; failed: number }> {

@@ -47,6 +47,12 @@ async function makeTree() {
   await fs.writeFile(path.join(files, 'nickname.session'), 'тоже', 'utf8')
   await fs.writeFile(path.join(files, 'nickname.json'), JSON.stringify({ phone: '15559998888', proxy: 'socks5://5.6.7.8:1080' }), 'utf8')
 
+  // 3b. Аккаунт, у которого облачный пароль лежит отдельным файлом, а не в json.
+  const a3 = path.join(root, '+13148766744')
+  await fs.mkdir(path.join(a3, 'tdata'), { recursive: true })
+  await convertToTdata(sessionData(), { path: path.join(a3, 'tdata'), crypto: nodeCryptoProvider() })
+  await fs.writeFile(path.join(a3, 'password.txt'), 'Ma2xQ\n', 'utf8')
+
   // 4. Мусор, который не должен попасть в результат.
   await fs.writeFile(path.join(root, 'readme.txt'), 'текст', 'utf8')
   await fs.mkdir(path.join(root, 'node_modules', 'что-то'), { recursive: true })
@@ -60,7 +66,7 @@ test('scanFolder: находит tdata и .session, мусор игнориру�
 
   const tdata = items.filter((i) => i.kind === 'tdata')
   const sess = items.filter((i) => i.kind === 'session-file')
-  assert.equal(tdata.length, 2, 'две папки tdata')
+  assert.equal(tdata.length, 3, 'три папки tdata')
   assert.equal(sess.length, 2, 'два файла .session')
   assert.ok(!items.some((i) => /readme/.test(i.name)), 'txt не аккаунт')
   assert.ok(!items.some((i) => i.path.includes('node_modules')), 'node_modules пропускается')
@@ -89,6 +95,23 @@ test('scanFolder: телефон достаётся из имени папки/�
 
   assert.ok(items.some((i) => i.kind === 'tdata' && i.phone === '+380671234567'), 'из имени папки')
   assert.ok(items.some((i) => i.kind === 'session-file' && i.phone === '+15550001111'), 'из имени файла')
+
+  await fs.rm(root, { recursive: true, force: true })
+})
+
+test('scanFolder: облачный пароль из password.txt рядом с аккаунтом', async () => {
+  // Продавцы часто кладут 2FA не в json, а отдельным текстовым файлом — без него
+  // аккаунт встанет на первом же запросе подтверждения.
+  const root = await makeTree()
+  const { items } = await scanFolder(root)
+
+  const withPass = items.find((i) => i.name === '+13148766744')
+  assert.ok(withPass, 'аккаунт найден')
+  assert.equal(withPass.twoFA, 'Ma2xQ', 'пароль прочитан и очищен от перевода строки')
+
+  // json главнее файла: если пароль есть и там, и там, берём из json.
+  const fromJson = items.find((i) => i.phone === '+79001112233')
+  assert.equal(fromJson.twoFA, 'parol123')
 
   await fs.rm(root, { recursive: true, force: true })
 })

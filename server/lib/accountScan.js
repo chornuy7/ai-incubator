@@ -94,6 +94,26 @@ export async function readSidecarJson(file) {
   } catch { return null }
 }
 
+/**
+ * Облачный пароль (2FA) часто лежит не в json, а отдельным текстовым файлом рядом —
+ * `password.txt` и его вариации. Без пароля аккаунт встанет на первом же запросе
+ * подтверждения, поэтому забираем его вместе с сессией.
+ * @param {import('fs').Dirent[]} entries содержимое папки аккаунта
+ * @param {string} dir
+ * @returns {Promise<string|null>}
+ */
+async function readPasswordFile(entries, dir) {
+  const f = entries.find((e) => e.isFile() && /^(password|pass|2fa|twofa)\.txt$/i.test(e.name))
+  if (!f) return null
+  try {
+    const raw = await fs.readFile(path.join(dir, f.name), 'utf8')
+    // Иногда пишут «пароль: xxxx» или несколько строк — берём первую непустую и чистим подпись.
+    const line = raw.split(/\r?\n/).map((l) => l.trim()).find(Boolean)
+    if (!line) return null
+    return line.replace(/^(пароль|password|2fa|pass)\s*[:=]\s*/i, '').trim() || null
+  } catch { return null }
+}
+
 /** Найти json-спутник для файла `<name>.session` → `<name>.json`. */
 async function sidecarFor(file) {
   const guess = file.replace(/\.session$/i, '.json')
@@ -132,6 +152,7 @@ export async function scanFolder(root, opts = {}) {
       const idxs = await tdataAccountIndexes(tdataDir, opts.passcode)
       const json = entries.find((e) => e.isFile() && e.name.toLowerCase().endsWith('.json'))
       const meta = json ? await readSidecarJson(path.join(dir, json.name)) : null
+      const passFile = await readPasswordFile(entries, dir)
       // Имя аккаунта — это имя ЕГО папки. Если указали прямо на `tdata`, берём родителя:
       // сама по себе «tdata» ничего человеку не говорит.
       const base = path.basename(dir)
@@ -144,7 +165,7 @@ export async function scanFolder(root, opts = {}) {
           accountIdx,
           phone: meta?.phone || phoneFromName(label),
           proxy: meta?.proxy || null,
-          twoFA: meta?.twoFA || null,
+          twoFA: meta?.twoFA || passFile || null,
           fingerprint: meta?.fingerprint || null,
         })
       }
@@ -158,6 +179,7 @@ export async function scanFolder(root, opts = {}) {
         await walk(full, depth + 1)
       } else if (e.isFile() && e.name.toLowerCase().endsWith('.session')) {
         const meta = await sidecarFor(full)
+        const passFile = await readPasswordFile(entries, dir)
         const base = e.name.replace(/\.session$/i, '')
         items.push({
           kind: 'session-file',
@@ -165,7 +187,7 @@ export async function scanFolder(root, opts = {}) {
           name: base,
           phone: meta?.phone || phoneFromName(base),
           proxy: meta?.proxy || null,
-          twoFA: meta?.twoFA || null,
+          twoFA: meta?.twoFA || passFile || null,
           fingerprint: meta?.fingerprint || null,
         })
       }
