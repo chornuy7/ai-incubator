@@ -19,6 +19,7 @@
  */
 import fs from 'fs/promises'
 import path from 'path'
+import { nodeCryptoProvider } from './tdataCrypto.js'
 import {
   convertFromTdata,
   convertToGramjsSession,
@@ -137,7 +138,7 @@ export async function toGramjsSession(src) {
   let data
   if (src.kind === 'tdata') {
     const open = (ignoreVersion) => convertFromTdata(
-      { path: src.path, passcode: src.passcode || undefined, ignoreVersion },
+      { path: src.path, passcode: src.passcode || undefined, ignoreVersion, crypto: nodeCryptoProvider() },
       src.accountIdx || 0,
     )
     try {
@@ -179,7 +180,7 @@ export async function toGramjsSession(src) {
 export async function tdataAccountIndexes(dir, passcode) {
   for (const ignoreVersion of [false, true]) {
     try {
-      const td = await Tdata.open({ path: dir, passcode: passcode || undefined, ignoreVersion })
+      const td = await Tdata.open({ path: dir, passcode: passcode || undefined, ignoreVersion, crypto: nodeCryptoProvider() })
       const order = td.keyData?.order
       if (Array.isArray(order) && order.length) return order.map(Number)
     } catch { /* пароль/версия — вторым заходом без проверки версии, дальше решает импорт */ }

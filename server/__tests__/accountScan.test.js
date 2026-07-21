@@ -9,6 +9,7 @@ import os from 'os'
 import path from 'path'
 import crypto from 'crypto'
 import { convertToTdata } from '@mtcute/convert'
+import { nodeCryptoProvider } from '../lib/tdataCrypto.js'
 import { scanFolder, listDirs, readSidecarJson } from '../lib/accountScan.js'
 import { distributeProxies } from '../lib/accountImport.js'
 
@@ -29,7 +30,7 @@ async function makeTree() {
   // 1. Папка аккаунта с вложенной tdata + json с телефоном и прокси.
   const a1 = path.join(root, '+79001112233')
   await fs.mkdir(path.join(a1, 'tdata'), { recursive: true })
-  await convertToTdata(sessionData(), { path: path.join(a1, 'tdata') })
+  await convertToTdata(sessionData(), { path: path.join(a1, 'tdata'), crypto: nodeCryptoProvider() })
   await fs.writeFile(path.join(a1, 'info.json'), JSON.stringify({
     phone: '+7 900 111-22-33', twoFA: 'parol123', proxy: ['socks5', '1.2.3.4', 1080, 'u', 'p'],
   }), 'utf8')
@@ -37,7 +38,7 @@ async function makeTree() {
   // 2. Ещё одна tdata, без json — телефон должен взяться из имени папки.
   const a2 = path.join(root, 'акк +380671234567')
   await fs.mkdir(a2, { recursive: true })
-  await convertToTdata(sessionData(), { path: a2 })
+  await convertToTdata(sessionData(), { path: a2, crypto: nodeCryptoProvider() })
 
   // 3. Пачка .session в общей папке, у одного есть json-спутник.
   const files = path.join(root, 'sessions')

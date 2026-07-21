@@ -10,6 +10,7 @@ import os from 'os'
 import path from 'path'
 import crypto from 'crypto'
 import { convertToTdata, convertToGramjsSession, convertFromGramjsSession } from '@mtcute/convert'
+import { nodeCryptoProvider } from '../lib/tdataCrypto.js'
 import { toGramjsSession, resolveTdataDir, tdataAccountIndexes, isSqlite, ImportError } from '../lib/sessionImport.js'
 
 const AUTH_KEY = new Uint8Array(crypto.randomBytes(256))
@@ -26,7 +27,7 @@ const tmpdir = async () => fs.mkdtemp(path.join(os.tmpdir(), 'sessimport-'))
 test('tdata → GramJS StringSession: ключ доезжает байт в байт', async () => {
   const dir = await tmpdir()
   const expected = convertToGramjsSession(sessionData())
-  await convertToTdata(sessionData(), { path: dir })
+  await convertToTdata(sessionData(), { path: dir, crypto: nodeCryptoProvider() })
 
   const { session, self } = await toGramjsSession({ kind: 'tdata', path: dir })
   assert.equal(session, expected)
@@ -40,7 +41,7 @@ test('resolveTdataDir: находит и саму папку, и вложенн�
   const root = await tmpdir()
   const inner = path.join(root, 'tdata')
   await fs.mkdir(inner, { recursive: true })
-  await convertToTdata(sessionData(), { path: inner })
+  await convertToTdata(sessionData(), { path: inner, crypto: nodeCryptoProvider() })
 
   assert.equal(await resolveTdataDir(inner), inner) // указали прямо на tdata
   assert.equal(await resolveTdataDir(root), inner)  // указали на папку аккаунта
@@ -50,7 +51,7 @@ test('resolveTdataDir: находит и саму папку, и вложенн�
 
 test('tdataAccountIndexes: у обычной tdata один аккаунт', async () => {
   const dir = await tmpdir()
-  await convertToTdata(sessionData(), { path: dir })
+  await convertToTdata(sessionData(), { path: dir, crypto: nodeCryptoProvider() })
   const idx = await tdataAccountIndexes(dir)
   assert.ok(Array.isArray(idx) && idx.length >= 1, 'должен быть хотя бы один индекс')
   await fs.rm(dir, { recursive: true, force: true })
