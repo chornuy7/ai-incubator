@@ -1512,18 +1512,39 @@ export async function runMailing(task, store) {
   const { default: bigInt } = await import('big-integer')
   const { buildAccountStats } = await import('../accountStats.js')
 
-  // Предохранитель §6: рассылка только с прогретых аккаунтов (trust > 70), активных.
+  // Предохранитель §6: рассылка только с прогретых аккаунтов. Порог настраиваемый —
+  // он зависит от того, какие аккаунты закупаются (у спам-аккаунтов trust низкий по
+  // определению), поэтому это настройка, а не константа.
+  const { getSetting } = await import('../settings.js')
+  const minTrust = Number(await getSetting('mailingMinTrust')) || 0
+  // Админ может осознанно пустить аккаунты ниже порога — тогда это не тихий обход,
+  // а явный флаг задачи, и он попадает в лог.
+  const allowLowTrust = s.allowLowTrust === true
+
   const usable = []
+  const lowTrust = []
   for (const id of accountIds) {
     const meta = await getAccountMeta(id)
     if (!isAccountRunnable(meta.status || 'active')) { await store.appendLog(task, 'warning', `Пропуск: статус ${meta.status}`, meta.name); continue }
     let trust = 0
     try { trust = (await buildAccountStats(id)).trust?.score ?? 0 } catch { trust = 0 }
-    if (trust <= 70) { await store.appendLog(task, 'warning', `${meta.name}: trust ${trust} ≤ 70 — пропущен (§6: рассылка только с trust>70)`, meta.name); continue }
+    if (trust < minTrust) {
+      if (!allowLowTrust) {
+        await store.appendLog(task, 'warning', `${meta.name}: trust ${trust} < ${minTrust} — пропущен (§6: порог рассылки)`, meta.name)
+        continue
+      }
+      lowTrust.push(`${meta.name} (${trust})`)
+    }
     usable.push(id)
   }
-  if (!usable.length) { await store.appendLog(task, 'warning', 'Нет аккаунтов с trust>70 — рассылка не запущена (§6). Прогрейте аккаунты.'); task.status = 'done'; await store.saveTask(task); return }
-  await store.appendLog(task, 'info', `К рассылке допущено аккаунтов: ${usable.length}/${accountIds.length} (trust>70)`)
+  if (!usable.length) {
+    await store.appendLog(task, 'warning', `Нет аккаунтов с trust ≥ ${minTrust} — рассылка не запущена (§6). Прогрейте аккаунты или снизьте порог в настройках.`)
+    task.status = 'done'; await store.saveTask(task); return
+  }
+  if (lowTrust.length) {
+    await store.appendLog(task, 'warning', `Админ разрешил рассылку с ${lowTrust.length} аккаунтов ниже порога ${minTrust}: ${lowTrust.slice(0, 5).join(', ')}${lowTrust.length > 5 ? '…' : ''}`)
+  }
+  await store.appendLog(task, 'info', `К рассылке допущено аккаунтов: ${usable.length}/${accountIds.length} (порог trust ${minTrust}${allowLowTrust ? ', разрешён обход' : ''})`)
 
   let sent = 0
   let skipped = 0

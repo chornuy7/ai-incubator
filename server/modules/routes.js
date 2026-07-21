@@ -6,8 +6,8 @@ import { assertNoHotLeadConflict, assertActiveDialogLimit } from '../leads.js'
 import { findDuplicateActiveTask } from '../lib/taskDedup.js'
 import { getGoal, isGoalExpired } from '../goals.js'
 import { WARMING_MODULES, canStopWarming } from '../lib/safetyLimits.js'
-import { isAdminRequest } from '../lib/accessGuard.js'
 import { canEditTask, pickEditableSettings } from '../lib/taskEdit.js'
+import { isAdminRequest } from '../lib/accessGuard.js'
 
 export const modulesRouter = Router()
 
@@ -75,6 +75,12 @@ modulesRouter.post('/:moduleKey/tasks', async (req, res) => {
     const settings = req.body?.settings ?? req.body
     const err = validateSettings(moduleKey, settings)
     if (err) return res.status(400).json({ ok: false, error: err })
+
+    // §6: обход порога trust — только для админа. Флаг приходит от клиента, поэтому
+    // проверяем на сервере: иначе любой мог бы дописать его в запрос руками.
+    if (settings.allowLowTrust === true && !(await isAdminRequest(req))) {
+      return res.status(403).json({ ok: false, error: 'Запускать аккаунты ниже порога trust может только админ' })
+    }
 
     // Guard безопасного назначения (§3.2/§3.3): не отдаём непрогретые/занятые статусом профили.
     const assignErr = await assertAccountsAssignable(settings.accountIds, moduleKey)

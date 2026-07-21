@@ -1,13 +1,15 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Mail, Send, AlertTriangle } from 'lucide-react'
+import { Mail, Send, AlertTriangle, ShieldAlert } from 'lucide-react'
 import { PageHeader, Card, Select, Segmented } from '@/shared/ui'
-import { useApp } from '@/mocks/store'
+import { useApp, activeAccounts } from '@/mocks/store'
 import { AccountPicker } from '@/features/account-picker/AccountPicker'
 import { MessageComposer } from '@/features/composer/MessageComposer'
 import { useSession } from '@/features/auth/session'
 import { fetchGoals, type Goal } from '@/api/goalsApi'
 import { startModuleTask } from '@/api/modulesApi'
+import { fetchSettings, saveSettings } from '@/api/settingsApi'
+import { confirmDialog } from '@/shared/lib/dialog'
 
 export function MailingPage() {
   const nav = useNavigate()
@@ -26,7 +28,15 @@ export function MailingPage() {
   const [aiPerRecipient, setAiPerRecipient] = useState(false)
   const [launching, setLaunching] = useState(false)
 
+  // §6: порог trust для рассылки — настройка, а не константа: у спам-аккаунтов
+  // trust низкий по определению, и жёсткий порог блокировал бы весь пул.
+  const [minTrust, setMinTrust] = useState<number | null>(null)
+  const [trustDraft, setTrustDraft] = useState('')
+  const [savingTrust, setSavingTrust] = useState(false)
   useEffect(() => { void fetchGoals().then(setGoals).catch(() => {}) }, [])
+  useEffect(() => {
+    void fetchSettings().then((s) => { setMinTrust(s.mailingMinTrust); setTrustDraft(String(s.mailingMinTrust)) }).catch(() => {})
+  }, [])
 
   const numbers = useMemo(() => {
     const raw = numbersText.split(/[\n,;]+/).map((x) => x.replace(/\D/g, '')).filter((x) => x.length >= 7)
@@ -36,10 +46,48 @@ export function MailingPage() {
   // §11: рассылку/пост создаёт только один ответственный — админ (единый отправитель).
   const me = useSession((s) => s.user)
   const canWrite = !me || me.isAdmin
+  // «Нет сессии» = дев/демо-админ — так же считает и сервер (isAdminRequest без заголовка).
+  const isAdmin = !me || me.isAdmin
   const perAcc = selected.size ? Math.ceil(numbers.length / selected.size) : 0
-  const canLaunch = canWrite && selected.size > 0 && numbers.length > 0 && message.trim().length > 0 && !launching
+
+  // Кто из выбранных не дотягивает до порога. trustScore приходит из кэша аккаунтов;
+  // если его нет — считаем 0, то есть аккаунт ниже любого порога.
+  const accounts = activeAccounts(useApp((s) => s.data))
+  const belowTrust = useMemo(() => {
+    if (minTrust == null) return []
+    return accounts.filter((a) => selected.has(a.id) && (a.trustScore ?? 0) < minTrust)
+  }, [accounts, selected, minTrust])
+  const blockedByTrust = belowTrust.length > 0 && !isAdmin
+
+  const canLaunch = canWrite && !blockedByTrust && selected.size > 0 && numbers.length > 0 && message.trim().length > 0 && !launching
+
+  const applyTrust = async () => {
+    const n = Number(trustDraft)
+    if (!Number.isFinite(n)) return
+    setSavingTrust(true)
+    try {
+      const s = await saveSettings({ mailingMinTrust: n })
+      setMinTrust(s.mailingMinTrust); setTrustDraft(String(s.mailingMinTrust))
+      pushToast({ type: 'success', title: 'Порог сохранён', desc: `Рассылка с trust ≥ ${s.mailingMinTrust}` })
+    } catch (e) {
+      pushToast({ type: 'error', title: 'Не сохранено', desc: e instanceof Error ? e.message : '' })
+    } finally { setSavingTrust(false) }
+  }
 
   async function launch() {
+    // Ниже порога — запускаем только по осознанному подтверждению админа.
+    // Сервер это тоже проверяет: флагу от клиента доверять нельзя.
+    if (belowTrust.length) {
+      const ok = await confirmDialog({
+        title: `${belowTrust.length} аккаунтов ниже порога trust`,
+        message: `Порог рассылки — ${minTrust}. У этих аккаунтов он ниже: ${belowTrust.slice(0, 5).map((a) => `${a.name} (${a.trustScore ?? 0})`).join(', ')}${belowTrust.length > 5 ? '…' : ''}.
+
+Низкий trust — выше риск спамблока. Запустить всё равно?`,
+        confirmLabel: 'Запустить',
+        tone: 'danger',
+      })
+      if (!ok) return
+    }
     setLaunching(true)
     try {
       await startModuleTask('mailing', {
@@ -52,6 +100,7 @@ export function MailingPage() {
         delayPreset,
         ...(media.length ? { mediaUrls: media } : {}),
         aiPerRecipient: aiPerRecipient && !!goalId,
+        ...(belowTrust.length ? { allowLowTrust: true } : {}),
         ...(goalId ? { goalId } : {}),
       })
       pushToast({ type: 'success', title: 'Рассылка создана', desc: `${numbers.length} номеров · ${selected.size} аккаунтов` })
@@ -137,6 +186,45 @@ export function MailingPage() {
             {!canWrite && (
               <div className="mt-3 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-200">
                 Рассылку создаёт только администратор (единый отправитель, §11). У вас нет прав на отправку.
+              </div>
+            )}
+
+            {/* §6: порог trust. Админу — предупреждение и право запустить всё равно,
+                остальным — запрет. Сам порог правится тут же, но только админом. */}
+            {minTrust != null && belowTrust.length > 0 && (
+              <div className={`mt-3 rounded-lg border px-3 py-2 text-xs ${isAdmin ? 'border-amber-500/30 bg-amber-500/10 text-amber-200' : 'border-rose-500/30 bg-rose-500/10 text-rose-200'}`}>
+                <div className="flex items-start gap-2">
+                  <ShieldAlert size={14} className="mt-0.5 shrink-0" />
+                  <div>
+                    <b>{belowTrust.length}</b> из выбранных аккаунтов ниже порога trust <b>{minTrust}</b>:{' '}
+                    {belowTrust.slice(0, 4).map((a) => `${a.name} (${a.trustScore ?? 0})`).join(', ')}{belowTrust.length > 4 ? '…' : ''}
+                    <div className="mt-1 opacity-80">
+                      {isAdmin
+                        ? 'Низкий trust — выше риск спамблока. Запустить можно, но подтвердите: это попадёт в лог задачи.'
+                        : 'Запуск заблокирован. Снять ограничение или изменить порог может только администратор.'}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {isAdmin && minTrust != null && (
+              <div className="mt-3 flex items-center gap-2 rounded-lg border border-line bg-elevated/40 px-3 py-2">
+                <span className="text-xs text-white/50">Порог trust для рассылки</span>
+                <input
+                  type="number" min={0} max={100}
+                  className="input h-8 w-20 text-xs"
+                  value={trustDraft}
+                  onChange={(e) => setTrustDraft(e.target.value)}
+                />
+                <button
+                  onClick={() => void applyTrust()}
+                  disabled={savingTrust || trustDraft === String(minTrust)}
+                  className="btn-ghost h-8 px-3 text-xs disabled:opacity-40"
+                >
+                  {savingTrust ? 'Сохраняю…' : 'Сохранить'}
+                </button>
+                <span className="text-xs text-white/30">действует для всех ролей</span>
               </div>
             )}
             <button onClick={() => void launch()} disabled={!canLaunch} className="btn-primary mt-3 h-10 w-full disabled:opacity-40">

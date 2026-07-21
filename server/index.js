@@ -20,9 +20,11 @@ import { campaignsRouter } from './campaignsRoutes.js'
 import { channelsRouter } from './channelsRoutes.js'
 import { rolesRouter } from './rolesRoutes.js'
 import { usersRouter } from './usersRoutes.js'
-import { moduleAccessGuard, moduleKeyFromModulesPath } from './lib/accessGuard.js'
+import { moduleAccessGuard, moduleKeyFromModulesPath, isAdminRequest } from './lib/accessGuard.js'
 import { proxiesRouter } from './proxiesRoutes.js'
 import { importRouter } from './importRoutes.js'
+import { getSettings, updateSettings } from './settings.js'
+import { appendAudit } from './lib/auditLog.js'
 import { startScheduler } from './automation/scheduler.js'
 import { loadAiSettings } from './aiSettings.js'
 import { loadAiSafety } from './aiSafety.js'
@@ -264,6 +266,24 @@ app.use('/api/roles', rolesRouter)
 app.use('/api/users', usersRouter)
 app.use('/api/proxies', proxiesRouter)
 app.use('/api/tg/import', importRouter) // §2: массовый импорт аккаунтов
+
+// §6: настройки безопасности. Читать может кто угодно (фронту нужен порог, чтобы
+// предупредить заранее), менять — только админ.
+app.get('/api/settings', async (_req, res) => {
+  try { res.json({ ok: true, settings: await getSettings() }) }
+  catch (err) { res.status(500).json({ ok: false, error: err instanceof Error ? err.message : 'Ошибка' }) }
+})
+app.put('/api/settings', async (req, res) => {
+  try {
+    if (!(await isAdminRequest(req))) return res.status(403).json({ ok: false, error: 'Менять настройки безопасности может только админ' })
+    const settings = await updateSettings(req.body ?? {})
+    await appendAudit({
+      action: 'settings.update', module: 'settings', initiator: req.header('x-user-id') || 'operator',
+      reason: `Изменены настройки: ${Object.keys(req.body ?? {}).join(', ')}`, meta: settings,
+    }).catch(() => {})
+    res.json({ ok: true, settings })
+  } catch (err) { res.status(400).json({ ok: false, error: err instanceof Error ? err.message : 'Ошибка' }) }
+})
 
 // Единый журнал действий/аудит (§3.1/§5): смена статусов, старт/стоп задач, перенос, кампании.
 app.get('/api/audit', async (req, res) => {
