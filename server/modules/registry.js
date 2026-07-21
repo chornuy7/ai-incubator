@@ -80,7 +80,8 @@ export function startModuleTask(moduleKey, settings) {
     results: [],
     commentHistory: [],
   })
-  const lockErr = tryAcquireLocks(settings.accountIds, moduleKey, task.id)
+  // goalId нужен локам: мейлинг и чатинг под ОДНОЙ целью делят аккаунты (§9).
+  const lockErr = tryAcquireLocks(settings.accountIds, moduleKey, task.id, { goalId: settings.goalId })
   if (lockErr) throw new Error(lockErr)
   return { store, task, worker }
 }
@@ -112,7 +113,7 @@ export async function resumeModuleTask(moduleKey, taskId) {
   const task = await store.loadTask(taskId)
   if (!task) return null
   if (task.status !== 'paused') return task
-  const lockErr = tryAcquireLocks(task.settings?.accountIds || [], moduleKey, task.id)
+  const lockErr = tryAcquireLocks(task.settings?.accountIds || [], moduleKey, task.id, { goalId: task.settings?.goalId })
   if (lockErr) throw new Error(lockErr)
   task.pauseRequested = false
   task.stopRequested = false

@@ -57,7 +57,24 @@ export async function getAllAccountLocksDetailed() {
   return out
 }
 
-/** @param {string[]} accountIds @param {string} moduleKey @param {string} taskId @param {{ force?: boolean }} [opts] */
+/**
+ * §9: пары модулей, которым РАЗРЕШЕНО делить аккаунты — но только под ОДНОЙ целью.
+ *
+ * Мейлинг приводит людей, чатинг отвечает тем, кто откликнулся. Это один процесс,
+ * разнесённый на два модуля: рассылка на тысячу контактов идёт часами, и всё это
+ * время ответы копились бы без реакции. Общий лок здесь не про конфликт, а про то,
+ * что аккаунт делает две части одной работы.
+ *
+ * Условие «одна цель» обязательно: без него чатинг из чужой кампании увёл бы
+ * аккаунт посреди рассылки и заговорил бы с людьми не о том.
+ */
+const SHARED_PAIRS = [['mailing', 'neuro-dialogs']]
+const canShare = (a, b) => SHARED_PAIRS.some((p) => p.includes(a) && p.includes(b) && a !== b)
+
+/**
+ * @param {string[]} accountIds @param {string} moduleKey @param {string} taskId
+ * @param {{ force?: boolean, goalId?: string }} [opts]
+ */
 export function tryAcquireLocks(accountIds, moduleKey, taskId, opts = {}) {
   const label = moduleLabel(moduleKey)
   /** @type {{ accountId: string, moduleKey: string, taskId: string, moduleLabel: string }[]} */
@@ -66,6 +83,9 @@ export function tryAcquireLocks(accountIds, moduleKey, taskId, opts = {}) {
   for (const accountId of accountIds || []) {
     const existing = locks.get(accountId)
     if (existing && existing.taskId !== taskId) {
+      // Исключение: парный модуль под той же целью — работают вместе, не мешая.
+      const sameGoal = opts.goalId && existing.goalId && String(opts.goalId) === String(existing.goalId)
+      if (sameGoal && canShare(moduleKey, existing.moduleKey)) continue
       conflicts.push({ accountId, ...existing })
     }
   }
@@ -76,7 +96,15 @@ export function tryAcquireLocks(accountIds, moduleKey, taskId, opts = {}) {
   }
 
   for (const accountId of accountIds || []) {
-    locks.set(accountId, { moduleKey, taskId, moduleLabel: label, since: Date.now() })
+    // Лок не перетираем, если аккаунт уже держит парный модуль: иначе «Стоп» одной
+    // задачи снял бы блокировку у второй, и аккаунт стал бы «свободным» посреди работы.
+    const prev = locks.get(accountId)
+    if (prev && prev.taskId !== taskId && canShare(moduleKey, prev.moduleKey)) {
+      const shared = prev.shared || [prev.taskId]
+      locks.set(accountId, { ...prev, shared: [...new Set([...shared, taskId])] })
+      continue
+    }
+    locks.set(accountId, { moduleKey, taskId, moduleLabel: label, goalId: opts.goalId || null, since: Date.now() })
   }
   return null
 }
@@ -84,7 +112,16 @@ export function tryAcquireLocks(accountIds, moduleKey, taskId, opts = {}) {
 /** @param {string} taskId */
 export function releaseTaskLocks(taskId) {
   for (const [accountId, lock] of locks) {
-    if (lock.taskId === taskId) locks.delete(accountId)
+    const shared = Array.isArray(lock.shared) ? lock.shared.filter((t) => t !== taskId) : []
+    if (lock.taskId === taskId) {
+      // Лок держала парная задача (мейлинг+чатинг под одной целью) — она ещё работает,
+      // поэтому аккаунт не освобождаем, а передаём ей: иначе он стал бы «свободным»
+      // посреди диалога, и его увела бы другая задача.
+      if (shared.length) locks.set(accountId, { ...lock, taskId: shared[0], shared: shared.slice(1) })
+      else locks.delete(accountId)
+    } else if (shared.length !== (lock.shared || []).length) {
+      locks.set(accountId, { ...lock, shared })
+    }
   }
 }
 
