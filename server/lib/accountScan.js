@@ -48,6 +48,26 @@ function normProxyFromJson(v) {
 }
 
 /**
+ * Отпечаток устройства из json продавца: под ним сессия была создана. Подключаться
+ * другим отпечатком — для Telegram это смена устройства на живой авторизации, поэтому
+ * тащим его вместе с аккаунтом и дальше ходим только так.
+ * Формат ключей — как у распространённых конвертеров (TeleRaptor и родственные).
+ * @param {object} j
+ */
+function readFingerprint(j) {
+  const fp = {
+    apiId: Number(j.app_id || j.api_id) || undefined,
+    apiHash: j.app_hash || j.api_hash || undefined,
+    device: j.device || j.device_model || undefined,
+    system: j.sdk || j.system_version || undefined,
+    appVersion: j.app_version || undefined,
+    langCode: j.lang_pack || j.lang_code || undefined,
+    systemLangCode: j.system_lang_pack || j.system_lang_code || undefined,
+  }
+  return Object.values(fp).some((v) => v !== undefined) ? fp : null
+}
+
+/**
  * Метаданные из json рядом с аккаунтом (`acc1.session` + `acc1.json`, либо любой json в папке tdata).
  * Best-effort: битый json просто игнорируем.
  * @param {string} file путь к json
@@ -57,12 +77,15 @@ export async function readSidecarJson(file) {
     const raw = await fs.readFile(file, 'utf8')
     const j = JSON.parse(raw)
     if (!j || typeof j !== 'object') return null
+    const rawPhone = pick(j, PHONE_KEYS) ? String(pick(j, PHONE_KEYS)).replace(/[^\d+]/g, '') : null
     return {
-      phone: pick(j, PHONE_KEYS) ? String(pick(j, PHONE_KEYS)).replace(/[^\d+]/g, '') : null,
+      // Телефон приводим к единому виду с «+»: в json его пишут и так, и так.
+      phone: rawPhone ? (rawPhone.startsWith('+') ? rawPhone : `+${rawPhone}`) : null,
       twoFA: pick(j, TWOFA_KEYS) ? String(pick(j, TWOFA_KEYS)) : null,
       proxy: normProxyFromJson(pick(j, PROXY_KEYS)),
       username: j.username ? String(j.username).replace(/^@/, '') : null,
       userId: Number(j.user_id || j.userId || j.id) || null,
+      fingerprint: readFingerprint(j),
     }
   } catch { return null }
 }
@@ -118,6 +141,7 @@ export async function scanFolder(root, opts = {}) {
           phone: meta?.phone || phoneFromName(label),
           proxy: meta?.proxy || null,
           twoFA: meta?.twoFA || null,
+          fingerprint: meta?.fingerprint || null,
         })
       }
       return
@@ -138,6 +162,7 @@ export async function scanFolder(root, opts = {}) {
           phone: meta?.phone || phoneFromName(base),
           proxy: meta?.proxy || null,
           twoFA: meta?.twoFA || null,
+          fingerprint: meta?.fingerprint || null,
         })
       }
     }

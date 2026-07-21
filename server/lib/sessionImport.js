@@ -136,12 +136,24 @@ function fromSqliteRow(row) {
 export async function toGramjsSession(src) {
   let data
   if (src.kind === 'tdata') {
+    const open = (ignoreVersion) => convertFromTdata(
+      { path: src.path, passcode: src.passcode || undefined, ignoreVersion },
+      src.accountIdx || 0,
+    )
     try {
-      data = await convertFromTdata({ path: src.path, passcode: src.passcode || undefined }, src.accountIdx || 0)
+      data = await open(false)
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e)
       if (/passcode|decrypt/i.test(msg)) throw new ImportError('tdata под локальным паролем — укажите passcode', 'passcode_required')
-      throw new ImportError(`tdata не читается: ${msg}`)
+      // Свежий Telegram Desktop пишет TDF новее, чем знает библиотека («Unsupported version: 70»).
+      // Раскладка при этом та же, поэтому вторым заходом читаем, игнорируя номер версии.
+      // Такое встречается, если папку хоть раз открывали самим Telegram Desktop.
+      if (!/unsupported version/i.test(msg)) throw new ImportError(`tdata не читается: ${msg}`)
+      try {
+        data = await open(true)
+      } catch (e2) {
+        throw new ImportError(`tdata не читается даже без проверки версии: ${e2 instanceof Error ? e2.message : e2}`)
+      }
     }
   } else {
     const buf = await fs.readFile(src.path)
@@ -165,10 +177,12 @@ export async function toGramjsSession(src) {
  * @param {string} dir @param {string} [passcode] @returns {Promise<number[]>}
  */
 export async function tdataAccountIndexes(dir, passcode) {
-  try {
-    const td = await Tdata.open({ path: dir, passcode: passcode || undefined })
-    const order = td.keyData?.order
-    if (Array.isArray(order) && order.length) return order.map(Number)
-  } catch { /* пароль/версия — разберёмся при самом импорте */ }
+  for (const ignoreVersion of [false, true]) {
+    try {
+      const td = await Tdata.open({ path: dir, passcode: passcode || undefined, ignoreVersion })
+      const order = td.keyData?.order
+      if (Array.isArray(order) && order.length) return order.map(Number)
+    } catch { /* пароль/версия — вторым заходом без проверки версии, дальше решает импорт */ }
+  }
   return [0]
 }

@@ -66,7 +66,7 @@ export async function importOne(item, opts = {}) {
     // то и проверять надо оттуда же, иначе проверка ничего не доказывает.
     let client
     try {
-      client = await createClient(session, proxy || undefined)
+      client = await createClient(session, proxy || undefined, item.fingerprint || undefined)
       me = await client.getMe()
       if (!me) return { ok: false, reason: 'Telegram не отдал профиль — сессия мертва' }
     } catch (e) {
@@ -92,6 +92,9 @@ export async function importOne(item, opts = {}) {
     phone,
     userId: Number(me?.id ?? self?.userId) || undefined,
     avatarColor: avatarColor(accountId),
+    // Отпечаток храним вместе с аккаунтом: дальше ходить надо тем же устройством,
+    // которым сессия создана, иначе для Telegram это смена девайса.
+    fingerprint: item.fingerprint || null,
     note: `Импортирован из ${item.kind === 'tdata' ? 'tdata' : 'файла сессии'}`,
   })
 

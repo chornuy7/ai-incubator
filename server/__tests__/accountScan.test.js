@@ -92,6 +92,34 @@ test('scanFolder: телефон достаётся из имени папки/�
   await fs.rm(root, { recursive: true, force: true })
 })
 
+test('readSidecarJson: отпечаток устройства вытаскивается из json продавца', async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'accscan-fp-'))
+  const f = path.join(dir, 'acc.json')
+  // Формат распространённых конвертеров: app_id 2040 — официальный Telegram Desktop.
+  await fs.writeFile(f, JSON.stringify({
+    app_id: 2040, app_hash: 'b18441a1ff607e10a989891a5462e627',
+    sdk: 'Windows 11 x64', device: 'SJV50PU', app_version: '6.9.3 x64',
+    lang_pack: 'en', system_lang_pack: 'en-US', phone: '19518558554',
+  }), 'utf8')
+
+  const meta = await readSidecarJson(f)
+  assert.equal(meta.phone, '+19518558554', 'телефон приводится к виду с «+»')
+  assert.deepEqual(meta.fingerprint, {
+    apiId: 2040, apiHash: 'b18441a1ff607e10a989891a5462e627',
+    device: 'SJV50PU', system: 'Windows 11 x64', appVersion: '6.9.3 x64',
+    langCode: 'en', systemLangCode: 'en-US',
+  })
+  await fs.rm(dir, { recursive: true, force: true })
+})
+
+test('readSidecarJson: без полей устройства отпечатка нет (а не пустой объект)', async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'accscan-nofp-'))
+  const f = path.join(dir, 'acc.json')
+  await fs.writeFile(f, JSON.stringify({ phone: '+15550001111' }), 'utf8')
+  assert.equal((await readSidecarJson(f)).fingerprint, null)
+  await fs.rm(dir, { recursive: true, force: true })
+})
+
 test('readSidecarJson: битый json не роняет сканер', async () => {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'accscan-bad-'))
   const f = path.join(dir, 'broken.json')

@@ -61,9 +61,31 @@ async function dropPending(authId) {
   }
 }
 
-export async function createClient(sessionString, proxyRaw) {
+/**
+ * Клиент по строке-сессии.
+ *
+ * `fingerprint` — отпечаток устройства, под которым сессия РОЖДЕНА (приходит из json
+ * рядом с купленным аккаунтом: app_id/app_hash, модель устройства, версия системы и
+ * приложения, язык). Подключаться чужим отпечатком — это для Telegram смена устройства
+ * на живой авторизации, самый быстрый способ получить к себе внимание антифрода.
+ * Поэтому если отпечаток известен — идём именно с ним, а свои API-креды берём только
+ * когда своих данных нет.
+ * @param {string} sessionString
+ * @param {string} [proxyRaw]
+ * @param {{apiId?:number, apiHash?:string, device?:string, system?:string, appVersion?:string, langCode?:string, systemLangCode?:string}} [fingerprint]
+ */
+export async function createClient(sessionString, proxyRaw, fingerprint) {
   const proxy = parseProxy(proxyRaw)
-  const client = new TelegramClient(new StringSession(sessionString), API_ID, API_HASH, clientOptions(proxy))
+  const fp = fingerprint || {}
+  const opts = clientOptions(proxy)
+  if (fp.device) opts.deviceModel = fp.device
+  if (fp.system) opts.systemVersion = fp.system
+  if (fp.appVersion) opts.appVersion = fp.appVersion
+  if (fp.langCode) opts.langCode = fp.langCode
+  if (fp.systemLangCode) opts.systemLangCode = fp.systemLangCode
+  const apiId = Number(fp.apiId) || API_ID
+  const apiHash = fp.apiHash || API_HASH
+  const client = new TelegramClient(new StringSession(sessionString), apiId, apiHash, opts)
   await client.connect()
   return client
 }
