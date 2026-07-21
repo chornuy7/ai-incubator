@@ -1,8 +1,26 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { cn } from '@/shared/lib/utils'
 import { Switch } from '@/shared/ui'
 import { HelpCircle } from 'lucide-react'
 import { useUi } from '@/shared/lib/uiStore'
+
+/**
+ * §13: открыть Help по блоку модуля и удержать САМ БЛОК в поле зрения.
+ *
+ * Панель помощи — не оверлей, а колонка в потоке (`HelpCenterDrawer`): при открытии
+ * страница сужается и перевёрстывается, из-за чего блок, у которого нажали «?»,
+ * уезжает из вида — приходится искать его глазами и скроллить руками.
+ *
+ * Скроллим к блоку ПОСЛЕ перевёрстки: два кадра (state → render → layout), иначе
+ * посчитаем позицию по старой, ещё широкой раскладке и промахнёмся.
+ */
+export function revealHelpBlock(el: HTMLElement | null) {
+  if (!el) return
+  const reduced = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches
+  requestAnimationFrame(() => requestAnimationFrame(() => {
+    el.scrollIntoView({ behavior: reduced ? 'auto' : 'smooth', block: 'center' })
+  }))
+}
 
 /** Приводит ввод к целому в пределах [min, max]. */
 function clampInt(raw: number | string, min: number, max?: number) {
@@ -18,19 +36,26 @@ export function HelpButton({ topic, className }: { topic: string; className?: st
   const setHelpTopic = useUi((s) => s.setHelpTopic)
   const setHelpOpen = useUi((s) => s.setHelpOpen)
 
+  // Карточка блока, внутри которой стоит кнопка, — к ней возвращаем взгляд после
+  // открытия панели (у этой кнопки нет своей обёртки, поэтому ищем ближайшую .card).
+  const open = (el: HTMLElement | null) => {
+    setHelpTopic(topic)
+    setHelpOpen(true)
+    revealHelpBlock(el?.closest('.card') as HTMLElement | null)
+  }
+
   return (
     <span
       role="button"
       tabIndex={0}
       title="Help Center"
       aria-label="Help Center"
-      onClick={(e) => { e.stopPropagation(); setHelpTopic(topic); setHelpOpen(true) }}
+      onClick={(e) => { e.stopPropagation(); open(e.currentTarget) }}
       onKeyDown={(e) => {
         if (e.key !== 'Enter' && e.key !== ' ') return
         e.preventDefault()
         e.stopPropagation()
-        setHelpTopic(topic)
-        setHelpOpen(true)
+        open(e.currentTarget)
       }}
       className={cn(
         'grid h-8 w-8 shrink-0 cursor-pointer place-items-center rounded-xl bg-spark-gradient text-[#04150c] shadow-pop transition-transform hover:scale-[1.03]',
@@ -47,9 +72,10 @@ export function SectionCard({ icon, title, badge, right, children }: {
 }) {
   const setHelpTopic = useUi((s) => s.setHelpTopic)
   const setHelpOpen = useUi((s) => s.setHelpOpen)
+  const rootRef = useRef<HTMLDivElement>(null)
 
   return (
-    <div className="card p-0">
+    <div ref={rootRef} className="card p-0">
       <div className="flex flex-wrap items-center gap-3 border-b border-line px-4 py-3.5">
         <span className="grid h-9 w-9 place-items-center rounded-xl bg-spark-500/12 text-spark-400">{icon}</span>
         <span className="font-display text-base font-bold text-fg">{title}</span>
@@ -61,7 +87,7 @@ export function SectionCard({ icon, title, badge, right, children }: {
             className="grid h-8 w-8 place-items-center rounded-xl bg-spark-gradient text-[#04150c] shadow-pop transition-transform hover:scale-[1.03]"
             title="Help Center"
             aria-label="Help Center"
-            onClick={() => { setHelpTopic(title); setHelpOpen(true) }}
+            onClick={() => { setHelpTopic(title); setHelpOpen(true); revealHelpBlock(rootRef.current) }}
           >
             <HelpCircle size={16} />
           </button>

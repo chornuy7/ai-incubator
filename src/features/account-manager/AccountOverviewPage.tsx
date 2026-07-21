@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback, useMemo } from 'react'
-import { useNavigate, useParams } from 'react-router-dom'
+import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { User, Loader2, ArrowLeft, Search } from 'lucide-react'
 import { Avatar, StatusBadge, EmptyState } from '@/shared/ui'
 import { cn } from '@/shared/lib/utils'
@@ -26,14 +26,36 @@ export function AccountOverviewPage() {
   const loadAccountBusy = useApp((s) => s.loadAccountBusy)
 
   const accounts = useMemo(() => activeAccounts(data), [data])
+  const [params] = useSearchParams()
+
+  /**
+   * §2: мульти-просмотр. Кнопка «Управление» в массовых действиях передаёт выбранные
+   * id через `?sel=`, и тогда слева показываем ТОЛЬКО их — иначе выбор терялся и
+   * список ничем не отличался от обычного обзора одного аккаунта.
+   */
+  const selectedIds = useMemo(() => {
+    const raw = params.get('sel')
+    if (!raw) return null
+    const ids = new Set(raw.split(',').filter(Boolean))
+    return ids.size ? ids : null
+  }, [params])
+  const [onlySelected, setOnlySelected] = useState(true)
+
+  // Область показа: выбранные или все. Поиск работает уже внутри неё.
+  const scope = useMemo(
+    () => (selectedIds && onlySelected ? accounts.filter((a) => selectedIds.has(a.id)) : accounts),
+    [accounts, selectedIds, onlySelected],
+  )
+
   const [query, setQuery] = useState('')
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase()
-    if (!q) return accounts
-    return accounts.filter((a) => `${a.name} ${a.username} ${a.phone}`.toLowerCase().includes(q))
-  }, [accounts, query])
+    if (!q) return scope
+    return scope.filter((a) => `${a.name} ${a.username} ${a.phone}`.toLowerCase().includes(q))
+  }, [scope, query])
 
-  const account = useMemo(() => accounts.find((a) => a.id === id) ?? accounts[0] ?? null, [accounts, id])
+  // Аккаунт из URL ищем среди ВСЕХ: прямая ссылка должна открываться, даже если он вне выбора.
+  const account = useMemo(() => accounts.find((a) => a.id === id) ?? scope[0] ?? accounts[0] ?? null, [accounts, scope, id])
 
   const [tab, setTab] = useState<TabKey>('profile')
   const [resetToProfile, setResetToProfile] = useState(false)
@@ -93,6 +115,16 @@ export function AccountOverviewPage() {
                 placeholder="Поиск аккаунта…"
               />
             </div>
+            {/* Видно, что список сужен до выбора, и можно выйти к полному списку не теряя обзор. */}
+            {selectedIds && (
+              <button
+                onClick={() => setOnlySelected((v) => !v)}
+                className="mt-2 w-full rounded-lg border border-iris-500/40 bg-iris-500/10 px-2 py-1.5 text-xs text-iris-200 transition-colors hover:bg-iris-500/20"
+                title={onlySelected ? 'Показать все аккаунты' : 'Вернуться к выбранным'}
+              >
+                {onlySelected ? `Только выбранные · ${selectedIds.size} — показать все` : `Показаны все — вернуться к выбранным (${selectedIds.size})`}
+              </button>
+            )}
           </div>
           <div className="min-h-0 flex-1 overflow-y-auto lg:max-h-[calc(100vh-260px)]">
             {filtered.length === 0 ? (
