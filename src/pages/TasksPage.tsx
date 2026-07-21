@@ -641,6 +641,9 @@ export function TaskDetailPage() {
   const s = t.settings || {}
   const logs = (t.logs || []).slice(0, 300)
   const results = (t.results || t.commentHistory || []) as Record<string, unknown>[]
+  const RES_PER_PAGE = 50
+  const [resPage, setResPage] = useState(1)
+  const resPages = Math.max(1, Math.ceil(results.length / RES_PER_PAGE))
 
   return (
     <div>
@@ -795,11 +798,25 @@ export function TaskDetailPage() {
                 </table>
               ) : (
                 <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b border-line text-left text-xs text-muted">
+                      <th className="py-1.5">Имя</th>
+                      <th className="w-44">Юзернейм</th>
+                      <th className="w-48">Откуда</th>
+                      <th className="w-24 text-right">Тип</th>
+                    </tr>
+                  </thead>
                   <tbody>
-                    {results.slice(0, 200).map((r, i) => (
+                    {results.slice((resPage - 1) * RES_PER_PAGE, resPage * RES_PER_PAGE).map((r, i) => (
                       <tr key={i} className="border-b border-line/50">
-                        <td className="py-1.5 font-medium text-fg">{String(r.name ?? r.title ?? r.username ?? r.accountName ?? '—')}</td>
-                        <td className="text-muted">{String(r.comment ?? r.text ?? (r.username ? `@${r.username}` : ''))}</td>
+                        <td className="py-1.5 font-medium text-fg">{String(r.name ?? r.title ?? r.accountName ?? '—')}</td>
+                        <td className="font-mono text-xs text-muted">
+                          {r.username
+                            ? <a href={`https://t.me/${String(r.username)}`} target="_blank" rel="noreferrer" className="hover:text-spark-300">@{String(r.username)}</a>
+                            : <span className="text-white/25">—</span>}
+                        </td>
+                        {/* §3.9: откуда спаршен — при пачке целей без этого результат превращается в кашу. */}
+                        <td className="truncate text-xs text-white/45">{String(r.source ?? r.comment ?? r.text ?? '')}</td>
                         <td className="text-right"><span className="text-xs text-white/40">{String(r.status ?? r.kind ?? '')}</span></td>
                       </tr>
                     ))}
@@ -807,6 +824,15 @@ export function TaskDetailPage() {
                 </table>
               )}
             </div>
+            {/* Пагинация — как в парсере: 200 первых строк «на глаз» скрывали остальное. */}
+            {t.moduleKey !== 'ggr' && resPages > 1 && (
+              <div className="mt-2 flex items-center justify-center gap-2 text-xs">
+                <button onClick={() => setResPage((p) => Math.max(1, p - 1))} disabled={resPage === 1} className="btn-soft h-7 px-2 disabled:opacity-30">Назад</button>
+                <span className="text-muted">{resPage} / {resPages}</span>
+                <button onClick={() => setResPage((p) => Math.min(resPages, p + 1))} disabled={resPage === resPages} className="btn-soft h-7 px-2 disabled:opacity-30">Вперёд</button>
+                <span className="ml-2 text-white/30">по {RES_PER_PAGE} из {results.length}</span>
+              </div>
+            )}
           </div>
         )}
 
