@@ -599,6 +599,11 @@ export function TaskDetailPage() {
   const [edMaxActions, setEdMaxActions] = useState(0)
   const [edMinPerAcc, setEdMinPerAcc] = useState(0)
   const [edMaxPerAcc, setEdMaxPerAcc] = useState(0)
+  // ВАЖНО: хук объявлен здесь, до ранних return'ов. Порядок хуков в React обязан быть
+  // одинаковым на каждом рендере — useState после условного return роняет всю страницу
+  // в белый/чёрный экран, как только задача догрузится.
+  const RES_PER_PAGE = 50
+  const [resPage, setResPage] = useState(1)
 
   const startEdit = (s: ModuleTaskSettings) => {
     setEdTargets((s.channels || s.targets || []).join('\n'))
@@ -641,8 +646,6 @@ export function TaskDetailPage() {
   const s = t.settings || {}
   const logs = (t.logs || []).slice(0, 300)
   const results = (t.results || t.commentHistory || []) as Record<string, unknown>[]
-  const RES_PER_PAGE = 50
-  const [resPage, setResPage] = useState(1)
   const resPages = Math.max(1, Math.ceil(results.length / RES_PER_PAGE))
 
   return (
