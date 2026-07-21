@@ -52,6 +52,9 @@ function toAccountDto(accountId, meta, me, sessionOk) {
     // note патчится через PATCH /accounts/:id, но в DTO его не было — заметка
     // сохранялась и пропадала. Нужна, в частности, чтобы видеть источник импорта.
     note: meta.note || '',
+    // Сам облачный пароль наружу НЕ отдаём (API у нас fail-open) — только признак,
+    // что он у нас есть: этого достаточно, чтобы видеть, где реавторизация возможна.
+    has2fa: !!meta.twoFA,
     inTrash: !!meta.inTrash,
     createdAt: meta.createdAt || Date.now(),
     busyIn: (() => {

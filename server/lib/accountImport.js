@@ -100,10 +100,13 @@ export async function importOne(item, opts = {}) {
     // Отпечаток храним вместе с аккаунтом: дальше ходить надо тем же устройством,
     // которым сессия создана (или которое мы ему выдали), иначе для Telegram это смена девайса.
     fingerprint,
+    // Облачный пароль (2FA) из json или password.txt рядом. Без него аккаунт встанет
+    // на первом же запросе подтверждения — а восстановить его потом неоткуда.
+    twoFA: item.twoFA || null,
     note: `Импортирован из ${item.kind === 'tdata' ? 'tdata' : 'файла сессии'}`,
   })
 
-  return { ok: true, accountId, name, phone, alive: opts.validate ? true : undefined }
+  return { ok: true, accountId, name, phone, has2fa: !!item.twoFA, alive: opts.validate ? true : undefined }
 }
 
 /**
