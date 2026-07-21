@@ -843,7 +843,19 @@ export async function runNeuroDialogs(task, store) {
           //  'count'       — не больше maxRepliesPerLead ответов;
           //  'untilTarget' — пишем, пока лид не выполнит целевое действие (или не откажется).
           // В обоих режимах терминальные статусы — стоп: closed (отказ) и target (цель достигнута).
-          const peerKey = d.username ? `@${d.username}` : d.name
+          // Служебные чаты и боты — никогда. Бот ответил на код входа от Telegram
+          // (id 777000) и завёл его в CRM как лида: писать туда нельзя ни при каких настройках.
+          const SERVICE_IDS = new Set(['777000', '42777', '1087968824'])
+          const uname = String(d.username || '').toLowerCase()
+          if (SERVICE_IDS.has(String(d.id)) || d.entity?.bot || uname === 'telegram' || /bot$/.test(uname)) {
+            await store.appendLog(task, 'info', `«${d.name}»: служебный чат или бот — пропуск`, meta.name)
+            continue
+          }
+          // Ключ лида: юзернейм из сущности важнее имени — список диалогов его не всегда
+          // отдаёт, и лид уезжал в CRM под именем («Ilya») вместо «@chornuy001»,
+          // а мейлинг заводил того же человека под юзернеймом. Один человек — четыре лида.
+          const realUsername = d.username || d.entity?.username || ''
+          const peerKey = realUsername ? `@${realUsername}` : (d.id ? `id:${d.id}` : d.name)
           const leadNow = findLeadByPeer(leadsForPrio, peerKey)
           if (leadNow && (leadNow.status === 'closed' || leadNow.status === 'target')) {
             await store.appendLog(
@@ -867,11 +879,21 @@ export async function runNeuroDialogs(task, store) {
           const msgs = await client.getMessages(d.entity, { limit: 6 })
           const last = msgs[0]
           const incoming = (last?.message || '').trim()
-          // Без OpenAI сработает шаблонный ответ — ему нужна реплика собеседника, а не стенограмма.
-          const prompt = isAiGenerationEnabled() ? buildDialogPrompt(msgs) : incoming || 'Привет'
+          const prompt = buildDialogPrompt(msgs)
           const { text: reply, mode } = await generateComment(prompt, s.promptIndex ?? 0, dialogSystemPrompt(s, goal, goalObj))
+          // Личная переписка — не то место, где годится шаблон-заглушка: она подставляла
+          // в сообщение стенограмму диалога («По «Переписка: Я: Привет!...» — согласен»)
+          // и это уходило собеседнику от имени аккаунта. Нет ИИ — молчим и идём дальше.
           if (mode !== 'openai') {
-            await store.appendLog(task, 'warning', mode === 'template_no_key' ? 'Шаблонный ответ (нет OPENAI_API_KEY в .env)' : 'Шаблонный ответ (OpenAI недоступен)', meta.name)
+            await store.appendLog(
+              task,
+              'error',
+              mode === 'template_no_key'
+                ? `«${peerKey}»: не отвечаем — нет OPENAI_API_KEY в .env`
+                : `«${peerKey}»: не отвечаем — OpenAI недоступен`,
+              meta.name,
+            )
+            continue
           }
           await sleep(pickDelay(s.delays?.action?.[0] ?? 5, s.delays?.action?.[1] ?? 30, mul) * 1000)
           await client.sendMessage(d.entity, { message: reply })
