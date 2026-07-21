@@ -1238,6 +1238,13 @@ export async function runParticipantsParser(task, store, kind) {
   const kw = (s.keywords || []).map((k) => String(k).toLowerCase().trim()).filter(Boolean)
   const delayChatMs = Math.max(0, Number(s.delayChat ?? 5)) * 1000
   const delayItemMs = Math.max(0, Number(s.delayItem ?? 0.5)) * 1000
+  // Вступление — самое опасное действие: чтобы прочитать участников чужого чата,
+  // аккаунт сначала должен в него ВОЙТИ, а серия быстрых вступлений даёт FloodWait
+  // и попадание в спам-фильтр. Задержки «между чатами» тут мало: она срабатывает
+  // ПОСЛЕ обработки, а вступления идут подряд. Поэтому отдельная пауза перед join,
+  // как в остальных модулях (§6).
+  const joinDelay = pickDelay(s.delays?.join?.[0] ?? 30, s.delays?.join?.[1] ?? 90, mul)
+  task.readyTargets = task.readyTargets || [] // куда аккаунт уже вступал — второй раз не ждём
   const tgs = targets(s)
   if (!tgs.length) {
     task.status = 'error'
@@ -1287,7 +1294,18 @@ export async function runParticipantsParser(task, store, kind) {
       let client
       try {
         ;({ client } = await connectAccount(accountId, task.id))
-        const membership = await joinTargetOrSkip(client, src, (l, m, a) => store.appendLog(task, l, m, a), meta.name)
+        // prepareTarget: сначала смотрит, состоит ли аккаунт в чате, и ТОЛЬКО при
+        // необходимости вступать выдерживает паузу (прерываемую «Стопом»).
+        const membership = await prepareTarget(
+          client,
+          src,
+          (l, m, a) => store.appendLog(task, l, m, a),
+          meta.name,
+          joinDelay,
+          task.readyTargets,
+          accountId,
+          makeStopCheck(store, task.id),
+        )
         if (!membership?.peer) { await disconnectAccount(client, accountId); continue }
         const peer = membership.peer
         let added = 0
