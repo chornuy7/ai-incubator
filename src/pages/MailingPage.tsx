@@ -31,6 +31,7 @@ export function MailingPage() {
   // §9: цель ведёт весь процесс. Выбрал цель — можно сразу поднять чатинг под ней же:
   // рассылка приводит людей, чатинг ловит ответы и двигает их по воронке той же цели.
   const [withChat, setWithChat] = useState(true)
+  // §3.9: потоки — общие для рассылки и чатинга: и то и другое работает одновременно.
   const [chatThreads, setChatThreads] = useState(3)
 
   // §6: порог trust для рассылки — настройка, а не константа: у спам-аккаунтов
@@ -122,6 +123,7 @@ export function MailingPage() {
       await startModuleTask('mailing', {
         accountIds: [...selected],
         targets: numbers,
+        threads: chatThreads,
         promptText: message.trim(),
         maxPerAccount,
         delays: { dm: [delayMin, delayMax], action: [delayMin, delayMax] },
@@ -232,7 +234,7 @@ export function MailingPage() {
                             onChange={(e) => setChatThreads(Math.max(1, Math.min(20, Number(e.target.value) || 1)))}
                           />
                           <span className="text-[11px] text-white/35">
-                            аккаунты делятся между потоками и отвечают одновременно; 1 — по очереди
+                            аккаунты делятся между потоками — и рассылка, и ответы идут одновременно; 1 — по очереди
                           </span>
                         </div>
                       </>

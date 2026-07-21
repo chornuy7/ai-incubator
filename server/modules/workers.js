@@ -1712,11 +1712,16 @@ export async function runMailing(task, store) {
 
   let sent = 0
   let skipped = 0
-  let idx = 0
   const perAccSent = {}
 
   try {
-    for (const tgt of mailTargets) {
+    /** Один ПОТОК рассылки: свои цели и свои аккаунты, независимо от остальных. */
+    const runThread = async (myTargets, myAccounts, threadNo = 0) => {
+    let idx = 0
+    // Расфазировка: без неё потоки быстро выравниваются и шлют синхронно —
+    // это и есть кластер, который видно со стороны.
+    if (threadNo > 0) await sleep(Math.round(pickDelay(5, 20, mul) * 1000 * (0.4 + Math.random() * 1.2)))
+    for (const tgt of myTargets) {
       const phone = tgt.kind === 'phone' ? tgt.value : ''
       const label = tgt.kind === 'phone' ? `+${tgt.value}` : `@${tgt.value}`
       task = (await store.loadTask(task.id)) || task
@@ -1725,8 +1730,8 @@ export async function runMailing(task, store) {
       // Выбрать аккаунт round-robin, у которого не исчерпан суточный лимит ЛС и maxPerAccount.
       // dm-лимит асинхронный — предвычисляем множество «исчерпавших» для чистого выбора.
       const dmReached = new Set()
-      for (const cand of usable) if (await limitReached(cand, 'dm')) dmReached.add(cand)
-      const picked = pickMailingAccount(usable, idx, { perAccSent, maxPerAccount, isDmReached: (id) => dmReached.has(id) })
+      for (const cand of myAccounts) if (await limitReached(cand, 'dm')) dmReached.add(cand)
+      const picked = pickMailingAccount(myAccounts, idx, { perAccSent, maxPerAccount, isDmReached: (id) => dmReached.has(id) })
       const account = picked.account
       idx = picked.idx
       if (!account) { await store.appendLog(task, 'info', 'Все аккаунты исчерпали суточный лимит ЛС (§6) — завершаем'); break }
@@ -1808,6 +1813,21 @@ export async function runMailing(task, store) {
           await store.appendLog(task, 'error', mapTelegramError(err), meta.name)
         }
       }
+    }
+    }
+
+    // §3.9: потоки рассылки. Цели и аккаунты делятся между ними, работают
+    // одновременно — но это ОДНА задача: один прогресс, одни логи, один «Стоп».
+    const threads = Math.max(1, Math.min(Number(s.threads) || 1, usable.length))
+    if (threads > 1) {
+      const tGroups = Array.from({ length: threads }, () => [])
+      const aGroups = Array.from({ length: threads }, () => [])
+      mailTargets.forEach((t, i) => tGroups[i % threads].push(t))
+      usable.forEach((a, i) => aGroups[i % threads].push(a))
+      await store.appendLog(task, 'info', `Асинхронная рассылка: ${threads} поток(ов), аккаунтов ${usable.length}, целей ${mailTargets.length}`)
+      await Promise.all(tGroups.map((g, i) => (g.length && aGroups[i].length ? runThread(g, aGroups[i], i) : Promise.resolve())))
+    } else {
+      await runThread(mailTargets, usable, 0)
     }
     task.status = statusAfterRun(task)
     await store.appendLog(task, 'info', `Мейлинг завершён · отправлено ${sent} · пропущено ${skipped} (нет в Telegram)`)
