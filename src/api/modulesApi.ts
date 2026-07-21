@@ -49,7 +49,8 @@ export interface ModuleTaskSettings {
   activeStories?: boolean
   intersectionMode?: boolean
   intersectionMin?: number
-  userSource?: 'participants' | 'writers' // как парсить users: список участников или кто писал в чате
+  // userSource убран: собираем и список участников, и писавших сразу — по отдельности
+  // каждый способ терял часть людей (закрытые списки / только активные).
   delayChat?: number
   delayItem?: number
   // ── Прогрев: уровень (0=2д, 1=3–7д, 2=7–14д) ──

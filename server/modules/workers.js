@@ -1265,7 +1265,7 @@ export async function runParticipantsParser(task, store, kind) {
   const seen = new Set()
   // Пересечение аудиторий (только parsing-users): пользователь засчитывается, если встречается
   // минимум в intersectionMin группах (по умолчанию — во всех выбранных).
-  const intersection = kind === 'parsing-users' && s.userSource !== 'writers' && !!s.intersectionMode && tgs.length > 1
+  const intersection = kind === 'parsing-users' && !!s.intersectionMode && tgs.length > 1
   const intersectMin = intersection ? (Number(s.intersectionMin) > 0 ? Number(s.intersectionMin) : tgs.length) : 0
   const userHits = new Map() // id -> { user, hits }
   let accIdx = 0
@@ -1310,7 +1310,11 @@ export async function runParticipantsParser(task, store, kind) {
         const peer = membership.peer
         let added = 0
 
-        if (kind === 'parsing-users' && s.userSource === 'writers') {
+        // §3.9: собираем ОБОИМИ способами — список участников и тех, кто писал.
+        // Списки участников у крупных каналов закрыты или обрезаны, а «писавшие» дают
+        // только активных: по отдельности каждый способ теряет часть людей. `seen`
+        // общий, поэтому пересечение схлопывается и дублей не будет.
+        if (kind === 'parsing-users') {
           // Режим «Активные»: канал → находим чат обсуждения → парсим тех, кто писал,
           // разбивая на админ/премиум/обычный.
           let chatPeer = peer
@@ -1328,23 +1332,25 @@ export async function runParticipantsParser(task, store, kind) {
             bySender.set(sid, rec)
           }
           for (const [sid, rec] of bySender) {
-            if (task.stopRequested || seen.has(sid)) continue
+            if (task.stopRequested || seen.has(String(sid))) continue
             const u = rec.sender ? mapUser(rec.sender) : { id: sid, name: sid, username: '', bot: false }
             if (!passUser(u)) continue
             const role = adminIds.has(sid) ? 'admin' : (u.premium ? 'premium' : 'user')
             if (F.onlyAdmins && role !== 'admin') continue
-            seen.add(sid)
+            seen.add(String(sid))
             task.results.push({ ...u, kind: 'user', messagesCount: rec.count, role })
             added++
           }
-        } else if (kind === 'parsing-users') {
+        }
+        if (kind === 'parsing-users') {
           let users = []
           try {
             users = await fetchParticipants(client, peer, L.participants || s.limit || 1000, { adminsOnly: !!F.onlyAdmins })
           } catch (e) {
             const msg = mapTelegramError(e)
             if (/ADMIN_REQUIRED|CHAT_ADMIN|CHANNEL_PRIVATE|not.*visible/i.test(msg)) {
-              await store.appendLog(task, 'warning', `${src}: список участников закрыт — используйте режим «Активные (кто писал)»`, meta.name)
+              // Не тупик: писавших мы уже собрали выше, просто список участников недоступен.
+              await store.appendLog(task, 'info', `${src}: список участников закрыт — взяли только тех, кто писал`, meta.name)
             } else { throw e }
           }
           const seenInThisTarget = new Set()
@@ -1360,8 +1366,8 @@ export async function runParticipantsParser(task, store, kind) {
               userHits.set(u.id, rec)
               added++
             } else {
-              if (seen.has(u.id)) continue
-              seen.add(u.id)
+              if (seen.has(String(u.id))) continue
+              seen.add(String(u.id))
               task.results.push({ ...u, kind: 'user' })
               added++
             }
@@ -1384,10 +1390,10 @@ export async function runParticipantsParser(task, store, kind) {
             bySender.set(sid, rec)
           }
           for (const [sid, rec] of bySender) {
-            if (task.stopRequested || seen.has(sid)) continue
+            if (task.stopRequested || seen.has(String(sid))) continue
             const u = rec.sender ? mapUser(rec.sender) : { id: sid, name: sid, username: '', bot: false }
             if (!passUser(u)) continue
-            seen.add(sid)
+            seen.add(String(sid))
             task.results.push({ ...u, kind: 'user', messagesCount: rec.count, firstSeen: new Date(rec.first * 1000).toISOString(), lastSeen: new Date(rec.last * 1000).toISOString() })
             added++
           }
@@ -1407,7 +1413,7 @@ export async function runParticipantsParser(task, store, kind) {
               if (seen.has(sid)) continue
               const u = c.sender ? mapUser(c.sender) : { id: sid, name: sid, username: '', bot: false }
               if (!passUser(u)) continue
-              seen.add(sid)
+              seen.add(String(sid))
               task.results.push({ ...u, kind: 'user', ...(F.keepText ? { commentText: text.slice(0, 300) } : {}) })
               added++
             }

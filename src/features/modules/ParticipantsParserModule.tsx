@@ -6,7 +6,7 @@ import {
 } from 'lucide-react'
 import { MODULES, type ModuleConfig } from '@/shared/config/modules'
 import { activeAccounts, useApp } from '@/mocks/store'
-import { Switch, Select, Segmented, Badge, EmptyState, Modal } from '@/shared/ui'
+import { Switch, Select, Badge, EmptyState, Modal } from '@/shared/ui'
 import { AccountPicker } from '@/features/account-picker/AccountPicker'
 import { useModuleTask } from './shared/useModuleTask'
 import { SectionCard, NumberField, ProtectionBlock, LaunchPanel, TaskStartedModal } from './shared'
@@ -67,7 +67,6 @@ function Inner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: string }) {
   const [fastWork, setFastWork] = useState(false)
   const [activeStories, setActiveStories] = useState(false)
   const [intersection, setIntersection] = useState(false)
-  const [userSource, setUserSource] = useState<'participants' | 'writers'>('participants')
 
   const [filters, setFilters] = useState<Record<string, boolean>>(() => {
     const init: Record<string, boolean> = {}
@@ -106,12 +105,11 @@ function Inner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: string }) {
     filters,
     limits,
     activeStories,
-    intersectionMode: moduleKey === 'parsing-users' && userSource !== 'writers' ? intersection : false,
-    userSource: moduleKey === 'parsing-users' ? userSource : undefined,
+    intersectionMode: moduleKey === 'parsing-users' ? intersection : false,
     delayChat: fastWork ? 0 : delayChat,
     delayItem: fastWork ? 0 : delayItem,
     limit: limits.participants ?? limits.messages ?? limits.posts ?? 1000,
-  }), [selected, targetList, keywordList, aiProtect, protLevel, filters, limits, activeStories, intersection, userSource, fastWork, delayChat, delayItem, moduleKey])
+  }), [selected, targetList, keywordList, aiProtect, protLevel, filters, limits, activeStories, intersection, fastWork, delayChat, delayItem, moduleKey])
 
   const busySelectedCount = useMemo(() => [...selected].filter((id) => accounts.some((a) => a.id === id && a.busyIn)).length, [selected, accounts])
   const canStart = selected.size > 0 && busySelectedCount === 0 && targetList.length > 0
@@ -198,13 +196,21 @@ function Inner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: string }) {
             {moduleKey === 'parsing-users' && (
               <div className="rounded-2xl border border-line bg-elevated/40 p-3">
                 <div className="mb-2 flex items-center gap-1.5 text-sm font-semibold text-fg"><Filter size={14} className="text-spark-400" /> Способ сбора</div>
-                <Segmented options={['Участники группы', 'Активные (кто писал)']} value={userSource === 'writers' ? 1 : 0} onChange={(i) => setUserSource(i === 1 ? 'writers' : 'participants')} size="sm" />
-                {userSource === 'writers' && (
-                  <div className="mt-2 flex items-start gap-2 rounded-xl border border-amber-500/30 bg-amber-500/8 p-2.5 text-[11px] text-amber-200">
-                    <Activity size={13} className="mt-0.5 shrink-0" />
-                    <span>Канал → находим чат обсуждения → парсим тех, кто <b>писал</b> (за последние N сообщений), с разбивкой на админ/премиум/обычный. Внимание: чтение большого числа сообщений повышает риск FloodWait/бана — не ставьте лимит слишком высоким и включите защиту.</span>
+                {/* Выбора больше нет: по отдельности каждый способ терял часть людей. */}
+                <div className="space-y-1.5 text-[11px] leading-relaxed text-muted">
+                  <div className="flex items-start gap-2">
+                    <Users size={13} className="mt-0.5 shrink-0 text-spark-400" />
+                    <span><b className="text-fg">Список участников</b> — все, кто состоит в группе. У крупных каналов он часто закрыт или обрезан Telegram.</span>
                   </div>
-                )}
+                  <div className="flex items-start gap-2">
+                    <Activity size={13} className="mt-0.5 shrink-0 text-iris-400" />
+                    <span><b className="text-fg">Кто писал</b> — из чата обсуждения, за последние N сообщений, с разбивкой на админ/премиум/обычный. Даёт живых и активных, но только их.</span>
+                  </div>
+                  <div className="flex items-start gap-2 rounded-xl border border-spark-500/25 bg-spark-500/5 p-2">
+                    <Filter size={13} className="mt-0.5 shrink-0 text-spark-400" />
+                    <span>Идут <b className="text-fg">оба сразу</b> — так находится максимум людей. Совпавшие схлопываются, дублей в результатах не будет. Если список участников закрыт, останутся писавшие, и задача не встанет.</span>
+                  </div>
+                </div>
               </div>
             )}
 
