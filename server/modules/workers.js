@@ -147,6 +147,18 @@ export async function runNeuroCommenting(task, store) {
 
   // §3.6/§4: если задача привязана к цели — подмешиваем цель + базу знаний в системный промпт.
   const goalCtx = await buildGoalContext(s.goalId)
+  // §9: заготовки первого сообщения живут в самой ЦЕЛИ («Первое сообщение:» и
+  // «Альтернативное…» в описании). Раньше текст приходилось дублировать в модуле,
+  // и он расходился с целью. Теперь: нет своего текста — берём из цели, по кругу.
+  const goalOpeners = await (async () => {
+    if (!s.goalId) return []
+    try {
+      const { getGoal } = await import('../goals.js')
+      const { firstMessagesFromGoal } = await import('../lib/goalContext.js')
+      return firstMessagesFromGoal(await getGoal(s.goalId))
+    } catch { return [] }
+  })()
+  if (goalOpeners.length) await store.appendLog(task, 'info', `Первое сообщение из цели: ${goalOpeners.length} вариант(ов), чередуем`)
   if (goalCtx) await store.appendLog(task, 'info', 'Комментарии генерируются к выбранной цели (с базой знаний)')
 
   // §3.5 семантика: если включён семантический фильтр и есть цель — считаем её вектор один раз.
@@ -317,7 +329,19 @@ export async function runNeuroChatting(task, store) {
   task.readyTargets = task.readyTargets || []
   await store.saveTask(task)
   await store.appendLog(task, 'info', 'Нейрочаттинг запущен')
-  const goalCtx = await buildGoalContext(s.goalId) // §3.6: диалог к цели с базой знаний
+  const goalCtx = await buildGoalContext(s.goalId)
+  // §9: заготовки первого сообщения живут в самой ЦЕЛИ («Первое сообщение:» и
+  // «Альтернативное…» в описании). Раньше текст приходилось дублировать в модуле,
+  // и он расходился с целью. Теперь: нет своего текста — берём из цели, по кругу.
+  const goalOpeners = await (async () => {
+    if (!s.goalId) return []
+    try {
+      const { getGoal } = await import('../goals.js')
+      const { firstMessagesFromGoal } = await import('../lib/goalContext.js')
+      return firstMessagesFromGoal(await getGoal(s.goalId))
+    } catch { return [] }
+  })()
+  if (goalOpeners.length) await store.appendLog(task, 'info', `Первое сообщение из цели: ${goalOpeners.length} вариант(ов), чередуем`) // §3.6: диалог к цели с базой знаний
   if (goalCtx) await store.appendLog(task, 'info', 'Ответы генерируются к выбранной цели (с базой знаний)')
   const mul = delayMultiplier(s.protectionLevel ?? 1, s.delayPreset ?? 1)
   const prob = effectiveProbability(s.probability ?? 30, !!s.aiProtection, s.protectionLevel ?? 1)
@@ -1613,6 +1637,18 @@ export async function runMailing(task, store) {
   const dm = s.delays?.dm || s.delays?.action || [90, 300] // §6: паузы рассылки ЛС 90–300с
   const maxPerAccount = Number(s.maxPerAccount || 0)
   const goalCtx = await buildGoalContext(s.goalId)
+  // §9: заготовки первого сообщения живут в самой ЦЕЛИ («Первое сообщение:» и
+  // «Альтернативное…» в описании). Раньше текст приходилось дублировать в модуле,
+  // и он расходился с целью. Теперь: нет своего текста — берём из цели, по кругу.
+  const goalOpeners = await (async () => {
+    if (!s.goalId) return []
+    try {
+      const { getGoal } = await import('../goals.js')
+      const { firstMessagesFromGoal } = await import('../lib/goalContext.js')
+      return firstMessagesFromGoal(await getGoal(s.goalId))
+    } catch { return [] }
+  })()
+  if (goalOpeners.length) await store.appendLog(task, 'info', `Первое сообщение из цели: ${goalOpeners.length} вариант(ов), чередуем`)
   const useAi = !!s.aiPerRecipient && isAiGenerationEnabled()
   const mediaCount = Array.isArray(s.mediaUrls) ? s.mediaUrls.filter((u) => /^https?:\/\//i.test(u)).length : 0
   await store.appendLog(task, 'info', `Текст: ${useAi ? 'ИИ-генерация к цели' : `"${message.slice(0, 70)}${message.length > 70 ? '…' : ''}"`}${mediaCount ? ` · медиа/ссылок: ${mediaCount}` : ''} · паузы ${dm[0]}–${dm[1]}с · лимит/акк ${maxPerAccount || '§6'}`)
@@ -1700,6 +1736,10 @@ export async function runMailing(task, store) {
         }
         // 2) Текст: шаблон или ИИ к цели.
         let text = message
+        if (!text && goalOpeners.length) {
+          const { pickFirstMessage } = await import('../lib/goalContext.js')
+          text = pickFirstMessage(goalOpeners, sent + skipped)
+        }
         if (useAi) {
           // ВАЖНО: текст шаблона нельзя отдавать как ПРОМПТ — ИИ принимал его за реплику
           // собеседника и писал ОТВЕТ от лица получателя («Да, я интересуюсь трейдингом,
@@ -1709,8 +1749,8 @@ export async function runMailing(task, store) {
             'Это ты пишешь первым, собеседник тебе ещё ничего не писал.',
             'Коротко (1–2 предложения), по-человечески, с вопросом в конце.',
             'Не благодари за ответ и не поддакивай — отвечать пока некому.',
-            message ? `Опирайся на этот текст как на образец смысла и тона:
-«${message}»` : '',
+            (message || goalOpeners[0]) ? `Опирайся на этот текст как на образец смысла и тона:
+«${message || goalOpeners[0]}»` : '',
           ].filter(Boolean).join(' ')
           const gen = await generateComment(openerTask, s.promptIndex ?? 0, resolveSystemPrompt(s) + goalCtx)
           if (gen.text) text = gen.text
