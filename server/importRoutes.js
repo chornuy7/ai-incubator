@@ -7,7 +7,10 @@
  */
 import { Router } from 'express'
 import path from 'path'
+import os from 'os'
+import crypto from 'crypto'
 import fs from 'fs/promises'
+import multer from 'multer'
 import { scanFolder, listDirs } from './lib/accountScan.js'
 import { distributeProxies, importOne, existingAccountKeys, isKnownByPhone } from './lib/accountImport.js'
 import { listProxies, toProxyUrl } from './proxies.js'
@@ -58,7 +61,19 @@ importRouter.post('/run', async (req, res) => {
   try {
     const items = Array.isArray(req.body?.items) ? req.body.items : []
     if (!items.length) return res.status(400).json({ ok: false, error: 'Нечего импортировать' })
-    const { proxyMode = 'pool', proxyIds = [], singleProxy = '', validate = true, passcode = '' } = req.body ?? {}
+    const { proxyMode = 'pool', proxyIds = [], singleProxy = '', validate = true, passcode = '', root = '' } = req.body ?? {}
+
+    // Пути приходят от клиента, поэтому импортировать разрешаем только из той папки,
+    // которую перед этим сканировали (или куда залили файлы). Иначе через этот роут
+    // можно было бы ткнуть в произвольный файл на сервере.
+    if (root) {
+      const base = path.resolve(String(root))
+      const outside = items.find((it) => {
+        const p = path.resolve(String(it?.path || ''))
+        return p !== base && !p.startsWith(base + path.sep)
+      })
+      if (outside) return res.status(400).json({ ok: false, error: 'Путь вне просканированной папки' })
+    }
 
     // Пул прокси: берём выбранные (или все живые) и исключаем уже занятые аккаунтами.
     const all = await listProxies()
@@ -98,6 +113,88 @@ importRouter.post('/run', async (req, res) => {
     }).catch(() => {})
 
     res.json({ ok: true, results, imported: imported.length, failed: results.length - imported.length })
+  } catch (err) { fail(res, err, 500) }
+})
+
+// ── Путь «загрузкой»: когда бэкенд НЕ на той машине, где лежат аккаунты ────────
+// Нужен для удалённого сервера: там читать с диска нечего, файлы приходят по HTTP.
+
+/** Куда складываем залитое. Живёт до конца импорта, потом удаляется. */
+const UPLOAD_ROOT = path.join(os.tmpdir(), 'ai-incubator-import')
+/** Залитая пачка старше этого срока считается брошенной и подметается. */
+const UPLOAD_TTL_MS = 6 * 60 * 60 * 1000
+
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 64 * 1024 * 1024, files: 4000 }, // tdata — это сотни мелких файлов
+})
+
+/** Обезвредить относительный путь из браузера: никаких `..` и абсолютных корней. */
+function safeRelative(rel) {
+  const norm = String(rel || '').replace(/\\/g, '/').replace(/^\/+/, '')
+  const parts = norm.split('/').filter((p) => p && p !== '.' && p !== '..')
+  return parts.join(path.sep)
+}
+
+/** Удалить брошенные пачки — иначе temp растёт молча. */
+async function sweepUploads() {
+  try {
+    const entries = await fs.readdir(UPLOAD_ROOT, { withFileTypes: true })
+    const now = Date.now()
+    for (const e of entries) {
+      if (!e.isDirectory()) continue
+      const full = path.join(UPLOAD_ROOT, e.name)
+      const st = await fs.stat(full).catch(() => null)
+      if (st && now - st.mtimeMs > UPLOAD_TTL_MS) await fs.rm(full, { recursive: true, force: true })
+    }
+  } catch { /* каталога ещё нет — подметать нечего */ }
+}
+
+/**
+ * Принять папку с аккаунтами через браузер и сразу просканировать.
+ * Фронт шлёт файлы полем `files`, а их относительные пути — полем `paths`
+ * (в том же порядке): из них восстанавливаем дерево во временной папке.
+ */
+importRouter.post('/upload', upload.array('files'), async (req, res) => {
+  try {
+    const files = req.files || []
+    if (!files.length) return res.status(400).json({ ok: false, error: 'Файлы не пришли' })
+    const rels = Array.isArray(req.body?.paths) ? req.body.paths : [req.body?.paths].filter(Boolean)
+
+    await sweepUploads()
+    const token = `up_${crypto.randomUUID().slice(0, 8)}`
+    const root = path.join(UPLOAD_ROOT, token)
+
+    for (let i = 0; i < files.length; i++) {
+      const rel = safeRelative(rels[i] || files[i].originalname)
+      if (!rel) continue
+      const dest = path.join(root, rel)
+      await fs.mkdir(path.dirname(dest), { recursive: true })
+      await fs.writeFile(dest, files[i].buffer)
+    }
+
+    const { items, scannedDirs } = await scanFolder(root, { passcode: req.body?.passcode })
+    const keys = await existingAccountKeys()
+    const marked = items.map((it) => ({ ...it, known: isKnownByPhone(keys, it.phone) }))
+    res.json({
+      ok: true,
+      token,
+      root,
+      items: marked,
+      scannedDirs,
+      tdata: marked.filter((i) => i.kind === 'tdata').length,
+      files: marked.filter((i) => i.kind === 'session-file').length,
+    })
+  } catch (err) { fail(res, err, 500) }
+})
+
+/** Убрать залитую пачку, когда импорт закончен (или человек передумал). */
+importRouter.post('/upload/:token/cleanup', async (req, res) => {
+  try {
+    const token = String(req.params.token || '')
+    if (!/^up_[a-z0-9]+$/i.test(token)) return res.status(400).json({ ok: false, error: 'Некорректный токен' })
+    await fs.rm(path.join(UPLOAD_ROOT, token), { recursive: true, force: true })
+    res.json({ ok: true })
   } catch (err) { fail(res, err, 500) }
 })
 

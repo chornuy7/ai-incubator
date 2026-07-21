@@ -39,6 +39,31 @@ export interface ImportRunInput {
   /** Зайти в Telegram каждой сессией — единственный способ узнать, живая ли она. */
   validate?: boolean
   passcode?: string
+  /** Папка, которую сканировали: сервер не пустит импорт из путей вне неё. */
+  root?: string
+}
+
+/**
+ * Залить папку через браузер и сразу просканировать. Нужно, когда бэкенд не на той
+ * машине, где лежат аккаунты (удалённый сервер) — локально дешевле указать путь.
+ */
+export async function uploadFolder(files: File[], passcode?: string): Promise<{ token: string; root: string; items: ScannedAccount[]; scannedDirs: number; tdata: number; files: number }> {
+  const fd = new FormData()
+  for (const f of files) {
+    fd.append('files', f)
+    // webkitRelativePath хранит путь внутри выбранной папки — по нему сервер восстановит дерево.
+    fd.append('paths', (f as File & { webkitRelativePath?: string }).webkitRelativePath || f.name)
+  }
+  if (passcode) fd.append('passcode', passcode)
+  const res = await fetch('/api/tg/import/upload', { method: 'POST', body: fd })
+  const data = await res.json()
+  if (!res.ok || !data.ok) throw new Error(data.error || 'Загрузка не удалась')
+  return data
+}
+
+/** Удалить залитую пачку с сервера — после импорта или отмены. */
+export async function cleanupUpload(token: string): Promise<void> {
+  await apiPost(`/api/tg/import/upload/${token}/cleanup`, {})
 }
 
 export interface ImportResultRow {

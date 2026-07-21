@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState } from 'react'
 import { UploadCloud, Folder, FolderOpen, ChevronRight, Loader2, Search, Check, AlertTriangle, HardDrive, Users, KeyRound } from 'lucide-react'
+import { useRef } from 'react'
 import { Modal, Select, Badge } from '@/shared/ui'
-import { browseDirs, scanFolder, runImport, proxyCapacity, type ScannedAccount, type ProxyMode, type ImportResultRow } from '@/api/accountImportApi'
+import { browseDirs, scanFolder, runImport, proxyCapacity, uploadFolder, cleanupUpload, type ScannedAccount, type ProxyMode, type ImportResultRow } from '@/api/accountImportApi'
 import { fetchProxies, toProxyUrl, type Proxy } from '@/api/proxiesApi'
 
 type Step = 'pick' | 'found' | 'result'
@@ -35,6 +36,11 @@ export function ImportModal({ open, onClose, onImported }: { open: boolean; onCl
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState('')
   const [results, setResults] = useState<ImportResultRow[]>([])
+  // §2: путь «загрузкой» — для случая, когда бэкенд не на машине с аккаунтами.
+  const [root, setRoot] = useState('')
+  const [uploadToken, setUploadToken] = useState('')
+  const [uploading, setUploading] = useState(false)
+  const folderRef = useRef<HTMLInputElement>(null)
 
   const key = (i: ScannedAccount) => `${i.path}#${i.accountIdx ?? 0}`
 
@@ -60,6 +66,7 @@ export function ImportModal({ open, onClose, onImported }: { open: boolean; onCl
     setScanning(true); setErr('')
     try {
       const r = await scanFolder(dir, passcode || undefined)
+      setRoot(dir); setUploadToken('')
       setItems(r.items)
       // Уже заведённые по умолчанию не отмечаем — чтобы повторный скан не плодил дубли.
       setPicked(new Set(r.items.filter((i) => !i.known).map(key)))
@@ -79,15 +86,34 @@ export function ImportModal({ open, onClose, onImported }: { open: boolean; onCl
   const run = async () => {
     setBusy(true); setErr('')
     try {
-      const r = await runImport({ items: chosen, proxyMode, singleProxy, validate, passcode: passcode || undefined })
+      const r = await runImport({ items: chosen, proxyMode, singleProxy, validate, passcode: passcode || undefined, root })
       setResults(r.results)
       setStep('result')
+      if (uploadToken) { void cleanupUpload(uploadToken).catch(() => {}); setUploadToken('') }
       onImported?.()
     } catch (e) { setErr(e instanceof Error ? e.message : 'Импорт не удался') }
     finally { setBusy(false) }
   }
 
-  const close = () => { setStep('pick'); setItems([]); setResults([]); onClose() }
+  const close = () => {
+    if (uploadToken) void cleanupUpload(uploadToken).catch(() => {})
+    setStep('pick'); setItems([]); setResults([]); setUploadToken(''); onClose()
+  }
+
+  /** Залить выбранную папку целиком — путь для удалённого сервера. */
+  const doUpload = async (files: FileList | null) => {
+    if (!files?.length) return
+    setUploading(true); setErr('')
+    try {
+      const r = await uploadFolder([...files], passcode || undefined)
+      setRoot(r.root); setUploadToken(r.token)
+      setItems(r.items)
+      setPicked(new Set(r.items.filter((i) => !i.known).map(key)))
+      setStep('found')
+      if (!r.items.length) setErr('В загруженной папке не нашлось ни tdata, ни .session.')
+    } catch (e) { setErr(e instanceof Error ? e.message : 'Загрузка не удалась') }
+    finally { setUploading(false) }
+  }
 
   return (
     <Modal
@@ -134,6 +160,28 @@ export function ImportModal({ open, onClose, onImported }: { open: boolean; onCl
           <div>
             <div className="mb-1 flex items-center gap-1.5 text-xs text-white/50"><KeyRound size={12} /> Локальный пароль tdata <span className="text-white/30">(если Telegram Desktop был под паролем)</span></div>
             <input className="input" type="password" value={passcode} onChange={(e) => setPasscode(e.target.value)} placeholder="обычно пусто" />
+          </div>
+
+          {/* Запасной путь: если панель открыта не на той машине, где лежат аккаунты
+              (удалённый сервер), папку можно залить через браузер. */}
+          <div className="rounded-xl border border-line bg-elevated/40 p-3">
+            <div className="text-xs text-white/45">
+              Панель открыта не на том компьютере, где лежат аккаунты? Тогда папку нужно загрузить —
+              это медленнее (tdata весит десятки мегабайт на аккаунт), но работает с любой машины.
+            </div>
+            <button onClick={() => folderRef.current?.click()} disabled={uploading} className="btn-ghost mt-2 h-9">
+              {uploading ? <><Loader2 size={14} className="animate-spin" /> Загружаю…</> : <><UploadCloud size={14} /> Загрузить папку через браузер</>}
+            </button>
+            <input
+              ref={folderRef}
+              type="file"
+              className="hidden"
+              multiple
+              // @ts-expect-error — нестандартные атрибуты выбора папки, есть во всех движках
+              webkitdirectory=""
+              directory=""
+              onChange={(e) => void doUpload(e.target.files)}
+            />
           </div>
 
           <div className="flex justify-end gap-2">
