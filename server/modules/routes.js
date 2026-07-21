@@ -7,6 +7,7 @@ import { findDuplicateActiveTask } from '../lib/taskDedup.js'
 import { getGoal, isGoalExpired } from '../goals.js'
 import { WARMING_MODULES, canStopWarming } from '../lib/safetyLimits.js'
 import { isAdminRequest } from '../lib/accessGuard.js'
+import { canEditTask, pickEditableSettings } from '../lib/taskEdit.js'
 
 export const modulesRouter = Router()
 
@@ -147,6 +148,44 @@ modulesRouter.post('/:moduleKey/tasks/:id/stop', async (req, res) => {
 })
 
 // Пауза задачи (§3.9): воркер выходит, статус «paused», прогресс сохранён.
+/**
+ * §9.8: правка настроек задачи. Разрешена ТОЛЬКО на паузе (решение 21.07) —
+ * см. пояснение в `lib/taskEdit.js`. Смена аккаунтов не поддерживается: за задачей
+ * держатся локи, подмена состава оставила бы их висеть на чужих аккаунтах.
+ */
+modulesRouter.patch('/:moduleKey/tasks/:id/settings', async (req, res) => {
+  try {
+    const store = getModuleStore(req.params.moduleKey)
+    if (!store) return res.status(404).json({ ok: false, error: 'Модуль не найден' })
+    const task = await store.loadTask(req.params.id)
+    if (!task) return res.status(404).json({ ok: false, error: 'Задача не найдена' })
+
+    const gate = canEditTask(task.status)
+    if (!gate.ok) return res.status(409).json({ ok: false, error: gate.reason, status: task.status })
+
+    const { settings, rejected } = pickEditableSettings(req.body?.settings)
+    if (!Object.keys(settings).length) {
+      return res.status(400).json({ ok: false, error: 'Нечего менять: не передано ни одного изменяемого поля', rejected })
+    }
+    task.settings = { ...task.settings, ...settings }
+    await store.saveTask(task)
+
+    const { appendAudit } = await import('../lib/auditLog.js')
+    await appendAudit({
+      action: 'task.edit',
+      module: req.params.moduleKey,
+      initiator: req.body?.initiator || 'operator',
+      scope: { taskId: req.params.id },
+      reason: `Правка задачи на паузе: ${Object.keys(settings).join(', ')}`,
+      meta: { fields: Object.keys(settings) },
+    }).catch(() => {})
+
+    res.json({ ok: true, task: store.taskToDto(task), rejected })
+  } catch (err) {
+    res.status(400).json({ ok: false, error: err instanceof Error ? err.message : 'Ошибка' })
+  }
+})
+
 modulesRouter.post('/:moduleKey/tasks/:id/pause', async (req, res) => {
   try {
     const blocked = await warmingStopBlockReason(req, req.params.moduleKey)

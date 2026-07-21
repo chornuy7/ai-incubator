@@ -1,8 +1,7 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
-  Play, Sparkles, Search, Send, MessagesSquare, Mail, Users,
+  Play, Sparkles, Search, MessagesSquare, Mail, Users,
   RefreshCw, Loader2, ChevronDown, ExternalLink, Terminal, ArrowUpRight,
-  Bold, Italic, Link2,
 } from 'lucide-react'
 import { MODULES } from '@/shared/config/modules'
 import { useApp } from '@/mocks/store'
@@ -17,7 +16,6 @@ import {
   fetchMessages,
   sendDialogMessage,
   markDialogRead,
-  dialogMediaUrl,
   type InboxDialog,
   type DialogMessage,
 } from '@/api/neuroDialogsApi'
@@ -35,6 +33,8 @@ import {
   type DelaysShape,
 } from '@/features/modules/shared'
 import type { ModuleTaskSettings } from '@/api/modulesApi'
+import { ConversationBubble } from '@/features/conversation/ConversationBubble'
+import { ReplyBox } from '@/features/conversation/ReplyBox'
 
 const cfg = MODULES['neuro-dialogs']!
 
@@ -93,37 +93,6 @@ const DialogRow = memo(function DialogRow({
   )
 })
 
-const MessageBubble = memo(function MessageBubble({ m, dialog }: { m: DialogMessage; dialog: InboxDialog | null }) {
-  // §3: превью подгружается по запросу из живой сессии и нигде не хранится.
-  // Если превью нет (404) — прячем картинку и оставляем текстовую пометку «📷 Фото».
-  const [thumbFailed, setThumbFailed] = useState(false)
-  const thumbUrl = m.hasThumb && dialog && !thumbFailed
-    ? dialogMediaUrl(dialog.accountId, dialog.peerId, m.id, { accessHash: dialog.accessHash, username: dialog.username })
-    : null
-
-  return (
-    <div className={cn('flex', m.out ? 'justify-end' : 'justify-start')}>
-      <div
-        className={cn(
-          'max-w-[78%] rounded-2xl px-3.5 py-2 text-sm leading-relaxed',
-          m.out ? 'bg-iris-gradient text-white' : 'border border-line bg-surface text-fg',
-        )}
-      >
-        {thumbUrl && (
-          <img
-            src={thumbUrl}
-            alt={m.media === 'video' ? 'Превью видео' : 'Превью изображения'}
-            loading="lazy"
-            onError={() => setThumbFailed(true)}
-            className="mb-1.5 max-h-52 w-full rounded-xl object-cover"
-          />
-        )}
-        <span className="whitespace-pre-wrap break-words">{m.text}</span>
-        <span className={cn('mt-1 block text-[10px]', m.out ? 'text-white/70' : 'text-faint')}>{m.time}</span>
-      </div>
-    </div>
-  )
-})
 
 export function NeuroDialogsModule() {
   const pushToast = useApp((s) => s.pushToast)
@@ -171,28 +140,7 @@ export function NeuroDialogsModule() {
 
   const msgCache = useRef<Map<string, DialogMessage[]>>(new Map())
   const scrollRef = useRef<HTMLDivElement>(null)
-  const replyRef = useRef<HTMLTextAreaElement>(null)
   const accountIds = useMemo(() => [...selected], [selected])
-
-  // §9: редактор ответа — обернуть выделение в Telegram-разметку (жирный/курсив/ссылка).
-  const fmtReply = useCallback((before: string, after: string) => {
-    const el = replyRef.current
-    if (!el) return
-    const s = el.selectionStart ?? reply.length
-    const e = el.selectionEnd ?? reply.length
-    const sel = reply.slice(s, e) || 'текст'
-    setReply(reply.slice(0, s) + before + sel + after + reply.slice(e))
-    requestAnimationFrame(() => { el.focus(); el.setSelectionRange(s + before.length, s + before.length + sel.length) })
-  }, [reply])
-
-  // Поле ответа растёт под текст и снова сжимается после отправки (textarea с rows=1
-  // сама по себе не растёт). Потолок — как в maxHeight, дальше включается скролл.
-  useEffect(() => {
-    const el = replyRef.current
-    if (!el) return
-    el.style.height = 'auto'
-    el.style.height = `${Math.min(el.scrollHeight, 160)}px`
-  }, [reply])
 
   const activeDialog = useMemo(
     () => dialogs.find((d) => d.key === activeKey) ?? null,
@@ -595,49 +543,14 @@ export function NeuroDialogsModule() {
                       <Loader2 size={18} className="animate-spin" /> Загрузка сообщений…
                     </div>
                   ) : (
-                    messages.map((m) => <MessageBubble key={m.id} m={m} dialog={activeDialog} />)
+                    messages.map((m) => <ConversationBubble key={m.id} m={m} dialog={activeDialog} />)
                   )}
                 </div>
 
                 <div className="border-t border-line p-3">
-                  {/* §9: панель форматирования ответа (Telegram-разметка). */}
-                  <div className="mb-2 flex items-center gap-1">
-                    {([
-                      [<Bold size={13} />, 'Жирный', '**', '**'],
-                      [<Italic size={13} />, 'Курсив', '__', '__'],
-                      [<Link2 size={13} />, 'Ссылка', '[', '](https://)'],
-                    ] as [React.ReactNode, string, string, string][]).map(([icon, title, b, a]) => (
-                      <button key={title} type="button" title={title} onClick={() => fmtReply(b, a)}
-                        className="grid h-7 w-7 place-items-center rounded-md border border-line bg-elevated text-muted transition-colors hover:border-spark-500/40 hover:text-fg">
-                        {icon}
-                      </button>
-                    ))}
-                    <span className="ml-1 text-[10px] text-faint">**жирный** · __курсив__ · [ссылка](url)</span>
-                  </div>
-                  <div className="flex items-end gap-2">
-                    {/* Было <input> — многострочный ответ физически нельзя было набрать, хотя
-                        Shift+Enter уже обрабатывался. Теперь textarea, растущая под текст:
-                        Enter отправляет, Shift+Enter — перенос строки. */}
-                    <textarea
-                      ref={replyRef}
-                      rows={1}
-                      value={reply}
-                      onChange={(e) => setReply(e.target.value)}
-                      onKeyDown={(e) => e.key === 'Enter' && !e.shiftKey && (e.preventDefault(), void send())}
-                      className="input min-h-[42px] min-w-0 flex-1 resize-none py-2.5 leading-snug"
-                      style={{ maxHeight: 160, overflowY: reply.split('\n').length > 5 ? 'auto' : 'hidden' }}
-                      placeholder="Написать сообщение…  Enter — отправить, Shift+Enter — новая строка"
-                      disabled={sending}
-                    />
-                    <button
-                      type="button"
-                      onClick={() => void send()}
-                      disabled={sending || !reply.trim()}
-                      className="btn-iris h-[42px] shrink-0 px-4"
-                    >
-                      {sending ? <Loader2 size={16} className="animate-spin" /> : <Send size={16} />}
-                    </button>
-                  </div>
+                  {/* §9.3: общий компонент — та же панель форматирования и то же
+                      поле, что в «Обзоре аккаунта». Раньше это были две копии. */}
+                  <ReplyBox value={reply} onChange={setReply} onSend={() => void send()} sending={sending} />
                 </div>
               </>
             ) : (
