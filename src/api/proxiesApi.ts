@@ -66,3 +66,30 @@ export async function checkProxy(id: string): Promise<{ proxy: Proxy; geo: Proxy
 export async function probeProxy(input: { host: string; port: number; scheme?: string; username?: string; password?: string }): Promise<{ alive: boolean; ms: number; geo: ProxyGeo | null; geoSource?: GeoSource }> {
   return apiPost<{ alive: boolean; ms: number; geo: ProxyGeo | null; geoSource?: GeoSource }>('/api/proxies/probe', input)
 }
+
+// ── §3.2: массовый импорт ──
+
+export interface ParsedProxyLine { scheme: ProxyScheme; host: string; port: number; username: string; password: string; raw: string }
+export interface ImportIssue { line?: number; raw: string; reason: string }
+
+/** Разобрать список без записи в базу — показать, что понято, до импорта. */
+export async function previewProxyImport(text: string, scheme?: ProxyScheme): Promise<{ items: ParsedProxyLine[]; errors: ImportIssue[]; total: number; duplicates: number }> {
+  return apiPost('/api/proxies/import/preview', { text, scheme })
+}
+
+export interface ProxyImportInput {
+  text: string
+  scheme?: ProxyScheme
+  kind?: ProxyKind
+  /** Метка в имени: «USA {tag} 1». */
+  tag?: string
+  /** Шаблон имени. Плейсхолдеры: {country} {tag} {n} {host} {port}. */
+  template?: string
+  /** Определять страну и живость по реальному выходному IP (медленнее, но имена осмысленные). */
+  probe?: boolean
+  note?: string
+}
+
+export async function importProxies(input: ProxyImportInput): Promise<{ created: Proxy[]; skipped: ImportIssue[]; errors: ImportIssue[]; alive: number; dead: number }> {
+  return apiPost('/api/proxies/import', input)
+}

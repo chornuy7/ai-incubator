@@ -2,6 +2,7 @@
 import { Router } from 'express'
 import { listProxies, getProxy, createProxy, updateProxy, deleteProxy, checkAllProxies, sharedProxies, probeProxyGeo, probeProxyExitGeo, tcpPing } from './proxies.js'
 import { loadAllMeta } from './accountsMeta.js'
+import { parseProxyList, proxyKey, assignLabels } from './lib/proxyImport.js'
 import { appendAudit } from './lib/auditLog.js'
 
 export const proxiesRouter = Router()
@@ -73,6 +74,89 @@ proxiesRouter.post('/:id/check', async (req, res) => {
       proxy = (await updateProxy(proxy.id, { country: geo.country })) || proxy
     }
     res.json({ ok: true, proxy, geo, geoSource, ms: alive ? ms : null })
+  } catch (err) { fail(res, err, 500) }
+})
+
+// ── §3.2: массовый импорт. Объявлено ДО '/:id', иначе путь затенится. ──────────
+
+/** Разобрать список без сети — показать человеку, что понято, до записи в базу. */
+proxiesRouter.post('/import/preview', async (req, res) => {
+  try {
+    const { text, scheme } = req.body ?? {}
+    const { items, errors } = parseProxyList(text, { scheme })
+    const existing = await listProxies()
+    const known = new Set(existing.map(proxyKey))
+    const fresh = items.filter((i) => !known.has(proxyKey(i)))
+    const dupes = items.length - fresh.length
+    res.json({ ok: true, items: fresh, errors, total: items.length, duplicates: dupes })
+  } catch (err) { fail(res, err) }
+})
+
+/** Выполнить N задач пачками по `size` — чтобы не открыть сотню сокетов разом. */
+async function inBatches(list, size, fn) {
+  const out = []
+  for (let i = 0; i < list.length; i += size) {
+    out.push(...await Promise.all(list.slice(i, i + size).map(fn)))
+  }
+  return out
+}
+
+/**
+ * §3.2: массовый импорт прокси. Страна определяется САМА — по реальному выходному IP
+ * (для мобильных/резидентных шлюз врёт), имя собирается по шаблону «USA SPAM 1»
+ * с продолжением нумерации от уже существующих.
+ */
+proxiesRouter.post('/import', async (req, res) => {
+  try {
+    const { text, scheme, kind, tag = '', template = '{country} {tag} {n}', probe = true, note = '' } = req.body ?? {}
+    const { items, errors } = parseProxyList(text, { scheme })
+    if (!items.length) return res.status(400).json({ ok: false, error: 'Не разобрано ни одной строки', errors })
+
+    const existing = await listProxies()
+    const known = new Set(existing.map(proxyKey))
+    const skipped = items.filter((i) => known.has(proxyKey(i))).map((i) => ({ raw: i.raw, reason: 'уже есть в базе' }))
+    const fresh = items.filter((i) => !known.has(proxyKey(i)))
+
+    // Живость + страна выхода. Без probe импорт мгновенный, но страна остаётся неизвестной.
+    const probed = probe
+      ? await inBatches(fresh, 8, async (p) => {
+        const alive = await tcpPing(p.host, p.port)
+        let geo = null, geoSource = null
+        if (alive) {
+          geo = await probeProxyExitGeo(p)
+          if (geo) geoSource = 'exit'
+          else { geo = await probeProxyGeo(p.host); if (geo) geoSource = 'gateway' }
+        }
+        return { ...p, status: alive ? 'ok' : 'dead', country: geo?.country || '', geo, geoSource }
+      })
+      : fresh.map((p) => ({ ...p, status: 'unknown', country: '', geo: null, geoSource: null }))
+
+    const labels = assignLabels(probed, { template, tag, existingLabels: existing.map((p) => p.label) })
+    const created = []
+    for (let i = 0; i < probed.length; i++) {
+      const p = probed[i]
+      try {
+        created.push(await createProxy({
+          label: labels[i], kind, scheme: p.scheme, host: p.host, port: p.port,
+          username: p.username, password: p.password, country: p.country, status: p.status,
+          note: [note, p.geo?.isp ? `${p.geo.countryName || ''} ${p.geo.city || ''} · ${p.geo.isp}`.trim() : ''].filter(Boolean).join(' · '),
+        }))
+      } catch (e) {
+        errors.push({ raw: p.raw, reason: e instanceof Error ? e.message : 'не сохранён' })
+      }
+    }
+
+    await appendAudit({
+      action: 'proxy.import', module: 'proxy', initiator: 'operator',
+      reason: `Импорт прокси: добавлено ${created.length}, пропущено ${skipped.length}, ошибок ${errors.length}`,
+      meta: { created: created.length, skipped: skipped.length, errors: errors.length, tag },
+    }).catch(() => {})
+
+    res.json({
+      ok: true, created, skipped, errors,
+      alive: created.filter((p) => p.status === 'ok').length,
+      dead: created.filter((p) => p.status === 'dead').length,
+    })
   } catch (err) { fail(res, err, 500) }
 })
 

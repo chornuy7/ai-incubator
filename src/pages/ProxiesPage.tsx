@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
-import { Network, Plus, Trash2, Pencil, Link2, Check, Circle, Zap, Loader2, MapPin } from 'lucide-react'
+import { Network, Plus, Trash2, Pencil, Link2, Check, Circle, Zap, Loader2, MapPin, Upload } from 'lucide-react'
 import { PageHeader, Card, EmptyState, Badge, Select, Modal } from '@/shared/ui'
 import { HelpButton } from '@/features/neuro-commenting/moduleUi'
 import {
@@ -10,6 +10,7 @@ import { fetchAccounts, patchAccount } from '@/api/accountsApi'
 import type { TgAccount } from '@/shared/types'
 import { FLAGS } from '@/shared/config/geo'
 import { confirmDialog } from '@/shared/lib/dialog'
+import { ImportProxiesModal } from '@/features/import-proxies/ImportProxiesModal'
 
 const STATUS_META: Record<Proxy['status'], { label: string; tone: 'spark' | 'rose' | 'muted' }> = {
   ok: { label: 'Рабочий', tone: 'spark' },
@@ -33,6 +34,7 @@ export function ProxiesPage() {
   const [geoMap, setGeoMap] = useState<Record<string, ProxyGeo | null>>({})
   const [geoSrcMap, setGeoSrcMap] = useState<Record<string, 'exit' | 'gateway' | null>>({})
   const [testing, setTesting] = useState<string | null>(null)
+  const [importOpen, setImportOpen] = useState(false)
 
   const doTest = async (p: Proxy) => {
     setTesting(p.id)
@@ -91,7 +93,13 @@ export function ProxiesPage() {
         subtitle="Каталог прокси (статические / мобильные / своя ферма) и привязка к аккаунтам. §3.2/3.4"
         icon={<Network size={22} />}
         badge={proxies.length ? `${proxies.length}` : undefined}
-        actions={<div className="flex items-center gap-2"><HelpButton topic="proxy-policy" className="h-10 w-10" /><button onClick={openNew} className="btn-primary h-10"><Plus size={16} /> Новый прокси</button></div>}
+        actions={(
+          <div className="flex items-center gap-2">
+            <HelpButton topic="proxy-policy" className="h-10 w-10" />
+            <button onClick={() => setImportOpen(true)} className="btn-ghost h-10"><Upload size={16} /> Импорт списком</button>
+            <button onClick={openNew} className="btn-primary h-10"><Plus size={16} /> Новый прокси</button>
+          </div>
+        )}
       />
 
       {err && !editOpen && <Card className="mb-3 border-rose-500/30 p-3 text-sm text-rose-300">{err}</Card>}
@@ -162,6 +170,8 @@ export function ProxiesPage() {
       </Modal>
 
       {assignFor && <AssignModal proxy={assignFor} accounts={accounts} onClose={() => setAssignFor(null)} onDone={() => { setAssignFor(null); void load() }} />}
+
+      <ImportProxiesModal open={importOpen} onClose={() => setImportOpen(false)} onDone={() => void load()} />
 
       {detailProxy && (
         <ProxyDetailModal
