@@ -51,6 +51,8 @@ export interface ModuleTaskSettings {
   intersectionMin?: number
   // userSource убран: собираем и список участников, и писавших сразу — по отдельности
   // каждый способ терял часть людей (закрытые списки / только активные).
+  /** §3.9: аккаунты работают параллельно ВНУТРИ одной задачи, стартуя вразнобой. */
+  parallelAccounts?: boolean
   delayChat?: number
   delayItem?: number
   // ── Прогрев: уровень (0=2д, 1=3–7д, 2=7–14д) ──

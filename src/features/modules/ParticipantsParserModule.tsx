@@ -14,7 +14,7 @@ import { cn } from '@/shared/lib/utils'
 import { downloadXls } from '@/shared/lib/exportXls'
 import { FolderPicker, SaveToFolderModal } from './shared/FolderPicker'
 import { promptDialog } from '@/shared/lib/dialog'
-import { fetchModuleTasks, fetchModuleTask, startModuleTask, type ModuleTaskSettings } from '@/api/modulesApi'
+import { fetchModuleTasks, fetchModuleTask, type ModuleTaskSettings } from '@/api/modulesApi'
 import { fetchTgstatOptions, fetchTgstatSession, fetchTgstatTargets, type TgstatOptions, type TgstatSession } from '@/api/tgstatApi'
 
 /** Стабильные ключи фильтров/лимитов по русским лейблам (для бэкенда). */
@@ -79,12 +79,14 @@ function Inner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: string }) {
     for (const l of P.limits ?? []) init[lkey(l.label)] = l.value
     return init
   })
-  const [delayChat, setDelayChat] = useState(P.delays[0]?.value ?? 5)
+  const [delayChat, setDelayChat] = useState(P.delays[0]?.value ?? 15)
   const [delayItem, setDelayItem] = useState(P.delays[1]?.value ?? 0.5)
   // §6: пауза перед ВСТУПЛЕНИЕМ. Отдельно от «между чатами»: та срабатывает после
   // обработки, а вступления — самое рискованное действие, серия подряд даёт FloodWait.
-  const [joinMin, setJoinMin] = useState(30)
-  const [joinMax, setJoinMax] = useState(90)
+  // Были 30–90 и оказались короткими: на живом прогоне 10 аккаунтов поймали FloodWait
+  // до 45 минут. Ставим осторожнее — вступление дешевле переждать, чем ловить бан.
+  const [joinMin, setJoinMin] = useState(90)
+  const [joinMax, setJoinMax] = useState(240)
   // §3.9: асинхронный режим — цели делятся между аккаунтами, и каждый аккаунт работает
   // СВОЕЙ задачей. Задачи независимы: свой прогресс, свои логи, свой «Стоп»; падение
   // одной не трогает остальные. Последовательный режим оставлен как был.
@@ -140,37 +142,11 @@ function Inner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: string }) {
     } catch (e) { pushToast({ type: 'error', title: 'Ошибка', desc: e instanceof Error ? e.message : '' }) }
   }
 
-  /** Разложить цели по аккаунтам по кругу: каждому свой набор, без пересечений. */
-  const splitTargets = (accs: string[], list: string[]) => {
-    const groups: string[][] = accs.map(() => [])
-    list.forEach((t, i) => groups[i % accs.length].push(t))
-    return groups
+  const handleStart = () => {
+    setCleared(false)
+    void start({ ...buildSettings(), parallelAccounts: parallel }, `${cfg.title} · ${selected.size} акк.`)
   }
 
-  const handleStart = async () => {
-    setCleared(false)
-    const accs = [...selected]
-    // Один аккаунт или выключенный режим — обычный путь, ничего не меняем.
-    if (!parallel || accs.length < 2) {
-      void start(buildSettings(), `${cfg.title} · ${accs.length} акк.`)
-      return
-    }
-    const groups = splitTargets(accs, targetList)
-    const base = buildSettings()
-    let okCount = 0
-    const errors: string[] = []
-    for (let i = 0; i < accs.length; i++) {
-      if (!groups[i].length) continue // целей меньше, чем аккаунтов — лишним задач не заводим
-      try {
-        await startModuleTask(moduleKey, { ...base, accountIds: [accs[i]], targets: groups[i] })
-        okCount++
-      } catch (e) {
-        errors.push(e instanceof Error ? e.message : 'ошибка запуска')
-      }
-    }
-    if (okCount) pushToast({ type: 'success', title: `Запущено задач: ${okCount}`, desc: 'Каждый аккаунт работает своей задачей — смотрите Дашборд задач' })
-    if (errors.length) pushToast({ type: 'error', title: `Не запущено: ${errors.length}`, desc: errors[0] })
-  }
   const handleSave = async () => { const n = await promptDialog({ title: 'Сохранить пресет', message: 'Название пресета настроек', placeholder: 'Напр. Парсер участников' }); if (n) void savePreset(n, buildSettings()) }
 
   // Цели (targetList) не восстанавливаем — они ситуативны; переносим фильтры, лимиты и задержки.
@@ -310,8 +286,8 @@ function Inner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: string }) {
               icon={<Activity size={15} />}
               label="Асинхронный режим"
               desc={selected.size > 1
-                ? `Цели разделятся между аккаунтами — ${Math.min(selected.size, targetList.length) || selected.size} независимых задач, работают одновременно`
-                : 'Нужно минимум 2 аккаунта: цели делятся между ними, каждый работает своей задачей'}
+                ? `Одна задача: цели разделятся между ${selected.size} аккаунтами, они пойдут одновременно и стартуют вразнобой`
+                : 'Нужно минимум 2 аккаунта — цели делятся между ними внутри одной задачи'}
               checked={parallel}
               onChange={setParallel}
             />
@@ -370,7 +346,7 @@ function Inner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: string }) {
       </SectionCard>
 
       <SectionCard icon={<Play size={18} />} title={running ? 'Выполнение' : 'Запуск & Логи'} badge={running ? 'LIVE' : undefined}>
-        <LaunchPanel running={running} starting={starting} canStart={canStart} onStart={() => void handleStart()} onStop={stop} onSave={handleSave}
+        <LaunchPanel running={running} starting={starting} canStart={canStart} onStart={handleStart} onStop={stop} onSave={handleSave}
           primaryLabel={cfg.primaryAction ?? 'Начать'} stats={launchStats} task={task} warn={warn}
           presets={presets} onApplyPreset={applyPreset} onDeletePreset={deletePreset} />
       </SectionCard>

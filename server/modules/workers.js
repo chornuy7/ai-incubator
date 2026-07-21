@@ -193,6 +193,8 @@ export async function runNeuroCommenting(task, store) {
         ;({ client } = await connectAccount(accountId, task.id))
         const ch = chs[Math.floor(Math.random() * chs.length)]
         const joinDelay = pickDelay(s.delays?.join?.[0] ?? 84, s.delays?.join?.[1] ?? 156, mul)
+  // §3.9: аккаунты идут ОДНОВРЕМЕННО внутри одной задачи, каждый по своим целям.
+  const parallelAccounts = s.parallelAccounts === true
         const membership = await prepareTarget(
           client,
           ch,
@@ -1236,14 +1238,14 @@ export async function runParticipantsParser(task, store, kind) {
   const F = s.filters || {}
   const L = s.limits || {}
   const kw = (s.keywords || []).map((k) => String(k).toLowerCase().trim()).filter(Boolean)
-  const delayChatMs = Math.max(0, Number(s.delayChat ?? 5)) * 1000
+  const delayChatMs = Math.max(0, Number(s.delayChat ?? 15)) * 1000
   const delayItemMs = Math.max(0, Number(s.delayItem ?? 0.5)) * 1000
   // Вступление — самое опасное действие: чтобы прочитать участников чужого чата,
   // аккаунт сначала должен в него ВОЙТИ, а серия быстрых вступлений даёт FloodWait
   // и попадание в спам-фильтр. Задержки «между чатами» тут мало: она срабатывает
   // ПОСЛЕ обработки, а вступления идут подряд. Поэтому отдельная пауза перед join,
   // как в остальных модулях (§6).
-  const joinDelay = pickDelay(s.delays?.join?.[0] ?? 30, s.delays?.join?.[1] ?? 90, mul)
+  const joinDelay = pickDelay(s.delays?.join?.[0] ?? 90, s.delays?.join?.[1] ?? 240, mul)
   task.readyTargets = task.readyTargets || [] // куда аккаунт уже вступал — второй раз не ждём
   const tgs = targets(s)
   if (!tgs.length) {
@@ -1286,9 +1288,11 @@ export async function runParticipantsParser(task, store, kind) {
   await store.appendLog(task, 'info', `Парсинг участников: источников ${tgs.length}, аккаунтов ${accountIds.length}${intersection ? ` · режим пересечения (≥${intersectMin} групп)` : ''}`)
 
   try {
-    for (const src of tgs) {
+    /** Проход ОДНОГО аккаунта по своему набору целей. Тело осталось прежним. */
+    const runSlice = async (slice, pinnedId) => {
+    for (const src of slice) {
       if (task.stopRequested) break
-      const accountId = await nextAccountId()
+      const accountId = pinnedId || await nextAccountId()
       if (!accountId) { await store.appendLog(task, 'warning', 'Нет доступных аккаунтов'); break }
       const meta = await getAccountMeta(accountId)
       let client
@@ -1455,6 +1459,27 @@ export async function runParticipantsParser(task, store, kind) {
       task.progress.done = processed
       await store.saveTask(task)
       if (!task.stopRequested) await sleep(delayChatMs || pickDelay(3, 6, mul) * 1000)
+    }
+    }
+
+    if (parallelAccounts && accountIds.length > 1) {
+      // Цели по кругу между аккаунтами, чтобы нагрузка легла ровно.
+      const slices = accountIds.map(() => [])
+      tgs.forEach((t, idx) => slices[idx % accountIds.length].push(t))
+      await store.appendLog(task, 'info', `Асинхронный режим: ${accountIds.length} аккаунтов идут одновременно, старт вразнобой`)
+      await Promise.all(accountIds.map(async (id, idx) => {
+        if (!slices[idx].length) return
+        // Разбег стартов: одновременный залп — это и есть то, что Telegram видит как
+        // ферму. Пауза случайная, а не кратная, чтобы не было машинного ритма.
+        if (idx > 0) {
+          const lag = Math.round(pickDelay(joinMin || 20, Math.max(joinMin || 20, joinMax || 90), mul) * 1000 * (0.5 + Math.random()))
+          await store.appendLog(task, 'info', `Аккаунт ${idx + 1}: старт через ${Math.round(lag / 1000)}с`)
+          if (await interruptibleSleep(lag, makeStopCheck(store, task.id))) return
+        }
+        await runSlice(slices[idx], id)
+      }))
+    } else {
+      await runSlice(tgs, null)
     }
 
     // Финализация пересечения: оставляем только тех, кто встретился в >= intersectMin группах.
