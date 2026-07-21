@@ -193,8 +193,6 @@ export async function runNeuroCommenting(task, store) {
         ;({ client } = await connectAccount(accountId, task.id))
         const ch = chs[Math.floor(Math.random() * chs.length)]
         const joinDelay = pickDelay(s.delays?.join?.[0] ?? 84, s.delays?.join?.[1] ?? 156, mul)
-  // §3.9: аккаунты идут ОДНОВРЕМЕННО внутри одной задачи, каждый по своим целям.
-  const parallelAccounts = s.parallelAccounts === true
         const membership = await prepareTarget(
           client,
           ch,
@@ -1238,6 +1236,8 @@ export async function runParticipantsParser(task, store, kind) {
   const F = s.filters || {}
   const L = s.limits || {}
   const kw = (s.keywords || []).map((k) => String(k).toLowerCase().trim()).filter(Boolean)
+  // §3.9: аккаунты идут ОДНОВРЕМЕННО внутри одной задачи, каждый по своим целям.
+  const parallelAccounts = s.parallelAccounts === true
   const delayChatMs = Math.max(0, Number(s.delayChat ?? 15)) * 1000
   const delayItemMs = Math.max(0, Number(s.delayItem ?? 0.5)) * 1000
   // Вступление — самое опасное действие: чтобы прочитать участников чужого чата,
@@ -1472,7 +1472,11 @@ export async function runParticipantsParser(task, store, kind) {
         // Разбег стартов: одновременный залп — это и есть то, что Telegram видит как
         // ферму. Пауза случайная, а не кратная, чтобы не было машинного ритма.
         if (idx > 0) {
-          const lag = Math.round(pickDelay(joinMin || 20, Math.max(joinMin || 20, joinMax || 90), mul) * 1000 * (0.5 + Math.random()))
+          // Разбег берём из тех же настроек join, что и пауза перед вступлением:
+          // отдельных переменных здесь нет — раньше я сослался на несуществующие.
+          const lagFrom = Number(s.delays?.join?.[0]) || 20
+          const lagTo = Math.max(lagFrom, Number(s.delays?.join?.[1]) || 90)
+          const lag = Math.round(pickDelay(lagFrom, lagTo, mul) * 1000 * (0.5 + Math.random()))
           await store.appendLog(task, 'info', `Аккаунт ${idx + 1}: старт через ${Math.round(lag / 1000)}с`)
           if (await interruptibleSleep(lag, makeStopCheck(store, task.id))) return
         }
