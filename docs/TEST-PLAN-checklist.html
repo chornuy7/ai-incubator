@@ -1,0 +1,1156 @@
+<title>Чек-лист тестирования — AI Incubator</title>
+<style>
+:root{--bg:#0f1117;--card:#171a22;--line:#262b36;--fg:#e8ecf4;--mut:#98a1b3;--ok:#22c55e;--bad:#ef4444;--acc:#7c8cff}
+@media (prefers-color-scheme:light){:root{--bg:#f6f7fb;--card:#fff;--line:#e2e6ef;--fg:#151922;--mut:#5d6678}}
+:root[data-theme=dark]{--bg:#0f1117;--card:#171a22;--line:#262b36;--fg:#e8ecf4;--mut:#98a1b3}
+:root[data-theme=light]{--bg:#f6f7fb;--card:#fff;--line:#e2e6ef;--fg:#151922;--mut:#5d6678}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.5 -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif}
+.wrap{max-width:1100px;margin:0 auto;padding:20px 16px 80px}
+h1{font-size:20px;margin:0 0 4px}.sub{color:var(--mut);font-size:13px;margin-bottom:14px}
+.bar{position:sticky;top:0;z-index:5;background:var(--bg);padding:10px 0;border-bottom:1px solid var(--line);margin-bottom:14px}
+.prog{height:8px;border-radius:99px;background:var(--line);overflow:hidden;margin-bottom:8px}
+.prog i{display:block;height:100%;background:var(--ok);width:0;transition:width .3s}
+.stats{display:flex;gap:14px;flex-wrap:wrap;font-size:12px;color:var(--mut);align-items:center}
+.stats b{color:var(--fg)}
+.f{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px}
+.f button{background:var(--card);border:1px solid var(--line);color:var(--mut);border-radius:8px;padding:4px 10px;font-size:12px;cursor:pointer}
+.f button.on{border-color:var(--acc);color:var(--fg)}
+.blk{margin-bottom:22px;background:var(--card);border:1px solid var(--line);border-radius:12px;overflow:hidden}
+.blk h2{font-size:14px;margin:0;padding:11px 14px;border-bottom:1px solid var(--line);background:rgba(124,140,255,.06)}
+.tw{overflow-x:auto}
+table{width:100%;border-collapse:collapse}
+th{text-align:left;font-size:11px;color:var(--mut);font-weight:600;padding:6px 10px;border-bottom:1px solid var(--line)}
+td{padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+tr:last-child td{border-bottom:none}
+.id{color:var(--mut);font-size:12px;white-space:nowrap}.p,.ty{white-space:nowrap;font-size:12px;color:var(--mut)}
+.nm{min-width:230px}.how{color:var(--mut);font-size:12px;margin-top:3px}.ex{color:var(--mut);font-size:12px;min-width:180px}
+code{background:rgba(124,140,255,.12);padding:1px 4px;border-radius:4px;font-size:12px}
+input[type=checkbox]{width:17px;height:17px;cursor:pointer;accent-color:var(--ok)}
+tr.done{opacity:.45}tr.done .nm{text-decoration:line-through}
+tr.failed{background:rgba(239,68,68,.08)}tr.failed .id{color:var(--bad);font-weight:700}
+.fail{background:none;border:1px solid var(--line);color:var(--mut);border-radius:6px;cursor:pointer;padding:1px 6px;font-size:12px}
+tr.failed .fail{border-color:var(--bad);color:var(--bad)}
+.hide{display:none}
+.rst{background:none;border:1px solid var(--line);color:var(--mut);border-radius:8px;padding:4px 10px;font-size:12px;cursor:pointer;margin-left:auto}
+button:focus-visible,input:focus-visible{outline:2px solid var(--acc);outline-offset:2px}
+@media(max-width:720px){.ex{display:none}th:nth-child(6){display:none}}
+</style>
+<div class="wrap">
+<h1>Чек-лист тестирования — AI Incubator</h1>
+<div class="sub">Полное покрытие ТЗ §3–§9 и роадмапа · 116 тестов. Отметки сохраняются в браузере. Кнопка ✕ — пометить упавший тест.</div>
+<div class="bar">
+  <div class="prog"><i id="pf"></i></div>
+  <div class="stats">
+    <span>Пройдено: <b id="s1">0</b></span>
+    <span>Упало: <b id="s2" style="color:var(--bad)">0</b></span>
+    <span>Критичных пройдено: <b id="s3">0</b></span>
+    <button class="rst" id="rst">Сбросить</button>
+  </div>
+  <div class="f">
+    <button data-fp="🔴">🔴 критичные</button><button data-fp="🟡">🟡 важные</button><button data-fp="⚪">⚪ потом</button>
+    <button data-ft="TG">нужен Telegram</button><button data-ft="UI">UI</button><button data-ft="API">API</button>
+  </div>
+</div>
+<section class="blk"><h2>Блок 1. Сквозной цикл — MVP (§8.9, DoD MVP) 🔴</h2><div class="tw"><table><thead><tr><th></th><th>#</th><th>!</th><th>тип</th><th>тест</th><th>ожидаем</th><th></th></tr></thead><tbody>
+    <tr class="t" data-p="🔴" data-ty="UI" data-id="1.1">
+      <td class="c"><input type="checkbox" id="cb-1.1"></td>
+      <td class="id">1.1</td>
+      <td class="p">🔴</td>
+      <td class="ty">UI</td>
+      <td class="nm">Создать <b>цель</b><div class="how">Цели → Создать: название, действие, этапы, критерий</div></td>
+      <td class="ex">Цель в списке, открывается на редактирование</td>
+      <td class="fx"><button class="fail" data-id="1.1" title="Отметить как упавший">✕</button></td>
+    </tr>
+    <tr class="t" data-p="🔴" data-ty="UI" data-id="1.2">
+      <td class="c"><input type="checkbox" id="cb-1.2"></td>
+      <td class="id">1.2</td>
+      <td class="p">🔴</td>
+      <td class="ty">UI</td>
+      <td class="nm">Создать <b>кампанию</b> под целью<div class="how">Кампания → Создать: выбрать цель, <b>выбрать модуль</b>, выбрать аккаунты</div></td>
+      <td class="ex">Кампания создалась и видна на карточке цели</td>
+      <td class="fx"><button class="fail" data-id="1.2" title="Отметить как упавший">✕</button></td>
+    </tr>
+    <tr class="t" data-p="🔴" data-ty="UI" data-id="1.3">
+      <td class="c"><input type="checkbox" id="cb-1.3"></td>
+      <td class="id">1.3</td>
+      <td class="p">🔴</td>
+      <td class="ty">UI</td>
+      <td class="nm">Запустить <b>задачу</b> из модуля<div class="how">Модуль → выбрать кампанию → Начать</div></td>
+      <td class="ex">Задача появилась в Дашборде со статусом и прогрессом</td>
+      <td class="fx"><button class="fail" data-id="1.3" title="Отметить как упавший">✕</button></td>
+    </tr>
+    <tr class="t" data-p="🔴" data-ty="TG" data-id="1.4">
+      <td class="c"><input type="checkbox" id="cb-1.4"></td>
+      <td class="id">1.4</td>
+      <td class="p">🔴</td>
+      <td class="ty">TG</td>
+      <td class="nm">Модуль <b>реально отработал</b><div class="how">Дождаться действий</div></td>
+      <td class="ex">В Telegram видно результат (коммент/сообщение/реакция), в логах задачи — <code>sent</code></td>
+      <td class="fx"><button class="fail" data-id="1.4" title="Отметить как упавший">✕</button></td>
+    </tr>
+    <tr class="t" data-p="🔴" data-ty="UI" data-id="1.5">
+      <td class="c"><input type="checkbox" id="cb-1.5"></td>
+      <td class="id">1.5</td>
+      <td class="p">🔴</td>
+      <td class="ty">UI</td>
+      <td class="nm">Полный путь виден в дашборде<div class="how">Дашборд задач</div></td>
+      <td class="ex">Статус · прогресс · цель · инициатор · логи · результаты</td>
+      <td class="fx"><button class="fail" data-id="1.5" title="Отметить как упавший">✕</button></td>
+    </tr></tbody></table></div></section>
+<section class="blk"><h2>Блок 2. Архитектура Цель→Кампания→Задача→Модуль (§9.0) 🔴</h2><div class="tw"><table><thead><tr><th></th><th>#</th><th>!</th><th>тип</th><th>тест</th><th>ожидаем</th><th></th></tr></thead><tbody>
+    <tr class="t" data-p="🔴" data-ty="UI" data-id="2.1">
+      <td class="c"><input type="checkbox" id="cb-2.1"></td>
+      <td class="id">2.1</td>
+      <td class="p">🔴</td>
+      <td class="ty">UI</td>
+      <td class="nm">Задачу <b>нельзя</b> запустить «к цели» напрямую<div class="how">Открыть модуль</div></td>
+      <td class="ex">В блоке запуска — <b>выбор кампании</b>, не цели</td>
+      <td class="fx"><button class="fail" data-id="2.1" title="Отметить как упавший">✕</button></td>
+    </tr>
+    <tr class="t" data-p="🔴" data-ty="UI" data-id="2.2">
+      <td class="c"><input type="checkbox" id="cb-2.2"></td>
+      <td class="id">2.2</td>
+      <td class="p">🔴</td>
+      <td class="ty">UI</td>
+      <td class="nm">Цель наследуется от кампании<div class="how">Выбрать кампанию с целью</div></td>
+      <td class="ex">Цель подставилась сама, отдельный выбор цели скрыт</td>
+      <td class="fx"><button class="fail" data-id="2.2" title="Отметить как упавший">✕</button></td>
+    </tr>
+    <tr class="t" data-p="🟡" data-ty="UI" data-id="2.3">
+      <td class="c"><input type="checkbox" id="cb-2.3"></td>
+      <td class="id">2.3</td>
+      <td class="p">🟡</td>
+      <td class="ty">UI</td>
+      <td class="nm">Мягкая миграция<div class="how">Когда кампаний ещё нет</div></td>
+      <td class="ex">Прямой выбор цели работает (старый путь не сломан)</td>
+      <td class="fx"><button class="fail" data-id="2.3" title="Отметить как упавший">✕</button></td>
+    </tr>
+    <tr class="t" data-p="🔴" data-ty="API" data-id="2.4">
+      <td class="c"><input type="checkbox" id="cb-2.4"></td>
+      <td class="id">2.4</td>
+      <td class="p">🔴</td>
+      <td class="ty">API</td>
+      <td class="nm">Кампания обязана иметь модуль<div class="how">Создать кампанию без модуля</div></td>
+      <td class="ex">Отказ с понятным текстом · <i>покрыто автотестом, прошло 21.07</i></td>
+      <td class="fx"><button class="fail" data-id="2.4" title="Отметить как упавший">✕</button></td>
+    </tr>
+    <tr class="t" data-p="🟡" data-ty="UI" data-id="2.5">
+      <td class="c"><input type="checkbox" id="cb-2.5"></td>
+      <td class="id">2.5</td>
+      <td class="p">🟡</td>
+      <td class="ty">UI</td>
+      <td class="nm">AI-промты берутся из цели<div class="how">Кампания под целью с базой знаний</div></td>
+      <td class="ex">Генерация учитывает цель и KB</td>
+      <td class="fx"><button class="fail" data-id="2.5" title="Отметить как упавший">✕</button></td>
+    </tr></tbody></table></div></section>
+<section class="blk"><h2>Блок 3. Аккаунты: закрепление и менеджер (§9.1, §9.2, §3.2) 🔴</h2><div class="tw"><table><thead><tr><th></th><th>#</th><th>!</th><th>тип</th><th>тест</th><th>ожидаем</th><th></th></tr></thead><tbody>
+    <tr class="t" data-p="🔴" data-ty="UI" data-id="3.1">
+      <td class="c"><input type="checkbox" id="cb-3.1"></td>
+      <td class="id">3.1</td>
+      <td class="p">🔴</td>
+      <td class="ty">UI</td>
+      <td class="nm">Колонка <b>Кампания</b> вместо роли<div class="how">Менеджер аккаунтов</div></td>
+      <td class="ex">Видно кампанию либо «в общем пуле»</td>
+      <td class="fx"><button class="fail" data-id="3.1" title="Отметить как упавший">✕</button></td>
+    </tr>
+    <tr class="t" data-p="🔴" data-ty="UI" data-id="3.2">
+      <td class="c"><input type="checkbox" id="cb-3.2"></td>
+      <td class="id">3.2</td>
+      <td class="p">🔴</td>
+      <td class="ty">UI</td>
+      <td class="nm"><b>Замочек</b> закрепления<div class="how">Аккаунт в кампании с закреплением</div></td>
+      <td class="ex">🔒 + имя кампании, подсказка «вышел из общего пула»</td>
+      <td class="fx"><button class="fail" data-id="3.2" title="Отметить как упавший">✕</button></td>
+    </tr>
+    <tr class="t" data-p="🔴" data-ty="UI" data-id="3.3">
+      <td class="c"><input type="checkbox" id="cb-3.3"></td>
+      <td class="id">3.3</td>
+      <td class="p">🔴</td>
+      <td class="ty">UI</td>
+      <td class="nm">«Использовать без лока»<div class="how">Снять галочку закрепления</div></td>
+      <td class="ex">Открытый замок, аккаунт доступен другим кампаниям</td>
+      <td class="fx"><button class="fail" data-id="3.3" title="Отметить как упавший">✕</button></td>
+    </tr>
+    <tr class="t" data-p="🔴" data-ty="API" data-id="3.4">
+      <td class="c"><input type="checkbox" id="cb-3.4"></td>
+      <td class="id">3.4</td>
+      <td class="p">🔴</td>
+      <td class="ty">API</td>
+      <td class="nm">Чужой закреплённый аккаунт не забрать<div class="how">Вторая кампания на тот же аккаунт</div></td>
+      <td class="ex">Отказ с указанием кем занят · <i>прошло 21.07</i></td>
+      <td class="fx"><button class="fail" data-id="3.4" title="Отметить как упавший">✕</button></td>
+    </tr>
+    <tr class="t" data-p="🟡" data-ty="UI" data-id="3.5">
+      <td class="c"><input type="checkbox" id="cb-3.5"></td>
+      <td class="id">3.5</td>
+      <td class="p">🟡</td>
+      <td class="ty">UI</td>
+      <td class="nm">Смена кампании у одного аккаунта<div class="how">Меню строки → Кампания аккаунта</div></td>
+      <td class="ex">Список кампаний + «вернуть в общий пул»; из прежней убрался</td>
+      <td class="fx"><button class="fail" data-id="3.5" title="Отметить как упавший">✕</button></td>
+    </tr>
+    <tr class="t" data-p="🟡" data-ty="UI" data-id="3.6">
+      <td class="c"><input type="checkbox" id="cb-3.6"></td>
+      <td class="id">3.6</td>
+      <td class="p">🟡</td>
+      <td class="ty">UI</td>
+      <td class="nm">Завершённая кампания освобождает<div class="how">Перевести кампанию в «Готово»</div></td>
+      <td class="ex">Аккаунты вернулись в пул</td>
+      <td class="fx"><button class="fail" data-id="3.6" title="Отметить как упавший">✕</button></td>
+    </tr>
+    <tr class="t" data-p="🔴" data-ty="UI" data-id="3.7">
+      <td class="c"><input type="checkbox" id="cb-3.7"></td>
+      <td class="id">3.7</td>
+      <td class="p">🔴</td>
+      <td class="ty">UI</td>
+      <td class="nm"><b>Запрет удаления «в работе»</b><div class="how">Выбрать занятый аккаунт → В корзину</div></td>
+      <td class="ex">Отказ «Сначала остановите работу», на кнопке «(N в работе)»</td>
+      <td class="fx"><button class="fail" data-id="3.7" title="Отметить как упавший">✕</button></td>
+    </tr>
+    <tr class="t" data-p="🟡" data-ty="UI" data-id="3.8">
+      <td class="c"><input type="checkbox" id="cb-3.8"></td>
+      <td class="id">3.8</td>
+      <td class="p">🟡</td>
+      <td class="ty">UI</td>
+      <td class="nm">Чекбокс-заголовок 3 состояния<div class="how">Выбрать часть строк → клик по «полувыбору»</div></td>
+      <td class="ex">Выбор снялся полностью</td>
+      <td class="fx"><button class="fail" data-id="3.8" title="Отметить как упавший">✕</button></td>
+    </tr>
+    <tr class="t" data-p="🟡" data-ty="UI" data-id="3.9">
+      <td class="c"><input type="checkbox" id="cb-3.9"></td>
+      <td class="id">3.9</td>
+      <td class="p">🟡</td>
+      <td class="ty">UI</td>
+      <td class="nm">Корзина: восстановить выбранные<div class="how">Положить 2, выбрать все → Восстановить</div></td>
+      <td class="ex">Подтверждение, оба вернулись · <i>прошло 21.07</i></td>
+      <td class="fx"><button class="fail" data-id="3.9" title="Отметить как упавший">✕</button></td>
+    </tr>
+    <tr class="t" data-p="🟡" data-ty="UI" data-id="3.10">
+      <td class="c"><input type="checkbox" id="cb-3.10"></td>
+      <td class="id">3.10</td>
+      <td class="p">🟡</td>
+      <td class="ty">UI</td>
+      <td class="nm">Корзина: «только живые»<div class="how">В корзине живой + invalid → галочка</div></td>
+      <td class="ex">Невалидный скрыт · <i>прошло 21.07</i></td>
+      <td class="fx"><button class="fail" data-id="3.10" title="Отметить как упавший">✕</button></td>
+    </tr>
+    <tr class="t" data-p="🟡" data-ty="UI" data-id="3.11">
+      <td class="c"><input type="checkbox" id="cb-3.11"></td>
+      <td class="id">3.11</td>
+      <td class="p">🟡</td>
+      <td class="ty">UI</td>
+      <td class="nm">Trust score виден всегда<div class="how">Список аккаунтов</div></td>
+      <td class="ex">Балл у всех, цвет по банду, подсказка что доступно</td>
+      <td class="fx"><button class="fail" data-id="3.11" title="Отметить как упавший">✕</button></td>
+    </tr>
+    <tr class="t" data-p="🟡" data-ty="UI" data-id="3.12">
+      <td class="c"><input type="checkbox" id="cb-3.12"></td>
+      <td class="id">3.12</td>
+      <td class="p">🟡</td>
+      <td class="ty">UI</td>
+      <td class="nm">Мульти-просмотр<div class="how">Выбрать 3 аккаунта → Управление</div></td>
+      <td class="ex">Слева <b>только выбранные</b>, переключатель «показать все»</td>
+      <td class="fx"><button class="fail" data-id="3.12" title="Отметить как упавший">✕</button></td>
+    </tr></tbody></table></div></section>
+<section class="blk"><h2>Блок 4. Обзор аккаунта (§9.3, §8.7) 🟡</h2><div class="tw"><table><thead><tr><th></th><th>#</th><th>!</th><th>тип</th><th>тест</th><th>ожидаем</th><th></th></tr></thead><tbody>
+    <tr class="t" data-p="🟡" data-ty="UI" data-id="4.1">
+      <td class="c"><input type="checkbox" id="cb-4.1"></td>
+      <td class="id">4.1</td>
+      <td class="p">🟡</td>
+      <td class="ty">UI</td>
+      <td class="nm">Обзор — страница, не модалка<div class="how">Клик по аккаунту</div></td>
+      <td class="ex">URL <code>/panel/accounts/:id</code>, есть «← Назад», оверлея нет</td>
+      <td class="fx"><button class="fail" data-id="4.1" title="Отметить как упавший">✕</button></td>
+    </tr>
+    <tr class="t" data-p="🟡" data-ty="UI" data-id="4.2">
+      <td class="c"><input type="checkbox" id="cb-4.2"></td>
+      <td class="id">4.2</td>
+      <td class="p">🟡</td>
+      <td class="ty">UI</td>
+      <td class="nm">Раскладка «как почта»<div class="how">В обзоре</div></td>
+      <td class="ex">Слева список с поиском, справа табы; переключение без выхода</td>
+      <td class="fx"><button class="fail" data-id="4.2" title="Отметить как упавший">✕</button></td>
+    </tr>
+    <tr class="t" data-p="🟡" data-ty="UI" data-id="4.3">
+      <td class="c"><input type="checkbox" id="cb-4.3"></td>
+      <td class="id">4.3</td>
+      <td class="p">🟡</td>
+      <td class="ty">UI</td>
+      <td class="nm"><b>Таб сохраняется</b> при смене аккаунта<div class="how">Открыть «Каналы» → сменить аккаунт</div></td>
+      <td class="ex">Остались «Каналы»; с галочкой «сбрасывать» — вернулось на Профиль</td>
+      <td class="fx"><button class="fail" data-id="4.3" title="Отметить как упавший">✕</button></td>
+    </tr>
+    <tr class="t" data-p="🔴" data-ty="TG" data-id="4.4">
+      <td class="c"><input type="checkbox" id="cb-4.4"></td>
+      <td class="id">4.4</td>
+      <td class="p">🔴</td>
+      <td class="ty">TG</td>
+      <td class="nm">Каналы <b>не стакаются</b><div class="how">Быстро переключить 3 аккаунта</div></td>
+      <td class="ex">У каждого свой список, чужие не подмешиваются</td>
+      <td class="fx"><button class="fail" data-id="4.4" title="Отметить как упавший">✕</button></td>
+    </tr>
+    <tr class="t" data-p="🟡" data-ty="TG" data-id="4.5">
+      <td class="c"><input type="checkbox" id="cb-4.5"></td>
+      <td class="id">4.5</td>
+      <td class="p">🟡</td>
+      <td class="ty">TG</td>
+      <td class="nm"><b>Превью картинок/видео</b><div class="how">Обзор аккаунта → Диалоги → диалог с картинкой</div></td>
+      <td class="ex">Картинка показана; оригинал не скачивается</td>
+      <td class="fx"><button class="fail" data-id="4.5" title="Отметить как упавший">✕</button></td>
+    </tr>
+    <tr class="t" data-p="🟡" data-ty="TG" data-id="4.6">
+      <td class="c"><input type="checkbox" id="cb-4.6"></td>
+      <td class="id">4.6</td>
+      <td class="p">🟡</td>
+      <td class="ty">TG</td>
+      <td class="nm">То же в НейроДиалогах<div class="how">Тот же диалог в модуле</div></td>
+      <td class="ex">Идентичное поведение (общий компонент)</td>
+      <td class="fx"><button class="fail" data-id="4.6" title="Отметить как упавший">✕</button></td>
+    </tr>
+    <tr class="t" data-p="🟡" data-ty="UI" data-id="4.7">
+      <td class="c"><input type="checkbox" id="cb-4.7"></td>
+      <td class="id">4.7</td>
+      <td class="p">🟡</td>
+      <td class="ty">UI</td>
+      <td class="nm">Многострочный ответ<div class="how">В поле ответа Shift+Enter</div></td>
+      <td class="ex">Перенос строки, поле растёт; Enter — отправка</td>
+      <td class="fx"><button class="fail" data-id="4.7" title="Отметить как упавший">✕</button></td>
+    </tr>
+    <tr class="t" data-p="⚪" data-ty="UI" data-id="4.8">
+      <td class="c"><input type="checkbox" id="cb-4.8"></td>
+      <td class="id">4.8</td>
+      <td class="p">⚪</td>
+      <td class="ty">UI</td>
+      <td class="nm">Панель форматирования<div class="how">Выделить текст → Жирный</div></td>
+      <td class="ex">Обёрнуто в <code><b>…</b></code>, выделение осталось на тексте</td>
+      <td class="fx"><button class="fail" data-id="4.8" title="Отметить как упавший">✕</button></td>
+    </tr></tbody></table></div></section>
+<section class="blk"><h2>Блок 5. Цели, KB, CRM (§3.6, §9.4, §9.9) 🔴</h2><div class="tw"><table><thead><tr><th></th><th>#</th><th>!</th><th>тип</th><th>тест</th><th>ожидаем</th><th></th></tr></thead><tbody>
+    <tr class="t" data-p="🟡" data-ty="UI" data-id="5.1">
+      <td class="c"><input type="checkbox" id="cb-5.1"></td>
+      <td class="id">5.1</td>
+      <td class="p">🟡</td>
+      <td class="ty">UI</td>
+      <td class="nm">Цель — полноэкранная вьюшка<div class="how">Создать/редактировать цель</div></td>
+      <td class="ex">Список скрылся, «← Назад к целям», модалки нет</td>
+      <td class="fx"><button class="fail" data-id="5.1" title="Отметить как упавший">✕</button></td>
+    </tr>
+    <tr class="t" data-p="🔴" data-ty="UI" data-id="5.2">
+      <td class="c"><input type="checkbox" id="cb-5.2"></td>
+      <td class="id">5.2</td>
+      <td class="p">🔴</td>
+      <td class="ty">UI</td>
+      <td class="nm"><b>Дедлайн</b> цели<div class="how">Поставить вчерашнюю дату → запустить задачу под целью</div></td>
+      <td class="ex">Отказ «цель просрочена — работа остановлена»</td>
+      <td class="fx"><button class="fail" data-id="5.2" title="Отметить как упавший">✕</button></td>
+    </tr>
+    <tr class="t" data-p="🔴" data-ty="TG" data-id="5.3">
+      <td class="c"><input type="checkbox" id="cb-5.3"></td>
+      <td class="id">5.3</td>
+      <td class="p">🔴</td>
+      <td class="ty">TG</td>
+      <td class="nm">Дедлайн и <b>уже идущие</b> задачи<div class="how">Задача работает → дедлайн истёк</div></td>
+      <td class="ex">⚠️ <b>Известный пробел:</b> идущие задачи НЕ останавливаются (за Ильёй)</td>
+      <td class="fx"><button class="fail" data-id="5.3" title="Отметить как упавший">✕</button></td>
+    </tr>
+    <tr class="t" data-p="🟡" data-ty="UI" data-id="5.4">
+      <td class="c"><input type="checkbox" id="cb-5.4"></td>
+      <td class="id">5.4</td>
+      <td class="p">🟡</td>
+      <td class="ty">UI</td>
+      <td class="nm">Цель по лидам<div class="how">Задать «5 лидов»</div></td>
+      <td class="ex">Прогресс-бар N/5 на карточке, растёт с лидами</td>
+      <td class="fx"><button class="fail" data-id="5.4" title="Отметить как упавший">✕</button></td>
+    </tr>
+    <tr class="t" data-p="🟡" data-ty="UI" data-id="5.5">
+      <td class="c"><input type="checkbox" id="cb-5.5"></td>
+      <td class="id">5.5</td>
+      <td class="p">🟡</td>
+      <td class="ty">UI</td>
+      <td class="nm"><b>База знаний с файлами</b><div class="how">Загрузить картинку и PDF</div></td>
+      <td class="ex">Превью картинки, ссылка на файл; удаление записи удаляет файл</td>
+      <td class="fx"><button class="fail" data-id="5.5" title="Отметить как упавший">✕</button></td>
+    </tr>
+    <tr class="t" data-p="⚪" data-ty="UI" data-id="5.6">
+      <td class="c"><input type="checkbox" id="cb-5.6"></td>
+      <td class="id">5.6</td>
+      <td class="p">⚪</td>
+      <td class="ty">UI</td>
+      <td class="nm">Лимит файла<div class="how">Файл &gt;3 МБ</div></td>
+      <td class="ex">Понятный отказ, а не молчание</td>
+      <td class="fx"><button class="fail" data-id="5.6" title="Отметить как упавший">✕</button></td>
+    </tr>
+    <tr class="t" data-p="🟡" data-ty="UI" data-id="5.7">
+      <td class="c"><input type="checkbox" id="cb-5.7"></td>
+      <td class="id">5.7</td>
+      <td class="p">🟡</td>
+      <td class="ty">UI</td>
+      <td class="nm">Кампании внутри цели<div class="how">Карточка цели</div></td>
+      <td class="ex">Блок «Кампании цели (N)» со статусом и переходом</td>
+      <td class="fx"><button class="fail" data-id="5.7" title="Отметить как упавший">✕</button></td>
+    </tr>
+    <tr class="t" data-p="🔴" data-ty="UI" data-id="5.8">
+      <td class="c"><input type="checkbox" id="cb-5.8"></td>
+      <td class="id">5.8</td>
+      <td class="p">🔴</td>
+      <td class="ty">UI</td>
+      <td class="nm"><b>Статусы лида</b> — воронка<div class="how">CRM → сменить статус на «горячий»</div></td>
+      <td class="ex">Тост «🔥 Горячий лид», баннер, подсветка карточки</td>
+      <td class="fx"><button class="fail" data-id="5.8" title="Отметить как упавший">✕</button></td>
+    </tr>
+    <tr class="t" data-p="🔴" data-ty="TG" data-id="5.9">
+      <td class="c"><input type="checkbox" id="cb-5.9"></td>
+      <td class="id">5.9</td>
+      <td class="p">🔴</td>
+      <td class="ty">TG</td>
+      <td class="nm"><b>Лид попадает в CRM сам</b><div class="how">Написать боту с телефона → дождаться авто-ответа под целью</div></td>
+      <td class="ex">Лид появился в CRM со статусом «только написал»</td>
+      <td class="fx"><button class="fail" data-id="5.9" title="Отметить как упавший">✕</button></td>
+    </tr>
+    <tr class="t" data-p="🟡" data-ty="TG" data-id="5.10">
+      <td class="c"><input type="checkbox" id="cb-5.10"></td>
+      <td class="id">5.10</td>
+      <td class="p">🟡</td>
+      <td class="ty">TG</td>
+      <td class="nm">Воронка не откатывается<div class="how">Прогретому лиду прилетает новый авто-ответ</div></td>
+      <td class="ex">Статус НЕ упал обратно на «только написал»</td>
+      <td class="fx"><button class="fail" data-id="5.10" title="Отметить как упавший">✕</button></td>
+    </tr>
+    <tr class="t" data-p="🟡" data-ty="UI" data-id="5.11">
+      <td class="c"><input type="checkbox" id="cb-5.11"></td>
+      <td class="id">5.11</td>
+      <td class="p">🟡</td>
+      <td class="ty">UI</td>
+      <td class="nm">Цель в НейроДиалогах<div class="how">Выбрать цель в ИИ-настройках</div></td>
+      <td class="ex">Тег цели, выбор пережил перезагрузку страницы</td>
+      <td class="fx"><button class="fail" data-id="5.11" title="Отметить как упавший">✕</button></td>
+    </tr></tbody></table></div></section>
+<section class="blk"><h2>Блок 6. Задачи и автоматизация (§3.9, §9.6, §9.7, §9.8) 🔴</h2><div class="tw"><table><thead><tr><th></th><th>#</th><th>!</th><th>тип</th><th>тест</th><th>ожидаем</th><th></th></tr></thead><tbody>
+    <tr class="t" data-p="🔴" data-ty="UI" data-id="6.1">
+      <td class="c"><input type="checkbox" id="cb-6.1"></td>
+      <td class="id">6.1</td>
+      <td class="p">🔴</td>
+      <td class="ty">UI</td>
+      <td class="nm">Пауза → продолжение<div class="how">Работающая задача → Пауза → Продолжить</div></td>
+      <td class="ex">Прогресс сохранился, продолжила с места, не с нуля</td>
+      <td class="fx"><button class="fail" data-id="6.1" title="Отметить как упавший">✕</button></td>
+    </tr>
+    <tr class="t" data-p="🔴" data-ty="UI" data-id="6.2">
+      <td class="c"><input type="checkbox" id="cb-6.2"></td>
+      <td class="id">6.2</td>
+      <td class="p">🔴</td>
+      <td class="ty">UI</td>
+      <td class="nm">Стоп и перезапуск<div class="how">Стоп → Перезапуск</div></td>
+      <td class="ex">Статусы меняются, аккаунты освободились</td>
+      <td class="fx"><button class="fail" data-id="6.2" title="Отметить как упавший">✕</button></td>
+    </tr>
+    <tr class="t" data-p="🔴" data-ty="UI" data-id="6.3">
+      <td class="c"><input type="checkbox" id="cb-6.3"></td>
+      <td class="id">6.3</td>
+      <td class="p">🔴</td>
+      <td class="ty">UI</td>
+      <td class="nm"><b>Правка задачи только на паузе</b><div class="how">У работающей нажать «Редактировать»</div></td>
+      <td class="ex">Кнопка заблокирована, подсказка объясняет почему</td>
+      <td class="fx"><button class="fail" data-id="6.3" title="Отметить как упавший">✕</button></td>
+    </tr>
+    <tr class="t" data-p="🔴" data-ty="UI" data-id="6.4">
+      <td class="c"><input type="checkbox" id="cb-6.4"></td>
+      <td class="id">6.4</td>
+      <td class="p">🔴</td>
+      <td class="ty">UI</td>
+      <td class="nm">Правка на паузе работает<div class="how">Поставить на паузу → изменить каналы/лимиты → Сохранить</div></td>
+      <td class="ex">Сохранилось; после Продолжить работает по новым · <i>API прошло 21.07</i></td>
+      <td class="fx"><button class="fail" data-id="6.4" title="Отметить как упавший">✕</button></td>
+    </tr>
+    <tr class="t" data-p="🟡" data-ty="UI" data-id="6.5">
+      <td class="c"><input type="checkbox" id="cb-6.5"></td>
+      <td class="id">6.5</td>
+      <td class="p">🟡</td>
+      <td class="ty">UI</td>
+      <td class="nm">Состав аккаунтов не меняется<div class="how">В панели правки</div></td>
+      <td class="ex">Явное предупреждение, поля аккаунтов нет</td>
+      <td class="fx"><button class="fail" data-id="6.5" title="Отметить как упавший">✕</button></td>
+    </tr>
+    <tr class="t" data-p="🔴" data-ty="UI" data-id="6.6">
+      <td class="c"><input type="checkbox" id="cb-6.6"></td>
+      <td class="id">6.6</td>
+      <td class="p">🔴</td>
+      <td class="ty">UI</td>
+      <td class="nm"><b>Уникальность задачи</b><div class="how">Запустить вторую идентичную (те же аккаунты+цель+каналы)</div></td>
+      <td class="ex">Отказ с номером уже активной задачи</td>
+      <td class="fx"><button class="fail" data-id="6.6" title="Отметить как упавший">✕</button></td>
+    </tr>
+    <tr class="t" data-p="🔴" data-ty="UI" data-id="6.7">
+      <td class="c"><input type="checkbox" id="cb-6.7"></td>
+      <td class="id">6.7</td>
+      <td class="p">🔴</td>
+      <td class="ty">UI</td>
+      <td class="nm">Задача = отдельная вьюшка<div class="how">Клик по задаче</div></td>
+      <td class="ex"><code>/panel/tasks/:id</code>, полные логи + результаты, «← Назад»</td>
+      <td class="fx"><button class="fail" data-id="6.7" title="Отметить как упавший">✕</button></td>
+    </tr>
+    <tr class="t" data-p="🟡" data-ty="UI" data-id="6.8">
+      <td class="c"><input type="checkbox" id="cb-6.8"></td>
+      <td class="id">6.8</td>
+      <td class="p">🟡</td>
+      <td class="ty">UI</td>
+      <td class="nm">AIR: рейтинг по аккаунтам<div class="how">Задача AIR → вьюшка</div></td>
+      <td class="ex">По каждому аккаунту балл, шкала, цвет</td>
+      <td class="fx"><button class="fail" data-id="6.8" title="Отметить как упавший">✕</button></td>
+    </tr>
+    <tr class="t" data-p="🟡" data-ty="UI" data-id="6.9">
+      <td class="c"><input type="checkbox" id="cb-6.9"></td>
+      <td class="id">6.9</td>
+      <td class="p">🟡</td>
+      <td class="ty">UI</td>
+      <td class="nm">«Цель» vs «каналы цели»<div class="how">Детали задачи</div></td>
+      <td class="ex">Разведены: «Цель кампании» и «Каналы / чаты»</td>
+      <td class="fx"><button class="fail" data-id="6.9" title="Отметить как упавший">✕</button></td>
+    </tr>
+    <tr class="t" data-p="🔴" data-ty="UI" data-id="6.10">
+      <td class="c"><input type="checkbox" id="cb-6.10"></td>
+      <td class="id">6.10</td>
+      <td class="p">🔴</td>
+      <td class="ty">UI</td>
+      <td class="nm">Автоматизация <b>под кампанию</b><div class="how">Автоматизация → создать правило</div></td>
+      <td class="ex">Выбор кампании; модуль/аккаунты подтянулись из неё</td>
+      <td class="fx"><button class="fail" data-id="6.10" title="Отметить как упавший">✕</button></td>
+    </tr>
+    <tr class="t" data-p="🔴" data-ty="UI" data-id="6.11">
+      <td class="c"><input type="checkbox" id="cb-6.11"></td>
+      <td class="id">6.11</td>
+      <td class="p">🔴</td>
+      <td class="ty">UI</td>
+      <td class="nm">Правило без кампании и модуля<div class="how">Попробовать сохранить пустое</div></td>
+      <td class="ex">Отказ</td>
+      <td class="fx"><button class="fail" data-id="6.11" title="Отметить как упавший">✕</button></td>
+    </tr>
+    <tr class="t" data-p="🟡" data-ty="TG" data-id="6.12">
+      <td class="c"><input type="checkbox" id="cb-6.12"></td>
+      <td class="id">6.12</td>
+      <td class="p">🟡</td>
+      <td class="ty">TG</td>
+      <td class="nm">Правило реально сработало<div class="how">Расписание «через 2 минуты»</div></td>
+      <td class="ex">Задача создалась сама, инициатор «Автоматизация: &lt;имя&gt;»</td>
+      <td class="fx"><button class="fail" data-id="6.12" title="Отметить как упавший">✕</button></td>
+    </tr>
+    <tr class="t" data-p="🟡" data-ty="UI" data-id="6.13">
+      <td class="c"><input type="checkbox" id="cb-6.13"></td>
+      <td class="id">6.13</td>
+      <td class="p">🟡</td>
+      <td class="ty">UI</td>
+      <td class="nm">Расписание прямо в модуле<div class="how">Модуль → блок Запуск</div></td>
+      <td class="ex">Сворачиваемый «Запуск по расписанию»: однократно/ежедневно/каждые N</td>
+      <td class="fx"><button class="fail" data-id="6.13" title="Отметить как упавший">✕</button></td>
+    </tr></tbody></table></div></section>
+<section class="blk"><h2>Блок 7. Права, роли, группы (§8.1, §9.12) 🔴</h2><div class="tw"><table><thead><tr><th></th><th>#</th><th>!</th><th>тип</th><th>тест</th><th>ожидаем</th><th></th></tr></thead><tbody>
+    <tr class="t" data-p="🔴" data-ty="UI" data-id="7.1">
+      <td class="c"><input type="checkbox" id="cb-7.1"></td>
+      <td class="id">7.1</td>
+      <td class="p">🔴</td>
+      <td class="ty">UI</td>
+      <td class="nm">Модератор видит меньше<div class="how">Войти Модератором</div></td>
+      <td class="ex">Скрыты запрещённые разделы и модули</td>
+      <td class="fx"><button class="fail" data-id="7.1" title="Отметить как упавший">✕</button></td>
+    </tr>
+    <tr class="t" data-p="🔴" data-ty="UI" data-id="7.2">
+      <td class="c"><input type="checkbox" id="cb-7.2"></td>
+      <td class="id">7.2</td>
+      <td class="p">🔴</td>
+      <td class="ty">UI</td>
+      <td class="nm">Прямой URL не обходит<div class="how">Модератором открыть <code>/panel/roles</code></div></td>
+      <td class="ex">«Нет доступа»</td>
+      <td class="fx"><button class="fail" data-id="7.2" title="Отметить как упавший">✕</button></td>
+    </tr>
+    <tr class="t" data-p="🔴" data-ty="UI" data-id="7.3">
+      <td class="c"><input type="checkbox" id="cb-7.3"></td>
+      <td class="id">7.3</td>
+      <td class="p">🔴</td>
+      <td class="ty">UI</td>
+      <td class="nm"><b>Доступ на ГРУППУ аккаунтов</b><div class="how">Создать группу → выдать роли → войти Модератором</div></td>
+      <td class="ex">Видит <b>только аккаунты группы</b> · <i>цепочка проверена 21.07</i></td>
+      <td class="fx"><button class="fail" data-id="7.3" title="Отметить как упавший">✕</button></td>
+    </tr>
+    <tr class="t" data-p="🔴" data-ty="UI" data-id="7.4">
+      <td class="c"><input type="checkbox" id="cb-7.4"></td>
+      <td class="id">7.4</td>
+      <td class="p">🔴</td>
+      <td class="ty">UI</td>
+      <td class="nm">Точечный запрет сильнее<div class="how">Аккаунту из группы — точечный deny</div></td>
+      <td class="ex">Аккаунт пропал у Модератора</td>
+      <td class="fx"><button class="fail" data-id="7.4" title="Отметить как упавший">✕</button></td>
+    </tr>
+    <tr class="t" data-p="🔴" data-ty="API" data-id="7.5">
+      <td class="c"><input type="checkbox" id="cb-7.5"></td>
+      <td class="id">7.5</td>
+      <td class="p">🔴</td>
+      <td class="ty">API</td>
+      <td class="nm"><b>Стоп прогрева только супер-админ</b><div class="how">Модератором остановить прогрев</div></td>
+      <td class="ex">Отказ 403 с объяснением · <i>прошло 21.07</i></td>
+      <td class="fx"><button class="fail" data-id="7.5" title="Отметить как упавший">✕</button></td>
+    </tr>
+    <tr class="t" data-p="🔴" data-ty="UI" data-id="7.6">
+      <td class="c"><input type="checkbox" id="cb-7.6"></td>
+      <td class="id">7.6</td>
+      <td class="p">🔴</td>
+      <td class="ty">UI</td>
+      <td class="nm">Красная пометка в Ролях<div class="how">Роли → модуль Прогрев</div></td>
+      <td class="ex">Бейдж «стоп — только админ» с подсказкой</td>
+      <td class="fx"><button class="fail" data-id="7.6" title="Отметить как упавший">✕</button></td>
+    </tr>
+    <tr class="t" data-p="🟡" data-ty="UI" data-id="7.7">
+      <td class="c"><input type="checkbox" id="cb-7.7"></td>
+      <td class="id">7.7</td>
+      <td class="p">🟡</td>
+      <td class="ty">UI</td>
+      <td class="nm">Массовый стоп ≥100 задач<div class="how">Выбрать много задач → Стоп</div></td>
+      <td class="ex">Усиленное подтверждение (ввод числа)</td>
+      <td class="fx"><button class="fail" data-id="7.7" title="Отметить как упавший">✕</button></td>
+    </tr>
+    <tr class="t" data-p="🟡" data-ty="UI" data-id="7.8">
+      <td class="c"><input type="checkbox" id="cb-7.8"></td>
+      <td class="id">7.8</td>
+      <td class="p">🟡</td>
+      <td class="ty">UI</td>
+      <td class="nm">Доступ на каналы через папки<div class="how">Выдать роли папку с 2 каналами из 5</div></td>
+      <td class="ex">В выборе каналов видно только 2</td>
+      <td class="fx"><button class="fail" data-id="7.8" title="Отметить как упавший">✕</button></td>
+    </tr>
+    <tr class="t" data-p="🟡" data-ty="UI" data-id="7.9">
+      <td class="c"><input type="checkbox" id="cb-7.9"></td>
+      <td class="id">7.9</td>
+      <td class="p">🟡</td>
+      <td class="ty">UI</td>
+      <td class="nm">Учёт рабочего времени<div class="how">Вход/выход пользователя</div></td>
+      <td class="ex">На карточке «в сети», время за сегодня/7 дней</td>
+      <td class="fx"><button class="fail" data-id="7.9" title="Отметить как упавший">✕</button></td>
+    </tr></tbody></table></div></section>
+<section class="blk"><h2>Блок 8. Модули — UX и запуск (§3.5, §9.7) 🟡</h2><div class="tw"><table><thead><tr><th></th><th>#</th><th>!</th><th>тип</th><th>тест</th><th>ожидаем</th><th></th></tr></thead><tbody>
+    <tr class="t" data-p="🟡" data-ty="UI" data-id="8.1">
+      <td class="c"><input type="checkbox" id="cb-8.1"></td>
+      <td class="id">8.1</td>
+      <td class="p">🟡</td>
+      <td class="ty">UI</td>
+      <td class="nm">AI-промты вверху<div class="how">Открыть модуль</div></td>
+      <td class="ex">Сразу под выбором аккаунтов</td>
+      <td class="fx"><button class="fail" data-id="8.1" title="Отметить как упавший">✕</button></td>
+    </tr>
+    <tr class="t" data-p="🟡" data-ty="UI" data-id="8.2">
+      <td class="c"><input type="checkbox" id="cb-8.2"></td>
+      <td class="id">8.2</td>
+      <td class="p">🟡</td>
+      <td class="ty">UI</td>
+      <td class="nm">Тайминги внизу<div class="how">Тот же экран</div></td>
+      <td class="ex">После блока «Запуск»</td>
+      <td class="fx"><button class="fail" data-id="8.2" title="Отметить как упавший">✕</button></td>
+    </tr>
+    <tr class="t" data-p="🟡" data-ty="UI" data-id="8.3">
+      <td class="c"><input type="checkbox" id="cb-8.3"></td>
+      <td class="id">8.3</td>
+      <td class="p">🟡</td>
+      <td class="ty">UI</td>
+      <td class="nm">Чёрный список компактный<div class="how">Секция каналов</div></td>
+      <td class="ex">Сворачиваемый блок, разворачивается по клику</td>
+      <td class="fx"><button class="fail" data-id="8.3" title="Отметить как упавший">✕</button></td>
+    </tr>
+    <tr class="t" data-p="🟡" data-ty="UI" data-id="8.4">
+      <td class="c"><input type="checkbox" id="cb-8.4"></td>
+      <td class="id">8.4</td>
+      <td class="p">🟡</td>
+      <td class="ty">UI</td>
+      <td class="nm"><b>Пресеты</b> с цветом и владельцем<div class="how">Сохранить пресет</div></td>
+      <td class="ex">Цветная метка + бейдж владельца на чипе</td>
+      <td class="fx"><button class="fail" data-id="8.4" title="Отметить как упавший">✕</button></td>
+    </tr>
+    <tr class="t" data-p="🟡" data-ty="UI" data-id="8.5">
+      <td class="c"><input type="checkbox" id="cb-8.5"></td>
+      <td class="id">8.5</td>
+      <td class="p">🟡</td>
+      <td class="ty">UI</td>
+      <td class="nm">Нижняя панель «Выполнение»<div class="how">Скроллить модуль</div></td>
+      <td class="ex">Панель прижата к низу, всегда видна</td>
+      <td class="fx"><button class="fail" data-id="8.5" title="Отметить как упавший">✕</button></td>
+    </tr>
+    <tr class="t" data-p="🟡" data-ty="UI" data-id="8.6">
+      <td class="c"><input type="checkbox" id="cb-8.6"></td>
+      <td class="id">8.6</td>
+      <td class="p">🟡</td>
+      <td class="ty">UI</td>
+      <td class="nm">Переход в дашборд с фильтром<div class="how">Кнопка «В Дашборде задач»</div></td>
+      <td class="ex">Дашборд открылся <b>отфильтрованным по модулю</b></td>
+      <td class="fx"><button class="fail" data-id="8.6" title="Отметить как упавший">✕</button></td>
+    </tr>
+    <tr class="t" data-p="🟡" data-ty="UI" data-id="8.7">
+      <td class="c"><input type="checkbox" id="cb-8.7"></td>
+      <td class="id">8.7</td>
+      <td class="p">🟡</td>
+      <td class="ty">UI</td>
+      <td class="nm">Автоскролл к блоку в Help<div class="how">Нажать «?» на нижнем блоке</div></td>
+      <td class="ex">Панель открылась, <b>блок остался в поле зрения</b></td>
+      <td class="fx"><button class="fail" data-id="8.7" title="Отметить как упавший">✕</button></td>
+    </tr>
+    <tr class="t" data-p="⚪" data-ty="UI" data-id="8.8">
+      <td class="c"><input type="checkbox" id="cb-8.8"></td>
+      <td class="id">8.8</td>
+      <td class="p">⚪</td>
+      <td class="ty">UI</td>
+      <td class="nm">Режимы нейрокомментинга<div class="how">Переключить 3 режима</div></td>
+      <td class="ex">Описания меняются, расчёт min–max времени обновляется</td>
+      <td class="fx"><button class="fail" data-id="8.8" title="Отметить как упавший">✕</button></td>
+    </tr></tbody></table></div></section>
+<section class="blk"><h2>Блок 9. Прокси (§3.4, §9.10) 🟡</h2><div class="tw"><table><thead><tr><th></th><th>#</th><th>!</th><th>тип</th><th>тест</th><th>ожидаем</th><th></th></tr></thead><tbody>
+    <tr class="t" data-p="🔴" data-ty="TG" data-id="9.1">
+      <td class="c"><input type="checkbox" id="cb-9.1"></td>
+      <td class="id">9.1</td>
+      <td class="p">🔴</td>
+      <td class="ty">TG</td>
+      <td class="nm">Проверка живости<div class="how">Добавить рабочий прокси → Проверить</div></td>
+      <td class="ex">Статус ok, страна определилась</td>
+      <td class="fx"><button class="fail" data-id="9.1" title="Отметить как упавший">✕</button></td>
+    </tr>
+    <tr class="t" data-p="🔴" data-ty="TG" data-id="9.2">
+      <td class="c"><input type="checkbox" id="cb-9.2"></td>
+      <td class="id">9.2</td>
+      <td class="p">🔴</td>
+      <td class="ty">TG</td>
+      <td class="nm">Мёртвый прокси<div class="how">Добавить несуществующий host:port</div></td>
+      <td class="ex">Статус dead, понятная причина</td>
+      <td class="fx"><button class="fail" data-id="9.2" title="Отметить как упавший">✕</button></td>
+    </tr>
+    <tr class="t" data-p="🟡" data-ty="TG" data-id="9.3">
+      <td class="c"><input type="checkbox" id="cb-9.3"></td>
+      <td class="id">9.3</td>
+      <td class="p">🟡</td>
+      <td class="ty">TG</td>
+      <td class="nm"><b>Гео реального IP vs сервера</b><div class="how">Карточка рабочего прокси</div></td>
+      <td class="ex">«Страна, которую видит Telegram» + выходной IP</td>
+      <td class="fx"><button class="fail" data-id="9.3" title="Отметить как упавший">✕</button></td>
+    </tr>
+    <tr class="t" data-p="🟡" data-ty="UI" data-id="9.4">
+      <td class="c"><input type="checkbox" id="cb-9.4"></td>
+      <td class="id">9.4</td>
+      <td class="p">🟡</td>
+      <td class="ty">UI</td>
+      <td class="nm">Выбор из базы при смене<div class="how">Аккаунт → сменить прокси</div></td>
+      <td class="ex">Переключатель «Из базы / Ввести новый», видно занят/свободен</td>
+      <td class="fx"><button class="fail" data-id="9.4" title="Отметить как упавший">✕</button></td>
+    </tr>
+    <tr class="t" data-p="🟡" data-ty="UI" data-id="9.5">
+      <td class="c"><input type="checkbox" id="cb-9.5"></td>
+      <td class="id">9.5</td>
+      <td class="p">🟡</td>
+      <td class="ty">UI</td>
+      <td class="nm">То же в мастере добавления<div class="how">Добавить аккаунт</div></td>
+      <td class="ex">⚠️ Ожидается от Ильи</td>
+      <td class="fx"><button class="fail" data-id="9.5" title="Отметить как упавший">✕</button></td>
+    </tr>
+    <tr class="t" data-p="🟡" data-ty="UI" data-id="9.6">
+      <td class="c"><input type="checkbox" id="cb-9.6"></td>
+      <td class="id">9.6</td>
+      <td class="p">🟡</td>
+      <td class="ty">UI</td>
+      <td class="nm">Правило 1 прокси = 1 аккаунт<div class="how">Назначить один прокси двум</div></td>
+      <td class="ex">Нарушение видно в списке</td>
+      <td class="fx"><button class="fail" data-id="9.6" title="Отметить как упавший">✕</button></td>
+    </tr></tbody></table></div></section>
+<section class="blk"><h2>Блок 10. Mailing / Autoposting (§8.4, §9.11) 🟡</h2><div class="tw"><table><thead><tr><th></th><th>#</th><th>!</th><th>тип</th><th>тест</th><th>ожидаем</th><th></th></tr></thead><tbody>
+    <tr class="t" data-p="🔴" data-ty="TG" data-id="10.1">
+      <td class="c"><input type="checkbox" id="cb-10.1"></td>
+      <td class="id">10.1</td>
+      <td class="p">🔴</td>
+      <td class="ty">TG</td>
+      <td class="nm">Автопостинг <b>сейчас</b><div class="how">Свой канал где аккаунт админ → Опубликовать</div></td>
+      <td class="ex">Пост появился в канале</td>
+      <td class="fx"><button class="fail" data-id="10.1" title="Отметить как упавший">✕</button></td>
+    </tr>
+    <tr class="t" data-p="🔴" data-ty="UI" data-id="10.2">
+      <td class="c"><input type="checkbox" id="cb-10.2"></td>
+      <td class="id">10.2</td>
+      <td class="p">🔴</td>
+      <td class="ty">UI</td>
+      <td class="nm">Автопостинг <b>не-админом канала</b><div class="how">Аккаунт без прав</div></td>
+      <td class="ex">Понятная ошибка <code>CHAT_ADMIN_REQUIRED</code>, а не молчание</td>
+      <td class="fx"><button class="fail" data-id="10.2" title="Отметить как упавший">✕</button></td>
+    </tr>
+    <tr class="t" data-p="🔴" data-ty="TG" data-id="10.3">
+      <td class="c"><input type="checkbox" id="cb-10.3"></td>
+      <td class="id">10.3</td>
+      <td class="p">🔴</td>
+      <td class="ty">TG</td>
+      <td class="nm"><b>Запланированный пост</b><div class="how">«По расписанию» → через 2 минуты</div></td>
+      <td class="ex">Пост опубликовался сам в нужное время</td>
+      <td class="fx"><button class="fail" data-id="10.3" title="Отметить как упавший">✕</button></td>
+    </tr>
+    <tr class="t" data-p="🟡" data-ty="UI" data-id="10.4">
+      <td class="c"><input type="checkbox" id="cb-10.4"></td>
+      <td class="id">10.4</td>
+      <td class="p">🟡</td>
+      <td class="ty">UI</td>
+      <td class="nm"><b>Редактирование</b> запланированного<div class="how">В списке → карандаш</div></td>
+      <td class="ex">Правятся аккаунты, каналы, текст, время; сохранилось</td>
+      <td class="fx"><button class="fail" data-id="10.4" title="Отметить как упавший">✕</button></td>
+    </tr>
+    <tr class="t" data-p="🟡" data-ty="UI" data-id="10.5">
+      <td class="c"><input type="checkbox" id="cb-10.5"></td>
+      <td class="id">10.5</td>
+      <td class="p">🟡</td>
+      <td class="ty">UI</td>
+      <td class="nm">Досрочная публикация и удаление<div class="how">Кнопки ▶ и 🗑</div></td>
+      <td class="ex">Публикует сразу / удаляет с подтверждением</td>
+      <td class="fx"><button class="fail" data-id="10.5" title="Отметить как упавший">✕</button></td>
+    </tr>
+    <tr class="t" data-p="🟡" data-ty="TG" data-id="10.6">
+      <td class="c"><input type="checkbox" id="cb-10.6"></td>
+      <td class="id">10.6</td>
+      <td class="p">🟡</td>
+      <td class="ty">TG</td>
+      <td class="nm">Медиа в посте<div class="how">Прикрепить картинку</div></td>
+      <td class="ex">Опубликовалась с подписью</td>
+      <td class="fx"><button class="fail" data-id="10.6" title="Отметить как упавший">✕</button></td>
+    </tr>
+    <tr class="t" data-p="🔴" data-ty="TG" data-id="10.7">
+      <td class="c"><input type="checkbox" id="cb-10.7"></td>
+      <td class="id">10.7</td>
+      <td class="p">🔴</td>
+      <td class="ty">TG</td>
+      <td class="nm">Мейлинг: реальная отправка<div class="how">Свой номер в списке</div></td>
+      <td class="ex">Сообщение пришло; в логах <code>sent</code></td>
+      <td class="fx"><button class="fail" data-id="10.7" title="Отметить как упавший">✕</button></td>
+    </tr>
+    <tr class="t" data-p="🔴" data-ty="UI" data-id="10.8">
+      <td class="c"><input type="checkbox" id="cb-10.8"></td>
+      <td class="id">10.8</td>
+      <td class="p">🔴</td>
+      <td class="ty">UI</td>
+      <td class="nm">Мейлинг: предохранители<div class="how">Аккаунт с trust&lt;70</div></td>
+      <td class="ex">Не допущен к рассылке, причина видна</td>
+      <td class="fx"><button class="fail" data-id="10.8" title="Отметить как упавший">✕</button></td>
+    </tr>
+    <tr class="t" data-p="🟡" data-ty="UI" data-id="10.9">
+      <td class="c"><input type="checkbox" id="cb-10.9"></td>
+      <td class="id">10.9</td>
+      <td class="p">🟡</td>
+      <td class="ty">UI</td>
+      <td class="nm">Номер не в Telegram<div class="how">Заведомо несуществующий номер</div></td>
+      <td class="ex">Пропущен со статусом, задача не падает</td>
+      <td class="fx"><button class="fail" data-id="10.9" title="Отметить как упавший">✕</button></td>
+    </tr></tbody></table></div></section>
+<section class="blk"><h2>Блок 11. Парсеры и каналы (§3.7, §3.8) 🟡</h2><div class="tw"><table><thead><tr><th></th><th>#</th><th>!</th><th>тип</th><th>тест</th><th>ожидаем</th><th></th></tr></thead><tbody>
+    <tr class="t" data-p="🟡" data-ty="TG" data-id="11.1">
+      <td class="c"><input type="checkbox" id="cb-11.1"></td>
+      <td class="id">11.1</td>
+      <td class="p">🟡</td>
+      <td class="ty">TG</td>
+      <td class="nm">Парсер каналов<div class="how">Поиск по 2 ключам</div></td>
+      <td class="ex">Результаты, дедуп, ★-рейтинг, «Открыть в Telegram»</td>
+      <td class="fx"><button class="fail" data-id="11.1" title="Отметить как упавший">✕</button></td>
+    </tr>
+    <tr class="t" data-p="🟡" data-ty="UI" data-id="11.2">
+      <td class="c"><input type="checkbox" id="cb-11.2"></td>
+      <td class="id">11.2</td>
+      <td class="p">🟡</td>
+      <td class="ty">UI</td>
+      <td class="nm"><b>AND-пересечение</b><div class="how">Тумблер «Пересечение» при 2 ключах</div></td>
+      <td class="ex">Результатов меньше — только совпавшие со всеми</td>
+      <td class="fx"><button class="fail" data-id="11.2" title="Отметить как упавший">✕</button></td>
+    </tr>
+    <tr class="t" data-p="🟡" data-ty="UI" data-id="11.3">
+      <td class="c"><input type="checkbox" id="cb-11.3"></td>
+      <td class="id">11.3</td>
+      <td class="p">🟡</td>
+      <td class="ty">UI</td>
+      <td class="nm">Шаблоны поиска<div class="how">Сохранить и применить шаблон</div></td>
+      <td class="ex">Параметры восстановились</td>
+      <td class="fx"><button class="fail" data-id="11.3" title="Отметить как упавший">✕</button></td>
+    </tr>
+    <tr class="t" data-p="🟡" data-ty="TG" data-id="11.4">
+      <td class="c"><input type="checkbox" id="cb-11.4"></td>
+      <td class="id">11.4</td>
+      <td class="p">🟡</td>
+      <td class="ty">TG</td>
+      <td class="nm">Парсер пользователей<div class="how">Участники группы</div></td>
+      <td class="ex">Список, фильтры, режим «кто писал»</td>
+      <td class="fx"><button class="fail" data-id="11.4" title="Отметить как упавший">✕</button></td>
+    </tr>
+    <tr class="t" data-p="🟡" data-ty="UI" data-id="11.5">
+      <td class="c"><input type="checkbox" id="cb-11.5"></td>
+      <td class="id">11.5</td>
+      <td class="p">🟡</td>
+      <td class="ty">UI</td>
+      <td class="nm">Пересечение аудиторий<div class="how">2 выгрузки → пересечь</div></td>
+      <td class="ex">Только общие пользователи</td>
+      <td class="fx"><button class="fail" data-id="11.5" title="Отметить как упавший">✕</button></td>
+    </tr>
+    <tr class="t" data-p="🟡" data-ty="UI" data-id="11.6">
+      <td class="c"><input type="checkbox" id="cb-11.6"></td>
+      <td class="id">11.6</td>
+      <td class="p">🟡</td>
+      <td class="ty">UI</td>
+      <td class="nm">Экспорт<div class="how">CSV и XLS</div></td>
+      <td class="ex">Файлы открываются, кодировка не побита</td>
+      <td class="fx"><button class="fail" data-id="11.6" title="Отметить как упавший">✕</button></td>
+    </tr>
+    <tr class="t" data-p="🟡" data-ty="UI" data-id="11.7">
+      <td class="c"><input type="checkbox" id="cb-11.7"></td>
+      <td class="id">11.7</td>
+      <td class="p">🟡</td>
+      <td class="ty">UI</td>
+      <td class="nm">Выбор каналов из папки<div class="how">FolderPicker в кампании</div></td>
+      <td class="ex">Загрузка/сохранение папок, валидация</td>
+      <td class="fx"><button class="fail" data-id="11.7" title="Отметить как упавший">✕</button></td>
+    </tr>
+    <tr class="t" data-p="⚪" data-ty="TG" data-id="11.8">
+      <td class="c"><input type="checkbox" id="cb-11.8"></td>
+      <td class="id">11.8</td>
+      <td class="p">⚪</td>
+      <td class="ty">TG</td>
+      <td class="nm">Закрытая группа<div class="how">Парсинг участников закрытой</div></td>
+      <td class="ex">Подсказка про режим «Активные», не краш</td>
+      <td class="fx"><button class="fail" data-id="11.8" title="Отметить как упавший">✕</button></td>
+    </tr></tbody></table></div></section>
+<section class="blk"><h2>Блок 12. 🔴 СЦЕНАРИИ СБОЕВ — главный пробел (§3.3, Фаза 1 «≥5 тест-профилей»)</h2><div class="tw"><table><thead><tr><th></th><th>#</th><th>!</th><th>тип</th><th>тест</th><th>ожидаем</th><th></th></tr></thead><tbody>
+    <tr class="t" data-p="🔴" data-ty="TG" data-id="12.1">
+      <td class="c"><input type="checkbox" id="cb-12.1"></td>
+      <td class="id">12.1</td>
+      <td class="p">🔴</td>
+      <td class="ty">TG</td>
+      <td class="nm"><b>FloodWait</b><div class="how">Агрессивный уровень + низкие задержки, много действий подряд</div></td>
+      <td class="ex">Статус <code>floodwait</code> с длительностью, пауза, потом авто-возврат</td>
+      <td class="fx"><button class="fail" data-id="12.1" title="Отметить как упавший">✕</button></td>
+    </tr>
+    <tr class="t" data-p="🔴" data-ty="TG" data-id="12.2">
+      <td class="c"><input type="checkbox" id="cb-12.2"></td>
+      <td class="id">12.2</td>
+      <td class="p">🔴</td>
+      <td class="ty">TG</td>
+      <td class="nm"><b>Карантин после N FloodWait</b><div class="how">Довести до 3 подряд (порог настраивается)</div></td>
+      <td class="ex">Аккаунт в <code>quarantine</code>, в логах причина, из модулей исключён</td>
+      <td class="fx"><button class="fail" data-id="12.2" title="Отметить как упавший">✕</button></td>
+    </tr>
+    <tr class="t" data-p="🔴" data-ty="TG" data-id="12.3">
+      <td class="c"><input type="checkbox" id="cb-12.3"></td>
+      <td class="id">12.3</td>
+      <td class="p">🔴</td>
+      <td class="ty">TG</td>
+      <td class="nm"><b>Спамблок</b><div class="how">Аккаунт с ограничением → проверка через @SpamBot</div></td>
+      <td class="ex">Статус <code>spamblock</code>, модули его не берут</td>
+      <td class="fx"><button class="fail" data-id="12.3" title="Отметить как упавший">✕</button></td>
+    </tr>
+    <tr class="t" data-p="🔴" data-ty="TG" data-id="12.4">
+      <td class="c"><input type="checkbox" id="cb-12.4"></td>
+      <td class="id">12.4</td>
+      <td class="p">🔴</td>
+      <td class="ty">TG</td>
+      <td class="nm"><b>Invalid / Reauth</b><div class="how">Отозвать сессию в Telegram → обновить</div></td>
+      <td class="ex"><code>reauth</code>/<code>invalid</code>, понятная подсказка что делать</td>
+      <td class="fx"><button class="fail" data-id="12.4" title="Отметить как упавший">✕</button></td>
+    </tr>
+    <tr class="t" data-p="🔴" data-ty="UI" data-id="12.5">
+      <td class="c"><input type="checkbox" id="cb-12.5"></td>
+      <td class="id">12.5</td>
+      <td class="p">🔴</td>
+      <td class="ty">UI</td>
+      <td class="nm">Непрогретый не назначается<div class="how">Аккаунт в прогреве → выбрать в модуле</div></td>
+      <td class="ex">Недоступен, метка «в прогреве», тост с причиной</td>
+      <td class="fx"><button class="fail" data-id="12.5" title="Отметить как упавший">✕</button></td>
+    </tr>
+    <tr class="t" data-p="🔴" data-ty="UI" data-id="12.6">
+      <td class="c"><input type="checkbox" id="cb-12.6"></td>
+      <td class="id">12.6</td>
+      <td class="p">🔴</td>
+      <td class="ty">UI</td>
+      <td class="nm">trust&lt;40 не пускается в бой<div class="how">Аккаунт с низким баллом → боевой модуль</div></td>
+      <td class="ex">Отказ «отправьте на прогрев»; в прогрев — пускает</td>
+      <td class="fx"><button class="fail" data-id="12.6" title="Отметить как упавший">✕</button></td>
+    </tr>
+    <tr class="t" data-p="🔴" data-ty="TG" data-id="12.7">
+      <td class="c"><input type="checkbox" id="cb-12.7"></td>
+      <td class="id">12.7</td>
+      <td class="p">🔴</td>
+      <td class="ty">TG</td>
+      <td class="nm"><b>Суточный лимит</b><div class="how">Довести аккаунт до потолка действий</div></td>
+      <td class="ex">Пропускается с логом «лимит достигнут», задача не падает</td>
+      <td class="fx"><button class="fail" data-id="12.7" title="Отметить как упавший">✕</button></td>
+    </tr>
+    <tr class="t" data-p="🔴" data-ty="UI" data-id="12.8">
+      <td class="c"><input type="checkbox" id="cb-12.8"></td>
+      <td class="id">12.8</td>
+      <td class="p">🔴</td>
+      <td class="ty">UI</td>
+      <td class="nm">Лимит виден<div class="how">Карточка → Здоровье</div></td>
+      <td class="ex">used/cap по каждому действию, чип в списке аккаунтов</td>
+      <td class="fx"><button class="fail" data-id="12.8" title="Отметить как упавший">✕</button></td>
+    </tr>
+    <tr class="t" data-p="🔴" data-ty="TG" data-id="12.9">
+      <td class="c"><input type="checkbox" id="cb-12.9"></td>
+      <td class="id">12.9</td>
+      <td class="p">🔴</td>
+      <td class="ty">TG</td>
+      <td class="nm"><b>Горячий лид защищён</b><div class="how">Аккаунту с горячим лидом дать НЕ-диалоговый модуль</div></td>
+      <td class="ex">Отказ; диалоговый — разрешён</td>
+      <td class="fx"><button class="fail" data-id="12.9" title="Отметить как упавший">✕</button></td>
+    </tr>
+    <tr class="t" data-p="🔴" data-ty="TG" data-id="12.10">
+      <td class="c"><input type="checkbox" id="cb-12.10"></td>
+      <td class="id">12.10</td>
+      <td class="p">🔴</td>
+      <td class="ty">TG</td>
+      <td class="nm">Один аккаунт = одна задача<div class="how">Занятый аккаунт взять во второй модуль</div></td>
+      <td class="ex">Отказ «в работе»</td>
+      <td class="fx"><button class="fail" data-id="12.10" title="Отметить как упавший">✕</button></td>
+    </tr>
+    <tr class="t" data-p="🔴" data-ty="UI" data-id="12.11">
+      <td class="c"><input type="checkbox" id="cb-12.11"></td>
+      <td class="id">12.11</td>
+      <td class="p">🔴</td>
+      <td class="ty">UI</td>
+      <td class="nm">Перезапуск бэкенда<div class="how">Рестарт сервера при работающей задаче</div></td>
+      <td class="ex">Задача помечена <code>stopped</code>, локи сняты, аккаунты свободны</td>
+      <td class="fx"><button class="fail" data-id="12.11" title="Отметить как упавший">✕</button></td>
+    </tr>
+    <tr class="t" data-p="🟡" data-ty="TG" data-id="12.12">
+      <td class="c"><input type="checkbox" id="cb-12.12"></td>
+      <td class="id">12.12</td>
+      <td class="p">🟡</td>
+      <td class="ty">TG</td>
+      <td class="nm">Прокси отвалился<div class="how">Выключить прокси во время работы</div></td>
+      <td class="ex">Понятная ошибка, аккаунт не «умирает» навсегда</td>
+      <td class="fx"><button class="fail" data-id="12.12" title="Отметить как упавший">✕</button></td>
+    </tr>
+    <tr class="t" data-p="🟡" data-ty="UI" data-id="12.13">
+      <td class="c"><input type="checkbox" id="cb-12.13"></td>
+      <td class="id">12.13</td>
+      <td class="p">🟡</td>
+      <td class="ty">UI</td>
+      <td class="nm">Капча при вступлении<div class="how">Группа с ботом-капчей</div></td>
+      <td class="ex">Простая решается сама, сложная → лог «нужен оператор»</td>
+      <td class="fx"><button class="fail" data-id="12.13" title="Отметить как упавший">✕</button></td>
+    </tr></tbody></table></div></section>
+<section class="blk"><h2>Блок 13. Логи и аудит (§3.1) 🟡</h2><div class="tw"><table><thead><tr><th></th><th>#</th><th>!</th><th>тип</th><th>тест</th><th>ожидаем</th><th></th></tr></thead><tbody>
+    <tr class="t" data-p="🟡" data-ty="UI" data-id="13.1">
+      <td class="c"><input type="checkbox" id="cb-13.1"></td>
+      <td class="id">13.1</td>
+      <td class="p">🟡</td>
+      <td class="ty">UI</td>
+      <td class="nm">Единый экран «Логи»<div class="how"><code>/panel/logs</code></div></td>
+      <td class="ex">Записи с инициатором и причиной, фильтры работают</td>
+      <td class="fx"><button class="fail" data-id="13.1" title="Отметить как упавший">✕</button></td>
+    </tr>
+    <tr class="t" data-p="🟡" data-ty="UI" data-id="13.2">
+      <td class="c"><input type="checkbox" id="cb-13.2"></td>
+      <td class="id">13.2</td>
+      <td class="p">🟡</td>
+      <td class="ty">UI</td>
+      <td class="nm">Детальная запись<div class="how">Клик по записи</div></td>
+      <td class="ex">Модалка с полным составом</td>
+      <td class="fx"><button class="fail" data-id="13.2" title="Отметить как упавший">✕</button></td>
+    </tr>
+    <tr class="t" data-p="🟡" data-ty="UI" data-id="13.3">
+      <td class="c"><input type="checkbox" id="cb-13.3"></td>
+      <td class="id">13.3</td>
+      <td class="p">🟡</td>
+      <td class="ty">UI</td>
+      <td class="nm">Режим «Потоки»<div class="how">Выбрать 2–3 действия</div></td>
+      <td class="ex">Параллельные колонки для сравнения</td>
+      <td class="fx"><button class="fail" data-id="13.3" title="Отметить как упавший">✕</button></td>
+    </tr>
+    <tr class="t" data-p="🔴" data-ty="UI" data-id="13.4">
+      <td class="c"><input type="checkbox" id="cb-13.4"></td>
+      <td class="id">13.4</td>
+      <td class="p">🔴</td>
+      <td class="ty">UI</td>
+      <td class="nm">Аудит опасных действий<div class="how">Перенос аккаунта, стоп, правка задачи</div></td>
+      <td class="ex">Каждое — в логе с инициатором</td>
+      <td class="fx"><button class="fail" data-id="13.4" title="Отметить как упавший">✕</button></td>
+    </tr>
+    <tr class="t" data-p="🟡" data-ty="UI" data-id="13.5">
+      <td class="c"><input type="checkbox" id="cb-13.5"></td>
+      <td class="id">13.5</td>
+      <td class="p">🟡</td>
+      <td class="ty">UI</td>
+      <td class="nm">Нет слова «История»<div class="how">Пройти по модулям</div></td>
+      <td class="ex">Везде «Логи»</td>
+      <td class="fx"><button class="fail" data-id="13.5" title="Отметить как упавший">✕</button></td>
+    </tr></tbody></table></div></section>
+<section class="blk"><h2>Блок 14. Инфраструктура (§9.14) ⚪</h2><div class="tw"><table><thead><tr><th></th><th>#</th><th>!</th><th>тип</th><th>тест</th><th>ожидаем</th><th></th></tr></thead><tbody>
+    <tr class="t" data-p="🔴" data-ty="" data-id="14.1">
+      <td class="c"><input type="checkbox" id="cb-14.1"></td>
+      <td class="id">14.1</td>
+      <td class="p">🔴</td>
+      <td class="ty"></td>
+      <td class="nm">Авто-деплой по пушу<div class="how">Пуш в ветку</div></td>
+      <td class="ex">GitHub Actions собрал и выкатил, сервис перезапустился</td>
+      <td class="fx"><button class="fail" data-id="14.1" title="Отметить как упавший">✕</button></td>
+    </tr>
+    <tr class="t" data-p="🔴" data-ty="" data-id="14.2">
+      <td class="c"><input type="checkbox" id="cb-14.2"></td>
+      <td class="id">14.2</td>
+      <td class="p">🔴</td>
+      <td class="ty"></td>
+      <td class="nm">Стенд после деплоя<div class="how">Открыть сайт</div></td>
+      <td class="ex">Работает, данные на месте</td>
+      <td class="fx"><button class="fail" data-id="14.2" title="Отметить как упавший">✕</button></td>
+    </tr>
+    <tr class="t" data-p="🟡" data-ty="" data-id="14.3">
+      <td class="c"><input type="checkbox" id="cb-14.3"></td>
+      <td class="id">14.3</td>
+      <td class="p">🟡</td>
+      <td class="ty"></td>
+      <td class="nm">Секреты не в репо<div class="how">Проверить <code>.env</code></div></td>
+      <td class="ex">Ключей нет в git</td>
+      <td class="fx"><button class="fail" data-id="14.3" title="Отметить как упавший">✕</button></td>
+    </tr>
+    <tr class="t" data-p="🔴" data-ty="" data-id="14.4">
+      <td class="c"><input type="checkbox" id="cb-14.4"></td>
+      <td class="id">14.4</td>
+      <td class="p">🔴</td>
+      <td class="ty"></td>
+      <td class="nm">HTTPS<div class="how">Открыть стенд</div></td>
+      <td class="ex">⚠️ Сейчас <code>http://</code> без TLS — пароли идут открытым текстом. Нужен сертификат</td>
+      <td class="fx"><button class="fail" data-id="14.4" title="Отметить как упавший">✕</button></td>
+    </tr></tbody></table></div></section>
+</div><script>
+var KEY="aiinc-testplan-v1";
+var st=JSON.parse(localStorage.getItem(KEY)||"{}");
+var rows=[].slice.call(document.querySelectorAll("tr.t"));
+function paint(){
+  var done=0,failed=0,crit=0,critDone=0;
+  rows.forEach(function(r){
+    var id=r.dataset.id,s=st[id]||"";
+    r.querySelector("input").checked=(s==="ok");
+    r.classList.toggle("done",s==="ok");
+    r.classList.toggle("failed",s==="fail");
+    if(s==="ok")done++;
+    if(s==="fail")failed++;
+    if(r.dataset.p==="\u{1F534}"){crit++;if(s==="ok")critDone++;}
+  });
+  document.getElementById("pf").style.width=(done/rows.length*100)+"%";
+  document.getElementById("s1").textContent=done+" / "+rows.length;
+  document.getElementById("s2").textContent=failed;
+  document.getElementById("s3").textContent=critDone+" / "+crit;
+  localStorage.setItem(KEY,JSON.stringify(st));
+}
+rows.forEach(function(r){
+  var id=r.dataset.id;
+  r.querySelector("input").addEventListener("change",function(e){st[id]=e.target.checked?"ok":"";paint()});
+  r.querySelector(".fail").addEventListener("click",function(){st[id]=(st[id]==="fail")?"":"fail";paint()});
+});
+var fp="",ft="";
+function filt(){rows.forEach(function(r){
+  var okp=!fp||r.dataset.p===fp, okt=!ft||r.dataset.ty===ft;
+  r.classList.toggle("hide",!(okp&&okt));
+})}
+[].forEach.call(document.querySelectorAll("[data-fp]"),function(b){b.addEventListener("click",function(){
+  fp=(fp===b.dataset.fp)?"":b.dataset.fp;
+  [].forEach.call(document.querySelectorAll("[data-fp]"),function(x){x.classList.toggle("on",x.dataset.fp===fp)});
+  filt();
+})});
+[].forEach.call(document.querySelectorAll("[data-ft]"),function(b){b.addEventListener("click",function(){
+  ft=(ft===b.dataset.ft)?"":b.dataset.ft;
+  [].forEach.call(document.querySelectorAll("[data-ft]"),function(x){x.classList.toggle("on",x.dataset.ft===ft)});
+  filt();
+})});
+document.getElementById("rst").addEventListener("click",function(){if(confirm("Сбросить все отметки?")){st={};paint()}});
+paint();
+</script>
