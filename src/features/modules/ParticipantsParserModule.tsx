@@ -12,7 +12,7 @@ import { useModuleTask } from './shared/useModuleTask'
 import { SectionCard, NumberField, ProtectionBlock, LaunchPanel, TaskStartedModal } from './shared'
 import { cn } from '@/shared/lib/utils'
 import { downloadXls } from '@/shared/lib/exportXls'
-import { SaveToFolderModal } from './shared/FolderPicker'
+import { FolderPicker, SaveToFolderModal } from './shared/FolderPicker'
 import { promptDialog } from '@/shared/lib/dialog'
 import { fetchModuleTasks, fetchModuleTask, type ModuleTaskSettings } from '@/api/modulesApi'
 import { fetchTgstatOptions, fetchTgstatSession, fetchTgstatTargets, type TgstatOptions, type TgstatSession } from '@/api/tgstatApi'
@@ -221,6 +221,17 @@ function Inner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: string }) {
               <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
                 {P.formatHint && <span className="text-[11px] text-muted">{P.formatHint}</span>}
                 <div className="ml-auto flex flex-wrap gap-2">
+                  {/* §3.9: источники можно взять готовой папкой, а не вбивать списком. */}
+                  <FolderPicker
+                    targets={targetList}
+                    onLoad={(list) => setTargets((t) => {
+                      // Дописываем к уже введённому, без дублей: папку часто грузят поверх ручного списка.
+                      const have = new Set(t.split(/[\n,]+/).map((x) => x.trim()).filter(Boolean))
+                      const add = list.filter((x) => !have.has(x))
+                      if (!add.length) return t
+                      return (t.trim() ? t.trimEnd() + '\n' : '') + add.join('\n')
+                    })}
+                  />
                   <TgstatSourceButton onFill={(u) => setTargets((t) => (t.trim() ? t.trimEnd() + '\n' : '') + u.map((x) => `@${x}`).join('\n'))} />
                   {P.historyBtn && <button type="button" onClick={() => void loadFromHistory()} className="btn-soft h-8 text-xs"><History size={13} /> {P.historyBtn}</button>}
                 </div>
