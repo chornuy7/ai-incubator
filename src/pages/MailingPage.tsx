@@ -32,6 +32,7 @@ export function MailingPage() {
   // рассылка приводит людей, чатинг ловит ответы и двигает их по воронке той же цели.
   const [withChat, setWithChat] = useState(true)
   const [chatGoal, setChatGoal] = useState('')
+  const [chatThreads, setChatThreads] = useState(3)
 
   // §6: порог trust для рассылки — настройка, а не константа: у спам-аккаунтов
   // trust низкий по определению, и жёсткий порог блокировал бы весь пул.
@@ -141,6 +142,7 @@ export function MailingPage() {
             dialogGoal: chatGoal.trim() || 'Дружелюбно ответить, выяснить интерес и довести до целевого действия.',
             replyScope: 'unread',
             replyLimitMode: 'untilTarget',
+            threads: chatThreads,
             delays: { dm: [delayMin, delayMax] },
           })
           pushToast({ type: 'success', title: 'Рассылка + чатинг запущены', desc: `${numbers.length} целей · одна цель на оба модуля` })
@@ -221,12 +223,26 @@ export function MailingPage() {
                       </span>
                     </label>
                     {withChat && (
-                      <input
-                        className="input mt-2 h-8 text-xs"
-                        value={chatGoal}
-                        onChange={(e) => setChatGoal(e.target.value)}
-                        placeholder="Как вести диалог (необязательно) — тон, что отвечать на возражения"
-                      />
+                      <>
+                        <input
+                          className="input mt-2 h-8 text-xs"
+                          value={chatGoal}
+                          onChange={(e) => setChatGoal(e.target.value)}
+                          placeholder="Как вести диалог (необязательно) — тон, что отвечать на возражения"
+                        />
+                        <div className="mt-2 flex items-center gap-2">
+                          <span className="text-[11px] text-white/50">Потоков</span>
+                          <input
+                            type="number" min={1} max={20}
+                            className="input h-8 w-16 text-xs"
+                            value={chatThreads}
+                            onChange={(e) => setChatThreads(Math.max(1, Math.min(20, Number(e.target.value) || 1)))}
+                          />
+                          <span className="text-[11px] text-white/35">
+                            аккаунты делятся между потоками и отвечают одновременно; 1 — по очереди
+                          </span>
+                        </div>
+                      </>
                     )}
                   </div>
                 )}

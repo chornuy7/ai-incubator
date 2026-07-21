@@ -790,8 +790,6 @@ export async function runNeuroDialogs(task, store) {
   )
   // Цель нужна классификатору статусов: по ней ИИ понимает, что считать «выполнено».
   const goalObj = s.goalId ? await (async () => { try { const { getGoal } = await import('../goals.js'); return await getGoal(s.goalId) } catch { return null } })() : null
-  let idx = 0
-  let skips = 0
   // Модуль-ответчик работает долго (ждёт входящие ЛС), поэтому при суточном лимите
   // не завершаемся, а тихо простаиваем — лог о достижении лимита пишем один раз на аккаунт.
   const dmCapLogged = new Set()
@@ -800,14 +798,18 @@ export async function runNeuroDialogs(task, store) {
   const answeredUpTo = new Map()
 
   try {
+    /** Один ПОТОК: крутит свой набор аккаунтов, пока задачу не остановят. */
+    const runThread = async (myAccounts) => {
+    let idx = 0
+    let skips = 0
     while (!task.stopRequested && !task.pauseRequested && !totalLimitReached(s, task)) {
       // Полный круг из пропусков (лимиты выбраны, аккаунты в карантине) — не крутим цикл вхолостую.
-      if (skips >= accountIds.length) {
+      if (skips >= myAccounts.length) {
         skips = 0
         await sleep(5000)
         continue
       }
-      const accountId = accountIds[idx++ % accountIds.length]
+      const accountId = myAccounts[idx++ % myAccounts.length]
       const meta = await getAccountMeta(accountId)
       if (!isAccountRunnable(meta.status || 'active')) {
         skips += 1
@@ -978,6 +980,24 @@ export async function runNeuroDialogs(task, store) {
       }
       task = (await store.loadTask(task.id)) || task
       await sleep(pickDelay(10, 25, mul) * 1000)
+    }
+    }
+
+    // §3.9: потоки. Аккаунты делятся между ними и работают независимо — но всё это
+    // ОДНА задача: свой прогресс, свои логи, один «Стоп». Потоков не больше, чем
+    // аккаунтов: пустой поток крутил бы цикл вхолостую.
+    const threads = Math.max(1, Math.min(Number(s.threads) || 1, accountIds.length))
+    if (threads > 1) {
+      const groups = Array.from({ length: threads }, () => [])
+      accountIds.forEach((id, i) => groups[i % threads].push(id))
+      await store.appendLog(task, 'info', `Асинхронный режим: ${threads} поток(ов) на ${accountIds.length} аккаунт(ов)`)
+      await Promise.all(groups.filter((g) => g.length).map((g, i) => (async () => {
+        // Разбег стартов: одновременный залп читается как ферма.
+        if (i > 0) await sleep(pickDelay(5, 20, mul) * 1000 * (0.5 + Math.random()))
+        return runThread(g)
+      })()))
+    } else {
+      await runThread(accountIds)
     }
     task.status = statusAfterRun(task)
     await store.appendLog(task, 'info', task.status === 'stopped' ? 'Остановлено' : 'Завершено')
