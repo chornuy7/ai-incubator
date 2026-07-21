@@ -3,6 +3,8 @@ import { apiGet, apiPost, apiPut, apiDelete } from './client'
 export interface CampaignModuleInput {
   moduleKey: string
   targets?: string[]
+  /** Переопределение настроек конкретного модуля (перекрывает общие `settings` кампании). */
+  settings?: Record<string, unknown>
 }
 
 export interface CampaignLaunchInput {
@@ -60,6 +62,21 @@ export async function deleteSchedule(id: string): Promise<void> {
 export type CampaignStatus = 'draft' | 'active' | 'paused' | 'done'
 export const CAMPAIGN_STATUSES: CampaignStatus[] = ['draft', 'active', 'paused', 'done']
 
+/**
+ * §9: догоняющий чатинг кампании. Основной модуль приводит людей, чатинг ведёт
+ * с ответившими переписку к цели. Выключен по умолчанию — старые кампании не меняются.
+ */
+export interface CampaignChat {
+  enabled: boolean
+  settings: {
+    dialogGoal?: string
+    replyScope?: 'unread' | 'all'
+    replyLimitMode?: 'untilTarget' | 'count'
+    maxRepliesPerLead?: number
+    maxActiveDialogs?: number
+  }
+}
+
 export interface Campaign {
   id: string
   name: string
@@ -69,6 +86,7 @@ export interface Campaign {
   accountIds: string[]
   pinned: boolean
   status: CampaignStatus
+  chat?: CampaignChat
   createdAt: number
   updatedAt: number
 }
@@ -81,6 +99,7 @@ export interface CampaignInput {
   accountIds?: string[]
   pinned?: boolean
   status?: CampaignStatus
+  chat?: CampaignChat
 }
 
 /** Карта «аккаунт → кампания, которая его закрепила». */

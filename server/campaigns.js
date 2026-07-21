@@ -20,9 +20,26 @@ const CAMPAIGNS_FILE = process.env.CAMPAIGNS_FILE || dataPath('campaigns.json')
 export const CAMPAIGN_STATUSES = ['draft', 'active', 'paused', 'done']
 
 /** Поля, которые можно задавать/менять. */
-const FIELDS = ['name', 'goalId', 'moduleKey', 'settings', 'accountIds', 'pinned', 'status']
+const FIELDS = ['name', 'goalId', 'moduleKey', 'settings', 'accountIds', 'pinned', 'status', 'chat']
 
 const normIds = (v) => (Array.isArray(v) ? [...new Set(v.map((x) => String(x || '').trim()).filter(Boolean))] : [])
+
+/** Модуль-«догоняющий»: ведёт переписку с теми, кто ответил на основной модуль. */
+export const CHAT_MODULE = 'neuro-dialogs'
+
+/**
+ * Догоняющий чатинг кампании (§9): основной модуль приводит людей (рассылка/комментинг),
+ * а чатинг ведёт с ответившими переписку к цели. Выключен по умолчанию — чтобы не менять
+ * поведение существующих кампаний.
+ * @param {*} v
+ */
+function normChat(v) {
+  const c = v && typeof v === 'object' ? v : {}
+  return {
+    enabled: c.enabled === true,
+    settings: c.settings && typeof c.settings === 'object' ? c.settings : {},
+  }
+}
 
 /** Нормализовать вход в чистую кампанию. @param {object} input */
 export function normalizeCampaign(input = {}) {
@@ -30,11 +47,12 @@ export function normalizeCampaign(input = {}) {
   return {
     name: String(input.name ?? '').trim(),
     goalId: input.goalId ? String(input.goalId) : null,
-    moduleKey: String(input.moduleKey ?? '').trim(), // ровно один модуль (§0)
+    moduleKey: String(input.moduleKey ?? '').trim(), // основной модуль (§0)
     settings: input.settings && typeof input.settings === 'object' ? input.settings : {}, // пресет модуля
     accountIds: normIds(input.accountIds),
     pinned: input.pinned !== false, // по умолчанию аккаунты закрепляются (выходят из общего пула)
     status,
+    chat: normChat(input.chat), // §9: опциональный догоняющий чатинг
   }
 }
 
@@ -80,6 +98,7 @@ export async function updateCampaign(id, patch = {}) {
     else if (k === 'pinned') all[i].pinned = patch[k] !== false
     else if (k === 'status') { if (CAMPAIGN_STATUSES.includes(patch[k])) all[i].status = patch[k] }
     else if (k === 'goalId') all[i].goalId = patch[k] ? String(patch[k]) : null
+    else if (k === 'chat') all[i].chat = normChat(patch[k])
     else all[i][k] = String(patch[k]).trim()
   }
   if (!all[i].name) throw new Error('Название кампании не может быть пустым')

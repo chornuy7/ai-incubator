@@ -54,6 +54,13 @@ export function CampaignPage() {
   const [cPinned, setCPinned] = useState(true)
   const [cStatus, setCStatus] = useState<CampaignStatus>('draft')
   const [cSaving, setCSaving] = useState(false)
+  // §9: догоняющий чатинг — второй модуль кампании. Основной выбор не трогаем.
+  const [cChat, setCChat] = useState(false)
+  const [cChatGoal, setCChatGoal] = useState('')
+  const [cChatScope, setCChatScope] = useState<'unread' | 'all'>('unread')
+  const [cChatLimitMode, setCChatLimitMode] = useState<'untilTarget' | 'count'>('untilTarget')
+  const [cChatMaxReplies, setCChatMaxReplies] = useState(5)
+  const [cChatMaxDialogs, setCChatMaxDialogs] = useState(0)
   const [pickMode, setPickMode] = useState(0) // 0 — числом из пула, 1 — вручную
   const [takeN, setTakeN] = useState(5)
   // §5: третий режим выбора аккаунтов — папкой (группой). §12: группы — отдельная сущность.
@@ -152,12 +159,21 @@ export function CampaignPage() {
     setEditingCampaign(null)
     setCName(''); setCGoalId(''); setCModule('neuro-commenting'); setCAccounts([])
     setCPinned(true); setCStatus('draft'); setPickMode(0); setTakeN(5)
+    setCChat(false); setCChatGoal(''); setCChatScope('unread')
+    setCChatLimitMode('untilTarget'); setCChatMaxReplies(5); setCChatMaxDialogs(0)
     setFormOpen(true)
   }
   const openEditCampaign = (c: Campaign) => {
     setEditingCampaign(c)
     setCName(c.name); setCGoalId(c.goalId || ''); setCModule(c.moduleKey); setCAccounts(c.accountIds || [])
     setCPinned(c.pinned); setCStatus(c.status); setPickMode(1); setTakeN(c.accountIds?.length || 5)
+    const ch = c.chat?.settings || {}
+    setCChat(c.chat?.enabled === true)
+    setCChatGoal(ch.dialogGoal || '')
+    setCChatScope(ch.replyScope === 'all' ? 'all' : 'unread')
+    setCChatLimitMode(ch.replyLimitMode === 'count' ? 'count' : 'untilTarget')
+    setCChatMaxReplies(ch.maxRepliesPerLead || 5)
+    setCChatMaxDialogs(ch.maxActiveDialogs || 0)
     setFormOpen(true)
   }
 
@@ -172,7 +188,19 @@ export function CampaignPage() {
         : cAccounts
     setCSaving(true)
     try {
-      const payload = { name: cName.trim(), goalId: cGoalId || null, moduleKey: cModule, accountIds: ids, pinned: cPinned, status: cStatus }
+      const payload = {
+        name: cName.trim(), goalId: cGoalId || null, moduleKey: cModule, accountIds: ids, pinned: cPinned, status: cStatus,
+        chat: {
+          enabled: cChat,
+          settings: {
+            dialogGoal: cChatGoal.trim(),
+            replyScope: cChatScope,
+            replyLimitMode: cChatLimitMode,
+            maxRepliesPerLead: cChatLimitMode === 'count' ? cChatMaxReplies : 0,
+            maxActiveDialogs: cChatMaxDialogs,
+          },
+        },
+      }
       if (editingCampaign) {
         await updateCampaign(editingCampaign.id, payload)
         pushToast({ type: 'success', title: 'Кампания обновлена', desc: cName.trim() })
@@ -200,6 +228,37 @@ export function CampaignPage() {
     }
   }
 
+  /**
+   * §9: запустить сохранённую кампанию — основной модуль + (если включён) чатинг.
+   * Аккаунты кампании делятся между модулями на сервере (`splitAccounts`), цели берём из цели кампании.
+   */
+  const launchSaved = async (c: Campaign) => {
+    const goal = goals.find((g) => g.id === c.goalId)
+    const modules = [
+      { moduleKey: c.moduleKey, settings: c.settings },
+      ...(c.chat?.enabled ? [{ moduleKey: 'neuro-dialogs', settings: c.chat.settings }] : []),
+    ]
+    const ids = c.accountIds.filter((id) => knownIds.has(id))
+    if (!ids.length) return pushToast({ type: 'error', title: 'В кампании нет аккаунтов' })
+    if (!(await confirmDialog({
+      title: `Запустить «${c.name}»?`,
+      message: `${modules.map((m) => MODULES[m.moduleKey]?.title || m.moduleKey).join(' + ')} · ${ids.length} акк.`,
+      confirmLabel: 'Запустить',
+    }))) return
+    try {
+      const r = await launchCampaign({ goalId: c.goalId, accountIds: ids, targets: goal?.channels || [], modules })
+      setResult(r)
+      pushToast({
+        type: r.tasks.length ? 'success' : 'error',
+        title: r.tasks.length ? 'Кампания запущена' : 'Ничего не запущено',
+        desc: `Задач: ${r.tasks.length}${r.skipped.length ? `, пропущено: ${r.skipped.length}` : ''}`,
+      })
+      if (r.tasks.length && c.status === 'draft') { await updateCampaign(c.id, { status: 'active' }); loadCampaigns() }
+    } catch (e) {
+      pushToast({ type: 'error', title: 'Не удалось запустить', desc: e instanceof Error ? e.message : '' })
+    }
+  }
+
   const removeCampaign = async (c: Campaign) => {
     if (!(await confirmDialog({ title: 'Удалить кампанию?', message: `«${c.name}» будет удалена, её аккаунты освободятся.`, confirmLabel: 'Удалить', tone: 'danger' }))) return
     try { await deleteCampaign(c.id); pushToast({ type: 'success', title: 'Кампания удалена' }); loadCampaigns() }
@@ -215,7 +274,7 @@ export function CampaignPage() {
         <button onClick={() => setFormOpen(false)} className="btn-ghost mb-3 h-9"><ArrowLeft size={15} /> Назад к кампаниям</button>
         <PageHeader
           title={editingCampaign ? 'Изменить кампанию' : 'Новая кампания'}
-          subtitle="Кампания принадлежит цели и настраивает ОДИН модуль. Закреплённые аккаунты выходят из общего пула."
+          subtitle="Кампания принадлежит цели: основной модуль + при желании чатинг. Закреплённые аккаунты выходят из общего пула."
           icon={<Rocket size={22} />}
         />
         <Card className="space-y-4 p-4">
@@ -239,6 +298,68 @@ export function CampaignPage() {
               <div className="mb-1 text-xs text-white/50">Статус</div>
               <Select value={cStatus} onChange={(v) => setCStatus(v as CampaignStatus)} options={CAMPAIGN_STATUSES.map((s) => ({ value: s, label: { draft: 'Черновик', active: 'Активна', paused: 'Пауза', done: 'Завершена' }[s] }))} />
             </div>
+          </div>
+
+          {/* §9: кампания = основной модуль + опциональный чатинг. Основной модуль приводит
+              людей, чатинг ведёт ответивших к цели и сам прощается по выполнению. */}
+          <div className="rounded-xl border border-line bg-elevated/40 p-3">
+            <label className="flex cursor-pointer items-start gap-2.5">
+              <input type="checkbox" checked={cChat} onChange={(e) => setCChat(e.target.checked)} className="mt-0.5 h-4 w-4 accent-spark" />
+              <span>
+                <span className="text-sm font-semibold">Добавить чатинг</span>
+                <span className="mt-0.5 block text-xs text-white/45">
+                  Те, кто ответил на «{MODULES[cModule]?.title || cModule}», попадают в воронку — ИИ доводит их до цели
+                  и прощается, когда целевое действие выполнено.
+                </span>
+              </span>
+            </label>
+
+            {cChat && (
+              <div className="mt-3 space-y-3 border-t border-line pt-3">
+                <div>
+                  <div className="mb-1 text-xs text-white/50">Инструкция ИИ — как вести диалог и к чему вести</div>
+                  <textarea
+                    className="input min-h-[76px] resize-y"
+                    value={cChatGoal}
+                    onChange={(e) => setCChatGoal(e.target.value)}
+                    placeholder={cGoalId ? `Цель «${goalNameOf(cGoalId)}» уже передаётся ИИ. Здесь — тон и детали: как знакомиться, что отвечать на возражения.` : 'Напр.: дружелюбно познакомиться, выяснить интерес и пригласить в канал.'}
+                  />
+                  <div className="mt-1 text-xs text-white/35">
+                    {cGoalId ? `Цель кампании: ${goalNameOf(cGoalId)} — целевое действие ИИ берёт из неё.` : 'Без цели кампании лиды не создаются — выберите цель выше.'}
+                  </div>
+                </div>
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <div>
+                    <div className="mb-1 text-xs text-white/50">Кому отвечаем</div>
+                    <Select value={cChatScope} onChange={(v) => setCChatScope(v as 'unread' | 'all')} options={[
+                      { value: 'unread', label: 'Только новые сообщения' },
+                      { value: 'all', label: 'Все диалоги, где ждут ответа' },
+                    ]} />
+                  </div>
+                  <div>
+                    <div className="mb-1 text-xs text-white/50">Сколько сообщений пишем одному лиду</div>
+                    <Select value={cChatLimitMode} onChange={(v) => setCChatLimitMode(v as 'untilTarget' | 'count')} options={[
+                      { value: 'untilTarget', label: 'Пока не выполнит целевое действие' },
+                      { value: 'count', label: 'Фиксированное число' },
+                    ]} />
+                  </div>
+                </div>
+                <div className="grid gap-3 sm:grid-cols-2">
+                  {cChatLimitMode === 'count' && (
+                    <div>
+                      <div className="mb-1 text-xs text-white/50">Максимум ответов на лида</div>
+                      <input type="number" min={1} className="input" value={cChatMaxReplies}
+                        onChange={(e) => setCChatMaxReplies(Math.max(1, Number(e.target.value) || 1))} />
+                    </div>
+                  )}
+                  <div>
+                    <div className="mb-1 text-xs text-white/50">Активных диалогов на аккаунт <span className="text-white/30">(0 — без лимита)</span></div>
+                    <input type="number" min={0} className="input" value={cChatMaxDialogs}
+                      onChange={(e) => setCChatMaxDialogs(Math.max(0, Number(e.target.value) || 0))} />
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
 
           <div>
@@ -324,7 +445,7 @@ export function CampaignPage() {
           <Rocket size={15} className="text-spark-400" /> Кампании ({campaigns.length})
         </div>
         {campaigns.length === 0 ? (
-          <p className="text-sm text-white/50">Кампаний пока нет. Кампания = цель + один настроенный модуль + закреплённые аккаунты.</p>
+          <p className="text-sm text-white/50">Кампаний пока нет. Кампания = цель + настроенный модуль (+ чатинг) + закреплённые аккаунты.</p>
         ) : (
           <div className="flex flex-col gap-2">
             {campaigns.map((c) => (
@@ -334,11 +455,13 @@ export function CampaignPage() {
                 </Badge>
                 <span className="font-semibold text-white">{c.name}</span>
                 <span className="text-xs text-white/50">{MODULES[c.moduleKey]?.title || c.moduleKey}</span>
+                {c.chat?.enabled && <Badge tone="iris">+ чатинг</Badge>}
                 {c.goalId && <span className="text-xs text-iris-300"><TargetIcon size={11} className="mb-0.5 inline" /> {goalNameOf(c.goalId)}</span>}
                 <span className="inline-flex items-center gap-1 text-xs text-white/50" title={c.pinned ? 'Аккаунты закреплены — вышли из общего пула' : 'Аккаунты используются без лока'}>
                   {c.pinned ? <Lock size={11} className="text-amber-300" /> : <LockOpen size={11} />} {realCount(c.accountIds)} акк.
                 </span>
                 <div className="ml-auto flex gap-1">
+                  <button onClick={() => void launchSaved(c)} className="btn-primary h-8 px-3 text-xs" aria-label="Запустить кампанию"><Rocket size={13} /> Запустить</button>
                   <button onClick={() => openEditCampaign(c)} className="btn-icon h-8 w-8" aria-label="Изменить"><Pencil size={14} /></button>
                   <button onClick={() => void removeCampaign(c)} className="btn-icon-danger h-8 w-8" aria-label="Удалить кампанию" title="Удалить кампанию"><Trash2 size={14} /></button>
                 </div>

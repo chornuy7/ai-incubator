@@ -685,10 +685,28 @@ export async function runWarming(task, store) {
  * Системный промпт для ЛС: промпт карточки + пользовательская инструкция и цель диалога.
  * @param {object} settings @param {string} goal
  */
-function dialogSystemPrompt(settings, goal) {
+/**
+ * Системный промт авто-ответчика.
+ * @param {object} settings
+ * @param {string} goal текстовая инструкция диалога (s.dialogGoal)
+ * @param {object|null} [goalObj] объект цели кампании — даёт ИИ понимание «что считать выполненным»
+ */
+function dialogSystemPrompt(settings, goal, goalObj = null) {
   const base = resolveSystemPrompt(settings)
   const rules = 'Ты ведёшь личную переписку в Telegram от лица владельца аккаунта. Отвечай на языке собеседника, коротко (1–3 предложения), живо и по-человечески. Никогда не сообщай, что ты ИИ или бот.'
-  return goal ? `${base}\n\n${rules}\n\nИнструкция и цель диалога:\n${goal}` : `${base}\n\n${rules}`
+  // §9: прощание — не отдельный механизм, а правило промта. ИИ видит историю переписки
+  // и сам понимает, что цель достигнута; тогда благодарит и закрывает диалог, а не давит дальше.
+  const finish = [
+    'Если из переписки видно, что собеседник УЖЕ выполнил целевое действие'
+      + (goalObj?.targetAction ? ` (${goalObj.targetAction})` : '')
+      + ' или прямо об этом написал — поблагодари, тепло попрощайся и заверши разговор.',
+    'Не повторяй просьбу и не уговаривай после выполнения — это выглядит навязчиво.',
+    'Если собеседник отказался или попросил не писать — извинись за беспокойство одним предложением и попрощайся.',
+  ].join(' ')
+  const parts = [base, rules, finish]
+  if (goalObj?.name) parts.push(`Цель кампании: ${goalObj.name}.`)
+  if (goal) parts.push(`Инструкция и цель диалога:\n${goal}`)
+  return parts.join('\n\n')
 }
 
 /**
@@ -850,7 +868,7 @@ export async function runNeuroDialogs(task, store) {
           const incoming = (last?.message || '').trim()
           // Без OpenAI сработает шаблонный ответ — ему нужна реплика собеседника, а не стенограмма.
           const prompt = isAiGenerationEnabled() ? buildDialogPrompt(msgs) : incoming || 'Привет'
-          const { text: reply, mode } = await generateComment(prompt, s.promptIndex ?? 0, dialogSystemPrompt(s, goal))
+          const { text: reply, mode } = await generateComment(prompt, s.promptIndex ?? 0, dialogSystemPrompt(s, goal, goalObj))
           if (mode !== 'openai') {
             await store.appendLog(task, 'warning', mode === 'template_no_key' ? 'Шаблонный ответ (нет OPENAI_API_KEY в .env)' : 'Шаблонный ответ (OpenAI недоступен)', meta.name)
           }
