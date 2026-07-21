@@ -31,7 +31,6 @@ export function MailingPage() {
   // §9: цель ведёт весь процесс. Выбрал цель — можно сразу поднять чатинг под ней же:
   // рассылка приводит людей, чатинг ловит ответы и двигает их по воронке той же цели.
   const [withChat, setWithChat] = useState(true)
-  const [chatGoal, setChatGoal] = useState('')
   const [chatThreads, setChatThreads] = useState(3)
 
   // §6: порог trust для рассылки — настройка, а не константа: у спам-аккаунтов
@@ -139,7 +138,6 @@ export function MailingPage() {
           await startModuleTask('neuro-dialogs', {
             accountIds: [...selected],
             goalId,
-            dialogGoal: chatGoal.trim() || 'Дружелюбно ответить, выяснить интерес и довести до целевого действия.',
             replyScope: 'unread',
             replyLimitMode: 'untilTarget',
             threads: chatThreads,
@@ -217,19 +215,14 @@ export function MailingPage() {
                       <span>
                         <span className="text-xs font-semibold text-spark-200">Включить нейрочатинг под этой целью</span>
                         <span className="mt-0.5 block text-[11px] leading-relaxed text-white/50">
-                          Рассылка приводит людей, чатинг ловит ответы и ведёт их по воронке ТОЙ ЖЕ цели:
-                          статусы в CRM едут сами, до целевого действия. Запустится второй задачей на тех же аккаунтах.
+                          Всё берётся из цели: текст первого сообщения, этапы, ссылка и целевое действие —
+                          настраивать отдельно ничего не нужно. Рассылка приводит людей, чатинг ловит ответы
+                          и ведёт их по этапам цели, статусы в CRM едут сами. Запустится второй задачей на тех же аккаунтах.
                         </span>
                       </span>
                     </label>
                     {withChat && (
                       <>
-                        <input
-                          className="input mt-2 h-8 text-xs"
-                          value={chatGoal}
-                          onChange={(e) => setChatGoal(e.target.value)}
-                          placeholder="Как вести диалог (необязательно) — тон, что отвечать на возражения"
-                        />
                         <div className="mt-2 flex items-center gap-2">
                           <span className="text-[11px] text-white/50">Потоков</span>
                           <input
