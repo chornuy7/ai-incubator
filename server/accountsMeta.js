@@ -1,5 +1,6 @@
 import fs from 'fs/promises'
 import path from 'path'
+import { mutateJson } from './lib/jsonStore.js'
 import { SESSIONS_DIR } from './config.js'
 import { buildStatusPatch, normalizeStatus, nextStatusAfterExpiry, canModuleUseAccount } from './lib/accountStatus.js'
 import { appendAudit } from './lib/auditLog.js'
@@ -29,27 +30,33 @@ export async function loadAllMeta() {
   }
 }
 
-async function saveAllMeta(meta) {
-  await fs.mkdir(path.dirname(META_FILE), { recursive: true })
-  await fs.writeFile(META_FILE, JSON.stringify(meta, null, 2), 'utf8')
-}
-
 export async function getAccountMeta(accountId) {
   const all = await loadAllMeta()
   return { ...DEFAULT_META, ...(all[accountId] || {}) }
 }
 
+/**
+ * ВАЖНО: запись идёт через mutateJson — он сериализует операции над файлом.
+ * Раньше здесь было read-modify-write с await посередине: при параллельных задачах
+ * (а их может быть десяток) потоки читали файл, правили СВОЙ аккаунт и переписывали
+ * файл ЦЕЛИКОМ. Последний писавший затирал чужие правки — так были потеряны прокси,
+ * отпечатки и облачные пароли у 37 аккаунтов.
+ */
 export async function setAccountMeta(accountId, patch) {
-  const all = await loadAllMeta()
-  all[accountId] = {
-    ...DEFAULT_META,
-    ...(all[accountId] || {}),
-    ...patch,
-    updatedAt: Date.now(),
-  }
-  if (!all[accountId].createdAt) all[accountId].createdAt = Date.now()
-  await saveAllMeta(all)
-  return all[accountId]
+  let result = null
+  await mutateJson(META_FILE, (all) => {
+    const next = all && typeof all === 'object' ? all : {}
+    next[accountId] = {
+      ...DEFAULT_META,
+      ...(next[accountId] || {}),
+      ...patch,
+      updatedAt: Date.now(),
+    }
+    if (!next[accountId].createdAt) next[accountId].createdAt = Date.now()
+    result = next[accountId]
+    return next
+  }, {})
+  return result
 }
 
 /**
@@ -142,9 +149,12 @@ export async function assertAccountsAssignable(accountIds, moduleKey) {
 }
 
 export async function deleteAccountMeta(accountId) {
-  const all = await loadAllMeta()
-  delete all[accountId]
-  await saveAllMeta(all)
+  // Тоже через mutateJson — иначе удаление одного аккаунта могло затереть правки соседних.
+  await mutateJson(META_FILE, (all) => {
+    const next = all && typeof all === 'object' ? all : {}
+    delete next[accountId]
+    return next
+  }, {})
 }
 
 export function countryFromPhone(phone) {
