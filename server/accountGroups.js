@@ -9,7 +9,7 @@
  * Хранение — JSON `data/account-groups.json`; путь через env ACCOUNT_GROUPS_FILE.
  */
 import crypto from 'crypto'
-import { dataPath, readJson, writeJson, mutateJson } from './lib/jsonStore.js'
+import { dataPath, readJson, mutateJson } from './lib/jsonStore.js'
 
 const GROUPS_FILE = process.env.ACCOUNT_GROUPS_FILE || dataPath('account-groups.json')
 
@@ -105,16 +105,24 @@ export function groupsByAccount(groups = []) {
 /**
  * §12: разрешён ли аккаунт роли — напрямую ИЛИ через разрешённую группу.
  * Прямой deny сильнее группового allow (точечный запрет важнее). Чистая функция.
- * @param {Record<string, boolean>} accountPerms accountId → allow/deny
- * @param {Record<string, boolean>} groupPerms   groupId → allow/deny
+ *
+ * Контракт значений — как во всём `roles.js`: строки `'allow'`/`'deny'`
+ * (отсутствие ключа = «мнения нет», не запрет). Зеркало `src/shared/lib/access.ts`.
+ *
+ * ВАЖНО: после `mergePermissions` (объединение ролей — union) в правах остаются
+ * ТОЛЬКО ключи `'allow'`, поэтому ветка точечного deny работает лишь для прав
+ * одной сырой роли. Это следствие union-семантики, а не недосмотр.
+ *
+ * @param {Record<string, 'allow'|'deny'>} accountPerms accountId → allow/deny
+ * @param {Record<string, 'allow'|'deny'>} groupPerms   groupId → allow/deny
  * @param {object[]} groups
  * @param {string} accountId
  */
 export function isAccountAllowedViaGroups(accountPerms = {}, groupPerms = {}, groups = [], accountId) {
-  if (accountPerms[accountId] === false) return false // точечный запрет сильнее
-  if (accountPerms[accountId] === true) return true
+  if (accountPerms[accountId] === 'deny') return false // точечный запрет сильнее
+  if (accountPerms[accountId] === 'allow') return true
   for (const g of Array.isArray(groups) ? groups : []) {
-    if (groupPerms[g?.id] !== true) continue
+    if (groupPerms[g?.id] !== 'allow') continue
     if ((g.accountIds || []).includes(accountId)) return true
   }
   return false

@@ -540,8 +540,18 @@ export function AccountsPage() {
           <span className="mx-1 h-5 w-px bg-line" />
           <button disabled={!has} onClick={() => setMoveOpen(true)} className={btn('border-line text-fg hover:bg-elevated')}><Users size={14} /> Переместить</button>
           <button disabled={!has} onClick={() => { void (async () => { for (const id of selected) await setAccountStatus(id, 'reauth'); pushToast({ type: 'info', title: 'Отправлено на реавторизацию' }); setSelected(new Set()) })() }} className={btn('border-line text-fg hover:bg-elevated')}><KeyRound size={14} /> Реавторизация</button>
-          {/* §2: «Управление» — мульти-просмотр выбранных аккаунтов. */}
-          <button disabled={!has} onClick={() => { const first = active.find((a) => selected.has(a.id)); if (first) navigate(`/panel/accounts/${first.id}`) }} className={btn('border-iris-500/50 bg-iris-500/12 text-iris-200 hover:bg-iris-500/20')}><Users size={14} /> Управление</button>
+          {/* §2: «Управление» — мульти-просмотр ВЫБРАННЫХ аккаунтов: открываем обзор на первом
+              и передаём весь выбор в `?sel=`, чтобы слева был список только выбранных, а не всех. */}
+          <button
+            disabled={!has}
+            onClick={() => {
+              const chosen = active.filter((a) => selected.has(a.id))
+              if (!chosen.length) return
+              navigate(`/panel/accounts/${chosen[0].id}?sel=${chosen.map((a) => a.id).join(',')}`)
+            }}
+            title="Открыть обзор выбранных аккаунтов: слева — только они, справа — табы"
+            className={btn('border-iris-500/50 bg-iris-500/12 text-iris-200 hover:bg-iris-500/20')}
+          ><Users size={14} /> Управление</button>
           {/* §2: «В корзину» — самая редкая деструктивная функция, поэтому крайняя справа. */}
           <button
             disabled={!has}

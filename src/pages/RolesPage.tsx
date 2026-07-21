@@ -8,6 +8,7 @@ import {
 } from '@/api/rolesApi'
 import { ADMIN_BYPASS_ID } from '@/shared/config/rbac'
 import { HelpButton } from '@/features/neuro-commenting/moduleUi'
+import { WARMING_MODULES } from '@/shared/lib/massAction'
 
 /** Пара чекбоксов «дать доступ / убрать доступ» (§8.1). */
 function PermToggle({ value, onChange, disabled }: { value: Perm; onChange: (p: Perm) => void; disabled?: boolean }) {
@@ -222,6 +223,16 @@ export function RolesPage() {
                               <button onClick={() => toggleExpand(m.key)} className="flex min-w-0 items-center gap-1.5 text-sm text-fg">
                                 {open ? <ChevronDown size={15} className="shrink-0 text-white/40" /> : <ChevronRight size={15} className="shrink-0 text-white/40" />}
                                 <span className={`truncate ${mPerm(m.key) === 'deny' ? 'text-rose-200/80' : ''}`}>{m.label}</span>
+                                {/* §12: доступ к модулю НЕ даёт права его останавливать. Без этой пометки
+                                    админ думает, что выдал оператору полный контроль над прогревом. */}
+                                {WARMING_MODULES.has(m.key) && (
+                                  <span
+                                    className="shrink-0 rounded-md bg-rose-500/15 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-rose-300 ring-1 ring-inset ring-rose-500/30"
+                                    title="Остановить или поставить на паузу прогрев может только супер-админ — ролью это не выдаётся. Прогрев это недели работы аккаунтов, откатить его нельзя. Проверка стоит и на сервере, не только в интерфейсе."
+                                  >
+                                    стоп — только админ
+                                  </span>
+                                )}
                               </button>
                               <PermToggle value={mPerm(m.key)} onChange={(p) => setModule(m.key, p)} />
                             </div>

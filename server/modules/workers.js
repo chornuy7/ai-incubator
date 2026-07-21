@@ -887,13 +887,25 @@ export async function runNeuroDialogs(task, store) {
           const inPreview = incoming ? incoming.slice(0, 60) : '[без текста]'
           await store.appendLog(task, 'success', `Ответ в ЛС «${d.name}» → «${reply.slice(0, 60)}» (на: «${inPreview}»)`, meta.name)
 
-          // §9: по ТЕКСТУ ответа определяем стадию воронки и двигаем лида в CRM.
+          // §9: лид попадает в CRM САМ. Сначала фиксируем сам факт переписки
+          // (`contacted`), иначе ответы авто-ответчика проходили мимо CRM. upsertLead
+          // двигает только вперёд, поэтому прогретый лид этим вызовом не сбросится.
+          if (s.goalId) {
+            try {
+              const { created } = await upsertLead({ goalId: s.goalId, accountId, peer: peerKey, status: 'contacted' })
+              if (created) await store.appendLog(task, 'info', `Новый лид в CRM: ${peerKey}`, meta.name)
+            } catch (e) {
+              // CRM не должна ронять переписку — диалог важнее записи о нём.
+              await store.appendLog(task, 'warning', `Лид не записан в CRM: ${e instanceof Error ? e.message : 'ошибка'}`, meta.name)
+            }
+          }
+
+          // §9: а по ТЕКСТУ ответа определяем стадию воронки и двигаем лида дальше.
           // «Верим на слово»: target ставится, если человек сам сказал, что подписался —
           // фактическая проверка (админ-аккаунт / инвайт-ссылки) будет отдельно.
           if (s.goalId && incoming) {
             try {
-              const peer = peerKey
-              const cur = findLeadByPeer(await listLeads({ goalId: s.goalId }), peer)
+              const cur = findLeadByPeer(await listLeads({ goalId: s.goalId }), peerKey)
               const verdict = await classifyLeadReply({
                 text: incoming,
                 currentStatus: cur?.status || 'cold',
@@ -901,11 +913,11 @@ export async function runNeuroDialogs(task, store) {
                 targetAction: goalObj?.targetAction || '',
               })
               if (shouldAdvance(cur?.status || 'cold', verdict.status)) {
-                await upsertLead({ peer, goalId: s.goalId, accountId, status: verdict.status })
+                await upsertLead({ peer: peerKey, goalId: s.goalId, accountId, status: verdict.status })
                 await store.appendLog(
                   task,
                   verdict.status === 'hot' || verdict.status === 'target' ? 'success' : 'info',
-                  `Лид «${peer}»: ${cur?.status || 'новый'} → ${verdict.status} (${verdict.reason}, ${verdict.mode})`,
+                  `Лид «${peerKey}»: ${cur?.status || 'новый'} → ${verdict.status} (${verdict.reason}, ${verdict.mode})`,
                   meta.name,
                 )
               }

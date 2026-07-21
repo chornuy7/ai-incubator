@@ -1,4 +1,5 @@
-import { useMemo, useState } from 'react'
+import { useMemo, useRef, useState } from 'react'
+import { revealHelpBlock } from '@/features/neuro-commenting/moduleUi'
 import { useParams, Navigate } from 'react-router-dom'
 import {
   Play, Save, Square, Sparkles, Plus, Trash2, FileText, Clock, Globe, Copy, Download,
@@ -1857,9 +1858,10 @@ function LookRow({ icon, label, sub, children }: { icon: React.ReactNode; label:
 function SectionCard({ icon, title, badge, right, children }: { icon: React.ReactNode; title: string; badge?: string; right?: React.ReactNode; children: React.ReactNode }) {
   const setHelpTopic = useUi((s) => s.setHelpTopic)
   const setHelpOpen = useUi((s) => s.setHelpOpen)
+  const rootRef = useRef<HTMLDivElement>(null)
 
   return (
-    <div className="card p-0">
+    <div ref={rootRef} className="card p-0">
       <div className="flex flex-wrap items-center gap-3 border-b border-line px-4 py-3.5">
         <span className="grid h-9 w-9 place-items-center rounded-xl bg-spark-500/12 text-spark-400">{icon}</span>
         <span className="font-display text-base font-bold text-fg">{title}</span>
@@ -1871,7 +1873,7 @@ function SectionCard({ icon, title, badge, right, children }: { icon: React.Reac
             className="grid h-8 w-8 place-items-center rounded-xl bg-spark-gradient text-[#04150c] shadow-pop transition-transform hover:scale-[1.03]"
             title="Help Center"
             aria-label="Help Center"
-            onClick={() => { setHelpTopic(title); setHelpOpen(true) }}
+            onClick={() => { setHelpTopic(title); setHelpOpen(true); revealHelpBlock(rootRef.current) }}
           >
             <HelpCircle size={16} />
           </button>

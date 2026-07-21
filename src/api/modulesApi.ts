@@ -143,6 +143,25 @@ export async function pauseModuleTask(moduleKey: string, taskId: string): Promis
   return data.task
 }
 
+/**
+ * §9.8: правка настроек задачи. Сервер примет её ТОЛЬКО на паузе (иначе 409):
+ * у работающей задачи воркер уже прошёл часть аккаунтов, и правка на лету дала бы
+ * результат, где часть отработала по старым настройкам, часть по новым.
+ * Состав аккаунтов не меняется — за задачей держатся локи (сервер отбросит поле).
+ */
+export async function updateModuleTaskSettings(
+  moduleKey: string, taskId: string, settings: Partial<ModuleTaskSettings>,
+): Promise<ModuleTask> {
+  const res = await fetch(`${base(moduleKey)}/tasks/${taskId}/settings`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ settings }),
+  })
+  const data = await res.json()
+  if (!res.ok || !data.ok) throw new Error(data.error || `HTTP ${res.status}`)
+  return data.task as ModuleTask
+}
+
 export async function resumeModuleTask(moduleKey: string, taskId: string): Promise<ModuleTask> {
   const data = await apiPost<{ task: ModuleTask }>(`${base(moduleKey)}/tasks/${taskId}/resume`)
   return data.task

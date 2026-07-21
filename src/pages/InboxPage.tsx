@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { MessagesSquare, Search, RefreshCw, Send, Check, Users, Radio } from 'lucide-react'
+import { MessagesSquare, Search, RefreshCw, Check, Users, Radio } from 'lucide-react'
+import { ConversationBubble } from '@/features/conversation/ConversationBubble'
+import { ReplyBox } from '@/features/conversation/ReplyBox'
 import { activeAccounts, useApp } from '@/mocks/store'
 import { PageHeader, Card, EmptyState, Segmented, Badge } from '@/shared/ui'
 import { HelpButton } from '@/features/neuro-commenting/moduleUi'
@@ -206,18 +208,14 @@ export function InboxPage() {
                   ) : messages.length === 0 ? (
                     <p className="py-6 text-center text-sm text-white/40">Сообщений нет</p>
                   ) : messages.map((m) => (
-                    <div key={m.id} className={`flex ${m.out ? 'justify-end' : 'justify-start'}`}>
-                      <div className={`max-w-[75%] rounded-2xl px-3 py-1.5 text-sm ${m.out ? 'bg-spark-500/20 text-white' : 'bg-white/10 text-white/90'}`}>
-                        <div className="whitespace-pre-wrap break-words">{m.text}</div>
-                        <div className="mt-0.5 text-right text-[10px] text-white/30">{m.time}</div>
-                      </div>
-                    </div>
+                    <ConversationBubble key={m.id} m={m} dialog={active} tone="spark" />
                   ))}
                   <div ref={endRef} />
                 </div>
-                <div className="flex items-center gap-2 border-t border-white/10 p-2">
-                  <input className="input h-10 flex-1" value={draft} onChange={(e) => setDraft(e.target.value)} placeholder="Написать сообщение…" onKeyDown={(e) => e.key === 'Enter' && !e.shiftKey && void send()} />
-                  <button onClick={() => void send()} disabled={sending || !draft.trim()} className="btn-primary h-10"><Send size={15} /></button>
+                <div className="border-t border-white/10 p-2">
+                  {/* §9.3: общий компонент — раньше здесь была своя разметка без превью
+                      медиа и с однострочным input, и экран отставал от НейроДиалогов. */}
+                  <ReplyBox value={draft} onChange={setDraft} onSend={() => void send()} sending={sending} />
                 </div>
               </>
             )}

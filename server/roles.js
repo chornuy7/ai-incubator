@@ -304,7 +304,7 @@ export async function buildCatalog() {
  * Разрешён ли доступ роли к цели. Чистая функция (юнит-тест + будущий enforcement).
  * Админ (builtin ADMIN_ROLE_ID) — всегда true. По умолчанию — deny.
  * @param {object|null} role
- * @param {'module'|'block'|'section'|'account'|'folder'|'channel'|'timers'|'searchTemplates'} kind
+ * @param {'module'|'block'|'section'|'account'|'accountGroup'|'folder'|'channel'|'timers'|'searchTemplates'} kind
  * @param {string} [key]
  */
 export function can(role, kind, key) {
@@ -316,6 +316,7 @@ export function can(role, kind, key) {
     case 'block': return p.blocks?.[key] === ALLOW
     case 'section': return p.sections?.[key] === ALLOW
     case 'account': return p.resources?.accounts?.[key] === ALLOW
+    case 'accountGroup': return p.resources?.accountGroups?.[key] === ALLOW // §12
     case 'folder': return p.resources?.folders?.[key] === ALLOW
     case 'channel': return p.resources?.channels?.[key] === ALLOW
     case 'timers': return p.resources?.timers === ALLOW
@@ -373,7 +374,7 @@ export async function rolesForUser(user) {
  * @param {object[]} roles @returns {RolePermissions}
  */
 export function mergePermissions(roles = []) {
-  const resources = { accounts: {}, folders: {}, channels: {}, folderChannels: {}, timers: DENY, searchTemplates: DENY }
+  const resources = { accounts: {}, accountGroups: {}, folders: {}, channels: {}, folderChannels: {}, timers: DENY, searchTemplates: DENY }
   const merged = { modules: {}, blocks: {}, sections: {}, resources }
   const wholeFolder = new Set() // папки, где хоть одна роль дала «все каналы»
   for (const role of roles) {
@@ -384,6 +385,7 @@ export function mergePermissions(roles = []) {
     for (const [k, v] of Object.entries(p.blocks || {})) if (v === ALLOW) merged.blocks[k] = ALLOW
     for (const [k, v] of Object.entries(p.sections || {})) if (v === ALLOW) merged.sections[k] = ALLOW
     for (const [k, v] of Object.entries(r.accounts || {})) if (v === ALLOW) resources.accounts[k] = ALLOW
+    for (const [k, v] of Object.entries(r.accountGroups || {})) if (v === ALLOW) resources.accountGroups[k] = ALLOW // §12
     for (const [k, v] of Object.entries(r.channels || {})) if (v === ALLOW) resources.channels[k] = ALLOW
     if (r.timers === ALLOW) resources.timers = ALLOW
     if (r.searchTemplates === ALLOW) resources.searchTemplates = ALLOW

@@ -61,6 +61,41 @@ export async function resolvePeerEntity(client, peerId, opts = {}) {
   throw new Error(`PEER_NOT_FOUND:${peerId}`)
 }
 
+/**
+ * §3: тип медиа сообщения — фронт по нему решает, тянуть превью или показать значок.
+ * Оригиналы мы не храним и не качаем: превью подгружается отдельным запросом (thumb).
+ * @returns {'photo'|'video'|'sticker'|'voice'|'file'|null}
+ */
+export function mediaKind(msg) {
+  const cn = msg?.media?.className || ''
+  if (!cn) return null
+  if (cn.includes('Photo')) return 'photo'
+  const attrs = msg?.media?.document?.attributes || []
+  const has = (n) => attrs.some((a) => `${a.className || ''}`.includes(n))
+  if (has('Sticker')) return 'sticker'
+  if (has('Video')) return 'video'
+  if (has('Audio')) return 'voice'
+  return 'file'
+}
+
+/** Есть ли у медиа превью, которое имеет смысл показывать картинкой. */
+const THUMBABLE = new Set(['photo', 'video', 'sticker'])
+
+/**
+ * §3: превью медиа ON-DEMAND — тянем из Telegram по запросу самый маленький thumb
+ * и НЕ сохраняем на диск. Оригинал (мегабайты видео) не качаем никогда.
+ * @returns {Promise<Buffer|null>} null, если превью нет
+ */
+export async function fetchMessageThumb(client, peerId, messageId, peerOpts = {}) {
+  const entity = await resolvePeerEntity(client, peerId, peerOpts)
+  const found = await client.getMessages(entity, { ids: [Number(messageId)] })
+  const msg = Array.isArray(found) ? found[0] : found
+  if (!msg?.media || !THUMBABLE.has(mediaKind(msg))) return null
+  // thumb: 0 — самая мелкая превьюшка (обычно единицы КБ), её и отдаём.
+  const buf = await client.downloadMedia(msg, { thumb: 0 })
+  return buf && buf.length ? Buffer.from(buf) : null
+}
+
 /** @param {import('telegram').TelegramClient} client @param {number} [limit] */
 export async function fetchInboxDialogs(client, limit = 100) {
   const dialogs = await client.getDialogs({ limit })
@@ -99,6 +134,8 @@ export async function fetchDialogMessages(client, peerId, limit = 60, beforeId =
       time: formatDialogTime(m.date),
       out: !!m.out,
       date: m.date || 0,
+      // §3: только ТИП медиа. Само превью фронт запросит отдельно и лишь для видимых сообщений.
+      ...(m.media ? { media: mediaKind(m), hasThumb: THUMBABLE.has(mediaKind(m)) } : {}),
     }))
     .sort((a, b) => a.date - b.date)
   return { messages: rows, peerId, hasMore: messages.length >= limit }

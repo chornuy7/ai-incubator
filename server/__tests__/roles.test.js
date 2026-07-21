@@ -192,3 +192,23 @@ test('createRole без имени — ошибка', async () => {
   await assert.rejects(() => r.createRole({ permissions: {} }), /название/i)
   delete process.env.ROLES_FILE
 })
+
+test('§12 accountGroups доживают до фронта: can() знает kind и mergePermissions их не теряет', () => {
+  const r = normalizeRole({ name: 'Групповая', permissions: {
+    resources: { accountGroups: { grp_ru: ALLOW, grp_ua: 'нет' } },
+  } })
+  // can() умеет отвечать про группу (без этого kind всегда падал в default → false)
+  assert.equal(can(r, 'accountGroup', 'grp_ru'), true)
+  assert.equal(can(r, 'accountGroup', 'grp_ua'), false)
+  assert.equal(can(r, 'accountGroup', 'нет-такой'), false)
+
+  // регрессия: mergePermissions роняла accountGroups целиком — доступ на группу
+  // сохранялся в роли, но до клиента не доезжал, и §12 не работал вообще
+  const other = normalizeRole({ name: 'Другая', permissions: {
+    resources: { accountGroups: { grp_kz: ALLOW } },
+  } })
+  const m = mergePermissions([r, other])
+  assert.equal(m.resources.accountGroups.grp_ru, ALLOW)
+  assert.equal(m.resources.accountGroups.grp_kz, ALLOW) // union по ролям
+  assert.equal(m.resources.accountGroups.grp_ua, undefined) // не-allow не проходит
+})

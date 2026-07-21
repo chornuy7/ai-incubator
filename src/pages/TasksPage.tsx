@@ -1,11 +1,11 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
-import { ListChecks, RefreshCw, Square, RotateCw, Target, Activity, Gauge, Pause, Play, Loader2, ArrowLeft } from 'lucide-react'
+import { ListChecks, RefreshCw, Square, RotateCw, Target, Activity, Gauge, Pause, Play, Loader2, ArrowLeft, Pencil } from 'lucide-react'
 import { useApp } from '@/mocks/store'
 import { PageHeader, Card, EmptyState, Badge, Select, Segmented } from '@/shared/ui'
 import { HelpButton } from '@/features/neuro-commenting/moduleUi'
 import { MODULES, isCombatModule, combatConfirmText } from '@/shared/config/modules'
-import { fetchAllTasks, fetchModuleTask, stopModuleTask, restartModuleTask, pauseModuleTask, resumeModuleTask, type ModuleTask } from '@/api/modulesApi'
+import { fetchAllTasks, fetchModuleTask, stopModuleTask, restartModuleTask, pauseModuleTask, resumeModuleTask, updateModuleTaskSettings, type ModuleTask, type ModuleTaskSettings } from '@/api/modulesApi'
 import { fetchGoals, type Goal } from '@/api/goalsApi'
 import { fetchCampaigns, type Campaign } from '@/api/campaignsApi'
 import { fetchAccounts } from '@/api/accountsApi'
@@ -591,6 +591,36 @@ export function TaskDetailPage() {
     void run(() => restartModuleTask(moduleKey, id), 'Задача перезапущена')
   }
 
+  // §9.8: правка задачи — только на паузе (сервер это тоже проверяет и вернёт 409).
+  const [editing, setEditing] = useState(false)
+  const [edTargets, setEdTargets] = useState('')
+  const [edMinActions, setEdMinActions] = useState(0)
+  const [edMaxActions, setEdMaxActions] = useState(0)
+  const [edMinPerAcc, setEdMinPerAcc] = useState(0)
+  const [edMaxPerAcc, setEdMaxPerAcc] = useState(0)
+
+  const startEdit = (s: ModuleTaskSettings) => {
+    setEdTargets((s.channels || s.targets || []).join('\n'))
+    setEdMinActions(s.minActions ?? 0)
+    setEdMaxActions(s.maxActions ?? 0)
+    setEdMinPerAcc(s.minPerAccount ?? 0)
+    setEdMaxPerAcc(s.maxPerAccount ?? 0)
+    setEditing(true)
+  }
+
+  const saveEdit = async () => {
+    const targets = edTargets.split(/[\n,;]+/).map((x) => x.trim()).filter(Boolean)
+    await run(
+      () => updateModuleTaskSettings(moduleKey, id, {
+        targets, channels: targets,
+        minActions: edMinActions, maxActions: edMaxActions,
+        minPerAccount: edMinPerAcc, maxPerAccount: edMaxPerAcc,
+      }),
+      'Настройки задачи обновлены',
+    )
+    setEditing(false)
+  }
+
   const back = (
     <button onClick={() => navigate('/panel/tasks')} className="btn-ghost mb-3 h-9"><ArrowLeft size={15} /> Назад к задачам</button>
   )
@@ -630,9 +660,52 @@ export function TaskDetailPage() {
             {isActive(t) && <button onClick={doPause} disabled={busy} className="btn-icon h-9 w-9" title="Пауза"><Pause size={15} /></button>}
             {t.status === 'paused' && <button onClick={doResume} disabled={busy} className="btn-icon h-9 w-9 text-spark-400" title="Продолжить"><Play size={15} /></button>}
             {isActive(t) && <button onClick={doStop} disabled={busy} className="btn-icon h-9 w-9 text-rose-300" title="Стоп"><Square size={15} /></button>}
+            {/* §9.8: правка только на паузе. Кнопку показываем всегда, но у работающей
+                задачи она заблокирована и объясняет причину — так понятнее, чем её отсутствие. */}
+            <button
+              onClick={() => startEdit(s)}
+              disabled={busy || t.status !== 'paused'}
+              className="btn-icon h-9 w-9 disabled:opacity-40"
+              title={t.status === 'paused'
+                ? 'Редактировать настройки задачи'
+                : isActive(t)
+                  ? 'Править можно только на паузе: сейчас задача выполняется и часть аккаунтов уже отработала по текущим настройкам'
+                  : 'Задача завершена — править нечего, перезапустите её'}
+            ><Pencil size={15} /></button>
             <button onClick={doRestart} disabled={busy} className="btn-icon h-9 w-9" title="Перезапуск"><RotateCw size={16} /></button>
           </div>
         </div>
+
+        {editing && (
+          <div className="rounded-2xl border border-spark-500/40 bg-spark-500/5 p-4">
+            <div className="mb-3 text-sm font-bold text-fg">Правка задачи (на паузе)</div>
+            <div className="grid gap-3 sm:grid-cols-2">
+              <label className="text-xs text-white/50 sm:col-span-2">Каналы / чаты — по одному на строку
+                <textarea value={edTargets} onChange={(e) => setEdTargets(e.target.value)} className="input mt-1 min-h-[80px] font-mono text-sm" placeholder="@channel" />
+              </label>
+              <label className="text-xs text-white/50">Всего действий: от
+                <input type="number" min={0} value={edMinActions} onChange={(e) => setEdMinActions(Math.max(0, Number(e.target.value) || 0))} className="input mt-1 h-9" />
+              </label>
+              <label className="text-xs text-white/50">до
+                <input type="number" min={0} value={edMaxActions} onChange={(e) => setEdMaxActions(Math.max(0, Number(e.target.value) || 0))} className="input mt-1 h-9" />
+              </label>
+              <label className="text-xs text-white/50">На аккаунт: от
+                <input type="number" min={0} value={edMinPerAcc} onChange={(e) => setEdMinPerAcc(Math.max(0, Number(e.target.value) || 0))} className="input mt-1 h-9" />
+              </label>
+              <label className="text-xs text-white/50">до
+                <input type="number" min={0} value={edMaxPerAcc} onChange={(e) => setEdMaxPerAcc(Math.max(0, Number(e.target.value) || 0))} className="input mt-1 h-9" />
+              </label>
+            </div>
+            <div className="mt-3 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-200">
+              Состав аккаунтов здесь не меняется: за задачей держатся блокировки профилей. Нужны другие
+              исполнители — остановите задачу и создайте новую.
+            </div>
+            <div className="mt-3 flex gap-2">
+              <button onClick={() => void saveEdit()} disabled={busy} className="btn-primary h-9">Сохранить</button>
+              <button onClick={() => setEditing(false)} disabled={busy} className="btn-ghost h-9">Отмена</button>
+            </div>
+          </div>
+        )}
         <div className="grid gap-2 sm:grid-cols-3">
           <Info label="Модуль" value={moduleTitle(t.moduleKey)} />
           {/* §8: разводим «цель кампании» (Goal) и «каналы, куда идёт работа» — раньше путались. */}

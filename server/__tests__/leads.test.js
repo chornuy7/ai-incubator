@@ -185,3 +185,29 @@ test('leadPriorityMap / dialogLeadPriority / sortDialogsByLeadPriority (§3.6 п
   const sorted = sortDialogsByLeadPriority(dialogs, leads)
   assert.deepEqual(sorted.map((d) => d.name), ['H', 'A', 'X'])
 })
+
+test('§9 upsertLead: параллельные записи из воркера не теряются', async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'leads-par-'))
+  process.env.LEADS_FILE = path.join(dir, 'leads.json')
+  const L = await import('../leads.js?par=' + Date.now())
+
+  // Авто-ответчик пишет лидов параллельно по разным диалогам одного захода.
+  // На read-modify-write без очереди осталась бы только последняя запись.
+  const N = 30
+  await Promise.all(
+    Array.from({ length: N }, (_, i) =>
+      L.upsertLead({ goalId: 'g1', accountId: 'acc1', peer: `@user_${i}`, status: 'contacted' }),
+    ),
+  )
+  const all = await L.listLeads({ goalId: 'g1' })
+  assert.equal(all.length, N, 'ни один лид не должен потеряться')
+
+  // Повторный upsert того же контакта не плодит дубль и не откатывает воронку назад.
+  await L.upsertLead({ goalId: 'g1', accountId: 'acc1', peer: '@user_0', status: 'hot' })
+  await L.upsertLead({ goalId: 'g1', accountId: 'acc1', peer: '@user_0', status: 'contacted' })
+  const after = await L.listLeads({ goalId: 'g1' })
+  assert.equal(after.length, N, 'дублей быть не должно')
+  assert.equal(after.find((l) => l.peer === '@user_0').status, 'hot', 'назад по воронке не откатываем')
+
+  delete process.env.LEADS_FILE
+})

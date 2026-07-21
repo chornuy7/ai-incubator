@@ -26,7 +26,9 @@ export function can(permissions: RolePermissions | null, isAdmin: boolean, kind:
 
 /**
  * Отфильтровать аккаунты по доступу роли (R4): не-админ видит только выданные ему аккаунты.
- * Нет сессии (демо) или админ → полный список. По умолчанию (нет выдач) не-админ видит пусто.
+ * Админ → полный список; по умолчанию (нет выдач) не-админ видит пусто.
+ * Случай «нет сессии» (демо) сюда НЕ доезжает — вызывающие показывают полный список
+ * до фильтра (см. AccountsPage / AccountPicker), иначе демо было бы пустым.
  */
 export function filterAccountsByAccess<T extends { id: string }>(
   list: T[], permissions: RolePermissions | null, isAdmin: boolean,

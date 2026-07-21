@@ -21,6 +21,11 @@ export function taskSignature(settings = {}) {
 
 /**
  * Найти активную задачу с той же подписью (дубль). Чистая функция.
+ *
+ * Модуль в подпись НЕ входит: вызывающий передаёт задачи одного модуля
+ * (стор пер-модульный, `getModuleStore(moduleKey)`). Если понадобится искать
+ * по всем модулям сразу — сначала добавьте moduleKey в `taskSignature`.
+ *
  * @param {Array<{status?: string, settings?: object, id?: string}>} tasks
  * @param {object} settings
  * @returns {object|null}
