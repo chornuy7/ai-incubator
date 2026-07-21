@@ -5,6 +5,7 @@ import { loadAllMeta, getAccountMeta, setAccountMeta, deleteAccountMeta, country
 import { loadSessionString, createClient } from './tgAuth.js'
 import { getAccountLock } from './lib/accountLocks.js'
 import { getAllTrustCache } from './lib/trustCache.js'
+import { accountFingerprint } from './lib/deviceFingerprint.js'
 
 async function listSessionIds() {
   await fs.mkdir(SESSIONS_DIR, { recursive: true })
@@ -73,7 +74,7 @@ export async function tgListAccounts() {
     let me = null
     let sessionOk = false
     try {
-      const client = await createClient(sessionStr, meta.proxy)
+      const client = await createClient(sessionStr, meta.proxy, accountFingerprint(accountId, meta))
       me = await client.getMe()
       sessionOk = true
       await client.disconnect()

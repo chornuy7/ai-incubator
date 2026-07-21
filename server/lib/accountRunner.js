@@ -5,6 +5,7 @@ import { assertAccountAvailable } from './accountLocks.js'
 import { resolveDurationPeriodMinutes } from './workModeDuration.js'
 import { getAiSafetySync } from '../aiSafety.js'
 import { resolvePerAccountTarget, resolveTotalTarget } from './targets.js'
+import { accountFingerprint } from './deviceFingerprint.js'
 
 /** @param {string} accountId @param {string} [taskId] */
 export async function connectAccount(accountId, taskId) {
@@ -19,7 +20,7 @@ export async function connectAccount(accountId, taskId) {
     throw new Error('NO_SESSION')
   }
   await setAccountMeta(accountId, { status: 'working' })
-  const client = await createClient(sessionStr, meta.proxy)
+  const client = await createClient(sessionStr, meta.proxy, accountFingerprint(accountId, meta))
   return { client, meta }
 }
 

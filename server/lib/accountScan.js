@@ -55,14 +55,18 @@ function normProxyFromJson(v) {
  * @param {object} j
  */
 function readFingerprint(j) {
+  // ВНИМАНИЕ: lang_pack — это ИМЯ языкового пакета («tdesktop»), а не код языка.
+  // Подставлять его как langCode нельзя, это само по себе выглядит странно в эфире.
+  const sysLang = j.system_lang_pack || j.system_lang_code || undefined
+  const langCode = j.lang_code || (sysLang ? String(sysLang).split('-')[0] : undefined)
   const fp = {
     apiId: Number(j.app_id || j.api_id) || undefined,
     apiHash: j.app_hash || j.api_hash || undefined,
     device: j.device || j.device_model || undefined,
     system: j.sdk || j.system_version || undefined,
     appVersion: j.app_version || undefined,
-    langCode: j.lang_pack || j.lang_code || undefined,
-    systemLangCode: j.system_lang_pack || j.system_lang_code || undefined,
+    langCode,
+    systemLangCode: sysLang,
   }
   return Object.values(fp).some((v) => v !== undefined) ? fp : null
 }

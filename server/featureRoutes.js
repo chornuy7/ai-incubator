@@ -6,6 +6,7 @@ import { listFolders, createFolder, updateFolder, deleteFolder } from './targetF
 import { loadAllMeta, getAccountMeta } from './accountsMeta.js'
 import { loadSessionString, createClient } from './tgAuth.js'
 import { sleep } from './lib/protection.js'
+import { accountFingerprint } from './lib/deviceFingerprint.js'
 
 export const featureRouter = Router()
 
@@ -120,7 +121,7 @@ featureRouter.post('/target-folders/:id/validate', async (req, res) => {
     const sessionStr = await loadSessionString(accountId)
     if (!sessionStr) return res.status(400).json({ ok: false, error: 'Сессия аккаунта недоступна' })
 
-    const client = await createClient(sessionStr, meta.proxy)
+    const client = await createClient(sessionStr, meta.proxy, accountFingerprint(accountId, meta))
     const valid = []
     try {
       for (const t of targets) {

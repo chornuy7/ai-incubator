@@ -6,6 +6,7 @@
 import { recordChannelStats } from './channels.js'
 import { acquireChannelLease, releaseChannelLease } from './lib/channelLease.js'
 import { normalizeStatus } from './lib/accountStatus.js'
+import { accountFingerprint } from './lib/deviceFingerprint.js'
 
 const HOUR = 3600_000
 const DEFAULT_PERIOD_H = 24
@@ -93,7 +94,7 @@ export async function refreshOneChannel(channel, meta, accountId) {
     const { resolvePeer, getChannelMembersCount, fetchPosts } = await import('./lib/gramHelpers.js')
     const sessionStr = await loadSessionString(acc)
     if (!sessionStr) throw new Error('У аккаунта нет сессии')
-    client = await createClient(sessionStr, meta[acc]?.proxy)
+    client = await createClient(sessionStr, meta[acc]?.proxy, accountFingerprint(acc, meta[acc]))
     const entity = await resolvePeer(client, channel.username || channel.link || channel.tgPeerId)
 
     // Проход 1 — база: подписчики.

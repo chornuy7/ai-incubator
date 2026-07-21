@@ -7,6 +7,7 @@ import { accountTrust } from './lib/trustScore.js'
 import { setTrustCache } from './lib/trustCache.js'
 import { countryFromPhone } from './accountsMeta.js'
 import { Api } from 'telegram/tl/index.js'
+import { accountFingerprint } from './lib/deviceFingerprint.js'
 
 const DAY = 24 * 60 * 60 * 1000
 
@@ -235,7 +236,7 @@ export async function buildAccountStats(accountId, opts = {}) {
   if (sessionStr && !busyIn) {
     let client
     try {
-      client = await createClient(sessionStr, meta.proxy)
+      client = await createClient(sessionStr, meta.proxy, accountFingerprint(accountId, meta))
       me = await client.getMe()
       sessionOk = true
       live = true
@@ -345,7 +346,7 @@ export async function listAccountChannels(accountId) {
   const meta = await getAccountMeta(accountId)
   let client
   try {
-    client = await createClient(sessionStr, meta.proxy)
+    client = await createClient(sessionStr, meta.proxy, accountFingerprint(accountId, meta))
     const dialogs = await client.getDialogs({ limit: 200 })
     const channels = []
     for (const d of dialogs) {
@@ -385,7 +386,7 @@ export async function listAccountFolders(accountId) {
   const meta = await getAccountMeta(accountId)
   let client
   try {
-    client = await createClient(sessionStr, meta.proxy)
+    client = await createClient(sessionStr, meta.proxy, accountFingerprint(accountId, meta))
     const res = await client.invoke(new Api.messages.GetDialogFilters())
     const filters = res?.filters || res || []
     const folders = []

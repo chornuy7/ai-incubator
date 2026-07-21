@@ -24,6 +24,7 @@ import {
   perAccountLimitReached,
   totalLimitReached,
 } from '../lib/accountRunner.js'
+import { accountFingerprint } from '../lib/deviceFingerprint.js'
 import {
   delayMultiplier,
   pickDelay,
@@ -976,7 +977,7 @@ export async function runGgr(task, store) {
       try {
         const sessionStr = await loadSessionString(accountId)
         if (!sessionStr) throw new Error('NO_SESSION')
-        client = await createClient(sessionStr, meta.proxy)
+        client = await createClient(sessionStr, meta.proxy, accountFingerprint(accountId, meta))
         const me = await client.getMe()
         let score = 50
         if (me.username) score += 15
