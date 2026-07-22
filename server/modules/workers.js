@@ -28,6 +28,7 @@ import { accountFingerprint } from '../lib/deviceFingerprint.js'
 import {
   delayMultiplier,
   pickDelay,
+  pickJoinDelay,
   effectiveProbability,
   isAccountRunnable,
   postMeetsMinWords,
@@ -50,6 +51,7 @@ import { listLeads, sortDialogsByLeadPriority, upsertLead } from '../leads.js'
 import { classifyLeadReply, shouldAdvance } from '../lib/leadClassifier.js'
 import { isSemanticEnabled, embedText, cosineSimilarity } from '../lib/semantic.js'
 import { parseTelegramPostLinks, resolvePostPeer } from '../lib/postLink.js'
+import { findChannelChat, isChannelPeer } from '../lib/channelChat.js'
 import { filterBlacklisted, isBlacklistedSync } from '../targetBlacklist.js'
 
 /** @type {Map<string, Promise<void>>} */
@@ -192,7 +194,7 @@ export async function runNeuroCommenting(task, store) {
       try {
         ;({ client } = await connectAccount(accountId, task.id))
         const ch = chs[Math.floor(Math.random() * chs.length)]
-        const joinDelay = pickDelay(s.delays?.join?.[0] ?? 84, s.delays?.join?.[1] ?? 156, mul)
+        const joinDelay = pickJoinDelay(s.delays?.join?.[0] ?? 84, s.delays?.join?.[1] ?? 156, mul)
         const membership = await prepareTarget(
           client,
           ch,
@@ -353,7 +355,7 @@ export async function runNeuroChatting(task, store) {
       try {
         ;({ client } = await connectAccount(accountId, task.id))
         const g = groups[Math.floor(Math.random() * groups.length)]
-        const joinDelay = pickDelay(s.delays?.join?.[0] ?? 50, s.delays?.join?.[1] ?? 120, mul)
+        const joinDelay = pickJoinDelay(s.delays?.join?.[0] ?? 50, s.delays?.join?.[1] ?? 120, mul)
         const membership = await prepareTarget(
           client,
           g,
@@ -1359,7 +1361,7 @@ export async function runParticipantsParser(task, store, kind) {
   // и попадание в спам-фильтр. Задержки «между чатами» тут мало: она срабатывает
   // ПОСЛЕ обработки, а вступления идут подряд. Поэтому отдельная пауза перед join,
   // как в остальных модулях (§6).
-  const joinDelay = pickDelay(s.delays?.join?.[0] ?? 90, s.delays?.join?.[1] ?? 240, mul)
+  const joinDelay = pickJoinDelay(s.delays?.join?.[0] ?? 90, s.delays?.join?.[1] ?? 240, mul)
   task.readyTargets = task.readyTargets || [] // куда аккаунт уже вступал — второй раз не ждём
   const tgs = targets(s)
   if (!tgs.length) {
@@ -1421,16 +1423,11 @@ export async function runParticipantsParser(task, store, kind) {
           peerNoJoin = await resolvePeer(client, src)
         } catch { /* не разрешилось — пойдём обычным путём со вступлением */ }
 
+        // Пробы «а вдруг откроется» здесь НЕТ намеренно. Раньше на каждую цель уходило
+        // два GetParticipants: пробный и основной. Метод жёстко лимитирован, на каналах
+        // оба заведомо падают — это и был главный источник FloodWait 21.07. Основной
+        // вызов ниже сам сообщит, что список закрыт, и мы просто пойдём дальше.
         let membership = peerNoJoin ? { peer: peerNoJoin, status: 'no_join_needed' } : null
-        if (membership) {
-          // Проверяем, что читать реально можно: пустой отказ здесь дешевле, чем вступление.
-          try {
-            await fetchParticipants(client, peerNoJoin, 1, {})
-            await store.appendLog(task, 'info', `${src}: читаем без вступления`, meta.name)
-          } catch {
-            membership = null // закрыто — придётся вступать
-          }
-        }
         if (!membership) membership = await prepareTarget(
           client,
           src,
@@ -1453,7 +1450,30 @@ export async function runParticipantsParser(task, store, kind) {
           // Режим «Активные»: канал → находим чат обсуждения → парсим тех, кто писал,
           // разбивая на админ/премиум/обычный.
           let chatPeer = peer
-          try { const disc = await joinDiscussionGroupIfNeeded(client, peer); if (disc?.peer) { chatPeer = disc.peer; await store.appendLog(task, 'info', `${src}: найден чат обсуждения`, meta.name) } } catch { /* нет обсуждения — читаем сам peer */ }
+          // Сначала штатная привязанная дискуссия (она же вступает, если надо).
+          try { const disc = await joinDiscussionGroupIfNeeded(client, peer); if (disc?.peer) { chatPeer = disc.peer; await store.appendLog(task, 'info', `${src}: найден чат обсуждения`, meta.name) } } catch { /* ищем другими способами ниже */ }
+          // Если привязки нет — чат может быть спрятан в описании или в подписи постов.
+          if (chatPeer === peer && isChannelPeer(peer)) {
+            const { Api } = await import('telegram/tl/index.js')
+            const found = await findChannelChat(client, peer, {
+              getFull: (p) => client.invoke(new Api.channels.GetFullChannel({ channel: p })),
+              resolve: (name) => client.getEntity(name),
+              getMessages: (p, o) => client.getMessages(p, o),
+              postsToScan: 3,
+            })
+            if (found) {
+              chatPeer = found.peer
+              const how = { about: 'в описании канала', posts: 'в подписи последних постов' }[found.via] || 'по ссылке'
+              await store.appendLog(task, 'info', `${src}: чат найден ${how}`, meta.name)
+            }
+          }
+          // Чата нет: у канала пишет только администрация, и «активные» превратятся
+          // в одного автора — тот самый мусорный «+1» на 132 целях из 148 (21.07).
+          if (chatPeer === peer && isChannelPeer(peer)) {
+            await store.appendLog(task, 'warning', `${src}: у канала нет чата — парсить некого, пропуск`, meta.name)
+            await disconnectAccount(client, accountId)
+            continue
+          }
           // множество админов для категоризации
           let adminIds = new Set()
           try { const admins = await fetchParticipants(client, chatPeer, 200, { adminsOnly: true }); adminIds = new Set(admins.map((a) => a.id)) } catch { /* нет прав/список закрыт */ }
@@ -1561,8 +1581,15 @@ export async function runParticipantsParser(task, store, kind) {
         await disconnectAccount(client, accountId)
       } catch (err) {
         if (client) await disconnectAccount(client, accountId)
-        if (!(await handleFlood(task, accountId, store, err, s, meta.name))) {
+        const flooded = await handleFlood(task, accountId, store, err, s, meta.name)
+        if (!flooded) {
           await store.appendLog(task, 'error', `${src}: ${mapTelegramError(err)}`, meta.name)
+        } else if (pinnedId) {
+          // Аккаунт получил FloodWait. Пробовать им дальше — значит удлинять наказание:
+          // Telegram считает попытки, а не успехи. В асинхронном режиме у аккаунта свой
+          // набор целей, поэтому останавливаем именно его поток, остальные идут дальше.
+          await store.appendLog(task, 'warning', `${meta.name}: FloodWait — поток остановлен, оставшиеся цели этого аккаунта пропущены`, meta.name)
+          break
         }
       }
       // прогресс — по обработанным группам (а не по числу результатов)

@@ -17,6 +17,24 @@ export function pickDelay(from, to, mul = 1) {
   return lo + Math.floor(Math.random() * (hi - lo + 1))
 }
 
+/**
+ * Нижняя граница паузы перед ВСТУПЛЕНИЕМ в канал (секунды).
+ *
+ * Вступления Telegram считает отдельно и жёстче остальных действий. Множитель
+ * «агрессивного» уровня и пресета «мин» перемножались и срезали заданные 90–240с
+ * до 32с (лог 21.07) — после чего аккаунты уходили в FloodWait и карантин.
+ * Ускорять всё остальное можно, вступления — нет.
+ */
+export const MIN_JOIN_DELAY_SEC = 60
+
+/**
+ * Пауза перед вступлением: тот же `pickDelay`, но не ниже безопасного порога.
+ * @param {number} from @param {number} to @param {number} [mul]
+ */
+export function pickJoinDelay(from, to, mul = 1) {
+  return Math.max(MIN_JOIN_DELAY_SEC, pickDelay(from, to, mul))
+}
+
 export function effectiveProbability(probability, aiProtection, level) {
   let p = probability ?? 30
   if (aiProtection) {

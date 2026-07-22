@@ -2,8 +2,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
   pickDelay, effectiveProbability, isAccountRunnable,
-  postMeetsMinWords, postMatchesKeywords, extractFloodSeconds, mapTelegramError, interruptibleSleep,
-} from '../lib/protection.js'
+  postMeetsMinWords, postMatchesKeywords, extractFloodSeconds, mapTelegramError, interruptibleSleep, pickJoinDelay, MIN_JOIN_DELAY_SEC } from '../lib/protection.js'
 
 test('pickDelay: держится в пределах [lo, hi], пол 5с', () => {
   for (let i = 0; i < 50; i++) {
@@ -73,4 +72,18 @@ test('interruptibleSleep: без стопа спит полностью', async 
   const interrupted = await interruptibleSleep(60, () => false, 20)
   assert.equal(interrupted, false)
   assert.ok(Date.now() - t0 >= 55)
+})
+
+test('pickJoinDelay: множитель не может срезать паузу вступления ниже порога', () => {
+  // Прогон 21.07: уровень «агрессивный» + пресет «мин» дали множитель ~0.35,
+  // и заданные 90–240с превратились в 32с. Итог — FloodWait и карантин.
+  for (const mul of [0.1, 0.2, 0.35, 0.5]) {
+    const d = pickJoinDelay(90, 240, mul)
+    assert.ok(d >= MIN_JOIN_DELAY_SEC, `множитель ${mul} дал ${d}с — ниже порога ${MIN_JOIN_DELAY_SEC}с`)
+  }
+})
+
+test('pickJoinDelay: когда пауза и так большая — не трогаем', () => {
+  const d = pickJoinDelay(300, 600, 1)
+  assert.ok(d >= 300 && d <= 600, `ожидали 300–600, получили ${d}`)
 })
