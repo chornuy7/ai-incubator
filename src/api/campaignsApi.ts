@@ -84,6 +84,8 @@ export interface Campaign {
   moduleKey: string
   settings: Record<string, unknown>
   accountIds: string[]
+  /** §9.0: собственные целевые каналы кампании (нормализованы: без @, нижний регистр). */
+  targets?: string[]
   pinned: boolean
   status: CampaignStatus
   chat?: CampaignChat

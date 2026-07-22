@@ -49,6 +49,8 @@ export function CampaignPage() {
   const [formOpen, setFormOpen] = useState(false)
   const [editingCampaign, setEditingCampaign] = useState<Campaign | null>(null)
   const [cName, setCName] = useState('')
+  // §9.0: собственные каналы кампании — раньше их было негде задать (тест 1.2).
+  const [cTargets, setCTargets] = useState('')
   const [cGoalId, setCGoalId] = useState('')
   const [cModule, setCModule] = useState('neuro-commenting')
   const [cAccounts, setCAccounts] = useState<string[]>([])
@@ -158,7 +160,7 @@ export function CampaignPage() {
 
   const openNewCampaign = () => {
     setEditingCampaign(null)
-    setCName(''); setCGoalId(''); setCModule('neuro-commenting'); setCAccounts([])
+    setCName(''); setCGoalId(''); setCModule('neuro-commenting'); setCAccounts([]); setCTargets('')
     setCPinned(true); setCStatus('draft'); setPickMode(0); setTakeN(5)
     setCChat(false); setCChatGoal(''); setCChatScope('unread')
     setCChatLimitMode('untilTarget'); setCChatMaxReplies(5); setCChatMaxDialogs(0)
@@ -167,6 +169,7 @@ export function CampaignPage() {
   const openEditCampaign = (c: Campaign) => {
     setEditingCampaign(c)
     setCName(c.name); setCGoalId(c.goalId || ''); setCModule(c.moduleKey); setCAccounts(c.accountIds || [])
+    setCTargets((c.targets || []).join('\n'))
     setCPinned(c.pinned); setCStatus(c.status); setPickMode(1); setTakeN(c.accountIds?.length || 5)
     const ch = c.chat?.settings || {}
     setCChat(c.chat?.enabled === true)
@@ -191,6 +194,7 @@ export function CampaignPage() {
     try {
       const payload = {
         name: cName.trim(), goalId: cGoalId || null, moduleKey: cModule, accountIds: ids, pinned: cPinned, status: cStatus,
+        targets: cTargets.split(/[\n,;]+/).map((x) => x.trim()).filter(Boolean),
         chat: {
           enabled: cChat,
           settings: {
@@ -247,7 +251,11 @@ export function CampaignPage() {
       confirmLabel: 'Запустить',
     }))) return
     try {
-      const r = await launchCampaign({ goalId: c.goalId, accountIds: ids, targets: goal?.channels || [], modules })
+      // §9.0: сначала СВОИ каналы кампании, и только если их нет — каналы цели.
+      // Раньше был только фолбэк на цель, поэтому кампания не могла иметь собственных
+      // целей, и рядом жил отдельный запускатор со своим полем (тест 1.2).
+      const targets = (c.targets?.length ? c.targets : goal?.channels) || []
+      const r = await launchCampaign({ goalId: c.goalId, accountIds: ids, targets, modules })
       setResult(r)
       pushToast({
         type: r.tasks.length ? 'success' : 'error',
@@ -299,6 +307,22 @@ export function CampaignPage() {
               <div className="mb-1 text-xs text-white/50">Статус</div>
               <Select value={cStatus} onChange={(v) => setCStatus(v as CampaignStatus)} options={CAMPAIGN_STATUSES.map((s) => ({ value: s, label: { draft: 'Черновик', active: 'Активна', paused: 'Пауза', done: 'Завершена' }[s] }))} />
             </div>
+          </div>
+
+          {/* §9.0: СВОИ каналы кампании. Раньше их было негде задать: форма каналов не
+              показывала, запуск брал их из цели, а рядом на странице жил отдельный
+              «запускатор» со своим полем целей — отсюда и ощущение двух разных
+              «кампаний» на одном экране (прогон 21–22.07, тест 1.2). */}
+          <div>
+            <div className="mb-1 text-xs text-white/50">
+              Целевые каналы/группы <span className="text-white/30">(по одному на строку; пусто — возьмём каналы цели)</span>
+            </div>
+            <textarea
+              className="input min-h-[72px] font-mono text-sm"
+              value={cTargets}
+              onChange={(e) => setCTargets(e.target.value)}
+              placeholder={'@channel1\nhttps://t.me/group2'}
+            />
           </div>
 
           {/* §9: кампания = основной модуль + опциональный чатинг. Основной модуль приводит
@@ -435,7 +459,7 @@ export function CampaignPage() {
     <div>
       <PageHeader
         title="Кампания"
-        subtitle="Одна цель → несколько модулей на общем пуле аккаунтов. Аккаунты распределяются между модулями без конфликтов."
+        subtitle="Кампания = цель + один модуль + свои каналы и аккаунты. Ниже — разовый запуск без сохранения."
         icon={<Rocket size={22} />}
         actions={<div className="flex items-center gap-2"><HelpButton topic="campaign" className="h-10 w-10" /><button onClick={openNewCampaign} className="btn-primary h-10"><Plus size={16} /> Создать кампанию</button></div>}
       />
@@ -472,6 +496,19 @@ export function CampaignPage() {
         )}
       </Card>
 
+      {/* §9.0: РАЗОВЫЙ запуск, а не вторая «кампания». Этот блок остался от старой модели
+          «одна цель → несколько модулей» и генерит свой id camp_xxx, не связанный с
+          сущностью кампании (cmp_xxx). Пока он жил без подписи, на одной странице
+          оказывалось две разные вещи с одинаковым названием, и тестировщик закономерно
+          путался, откуда запускать (прогон 21–22.07, тест 1.2). Кампанию заводят выше;
+          здесь — быстрый запуск без сохранения. */}
+      <div className="mb-2 mt-6 flex flex-wrap items-baseline gap-2">
+        <span className="font-display text-base font-bold text-fg">Разовый запуск</span>
+        <span className="text-xs text-muted">
+          без сохранения кампании: цель + сразу несколько модулей на общем пуле.
+          Задача не будет привязана к кампании — для повторяемой работы заведите кампанию выше.
+        </span>
+      </div>
       <div className="grid gap-3 lg:grid-cols-2">
         <Card className="p-4">
           <div className="mb-1 text-xs text-white/50">Цель кампании</div>
@@ -528,7 +565,7 @@ export function CampaignPage() {
             <span>Целей-каналов: <b className="text-white">{targets.length}</b></span>
           </div>
           <button onClick={() => void launch()} disabled={!canLaunch} className="btn-primary mt-3 h-10 w-full">
-            <Rocket size={16} /> {launching ? 'Запуск…' : 'Запустить кампанию'}
+            <Rocket size={16} /> {launching ? 'Запуск…' : 'Запустить разово'}
           </button>
           {freeIds.length === 0 && <div className="mt-2 text-xs text-amber-300">Нет свободных аккаунтов (все заняты или в прогреве).</div>}
 

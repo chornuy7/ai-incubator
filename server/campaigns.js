@@ -20,7 +20,11 @@ const CAMPAIGNS_FILE = process.env.CAMPAIGNS_FILE || dataPath('campaigns.json')
 export const CAMPAIGN_STATUSES = ['draft', 'active', 'paused', 'done']
 
 /** Поля, которые можно задавать/менять. */
-const FIELDS = ['name', 'goalId', 'moduleKey', 'settings', 'accountIds', 'pinned', 'status', 'chat']
+// §9.0: у кампании есть СВОИ целевые каналы. Раньше поля не было вовсе: форма кампании
+// каналов не показывала, а запуск брал их из ЦЕЛИ (goal.channels). Из-за этого рядом
+// жил отдельный «разовый запускатор» со своим полем целей, и на одной странице
+// оказывалось две разные сущности «кампания» (прогон 21–22.07, тест 1.2).
+const FIELDS = ['name', 'goalId', 'moduleKey', 'settings', 'accountIds', 'pinned', 'status', 'chat', 'targets']
 
 const normIds = (v) => (Array.isArray(v) ? [...new Set(v.map((x) => String(x || '').trim()).filter(Boolean))] : [])
 
@@ -50,6 +54,10 @@ export function normalizeCampaign(input = {}) {
     moduleKey: String(input.moduleKey ?? '').trim(), // основной модуль (§0)
     settings: input.settings && typeof input.settings === 'object' ? input.settings : {}, // пресет модуля
     accountIds: normIds(input.accountIds),
+    // Нормализуем как цели папок: без @, без пробелов, нижний регистр, без дублей —
+    // иначе @Crypto и @crypto дали бы двойную обработку одним аккаунтом (ср. 11.7-d).
+    targets: [...new Set((Array.isArray(input.targets) ? input.targets : [])
+      .map((x) => String(x || '').trim().replace(/^@/, '').toLowerCase()).filter(Boolean))],
     pinned: input.pinned !== false, // по умолчанию аккаунты закрепляются (выходят из общего пула)
     status,
     chat: normChat(input.chat), // §9: опциональный догоняющий чатинг
