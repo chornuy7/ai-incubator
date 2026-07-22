@@ -51,6 +51,13 @@ export function AutopostingPage() {
 
   const [rules, setRules] = useState<AutomationRule[]>([])
   const [loadingRules, setLoadingRules] = useState(true)
+  const [showSpent, setShowSpent] = useState(false)
+
+  // «Отработавшее» = разовое правило, которое уже выключилось после запуска. Оно ничего
+  // больше не сделает, но занимало место наравне с живыми (баг 10.5-b).
+  const spentRules = useMemo(() => rules.filter((r) => !r.enabled && r.schedule?.type === 'once'), [rules])
+  const activeRules = useMemo(() => rules.filter((r) => !spentRules.includes(r)), [rules, spentRules])
+  const visibleRules = showSpent ? [...activeRules, ...spentRules] : activeRules
 
   const channels = useMemo(() => {
     const raw = channelsText.split(/[\n,;]+/).map((x) => x.trim()).filter(Boolean)
@@ -287,15 +294,27 @@ export function AutopostingPage() {
         <div className="mb-3 flex items-center gap-2">
           <CalendarClock size={16} className="text-spark-400" />
           <span className="font-display text-base font-bold text-fg">Запланированные посты</span>
-          <span className="rounded-md bg-spark-500/12 px-2 py-0.5 text-xs font-bold text-spark-300">{rules.length}</span>
+          <span className="rounded-md bg-spark-500/12 px-2 py-0.5 text-xs font-bold text-spark-300">{activeRules.length}</span>
+          {/* Разовое правило после срабатывания навсегда остаётся в списке со статусом «выключен».
+              За месяц ежедневной работы список превращается в свалку мёртвых записей, среди которых
+              надо выискивать живые (баг 10.5-b). Прячем их за переключатель. */}
+          {spentRules.length > 0 && (
+            <button
+              type="button"
+              onClick={() => setShowSpent((v) => !v)}
+              className="ml-auto text-xs font-semibold text-muted hover:text-fg"
+            >
+              {showSpent ? 'Скрыть отработавшие' : `Показать отработавшие (${spentRules.length})`}
+            </button>
+          )}
         </div>
         {loadingRules ? (
           <p className="text-sm text-muted">Загрузка…</p>
-        ) : rules.length === 0 ? (
+        ) : visibleRules.length === 0 ? (
           <p className="text-sm text-muted">Пока ничего не запланировано. Выберите «По расписанию» выше — пост появится здесь и опубликуется сам.</p>
         ) : (
           <div className="flex flex-col gap-2">
-            {rules.map((r) => (
+            {visibleRules.map((r) => (
               <div key={r.id} className={`flex flex-wrap items-center gap-3 rounded-lg border px-3 py-2 ${editingId === r.id ? 'border-spark-500/50 bg-spark-500/8' : 'border-line bg-elevated/50'}`}>
                 <div className="min-w-0 flex-1">
                   <div className="truncate text-sm font-semibold text-fg">{r.name}</div>

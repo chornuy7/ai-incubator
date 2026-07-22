@@ -6,6 +6,7 @@ import { HelpButton } from '@/features/neuro-commenting/moduleUi'
 import { confirmDialog } from '@/shared/lib/dialog'
 import { fetchLeads, createLead, updateLead, deleteLead, sortLeadsByPriority, LEAD_STATUSES, type Lead, type LeadStatus } from '@/api/leadsApi'
 import { fetchGoals, type Goal } from '@/api/goalsApi'
+import { fetchAccounts, type ServerAccount } from '@/api/accountsApi'
 
 // §9: воронка прогрева. Порядок = движение к цели; «Горячий» — мгновенный алерт.
 const STATUS: Record<LeadStatus, { label: string; tone: 'spark' | 'iris' | 'amber' | 'rose' | 'muted' }> = {
@@ -27,19 +28,34 @@ export function LeadsPage() {
   const [fStatus, setFStatus] = useState('')
   const [peer, setPeer] = useState('')
   const [newGoal, setNewGoal] = useState('')
+  // §3.3/§4: без ответственного аккаунта гвардия «горячий лид» бессильна — она ищет
+  // совпадение по lead.accountId. Раньше форма его не спрашивала, и вручную добавленный
+  // горячий лид не защищал аккаунт вообще (прогон 21–22.07, тест 12.9).
+  const [accounts, setAccounts] = useState<ServerAccount[]>([])
+  const [newAccount, setNewAccount] = useState('')
 
   const goalName = useMemo(() => {
     const m = new Map(goals.map((g) => [g.id, g.name]))
     return (id?: string | null) => (id ? m.get(id) || '—' : '')
   }, [goals])
 
+  const accountOptions = useMemo(
+    () => [{ value: '', label: 'Без аккаунта' }, ...accounts.map((a) => ({ value: a.id, label: a.name || a.id.slice(-6) }))],
+    [accounts],
+  )
+  const accountName = useMemo(() => {
+    const m = new Map(accounts.map((a) => [a.id, a.name || a.id.slice(-6)]))
+    return (id?: string | null) => (id ? m.get(id) || String(id).slice(-6) : '')
+  }, [accounts])
+
   const load = async () => {
     try {
-      const [l, g] = await Promise.all([
+      const [l, g, a] = await Promise.all([
         fetchLeads({ goalId: fGoal || undefined, status: (fStatus as LeadStatus) || undefined }),
         fetchGoals().catch(() => []),
+        fetchAccounts().catch(() => []),
       ])
-      setLeads(l); setGoals(g)
+      setLeads(l); setGoals(g); setAccounts(a)
     } catch (err) {
       pushToast({ type: 'error', title: 'Не удалось загрузить лидов', desc: err instanceof Error ? err.message : '' })
     } finally {
@@ -57,7 +73,7 @@ export function LeadsPage() {
   const add = async () => {
     if (!peer.trim()) return pushToast({ type: 'error', title: 'Укажите контакт лида' })
     try {
-      await createLead({ peer: peer.trim(), goalId: newGoal || null })
+      await createLead({ peer: peer.trim(), goalId: newGoal || null, accountId: newAccount || null })
       setPeer('')
       pushToast({ type: 'success', title: 'Лид добавлен' })
       await load()
@@ -75,6 +91,19 @@ export function LeadsPage() {
     }
     catch (err) { pushToast({ type: 'error', title: 'Ошибка', desc: err instanceof Error ? err.message : '' }) }
   }
+  /** Назначить ответственного за лида — от этого зависит гвардия «горячий лид» (12.9). */
+  const setAccount = async (l: Lead, accountId: string) => {
+    try {
+      await updateLead(l.id, { accountId: accountId || null })
+      pushToast({
+        type: 'success',
+        title: accountId ? `Ответственный: ${accountName(accountId)}` : 'Ответственный снят',
+        desc: accountId && l.status === 'hot' ? 'Аккаунт больше нельзя забрать в другой модуль, пока идёт диалог' : undefined,
+      })
+      await load()
+    } catch (err) { pushToast({ type: 'error', title: 'Ошибка', desc: err instanceof Error ? err.message : '' }) }
+  }
+
   const remove = async (l: Lead) => {
     if (!(await confirmDialog({ title: 'Удалить лида?', message: `${l.peer} будет удалён из CRM.`, confirmLabel: 'Удалить', tone: 'danger' }))) return
     try { await deleteLead(l.id); await load() }
@@ -116,6 +145,8 @@ export function LeadsPage() {
         <div className="ml-auto flex items-center gap-2">
           <input className="input h-9 w-44" value={peer} onChange={(e) => setPeer(e.target.value)} placeholder="@username лида" onKeyDown={(e) => e.key === 'Enter' && void add()} />
           <Select value={newGoal} onChange={setNewGoal} options={goalOptions} className="w-40" placeholder="Цель" />
+          {/* Ответственный аккаунт — от него зависит, защитит ли гвардия «горячий лид» (12.9). */}
+          <Select value={newAccount} onChange={setNewAccount} options={accountOptions} className="w-40" placeholder="Аккаунт" />
           <button onClick={() => void add()} className="btn-primary h-9"><Plus size={15} /> Лид</button>
         </div>
       </div>
@@ -132,8 +163,19 @@ export function LeadsPage() {
               <Badge tone={STATUS[l.status].tone}>{STATUS[l.status].label}</Badge>
               <span className="font-semibold text-white">{l.peer}</span>
               {l.goalId && <span className="text-xs text-iris-300">цель: {goalName(l.goalId)}</span>}
-              {l.accountId && <span className="text-xs text-white/40">акк: {l.accountId.slice(-6)}</span>}
+              {/* Горячий лид без ответственного аккаунта не защищает никого — говорим об этом прямо. */}
+              {l.status === 'hot' && !l.accountId && (
+                <span className="rounded-md bg-amber-500/15 px-1.5 py-0.5 text-[11px] font-bold text-amber-300" title="Гвардия «горячий лид» ищет совпадение по ответственному аккаунту. Пока его нет, аккаунт можно забрать в другой модуль посреди диалога.">
+                  без аккаунта — не защищён
+                </span>
+              )}
               <div className="ml-auto flex items-center gap-2">
+                <Select
+                  value={l.accountId || ''}
+                  onChange={(v) => void setAccount(l, v)}
+                  options={accountOptions}
+                  className="w-36"
+                />
                 <Select
                   value={l.status}
                   onChange={(v) => void setStatus(l, v as LeadStatus)}
