@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { MessagesSquare, Search, RefreshCw, Check, Users, Radio } from 'lucide-react'
+import { MessagesSquare, Search, RefreshCw, Users, Radio } from 'lucide-react'
 import { ConversationBubble } from '@/features/conversation/ConversationBubble'
+import { AccountRail } from '@/features/conversation/AccountRail'
 import { ReplyBox } from '@/features/conversation/ReplyBox'
 import { activeAccounts, useApp } from '@/mocks/store'
 import { PageHeader, Card, EmptyState, Segmented, Badge } from '@/shared/ui'
@@ -107,20 +108,22 @@ export function InboxPage() {
         actions={<div className="flex items-center gap-2"><HelpButton topic="inbox" className="h-10 w-10" /><button onClick={() => void (tab === 0 ? loadInbox() : loadGroups())} className="btn-ghost h-10"><RefreshCw size={16} className={(loadingInbox || loadingGroups) ? 'animate-spin' : ''} /> Обновить</button></div>}
       />
 
-      <div className="mb-3 flex flex-wrap gap-1.5">
-        {accounts.length === 0 && <span className="text-sm text-white/40">Нет аккаунтов в панели.</span>}
-        {accounts.map((a) => {
-          const on = sel.has(a.id)
-          return (
-            <button key={a.id} onClick={() => toggleAcc(a.id)} className={`flex items-center gap-1 rounded-lg px-2.5 py-1 text-sm ${on ? 'bg-spark-500 text-black' : 'bg-white/5 text-white/70 hover:bg-white/10'}`}>
-              {on && <Check size={13} />}{a.name || a.phone || a.id.slice(-6)}
-            </button>
-          )
-        })}
-      </div>
+      {accounts.length === 0 ? (
+        <span className="text-sm text-white/40">Нет аккаунтов в панели.</span>
+      ) : (
+      // Два яруса: слева аккаунты, справа их содержимое. Раньше выбор был стеной
+      // одинаковых чипов с сырыми id — ни имени, ни статуса, ни поиска.
+      <div className="grid gap-3 lg:grid-cols-[280px_1fr]">
+        <AccountRail
+          accounts={accounts}
+          selected={sel}
+          onToggle={toggleAcc}
+          onOnly={(id) => setSel(new Set([id]))}
+        />
 
+        <div className="min-w-0">
       {sel.size === 0 ? (
-        <EmptyState icon={<MessagesSquare size={26} />} title="Выберите аккаунт(ы)" desc="Отметьте аккаунты выше — покажем в каких группах состоит и все диалоги, как в Telegram." />
+        <EmptyState icon={<MessagesSquare size={26} />} title="Выберите аккаунт" desc="Кликните аккаунт слева — покажем, в каких группах он состоит и все его диалоги, как в Telegram." />
       ) : (
         <>
         <div className="mb-3">
@@ -223,6 +226,9 @@ export function InboxPage() {
         </div>
         )}
         </>
+      )}
+        </div>
+      </div>
       )}
     </div>
   )

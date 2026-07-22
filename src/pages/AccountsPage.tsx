@@ -13,6 +13,7 @@ import {
   PageHeader, Avatar, StatusBadge, EmptyState, Dropdown, MenuItem, Select, Skeleton, Modal,
 } from '@/shared/ui'
 import { HelpButton } from '@/features/neuro-commenting/moduleUi'
+import { accountLabel, accountSub } from '@/features/conversation/AccountRail'
 import { AddAccountWizard } from '@/features/add-tg-account/AddAccountWizard'
 import { ImportModal } from '@/features/import-sessions/ImportModal'
 import { ProxyPoolModal } from '@/features/proxy/ProxyPoolModal'
@@ -758,10 +759,10 @@ function AccountsTable(props: {
                 {showAccountCol && (
                 <td className="px-4 py-3">
                   <button type="button" onClick={() => props.onDetail(a)} className="group flex items-center gap-3 text-left" title="Открыть статистику аккаунта">
-                    {showCol('avatar') && <Avatar name={a.name} color={a.avatarColor} />}
+                    {showCol('avatar') && <Avatar name={accountLabel(a)} color={a.avatarColor} />}
                     <div className="min-w-0">
-                      {showCol('name') && <div className="truncate font-semibold text-fg transition-colors group-hover:text-spark-300">{a.name}</div>}
-                      <div className="truncate text-xs text-muted">@{a.username} · {a.phone}</div>
+                      {showCol('name') && <div className="truncate font-semibold text-fg transition-colors group-hover:text-spark-300">{accountLabel(a)}</div>}
+                      <div className="truncate text-xs text-muted">{accountSub(a)}</div>
                     </div>
                   </button>
                 </td>
@@ -865,10 +866,10 @@ function AccountsTable(props: {
           <div key={a.id} className={cn('flex items-center gap-3 p-3.5', a.busyIn && 'opacity-60')}>
             <input type="checkbox" checked={selected.has(a.id)} onChange={() => toggleOne(a.id)} className="h-4 w-4 rounded border-line accent-spark-500" />
             <button type="button" onClick={() => props.onDetail(a)} className="flex min-w-0 flex-1 items-center gap-3 text-left" title="Открыть статистику аккаунта">
-              <Avatar name={a.name} color={a.avatarColor} />
+              <Avatar name={accountLabel(a)} color={a.avatarColor} />
               <div className="min-w-0 flex-1">
-                <div className="truncate font-semibold text-fg">{a.name}</div>
-                <div className="truncate text-xs text-muted">@{a.username} · {a.phone}</div>
+                <div className="truncate font-semibold text-fg">{accountLabel(a)}</div>
+                <div className="truncate text-xs text-muted">{accountSub(a)}</div>
                 <div className="mt-1.5">
                   <StatusBadge status={a.status} until={a.statusUntil} reason={a.statusReason} />
                 {a.busyIn ? (
