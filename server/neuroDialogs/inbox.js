@@ -91,9 +91,28 @@ export async function fetchMessageThumb(client, peerId, messageId, peerOpts = {}
   const found = await client.getMessages(entity, { ids: [Number(messageId)] })
   const msg = Array.isArray(found) ? found[0] : found
   if (!msg?.media || !THUMBABLE.has(mediaKind(msg))) return null
-  // thumb: 0 — самая мелкая превьюшка (обычно единицы КБ), её и отдаём.
-  const buf = await client.downloadMedia(msg, { thumb: 0 })
-  return buf && buf.length ? Buffer.from(buf) : null
+  // Берём САМУЮ КРУПНУЮ доступную миниатюру, укладывающуюся в потолок по весу.
+  // Раньше стояло `thumb: 0` — самый мелкий размер: превью выходили по 660–800 байт,
+  // размытыми квадратиками, а скриншот таблицы превращался в белое пятно. Смысл
+  // превью в том, чтобы УВИДЕТЬ, что прислали, поэтому идём от крупного к мелкому
+  // и останавливаемся на первом, что влезает в лимит (прогон 21–22.07, тест 4.5).
+  // Оригинал (мегабайты видео) по-прежнему не качаем никогда.
+  const MAX_THUMB_BYTES = 40 * 1024
+  const sizes = msg.media?.photo?.sizes || msg.media?.document?.thumbs || []
+  // Индексы миниатюр от крупной к мелкой; если размеров не видно — пробуем 2, 1, 0.
+  const order = sizes.length ? [...sizes.keys()].reverse() : [2, 1, 0]
+  let fallback = null
+  for (const thumb of order) {
+    let buf
+    try {
+      buf = await client.downloadMedia(msg, { thumb })
+    } catch { continue } // размера нет или он недоступен — пробуем следующий
+    if (!buf || !buf.length) continue
+    const out = Buffer.from(buf)
+    if (out.length <= MAX_THUMB_BYTES) return out
+    fallback = out // всё крупнее лимита — запомним на случай, что мельче не найдётся
+  }
+  return fallback
 }
 
 /** @param {import('telegram').TelegramClient} client @param {number} [limit] */

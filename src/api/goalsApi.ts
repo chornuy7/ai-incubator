@@ -106,6 +106,14 @@ export async function deleteKb(goalId: string, kbId: string): Promise<void> {
   await apiDelete(`/api/goals/${goalId}/kb/${kbId}`)
 }
 
+/**
+ * §4: потолок размера файла базы знаний. Должен совпадать с `KB_FILE_MAX_BYTES`
+ * в server/kbFiles.js — фронт проверяет его ПЕРВЫМ, до отправки, потому что файл
+ * уходит data-URL'ом и base64 раздувает его на треть, пробивая лимит тела запроса
+ * express раньше серверной проверки (тест 5.6).
+ */
+export const KB_FILE_MAX_BYTES = 3 * 1024 * 1024
+
 /** §4: загрузить файл в базу знаний цели (data-URL, до 3 МБ). */
 export async function uploadKbFile(goalId: string, file: File, title?: string): Promise<KbItem> {
   const dataUrl = await new Promise<string>((resolve, reject) => {

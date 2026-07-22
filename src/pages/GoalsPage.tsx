@@ -8,7 +8,7 @@ import { FolderPicker } from '@/features/modules/shared'
 import {
   fetchGoals, createGoal, updateGoal, deleteGoal, isGoalExpired, isSaneDeadline,
   DEADLINE_MIN_YEAR, DEADLINE_MAX_YEAR, LEAD_TARGET_MAX, type Goal, type GoalInput,
-  fetchKb, createKb, deleteKb, uploadKbFile, kbFileUrl, type KbItem,
+  fetchKb, createKb, deleteKb, uploadKbFile, kbFileUrl, KB_FILE_MAX_BYTES, type KbItem,
 } from '@/api/goalsApi'
 import { fetchLeads } from '@/api/leadsApi'
 import { fetchCampaigns, type Campaign } from '@/api/campaignsApi'
@@ -90,6 +90,20 @@ export function GoalsPage() {
   // §4: база знаний с файлами — грузим и сразу обновляем список.
   const addKbFile = async (file: File | undefined) => {
     if (!editing || !file) return
+    // Размер проверяем ЗДЕСЬ, до отправки. Файл уходит как data-URL, то есть base64
+    // раздувает его примерно на треть: 4 МБ превращались в 5.33 МБ и пробивали лимит
+    // тела запроса express (5mb) — запрос умирал ДО серверной проверки, express отдавал
+    // HTML-страницу PayloadTooLargeError, фронт не мог её разобрать и показывал
+    // «API недоступен — перезапустите npm run dev», хотя API был исправен. Вежливое
+    // «Файл больше 3 МБ» показывалось лишь в узком окне 3–3.6 МБ (тест 5.6).
+    if (file.size > KB_FILE_MAX_BYTES) {
+      const mb = (n: number) => `${(n / 1024 / 1024).toFixed(1)} МБ`
+      return pushToast({
+        type: 'error',
+        title: `Файл больше ${mb(KB_FILE_MAX_BYTES)}`,
+        desc: `«${file.name}» весит ${mb(file.size)} — уменьшите или загрузите ссылкой.`,
+      })
+    }
     setKbUploading(true)
     try {
       await uploadKbFile(editing.id, file)
