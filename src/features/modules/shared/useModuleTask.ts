@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import { useApp } from '@/mocks/store'
+import { launchWithSkip } from './launchWithSkip'
 import {
   startModuleTask,
   fetchModuleTask,
@@ -104,7 +105,10 @@ export function useModuleTask(moduleKey: string) {
     if (!guardNet(`запуск ${moduleKey}`)) return false
     setStarting(true)
     try {
-      const t = await startModuleTask(moduleKey, settings)
+      // Часть аккаунтов в карантине/спамблоке — не валим запуск, а предлагаем без них:
+      // при трёх десятках профилей кто-то в блоке почти всегда.
+      const t = await launchWithSkip((skip) => startModuleTask(moduleKey, settings, skip))
+      if (!t) return false
       setTaskId(t.id)
       setTask(t)
       persistActiveTaskId(moduleKey, t.id)

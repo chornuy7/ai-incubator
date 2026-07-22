@@ -13,6 +13,7 @@ import type { TgAccount } from '@/shared/types'
 import { cn } from '@/shared/lib/utils'
 import { confirmDialog, promptDialog } from '@/shared/lib/dialog'
 import { TaskAudiencePanel } from '@/features/mailing/TaskAudiencePanel'
+import { launchWithSkip } from '@/features/modules/shared/launchWithSkip'
 import { massStopConfirmSteps, canStopWarming, containsWarming } from '@/shared/lib/massAction'
 import { useSession } from '@/features/auth/session'
 import { downloadXls } from '@/shared/lib/exportXls'
@@ -146,7 +147,11 @@ export function TasksPage() {
     // #4: рестарт боевого модуля = реальные действия в Telegram — подтверждаем.
     if (isCombatModule(t.moduleKey) && !(await confirmDialog({ title: 'Реальные действия в Telegram', message: combatConfirmText(t.moduleKey), confirmLabel: 'Запустить', tone: 'danger' }))) return
     setBusy(t.id)
-    try { await restartModuleTask(t.moduleKey, t.id); pushToast({ type: 'success', title: 'Задача перезапущена' }); await load() }
+    // Часть аккаунтов в карантине/спамблоке — не валим запуск, а предлагаем без них.
+    try {
+      const done = await launchWithSkip((skip) => restartModuleTask(t.moduleKey, t.id, skip))
+      if (done) { pushToast({ type: 'success', title: 'Задача перезапущена' }); await load() }
+    }
     catch (err) { pushToast({ type: 'error', title: 'Ошибка перезапуска', desc: err instanceof Error ? err.message : '' }) }
     finally { setBusy(null) }
   }
@@ -198,7 +203,9 @@ export function TasksPage() {
     // Боевые модули при перезапуске = реальные действия в Telegram — подтверждаем разово.
     if (startTargets.some((t) => t.status !== 'paused' && isCombatModule(t.moduleKey)) &&
         !(await confirmDialog({ title: 'Реальные действия в Telegram', message: 'Перезапуск боевых модулей выполнит реальные действия в Telegram (комментарии / ответы / реакции). Продолжить?', confirmLabel: 'Запустить', tone: 'danger' }))) return
-    void runBulk('Запуск/возобновление', startTargets, (t) => (t.status === 'paused' ? resumeModuleTask(t.moduleKey, t.id) : restartModuleTask(t.moduleKey, t.id)))
+    // Массовый запуск: недоступные аккаунты исключаем сразу. Спрашивать по каждой
+    // задаче отдельно — двадцать одинаковых вопросов подряд, никто так не работает.
+    void runBulk('Запуск/возобновление', startTargets, (t) => (t.status === 'paused' ? resumeModuleTask(t.moduleKey, t.id) : restartModuleTask(t.moduleKey, t.id, true)))
   }
   const bulkPause = () => void runBulk('Пауза', pauseTargets, (t) => pauseModuleTask(t.moduleKey, t.id))
   /**
@@ -590,7 +597,15 @@ export function TaskDetailPage() {
   const doRestart = async () => {
     // #4: рестарт боевого модуля = реальные действия в Telegram — подтверждаем.
     if (isCombatModule(moduleKey) && !(await confirmDialog({ title: 'Реальные действия в Telegram', message: combatConfirmText(moduleKey), confirmLabel: 'Запустить', tone: 'danger' }))) return
-    void run(() => restartModuleTask(moduleKey, id), 'Задача перезапущена')
+    // `run` не подходит: отказ в диалоге — не ошибка, а осознанный выбор,
+    // и показывать по нему красный тост неправильно.
+    setBusy(true)
+    try {
+      const done = await launchWithSkip((skip) => restartModuleTask(moduleKey, id, skip))
+      if (done) { pushToast({ type: 'success', title: 'Задача перезапущена' }); await reload() }
+    } catch (err) {
+      pushToast({ type: 'error', title: 'Ошибка', desc: err instanceof Error ? err.message : '' })
+    } finally { setBusy(false) }
   }
 
   // §9.8: правка задачи — только на паузе (сервер это тоже проверяет и вернёт 409).

@@ -1,3 +1,21 @@
+/**
+ * Ошибка API вместе с телом ответа.
+ *
+ * Обычный `Error` доносит только текст, и всё остальное терялось: например список
+ * аккаунтов, из-за которых запуск не прошёл. Из-за этого пользователю показывали
+ * «нельзя назначить профили» без возможности что-то сделать прямо там.
+ */
+export class ApiError<T = Record<string, unknown>> extends Error {
+  readonly status: number
+  readonly data: T
+  constructor(message: string, status: number, data: T) {
+    super(message)
+    this.name = 'ApiError'
+    this.status = status
+    this.data = data
+  }
+}
+
 export async function parseJson<T>(res: Response): Promise<T> {
   const text = await res.text()
   const ct = res.headers.get('content-type') || ''
@@ -14,7 +32,11 @@ export async function parseJson<T>(res: Response): Promise<T> {
     throw new Error(`Некорректный ответ API (HTTP ${res.status})`)
   }
   if (!res.ok || (data && typeof data === 'object' && 'ok' in data && !(data as { ok?: boolean }).ok)) {
-    throw new Error((data as { error?: string }).error || `HTTP ${res.status}`)
+    throw new ApiError(
+      (data as { error?: string }).error || `HTTP ${res.status}`,
+      res.status,
+      (data ?? {}) as Record<string, unknown>,
+    )
   }
   return data as T
 }

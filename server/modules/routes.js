@@ -1,7 +1,7 @@
 import { Router } from 'express'
 import { getModuleStore, listModuleKeys, validateSettings, startModuleTask, stopModuleTask, pauseModuleTask, resumeModuleTask } from './registry.js'
 import { releaseTaskLocks } from '../lib/accountLocks.js'
-import { assertAccountsAssignable, loadAllMeta } from '../accountsMeta.js'
+import { assertAccountsAssignable, checkAccountsAssignable, loadAllMeta } from '../accountsMeta.js'
 import { assertNoHotLeadConflict, assertActiveDialogLimit } from '../leads.js'
 import { findDuplicateActiveTask } from '../lib/taskDedup.js'
 import { getGoal, isGoalExpired } from '../goals.js'
@@ -11,6 +11,33 @@ import { canEditTask, pickEditableSettings } from '../lib/taskEdit.js'
 import { isAdminRequest } from '../lib/accessGuard.js'
 
 export const modulesRouter = Router()
+
+/**
+ * Отсеять аккаунты, которые модуль взять не может, — или объяснить, кто мешает.
+ *
+ * Один аккаунт в карантине валил весь запуск, и человек шёл искать виноватого руками.
+ * Теперь ответ 409 несёт состав: фронт показывает список и предлагает исключить.
+ * С `skipUnavailable` сервер убирает их сам — но только если кто-то остаётся.
+ * @returns {Promise<{ ok:true, accountIds:string[] } | { ok:false, payload:object }>}
+ */
+async function resolveUsableAccounts(settings, moduleKey, skipUnavailable) {
+  const { error, blocked, usable } = await checkAccountsAssignable(settings.accountIds, moduleKey)
+  if (!error) return { ok: true, accountIds: settings.accountIds }
+  if (skipUnavailable && usable.length) return { ok: true, accountIds: usable }
+  return {
+    ok: false,
+    payload: {
+      ok: false,
+      error: usable.length
+        ? `${error} Можно исключить их и запустить на оставшихся (${usable.length}).`
+        : `${error} Свободных профилей не осталось — дождитесь выхода из карантина или выберите другие.`,
+      // Состав нужен фронту, чтобы показать понятный вопрос вместо голой ошибки.
+      blocked,
+      usableCount: usable.length,
+      canSkip: usable.length > 0,
+    },
+  }
+}
 
 /**
  * §12: стоп/пауза прогрева — только супер-админ. Раньше это проверял ТОЛЬКО фронт
@@ -108,8 +135,10 @@ modulesRouter.post('/:moduleKey/tasks', async (req, res) => {
     }
 
     // Guard безопасного назначения (§3.2/§3.3): не отдаём непрогретые/занятые статусом профили.
-    const assignErr = await assertAccountsAssignable(settings.accountIds, moduleKey)
-    if (assignErr) return res.status(409).json({ ok: false, error: assignErr })
+    // Недоступные можно исключить — тогда задача идёт на оставшихся, а не падает целиком.
+    const picked = await resolveUsableAccounts(settings, moduleKey, req.body?.skipUnavailable === true)
+    if (!picked.ok) return res.status(409).json(picked.payload)
+    settings.accountIds = picked.accountIds
     // Guard «горячий лид» (§3.3/§4): не забираем аккаунт из активного диалога в другой модуль.
     const hotErr = await assertNoHotLeadConflict(settings.accountIds, moduleKey)
     if (hotErr) return res.status(409).json({ ok: false, error: hotErr })
@@ -256,8 +285,9 @@ modulesRouter.post('/:moduleKey/tasks/:id/restart', async (req, res) => {
 
     const err = validateSettings(moduleKey, settings)
     if (err) return res.status(400).json({ ok: false, error: err })
-    const assignErr = await assertAccountsAssignable(settings.accountIds, moduleKey)
-    if (assignErr) return res.status(409).json({ ok: false, error: assignErr })
+    const picked = await resolveUsableAccounts(settings, moduleKey, req.body?.skipUnavailable === true)
+    if (!picked.ok) return res.status(409).json(picked.payload)
+    settings.accountIds = picked.accountIds
 
     const { store: s, task, worker } = startModuleTask(moduleKey, settings)
     task.initiator = settings.initiator

@@ -11,7 +11,14 @@ import { getTrustCache } from './lib/trustCache.js'
 const TRUST_GATED_MODULES = new Set(['neuro-commenting', 'neuro-chatting', 'neuro-dialogs', 'mass-react', 'mailing'])
 const TRUST_MIN = 40
 
-const META_FILE = path.join(path.dirname(SESSIONS_DIR), 'accounts-meta.json')
+/**
+ * Путь к метаданным — лениво и с возможностью подмены.
+ *
+ * Вычисление при импорте не давало изолировать тесты: подменить файл после того,
+ * как модуль подтянулся по цепочке импортов, было уже нельзя, и тест писал в боевые
+ * данные (так уже случилось с целями).
+ */
+const metaFile = () => process.env.ACCOUNTS_META_FILE || path.join(path.dirname(SESSIONS_DIR), 'accounts-meta.json')
 
 const DEFAULT_META = {
   role: 'Резерв',
@@ -23,7 +30,7 @@ const DEFAULT_META = {
 
 export async function loadAllMeta() {
   try {
-    const raw = await fs.readFile(META_FILE, 'utf8')
+    const raw = await fs.readFile(metaFile(), 'utf8')
     return /** @type {Record<string, object>} */ (JSON.parse(raw))
   } catch {
     return {}
@@ -44,7 +51,7 @@ export async function getAccountMeta(accountId) {
  */
 export async function setAccountMeta(accountId, patch) {
   let result = null
-  await mutateJson(META_FILE, (all) => {
+  await mutateJson(metaFile(), (all) => {
     const next = all && typeof all === 'object' ? all : {}
     next[accountId] = {
       ...DEFAULT_META,
@@ -153,30 +160,61 @@ export async function backfillMissingStatusUntil(now = Date.now()) {
  * @returns {Promise<string|null>}
  */
 export async function assertAccountsAssignable(accountIds, moduleKey) {
-  if (!accountIds?.length) return null
+  return (await checkAccountsAssignable(accountIds, moduleKey)).error
+}
+
+/**
+ * Тот же guard, но с разбором: КТО именно не проходит и что останется, если их убрать.
+ *
+ * Раньше наружу отдавался только текст ошибки, и один аккаунт в карантине валил весь
+ * запуск: человек шёл в менеджер, искал виноватого, правил набор, возвращался. При
+ * трёх десятках аккаунтов, часть которых постоянно в спамблоке, это тупик — поэтому
+ * теперь можно предложить «исключить недоступные и запустить на оставшихся».
+ *
+ * @param {string[]} accountIds
+ * @param {string} moduleKey
+ * @returns {Promise<{ error: string|null, blocked: {id:string,status:string,reason:string}[], usable: string[] }>}
+ */
+export async function checkAccountsAssignable(accountIds, moduleKey) {
+  if (!accountIds?.length) return { error: null, blocked: [], usable: [] }
   const all = await loadAllMeta()
-  /** @type {string[]} */
+  /** @type {{id:string,status:string,reason:string}[]} */
   const blocked = []
   /** @type {string[]} */
-  const lowTrust = []
+  const usable = []
   const gated = TRUST_GATED_MODULES.has(moduleKey)
   for (const id of accountIds) {
     const status = normalizeStatus((all[id] || {}).status)
-    if (!canModuleUseAccount(moduleKey, status)) { blocked.push(`${String(id).slice(-6)} (${status})`); continue }
+    if (!canModuleUseAccount(moduleKey, status)) {
+      blocked.push({ id, status, reason: 'статус' })
+      continue
+    }
     if (gated) {
       // Кэшированный trust (fail-open: если ни разу не считался — не блокируем).
       const t = await getTrustCache(id)
-      if (t && Number(t.score) < TRUST_MIN) lowTrust.push(`${String(id).slice(-6)} (trust ${t.score})`)
+      if (t && Number(t.score) < TRUST_MIN) {
+        blocked.push({ id, status, reason: `trust ${t.score}` })
+        continue
+      }
     }
+    usable.push(id)
   }
-  if (blocked.length) return `Нельзя назначить профили в статусе, недоступном для модуля: ${blocked.join(', ')}. Дождитесь выхода из прогрева/карантина или выберите другие.`
-  if (lowTrust.length) return `Профили с trust<${TRUST_MIN} нельзя брать в боевой модуль (§6, авто-стоп → прогрев): ${lowTrust.join(', ')}. Отправьте их на прогрев или выберите другие.`
-  return null
+  if (!blocked.length) return { error: null, blocked: [], usable }
+  const byStatus = blocked.filter((b) => b.reason === 'статус')
+  const byTrust = blocked.filter((b) => b.reason !== 'статус')
+  const parts = []
+  if (byStatus.length) parts.push(`недоступны по статусу: ${byStatus.map((b) => `${String(b.id).slice(-6)} (${b.status})`).join(', ')}`)
+  if (byTrust.length) parts.push(`ниже порога trust<${TRUST_MIN}: ${byTrust.map((b) => `${String(b.id).slice(-6)} (${b.reason})`).join(', ')}`)
+  return {
+    error: `Часть профилей запустить нельзя — ${parts.join('; ')}.`,
+    blocked,
+    usable,
+  }
 }
 
 export async function deleteAccountMeta(accountId) {
   // Тоже через mutateJson — иначе удаление одного аккаунта могло затереть правки соседних.
-  await mutateJson(META_FILE, (all) => {
+  await mutateJson(metaFile(), (all) => {
     const next = all && typeof all === 'object' ? all : {}
     delete next[accountId]
     return next

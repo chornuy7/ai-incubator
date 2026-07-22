@@ -118,8 +118,18 @@ export interface ModuleTask {
 
 const base = (moduleKey: string) => `/api/modules/${moduleKey}`
 
-export async function startModuleTask(moduleKey: string, settings: ModuleTaskSettings): Promise<ModuleTask> {
-  const data = await apiPost<{ task: ModuleTask }>(`${base(moduleKey)}/tasks`, { settings })
+/** Аккаунт, который модуль взять не может, и почему. */
+export interface BlockedAccount { id: string; status: string; reason: string }
+
+/** Тело ответа 409, когда часть аккаунтов недоступна. */
+export interface UnavailablePayload { error: string; blocked?: BlockedAccount[]; usableCount?: number; canSkip?: boolean }
+
+/**
+ * @param skipUnavailable исключить недоступные аккаунты и запустить на оставшихся.
+ *   Без него сервер отвечает 409 со списком — чтобы спросить человека, а не решать за него.
+ */
+export async function startModuleTask(moduleKey: string, settings: ModuleTaskSettings, skipUnavailable = false): Promise<ModuleTask> {
+  const data = await apiPost<{ task: ModuleTask }>(`${base(moduleKey)}/tasks`, { settings, skipUnavailable })
   return data.task
 }
 
@@ -138,8 +148,8 @@ export async function stopModuleTask(moduleKey: string, taskId: string): Promise
   return data.task
 }
 
-export async function restartModuleTask(moduleKey: string, taskId: string): Promise<ModuleTask> {
-  const data = await apiPost<{ task: ModuleTask }>(`${base(moduleKey)}/tasks/${taskId}/restart`)
+export async function restartModuleTask(moduleKey: string, taskId: string, skipUnavailable = false): Promise<ModuleTask> {
+  const data = await apiPost<{ task: ModuleTask }>(`${base(moduleKey)}/tasks/${taskId}/restart`, { skipUnavailable })
   return data.task
 }
 
