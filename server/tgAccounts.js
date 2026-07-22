@@ -56,6 +56,10 @@ function toAccountDto(accountId, meta, me, sessionOk) {
     // что он у нас есть: этого достаточно, чтобы видеть, где реавторизация возможна.
     has2fa: !!meta.twoFA,
     inTrash: !!meta.inTrash,
+    // Временные статусы (спамблок/флудвейт/карантин) сами спадают по сроку — без него
+    // оператор видит «спамблок» и не знает, ждать ему или списывать аккаунт.
+    statusUntil: typeof meta.statusUntil === 'number' ? meta.statusUntil : null,
+    statusReason: meta.statusReason || '',
     createdAt: meta.createdAt || Date.now(),
     busyIn: (() => {
       const lock = getAccountLock(accountId)

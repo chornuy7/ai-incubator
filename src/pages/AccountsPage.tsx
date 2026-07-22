@@ -784,7 +784,7 @@ function AccountsTable(props: {
                 {showCol('status') && (
                   <td className="px-4 py-3">
                     <div className="flex flex-col items-start gap-1.5">
-                      <StatusBadge status={a.status} />
+                      <StatusBadge status={a.status} until={a.statusUntil} reason={a.statusReason} />
                       {a.busyIn ? (
                         a.busyIn.taskStatus === 'paused' ? (
                           <div className="flex items-center gap-1 text-[11px] font-semibold text-amber-300">
@@ -870,7 +870,7 @@ function AccountsTable(props: {
                 <div className="truncate font-semibold text-fg">{a.name}</div>
                 <div className="truncate text-xs text-muted">@{a.username} · {a.phone}</div>
                 <div className="mt-1.5">
-                  <StatusBadge status={a.status} />
+                  <StatusBadge status={a.status} until={a.statusUntil} reason={a.statusReason} />
                 {a.busyIn ? (
                   a.busyIn.taskStatus === 'paused' ? (
                     <div className="mt-1 flex items-center gap-1 text-[11px] font-semibold text-amber-300">

@@ -99,6 +99,7 @@ export async function setAccountStatus(accountId, to, opts = {}) {
  * @returns {Promise<{ accountId: string, from: string, to: string }[]>}
  */
 export async function reconcileExpiredStatuses(now = Date.now()) {
+  await backfillMissingStatusUntil(now)
   const all = await loadAllMeta()
   /** @type {{ accountId: string, from: string, to: string }[]} */
   const flipped = []
@@ -116,6 +117,31 @@ export async function reconcileExpiredStatuses(now = Date.now()) {
     } catch { /* недопустимый переход — пропускаем */ }
   }
   return flipped
+}
+
+/** Сколько держится временный статус, если срок не был проставлен (часы). */
+const DEFAULT_HOLD_HOURS = { spamblock: 24, quarantine: 24, floodwait: 1 }
+
+/**
+ * Долечить аккаунты, попавшие во временный статус ДО того, как мы начали писать срок.
+ *
+ * Такие висят вечно: reconciler снимает статус по `statusUntil`, а его нет — и аккаунт
+ * навсегда выпадает из работы. Ровно это случилось с 20 аккаунтами в прогоне 21–22.07.
+ * Срок отсчитываем от момента постановки статуса, а не от «сейчас», — иначе каждый
+ * рестарт продлевал бы наказание заново.
+ * @param {number} [now] @returns {Promise<number>} скольким проставили срок
+ */
+export async function backfillMissingStatusUntil(now = Date.now()) {
+  const all = await loadAllMeta()
+  let fixed = 0
+  for (const [accountId, meta] of Object.entries(all)) {
+    const hours = DEFAULT_HOLD_HOURS[normalizeStatus(meta?.status)]
+    if (!hours || typeof meta?.statusUntil === 'number') continue
+    const since = typeof meta?.statusSince === 'number' ? meta.statusSince : now
+    await setAccountMeta(accountId, { statusUntil: since + hours * 3600 * 1000 })
+    fixed += 1
+  }
+  return fixed
 }
 
 /**

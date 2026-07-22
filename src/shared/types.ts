@@ -35,6 +35,10 @@ export interface TgAccount {
   createdAt: number
   inTrash?: boolean
   note?: string
+  /** До какого времени держится временный статус (спамблок/флудвейт/карантин). */
+  statusUntil?: number | null
+  /** Почему статус выставлен — показывается подсказкой в менеджере. */
+  statusReason?: string
   /** Аккаунт занят задачей другого (или этого) модуля. taskStatus — running/paused/… */
   busyIn?: { moduleKey: string; taskId: string; moduleLabel: string; taskStatus?: string }
 }

@@ -175,14 +175,33 @@ export function Avatar({ name, color, size = 36 }: { name: string; color: string
 }
 
 /* ── StatusBadge ── */
-export function StatusBadge({ status }: { status: AccountStatus }) {
+/**
+ * @param until срок временного статуса (спамблок/флудвейт/карантин). Когда он есть,
+ *   в бейдж дописывается остаток — иначе оператор видит «спамблок» и не понимает,
+ *   ждать ему или списывать аккаунт. Такие статусы система снимает сама.
+ */
+export function StatusBadge({ status, until, reason }: { status: AccountStatus; until?: number | null; reason?: string }) {
   const m = STATUS_META[status]
+  const left = until && until > Date.now() ? formatLeft(until - Date.now()) : ''
   return (
-    <span className={cn('inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-xs font-semibold', m.bg, m.text)}>
+    <span
+      className={cn('inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-xs font-semibold', m.bg, m.text)}
+      title={[reason, until && until > Date.now() ? `Снимется автоматически ${new Date(until).toLocaleString('ru-RU')}` : ''].filter(Boolean).join(' · ')}
+    >
       <span className={cn('h-1.5 w-1.5 rounded-full', m.dot)} />
       {m.label}
+      {left && <span className="font-normal opacity-70">· ещё {left}</span>}
     </span>
   )
+}
+
+/** Остаток времени коротко: «2 ч», «40 мин». Секунды оператору не нужны. */
+function formatLeft(ms: number): string {
+  const min = Math.ceil(ms / 60000)
+  if (min < 60) return `${min} мин`
+  const h = Math.round(min / 60)
+  if (h < 48) return `${h} ч`
+  return `${Math.round(h / 24)} дн`
 }
 
 /* ── EmptyState ── */
