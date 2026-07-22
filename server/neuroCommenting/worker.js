@@ -199,11 +199,19 @@ async function runTask(task) {
 
           if (task.stopRequested) break
 
-          const { text, mode } = await generateComment(
+          task.usedTexts = task.usedTexts || []
+          const { text, mode, reason } = await generateComment(
             (post.message || '').trim() || (post.media ? '[медиа]' : ''),
             s.promptIndex ?? 0,
             resolveSystemPrompt(s),
+            { avoid: task.usedTexts },
           )
+          // Мёртвый ключ — стоп всей задаче: шаблон от лица живых аккаунтов это спам-блок.
+          if (mode === 'fatal') {
+            await appendLog(task, 'error', `ИИ недоступен: ${reason}. Задача остановлена — комментарии без ИИ не публикуем.`, meta.name || accountId)
+            task.stopRequested = true
+            break
+          }
           if (mode !== 'openai') {
             const hint = mode === 'template_no_key'
               ? 'Шаблон (нет OPENAI_API_KEY в .env)'
@@ -230,6 +238,8 @@ async function runTask(task) {
               comment: text,
               status: 'sent',
             })
+            task.usedTexts.push(text)
+            if (task.usedTexts.length > 50) task.usedTexts.shift()
             await appendLog(task, 'success', `Комментарий отправлен: «${text.slice(0, 60)}…»`, meta.name || accountId)
           } catch (err) {
             const floodSec = extractFloodSeconds(err)

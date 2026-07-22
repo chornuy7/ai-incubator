@@ -250,7 +250,15 @@ export async function runNeuroCommenting(task, store) {
             const useDist = Array.isArray(s.typeWeights) && s.typeWeights.some((w) => Number(w) > 0)
             const typeIdx = useDist ? weightedPickIndex(s.typeWeights) : (s.promptIndex ?? 0)
             const sysPrompt = useDist ? resolveSystemPrompt({ ...s, promptIndex: typeIdx, promptText: '' }) : resolveSystemPrompt(s)
-            const { text, mode } = await generateComment(postText, typeIdx, sysPrompt + goalCtx)
+            task.usedTexts = task.usedTexts || []
+            const { text, mode, reason } = await generateComment(postText, typeIdx, sysPrompt + goalCtx, { avoid: task.usedTexts })
+            // Ключ мёртв: продолжать — значит лить шаблонные отписки от живых аккаунтов
+            // в реальные каналы (прогон 21.07). Останавливаем всю задачу, а не аккаунт.
+            if (mode === 'fatal') {
+              await store.appendLog(task, 'error', `ИИ недоступен: ${reason}. Задача остановлена — комментарии без ИИ не публикуем.`, meta.name)
+              task.stopRequested = true
+              break
+            }
             if (mode !== 'openai') {
               const hint = mode === 'template_no_key'
                 ? 'Шаблон (нет OPENAI_API_KEY в .env)'
@@ -272,6 +280,9 @@ export async function runNeuroCommenting(task, store) {
                 comment: text,
                 status: 'sent',
               }, 'commentHistory')
+              // Запоминаем отправленное, чтобы следующий аккаунт не написал то же слово в слово.
+              task.usedTexts.push(text)
+              if (task.usedTexts.length > 50) task.usedTexts.shift()
               await store.appendLog(task, 'success', `Коммент: ${text.slice(0, 50)}…`, meta.name)
               progressed = true
               break
@@ -369,7 +380,14 @@ export async function runNeuroChatting(task, store) {
           continue
         }
         await sleep(pickDelay(s.delays?.action?.[0] ?? 42, s.delays?.action?.[1] ?? 78, mul) * 1000)
-        const { text: reply, mode } = await generateComment(msg.message || '', s.promptIndex ?? 0, resolveSystemPrompt(s) + goalCtx)
+        task.usedTexts = task.usedTexts || []
+        const { text: reply, mode, reason } = await generateComment(msg.message || '', s.promptIndex ?? 0, resolveSystemPrompt(s) + goalCtx, { avoid: task.usedTexts })
+        if (mode === 'fatal') {
+          await store.appendLog(task, 'error', `ИИ недоступен: ${reason}. Задача остановлена — писать в чаты без ИИ не будем.`, meta.name)
+          await disconnectAccount(client, accountId)
+          task.stopRequested = true
+          break
+        }
         if (mode !== 'openai') {
           await store.appendLog(task, 'warning', mode === 'template_no_key' ? 'Шаблон (нет OPENAI_API_KEY)' : 'Шаблон (OpenAI недоступен)', meta.name)
         }
@@ -379,6 +397,8 @@ export async function runNeuroChatting(task, store) {
         await incAction(accountId, 'comments') // §6: групповые сообщения — под лимит комментариев
         await bumpProgress(task, store)
         await store.appendHistory(task, { id: `${task.id}_${Date.now()}`, ts: new Date().toISOString(), accountName: meta.name, target: g, text: reply, status: 'sent' })
+        task.usedTexts.push(reply)
+        if (task.usedTexts.length > 50) task.usedTexts.shift()
         await store.appendLog(task, 'success', `Ответ в @${g}`, meta.name)
         progressed = true
         await disconnectAccount(client, accountId)
