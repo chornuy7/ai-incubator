@@ -96,7 +96,17 @@ export function AccountsPage() {
   const loadCampaigns = () => {
     void fetchCampaigns().then(({ campaigns: cs, pinned }) => { setCampaigns(cs); setPinnedMap(pinned) }).catch(() => {})
   }
-  useEffect(() => { loadCampaigns() }, [])
+  // Кампании обновляем ПЕРИОДИЧЕСКИ, как и аккаунты. Раньше здесь был useEffect с
+  // пустыми зависимостями — список кампаний и карта закреплений грузились ОДИН раз
+  // при открытии, тогда как аккаунты освежались каждые 30 с. Кампанию, созданную на
+  // другой странице, менеджер не видел: её не было в фильтре, а её аккаунты
+  // показывались «в общем пуле», хотя были закреплены. Оператор раздавал их другой
+  // кампании, ломая закрепление (прогон 21–22.07, тест 3.1).
+  useEffect(() => {
+    loadCampaigns()
+    const t = setInterval(loadCampaigns, 30000)
+    return () => clearInterval(t)
+  }, [])
   const [assignAcc, setAssignAcc] = useState<TgAccount | null>(null) // §1: назначить кампанию одному аккаунту
   /**
    * §1: назначить аккаунт кампании — «присвоить (лок)» или «использовать (без лока)».
@@ -779,9 +789,16 @@ function AccountsTable(props: {
                       const c = campaignOf(a.id)
                       if (!c) return <span className="text-xs text-faint">в общем пуле</span>
                       return (
-                        <span className="inline-flex items-center gap-1 text-xs text-fg" title={c.locked ? `Закреплён за кампанией «${c.name}» — вышел из общего пула` : `Используется кампанией «${c.name}» без закрепления`}>
+                        // Два состояния различались ТОЛЬКО формой иконки в 11px (закрытый
+                        // янтарный замок против открытого серого) — тестировщик не смог
+                        // отличить их даже на скриншоте. Добавляем словесную подпись:
+                        // от неё зависит, уйдёт аккаунт в другую кампанию или нет (тест 3.3).
+                        <span className="inline-flex items-center gap-1 text-xs text-fg" title={c.locked ? `Закреплён за кампанией «${c.name}» — вышел из общего пула` : `Используется кампанией «${c.name}» без закрепления — остаётся доступен другим`}>
                           {c.locked ? <Lock size={11} className="shrink-0 text-amber-300" /> : <LockOpen size={11} className="shrink-0 text-faint" />}
                           <span className="truncate">{c.name}</span>
+                          <span className={`shrink-0 rounded px-1 py-0.5 text-[10px] font-bold ${c.locked ? 'bg-amber-500/15 text-amber-300' : 'bg-white/5 text-faint'}`}>
+                            {c.locked ? 'закреплён' : 'без лока'}
+                          </span>
                         </span>
                       )
                     })()}
