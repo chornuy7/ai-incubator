@@ -1823,6 +1823,18 @@ export async function runMailing(task, store) {
           skipped += 1
           task.progress.done = sent + skipped
           await store.appendLog(task, 'info', `${label}: нет в Telegram — пропуск`, meta.name)
+          // Пропуск тоже в историю: иначе после прогона не отличить «не написали, потому
+          // что не дошли» от «не написали, потому что такого человека нет». Первых надо
+          // взять в следующую рассылку, вторых — нет.
+          await store.appendHistory(task, {
+            id: `${task.id}_${Date.now()}`,
+            ts: new Date().toISOString(),
+            accountName: meta.name || account,
+            target: label,
+            text: '',
+            status: 'skipped',
+            reason: 'нет в Telegram',
+          })
           await disconnectAccount(client, account)
           continue
         }
@@ -1861,7 +1873,18 @@ export async function runMailing(task, store) {
         task.accountStats[account] = task.accountStats[account] || { actions: 0, floodWaits: 0 }
         task.accountStats[account].actions += 1
         task.progress.done = sent + skipped
-        await store.appendHistory(task, { id: `${task.id}_${Date.now()}`, ts: new Date().toISOString(), accountName: meta.name, target: label, text, status: 'sent' })
+        // `peer` — то, как человек виден в Telegram: по нему потом открывается переписка
+        // (сама цель могла быть номером, а лид живёт под юзернеймом).
+        await store.appendHistory(task, {
+          id: `${task.id}_${Date.now()}`,
+          ts: new Date().toISOString(),
+          accountId: account,
+          accountName: meta.name || account,
+          target: label,
+          peer: user.username ? `@${user.username}` : label,
+          text,
+          status: 'sent',
+        })
         // §9: лид сразу в CRM со статусом «холодный» — это знаменатель конверсии
         // (скольким написали). Ответит — авто-ответчик продвинет его по воронке.
         // peer берём как @username (по нему матчатся входящие диалоги), иначе — телефон.
@@ -1880,9 +1903,22 @@ export async function runMailing(task, store) {
         await disconnectAccount(client, account)
       } catch (err) {
         if (client) await disconnectAccount(client, account)
+        const reason = mapTelegramError(err)
         if (!(await handleFlood(task, account, store, err, s, meta.name))) {
-          await store.appendLog(task, 'error', mapTelegramError(err), meta.name)
+          await store.appendLog(task, 'error', reason, meta.name)
         }
+        // Ошибка по конкретному человеку — тоже часть ответа «кому не написали».
+        // Такие цели в следующую рассылку брать МОЖНО: причина в аккаунте, не в них.
+        await store.appendHistory(task, {
+          id: `${task.id}_${Date.now()}`,
+          ts: new Date().toISOString(),
+          accountId: account,
+          accountName: meta.name || account,
+          target: label,
+          text: '',
+          status: 'failed',
+          reason,
+        })
       }
     }
     }

@@ -157,7 +157,7 @@ export function LeadsPage() {
         </div>
       )}
 
-      <LeadConversationModal lead={chatLead} onClose={() => setChatLead(null)} />
+      <LeadConversationModal source={chatLead ? { kind: 'lead', lead: chatLead } : null} onClose={() => setChatLead(null)} />
     </div>
   )
 }

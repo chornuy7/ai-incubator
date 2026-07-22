@@ -12,6 +12,7 @@ import { fetchAccounts } from '@/api/accountsApi'
 import type { TgAccount } from '@/shared/types'
 import { cn } from '@/shared/lib/utils'
 import { confirmDialog, promptDialog } from '@/shared/lib/dialog'
+import { TaskAudiencePanel } from '@/features/mailing/TaskAudiencePanel'
 import { massStopConfirmSteps, canStopWarming, containsWarming } from '@/shared/lib/massAction'
 import { useSession } from '@/features/auth/session'
 import { downloadXls } from '@/shared/lib/exportXls'
@@ -745,6 +746,9 @@ export function TaskDetailPage() {
         {(s.postUrls?.length ?? 0) > 0 && (
           <ChipList title="Ссылки на посты" count={s.postUrls!.length} items={s.postUrls!} empty="" tone="spark" mono />
         )}
+
+        {/* §9.11: кому написали и кто остался — только там, где это осмысленно (рассылка). */}
+        {t.moduleKey === 'mailing' && <TaskAudiencePanel moduleKey={t.moduleKey} taskId={t.id} />}
 
         {results.length > 0 && (
           <div className="rounded-2xl border border-line bg-elevated/40 p-3">

@@ -1,25 +1,38 @@
 import { useEffect, useState } from 'react'
 import { MessageSquare, RefreshCw, AlertTriangle, Bot, User } from 'lucide-react'
 import { Modal, Badge } from '@/shared/ui'
-import { fetchLeadConversation, type Lead, type LeadConversation } from '@/api/leadsApi'
+import { fetchLeadConversation, fetchConversationByPeer, type Lead, type LeadConversation } from '@/api/leadsApi'
 import { cn } from '@/shared/lib/utils'
 
 /**
- * Переписка с лидом целиком: что написали мы и что ответил человек.
- *
- * Читается из самого Telegram аккаунтом-владельцем лида, а не из логов задачи —
- * в логах видно только наши реплики, а понять, как построился разговор, можно
- * лишь по обеим сторонам. Поэтому работает и для лидов из прошлых прогонов.
+ * Кого показываем: лида из CRM либо просто контакт с аккаунтом — получателя рассылки,
+ * который лидом ещё не стал (задача могла идти без цели).
  */
-export function LeadConversationModal({ lead, onClose }: { lead: Lead | null; onClose: () => void }) {
+export type ConversationSource =
+  | { kind: 'lead'; lead: Lead }
+  | { kind: 'peer'; peer: string; accountId: string }
+
+/**
+ * Переписка целиком: что написали мы и что ответил человек.
+ *
+ * Читается из самого Telegram аккаунтом, который вёл диалог, а не из логов задачи —
+ * в логах видно только наши реплики, а понять, как построился разговор, можно
+ * лишь по обеим сторонам. Поэтому работает и для прогонов, сделанных раньше.
+ */
+export function LeadConversationModal({ source, onClose }: { source: ConversationSource | null; onClose: () => void }) {
   const [data, setData] = useState<LeadConversation | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
 
-  const load = async (id: string) => {
+  const title = source?.kind === 'lead' ? source.lead.peer : source?.peer || ''
+  const key = source?.kind === 'lead' ? source.lead.id : source ? `${source.accountId}:${source.peer}` : ''
+
+  const load = async (src: ConversationSource) => {
     setLoading(true); setError('')
     try {
-      setData(await fetchLeadConversation(id))
+      setData(src.kind === 'lead'
+        ? await fetchLeadConversation(src.lead.id)
+        : await fetchConversationByPeer(src.peer, src.accountId))
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Не удалось прочитать переписку')
       setData(null)
@@ -27,31 +40,31 @@ export function LeadConversationModal({ lead, onClose }: { lead: Lead | null; on
   }
 
   useEffect(() => {
-    if (lead) void load(lead.id)
+    if (source) void load(source)
     else { setData(null); setError('') }
-  }, [lead?.id])
+  }, [key])
 
   const messages = data?.messages?.messages || []
 
   return (
     <Modal
-      open={!!lead}
+      open={!!source}
       onClose={onClose}
-      title={`Переписка · ${lead?.peer || ''}`}
+      title={`Переписка · ${title}`}
       subtitle={data ? `Аккаунт ${data.account.name}` : 'Читаем диалог из Telegram…'}
       icon={<MessageSquare size={18} />}
       size="lg"
     >
       <div className="space-y-3">
         <div className="flex flex-wrap items-center gap-2">
-          {lead?.goalId && <Badge tone="iris">по цели</Badge>}
+          {data?.lead?.goalId && <Badge tone="iris">по цели</Badge>}
           {data?.busyIn && (
             <Badge tone="amber" >
               Аккаунт сейчас занят: {data.busyIn.moduleLabel}
             </Badge>
           )}
           <button
-            onClick={() => lead && void load(lead.id)}
+            onClick={() => source && void load(source)}
             disabled={loading}
             className="btn-ghost ml-auto h-8 px-2 text-xs"
           >

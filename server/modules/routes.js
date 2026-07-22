@@ -6,6 +6,7 @@ import { assertNoHotLeadConflict, assertActiveDialogLimit } from '../leads.js'
 import { findDuplicateActiveTask } from '../lib/taskDedup.js'
 import { getGoal, isGoalExpired } from '../goals.js'
 import { WARMING_MODULES, canStopWarming } from '../lib/safetyLimits.js'
+import { splitAudience } from '../lib/mailingAudience.js'
 import { canEditTask, pickEditableSettings } from '../lib/taskEdit.js'
 import { isAdminRequest } from '../lib/accessGuard.js'
 
@@ -64,6 +65,26 @@ modulesRouter.get('/:moduleKey/tasks/:id', async (req, res) => {
     const task = await store.loadTask(req.params.id)
     if (!task) return res.status(404).json({ ok: false, error: 'Задача не найдена' })
     res.json({ ok: true, task: store.taskToDto(task) })
+  } catch (err) {
+    res.status(500).json({ ok: false, error: err instanceof Error ? err.message : 'Ошибка' })
+  }
+})
+
+/**
+ * §9.11: аудитория задачи — кому написали, кого пропустили, до кого не дошли.
+ *
+ * Считается на сервере: список целей бывает в тысячи строк, и гонять его в браузер
+ * ради арифметики незачем. Главный потребитель — кнопка «взять оставшихся
+ * в новую рассылку», ради которой человек иначе сверял бы списки руками.
+ */
+modulesRouter.get('/:moduleKey/tasks/:id/audience', async (req, res) => {
+  try {
+    const store = getModuleStore(req.params.moduleKey)
+    if (!store) return res.status(404).json({ ok: false, error: 'Модуль не найден' })
+    const task = await store.loadTask(req.params.id)
+    if (!task) return res.status(404).json({ ok: false, error: 'Задача не найдена' })
+    const targets = task.settings?.targets || task.settings?.numbers || []
+    res.json({ ok: true, audience: splitAudience(targets, task.history || []), total: targets.length })
   } catch (err) {
     res.status(500).json({ ok: false, error: err instanceof Error ? err.message : 'Ошибка' })
   }

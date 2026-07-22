@@ -208,3 +208,31 @@ export async function listModuleKeys() {
 
 /** Legacy neuro-commenting API (backward compat) */
 export { startNeuroCommentingTask, fetchNeuroTask, stopNeuroTask } from './neuroCommentingApi'
+
+// ── §9.11: аудитория задачи (кому написали / кто остался) ──
+
+export interface AudienceRow {
+  /** Цель в едином виде: «@user» или «+380…». */
+  target: string
+  /** Контакт, по которому реально писали, — по нему открывается переписка. */
+  peer?: string
+  accountId?: string
+  accountName?: string
+  reason?: string
+  ts?: string
+}
+
+export interface TaskAudience {
+  /** Кому написали. */
+  sent: AudienceRow[]
+  /** Таких нет в Telegram — в следующий заход брать бессмысленно. */
+  skipped: AudienceRow[]
+  /** Сорвалось из-за аккаунта — этих взять стоит. */
+  failed: AudienceRow[]
+  /** До них не дошли: остановили, кончились лимиты или аккаунты. */
+  remaining: AudienceRow[]
+}
+
+export async function fetchTaskAudience(moduleKey: string, id: string): Promise<{ audience: TaskAudience; total: number }> {
+  return apiGet<{ audience: TaskAudience; total: number }>(`/api/modules/${moduleKey}/tasks/${id}/audience`)
+}

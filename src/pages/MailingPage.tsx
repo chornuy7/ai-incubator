@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useLocation, useNavigate } from 'react-router-dom'
 import { Mail, Send, AlertTriangle, ShieldAlert } from 'lucide-react'
 import { PageHeader, Card, Select, Segmented } from '@/shared/ui'
 import { DedupeButton } from '@/shared/ui/DedupeButton'
+import type { MailingPrefill } from '@/features/mailing/TaskAudiencePanel'
 import { useApp, activeAccounts } from '@/mocks/store'
 import { AccountPicker } from '@/features/account-picker/AccountPicker'
 import { MessageComposer } from '@/features/composer/MessageComposer'
@@ -17,7 +18,10 @@ export function MailingPage() {
   const nav = useNavigate()
   const pushToast = useApp((s) => s.pushToast)
   const [selected, setSelected] = useState<Set<string>>(new Set())
-  const [numbersText, setNumbersText] = useState('')
+  // §9.11: список, переданный кнопкой «В новую рассылку» из деталей прошлой задачи —
+  // те, кому ещё не написали. Иначе человек сверял бы тысячу строк руками.
+  const prefill = useLocation().state as MailingPrefill | null
+  const [numbersText, setNumbersText] = useState(prefill?.targets || '')
   const [message, setMessage] = useState('')
   const [media, setMedia] = useState<string[]>([])
   const [maxPerAccount, setMaxPerAccount] = useState(25)

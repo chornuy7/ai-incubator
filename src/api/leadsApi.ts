@@ -104,3 +104,13 @@ export interface LeadConversation {
 export async function fetchLeadConversation(id: string, limit = 60): Promise<LeadConversation> {
   return apiGet<LeadConversation>(`/api/leads/${id}/conversation?limit=${limit}`)
 }
+
+/**
+ * Переписка по контакту напрямую — для получателей рассылки, которые ещё не стали
+ * лидами (например, задача шла без цели). Аккаунт обязателен: история диалога своя
+ * у каждого аккаунта.
+ */
+export async function fetchConversationByPeer(peer: string, accountId: string, limit = 60): Promise<LeadConversation & { lead: Lead | null }> {
+  const qs = new URLSearchParams({ peer, accountId, limit: String(limit) })
+  return apiGet<LeadConversation & { lead: Lead | null }>(`/api/leads/conversation?${qs}`)
+}
