@@ -210,5 +210,27 @@ test('§12 accountGroups доживают до фронта: can() знает ki
   const m = mergePermissions([r, other])
   assert.equal(m.resources.accountGroups.grp_ru, ALLOW)
   assert.equal(m.resources.accountGroups.grp_kz, ALLOW) // union по ролям
-  assert.equal(m.resources.accountGroups.grp_ua, undefined) // не-allow не проходит
+  // Раньше здесь ожидался undefined: запреты в mergePermissions не проходили вовсе.
+  // Из-за этого точечный запрет не работал в принципе — он терялся при объединении
+  // и до клиента не доезжал (прогон 21–22.07, тест 7.4). Теперь запрет доживает.
+  assert.equal(m.resources.accountGroups.grp_ua, 'deny')
+})
+
+test('7.4 точечный запрет сильнее группового разрешения и переживает объединение ролей', () => {
+  const allowRole = normalizeRole({ name: 'Доступ', permissions: {
+    resources: { accounts: { acc_1: ALLOW, acc_2: ALLOW } },
+  } })
+  const denyRole = normalizeRole({ name: 'Запрет', permissions: {
+    resources: { accounts: { acc_2: 'deny' } },
+  } })
+
+  // Порядок ролей не должен влиять: deny выигрывает в обе стороны.
+  for (const roles of [[allowRole, denyRole], [denyRole, allowRole]]) {
+    const m = mergePermissions(roles)
+    assert.equal(m.resources.accounts.acc_1, ALLOW, 'нетронутый аккаунт остаётся доступен')
+    assert.equal(m.resources.accounts.acc_2, 'deny', 'явный запрет бьёт разрешение другой роли')
+  }
+
+  // «Не задано» — это не запрет: ключа просто нет, поведение нейтральное.
+  assert.equal(mergePermissions([allowRole]).resources.accounts.acc_3, undefined)
 })

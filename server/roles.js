@@ -373,6 +373,18 @@ export async function rolesForUser(user) {
  * ограничения по каналам (пустой список) — ограничение снимается (= все каналы). §8.1.
  * @param {object[]} roles @returns {RolePermissions}
  */
+/**
+ * Слить одно поэлементное право в общую карту. Семантика — «запрет сильнее»:
+ * если хоть одна роль явно запретила элемент, объединение остаётся запретом,
+ * сколько бы других ролей его ни разрешало. Иначе точечный запрет невозможно
+ * было бы задать поверх группового доступа — ради чего он и существует.
+ * @param {Record<string,string>} map @param {string} key @param {string} value
+ */
+function mergeItem(map, key, value) {
+  if (map[key] === DENY) return // уже запрещено — allow не перебивает
+  map[key] = value
+}
+
 export function mergePermissions(roles = []) {
   const resources = { accounts: {}, accountGroups: {}, folders: {}, channels: {}, folderChannels: {}, timers: DENY, searchTemplates: DENY }
   const merged = { modules: {}, blocks: {}, sections: {}, resources }
@@ -384,9 +396,13 @@ export function mergePermissions(roles = []) {
     for (const [k, v] of Object.entries(p.modules || {})) if (v === ALLOW) merged.modules[k] = ALLOW
     for (const [k, v] of Object.entries(p.blocks || {})) if (v === ALLOW) merged.blocks[k] = ALLOW
     for (const [k, v] of Object.entries(p.sections || {})) if (v === ALLOW) merged.sections[k] = ALLOW
-    for (const [k, v] of Object.entries(r.accounts || {})) if (v === ALLOW) resources.accounts[k] = ALLOW
-    for (const [k, v] of Object.entries(r.accountGroups || {})) if (v === ALLOW) resources.accountGroups[k] = ALLOW // §12
-    for (const [k, v] of Object.entries(r.channels || {})) if (v === ALLOW) resources.channels[k] = ALLOW
+    // §8.1: поэлементные ресурсы копируем ВМЕСТЕ С ЗАПРЕТАМИ. Раньше сюда проходил
+    // только ALLOW, поэтому явный точечный deny терялся при объединении ролей и до
+    // клиента не доезжал никогда — точечный запрет не работал в принципе
+    // (прогон 21–22.07, тест 7.4). Приоритет разрешается ниже: deny сильнее allow.
+    for (const [k, v] of Object.entries(r.accounts || {})) if (v === ALLOW || v === DENY) mergeItem(resources.accounts, k, v)
+    for (const [k, v] of Object.entries(r.accountGroups || {})) if (v === ALLOW || v === DENY) mergeItem(resources.accountGroups, k, v) // §12
+    for (const [k, v] of Object.entries(r.channels || {})) if (v === ALLOW || v === DENY) mergeItem(resources.channels, k, v)
     if (r.timers === ALLOW) resources.timers = ALLOW
     if (r.searchTemplates === ALLOW) resources.searchTemplates = ALLOW
     const fc = r.folderChannels || {}

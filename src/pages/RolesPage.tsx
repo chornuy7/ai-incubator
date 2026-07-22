@@ -11,23 +11,36 @@ import { HelpButton } from '@/features/neuro-commenting/moduleUi'
 import { WARMING_MODULES } from '@/shared/lib/massAction'
 
 /** Пара чекбоксов «дать доступ / убрать доступ» (§8.1). */
-function PermToggle({ value, onChange, disabled }: { value: Perm; onChange: (p: Perm) => void; disabled?: boolean }) {
+/**
+ * Три состояния поэлементного права: «Доступ» (allow), «Убрать» (явный deny) и
+ * НИ ОДНОЙ галочки — «не задано».
+ *
+ * Раньше состояний было два: незаданное право рисовалось как «Убрать» (из-за
+ * фолбэка `?? 'deny'` у геттеров), поэтому админ видел красную «Убрать» у аккаунта,
+ * который на самом деле доступен через группу. Хуже: чекбокс «Убрать» уже был
+ * checked, и клик по нему ничего не менял — поставить явный запрет через интерфейс
+ * было практически невозможно (прогон 21–22.07, тест 7.4). Повторный клик по
+ * отмеченному варианту теперь снимает его и возвращает «не задано».
+ */
+function PermToggle({ value, onChange, disabled }: { value?: Perm; onChange: (p?: Perm) => void; disabled?: boolean }) {
+  const pick = (p: Perm) => onChange(value === p ? undefined : p)
   return (
     <div className="flex shrink-0 items-center gap-3">
       <label className={`flex items-center gap-1.5 text-xs ${disabled ? 'opacity-40' : 'cursor-pointer'}`}>
-        <input type="checkbox" className="accent-spark-500" checked={value === 'allow'} disabled={disabled} onChange={() => onChange('allow')} />
+        <input type="checkbox" className="accent-spark-500" checked={value === 'allow'} disabled={disabled} onChange={() => pick('allow')} />
         <span className={value === 'allow' ? 'text-spark-300' : 'text-white/50'}>Доступ</span>
       </label>
       <label className={`flex items-center gap-1.5 text-xs ${disabled ? 'opacity-40' : 'cursor-pointer'}`}>
-        <input type="checkbox" className="accent-rose-500" checked={value === 'deny'} disabled={disabled} onChange={() => onChange('deny')} />
+        <input type="checkbox" className="accent-rose-500" checked={value === 'deny'} disabled={disabled} onChange={() => pick('deny')} />
         <span className={value === 'deny' ? 'text-rose-300' : 'text-white/50'}>Убрать</span>
       </label>
+      {value === undefined && <span className="text-[11px] text-white/30" title="Право не задано: доступ решают другие роли и групповые правила">не задано</span>}
     </div>
   )
 }
 
 /** Строка права: подсвечивается, если доступ снят (§8.1 «выделить, если убрал»). */
-function PermRow({ label, indent, value, onChange, disabled }: { label: string; indent?: boolean; value: Perm; onChange: (p: Perm) => void; disabled?: boolean }) {
+function PermRow({ label, indent, value, onChange, disabled }: { label: string; indent?: boolean; value?: Perm; onChange: (p?: Perm) => void; disabled?: boolean }) {
   return (
     <div className={`flex items-center justify-between gap-3 rounded-lg px-3 py-2 ${value === 'deny' ? 'bg-rose-500/8 ring-1 ring-inset ring-rose-500/20' : 'bg-elevated'} ${indent ? 'ml-6' : ''}`}>
       <span className={`truncate text-sm ${value === 'deny' ? 'text-rose-200/80' : 'text-fg'}`}>{label}</span>
@@ -111,10 +124,17 @@ export function RolesPage() {
   const setModule = (key: string, p: Perm) => { setPerms((s) => ({ ...s, modules: { ...s.modules, [key]: p } })); mark() }
   const setBlock = (key: string, p: Perm) => { setPerms((s) => ({ ...s, blocks: { ...s.blocks, [key]: p } })); mark() }
   const setSection = (key: string, p: Perm) => { setPerms((s) => ({ ...s, sections: { ...s.sections, [key]: p } })); mark() }
-  const setAccount = (id: string, p: Perm) => { setPerms((s) => ({ ...s, resources: { ...s.resources, accounts: { ...s.resources.accounts, [id]: p } } })); mark() }
-  const setAccountGroup = (id: string, p: Perm) => { setPerms((s) => ({ ...s, resources: { ...s.resources, accountGroups: { ...(s.resources.accountGroups ?? {}), [id]: p } } })); mark() }
-  const setFolder = (id: string, p: Perm) => { setPerms((s) => ({ ...s, resources: { ...s.resources, folders: { ...s.resources.folders, [id]: p } } })); mark() }
-  const setChannel = (id: string, p: Perm) => { setPerms((s) => ({ ...s, resources: { ...s.resources, channels: { ...s.resources.channels, [id]: p } } })); mark() }
+  /** Записать поэлементное право; undefined — снять его (вернуть «не задано»). */
+  const putPerm = (map: Record<string, Perm>, id: string, p?: Perm) => {
+    const next = { ...map }
+    if (p === undefined) delete next[id]
+    else next[id] = p
+    return next
+  }
+  const setAccount = (id: string, p?: Perm) => { setPerms((s) => ({ ...s, resources: { ...s.resources, accounts: putPerm(s.resources.accounts, id, p) } })); mark() }
+  const setAccountGroup = (id: string, p?: Perm) => { setPerms((s) => ({ ...s, resources: { ...s.resources, accountGroups: putPerm(s.resources.accountGroups ?? {}, id, p) } })); mark() }
+  const setFolder = (id: string, p?: Perm) => { setPerms((s) => ({ ...s, resources: { ...s.resources, folders: putPerm(s.resources.folders, id, p) } })); mark() }
+  const setChannel = (id: string, p?: Perm) => { setPerms((s) => ({ ...s, resources: { ...s.resources, channels: putPerm(s.resources.channels, id, p) } })); mark() }
   const setTimers = (p: Perm) => { setPerms((s) => ({ ...s, resources: { ...s.resources, timers: p } })); mark() }
   const setTemplates = (p: Perm) => { setPerms((s) => ({ ...s, resources: { ...s.resources, searchTemplates: p } })); mark() }
   const setFolderChannels = (id: string, channels: string[]) => { setPerms((s) => ({ ...s, resources: { ...s.resources, folderChannels: { ...(s.resources.folderChannels ?? {}), [id]: channels } } })); mark() }
@@ -122,10 +142,10 @@ export function RolesPage() {
   const mPerm = (k: string): Perm => perms.modules[k] ?? 'deny'
   const bPerm = (k: string): Perm => perms.blocks[k] ?? 'deny'
   const sPerm = (k: string): Perm => perms.sections?.[k] ?? 'deny'
-  const aPerm = (id: string): Perm => perms.resources.accounts?.[id] ?? 'deny'
-  const agPerm = (id: string): Perm => perms.resources.accountGroups?.[id] ?? 'deny'
-  const fPerm = (id: string): Perm => perms.resources.folders[id] ?? 'deny'
-  const cPerm = (id: string): Perm => perms.resources.channels[id] ?? 'deny'
+  const aPerm = (id: string): Perm | undefined => perms.resources.accounts?.[id]
+  const agPerm = (id: string): Perm | undefined => perms.resources.accountGroups?.[id]
+  const fPerm = (id: string): Perm | undefined => perms.resources.folders[id]
+  const cPerm = (id: string): Perm | undefined => perms.resources.channels[id]
   // Выбранные каналы папки. Пусто = все каналы папки (в т.ч. будущие). Ключи нормализованы (без @, lower).
   const ntCh = (t: string) => String(t || '').trim().replace(/^@/, '').toLowerCase()
   const fChannels = (id: string): string[] => perms.resources.folderChannels?.[id] ?? []
@@ -234,12 +254,12 @@ export function RolesPage() {
                                   </span>
                                 )}
                               </button>
-                              <PermToggle value={mPerm(m.key)} onChange={(p) => setModule(m.key, p)} />
+                              <PermToggle value={mPerm(m.key)} onChange={(p) => setModule(m.key, p ?? 'deny')} />
                             </div>
                             {open && (
                               <div className="mt-1 flex flex-col gap-1">
                                 {catalog.blocks.map((b) => (
-                                  <PermRow key={b.key} indent label={b.label} value={bPerm(`${m.key}:${b.key}`)} onChange={(p) => setBlock(`${m.key}:${b.key}`, p)} />
+                                  <PermRow key={b.key} indent label={b.label} value={bPerm(`${m.key}:${b.key}`)} onChange={(p) => setBlock(`${m.key}:${b.key}`, p ?? 'deny')} />
                                 ))}
                               </div>
                             )}
@@ -256,7 +276,7 @@ export function RolesPage() {
                       <div className="mb-2 text-[11px] text-white/35">«Мой аккаунт» и «Поддержка» доступны всем всегда. «Роли и доступы» / «Пользователи» — только админу.</div>
                       <div className="flex flex-col gap-1">
                         {catalog.sections.map((sec) => (
-                          <PermRow key={sec.key} label={sec.label} value={sPerm(sec.key)} onChange={(p) => setSection(sec.key, p)} />
+                          <PermRow key={sec.key} label={sec.label} value={sPerm(sec.key)} onChange={(p) => setSection(sec.key, p ?? 'deny')} />
                         ))}
                       </div>
                     </section>
@@ -269,8 +289,8 @@ export function RolesPage() {
                       {catalog.resources.map((res) => (
                         <div key={res.type}>
                           <div className="mb-1.5 text-sm font-medium text-white/70">{res.label}</div>
-                          {res.type === 'timers' && <PermRow label="Доступ к таймерам / планировщику" value={perms.resources.timers} onChange={setTimers} />}
-                          {res.type === 'searchTemplates' && <PermRow label="Доступ к шаблонам поиска" value={perms.resources.searchTemplates} onChange={setTemplates} />}
+                          {res.type === 'timers' && <PermRow label="Доступ к таймерам / планировщику" value={perms.resources.timers} onChange={(p) => setTimers(p ?? 'deny')} />}
+                          {res.type === 'searchTemplates' && <PermRow label="Доступ к шаблонам поиска" value={perms.resources.searchTemplates} onChange={(p) => setTemplates(p ?? 'deny')} />}
                           {res.perItem && (res.items?.length ? (
                             <div className="flex flex-col gap-1">
                               {res.items.map((it) => (
