@@ -254,16 +254,26 @@ export async function probeProxyExitGeo(proxy = {}, timeoutMs = 9000) {
 export async function checkAllProxies(timeoutMs = 9000) {
   const all = await listProxies()
   const results = []
-  for (const p of all) {
-    const { status, geo, geoSource } = await probeProxy(p, timeoutMs)
-    try {
-      await updateProxy(p.id, {
-        status,
-        lastCheckAt: Date.now(),
-        ...(geo ? { country: geo.country || p.country, geoSource, note: geoNote(geo) } : {}),
-      })
-    } catch { /* skip */ }
-    results.push({ id: p.id, status, country: geo?.country || p.country || '', geoSource })
+  // Пачками: проба теперь ходит наружу через каждый прокси (секунды), и полсотни
+  // подряд — это минуты. Но и все разом открывать нельзя: сотня сокетов на ровном месте.
+  const BATCH = 8
+  for (let i = 0; i < all.length; i += BATCH) {
+    const batch = all.slice(i, i + BATCH)
+    const probed = await Promise.all(batch.map((p) => probeProxy(p, timeoutMs).catch(() => ({ status: 'dead', geo: null, geoSource: null }))))
+    // Запись — по одному: `updateProxy` читает-меняет-пишет общий файл,
+    // параллельные записи затирали бы друг друга.
+    for (let k = 0; k < batch.length; k += 1) {
+      const p = batch[k]
+      const { status, geo, geoSource } = probed[k]
+      try {
+        await updateProxy(p.id, {
+          status,
+          lastCheckAt: Date.now(),
+          ...(geo ? { country: geo.country || p.country, geoSource, note: geoNote(geo) } : {}),
+        })
+      } catch { /* skip */ }
+      results.push({ id: p.id, status, country: geo?.country || p.country || '', geoSource })
+    }
   }
   return results
 }

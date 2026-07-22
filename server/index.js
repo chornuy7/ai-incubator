@@ -334,8 +334,13 @@ try {
 // §6 (прокси): авто-проверка живости прокси при старте + каждые 30 мин.
 try {
   const { checkAllProxies } = await import('./proxies.js')
-  const runProxy = () => checkAllProxies().then((r) => r.length && console.log(`[proxy] проверено ${r.length}, живых ${r.filter((x) => x.status === 'ok').length}`)).catch((e) => console.warn('[proxy] check failed:', e?.message || e))
-  await runProxy()
+  const runProxy = () => checkAllProxies()
+    .then((r) => r.length && console.log(`[proxy] проверено ${r.length}: рабочих ${r.filter((x) => x.status === 'ok').length}, не тот протокол ${r.filter((x) => x.status === 'bad').length}, мёртвых ${r.filter((x) => x.status === 'dead').length}`))
+    .catch((e) => console.warn('[proxy] check failed:', e?.message || e))
+  // БЕЗ await: проверка ходит наружу через каждый прокси и на полусотне занимает минуты.
+  // Раньше это был мгновенный TCP-пинг, и ожидание ничего не стоило; теперь оно
+  // задерживало app.listen, то есть API не отвечал, пока не опросятся все прокси.
+  void runProxy()
   setInterval(runProxy, 30 * 60 * 1000)
 } catch (err) {
   console.warn('[proxy] scheduler init failed:', err)
@@ -379,6 +384,33 @@ if (fs.existsSync(DIST_DIR)) {
 // торчать в LAN/интернет). Для доступа с другого устройства выставить API_HOST=0.0.0.0.
 // На проде держим 127.0.0.1 и выпускаем наружу через nginx с паролем (см. docs/DEPLOY.md).
 const HOST = process.env.API_HOST || '127.0.0.1'
-app.listen(PORT, HOST, () => {
+
+/**
+ * Ловим то, что иначе роняет процесс молча.
+ *
+ * 21.07 бэкенд умер без единой строки в логе — снаружи это выглядело как «фронт
+ * отдаёт 500», и на поиск причины ушёл час. Воркеры живут в этом же процессе и
+ * полны асинхронных операций с сетью, поэтому необработанный reject здесь — норма
+ * жизни, а не исключительная ситуация. Пишем и продолжаем: убить задачи из-за
+ * одной сорвавшейся отправки хуже, чем доработать в неидеальном состоянии.
+ */
+process.on('unhandledRejection', (reason) => {
+  console.error('[fatal] необработанный reject:', reason instanceof Error ? reason.stack : reason)
+})
+process.on('uncaughtException', (err) => {
+  console.error('[fatal] необработанное исключение:', err?.stack || err)
+})
+
+const server = app.listen(PORT, HOST, () => {
   console.log(`API → http://${HOST}:${PORT}`)
+})
+// Занятый порт — единственная ошибка, при которой продолжать бессмысленно: обычно
+// это уже запущенный второй экземпляр. Говорим об этом человеческим языком.
+server.on('error', (err) => {
+  if (err?.code === 'EADDRINUSE') {
+    console.error(`[fatal] порт ${PORT} уже занят — вероятно, бэкенд уже запущен. Остановите старый процесс и повторите.`)
+    process.exit(1)
+  }
+  console.error('[fatal] сервер не поднялся:', err?.stack || err)
+  process.exit(1)
 })
