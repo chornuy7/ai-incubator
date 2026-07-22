@@ -19,7 +19,9 @@ import { fetchChannels, type Channel } from '@/api/channelsApi'
 import { FolderPicker } from '@/features/modules/shared/FolderPicker'
 
 // Модули, которые осмысленно вести к цели (принимают целевые каналы/группы).
-const CAMPAIGN_MODULES = ['neuro-commenting', 'neuro-chatting', 'mass-react', 'mass-looking']
+// Модули, которые осмысленно ставить в кампанию. Рассылки здесь не было вовсе —
+// поэтому связку «комментинг приводит людей, рассылка им пишет» собрать было нельзя.
+const CAMPAIGN_MODULES = ['neuro-commenting', 'mailing', 'neuro-chatting', 'mass-react', 'mass-looking']
 
 /**
  * Модули, которые сами ведут переписку. Для них «добавить чатинг» бессмысленно:
@@ -59,6 +61,8 @@ export function CampaignPage() {
   const [cName, setCName] = useState('')
   const [cGoalId, setCGoalId] = useState('')
   const [cModule, setCModule] = useState('neuro-commenting')
+  /** Модули кампании: несколько, работают вместе. `cModule` — первый из них. */
+  const [cModules, setCModules] = useState<string[]>(['neuro-commenting'])
   const [cAccounts, setCAccounts] = useState<string[]>([])
   const [cPinned, setCPinned] = useState(true)
   const [cStatus, setCStatus] = useState<CampaignStatus>('draft')
@@ -172,13 +176,16 @@ export function CampaignPage() {
 
   const openNewCampaign = () => {
     setEditingCampaign(null)
-    setCName(''); setCGoalId(''); setCModule('neuro-commenting'); setCAccounts([])
+    setCName(''); setCGoalId(''); setCModules(['neuro-commenting']); setCAccounts([])
     setCPinned(true); setCStatus('draft'); setPickMode(0); setTakeN(5)
     setCChat(false); setCChatGoal(''); setCChatScope('unread')
     setCChatLimitMode('untilTarget'); setCChatMaxReplies(5); setCChatMaxDialogs(0)
     setFormOpen(true)
   }
-  // Пресеты того модуля, который выбран сейчас: это и есть его настройки для кампании.
+  // Пресеты берём для ПЕРВОГО модуля: настройки в кампании пока одни на задачу,
+  // а первый модуль — основной (он приводит людей, остальные работают по ним).
+  useEffect(() => { setCModule(cModules[0] || '') }, [cModules])
+
   useEffect(() => {
     setCPresetId(''); setCSettings(null); setModulePresets([])
     if (!cModule) return
@@ -191,7 +198,7 @@ export function CampaignPage() {
 
   const openEditCampaign = (c: Campaign) => {
     setEditingCampaign(c)
-    setCName(c.name); setCGoalId(c.goalId || ''); setCModule(c.moduleKey); setCAccounts(c.accountIds || [])
+    setCName(c.name); setCGoalId(c.goalId || ''); setCModules(c.modules?.length ? c.modules : [c.moduleKey].filter(Boolean)); setCAccounts(c.accountIds || [])
     setCPinned(c.pinned); setCStatus(c.status); setPickMode(1); setTakeN(c.accountIds?.length || 5)
     const ch = c.chat?.settings || {}
     setCChat(c.chat?.enabled === true)
@@ -215,7 +222,7 @@ export function CampaignPage() {
     setCSaving(true)
     try {
       const payload = {
-        name: cName.trim(), goalId: cGoalId || null, moduleKey: cModule, accountIds: ids, pinned: cPinned, status: cStatus,
+        name: cName.trim(), goalId: cGoalId || null, moduleKey: cModules[0] || '', modules: cModules, accountIds: ids, pinned: cPinned, status: cStatus,
         ...(cSettings ? { settings: cSettings } : {}),
         chat: {
           enabled: cChat,
@@ -261,8 +268,10 @@ export function CampaignPage() {
    */
   const launchSaved = async (c: Campaign) => {
     const goal = goals.find((g) => g.id === c.goalId)
+    // Все модули кампании разом: они и должны работать вместе на общем пуле.
+    const keys = c.modules?.length ? c.modules : [c.moduleKey].filter(Boolean)
     const modules = [
-      { moduleKey: c.moduleKey, settings: c.settings },
+      ...keys.map((moduleKey) => ({ moduleKey, settings: c.settings })),
       ...(c.chat?.enabled ? [{ moduleKey: 'neuro-dialogs', settings: c.chat.settings }] : []),
     ]
     const ids = c.accountIds.filter((id) => knownIds.has(id))
@@ -318,19 +327,41 @@ export function CampaignPage() {
 
           <div className="grid gap-3 sm:grid-cols-2">
             <div>
-              <div className="mb-1 text-xs text-white/50">Модуль * <span className="text-white/30">(кампания обязана настраивать модуль)</span></div>
-              <Select
-                value={cModule}
-                // Переключились на диалоговый модуль — снимаем галочку чатинга: она
-                // спрятана, но осталась бы включённой и добавила второй диалоговый модуль.
-                onChange={(v) => { setCModule(v); if (DIALOG_MODULES.has(v)) setCChat(false) }}
-                options={CAMPAIGN_MODULES.map((k) => ({ value: k, label: MODULES[k]?.title || k }))}
-              />
-            </div>
-            <div>
               <div className="mb-1 text-xs text-white/50">Статус</div>
               <Select value={cStatus} onChange={(v) => setCStatus(v as CampaignStatus)} options={CAMPAIGN_STATUSES.map((s) => ({ value: s, label: { draft: 'Черновик', active: 'Активна', paused: 'Пауза', done: 'Завершена' }[s] }))} />
             </div>
+          </div>
+
+          {/* §0: модулей может быть НЕСКОЛЬКО и работают они вместе на общем пуле:
+              комментинг приводит людей, рассылка им пишет, чатинг ловит ответы.
+              Раньше поле было одиночным — и такую связку собрать было нельзя. */}
+          <div>
+            <div className="mb-1 text-xs text-white/50">
+              Модули * <span className="text-white/30">(работают вместе, аккаунты делятся между ними)</span>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              {CAMPAIGN_MODULES.map((k) => {
+                const on = cModules.includes(k)
+                return (
+                  <button
+                    key={k}
+                    type="button"
+                    onClick={() => {
+                      const next = on ? cModules.filter((x) => x !== k) : [...cModules, k]
+                      setCModules(next)
+                      // Диалоговый модуль сам ведёт переписку — отдельный чатинг ему не нужен.
+                      if (next.some((m) => DIALOG_MODULES.has(m))) setCChat(false)
+                    }}
+                    className={`rounded-xl border px-3 py-2 text-sm font-semibold transition-colors ${
+                      on ? 'border-spark-500/50 bg-spark-500/12 text-spark-200' : 'border-line bg-elevated text-muted hover:border-spark-500/30'
+                    }`}
+                  >
+                    {on ? '✓ ' : ''}{MODULES[k]?.title || k}
+                  </button>
+                )
+              })}
+            </div>
+            {!cModules.length && <div className="mt-1 text-xs text-rose-300">Выберите хотя бы один модуль</div>}
           </div>
 
           {/* §0: настройки модуля для кампании — пресетом. Свою копию формы модуля здесь

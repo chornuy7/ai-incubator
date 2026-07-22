@@ -81,7 +81,10 @@ export interface Campaign {
   id: string
   name: string
   goalId: string | null
+  /** Первый модуль — для старых мест, которые ждут одиночное поле. */
   moduleKey: string
+  /** Модули кампании: работают вместе на общем пуле аккаунтов. */
+  modules: string[]
   settings: Record<string, unknown>
   accountIds: string[]
   pinned: boolean
@@ -94,6 +97,7 @@ export interface Campaign {
 export interface CampaignInput {
   name: string
   goalId?: string | null
+  modules?: string[]
   moduleKey: string
   settings?: Record<string, unknown>
   accountIds?: string[]

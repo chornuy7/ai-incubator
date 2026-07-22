@@ -20,7 +20,7 @@ const CAMPAIGNS_FILE = process.env.CAMPAIGNS_FILE || dataPath('campaigns.json')
 export const CAMPAIGN_STATUSES = ['draft', 'active', 'paused', 'done']
 
 /** Поля, которые можно задавать/менять. */
-const FIELDS = ['name', 'goalId', 'moduleKey', 'settings', 'accountIds', 'pinned', 'status', 'chat']
+const FIELDS = ['name', 'goalId', 'moduleKey', 'modules', 'settings', 'accountIds', 'pinned', 'status', 'chat']
 
 const normIds = (v) => (Array.isArray(v) ? [...new Set(v.map((x) => String(x || '').trim()).filter(Boolean))] : [])
 
@@ -42,12 +42,29 @@ function normChat(v) {
 }
 
 /** Нормализовать вход в чистую кампанию. @param {object} input */
+/**
+ * Список модулей кампании: без дублей, пустые отброшены. Для кампаний, созданных
+ * до появления поля, берём одиночный `moduleKey` — миграция не нужна.
+ * @param {*} list @param {*} single
+ */
+function normModules(list, single) {
+  const arr = Array.isArray(list) ? list : []
+  const keys = [...arr, single].map((x) => String(x ?? '').trim()).filter(Boolean)
+  return [...new Set(keys)]
+}
+
 export function normalizeCampaign(input = {}) {
   const status = CAMPAIGN_STATUSES.includes(input.status) ? input.status : 'draft'
   return {
     name: String(input.name ?? '').trim(),
     goalId: input.goalId ? String(input.goalId) : null,
-    moduleKey: String(input.moduleKey ?? '').trim(), // основной модуль (§0)
+    // §0: модули кампании. Их может быть несколько и работать они должны ВМЕСТЕ —
+    // комментинг приводит людей, рассылка пишет им, чатинг ловит ответы. Раньше
+    // кампания держала ровно один модуль, и «комментинг + рассылка» собрать было нельзя,
+    // хотя сам запуск (`launchCampaign`) несколько модулей принимал всегда.
+    modules: normModules(input.modules, input.moduleKey),
+    // Первый модуль дублируем в moduleKey: на него смотрят фильтры и старые кампании.
+    moduleKey: normModules(input.modules, input.moduleKey)[0] || '',
     settings: input.settings && typeof input.settings === 'object' ? input.settings : {}, // пресет модуля
     accountIds: normIds(input.accountIds),
     pinned: input.pinned !== false, // по умолчанию аккаунты закрепляются (выходят из общего пула)
@@ -58,11 +75,15 @@ export function normalizeCampaign(input = {}) {
 
 export async function listCampaigns(filter = {}) {
   const all = await readJson(CAMPAIGNS_FILE, [])
-  return all.filter((c) =>
-    (!filter.goalId || c.goalId === filter.goalId) &&
-    (!filter.status || c.status === filter.status) &&
-    (!filter.moduleKey || c.moduleKey === filter.moduleKey),
-  )
+  // Кампании, созданные до многомодульности, отдаём с `modules` — иначе фронту
+  // пришлось бы проверять оба поля в каждом месте.
+  return all
+    .map((c) => ({ ...c, modules: normModules(c.modules, c.moduleKey) }))
+    .filter((c) =>
+      (!filter.goalId || c.goalId === filter.goalId) &&
+      (!filter.status || c.status === filter.status) &&
+      (!filter.moduleKey || c.modules.includes(filter.moduleKey)),
+    )
 }
 
 export async function getCampaign(id) {
@@ -74,7 +95,7 @@ export async function getCampaign(id) {
 export async function createCampaign(input) {
   const clean = normalizeCampaign(input)
   if (!clean.name) throw new Error('Укажите название кампании')
-  if (!clean.moduleKey) throw new Error('Кампания должна настраивать модуль — выберите модуль')
+  if (!clean.modules.length) throw new Error('Кампания должна настраивать модуль — выберите хотя бы один')
   const campaign = {
     id: `cmp_${crypto.randomUUID().slice(0, 8)}`,
     ...clean,
@@ -102,7 +123,7 @@ export async function updateCampaign(id, patch = {}) {
     else all[i][k] = String(patch[k]).trim()
   }
   if (!all[i].name) throw new Error('Название кампании не может быть пустым')
-  if (!all[i].moduleKey) throw new Error('У кампании должен быть модуль')
+  if (!all[i].modules?.length && !all[i].moduleKey) throw new Error('У кампании должен быть модуль')
   all[i].updatedAt = Date.now()
   result = all[i]
   return all
