@@ -89,12 +89,26 @@ export interface LeadMessage {
   hasThumb?: boolean
 }
 
+/** Сообщение, которое мы отправили, но Telegram его не показывает. */
+export interface WipedMessage {
+  text: string
+  ts: string
+  taskId: string
+  moduleKey: string
+  accountName?: string
+}
+
 export interface LeadConversation {
   lead: Lead
   account: { id: string; name: string; status: string }
   /** Аккаунт прямо сейчас занят задачей — переписка читается «поверх» работы. */
   busyIn: { moduleLabel: string; taskId: string } | null
   messages: { messages: LeadMessage[]; peerId: string; hasMore: boolean }
+  /**
+   * Мы писали, а Telegram отдаёт пустой диалог — отправку стёр антиспам.
+   * Показываем, что именно уходило: «переписки нет» здесь было бы неправдой.
+   */
+  wiped?: WipedMessage[]
 }
 
 /**

@@ -1,10 +1,20 @@
 import { Api } from 'telegram/tl/index.js'
 
-/** @param {import('telegram').Api.TypeMessage | undefined} msg */
+/**
+ * Короткая строка для СПИСКА диалогов — там нужна одна строчка, а не всё сообщение.
+ * Для самой переписки не годится: обрезка рвала ссылку посреди адреса
+ * («https://t.me/+WNDfu»), и оператор видел не то, что получил человек.
+ * @param {import('telegram').Api.TypeMessage | undefined} msg
+ */
 function previewText(msg) {
   if (!msg) return ''
   if (msg.message?.trim()) return msg.message.trim().slice(0, 120)
-  if (msg.media) {
+  return mediaLabel(msg)
+}
+
+/** Подпись вместо текста, когда сообщение — вложение. @param {object} msg */
+function mediaLabel(msg) {
+  if (msg?.media) {
     const cn = msg.media.className || ''
     if (cn.includes('Photo')) return '📷 Фото'
     if (cn.includes('Document')) return '📎 Файл'
@@ -14,6 +24,12 @@ function previewText(msg) {
     return 'Медиа'
   }
   return ''
+}
+
+/** Полный текст сообщения для окна переписки — без обрезки. @param {object} msg */
+function fullText(msg) {
+  const t = msg?.message?.trim()
+  return t || mediaLabel(msg)
 }
 
 /** @param {number | undefined} ts */
@@ -130,7 +146,7 @@ export async function fetchDialogMessages(client, peerId, limit = 60, beforeId =
     .filter((m) => m?.id && (m.message || m.media) && !m.action)
     .map((m) => ({
       id: m.id,
-      text: previewText(m) || '…',
+      text: fullText(m) || '…',
       time: formatDialogTime(m.date),
       out: !!m.out,
       date: m.date || 0,

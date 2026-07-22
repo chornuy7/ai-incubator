@@ -84,9 +84,34 @@ export function LeadConversationModal({ source, onClose }: { source: Conversatio
 
         <div className="max-h-[55vh] space-y-2 overflow-y-auto rounded-xl border border-line bg-elevated/30 p-3">
           {loading && !messages.length && <div className="py-8 text-center text-sm text-white/40">Загружаем диалог…</div>}
-          {!loading && !messages.length && !error && (
+          {!loading && !messages.length && !error && !data?.wiped?.length && (
             <div className="py-8 text-center text-sm text-white/40">
               Сообщений нет — с этим контактом ещё не переписывались.
+            </div>
+          )}
+          {!loading && !messages.length && !!data?.wiped?.length && (
+            <div className="space-y-2">
+              <div className="flex items-start gap-2 rounded-xl border border-amber-500/30 bg-amber-500/10 p-3 text-xs text-amber-200">
+                <AlertTriangle size={14} className="mt-0.5 shrink-0" />
+                <div>
+                  <div className="font-semibold">Telegram не показывает эту переписку</div>
+                  <div className="mt-0.5 opacity-85">
+                    Отправка прошла, но ни сообщения, ни диалога у аккаунта больше нет — так выглядит
+                    удаление антиспамом. Получатель его, скорее всего, не увидел. Это признак того,
+                    что аккаунт помечен, а не ошибка отображения.
+                  </div>
+                </div>
+              </div>
+              {data.wiped.map((w, i) => (
+                <div key={i} className="flex justify-end gap-2">
+                  <div className="max-w-[75%] rounded-2xl border border-dashed border-white/15 bg-white/4 px-3 py-2 text-sm text-white/60">
+                    <div className="whitespace-pre-wrap break-words">{w.text}</div>
+                    <div className="mt-1 text-[10px] opacity-45">
+                      отправляли {new Date(w.ts).toLocaleString('ru-RU')}
+                    </div>
+                  </div>
+                </div>
+              ))}
             </div>
           )}
           {messages.map((m) => (

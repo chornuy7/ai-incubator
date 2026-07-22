@@ -48,6 +48,33 @@ export function isAccountRunnable(status) {
   return !SKIP_STATUSES.has(status)
 }
 
+/**
+ * Статусы, при которых аккаунт не может писать ПЕРВЫМ, но может ОТВЕЧАТЬ.
+ *
+ * Спамблок в Telegram запрещает писать тем, кто с тобой не переписывался. Ответить
+ * в уже открытый диалог он не мешает — человек написал сам, ограничение снято для
+ * этой пары. Выбрасывать такой аккаунт из чатинга значит бросать живых собеседников
+ * на полуслове: именно это и произошло 21–22.07, когда 11 аккаунтов ушли в спамблок
+ * посреди диалогов.
+ */
+const REPLY_ONLY_STATUSES = new Set(['spamblock'])
+
+/**
+ * Можно ли использовать аккаунт в режиме «только ответы» (нейрочатинг/диалоги).
+ * @param {string} status
+ */
+export function isAccountReplyOnly(status) {
+  return REPLY_ONLY_STATUSES.has(status)
+}
+
+/**
+ * Годится ли аккаунт для модуля, который только отвечает на входящие.
+ * @param {string} status
+ */
+export function canReplyWithStatus(status) {
+  return isAccountRunnable(status) || isAccountReplyOnly(status)
+}
+
 export function postMeetsMinWords(text, minWords) {
   if (!minWords) return true
   return (text || '').trim().split(/\s+/).filter(Boolean).length >= minWords

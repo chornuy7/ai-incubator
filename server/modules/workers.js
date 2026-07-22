@@ -31,6 +31,8 @@ import {
   pickJoinDelay,
   effectiveProbability,
   isAccountRunnable,
+  canReplyWithStatus,
+  isAccountReplyOnly,
   postMeetsMinWords,
   postMatchesKeywords,
   sleep,
@@ -816,6 +818,8 @@ export async function runNeuroDialogs(task, store) {
   // Модуль-ответчик работает долго (ждёт входящие ЛС), поэтому при суточном лимите
   // не завершаемся, а тихо простаиваем — лог о достижении лимита пишем один раз на аккаунт.
   const dmCapLogged = new Set()
+  /** Кому уже сказали, что он работает только на приём (спамблок). */
+  const replyOnlyLogged = new Set()
   // Последнее входящее сообщение, на которое уже ответили: не отвечаем дважды на одно и то же,
   // но отвечаем снова, когда собеседник напишет новое.
   const answeredUpTo = new Map()
@@ -841,11 +845,14 @@ export async function runNeuroDialogs(task, store) {
       }
       const accountId = myAccounts[idx++ % myAccounts.length]
       const meta = await getAccountMeta(accountId)
-      if (!isAccountRunnable(meta.status || 'active')) {
-        // Спамблок/карантин — это надолго. Раньше такой аккаунт оставался в ротации и
-        // проверялся каждый круг: лог забивался «Пропуск аккаунта: spamblock» до бесконечности,
+      // Спамблок запрещает писать ПЕРВЫМ, но не мешает ответить тому, кто написал сам.
+      // Нейродиалоги только отвечают — значит такой аккаунт здесь полноценно работает.
+      // Выбрасывать его означало бы бросить живых собеседников на полуслове.
+      if (!canReplyWithStatus(meta.status || 'active')) {
+        // Карантин/невалид — это надолго. Раньше такой аккаунт оставался в ротации и
+        // проверялся каждый круг: лог забивался «Пропуск аккаунта» до бесконечности,
         // а поток тратил обороты впустую. Теперь выбрасываем его из своего набора.
-        const dead = ['spamblock', 'quarantine', 'invalid', 'banned'].includes(meta.status)
+        const dead = ['quarantine', 'invalid', 'banned'].includes(meta.status)
         if (dead) {
           const at = myAccounts.indexOf(accountId)
           if (at !== -1) myAccounts.splice(at, 1)
@@ -856,6 +863,12 @@ export async function runNeuroDialogs(task, store) {
         skips += 1
         await store.appendLog(task, 'warning', `Пропуск аккаунта: ${meta.status}`, meta.name)
         continue
+      }
+      // Один раз на аккаунт сообщаем, что он работает «на приём»: оператор видит
+      // спамблок в менеджере и иначе решил бы, что задача его зря держит.
+      if (isAccountReplyOnly(meta.status) && !replyOnlyLogged.has(accountId)) {
+        replyOnlyLogged.add(accountId)
+        await store.appendLog(task, 'info', `${meta.name}: спамблок — писать первым нельзя, но отвечать в открытые диалоги можно. Оставляем в работе.`, meta.name)
       }
       if (perAccountLimitReached(s, accountId, task)) {
         skips += 1

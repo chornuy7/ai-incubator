@@ -4,6 +4,7 @@ import { listLeads, createLead, updateLead, deleteLead, upsertLead, leadStats, L
 import { loadMessages } from './neuroDialogs/service.js'
 import { getAccountMeta } from './accountsMeta.js'
 import { getAccountLock } from './lib/accountLocks.js'
+import { outgoingToPeer } from './lib/outbox.js'
 
 export const leadsRouter = Router()
 
@@ -43,10 +44,16 @@ async function readConversation(accountId, rawPeer, limit) {
   const bare = peer.replace(/^@/, '')
   const isUsername = /^[a-zA-Z][\w\d_]{3,}$/.test(bare)
   const messages = await loadMessages(accountId, bare, limit, 0, isUsername ? { username: bare } : {})
+  // Telegram отдал пустой диалог, а мы точно писали? Значит отправку стёр антиспам:
+  // сообщение исчезает у обеих сторон, диалога в списке нет. Показать «переписки нет»
+  // было бы враньём — человек решит, что баг у нас, вместо того чтобы увидеть
+  // главный симптом помеченного аккаунта.
+  const wiped = !messages?.messages?.length ? await outgoingToPeer(rawPeer, { accountId }) : []
   return {
     account: { id: accountId, name: meta.name || accountId, status: meta.status || 'active' },
     busyIn: lock ? { moduleLabel: lock.moduleLabel, taskId: lock.taskId } : null,
     messages,
+    wiped,
   }
 }
 

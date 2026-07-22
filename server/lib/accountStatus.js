@@ -71,9 +71,18 @@ export const WARMING_MODULE = 'warming'
  * @param {string} moduleKey
  * @param {string} status
  */
+/**
+ * Модули, которые только ОТВЕЧАЮТ на входящие и никогда не пишут первыми.
+ * Спамблок им не помеха: он запрещает писать незнакомым, а не отвечать тем,
+ * кто написал сам. Раньше такой аккаунт выбрасывался — и живые диалоги обрывались
+ * на полуслове (21–22.07: 11 аккаунтов ушли в спамблок посреди переписок).
+ */
+const REPLY_ONLY_MODULES = new Set(['neuro-dialogs'])
+
 export function canModuleUseAccount(moduleKey, status) {
   const s = normalizeStatus(status)
   if (moduleKey === WARMING_MODULE) return s === STATUS.ACTIVE || s === STATUS.WARMING
+  if (REPLY_ONLY_MODULES.has(moduleKey) && s === STATUS.SPAMBLOCK) return true
   return isRunnable(s)
 }
 

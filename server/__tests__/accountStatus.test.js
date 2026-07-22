@@ -124,3 +124,23 @@ test('nextStatusAfterExpiry: floodwait→prevStatus, quarantine→warming', () =
   // не временный статус → null
   assert.equal(nextStatusAfterExpiry({ status: 'active' }, 200), null)
 })
+
+// ── Спамблок ≠ полная нерабочесть: писать первым нельзя, отвечать можно ──
+
+test('нейродиалоги берут аккаунт в спамблоке — они только отвечают', () => {
+  // 21–22.07: 11 аккаунтов ушли в спамблок посреди живых переписок, и мы бросили
+  // собеседников на полуслове. Ограничение Telegram — на первое сообщение незнакомому.
+  assert.equal(canModuleUseAccount('neuro-dialogs', 'spamblock'), true)
+})
+
+test('модули, которые пишут первыми, аккаунт в спамблоке не берут', () => {
+  for (const m of ['mailing', 'neuro-commenting', 'neuro-chatting', 'warming']) {
+    assert.equal(canModuleUseAccount(m, 'spamblock'), false, `${m} не должен писать в спамблоке`)
+  }
+})
+
+test('карантин и невалид закрыты даже для «только ответов»', () => {
+  for (const s of ['quarantine', 'invalid', 'reauth']) {
+    assert.equal(canModuleUseAccount('neuro-dialogs', s), false, s)
+  }
+})
