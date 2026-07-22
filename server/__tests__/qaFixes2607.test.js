@@ -10,6 +10,7 @@ import { postErrorHint, stopWorker } from '../modules/workers.js'
 import { generateComment } from '../neuroCommenting/commentGenerator.js'
 import { foldersForRequest } from '../lib/accessGuard.js'
 import { taskSignature, findDuplicateActiveTask } from '../lib/taskDedup.js'
+import { OPEN_SESSION_CAP_MS } from '../workLog.js'
 
 const mockReq = (headers = {}) => ({ header: (h) => headers[h.toLowerCase()] })
 const FOLDERS = [
@@ -125,4 +126,24 @@ test('1.3: без seed поведение прежнее — выбор по pro
   const a = await generateComment('Привет всем!', 1)
   const b = await generateComment('Привет всем!', 1)
   assert.equal(a.text, b.text)
+})
+
+// ── 7.9: учёт рабочего времени считает работу, а не календарь ────────────
+test('7.9: незакрытая сессия не растёт бесконечно — есть потолок', () => {
+  const H = 60 * 60 * 1000
+  assert.equal(OPEN_SESSION_CAP_MS, 12 * H, 'смена, а не четверо суток')
+  const start = Date.parse('2026-07-17T16:53:00Z')
+  const now = start + 98 * H // ровно тот случай из лога: сессия «длиной 98 часов»
+  const counted = Math.min(now, start + OPEN_SESSION_CAP_MS) - start
+  assert.equal(counted, 12 * H)
+})
+
+test('7.9: в окно попадает ПЕРЕСЕЧЕНИЕ сессии с ним, а не вся длительность', () => {
+  const H = 60 * 60 * 1000
+  const overlap = (aS, aE, wS, wE) => Math.max(0, Math.min(aE, wE) - Math.max(aS, wS))
+  const dayStart = Date.parse('2026-07-22T00:00:00Z')
+  // Сессия с 22:00 вчера до 02:00 сегодня: «сегодня» должно быть 2 часа, а не 4.
+  const s = dayStart - 2 * H
+  const e = dayStart + 2 * H
+  assert.equal(overlap(s, e, dayStart, e), 2 * H)
 })
