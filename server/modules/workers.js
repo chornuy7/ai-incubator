@@ -1860,6 +1860,22 @@ export async function runMailing(task, store) {
   await finalizeAccounts(accountIds, task.id, !!task.pauseRequested)
 }
 
+/** Ошибки Telegram, где подсказка про права админа действительно уместна. */
+const ADMIN_RIGHTS_ERRORS = /CHAT_ADMIN_REQUIRED|CHAT_WRITE_FORBIDDEN|CHAT_SEND_.*FORBIDDEN|USER_BANNED_IN_CHANNEL/i
+
+/**
+ * Текст ошибки постинга. Подсказку «нужны права админа» дописываем ТОЛЬКО к ошибкам
+ * доступа: раньше она приклеивалась к любой, включая сетевые и прокси
+ * (`Invalid sockets params: socksType=undefined`), и уводила оператора проверять права,
+ * когда дело было в прокси (прогон 21–22.07, тест 10.1).
+ * @param {unknown} err
+ */
+export function postErrorHint(err) {
+  const msg = mapTelegramError(err)
+  const raw = err instanceof Error ? `${err.message} ${msg}` : String(msg)
+  return ADMIN_RIGHTS_ERRORS.test(raw) ? `${msg} — аккаунт должен быть админом канала с правом публикации` : msg
+}
+
 /**
  * Автопостинг (§8.10, паритет): публикация поста в СВОИ каналы/группы по расписанию.
  * Безопасно — постим в свои каналы (аккаунт должен быть админом с правом постинга), не спам.
@@ -1904,13 +1920,21 @@ export async function runAutoPosting(task, store) {
       } catch (err) {
         if (client) await disconnectAccount(client, accountId)
         if (!(await handleFlood(task, accountId, store, err, s, meta.name))) {
-          await store.appendLog(task, 'error', `${ch}: ${mapTelegramError(err)} (нужны права админа на постинг?)`, meta.name)
+          await store.appendLog(task, 'error', `${ch}: ${postErrorHint(err)}`, meta.name)
         }
       }
       task = (await store.loadTask(task.id)) || task
     }
     task.status = statusAfterRun(task)
-    await store.appendLog(task, 'info', 'Автопостинг завершён')
+    // §8.4: запуск, не опубликовавший НИ ОДНОГО поста, — это не «Готово».
+    // Раньше здесь всегда стоял statusAfterRun → задача с 0/1 показывалась как успешная,
+    // и провал был виден только тому, кто откроет логи (прогон 21–22.07, тест 10.1).
+    if (task.status === 'done' && task.progress.done === 0 && task.progress.total > 0) {
+      task.status = 'error'
+      await store.appendLog(task, 'error', `Не опубликовано ни одного поста из ${task.progress.total} — см. ошибки выше`)
+    } else {
+      await store.appendLog(task, 'info', 'Автопостинг завершён')
+    }
   } catch (err) {
     task.status = 'error'
     await store.appendLog(task, 'error', err instanceof Error ? err.message : 'Ошибка')

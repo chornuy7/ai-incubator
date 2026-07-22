@@ -7,18 +7,40 @@ function newId() {
   return `fld_${crypto.randomUUID().slice(0, 8)}`
 }
 
-function normalizeTargets(targets) {
+/**
+ * Цели папки: без `@`, без пробелов, без дублей — и в НИЖНЕМ регистре.
+ *
+ * Регистр критичен: юзернеймы Telegram регистронезависимы, `@nuancesprog` и
+ * `@NUANCESPROG` — один канал. Без `toLowerCase()` они ложились в папку двумя
+ * записями, и кампания отрабатывала по такому каналу ДВАЖДЫ одним аккаунтом —
+ * повторные действия в один чат читаются как сигнатура бота (прогон 21–22.07,
+ * тест 11.7: отправили 15 строк, сохранилось 13 вместо 12).
+ * @param {*} targets
+ */
+export function normalizeTargets(targets) {
   const arr = Array.isArray(targets) ? targets : []
   const clean = arr
-    .map((t) => String(t || '').trim().replace(/^@/, ''))
+    .map((t) => String(t || '').trim().replace(/^@/, '').toLowerCase())
     .filter(Boolean)
   return [...new Set(clean)]
 }
 
+/** Миграция регистра выполняется один раз за процесс — чтобы не писать файл на каждом чтении. */
+let migrated = false
+
 /** @returns {Promise<Array<{id:string,name:string,targets:string[],createdAt:number,updatedAt:number}>>} */
 export async function listFolders() {
   const data = await readJson(FILE, { folders: [] })
-  return Array.isArray(data?.folders) ? data.folders : []
+  const folders = Array.isArray(data?.folders) ? data.folders : []
+  // Папки, сохранённые до фикса регистра, содержат дубли вида nuancesprog + NUANCESPROG.
+  // Сами они не исчезнут, поэтому схлопываем их при первом чтении и сохраняем результат.
+  const fixed = folders.map((f) => ({ ...f, targets: normalizeTargets(f.targets) }))
+  const changed = fixed.some((f, i) => f.targets.length !== (folders[i].targets?.length ?? 0))
+  if (changed && !migrated) {
+    migrated = true
+    await saveFolders(fixed).catch(() => {})
+  }
+  return fixed
 }
 
 async function saveFolders(folders) {

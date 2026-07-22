@@ -7,6 +7,8 @@ import { loadAllMeta, getAccountMeta } from './accountsMeta.js'
 import { loadSessionString, createClient } from './tgAuth.js'
 import { sleep } from './lib/protection.js'
 import { accountFingerprint } from './lib/deviceFingerprint.js'
+import { foldersForRequest, isAdminRequest } from './lib/accessGuard.js'
+import { appendAudit } from './lib/auditLog.js'
 
 export const featureRouter = Router()
 
@@ -69,9 +71,12 @@ featureRouter.delete('/target-blacklist', async (req, res) => {
 })
 
 // ── (5) Папки списков целей ─────────────────────────────────────────────
-featureRouter.get('/target-folders', async (_req, res) => {
+// §8.1: отдаём только разрешённые роли папки и только разрешённые каналы внутри них.
+// До этого стоял `_req` — запрос не читался вовсе, и списки каналов всех ролей уходили
+// любому, кто дёрнет URL (прогон 21–22.07, тест 11.7).
+featureRouter.get('/target-folders', async (req, res) => {
   try {
-    res.json({ ok: true, folders: await listFolders() })
+    res.json({ ok: true, folders: await foldersForRequest(req, await listFolders()) })
   } catch (err) { fail(res, err, 500) }
 })
 
@@ -85,16 +90,52 @@ featureRouter.post('/target-folders', async (req, res) => {
 
 featureRouter.put('/target-folders/:id', async (req, res) => {
   try {
-    const folder = await updateFolder(req.params.id, req.body ?? {})
+    const patch = req.body ?? {}
+    // §8.1: переименование — управление папкой, только админ. Дозапись целей
+    // («Сохранить в папку») доступна всем, у кого папка вообще видна.
+    if (typeof patch.name === 'string' && !(await isAdminRequest(req))) {
+      return res.status(403).json({ ok: false, error: 'Переименовать папку может только администратор' })
+    }
+    if (patch.targets !== undefined) {
+      const visible = await foldersForRequest(req, await listFolders())
+      if (!visible.some((f) => f.id === req.params.id)) {
+        return res.status(403).json({ ok: false, error: 'Нет доступа к этой папке' })
+      }
+    }
+    const before = (await listFolders()).find((f) => f.id === req.params.id)
+    const folder = await updateFolder(req.params.id, patch)
     if (!folder) return res.status(404).json({ ok: false, error: 'Папка не найдена' })
+    // §3.1: папка — база для массовой рассылки; подмена её содержимого должна оставлять след.
+    await appendAudit({
+      action: 'folder.update',
+      module: 'folders',
+      initiator: req.header('x-user-id') || 'operator',
+      reason: patch.name !== undefined
+        ? `Переименована: «${before?.name ?? '—'}» → «${folder.name}»`
+        : `Цели папки «${folder.name}»: было ${before?.targets?.length ?? 0} → стало ${folder.targets.length}`,
+      scope: { folderId: folder.id },
+      meta: { before: before?.targets?.length ?? 0, after: folder.targets.length },
+    }).catch(() => {})
     res.json({ ok: true, folder })
   } catch (err) { fail(res, err) }
 })
 
 featureRouter.delete('/target-folders/:id', async (req, res) => {
   try {
+    // §8.1: удаление папки — необратимо и только для админа (фронт это и так подразумевал).
+    if (!(await isAdminRequest(req))) {
+      return res.status(403).json({ ok: false, error: 'Удалить папку может только администратор' })
+    }
+    const before = (await listFolders()).find((f) => f.id === req.params.id)
     const ok = await deleteFolder(req.params.id)
     if (!ok) return res.status(404).json({ ok: false, error: 'Папка не найдена' })
+    await appendAudit({
+      action: 'folder.delete',
+      module: 'folders',
+      initiator: req.header('x-user-id') || 'operator',
+      reason: `Удалена папка «${before?.name ?? req.params.id}» (${before?.targets?.length ?? 0} целей)`,
+      scope: { folderId: req.params.id },
+    }).catch(() => {})
     res.json({ ok: true })
   } catch (err) { fail(res, err) }
 })
