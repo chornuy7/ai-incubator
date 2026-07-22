@@ -145,7 +145,14 @@ export function TasksPage() {
     // #4: рестарт боевого модуля = реальные действия в Telegram — подтверждаем.
     if (isCombatModule(t.moduleKey) && !(await confirmDialog({ title: 'Реальные действия в Telegram', message: combatConfirmText(t.moduleKey), confirmLabel: 'Запустить', tone: 'danger' }))) return
     setBusy(t.id)
-    try { await restartModuleTask(t.moduleKey, t.id); pushToast({ type: 'success', title: 'Задача перезапущена' }); await load() }
+    // Рестарт создаёт НОВУЮ задачу с новым id, а старая честно остаётся «Остановлена».
+    // Раньше тост писал просто «Задача перезапущена», пользователь оставался на старой
+    // карточке и это выглядело как «ничего не произошло» (прогон 21–22.07, тест 6.2).
+    try {
+      const fresh = await restartModuleTask(t.moduleKey, t.id)
+      pushToast({ type: 'success', title: 'Создана новая задача', desc: `${fresh.id} — прежняя ${t.id} осталась остановленной` })
+      await load()
+    }
     catch (err) { pushToast({ type: 'error', title: 'Ошибка перезапуска', desc: err instanceof Error ? err.message : '' }) }
     finally { setBusy(null) }
   }
@@ -589,16 +596,29 @@ export function TaskDetailPage() {
   const doRestart = async () => {
     // #4: рестарт боевого модуля = реальные действия в Telegram — подтверждаем.
     if (isCombatModule(moduleKey) && !(await confirmDialog({ title: 'Реальные действия в Telegram', message: combatConfirmText(moduleKey), confirmLabel: 'Запустить', tone: 'danger' }))) return
-    void run(() => restartModuleTask(moduleKey, id), 'Задача перезапущена')
+    // Рестарт заводит НОВУЮ задачу — на странице старой видно «Остановлена», и это
+    // читается как «кнопка не сработала». Переходим на новую (тест 6.2).
+    setBusy(true)
+    try {
+      const fresh = await restartModuleTask(moduleKey, id)
+      pushToast({ type: 'success', title: 'Создана новая задача', desc: fresh.id })
+      navigate(`/panel/tasks/${fresh.id}?m=${moduleKey}`)
+    } catch (err) {
+      pushToast({ type: 'error', title: 'Ошибка', desc: err instanceof Error ? err.message : '' })
+    } finally { setBusy(false) }
   }
 
   // §9.8: правка задачи — только на паузе (сервер это тоже проверяет и вернёт 409).
   const [editing, setEditing] = useState(false)
   const [edTargets, setEdTargets] = useState('')
-  const [edMinActions, setEdMinActions] = useState(0)
-  const [edMaxActions, setEdMaxActions] = useState(0)
-  const [edMinPerAcc, setEdMinPerAcc] = useState(0)
-  const [edMaxPerAcc, setEdMaxPerAcc] = useState(0)
+  // Лимиты держим СТРОКАМИ: пустая строка = «не задано». Раньше здесь были числа и
+  // `s.maxActions ?? 0`, поэтому незаданный лимит показывался нулём; оператор принимал
+  // ноль за настоящее значение, жал «Сохранить» — и в настройки уходил явный 0, который
+  // resolveTotalTarget трактует как «ноль действий» (прогон 21–22.07, тест 6.4).
+  const [edMinActions, setEdMinActions] = useState('')
+  const [edMaxActions, setEdMaxActions] = useState('')
+  const [edMinPerAcc, setEdMinPerAcc] = useState('')
+  const [edMaxPerAcc, setEdMaxPerAcc] = useState('')
   // ВАЖНО: хук объявлен здесь, до ранних return'ов. Порядок хуков в React обязан быть
   // одинаковым на каждом рендере — useState после условного return роняет всю страницу
   // в белый/чёрный экран, как только задача догрузится.
@@ -607,20 +627,23 @@ export function TaskDetailPage() {
 
   const startEdit = (s: ModuleTaskSettings) => {
     setEdTargets((s.channels || s.targets || []).join('\n'))
-    setEdMinActions(s.minActions ?? 0)
-    setEdMaxActions(s.maxActions ?? 0)
-    setEdMinPerAcc(s.minPerAccount ?? 0)
-    setEdMaxPerAcc(s.maxPerAccount ?? 0)
+    const str = (v: number | null | undefined) => (v === null || v === undefined ? '' : String(v))
+    setEdMinActions(str(s.minActions))
+    setEdMaxActions(str(s.maxActions))
+    setEdMinPerAcc(str(s.minPerAccount))
+    setEdMaxPerAcc(str(s.maxPerAccount))
     setEditing(true)
   }
 
   const saveEdit = async () => {
     const targets = edTargets.split(/[\n,;]+/).map((x) => x.trim()).filter(Boolean)
+    // Пустое поле НЕ отправляем — иначе «не задано» превратится в явный 0.
+    const num = (v: string) => (v.trim() === '' ? undefined : Math.max(0, Number(v) || 0))
     await run(
       () => updateModuleTaskSettings(moduleKey, id, {
         targets, channels: targets,
-        minActions: edMinActions, maxActions: edMaxActions,
-        minPerAccount: edMinPerAcc, maxPerAccount: edMaxPerAcc,
+        minActions: num(edMinActions), maxActions: num(edMaxActions),
+        minPerAccount: num(edMinPerAcc), maxPerAccount: num(edMaxPerAcc),
       }),
       'Настройки задачи обновлены',
     )
@@ -683,6 +706,17 @@ export function TaskDetailPage() {
           </div>
         </div>
 
+        {/* Причина блокировки правки — ТЕКСТОМ, а не в title кнопки: браузеры не показывают
+            подсказки на disabled-элементах (они не получают событий мыши), поэтому оператор
+            видел «не могу нажать» и ни намёка почему (прогон 21–22.07, тест 6.3). */}
+        {t.status !== 'paused' && (
+          <div className="mt-2 text-xs text-muted">
+            {isActive(t)
+              ? 'Настройки задачи правятся только на паузе — сейчас она выполняется, и часть аккаунтов уже отработала по текущим настройкам. Нажмите «Пауза», затем карандаш.'
+              : 'Задача завершена — править нечего. Нажмите «Перезапуск», чтобы создать новую с этими настройками.'}
+          </div>
+        )}
+
         {editing && (
           <div className="rounded-2xl border border-spark-500/40 bg-spark-500/5 p-4">
             <div className="mb-3 text-sm font-bold text-fg">Правка задачи (на паузе)</div>
@@ -691,16 +725,16 @@ export function TaskDetailPage() {
                 <textarea value={edTargets} onChange={(e) => setEdTargets(e.target.value)} className="input mt-1 min-h-[80px] font-mono text-sm" placeholder="@channel" />
               </label>
               <label className="text-xs text-white/50">Всего действий: от
-                <input type="number" min={0} value={edMinActions} onChange={(e) => setEdMinActions(Math.max(0, Number(e.target.value) || 0))} className="input mt-1 h-9" />
+                <input type="number" min={0} value={edMinActions} onChange={(e) => setEdMinActions(e.target.value)} placeholder="не задано" className="input mt-1 h-9" />
               </label>
               <label className="text-xs text-white/50">до
-                <input type="number" min={0} value={edMaxActions} onChange={(e) => setEdMaxActions(Math.max(0, Number(e.target.value) || 0))} className="input mt-1 h-9" />
+                <input type="number" min={0} value={edMaxActions} onChange={(e) => setEdMaxActions(e.target.value)} placeholder="не задано" className="input mt-1 h-9" />
               </label>
               <label className="text-xs text-white/50">На аккаунт: от
-                <input type="number" min={0} value={edMinPerAcc} onChange={(e) => setEdMinPerAcc(Math.max(0, Number(e.target.value) || 0))} className="input mt-1 h-9" />
+                <input type="number" min={0} value={edMinPerAcc} onChange={(e) => setEdMinPerAcc(e.target.value)} placeholder="не задано" className="input mt-1 h-9" />
               </label>
               <label className="text-xs text-white/50">до
-                <input type="number" min={0} value={edMaxPerAcc} onChange={(e) => setEdMaxPerAcc(Math.max(0, Number(e.target.value) || 0))} className="input mt-1 h-9" />
+                <input type="number" min={0} value={edMaxPerAcc} onChange={(e) => setEdMaxPerAcc(e.target.value)} placeholder="не задано" className="input mt-1 h-9" />
               </label>
             </div>
             <div className="mt-3 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-200">

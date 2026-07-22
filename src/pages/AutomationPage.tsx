@@ -7,7 +7,7 @@ import { HelpButton } from '@/features/neuro-commenting/moduleUi'
 import { confirmDialog } from '@/shared/lib/dialog'
 import { AccountPicker } from '@/features/account-picker/AccountPicker'
 import { NumberField, FolderPicker } from '@/features/modules/shared'
-import { MODULES } from '@/shared/config/modules'
+import { MODULES, isCombatModule, combatConfirmText } from '@/shared/config/modules'
 import { useApp } from '@/mocks/store'
 import {
   fetchAutomationRules, createAutomationRule, updateAutomationRule, deleteAutomationRule, runAutomationRuleNow,
@@ -67,6 +67,16 @@ export function AutomationPage() {
   }
 
   const runNow = async (r: AutomationRule) => {
+    // Досрочный запуск правила = те же реальные действия в Telegram, что и запуск из
+    // модуля. Там подтверждение спрашивают (LiveModule, TasksPage), а здесь кнопка ▶
+    // стреляла сразу (прогон 21–22.07, тест 6.12).
+    const mk = r.moduleKey || ''
+    if (isCombatModule(mk) && !(await confirmDialog({
+      title: 'Реальные действия в Telegram',
+      message: combatConfirmText(mk),
+      confirmLabel: 'Запустить',
+      tone: 'danger',
+    }))) return
     try {
       const taskId = await runAutomationRuleNow(r.id)
       await reload()

@@ -76,11 +76,28 @@ export function startWorker(taskId, store, runner) {
   running.set(taskId, job)
 }
 
-/** @param {string} taskId @param {object} store */
+/**
+ * Стоп задачи. Для РАБОТАЮЩЕЙ — выставляем флаг, воркер выйдет из цикла сам.
+ *
+ * Для задачи НА ПАУЗЕ живого воркера нет, и флаг обрабатывать некому: раньше стоп
+ * возвращал 200, а задача так и оставалась `paused` — оператор видел успех, но её
+ * можно было «возобновить» кнопкой, то есть «остановленная» боевая задача оживала
+ * (прогон 21–22.07, тест 6.2). Поэтому здесь останавливаем сами: ставим статус,
+ * снимаем локи и освобождаем аккаунты — ровно то, что сделал бы воркер на выходе.
+ * @param {string} taskId @param {object} store
+ */
 export async function stopWorker(taskId, store) {
   const task = await store.loadTask(taskId)
   if (!task) return null
   task.stopRequested = true
+  if (task.status === 'paused' && !running.has(taskId)) {
+    task.pauseRequested = false
+    task.status = 'stopped'
+    await store.appendLog(task, 'info', 'Задача остановлена с паузы — аккаунты освобождены')
+    await store.saveTask(task)
+    await finalizeAccounts(task.settings?.accountIds || [], task.id, false)
+    return task
+  }
   await store.saveTask(task)
   return task
 }

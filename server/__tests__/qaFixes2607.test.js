@@ -6,8 +6,9 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 
 import { normalizeTargets } from '../targetFolders.js'
-import { postErrorHint } from '../modules/workers.js'
+import { postErrorHint, stopWorker } from '../modules/workers.js'
 import { foldersForRequest } from '../lib/accessGuard.js'
+import { taskSignature, findDuplicateActiveTask } from '../lib/taskDedup.js'
 
 const mockReq = (headers = {}) => ({ header: (h) => headers[h.toLowerCase()] })
 const FOLDERS = [
@@ -63,4 +64,42 @@ test('11.7: исходный массив не мутируется', async () =
   const copy = JSON.parse(JSON.stringify(FOLDERS))
   await foldersForRequest(mockReq({ 'x-user-id': 'нет-такого-юзера' }), FOLDERS)
   assert.deepEqual(FOLDERS, copy)
+})
+
+// ── 6.6: подпись задачи различает парсеры по ключевым словам ─────────────
+test('6.6: поиск «crypto» и «nft» одним аккаунтом — РАЗНЫЕ задачи', () => {
+  const a = { accountIds: ['acc_1'], keywords: ['crypto'] }
+  const b = { accountIds: ['acc_1'], keywords: ['nft'] }
+  assert.notEqual(taskSignature(a), taskSignature(b), 'иначе вторая выгрузка отклоняется как дубль')
+  assert.equal(findDuplicateActiveTask([{ status: 'running', settings: a }], b), null)
+})
+
+test('6.6: те же ключи в другом порядке и регистре — всё же дубль', () => {
+  const a = { accountIds: ['acc_1'], keywords: ['Crypto', 'nft'] }
+  const b = { accountIds: ['acc_1'], keywords: ['NFT', 'crypto'] }
+  assert.equal(taskSignature(a), taskSignature(b))
+  assert.ok(findDuplicateActiveTask([{ status: 'running', settings: a }], b), 'настоящий дубль ловим')
+})
+
+// ── 6.2: стоп работает и на задаче, стоящей на паузе ─────────────────────
+function mockStore(task) {
+  return {
+    loadTask: async () => task,
+    saveTask: async (t) => { task = t },
+    appendLog: async () => {},
+  }
+}
+
+test('6.2: стоп задачи НА ПАУЗЕ переводит её в stopped, а не оставляет paused', async () => {
+  const task = { id: 'x_1', status: 'paused', pauseRequested: true, settings: { accountIds: [] } }
+  const out = await stopWorker('x_1', mockStore(task))
+  assert.equal(out.status, 'stopped', 'иначе «остановленную» задачу можно возобновить кнопкой')
+  assert.equal(out.pauseRequested, false, 'снят флаг паузы, иначе она вернётся в paused')
+})
+
+test('6.2: у работающей задачи стоп только просит остановиться — статус меняет воркер', async () => {
+  const task = { id: 'x_2', status: 'running', settings: { accountIds: [] } }
+  const out = await stopWorker('x_2', mockStore(task))
+  assert.equal(out.stopRequested, true)
+  assert.equal(out.status, 'running', 'воркер сам доведёт до stopped на выходе из цикла')
 })
