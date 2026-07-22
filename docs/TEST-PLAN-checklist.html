@@ -1,6 +1,6 @@
 <title>Чек-лист тестирования — AI Incubator</title>
 <style>
-:root{--bg:#0f1117;--card:#171a22;--line:#262b36;--fg:#e8ecf4;--mut:#98a1b3;--ok:#22c55e;--bad:#ef4444;--acc:#7c8cff}
+:root{--bg:#0f1117;--card:#171a22;--line:#262b36;--fg:#e8ecf4;--mut:#98a1b3;--ok:#22c55e;--bad:#ef4444;--warn:#f59e0b;--acc:#7c8cff}
 @media (prefers-color-scheme:light){:root{--bg:#f6f7fb;--card:#fff;--line:#e2e6ef;--fg:#151922;--mut:#5d6678}}
 :root[data-theme=dark]{--bg:#0f1117;--card:#171a22;--line:#262b36;--fg:#e8ecf4;--mut:#98a1b3}
 :root[data-theme=light]{--bg:#f6f7fb;--card:#fff;--line:#e2e6ef;--fg:#151922;--mut:#5d6678}
@@ -9,8 +9,9 @@ body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.5 -apple-system,B
 .wrap{max-width:1100px;margin:0 auto;padding:20px 16px 80px}
 h1{font-size:20px;margin:0 0 4px}.sub{color:var(--mut);font-size:13px;margin-bottom:14px}
 .bar{position:sticky;top:0;z-index:5;background:var(--bg);padding:10px 0;border-bottom:1px solid var(--line);margin-bottom:14px}
-.prog{height:8px;border-radius:99px;background:var(--line);overflow:hidden;margin-bottom:8px}
-.prog i{display:block;height:100%;background:var(--ok);width:0;transition:width .3s}
+.prog{height:8px;border-radius:99px;background:var(--line);overflow:hidden;margin-bottom:8px;display:flex}
+.prog i{display:block;height:100%;transition:width .3s}
+.prog .pOk{background:var(--ok)}.prog .pWarn{background:var(--warn)}.prog .pFail{background:var(--bad)}
 .stats{display:flex;gap:14px;flex-wrap:wrap;font-size:12px;color:var(--mut);align-items:center}
 .stats b{color:var(--fg)}
 .f{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px}
@@ -27,1108 +28,908 @@ tr:last-child td{border-bottom:none}
 .nm{min-width:230px}.how{color:var(--mut);font-size:12px;margin-top:3px}.ex{color:var(--mut);font-size:12px;min-width:180px}
 code{background:rgba(124,140,255,.12);padding:1px 4px;border-radius:4px;font-size:12px}
 input[type=checkbox]{width:17px;height:17px;cursor:pointer;accent-color:var(--ok)}
-tr.done{opacity:.45}tr.done .nm{text-decoration:line-through}
-tr.failed{background:rgba(239,68,68,.08)}tr.failed .id{color:var(--bad);font-weight:700}
+tr.done{opacity:.5}tr.done .nm{text-decoration:line-through}
+tr.failed{background:rgba(239,68,68,.09)}tr.failed .id{color:var(--bad);font-weight:700}
+tr.warned{background:rgba(245,158,11,.08)}tr.warned .id{color:var(--warn);font-weight:700}
+tr.skipped{background:rgba(148,163,184,.08)}tr.skipped .id{color:var(--mut);font-weight:700}
 .fail{background:none;border:1px solid var(--line);color:var(--mut);border-radius:6px;cursor:pointer;padding:1px 6px;font-size:12px}
 tr.failed .fail{border-color:var(--bad);color:var(--bad)}
+tr.note td{font-size:12.5px;line-height:1.6;padding-top:2px;border-top:none}
+tr.note.warn td{color:#fbbf24;background:rgba(245,158,11,.07)}
+tr.note.fail td{color:#fca5a5;background:rgba(239,68,68,.08)}
+tr.note.ok td{color:#86efac;background:rgba(34,197,94,.07)}
+tr.note.skip td{color:#cbd5e1;background:rgba(148,163,184,.07)}
 .hide{display:none}
 .rst{background:none;border:1px solid var(--line);color:var(--mut);border-radius:8px;padding:4px 10px;font-size:12px;cursor:pointer;margin-left:auto}
 button:focus-visible,input:focus-visible{outline:2px solid var(--acc);outline-offset:2px}
 @media(max-width:720px){.ex{display:none}th:nth-child(6){display:none}}
 </style>
 <div class="wrap">
-<h1>Чек-лист тестирования — AI Incubator</h1>
-<div class="sub">Полное покрытие ТЗ §3–§9 и роадмапа · 116 тестов. Отметки сохраняются в браузере. Кнопка ✕ — пометить упавший тест.</div>
+<h1>Чек-лист ручного тестирования — AI Incubator</h1>
+<div class="sub">Прогон 21–22.07 · 118 ручных тестов, результат у 105. Оставшиеся 13 (парсеры 11.3/11.6, инфраструктура блок 14, разрушающие статусы/прокси 12.1–12.4/12.7/12.12/12.13) — дорожка Ильи. Под пройденными строками — <b>результат</b>: зелёный «прошло», жёлтый «с замечанием», красный «упало», серый «пропущено». Свои отметки ставьте галочкой, они сохраняются в браузере.</div>
 <div class="bar">
-  <div class="prog"><i id="pf"></i></div>
+  <div class="prog"><i id="bOk" class="pOk"></i><i id="bWarn" class="pWarn"></i><i id="bFail" class="pFail"></i></div>
   <div class="stats">
     <span>Пройдено: <b id="s1">0</b></span>
+    <span>С замечанием: <b id="s4" style="color:var(--warn)">0</b></span>
     <span>Упало: <b id="s2" style="color:var(--bad)">0</b></span>
-    <span>Критичных пройдено: <b id="s3">0</b></span>
-    <button class="rst" id="rst">Сбросить</button>
+    <span>Пропущено: <b id="s5">0</b></span>
+    <span>Критичных: <b id="s3">0</b></span>
+    <button class="rst" id="rst">Сбросить свои</button>
   </div>
   <div class="f">
     <button data-fp="🔴">🔴 критичные</button><button data-fp="🟡">🟡 важные</button><button data-fp="⚪">⚪ потом</button>
-    <button data-ft="TG">нужен Telegram</button><button data-ft="UI">UI</button><button data-ft="API">API</button>
+    <button data-ft="TG">нужен Telegram</button><button data-ft="UI">UI</button>
   </div>
 </div>
 <section class="blk"><h2>Блок 1. Сквозной цикл — MVP (§8.9, DoD MVP) 🔴</h2><div class="tw"><table><thead><tr><th></th><th>#</th><th>!</th><th>тип</th><th>тест</th><th>ожидаем</th><th></th></tr></thead><tbody>
     <tr class="t" data-p="🔴" data-ty="UI" data-id="1.1">
-      <td class="c"><input type="checkbox" id="cb-1.1"></td>
-      <td class="id">1.1</td>
-      <td class="p">🔴</td>
+      <td class="c"><input type="checkbox"></td><td class="id">1.1</td><td class="p">🔴</td>
       <td class="ty">UI</td>
       <td class="nm">Создать <b>цель</b><div class="how">Цели → Создать: название, действие, этапы, критерий</div></td>
       <td class="ex">Цель в списке, открывается на редактирование</td>
-      <td class="fx"><button class="fail" data-id="1.1" title="Отметить как упавший">✕</button></td>
-    </tr>
+      <td class="fx"><button class="fail" title="Отметить упавшим">✕</button></td>
+    </tr><tr class="note warn" data-for="1.1"><td></td><td colspan="6"><b>Прошло с замечанием · 21.07:</b> Цель создаётся, редактирование работает. НО дедлайн принимал год 123123 и несуществующие даты (2026-02-31), цель по лидам — 999999999999. Такая цель НЕ ИСТЕКЛА БЫ НИКОГДА, т.е. блокировка задач под просроченную цель молча не работала. ПОЧИНЕНО + 3 регресс-теста. Цель «Тест5» создана до фикса — дедлайн там битый, поправить руками.</td></tr>
     <tr class="t" data-p="🔴" data-ty="UI" data-id="1.2">
-      <td class="c"><input type="checkbox" id="cb-1.2"></td>
-      <td class="id">1.2</td>
-      <td class="p">🔴</td>
+      <td class="c"><input type="checkbox"></td><td class="id">1.2</td><td class="p">🔴</td>
       <td class="ty">UI</td>
       <td class="nm">Создать <b>кампанию</b> под целью<div class="how">Кампания → Создать: выбрать цель, <b>выбрать модуль</b>, выбрать аккаунты</div></td>
       <td class="ex">Кампания создалась и видна на карточке цели</td>
-      <td class="fx"><button class="fail" data-id="1.2" title="Отметить как упавший">✕</button></td>
-    </tr>
+      <td class="fx"><button class="fail" title="Отметить упавшим">✕</button></td>
+    </tr><tr class="note warn" data-for="1.2"><td></td><td colspan="6"><b>Прошло с замечанием · 21.07:</b> Кампания создалась: цель, один модуль, закрепление аккаунтов. НО на странице ДВЕ разные «кампании» — старый запускатор «одна цель → несколько модулей» живёт рядом с новой сущностью и генерит свой id camp_xxx, не связанный с cmp_xxx. Плюс поле «Статус» ничего не объясняет, хотя «Завершена» молча освобождает закреплённые аккаунты.</td></tr>
     <tr class="t" data-p="🔴" data-ty="UI" data-id="1.3">
-      <td class="c"><input type="checkbox" id="cb-1.3"></td>
-      <td class="id">1.3</td>
-      <td class="p">🔴</td>
+      <td class="c"><input type="checkbox"></td><td class="id">1.3</td><td class="p">🔴</td>
       <td class="ty">UI</td>
       <td class="nm">Запустить <b>задачу</b> из модуля<div class="how">Модуль → выбрать кампанию → Начать</div></td>
       <td class="ex">Задача появилась в Дашборде со статусом и прогрессом</td>
-      <td class="fx"><button class="fail" data-id="1.3" title="Отметить как упавший">✕</button></td>
-    </tr>
+      <td class="fx"><button class="fail" title="Отметить упавшим">✕</button></td>
+    </tr><tr class="note fail" data-for="1.3"><td></td><td colspan="6"><b>УПАЛО · 21.07:</b> ТРИ проблемы. (1) У OpenAI кончилась квота (429 insufficient_quota) — модуль МОЛЧА публикует шаблон вместо ИИ к цели и НЕ останавливается. (2) Разные аккаунты пишут ДОСЛОВНО одинаковый текст: вариант выбирается по promptIndex — настройке задачи, а не по аккаунту, поэтому все берут один элемент массива. Одинаковый текст с нескольких аккаунтов под одним постом = сигнатура ботофермы, прямой путь к спам-блоку. ДОКАЗАНО НА ЖИВОЙ ГРУППЕ: 17 июля, когда квота была жива, три аккаунта написали три РАЗНЫХ осмысленных комментария по теме поста. 21 июля с мёртвой квотой — три ОДИНАКОВЫХ «Привет! Рад быть здесь, буду следить за обновлениями.», причём ОДИН аккаунт (Регото) повторил тот же текст ДВАЖДЫ в ту же группу с разницей в два часа (16:42 и 18:37). Это уже не «разные аккаунты пишут одинаково», а аккаунт, дословно повторяющий сам себя. (3) Запуск со страницы «Кампания» ушёл мимо кампании, с фантомным camp_...</td></tr>
     <tr class="t" data-p="🔴" data-ty="TG" data-id="1.4">
-      <td class="c"><input type="checkbox" id="cb-1.4"></td>
-      <td class="id">1.4</td>
-      <td class="p">🔴</td>
-      <td class="ty">TG</td>
+      <td class="c"><input type="checkbox"></td><td class="id">1.4</td><td class="p">🔴</td>
+      <td class="ty">Telegram</td>
       <td class="nm">Модуль <b>реально отработал</b><div class="how">Дождаться действий</div></td>
       <td class="ex">В Telegram видно результат (коммент/сообщение/реакция), в логах задачи — <code>sent</code></td>
-      <td class="fx"><button class="fail" data-id="1.4" title="Отметить как упавший">✕</button></td>
-    </tr>
+      <td class="fx"><button class="fail" title="Отметить упавшим">✕</button></td>
+    </tr><tr class="note skip" data-for="1.4"><td></td><td colspan="6"><b>Пропущено · 21.07:</b> Заблокировано. Комментарий физически ушёл в Telegram (sent), но шаблонный — проверяем не «дошло ли сообщение», а «сработал ли ИИ к цели». Вернуться после пополнения квоты OpenAI.</td></tr>
     <tr class="t" data-p="🔴" data-ty="UI" data-id="1.5">
-      <td class="c"><input type="checkbox" id="cb-1.5"></td>
-      <td class="id">1.5</td>
-      <td class="p">🔴</td>
+      <td class="c"><input type="checkbox"></td><td class="id">1.5</td><td class="p">🔴</td>
       <td class="ty">UI</td>
       <td class="nm">Полный путь виден в дашборде<div class="how">Дашборд задач</div></td>
       <td class="ex">Статус · прогресс · цель · инициатор · логи · результаты</td>
-      <td class="fx"><button class="fail" data-id="1.5" title="Отметить как упавший">✕</button></td>
-    </tr></tbody></table></div></section>
+      <td class="fx"><button class="fail" title="Отметить упавшим">✕</button></td>
+    </tr><tr class="note ok" data-for="1.5"><td></td><td colspan="6"><b>Прошло · 21.07:</b> На карточке задачи видно статус, прогресс, цель, инициатора, время; логи и результаты — внутри вьюшки. Наблюдение: в списке НЕ видно кампанию (только цель), хотя кампания теперь средний уровень модели. При нескольких кампаниях под одной целью список станет неразличимым.</td></tr></tbody></table></div></section>
 <section class="blk"><h2>Блок 2. Архитектура Цель→Кампания→Задача→Модуль (§9.0) 🔴</h2><div class="tw"><table><thead><tr><th></th><th>#</th><th>!</th><th>тип</th><th>тест</th><th>ожидаем</th><th></th></tr></thead><tbody>
     <tr class="t" data-p="🔴" data-ty="UI" data-id="2.1">
-      <td class="c"><input type="checkbox" id="cb-2.1"></td>
-      <td class="id">2.1</td>
-      <td class="p">🔴</td>
+      <td class="c"><input type="checkbox"></td><td class="id">2.1</td><td class="p">🔴</td>
       <td class="ty">UI</td>
       <td class="nm">Задачу <b>нельзя</b> запустить «к цели» напрямую<div class="how">Открыть модуль</div></td>
       <td class="ex">В блоке запуска — <b>выбор кампании</b>, не цели</td>
-      <td class="fx"><button class="fail" data-id="2.1" title="Отметить как упавший">✕</button></td>
-    </tr>
+      <td class="fx"><button class="fail" title="Отметить упавшим">✕</button></td>
+    </tr><tr class="note ok" data-for="2.1"><td></td><td colspan="6"><b>Прошло · 21.07:</b> ГЛАВНЫЙ ВЫВОД: правильный путь работает. В блоке «Запуск» есть селектор «Кампания», и задача ушла с настоящим campaignId=cmp_285edb73 («Тест 6»), а не с фантомным camp_. Значит чинить надо не архитектуру, а убрать старый запускатор со страницы «Кампания». Попутно в этом же блоке найдено 5 проблем UI — см. тест 8.x и журнал (сумма типов 102% из коробки блокирует запуск; ошибка ссылается на кнопку «= 100%», которой нет — она подписана «поровну»; текст «нормируется к 100%» противоречит требованию «уменьшите»; числа в полях обрезаются спиннерами; непонятно, что делать).</td></tr>
     <tr class="t" data-p="🔴" data-ty="UI" data-id="2.2">
-      <td class="c"><input type="checkbox" id="cb-2.2"></td>
-      <td class="id">2.2</td>
-      <td class="p">🔴</td>
+      <td class="c"><input type="checkbox"></td><td class="id">2.2</td><td class="p">🔴</td>
       <td class="ty">UI</td>
       <td class="nm">Цель наследуется от кампании<div class="how">Выбрать кампанию с целью</div></td>
       <td class="ex">Цель подставилась сама, отдельный выбор цели скрыт</td>
-      <td class="fx"><button class="fail" data-id="2.2" title="Отметить как упавший">✕</button></td>
-    </tr>
+      <td class="fx"><button class="fail" title="Отметить упавшим">✕</button></td>
+    </tr><tr class="note ok" data-for="2.2"><td></td><td colspan="6"><b>Прошло · 21.07:</b> Во вьюшке задачи: КАМПАНИЯ «Тест 6» → ЦЕЛЬ КАМПАНИИ «Тест5». Цель подтянулась сама, прямой выбор цели скрывается при выбранной кампании.</td></tr>
     <tr class="t" data-p="🟡" data-ty="UI" data-id="2.3">
-      <td class="c"><input type="checkbox" id="cb-2.3"></td>
-      <td class="id">2.3</td>
-      <td class="p">🟡</td>
+      <td class="c"><input type="checkbox"></td><td class="id">2.3</td><td class="p">🟡</td>
       <td class="ty">UI</td>
       <td class="nm">Мягкая миграция<div class="how">Когда кампаний ещё нет</div></td>
       <td class="ex">Прямой выбор цели работает (старый путь не сломан)</td>
-      <td class="fx"><button class="fail" data-id="2.3" title="Отметить как упавший">✕</button></td>
-    </tr>
-    <tr class="t" data-p="🔴" data-ty="API" data-id="2.4">
-      <td class="c"><input type="checkbox" id="cb-2.4"></td>
-      <td class="id">2.4</td>
-      <td class="p">🔴</td>
-      <td class="ty">API</td>
-      <td class="nm">Кампания обязана иметь модуль<div class="how">Создать кампанию без модуля</div></td>
-      <td class="ex">Отказ с понятным текстом · <i>покрыто автотестом, прошло 21.07</i></td>
-      <td class="fx"><button class="fail" data-id="2.4" title="Отметить как упавший">✕</button></td>
-    </tr>
+      <td class="fx"><button class="fail" title="Отметить упавшим">✕</button></td>
+    </tr><tr class="note ok" data-for="2.3"><td></td><td colspan="6"><b>Прошло · 21.07:</b> Пока кампания не выбрана, доступен блок «Цель напрямую (без кампании)» — старый путь не сломан.</td></tr>
     <tr class="t" data-p="🟡" data-ty="UI" data-id="2.5">
-      <td class="c"><input type="checkbox" id="cb-2.5"></td>
-      <td class="id">2.5</td>
-      <td class="p">🟡</td>
+      <td class="c"><input type="checkbox"></td><td class="id">2.5</td><td class="p">🟡</td>
       <td class="ty">UI</td>
       <td class="nm">AI-промты берутся из цели<div class="how">Кампания под целью с базой знаний</div></td>
       <td class="ex">Генерация учитывает цель и KB</td>
-      <td class="fx"><button class="fail" data-id="2.5" title="Отметить как упавший">✕</button></td>
-    </tr></tbody></table></div></section>
+      <td class="fx"><button class="fail" title="Отметить упавшим">✕</button></td>
+    </tr><tr class="note skip" data-for="2.5"><td></td><td colspan="6"><b>Пропущено · 21.07:</b> Заблокировано квотой OpenAI: без работающей генерации нельзя проверить, учитывает ли она цель и базу знаний.</td></tr></tbody></table></div></section>
 <section class="blk"><h2>Блок 3. Аккаунты: закрепление и менеджер (§9.1, §9.2, §3.2) 🔴</h2><div class="tw"><table><thead><tr><th></th><th>#</th><th>!</th><th>тип</th><th>тест</th><th>ожидаем</th><th></th></tr></thead><tbody>
     <tr class="t" data-p="🔴" data-ty="UI" data-id="3.1">
-      <td class="c"><input type="checkbox" id="cb-3.1"></td>
-      <td class="id">3.1</td>
-      <td class="p">🔴</td>
+      <td class="c"><input type="checkbox"></td><td class="id">3.1</td><td class="p">🔴</td>
       <td class="ty">UI</td>
       <td class="nm">Колонка <b>Кампания</b> вместо роли<div class="how">Менеджер аккаунтов</div></td>
       <td class="ex">Видно кампанию либо «в общем пуле»</td>
-      <td class="fx"><button class="fail" data-id="3.1" title="Отметить как упавший">✕</button></td>
-    </tr>
+      <td class="fx"><button class="fail" title="Отметить упавшим">✕</button></td>
+    </tr><tr class="note warn" data-for="3.1"><td></td><td colspan="6"><b>Прошло с замечанием · 21.07:</b> Колонка «Кампания» на месте: закреплённые показывают 🔒 + имя, остальные «в общем пуле». НО НАЙДЕН БАГ: список кампаний и карта закреплений грузятся ОДИН РАЗ при открытии страницы (useEffect с пустыми зависимостями), тогда как аккаунты обновляются каждые 30 с. Создали вторую кампанию на другой странице — менеджер о ней не узнал: её не было в фильтре, а её 4 аккаунта показывались «в общем пуле», хотя закреплены. После F5 всё стало верно. Последствие как у бага 3-a: оператор видит «свободные» аккаунты и раздаёт их другой кампании, ломая гарантию закрепления — только здесь причина не старый блок, а устаревший экран.</td></tr>
     <tr class="t" data-p="🔴" data-ty="UI" data-id="3.2">
-      <td class="c"><input type="checkbox" id="cb-3.2"></td>
-      <td class="id">3.2</td>
-      <td class="p">🔴</td>
+      <td class="c"><input type="checkbox"></td><td class="id">3.2</td><td class="p">🔴</td>
       <td class="ty">UI</td>
       <td class="nm"><b>Замочек</b> закрепления<div class="how">Аккаунт в кампании с закреплением</div></td>
       <td class="ex">🔒 + имя кампании, подсказка «вышел из общего пула»</td>
-      <td class="fx"><button class="fail" data-id="3.2" title="Отметить как упавший">✕</button></td>
-    </tr>
+      <td class="fx"><button class="fail" title="Отметить упавшим">✕</button></td>
+    </tr><tr class="note ok" data-for="3.2"><td></td><td colspan="6"><b>Прошло · 21.07:</b> Замок рисуется, подсказка внятная: «Закреплён за кампанией «Тест 6» — вышел из общего пула». На странице кампании своя подсказка «Аккаунты закреплены — вышли из общего пула».</td></tr>
     <tr class="t" data-p="🔴" data-ty="UI" data-id="3.3">
-      <td class="c"><input type="checkbox" id="cb-3.3"></td>
-      <td class="id">3.3</td>
-      <td class="p">🔴</td>
+      <td class="c"><input type="checkbox"></td><td class="id">3.3</td><td class="p">🔴</td>
       <td class="ty">UI</td>
       <td class="nm">«Использовать без лока»<div class="how">Снять галочку закрепления</div></td>
       <td class="ex">Открытый замок, аккаунт доступен другим кампаниям</td>
-      <td class="fx"><button class="fail" data-id="3.3" title="Отметить как упавший">✕</button></td>
-    </tr>
-    <tr class="t" data-p="🔴" data-ty="API" data-id="3.4">
-      <td class="c"><input type="checkbox" id="cb-3.4"></td>
-      <td class="id">3.4</td>
-      <td class="p">🔴</td>
-      <td class="ty">API</td>
-      <td class="nm">Чужой закреплённый аккаунт не забрать<div class="how">Вторая кампания на тот же аккаунт</div></td>
-      <td class="ex">Отказ с указанием кем занят · <i>прошло 21.07</i></td>
-      <td class="fx"><button class="fail" data-id="3.4" title="Отметить как упавший">✕</button></td>
-    </tr>
+      <td class="fx"><button class="fail" title="Отметить упавшим">✕</button></td>
+    </tr><tr class="note warn" data-for="3.3"><td></td><td colspan="6"><b>Прошло с замечанием · 21.07:</b> Функция работает: сняли галочку «Закрепить аккаунты» — бэкенд сохранил pinned=false, в карте закреплений остался только аккаунт второй кампании. Замечание: отличить состояния глазами почти нельзя. Закреплён — замок закрытый янтарный, без лока — открытый серый, оба 11px; тестировщик не смог их различить на скриншоте. Нужна явная подпись («закреплён» / «без лока»), а не только форма иконки. Второе: изменение видно ТОЛЬКО после F5 — см. баг 3.1 про устаревшие данные.</td></tr>
     <tr class="t" data-p="🟡" data-ty="UI" data-id="3.5">
-      <td class="c"><input type="checkbox" id="cb-3.5"></td>
-      <td class="id">3.5</td>
-      <td class="p">🟡</td>
+      <td class="c"><input type="checkbox"></td><td class="id">3.5</td><td class="p">🟡</td>
       <td class="ty">UI</td>
       <td class="nm">Смена кампании у одного аккаунта<div class="how">Меню строки → Кампания аккаунта</div></td>
       <td class="ex">Список кампаний + «вернуть в общий пул»; из прежней убрался</td>
-      <td class="fx"><button class="fail" data-id="3.5" title="Отметить как упавший">✕</button></td>
-    </tr>
+      <td class="fx"><button class="fail" title="Отметить упавшим">✕</button></td>
+    </tr><tr class="note warn" data-for="3.5"><td></td><td colspan="6"><b>Прошло с замечанием · 21.07:</b> Перенос работает: аккаунт убирается из прежней кампании и не висит в двух местах, «вернуть в общий пул» тоже отработало. БАГ: назначение ОДНОГО аккаунта переписывает политику ВСЕЙ кампании — в AccountsPage.tsx:117 вместе со списком уходит pinned: lock, то есть галочка «закрепить» из маленького диалога меняет режим закрепления целой кампании и всех остальных её аккаунтов. Проверено: «Тест 6» была pinned=true, её не редактировали — после назначения стала pinned=false, закрепление слетело со всех.</td></tr>
     <tr class="t" data-p="🟡" data-ty="UI" data-id="3.6">
-      <td class="c"><input type="checkbox" id="cb-3.6"></td>
-      <td class="id">3.6</td>
-      <td class="p">🟡</td>
+      <td class="c"><input type="checkbox"></td><td class="id">3.6</td><td class="p">🟡</td>
       <td class="ty">UI</td>
       <td class="nm">Завершённая кампания освобождает<div class="how">Перевести кампанию в «Готово»</div></td>
       <td class="ex">Аккаунты вернулись в пул</td>
-      <td class="fx"><button class="fail" data-id="3.6" title="Отметить как упавший">✕</button></td>
-    </tr>
+      <td class="fx"><button class="fail" title="Отметить упавшим">✕</button></td>
+    </tr><tr class="note skip" data-for="3.6"><td></td><td colspan="6"><b>Пропущено · 21.07:</b> Недоказуемо на текущем состоянии: к моменту теста pinned уже был false (следствие бага 3.5), освобождать было нечего. Сама логика «done отпускает аккаунты» покрыта юнит-тестом (pinnedAccountMap пропускает done). Вернуться после правок. ПОПУТНО: у завершённой кампании остаётся полностью активная кнопка «Запустить» (CampaignPage.tsx:464, без проверки статуса) — запуск пойдёт на аккаунтах, которые статусом done уже освобождены и могут быть заняты кем-то другим; статус при этом останется done (авто-переключение есть только из draft). И вторая: завершённая кампания продолжает показываться в колонке «Кампания» у аккаунта, хотя она уже ничего не использует.</td></tr>
     <tr class="t" data-p="🔴" data-ty="UI" data-id="3.7">
-      <td class="c"><input type="checkbox" id="cb-3.7"></td>
-      <td class="id">3.7</td>
-      <td class="p">🔴</td>
+      <td class="c"><input type="checkbox"></td><td class="id">3.7</td><td class="p">🔴</td>
       <td class="ty">UI</td>
       <td class="nm"><b>Запрет удаления «в работе»</b><div class="how">Выбрать занятый аккаунт → В корзину</div></td>
       <td class="ex">Отказ «Сначала остановите работу», на кнопке «(N в работе)»</td>
-      <td class="fx"><button class="fail" data-id="3.7" title="Отметить как упавший">✕</button></td>
-    </tr>
+      <td class="fx"><button class="fail" title="Отметить упавшим">✕</button></td>
+    </tr><tr class="note ok" data-for="3.7"><td></td><td colspan="6"><b>Прошло · 21.07:</b> Отработало точно как задумано: кнопка показала «В корзину (1 в работе)», тост объяснил что делать — «Сначала остановите работу. 1 акк. в работе/прогреве — удалить нельзя. Нажмите Стоп/освободить, затем в корзину». Отказ с инструкцией, а не молчаливое игнорирование. ПОПУТНО НАЙДЕНО: аккаунт Trader Diares висит в статусе «В работе» при НУЛЕ запущенных задач и без лока. reconcileStaleTasksOnBoot (accountLocks.js:178) при старте чистит локи и помечает зависшие задачи stopped, но статус аккаунта в accountsMeta не сбрасывает — после падения или рестарта аккаунт остаётся «в работе» навсегда. Проверено: назначению это НЕ мешает (assertAccountsAssignable пропускает), то есть интерфейс и бэкенд расходятся: оператор видит «занят» и обходит аккаунт стороной, а автоматика его спокойно берёт.</td></tr>
     <tr class="t" data-p="🟡" data-ty="UI" data-id="3.8">
-      <td class="c"><input type="checkbox" id="cb-3.8"></td>
-      <td class="id">3.8</td>
-      <td class="p">🟡</td>
+      <td class="c"><input type="checkbox"></td><td class="id">3.8</td><td class="p">🟡</td>
       <td class="ty">UI</td>
       <td class="nm">Чекбокс-заголовок 3 состояния<div class="how">Выбрать часть строк → клик по «полувыбору»</div></td>
       <td class="ex">Выбор снялся полностью</td>
-      <td class="fx"><button class="fail" data-id="3.8" title="Отметить как упавший">✕</button></td>
-    </tr>
+      <td class="fx"><button class="fail" title="Отметить упавшим">✕</button></td>
+    </tr><tr class="note ok" data-for="3.8"><td></td><td colspan="6"><b>Прошло · 21.07:</b> Три состояния работают: при частичном выборе чекбокс шапки показывает риску, клик по нему снимает выбор ПОЛНОСТЬЮ (а не выделяет все — типичная ошибка таких таблиц). Панель массовых действий вернулась в «Выберите аккаунты для управления».</td></tr>
     <tr class="t" data-p="🟡" data-ty="UI" data-id="3.9">
-      <td class="c"><input type="checkbox" id="cb-3.9"></td>
-      <td class="id">3.9</td>
-      <td class="p">🟡</td>
+      <td class="c"><input type="checkbox"></td><td class="id">3.9</td><td class="p">🟡</td>
       <td class="ty">UI</td>
       <td class="nm">Корзина: восстановить выбранные<div class="how">Положить 2, выбрать все → Восстановить</div></td>
-      <td class="ex">Подтверждение, оба вернулись · <i>прошло 21.07</i></td>
-      <td class="fx"><button class="fail" data-id="3.9" title="Отметить как упавший">✕</button></td>
+      <td class="ex">Подтверждение, оба вернулись · *прошло 21.07*</td>
+      <td class="fx"><button class="fail" title="Отметить упавшим">✕</button></td>
     </tr>
     <tr class="t" data-p="🟡" data-ty="UI" data-id="3.10">
-      <td class="c"><input type="checkbox" id="cb-3.10"></td>
-      <td class="id">3.10</td>
-      <td class="p">🟡</td>
+      <td class="c"><input type="checkbox"></td><td class="id">3.10</td><td class="p">🟡</td>
       <td class="ty">UI</td>
       <td class="nm">Корзина: «только живые»<div class="how">В корзине живой + invalid → галочка</div></td>
-      <td class="ex">Невалидный скрыт · <i>прошло 21.07</i></td>
-      <td class="fx"><button class="fail" data-id="3.10" title="Отметить как упавший">✕</button></td>
+      <td class="ex">Невалидный скрыт · *прошло 21.07*</td>
+      <td class="fx"><button class="fail" title="Отметить упавшим">✕</button></td>
     </tr>
     <tr class="t" data-p="🟡" data-ty="UI" data-id="3.11">
-      <td class="c"><input type="checkbox" id="cb-3.11"></td>
-      <td class="id">3.11</td>
-      <td class="p">🟡</td>
+      <td class="c"><input type="checkbox"></td><td class="id">3.11</td><td class="p">🟡</td>
       <td class="ty">UI</td>
       <td class="nm">Trust score виден всегда<div class="how">Список аккаунтов</div></td>
       <td class="ex">Балл у всех, цвет по банду, подсказка что доступно</td>
-      <td class="fx"><button class="fail" data-id="3.11" title="Отметить как упавший">✕</button></td>
-    </tr>
+      <td class="fx"><button class="fail" title="Отметить упавшим">✕</button></td>
+    </tr><tr class="note ok" data-for="3.11"><td></td><td colspan="6"><b>Прошло · 21.07:</b> Балл показан у всех пяти аккаунтов (75/81/79/78/89), не только у проблемных, с цветом по банду.</td></tr>
     <tr class="t" data-p="🟡" data-ty="UI" data-id="3.12">
-      <td class="c"><input type="checkbox" id="cb-3.12"></td>
-      <td class="id">3.12</td>
-      <td class="p">🟡</td>
+      <td class="c"><input type="checkbox"></td><td class="id">3.12</td><td class="p">🟡</td>
       <td class="ty">UI</td>
       <td class="nm">Мульти-просмотр<div class="how">Выбрать 3 аккаунта → Управление</div></td>
       <td class="ex">Слева <b>только выбранные</b>, переключатель «показать все»</td>
-      <td class="fx"><button class="fail" data-id="3.12" title="Отметить как упавший">✕</button></td>
-    </tr></tbody></table></div></section>
+      <td class="fx"><button class="fail" title="Отметить упавшим">✕</button></td>
+    </tr><tr class="note warn" data-for="3.12"><td></td><td colspan="6"><b>Прошло с замечанием · 21.07:</b> Половина работает: «Управление» открыло вьюшку, слева ровно 3 выбранных, кнопка «Только выбранные · 3 — показать все» на месте. БАГ (мой, от 21.07): при клике по аккаунту в левой колонке навигация идёт на /panel/accounts/:id БЕЗ сохранения ?sel= (AccountOverviewPage.tsx:136), поэтому выборка теряется с первого же переключения, кнопка исчезает и вернуться к ней нельзя. А переключение между аккаунтами — основной сценарий этого экрана, ради него он и делался. Фикс на один рядок.</td></tr></tbody></table></div></section>
 <section class="blk"><h2>Блок 4. Обзор аккаунта (§9.3, §8.7) 🟡</h2><div class="tw"><table><thead><tr><th></th><th>#</th><th>!</th><th>тип</th><th>тест</th><th>ожидаем</th><th></th></tr></thead><tbody>
     <tr class="t" data-p="🟡" data-ty="UI" data-id="4.1">
-      <td class="c"><input type="checkbox" id="cb-4.1"></td>
-      <td class="id">4.1</td>
-      <td class="p">🟡</td>
+      <td class="c"><input type="checkbox"></td><td class="id">4.1</td><td class="p">🟡</td>
       <td class="ty">UI</td>
       <td class="nm">Обзор — страница, не модалка<div class="how">Клик по аккаунту</div></td>
       <td class="ex">URL <code>/panel/accounts/:id</code>, есть «← Назад», оверлея нет</td>
-      <td class="fx"><button class="fail" data-id="4.1" title="Отметить как упавший">✕</button></td>
-    </tr>
+      <td class="fx"><button class="fail" title="Отметить упавшим">✕</button></td>
+    </tr><tr class="note ok" data-for="4.1"><td></td><td colspan="6"><b>Прошло · 21.07:</b> Обзор — отдельная страница /panel/accounts/:id с «← Назад к менеджеру», оверлея модалки нет.</td></tr>
     <tr class="t" data-p="🟡" data-ty="UI" data-id="4.2">
-      <td class="c"><input type="checkbox" id="cb-4.2"></td>
-      <td class="id">4.2</td>
-      <td class="p">🟡</td>
+      <td class="c"><input type="checkbox"></td><td class="id">4.2</td><td class="p">🟡</td>
       <td class="ty">UI</td>
       <td class="nm">Раскладка «как почта»<div class="how">В обзоре</div></td>
       <td class="ex">Слева список с поиском, справа табы; переключение без выхода</td>
-      <td class="fx"><button class="fail" data-id="4.2" title="Отметить как упавший">✕</button></td>
-    </tr>
+      <td class="fx"><button class="fail" title="Отметить упавшим">✕</button></td>
+    </tr><tr class="note ok" data-for="4.2"><td></td><td colspan="6"><b>Прошло · 21.07:</b> Раскладка как почта: слева колонка аккаунтов с поиском, справа табы; переключение аккаунта не выкидывает со страницы.</td></tr>
     <tr class="t" data-p="🟡" data-ty="UI" data-id="4.3">
-      <td class="c"><input type="checkbox" id="cb-4.3"></td>
-      <td class="id">4.3</td>
-      <td class="p">🟡</td>
+      <td class="c"><input type="checkbox"></td><td class="id">4.3</td><td class="p">🟡</td>
       <td class="ty">UI</td>
       <td class="nm"><b>Таб сохраняется</b> при смене аккаунта<div class="how">Открыть «Каналы» → сменить аккаунт</div></td>
       <td class="ex">Остались «Каналы»; с галочкой «сбрасывать» — вернулось на Профиль</td>
-      <td class="fx"><button class="fail" data-id="4.3" title="Отметить как упавший">✕</button></td>
-    </tr>
+      <td class="fx"><button class="fail" title="Отметить упавшим">✕</button></td>
+    </tr><tr class="note ok" data-for="4.3"><td></td><td colspan="6"><b>Прошло · 21.07:</b> Таб переживает переключение: открыли «Каналы» у Ілля, перешли на Claude Bet AI — остались «Каналы». С галочкой «сбрасывать на профиль» переключение вернуло на «Профиль». Обе ветки отработали.</td></tr>
     <tr class="t" data-p="🔴" data-ty="TG" data-id="4.4">
-      <td class="c"><input type="checkbox" id="cb-4.4"></td>
-      <td class="id">4.4</td>
-      <td class="p">🔴</td>
-      <td class="ty">TG</td>
+      <td class="c"><input type="checkbox"></td><td class="id">4.4</td><td class="p">🔴</td>
+      <td class="ty">Telegram</td>
       <td class="nm">Каналы <b>не стакаются</b><div class="how">Быстро переключить 3 аккаунта</div></td>
       <td class="ex">У каждого свой список, чужие не подмешиваются</td>
-      <td class="fx"><button class="fail" data-id="4.4" title="Отметить как упавший">✕</button></td>
-    </tr>
+      <td class="fx"><button class="fail" title="Отметить упавшим">✕</button></td>
+    </tr><tr class="note ok" data-for="4.4"><td></td><td colspan="6"><b>Прошло · 21.07:</b> Стакания нет, проверено сверкой UI с API. Ілля — 50 каналов (X Empire Apps unread=0, Hrum Family 41), Claude Bet AI — 28 каналов (unread=5, Hrum 982). Совпадающие числа (63/218/129/6) — реальные данные Telegram: оба аккаунта вступили в эти каналы и одинаково их не читали, это не копирование списка. Остаточного отображения при переключении тоже не было.</td></tr>
     <tr class="t" data-p="🟡" data-ty="TG" data-id="4.5">
-      <td class="c"><input type="checkbox" id="cb-4.5"></td>
-      <td class="id">4.5</td>
-      <td class="p">🟡</td>
-      <td class="ty">TG</td>
+      <td class="c"><input type="checkbox"></td><td class="id">4.5</td><td class="p">🟡</td>
+      <td class="ty">Telegram</td>
       <td class="nm"><b>Превью картинок/видео</b><div class="how">Обзор аккаунта → Диалоги → диалог с картинкой</div></td>
       <td class="ex">Картинка показана; оригинал не скачивается</td>
-      <td class="fx"><button class="fail" data-id="4.5" title="Отметить как упавший">✕</button></td>
-    </tr>
+      <td class="fx"><button class="fail" title="Отметить упавшим">✕</button></td>
+    </tr><tr class="note warn" data-for="4.5"><td></td><td colspan="6"><b>Прошло с замечанием · 21.07:</b> Превью РИСУЮТСЯ — бэкенд отдаёт image/jpeg, проверено: 3 из 3 запросов вернули валидный JPEG. НО они бесполезно мелкие: беру thumb: 0, то есть САМУЮ мелкую миниатюру — отсюда 660-800 байт и размытые квадратики; последнее фото (таблица) вообще почти белое пятно. Для «не хранить оригинал» это хорошо, для «увидеть, что прислали» — нет. Нужен размер побольше с потолком по весу (20-30 КБ). Плюс пузырёк сужается под короткий текст «📷 Фото», и картинка ужимается вместе с ним.</td></tr>
     <tr class="t" data-p="🟡" data-ty="TG" data-id="4.6">
-      <td class="c"><input type="checkbox" id="cb-4.6"></td>
-      <td class="id">4.6</td>
-      <td class="p">🟡</td>
-      <td class="ty">TG</td>
+      <td class="c"><input type="checkbox"></td><td class="id">4.6</td><td class="p">🟡</td>
+      <td class="ty">Telegram</td>
       <td class="nm">То же в НейроДиалогах<div class="how">Тот же диалог в модуле</div></td>
       <td class="ex">Идентичное поведение (общий компонент)</td>
-      <td class="fx"><button class="fail" data-id="4.6" title="Отметить как упавший">✕</button></td>
-    </tr>
+      <td class="fx"><button class="fail" title="Отметить упавшим">✕</button></td>
+    </tr><tr class="note fail" data-for="4.6"><td></td><td colspan="6"><b>УПАЛО · 21.07:</b> Тот же компонент, но вылез баг ХУЖЕ превью: ПЕРЕПИСКА НЕ ОБНОВЛЯЕТСЯ. msgCache (NeuroDialogsModule.tsx:238) при повторном открытии диалога отдаёт кэш и НИКОГДА не перезапрашивает; чистится только при смене набора аккаунтов. Кнопка обновления освежает лишь список слева — поэтому там появилось «📷 Фото 18:07», а справа висело старое. Пришлось перезагружать всю страницу и заново выбирать аккаунт. Проверено по API: бэкенд отдаёт 9 сообщений, включая 4 новых входящих (2 фото, ссылка, «А ти тут»), UI показывал только до «Тут?». Для модуля переписки это значит, что ОПЕРАТОР НЕ ВИДИТ ВХОДЯЩИХ. ВТОРОЕ: список диалогов отсортирован НЕ ПО ВРЕМЕНИ, а по непрочитанным и дальше ПО АЛФАВИТУ (service.js:52-55) — свежий диалог 18:07 оказался шестым, октябрьский ниже майского. Хуже того, в объекте диалога вообще нет поля с датой, только готовая строка time «28 мая», то есть фронт не пересортирует даже при желании — нужно отдавать сырой timestamp с бэкенда. Для инбокса ожидание однозначное: новое сверху.</td></tr>
     <tr class="t" data-p="🟡" data-ty="UI" data-id="4.7">
-      <td class="c"><input type="checkbox" id="cb-4.7"></td>
-      <td class="id">4.7</td>
-      <td class="p">🟡</td>
+      <td class="c"><input type="checkbox"></td><td class="id">4.7</td><td class="p">🟡</td>
       <td class="ty">UI</td>
       <td class="nm">Многострочный ответ<div class="how">В поле ответа Shift+Enter</div></td>
       <td class="ex">Перенос строки, поле растёт; Enter — отправка</td>
-      <td class="fx"><button class="fail" data-id="4.7" title="Отметить как упавший">✕</button></td>
-    </tr>
+      <td class="fx"><button class="fail" title="Отметить упавшим">✕</button></td>
+    </tr><tr class="note ok" data-for="4.7"><td></td><td colspan="6"><b>Прошло · 21.07:</b> Поле — многострочная textarea с подсказкой «Enter — отправить, Shift+Enter — новая строка», отрисовано в обоих экранах (НейроДиалоги и Обзор аккаунта) через общий ReplyBox. Само нажатие Shift+Enter вживую не кликали.</td></tr>
     <tr class="t" data-p="⚪" data-ty="UI" data-id="4.8">
-      <td class="c"><input type="checkbox" id="cb-4.8"></td>
-      <td class="id">4.8</td>
-      <td class="p">⚪</td>
+      <td class="c"><input type="checkbox"></td><td class="id">4.8</td><td class="p">⚪</td>
       <td class="ty">UI</td>
       <td class="nm">Панель форматирования<div class="how">Выделить текст → Жирный</div></td>
       <td class="ex">Обёрнуто в <code><b>…</b></code>, выделение осталось на тексте</td>
-      <td class="fx"><button class="fail" data-id="4.8" title="Отметить как упавший">✕</button></td>
-    </tr></tbody></table></div></section>
+      <td class="fx"><button class="fail" title="Отметить упавшим">✕</button></td>
+    </tr><tr class="note ok" data-for="4.8"><td></td><td colspan="6"><b>Прошло · 21.07:</b> Панель форматирования на месте: B, I, ссылка + подсказка «<b>жирный</b> · __курсив__ · [ссылка](url)». Обёртывание выделения вживую не кликали.</td></tr></tbody></table></div></section>
 <section class="blk"><h2>Блок 5. Цели, KB, CRM (§3.6, §9.4, §9.9) 🔴</h2><div class="tw"><table><thead><tr><th></th><th>#</th><th>!</th><th>тип</th><th>тест</th><th>ожидаем</th><th></th></tr></thead><tbody>
     <tr class="t" data-p="🟡" data-ty="UI" data-id="5.1">
-      <td class="c"><input type="checkbox" id="cb-5.1"></td>
-      <td class="id">5.1</td>
-      <td class="p">🟡</td>
+      <td class="c"><input type="checkbox"></td><td class="id">5.1</td><td class="p">🟡</td>
       <td class="ty">UI</td>
       <td class="nm">Цель — полноэкранная вьюшка<div class="how">Создать/редактировать цель</div></td>
       <td class="ex">Список скрылся, «← Назад к целям», модалки нет</td>
-      <td class="fx"><button class="fail" data-id="5.1" title="Отметить как упавший">✕</button></td>
-    </tr>
+      <td class="fx"><button class="fail" title="Отметить упавшим">✕</button></td>
+    </tr><tr class="note ok" data-for="5.1"><td></td><td colspan="6"><b>Прошло · 21.07:</b> Форма цели — полноэкранная вьюшка с «← Назад к целям», список скрыт, модалки нет.</td></tr>
     <tr class="t" data-p="🔴" data-ty="UI" data-id="5.2">
-      <td class="c"><input type="checkbox" id="cb-5.2"></td>
-      <td class="id">5.2</td>
-      <td class="p">🔴</td>
+      <td class="c"><input type="checkbox"></td><td class="id">5.2</td><td class="p">🔴</td>
       <td class="ty">UI</td>
       <td class="nm"><b>Дедлайн</b> цели<div class="how">Поставить вчерашнюю дату → запустить задачу под целью</div></td>
       <td class="ex">Отказ «цель просрочена — работа остановлена»</td>
-      <td class="fx"><button class="fail" data-id="5.2" title="Отметить как упавший">✕</button></td>
-    </tr>
+      <td class="fx"><button class="fail" title="Отметить упавшим">✕</button></td>
+    </tr><tr class="note ok" data-for="5.2"><td></td><td colspan="6"><b>Прошло · 21.07:</b> Все три шага. (1) Год 123123 отбит с внятным текстом «Дата вне допустимого диапазона (2000-2046) — проверьте год», значение НЕ сохранилось (это фикс от 21.07, раньше проходило молча). (2) Прошедшая дата сохранилась, на карточке красный бейдж «⏱ Дедлайн истёк». (3) Запуск задачи под просроченной целью → 409 «Цель «Тест5» просрочена (дедлайн 2025-07-24) — работа по ней остановлена». ОТДЕЛЬНО: пустой goalId проходит как «без цели» и гард дедлайна просто не срабатывает — если id где-то потеряется во фронте, защита тихо обойдётся.</td></tr>
     <tr class="t" data-p="🔴" data-ty="TG" data-id="5.3">
-      <td class="c"><input type="checkbox" id="cb-5.3"></td>
-      <td class="id">5.3</td>
-      <td class="p">🔴</td>
-      <td class="ty">TG</td>
+      <td class="c"><input type="checkbox"></td><td class="id">5.3</td><td class="p">🔴</td>
+      <td class="ty">Telegram</td>
       <td class="nm">Дедлайн и <b>уже идущие</b> задачи<div class="how">Задача работает → дедлайн истёк</div></td>
       <td class="ex">⚠️ <b>Известный пробел:</b> идущие задачи НЕ останавливаются (за Ильёй)</td>
-      <td class="fx"><button class="fail" data-id="5.3" title="Отметить как упавший">✕</button></td>
+      <td class="fx"><button class="fail" title="Отметить упавшим">✕</button></td>
     </tr>
     <tr class="t" data-p="🟡" data-ty="UI" data-id="5.4">
-      <td class="c"><input type="checkbox" id="cb-5.4"></td>
-      <td class="id">5.4</td>
-      <td class="p">🟡</td>
+      <td class="c"><input type="checkbox"></td><td class="id">5.4</td><td class="p">🟡</td>
       <td class="ty">UI</td>
       <td class="nm">Цель по лидам<div class="how">Задать «5 лидов»</div></td>
       <td class="ex">Прогресс-бар N/5 на карточке, растёт с лидами</td>
-      <td class="fx"><button class="fail" data-id="5.4" title="Отметить как упавший">✕</button></td>
-    </tr>
+      <td class="fx"><button class="fail" title="Отметить упавшим">✕</button></td>
+    </tr><tr class="note ok" data-for="5.4"><td></td><td colspan="6"><b>Прошло · 21.07:</b> Подпись «(0 = не задано, максимум 1 000 000)» на месте, потолок проверен на бэкенде (999999999999 → 1000000). На карточке прогресс-бар «Лиды к цели 0/199».</td></tr>
     <tr class="t" data-p="🟡" data-ty="UI" data-id="5.5">
-      <td class="c"><input type="checkbox" id="cb-5.5"></td>
-      <td class="id">5.5</td>
-      <td class="p">🟡</td>
+      <td class="c"><input type="checkbox"></td><td class="id">5.5</td><td class="p">🟡</td>
       <td class="ty">UI</td>
       <td class="nm"><b>База знаний с файлами</b><div class="how">Загрузить картинку и PDF</div></td>
       <td class="ex">Превью картинки, ссылка на файл; удаление записи удаляет файл</td>
-      <td class="fx"><button class="fail" data-id="5.5" title="Отметить как упавший">✕</button></td>
-    </tr>
+      <td class="fx"><button class="fail" title="Отметить упавшим">✕</button></td>
+    </tr><tr class="note ok" data-for="5.5"><td></td><td colspan="6"><b>Прошло · 21.07:</b> Обе ветки: PNG (116 КБ) — превью картинки + «открыть файл»; .txt (146 КБ) и .xlsx (328 КБ) — ссылка «открыть файл» + тост «Файл добавлен в базу знаний». Удаление записи доступно. Видео не принимается — это по замыслу (лимит 3 МБ), подпись «картинка или документ» честная. ВОПРОС К ЗАКАЗЧИКУ: нужно ли видео в КБ и нужен ли отдельный тип записи «ссылка» — сейчас URL можно вставить только текстом.</td></tr>
     <tr class="t" data-p="⚪" data-ty="UI" data-id="5.6">
-      <td class="c"><input type="checkbox" id="cb-5.6"></td>
-      <td class="id">5.6</td>
-      <td class="p">⚪</td>
+      <td class="c"><input type="checkbox"></td><td class="id">5.6</td><td class="p">⚪</td>
       <td class="ty">UI</td>
       <td class="nm">Лимит файла<div class="how">Файл &gt;3 МБ</div></td>
       <td class="ex">Понятный отказ, а не молчание</td>
-      <td class="fx"><button class="fail" data-id="5.6" title="Отметить как упавший">✕</button></td>
-    </tr>
+      <td class="fx"><button class="fail" title="Отметить упавшим">✕</button></td>
+    </tr><tr class="note fail" data-for="5.6"><td></td><td colspan="6"><b>УПАЛО · 21.07:</b> Лимит 3 МБ практически не работает, и ошибка ВВОДИТ В ЗАБЛУЖДЕНИЕ. Файл 4 МБ → base64 5.33 МБ → превышает лимит тела запроса express (5mb), и запрос умирает ДО моей проверки размера: PayloadTooLargeError, express отдаёт HTML-страницу вместо JSON. Фронт не может её разобрать и показывает «API недоступен — перезапустите npm run dev», хотя API исправен. Итог: вежливое «Файл больше 3 МБ — уменьшите» показывается только в узком окне 3-3.6 МБ; всё тяжелее даёт ложную ошибку с инструкцией для разработчика, бессмысленной на боевом стенде. Проверять размер надо в браузере ДО отправки.</td></tr>
     <tr class="t" data-p="🟡" data-ty="UI" data-id="5.7">
-      <td class="c"><input type="checkbox" id="cb-5.7"></td>
-      <td class="id">5.7</td>
-      <td class="p">🟡</td>
+      <td class="c"><input type="checkbox"></td><td class="id">5.7</td><td class="p">🟡</td>
       <td class="ty">UI</td>
       <td class="nm">Кампании внутри цели<div class="how">Карточка цели</div></td>
       <td class="ex">Блок «Кампании цели (N)» со статусом и переходом</td>
-      <td class="fx"><button class="fail" data-id="5.7" title="Отметить как упавший">✕</button></td>
-    </tr>
+      <td class="fx"><button class="fail" title="Отметить упавшим">✕</button></td>
+    </tr><tr class="note ok" data-for="5.7"><td></td><td colspan="6"><b>Прошло · 21.07:</b> На карточке цели блок «КАМПАНИИ ЦЕЛИ (2)» с обеими кампаниями и переходом.</td></tr>
     <tr class="t" data-p="🔴" data-ty="UI" data-id="5.8">
-      <td class="c"><input type="checkbox" id="cb-5.8"></td>
-      <td class="id">5.8</td>
-      <td class="p">🔴</td>
+      <td class="c"><input type="checkbox"></td><td class="id">5.8</td><td class="p">🔴</td>
       <td class="ty">UI</td>
       <td class="nm"><b>Статусы лида</b> — воронка<div class="how">CRM → сменить статус на «горячий»</div></td>
       <td class="ex">Тост «🔥 Горячий лид», баннер, подсветка карточки</td>
-      <td class="fx"><button class="fail" data-id="5.8" title="Отметить как упавший">✕</button></td>
-    </tr>
+      <td class="fx"><button class="fail" title="Отметить упавшим">✕</button></td>
+    </tr><tr class="note ok" data-for="5.8"><td></td><td colspan="6"><b>Прошло · 21.07:</b> Сработали все четыре сигнала сразу: тост «🔥 Горячий лид! @MiGrain1231 — свяжитесь немедленно», баннер вверху страницы, счётчик «Горячий 1 🔥» подсвечен красным, бейдж на карточке. НАЙДЕНО ПОПУТНО: два одинаковых выпадающих списка «Все цели» рядом — слева фильтр, справа цель для НОВОГО лида, и оба используют один goalOptions, где пустое значение подписано «Все цели» (LeadsPage.tsx:84,114,118). В форме создания оно должно называться «Без цели». Из-за этого лид создался без цели при активном фильтре по цели, и система одновременно сказала «Лид добавлен» и «Лидов пока нет» — без намёка, что запись скрыта фильтром. Список при этом обновляется корректно, дело не в нём.</td></tr>
     <tr class="t" data-p="🔴" data-ty="TG" data-id="5.9">
-      <td class="c"><input type="checkbox" id="cb-5.9"></td>
-      <td class="id">5.9</td>
-      <td class="p">🔴</td>
-      <td class="ty">TG</td>
+      <td class="c"><input type="checkbox"></td><td class="id">5.9</td><td class="p">🔴</td>
+      <td class="ty">Telegram</td>
       <td class="nm"><b>Лид попадает в CRM сам</b><div class="how">Написать боту с телефона → дождаться авто-ответа под целью</div></td>
       <td class="ex">Лид появился в CRM со статусом «только написал»</td>
-      <td class="fx"><button class="fail" data-id="5.9" title="Отметить как упавший">✕</button></td>
-    </tr>
+      <td class="fx"><button class="fail" title="Отметить упавшим">✕</button></td>
+    </tr><tr class="note skip" data-for="5.9"><td></td><td colspan="6"><b>Пропущено · 21.07:</b> Заблокировано квотой OpenAI: авто-запись лида идёт из воркера авто-ответчика, без работающей генерации проверить нельзя.</td></tr>
     <tr class="t" data-p="🟡" data-ty="TG" data-id="5.10">
-      <td class="c"><input type="checkbox" id="cb-5.10"></td>
-      <td class="id">5.10</td>
-      <td class="p">🟡</td>
-      <td class="ty">TG</td>
+      <td class="c"><input type="checkbox"></td><td class="id">5.10</td><td class="p">🟡</td>
+      <td class="ty">Telegram</td>
       <td class="nm">Воронка не откатывается<div class="how">Прогретому лиду прилетает новый авто-ответ</div></td>
       <td class="ex">Статус НЕ упал обратно на «только написал»</td>
-      <td class="fx"><button class="fail" data-id="5.10" title="Отметить как упавший">✕</button></td>
-    </tr>
+      <td class="fx"><button class="fail" title="Отметить упавшим">✕</button></td>
+    </tr><tr class="note skip" data-for="5.10"><td></td><td colspan="6"><b>Пропущено · 21.07:</b> Заблокировано вместе с 5.9. Сама логика «воронка не откатывается назад» покрыта юнит-тестом (advanceLeadStatus).</td></tr>
     <tr class="t" data-p="🟡" data-ty="UI" data-id="5.11">
-      <td class="c"><input type="checkbox" id="cb-5.11"></td>
-      <td class="id">5.11</td>
-      <td class="p">🟡</td>
+      <td class="c"><input type="checkbox"></td><td class="id">5.11</td><td class="p">🟡</td>
       <td class="ty">UI</td>
       <td class="nm">Цель в НейроДиалогах<div class="how">Выбрать цель в ИИ-настройках</div></td>
       <td class="ex">Тег цели, выбор пережил перезагрузку страницы</td>
-      <td class="fx"><button class="fail" data-id="5.11" title="Отметить как упавший">✕</button></td>
+      <td class="fx"><button class="fail" title="Отметить упавшим">✕</button></td>
     </tr></tbody></table></div></section>
 <section class="blk"><h2>Блок 6. Задачи и автоматизация (§3.9, §9.6, §9.7, §9.8) 🔴</h2><div class="tw"><table><thead><tr><th></th><th>#</th><th>!</th><th>тип</th><th>тест</th><th>ожидаем</th><th></th></tr></thead><tbody>
     <tr class="t" data-p="🔴" data-ty="UI" data-id="6.1">
-      <td class="c"><input type="checkbox" id="cb-6.1"></td>
-      <td class="id">6.1</td>
-      <td class="p">🔴</td>
+      <td class="c"><input type="checkbox"></td><td class="id">6.1</td><td class="p">🔴</td>
       <td class="ty">UI</td>
       <td class="nm">Пауза → продолжение<div class="how">Работающая задача → Пауза → Продолжить</div></td>
       <td class="ex">Прогресс сохранился, продолжила с места, не с нуля</td>
-      <td class="fx"><button class="fail" data-id="6.1" title="Отметить как упавший">✕</button></td>
-    </tr>
+      <td class="fx"><button class="fail" title="Отметить упавшим">✕</button></td>
+    </tr><tr class="note fail" data-for="6.1"><td></td><td colspan="6"><b>УПАЛО · 21.07:</b> ПРОДОЛЖЕНИЕ НЕ ПРОДОЛЖАЕТ, А ПЕРЕЗАПУСКАЕТ. Проверено на парсере (безопасный модуль, ничего не публикует). До паузы: 10/100 действий, 10 результатов, в логах «Готово · найдено 11 каналов». После «Запустить/возобновить» в логах сразу «Парсинг запущен · запросов: 11» — модуль стартовал С НАЧАЛА: счётчик найденного сбросился в ноль («crypto» → +3 (всего 3)), total пересчитался со 100 на 11, результаты 10 → 0 и собрались заново. Итог 33/33. То есть прогресс НЕ сохраняется и ранее собранные результаты ТЕРЯЮТСЯ. В роадмапе записано, что пауза/продолжение проверялись вживую на ПРОГРЕВЕ и работали — значит поведение зависит от модуля, общей гарантии «продолжит с места» нет, хотя интерфейс обещает её одинаково для всех.</td></tr>
     <tr class="t" data-p="🔴" data-ty="UI" data-id="6.2">
-      <td class="c"><input type="checkbox" id="cb-6.2"></td>
-      <td class="id">6.2</td>
-      <td class="p">🔴</td>
+      <td class="c"><input type="checkbox"></td><td class="id">6.2</td><td class="p">🔴</td>
       <td class="ty">UI</td>
       <td class="nm">Стоп и перезапуск<div class="how">Стоп → Перезапуск</div></td>
       <td class="ex">Статусы меняются, аккаунты освободились</td>
-      <td class="fx"><button class="fail" data-id="6.2" title="Отметить как упавший">✕</button></td>
-    </tr>
+      <td class="fx"><button class="fail" title="Отметить упавшим">✕</button></td>
+    </tr><tr class="note fail" data-for="6.2"><td></td><td colspan="6"><b>УПАЛО · 21.07:</b> ДВА бага. (1) «Стоп» НЕ РАБОТАЕТ на задаче с паузы: stopWorker (workers.js:80) только ставит stopRequested и ждёт, что РАБОТАЮЩИЙ воркер его заметит — у паузы воркера нет, флаг обрабатывать некому. Два запроса подряд вернули 200, статус остался paused. Оператор видит успех, а задачу можно возобновить кнопкой «Запустить» — для боевого модуля это значит, что «остановленная» задача может ожить. Пришлось править файл задачи вручную. Показательно, что pauseWorker такую проверку статуса ИМЕЕТ, а stopWorker — нет. (2) Перезапуск создаёт НОВУЮ задачу с новым id, но оставляет пользователя на странице СТАРОЙ, которая честно показывает «Остановлена» — выглядит как «ничего не произошло», новую видно только в дашборде. Надо либо перекидывать на новую, либо писать её номер.</td></tr>
     <tr class="t" data-p="🔴" data-ty="UI" data-id="6.3">
-      <td class="c"><input type="checkbox" id="cb-6.3"></td>
-      <td class="id">6.3</td>
-      <td class="p">🔴</td>
+      <td class="c"><input type="checkbox"></td><td class="id">6.3</td><td class="p">🔴</td>
       <td class="ty">UI</td>
       <td class="nm"><b>Правка задачи только на паузе</b><div class="how">У работающей нажать «Редактировать»</div></td>
       <td class="ex">Кнопка заблокирована, подсказка объясняет почему</td>
-      <td class="fx"><button class="fail" data-id="6.3" title="Отметить как упавший">✕</button></td>
-    </tr>
+      <td class="fx"><button class="fail" title="Отметить упавшим">✕</button></td>
+    </tr><tr class="note warn" data-for="6.3"><td></td><td colspan="6"><b>Прошло с замечанием · 21.07:</b> Гейт работает правильно: у завершённой/остановленной задачи карандаш заблокирован. НО объяснение НЕДОСТУПНО: причина спрятана в title disabled-кнопки, а браузеры не показывают подсказки на disabled-элементах — они не получают событий мыши. Тестировщик увидел ровно то, что увидит оператор: «не могу нажать» и ни намёка почему. Мой просчёт при реализации: объяснение надо выносить текстом рядом с кнопкой.</td></tr>
     <tr class="t" data-p="🔴" data-ty="UI" data-id="6.4">
-      <td class="c"><input type="checkbox" id="cb-6.4"></td>
-      <td class="id">6.4</td>
-      <td class="p">🔴</td>
+      <td class="c"><input type="checkbox"></td><td class="id">6.4</td><td class="p">🔴</td>
       <td class="ty">UI</td>
       <td class="nm">Правка на паузе работает<div class="how">Поставить на паузу → изменить каналы/лимиты → Сохранить</div></td>
-      <td class="ex">Сохранилось; после Продолжить работает по новым · <i>API прошло 21.07</i></td>
-      <td class="fx"><button class="fail" data-id="6.4" title="Отметить как упавший">✕</button></td>
-    </tr>
+      <td class="ex">Сохранилось; после Продолжить работает по новым · *API прошло 21.07*</td>
+      <td class="fx"><button class="fail" title="Отметить упавшим">✕</button></td>
+    </tr><tr class="note warn" data-for="6.4"><td></td><td colspan="6"><b>Прошло с замечанием · 21.07:</b> Панель «Правка задачи (на паузе)» открывается на задаче с паузы, поля каналов и лимитов на месте, сохранение доступно. НО ОПАСНЫЙ ДЕФОЛТ (мой баг): если лимиты в задаче НЕ ЗАДАНЫ (в settings они null), панель показывает 0, потому что читает <code>s.maxActions ?? 0</code>. Оператор видит нули, считает их настоящими значениями и жмёт «Сохранить» — в настройки пишутся явные нули. Дальше resolveTotalTarget использует <code>??</code>, который ноль НЕ пропускает, поэтому дефолт 100 больше не срабатывает. Проверено на живой задаче nc_ebda4fe0: лимиты не заданы → цель 92; после сохранения нулями → цель 0. Задача запустится и молча ничего не сделает. В коде targets.js уже стоит защита с комментарием «Защита от тихого нуля» — панель обходит её с другой стороны. Правильно: показывать пустое поле с подсказкой «не задано (по умолчанию 100)» и не писать в настройки то, чего пользователь не трогал.</td></tr>
     <tr class="t" data-p="🟡" data-ty="UI" data-id="6.5">
-      <td class="c"><input type="checkbox" id="cb-6.5"></td>
-      <td class="id">6.5</td>
-      <td class="p">🟡</td>
+      <td class="c"><input type="checkbox"></td><td class="id">6.5</td><td class="p">🟡</td>
       <td class="ty">UI</td>
       <td class="nm">Состав аккаунтов не меняется<div class="how">В панели правки</div></td>
       <td class="ex">Явное предупреждение, поля аккаунтов нет</td>
-      <td class="fx"><button class="fail" data-id="6.5" title="Отметить как упавший">✕</button></td>
-    </tr>
+      <td class="fx"><button class="fail" title="Отметить упавшим">✕</button></td>
+    </tr><tr class="note ok" data-for="6.5"><td></td><td colspan="6"><b>Прошло · 21.07:</b> Жёлтое предупреждение на месте и объясняет причину: «Состав аккаунтов здесь не меняется: за задачей держатся блокировки профилей. Нужны другие исполнители — остановите задачу и создайте новую». Полей аккаунтов в панели нет.</td></tr>
     <tr class="t" data-p="🔴" data-ty="UI" data-id="6.6">
-      <td class="c"><input type="checkbox" id="cb-6.6"></td>
-      <td class="id">6.6</td>
-      <td class="p">🔴</td>
+      <td class="c"><input type="checkbox"></td><td class="id">6.6</td><td class="p">🔴</td>
       <td class="ty">UI</td>
       <td class="nm"><b>Уникальность задачи</b><div class="how">Запустить вторую идентичную (те же аккаунты+цель+каналы)</div></td>
       <td class="ex">Отказ с номером уже активной задачи</td>
-      <td class="fx"><button class="fail" data-id="6.6" title="Отметить как упавший">✕</button></td>
-    </tr>
+      <td class="fx"><button class="fail" title="Отметить упавшим">✕</button></td>
+    </tr><tr class="note fail" data-for="6.6"><td></td><td colspan="6"><b>УПАЛО · 21.07:</b> Подпись задачи для ВСЕХ ПАРСЕРОВ вырождается в один аккаунт. taskSignature складывает аккаунты + цель + каналы/targets, но парсеры каналов не используют — они ищут по keywords, а ключевые слова в подпись НЕ входят. Проверено напрямую: поиск «crypto» и поиск «nft» на одном аккаунте дают идентичную подпись {"a":["acc_1"],"g":"","t":[]}. Значит две РАЗНЫЕ параллельные выгрузки одним аккаунтом будут отклонены как «идентичная задача уже запущена». И наоборот — для парсеров проверка вырождается в «одна задача на аккаунт», дублируя лок аккаунта, но с вводящим в заблуждение текстом. Это мой код (taskDedup.js, §7): проверял на модулях с каналами и не учёл семейство парсеров, а их пять. В UI баг не проявился только потому, что парсер отрабатывает за ~30 секунд и первая задача успевала завершиться до второго клика.</td></tr>
     <tr class="t" data-p="🔴" data-ty="UI" data-id="6.7">
-      <td class="c"><input type="checkbox" id="cb-6.7"></td>
-      <td class="id">6.7</td>
-      <td class="p">🔴</td>
+      <td class="c"><input type="checkbox"></td><td class="id">6.7</td><td class="p">🔴</td>
       <td class="ty">UI</td>
       <td class="nm">Задача = отдельная вьюшка<div class="how">Клик по задаче</div></td>
       <td class="ex"><code>/panel/tasks/:id</code>, полные логи + результаты, «← Назад»</td>
-      <td class="fx"><button class="fail" data-id="6.7" title="Отметить как упавший">✕</button></td>
-    </tr>
+      <td class="fx"><button class="fail" title="Отметить упавшим">✕</button></td>
+    </tr><tr class="note ok" data-for="6.7"><td></td><td colspan="6"><b>Прошло · 21.07:</b> Задача открывается отдельной страницей /panel/tasks/:id с «← Назад к задачам», видны полные логи, аккаунты в работе и каналы.</td></tr>
     <tr class="t" data-p="🟡" data-ty="UI" data-id="6.8">
-      <td class="c"><input type="checkbox" id="cb-6.8"></td>
-      <td class="id">6.8</td>
-      <td class="p">🟡</td>
+      <td class="c"><input type="checkbox"></td><td class="id">6.8</td><td class="p">🟡</td>
       <td class="ty">UI</td>
       <td class="nm">AIR: рейтинг по аккаунтам<div class="how">Задача AIR → вьюшка</div></td>
       <td class="ex">По каждому аккаунту балл, шкала, цвет</td>
-      <td class="fx"><button class="fail" data-id="6.8" title="Отметить как упавший">✕</button></td>
-    </tr>
+      <td class="fx"><button class="fail" title="Отметить упавшим">✕</button></td>
+    </tr><tr class="note ok" data-for="6.8"><td></td><td colspan="6"><b>Прошло · 21.07:</b> Рейтинг по каждому аккаунту отрисован как задумано: таблица «Аккаунт | Балл | Статус», у Claude Bet AI и Дмитрій Руб по 75 с цветной шкалой и бейджем «валиден». Не сырая строка. Задача ggr_07657b70, 2/2, модуль ничего не публикует — только подключается и оценивает.</td></tr>
     <tr class="t" data-p="🟡" data-ty="UI" data-id="6.9">
-      <td class="c"><input type="checkbox" id="cb-6.9"></td>
-      <td class="id">6.9</td>
-      <td class="p">🟡</td>
+      <td class="c"><input type="checkbox"></td><td class="id">6.9</td><td class="p">🟡</td>
       <td class="ty">UI</td>
       <td class="nm">«Цель» vs «каналы цели»<div class="how">Детали задачи</div></td>
       <td class="ex">Разведены: «Цель кампании» и «Каналы / чаты»</td>
-      <td class="fx"><button class="fail" data-id="6.9" title="Отметить как упавший">✕</button></td>
-    </tr>
+      <td class="fx"><button class="fail" title="Отметить упавшим">✕</button></td>
+    </tr><tr class="note ok" data-for="6.9"><td></td><td colspan="6"><b>Прошло · 21.07:</b> Поля разведены и не путаются: «МОДУЛЬ», «КАМПАНИЯ», «ЦЕЛЬ КАМПАНИИ» и отдельно «КАНАЛОВ / ЧАТОВ» + блок «Каналы / чаты — где работает модуль».</td></tr>
     <tr class="t" data-p="🔴" data-ty="UI" data-id="6.10">
-      <td class="c"><input type="checkbox" id="cb-6.10"></td>
-      <td class="id">6.10</td>
-      <td class="p">🔴</td>
+      <td class="c"><input type="checkbox"></td><td class="id">6.10</td><td class="p">🔴</td>
       <td class="ty">UI</td>
       <td class="nm">Автоматизация <b>под кампанию</b><div class="how">Автоматизация → создать правило</div></td>
       <td class="ex">Выбор кампании; модуль/аккаунты подтянулись из неё</td>
-      <td class="fx"><button class="fail" data-id="6.10" title="Отметить как упавший">✕</button></td>
-    </tr>
+      <td class="fx"><button class="fail" title="Отметить упавшим">✕</button></td>
+    </tr><tr class="note warn" data-for="6.10"><td></td><td colspan="6"><b>Прошло с замечанием · 21.07:</b> Модуль ИЗ КАМПАНИИ подтягивается корректно: выбрал «Тест 6» — поле «МОДУЛЬ (ИЗ КАМПАНИИ)» заполнилось «Нейрокомментинг». НО подсказка обещает «Модуль, аккаунты и пресет — из кампании», а блок аккаунтов остаётся ПУСТЫМ и форма требует выбрать вручную («Выберите аккаунты» блокирует сохранение). При этом БЭКЕНД это умеет: resolveRuleTarget (automation/store.js:165) берёт accountIds кампании, если у правила их нет. То есть логика есть, подсказка правдива, а фронт не даёт ей воспользоваться. ХУЖЕ: нет проверки, что выбранные аккаунты вообще принадлежат кампании — правило привязано к «Тест 6» (аккаунт Регото), а работает на Ілля; пересечение ПУСТОЕ. Та же болезнь, что баг 3-a, только здесь модель закрепления обходит автоматика, которая сработает без человека.</td></tr>
     <tr class="t" data-p="🔴" data-ty="UI" data-id="6.11">
-      <td class="c"><input type="checkbox" id="cb-6.11"></td>
-      <td class="id">6.11</td>
-      <td class="p">🔴</td>
+      <td class="c"><input type="checkbox"></td><td class="id">6.11</td><td class="p">🔴</td>
       <td class="ty">UI</td>
       <td class="nm">Правило без кампании и модуля<div class="how">Попробовать сохранить пустое</div></td>
       <td class="ex">Отказ</td>
-      <td class="fx"><button class="fail" data-id="6.11" title="Отметить как упавший">✕</button></td>
-    </tr>
+      <td class="fx"><button class="fail" title="Отметить упавшим">✕</button></td>
+    </tr><tr class="note warn" data-for="6.11"><td></td><td colspan="6"><b>Прошло с замечанием · 21.07:</b> Валидация есть — без аккаунтов сохранить не даёт («Выберите аккаунты»). Но проверить путь «без кампании И без модуля» не удалось: кампания выбирается сразу и подтягивает модуль, так что пустое правило в этой форме собрать нельзя. Отдельно: у ПРАВИЛА нет подтверждения при запуске боевого модуля — см. 6.12.</td></tr>
     <tr class="t" data-p="🟡" data-ty="TG" data-id="6.12">
-      <td class="c"><input type="checkbox" id="cb-6.12"></td>
-      <td class="id">6.12</td>
-      <td class="p">🟡</td>
-      <td class="ty">TG</td>
+      <td class="c"><input type="checkbox"></td><td class="id">6.12</td><td class="p">🟡</td>
+      <td class="ty">Telegram</td>
       <td class="nm">Правило реально сработало<div class="how">Расписание «через 2 минуты»</div></td>
       <td class="ex">Задача создалась сама, инициатор «Автоматизация: &lt;имя&gt;»</td>
-      <td class="fx"><button class="fail" data-id="6.12" title="Отметить как упавший">✕</button></td>
-    </tr>
+      <td class="fx"><button class="fail" title="Отметить упавшим">✕</button></td>
+    </tr><tr class="note warn" data-for="6.12"><td></td><td colspan="6"><b>Прошло с замечанием · 21.07:</b> Правило реально создаёт задачу: ручной запуск дал nc_b1eaaa42 с инициатором «Автоматизация: 1» — узнаваемость в дашборде работает. НО НАЙДЕНО 🔴: кнопка ▶ в строке правила запускает БОЕВОЙ модуль БЕЗ ПОДТВЕРЖДЕНИЯ. runAutomationRuleNow вызывается напрямую (AutomationPage.tsx:71), тогда как запуск из модуля (LiveModule.tsx:246) и перезапуск из дашборда (TasksPage.tsx:145) спрашивают «Реальные действия в Telegram». Это единственный путь, обходящий защиту, и кнопка стоит вплотную к карандашу и корзине — попасть случайно легко. Именно так и вышло при тесте: один клик → реальная задача → шаблонный комментарий в группу без единого вопроса. Плюс правило было ВЫКЛЮЧЕНО, а ▶ всё равно сработала.</td></tr>
     <tr class="t" data-p="🟡" data-ty="UI" data-id="6.13">
-      <td class="c"><input type="checkbox" id="cb-6.13"></td>
-      <td class="id">6.13</td>
-      <td class="p">🟡</td>
+      <td class="c"><input type="checkbox"></td><td class="id">6.13</td><td class="p">🟡</td>
       <td class="ty">UI</td>
       <td class="nm">Расписание прямо в модуле<div class="how">Модуль → блок Запуск</div></td>
       <td class="ex">Сворачиваемый «Запуск по расписанию»: однократно/ежедневно/каждые N</td>
-      <td class="fx"><button class="fail" data-id="6.13" title="Отметить как упавший">✕</button></td>
-    </tr></tbody></table></div></section>
+      <td class="fx"><button class="fail" title="Отметить упавшим">✕</button></td>
+    </tr><tr class="note warn" data-for="6.13"><td></td><td colspan="6"><b>Прошло с замечанием · 21.07:</b> Блок «Запуск по расписанию» есть, но НЕ ВЕЗДЕ. Реализован только в LiveModule.tsx, а ModuleLiveRouter (features/modules/index.tsx) отправляет парсеры в ChannelParserModule / ParticipantsParserModule, а НейроДиалоги — в свой компонент. Итог: расписание доступно в нейрокомментинге, нейрочатинге, реакциях, масслукинге, прогреве и AIR — и отсутствует во всех 5 парсерах и в НейроДиалогах. Тестировщик искал его в парсере и не нашёл. Сама автоматизация парсеры умеет (они есть в списке AUTOMATABLE на странице «Автоматизация») — нет только быстрого пути из модуля.</td></tr></tbody></table></div></section>
 <section class="blk"><h2>Блок 7. Права, роли, группы (§8.1, §9.12) 🔴</h2><div class="tw"><table><thead><tr><th></th><th>#</th><th>!</th><th>тип</th><th>тест</th><th>ожидаем</th><th></th></tr></thead><tbody>
     <tr class="t" data-p="🔴" data-ty="UI" data-id="7.1">
-      <td class="c"><input type="checkbox" id="cb-7.1"></td>
-      <td class="id">7.1</td>
-      <td class="p">🔴</td>
+      <td class="c"><input type="checkbox"></td><td class="id">7.1</td><td class="p">🔴</td>
       <td class="ty">UI</td>
       <td class="nm">Модератор видит меньше<div class="how">Войти Модератором</div></td>
       <td class="ex">Скрыты запрещённые разделы и модули</td>
-      <td class="fx"><button class="fail" data-id="7.1" title="Отметить как упавший">✕</button></td>
-    </tr>
+      <td class="fx"><button class="fail" title="Отметить упавшим">✕</button></td>
+    </tr><tr class="note ok" data-for="7.1"><td></td><td colspan="6"><b>Прошло · 21.07:</b> Гейтинг сайдбара работает. Сначала модератор видел всё — но это оказалось ВЕРНЫМ поведением: у тестового пользователя было ДВЕ роли (roleIds: role_moderator + role_operator), а mergePermissions — объединение, и «Оператор» давал полный доступ. После снятия второй роли осталось ровно то, что выдано: Менеджер аккаунтов, Дашборд задач, Поддержка, Мой аккаунт. Остальное скрыто. Замечание: имя пользователя «Тестовый модератор» вводит в заблуждение — фактические права шли от второй роли, и понять это из интерфейса нельзя.</td></tr>
     <tr class="t" data-p="🔴" data-ty="UI" data-id="7.2">
-      <td class="c"><input type="checkbox" id="cb-7.2"></td>
-      <td class="id">7.2</td>
-      <td class="p">🔴</td>
+      <td class="c"><input type="checkbox"></td><td class="id">7.2</td><td class="p">🔴</td>
       <td class="ty">UI</td>
       <td class="nm">Прямой URL не обходит<div class="how">Модератором открыть <code>/panel/roles</code></div></td>
       <td class="ex">«Нет доступа»</td>
-      <td class="fx"><button class="fail" data-id="7.2" title="Отметить как упавший">✕</button></td>
-    </tr>
+      <td class="fx"><button class="fail" title="Отметить упавшим">✕</button></td>
+    </tr><tr class="note ok" data-for="7.2"><td></td><td colspan="6"><b>Прошло · 21.07:</b> Прямой заход по URL не обходит гейт: /panel/roles под модератором даёт экран «Нет доступа к разделу» с объяснением и кнопкой в поддержку, а не страницу ролей.</td></tr>
     <tr class="t" data-p="🔴" data-ty="UI" data-id="7.3">
-      <td class="c"><input type="checkbox" id="cb-7.3"></td>
-      <td class="id">7.3</td>
-      <td class="p">🔴</td>
+      <td class="c"><input type="checkbox"></td><td class="id">7.3</td><td class="p">🔴</td>
       <td class="ty">UI</td>
       <td class="nm"><b>Доступ на ГРУППУ аккаунтов</b><div class="how">Создать группу → выдать роли → войти Модератором</div></td>
-      <td class="ex">Видит <b>только аккаунты группы</b> · <i>цепочка проверена 21.07</i></td>
-      <td class="fx"><button class="fail" data-id="7.3" title="Отметить как упавший">✕</button></td>
-    </tr>
+      <td class="ex">Видит <b>только аккаунты группы</b> · *цепочка проверена 21.07*</td>
+      <td class="fx"><button class="fail" title="Отметить упавшим">✕</button></td>
+    </tr><tr class="note ok" data-for="7.3"><td></td><td colspan="6"><b>Прошло · 21.07:</b> ГЛАВНЫЙ ТЕСТ БЛОКА — ПРОШЁЛ. Доступ роли на ГРУППУ аккаунтов работает сквозняком под реальным логином. Роли выдана только группа «3» (Trader Diares + Регото Папіроні), точечных выдач НОЛЬ — проверено по API. Модератор видит ровно этих двоих, счётчики статусов тоже считаются по видимым. Это та самая фича, которая не работала НИ РАЗУ с момента появления: mergePermissions теряла accountGroups, а can() не знал такого kind. Починено 21.07, теперь подтверждено вживую.</td></tr>
     <tr class="t" data-p="🔴" data-ty="UI" data-id="7.4">
-      <td class="c"><input type="checkbox" id="cb-7.4"></td>
-      <td class="id">7.4</td>
-      <td class="p">🔴</td>
+      <td class="c"><input type="checkbox"></td><td class="id">7.4</td><td class="p">🔴</td>
       <td class="ty">UI</td>
       <td class="nm">Точечный запрет сильнее<div class="how">Аккаунту из группы — точечный deny</div></td>
       <td class="ex">Аккаунт пропал у Модератора</td>
-      <td class="fx"><button class="fail" data-id="7.4" title="Отметить как упавший">✕</button></td>
-    </tr>
-    <tr class="t" data-p="🔴" data-ty="API" data-id="7.5">
-      <td class="c"><input type="checkbox" id="cb-7.5"></td>
-      <td class="id">7.5</td>
-      <td class="p">🔴</td>
-      <td class="ty">API</td>
-      <td class="nm"><b>Стоп прогрева только супер-админ</b><div class="how">Модератором остановить прогрев</div></td>
-      <td class="ex">Отказ 403 с объяснением · <i>прошло 21.07</i></td>
-      <td class="fx"><button class="fail" data-id="7.5" title="Отметить как упавший">✕</button></td>
-    </tr>
+      <td class="fx"><button class="fail" title="Отметить упавшим">✕</button></td>
+    </tr><tr class="note fail" data-for="7.4"><td></td><td colspan="6"><b>УПАЛО · 21.07:</b> ТОЧЕЧНЫЙ ЗАПРЕТ НЕ РАБОТАЕТ ВООБЩЕ — цепочка рвётся в ТРЁХ местах подряд. (1) Матрица ролей показывает НЕЗАДАННОЕ право как «Убрать»: aPerm = perms.resources.accounts?.[id] ?? deny (RolesPage.tsx:125). Три состояния (allow / deny / не задано) схлопнуты в два, а ведут себя по-разному: явный deny бьёт групповой allow, а «не задано» нейтрально. Админ видит красную «Убрать» у аккаунта, который на самом деле доступен через группу, и проверить правду из интерфейса нельзя. (2) Клик по «Убрать» ничего не сохраняет: чекбокс уже checked (value===deny из-за фолбэка), поэтому поставить явный запрет через UI практически невозможно — проверено дважды по API, запись не появилась. (3) Даже записанный через API deny ТЕРЯЕТСЯ: mergePermissions копирует только ALLOW (roles.js), поэтому до клиента запреты не доезжают никогда. Проверено: в роли {acc_99a46d69fa1e: deny, acc_9c93eedbb6f2: deny} → после merge {}. Модератор после перезахода по-прежнему видит запрещённый аккаунт. ВАЖНО: 21.07 я видел этот же рядок и записал в комментарий, что это «следствие union-семантики, а не недосмотр» — классификация была НЕВЕРНОЙ. §12 ТЗ прямо требует «точечный deny сильнее группового allow», и кнопка «Убрать» это обещает. Ошибку допустил потому, что проверял чистую функцию isAccountAllowedViaGroups (она верна и покрыта тестом), а ломается слоем выше — та же ловушка, что с группами: логика верная, доставка сломана.</td></tr>
     <tr class="t" data-p="🔴" data-ty="UI" data-id="7.6">
-      <td class="c"><input type="checkbox" id="cb-7.6"></td>
-      <td class="id">7.6</td>
-      <td class="p">🔴</td>
+      <td class="c"><input type="checkbox"></td><td class="id">7.6</td><td class="p">🔴</td>
       <td class="ty">UI</td>
       <td class="nm">Красная пометка в Ролях<div class="how">Роли → модуль Прогрев</div></td>
       <td class="ex">Бейдж «стоп — только админ» с подсказкой</td>
-      <td class="fx"><button class="fail" data-id="7.6" title="Отметить как упавший">✕</button></td>
-    </tr>
+      <td class="fx"><button class="fail" title="Отметить упавшим">✕</button></td>
+    </tr><tr class="note ok" data-for="7.6"><td></td><td colspan="6"><b>Прошло · 21.07:</b> Красная пометка на месте: в матрице ролей у модуля «Прогрев» стоит бейдж «СТОП — ТОЛЬКО АДМИН». Добавлено 21.07 по итогам аудита §12.</td></tr>
     <tr class="t" data-p="🟡" data-ty="UI" data-id="7.7">
-      <td class="c"><input type="checkbox" id="cb-7.7"></td>
-      <td class="id">7.7</td>
-      <td class="p">🟡</td>
+      <td class="c"><input type="checkbox"></td><td class="id">7.7</td><td class="p">🟡</td>
       <td class="ty">UI</td>
       <td class="nm">Массовый стоп ≥100 задач<div class="how">Выбрать много задач → Стоп</div></td>
       <td class="ex">Усиленное подтверждение (ввод числа)</td>
-      <td class="fx"><button class="fail" data-id="7.7" title="Отметить как упавший">✕</button></td>
-    </tr>
+      <td class="fx"><button class="fail" title="Отметить упавшим">✕</button></td>
+    </tr><tr class="note ok" data-for="7.7"><td></td><td colspan="6"><b>Прошло · 21.07:</b> Подтверждение массовой остановки работает: «Остановить задач: 2?» — счёт верный, в цели попадают только активные (running/queued/paused), завершённые не трогаются. Отдельная оговорка про прогрев в коде есть и подставляется условно: warmN = stopTargets.filter(t =&gt; t.moduleKey === warming), текст «Из них прогрева: N — прогресс будет потерян». В этом прогоне прогрева среди выбранных не было, поэтому фраза не показалась — ветка осталась непроверенной вживую. Второй барьер (ввод числа) есть в коде и включается от 100 задач; у нас их ~50, поэтому не сработал — формула покрыта юнит-тестом.</td></tr>
     <tr class="t" data-p="🟡" data-ty="UI" data-id="7.8">
-      <td class="c"><input type="checkbox" id="cb-7.8"></td>
-      <td class="id">7.8</td>
-      <td class="p">🟡</td>
+      <td class="c"><input type="checkbox"></td><td class="id">7.8</td><td class="p">🟡</td>
       <td class="ty">UI</td>
       <td class="nm">Доступ на каналы через папки<div class="how">Выдать роли папку с 2 каналами из 5</div></td>
       <td class="ex">В выборе каналов видно только 2</td>
-      <td class="fx"><button class="fail" data-id="7.8" title="Отметить как упавший">✕</button></td>
-    </tr>
+      <td class="fx"><button class="fail" title="Отметить упавшим">✕</button></td>
+    </tr><tr class="note ok" data-for="7.8"><td></td><td colspan="6"><b>Прошло · 21.07:</b> Доступ на каналы через папки работает. Проверено на реальных данных роли «Модератор»: разрешённая папка «1» (1 канал) → роль видит [dadaqqqeqw]; запрещённая папка «1» (11 каналов) → []. Правило «ничего не выбрано = все каналы папки, включая будущие» подтвердилось. Оговорка: проверено на уровне логики (allowedFolderTargets с реальными данными), а не кликами — модератору не выдан ни один модуль с выбором каналов из папок, поэтому UI-путь не пройден.</td></tr>
     <tr class="t" data-p="🟡" data-ty="UI" data-id="7.9">
-      <td class="c"><input type="checkbox" id="cb-7.9"></td>
-      <td class="id">7.9</td>
-      <td class="p">🟡</td>
+      <td class="c"><input type="checkbox"></td><td class="id">7.9</td><td class="p">🟡</td>
       <td class="ty">UI</td>
       <td class="nm">Учёт рабочего времени<div class="how">Вход/выход пользователя</div></td>
       <td class="ex">На карточке «в сети», время за сегодня/7 дней</td>
-      <td class="fx"><button class="fail" data-id="7.9" title="Отметить как упавший">✕</button></td>
-    </tr></tbody></table></div></section>
+      <td class="fx"><button class="fail" title="Отметить упавшим">✕</button></td>
+    </tr><tr class="note fail" data-for="7.9"><td></td><td colspan="6"><b>УПАЛО · 21.07:</b> УЧЁТ РАБОЧЕГО ВРЕМЕНИ СЧИТАЕТ НЕ РАБОТУ, А КАЛЕНДАРЬ. Тестировщик заметил несуразицу: «сегодня 5м» рядом с «7 дней 149ч 42м». В логе нашлась запись usr_admin: старт 17.07 16:53, длительность 98.47 ч — одна сессия длиной четверо суток. Две причины. (1) Открытая сессия растёт круглосуточно: workSummary берёт <code>const end = e.end == null ? now : e.end</code>, а закрытия по таймауту неактивности и закрытия открытых сессий при рестарте бэкенда нет — закрыл вкладку и «работаешь» всю ночь. (2) Сессия целиком засчитывается в окно своего НАЧАЛА: <code>if (e.start &gt;= dayStart) todayMs += dur</code> — в коде это честно названо «простая аппроксимация». Поэтому 98-часовая сессия от 17-го полностью легла в «7 дней» и ничего не дала в «сегодня»: две цифры считаются по разным сессиям и между собой не связаны. §8.1 в роадмапе помечен готовым — но если по этим числам платить операторам, они показывают время, когда человек просто не нажал «Выйти». Нужно: таймаут неактивности, закрытие открытых сессий на старте бэкенда, и резать длительность по границе суток.</td></tr></tbody></table></div></section>
 <section class="blk"><h2>Блок 8. Модули — UX и запуск (§3.5, §9.7) 🟡</h2><div class="tw"><table><thead><tr><th></th><th>#</th><th>!</th><th>тип</th><th>тест</th><th>ожидаем</th><th></th></tr></thead><tbody>
     <tr class="t" data-p="🟡" data-ty="UI" data-id="8.1">
-      <td class="c"><input type="checkbox" id="cb-8.1"></td>
-      <td class="id">8.1</td>
-      <td class="p">🟡</td>
+      <td class="c"><input type="checkbox"></td><td class="id">8.1</td><td class="p">🟡</td>
       <td class="ty">UI</td>
       <td class="nm">AI-промты вверху<div class="how">Открыть модуль</div></td>
       <td class="ex">Сразу под выбором аккаунтов</td>
-      <td class="fx"><button class="fail" data-id="8.1" title="Отметить как упавший">✕</button></td>
-    </tr>
+      <td class="fx"><button class="fail" title="Отметить упавшим">✕</button></td>
+    </tr><tr class="note ok" data-for="8.1"><td></td><td colspan="6"><b>Прошло · 21.07:</b> AI-промты стоят сразу под выбором аккаунтов — как основа модуля. Подтверждено при прокрутке страницы.</td></tr>
     <tr class="t" data-p="🟡" data-ty="UI" data-id="8.2">
-      <td class="c"><input type="checkbox" id="cb-8.2"></td>
-      <td class="id">8.2</td>
-      <td class="p">🟡</td>
+      <td class="c"><input type="checkbox"></td><td class="id">8.2</td><td class="p">🟡</td>
       <td class="ty">UI</td>
       <td class="nm">Тайминги внизу<div class="how">Тот же экран</div></td>
       <td class="ex">После блока «Запуск»</td>
-      <td class="fx"><button class="fail" data-id="8.2" title="Отметить как упавший">✕</button></td>
-    </tr>
+      <td class="fx"><button class="fail" title="Отметить упавшим">✕</button></td>
+    </tr><tr class="note ok" data-for="8.2"><td></td><td colspan="6"><b>Прошло · 21.07:</b> Тайминги и задержки — в самом низу, после блока «Запуск». Меняются редко, поэтому убраны с глаз.</td></tr>
     <tr class="t" data-p="🟡" data-ty="UI" data-id="8.3">
-      <td class="c"><input type="checkbox" id="cb-8.3"></td>
-      <td class="id">8.3</td>
-      <td class="p">🟡</td>
+      <td class="c"><input type="checkbox"></td><td class="id">8.3</td><td class="p">🟡</td>
       <td class="ty">UI</td>
       <td class="nm">Чёрный список компактный<div class="how">Секция каналов</div></td>
       <td class="ex">Сворачиваемый блок, разворачивается по клику</td>
-      <td class="fx"><button class="fail" data-id="8.3" title="Отметить как упавший">✕</button></td>
-    </tr>
+      <td class="fx"><button class="fail" title="Отметить упавшим">✕</button></td>
+    </tr><tr class="note ok" data-for="8.3"><td></td><td colspan="6"><b>Прошло · 21.07:</b> Чёрный список — компактный СВЁРНУТЫЙ блок внутри секции каналов, с переключателем «показать / скрыть». В развёрнутом виде объясняет, что цели исключаются из всех модулей (нейрокомментинг, реакции, чаттинг, масслукинг).</td></tr>
     <tr class="t" data-p="🟡" data-ty="UI" data-id="8.4">
-      <td class="c"><input type="checkbox" id="cb-8.4"></td>
-      <td class="id">8.4</td>
-      <td class="p">🟡</td>
+      <td class="c"><input type="checkbox"></td><td class="id">8.4</td><td class="p">🟡</td>
       <td class="ty">UI</td>
       <td class="nm"><b>Пресеты</b> с цветом и владельцем<div class="how">Сохранить пресет</div></td>
       <td class="ex">Цветная метка + бейдж владельца на чипе</td>
-      <td class="fx"><button class="fail" data-id="8.4" title="Отметить как упавший">✕</button></td>
-    </tr>
+      <td class="fx"><button class="fail" title="Отметить упавшим">✕</button></td>
+    </tr><tr class="note ok" data-for="8.4"><td></td><td colspan="6"><b>Прошло · 21.07:</b> Пресеты с цветовой меткой и владельцем: модалка предлагает 6 цветов и поле владельца; после сохранения чип в «Моих пресетах» показывает цветную точку и бейдж владельца («Тест1 · ТЕСТ2»). Подпись честно уточняет, что выбор аккаунтов пресетом не меняется.</td></tr>
     <tr class="t" data-p="🟡" data-ty="UI" data-id="8.5">
-      <td class="c"><input type="checkbox" id="cb-8.5"></td>
-      <td class="id">8.5</td>
-      <td class="p">🟡</td>
+      <td class="c"><input type="checkbox"></td><td class="id">8.5</td><td class="p">🟡</td>
       <td class="ty">UI</td>
       <td class="nm">Нижняя панель «Выполнение»<div class="how">Скроллить модуль</div></td>
       <td class="ex">Панель прижата к низу, всегда видна</td>
-      <td class="fx"><button class="fail" data-id="8.5" title="Отметить как упавший">✕</button></td>
-    </tr>
+      <td class="fx"><button class="fail" title="Отметить упавшим">✕</button></td>
+    </tr><tr class="note ok" data-for="8.5"><td></td><td colspan="6"><b>Прошло · 21.07:</b> Нижняя панель прилипает: при прокрутке к «Целевым каналам» внизу экрана осталась строка «Готов к запуску · 2 акк. · … · Задачи модуля в Дашборде». Быстрый доступ к статусу без возврата наверх.</td></tr>
     <tr class="t" data-p="🟡" data-ty="UI" data-id="8.6">
-      <td class="c"><input type="checkbox" id="cb-8.6"></td>
-      <td class="id">8.6</td>
-      <td class="p">🟡</td>
+      <td class="c"><input type="checkbox"></td><td class="id">8.6</td><td class="p">🟡</td>
       <td class="ty">UI</td>
       <td class="nm">Переход в дашборд с фильтром<div class="how">Кнопка «В Дашборде задач»</div></td>
       <td class="ex">Дашборд открылся <b>отфильтрованным по модулю</b></td>
-      <td class="fx"><button class="fail" data-id="8.6" title="Отметить как упавший">✕</button></td>
-    </tr>
+      <td class="fx"><button class="fail" title="Отметить упавшим">✕</button></td>
+    </tr><tr class="note ok" data-for="8.6"><td></td><td colspan="6"><b>Прошло · 21.07:</b> Переход в дашборд предфильтрован по модулю: до клика 53 задачи и фильтр «Все модули», после — фильтр «Нейрокомментинг» и 18 задач, сводка пересчиталась (39%, 7 готово / 10 остановлено / 1 на паузе). Открывается именно срез модуля, а не общий список.</td></tr>
     <tr class="t" data-p="🟡" data-ty="UI" data-id="8.7">
-      <td class="c"><input type="checkbox" id="cb-8.7"></td>
-      <td class="id">8.7</td>
-      <td class="p">🟡</td>
+      <td class="c"><input type="checkbox"></td><td class="id">8.7</td><td class="p">🟡</td>
       <td class="ty">UI</td>
       <td class="nm">Автоскролл к блоку в Help<div class="how">Нажать «?» на нижнем блоке</div></td>
       <td class="ex">Панель открылась, <b>блок остался в поле зрения</b></td>
-      <td class="fx"><button class="fail" data-id="8.7" title="Отметить как упавший">✕</button></td>
-    </tr>
+      <td class="fx"><button class="fail" title="Отметить упавшим">✕</button></td>
+    </tr><tr class="note warn" data-for="8.7"><td></td><td colspan="6"><b>Прошло с замечанием · 21.07:</b> АВТОСКРОЛЛ РАБОТАЕТ — правка от 21.07 подтверждена: нажали «?» у нижнего блока «Тайминги и задержки», панель открылась справа, страница перевёрсталась, и блок остался перед глазами. Тестировщик подтвердил словами «Тайминги и задержки норм отображает». НО ВЫЯВЛЕНА ДРУГАЯ ПРОБЛЕМА, которую он же и заметил («некоторые работают, а где-то нет»): своя статья есть только у 3 блоков из 7. Есть: «Выбор аккаунтов», «Тайминги и задержки», «Запуск/Выполнение». Нет: «AI / промпты», «Эмодзи», «Целевые каналы», «Результаты». Причина в findHelpDoc (helpDocs.ts:596): шаг 2 «подсказка из URL» срабатывает РАНЬШЕ мягкого поиска, поэтому любой блок без точного псевдонима на странице модуля молча возвращает статью ВСЕГО модуля. Отсюда и «Настройки комментирования» → «Нейрокомментинг». Пользователь жмёт «?» у конкретного блока и получает общий текст, не понимая почему.</td></tr>
     <tr class="t" data-p="⚪" data-ty="UI" data-id="8.8">
-      <td class="c"><input type="checkbox" id="cb-8.8"></td>
-      <td class="id">8.8</td>
-      <td class="p">⚪</td>
+      <td class="c"><input type="checkbox"></td><td class="id">8.8</td><td class="p">⚪</td>
       <td class="ty">UI</td>
       <td class="nm">Режимы нейрокомментинга<div class="how">Переключить 3 режима</div></td>
       <td class="ex">Описания меняются, расчёт min–max времени обновляется</td>
-      <td class="fx"><button class="fail" data-id="8.8" title="Отметить как упавший">✕</button></td>
-    </tr></tbody></table></div></section>
-<section class="blk"><h2>Блок 9. Прокси (§3.4, §9.10) 🟡</h2><div class="tw"><table><thead><tr><th></th><th>#</th><th>!</th><th>тип</th><th>тест</th><th>ожидаем</th><th></th></tr></thead><tbody>
-    <tr class="t" data-p="🔴" data-ty="TG" data-id="9.1">
-      <td class="c"><input type="checkbox" id="cb-9.1"></td>
-      <td class="id">9.1</td>
-      <td class="p">🔴</td>
-      <td class="ty">TG</td>
-      <td class="nm">Проверка живости<div class="how">Добавить рабочий прокси → Проверить</div></td>
-      <td class="ex">Статус ok, страна определилась</td>
-      <td class="fx"><button class="fail" data-id="9.1" title="Отметить как упавший">✕</button></td>
-    </tr>
-    <tr class="t" data-p="🔴" data-ty="TG" data-id="9.2">
-      <td class="c"><input type="checkbox" id="cb-9.2"></td>
-      <td class="id">9.2</td>
-      <td class="p">🔴</td>
-      <td class="ty">TG</td>
+      <td class="fx"><button class="fail" title="Отметить упавшим">✕</button></td>
+    </tr><tr class="note ok" data-for="8.8"><td></td><td colspan="6"><b>Прошло · 21.07:</b> Режимы комментирования переключаются и меняют форму: при выборе «По ключевым словам» появляется поле ввода слов, которого нет в режиме «Случайный». Рядом — вероятность комментария и выбор, какие посты обрабатывать.</td></tr></tbody></table></div></section>
+<section class="blk"><h2>Блок 9. Прокси (§3.4, §9.10) 🔴 *(зона Ильи — найдены баги, см. ниже)*</h2><div class="tw"><table><thead><tr><th></th><th>#</th><th>!</th><th>тип</th><th>тест</th><th>ожидаем</th><th></th></tr></thead><tbody>
+    <tr class="t" data-p="🔴" data-ty="UI" data-id="9.1">
+      <td class="c"><input type="checkbox"></td><td class="id">9.1</td><td class="p">🔴</td>
+      <td class="ty">UI</td>
+      <td class="nm"><b>Импорт списка со схемой в отдельной строке</b><div class="how">Вставить список в формате <code>http:</code> / новая строка / <code>host:port:user:pass</code></div></td>
+      <td class="ex">⚠️ <b>Сейчас баг:</b> заголовок схемы игнорируется, всё уезжает в socks5</td>
+      <td class="fx"><button class="fail" title="Отметить упавшим">✕</button></td>
+    </tr><tr class="note fail" data-for="9.1"><td></td><td colspan="6"><b>УПАЛО · 21.07:</b> Строка-заголовок схемы («http:» отдельной строкой, как присылают продавцы) игнорируется — падает в errors, а прокси разбираются с дефолтной socks5. HTTP-прокси на портах 7063/7469 сохранились как socks5. Проверено curl-ом: 7063 работает ТОЛЬКО как http, 7163 — только как socks5. Половина списка легла в базу нерабочей. Репро и разбор — docs/BUGS-2026-07-21-proxy-import.md. Зона Ильи.</td></tr>
+    <tr class="t" data-p="🔴" data-ty="UI" data-id="9.2">
+      <td class="c"><input type="checkbox"></td><td class="id">9.2</td><td class="p">🔴</td>
+      <td class="ty">UI</td>
+      <td class="nm"><b>Нерабочий прокси не должен быть «ok»</b><div class="how">Прокси с неверной схемой → Проверить</div></td>
+      <td class="ex">⚠️ <b>Сейчас баг:</b> TCP-пинг проходит, статус зелёный, а прокси не работает</td>
+      <td class="fx"><button class="fail" title="Отметить упавшим">✕</button></td>
+    </tr><tr class="note fail" data-for="9.2"><td></td><td colspan="6"><b>УПАЛО · 21.07:</b> Нерабочий прокси показывается зелёным «ok»: живость меряется tcpPing(host, port), а порт открыт независимо от того, тем ли протоколом на него говорить. Прокси со сломанной схемой выглядит здоровым и раздаётся аккаунтам, где отваливается уже в бою. TCP-пинг годится отсечь мёртвый хост, но не как признак «прокси рабочий». Зона Ильи.</td></tr>
+    <tr class="t" data-p="🔴" data-ty="UI" data-id="9.3">
+      <td class="c"><input type="checkbox"></td><td class="id">9.3</td><td class="p">🔴</td>
+      <td class="ty">UI</td>
+      <td class="nm"><b>Страна = реальный выход, а не шлюз</b><div class="how">Карточка порта 7063</div></td>
+      <td class="ex">Польша (реальный выход). ⚠️ При импорте показывало Германию (шлюз Hetzner)</td>
+      <td class="fx"><button class="fail" title="Отметить упавшим">✕</button></td>
+    </tr><tr class="note fail" data-for="9.3"><td></td><td colspan="6"><b>УПАЛО · 21.07:</b> Страна подменяется на гео ШЛЮЗА. При импорте: probeProxyExitGeo, а если не вышло — фолбэк probeProxyGeo(host). Со сломанной схемой exit-проба падает и молча уходит в фолбэк: у порта 7063 записалась Германия (Hetzner, Falkenstein — сервер провайдера), хотя реальный выход Польша (37.248.166.213, Polkomtel). Оператор раздаёт «немецкий» прокси, а Telegram видит Польшу. Сама функция исправна — при верной схеме отдаёт правильный выход. Зона Ильи.</td></tr>
+    <tr class="t" data-p="🟡" data-ty="UI" data-id="9.4">
+      <td class="c"><input type="checkbox"></td><td class="id">9.4</td><td class="p">🟡</td>
+      <td class="ty">UI</td>
+      <td class="nm">Пометка источника гео<div class="how">Карточка прокси</div></td>
+      <td class="ex">⚠️ <b>Сейчас нет:</b> <code>geoSource</code> не сохраняется, отличить выход от шлюза нельзя</td>
+      <td class="fx"><button class="fail" title="Отметить упавшим">✕</button></td>
+    </tr><tr class="note fail" data-for="9.4"><td></td><td colspan="6"><b>УПАЛО · 21.07:</b> geoSource не сохраняется: роуты проверки возвращают exit | gateway, но в запись прокси это поле не пишется (в базе null у всех). UI не может отличить «гео реального IP» от «гео сервера (примерно)» — а именно ради этого различия §9.10 и заводился. Зона Ильи.</td></tr>
+    <tr class="t" data-p="🟡" data-ty="UI" data-id="9.5">
+      <td class="c"><input type="checkbox"></td><td class="id">9.5</td><td class="p">🟡</td>
+      <td class="ty">UI</td>
+      <td class="nm">«Проверить все» обновляет и страну<div class="how">Изменить схему → Проверить все</div></td>
+      <td class="ex">⚠️ <b>Сейчас баг:</b> обновляется только статус, страна остаётся старой</td>
+      <td class="fx"><button class="fail" title="Отметить упавшим">✕</button></td>
+    </tr><tr class="note fail" data-for="9.5"><td></td><td colspan="6"><b>УПАЛО · 21.07:</b> «Проверить все» не обновляет гео: checkProxyLiveness пишет только status и lastCheckAt. Страна пересчитывается лишь при импорте и в точечном POST /api/proxies/:id/check. После исправления схемы кнопка «проверить все» оставила старую (неверную) страну — вылечилось только точечной перепроверкой. Побочно: note остаётся от прошлой пробы и противоречит стране. Зона Ильи.</td></tr>
+    <tr class="t" data-p="🔴" data-ty="UI" data-id="9.6">
+      <td class="c"><input type="checkbox"></td><td class="id">9.6</td><td class="p">🔴</td>
+      <td class="ty">UI</td>
       <td class="nm">Мёртвый прокси<div class="how">Добавить несуществующий host:port</div></td>
       <td class="ex">Статус dead, понятная причина</td>
-      <td class="fx"><button class="fail" data-id="9.2" title="Отметить как упавший">✕</button></td>
+      <td class="fx"><button class="fail" title="Отметить упавшим">✕</button></td>
     </tr>
-    <tr class="t" data-p="🟡" data-ty="TG" data-id="9.3">
-      <td class="c"><input type="checkbox" id="cb-9.3"></td>
-      <td class="id">9.3</td>
-      <td class="p">🟡</td>
-      <td class="ty">TG</td>
-      <td class="nm"><b>Гео реального IP vs сервера</b><div class="how">Карточка рабочего прокси</div></td>
-      <td class="ex">«Страна, которую видит Telegram» + выходной IP</td>
-      <td class="fx"><button class="fail" data-id="9.3" title="Отметить как упавший">✕</button></td>
-    </tr>
-    <tr class="t" data-p="🟡" data-ty="UI" data-id="9.4">
-      <td class="c"><input type="checkbox" id="cb-9.4"></td>
-      <td class="id">9.4</td>
-      <td class="p">🟡</td>
+    <tr class="t" data-p="🟡" data-ty="UI" data-id="9.7">
+      <td class="c"><input type="checkbox"></td><td class="id">9.7</td><td class="p">🟡</td>
       <td class="ty">UI</td>
       <td class="nm">Выбор из базы при смене<div class="how">Аккаунт → сменить прокси</div></td>
       <td class="ex">Переключатель «Из базы / Ввести новый», видно занят/свободен</td>
-      <td class="fx"><button class="fail" data-id="9.4" title="Отметить как упавший">✕</button></td>
-    </tr>
-    <tr class="t" data-p="🟡" data-ty="UI" data-id="9.5">
-      <td class="c"><input type="checkbox" id="cb-9.5"></td>
-      <td class="id">9.5</td>
-      <td class="p">🟡</td>
+      <td class="fx"><button class="fail" title="Отметить упавшим">✕</button></td>
+    </tr><tr class="note fail" data-for="9.7"><td></td><td colspan="6"><b>УПАЛО · 21.07:</b> Выбор из базы прокси НЕ ВИДИТ БАЗУ. Модалка «Сменить прокси» в менеджере читает пул из клиентского мок-стора: <code>const pool = useApp(s =&gt; s.data.proxies)</code> (AccountsPage.tsx:989), а он инициализируется пустым (seeds.ts) и наполняется только локальной кнопкой в этой же сессии. Настоящие 4 прокси лежат на бэкенде; fetchProxies() вызывается ТОЛЬКО на странице «Прокси» и в мастере импорта. Итог: список всегда пуст, надпись «База прокси пуста — введите новый, он попадёт в базу», и оператора каждый раз заставляют вбивать прокси руками. Обещание «он попадёт в базу» тоже не выполняется — введённое значение в базу не попало. В роадмапе пункт помечен «Проверено LIVE» — скорее всего проверяли сразу после добавления прокси через ту же локальную кнопку, когда массив был непуст. ВТОРОЕ, ХУЖЕ: поле принимает ЛЮБОЙ текст без валидации. Ввели «123іфвіф» — сохранилось, тост «Прокси обновлён», в колонке ПРОКСИ красуется мусор. При подключении parseProxy вернёт null, clientOptions не добавит прокси, и аккаунт молча пойдёт НАПРЯМУЮ с реального IP сервера. Ни ошибки при сохранении, ни при коннекте. Одна опечатка в схеме — и аккаунт выходит наружу без прокси, а интерфейс показывает, что прокси есть.</td></tr>
+    <tr class="t" data-p="🟡" data-ty="UI" data-id="9.8">
+      <td class="c"><input type="checkbox"></td><td class="id">9.8</td><td class="p">🟡</td>
       <td class="ty">UI</td>
       <td class="nm">То же в мастере добавления<div class="how">Добавить аккаунт</div></td>
       <td class="ex">⚠️ Ожидается от Ильи</td>
-      <td class="fx"><button class="fail" data-id="9.5" title="Отметить как упавший">✕</button></td>
+      <td class="fx"><button class="fail" title="Отметить упавшим">✕</button></td>
     </tr>
-    <tr class="t" data-p="🟡" data-ty="UI" data-id="9.6">
-      <td class="c"><input type="checkbox" id="cb-9.6"></td>
-      <td class="id">9.6</td>
-      <td class="p">🟡</td>
+    <tr class="t" data-p="🟡" data-ty="UI" data-id="9.9">
+      <td class="c"><input type="checkbox"></td><td class="id">9.9</td><td class="p">🟡</td>
       <td class="ty">UI</td>
       <td class="nm">Правило 1 прокси = 1 аккаунт<div class="how">Назначить один прокси двум</div></td>
       <td class="ex">Нарушение видно в списке</td>
-      <td class="fx"><button class="fail" data-id="9.6" title="Отметить как упавший">✕</button></td>
-    </tr></tbody></table></div></section>
+      <td class="fx"><button class="fail" title="Отметить упавшим">✕</button></td>
+    </tr><tr class="note fail" data-for="9.9"><td></td><td colspan="6"><b>УПАЛО · 21.07:</b> ПОТЕРЯ ДАННЫХ В САМОМ ВАЖНОМ ФАЙЛЕ. Назначение прокси на несколько аккаунтов разом стирает мету всех остальных. Механизм: AssignModal шлёт patchAccount параллельно (<code>await Promise.all(ops)</code>, ProxiesPage.tsx:283), а setAccountMeta делает read-modify-write целого файла: loadAllMeta() → all[id] = {...} → saveAllMeta(all) — без сериализации (accountsMeta.js:32). Классическая потеря обновлений: каждый запрос прочитал весь файл, поменял свой ключ и записал всё назад; победил последний, остальное исчезло. Наблюдали живьём: выбрали 4 аккаунта — назначился 1; у трёх аккаунтов пропали ранее выданные прокси; из accounts-meta.json осталось 2 записи вместо 5, а в них name/phone/username/role/project/country = null. В списке вместо имён появились id (acc_d4237fa5793f), телефоны «—», trust упал с 88 до 65 «без мейлинга» — он считается из той же меты. Правило «1 прокси = 1 аккаунт» при этом тоже не сработало: два аккаунта оказались на одном прокси без единого предупреждения. ЭТО ТА ЖЕ ОШИБКА, что чинилась 21.07 через mutateJson в campaigns/accountGroups/leads — но accountsMeta.js (чужая дорожка) остался на голом writeFile, хотя хранит прокси, статусы, профили, роли и проекты. ВОССТАНОВЛЕНО: прогон ?verify=1 вернул имена/телефоны из Telegram, прокси разведены по одному на аккаунт ПОСЛЕДОВАТЕЛЬНО — 5 записей подряд сохранились все, что подтверждает: причина именно в параллельности.</td></tr>
+    <tr class="t" data-p="🔴" data-ty="TG" data-id="9.10">
+      <td class="c"><input type="checkbox"></td><td class="id">9.10</td><td class="p">🔴</td>
+      <td class="ty">Telegram</td>
+      <td class="nm"><b>Аккаунт реально работает через прокси</b><div class="how">Назначить прокси → запустить модуль</div></td>
+      <td class="ex">Действие прошло; Telegram видит страну прокси, а не сервера</td>
+      <td class="fx"><button class="fail" title="Отметить упавшим">✕</button></td>
+    </tr><tr class="note warn" data-for="9.10"><td></td><td colspan="6"><b>Прошло с замечанием · 21.07:</b> ГЛАВНЫЙ ВОПРОС БЛОКА ЗАКРЫТ: для SOCKS прокси реально применяется к сессии. Прочитали account.GetAuthorizations под аккаунтом Claude Bet AI (socks5 :7163) — Telegram показывает текущую сессию как «Poznan, Poland», то есть видит выход прокси, а не реальное расположение сервера. Город отличается от пробы (Słupno vs Poznan) — нормально для мобильных прокси с ротацией IP. НО HTTP-ПРОКСИ НЕ РАБОТАЮТ ВООБЩЕ: тот же вызов под аккаунтом с http-прокси (:7063) падает сразу — «Invalid sockets params: ip=…, port=7063, socksType=undefined». Причина: parseProxy (proxy.js:9) ПРИНИМАЕТ http, но возвращает объект без socksType, а clientOptions просто кладёт его в opts.proxy — GramJS без socksType не умеет. При этом http-прокси спокойно сохраняются, показываются зелёным «Рабочий» (tcpPing проходит) и раздаются аккаунтам. Накладывается на баг 9.1: импорт клал http как socks5, и «исправление» схемы на верную ломает подключение ещё надёжнее. Нужно либо поддержать http на уровне клиента, либо не принимать http вовсе — с внятным отказом при вводе и импорте.</td></tr>
+    <tr class="t" data-p="🟡" data-ty="UI" data-id="9.11">
+      <td class="c"><input type="checkbox"></td><td class="id">9.11</td><td class="p">🟡</td>
+      <td class="ty">UI</td>
+      <td class="nm">Ссылки ротации IP<div class="how">Вставить <code>changeip</code>-ссылку в импорт</div></td>
+      <td class="ex">⚠️ Сейчас считается ошибкой формата</td>
+      <td class="fx"><button class="fail" title="Отметить упавшим">✕</button></td>
+    </tr><tr class="note fail" data-for="9.11"><td></td><td colspan="6"><b>УПАЛО · 21.07:</b> Ссылки ротации IP (http://host:8881/changeip/&lt;token&gt;), которые продавец присылает вместе со списком, считаются ошибкой формата и попадают в errors. Логично либо игнорировать молча, либо привязывать к прокси как «ссылку на смену IP». Зона Ильи.</td></tr></tbody></table></div></section>
 <section class="blk"><h2>Блок 10. Mailing / Autoposting (§8.4, §9.11) 🟡</h2><div class="tw"><table><thead><tr><th></th><th>#</th><th>!</th><th>тип</th><th>тест</th><th>ожидаем</th><th></th></tr></thead><tbody>
     <tr class="t" data-p="🔴" data-ty="TG" data-id="10.1">
-      <td class="c"><input type="checkbox" id="cb-10.1"></td>
-      <td class="id">10.1</td>
-      <td class="p">🔴</td>
-      <td class="ty">TG</td>
+      <td class="c"><input type="checkbox"></td><td class="id">10.1</td><td class="p">🔴</td>
+      <td class="ty">Telegram</td>
       <td class="nm">Автопостинг <b>сейчас</b><div class="how">Свой канал где аккаунт админ → Опубликовать</div></td>
       <td class="ex">Пост появился в канале</td>
-      <td class="fx"><button class="fail" data-id="10.1" title="Отметить как упавший">✕</button></td>
-    </tr>
+      <td class="fx"><button class="fail" title="Отметить упавшим">✕</button></td>
+    </tr><tr class="note ok" data-for="10.1"><td></td><td colspan="6"><b>ПРОШЛО СО ВТОРОГО РАЗА · 21.07:</b> Повтор с одним аккаунтом на прямом подключении — задача <code>ap_d2ae6a93</code>, <code>[success] Пост в dadaqqqeqw</code>, <code>history: Ілля · «QA тест 2» · sent</code>, 1/1. Пост реально пришёл в Telegram. Значит постинг работает, а первый провал был ЦЕЛИКОМ из-за прокси — не из-за прав админа, как утверждало сообщение об ошибке. Плюс на скрине аккаунтов у 4 из 5 снова «Прямое подключение» — прокси слетели, тот же баг 9.x.</td></tr><tr class="note warn" data-for="10.1"><td></td><td colspan="6"><b>Баг 10.1-b 🟡 — поле «до (с)» невозможно заполнить.</b> Тестировщик: «15 не можу написати». <code>AutopostingPage.tsx:246</code>: <code>onChange={(e) =&gt; setDelayMax(Math.max(delayMin, Number(e.target.value) || delayMin))}</code>. Значение зажимается на КАЖДОМ нажатии клавиши, а не по завершении ввода. При «от» = 10, чтобы набрать «15», надо пройти через промежуточное «1» — а <code>1 &lt; 10</code>, и Math.max мгновенно возвращает 10. Следующая цифра дописывается уже к десятке и выходит 105. Любое число начинается с цифры меньше минимума, поэтому поле физически не набирается — только стрелками. Точно то же в <code>MailingPage.tsx:129</code> (зона Ильи). <b>Класс шире:</b> 22 числовых поля по приложению нормализуют ввод в onChange; остальные набираются лишь потому, что у них минимум 0 или 1. Чинить одинаково: зажимать на <code>onBlur</code>, а не на keystroke.</td></tr><tr class="note fail" data-for="10.1"><td></td><td colspan="6"><b>Замечания с первого прогона (остаются в силе) · 21.07:</b> Задача <code>ap_abf12a0d</code>, 5 аккаунтов на @dadaqqqeqw. В канал не ушло ничего. ЧЕТЫРЕ проблемы. (1) Упало на http-прокси Ильи: <code>Invalid sockets params: socksType=undefined</code> — тот же баг, что в блоке 9; половина аккаунтов сейчас непригодна для любых действий. (2) <code>workers.js:1658</code> дописывает «(нужны права админа на постинг?)» к ЛЮБОЙ ошибке, хоть сетевой, хоть прокси. Оператор пойдёт проверять права админа, а причина совсем другая — сообщение об ошибке уводит от неё. (3) Задача завершилась статусом <b>«Готово» при 0/1</b>. Полностью провальный запуск выглядит в дашборде успешным; при массовом постинге это скроет отказ целиком. (4) Цикл идёт ПО КАНАЛАМ (<code>for (const ch of channels)</code>), аккаунт берётся round-robin <code>accountIds[accIdx++ % len]</code>. Один канал = ОДИН аккаунт: выбранные 5 залочены задачей, но 4 из них не использованы ни разу. В <code>catch</code> подмены аккаунта нет — если единственный выбранный упал, пост просто теряется, хотя рядом четыре живых аккаунта. (5) Тестировщик: «автоматом в дашборд кидуло». <code>AutopostingPage.tsx:148</code> — сразу после <code>startModuleTask</code> идёт тост «Автопостинг создан» и <code>nav('/panel/tasks')</code>, до того как хоть что-то известно о результате. В сумме с (3) оператор получает ТРИ сигнала успеха подряд — зелёный тост, переброс на задачи, статус «Готово» — на запуске, где в канал не ушло ни одного поста.</td></tr>
     <tr class="t" data-p="🔴" data-ty="UI" data-id="10.2">
-      <td class="c"><input type="checkbox" id="cb-10.2"></td>
-      <td class="id">10.2</td>
-      <td class="p">🔴</td>
+      <td class="c"><input type="checkbox"></td><td class="id">10.2</td><td class="p">🔴</td>
       <td class="ty">UI</td>
       <td class="nm">Автопостинг <b>не-админом канала</b><div class="how">Аккаунт без прав</div></td>
       <td class="ex">Понятная ошибка <code>CHAT_ADMIN_REQUIRED</code>, а не молчание</td>
-      <td class="fx"><button class="fail" data-id="10.2" title="Отметить как упавший">✕</button></td>
-    </tr>
+      <td class="fx"><button class="fail" title="Отметить упавшим">✕</button></td>
+    </tr><tr class="note ok" data-for="10.2"><td></td><td colspan="6"><b>ПРОШЛО · 21.07:</b> Задача <code>ap_42eff7b2</code>, Регото Папіроні → @dadaqqqeqw: <code>CHAT_ADMIN_REQUIRED (нужны права админа на постинг?)</code>. Ошибка внятная, аккаунт и канал названы, молчания нет. Здесь приписка про права админа как раз УМЕСТНА — значит правка к багу 10.1-(2) точечная: дописывать подсказку только к ошибкам доступа, а не ко всем подряд. <b>Но статус снова «Готово» при 0/1 и зелёный тост «Автопостинг создан»</b> — запуск, не опубликовавший ничего, выглядит успешным в трёх местах сразу. Подтверждает 10.1-(3) и 10.1-(5) вторым независимым прогоном.</td></tr>
     <tr class="t" data-p="🔴" data-ty="TG" data-id="10.3">
-      <td class="c"><input type="checkbox" id="cb-10.3"></td>
-      <td class="id">10.3</td>
-      <td class="p">🔴</td>
-      <td class="ty">TG</td>
+      <td class="c"><input type="checkbox"></td><td class="id">10.3</td><td class="p">🔴</td>
+      <td class="ty">Telegram</td>
       <td class="nm"><b>Запланированный пост</b><div class="how">«По расписанию» → через 2 минуты</div></td>
       <td class="ex">Пост опубликовался сам в нужное время</td>
-      <td class="fx"><button class="fail" data-id="10.3" title="Отметить как упавший">✕</button></td>
-    </tr>
+      <td class="fx"><button class="fail" title="Отметить упавшим">✕</button></td>
+    </tr><tr class="note ok" data-for="10.3"><td></td><td colspan="6"><b>ПРОШЛО · 21.07:</b> Правило <code>au_e2337423</code> сработало само в 22:16:43, <code>lastStatus: launched</code> → задача <code>ap_d982c629</code>, <code>[success] Пост в dadaqqqeqw</code>, 1/1, <code>history: Ілля · «QA тест 4 — по расписанию» · sent</code>. Пост физически пришёл в Telegram в 22:16 — подтверждено скриншотом канала. Планировщик тикает раз в 30 с и отработал точно. Отдельно правильно: у разового расписания после запуска <code>enabled</code> сам стал <code>false</code> — пост не повторится, классическая ошибка планировщиков здесь отсутствует.</td></tr><tr class="note warn" data-for="10.3"><td></td><td colspan="6"><b>Баг 10.3-a 🟠 — поле времени в 12-часовом формате внутри 24-часового интерфейса.</b> Тестировщик планировал пост «через 2 минуты» на 22:09 и вписал <code>11:09 PM</code>. Сервер принял <code>1784664540000</code> = <b>23:09</b>, на час позже. Ошибка не тестировщика: <code>&lt;input type="datetime-local"&gt;</code> рисуется в формате AM/PM по локали браузера, тогда как весь интерфейс на русском и в шапке стоит RU, а все остальные времена в приложении 24-часовые. Планирование постинга — ровно то место, где промах на час означает публикацию не в то время суток; на ежедневном расписании ошибка будет повторяться каждый день. Нужен либо явный 24-часовой ввод, либо подпись «во сколько это сработает» под полем. <b>Усугубляется тем, что одна и та же страница показывает время в ДРУГОМ формате:</b> карточка в «Запланированных постах» пишет «Один раз · 21.07.2026, <b>22:16</b> · следующий 21.07.2026, 22:16» — 24-часовой, а поле ввода прямо над ней требует <code>10:16 PM</code>. Сверить введённое с показанным невозможно, поэтому промах на час и остался незамеченным. <i>Список правил при этом работает штатно — правило появляется сразу после сохранения (первоначальный «0» был снят до нажатия кнопки, подозрение снято).</i></td></tr><tr class="note fail" data-for="10.3"><td></td><td colspan="6"><b>Баг 10.3-b 🔴 — запланированная работа не существует для Дашборда.</b> Правило <code>au_e2337423</code> создано и живёт на сервере (<code>enabled: true</code>, once @ 23:09), планировщик тикает. Но в «Дашборде задач» его нет, и это не сбой отображения: запланированный пост — правило автоматизации, а задача рождается только в момент срабатывания. Фильтр статусов на дашборде это подтверждает — там «Выполняется / В очереди / Готово / Остановлена / Ошибка» и <b>ни одного «Запланировано»</b>. По §8.8 дашборд — «единый экран прогресса», но вся отложенная работа на нём невидима: оператор не может ответить на вопрос «что запущено сегодня вечером», не обойдя страницы модулей по одной. Тестировщик наткнулся на это сам: «даже запланированного нет в дашборд».</td></tr>
     <tr class="t" data-p="🟡" data-ty="UI" data-id="10.4">
-      <td class="c"><input type="checkbox" id="cb-10.4"></td>
-      <td class="id">10.4</td>
-      <td class="p">🟡</td>
+      <td class="c"><input type="checkbox"></td><td class="id">10.4</td><td class="p">🟡</td>
       <td class="ty">UI</td>
       <td class="nm"><b>Редактирование</b> запланированного<div class="how">В списке → карандаш</div></td>
       <td class="ex">Правятся аккаунты, каналы, текст, время; сохранилось</td>
-      <td class="fx"><button class="fail" data-id="10.4" title="Отметить как упавший">✕</button></td>
-    </tr>
+      <td class="fx"><button class="fail" title="Отметить упавшим">✕</button></td>
+    </tr><tr class="note ok" data-for="10.4"><td></td><td colspan="6"><b>ПРОШЛО (бэкенд) · 21.07:</b> Время правила <code>au_e2337423</code> изменено через <code>PUT /api/automation/rules/:id</code> — тот же вызов, что за карандашом в карточке. <code>nextRun</code> пересчитался сам и совпал с новым <code>schedule.at</code>, правило сработало именно по новому времени. Карточка в списке сразу показала новое «следующий 21.07.2026, 22:16». <i>Правка через форму UI (карандаш → заполнение полей) вручную не прогонялась — проверен серверный путь и отображение.</i></td></tr>
     <tr class="t" data-p="🟡" data-ty="UI" data-id="10.5">
-      <td class="c"><input type="checkbox" id="cb-10.5"></td>
-      <td class="id">10.5</td>
-      <td class="p">🟡</td>
+      <td class="c"><input type="checkbox"></td><td class="id">10.5</td><td class="p">🟡</td>
       <td class="ty">UI</td>
       <td class="nm">Досрочная публикация и удаление<div class="how">Кнопки ▶ и 🗑</div></td>
       <td class="ex">Публикует сразу / удаляет с подтверждением</td>
-      <td class="fx"><button class="fail" data-id="10.5" title="Отметить как упавший">✕</button></td>
-    </tr>
+      <td class="fx"><button class="fail" title="Отметить упавшим">✕</button></td>
+    </tr><tr class="note ok" data-for="10.5"><td></td><td colspan="6"><b>ПРОШЛО · 21.07:</b> Удаление сделано аккуратно: модалка «Удалить запланированный пост», объяснены последствия («больше не опубликуется; уже опубликованные посты останутся в каналах»), есть «Отмена». После подтверждения — тост «Запланированный пост удалён», список 2 → 1. <i>Кнопка ▶ (досрочная публикация) отдельно не прогонялась.</i></td></tr><tr class="note warn" data-for="10.5"><td></td><td colspan="6"><b>Баг 10.5-a 🟡 — подтверждение удаления не отличает один пост от другого.</b> Обе карточки в списке назывались одинаково — «Пост в 1 канал(ов)»: поле «Название поста» необязательное, при пустом подставляется автоимя <code>Пост в ${channels.length} канал(ов)</code>, одинаковое для всех постов в одно и то же число каналов. Модалка пишет «Пост "Пост в 1 канал(ов)" больше не опубликуется» — то есть для НЕОБРАТИМОГО действия подтверждение не идентифицирует цель. Единственное различие между карточками — время мелким шрифтом под названием. Автоимя должно включать время или начало текста поста.</td></tr><tr class="note warn" data-for="10.5"><td></td><td colspan="6"><b>Баг 10.5-b 🟡 — отработавшие правила не убираются из списка.</b> Разовое правило, сработавшее в 22:16, осталось в «Запланированных постах» со статусом «выключен» и висит там бессрочно. Оно уже ничего не сделает (<code>enabled: false</code>, тип <code>once</code>), но занимает место наравне с живыми. При ежедневной работе список за месяц превратится в свалку мёртвых записей, среди которых надо выискивать актуальные — а с учётом 10.5-a все они ещё и называются одинаково. Нужен либо автоперенос отработавших в «историю», либо сворачивание/фильтр.</td></tr>
     <tr class="t" data-p="🟡" data-ty="TG" data-id="10.6">
-      <td class="c"><input type="checkbox" id="cb-10.6"></td>
-      <td class="id">10.6</td>
-      <td class="p">🟡</td>
-      <td class="ty">TG</td>
+      <td class="c"><input type="checkbox"></td><td class="id">10.6</td><td class="p">🟡</td>
+      <td class="ty">Telegram</td>
       <td class="nm">Медиа в посте<div class="how">Прикрепить картинку</div></td>
       <td class="ex">Опубликовалась с подписью</td>
-      <td class="fx"><button class="fail" data-id="10.6" title="Отметить как упавший">✕</button></td>
-    </tr>
+      <td class="fx"><button class="fail" title="Отметить упавшим">✕</button></td>
+    </tr><tr class="note fail" data-for="10.6"><td></td><td colspan="6"><b>УПАЛО · 21.07:</b> Тестировщик: «кнопка не работает». Причина в <code>MessageComposer.tsx:50</code>: <code>addMedia</code> фильтрует ввод по <code>/^https?:\/\//i</code> и при пустом результате делает <code>return</code> — <b>молча, без единого сообщения</b>. Пустое поле, путь к файлу, что угодно кроме ссылки — нажатие просто ничего не делает, и понять почему невозможно. Отдельно: <b>загрузить файл с компьютера нельзя вообще</b>, принимается только URL уже загруженной куда-то картинки. По §9.11 в посте ожидаются «медиа (фото/видео/ссылки)» — оператор будет прикреплять файл, а не искать хостинг. Нужны и file-picker, и внятная ошибка вместо тишины.</td></tr>
     <tr class="t" data-p="🔴" data-ty="TG" data-id="10.7">
-      <td class="c"><input type="checkbox" id="cb-10.7"></td>
-      <td class="id">10.7</td>
-      <td class="p">🔴</td>
-      <td class="ty">TG</td>
+      <td class="c"><input type="checkbox"></td><td class="id">10.7</td><td class="p">🔴</td>
+      <td class="ty">Telegram</td>
       <td class="nm">Мейлинг: реальная отправка<div class="how">Свой номер в списке</div></td>
       <td class="ex">Сообщение пришло; в логах <code>sent</code></td>
-      <td class="fx"><button class="fail" data-id="10.7" title="Отметить как упавший">✕</button></td>
-    </tr>
+      <td class="fx"><button class="fail" title="Отметить упавшим">✕</button></td>
+    </tr><tr class="note skip" data-for="10.7"><td></td><td colspan="6"><b>Пропущено · 21.07:</b> Передано Илье 21.07 — мейлинг он взял на себя («Мейлінг не трогай, він теж взяв його»). Реальная отправка по номерам — его часть.</td></tr>
     <tr class="t" data-p="🔴" data-ty="UI" data-id="10.8">
-      <td class="c"><input type="checkbox" id="cb-10.8"></td>
-      <td class="id">10.8</td>
-      <td class="p">🔴</td>
+      <td class="c"><input type="checkbox"></td><td class="id">10.8</td><td class="p">🔴</td>
       <td class="ty">UI</td>
       <td class="nm">Мейлинг: предохранители<div class="how">Аккаунт с trust&lt;70</div></td>
       <td class="ex">Не допущен к рассылке, причина видна</td>
-      <td class="fx"><button class="fail" data-id="10.8" title="Отметить как упавший">✕</button></td>
-    </tr>
+      <td class="fx"><button class="fail" title="Отметить упавшим">✕</button></td>
+    </tr><tr class="note skip" data-for="10.8"><td></td><td colspan="6"><b>Пропущено · 21.07:</b> Передано Илье вместе с мейлингом — предохранители по trust проверяет он.</td></tr>
     <tr class="t" data-p="🟡" data-ty="UI" data-id="10.9">
-      <td class="c"><input type="checkbox" id="cb-10.9"></td>
-      <td class="id">10.9</td>
-      <td class="p">🟡</td>
+      <td class="c"><input type="checkbox"></td><td class="id">10.9</td><td class="p">🟡</td>
       <td class="ty">UI</td>
       <td class="nm">Номер не в Telegram<div class="how">Заведомо несуществующий номер</div></td>
       <td class="ex">Пропущен со статусом, задача не падает</td>
-      <td class="fx"><button class="fail" data-id="10.9" title="Отметить как упавший">✕</button></td>
-    </tr></tbody></table></div></section>
+      <td class="fx"><button class="fail" title="Отметить упавшим">✕</button></td>
+    </tr><tr class="note skip" data-for="10.9"><td></td><td colspan="6"><b>Пропущено · 21.07:</b> Передано Илье вместе с мейлингом — обработка номеров не из Telegram.</td></tr></tbody></table></div></section>
 <section class="blk"><h2>Блок 11. Парсеры и каналы (§3.7, §3.8) 🟡</h2><div class="tw"><table><thead><tr><th></th><th>#</th><th>!</th><th>тип</th><th>тест</th><th>ожидаем</th><th></th></tr></thead><tbody>
     <tr class="t" data-p="🟡" data-ty="TG" data-id="11.1">
-      <td class="c"><input type="checkbox" id="cb-11.1"></td>
-      <td class="id">11.1</td>
-      <td class="p">🟡</td>
-      <td class="ty">TG</td>
+      <td class="c"><input type="checkbox"></td><td class="id">11.1</td><td class="p">🟡</td>
+      <td class="ty">Telegram</td>
       <td class="nm">Парсер каналов<div class="how">Поиск по 2 ключам</div></td>
       <td class="ex">Результаты, дедуп, ★-рейтинг, «Открыть в Telegram»</td>
-      <td class="fx"><button class="fail" data-id="11.1" title="Отметить как упавший">✕</button></td>
-    </tr>
+      <td class="fx"><button class="fail" title="Отметить упавшим">✕</button></td>
+    </tr><tr class="note skip" data-for="11.1"><td></td><td colspan="6"><b>Пропущено · 21.07:</b> Передано Илье 21.07 — парсер каналов и парсер пользователей он тестирует сам.</td></tr>
     <tr class="t" data-p="🟡" data-ty="UI" data-id="11.2">
-      <td class="c"><input type="checkbox" id="cb-11.2"></td>
-      <td class="id">11.2</td>
-      <td class="p">🟡</td>
+      <td class="c"><input type="checkbox"></td><td class="id">11.2</td><td class="p">🟡</td>
       <td class="ty">UI</td>
       <td class="nm"><b>AND-пересечение</b><div class="how">Тумблер «Пересечение» при 2 ключах</div></td>
       <td class="ex">Результатов меньше — только совпавшие со всеми</td>
-      <td class="fx"><button class="fail" data-id="11.2" title="Отметить как упавший">✕</button></td>
-    </tr>
+      <td class="fx"><button class="fail" title="Отметить упавшим">✕</button></td>
+    </tr><tr class="note skip" data-for="11.2"><td></td><td colspan="6"><b>Пропущено · 21.07:</b> Передано Илье вместе с парсером каналов.</td></tr>
     <tr class="t" data-p="🟡" data-ty="UI" data-id="11.3">
-      <td class="c"><input type="checkbox" id="cb-11.3"></td>
-      <td class="id">11.3</td>
-      <td class="p">🟡</td>
+      <td class="c"><input type="checkbox"></td><td class="id">11.3</td><td class="p">🟡</td>
       <td class="ty">UI</td>
       <td class="nm">Шаблоны поиска<div class="how">Сохранить и применить шаблон</div></td>
       <td class="ex">Параметры восстановились</td>
-      <td class="fx"><button class="fail" data-id="11.3" title="Отметить как упавший">✕</button></td>
+      <td class="fx"><button class="fail" title="Отметить упавшим">✕</button></td>
     </tr>
     <tr class="t" data-p="🟡" data-ty="TG" data-id="11.4">
-      <td class="c"><input type="checkbox" id="cb-11.4"></td>
-      <td class="id">11.4</td>
-      <td class="p">🟡</td>
-      <td class="ty">TG</td>
+      <td class="c"><input type="checkbox"></td><td class="id">11.4</td><td class="p">🟡</td>
+      <td class="ty">Telegram</td>
       <td class="nm">Парсер пользователей<div class="how">Участники группы</div></td>
       <td class="ex">Список, фильтры, режим «кто писал»</td>
-      <td class="fx"><button class="fail" data-id="11.4" title="Отметить как упавший">✕</button></td>
-    </tr>
+      <td class="fx"><button class="fail" title="Отметить упавшим">✕</button></td>
+    </tr><tr class="note skip" data-for="11.4"><td></td><td colspan="6"><b>Пропущено · 21.07:</b> Передано Илье 21.07 — парсер пользователей он тестирует сам.</td></tr>
     <tr class="t" data-p="🟡" data-ty="UI" data-id="11.5">
-      <td class="c"><input type="checkbox" id="cb-11.5"></td>
-      <td class="id">11.5</td>
-      <td class="p">🟡</td>
+      <td class="c"><input type="checkbox"></td><td class="id">11.5</td><td class="p">🟡</td>
       <td class="ty">UI</td>
       <td class="nm">Пересечение аудиторий<div class="how">2 выгрузки → пересечь</div></td>
       <td class="ex">Только общие пользователи</td>
-      <td class="fx"><button class="fail" data-id="11.5" title="Отметить как упавший">✕</button></td>
-    </tr>
+      <td class="fx"><button class="fail" title="Отметить упавшим">✕</button></td>
+    </tr><tr class="note skip" data-for="11.5"><td></td><td colspan="6"><b>Пропущено · 21.07:</b> Передано Илье вместе с парсером пользователей (пересечение аудиторий — его часть).</td></tr>
     <tr class="t" data-p="🟡" data-ty="UI" data-id="11.6">
-      <td class="c"><input type="checkbox" id="cb-11.6"></td>
-      <td class="id">11.6</td>
-      <td class="p">🟡</td>
+      <td class="c"><input type="checkbox"></td><td class="id">11.6</td><td class="p">🟡</td>
       <td class="ty">UI</td>
       <td class="nm">Экспорт<div class="how">CSV и XLS</div></td>
       <td class="ex">Файлы открываются, кодировка не побита</td>
-      <td class="fx"><button class="fail" data-id="11.6" title="Отметить как упавший">✕</button></td>
+      <td class="fx"><button class="fail" title="Отметить упавшим">✕</button></td>
     </tr>
     <tr class="t" data-p="🟡" data-ty="UI" data-id="11.7">
-      <td class="c"><input type="checkbox" id="cb-11.7"></td>
-      <td class="id">11.7</td>
-      <td class="p">🟡</td>
+      <td class="c"><input type="checkbox"></td><td class="id">11.7</td><td class="p">🟡</td>
       <td class="ty">UI</td>
       <td class="nm">Выбор каналов из папки<div class="how">FolderPicker в кампании</div></td>
       <td class="ex">Загрузка/сохранение папок, валидация</td>
-      <td class="fx"><button class="fail" data-id="11.7" title="Отметить как упавший">✕</button></td>
-    </tr>
+      <td class="fx"><button class="fail" title="Отметить упавшим">✕</button></td>
+    </tr><tr class="note fail" data-for="11.7"><td></td><td colspan="6"><b>УПАЛО 🔴 (§8.1) — права на папки целей существуют только в браузере.</b> Проверено запросом без токена и без роли: <code>GET /api/target-folders</code> → отдано ВСЕ 3 папки целиком, со списками каналов (<code>fld_8a8879af</code>, <code>fld_741c82f2</code>, <code>fld_4a95ab87</code> на 11 каналов). Обработчик в <code>server/featureRoutes.js:72</code> объявлен как <code>async (_req, res) =&gt; res.json({ folders: await listFolders() })</code> — подчёркивание в <code>_req</code> означает, что запрос вообще не читается: ни роли, ни проверки. Вся фильтрация живёт в React (<code>visibleFolders()</code>, <code>allowedTargets()</code> в <code>FolderPicker.tsx:14,25</code>), то есть это не разграничение доступа, а <b>сокрытие в интерфейсе</b>: devtools или прямой URL отдают базы каналов всех ролей. По §8.1 папки целей — ресурс с поэлементными правами; фактически прав нет вообще. <b>Хуже:</b> <code>PUT</code> и <code>DELETE /target-folders/:id</code> тоже без единой проверки — любой может переименовать или удалить чужую папку, включая ту, что на 11 каналов. <b>Третье:</b> обе клиентские проверки открываются при отсутствии сессии — <code>canManage = !user || user.isAdmin</code> (<code>FolderPicker.tsx:165</code>) и <code>if (!user || user.isAdmin) return folders</code>: если запрос за сессией не успел или упал, оператор видит все папки и кнопку «Управление». Правило должно быть обратным — нет пользователя, нет доступа (fail-closed), как уже сделано в <code>isAdminRequest()</code>. <b>Отдельно — папку вообще нельзя привязать к кампании.</b> В сущности кампании нет поля под каналы: <code>FIELDS = ['name','goalId','moduleKey','settings','accountIds','pinned','status','chat']</code> (<code>server/campaigns.js:23</code>), и форма редактирования кампании каналов не показывает — тестировщик открыл её и спросил «что тут выбрать?», выбирать нечего. При запуске сохранённой кампании цели берутся из ЦЕЛИ: <code>targets: goal?.channels || []</code> (<code>CampaignPage.tsx:249</code>). А блок «Целевые каналы/группы» с FolderPicker (<code>CampaignPage.tsx:490</code>) находится ниже списка кампаний и принадлежит СТАРОМУ разовому запускатору — загруженная туда папка до сохранённой кампании не доходит. По §3.7 папки — источник целей; фактически они источник только для разового запуска. Продолжение бага 1.2 (две параллельные «кампании» на одной странице). <b>Четвёртое:</b> в <code>FolderManageModal</code> кнопка «Загрузить в цели» (<code>FolderPicker.tsx:307</code>) зовёт <code>onLoad(f.targets)</code> в обход <code>allowedTargets()</code> — сейчас недостижимо для не-админа, но это вторая точка, где фильтр каналов забыт. <i>Тот же класс, что группы аккаунтов и точечный deny: логика есть и покрыта тестами, но до сервера она не доходит.</i></td></tr><tr class="note fail" data-for="11.7"><td></td><td colspan="6"><b>Баг 11.7-b 🔴 — загруженные из папки каналы не видно нигде.</b> Загрузка папки отработала (тост «Папка загружена · 1 · 11 целей»), но <code>onLoad</code> в <code>CampaignPage.tsx:495</code> кладёт цели в <code>picked</code> — выбор из «базы каналов», а не в текстовое поле «Целевые каналы/группы», которое осталось пустым. Список базы рисует галочки только по своим 50 каналам (<code>CampaignPage.tsx:506-510</code>), а <b>ни одной из 11 целей папки в базе нет</b> (проверено запросом: <code>nuancesprog, it_boooks, procode404…</code> — совпадений 0). Итог: счётчик пишет «Целей-каналов: 12», текстовое поле пустое, среди чипов ничего не подсвечено — <b>увидеть, куда полетит кампания, физически негде</b>, а рядом кнопка «Запустить кампанию». Функционально цели дойдут (<code>targets = typed + picked</code>), то есть это не потеря данных, а невозможность проверить массовое действие перед запуском.</td></tr><tr class="note warn" data-for="11.7"><td></td><td colspan="6"><b>Баг 11.7-c 🟡 — дубли в базе каналов и одинаковые имена папок.</b> (1) В базе 50 каналов, из них <code>founder</code>, <code>cryptoy</code>, <code>cryptowallet_news_cis</code> лежат по два раза — на скриншоте <code>@founder</code> виден дважды в одной строке. (2) Две папки из трёх называются «1» (<code>fld_8a8879af</code> на 1 цель и <code>fld_4a95ab87</code> на 11 целей): в окне «Загрузить папку» они отличаются только числом целей мелким шрифтом. Тот же класс, что 10.5-a: неуникальные имена у элементов, по которым выбирают. <i>(Расхождение 12 против 11 к этому отношения не имело — тестировщик подтвердил, что случайно добавил один канал из базы кликом. Папка загрузила ровно 11.)</i></td></tr><tr class="note fail" data-for="11.7"><td></td><td colspan="6"><b>Баг 11.7-d 🔴 — дедуп целей не учитывает регистр, один канал попадает в папку дважды.</b> Проверено реальным <code>PUT /api/target-folders/fld_4a95ab87</code>: отправлено 15 строк (11 исходных + <code>@dadaqqqeqw</code> + три намеренных дубля), сохранилось <b>13 вместо 12</b>. <code>normalizeTargets()</code> (<code>server/targetFolders.js:10</code>) срезает <code>@</code> и пробелы и гонит через <code>Set</code>, но <b>не приводит к нижнему регистру</b>: <code>@nuancesprog</code> и <code>  it_boooks  </code> схлопнулись правильно, а <code>NUANCESPROG</code> лёг отдельной целью рядом с <code>nuancesprog</code>. В Telegram юзернеймы регистронезависимы — это один и тот же канал. Последствие не косметическое: кампания отработает по такому каналу ДВАЖДЫ одним и тем же аккаунтом, а повторные действия в один чат — прямая сигнатура для спамблока (тот же класс вреда, что баг 1.3 с одинаковыми комментариями). Чинится одной строкой: <code>.toLowerCase()</code> в <code>normalizeTargets</code>, плюс миграция уже сохранённых папок. <i>Внесённый тестовый дубль убран, папка оставлена в состоянии 12 целей.</i></td></tr><tr class="note warn" data-for="11.7"><td></td><td colspan="6"><b>Баг 11.7-e 🟡 — в базе каналов лежат точные дубли.</b> Проверка 50 каналов базы: <code>Cryptoy</code>, <code>founder</code>, <code>cryptowallet_news_cis</code> присутствуют по два раза <b>буква в букву</b> — то есть это не история с регистром из 11.7-d, а отсутствие дедупа при наполнении базы. На скриншоте кампании <code>@founder</code> виден дважды в одной строке чипов. Оператор, отмечая канал галочкой, не понимает, какой из двух одинаковых он выбрал, а выбор обоих даст двойную обработку.</td></tr>
     <tr class="t" data-p="⚪" data-ty="TG" data-id="11.8">
-      <td class="c"><input type="checkbox" id="cb-11.8"></td>
-      <td class="id">11.8</td>
-      <td class="p">⚪</td>
-      <td class="ty">TG</td>
+      <td class="c"><input type="checkbox"></td><td class="id">11.8</td><td class="p">⚪</td>
+      <td class="ty">Telegram</td>
       <td class="nm">Закрытая группа<div class="how">Парсинг участников закрытой</div></td>
       <td class="ex">Подсказка про режим «Активные», не краш</td>
-      <td class="fx"><button class="fail" data-id="11.8" title="Отметить как упавший">✕</button></td>
-    </tr></tbody></table></div></section>
+      <td class="fx"><button class="fail" title="Отметить упавшим">✕</button></td>
+    </tr><tr class="note skip" data-for="11.8"><td></td><td colspan="6"><b>Пропущено · 21.07:</b> Передано Илье вместе с парсером пользователей (закрытые группы).</td></tr></tbody></table></div></section>
 <section class="blk"><h2>Блок 12. 🔴 СЦЕНАРИИ СБОЕВ — главный пробел (§3.3, Фаза 1 «≥5 тест-профилей»)</h2><div class="tw"><table><thead><tr><th></th><th>#</th><th>!</th><th>тип</th><th>тест</th><th>ожидаем</th><th></th></tr></thead><tbody>
     <tr class="t" data-p="🔴" data-ty="TG" data-id="12.1">
-      <td class="c"><input type="checkbox" id="cb-12.1"></td>
-      <td class="id">12.1</td>
-      <td class="p">🔴</td>
-      <td class="ty">TG</td>
+      <td class="c"><input type="checkbox"></td><td class="id">12.1</td><td class="p">🔴</td>
+      <td class="ty">Telegram</td>
       <td class="nm"><b>FloodWait</b><div class="how">Агрессивный уровень + низкие задержки, много действий подряд</div></td>
       <td class="ex">Статус <code>floodwait</code> с длительностью, пауза, потом авто-возврат</td>
-      <td class="fx"><button class="fail" data-id="12.1" title="Отметить как упавший">✕</button></td>
-    </tr>
+      <td class="fx"><button class="fail" title="Отметить упавшим">✕</button></td>
+    </tr><tr class="note skip" data-for="12.1"><td></td><td colspan="6"><b>Передано в дорожку Ильи · 21.07:</b> Статусы аккаунтов и state machine — Lane A по CLAUDE.md («профили, статусы, блокировки/lease, прогрев, оркестрация»). Довести живой аккаунт до FloodWait — это намеренная порча рабочего аккаунта. Риск потерять живые аккаунты реальный, прогон долгий, а чинить всё равно владельцу дорожки — логичнее гонять на одноразовых аккаунтах у себя. <i>Не «пропущено по лени» — вынесено осознанно, тест остаётся обязательным.</i></td></tr>
     <tr class="t" data-p="🔴" data-ty="TG" data-id="12.2">
-      <td class="c"><input type="checkbox" id="cb-12.2"></td>
-      <td class="id">12.2</td>
-      <td class="p">🔴</td>
-      <td class="ty">TG</td>
+      <td class="c"><input type="checkbox"></td><td class="id">12.2</td><td class="p">🔴</td>
+      <td class="ty">Telegram</td>
       <td class="nm"><b>Карантин после N FloodWait</b><div class="how">Довести до 3 подряд (порог настраивается)</div></td>
       <td class="ex">Аккаунт в <code>quarantine</code>, в логах причина, из модулей исключён</td>
-      <td class="fx"><button class="fail" data-id="12.2" title="Отметить как упавший">✕</button></td>
-    </tr>
+      <td class="fx"><button class="fail" title="Отметить упавшим">✕</button></td>
+    </tr><tr class="note skip" data-for="12.2"><td></td><td colspan="6"><b>Передано в дорожку Ильи · 21.07:</b> Статусы аккаунтов и state machine — Lane A по CLAUDE.md («профили, статусы, блокировки/lease, прогрев, оркестрация»). Требует трёх FloodWait подряд на живом аккаунте. Риск потерять живые аккаунты реальный, прогон долгий, а чинить всё равно владельцу дорожки — логичнее гонять на одноразовых аккаунтах у себя. <i>Не «пропущено по лени» — вынесено осознанно, тест остаётся обязательным.</i></td></tr>
     <tr class="t" data-p="🔴" data-ty="TG" data-id="12.3">
-      <td class="c"><input type="checkbox" id="cb-12.3"></td>
-      <td class="id">12.3</td>
-      <td class="p">🔴</td>
-      <td class="ty">TG</td>
+      <td class="c"><input type="checkbox"></td><td class="id">12.3</td><td class="p">🔴</td>
+      <td class="ty">Telegram</td>
       <td class="nm"><b>Спамблок</b><div class="how">Аккаунт с ограничением → проверка через @SpamBot</div></td>
       <td class="ex">Статус <code>spamblock</code>, модули его не берут</td>
-      <td class="fx"><button class="fail" data-id="12.3" title="Отметить как упавший">✕</button></td>
-    </tr>
+      <td class="fx"><button class="fail" title="Отметить упавшим">✕</button></td>
+    </tr><tr class="note skip" data-for="12.3"><td></td><td colspan="6"><b>Передано в дорожку Ильи · 21.07:</b> Статусы аккаунтов и state machine — Lane A по CLAUDE.md («профили, статусы, блокировки/lease, прогрев, оркестрация»). Требует реально словить спамблок. Риск потерять живые аккаунты реальный, прогон долгий, а чинить всё равно владельцу дорожки — логичнее гонять на одноразовых аккаунтах у себя. <i>Не «пропущено по лени» — вынесено осознанно, тест остаётся обязательным.</i></td></tr>
     <tr class="t" data-p="🔴" data-ty="TG" data-id="12.4">
-      <td class="c"><input type="checkbox" id="cb-12.4"></td>
-      <td class="id">12.4</td>
-      <td class="p">🔴</td>
-      <td class="ty">TG</td>
+      <td class="c"><input type="checkbox"></td><td class="id">12.4</td><td class="p">🔴</td>
+      <td class="ty">Telegram</td>
       <td class="nm"><b>Invalid / Reauth</b><div class="how">Отозвать сессию в Telegram → обновить</div></td>
       <td class="ex"><code>reauth</code>/<code>invalid</code>, понятная подсказка что делать</td>
-      <td class="fx"><button class="fail" data-id="12.4" title="Отметить как упавший">✕</button></td>
-    </tr>
+      <td class="fx"><button class="fail" title="Отметить упавшим">✕</button></td>
+    </tr><tr class="note skip" data-for="12.4"><td></td><td colspan="6"><b>Передано в дорожку Ильи · 21.07:</b> Статусы аккаунтов и state machine — Lane A по CLAUDE.md («профили, статусы, блокировки/lease, прогрев, оркестрация»). Требует отозвать сессию у рабочего аккаунта. Риск потерять живые аккаунты реальный, прогон долгий, а чинить всё равно владельцу дорожки — логичнее гонять на одноразовых аккаунтах у себя. <i>Не «пропущено по лени» — вынесено осознанно, тест остаётся обязательным.</i></td></tr>
     <tr class="t" data-p="🔴" data-ty="UI" data-id="12.5">
-      <td class="c"><input type="checkbox" id="cb-12.5"></td>
-      <td class="id">12.5</td>
-      <td class="p">🔴</td>
+      <td class="c"><input type="checkbox"></td><td class="id">12.5</td><td class="p">🔴</td>
       <td class="ty">UI</td>
       <td class="nm">Непрогретый не назначается<div class="how">Аккаунт в прогреве → выбрать в модуле</div></td>
       <td class="ex">Недоступен, метка «в прогреве», тост с причиной</td>
-      <td class="fx"><button class="fail" data-id="12.5" title="Отметить как упавший">✕</button></td>
-    </tr>
+      <td class="fx"><button class="fail" title="Отметить упавшим">✕</button></td>
+    </tr><tr class="note fail" data-for="12.5"><td></td><td colspan="6"><b>УПАЛО 🔴 · 22.07 — статус «прогрев» недостижим, защита держится только на локе задачи.</b> Запущен реальный прогрев (задача <code>wm_046eda8e</code>, Дмитрій Руб, 1/10 действий). В Автопостинге аккаунт корректно ушёл в группу «Недоступны · 1» с чипом «В РАБОТЕ», иконкой замка и названием модуля «Прогрев» — выбрать его нельзя, отображение внятное. <b>Но статус аккаунта при этом <code>active</code>, а не <code>warming</code></b> (проверено и в API, и в <code>accounts-meta.json</code>), счётчик «Прогрев» на странице аккаунтов показывает 0 во время работающего прогрева. Причина: <b>ни одна строка сервера никогда не выставляет <code>status: 'warming'</code></b> — поиск по всему <code>server/</code> не дал ни одного писателя. Статус объявлен в state machine и входит в <code>NON_RUNNABLE</code> (<code>lib/accountStatus.js</code>), то есть запрет «непрогретый в бой не идёт» реализован — но попасть в это состояние нечем. Выход из него при этом есть: trust-служба сама переводит <code>warming → active</code> при trust&gt;70 (подтверждено записью аудита <code>initiator=system, module=trust</code>, когда статус был выставлен вручную). <b>Последствие:</b> как только задача прогрева закончилась — а она короткая, 10 действий, — аккаунт немедленно доступен боевым модулям, хотя лог самой задачи заявляет «уровень: Нормальный (<b>3–7 дней</b>) · ~20 действий/день». Многодневный период прогрева не представлен в данных ничем: нет состояния «ещё прогревается, не трогать». Оператор, запустивший прогрев на неделю, через 5 минут может отправить этот аккаунт в рассылку и не увидит ни одного предупреждения. <i>Замечание тестировщика «так він не на прогреве» — точное: блокировка идёт от лока, а не от статуса.</i></td></tr>
     <tr class="t" data-p="🔴" data-ty="UI" data-id="12.6">
-      <td class="c"><input type="checkbox" id="cb-12.6"></td>
-      <td class="id">12.6</td>
-      <td class="p">🔴</td>
+      <td class="c"><input type="checkbox"></td><td class="id">12.6</td><td class="p">🔴</td>
       <td class="ty">UI</td>
       <td class="nm">trust&lt;40 не пускается в бой<div class="how">Аккаунт с низким баллом → боевой модуль</div></td>
       <td class="ex">Отказ «отправьте на прогрев»; в прогрев — пускает</td>
-      <td class="fx"><button class="fail" data-id="12.6" title="Отметить как упавший">✕</button></td>
-    </tr>
+      <td class="fx"><button class="fail" title="Отметить упавшим">✕</button></td>
+    </tr><tr class="note warn" data-for="12.6"><td></td><td colspan="6"><b>ПРОШЛО С ЗАМЕЧАНИЯМИ 🟡 · 22.07 (прогон Claude на API, живых аккаунтов с trust&lt;40 на стенде нет — у всех пяти 72–80).</b> Проверено подменой значения в <code>trust-cache.json</code> с последующим восстановлением из бэкапа. <b>Порог работает:</b> с trust 25 запуск нейрокомментинга → <b>HTTP 409</b>, «Профили с trust&lt;40 нельзя брать в боевой модуль (§6, авто-стоп → прогрев): dbb6f2 (trust 25). Отправьте их на прогрев или выберите другие» — сообщение внятное, порог назван, счёт показан, сказано что делать. <code>TRUST_MIN = 40</code>, гейт стоит в роуте до создания задачи. <b>Замечание 1 (🔴) — аккаунт БЕЗ посчитанного trust проходит в бой.</b> Удалил запись из кэша (имитация только что добавленного аккаунта) — задача создалась, аккаунт пропущен. Это заложено намеренно: <code>if (t &amp;&amp; Number(t.score) &lt; TRUST_MIN)</code> с комментарием «fail-open: если ни разу не считался — не блокируем» (<code>accountsMeta.js:135</code>). Но именно свежедобавленный аккаунт — тот самый, кого правило §6 и должно останавливать: у него нет ни истории, ни отлёжки, и он максимально уязвим к спамблоку. Гейт защищает только тех, кто уже поработал и получил оценку. Правильнее fail-closed: нет оценки — сначала прогрев. <b>Замечание 2 (🟡):</b> аккаунт снова назван как <code>dbb6f2</code> — хвост id вместо имени, как и в 12.9. <b>Замечание 3 (🟡):</b> <code>TRUST_GATED_MODULES</code> = neuro-commenting, neuro-chatting, neuro-dialogs, mass-react, mailing. Автопостинг и масслукинг в список не входят — для постинга в свои каналы это оправдано, но стоит зафиксировать решение явно, иначе при добавлении новых модулей список молча отстанет.</td></tr>
     <tr class="t" data-p="🔴" data-ty="TG" data-id="12.7">
-      <td class="c"><input type="checkbox" id="cb-12.7"></td>
-      <td class="id">12.7</td>
-      <td class="p">🔴</td>
-      <td class="ty">TG</td>
+      <td class="c"><input type="checkbox"></td><td class="id">12.7</td><td class="p">🔴</td>
+      <td class="ty">Telegram</td>
       <td class="nm"><b>Суточный лимит</b><div class="how">Довести аккаунт до потолка действий</div></td>
       <td class="ex">Пропускается с логом «лимит достигнут», задача не падает</td>
-      <td class="fx"><button class="fail" data-id="12.7" title="Отметить как упавший">✕</button></td>
-    </tr>
+      <td class="fx"><button class="fail" title="Отметить упавшим">✕</button></td>
+    </tr><tr class="note skip" data-for="12.7"><td></td><td colspan="6"><b>Передано в дорожку Ильи · 21.07:</b> Статусы аккаунтов и state machine — Lane A по CLAUDE.md («профили, статусы, блокировки/lease, прогрев, оркестрация»). Требует выработать суточный потолок действий — сотни реальных действий в Telegram. Риск потерять живые аккаунты реальный, прогон долгий, а чинить всё равно владельцу дорожки — логичнее гонять на одноразовых аккаунтах у себя. <i>Не «пропущено по лени» — вынесено осознанно, тест остаётся обязательным.</i></td></tr>
     <tr class="t" data-p="🔴" data-ty="UI" data-id="12.8">
-      <td class="c"><input type="checkbox" id="cb-12.8"></td>
-      <td class="id">12.8</td>
-      <td class="p">🔴</td>
+      <td class="c"><input type="checkbox"></td><td class="id">12.8</td><td class="p">🔴</td>
       <td class="ty">UI</td>
       <td class="nm">Лимит виден<div class="how">Карточка → Здоровье</div></td>
       <td class="ex">used/cap по каждому действию, чип в списке аккаунтов</td>
-      <td class="fx"><button class="fail" data-id="12.8" title="Отметить как упавший">✕</button></td>
+      <td class="fx"><button class="fail" title="Отметить упавшим">✕</button></td>
     </tr>
     <tr class="t" data-p="🔴" data-ty="TG" data-id="12.9">
-      <td class="c"><input type="checkbox" id="cb-12.9"></td>
-      <td class="id">12.9</td>
-      <td class="p">🔴</td>
-      <td class="ty">TG</td>
+      <td class="c"><input type="checkbox"></td><td class="id">12.9</td><td class="p">🔴</td>
+      <td class="ty">Telegram</td>
       <td class="nm"><b>Горячий лид защищён</b><div class="how">Аккаунту с горячим лидом дать НЕ-диалоговый модуль</div></td>
       <td class="ex">Отказ; диалоговый — разрешён</td>
-      <td class="fx"><button class="fail" data-id="12.9" title="Отметить как упавший">✕</button></td>
-    </tr>
+      <td class="fx"><button class="fail" title="Отметить упавшим">✕</button></td>
+    </tr><tr class="note warn" data-for="12.9"><td></td><td colspan="6"><b>ПРОШЛО С ЗАМЕЧАНИЯМИ 🟡 · 22.07 — сама гвардия работает, но защищает только лидов, которых нельзя создать через интерфейс.</b> Проверено: <code>POST /api/modules/autoposting/tasks</code> с аккаунтом, за которым висит горячий лид → <b>HTTP 409</b>, «Профили ведут горячий лид — их нельзя забирать в другой модуль (диалог продолжается): a5793f». В UI ошибка тоже доходит — красный тост с полным текстом, задача не создаётся. Логика в <code>leads.js:109 assertNoHotLeadConflict</code> корректна и стоит в роуте до создания задачи. <b>Замечание 1 (🔴 главное):</b> гвардия ищет совпадение по <code>lead.accountId</code>, а <b>лид, созданный вручную, этого поля не получает никогда</b>: форма «+ Лид» шлёт только <code>{peer, goalId}</code> (<code>LeadsPage.tsx:60</code>), назначить ответственного потом негде — в строке лида только выпадашка статуса и корзина. Единственный горячий лид на стенде (<code>lead_26062007</code>) имел <code>accountId: null</code>, и гвардия по нему молча не срабатывала — сработала лишь после того, как аккаунт был привязан вручную через API. Итог: оператор добавляет горячего лида руками, видит красный баннер «свяжитесь немедленно» и считает аккаунт защищённым — а тот свободно уходит в массовую рассылку посреди диалога. Лиды, созданные системой, поле получают (<code>workers.js:895</code>), но только <code>if (s.goalId)</code> — задача без цели лида не заводит вовсе. <b>Замечание 2 (🟡):</b> в тексте ошибки аккаунт назван как <code>a5793f</code> — последние 6 символов id вместо имени «Ілля». При 50 аккаунтах по такой строке не понять, кого именно система не отдала. <b>Замечание 3 (🟡):</b> заголовок тоста «Не удалось <b>сохранить</b>» — оператор нажимал «Опубликовать», ничего не сохраняя.</td></tr>
     <tr class="t" data-p="🔴" data-ty="TG" data-id="12.10">
-      <td class="c"><input type="checkbox" id="cb-12.10"></td>
-      <td class="id">12.10</td>
-      <td class="p">🔴</td>
-      <td class="ty">TG</td>
+      <td class="c"><input type="checkbox"></td><td class="id">12.10</td><td class="p">🔴</td>
+      <td class="ty">Telegram</td>
       <td class="nm">Один аккаунт = одна задача<div class="how">Занятый аккаунт взять во второй модуль</div></td>
       <td class="ex">Отказ «в работе»</td>
-      <td class="fx"><button class="fail" data-id="12.10" title="Отметить как упавший">✕</button></td>
-    </tr>
+      <td class="fx"><button class="fail" title="Отметить упавшим">✕</button></td>
+    </tr><tr class="note ok" data-for="12.10"><td></td><td colspan="6"><b>ПРОШЛО · 21.07:</b> Пока шёл парсинг, аккаунт Ілля в менеджере показан как «В работе: Парсинг» со спиннером, чекбокс заблокирован, строка ушла вниз списка; сверху появился фильтр «В РАБОТЕ ПО МОДУЛЯМ: Парсинг 1». Занятость аккаунта видна и в списке, и в фильтре. <i>Попытка выбрать занятый аккаунт в другом модуле вручную не прогонялась — проверено отображение лока.</i></td></tr>
     <tr class="t" data-p="🔴" data-ty="UI" data-id="12.11">
-      <td class="c"><input type="checkbox" id="cb-12.11"></td>
-      <td class="id">12.11</td>
-      <td class="p">🔴</td>
+      <td class="c"><input type="checkbox"></td><td class="id">12.11</td><td class="p">🔴</td>
       <td class="ty">UI</td>
       <td class="nm">Перезапуск бэкенда<div class="how">Рестарт сервера при работающей задаче</div></td>
       <td class="ex">Задача помечена <code>stopped</code>, локи сняты, аккаунты свободны</td>
-      <td class="fx"><button class="fail" data-id="12.11" title="Отметить как упавший">✕</button></td>
-    </tr>
+      <td class="fx"><button class="fail" title="Отметить упавшим">✕</button></td>
+    </tr><tr class="note warn" data-for="12.11"><td></td><td colspan="6"><b>ПРОШЛО С ЗАМЕЧАНИЕМ · 21.07 (прогон сделан Claude).</b> Запущен парсинг на 9 ключах (100 запросов), дождались состояния <code>running 25/100</code> НА ДИСКЕ, затем бэкенд убит на ходу (<code>taskkill /F</code>) при <code>running 44/100</code>. После рестарта: в логе загрузки <code>Reconcile: 1 устаревших задач помечены stopped, блокировки не восстановлены</code>, задача <code>pr_10267045</code> → <b>stopped</b>, прогресс 44/100 сохранён, локи не восстановлены, аккаунты не заблокированы. Основное требование §3.3 выполнено. <b>НО аккаунт Ілля остался в статусе <code>working</code> навсегда</b> — и через 12 секунд, и в <code>accounts-meta.json</code>. Причина: воркеры пишут <code>setAccountMeta(id, {status:'working'})</code> напрямую (<code>lib/accountRunner.js:22</code>, <code>modules/workers.js:112</code>, <code>neuroCommenting/worker.js:144</code>) в обход state machine и снимают его в конце — при убийстве процесса снимать некому, а <code>reconcileStaleTasksOnBoot</code> чинит задачи и локи, но статус аккаунта не трогает. <b>Починить это штатно нельзя:</b> <code>POST /api/modules/locks/reconcile</code> вернул <code>dropped: []</code> и статус не изменил; <code>POST /accounts/:id/status {to:'active'}</code> вернул <code>ok: true</code> и НИЧЕГО не сделал — потому что <code>LEGACY_MAP.working = ACTIVE</code> (<code>lib/accountStatus.js:32</code>), значит <code>normalizeStatus('working')==='active'</code>, переход считается «active→active» и <code>setAccountStatus</code> молча выходит по <code>if (patch.status === from) return</code>. Итог: бэкенд считает аккаунт активным и берёт в работу (<code>working</code> не входит в <code>SKIP_STATUSES</code>), а фронт читает сырое значение и рисует «В работе» — навсегда, с враньём в счётчике «В работе: N» на дашборде. Снять удалось только сырым <code>PATCH /api/tg/accounts/:id {status:'active'}</code>. <i>Комментарий в самом коде это предсказывает: «working — это факт занятости задачей (лок), а не статус жизненного цикла» — то есть писать его в поле статуса вообще не следовало.</i></td></tr>
     <tr class="t" data-p="🟡" data-ty="TG" data-id="12.12">
-      <td class="c"><input type="checkbox" id="cb-12.12"></td>
-      <td class="id">12.12</td>
-      <td class="p">🟡</td>
-      <td class="ty">TG</td>
+      <td class="c"><input type="checkbox"></td><td class="id">12.12</td><td class="p">🟡</td>
+      <td class="ty">Telegram</td>
       <td class="nm">Прокси отвалился<div class="how">Выключить прокси во время работы</div></td>
       <td class="ex">Понятная ошибка, аккаунт не «умирает» навсегда</td>
-      <td class="fx"><button class="fail" data-id="12.12" title="Отметить как упавший">✕</button></td>
-    </tr>
+      <td class="fx"><button class="fail" title="Отметить упавшим">✕</button></td>
+    </tr><tr class="note skip" data-for="12.12"><td></td><td colspan="6"><b>Передано в дорожку Ильи · 22.07:</b> Тест требует назначать и ломать прокси у аккаунтов — зона, которую владелец дорожки явно попросил не трогать («прокси не трогай, я уже делаю там»). <b>Частичный ответ уже получен побочно:</b> в блоках 9 и 10 аккаунт Ілля с http-прокси уронил автопостинг ошибкой <code>Invalid sockets params: ip=…, socksType=undefined</code>, при этом сам аккаунт НЕ «умер»: через полчаса он же успешно опубликовал пост (задача <code>ap_d2ae6a93</code>, 1/1). То есть главное требование теста — «аккаунт не умирает навсегда» — на неисправном прокси выполняется. Не проверен именно ОТВАЛ посреди работы (соединение рвётся в процессе) и понятность сообщения в этом сценарии.</td></tr>
     <tr class="t" data-p="🟡" data-ty="UI" data-id="12.13">
-      <td class="c"><input type="checkbox" id="cb-12.13"></td>
-      <td class="id">12.13</td>
-      <td class="p">🟡</td>
+      <td class="c"><input type="checkbox"></td><td class="id">12.13</td><td class="p">🟡</td>
       <td class="ty">UI</td>
       <td class="nm">Капча при вступлении<div class="how">Группа с ботом-капчей</div></td>
       <td class="ex">Простая решается сама, сложная → лог «нужен оператор»</td>
-      <td class="fx"><button class="fail" data-id="12.13" title="Отметить как упавший">✕</button></td>
-    </tr></tbody></table></div></section>
+      <td class="fx"><button class="fail" title="Отметить упавшим">✕</button></td>
+    </tr><tr class="note skip" data-for="12.13"><td></td><td colspan="6"><b>Передано в дорожку Ильи · 21.07:</b> Статусы аккаунтов и state machine — Lane A по CLAUDE.md («профили, статусы, блокировки/lease, прогрев, оркестрация»). Требует группу с ботом-капчей и реальных попыток вступления. Риск потерять живые аккаунты реальный, прогон долгий, а чинить всё равно владельцу дорожки — логичнее гонять на одноразовых аккаунтах у себя. <i>Не «пропущено по лени» — вынесено осознанно, тест остаётся обязательным.</i></td></tr></tbody></table></div></section>
 <section class="blk"><h2>Блок 13. Логи и аудит (§3.1) 🟡</h2><div class="tw"><table><thead><tr><th></th><th>#</th><th>!</th><th>тип</th><th>тест</th><th>ожидаем</th><th></th></tr></thead><tbody>
     <tr class="t" data-p="🟡" data-ty="UI" data-id="13.1">
-      <td class="c"><input type="checkbox" id="cb-13.1"></td>
-      <td class="id">13.1</td>
-      <td class="p">🟡</td>
+      <td class="c"><input type="checkbox"></td><td class="id">13.1</td><td class="p">🟡</td>
       <td class="ty">UI</td>
       <td class="nm">Единый экран «Логи»<div class="how"><code>/panel/logs</code></div></td>
       <td class="ex">Записи с инициатором и причиной, фильтры работают</td>
-      <td class="fx"><button class="fail" data-id="13.1" title="Отметить как упавший">✕</button></td>
-    </tr>
+      <td class="fx"><button class="fail" title="Отметить упавшим">✕</button></td>
+    </tr><tr class="note ok" data-for="13.1"><td></td><td colspan="6"><b>ПРОШЛО · 22.07:</b> Экран /panel/logs, 291 запись. У каждой — тип (цветной бейдж), модуль, «кто» (operator / system / illia@incubator.ai), число аккаунтов, время. Фильтры реально фильтруют и комбинируются: «task.start» → 51 запись, «task.start + operator» → те же 51, «task.start + system» → честный «Показано: 0» с корректным пустым состоянием. Есть экспорт CSV, поиск по журналу. Причина у задач присутствует (видна в модалке, см. 13.2).</td></tr>
     <tr class="t" data-p="🟡" data-ty="UI" data-id="13.2">
-      <td class="c"><input type="checkbox" id="cb-13.2"></td>
-      <td class="id">13.2</td>
-      <td class="p">🟡</td>
+      <td class="c"><input type="checkbox"></td><td class="id">13.2</td><td class="p">🟡</td>
       <td class="ty">UI</td>
       <td class="nm">Детальная запись<div class="how">Клик по записи</div></td>
       <td class="ex">Модалка с полным составом</td>
-      <td class="fx"><button class="fail" data-id="13.2" title="Отметить как упавший">✕</button></td>
-    </tr>
+      <td class="fx"><button class="fail" title="Отметить упавшим">✕</button></td>
+    </tr><tr class="note ok" data-for="13.2"><td></td><td colspan="6"><b>ПРОШЛО · 22.07:</b> Клик по записи открывает модалку «Запись лога» с полным составом: действие, инициатор, модуль, код, причина, аккаунт, время, «затронуто N акк.», id задачи. <i>Замечание (не новое): аккаунт назван хвостом id «a5793f» вместо имени — то же, что в 12.6/12.9; по журналу расследований это неудобно, но отдельным багом не дублирую.</i></td></tr>
     <tr class="t" data-p="🟡" data-ty="UI" data-id="13.3">
-      <td class="c"><input type="checkbox" id="cb-13.3"></td>
-      <td class="id">13.3</td>
-      <td class="p">🟡</td>
+      <td class="c"><input type="checkbox"></td><td class="id">13.3</td><td class="p">🟡</td>
       <td class="ty">UI</td>
       <td class="nm">Режим «Потоки»<div class="how">Выбрать 2–3 действия</div></td>
       <td class="ex">Параллельные колонки для сравнения</td>
-      <td class="fx"><button class="fail" data-id="13.3" title="Отметить как упавший">✕</button></td>
-    </tr>
+      <td class="fx"><button class="fail" title="Отметить упавшим">✕</button></td>
+    </tr><tr class="note ok" data-for="13.3"><td></td><td colspan="6"><b>ПРОШЛО · 22.07:</b> Режим «Потоки» — две параллельные колонки со своими счётчиками («Стоп задачи 28» / «Старт задачи 51»), сверху панель «Колонки (до 3)» для выбора до трёх типов действий и сравнения их рядом. Работает как задумано.</td></tr>
     <tr class="t" data-p="🔴" data-ty="UI" data-id="13.4">
-      <td class="c"><input type="checkbox" id="cb-13.4"></td>
-      <td class="id">13.4</td>
-      <td class="p">🔴</td>
+      <td class="c"><input type="checkbox"></td><td class="id">13.4</td><td class="p">🔴</td>
       <td class="ty">UI</td>
       <td class="nm">Аудит опасных действий<div class="how">Перенос аккаунта, стоп, правка задачи</div></td>
       <td class="ex">Каждое — в логе с инициатором</td>
-      <td class="fx"><button class="fail" data-id="13.4" title="Отметить как упавший">✕</button></td>
-    </tr>
+      <td class="fx"><button class="fail" title="Отметить упавшим">✕</button></td>
+    </tr><tr class="note fail" data-for="13.4"><td></td><td colspan="6"><b>УПАЛО 🔴 · 22.07 — целые классы опасных действий не пишутся в аудит.</b> Что аудит ПОКРЫВАЕТ (за 21–22.07 в <code>audit.log.jsonl</code> 65 записей): <code>task.start</code> ×14, <code>task.stop</code> ×8, <code>task.edit</code> ×2, <code>task.pause</code>, <code>task.restart</code>, <code>role.update</code> ×8, <code>user.login/logout</code>, <code>proxy.import</code>, <code>account.status.change</code> — с инициатором и модулем. Требование «стоп и правка задачи — в логе с инициатором» выполнено. <b>Чего в аудите НЕТ (проверено grep: ноль вызовов <code>appendAudit</code>):</b> <code>featureRoutes.js</code> — правка и удаление <b>папок целей</b>; <code>automation/routes.js</code> — создание, правка и <b>удаление запланированных постов</b>; <code>leadsRoutes.js</code> и <code>leads.js</code> — любые операции с <b>лидами CRM</b>; сырой <code>PATCH /api/tg/accounts/:id</code> — смена статуса в обход state machine (аудит там есть только для смены роли/проекта). <b>Подтверждено фактически:</b> за сессию были выполнены правка содержимого папки (дважды), привязка и отвязка ответственного аккаунта у горячего лида, изменение времени запланированного поста, удаление запланированного поста тестировщиком — <b>ни одна из этих операций в журнале не появилась</b>. <b>Почему это критично:</b> папка целей — база для массовой рассылки; подменив её содержимое, можно увести всю кампанию на чужие каналы, и следов не останется. Удаление запланированного поста необратимо. Перепривязка лида меняет, какой аккаунт ведёт диалог. Ровно эти действия и нужно расследовать постфактум, а именно их журнал не видит. <i>Проверка отображения на экране «Логи» (инициатор и причина в UI) — в 13.1.</i> <b>Уточнение по показу (22.07, режим «Потоки», колонка «Статус аккаунта»):</b> смена статуса аккаунта через ШТАТНЫЙ путь <code>setAccountStatus</code> в аудит попадает исправно и видна на экране — «Ручная пауза оператором», «Снятие паузы оператором» (кто: operator), «trust&gt;70 — авто-возврат из прогрева», «Нет сессии — нужна переавторизация» (кто: system), с хвостом id аккаунта. То есть провал 13.4 НЕ в том, что статусы не логируются — они логируются. Провал узкий и точный: (а) роуты папок/лидов/расписаний не вызывают <code>appendAudit</code> вовсе; (б) сырой <code>PATCH /api/tg/accounts/:id</code> меняет статус в обход <code>setAccountStatus</code>, поэтому мой сброс working→active в журнал не попал, тогда как «Ручная пауза» рядом попала. Чинить: добавить аудит в три роута и/или закрыть сырой PATCH статуса, заведя его через state machine.</td></tr>
     <tr class="t" data-p="🟡" data-ty="UI" data-id="13.5">
-      <td class="c"><input type="checkbox" id="cb-13.5"></td>
-      <td class="id">13.5</td>
-      <td class="p">🟡</td>
+      <td class="c"><input type="checkbox"></td><td class="id">13.5</td><td class="p">🟡</td>
       <td class="ty">UI</td>
       <td class="nm">Нет слова «История»<div class="how">Пройти по модулям</div></td>
       <td class="ex">Везде «Логи»</td>
-      <td class="fx"><button class="fail" data-id="13.5" title="Отметить как упавший">✕</button></td>
-    </tr></tbody></table></div></section>
-<section class="blk"><h2>Блок 14. Инфраструктура (§9.14) ⚪</h2><div class="tw"><table><thead><tr><th></th><th>#</th><th>!</th><th>тип</th><th>тест</th><th>ожидаем</th><th></th></tr></thead><tbody>
-    <tr class="t" data-p="🔴" data-ty="" data-id="14.1">
-      <td class="c"><input type="checkbox" id="cb-14.1"></td>
-      <td class="id">14.1</td>
-      <td class="p">🔴</td>
-      <td class="ty"></td>
+      <td class="fx"><button class="fail" title="Отметить упавшим">✕</button></td>
+    </tr><tr class="note ok" data-for="13.5"><td></td><td colspan="6"><b>ПРОШЛО · 22.07:</b> На экране логов и в модалке везде «Логи» / «Запись лога», слова «История» нет. Термин из CLAUDE.md соблюдён. <i>Полный обход всех модулей глазами тестировщик не делал, но на профильном экране терминология единая.</i></td></tr></tbody></table></div></section>
+<section class="blk"><h2>Блок 14. Инфраструктура (§9.14) ⚪ *(зона Ильи)*</h2><div class="tw"><table><thead><tr><th></th><th>#</th><th>!</th><th>тип</th><th>тест</th><th>ожидаем</th><th></th></tr></thead><tbody>
+    <tr class="t" data-p="🔴" data-ty="UI" data-id="14.1">
+      <td class="c"><input type="checkbox"></td><td class="id">14.1</td><td class="p">🔴</td>
+      <td class="ty">UI</td>
       <td class="nm">Авто-деплой по пушу<div class="how">Пуш в ветку</div></td>
       <td class="ex">GitHub Actions собрал и выкатил, сервис перезапустился</td>
-      <td class="fx"><button class="fail" data-id="14.1" title="Отметить как упавший">✕</button></td>
+      <td class="fx"><button class="fail" title="Отметить упавшим">✕</button></td>
     </tr>
-    <tr class="t" data-p="🔴" data-ty="" data-id="14.2">
-      <td class="c"><input type="checkbox" id="cb-14.2"></td>
-      <td class="id">14.2</td>
-      <td class="p">🔴</td>
-      <td class="ty"></td>
+    <tr class="t" data-p="🔴" data-ty="UI" data-id="14.2">
+      <td class="c"><input type="checkbox"></td><td class="id">14.2</td><td class="p">🔴</td>
+      <td class="ty">UI</td>
       <td class="nm">Стенд после деплоя<div class="how">Открыть сайт</div></td>
       <td class="ex">Работает, данные на месте</td>
-      <td class="fx"><button class="fail" data-id="14.2" title="Отметить как упавший">✕</button></td>
+      <td class="fx"><button class="fail" title="Отметить упавшим">✕</button></td>
     </tr>
-    <tr class="t" data-p="🟡" data-ty="" data-id="14.3">
-      <td class="c"><input type="checkbox" id="cb-14.3"></td>
-      <td class="id">14.3</td>
-      <td class="p">🟡</td>
-      <td class="ty"></td>
+    <tr class="t" data-p="🟡" data-ty="UI" data-id="14.3">
+      <td class="c"><input type="checkbox"></td><td class="id">14.3</td><td class="p">🟡</td>
+      <td class="ty">UI</td>
       <td class="nm">Секреты не в репо<div class="how">Проверить <code>.env</code></div></td>
       <td class="ex">Ключей нет в git</td>
-      <td class="fx"><button class="fail" data-id="14.3" title="Отметить как упавший">✕</button></td>
+      <td class="fx"><button class="fail" title="Отметить упавшим">✕</button></td>
     </tr>
-    <tr class="t" data-p="🔴" data-ty="" data-id="14.4">
-      <td class="c"><input type="checkbox" id="cb-14.4"></td>
-      <td class="id">14.4</td>
-      <td class="p">🔴</td>
-      <td class="ty"></td>
+    <tr class="t" data-p="🔴" data-ty="UI" data-id="14.4">
+      <td class="c"><input type="checkbox"></td><td class="id">14.4</td><td class="p">🔴</td>
+      <td class="ty">UI</td>
       <td class="nm">HTTPS<div class="how">Открыть стенд</div></td>
       <td class="ex">⚠️ Сейчас <code>http://</code> без TLS — пароли идут открытым текстом. Нужен сертификат</td>
-      <td class="fx"><button class="fail" data-id="14.4" title="Отметить как упавший">✕</button></td>
+      <td class="fx"><button class="fail" title="Отметить упавшим">✕</button></td>
     </tr></tbody></table></div></section>
 </div><script>
-var KEY="aiinc-testplan-v1";
+var KEY="aiinc-testplan-v3";
+var SEED={"1.1":"warn","1.2":"warn","1.3":"fail","1.4":"skip","1.5":"ok","2.1":"ok","2.2":"ok","2.3":"ok","3.1":"warn","3.2":"ok","3.11":"ok","3.3":"warn","3.7":"ok","3.5":"warn","3.6":"skip","3.8":"ok","3.12":"warn","4.1":"ok","4.2":"ok","4.3":"ok","4.4":"ok","4.5":"warn","4.6":"fail","4.7":"ok","4.8":"ok","5.1":"ok","5.2":"ok","5.4":"ok","5.5":"ok","5.6":"fail","5.7":"ok","5.8":"ok","5.9":"skip","5.10":"skip","6.2":"fail","6.3":"warn","6.7":"ok","6.9":"ok","6.4":"warn","6.5":"ok","6.10":"warn","6.11":"warn","6.12":"warn","6.1":"fail","6.6":"fail","6.13":"warn","6.8":"ok","7.1":"ok","7.2":"ok","7.3":"ok","7.6":"ok","7.4":"fail","7.8":"ok","7.9":"fail","7.7":"ok","11.1":"skip","11.2":"skip","11.4":"skip","11.5":"skip","11.8":"skip","8.1":"ok","8.2":"ok","8.3":"ok","8.4":"ok","8.5":"ok","8.6":"ok","8.8":"ok","8.7":"warn","9.1":"fail","9.2":"fail","9.3":"fail","9.4":"fail","9.5":"fail","9.11":"fail","9.7":"fail","9.9":"fail","9.10":"warn","10.7":"skip","10.8":"skip","10.9":"skip","2.5":"skip","10.1":"warn","10.2":"ok","10.3":"warn","10.4":"ok","10.5":"warn","10.6":"fail","11.7":"fail","12.1":"skip","12.2":"skip","12.3":"skip","12.4":"skip","12.7":"skip","12.13":"skip","12.10":"ok","12.11":"warn","12.5":"fail","12.9":"warn","12.6":"warn","12.12":"skip","13.4":"fail","13.1":"ok","13.2":"ok","13.3":"ok","13.5":"ok"};
 var st=JSON.parse(localStorage.getItem(KEY)||"{}");
+// Итоги прогона задаются из файла: они общие, а не «у того, кто кликал».
+for(var k in SEED) st[k]=SEED[k];
 var rows=[].slice.call(document.querySelectorAll("tr.t"));
 function paint(){
-  var done=0,failed=0,crit=0,critDone=0;
+  var ok=0,warn=0,fail=0,skip=0,crit=0,critOk=0;
   rows.forEach(function(r){
     var id=r.dataset.id,s=st[id]||"";
-    r.querySelector("input").checked=(s==="ok");
+    r.querySelector("input").checked=(s==="ok"||s==="warn");
     r.classList.toggle("done",s==="ok");
+    r.classList.toggle("warned",s==="warn");
     r.classList.toggle("failed",s==="fail");
-    if(s==="ok")done++;
-    if(s==="fail")failed++;
-    if(r.dataset.p==="\u{1F534}"){crit++;if(s==="ok")critDone++;}
+    r.classList.toggle("skipped",s==="skip");
+    if(s==="ok")ok++; else if(s==="warn")warn++; else if(s==="fail")fail++; else if(s==="skip")skip++;
+    if(r.dataset.p==="\u{1F534}"){crit++;if(s==="ok"||s==="warn")critOk++;}
   });
-  document.getElementById("pf").style.width=(done/rows.length*100)+"%";
-  document.getElementById("s1").textContent=done+" / "+rows.length;
-  document.getElementById("s2").textContent=failed;
-  document.getElementById("s3").textContent=critDone+" / "+crit;
+  var n=rows.length;
+  document.getElementById("bOk").style.width=(ok/n*100)+"%";
+  document.getElementById("bWarn").style.width=(warn/n*100)+"%";
+  document.getElementById("bFail").style.width=(fail/n*100)+"%";
+  document.getElementById("s1").textContent=(ok+warn)+" / "+n;
+  document.getElementById("s2").textContent=fail;
+  document.getElementById("s4").textContent=warn;
+  document.getElementById("s5").textContent=skip;
+  document.getElementById("s3").textContent=critOk+" / "+crit;
   localStorage.setItem(KEY,JSON.stringify(st));
 }
 rows.forEach(function(r){
@@ -1138,19 +939,17 @@ rows.forEach(function(r){
 });
 var fp="",ft="";
 function filt(){rows.forEach(function(r){
-  var okp=!fp||r.dataset.p===fp, okt=!ft||r.dataset.ty===ft;
-  r.classList.toggle("hide",!(okp&&okt));
+  var hide=!((!fp||r.dataset.p===fp)&&(!ft||r.dataset.ty===ft));
+  r.classList.toggle("hide",hide);
+  var nt=document.querySelector('tr.note[data-for="'+r.dataset.id+'"]');
+  if(nt)nt.classList.toggle("hide",hide);
 })}
 [].forEach.call(document.querySelectorAll("[data-fp]"),function(b){b.addEventListener("click",function(){
   fp=(fp===b.dataset.fp)?"":b.dataset.fp;
-  [].forEach.call(document.querySelectorAll("[data-fp]"),function(x){x.classList.toggle("on",x.dataset.fp===fp)});
-  filt();
-})});
+  [].forEach.call(document.querySelectorAll("[data-fp]"),function(x){x.classList.toggle("on",x.dataset.fp===fp)});filt();})});
 [].forEach.call(document.querySelectorAll("[data-ft]"),function(b){b.addEventListener("click",function(){
   ft=(ft===b.dataset.ft)?"":b.dataset.ft;
-  [].forEach.call(document.querySelectorAll("[data-ft]"),function(x){x.classList.toggle("on",x.dataset.ft===ft)});
-  filt();
-})});
-document.getElementById("rst").addEventListener("click",function(){if(confirm("Сбросить все отметки?")){st={};paint()}});
+  [].forEach.call(document.querySelectorAll("[data-ft]"),function(x){x.classList.toggle("on",x.dataset.ft===ft)});filt();})});
+document.getElementById("rst").addEventListener("click",function(){if(confirm("Сбросить свои отметки? Итоги прогона останутся.")){st={};for(var k in SEED)st[k]=SEED[k];paint()}});
 paint();
 </script>

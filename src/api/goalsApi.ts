@@ -27,6 +27,25 @@ export interface GoalInput {
   leadTarget?: number
 }
 
+/** §4: границы дедлайна — зеркало server/goals.js. Прошлое разрешено (по нему проверяют «просрочено»). */
+export const DEADLINE_MIN_YEAR = 2000
+export const DEADLINE_MAX_YEAR = new Date().getFullYear() + 20
+/** §4: потолок цели по лидам — зеркало server/goals.js. Больше — это опечатка, а не план. */
+export const LEAD_TARGET_MAX = 1_000_000
+
+/**
+ * §4: дата в разумных пределах и реально существует. Нужна форме, чтобы показать
+ * ошибку сразу, а не после отказа сервера. Раньше проходил год 123123.
+ */
+export function isSaneDeadline(v: string): boolean {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(v || '').trim())
+  if (!m) return false
+  const [y, mo, d] = [Number(m[1]), Number(m[2]), Number(m[3])]
+  if (y < DEADLINE_MIN_YEAR || y > DEADLINE_MAX_YEAR) return false
+  const dt = new Date(`${v}T00:00:00Z`)
+  return !isNaN(dt.getTime()) && dt.getUTCFullYear() === y && dt.getUTCMonth() + 1 === mo && dt.getUTCDate() === d
+}
+
 /** §4: истёк ли дедлайн цели (зеркало server/goals.js#isGoalExpired). Дедлайн включает весь день. */
 export function isGoalExpired(goal: Pick<Goal, 'deadline'>, now = Date.now()): boolean {
   if (!goal.deadline) return false
