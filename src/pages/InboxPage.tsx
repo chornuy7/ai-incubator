@@ -24,6 +24,10 @@ export function InboxPage() {
   const [active, setActive] = useState<InboxDialog | null>(null)
   const [messages, setMessages] = useState<DialogMessage[]>([])
   const [loadingMsgs, setLoadingMsgs] = useState(false)
+  /** Есть ли в Telegram сообщения старше загруженных. Историю не храним у себя —
+   *  подгружаем из Telegram по требованию, как это делает сам мессенджер. */
+  const [hasMore, setHasMore] = useState(false)
+  const [loadingMore, setLoadingMore] = useState(false)
   const [search, setSearch] = useState('')
   const [draft, setDraft] = useState('')
   const [sending, setSending] = useState(false)
@@ -66,10 +70,11 @@ export function InboxPage() {
   useEffect(() => { if (tab === 1) void loadGroups() }, [sel, tab])
 
   const openDialog = async (d: InboxDialog) => {
-    setActive(d); setMessages([]); setLoadingMsgs(true)
+    setActive(d); setMessages([]); setLoadingMsgs(true); setHasMore(false)
     try {
       const r = await fetchMessages(d.accountId, peerOf(d), 60)
       setMessages([...r.messages].sort((a, b) => a.date - b.date))
+      setHasMore(!!r.hasMore)
       void markDialogRead(d.accountId, peerOf(d)).then(() => {
         setDialogs((prev) => prev.map((x) => x.key === d.key ? { ...x, unread: 0 } : x))
       }).catch(() => {})
@@ -90,6 +95,21 @@ export function InboxPage() {
     } catch (err) {
       pushToast({ type: 'error', title: 'Не отправлено', desc: err instanceof Error ? err.message : '' })
     } finally { setSending(false) }
+  }
+
+  /** Догрузить более старую часть переписки — прямо из Telegram, ничего не кэшируя. */
+  const loadEarlier = async () => {
+    if (!active || !messages.length) return
+    setLoadingMore(true)
+    try {
+      const oldest = messages[0]
+      const r = await fetchMessages(active.accountId, peerOf(active), 60, oldest.id)
+      const older = r.messages.filter((m) => !messages.some((x) => x.id === m.id))
+      setMessages((prev) => [...older, ...prev].sort((a, b) => a.date - b.date))
+      setHasMore(!!r.hasMore && older.length > 0)
+    } catch (err) {
+      pushToast({ type: 'error', title: 'Не удалось догрузить', desc: err instanceof Error ? err.message : '' })
+    } finally { setLoadingMore(false) }
   }
 
   const filtered = useMemo(() => {
@@ -206,6 +226,15 @@ export function InboxPage() {
                   <div className="text-xs text-white/40">{active.username ? `@${active.username} · ` : ''}через {active.accountName}</div>
                 </div>
                 <div className="flex-1 space-y-1.5 overflow-y-auto p-3">
+                  {hasMore && !loadingMsgs && (
+                    <button
+                      onClick={() => void loadEarlier()}
+                      disabled={loadingMore}
+                      className="btn-ghost mx-auto mb-1 h-7 px-3 text-xs"
+                    >
+                      {loadingMore ? 'Загружаем…' : 'Показать более раннее'}
+                    </button>
+                  )}
                   {loadingMsgs ? (
                     <p className="py-6 text-center text-sm text-white/40">Загрузка…</p>
                   ) : messages.length === 0 ? (
