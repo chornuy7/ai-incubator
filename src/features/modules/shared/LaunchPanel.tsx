@@ -2,6 +2,7 @@ import { Play, Save, AlertTriangle, Loader2, Bookmark, X, ArrowUpRight } from 'l
 import { cn } from '@/shared/lib/utils'
 import type { ModuleTask, ModulePreset, ModuleTaskSettings } from '@/api/modulesApi'
 import { LaunchStat } from './index'
+import { FloatingBar } from './FloatingBar'
 import { presetHex } from './SavePresetModal'
 
 export function LaunchPanel({
@@ -29,10 +30,7 @@ export function LaunchPanel({
           <div className="text-sm text-rose-300">{warn}</div>
         </div>
       )}
-      {/* Панель запуска липнет к низу экрана: настройки модулей длинные, и без этого
-          до кнопки «Начать» приходилось каждый раз прокручивать страницу вниз.
-          `bottom-2` + фон с размытием — чтобы не перекрывала содержимое наглухо. */}
-      <div className="sticky bottom-2 z-20 flex flex-col items-center gap-3 rounded-2xl border border-line bg-elevated/95 p-4 shadow-lg shadow-black/30 backdrop-blur sm:flex-row">
+      <FloatingBar>
         <div className="flex items-center gap-2 text-sm font-semibold text-muted">
           <span className={cn('h-2.5 w-2.5 rounded-full', running ? 'bg-spark-400 animate-pulse' : 'bg-faint')} />
           {running ? 'Выполняется' : task?.status === 'done' ? 'Завершено' : 'Готов'}
@@ -46,7 +44,7 @@ export function LaunchPanel({
           )}
         </div>
         <button type="button" onClick={onSave} className="btn-ghost h-11 text-sm"><Save size={15} /> Сохранить пресет</button>
-      </div>
+      </FloatingBar>
       {onApplyPreset && presets && presets.length > 0 && (
         <div className="mt-3 rounded-2xl border border-line bg-elevated/40 p-3">
           <div className="mb-2 flex items-center gap-2 text-xs font-bold uppercase tracking-wide text-muted">

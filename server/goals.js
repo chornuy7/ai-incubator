@@ -6,7 +6,14 @@
 import crypto from 'crypto'
 import { dataPath, readJson, writeJson } from './lib/jsonStore.js'
 
-const GOALS_FILE = process.env.GOALS_FILE || dataPath('goals.json')
+/**
+ * Путь считаем ЛЕНИВО, при каждом обращении.
+ *
+ * Раньше он вычислялся один раз при импорте модуля — и тест, выставивший GOALS_FILE
+ * уже после того, как модуль подтянулся по цепочке импортов, писал в БОЕВОЙ файл.
+ * Именно так в рабочие цели попали четыре тестовых.
+ */
+const goalsFile = () => process.env.GOALS_FILE || dataPath('goals.json')
 
 /** Поля, которые можно задавать/менять (остальное — служебное). */
 const FIELDS = ['name', 'description', 'targetAction', 'stages', 'completionCriteria', 'audience', 'channels', 'deadline', 'leadTarget', 'followUp', 'toneOfVoice', 'restrictions']
@@ -124,7 +131,7 @@ export function isGoalExpired(goal, now = Date.now()) {
 }
 
 export async function listGoals() {
-  const all = await readJson(GOALS_FILE, [])
+  const all = await readJson(goalsFile(), [])
   // Цели, созданные до появления поля, отдаём с дефолтом: иначе воркеру и форме
   // пришлось бы проверять `undefined` в каждом месте, где читается дожим.
   return (Array.isArray(all) ? all : []).map((g) => ({
@@ -153,7 +160,7 @@ export async function createGoal(input) {
     updatedAt: Date.now(),
   }
   goals.unshift(goal)
-  await writeJson(GOALS_FILE, goals)
+  await writeJson(goalsFile(), goals)
   return goal
 }
 
@@ -182,7 +189,7 @@ export async function updateGoal(id, patch = {}) {
   }
   if (!goals[i].name) throw new Error('Название цели не может быть пустым')
   goals[i].updatedAt = Date.now()
-  await writeJson(GOALS_FILE, goals)
+  await writeJson(goalsFile(), goals)
   return goals[i]
 }
 
@@ -191,6 +198,6 @@ export async function deleteGoal(id) {
   const goals = await listGoals()
   const next = goals.filter((g) => g.id !== id)
   if (next.length === goals.length) return false
-  await writeJson(GOALS_FILE, next)
+  await writeJson(goalsFile(), next)
   return true
 }

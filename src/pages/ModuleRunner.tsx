@@ -28,6 +28,7 @@ import { LogsPanel } from '@/widgets/LogsPanel'
 import { AccountPicker } from '@/features/account-picker/AccountPicker'
 import { PaywallLock } from '@/features/paywall/Paywall'
 import { ModuleLiveRouter, isLiveModule } from '@/features/modules'
+import { FloatingBar } from '@/features/modules/shared'
 import { cn, compact, uid } from '@/shared/lib/utils'
 import type { ParseResult } from '@/shared/types'
 
@@ -524,7 +525,7 @@ function RichModule({ cfg }: { cfg: ModuleConfig }) {
         )}
 
         {/* Липнет к низу: настройки парсера длинные, кнопку не должно уносить за экран. */}
-        <div className="sticky bottom-2 z-20 flex flex-col items-center gap-3 rounded-2xl border border-line bg-elevated/95 p-4 shadow-lg shadow-black/30 backdrop-blur sm:flex-row">
+        <FloatingBar>
           <div className="flex items-center gap-2 text-sm font-semibold text-muted">
             <span className={cn('h-2.5 w-2.5 rounded-full', running ? 'bg-spark-400 animate-pulse' : 'bg-faint')} /> {running ? 'Выполняется' : 'Остановлено'}
           </div>
@@ -538,7 +539,7 @@ function RichModule({ cfg }: { cfg: ModuleConfig }) {
           <div className="flex gap-2">
             {cfg.secondaryAction && <button onClick={() => pushToast({ type: 'success', title: 'Настройки сохранены' })} className="btn-ghost h-11 text-sm"><Save size={15} /> {cfg.secondaryAction}</button>}
           </div>
-        </div>
+        </FloatingBar>
 
         {cfg.progressBar && running && (
           <div className="mt-4 rounded-2xl border border-line bg-elevated/40 p-4">
@@ -759,10 +760,10 @@ function ParticipantsModule({ cfg }: { cfg: ModuleConfig }) {
           <LaunchStat icon={<Database size={18} />} color="#0ec464" label={p.unit.limitLabel} value={String(p.unit.limitValue)} />
         </div>
         {/* Липнет к низу: настройки парсера длинные, кнопку не должно уносить за экран. */}
-        <div className="sticky bottom-2 z-20 flex flex-col items-center gap-3 rounded-2xl border border-line bg-elevated/95 p-4 shadow-lg shadow-black/30 backdrop-blur sm:flex-row">
+        <FloatingBar>
           <div className="flex items-center gap-2 text-sm font-semibold text-muted"><span className={cn('h-2.5 w-2.5 rounded-full', running ? 'bg-spark-400 animate-pulse' : 'bg-faint')} /> {running ? 'Выполняется' : 'Остановлено'}</div>
           <div className="flex flex-1 justify-center">{running ? <button className="btn-danger h-11 min-w-[160px]"><Square size={16} /> Остановить</button> : <button onClick={run} disabled={selected.size === 0} className="btn-iris h-11 min-w-[160px]"><Play size={17} /> {cfg.primaryAction}</button>}</div>
-        </div>
+        </FloatingBar>
       </SectionCard>
 
       {/* 4. Results */}
@@ -1105,7 +1106,7 @@ function ParsingModule({ cfg }: { cfg: ModuleConfig }) {
           <LaunchStat icon={<Database size={18} />} color="#0ec464" label="Макс. результатов" value={limitChip === '∞' ? '∞' : String(limitChip)} />
         </div>
         {/* Липнет к низу: настройки парсера длинные, кнопку не должно уносить за экран. */}
-        <div className="sticky bottom-2 z-20 flex flex-col items-center gap-3 rounded-2xl border border-line bg-elevated/95 p-4 shadow-lg shadow-black/30 backdrop-blur sm:flex-row">
+        <FloatingBar>
           <div className="flex items-center gap-2 text-sm font-semibold text-muted"><span className={cn('h-2.5 w-2.5 rounded-full', running ? 'bg-spark-400 animate-pulse' : 'bg-faint')} /> {running ? 'Выполняется' : 'Остановлено'}</div>
           <div className="flex flex-1 flex-col items-center gap-2">
             {/* §3.8: одно ключевое слово — одна задача. Идут параллельно, каждую видно
@@ -1120,7 +1121,7 @@ function ParsingModule({ cfg }: { cfg: ModuleConfig }) {
               ? <button className="btn-danger h-11 min-w-[180px]" disabled><Square size={16} /> Запускаю…</button>
               : <button onClick={() => void run()} disabled={selected.size === 0} className="btn-iris h-11 min-w-[180px]"><Play size={17} /> {cfg.primaryAction}</button>}
           </div>
-        </div>
+        </FloatingBar>
 
         {/* Прогресс живых задач: раньше здесь крутился фейковый таймер на 1.4 секунды. */}
         {liveTasks.length > 0 && (
@@ -1754,7 +1755,7 @@ function WarmingModule({ cfg }: { cfg: ModuleConfig }) {
           </div>
         )}
         {/* Липнет к низу: настройки парсера длинные, кнопку не должно уносить за экран. */}
-        <div className="sticky bottom-2 z-20 flex flex-col items-center gap-3 rounded-2xl border border-line bg-elevated/95 p-4 shadow-lg shadow-black/30 backdrop-blur sm:flex-row">
+        <FloatingBar>
           <div className="flex items-center gap-2 text-sm font-semibold text-muted">
             <span className={cn('h-2.5 w-2.5 rounded-full', running ? 'bg-spark-400 animate-pulse' : 'bg-faint')} /> {running ? 'Выполняется' : 'Остановлено'}
           </div>
@@ -1765,7 +1766,7 @@ function WarmingModule({ cfg }: { cfg: ModuleConfig }) {
               <button onClick={run} disabled={selected.size === 0} className="btn-iris h-11 min-w-[180px]"><Play size={17} /> {cfg.primaryAction}</button>
             )}
           </div>
-        </div>
+        </FloatingBar>
         {running && <div className="mt-4"><LogsPanel logs={logs} emptyText={cfg.logEmpty} title="Логи выполнения" live /></div>}
       </SectionCard>
     </div>
@@ -1892,7 +1893,7 @@ function LookingModule({ cfg }: { cfg: ModuleConfig }) {
           </div>
         )}
         {/* Липнет к низу: настройки парсера длинные, кнопку не должно уносить за экран. */}
-        <div className="sticky bottom-2 z-20 flex flex-col items-center gap-3 rounded-2xl border border-line bg-elevated/95 p-4 shadow-lg shadow-black/30 backdrop-blur sm:flex-row">
+        <FloatingBar>
           <div className="flex items-center gap-2 text-sm font-semibold text-muted">
             <span className={cn('h-2.5 w-2.5 rounded-full', running ? 'bg-spark-400 animate-pulse' : 'bg-faint')} /> {running ? 'Выполняется' : 'Остановлено'}
           </div>
@@ -1903,7 +1904,7 @@ function LookingModule({ cfg }: { cfg: ModuleConfig }) {
               <button onClick={run} disabled={selected.size === 0} className="btn-primary h-11 min-w-[180px]"><Play size={17} /> {cfg.primaryAction}</button>
             )}
           </div>
-        </div>
+        </FloatingBar>
       </SectionCard>
 
       {/* 4. View history */}

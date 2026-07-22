@@ -11,6 +11,7 @@ import {
   fetchCampaigns, createCampaign, updateCampaign, deleteCampaign, CAMPAIGN_STATUSES,
   type CampaignResult, type CampaignSchedule, type Campaign, type CampaignStatus, type PinnedMap,
 } from '@/api/campaignsApi'
+import { fetchModulePresets, type ModulePreset } from '@/api/modulesApi'
 import { confirmDialog, promptDialog } from '@/shared/lib/dialog'
 import { DedupeButton } from '@/shared/ui/DedupeButton'
 import { fetchAccountGroups, createAccountGroup, accountsOfGroupsLocal, type AccountGroup } from '@/api/accountGroupsApi'
@@ -19,6 +20,13 @@ import { FolderPicker } from '@/features/modules/shared/FolderPicker'
 
 // Модули, которые осмысленно вести к цели (принимают целевые каналы/группы).
 const CAMPAIGN_MODULES = ['neuro-commenting', 'neuro-chatting', 'mass-react', 'mass-looking']
+
+/**
+ * Модули, которые сами ведут переписку. Для них «добавить чатинг» бессмысленно:
+ * получилось бы два диалоговых модуля на одних аккаунтах — оба отвечали бы
+ * одному человеку.
+ */
+const DIALOG_MODULES = new Set(['neuro-chatting', 'neuro-dialogs'])
 
 export function CampaignPage() {
   const nav = useNavigate()
@@ -56,6 +64,12 @@ export function CampaignPage() {
   const [cStatus, setCStatus] = useState<CampaignStatus>('draft')
   const [cSaving, setCSaving] = useState(false)
   // §9: догоняющий чатинг — второй модуль кампании. Основной выбор не трогаем.
+  // §0: настройки модуля для кампании. Держим их пресетом: у каждого модуля свой
+  // набор полей, дублировать все формы внутри кампании — верный способ разойтись
+  // с самим модулем. Пресет собирается там, где его удобно настраивать и проверять.
+  const [cSettings, setCSettings] = useState<Record<string, unknown> | null>(null)
+  const [cPresetId, setCPresetId] = useState('')
+  const [modulePresets, setModulePresets] = useState<ModulePreset[]>([])
   const [cChat, setCChat] = useState(false)
   const [cChatGoal, setCChatGoal] = useState('')
   const [cChatScope, setCChatScope] = useState<'unread' | 'all'>('unread')
@@ -164,6 +178,17 @@ export function CampaignPage() {
     setCChatLimitMode('untilTarget'); setCChatMaxReplies(5); setCChatMaxDialogs(0)
     setFormOpen(true)
   }
+  // Пресеты того модуля, который выбран сейчас: это и есть его настройки для кампании.
+  useEffect(() => {
+    setCPresetId(''); setCSettings(null); setModulePresets([])
+    if (!cModule) return
+    let cancelled = false
+    void fetchModulePresets(cModule)
+      .then((p) => { if (!cancelled) setModulePresets(p) })
+      .catch(() => { /* нет пресетов — не беда, кампания запустится с настройками по умолчанию */ })
+    return () => { cancelled = true }
+  }, [cModule])
+
   const openEditCampaign = (c: Campaign) => {
     setEditingCampaign(c)
     setCName(c.name); setCGoalId(c.goalId || ''); setCModule(c.moduleKey); setCAccounts(c.accountIds || [])
@@ -191,6 +216,7 @@ export function CampaignPage() {
     try {
       const payload = {
         name: cName.trim(), goalId: cGoalId || null, moduleKey: cModule, accountIds: ids, pinned: cPinned, status: cStatus,
+        ...(cSettings ? { settings: cSettings } : {}),
         chat: {
           enabled: cChat,
           settings: {
@@ -293,7 +319,13 @@ export function CampaignPage() {
           <div className="grid gap-3 sm:grid-cols-2">
             <div>
               <div className="mb-1 text-xs text-white/50">Модуль * <span className="text-white/30">(кампания обязана настраивать модуль)</span></div>
-              <Select value={cModule} onChange={setCModule} options={CAMPAIGN_MODULES.map((k) => ({ value: k, label: MODULES[k]?.title || k }))} />
+              <Select
+                value={cModule}
+                // Переключились на диалоговый модуль — снимаем галочку чатинга: она
+                // спрятана, но осталась бы включённой и добавила второй диалоговый модуль.
+                onChange={(v) => { setCModule(v); if (DIALOG_MODULES.has(v)) setCChat(false) }}
+                options={CAMPAIGN_MODULES.map((k) => ({ value: k, label: MODULES[k]?.title || k }))}
+              />
             </div>
             <div>
               <div className="mb-1 text-xs text-white/50">Статус</div>
@@ -301,8 +333,41 @@ export function CampaignPage() {
             </div>
           </div>
 
+          {/* §0: настройки модуля для кампании — пресетом. Свою копию формы модуля здесь
+              заводить нельзя: у каждого модуля свой набор полей, и две формы неизбежно
+              разойдутся. Пресет собирается в самом модуле, где его видно и можно проверить. */}
+          <div className="rounded-xl border border-line bg-elevated/40 p-3">
+            <div className="mb-1 flex items-center justify-between text-xs text-white/50">
+              <span>Настройки модуля «{MODULES[cModule]?.title || cModule}»</span>
+              <a href={`/panel/modules/${cModule}`} className="font-semibold text-spark-300 hover:underline">
+                Настроить и сохранить пресет
+              </a>
+            </div>
+            {modulePresets.length ? (
+              <Select
+                value={cPresetId}
+                onChange={(v) => {
+                  setCPresetId(v)
+                  setCSettings(v ? (modulePresets.find((p) => p.id === v)?.settings as unknown as Record<string, unknown>) ?? null : null)
+                }}
+                options={[
+                  { value: '', label: 'По умолчанию (настройки модуля)' },
+                  ...modulePresets.map((p) => ({ value: p.id, label: p.name })),
+                ]}
+              />
+            ) : (
+              <div className="text-xs text-white/40">
+                Пресетов для этого модуля пока нет — кампания запустится с настройками модуля по умолчанию.
+                Чтобы задать свои, откройте модуль, настройте и нажмите «Сохранить пресет».
+              </div>
+            )}
+          </div>
+
           {/* §9: кампания = основной модуль + опциональный чатинг. Основной модуль приводит
-              людей, чатинг ведёт ответивших к цели и сам прощается по выполнению. */}
+              людей, чатинг ведёт ответивших к цели и сам прощается по выполнению.
+              Если основной модуль САМ диалоговый — добавлять к нему чатинг не к чему:
+              он и так ведёт переписку, вторая копия дублировала бы ответы. */}
+          {!DIALOG_MODULES.has(cModule) && (
           <div className="rounded-xl border border-line bg-elevated/40 p-3">
             <label className="flex cursor-pointer items-start gap-2.5">
               <input type="checkbox" checked={cChat} onChange={(e) => setCChat(e.target.checked)} className="mt-0.5 h-4 w-4 accent-spark" />
@@ -362,6 +427,7 @@ export function CampaignPage() {
               </div>
             )}
           </div>
+          )}
 
           <div>
             <div className="mb-1 text-xs text-white/50">Аккаунты — {freeForCampaign.length} свободных (не закреплены другой кампанией)</div>

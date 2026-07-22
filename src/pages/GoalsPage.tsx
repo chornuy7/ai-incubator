@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Target, Plus, Pencil, Trash2, BookOpen, Hash, X, ArrowLeft } from 'lucide-react'
+import { Target, Plus, Pencil, Trash2, BookOpen, Hash, X, ArrowLeft, Copy } from 'lucide-react'
 import { useApp } from '@/mocks/store'
 import { PageHeader, Card, EmptyState, Badge } from '@/shared/ui'
 import { HelpButton } from '@/features/neuro-commenting/moduleUi'
@@ -133,6 +133,35 @@ export function GoalsPage() {
     }
   }
 
+  /**
+   * Копия цели со всей начинкой. Цели у нас объёмные — этапы, критерий, тон,
+   * ограничения, дожим, — и под каждую новую кампанию их переписывали руками.
+   * База знаний не копируется: она привязана к своей цели и обычно другая.
+   */
+  const duplicate = async (g: Goal) => {
+    try {
+      const copy = await createGoal({
+        name: `${g.name} — копия`,
+        description: g.description,
+        targetAction: g.targetAction,
+        stages: g.stages,
+        completionCriteria: g.completionCriteria,
+        audience: g.audience,
+        channels: g.channels,
+        // Дедлайн и цель по лидам НЕ копируем: это план конкретной кампании,
+        // у копии он свой. Чужой дедлайн мог бы сразу оказаться просроченным.
+        followUp: g.followUp,
+        toneOfVoice: g.toneOfVoice,
+        restrictions: g.restrictions,
+      })
+      pushToast({ type: 'success', title: 'Цель скопирована', desc: copy.name })
+      await load()
+      openEdit(copy)
+    } catch (err) {
+      pushToast({ type: 'error', title: 'Не удалось скопировать', desc: err instanceof Error ? err.message : '' })
+    }
+  }
+
   const remove = async (g: Goal) => {
     if (!(await confirmDialog({ title: 'Удалить цель?', message: `«${g.name}» будет удалена.`, confirmLabel: 'Удалить', tone: 'danger' }))) return
     try {
@@ -176,6 +205,7 @@ export function GoalsPage() {
                 </div>
                 <div className="flex shrink-0 gap-1">
                   <button onClick={() => openEdit(g)} className="btn-icon h-8 w-8" aria-label="Изменить"><Pencil size={14} /></button>
+                  <button onClick={() => void duplicate(g)} className="btn-icon h-8 w-8" aria-label="Дублировать цель" title="Дублировать цель"><Copy size={14} /></button>
                   <button onClick={() => remove(g)} className="btn-icon-danger h-8 w-8" aria-label="Удалить цель" title="Удалить цель"><Trash2 size={14} /></button>
                 </div>
               </div>
