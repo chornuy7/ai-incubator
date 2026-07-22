@@ -114,6 +114,10 @@ export async function fetchInboxDialogs(client, limit = 100) {
         username,
         last,
         time: formatDialogTime(d.message?.date),
+        // Сырая отметка времени нужна фронту для сортировки «новое сверху»: раньше
+        // наружу уходила только готовая строка вроде «28 мая», и пересортировать
+        // список было физически нечем (прогон 21–22.07, тест 4.6).
+        ts: Number(d.message?.date || 0),
         unread: d.unreadCount || 0,
         isBot: !!entity?.bot,
       }

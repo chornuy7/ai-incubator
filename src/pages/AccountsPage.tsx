@@ -114,7 +114,14 @@ export function AccountsPage() {
         const target = campaigns.find((c) => c.id === campaignId)
         if (target) {
           const ids = [...new Set([...(target.accountIds || []), accountId])]
-          await updateCampaign(campaignId, { accountIds: ids, pinned: lock })
+          // pinned — политика ВСЕЙ кампании, а не свойство одного аккаунта. Раньше он
+          // уходил в патч всегда, и галочка «закрепить» из маленького диалога назначения
+          // переписывала режим закрепления кампании и всех остальных её аккаунтов:
+          // «Тест 6» была pinned=true, её не редактировали — после назначения одного
+          // аккаунта закрепление слетело со всех (прогон 21–22.07, тест 3.5).
+          // Отправляем pinned только когда кампания ЕЩЁ пуста и политику задаём впервые.
+          const firstAccount = (target.accountIds || []).length === 0
+          await updateCampaign(campaignId, firstAccount ? { accountIds: ids, pinned: lock } : { accountIds: ids })
         }
       }
       loadCampaigns()
@@ -969,15 +976,31 @@ function AssignCampaignModal({ acc, campaigns, current, onClose, onApply }: {
         placeholder="Без кампании (общий пул)"
         options={[{ value: '', label: 'Без кампании (вернуть в общий пул)' }, ...campaigns.map((c) => ({ value: c.id, label: c.name }))]}
       />
-      {cid && (
-        <label className="mt-3 flex items-center gap-2 text-xs text-white/70">
-          <input type="checkbox" checked={lock} onChange={(e) => setLock(e.target.checked)} className="h-4 w-4 rounded border-line accent-spark-500" />
-          Присвоить с закреплением (замок) — аккаунт выйдет из общего пула
-        </label>
-      )}
-      <p className="mt-2 text-[11px] text-muted">
-        Без галочки — «использовать без лока»: аккаунт остаётся доступен другим кампаниям.
-      </p>
+      {/* Закрепление — политика ВСЕЙ кампании, а не свойство одного аккаунта. Пока в
+          кампании никого нет, её можно задать здесь; если аккаунты уже есть, менять её
+          отсюда нельзя — иначе назначение одного профиля переписало бы режим у всех
+          остальных (прогон 21–22.07, тест 3.5). */}
+      {cid && (() => {
+        const target = campaigns.find((c) => c.id === cid)
+        const already = (target?.accountIds || []).length > 0
+        return already ? (
+          <p className="mt-3 rounded-lg border border-line bg-elevated/40 px-3 py-2 text-[11px] text-muted">
+            Режим кампании «{target?.name}» — <b className="text-fg">{target?.pinned ? 'с закреплением' : 'без лока'}</b>.
+            Он общий для всех её аккаунтов и меняется на странице кампании, а не здесь.
+          </p>
+        ) : (
+          <>
+            <label className="mt-3 flex items-center gap-2 text-xs text-white/70">
+              <input type="checkbox" checked={lock} onChange={(e) => setLock(e.target.checked)} className="h-4 w-4 rounded border-line accent-spark-500" />
+              Присвоить с закреплением (замок) — аккаунты выйдут из общего пула
+            </label>
+            <p className="mt-2 text-[11px] text-muted">
+              Кампания пока пустая — задаёте режим для неё целиком. Без галочки — «использовать
+              без лока»: аккаунты остаются доступны другим кампаниям.
+            </p>
+          </>
+        )
+      })()}
     </Modal>
   )
 }

@@ -10,6 +10,8 @@ export interface InboxDialog {
   username: string
   last: string
   time: string
+  /** Сырая отметка времени последнего сообщения (unix, сек) — для сортировки «новое сверху». */
+  ts?: number
   unread: number
   isBot?: boolean
   error?: boolean

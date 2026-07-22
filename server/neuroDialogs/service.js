@@ -49,8 +49,12 @@ export async function loadMergedInbox(accountIds, limit = 100) {
       })
     }
   }
+  // Инбокс сортируем как почту: непрочитанные выше, дальше — СВЕЖЕЕ СВЕРХУ.
+  // Раньше вторым ключом шло имя по алфавиту, и диалог, пришедший минуту назад,
+  // оказывался шестым, а октябрьский — ниже майского (прогон 21–22.07, тест 4.6).
   dialogs.sort((a, b) => {
     if (a.unread !== b.unread) return b.unread - a.unread
+    if ((b.ts || 0) !== (a.ts || 0)) return (b.ts || 0) - (a.ts || 0)
     return (a.name || '').localeCompare(b.name || '', 'ru')
   })
   return dialogs
