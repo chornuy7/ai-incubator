@@ -260,5 +260,23 @@ export async function reconcileStaleTasksOnBoot() {
     }
   } catch { /* ignore */ }
 
-  return { flipped }
+  // Аккаунты, зависшие в «working». Воркеры пишут этот статус напрямую при старте и
+  // снимают в конце — при падении процесса снимать некому, и аккаунт навсегда остаётся
+  // «В работе»: локов нет, задач нет, а менеджер и счётчик дашборда показывают занятость.
+  // Штатно это не лечилось вообще (прогон 21–22.07, тест 12.11): `locks/reconcile`
+  // возвращал dropped: [], а `POST /accounts/:id/status {to:'active'}` отвечал ok:true
+  // и НИЧЕГО не делал — потому что LEGACY_MAP.working = ACTIVE, переход считался
+  // «active→active» и setAccountStatus молча выходил. Снимаем здесь, сырым патчем.
+  const cleared = []
+  try {
+    const { loadAllMeta, setAccountMeta } = await import('../accountsMeta.js')
+    const all = await loadAllMeta()
+    for (const [id, meta] of Object.entries(all)) {
+      if (meta?.status !== 'working') continue
+      await setAccountMeta(id, { status: 'active' })
+      cleared.push(id)
+    }
+  } catch { /* ignore */ }
+
+  return { flipped, cleared }
 }

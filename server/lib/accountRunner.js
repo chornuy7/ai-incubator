@@ -19,7 +19,10 @@ export async function connectAccount(accountId, taskId) {
     await setStatus(accountId, 'reauth', { code: 'NO_SESSION', reason: 'Нет сессии — нужна переавторизация', task: { id: taskId } })
     throw new Error('NO_SESSION')
   }
-  await setAccountMeta(accountId, { status: 'working' })
+  // Запоминаем, из какого статуса аккаунт ушёл в работу. Без этого disconnect
+  // возвращал жёстко 'active' и стирал 'warming' — аккаунт, который прогревается,
+  // после первого же действия становился обычным активным (тест 12.5).
+  await setAccountMeta(accountId, { status: 'working', statusBefore: meta.status || 'active' })
   const client = await createClient(sessionStr, meta.proxy, accountFingerprint(accountId, meta))
   return { client, meta }
 }
@@ -32,7 +35,12 @@ export async function disconnectAccount(client, accountId) {
     /* ignore */
   }
   const meta = await getAccountMeta(accountId)
-  if (meta.status === 'working') await setAccountMeta(accountId, { status: 'active' })
+  // Возвращаем аккаунт в тот статус, из которого он ушёл в работу: 'warming' должен
+  // пережить действие, иначе прогрев снимается сам собой после первого же шага.
+  if (meta.status === 'working') {
+    const back = meta.statusBefore === 'warming' ? 'warming' : 'active'
+    await setAccountMeta(accountId, { status: back, statusBefore: null })
+  }
 }
 
 /**

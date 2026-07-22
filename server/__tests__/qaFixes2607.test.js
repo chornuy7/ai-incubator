@@ -11,6 +11,7 @@ import { generateComment } from '../neuroCommenting/commentGenerator.js'
 import { foldersForRequest } from '../lib/accessGuard.js'
 import { taskSignature, findDuplicateActiveTask } from '../lib/taskDedup.js'
 import { OPEN_SESSION_CAP_MS } from '../workLog.js'
+import { assertAccountsAssignable } from '../accountsMeta.js'
 
 const mockReq = (headers = {}) => ({ header: (h) => headers[h.toLowerCase()] })
 const FOLDERS = [
@@ -136,6 +137,17 @@ test('7.9: незакрытая сессия не растёт бесконеч�
   const now = start + 98 * H // ровно тот случай из лога: сессия «длиной 98 часов»
   const counted = Math.min(now, start + OPEN_SESSION_CAP_MS) - start
   assert.equal(counted, 12 * H)
+})
+
+// ── 12.6: аккаунт без посчитанного trust не идёт в боевой модуль ─────────
+test('12.6: профиль без trust не пускается в боевой модуль (fail-closed)', async () => {
+  const err = await assertAccountsAssignable(['acc_нет_такого_в_кэше'], 'neuro-commenting')
+  assert.ok(err, 'иначе свежедобавленный аккаунт — самый уязвимый — проходит гейт §6')
+  assert.match(String(err), /не посчитан trust/i)
+})
+
+test('12.6: не-боевой модуль по trust не гейтится', async () => {
+  assert.equal(await assertAccountsAssignable(['acc_нет_такого_в_кэше'], 'parsing'), null)
 })
 
 test('7.9: в окно попадает ПЕРЕСЕЧЕНИЕ сессии с ним, а не вся длительность', () => {

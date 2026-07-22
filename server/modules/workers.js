@@ -617,6 +617,15 @@ export async function runWarming(task, store) {
   const mul = delayMultiplier(s.protectionLevel ?? 1, s.delayPreset ?? 1) * pace.mul
   await store.appendLog(task, 'info', `Прогрев запущен · уровень: ${pace.label} · ~${pace.actionsPerDay} действий/день на аккаунт`)
   const accountIds = s.accountIds || []
+  // §3.3: на время прогрева аккаунт получает статус «warming» — он входит в NON_RUNNABLE,
+  // поэтому боевые модули его не возьмут. Раньше этот статус не выставлял НИКТО: он был
+  // описан в state machine, но недостижим, и защита «непрогретый в бой не идёт» держалась
+  // только на локе задачи — то есть исчезала в ту же секунду, когда прогрев заканчивался
+  // (прогон 21–22.07, тест 12.5).
+  for (const id of accountIds) {
+    const meta = await getAccountMeta(id)
+    if (meta.status === 'active') await setAccountMeta(id, { status: 'warming' })
+  }
   let idx = 0
   let idleLap = 0
 
@@ -697,6 +706,14 @@ export async function runWarming(task, store) {
   }
   await store.saveTask(task)
   await finalizeAccounts(accountIds, task.id, !!task.pauseRequested)
+  // Прогрев закончился — снимаем «warming», иначе аккаунт навсегда остался бы вне
+  // боевых модулей. На паузе не трогаем: задачу ещё продолжат.
+  if (!task.pauseRequested) {
+    for (const id of accountIds) {
+      const meta = await getAccountMeta(id)
+      if (meta.status === 'warming') await setAccountMeta(id, { status: 'active', statusBefore: null })
+    }
+  }
 }
 
 /**

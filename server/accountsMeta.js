@@ -133,18 +133,27 @@ export async function assertAccountsAssignable(accountIds, moduleKey) {
   const blocked = []
   /** @type {string[]} */
   const lowTrust = []
+  /** @type {string[]} Профили без посчитанного trust — их тоже не пускаем (§6). */
+  const noTrust = []
   const gated = TRUST_GATED_MODULES.has(moduleKey)
   for (const id of accountIds) {
     const status = normalizeStatus((all[id] || {}).status)
     if (!canModuleUseAccount(moduleKey, status)) { blocked.push(`${String(id).slice(-6)} (${status})`); continue }
     if (gated) {
-      // Кэшированный trust (fail-open: если ни разу не считался — не блокируем).
+      // Кэшированный trust. РАНЬШЕ здесь был fail-open: «если ни разу не считался —
+      // не блокируем». Но именно свежедобавленный аккаунт §6 и должен останавливать:
+      // у него нет ни истории, ни отлёжки, он максимально уязвим к спам-блоку, а гейт
+      // защищал только тех, кто уже поработал и получил оценку (прогон 21–22.07,
+      // тест 12.6: удалили запись из кэша — аккаунт спокойно ушёл в боевой модуль).
+      // Теперь нет оценки — сначала прогрев.
       const t = await getTrustCache(id)
-      if (t && Number(t.score) < TRUST_MIN) lowTrust.push(`${String(id).slice(-6)} (trust ${t.score})`)
+      if (!t) noTrust.push(String(id).slice(-6))
+      else if (Number(t.score) < TRUST_MIN) lowTrust.push(`${String(id).slice(-6)} (trust ${t.score})`)
     }
   }
   if (blocked.length) return `Нельзя назначить профили в статусе, недоступном для модуля: ${blocked.join(', ')}. Дождитесь выхода из прогрева/карантина или выберите другие.`
   if (lowTrust.length) return `Профили с trust<${TRUST_MIN} нельзя брать в боевой модуль (§6, авто-стоп → прогрев): ${lowTrust.join(', ')}. Отправьте их на прогрев или выберите другие.`
+  if (noTrust.length) return `У профилей ещё не посчитан trust — в боевой модуль их пускать рано (§6): ${noTrust.join(', ')}. Отправьте на прогрев: балл появится после первых действий.`
   return null
 }
 
