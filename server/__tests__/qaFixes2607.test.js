@@ -139,6 +139,21 @@ test('7.9: незакрытая сессия не растёт бесконеч�
   assert.equal(counted, 12 * H)
 })
 
+// ── 9.1: строка-заголовок схемы задаёт схему следующим строкам ───────────
+test('9.1: «http:» отдельной строкой не ошибка, а схема для следующих прокси', async () => {
+  const { parseProxyList } = await import('../lib/proxyImport.js')
+  const r = parseProxyList('http:\n1.2.3.4:7063:u:p\nsocks5:\n1.2.3.4:7163:u:p\n')
+  assert.equal(r.errors.length, 0, 'заголовок схемы больше не падает в errors')
+  assert.deepEqual(r.items.map((i) => `${i.scheme}:${i.port}`), ['http:7063', 'socks5:7163'],
+    'иначе http-прокси легли бы в базу как socks5 и не работали')
+})
+
+test('9.1: без заголовка поведение прежнее — схема по умолчанию', async () => {
+  const { parseProxyList } = await import('../lib/proxyImport.js')
+  const r = parseProxyList('1.2.3.4:7163:u:p')
+  assert.equal(r.items[0].scheme, 'socks5')
+})
+
 // ── 12.6: аккаунт без посчитанного trust не идёт в боевой модуль ─────────
 test('12.6: профиль без trust не пускается в боевой модуль (fail-closed)', async () => {
   const err = await assertAccountsAssignable(['acc_нет_такого_в_кэше'], 'neuro-commenting')

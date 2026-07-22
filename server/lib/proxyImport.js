@@ -87,15 +87,36 @@ export function parseProxyLine(raw, defaults = {}) {
  * @param {string} text @param {{scheme?: string}} [defaults]
  * @returns {{ items: object[], errors: {line:number, raw:string, reason:string}[] }}
  */
+/**
+ * Строка-заголовок схемы: продавцы часто присылают список в виде
+ *   http:
+ *   1.2.3.4:7063:user:pass
+ *   socks5:
+ *   1.2.3.4:7163:user:pass
+ * Возвращает схему или null. @param {string} line
+ */
+function schemeHeader(line) {
+  const m = /^(socks5|socks4|https?)\s*:?\s*$/i.exec(line.trim())
+  return m ? m[1].toLowerCase() : null
+}
+
 export function parseProxyList(text, defaults = {}) {
   const lines = String(text || '').split(/\r?\n/)
   const items = []
   const errors = []
   const seen = new Set()
+  // Схема «сверху» действует на последующие строки, пока не встретится новая.
+  // Раньше такой заголовок просто падал в errors, а сами прокси разбирались с
+  // дефолтной socks5 — http-прокси на портах 7063/7469 легли в базу как socks5
+  // и не работали (прогон 21–22.07, тест 9.1: проверено curl-ом, 7063 отвечает
+  // только по http, 7163 — только по socks5).
+  let current = { ...defaults }
   lines.forEach((raw, i) => {
     const trimmed = raw.trim()
     if (!trimmed || trimmed.startsWith('#') || trimmed.startsWith('//')) return
-    const parsed = parseProxyLine(trimmed, defaults)
+    const hdr = schemeHeader(trimmed)
+    if (hdr) { current = { ...defaults, scheme: hdr }; return }
+    const parsed = parseProxyLine(trimmed, current)
     if (!parsed) {
       errors.push({ line: i + 1, raw: trimmed, reason: 'не удалось разобрать формат' })
       return

@@ -106,11 +106,51 @@ export function tcpPing(host, port, timeoutMs = 6000) {
   })
 }
 
+/**
+ * Проверка на уровне ПРОТОКОЛА, а не только открытого порта.
+ *
+ * TCP-пинг говорит лишь «на этом порту кто-то слушает» — а слушать может сервис,
+ * который данной схемой не разговаривает. Прокси со сломанной схемой показывался
+ * зелёным «ok», раздавался аккаунтам и отваливался уже в бою (прогон 21–22.07,
+ * тест 9.2: http-прокси, записанный как socks5, проходил проверку).
+ *
+ * SOCKS5: шлём приветствие 05 01 00 и ждём ответ, начинающийся с 0x05.
+ * HTTP(S): шлём CONNECT и ждём статус-строку HTTP (200, 407 «нужна авторизация»
+ * и 403 тоже подтверждают, что это HTTP-прокси).
+ * SOCKS4: протокол без рукопожатия — остаёмся на TCP-пинге.
+ *
+ * @param {{scheme?:string, host:string, port:number|string}} p
+ * @returns {Promise<boolean>}
+ */
+export function probeProxyProtocol(p, timeoutMs = 6000) {
+  const scheme = String(p?.scheme || 'socks5').toLowerCase()
+  if (scheme === 'socks4') return tcpPing(p.host, p.port, timeoutMs)
+  return new Promise((resolve) => {
+    if (!p?.host || !p?.port) return resolve(false)
+    const sock = new net.Socket()
+    let done = false
+    const finish = (ok) => { if (done) return; done = true; try { sock.destroy() } catch { /* noop */ } resolve(ok) }
+    sock.setTimeout(timeoutMs)
+    sock.once('timeout', () => finish(false))
+    sock.once('error', () => finish(false))
+    sock.once('connect', () => {
+      if (scheme === 'socks5') sock.write(Buffer.from([0x05, 0x01, 0x00]))
+      else sock.write(`CONNECT example.com:443 HTTP/1.1\r\nHost: example.com:443\r\n\r\n`)
+    })
+    sock.once('data', (buf) => {
+      if (scheme === 'socks5') return finish(buf.length >= 2 && buf[0] === 0x05)
+      const head = buf.toString('latin1', 0, 64)
+      finish(/^HTTP\/1\.[01] (2\d\d|40[37])/.test(head))
+    })
+    try { sock.connect(Number(p.port), String(p.host)) } catch { finish(false) }
+  })
+}
+
 /** Проверить один прокси и записать статус ok/dead + lastCheckAt. */
 export async function checkProxyLiveness(id, timeoutMs = 6000) {
   const p = await getProxy(id)
   if (!p) return null
-  const alive = await tcpPing(p.host, p.port, timeoutMs)
+  const alive = await probeProxyProtocol(p, timeoutMs)
   return updateProxy(id, { status: alive ? 'ok' : 'dead', lastCheckAt: Date.now() })
 }
 
@@ -208,7 +248,8 @@ export async function checkAllProxies(timeoutMs = 6000) {
   const all = await listProxies()
   const results = []
   for (const p of all) {
-    const alive = await tcpPing(p.host, p.port, timeoutMs)
+    // Массовая проверка — тем же протокольным пробником, что и одиночная (тест 9.2).
+    const alive = await probeProxyProtocol(p, timeoutMs)
     try { await updateProxy(p.id, { status: alive ? 'ok' : 'dead', lastCheckAt: Date.now() }) } catch { /* skip */ }
     results.push({ id: p.id, status: alive ? 'ok' : 'dead' })
   }
