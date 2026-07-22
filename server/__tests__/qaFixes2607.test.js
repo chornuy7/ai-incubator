@@ -154,6 +154,29 @@ test('9.1: без заголовка поведение прежнее — сх�
   assert.equal(r.items[0].scheme, 'socks5')
 })
 
+// ── 9.11: ссылка смены IP — не ошибка формата ────────────────────────────
+test('9.11: ссылка …/changeip/<token> привязывается к прокси того же хоста', async () => {
+  const { parseProxyList } = await import('../lib/proxyImport.js')
+  const r = parseProxyList('http:\n1.2.3.4:7063:u:p\nhttp://1.2.3.4:8881/changeip/abc123\n')
+  assert.equal(r.errors.length, 0, 'раньше такая строка пугала оператора как «не удалось разобрать формат»')
+  assert.equal(r.items[0].rotateUrl, 'http://1.2.3.4:8881/changeip/abc123')
+})
+
+test('9.11: чужой хост ссылку не получает', async () => {
+  const { parseProxyList } = await import('../lib/proxyImport.js')
+  const r = parseProxyList('5.6.7.8:7063:u:p\nhttp://1.2.3.4:8881/changeip/abc\n')
+  assert.equal(r.items[0].rotateUrl, undefined)
+})
+
+// ── 9.4: geoSource переживает запись в базу ──────────────────────────────
+test('9.4: geoSource сохраняется, мусор отсекается', async () => {
+  const { normalizeProxy } = await import('../proxies.js')
+  assert.equal(normalizeProxy({ host: 'h', port: 1, geoSource: 'exit' }).geoSource, 'exit')
+  assert.equal(normalizeProxy({ host: 'h', port: 1, geoSource: 'gateway' }).geoSource, 'gateway')
+  assert.equal(normalizeProxy({ host: 'h', port: 1, geoSource: 'мусор' }).geoSource, null,
+    'иначе UI не отличит гео реального выхода от гео шлюза')
+})
+
 // ── 12.6: аккаунт без посчитанного trust не идёт в боевой модуль ─────────
 test('12.6: профиль без trust не пускается в боевой модуль (fail-closed)', async () => {
   const err = await assertAccountsAssignable(['acc_нет_такого_в_кэше'], 'neuro-commenting')

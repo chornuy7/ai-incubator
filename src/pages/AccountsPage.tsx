@@ -27,6 +27,7 @@ import type { AccountStatus, TgAccount } from '@/shared/types'
 import { patchAccount, releaseAccountLock, setAccountStatusManual, fetchDailyAll, type DailyAllMap } from '@/api/accountsApi'
 import { fetchCampaigns, updateCampaign, type Campaign, type PinnedMap } from '@/api/campaignsApi'
 import { fetchAccountGroups, type AccountGroup } from '@/api/accountGroupsApi'
+import { fetchProxies, type Proxy as ApiProxy } from '@/api/proxiesApi'
 
 const STATUS_ORDER: AccountStatus[] = ['active', 'working', 'warming', 'pause', 'floodwait', 'quarantine', 'spamblock', 'invalid', 'frozen', 'reauth']
 const COLS = [
@@ -1026,8 +1027,17 @@ function ChangeProxyModal({ acc, onClose, onSave }: { acc: TgAccount | null; onC
   const [useProxy, setUseProxy] = useState(true)
   const [value, setValue] = useState('')
   // §10: чаще всего прокси уже есть в базе — предлагаем выбрать, а не вбивать заново.
-  const pool = useApp((s) => s.data.proxies)
+  // Раньше пул читался из КЛИЕНТСКОГО мок-стора (`s.data.proxies`), который стартует
+  // пустым и наполняется только локальной кнопкой в этой же сессии: настоящая база
+  // прокси в модалку не попадала никогда, и оператор видел «База прокси пуста»
+  // при десятках записей на сервере (прогон 21–22.07, тест 9.7).
+  const [pool, setPool] = useState<ApiProxy[]>([])
   const [fromPool, setFromPool] = useState(true)
+
+  useEffect(() => {
+    if (!acc) return
+    void fetchProxies().then(setPool).catch(() => setPool([]))
+  }, [acc?.id])
 
   useEffect(() => {
     if (!acc) return
@@ -1094,8 +1104,11 @@ function ChangeProxyModal({ acc, onClose, onSave }: { acc: TgAccount | null; onC
                   onChange={setValue}
                   placeholder="Выберите прокси"
                   options={pool.map((p) => {
-                    const url = `${p.type}://${p.host}:${p.port}`
-                    return { value: url, label: `${url}${p.status === 'dead' ? ' · не отвечает' : ''}${p.usedBy ? ` · занят ${p.usedBy}` : ' · свободен'}` }
+                    const auth = p.username ? `${p.username}${p.password ? ':' + p.password : ''}@` : ''
+                    const url = `${p.scheme}://${auth}${p.host}:${p.port}`
+                    const shown = `${p.scheme}://${p.host}:${p.port}`
+                    const geo = p.country ? ` · ${p.country.toUpperCase()}` : ''
+                    return { value: url, label: `${shown}${geo}${p.status === 'dead' ? ' · не отвечает' : ''}` }
                   })}
                 />
               </>

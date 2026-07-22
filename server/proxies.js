@@ -35,6 +35,13 @@ export function normalizeProxy(input = {}) {
     username: String(input.username ?? '').trim(),
     password: String(input.password ?? ''),
     country: String(input.country ?? '').trim().toLowerCase(),
+    // Откуда взята страна: 'exit' — гео РЕАЛЬНОГО выходного IP (запрос ушёл через прокси),
+    // 'gateway' — гео адреса шлюза, то есть «примерно». Без этого поля интерфейс не мог
+    // отличить одно от другого и показывал страну сервера как страну выхода (тест 9.4).
+    geoSource: ['exit', 'gateway'].includes(input.geoSource) ? input.geoSource : null,
+    // Ссылка смены IP от продавца (…/changeip/<token>) — приходит вместе со списком
+    // при импорте и раньше считалась ошибкой формата (тест 9.11).
+    rotateUrl: String(input.rotateUrl ?? '').trim(),
     status: PROXY_STATUSES.includes(input.status) ? input.status : 'unknown',
     note: String(input.note ?? ''),
   }
@@ -250,8 +257,20 @@ export async function checkAllProxies(timeoutMs = 6000) {
   for (const p of all) {
     // Массовая проверка — тем же протокольным пробником, что и одиночная (тест 9.2).
     const alive = await probeProxyProtocol(p, timeoutMs)
-    try { await updateProxy(p.id, { status: alive ? 'ok' : 'dead', lastCheckAt: Date.now() }) } catch { /* skip */ }
-    results.push({ id: p.id, status: alive ? 'ok' : 'dead' })
+    const patch = { status: alive ? 'ok' : 'dead', lastCheckAt: Date.now() }
+    // Гео пересчитываем ЗДЕСЬ же. Раньше «Проверить все» писала только status и
+    // lastCheckAt: страна обновлялась лишь при импорте и в точечной проверке, поэтому
+    // после исправления схемы прокси кнопка оставляла старую, неверную страну, и
+    // лечилось это только перепроверкой по одному (прогон 21–22.07, тест 9.5).
+    if (alive) {
+      let geo = await probeProxyExitGeo(p).catch(() => null)
+      let source = geo ? 'exit' : null
+      if (!geo) { geo = await probeProxyGeo(p.host).catch(() => null); if (geo) source = 'gateway' }
+      if (geo?.country) patch.country = geo.country
+      if (source) patch.geoSource = source
+    }
+    try { await updateProxy(p.id, patch) } catch { /* skip */ }
+    results.push({ id: p.id, status: patch.status, country: patch.country, geoSource: patch.geoSource })
   }
   return results
 }

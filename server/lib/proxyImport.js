@@ -100,11 +100,26 @@ function schemeHeader(line) {
   return m ? m[1].toLowerCase() : null
 }
 
+/**
+ * Ссылка смены IP, которую продавцы присылают вместе со списком:
+ *   http://138.201.202.99:8881/changeip/abc123
+ * Раньше такая строка считалась ошибкой формата и попадала в errors, пугая оператора
+ * (прогон 21–22.07, тест 9.11). Теперь распознаём её и привязываем к прокси того же
+ * хоста как `rotateUrl` — это ровно то, для чего она и нужна.
+ * @param {string} line
+ */
+function rotateLink(line) {
+  const m = /^(https?:\/\/([^\s/:]+)(?::\d+)?\/[^\s]*(?:changeip|change_ip|rotate|reset)[^\s]*)$/i.exec(line.trim())
+  return m ? { url: m[1], host: m[2] } : null
+}
+
 export function parseProxyList(text, defaults = {}) {
   const lines = String(text || '').split(/\r?\n/)
   const items = []
   const errors = []
   const seen = new Set()
+  /** @type {{url:string, host:string}[]} Ссылки смены IP — раскидаем по хостам в конце. */
+  const rotates = []
   // Схема «сверху» действует на последующие строки, пока не встретится новая.
   // Раньше такой заголовок просто падал в errors, а сами прокси разбирались с
   // дефолтной socks5 — http-прокси на портах 7063/7469 легли в базу как socks5
@@ -116,6 +131,8 @@ export function parseProxyList(text, defaults = {}) {
     if (!trimmed || trimmed.startsWith('#') || trimmed.startsWith('//')) return
     const hdr = schemeHeader(trimmed)
     if (hdr) { current = { ...defaults, scheme: hdr }; return }
+    const rot = rotateLink(trimmed)
+    if (rot) { rotates.push(rot); return } // не ошибка — привяжем ниже к прокси того же хоста
     const parsed = parseProxyLine(trimmed, current)
     if (!parsed) {
       errors.push({ line: i + 1, raw: trimmed, reason: 'не удалось разобрать формат' })
@@ -129,6 +146,11 @@ export function parseProxyList(text, defaults = {}) {
     seen.add(key)
     items.push({ ...parsed, raw: trimmed })
   })
+  // Ссылку смены IP вешаем на все прокси того же хоста: продавец даёт одну ссылку
+  // на шлюз, а портов за ним обычно несколько.
+  for (const r of rotates) {
+    for (const it of items) if (it.host === r.host) it.rotateUrl = r.url
+  }
   return { items, errors }
 }
 

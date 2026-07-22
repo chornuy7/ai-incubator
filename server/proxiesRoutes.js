@@ -1,6 +1,6 @@
 /** CRUD-роуты сущности «Прокси» (§3.2/3.4). Монтируется в /api/proxies. */
 import { Router } from 'express'
-import { listProxies, getProxy, createProxy, updateProxy, deleteProxy, checkAllProxies, sharedProxies, probeProxyGeo, probeProxyExitGeo, tcpPing } from './proxies.js'
+import { listProxies, getProxy, createProxy, updateProxy, deleteProxy, checkAllProxies, sharedProxies, probeProxyGeo, probeProxyExitGeo, tcpPing, probeProxyProtocol } from './proxies.js'
 import { loadAllMeta } from './accountsMeta.js'
 import { parseProxyList, proxyKey, assignLabels } from './lib/proxyImport.js'
 import { appendAudit } from './lib/auditLog.js'
@@ -58,7 +58,8 @@ proxiesRouter.post('/:id/check', async (req, res) => {
     if (!existing) return res.status(404).json({ ok: false, error: 'Прокси не найден' })
     // Пинг с замером времени + статус.
     const t0 = Date.now()
-    const alive = await tcpPing(existing.host, existing.port)
+    // Протокольная проверка, а не просто открытый порт (тест 9.2).
+    const alive = await probeProxyProtocol(existing)
     const ms = Date.now() - t0
     let proxy = (await updateProxy(existing.id, { status: alive ? 'ok' : 'dead', lastCheckAt: Date.now() })) || existing
     // Гео ВЫХОДНОГО IP (через прокси) — для мобильных/резидентных это страна выхода, а не шлюза.
@@ -70,9 +71,14 @@ proxiesRouter.post('/:id/check', async (req, res) => {
       else { geo = await probeProxyGeo(proxy.host); if (geo) geoSource = 'gateway' }
     }
     // Страна выставляется автоматически из гео (руками выбирать не нужно).
-    if (geo?.country && geo.country !== proxy.country) {
-      proxy = (await updateProxy(proxy.id, { country: geo.country })) || proxy
-    }
+    // geoSource ОБЯЗАТЕЛЬНО пишем в запись: раньше роут возвращал его только в ответе,
+    // а в базе у всех прокси стоял null — интерфейс не мог отличить «гео реального
+    // выходного IP» от «гео сервера, примерно», хотя ради этого различия §9.10
+    // и заводился (прогон 21–22.07, тест 9.4).
+    const patch = {}
+    if (geo?.country && geo.country !== proxy.country) patch.country = geo.country
+    if (geoSource && geoSource !== proxy.geoSource) patch.geoSource = geoSource
+    if (Object.keys(patch).length) proxy = (await updateProxy(proxy.id, patch)) || proxy
     res.json({ ok: true, proxy, geo, geoSource, ms: alive ? ms : null })
   } catch (err) { fail(res, err, 500) }
 })
