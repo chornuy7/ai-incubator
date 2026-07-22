@@ -1,7 +1,7 @@
 import { Router } from 'express'
 import { getModuleStore, listModuleKeys, validateSettings, startModuleTask, stopModuleTask, pauseModuleTask, resumeModuleTask } from './registry.js'
 import { releaseTaskLocks } from '../lib/accountLocks.js'
-import { assertAccountsAssignable } from '../accountsMeta.js'
+import { assertAccountsAssignable, loadAllMeta } from '../accountsMeta.js'
 import { assertNoHotLeadConflict, assertActiveDialogLimit } from '../leads.js'
 import { findDuplicateActiveTask } from '../lib/taskDedup.js'
 import { getGoal, isGoalExpired } from '../goals.js'
@@ -84,7 +84,11 @@ modulesRouter.get('/:moduleKey/tasks/:id/audience', async (req, res) => {
     const task = await store.loadTask(req.params.id)
     if (!task) return res.status(404).json({ ok: false, error: 'Задача не найдена' })
     const targets = task.settings?.targets || task.settings?.numbers || []
-    res.json({ ok: true, audience: splitAudience(targets, task.history || []), total: targets.length })
+    // Аккаунты задачи нужны, чтобы восстановить, кем писали, там где в истории
+    // сохранилось только имя, — без id переписку не открыть.
+    const meta = await loadAllMeta().catch(() => ({}))
+    const accounts = (task.settings?.accountIds || []).map((id) => ({ id, name: meta[id]?.name || '' }))
+    res.json({ ok: true, audience: splitAudience(targets, task.history || [], { accounts }), total: targets.length })
   } catch (err) {
     res.status(500).json({ ok: false, error: err instanceof Error ? err.message : 'Ошибка' })
   }

@@ -1,5 +1,5 @@
 import { generateComment, isAiGenerationEnabled, resolveSystemPrompt } from '../neuroCommenting/commentGenerator.js'
-import { buildGoalContext, stageForStatus, linksFromGoal } from '../lib/goalContext.js'
+import { buildGoalContext, stageForStatus, linksFromGoal, cleanDialogReply, hasPlaceholder } from '../lib/goalContext.js'
 import { upsertMany } from '../channels.js'
 import {
   fetchPosts,
@@ -949,11 +949,16 @@ export async function runNeuroDialogs(task, store) {
           const weWroteBefore = msgs.some((m) => m?.out && (m.message || '').trim())
           const rawStatus = leadNow?.status || 'cold'
           const effStatus = weWroteBefore && (rawStatus === 'cold') ? 'contacted' : rawStatus
-          const { text: reply, mode } = await generateComment(
+          const gen = await generateComment(
             prompt,
             s.promptIndex ?? 0,
             dialogSystemPrompt(s, goal, goalObj, effStatus, stageForStatus(goalObj?.stages, effStatus)),
           )
+          const mode = gen.mode
+          // Диалог подаётся модели стенограммой «Я: … / Собеседник: …», и она регулярно
+          // копирует эту разметку в ответ. Живой человек 21.07 получил «Я: Отлично!…» —
+          // по такому сразу видно робота.
+          const reply = cleanDialogReply(gen.text)
           // Личная переписка — не то место, где годится шаблон-заглушка: она подставляла
           // в сообщение стенограмму диалога («По «Переписка: Я: Привет!...» — согласен»)
           // и это уходило собеседнику от имени аккаунта. Нет ИИ — молчим и идём дальше.
@@ -966,6 +971,12 @@ export async function runNeuroDialogs(task, store) {
                 : `«${peerKey}»: не отвечаем — OpenAI недоступен`,
               meta.name,
             )
+            continue
+          }
+          // Заглушка вместо ссылки («[тут вставь ссылку]») уже уходила живому человеку.
+          // Молчание лучше: следующий круг сгенерирует заново, а сказанного не вернуть.
+          if (!reply || hasPlaceholder(reply)) {
+            await store.appendLog(task, 'warning', `«${peerKey}»: ответ не отправлен — ИИ оставил заготовку вместо текста`, meta.name)
             continue
           }
           await sleep(pickDelay(s.delays?.action?.[0] ?? 5, s.delays?.action?.[1] ?? 30, mul) * 1000)
@@ -1860,7 +1871,11 @@ export async function runMailing(task, store) {
 «${message || opener}»` : '',
           ].filter(Boolean).join(' ')
           const gen = await generateComment(openerTask, s.promptIndex ?? 0, resolveSystemPrompt(s) + goalCtx)
-          if (gen.text) text = gen.text
+          // Чистим так же, как в диалогах: модель повторяет ярлыки промпта и оставляет
+          // заготовки. С заглушкой лучше отправить текст из цели, чем «[тут вставь ссылку]».
+          const cleaned = cleanDialogReply(gen.text)
+          if (cleaned && !hasPlaceholder(cleaned)) text = cleaned
+          else if (cleaned) await store.appendLog(task, 'warning', `${label}: ИИ оставил заготовку — отправляем текст из цели`, meta.name)
         }
         // 3) Пауза «по-человечески» и отправка (#6: прерываемая — стоп не шлёт лишнее ЛС).
         if (await interruptibleSleep(pickDelay(dm[0], dm[1], mul) * 1000, makeStopCheck(store, task.id))) { await disconnectAccount(client, account); break }

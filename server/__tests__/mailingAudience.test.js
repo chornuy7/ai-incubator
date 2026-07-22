@@ -83,3 +83,28 @@ test('на реальной форме записи мейлинга (боево
   assert.deepEqual(a.remaining.map((r) => r.target), ['@venem2'])
   assert.equal(a.sent[0].peer, '@spx690ether', 'без peer не открыть переписку')
 })
+
+test('старая запись без accountId: аккаунт восстанавливается по имени', () => {
+  // Прогоны до 22.07 писали в историю только имя аккаунта. Без id переписку
+  // не открыть — история диалога своя у каждого аккаунта.
+  const accounts = [{ id: 'acc_111', name: 'Юрій Дудь' }, { id: 'acc_222', name: 'Другой' }]
+  const a = splitAudience(['RmnNlm'], [{ target: '@RmnNlm', status: 'sent', accountName: 'Юрій Дудь' }], { accounts })
+  assert.equal(a.sent[0].accountId, 'acc_111')
+})
+
+test('в задаче один аккаунт — берём его, даже если имя не совпало', () => {
+  const a = splitAudience(['user1'], [{ target: '@user1', status: 'sent' }], { accounts: [{ id: 'acc_solo', name: '' }] })
+  assert.equal(a.sent[0].accountId, 'acc_solo', 'вариантов всё равно нет')
+})
+
+test('несколько аккаунтов и неизвестное имя — не угадываем', () => {
+  const accounts = [{ id: 'a1', name: 'Первый' }, { id: 'a2', name: 'Второй' }]
+  const a = splitAudience(['user1'], [{ target: '@user1', status: 'sent', accountName: 'Третий' }], { accounts })
+  assert.equal(a.sent[0].accountId, undefined, 'лучше без кнопки, чем чужая переписка')
+})
+
+test('имя записалось как id аккаунта (аккаунты без имени)', () => {
+  const accounts = [{ id: 'acc_abc', name: '' }, { id: 'acc_xyz', name: '' }]
+  const a = splitAudience(['user1'], [{ target: '@user1', status: 'sent', accountName: 'acc_xyz' }], { accounts })
+  assert.equal(a.sent[0].accountId, 'acc_xyz')
+})

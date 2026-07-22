@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { buildGoalContext, firstMessagesFromGoal, pickFirstMessage } from '../lib/goalContext.js'
+import { buildGoalContext, firstMessagesFromGoal, pickFirstMessage, cleanDialogReply, hasPlaceholder } from '../lib/goalContext.js'
 
 test('buildGoalContext: пустой/нет цели → пустая строка (генерация как раньше)', async () => {
   assert.equal(await buildGoalContext(null), '')
@@ -47,4 +47,44 @@ test('pickFirstMessage: варианты чередуются по кругу, �
   const v = ['A', 'B', 'C']
   assert.deepEqual([0, 1, 2, 3, 4].map((i) => pickFirstMessage(v, i)), ['A', 'B', 'C', 'A', 'B'])
   assert.equal(pickFirstMessage([], 3), '', 'нет вариантов — пустая строка, а не падение')
+})
+
+// ── Чистка ответов ИИ. Разбор реальных переписок 21.07 ──
+
+test('cleanDialogReply: ярлык роли из промпта не уходит человеку', () => {
+  // Реальное сообщение из боевого диалога — собеседник получил его с «Я: ».
+  assert.equal(
+    cleanDialogReply('Я: Отлично! Чат-бот действительно может упростить взаимодействие.'),
+    'Отлично! Чат-бот действительно может упростить взаимодействие.',
+  )
+  assert.equal(cleanDialogReply('Переписка: Я: Привет'), 'Привет')
+  assert.equal(cleanDialogReply('Ответ: Да, конечно'), 'Да, конечно')
+  assert.equal(cleanDialogReply('Я — Да, конечно'), 'Да, конечно')
+})
+
+test('cleanDialogReply: не режет нормальный текст', () => {
+  for (const ok of [
+    'Привет! Как дела?',
+    'Я думаю, это отличная идея — попробуй.',
+    'Ясно, спасибо!',
+    'Меня зовут Илья, пиши в телеграм.',
+  ]) assert.equal(cleanDialogReply(ok), ok, `испорчен нормальный текст: ${ok}`)
+})
+
+test('cleanDialogReply: реплика собеседника в теле ответа отрезается', () => {
+  assert.equal(cleanDialogReply('Конечно, держи ссылку.\nСобеседник: спасибо'), 'Конечно, держи ссылку.')
+})
+
+test('cleanDialogReply: снимает кавычки вокруг всего ответа, но не внутри', () => {
+  assert.equal(cleanDialogReply('«Привет, как дела?»'), 'Привет, как дела?')
+  assert.equal(cleanDialogReply('Он сказал «да» и ушёл'), 'Он сказал «да» и ушёл')
+})
+
+test('hasPlaceholder: заготовка вместо ссылки — не отправлять', () => {
+  // Это ушло живому человеку 21.07.
+  assert.equal(hasPlaceholder('Отлично! Вот ссылка на канал: [тут вставь ссылку].'), true)
+  assert.equal(hasPlaceholder('Держи: [ссылка]'), true)
+  assert.equal(hasPlaceholder('Привет, {{name}}!'), true)
+  assert.equal(hasPlaceholder('Вот ссылка: https://t.me/+WNDfuu5d6EM1YjVi'), false)
+  assert.equal(hasPlaceholder('Читай [тут](https://t.me/x)'), false, 'markdown-ссылка — это не заготовка')
 })

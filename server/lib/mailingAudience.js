@@ -24,14 +24,37 @@ export function targetKey(raw) {
 }
 
 /**
+ * Восстановить, каким аккаунтом писали, если в записи истории этого нет.
+ *
+ * Записи старых прогонов сохраняли только имя аккаунта — а чтобы открыть переписку,
+ * нужен его id: история диалога своя у каждого аккаунта. Достаём id по имени, а если
+ * в задаче участвовал ровно один аккаунт, вариантов и вовсе нет.
+ * @param {{id:string, name?:string}[]} accounts аккаунты задачи
+ * @param {string} [name] имя из записи истории
+ */
+export function resolveAccountId(accounts, name) {
+  const list = accounts || []
+  if (name) {
+    const hit = list.find((a) => a.name && a.name === name)
+    if (hit) return hit.id
+    // Имя могло записаться как сам id — так бывает у аккаунтов без имени.
+    const byId = list.find((a) => a.id === name)
+    if (byId) return byId.id
+  }
+  return list.length === 1 ? list[0].id : undefined
+}
+
+/**
  * @param {string[]} targets исходные цели задачи (`settings.targets`)
  * @param {object[]} history история задачи
+ * @param {{ accounts?: {id:string, name?:string}[] }} [opts] аккаунты задачи —
+ *   ими дозаполняем `accountId` в записях, где его не сохранили
  * @returns {{ sent:object[], skipped:object[], failed:object[], remaining:object[] }}
  *   `sent` — написали · `skipped` — таких нет в Telegram (в следующий заход брать
  *   бессмысленно) · `failed` — сорвалось из-за аккаунта (брать СТОИТ) ·
  *   `remaining` — до них просто не дошли (стоп, лимиты, спамблоки).
  */
-export function splitAudience(targets = [], history = []) {
+export function splitAudience(targets = [], history = [], opts = {}) {
   const sent = []
   const skipped = []
   const failed = []
@@ -47,7 +70,8 @@ export function splitAudience(targets = [], history = []) {
     const row = {
       target,
       peer: h.peer || (target.startsWith('@') ? target : undefined),
-      accountId: h.accountId,
+      // Без accountId переписку не открыть — для старых записей восстанавливаем.
+      accountId: h.accountId || resolveAccountId(opts.accounts, h.accountName),
       accountName: h.accountName,
       reason: h.reason,
       ts: h.ts,
