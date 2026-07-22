@@ -1145,9 +1145,19 @@ export async function runGgr(task, store) {
  */
 export async function runChannelParser(task, store, kind) {
   const s = task.settings
-  task.startedAt = Date.now()
+  // Продолжение с паузы, а не запуск с нуля. Раньше здесь безусловно стояло
+  // `task.results = []`, и цикл начинался с первого запроса: после «Запустить/
+  // возобновить» счётчик найденного обнулялся, total пересчитывался, а уже собранные
+  // результаты ТЕРЯЛИСЬ (прогон 21–22.07, тест 6.1: было 10/100 и 10 результатов,
+  // стало 0 и сбор заново). Интерфейс при этом обещает «продолжить» одинаково для
+  // всех модулей, поэтому чиним здесь, а не в подписи кнопки.
+  const resuming = Number(task.cursor) > 0
+  task.startedAt = resuming ? (task.startedAt || Date.now()) : Date.now()
   task.status = 'running'
-  task.results = []
+  if (!resuming) {
+    task.results = []
+    task.cursor = 0
+  }
   await store.saveTask(task)
 
   const accountIds = s.accountIds || []
@@ -1195,6 +1205,12 @@ export async function runChannelParser(task, store, kind) {
   }
 
   const seen = new Set() // дедуп по id/username
+  // При продолжении восстанавливаем дедуп из уже собранного, иначе те же каналы
+  // приедут повторно и результаты задвоятся.
+  for (const r of task.results || []) {
+    if (r?.username) seen.add(String(r.username).toLowerCase())
+    if (r?.id) seen.add(String(r.id))
+  }
   const skipParsed = new Set((s.alreadyParsed || []).map((x) => String(x).toLowerCase()))
   let accIdx = 0
 
@@ -1207,12 +1223,23 @@ export async function runChannelParser(task, store, kind) {
     return null
   }
 
-  await store.appendLog(task, 'info', `Парсинг запущен · запросов: ${queries.length} · аккаунтов: ${accountIds.length}`)
+  const startFrom = Math.min(Number(task.cursor) || 0, queries.length)
+  await store.appendLog(
+    task,
+    'info',
+    startFrom > 0
+      ? `Парсинг продолжен с запроса ${startFrom + 1} из ${queries.length} · уже собрано: ${task.results.length}`
+      : `Парсинг запущен · запросов: ${queries.length} · аккаунтов: ${accountIds.length}`,
+  )
 
   try {
-    for (const { q, kwIdx } of queries) {
+    for (let qi = startFrom; qi < queries.length; qi++) {
+      const { q, kwIdx } = queries[qi]
       // В AND-режиме нельзя рано выходить по лимиту — нужно просканировать все ключи для пересечения.
       if (task.stopRequested || task.pauseRequested || (!andMode && task.results.length >= limit)) break
+      // Курсор двигаем ДО обработки: если задачу поставят на паузу внутри запроса,
+      // при продолжении он не выполнится дважды.
+      task.cursor = qi + 1
 
       const accountId = await nextAccountId()
       if (!accountId) {
@@ -1301,6 +1328,9 @@ export async function runChannelParser(task, store, kind) {
     task.progress.done = task.results.length
     task.progress.actionsDone = task.results.length
     task.status = statusAfterRun(task)
+    // Курсор нужен только между паузой и продолжением. На завершении/стопе сбрасываем,
+    // иначе «Перезапуск» начал бы с конца очереди и не сделал бы ничего.
+    if (task.status !== 'paused') task.cursor = 0
     // §3.8/§4: найденные каналы — в общую базу одним батчем (дедуп, без потери данных).
     try { const n = await upsertMany(baseChannels, `parse:${task.id}`); if (n) await store.appendLog(task, 'info', `В базу каналов: ${n}`) } catch { /* ignore */ }
     await store.appendLog(task, 'info', `Готово · найдено ${task.results.length} ${unitLabel}`)
