@@ -103,3 +103,47 @@ test('assignLabels: дозагрузка продолжает нумерацию
 test('assignLabels: без страны — XX, импорт не ломается', () => {
   assert.deepEqual(assignLabels([{ host: '1.1.1.1', port: 1080 }], { tag: 'SPAM' }), ['XX SPAM 1'])
 })
+
+// ── Баги массового импорта, найдено 21.07 (docs/BUGS-2026-07-21-proxy-import.md) ──
+
+test('баг 1: строка-заголовок «http:» задаёт схему для следующих строк', () => {
+  // Ровно тот список, что прислал продавец: пары портов, один HTTP, второй SOCKS5.
+  const text = [
+    'http:',
+    '138.201.202.99:7063:avjycaue:qsjsiodh',
+    '',
+    'socks5:',
+    '138.201.202.99:7163:avjycaue:qsjsiodh',
+  ].join('\n')
+
+  const { items, errors } = parseProxyList(text)
+  assert.equal(items.length, 2)
+  assert.equal(items[0].scheme, 'http', 'порт 7063 работает только по HTTP')
+  assert.equal(items[0].port, 7063)
+  assert.equal(items[1].scheme, 'socks5', 'порт 7163 работает только по SOCKS5')
+  assert.equal(items[1].port, 7163)
+  assert.equal(errors.length, 0, 'заголовки схем — не ошибки разбора')
+})
+
+test('баг 1: заголовки в разных начертаниях', () => {
+  for (const header of ['HTTP:', 'socks5', '[SOCKS5]', 'https:', ' http : ']) {
+    const { items } = parseProxyList(`${header}\n1.2.3.4:1080`)
+    assert.equal(items.length, 1, `«${header}» должен пониматься как заголовок`)
+    assert.ok(['http', 'socks5'].includes(items[0].scheme), `«${header}» → ${items[0].scheme}`)
+  }
+})
+
+test('баг 5: ссылка смены IP не считается ошибкой разбора', () => {
+  const { items, errors, rotationLinks } = parseProxyList(
+    'http:\n1.2.3.4:7063:u:p\nhttp://138.201.202.99:8881/changeip/abc123',
+  )
+  assert.equal(items.length, 1)
+  assert.equal(errors.length, 0, 'сервисная ссылка — не сломанная строка')
+  assert.deepEqual(rotationLinks, ['http://138.201.202.99:8881/changeip/abc123'])
+})
+
+test('схема из заголовка важнее выбранной в форме, но только ниже заголовка', () => {
+  const { items } = parseProxyList('1.1.1.1:1080\nhttp:\n2.2.2.2:8080', { scheme: 'socks5' })
+  assert.equal(items[0].scheme, 'socks5', 'до заголовка — схема из формы')
+  assert.equal(items[1].scheme, 'http', 'после заголовка — из заголовка')
+})

@@ -15,7 +15,16 @@ const PLACEHOLDER = `Вставьте список — по одному про�
 1.2.3.4:1080
 1.2.3.4:1080:логин:пароль
 логин:пароль@1.2.3.4:1080
-socks5://логин:пароль@1.2.3.4:1080`
+socks5://логин:пароль@1.2.3.4:1080
+
+Строка «http:» или «socks5:» задаёт протокол для идущих ниже прокси —
+можно вставлять список продавца как есть:
+
+http:
+1.2.3.4:7063:логин:пароль
+
+socks5:
+1.2.3.4:7163:логин:пароль`
 
 /**
  * §3.2: массовый импорт прокси. Страну и живость определяем сами — по РЕАЛЬНОМУ
@@ -30,8 +39,9 @@ export function ImportProxiesModal({ open, onClose, onDone }: Props) {
   const [items, setItems] = useState<ParsedProxyLine[]>([])
   const [errors, setErrors] = useState<ImportIssue[]>([])
   const [duplicates, setDuplicates] = useState(0)
+  const [rotationLinks, setRotationLinks] = useState<string[]>([])
   const [busy, setBusy] = useState(false)
-  const [result, setResult] = useState<{ created: Proxy[]; skipped: ImportIssue[]; errors: ImportIssue[] } | null>(null)
+  const [result, setResult] = useState<{ created: Proxy[]; skipped: ImportIssue[]; errors: ImportIssue[]; rotationLinks?: string[] } | null>(null)
   const fileRef = useRef<HTMLInputElement>(null)
 
   // Разбор идёт на сервере на каждый ввод — он дешёвый (без сети), зато человек сразу
@@ -39,15 +49,22 @@ export function ImportProxiesModal({ open, onClose, onDone }: Props) {
   useEffect(() => {
     if (!open) return
     const id = setTimeout(() => {
-      if (!text.trim()) { setItems([]); setErrors([]); setDuplicates(0); return }
+      if (!text.trim()) { setItems([]); setErrors([]); setDuplicates(0); setRotationLinks([]); return }
       void previewProxyImport(text, scheme)
-        .then((r) => { setItems(r.items); setErrors(r.errors); setDuplicates(r.duplicates) })
+        .then((r) => { setItems(r.items); setErrors(r.errors); setDuplicates(r.duplicates); setRotationLinks(r.rotationLinks || []) })
         .catch(() => { /* превью не критично */ })
     }, 300)
     return () => clearTimeout(id)
   }, [text, scheme, open])
 
   useEffect(() => { if (open) { setResult(null) } }, [open])
+
+  /** Сколько строк какой схемой прочитано — заголовки «http:»/«socks5:» переключают её по ходу списка. */
+  const schemeSummary = useMemo(() => {
+    const by: Record<string, number> = {}
+    for (const i of items) by[i.scheme] = (by[i.scheme] || 0) + 1
+    return Object.entries(by)
+  }, [items])
 
   const example = useMemo(() => {
     if (!items.length) return ''
@@ -71,7 +88,7 @@ export function ImportProxiesModal({ open, onClose, onDone }: Props) {
     } finally { setBusy(false) }
   }
 
-  const close = () => { setText(''); setItems([]); setErrors([]); setResult(null); onClose() }
+  const close = () => { setText(''); setItems([]); setErrors([]); setRotationLinks([]); setResult(null); onClose() }
 
   return (
     <Modal
@@ -96,8 +113,8 @@ export function ImportProxiesModal({ open, onClose, onDone }: Props) {
                 <span className="font-semibold text-white">{p.label}</span>
                 <span className="text-xs text-white/45">{p.host}:{p.port}</span>
                 <span className="ml-auto">
-                  <Badge tone={p.status === 'ok' ? 'spark' : p.status === 'dead' ? 'rose' : 'muted'}>
-                    {p.status === 'ok' ? 'Рабочий' : p.status === 'dead' ? 'Мёртвый' : 'Не проверен'}
+                  <Badge tone={p.status === 'ok' ? 'spark' : p.status === 'bad' ? 'amber' : p.status === 'dead' ? 'rose' : 'muted'}>
+                    {p.status === 'ok' ? 'Рабочий' : p.status === 'bad' ? 'Не тот протокол' : p.status === 'dead' ? 'Мёртвый' : 'Не проверен'}
                   </Badge>
                 </span>
               </div>
@@ -135,6 +152,14 @@ export function ImportProxiesModal({ open, onClose, onDone }: Props) {
               {errors.length > 0 && <Badge tone="rose">Не разобрано: {errors.length}</Badge>}
               {errors.length > 0 && (
                 <span className="text-white/40">строка {errors.slice(0, 3).map((e) => e.line).filter(Boolean).join(', ')}{errors.length > 3 ? '…' : ''}</span>
+              )}
+              {/* Схемы показываем явно: список продавца часто идёт заголовками «http:» / «socks5:»,
+                  и человек должен видеть, что они прочитаны, — иначе половина базы уедет не тем протоколом. */}
+              {schemeSummary.map(([sch, n]) => (
+                <Badge key={sch} tone="iris">{sch === 'http' ? 'HTTP' : 'SOCKS5'}: {n}</Badge>
+              ))}
+              {rotationLinks.length > 0 && (
+                <Badge tone="muted" >Ссылки смены IP: {rotationLinks.length}</Badge>
               )}
             </div>
           )}

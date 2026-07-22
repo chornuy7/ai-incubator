@@ -12,9 +12,10 @@ import { FLAGS } from '@/shared/config/geo'
 import { confirmDialog } from '@/shared/lib/dialog'
 import { ImportProxiesModal } from '@/features/import-proxies/ImportProxiesModal'
 
-const STATUS_META: Record<Proxy['status'], { label: string; tone: 'spark' | 'rose' | 'muted' }> = {
-  ok: { label: 'Рабочий', tone: 'spark' },
-  dead: { label: 'Мёртвый', tone: 'rose' },
+const STATUS_META: Record<Proxy['status'], { label: string; tone: 'spark' | 'rose' | 'amber' | 'muted'; hint?: string }> = {
+  ok: { label: 'Рабочий', tone: 'spark', hint: 'Через прокси удалось выйти в интернет' },
+  bad: { label: 'Не тот протокол', tone: 'amber', hint: 'Порт открыт, но выйти наружу не удалось — обычно помогает сменить схему http ↔ socks5' },
+  dead: { label: 'Мёртвый', tone: 'rose', hint: 'Хост не отвечает' },
   unknown: { label: 'Не проверен', tone: 'muted' },
 }
 
@@ -119,7 +120,14 @@ export function ProxiesPage() {
                   <div className="flex flex-wrap items-center gap-2">
                     <span className="truncate font-semibold text-fg group-hover:text-spark-300">{p.label || `${p.host}:${p.port}`}</span>
                     <Badge tone="iris">{PROXY_KIND_LABELS[p.kind]}</Badge>
-                    {p.country && <span className="text-sm">{FLAGS[p.country] || p.country.toUpperCase()}</span>}
+                    {p.country && (
+                      // Гео по шлюзу — это страна дата-центра, а не выхода: у мобильных
+                      // прокси они разные, и раздавать такой прокси «по стране» опасно.
+                      <span className="text-sm" title={p.geoSource === 'gateway' ? 'Страна определена по адресу сервера — приблизительно' : p.geoSource === 'exit' ? 'Страна реального выходного IP' : ''}>
+                        {FLAGS[p.country] || p.country.toUpperCase()}
+                        {p.geoSource === 'gateway' && <span className="ml-0.5 text-[10px] text-amber-300">≈</span>}
+                      </span>
+                    )}
                     <Badge tone={sm.tone}>{sm.label}</Badge>
                   </div>
                   <div className="mt-0.5 truncate font-mono text-xs text-white/50">{p.scheme}://{p.username ? `${p.username}@` : ''}{p.host}:{p.port}</div>
@@ -245,6 +253,13 @@ function ProxyDetailModal({ proxy, accountsCount, onClose, onUpdated }: {
       )}
       {!loading && p.status === 'dead' && (
         <p className="mt-3 text-xs text-amber-300">Прокси не отвечает — гео выхода недоступно, пока он мёртв.</p>
+      )}
+      {!loading && p.status === 'bad' && (
+        <p className="mt-3 text-xs text-amber-300">
+          Порт открыт, но выйти в интернет через прокси не удалось. Чаще всего дело в схеме:
+          попробуйте сменить {p.scheme === 'socks5' ? 'SOCKS5 на HTTP' : 'HTTP на SOCKS5'} и проверить снова.
+          У многих продавцов соседние порты — это одна пара, где один HTTP, второй SOCKS5.
+        </p>
       )}
     </Modal>
   )

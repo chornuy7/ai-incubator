@@ -83,19 +83,47 @@ export function parseProxyLine(raw, defaults = {}) {
 }
 
 /**
+ * Строка-заголовок вида `http:` / `socks5:` / `[SOCKS5]` — она не прокси, а объявление
+ * схемы для последующих строк. Формат очень распространён у продавцов: сверху `http:`,
+ * под ним адреса, ниже `socks5:` и снова адреса.
+ * @param {string} line @returns {string|null} схема или null
+ */
+export function schemeHeader(line) {
+  const s = String(line || '').trim().toLowerCase().replace(/^\[|\]$/g, '')
+  const m = s.match(/^(socks5|socks4|https?)\s*:?\s*$/)
+  if (!m) return null
+  return m[1] === 'https' ? 'http' : m[1]
+}
+
+/** Сервисная ссылка ротации IP (`.../changeip/<token>`) — не прокси, но и не ошибка. */
+export function isRotationLink(line) {
+  return /\/(changeip|change_ip|rotate|reset)\b/i.test(String(line || ''))
+}
+
+/**
  * Разобрать список: по строке на прокси. Дубли внутри самого списка схлопываем.
+ *
+ * Заголовки схем переключают схему для идущих следом строк — без этого HTTP-прокси
+ * молча сохранялись как socks5 и половина базы оказывалась нерабочей (баг 1, 21.07).
+ *
  * @param {string} text @param {{scheme?: string}} [defaults]
- * @returns {{ items: object[], errors: {line:number, raw:string, reason:string}[] }}
+ * @returns {{ items: object[], errors: {line:number, raw:string, reason:string}[], rotationLinks: string[] }}
  */
 export function parseProxyList(text, defaults = {}) {
   const lines = String(text || '').split(/\r?\n/)
   const items = []
   const errors = []
+  const rotationLinks = []
   const seen = new Set()
+  // Схема «здесь и ниже»: стартуем с той, что выбрал человек, дальше её меняют заголовки.
+  let current = SCHEMES.includes(defaults.scheme) ? defaults.scheme : 'socks5'
   lines.forEach((raw, i) => {
     const trimmed = raw.trim()
     if (!trimmed || trimmed.startsWith('#') || trimmed.startsWith('//')) return
-    const parsed = parseProxyLine(trimmed, defaults)
+    const header = schemeHeader(trimmed)
+    if (header) { current = header; return }
+    if (isRotationLink(trimmed)) { rotationLinks.push(trimmed); return }
+    const parsed = parseProxyLine(trimmed, { ...defaults, scheme: current })
     if (!parsed) {
       errors.push({ line: i + 1, raw: trimmed, reason: 'не удалось разобрать формат' })
       return
@@ -108,7 +136,7 @@ export function parseProxyList(text, defaults = {}) {
     seen.add(key)
     items.push({ ...parsed, raw: trimmed })
   })
-  return { items, errors }
+  return { items, errors, rotationLinks }
 }
 
 /** Ключ для дедупликации: адрес + учётка (один хост может продаваться с разными логинами). */

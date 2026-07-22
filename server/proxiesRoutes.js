@@ -1,6 +1,6 @@
 /** CRUD-роуты сущности «Прокси» (§3.2/3.4). Монтируется в /api/proxies. */
 import { Router } from 'express'
-import { listProxies, getProxy, createProxy, updateProxy, deleteProxy, checkAllProxies, sharedProxies, probeProxyGeo, probeProxyExitGeo, tcpPing } from './proxies.js'
+import { listProxies, getProxy, createProxy, updateProxy, deleteProxy, checkAllProxies, sharedProxies, probeProxy, geoNote, tcpPing } from './proxies.js'
 import { loadAllMeta } from './accountsMeta.js'
 import { parseProxyList, proxyKey, assignLabels } from './lib/proxyImport.js'
 import { appendAudit } from './lib/auditLog.js'
@@ -39,16 +39,11 @@ proxiesRouter.post('/probe', async (req, res) => {
     const { host, port, scheme, username, password } = req.body ?? {}
     if (!host || !port) return res.status(400).json({ ok: false, error: 'Укажите host и port' })
     const started = Date.now()
-    const alive = await tcpPing(String(host), Number(port))
+    // «Живость» = выход наружу через прокси, а не открытый порт: порт отвечает и на
+    // чужом протоколе, из-за чего нерабочий прокси показывался зелёным (баг 2, 21.07).
+    const { status, geo, geoSource } = await probeProxy({ host, port, scheme, username, password })
     const ms = Date.now() - started
-    // Гео ВЫХОДНОГО IP (через прокси); если не удалось — гео адреса шлюза как запасной вариант.
-    let geo = null, geoSource = null
-    if (alive) {
-      geo = await probeProxyExitGeo({ host, port, scheme, username, password })
-      if (geo) geoSource = 'exit'
-      else { geo = await probeProxyGeo(String(host)); if (geo) geoSource = 'gateway' }
-    }
-    res.json({ ok: true, alive, ms, geo, geoSource })
+    res.json({ ok: true, alive: status === 'ok', status, ms, geo, geoSource })
   } catch (err) { fail(res, err, 500) }
 })
 
@@ -56,24 +51,17 @@ proxiesRouter.post('/:id/check', async (req, res) => {
   try {
     const existing = await getProxy(req.params.id)
     if (!existing) return res.status(404).json({ ok: false, error: 'Прокси не найден' })
-    // Пинг с замером времени + статус.
     const t0 = Date.now()
-    const alive = await tcpPing(existing.host, existing.port)
+    const { status, geo, geoSource } = await probeProxy(existing)
     const ms = Date.now() - t0
-    let proxy = (await updateProxy(existing.id, { status: alive ? 'ok' : 'dead', lastCheckAt: Date.now() })) || existing
-    // Гео ВЫХОДНОГО IP (через прокси) — для мобильных/резидентных это страна выхода, а не шлюза.
-    // Если через прокси не удалось — гео адреса шлюза как запасной вариант (§3.4).
-    let geo = null, geoSource = null
-    if (proxy.status === 'ok') {
-      geo = await probeProxyExitGeo(proxy)
-      if (geo) geoSource = 'exit'
-      else { geo = await probeProxyGeo(proxy.host); if (geo) geoSource = 'gateway' }
-    }
-    // Страна выставляется автоматически из гео (руками выбирать не нужно).
-    if (geo?.country && geo.country !== proxy.country) {
-      proxy = (await updateProxy(proxy.id, { country: geo.country })) || proxy
-    }
-    res.json({ ok: true, proxy, geo, geoSource, ms: alive ? ms : null })
+    // Страна, её источник и подпись пишутся одной транзакцией — иначе `note` остаётся
+    // от прошлой пробы и противоречит `country` (баг 5, 21.07).
+    const proxy = (await updateProxy(existing.id, {
+      status,
+      lastCheckAt: Date.now(),
+      ...(geo ? { country: geo.country || existing.country, geoSource, note: geoNote(geo) } : {}),
+    })) || existing
+    res.json({ ok: true, proxy, geo, geoSource, ms: status === 'dead' ? null : ms })
   } catch (err) { fail(res, err, 500) }
 })
 
@@ -83,12 +71,12 @@ proxiesRouter.post('/:id/check', async (req, res) => {
 proxiesRouter.post('/import/preview', async (req, res) => {
   try {
     const { text, scheme } = req.body ?? {}
-    const { items, errors } = parseProxyList(text, { scheme })
+    const { items, errors, rotationLinks } = parseProxyList(text, { scheme })
     const existing = await listProxies()
     const known = new Set(existing.map(proxyKey))
     const fresh = items.filter((i) => !known.has(proxyKey(i)))
     const dupes = items.length - fresh.length
-    res.json({ ok: true, items: fresh, errors, total: items.length, duplicates: dupes })
+    res.json({ ok: true, items: fresh, errors, rotationLinks, total: items.length, duplicates: dupes })
   } catch (err) { fail(res, err) }
 })
 
@@ -109,7 +97,7 @@ async function inBatches(list, size, fn) {
 proxiesRouter.post('/import', async (req, res) => {
   try {
     const { text, scheme, kind, tag = '', template = '{country} {tag} {n}', probe = true, note = '' } = req.body ?? {}
-    const { items, errors } = parseProxyList(text, { scheme })
+    const { items, errors, rotationLinks } = parseProxyList(text, { scheme })
     if (!items.length) return res.status(400).json({ ok: false, error: 'Не разобрано ни одной строки', errors })
 
     const existing = await listProxies()
@@ -120,14 +108,8 @@ proxiesRouter.post('/import', async (req, res) => {
     // Живость + страна выхода. Без probe импорт мгновенный, но страна остаётся неизвестной.
     const probed = probe
       ? await inBatches(fresh, 8, async (p) => {
-        const alive = await tcpPing(p.host, p.port)
-        let geo = null, geoSource = null
-        if (alive) {
-          geo = await probeProxyExitGeo(p)
-          if (geo) geoSource = 'exit'
-          else { geo = await probeProxyGeo(p.host); if (geo) geoSource = 'gateway' }
-        }
-        return { ...p, status: alive ? 'ok' : 'dead', country: geo?.country || '', geo, geoSource }
+        const { status, geo, geoSource } = await probeProxy(p)
+        return { ...p, status, country: geo?.country || '', geo, geoSource }
       })
       : fresh.map((p) => ({ ...p, status: 'unknown', country: '', geo: null, geoSource: null }))
 
@@ -139,7 +121,8 @@ proxiesRouter.post('/import', async (req, res) => {
         created.push(await createProxy({
           label: labels[i], kind, scheme: p.scheme, host: p.host, port: p.port,
           username: p.username, password: p.password, country: p.country, status: p.status,
-          note: [note, p.geo?.isp ? `${p.geo.countryName || ''} ${p.geo.city || ''} · ${p.geo.isp}`.trim() : ''].filter(Boolean).join(' · '),
+          geoSource: p.geoSource, // §9.10: отличить «гео реального IP» от «гео шлюза» (баг 4)
+          note: [note, geoNote(p.geo)].filter(Boolean).join(' · '),
         }))
       } catch (e) {
         errors.push({ raw: p.raw, reason: e instanceof Error ? e.message : 'не сохранён' })
@@ -153,8 +136,11 @@ proxiesRouter.post('/import', async (req, res) => {
     }).catch(() => {})
 
     res.json({
-      ok: true, created, skipped, errors,
+      ok: true, created, skipped, errors, rotationLinks,
       alive: created.filter((p) => p.status === 'ok').length,
+      // «Порт открыт, но наружу не пускает» — почти всегда неверная схема. Это отдельный
+      // счётчик, а не «мёртвый»: такие лечатся сменой http↔socks5, а не выбрасыванием.
+      bad: created.filter((p) => p.status === 'bad').length,
       dead: created.filter((p) => p.status === 'dead').length,
     })
   } catch (err) { fail(res, err, 500) }

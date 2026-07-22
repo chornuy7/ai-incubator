@@ -2,7 +2,11 @@ import { apiGet, apiPost, apiPut, apiDelete } from './client'
 
 export type ProxyKind = 'static' | 'mobile' | 'farm'
 export type ProxyScheme = 'socks5' | 'http'
-export type ProxyStatus = 'ok' | 'dead' | 'unknown'
+/**
+ * `bad` — порт открыт, но выйти наружу через прокси не удалось. Почти всегда это
+ * неверная схема (socks5 вместо http): лечится сменой схемы, а не удалением.
+ */
+export type ProxyStatus = 'ok' | 'bad' | 'dead' | 'unknown'
 
 export interface Proxy {
   id: string
@@ -15,6 +19,8 @@ export interface Proxy {
   password: string
   country: string
   status: ProxyStatus
+  /** Откуда взята страна: реальный выходной IP или адрес шлюза («примерно»). */
+  geoSource: GeoSource
   note: string
   lastCheckAt: number | null
   createdAt: number
@@ -73,7 +79,7 @@ export interface ParsedProxyLine { scheme: ProxyScheme; host: string; port: numb
 export interface ImportIssue { line?: number; raw: string; reason: string }
 
 /** Разобрать список без записи в базу — показать, что понято, до импорта. */
-export async function previewProxyImport(text: string, scheme?: ProxyScheme): Promise<{ items: ParsedProxyLine[]; errors: ImportIssue[]; total: number; duplicates: number }> {
+export async function previewProxyImport(text: string, scheme?: ProxyScheme): Promise<{ items: ParsedProxyLine[]; errors: ImportIssue[]; rotationLinks: string[]; total: number; duplicates: number }> {
   return apiPost('/api/proxies/import/preview', { text, scheme })
 }
 
@@ -90,6 +96,6 @@ export interface ProxyImportInput {
   note?: string
 }
 
-export async function importProxies(input: ProxyImportInput): Promise<{ created: Proxy[]; skipped: ImportIssue[]; errors: ImportIssue[]; alive: number; dead: number }> {
+export async function importProxies(input: ProxyImportInput): Promise<{ created: Proxy[]; skipped: ImportIssue[]; errors: ImportIssue[]; rotationLinks: string[]; alive: number; bad: number; dead: number }> {
   return apiPost('/api/proxies/import', input)
 }

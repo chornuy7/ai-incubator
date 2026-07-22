@@ -14,7 +14,12 @@ const PROXIES_FILE = process.env.PROXIES_FILE || dataPath('proxies.json')
 
 export const PROXY_KINDS = ['static', 'mobile', 'farm'] // статический / мобильный / своя ферма
 export const PROXY_SCHEMES = ['socks5', 'http']
-export const PROXY_STATUSES = ['ok', 'dead', 'unknown']
+/**
+ * `bad` — порт открыт, но выйти наружу через прокси не удалось: чаще всего это
+ * неверная схема (socks5 вместо http). Раньше такой прокси показывался как `ok`,
+ * потому что живость мерилась TCP-пингом, а порт открыт всегда (баг 2, 21.07).
+ */
+export const PROXY_STATUSES = ['ok', 'bad', 'dead', 'unknown']
 
 /** Построить URL-строку прокси (совместимо с parseProxy). @param {object} p */
 export function toProxyUrl(p) {
@@ -36,6 +41,9 @@ export function normalizeProxy(input = {}) {
     password: String(input.password ?? ''),
     country: String(input.country ?? '').trim().toLowerCase(),
     status: PROXY_STATUSES.includes(input.status) ? input.status : 'unknown',
+    // Откуда взялась страна: `exit` — реальный выходной IP, `gateway` — адрес шлюза
+    // (у мобильных прокси это дата-центр провайдера, а не страна выхода — то есть «примерно»).
+    geoSource: ['exit', 'gateway'].includes(input.geoSource) ? input.geoSource : null,
     note: String(input.note ?? ''),
   }
 }
@@ -106,12 +114,46 @@ export function tcpPing(host, port, timeoutMs = 6000) {
   })
 }
 
-/** Проверить один прокси и записать статус ok/dead + lastCheckAt. */
-export async function checkProxyLiveness(id, timeoutMs = 6000) {
+/**
+ * Проверить прокси по-настоящему: не «открыт ли порт», а «видно ли через него интернет».
+ *
+ * TCP-пинг оставлен как быстрая отсечка мёртвого хоста, но сам по себе он ничего не
+ * доказывает — порт отвечает и когда мы говорим на нём не тем протоколом. Поэтому
+ * решающая проба — выход наружу (`probeProxyExitGeo`). Она же даёт настоящую страну.
+ *
+ * @param {object} p запись прокси
+ * @param {number} [timeoutMs]
+ * @returns {Promise<{status:string, geo:object|null, geoSource:string|null}>}
+ */
+export async function probeProxy(p, timeoutMs = 9000) {
+  const reachable = await tcpPing(p.host, p.port, Math.min(timeoutMs, 6000))
+  if (!reachable) return { status: 'dead', geo: null, geoSource: null }
+
+  const exit = await probeProxyExitGeo(p, timeoutMs)
+  if (exit) return { status: 'ok', geo: exit, geoSource: 'exit' }
+
+  // Порт открыт, а наружу не пускает. Страну берём по шлюзу — но помечаем её как
+  // приблизительную, чтобы оператор не раздал «немецкий» прокси с польским выходом.
+  const gateway = await probeProxyGeo(p.host, Math.min(timeoutMs, 6000))
+  return { status: 'bad', geo: gateway, geoSource: gateway ? 'gateway' : null }
+}
+
+/** Проверить один прокси и записать статус + актуальные гео/geoSource. */
+export async function checkProxyLiveness(id, timeoutMs = 9000) {
   const p = await getProxy(id)
   if (!p) return null
-  const alive = await tcpPing(p.host, p.port, timeoutMs)
-  return updateProxy(id, { status: alive ? 'ok' : 'dead', lastCheckAt: Date.now() })
+  const { status, geo, geoSource } = await probeProxy(p, timeoutMs)
+  return updateProxy(id, {
+    status,
+    lastCheckAt: Date.now(),
+    ...(geo ? { country: geo.country || p.country, geoSource, note: geoNote(geo) } : {}),
+  })
+}
+
+/** Человекочитаемая подпись гео — она же уходит в `note`, чтобы не расходилась со страной. */
+export function geoNote(geo) {
+  if (!geo) return ''
+  return [geo.countryName || geo.country, geo.city, geo.isp].filter(Boolean).join(' · ')
 }
 
 /** GeoIP по IP прокси (ip-api.com, без ключа) — страна/город/провайдер. Best-effort. */
@@ -203,14 +245,25 @@ export async function probeProxyExitGeo(proxy = {}, timeoutMs = 9000) {
   } catch { return null }
 }
 
-/** Проверить все прокси (последовательно, чтобы не открывать сотни сокетов разом). */
-export async function checkAllProxies(timeoutMs = 6000) {
+/**
+ * Проверить все прокси (последовательно, чтобы не открывать сотни сокетов разом).
+ *
+ * Обновляет и гео тоже: раньше кнопка трогала только статус, поэтому после починки
+ * схемы страна оставалась старой и неверной, а `note` противоречил `country` (баг 5).
+ */
+export async function checkAllProxies(timeoutMs = 9000) {
   const all = await listProxies()
   const results = []
   for (const p of all) {
-    const alive = await tcpPing(p.host, p.port, timeoutMs)
-    try { await updateProxy(p.id, { status: alive ? 'ok' : 'dead', lastCheckAt: Date.now() }) } catch { /* skip */ }
-    results.push({ id: p.id, status: alive ? 'ok' : 'dead' })
+    const { status, geo, geoSource } = await probeProxy(p, timeoutMs)
+    try {
+      await updateProxy(p.id, {
+        status,
+        lastCheckAt: Date.now(),
+        ...(geo ? { country: geo.country || p.country, geoSource, note: geoNote(geo) } : {}),
+      })
+    } catch { /* skip */ }
+    results.push({ id: p.id, status, country: geo?.country || p.country || '', geoSource })
   }
   return results
 }
