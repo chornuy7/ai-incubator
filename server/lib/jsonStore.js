@@ -37,7 +37,22 @@ export async function writeJson(file, value) {
   await fs.mkdir(path.dirname(file), { recursive: true })
   const tmp = `${file}.${process.pid}.${Date.now()}.tmp`
   await fs.writeFile(tmp, JSON.stringify(value, null, 2), 'utf8')
-  await fs.rename(tmp, file)
+  // На Windows rename падает с EPERM/EBUSY, если файл в этот момент кто-то держит
+  // открытым (антивирус, редактор, параллельное чтение). Данные при этом целы —
+  // достаточно подождать и повторить, иначе теряется запись метаданных аккаунта.
+  for (let attempt = 0; ; attempt++) {
+    try {
+      await fs.rename(tmp, file)
+      return
+    } catch (e) {
+      const retriable = e?.code === 'EPERM' || e?.code === 'EBUSY' || e?.code === 'EACCES'
+      if (!retriable || attempt >= 5) {
+        try { await fs.unlink(tmp) } catch { /* временный файл уже убран */ }
+        throw e
+      }
+      await new Promise((r) => setTimeout(r, 40 * (attempt + 1)))
+    }
+  }
 }
 
 // Очередь операций на каждый файл — сериализует read-modify-write, чтобы два

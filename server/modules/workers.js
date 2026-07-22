@@ -819,6 +819,17 @@ export async function runNeuroDialogs(task, store) {
       const accountId = myAccounts[idx++ % myAccounts.length]
       const meta = await getAccountMeta(accountId)
       if (!isAccountRunnable(meta.status || 'active')) {
+        // Спамблок/карантин — это надолго. Раньше такой аккаунт оставался в ротации и
+        // проверялся каждый круг: лог забивался «Пропуск аккаунта: spamblock» до бесконечности,
+        // а поток тратил обороты впустую. Теперь выбрасываем его из своего набора.
+        const dead = ['spamblock', 'quarantine', 'invalid', 'banned'].includes(meta.status)
+        if (dead) {
+          const at = myAccounts.indexOf(accountId)
+          if (at !== -1) myAccounts.splice(at, 1)
+          await store.appendLog(task, 'warning', `${meta.name}: ${meta.status} — выведен из работы (осталось ${myAccounts.length})`, meta.name)
+          if (!myAccounts.length) { await store.appendLog(task, 'error', 'В потоке не осталось рабочих аккаунтов'); break }
+          continue
+        }
         skips += 1
         await store.appendLog(task, 'warning', `Пропуск аккаунта: ${meta.status}`, meta.name)
         continue

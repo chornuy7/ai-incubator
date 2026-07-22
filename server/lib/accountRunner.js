@@ -106,8 +106,12 @@ export async function applyBanPolicy(task, accountId, store, err, accountName) {
       await store.saveTask(task)
       return true
     }
-    await setStatus(accountId, 'spamblock', { code: 'SPAM', reason: 'Спамблок — аккаунт помечен и пропускается', task })
-    await store.appendLog(task, 'warning', 'Спамблок — аккаунт помечен и пропускается', accountName)
+    // Со сроком: без него аккаунт залипал в spamblock навсегда и не возвращался в работу
+    // сам. Telegram точную длительность не сообщает — берём сутки, это типичный срок
+    // первого спамблока; `reconcileExpiredStatuses` вернёт аккаунт в active по истечении.
+    const until = Date.now() + (safety.spamblockHours ?? 24) * 3600 * 1000
+    await setStatus(accountId, 'spamblock', { code: 'SPAM', reason: 'Спамблок — аккаунт помечен и пропускается', until, task })
+    await store.appendLog(task, 'warning', `Спамблок — аккаунт выведен до ${new Date(until).toLocaleString('ru-RU')}`, accountName)
     await store.saveTask(task)
     return true
   }
