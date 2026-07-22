@@ -12,6 +12,8 @@ export interface Goal {
   deadline: string | null // §4: дедлайн (ISO-дата) или null
   leadTarget: number // §4: сколько лидов должна привести цель (0 = не задано)
   followUp: FollowUp // §9: дожим после закрытия диалога
+  toneOfVoice: string // §9: как писать — общий тон для всех модулей кампании
+  restrictions: string // §9: чего делать нельзя — общий запрет для всех модулей
   createdAt: number
   updatedAt: number
 }
@@ -27,6 +29,8 @@ export interface GoalInput {
   deadline?: string | null
   leadTarget?: number
   followUp?: FollowUp
+  toneOfVoice?: string
+  restrictions?: string
 }
 
 /**

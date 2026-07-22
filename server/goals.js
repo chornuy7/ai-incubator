@@ -9,7 +9,7 @@ import { dataPath, readJson, writeJson } from './lib/jsonStore.js'
 const GOALS_FILE = process.env.GOALS_FILE || dataPath('goals.json')
 
 /** Поля, которые можно задавать/менять (остальное — служебное). */
-const FIELDS = ['name', 'description', 'targetAction', 'stages', 'completionCriteria', 'audience', 'channels', 'deadline', 'leadTarget', 'followUp']
+const FIELDS = ['name', 'description', 'targetAction', 'stages', 'completionCriteria', 'audience', 'channels', 'deadline', 'leadTarget', 'followUp', 'toneOfVoice', 'restrictions']
 
 /** Нормализовать список каналов/групп цели: trim, без @, без дублей. @param {*} v */
 function normChannels(v) {
@@ -80,6 +80,10 @@ export function normalizeGoal(input = {}) {
     deadline: normDeadline(input.deadline), // §4: дедлайн (опц.)
     leadTarget: normLeadTarget(input.leadTarget), // §4: цель по лидам (опц.)
     followUp: normFollowUp(input.followUp), // §9: дожим после достижения цели
+    // §9: как писать и чего не делать. Одно место на всю кампанию — иначе правила
+    // расходятся между модулями: в рассылке один тон, в комментариях другой.
+    toneOfVoice: String(input.toneOfVoice ?? '').slice(0, 2000),
+    restrictions: String(input.restrictions ?? '').slice(0, 2000),
   }
 }
 
@@ -123,7 +127,12 @@ export async function listGoals() {
   const all = await readJson(GOALS_FILE, [])
   // Цели, созданные до появления поля, отдаём с дефолтом: иначе воркеру и форме
   // пришлось бы проверять `undefined` в каждом месте, где читается дожим.
-  return (Array.isArray(all) ? all : []).map((g) => ({ ...g, followUp: normFollowUp(g?.followUp) }))
+  return (Array.isArray(all) ? all : []).map((g) => ({
+    ...g,
+    followUp: normFollowUp(g?.followUp),
+    toneOfVoice: String(g?.toneOfVoice ?? ''),
+    restrictions: String(g?.restrictions ?? ''),
+  }))
 }
 
 export async function getGoal(id) {
@@ -166,7 +175,9 @@ export async function updateGoal(id, patch = {}) {
               ? normLeadTarget(patch[k])
               : k === 'followUp'
                 ? normFollowUp(patch[k])
-                : (k === 'name' ? String(patch[k]).trim() : String(patch[k]))
+                : ['toneOfVoice', 'restrictions'].includes(k)
+                  ? String(patch[k] ?? '').slice(0, 2000)
+                  : (k === 'name' ? String(patch[k]).trim() : String(patch[k]))
     }
   }
   if (!goals[i].name) throw new Error('Название цели не может быть пустым')

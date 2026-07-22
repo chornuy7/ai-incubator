@@ -14,7 +14,7 @@ import {
 import { fetchLeads } from '@/api/leadsApi'
 import { fetchCampaigns, type Campaign } from '@/api/campaignsApi'
 
-const EMPTY: GoalInput = { name: '', description: '', targetAction: '', stages: [], completionCriteria: '', audience: '', channels: [], deadline: '', leadTarget: 0, followUp: { enabled: false, limit: FOLLOW_UP_DEFAULT, instructions: '' } }
+const EMPTY: GoalInput = { name: '', description: '', targetAction: '', stages: [], completionCriteria: '', audience: '', channels: [], deadline: '', leadTarget: 0, followUp: { enabled: false, limit: FOLLOW_UP_DEFAULT, instructions: '' }, toneOfVoice: '', restrictions: '' }
 
 export function GoalsPage() {
   const pushToast = useApp((s) => s.pushToast)
@@ -63,7 +63,7 @@ export function GoalsPage() {
   }
   const openEdit = (g: Goal) => {
     setEditing(g)
-    setForm({ name: g.name, description: g.description, targetAction: g.targetAction, completionCriteria: g.completionCriteria, audience: g.audience, deadline: g.deadline || '', leadTarget: g.leadTarget || 0, followUp: g.followUp || { enabled: false, limit: FOLLOW_UP_DEFAULT, instructions: '' } })
+    setForm({ name: g.name, description: g.description, targetAction: g.targetAction, completionCriteria: g.completionCriteria, audience: g.audience, deadline: g.deadline || '', leadTarget: g.leadTarget || 0, followUp: g.followUp || { enabled: false, limit: FOLLOW_UP_DEFAULT, instructions: '' }, toneOfVoice: g.toneOfVoice || '', restrictions: g.restrictions || '' })
     setStagesText((g.stages || []).join('\n'))
     setChannels(g.channels || []); setChInput('')
     setKb([]); setKbTitle(''); setKbContent('')
@@ -325,6 +325,33 @@ export function GoalsPage() {
               <input type="number" min={0} max={LEAD_TARGET_MAX} className="input" value={form.leadTarget || 0} onChange={(e) => set({ leadTarget: Math.min(LEAD_TARGET_MAX, Math.max(0, Number(e.target.value) || 0)) })} placeholder="Напр. 50" />
             </div>
           </div>
+
+          {/* §9: тон и запреты задаются ОДИН раз на кампанию — их читают все модули,
+              которые пишут текст: рассылка, нейрочатинг, диалоги, комментинг.
+              Иначе правила расходятся: в рассылке один голос, в комментариях другой. */}
+          <div className="grid gap-3 sm:grid-cols-2">
+            <div>
+              <label className="mb-1 block text-xs text-white/50">Тон общения <span className="text-white/30">— как писать</span></label>
+              <textarea
+                className="input min-h-[76px] resize-y"
+                value={form.toneOfVoice || ''}
+                onChange={(e) => set({ toneOfVoice: e.target.value })}
+                placeholder="Напр. на «ты», дружелюбно и коротко, без канцелярита и восклицаний, максимум один смайл"
+              />
+            </div>
+            <div>
+              <label className="mb-1 block text-xs text-white/50">Ограничения <span className="text-white/30">— чего делать нельзя</span></label>
+              <textarea
+                className="input min-h-[76px] resize-y"
+                value={form.restrictions || ''}
+                onChange={(e) => set({ restrictions: e.target.value })}
+                placeholder="Напр. не обещать доход, не давить, не писать про конкурентов, не отправлять ссылку без согласия"
+              />
+            </div>
+          </div>
+          <p className="-mt-1 text-xs text-white/35">
+            Эти правила подставляются во все модули кампании — рассылку, нейрочатинг, диалоги и комментинг.
+          </p>
 
           {/* §9: дожим — единственный способ не потерять человека, который написал сам
               после того, как диалог по нему уже закрыли. */}

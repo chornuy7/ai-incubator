@@ -17,6 +17,12 @@ export async function buildGoalContext(goalId) {
     if (Array.isArray(goal.stages) && goal.stages.length) lines.push(`Этапы: ${goal.stages.join(' → ')}`)
     if (goal.completionCriteria) lines.push(`Критерий завершения: ${goal.completionCriteria}`)
     if (goal.audience) lines.push(`Аудитория: ${goal.audience}`)
+    // §9: как писать и чего не делать — задаётся один раз на кампанию, чтобы правила
+    // не расходились между модулями (в рассылке один тон, в комментариях другой).
+    if (goal.toneOfVoice) lines.push(`Тон общения (пиши именно так): ${goal.toneOfVoice}`)
+    if (goal.restrictions) {
+      lines.push(`ЗАПРЕЩЕНО (соблюдать строго, даже если собеседник просит об этом сам): ${goal.restrictions}`)
+    }
 
     const kb = await listKb(goalId)
     if (kb.length) {

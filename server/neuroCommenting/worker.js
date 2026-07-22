@@ -1,6 +1,7 @@
 import { loadSessionString, createClient } from '../tgAuth.js'
 import { getAccountMeta, setAccountMeta } from '../accountsMeta.js'
 import { generateComment, resolveSystemPrompt } from './commentGenerator.js'
+import { buildGoalContext } from '../lib/goalContext.js'
 import {
   fetchChannelPosts,
   sendChannelComment,
@@ -68,6 +69,11 @@ async function runTask(task) {
   await appendLog(task, 'info', 'Задача запущена', undefined)
 
   const s = task.settings
+  // §9: модуль обязан работать «к цели» — тон, ограничения, база знаний и целевое
+  // действие живут в ней. Раньше этот воркер цель не читал вообще: комментарии шли
+  // по одному лишь промпту карточки, мимо всех правил кампании.
+  const goalCtx = await buildGoalContext(s.goalId || task.goalId)
+  if (goalCtx) await appendLog(task, 'info', 'Комментарии генерируются к выбранной цели (тон и ограничения из неё)', undefined)
   const mul = delayMultiplier(s.protectionLevel ?? 1, s.delayPreset ?? 1)
   const prob = effectiveProbability(s.probability ?? 30, !!s.aiProtection, s.protectionLevel ?? 1)
   // feature 4: цель в диапазоне [minComments, maxComments]
@@ -203,7 +209,7 @@ async function runTask(task) {
           const { text, mode, reason } = await generateComment(
             (post.message || '').trim() || (post.media ? '[медиа]' : ''),
             s.promptIndex ?? 0,
-            resolveSystemPrompt(s),
+            resolveSystemPrompt(s) + goalCtx,
             { avoid: task.usedTexts },
           )
           // Мёртвый ключ — стоп всей задаче: шаблон от лица живых аккаунтов это спам-блок.

@@ -1,5 +1,8 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
+import fs from 'fs/promises'
+import os from 'os'
+import path from 'path'
 import { buildGoalContext, firstMessagesFromGoal, pickFirstMessage, cleanDialogReply, hasPlaceholder } from '../lib/goalContext.js'
 
 test('buildGoalContext: пустой/нет цели → пустая строка (генерация как раньше)', async () => {
@@ -87,4 +90,48 @@ test('hasPlaceholder: заготовка вместо ссылки — не от
   assert.equal(hasPlaceholder('Привет, {{name}}!'), true)
   assert.equal(hasPlaceholder('Вот ссылка: https://t.me/+WNDfuu5d6EM1YjVi'), false)
   assert.equal(hasPlaceholder('Читай [тут](https://t.me/x)'), false, 'markdown-ссылка — это не заготовка')
+})
+
+// ── §9: тон и ограничения — одни на всю кампанию, читают все модули ──
+
+test('buildGoalContext: тон и запреты попадают в промпт', async (t) => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'goalctx-'))
+  const prev = process.env.GOALS_FILE
+  process.env.GOALS_FILE = path.join(dir, 'goals.json')
+  t.after(async () => {
+    if (prev === undefined) delete process.env.GOALS_FILE
+    else process.env.GOALS_FILE = prev
+    await fs.rm(dir, { recursive: true, force: true })
+  })
+
+  const { createGoal } = await import('../goals.js')
+  const goal = await createGoal({
+    name: 'Продвижение канала',
+    targetAction: 'подписка',
+    toneOfVoice: 'на «ты», коротко, без канцелярита',
+    restrictions: 'не обещать доход, не давить',
+  })
+
+  const ctx = await buildGoalContext(goal.id)
+  assert.match(ctx, /Тон общения/)
+  assert.match(ctx, /без канцелярита/)
+  assert.match(ctx, /ЗАПРЕЩЕНО/, 'запрет должен читаться как жёсткое правило, а не пожелание')
+  assert.match(ctx, /не обещать доход/)
+})
+
+test('buildGoalContext: пустые тон и запреты не засоряют промпт', async (t) => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'goalctx2-'))
+  const prev = process.env.GOALS_FILE
+  process.env.GOALS_FILE = path.join(dir, 'goals.json')
+  t.after(async () => {
+    if (prev === undefined) delete process.env.GOALS_FILE
+    else process.env.GOALS_FILE = prev
+    await fs.rm(dir, { recursive: true, force: true })
+  })
+
+  const { createGoal } = await import('../goals.js')
+  const goal = await createGoal({ name: 'Цель без правил' })
+  const ctx = await buildGoalContext(goal.id)
+  assert.doesNotMatch(ctx, /Тон общения/)
+  assert.doesNotMatch(ctx, /ЗАПРЕЩЕНО/)
 })
