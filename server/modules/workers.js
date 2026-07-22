@@ -267,7 +267,7 @@ export async function runNeuroCommenting(task, store) {
             const useDist = Array.isArray(s.typeWeights) && s.typeWeights.some((w) => Number(w) > 0)
             const typeIdx = useDist ? weightedPickIndex(s.typeWeights) : (s.promptIndex ?? 0)
             const sysPrompt = useDist ? resolveSystemPrompt({ ...s, promptIndex: typeIdx, promptText: '' }) : resolveSystemPrompt(s)
-            const { text, mode } = await generateComment(postText, typeIdx, sysPrompt + goalCtx)
+            const { text, mode } = await generateComment(postText, typeIdx, sysPrompt + goalCtx, accountId)
             if (mode !== 'openai') {
               const hint = mode === 'template_no_key'
                 ? 'Шаблон (нет OPENAI_API_KEY в .env)'
@@ -386,7 +386,7 @@ export async function runNeuroChatting(task, store) {
           continue
         }
         await sleep(pickDelay(s.delays?.action?.[0] ?? 42, s.delays?.action?.[1] ?? 78, mul) * 1000)
-        const { text: reply, mode } = await generateComment(msg.message || '', s.promptIndex ?? 0, resolveSystemPrompt(s) + goalCtx)
+        const { text: reply, mode } = await generateComment(msg.message || '', s.promptIndex ?? 0, resolveSystemPrompt(s) + goalCtx, accountId)
         if (mode !== 'openai') {
           await store.appendLog(task, 'warning', mode === 'template_no_key' ? 'Шаблон (нет OPENAI_API_KEY)' : 'Шаблон (OpenAI недоступен)', meta.name)
         }
@@ -948,6 +948,7 @@ export async function runNeuroDialogs(task, store) {
             prompt,
             s.promptIndex ?? 0,
             dialogSystemPrompt(s, goal, goalObj, effStatus, stageForStatus(goalObj?.stages, effStatus)),
+            accountId,
           )
           // Личная переписка — не то место, где годится шаблон-заглушка: она подставляла
           // в сообщение стенограмму диалога («По «Переписка: Я: Привет!...» — согласен»)
@@ -1814,7 +1815,7 @@ export async function runMailing(task, store) {
             (message || goalOpeners[0]) ? `Опирайся на этот текст как на образец смысла и тона:
 «${message || goalOpeners[0]}»` : '',
           ].filter(Boolean).join(' ')
-          const gen = await generateComment(openerTask, s.promptIndex ?? 0, resolveSystemPrompt(s) + goalCtx)
+          const gen = await generateComment(openerTask, s.promptIndex ?? 0, resolveSystemPrompt(s) + goalCtx, accountId)
           if (gen.text) text = gen.text
         }
         // 3) Пауза «по-человечески» и отправка (#6: прерываемая — стоп не шлёт лишнее ЛС).

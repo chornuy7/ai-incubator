@@ -21,8 +21,12 @@ export function isAiGenerationEnabled() {
   return Boolean(process.env.OPENAI_API_KEY?.trim())
 }
 
-/** @param {string} postText @param {number} promptIndex @param {string} [systemPrompt] */
-export async function generateComment(postText, promptIndex = 0, systemPrompt) {
+/**
+ * @param {string} postText @param {number} promptIndex @param {string} [systemPrompt]
+ * @param {string} [variantSeed] id аккаунта — чтобы шаблонный ответ отличался у разных
+ *   профилей (см. `templateComment`). Не влияет на ответ ИИ, только на запасной шаблон.
+ */
+export async function generateComment(postText, promptIndex = 0, systemPrompt, variantSeed = '') {
   const snippet = (postText || '').slice(0, 500)
   const system = systemPrompt?.trim() || PROMPTS[promptIndex] || PROMPTS[0]
   const apiKey = process.env.OPENAI_API_KEY?.trim()
@@ -60,7 +64,7 @@ export async function generateComment(postText, promptIndex = 0, systemPrompt) {
     }
   }
 
-  return { text: templateComment(snippet, promptIndex), mode: apiKey ? 'template_api_error' : 'template_no_key' }
+  return { text: templateComment(snippet, promptIndex, variantSeed), mode: apiKey ? 'template_api_error' : 'template_no_key' }
 }
 
 /** Смёржить глобальный системный промпт (feature 6) с промптом карточки. @param {string} cardPrompt */
@@ -88,12 +92,34 @@ export function resolveSystemPrompt(settings) {
   return mergeGlobalPrompt(card)
 }
 
-/** @param {string} postText @param {number} promptIndex */
-function templateComment(postText, promptIndex) {
+/** Стабильный хеш строки — одинаковый вход даёт одинаковый вариант. @param {string} s */
+function seedHash(s) {
+  let h = 0
+  for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0
+  return Math.abs(h)
+}
+
+/**
+ * Запасной шаблон, когда ИИ недоступен (нет ключа/кончилась квота).
+ *
+ * Вариант выбирается по (аккаунт + текст поста), а НЕ по promptIndex. promptIndex —
+ * настройка ЗАДАЧИ, общая для всех аккаунтов, поэтому раньше все профили под одним
+ * постом писали ДОСЛОВНО одинаковый текст. Проверено на живой группе 21.07: три
+ * аккаунта оставили три одинаковых «Привет! Рад быть здесь…». Одинаковый текст с
+ * нескольких аккаунтов — сигнатура ботофермы и прямой путь к спам-блоку (тест 1.3).
+ *
+ * Хеш стабильный: тот же аккаунт на том же посте получит тот же вариант (без
+ * перебора при повторе), а разные аккаунты — разные.
+ *
+ * @param {string} postText @param {number} promptIndex @param {string} [variantSeed]
+ */
+function templateComment(postText, promptIndex, variantSeed = '') {
   const text = (postText || '').trim()
   const words = text.split(/\s+/).filter(Boolean)
   const hook = words.slice(0, 5).join(' ')
   const lower = text.toLowerCase()
+  // Без seed поведение прежнее (промпт-индекс) — чтобы не ломать вызовы без аккаунта.
+  const variant = variantSeed ? seedHash(`${variantSeed}|${text}`) : promptIndex
 
   const isGreeting = !text
     || words.length <= 3
@@ -108,7 +134,7 @@ function templateComment(postText, promptIndex) {
       'Здорово познакомиться с проектом, спасибо за welcome.',
       'Привет! Выглядит перспективно, буду на связи.',
     ]
-    return greet[promptIndex % greet.length]
+    return greet[variant % greet.length]
   }
 
   if (promptIndex === 3) return `А что думаете про «${hook.toLowerCase()}»?`
@@ -122,5 +148,5 @@ function templateComment(postText, promptIndex) {
     `«${hook}» — коротко и по делу, понравилось.`,
     `По «${hook}» — интересный угол, жду продолжения.`,
   ]
-  return contextual[promptIndex % contextual.length] || FALLBACKS[promptIndex % FALLBACKS.length]
+  return contextual[variant % contextual.length] || FALLBACKS[variant % FALLBACKS.length]
 }

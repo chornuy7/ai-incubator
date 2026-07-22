@@ -7,6 +7,7 @@ import assert from 'node:assert/strict'
 
 import { normalizeTargets } from '../targetFolders.js'
 import { postErrorHint, stopWorker } from '../modules/workers.js'
+import { generateComment } from '../neuroCommenting/commentGenerator.js'
 import { foldersForRequest } from '../lib/accessGuard.js'
 import { taskSignature, findDuplicateActiveTask } from '../lib/taskDedup.js'
 
@@ -102,4 +103,26 @@ test('6.2: у работающей задачи стоп только проси
   const out = await stopWorker('x_2', mockStore(task))
   assert.equal(out.stopRequested, true)
   assert.equal(out.status, 'running', 'воркер сам доведёт до stopped на выходе из цикла')
+})
+
+// ── 1.3: шаблонный комментарий различается по аккаунту ───────────────────
+test('1.3: разные аккаунты под одним постом пишут РАЗНЫЙ текст', async () => {
+  const post = 'Привет всем!'
+  const ids = ['acc_aaa111', 'acc_bbb222', 'acc_ccc333']
+  const texts = []
+  for (const id of ids) texts.push((await generateComment(post, 0, undefined, id)).text)
+  assert.equal(new Set(texts).size, texts.length,
+    'одинаковый текст с нескольких аккаунтов — сигнатура ботофермы и путь к спам-блоку')
+})
+
+test('1.3: тот же аккаунт на том же посте даёт стабильный текст', async () => {
+  const a = await generateComment('Привет всем!', 0, undefined, 'acc_aaa111')
+  const b = await generateComment('Привет всем!', 0, undefined, 'acc_aaa111')
+  assert.equal(a.text, b.text, 'вариант не должен перебираться при повторе')
+})
+
+test('1.3: без seed поведение прежнее — выбор по promptIndex', async () => {
+  const a = await generateComment('Привет всем!', 1)
+  const b = await generateComment('Привет всем!', 1)
+  assert.equal(a.text, b.text)
 })
