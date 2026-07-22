@@ -1801,10 +1801,11 @@ export async function runMailing(task, store) {
         }
         // 2) Текст: шаблон или ИИ к цели.
         let text = message
-        if (!text && goalOpeners.length) {
-          const { pickFirstMessage } = await import('../lib/goalContext.js')
-          text = pickFirstMessage(goalOpeners, sent + skipped)
-        }
+        // Вариант первого сообщения — свой для каждого получателя, по кругу. Один и тот же
+        // текст на всю рассылку Telegram видит как спам-паттерн (прогон 21–22.07: 11 блоков).
+        const { pickFirstMessage } = await import('../lib/goalContext.js')
+        const opener = goalOpeners.length ? pickFirstMessage(goalOpeners, sent + skipped) : ''
+        if (!text && opener) text = opener
         if (useAi) {
           // ВАЖНО: текст шаблона нельзя отдавать как ПРОМПТ — ИИ принимал его за реплику
           // собеседника и писал ОТВЕТ от лица получателя («Да, я интересуюсь трейдингом,
@@ -1814,8 +1815,10 @@ export async function runMailing(task, store) {
             'Это ты пишешь первым, собеседник тебе ещё ничего не писал.',
             'Коротко (1–2 предложения), по-человечески, с вопросом в конце.',
             'Не благодари за ответ и не поддакивай — отвечать пока некому.',
-            (message || goalOpeners[0]) ? `Опирайся на этот текст как на образец смысла и тона:
-«${message || goalOpeners[0]}»` : '',
+            // Образец тоже чередуем: иначе ИИ каждый раз отталкивается от одного текста
+            // и выдаёт почти одинаковые сообщения — смысл вариантов теряется.
+            (message || opener) ? `Опирайся на этот текст как на образец смысла и тона:
+«${message || opener}»` : '',
           ].filter(Boolean).join(' ')
           const gen = await generateComment(openerTask, s.promptIndex ?? 0, resolveSystemPrompt(s) + goalCtx)
           if (gen.text) text = gen.text

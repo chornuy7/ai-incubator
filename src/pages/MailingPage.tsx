@@ -107,6 +107,22 @@ export function MailingPage() {
   // Пересечение выбранных с «занятыми диалогом» — их надо убрать до запуска.
   const pickedHot = useMemo(() => [...selected].filter((id) => hotAccounts.includes(id)), [selected, hotAccounts])
   const needOwnText = !goalId || ownText
+
+  /**
+   * Сколько вариантов первого сообщения задано в описании выбранной цели.
+   * Считаем так же, как сервер (`firstMessagesFromGoal`): важно, чтобы человек ДО запуска
+   * видел, уйдёт ли вся рассылка одним текстом, — именно это ловит спамблок.
+   */
+  const openerCount = useMemo(() => {
+    const desc = goals.find((g) => g.id === goalId)?.description || ''
+    if (!desc.trim()) return 0
+    // `\w` не покрывает кириллицу, поэтому «Альтернативн(ое)» ловим через \S*.
+    const header = /(?:^|\n)[ \t]*(?:альтернативн\S*[ \t]+)?первое\s+сообщение\s*:?[ \t]*\n?/gi
+    return desc.split(header)
+      .slice(1)
+      .filter((chunk) => chunk.split(/\n\s*\n/)[0].trim())
+      .length
+  }, [goals, goalId])
   const canLaunch = canWrite && !blockedByTrust && selected.size > 0 && numbers.length > 0
     && (!needOwnText || message.trim().length > 0) && pickedHot.length === 0 && !launching
 
@@ -233,6 +249,12 @@ export function MailingPage() {
               ? <MessageComposer value={message} onChange={setMessage} media={media} onMedia={setMedia} minHeight={90} />
               : <div className="rounded-xl border border-line bg-elevated/40 p-3 text-xs text-white/45">
                   Текст возьмётся из цели «{goals.find((g) => g.id === goalId)?.name || ''}» — «Первое сообщение» в её описании.
+                  {openerCount > 1
+                    ? <span className="ml-1 text-spark-300">Вариантов: {openerCount} — чередуются между получателями.</span>
+                    : <span className="ml-1 text-amber-300">
+                        Вариант один: все получат одинаковый текст. Добавьте в описание цели блок
+                        «Альтернативное первое сообщение:» — одинаковая рассылка ловит спамблок быстрее.
+                      </span>}
                 </div>}
             {goals.length > 0 && (
               <div className="mt-2">
