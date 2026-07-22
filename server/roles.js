@@ -407,7 +407,12 @@ export function mergePermissions(roles = []) {
     if (r.searchTemplates === ALLOW) resources.searchTemplates = ALLOW
     const fc = r.folderChannels || {}
     for (const [folderId, v] of Object.entries(r.folders || {})) {
+      // Запрет на папку тоже должен доживать до клиента и побеждать разрешение другой
+      // роли — иначе точечный запрет работает для аккаунтов и каналов, но молча
+      // не работает для папок (найдено аудитом собственных правок 22.07, ср. тест 7.4).
+      if (v === DENY) { mergeItem(resources.folders, folderId, DENY); continue }
       if (v !== ALLOW) continue
+      if (resources.folders[folderId] === DENY) continue // запрет уже поставлен — allow не перебивает
       resources.folders[folderId] = ALLOW
       const list = fc[folderId]
       if (!Array.isArray(list) || list.length === 0) {

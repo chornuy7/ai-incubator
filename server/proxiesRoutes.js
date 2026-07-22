@@ -145,6 +145,11 @@ proxiesRouter.post('/import', async (req, res) => {
         created.push(await createProxy({
           label: labels[i], kind, scheme: p.scheme, host: p.host, port: p.port,
           username: p.username, password: p.password, country: p.country, status: p.status,
+          // Парсер их определяет, но раньше они терялись здесь и не доезжали до записи:
+          // rotateUrl — ссылка смены IP из того же списка (9.11), geoSource — откуда
+          // взята страна: реальный выход или шлюз (9.4). Найдено аудитом собственных правок.
+          rotateUrl: p.rotateUrl || '',
+          geoSource: p.geoSource || null,
           note: [note, p.geo?.isp ? `${p.geo.countryName || ''} ${p.geo.city || ''} · ${p.geo.isp}`.trim() : ''].filter(Boolean).join(' · '),
         }))
       } catch (e) {
