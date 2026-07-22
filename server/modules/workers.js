@@ -47,11 +47,12 @@ import { loadSessionString, createClient } from '../tgAuth.js'
 import { pickCommentCandidates, trackIdlePass, warmingPace, pickWeightedKey } from '../lib/workerLoop.js'
 import { limitReached, incAction } from '../lib/dailyActions.js'
 import { cleanMailingNumbers, classifyMailingTargets, pickMailingAccount } from '../lib/mailing.js'
-import { listLeads, sortDialogsByLeadPriority, upsertLead } from '../leads.js'
+import { listLeads, sortDialogsByLeadPriority, upsertLead, updateLead } from '../leads.js'
 import { classifyLeadReply, shouldAdvance } from '../lib/leadClassifier.js'
 import { isSemanticEnabled, embedText, cosineSimilarity } from '../lib/semantic.js'
 import { parseTelegramPostLinks, resolvePostPeer } from '../lib/postLink.js'
 import { findChannelChat, isChannelPeer } from '../lib/channelChat.js'
+import { followUpDecision, followUpPrompt, followUpStatus } from '../lib/followUp.js'
 import { filterBlacklisted, isBlacklistedSync } from '../targetBlacklist.js'
 
 /** @type {Map<string, Promise<void>>} */
@@ -920,17 +921,24 @@ export async function runNeuroDialogs(task, store) {
           const realUsername = d.username || d.entity?.username || ''
           const peerKey = realUsername ? `@${realUsername}` : (d.id ? `id:${d.id}` : d.name)
           const leadNow = findLeadByPeer(leadsForPrio, peerKey)
-          if (leadNow && (leadNow.status === 'closed' || leadNow.status === 'target')) {
-            await store.appendLog(
-              task,
-              'info',
-              leadNow.status === 'closed'
-                ? `«${peerKey}» отказался — больше не пишем (стоп-лист)`
-                : `«${peerKey}» выполнил целевое действие — диалог завершён`,
-              meta.name,
-            )
+          // §9 «дожим»: диалог закрыт (цель достигнута или человек отказался), но он
+          // написал САМ — это входящий интерес, а не наша навязчивость. Если в цели
+          // включён дожим, отвечаем с отдельным счётчиком и потолком.
+          task.followUps = task.followUps || {}
+          const fuDone = task.followUps[peerKey] || 0
+          // В `pending` попадают только диалоги, где последнее слово за собеседником
+          // (или есть непрочитанные), — но условие пишем явно, чтобы дожим не начал
+          // срабатывать сам, если фильтрация выше однажды изменится.
+          const hasIncoming = d.unread > 0 || !d.lastOut
+          const decision = followUpDecision(leadNow, goalObj, fuDone, hasIncoming)
+          if (decision.mode === 'skip') {
+            await store.appendLog(task, 'info', `«${peerKey}» ${decision.reason}`, meta.name)
             answeredUpTo.set(`${accountId}:${d.id}`, Math.max(d.lastMessageId ?? 0, answeredUpTo.get(`${accountId}:${d.id}`) ?? 0))
             continue
+          }
+          const isFollowUp = decision.mode === 'follow-up'
+          if (isFollowUp) {
+            await store.appendLog(task, 'info', `«${peerKey}»: дожим — написал сам после закрытия (осталось ${decision.left})`, meta.name)
           }
           task.leadReplies = task.leadReplies || {}
           const sentToLead = task.leadReplies[peerKey] || 0
@@ -949,11 +957,11 @@ export async function runNeuroDialogs(task, store) {
           const weWroteBefore = msgs.some((m) => m?.out && (m.message || '').trim())
           const rawStatus = leadNow?.status || 'cold'
           const effStatus = weWroteBefore && (rawStatus === 'cold') ? 'contacted' : rawStatus
-          const gen = await generateComment(
-            prompt,
-            s.promptIndex ?? 0,
-            dialogSystemPrompt(s, goal, goalObj, effStatus, stageForStatus(goalObj?.stages, effStatus)),
-          )
+          // В дожиме — свой тон: человек уже прошёл воронку, продавать ему то же
+          // самое повторно это верный способ получить блокировку.
+          const sysPrompt = dialogSystemPrompt(s, goal, goalObj, effStatus, stageForStatus(goalObj?.stages, effStatus))
+            + (isFollowUp ? followUpPrompt(goalObj, rawStatus, decision.left) : '')
+          const gen = await generateComment(prompt, s.promptIndex ?? 0, sysPrompt)
           const mode = gen.mode
           // Диалог подаётся модели стенограммой «Я: … / Собеседник: …», и она регулярно
           // копирует эту разметку в ответ. Живой человек 21.07 получил «Я: Отлично!…» —
@@ -987,6 +995,9 @@ export async function runNeuroDialogs(task, store) {
           task.accountStats[accountId] = task.accountStats[accountId] || { actions: 0, floodWaits: 0 }
           task.accountStats[accountId].actions += 1
           task.leadReplies[peerKey] = sentToLead + 1 // §9: счётчик ответов этому лиду
+          // Дожим считаем отдельно: у него свой потолок из цели, и обычный лимит
+          // ответов на лида к нему отношения не имеет.
+          if (isFollowUp) task.followUps[peerKey] = (task.followUps[peerKey] || 0) + 1
           await incAction(accountId, 'dm') // §6: суточный лимит ЛС
           await bumpProgress(task, store)
           await store.appendHistory(task, { id: `${task.id}_${Date.now()}`, ts: new Date().toISOString(), accountName: meta.name, target: d.name, text: reply, status: 'sent' })
@@ -1018,7 +1029,19 @@ export async function runNeuroDialogs(task, store) {
                 goalName: goalObj?.name || '',
                 targetAction: goalObj?.targetAction || '',
               })
-              if (shouldAdvance(cur?.status || 'cold', verdict.status)) {
+              if (isFollowUp) {
+                // В дожиме обычная воронка не работает: она ходит только вперёд, а лид
+                // уже в конце. Здесь важен исход самого дожима — отказался или ожил.
+                const next = followUpStatus(cur?.status || 'target', verdict.status)
+                // Пишем через updateLead, а не upsertLead: последний двигает статус
+                // только вперёд и терминальный не трогает вообще — то есть исход
+                // дожима до CRM бы не доехал.
+                if (next && cur?.id) {
+                  await updateLead(cur.id, { status: next })
+                  await store.appendLog(task, next === 'closed' ? 'info' : 'success',
+                    `Дожим «${peerKey}»: ${cur.status} → ${next} (${verdict.reason})`, meta.name)
+                }
+              } else if (shouldAdvance(cur?.status || 'cold', verdict.status)) {
                 await upsertLead({ peer: peerKey, goalId: s.goalId, accountId, status: verdict.status })
                 await store.appendLog(
                   task,

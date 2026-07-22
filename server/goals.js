@@ -9,7 +9,7 @@ import { dataPath, readJson, writeJson } from './lib/jsonStore.js'
 const GOALS_FILE = process.env.GOALS_FILE || dataPath('goals.json')
 
 /** Поля, которые можно задавать/менять (остальное — служебное). */
-const FIELDS = ['name', 'description', 'targetAction', 'stages', 'completionCriteria', 'audience', 'channels', 'deadline', 'leadTarget']
+const FIELDS = ['name', 'description', 'targetAction', 'stages', 'completionCriteria', 'audience', 'channels', 'deadline', 'leadTarget', 'followUp']
 
 /** Нормализовать список каналов/групп цели: trim, без @, без дублей. @param {*} v */
 function normChannels(v) {
@@ -79,6 +79,30 @@ export function normalizeGoal(input = {}) {
     channels: normChannels(input.channels),
     deadline: normDeadline(input.deadline), // §4: дедлайн (опц.)
     leadTarget: normLeadTarget(input.leadTarget), // §4: цель по лидам (опц.)
+    followUp: normFollowUp(input.followUp), // §9: дожим после достижения цели
+  }
+}
+
+/** Сколько сообщений подряд можно дожимать одного человека, если он написал сам. */
+export const FOLLOW_UP_MAX = 50
+export const FOLLOW_UP_DEFAULT = 10
+
+/**
+ * §9: «дожим» — что делать, когда цель по человеку уже достигнута (или он отказался),
+ * а он вдруг написал снова.
+ *
+ * Без этого такой человек попадал в стоп-лист навсегда: диалог закрыт, бот молчит.
+ * Но написал он сам — значит интерес живой, и это самый тёплый контакт, какой бывает.
+ * Лимит нужен, чтобы дожим не превратился в бесконечную переписку: исчерпали — молчим.
+ * @param {*} v
+ */
+function normFollowUp(v) {
+  if (!v || typeof v !== 'object') return { enabled: false, limit: FOLLOW_UP_DEFAULT, instructions: '' }
+  const n = Math.floor(Number(v.limit) || 0)
+  return {
+    enabled: !!v.enabled,
+    limit: n > 0 ? Math.min(n, FOLLOW_UP_MAX) : FOLLOW_UP_DEFAULT,
+    instructions: String(v.instructions ?? '').slice(0, 2000),
   }
 }
 
@@ -96,7 +120,10 @@ export function isGoalExpired(goal, now = Date.now()) {
 }
 
 export async function listGoals() {
-  return readJson(GOALS_FILE, [])
+  const all = await readJson(GOALS_FILE, [])
+  // Цели, созданные до появления поля, отдаём с дефолтом: иначе воркеру и форме
+  // пришлось бы проверять `undefined` в каждом месте, где читается дожим.
+  return (Array.isArray(all) ? all : []).map((g) => ({ ...g, followUp: normFollowUp(g?.followUp) }))
 }
 
 export async function getGoal(id) {
@@ -137,7 +164,9 @@ export async function updateGoal(id, patch = {}) {
             ? normDeadline(patch[k])
             : k === 'leadTarget'
               ? normLeadTarget(patch[k])
-              : (k === 'name' ? String(patch[k]).trim() : String(patch[k]))
+              : k === 'followUp'
+                ? normFollowUp(patch[k])
+                : (k === 'name' ? String(patch[k]).trim() : String(patch[k]))
     }
   }
   if (!goals[i].name) throw new Error('Название цели не может быть пустым')

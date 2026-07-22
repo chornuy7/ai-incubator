@@ -11,6 +11,7 @@ export interface Goal {
   channels: string[]
   deadline: string | null // §4: дедлайн (ISO-дата) или null
   leadTarget: number // §4: сколько лидов должна привести цель (0 = не задано)
+  followUp: FollowUp // §9: дожим после закрытия диалога
   createdAt: number
   updatedAt: number
 }
@@ -25,7 +26,25 @@ export interface GoalInput {
   channels?: string[]
   deadline?: string | null
   leadTarget?: number
+  followUp?: FollowUp
 }
+
+/**
+ * §9 «дожим»: что делать, когда по человеку цель уже закрыта (достигнута или он
+ * отказался), а он написал снова. Молчать — терять самый тёплый контакт, какой
+ * бывает: написал он сам. Лимит держит дожим в рамках ответа, а не новой рассылки.
+ */
+export interface FollowUp {
+  enabled: boolean
+  /** Сколько сообщений подряд можно дожимать одного человека. */
+  limit: number
+  /** Свободные указания ИИ на время дожима (необязательно). */
+  instructions: string
+}
+
+/** Зеркало server/goals.js. */
+export const FOLLOW_UP_MAX = 50
+export const FOLLOW_UP_DEFAULT = 10
 
 /** §4: границы дедлайна — зеркало server/goals.js. Прошлое разрешено (по нему проверяют «просрочено»). */
 export const DEADLINE_MIN_YEAR = 2000

@@ -7,13 +7,14 @@ import { confirmDialog } from '@/shared/lib/dialog'
 import { FolderPicker } from '@/features/modules/shared'
 import {
   fetchGoals, createGoal, updateGoal, deleteGoal, isGoalExpired, isSaneDeadline,
-  DEADLINE_MIN_YEAR, DEADLINE_MAX_YEAR, LEAD_TARGET_MAX, type Goal, type GoalInput,
+  DEADLINE_MIN_YEAR, DEADLINE_MAX_YEAR, LEAD_TARGET_MAX, FOLLOW_UP_MAX, FOLLOW_UP_DEFAULT,
+  type Goal, type GoalInput, type FollowUp,
   fetchKb, createKb, deleteKb, uploadKbFile, kbFileUrl, type KbItem,
 } from '@/api/goalsApi'
 import { fetchLeads } from '@/api/leadsApi'
 import { fetchCampaigns, type Campaign } from '@/api/campaignsApi'
 
-const EMPTY: GoalInput = { name: '', description: '', targetAction: '', stages: [], completionCriteria: '', audience: '', channels: [], deadline: '', leadTarget: 0 }
+const EMPTY: GoalInput = { name: '', description: '', targetAction: '', stages: [], completionCriteria: '', audience: '', channels: [], deadline: '', leadTarget: 0, followUp: { enabled: false, limit: FOLLOW_UP_DEFAULT, instructions: '' } }
 
 export function GoalsPage() {
   const pushToast = useApp((s) => s.pushToast)
@@ -62,7 +63,7 @@ export function GoalsPage() {
   }
   const openEdit = (g: Goal) => {
     setEditing(g)
-    setForm({ name: g.name, description: g.description, targetAction: g.targetAction, completionCriteria: g.completionCriteria, audience: g.audience, deadline: g.deadline || '', leadTarget: g.leadTarget || 0 })
+    setForm({ name: g.name, description: g.description, targetAction: g.targetAction, completionCriteria: g.completionCriteria, audience: g.audience, deadline: g.deadline || '', leadTarget: g.leadTarget || 0, followUp: g.followUp || { enabled: false, limit: FOLLOW_UP_DEFAULT, instructions: '' } })
     setStagesText((g.stages || []).join('\n'))
     setChannels(g.channels || []); setChInput('')
     setKb([]); setKbTitle(''); setKbContent('')
@@ -183,6 +184,12 @@ export function GoalsPage() {
                 <div className="flex flex-wrap gap-1">
                   {g.stages.map((s, i) => <Badge key={i} tone="iris">{i + 1}. {s}</Badge>)}
                 </div>
+              )}
+
+              {g.followUp?.enabled && (
+                <Badge tone="iris">
+                  Дожим до {g.followUp.limit} сообщ.
+                </Badge>
               )}
 
               {/* §4: дедлайн + прогресс по лидам */}
@@ -317,6 +324,49 @@ export function GoalsPage() {
               {/* Без потолка сюда проходило 999999999999, и прогресс-бар терял смысл. */}
               <input type="number" min={0} max={LEAD_TARGET_MAX} className="input" value={form.leadTarget || 0} onChange={(e) => set({ leadTarget: Math.min(LEAD_TARGET_MAX, Math.max(0, Number(e.target.value) || 0)) })} placeholder="Напр. 50" />
             </div>
+          </div>
+
+          {/* §9: дожим — единственный способ не потерять человека, который написал сам
+              после того, как диалог по нему уже закрыли. */}
+          <div className="rounded-lg border border-white/10 p-3">
+            <label className="flex cursor-pointer items-start gap-2">
+              <input
+                type="checkbox"
+                className="mt-1"
+                checked={!!form.followUp?.enabled}
+                onChange={(e) => set({ followUp: { ...(form.followUp || { limit: FOLLOW_UP_DEFAULT, instructions: '' }), enabled: e.target.checked } as FollowUp })}
+              />
+              <span>
+                <span className="text-sm font-semibold text-fg">Дожимать, если написал сам после закрытия</span>
+                <span className="mt-0.5 block text-xs text-white/45">
+                  Обычно диалог с человеком заканчивается, когда он выполнил целевое действие или отказался —
+                  дальше ему не пишут. Но если он потом написал сам, это входящий интерес, и молчать в ответ
+                  глупо. Бот продолжит разговор, но не более указанного числа сообщений.
+                </span>
+              </span>
+            </label>
+
+            {form.followUp?.enabled && (
+              <div className="mt-3 grid gap-3 sm:grid-cols-[160px_1fr]">
+                <div>
+                  <label className="mb-1 block text-xs text-white/50">Максимум сообщений</label>
+                  <input
+                    type="number" min={1} max={FOLLOW_UP_MAX} className="input"
+                    value={form.followUp.limit || FOLLOW_UP_DEFAULT}
+                    onChange={(e) => set({ followUp: { ...form.followUp!, limit: Math.min(FOLLOW_UP_MAX, Math.max(1, Number(e.target.value) || FOLLOW_UP_DEFAULT)) } })}
+                  />
+                </div>
+                <div>
+                  <label className="mb-1 block text-xs text-white/50">Что делать в дожиме <span className="text-white/30">(необязательно)</span></label>
+                  <input
+                    className="input"
+                    value={form.followUp.instructions || ''}
+                    onChange={(e) => set({ followUp: { ...form.followUp!, instructions: e.target.value } })}
+                    placeholder="Напр. предложить консультацию или узнать, что не подошло"
+                  />
+                </div>
+              </div>
+            )}
           </div>
 
           {editing && (
