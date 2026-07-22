@@ -75,3 +75,32 @@ export function leadPriority(status: string): number {
 export function sortLeadsByPriority(leads: Lead[]): Lead[] {
   return [...leads].sort((a, b) => leadPriority(b.status) - leadPriority(a.status) || (b.updatedAt || 0) - (a.updatedAt || 0))
 }
+
+// ── Переписка по лиду ──
+
+export interface LeadMessage {
+  id: number
+  text: string
+  time: string
+  /** true — писали мы, false — писал собеседник. */
+  out: boolean
+  date: number
+  media?: string
+  hasThumb?: boolean
+}
+
+export interface LeadConversation {
+  lead: Lead
+  account: { id: string; name: string; status: string }
+  /** Аккаунт прямо сейчас занят задачей — переписка читается «поверх» работы. */
+  busyIn: { moduleLabel: string; taskId: string } | null
+  messages: { messages: LeadMessage[]; peerId: string; hasMore: boolean }
+}
+
+/**
+ * Прочитать диалог с лидом глазами аккаунта-владельца. Данные берутся из самого
+ * Telegram, а не из логов задачи, — логи содержат только наши реплики.
+ */
+export async function fetchLeadConversation(id: string, limit = 60): Promise<LeadConversation> {
+  return apiGet<LeadConversation>(`/api/leads/${id}/conversation?limit=${limit}`)
+}

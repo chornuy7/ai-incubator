@@ -1,11 +1,12 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Users, Plus, Trash2, Flame } from 'lucide-react'
+import { Users, Plus, Trash2, Flame, MessageSquare } from 'lucide-react'
 import { useApp } from '@/mocks/store'
 import { PageHeader, Card, EmptyState, Select, Badge } from '@/shared/ui'
 import { HelpButton } from '@/features/neuro-commenting/moduleUi'
 import { confirmDialog } from '@/shared/lib/dialog'
 import { fetchLeads, createLead, updateLead, deleteLead, sortLeadsByPriority, LEAD_STATUSES, type Lead, type LeadStatus } from '@/api/leadsApi'
 import { fetchGoals, type Goal } from '@/api/goalsApi'
+import { LeadConversationModal } from '@/features/leads/LeadConversationModal'
 
 // §9: воронка прогрева. Порядок = движение к цели; «Горячий» — мгновенный алерт.
 const STATUS: Record<LeadStatus, { label: string; tone: 'spark' | 'iris' | 'amber' | 'rose' | 'muted' }> = {
@@ -27,6 +28,8 @@ export function LeadsPage() {
   const [fStatus, setFStatus] = useState('')
   const [peer, setPeer] = useState('')
   const [newGoal, setNewGoal] = useState('')
+  /** Лид, чью переписку открыли. */
+  const [chatLead, setChatLead] = useState<Lead | null>(null)
 
   const goalName = useMemo(() => {
     const m = new Map(goals.map((g) => [g.id, g.name]))
@@ -130,7 +133,13 @@ export function LeadsPage() {
           {sortLeadsByPriority(leads).map((l) => (
             <Card key={l.id} className="flex flex-wrap items-center gap-2 p-3">
               <Badge tone={STATUS[l.status].tone}>{STATUS[l.status].label}</Badge>
-              <span className="font-semibold text-white">{l.peer}</span>
+              <button
+                onClick={() => setChatLead(l)}
+                className="font-semibold text-white hover:text-spark-300"
+                title="Открыть переписку с этим человеком"
+              >
+                {l.peer}
+              </button>
               {l.goalId && <span className="text-xs text-iris-300">цель: {goalName(l.goalId)}</span>}
               {l.accountId && <span className="text-xs text-white/40">акк: {l.accountId.slice(-6)}</span>}
               <div className="ml-auto flex items-center gap-2">
@@ -140,12 +149,15 @@ export function LeadsPage() {
                   options={LEAD_STATUSES.map((s) => ({ value: s, label: STATUS[s].label }))}
                   className="w-44"
                 />
+                <button onClick={() => setChatLead(l)} className="btn-icon h-8 w-8" aria-label="Открыть переписку" title="Открыть переписку"><MessageSquare size={14} /></button>
                 <button onClick={() => void remove(l)} className="btn-icon-danger h-8 w-8" aria-label="Удалить лида" title="Удалить лида"><Trash2 size={14} /></button>
               </div>
             </Card>
           ))}
         </div>
       )}
+
+      <LeadConversationModal lead={chatLead} onClose={() => setChatLead(null)} />
     </div>
   )
 }
