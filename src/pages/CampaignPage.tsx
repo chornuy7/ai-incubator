@@ -9,6 +9,7 @@ import { fetchGoals, type Goal } from '@/api/goalsApi'
 import {
   launchCampaign, fetchSchedules, createSchedule, updateSchedule, deleteSchedule,
   fetchCampaigns, createCampaign, updateCampaign, deleteCampaign, CAMPAIGN_STATUSES,
+  parseIntent, type IntentSuggestion,
   type CampaignResult, type CampaignSchedule, type Campaign, type CampaignStatus, type PinnedMap,
 } from '@/api/campaignsApi'
 import { fetchModulePresets, type ModulePreset } from '@/api/modulesApi'
@@ -62,6 +63,34 @@ export function CampaignPage() {
   const [cName, setCName] = useState('')
   // §9.0: собственные каналы кампании — раньше их было негде задать (тест 1.2).
   const [cTargets, setCTargets] = useState('')
+  // D5 (SPEC §2.4): «я хочу создать кампанию, а не настроить модуль». Оператор пишет
+  // намерение словами, система предлагает раскладку — но НЕ применяет молча: раскладка
+  // чужого намерения по боевым модулям без подтверждения была бы опасной.
+  const [cIntent, setCIntent] = useState('')
+  const [suggestion, setSuggestion] = useState<IntentSuggestion | null>(null)
+  const [intentBusy, setIntentBusy] = useState(false)
+
+  const askIntent = async () => {
+    if (!cIntent.trim()) return
+    setIntentBusy(true)
+    try { setSuggestion(await parseIntent(cIntent)) }
+    catch (e) { pushToast({ type: 'error', title: 'Не разобрал', desc: e instanceof Error ? e.message : '' }) }
+    finally { setIntentBusy(false) }
+  }
+
+  /** Применить предложение: модули и каналы подставляются в форму, дальше правит человек. */
+  const applySuggestion = () => {
+    if (!suggestion) return
+    const keys = suggestion.modules.map((m) => m.moduleKey).filter((k) => CAMPAIGN_MODULES.includes(k))
+    if (keys.length) setCModules(keys)
+    if (suggestion.targets.length) {
+      setCTargets((prev) => {
+        const had = prev.split(/[\n,;]+/).map((x) => x.trim()).filter(Boolean)
+        return [...new Set([...had, ...suggestion.targets])].join('\n')
+      })
+    }
+    pushToast({ type: 'success', title: 'Раскладка подставлена', desc: 'Проверьте модули и каналы ниже' })
+  }
   const [cGoalId, setCGoalId] = useState('')
   const [cModule, setCModule] = useState('neuro-commenting')
   /** Модули кампании: несколько, работают вместе. `cModule` — первый из них. */
@@ -334,6 +363,63 @@ export function CampaignPage() {
           icon={<Rocket size={22} />}
         />
         <Card className="space-y-4 p-4">
+          {/* D5 (SPEC §2.4): «я хочу создать кампанию, а не настроить модуль».
+              Оператор описывает задачу словами — система предлагает раскладку, но
+              подставляет её только по кнопке: молча разложить чужое намерение
+              по боевым модулям было бы опасно. Ручной путь ниже остаётся основным. */}
+          <div className="rounded-xl border border-iris-500/30 bg-iris-500/5 p-3">
+            <div className="mb-1.5 text-xs font-semibold text-iris-200">
+              Опишите задачу словами <span className="font-normal text-white/40">— система предложит модули и цели</span>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <input
+                className="input h-10 min-w-[280px] flex-1"
+                value={cIntent}
+                onChange={(e) => setCIntent(e.target.value)}
+                onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); void askIntent() } }}
+                placeholder="Напр. комментировать @cryptoz и вести людей в личку, нужно 200 переходов"
+              />
+              <button type="button" onClick={() => void askIntent()} disabled={intentBusy || !cIntent.trim()} className="btn-ghost h-10 shrink-0 px-4 disabled:opacity-40">
+                {intentBusy ? 'Разбираю…' : 'Разобрать'}
+              </button>
+            </div>
+
+            {suggestion && (
+              <div className="mt-3 rounded-lg border border-line bg-elevated/50 p-3">
+                {suggestion.understood ? (
+                  <>
+                    <div className="mb-2 text-xs text-white/50">Поняли так:</div>
+                    <div className="flex flex-col gap-1.5">
+                      {suggestion.modules.map((m) => (
+                        <div key={m.moduleKey} className="flex flex-wrap items-baseline gap-2 text-sm">
+                          <span className="font-semibold text-fg">{MODULES[m.moduleKey]?.title || m.moduleKey}</span>
+                          <span className="text-xs text-muted">— {m.why}</span>
+                        </div>
+                      ))}
+                    </div>
+                    {!!suggestion.targets.length && (
+                      <div className="mt-2 text-xs text-muted">Цели из текста: <span className="text-fg">{suggestion.targets.join(', ')}</span></div>
+                    )}
+                    {suggestion.result && (
+                      <div className="mt-1 text-xs text-muted">
+                        Измеримый результат: <span className="text-fg">{suggestion.result.amount} {suggestion.result.unit}</span>
+                        {suggestion.needsLink && ' — считается по отслеживаемой ссылке'}
+                      </div>
+                    )}
+                    <button type="button" onClick={applySuggestion} className="btn-primary mt-3 h-9 text-sm">
+                      Подставить в форму
+                    </button>
+                  </>
+                ) : (
+                  <div className="text-sm text-amber-300">Не понял, что нужно сделать — опишите действие или заполните форму вручную.</div>
+                )}
+                {suggestion.warnings.map((w) => (
+                  <div key={w} className="mt-2 text-xs text-amber-300">⚠ {w}</div>
+                ))}
+              </div>
+            )}
+          </div>
+
           <div className="grid gap-3 sm:grid-cols-2">
             <div>
               <div className="mb-1 text-xs text-white/50">Название *</div>
