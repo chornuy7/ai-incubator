@@ -163,11 +163,14 @@ function targets(settings) {
   return filterBlacklisted(list)
 }
 
-function bumpProgress(task, store) {
+async function bumpProgress(task, store) {
   task.progress.actionsDone = (task.progress.actionsDone || 0) + 1
   task.progress.done = task.progress.actionsDone
   if (task.progress.commentsSent !== undefined) task.progress.commentsSent = task.progress.actionsDone
-  void chargeActions(task, store, 1)
+  // ЖДЁМ списание: оно при нуле ставит task.pauseRequested, а saveTask ниже должен
+  // сохранить уже выставленный флаг. Иначе цикл перезагрузит задачу с диска и
+  // затрёт паузу — модуль сделал бы несколько лишних действий на нулевом балансе.
+  await chargeActions(task, store, 1)
   return store.saveTask(task)
 }
 
@@ -1512,8 +1515,12 @@ export async function runChannelParser(task, store, kind) {
       await sleep(pickDelay(reqFrom, reqTo, mul) * 1000)
     }
 
-    // §3.8 AND-пересечение: оставляем только каналы, совпавшие со ВСЕМИ ключевыми словами.
-    if (andMode && !task.stopRequested) {
+    // §3.8 AND-пересечение: оставляем только каналы, совпавшие со ВСЕМИ ключевыми
+    // словами. ТОЛЬКО на завершении, не на паузе: на паузе сбор ещё частичный, и
+    // пересечение вычеркнуло бы каналы, чьи остальные ключи придут после «Продолжить»,
+    // — а курсор их уже не переиграет, и они пропали бы навсегда (карту хитов мы
+    // сохраняем, но сами строки удалять рано).
+    if (andMode && !task.stopRequested && !task.pauseRequested) {
       const need = keywords.length
       const before = task.results.length
       task.results = keepIntersecting(task.results, hitsByKey, need, limit)
