@@ -92,6 +92,16 @@ const SPECIAL_MODULE_PATHS: Record<string, string> = {
 }
 
 /**
+ * Ключ модуля для ЛЮБОГО его пути, включая мейлинг и автопостинг, которые живут
+ * не под `/panel/modules/*`. Нужен подписке: без него эти два оставались в меню
+ * при любом наборе — человек видел купленным то, чего не покупал, и узнавал об
+ * этом только по отказу на запуске.
+ */
+export function anyModuleKeyFromPath(path: string): string | null {
+  return moduleKeyFromPath(path) ?? SPECIAL_MODULE_PATHS[path] ?? null
+}
+
+/**
  * Разрешён ли доступ к странице панели для роли (§8.1). Зеркалит сайдбар и guard прямого URL.
  * Порядок: админ-страницы (только админ) → always-on → модули (по ключу) → остальное как 'section'.
  * @param isAdmin — bypass; permissions null трактуется как deny (кроме always-on).

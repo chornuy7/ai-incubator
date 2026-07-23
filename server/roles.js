@@ -396,7 +396,7 @@ function mergeItem(map, key, value) {
 }
 
 export function mergePermissions(roles = []) {
-  const resources = { accounts: {}, accountGroups: {}, folders: {}, channels: {}, folderChannels: {}, timers: DENY, searchTemplates: DENY }
+  const resources = { accounts: {}, accountGroups: {}, folders: {}, channels: {}, folderChannels: {}, timers: DENY, searchTemplates: DENY, allTasks: DENY }
   const merged = { modules: {}, blocks: {}, sections: {}, resources }
   const wholeFolder = new Set() // папки, где хоть одна роль дала «все каналы»
   for (const role of roles) {
@@ -415,6 +415,10 @@ export function mergePermissions(roles = []) {
     for (const [k, v] of Object.entries(r.channels || {})) if (v === ALLOW || v === DENY) mergeItem(resources.channels, k, v)
     if (r.timers === ALLOW) resources.timers = ALLOW
     if (r.searchTemplates === ALLOW) resources.searchTemplates = ALLOW
+    // Без этой строки право «чужие задачи» терялось при объединении ролей: сервер
+    // читает роли напрямую и работал верно, а фронт получал права БЕЗ него и
+    // молча отказывал — расхождение, которое видно только в интерфейсе.
+    if (r.allTasks === ALLOW) resources.allTasks = ALLOW
     const fc = r.folderChannels || {}
     for (const [folderId, v] of Object.entries(r.folders || {})) {
       // Запрет на папку тоже должен доживать до клиента и побеждать разрешение другой

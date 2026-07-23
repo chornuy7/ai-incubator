@@ -87,3 +87,35 @@ test('tasksForRequest: свои задачи — всем, чужие — тол
   // Ничего не оставляем в боевых данных: файлы теста живут в temp и удаляются.
   await fs.rm(dir, { recursive: true, force: true })
 })
+
+/**
+ * Отключённый сотрудник не должен проходить гейт модулей. Раньше здесь стоял
+ * `next()` — то есть увольнение не закрывало доступ, хотя в соседних функциях
+ * того же файла неизвестный пользователь был fail-closed.
+ */
+test('moduleAccessGuard: отключённый пользователь получает 403, а не проходит', async () => {
+  const os = await import('os')
+  const path = await import('path')
+  const fs = await import('fs/promises')
+  const dir = path.join(os.tmpdir(), `guard-off-${process.pid}-${Math.random().toString(36).slice(2)}`)
+  await fs.mkdir(dir, { recursive: true })
+  process.env.DATA_DIR = dir
+  process.env.ROLES_FILE = path.join(dir, 'roles.json')
+  process.env.USERS_FILE = path.join(dir, 'users.json')
+
+  const { createUser, updateUser } = await import('../users.js')
+  const { createRole } = await import('../roles.js')
+  const role = await createRole({ name: 'Уволенный', permissions: { modules: { mailing: 'allow' } } })
+  const user = await createUser({ email: `off${Date.now()}@t.io`, password: 'x12345', roleIds: [role.id] })
+  await updateUser(user.id, { active: false })
+
+  const guard = moduleAccessGuard(moduleKeyFromModulesPath)
+  let status = 0
+  const res = { status: (c) => { status = c; return { json: () => {} } } }
+  let nexted = false
+  await guard(mockReq({ 'x-user-id': user.id }, '/mailing/tasks'), res, () => { nexted = true })
+  assert.equal(nexted, false, 'отключённый не должен проходить')
+  assert.equal(status, 403)
+
+  await fs.rm(dir, { recursive: true, force: true })
+})

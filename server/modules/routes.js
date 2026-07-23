@@ -3,12 +3,6 @@ import { getModuleStore, listModuleKeys, validateSettings, startModuleTask, stop
 import { releaseTaskLocks } from '../lib/accountLocks.js'
 import { assertAccountsAssignable, checkAccountsAssignable, loadAllMeta } from '../accountsMeta.js'
 
-/**
- * C2 (§5.1): модули, которые обращаются к ИИ и потому тратят монеты. Парсеры сюда
- * НЕ входят — они только читают Telegram, ничего не генерируют, и блокировать сбор
- * данных из-за нулевого баланса было бы произволом.
- */
-
 import { assertNoHotLeadConflict, assertActiveDialogLimit } from '../leads.js'
 import { findDuplicateActiveTask } from '../lib/taskDedup.js'
 import { getGoal, isGoalExpired } from '../goals.js'
@@ -374,6 +368,9 @@ modulesRouter.post('/:moduleKey/tasks/:id/resume', async (req, res) => {
     if (foreign) return res.status(404).json({ ok: false, error: foreign })
     const noCoins = await noCoinsPayload(req, req.params.moduleKey)
     if (noCoins) return res.status(402).json(noCoins)
+    // И подписку тоже: иначе задачу отключённого модуля можно было продолжать.
+    const notInPlan = await notInPlanPayload(req, req.params.moduleKey)
+    if (notInPlan) return res.status(402).json(notInPlan)
     const task = await resumeModuleTask(req.params.moduleKey, req.params.id)
     if (!task) return res.status(404).json({ ok: false, error: 'Задача не найдена' })
     const { appendAudit } = await import('../lib/auditLog.js')

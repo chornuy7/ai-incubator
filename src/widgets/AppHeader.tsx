@@ -1,7 +1,7 @@
 import { useNavigate } from 'react-router-dom'
 import { useState, useEffect } from 'react'
 import {
-  Menu, Zap, Sun, Moon, Radar, ChevronDown, UserCog, LogOut, Wallet, Check, AlertTriangle,
+  Menu, Zap, Sun, Moon, Radar, ChevronDown, UserCog, LogOut, Wallet, Check, AlertTriangle, Package,
 } from 'lucide-react'
 import { useApp, activeAccounts } from '@/mocks/store'
 import { fetchBalance, fetchPricing, type Balance, type Pricing } from '@/api/balanceApi'
@@ -60,6 +60,8 @@ export function AppHeader() {
   const setCoinsOpen = useUi((s) => s.setCoinsOpen)
   const noCoins = useUi((s) => s.noCoins)
   const setNoCoins = useUi((s) => s.setNoCoins)
+  const noSubscription = useUi((s) => s.noSubscription)
+  const setNoSubscription = useUi((s) => s.setNoSubscription)
   const [langOpenTick, setLangOpenTick] = useState(0)
 
   const active = activeAccounts(data).length
@@ -208,6 +210,33 @@ export function AppHeader() {
         </div>
         <p className="mt-3 text-xs text-muted">
           Платные все модули, включая сбор данных. Цены по действиям — в окне «Пополнить баланс».
+        </p>
+      </Modal>
+
+      {/* Модуль не оплачен — это не про монеты, и путь отсюда в кабинет. */}
+      <Modal
+        open={!!noSubscription}
+        onClose={() => setNoSubscription('')}
+        title="Модуль не оплачен"
+        subtitle="Его нет в вашей подписке"
+        icon={<Package size={22} />}
+        size="sm"
+        footer={(
+          <>
+            <button onClick={() => setNoSubscription('')} className="btn-ghost">Закрыть</button>
+            <button
+              onClick={() => { setNoSubscription(''); nav('/panel/user/subscription') }}
+              className="btn-primary inline-flex items-center gap-1.5"
+            >
+              <Package size={16} /> Мои модули
+            </button>
+          </>
+        )}
+      >
+        <p className="text-sm leading-relaxed text-muted">{noSubscription}</p>
+        <p className="mt-3 text-xs text-muted">
+          Подписка и монеты — разные вещи: монеты тратятся на действия внутри модуля,
+          подписка открывает сам модуль. Менять набор может владелец рабочего пространства.
         </p>
       </Modal>
 

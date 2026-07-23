@@ -13,25 +13,23 @@ import { fetchBalance } from '@/api/balanceApi'
  * и обновляться должен сам — как и права (см. session.refresh).
  */
 interface PlanStore {
-  /** 'all' — тариф со всеми модулями. Массив — только перечисленные. null — ещё не загружено. */
+  /** 'all' — подписка на все модули. Массив — только перечисленные. null — ещё не загружено. */
   modules: string[] | 'all' | null
-  planName: string
   load: () => Promise<void>
 }
 
 export const usePlan = create<PlanStore>((set) => ({
   modules: null,
-  planName: '',
   load: async () => {
     try {
       const b = await fetchBalance()
-      set({ modules: b.modules ?? 'all', planName: b.plan.name })
+      set({ modules: b.modules ?? 'all' })
     } catch { /* сеть легла — оставляем как было, а не запираем человека */ }
   },
 }))
 
 /**
- * Входит ли модуль в тариф. Пока тариф не загружен — НЕ прячем: иначе при каждом
+ * Оплачен ли модуль. Пока подписка не загружена — НЕ прячем: иначе при каждом
  * открытии панели меню на секунду схлопывалось бы до пустого.
  */
 export function planHasModule(modules: string[] | 'all' | null, moduleKey: string): boolean {

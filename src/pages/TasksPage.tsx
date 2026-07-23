@@ -10,7 +10,7 @@ import { fetchGoals, type Goal } from '@/api/goalsApi'
 import { fetchCampaigns, type Campaign } from '@/api/campaignsApi'
 import { fetchAccounts } from '@/api/accountsApi'
 import type { TgAccount } from '@/shared/types'
-import { cn } from '@/shared/lib/utils'
+import { cn, coins as fmtCoins } from '@/shared/lib/utils'
 import { confirmDialog, promptDialog } from '@/shared/lib/dialog'
 import { TaskAudiencePanel } from '@/features/mailing/TaskAudiencePanel'
 import { launchWithSkip } from '@/features/modules/shared/launchWithSkip'
@@ -516,7 +516,7 @@ function TaskCard({ t, goalName, busy, onOpen, onStop, onRestart, onPause, onRes
           {t.initiator && <span>кто: {t.initiator}</span>}
           {/* Во сколько обошёлся запуск. Из общего баланса не понять, куда ушли монеты,
               а «сколько стоила вот эта задача» — первый вопрос при разборе счёта. */}
-          {!!t.spentCoins && <span className="tabular-nums text-amber-300/80" title="Потрачено монет на эту задачу">⚡ {t.spentCoins.toFixed(2)}</span>}
+          {!!t.spentCoins && <span className="tabular-nums text-amber-300/80" title="Потрачено монет на эту задачу">⚡ {fmtCoins(t.spentCoins)}</span>}
           <span>{new Date(t.createdAt).toLocaleString('ru-RU', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}</span>
         </div>
       </div>
@@ -783,7 +783,7 @@ export function TaskDetailPage() {
               даже когда ноль: «бесплатно» это тоже ответ, а прочерк — нет. */}
           <Info
             label="Потрачено"
-            value={`${(t.spentCoins || 0).toFixed(2)} ⚡${t.tokens ? ` · ${t.tokens.toLocaleString('ru-RU')} токенов` : ''}`}
+            value={`${fmtCoins(t.spentCoins || 0)} ⚡${t.tokens ? ` · ${t.tokens.toLocaleString('ru-RU')} токенов` : ''}`}
           />
         </div>
 

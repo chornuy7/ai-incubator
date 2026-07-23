@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { revealHelpBlock } from '@/features/neuro-commenting/moduleUi'
-import { useParams, Navigate, Link } from 'react-router-dom'
+import { useParams, Navigate } from 'react-router-dom'
 import {
   Play, Save, Square, Sparkles, Plus, Trash2, FileText, Clock, Globe, Copy, Download,
   ArrowUp, ListChecks, ShoppingCart, History as HistoryIcon, ChevronRight, X, ChevronDown,
@@ -8,13 +8,14 @@ import {
   MessageSquareText, AlertTriangle, Check, Star, UploadCloud, Bolt, MessageCircle, Filter, Heart, Smile,
   BarChart3 as BarChartIcon, Ban, Calendar, Cpu, MapPin, SlidersHorizontal, CheckSquare,
   Volume2, ArrowDown, Search, LayoutGrid, List, Send, ExternalLink, MessagesSquare, Trophy,
-  Tag, Activity, Database, ArrowUpDown, Pencil, RefreshCw, Radio, HelpCircle, Lock, Package } from 'lucide-react'
+  Tag, Activity, Database, ArrowUpDown, Pencil, RefreshCw, Radio, HelpCircle, Lock } from 'lucide-react'
 import { DIALOGS, type Dialog } from '@/mocks/dialogs'
 import { MODULES, LANGUAGES, type ModuleConfig } from '@/shared/config/modules'
 import { ROUTES } from '@/shared/config/routes'
 import { useApp, activeAccounts } from '@/mocks/store'
 import { useSession } from '@/features/auth/session'
 import { usePlan, planHasModule } from '@/features/billing/plan'
+import { ModuleNotPaid } from '@/features/billing/ModuleNotPaid'
 import { can } from '@/shared/lib/access'
 import { useUi } from '@/shared/lib/uiStore'
 import { seedLogs } from '@/mocks/logs'
@@ -78,18 +79,8 @@ export function ModuleRunner() {
 
   if (!cfg || !route) return <Navigate to="/panel" replace />
 
-  // Гейт подписки (§5.4): модуль не оплачен — не открываем даже админу. Это не
-  // «нет прав», а «не куплено», и путь дальше другой: не к администратору, а в кабинет.
-  if (!planHasModule(planModules, moduleKey)) {
-    return (
-      <div className="mx-auto mt-16 max-w-md rounded-2xl border border-line bg-elevated p-8 text-center">
-        <Package size={28} className="mx-auto text-amber-300/70" />
-        <div className="mt-3 text-base font-semibold text-fg">Модуль не в вашей подписке</div>
-        <div className="mt-1 text-sm text-muted">«{cfg.title}» не оплачен. Добавьте его в разделе «Мои модули» — платите только за то, чем пользуетесь.</div>
-        <Link to="/panel/user/subscription" className="btn-primary mt-5 inline-flex h-10">Мои модули</Link>
-      </div>
-    )
-  }
+  // Гейт подписки (§5.4): модуль не оплачен — не открываем даже админу.
+  if (!planHasModule(planModules, moduleKey)) return <ModuleNotPaid title={cfg.title} />
 
   // RBAC-гейт (§8.1): не-админ без доступа к модулю — прямой заход по URL запрещён.
   if (sessionUser && !sessionUser.isAdmin && !can(sessionUser.permissions, false, 'module', moduleKey)) {

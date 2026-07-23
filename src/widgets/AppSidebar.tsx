@@ -3,7 +3,7 @@ import { PanelLeftClose, PanelLeftOpen, X, LogOut } from 'lucide-react'
 import { ROUTES, GROUP_LABELS, type RouteDef } from '@/shared/config/routes'
 import { useApp } from '@/mocks/store'
 import { useSession } from '@/features/auth/session'
-import { canAccessPath, moduleKeyFromPath } from '@/shared/lib/access'
+import { canAccessPath, anyModuleKeyFromPath } from '@/shared/lib/access'
 import { usePlan, planHasModule } from '@/features/billing/plan'
 import { cn } from '@/shared/lib/utils'
 
@@ -45,7 +45,7 @@ export function AppSidebar({ mobile = false }: { mobile?: boolean }) {
   // нейрочатінг», остальных модулей в меню быть не должно. Проходить надо обе:
   // админ не увидит неоплаченный модуль, а сотрудник — оплаченный, но закрытый ему.
   const allowed = (r: RouteDef) => {
-    const mk = moduleKeyFromPath(r.path)
+    const mk = anyModuleKeyFromPath(r.path)
     if (mk && !planHasModule(planModules, mk)) return false
     if (!sessionUser) return true
     return canAccessPath(sessionUser.permissions, sessionUser.isAdmin, r.path)

@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Zap } from 'lucide-react'
 import { fetchPricing, type Pricing } from '@/api/balanceApi'
+import { coins as fmtCoins } from '@/shared/lib/utils'
 
 /**
  * §5.1: во сколько обойдётся запуск — ДО нажатия «Начать».
@@ -20,12 +21,15 @@ export function LaunchCost({ moduleKey, actions }: { moduleKey: string; actions:
   const price = pricing?.actions?.[moduleKey] ?? 0
   if (!pricing || !price || !n) return null
 
-  const actionsCost = Math.round(price * n * 100) / 100
+  // Округляем до ТЫСЯЧНЫХ — как сервер: до сотых прогноз расходился с фактом
+  // (3 строки парсера: обещали 0.02, списывается 0.015).
+  const r3 = (x: number) => Math.round(x * 1000) / 1000
+  const actionsCost = r3(price * n)
   const avgTokens = pricing.avgTokens?.[moduleKey] ?? 0
   const tokens = avgTokens * n
-  const tokensCost = Math.round((tokens / 1000) * pricing.coinsPer1kTokens * 100) / 100
-  const total = Math.round((actionsCost + tokensCost) * 100) / 100
-  const fmt = (x: number) => x.toFixed(2)
+  const tokensCost = r3((tokens / 1000) * pricing.coinsPer1kTokens)
+  const total = r3(actionsCost + tokensCost)
+  const fmt = fmtCoins
 
   return (
     <div className="mb-4 flex flex-wrap items-center gap-x-2 gap-y-1 rounded-2xl border border-amber-500/25 bg-amber-500/8 px-4 py-2.5 text-sm">

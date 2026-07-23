@@ -85,12 +85,24 @@ test('пока набор не выбран — открыто всё: выка�
   assert.equal(B.modulesAllow(modules, 'mailing'), true)
 })
 
-test('подписка у каждого своя, как и монеты', async () => {
+/**
+ * Подписка — на всё пространство, монеты — у каждого свои. Пока подписку хранили
+ * пер-юзерно, у сотрудника не было своей записи, он получал 'all' и запускал все
+ * 14 модулей при двух оплаченных.
+ */
+test('подписка общая на пространство, а монеты — личные', async () => {
   const B = await fresh()
-  await B.setModules(['mailing'], 'usr_a')
-  await B.setModules(['neuro-commenting'], 'usr_b')
-  assert.deepEqual((await B.getBalance('usr_a')).modules, ['mailing'])
-  assert.deepEqual((await B.getBalance('usr_b')).modules, ['neuro-commenting'])
+  await B.setModules(['mailing'], 'usr_owner')
+  await B.changeCoins(10, 'пополнение', 'usr_owner')
+
+  assert.deepEqual((await B.getBalance('usr_owner')).modules, ['mailing'])
+  assert.deepEqual((await B.getBalance('usr_worker')).modules, ['mailing'], 'сотрудник работает внутри купленного владельцем')
+  assert.equal((await B.getBalance('usr_worker')).coins, 0, 'а монеты у него свои')
+  assert.equal((await B.getBalance('usr_owner')).coins, 10)
+
+  // Смена набора владельцем видна сотруднику сразу — запись одна.
+  await B.setModules(['neuro-chatting'], 'usr_owner')
+  assert.deepEqual((await B.getBalance('usr_worker')).modules, ['neuro-chatting'])
 })
 
 test('дубли в выборе схлопываются', async () => {

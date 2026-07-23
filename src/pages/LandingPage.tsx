@@ -1,9 +1,10 @@
+import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import {
   Bot, Radar, MessagesSquare, ShieldCheck, Target, BarChart3,
   ArrowRight, Check, Zap,
 } from 'lucide-react'
-import { PLAN_CARDS, CURRENCY } from '@/shared/config/plans'
+import { fetchSubscription, type Subscription } from '@/api/balanceApi'
 
 /**
  * B1 (SPEC §5.2): публичный лендинг — единственная страница вне auth-гейта панели.
@@ -50,6 +51,11 @@ const FEATURES = [
 ]
 
 export function LandingPage() {
+  // Цены — с сервера, не из копии в вебе: публичная страница и счёт должны
+  // называть одно число. Лендинг открыт без входа, поэтому запрос анонимный.
+  const [pricing, setPricing] = useState<Subscription | null>(null)
+  useEffect(() => { void fetchSubscription().then(setPricing).catch(() => {}) }, [])
+
   const nav = useNavigate()
   const start = () => nav('/login')
 
@@ -114,55 +120,85 @@ export function LandingPage() {
         </div>
       </section>
 
-      {/* Тарифы */}
+      {/*
+        Тарифы. Продукт продаёт МОДУЛИ, а не три коробки: клиент собирает набор сам
+        (SPEC §5.4, заказчик 23.07). Витрина берёт цены с сервера — того же места,
+        откуда считается счёт в кабинете: расхождение публичной цены и списания —
+        худший вид ошибки в биллинге.
+      */}
       <section id="tarify" className="mx-auto max-w-6xl px-5 py-16">
         <h2 className="font-display text-2xl font-bold">Тарифы</h2>
         <p className="mt-2 text-sm text-muted">
-          Оплата монетами: списываются за работу ИИ. Не работаете — не тратите.
+          Платите только за модули, которыми пользуетесь. Готовый набор — дешевле, чем те же модули поштучно.
+          Работа ИИ оплачивается отдельно монетами: не работаете — не тратите.
         </p>
-        <div className="mt-8 grid gap-5 sm:grid-cols-3">
-          {PLAN_CARDS.map((p) => (
-            <div
-              key={p.id}
-              className={`flex flex-col rounded-2xl border p-6 ${
-                p.featured ? 'border-spark-500/50 bg-spark-500/5' : 'border-line bg-card'
-              }`}
-            >
-              {p.featured && (
-                <span className="mb-3 self-start rounded-full bg-spark-500/15 px-2.5 py-0.5 text-[11px] font-bold text-spark-300">
-                  чаще выбирают
-                </span>
-              )}
-              <div className="font-display text-lg font-bold">{p.name}</div>
-              {/* Цена появляется автоматически, как только её проставят в plans.ts.
-                  Пока null — честное «по запросу» вместо выдуманной суммы. */}
-              <div className="mt-1 font-display text-2xl font-bold text-fg">
-                {p.pricePerMonth != null
-                  ? <>{CURRENCY}{p.pricePerMonth}<span className="text-sm font-normal text-muted"> / мес</span></>
-                  : <span className="text-base font-semibold text-muted">Цена по запросу</span>}
-              </div>
-              <div className="mt-1 text-sm text-muted">до {p.accountLimit} аккаунтов</div>
-              <ul className="mt-5 flex flex-1 flex-col gap-2">
-                {p.perks.map((perk) => (
-                  <li key={perk} className="flex items-start gap-2 text-sm">
-                    <Check size={15} className="mt-0.5 shrink-0 text-spark-400" />
-                    <span className="text-muted">{perk}</span>
-                  </li>
-                ))}
-              </ul>
-              <button
-                onClick={start}
-                className={`mt-6 h-10 rounded-xl text-sm font-semibold ${
-                  p.featured ? 'btn-primary' : 'btn-ghost border border-line'
-                }`}
-              >
-                Выбрать
-              </button>
+
+        {pricing && (
+          <>
+            <div className="mt-8 grid gap-5 sm:grid-cols-3">
+              {pricing.setups.map((sp) => (
+                <div
+                  key={sp.id}
+                  className={`flex flex-col rounded-2xl border p-6 ${
+                    sp.id === 'setup-all' ? 'border-spark-500/50 bg-spark-500/5' : 'border-line bg-card'
+                  }`}
+                >
+                  {sp.id === 'setup-all' && (
+                    <span className="mb-3 self-start rounded-full bg-spark-500/15 px-2.5 py-0.5 text-[11px] font-bold text-spark-300">
+                      всё сразу — выгоднее всего
+                    </span>
+                  )}
+                  <div className="font-display text-lg font-bold">{sp.name}</div>
+                  <div className="mt-1 flex items-baseline gap-2">
+                    <span className="font-display text-2xl font-bold text-fg">
+                      {pricing.currency}{sp.cost.sum}<span className="text-sm font-normal text-muted"> / мес</span>
+                    </span>
+                    <span className="text-sm text-muted line-through">{pricing.currency}{sp.cost.full}</span>
+                    <span className="rounded-md bg-spark-500/15 px-1.5 py-0.5 text-[10px] font-bold text-spark-300">
+                      −{Math.round(sp.discount * 100)}%
+                    </span>
+                  </div>
+                  <div className="mt-1 text-sm text-muted">{sp.hint}</div>
+                  <ul className="mt-5 flex flex-1 flex-col gap-2">
+                    {sp.modules.map((mk) => (
+                      <li key={mk} className="flex items-start gap-2 text-sm">
+                        <Check size={15} className="mt-0.5 shrink-0 text-spark-400" />
+                        <span className="text-muted">{pricing.items.find((i) => i.key === mk)?.title || mk}</span>
+                      </li>
+                    ))}
+                  </ul>
+                  <button
+                    onClick={start}
+                    className={`mt-6 h-10 rounded-xl text-sm font-semibold ${
+                      sp.id === 'setup-all' ? 'btn-primary' : 'btn-ghost border border-line'
+                    }`}
+                  >
+                    Выбрать
+                  </button>
+                </div>
+              ))}
             </div>
-          ))}
-        </div>
+
+            {/* Поштучно — главное отличие от «трёх коробок»: нужен один модуль, платите за один. */}
+            <div className="mt-6 rounded-2xl border border-line bg-card p-6">
+              <div className="font-display text-lg font-bold">Или соберите свой набор</div>
+              <p className="mt-1 text-sm text-muted">
+                Нужен только мейлинг — платите только за мейлинг. Набор меняется в кабинете в любой момент.
+              </p>
+              <div className="mt-4 grid gap-x-6 gap-y-1.5 sm:grid-cols-2 lg:grid-cols-3">
+                {pricing.items.map((m) => (
+                  <div key={m.key} className="flex items-baseline justify-between gap-3 border-b border-line/60 py-1.5 text-sm">
+                    <span className="text-muted">{m.title}</span>
+                    <span className="shrink-0 font-semibold tabular-nums text-fg">{pricing.currency}{m.price}<span className="text-xs font-normal text-muted"> / мес</span></span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </>
+        )}
+
         <p className="mt-5 text-xs text-muted">
-          Точная стоимость и условия — по запросу: тарифная сетка согласуется индивидуально.
+          Цены указаны за месяц на рабочее пространство. Лимит аккаунтов и условия для больших сеток — по запросу.
         </p>
       </section>
 

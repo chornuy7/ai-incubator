@@ -2,8 +2,9 @@
  * Серверный enforcement RBAC (§8.1): гейт доступа к модулю по роли пользователя.
  * Пользователь идентифицируется заголовком `X-User-Id` (клиент шлёт id из сессии).
  *
- * Дев-модель: если заголовка нет — пропускаем (демо/админ без сессии). Если есть и юзер
- * не админ — проверяем `can(role,'module',key)`; при отказе — 403. Продакшн-шаг: заменить
+ * Дев-модель: если заголовка нет — пропускаем (демо/админ без сессии). Если есть —
+ * отключённый или неизвестный пользователь получает 403, админ проходит, остальным
+ * проверяем `can(role,'module',key)`; при отказе — 403. Продакшн-шаг: заменить
  * заголовок на подписанный токен сессии (см. docs/CONTRACT-rbac.md §7).
  */
 import { getUser } from '../users.js'
@@ -21,7 +22,12 @@ export function moduleAccessGuard(keyFrom) {
       const key = keyFrom(req)
       if (!key) return next() // не модульный путь (список задач и т.п.)
       const user = await getUser(userId)
-      if (!user || !user.active) return next()
+      // Неизвестный или отключённый — fail-closed, как в isAdminRequest и
+      // tasksForRequest. Раньше здесь стоял next(), то есть отключённый сотрудник
+      // проходил гейт модулей: увольнение не закрывало доступ.
+      if (!user || !user.active) {
+        return res.status(403).json({ ok: false, error: 'Пользователь отключён' })
+      }
       if (hasAdminRole(userRoleIds(user))) return next() // админ среди ролей — bypass
       const roles = await rolesForUser(user)
       if (roles.some((role) => can(role, 'module', key))) return next() // union: доступ даёт любая роль

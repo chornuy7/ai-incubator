@@ -458,13 +458,15 @@ app.post('/api/subscription', async (req, res) => {
   try {
     const { setModules } = await import('./balance.js')
     const { subscriptionCost } = await import('./pricing.js')
+    // Подписка — деньги пространства, менять её может только владелец. Проверка
+    // ОБЯЗАТЕЛЬНА на сервере: пряча раздел во фронте, мы прятали кнопку, а прямой
+    // запрос позволял любому сотруднику выдать себе все модули.
+    if (!(await isAdminRequest(req))) {
+      return res.status(403).json({ ok: false, error: 'Менять подписку может только владелец рабочего пространства' })
+    }
     const wanted = req.body?.modules
     const list = wanted === 'all' ? 'all' : (Array.isArray(wanted) ? wanted : [])
-    // Свой набор правит сам пользователь; чужой — только админ (это деньги).
-    const target = req.body?.userId || req.header('x-user-id')
-    if (req.body?.userId && !(await isAdminRequest(req))) {
-      return res.status(403).json({ ok: false, error: 'Менять чужую подписку может только админ' })
-    }
+    const target = req.header('x-user-id')
     const balance = await setModules(list, target)
     await appendAudit({
       action: 'subscription.set',

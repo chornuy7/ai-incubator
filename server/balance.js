@@ -39,13 +39,22 @@ export const PLANS = {
 }
 
 /**
- * Что открыто, пока клиент ничего не выбрал.
+ * Что открыто, пока набор не выбран.
  *
  * `'all'` — а не пустой список: система уже работает у существующих клиентов, и
  * молча закрыть им всё в момент выкатки — худший способ ввести подписки. Ограничение
  * начинает действовать с той секунды, когда набор выбран явно.
  */
 export const DEFAULT_MODULES = 'all'
+
+/**
+ * Ключ подписки. Она принадлежит РАБОЧЕМУ ПРОСТРАНСТВУ, а не человеку: платит
+ * владелец, а сотрудники работают внутри купленного. Пока хранили пер-юзерно,
+ * у сотрудника не было своей записи — и он получал `'all'`, то есть все 14 модулей
+ * при оплаченных двух. Монеты при этом остаются пер-юзерными: за расход платит тот,
+ * кто запускает.
+ */
+const SUBSCRIPTION_KEY = '__subscription'
 
 /**
  * Открыт ли модуль этому набору. Набор — либо `'all'`, либо список ключей.
@@ -57,26 +66,16 @@ export function modulesAllow(modules, moduleKey) {
 }
 
 /**
- * Купленные модули пользователя. Отдельно от роли: роль отвечает на вопрос «что
- * сотруднику разрешил админ», подписка — «что оплачено рабочим пространством».
- * @param {string} [userId] @returns {Promise<string[]|'all'>}
- */
-export async function getModules(userId) {
-  const { modules } = await getBalance(userId)
-  return modules
-}
-
-/**
- * Записать выбранный набор модулей (после оплаты в кабинете).
- * @param {string[]|'all'} modules @param {string} [userId]
+ * Записать набор купленных модулей. Одна запись на всё пространство: подписку
+ * оплачивает владелец, и у сотрудника не должно быть своей.
+ * @param {string[]|'all'} modules @param {string} [userId] чей баланс вернуть в ответе
  */
 export async function setModules(modules, userId) {
   const list = modules === 'all' ? 'all' : [...new Set((modules || []).map(String).filter(Boolean))]
-  const k = key(userId)
   await mutateJson(BALANCE_FILE(), (all) => {
     const next = { ...(all || {}) }
     delete next.coins; delete next.planId; delete next.updatedAt
-    next[k] = { ...(next[k] || {}), modules: list, updatedAt: Date.now() }
+    next[SUBSCRIPTION_KEY] = { modules: list, updatedAt: Date.now() }
     return next
   })
   return getBalance(userId)
@@ -90,7 +89,6 @@ export const DEFAULT_USER = '__default'
 /** @param {string} [userId] */
 const key = (userId) => String(userId || DEFAULT_USER)
 
-/** Монеты храним с точностью до сотых: списание за действие — доли монеты. */
 /**
  * Точность монет — ТЫСЯЧНЫЕ, а не сотые.
  *
@@ -113,8 +111,8 @@ export async function getBalance(userId) {
   return {
     planId,
     plan: PLANS[planId],
-    // Набор купленных модулей: 'all' или список ключей.
-    modules: saved?.modules === undefined ? DEFAULT_MODULES : saved.modules,
+    // Набор купленных модулей — общий на пространство (см. SUBSCRIPTION_KEY).
+    modules: (all && all[SUBSCRIPTION_KEY]?.modules) ?? DEFAULT_MODULES,
     coins: normCoins(saved?.coins ?? DEFAULT_STATE.coins),
     updatedAt: Number(saved?.updatedAt) || 0,
   }
