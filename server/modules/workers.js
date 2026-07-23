@@ -55,6 +55,7 @@ import { isSemanticEnabled, embedText, cosineSimilarity } from '../lib/semantic.
 import { parseTelegramPostLinks, resolvePostPeer } from '../lib/postLink.js'
 import { findChannelChat, isChannelPeer } from '../lib/channelChat.js'
 import { followUpDecision, followUpPrompt, followUpStatus } from '../lib/followUp.js'
+import { buildAgentContext, getAgent } from '../agents.js'
 import { filterBlacklisted, isBlacklistedSync } from '../targetBlacklist.js'
 
 /** @type {Map<string, Promise<void>>} */
@@ -169,6 +170,12 @@ export async function runNeuroCommenting(task, store) {
 
   // §3.6/§4: если задача привязана к цели — подмешиваем цель + базу знаний в системный промпт.
   const goalCtx = await buildGoalContext(s.goalId)
+  // A3.3: тон, роль и запреты берём у АГЕНТА задачи, а не у цели (SPEC §1.2).
+  // Пустая строка, если агент не выбран — генерация работает как раньше.
+  const agentCtx = await buildAgentContext(s.agentId)
+  // Дожим тоже принадлежит агенту: «дожимать или отпускать» — манера общения.
+  // Для задач без агента остаётся цель — старые кампании продолжают работать.
+  const agentObj = s.agentId ? await getAgent(s.agentId).catch(() => null) : null
   if (goalCtx) await store.appendLog(task, 'info', 'Комментарии генерируются к выбранной цели (с базой знаний)')
 
   // §3.5 семантика: если включён семантический фильтр и есть цель — считаем её вектор один раз.
@@ -273,7 +280,7 @@ export async function runNeuroCommenting(task, store) {
             const typeIdx = useDist ? weightedPickIndex(s.typeWeights) : (s.promptIndex ?? 0)
             const sysPrompt = useDist ? resolveSystemPrompt({ ...s, promptIndex: typeIdx, promptText: '' }) : resolveSystemPrompt(s)
             task.usedTexts = task.usedTexts || []
-            const { text, mode, reason } = await generateComment(postText, typeIdx, sysPrompt + goalCtx, { avoid: task.usedTexts, variantSeed: accountId })
+            const { text, mode, reason } = await generateComment(postText, typeIdx, sysPrompt + goalCtx + agentCtx, { avoid: task.usedTexts, variantSeed: accountId })
             // Ключ мёртв: продолжать — значит лить шаблонные отписки от живых аккаунтов
             // в реальные каналы (прогон 21.07). Останавливаем всю задачу, а не аккаунт.
             if (mode === 'fatal') {
@@ -351,6 +358,12 @@ export async function runNeuroChatting(task, store) {
   await store.saveTask(task)
   await store.appendLog(task, 'info', 'Нейрочаттинг запущен')
   const goalCtx = await buildGoalContext(s.goalId)
+  // A3.3: тон, роль и запреты берём у АГЕНТА задачи, а не у цели (SPEC §1.2).
+  // Пустая строка, если агент не выбран — генерация работает как раньше.
+  const agentCtx = await buildAgentContext(s.agentId)
+  // Дожим тоже принадлежит агенту: «дожимать или отпускать» — манера общения.
+  // Для задач без агента остаётся цель — старые кампании продолжают работать.
+  const agentObj = s.agentId ? await getAgent(s.agentId).catch(() => null) : null
   if (goalCtx) await store.appendLog(task, 'info', 'Ответы генерируются к выбранной цели (с базой знаний)')
   const mul = delayMultiplier(s.protectionLevel ?? 1, s.delayPreset ?? 1)
   const prob = effectiveProbability(s.probability ?? 30, !!s.aiProtection, s.protectionLevel ?? 1)
@@ -403,7 +416,7 @@ export async function runNeuroChatting(task, store) {
         }
         await sleep(pickDelay(s.delays?.action?.[0] ?? 42, s.delays?.action?.[1] ?? 78, mul) * 1000)
         task.usedTexts = task.usedTexts || []
-        const { text: reply, mode, reason } = await generateComment(msg.message || '', s.promptIndex ?? 0, resolveSystemPrompt(s) + goalCtx, { avoid: task.usedTexts, variantSeed: accountId })
+        const { text: reply, mode, reason } = await generateComment(msg.message || '', s.promptIndex ?? 0, resolveSystemPrompt(s) + goalCtx + agentCtx, { avoid: task.usedTexts, variantSeed: accountId })
         if (mode === 'fatal') {
           await store.appendLog(task, 'error', `ИИ недоступен: ${reason}. Задача остановлена — писать в чаты без ИИ не будем.`, meta.name)
           await disconnectAccount(client, accountId)
@@ -977,7 +990,7 @@ export async function runNeuroDialogs(task, store) {
           // (или есть непрочитанные), — но условие пишем явно, чтобы дожим не начал
           // срабатывать сам, если фильтрация выше однажды изменится.
           const hasIncoming = d.unread > 0 || !d.lastOut
-          const decision = followUpDecision(leadNow, goalObj, fuDone, hasIncoming)
+          const decision = followUpDecision(leadNow, agentObj || goalObj, fuDone, hasIncoming)
           if (decision.mode === 'skip') {
             await store.appendLog(task, 'info', `«${peerKey}» ${decision.reason}`, meta.name)
             answeredUpTo.set(`${accountId}:${d.id}`, Math.max(d.lastMessageId ?? 0, answeredUpTo.get(`${accountId}:${d.id}`) ?? 0))
@@ -1007,7 +1020,7 @@ export async function runNeuroDialogs(task, store) {
           // В дожиме — свой тон: человек уже прошёл воронку, продавать ему то же
           // самое повторно это верный способ получить блокировку.
           const sysPrompt = dialogSystemPrompt(s, goal, goalObj, effStatus, stageForStatus(goalObj?.stages, effStatus))
-            + (isFollowUp ? followUpPrompt(goalObj, rawStatus, decision.left) : '')
+            + (isFollowUp ? followUpPrompt(agentObj || goalObj, rawStatus, decision.left) : '')
           const gen = await generateComment(prompt, s.promptIndex ?? 0, sysPrompt, accountId)
           const mode = gen.mode
           // Диалог подаётся модели стенограммой «Я: … / Собеседник: …», и она регулярно
@@ -1828,6 +1841,12 @@ export async function runMailing(task, store) {
   const dm = s.delays?.dm || s.delays?.action || [90, 300] // §6: паузы рассылки ЛС 90–300с
   const maxPerAccount = Number(s.maxPerAccount || 0)
   const goalCtx = await buildGoalContext(s.goalId)
+  // A3.3: тон, роль и запреты берём у АГЕНТА задачи, а не у цели (SPEC §1.2).
+  // Пустая строка, если агент не выбран — генерация работает как раньше.
+  const agentCtx = await buildAgentContext(s.agentId)
+  // Дожим тоже принадлежит агенту: «дожимать или отпускать» — манера общения.
+  // Для задач без агента остаётся цель — старые кампании продолжают работать.
+  const agentObj = s.agentId ? await getAgent(s.agentId).catch(() => null) : null
   // §9: заготовки первого сообщения живут в самой ЦЕЛИ («Первое сообщение:» и
   // «Альтернативное…» в описании). Раньше текст приходилось дублировать в модуле,
   // и он расходился с целью. Теперь: нет своего текста — берём из цели, по кругу.
@@ -1970,7 +1989,7 @@ export async function runMailing(task, store) {
             (message || opener) ? `Опирайся на этот текст как на образец смысла и тона:
 «${message || opener}»` : '',
           ].filter(Boolean).join(' ')
-          const gen = await generateComment(openerTask, s.promptIndex ?? 0, resolveSystemPrompt(s) + goalCtx, account)
+          const gen = await generateComment(openerTask, s.promptIndex ?? 0, resolveSystemPrompt(s) + goalCtx + agentCtx, account)
           // Чистим так же, как в диалогах: модель повторяет ярлыки промпта и оставляет
           // заготовки. С заглушкой лучше отправить текст из цели, чем «[тут вставь ссылку]».
           const cleaned = cleanDialogReply(gen.text)
