@@ -32,6 +32,13 @@ export async function parseJson<T>(res: Response): Promise<T> {
     throw new Error(`Некорректный ответ API (HTTP ${res.status})`)
   }
   if (!res.ok || (data && typeof data === 'object' && 'ok' in data && !(data as { ok?: boolean }).ok)) {
+    // Нулевой баланс — единственная ошибка, которую нельзя «закрыть и забыть»:
+    // без пополнения не заработает ни один боевой модуль. Поднимаем окно по центру
+    // из одного места, чтобы каждый экран не переоткрывал его по-своему.
+    if (res.status === 402 || (data as { needTopUp?: boolean })?.needTopUp) {
+      const msg = (data as { error?: string }).error || 'Закончились монеты.'
+      void import('@/shared/lib/uiStore').then(({ useUi }) => useUi.getState().setNoCoins(msg))
+    }
     throw new ApiError(
       (data as { error?: string }).error || `HTTP ${res.status}`,
       res.status,

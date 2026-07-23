@@ -147,7 +147,9 @@ modulesRouter.post('/:moduleKey/tasks', async (req, res) => {
     // уже запущенной рассылки — худший из возможных способов.
     if (AI_MODULES.has(moduleKey)) {
       const { getBalance } = await import('../balance.js')
-      const { coins } = await getBalance()
+      // Считаем баланс ТОГО, кто запускает: кошельки у пользователей разные,
+      // и запуск на чужие монеты был бы дырой в биллинге.
+      const { coins } = await getBalance(req.header('x-user-id'))
       if (coins <= 0) {
         return res.status(402).json({
           ok: false,
@@ -187,6 +189,9 @@ modulesRouter.post('/:moduleKey/tasks', async (req, res) => {
     task.initiator = settings.initiator || 'operator' // §3.9: кто запустил
     task.goalId = settings.goalId ?? null // §3.6: к какой цели
     task.campaignId = settings.campaignId ?? null // §0: под какой кампанией
+    // Чей кошелёк платит за ИИ этой задачи. Кошельки пер-юзерные, а списание идёт
+    // из воркера в фоне — если не запомнить владельца при запуске, потом уже негде взять.
+    task.userId = req.header('x-user-id') || ''
     try {
       await store.saveTask(task)
       const { startWorker } = await import('./workers.js')

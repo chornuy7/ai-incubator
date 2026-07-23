@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { useApp } from '@/mocks/store'
 import { launchWithSkip } from './launchWithSkip'
+import { ApiError } from '@/api/client'
 import {
   startModuleTask,
   fetchModuleTask,
@@ -131,7 +132,11 @@ export function useModuleTask(moduleKey: string) {
       void loadAccountBusy()
       return true
     } catch (e) {
-      pushToast({ type: 'error', title: 'Ошибка запуска', desc: e instanceof Error ? e.message : '' })
+      // 402 «нет монет» уже показан окном по центру (см. api/client) — второй тост
+      // в углу про то же самое только шумит.
+      if (!(e instanceof ApiError && e.status === 402)) {
+        pushToast({ type: 'error', title: 'Ошибка запуска', desc: e instanceof Error ? e.message : '' })
+      }
       return false
     } finally {
       setStarting(false)

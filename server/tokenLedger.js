@@ -44,6 +44,7 @@ export async function recordTokens(entry = {}) {
     accountId: String(entry.accountId || ''),
     taskId: String(entry.taskId || ''),
     campaignId: String(entry.campaignId || ''),
+    userId: String(entry.userId || ''),
     model: String(entry.model || ''),
     tokens,
     promptTokens: Math.max(0, Number(entry.promptTokens) || 0),
@@ -63,7 +64,9 @@ export async function recordTokens(entry = {}) {
   if (row.coins > 0) {
     try {
       const { changeCoins } = await import('./balance.js')
-      await changeCoins(-row.coins, `${row.module || 'ИИ'}: ${row.tokens} токенов`)
+      // Списываем с кошелька того, кто запустил задачу. Без userId (старые задачи,
+      // автоматизация) — с общего: терять учёт расхода хуже, чем списать не с того.
+      await changeCoins(-row.coins, `${row.module || 'ИИ'}: ${row.tokens} токенов`, row.userId)
     } catch { /* не роняем задачу из-за биллинга */ }
   }
   return row

@@ -1,7 +1,7 @@
 import { useNavigate } from 'react-router-dom'
 import { useState, useEffect } from 'react'
 import {
-  Menu, Zap, Sun, Moon, Radar, ChevronDown, UserCog, LogOut, Wallet, Check,
+  Menu, Zap, Sun, Moon, Radar, ChevronDown, UserCog, LogOut, Wallet, Check, AlertTriangle,
 } from 'lucide-react'
 import { useApp, activeAccounts } from '@/mocks/store'
 import { fetchBalance, type Balance } from '@/api/balanceApi'
@@ -42,6 +42,8 @@ export function AppHeader() {
   const logout = useSession((s) => s.logout)
   const coinsOpen = useUi((s) => s.coinsOpen)
   const setCoinsOpen = useUi((s) => s.setCoinsOpen)
+  const noCoins = useUi((s) => s.noCoins)
+  const setNoCoins = useUi((s) => s.setNoCoins)
   const [langOpenTick, setLangOpenTick] = useState(0)
 
   const active = activeAccounts(data).length
@@ -156,6 +158,42 @@ export function AppHeader() {
           </Dropdown>
         </div>
       </div>
+
+      {/*
+        Нулевой баланс: окно по центру вместо тоста в углу. Запуск не состоялся —
+        значит человеку нужно не уведомление, а следующий шаг, и кнопка ведёт
+        прямо в пополнение, а не оставляет искать его в меню.
+      */}
+      <Modal
+        open={!!noCoins}
+        onClose={() => setNoCoins('')}
+        title="Недостаточно монет"
+        subtitle="Боевые модули остановлены"
+        icon={<AlertTriangle size={22} />}
+        size="sm"
+        footer={(
+          <>
+            <button onClick={() => setNoCoins('')} className="btn-ghost">Закрыть</button>
+            <button
+              onClick={() => { setNoCoins(''); setCoinsOpen(true) }}
+              className="btn-primary inline-flex items-center gap-1.5"
+            >
+              <Zap size={16} fill="currentColor" /> Пополнить баланс
+            </button>
+          </>
+        )}
+      >
+        <p className="text-sm leading-relaxed text-muted">{noCoins}</p>
+        <div className="mt-4 flex items-center justify-between rounded-2xl border border-amber-500/30 bg-amber-500/10 px-4 py-3">
+          <span className="text-sm font-medium text-muted">Текущий баланс</span>
+          <span className="flex items-center gap-1.5 font-display text-xl font-bold text-amber-300">
+            <Zap size={18} fill="currentColor" /> {fmtCoins(balance?.coins ?? 0)}
+          </span>
+        </div>
+        <p className="mt-3 text-xs text-muted">
+          Парсеры и сбор данных продолжают работать — они не обращаются к ИИ и монеты не тратят.
+        </p>
+      </Modal>
 
       {/* Coins modal */}
       <Modal

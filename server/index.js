@@ -397,26 +397,30 @@ app.post('/api/accounts/activity', async (req, res) => {
 
 // §5.1 (B2): баланс монет и тариф. Читают все — шапка показывает их на каждой странице.
 // Менять (пополнение/списание/смена тарифа) — только админ: это деньги, а не настройка.
-app.get('/api/balance', async (_req, res) => {
+app.get('/api/balance', async (req, res) => {
   try {
+    // Свой баланс у каждого пользователя: ключ — X-User-Id. Без сессии (дев)
+    // отдаётся общий кошелёк, как и раньше.
     const { getBalance } = await import('./balance.js')
-    res.json({ ok: true, balance: await getBalance() })
+    res.json({ ok: true, balance: await getBalance(req.header('x-user-id')) })
   } catch (err) { res.status(500).json({ ok: false, error: err instanceof Error ? err.message : 'Ошибка' }) }
 })
 app.post('/api/balance', async (req, res) => {
   try {
     if (!(await isAdminRequest(req))) return res.status(403).json({ ok: false, error: 'Менять баланс может только админ' })
     const { getBalance, changeCoins, setPlan } = await import('./balance.js')
-    const { amount, planId, reason } = req.body ?? {}
+    const { amount, planId, reason, userId } = req.body ?? {}
+    // Админ может пополнить ЧУЖОЙ кошелёк, явно указав userId — иначе правит свой.
+    const target = userId || req.header('x-user-id')
     let changed = null
-    if (amount !== undefined) changed = await changeCoins(amount, reason)
-    if (planId !== undefined) await setPlan(planId)
-    const balance = await getBalance()
+    if (amount !== undefined) changed = await changeCoins(amount, reason, target)
+    if (planId !== undefined) await setPlan(planId, target)
+    const balance = await getBalance(target)
     await appendAudit({
       action: 'balance.change', module: 'balance', initiator: req.header('x-user-id') || 'operator',
       reason: planId !== undefined
-        ? `Тариф: ${balance.plan.name}`
-        : `Баланс: ${changed?.before} → ${changed?.after}${reason ? ` (${reason})` : ''}`,
+        ? `Тариф ${target || 'общий'}: ${balance.plan.name}`
+        : `Баланс ${target || 'общий'}: ${changed?.before} → ${changed?.after}${reason ? ` (${reason})` : ''}`,
       meta: { ...changed, planId: balance.planId },
     }).catch(() => {})
     res.json({ ok: true, balance })
