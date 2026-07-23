@@ -14,6 +14,7 @@ import { TasksPage, TaskDetailPage } from '@/pages/TasksPage'
 import { AccountOverviewPage } from '@/features/account-manager/AccountOverviewPage'
 import { LeadsPage } from '@/pages/LeadsPage'
 import { AdminStatsPage } from '@/pages/AdminStatsPage'
+import { LandingPage } from '@/pages/LandingPage'
 import { AnalyticsPage } from '@/pages/AnalyticsPage'
 import { CampaignPage } from '@/pages/CampaignPage'
 import { ChannelsPage } from '@/pages/ChannelsPage'
@@ -30,8 +31,12 @@ export default function App() {
   const userState = useApp((s) => s.userState)
 
   if (userState === 'guest') {
+    // B1 (SPEC §5.2): лендинг — единственная страница ВНЕ auth-гейта. Раньше гость
+    // на любом адресе видел форму входа: человек, пришедший по ссылке из рекламы,
+    // упирался в логин, не понимая, что это за продукт.
     return (
       <Routes>
+        <Route path="/" element={<LandingPage />} />
         <Route path="*" element={<GuestLogin />} />
       </Routes>
     )
