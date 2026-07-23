@@ -59,6 +59,26 @@ async function warmingStopBlockReason(req, moduleKey) {
 
 
 /**
+ * Хватает ли монет, чтобы (пере)запустить задачу модуля. Тот же гейт, что при
+ * создании: без него «Продолжить» на нулевом балансе стартовал бы задачу, которая
+ * встаёт на паузу после первого же действия — человек жмёт кнопку, ничего не
+ * происходит, причина видна только в логах.
+ * @returns {Promise<object|null>} тело отказа или null
+ */
+async function noCoinsPayload(req, moduleKey) {
+  const { actionPrice } = await import('../pricing.js')
+  if (actionPrice(moduleKey) <= 0) return null
+  const { getBalance } = await import('../balance.js')
+  const { coins } = await getBalance(req.header('x-user-id'))
+  if (coins > 0) return null
+  return {
+    ok: false,
+    error: 'Закончились монеты — модули остановлены. Пополните баланс, чтобы продолжить.',
+    needTopUp: true,
+  }
+}
+
+/**
  * Своя ли это задача. Скрытие чужих в списке без этой проверки было бы косметикой:
  * id виден в интерфейсе, и остановить чужой запуск можно было бы прямым запросом.
  * @returns {Promise<string|null>} текст отказа или null
@@ -166,20 +186,10 @@ modulesRouter.post('/:moduleKey/tasks', async (req, res) => {
     // половиной платформы можно было пользоваться, не платя вообще. Проверяем ДО
     // создания задачи: узнать о нуле из логов уже запущенной рассылки — худший
     // из возможных способов.
-    const { actionPrice } = await import('../pricing.js')
-    if (actionPrice(moduleKey) > 0) {
-      const { getBalance } = await import('../balance.js')
-      // Считаем баланс ТОГО, кто запускает: кошельки у пользователей разные,
-      // и запуск на чужие монеты был бы дырой в биллинге.
-      const { coins } = await getBalance(req.header('x-user-id'))
-      if (coins <= 0) {
-        return res.status(402).json({
-          ok: false,
-          error: 'Закончились монеты — модули остановлены. Пополните баланс, чтобы продолжить.',
-          needTopUp: true,
-        })
-      }
-    }
+    // Считаем баланс ТОГО, кто запускает: кошельки у пользователей разные,
+    // и запуск на чужие монеты был бы дырой в биллинге.
+    const noCoins = await noCoinsPayload(req, moduleKey)
+    if (noCoins) return res.status(402).json(noCoins)
 
     // Guard безопасного назначения (§3.2/§3.3): не отдаём непрогретые/занятые статусом профили.
     // Недоступные можно исключить — тогда задача идёт на оставшихся, а не падает целиком.
@@ -335,6 +345,8 @@ modulesRouter.post('/:moduleKey/tasks/:id/resume', async (req, res) => {
   try {
     const foreign = await foreignTaskReason(req, req.params.moduleKey, req.params.id)
     if (foreign) return res.status(404).json({ ok: false, error: foreign })
+    const noCoins = await noCoinsPayload(req, req.params.moduleKey)
+    if (noCoins) return res.status(402).json(noCoins)
     const task = await resumeModuleTask(req.params.moduleKey, req.params.id)
     if (!task) return res.status(404).json({ ok: false, error: 'Задача не найдена' })
     const { appendAudit } = await import('../lib/auditLog.js')
@@ -354,6 +366,8 @@ modulesRouter.post('/:moduleKey/tasks/:id/restart', async (req, res) => {
     const old = await store.loadTask(id)
     if (!old) return res.status(404).json({ ok: false, error: 'Задача не найдена' })
     if (!(await canTouchTask(req, old))) return res.status(404).json({ ok: false, error: 'Задача не найдена' })
+    const noCoins = await noCoinsPayload(req, moduleKey)
+    if (noCoins) return res.status(402).json(noCoins)
     const settings = { ...(old.settings || {}), initiator: req.body?.initiator || 'operator' }
 
     const err = validateSettings(moduleKey, settings)
@@ -364,6 +378,9 @@ modulesRouter.post('/:moduleKey/tasks/:id/restart', async (req, res) => {
 
     const { store: s, task, worker } = startModuleTask(moduleKey, settings)
     task.initiator = settings.initiator
+    // Перезапуск создаёт НОВУЮ задачу — владельца надо проставить заново, иначе
+    // она станет ничьей и списываться будет с общего кошелька.
+    task.userId = req.header('x-user-id') || old.userId || ''
     task.goalId = settings.goalId ?? null
     task.restartOf = id
     try {

@@ -23,18 +23,20 @@ test('списывает по прайсу модуля и не трогает �
   const store = storeMock()
   await chargeActions(task, store, 4, w) // 4 × 0.05
   assert.equal(w.coins(), 9.8)
-  assert.equal(task.stopRequested, undefined, 'задача не должна останавливаться при живом балансе')
+  assert.equal(task.pauseRequested, undefined, 'задача не должна вставать при живом балансе')
   assert.equal(store.logs.length, 0)
 })
 
-test('на нуле останавливает задачу и пишет причину в логи', async () => {
+test('на нуле ставит задачу на ПАУЗУ (не стоп) и пишет причину в логи', async () => {
   const w = wallet(0.05)
   const task = { moduleKey: 'neuro-commenting', userId: 'u1' }
   const store = storeMock()
   await chargeActions(task, store, 1, w)
   assert.equal(w.coins(), 0)
-  assert.equal(task.stopRequested, true, 'иначе начатая задача доработала бы бесплатно')
+  assert.equal(task.pauseRequested, true, 'иначе начатая задача доработала бы бесплатно')
+  assert.notEqual(task.stopRequested, true, 'стоп потерял бы прогресс — за уже сделанное платили бы дважды')
   assert.match(store.logs[0].text, /Закончились монеты/)
+  assert.match(store.logs[0].text, /Продолжить/, 'в логе должно быть сказано, что делать дальше')
   assert.equal(store.logs[0].level, 'error')
 })
 
@@ -65,5 +67,5 @@ test('сбой кошелька не роняет задачу — действ�
   const broken = { changeCoins: async () => { throw new Error('диск отвалился') }, getBalance: async () => ({ coins: 0 }) }
   const task = { moduleKey: 'mailing', userId: 'u1' }
   assert.equal(await chargeActions(task, storeMock(), 1, broken), null)
-  assert.equal(task.stopRequested, undefined)
+  assert.equal(task.pauseRequested, undefined)
 })
