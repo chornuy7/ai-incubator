@@ -1,8 +1,9 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import {
   UserCog, User, Shield, Bell, Handshake, Cable, Save, Copy, RefreshCw, Eye, EyeOff, Check, Zap,
 } from 'lucide-react'
 import { useApp } from '@/mocks/store'
+import { fetchBalance, type Balance } from '@/api/balanceApi'
 import { useSession } from '@/features/auth/session'
 import { PageHeader, Card, Switch, Badge } from '@/shared/ui'
 import { cn } from '@/shared/lib/utils'
@@ -18,6 +19,16 @@ const TABS = [
 
 export function ProfilePage() {
   const data = useApp((s) => s.data)
+  // Тариф, лимит и баланс — с сервера, а не из моков: раньше на странице профиля
+  // висели те же нарисованные «Базовая» и 80.00, что и в шапке, и пополнение
+  // сверить было не с чем.
+  const [balance, setBalance] = useState<Balance | null>(null)
+  useEffect(() => {
+    const load = () => { void fetchBalance().then(setBalance).catch(() => {}) }
+    load()
+    const t = setInterval(load, 30000)
+    return () => clearInterval(t)
+  }, [])
   const updateUser = useApp((s) => s.updateUser)
   const toggleNotification = useApp((s) => s.toggleNotification)
   const pushToast = useApp((s) => s.pushToast)
@@ -85,12 +96,12 @@ export function ProfilePage() {
           {tab === 'account' && (
             <Card className="space-y-5">
               <div className="flex items-center justify-between rounded-2xl border border-line bg-elevated p-4">
-                <div><div className="text-sm text-muted">Текущий тариф</div><div className="font-display text-lg font-bold text-fg">{data.plan.name}</div></div>
+                <div><div className="text-sm text-muted">Текущий тариф</div><div className="font-display text-lg font-bold text-fg">{balance?.plan.name ?? data.plan.name}</div></div>
                 <button onClick={() => pushToast({ type: 'info', title: 'Смена тарифа (демо)' })} className="btn-iris h-10">Изменить тариф</button>
               </div>
               <div className="grid gap-3 sm:grid-cols-2">
-                <div className="rounded-2xl border border-line bg-elevated p-4"><div className="text-sm text-muted">Лимит аккаунтов</div><div className="font-display text-lg font-bold text-fg">{data.accounts.filter((a) => !a.inTrash).length} / {data.plan.accountLimit}</div></div>
-                <div className="rounded-2xl border border-line bg-elevated p-4"><div className="flex items-center gap-1.5 text-sm text-muted"><Zap size={14} className="text-amber-400" /> Баланс монет</div><div className="font-display text-lg font-bold text-fg">{data.coins.toFixed(2)}</div></div>
+                <div className="rounded-2xl border border-line bg-elevated p-4"><div className="text-sm text-muted">Лимит аккаунтов</div><div className="font-display text-lg font-bold text-fg">{data.accounts.filter((a) => !a.inTrash).length} / {balance?.plan.accountLimit ?? data.plan.accountLimit}</div></div>
+                <div className="rounded-2xl border border-line bg-elevated p-4"><div className="flex items-center gap-1.5 text-sm text-muted"><Zap size={14} className="text-amber-400" /> Баланс монет</div><div className="font-display text-lg font-bold text-fg">{(balance?.coins ?? data.coins).toFixed(2)}</div></div>
               </div>
               <div>
                 <label className="label">Часовой пояс</label>

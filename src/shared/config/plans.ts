@@ -12,13 +12,28 @@ export interface PlanCard {
   accountLimit: number
   featured?: boolean
   perks: string[]
+  /**
+   * Цена за месяц. `null` — цена ещё не утверждена, и на лендинге вместо неё
+   * показывается «по запросу»: выдуманная сумма на публичной странице хуже
+   * её отсутствия. Ставите число — оно сразу появляется в карточке.
+   */
+  pricePerMonth?: number | null
+  /** Валюта для показа. Меняется в одном месте вместе с ценами. */
+  currency?: string
 }
+
+/**
+ * Сколько монет включено в тариф при оплате. Связывает прайс с биллингом (C2):
+ * `null` — не задано, тогда монеты пополняются отдельно.
+ */
+export const CURRENCY = '$'
 
 export const PLAN_CARDS: PlanCard[] = [
   {
     id: 'none',
     name: 'Старт',
     accountLimit: 3,
+    pricePerMonth: null,
     perks: [
       'Знакомство с платформой',
       'Парсеры каналов и аудитории',
@@ -30,6 +45,7 @@ export const PLAN_CARDS: PlanCard[] = [
     name: 'Базовая',
     accountLimit: 50,
     featured: true,
+    pricePerMonth: null,
     perks: [
       'Все модули: комментинг, чатинг, диалоги, рассылка',
       'Агенты с характером и запретами',
@@ -41,6 +57,7 @@ export const PLAN_CARDS: PlanCard[] = [
     id: 'pro',
     name: 'Про',
     accountLimit: 200,
+    pricePerMonth: null,
     perks: [
       'Всё из «Базовой»',
       'Кампании из нескольких модулей',

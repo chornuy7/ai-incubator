@@ -3,7 +3,7 @@ import {
   Bot, Radar, MessagesSquare, ShieldCheck, Target, BarChart3,
   ArrowRight, Check, Zap,
 } from 'lucide-react'
-import { PLAN_CARDS } from '@/shared/config/plans'
+import { PLAN_CARDS, CURRENCY } from '@/shared/config/plans'
 
 /**
  * B1 (SPEC §5.2): публичный лендинг — единственная страница вне auth-гейта панели.
@@ -134,6 +134,13 @@ export function LandingPage() {
                 </span>
               )}
               <div className="font-display text-lg font-bold">{p.name}</div>
+              {/* Цена появляется автоматически, как только её проставят в plans.ts.
+                  Пока null — честное «по запросу» вместо выдуманной суммы. */}
+              <div className="mt-1 font-display text-2xl font-bold text-fg">
+                {p.pricePerMonth != null
+                  ? <>{CURRENCY}{p.pricePerMonth}<span className="text-sm font-normal text-muted"> / мес</span></>
+                  : <span className="text-base font-semibold text-muted">Цена по запросу</span>}
+              </div>
               <div className="mt-1 text-sm text-muted">до {p.accountLimit} аккаунтов</div>
               <ul className="mt-5 flex flex-1 flex-col gap-2">
                 {p.perks.map((perk) => (
