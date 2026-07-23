@@ -53,9 +53,12 @@ export function isAccountAllowed(
   return groups.some((g) => can(permissions, false, 'accountGroup', g.id) && g.accountIds.includes(accountId))
 }
 
-/** Извлечь ключ модуля из пути роутинга (/panel/modules/<key>). */
+/**
+ * Извлечь ключ модуля из пути роутинга (/panel/modules/<key>[/...]).
+ * Вложенные страницы модуля — часть модуля: доступ к ним даёт то же право.
+ */
 export function moduleKeyFromPath(path: string): string | null {
-  const m = path.match(/^\/panel\/modules\/([^/]+)$/)
+  const m = path.match(/^\/panel\/modules\/([^/]+)/)
   return m ? m[1] : null
 }
 
@@ -80,5 +83,22 @@ export function canAccessPath(permissions: RolePermissions | null, isAdmin: bool
   if (ALWAYS_ON_PATHS.has(path)) return true
   const mk = moduleKeyFromPath(path) ?? SPECIAL_MODULE_PATHS[path]
   if (mk) return can(permissions, false, 'module', mk)
-  return can(permissions, false, 'section', path)
+  if (can(permissions, false, 'section', path)) return true
+  // Вложенная страница наследует доступ раздела: карточка задачи живёт по
+  // /panel/tasks/<id>, и точное сравнение пути закрывало её даже тому, кому
+  // Дашборд открыт — он видел список, но не мог открыть ни одну свою задачу.
+  // Корень /panel из наследования исключён: он есть почти у всех, и через него
+  // открылась бы вообще любая страница панели.
+  return allowedByParentSection(permissions, path)
+}
+
+/** Разрешён ли какой-нибудь родительский раздел пути (глубже, чем корень /panel). */
+function allowedByParentSection(permissions: RolePermissions | null, path: string): boolean {
+  const parts = path.split('/').filter(Boolean) // ['panel','tasks','pr_1']
+  for (let i = parts.length - 1; i > 1; i -= 1) {
+    const parent = '/' + parts.slice(0, i).join('/')
+    if (ADMIN_ONLY_PATHS.has(parent)) return false // /panel/roles/<id> — тоже только админу
+    if (can(permissions, false, 'section', parent)) return true
+  }
+  return false
 }
