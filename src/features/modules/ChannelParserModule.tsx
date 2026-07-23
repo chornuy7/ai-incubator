@@ -412,6 +412,15 @@ function ChannelParserInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: 
                 onChange={setIntersect}
               />
             )}
+            {/* Пересечение считается по ВСЕМ ключам разом, поэтому применяется только
+                когда пройдут все запросы. Пока идёт сбор, в результатах видно
+                промежуточное — и это читается как «фильтр не работает». */}
+            {method === 0 && keywords.length > 1 && intersect && (
+              <div className="rounded-xl border border-amber-500/25 bg-amber-500/8 px-3 py-2 text-xs leading-relaxed text-amber-200/90">
+                Пересечение применится <b>в конце</b>, когда пройдут все запросы. По ходу работы
+                в результатах будет видно промежуточный сбор — часть строк уйдёт, и монеты за них вернутся.
+              </div>
+            )}
 
             <div className="rounded-2xl border border-line bg-elevated/40 p-3">
               <NumberField label="Лимит результатов" value={limit} onChange={setLimit} step={10} />
