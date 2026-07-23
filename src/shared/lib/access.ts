@@ -62,6 +62,21 @@ export function moduleKeyFromPath(path: string): string | null {
   return m ? m[1] : null
 }
 
+/**
+ * Может ли роль УПРАВЛЯТЬ задачей модуля (запуск/пауза/стоп/правка).
+ *
+ * Спрашиваем именно доступ к модулю, а не блок `<key>:run`: блоки применяются
+ * не на всех типах страниц (парсеры их не гейтят), и в Дашборде это давало бы
+ * расхождение — человек запускает парсер с его страницы, но кнопок у своей же
+ * задачи не видит.
+ *
+ * Нет сессии — дев/демо, как и в остальных гейтах.
+ */
+export function canControlModule(permissions: RolePermissions | null, isAdmin: boolean, moduleKey: string): boolean {
+  if (isAdmin) return true
+  return can(permissions, false, 'module', moduleKey)
+}
+
 /** Страницы только для админа (управление ролями/пользователями). §8.1 */
 export const ADMIN_ONLY_PATHS = new Set(['/panel/roles', '/panel/users'])
 /** Минимум, доступный всем всегда (свой профиль + поддержка) — не гейтится ролью. */
