@@ -556,8 +556,18 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
                   <div key={i} className="rounded-xl border border-line bg-surface/40 p-2">
                     <div className="mb-1.5 flex items-center gap-2">
                       <span className="min-w-0 flex-1 truncate text-xs font-medium text-fg">{label}</span>
-                      <input type="number" min={0} max={100} className="input h-7 w-14 text-center text-sm" value={val}
-                        onChange={(e) => setTypeWeights((w) => { const n = [...w]; while (n.length < (cfg.messagePrompts?.length ?? 0)) n.push(0); n[i] = Math.max(0, Number(e.target.value) || 0); return n })} />
+                      {/* Поле было w-14 со спиннерами: «17» показывалось как «1» — цифру
+                          съедали стрелки, и оператор не видел, что реально ввёл. Шире,
+                          спиннеры убраны, «%» подписан. Потолок 100 применяется в обработчике,
+                          а не только в атрибуте: атрибут не мешает вписать 500 руками. */}
+                      <div className="flex shrink-0 items-center gap-1">
+                        <input
+                          type="number" min={0} max={100} inputMode="numeric"
+                          className="input h-7 w-16 text-center text-sm [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+                          value={val}
+                          onChange={(e) => setTypeWeights((w) => { const n = [...w]; while (n.length < (cfg.messagePrompts?.length ?? 0)) n.push(0); n[i] = Math.min(100, Math.max(0, Number(e.target.value) || 0)); return n })} />
+                        <span className="text-[11px] text-white/40">%</span>
+                      </div>
                     </div>
                     <div className="h-1.5 overflow-hidden rounded-full bg-line"><div className="h-full rounded-full bg-spark-500 transition-all" style={{ width: `${share}%` }} /></div>
                   </div>
@@ -739,10 +749,14 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
         </div>
       )}
 
-      {/* §7: «Выполнение» — нижняя прижатая панель (всегда видна): статус текущей задачи
-          + прыжок в Дашборд, отфильтрованный по этому модулю. */}
+      {/* §7: «Выполнение» — статус текущей задачи + прыжок в Дашборд по этому модулю.
+          Раньше панель была `sticky bottom-0 z-30` и висела ПОВЕРХ плавающей панели
+          запуска (LaunchPanel/FloatingBar, тот же z-30): две панели дублировали статус,
+          а нижняя накрывала кнопку «Начать» — оператор видел зелёный обрезок и не мог
+          нажать. Обычный блок в потоке: панель запуска и так ходит за человеком,
+          дублировать её прилипанием незачем. */}
       {showBlock('run') && (
-        <div className="sticky bottom-0 z-30 -mx-0.5 flex flex-wrap items-center gap-x-3 gap-y-1 rounded-t-xl border border-b-0 border-line bg-surface/90 px-4 py-2.5 shadow-[0_-8px_24px_-12px_rgba(0,0,0,0.5)] backdrop-blur supports-[backdrop-filter]:bg-surface/75">
+        <div className="mt-3 -mx-0.5 flex flex-wrap items-center gap-x-3 gap-y-1 rounded-xl border border-line bg-surface/60 px-4 py-2.5">
           <span className={`h-2.5 w-2.5 shrink-0 rounded-full ${running ? 'animate-pulse bg-spark-400' : task?.status === 'done' ? 'bg-spark-500' : 'bg-faint'}`} />
           <span className="text-sm font-semibold text-fg">
             {running
