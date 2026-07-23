@@ -13,7 +13,10 @@ import { listChannels } from './channels.js'
 import { loadAllMeta } from './accountsMeta.js'
 import { listGroups } from './accountGroups.js'
 
-const ROLES_FILE = process.env.ROLES_FILE || dataPath('roles.json')
+// Путь — ФУНКЦИЯ, а не константа: при вычислении на импорте тесты, выставляющие
+// env позже, писали бы в боевые data/. Так и случилось — прогон накопил там
+// 22 лишние роли и 36 пользователей.
+const ROLES_FILE = () => process.env.ROLES_FILE || dataPath('roles.json')
 
 export const ALLOW = 'allow'
 export const DENY = 'deny'
@@ -186,10 +189,10 @@ function defaultRoles() {
 }
 
 export async function listRoles() {
-  const roles = await readJson(ROLES_FILE, null)
+  const roles = await readJson(ROLES_FILE(), null)
   if (!Array.isArray(roles)) {
     const seed = defaultRoles()
-    await writeJson(ROLES_FILE, seed)
+    await writeJson(ROLES_FILE(), seed)
     return seed
   }
   // §12: у ролей, созданных до групп аккаунтов, поля нет — дошиваем пустую карту,
@@ -208,7 +211,7 @@ export async function listRoles() {
     const missing = defaultRoles().filter((r) => r.id !== ADMIN_ROLE_ID && !have.has(r.id))
     if (missing.length) {
       const merged = [...roles, ...missing]
-      await writeJson(ROLES_FILE, merged)
+      await writeJson(ROLES_FILE(), merged)
       return merged
     }
   }
@@ -223,7 +226,7 @@ export async function listRoles() {
       migrated = true
     }
   }
-  if (migrated) await writeJson(ROLES_FILE, roles)
+  if (migrated) await writeJson(ROLES_FILE(), roles)
   return roles
 }
 
@@ -245,7 +248,7 @@ export async function createRole(input) {
     updatedAt: Date.now(),
   }
   roles.push(role)
-  await writeJson(ROLES_FILE, roles)
+  await writeJson(ROLES_FILE(), roles)
   return role
 }
 
@@ -267,7 +270,7 @@ export async function updateRole(id, patch = {}) {
     ...(roles[i].id === ADMIN_ROLE_ID ? {} : { permissions: clean.permissions }),
     updatedAt: Date.now(),
   }
-  await writeJson(ROLES_FILE, roles)
+  await writeJson(ROLES_FILE(), roles)
   return roles[i]
 }
 
@@ -278,7 +281,7 @@ export async function deleteRole(id) {
   if (!target) return false
   if (target.builtin) throw new Error('Встроенную роль удалить нельзя')
   const next = roles.filter((r) => r.id !== id)
-  await writeJson(ROLES_FILE, next)
+  await writeJson(ROLES_FILE(), next)
   return true
 }
 

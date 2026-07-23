@@ -9,7 +9,10 @@ import crypto from 'crypto'
 import { dataPath, readJson, writeJson } from './lib/jsonStore.js'
 import { ADMIN_ROLE_ID } from './roles.js'
 
-const USERS_FILE = process.env.USERS_FILE || dataPath('users.json')
+// Путь — ФУНКЦИЯ, а не константа: при вычислении на импорте тесты, выставляющие
+// env позже, писали бы в боевые data/. Так и случилось — прогон накопил там
+// 22 лишние роли и 36 пользователей.
+const USERS_FILE = () => process.env.USERS_FILE || dataPath('users.json')
 
 /** Хэш пароля: случайная соль + scrypt. Возвращает "salt:hash" (hex). @param {string} password */
 export function hashPassword(password) {
@@ -85,10 +88,10 @@ function defaultUsers() {
 }
 
 export async function listUsers() {
-  const users = await readJson(USERS_FILE, null)
+  const users = await readJson(USERS_FILE(), null)
   if (!Array.isArray(users)) {
     const seed = defaultUsers()
-    await writeJson(USERS_FILE, seed)
+    await writeJson(USERS_FILE(), seed)
     return seed
   }
   // Разовая миграция: старым учёткам с одиночным roleId проставляем roleIds (мульти-роль).
@@ -99,7 +102,7 @@ export async function listUsers() {
       u.roleIds = roleIds; u.roleId = roleId; changed = true
     }
   }
-  if (changed) await writeJson(USERS_FILE, users)
+  if (changed) await writeJson(USERS_FILE(), users)
   return users
 }
 
@@ -134,7 +137,7 @@ export async function createUser(input = {}) {
     updatedAt: Date.now(),
   }
   users.push(user)
-  await writeJson(USERS_FILE, users)
+  await writeJson(USERS_FILE(), users)
   return user
 }
 
@@ -154,7 +157,7 @@ export async function updateUser(id, patch = {}) {
     users[i].passwordHash = hashPassword(patch.password)
   }
   users[i].updatedAt = Date.now()
-  await writeJson(USERS_FILE, users)
+  await writeJson(USERS_FILE(), users)
   return users[i]
 }
 
@@ -163,7 +166,7 @@ export async function deleteUser(id) {
   if (id === 'usr_admin') throw new Error('Встроенного администратора удалить нельзя')
   const next = users.filter((u) => u.id !== id)
   if (next.length === users.length) return false
-  await writeJson(USERS_FILE, next)
+  await writeJson(USERS_FILE(), next)
   return true
 }
 

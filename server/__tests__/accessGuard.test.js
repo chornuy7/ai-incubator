@@ -42,6 +42,12 @@ test('moduleAccessGuard: не роняет запрос при ошибке (fai
  * users/roles (тесты гоняются на временном DATA_DIR), потому что вся суть правила —
  * в связке «пользователь → его роли → право allTasks», а не в чистой функции.
  */
+/**
+ * §8.1: каждый видит в Дашборде только свои запуски. Проверяем на чистых временных
+ * файлах: раньше тест писал роли и пользователей в БОЕВЫЕ data/ — за десяток прогонов
+ * набежало 22 мусорных роли и 33 юзера. Пути модулей резолвятся на импорте, поэтому
+ * env выставляем ДО первого импорта, а не внутри теста.
+ */
 test('tasksForRequest: свои задачи — всем, чужие — только админу и роли allTasks', async () => {
   const os = await import('os')
   const path = await import('path')
@@ -49,6 +55,8 @@ test('tasksForRequest: свои задачи — всем, чужие — тол
   const dir = path.join(os.tmpdir(), `tasks-acl-${process.pid}-${Math.random().toString(36).slice(2)}`)
   await fs.mkdir(dir, { recursive: true })
   process.env.DATA_DIR = dir
+  process.env.ROLES_FILE = path.join(dir, 'roles.json')
+  process.env.USERS_FILE = path.join(dir, 'users.json')
 
   const { createUser } = await import('../users.js')
   const { createRole, updateRole, ADMIN_ROLE_ID } = await import('../roles.js')
@@ -75,4 +83,7 @@ test('tasksForRequest: свои задачи — всем, чужие — тол
   assert.deepEqual(ids(await tasksForRequest(req(boss.id), tasks)), ['t_own', 't_other', 't_legacy'], 'право allTasks — все')
   assert.deepEqual(ids(await tasksForRequest(req(undefined), tasks)), ['t_own', 't_other', 't_legacy'], 'без сессии — дев/демо')
   assert.deepEqual(await tasksForRequest(req('usr_несуществующий'), tasks), [], 'неизвестный юзер — ничего (fail-closed)')
+
+  // Ничего не оставляем в боевых данных: файлы теста живут в temp и удаляются.
+  await fs.rm(dir, { recursive: true, force: true })
 })
