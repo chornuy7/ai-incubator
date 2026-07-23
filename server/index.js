@@ -404,7 +404,13 @@ app.get('/api/pricing', async (_req, res) => {
   try {
     const { ACTION_PRICE } = await import('./pricing.js')
     const { COINS_PER_1K_TOKENS } = await import('./tokenLedger.js')
-    res.json({ ok: true, actions: ACTION_PRICE, coinsPer1kTokens: COINS_PER_1K_TOKENS })
+    const { moduleTitle } = await import('./lib/moduleTitles.js')
+    // Отдаём с названиями: в вебе нет конфига для mailing и autoposting (чужая
+    // дорожка), и в окне цен они показывались бы техническими ключами.
+    const items = Object.entries(ACTION_PRICE)
+      .map(([key, price]) => ({ key, title: moduleTitle(key), price }))
+      .sort((a, b) => b.price - a.price || a.title.localeCompare(b.title, 'ru'))
+    res.json({ ok: true, items, actions: ACTION_PRICE, coinsPer1kTokens: COINS_PER_1K_TOKENS })
   } catch (err) { res.status(500).json({ ok: false, error: err instanceof Error ? err.message : 'Ошибка' }) }
 })
 

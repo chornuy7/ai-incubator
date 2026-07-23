@@ -12,6 +12,7 @@
 import { listModuleKeys, getModuleStore } from './modules/registry.js'
 import { tokenSummary, readLedger } from './tokenLedger.js'
 import { getBalance } from './balance.js'
+import { moduleTitle } from './lib/moduleTitles.js'
 import { loadAllMeta } from './accountsMeta.js'
 import { listActivity } from './accountActivity.js'
 import { readAudit } from './lib/auditLog.js'
@@ -24,23 +25,7 @@ const DAY_MS = 24 * 60 * 60 * 1000
  * отчёт должен собираться на сервере целиком, иначе «инвойс» нельзя будет отдать
  * ни письмом, ни выгрузкой — только из открытой вкладки.
  */
-const MODULE_TITLES = {
-  mailing: 'Рассылка',
-  autoposting: 'Автопостинг',
-  'neuro-commenting': 'Нейрокомментинг',
-  'neuro-chatting': 'Нейрочаттинг',
-  'neuro-dialogs': 'НейроДиалоги',
-  'mass-react': 'Массовые реакции',
-  'mass-looking': 'Масслукинг',
-  warming: 'Прогрев аккаунтов',
-  parsing: 'Парсинг каналов',
-  'parsing-groups': 'Парсер групп',
-  'parsing-users': 'Парсер пользователей',
-  'parsing-messages': 'Парсер сообщений',
-  'parsing-comments': 'Парсер комментариев',
-  ggr: 'AIR — AI Rating',
-}
-const moduleTitle = (key) => MODULE_TITLES[key] || key
+
 
 /**
  * Свод для админ-панели.

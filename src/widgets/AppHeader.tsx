@@ -9,7 +9,7 @@ import { useSession } from '@/features/auth/session'
 import { useUi } from '@/shared/lib/uiStore'
 import { coins as fmtCoins } from '@/shared/lib/utils'
 import { Dropdown, MenuItem, Modal, Avatar } from '@/shared/ui'
-import { LANGUAGES, MODULES } from '@/shared/config/modules'
+import { LANGUAGES } from '@/shared/config/modules'
 
 const COIN_PACKS = [
   { coins: 50, price: '4.99 $' },
@@ -180,7 +180,7 @@ export function AppHeader() {
         open={!!noCoins}
         onClose={() => setNoCoins('')}
         title="Недостаточно монет"
-        subtitle="Боевые модули остановлены"
+        subtitle="Модули остановлены"
         icon={<AlertTriangle size={22} />}
         size="sm"
         footer={(
@@ -203,7 +203,7 @@ export function AppHeader() {
           </span>
         </div>
         <p className="mt-3 text-xs text-muted">
-          Парсеры и сбор данных продолжают работать — они не обращаются к ИИ и монеты не тратят.
+          Платные все модули, включая сбор данных. Цены по действиям — в окне «Пополнить баланс».
         </p>
       </Modal>
 
@@ -227,14 +227,12 @@ export function AppHeader() {
           <div className="mb-4 rounded-2xl border border-line bg-elevated/50 p-3">
             <div className="mb-2 text-xs font-bold uppercase tracking-wide text-muted">Сколько стоит действие</div>
             <div className="max-h-44 overflow-y-auto pr-1">
-              {Object.entries(pricing.actions)
-                .sort((a, b) => b[1] - a[1])
-                .map(([key, price]) => (
-                  <div key={key} className="flex items-center justify-between border-b border-line/50 py-1 text-sm last:border-0">
-                    <span className="text-muted">{MODULES[key]?.title || key}</span>
-                    <span className="font-semibold tabular-nums text-fg">{price} ⚡</span>
-                  </div>
-                ))}
+              {pricing.items.map((p) => (
+                <div key={p.key} className="flex items-center justify-between border-b border-line/50 py-1 text-sm last:border-0">
+                  <span className="text-muted">{p.title}</span>
+                  <span className="font-semibold tabular-nums text-fg">{p.price} ⚡</span>
+                </div>
+              ))}
             </div>
             <div className="mt-2 text-xs text-muted">
               Плюс расход ИИ по факту: {pricing.coinsPer1kTokens} ⚡ за 1000 токенов.
