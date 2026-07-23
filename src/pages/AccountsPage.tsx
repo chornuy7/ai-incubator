@@ -10,7 +10,7 @@ import { useSession } from '@/features/auth/session'
 import { filterAccountsByAccess } from '@/shared/lib/access'
 import { useUi } from '@/shared/lib/uiStore'
 import {
-  PageHeader, Avatar, StatusBadge, EmptyState, Dropdown, MenuItem, Select, Skeleton, Modal,
+  PageHeader, Avatar, StatusBadge, EmptyState, Dropdown, MenuItem, Select, Skeleton, Modal, NumberField,
 } from '@/shared/ui'
 import { HelpButton } from '@/features/neuro-commenting/moduleUi'
 import { accountLabel, accountSub } from '@/features/conversation/AccountRail'
@@ -29,6 +29,7 @@ import { patchAccount, releaseAccountLock, setAccountStatusManual, fetchDailyAll
 import { fetchCampaigns, updateCampaign, type Campaign, type PinnedMap } from '@/api/campaignsApi'
 import { fetchAccountGroups, type AccountGroup } from '@/api/accountGroupsApi'
 import { fetchProxies, type Proxy as ApiProxy } from '@/api/proxiesApi'
+import { fetchActivity, setActivity, type ActivityMap } from '@/api/accountActivityApi'
 
 const STATUS_ORDER: AccountStatus[] = ['active', 'working', 'warming', 'pause', 'floodwait', 'quarantine', 'spamblock', 'invalid', 'frozen', 'reauth']
 const COLS = [
@@ -107,6 +108,15 @@ export function AccountsPage() {
   useEffect(() => {
     loadCampaigns()
     const t = setInterval(loadCampaigns, 30000)
+    return () => clearInterval(t)
+  }, [])
+  // §4 (D1/D3): усталость общая для всех модулей — показываем в списке, кто отдыхает.
+  const [activity, setActivityMap] = useState<ActivityMap>({})
+  const [fatigueOpen, setFatigueOpen] = useState(false)
+  useEffect(() => {
+    const load = () => { void fetchActivity().then(setActivityMap).catch(() => {}) }
+    load()
+    const t = setInterval(load, 30000)
     return () => clearInterval(t)
   }, [])
   const [assignAcc, setAssignAcc] = useState<TgAccount | null>(null) // §1: назначить кампанию одному аккаунту
@@ -558,6 +568,9 @@ export function AccountsPage() {
           <button disabled={!has} onClick={() => bulkSetStatus('frozen', 'Отключено (frozen)')} className={btn('border-rose-500/40 bg-rose-500/8 text-rose-300 hover:bg-rose-500/15')}><X size={14} /> Отключить</button>
           <span className="mx-1 h-5 w-px bg-line" />
           <button disabled={!has} onClick={() => setMoveOpen(true)} className={btn('border-line text-fg hover:bg-elevated')}><Users size={14} /> Переместить</button>
+          {/* §4.5, прямой запрос владельца: «чтобы можно было МАССОВО всем задавать
+              усталость и отдых от модулей, как живой человек». */}
+          <button disabled={!has} onClick={() => setFatigueOpen(true)} className={btn('border-line text-fg hover:bg-elevated')}><Pause size={14} /> Усталость и отдых</button>
           <button disabled={!has} onClick={() => { void (async () => { for (const id of selected) await setAccountStatus(id, 'reauth'); pushToast({ type: 'info', title: 'Отправлено на реавторизацию' }); setSelected(new Set()) })() }} className={btn('border-line text-fg hover:bg-elevated')}><KeyRound size={14} /> Реавторизация</button>
           {/* §2: «Управление» — мульти-просмотр ВЫБРАННЫХ аккаунтов: открываем обзор на первом
               и передаём весь выбор в `?sel=`, чтобы слева был список только выбранных, а не всех. */}
@@ -636,6 +649,7 @@ export function AccountsPage() {
             onMarkReauth={(a) => { void setAccountStatus(a.id, 'reauth').then(() => pushToast({ type: 'info', title: 'Требуется реавторизация', desc: a.name })) }}
             loading={false}
             dailyAll={dailyAll}
+            activity={activity}
           />
 
           {/* Pagination */}
@@ -680,6 +694,20 @@ export function AccountsPage() {
 
       {/* (8) Bulk move to group */}
       <BulkMoveModal open={moveOpen} count={selected.size} onClose={() => setMoveOpen(false)} onApply={bulkMove} />
+      <FatigueModal
+        open={fatigueOpen}
+        ids={[...selected]}
+        onClose={() => setFatigueOpen(false)}
+        onDone={(map, msg) => { setActivityMap(map); setFatigueOpen(false); setSelected(new Set()); pushToast({ type: 'success', title: msg }) }}
+        onError={(e) => pushToast({ type: 'error', title: 'Не применилось', desc: e })}
+      />
+      <FatigueModal
+        open={fatigueOpen}
+        ids={[...selected]}
+        onClose={() => setFatigueOpen(false)}
+        onDone={(map, msg) => { setActivityMap(map); setFatigueOpen(false); setSelected(new Set()); pushToast({ type: 'success', title: msg }) }}
+        onError={(e) => pushToast({ type: 'error', title: 'Не применилось', desc: e })}
+      />
     </div>
   )
 }
@@ -740,6 +768,8 @@ function AccountsTable(props: {
   onMarkReauth: (a: TgAccount) => void
   loading: boolean
   dailyAll?: DailyAllMap
+  /** §4: усталость/отдых — общая для всех модулей (D1). */
+  activity?: ActivityMap
   /** §1: под какой кампанией аккаунт и закреплён ли (замочек). */
   campaignOf: (accountId: string) => { name: string; locked: boolean } | null
   onAssign: (a: TgAccount) => void
@@ -861,6 +891,28 @@ function AccountsTable(props: {
                           return (
                             <span className="rounded-md bg-amber-500/15 px-1.5 py-0.5 text-[10px] font-bold text-amber-300" title={`Близко к суточному лимиту §6: ${lbl}. Скоро модули начнут пропускать аккаунт.`}>
                               §6 близко: {near.map((x) => DAILY_CAP_LABELS[x.action] ?? x.action).join(', ')}
+                            </span>
+                          )
+                        }
+                        return null
+                      })()}
+                      {/* §4: усталость видна прямо в списке — иначе оператор раздаст задачи
+                          профилям, которые сейчас «отдыхают», и узнает об этом из логов. */}
+                      {(() => {
+                        const act = props.activity?.[a.id]
+                        if (!act) return null
+                        if (act.resting) {
+                          const left = Math.ceil((act.restUntil - Date.now()) / 60000)
+                          return (
+                            <span className="rounded-md bg-iris-500/15 px-1.5 py-0.5 text-[10px] font-bold text-iris-300" title={`Аккаунт отдыхает после нагрузки — освободится через ${left} мин. Отдых общий для всех модулей (§4.1).`}>
+                              отдыхает {left > 0 ? `${left} мин` : ''}
+                            </span>
+                          )
+                        }
+                        if (act.threshold > 0 && act.fatigue / act.threshold >= 0.7) {
+                          return (
+                            <span className="rounded-md bg-amber-500/15 px-1.5 py-0.5 text-[10px] font-bold text-amber-300" title={`Усталость ${act.fatigue} из ${act.threshold} — скоро уйдёт на отдых во всех модулях.`}>
+                              устаёт {act.fatigue}/{act.threshold}
                             </span>
                           )
                         }
@@ -1125,6 +1177,93 @@ function ChangeProxyModal({ acc, onClose, onSave }: { acc: TgAccount | null; onC
       ) : (
         <p className="text-sm text-muted">Аккаунт будет подключаться напрямую, без SOCKS5/HTTP прокси.</p>
       )}
+    </Modal>
+  )
+}
+
+/**
+ * §4.5 (D2), прямой запрос владельца: «чтобы можно было МАССОВО всем задавать усталость
+ * и отдых от модулей, как живой человек, чтобы выглядели».
+ *
+ * Три операции намеренно разделены: задать профиль — это надолго, отправить отдыхать —
+ * разово «сейчас», сбросить усталость — вернуть в строй раньше срока. Смешивать их
+ * в одной кнопке значило бы, что оператор не понимает, что именно применил.
+ */
+function FatigueModal({ open, ids, onClose, onDone, onError }: {
+  open: boolean
+  ids: string[]
+  onClose: () => void
+  onDone: (map: ActivityMap, message: string) => void
+  onError: (e: string) => void
+}) {
+  const [threshold, setThreshold] = useState(15)
+  const [restMinutes, setRestMinutes] = useState(45)
+  const [recoveryPerHour, setRecoveryPerHour] = useState(5)
+  const [restNow, setRestNow] = useState(60)
+  const [busy, setBusy] = useState(false)
+
+  const run = async (patch: Parameters<typeof setActivity>[0], message: string) => {
+    setBusy(true)
+    try {
+      const r = await setActivity(patch)
+      onDone(r.activity, `${message}: ${r.applied} акк.`)
+    } catch (e) {
+      onError(e instanceof Error ? e.message : 'Ошибка')
+    } finally { setBusy(false) }
+  }
+
+  return (
+    <Modal
+      open={open}
+      onClose={onClose}
+      title="Усталость и отдых"
+      subtitle={`Выбрано аккаунтов: ${ids.length}`}
+      icon={<Pause size={22} />}
+      size="sm"
+      footer={<button onClick={onClose} className="btn-ghost h-10">Закрыть</button>}
+    >
+      <p className="mb-3 text-xs text-white/45">
+        Усталость общая для ВСЕХ модулей: аккаунт, отработавший смену в комментинге,
+        не уйдёт тут же лить реакции — он отдыхает, как живой человек.
+      </p>
+
+      <label className="label">Порог усталости <span className="text-white/30">— действий до отдыха</span></label>
+      <NumberField value={threshold} onChange={setThreshold} min={1} max={500} className="input h-10 w-full" />
+
+      <label className="label mt-3">Отдых после переутомления, минут</label>
+      <NumberField value={restMinutes} onChange={setRestMinutes} min={1} max={1440} className="input h-10 w-full" />
+
+      <label className="label mt-3">Восстановление <span className="text-white/30">— единиц усталости за час</span></label>
+      <NumberField value={recoveryPerHour} onChange={setRecoveryPerHour} min={1} max={100} className="input h-10 w-full" />
+
+      <button
+        disabled={busy || !ids.length}
+        onClick={() => void run({ accountIds: ids, profile: { threshold, restMinutes, recoveryPerHour } }, 'Профиль задан')}
+        className="btn-primary mt-3 h-10 w-full disabled:opacity-40"
+      >
+        Применить профиль ко всем выбранным
+      </button>
+
+      <div className="mt-4 border-t border-line pt-3">
+        <label className="label">Отправить отдыхать прямо сейчас, минут</label>
+        <div className="flex gap-2">
+          <NumberField value={restNow} onChange={setRestNow} min={1} max={1440} className="input h-10 flex-1" />
+          <button
+            disabled={busy || !ids.length}
+            onClick={() => void run({ accountIds: ids, restMinutes: restNow }, 'Отправлены на отдых')}
+            className="btn-ghost h-10 shrink-0 px-4 disabled:opacity-40"
+          >
+            Отдых
+          </button>
+        </div>
+        <button
+          disabled={busy || !ids.length}
+          onClick={() => void run({ accountIds: ids, reset: true }, 'Усталость сброшена')}
+          className="btn-ghost mt-2 h-10 w-full disabled:opacity-40"
+        >
+          Сбросить усталость и вернуть в строй
+        </button>
+      </div>
     </Modal>
   )
 }
