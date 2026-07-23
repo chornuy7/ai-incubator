@@ -1,9 +1,10 @@
 import { useNavigate } from 'react-router-dom'
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import {
   Menu, Zap, Sun, Moon, Radar, ChevronDown, UserCog, LogOut, Wallet, Check,
 } from 'lucide-react'
 import { useApp, activeAccounts } from '@/mocks/store'
+import { fetchBalance, type Balance } from '@/api/balanceApi'
 import { useSession } from '@/features/auth/session'
 import { useUi } from '@/shared/lib/uiStore'
 import { coins as fmtCoins } from '@/shared/lib/utils'
@@ -19,6 +20,17 @@ const COIN_PACKS = [
 export function AppHeader() {
   const nav = useNavigate()
   const data = useApp((s) => s.data)
+  // B2 (§5.1): план и монеты — с сервера, а не константа из моков. Раньше в шапке
+  // всегда висели «Базовая» и 80.00 независимо от того, что происходило в системе.
+  // Обновляем периодически: списания за действия (C2) идут в фоне, и цифра должна
+  // меняться без перезагрузки страницы.
+  const [balance, setBalance] = useState<Balance | null>(null)
+  useEffect(() => {
+    const load = () => { void fetchBalance().then(setBalance).catch(() => {}) }
+    load()
+    const t = setInterval(load, 30000)
+    return () => clearInterval(t)
+  }, [])
   const theme = useApp((s) => s.theme)
   const toggleTheme = useApp((s) => s.toggleTheme)
   const locale = useApp((s) => s.locale)
@@ -33,7 +45,7 @@ export function AppHeader() {
   const [langOpenTick, setLangOpenTick] = useState(0)
 
   const active = activeAccounts(data).length
-  const limit = data.plan.accountLimit
+  const limit = balance?.plan.accountLimit ?? data.plan.accountLimit
   const currentLang = LANGUAGES.find((l) => l.code === locale) ?? LANGUAGES[1]
 
   // R1/R2: шапка отражает залогиненного пользователя сессии (а не мок-профиль), + его роль.
@@ -53,7 +65,7 @@ export function AppHeader() {
         {/* Plan badge */}
         <div className="hidden items-center gap-2 rounded-xl border border-line bg-elevated px-3 py-1.5 sm:flex">
           <span className="text-xs font-medium text-muted">План</span>
-          <span className="text-sm font-bold text-fg">{data.plan.name}</span>
+          <span className="text-sm font-bold text-fg">{balance?.plan.name ?? data.plan.name}</span>
         </div>
 
         <div className="ml-auto flex items-center gap-1.5 sm:gap-2">
@@ -74,7 +86,7 @@ export function AppHeader() {
             className="flex items-center gap-1.5 rounded-xl border border-amber-500/30 bg-amber-500/10 px-3 py-1.5 transition-colors hover:bg-amber-500/15"
           >
             <Zap size={16} className="text-amber-400" fill="currentColor" />
-            <span className="text-sm font-bold text-amber-300">{fmtCoins(data.coins)}</span>
+            <span className="text-sm font-bold text-amber-300">{fmtCoins(balance?.coins ?? data.coins)}</span>
           </button>
 
           {/* Theme */}
@@ -157,7 +169,7 @@ export function AppHeader() {
         <div className="mb-4 flex items-center justify-between rounded-2xl border border-amber-500/30 bg-amber-500/10 px-4 py-3.5">
           <span className="text-sm font-medium text-muted">Текущий баланс</span>
           <span className="flex items-center gap-1.5 font-display text-2xl font-bold text-amber-300">
-            <Zap size={20} fill="currentColor" /> {fmtCoins(data.coins)}
+            <Zap size={20} fill="currentColor" /> {fmtCoins(balance?.coins ?? data.coins)}
           </span>
         </div>
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">

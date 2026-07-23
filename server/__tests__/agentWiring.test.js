@@ -78,3 +78,23 @@ test('дожим: задача без агента продолжает рабо
 test('дожим выключен — молчим, что бы ни пришло', () => {
   assert.equal(followUpDecision({ status: 'closed' }, { followUp: { enabled: false } }, 0, true).mode, 'skip')
 })
+
+// ── B2 (§5.1): баланс — единственный источник правды вместо константы в моках ──
+test('B2: баланс не уходит в минус — при нуле боевые модули должны стоять', async () => {
+  const os = await import('os'); const fs = await import('fs/promises'); const path = await import('path')
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'balance-'))
+  process.env.BALANCE_FILE = path.join(dir, 'balance.json')
+  const { getBalance, changeCoins, setPlan } = await import('../balance.js')
+
+  assert.equal((await getBalance()).coins, 0, 'без файла — ноль, а не выдуманные 80')
+  await changeCoins(100)
+  assert.equal((await changeCoins(-2.5)).after, 97.5, 'списание с точностью до сотых')
+  assert.equal((await changeCoins(-1000)).after, 0, 'отрицательный баланс сделал бы правило «стоп при нуле» непроверяемым')
+
+  const b = await setPlan('pro')
+  assert.equal(b.plan.accountLimit, 200, 'тариф задаёт лимит аккаунтов')
+  await assert.rejects(() => setPlan('несуществующий'), /Неизвестный тариф/)
+
+  await fs.rm(dir, { recursive: true, force: true })
+  delete process.env.BALANCE_FILE
+})

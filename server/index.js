@@ -269,6 +269,34 @@ app.use('/api/users', usersRouter)
 app.use('/api/proxies', proxiesRouter)
 app.use('/api/tg/import', importRouter) // §2: массовый импорт аккаунтов
 
+// §5.1 (B2): баланс монет и тариф. Читают все — шапка показывает их на каждой странице.
+// Менять (пополнение/списание/смена тарифа) — только админ: это деньги, а не настройка.
+app.get('/api/balance', async (_req, res) => {
+  try {
+    const { getBalance } = await import('./balance.js')
+    res.json({ ok: true, balance: await getBalance() })
+  } catch (err) { res.status(500).json({ ok: false, error: err instanceof Error ? err.message : 'Ошибка' }) }
+})
+app.post('/api/balance', async (req, res) => {
+  try {
+    if (!(await isAdminRequest(req))) return res.status(403).json({ ok: false, error: 'Менять баланс может только админ' })
+    const { getBalance, changeCoins, setPlan } = await import('./balance.js')
+    const { amount, planId, reason } = req.body ?? {}
+    let changed = null
+    if (amount !== undefined) changed = await changeCoins(amount, reason)
+    if (planId !== undefined) await setPlan(planId)
+    const balance = await getBalance()
+    await appendAudit({
+      action: 'balance.change', module: 'balance', initiator: req.header('x-user-id') || 'operator',
+      reason: planId !== undefined
+        ? `Тариф: ${balance.plan.name}`
+        : `Баланс: ${changed?.before} → ${changed?.after}${reason ? ` (${reason})` : ''}`,
+      meta: { ...changed, planId: balance.planId },
+    }).catch(() => {})
+    res.json({ ok: true, balance })
+  } catch (err) { res.status(400).json({ ok: false, error: err instanceof Error ? err.message : 'Ошибка' }) }
+})
+
 // §6: настройки безопасности. Читать может кто угодно (фронту нужен порог, чтобы
 // предупредить заранее), менять — только админ.
 app.get('/api/settings', async (_req, res) => {
