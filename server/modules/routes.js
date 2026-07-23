@@ -8,7 +8,7 @@ import { assertAccountsAssignable, checkAccountsAssignable, loadAllMeta } from '
  * НЕ входят — они только читают Telegram, ничего не генерируют, и блокировать сбор
  * данных из-за нулевого баланса было бы произволом.
  */
-const AI_MODULES = new Set(['neuro-commenting', 'neuro-chatting', 'neuro-dialogs', 'mailing'])
+
 import { assertNoHotLeadConflict, assertActiveDialogLimit } from '../leads.js'
 import { findDuplicateActiveTask } from '../lib/taskDedup.js'
 import { getGoal, isGoalExpired } from '../goals.js'
@@ -161,11 +161,13 @@ modulesRouter.post('/:moduleKey/tasks', async (req, res) => {
       return res.status(403).json({ ok: false, error: 'Запускать аккаунты ниже порога trust может только админ' })
     }
 
-    // C2 (§5.1): при нулевом балансе боевые модули не запускаем. Парсеры пропускаем —
-    // они не обращаются к ИИ и ничего не тратят, а запрет на сбор данных из-за монет
-    // выглядел бы произволом. Проверяем ДО создания задачи: узнать о нуле из логов
-    // уже запущенной рассылки — худший из возможных способов.
-    if (AI_MODULES.has(moduleKey)) {
+    // §5.1: платный модуль на нуле не запускаем. Платные — все, у кого в прайсе
+    // ненулевая цена действия: бесплатных модулей в системе не осталось, иначе
+    // половиной платформы можно было пользоваться, не платя вообще. Проверяем ДО
+    // создания задачи: узнать о нуле из логов уже запущенной рассылки — худший
+    // из возможных способов.
+    const { actionPrice } = await import('../pricing.js')
+    if (actionPrice(moduleKey) > 0) {
       const { getBalance } = await import('../balance.js')
       // Считаем баланс ТОГО, кто запускает: кошельки у пользователей разные,
       // и запуск на чужие монеты был бы дырой в биллинге.
@@ -173,7 +175,7 @@ modulesRouter.post('/:moduleKey/tasks', async (req, res) => {
       if (coins <= 0) {
         return res.status(402).json({
           ok: false,
-          error: 'Закончились монеты — боевые модули остановлены. Пополните баланс, чтобы продолжить.',
+          error: 'Закончились монеты — модули остановлены. Пополните баланс, чтобы продолжить.',
           needTopUp: true,
         })
       }

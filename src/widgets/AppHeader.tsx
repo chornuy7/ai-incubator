@@ -4,12 +4,12 @@ import {
   Menu, Zap, Sun, Moon, Radar, ChevronDown, UserCog, LogOut, Wallet, Check, AlertTriangle,
 } from 'lucide-react'
 import { useApp, activeAccounts } from '@/mocks/store'
-import { fetchBalance, type Balance } from '@/api/balanceApi'
+import { fetchBalance, fetchPricing, type Balance, type Pricing } from '@/api/balanceApi'
 import { useSession } from '@/features/auth/session'
 import { useUi } from '@/shared/lib/uiStore'
 import { coins as fmtCoins } from '@/shared/lib/utils'
 import { Dropdown, MenuItem, Modal, Avatar } from '@/shared/ui'
-import { LANGUAGES } from '@/shared/config/modules'
+import { LANGUAGES, MODULES } from '@/shared/config/modules'
 
 const COIN_PACKS = [
   { coins: 50, price: '4.99 $' },
@@ -31,6 +31,9 @@ export function AppHeader() {
     const t = setInterval(load, 30000)
     return () => clearInterval(t)
   }, [])
+  // Прайс — с сервера: копия в вебе рано или поздно разошлась бы с тем, что списывается.
+  const [pricing, setPricing] = useState<Pricing | null>(null)
+  useEffect(() => { void fetchPricing().then(setPricing).catch(() => {}) }, [])
   const theme = useApp((s) => s.theme)
   const toggleTheme = useApp((s) => s.toggleTheme)
   const locale = useApp((s) => s.locale)
@@ -219,6 +222,25 @@ export function AppHeader() {
             <Zap size={20} fill="currentColor" /> {fmtCoins(balance?.coins ?? data.coins)}
           </span>
         </div>
+        {/* Прайс: человек должен видеть, за что уходят монеты, до пополнения, а не после. */}
+        {pricing && (
+          <div className="mb-4 rounded-2xl border border-line bg-elevated/50 p-3">
+            <div className="mb-2 text-xs font-bold uppercase tracking-wide text-muted">Сколько стоит действие</div>
+            <div className="max-h-44 overflow-y-auto pr-1">
+              {Object.entries(pricing.actions)
+                .sort((a, b) => b[1] - a[1])
+                .map(([key, price]) => (
+                  <div key={key} className="flex items-center justify-between border-b border-line/50 py-1 text-sm last:border-0">
+                    <span className="text-muted">{MODULES[key]?.title || key}</span>
+                    <span className="font-semibold tabular-nums text-fg">{price} ⚡</span>
+                  </div>
+                ))}
+            </div>
+            <div className="mt-2 text-xs text-muted">
+              Плюс расход ИИ по факту: {pricing.coinsPer1kTokens} ⚡ за 1000 токенов.
+            </div>
+          </div>
+        )}
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
           {COIN_PACKS.map((p) => (
             <button

@@ -395,6 +395,19 @@ app.post('/api/accounts/activity', async (req, res) => {
   } catch (err) { res.status(400).json({ ok: false, error: err instanceof Error ? err.message : 'Ошибка' }) }
 })
 
+/**
+ * §5.1: прайс — сколько стоит одно действие каждого модуля. Отдаём с сервера, а не
+ * держим копию в вебе: цену утверждает заказчик, и расхождение витрины с тем, что
+ * реально спишется, — худший вид ошибки в биллинге.
+ */
+app.get('/api/pricing', async (_req, res) => {
+  try {
+    const { ACTION_PRICE } = await import('./pricing.js')
+    const { COINS_PER_1K_TOKENS } = await import('./tokenLedger.js')
+    res.json({ ok: true, actions: ACTION_PRICE, coinsPer1kTokens: COINS_PER_1K_TOKENS })
+  } catch (err) { res.status(500).json({ ok: false, error: err instanceof Error ? err.message : 'Ошибка' }) }
+})
+
 // §5.1 (B2): баланс монет и тариф. Читают все — шапка показывает их на каждой странице.
 // Менять (пополнение/списание/смена тарифа) — только админ: это деньги, а не настройка.
 app.get('/api/balance', async (req, res) => {

@@ -51,6 +51,7 @@ import { limitReached, incAction } from '../lib/dailyActions.js'
 import { cleanMailingNumbers, classifyMailingTargets, pickMailingAccount } from '../lib/mailing.js'
 import { listLeads, sortDialogsByLeadPriority, upsertLead, updateLead } from '../leads.js'
 import { classifyLeadReply, shouldAdvance } from '../lib/leadClassifier.js'
+import { chargeActions, chargeCollected } from '../lib/actionBilling.js'
 import { isSemanticEnabled, embedText, cosineSimilarity } from '../lib/semantic.js'
 import { parseTelegramPostLinks, resolvePostPeer } from '../lib/postLink.js'
 import { findChannelChat, isChannelPeer } from '../lib/channelChat.js'
@@ -165,6 +166,7 @@ function bumpProgress(task, store) {
   task.progress.actionsDone = (task.progress.actionsDone || 0) + 1
   task.progress.done = task.progress.actionsDone
   if (task.progress.commentsSent !== undefined) task.progress.commentsSent = task.progress.actionsDone
+  void chargeActions(task, store, 1)
   return store.saveTask(task)
 }
 
@@ -1471,6 +1473,7 @@ export async function runChannelParser(task, store, kind) {
           added += 1
           task.progress.actionsDone = task.results.length
           task.progress.done = task.results.length
+          await chargeCollected(task, store)
           task.progress.total = Math.max(task.results.length, task.progress.total || 0)
           await store.saveTask(task)
         }
@@ -1503,6 +1506,8 @@ export async function runChannelParser(task, store, kind) {
     task.progress.total = task.results.length
     task.progress.done = task.results.length
     task.progress.actionsDone = task.results.length
+    // Хвост: то, что докопилось после последнего списания в цикле сбора.
+    await chargeCollected(task, store)
     task.status = statusAfterRun(task)
     // Курсор нужен только между паузой и продолжением. На завершении/стопе сбрасываем,
     // иначе «Перезапуск» начал бы с конца очереди и не сделал бы ничего.
