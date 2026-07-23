@@ -20,6 +20,7 @@ import {
 } from './shared'
 import type { ModuleTaskSettings } from '@/api/modulesApi'
 import { confirmDialog } from '@/shared/lib/dialog'
+import { LaunchCost } from './shared/LaunchCost'
 
 const DEFAULT_DELAYS = {
   comment: [30, 120] as [number, number],
@@ -633,6 +634,7 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
           onStop={stop}
           onSave={handleSave}
           primaryLabel={cfg.primaryAction ?? 'Начать'}
+          cost={<LaunchCost moduleKey={moduleKey} actions={maxActions} />}
           stats={launchStats}
           task={task}
           warn={warn}

@@ -4,14 +4,15 @@
  */
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { chargeActions, chargeCollected } from '../lib/actionBilling.js'
+import { chargeActions, chargeCollected, refundShrunk } from '../lib/actionBilling.js'
 
 /** Кошелёк-заглушка: в минус не уходит, как настоящий. */
 function wallet(start) {
   let coins = start
   return {
     coins: () => coins,
-    changeCoins: async (delta) => { coins = Math.max(0, Math.round((coins + delta) * 100) / 100) },
+    // Тысячные, как в настоящем кошельке: до сотых ставка 0.005 удваивалась.
+    changeCoins: async (delta) => { coins = Math.max(0, Math.round((coins + delta) * 1000) / 1000) },
     getBalance: async () => ({ coins }),
   }
 }
@@ -68,4 +69,26 @@ test('сбой кошелька не роняет задачу — действ�
   const task = { moduleKey: 'mailing', userId: 'u1' }
   assert.equal(await chargeActions(task, storeMock(), 1, broken), null)
   assert.equal(task.pauseRequested, undefined)
+})
+
+test('парсер: 10 строк стоят 0.05, а не 0.10 (округление до сотых удваивало ставку)', async () => {
+  const w = wallet(1)
+  const task = { moduleKey: 'parsing-groups', userId: 'u1', results: [] }
+  const store = storeMock()
+  for (let i = 0; i < 10; i += 1) { task.results.push(i); await chargeCollected(task, store, w) }
+  assert.equal(w.coins(), 0.95)
+  assert.equal(task.spentCoins, 0.05)
+})
+
+test('возврат за строки, которые срезали фильтры', async () => {
+  const w = wallet(1)
+  const task = { moduleKey: 'parsing-groups', userId: 'u1', results: new Array(53).fill(0) }
+  const store = storeMock()
+  await chargeCollected(task, store, w)
+  assert.equal(w.coins(), 0.735) // 53 × 0.005
+  task.results = [] // AND-пересечение убрало всё — живой случай
+  await refundShrunk(task, store, w)
+  assert.equal(w.coins(), 1, 'за пустой результат платить не за что')
+  assert.equal(task.spentCoins, 0)
+  assert.match(store.logs.at(-1).text, /Возврат/)
 })

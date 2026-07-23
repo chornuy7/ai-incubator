@@ -51,7 +51,7 @@ import { limitReached, incAction } from '../lib/dailyActions.js'
 import { cleanMailingNumbers, classifyMailingTargets, pickMailingAccount } from '../lib/mailing.js'
 import { listLeads, sortDialogsByLeadPriority, upsertLead, updateLead } from '../leads.js'
 import { classifyLeadReply, shouldAdvance } from '../lib/leadClassifier.js'
-import { chargeActions, chargeCollected } from '../lib/actionBilling.js'
+import { chargeActions, chargeCollected, refundShrunk } from '../lib/actionBilling.js'
 import { isSemanticEnabled, embedText, cosineSimilarity } from '../lib/semantic.js'
 import { parseTelegramPostLinks, resolvePostPeer } from '../lib/postLink.js'
 import { findChannelChat, isChannelPeer } from '../lib/channelChat.js'
@@ -1506,8 +1506,10 @@ export async function runChannelParser(task, store, kind) {
     task.progress.total = task.results.length
     task.progress.done = task.results.length
     task.progress.actionsDone = task.results.length
-    // Хвост: то, что докопилось после последнего списания в цикле сбора.
+    // Хвост: то, что докопилось после последнего списания в цикле сбора,
+    // и возврат за строки, которые срезали фильтры (AND-пересечение, чёрный список).
     await chargeCollected(task, store)
+    await refundShrunk(task, store)
     task.status = statusAfterRun(task)
     // Курсор нужен только между паузой и продолжением. На завершении/стопе сбрасываем,
     // иначе «Перезапуск» начал бы с конца очереди и не сделал бы ничего.

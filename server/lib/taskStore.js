@@ -75,6 +75,7 @@ export function createTaskStore(moduleKey, idPrefix) {
           // Владелец нужен фильтру «свои задачи» (§8.1): без него дашборд не сможет
           // отличить чужой запуск от своего и покажет либо всё, либо ничего.
           userId: t.userId || '',
+          spentCoins: t.spentCoins || 0, // §5.1: во сколько обошёлся ЭТОТ запуск
           goalId: t.goalId ?? t.settings?.goalId ?? null,
           campaignId: t.campaignId ?? null,
           createdAt: t.createdAt,
@@ -165,6 +166,7 @@ export function createTaskStore(moduleKey, idPrefix) {
       status: task.status,
       initiator: task.initiator || null,
       userId: task.userId || '',
+      spentCoins: task.spentCoins || 0,
       goalId: task.goalId ?? task.settings?.goalId ?? null,
       campaignId: task.campaignId ?? null,
       createdAt: task.createdAt,

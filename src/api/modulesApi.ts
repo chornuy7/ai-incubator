@@ -105,6 +105,11 @@ export interface ModuleTask {
   initiator?: string | null
   goalId?: string | null
   campaignId?: string | null // §0: под какой кампанией идёт задача
+  /** §5.1: во сколько монет обошёлся ЭТОТ запуск (действия + токены ИИ). */
+  spentCoins?: number
+  /** Токенов ИИ по этой задаче (только в ответе одной задачи, не в списке). */
+  tokens?: number
+  tokenCalls?: number
   createdAt: number
   updatedAt: number
   progress: ModuleTaskProgress

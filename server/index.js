@@ -407,10 +407,19 @@ app.get('/api/pricing', async (_req, res) => {
     const { moduleTitle } = await import('./lib/moduleTitles.js')
     // Отдаём с названиями: в вебе нет конфига для mailing и autoposting (чужая
     // дорожка), и в окне цен они показывались бы техническими ключами.
+    // Средний расход токенов на действие — из СВОЕЙ истории, а не из константы:
+    // длина промпта и ответа у каждого клиента своя, и чужое среднее врало бы.
+    // Нет истории — 0, и интерфейс честно скажет «пока не на чем считать».
+    const { tokenSummary } = await import('./tokenLedger.js')
+    const avgTokens = {}
+    for (const key of Object.keys(ACTION_PRICE)) {
+      const sum = await tokenSummary({ module: key }).catch(() => null)
+      avgTokens[key] = sum?.calls ? Math.round(sum.tokens / sum.calls) : 0
+    }
     const items = Object.entries(ACTION_PRICE)
-      .map(([key, price]) => ({ key, title: moduleTitle(key), price }))
+      .map(([key, price]) => ({ key, title: moduleTitle(key), price, avgTokens: avgTokens[key] || 0 }))
       .sort((a, b) => b.price - a.price || a.title.localeCompare(b.title, 'ru'))
-    res.json({ ok: true, items, actions: ACTION_PRICE, coinsPer1kTokens: COINS_PER_1K_TOKENS })
+    res.json({ ok: true, items, actions: ACTION_PRICE, avgTokens, coinsPer1kTokens: COINS_PER_1K_TOKENS })
   } catch (err) { res.status(500).json({ ok: false, error: err instanceof Error ? err.message : 'Ошибка' }) }
 })
 

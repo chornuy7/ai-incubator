@@ -32,3 +32,13 @@ test('сбор данных дешевле боевого действия — �
   assert.ok(actionPrice('parsing-groups') < actionPrice('neuro-commenting'))
   assert.ok(actionPrice('warming') < actionPrice('mailing'), 'прогрев готовит свои же аккаунты, а не продвигает клиента')
 })
+
+/**
+ * Цены мельче копейки должны считаться точно. Поймано на живом прогоне: 10 строк
+ * парсера списали 0.10 вместо 0.05 — округление до сотых удваивало ставку 0.005.
+ */
+test('мелкие цены не округляются вверх', () => {
+  assert.equal(estimateCost('parsing-groups', 1), 0.005, 'одна строка не должна стоить копейку')
+  assert.equal(estimateCost('parsing-groups', 10), 0.05)
+  assert.equal(estimateCost('parsing-groups', 3), 0.015)
+})

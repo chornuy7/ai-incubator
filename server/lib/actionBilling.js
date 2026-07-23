@@ -29,10 +29,14 @@ import { actionPrice } from '../pricing.js'
 export async function chargeActions(task, store, actions = 1, deps = {}) {
   try {
     const n = Math.max(0, Number(actions) || 0)
-    const cost = Math.round(actionPrice(task?.moduleKey) * n * 100) / 100
+    // До тысячных: цена строки парсера — 0.005, и округление до сотых удваивало её.
+    const cost = Math.round(actionPrice(task?.moduleKey) * n * 1000) / 1000
     if (cost <= 0) return null
     const balance = deps.changeCoins && deps.getBalance ? deps : await import('../balance.js')
     await balance.changeCoins(-cost, `${task.moduleKey}: ${n} действ.`, task.userId)
+    // Сколько монет съела ЭТА задача — чтобы в Дашборде было видно цену запуска,
+    // а не только общий баланс, из которого не понять, куда ушло.
+    task.spentCoins = Math.round(((task.spentCoins || 0) + cost) * 1000) / 1000
     const { coins } = await balance.getBalance(task.userId)
     if (coins <= 0 && !task.pauseRequested && !task.stopRequested) {
       task.pauseRequested = true
@@ -57,4 +61,33 @@ export async function chargeCollected(task, store, deps = {}) {
   if (total <= billed) return null
   task.billedResults = total
   return chargeActions(task, store, total - billed, deps)
+}
+
+/**
+ * Вернуть деньги за строки, которых в итоге не осталось.
+ *
+ * Парсер копит результаты по ходу, а фильтры (AND-пересечение ключей, чёрный список,
+ * дедуп) применяются в конце и могут срезать список хоть до нуля. Живой прогон:
+ * собрано 53 → списано за 53 → пересечение оставило 0, и человек заплатил за пустой
+ * результат. Платим за то, что клиент реально получил.
+ *
+ * @param {object} task @param {object} store
+ * @param {{changeCoins?:Function, getBalance?:Function}} [deps]
+ */
+export async function refundShrunk(task, store, deps = {}) {
+  try {
+    const total = task?.results?.length || 0
+    const billed = task?.billedResults || 0
+    if (billed <= total) return null
+    const back = Math.round(actionPrice(task?.moduleKey) * (billed - total) * 1000) / 1000
+    task.billedResults = total
+    if (back <= 0) return null
+    const balance = deps.changeCoins && deps.getBalance ? deps : await import('../balance.js')
+    await balance.changeCoins(back, `${task.moduleKey}: возврат за ${billed - total} отфильтрованных`, task.userId)
+    task.spentCoins = Math.max(0, Math.round(((task.spentCoins || 0) - back) * 1000) / 1000)
+    await store?.appendLog?.(task, 'info', `Возврат ${back} монет: фильтры убрали ${billed - total} из ${billed} собранных строк.`)
+    return { refunded: back }
+  } catch {
+    return null
+  }
 }

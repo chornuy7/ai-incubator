@@ -13,6 +13,7 @@ import { SectionCard, NumberField, ProtectionBlock, DelayFields, LaunchPanel, Ta
 import { cn } from '@/shared/lib/utils'
 import { downloadXls } from '@/shared/lib/exportXls'
 import { SaveToFolderModal } from './shared/FolderPicker'
+import { LaunchCost } from './shared/LaunchCost'
 import { promptDialog } from '@/shared/lib/dialog'
 import { fetchModuleTasks, fetchModuleTask, type ModuleTaskSettings } from '@/api/modulesApi'
 
@@ -476,6 +477,7 @@ function ChannelParserInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: 
           onStop={stop}
           onSave={handleSave}
           primaryLabel={cfg.primaryAction ?? 'Запустить парсинг'}
+          cost={<LaunchCost moduleKey={moduleKey} actions={limit} />}
           stats={launchStats}
           task={task}
           warn={warn}

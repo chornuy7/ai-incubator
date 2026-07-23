@@ -39,7 +39,16 @@ export const DEFAULT_USER = '__default'
 const key = (userId) => String(userId || DEFAULT_USER)
 
 /** Монеты храним с точностью до сотых: списание за действие — доли монеты. */
-const normCoins = (v) => Math.max(0, Math.round((Number(v) || 0) * 100) / 100)
+/**
+ * Точность монет — ТЫСЯЧНЫЕ, а не сотые.
+ *
+ * Было до сотых, и списание за строку парсера (0.005) округлялось вверх до 0.01 —
+ * ровно вдвое дороже прайса. Поймано на живом прогоне: 10 строк списали 0.10 вместо
+ * 0.05. Пока в прайсе есть цены мельче копейки, хранить баланс с точностью до копейки
+ * нельзя: каждое мелкое списание молча дорожает.
+ */
+const COIN_PRECISION = 1000
+const normCoins = (v) => Math.max(0, Math.round((Number(v) || 0) * COIN_PRECISION) / COIN_PRECISION)
 
 /** @returns {Promise<{planId:string, plan:{name:string,accountLimit:number}, coins:number, updatedAt:number}>} */
 export async function getBalance(userId) {
@@ -64,14 +73,14 @@ export async function getBalance(userId) {
  * @param {number} amount @param {string} [reason]
  */
 export async function changeCoins(amount, reason = '', userId) {
-  const delta = Math.round((Number(amount) || 0) * 100) / 100
+  const delta = Math.round((Number(amount) || 0) * COIN_PRECISION) / COIN_PRECISION
   const k = key(userId)
   let result = null
   await mutateJson(BALANCE_FILE(), (all) => {
     const cur = (all && all[k]) || (k === DEFAULT_USER && typeof all?.coins === 'number' ? { coins: all.coins, planId: all.planId } : {})
     const before = normCoins(cur?.coins ?? DEFAULT_STATE.coins)
     const after = normCoins(before + delta)
-    result = { before, after, applied: Math.round((after - before) * 100) / 100, reason, userId: k }
+    result = { before, after, applied: Math.round((after - before) * COIN_PRECISION) / COIN_PRECISION, reason, userId: k }
     const next = { ...(all || {}) }
     delete next.coins; delete next.planId; delete next.updatedAt // чистим старый корневой формат
     next[k] = { ...cur, coins: after, updatedAt: Date.now() }

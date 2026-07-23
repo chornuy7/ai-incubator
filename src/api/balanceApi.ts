@@ -26,9 +26,15 @@ export async function changeBalance(patch: { amount?: number; planId?: string; r
 }
 
 /** Прайс с сервера: цена действия по модулям + курс токенов. Витрина не должна расходиться с тем, что спишется. */
-export interface PriceItem { key: string; title: string; price: number }
-export interface Pricing { items: PriceItem[]; coinsPer1kTokens: number }
+export interface PriceItem { key: string; title: string; price: number; avgTokens: number }
+export interface Pricing {
+  items: PriceItem[]
+  actions: Record<string, number>
+  /** Средний расход токенов на действие по своей истории. 0 = считать не на чем. */
+  avgTokens: Record<string, number>
+  coinsPer1kTokens: number
+}
 export async function fetchPricing(): Promise<Pricing> {
-  const r = await apiGet<{ items?: PriceItem[]; coinsPer1kTokens: number }>('/api/pricing')
-  return { items: r.items || [], coinsPer1kTokens: r.coinsPer1kTokens ?? 1 }
+  const r = await apiGet<{ items?: PriceItem[]; actions?: Record<string, number>; avgTokens?: Record<string, number>; coinsPer1kTokens: number }>('/api/pricing')
+  return { items: r.items || [], actions: r.actions || {}, avgTokens: r.avgTokens || {}, coinsPer1kTokens: r.coinsPer1kTokens ?? 1 }
 }

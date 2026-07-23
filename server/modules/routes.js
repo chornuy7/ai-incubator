@@ -136,7 +136,11 @@ modulesRouter.get('/:moduleKey/tasks/:id', async (req, res) => {
     if (!task) return res.status(404).json({ ok: false, error: 'Задача не найдена' })
     // Чужая задача = «не найдена»: подтверждать существование чужого запуска незачем.
     if (!(await canTouchTask(req, task))) return res.status(404).json({ ok: false, error: 'Задача не найдена' })
-    res.json({ ok: true, task: store.taskToDto(task) })
+    // Расход ИИ именно этой задачи: «во сколько обошёлся запуск» — первый вопрос
+    // при разборе счёта, а из общего баланса он не отвечается.
+    const { tokenSummary } = await import('../tokenLedger.js')
+    const tokens = await tokenSummary({ taskId: task.id }).catch(() => null)
+    res.json({ ok: true, task: { ...store.taskToDto(task), tokens: tokens?.tokens || 0, tokenCalls: tokens?.calls || 0 } })
   } catch (err) {
     res.status(500).json({ ok: false, error: err instanceof Error ? err.message : 'Ошибка' })
   }

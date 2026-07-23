@@ -514,6 +514,9 @@ function TaskCard({ t, goalName, busy, onOpen, onStop, onRestart, onPause, onRes
           <span className="tabular-nums">{t.progress?.done ?? t.progress?.actionsDone ?? 0}/{t.progress?.total ?? 0}</span>
           {goalName && <span className="text-iris-300"><Target size={11} className="mb-0.5 inline" /> {goalName}</span>}
           {t.initiator && <span>кто: {t.initiator}</span>}
+          {/* Во сколько обошёлся запуск. Из общего баланса не понять, куда ушли монеты,
+              а «сколько стоила вот эта задача» — первый вопрос при разборе счёта. */}
+          {!!t.spentCoins && <span className="tabular-nums text-amber-300/80" title="Потрачено монет на эту задачу">⚡ {t.spentCoins.toFixed(2)}</span>}
           <span>{new Date(t.createdAt).toLocaleString('ru-RU', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}</span>
         </div>
       </div>
@@ -776,6 +779,12 @@ export function TaskDetailPage() {
           <Info label="Создана" value={new Date(t.createdAt).toLocaleString('ru-RU')} />
           <Info label="Обновлена" value={new Date(t.updatedAt).toLocaleString('ru-RU')} />
           <Info label="Результатов" value={String(results.length)} />
+          {/* Цена запуска: монеты — точно, токены — по журналу. Показываем всегда,
+              даже когда ноль: «бесплатно» это тоже ответ, а прочерк — нет. */}
+          <Info
+            label="Потрачено"
+            value={`${(t.spentCoins || 0).toFixed(2)} ⚡${t.tokens ? ` · ${t.tokens.toLocaleString('ru-RU')} токенов` : ''}`}
+          />
         </div>
 
         <ChipList

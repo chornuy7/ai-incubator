@@ -6,7 +6,7 @@ import { FloatingBar } from './FloatingBar'
 import { presetHex } from './SavePresetModal'
 
 export function LaunchPanel({
-  running, starting, canStart, onStart, onSave, primaryLabel, stats, task, warn,
+  running, starting, canStart, onStart, onSave, primaryLabel, stats, task, warn, cost,
   presets, onApplyPreset, onDeletePreset,
 }: {
   running: boolean; starting: boolean; canStart: boolean
@@ -15,6 +15,8 @@ export function LaunchPanel({
   stats: { icon: React.ReactNode; color: string; label: string; value: string; warn?: boolean }[]
   task: ModuleTask | null
   warn?: string
+  /** §5.1: во сколько обойдётся запуск — показываем ДО кнопки, а не по факту списания. */
+  cost?: React.ReactNode
   presets?: ModulePreset[]
   onApplyPreset?: (settings: ModuleTaskSettings) => void
   onDeletePreset?: (id: string) => void
@@ -24,6 +26,7 @@ export function LaunchPanel({
       <div className="mb-4 grid grid-cols-2 gap-2.5 lg:grid-cols-4">
         {stats.map((s) => <LaunchStat key={s.label} {...s} />)}
       </div>
+      {!running && cost}
       {warn && !running && (
         <div className="mb-4 flex items-center gap-2.5 rounded-2xl border border-rose-500/30 bg-rose-500/8 p-4">
           <AlertTriangle size={18} className="text-rose-400" />

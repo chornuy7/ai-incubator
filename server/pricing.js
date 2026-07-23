@@ -58,5 +58,5 @@ export function actionPrice(moduleKey) {
  */
 export function estimateCost(moduleKey, actions = 0) {
   const n = Math.max(0, Number(actions) || 0)
-  return Math.round(actionPrice(moduleKey) * n * 100) / 100
+  return Math.round(actionPrice(moduleKey) * n * 1000) / 1000
 }
