@@ -269,6 +269,27 @@ app.use('/api/users', usersRouter)
 app.use('/api/proxies', proxiesRouter)
 app.use('/api/tg/import', importRouter) // §2: массовый импорт аккаунтов
 
+// §5.3 (E1/E2): сводная статистика админ-панели и постатейный отчёт клиенту.
+// Только админ: это данные по всем пользователям и деньгам, а не по своей работе.
+app.get('/api/admin/overview', async (req, res) => {
+  try {
+    if (!(await isAdminRequest(req))) return res.status(403).json({ ok: false, error: 'Статистика доступна только администратору' })
+    const { adminOverview } = await import('./adminStats.js')
+    res.json({ ok: true, overview: await adminOverview({ since: req.query.since ? Number(req.query.since) : undefined }) })
+  } catch (err) { res.status(500).json({ ok: false, error: err instanceof Error ? err.message : 'Ошибка' }) }
+})
+app.get('/api/admin/report', async (req, res) => {
+  try {
+    if (!(await isAdminRequest(req))) return res.status(403).json({ ok: false, error: 'Отчёт доступен только администратору' })
+    const { clientReport } = await import('./adminStats.js')
+    const report = await clientReport({
+      since: req.query.since ? Number(req.query.since) : undefined,
+      until: req.query.until ? Number(req.query.until) : undefined,
+    })
+    res.json({ ok: true, report })
+  } catch (err) { res.status(500).json({ ok: false, error: err instanceof Error ? err.message : 'Ошибка' }) }
+})
+
 // §4 (D1/D2): усталость и распорядок аккаунтов. Читают все — список аккаунтов
 // показывает, кто отдыхает. Массовое задание профиля — прямой запрос владельца:
 // «чтобы можно было массово всем задавать усталость и отдых от модулей».

@@ -13,6 +13,7 @@ import { AgentsPage } from '@/pages/AgentsPage'
 import { TasksPage, TaskDetailPage } from '@/pages/TasksPage'
 import { AccountOverviewPage } from '@/features/account-manager/AccountOverviewPage'
 import { LeadsPage } from '@/pages/LeadsPage'
+import { AdminStatsPage } from '@/pages/AdminStatsPage'
 import { AnalyticsPage } from '@/pages/AnalyticsPage'
 import { CampaignPage } from '@/pages/CampaignPage'
 import { ChannelsPage } from '@/pages/ChannelsPage'
@@ -48,6 +49,7 @@ export default function App() {
         <Route path="/panel/tasks/:id" element={<TaskDetailPage />} />
         <Route path="/panel/crm" element={<LeadsPage />} />
         <Route path="/panel/analytics" element={<AnalyticsPage />} />
+        <Route path="/panel/admin-stats" element={<AdminStatsPage />} />
         <Route path="/panel/campaign" element={<CampaignPage />} />
         <Route path="/panel/channels" element={<ChannelsPage />} />
         <Route path="/panel/logs" element={<LogsPage />} />
