@@ -269,6 +269,57 @@ app.use('/api/users', usersRouter)
 app.use('/api/proxies', proxiesRouter)
 app.use('/api/tg/import', importRouter) // §2: массовый импорт аккаунтов
 
+// §1.3 (C3): счётчик переходов. Короткая ссылка живёт в корне (`/r/<code>`), а не
+// под /api — её отправляют людям, и она должна выглядеть как ссылка, а не как вызов API.
+app.get('/r/:code', async (req, res) => {
+  try {
+    const { registerHit } = await import('./linkTracker.js')
+    const url = await registerHit(req.params.code, {
+      ip: req.headers['x-forwarded-for'] || req.socket?.remoteAddress || '',
+      ua: req.headers['user-agent'] || '',
+      ref: req.headers.referer || '',
+    })
+    if (!url) return res.status(404).send('Ссылка не найдена')
+    // 302, а не 301: постоянный редирект браузер закеширует, и следующие переходы
+    // того же человека мы просто не увидим — счётчик замрёт.
+    return res.redirect(302, url)
+  } catch {
+    return res.status(500).send('Ошибка перехода')
+  }
+})
+
+app.get('/api/links', async (req, res) => {
+  try {
+    const { listLinks, goalHits } = await import('./linkTracker.js')
+    const links = await listLinks()
+    const goalId = req.query.goalId ? String(req.query.goalId) : null
+    res.json({
+      ok: true,
+      links: goalId ? links.filter((l) => l.goalId === goalId) : links,
+      ...(goalId ? { summary: await goalHits(goalId) } : {}),
+    })
+  } catch (err) { res.status(500).json({ ok: false, error: err instanceof Error ? err.message : 'Ошибка' }) }
+})
+app.post('/api/links', async (req, res) => {
+  try {
+    const { createLink } = await import('./linkTracker.js')
+    const link = await createLink(req.body ?? {})
+    await appendAudit({
+      action: 'link.create', module: 'links', initiator: req.header('x-user-id') || 'operator',
+      reason: `Создана отслеживаемая ссылка на ${link.url}`, scope: { goalId: link.goalId },
+    }).catch(() => {})
+    res.json({ ok: true, link })
+  } catch (err) { res.status(400).json({ ok: false, error: err instanceof Error ? err.message : 'Ошибка' }) }
+})
+app.delete('/api/links/:id', async (req, res) => {
+  try {
+    const { deleteLink } = await import('./linkTracker.js')
+    const ok = await deleteLink(req.params.id)
+    if (!ok) return res.status(404).json({ ok: false, error: 'Ссылка не найдена' })
+    res.json({ ok: true })
+  } catch (err) { res.status(400).json({ ok: false, error: err instanceof Error ? err.message : 'Ошибка' }) }
+})
+
 // §5.3 (E1/E2): сводная статистика админ-панели и постатейный отчёт клиенту.
 // Только админ: это данные по всем пользователям и деньгам, а не по своей работе.
 app.get('/api/admin/overview', async (req, res) => {
