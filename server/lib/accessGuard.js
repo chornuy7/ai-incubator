@@ -93,6 +93,51 @@ export async function foldersForRequest(req, folders = []) {
   return out
 }
 
+/**
+ * §8.1: чьи задачи видит автор запроса.
+ *
+ * По умолчанию человек видит в Дашборде ТОЛЬКО свои запуски: чужая задача — это
+ * чужие аккаунты, цели и переписка, и показывать их всем подряд нельзя. Дашборд
+ * целиком открывают админ и роль с правом `allTasks` (тимлид, ответственный
+ * за сетку) — как и просил заказчик: «всё видит админ или тот, кому он дал доступ».
+ *
+ * Задачи без владельца (созданные до того, как владельца стали запоминать) считаем
+ * общими — только для тех, кто и так видит всё. Отдавать их всем значило бы оставить
+ * дыру ровно того размера, что и была.
+ *
+ * @param {import('express').Request} req
+ * @param {Array<{userId?:string}>} tasks
+ * @returns {Promise<Array<object>>}
+ */
+export async function tasksForRequest(req, tasks = []) {
+  const userId = req.header('x-user-id')
+  if (!userId) return tasks // нет сессии — дев/демо, как в moduleAccessGuard
+  let user = null
+  try {
+    user = await getUser(userId)
+  } catch {
+    return [] // fail-closed: не смогли проверить — не показываем чужую работу
+  }
+  if (!user || !user.active) return []
+  if (hasAdminRole(userRoleIds(user))) return tasks
+  const roles = await rolesForUser(user)
+  if (roles.some((role) => can(role, 'allTasks'))) return tasks
+  return tasks.filter((t) => t && t.userId === userId)
+}
+
+/**
+ * Доступна ли автору запроса конкретная задача — для чтения и для управления
+ * (пауза/стоп/перезапуск/правка). Без этой проверки скрытие в списке было бы
+ * косметикой: id задачи виден в интерфейсе, и остановить чужую можно было бы
+ * прямым запросом.
+ * @returns {Promise<boolean>}
+ */
+export async function canTouchTask(req, task) {
+  if (!task) return false
+  const [visible] = await tasksForRequest(req, [task])
+  return Boolean(visible)
+}
+
 /** Ключ модуля из /api/modules/<key>/... (первый сегмент; 'tasks' — не модуль). */
 export function moduleKeyFromModulesPath(req) {
   const seg = String(req.path || '').split('/').filter(Boolean)[0]

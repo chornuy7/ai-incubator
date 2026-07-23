@@ -16,6 +16,8 @@ export interface RolePermissions {
     folderChannels: Record<string, string[]>
     timers: Perm
     searchTemplates: Perm
+    /** Видеть и вести в Дашборде ЧУЖИЕ задачи. По умолчанию человек видит только свои. */
+    allTasks?: Perm
   }
 }
 
@@ -34,7 +36,7 @@ export interface CatalogBlock { key: string; label: string }
 export interface CatalogSection { key: string; label: string }
 export interface CatalogResourceItem { id: string; label: string; channels?: string[] }
 export interface CatalogResource {
-  type: 'accounts' | 'accountGroups' | 'folders' | 'channels' | 'timers' | 'searchTemplates'
+  type: 'accounts' | 'accountGroups' | 'folders' | 'channels' | 'timers' | 'searchTemplates' | 'allTasks'
   label: string
   perItem: boolean
   items?: CatalogResourceItem[]
@@ -72,5 +74,5 @@ export async function deleteRole(id: string): Promise<void> {
 
 /** Пустые права (всё deny) — для новой роли. */
 export function emptyPermissions(): RolePermissions {
-  return { modules: {}, blocks: {}, sections: {}, resources: { accounts: {}, accountGroups: {}, folders: {}, channels: {}, folderChannels: {}, timers: 'deny', searchTemplates: 'deny' } }
+  return { modules: {}, blocks: {}, sections: {}, resources: { accounts: {}, accountGroups: {}, folders: {}, channels: {}, folderChannels: {}, timers: 'deny', searchTemplates: 'deny', allTasks: 'deny' } }
 }

@@ -39,7 +39,7 @@ export function rankBySimilarity(items, queryVec, getVec, minScore = 0) {
 }
 
 /** Embedding текста через OpenAI. @returns {Promise<number[]|null>} null при ошибке/без ключа. */
-export async function embedText(text) {
+export async function embedText(text, userId) {
   const apiKey = process.env.OPENAI_API_KEY?.trim()
   const input = String(text || '').trim().slice(0, 8000)
   if (!apiKey || !input) return null
@@ -54,6 +54,10 @@ export async function embedText(text) {
       return null
     }
     const data = await res.json()
+    // Эмбеддинги дешевле генерации, но не бесплатны: раньше семантический фильтр
+    // тратил деньги мимо журнала — и «сколько ушло на задачу» считалось неверно.
+    const { noteUsage } = await import('../tokenLedger.js')
+    await noteUsage(data?.usage, 'semantic', userId)
     const vec = data?.data?.[0]?.embedding
     return Array.isArray(vec) ? vec : null
   } catch (err) {

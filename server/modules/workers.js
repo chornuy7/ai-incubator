@@ -202,7 +202,7 @@ export async function runNeuroCommenting(task, store) {
   const semanticThreshold = Number(s.semanticThreshold ?? 0.2)
   let goalVec = null
   if (semanticOn) {
-    goalVec = await embedText(goalCtx)
+    goalVec = await embedText(goalCtx, task.userId)
     await store.appendLog(task, goalVec ? 'info' : 'warning', goalVec
       ? `Семантический фильтр к цели включён (порог ${semanticThreshold})`
       : 'Семантический фильтр недоступен (нет ответа embeddings) — работаем без него')
@@ -299,7 +299,7 @@ export async function runNeuroCommenting(task, store) {
             const postText = (post.message || '').trim() || (post.media ? '[медиа]' : '')
             // §3.5 семантика: пропускаем посты, семантически далёкие от цели кампании.
             if (goalVec) {
-              const pv = await embedText(postText)
+              const pv = await embedText(postText, task.userId)
               const sim = pv ? cosineSimilarity(pv, goalVec) : 1 // нет вектора поста → не режем
               if (sim < semanticThreshold) {
                 await store.appendLog(task, 'info', `Пропуск по семантике (близость к цели ${sim.toFixed(2)} < ${semanticThreshold})`, meta.name)
@@ -1096,7 +1096,7 @@ export async function runNeuroDialogs(task, store) {
           const sysPrompt = dialogSystemPrompt(s, goal, goalObj, effStatus, stageForStatus(goalObj?.stages, effStatus))
             + (isFollowUp ? followUpPrompt(agentObj || goalObj, rawStatus, decision.left) : '')
           const gen = await generateComment(prompt, s.promptIndex ?? 0, sysPrompt, accountId)
-          if (gen?.usage?.tokens) await recordTokens({ ...gen.usage, module: task.moduleKey, accountId, taskId: task.id, campaignId: s.campaignId })
+          if (gen?.usage?.tokens) await recordTokens({ ...gen.usage, module: task.moduleKey, accountId, taskId: task.id, campaignId: s.campaignId, userId: task.userId })
           const mode = gen.mode
           // Диалог подаётся модели стенограммой «Я: … / Собеседник: …», и она регулярно
           // копирует эту разметку в ответ. Живой человек 21.07 получил «Я: Отлично!…» —
@@ -1165,6 +1165,7 @@ export async function runNeuroDialogs(task, store) {
                 currentStatus: cur?.status || 'cold',
                 goalName: goalObj?.name || '',
                 targetAction: goalObj?.targetAction || '',
+                userId: task.userId,
               })
               if (isFollowUp) {
                 // В дожиме обычная воронка не работает: она ходит только вперёд, а лид
@@ -2067,7 +2068,7 @@ export async function runMailing(task, store) {
 «${message || opener}»` : '',
           ].filter(Boolean).join(' ')
           const gen = await generateComment(openerTask, s.promptIndex ?? 0, resolveSystemPrompt(s) + goalCtx + agentCtx, account)
-          if (gen?.usage?.tokens) await recordTokens({ ...gen.usage, module: task.moduleKey, accountId, taskId: task.id, campaignId: s.campaignId })
+          if (gen?.usage?.tokens) await recordTokens({ ...gen.usage, module: task.moduleKey, accountId, taskId: task.id, campaignId: s.campaignId, userId: task.userId })
           // Чистим так же, как в диалогах: модель повторяет ярлыки промпта и оставляет
           // заготовки. С заглушкой лучше отправить текст из цели, чем «[тут вставь ссылку]».
           const cleaned = cleanDialogReply(gen.text)

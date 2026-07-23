@@ -22,6 +22,15 @@ export async function loginUser(email: string, password: string): Promise<{ user
   return { user: data.user, role: data.role }
 }
 
+/**
+ * Кто я сейчас, с актуальными правами. Нужен, чтобы выданный/отозванный доступ
+ * применялся без перезахода: права снимались снимком при входе.
+ */
+export async function fetchMe(): Promise<{ user: User; role: Role | null }> {
+  const r = await apiGet<{ user: User; role: Role | null }>('/api/users/me')
+  return { user: r.user, role: r.role }
+}
+
 export async function createUser(input: { email: string; name?: string; roleId?: string; roleIds?: string[]; password: string; active?: boolean }): Promise<User> {
   const data = await apiPost<{ user: User }>('/api/users', input)
   return data.user

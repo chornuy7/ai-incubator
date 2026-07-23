@@ -60,6 +60,10 @@ export const RESOURCE_TYPES = [
   { type: 'channels', label: 'Целевые каналы', perItem: true },
   { type: 'timers', label: 'Таймеры / планировщик', perItem: false },
   { type: 'searchTemplates', label: 'Шаблоны поиска', perItem: false },
+  // По умолчанию человек видит в Дашборде только СВОИ запуски: чужие задачи — это
+  // чужие аккаунты, цели и переписка. Это право открывает весь дашборд целиком —
+  // выдаётся тимлиду или тому, кто отвечает за всю сетку.
+  { type: 'allTasks', label: 'Чужие задачи (видеть и управлять всеми в Дашборде)', perItem: false },
 ]
 
 /** Нормализовать значение доступа: всё, что не 'allow', — deny. @param {*} v */
@@ -109,6 +113,7 @@ export function normalizeRole(input = {}) {
         folderChannels: normFolderChannels(r.folderChannels),
         timers: normPerm(r.timers),
         searchTemplates: normPerm(r.searchTemplates),
+        allTasks: normPerm(r.allTasks),
       },
     },
   }
@@ -138,14 +143,14 @@ function defaultRoles() {
   const OUTREACH = mods.filter((k) => ['neuro-chatting', 'neuro-dialogs', 'mailing'].includes(k))
   const ENGAGE = mods.filter((k) => ['neuro-commenting', 'neuro-chatting', 'neuro-dialogs', 'mass-react', 'mass-looking'].includes(k))
   const roleTpl = (id, name, permissions) => ({ id, name, builtin: false, isTemplate: true, permissions, createdAt: now, updatedAt: now })
-  const res = (over = {}) => ({ accounts: {}, folders: {}, channels: {}, timers: DENY, searchTemplates: DENY, ...over })
+  const res = (over = {}) => ({ accounts: {}, folders: {}, channels: {}, timers: DENY, searchTemplates: DENY, allTasks: DENY, ...over })
   return [
     {
       id: ADMIN_ROLE_ID,
       name: 'Администратор',
       builtin: true,
       isTemplate: false,
-      permissions: { modules: {}, blocks: {}, sections: {}, resources: res({ timers: ALLOW, searchTemplates: ALLOW }) },
+      permissions: { modules: {}, blocks: {}, sections: {}, resources: res({ timers: ALLOW, searchTemplates: ALLOW, allTasks: ALLOW }) },
       createdAt: now,
       updatedAt: now,
     },
@@ -296,6 +301,7 @@ export async function buildCatalog() {
     { type: 'channels', label: 'Целевые каналы', perItem: true, items: channels.map((c) => ({ id: c.id, label: c.title || (c.username ? '@' + c.username : c.id) })) },
     { type: 'timers', label: 'Таймеры / планировщик', perItem: false },
     { type: 'searchTemplates', label: 'Шаблоны поиска', perItem: false },
+    { type: 'allTasks', label: 'Чужие задачи (видеть и управлять всеми в Дашборде)', perItem: false },
   ]
   return { modules, blocks: BLOCKS, sections: SECTIONS, resources }
 }
@@ -304,7 +310,7 @@ export async function buildCatalog() {
  * Разрешён ли доступ роли к цели. Чистая функция (юнит-тест + будущий enforcement).
  * Админ (builtin ADMIN_ROLE_ID) — всегда true. По умолчанию — deny.
  * @param {object|null} role
- * @param {'module'|'block'|'section'|'account'|'accountGroup'|'folder'|'channel'|'timers'|'searchTemplates'} kind
+ * @param {'module'|'block'|'section'|'account'|'accountGroup'|'folder'|'channel'|'timers'|'searchTemplates'|'allTasks'} kind
  * @param {string} [key]
  */
 export function can(role, kind, key) {
@@ -321,6 +327,7 @@ export function can(role, kind, key) {
     case 'channel': return p.resources?.channels?.[key] === ALLOW
     case 'timers': return p.resources?.timers === ALLOW
     case 'searchTemplates': return p.resources?.searchTemplates === ALLOW
+    case 'allTasks': return p.resources?.allTasks === ALLOW
     default: return false
   }
 }

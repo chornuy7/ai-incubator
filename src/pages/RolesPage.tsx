@@ -137,6 +137,7 @@ export function RolesPage() {
   const setChannel = (id: string, p?: Perm) => { setPerms((s) => ({ ...s, resources: { ...s.resources, channels: putPerm(s.resources.channels, id, p) } })); mark() }
   const setTimers = (p: Perm) => { setPerms((s) => ({ ...s, resources: { ...s.resources, timers: p } })); mark() }
   const setTemplates = (p: Perm) => { setPerms((s) => ({ ...s, resources: { ...s.resources, searchTemplates: p } })); mark() }
+  const setAllTasks = (p: Perm) => { setPerms((s) => ({ ...s, resources: { ...s.resources, allTasks: p } })); mark() }
   const setFolderChannels = (id: string, channels: string[]) => { setPerms((s) => ({ ...s, resources: { ...s.resources, folderChannels: { ...(s.resources.folderChannels ?? {}), [id]: channels } } })); mark() }
 
   const mPerm = (k: string): Perm => perms.modules[k] ?? 'deny'
@@ -291,6 +292,7 @@ export function RolesPage() {
                           <div className="mb-1.5 text-sm font-medium text-white/70">{res.label}</div>
                           {res.type === 'timers' && <PermRow label="Доступ к таймерам / планировщику" value={perms.resources.timers} onChange={(p) => setTimers(p ?? 'deny')} />}
                           {res.type === 'searchTemplates' && <PermRow label="Доступ к шаблонам поиска" value={perms.resources.searchTemplates} onChange={(p) => setTemplates(p ?? 'deny')} />}
+                          {res.type === 'allTasks' && <PermRow label="Видеть и вести чужие задачи в Дашборде (иначе — только свои)" value={perms.resources.allTasks ?? 'deny'} onChange={(p) => setAllTasks(p ?? 'deny')} />}
                           {res.perItem && (res.items?.length ? (
                             <div className="flex flex-col gap-1">
                               {res.items.map((it) => (

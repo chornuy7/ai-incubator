@@ -15,7 +15,7 @@ import { getGoal, isGoalExpired } from '../goals.js'
 import { WARMING_MODULES, canStopWarming } from '../lib/safetyLimits.js'
 import { splitAudience } from '../lib/mailingAudience.js'
 import { canEditTask, pickEditableSettings } from '../lib/taskEdit.js'
-import { isAdminRequest } from '../lib/accessGuard.js'
+import { isAdminRequest, tasksForRequest, canTouchTask } from '../lib/accessGuard.js'
 
 export const modulesRouter = Router()
 
@@ -57,12 +57,27 @@ async function warmingStopBlockReason(req, moduleKey) {
   return 'Останавливать и ставить на паузу прогрев может только супер-админ: это недели работы аккаунтов, откатить нельзя.'
 }
 
+
+/**
+ * Своя ли это задача. Скрытие чужих в списке без этой проверки было бы косметикой:
+ * id виден в интерфейсе, и остановить чужой запуск можно было бы прямым запросом.
+ * @returns {Promise<string|null>} текст отказа или null
+ */
+async function foreignTaskReason(req, moduleKey, id) {
+  const store = getModuleStore(moduleKey)
+  if (!store) return null // модуль не найден — пусть отвечает сам обработчик
+  const task = await store.loadTask(id).catch(() => null)
+  if (!task) return null // нет задачи — тоже забота обработчика (404)
+  if (await canTouchTask(req, task)) return null
+  return 'Задача не найдена'
+}
+
 modulesRouter.get('/', (_req, res) => {
   res.json({ ok: true, modules: listModuleKeys() })
 })
 
 // Агрегат всех задач по всем модулям (дашборд «Задачи», §3.9). До /:moduleKey/tasks.
-modulesRouter.get('/tasks', async (_req, res) => {
+modulesRouter.get('/tasks', async (req, res) => {
   try {
     const { listModuleKeys, getModuleStore } = await import('./registry.js')
     const all = []
@@ -75,7 +90,8 @@ modulesRouter.get('/tasks', async (_req, res) => {
       } catch { /* skip module */ }
     }
     all.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0))
-    res.json({ ok: true, tasks: all })
+    // Каждому — его запуски; весь дашборд видит админ и роль с правом allTasks.
+    res.json({ ok: true, tasks: await tasksForRequest(req, all) })
   } catch (err) {
     res.status(500).json({ ok: false, error: err instanceof Error ? err.message : 'Ошибка' })
   }
@@ -86,7 +102,7 @@ modulesRouter.get('/:moduleKey/tasks', async (req, res) => {
     const store = getModuleStore(req.params.moduleKey)
     if (!store) return res.status(404).json({ ok: false, error: 'Модуль не найден' })
     const tasks = await store.listTasks()
-    res.json({ ok: true, tasks })
+    res.json({ ok: true, tasks: await tasksForRequest(req, tasks) })
   } catch (err) {
     res.status(500).json({ ok: false, error: err instanceof Error ? err.message : 'Ошибка' })
   }
@@ -98,6 +114,8 @@ modulesRouter.get('/:moduleKey/tasks/:id', async (req, res) => {
     if (!store) return res.status(404).json({ ok: false, error: 'Модуль не найден' })
     const task = await store.loadTask(req.params.id)
     if (!task) return res.status(404).json({ ok: false, error: 'Задача не найдена' })
+    // Чужая задача = «не найдена»: подтверждать существование чужого запуска незачем.
+    if (!(await canTouchTask(req, task))) return res.status(404).json({ ok: false, error: 'Задача не найдена' })
     res.json({ ok: true, task: store.taskToDto(task) })
   } catch (err) {
     res.status(500).json({ ok: false, error: err instanceof Error ? err.message : 'Ошибка' })
@@ -117,6 +135,8 @@ modulesRouter.get('/:moduleKey/tasks/:id/audience', async (req, res) => {
     if (!store) return res.status(404).json({ ok: false, error: 'Модуль не найден' })
     const task = await store.loadTask(req.params.id)
     if (!task) return res.status(404).json({ ok: false, error: 'Задача не найдена' })
+    // Аудитория — это список людей, кому писали. Чужую не отдаём.
+    if (!(await canTouchTask(req, task))) return res.status(404).json({ ok: false, error: 'Задача не найдена' })
     const targets = task.settings?.targets || task.settings?.numbers || []
     // Аккаунты задачи нужны, чтобы восстановить, кем писали, там где в истории
     // сохранилось только имя, — без id переписку не открыть.
@@ -231,6 +251,8 @@ modulesRouter.post('/:moduleKey/tasks', async (req, res) => {
 
 modulesRouter.post('/:moduleKey/tasks/:id/stop', async (req, res) => {
   try {
+    const foreign = await foreignTaskReason(req, req.params.moduleKey, req.params.id)
+    if (foreign) return res.status(404).json({ ok: false, error: foreign })
     const blocked = await warmingStopBlockReason(req, req.params.moduleKey)
     if (blocked) return res.status(403).json({ ok: false, error: blocked })
     const task = await stopModuleTask(req.params.moduleKey, req.params.id)
@@ -262,6 +284,7 @@ modulesRouter.patch('/:moduleKey/tasks/:id/settings', async (req, res) => {
     if (!store) return res.status(404).json({ ok: false, error: 'Модуль не найден' })
     const task = await store.loadTask(req.params.id)
     if (!task) return res.status(404).json({ ok: false, error: 'Задача не найдена' })
+    if (!(await canTouchTask(req, task))) return res.status(404).json({ ok: false, error: 'Задача не найдена' })
 
     const gate = canEditTask(task.status)
     if (!gate.ok) return res.status(409).json({ ok: false, error: gate.reason, status: task.status })
@@ -291,6 +314,8 @@ modulesRouter.patch('/:moduleKey/tasks/:id/settings', async (req, res) => {
 
 modulesRouter.post('/:moduleKey/tasks/:id/pause', async (req, res) => {
   try {
+    const foreign = await foreignTaskReason(req, req.params.moduleKey, req.params.id)
+    if (foreign) return res.status(404).json({ ok: false, error: foreign })
     const blocked = await warmingStopBlockReason(req, req.params.moduleKey)
     if (blocked) return res.status(403).json({ ok: false, error: blocked })
     const task = await pauseModuleTask(req.params.moduleKey, req.params.id)
@@ -306,6 +331,8 @@ modulesRouter.post('/:moduleKey/tasks/:id/pause', async (req, res) => {
 // Продолжить приостановленную задачу (§3.9): перезахват локов + запуск с сохранённым прогрессом.
 modulesRouter.post('/:moduleKey/tasks/:id/resume', async (req, res) => {
   try {
+    const foreign = await foreignTaskReason(req, req.params.moduleKey, req.params.id)
+    if (foreign) return res.status(404).json({ ok: false, error: foreign })
     const task = await resumeModuleTask(req.params.moduleKey, req.params.id)
     if (!task) return res.status(404).json({ ok: false, error: 'Задача не найдена' })
     const { appendAudit } = await import('../lib/auditLog.js')
@@ -324,6 +351,7 @@ modulesRouter.post('/:moduleKey/tasks/:id/restart', async (req, res) => {
     if (!store) return res.status(404).json({ ok: false, error: 'Модуль не найден' })
     const old = await store.loadTask(id)
     if (!old) return res.status(404).json({ ok: false, error: 'Задача не найдена' })
+    if (!(await canTouchTask(req, old))) return res.status(404).json({ ok: false, error: 'Задача не найдена' })
     const settings = { ...(old.settings || {}), initiator: req.body?.initiator || 'operator' }
 
     const err = validateSettings(moduleKey, settings)

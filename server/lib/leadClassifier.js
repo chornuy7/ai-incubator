@@ -9,6 +9,7 @@
  * явный отказ переводит в `closed` в любой момент.
  */
 import { LEAD_STATUSES } from '../leads.js'
+import { noteUsage } from '../tokenLedger.js'
 
 /** Порядок воронки (без терминальных target/closed). */
 const FUNNEL = ['cold', 'contacted', 'warm', 'interested', 'hot']
@@ -61,7 +62,7 @@ function rank(s) {
  * @param {{ text: string, currentStatus?: string, goalName?: string, targetAction?: string }} input
  * @returns {Promise<{ status: string, reason: string, mode: 'openai'|'rules' }>}
  */
-export async function classifyLeadReply({ text, currentStatus = 'cold', goalName = '', targetAction = '' }) {
+export async function classifyLeadReply({ text, currentStatus = 'cold', goalName = '', targetAction = '', userId = '' }) {
   const fallback = classifyByRules(text, currentStatus) || { status: currentStatus, reason: 'пустой ответ' }
   const apiKey = process.env.OPENAI_API_KEY?.trim()
   if (!apiKey || !String(text || '').trim()) {
@@ -97,6 +98,8 @@ export async function classifyLeadReply({ text, currentStatus = 'cold', goalName
     })
     if (res.ok) {
       const data = await res.json()
+      // Классификация ответа лида — тоже платный вызов; учитываем наравне с генерацией.
+      await noteUsage(data?.usage, 'lead-classifier', userId)
       const raw = data?.choices?.[0]?.message?.content?.trim().toLowerCase().replace(/[^a-z]/g, '')
       if (LEAD_STATUSES.includes(raw)) {
         // Страховка: правила увидели явный отказ/выполнение — доверяем им больше,

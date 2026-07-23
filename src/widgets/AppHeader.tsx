@@ -40,6 +40,15 @@ export function AppHeader() {
   const pushToast = useApp((s) => s.pushToast)
   const sessionUser = useSession((s) => s.user)
   const logout = useSession((s) => s.logout)
+  // Права перечитываем с сервера: выданный или отозванный админом доступ должен
+  // применяться в текущей сессии, а не «после перезахода» — про перезаход человеку
+  // никто не скажет, а отзыв доступа, ждущий перелогина, это уже дыра.
+  const refreshSession = useSession((s) => s.refresh)
+  useEffect(() => {
+    void refreshSession()
+    const t = setInterval(() => { void refreshSession() }, 30000)
+    return () => clearInterval(t)
+  }, [refreshSession])
   const coinsOpen = useUi((s) => s.coinsOpen)
   const setCoinsOpen = useUi((s) => s.setCoinsOpen)
   const noCoins = useUi((s) => s.noCoins)

@@ -263,7 +263,7 @@ app.post('/api/ai/help', async (req, res) => {
   try {
     const { topic, context, question, history } = req.body || {}
     if (!question || !String(question).trim()) return res.status(400).json({ ok: false, error: 'Пустой вопрос' })
-    const { answer, mode } = await answerHelp({ topic, context, question, history })
+    const { answer, mode } = await answerHelp({ topic, context, question, history, userId: req.header('x-user-id') })
     res.json({ ok: true, answer, mode })
   } catch (err) {
     res.status(500).json({ ok: false, error: err instanceof Error ? err.message : 'Ошибка' })
