@@ -7,14 +7,14 @@ import { confirmDialog } from '@/shared/lib/dialog'
 import { FolderPicker } from '@/features/modules/shared'
 import {
   fetchGoals, createGoal, updateGoal, deleteGoal, isGoalExpired, isSaneDeadline,
-  DEADLINE_MIN_YEAR, DEADLINE_MAX_YEAR, LEAD_TARGET_MAX, FOLLOW_UP_MAX, FOLLOW_UP_DEFAULT,
-  type Goal, type GoalInput, type FollowUp,
+  DEADLINE_MIN_YEAR, DEADLINE_MAX_YEAR, LEAD_TARGET_MAX,
+  type Goal, type GoalInput,
   fetchKb, createKb, deleteKb, uploadKbFile, kbFileUrl, KB_FILE_MAX_BYTES, type KbItem,
 } from '@/api/goalsApi'
 import { fetchLeads } from '@/api/leadsApi'
 import { fetchCampaigns, type Campaign } from '@/api/campaignsApi'
 
-const EMPTY: GoalInput = { name: '', description: '', targetAction: '', stages: [], completionCriteria: '', audience: '', channels: [], deadline: '', leadTarget: 0, followUp: { enabled: false, limit: FOLLOW_UP_DEFAULT, instructions: '' }, toneOfVoice: '', restrictions: '' }
+const EMPTY: GoalInput = { name: '', description: '', targetAction: '', stages: [], completionCriteria: '', audience: '', channels: [], deadline: '', leadTarget: 0 }
 
 export function GoalsPage() {
   const pushToast = useApp((s) => s.pushToast)
@@ -63,7 +63,7 @@ export function GoalsPage() {
   }
   const openEdit = (g: Goal) => {
     setEditing(g)
-    setForm({ name: g.name, description: g.description, targetAction: g.targetAction, completionCriteria: g.completionCriteria, audience: g.audience, deadline: g.deadline || '', leadTarget: g.leadTarget || 0, followUp: g.followUp || { enabled: false, limit: FOLLOW_UP_DEFAULT, instructions: '' }, toneOfVoice: g.toneOfVoice || '', restrictions: g.restrictions || '' })
+    setForm({ name: g.name, description: g.description, targetAction: g.targetAction, completionCriteria: g.completionCriteria, audience: g.audience, deadline: g.deadline || '', leadTarget: g.leadTarget || 0 })
     setStagesText((g.stages || []).join('\n'))
     setChannels(g.channels || []); setChInput('')
     setKb([]); setKbTitle(''); setKbContent('')
@@ -164,9 +164,6 @@ export function GoalsPage() {
         channels: g.channels,
         // Дедлайн и цель по лидам НЕ копируем: это план конкретной кампании,
         // у копии он свой. Чужой дедлайн мог бы сразу оказаться просроченным.
-        followUp: g.followUp,
-        toneOfVoice: g.toneOfVoice,
-        restrictions: g.restrictions,
       })
       pushToast({ type: 'success', title: 'Цель скопирована', desc: copy.name })
       await load()
@@ -370,75 +367,11 @@ export function GoalsPage() {
             </div>
           </div>
 
-          {/* §9: тон и запреты задаются ОДИН раз на кампанию — их читают все модули,
-              которые пишут текст: рассылка, нейрочатинг, диалоги, комментинг.
-              Иначе правила расходятся: в рассылке один голос, в комментариях другой. */}
-          <div className="grid gap-3 sm:grid-cols-2">
-            <div>
-              <label className="mb-1 block text-xs text-white/50">Тон общения <span className="text-white/30">— как писать</span></label>
-              <textarea
-                className="input min-h-[76px] resize-y"
-                value={form.toneOfVoice || ''}
-                onChange={(e) => set({ toneOfVoice: e.target.value })}
-                placeholder="Напр. на «ты», дружелюбно и коротко, без канцелярита и восклицаний, максимум один смайл"
-              />
-            </div>
-            <div>
-              <label className="mb-1 block text-xs text-white/50">Ограничения <span className="text-white/30">— чего делать нельзя</span></label>
-              <textarea
-                className="input min-h-[76px] resize-y"
-                value={form.restrictions || ''}
-                onChange={(e) => set({ restrictions: e.target.value })}
-                placeholder="Напр. не обещать доход, не давить, не писать про конкурентов, не отправлять ссылку без согласия"
-              />
-            </div>
-          </div>
-          <p className="-mt-1 text-xs text-white/35">
-            Эти правила подставляются во все модули кампании — рассылку, нейрочатинг, диалоги и комментинг.
-          </p>
+          {/* SPEC §1.2 (решение звонка 22.07): тон, ограничения и дожим убраны из Цели —
+              это свойства АГЕНТА. Цель отвечает за измеримый результат, критерий завершения,
+              дедлайн и аудиторию; кто и как говорит — задаёт агент, выбранный в задаче
+              кампании. Настройки переехали в раздел «Агенты». */}
 
-          {/* §9: дожим — единственный способ не потерять человека, который написал сам
-              после того, как диалог по нему уже закрыли. */}
-          <div className="rounded-lg border border-white/10 p-3">
-            <label className="flex cursor-pointer items-start gap-2">
-              <input
-                type="checkbox"
-                className="mt-1"
-                checked={!!form.followUp?.enabled}
-                onChange={(e) => set({ followUp: { ...(form.followUp || { limit: FOLLOW_UP_DEFAULT, instructions: '' }), enabled: e.target.checked } as FollowUp })}
-              />
-              <span>
-                <span className="text-sm font-semibold text-fg">Дожимать, если написал сам после закрытия</span>
-                <span className="mt-0.5 block text-xs text-white/45">
-                  Обычно диалог с человеком заканчивается, когда он выполнил целевое действие или отказался —
-                  дальше ему не пишут. Но если он потом написал сам, это входящий интерес, и молчать в ответ
-                  глупо. Бот продолжит разговор, но не более указанного числа сообщений.
-                </span>
-              </span>
-            </label>
-
-            {form.followUp?.enabled && (
-              <div className="mt-3 grid gap-3 sm:grid-cols-[160px_1fr]">
-                <div>
-                  <label className="mb-1 block text-xs text-white/50">Максимум сообщений</label>
-                  <input
-                    type="number" min={1} max={FOLLOW_UP_MAX} className="input"
-                    value={form.followUp.limit || FOLLOW_UP_DEFAULT}
-                    onChange={(e) => set({ followUp: { ...form.followUp!, limit: Math.min(FOLLOW_UP_MAX, Math.max(1, Number(e.target.value) || FOLLOW_UP_DEFAULT)) } })}
-                  />
-                </div>
-                <div>
-                  <label className="mb-1 block text-xs text-white/50">Что делать в дожиме <span className="text-white/30">(необязательно)</span></label>
-                  <input
-                    className="input"
-                    value={form.followUp.instructions || ''}
-                    onChange={(e) => set({ followUp: { ...form.followUp!, instructions: e.target.value } })}
-                    placeholder="Напр. предложить консультацию или узнать, что не подошло"
-                  />
-                </div>
-              </div>
-            )}
-          </div>
 
           {editing && (
             <div className="rounded-lg border border-white/10 p-3">

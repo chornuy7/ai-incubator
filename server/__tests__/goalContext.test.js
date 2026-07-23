@@ -92,9 +92,13 @@ test('hasPlaceholder: заготовка вместо ссылки — не от
   assert.equal(hasPlaceholder('Читай [тут](https://t.me/x)'), false, 'markdown-ссылка — это не заготовка')
 })
 
-// ── §9: тон и ограничения — одни на всю кампанию, читают все модули ──
+// ── SPEC §1.2 (звонок 22.07): тон и запреты ушли из Цели в АГЕНТА ──
+// Раньше здесь проверялось обратное — что они попадают в промпт цели. Заказчик прямо
+// сказал, что это ошибка: одна цель навязывала один голос всем кампаниям, и сценарий
+// «500 хвалят / 500 спорят» под одной целью был невозможен. Теперь их кладёт
+// buildAgentContext, а цель отвечает только за измеримый результат.
 
-test('buildGoalContext: тон и запреты попадают в промпт', async (t) => {
+test('buildGoalContext: тон и запреты в промпт цели НЕ попадают (их даёт агент)', async (t) => {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'goalctx-'))
   const prev = process.env.GOALS_FILE
   process.env.GOALS_FILE = path.join(dir, 'goals.json')
@@ -113,10 +117,13 @@ test('buildGoalContext: тон и запреты попадают в промп�
   })
 
   const ctx = await buildGoalContext(goal.id)
-  assert.match(ctx, /Тон общения/)
-  assert.match(ctx, /без канцелярита/)
-  assert.match(ctx, /ЗАПРЕЩЕНО/, 'запрет должен читаться как жёсткое правило, а не пожелание')
-  assert.match(ctx, /не обещать доход/)
+  assert.doesNotMatch(ctx, /Тон общения/, 'тон — свойство агента, а не цели')
+  assert.doesNotMatch(ctx, /без канцелярита/)
+  assert.doesNotMatch(ctx, /ЗАПРЕЩЕНО/)
+  assert.doesNotMatch(ctx, /не обещать доход/)
+  // Цель по-прежнему отвечает за «чего добиваемся» — это остаётся в промпте.
+  assert.match(ctx, /Цель: Продвижение канала/)
+  assert.match(ctx, /Целевое действие: подписка/)
 })
 
 test('buildGoalContext: пустые тон и запреты не засоряют промпт', async (t) => {

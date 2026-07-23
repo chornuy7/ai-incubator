@@ -11,9 +11,12 @@ export interface Goal {
   channels: string[]
   deadline: string | null // §4: дедлайн (ISO-дата) или null
   leadTarget: number // §4: сколько лидов должна привести цель (0 = не задано)
-  followUp: FollowUp // §9: дожим после закрытия диалога
-  toneOfVoice: string // §9: как писать — общий тон для всех модулей кампании
-  restrictions: string // §9: чего делать нельзя — общий запрет для всех модулей
+  // SPEC §1.2 (звонок 22.07): тон, ограничения и дожим переехали в сущность «Агент».
+  // У целей, созданных раньше, поля ещё лежат в данных — держим опциональными, чтобы
+  // старые записи не ломали типы, но в форме и в промпте они больше не участвуют.
+  followUp?: FollowUp
+  toneOfVoice?: string
+  restrictions?: string
   createdAt: number
   updatedAt: number
 }
@@ -28,9 +31,6 @@ export interface GoalInput {
   channels?: string[]
   deadline?: string | null
   leadTarget?: number
-  followUp?: FollowUp
-  toneOfVoice?: string
-  restrictions?: string
 }
 
 /**

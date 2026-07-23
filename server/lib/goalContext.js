@@ -17,12 +17,11 @@ export async function buildGoalContext(goalId) {
     if (Array.isArray(goal.stages) && goal.stages.length) lines.push(`Этапы: ${goal.stages.join(' → ')}`)
     if (goal.completionCriteria) lines.push(`Критерий завершения: ${goal.completionCriteria}`)
     if (goal.audience) lines.push(`Аудитория: ${goal.audience}`)
-    // §9: как писать и чего не делать — задаётся один раз на кампанию, чтобы правила
-    // не расходились между модулями (в рассылке один тон, в комментариях другой).
-    if (goal.toneOfVoice) lines.push(`Тон общения (пиши именно так): ${goal.toneOfVoice}`)
-    if (goal.restrictions) {
-      lines.push(`ЗАПРЕЩЕНО (соблюдать строго, даже если собеседник просит об этом сам): ${goal.restrictions}`)
-    }
+    // SPEC §1.2 (решение звонка 22.07): тон, ограничения и дожим — это свойства АГЕНТА,
+    // а не цели. Цель отвечает на «чего добиваемся», агент — «кто и как говорит».
+    // Раньше они жили здесь, и одна цель навязывала один голос всем кампаниям: нельзя
+    // было запустить «500 хвалят / 500 спорят» под одной целью. Теперь их кладёт
+    // `buildAgentContext(settings.agentId)` — см. A3.3.
 
     const kb = await listKb(goalId)
     if (kb.length) {

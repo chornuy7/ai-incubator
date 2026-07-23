@@ -17,17 +17,23 @@ export const TERMINAL = new Set(['target', 'closed'])
  * Нужно ли включать дожим для этого лида.
  *
  * @param {{status?:string}|null} lead лид из CRM
- * @param {{followUp?:{enabled?:boolean, limit?:number}}|null} goal цель кампании
+ * @param {{followUp?:{enabled?:boolean, limit?:number}}|null} agentOrGoal агент (SPEC §1.2); цель — legacy
  * @param {number} already сколько сообщений дожима уже отправлено этому человеку
  * @param {boolean} hasIncoming есть ли НОВОЕ входящее от него
+ *
+ * SPEC §1.2: дожим настраивается у АГЕНТА, а не у цели (решение звонка 22.07) —
+ * «дожимать или отпускать» это манера общения, а не измеримый результат. Второй
+ * параметр остался структурно тем же (объект с полем `followUp`), поэтому вызывающий
+ * передаёт агента; для целей, созданных до разделения, поле ещё читается — старые
+ * данные не ломаем, миграция не нужна.
  * @returns {{ mode:'skip'|'follow-up'|'normal', reason?:string, left?:number }}
  *   `skip` — молчим · `follow-up` — дожимаем · `normal` — обычный диалог
  */
-export function followUpDecision(lead, goal, already = 0, hasIncoming = true) {
+export function followUpDecision(lead, agentOrGoal, already = 0, hasIncoming = true) {
   const status = lead?.status || 'cold'
   if (!TERMINAL.has(status)) return { mode: 'normal' }
 
-  const fu = goal?.followUp
+  const fu = agentOrGoal?.followUp
   if (!fu?.enabled) {
     return {
       mode: 'skip',
@@ -51,11 +57,11 @@ export function followUpDecision(lead, goal, already = 0, hasIncoming = true) {
  * Указания модели на время дожима. Тон здесь другой, чем в основном диалоге:
  * человек уже прошёл воронку, повторно продавать ему то же самое — верный способ
  * получить блокировку.
- * @param {{followUp?:{instructions?:string}}|null} goal
+ * @param {{followUp?:{instructions?:string}}|null} agentOrGoal агент (SPEC §1.2); цель — legacy
  * @param {string} status терминальный статус лида
  * @param {number} left сколько сообщений дожима осталось
  */
-export function followUpPrompt(goal, status, left) {
+export function followUpPrompt(agentOrGoal, status, left) {
   const lines = [
     '',
     '--- Режим дожима ---',
@@ -64,7 +70,7 @@ export function followUpPrompt(goal, status, left) {
       : 'Этот человек УЖЕ выполнил целевое действие, но написал сам. Не продавай повторно и не повторяй прошлые предложения: ответь по существу и поддержи разговор.',
     `Осталось сообщений в этом режиме: ${left}. Пиши коротко и по делу.`,
   ]
-  const extra = String(goal?.followUp?.instructions || '').trim()
+  const extra = String(agentOrGoal?.followUp?.instructions || '').trim()
   if (extra) lines.push(`Указания от владельца кампании: ${extra}`)
   return lines.join('\n')
 }
