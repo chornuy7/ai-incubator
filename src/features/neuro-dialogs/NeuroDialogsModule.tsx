@@ -235,15 +235,19 @@ export function NeuroDialogsModule() {
     setActiveKey(d.key)
     setDialogs((list) => list.map((x) => (x.key === d.key ? { ...x, unread: 0 } : x)))
 
+    // Кэш показываем СРАЗУ (чтобы не мигало пустотой), но обязательно идём за свежими.
+    // Раньше при наличии кэша стоял `return` и переписка не перезапрашивалась НИКОГДА:
+    // кэш чистился только при смене набора аккаунтов, кнопка обновления освежала лишь
+    // список слева. В итоге слева появлялось «📷 Фото 18:07», а справа висела старая
+    // лента — оператор не видел входящих, хотя бэкенд их отдавал (прогон 21–22.07,
+    // тест 4.6). Приходилось перезагружать всю страницу и заново выбирать аккаунт.
     const cached = msgCache.current.get(d.key)
     if (cached) {
       setMessages(cached)
       requestAnimationFrame(() => scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight }))
-      void markDialogRead(d.accountId, peerRef(d)).catch(() => {})
-      return
     }
 
-    setMsgsLoading(true)
+    if (!cached) setMsgsLoading(true)
     try {
       const res = await fetchMessages(d.accountId, peerRef(d), 80)
       msgCache.current.set(d.key, res.messages)

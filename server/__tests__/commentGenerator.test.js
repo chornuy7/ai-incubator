@@ -62,10 +62,11 @@ test('без ключа шаблоны РАЗНЫЕ у разных аккаун
   delete process.env.OPENAI_API_KEY
   t.after(() => { if (key !== undefined) process.env.OPENAI_API_KEY = key })
 
-  // Ровно сценарий бага: 30 аккаунтов, один и тот же пост, один promptIndex.
+  // Ровно сценарий бага: 30 аккаунтов, один и тот же пост, один promptIndex —
+  // но у каждого свой variantSeed (id аккаунта), как в реальном вызове.
   const seen = new Set()
   for (let i = 0; i < 30; i += 1) {
-    const { text } = await generateComment('Welcome!', 0, '')
+    const { text } = await generateComment('Welcome!', 0, '', `acc_${i}`)
     seen.add(text)
   }
   assert.ok(seen.size > 1, 'все аккаунты написали одинаковый текст — это сетка ботов в глазах Telegram')

@@ -101,10 +101,24 @@ export function isRotationLink(line) {
 }
 
 /**
+ * Ссылка смены IP, которую продавцы присылают вместе со списком:
+ *   http://138.201.202.99:8881/changeip/abc123
+ * Раньше такая строка считалась ошибкой формата и попадала в errors, пугая оператора
+ * (прогон 21–22.07, тест 9.11). Теперь распознаём её и привязываем к прокси того же
+ * хоста как `rotateUrl`. @param {string} line @returns {{url:string, host:string}|null}
+ */
+function rotateLink(line) {
+  const m = /^(https?:\/\/([^\s/:]+)(?::\d+)?\/[^\s]*(?:changeip|change_ip|rotate|reset)[^\s]*)$/i.exec(String(line || '').trim())
+  return m ? { url: m[1], host: m[2] } : null
+}
+
+/**
  * Разобрать список: по строке на прокси. Дубли внутри самого списка схлопываем.
  *
  * Заголовки схем переключают схему для идущих следом строк — без этого HTTP-прокси
  * молча сохранялись как socks5 и половина базы оказывалась нерабочей (баг 1, 21.07).
+ * Ссылки смены IP не считаются ошибкой: и уходят плоским списком `rotationLinks`,
+ * и привязываются к прокси того же хоста как `rotateUrl`.
  *
  * @param {string} text @param {{scheme?: string}} [defaults]
  * @returns {{ items: object[], errors: {line:number, raw:string, reason:string}[], rotationLinks: string[] }}
@@ -114,6 +128,8 @@ export function parseProxyList(text, defaults = {}) {
   const items = []
   const errors = []
   const rotationLinks = []
+  /** @type {{url:string, host:string}[]} для привязки к прокси того же хоста */
+  const rotates = []
   const seen = new Set()
   // Схема «здесь и ниже»: стартуем с той, что выбрал человек, дальше её меняют заголовки.
   let current = SCHEMES.includes(defaults.scheme) ? defaults.scheme : 'socks5'
@@ -122,6 +138,8 @@ export function parseProxyList(text, defaults = {}) {
     if (!trimmed || trimmed.startsWith('#') || trimmed.startsWith('//')) return
     const header = schemeHeader(trimmed)
     if (header) { current = header; return }
+    const rot = rotateLink(trimmed)
+    if (rot) { rotationLinks.push(rot.url); rotates.push(rot); return }
     if (isRotationLink(trimmed)) { rotationLinks.push(trimmed); return }
     const parsed = parseProxyLine(trimmed, { ...defaults, scheme: current })
     if (!parsed) {
@@ -136,6 +154,10 @@ export function parseProxyList(text, defaults = {}) {
     seen.add(key)
     items.push({ ...parsed, raw: trimmed })
   })
+  // Одна ссылка на шлюз — портов за ним обычно несколько: вешаем на все прокси хоста.
+  for (const r of rotates) {
+    for (const it of items) if (it.host === r.host) it.rotateUrl = r.url
+  }
   return { items, errors, rotationLinks }
 }
 

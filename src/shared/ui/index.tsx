@@ -6,6 +6,7 @@ import type { AccountStatus } from '@/shared/types'
 import { STATUS_META } from '@/mocks/store'
 
 export { Modal } from './Modal'
+export { NumberField } from './NumberField'
 
 /* ── Card ── */
 export function Card({ className, children }: { className?: string; children: ReactNode }) {

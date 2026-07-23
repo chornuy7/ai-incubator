@@ -20,7 +20,10 @@ const CAMPAIGNS_FILE = process.env.CAMPAIGNS_FILE || dataPath('campaigns.json')
 export const CAMPAIGN_STATUSES = ['draft', 'active', 'paused', 'done']
 
 /** Поля, которые можно задавать/менять. */
-const FIELDS = ['name', 'goalId', 'moduleKey', 'modules', 'settings', 'accountIds', 'pinned', 'status', 'chat']
+// §0: `modules` — кампания ведёт НЕСКОЛЬКО модулей (звонок 22.07). §9.0: `targets` —
+// у кампании СВОИ целевые каналы (раньше брались из цели, из-за чего рядом жил отдельный
+// «разовый запускатор» и на странице было две сущности «кампания», тест 1.2).
+const FIELDS = ['name', 'goalId', 'moduleKey', 'modules', 'settings', 'accountIds', 'pinned', 'status', 'chat', 'targets']
 
 const normIds = (v) => (Array.isArray(v) ? [...new Set(v.map((x) => String(x || '').trim()).filter(Boolean))] : [])
 
@@ -67,6 +70,10 @@ export function normalizeCampaign(input = {}) {
     moduleKey: normModules(input.modules, input.moduleKey)[0] || '',
     settings: input.settings && typeof input.settings === 'object' ? input.settings : {}, // пресет модуля
     accountIds: normIds(input.accountIds),
+    // Нормализуем как цели папок: без @, без пробелов, нижний регистр, без дублей —
+    // иначе @Crypto и @crypto дали бы двойную обработку одним аккаунтом (ср. 11.7-d).
+    targets: [...new Set((Array.isArray(input.targets) ? input.targets : [])
+      .map((x) => String(x || '').trim().replace(/^@/, '').toLowerCase()).filter(Boolean))],
     pinned: input.pinned !== false, // по умолчанию аккаунты закрепляются (выходят из общего пула)
     status,
     chat: normChat(input.chat), // §9: опциональный догоняющий чатинг

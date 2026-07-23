@@ -9,7 +9,7 @@ import { activeAccounts, useApp } from '@/mocks/store'
 import { Segmented, Switch, Badge, Select, EmptyState } from '@/shared/ui'
 import { AccountPicker } from '@/features/account-picker/AccountPicker'
 import { useModuleTask } from './shared/useModuleTask'
-import { SectionCard, NumberField, ProtectionBlock, DelayFields, LaunchPanel, TaskStartedModal } from './shared'
+import { SectionCard, NumberField, ProtectionBlock, DelayFields, LaunchPanel, TaskStartedModal, SchedulePanel } from './shared'
 import { cn } from '@/shared/lib/utils'
 import { downloadXls } from '@/shared/lib/exportXls'
 import { SaveToFolderModal } from './shared/FolderPicker'
@@ -484,6 +484,17 @@ function ChannelParserInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: 
           onDeletePreset={deletePreset}
         />
       </SectionCard>
+
+      {/* §3.9: расписание доступно и в парсерах — раньше блок жил только в LiveModule
+          и все пять парсеров запускались исключительно вручную (тест 6.13). */}
+      <SchedulePanel
+        moduleKey={moduleKey}
+        title={cfg?.title ?? moduleKey}
+        buildSettings={() => buildSettings() as unknown as Record<string, unknown>}
+        accountIds={[...selected]}
+        disabled={!selected.size || !keywords.length}
+        disabledReason={!selected.size ? 'Выберите аккаунты' : 'Добавьте хотя бы одно ключевое слово'}
+      />
 
       <div className="flex justify-end">
         <a href={task ? `/panel/tasks?task=${task.id}` : '/panel/tasks'} className="inline-flex items-center gap-1 text-xs font-semibold text-spark-300 hover:underline" title="Логи по этой задаче — в Дашборде задач">

@@ -81,11 +81,28 @@ export function startWorker(taskId, store, runner) {
   running.set(taskId, job)
 }
 
-/** @param {string} taskId @param {object} store */
+/**
+ * Стоп задачи. Для РАБОТАЮЩЕЙ — выставляем флаг, воркер выйдет из цикла сам.
+ *
+ * Для задачи НА ПАУЗЕ живого воркера нет, и флаг обрабатывать некому: раньше стоп
+ * возвращал 200, а задача так и оставалась `paused` — оператор видел успех, но её
+ * можно было «возобновить» кнопкой, то есть «остановленная» боевая задача оживала
+ * (прогон 21–22.07, тест 6.2). Поэтому здесь останавливаем сами: ставим статус,
+ * снимаем локи и освобождаем аккаунты — ровно то, что сделал бы воркер на выходе.
+ * @param {string} taskId @param {object} store
+ */
 export async function stopWorker(taskId, store) {
   const task = await store.loadTask(taskId)
   if (!task) return null
   task.stopRequested = true
+  if (task.status === 'paused' && !running.has(taskId)) {
+    task.pauseRequested = false
+    task.status = 'stopped'
+    await store.appendLog(task, 'info', 'Задача остановлена с паузы — аккаунты освобождены')
+    await store.saveTask(task)
+    await finalizeAccounts(task.settings?.accountIds || [], task.id, false)
+    return task
+  }
   await store.saveTask(task)
   return task
 }
@@ -256,7 +273,7 @@ export async function runNeuroCommenting(task, store) {
             const typeIdx = useDist ? weightedPickIndex(s.typeWeights) : (s.promptIndex ?? 0)
             const sysPrompt = useDist ? resolveSystemPrompt({ ...s, promptIndex: typeIdx, promptText: '' }) : resolveSystemPrompt(s)
             task.usedTexts = task.usedTexts || []
-            const { text, mode, reason } = await generateComment(postText, typeIdx, sysPrompt + goalCtx, { avoid: task.usedTexts })
+            const { text, mode, reason } = await generateComment(postText, typeIdx, sysPrompt + goalCtx, { avoid: task.usedTexts, variantSeed: accountId })
             // Ключ мёртв: продолжать — значит лить шаблонные отписки от живых аккаунтов
             // в реальные каналы (прогон 21.07). Останавливаем всю задачу, а не аккаунт.
             if (mode === 'fatal') {
@@ -386,7 +403,7 @@ export async function runNeuroChatting(task, store) {
         }
         await sleep(pickDelay(s.delays?.action?.[0] ?? 42, s.delays?.action?.[1] ?? 78, mul) * 1000)
         task.usedTexts = task.usedTexts || []
-        const { text: reply, mode, reason } = await generateComment(msg.message || '', s.promptIndex ?? 0, resolveSystemPrompt(s) + goalCtx, { avoid: task.usedTexts })
+        const { text: reply, mode, reason } = await generateComment(msg.message || '', s.promptIndex ?? 0, resolveSystemPrompt(s) + goalCtx, { avoid: task.usedTexts, variantSeed: accountId })
         if (mode === 'fatal') {
           await store.appendLog(task, 'error', `ИИ недоступен: ${reason}. Задача остановлена — писать в чаты без ИИ не будем.`, meta.name)
           await disconnectAccount(client, accountId)
@@ -625,6 +642,15 @@ export async function runWarming(task, store) {
   const mul = delayMultiplier(s.protectionLevel ?? 1, s.delayPreset ?? 1) * pace.mul
   await store.appendLog(task, 'info', `Прогрев запущен · уровень: ${pace.label} · ~${pace.actionsPerDay} действий/день на аккаунт`)
   const accountIds = s.accountIds || []
+  // §3.3: на время прогрева аккаунт получает статус «warming» — он входит в NON_RUNNABLE,
+  // поэтому боевые модули его не возьмут. Раньше этот статус не выставлял НИКТО: он был
+  // описан в state machine, но недостижим, и защита «непрогретый в бой не идёт» держалась
+  // только на локе задачи — то есть исчезала в ту же секунду, когда прогрев заканчивался
+  // (прогон 21–22.07, тест 12.5).
+  for (const id of accountIds) {
+    const meta = await getAccountMeta(id)
+    if (meta.status === 'active') await setAccountMeta(id, { status: 'warming' })
+  }
   let idx = 0
   let idleLap = 0
 
@@ -705,6 +731,14 @@ export async function runWarming(task, store) {
   }
   await store.saveTask(task)
   await finalizeAccounts(accountIds, task.id, !!task.pauseRequested)
+  // Прогрев закончился — снимаем «warming», иначе аккаунт навсегда остался бы вне
+  // боевых модулей. На паузе не трогаем: задачу ещё продолжат.
+  if (!task.pauseRequested) {
+    for (const id of accountIds) {
+      const meta = await getAccountMeta(id)
+      if (meta.status === 'warming') await setAccountMeta(id, { status: 'active', statusBefore: null })
+    }
+  }
 }
 
 /**
@@ -974,7 +1008,7 @@ export async function runNeuroDialogs(task, store) {
           // самое повторно это верный способ получить блокировку.
           const sysPrompt = dialogSystemPrompt(s, goal, goalObj, effStatus, stageForStatus(goalObj?.stages, effStatus))
             + (isFollowUp ? followUpPrompt(goalObj, rawStatus, decision.left) : '')
-          const gen = await generateComment(prompt, s.promptIndex ?? 0, sysPrompt)
+          const gen = await generateComment(prompt, s.promptIndex ?? 0, sysPrompt, accountId)
           const mode = gen.mode
           // Диалог подаётся модели стенограммой «Я: … / Собеседник: …», и она регулярно
           // копирует эту разметку в ответ. Живой человек 21.07 получил «Я: Отлично!…» —
@@ -1196,9 +1230,19 @@ export async function runGgr(task, store) {
  */
 export async function runChannelParser(task, store, kind) {
   const s = task.settings
-  task.startedAt = Date.now()
+  // Продолжение с паузы, а не запуск с нуля. Раньше здесь безусловно стояло
+  // `task.results = []`, и цикл начинался с первого запроса: после «Запустить/
+  // возобновить» счётчик найденного обнулялся, total пересчитывался, а уже собранные
+  // результаты ТЕРЯЛИСЬ (прогон 21–22.07, тест 6.1: было 10/100 и 10 результатов,
+  // стало 0 и сбор заново). Интерфейс при этом обещает «продолжить» одинаково для
+  // всех модулей, поэтому чиним здесь, а не в подписи кнопки.
+  const resuming = Number(task.cursor) > 0
+  task.startedAt = resuming ? (task.startedAt || Date.now()) : Date.now()
   task.status = 'running'
-  task.results = []
+  if (!resuming) {
+    task.results = []
+    task.cursor = 0
+  }
   await store.saveTask(task)
 
   const accountIds = s.accountIds || []
@@ -1246,6 +1290,12 @@ export async function runChannelParser(task, store, kind) {
   }
 
   const seen = new Set() // дедуп по id/username
+  // При продолжении восстанавливаем дедуп из уже собранного, иначе те же каналы
+  // приедут повторно и результаты задвоятся.
+  for (const r of task.results || []) {
+    if (r?.username) seen.add(String(r.username).toLowerCase())
+    if (r?.id) seen.add(String(r.id))
+  }
   const skipParsed = new Set((s.alreadyParsed || []).map((x) => String(x).toLowerCase()))
   let accIdx = 0
 
@@ -1258,12 +1308,23 @@ export async function runChannelParser(task, store, kind) {
     return null
   }
 
-  await store.appendLog(task, 'info', `Парсинг запущен · запросов: ${queries.length} · аккаунтов: ${accountIds.length}`)
+  const startFrom = Math.min(Number(task.cursor) || 0, queries.length)
+  await store.appendLog(
+    task,
+    'info',
+    startFrom > 0
+      ? `Парсинг продолжен с запроса ${startFrom + 1} из ${queries.length} · уже собрано: ${task.results.length}`
+      : `Парсинг запущен · запросов: ${queries.length} · аккаунтов: ${accountIds.length}`,
+  )
 
   try {
-    for (const { q, kwIdx } of queries) {
+    for (let qi = startFrom; qi < queries.length; qi++) {
+      const { q, kwIdx } = queries[qi]
       // В AND-режиме нельзя рано выходить по лимиту — нужно просканировать все ключи для пересечения.
       if (task.stopRequested || task.pauseRequested || (!andMode && task.results.length >= limit)) break
+      // Курсор двигаем ДО обработки: если задачу поставят на паузу внутри запроса,
+      // при продолжении он не выполнится дважды.
+      task.cursor = qi + 1
 
       const accountId = await nextAccountId()
       if (!accountId) {
@@ -1352,6 +1413,9 @@ export async function runChannelParser(task, store, kind) {
     task.progress.done = task.results.length
     task.progress.actionsDone = task.results.length
     task.status = statusAfterRun(task)
+    // Курсор нужен только между паузой и продолжением. На завершении/стопе сбрасываем,
+    // иначе «Перезапуск» начал бы с конца очереди и не сделал бы ничего.
+    if (task.status !== 'paused') task.cursor = 0
     // §3.8/§4: найденные каналы — в общую базу одним батчем (дедуп, без потери данных).
     try { const n = await upsertMany(baseChannels, `parse:${task.id}`); if (n) await store.appendLog(task, 'info', `В базу каналов: ${n}`) } catch { /* ignore */ }
     await store.appendLog(task, 'info', `Готово · найдено ${task.results.length} ${unitLabel}`)
@@ -1906,7 +1970,7 @@ export async function runMailing(task, store) {
             (message || opener) ? `Опирайся на этот текст как на образец смысла и тона:
 «${message || opener}»` : '',
           ].filter(Boolean).join(' ')
-          const gen = await generateComment(openerTask, s.promptIndex ?? 0, resolveSystemPrompt(s) + goalCtx)
+          const gen = await generateComment(openerTask, s.promptIndex ?? 0, resolveSystemPrompt(s) + goalCtx, account)
           // Чистим так же, как в диалогах: модель повторяет ярлыки промпта и оставляет
           // заготовки. С заглушкой лучше отправить текст из цели, чем «[тут вставь ссылку]».
           const cleaned = cleanDialogReply(gen.text)
@@ -1997,6 +2061,22 @@ export async function runMailing(task, store) {
   await finalizeAccounts(accountIds, task.id, !!task.pauseRequested)
 }
 
+/** Ошибки Telegram, где подсказка про права админа действительно уместна. */
+const ADMIN_RIGHTS_ERRORS = /CHAT_ADMIN_REQUIRED|CHAT_WRITE_FORBIDDEN|CHAT_SEND_.*FORBIDDEN|USER_BANNED_IN_CHANNEL/i
+
+/**
+ * Текст ошибки постинга. Подсказку «нужны права админа» дописываем ТОЛЬКО к ошибкам
+ * доступа: раньше она приклеивалась к любой, включая сетевые и прокси
+ * (`Invalid sockets params: socksType=undefined`), и уводила оператора проверять права,
+ * когда дело было в прокси (прогон 21–22.07, тест 10.1).
+ * @param {unknown} err
+ */
+export function postErrorHint(err) {
+  const msg = mapTelegramError(err)
+  const raw = err instanceof Error ? `${err.message} ${msg}` : String(msg)
+  return ADMIN_RIGHTS_ERRORS.test(raw) ? `${msg} — аккаунт должен быть админом канала с правом публикации` : msg
+}
+
 /**
  * Автопостинг (§8.10, паритет): публикация поста в СВОИ каналы/группы по расписанию.
  * Безопасно — постим в свои каналы (аккаунт должен быть админом с правом постинга), не спам.
@@ -2041,13 +2121,21 @@ export async function runAutoPosting(task, store) {
       } catch (err) {
         if (client) await disconnectAccount(client, accountId)
         if (!(await handleFlood(task, accountId, store, err, s, meta.name))) {
-          await store.appendLog(task, 'error', `${ch}: ${mapTelegramError(err)} (нужны права админа на постинг?)`, meta.name)
+          await store.appendLog(task, 'error', `${ch}: ${postErrorHint(err)}`, meta.name)
         }
       }
       task = (await store.loadTask(task.id)) || task
     }
     task.status = statusAfterRun(task)
-    await store.appendLog(task, 'info', 'Автопостинг завершён')
+    // §8.4: запуск, не опубликовавший НИ ОДНОГО поста, — это не «Готово».
+    // Раньше здесь всегда стоял statusAfterRun → задача с 0/1 показывалась как успешная,
+    // и провал был виден только тому, кто откроет логи (прогон 21–22.07, тест 10.1).
+    if (task.status === 'done' && task.progress.done === 0 && task.progress.total > 0) {
+      task.status = 'error'
+      await store.appendLog(task, 'error', `Не опубликовано ни одного поста из ${task.progress.total} — см. ошибки выше`)
+    } else {
+      await store.appendLog(task, 'info', 'Автопостинг завершён')
+    }
   } catch (err) {
     task.status = 'error'
     await store.appendLog(task, 'error', err instanceof Error ? err.message : 'Ошибка')

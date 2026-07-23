@@ -260,5 +260,40 @@ export async function reconcileStaleTasksOnBoot() {
     }
   } catch { /* ignore */ }
 
-  return { flipped }
+  // Аккаунты, зависшие в «working». Воркеры пишут этот статус напрямую при старте и
+  // снимают в конце — при падении процесса снимать некому, и аккаунт навсегда остаётся
+  // «В работе»: локов нет, задач нет, а менеджер и счётчик дашборда показывают занятость.
+  // Штатно это не лечилось вообще (прогон 21–22.07, тест 12.11): `locks/reconcile`
+  // возвращал dropped: [], а `POST /accounts/:id/status {to:'active'}` отвечал ok:true
+  // и НИЧЕГО не делал — потому что LEGACY_MAP.working = ACTIVE, переход считался
+  // «active→active» и setAccountStatus молча выходил. Снимаем здесь, сырым патчем.
+  const cleared = []
+  // Аккаунты задач прогрева, которые стоят НА ПАУЗЕ, — их статус трогать нельзя.
+  const pausedWarming = new Set()
+  try {
+    const { getModuleStore } = await import('../modules/registry.js')
+    const store = getModuleStore('warming')
+    for (const t of store ? await store.listTasks() : []) {
+      if (t.status !== 'paused') continue
+      const full = await store.loadTask(t.id)
+      for (const id of full?.settings?.accountIds || []) pausedWarming.add(id)
+    }
+  } catch { /* ignore */ }
+  try {
+    const { loadAllMeta, setAccountMeta } = await import('../accountsMeta.js')
+    const all = await loadAllMeta()
+    for (const [id, meta] of Object.entries(all)) {
+      // 'working' — всегда мусор после падения: живых воркеров уже нет.
+      // 'warming' — тоже, но только если аккаунт не ждёт ПРОДОЛЖЕНИЯ прогрева: задачи
+      // на паузе переживают рестарт, и снимать у них статус нельзя, иначе аккаунт
+      // посреди прогрева уйдёт в боевые модули. Иначе он завис бы навсегда вне боя —
+      // ровно та же болезнь, что была у 'working' (найдено аудитом собственных правок 22.07).
+      const stuck = meta?.status === 'working' || (meta?.status === 'warming' && !pausedWarming.has(id))
+      if (!stuck) continue
+      await setAccountMeta(id, { status: 'active', statusBefore: null })
+      cleared.push(id)
+    }
+  } catch { /* ignore */ }
+
+  return { flipped, cleared }
 }

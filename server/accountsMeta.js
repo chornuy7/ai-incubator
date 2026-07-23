@@ -190,10 +190,17 @@ export async function checkAccountsAssignable(accountIds, moduleKey) {
       continue
     }
     if (gated) {
-      // Кэшированный trust (fail-open: если ни разу не считался — не блокируем).
+      // Кэшированный trust. РАНЬШЕ здесь был fail-open: «если ни разу не считался —
+      // не блокируем». Но именно свежедобавленный аккаунт §6 и должен останавливать:
+      // у него нет ни истории, ни отлёжки, он максимально уязвим к спам-блоку, а гейт
+      // защищал только тех, кто уже поработал и получил оценку (прогон 21–22.07,
+      // тест 12.6: удалили запись из кэша — аккаунт спокойно ушёл в боевой модуль).
+      // Теперь нет оценки — сначала прогрев.
       const t = await getTrustCache(id)
-      if (t && Number(t.score) < TRUST_MIN) {
-        blocked.push({ id, status, reason: `trust ${t.score}` })
+      // Fail-closed: нет оценки ИЛИ ниже порога — не пускаем (тест 12.6). Свежий
+      // аккаунт без истории максимально уязвим, гейт должен его останавливать.
+      if (!t || Number(t.score) < TRUST_MIN) {
+        blocked.push({ id, status, reason: t ? `trust ${t.score}` : 'нет trust' })
         continue
       }
     }
@@ -201,10 +208,12 @@ export async function checkAccountsAssignable(accountIds, moduleKey) {
   }
   if (!blocked.length) return { error: null, blocked: [], usable }
   const byStatus = blocked.filter((b) => b.reason === 'статус')
-  const byTrust = blocked.filter((b) => b.reason !== 'статус')
+  const byLowTrust = blocked.filter((b) => b.reason.startsWith('trust'))
+  const byNoTrust = blocked.filter((b) => b.reason === 'нет trust')
   const parts = []
   if (byStatus.length) parts.push(`недоступны по статусу: ${byStatus.map((b) => `${String(b.id).slice(-6)} (${b.status})`).join(', ')}`)
-  if (byTrust.length) parts.push(`ниже порога trust<${TRUST_MIN}: ${byTrust.map((b) => `${String(b.id).slice(-6)} (${b.reason})`).join(', ')}`)
+  if (byLowTrust.length) parts.push(`ниже порога trust<${TRUST_MIN}: ${byLowTrust.map((b) => `${String(b.id).slice(-6)} (${b.reason})`).join(', ')}`)
+  if (byNoTrust.length) parts.push(`ещё не посчитан trust — в боевой модуль рано: ${byNoTrust.map((b) => String(b.id).slice(-6)).join(', ')}`)
   return {
     error: `Часть профилей запустить нельзя — ${parts.join('; ')}.`,
     blocked,

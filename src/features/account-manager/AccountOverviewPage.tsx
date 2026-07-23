@@ -133,7 +133,11 @@ export function AccountOverviewPage() {
               <button
                 key={a.id}
                 type="button"
-                onClick={() => navigate(`/panel/accounts/${a.id}`)}
+                // ?sel= сохраняем при переключении: без него выборка «только выбранные»
+                // терялась с ПЕРВОГО же клика, кнопка «Только выбранные · N» исчезала и
+                // вернуться к ней было нельзя — а переключение между аккаунтами и есть
+                // основной сценарий этого экрана (прогон 21–22.07, тест 3.12).
+                onClick={() => navigate(`/panel/accounts/${a.id}${params.get('sel') ? `?sel=${params.get('sel')}` : ''}`)}
                 className={cn(
                   'flex w-full items-center gap-3 border-b border-line/50 p-3 text-left transition-colors hover:bg-elevated',
                   account?.id === a.id && 'bg-iris-500/10',

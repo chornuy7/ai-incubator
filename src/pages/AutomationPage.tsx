@@ -7,7 +7,7 @@ import { HelpButton } from '@/features/neuro-commenting/moduleUi'
 import { confirmDialog } from '@/shared/lib/dialog'
 import { AccountPicker } from '@/features/account-picker/AccountPicker'
 import { NumberField, FolderPicker } from '@/features/modules/shared'
-import { MODULES } from '@/shared/config/modules'
+import { MODULES, isCombatModule, combatConfirmText } from '@/shared/config/modules'
 import { useApp } from '@/mocks/store'
 import {
   fetchAutomationRules, createAutomationRule, updateAutomationRule, deleteAutomationRule, runAutomationRuleNow,
@@ -67,6 +67,16 @@ export function AutomationPage() {
   }
 
   const runNow = async (r: AutomationRule) => {
+    // Досрочный запуск правила = те же реальные действия в Telegram, что и запуск из
+    // модуля. Там подтверждение спрашивают (LiveModule, TasksPage), а здесь кнопка ▶
+    // стреляла сразу (прогон 21–22.07, тест 6.12).
+    const mk = r.moduleKey || ''
+    if (isCombatModule(mk) && !(await confirmDialog({
+      title: 'Реальные действия в Telegram',
+      message: combatConfirmText(mk),
+      confirmLabel: 'Запустить',
+      tone: 'danger',
+    }))) return
     try {
       const taskId = await runAutomationRuleNow(r.id)
       await reload()
@@ -165,7 +175,11 @@ function RuleEditor({ rule, onClose, onSaved }: {
   const needsTargets = useMemo(() => NEEDS_TARGETS.has(moduleKey), [moduleKey])
 
   const save = async () => {
-    if (!selected.size) return pushToast({ type: 'error', title: 'Выберите аккаунты' })
+    // При выбранной кампании аккаунты НЕ обязательны: resolveRuleTarget
+    // (automation/store.js) сам возьмёт закреплённые за кампанией, если у правила
+    // своих нет. Раньше форма требовала их вручную, хотя подсказка обещала «модуль,
+    // аккаунты и пресет — из кампании» — бэкенд это умел, а UI не пускал (тест 6.10).
+    if (!campaignId && !selected.size) return pushToast({ type: 'error', title: 'Выберите аккаунты' })
     const targets = targetsText.split(/[\n,\s]+/).map((s) => s.trim().replace(/^@/, '')).filter(Boolean)
     if (needsTargets && !targets.length) return pushToast({ type: 'error', title: 'Добавьте цели' })
     if (minActions && maxActions && minActions > maxActions) return pushToast({ type: 'error', title: 'Минимум больше максимума' })
@@ -231,11 +245,17 @@ function RuleEditor({ rule, onClose, onSaved }: {
               placeholder="Без кампании (голый модуль)"
               options={[{ value: '', label: 'Без кампании (голый модуль)' }, ...campaigns.map((c) => ({ value: c.id, label: `${c.name} · ${MODULES[c.moduleKey]?.title ?? c.moduleKey}` }))]}
             />
-            {campaignId && (
-              <p className="mt-1 text-[11px] text-muted">
-                Модуль, аккаунты и пресет — из кампании. Настройки ниже перекроют пресет кампании.
-              </p>
-            )}
+            {campaignId && (() => {
+              const c = campaigns.find((x) => x.id === campaignId)
+              const n = (c?.accountIds || []).length
+              return (
+                <p className="mt-1 text-[11px] text-muted">
+                  Модуль, аккаунты и пресет — из кампании ({n ? `${n} акк.` : 'аккаунтов пока нет'}).
+                  Настройки ниже перекроют пресет кампании; выбирать аккаунты вручную не обязательно —
+                  но если выберете, они будут приоритетнее.
+                </p>
+              )
+            })()}
             <label className="label mt-3">Модуль{campaignId ? ' (из кампании)' : ''}</label>
             <Select value={campaignId ? (campaigns.find((c) => c.id === campaignId)?.moduleKey ?? moduleKey) : moduleKey} onChange={setModuleKey} options={AUTOMATABLE.map((k) => ({ value: k, label: MODULES[k]?.title ?? k }))} />
           </div>

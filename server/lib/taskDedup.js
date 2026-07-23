@@ -8,15 +8,24 @@
 export const ACTIVE_TASK_STATUSES = new Set(['running', 'queued', 'paused'])
 
 /**
- * Подпись задачи для сравнения: аккаунты + цель + цели/каналы (нормализованы, отсортированы).
- * @param {{accountIds?: string[], goalId?: string|null, channels?: string[], targets?: string[]}} settings
+ * Подпись задачи для сравнения: аккаунты + цель + цели/каналы + ключевые слова.
+ *
+ * Ключевые слова обязательны: семейство парсеров (их пять) работает не по каналам,
+ * а по `keywords`, поэтому без них подпись вырождалась в один аккаунт. Проверено на
+ * прогоне 21–22.07 (тест 6.6): поиск «crypto» и поиск «nft» одним аккаунтом давали
+ * идентичную подпись `{"a":["acc_1"],"g":"","t":[]}` — то есть вторая, СОВЕРШЕННО
+ * другая выгрузка отклонялась как «идентичная задача уже запущена», а для парсеров
+ * проверка вырождалась в «одна задача на аккаунт», дублируя лок аккаунта.
+ *
+ * @param {{accountIds?: string[], goalId?: string|null, channels?: string[], targets?: string[], keywords?: string[]}} settings
  * @returns {string}
  */
 export function taskSignature(settings = {}) {
   const accs = [...new Set((settings.accountIds || []).map((x) => String(x)))].sort()
   const tgts = [...new Set((settings.channels || settings.targets || []).map((x) => String(x)))].sort()
+  const kws = [...new Set((settings.keywords || []).map((x) => String(x).trim().toLowerCase()).filter(Boolean))].sort()
   const goal = settings.goalId ? String(settings.goalId) : ''
-  return JSON.stringify({ a: accs, g: goal, t: tgts })
+  return JSON.stringify({ a: accs, g: goal, t: tgts, k: kws })
 }
 
 /**

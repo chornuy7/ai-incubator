@@ -28,6 +28,7 @@ import type { AccountStatus, TgAccount } from '@/shared/types'
 import { patchAccount, releaseAccountLock, setAccountStatusManual, fetchDailyAll, type DailyAllMap } from '@/api/accountsApi'
 import { fetchCampaigns, updateCampaign, type Campaign, type PinnedMap } from '@/api/campaignsApi'
 import { fetchAccountGroups, type AccountGroup } from '@/api/accountGroupsApi'
+import { fetchProxies, type Proxy as ApiProxy } from '@/api/proxiesApi'
 
 const STATUS_ORDER: AccountStatus[] = ['active', 'working', 'warming', 'pause', 'floodwait', 'quarantine', 'spamblock', 'invalid', 'frozen', 'reauth']
 const COLS = [
@@ -97,7 +98,17 @@ export function AccountsPage() {
   const loadCampaigns = () => {
     void fetchCampaigns().then(({ campaigns: cs, pinned }) => { setCampaigns(cs); setPinnedMap(pinned) }).catch(() => {})
   }
-  useEffect(() => { loadCampaigns() }, [])
+  // Кампании обновляем ПЕРИОДИЧЕСКИ, как и аккаунты. Раньше здесь был useEffect с
+  // пустыми зависимостями — список кампаний и карта закреплений грузились ОДИН раз
+  // при открытии, тогда как аккаунты освежались каждые 30 с. Кампанию, созданную на
+  // другой странице, менеджер не видел: её не было в фильтре, а её аккаунты
+  // показывались «в общем пуле», хотя были закреплены. Оператор раздавал их другой
+  // кампании, ломая закрепление (прогон 21–22.07, тест 3.1).
+  useEffect(() => {
+    loadCampaigns()
+    const t = setInterval(loadCampaigns, 30000)
+    return () => clearInterval(t)
+  }, [])
   const [assignAcc, setAssignAcc] = useState<TgAccount | null>(null) // §1: назначить кампанию одному аккаунту
   /**
    * §1: назначить аккаунт кампании — «присвоить (лок)» или «использовать (без лока)».
@@ -115,7 +126,14 @@ export function AccountsPage() {
         const target = campaigns.find((c) => c.id === campaignId)
         if (target) {
           const ids = [...new Set([...(target.accountIds || []), accountId])]
-          await updateCampaign(campaignId, { accountIds: ids, pinned: lock })
+          // pinned — политика ВСЕЙ кампании, а не свойство одного аккаунта. Раньше он
+          // уходил в патч всегда, и галочка «закрепить» из маленького диалога назначения
+          // переписывала режим закрепления кампании и всех остальных её аккаунтов:
+          // «Тест 6» была pinned=true, её не редактировали — после назначения одного
+          // аккаунта закрепление слетело со всех (прогон 21–22.07, тест 3.5).
+          // Отправляем pinned только когда кампания ЕЩЁ пуста и политику задаём впервые.
+          const firstAccount = (target.accountIds || []).length === 0
+          await updateCampaign(campaignId, firstAccount ? { accountIds: ids, pinned: lock } : { accountIds: ids })
         }
       }
       loadCampaigns()
@@ -773,9 +791,16 @@ function AccountsTable(props: {
                       const c = campaignOf(a.id)
                       if (!c) return <span className="text-xs text-faint">в общем пуле</span>
                       return (
-                        <span className="inline-flex items-center gap-1 text-xs text-fg" title={c.locked ? `Закреплён за кампанией «${c.name}» — вышел из общего пула` : `Используется кампанией «${c.name}» без закрепления`}>
+                        // Два состояния различались ТОЛЬКО формой иконки в 11px (закрытый
+                        // янтарный замок против открытого серого) — тестировщик не смог
+                        // отличить их даже на скриншоте. Добавляем словесную подпись:
+                        // от неё зависит, уйдёт аккаунт в другую кампанию или нет (тест 3.3).
+                        <span className="inline-flex items-center gap-1 text-xs text-fg" title={c.locked ? `Закреплён за кампанией «${c.name}» — вышел из общего пула` : `Используется кампанией «${c.name}» без закрепления — остаётся доступен другим`}>
                           {c.locked ? <Lock size={11} className="shrink-0 text-amber-300" /> : <LockOpen size={11} className="shrink-0 text-faint" />}
                           <span className="truncate">{c.name}</span>
+                          <span className={`shrink-0 rounded px-1 py-0.5 text-[10px] font-bold ${c.locked ? 'bg-amber-500/15 text-amber-300' : 'bg-white/5 text-faint'}`}>
+                            {c.locked ? 'закреплён' : 'без лока'}
+                          </span>
                         </span>
                       )
                     })()}
@@ -970,15 +995,31 @@ function AssignCampaignModal({ acc, campaigns, current, onClose, onApply }: {
         placeholder="Без кампании (общий пул)"
         options={[{ value: '', label: 'Без кампании (вернуть в общий пул)' }, ...campaigns.map((c) => ({ value: c.id, label: c.name }))]}
       />
-      {cid && (
-        <label className="mt-3 flex items-center gap-2 text-xs text-white/70">
-          <input type="checkbox" checked={lock} onChange={(e) => setLock(e.target.checked)} className="h-4 w-4 rounded border-line accent-spark-500" />
-          Присвоить с закреплением (замок) — аккаунт выйдет из общего пула
-        </label>
-      )}
-      <p className="mt-2 text-[11px] text-muted">
-        Без галочки — «использовать без лока»: аккаунт остаётся доступен другим кампаниям.
-      </p>
+      {/* Закрепление — политика ВСЕЙ кампании, а не свойство одного аккаунта. Пока в
+          кампании никого нет, её можно задать здесь; если аккаунты уже есть, менять её
+          отсюда нельзя — иначе назначение одного профиля переписало бы режим у всех
+          остальных (прогон 21–22.07, тест 3.5). */}
+      {cid && (() => {
+        const target = campaigns.find((c) => c.id === cid)
+        const already = (target?.accountIds || []).length > 0
+        return already ? (
+          <p className="mt-3 rounded-lg border border-line bg-elevated/40 px-3 py-2 text-[11px] text-muted">
+            Режим кампании «{target?.name}» — <b className="text-fg">{target?.pinned ? 'с закреплением' : 'без лока'}</b>.
+            Он общий для всех её аккаунтов и меняется на странице кампании, а не здесь.
+          </p>
+        ) : (
+          <>
+            <label className="mt-3 flex items-center gap-2 text-xs text-white/70">
+              <input type="checkbox" checked={lock} onChange={(e) => setLock(e.target.checked)} className="h-4 w-4 rounded border-line accent-spark-500" />
+              Присвоить с закреплением (замок) — аккаунты выйдут из общего пула
+            </label>
+            <p className="mt-2 text-[11px] text-muted">
+              Кампания пока пустая — задаёте режим для неё целиком. Без галочки — «использовать
+              без лока»: аккаунты остаются доступны другим кампаниям.
+            </p>
+          </>
+        )
+      })()}
     </Modal>
   )
 }
@@ -987,8 +1028,17 @@ function ChangeProxyModal({ acc, onClose, onSave }: { acc: TgAccount | null; onC
   const [useProxy, setUseProxy] = useState(true)
   const [value, setValue] = useState('')
   // §10: чаще всего прокси уже есть в базе — предлагаем выбрать, а не вбивать заново.
-  const pool = useApp((s) => s.data.proxies)
+  // Раньше пул читался из КЛИЕНТСКОГО мок-стора (`s.data.proxies`), который стартует
+  // пустым и наполняется только локальной кнопкой в этой же сессии: настоящая база
+  // прокси в модалку не попадала никогда, и оператор видел «База прокси пуста»
+  // при десятках записей на сервере (прогон 21–22.07, тест 9.7).
+  const [pool, setPool] = useState<ApiProxy[]>([])
   const [fromPool, setFromPool] = useState(true)
+
+  useEffect(() => {
+    if (!acc) return
+    void fetchProxies().then(setPool).catch(() => setPool([]))
+  }, [acc?.id])
 
   useEffect(() => {
     if (!acc) return
@@ -1055,8 +1105,11 @@ function ChangeProxyModal({ acc, onClose, onSave }: { acc: TgAccount | null; onC
                   onChange={setValue}
                   placeholder="Выберите прокси"
                   options={pool.map((p) => {
-                    const url = `${p.type}://${p.host}:${p.port}`
-                    return { value: url, label: `${url}${p.status === 'dead' ? ' · не отвечает' : ''}${p.usedBy ? ` · занят ${p.usedBy}` : ' · свободен'}` }
+                    const auth = p.username ? `${p.username}${p.password ? ':' + p.password : ''}@` : ''
+                    const url = `${p.scheme}://${auth}${p.host}:${p.port}`
+                    const shown = `${p.scheme}://${p.host}:${p.port}`
+                    const geo = p.country ? ` · ${p.country.toUpperCase()}` : ''
+                    return { value: url, label: `${shown}${geo}${p.status === 'dead' ? ' · не отвечает' : ''}` }
                   })}
                 />
               </>

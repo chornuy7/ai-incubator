@@ -50,15 +50,17 @@ export function classifyOpenAiError(status, body = '') {
  * @param {string} postText
  * @param {number} promptIndex
  * @param {string} [systemPrompt]
- * @param {{ avoid?: string[] }} [opts] `avoid` — тексты, которые уже отправлены в этой
- *   задаче: одинаковый комментарий от разных аккаунтов под одним постом выдаёт их пачкой.
+ * @param {{avoid?:string[], variantSeed?:string}|string} [opts] Объект ИЛИ строка
+ *   variantSeed (id аккаунта) — обратная совместимость. `avoid` — уже отправленные
+ *   тексты в задаче; `variantSeed` — чтобы шаблон отличался у разных аккаунтов.
  * @returns {Promise<{ text:string|null, mode:'openai'|'template_no_key'|'template_api_error'|'fatal', reason?:string }>}
  */
 export async function generateComment(postText, promptIndex = 0, systemPrompt, opts = {}) {
+  const o = typeof opts === 'string' ? { variantSeed: opts } : (opts || {})
   const snippet = (postText || '').slice(0, 500)
   const system = systemPrompt?.trim() || PROMPTS[promptIndex] || PROMPTS[0]
   const apiKey = process.env.OPENAI_API_KEY?.trim()
-  const avoid = new Set((opts.avoid || []).map(normalizeText))
+  const avoid = new Set((o.avoid || []).map(normalizeText))
 
   if (apiKey) {
     // Две попытки: если ИИ выдал то же, что уже отправлено, просим ещё раз погорячее.
@@ -103,7 +105,7 @@ export async function generateComment(postText, promptIndex = 0, systemPrompt, o
   }
 
   return {
-    text: templateComment(snippet, promptIndex, avoid),
+    text: templateComment(snippet, promptIndex, { avoid, variantSeed: o.variantSeed }),
     mode: apiKey ? 'template_api_error' : 'template_no_key',
   }
 }
@@ -111,6 +113,13 @@ export async function generateComment(postText, promptIndex = 0, systemPrompt, o
 /** Для сравнения «тот же текст или нет»: регистр и пунктуация роли не играют. */
 function normalizeText(s) {
   return String(s || '').toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').trim()
+}
+
+/** Стабильный хеш строки — одинаковый вход даёт одинаковый вариант. @param {string} s */
+function seedHash(s) {
+  let h = 0
+  for (let i = 0; i < String(s).length; i++) h = (h * 31 + String(s).charCodeAt(i)) | 0
+  return Math.abs(h)
 }
 
 /** Смёржить глобальный системный промпт (feature 6) с промптом карточки. @param {string} cardPrompt */
@@ -139,23 +148,26 @@ export function resolveSystemPrompt(settings) {
 }
 
 /**
- * Шаблонный комментарий — подстраховка на единичный сбой сети, не рабочий режим.
+ * Запасной шаблон, когда ИИ недоступен (нет ключа/кончилась квота).
  *
- * Раньше вариант выбирался как `list[promptIndex % list.length]`: promptIndex у всех
- * аккаунтов задачи один и тот же, поэтому все они писали ДОСЛОВНО одинаковый текст
- * под одним постом (прогон 21.07, подтверждено скриншотом канала). Для Telegram это
- * очевидная сетка ботов. Теперь вариант выбирается случайно и с оглядкой на уже
- * отправленное в этой задаче.
+ * Вариант выбирается детерминированно по (аккаунт + текст поста) через `variantSeed`,
+ * а НЕ по promptIndex: promptIndex — настройка задачи, общая для всех аккаунтов, поэтому
+ * раньше все профили под одним постом писали ДОСЛОВНО одинаковый текст (прогон 21.07,
+ * сигнатура ботофермы, тест 1.3). Тот же аккаунт на том же посте — тот же вариант,
+ * разные аккаунты — разные. `avoid` дополнительно пропускает уже отправленное в задаче.
  *
  * @param {string} postText
  * @param {number} promptIndex
- * @param {Set<string>} [avoid] уже отправленные тексты (нормализованные)
+ * @param {{ avoid?: Set<string>, variantSeed?: string }} [opts]
  */
-function templateComment(postText, promptIndex, avoid = new Set()) {
+function templateComment(postText, promptIndex, opts = {}) {
+  const { avoid = new Set(), variantSeed = '' } = opts
   const text = (postText || '').trim()
   const words = text.split(/\s+/).filter(Boolean)
   const hook = words.slice(0, 5).join(' ')
   const lower = text.toLowerCase()
+  // Без seed поведение прежнее (промпт-индекс) — чтобы не ломать вызовы без аккаунта.
+  const variant = variantSeed ? seedHash(`${variantSeed}|${text}`) : promptIndex
 
   const isGreeting = !text
     || words.length <= 3
@@ -169,7 +181,7 @@ function templateComment(postText, promptIndex, avoid = new Set()) {
       'Приветствую! Есть планы по ближайшим апдейтам?',
       'Здорово познакомиться с проектом, спасибо за welcome.',
       'Привет! Выглядит перспективно, буду на связи.',
-    ], avoid)
+    ], avoid, [], variant)
   }
 
   if (promptIndex === 3) return `А что думаете про «${hook.toLowerCase()}»?`
@@ -182,16 +194,17 @@ function templateComment(postText, promptIndex, avoid = new Set()) {
     `«${hook}» — актуально, спасибо что поделились.`,
     `«${hook}» — коротко и по делу, понравилось.`,
     `По «${hook}» — интересный угол, жду продолжения.`,
-  ], avoid, FALLBACKS)
+  ], avoid, FALLBACKS, variant)
 }
 
 /**
- * Случайный вариант из списка, которого ещё не было. Если все уже использованы —
- * берём из запасного списка, и только потом сдаёмся и повторяемся.
- * @param {string[]} list @param {Set<string>} avoid @param {string[]} [spare]
+ * Выбрать вариант, которого ещё не было (avoid), детерминированно по `variant`.
+ * Тот же variant (аккаунт+пост) → тот же текст; разные аккаунты → разные. Если все
+ * уже использованы — берём из запасного списка, потом сдаёмся и повторяемся.
+ * @param {string[]} list @param {Set<string>} avoid @param {string[]} [spare] @param {number} [variant]
  */
-function pickUnused(list, avoid, spare = []) {
+function pickUnused(list, avoid = new Set(), spare = [], variant = 0) {
   const fresh = [...list, ...spare].filter((v) => !avoid.has(normalizeText(v)))
   const pool = fresh.length ? fresh : list
-  return pool[Math.floor(Math.random() * pool.length)]
+  return pool[Math.abs(variant) % pool.length]
 }

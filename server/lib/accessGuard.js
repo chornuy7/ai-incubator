@@ -7,7 +7,7 @@
  * заголовок на подписанный токен сессии (см. docs/CONTRACT-rbac.md §7).
  */
 import { getUser } from '../users.js'
-import { can, userRoleIds, hasAdminRole, rolesForUser } from '../roles.js'
+import { can, userRoleIds, hasAdminRole, rolesForUser, allowedFolderTargets } from '../roles.js'
 
 /**
  * Guard для монтирования на префикс модуля. `keyFrom(req)` извлекает ключ модуля.
@@ -51,6 +51,46 @@ export async function isAdminRequest(req) {
   } catch {
     return false // fail-closed: защищаем дорогое действие
   }
+}
+
+/**
+ * §8.1: папки целей, доступные автору запроса, с урезанными списками каналов.
+ *
+ * Раньше фильтрация жила ТОЛЬКО во фронте (`visibleFolders`/`allowedTargets` в
+ * FolderPicker.tsx), а `GET /api/target-folders` отдавал все папки всем — то есть
+ * это было сокрытие в интерфейсе, а не разграничение доступа: devtools или прямой
+ * запрос возвращали базы каналов всех ролей. Прогон 21–22.07, тест 11.7.
+ *
+ * Семантика прав — union по ролям (как `moduleAccessGuard`): папка видна, если её
+ * разрешает ХОТЬ ОДНА роль; список каналов папки — объединение разрешённых каналов
+ * по всем ролям пользователя.
+ *
+ * @param {import('express').Request} req
+ * @param {Array<{id:string,targets?:string[]}>} folders
+ * @returns {Promise<Array<object>>}
+ */
+export async function foldersForRequest(req, folders = []) {
+  const userId = req.header('x-user-id')
+  if (!userId) return folders // нет сессии — дев/демо, как в moduleAccessGuard
+  let user = null
+  try {
+    user = await getUser(userId)
+  } catch {
+    return [] // fail-closed: не смогли проверить — не отдаём чужие базы каналов
+  }
+  if (!user || !user.active) return []
+  if (hasAdminRole(userRoleIds(user))) return folders
+  const roles = await rolesForUser(user)
+  if (!roles.length) return []
+  const out = []
+  for (const f of folders) {
+    const targets = f.targets || []
+    // union: собираем разрешённое по всем ролям, дубли схлопывает Set
+    const allowed = [...new Set(roles.flatMap((role) => allowedFolderTargets(role, f.id, targets)))]
+    if (!allowed.length && targets.length) continue // ни одна роль не дала доступа
+    out.push({ ...f, targets: allowed })
+  }
+  return out
 }
 
 /** Ключ модуля из /api/modules/<key>/... (первый сегмент; 'tasks' — не модуль). */

@@ -55,7 +55,7 @@ proxiesRouter.post('/:id/check', async (req, res) => {
     const { status, geo, geoSource } = await probeProxy(existing)
     const ms = Date.now() - t0
     // Страна, её источник и подпись пишутся одной транзакцией — иначе `note` остаётся
-    // от прошлой пробы и противоречит `country` (баг 5, 21.07).
+    // от прошлой пробы и противоречит `country`. geoSource пишем в базу (тест 9.4).
     const proxy = (await updateProxy(existing.id, {
       status,
       lastCheckAt: Date.now(),
@@ -121,7 +121,8 @@ proxiesRouter.post('/import', async (req, res) => {
         created.push(await createProxy({
           label: labels[i], kind, scheme: p.scheme, host: p.host, port: p.port,
           username: p.username, password: p.password, country: p.country, status: p.status,
-          geoSource: p.geoSource, // §9.10: отличить «гео реального IP» от «гео шлюза» (баг 4)
+          geoSource: p.geoSource || null, // §9.10: гео реального IP vs шлюза (тест 9.4)
+          rotateUrl: p.rotateUrl || '',    // ссылка смены IP из того же списка (тест 9.11)
           note: [note, geoNote(p.geo)].filter(Boolean).join(' · '),
         }))
       } catch (e) {

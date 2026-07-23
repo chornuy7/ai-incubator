@@ -9,18 +9,30 @@ import fs from 'fs/promises'
 import os from 'os'
 import path from 'path'
 
+// Boевые модули fail-closed по trust (тест 12.6 Николая): нет оценки → не пускаем.
+// Чтобы изолировать проверку СТАТУСА, даём тест-аккаунтам высокий trust через общий
+// кэш и восстанавливаем файл после. Путь trust-кэша захватывается при импорте, env
+// его уже не подменит, поэтому сидируем реальный файл и откатываем.
+const TRUST_FILE = path.join(process.cwd(), 'server', 'data', 'trust-cache.json')
+
 async function withMeta(meta, fn) {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'assignable-'))
   const file = path.join(dir, 'accounts-meta.json')
   await fs.writeFile(file, JSON.stringify(meta), 'utf8')
   const prev = process.env.ACCOUNTS_META_FILE
   process.env.ACCOUNTS_META_FILE = file
+  let backup = null
+  try { backup = await fs.readFile(TRUST_FILE, 'utf8') } catch { backup = null }
   try {
+    const { setTrustCache } = await import('../lib/trustCache.js')
+    for (const id of Object.keys(meta)) await setTrustCache(id, { score: 90, band: 'high' })
     const mod = await import(`../accountsMeta.js?t=${Date.now()}`)
     return await fn(mod)
   } finally {
     if (prev === undefined) delete process.env.ACCOUNTS_META_FILE
     else process.env.ACCOUNTS_META_FILE = prev
+    // Откатываем trust-кэш к исходному, чтобы не засорять боевые данные.
+    if (backup !== null) await fs.writeFile(TRUST_FILE, backup, 'utf8')
     await fs.rm(dir, { recursive: true, force: true })
   }
 }

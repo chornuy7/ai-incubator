@@ -9,7 +9,7 @@ import { activeAccounts, useApp } from '@/mocks/store'
 import { Switch, Select, Badge, EmptyState, Modal } from '@/shared/ui'
 import { AccountPicker } from '@/features/account-picker/AccountPicker'
 import { useModuleTask } from './shared/useModuleTask'
-import { SectionCard, NumberField, ProtectionBlock, LaunchPanel, TaskStartedModal } from './shared'
+import { SectionCard, NumberField, ProtectionBlock, LaunchPanel, TaskStartedModal, SchedulePanel } from './shared'
 import { cn } from '@/shared/lib/utils'
 import { downloadXls } from '@/shared/lib/exportXls'
 import { FolderPicker, SaveToFolderModal } from './shared/FolderPicker'
@@ -352,6 +352,16 @@ function Inner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: string }) {
           primaryLabel={cfg.primaryAction ?? 'Начать'} stats={launchStats} task={task} warn={warn}
           presets={presets} onApplyPreset={applyPreset} onDeletePreset={deletePreset} />
       </SectionCard>
+
+      {/* §3.9: расписание и здесь — раньше блок был только в LiveModule (тест 6.13). */}
+      <SchedulePanel
+        moduleKey={moduleKey}
+        title={cfg?.title ?? moduleKey}
+        buildSettings={() => buildSettings() as unknown as Record<string, unknown>}
+        accountIds={[...selected]}
+        disabled={!selected.size}
+        disabledReason="Выберите аккаунты"
+      />
 
       <div className="flex justify-end">
         <a href={task ? `/panel/tasks?task=${task.id}` : '/panel/tasks'} className="inline-flex items-center gap-1 text-xs font-semibold text-spark-300 hover:underline" title="Логи по этой задаче — в Дашборде задач">

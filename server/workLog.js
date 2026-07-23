@@ -44,6 +44,18 @@ export async function clockOut(userId, now = Date.now()) {
   return open
 }
 
+/**
+ * Потолок для НЕЗАКРЫТОЙ сессии. Человек не работает 98 часов подряд — такая запись
+ * означает, что закрытие по неактивности не отработало (или вкладку не закрыли).
+ * Считаем максимум рабочую смену, остальное в статистику не пускаем.
+ */
+export const OPEN_SESSION_CAP_MS = 12 * 60 * 60 * 1000
+
+/** Пересечение отрезка [aStart,aEnd] с окном [wStart,wEnd] в миллисекундах. */
+function overlap(aStart, aEnd, wStart, wEnd) {
+  return Math.max(0, Math.min(aEnd, wEnd) - Math.max(aStart, wStart))
+}
+
 function startOfDay(now) {
   const d = new Date(now)
   d.setHours(0, 0, 0, 0)
@@ -64,12 +76,19 @@ export async function workSummary(userId, now = Date.now()) {
   let open = false
   let since = null
   for (const e of entries) {
-    const end = e.end == null ? now : e.end
+    // Открытая сессия росла КРУГЛОСУТОЧНО: `end = now` без потолка давал записи вроде
+    // «одна сессия длиной 98 часов», и рядом с «сегодня 5м» появлялось «7 дней 149ч».
+    // Это учёт календаря, а не работы. Ограничиваем открытую сессию разумным
+    // потолком — дальше считаем, что человек просто не разлогинился (тест 7.9).
+    const rawEnd = e.end == null ? now : e.end
+    const end = e.end == null ? Math.min(now, e.start + OPEN_SESSION_CAP_MS) : rawEnd
     if (e.end == null) { open = true; since = e.start }
     const dur = Math.max(0, end - e.start)
-    // Доля сессии, попадающая в окно (простая аппроксимация — по началу сессии).
-    if (e.start >= dayStart) todayMs += dur
-    if (e.start >= weekStart) weekMs += dur
+    // Считаем ПЕРЕСЕЧЕНИЕ сессии с окном, а не всю длительность по её началу:
+    // раньше сессия, начавшаяся вчера, целиком падала в «неделю», а ночная — целиком
+    // в «сегодня» или не попадала вовсе.
+    todayMs += overlap(e.start, end, dayStart, now)
+    weekMs += overlap(e.start, end, weekStart, now)
   }
   return { todayMs, weekMs, open, since }
 }

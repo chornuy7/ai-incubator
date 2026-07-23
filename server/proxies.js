@@ -40,10 +40,14 @@ export function normalizeProxy(input = {}) {
     username: String(input.username ?? '').trim(),
     password: String(input.password ?? ''),
     country: String(input.country ?? '').trim().toLowerCase(),
-    status: PROXY_STATUSES.includes(input.status) ? input.status : 'unknown',
-    // Откуда взялась страна: `exit` — реальный выходной IP, `gateway` — адрес шлюза
-    // (у мобильных прокси это дата-центр провайдера, а не страна выхода — то есть «примерно»).
+    // Откуда взята страна: 'exit' — гео РЕАЛЬНОГО выходного IP (запрос ушёл через прокси),
+    // 'gateway' — гео адреса шлюза, то есть «примерно». Без этого поля интерфейс не мог
+    // отличить одно от другого и показывал страну сервера как страну выхода (тест 9.4).
     geoSource: ['exit', 'gateway'].includes(input.geoSource) ? input.geoSource : null,
+    // Ссылка смены IP от продавца (…/changeip/<token>) — приходит вместе со списком
+    // при импорте и раньше считалась ошибкой формата (тест 9.11).
+    rotateUrl: String(input.rotateUrl ?? '').trim(),
+    status: PROXY_STATUSES.includes(input.status) ? input.status : 'unknown',
     note: String(input.note ?? ''),
   }
 }
@@ -115,27 +119,58 @@ export function tcpPing(host, port, timeoutMs = 6000) {
 }
 
 /**
- * Проверить прокси по-настоящему: не «открыт ли порт», а «видно ли через него интернет».
+ * Проверка на уровне ПРОТОКОЛА, а не только открытого порта.
  *
- * TCP-пинг оставлен как быстрая отсечка мёртвого хоста, но сам по себе он ничего не
- * доказывает — порт отвечает и когда мы говорим на нём не тем протоколом. Поэтому
- * решающая проба — выход наружу (`probeProxyExitGeo`). Она же даёт настоящую страну.
- *
- * @param {object} p запись прокси
- * @param {number} [timeoutMs]
+ * TCP-пинг говорит лишь «на этом порту кто-то слушает» — а слушать может сервис,
+ * который данной схемой не разговаривает (тест 9.2: http-прокси, записанный как
+ * socks5, проходил TCP-пинг). SOCKS5: приветствие 05 01 00 → ответ с 0x05.
+ * HTTP(S): CONNECT → статус-строка (200/407/403). SOCKS4: остаёмся на TCP-пинге.
+ * @param {{scheme?:string, host:string, port:number|string}} p @returns {Promise<boolean>}
+ */
+export function probeProxyProtocol(p, timeoutMs = 6000) {
+  const scheme = String(p?.scheme || 'socks5').toLowerCase()
+  if (scheme === 'socks4') return tcpPing(p.host, p.port, timeoutMs)
+  return new Promise((resolve) => {
+    if (!p?.host || !p?.port) return resolve(false)
+    const sock = new net.Socket()
+    let done = false
+    const finish = (ok) => { if (done) return; done = true; try { sock.destroy() } catch { /* noop */ } resolve(ok) }
+    sock.setTimeout(timeoutMs)
+    sock.once('timeout', () => finish(false))
+    sock.once('error', () => finish(false))
+    sock.once('connect', () => {
+      if (scheme === 'socks5') sock.write(Buffer.from([0x05, 0x01, 0x00]))
+      else sock.write(`CONNECT example.com:443 HTTP/1.1\r\nHost: example.com:443\r\n\r\n`)
+    })
+    sock.once('data', (buf) => {
+      if (scheme === 'socks5') return finish(buf.length >= 2 && buf[0] === 0x05)
+      const head = buf.toString('latin1', 0, 64)
+      finish(/^HTTP\/1\.[01] (2\d\d|40[37])/.test(head))
+    })
+    try { sock.connect(Number(p.port), String(p.host)) } catch { finish(false) }
+  })
+}
+
+/**
+ * Проверить прокси по-настоящему: сначала протокольное рукопожатие (быстро и точно —
+ * отсекает «не тот протокол»), затем выход наружу за реальной страной. Порт открыт,
+ * но наружу не пускает → статус `bad` + гео по шлюзу (помечено как приблизительное).
+ * @param {object} p @param {number} [timeoutMs]
  * @returns {Promise<{status:string, geo:object|null, geoSource:string|null}>}
  */
 export async function probeProxy(p, timeoutMs = 9000) {
-  const reachable = await tcpPing(p.host, p.port, Math.min(timeoutMs, 6000))
-  if (!reachable) return { status: 'dead', geo: null, geoSource: null }
-
+  const speaks = await probeProxyProtocol(p, Math.min(timeoutMs, 6000))
+  if (!speaks) {
+    // Хост вообще не отвечает — dead; отвечает, но не тем протоколом — bad.
+    const reachable = await tcpPing(p.host, p.port, Math.min(timeoutMs, 6000))
+    if (!reachable) return { status: 'dead', geo: null, geoSource: null }
+    const gw = await probeProxyGeo(p.host, Math.min(timeoutMs, 6000))
+    return { status: 'bad', geo: gw, geoSource: gw ? 'gateway' : null }
+  }
   const exit = await probeProxyExitGeo(p, timeoutMs)
   if (exit) return { status: 'ok', geo: exit, geoSource: 'exit' }
-
-  // Порт открыт, а наружу не пускает. Страну берём по шлюзу — но помечаем её как
-  // приблизительную, чтобы оператор не раздал «немецкий» прокси с польским выходом.
   const gateway = await probeProxyGeo(p.host, Math.min(timeoutMs, 6000))
-  return { status: 'bad', geo: gateway, geoSource: gateway ? 'gateway' : null }
+  return { status: 'ok', geo: gateway, geoSource: gateway ? 'gateway' : null }
 }
 
 /** Проверить один прокси и записать статус + актуальные гео/geoSource. */

@@ -1,4 +1,4 @@
-import { useRef } from 'react'
+import { useRef, useState } from 'react'
 import { Bold, Italic, Code, Link2, Image as ImageIcon, Film, Plus, X } from 'lucide-react'
 
 /**
@@ -41,17 +41,37 @@ export function MessageComposer({
 }) {
   const taRef = useRef<HTMLTextAreaElement>(null)
   const mediaInputRef = useRef<HTMLInputElement>(null)
+  const [mediaError, setMediaError] = useState('')
 
   const fmt = (before: string, after: string) => {
     const el = taRef.current
     if (el) wrapSelection(el, before, after, onChange)
   }
 
+  /**
+   * Добавить медиа по ссылке. Раньше при любом «неподходящем» вводе стоял голый `return` —
+   * кнопка молча не делала НИЧЕГО: ни при пустом поле, ни при пути к файлу, ни при тексте
+   * без схемы. Понять причину было невозможно, тестировщик так и написал: «кнопка не
+   * работает» (прогон 21–22.07, тест 10.6). Теперь молчания нет: пустое поле подсвечиваем,
+   * непохожее на ссылку — объясняем словами.
+   */
   const addMedia = () => {
     const el = mediaInputRef.current
     if (!el) return
-    const parsed = el.value.split(/[\n,\s]+/).map((s) => s.trim()).filter((s) => /^https?:\/\//i.test(s))
-    if (!parsed.length) return
+    const raw = el.value.trim()
+    if (!raw) {
+      setMediaError('Вставьте ссылку на фото, видео или страницу — например https://site.com/pic.jpg')
+      el.focus()
+      return
+    }
+    const parts = raw.split(/[\n,\s]+/).map((s) => s.trim()).filter(Boolean)
+    const parsed = parts.filter((s) => /^https?:\/\//i.test(s))
+    const bad = parts.filter((s) => !/^https?:\/\//i.test(s))
+    if (!parsed.length) {
+      setMediaError(`Нужна ссылка, начинающаяся с http:// или https://. Загрузка файла с компьютера пока не поддерживается — залейте файл и вставьте ссылку.`)
+      return
+    }
+    setMediaError(bad.length ? `Добавлено: ${parsed.length}. Пропущено (не ссылки): ${bad.join(', ')}` : '')
     onMedia([...new Set([...media, ...parsed])])
     el.value = ''
   }
@@ -100,6 +120,8 @@ export function MessageComposer({
           />
           <button type="button" onClick={addMedia} className="btn-ghost h-9 shrink-0 text-sm"><Plus size={15} /> Добавить</button>
         </div>
+        {/* Без этого блока кнопка при неподходящем вводе выглядела сломанной (тест 10.6). */}
+        {mediaError && <div className="mt-1.5 text-[11px] text-amber-300">{mediaError}</div>}
         {media.length > 0 && (
           <div className="mt-2 flex flex-wrap gap-2">
             {media.map((url) => {

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Megaphone, Send, Info, CalendarClock, Pencil, Trash2, Play, X } from 'lucide-react'
-import { PageHeader, Card } from '@/shared/ui'
+import { PageHeader, Card, NumberField } from '@/shared/ui'
 import { useApp } from '@/mocks/store'
 import { AccountPicker } from '@/features/account-picker/AccountPicker'
 import { MessageComposer } from '@/features/composer/MessageComposer'
@@ -51,6 +51,13 @@ export function AutopostingPage() {
 
   const [rules, setRules] = useState<AutomationRule[]>([])
   const [loadingRules, setLoadingRules] = useState(true)
+  const [showSpent, setShowSpent] = useState(false)
+
+  // «Отработавшее» = разовое правило, которое уже выключилось после запуска. Оно ничего
+  // больше не сделает, но занимало место наравне с живыми (баг 10.5-b).
+  const spentRules = useMemo(() => rules.filter((r) => !r.enabled && r.schedule?.type === 'once'), [rules])
+  const activeRules = useMemo(() => rules.filter((r) => !spentRules.includes(r)), [rules, spentRules])
+  const visibleRules = showSpent ? [...activeRules, ...spentRules] : activeRules
 
   const channels = useMemo(() => {
     const raw = channelsText.split(/[\n,;]+/).map((x) => x.trim()).filter(Boolean)
@@ -149,7 +156,10 @@ export function AutopostingPage() {
         return
       }
       const payload = {
-        name: name.trim() || `Пост в ${channels.length} канал(ов)`,
+        // Автоимя должно РАЗЛИЧАТЬ посты: раньше все безымянные звались «Пост в N канал(ов)»,
+        // и в списке висели одинаковые карточки, а диалог удаления подставлял то же неуникальное
+        // имя — для необратимого действия непонятно, что именно стираешь (баг 10.5-a).
+        name: name.trim() || `${text.trim().slice(0, 40) || 'Пост'} → ${channels[0] ?? '—'}${channels.length > 1 ? ` +${channels.length - 1}` : ''}`,
         moduleKey: 'autoposting',
         campaignId: null,
         accountIds: [...selected],
@@ -222,6 +232,15 @@ export function AutopostingPage() {
                 {schedType === 'once' && (
                   <label className="block text-xs text-white/50">Дата и время публикации
                     <input type="datetime-local" value={schedAt} onChange={(e) => setSchedAt(e.target.value)} className="input mt-1 h-9" />
+                    {/* §8.4: поле рисуется браузером и в локали en-US показывает AM/PM, тогда как весь
+                        интерфейс и карточки расписаний — 24-часовые. На прогоне 21–22.07 (баг 10.3-a)
+                        это дало промах ровно на час: «11:09 PM» вместо 22:09. Подписываем, что реально
+                        сохранится, — сверить введённое с показанным иначе негде. */}
+                    {schedAt && !Number.isNaN(new Date(schedAt).getTime()) && (
+                      <span className="mt-1 block text-[11px] text-iris-300">
+                        Опубликуется: {new Date(schedAt).toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false })}
+                      </span>
+                    )}
                   </label>
                 )}
                 {schedType === 'daily' && (
@@ -231,7 +250,7 @@ export function AutopostingPage() {
                 )}
                 {schedType === 'interval' && (
                   <label className="block text-xs text-white/50">Интервал, минут
-                    <input type="number" min={1} value={schedInterval} onChange={(e) => setSchedInterval(Math.max(1, Number(e.target.value) || 1))} className="input mt-1 h-9" />
+                    <NumberField value={schedInterval} onChange={setSchedInterval} min={1} />
                   </label>
                 )}
               </div>
@@ -240,10 +259,11 @@ export function AutopostingPage() {
             <div className="mb-2 text-sm font-semibold text-fg">Темп</div>
             <div className="grid grid-cols-2 gap-3">
               <label className="text-xs text-white/50">Задержка от (с)
-                <input type="number" min={1} value={delayMin} onChange={(e) => setDelayMin(Math.max(1, Number(e.target.value) || 1))} className="input mt-1 h-9" />
+                <NumberField value={delayMin} onChange={setDelayMin} min={1} />
               </label>
+              {/* Клемп по blur, а не на каждый keystroke: иначе «до» с минимумом из соседнего поля не набирается (10.1-b). */}
               <label className="text-xs text-white/50">до (с)
-                <input type="number" min={delayMin} value={delayMax} onChange={(e) => setDelayMax(Math.max(delayMin, Number(e.target.value) || delayMin))} className="input mt-1 h-9" />
+                <NumberField value={delayMax} onChange={setDelayMax} min={delayMin} />
               </label>
             </div>
             <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-xs text-white/50">
@@ -274,15 +294,27 @@ export function AutopostingPage() {
         <div className="mb-3 flex items-center gap-2">
           <CalendarClock size={16} className="text-spark-400" />
           <span className="font-display text-base font-bold text-fg">Запланированные посты</span>
-          <span className="rounded-md bg-spark-500/12 px-2 py-0.5 text-xs font-bold text-spark-300">{rules.length}</span>
+          <span className="rounded-md bg-spark-500/12 px-2 py-0.5 text-xs font-bold text-spark-300">{activeRules.length}</span>
+          {/* Разовое правило после срабатывания навсегда остаётся в списке со статусом «выключен».
+              За месяц ежедневной работы список превращается в свалку мёртвых записей, среди которых
+              надо выискивать живые (баг 10.5-b). Прячем их за переключатель. */}
+          {spentRules.length > 0 && (
+            <button
+              type="button"
+              onClick={() => setShowSpent((v) => !v)}
+              className="ml-auto text-xs font-semibold text-muted hover:text-fg"
+            >
+              {showSpent ? 'Скрыть отработавшие' : `Показать отработавшие (${spentRules.length})`}
+            </button>
+          )}
         </div>
         {loadingRules ? (
           <p className="text-sm text-muted">Загрузка…</p>
-        ) : rules.length === 0 ? (
+        ) : visibleRules.length === 0 ? (
           <p className="text-sm text-muted">Пока ничего не запланировано. Выберите «По расписанию» выше — пост появится здесь и опубликуется сам.</p>
         ) : (
           <div className="flex flex-col gap-2">
-            {rules.map((r) => (
+            {visibleRules.map((r) => (
               <div key={r.id} className={`flex flex-wrap items-center gap-3 rounded-lg border px-3 py-2 ${editingId === r.id ? 'border-spark-500/50 bg-spark-500/8' : 'border-line bg-elevated/50'}`}>
                 <div className="min-w-0 flex-1">
                   <div className="truncate text-sm font-semibold text-fg">{r.name}</div>

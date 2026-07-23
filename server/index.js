@@ -307,9 +307,12 @@ await Promise.all([
   loadBlacklist().catch(() => {}),
 ])
 
-const { flipped } = await reconcileStaleTasksOnBoot()
+const { flipped, cleared } = await reconcileStaleTasksOnBoot()
 if (flipped.length) {
   console.log(`Reconcile: ${flipped.length} устаревших задач помечены stopped, блокировки не восстановлены`)
+}
+if (cleared?.length) {
+  console.log(`Reconcile: ${cleared.length} аккаунтов сняты с зависшего статуса «в работе»`)
 }
 
 // Авто-выход из временных статусов (floodwait/quarantine с истёкшим сроком) на старте (§3.3).
