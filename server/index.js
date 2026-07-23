@@ -269,6 +269,17 @@ app.use('/api/users', usersRouter)
 app.use('/api/proxies', proxiesRouter)
 app.use('/api/tg/import', importRouter) // §2: массовый импорт аккаунтов
 
+// §2.4 (D5): кампания принимает намерение СЛОВАМИ, система предлагает раскладку.
+// Заказчик: «я хочу создать кампанию, а не настроить модуль». Отдаём ПРЕДЛОЖЕНИЕ —
+// оператор видит, что система поняла, и правит; молча разложить чужое намерение
+// по боевым модулям было бы опасно.
+app.post('/api/campaigns/intent', async (req, res) => {
+  try {
+    const { parseIntent } = await import('./lib/intent.js')
+    res.json({ ok: true, suggestion: parseIntent(req.body?.text || '') })
+  } catch (err) { res.status(400).json({ ok: false, error: err instanceof Error ? err.message : 'Ошибка' }) }
+})
+
 // §1.3 (C3): счётчик переходов. Короткая ссылка живёт в корне (`/r/<code>`), а не
 // под /api — её отправляют людям, и она должна выглядеть как ссылка, а не как вызов API.
 app.get('/r/:code', async (req, res) => {
