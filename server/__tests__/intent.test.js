@@ -41,3 +41,21 @@ test('D5: переходы без числа — цель нельзя закр�
   const r = parseIntent('комментировать @c и получить переходы')
   assert.ok(r.warnings.some((w) => /сколько/.test(w)))
 })
+
+// ── §9.4: дедлайн останавливает УЖЕ ИДУЩУЮ работу, а не только новые запуски ──
+test('§9.4: истёкшая цель считается просроченной', async () => {
+  const { isGoalExpired } = await import('../goals.js')
+  const yesterday = new Date(Date.now() - 2 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10)
+  const today = new Date().toISOString().slice(0, 10)
+  assert.equal(isGoalExpired({ deadline: yesterday }), true)
+  assert.equal(isGoalExpired({ deadline: today }), false, 'дедлайн — конец дня включительно')
+  assert.equal(isGoalExpired({ deadline: null }), false, 'без дедлайна цель не истекает')
+})
+
+// ── §9.12: барьер прогрева одинаков в модуле и в менеджере аккаунтов ──
+test('§9.12: остановить прогрев может только супер-админ', async () => {
+  const { canStopWarming, WARMING_MODULES } = await import('../lib/safetyLimits.js')
+  assert.ok(WARMING_MODULES.has('warming'))
+  assert.equal(canStopWarming(false), false, 'обычный оператор не сносит недели работы')
+  assert.equal(canStopWarming(true), true)
+})

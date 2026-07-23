@@ -59,6 +59,22 @@ import { buildAgentContext, getAgent } from '../agents.js'
 import { recordTokens } from '../tokenLedger.js'
 import { canWorkNow, noteAction } from '../accountActivity.js'
 import { humanPace } from '../lib/antiCluster.js'
+import { getGoal, isGoalExpired } from '../goals.js'
+
+/**
+ * §9.4: цель просрочена — работа по ней ОСТАНАВЛИВАЕТСЯ. Раньше дедлайн проверялся
+ * только при СОЗДАНИИ задачи: запущенная накануне рассылка спокойно продолжала
+ * работать и после срока, то есть обещание «дедлайн останавливает работу» держалось
+ * лишь до первого запуска. Проверяем в цикле воркера, дёшево и по месту.
+ * @param {object} settings @returns {Promise<boolean>}
+ */
+async function goalExpired(settings) {
+  if (!settings?.goalId) return false
+  try {
+    const goal = await getGoal(settings.goalId)
+    return !!goal && isGoalExpired(goal)
+  } catch { return false } // сбой чтения цели не должен останавливать работу
+}
 import { filterBlacklisted, isBlacklistedSync } from '../targetBlacklist.js'
 
 /** @type {Map<string, Promise<void>>} */
@@ -204,6 +220,12 @@ export async function runNeuroCommenting(task, store) {
 
   try {
     while (!task.stopRequested && !task.pauseRequested && !totalLimitReached(s, task)) {
+      // §9.4: дедлайн цели останавливает и УЖЕ ИДУЩУЮ работу, а не только новые запуски.
+      if (await goalExpired(s)) {
+        await store.appendLog(task, 'warning', 'Цель просрочена — работа по ней остановлена (§9.4)')
+        task.stopRequested = true
+        break
+      }
       if (idleLap >= accountIds.length) {
         await store.appendLog(task, 'info', 'Все аккаунты исчерпали лимиты на эту задачу — завершаем')
         break
@@ -387,6 +409,12 @@ export async function runNeuroChatting(task, store) {
 
   try {
     while (!task.stopRequested && !task.pauseRequested && !totalLimitReached(s, task)) {
+      // §9.4: дедлайн цели останавливает и УЖЕ ИДУЩУЮ работу, а не только новые запуски.
+      if (await goalExpired(s)) {
+        await store.appendLog(task, 'warning', 'Цель просрочена — работа по ней остановлена (§9.4)')
+        task.stopRequested = true
+        break
+      }
       if (idleLap >= accountIds.length) {
         await store.appendLog(task, 'info', 'Все аккаунты исчерпали лимиты на эту задачу — завершаем')
         break
@@ -499,6 +527,12 @@ export async function runMassReact(task, store) {
 
   try {
     while (!task.stopRequested && !task.pauseRequested && !totalLimitReached(s, task)) {
+      // §9.4: дедлайн цели останавливает и УЖЕ ИДУЩУЮ работу, а не только новые запуски.
+      if (await goalExpired(s)) {
+        await store.appendLog(task, 'warning', 'Цель просрочена — работа по ней остановлена (§9.4)')
+        task.stopRequested = true
+        break
+      }
       if (idleLap >= accountIds.length) {
         await store.appendLog(task, 'info', 'Все аккаунты исчерпали лимиты на эту задачу — завершаем')
         break
@@ -600,6 +634,12 @@ export async function runMassLooking(task, store) {
 
   try {
     while (!task.stopRequested && !task.pauseRequested && !totalLimitReached(s, task)) {
+      // §9.4: дедлайн цели останавливает и УЖЕ ИДУЩУЮ работу, а не только новые запуски.
+      if (await goalExpired(s)) {
+        await store.appendLog(task, 'warning', 'Цель просрочена — работа по ней остановлена (§9.4)')
+        task.stopRequested = true
+        break
+      }
       if (idleLap >= accountIds.length) {
         await store.appendLog(task, 'info', 'Все аккаунты исчерпали лимиты на эту задачу — завершаем')
         break
@@ -690,6 +730,12 @@ export async function runWarming(task, store) {
 
   try {
     while (!task.stopRequested && !task.pauseRequested && !totalLimitReached(s, task)) {
+      // §9.4: дедлайн цели останавливает и УЖЕ ИДУЩУЮ работу, а не только новые запуски.
+      if (await goalExpired(s)) {
+        await store.appendLog(task, 'warning', 'Цель просрочена — работа по ней остановлена (§9.4)')
+        task.stopRequested = true
+        break
+      }
       if (idleLap >= accountIds.length) {
         await store.appendLog(task, 'info', 'Нет доступных аккаунтов для прогрева — завершаем')
         break
@@ -906,6 +952,12 @@ export async function runNeuroDialogs(task, store) {
     const phase = Math.random() * 2500 + threadNo * 400
     if (phase) await sleep(phase)
     while (!task.stopRequested && !task.pauseRequested && !totalLimitReached(s, task)) {
+      // §9.4: дедлайн цели останавливает и УЖЕ ИДУЩУЮ работу, а не только новые запуски.
+      if (await goalExpired(s)) {
+        await store.appendLog(task, 'warning', 'Цель просрочена — работа по ней остановлена (§9.4)')
+        task.stopRequested = true
+        break
+      }
       // Полный круг из пропусков (лимиты выбраны, аккаунты в карантине) — не крутим цикл вхолостую.
       if (skips >= myAccounts.length) {
         skips = 0

@@ -207,6 +207,18 @@ app.get('/api/tg/accounts/:accountId/folders', async (req, res) => {
 })
 
 app.post('/api/tg/accounts/:accountId/release', async (req, res) => {
+  // §9.12: тот же барьер, что и в модулях. Массовый «Стоп / освободить» в менеджере
+  // снимал локи напрямую и обходил защиту прогрева: остановить недели работы можно
+  // было в два клика из списка аккаунтов, хотя в самом модуле это запрещено.
+  const { WARMING_MODULES, canStopWarming } = await import('./lib/safetyLimits.js')
+  const { getAccountLock } = await import('./lib/accountLocks.js')
+  const info = getAccountLock(req.params.accountId)
+  if (info && WARMING_MODULES.has(info.moduleKey) && !canStopWarming(await isAdminRequest(req))) {
+    return res.status(403).json({
+      ok: false,
+      error: 'Останавливать прогрев может только супер-админ: это недели работы аккаунтов, откатить нельзя.',
+    })
+  }
   const released = forceReleaseAccount(req.params.accountId)
   res.json({ ok: true, released: released ? { taskId: released.taskId, moduleLabel: released.moduleLabel } : null })
 })
