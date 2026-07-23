@@ -423,6 +423,60 @@ app.get('/api/pricing', async (_req, res) => {
   } catch (err) { res.status(500).json({ ok: false, error: err instanceof Error ? err.message : 'Ошибка' }) }
 })
 
+/**
+ * §5.4: витрина подписки — цена каждого модуля в месяц, готовые сетапы и что уже
+ * куплено. Считает сервер: витрина и то, что спишется, должны быть одним числом.
+ */
+app.get('/api/subscription', async (req, res) => {
+  try {
+    const { MODULE_MONTH_PRICE, SETUPS, CURRENCY, subscriptionCost } = await import('./pricing.js')
+    const { getBalance } = await import('./balance.js')
+    const { moduleTitle } = await import('./lib/moduleTitles.js')
+    const { modules } = await getBalance(req.header('x-user-id'))
+    const items = Object.entries(MODULE_MONTH_PRICE)
+      .map(([key, price]) => ({ key, title: moduleTitle(key), price }))
+      .sort((a, b) => b.price - a.price || a.title.localeCompare(b.title, 'ru'))
+    const setups = SETUPS.map((s) => ({ ...s, cost: subscriptionCost(s.modules) }))
+    res.json({ ok: true, items, setups, currency: CURRENCY, mine: modules })
+  } catch (err) { res.status(500).json({ ok: false, error: err instanceof Error ? err.message : 'Ошибка' }) }
+})
+
+/** Сколько будет стоить набор — до оплаты. */
+app.post('/api/subscription/quote', async (req, res) => {
+  try {
+    const { subscriptionCost } = await import('./pricing.js')
+    res.json({ ok: true, ...subscriptionCost(req.body?.modules || []) })
+  } catch (err) { res.status(500).json({ ok: false, error: err instanceof Error ? err.message : 'Ошибка' }) }
+})
+
+/**
+ * Оформить подписку на выбранные модули. Оплаты в демо нет — записываем набор.
+ * Когда появится платёжный провайдер, сюда встанет проверка успешного платежа,
+ * а всё остальное (гейт запуска, меню) уже работает от этого набора.
+ */
+app.post('/api/subscription', async (req, res) => {
+  try {
+    const { setModules } = await import('./balance.js')
+    const { subscriptionCost } = await import('./pricing.js')
+    const wanted = req.body?.modules
+    const list = wanted === 'all' ? 'all' : (Array.isArray(wanted) ? wanted : [])
+    // Свой набор правит сам пользователь; чужой — только админ (это деньги).
+    const target = req.body?.userId || req.header('x-user-id')
+    if (req.body?.userId && !(await isAdminRequest(req))) {
+      return res.status(403).json({ ok: false, error: 'Менять чужую подписку может только админ' })
+    }
+    const balance = await setModules(list, target)
+    await appendAudit({
+      action: 'subscription.set',
+      module: 'billing',
+      initiator: req.header('x-user-id') || 'system',
+      reason: `Подписка: ${list === 'all' ? 'все модули' : `${list.length} модулей`}`,
+      meta: { modules: list, cost: list === 'all' ? null : subscriptionCost(list) },
+    }).catch(() => {})
+    res.json({ ok: true, balance })
+  } catch (err) { res.status(500).json({ ok: false, error: err instanceof Error ? err.message : 'Ошибка' }) }
+})
+
 // §5.1 (B2): баланс монет и тариф. Читают все — шапка показывает их на каждой странице.
 // Менять (пополнение/списание/смена тарифа) — только админ: это деньги, а не настройка.
 app.get('/api/balance', async (req, res) => {

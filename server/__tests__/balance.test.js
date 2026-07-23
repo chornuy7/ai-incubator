@@ -63,3 +63,38 @@ test('запрос без пользователя не забирает мон�
   assert.equal((await B.getBalance('usr_a')).coins, 10)
   assert.equal((await B.getBalance()).coins, 0)
 })
+
+/**
+ * Подписка на модули. Заказчик (23.07): «вибирає собі модулі які хоче, сума
+ * сумується і оплачується в кабінеті — доступ тільки до них».
+ */
+test('открыты только оплаченные модули', async () => {
+  const B = await fresh()
+  await B.setModules(['neuro-chatting', 'mailing'], 'usr_x')
+  const { modules } = await B.getBalance('usr_x')
+  assert.deepEqual(modules, ['neuro-chatting', 'mailing'])
+  assert.equal(B.modulesAllow(modules, 'neuro-chatting'), true)
+  assert.equal(B.modulesAllow(modules, 'mailing'), true)
+  assert.equal(B.modulesAllow(modules, 'neuro-commenting'), false, 'за него не платили')
+})
+
+test('пока набор не выбран — открыто всё: выкатка не должна запирать текущих клиентов', async () => {
+  const B = await fresh()
+  const { modules } = await B.getBalance('usr_new')
+  assert.equal(modules, 'all')
+  assert.equal(B.modulesAllow(modules, 'mailing'), true)
+})
+
+test('подписка у каждого своя, как и монеты', async () => {
+  const B = await fresh()
+  await B.setModules(['mailing'], 'usr_a')
+  await B.setModules(['neuro-commenting'], 'usr_b')
+  assert.deepEqual((await B.getBalance('usr_a')).modules, ['mailing'])
+  assert.deepEqual((await B.getBalance('usr_b')).modules, ['neuro-commenting'])
+})
+
+test('дубли в выборе схлопываются', async () => {
+  const B = await fresh()
+  await B.setModules(['mailing', 'mailing', 'warming'], 'usr_c')
+  assert.deepEqual((await B.getBalance('usr_c')).modules, ['mailing', 'warming'])
+})

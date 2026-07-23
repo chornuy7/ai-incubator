@@ -77,8 +77,12 @@ export function canControlModule(permissions: RolePermissions | null, isAdmin: b
   return can(permissions, false, 'module', moduleKey)
 }
 
-/** Страницы только для админа (управление ролями/пользователями). §8.1 */
-export const ADMIN_ONLY_PATHS = new Set(['/panel/roles', '/panel/users'])
+/**
+ * Страницы только для админа: роли, пользователи и подписка. Подписка — деньги
+ * рабочего пространства, ею распоряжается владелец, а не сотрудник, которому
+ * админ выдал пару модулей. §8.1 / §5.4
+ */
+export const ADMIN_ONLY_PATHS = new Set(['/panel/roles', '/panel/users', '/panel/user/subscription'])
 /** Минимум, доступный всем всегда (свой профиль + поддержка) — не гейтится ролью. */
 export const ALWAYS_ON_PATHS = new Set(['/panel/user/profile', '/panel/support'])
 /** Модули вне /panel/modules/* — их доступ проверяется как 'module' по этому ключу. */

@@ -7,6 +7,7 @@ import { SupportPage } from '@/pages/SupportPage'
 import { ModuleRunner } from '@/pages/ModuleRunner'
 import { ParsingHistoryPage } from '@/pages/ParsingHistoryPage'
 import { ProfilePage } from '@/pages/ProfilePage'
+import { SubscriptionPage } from '@/pages/SubscriptionPage'
 import { AutomationPage } from '@/pages/AutomationPage'
 import { GoalsPage } from '@/pages/GoalsPage'
 import { AgentsPage } from '@/pages/AgentsPage'
@@ -64,6 +65,7 @@ export default function App() {
         <Route path="/panel/modules/:moduleKey" element={<ModuleRunner />} />
         <Route path="/panel/parsing-history" element={<ParsingHistoryPage />} />
         <Route path="/panel/user/profile" element={<ProfilePage />} />
+        <Route path="/panel/user/subscription" element={<SubscriptionPage />} />
         <Route path="/panel/roles" element={<RolesPage />} />
         <Route path="/panel/users" element={<UsersPage />} />
         <Route path="/panel/proxies" element={<ProxiesPage />} />

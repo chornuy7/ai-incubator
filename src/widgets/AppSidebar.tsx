@@ -3,7 +3,8 @@ import { PanelLeftClose, PanelLeftOpen, X, LogOut } from 'lucide-react'
 import { ROUTES, GROUP_LABELS, type RouteDef } from '@/shared/config/routes'
 import { useApp } from '@/mocks/store'
 import { useSession } from '@/features/auth/session'
-import { canAccessPath } from '@/shared/lib/access'
+import { canAccessPath, moduleKeyFromPath } from '@/shared/lib/access'
+import { usePlan, planHasModule } from '@/features/billing/plan'
 import { cn } from '@/shared/lib/utils'
 
 const GROUP_ORDER: RouteDef['group'][] = ['main', 'modules', 'parsing', 'account']
@@ -35,12 +36,17 @@ export function AppSidebar({ mobile = false }: { mobile?: boolean }) {
   const logout = useSession((s) => s.logout)
   const setUserState = useApp((s) => s.setUserState)
   const location = useLocation()
+  const planModules = usePlan((s) => s.modules)
 
   const signOut = () => { logout(); setUserState('guest') }
 
-  // Гейтинг под роль (§8.1): нет сессии (демо) → всё видно; иначе — по правам роли
-  // (модули, разделы, админ-страницы, always-on) через единый canAccessPath.
+  // Две независимые оси. РОЛЬ (§8.1) — что админ разрешил сотруднику. ПОДПИСКА
+  // (§5.4) — что рабочее пространство оплатило: «купив нейрочатінг — бачить
+  // нейрочатінг», остальных модулей в меню быть не должно. Проходить надо обе:
+  // админ не увидит неоплаченный модуль, а сотрудник — оплаченный, но закрытый ему.
   const allowed = (r: RouteDef) => {
+    const mk = moduleKeyFromPath(r.path)
+    if (mk && !planHasModule(planModules, mk)) return false
     if (!sessionUser) return true
     return canAccessPath(sessionUser.permissions, sessionUser.isAdmin, r.path)
   }

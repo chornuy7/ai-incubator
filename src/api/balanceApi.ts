@@ -8,6 +8,8 @@ export interface Plan {
 export interface Balance {
   planId: string
   plan: Plan
+  /** §5.4: купленные модули. 'all' — набор ещё не выбирали, открыто всё. */
+  modules: string[] | 'all'
   /** Монеты с точностью до сотых — списание за действие это доли монеты (C2). */
   coins: number
   updatedAt: number
@@ -37,4 +39,25 @@ export interface Pricing {
 export async function fetchPricing(): Promise<Pricing> {
   const r = await apiGet<{ items?: PriceItem[]; actions?: Record<string, number>; avgTokens?: Record<string, number>; coinsPer1kTokens: number }>('/api/pricing')
   return { items: r.items || [], actions: r.actions || {}, avgTokens: r.avgTokens || {}, coinsPer1kTokens: r.coinsPer1kTokens ?? 1 }
+}
+
+/** §5.4: подписка на модули — витрина и то, что уже куплено. */
+export interface SubModule { key: string; title: string; price: number }
+export interface SubCost { sum: number; full: number; setup: string | null; discount: number }
+export interface SubSetup { id: string; name: string; hint: string; modules: string[]; discount: number; cost: SubCost }
+export interface Subscription { items: SubModule[]; setups: SubSetup[]; currency: string; mine: string[] | 'all' }
+
+export async function fetchSubscription(): Promise<Subscription> {
+  const r = await apiGet<Subscription & { ok: boolean }>('/api/subscription')
+  return { items: r.items || [], setups: r.setups || [], currency: r.currency || '$', mine: r.mine ?? 'all' }
+}
+
+export async function quoteSubscription(modules: string[]): Promise<SubCost> {
+  return apiPost<SubCost>('/api/subscription/quote', { modules })
+}
+
+/** Оформить подписку на набор. Оплаты в демо нет — набор записывается сразу. */
+export async function saveSubscription(modules: string[] | 'all'): Promise<Balance> {
+  const r = await apiPost<{ balance: Balance }>('/api/subscription', { modules })
+  return r.balance
 }

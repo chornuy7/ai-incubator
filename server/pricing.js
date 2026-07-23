@@ -52,6 +52,93 @@ export function actionPrice(moduleKey) {
 }
 
 /**
+ * §5.4: ПОДПИСКА НА МОДУЛЬ — сколько стоит держать модуль открытым, в месяц.
+ *
+ * Заказчик (23.07): «людина хоче нейрочатінг + мейлінг — вибирає собі модулі які
+ * хоче, сума сумується і оплачується в кабінеті, доступ тільки до них». То есть
+ * тариф не выбирают из трёх коробок — его СОБИРАЮТ: отметил модули, увидел сумму,
+ * оплатил, получил ровно их.
+ *
+ * Отдельно от `ACTION_PRICE`: подписка — это право пользоваться модулем, а монеты
+ * тратятся на сами действия внутри него. Смешивать нельзя, иначе клиент, который
+ * ничего не запускал, платил бы ноль и держал модуль бесплатно.
+ *
+ * ЦИФРЫ ВРЕМЕННЫЕ — прайс утверждает заказчик. Ориентир из разговора: ~20 $ за модуль.
+ */
+export const MODULE_MONTH_PRICE = {
+  mailing: 20,
+  'neuro-commenting': 20,
+  'neuro-chatting': 20,
+  'neuro-dialogs': 25,
+  autoposting: 15,
+  'mass-react': 10,
+  'mass-looking': 10,
+  warming: 10,
+  ggr: 15,
+  parsing: 8,
+  'parsing-groups': 8,
+  'parsing-users': 8,
+  'parsing-messages': 8,
+  'parsing-comments': 8,
+}
+
+/** Валюта витрины. Меняется в одном месте вместе с ценами. */
+export const CURRENCY = '$'
+
+/**
+ * Готовые сетапы — связки модулей под типовой сценарий, дешевле поштучной суммы.
+ * `discount` — доля скидки от суммы входящих модулей (0.2 = −20%).
+ */
+export const SETUPS = [
+  {
+    id: 'setup-outreach',
+    name: 'Аутрич',
+    hint: 'Найти аудиторию, написать в личку и довести до цели',
+    modules: ['parsing-users', 'parsing-groups', 'mailing', 'neuro-dialogs', 'neuro-chatting'],
+    discount: 0.2,
+  },
+  {
+    id: 'setup-engage',
+    name: 'Вовлечение',
+    hint: 'Присутствие в чужих каналах: комментарии, ответы, реакции',
+    modules: ['parsing', 'parsing-comments', 'neuro-commenting', 'neuro-chatting', 'mass-react', 'mass-looking'],
+    discount: 0.2,
+  },
+  {
+    id: 'setup-all',
+    name: 'Всё включено',
+    hint: 'Все модули платформы без ограничений',
+    modules: Object.keys(MODULE_MONTH_PRICE),
+    discount: 0.35,
+  },
+]
+
+/** Цена подписки на модуль в месяц. Неизвестный — 0. @param {string} moduleKey */
+export function modulePrice(moduleKey) {
+  return MODULE_MONTH_PRICE[moduleKey] ?? 0
+}
+
+/**
+ * Сумма за набор модулей с учётом скидки сетапа, если набор ему точно соответствует.
+ * Считаем на сервере: витрина и то, что спишется, должны быть одним числом.
+ * @param {string[]} moduleKeys @returns {{sum:number, full:number, setup:string|null, discount:number}}
+ */
+export function subscriptionCost(moduleKeys = []) {
+  const keys = [...new Set(moduleKeys.filter((k) => MODULE_MONTH_PRICE[k] !== undefined))]
+  const full = keys.reduce((acc, k) => acc + modulePrice(k), 0)
+  // Скидку даёт сетап, ВСЕ модули которого выбраны: иначе «почти сетап» получал бы
+  // цену сетапа, и поштучная покупка была бы бессмысленной.
+  let best = { setup: null, discount: 0 }
+  for (const s of SETUPS) {
+    if (s.modules.every((m) => keys.includes(m)) && s.discount > best.discount) {
+      best = { setup: s.id, discount: s.discount }
+    }
+  }
+  const sum = Math.round(full * (1 - best.discount) * 100) / 100
+  return { sum, full, setup: best.setup, discount: best.discount }
+}
+
+/**
  * Во сколько обойдётся запуск: цена действия × сколько действий планируется.
  * Нужна интерфейсу — «сколько это будет стоить» до нажатия «Начать», а не после.
  * @param {string} moduleKey @param {number} actions

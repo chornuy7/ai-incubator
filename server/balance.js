@@ -24,10 +24,62 @@ import { dataPath, readJson, mutateJson } from './lib/jsonStore.js'
 const BALANCE_FILE = () => process.env.BALANCE_FILE || dataPath('balance.json')
 
 /** Тарифы (§5.1). Пока фиксированный список — прайсы заказчик утверждает отдельно. */
+/**
+ * Тарифы — только лимит аккаунтов. Набор модулей клиент СОБИРАЕТ сам (см. ниже).
+ *
+ * Заказчик (23.07): «людина хоче нейрочатінг + мейлінг — вибирає собі модулі які
+ * хоче, сума сумується і оплачується в кабінеті, доступ тільки до них». Поэтому
+ * фиксированных коробок «Базовая / Про» с зашитым набором модулей быть не может:
+ * набор — это выбор клиента, а не одна из трёх заготовок.
+ */
 export const PLANS = {
   none: { name: 'Нет подписки', accountLimit: 3 },
   basic: { name: 'Базовая', accountLimit: 50 },
   pro: { name: 'Про', accountLimit: 200 },
+}
+
+/**
+ * Что открыто, пока клиент ничего не выбрал.
+ *
+ * `'all'` — а не пустой список: система уже работает у существующих клиентов, и
+ * молча закрыть им всё в момент выкатки — худший способ ввести подписки. Ограничение
+ * начинает действовать с той секунды, когда набор выбран явно.
+ */
+export const DEFAULT_MODULES = 'all'
+
+/**
+ * Открыт ли модуль этому набору. Набор — либо `'all'`, либо список ключей.
+ * @param {string[]|'all'|undefined} modules @param {string} moduleKey
+ */
+export function modulesAllow(modules, moduleKey) {
+  if (modules === 'all' || modules == null) return true
+  return Array.isArray(modules) && modules.includes(moduleKey)
+}
+
+/**
+ * Купленные модули пользователя. Отдельно от роли: роль отвечает на вопрос «что
+ * сотруднику разрешил админ», подписка — «что оплачено рабочим пространством».
+ * @param {string} [userId] @returns {Promise<string[]|'all'>}
+ */
+export async function getModules(userId) {
+  const { modules } = await getBalance(userId)
+  return modules
+}
+
+/**
+ * Записать выбранный набор модулей (после оплаты в кабинете).
+ * @param {string[]|'all'} modules @param {string} [userId]
+ */
+export async function setModules(modules, userId) {
+  const list = modules === 'all' ? 'all' : [...new Set((modules || []).map(String).filter(Boolean))]
+  const k = key(userId)
+  await mutateJson(BALANCE_FILE(), (all) => {
+    const next = { ...(all || {}) }
+    delete next.coins; delete next.planId; delete next.updatedAt
+    next[k] = { ...(next[k] || {}), modules: list, updatedAt: Date.now() }
+    return next
+  })
+  return getBalance(userId)
 }
 
 export const DEFAULT_STATE = { planId: 'basic', coins: 0, updatedAt: 0 }
@@ -61,6 +113,8 @@ export async function getBalance(userId) {
   return {
     planId,
     plan: PLANS[planId],
+    // Набор купленных модулей: 'all' или список ключей.
+    modules: saved?.modules === undefined ? DEFAULT_MODULES : saved.modules,
     coins: normCoins(saved?.coins ?? DEFAULT_STATE.coins),
     updatedAt: Number(saved?.updatedAt) || 0,
   }

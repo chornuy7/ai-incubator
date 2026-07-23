@@ -65,6 +65,26 @@ async function warmingStopBlockReason(req, moduleKey) {
  * происходит, причина видна только в логах.
  * @returns {Promise<object|null>} тело отказа или null
  */
+/**
+ * Оплачен ли модуль. Заказчик (23.07): набор модулей клиент собирает сам и платит
+ * только за них — значит запуск надо проверять не только по балансу и роли, но и
+ * по тому, что куплено. Три независимые оси: роль (что разрешил админ), подписка
+ * (что оплачено), монеты (есть ли чем платить за действия).
+ * @returns {Promise<object|null>} тело отказа или null
+ */
+async function notInPlanPayload(req, moduleKey) {
+  const { getBalance, modulesAllow } = await import('../balance.js')
+  const { modules } = await getBalance(req.header('x-user-id'))
+  if (modulesAllow(modules, moduleKey)) return null
+  const { moduleTitle } = await import('../lib/moduleTitles.js')
+  return {
+    ok: false,
+    error: `Модуль «${moduleTitle(moduleKey)}» не оплачен. Добавьте его в подписку в разделе «Мои модули».`,
+    needSubscription: true,
+    moduleKey,
+  }
+}
+
 async function noCoinsPayload(req, moduleKey) {
   const { actionPrice } = await import('../pricing.js')
   if (actionPrice(moduleKey) <= 0) return null
@@ -194,6 +214,9 @@ modulesRouter.post('/:moduleKey/tasks', async (req, res) => {
     // и запуск на чужие монеты был бы дырой в биллинге.
     const noCoins = await noCoinsPayload(req, moduleKey)
     if (noCoins) return res.status(402).json(noCoins)
+    // Тариф может быть поштучным — модуль должен быть в него включён.
+    const notInPlan = await notInPlanPayload(req, moduleKey)
+    if (notInPlan) return res.status(402).json(notInPlan)
 
     // Guard безопасного назначения (§3.2/§3.3): не отдаём непрогретые/занятые статусом профили.
     // Недоступные можно исключить — тогда задача идёт на оставшихся, а не падает целиком.
@@ -372,6 +395,8 @@ modulesRouter.post('/:moduleKey/tasks/:id/restart', async (req, res) => {
     if (!(await canTouchTask(req, old))) return res.status(404).json({ ok: false, error: 'Задача не найдена' })
     const noCoins = await noCoinsPayload(req, moduleKey)
     if (noCoins) return res.status(402).json(noCoins)
+    const notInPlan = await notInPlanPayload(req, moduleKey)
+    if (notInPlan) return res.status(402).json(notInPlan)
     const settings = { ...(old.settings || {}), initiator: req.body?.initiator || 'operator' }
 
     const err = validateSettings(moduleKey, settings)

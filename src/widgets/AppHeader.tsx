@@ -6,6 +6,7 @@ import {
 import { useApp, activeAccounts } from '@/mocks/store'
 import { fetchBalance, fetchPricing, type Balance, type Pricing } from '@/api/balanceApi'
 import { useSession } from '@/features/auth/session'
+import { usePlan } from '@/features/billing/plan'
 import { useUi } from '@/shared/lib/uiStore'
 import { coins as fmtCoins } from '@/shared/lib/utils'
 import { Dropdown, MenuItem, Modal, Avatar } from '@/shared/ui'
@@ -47,11 +48,14 @@ export function AppHeader() {
   // применяться в текущей сессии, а не «после перезахода» — про перезаход человеку
   // никто не скажет, а отзыв доступа, ждущий перелогина, это уже дыра.
   const refreshSession = useSession((s) => s.refresh)
+  // Подписку тянем тем же тиком: оплатили модуль — он появляется в меню сам,
+  // как и выданное админом право.
+  const loadPlan = usePlan((s) => s.load)
   useEffect(() => {
-    void refreshSession()
-    const t = setInterval(() => { void refreshSession() }, 30000)
+    void refreshSession(); void loadPlan()
+    const t = setInterval(() => { void refreshSession(); void loadPlan() }, 30000)
     return () => clearInterval(t)
-  }, [refreshSession])
+  }, [refreshSession, loadPlan])
   const coinsOpen = useUi((s) => s.coinsOpen)
   const setCoinsOpen = useUi((s) => s.setCoinsOpen)
   const noCoins = useUi((s) => s.noCoins)
