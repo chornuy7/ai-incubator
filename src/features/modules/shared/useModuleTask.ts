@@ -109,6 +109,12 @@ export function useModuleTask(moduleKey: string) {
       // при трёх десятках профилей кто-то в блоке почти всегда.
       const t = await launchWithSkip((skip) => startModuleTask(moduleKey, settings, skip))
       if (!t) return false
+      // §4.4 (D4): риск волнового бана показываем сразу после запуска. Не блокируем —
+      // решение за оператором, — но молчать об этом нельзя: Telegram банит группами,
+      // и узнать о паттерне постфактум означает потерять сразу несколько профилей.
+      for (const w of (t as { clusterWarnings?: string[] }).clusterWarnings || []) {
+        pushToast({ type: 'error', title: 'Риск блокировки группой', desc: w })
+      }
       setTaskId(t.id)
       setTask(t)
       persistActiveTaskId(moduleKey, t.id)

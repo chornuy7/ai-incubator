@@ -199,7 +199,22 @@ modulesRouter.post('/:moduleKey/tasks', async (req, res) => {
         scope: { taskId: task.id, accounts: settings.accountIds || [] },
         reason: `Запуск задачи ${moduleKey}`,
       }).catch(() => {})
-      res.json({ ok: true, task: store.taskToDto(task) })
+      // §4.4 (D4): анти-кластерные предупреждения отдаём вместе с задачей — они
+      // НЕ запрещают запуск (решение за оператором), но он должен увидеть риск
+      // сразу, а не после того, как Telegram забанит группу волной.
+      let clusterWarnings = []
+      try {
+        const { clusterWarnings: warn } = await import('../lib/antiCluster.js')
+        const all = await loadAllMeta()
+        const proxyByAccount = {}
+        for (const id of settings.accountIds || []) proxyByAccount[id] = all[id]?.proxy || ''
+        clusterWarnings = warn({
+          proxyByAccount,
+          accountIds: settings.accountIds || [],
+          targets: settings.channels || settings.targets || [],
+        })
+      } catch { /* предупреждения не должны мешать запуску */ }
+      res.json({ ok: true, task: store.taskToDto(task), clusterWarnings })
     } catch (err) {
       releaseTaskLocks(task.id)
       throw err

@@ -128,9 +128,15 @@ export interface UnavailablePayload { error: string; blocked?: BlockedAccount[];
  * @param skipUnavailable исключить недоступные аккаунты и запустить на оставшихся.
  *   Без него сервер отвечает 409 со списком — чтобы спросить человека, а не решать за него.
  */
-export async function startModuleTask(moduleKey: string, settings: ModuleTaskSettings, skipUnavailable = false): Promise<ModuleTask> {
-  const data = await apiPost<{ task: ModuleTask }>(`${base(moduleKey)}/tasks`, { settings, skipUnavailable })
-  return data.task
+/**
+ * §4.4 (D4): анти-кластерные предупреждения приходят вместе с задачей. Они НЕ
+ * блокируют запуск — решение за оператором, — но должны быть видны сразу, а не
+ * после того, как Telegram забанит группу волной. Вешаем их на объект задачи,
+ * чтобы не менять сигнатуру во всех местах вызова.
+ */
+export async function startModuleTask(moduleKey: string, settings: ModuleTaskSettings, skipUnavailable = false): Promise<ModuleTask & { clusterWarnings?: string[] }> {
+  const data = await apiPost<{ task: ModuleTask; clusterWarnings?: string[] }>(`${base(moduleKey)}/tasks`, { settings, skipUnavailable })
+  return { ...data.task, clusterWarnings: data.clusterWarnings || [] }
 }
 
 export async function fetchModuleTasks(moduleKey: string): Promise<ModuleTask[]> {
