@@ -14,6 +14,7 @@ import { answerHelp } from './aiHelp.js'
 import { featureRouter } from './featureRoutes.js'
 import { automationRouter } from './automation/routes.js'
 import { goalsRouter } from './goalsRoutes.js'
+import { agentsRouter } from './agentsRoutes.js'
 import { leadsRouter } from './leadsRoutes.js'
 import { accountGroupsRouter } from './accountGroupsRoutes.js'
 import { campaignsRouter } from './campaignsRoutes.js'
@@ -258,6 +259,7 @@ app.post('/api/ai/help', async (req, res) => {
 })
 app.use('/api/automation', automationRouter)
 app.use('/api/goals', goalsRouter)
+app.use('/api/agents', agentsRouter)
 app.use('/api/leads', leadsRouter)
 app.use('/api/account-groups', accountGroupsRouter) // §12: группы аккаунтов
 app.use('/api/campaigns', campaignsRouter)

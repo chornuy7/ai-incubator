@@ -9,6 +9,7 @@ import { ParsingHistoryPage } from '@/pages/ParsingHistoryPage'
 import { ProfilePage } from '@/pages/ProfilePage'
 import { AutomationPage } from '@/pages/AutomationPage'
 import { GoalsPage } from '@/pages/GoalsPage'
+import { AgentsPage } from '@/pages/AgentsPage'
 import { TasksPage, TaskDetailPage } from '@/pages/TasksPage'
 import { AccountOverviewPage } from '@/features/account-manager/AccountOverviewPage'
 import { LeadsPage } from '@/pages/LeadsPage'
@@ -42,6 +43,7 @@ export default function App() {
         <Route path="/panel/accounts/:id" element={<AccountOverviewPage />} />
         <Route path="/panel/automation" element={<AutomationPage />} />
         <Route path="/panel/goals" element={<GoalsPage />} />
+        <Route path="/panel/agents" element={<AgentsPage />} />
         <Route path="/panel/tasks" element={<TasksPage />} />
         <Route path="/panel/tasks/:id" element={<TaskDetailPage />} />
         <Route path="/panel/crm" element={<LeadsPage />} />

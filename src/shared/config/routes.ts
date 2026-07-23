@@ -18,6 +18,7 @@ export const ROUTES: RouteDef[] = [
   { path: '/panel/proxies', label: 'Прокси', icon: Network, group: 'main' },
   { path: '/panel/automation', label: 'Автоматизация', icon: CalendarClock, group: 'main' },
   { path: '/panel/goals', label: 'Цели', icon: Target, group: 'main' },
+  { path: '/panel/agents', label: 'Агенты', icon: Bot, group: 'main' },
   { path: '/panel/campaign', label: 'Кампания', icon: Rocket, group: 'main' },
   { path: '/panel/tasks', label: 'Дашборд задач', icon: ListChecks, group: 'main' },
   { path: '/panel/crm', label: 'CRM · Лиды', icon: Contact, group: 'main' },
