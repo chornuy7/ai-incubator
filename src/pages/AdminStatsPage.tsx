@@ -1,3 +1,4 @@
+import { coins as fmtCoins } from '@/shared/lib/utils'
 import { useEffect, useMemo, useState } from 'react'
 import { BarChart3, Users, ListChecks, Coins, Download, RefreshCw } from 'lucide-react'
 import { PageHeader, Card, Segmented, EmptyState } from '@/shared/ui'
@@ -164,8 +165,9 @@ function PanelTab({ o }: { o: AdminOverview | null }) {
           hint={`${o.tokens.coins} монет · ${fmt(o.tokens.calls)} запросов к ИИ`}
         />
         <Tile
-          icon={<Coins size={14} />} label="Баланс" value={o.balance ? `${o.balance.coins}` : '—'}
-          hint={o.balance ? `Тариф «${o.balance.plan.name}» · до ${o.balance.plan.accountLimit} акк.` : undefined}
+          icon={<Coins size={14} />} label="Монет в системе"
+          value={o.coinTotal ? fmtCoins(o.coinTotal.coins) : (o.balance ? fmtCoins(o.balance.coins) : '—')}
+          hint={o.coinTotal ? `на ${o.coinTotal.wallets} кошельках пользователей` : undefined}
         />
       </div>
 

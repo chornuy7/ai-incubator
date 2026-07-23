@@ -110,3 +110,20 @@ test('дубли в выборе схлопываются', async () => {
   await B.setModules(['mailing', 'mailing', 'warming'], 'usr_c')
   assert.deepEqual((await B.getBalance('usr_c')).modules, ['mailing', 'warming'])
 })
+
+/**
+ * §5.3: сумма монет по всем кошелькам — для админ-панели. После пер-юзерного
+ * рефактора getBalance() без id возвращал пустой __default, и статистика
+ * показывала ноль вместо реальной суммы.
+ */
+test('totalCoins: сумма по всем пользователям, служебные ключи не в счёт', async () => {
+  const B = await fresh()
+  await B.changeCoins(10, 'x', 'usr_a')
+  await B.changeCoins(5.5, 'x', 'usr_b')
+  await B.setModules(['mailing'], 'usr_a') // пишет __subscription — не должен попасть в сумму
+  await B.changeCoins(1, 'x') // __default — в сумму монет идёт, но не считается кошельком
+
+  const t = await B.totalCoins()
+  assert.equal(t.coins, 16.5, '10 + 5.5 + 1')
+  assert.equal(t.wallets, 2, 'usr_a и usr_b; __default и __subscription не кошельки пользователей')
+})

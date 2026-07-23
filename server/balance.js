@@ -119,6 +119,27 @@ export async function getBalance(userId) {
 }
 
 /**
+ * Свод по всем кошелькам пространства: сколько монет у всех пользователей вместе.
+ *
+ * Нужен админ-панели. После перехода на пер-юзерные кошельки `getBalance()` без id
+ * стал возвращать пустой `__default`, и в статистике висел ноль вместо реальной
+ * суммы. Служебные ключи (`__subscription`, `__default`) в подсчёт не идут.
+ * @returns {Promise<{coins:number, wallets:number}>}
+ */
+export async function totalCoins() {
+  const all = await readJson(BALANCE_FILE(), {})
+  let coins = 0
+  let wallets = 0
+  for (const [k, v] of Object.entries(all || {})) {
+    if (k === SUBSCRIPTION_KEY) continue
+    if (typeof v?.coins !== 'number') continue
+    coins = Math.round((coins + v.coins) * COIN_PRECISION) / COIN_PRECISION
+    if (k !== DEFAULT_USER) wallets += 1
+  }
+  return { coins, wallets }
+}
+
+/**
  * Пополнить (amount > 0) или списать (amount < 0).
  * Уходить в минус не даём: при нуле боевые модули должны останавливаться (C2),
  * а отрицательный баланс сделал бы это правило непроверяемым.

@@ -7,6 +7,8 @@ export interface AdminOverview {
   tasks: { total: number; byStatus: Record<string, number>; byModule: Record<string, { tasks: number; done: number; actions: number }> }
   tokens: { tokens: number; coins: number; calls: number; byModule: Record<string, number>; byAccount: Record<string, number> }
   balance: { planId: string; plan: { name: string; accountLimit: number }; coins: number } | null
+  /** Сумма монет по всем кошелькам пространства — то, что показывает панель. */
+  coinTotal?: { coins: number; wallets: number }
   users: { total: number; active: number }
   audit: { total: number; byAction: Record<string, number> }
 }

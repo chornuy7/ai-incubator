@@ -11,7 +11,7 @@
  */
 import { listModuleKeys, getModuleStore } from './modules/registry.js'
 import { tokenSummary, readLedger } from './tokenLedger.js'
-import { getBalance } from './balance.js'
+import { getBalance, totalCoins } from './balance.js'
 import { moduleTitle } from './lib/moduleTitles.js'
 import { loadAllMeta } from './accountsMeta.js'
 import { listActivity } from './accountActivity.js'
@@ -67,9 +67,10 @@ export async function adminOverview(opts = {}) {
     }
   }
 
-  const [tokens, balance, users] = await Promise.all([
+  const [tokens, balance, coinTotal, users] = await Promise.all([
     tokenSummary({ since }).catch(() => ({ tokens: 0, coins: 0, calls: 0, byModule: {}, byAccount: {} })),
     getBalance().catch(() => null),
+    totalCoins().catch(() => ({ coins: 0, wallets: 0 })),
     listUsers().catch(() => []),
   ])
 
@@ -83,7 +84,10 @@ export async function adminOverview(opts = {}) {
     accounts,
     tasks,
     tokens,
+    // balance — кошелёк по умолчанию (для совместимости), coinTotal — сумма по всем
+    // пользователям: именно её показывает админ-панель как «монет в системе».
     balance,
+    coinTotal,
     users: {
       total: users.length,
       active: users.filter((u) => u.active !== false).length,
