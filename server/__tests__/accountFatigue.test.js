@@ -65,3 +65,33 @@ test('applyAction не мутирует исходное состояние', ()
   applyAction(st, DEFAULT_FATIGUE, Date.now())
   assert.deepEqual(st, copy)
 })
+
+// ── D4 (§4.4): анти-кластер — Telegram банит волнами по паттерну ──
+test('§4.4: человеческий темп — мгновенный ответ невозможен', async () => {
+  const { humanPace } = await import('../lib/antiCluster.js')
+  const p = humanPace('Короткий ответ', 200)
+  assert.ok(p.readMs >= 3000, 'меньше трёх секунд на чтение — сигнатура бота')
+  const long = humanPace(Array(100).fill('слово').join(' '), 0)
+  assert.ok(long.typeMs > 100000, '100 слов нельзя напечатать за секунду')
+})
+
+test('§4.4: один аккаунт не работает в пяти чатах параллельно', async () => {
+  const { parallelChatsGate } = await import('../lib/antiCluster.js')
+  assert.equal(parallelChatsGate(1).ok, true)
+  assert.equal(parallelChatsGate(2).ok, false, 'у человека не десять рук')
+})
+
+test('§4.4: пачка с одного прокси — предупреждение о кластере', async () => {
+  const { proxySpreadGate } = await import('../lib/antiCluster.js')
+  const one = { a1: 'socks5://1.1.1.1:1080', a2: 'socks5://1.1.1.1:1080', a3: 'socks5://1.1.1.1:1080' }
+  assert.equal(proxySpreadGate(one, ['a1', 'a2', 'a3']).ok, false)
+  const spread = { a1: 'socks5://1.1.1.1:1080', a2: 'socks5://2.2.2.2:1080' }
+  assert.equal(proxySpreadGate(spread, ['a1', 'a2']).ok, true)
+})
+
+test('§4.4: прямое подключение кластером не считается', async () => {
+  const { proxySpreadGate } = await import('../lib/antiCluster.js')
+  const direct = { a1: '—', a2: '—', a3: '—', a4: '—' }
+  assert.equal(proxySpreadGate(direct, ['a1', 'a2', 'a3', 'a4']).ok, true,
+    'это разные домашние IP, а не один шлюз')
+})

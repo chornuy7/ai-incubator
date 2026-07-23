@@ -58,6 +58,7 @@ import { followUpDecision, followUpPrompt, followUpStatus } from '../lib/followU
 import { buildAgentContext, getAgent } from '../agents.js'
 import { recordTokens } from '../tokenLedger.js'
 import { canWorkNow, noteAction } from '../accountActivity.js'
+import { humanPace } from '../lib/antiCluster.js'
 import { filterBlacklisted, isBlacklistedSync } from '../targetBlacklist.js'
 
 /** @type {Map<string, Promise<void>>} */
@@ -439,6 +440,10 @@ export async function runNeuroChatting(task, store) {
         if (mode !== 'openai') {
           await store.appendLog(task, 'warning', mode === 'template_no_key' ? 'Шаблон (нет OPENAI_API_KEY)' : 'Шаблон (OpenAI недоступен)', meta.name)
         }
+        // §4.4 (D4): человеческий темп — пауза «на чтение» и время «на набор».
+        // Мгновенный ответ и «100 слов за полсекунды» — то, по чему Telegram узнаёт бота
+        // и банит волной похожие аккаунты.
+        await sleep(humanPace(reply, (msg.message || '').length).totalMs)
         await client.sendMessage(peer, { message: reply, replyTo: msg.id })
         task.accountStats[accountId] = task.accountStats[accountId] || { actions: 0, floodWaits: 0 }
         task.accountStats[accountId].actions += 1
@@ -1066,6 +1071,7 @@ export async function runNeuroDialogs(task, store) {
             continue
           }
           await sleep(pickDelay(s.delays?.action?.[0] ?? 5, s.delays?.action?.[1] ?? 30, mul) * 1000)
+          await sleep(humanPace(reply, incoming.length).totalMs) // §4.4: читаем и печатаем как человек
           await client.sendMessage(d.entity, { message: reply })
           // Помечаем прочитанным, чтобы не отвечать повторно одному и тому же собеседнику.
           await readUserHistory(client, d.entity)
