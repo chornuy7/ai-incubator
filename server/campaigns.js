@@ -23,7 +23,7 @@ export const CAMPAIGN_STATUSES = ['draft', 'active', 'paused', 'done']
 // §0: `modules` — кампания ведёт НЕСКОЛЬКО модулей (звонок 22.07). §9.0: `targets` —
 // у кампании СВОИ целевые каналы (раньше брались из цели, из-за чего рядом жил отдельный
 // «разовый запускатор» и на странице было две сущности «кампания», тест 1.2).
-const FIELDS = ['name', 'goalId', 'moduleKey', 'modules', 'settings', 'accountIds', 'pinned', 'status', 'chat', 'targets']
+const FIELDS = ['name', 'goalId', 'moduleKey', 'modules', 'moduleAgents', 'settings', 'accountIds', 'pinned', 'status', 'chat', 'targets']
 
 const normIds = (v) => (Array.isArray(v) ? [...new Set(v.map((x) => String(x || '').trim()).filter(Boolean))] : [])
 
@@ -56,6 +56,25 @@ function normModules(list, single) {
   return [...new Set(keys)]
 }
 
+/**
+ * SPEC §2.6 (A3.2): какой АГЕНТ ведёт каждый модуль кампании. Держим отдельной картой
+ * `moduleKey → agentId`, а не переводим `modules` в объекты: на строковый массив
+ * опираются фильтры (`c.modules.includes(...)`), фронт и старые кампании — переделка
+ * потребовала бы миграции ради того же результата.
+ * Ключи, которых нет среди модулей кампании, отбрасываем: иначе в данных копился бы
+ * мусор от переключений в форме.
+ * @param {*} map @param {string[]} modules
+ */
+function normModuleAgents(map, modules) {
+  const src = map && typeof map === 'object' ? map : {}
+  const out = {}
+  for (const k of modules) {
+    const v = String(src[k] ?? '').trim()
+    if (v) out[k] = v
+  }
+  return out
+}
+
 export function normalizeCampaign(input = {}) {
   const status = CAMPAIGN_STATUSES.includes(input.status) ? input.status : 'draft'
   return {
@@ -66,6 +85,7 @@ export function normalizeCampaign(input = {}) {
     // кампания держала ровно один модуль, и «комментинг + рассылка» собрать было нельзя,
     // хотя сам запуск (`launchCampaign`) несколько модулей принимал всегда.
     modules: normModules(input.modules, input.moduleKey),
+    moduleAgents: normModuleAgents(input.moduleAgents, normModules(input.modules, input.moduleKey)),
     // Первый модуль дублируем в moduleKey: на него смотрят фильтры и старые кампании.
     moduleKey: normModules(input.modules, input.moduleKey)[0] || '',
     settings: input.settings && typeof input.settings === 'object' ? input.settings : {}, // пресет модуля

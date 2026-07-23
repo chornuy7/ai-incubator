@@ -87,6 +87,8 @@ export interface Campaign {
   modules: string[]
   settings: Record<string, unknown>
   accountIds: string[]
+  /** A3.2: какой агент ведёт каждый модуль кампании (moduleKey → agentId). */
+  moduleAgents?: Record<string, string>
   /** §9.0: собственные целевые каналы кампании (нормализованы: без @, нижний регистр). */
   targets?: string[]
   pinned: boolean

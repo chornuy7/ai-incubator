@@ -16,6 +16,7 @@ import { confirmDialog, promptDialog } from '@/shared/lib/dialog'
 import { DedupeButton } from '@/shared/ui/DedupeButton'
 import { fetchAccountGroups, createAccountGroup, accountsOfGroupsLocal, type AccountGroup } from '@/api/accountGroupsApi'
 import { fetchChannels, type Channel } from '@/api/channelsApi'
+import { fetchAgents, type Agent } from '@/api/agentsApi'
 import { FolderPicker } from '@/features/modules/shared/FolderPicker'
 
 // Модули, которые осмысленно вести к цели (принимают целевые каналы/группы).
@@ -65,6 +66,10 @@ export function CampaignPage() {
   const [cModule, setCModule] = useState('neuro-commenting')
   /** Модули кампании: несколько, работают вместе. `cModule` — первый из них. */
   const [cModules, setCModules] = useState<string[]>(['neuro-commenting'])
+  // A3.2 (SPEC §2.6): агент выбирается на СТРОКЕ модуля — под одной целью можно вести
+  // «500 хвалят» и «500 спорят» разными персонами.
+  const [cModuleAgents, setCModuleAgents] = useState<Record<string, string>>({})
+  const [agents, setAgents] = useState<Agent[]>([])
   const [cAccounts, setCAccounts] = useState<string[]>([])
   const [cPinned, setCPinned] = useState(true)
   const [cStatus, setCStatus] = useState<CampaignStatus>('draft')
@@ -99,6 +104,7 @@ export function CampaignPage() {
     loadSchedules()
     loadCampaigns()
     loadGroups()
+    void fetchAgents().then(setAgents).catch(() => {})
   }, [])
 
   // Свободные аккаунты (не занятые другой задачей) — их и распределим.
@@ -178,7 +184,7 @@ export function CampaignPage() {
 
   const openNewCampaign = () => {
     setEditingCampaign(null)
-    setCName(''); setCGoalId(''); setCModules(['neuro-commenting']); setCAccounts([]); setCTargets('')
+    setCName(''); setCGoalId(''); setCModules(['neuro-commenting']); setCModuleAgents({}); setCAccounts([]); setCTargets('')
     setCPinned(true); setCStatus('draft'); setPickMode(0); setTakeN(5)
     setCChat(false); setCChatGoal(''); setCChatScope('unread')
     setCChatLimitMode('untilTarget'); setCChatMaxReplies(5); setCChatMaxDialogs(0)
@@ -200,7 +206,7 @@ export function CampaignPage() {
 
   const openEditCampaign = (c: Campaign) => {
     setEditingCampaign(c)
-    setCName(c.name); setCGoalId(c.goalId || ''); setCModules(c.modules?.length ? c.modules : [c.moduleKey].filter(Boolean)); setCAccounts(c.accountIds || [])
+    setCName(c.name); setCGoalId(c.goalId || ''); setCModules(c.modules?.length ? c.modules : [c.moduleKey].filter(Boolean)); setCModuleAgents(c.moduleAgents || {}); setCAccounts(c.accountIds || [])
     setCTargets((c.targets || []).join('\n'))
     setCPinned(c.pinned); setCStatus(c.status); setPickMode(1); setTakeN(c.accountIds?.length || 5)
     const ch = c.chat?.settings || {}
@@ -225,7 +231,7 @@ export function CampaignPage() {
     setCSaving(true)
     try {
       const payload = {
-        name: cName.trim(), goalId: cGoalId || null, moduleKey: cModules[0] || '', modules: cModules, accountIds: ids, pinned: cPinned, status: cStatus,
+        name: cName.trim(), goalId: cGoalId || null, moduleKey: cModules[0] || '', modules: cModules, moduleAgents: cModuleAgents, accountIds: ids, pinned: cPinned, status: cStatus,
         ...(cSettings ? { settings: cSettings } : {}),
         targets: cTargets.split(/[\n,;]+/).map((x) => x.trim()).filter(Boolean),
         chat: {
@@ -274,8 +280,14 @@ export function CampaignPage() {
     const goal = goals.find((g) => g.id === c.goalId)
     // Все модули кампании разом: они и должны работать вместе на общем пуле.
     const keys = c.modules?.length ? c.modules : [c.moduleKey].filter(Boolean)
+    // A3.2: агент выбирается на СТРОКЕ модуля, поэтому кладём его в настройки задачи —
+    // оттуда воркер возьмёт тон и дожим (A3.3). Так под одной целью можно вести
+    // «500 хвалят» и «500 спорят» разными агентами (SPEC §2.6).
     const modules = [
-      ...keys.map((moduleKey) => ({ moduleKey, settings: c.settings })),
+      ...keys.map((moduleKey) => ({
+        moduleKey,
+        settings: { ...c.settings, agentId: c.moduleAgents?.[moduleKey] || undefined },
+      })),
       ...(c.chat?.enabled ? [{ moduleKey: 'neuro-dialogs', settings: c.chat.settings }] : []),
     ]
     const ids = c.accountIds.filter((id) => knownIds.has(id))
@@ -370,6 +382,29 @@ export function CampaignPage() {
               })}
             </div>
             {!cModules.length && <div className="mt-1 text-xs text-rose-300">Выберите хотя бы один модуль</div>}
+
+            {/* A3.2: у каждого выбранного модуля — свой агент. Пусто = «без агента»:
+                модуль отработает на общих настройках, тон возьмётся по умолчанию. */}
+            {cModules.length > 0 && (
+              <div className="mt-3 space-y-2">
+                <div className="text-xs text-white/50">Кто ведёт модуль <span className="text-white/30">— AI-персона (тон, ограничения, дожим)</span></div>
+                {cModules.map((k) => (
+                  <div key={k} className="flex flex-wrap items-center gap-2">
+                    <span className="min-w-[150px] text-sm text-fg">{MODULES[k]?.title || k}</span>
+                    <Select
+                      value={cModuleAgents[k] || ''}
+                      onChange={(v) => setCModuleAgents((prev) => ({ ...prev, [k]: v }))}
+                      placeholder="Без агента"
+                      className="w-56"
+                      options={[{ value: '', label: 'Без агента' }, ...agents.map((a) => ({ value: a.id, label: a.name }))]}
+                    />
+                  </div>
+                ))}
+                {!agents.length && (
+                  <div className="text-xs text-amber-300">Агентов пока нет — заведите их в разделе «Агенты», иначе тон будет по умолчанию.</div>
+                )}
+              </div>
+            )}
           </div>
 
           {/* §0: настройки модуля для кампании — пресетом. Свою копию формы модуля здесь
