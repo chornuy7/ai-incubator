@@ -52,6 +52,7 @@ import { cleanMailingNumbers, classifyMailingTargets, pickMailingAccount } from 
 import { listLeads, sortDialogsByLeadPriority, upsertLead, updateLead } from '../leads.js'
 import { classifyLeadReply, shouldAdvance } from '../lib/leadClassifier.js'
 import { chargeActions, chargeCollected, refundShrunk } from '../lib/actionBilling.js'
+import { serializeHits, restoreHits, keepIntersecting } from '../lib/parserIntersect.js'
 import { isSemanticEnabled, embedText, cosineSimilarity } from '../lib/semantic.js'
 import { parseTelegramPostLinks, resolvePostPeer } from '../lib/postLink.js'
 import { findChannelChat, isChannelPeer } from '../lib/channelChat.js'
@@ -1367,7 +1368,12 @@ export async function runChannelParser(task, store, kind) {
   const keywords = (s.keywords || []).map((k) => String(k).trim()).filter(Boolean)
   const endings = (s.endings || []).map((e) => String(e).trim()).filter(Boolean)
   const andMode = !!s.intersect && keywords.length > 1 // §3.8: канал должен совпасть со ВСЕМИ ключами
-  const hitsByKey = new Map() // channelKey → Set<индекс ключевого слова> (для AND)
+  // channelKey → Set<индекс ключевого слова> (для AND). ВОССТАНАВЛИВАЕМ из задачи:
+  // при «Продолжить» ранние запросы не переигрываются (курсор их пропускает), и без
+  // сохранённой карты финальное AND-пересечение выбросило бы всё, собранное до паузы.
+  const hitsByKey = restoreHits(task.hitsByKey)
+  // Сериализация карты в задачу перед каждым сохранением — иначе пауза теряет хиты.
+  const syncHits = () => { if (andMode) task.hitsByKey = serializeHits(hitsByKey) }
   const queries = []
   const seenQuery = new Set()
   const pushQuery = (q, kwIdx) => { const v = q.trim(); if (v && !seenQuery.has(v.toLowerCase())) { seenQuery.add(v.toLowerCase()); queries.push({ q: v, kwIdx }) } }
@@ -1487,6 +1493,7 @@ export async function runChannelParser(task, store, kind) {
           task.progress.done = task.results.length
           await chargeCollected(task, store)
           task.progress.total = Math.max(task.results.length, task.progress.total || 0)
+          syncHits()
           await store.saveTask(task)
         }
         await store.appendLog(task, added ? 'success' : 'info', `«${q}» → +${added} ${unitLabel} (всего ${task.results.length})`, meta.name)
@@ -1499,6 +1506,9 @@ export async function runChannelParser(task, store, kind) {
       }
 
       task = (await store.loadTask(task.id)) || task
+      // Диск — источник истины после reload (там могли выставить pause/stop). Наши
+      // хиты мы туда только что записали через syncHits, так что карта не отстаёт.
+      for (const [k, v] of restoreHits(task.hitsByKey)) hitsByKey.set(k, v)
       await sleep(pickDelay(reqFrom, reqTo, mul) * 1000)
     }
 
@@ -1506,8 +1516,7 @@ export async function runChannelParser(task, store, kind) {
     if (andMode && !task.stopRequested) {
       const need = keywords.length
       const before = task.results.length
-      const keep = (r) => (hitsByKey.get((r.username || r.id).toLowerCase())?.size || 0) >= need
-      task.results = task.results.filter(keep).slice(0, limit === Infinity ? undefined : limit)
+      task.results = keepIntersecting(task.results, hitsByKey, need, limit)
       const keepSet = new Set(task.results.map((r) => (r.username || r.id).toLowerCase()))
       for (let i = baseChannels.length - 1; i >= 0; i--) {
         if (!keepSet.has((baseChannels[i].username || baseChannels[i].tgPeerId || '').toString().toLowerCase())) baseChannels.splice(i, 1)
@@ -1525,7 +1534,7 @@ export async function runChannelParser(task, store, kind) {
     task.status = statusAfterRun(task)
     // Курсор нужен только между паузой и продолжением. На завершении/стопе сбрасываем,
     // иначе «Перезапуск» начал бы с конца очереди и не сделал бы ничего.
-    if (task.status !== 'paused') task.cursor = 0
+    if (task.status !== 'paused') { task.cursor = 0; delete task.hitsByKey }
     // §3.8/§4: найденные каналы — в общую базу одним батчем (дедуп, без потери данных).
     try { const n = await upsertMany(baseChannels, `parse:${task.id}`); if (n) await store.appendLog(task, 'info', `В базу каналов: ${n}`) } catch { /* ignore */ }
     await store.appendLog(task, 'info', `Готово · найдено ${task.results.length} ${unitLabel}`)

@@ -5,7 +5,7 @@
  */
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { ACTION_PRICE, actionPrice, estimateCost } from '../pricing.js'
+import { ACTION_PRICE, actionPrice, estimateCost, subscriptionCost, modulePrice, MODULE_MONTH_PRICE, SETUPS } from '../pricing.js'
 import { MODULE_DEFS } from '../modules/registry.js'
 
 test('цена проставлена каждому модулю системы и она больше нуля', () => {
@@ -41,4 +41,49 @@ test('мелкие цены не округляются вверх', () => {
   assert.equal(estimateCost('parsing-groups', 1), 0.005, 'одна строка не должна стоить копейку')
   assert.equal(estimateCost('parsing-groups', 10), 0.05)
   assert.equal(estimateCost('parsing-groups', 3), 0.015)
+})
+
+
+/**
+ * §5.4: сумма подписки — то, что клиент реально платит в кабинете. Скидку даёт только
+ * ПОЛНОЕ совпадение с сетапом: иначе «почти сетап» получал бы цену сетапа, и поштучная
+ * покупка теряла смысл.
+ */
+test('поштучный набор — сумма без скидки', () => {
+  const c = subscriptionCost(['neuro-chatting', 'mailing'])
+  assert.equal(c.full, modulePrice('neuro-chatting') + modulePrice('mailing'))
+  assert.equal(c.sum, c.full)
+  assert.equal(c.setup, null)
+  assert.equal(c.discount, 0)
+})
+
+test('полный сетап — скидка применяется', () => {
+  const outreach = SETUPS.find((s) => s.id === 'setup-outreach')
+  const c = subscriptionCost(outreach.modules)
+  assert.equal(c.setup, 'setup-outreach')
+  assert.equal(c.discount, outreach.discount)
+  assert.ok(c.sum < c.full, 'со скидкой дешевле поштучного')
+  assert.equal(c.sum, Math.round(c.full * (1 - outreach.discount) * 100) / 100)
+})
+
+test('неполный сетап скидки НЕ даёт', () => {
+  const outreach = SETUPS.find((s) => s.id === 'setup-outreach')
+  const c = subscriptionCost(outreach.modules.slice(0, -1)) // на один модуль меньше
+  assert.equal(c.setup, null, 'не хватает одного модуля — не сетап')
+  assert.equal(c.discount, 0)
+})
+
+test('«всё включено» выгоднее любого частичного набора той же ширины', () => {
+  const all = subscriptionCost(Object.keys(MODULE_MONTH_PRICE))
+  assert.equal(all.setup, 'setup-all')
+  assert.equal(all.discount, 0.35)
+})
+
+test('мусор и дубли в наборе игнорируются', () => {
+  const c = subscriptionCost(['mailing', 'mailing', 'модуля-нет', ''])
+  assert.equal(c.full, modulePrice('mailing'), 'один мейлинг, а не два')
+})
+
+test('пустой набор стоит 0', () => {
+  assert.deepEqual(subscriptionCost([]), { sum: 0, full: 0, setup: null, discount: 0 })
 })
