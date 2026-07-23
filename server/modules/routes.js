@@ -2,6 +2,13 @@ import { Router } from 'express'
 import { getModuleStore, listModuleKeys, validateSettings, startModuleTask, stopModuleTask, pauseModuleTask, resumeModuleTask } from './registry.js'
 import { releaseTaskLocks } from '../lib/accountLocks.js'
 import { assertAccountsAssignable, checkAccountsAssignable, loadAllMeta } from '../accountsMeta.js'
+
+/**
+ * C2 (§5.1): модули, которые обращаются к ИИ и потому тратят монеты. Парсеры сюда
+ * НЕ входят — они только читают Telegram, ничего не генерируют, и блокировать сбор
+ * данных из-за нулевого баланса было бы произволом.
+ */
+const AI_MODULES = new Set(['neuro-commenting', 'neuro-chatting', 'neuro-dialogs', 'mailing'])
 import { assertNoHotLeadConflict, assertActiveDialogLimit } from '../leads.js'
 import { findDuplicateActiveTask } from '../lib/taskDedup.js'
 import { getGoal, isGoalExpired } from '../goals.js'
@@ -132,6 +139,22 @@ modulesRouter.post('/:moduleKey/tasks', async (req, res) => {
     // проверяем на сервере: иначе любой мог бы дописать его в запрос руками.
     if (settings.allowLowTrust === true && !(await isAdminRequest(req))) {
       return res.status(403).json({ ok: false, error: 'Запускать аккаунты ниже порога trust может только админ' })
+    }
+
+    // C2 (§5.1): при нулевом балансе боевые модули не запускаем. Парсеры пропускаем —
+    // они не обращаются к ИИ и ничего не тратят, а запрет на сбор данных из-за монет
+    // выглядел бы произволом. Проверяем ДО создания задачи: узнать о нуле из логов
+    // уже запущенной рассылки — худший из возможных способов.
+    if (AI_MODULES.has(moduleKey)) {
+      const { getBalance } = await import('../balance.js')
+      const { coins } = await getBalance()
+      if (coins <= 0) {
+        return res.status(402).json({
+          ok: false,
+          error: 'Закончились монеты — боевые модули остановлены. Пополните баланс, чтобы продолжить.',
+          needTopUp: true,
+        })
+      }
     }
 
     // Guard безопасного назначения (§3.2/§3.3): не отдаём непрогретые/занятые статусом профили.

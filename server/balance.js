@@ -13,7 +13,9 @@
  */
 import { dataPath, readJson, mutateJson } from './lib/jsonStore.js'
 
-const BALANCE_FILE = process.env.BALANCE_FILE || dataPath('balance.json')
+// Путь берём функцией, а не константой: константа фиксируется в момент импорта модуля,
+// и env, выставленный тестом позже, уже не действует — тест молча писал бы в боевой файл.
+const BALANCE_FILE = () => process.env.BALANCE_FILE || dataPath('balance.json')
 
 /** Тарифы (§5.1). Пока фиксированный список — прайсы заказчик утверждает отдельно. */
 export const PLANS = {
@@ -29,7 +31,7 @@ const normCoins = (v) => Math.max(0, Math.round((Number(v) || 0) * 100) / 100)
 
 /** @returns {Promise<{planId:string, plan:{name:string,accountLimit:number}, coins:number, updatedAt:number}>} */
 export async function getBalance() {
-  const saved = await readJson(BALANCE_FILE, {})
+  const saved = await readJson(BALANCE_FILE(), {})
   const planId = PLANS[saved?.planId] ? saved.planId : DEFAULT_STATE.planId
   return {
     planId,
@@ -48,7 +50,7 @@ export async function getBalance() {
 export async function changeCoins(amount, reason = '') {
   const delta = Math.round((Number(amount) || 0) * 100) / 100
   let result = null
-  await mutateJson(BALANCE_FILE, (cur) => {
+  await mutateJson(BALANCE_FILE(), (cur) => {
     const before = normCoins(cur?.coins ?? DEFAULT_STATE.coins)
     const after = normCoins(before + delta)
     result = { before, after, applied: Math.round((after - before) * 100) / 100, reason }
@@ -60,7 +62,7 @@ export async function changeCoins(amount, reason = '') {
 /** Сменить тариф. @param {string} planId */
 export async function setPlan(planId) {
   if (!PLANS[planId]) throw new Error(`Неизвестный тариф: ${planId}`)
-  await mutateJson(BALANCE_FILE, (cur) => ({ ...(cur || {}), planId, updatedAt: Date.now() }))
+  await mutateJson(BALANCE_FILE(), (cur) => ({ ...(cur || {}), planId, updatedAt: Date.now() }))
   return getBalance()
 }
 

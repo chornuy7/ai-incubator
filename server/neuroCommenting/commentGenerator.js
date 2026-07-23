@@ -87,7 +87,19 @@ export async function generateComment(postText, promptIndex = 0, systemPrompt, o
           const text = data?.choices?.[0]?.message?.content?.trim()
           if (text && text.length >= 3 && text.length <= 400) {
             if (avoid.has(normalizeText(text)) && attempt === 0) continue // повтор — просим другой
-            return { text, mode: 'openai' }
+            // C1 (§5.1): расход токенов возвращаем наружу — воркер запишет его в журнал
+            // с привязкой к модулю/аккаунту/задаче. Без этого C2 нечего списывать
+            // и не из чего считать курс «токен → монета».
+            return {
+              text,
+              mode: 'openai',
+              usage: {
+                tokens: Number(data?.usage?.total_tokens) || 0,
+                promptTokens: Number(data?.usage?.prompt_tokens) || 0,
+                completionTokens: Number(data?.usage?.completion_tokens) || 0,
+                model: String(data?.model || ''),
+              },
+            }
           }
         } else {
           const errBody = await res.text().catch(() => '')
