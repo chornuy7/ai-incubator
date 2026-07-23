@@ -269,6 +269,37 @@ app.use('/api/users', usersRouter)
 app.use('/api/proxies', proxiesRouter)
 app.use('/api/tg/import', importRouter) // §2: массовый импорт аккаунтов
 
+// §4 (D1/D2): усталость и распорядок аккаунтов. Читают все — список аккаунтов
+// показывает, кто отдыхает. Массовое задание профиля — прямой запрос владельца:
+// «чтобы можно было массово всем задавать усталость и отдых от модулей».
+app.get('/api/accounts/activity', async (_req, res) => {
+  try {
+    const { listActivity } = await import('./accountActivity.js')
+    res.json({ ok: true, activity: await listActivity() })
+  } catch (err) { res.status(500).json({ ok: false, error: err instanceof Error ? err.message : 'Ошибка' }) }
+})
+app.post('/api/accounts/activity', async (req, res) => {
+  try {
+    const { setActivityProfile, restAccounts } = await import('./accountActivity.js')
+    const { accountIds, profile, schedule, reset, restMinutes } = req.body ?? {}
+    if (!Array.isArray(accountIds) || !accountIds.length) {
+      return res.status(400).json({ ok: false, error: 'Выберите аккаунты' })
+    }
+    const n = restMinutes !== undefined
+      ? await restAccounts(accountIds, restMinutes)
+      : await setActivityProfile(accountIds, { profile, schedule, reset })
+    await appendAudit({
+      action: 'accounts.activity', module: 'accounts', initiator: req.header('x-user-id') || 'operator',
+      reason: restMinutes !== undefined
+        ? `Отправлены на отдых ${n} акк. на ${restMinutes} мин`
+        : `Профиль усталости задан ${n} акк.${reset ? ' (усталость сброшена)' : ''}`,
+      scope: { accounts: accountIds },
+    }).catch(() => {})
+    const { listActivity } = await import('./accountActivity.js')
+    res.json({ ok: true, applied: n, activity: await listActivity() })
+  } catch (err) { res.status(400).json({ ok: false, error: err instanceof Error ? err.message : 'Ошибка' }) }
+})
+
 // §5.1 (B2): баланс монет и тариф. Читают все — шапка показывает их на каждой странице.
 // Менять (пополнение/списание/смена тарифа) — только админ: это деньги, а не настройка.
 app.get('/api/balance', async (_req, res) => {

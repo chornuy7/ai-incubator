@@ -57,6 +57,7 @@ import { findChannelChat, isChannelPeer } from '../lib/channelChat.js'
 import { followUpDecision, followUpPrompt, followUpStatus } from '../lib/followUp.js'
 import { buildAgentContext, getAgent } from '../agents.js'
 import { recordTokens } from '../tokenLedger.js'
+import { canWorkNow, noteAction } from '../accountActivity.js'
 import { filterBlacklisted, isBlacklistedSync } from '../targetBlacklist.js'
 
 /** @type {Map<string, Promise<void>>} */
@@ -214,6 +215,12 @@ export async function runNeuroCommenting(task, store) {
         continue
       }
       if (perAccountLimitReached(s, accountId, task)) { idleLap += 1; continue }
+      // §4.1–§4.2 (D1/D3): усталость и распорядок — СКВОЗЬ модули. Счётчики живут
+      // у аккаунта, поэтому профиль, только что отработавший смену в другом модуле,
+      // сюда уже не попадёт: раньше каждая задача считала с нуля и освободившийся
+      // аккаунт тут же уходил лить реакции.
+      const human = await canWorkNow(accountId)
+      if (!human.ok) { idleLap += 1; await store.appendLog(task, 'info', `Пропуск: ${human.reason}`, meta.name); continue }
       if (await limitReached(accountId, 'comments')) { idleLap += 1; await store.appendLog(task, 'info', 'Суточный лимит комментариев достигнут (§6)', meta.name); continue }
       idleLap = 0
 
@@ -304,6 +311,8 @@ export async function runNeuroCommenting(task, store) {
               task.accountStats[accountId].actions += 1
               await incAction(accountId, 'comments') // §6: суточный лимит действий
               await bumpProgress(task, store)
+        await noteAction(accountId) // §4.3: усталость общая для всех модулей
+              await noteAction(accountId) // §4.3: действие копится У АККАУНТА, а не в задаче
               await store.appendHistory(task, {
                 id: `${task.id}_${Date.now()}`,
                 ts: new Date().toISOString(),
@@ -435,6 +444,7 @@ export async function runNeuroChatting(task, store) {
         task.accountStats[accountId].actions += 1
         await incAction(accountId, 'comments') // §6: групповые сообщения — под лимит комментариев
         await bumpProgress(task, store)
+        await noteAction(accountId) // §4.3: усталость общая для всех модулей
         await store.appendHistory(task, { id: `${task.id}_${Date.now()}`, ts: new Date().toISOString(), accountName: meta.name, target: g, text: reply, status: 'sent' })
         task.usedTexts.push(reply)
         if (task.usedTexts.length > 50) task.usedTexts.shift()
@@ -546,6 +556,7 @@ export async function runMassReact(task, store) {
         task.accountStats[accountId].actions += 1
         await incAction(accountId, 'reactions') // §6: суточный лимит реакций
         await bumpProgress(task, store)
+        await noteAction(accountId) // §4.3: усталость общая для всех модулей
         await store.appendHistory(task, { id: `${task.id}_${Date.now()}`, ts: new Date().toISOString(), accountName: meta.name, target: targetLabel, emoji, postId, status: 'sent' })
         await store.appendLog(task, 'success', `Реакция ${emoji} ${targetLabel} · пост #${postId}`, meta.name)
         await disconnectAccount(client, accountId)
@@ -628,6 +639,7 @@ export async function runMassLooking(task, store) {
         }
         task.accountStats[accountId].actions += 1
         await bumpProgress(task, store)
+        await noteAction(accountId) // §4.3: усталость общая для всех модулей
         await disconnectAccount(client, accountId)
       } catch (err) {
         if (client) await disconnectAccount(client, accountId)
@@ -730,6 +742,7 @@ export async function runWarming(task, store) {
         task.accountStats[accountId] = task.accountStats[accountId] || { actions: 0, floodWaits: 0 }
         task.accountStats[accountId].actions += 1
         await bumpProgress(task, store)
+        await noteAction(accountId) // §4.3: усталость общая для всех модулей
         await disconnectAccount(client, accountId)
       } catch (err) {
         if (client) await disconnectAccount(client, accountId)
@@ -1065,6 +1078,7 @@ export async function runNeuroDialogs(task, store) {
           if (isFollowUp) task.followUps[peerKey] = (task.followUps[peerKey] || 0) + 1
           await incAction(accountId, 'dm') // §6: суточный лимит ЛС
           await bumpProgress(task, store)
+        await noteAction(accountId) // §4.3: усталость общая для всех модулей
           await store.appendHistory(task, { id: `${task.id}_${Date.now()}`, ts: new Date().toISOString(), accountName: meta.name, target: d.name, text: reply, status: 'sent' })
           const inPreview = incoming ? incoming.slice(0, 60) : '[без текста]'
           await store.appendLog(task, 'success', `Ответ в ЛС «${d.name}» → «${reply.slice(0, 60)}» (на: «${inPreview}»)`, meta.name)
@@ -2040,6 +2054,7 @@ export async function runMailing(task, store) {
         }
         await store.appendLog(task, 'success', `ЛС → ${label} (${user.firstName || 'user'})`, meta.name)
         await bumpProgress(task, store)
+        await noteAction(accountId) // §4.3: усталость общая для всех модулей
         await disconnectAccount(client, account)
       } catch (err) {
         if (client) await disconnectAccount(client, account)
