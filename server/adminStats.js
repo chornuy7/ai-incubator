@@ -18,8 +18,19 @@ import { listActivity } from './accountActivity.js'
 import { readAudit } from './lib/auditLog.js'
 import { listUsers } from './users.js'
 
-/** Округление денег — до тысячных, как считает биллинг (строка парсера 0.005). */
-const round2 = (v) => Math.round((Number(v) || 0) * 1000) / 1000
+/** Округление денег — до ТЫСЯЧНЫХ, как считает биллинг (строка парсера 0.005). */
+const round3 = (v) => Math.round((Number(v) || 0) * 1000) / 1000
+
+/**
+ * ИИ, который тратит монеты вне модулей: подсказки в интерфейсе, классификатор
+ * лидов, семантический фильтр. Клиент за них платит, значит видит их в счёте
+ * своими словами, а не техническим ключом.
+ */
+const SERVICE_AI_TITLES = {
+  'ai-help': 'Подсказки ИИ в интерфейсе',
+  'lead-classifier': 'Классификация лидов',
+  semantic: 'Семантический фильтр',
+}
 
 const DAY_MS = 24 * 60 * 60 * 1000
 
@@ -163,12 +174,19 @@ export async function dailySpend(opts = {}) {
   // Заполняем весь диапазон, включая пустые дни: провал в работе — тоже сигнал,
   // а «сжатый» график из трёх точек создаёт вид ровной нагрузки.
   for (let i = days - 1; i >= 0; i--) touch(dayKey(Date.now() - i * DAY_MS))
+  // Границу берём ПО ДНЯМ, а не по «сейчас минус N суток»: скользящее окно на
+  // несколько часов шире заполненного диапазона, и события попадали в лишний,
+  // 31-й день — график просили за 30. Считаем только то, что внутри показанного.
+  const firstDay = [...acc.keys()].sort()[0]
+  const inRange = (ts) => dayKey(ts) >= firstDay
 
   const ledger = await readLedger({ since, limit: 100000 }).catch(() => [])
   for (const e of ledger) {
-    const row = touch(dayKey(Number(e.ts) || Date.now()))
+    const ts = Number(e.ts) || Date.now()
+    if (!inRange(ts)) continue
+    const row = touch(dayKey(ts))
     row.tokens += Number(e.tokens) || 0
-    row.tokenCoins = round2(row.tokenCoins + (Number(e.coins) || 0))
+    row.tokenCoins = round3(row.tokenCoins + (Number(e.coins) || 0))
   }
 
   for (const key of listModuleKeys()) {
@@ -178,16 +196,16 @@ export async function dailySpend(opts = {}) {
     try { list = await store.listTasks() } catch { continue }
     for (const t of list) {
       const ts = Number(t.createdAt) || 0
-      if (ts < since) continue
+      if (!ts || !inRange(ts)) continue
       const row = touch(dayKey(ts))
       row.tasks += 1
       row.actions += Number(t.progress?.done) || 0
-      row.actionCoins = round2(row.actionCoins + (Number(t.spentCoins) || 0))
+      row.actionCoins = round3(row.actionCoins + (Number(t.spentCoins) || 0))
     }
   }
 
   const rows = [...acc.values()].sort((a, b) => a.day.localeCompare(b.day))
-  for (const r of rows) r.coins = round2(r.tokenCoins + r.actionCoins)
+  for (const r of rows) r.coins = round3(r.tokenCoins + r.actionCoins)
   return { days, rows }
 }
 
@@ -231,13 +249,16 @@ export async function accountReport(accountId, opts = {}) {
       const coinShare = ids.length > 1 ? (Number(t.spentCoins) || 0) / ids.length : (Number(t.spentCoins) || 0)
       tasks += 1
       actions += share
-      spent = round2(spent + coinShare)
-      errors += Number(t.errors) || 0
+      spent = round3(spent + coinShare)
+      // Ошибки делим так же, как действия: задача с 10 ошибками на 5 аккаунтов
+      // давала каждому все 10, и во вкладке «Работа» выходило 50 вместо 10 —
+      // подпись «частые ошибки, проверьте прокси» срабатывала на ровном месте.
+      errors += ids.length > 1 ? (Number(t.errors) || 0) / ids.length : (Number(t.errors) || 0)
       lastUsed = Math.max(lastUsed, Number(t.updatedAt) || Number(t.createdAt) || 0)
       const m = mod(key)
       m.tasks += 1
       m.actions += share
-      m.spent = round2(m.spent + coinShare)
+      m.spent = round3(m.spent + coinShare)
       recent.push({ id: t.id, moduleKey: key, title: moduleTitle(key), status: t.status, at: Number(t.updatedAt) || Number(t.createdAt) || 0, actions: Math.round(share) })
     }
   }
@@ -248,7 +269,7 @@ export async function accountReport(accountId, opts = {}) {
   let tokenCoins = 0
   for (const e of ledger) {
     tokens += Number(e.tokens) || 0
-    tokenCoins = round2(tokenCoins + (Number(e.coins) || 0))
+    tokenCoins = round3(tokenCoins + (Number(e.coins) || 0))
     if (e.module) mod(e.module).tokens += Number(e.tokens) || 0
   }
 
@@ -267,8 +288,8 @@ export async function accountReport(accountId, opts = {}) {
     spent,
     tokens,
     tokenCoins,
-    totalCoins: round2(spent + tokenCoins),
-    errors,
+    totalCoins: round3(spent + tokenCoins),
+    errors: Math.round(errors),
     lastUsed,
     leads: { total: leads.length, active: leadsActive, target: leadsTarget },
     byModule: Object.values(byModule)
@@ -316,10 +337,15 @@ export async function problems(opts = {}) {
   const meta = await loadAllMeta().catch(() => ({}))
   const accounts = { banned: [], flood: [], noProxy: [] }
   for (const [id, m] of Object.entries(meta || {})) {
+    if (m?.inTrash) continue // корзина — не проблема, это уже решение
     const st = String(m?.status || '')
     if (/ban|block/i.test(st)) accounts.banned.push({ id, status: st })
     else if (/flood/i.test(st) || m?.floodUntil > Date.now()) accounts.flood.push({ id, status: st, until: m?.floodUntil || 0 })
-    if (!m?.proxyId) accounts.noProxy.push({ id })
+    // Прокси хранится в поле `proxy` строкой, «—» означает «не назначен».
+    // Проверка на `proxyId` читала несуществующее поле и записывала в «без прокси»
+    // все аккаунты подряд.
+    const proxy = String(m?.proxy || '').trim()
+    if (!proxy || proxy === '—') accounts.noProxy.push({ id })
   }
 
   return {
@@ -343,8 +369,12 @@ export async function problems(opts = {}) {
  */
 export async function crmOverview(opts = {}) {
   const stuckDays = Number(opts.stuckDays) || 3
+  const since = Number(opts.since) || 0
   const { listLeads, LEAD_STATUSES, ACTIVE_LEAD_STATUSES } = await import('./leads.js')
-  const leads = await listLeads({}).catch(() => [])
+  // Период учитываем, как на остальных вкладках: без этого переключение 7/30/90
+  // дней перерисовывало страницу, а цифры CRM не менялись — читалось как залипание.
+  const leads = (await listLeads({}).catch(() => []))
+    .filter((l) => !since || (Number(l.createdAt) || 0) >= since)
 
   const byStatus = Object.fromEntries(LEAD_STATUSES.map((k) => [k, 0]))
   const byAccount = {}
@@ -428,11 +458,11 @@ export async function usersReport(opts = {}) {
       const spent = Number(t.spentCoins) || 0
       row.tasks += 1
       row.actions += acts
-      row.spent = round2(row.spent + spent)
+      row.spent = round3(row.spent + spent)
       const m = mod(row, key)
       m.tasks += 1
       m.actions += acts
-      m.spent = round2(m.spent + spent)
+      m.spent = round3(m.spent + spent)
     }
   }
 
@@ -459,7 +489,7 @@ export async function usersReport(opts = {}) {
       email: u.email || '',
       name: u.name || '',
       active: u.active !== false,
-      coins: round2(coins[u.id] ?? 0),
+      coins: round3(coins[u.id] ?? 0),
       tasks: st.tasks,
       actions: st.actions,
       spent: st.spent,
@@ -482,10 +512,10 @@ export async function usersReport(opts = {}) {
 
   rows.sort((a, b) => b.spent - a.spent || b.actions - a.actions)
   const totals = rows.reduce((acc, r) => ({
-    coins: round2(acc.coins + r.coins),
+    coins: round3(acc.coins + r.coins),
     tasks: acc.tasks + r.tasks,
     actions: acc.actions + r.actions,
-    spent: round2(acc.spent + r.spent),
+    spent: round3(acc.spent + r.spent),
     tokens: acc.tokens + r.tokens,
   }), { coins: 0, tasks: 0, actions: 0, spent: 0, tokens: 0 })
 
@@ -502,7 +532,25 @@ export async function clientReport(opts = {}) {
   const since = Number(opts.since) || Date.now() - 30 * DAY_MS
   const until = Number(opts.until) || Date.now()
 
+  // Журнал ИИ читаем ОДИН раз и режем по периоду сами: tokenSummary на каждый
+  // модуль перечитывал весь файл по разу на модуль, а верхнюю границу `until`
+  // вообще не применял — отчёт за закрытый период втягивал расход после него.
+  const ledger = (await readLedger({ since, limit: 100000 }).catch(() => []))
+    .filter((e) => {
+      const ts = Number(e.ts) || 0
+      return ts >= since && ts <= until
+    })
+  const aiByModule = new Map()
+  for (const e of ledger) {
+    const k = String(e.module || '')
+    if (!aiByModule.has(k)) aiByModule.set(k, { tokens: 0, coins: 0 })
+    const row = aiByModule.get(k)
+    row.tokens += Number(e.tokens) || 0
+    row.coins = round3(row.coins + (Number(e.coins) || 0))
+  }
+
   const rows = []
+  const moduleKeys = new Set(listModuleKeys())
   for (const key of listModuleKeys()) {
     const store = getModuleStore(key)
     if (!store) continue
@@ -512,14 +560,16 @@ export async function clientReport(opts = {}) {
       const ts = Number(t.createdAt) || 0
       return ts >= since && ts <= until
     })
-    if (!inPeriod.length) continue
+    // Модуль без новых задач мог всё равно жечь токены — старой, ещё идущей
+    // задачей. Пропустить его значило бы потерять эти деньги из счёта.
+    if (!inPeriod.length && !aiByModule.get(key)?.tokens) continue
     const actions = inPeriod.reduce((n, t) => n + (Number(t.progress?.done) || 0), 0)
     // Монеты клиента складываются из ДВУХ источников, и в счёте должны быть оба:
     // плата за действия (task.spentCoins, фикс по прайсу) и плата за токены ИИ.
     // Раньше в отчёт шли только токены — парсер на 111 действий показывал ноль монет,
     // то есть клиенту предъявляли меньше, чем с него списали.
-    const actionCoins = round2(inPeriod.reduce((n, t) => n + (Number(t.spentCoins) || 0), 0))
-    const tk = await tokenSummary({ module: key, since }).catch(() => ({ tokens: 0, coins: 0 }))
+    const actionCoins = round3(inPeriod.reduce((n, t) => n + (Number(t.spentCoins) || 0), 0))
+    const tk = aiByModule.get(key) || { tokens: 0, coins: 0 }
     rows.push({
       moduleKey: key,
       title: moduleTitle(key),
@@ -529,18 +579,36 @@ export async function clientReport(opts = {}) {
       tokens: tk.tokens,
       actionCoins,
       tokenCoins: tk.coins,
-      coins: round2(actionCoins + tk.coins),
+      coins: round3(actionCoins + tk.coins),
     })
   }
+  // Служебный ИИ (подсказки, классификатор лидов, семантика) списывает с того же
+  // кошелька, но модулем не является. Раньше он выпадал из счёта целиком: клиент
+  // платил, а в документе этих денег не было.
+  for (const [key, tk] of aiByModule) {
+    if (moduleKeys.has(key) || !tk.tokens) continue
+    rows.push({
+      moduleKey: key,
+      title: SERVICE_AI_TITLES[key] || `Сервисный ИИ (${key || 'без модуля'})`,
+      tasks: 0,
+      completed: 0,
+      actions: 0,
+      tokens: tk.tokens,
+      actionCoins: 0,
+      tokenCoins: tk.coins,
+      coins: tk.coins,
+    })
+  }
+
   rows.sort((a, b) => b.actions - a.actions)
 
   const totals = rows.reduce((acc, r) => ({
     tasks: acc.tasks + r.tasks,
     actions: acc.actions + r.actions,
     tokens: acc.tokens + r.tokens,
-    actionCoins: round2(acc.actionCoins + r.actionCoins),
-    tokenCoins: round2(acc.tokenCoins + r.tokenCoins),
-    coins: round2(acc.coins + r.coins),
+    actionCoins: round3(acc.actionCoins + r.actionCoins),
+    tokenCoins: round3(acc.tokenCoins + r.tokenCoins),
+    coins: round3(acc.coins + r.coins),
   }), { tasks: 0, actions: 0, tokens: 0, actionCoins: 0, tokenCoins: 0, coins: 0 })
 
   return { since, until, rows, totals }

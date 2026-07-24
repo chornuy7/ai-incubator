@@ -354,14 +354,26 @@ app.get('/api/admin/overview', async (req, res) => {
 })
 /**
  * Что делал конкретный аккаунт: задачи, действия, токены, деньги, лиды.
- * Доступно не только админу: оператор вправе видеть отдачу профилей, которыми
- * работает, — гейт доступа к самому аккаунту уже стоит выше по цепочке.
+ *
+ * Гейт ЗДЕСЬ, а не «выше по цепочке» — выше его нет. Отдаём только тем, кому этот
+ * аккаунт доступен по правам: иначе любой запрос вытаскивал бы по чужому профилю
+ * список задач, потраченные деньги и число лидов — ровно то, что закрывает §8.1.
+ * Несуществующий id тоже отбиваем: без этого 200 с нулями подтверждал бы перебор.
  */
 app.get('/api/accounts/:accountId/work', async (req, res) => {
   try {
+    const id = String(req.params.accountId || '')
+    const { loadAllMeta } = await import('./accountsMeta.js')
+    const meta = await loadAllMeta().catch(() => ({}))
+    if (!meta || !meta[id]) return res.status(404).json({ ok: false, error: 'Аккаунт не найден' })
+
+    const { canSeeAccount } = await import('./lib/accessGuard.js')
+    if (!(await canSeeAccount(req, id))) {
+      return res.status(403).json({ ok: false, error: 'Нет доступа к этому аккаунту' })
+    }
+
     const { accountReport } = await import('./adminStats.js')
-    const rep = await accountReport(req.params.accountId, { since: req.query.since ? Number(req.query.since) : undefined })
-    if (!rep) return res.status(404).json({ ok: false, error: 'Аккаунт не найден' })
+    const rep = await accountReport(id, { since: req.query.since ? Number(req.query.since) : undefined })
     res.json({ ok: true, work: rep })
   } catch (err) { res.status(500).json({ ok: false, error: err instanceof Error ? err.message : 'Ошибка' }) }
 })
@@ -398,7 +410,7 @@ app.get('/api/admin/crm', async (req, res) => {
   try {
     if (!(await isAdminRequest(req))) return res.status(403).json({ ok: false, error: 'Статистика доступна только администратору' })
     const { crmOverview } = await import('./adminStats.js')
-    res.json({ ok: true, crm: await crmOverview({ stuckDays: req.query.stuckDays ? Number(req.query.stuckDays) : undefined }) })
+    res.json({ ok: true, crm: await crmOverview({ stuckDays: req.query.stuckDays ? Number(req.query.stuckDays) : undefined, since: req.query.since ? Number(req.query.since) : undefined }) })
   } catch (err) { res.status(500).json({ ok: false, error: err instanceof Error ? err.message : 'Ошибка' }) }
 })
 
@@ -535,6 +547,23 @@ app.post('/api/subscription', async (req, res) => {
       meta: { modules: list, cost: list === 'all' ? null : subscriptionCost(list) },
     }).catch(() => {})
     res.json({ ok: true, balance })
+  } catch (err) { res.status(500).json({ ok: false, error: err instanceof Error ? err.message : 'Ошибка' }) }
+})
+
+/**
+ * §5.1: операции по кошельку — «за что списали». Свой журнал видит каждый,
+ * чужой — только админ: это деньги конкретного человека.
+ */
+app.get('/api/balance/history', async (req, res) => {
+  try {
+    const { walletHistory } = await import('./balance.js')
+    const me = req.header('x-user-id')
+    const target = req.query.userId ? String(req.query.userId) : me
+    if (req.query.userId && req.query.userId !== me && !(await isAdminRequest(req))) {
+      return res.status(403).json({ ok: false, error: 'Чужие операции доступны только администратору' })
+    }
+    const rows = await walletHistory({ userId: target, limit: req.query.limit ? Number(req.query.limit) : undefined })
+    res.json({ ok: true, rows })
   } catch (err) { res.status(500).json({ ok: false, error: err instanceof Error ? err.message : 'Ошибка' }) }
 })
 

@@ -1,12 +1,11 @@
 import { useState, useEffect } from 'react'
 import {
-  UserCog, User, Shield, Bell, Handshake, Cable, Save, Copy, RefreshCw, Eye, EyeOff, Check, Zap,
-} from 'lucide-react'
+  UserCog, User, Shield, Bell, Handshake, Cable, Save, Copy, RefreshCw, Eye, EyeOff, Check, Zap, History as HistoryIcon } from 'lucide-react'
 import { useApp } from '@/mocks/store'
-import { fetchBalance, type Balance } from '@/api/balanceApi'
+import { fetchBalance, fetchWalletHistory, type Balance, type WalletEntry } from '@/api/balanceApi'
 import { useSession } from '@/features/auth/session'
 import { PageHeader, Card, Switch, Badge } from '@/shared/ui'
-import { cn } from '@/shared/lib/utils'
+import { cn, coins as fmtCoins } from '@/shared/lib/utils'
 
 const TABS = [
   { key: 'profile', label: 'Настройки профиля', icon: User },
@@ -101,8 +100,12 @@ export function ProfilePage() {
               </div>
               <div className="grid gap-3 sm:grid-cols-2">
                 <div className="rounded-2xl border border-line bg-elevated p-4"><div className="text-sm text-muted">Лимит аккаунтов</div><div className="font-display text-lg font-bold text-fg">{data.accounts.filter((a) => !a.inTrash).length} / {balance?.plan.accountLimit ?? data.plan.accountLimit}</div></div>
-                <div className="rounded-2xl border border-line bg-elevated p-4"><div className="flex items-center gap-1.5 text-sm text-muted"><Zap size={14} className="text-amber-400" /> Баланс монет</div><div className="font-display text-lg font-bold text-fg">{(balance?.coins ?? data.coins).toFixed(2)}</div></div>
+                <div className="rounded-2xl border border-line bg-elevated p-4"><div className="flex items-center gap-1.5 text-sm text-muted"><Zap size={14} className="text-amber-400" /> Баланс монет</div><div className="font-display text-lg font-bold text-fg">{fmtCoins(balance?.coins ?? data.coins)}</div></div>
               </div>
+              {/* §5.1: «за что списали». Баланс отвечает «сколько сейчас», а на
+                  претензию по деньгам без истории операций ответить нечем. */}
+              <WalletHistory />
+
               <div>
                 <label className="label">Часовой пояс</label>
                 <input defaultValue="UTC+3 (Moscow)" className="input max-w-xs" />
@@ -195,6 +198,57 @@ export function ProfilePage() {
           )}
         </div>
       </div>
+    </div>
+  )
+}
+
+
+/**
+ * История операций по кошельку: когда, за что, сколько и что осталось.
+ *
+ * Показываем «до → после» рядом с суммой: одна цифра «−0.15» не даёт понять, было
+ * это списание с 80 или последние монеты. Свои операции видит каждый, чужие — только
+ * админ (проверяется на сервере).
+ */
+function WalletHistory() {
+  const [rows, setRows] = useState<WalletEntry[] | null>(null)
+  const [open, setOpen] = useState(false)
+
+  useEffect(() => {
+    if (!open || rows) return
+    void fetchWalletHistory(50).then(setRows).catch(() => setRows([]))
+  }, [open, rows])
+
+  return (
+    <div className="rounded-2xl border border-line bg-elevated p-4">
+      <button onClick={() => setOpen(!open)} className="flex w-full items-center gap-2 text-left">
+        <HistoryIcon size={15} className="text-muted" />
+        <span className="text-sm font-semibold text-fg">История операций</span>
+        <span className="ml-auto text-xs text-muted">{open ? 'свернуть' : 'показать'}</span>
+      </button>
+
+      {open && (
+        <div className="mt-3">
+          {!rows ? (
+            <div className="text-sm text-muted">Загрузка…</div>
+          ) : !rows.length ? (
+            <div className="text-sm text-muted">Операций пока не было.</div>
+          ) : (
+            <div className="space-y-1">
+              {rows.map((r, i) => (
+                <div key={r.ts + '-' + i} className="flex flex-wrap items-baseline gap-x-3 gap-y-0.5 border-b border-line/40 py-1.5 text-sm last:border-0">
+                  <span className={cn('w-20 shrink-0 font-semibold tabular-nums', r.amount > 0 ? 'text-spark-300' : 'text-amber-300')}>
+                    {r.amount > 0 ? '+' : ''}{fmtCoins(r.amount)}
+                  </span>
+                  <span className="min-w-0 flex-1 truncate text-muted">{r.reason || 'без описания'}</span>
+                  <span className="shrink-0 text-xs tabular-nums text-faint">{fmtCoins(r.before)} → {fmtCoins(r.after)}</span>
+                  <span className="shrink-0 text-xs text-faint">{new Date(r.ts).toLocaleString('ru-RU')}</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
     </div>
   )
 }

@@ -124,6 +124,9 @@ test('totalCoins: сумма по всем пользователям, служ�
   await B.changeCoins(1, 'x') // __default — в сумму монет идёт, но не считается кошельком
 
   const t = await B.totalCoins()
-  assert.equal(t.coins, 16.5, '10 + 5.5 + 1')
-  assert.equal(t.wallets, 2, 'usr_a и usr_b; __default и __subscription не кошельки пользователей')
+  // Служебный кошелёк идёт ОТДЕЛЬНЫМ полем: попадая в общую сумму, он разводил
+  // «Монет в системе» с итогом «На счету» в таблице людей — две цифры про одно.
+  assert.equal(t.coins, 15.5, 'только людские кошельки: 10 + 5.5')
+  assert.equal(t.wallets, 2, 'usr_a и usr_b')
+  assert.equal(t.service, 1, 'служебный __default виден, но не смешан с людьми')
 })

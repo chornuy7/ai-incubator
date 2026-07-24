@@ -8,7 +8,7 @@ export interface AdminOverview {
   tokens: { tokens: number; coins: number; calls: number; byModule: Record<string, number>; byAccount: Record<string, number> }
   balance: { planId: string; plan: { name: string; accountLimit: number }; coins: number } | null
   /** Сумма монет по всем кошелькам пространства — то, что показывает панель. */
-  coinTotal?: { coins: number; wallets: number }
+  coinTotal?: { coins: number; wallets: number; service?: number }
   users: { total: number; active: number }
   audit: { total: number; byAction: Record<string, number> }
 }
@@ -117,8 +117,9 @@ export async function fetchProblems(since?: number): Promise<Problems> {
   return (await apiGet<{ ok: boolean; problems: Problems }>(`/api/admin/problems${q}`)).problems
 }
 
-export async function fetchCrmOverview(): Promise<CrmOverview> {
-  return (await apiGet<{ ok: boolean; crm: CrmOverview }>('/api/admin/crm')).crm
+export async function fetchCrmOverview(since?: number): Promise<CrmOverview> {
+  const q = since ? `?since=${since}` : ''
+  return (await apiGet<{ ok: boolean; crm: CrmOverview }>(`/api/admin/crm${q}`)).crm
 }
 
 export async function fetchUsersReport(since?: number): Promise<UsersReport> {

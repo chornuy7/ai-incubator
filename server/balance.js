@@ -130,13 +130,17 @@ export async function totalCoins() {
   const all = await readJson(BALANCE_FILE(), {})
   let coins = 0
   let wallets = 0
+  let service = 0
   for (const [k, v] of Object.entries(all || {})) {
     if (k === SUBSCRIPTION_KEY) continue
     if (typeof v?.coins !== 'number') continue
+    // Служебный кошелёк (`__default`) считаем ОТДЕЛЬНО: он не принадлежит человеку,
+    // и, попадая в общую сумму, разводил её с итогом «На счету» в таблице людей.
+    if (k === DEFAULT_USER) { service = v.coins; continue }
     coins = Math.round((coins + v.coins) * COIN_PRECISION) / COIN_PRECISION
-    if (k !== DEFAULT_USER) wallets += 1
+    wallets += 1
   }
-  return { coins, wallets }
+  return { coins, wallets, service }
 }
 
 /**
@@ -176,7 +180,60 @@ export async function changeCoins(amount, reason = '', userId) {
     next[k] = { ...cur, coins: after, updatedAt: Date.now() }
     return next
   })
+  // История пишется ПОСЛЕ успешного изменения и не роняет операцию при сбое:
+  // потерянная строка журнала — досадно, потерянное списание — деньги.
+  if (result && result.applied) await appendWalletEntry(result).catch(() => {})
   return result
+}
+
+/**
+ * Журнал операций по кошелькам — `data/wallet-log.jsonl`, строка на операцию.
+ *
+ * Без него на вопрос клиента «за что списали 12 монет» ответить нечем: баланс
+ * показывает только «сколько сейчас». JSONL, а не JSON-массив: дописывание строки
+ * не перечитывает весь файл и не теряет историю при параллельных списаниях.
+ */
+const WALLET_LOG = () => process.env.WALLET_LOG_FILE || dataPath('wallet-log.jsonl')
+
+async function appendWalletEntry(entry) {
+  const fs = await import('node:fs/promises')
+  const path = await import('node:path')
+  const file = WALLET_LOG()
+  await fs.mkdir(path.dirname(file), { recursive: true }).catch(() => {})
+  const row = {
+    ts: Date.now(),
+    userId: entry.userId,
+    amount: entry.applied,
+    before: entry.before,
+    after: entry.after,
+    reason: String(entry.reason || ''),
+  }
+  await fs.appendFile(file, JSON.stringify(row) + '\n', 'utf8')
+}
+
+/**
+ * Операции по кошельку: свежие сверху. Без userId — по всем (для админки).
+ * @param {{userId?:string, limit?:number, since?:number}} [filter]
+ */
+export async function walletHistory(filter = {}) {
+  const fs = await import('node:fs/promises')
+  let raw = ''
+  try { raw = await fs.readFile(WALLET_LOG(), 'utf8') } catch { return [] }
+  const limit = Math.min(1000, Math.max(1, Number(filter.limit) || 100))
+  const since = Number(filter.since) || 0
+  const wanted = filter.userId ? key(filter.userId) : null
+
+  const rows = []
+  for (const line of raw.split('\n')) {
+    if (!line.trim()) continue
+    try {
+      const r = JSON.parse(line)
+      if (wanted && r.userId !== wanted) continue
+      if (since && (Number(r.ts) || 0) < since) continue
+      rows.push(r)
+    } catch { /* битая строка не должна ронять весь журнал */ }
+  }
+  return rows.reverse().slice(0, limit)
 }
 
 /** Сменить тариф. @param {string} planId */

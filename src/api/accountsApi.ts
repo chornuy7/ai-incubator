@@ -1,4 +1,5 @@
 import type { TgAccount, AccountStatus, AccountStats, AccountChannel, AccountFolder } from '@/shared/types'
+import { apiGet } from './client'
 
 export type ServerAccount = TgAccount
 
@@ -129,7 +130,8 @@ export interface AccountWork {
 
 export async function fetchAccountWork(accountId: string, since?: number): Promise<AccountWork> {
   const q = since ? `?since=${since}` : ''
-  const res = await fetch(`/api/accounts/${accountId}/work${q}`)
-  const data = await parseJson(res)
-  return data.work as AccountWork
+  // Через apiGet, а не голым fetch: он ставит X-User-Id, без которого серверный
+  // гейт не поймёт, кто спрашивает, и отдаст данные любому.
+  const r = await apiGet<{ ok: boolean; work: AccountWork }>(`/api/accounts/${accountId}/work${q}`)
+  return r.work
 }

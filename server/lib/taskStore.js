@@ -81,7 +81,11 @@ export function createTaskStore(moduleKey, idPrefix) {
           errors: (t.logs || []).reduce((n, l) => n + (l.level === 'error' ? 1 : 0), 0),
           lastError: (t.logs || []).find((l) => l.level === 'error')?.message || '',
           // Пауза из-за денег отличается от паузы рукой: первую чинит пополнение.
-          pausedByCoins: t.status === 'paused' && (t.logs || []).some((l) => /монет|баланс/i.test(l.message || '')),
+          // Ищем ТОЧНУЮ фразу и только в последней записи: широкий поиск «монет|баланс»
+          // по всему журналу ловил и строку возврата «Возврат N монет», из-за чего
+          // задача, поставленная на паузу рукой, показывалась как «ждёт пополнения».
+          pausedByCoins: t.status === 'paused'
+            && /Закончились монеты/i.test(String((t.logs || [])[0]?.message || '')),
           goalId: t.goalId ?? t.settings?.goalId ?? null,
           campaignId: t.campaignId ?? null,
           createdAt: t.createdAt,

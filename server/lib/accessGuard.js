@@ -115,6 +115,31 @@ export async function foldersForRequest(req, folders = []) {
  * @param {Array<{userId?:string}>} tasks
  * @returns {Promise<Array<object>>}
  */
+/**
+ * Доступен ли автору запроса конкретный аккаунт (§8.1, ресурс `accounts`).
+ *
+ * Нужен там, где отдаём данные ПО аккаунту, а не список: список фильтрует фронт
+ * через `filterAccountsByAccess`, но точечный запрос по id так не прикрыть —
+ * без этой проверки чужой профиль отдавал бы задачи, деньги и лиды.
+ * @param {import('express').Request} req @param {string} accountId
+ */
+export async function canSeeAccount(req, accountId) {
+  const userId = req.header('x-user-id')
+  if (!userId) return true // нет сессии — дев/демо, как в moduleAccessGuard
+  let user = null
+  try {
+    user = await getUser(userId)
+  } catch {
+    return false // fail-closed: не смогли проверить — не отдаём
+  }
+  if (!user || !user.active) return false
+  if (hasAdminRole(userRoleIds(user))) return true
+  const roles = await rolesForUser(user)
+  if (!roles.length) return false
+  // Хотя бы одна роль разрешает этот аккаунт — union, как и везде в §8.1.
+  return roles.some((role) => can(role, 'account', String(accountId)))
+}
+
 export async function tasksForRequest(req, tasks = []) {
   const userId = req.header('x-user-id')
   if (!userId) return tasks // нет сессии — дев/демо, как в moduleAccessGuard

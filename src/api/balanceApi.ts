@@ -62,3 +62,13 @@ export async function saveSubscription(modules: string[] | 'all'): Promise<Balan
   const r = await apiPost<{ balance: Balance }>('/api/subscription', { modules })
   return r.balance
 }
+
+/** §5.1: операция по кошельку — «за что списали». */
+export interface WalletEntry { ts: number; userId: string; amount: number; before: number; after: number; reason: string }
+
+export async function fetchWalletHistory(limit = 50, userId?: string): Promise<WalletEntry[]> {
+  const q = new URLSearchParams({ limit: String(limit) })
+  if (userId) q.set('userId', userId)
+  const r = await apiGet<{ ok: boolean; rows: WalletEntry[] }>(`/api/balance/history?${q}`)
+  return r.rows || []
+}

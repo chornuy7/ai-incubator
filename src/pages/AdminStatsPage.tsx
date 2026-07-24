@@ -60,7 +60,7 @@ export function AdminStatsPage() {
       // времени, иначе «в панели 82 задачи, а по людям 80» читается как ошибка счёта.
       const [o, r, u, p, c, a, d] = await Promise.all([
         fetchAdminOverview(since), fetchClientReport(since),
-        fetchUsersReport(since), fetchProblems(since), fetchCrmOverview(),
+        fetchUsersReport(since), fetchProblems(since), fetchCrmOverview(since),
         fetchActiveNow(), fetchDailySpend(PERIODS[periodIdx].days),
       ])
       setOverview(o); setReport(r); setUsers(u); setProblems(p); setCrm(c)
@@ -195,7 +195,7 @@ function PanelTab({ o }: { o: AdminOverview | null }) {
         <Tile icon={<ListChecks size={14} />} label="Задач за период" value={fmt(o.tasks.total)} />
         <Tile
           icon={<Coins size={14} />} label="Израсходовано" value={`${fmt(o.tokens.tokens)} ток.`}
-          hint={`${o.tokens.coins} монет · ${fmt(o.tokens.calls)} запросов к ИИ`}
+          hint={`${fmtCoins(o.tokens.coins)} ⚡ за ИИ · ${fmt(o.tokens.calls)} запросов`}
         />
         <Tile
           icon={<Coins size={14} />} label="Монет в системе"

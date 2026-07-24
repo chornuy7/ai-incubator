@@ -33,16 +33,23 @@ export async function chargeActions(task, store, actions = 1, deps = {}) {
     const cost = Math.round(actionPrice(task?.moduleKey) * n * 1000) / 1000
     if (cost <= 0) return null
     const balance = deps.changeCoins && deps.getBalance ? deps : await import('../balance.js')
-    await balance.changeCoins(-cost, `${task.moduleKey}: ${n} действ.`, task.userId)
+    const res = await balance.changeCoins(-cost, `${task.moduleKey}: ${n} действ.`, task.userId)
+    // Считаем ФАКТИЧЕСКИ списанное, а не запрошенное: в минус кошелёк не уходит,
+    // и при остатке 0.002 с ценой 0.005 спишется 0.002. Прибавляя полную цену, мы
+    // предъявляли бы клиенту в счёте больше, чем с него взяли.
+    const charged = Math.abs(Number(res?.applied) || 0) || cost
     // Сколько монет съела ЭТА задача — чтобы в Дашборде было видно цену запуска,
     // а не только общий баланс, из которого не понять, куда ушло.
-    task.spentCoins = Math.round(((task.spentCoins || 0) + cost) * 1000) / 1000
+    task.spentCoins = Math.round(((task.spentCoins || 0) + charged) * 1000) / 1000
     const { coins } = await balance.getBalance(task.userId)
     if (coins <= 0 && !task.pauseRequested && !task.stopRequested) {
       task.pauseRequested = true
-      await store?.appendLog?.(task, 'error', 'Закончились монеты — задача на паузе. Пополните баланс и нажмите «Продолжить»: прогресс сохранён.')
+      // Уровень info, а не error: кончившиеся деньги — не поломка модуля. С уровнем
+      // error задача попадала и в «Задач с ошибками», и в «Встали из-за баланса»,
+      // а в списке ошибок висела строка «Закончились монеты», хотя чинить нечего.
+      await store?.appendLog?.(task, 'info', 'Закончились монеты — задача на паузе. Пополните баланс и нажмите «Продолжить»: прогресс сохранён.')
     }
-    return { charged: cost, left: coins }
+    return { charged, left: coins }
   } catch {
     return null // не роняем задачу из-за биллинга
   }
