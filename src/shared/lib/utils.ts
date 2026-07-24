@@ -29,8 +29,10 @@ export function compact(n: number): string {
  */
 export function coins(n: number): string {
   const v = Number(n) || 0
-  const round3 = Math.round(v * 1000) / 1000
-  return Number.isInteger(round3 * 100) ? round3.toFixed(2) : round3.toFixed(3)
+  const milli = Math.round(v * 1000)
+  // Смотрим ИМЕННО третий знак, а не `Number.isInteger(x * 100)`: 0.07 * 100 в
+  // плавающей точке даёт 7.000000000000001, и 0.07 печаталось как «0.070».
+  return milli % 10 === 0 ? (milli / 1000).toFixed(2) : (milli / 1000).toFixed(3)
 }
 
 /** Пауза (для мок-задержек). */
