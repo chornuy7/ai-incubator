@@ -3,6 +3,8 @@ import { apiGet, apiPost, apiPut, apiDelete } from './client'
 export type Perm = 'allow' | 'deny'
 
 export interface RolePermissions {
+  /** Роль «без оплаты» (тест/модератор): доступ к модулям даёт роль в обход подписки. */
+  freeAccess?: boolean
   modules: Record<string, Perm>
   blocks: Record<string, Perm> // ключ = `${moduleKey}:${blockKey}`
   sections: Record<string, Perm> // ключ = путь раздела (напр. '/panel/proxies')
@@ -74,5 +76,5 @@ export async function deleteRole(id: string): Promise<void> {
 
 /** Пустые права (всё deny) — для новой роли. */
 export function emptyPermissions(): RolePermissions {
-  return { modules: {}, blocks: {}, sections: {}, resources: { accounts: {}, accountGroups: {}, folders: {}, channels: {}, folderChannels: {}, timers: 'deny', searchTemplates: 'deny', allTasks: 'deny' } }
+  return { freeAccess: false, modules: {}, blocks: {}, sections: {}, resources: { accounts: {}, accountGroups: {}, folders: {}, channels: {}, folderChannels: {}, timers: 'deny', searchTemplates: 'deny', allTasks: 'deny' } }
 }

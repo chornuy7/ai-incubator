@@ -66,7 +66,22 @@ async function warmingStopBlockReason(req, moduleKey) {
  * (что оплачено), монеты (есть ли чем платить за действия).
  * @returns {Promise<object|null>} тело отказа или null
  */
+/** Роль «без оплаты» (тест/модератор): доступ к модулям даёт роль, а не подписка. */
+async function userHasFreeAccess(userId) {
+  if (!userId) return false
+  try {
+    const { getUser } = await import('../users.js')
+    const { rolesForUser } = await import('../roles.js')
+    const user = await getUser(userId)
+    if (!user) return false
+    const roles = await rolesForUser(user)
+    return roles.some((r) => !!r?.permissions?.freeAccess)
+  } catch { return false }
+}
+
 async function notInPlanPayload(req, moduleKey) {
+  // Роль без оплаты обходит подписку — но не роль и не монеты (это отдельные оси).
+  if (await userHasFreeAccess(req.header('x-user-id'))) return null
   const { getBalance, modulesAllow } = await import('../balance.js')
   const { modules } = await getBalance(req.header('x-user-id'))
   if (modulesAllow(modules, moduleKey)) return null

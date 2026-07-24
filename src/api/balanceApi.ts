@@ -13,6 +13,8 @@ export interface Balance {
   /** Монеты с точностью до ТЫСЯЧНЫХ: строка парсера стоит 0.005 (C2). */
   coins: number
   updatedAt: number
+  /** Срок подписки: timestamp окончания или null («бессрочно» / демо без периода). */
+  expiresAt?: number | null
 }
 
 /** §5.1 (B2): баланс и тариф с сервера. До этого шапка показывала константу из моков. */
@@ -70,9 +72,9 @@ export async function quoteSubscription(modules: string[]): Promise<SubCost> {
   return apiPost<SubCost>('/api/subscription/quote', { modules })
 }
 
-/** Оформить подписку на набор. Оплаты в демо нет — набор записывается сразу. */
-export async function saveSubscription(modules: string[] | 'all'): Promise<Balance> {
-  const r = await apiPost<{ balance: Balance }>('/api/subscription', { modules })
+/** Оформить подписку на набор. `months` — период (1 или 12); 0/пусто — без срока (демо). */
+export async function saveSubscription(modules: string[] | 'all', months = 0): Promise<Balance> {
+  const r = await apiPost<{ balance: Balance }>('/api/subscription', { modules, months })
   return r.balance
 }
 

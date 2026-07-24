@@ -51,9 +51,12 @@ export async function fetchAdminOverview(since?: number): Promise<AdminOverview>
   return data.overview
 }
 
-export async function fetchClientReport(since?: number): Promise<ClientReport> {
-  const q = since ? `?since=${since}` : ''
-  const data = await apiGet<{ ok: boolean; report: ClientReport }>(`/api/admin/report${q}`)
+export async function fetchClientReport(since?: number, userId?: string): Promise<ClientReport> {
+  const p = new URLSearchParams()
+  if (since) p.set('since', String(since))
+  if (userId) p.set('userId', userId)
+  const qs = p.toString()
+  const data = await apiGet<{ ok: boolean; report: ClientReport }>(`/api/admin/report${qs ? `?${qs}` : ''}`)
   return data.report
 }
 
@@ -67,6 +70,8 @@ export interface UserRow {
   active: boolean
   /** Монет на счету сейчас. */
   coins: number
+  /** Подписка: какие модули открыты. all=true — набор не выбран (открыто всё). null — синтетическая строка. */
+  subscription: { all: boolean; count: number; titles: string[] } | null
   tasks: number
   actions: number
   /** Сколько списано за действия по его задачам. */
@@ -139,4 +144,54 @@ export async function fetchUsersReport(since?: number): Promise<UsersReport> {
   const q = since ? `?since=${since}` : ''
   const data = await apiGet<{ ok: boolean; report: UsersReport }>(`/api/admin/users-report${q}`)
   return data.report
+}
+
+/** §5.3: что и сколько куплено — пополнения кошельков по людям (только админ). */
+export interface PurchaseUser { userId: string; name: string; email: string; count: number; coins: number; lastAt: number }
+export interface PurchaseFeedItem { ts: number; userId: string; name: string; email: string; amount: number; reason: string }
+/** Покупка/продление плана ($): modulesCount = -1 означает «все модули». */
+export interface PlanPurchase { ts: number; userId: string; name: string; email: string; amount: number; modulesCount: number; reason: string }
+export interface Purchases {
+  since: number
+  /** Всего начислено монет за период по всем кошелькам. */
+  boughtTotal: number
+  count: number
+  rows: PurchaseUser[]
+  feed: PurchaseFeedItem[]
+  /** Покупки планов/подписок ($) — отдельный от монет поток. */
+  plans: { currency: string; total: number; count: number; feed: PlanPurchase[] }
+}
+
+export async function fetchPurchases(since?: number): Promise<Purchases> {
+  const q = since ? `?since=${since}` : ''
+  const data = await apiGet<{ ok: boolean; purchases: Purchases }>(`/api/admin/purchases${q}`)
+  return data.purchases
+}
+
+/** §5.1: строка из базы оплат (SQLite-индекс). kind: 'coins' (⚡) | 'plan' ($). */
+export interface PaymentRow {
+  id: string; ts: number; user_id: string; kind: 'coins' | 'plan'
+  coins: number | null; amount_fiat: number | null; currency: string
+  modules: number | null; status: string; reason: string
+  name: string; email: string
+}
+export interface PaymentsResult {
+  total: number; limit: number; offset: number
+  items: PaymentRow[]
+  summary: { coinsTotal: number; coinsCount: number; planTotal: number; planCount: number }
+}
+export interface PaymentsQuery { from?: number; to?: number; userId?: string; kind?: string; q?: string; limit?: number; offset?: number }
+
+/** База оплат с диапазоном дат и пагинацией — «найти покупку за месяц назад». */
+export async function fetchPayments(opts: PaymentsQuery = {}): Promise<PaymentsResult> {
+  const p = new URLSearchParams()
+  if (opts.from) p.set('from', String(opts.from))
+  if (opts.to) p.set('to', String(opts.to))
+  if (opts.userId) p.set('userId', opts.userId)
+  if (opts.kind) p.set('kind', opts.kind)
+  if (opts.q) p.set('q', opts.q)
+  if (opts.limit) p.set('limit', String(opts.limit))
+  if (opts.offset) p.set('offset', String(opts.offset))
+  const data = await apiGet<{ ok: boolean; payments: PaymentsResult }>(`/api/admin/payments?${p.toString()}`)
+  return data.payments
 }

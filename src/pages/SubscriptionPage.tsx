@@ -27,6 +27,7 @@ export function SubscriptionPage() {
   const [data, setData] = useState<Subscription | null>(null)
   const [picked, setPicked] = useState<Set<string>>(new Set())
   const [saving, setSaving] = useState(false)
+  const [period, setPeriod] = useState<'month' | 'year'>('month')
   // Форма «собрать набор под клиента»: имя + цена, состав берётся из текущего выбора.
   const [bundleName, setBundleName] = useState('')
   const [bundlePrice, setBundlePrice] = useState('')
@@ -110,9 +111,9 @@ export function SubscriptionPage() {
   const save = async () => {
     setSaving(true)
     try {
-      await saveSubscription(keys)
+      await saveSubscription(keys, period === 'year' ? 12 : 1)
       await loadPlan() // меню должно перестроиться сразу, а не после перезагрузки
-      pushToast({ type: 'success', title: 'Подписка обновлена', desc: `Открыто модулей: ${keys.length}` })
+      pushToast({ type: 'success', title: 'Подписка обновлена', desc: `Открыто модулей: ${keys.length} · на ${period === 'year' ? 'год' : 'месяц'}` })
       const fresh = await fetchSubscription()
       setData(fresh)
     } catch (e) {
@@ -247,10 +248,20 @@ export function SubscriptionPage() {
             {cost.setup && <> · набор «{data.setups.find((s) => s.id === cost.setup)?.name}» — скидка {Math.round(cost.discount * 100)}%</>}
           </div>
           <div className="flex items-baseline gap-2">
-            <span className="font-display text-2xl font-bold text-fg">{cost.sum} {cur}</span>
-            <span className="text-sm text-muted">в месяц</span>
-            {cost.discount > 0 && <span className="text-sm text-muted line-through">{cost.full} {cur}</span>}
+            {/* Год — со скидкой 20% от 12 месяцев (витринное допущение, как на лендинге). */}
+            <span className="font-display text-2xl font-bold text-fg">{period === 'year' ? Math.round(cost.sum * 12 * 0.8) : cost.sum} {cur}</span>
+            <span className="text-sm text-muted">{period === 'year' ? 'за год' : 'в месяц'}</span>
+            {period === 'year' && <span className="rounded-md bg-spark-500/15 px-1.5 py-0.5 text-[10px] font-bold text-spark-300">−20%</span>}
+            {period === 'month' && cost.discount > 0 && <span className="text-sm text-muted line-through">{cost.full} {cur}</span>}
           </div>
+        </div>
+        {/* Период подписки: на месяц или на год — определяет срок действия (expiresAt). */}
+        <div className="flex rounded-xl border border-line bg-elevated p-0.5 text-sm">
+          {(['month', 'year'] as const).map((p) => (
+            <button key={p} onClick={() => setPeriod(p)} className={cn('h-9 rounded-lg px-3 font-semibold transition-colors', period === p ? 'bg-spark-500/15 text-spark-300' : 'text-muted hover:text-fg')}>
+              {p === 'month' ? 'Месяц' : 'Год'}{p === 'year' && <span className="ml-1 text-[10px] text-spark-400">−20%</span>}
+            </button>
+          ))}
         </div>
         <button
           onClick={() => void save()}
@@ -259,7 +270,7 @@ export function SubscriptionPage() {
           title={changed ? 'Оплата в демо отключена — набор применится сразу' : 'Набор не менялся'}
         >
           {saving ? <Loader2 size={16} className="animate-spin" /> : <Check size={16} />}
-          {keys.length === 0 ? 'Отключить все модули' : 'Оплатить и открыть'}
+          {keys.length === 0 ? 'Отключить все модули' : `Оплатить на ${period === 'year' ? 'год' : 'месяц'}`}
         </button>
       </div>
 

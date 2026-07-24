@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 import { fetchBalance } from '@/api/balanceApi'
+import { useSession } from '@/features/auth/session'
 
 /**
  * Что клиент КУПИЛ — отдельная ось от того, что ему разрешил админ.
@@ -21,6 +22,9 @@ interface PlanStore {
 export const usePlan = create<PlanStore>((set) => ({
   modules: null,
   load: async () => {
+    // Роль «без оплаты» (тест/модератор) видит все модули в обход подписки: доступ
+    // ограничивает роль, а не кошелёк. Зеркалит серверный обход в modules/routes.js.
+    if (useSession.getState().user?.permissions?.freeAccess) { set({ modules: 'all' }); return }
     try {
       const b = await fetchBalance()
       set({ modules: b.modules ?? 'all' })

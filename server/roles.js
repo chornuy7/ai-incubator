@@ -105,6 +105,8 @@ export function normalizeRole(input = {}) {
     name: String(input.name ?? '').trim(),
     isTemplate: !!input.isTemplate,
     permissions: {
+      // Роль «без оплаты» (тест/модератор): доступ к модулям в обход подписки.
+      freeAccess: !!p.freeAccess,
       modules: normPermMap(p.modules),
       blocks: normPermMap(p.blocks), // ключ = `${moduleKey}:${blockKey}`
       sections: normPermMap(p.sections), // ключ = путь раздела (напр. '/panel/proxies')

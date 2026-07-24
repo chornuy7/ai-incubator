@@ -14,8 +14,9 @@ import { AgentsPage } from '@/pages/AgentsPage'
 import { TasksPage, TaskDetailPage } from '@/pages/TasksPage'
 import { AccountOverviewPage } from '@/features/account-manager/AccountOverviewPage'
 import { LeadsPage } from '@/pages/LeadsPage'
-import { AdminStatsPage } from '@/pages/AdminStatsPage'
+import { AdminEntry } from '@/pages/AdminEntry'
 import { LandingPage } from '@/pages/LandingPage'
+import { ModuleLandingPage } from '@/pages/landing/ModuleLandingPage'
 import { AnalyticsPage } from '@/pages/AnalyticsPage'
 import { CampaignPage } from '@/pages/CampaignPage'
 import { ChannelsPage } from '@/pages/ChannelsPage'
@@ -38,6 +39,10 @@ export default function App() {
     return (
       <Routes>
         <Route path="/" element={<LandingPage />} />
+        {/* Страницы модулей — часть публичного лендинга, доступны «гостю». */}
+        <Route path="/module/:key" element={<ModuleLandingPage />} />
+        {/* Админ-панель — отдельная ссылка со своим входом, доступна и «гостю». */}
+        <Route path="/admin" element={<AdminEntry />} />
         <Route path="*" element={<GuestLogin />} />
       </Routes>
     )
@@ -55,7 +60,6 @@ export default function App() {
         <Route path="/panel/tasks/:id" element={<TaskDetailPage />} />
         <Route path="/panel/crm" element={<LeadsPage />} />
         <Route path="/panel/analytics" element={<AnalyticsPage />} />
-        <Route path="/panel/admin-stats" element={<AdminStatsPage />} />
         <Route path="/panel/campaign" element={<CampaignPage />} />
         <Route path="/panel/channels" element={<ChannelsPage />} />
         <Route path="/panel/logs" element={<LogsPage />} />
@@ -72,6 +76,8 @@ export default function App() {
         <Route path="/panel/mailing" element={<MailingPage />} />
         <Route path="/panel/autoposting" element={<AutopostingPage />} />
       </Route>
+      {/* Админ-панель — вне Layout: своя шапка, свой вход, отдельная ссылка. */}
+      <Route path="/admin" element={<AdminEntry />} />
       <Route path="/" element={<Navigate to="/panel" replace />} />
       <Route path="*" element={<Navigate to="/panel" replace />} />
     </Routes>

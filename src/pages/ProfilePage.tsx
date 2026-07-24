@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
+import { Link } from 'react-router-dom'
 import {
-  UserCog, User, Shield, Bell, Handshake, Cable, Save, Copy, RefreshCw, Eye, EyeOff, Check, Zap, History as HistoryIcon } from 'lucide-react'
+  UserCog, User, Shield, Bell, Handshake, Cable, Save, Copy, RefreshCw, Eye, EyeOff, Check, Zap, History as HistoryIcon, Package, CalendarClock } from 'lucide-react'
 import { useApp } from '@/mocks/store'
 import { fetchBalance, fetchWalletHistory, type Balance, type WalletEntry } from '@/api/balanceApi'
 import { useSession } from '@/features/auth/session'
@@ -48,6 +49,9 @@ export function ProfilePage() {
   return (
     <div>
       <PageHeader title="Мой аккаунт" subtitle="Профиль, безопасность и интеграции" icon={<UserCog size={22} />} />
+
+      {/* План и подписка: какой тариф/набор подключён и до какого числа. */}
+      <SubscriptionCard balance={balance} />
 
       <div className="grid gap-4 lg:grid-cols-[240px_1fr]">
         {/* Subtabs */}
@@ -250,5 +254,45 @@ function WalletHistory() {
         </div>
       )}
     </div>
+  )
+}
+
+/**
+ * План и подписка: какой тариф/набор подключён и до какого числа. Срок берётся с
+ * сервера (expiresAt); нет срока — «бессрочно (демо)», пока не подключён провайдер.
+ */
+function SubscriptionCard({ balance }: { balance: Balance | null }) {
+  const modules = balance?.modules
+  const sub = modules === 'all' || modules == null ? 'Все модули' : `${modules.length} ${modules.length === 1 ? 'модуль' : 'модулей'}`
+  const exp = balance?.expiresAt || 0
+  const now = Date.now()
+  const active = !exp || exp > now
+  const fmtDate = (ts: number) => new Date(ts).toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit', year: 'numeric' })
+  const daysLeft = exp ? Math.max(0, Math.ceil((exp - now) / (24 * 60 * 60 * 1000))) : 0
+  return (
+    <Card className="mb-4 p-4">
+      <div className="flex flex-wrap items-center gap-x-8 gap-y-3">
+        <div className="flex items-center gap-2.5">
+          <div className="grid h-10 w-10 place-items-center rounded-xl bg-spark-500/12 text-spark-300"><Package size={18} /></div>
+          <div>
+            <div className="text-[11px] uppercase tracking-wide text-muted">Тариф</div>
+            <div className="font-semibold text-fg">{balance?.plan?.name || '—'}</div>
+          </div>
+        </div>
+        <div>
+          <div className="text-[11px] uppercase tracking-wide text-muted">Подписка</div>
+          <div className="font-semibold text-fg">{sub}</div>
+        </div>
+        <div>
+          <div className="text-[11px] uppercase tracking-wide text-muted">Срок</div>
+          <div className={cn('flex items-center gap-1.5 font-semibold', active ? 'text-fg' : 'text-red-300')}>
+            <CalendarClock size={14} className="text-muted" />
+            {exp ? (active ? `активна до ${fmtDate(exp)}` : `истекла ${fmtDate(exp)}`) : 'бессрочно (демо)'}
+          </div>
+          {!!exp && active && <div className="text-[11px] text-muted">осталось {daysLeft} дн.</div>}
+        </div>
+        <Link to="/panel/user/subscription" className="btn-ghost ml-auto h-9 border border-line text-sm"><Package size={14} /> Мои модули</Link>
+      </div>
+    </Card>
   )
 }

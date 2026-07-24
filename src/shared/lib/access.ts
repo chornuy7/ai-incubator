@@ -88,7 +88,10 @@ export const ADMIN_ONLY_PATHS = new Set(['/panel/roles', '/panel/users'])
  * «Мои модули». Последнее — витрина, где клиент покупает себе набор: закрывать её
  * ролью значит закрывать саму продажу.
  */
-export const ALWAYS_ON_PATHS = new Set(['/panel/user/profile', '/panel/support', '/panel/user/subscription'])
+export const ALWAYS_ON_PATHS = new Set([
+  '/panel', // Менеджер аккаунтов — базовый «в подарок»; сами аккаунты всё равно фильтрует роль
+  '/panel/user/profile', '/panel/support', '/panel/user/subscription', '/panel/my-statistics',
+])
 /** Модули вне /panel/modules/* — их доступ проверяется как 'module' по этому ключу. */
 const SPECIAL_MODULE_PATHS: Record<string, string> = {
   '/panel/mailing': 'mailing',

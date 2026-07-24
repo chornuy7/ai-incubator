@@ -1,14 +1,13 @@
-import { Link } from 'react-router-dom'
 import { coins as fmtCoins, cn } from '@/shared/lib/utils'
 import { useEffect, useMemo, useState } from 'react'
-import { BarChart3, Users, ListChecks, Coins, Download, RefreshCw, AlertTriangle, Contact, Power, ChevronDown, Activity, Plus, Radar, Package, Search } from 'lucide-react'
+import { BarChart3, Users, ListChecks, Coins, Download, RefreshCw, AlertTriangle, Contact, Power, ChevronDown, Activity, Plus, Radar, Search, ShoppingCart } from 'lucide-react'
 import { PageHeader, Card, Segmented, EmptyState } from '@/shared/ui'
 import { useApp } from '@/mocks/store'
 import {
   fetchAdminOverview, fetchClientReport, fetchUsersReport, fetchProblems, fetchCrmOverview,
-  fetchActiveNow, fetchDailySpend,
+  fetchActiveNow, fetchDailySpend, fetchPurchases, fetchPayments,
   type AdminOverview, type ClientReport, type UsersReport, type Problems, type CrmOverview,
-  type ActiveNow, type ActiveTask, type DailySpend,
+  type ActiveNow, type ActiveTask, type DailySpend, type Purchases, type PaymentsResult, type UserRow,
 } from '@/api/adminApi'
 import { updateUser } from '@/api/usersApi'
 import { changeBalance } from '@/api/balanceApi'
@@ -56,6 +55,7 @@ export function AdminStatsPage() {
   const [crm, setCrm] = useState<CrmOverview | null>(null)
   const [active, setActive] = useState<ActiveNow | null>(null)
   const [daily, setDaily] = useState<DailySpend | null>(null)
+  const [purchases, setPurchases] = useState<Purchases | null>(null)
   const [loading, setLoading] = useState(true)
   const [denied, setDenied] = useState(false)
 
@@ -69,13 +69,13 @@ export function AdminStatsPage() {
     try {
       // Грузим всё одним заходом: цифры на разных вкладках должны быть на один момент
       // времени, иначе «в панели 82 задачи, а по людям 80» читается как ошибка счёта.
-      const [o, r, u, p, c, a, d] = await Promise.all([
+      const [o, r, u, p, c, a, d, pur] = await Promise.all([
         fetchAdminOverview(since), fetchClientReport(since),
         fetchUsersReport(since), fetchProblems(since), fetchCrmOverview(since),
-        fetchActiveNow(), fetchDailySpend(PERIODS[periodIdx].days || 90),
+        fetchActiveNow(), fetchDailySpend(PERIODS[periodIdx].days || 90), fetchPurchases(since),
       ])
       setOverview(o); setReport(r); setUsers(u); setProblems(p); setCrm(c)
-      setActive(a); setDaily(d); setDenied(false)
+      setActive(a); setDaily(d); setPurchases(pur); setDenied(false)
     } catch (e) {
       // 403 — не ошибка сборки, а честный отказ: показываем это отдельно, иначе
       // оператор будет думать, что страница сломалась.
@@ -86,24 +86,25 @@ export function AdminStatsPage() {
   }
   useEffect(() => { void load() }, [since])
 
-  /** Выгрузка «инвойса» в CSV — клиенту его нужно отправить, а не показать на экране. */
-  const exportCsv = () => {
-    if (!report?.rows.length) return
-    // Монеты разбиты на две статьи: клиент вправе видеть, за что именно списано —
-    // за сами действия по прайсу и отдельно за работу ИИ.
+  /** Выгрузка «инвойса» в CSV — отчёт нужно отправить, а не показать на экране.
+      Принимает отображаемый отчёт (общий или по конкретному клиенту). */
+  const exportCsv = (rep: ClientReport | null = report) => {
+    if (!rep?.rows.length) return
+    // Монеты разбиты на две статьи: видно, за что именно списано — за сами действия
+    // по прайсу и отдельно за работу ИИ.
     const head = ['Модуль', 'Задач', 'Завершено', 'Действий', 'Токенов', 'Монет за действия', 'Монет за ИИ', 'Монет всего']
     const lines = [
-      `Отчёт за период ${fmtDate(report.since)} — ${fmtDate(report.until)}`,
+      `Отчёт за период ${fmtDate(rep.since)} — ${fmtDate(rep.until)}`,
       head.join(';'),
-      ...report.rows.map((r) => [r.title, r.tasks, r.completed, r.actions, r.tokens, r.actionCoins ?? 0, r.tokenCoins ?? 0, r.coins].join(';')),
-      ['ИТОГО', report.totals.tasks, '', report.totals.actions, report.totals.tokens,
-       report.totals.actionCoins ?? 0, report.totals.tokenCoins ?? 0, report.totals.coins].join(';'),
+      ...rep.rows.map((r) => [r.title, r.tasks, r.completed, r.actions, r.tokens, r.actionCoins ?? 0, r.tokenCoins ?? 0, r.coins].join(';')),
+      ['ИТОГО', rep.totals.tasks, '', rep.totals.actions, rep.totals.tokens,
+       rep.totals.actionCoins ?? 0, rep.totals.tokenCoins ?? 0, rep.totals.coins].join(';'),
     ]
-    // BOM — иначе Excel открывает кириллицу кракозябрами, и отчёт клиенту нечитаем.
+    // BOM — иначе Excel открывает кириллицу кракозябрами, и отчёт нечитаем.
     const blob = new Blob(['﻿' + lines.join('\n')], { type: 'text/csv;charset=utf-8' })
     const a = document.createElement('a')
     a.href = URL.createObjectURL(blob)
-    a.download = `otchet-${fmtDate(report.since)}-${fmtDate(report.until)}.csv`.replace(/\./g, '-')
+    a.download = `otchet-${fmtDate(rep.since)}-${fmtDate(rep.until)}.csv`.replace(/\./g, '-')
     a.click()
     URL.revokeObjectURL(a.href)
   }
@@ -111,7 +112,7 @@ export function AdminStatsPage() {
   if (denied) {
     return (
       <div>
-        <PageHeader title="Статистика" subtitle="Сводка по системе и отчёт клиенту" icon={<BarChart3 size={22} />} />
+        <PageHeader title="Админ-панель" subtitle="Сводка по системе, деньги и отчёт клиенту" icon={<BarChart3 size={22} />} />
         <Card className="p-6">
           <EmptyState
             icon={<BarChart3 size={22} />}
@@ -126,8 +127,8 @@ export function AdminStatsPage() {
   return (
     <div>
       <PageHeader
-        title="Статистика"
-        subtitle="Сводка по системе и постатейный отчёт клиенту"
+        title="Админ-панель"
+        subtitle="Сводка по системе, деньги, покупки и постатейный отчёт клиенту"
         icon={<BarChart3 size={22} />}
         actions={
           <button onClick={() => void load()} className="btn-ghost h-10" disabled={loading}>
@@ -137,7 +138,7 @@ export function AdminStatsPage() {
       />
 
       <div className="mb-4 flex flex-wrap items-center gap-3">
-        <Segmented options={['Панель', 'Сейчас', 'По дням', 'Пользователи', 'Проблемы', 'CRM', 'Отчёт клиенту']} value={tab} onChange={setTab} />
+        <Segmented options={['Панель', 'Сейчас', 'По дням', 'Пользователи', 'Покупки', 'Проблемы', 'CRM', 'Отчёт']} value={tab} onChange={setTab} />
         <Segmented options={PERIODS.map((p) => p.label)} value={periodIdx} onChange={setPeriodIdx} size="sm" />
       </div>
 
@@ -152,11 +153,13 @@ export function AdminStatsPage() {
       ) : tab === 3 ? (
         <UsersTab report={users} onReload={load} />
       ) : tab === 4 ? (
-        <ProblemsTab p={problems} />
+        <PurchasesTab p={purchases} />
       ) : tab === 5 ? (
+        <ProblemsTab p={problems} />
+      ) : tab === 6 ? (
         <CrmTab crm={crm} />
       ) : (
-        <ReportTab report={report} onExport={exportCsv} />
+        <ReportTab report={report} onExport={exportCsv} users={users?.rows || []} since={since} />
       )}
     </div>
   )
@@ -220,18 +223,10 @@ function PanelTab({ o }: { o: AdminOverview | null }) {
           value={o.coinTotal ? fmtCoins(o.coinTotal.coins) : (o.balance ? fmtCoins(o.balance.coins) : '—')}
           hint={o.coinTotal ? `на ${o.coinTotal.wallets} кошельках пользователей` : undefined}
         />
-        {o.subscription && (
-          <Tile
-            icon={<Package size={14} />} label="Подписка в месяц"
-            value={`${o.subscription.cost.sum} ${o.subscription.currency}`}
-            hint={`${o.subscription.count} из ${o.subscription.total} модулей`}
-          />
-        )}
       </div>
 
-      {/* Что оплачено — первая строка расходов. Раньше админка показывала деньги и
-          задачи, но на вопрос «за что мы платим ежемесячно» ответить было нечем. */}
-      {o.subscription && <SubscriptionCard s={o.subscription} />}
+      {/* Подписка («что оплачено») намеренно НЕ здесь: это личная покупка клиента, а
+          не системная метрика админа. Она живёт в «Мои модули» у самого пользователя. */}
 
       <div className="grid gap-3 lg:grid-cols-2">
         <Breakdown title="Аккаунты по статусам" data={o.accounts.byStatus} ru />
@@ -253,21 +248,59 @@ function PanelTab({ o }: { o: AdminOverview | null }) {
   )
 }
 
-function ReportTab({ report, onExport }: { report: ClientReport | null; onExport: () => void }) {
-  if (!report || !report.rows.length) {
+/**
+ * Постатейный отчёт «по проекту» ИЛИ по конкретному клиенту (клиентов может быть
+ * больше одного). Селектор сверху: «Весь проект» или выбранный клиент — тогда отчёт
+ * перезапрашивается по нему. CSV выгружает то, что показано.
+ */
+function ReportTab({ report, onExport, users, since }: { report: ClientReport | null; onExport: (rep: ClientReport | null) => void; users: UserRow[]; since: number }) {
+  const [client, setClient] = useState('')
+  const [override, setOverride] = useState<ClientReport | null>(null)
+  const [loading, setLoading] = useState(false)
+
+  const clients = users.filter((u) => u.userId && !u.email.startsWith('без владельца') && !u.email.startsWith('удалённый'))
+
+  useEffect(() => {
+    if (!client) { setOverride(null); return }
+    let alive = true
+    setLoading(true)
+    fetchClientReport(since || undefined, client)
+      .then((r) => { if (alive) setOverride(r) })
+      .catch(() => { if (alive) setOverride(null) })
+      .finally(() => { if (alive) setLoading(false) })
+    return () => { alive = false }
+  }, [client, since])
+
+  const shown = client ? override : report
+  const clientName = client ? (clients.find((c) => c.userId === client)?.name || clients.find((c) => c.userId === client)?.email || 'клиент') : ''
+
+  const selector = (
+    <div className="mb-3 flex flex-wrap items-center gap-2">
+      <span className="text-xs text-muted">Клиент:</span>
+      <select value={client} onChange={(e) => setClient(e.target.value)} className="input h-9 w-auto text-sm">
+        <option value="">Весь проект</option>
+        {clients.map((c) => <option key={c.userId} value={c.userId}>{c.name || c.email}</option>)}
+      </select>
+      <button onClick={() => onExport(shown)} disabled={!shown?.rows.length} className="btn-ghost ml-auto h-9 text-sm disabled:opacity-40"><Download size={15} /> Выгрузить CSV</button>
+    </div>
+  )
+
+  if (loading && client) {
+    return <Card className="p-4">{selector}<div className="px-1 py-4 text-sm text-muted">Загрузка…</div></Card>
+  }
+  if (!shown || !shown.rows.length) {
     return (
-      <Card className="p-6">
-        <EmptyState icon={<BarChart3 size={22} />} title="За период работ не было" desc="Выберите другой период — отчёт строится по задачам модулей." />
+      <Card className="p-4">
+        {selector}
+        <EmptyState icon={<BarChart3 size={22} />} title="За период работ не было" desc={client ? `У «${clientName}» нет работ за период.` : 'Выберите другой период — отчёт строится по задачам модулей.'} />
       </Card>
     )
   }
   return (
     <Card className="p-4">
-      <div className="mb-3 flex flex-wrap items-center gap-2">
-        <div className="text-sm font-semibold text-fg">
-          Отчёт за {fmtDate(report.since)} — {fmtDate(report.until)}
-        </div>
-        <button onClick={onExport} className="btn-ghost ml-auto h-9 text-sm"><Download size={15} /> Выгрузить CSV</button>
+      {selector}
+      <div className="mb-1 text-sm font-semibold text-fg">
+        Отчёт {client ? `по клиенту «${clientName}»` : 'по проекту'} за {fmtDate(shown.since)} — {fmtDate(shown.until)}
       </div>
       <p className="mb-3 text-xs text-muted">
         Постатейно: строка на модуль. Детали отдельных действий — в логах задач, здесь только итоги.
@@ -285,7 +318,7 @@ function ReportTab({ report, onExport }: { report: ClientReport | null; onExport
             </tr>
           </thead>
           <tbody>
-            {report.rows.map((r) => (
+            {shown.rows.map((r) => (
               <tr key={r.moduleKey} className="border-b border-line/50">
                 <td className="py-2 pr-3 text-fg">{r.title}</td>
                 <td className="py-2 pr-3 text-right tabular-nums text-muted">{fmt(r.tasks)}</td>
@@ -300,14 +333,14 @@ function ReportTab({ report, onExport }: { report: ClientReport | null; onExport
             ))}
             <tr className="font-semibold">
               <td className="py-2 pr-3 text-fg">ИТОГО</td>
-              <td className="py-2 pr-3 text-right tabular-nums text-fg">{fmt(report.totals.tasks)}</td>
+              <td className="py-2 pr-3 text-right tabular-nums text-fg">{fmt(shown.totals.tasks)}</td>
               <td className="py-2 pr-3" />
-              <td className="py-2 pr-3 text-right tabular-nums text-fg">{fmt(report.totals.actions)}</td>
-              <td className="py-2 pr-3 text-right tabular-nums text-fg">{fmt(report.totals.tokens)}</td>
+              <td className="py-2 pr-3 text-right tabular-nums text-fg">{fmt(shown.totals.actions)}</td>
+              <td className="py-2 pr-3 text-right tabular-nums text-fg">{fmt(shown.totals.tokens)}</td>
               <td
                 className="py-2 text-right tabular-nums text-amber-300"
-                title={`За действия ${fmtCoins(report.totals.actionCoins ?? 0)} + за ИИ ${fmtCoins(report.totals.tokenCoins ?? 0)}`}
-              >{report.totals.coins ? fmtCoins(report.totals.coins) : '—'}</td>
+                title={`За действия ${fmtCoins(shown.totals.actionCoins ?? 0)} + за ИИ ${fmtCoins(shown.totals.tokenCoins ?? 0)}`}
+              >{shown.totals.coins ? fmtCoins(shown.totals.coins) : '—'}</td>
             </tr>
           </tbody>
         </table>
@@ -402,6 +435,7 @@ function UsersTab({ report, onReload }: { report: UsersReport | null; onReload: 
               <th className="pb-2 pr-3 text-right font-medium">Токенов</th>
               <th className="pb-2 pr-3 text-right font-medium">Списано</th>
               <th className="pb-2 pr-3 text-right font-medium">На счету</th>
+              <th className="pb-2 pr-3 text-left font-medium">Подписка</th>
               <th className="pb-2 text-right font-medium">Доступ</th>
             </tr>
           </thead>
@@ -450,6 +484,15 @@ function UsersTab({ report, onReload }: { report: UsersReport | null; onReload: 
                       )}
                     </div>
                   </td>
+                  <td className="py-2 pr-3">
+                    {r.subscription
+                      ? (r.subscription.all
+                          ? <span className="text-xs text-muted" title="Набор не выбран — открыто всё">Все модули</span>
+                          : r.subscription.count
+                            ? <span className="cursor-help text-xs text-fg" title={r.subscription.titles.join(', ')}>{r.subscription.count} мод.</span>
+                            : <span className="text-xs text-muted">нет</span>)
+                      : <span className="text-xs text-muted">—</span>}
+                  </td>
                   <td className="py-2 text-right">
                     {real ? (
                       <button
@@ -466,7 +509,7 @@ function UsersTab({ report, onReload }: { report: UsersReport | null; onReload: 
                 </tr>,
                 isOpen ? (
                   <tr key={r.userId + '-where'} className="border-b border-line/50 bg-white/[.02]">
-                    <td colSpan={7} className="px-3 py-3">
+                    <td colSpan={8} className="px-3 py-3">
                       {!r.where.length && !r.log.length ? (
                         <span className="text-xs text-muted">За выбранный период ничего не запускал.</span>
                       ) : (
@@ -526,10 +569,220 @@ function UsersTab({ report, onReload }: { report: UsersReport | null; onReload: 
               <td className="py-2 pr-3 text-right tabular-nums text-amber-300">{fmtCoins(report.totals.spent)}</td>
               <td className="py-2 pr-3 text-right tabular-nums text-fg">{fmtCoins(report.totals.coins)}</td>
               <td />
+              <td />
             </tr>
           </tbody>
         </table>
       </div>
+    </Card>
+  )
+}
+
+/**
+ * §5.3: «что и сколько куплено» — пополнения кошельков по людям.
+ *
+ * Отдельно от «Пользователей» (там сколько ПОТРАЧЕНО): владельца интересуют обе
+ * стороны счёта — сколько человек занёс и сколько сжёг. Списания сюда не идут, это
+ * не покупка; здесь только положительные операции — начисления и пополнения.
+ */
+function PurchasesTab({ p }: { p: Purchases | null }) {
+  const [open, setOpen] = useState<string | null>(null)
+  if (!p) return <Card className="p-6 text-sm text-muted">Загрузка…</Card>
+
+  const fmtDt = (ts: number) => ts ? new Date(ts).toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : '—'
+
+  // Что и когда купил конкретный человек: его пополнения (⚡) и покупки планов ($)
+  // одной лентой по времени. Раскрывается по клику на строку.
+  const userOps = (uid: string) => {
+    const coins = (p.feed || []).filter((f) => f.userId === uid).map((f) => ({ ts: f.ts, kind: 'coin' as const, amount: f.amount, label: f.reason || 'пополнение' }))
+    const pl = (p.plans?.feed || []).filter((f) => f.userId === uid).map((f) => ({ ts: f.ts, kind: 'plan' as const, amount: f.amount, label: f.modulesCount < 0 ? 'все модули' : `${f.modulesCount} мод.` }))
+    return [...coins, ...pl].sort((a, b) => b.ts - a.ts)
+  }
+
+  return (
+    <div className="space-y-3">
+      <div className="grid gap-3 sm:grid-cols-3">
+        <Card className="p-4">
+          <div className="mb-1 flex items-center gap-2 text-xs text-muted"><ShoppingCart size={14} /> Пополнено за период</div>
+          <div className="font-display text-2xl font-bold text-spark-300">{fmtCoins(p.boughtTotal)} ⚡</div>
+        </Card>
+        <Card className="p-4">
+          <div className="mb-1 text-xs text-muted">Операций пополнения</div>
+          <div className="font-display text-2xl font-bold text-fg">{fmt(p.count)}</div>
+        </Card>
+        <Card className="p-4">
+          <div className="mb-1 text-xs text-muted">Кошельков пополняли</div>
+          <div className="font-display text-2xl font-bold text-fg">{fmt(p.rows.length)}</div>
+        </Card>
+      </div>
+
+      {/* База оплат: любой платёж за любой диапазон дат — «месяц назад» тоже. */}
+      <PaymentsExplorer />
+
+      <Card className="p-4">
+        <div className="mb-1 text-sm font-semibold text-fg">Кто сколько занёс (монеты ⚡)</div>
+        <div className="mb-2 text-xs text-muted">Нажмите на пользователя — увидите, что и когда он покупал.</div>
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-line text-left text-xs text-muted">
+                <th className="pb-2 pr-3 font-medium">Пользователь</th>
+                <th className="pb-2 pr-3 text-right font-medium">Пополнений</th>
+                <th className="pb-2 pr-3 text-right font-medium">Всего монет</th>
+                <th className="pb-2 text-right font-medium">Последнее</th>
+              </tr>
+            </thead>
+            <tbody>
+              {p.rows.map((r) => {
+                const isOpen = open === r.userId
+                const ops = isOpen ? userOps(r.userId) : []
+                return [
+                  <tr
+                    key={r.userId}
+                    className="cursor-pointer border-b border-line/50 hover:bg-white/[.02]"
+                    onClick={() => setOpen(isOpen ? null : r.userId)}
+                  >
+                    <td className="py-2 pr-3">
+                      <div className="flex items-center gap-1.5">
+                        <ChevronDown size={13} className={cn('shrink-0 text-muted transition-transform', isOpen && 'rotate-180')} />
+                        <span className="min-w-0">
+                          <span className="block truncate text-fg">{r.name}</span>
+                          {!!r.email && <span className="block truncate text-[11px] text-muted">{r.email}</span>}
+                        </span>
+                      </div>
+                    </td>
+                    <td className="py-2 pr-3 text-right tabular-nums text-muted">{fmt(r.count)}</td>
+                    <td className="py-2 pr-3 text-right font-semibold tabular-nums text-spark-300">{fmtCoins(r.coins)} ⚡</td>
+                    <td className="py-2 text-right tabular-nums text-faint">{fmtDt(r.lastAt)}</td>
+                  </tr>,
+                  isOpen ? (
+                    <tr key={r.userId + '-ops'} className="border-b border-line/50 bg-white/[.02]">
+                      <td colSpan={4} className="px-3 py-2">
+                        {!ops.length ? (
+                          <span className="text-xs text-muted">Покупок за период нет.</span>
+                        ) : (
+                          <div className="max-h-56 space-y-1 overflow-y-auto pr-1">
+                            {ops.map((o, i) => (
+                              <div key={o.ts + '-' + i} className="flex items-baseline gap-x-2 border-b border-line/30 pb-1 text-xs last:border-0">
+                                <span className={cn('rounded px-1 text-[10px] font-bold', o.kind === 'plan' ? 'bg-iris-500/15 text-iris-300' : 'bg-spark-500/12 text-spark-300')}>
+                                  {o.kind === 'plan' ? 'план' : 'монеты'}
+                                </span>
+                                <span className={cn('font-semibold tabular-nums', o.kind === 'plan' ? 'text-fg' : 'text-spark-300')}>
+                                  {o.kind === 'plan' ? `${p.plans.currency}${o.amount}` : `+${fmtCoins(o.amount)} ⚡`}
+                                </span>
+                                <span className="min-w-0 flex-1 truncate text-muted">{o.label}</span>
+                                <span className="ml-auto shrink-0 tabular-nums text-faint">{fmtDt(o.ts)}</span>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </td>
+                    </tr>
+                  ) : null,
+                ]
+              })}
+              {!p.rows.length && (
+                <tr><td colSpan={4} className="py-3 text-center text-xs text-muted">Пополнений пока нет</td></tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </Card>
+    </div>
+  )
+}
+
+/**
+ * §5.1: провайдер по БАЗЕ ОПЛАТ (SQLite-индекс). Диапазон дат from–to, тип (монеты/планы),
+ * поиск и пагинация — «найти покупку за месяц назад» без упора в срез последних N.
+ */
+function PaymentsExplorer() {
+  const [from, setFrom] = useState('')
+  const [to, setTo] = useState('')
+  const [kind, setKind] = useState<'' | 'coins' | 'plan'>('')
+  const [q, setQ] = useState('')
+  const [page, setPage] = useState(0)
+  const [data, setData] = useState<PaymentsResult | null>(null)
+  const [loading, setLoading] = useState(false)
+  const LIMIT = 50
+
+  const fromTs = from ? new Date(from + 'T00:00:00').getTime() : 0
+  const toTs = to ? new Date(to + 'T23:59:59.999').getTime() : 0
+
+  useEffect(() => { setPage(0) }, [from, to, kind, q])
+  useEffect(() => {
+    let alive = true
+    setLoading(true)
+    fetchPayments({ from: fromTs, to: toTs, kind, q: q.trim(), limit: LIMIT, offset: page * LIMIT })
+      .then((d) => { if (alive) setData(d) })
+      .catch(() => { if (alive) setData(null) })
+      .finally(() => { if (alive) setLoading(false) })
+    return () => { alive = false }
+  }, [fromTs, toTs, kind, q, page])
+
+  const fmtDt = (ts: number) => ts ? new Date(ts).toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : '—'
+  const s = data?.summary
+  const total = data?.total ?? 0
+  const items = data?.items ?? []
+  const shownFrom = total ? page * LIMIT + 1 : 0
+  const shownTo = Math.min(total, (page + 1) * LIMIT)
+  const kinds: { v: '' | 'coins' | 'plan'; label: string }[] = [
+    { v: '', label: 'Все' }, { v: 'coins', label: 'Монеты ⚡' }, { v: 'plan', label: 'Планы $' },
+  ]
+
+  return (
+    <Card className="p-4">
+      <div className="mb-3 flex flex-wrap items-center gap-2">
+        <span className="text-sm font-semibold text-fg">База оплат</span>
+        {s && (
+          <span className="text-xs text-muted">
+            {s.coinsCount} поп. на {fmtCoins(s.coinsTotal)} ⚡ · {s.planCount} планов на ${s.planTotal}
+          </span>
+        )}
+        <RefreshCw size={13} className={cn('ml-auto text-muted', loading && 'animate-spin')} />
+      </div>
+
+      <div className="mb-3 flex flex-wrap items-end gap-2">
+        <label className="text-xs text-muted">С<br /><input type="date" value={from} onChange={(e) => setFrom(e.target.value)} className="input h-9 text-sm" /></label>
+        <label className="text-xs text-muted">По<br /><input type="date" value={to} onChange={(e) => setTo(e.target.value)} className="input h-9 text-sm" /></label>
+        <div className="flex rounded-lg border border-line bg-surface p-0.5 text-xs">
+          {kinds.map((k) => (
+            <button key={k.v} onClick={() => setKind(k.v)} className={cn('h-8 rounded-md px-2.5 font-semibold', kind === k.v ? 'bg-spark-500/15 text-spark-300' : 'text-muted hover:text-fg')}>{k.label}</button>
+          ))}
+        </div>
+        <div className="relative min-w-0 flex-1 sm:max-w-xs">
+          <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted" />
+          <input value={q} onChange={(e) => setQ(e.target.value)} className="input h-9 pl-9 text-sm" placeholder="Имя, почта или причина…" />
+        </div>
+      </div>
+
+      <div className="max-h-80 space-y-1 overflow-y-auto pr-1">
+        {items.map((r) => (
+          <div key={r.id} className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5 border-b border-line/30 pb-1 text-xs last:border-0">
+            <span className={cn('rounded px-1 text-[10px] font-bold', r.kind === 'plan' ? 'bg-iris-500/15 text-iris-300' : 'bg-spark-500/12 text-spark-300')}>
+              {r.kind === 'plan' ? 'план' : 'монеты'}
+            </span>
+            <span className="text-fg">{r.name}</span>
+            {!!r.email && <span className="text-muted">{r.email}</span>}
+            <span className={cn('font-semibold tabular-nums', r.kind === 'plan' ? 'text-fg' : 'text-spark-300')}>
+              {r.kind === 'plan' ? `$${r.amount_fiat}` : `+${fmtCoins(r.coins ?? 0)} ⚡`}
+            </span>
+            {!!r.reason && <span className="min-w-0 flex-1 truncate text-muted">{r.reason}</span>}
+            <span className="ml-auto shrink-0 tabular-nums text-faint">{fmtDt(r.ts)}</span>
+          </div>
+        ))}
+        {!items.length && <div className="py-3 text-center text-xs text-muted">{loading ? 'Загрузка…' : 'Ничего не найдено за диапазон'}</div>}
+      </div>
+
+      {total > LIMIT && (
+        <div className="mt-3 flex items-center justify-between text-xs text-muted">
+          <span>Показаны {shownFrom}–{shownTo} из {total}</span>
+          <div className="flex gap-1">
+            <button disabled={page === 0} onClick={() => setPage((n) => Math.max(0, n - 1))} className="btn-ghost h-7 px-2 disabled:opacity-40">← Назад</button>
+            <button disabled={shownTo >= total} onClick={() => setPage((n) => n + 1)} className="btn-ghost h-7 px-2 disabled:opacity-40">Вперёд →</button>
+          </div>
+        </div>
+      )}
     </Card>
   )
 }
@@ -811,61 +1064,3 @@ function DailyTab({ daily }: { daily: DailySpend | null }) {
   )
 }
 
-/**
- * Что оплачено сейчас. Отвечает на «за что мы платим каждый месяц» — вопрос, на
- * который вся остальная статистика не отвечает: она про расход монет, а подписка
- * это отдельная, постоянная строка затрат.
- *
- * Отдельно оговариваем случай «набор не выбирали»: открыто всё, но платить за такое
- * пространство ещё не начинали, и показывать 120.25 $ как факт было бы враньём.
- */
-function SubscriptionCard({ s }: { s: NonNullable<AdminOverview['subscription']> }) {
-  return (
-    <Card className="mt-3 p-4">
-      <div className="mb-2 flex flex-wrap items-baseline gap-x-3 gap-y-1">
-        <span className="text-sm font-semibold text-fg">Что оплачено</span>
-        <span className="font-display text-xl font-bold text-fg">
-          {s.cost.sum} {s.currency}<span className="text-sm font-normal text-muted"> / мес</span>
-        </span>
-        {s.cost.discount > 0 && (
-          <>
-            <span className="text-sm text-muted line-through">{s.cost.full} {s.currency}</span>
-            <span className="rounded-md bg-spark-500/15 px-1.5 py-0.5 text-[10px] font-bold text-spark-300">
-              −{Math.round(s.cost.discount * 100)} %
-            </span>
-          </>
-        )}
-        <span className="ml-auto text-xs text-muted">
-          {s.changedAt ? `изменена ${new Date(s.changedAt).toLocaleString('ru-RU')}` : 'ни разу не меняли'}
-        </span>
-        {/* Управление подпиской живёт в «Мои модули» — отсюда до него один клик,
-            иначе карточка отвечает «что оплачено», но не «где это поменять». */}
-        <Link to="/panel/user/subscription" className="btn-ghost h-8 shrink-0 border border-line text-xs">
-          <Package size={13} /> Мои модули
-        </Link>
-      </div>
-
-      {!s.explicit && (
-        <div className="mb-3 rounded-xl border border-amber-500/25 bg-amber-500/8 px-3 py-2 text-xs text-amber-200/90">
-          Набор модулей не выбирали — открыто всё. Это не значит «куплено всё»: сумма ниже
-          показывает, во сколько такой набор обошёлся бы. Выберите набор в «Мои модули»,
-          и ограничение начнёт действовать.
-        </div>
-      )}
-
-      <div className="grid gap-x-6 gap-y-1 sm:grid-cols-2 lg:grid-cols-3">
-        {s.modules.map((m) => (
-          <div key={m.key} className="flex items-baseline justify-between gap-3 border-b border-line/40 py-1 text-sm">
-            <span className="truncate text-muted">{m.title}</span>
-            <span className="shrink-0 tabular-nums text-fg">{m.price} {s.currency}</span>
-          </div>
-        ))}
-      </div>
-
-      <p className="mt-3 text-xs text-muted">
-        Подписка одна на рабочее пространство: открывает модули всем, кому их разрешила роль.
-        Монеты при этом у каждого свои — за расход платит тот, кто запускает.
-      </p>
-    </Card>
-  )
-}

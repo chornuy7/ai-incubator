@@ -35,6 +35,22 @@ const SERVICE_AI_TITLES = {
 const DAY_MS = 24 * 60 * 60 * 1000
 
 /**
+ * Модуль → род активности для личной статистики. Комментинг даёт комментарии,
+ * масс-реакции — реакции, чат/диалоги — сообщения и т. д. Это честный маппинг на
+ * реальные действия задач: раньше «Моя статистика» рисовала эти же цифры моком.
+ * Модули без явной категории (прогрев, парсеры, автопостинг) в KPI активности не
+ * попадают — их вклад виден в разрезе «куда идёт работа».
+ */
+const ACTIVITY_OF_MODULE = {
+  'neuro-commenting': 'comments',
+  'mass-react': 'reactions',
+  'neuro-chatting': 'messages',
+  'neuro-dialogs': 'messages',
+  'mass-looking': 'views',
+  mailing: 'pm',
+}
+
+/**
  * Человекочитаемые имена модулей для отчёта клиенту. Держим здесь, а не тянем с фронта:
  * отчёт должен собираться на сервере целиком, иначе «инвойс» нельзя будет отдать
  * ни письмом, ни выгрузкой — только из открытой вкладки.
@@ -479,6 +495,18 @@ export async function usersReport(opts = {}) {
     readLedger({ since: since || undefined, limit: 100000 }).catch(() => []),
   ])
 
+  // Подписка каждого: какие модули ему открыты. 'all' — набор не выбран (открыто всё).
+  // Нужно админу, чтобы прямо в списке видеть, кто на что подписан.
+  const modsByUser = {}
+  await Promise.all(users.map(async (u) => {
+    try { modsByUser[u.id] = (await getBalance(u.id)).modules } catch { modsByUser[u.id] = 'all' }
+  }))
+  const subOf = (mods) => {
+    if (mods === 'all' || mods == null) return { all: true, count: 0, titles: [] }
+    const arr = Array.isArray(mods) ? mods : []
+    return { all: false, count: arr.length, titles: arr.map((k) => moduleTitle(k)) }
+  }
+
   // Собираем задачи один раз и раскладываем по владельцу: задач много, юзеров мало.
   const byUser = new Map()
   const taskOwner = new Map() // taskId → userId, чтобы привязать старые записи журнала
@@ -546,6 +574,7 @@ export async function usersReport(opts = {}) {
       name: u.name || '',
       active: u.active !== false,
       coins: round3(coins[u.id] ?? 0),
+      subscription: subOf(modsByUser[u.id]),
       tasks: st.tasks,
       actions: st.actions,
       spent: st.spent,
@@ -561,7 +590,7 @@ export async function usersReport(opts = {}) {
     rows.push({
       userId: id,
       email: id === '—' ? 'без владельца (старые задачи)' : `удалённый пользователь ${id}`,
-      name: '', active: false, coins: 0,
+      name: '', active: false, coins: 0, subscription: null,
       tasks: st.tasks, actions: st.actions, spent: st.spent, tokens: st.tokens,
       where: where(st.byModule),
       log: st.log.sort((a, b) => b.at - a.at).slice(0, 100),
@@ -581,14 +610,172 @@ export async function usersReport(opts = {}) {
 }
 
 /**
+ * §5.3: ЛИЧНАЯ статистика одного пользователя — его задачи, действия, расходы и
+ * активность по модулям. Зеркалит usersReport, но для «своего» среза: сюда не
+ * попадают ни другие люди, ни деньги пространства — только то, что запускал и
+ * тратил он сам. Демо (без сессии) сюда не ходит — там фронт показывает моки.
+ * @param {string} userId @param {{since?:number}} [opts]
+ */
+export async function myStats(userId, opts = {}) {
+  const uid = String(userId || '')
+  const since = Number(opts.since) || 0
+  const dayKey = (ts) => new Date(ts).toISOString().slice(0, 10)
+
+  const byModule = {}
+  const activity = { comments: 0, reactions: 0, messages: 0, views: 0, pm: 0 }
+  const daily = new Map()
+  const log = []
+  let tasks = 0, actions = 0, spent = 0, tokens = 0
+  const myTaskIds = new Set()
+
+  const touchDay = (k) => {
+    if (!daily.has(k)) daily.set(k, { day: k, comments: 0, reactions: 0, messages: 0, actions: 0, tokens: 0, coins: 0 })
+    return daily.get(k)
+  }
+  const mod = (key) => {
+    if (!byModule[key]) byModule[key] = { tasks: 0, actions: 0, tokens: 0, spent: 0 }
+    return byModule[key]
+  }
+
+  for (const key of listModuleKeys()) {
+    const store = getModuleStore(key)
+    if (!store) continue
+    let list = []
+    try { list = await store.listTasks() } catch { continue }
+    for (const t of list) {
+      if (t.userId !== uid) continue // только свои задачи
+      if ((Number(t.createdAt) || 0) < since) continue
+      myTaskIds.add(t.id)
+      const acts = Number(t.progress?.done) || 0
+      const sp = Number(t.spentCoins) || 0
+      tasks += 1; actions += acts; spent = round3(spent + sp)
+      const m = mod(key); m.tasks += 1; m.actions += acts; m.spent = round3(m.spent + sp)
+      const cat = ACTIVITY_OF_MODULE[key]
+      const d = touchDay(dayKey(Number(t.createdAt) || Date.now()))
+      d.actions += acts; d.coins = round3(d.coins + sp)
+      if (cat) { activity[cat] += acts; d[cat] += acts }
+      log.push({
+        id: t.id, moduleKey: key, title: moduleTitle(key), status: t.status,
+        actions: acts, spent: sp, at: Number(t.createdAt) || 0, finishedAt: Number(t.updatedAt) || 0,
+        errors: Number(t.errors) || 0,
+      })
+    }
+  }
+
+  // Токены ИИ: у свежих записей журнала есть userId, у старых — только taskId,
+  // который мы уже собрали в myTaskIds. Иначе ранний расход выглядел бы ничьим.
+  const ledger = await readLedger({ since: since || undefined, limit: 100000 }).catch(() => [])
+  for (const e of ledger) {
+    if (!(e.userId === uid || (e.taskId && myTaskIds.has(e.taskId)))) continue
+    const tk = Number(e.tokens) || 0
+    tokens += tk
+    if (e.module) mod(e.module).tokens += tk
+    const d = touchDay(dayKey(Number(e.ts) || Date.now()))
+    d.tokens += tk; d.coins = round3(d.coins + (Number(e.coins) || 0))
+  }
+
+  const where = Object.entries(byModule)
+    .map(([key, v]) => ({ moduleKey: key, title: moduleTitle(key), ...v }))
+    .sort((a, b) => b.actions - a.actions || b.tokens - a.tokens)
+
+  const { coins } = await getBalance(uid).catch(() => ({ coins: 0 }))
+  log.sort((a, b) => b.at - a.at)
+
+  return {
+    since,
+    coins: round3(coins),
+    totals: { tasks, actions, spent, tokens },
+    activity,
+    where,
+    daily: [...daily.values()].sort((a, b) => a.day.localeCompare(b.day)),
+    log: log.slice(0, 200),
+  }
+}
+
+/**
+ * §5.3: что и сколько «куплено» — ПОПОЛНЕНИЯ кошельков (положительные операции)
+ * по каждому пользователю. Отвечает на «кто сколько занёс», отдельно от «кто
+ * сколько потратил» (это usersReport): списания — не покупка и сюда не идут.
+ * @param {{since?:number}} [opts]
+ */
+export async function purchasesReport(opts = {}) {
+  const since = Number(opts.since) || 0
+  const { walletHistory } = await import('./balance.js')
+  const [rowsRaw, users] = await Promise.all([
+    walletHistory({ since: since || undefined, limit: 1000 }).catch(() => []),
+    listUsers().catch(() => []),
+  ])
+  const nameOf = new Map(users.map((u) => [u.id, u.name || u.email || u.id]))
+  const emailOf = new Map(users.map((u) => [u.id, u.email || '']))
+
+  const byUser = new Map()
+  const feed = []
+  let boughtTotal = 0
+  for (const r of rowsRaw) {
+    const amount = Number(r.amount) || 0
+    if (amount <= 0) continue // только пополнения/начисления, не списания
+    const id = r.userId || '—'
+    if (!byUser.has(id)) {
+      byUser.set(id, { userId: id, name: nameOf.get(id) || (id === '__default' ? 'Системный кошелёк' : id), email: emailOf.get(id) || '', count: 0, coins: 0, lastAt: 0 })
+    }
+    const u = byUser.get(id)
+    u.count += 1; u.coins = round3(u.coins + amount); u.lastAt = Math.max(u.lastAt, Number(r.ts) || 0)
+    boughtTotal = round3(boughtTotal + amount)
+    feed.push({ ts: Number(r.ts) || 0, userId: id, name: u.name, email: u.email, amount, reason: r.reason || '' })
+  }
+
+  // Покупки планов ($): события подписки из журнала. Каждая — покупка ИЛИ продление
+  // набора модулей; сумма в валюте подписки, а не в монетах. Набор «all» (не выбирали)
+  // это не покупка — пропускаем.
+  const { CURRENCY } = await import('./pricing.js')
+  const auditRows = await readAudit({ action: 'subscription.set', limit: 5000 }).catch(() => [])
+  const planFeed = []
+  let planTotal = 0
+  for (const e of auditRows) {
+    const ts = Number(e.ts) || 0
+    if (since && ts < since) continue
+    const sum = Number(e.meta?.cost?.sum) || 0
+    if (sum <= 0) continue // 'all'/пустой набор — не покупка
+    const id = e.initiator && e.initiator !== 'system' ? e.initiator : '—'
+    const mods = e.meta?.modules
+    planTotal = round3(planTotal + sum)
+    planFeed.push({
+      ts,
+      userId: id,
+      name: nameOf.get(id) || (id === '—' ? 'система' : id),
+      email: emailOf.get(id) || '',
+      amount: sum,
+      modulesCount: mods === 'all' ? -1 : (Array.isArray(mods) ? mods.length : 0),
+      reason: e.reason || '',
+    })
+  }
+  planFeed.sort((a, b) => b.ts - a.ts)
+
+  return {
+    since,
+    boughtTotal,
+    count: feed.length,
+    rows: [...byUser.values()].sort((a, b) => b.coins - a.coins),
+    // Отдаём до 500 последних операций за период — иначе «глянуть месяц назад»
+    // упирается в срез, и поиск не находит то, что дальше сотни. Полноценная глубокая
+    // история — отдельная задача (диапазон дат from–to + пагинация).
+    feed: feed.sort((a, b) => b.ts - a.ts).slice(0, 500),
+    plans: { currency: CURRENCY, total: planTotal, count: planFeed.length, feed: planFeed.slice(0, 500) },
+  }
+}
+
+/**
  * §5.3/E2: «инвойс» — постатейный отчёт клиенту за период.
  * Строка = модуль: сколько задач, сколько действий, сколько израсходовано.
  * Никаких мелочей вроде отдельных комментариев — заказчик просил именно постатейно.
- * @param {{since?:number, until?:number}} [opts]
+ * @param {{since?:number, until?:number, userId?:string}} [opts]
  */
 export async function clientReport(opts = {}) {
   const since = Number(opts.since) || Date.now() - 30 * DAY_MS
   const until = Number(opts.until) || Date.now()
+  // Отчёт по КОНКРЕТНОМУ клиенту (клиентов может быть больше одного): считаем только
+  // его задачи и его расход ИИ. Пусто — общий отчёт по всему проекту.
+  const userId = opts.userId ? String(opts.userId) : ''
 
   // Журнал ИИ читаем ОДИН раз и режем по периоду сами: tokenSummary на каждый
   // модуль перечитывал весь файл по разу на модуль, а верхнюю границу `until`
@@ -596,6 +783,7 @@ export async function clientReport(opts = {}) {
   const ledger = (await readLedger({ since, limit: 100000 }).catch(() => []))
     .filter((e) => {
       const ts = Number(e.ts) || 0
+      if (userId && e.userId !== userId) return false
       return ts >= since && ts <= until
     })
   const aiByModule = new Map()
@@ -616,6 +804,7 @@ export async function clientReport(opts = {}) {
     try { list = await store.listTasks() } catch { continue }
     const inPeriod = list.filter((t) => {
       const ts = Number(t.createdAt) || 0
+      if (userId && t.userId !== userId) return false
       return ts >= since && ts <= until
     })
     // Модуль без новых задач мог всё равно жечь токены — старой, ещё идущей

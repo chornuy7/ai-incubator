@@ -455,6 +455,64 @@ app.get('/api/admin/users-report', async (req, res) => {
   } catch (err) { res.status(500).json({ ok: false, error: err instanceof Error ? err.message : 'Ошибка' }) }
 })
 
+/** §5.3: что и сколько куплено — пополнения кошельков по людям. Только админ. */
+app.get('/api/admin/purchases', async (req, res) => {
+  try {
+    if (!(await isAdminRequest(req))) return res.status(403).json({ ok: false, error: 'Статистика доступна только администратору' })
+    const { purchasesReport } = await import('./adminStats.js')
+    res.json({ ok: true, purchases: await purchasesReport({ since: req.query.since ? Number(req.query.since) : undefined }) })
+  } catch (err) { res.status(500).json({ ok: false, error: err instanceof Error ? err.message : 'Ошибка' }) }
+})
+
+/**
+ * §5.1: база оплат — все платежи с диапазоном дат (from..to) и пагинацией. Только админ.
+ * Индекс пересобирается из источников истины при каждом запросе — витрина не расходится
+ * с деньгами. Имена/почты джойним из users на лету (в БД не храним — они меняются).
+ */
+app.get('/api/admin/payments', async (req, res) => {
+  try {
+    if (!(await isAdminRequest(req))) return res.status(403).json({ ok: false, error: 'Оплаты доступны только администратору' })
+    const { syncPayments, queryPayments, paymentsSummary } = await import('./payments.js')
+    await syncPayments()
+    const q = req.query
+    const opts = {
+      from: q.from ? Number(q.from) : 0,
+      to: q.to ? Number(q.to) : 0,
+      userId: q.userId ? String(q.userId) : '',
+      kind: q.kind ? String(q.kind) : '',
+      q: q.q ? String(q.q) : '',
+      limit: q.limit ? Number(q.limit) : 50,
+      offset: q.offset ? Number(q.offset) : 0,
+    }
+    const { total, rows } = queryPayments(opts)
+    const summary = paymentsSummary({ from: opts.from, to: opts.to })
+    const { listUsers } = await import('./users.js')
+    const users = await listUsers().catch(() => [])
+    const nameOf = new Map(users.map((u) => [u.id, u.name || u.email || u.id]))
+    const emailOf = new Map(users.map((u) => [u.id, u.email || '']))
+    const items = rows.map((r) => ({
+      ...r,
+      name: nameOf.get(r.user_id) || (r.user_id === '__default' ? 'Системный кошелёк' : r.user_id),
+      email: emailOf.get(r.user_id) || '',
+    }))
+    res.json({ ok: true, payments: { total, items, summary, limit: opts.limit, offset: opts.offset } })
+  } catch (err) { res.status(500).json({ ok: false, error: err instanceof Error ? err.message : 'Ошибка' }) }
+})
+
+/**
+ * §5.3: ЛИЧНАЯ статистика — своя работа и свои расходы. Гейта админа тут нет: это
+ * данные самого пользователя, идентифицируем по X-User-Id. Без него (демо/дев)
+ * отдаём пусто — фронт в этом случае показывает демо-моки, а не реальный срез.
+ */
+app.get('/api/me/stats', async (req, res) => {
+  try {
+    const me = req.header('x-user-id')
+    if (!me) return res.status(400).json({ ok: false, error: 'Нет сессии' })
+    const { myStats } = await import('./adminStats.js')
+    res.json({ ok: true, stats: await myStats(me, { since: req.query.since ? Number(req.query.since) : undefined }) })
+  } catch (err) { res.status(500).json({ ok: false, error: err instanceof Error ? err.message : 'Ошибка' }) }
+})
+
 app.get('/api/admin/report', async (req, res) => {
   try {
     if (!(await isAdminRequest(req))) return res.status(403).json({ ok: false, error: 'Отчёт доступен только администратору' })
@@ -462,6 +520,7 @@ app.get('/api/admin/report', async (req, res) => {
     const report = await clientReport({
       since: req.query.since ? Number(req.query.since) : undefined,
       until: req.query.until ? Number(req.query.until) : undefined,
+      userId: req.query.userId ? String(req.query.userId) : undefined,
     })
     res.json({ ok: true, report })
   } catch (err) { res.status(500).json({ ok: false, error: err instanceof Error ? err.message : 'Ошибка' }) }
@@ -593,7 +652,8 @@ app.post('/api/subscription', async (req, res) => {
     const { setUserModules } = await import('./balance.js')
     // Админ без явного userId правит ОБЩИЙ набор; всё остальное — личная покупка.
     const personal = !(admin && !req.body?.userId)
-    const balance = personal ? await setUserModules(list, target) : await setModules(list, target)
+    const months = Number(req.body?.months) || 0
+    const balance = personal ? await setUserModules(list, target, { months }) : await setModules(list, target, { months })
     await appendAudit({
       action: 'subscription.set',
       module: 'billing',

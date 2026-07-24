@@ -232,6 +232,22 @@ export function RolesPage() {
                 </div>
               ) : catalog ? (
                 <div className="flex flex-col gap-5">
+                  {/* Роль «без оплаты»: доступ к модулям даёт роль в обход подписки (тест/модер). */}
+                  <section className="rounded-lg border border-iris-500/25 bg-iris-500/[.06] p-3">
+                    <label className="flex cursor-pointer items-start gap-3">
+                      <input
+                        type="checkbox"
+                        checked={!!perms.freeAccess}
+                        onChange={(e) => { setPerms((s) => ({ ...s, freeAccess: e.target.checked })); mark() }}
+                        className="mt-0.5 h-4 w-4 rounded border-line accent-spark-500"
+                      />
+                      <span className="min-w-0">
+                        <span className="block text-sm font-semibold text-fg">Тестовый доступ — без оплаты</span>
+                        <span className="block text-xs text-muted">Роль видит и запускает разрешённые ей модули в обход подписки. Для тестеров и модераторов, которым не нужно платить (монеты за действия всё равно расходуются).</span>
+                      </span>
+                    </label>
+                  </section>
+
                   {/* Модули + блоки */}
                   <section>
                     <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-white/40">Модули и блоки</h3>

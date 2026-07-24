@@ -69,15 +69,27 @@ export function modulesAllow(modules, moduleKey) {
  * Записать ОБЩИЙ набор пространства — то, что покупает владелец для всех.
  * @param {string[]|'all'} modules @param {string} [userId] чей баланс вернуть в ответе
  */
-export async function setModules(modules, userId) {
+export async function setModules(modules, userId, opts = {}) {
   const list = modules === 'all' ? 'all' : [...new Set((modules || []).map(String).filter(Boolean))]
+  const expiresAt = subExpiry(opts)
   await mutateJson(BALANCE_FILE(), (all) => {
     const next = { ...(all || {}) }
     delete next.coins; delete next.planId; delete next.updatedAt
-    next[SUBSCRIPTION_KEY] = { modules: list, updatedAt: Date.now() }
+    next[SUBSCRIPTION_KEY] = { modules: list, expiresAt, updatedAt: Date.now() }
     return next
   })
   return getBalance(userId)
+}
+
+/**
+ * Срок подписки: покупка на N месяцев → дата окончания. Демо без периода — null
+ * («бессрочно», пока не подключён провайдер). 30 дней в месяце — витринное допущение.
+ * @param {{months?:number}} opts
+ */
+const DAY = 24 * 60 * 60 * 1000
+function subExpiry(opts = {}) {
+  const months = Number(opts?.months) || 0
+  return months > 0 ? Date.now() + Math.round(months * 30 * DAY) : null
 }
 
 /**
@@ -86,14 +98,15 @@ export async function setModules(modules, userId) {
  * пользователи пространства не задеты.
  * @param {string[]|'all'} modules @param {string} userId
  */
-export async function setUserModules(modules, userId) {
+export async function setUserModules(modules, userId, opts = {}) {
   if (!userId) throw new Error('Личная подписка требует пользователя')
   const list = modules === 'all' ? 'all' : [...new Set((modules || []).map(String).filter(Boolean))]
+  const expiresAt = subExpiry(opts)
   const k = key(userId)
   await mutateJson(BALANCE_FILE(), (all) => {
     const next = { ...(all || {}) }
     delete next.coins; delete next.planId; delete next.updatedAt
-    next[k] = { ...(next[k] || {}), modules: list, updatedAt: Date.now() }
+    next[k] = { ...(next[k] || {}), modules: list, expiresAt, updatedAt: Date.now() }
     return next
   })
   return getBalance(userId)
@@ -131,10 +144,12 @@ export async function getBalance(userId) {
     plan: PLANS[planId],
     // Набор модулей: СВОЙ (клиент купил лично) перекрывает общий на пространство.
     // Клиент, выбравший «парсер + комментинг за 20», видит свои два модуля, а
-    // сотрудник без личной покупки работает внутри купленного владельцем.
+    // сотрудник без личной покупки работает внутри купленного владельцем. Срок
+    // подписки (expiresAt) берём из того же источника, что и набор.
     modules: saved?.modules !== undefined
       ? saved.modules
       : ((all && all[SUBSCRIPTION_KEY]?.modules) ?? DEFAULT_MODULES),
+    expiresAt: (saved?.modules !== undefined ? saved?.expiresAt : (all && all[SUBSCRIPTION_KEY]?.expiresAt)) ?? null,
     coins: normCoins(saved?.coins ?? DEFAULT_STATE.coins),
     updatedAt: Number(saved?.updatedAt) || 0,
   }
