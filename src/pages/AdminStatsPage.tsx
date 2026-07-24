@@ -1,6 +1,6 @@
 import { coins as fmtCoins, cn } from '@/shared/lib/utils'
 import { useEffect, useMemo, useState } from 'react'
-import { BarChart3, Users, ListChecks, Coins, Download, RefreshCw, AlertTriangle, Contact, Power, ChevronDown, Activity, Plus, Radar, Package } from 'lucide-react'
+import { BarChart3, Users, ListChecks, Coins, Download, RefreshCw, AlertTriangle, Contact, Power, ChevronDown, Activity, Plus, Radar, Package, Search } from 'lucide-react'
 import { PageHeader, Card, Segmented, EmptyState } from '@/shared/ui'
 import { useApp } from '@/mocks/store'
 import {
@@ -21,10 +21,17 @@ import { promptDialog } from '@/shared/lib/dialog'
  * с тем, что видит оператор, здесь худшее из возможного.
  */
 
+/**
+ * `days: 0` — «всё время»: since уходит в 0, а не «сегодня минус ноль дней».
+ * Без этого варианта нельзя ответить на «сколько он потратил всего», а именно это
+ * и спрашивают, когда разбирают счёт.
+ */
 const PERIODS = [
+  { label: 'День', days: 1 },
   { label: '7 дней', days: 7 },
   { label: '30 дней', days: 30 },
   { label: '90 дней', days: 90 },
+  { label: 'Всё время', days: 0 },
 ]
 
 const STATUS_RU: Record<string, string> = {
@@ -40,7 +47,7 @@ const fmtDate = (ts: number) => new Date(ts).toLocaleDateString('ru-RU')
 export function AdminStatsPage() {
   const pushToast = useApp((s) => s.pushToast)
   const [tab, setTab] = useState(0)
-  const [periodIdx, setPeriodIdx] = useState(1)
+  const [periodIdx, setPeriodIdx] = useState(2)
   const [overview, setOverview] = useState<AdminOverview | null>(null)
   const [report, setReport] = useState<ClientReport | null>(null)
   const [users, setUsers] = useState<UsersReport | null>(null)
@@ -51,7 +58,10 @@ export function AdminStatsPage() {
   const [loading, setLoading] = useState(true)
   const [denied, setDenied] = useState(false)
 
-  const since = useMemo(() => Date.now() - PERIODS[periodIdx].days * 24 * 60 * 60 * 1000, [periodIdx])
+  const since = useMemo(() => {
+    const d = PERIODS[periodIdx].days
+    return d ? Date.now() - d * 24 * 60 * 60 * 1000 : 0
+  }, [periodIdx])
 
   const load = async () => {
     setLoading(true)
@@ -61,7 +71,7 @@ export function AdminStatsPage() {
       const [o, r, u, p, c, a, d] = await Promise.all([
         fetchAdminOverview(since), fetchClientReport(since),
         fetchUsersReport(since), fetchProblems(since), fetchCrmOverview(since),
-        fetchActiveNow(), fetchDailySpend(PERIODS[periodIdx].days),
+        fetchActiveNow(), fetchDailySpend(PERIODS[periodIdx].days || 90),
       ])
       setOverview(o); setReport(r); setUsers(u); setProblems(p); setCrm(c)
       setActive(a); setDaily(d); setDenied(false)
@@ -317,8 +327,15 @@ function UsersTab({ report, onReload }: { report: UsersReport | null; onReload: 
   const pushToast = useApp((s) => s.pushToast)
   const [open, setOpen] = useState<string | null>(null)
   const [busy, setBusy] = useState<string | null>(null)
+  const [q, setQ] = useState('')
   if (!report) return <Card className="p-6 text-sm text-muted">Загрузка…</Card>
   if (!report.rows.length) return <EmptyState icon={<Users size={22} />} title="Пользователей нет" />
+
+  // Ищем и по имени, и по почте: человека помнят по имени, а находят иногда по почте.
+  const needle = q.trim().toLowerCase()
+  const shown = needle
+    ? report.rows.filter((r) => `${r.name} ${r.email}`.toLowerCase().includes(needle))
+    : report.rows
 
   /**
    * Пополнение прямо из таблицы: админ видит, у кого кончаются монеты, и тут же
@@ -360,10 +377,20 @@ function UsersTab({ report, onReload }: { report: UsersReport | null; onReload: 
 
   return (
     <Card className="p-4">
-      <p className="mb-3 text-xs text-muted">
-        Строка — человек. Нажмите на неё, чтобы увидеть, в каких модулях он работал.
-        «Списано» — плата за действия по его задачам, «На счету» — что осталось в кошельке.
-      </p>
+      <div className="mb-3 flex flex-wrap items-center gap-3">
+        <div className="relative min-w-0 flex-1 sm:max-w-xs">
+          <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted" />
+          <input
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+            className="input h-9 pl-9 text-sm"
+            placeholder="Поиск по имени или почте…"
+          />
+        </div>
+        <span className="text-xs text-muted">
+          Нажмите на строку — увидите, что человек запускал и когда.
+        </span>
+      </div>
       <div className="overflow-x-auto">
         <table className="w-full text-sm">
           <thead>
@@ -378,7 +405,7 @@ function UsersTab({ report, onReload }: { report: UsersReport | null; onReload: 
             </tr>
           </thead>
           <tbody>
-            {report.rows.map((r) => {
+            {shown.map((r) => {
               // Строки без реального пользователя (удалённые, задачи без владельца)
               // отключать нечего — кнопки у них нет, но из счёта они не исчезают.
               const real = !!r.userId && !r.email.startsWith('без владельца') && !r.email.startsWith('удалённый')
@@ -392,7 +419,14 @@ function UsersTab({ report, onReload }: { report: UsersReport | null; onReload: 
                   <td className="py-2 pr-3">
                     <div className="flex items-center gap-1.5">
                       <ChevronDown size={13} className={cn('text-muted transition-transform', isOpen && 'rotate-180')} />
-                      <span className={cn('text-fg', !r.active && real && 'text-muted line-through')}>{r.email || r.userId}</span>
+                      {/* Имя — то, чем человека называют. Почта под ним: она нужна,
+                          чтобы его найти и написать, но в списке читается хуже. */}
+                      <span className="min-w-0">
+                        <span className={cn('block truncate text-fg', !r.active && real && 'text-muted line-through')}>
+                          {r.name || r.email || r.userId}
+                        </span>
+                        {!!r.name && !!r.email && <span className="block truncate text-[11px] text-muted">{r.email}</span>}
+                      </span>
                       {!r.active && real && <span className="rounded-md bg-white/8 px-1.5 py-0.5 text-[10px] font-bold text-muted">отключён</span>}
                     </div>
                   </td>
@@ -431,21 +465,53 @@ function UsersTab({ report, onReload }: { report: UsersReport | null; onReload: 
                 </tr>,
                 isOpen ? (
                   <tr key={r.userId + '-where'} className="border-b border-line/50 bg-white/[.02]">
-                    <td colSpan={7} className="px-3 py-2">
-                      {r.where.length ? (
-                        <div className="grid gap-1 sm:grid-cols-2">
-                          {r.where.map((w) => (
-                            <div key={w.moduleKey} className="flex items-baseline justify-between gap-3 text-xs">
-                              <span className="text-muted">{w.title}</span>
-                              <span className="tabular-nums text-fg">
-                                {fmt(w.actions)} действий
-                                {w.tokens ? <span className="text-muted"> · {fmt(w.tokens)} ток.</span> : null}
-                                {w.spent ? <span className="text-amber-300"> · {fmtCoins(w.spent)} ⚡</span> : null}
-                              </span>
+                    <td colSpan={7} className="px-3 py-3">
+                      {!r.where.length && !r.log.length ? (
+                        <span className="text-xs text-muted">За выбранный период ничего не запускал.</span>
+                      ) : (
+                        <div className="grid gap-4 lg:grid-cols-2">
+                          <div>
+                            <div className="mb-1.5 text-[11px] font-bold uppercase tracking-wide text-muted">Куда уходила работа</div>
+                            <div className="space-y-1">
+                              {r.where.map((w) => (
+                                <div key={w.moduleKey} className="flex items-baseline justify-between gap-3 text-xs">
+                                  <span className="text-muted">{w.title}</span>
+                                  <span className="tabular-nums text-fg">
+                                    {fmt(w.actions)} действий
+                                    {w.tokens ? <span className="text-muted"> · {fmt(w.tokens)} ток.</span> : null}
+                                    {w.spent ? <span className="text-amber-300"> · {fmtCoins(w.spent)} ⚡</span> : null}
+                                  </span>
+                                </div>
+                              ))}
                             </div>
-                          ))}
+                          </div>
+
+                          {/* Сами запуски с датами: «потратил 0.15 за месяц» не отвечает
+                              на «что он делал в среду» — а разбирают счёт именно так. */}
+                          <div>
+                            <div className="mb-1.5 text-[11px] font-bold uppercase tracking-wide text-muted">
+                              Что запускал ({r.log.length}{r.log.length >= 100 ? ', показаны последние 100' : ''})
+                            </div>
+                            <div className="max-h-56 space-y-1 overflow-y-auto pr-1">
+                              {r.log.map((t) => (
+                                <div key={t.id} className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5 border-b border-line/30 pb-1 text-xs last:border-0">
+                                  <span className="text-fg">{t.title}</span>
+                                  <span className={cn('rounded px-1 text-[10px] font-bold',
+                                    t.status === 'done' ? 'bg-spark-500/12 text-spark-300'
+                                      : t.status === 'paused' ? 'bg-amber-500/12 text-amber-300'
+                                      : 'bg-white/8 text-muted')}>{t.status}</span>
+                                  {!!t.errors && <span className="rounded bg-red-500/12 px-1 text-[10px] font-bold text-red-300">{t.errors} ош.</span>}
+                                  <span className="text-muted">{fmt(t.actions)} действий</span>
+                                  {!!t.spent && <span className="text-amber-300">{fmtCoins(t.spent)} ⚡</span>}
+                                  <span className="ml-auto shrink-0 tabular-nums text-faint">
+                                    {t.at ? new Date(t.at).toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : '—'}
+                                  </span>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
                         </div>
-                      ) : <span className="text-xs text-muted">Ничего не запускал.</span>}
+                      )}
                     </td>
                   </tr>
                 ) : null,

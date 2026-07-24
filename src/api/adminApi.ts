@@ -73,6 +73,8 @@ export interface UserRow {
   spent: number
   tokens: number
   where: UserWhere[]
+  /** Сами запуски с датами: на «что он делал в среду» сумма за период не отвечает. */
+  log: { id: string; moduleKey: string; title: string; status: string; actions: number; spent: number; at: number; finishedAt: number; errors: number }[]
 }
 export interface UsersReport {
   since: number

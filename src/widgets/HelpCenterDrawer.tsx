@@ -20,6 +20,27 @@ const QUICK_QUESTIONS = [
 
 type HelpMsg = { id: string; role: 'user' | 'assistant'; text: string }
 
+/**
+ * Тема справки по обычным страницам (не модулям).
+ *
+ * Раньше «?» на любой немодульной странице открывал общий список тем: человек стоял
+ * на статистике и получал перечень статей про нейрокомментинг. Страница должна
+ * объяснять сама себя, а список остаётся как «все статьи».
+ */
+const PAGE_TOPICS: Record<string, string> = {
+  '/panel/admin-stats': 'admin-stats',
+  '/panel/accounts': 'accounts-manager',
+  '/panel/automation': 'automation',
+  '/panel/goals': 'goals',
+  '/panel/campaign': 'campaign',
+  '/panel/tasks': 'tasks',
+  '/panel/crm': 'crm',
+  '/panel/analytics': 'analytics',
+  '/panel/logs': 'logs',
+  '/panel/support': 'support',
+  '/panel/inbox': 'inbox',
+}
+
 /** Достаёт ключ модуля из пути вида /panel/modules/:moduleKey. */
 function moduleKeyFromPath(pathname: string): string | undefined {
   const m = pathname.match(/\/panel\/modules\/([^/?#]+)/)
@@ -153,7 +174,12 @@ export function HelpCenterDrawer() {
   const scrollRef = useRef<HTMLDivElement>(null)
 
   const moduleKey = moduleKeyFromPath(location.pathname)
-  const doc = useMemo(() => findHelpDoc(topic, moduleKey), [topic, moduleKey])
+  // Тема не выбрана — берём тему самой страницы, а не общий список.
+  const pageTopic = PAGE_TOPICS[location.pathname] || ''
+  const doc = useMemo(
+    () => findHelpDoc(topic, moduleKey) || (pageTopic ? HELP_DOCS[pageTopic] ?? null : null),
+    [topic, moduleKey, pageTopic],
+  )
   const intro = useMemo(() => helpIntro(topic), [topic])
 
   useEffect(() => {
