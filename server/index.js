@@ -545,12 +545,17 @@ app.get('/api/subscription', async (req, res) => {
     // платформа или админ. `custom` нужен только админской кнопке «удалить».
     const setups = [
       ...SETUPS.map((s) => ({ ...s, cost: subscriptionCost(s.modules, bundles) })),
-      ...bundles.map((b) => ({
-        id: b.id, name: b.name, hint: b.hint, modules: b.modules,
-        custom: true, price: b.price,
-        discount: 0,
-        cost: subscriptionCost(b.modules, bundles),
-      })),
+      ...bundles.map((b) => {
+        const cost = subscriptionCost(b.modules, bundles)
+        return {
+          id: b.id, name: b.name, hint: b.hint, modules: b.modules,
+          custom: true, price: b.price,
+          // Скидка выводится из цены: «77 вместо 109» — это −29 %, и бейдж обязан
+          // так и говорить. Захардкоженный ноль показывал клиенту «−0%».
+          discount: cost.full ? Math.max(0, Math.round((1 - cost.sum / cost.full) * 100) / 100) : 0,
+          cost,
+        }
+      }),
     ]
     res.json({ ok: true, items, setups, currency: CURRENCY, mine: modules })
   } catch (err) { res.status(500).json({ ok: false, error: err instanceof Error ? err.message : 'Ошибка' }) }
@@ -574,21 +579,26 @@ app.post('/api/subscription', async (req, res) => {
   try {
     const { setModules } = await import('./balance.js')
     const { subscriptionCost } = await import('./pricing.js')
-    // Подписка — деньги пространства, менять её может только владелец. Проверка
-    // ОБЯЗАТЕЛЬНА на сервере: пряча раздел во фронте, мы прятали кнопку, а прямой
-    // запрос позволял любому сотруднику выдать себе все модули.
-    if (!(await isAdminRequest(req))) {
-      return res.status(403).json({ ok: false, error: 'Менять подписку может только владелец рабочего пространства' })
+    // Две покупки, два масштаба. КЛИЕНТ выбирает СВОЙ набор — это и есть продажа
+    // («зайшов і вибрав»), пока без оплаты. ВЛАДЕЛЕЦ без userId меняет общий набор
+    // пространства; чужой личный — тоже только владелец: это деньги другого человека.
+    const me = req.header('x-user-id')
+    const admin = await isAdminRequest(req)
+    if (req.body?.userId && !admin) {
+      return res.status(403).json({ ok: false, error: 'Чужую подписку меняет только владелец' })
     }
     const wanted = req.body?.modules
     const list = wanted === 'all' ? 'all' : (Array.isArray(wanted) ? wanted : [])
-    const target = req.header('x-user-id')
-    const balance = await setModules(list, target)
+    const target = req.body?.userId || me
+    const { setUserModules } = await import('./balance.js')
+    // Админ без явного userId правит ОБЩИЙ набор; всё остальное — личная покупка.
+    const personal = !(admin && !req.body?.userId)
+    const balance = personal ? await setUserModules(list, target) : await setModules(list, target)
     await appendAudit({
       action: 'subscription.set',
       module: 'billing',
       initiator: req.header('x-user-id') || 'system',
-      reason: `Подписка: ${list === 'all' ? 'все модули' : `${list.length} модулей`}`,
+      reason: `Подписка${(admin && !req.body?.userId) ? ' пространства' : ` (${target || 'свой'})`}: ${list === 'all' ? 'все модули' : `${list.length} модулей`}`,
       meta: { modules: list, cost: list === 'all' ? null : subscriptionCost(list, await (await import('./bundles.js')).listBundles()) },
     }).catch(() => {})
     res.json({ ok: true, balance })

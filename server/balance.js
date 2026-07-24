@@ -66,8 +66,7 @@ export function modulesAllow(modules, moduleKey) {
 }
 
 /**
- * Записать набор купленных модулей. Одна запись на всё пространство: подписку
- * оплачивает владелец, и у сотрудника не должно быть своей.
+ * Записать ОБЩИЙ набор пространства — то, что покупает владелец для всех.
  * @param {string[]|'all'} modules @param {string} [userId] чей баланс вернуть в ответе
  */
 export async function setModules(modules, userId) {
@@ -76,6 +75,25 @@ export async function setModules(modules, userId) {
     const next = { ...(all || {}) }
     delete next.coins; delete next.planId; delete next.updatedAt
     next[SUBSCRIPTION_KEY] = { modules: list, updatedAt: Date.now() }
+    return next
+  })
+  return getBalance(userId)
+}
+
+/**
+ * Личная покупка клиента: его набор перекрывает общий ТОЛЬКО для него.
+ * Клиент заходит в «Мои модули», выбирает пакет — и видит ровно его; остальные
+ * пользователи пространства не задеты.
+ * @param {string[]|'all'} modules @param {string} userId
+ */
+export async function setUserModules(modules, userId) {
+  if (!userId) throw new Error('Личная подписка требует пользователя')
+  const list = modules === 'all' ? 'all' : [...new Set((modules || []).map(String).filter(Boolean))]
+  const k = key(userId)
+  await mutateJson(BALANCE_FILE(), (all) => {
+    const next = { ...(all || {}) }
+    delete next.coins; delete next.planId; delete next.updatedAt
+    next[k] = { ...(next[k] || {}), modules: list, updatedAt: Date.now() }
     return next
   })
   return getBalance(userId)
@@ -111,8 +129,12 @@ export async function getBalance(userId) {
   return {
     planId,
     plan: PLANS[planId],
-    // Набор купленных модулей — общий на пространство (см. SUBSCRIPTION_KEY).
-    modules: (all && all[SUBSCRIPTION_KEY]?.modules) ?? DEFAULT_MODULES,
+    // Набор модулей: СВОЙ (клиент купил лично) перекрывает общий на пространство.
+    // Клиент, выбравший «парсер + комментинг за 20», видит свои два модуля, а
+    // сотрудник без личной покупки работает внутри купленного владельцем.
+    modules: saved?.modules !== undefined
+      ? saved.modules
+      : ((all && all[SUBSCRIPTION_KEY]?.modules) ?? DEFAULT_MODULES),
     coins: normCoins(saved?.coins ?? DEFAULT_STATE.coins),
     updatedAt: Number(saved?.updatedAt) || 0,
   }

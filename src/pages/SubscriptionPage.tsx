@@ -3,6 +3,7 @@ import { Check, Package, Sparkles, Loader2, Trash2, Plus } from 'lucide-react'
 import { PageHeader, Card } from '@/shared/ui'
 import { useApp } from '@/mocks/store'
 import { usePlan } from '@/features/billing/plan'
+import { useSession } from '@/features/auth/session'
 import { fetchSubscription, saveSubscription, createBundle, deleteBundle, type Subscription } from '@/api/balanceApi'
 import { cn } from '@/shared/lib/utils'
 
@@ -20,6 +21,9 @@ import { cn } from '@/shared/lib/utils'
 export function SubscriptionPage() {
   const pushToast = useApp((s) => s.pushToast)
   const loadPlan = usePlan((s) => s.load)
+  // Конструктор наборов и их удаление — владельцу; клиент видит витрину и покупает.
+  const sessionUser = useSession((st) => st.user)
+  const isAdmin = !sessionUser || !!sessionUser.isAdmin
   const [data, setData] = useState<Subscription | null>(null)
   const [picked, setPicked] = useState<Set<string>>(new Set())
   const [saving, setSaving] = useState(false)
@@ -144,7 +148,7 @@ export function SubscriptionPage() {
               <div className="flex items-center gap-1.5 font-display text-base font-bold text-fg">
                 <Sparkles size={15} className="text-spark-400" /> {s.name}
                 {s.custom && <span className="rounded-md bg-iris-500/15 px-1.5 py-0.5 text-[10px] font-bold text-iris-300">ваш набор</span>}
-                {s.custom && (
+                {s.custom && isAdmin && (
                   <span
                     role="button"
                     tabIndex={0}
@@ -160,8 +164,10 @@ export function SubscriptionPage() {
               <div className="mt-1 text-xs leading-relaxed text-muted">{s.hint}</div>
               <div className="mt-2 flex items-baseline gap-2">
                 <span className="font-display text-xl font-bold text-fg">{s.cost.sum} {cur}</span>
-                <span className="text-xs text-muted line-through">{s.cost.full} {cur}</span>
-                <span className="rounded-md bg-spark-500/15 px-1.5 py-0.5 text-[10px] font-bold text-spark-300">−{Math.round(s.discount * 100)}%</span>
+                {s.cost.sum < s.cost.full && <span className="text-xs text-muted line-through">{s.cost.full} {cur}</span>}
+                {s.discount > 0 && (
+                  <span className="rounded-md bg-spark-500/15 px-1.5 py-0.5 text-[10px] font-bold text-spark-300">−{Math.round(s.discount * 100)}%</span>
+                )}
               </div>
               <div className="mt-1 text-[11px] text-muted">{s.modules.length} модулей</div>
             </button>
@@ -199,6 +205,7 @@ export function SubscriptionPage() {
 
       {/* Собрать набор под клиента: состав = текущий выбор, цена — явная.
           Продают именно так: «парсер + комментинг за 20 $», а не «минус N % от прайса». */}
+      {isAdmin && (
       <Card>
         <div className="mb-1 text-xs font-bold uppercase tracking-wide text-muted">Собрать набор для клиента</div>
         <p className="mb-3 text-xs text-muted">
@@ -230,6 +237,7 @@ export function SubscriptionPage() {
           </button>
         </div>
       </Card>
+      )}
 
       {/* Итог держим на виду: сумма меняется от каждого клика, и уезжать за ней вниз незачем. */}
       <div className="sticky bottom-4 flex flex-wrap items-center gap-3 rounded-2xl border border-line bg-surface/95 px-4 py-3 backdrop-blur-xl">

@@ -130,3 +130,22 @@ test('totalCoins: сумма по всем пользователям, служ�
   assert.equal(t.wallets, 2, 'usr_a и usr_b')
   assert.equal(t.service, 1, 'служебный __default виден, но не смешан с людьми')
 })
+
+/**
+ * Личная покупка клиента перекрывает общий набор — но только для него.
+ * «Тестовий акаунт зайшов, вибрав пакет» — остальное пространство не задето.
+ */
+test('свой набор перекрывает общий, соседи не задеты', async () => {
+  const B = await fresh()
+  await B.setModules(['mailing'], 'usr_owner') // общий набор пространства
+  await B.setUserModules(['neuro-chatting'], 'usr_client') // клиент купил своё
+
+  assert.deepEqual((await B.getBalance('usr_client')).modules, ['neuro-chatting'], 'клиент видит купленное лично')
+  assert.deepEqual((await B.getBalance('usr_worker')).modules, ['mailing'], 'без личной покупки — общий набор')
+  assert.deepEqual((await B.getBalance('usr_owner')).modules, ['mailing'], 'владелец не задет чужой покупкой')
+
+  // Смена общего набора не трогает личный.
+  await B.setModules(['warming'], 'usr_owner')
+  assert.deepEqual((await B.getBalance('usr_client')).modules, ['neuro-chatting'])
+  assert.deepEqual((await B.getBalance('usr_worker')).modules, ['warming'])
+})

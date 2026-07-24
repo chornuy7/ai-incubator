@@ -78,13 +78,17 @@ export function canControlModule(permissions: RolePermissions | null, isAdmin: b
 }
 
 /**
- * Страницы только для админа: роли, пользователи и подписка. Подписка — деньги
- * рабочего пространства, ею распоряжается владелец, а не сотрудник, которому
- * админ выдал пару модулей. §8.1 / §5.4
+ * Страницы только для админа: роли и пользователи. Подписка сюда НЕ входит:
+ * клиент сам заходит в «Мои модули» и покупает свой набор — личная покупка
+ * перекрывает общий набор только для него. §8.1 / §5.4
  */
-export const ADMIN_ONLY_PATHS = new Set(['/panel/roles', '/panel/users', '/panel/user/subscription'])
-/** Минимум, доступный всем всегда (свой профиль + поддержка) — не гейтится ролью. */
-export const ALWAYS_ON_PATHS = new Set(['/panel/user/profile', '/panel/support'])
+export const ADMIN_ONLY_PATHS = new Set(['/panel/roles', '/panel/users'])
+/**
+ * Минимум, доступный всем всегда — не гейтится ролью: свой профиль, поддержка и
+ * «Мои модули». Последнее — витрина, где клиент покупает себе набор: закрывать её
+ * ролью значит закрывать саму продажу.
+ */
+export const ALWAYS_ON_PATHS = new Set(['/panel/user/profile', '/panel/support', '/panel/user/subscription'])
 /** Модули вне /panel/modules/* — их доступ проверяется как 'module' по этому ключу. */
 const SPECIAL_MODULE_PATHS: Record<string, string> = {
   '/panel/mailing': 'mailing',
