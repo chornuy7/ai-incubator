@@ -193,7 +193,7 @@ export function AutopostingPage() {
     <div>
       <PageHeader
         title="Автопостинг"
-        subtitle="Публикация постов в СВОИ каналы/группы. Безопасно — не спам (§8.10)."
+        subtitle="Публикация постов в СВОИ каналы/группы. Безопасно — не спам."
         icon={<Megaphone size={22} />}
       />
 

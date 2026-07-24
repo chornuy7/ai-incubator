@@ -136,7 +136,9 @@ export function LandingPage() {
         {pricing && (
           <>
             <div className="mt-8 grid gap-5 sm:grid-cols-3">
-              {pricing.setups.map((sp) => (
+              {/* По возрастанию цены: набор из 5 дорогих модулей стоит больше набора
+                  из 6 дешёвых, и вперемешку это читается как ошибка прайса. */}
+              {[...pricing.setups].sort((a, b) => a.cost.sum - b.cost.sum).map((sp) => (
                 <div
                   key={sp.id}
                   className={`flex flex-col rounded-2xl border p-6 ${

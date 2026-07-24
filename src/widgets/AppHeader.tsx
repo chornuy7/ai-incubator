@@ -12,10 +12,15 @@ import { coins as fmtCoins } from '@/shared/lib/utils'
 import { Dropdown, MenuItem, Modal, Avatar } from '@/shared/ui'
 import { LANGUAGES } from '@/shared/config/modules'
 
-const COIN_PACKS = [
-  { coins: 50, price: '4.99 $' },
-  { coins: 200, price: '17.99 $', best: true },
-  { coins: 500, price: '39.99 $' },
+/**
+ * Запасные пакеты — на случай, если прайс с сервера не приехал. Настоящие цены
+ * живут в server/pricing.js: курс монеты определяет реальную выручку с действия,
+ * и копия в вебе неизбежно разъедется с прайсом и счётом.
+ */
+const FALLBACK_PACKS = [
+  { coins: 50, price: 4.99 },
+  { coins: 200, price: 17.99, best: true },
+  { coins: 500, price: 39.99 },
 ]
 
 export function AppHeader() {
@@ -245,7 +250,7 @@ export function AppHeader() {
         open={coinsOpen}
         onClose={() => setCoinsOpen(false)}
         title="Баланс монет"
-        subtitle="Монеты ⚡ тратятся на запуск модулей и проверки AIR"
+        subtitle="Монеты ⚡ — топливо: тратятся за каждое действие. Какие модули открыты — это подписка"
         icon={<Zap size={22} fill="currentColor" />}
         size="md"
       >
@@ -273,7 +278,7 @@ export function AppHeader() {
           </div>
         )}
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-          {COIN_PACKS.map((p) => (
+          {(pricing?.packs?.length ? pricing.packs : FALLBACK_PACKS).map((p) => (
             <button
               key={p.coins}
               onClick={() => { pushToast({ type: 'info', title: 'Оплата в демо отключена', desc: `Пакет ${p.coins} ⚡ — только визуал.` }); setCoinsOpen(false) }}
@@ -282,7 +287,9 @@ export function AppHeader() {
               {p.best && <span className="absolute -top-2 rounded-full bg-spark-gradient px-2 py-0.5 text-[10px] font-bold text-[#04150c]">ВЫГОДНО</span>}
               <Zap size={22} className="text-amber-400" fill="currentColor" />
               <span className="font-display text-xl font-bold text-fg">{p.coins}</span>
-              <span className="text-sm font-semibold text-muted">{p.price}</span>
+              <span className="text-sm font-semibold text-muted">{p.price} {pricing?.currency ?? '$'}</span>
+              {/* Цена монеты в пакете: «выгодно» должно быть посчитано, а не заявлено. */}
+              <span className="text-[10px] text-faint">{(p.price / p.coins).toFixed(3)} {pricing?.currency ?? '$'} / ⚡</span>
             </button>
           ))}
         </div>

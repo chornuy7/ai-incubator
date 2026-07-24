@@ -1,15 +1,18 @@
 /**
- * Генератор docs/ПРАЙСЫ.md ИЗ КОДА.
+ * Генератор docs/PRICING.md ИЗ КОДА.
  *
  * Прайс, переписанный руками в документ, расходится с кодом на второй правке — и
  * тогда клиенту называют одну цену, а списывают другую. Поэтому документ не пишут,
  * а собирают: единственный источник — server/pricing.js и tokenLedger.js.
  *
+ * Имя файла латиницей намеренно: кириллица в пути ломает ссылки в интерфейсах и
+ * часть инструментов, а прайс — документ, который открывают чаще всего.
+ *
  * Запуск: node scripts/gen-pricing-doc.mjs
  */
 import { writeFile } from 'node:fs/promises'
 import {
-  ACTION_PRICE, MODULE_MONTH_PRICE, SETUPS, CURRENCY, subscriptionCost,
+  ACTION_PRICE, MODULE_MONTH_PRICE, SETUPS, CURRENCY, subscriptionCost, COIN_PACKS, coinRate,
 } from '../server/pricing.js'
 import { COINS_PER_1K_TOKENS } from '../server/tokenLedger.js'
 import { moduleTitle } from '../server/lib/moduleTitles.js'
@@ -26,7 +29,13 @@ const rows = keys
   }))
   .sort((a, b) => b.month - a.month || a.title.localeCompare(b.title, 'ru'))
 
-const setupRows = SETUPS.map((s) => ({ ...s, cost: subscriptionCost(s.modules) }))
+// По возрастанию цены: набор дороже другого может содержать МЕНЬШЕ модулей —
+// «Аутрич» это 5 дорогих (диалоги 25 + рассылка 20 + чаттинг 20), «Вовлечение» —
+// 6 дешёвых. Цена идёт от состава, а не от счёта, и лестница по цене читается
+// правильно, тогда как «5 модулей дороже 6» выглядит ошибкой прайса.
+const setupRows = SETUPS
+  .map((s) => ({ ...s, cost: subscriptionCost(s.modules) }))
+  .sort((a, b) => a.cost.sum - b.cost.sum)
 
 // Сколько стоит «поработать день»: 100 действий типового модуля — чтобы у цифры
 // был человеческий масштаб, а не только ставка с тремя нулями после запятой.
@@ -65,9 +74,14 @@ ${rows.map((r) => `| ${r.title} | ${rub(r.month)} |`).join('\n')}
 Скидку даёт только ПОЛНОЕ совпадение с набором: иначе «почти сетап» получал бы
 цену сетапа, и поштучная покупка теряла бы смысл.
 
-| Набор | Модулей | Без скидки | Скидка | Цена |
-|---|---:|---:|---:|---:|
-${setupRows.map((s) => `| **${s.name}** — ${s.hint} | ${s.modules.length} | ${CURRENCY}${s.cost.full} | −${Math.round(s.discount * 100)} % | **${CURRENCY}${s.cost.sum}** |`).join('\n')}
+| Набор | Что входит | Без скидки | Скидка | Цена |
+|---|---|---:|---:|---:|
+${setupRows.map((s) => `| **${s.name}**<br>${s.hint} | ${s.modules.map((m) => moduleTitle(m)).join(", ")} | ${CURRENCY}${s.cost.full} | −${Math.round(s.discount * 100)} % | **${CURRENCY}${s.cost.sum}** |`).join('\n')}
+
+> Число модулей намеренно НЕ вынесено колонкой: цена идёт от СОСТАВА, а не от счёта.
+> «Аутрич» — пять дорогих модулей (НейроДиалоги 25, Рассылка 20, Нейрочаттинг 20),
+> «Вовлечение» — шесть дешёвых. Рядом в столбик «5 модулей за 64.80» и «6 за 60.80»
+> читаются как ошибка прайса, хотя арифметика верна. Наборы отсортированы по цене.
 
 ## 3. Монеты за действия
 
@@ -88,7 +102,24 @@ ${rows.filter((r) => r.action > 0).map((r) => `| ${r.title} | ${r.action} | ${ex
 нейрочаттинг, нейродиалоги, AIR. Парсеры и массовые действия ИИ не используют —
 за них платится только ставка за действие.
 
-## 5. Что уже возвращается клиенту
+## 5. Сколько стоит сама монета
+
+Монета — топливо. Пакеты пополнения задают её курс, а значит и реальную выручку
+с каждого действия.
+
+| Пакет | Цена | Цена монеты |
+|---:|---:|---:|
+${COIN_PACKS.map((p) => `| ${p.coins} ⚡ | ${CURRENCY}${p.price} | ${CURRENCY}${coinRate(p)}${p.best ? ' — выгоднее всего' : ''} |`).join('\n')}
+
+По среднему пакету (${COIN_PACKS.find((p) => p.best)?.coins ?? COIN_PACKS[0].coins} ⚡) выходит:
+
+| Что | В монетах | В деньгах |
+|---|---:|---:|
+| Действие нейрокомментинга | 0.05 ⚡ | ${CURRENCY}${Math.round(0.05 * coinRate(COIN_PACKS.find((p) => p.best) ?? COIN_PACKS[0]) * 10000) / 10000} |
+| Строка парсера | 0.005 ⚡ | ${CURRENCY}${Math.round(0.005 * coinRate(COIN_PACKS.find((p) => p.best) ?? COIN_PACKS[0]) * 100000) / 100000} |
+| 1 000 токенов ИИ | ${COINS_PER_1K_TOKENS} ⚡ | ${CURRENCY}${Math.round(COINS_PER_1K_TOKENS * coinRate(COIN_PACKS.find((p) => p.best) ?? COIN_PACKS[0]) * 10000) / 10000} |
+
+## 6. Что уже возвращается клиенту
 
 - **Отфильтрованные строки.** Если парсер собрал 29 строк, а AND-пересечение
   оставило 0 — деньги за отброшенное возвращаются автоматически.
@@ -105,7 +136,8 @@ ${rows.filter((r) => r.action > 0).map((r) => `| ${r.title} | ${r.action} | ${ex
 | Итоговые цифры подписки | временные, ориентир из разговора «~20 $ за модуль» |
 | Размер скидки за набор | ${setupRows.map((s) => `${s.name} −${Math.round(s.discount * 100)} %`).join(', ')} |
 | Ставки за действия | временные |
-| Курс токенов | ${COINS_PER_1K_TOKENS} ⚡ за 1 000 — привязка монеты к деньгам не определена |
+| Курс токенов | ${COINS_PER_1K_TOKENS} ⚡ за 1 000 |
+| Цена монеты | ${CURRENCY}${coinRate(COIN_PACKS[0])}–${coinRate(COIN_PACKS[COIN_PACKS.length - 1])} в зависимости от пакета — подтвердить |
 | Платёжный провайдер | не подключён: набор применяется сразу, без оплаты |
 | Лимит аккаунтов в тарифе | 3 / 50 / 200 — не связан с набором модулей |
 
@@ -113,5 +145,5 @@ ${rows.filter((r) => r.action > 0).map((r) => `| ${r.title} | ${r.action} | ${ex
 счёте клиенту. Перегенерируйте этот файл, чтобы документ не отстал.
 `
 
-await writeFile(new URL('../docs/ПРАЙСЫ.md', import.meta.url), md, 'utf8')
-console.log('docs/ПРАЙСЫ.md собран:', rows.length, 'модулей,', setupRows.length, 'наборов')
+await writeFile(new URL('../docs/PRICING.md', import.meta.url), md, 'utf8')
+console.log('docs/PRICING.md собран:', rows.length, 'модулей,', setupRows.length, 'наборов')

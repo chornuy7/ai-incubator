@@ -11,7 +11,7 @@ import { readFile } from 'node:fs/promises'
 import { MODULE_MONTH_PRICE, ACTION_PRICE, SETUPS, subscriptionCost } from '../pricing.js'
 import { moduleTitle } from '../lib/moduleTitles.js'
 
-const DOC = new URL('../../docs/ПРАЙСЫ.md', import.meta.url)
+const DOC = new URL('../../docs/PRICING.md', import.meta.url)
 
 test('в документе есть каждый модуль с его ценой подписки', async () => {
   const md = await readFile(DOC, 'utf8')

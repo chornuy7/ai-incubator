@@ -473,7 +473,7 @@ app.post('/api/accounts/activity', async (req, res) => {
  */
 app.get('/api/pricing', async (_req, res) => {
   try {
-    const { ACTION_PRICE } = await import('./pricing.js')
+    const { ACTION_PRICE, COIN_PACKS, CURRENCY } = await import('./pricing.js')
     const { COINS_PER_1K_TOKENS } = await import('./tokenLedger.js')
     const { moduleTitle } = await import('./lib/moduleTitles.js')
     // Отдаём с названиями: в вебе нет конфига для mailing и autoposting (чужая
@@ -490,7 +490,7 @@ app.get('/api/pricing', async (_req, res) => {
     const items = Object.entries(ACTION_PRICE)
       .map(([key, price]) => ({ key, title: moduleTitle(key), price, avgTokens: avgTokens[key] || 0 }))
       .sort((a, b) => b.price - a.price || a.title.localeCompare(b.title, 'ru'))
-    res.json({ ok: true, items, actions: ACTION_PRICE, avgTokens, coinsPer1kTokens: COINS_PER_1K_TOKENS })
+    res.json({ ok: true, items, actions: ACTION_PRICE, avgTokens, coinsPer1kTokens: COINS_PER_1K_TOKENS, packs: COIN_PACKS, currency: CURRENCY })
   } catch (err) { res.status(500).json({ ok: false, error: err instanceof Error ? err.message : 'Ошибка' }) }
 })
 

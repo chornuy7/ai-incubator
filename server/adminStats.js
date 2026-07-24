@@ -434,7 +434,7 @@ export async function usersReport(opts = {}) {
   const byUser = new Map()
   const taskOwner = new Map() // taskId → userId, чтобы привязать старые записи журнала
   const touch = (id) => {
-    if (!byUser.has(id)) byUser.set(id, { tasks: 0, actions: 0, spent: 0, tokens: 0, byModule: {} })
+    if (!byUser.has(id)) byUser.set(id, { tasks: 0, actions: 0, spent: 0, tokens: 0, byModule: {}, log: [] })
     return byUser.get(id)
   }
   /** Разрез «куда»: что человек делал в конкретном модуле. */
@@ -463,6 +463,13 @@ export async function usersReport(opts = {}) {
       m.tasks += 1
       m.actions += acts
       m.spent = round3(m.spent + spent)
+      // Сами запуски, а не только итоги: на вопрос «что он делал в среду» сумма
+      // за период не отвечает — нужен список с датами.
+      row.log.push({
+        id: t.id, moduleKey: key, title: moduleTitle(key), status: t.status,
+        actions: acts, spent, at: Number(t.createdAt) || 0, finishedAt: Number(t.updatedAt) || 0,
+        errors: Number(t.errors) || 0,
+      })
     }
   }
 
@@ -482,7 +489,7 @@ export async function usersReport(opts = {}) {
     .sort((a, b) => b.actions - a.actions || b.tokens - a.tokens)
 
   const rows = users.map((u) => {
-    const st = byUser.get(u.id) || { tasks: 0, actions: 0, spent: 0, tokens: 0, byModule: {} }
+    const st = byUser.get(u.id) || { tasks: 0, actions: 0, spent: 0, tokens: 0, byModule: {}, log: [] }
     byUser.delete(u.id)
     return {
       userId: u.id,
@@ -495,6 +502,7 @@ export async function usersReport(opts = {}) {
       spent: st.spent,
       tokens: st.tokens,
       where: where(st.byModule),
+      log: st.log.sort((a, b) => b.at - a.at).slice(0, 100),
     }
   })
 
@@ -507,6 +515,7 @@ export async function usersReport(opts = {}) {
       name: '', active: false, coins: 0,
       tasks: st.tasks, actions: st.actions, spent: st.spent, tokens: st.tokens,
       where: where(st.byModule),
+      log: st.log.sort((a, b) => b.at - a.at).slice(0, 100),
     })
   }
 

@@ -922,8 +922,8 @@ function AccountsTable(props: {
                         if (d.anyReached) {
                           const hit = d.items.filter((x) => x.reached).map((x) => DAILY_CAP_LABELS[x.action] ?? x.action).join(', ')
                           return (
-                            <span className="rounded-md bg-rose-500/15 px-1.5 py-0.5 text-[10px] font-bold text-rose-300" title={`Суточный лимит §6 достигнут: ${hit}. Модули пропускают аккаунт до сброса в полночь.`}>
-                              §6 лимит: {hit}
+                            <span className="rounded-md bg-rose-500/15 px-1.5 py-0.5 text-[10px] font-bold text-rose-300" title={`Суточный лимит достигнут: ${hit}. Модули пропускают аккаунт до сброса в полночь.`}>
+                              Лимит: {hit}
                             </span>
                           )
                         }
@@ -932,8 +932,8 @@ function AccountsTable(props: {
                         if (near.length) {
                           const lbl = near.map((x) => `${DAILY_CAP_LABELS[x.action] ?? x.action} ${x.used}/${x.cap}`).join(', ')
                           return (
-                            <span className="rounded-md bg-amber-500/15 px-1.5 py-0.5 text-[10px] font-bold text-amber-300" title={`Близко к суточному лимиту §6: ${lbl}. Скоро модули начнут пропускать аккаунт.`}>
-                              §6 близко: {near.map((x) => DAILY_CAP_LABELS[x.action] ?? x.action).join(', ')}
+                            <span className="rounded-md bg-amber-500/15 px-1.5 py-0.5 text-[10px] font-bold text-amber-300" title={`Близко к суточному лимиту: ${lbl}. Скоро модули начнут пропускать аккаунт.`}>
+                              Близко: {near.map((x) => DAILY_CAP_LABELS[x.action] ?? x.action).join(', ')}
                             </span>
                           )
                         }
@@ -947,7 +947,7 @@ function AccountsTable(props: {
                         if (act.resting) {
                           const left = Math.ceil((act.restUntil - Date.now()) / 60000)
                           return (
-                            <span className="rounded-md bg-iris-500/15 px-1.5 py-0.5 text-[10px] font-bold text-iris-300" title={`Аккаунт отдыхает после нагрузки — освободится через ${left} мин. Отдых общий для всех модулей (§4.1).`}>
+                            <span className="rounded-md bg-iris-500/15 px-1.5 py-0.5 text-[10px] font-bold text-iris-300" title={`Аккаунт отдыхает после нагрузки — освободится через ${left} мин. Отдых общий для всех модулей.`}>
                               отдыхает {left > 0 ? `${left} мин` : ''}
                             </span>
                           )

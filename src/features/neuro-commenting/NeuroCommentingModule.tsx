@@ -370,7 +370,7 @@ export function NeuroCommentingModule() {
           </div>
         )}
         <div className="mt-3 grid gap-3 sm:grid-cols-2">
-          <ToggleRow icon={<Sparkles size={16} />} label="Семантический фильтр к цели (ИИ, §3.5)" checked={semanticFilter} onChange={setSemanticFilter} />
+          <ToggleRow icon={<Sparkles size={16} />} label="Семантический фильтр к цели (ИИ)" checked={semanticFilter} onChange={setSemanticFilter} />
         </div>
         <div className="mt-3 grid gap-3 sm:grid-cols-2">
           {cfg.languageDetection && (

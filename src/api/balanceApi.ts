@@ -36,6 +36,9 @@ export interface Pricing {
   /** Средний расход токенов на действие по своей истории. 0 = считать не на чем. */
   avgTokens: Record<string, number>
   coinsPer1kTokens: number
+  /** Пакеты пополнения — цена самой монеты. С сервера, не копией в вебе. */
+  packs?: { coins: number; price: number; best?: boolean }[]
+  currency?: string
 }
 export async function fetchPricing(): Promise<Pricing> {
   const r = await apiGet<{ items?: PriceItem[]; actions?: Record<string, number>; avgTokens?: Record<string, number>; coinsPer1kTokens: number }>('/api/pricing')

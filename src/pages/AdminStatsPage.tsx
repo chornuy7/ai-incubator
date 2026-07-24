@@ -1,6 +1,6 @@
 import { coins as fmtCoins, cn } from '@/shared/lib/utils'
 import { useEffect, useMemo, useState } from 'react'
-import { BarChart3, Users, ListChecks, Coins, Download, RefreshCw, AlertTriangle, Contact, Power, ChevronDown, Activity, Plus } from 'lucide-react'
+import { BarChart3, Users, ListChecks, Coins, Download, RefreshCw, AlertTriangle, Contact, Power, ChevronDown, Activity, Plus, Radar } from 'lucide-react'
 import { PageHeader, Card, Segmented, EmptyState } from '@/shared/ui'
 import { useApp } from '@/mocks/store'
 import {
@@ -100,7 +100,7 @@ export function AdminStatsPage() {
   if (denied) {
     return (
       <div>
-        <PageHeader title="Статистика" subtitle="Сводка по системе и отчёт клиенту (§5.3)" icon={<BarChart3 size={22} />} />
+        <PageHeader title="Статистика" subtitle="Сводка по системе и отчёт клиенту" icon={<BarChart3 size={22} />} />
         <Card className="p-6">
           <EmptyState
             icon={<BarChart3 size={22} />}
@@ -116,7 +116,7 @@ export function AdminStatsPage() {
     <div>
       <PageHeader
         title="Статистика"
-        subtitle="Сводка по системе и постатейный отчёт клиенту (§5.3)"
+        subtitle="Сводка по системе и постатейный отчёт клиенту"
         icon={<BarChart3 size={22} />}
         actions={
           <button onClick={() => void load()} className="btn-ghost h-10" disabled={loading}>
@@ -187,10 +187,17 @@ function PanelTab({ o }: { o: AdminOverview | null }) {
   if (!o) return <Card className="p-6 text-sm text-muted">Нет данных</Card>
   return (
     <div className="flex flex-col gap-4">
-      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
+        {/* «Аккаунт» — управляемый Telegram-бот, «пользователь» — человек в системе.
+            Рядом с карточкой про кошельки пользователей голое слово «Аккаунты»
+            читалось как «людей 5», хотя людей двое. Называем вещи полностью. */}
         <Tile
-          icon={<Users size={14} />} label="Аккаунты" value={fmt(o.accounts.total)}
+          icon={<Radar size={14} />} label="Telegram-аккаунты" value={fmt(o.accounts.total)}
           hint={`${o.accounts.resting} отдыхают · ${o.accounts.tired} устают`}
+        />
+        <Tile
+          icon={<Users size={14} />} label="Пользователей" value={fmt(o.users.total)}
+          hint={`${o.users.active} активных · люди, а не боты`}
         />
         <Tile icon={<ListChecks size={14} />} label="Задач за период" value={fmt(o.tasks.total)} />
         <Tile
