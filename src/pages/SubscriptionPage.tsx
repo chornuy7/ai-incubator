@@ -1,9 +1,9 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Check, Package, Sparkles, Loader2 } from 'lucide-react'
+import { Check, Package, Sparkles, Loader2, Trash2, Plus } from 'lucide-react'
 import { PageHeader, Card } from '@/shared/ui'
 import { useApp } from '@/mocks/store'
 import { usePlan } from '@/features/billing/plan'
-import { fetchSubscription, saveSubscription, type Subscription } from '@/api/balanceApi'
+import { fetchSubscription, saveSubscription, createBundle, deleteBundle, type Subscription } from '@/api/balanceApi'
 import { cn } from '@/shared/lib/utils'
 
 /**
@@ -23,6 +23,10 @@ export function SubscriptionPage() {
   const [data, setData] = useState<Subscription | null>(null)
   const [picked, setPicked] = useState<Set<string>>(new Set())
   const [saving, setSaving] = useState(false)
+  // Форма «собрать набор под клиента»: имя + цена, состав берётся из текущего выбора.
+  const [bundleName, setBundleName] = useState('')
+  const [bundlePrice, setBundlePrice] = useState('')
+  const [bundleBusy, setBundleBusy] = useState(false)
 
   useEffect(() => {
     void fetchSubscription().then((d) => {
@@ -38,11 +42,22 @@ export function SubscriptionPage() {
   const cost = useMemo(() => {
     if (!data) return { sum: 0, full: 0, setup: null as string | null, discount: 0 }
     const full = data.items.filter((i) => picked.has(i.key)).reduce((a, i) => a + i.price, 0)
-    let best = { setup: null as string | null, discount: 0 }
+    let best = { setup: null as string | null, discount: 0, sum: full }
     for (const s of data.setups) {
-      if (s.modules.every((m) => picked.has(m)) && s.discount > best.discount) best = { setup: s.id, discount: s.discount }
+      if (s.custom) {
+        // Набор админа: цена явная и только на ТОЧНЫЙ состав — «20 $ за парсер +
+        // комментинг» не скидочный коэффициент на любую корзину с ними.
+        const exact = s.modules.length === picked.size && s.modules.every((m) => picked.has(m))
+        const price = s.price ?? s.cost.sum
+        if (exact && price > 0 && price < best.sum) {
+          best = { setup: s.id, discount: full ? Math.round((1 - price / full) * 1000) / 1000 : 0, sum: price }
+        }
+      } else if (s.modules.every((m) => picked.has(m))) {
+        const sum = Math.round(full * (1 - s.discount) * 100) / 100
+        if (sum < best.sum) best = { setup: s.id, discount: s.discount, sum }
+      }
     }
-    return { sum: Math.round(full * (1 - best.discount) * 100) / 100, full, ...best }
+    return { sum: best.sum, full, setup: best.setup, discount: best.discount }
   }, [data, picked])
 
   const toggle = (key: string) => setPicked((prev) => {
@@ -51,6 +66,42 @@ export function SubscriptionPage() {
     return next
   })
   const applySetup = (modules: string[]) => setPicked(new Set(modules))
+
+  const reload = async () => {
+    const fresh = await fetchSubscription()
+    setData(fresh)
+  }
+
+  /**
+   * Сохранить текущий выбор как именованный набор с ЯВНОЙ ценой. Это то, как
+   * реально продают: «клиенту нужен парсер + комментинг за 20 $» — админ собирает
+   * ровно этот пакет, и покупатель получает ровно эти модули.
+   */
+  const saveBundle = async () => {
+    const price = Number(String(bundlePrice).replace(',', '.'))
+    if (!bundleName.trim()) { pushToast({ type: 'error', title: 'Дайте набору имя', desc: 'Его увидит клиент' }); return }
+    if (!Number.isFinite(price) || price <= 0) { pushToast({ type: 'error', title: 'Нужна цена больше нуля', desc: 'Например 20' }); return }
+    if (!keys.length) { pushToast({ type: 'error', title: 'Отметьте модули', desc: 'Набор собирается из текущего выбора' }); return }
+    setBundleBusy(true)
+    try {
+      await createBundle({ name: bundleName.trim(), modules: keys, price })
+      pushToast({ type: 'success', title: `Набор «${bundleName.trim()}» создан`, desc: `${keys.length} модулей за ${price} ${data?.currency ?? '$'}` })
+      setBundleName(''); setBundlePrice('')
+      await reload()
+    } catch (e) {
+      pushToast({ type: 'error', title: 'Не удалось создать набор', desc: e instanceof Error ? e.message : '' })
+    } finally { setBundleBusy(false) }
+  }
+
+  const removeBundle = async (id: string, name: string) => {
+    try {
+      await deleteBundle(id)
+      pushToast({ type: 'success', title: `Набор «${name}» удалён`, desc: 'Уже купленные подписки не тронуты' })
+      await reload()
+    } catch (e) {
+      pushToast({ type: 'error', title: 'Не удалось удалить', desc: e instanceof Error ? e.message : '' })
+    }
+  }
 
   const save = async () => {
     setSaving(true)
@@ -92,6 +143,19 @@ export function SubscriptionPage() {
             >
               <div className="flex items-center gap-1.5 font-display text-base font-bold text-fg">
                 <Sparkles size={15} className="text-spark-400" /> {s.name}
+                {s.custom && <span className="rounded-md bg-iris-500/15 px-1.5 py-0.5 text-[10px] font-bold text-iris-300">ваш набор</span>}
+                {s.custom && (
+                  <span
+                    role="button"
+                    tabIndex={0}
+                    onClick={(e) => { e.stopPropagation(); void removeBundle(s.id, s.name) }}
+                    onKeyDown={(e) => { if (e.key === 'Enter') { e.stopPropagation(); void removeBundle(s.id, s.name) } }}
+                    className="ml-auto grid h-6 w-6 place-items-center rounded-md border border-line text-muted transition-colors hover:border-red-500/40 hover:text-red-300"
+                    title="Удалить набор (купленные подписки не тронет)"
+                  >
+                    <Trash2 size={12} />
+                  </span>
+                )}
               </div>
               <div className="mt-1 text-xs leading-relaxed text-muted">{s.hint}</div>
               <div className="mt-2 flex items-baseline gap-2">
@@ -130,6 +194,40 @@ export function SubscriptionPage() {
               </button>
             )
           })}
+        </div>
+      </Card>
+
+      {/* Собрать набор под клиента: состав = текущий выбор, цена — явная.
+          Продают именно так: «парсер + комментинг за 20 $», а не «минус N % от прайса». */}
+      <Card>
+        <div className="mb-1 text-xs font-bold uppercase tracking-wide text-muted">Собрать набор для клиента</div>
+        <p className="mb-3 text-xs text-muted">
+          Отметьте модули выше, назовите набор и цену — он появится в «Готовых наборах» и на лендинге.
+          Покупатель получит ровно эти модули; монеты за действия и токены ИИ — сверх, как обычно.
+        </p>
+        <div className="flex flex-wrap items-center gap-2">
+          <input
+            value={bundleName}
+            onChange={(e) => setBundleName(e.target.value)}
+            className="input h-10 min-w-0 flex-1 sm:max-w-xs"
+            placeholder="Название — например «Парсер + Комментинг»"
+          />
+          <input
+            value={bundlePrice}
+            onChange={(e) => setBundlePrice(e.target.value)}
+            className="input h-10 w-28 text-right tabular-nums"
+            placeholder="20"
+            inputMode="decimal"
+          />
+          <span className="text-sm text-muted">{cur} / мес</span>
+          <button
+            onClick={() => void saveBundle()}
+            disabled={bundleBusy}
+            className="btn-ghost h-10 border border-line disabled:opacity-40"
+          >
+            {bundleBusy ? <Loader2 size={15} className="animate-spin" /> : <Plus size={15} />}
+            Создать набор из выбранного ({keys.length})
+          </button>
         </div>
       </Card>
 

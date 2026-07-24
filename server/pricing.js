@@ -145,19 +145,32 @@ export function modulePrice(moduleKey) {
  * Считаем на сервере: витрина и то, что спишется, должны быть одним числом.
  * @param {string[]} moduleKeys @returns {{sum:number, full:number, setup:string|null, discount:number}}
  */
-export function subscriptionCost(moduleKeys = []) {
+export function subscriptionCost(moduleKeys = [], customBundles = []) {
   const keys = [...new Set(moduleKeys.filter((k) => MODULE_MONTH_PRICE[k] !== undefined))]
   const full = keys.reduce((acc, k) => acc + modulePrice(k), 0)
   // Скидку даёт сетап, ВСЕ модули которого выбраны: иначе «почти сетап» получал бы
   // цену сетапа, и поштучная покупка была бы бессмысленной.
-  let best = { setup: null, discount: 0 }
+  let best = { setup: null, discount: 0, sum: full }
   for (const s of SETUPS) {
-    if (s.modules.every((m) => keys.includes(m)) && s.discount > best.discount) {
-      best = { setup: s.id, discount: s.discount }
+    if (!s.modules.every((m) => keys.includes(m))) continue
+    const sum = Math.round(full * (1 - s.discount) * 100) / 100
+    if (sum < best.sum) best = { setup: s.id, discount: s.discount, sum }
+  }
+  // Наборы, собранные админом: цена задана ЯВНО и действует только на ТОЧНЫЙ состав.
+  // Superset здесь не годится: «20 $ за парсер + комментинг» — это договорённость
+  // про конкретный пакет, а не скидочный коэффициент на любую корзину с ними.
+  // Если цена набора вдруг выше поштучной суммы — берём меньшую: клиент не должен
+  // платить за «набор» больше, чем стоили бы те же модули по прайсу.
+  const wanted = keys.slice().sort().join(',')
+  for (const b of customBundles || []) {
+    const mods = [...new Set((b?.modules || []).filter((k) => MODULE_MONTH_PRICE[k] !== undefined))]
+    if (mods.sort().join(',') !== wanted || !wanted) continue
+    const price = Math.round((Number(b.price) || 0) * 100) / 100
+    if (price > 0 && price < best.sum) {
+      best = { setup: b.id, discount: full ? Math.round((1 - price / full) * 1000) / 1000 : 0, sum: price }
     }
   }
-  const sum = Math.round(full * (1 - best.discount) * 100) / 100
-  return { sum, full, setup: best.setup, discount: best.discount }
+  return { sum: best.sum, full, setup: best.setup, discount: best.discount }
 }
 
 /**

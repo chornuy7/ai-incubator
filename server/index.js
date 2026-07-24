@@ -387,6 +387,38 @@ app.get('/api/admin/problems', async (req, res) => {
   } catch (err) { res.status(500).json({ ok: false, error: err instanceof Error ? err.message : 'Ошибка' }) }
 })
 
+/**
+ * §5.4: наборы, которые админ собирает под клиента («парсер + комментинг за 20 $»).
+ * Только владелец: это цены, по которым пространство продаёт.
+ */
+app.post('/api/bundles', async (req, res) => {
+  try {
+    if (!(await isAdminRequest(req))) return res.status(403).json({ ok: false, error: 'Собирать наборы может только владелец' })
+    const { createBundle } = await import('./bundles.js')
+    const bundle = await createBundle(req.body || {})
+    await appendAudit({
+      action: 'bundle.create', module: 'billing', initiator: req.header('x-user-id') || 'system',
+      reason: `Набор «${bundle.name}»: ${bundle.modules.length} модулей за ${bundle.price}`,
+      meta: bundle,
+    }).catch(() => {})
+    res.json({ ok: true, bundle })
+  } catch (err) { res.status(400).json({ ok: false, error: err instanceof Error ? err.message : 'Ошибка' }) }
+})
+
+app.delete('/api/bundles/:id', async (req, res) => {
+  try {
+    if (!(await isAdminRequest(req))) return res.status(403).json({ ok: false, error: 'Удалять наборы может только владелец' })
+    const { deleteBundle } = await import('./bundles.js')
+    const gone = await deleteBundle(req.params.id)
+    if (!gone) return res.status(404).json({ ok: false, error: 'Набор не найден' })
+    await appendAudit({
+      action: 'bundle.delete', module: 'billing', initiator: req.header('x-user-id') || 'system',
+      reason: `Удалён набор ${req.params.id}`,
+    }).catch(() => {})
+    res.json({ ok: true })
+  } catch (err) { res.status(500).json({ ok: false, error: err instanceof Error ? err.message : 'Ошибка' }) }
+})
+
 /** §5.3: кто работает прямо сейчас — запущенные и вставшие задачи. */
 app.get('/api/admin/active', async (req, res) => {
   try {
@@ -503,11 +535,23 @@ app.get('/api/subscription', async (req, res) => {
     const { MODULE_MONTH_PRICE, SETUPS, CURRENCY, subscriptionCost } = await import('./pricing.js')
     const { getBalance } = await import('./balance.js')
     const { moduleTitle } = await import('./lib/moduleTitles.js')
+    const { listBundles } = await import('./bundles.js')
     const { modules } = await getBalance(req.header('x-user-id'))
+    const bundles = await listBundles()
     const items = Object.entries(MODULE_MONTH_PRICE)
       .map(([key, price]) => ({ key, title: moduleTitle(key), price }))
       .sort((a, b) => b.price - a.price || a.title.localeCompare(b.title, 'ru'))
-    const setups = SETUPS.map((s) => ({ ...s, cost: subscriptionCost(s.modules) }))
+    // Одним списком со встроенными: для покупателя нет разницы, кто собрал набор —
+    // платформа или админ. `custom` нужен только админской кнопке «удалить».
+    const setups = [
+      ...SETUPS.map((s) => ({ ...s, cost: subscriptionCost(s.modules, bundles) })),
+      ...bundles.map((b) => ({
+        id: b.id, name: b.name, hint: b.hint, modules: b.modules,
+        custom: true, price: b.price,
+        discount: 0,
+        cost: subscriptionCost(b.modules, bundles),
+      })),
+    ]
     res.json({ ok: true, items, setups, currency: CURRENCY, mine: modules })
   } catch (err) { res.status(500).json({ ok: false, error: err instanceof Error ? err.message : 'Ошибка' }) }
 })
@@ -516,7 +560,8 @@ app.get('/api/subscription', async (req, res) => {
 app.post('/api/subscription/quote', async (req, res) => {
   try {
     const { subscriptionCost } = await import('./pricing.js')
-    res.json({ ok: true, ...subscriptionCost(req.body?.modules || []) })
+    const { listBundles } = await import('./bundles.js')
+    res.json({ ok: true, ...subscriptionCost(req.body?.modules || [], await listBundles()) })
   } catch (err) { res.status(500).json({ ok: false, error: err instanceof Error ? err.message : 'Ошибка' }) }
 })
 
@@ -544,7 +589,7 @@ app.post('/api/subscription', async (req, res) => {
       module: 'billing',
       initiator: req.header('x-user-id') || 'system',
       reason: `Подписка: ${list === 'all' ? 'все модули' : `${list.length} модулей`}`,
-      meta: { modules: list, cost: list === 'all' ? null : subscriptionCost(list) },
+      meta: { modules: list, cost: list === 'all' ? null : subscriptionCost(list, await (await import('./bundles.js')).listBundles()) },
     }).catch(() => {})
     res.json({ ok: true, balance })
   } catch (err) { res.status(500).json({ ok: false, error: err instanceof Error ? err.message : 'Ошибка' }) }

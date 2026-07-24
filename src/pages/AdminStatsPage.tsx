@@ -1,3 +1,4 @@
+import { Link } from 'react-router-dom'
 import { coins as fmtCoins, cn } from '@/shared/lib/utils'
 import { useEffect, useMemo, useState } from 'react'
 import { BarChart3, Users, ListChecks, Coins, Download, RefreshCw, AlertTriangle, Contact, Power, ChevronDown, Activity, Plus, Radar, Package, Search } from 'lucide-react'
@@ -837,6 +838,11 @@ function SubscriptionCard({ s }: { s: NonNullable<AdminOverview['subscription']>
         <span className="ml-auto text-xs text-muted">
           {s.changedAt ? `изменена ${new Date(s.changedAt).toLocaleString('ru-RU')}` : 'ни разу не меняли'}
         </span>
+        {/* Управление подпиской живёт в «Мои модули» — отсюда до него один клик,
+            иначе карточка отвечает «что оплачено», но не «где это поменять». */}
+        <Link to="/panel/user/subscription" className="btn-ghost h-8 shrink-0 border border-line text-xs">
+          <Package size={13} /> Мои модули
+        </Link>
       </div>
 
       {!s.explicit && (

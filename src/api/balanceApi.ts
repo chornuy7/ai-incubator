@@ -1,4 +1,4 @@
-import { apiGet, apiPost } from './client'
+import { apiGet, apiPost, apiDelete } from './client'
 
 export interface Plan {
   name: string
@@ -48,7 +48,17 @@ export async function fetchPricing(): Promise<Pricing> {
 /** §5.4: подписка на модули — витрина и то, что уже куплено. */
 export interface SubModule { key: string; title: string; price: number }
 export interface SubCost { sum: number; full: number; setup: string | null; discount: number }
-export interface SubSetup { id: string; name: string; hint: string; modules: string[]; discount: number; cost: SubCost }
+export interface SubSetup {
+  id: string
+  name: string
+  hint: string
+  modules: string[]
+  discount: number
+  cost: SubCost
+  /** Набор, собранный админом: цена явная, удалить можно только его. */
+  custom?: boolean
+  price?: number
+}
 export interface Subscription { items: SubModule[]; setups: SubSetup[]; currency: string; mine: string[] | 'all' }
 
 export async function fetchSubscription(): Promise<Subscription> {
@@ -74,4 +84,13 @@ export async function fetchWalletHistory(limit = 50, userId?: string): Promise<W
   if (userId) q.set('userId', userId)
   const r = await apiGet<{ ok: boolean; rows: WalletEntry[] }>(`/api/balance/history?${q}`)
   return r.rows || []
+}
+
+/** §5.4: набор под клиента — админ выбирает модули и называет цену. */
+export async function createBundle(input: { name: string; hint?: string; modules: string[]; price: number }): Promise<void> {
+  await apiPost('/api/bundles', input)
+}
+
+export async function deleteBundle(id: string): Promise<void> {
+  await apiDelete(`/api/bundles/${id}`)
 }

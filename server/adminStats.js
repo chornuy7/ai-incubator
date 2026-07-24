@@ -313,11 +313,14 @@ export async function accountReport(accountId, opts = {}) {
 export async function subscriptionState() {
   const { getBalance } = await import('./balance.js')
   const { subscriptionCost, MODULE_MONTH_PRICE, CURRENCY } = await import('./pricing.js')
+  const { listBundles } = await import('./bundles.js')
   const { modules } = await getBalance()
 
   const all = Object.keys(MODULE_MONTH_PRICE)
   const keys = modules === 'all' ? all : (Array.isArray(modules) ? modules : [])
-  const cost = subscriptionCost(keys)
+  // С учётом наборов админа: клиент, купивший «парсер + комментинг за 20», должен
+  // видеть в карточке 20, а не поштучные 28.
+  const cost = subscriptionCost(keys, await listBundles().catch(() => []))
 
   // Когда меняли: берём последнюю запись из аудита — «с какого числа платим столько».
   let changedAt = 0

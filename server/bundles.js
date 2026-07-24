@@ -1,0 +1,65 @@
+/**
+ * §5.4: наборы модулей, которые админ собирает САМ — под конкретного клиента.
+ *
+ * Встроенные сетапы («Аутрич», «Вовлечение») зашиты в pricing.js и покрывают
+ * типовые сценарии. Но продажа выглядит иначе: клиенту нужен «парсер групп +
+ * нейрокомментинг за 20 $» — админ собирает ровно этот пакет, называет цену,
+ * и покупатель получает ровно эти модули. Токены и монеты за работу — сверх,
+ * как и везде.
+ *
+ * Цена ЯВНАЯ, а не скидкой: админ продаёт за названную сумму, а не за «минус N %
+ * от прайса» — прайс поменяется, а договорённость с клиентом останется.
+ *
+ * Хранение — data/bundles.json; путь через env BUNDLES_FILE (изоляция тестов).
+ */
+import { dataPath, readJson, writeJson } from './lib/jsonStore.js'
+import { MODULE_MONTH_PRICE } from './pricing.js'
+
+const BUNDLES_FILE = () => process.env.BUNDLES_FILE || dataPath('bundles.json')
+
+const newId = () => `bun_${Math.random().toString(16).slice(2, 10)}`
+
+/** @returns {Promise<Array<{id:string,name:string,hint:string,modules:string[],price:number,createdAt:number}>>} */
+export async function listBundles() {
+  const raw = await readJson(BUNDLES_FILE(), [])
+  return Array.isArray(raw) ? raw : []
+}
+
+/**
+ * Создать набор. Валидация жёсткая: набор с опечаткой в ключе модуля молча
+ * продавал бы воздух — модуль «parsing-grups» никогда не откроется.
+ * @param {{name?:string, hint?:string, modules?:string[], price?:number}} input
+ */
+export async function createBundle(input = {}) {
+  const name = String(input.name || '').trim()
+  if (!name) throw new Error('У набора должно быть имя — его увидит клиент')
+
+  const modules = [...new Set((input.modules || []).map(String))]
+  const unknown = modules.filter((k) => MODULE_MONTH_PRICE[k] === undefined)
+  if (unknown.length) throw new Error(`Неизвестные модули: ${unknown.join(', ')}`)
+  if (modules.length < 1) throw new Error('Выберите хотя бы один модуль')
+
+  const price = Math.round((Number(input.price) || 0) * 100) / 100
+  if (price <= 0) throw new Error('Цена набора должна быть больше нуля')
+
+  const bundle = {
+    id: newId(),
+    name,
+    hint: String(input.hint || '').trim(),
+    modules,
+    price,
+    createdAt: Date.now(),
+  }
+  const all = await listBundles()
+  await writeJson(BUNDLES_FILE(), [...all, bundle])
+  return bundle
+}
+
+/** Удалить набор. Уже проданные подписки не трогаем: у клиента остаётся его список модулей. */
+export async function deleteBundle(id) {
+  const all = await listBundles()
+  const next = all.filter((b) => b.id !== id)
+  if (next.length === all.length) return false
+  await writeJson(BUNDLES_FILE(), next)
+  return true
+}
