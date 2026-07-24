@@ -58,12 +58,15 @@ export function AdminStatsPage() {
   /** Выгрузка «инвойса» в CSV — клиенту его нужно отправить, а не показать на экране. */
   const exportCsv = () => {
     if (!report?.rows.length) return
-    const head = ['Модуль', 'Задач', 'Завершено', 'Действий', 'Токенов', 'Монет']
+    // Монеты разбиты на две статьи: клиент вправе видеть, за что именно списано —
+    // за сами действия по прайсу и отдельно за работу ИИ.
+    const head = ['Модуль', 'Задач', 'Завершено', 'Действий', 'Токенов', 'Монет за действия', 'Монет за ИИ', 'Монет всего']
     const lines = [
       `Отчёт за период ${fmtDate(report.since)} — ${fmtDate(report.until)}`,
       head.join(';'),
-      ...report.rows.map((r) => [r.title, r.tasks, r.completed, r.actions, r.tokens, r.coins].join(';')),
-      ['ИТОГО', report.totals.tasks, '', report.totals.actions, report.totals.tokens, report.totals.coins].join(';'),
+      ...report.rows.map((r) => [r.title, r.tasks, r.completed, r.actions, r.tokens, r.actionCoins ?? 0, r.tokenCoins ?? 0, r.coins].join(';')),
+      ['ИТОГО', report.totals.tasks, '', report.totals.actions, report.totals.tokens,
+       report.totals.actionCoins ?? 0, report.totals.tokenCoins ?? 0, report.totals.coins].join(';'),
     ]
     // BOM — иначе Excel открывает кириллицу кракозябрами, и отчёт клиенту нечитаем.
     const blob = new Blob(['﻿' + lines.join('\n')], { type: 'text/csv;charset=utf-8' })
@@ -230,7 +233,10 @@ function ReportTab({ report, onExport }: { report: ClientReport | null; onExport
                 <td className="py-2 pr-3 text-right tabular-nums text-muted">{fmt(r.completed)}</td>
                 <td className="py-2 pr-3 text-right font-semibold tabular-nums text-fg">{fmt(r.actions)}</td>
                 <td className="py-2 pr-3 text-right tabular-nums text-muted">{fmt(r.tokens)}</td>
-                <td className="py-2 text-right tabular-nums text-amber-300">{r.coins || '—'}</td>
+                <td
+                  className="py-2 text-right tabular-nums text-amber-300"
+                  title={`За действия ${fmtCoins(r.actionCoins ?? 0)} + за ИИ ${fmtCoins(r.tokenCoins ?? 0)}`}
+                >{r.coins ? fmtCoins(r.coins) : '—'}</td>
               </tr>
             ))}
             <tr className="font-semibold">
@@ -239,7 +245,10 @@ function ReportTab({ report, onExport }: { report: ClientReport | null; onExport
               <td className="py-2 pr-3" />
               <td className="py-2 pr-3 text-right tabular-nums text-fg">{fmt(report.totals.actions)}</td>
               <td className="py-2 pr-3 text-right tabular-nums text-fg">{fmt(report.totals.tokens)}</td>
-              <td className="py-2 text-right tabular-nums text-amber-300">{report.totals.coins || '—'}</td>
+              <td
+                className="py-2 text-right tabular-nums text-amber-300"
+                title={`За действия ${fmtCoins(report.totals.actionCoins ?? 0)} + за ИИ ${fmtCoins(report.totals.tokenCoins ?? 0)}`}
+              >{report.totals.coins ? fmtCoins(report.totals.coins) : '—'}</td>
             </tr>
           </tbody>
         </table>

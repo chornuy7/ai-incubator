@@ -15,6 +15,9 @@ export interface AdminOverview {
 
 /** §5.3 (E2): постатейный «инвойс» — строка на модуль, без мелочей. */
 export interface ReportRow {
+  /** Плата за действия (фикс по прайсу) и за токены ИИ — в счёте нужны обе. */
+  actionCoins?: number
+  tokenCoins?: number
   moduleKey: string
   title: string
   tasks: number
@@ -28,7 +31,7 @@ export interface ClientReport {
   since: number
   until: number
   rows: ReportRow[]
-  totals: { tasks: number; actions: number; tokens: number; coins: number }
+  totals: { tasks: number; actions: number; tokens: number; coins: number; actionCoins?: number; tokenCoins?: number }
 }
 
 export async function fetchAdminOverview(since?: number): Promise<AdminOverview> {

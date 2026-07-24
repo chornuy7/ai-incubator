@@ -18,6 +18,9 @@ import { listActivity } from './accountActivity.js'
 import { readAudit } from './lib/auditLog.js'
 import { listUsers } from './users.js'
 
+/** Округление денег — до тысячных, как считает биллинг (строка парсера 0.005). */
+const round2 = (v) => Math.round((Number(v) || 0) * 1000) / 1000
+
 const DAY_MS = 24 * 60 * 60 * 1000
 
 /**
@@ -118,6 +121,11 @@ export async function clientReport(opts = {}) {
     })
     if (!inPeriod.length) continue
     const actions = inPeriod.reduce((n, t) => n + (Number(t.progress?.done) || 0), 0)
+    // Монеты клиента складываются из ДВУХ источников, и в счёте должны быть оба:
+    // плата за действия (task.spentCoins, фикс по прайсу) и плата за токены ИИ.
+    // Раньше в отчёт шли только токены — парсер на 111 действий показывал ноль монет,
+    // то есть клиенту предъявляли меньше, чем с него списали.
+    const actionCoins = round2(inPeriod.reduce((n, t) => n + (Number(t.spentCoins) || 0), 0))
     const tk = await tokenSummary({ module: key, since }).catch(() => ({ tokens: 0, coins: 0 }))
     rows.push({
       moduleKey: key,
@@ -126,7 +134,9 @@ export async function clientReport(opts = {}) {
       completed: inPeriod.filter((t) => t.status === 'done').length,
       actions,
       tokens: tk.tokens,
-      coins: tk.coins,
+      actionCoins,
+      tokenCoins: tk.coins,
+      coins: round2(actionCoins + tk.coins),
     })
   }
   rows.sort((a, b) => b.actions - a.actions)
@@ -135,8 +145,10 @@ export async function clientReport(opts = {}) {
     tasks: acc.tasks + r.tasks,
     actions: acc.actions + r.actions,
     tokens: acc.tokens + r.tokens,
-    coins: Math.round((acc.coins + r.coins) * 100) / 100,
-  }), { tasks: 0, actions: 0, tokens: 0, coins: 0 })
+    actionCoins: round2(acc.actionCoins + r.actionCoins),
+    tokenCoins: round2(acc.tokenCoins + r.tokenCoins),
+    coins: round2(acc.coins + r.coins),
+  }), { tasks: 0, actions: 0, tokens: 0, actionCoins: 0, tokenCoins: 0, coins: 0 })
 
   return { since, until, rows, totals }
 }
