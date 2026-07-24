@@ -88,7 +88,28 @@ export interface CrmOverview {
   stuckDays: number
   target: number
   conversion: number
-  byAccount: Record<string, number>
+  /** Кто ведёт лидов — аккаунт-исполнитель, именем а не id. */
+  owners: { accountId: string; name: string; count: number }[]
+}
+
+/** §5.3: что идёт прямо сейчас. */
+export interface ActiveTask {
+  id: string; moduleKey: string; title: string; status: string; userId: string
+  done: number; total: number; percent: number; accounts: number
+  startedAt: number; updatedAt: number; spentCoins: number; pausedByCoins: boolean
+}
+export interface ActiveNow { running: ActiveTask[]; paused: ActiveTask[] }
+
+/** §5.3: расход по дням. */
+export interface DailyRow { day: string; tokens: number; tokenCoins: number; actionCoins: number; coins: number; tasks: number; actions: number }
+export interface DailySpend { days: number; rows: DailyRow[] }
+
+export async function fetchActiveNow(): Promise<ActiveNow> {
+  return (await apiGet<{ ok: boolean; active: ActiveNow }>('/api/admin/active')).active
+}
+
+export async function fetchDailySpend(days = 30): Promise<DailySpend> {
+  return (await apiGet<{ ok: boolean; daily: DailySpend }>(`/api/admin/daily?days=${days}`)).daily
 }
 
 export async function fetchProblems(since?: number): Promise<Problems> {

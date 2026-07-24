@@ -22,7 +22,8 @@ export async function fetchBalance(): Promise<Balance> {
 }
 
 /** Пополнить (amount > 0), списать (amount < 0) или сменить тариф. Только админ. */
-export async function changeBalance(patch: { amount?: number; planId?: string; reason?: string }): Promise<Balance> {
+/** `userId` — чей кошелёк править. Без него правится свой; чужой доступен только админу. */
+export async function changeBalance(patch: { amount?: number; planId?: string; reason?: string; userId?: string }): Promise<Balance> {
   const data = await apiPost<{ ok: boolean; balance: Balance }>('/api/balance', patch)
   return data.balance
 }

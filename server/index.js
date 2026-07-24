@@ -375,6 +375,24 @@ app.get('/api/admin/problems', async (req, res) => {
   } catch (err) { res.status(500).json({ ok: false, error: err instanceof Error ? err.message : 'Ошибка' }) }
 })
 
+/** §5.3: кто работает прямо сейчас — запущенные и вставшие задачи. */
+app.get('/api/admin/active', async (req, res) => {
+  try {
+    if (!(await isAdminRequest(req))) return res.status(403).json({ ok: false, error: 'Статистика доступна только администратору' })
+    const { activeNow } = await import('./adminStats.js')
+    res.json({ ok: true, active: await activeNow() })
+  } catch (err) { res.status(500).json({ ok: false, error: err instanceof Error ? err.message : 'Ошибка' }) }
+})
+
+/** §5.3: расход по дням — тренд, а не только итог за период. */
+app.get('/api/admin/daily', async (req, res) => {
+  try {
+    if (!(await isAdminRequest(req))) return res.status(403).json({ ok: false, error: 'Статистика доступна только администратору' })
+    const { dailySpend } = await import('./adminStats.js')
+    res.json({ ok: true, daily: await dailySpend({ days: req.query.days ? Number(req.query.days) : undefined }) })
+  } catch (err) { res.status(500).json({ ok: false, error: err instanceof Error ? err.message : 'Ошибка' }) }
+})
+
 /** §5.3 + CRM: воронка лидов, горячие и зависшие. */
 app.get('/api/admin/crm', async (req, res) => {
   try {

@@ -100,6 +100,98 @@ export async function adminOverview(opts = {}) {
 }
 
 /**
+ * Кто работает ПРЯМО СЕЙЧАС: запущенные задачи с прогрессом и владельцем.
+ *
+ * Сводка за период отвечает «что было», а владельцу чаще нужно «что идёт»: успеет
+ * ли до ночи, не встало ли, кто это запустил. Ради этого не поднимаем отдельный
+ * канал — тот же опрос, что и остальная панель.
+ */
+export async function activeNow() {
+  const running = []
+  for (const key of listModuleKeys()) {
+    const store = getModuleStore(key)
+    if (!store) continue
+    let list = []
+    try { list = await store.listTasks() } catch { continue }
+    for (const t of list) {
+      if (t.status !== 'running' && t.status !== 'paused') continue
+      const done = Number(t.progress?.done) || 0
+      const total = Number(t.progress?.total) || 0
+      running.push({
+        id: t.id,
+        moduleKey: key,
+        title: moduleTitle(key),
+        status: t.status,
+        userId: t.userId || '',
+        done,
+        total,
+        percent: total ? Math.min(100, Math.round((done / total) * 100)) : 0,
+        accounts: (t.settings?.accountIds || []).length,
+        startedAt: Number(t.createdAt) || 0,
+        updatedAt: Number(t.updatedAt) || 0,
+        spentCoins: Number(t.spentCoins) || 0,
+        pausedByCoins: !!t.pausedByCoins,
+      })
+    }
+  }
+  running.sort((a, b) => b.updatedAt - a.updatedAt)
+  return {
+    running: running.filter((t) => t.status === 'running'),
+    paused: running.filter((t) => t.status === 'paused'),
+  }
+}
+
+/**
+ * Расход по дням — чтобы видеть тренд, а не только итог за период.
+ *
+ * Источники разной точности, и мы их НЕ смешиваем в одну цифру: журнал токенов
+ * пишет каждое обращение к ИИ с меткой времени (точно), а плата за действия
+ * хранится итогом на задаче, без разбивки по дням, — её кладём на день создания
+ * задачи. Подписи в интерфейсе говорят это прямо, иначе график врал бы точностью.
+ * @param {{days?:number}} [opts]
+ */
+export async function dailySpend(opts = {}) {
+  const days = Math.min(90, Math.max(1, Number(opts.days) || 30))
+  const since = Date.now() - days * DAY_MS
+  const dayKey = (ts) => new Date(ts).toISOString().slice(0, 10)
+
+  const acc = new Map()
+  const touch = (k) => {
+    if (!acc.has(k)) acc.set(k, { day: k, tokens: 0, tokenCoins: 0, actionCoins: 0, tasks: 0, actions: 0 })
+    return acc.get(k)
+  }
+  // Заполняем весь диапазон, включая пустые дни: провал в работе — тоже сигнал,
+  // а «сжатый» график из трёх точек создаёт вид ровной нагрузки.
+  for (let i = days - 1; i >= 0; i--) touch(dayKey(Date.now() - i * DAY_MS))
+
+  const ledger = await readLedger({ since, limit: 100000 }).catch(() => [])
+  for (const e of ledger) {
+    const row = touch(dayKey(Number(e.ts) || Date.now()))
+    row.tokens += Number(e.tokens) || 0
+    row.tokenCoins = round2(row.tokenCoins + (Number(e.coins) || 0))
+  }
+
+  for (const key of listModuleKeys()) {
+    const store = getModuleStore(key)
+    if (!store) continue
+    let list = []
+    try { list = await store.listTasks() } catch { continue }
+    for (const t of list) {
+      const ts = Number(t.createdAt) || 0
+      if (ts < since) continue
+      const row = touch(dayKey(ts))
+      row.tasks += 1
+      row.actions += Number(t.progress?.done) || 0
+      row.actionCoins = round2(row.actionCoins + (Number(t.spentCoins) || 0))
+    }
+  }
+
+  const rows = [...acc.values()].sort((a, b) => a.day.localeCompare(b.day))
+  for (const r of rows) r.coins = round2(r.tokenCoins + r.actionCoins)
+  return { days, rows }
+}
+
+/**
  * Что делал КОНКРЕТНЫЙ аккаунт: задачи, действия, токены, деньги, лиды — по модулям.
  *
  * Профиль аккаунта (подписчики, статус, прокси) отвечает «кто он», но не «что он нам
@@ -266,6 +358,18 @@ export async function crmOverview(opts = {}) {
     if (ACTIVE_LEAD_STATUSES.has(l.status) && (Number(l.updatedAt) || 0) < cutoff) stuck += 1
   }
   const target = byStatus.target || 0
+
+  // Кто ведёт лида — это аккаунт, который с ним работает. Показываем именем, а не
+  // id: «acc_99a46d69fa1e привёл 12 лидов» не читается человеком.
+  const meta = await loadAllMeta().catch(() => ({}))
+  const owners = Object.entries(byAccount)
+    .map(([id, count]) => ({
+      accountId: id,
+      name: meta?.[id]?.name || meta?.[id]?.username || id,
+      count,
+    }))
+    .sort((a, b) => b.count - a.count)
+
   return {
     total: leads.length,
     byStatus,
@@ -275,7 +379,7 @@ export async function crmOverview(opts = {}) {
     target,
     // Конверсия в целевое действие — то, ради чего всё и делается.
     conversion: leads.length ? Math.round((target / leads.length) * 1000) / 10 : 0,
-    byAccount,
+    owners,
   }
 }
 

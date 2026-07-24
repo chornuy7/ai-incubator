@@ -1,13 +1,17 @@
 import { coins as fmtCoins, cn } from '@/shared/lib/utils'
 import { useEffect, useMemo, useState } from 'react'
-import { BarChart3, Users, ListChecks, Coins, Download, RefreshCw, AlertTriangle, Contact, Power, ChevronDown } from 'lucide-react'
+import { BarChart3, Users, ListChecks, Coins, Download, RefreshCw, AlertTriangle, Contact, Power, ChevronDown, Activity, Plus } from 'lucide-react'
 import { PageHeader, Card, Segmented, EmptyState } from '@/shared/ui'
 import { useApp } from '@/mocks/store'
 import {
   fetchAdminOverview, fetchClientReport, fetchUsersReport, fetchProblems, fetchCrmOverview,
+  fetchActiveNow, fetchDailySpend,
   type AdminOverview, type ClientReport, type UsersReport, type Problems, type CrmOverview,
+  type ActiveNow, type ActiveTask, type DailySpend,
 } from '@/api/adminApi'
 import { updateUser } from '@/api/usersApi'
+import { changeBalance } from '@/api/balanceApi'
+import { promptDialog } from '@/shared/lib/dialog'
 
 /**
  * §5.3 (E1/E2): админ-панель со статистикой и постатейный отчёт клиенту.
@@ -42,6 +46,8 @@ export function AdminStatsPage() {
   const [users, setUsers] = useState<UsersReport | null>(null)
   const [problems, setProblems] = useState<Problems | null>(null)
   const [crm, setCrm] = useState<CrmOverview | null>(null)
+  const [active, setActive] = useState<ActiveNow | null>(null)
+  const [daily, setDaily] = useState<DailySpend | null>(null)
   const [loading, setLoading] = useState(true)
   const [denied, setDenied] = useState(false)
 
@@ -52,11 +58,13 @@ export function AdminStatsPage() {
     try {
       // Грузим всё одним заходом: цифры на разных вкладках должны быть на один момент
       // времени, иначе «в панели 82 задачи, а по людям 80» читается как ошибка счёта.
-      const [o, r, u, p, c] = await Promise.all([
+      const [o, r, u, p, c, a, d] = await Promise.all([
         fetchAdminOverview(since), fetchClientReport(since),
         fetchUsersReport(since), fetchProblems(since), fetchCrmOverview(),
+        fetchActiveNow(), fetchDailySpend(PERIODS[periodIdx].days),
       ])
-      setOverview(o); setReport(r); setUsers(u); setProblems(p); setCrm(c); setDenied(false)
+      setOverview(o); setReport(r); setUsers(u); setProblems(p); setCrm(c)
+      setActive(a); setDaily(d); setDenied(false)
     } catch (e) {
       // 403 — не ошибка сборки, а честный отказ: показываем это отдельно, иначе
       // оператор будет думать, что страница сломалась.
@@ -118,7 +126,7 @@ export function AdminStatsPage() {
       />
 
       <div className="mb-4 flex flex-wrap items-center gap-3">
-        <Segmented options={['Панель', 'Пользователи', 'Проблемы', 'CRM', 'Отчёт клиенту']} value={tab} onChange={setTab} />
+        <Segmented options={['Панель', 'Сейчас', 'По дням', 'Пользователи', 'Проблемы', 'CRM', 'Отчёт клиенту']} value={tab} onChange={setTab} />
         <Segmented options={PERIODS.map((p) => p.label)} value={periodIdx} onChange={setPeriodIdx} size="sm" />
       </div>
 
@@ -127,10 +135,14 @@ export function AdminStatsPage() {
       ) : tab === 0 ? (
         <PanelTab o={overview} />
       ) : tab === 1 ? (
-        <UsersTab report={users} onReload={load} />
+        <ActiveTab active={active} onReload={load} />
       ) : tab === 2 ? (
-        <ProblemsTab p={problems} />
+        <DailyTab daily={daily} />
       ) : tab === 3 ? (
+        <UsersTab report={users} onReload={load} />
+      ) : tab === 4 ? (
+        <ProblemsTab p={problems} />
+      ) : tab === 5 ? (
         <CrmTab crm={crm} />
       ) : (
         <ReportTab report={report} onExport={exportCsv} />
@@ -290,6 +302,33 @@ function UsersTab({ report, onReload }: { report: UsersReport | null; onReload: 
   if (!report) return <Card className="p-6 text-sm text-muted">Загрузка…</Card>
   if (!report.rows.length) return <EmptyState icon={<Users size={22} />} title="Пользователей нет" />
 
+  /**
+   * Пополнение прямо из таблицы: админ видит, у кого кончаются монеты, и тут же
+   * доливает — иначе за этим надо уходить в чужой профиль и терять, кому доливал.
+   * Отрицательная сумма списывает: та же операция, тот же аудит.
+   */
+  const topUp = async (userId: string, email: string) => {
+    const raw = await promptDialog({
+      title: 'Пополнить кошелёк',
+      message: `Сколько монет начислить: ${email}? Отрицательное число — списать.`,
+      placeholder: '10',
+    })
+    if (raw === null) return
+    const amount = Number(String(raw).replace(',', '.'))
+    if (!Number.isFinite(amount) || !amount) {
+      pushToast({ type: 'error', title: 'Нужно число', desc: 'Например 10 или -2.5' })
+      return
+    }
+    setBusy(userId)
+    try {
+      await changeBalance({ amount, reason: 'Начисление из админ-панели', userId })
+      pushToast({ type: 'success', title: amount > 0 ? `Начислено ${amount} ⚡` : `Списано ${-amount} ⚡`, desc: email })
+      onReload()
+    } catch (e) {
+      pushToast({ type: 'error', title: 'Не удалось изменить баланс', desc: e instanceof Error ? e.message : '' })
+    } finally { setBusy(null) }
+  }
+
   const toggle = async (userId: string, active: boolean) => {
     setBusy(userId)
     try {
@@ -343,7 +382,21 @@ function UsersTab({ report, onReload }: { report: UsersReport | null; onReload: 
                   <td className="py-2 pr-3 text-right font-semibold tabular-nums text-fg">{fmt(r.actions)}</td>
                   <td className="py-2 pr-3 text-right tabular-nums text-muted">{fmt(r.tokens)}</td>
                   <td className="py-2 pr-3 text-right tabular-nums text-amber-300">{r.spent ? fmtCoins(r.spent) : '—'}</td>
-                  <td className="py-2 pr-3 text-right tabular-nums text-fg">{r.coins ? fmtCoins(r.coins) : '—'}</td>
+                  <td className="py-2 pr-3 text-right">
+                    <div className="flex items-center justify-end gap-1.5">
+                      <span className="tabular-nums text-fg">{r.coins ? fmtCoins(r.coins) : '—'}</span>
+                      {real && (
+                        <button
+                          onClick={(e) => { e.stopPropagation(); void topUp(r.userId, r.email) }}
+                          disabled={busy === r.userId}
+                          className="grid h-6 w-6 shrink-0 place-items-center rounded-md border border-line text-muted transition-colors hover:border-spark-500/40 hover:text-spark-300 disabled:opacity-40"
+                          title="Пополнить кошелёк"
+                        >
+                          <Plus size={13} />
+                        </button>
+                      )}
+                    </div>
+                  </td>
                   <td className="py-2 text-right">
                     {real ? (
                       <button
@@ -494,6 +547,23 @@ function CrmTab({ crm }: { crm: CrmOverview | null }) {
         </Card>
       </div>
 
+      {!!crm.owners.length && (
+        <Card className="p-4">
+          <div className="mb-2.5 text-sm font-semibold text-fg">Кто ведёт лидов</div>
+          <div className="space-y-1.5">
+            {crm.owners.map((o) => (
+              <div key={o.accountId} className="flex items-center gap-3 text-sm">
+                <span className="min-w-0 flex-1 truncate text-fg">{o.name}</span>
+                <div className="h-1.5 w-32 overflow-hidden rounded-full bg-line">
+                  <div className="h-full rounded-full bg-spark-500/70" style={{ width: (o.count / Math.max(...crm.owners.map((x) => x.count), 1)) * 100 + '%' }} />
+                </div>
+                <span className="w-10 shrink-0 text-right tabular-nums text-fg">{fmt(o.count)}</span>
+              </div>
+            ))}
+          </div>
+        </Card>
+      )}
+
       <Card className="p-4">
         <div className="mb-3 text-sm font-semibold text-fg">Воронка по статусам</div>
         <div className="space-y-1.5">
@@ -504,6 +574,150 @@ function CrmTab({ crm }: { crm: CrmOverview | null }) {
                 <div className="h-full rounded-full bg-spark-500/70" style={{ width: (v / max) * 100 + '%' }} />
               </div>
               <span className="w-12 shrink-0 text-right text-sm font-semibold tabular-nums text-fg">{fmt(v)}</span>
+            </div>
+          ))}
+        </div>
+      </Card>
+    </div>
+  )
+}
+
+/**
+ * «Сейчас» — что идёт в эту минуту.
+ *
+ * Сводка за период отвечает «что было», но владельцу чаще нужно «что идёт»: успеет
+ * ли до ночи, не встало ли, кто запустил. Вставшие из-за денег вынесены отдельно —
+ * это единственная поломка, которую чинит не разбирательство, а пополнение.
+ */
+function ActiveTab({ active, onReload }: { active: ActiveNow | null; onReload: () => void }) {
+  if (!active) return <Card className="p-6 text-sm text-muted">Загрузка…</Card>
+  const nothing = !active.running.length && !active.paused.length
+  if (nothing) return <EmptyState icon={<Activity size={22} />} title="Сейчас ничего не идёт" desc="Ни одной запущенной или приостановленной задачи." />
+
+  const Row = ({ t }: { t: ActiveTask }) => (
+    <div className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-line/40 py-2 text-sm last:border-0">
+      <span className="font-medium text-fg">{t.title}</span>
+      <span className="text-xs text-muted">{t.id}</span>
+      {t.pausedByCoins && (
+        <span className="rounded-md bg-amber-500/15 px-1.5 py-0.5 text-[10px] font-bold text-amber-300">ждёт пополнения</span>
+      )}
+      <span className="text-xs text-muted">{t.accounts} акк.</span>
+      <div className="flex min-w-[120px] flex-1 items-center gap-2">
+        <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-line">
+          <div className={cn('h-full rounded-full', t.status === 'running' ? 'bg-spark-500' : 'bg-amber-400/70')} style={{ width: t.percent + '%' }} />
+        </div>
+        <span className="w-20 shrink-0 text-right text-xs tabular-nums text-muted">
+          {fmt(t.done)}{t.total ? '/' + fmt(t.total) : ''}
+        </span>
+      </div>
+      {!!t.spentCoins && <span className="text-xs tabular-nums text-amber-300">{fmtCoins(t.spentCoins)} ⚡</span>}
+    </div>
+  )
+
+  return (
+    <div className="space-y-3">
+      <div className="flex items-center gap-2">
+        <button onClick={onReload} className="btn-ghost h-8 text-xs"><RefreshCw size={13} /> Обновить</button>
+        <span className="text-xs text-muted">Данные на момент загрузки страницы.</span>
+      </div>
+
+      <Card className="p-4">
+        <div className="mb-2 flex items-center gap-2 text-sm font-semibold text-fg">
+          <Activity size={15} className="text-spark-400" /> Идёт сейчас
+          <span className="text-muted">{active.running.length}</span>
+        </div>
+        {active.running.length
+          ? active.running.map((t) => <Row key={t.id} t={t} />)
+          : <div className="py-2 text-sm text-muted">Ничего не запущено.</div>}
+      </Card>
+
+      {!!active.paused.length && (
+        <Card className="p-4">
+          <div className="mb-2 flex items-center gap-2 text-sm font-semibold text-fg">
+            Приостановлены <span className="text-muted">{active.paused.length}</span>
+          </div>
+          {active.paused.map((t) => <Row key={t.id} t={t} />)}
+        </Card>
+      )}
+    </div>
+  )
+}
+
+/**
+ * Расход по дням. Столбцы намеренно двухцветные: плата за действия и за ИИ ведут
+ * себя по-разному, и «вчера потратили втрое больше» без ответа «на что» бесполезно.
+ *
+ * Точность источников разная, и подпись говорит это прямо: журнал ИИ пишет каждое
+ * обращение с меткой времени, а плата за действия хранится итогом на задаче и
+ * ложится на день её создания.
+ */
+function DailyTab({ daily }: { daily: DailySpend | null }) {
+  if (!daily) return <Card className="p-6 text-sm text-muted">Загрузка…</Card>
+  const rows = daily.rows
+  const max = Math.max(...rows.map((r) => r.coins), 0.001)
+  const maxActions = Math.max(...rows.map((r) => r.actions), 1)
+  const totalCoins = rows.reduce((n, r) => n + r.coins, 0)
+  const busiest = rows.reduce((a, b) => (b.actions > a.actions ? b : a), rows[0])
+
+  return (
+    <div className="space-y-3">
+      <div className="grid gap-3 sm:grid-cols-3">
+        <Card className="p-4">
+          <div className="text-xs text-muted">Потрачено за {daily.days} дн.</div>
+          <div className="font-display text-2xl font-bold text-amber-300">{fmtCoins(totalCoins)} ⚡</div>
+        </Card>
+        <Card className="p-4">
+          <div className="text-xs text-muted">В среднем в день</div>
+          <div className="font-display text-2xl font-bold text-fg">{fmtCoins(totalCoins / Math.max(1, daily.days))} ⚡</div>
+        </Card>
+        <Card className="p-4">
+          <div className="text-xs text-muted">Самый нагруженный день</div>
+          <div className="font-display text-2xl font-bold text-fg">{busiest ? fmt(busiest.actions) : 0}</div>
+          <div className="mt-0.5 text-[11px] text-muted">{busiest ? busiest.day : '—'} · действий</div>
+        </Card>
+      </div>
+
+      <Card className="p-4">
+        <div className="mb-1 text-sm font-semibold text-fg">Монеты по дням</div>
+        <div className="mb-3 flex flex-wrap items-center gap-3 text-[11px] text-muted">
+          <span className="flex items-center gap-1"><i className="inline-block h-2 w-2 rounded-sm bg-amber-400" /> за действия</span>
+          <span className="flex items-center gap-1"><i className="inline-block h-2 w-2 rounded-sm bg-spark-500" /> за ИИ</span>
+        </div>
+        <div className="flex h-40 items-end gap-1 overflow-x-auto">
+          {rows.map((r) => {
+            const h = (r.coins / max) * 100
+            const aiPart = r.coins ? (r.tokenCoins / r.coins) * 100 : 0
+            return (
+              <div key={r.day} className="flex min-w-[14px] flex-1 flex-col items-center gap-1" title={`${r.day}: ${fmtCoins(r.coins)} ⚡ (действия ${fmtCoins(r.actionCoins)} + ИИ ${fmtCoins(r.tokenCoins)}) · ${fmt(r.actions)} действий`}>
+                <div className="flex w-full flex-1 items-end">
+                  <div className="w-full overflow-hidden rounded-t bg-line/40" style={{ height: Math.max(2, h) + '%' }}>
+                    <div className="h-full w-full bg-amber-400/80">
+                      <div className="w-full bg-spark-500" style={{ height: aiPart + '%' }} />
+                    </div>
+                  </div>
+                </div>
+                <span className="shrink-0 text-[9px] tabular-nums text-faint">{r.day.slice(8)}</span>
+              </div>
+            )
+          })}
+        </div>
+        <p className="mt-3 text-[11px] text-muted">
+          Расход ИИ берётся из журнала обращений — с точной меткой времени. Плата за действия
+          хранится итогом на задаче, поэтому ложится на день её создания.
+        </p>
+      </Card>
+
+      <Card className="p-4">
+        <div className="mb-2 text-sm font-semibold text-fg">Действия по дням</div>
+        <div className="space-y-1">
+          {rows.filter((r) => r.actions || r.tasks).map((r) => (
+            <div key={r.day} className="flex items-center gap-3 text-xs">
+              <span className="w-20 shrink-0 tabular-nums text-muted">{r.day}</span>
+              <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-line">
+                <div className="h-full rounded-full bg-spark-500/60" style={{ width: (r.actions / maxActions) * 100 + '%' }} />
+              </div>
+              <span className="w-24 shrink-0 text-right tabular-nums text-fg">{fmt(r.actions)} действий</span>
+              <span className="w-16 shrink-0 text-right tabular-nums text-muted">{fmt(r.tasks)} задач</span>
             </div>
           ))}
         </div>
