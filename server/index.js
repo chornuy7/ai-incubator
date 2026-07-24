@@ -352,6 +352,47 @@ app.get('/api/admin/overview', async (req, res) => {
     res.json({ ok: true, overview: await adminOverview({ since: req.query.since ? Number(req.query.since) : undefined }) })
   } catch (err) { res.status(500).json({ ok: false, error: err instanceof Error ? err.message : 'Ошибка' }) }
 })
+/**
+ * Что делал конкретный аккаунт: задачи, действия, токены, деньги, лиды.
+ * Доступно не только админу: оператор вправе видеть отдачу профилей, которыми
+ * работает, — гейт доступа к самому аккаунту уже стоит выше по цепочке.
+ */
+app.get('/api/accounts/:accountId/work', async (req, res) => {
+  try {
+    const { accountReport } = await import('./adminStats.js')
+    const rep = await accountReport(req.params.accountId, { since: req.query.since ? Number(req.query.since) : undefined })
+    if (!rep) return res.status(404).json({ ok: false, error: 'Аккаунт не найден' })
+    res.json({ ok: true, work: rep })
+  } catch (err) { res.status(500).json({ ok: false, error: err instanceof Error ? err.message : 'Ошибка' }) }
+})
+
+/** §5.3: где сейчас болит — ошибки задач, баны, работа вставшая из-за денег. */
+app.get('/api/admin/problems', async (req, res) => {
+  try {
+    if (!(await isAdminRequest(req))) return res.status(403).json({ ok: false, error: 'Статистика доступна только администратору' })
+    const { problems } = await import('./adminStats.js')
+    res.json({ ok: true, problems: await problems({ since: req.query.since ? Number(req.query.since) : undefined }) })
+  } catch (err) { res.status(500).json({ ok: false, error: err instanceof Error ? err.message : 'Ошибка' }) }
+})
+
+/** §5.3 + CRM: воронка лидов, горячие и зависшие. */
+app.get('/api/admin/crm', async (req, res) => {
+  try {
+    if (!(await isAdminRequest(req))) return res.status(403).json({ ok: false, error: 'Статистика доступна только администратору' })
+    const { crmOverview } = await import('./adminStats.js')
+    res.json({ ok: true, crm: await crmOverview({ stuckDays: req.query.stuckDays ? Number(req.query.stuckDays) : undefined }) })
+  } catch (err) { res.status(500).json({ ok: false, error: err instanceof Error ? err.message : 'Ошибка' }) }
+})
+
+/** §5.3: статистика по людям — кто сколько запустил и сколько с него списано. */
+app.get('/api/admin/users-report', async (req, res) => {
+  try {
+    if (!(await isAdminRequest(req))) return res.status(403).json({ ok: false, error: 'Статистика доступна только администратору' })
+    const { usersReport } = await import('./adminStats.js')
+    res.json({ ok: true, report: await usersReport({ since: req.query.since ? Number(req.query.since) : undefined }) })
+  } catch (err) { res.status(500).json({ ok: false, error: err instanceof Error ? err.message : 'Ошибка' }) }
+})
+
 app.get('/api/admin/report', async (req, res) => {
   try {
     if (!(await isAdminRequest(req))) return res.status(403).json({ ok: false, error: 'Отчёт доступен только администратору' })

@@ -11,7 +11,7 @@
  */
 import { listModuleKeys, getModuleStore } from './modules/registry.js'
 import { tokenSummary, readLedger } from './tokenLedger.js'
-import { getBalance, totalCoins } from './balance.js'
+import { getBalance, totalCoins, coinsByUser } from './balance.js'
 import { moduleTitle } from './lib/moduleTitles.js'
 import { loadAllMeta } from './accountsMeta.js'
 import { listActivity } from './accountActivity.js'
@@ -97,6 +97,295 @@ export async function adminOverview(opts = {}) {
     },
     audit: { total: recent.length, byAction },
   }
+}
+
+/**
+ * Что делал КОНКРЕТНЫЙ аккаунт: задачи, действия, токены, деньги, лиды — по модулям.
+ *
+ * Профиль аккаунта (подписчики, статус, прокси) отвечает «кто он», но не «что он нам
+ * принёс». Владелец покупает аккаунты за деньги и должен видеть отдачу каждого:
+ * этот собрал 2 000 строк, а тот сжёг токены и привёл ноль лидов.
+ * @param {string} accountId @param {{since?:number}} [opts]
+ */
+export async function accountReport(accountId, opts = {}) {
+  const since = Number(opts.since) || 0
+  const id = String(accountId || '')
+  if (!id) return null
+
+  const byModule = {}
+  const mod = (key) => {
+    if (!byModule[key]) byModule[key] = { moduleKey: key, title: moduleTitle(key), tasks: 0, actions: 0, tokens: 0, spent: 0 }
+    return byModule[key]
+  }
+
+  let tasks = 0
+  let actions = 0
+  let spent = 0
+  let errors = 0
+  let lastUsed = 0
+  const recent = []
+  for (const key of listModuleKeys()) {
+    const store = getModuleStore(key)
+    if (!store) continue
+    let list = []
+    try { list = await store.listTasks() } catch { continue }
+    for (const t of list) {
+      const ids = t.settings?.accountIds || []
+      if (!Array.isArray(ids) || !ids.includes(id)) continue
+      if ((Number(t.createdAt) || 0) < since) continue
+      // Действия задачи делим на число участвовавших аккаунтов: приписать все 500
+      // комментариев каждому из пяти профилей значит впятеро завысить отдачу.
+      const share = ids.length > 1 ? (Number(t.progress?.done) || 0) / ids.length : (Number(t.progress?.done) || 0)
+      const coinShare = ids.length > 1 ? (Number(t.spentCoins) || 0) / ids.length : (Number(t.spentCoins) || 0)
+      tasks += 1
+      actions += share
+      spent = round2(spent + coinShare)
+      errors += Number(t.errors) || 0
+      lastUsed = Math.max(lastUsed, Number(t.updatedAt) || Number(t.createdAt) || 0)
+      const m = mod(key)
+      m.tasks += 1
+      m.actions += share
+      m.spent = round2(m.spent + coinShare)
+      recent.push({ id: t.id, moduleKey: key, title: moduleTitle(key), status: t.status, at: Number(t.updatedAt) || Number(t.createdAt) || 0, actions: Math.round(share) })
+    }
+  }
+
+  // Токены журнал пишет с accountId — здесь делить ничего не надо, это точный расход.
+  const ledger = await readLedger({ accountId: id, since: since || undefined, limit: 100000 }).catch(() => [])
+  let tokens = 0
+  let tokenCoins = 0
+  for (const e of ledger) {
+    tokens += Number(e.tokens) || 0
+    tokenCoins = round2(tokenCoins + (Number(e.coins) || 0))
+    if (e.module) mod(e.module).tokens += Number(e.tokens) || 0
+  }
+
+  // Лиды — конечный смысл работы аккаунта, а не побочная метрика.
+  const { listLeads, ACTIVE_LEAD_STATUSES } = await import('./leads.js')
+  const leads = (await listLeads({}).catch(() => [])).filter((l) => l.accountId === id)
+  const leadsTarget = leads.filter((l) => l.status === 'target').length
+  const leadsActive = leads.filter((l) => ACTIVE_LEAD_STATUSES.has(l.status)).length
+
+  recent.sort((a, b) => b.at - a.at)
+  return {
+    accountId: id,
+    since,
+    tasks,
+    actions: Math.round(actions),
+    spent,
+    tokens,
+    tokenCoins,
+    totalCoins: round2(spent + tokenCoins),
+    errors,
+    lastUsed,
+    leads: { total: leads.length, active: leadsActive, target: leadsTarget },
+    byModule: Object.values(byModule)
+      .map((m) => ({ ...m, actions: Math.round(m.actions) }))
+      .sort((a, b) => b.actions - a.actions || b.tokens - a.tokens),
+    recent: recent.slice(0, 10),
+  }
+}
+
+/**
+ * §5.3: то, за чем владелец следит каждый день — где сейчас болит.
+ *
+ * Сводка отвечает «сколько всего сделано», но не «что сломалось». Задачи с ошибками,
+ * аккаунты в бане и работа, вставшая из-за нуля на балансе, — это три разные беды с
+ * разными действиями, поэтому считаем их отдельно, а не одной кучей «проблемы: 7».
+ * @param {{since?:number}} [opts]
+ */
+export async function problems(opts = {}) {
+  const since = Number(opts.since) || 0
+
+  const failedTasks = []
+  const pausedNoCoins = []
+  for (const key of listModuleKeys()) {
+    const store = getModuleStore(key)
+    if (!store) continue
+    let list = []
+    try { list = await store.listTasks() } catch { continue }
+    for (const t of list) {
+      if ((Number(t.createdAt) || 0) < since) continue
+      const errors = Number(t.errors) || 0
+      if (errors) {
+        failedTasks.push({
+          id: t.id, moduleKey: key, title: moduleTitle(key), status: t.status,
+          errors, lastError: t.lastError || '', userId: t.userId || '',
+        })
+      }
+      if (t.pausedByCoins) {
+        pausedNoCoins.push({ id: t.id, moduleKey: key, title: moduleTitle(key), userId: t.userId || '' })
+      }
+    }
+  }
+  failedTasks.sort((a, b) => b.errors - a.errors)
+
+  // Аккаунты: бан и flood — это простой оплаченного ресурса, их видно сразу.
+  const meta = await loadAllMeta().catch(() => ({}))
+  const accounts = { banned: [], flood: [], noProxy: [] }
+  for (const [id, m] of Object.entries(meta || {})) {
+    const st = String(m?.status || '')
+    if (/ban|block/i.test(st)) accounts.banned.push({ id, status: st })
+    else if (/flood/i.test(st) || m?.floodUntil > Date.now()) accounts.flood.push({ id, status: st, until: m?.floodUntil || 0 })
+    if (!m?.proxyId) accounts.noProxy.push({ id })
+  }
+
+  return {
+    since,
+    failedTasks: failedTasks.slice(0, 20),
+    failedTotal: failedTasks.length,
+    pausedNoCoins,
+    accounts: {
+      banned: accounts.banned.length, flood: accounts.flood.length, noProxy: accounts.noProxy.length,
+      bannedIds: accounts.banned.slice(0, 10), floodIds: accounts.flood.slice(0, 10),
+    },
+  }
+}
+
+/**
+ * §5.3 + CRM: воронка лидов для админки.
+ *
+ * Отдельно считаем ЗАВИСШИЕ — активный лид, по которому давно ничего не происходило.
+ * Их не видно ни в одном счётчике статусов, а именно они и есть потерянные деньги.
+ * @param {{stuckDays?:number}} [opts]
+ */
+export async function crmOverview(opts = {}) {
+  const stuckDays = Number(opts.stuckDays) || 3
+  const { listLeads, LEAD_STATUSES, ACTIVE_LEAD_STATUSES } = await import('./leads.js')
+  const leads = await listLeads({}).catch(() => [])
+
+  const byStatus = Object.fromEntries(LEAD_STATUSES.map((k) => [k, 0]))
+  const byAccount = {}
+  const cutoff = Date.now() - stuckDays * DAY_MS
+  let stuck = 0
+  let hot = 0
+  for (const l of leads) {
+    byStatus[l.status] = (byStatus[l.status] || 0) + 1
+    if (l.accountId) byAccount[l.accountId] = (byAccount[l.accountId] || 0) + 1
+    if (l.isHot || l.status === 'hot') hot += 1
+    if (ACTIVE_LEAD_STATUSES.has(l.status) && (Number(l.updatedAt) || 0) < cutoff) stuck += 1
+  }
+  const target = byStatus.target || 0
+  return {
+    total: leads.length,
+    byStatus,
+    hot,
+    stuck,
+    stuckDays,
+    target,
+    // Конверсия в целевое действие — то, ради чего всё и делается.
+    conversion: leads.length ? Math.round((target / leads.length) * 1000) / 10 : 0,
+    byAccount,
+  }
+}
+
+/**
+ * §5.3: «трекинг пользователей» — разрез статистики ПО ЛЮДЯМ.
+ *
+ * Общая сумма отвечает «сколько всего потрачено», но не «кем». После перехода на
+ * личные кошельки и личные задачи админ должен видеть, кто сколько запустил и
+ * сколько с него списано: без этого претензию клиента «за что списали» разобрать
+ * нечем. Строка = пользователь, а не задача — заказчик просил постатейно.
+ * @param {{since?:number}} [opts]
+ */
+export async function usersReport(opts = {}) {
+  const since = Number(opts.since) || 0
+  const [users, coins, ledger] = await Promise.all([
+    listUsers().catch(() => []),
+    coinsByUser().catch(() => ({})),
+    readLedger({ since: since || undefined, limit: 100000 }).catch(() => []),
+  ])
+
+  // Собираем задачи один раз и раскладываем по владельцу: задач много, юзеров мало.
+  const byUser = new Map()
+  const taskOwner = new Map() // taskId → userId, чтобы привязать старые записи журнала
+  const touch = (id) => {
+    if (!byUser.has(id)) byUser.set(id, { tasks: 0, actions: 0, spent: 0, tokens: 0, byModule: {} })
+    return byUser.get(id)
+  }
+  /** Разрез «куда»: что человек делал в конкретном модуле. */
+  const mod = (row, key) => {
+    if (!row.byModule[key]) row.byModule[key] = { tasks: 0, actions: 0, tokens: 0, spent: 0 }
+    return row.byModule[key]
+  }
+  for (const key of listModuleKeys()) {
+    const store = getModuleStore(key)
+    if (!store) continue
+    let list = []
+    try { list = await store.listTasks() } catch { continue }
+    for (const t of list) {
+      if ((Number(t.createdAt) || 0) < since) continue
+      // Задачи, заведённые до того, как стали запоминать владельца, считаем ничьими:
+      // приписать их наугад хуже, чем честно показать отдельной строкой.
+      const owner = t.userId || '—'
+      taskOwner.set(t.id, owner)
+      const row = touch(owner)
+      const acts = Number(t.progress?.done) || 0
+      const spent = Number(t.spentCoins) || 0
+      row.tasks += 1
+      row.actions += acts
+      row.spent = round2(row.spent + spent)
+      const m = mod(row, key)
+      m.tasks += 1
+      m.actions += acts
+      m.spent = round2(m.spent + spent)
+    }
+  }
+
+  // Токены: у свежих записей журнала есть userId, у старых — только taskId.
+  // Привязываем через владельца задачи, иначе весь ранний расход выглядел бы ничьим.
+  for (const e of ledger) {
+    const owner = e.userId || taskOwner.get(e.taskId) || '—'
+    const row = touch(owner)
+    const tk = Number(e.tokens) || 0
+    row.tokens += tk
+    if (e.module) mod(row, e.module).tokens += tk
+  }
+
+  /** «Куда» — модули, отсортированные по весу: сначала где больше действий. */
+  const where = (byModule) => Object.entries(byModule)
+    .map(([key, v]) => ({ moduleKey: key, title: moduleTitle(key), ...v }))
+    .sort((a, b) => b.actions - a.actions || b.tokens - a.tokens)
+
+  const rows = users.map((u) => {
+    const st = byUser.get(u.id) || { tasks: 0, actions: 0, spent: 0, tokens: 0, byModule: {} }
+    byUser.delete(u.id)
+    return {
+      userId: u.id,
+      email: u.email || '',
+      name: u.name || '',
+      active: u.active !== false,
+      coins: round2(coins[u.id] ?? 0),
+      tasks: st.tasks,
+      actions: st.actions,
+      spent: st.spent,
+      tokens: st.tokens,
+      where: where(st.byModule),
+    }
+  })
+
+  // Владельцы, которых уже нет в списке юзеров (удалили), и задачи без владельца —
+  // прятать нельзя: их действия и деньги реальны и должны сходиться с общим итогом.
+  for (const [id, st] of byUser) {
+    rows.push({
+      userId: id,
+      email: id === '—' ? 'без владельца (старые задачи)' : `удалённый пользователь ${id}`,
+      name: '', active: false, coins: 0,
+      tasks: st.tasks, actions: st.actions, spent: st.spent, tokens: st.tokens,
+      where: where(st.byModule),
+    })
+  }
+
+  rows.sort((a, b) => b.spent - a.spent || b.actions - a.actions)
+  const totals = rows.reduce((acc, r) => ({
+    coins: round2(acc.coins + r.coins),
+    tasks: acc.tasks + r.tasks,
+    actions: acc.actions + r.actions,
+    spent: round2(acc.spent + r.spent),
+    tokens: acc.tokens + r.tokens,
+  }), { coins: 0, tasks: 0, actions: 0, spent: 0, tokens: 0 })
+
+  return { since, rows, totals }
 }
 
 /**

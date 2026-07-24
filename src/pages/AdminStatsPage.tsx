@@ -1,9 +1,13 @@
-import { coins as fmtCoins } from '@/shared/lib/utils'
+import { coins as fmtCoins, cn } from '@/shared/lib/utils'
 import { useEffect, useMemo, useState } from 'react'
-import { BarChart3, Users, ListChecks, Coins, Download, RefreshCw } from 'lucide-react'
+import { BarChart3, Users, ListChecks, Coins, Download, RefreshCw, AlertTriangle, Contact, Power, ChevronDown } from 'lucide-react'
 import { PageHeader, Card, Segmented, EmptyState } from '@/shared/ui'
 import { useApp } from '@/mocks/store'
-import { fetchAdminOverview, fetchClientReport, type AdminOverview, type ClientReport } from '@/api/adminApi'
+import {
+  fetchAdminOverview, fetchClientReport, fetchUsersReport, fetchProblems, fetchCrmOverview,
+  type AdminOverview, type ClientReport, type UsersReport, type Problems, type CrmOverview,
+} from '@/api/adminApi'
+import { updateUser } from '@/api/usersApi'
 
 /**
  * §5.3 (E1/E2): админ-панель со статистикой и постатейный отчёт клиенту.
@@ -35,6 +39,9 @@ export function AdminStatsPage() {
   const [periodIdx, setPeriodIdx] = useState(1)
   const [overview, setOverview] = useState<AdminOverview | null>(null)
   const [report, setReport] = useState<ClientReport | null>(null)
+  const [users, setUsers] = useState<UsersReport | null>(null)
+  const [problems, setProblems] = useState<Problems | null>(null)
+  const [crm, setCrm] = useState<CrmOverview | null>(null)
   const [loading, setLoading] = useState(true)
   const [denied, setDenied] = useState(false)
 
@@ -43,8 +50,13 @@ export function AdminStatsPage() {
   const load = async () => {
     setLoading(true)
     try {
-      const [o, r] = await Promise.all([fetchAdminOverview(since), fetchClientReport(since)])
-      setOverview(o); setReport(r); setDenied(false)
+      // Грузим всё одним заходом: цифры на разных вкладках должны быть на один момент
+      // времени, иначе «в панели 82 задачи, а по людям 80» читается как ошибка счёта.
+      const [o, r, u, p, c] = await Promise.all([
+        fetchAdminOverview(since), fetchClientReport(since),
+        fetchUsersReport(since), fetchProblems(since), fetchCrmOverview(),
+      ])
+      setOverview(o); setReport(r); setUsers(u); setProblems(p); setCrm(c); setDenied(false)
     } catch (e) {
       // 403 — не ошибка сборки, а честный отказ: показываем это отдельно, иначе
       // оператор будет думать, что страница сломалась.
@@ -106,7 +118,7 @@ export function AdminStatsPage() {
       />
 
       <div className="mb-4 flex flex-wrap items-center gap-3">
-        <Segmented options={['Панель', 'Отчёт клиенту']} value={tab} onChange={setTab} />
+        <Segmented options={['Панель', 'Пользователи', 'Проблемы', 'CRM', 'Отчёт клиенту']} value={tab} onChange={setTab} />
         <Segmented options={PERIODS.map((p) => p.label)} value={periodIdx} onChange={setPeriodIdx} size="sm" />
       </div>
 
@@ -114,6 +126,12 @@ export function AdminStatsPage() {
         <Card className="p-6 text-sm text-muted">Загрузка…</Card>
       ) : tab === 0 ? (
         <PanelTab o={overview} />
+      ) : tab === 1 ? (
+        <UsersTab report={users} onReload={load} />
+      ) : tab === 2 ? (
+        <ProblemsTab p={problems} />
+      ) : tab === 3 ? (
+        <CrmTab crm={crm} />
       ) : (
         <ReportTab report={report} onExport={exportCsv} />
       )}
@@ -254,5 +272,242 @@ function ReportTab({ report, onExport }: { report: ClientReport | null; onExport
         </table>
       </div>
     </Card>
+  )
+}
+
+/**
+ * §5.3 «трекинг пользователей»: кто, что делал, сколько потратил и КУДА.
+ *
+ * Отключить человека можно прямо отсюда: админ смотрит статистику и тут же видит,
+ * кого пора закрыть, — уходить за этим на другую страницу значит терять контекст.
+ * Строка раскрывается в разрез по модулям: «потратил 5 000 токенов» без «на что»
+ * не отвечает ни на один реальный вопрос.
+ */
+function UsersTab({ report, onReload }: { report: UsersReport | null; onReload: () => void }) {
+  const pushToast = useApp((s) => s.pushToast)
+  const [open, setOpen] = useState<string | null>(null)
+  const [busy, setBusy] = useState<string | null>(null)
+  if (!report) return <Card className="p-6 text-sm text-muted">Загрузка…</Card>
+  if (!report.rows.length) return <EmptyState icon={<Users size={22} />} title="Пользователей нет" />
+
+  const toggle = async (userId: string, active: boolean) => {
+    setBusy(userId)
+    try {
+      await updateUser(userId, { active: !active })
+      pushToast({ type: 'success', title: !active ? 'Пользователь включён' : 'Пользователь отключён' })
+      onReload()
+    } catch (e) {
+      pushToast({ type: 'error', title: 'Не удалось изменить', desc: e instanceof Error ? e.message : '' })
+    } finally { setBusy(null) }
+  }
+
+  return (
+    <Card className="p-4">
+      <p className="mb-3 text-xs text-muted">
+        Строка — человек. Нажмите на неё, чтобы увидеть, в каких модулях он работал.
+        «Списано» — плата за действия по его задачам, «На счету» — что осталось в кошельке.
+      </p>
+      <div className="overflow-x-auto">
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="border-b border-line text-left text-xs text-muted">
+              <th className="pb-2 pr-3 font-medium">Пользователь</th>
+              <th className="pb-2 pr-3 text-right font-medium">Задач</th>
+              <th className="pb-2 pr-3 text-right font-medium">Действий</th>
+              <th className="pb-2 pr-3 text-right font-medium">Токенов</th>
+              <th className="pb-2 pr-3 text-right font-medium">Списано</th>
+              <th className="pb-2 pr-3 text-right font-medium">На счету</th>
+              <th className="pb-2 text-right font-medium">Доступ</th>
+            </tr>
+          </thead>
+          <tbody>
+            {report.rows.map((r) => {
+              // Строки без реального пользователя (удалённые, задачи без владельца)
+              // отключать нечего — кнопки у них нет, но из счёта они не исчезают.
+              const real = !!r.userId && !r.email.startsWith('без владельца') && !r.email.startsWith('удалённый')
+              const isOpen = open === r.userId
+              return [
+                <tr
+                  key={r.userId}
+                  className="cursor-pointer border-b border-line/50 hover:bg-white/[.02]"
+                  onClick={() => setOpen(isOpen ? null : r.userId)}
+                >
+                  <td className="py-2 pr-3">
+                    <div className="flex items-center gap-1.5">
+                      <ChevronDown size={13} className={cn('text-muted transition-transform', isOpen && 'rotate-180')} />
+                      <span className={cn('text-fg', !r.active && real && 'text-muted line-through')}>{r.email || r.userId}</span>
+                      {!r.active && real && <span className="rounded-md bg-white/8 px-1.5 py-0.5 text-[10px] font-bold text-muted">отключён</span>}
+                    </div>
+                  </td>
+                  <td className="py-2 pr-3 text-right tabular-nums text-muted">{fmt(r.tasks)}</td>
+                  <td className="py-2 pr-3 text-right font-semibold tabular-nums text-fg">{fmt(r.actions)}</td>
+                  <td className="py-2 pr-3 text-right tabular-nums text-muted">{fmt(r.tokens)}</td>
+                  <td className="py-2 pr-3 text-right tabular-nums text-amber-300">{r.spent ? fmtCoins(r.spent) : '—'}</td>
+                  <td className="py-2 pr-3 text-right tabular-nums text-fg">{r.coins ? fmtCoins(r.coins) : '—'}</td>
+                  <td className="py-2 text-right">
+                    {real ? (
+                      <button
+                        onClick={(e) => { e.stopPropagation(); void toggle(r.userId, r.active) }}
+                        disabled={busy === r.userId}
+                        className={cn('inline-flex h-7 items-center gap-1 rounded-lg border px-2 text-xs font-semibold disabled:opacity-40',
+                          r.active ? 'border-line text-muted hover:border-red-500/40 hover:text-red-300' : 'border-spark-500/40 text-spark-300')}
+                        title={r.active ? 'Отключить доступ' : 'Включить доступ'}
+                      >
+                        <Power size={12} /> {r.active ? 'Отключить' : 'Включить'}
+                      </button>
+                    ) : <span className="text-xs text-muted">—</span>}
+                  </td>
+                </tr>,
+                isOpen ? (
+                  <tr key={r.userId + '-where'} className="border-b border-line/50 bg-white/[.02]">
+                    <td colSpan={7} className="px-3 py-2">
+                      {r.where.length ? (
+                        <div className="grid gap-1 sm:grid-cols-2">
+                          {r.where.map((w) => (
+                            <div key={w.moduleKey} className="flex items-baseline justify-between gap-3 text-xs">
+                              <span className="text-muted">{w.title}</span>
+                              <span className="tabular-nums text-fg">
+                                {fmt(w.actions)} действий
+                                {w.tokens ? <span className="text-muted"> · {fmt(w.tokens)} ток.</span> : null}
+                                {w.spent ? <span className="text-amber-300"> · {fmtCoins(w.spent)} ⚡</span> : null}
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                      ) : <span className="text-xs text-muted">Ничего не запускал.</span>}
+                    </td>
+                  </tr>
+                ) : null,
+              ]
+            })}
+            <tr className="font-semibold">
+              <td className="py-2 pr-3 text-fg">ИТОГО</td>
+              <td className="py-2 pr-3 text-right tabular-nums text-fg">{fmt(report.totals.tasks)}</td>
+              <td className="py-2 pr-3 text-right tabular-nums text-fg">{fmt(report.totals.actions)}</td>
+              <td className="py-2 pr-3 text-right tabular-nums text-fg">{fmt(report.totals.tokens)}</td>
+              <td className="py-2 pr-3 text-right tabular-nums text-amber-300">{fmtCoins(report.totals.spent)}</td>
+              <td className="py-2 pr-3 text-right tabular-nums text-fg">{fmtCoins(report.totals.coins)}</td>
+              <td />
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </Card>
+  )
+}
+
+/**
+ * §5.3: где сейчас болит. Три беды разведены намеренно — у них разные действия:
+ * ошибки чинит настройка, бан/flood — замена аккаунта, пауза из-за денег — пополнение.
+ */
+function ProblemsTab({ p }: { p: Problems | null }) {
+  if (!p) return <Card className="p-6 text-sm text-muted">Загрузка…</Card>
+  const quiet = !p.failedTotal && !p.pausedNoCoins.length && !p.accounts.banned && !p.accounts.flood && !p.accounts.noProxy
+  if (quiet) return <EmptyState icon={<AlertTriangle size={22} />} title="Всё спокойно" desc="Ошибок, банов и остановок из-за баланса нет." />
+
+  return (
+    <div className="space-y-3">
+      <div className="grid gap-3 sm:grid-cols-3">
+        <Card className="p-4">
+          <div className="text-xs text-muted">Задач с ошибками</div>
+          <div className="font-display text-2xl font-bold text-fg">{fmt(p.failedTotal)}</div>
+        </Card>
+        <Card className="p-4">
+          <div className="text-xs text-muted">Встали из-за баланса</div>
+          <div className="font-display text-2xl font-bold text-amber-300">{fmt(p.pausedNoCoins.length)}</div>
+          <div className="mt-0.5 text-[11px] text-muted">чинится пополнением</div>
+        </Card>
+        <Card className="p-4">
+          <div className="text-xs text-muted">Аккаунты</div>
+          <div className="font-display text-2xl font-bold text-fg">{fmt(p.accounts.banned + p.accounts.flood)}</div>
+          <div className="mt-0.5 text-[11px] text-muted">
+            бан {p.accounts.banned} · flood {p.accounts.flood} · без прокси {p.accounts.noProxy}
+          </div>
+        </Card>
+      </div>
+
+      {!!p.failedTasks.length && (
+        <Card className="p-4">
+          <div className="mb-2 text-sm font-semibold text-fg">Где именно ошибки</div>
+          <div className="space-y-1.5">
+            {p.failedTasks.map((t) => (
+              <div key={t.id} className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5 border-b border-line/40 pb-1.5 text-sm last:border-0">
+                <span className="font-medium text-fg">{t.title}</span>
+                <span className="rounded-md bg-red-500/12 px-1.5 py-0.5 text-[11px] font-bold text-red-300">{t.errors} ош.</span>
+                <span className="text-xs text-muted">{t.id}</span>
+                <span className="w-full text-xs text-muted sm:w-auto sm:flex-1 sm:truncate">{t.lastError}</span>
+              </div>
+            ))}
+          </div>
+        </Card>
+      )}
+
+      {!!p.pausedNoCoins.length && (
+        <Card className="p-4">
+          <div className="mb-2 text-sm font-semibold text-fg">Ждут пополнения</div>
+          <div className="text-sm text-muted">
+            {p.pausedNoCoins.map((t) => t.title + ' (' + t.id + ')').join(' · ')}
+          </div>
+        </Card>
+      )}
+    </div>
+  )
+}
+
+/**
+ * CRM в админке: воронка и — главное — ЗАВИСШИЕ лиды.
+ *
+ * Их не видно ни в одном счётчике статусов: лид формально «в работе», а по факту
+ * им никто не занимался несколько дней. Это и есть потерянные деньги, поэтому
+ * вынесено отдельной цифрой, а не спрятано в разбивке.
+ */
+function CrmTab({ crm }: { crm: CrmOverview | null }) {
+  if (!crm) return <Card className="p-6 text-sm text-muted">Загрузка…</Card>
+  if (!crm.total) return <EmptyState icon={<Contact size={22} />} title="Лидов пока нет" desc="Появятся, когда модули начнут доводить людей до диалога." />
+
+  const LABELS: Record<string, string> = {
+    cold: 'Холодные', contacted: 'Написали', warm: 'Тёплые', interested: 'Заинтересованы',
+    hot: 'Горячие', target: 'Целевое действие', closed: 'Закрыты',
+  }
+  const max = Math.max(...Object.values(crm.byStatus), 1)
+
+  return (
+    <div className="space-y-3">
+      <div className="grid gap-3 sm:grid-cols-4">
+        <Card className="p-4">
+          <div className="text-xs text-muted">Всего лидов</div>
+          <div className="font-display text-2xl font-bold text-fg">{fmt(crm.total)}</div>
+        </Card>
+        <Card className="p-4">
+          <div className="text-xs text-muted">Горячие</div>
+          <div className="font-display text-2xl font-bold text-spark-300">{fmt(crm.hot)}</div>
+        </Card>
+        <Card className="p-4">
+          <div className="text-xs text-muted">Зависшие</div>
+          <div className="font-display text-2xl font-bold text-amber-300">{fmt(crm.stuck)}</div>
+          <div className="mt-0.5 text-[11px] text-muted">в работе, но молчат больше {crm.stuckDays} дн.</div>
+        </Card>
+        <Card className="p-4">
+          <div className="text-xs text-muted">Конверсия в цель</div>
+          <div className="font-display text-2xl font-bold text-fg">{crm.conversion}%</div>
+          <div className="mt-0.5 text-[11px] text-muted">{fmt(crm.target)} довели до целевого</div>
+        </Card>
+      </div>
+
+      <Card className="p-4">
+        <div className="mb-3 text-sm font-semibold text-fg">Воронка по статусам</div>
+        <div className="space-y-1.5">
+          {Object.entries(crm.byStatus).map(([k, v]) => (
+            <div key={k} className="flex items-center gap-3">
+              <span className="w-40 shrink-0 text-sm text-muted">{LABELS[k] || k}</span>
+              <div className="h-2 flex-1 overflow-hidden rounded-full bg-line">
+                <div className="h-full rounded-full bg-spark-500/70" style={{ width: (v / max) * 100 + '%' }} />
+              </div>
+              <span className="w-12 shrink-0 text-right text-sm font-semibold tabular-nums text-fg">{fmt(v)}</span>
+            </div>
+          ))}
+        </div>
+      </Card>
+    </div>
   )
 }

@@ -140,6 +140,23 @@ export async function totalCoins() {
 }
 
 /**
+ * Монеты по каждому кошельку: id пользователя → сколько у него сейчас.
+ *
+ * Нужен админ-панели: после перехода на личные кошельки общая сумма отвечает
+ * «сколько всего», но не «у кого». Служебные ключи не отдаём — это не люди.
+ * @returns {Promise<Record<string, number>>}
+ */
+export async function coinsByUser() {
+  const all = await readJson(BALANCE_FILE(), {})
+  const out = {}
+  for (const [k, v] of Object.entries(all || {})) {
+    if (k === SUBSCRIPTION_KEY || k === DEFAULT_USER) continue
+    if (typeof v?.coins === 'number') out[k] = v.coins
+  }
+  return out
+}
+
+/**
  * Пополнить (amount > 0) или списать (amount < 0).
  * Уходить в минус не даём: при нуле боевые модули должны останавливаться (C2),
  * а отрицательный баланс сделал бы это правило непроверяемым.

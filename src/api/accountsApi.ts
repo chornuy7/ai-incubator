@@ -106,3 +106,30 @@ export async function reconcileLocks(): Promise<{ ok: boolean; dropped: { accoun
   const res = await fetch('/api/modules/locks/reconcile', { method: 'POST' })
   return parseJson(res) as Promise<{ ok: boolean; dropped: { accountId: string; taskId: string; moduleKey: string }[] }>
 }
+
+/**
+ * Что аккаунт нам принёс: задачи, действия, токены, деньги, лиды — по модулям.
+ * Отдельно от профиля Telegram: тот отвечает «кто он», этот — «какая отдача».
+ */
+export interface AccountWorkModule { moduleKey: string; title: string; tasks: number; actions: number; tokens: number; spent: number }
+export interface AccountWork {
+  accountId: string
+  tasks: number
+  actions: number
+  spent: number
+  tokens: number
+  tokenCoins: number
+  totalCoins: number
+  errors: number
+  lastUsed: number
+  leads: { total: number; active: number; target: number }
+  byModule: AccountWorkModule[]
+  recent: { id: string; moduleKey: string; title: string; status: string; at: number; actions: number }[]
+}
+
+export async function fetchAccountWork(accountId: string, since?: number): Promise<AccountWork> {
+  const q = since ? `?since=${since}` : ''
+  const res = await fetch(`/api/accounts/${accountId}/work${q}`)
+  const data = await parseJson(res)
+  return data.work as AccountWork
+}

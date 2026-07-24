@@ -76,6 +76,12 @@ export function createTaskStore(moduleKey, idPrefix) {
           // отличить чужой запуск от своего и покажет либо всё, либо ничего.
           userId: t.userId || '',
           spentCoins: t.spentCoins || 0, // §5.1: во сколько обошёлся ЭТОТ запуск
+          // Счётчик ошибок — не сами логи: файл здесь и так читается целиком, а
+          // админке нужно «где болит», не таща в список весь журнал каждой задачи.
+          errors: (t.logs || []).reduce((n, l) => n + (l.level === 'error' ? 1 : 0), 0),
+          lastError: (t.logs || []).find((l) => l.level === 'error')?.message || '',
+          // Пауза из-за денег отличается от паузы рукой: первую чинит пополнение.
+          pausedByCoins: t.status === 'paused' && (t.logs || []).some((l) => /монет|баланс/i.test(l.message || '')),
           goalId: t.goalId ?? t.settings?.goalId ?? null,
           campaignId: t.campaignId ?? null,
           createdAt: t.createdAt,

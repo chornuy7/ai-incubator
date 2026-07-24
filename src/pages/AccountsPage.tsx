@@ -68,6 +68,35 @@ function formatProxyLabel(proxy: string) {
   return proxy
 }
 
+/**
+ * Сортировки списка аккаунтов. Держим таблицей функций, а не цепочкой if: добавить
+ * порядок = добавить строку, и подпись в выпадающем списке не разъедется с логикой.
+ *
+ * `default` — прежнее поведение: занятые в работе уходят вниз, чтобы свободные,
+ * которые и надо выбирать для запуска, были под рукой.
+ */
+type SortKey = 'default' | 'name' | 'status' | 'country' | 'newest' | 'oldest'
+
+const str = (v: unknown) => String(v ?? '')
+const SORTS: Record<SortKey, (a: TgAccount, b: TgAccount) => number> = {
+  default: (a, b) => Number(!!a.busyIn) - Number(!!b.busyIn),
+  name: (a, b) => str(a.name || a.username).localeCompare(str(b.name || b.username), 'ru'),
+  status: (a, b) => str(a.status).localeCompare(str(b.status)),
+  country: (a, b) => str(a.country).localeCompare(str(b.country), 'ru'),
+  // Свежие сверху: у аккаунтов без даты ставим 0, иначе они всплывали бы наверх.
+  newest: (a, b) => (Number(b.createdAt) || 0) - (Number(a.createdAt) || 0),
+  oldest: (a, b) => (Number(a.createdAt) || 0) - (Number(b.createdAt) || 0),
+}
+
+const SORT_LABELS: { key: SortKey; label: string }[] = [
+  { key: 'default', label: 'Свободные сверху' },
+  { key: 'name', label: 'По имени' },
+  { key: 'status', label: 'По статусу' },
+  { key: 'country', label: 'По стране' },
+  { key: 'newest', label: 'Сначала новые' },
+  { key: 'oldest', label: 'Сначала старые' },
+]
+
 export function AccountsPage() {
   const data = useApp((s) => s.data)
   const isNoSub = useApp((s) => s.userState === 'no-sub')
@@ -177,6 +206,9 @@ export function AccountsPage() {
   const [importOpen, setImportOpen] = useState(false)
   const [proxyPoolOpen, setProxyPoolOpen] = useState(false)
   const [detailAcc, setDetailAcc] = useState<TgAccount | null>(null)
+  // Сортировка списка. По умолчанию «занятые вниз» — так было и раньше, но теперь
+  // это осознанный выбор из списка, а не единственный жёсткий порядок.
+  const [sortKey, setSortKey] = useState<SortKey>('default')
   const [proxyAcc, setProxyAcc] = useState<TgAccount | null>(null)
 
   const loading = accountsLoading
@@ -236,12 +268,14 @@ export function AccountsPage() {
       if (query && !`${a.name} ${a.username} ${a.phone}`.toLowerCase().includes(query.toLowerCase())) return false
       return true
     })
-    // Свободные — сверху, занятые (в работе) — в самый низ. Стабильно сохраняем прочий порядок.
+    // Сортируем стабильно: сравнение по ключу, при равенстве — исходный порядок,
+    // иначе строки прыгали бы между перерисовками при одинаковых значениях.
+    const cmp = SORTS[sortKey]
     return list
       .map((a, i) => ({ a, i }))
-      .sort((x, y) => (Number(!!x.a.busyIn) - Number(!!y.a.busyIn)) || (x.i - y.i))
+      .sort((x, y) => cmp(x.a, y.a) || (x.i - y.i))
       .map((x) => x.a)
-  }, [source, tab, statusFilter, campaignFilter, campaigns, pinnedMap, countryFilter, moduleFilter, query, trashAlive])
+  }, [source, tab, statusFilter, campaignFilter, campaigns, pinnedMap, countryFilter, moduleFilter, query, trashAlive, sortKey])
 
   const pageCount = Math.max(1, Math.ceil(filtered.length / pageSize))
   const pageItems = filtered.slice(page * pageSize, page * pageSize + pageSize)
@@ -465,6 +499,15 @@ export function AccountsPage() {
           <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted" />
           <input value={query} onChange={(e) => { setQuery(e.target.value); setPage(0) }} className="input pl-9" placeholder="Поиск по имени, @username, номеру…" />
         </div>
+
+        {/* Сортировка рядом с поиском: это две половины одного действия — найти нужный
+            аккаунт в списке на сотни строк. */}
+        <Select
+          value={sortKey}
+          onChange={(v) => { setSortKey(v as SortKey); setPage(0) }}
+          options={SORT_LABELS.map((s) => ({ value: s.key, label: s.label }))}
+          className="w-full sm:w-48"
+        />
 
         {/* Filters dropdown */}
         <Dropdown

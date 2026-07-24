@@ -45,3 +45,63 @@ export async function fetchClientReport(since?: number): Promise<ClientReport> {
   const data = await apiGet<{ ok: boolean; report: ClientReport }>(`/api/admin/report${q}`)
   return data.report
 }
+
+/** §5.3: разрез статистики по людям — кто сколько запустил и сколько с него списано. */
+/** Разрез «куда»: что человек делал в конкретном модуле. */
+export interface UserWhere { moduleKey: string; title: string; tasks: number; actions: number; tokens: number; spent: number }
+export interface UserRow {
+  userId: string
+  email: string
+  name: string
+  active: boolean
+  /** Монет на счету сейчас. */
+  coins: number
+  tasks: number
+  actions: number
+  /** Сколько списано за действия по его задачам. */
+  spent: number
+  tokens: number
+  where: UserWhere[]
+}
+export interface UsersReport {
+  since: number
+  rows: UserRow[]
+  totals: { coins: number; tasks: number; actions: number; spent: number; tokens: number }
+}
+
+/** §5.3: где сейчас болит. */
+export interface FailedTask { id: string; moduleKey: string; title: string; status: string; errors: number; lastError: string; userId: string }
+export interface Problems {
+  since: number
+  failedTasks: FailedTask[]
+  failedTotal: number
+  pausedNoCoins: { id: string; moduleKey: string; title: string; userId: string }[]
+  accounts: { banned: number; flood: number; noProxy: number; bannedIds: { id: string; status: string }[]; floodIds: { id: string; status: string; until: number }[] }
+}
+
+/** §5.3 + CRM: воронка лидов. */
+export interface CrmOverview {
+  total: number
+  byStatus: Record<string, number>
+  hot: number
+  stuck: number
+  stuckDays: number
+  target: number
+  conversion: number
+  byAccount: Record<string, number>
+}
+
+export async function fetchProblems(since?: number): Promise<Problems> {
+  const q = since ? `?since=${since}` : ''
+  return (await apiGet<{ ok: boolean; problems: Problems }>(`/api/admin/problems${q}`)).problems
+}
+
+export async function fetchCrmOverview(): Promise<CrmOverview> {
+  return (await apiGet<{ ok: boolean; crm: CrmOverview }>('/api/admin/crm')).crm
+}
+
+export async function fetchUsersReport(since?: number): Promise<UsersReport> {
+  const q = since ? `?since=${since}` : ''
+  const data = await apiGet<{ ok: boolean; report: UsersReport }>(`/api/admin/users-report${q}`)
+  return data.report
+}

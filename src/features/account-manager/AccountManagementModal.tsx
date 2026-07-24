@@ -1,4 +1,5 @@
 import { useEffect, useState, useCallback } from 'react'
+import { WorkTab } from './WorkTab'
 import {
   User, Globe, BarChart3, Calendar, Zap, HeartPulse, Hash, FolderClosed,
   Copy, Check, ShieldCheck, ShieldAlert, ShieldQuestion, Loader2, RefreshCw, Unlock, AlertCircle,
@@ -13,10 +14,13 @@ import {
 import type { TgAccount, AccountStats, AccountChannel, AccountFolder } from '@/shared/types'
 import { FLAGS as GEO_FLAGS, COUNTRY_NAME, COUNTRIES } from '@/shared/config/geo'
 
-export type TabKey = 'profile' | 'proxy' | 'status' | 'dates' | 'actions' | 'health' | 'channels' | 'folders'
+export type TabKey = 'profile' | 'work' | 'proxy' | 'status' | 'dates' | 'actions' | 'health' | 'channels' | 'folders'
 
 export const TABS: { key: TabKey; label: string; icon: React.ReactNode }[] = [
+  // «Работа» первой после профиля: на вопрос «что этот аккаунт нам принёс»
+  // отвечают чаще, чем на «какие у него папки».
   { key: 'profile', label: 'Профиль', icon: <User size={15} /> },
+  { key: 'work', label: 'Работа', icon: <Zap size={15} /> },
   { key: 'proxy', label: 'Прокси', icon: <Globe size={15} /> },
   { key: 'status', label: 'Статус', icon: <BarChart3 size={15} /> },
   { key: 'dates', label: 'Даты', icon: <Calendar size={15} /> },
@@ -137,6 +141,7 @@ export function AccountManagementModal({ account, onClose }: { account: TgAccoun
           ) : (
             <div className="animate-fade-in">
               {tab === 'profile' && <ProfileTab account={account} stats={stats} />}
+              {tab === 'work' && <WorkTab accountId={account.id} />}
               {tab === 'proxy' && <ProxyTab account={account} stats={stats} loading={loading} onRecheck={() => void load()} />}
               {tab === 'status' && <StatusTab stats={stats} spamChecking={spamChecking} onSpamCheck={() => void runSpamCheck()} />}
               {tab === 'dates' && <DatesTab stats={stats} />}
