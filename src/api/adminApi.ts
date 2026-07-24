@@ -9,6 +9,17 @@ export interface AdminOverview {
   balance: { planId: string; plan: { name: string; accountLimit: number }; coins: number } | null
   /** Сумма монет по всем кошелькам пространства — то, что показывает панель. */
   coinTotal?: { coins: number; wallets: number; service?: number }
+  /** Что оплачено сейчас: набор модулей и во сколько он обходится в месяц. */
+  subscription?: {
+    /** false — набор не выбирали явно, открыто всё (и платить за это не начинали). */
+    explicit: boolean
+    modules: { key: string; title: string; price: number }[]
+    count: number
+    total: number
+    cost: { sum: number; full: number; setup: string | null; discount: number }
+    currency: string
+    changedAt: number
+  } | null
   users: { total: number; active: number }
   audit: { total: number; byAction: Record<string, number> }
 }

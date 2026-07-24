@@ -1,6 +1,6 @@
 import { coins as fmtCoins, cn } from '@/shared/lib/utils'
 import { useEffect, useMemo, useState } from 'react'
-import { BarChart3, Users, ListChecks, Coins, Download, RefreshCw, AlertTriangle, Contact, Power, ChevronDown, Activity, Plus, Radar } from 'lucide-react'
+import { BarChart3, Users, ListChecks, Coins, Download, RefreshCw, AlertTriangle, Contact, Power, ChevronDown, Activity, Plus, Radar, Package } from 'lucide-react'
 import { PageHeader, Card, Segmented, EmptyState } from '@/shared/ui'
 import { useApp } from '@/mocks/store'
 import {
@@ -209,7 +209,18 @@ function PanelTab({ o }: { o: AdminOverview | null }) {
           value={o.coinTotal ? fmtCoins(o.coinTotal.coins) : (o.balance ? fmtCoins(o.balance.coins) : '—')}
           hint={o.coinTotal ? `на ${o.coinTotal.wallets} кошельках пользователей` : undefined}
         />
+        {o.subscription && (
+          <Tile
+            icon={<Package size={14} />} label="Подписка в месяц"
+            value={`${o.subscription.cost.sum} ${o.subscription.currency}`}
+            hint={`${o.subscription.count} из ${o.subscription.total} модулей`}
+          />
+        )}
       </div>
+
+      {/* Что оплачено — первая строка расходов. Раньше админка показывала деньги и
+          задачи, но на вопрос «за что мы платим ежемесячно» ответить было нечем. */}
+      {o.subscription && <SubscriptionCard s={o.subscription} />}
 
       <div className="grid gap-3 lg:grid-cols-2">
         <Breakdown title="Аккаунты по статусам" data={o.accounts.byStatus} ru />
@@ -730,5 +741,59 @@ function DailyTab({ daily }: { daily: DailySpend | null }) {
         </div>
       </Card>
     </div>
+  )
+}
+
+/**
+ * Что оплачено сейчас. Отвечает на «за что мы платим каждый месяц» — вопрос, на
+ * который вся остальная статистика не отвечает: она про расход монет, а подписка
+ * это отдельная, постоянная строка затрат.
+ *
+ * Отдельно оговариваем случай «набор не выбирали»: открыто всё, но платить за такое
+ * пространство ещё не начинали, и показывать 120.25 $ как факт было бы враньём.
+ */
+function SubscriptionCard({ s }: { s: NonNullable<AdminOverview['subscription']> }) {
+  return (
+    <Card className="mt-3 p-4">
+      <div className="mb-2 flex flex-wrap items-baseline gap-x-3 gap-y-1">
+        <span className="text-sm font-semibold text-fg">Что оплачено</span>
+        <span className="font-display text-xl font-bold text-fg">
+          {s.cost.sum} {s.currency}<span className="text-sm font-normal text-muted"> / мес</span>
+        </span>
+        {s.cost.discount > 0 && (
+          <>
+            <span className="text-sm text-muted line-through">{s.cost.full} {s.currency}</span>
+            <span className="rounded-md bg-spark-500/15 px-1.5 py-0.5 text-[10px] font-bold text-spark-300">
+              −{Math.round(s.cost.discount * 100)} %
+            </span>
+          </>
+        )}
+        <span className="ml-auto text-xs text-muted">
+          {s.changedAt ? `изменена ${new Date(s.changedAt).toLocaleString('ru-RU')}` : 'ни разу не меняли'}
+        </span>
+      </div>
+
+      {!s.explicit && (
+        <div className="mb-3 rounded-xl border border-amber-500/25 bg-amber-500/8 px-3 py-2 text-xs text-amber-200/90">
+          Набор модулей не выбирали — открыто всё. Это не значит «куплено всё»: сумма ниже
+          показывает, во сколько такой набор обошёлся бы. Выберите набор в «Мои модули»,
+          и ограничение начнёт действовать.
+        </div>
+      )}
+
+      <div className="grid gap-x-6 gap-y-1 sm:grid-cols-2 lg:grid-cols-3">
+        {s.modules.map((m) => (
+          <div key={m.key} className="flex items-baseline justify-between gap-3 border-b border-line/40 py-1 text-sm">
+            <span className="truncate text-muted">{m.title}</span>
+            <span className="shrink-0 tabular-nums text-fg">{m.price} {s.currency}</span>
+          </div>
+        ))}
+      </div>
+
+      <p className="mt-3 text-xs text-muted">
+        Подписка одна на рабочее пространство: открывает модули всем, кому их разрешила роль.
+        Монеты при этом у каждого свои — за расход платит тот, кто запускает.
+      </p>
+    </Card>
   )
 }

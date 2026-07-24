@@ -81,10 +81,11 @@ export async function adminOverview(opts = {}) {
     }
   }
 
-  const [tokens, balance, coinTotal, users] = await Promise.all([
+  const [tokens, balance, coinTotal, subscription, users] = await Promise.all([
     tokenSummary({ since }).catch(() => ({ tokens: 0, coins: 0, calls: 0, byModule: {}, byAccount: {} })),
     getBalance().catch(() => null),
     totalCoins().catch(() => ({ coins: 0, wallets: 0 })),
+    subscriptionState().catch(() => null),
     listUsers().catch(() => []),
   ])
 
@@ -102,6 +103,7 @@ export async function adminOverview(opts = {}) {
     // пользователям: именно её показывает админ-панель как «монет в системе».
     balance,
     coinTotal,
+    subscription,
     users: {
       total: users.length,
       active: users.filter((u) => u.active !== false).length,
@@ -296,6 +298,50 @@ export async function accountReport(accountId, opts = {}) {
       .map((m) => ({ ...m, actions: Math.round(m.actions) }))
       .sort((a, b) => b.actions - a.actions || b.tokens - a.tokens),
     recent: recent.slice(0, 10),
+  }
+}
+
+/**
+ * Что оплачено СЕЙЧАС: набор модулей, во сколько он обходится в месяц и когда его
+ * меняли в последний раз.
+ *
+ * Админка показывала деньги и задачи, но не показывала подписку — то есть на вопрос
+ * «за что мы вообще платим ежемесячно» ответить было нечем, хотя это первая строка
+ * расходов. Подписка одна на пространство, поэтому живёт в общей сводке, а не в
+ * разрезе по людям.
+ */
+export async function subscriptionState() {
+  const { getBalance } = await import('./balance.js')
+  const { subscriptionCost, MODULE_MONTH_PRICE, CURRENCY } = await import('./pricing.js')
+  const { modules } = await getBalance()
+
+  const all = Object.keys(MODULE_MONTH_PRICE)
+  const keys = modules === 'all' ? all : (Array.isArray(modules) ? modules : [])
+  const cost = subscriptionCost(keys)
+
+  // Когда меняли: берём последнюю запись из аудита — «с какого числа платим столько».
+  let changedAt = 0
+  try {
+    // Фильтр по действию, а не перебор всего журнала: смена подписки — событие
+    // редкое, и в последних N записях её может не быть вовсе.
+    const audit = await readAudit({ action: 'subscription.set', limit: 1 })
+    const last = audit[0]
+    // В аудите ts — ISO-строка, а не число (в отличие от журнала токенов).
+    // Number('2026-07-24T08:17:55Z') даёт NaN, и дата молча превращалась в «—».
+    changedAt = last?.ts ? Date.parse(last.ts) || 0 : 0
+  } catch { /* журнал не критичен для карточки */ }
+
+  return {
+    // 'all' — набор ещё не выбирали явно, открыто всё. Это НЕ то же самое, что
+    // «купили все модули»: платить за такое пространство пока не начинали.
+    explicit: modules !== 'all',
+    modules: keys.map((k) => ({ key: k, title: moduleTitle(k), price: MODULE_MONTH_PRICE[k] || 0 }))
+      .sort((a, b) => b.price - a.price),
+    count: keys.length,
+    total: all.length,
+    cost,
+    currency: CURRENCY,
+    changedAt,
   }
 }
 
