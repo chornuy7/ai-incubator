@@ -5,4 +5,7 @@ dist-ssr
 .DS_Store
 *.tsbuildinfo
 .env
+# Бэкапы .env содержат те же секреты, что и сам .env, — в репозиторий им нельзя.
+.env.*
+!.env.example
 server/data/

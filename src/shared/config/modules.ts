@@ -597,6 +597,14 @@ export const MODULES: Record<string, ModuleConfig> = {
   },
 }
 
+// Подписи модулей без data-driven конфига в MODULES (у них свои экраны: рассылка, автопостинг).
+const EXTRA_MODULE_TITLES: Record<string, string> = {
+  mailing: 'Мейлинг',
+  autoposting: 'Автопостинг',
+}
+/** Человеческое имя модуля по ключу: из MODULES, из запасной таблицы, иначе сам ключ. */
+export const moduleTitle = (key: string): string => MODULES[key]?.title || EXTRA_MODULE_TITLES[key] || key
+
 export const ROLES = ['Все роли', 'Чаттинг', 'Комментинг', 'Парсинг', 'Реакции', 'Резерв']
 // GEO-модель (§8.3) вынесена в ./geo — регионы Европа+Украина/СНГ. Ре-экспорт для совместимости.
 export { COUNTRIES_FILTER, matchesGeo, FLAGS as GEO_FLAGS, COUNTRY_NAME as GEO_NAMES } from './geo'

@@ -262,11 +262,14 @@ export interface SelectOption {
 }
 
 export function Select({
-  options, value, onChange, className, placeholder,
+  options, value, onChange, className, placeholder, searchable,
 }: {
   options: SelectOption[]; value: string; onChange: (v: string) => void; className?: string; placeholder?: string
+  /** Поле поиска над списком. Нужно там, где вариантов десятки: языки, страны. */
+  searchable?: boolean
 }) {
   const [open, setOpen] = useState(false)
+  const [query, setQuery] = useState('')
   const ref = useRef<HTMLDivElement>(null)
   const menuRef = useRef<HTMLDivElement>(null)
   const [coords, setCoords] = useState<{ top: number; left: number; width: number } | null>(null)
@@ -308,7 +311,15 @@ export function Select({
 
   const current = options.find((o) => o.value === value)
 
-  const toggle = () => setOpen((v) => !v)
+  // Поиск без учёта регистра и по подстроке: язык ищут и как «англ», и как «english».
+  // Метка — ReactNode, поэтому ищем только по текстовым: по вёрстке искать нечего,
+  // и такие опции просто остаются в списке, а не пропадают из него молча.
+  const q = query.trim().toLowerCase()
+  const shown = searchable && q
+    ? options.filter((o) => (typeof o.label === 'string' ? o.label.toLowerCase().includes(q) : true))
+    : options
+
+  const toggle = () => setOpen((v) => { if (!v) setQuery(''); return !v })
 
   return (
     <div ref={ref} className={cn('relative', className)}>
@@ -328,7 +339,24 @@ export function Select({
             className="fixed z-[120] max-h-72 overflow-y-auto rounded-xl border border-line bg-surface p-1 shadow-pop animate-scale-in"
             style={{ top: coords.top, left: coords.left, width: coords.width }}
           >
-            {options.map((o) => (
+            {searchable && (
+              <input
+                autoFocus
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                placeholder="Поиск…"
+                className="mb-1 w-full rounded-lg border border-line bg-elevated px-3 py-2 text-sm text-fg outline-none placeholder:text-faint focus:border-spark-500/40"
+                onKeyDown={(e) => {
+                  // Enter выбирает первое совпадение: искать и потом ещё целиться мышью — лишнее.
+                  if (e.key === 'Enter' && shown[0]) { onChange(shown[0].value); setOpen(false) }
+                  if (e.key === 'Escape') setOpen(false)
+                }}
+              />
+            )}
+            {shown.length === 0 && (
+              <div className="px-3 py-2 text-sm text-faint">Ничего не найдено</div>
+            )}
+            {shown.map((o) => (
               <button
                 key={o.value}
                 onClick={() => { onChange(o.value); setOpen(false) }}
