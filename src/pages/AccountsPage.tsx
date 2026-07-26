@@ -2,7 +2,7 @@ import { useMemo, useState, useEffect, useRef } from 'react'
 import {
   Plus, UploadCloud, Server, RefreshCw, Columns3, ListChecks, Search, Filter,
   MoreHorizontal, Trash2, KeyRound, Info, Users, Check, X, Undo2, Loader2, Pause,
-  Lock, LockOpen, Rocket,
+  Lock, LockOpen, Rocket, AlertTriangle,
 } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import { useApp, activeAccounts, trashedAccounts, STATUS_META } from '@/mocks/store'
@@ -28,15 +28,16 @@ import type { AccountStatus, TgAccount } from '@/shared/types'
 import { patchAccount, releaseAccountLock, setAccountStatusManual, fetchDailyAll, type DailyAllMap } from '@/api/accountsApi'
 import { fetchCampaigns, updateCampaign, type Campaign, type PinnedMap } from '@/api/campaignsApi'
 import { fetchAccountGroups, type AccountGroup } from '@/api/accountGroupsApi'
-import { fetchProxies, type Proxy as ApiProxy } from '@/api/proxiesApi'
-import { fetchActivity, setActivity, type ActivityMap } from '@/api/accountActivityApi'
+import { fetchProxies, toProxyUrl, type Proxy as ApiProxy } from '@/api/proxiesApi'
+import { assignProxies, proxyCapacity } from '@/api/accountImportApi'
+import { fetchActivity, setActivity, type ActivityMap, type SchedulePercent } from '@/api/accountActivityApi'
 
 const STATUS_ORDER: AccountStatus[] = ['active', 'working', 'warming', 'pause', 'floodwait', 'quarantine', 'spamblock', 'invalid', 'frozen', 'reauth']
 const COLS = [
   { key: 'avatar', label: 'Аватар' },
   { key: 'name', label: 'Имя' },
   { key: 'campaign', label: 'Кампания' },
-  { key: 'project', label: 'Проект' },
+  { key: 'fatigue', label: 'Усталость' },
   { key: 'status', label: 'Статус' },
   { key: 'lastSeen', label: 'Отлёжка' },
   { key: 'proxy', label: 'Прокси' },
@@ -66,6 +67,12 @@ function TriStateCheckbox({ checked, indeterminate, onChange, title }: {
 function formatProxyLabel(proxy: string) {
   if (!proxy || proxy === '—') return 'Прямое подключение'
   return proxy
+}
+
+/** Есть ли у аккаунта свой выход в сеть. Прочерк и пустая строка — одно и то же. */
+function hasProxy(a: { proxy?: string }) {
+  const p = String(a?.proxy || '').trim()
+  return !!p && p !== '—'
 }
 
 export function AccountsPage() {
@@ -113,6 +120,16 @@ export function AccountsPage() {
   // §4 (D1/D3): усталость общая для всех модулей — показываем в списке, кто отдыхает.
   const [activity, setActivityMap] = useState<ActivityMap>({})
   const [fatigueOpen, setFatigueOpen] = useState(false)
+  // §4 (D2): фильтр по усталости — ползунок «показать усталость ≥ N%» (вместо колонки «Проект»).
+  const [fatigueMin, setFatigueMin] = useState(0)
+  // Усталость можно задать и ОДНОМУ аккаунту (не только массово): клик по ячейке усталости.
+  const [fatigueOne, setFatigueOne] = useState<string | null>(null)
+  /** Усталость аккаунта в процентах от порога (0, если порог не задан). */
+  const fatiguePct = (id: string) => {
+    const act = activity[id]
+    return act && act.threshold > 0 ? Math.min(100, Math.round((act.fatigue / act.threshold) * 100)) : 0
+  }
+  const [assignProxyOpen, setAssignProxyOpen] = useState(false)
   useEffect(() => {
     const load = () => { void fetchActivity().then(setActivityMap).catch(() => {}) }
     load()
@@ -234,6 +251,8 @@ export function AccountsPage() {
         else if (a.busyIn?.moduleKey !== moduleFilter) return false
       }
       if (query && !`${a.name} ${a.username} ${a.phone}`.toLowerCase().includes(query.toLowerCase())) return false
+      // §4 (D2): порог усталости — показываем только устающих ≥ N%.
+      if (fatigueMin > 0 && fatiguePct(a.id) < fatigueMin) return false
       return true
     })
     // Свободные — сверху, занятые (в работе) — в самый низ. Стабильно сохраняем прочий порядок.
@@ -241,7 +260,8 @@ export function AccountsPage() {
       .map((a, i) => ({ a, i }))
       .sort((x, y) => (Number(!!x.a.busyIn) - Number(!!y.a.busyIn)) || (x.i - y.i))
       .map((x) => x.a)
-  }, [source, tab, statusFilter, campaignFilter, campaigns, pinnedMap, countryFilter, moduleFilter, query, trashAlive])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [source, tab, statusFilter, campaignFilter, campaigns, pinnedMap, countryFilter, moduleFilter, query, trashAlive, fatigueMin, activity])
 
   const pageCount = Math.max(1, Math.ceil(filtered.length / pageSize))
   const pageItems = filtered.slice(page * pageSize, page * pageSize + pageSize)
@@ -500,7 +520,17 @@ export function AccountsPage() {
                   ...moduleSummary.map((m) => ({ value: m.key, label: `${m.label} (${m.count})` })),
                 ]}
               />
-              <button onClick={() => { setRoleFilter('Все роли'); setCountryFilter('all'); setModuleFilter('all') }} className="btn-ghost mt-3 h-8 w-full text-xs">Сбросить фильтры</button>
+              {/* §4 (D2): фильтр по усталости — ползунок, вместо «Проекта». */}
+              <div className="mb-1 mt-3 flex items-center justify-between px-1 text-[11px] font-bold uppercase tracking-wide text-faint">
+                <span>Усталость</span>
+                <span className="text-spark-300">{fatigueMin > 0 ? `≥ ${fatigueMin}%` : 'любая'}</span>
+              </div>
+              <input
+                type="range" min={0} max={100} step={5} value={fatigueMin}
+                onChange={(e) => { setFatigueMin(Number(e.target.value) || 0); setPage(0) }}
+                className="w-full accent-spark-500"
+              />
+              <button onClick={() => { setRoleFilter('Все роли'); setCountryFilter('all'); setModuleFilter('all'); setFatigueMin(0) }} className="btn-ghost mt-3 h-8 w-full text-xs">Сбросить фильтры</button>
             </div>
           )}
         </Dropdown>
@@ -571,6 +601,9 @@ export function AccountsPage() {
           {/* §4.5, прямой запрос владельца: «чтобы можно было МАССОВО всем задавать
               усталость и отдых от модулей, как живой человек». */}
           <button disabled={!has} onClick={() => setFatigueOpen(true)} className={btn('border-line text-fg hover:bg-elevated')}><Pause size={14} /> Усталость и отдых</button>
+          {/* Раздача прокси была только в момент импорта. Дальше — пул сдох, купили новый,
+              и всё это руками по одному через карточку. */}
+          <button disabled={!has} onClick={() => setAssignProxyOpen(true)} className={btn('border-line text-fg hover:bg-elevated')}><Server size={14} /> Назначить прокси</button>
           <button disabled={!has} onClick={() => { void (async () => { for (const id of selected) await setAccountStatus(id, 'reauth'); pushToast({ type: 'info', title: 'Отправлено на реавторизацию' }); setSelected(new Set()) })() }} className={btn('border-line text-fg hover:bg-elevated')}><KeyRound size={14} /> Реавторизация</button>
           {/* §2: «Управление» — мульти-просмотр ВЫБРАННЫХ аккаунтов: открываем обзор на первом
               и передаём весь выбор в `?sel=`, чтобы слева был список только выбранных, а не всех. */}
@@ -650,6 +683,7 @@ export function AccountsPage() {
             loading={false}
             dailyAll={dailyAll}
             activity={activity}
+            onSetFatigue={setFatigueOne}
           />
 
           {/* Pagination */}
@@ -695,20 +729,134 @@ export function AccountsPage() {
       {/* (8) Bulk move to group */}
       <BulkMoveModal open={moveOpen} count={selected.size} onClose={() => setMoveOpen(false)} onApply={bulkMove} />
       <FatigueModal
-        open={fatigueOpen}
-        ids={[...selected]}
-        onClose={() => setFatigueOpen(false)}
-        onDone={(map, msg) => { setActivityMap(map); setFatigueOpen(false); setSelected(new Set()); pushToast({ type: 'success', title: msg }) }}
+        open={fatigueOpen || !!fatigueOne}
+        ids={fatigueOne ? [fatigueOne] : [...selected]}
+        onClose={() => { setFatigueOpen(false); setFatigueOne(null) }}
+        onDone={(map, msg) => { setActivityMap(map); setFatigueOpen(false); setFatigueOne(null); if (!fatigueOne) setSelected(new Set()); pushToast({ type: 'success', title: msg }) }}
         onError={(e) => pushToast({ type: 'error', title: 'Не применилось', desc: e })}
       />
-      <FatigueModal
-        open={fatigueOpen}
+      <AssignProxyModal
+        open={assignProxyOpen}
         ids={[...selected]}
-        onClose={() => setFatigueOpen(false)}
-        onDone={(map, msg) => { setActivityMap(map); setFatigueOpen(false); setSelected(new Set()); pushToast({ type: 'success', title: msg }) }}
+        onClose={() => setAssignProxyOpen(false)}
+        onDone={(msg) => { setAssignProxyOpen(false); setSelected(new Set()); void loadAccounts(); pushToast({ type: 'success', title: msg }) }}
         onError={(e) => pushToast({ type: 'error', title: 'Не применилось', desc: e })}
       />
     </div>
+  )
+}
+
+/**
+ * Массовая привязка прокси к уже залитым аккаунтам.
+ *
+ * При импорте прокси раздаются сразу — а дальше сценарий обрывался: пул умер, купили
+ * новый, аккаунты переехали между проектами, и всё это правится по одному в карточке.
+ * Режимы те же, что в импорте, и раздача идёт той же серверной функцией, чтобы правило
+ * «один прокси — один аккаунт» жило в одном месте.
+ */
+function AssignProxyModal({ open, ids, onClose, onDone, onError }: {
+  open: boolean
+  ids: string[]
+  onClose: () => void
+  onDone: (message: string) => void
+  onError: (e: string) => void
+}) {
+  const [mode, setMode] = useState<'pool' | 'single' | 'none'>('pool')
+  const [proxies, setProxies] = useState<ApiProxy[]>([])
+  const [free, setFree] = useState(0)
+  const [single, setSingle] = useState('')
+  const [busy, setBusy] = useState(false)
+
+  useEffect(() => {
+    if (!open) return
+    void fetchProxies().then(setProxies).catch(() => {})
+    void proxyCapacity().then((c) => setFree(c.free)).catch(() => {})
+  }, [open])
+
+  // Свободными считаем и те, что уже висят на выбранных: перепривязка той же пачки
+  // на тот же пул иначе упиралась бы в «не хватило прокси».
+  const notEnough = mode === 'pool' && ids.length > free
+
+  const apply = async () => {
+    setBusy(true)
+    try {
+      const r = await assignProxies({ accountIds: ids, mode, singleProxy: single })
+      const failed = r.rows.filter((x) => !x.ok).length
+      onDone(failed
+        ? `Назначено ${r.applied} акк., не хватило прокси для ${failed}`
+        : `Прокси назначены: ${r.applied} акк.`)
+    } catch (e) {
+      onError(e instanceof Error ? e.message : 'Ошибка')
+    } finally { setBusy(false) }
+  }
+
+  return (
+    <Modal
+      open={open}
+      onClose={onClose}
+      title="Назначить прокси"
+      subtitle={`Выбрано аккаунтов: ${ids.length}`}
+      icon={<Server size={22} />}
+      size="sm"
+      footer={<button onClick={onClose} className="btn-ghost h-10">Закрыть</button>}
+    >
+      <label className="label">Как раздать</label>
+      <Select
+        value={mode}
+        onChange={(v) => setMode(v as typeof mode)}
+        options={[
+          { value: 'pool', label: 'По одному из пула на аккаунт' },
+          { value: 'single', label: 'Один прокси на всю пачку' },
+          { value: 'none', label: 'Снять прокси (прямое подключение)' },
+        ]}
+      />
+
+      {mode === 'pool' && (
+        <p className={cn('mt-2 text-xs', notEnough ? 'text-amber-300' : 'text-white/45')}>
+          Свободно прокси: {free}. {notEnough
+            ? `Выбрано ${ids.length} — на всех не хватит, остальные останутся как есть.`
+            : 'Один прокси — один аккаунт (§6).'}
+        </p>
+      )}
+
+      {mode === 'none' && (
+        // Снять прокси можно — это законный сценарий. Но последствие должно быть
+        // на экране до нажатия, а не выясняться по спамблокам через сутки.
+        <div className="mt-3 rounded-xl border border-rose-500/40 bg-rose-500/8 p-3">
+          <div className="flex items-center gap-1.5 text-sm font-bold text-rose-300">
+            <AlertTriangle size={14} /> Высокий риск блокировки
+          </div>
+          <p className="mt-1 text-xs leading-relaxed text-rose-200/70">
+            {ids.length} аккаунт(ов) пойдут через ваш IP — тот же, что у остальных без прокси.
+            Для Telegram это одна группа: находит один аккаунт, изучает параметры и добивает
+            похожие с того же адреса. Работать так можно, но живут они заметно меньше.
+          </p>
+        </div>
+      )}
+
+      {mode === 'single' && (
+        <>
+          <label className="label mt-3">Прокси</label>
+          <Select
+            value={single}
+            onChange={setSingle}
+            options={proxies.map((p) => ({ value: toProxyUrl(p), label: `${p.label || p.host}:${p.port}` }))}
+          />
+          <p className="mt-2 text-xs text-amber-300/80">
+            Вся пачка выйдет с одного IP — Telegram видит такую группу и банит волной (§4.4).
+            Осознанный выбор, но не для больших пачек.
+          </p>
+        </>
+      )}
+
+      <button
+        disabled={busy || !ids.length || (mode === 'single' && !single)}
+        onClick={() => void apply()}
+        className="btn-primary mt-4 h-10 w-full disabled:opacity-40"
+      >
+        Применить к выбранным
+      </button>
+    </Modal>
   )
 }
 
@@ -770,6 +918,8 @@ function AccountsTable(props: {
   dailyAll?: DailyAllMap
   /** §4: усталость/отдых — общая для всех модулей (D1). */
   activity?: ActivityMap
+  /** §4 (D2): задать усталость ОДНОМУ аккаунту (клик по ячейке усталости). */
+  onSetFatigue?: (id: string) => void
   /** §1: под какой кампанией аккаунт и закреплён ли (замочек). */
   campaignOf: (accountId: string) => { name: string; locked: boolean } | null
   onAssign: (a: TgAccount) => void
@@ -793,7 +943,7 @@ function AccountsTable(props: {
               </th>
               {showAccountCol && <th className="px-4 py-3">Аккаунт</th>}
               {showCol('campaign') && <th className="px-4 py-3">Кампания</th>}
-              {showCol('project') && <th className="px-4 py-3">Проект</th>}
+              {showCol('fatigue') && <th className="px-4 py-3">Усталость</th>}
               {showCol('status') && <th className="px-4 py-3">Статус</th>}
               {showCol('lastSeen') && <th className="px-4 py-3">Отлёжка</th>}
               {showCol('proxy') && <th className="px-4 py-3">Прокси</th>}
@@ -836,7 +986,30 @@ function AccountsTable(props: {
                     })()}
                   </td>
                 )}
-                {showCol('project') && <td className="px-4 py-3"><span className="rounded-md bg-elevated px-2 py-0.5 text-xs font-medium text-fg">{a.project}</span></td>}
+                {showCol('fatigue') && (() => {
+                  const act = props.activity?.[a.id]
+                  const th = act?.threshold ?? 0
+                  const pct = act && th > 0 ? Math.min(100, Math.round((act.fatigue / th) * 100)) : 0
+                  const resting = act?.resting
+                  const tone = resting ? 'bg-iris-400' : pct >= 70 ? 'bg-rose-400' : pct >= 40 ? 'bg-amber-400' : 'bg-spark-500'
+                  return (
+                    <td className="px-4 py-3">
+                      <button
+                        type="button"
+                        onClick={() => props.onSetFatigue?.(a.id)}
+                        title="Задать усталость и распорядок этому аккаунту"
+                        className="flex w-28 items-center gap-2 text-left"
+                      >
+                        <span className="h-1.5 flex-1 overflow-hidden rounded-full bg-white/10">
+                          <span className={cn('block h-full rounded-full transition-all', tone)} style={{ width: `${pct}%` }} />
+                        </span>
+                        <span className="w-14 shrink-0 text-[11px] tabular-nums text-muted">
+                          {resting ? 'отдых' : th > 0 ? `${act?.fatigue ?? 0}/${th}` : '—'}
+                        </span>
+                      </button>
+                    </td>
+                  )
+                })()}
                 {showCol('status') && (
                   <td className="px-4 py-3">
                     <div className="flex flex-col items-start gap-1.5">
@@ -916,8 +1089,29 @@ function AccountsTable(props: {
                             </span>
                           )
                         }
+                        // §4.2: низкий шанс часа — самая частая причина «модуль ничего
+                        // не делает». Без этой метки её ищут в логах задачи.
+                        if (typeof act.chanceNow === 'number' && act.chanceNow < 20 && (a.proxy && a.proxy !== '—')) {
+                          return (
+                            <span
+                              className="rounded-md bg-white/5 px-1.5 py-0.5 text-[10px] font-bold text-white/45"
+                              title={`По распорядку сейчас шанс привлечения ${act.chanceNow}% — аккаунт чаще всего будет пропущен. Меняется в «Усталость и отдых».`}
+                            >
+                              по распорядку {act.chanceNow}%
+                            </span>
+                          )
+                        }
                         return null
                       })()}
+                      {/* Колонку «Прокси» можно скрыть в настройках таблицы — риск скрывать нельзя. */}
+                      {!hasProxy(a) && !showCol('proxy') && (
+                        <span
+                          className="rounded-md bg-rose-500/15 px-1.5 py-0.5 text-[10px] font-bold text-rose-300"
+                          title="Аккаунт ходит через ваш IP — тот же, что у остальных без прокси. Для Telegram это одна группа."
+                        >
+                          без прокси · риск блока
+                        </span>
+                      )}
                       {a.status === 'reauth' && props.tab === 'accounts' && (
                         <button type="button" onClick={() => props.onReauth(a)} className="text-xs font-semibold text-violet-300 hover:text-violet-200">
                           Войти снова →
@@ -927,7 +1121,18 @@ function AccountsTable(props: {
                   </td>
                 )}
                 {showCol('lastSeen') && <td className="px-4 py-3 text-muted">{a.lastSeen}</td>}
-                {showCol('proxy') && <td className="px-4 py-3 font-mono text-xs text-muted">{formatProxyLabel(a.proxy)}</td>}
+                {showCol('proxy') && (
+                  // Прокси опционален — работать без него можно. Но «Прямое подключение»
+                  // звучало нейтрально, хотя означает, что аккаунт ходит с того же IP,
+                  // что и все остальные без прокси: Telegram видит группу и банит волной.
+                  <td className={cn('px-4 py-3 font-mono text-xs', hasProxy(a) ? 'text-muted' : 'font-bold text-rose-300')}>
+                    {hasProxy(a) ? formatProxyLabel(a.proxy) : (
+                      <span className="inline-flex items-center gap-1" title="Аккаунт ходит через ваш IP — тот же, что у остальных без прокси. Для Telegram это одна группа: находит один аккаунт и добивает похожие. Работать так можно, но живут такие аккаунты заметно меньше.">
+                        <AlertTriangle size={11} className="shrink-0" /> без прокси · высокий риск блока
+                      </span>
+                    )}
+                  </td>
+                )}
                 <td className="px-4 py-3 text-right">
                   <RowMenu a={a} {...props} />
                 </td>
@@ -1182,6 +1387,36 @@ function ChangeProxyModal({ acc, onClose, onSave }: { acc: TgAccount | null; onC
 }
 
 /**
+ * Готовые распорядки (§4.2). Проценты, а не доли: оператор мыслит «80% в обед»,
+ * а не «0.8». Ночь у всех почти нулевая — активность в 3:00 палит бота вернее всего.
+ */
+const hours = (list: number[]): SchedulePercent =>
+  Object.fromEntries(list.map((v, h) => [h, v])) as SchedulePercent
+
+const DAY_PRESETS: Record<string, { label: string; hint: string; hours: SchedulePercent }> = {
+  day: {
+    label: 'Обычный день',
+    hint: 'активен с утра до ночи, спит 2–5',
+    hours: hours([10, 5, 0, 0, 0, 2, 15, 45, 65, 80, 85, 85, 75, 90, 85, 85, 80, 75, 70, 75, 80, 75, 55, 30]),
+  },
+  evening: {
+    label: 'Вечерний',
+    hint: 'днём занят, оживает после 18:00',
+    hours: hours([20, 10, 0, 0, 0, 0, 5, 15, 20, 25, 25, 25, 35, 25, 25, 30, 40, 60, 85, 90, 90, 85, 70, 45]),
+  },
+  work: {
+    label: 'Рабочие часы',
+    hint: 'только 9–18, как из офиса',
+    hours: hours([0, 0, 0, 0, 0, 0, 5, 20, 55, 85, 90, 90, 70, 85, 90, 90, 85, 70, 30, 15, 10, 5, 0, 0]),
+  },
+  always: {
+    label: 'Без ограничений',
+    hint: '100% круглосуточно — быстро, но заметно',
+    hours: hours(Array.from({ length: 24 }, () => 100)),
+  },
+}
+
+/**
  * §4.5 (D2), прямой запрос владельца: «чтобы можно было МАССОВО всем задавать усталость
  * и отдых от модулей, как живой человек, чтобы выглядели».
  *
@@ -1201,6 +1436,8 @@ function FatigueModal({ open, ids, onClose, onDone, onError }: {
   const [recoveryPerHour, setRecoveryPerHour] = useState(5)
   const [restNow, setRestNow] = useState(60)
   const [busy, setBusy] = useState(false)
+  const [schedule, setSchedule] = useState<SchedulePercent>(() => ({ ...DAY_PRESETS.day.hours }))
+  const [spread, setSpread] = useState(true)
 
   const run = async (patch: Parameters<typeof setActivity>[0], message: string) => {
     setBusy(true)
@@ -1219,7 +1456,7 @@ function FatigueModal({ open, ids, onClose, onDone, onError }: {
       title="Усталость и отдых"
       subtitle={`Выбрано аккаунтов: ${ids.length}`}
       icon={<Pause size={22} />}
-      size="sm"
+      size="md"
       footer={<button onClick={onClose} className="btn-ghost h-10">Закрыть</button>}
     >
       <p className="mb-3 text-xs text-white/45">
@@ -1243,6 +1480,70 @@ function FatigueModal({ open, ids, onClose, onDone, onError }: {
       >
         Применить профиль ко всем выбранным
       </button>
+
+      {/* §4.2: распорядок дня. Правится массово и в процентах — на живом прогоне 23.07
+          старая шкала (3% днём) заставляла модуль завершаться с нулём действий. */}
+      <div className="mt-4 border-t border-line pt-3">
+        <label className="label">Распорядок дня <span className="text-white/30">— шанс привлечения по часам, %</span></label>
+        <div className="mb-2 flex flex-wrap gap-1.5">
+          {Object.entries(DAY_PRESETS).map(([key, p]) => (
+            <button
+              key={key}
+              onClick={() => setSchedule({ ...p.hours })}
+              title={p.hint}
+              className="rounded-lg border border-line px-2.5 py-1 text-[11px] text-white/70 hover:bg-elevated"
+            >
+              {p.label}
+            </button>
+          ))}
+        </div>
+
+        <div className="grid grid-cols-6 gap-1">
+          {Array.from({ length: 24 }, (_, h) => {
+            const v = Number(schedule[h] ?? 0)
+            return (
+              <label key={h} className="flex flex-col gap-0.5" title={`${h}:00 — ${v}%`}>
+                <span className="text-center text-[10px] tabular-nums text-white/35">
+                  {String(h).padStart(2, '0')}
+                </span>
+                <input
+                  type="number"
+                  min={0}
+                  max={100}
+                  value={v}
+                  onChange={(e) => {
+                    const n = Math.min(100, Math.max(0, Math.round(Number(e.target.value) || 0)))
+                    setSchedule((s) => ({ ...s, [h]: n }))
+                  }}
+                  className={cn(
+                    'input h-8 w-full px-1 text-center text-[11px] tabular-nums',
+                    v === 0 && 'text-white/25',
+                  )}
+                />
+              </label>
+            )
+          })}
+        </div>
+
+        <label className="mt-2.5 flex items-start gap-2 text-xs text-white/60">
+          <input type="checkbox" checked={spread} onChange={(e) => setSpread(e.target.checked)} className="mt-0.5" />
+          <span>
+            Сдвинуть у каждого аккаунта по-своему
+            <span className="block text-[11px] text-white/35">
+              ±2 часа и разная амплитуда. Один распорядок на всю пачку — сам по себе
+              признак фермы: профили оживают и замолкают в одну минуту.
+            </span>
+          </span>
+        </label>
+
+        <button
+          disabled={busy || !ids.length}
+          onClick={() => void run({ accountIds: ids, schedule, spread }, 'Распорядок задан')}
+          className="btn-primary mt-2 h-10 w-full disabled:opacity-40"
+        >
+          Применить распорядок ко всем выбранным
+        </button>
+      </div>
 
       <div className="mt-4 border-t border-line pt-3">
         <label className="label">Отправить отдыхать прямо сейчас, минут</label>

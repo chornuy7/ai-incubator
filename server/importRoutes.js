@@ -12,9 +12,9 @@ import crypto from 'crypto'
 import fs from 'fs/promises'
 import multer from 'multer'
 import { scanFolder, listDirs } from './lib/accountScan.js'
-import { distributeProxies, importOne, existingAccountKeys, isKnownByPhone } from './lib/accountImport.js'
+import { distributeProxies, pairByOrder, importOne, existingAccountKeys, isKnownByPhone } from './lib/accountImport.js'
 import { listProxies, toProxyUrl } from './proxies.js'
-import { loadAllMeta } from './accountsMeta.js'
+import { loadAllMeta, setAccountMeta, countryFromPhone } from './accountsMeta.js'
 import { appendAudit } from './lib/auditLog.js'
 
 export const importRouter = Router()
@@ -61,7 +61,7 @@ importRouter.post('/run', async (req, res) => {
   try {
     const items = Array.isArray(req.body?.items) ? req.body.items : []
     if (!items.length) return res.status(400).json({ ok: false, error: 'Нечего импортировать' })
-    const { proxyMode = 'pool', proxyIds = [], singleProxy = '', validate = true, passcode = '', root = '' } = req.body ?? {}
+    const { proxyMode = 'pool', proxyIds = [], singleProxy = '', manualProxies = [], validate = true, passcode = '', root = '' } = req.body ?? {}
 
     // Пути приходят от клиента, поэтому импортировать разрешаем только из той папки,
     // которую перед этим сканировали (или куда залили файлы). Иначе через этот роут
@@ -84,6 +84,9 @@ importRouter.post('/run', async (req, res) => {
       mode: proxyMode,
       proxyUrls: chosen.map(toProxyUrl),
       single: singleProxy,
+      // `manual` — раскладка из таблицы «аккаунт ↔ прокси»: оператор её уже видел
+      // и поправил, переставлять нельзя.
+      manual: manualProxies,
       busy,
     })
 
@@ -206,6 +209,107 @@ importRouter.get('/proxy-capacity', async (_req, res) => {
     const busy = new Set(Object.values(meta || {}).map((m) => m?.proxy).filter((u) => u && u !== '—'))
     const free = all.filter((p) => p.status !== 'dead' && !busy.has(toProxyUrl(p)))
     res.json({ ok: true, total: all.length, free: free.length, freeIds: free.map((p) => p.id) })
+  } catch (err) { fail(res, err, 500) }
+})
+
+/**
+ * Предложить раскладку «аккаунт ↔ прокси» перед импортом.
+ *
+ * Считает сервер, а не форма: правило раскладки одно на систему и уже покрыто тестами.
+ * Форма только показывает результат и даёт его поправить — иначе появилась бы вторая,
+ * ни на что не похожая реализация внутри UI.
+ */
+importRouter.post('/pair-preview', async (req, res) => {
+  try {
+    const { accounts = [], proxyUrls = null, matchGeo = false, skipDead = true } = req.body ?? {}
+    if (!Array.isArray(accounts) || !accounts.length) {
+      return res.status(400).json({ ok: false, error: 'Нет аккаунтов' })
+    }
+    const all = await listProxies()
+    const meta = await loadAllMeta()
+    const busy = new Set(Object.values(meta || {}).map((m) => m?.proxy).filter((u) => u && u !== '—'))
+
+    // Если форма прислала свой список (например, только что добавленные) — берём его
+    // в присланном порядке. Иначе — все свободные из пула.
+    const byUrl = new Map(all.map((p) => [toProxyUrl(p), p]))
+    const pool = Array.isArray(proxyUrls) && proxyUrls.length
+      ? proxyUrls.map((u) => ({ url: u, country: byUrl.get(u)?.country || '', status: byUrl.get(u)?.status || 'unknown' }))
+      : all.filter((p) => !busy.has(toProxyUrl(p)))
+        .map((p) => ({ url: toProxyUrl(p), country: p.country || '', status: p.status }))
+
+    // Страна аккаунта выводится из номера — справочник кодов живёт на сервере,
+    // держать его вторую копию в форме незачем.
+    const withCountry = accounts.map((a) => ({
+      ...a,
+      country: a?.country || (a?.phone ? countryFromPhone(a.phone) : '') || '',
+    }))
+    const pairs = pairByOrder(withCountry, pool, { matchGeo, skipDead })
+    res.json({
+      ok: true,
+      pairs,
+      pool,
+      shortage: Math.max(0, accounts.length - pairs.filter(Boolean).length),
+    })
+  } catch (err) { fail(res, err, 500) }
+})
+
+/**
+ * Массовая привязка прокси к УЖЕ ЗАЛИТЫМ аккаунтам.
+ *
+ * Раздача прокси была только в импорте: залил пачку — получил по прокси на каждого.
+ * А дальше тупик: прокси сдох, купили новый пул, аккаунты переехали — и всё это
+ * руками, по одному через карточку. Логику раздачи не дублируем, берём ту же
+ * `distributeProxies`, чтобы правило «1 прокси = 1 аккаунт» жило в одном месте.
+ *
+ * Занятыми считаем прокси ЧУЖИХ аккаунтов: те, что висят на выбранных, освобождаются —
+ * иначе перепривязка той же пачки на тот же пул сразу упиралась бы в «не хватило».
+ */
+importRouter.post('/assign-proxies', async (req, res) => {
+  try {
+    const { accountIds = [], mode = 'pool', proxyIds = [], singleProxy = '' } = req.body ?? {}
+    const ids = Array.isArray(accountIds) ? accountIds.filter(Boolean) : []
+    if (!ids.length) return res.status(400).json({ ok: false, error: 'Выберите аккаунты' })
+    if (mode === 'single' && !singleProxy) return res.status(400).json({ ok: false, error: 'Выберите прокси' })
+
+    const all = await listProxies()
+    const chosen = proxyIds.length ? all.filter((p) => proxyIds.includes(p.id)) : all.filter((p) => p.status !== 'dead')
+    const meta = await loadAllMeta()
+    const mine = new Set(ids)
+    const busy = new Set(
+      Object.entries(meta || {})
+        .filter(([id]) => !mine.has(id))
+        .map(([, m]) => m?.proxy)
+        .filter((u) => u && u !== '—'),
+    )
+    const assigned = distributeProxies(ids.map((id) => ({ id })), {
+      mode, proxyUrls: chosen.map(toProxyUrl), single: singleProxy, busy,
+    })
+
+    const rows = []
+    for (let i = 0; i < ids.length; i++) {
+      const proxy = assigned[i]
+      if (mode === 'pool' && !proxy) {
+        rows.push({ accountId: ids[i], ok: false, reason: 'не хватило свободных прокси в пуле' })
+        continue
+      }
+      // «Без прокси» — это прочерк, а не пустая строка: так прямое подключение
+      // отображается в списке и не путается с «прокси ещё не назначали».
+      await setAccountMeta(ids[i], { proxy: mode === 'none' ? '—' : proxy })
+      rows.push({ accountId: ids[i], ok: true, proxy: mode === 'none' ? null : proxy })
+    }
+
+    const okCount = rows.filter((r) => r.ok).length
+    await appendAudit({
+      action: 'account.proxy.assign',
+      module: 'accounts',
+      initiator: req.header('x-user-id') || 'operator',
+      reason: mode === 'none'
+        ? `Прокси сняты с ${okCount} акк.`
+        : `Прокси назначены ${okCount} акк. (${mode === 'single' ? 'один на всех' : 'по одному из пула'})`,
+      scope: { accounts: ids },
+    }).catch(() => {})
+
+    res.json({ ok: true, applied: okCount, rows })
   } catch (err) { fail(res, err, 500) }
 })
 

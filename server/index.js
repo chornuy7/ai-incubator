@@ -376,18 +376,20 @@ app.get('/api/accounts/activity', async (_req, res) => {
 app.post('/api/accounts/activity', async (req, res) => {
   try {
     const { setActivityProfile, restAccounts } = await import('./accountActivity.js')
-    const { accountIds, profile, schedule, reset, restMinutes } = req.body ?? {}
+    const { accountIds, profile, schedule, spread, reset, restMinutes } = req.body ?? {}
     if (!Array.isArray(accountIds) || !accountIds.length) {
       return res.status(400).json({ ok: false, error: 'Выберите аккаунты' })
     }
     const n = restMinutes !== undefined
       ? await restAccounts(accountIds, restMinutes)
-      : await setActivityProfile(accountIds, { profile, schedule, reset })
+      : await setActivityProfile(accountIds, { profile, schedule, spread, reset })
     await appendAudit({
       action: 'accounts.activity', module: 'accounts', initiator: req.header('x-user-id') || 'operator',
       reason: restMinutes !== undefined
         ? `Отправлены на отдых ${n} акк. на ${restMinutes} мин`
-        : `Профиль усталости задан ${n} акк.${reset ? ' (усталость сброшена)' : ''}`,
+        : schedule
+          ? `Распорядок дня задан ${n} акк.${spread === false ? ' (одинаковый)' : ' (со сдвигом по аккаунтам)'}`
+          : `Профиль усталости задан ${n} акк.${reset ? ' (усталость сброшена)' : ''}`,
       scope: { accounts: accountIds },
     }).catch(() => {})
     const { listActivity } = await import('./accountActivity.js')

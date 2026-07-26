@@ -7,7 +7,14 @@ export interface AccountActivity {
   restUntil: number
   actionsTotal: number
   resting: boolean
+  /** Шанс привлечения в текущем часе, % — прямой ответ на «почему аккаунт молчит». */
+  chanceNow?: number
+  /** Распорядок задан вручную (иначе — личный, выведенный из id). */
+  scheduleCustom?: boolean
 }
+
+/** Распорядок дня: час (0–23) → вероятность привлечения в ПРОЦЕНТАХ (0–100). */
+export type SchedulePercent = Record<number, number>
 
 export type ActivityMap = Record<string, AccountActivity>
 
@@ -23,6 +30,10 @@ export async function fetchActivity(): Promise<ActivityMap> {
 export async function setActivity(patch: {
   accountIds: string[]
   profile?: { threshold?: number; recoveryPerHour?: number; restMinutes?: number }
+  /** Часы в процентах (0–100). Сервер приводит к своему виду сам. */
+  schedule?: SchedulePercent
+  /** Раздать каждому свой сдвиг вокруг заданной кривой (по умолчанию да). */
+  spread?: boolean
   reset?: boolean
   restMinutes?: number
 }): Promise<{ applied: number; activity: ActivityMap }> {

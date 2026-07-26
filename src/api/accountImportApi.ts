@@ -29,11 +29,13 @@ export async function scanFolder(path: string, passcode?: string): Promise<{ ite
   return apiPost('/api/tg/import/scan', { path, passcode })
 }
 
-export type ProxyMode = 'pool' | 'single' | 'sidecar' | 'none'
+export type ProxyMode = 'pool' | 'single' | 'sidecar' | 'manual' | 'none'
 
 export interface ImportRunInput {
   items: ScannedAccount[]
   proxyMode: ProxyMode
+  /** Раскладка «аккаунт ↔ прокси» из таблицы — для режима `manual`. */
+  manualProxies?: (string | null)[]
   proxyIds?: string[]
   singleProxy?: string
   /** Зайти в Telegram каждой сессией — единственный способ узнать, живая ли она. */
@@ -86,4 +88,40 @@ export async function runImport(input: ImportRunInput): Promise<{ results: Impor
 /** Сколько прокси свободно под импорт (правило §6: один прокси — один аккаунт). */
 export async function proxyCapacity(): Promise<{ total: number; free: number; freeIds: string[] }> {
   return apiGet('/api/tg/import/proxy-capacity')
+}
+
+export interface PairPoolItem { url: string; country?: string; status?: string }
+
+/**
+ * Предложенная раскладка «аккаунт ↔ прокси» перед импортом. Считает сервер: правило
+ * одно на систему и покрыто тестами, форма только показывает и даёт поправить.
+ */
+export async function pairPreview(input: {
+  accounts: { name?: string; phone?: string | null; country?: string }[]
+  proxyUrls?: string[]
+  matchGeo?: boolean
+  skipDead?: boolean
+}): Promise<{ pairs: (string | null)[]; pool: PairPoolItem[]; shortage: number }> {
+  return apiPost('/api/tg/import/pair-preview', input)
+}
+
+export interface AssignProxyRow {
+  accountId: string
+  ok: boolean
+  proxy?: string | null
+  reason?: string
+}
+
+/**
+ * Массово привязать прокси к УЖЕ ЗАЛИТЫМ аккаунтам: пул сдох, купили новый,
+ * аккаунты переехали. До этого раздача была только в момент импорта, а дальше —
+ * руками по одному через карточку.
+ */
+export async function assignProxies(input: {
+  accountIds: string[]
+  mode: 'pool' | 'single' | 'none'
+  proxyIds?: string[]
+  singleProxy?: string
+}): Promise<{ applied: number; rows: AssignProxyRow[] }> {
+  return apiPost('/api/tg/import/assign-proxies', input)
 }

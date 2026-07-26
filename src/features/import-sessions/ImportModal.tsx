@@ -2,15 +2,17 @@ import { useEffect, useMemo, useState } from 'react'
 import { UploadCloud, Folder, FolderOpen, ChevronRight, Loader2, Search, Check, AlertTriangle, HardDrive, Users, KeyRound } from 'lucide-react'
 import { useRef } from 'react'
 import { Modal, Select, Badge } from '@/shared/ui'
-import { browseDirs, scanFolder, runImport, proxyCapacity, uploadFolder, cleanupUpload, type ScannedAccount, type ProxyMode, type ImportResultRow } from '@/api/accountImportApi'
-import { fetchProxies, toProxyUrl, type Proxy } from '@/api/proxiesApi'
+import { cn } from '@/shared/lib/utils'
+import { browseDirs, scanFolder, runImport, proxyCapacity, pairPreview, uploadFolder, cleanupUpload, type ScannedAccount, type ProxyMode, type ImportResultRow, type PairPoolItem } from '@/api/accountImportApi'
+import { fetchProxies, importProxies, toProxyUrl, type Proxy } from '@/api/proxiesApi'
 
-type Step = 'pick' | 'found' | 'result'
+type Step = 'pick' | 'found' | 'proxy' | 'result'
 
 const PROXY_MODE_LABELS: Record<ProxyMode, string> = {
   pool: 'По одному из пула на аккаунт',
   single: 'Один прокси на всю пачку',
   sidecar: 'Из файла рядом с аккаунтом',
+  manual: 'Разложить вручную (таблица)',
   none: 'Без прокси',
 }
 
@@ -34,6 +36,12 @@ export function ImportModal({ open, onClose, onImported }: { open: boolean; onCl
   const [proxies, setProxies] = useState<Proxy[]>([])
   const [singleProxy, setSingleProxy] = useState('')
   const [freeProxies, setFreeProxies] = useState(0)
+  // Шаг «Прокси»: список, вставленный оператором, и раскладка «аккаунт ↔ прокси».
+  const [proxyText, setProxyText] = useState('')
+  const [adding, setAdding] = useState(false)
+  const [addReport, setAddReport] = useState('')
+  const [pool, setPool] = useState<PairPoolItem[]>([])
+  const [pairs, setPairs] = useState<(string | null)[]>([])
   const [validate, setValidate] = useState(true)
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState('')
@@ -85,6 +93,59 @@ export function ImportModal({ open, onClose, onImported }: { open: boolean; onCl
 
   const notEnoughProxies = proxyMode === 'pool' && chosen.length > freeProxies
 
+  /**
+   * Аккаунты для раскладки — в том порядке, в каком их нашли в папке.
+   * Страну не вычисляем здесь: она выводится из номера, и делает это сервер —
+   * иначе тот же справочник кодов пришлось бы держать во второй копии.
+   */
+  const pairAccounts = useMemo(
+    () => chosen.map((i) => ({ name: i.name, phone: i.phone || '' })),
+    [chosen],
+  )
+
+  /** Перестроить раскладку сервером: по порядку либо с учётом страны. */
+  const relayout = async (matchGeo: boolean) => {
+    try {
+      const r = await pairPreview({ accounts: pairAccounts, matchGeo, skipDead: true })
+      setPool(r.pool); setPairs(r.pairs)
+    } catch (e) { setErr(e instanceof Error ? e.message : 'Не удалось разложить') }
+  }
+
+  /**
+   * Добавить прокси списком. Внутри — обычный импорт прокси: разбор, отсев дублей,
+   * ПРОВЕРКА живости и настоящей страны выхода. Проверенные сразу идут в раскладку
+   * в том порядке, в каком их вставили, — это и есть «1 к 1 по строкам».
+   */
+  const addProxies = async () => {
+    const text = proxyText.trim()
+    if (!text) return
+    setAdding(true); setErr(''); setAddReport('')
+    try {
+      const r = await importProxies({ text, probe: true })
+      const urls = r.created.map(toProxyUrl)
+      setAddReport(
+        `Добавлено ${r.created.length}: живых ${r.alive}` +
+        (r.bad ? `, с неверной схемой ${r.bad}` : '') +
+        (r.dead ? `, мёртвых ${r.dead}` : '') +
+        (r.skipped.length ? `, уже были ${r.skipped.length}` : '') +
+        (r.errors.length ? `, не разобрано ${r.errors.length}` : ''),
+      )
+      setProxyText('')
+      // Раскладываем на объединённый список: сначала то, что было свободно, потом новые.
+      const merged = [...pool.map((p) => p.url), ...urls]
+      const pr = await pairPreview({ accounts: pairAccounts, proxyUrls: merged, skipDead: true })
+      setPool(pr.pool); setPairs(pr.pairs)
+      void proxyCapacity().then((c) => setFreeProxies(c.free)).catch(() => {})
+      void fetchProxies().then(setProxies).catch(() => {})
+    } catch (e) { setErr(e instanceof Error ? e.message : 'Не удалось добавить прокси') }
+    finally { setAdding(false) }
+  }
+
+  /** Сдвинуть всю колонку прокси на одну строку — когда списки разъехались на единицу. */
+  const rotatePairs = () => setPairs((p) => (p.length ? [...p.slice(1), p[0]] : p))
+
+  const withoutProxy = pairs.filter((p) => !p).length
+
   const run = async () => {
     setBusy(true); setErr('')
     try {
@@ -92,7 +153,11 @@ export function ImportModal({ open, onClose, onImported }: { open: boolean; onCl
         const typed = passwords[key(i)]?.trim()
         return typed && !i.twoFA ? { ...i, twoFA: typed } : i
       })
-      const r = await runImport({ items: withPasswords, proxyMode, singleProxy, validate, passcode: passcode || undefined, root })
+      const r = await runImport({
+        items: withPasswords, proxyMode, singleProxy, validate, passcode: passcode || undefined, root,
+        // В ручном режиме раскладка уже перед глазами оператора — шлём её как есть.
+        manualProxies: proxyMode === 'manual' ? pairs : undefined,
+      })
       setResults(r.results)
       setStep('result')
       if (uploadToken) { void cleanupUpload(uploadToken).catch(() => {}); setUploadToken('') }
@@ -290,6 +355,117 @@ export function ImportModal({ open, onClose, onImported }: { open: boolean; onCl
 
           <div className="flex justify-end gap-2">
             <button onClick={() => setStep('pick')} className="btn-ghost h-10">Назад</button>
+            {/* Раскладка «аккаунт ↔ прокси» — отдельный шаг: на нём видно обе колонки
+                сразу, а не абстрактный режим в выпадающем списке. */}
+            <button
+              onClick={() => { setProxyMode('manual'); setStep('proxy'); void relayout(false) }}
+              disabled={!chosen.length}
+              className="btn-ghost h-10"
+            >
+              Прокси: разложить {chosen.length} <ChevronRight size={15} />
+            </button>
+            <button onClick={() => void run()} disabled={!chosen.length || busy} className="btn-primary h-10">
+              {busy ? <><Loader2 size={15} className="animate-spin" /> Импортирую{validate ? ' и проверяю' : ''}…</> : <>Импортировать {chosen.length}</>}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* ── Шаг «Прокси»: сколько не хватает, добавить списком, разложить 1 к 1, поправить ── */}
+      {step === 'proxy' && (
+        <div className="space-y-3">
+          {/* Прокси — дело добровольное, запрещать импорт мы не будем. Но риск обязан
+              быть виден до нажатия кнопки, а не выясняться по спамблокам через сутки. */}
+          <div className={cn(
+            'rounded-xl border p-3 text-sm',
+            withoutProxy > 0 ? 'border-rose-500/40 bg-rose-500/8' : 'border-line bg-elevated/40',
+          )}>
+            <b className="text-white">Найдено аккаунтов: {chosen.length}.</b>{' '}
+            {withoutProxy > 0 ? (
+              <span className="font-bold text-rose-300">
+                <AlertTriangle size={13} className="mb-0.5 inline" /> Без прокси остаются: {withoutProxy} — высокий риск блокировки.
+              </span>
+            ) : (
+              <span className="text-spark-400">Прокси хватает на всех — по одному на аккаунт.</span>
+            )}
+            {withoutProxy > 0 && (
+              <div className="mt-1 text-xs leading-relaxed text-rose-200/70">
+                Они пойдут через ваш IP — и для Telegram это одна группа: находит один
+                аккаунт, изучает параметры, добивает остальных с того же адреса.
+                Импортировать можно и так, но эти аккаунты живут заметно меньше.
+              </div>
+            )}
+          </div>
+
+          <div>
+            <div className="mb-1 text-xs text-white/50">
+              Вставьте прокси списком — по одному в строке. Проверим живость и настоящую страну выхода.
+            </div>
+            <textarea
+              value={proxyText}
+              onChange={(e) => setProxyText(e.target.value)}
+              rows={3}
+              placeholder={'socks5://user:pass@1.2.3.4:1080\n1.2.3.5:1080:user:pass'}
+              className="input w-full resize-y py-2 font-mono text-xs"
+            />
+            <div className="mt-1.5 flex items-center gap-2">
+              <button onClick={() => void addProxies()} disabled={adding || !proxyText.trim()} className="btn-primary h-9 px-3 text-sm disabled:opacity-40">
+                {adding ? <><Loader2 size={14} className="animate-spin" /> Проверяю…</> : <>Проверить и добавить</>}
+              </button>
+              {addReport && <span className="text-xs text-white/50">{addReport}</span>}
+            </div>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-1.5 border-t border-line pt-3">
+            <span className="text-xs text-white/50">Разложить:</span>
+            <button onClick={() => void relayout(false)} className="rounded-lg border border-line px-2.5 py-1 text-[11px] text-white/70 hover:bg-elevated">
+              По порядку, 1 к 1
+            </button>
+            <button
+              onClick={() => void relayout(true)}
+              title="Аккаунт из Украины через американский IP — заметная нестыковка. Если страна известна с обеих сторон, сперва свяжем по ней."
+              className="rounded-lg border border-line px-2.5 py-1 text-[11px] text-white/70 hover:bg-elevated"
+            >
+              По странам
+            </button>
+            <button onClick={rotatePairs} title="Списки разъехались на одну строку" className="rounded-lg border border-line px-2.5 py-1 text-[11px] text-white/70 hover:bg-elevated">
+              Сдвинуть на 1
+            </button>
+            <button onClick={() => setPairs(chosen.map(() => null))} className="rounded-lg border border-line px-2.5 py-1 text-[11px] text-white/70 hover:bg-elevated">
+              Снять все
+            </button>
+          </div>
+
+          <div className="max-h-72 overflow-y-auto rounded-xl border border-line">
+            {chosen.map((it, i) => {
+              // Прокси, уже отданный другой строке, в этом списке не показываем:
+              // «один прокси — один аккаунт» должно быть невозможно нарушить руками.
+              const takenElsewhere = new Set(pairs.filter((p, j) => p && j !== i) as string[])
+              const opts = pool.filter((p) => !takenElsewhere.has(p.url))
+              return (
+                <div key={key(it)} className="flex items-center gap-2 border-b border-line/60 px-3 py-2 text-sm last:border-0">
+                  <span className="w-6 shrink-0 text-right text-xs tabular-nums text-white/30">{i + 1}</span>
+                  <span className="w-40 shrink-0 truncate font-semibold text-white" title={it.name}>{it.name}</span>
+                  {it.phone && <span className="w-32 shrink-0 font-mono text-xs text-white/40">{it.phone}</span>}
+                  <Select
+                    value={pairs[i] || ''}
+                    onChange={(v) => setPairs((prev) => { const n = [...prev]; n[i] = v || null; return n })}
+                    placeholder="Без прокси"
+                    options={[
+                      { value: '', label: 'Без прокси' },
+                      ...opts.map((p) => ({
+                        value: p.url,
+                        label: `${p.url.replace(/^\w+:\/\/[^@]*@/, '')}${p.country ? ` · ${p.country.toUpperCase()}` : ''}${p.status === 'dead' ? ' · мёртвый' : ''}`,
+                      })),
+                    ]}
+                  />
+                </div>
+              )
+            })}
+          </div>
+
+          <div className="flex justify-end gap-2">
+            <button onClick={() => setStep('found')} className="btn-ghost h-10">Назад</button>
             <button onClick={() => void run()} disabled={!chosen.length || busy} className="btn-primary h-10">
               {busy ? <><Loader2 size={15} className="animate-spin" /> Импортирую{validate ? ' и проверяю' : ''}…</> : <>Импортировать {chosen.length}</>}
             </button>

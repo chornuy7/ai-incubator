@@ -14,13 +14,17 @@ import { saveSession, newAccountId, createClient } from '../tgAuth.js'
 import { setAccountMeta, countryFromPhone, avatarColor, loadAllMeta } from '../accountsMeta.js'
 import { accountFingerprint, takenFingerprints } from './deviceFingerprint.js'
 
-/** Режимы раздачи прокси. */
-export const PROXY_MODES = ['pool', 'single', 'sidecar', 'none']
+/**
+ * Режимы раздачи прокси.
+ * `manual` — раскладку прислал оператор из таблицы «аккаунт ↔ прокси»: он уже видел
+ * обе колонки и поправил пары руками, наше дело — не переставлять.
+ */
+export const PROXY_MODES = ['pool', 'single', 'sidecar', 'manual', 'none']
 
 /**
  * Раздать прокси на пачку. Чистая функция — тестируется без сети.
  * @param {object[]} items найденные аккаунты (у некоторых есть свой `proxy` из json)
- * @param {{ mode:string, proxyUrls?:string[], single?:string, busy?:Set<string> }} opts
+ * @param {{ mode:string, proxyUrls?:string[], single?:string, busy?:Set<string>, manual?:(string|null)[] }} opts
  * @returns {(string|null)[]} прокси на каждый item в том же порядке (null = без прокси)
  */
 export function distributeProxies(items, opts = {}) {
@@ -28,14 +32,59 @@ export function distributeProxies(items, opts = {}) {
   const busy = opts.busy || new Set()
   // Пул: только те, что ещё никому не назначены — иначе нарушим «1 прокси = 1 аккаунт».
   const free = (opts.proxyUrls || []).filter((u) => u && !busy.has(u))
+  const manual = Array.isArray(opts.manual) ? opts.manual : []
   let cursor = 0
-  return (items || []).map((it) => {
+  return (items || []).map((it, i) => {
     if (mode === 'none') return null
     if (mode === 'single') return opts.single || null
     if (mode === 'sidecar') return it.proxy || null
+    if (mode === 'manual') return manual[i] || null
     // pool: свой прокси каждому, по порядку; закончились — null (в отчёте это будет видно)
     return cursor < free.length ? free[cursor++] : null
   })
+}
+
+/**
+ * Предложить раскладку «аккаунт ↔ прокси» ПО ПОРЯДКУ, 1 к 1.
+ *
+ * Это дефолт по одной причине: у продавца папки и списки прокси обычно идут в одном
+ * порядке, и совпадение по строкам — то, чего оператор и ждёт. Дальше он правит руками.
+ *
+ * Гео важнее порядка, если страна известна у обеих сторон: аккаунт из Украины через
+ * американский IP — заметная нестыковка, Telegram смотрит на неё в том числе. Поэтому
+ * при `matchGeo` сперва раскладываем по совпадению стран, а остаток — по порядку.
+ *
+ * @param {{country?:string}[]} accounts найденные аккаунты, в порядке находки
+ * @param {{url:string, country?:string, status?:string}[]} proxies прокси, в порядке списка
+ * @param {{matchGeo?:boolean, skipDead?:boolean}} [opts]
+ * @returns {(string|null)[]} прокси на каждый аккаунт
+ */
+export function pairByOrder(accounts = [], proxies = [], opts = {}) {
+  const pool = (proxies || []).filter((p) => p && p.url && (!opts.skipDead || p.status !== 'dead'))
+  const taken = new Set()
+  const out = new Array(accounts.length).fill(null)
+
+  if (opts.matchGeo) {
+    for (let i = 0; i < accounts.length; i++) {
+      const c = String(accounts[i]?.country || '').toLowerCase()
+      if (!c) continue
+      const hit = pool.find((p, j) => !taken.has(j) && String(p.country || '').toLowerCase() === c)
+      if (!hit) continue
+      taken.add(pool.indexOf(hit))
+      out[i] = hit.url
+    }
+  }
+
+  // Остаток — строго по порядку: первый свободный аккаунт получает первый свободный прокси.
+  let cursor = 0
+  for (let i = 0; i < accounts.length; i++) {
+    if (out[i]) continue
+    while (cursor < pool.length && taken.has(cursor)) cursor++
+    if (cursor >= pool.length) break
+    taken.add(cursor)
+    out[i] = pool[cursor].url
+  }
+  return out
 }
 
 /**

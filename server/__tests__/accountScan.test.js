@@ -180,3 +180,53 @@ test('distributeProxies: single — один на всех, sidecar — из jso
   assert.deepEqual(distributeProxies(items3, { mode: 'sidecar' }), [null, 'socks5://own:1080', null])
   assert.deepEqual(distributeProxies(items3, { mode: 'none' }), [null, null, null])
 })
+
+// ── Раскладка «аккаунт ↔ прокси» при заливе пачки ──
+test('pairByOrder: 1 к 1 по порядку — как лежат аккаунты, так и прокси', async () => {
+  const { pairByOrder } = await import('../lib/accountImport.js')
+  const accs = [{ name: 'a' }, { name: 'b' }, { name: 'c' }]
+  const px = [{ url: 'p1' }, { url: 'p2' }, { url: 'p3' }]
+  assert.deepEqual(pairByOrder(accs, px), ['p1', 'p2', 'p3'])
+})
+
+test('pairByOrder: прокси меньше, чем аккаунтов — хвост остаётся без прокси', () => {
+  // Молча зациклить пул нельзя: это нарушило бы «один прокси — один аккаунт»,
+  // а оператор увидел бы «всем раздали» вместо честной нехватки.
+  return import('../lib/accountImport.js').then(({ pairByOrder }) => {
+    const out = pairByOrder([{}, {}, {}], [{ url: 'p1' }, { url: 'p2' }])
+    assert.deepEqual(out, ['p1', 'p2', null])
+  })
+})
+
+test('pairByOrder: мёртвые прокси не раздаются, если попросили их пропустить', async () => {
+  const { pairByOrder } = await import('../lib/accountImport.js')
+  const px = [{ url: 'p1', status: 'dead' }, { url: 'p2', status: 'ok' }]
+  assert.deepEqual(pairByOrder([{}, {}], px, { skipDead: true }), ['p2', null])
+})
+
+test('pairByOrder: гео важнее порядка — украинский аккаунт идёт через украинский IP', async () => {
+  const { pairByOrder } = await import('../lib/accountImport.js')
+  // Аккаунт из Украины через американский адрес — заметная нестыковка.
+  const accs = [{ country: 'us' }, { country: 'ua' }]
+  const px = [{ url: 'p_ua', country: 'ua' }, { url: 'p_us', country: 'us' }]
+  assert.deepEqual(pairByOrder(accs, px, { matchGeo: true }), ['p_us', 'p_ua'])
+})
+
+test('pairByOrder: страна известна не у всех — остаток честно ложится по порядку', async () => {
+  const { pairByOrder } = await import('../lib/accountImport.js')
+  const accs = [{ country: 'ua' }, {}, {}]
+  const px = [{ url: 'p_de', country: 'de' }, { url: 'p_ua', country: 'ua' }, { url: 'p_x' }]
+  assert.deepEqual(pairByOrder(accs, px, { matchGeo: true }), ['p_ua', 'p_de', 'p_x'])
+})
+
+test('pairByOrder: один прокси не достаётся двум аккаунтам', async () => {
+  const { pairByOrder } = await import('../lib/accountImport.js')
+  const out = pairByOrder([{ country: 'ua' }, { country: 'ua' }], [{ url: 'p_ua', country: 'ua' }], { matchGeo: true })
+  assert.deepEqual(out, ['p_ua', null])
+})
+
+test('distributeProxies: manual — раскладку оператора не переставляем', async () => {
+  const { distributeProxies } = await import('../lib/accountImport.js')
+  const out = distributeProxies([{}, {}, {}], { mode: 'manual', manual: ['p3', null, 'p1'] })
+  assert.deepEqual(out, ['p3', null, 'p1'], 'оператор уже видел обе колонки и поправил пары')
+})

@@ -13,7 +13,7 @@
 import { dataPath, readJson, mutateJson } from './lib/jsonStore.js'
 import {
   DEFAULT_FATIGUE, DEFAULT_SCHEDULE, applyAction, fatigueGate, scheduleGate,
-  currentFatigue, normalizeFatigueProfile,
+  currentFatigue, normalizeFatigueProfile, normalizeSchedule, scheduleForAccount,
 } from './lib/accountFatigue.js'
 
 const FILE = () => process.env.ACCOUNT_ACTIVITY_FILE || dataPath('account-activity.json')
@@ -34,7 +34,12 @@ export async function getActivity(accountId) {
     restUntil: Number(s.restUntil) || 0,
     actionsTotal: Number(s.actionsTotal) || 0,
     profile: { ...DEFAULT_FATIGUE, ...(s.profile || {}) },
-    schedule: s.schedule && typeof s.schedule === 'object' ? s.schedule : DEFAULT_SCHEDULE,
+    // Распорядок не задан руками — берём ЛИЧНЫЙ, выведенный из id (§4.4). Одинаковая
+    // кривая на всей ферме читается как группа: профили оживают и замолкают синхронно.
+    schedule: s.schedule && typeof s.schedule === 'object'
+      ? normalizeSchedule(s.schedule)
+      : scheduleForAccount(accountId),
+    scheduleCustom: !!(s.schedule && typeof s.schedule === 'object'),
   }
 }
 
@@ -42,18 +47,34 @@ export async function getActivity(accountId) {
 export async function listActivity() {
   const all = await loadAll()
   const now = Date.now()
+  const hour = new Date(now).getHours()
   const out = {}
   for (const [id, s] of Object.entries(all)) {
     const profile = { ...DEFAULT_FATIGUE, ...(s.profile || {}) }
+    const schedule = s.schedule && typeof s.schedule === 'object'
+      ? normalizeSchedule(s.schedule)
+      : scheduleForAccount(id)
     out[id] = {
       fatigue: currentFatigue(s, profile, now),
       threshold: profile.threshold,
       restUntil: Number(s.restUntil) || 0,
       actionsTotal: Number(s.actionsTotal) || 0,
       resting: (Number(s.restUntil) || 0) > now,
+      // Шанс текущего часа: без него «почему аккаунт ничего не делает» приходится
+      // выяснять по логам задачи — а ответ обычно именно здесь.
+      chanceNow: Math.round((schedule[hour] || 0) * 100),
+      scheduleCustom: !!(s.schedule && typeof s.schedule === 'object'),
     }
   }
   return out
+}
+
+/** Распорядок аккаунта в процентах — для формы редактирования. */
+export async function getSchedulePercent(accountId) {
+  const s = await getActivity(accountId)
+  const out = {}
+  for (let h = 0; h < 24; h++) out[h] = Math.round((s.schedule[h] || 0) * 100)
+  return { schedule: out, custom: s.scheduleCustom }
 }
 
 /**
@@ -87,12 +108,21 @@ export async function canWorkNow(accountId, now = Date.now(), rnd = Math.random)
  * §4.5: задать профиль усталости/распорядок — одному или СРАЗУ ПАЧКЕ аккаунтов.
  * Массовое задание — прямой запрос владельца: «чтобы можно было массово всем задавать
  * усталость и отдых от модулей, как живой человек».
- * @param {string[]} accountIds @param {{profile?:object, schedule?:object, reset?:boolean}} patch
+ * Распорядок принимается в процентах (0–100) — так его редактирует оператор.
+ * `spread` (по умолчанию включён) раздаёт КАЖДОМУ свой сдвиг вокруг заданной кривой:
+ * без этого массовое задание одного расписания на 48 аккаунтов само создаёт кластер,
+ * от которого мы и защищаемся. Выключать имеет смысл, только если распорядок должен
+ * совпасть до часа (например, дежурная пара аккаунтов под конкретное окно).
+ *
+ * @param {string[]} accountIds
+ * @param {{profile?:object, schedule?:object, spread?:boolean, reset?:boolean}} patch
  */
 export async function setActivityProfile(accountIds, patch = {}) {
   const ids = (Array.isArray(accountIds) ? accountIds : []).filter(Boolean)
   if (!ids.length) return 0
   const profile = patch.profile ? normalizeFatigueProfile(patch.profile) : null
+  const base = patch.schedule ? normalizeSchedule(patch.schedule) : null
+  const spread = patch.spread !== false
   await mutateJson(FILE(), (all) => {
     const next = { ...(all || {}) }
     for (const id of ids) {
@@ -100,7 +130,7 @@ export async function setActivityProfile(accountIds, patch = {}) {
       next[id] = {
         ...cur,
         ...(profile ? { profile } : {}),
-        ...(patch.schedule ? { schedule: patch.schedule } : {}),
+        ...(base ? { schedule: spread ? scheduleForAccount(id, base) : base } : {}),
         // «Отправить отдыхать» пачкой: обнуляем усталость и снимаем принудительный отдых.
         ...(patch.reset ? { fatigue: 0, restUntil: 0 } : {}),
       }
