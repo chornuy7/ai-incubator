@@ -41,6 +41,29 @@ usersRouter.post('/login', async (req, res) => {
   } catch (err) { fail(res, err, 500) }
 })
 
+/**
+ * Кто я сейчас — с АКТУАЛЬНЫМИ правами.
+ *
+ * Права снимались снимком при входе и лежали в localStorage: админ выдавал роли
+ * доступ к модулю, а человек продолжал видеть «Нет доступа к разделу», пока не
+ * перезайдёт — и никакой подсказки об этом не было. Отзыв доступа так же
+ * не срабатывал до перелогина, что уже вопрос безопасности, а не удобства.
+ */
+usersRouter.get('/me', async (req, res) => {
+  try {
+    const userId = req.header('x-user-id')
+    if (!userId) return res.status(401).json({ ok: false, error: 'Нет сессии' })
+    const user = await getUser(userId)
+    if (!user || !user.active) return res.status(401).json({ ok: false, error: 'Пользователь отключён' })
+    const ids = userRoleIds(user)
+    const roles = await rolesForUser(user)
+    const isAdmin = hasAdminRole(ids)
+    const permissions = isAdmin || roles.length === 0 ? null : mergePermissions(roles)
+    const role = { id: user.roleId || '', name: roles.map((r) => r.name).join(' + '), permissions }
+    res.json({ ok: true, user: publicUser(user), role, roles })
+  } catch (err) { fail(res, err, 500) }
+})
+
 /** Выход: закрыть сессию рабочего времени. */
 usersRouter.post('/logout', async (req, res) => {
   try {

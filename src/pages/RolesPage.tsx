@@ -137,6 +137,7 @@ export function RolesPage() {
   const setChannel = (id: string, p?: Perm) => { setPerms((s) => ({ ...s, resources: { ...s.resources, channels: putPerm(s.resources.channels, id, p) } })); mark() }
   const setTimers = (p: Perm) => { setPerms((s) => ({ ...s, resources: { ...s.resources, timers: p } })); mark() }
   const setTemplates = (p: Perm) => { setPerms((s) => ({ ...s, resources: { ...s.resources, searchTemplates: p } })); mark() }
+  const setAllTasks = (p: Perm) => { setPerms((s) => ({ ...s, resources: { ...s.resources, allTasks: p } })); mark() }
   const setFolderChannels = (id: string, channels: string[]) => { setPerms((s) => ({ ...s, resources: { ...s.resources, folderChannels: { ...(s.resources.folderChannels ?? {}), [id]: channels } } })); mark() }
 
   const mPerm = (k: string): Perm => perms.modules[k] ?? 'deny'
@@ -231,6 +232,22 @@ export function RolesPage() {
                 </div>
               ) : catalog ? (
                 <div className="flex flex-col gap-5">
+                  {/* Роль «без оплаты»: доступ к модулям даёт роль в обход подписки (тест/модер). */}
+                  <section className="rounded-lg border border-iris-500/25 bg-iris-500/[.06] p-3">
+                    <label className="flex cursor-pointer items-start gap-3">
+                      <input
+                        type="checkbox"
+                        checked={!!perms.freeAccess}
+                        onChange={(e) => { setPerms((s) => ({ ...s, freeAccess: e.target.checked })); mark() }}
+                        className="mt-0.5 h-4 w-4 rounded border-line accent-spark-500"
+                      />
+                      <span className="min-w-0">
+                        <span className="block text-sm font-semibold text-fg">Тестовый доступ — без оплаты</span>
+                        <span className="block text-xs text-muted">Роль видит и запускает разрешённые ей модули в обход подписки. Для тестеров и модераторов, которым не нужно платить (монеты за действия всё равно расходуются).</span>
+                      </span>
+                    </label>
+                  </section>
+
                   {/* Модули + блоки */}
                   <section>
                     <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-white/40">Модули и блоки</h3>
@@ -291,6 +308,7 @@ export function RolesPage() {
                           <div className="mb-1.5 text-sm font-medium text-white/70">{res.label}</div>
                           {res.type === 'timers' && <PermRow label="Доступ к таймерам / планировщику" value={perms.resources.timers} onChange={(p) => setTimers(p ?? 'deny')} />}
                           {res.type === 'searchTemplates' && <PermRow label="Доступ к шаблонам поиска" value={perms.resources.searchTemplates} onChange={(p) => setTemplates(p ?? 'deny')} />}
+                          {res.type === 'allTasks' && <PermRow label="Видеть и вести чужие задачи в Дашборде (иначе — только свои)" value={perms.resources.allTasks ?? 'deny'} onChange={(p) => setAllTasks(p ?? 'deny')} />}
                           {res.perItem && (res.items?.length ? (
                             <div className="flex flex-col gap-1">
                               {res.items.map((it) => (

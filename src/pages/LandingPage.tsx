@@ -1,182 +1,531 @@
-import { useNavigate } from 'react-router-dom'
+import { useState, useEffect, useMemo, type Dispatch, type SetStateAction } from 'react'
+import { useNavigate, Link } from 'react-router-dom'
 import {
-  Bot, Radar, MessagesSquare, ShieldCheck, Target, BarChart3,
-  ArrowRight, Check, Zap,
+  ArrowRight, Check, Zap, Lock, Minus, X, Quote, TrendingUp, Clock, Bot, Star,
 } from 'lucide-react'
-import { PLAN_CARDS } from '@/shared/config/plans'
+import { fetchSubscription, quoteSubscription, type Subscription, type SubCost } from '@/api/balanceApi'
+import { MODULES, BONUS_MODULE, FUNNEL_STEPS, COMPARISON, REVIEWS, CASES, ANNUAL_DISCOUNT, moduleTagline, moduleIcon, type Cmp } from './landing/catalog'
 
 /**
- * B1 (SPEC §5.2): публичный лендинг — единственная страница вне auth-гейта панели.
+ * B1 (SPEC §5.2): публичный лендинг — единственная страница вне auth-гейта.
  *
- * Задача страницы одна: объяснить, что это, и довести до регистрации или оплаты.
- * Поэтому здесь нет ни демо-данных, ни «интерактива ради интерактива» — только то,
- * что человек должен понять, прежде чем заводить аккаунты и платить.
- *
- * Тарифы берутся из общего конфига, а не переписаны текстом: цифры на лендинге и
- * лимиты в системе должны совпадать, иначе клиент заплатит за одно, а получит другое.
+ * Структура в духе современных лендингов (герой → как работает → модули → цены →
+ * сравнение → отзывы → кейсы), но НА НАШИХ данных: наши модули, наши цены с сервера,
+ * наши уникальные фичи (цели/CRM, умный прогрев, AIR). Не копия — адаптация.
  */
-
-const FEATURES = [
-  {
-    icon: <Bot size={20} />,
-    title: 'Агенты вместо шаблонов',
-    text: 'AI-персона с характером, тоном и запретами. Под одной целью можно вести две линии: одни аккаунты хвалят, другие спорят — и это выглядит как живое обсуждение, а не рассылка.',
-  },
-  {
-    icon: <Target size={20} />,
-    title: 'Работа к цели, а не «по кнопке»',
-    text: 'Цель задаёт измеримый результат: лиды, переходы, срок. Модули ведут человека по воронке и прощаются, когда целевое действие выполнено.',
-  },
-  {
-    icon: <Radar size={20} />,
-    title: 'Свои базы каналов и аудитории',
-    text: 'Парсеры собирают каналы, группы и участников по ключевым словам, фильтруют по активности и размеру. Найденное сразу идёт в работу.',
-  },
-  {
-    icon: <MessagesSquare size={20} />,
-    title: 'Комментинг, чатинг, рассылка',
-    text: 'Осмысленные комментарии под постами, ответы в группах, личные диалоги и автопостинг в свои каналы — на общем пуле профилей, без конфликтов.',
-  },
-  {
-    icon: <ShieldCheck size={20} />,
-    title: 'Профили ведут себя как люди',
-    text: 'Усталость и распорядок дня: после смены аккаунт отдыхает во всех модулях сразу, ночью не пишет, отвечает не мгновенно. Именно по таким мелочам Telegram и вычисляет ботов.',
-  },
-  {
-    icon: <BarChart3 size={20} />,
-    title: 'Видно, за что платите',
-    text: 'Расход считается построчно: модуль, аккаунт, задача. Постатейный отчёт выгружается одним файлом — без «поверьте на слово».',
-  },
-]
-
 export function LandingPage() {
+  // Цены — с сервера, не из копии в вебе: публичная страница и счёт называют одно число.
+  const [pricing, setPricing] = useState<Subscription | null>(null)
+  useEffect(() => { void fetchSubscription().then(setPricing).catch(() => {}) }, [])
+
   const nav = useNavigate()
   const start = () => nav('/login')
 
+  const setupAll = pricing?.setups.find((s) => s.id === 'setup-all') || null
+
+  // Состояние калькулятора живёт здесь, чтобы готовые наборы могли его заполнять:
+  // клик по пресету складывает его модули в калькулятор — иначе курируемые наборы
+  // бесполезны рядом с ручной сборкой.
+  const [planPeriod, setPlanPeriod] = useState<'month' | 'year'>('month')
+  const [calcFull, setCalcFull] = useState(false)
+  const [calcSelected, setCalcSelected] = useState<Set<string>>(new Set())
+  const pickPreset = (mods: string[]) => {
+    setCalcFull(false)
+    setCalcSelected(new Set(mods))
+    setTimeout(() => document.getElementById('calc')?.scrollIntoView({ behavior: 'smooth' }), 0)
+  }
+
   return (
     <div className="min-h-screen bg-bg text-fg">
-      {/* Шапка */}
-      <header className="sticky top-0 z-40 border-b border-line bg-surface/80 backdrop-blur-xl">
-        <div className="mx-auto flex max-w-6xl items-center gap-3 px-5 py-3.5">
-          <div className="grid h-9 w-9 place-items-center rounded-xl bg-spark-gradient text-[#04150c]">
-            <Zap size={18} fill="currentColor" />
-          </div>
-          <div>
-            <div className="font-display text-sm font-bold leading-tight">AI Incubator</div>
-            <div className="text-[11px] leading-tight text-muted">управление Telegram-профилями</div>
-          </div>
-          <button onClick={start} className="btn-primary ml-auto h-9 px-4 text-sm">
-            Войти <ArrowRight size={15} />
-          </button>
-        </div>
-      </header>
+      <Header start={start} />
 
-      {/* Первый экран */}
-      <section className="mx-auto max-w-6xl px-5 pb-16 pt-16 sm:pt-24">
-        <div className="max-w-3xl">
+      {/* ── Герой ─────────────────────────────────────────────── */}
+      <section className="mx-auto grid max-w-6xl items-center gap-10 px-5 pb-16 pt-14 lg:grid-cols-[1.1fr_1fr] lg:pt-20">
+        <div>
           <span className="inline-flex items-center gap-1.5 rounded-full border border-iris-500/30 bg-iris-500/10 px-3 py-1 text-xs font-semibold text-iris-200">
-            <Bot size={13} /> AI-агенты · Telegram
+            <Bot size={13} /> ИИ-комбайн · Telegram
           </span>
           <h1 className="mt-5 font-display text-4xl font-bold leading-[1.1] sm:text-5xl">
             Десятки Telegram-профилей,
-            <br />
-            которые работают к вашей цели
+            <br /> которые работают <span className="text-gradient">к вашей цели</span>
           </h1>
-          <p className="mt-5 max-w-2xl text-lg leading-relaxed text-muted">
-            Не массовая рассылка, а осмысленное присутствие: агенты комментируют посты,
-            отвечают в группах и ведут переписку — каждый со своим характером, своим
-            распорядком дня и общим счётчиком усталости.
+          <p className="mt-5 max-w-xl text-lg leading-relaxed text-muted">
+            Парсинг, нейрокомментинг, нейрочаттинг, рассылки, прогрев и защита аккаунтов —
+            в одном кабинете. Агенты со своим характером и распорядком дня ведут людей по
+            воронке до целевого действия.
           </p>
           <div className="mt-8 flex flex-wrap items-center gap-3">
-            <button onClick={start} className="btn-primary h-11 px-6 text-base">
-              Начать <ArrowRight size={17} />
-            </button>
-            <a href="#tarify" className="btn-ghost h-11 px-6 text-base">Тарифы</a>
+            <button onClick={start} className="btn-primary h-11 px-6 text-base">Начать <ArrowRight size={17} /></button>
+            <a href="#modules" className="btn-ghost h-11 px-6 text-base">Возможности</a>
+          </div>
+          <div className="mt-8 flex flex-wrap gap-x-8 gap-y-3 text-sm">
+            <Stat value="10+" label="модулей автоматизации" />
+            <Stat value="24/7" label="работа к цели" />
+            <Stat value="0" label="ручной рутины" />
           </div>
         </div>
+        <HeroMock />
       </section>
 
-      {/* Что делает */}
+      {/* ── Как работает ─────────────────────────────────────── */}
       <section className="border-y border-line bg-surface/40">
         <div className="mx-auto max-w-6xl px-5 py-16">
-          <h2 className="font-display text-2xl font-bold">Что внутри</h2>
-          <div className="mt-8 grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
-            {FEATURES.map((f) => (
-              <div key={f.title} className="rounded-2xl border border-line bg-card p-5">
-                <div className="mb-3 grid h-10 w-10 place-items-center rounded-xl bg-spark-500/12 text-spark-300">
-                  {f.icon}
+          <SectionHead eyebrow="Полный Telegram-конвейер" title="Как это работает" desc="Пять шагов от холодной базы до лидов — каждый закрывают наши модули." />
+          <div className="mt-8 grid gap-3 sm:grid-cols-3 lg:grid-cols-5">
+            {FUNNEL_STEPS.map((s, i) => (
+              <div key={s.title} className="rounded-2xl border border-line bg-card p-4">
+                <div className="mb-3 flex items-center justify-between">
+                  <div className="grid h-9 w-9 place-items-center rounded-xl bg-spark-500/12 text-spark-300"><s.icon size={18} /></div>
+                  <span className="font-display text-lg font-bold text-faint">0{i + 1}</span>
                 </div>
-                <div className="mb-1.5 font-semibold">{f.title}</div>
-                <p className="text-sm leading-relaxed text-muted">{f.text}</p>
+                <div className="font-semibold">{s.title}</div>
+                <p className="mt-1 text-xs leading-relaxed text-muted">{s.desc}</p>
               </div>
             ))}
           </div>
         </div>
       </section>
 
-      {/* Тарифы */}
-      <section id="tarify" className="mx-auto max-w-6xl px-5 py-16">
-        <h2 className="font-display text-2xl font-bold">Тарифы</h2>
-        <p className="mt-2 text-sm text-muted">
-          Оплата монетами: списываются за работу ИИ. Не работаете — не тратите.
-        </p>
-        <div className="mt-8 grid gap-5 sm:grid-cols-3">
-          {PLAN_CARDS.map((p) => (
-            <div
-              key={p.id}
-              className={`flex flex-col rounded-2xl border p-6 ${
-                p.featured ? 'border-spark-500/50 bg-spark-500/5' : 'border-line bg-card'
-              }`}
-            >
-              {p.featured && (
-                <span className="mb-3 self-start rounded-full bg-spark-500/15 px-2.5 py-0.5 text-[11px] font-bold text-spark-300">
-                  чаще выбирают
-                </span>
-              )}
-              <div className="font-display text-lg font-bold">{p.name}</div>
-              <div className="mt-1 text-sm text-muted">до {p.accountLimit} аккаунтов</div>
-              <ul className="mt-5 flex flex-1 flex-col gap-2">
-                {p.perks.map((perk) => (
-                  <li key={perk} className="flex items-start gap-2 text-sm">
-                    <Check size={15} className="mt-0.5 shrink-0 text-spark-400" />
-                    <span className="text-muted">{perk}</span>
-                  </li>
+      {/* ── Модули (возможности) ─────────────────────────────── */}
+      <section id="modules" className="mx-auto max-w-6xl px-5 py-16">
+        <SectionHead eyebrow="Возможности" title="Всё, что нужно для продвижения" desc="10 модулей и менеджер аккаунтов в подарок. Один интерфейс, общий пул профилей." />
+        <div className="mt-8 grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
+          {MODULES.map((m) => (
+            <div key={m.key} className="flex flex-col rounded-2xl border border-line bg-card p-5 transition-colors hover:border-spark-500/30">
+              <div className="mb-3 flex items-center gap-3">
+                <div className="grid h-10 w-10 place-items-center rounded-xl bg-spark-500/12 text-spark-300"><m.icon size={20} /></div>
+                {m.unique && <span className="ml-auto rounded-md bg-iris-500/15 px-1.5 py-0.5 text-[10px] font-bold text-iris-300">только у нас</span>}
+              </div>
+              <div className="font-semibold">{m.title}</div>
+              <div className="text-xs text-muted">{m.tagline}</div>
+              <p className="mt-2 flex-1 text-sm leading-relaxed text-muted line-clamp-3">{m.description}</p>
+              <Link to={`/module/${m.key}`} className="mt-4 inline-flex items-center gap-1 text-sm font-semibold text-spark-300 hover:gap-2">
+                Подробнее <ArrowRight size={15} />
+              </Link>
+            </div>
+          ))}
+          {/* Бонус */}
+          <div className="flex flex-col rounded-2xl border border-spark-500/40 bg-spark-500/5 p-5">
+            <div className="mb-3 flex items-center gap-3">
+              <div className="grid h-10 w-10 place-items-center rounded-xl bg-spark-500/15 text-spark-300"><BONUS_MODULE.icon size={20} /></div>
+              <span className="ml-auto rounded-md bg-spark-500/15 px-1.5 py-0.5 text-[10px] font-bold text-spark-300">в подарок</span>
+            </div>
+            <div className="font-semibold">{BONUS_MODULE.title}</div>
+            <div className="text-xs text-muted">{BONUS_MODULE.tagline}</div>
+            <p className="mt-2 flex-1 text-sm leading-relaxed text-muted line-clamp-3">{BONUS_MODULE.description}</p>
+            <Link to={`/module/${BONUS_MODULE.key}`} className="mt-4 inline-flex items-center gap-1 text-sm font-semibold text-spark-300 hover:gap-2">
+              Подробнее <ArrowRight size={15} />
+            </Link>
+          </div>
+        </div>
+      </section>
+
+      {/* ── Цены ─────────────────────────────────────────────── */}
+      <section id="tarify" className="border-y border-line bg-surface/40">
+        <div className="mx-auto max-w-6xl px-5 py-16">
+          <SectionHead eyebrow="Доступные тарифы" title="Цены" desc="Весь комбайн или отдельные модули — от $8. Работа ИИ оплачивается монетами: не работаете — не тратите." center />
+
+          {/* Переключатель периода: помесячно или на год (год дешевле). */}
+          <div className="mt-6 flex justify-center">
+            <div className="flex rounded-xl border border-line bg-surface p-0.5 text-sm">
+              {(['month', 'year'] as const).map((p) => (
+                <button key={p} onClick={() => setPlanPeriod(p)} className={`h-9 rounded-lg px-4 font-semibold transition-colors ${planPeriod === p ? 'bg-spark-500/15 text-spark-300' : 'text-muted hover:text-fg'}`}>
+                  {p === 'month' ? 'Помесячно' : 'На год'}
+                  {p === 'year' && <span className="ml-1.5 text-[11px] text-spark-400">−{Math.round(ANNUAL_DISCOUNT * 100)}%</span>}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {pricing && setupAll && (() => {
+            const yr = planPeriod === 'year'
+            const per = yr ? '/ год' : '/ мес'
+            const perAll = yr ? Math.round(setupAll.cost.sum * 12 * (1 - ANNUAL_DISCOUNT)) : setupAll.cost.sum
+            const perMin = yr ? Math.round(8 * 12 * (1 - ANNUAL_DISCOUNT)) : 8
+            return (
+              <div className="mx-auto mt-6 grid max-w-3xl gap-5 sm:grid-cols-2">
+                <PlanCard
+                  name="Весь комбайн"
+                  price={`${pricing.currency}${perAll}`}
+                  per={per}
+                  badge={yr ? `выгодно · −${Math.round(ANNUAL_DISCOUNT * 100)}%` : undefined}
+                  highlight
+                  desc={yr ? 'Все модули на год — дешевле помесячной.' : 'Доступ ко всем модулям на месяц.'}
+                  features={['Все модули комбайна', 'Новые модули — бесплатно', 'Менеджер аккаунтов в подарок']}
+                  onStart={start}
+                />
+                <PlanCard
+                  name="Отдельные модули"
+                  price={`от ${pricing.currency}${perMin}`}
+                  per={per}
+                  desc="Соберите свой набор — платите только за нужное."
+                  features={['Выбор отдельных модулей', 'Гибкая настройка', 'Скидка на готовый набор']}
+                  onStart={() => { document.getElementById('calc')?.scrollIntoView({ behavior: 'smooth' }) }}
+                  cta="К калькулятору"
+                />
+              </div>
+            )
+          })()}
+
+          {/* Готовые наборы — курируемые пресеты дешевле поштучной сборки. Клик
+              складывает набор в калькулятор, чтобы его можно было докрутить. */}
+          {pricing && pricing.setups.length > 0 && (
+            <div className="mt-8">
+              <div className="mb-3 text-sm font-semibold text-fg">Готовые наборы — дешевле, чем собирать поштучно</div>
+              <div className="grid gap-4 sm:grid-cols-3">
+                {[...pricing.setups].sort((a, b) => a.cost.sum - b.cost.sum).map((sp) => (
+                  <div key={sp.id} className={`flex flex-col rounded-2xl border p-5 ${sp.id === 'setup-all' ? 'border-spark-500/50 bg-spark-500/5' : 'border-line bg-card'}`}>
+                    <div className="font-display text-base font-bold">{sp.name}</div>
+                    <div className="text-xs text-muted">{sp.hint}</div>
+                    <div className="mt-2 flex flex-wrap items-baseline gap-2">
+                      <span className="font-display text-2xl font-bold">{pricing.currency}{sp.cost.sum}<span className="text-xs font-normal text-muted"> / мес</span></span>
+                      {sp.discount > 0 && <span className="text-xs text-muted line-through">{pricing.currency}{sp.cost.full}</span>}
+                      {sp.discount > 0 && <span className="rounded-md bg-spark-500/15 px-1.5 py-0.5 text-[10px] font-bold text-spark-300">−{Math.round(sp.discount * 100)}%</span>}
+                    </div>
+                    <ul className="mt-3 flex flex-1 flex-col gap-1 text-xs text-muted">
+                      {sp.modules.slice(0, 6).map((mk) => (
+                        <li key={mk} className="flex items-center gap-1.5"><Check size={12} className="shrink-0 text-spark-400" /> {pricing.items.find((i) => i.key === mk)?.title || mk}</li>
+                      ))}
+                      {sp.modules.length > 6 && <li className="text-faint">и ещё {sp.modules.length - 6}…</li>}
+                    </ul>
+                    <button onClick={() => pickPreset(sp.modules)} className="btn-ghost mt-4 h-9 rounded-xl border border-line text-sm font-semibold">Собрать в калькуляторе</button>
+                  </div>
                 ))}
-              </ul>
-              <button
-                onClick={start}
-                className={`mt-6 h-10 rounded-xl text-sm font-semibold ${
-                  p.featured ? 'btn-primary' : 'btn-ghost border border-line'
-                }`}
-              >
-                Выбрать
-              </button>
+              </div>
+            </div>
+          )}
+
+          <div id="calc" className="scroll-mt-8">
+            {pricing && <PriceCalculator pricing={pricing} start={start} full={calcFull} setFull={setCalcFull} selected={calcSelected} setSelected={setCalcSelected} />}
+          </div>
+        </div>
+      </section>
+
+      {/* ── Сравнение ────────────────────────────────────────── */}
+      <section className="mx-auto max-w-6xl px-5 py-16">
+        <SectionHead eyebrow="Сравнение" title="Почему выбирают AI Incubator" desc="Наши возможности против типовых альтернатив на рынке." center />
+        <Comparison />
+      </section>
+
+      {/* ── Отзывы ───────────────────────────────────────────── */}
+      <section className="border-y border-line bg-surface/40">
+        <div className="mx-auto max-w-6xl px-5 py-16">
+          <SectionHead eyebrow="Отзывы" title="Что о нас говорят" desc="Иллюстративные отзывы — в демо-версии." center />
+          <div className="mt-8 grid gap-5 md:grid-cols-2">
+            {REVIEWS.map((r) => (
+              <div key={r.name} className="rounded-2xl border border-line bg-card p-5">
+                <Quote size={22} className="text-spark-400/60" />
+                <p className="mt-3 text-sm leading-relaxed text-muted">{r.text}</p>
+                <div className="mt-4 flex items-center gap-3">
+                  <div className="grid h-9 w-9 place-items-center rounded-full bg-spark-500/15 font-bold text-spark-300">{r.name[0]}</div>
+                  <div>
+                    <div className="text-sm font-semibold">{r.name}</div>
+                    <div className="text-xs text-muted">{r.role}</div>
+                  </div>
+                  <div className="ml-auto flex items-center gap-0.5 text-amber-300">
+                    {Array.from({ length: 5 }).map((_, i) => <Star key={i} size={13} fill="currentColor" />)}
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      {/* ── Истории успеха ───────────────────────────────────── */}
+      <section className="mx-auto max-w-6xl px-5 py-16">
+        <SectionHead eyebrow="Кейсы" title="Реальные истории успеха" desc="Как бизнесы используют AI Incubator для роста в Telegram (демо-примеры)." center />
+        <div className="mt-8 grid gap-5 md:grid-cols-2">
+          {CASES.map((c) => (
+            <div key={c.title} className="rounded-2xl border border-line bg-card p-5">
+              <div className="font-display text-lg font-bold">{c.title}</div>
+              <p className="mt-2 text-sm leading-relaxed text-muted">{c.text}</p>
+              <div className="mt-4 flex flex-wrap gap-2 text-xs">
+                <span className="inline-flex items-center gap-1 rounded-lg bg-spark-500/12 px-2 py-1 font-semibold text-spark-300"><TrendingUp size={13} /> {c.metric}</span>
+                <span className="inline-flex items-center gap-1 rounded-lg bg-elevated px-2 py-1 text-muted"><Clock size={13} /> {c.period}</span>
+              </div>
             </div>
           ))}
         </div>
-        <p className="mt-5 text-xs text-muted">
-          Точная стоимость и условия — по запросу: тарифная сетка согласуется индивидуально.
-        </p>
       </section>
 
-      {/* Финальный призыв */}
+      {/* ── Финальный призыв ─────────────────────────────────── */}
       <section className="border-t border-line bg-surface/40">
         <div className="mx-auto flex max-w-6xl flex-col items-start gap-5 px-5 py-14 sm:flex-row sm:items-center">
           <div>
             <div className="font-display text-xl font-bold">Попробуйте на своих каналах</div>
-            <p className="mt-1.5 text-sm text-muted">
-              Заведите профили, задайте цель — первые результаты видно в тот же день.
-            </p>
+            <p className="mt-1.5 text-sm text-muted">Заведите профили, задайте цель — первые результаты видно в тот же день.</p>
           </div>
-          <button onClick={start} className="btn-primary h-11 shrink-0 px-6 text-base sm:ml-auto">
-            Начать <ArrowRight size={17} />
-          </button>
+          <button onClick={start} className="btn-primary h-11 shrink-0 px-6 text-base sm:ml-auto">Начать <ArrowRight size={17} /></button>
         </div>
       </section>
 
       <footer className="mx-auto max-w-6xl px-5 py-8 text-xs text-muted">
         AI Incubator — платформа управления Telegram-профилями.
       </footer>
+    </div>
+  )
+}
+
+/* ─────────────────────────── Части ─────────────────────────── */
+
+function Header({ start }: { start: () => void }) {
+  return (
+    <header className="sticky top-0 z-40 border-b border-line bg-surface/80 backdrop-blur-xl">
+      <div className="mx-auto flex max-w-6xl items-center gap-3 px-5 py-3.5">
+        <div className="grid h-9 w-9 place-items-center rounded-xl bg-spark-gradient text-[#04150c]"><Zap size={18} fill="currentColor" /></div>
+        <div>
+          <div className="font-display text-sm font-bold leading-tight">AI Incubator</div>
+          <div className="text-[11px] leading-tight text-muted">управление Telegram-профилями</div>
+        </div>
+        <nav className="ml-auto hidden items-center gap-6 text-sm text-muted md:flex">
+          <a href="#modules" className="hover:text-fg">Возможности</a>
+          <a href="#tarify" className="hover:text-fg">Тарифы</a>
+        </nav>
+        <button onClick={start} className="ml-4 btn-primary h-9 px-4 text-sm">Войти <ArrowRight size={15} /></button>
+      </div>
+    </header>
+  )
+}
+
+function SectionHead({ eyebrow, title, desc, center }: { eyebrow: string; title: string; desc: string; center?: boolean }) {
+  return (
+    <div className={center ? 'mx-auto max-w-2xl text-center' : 'max-w-2xl'}>
+      <span className="text-xs font-bold uppercase tracking-wider text-spark-400">{eyebrow}</span>
+      <h2 className="mt-2 font-display text-2xl font-bold sm:text-3xl">{title}</h2>
+      <p className="mt-2 text-sm leading-relaxed text-muted">{desc}</p>
+    </div>
+  )
+}
+
+function Stat({ value, label }: { value: string; label: string }) {
+  return (
+    <div>
+      <div className="font-display text-2xl font-bold text-fg">{value}</div>
+      <div className="text-xs text-muted">{label}</div>
+    </div>
+  )
+}
+
+/** Декоративный «скриншот» кабинета — чистый CSS, не картинка. */
+function HeroMock() {
+  const rows = [
+    { n: 'Ethan Walker', s: 'Валидный', c: 'text-spark-300' },
+    { n: 'Mia Hartley', s: 'Прогрев', c: 'text-amber-300' },
+    { n: 'Sophie Dane', s: 'Валидный', c: 'text-spark-300' },
+    { n: 'Nexus Media', s: 'Реакции', c: 'text-iris-300' },
+  ]
+  return (
+    <div className="relative">
+      <div className="pointer-events-none absolute -right-10 -top-10 h-56 w-56 rounded-full bg-spark-500/15 blur-3xl" />
+      <div className="pointer-events-none absolute -bottom-10 left-0 h-56 w-56 rounded-full bg-iris-500/15 blur-3xl" />
+      <div className="relative overflow-hidden rounded-2xl border border-line bg-surface shadow-pop">
+        <div className="flex items-center gap-1.5 border-b border-line px-4 py-2.5">
+          <span className="h-2.5 w-2.5 rounded-full bg-red-400/70" />
+          <span className="h-2.5 w-2.5 rounded-full bg-amber-400/70" />
+          <span className="h-2.5 w-2.5 rounded-full bg-spark-400/70" />
+          <span className="ml-3 text-[11px] text-muted">Менеджер аккаунтов</span>
+        </div>
+        <div className="space-y-2 p-4">
+          <div className="mb-3 grid grid-cols-3 gap-2">
+            {[['6', 'Активные'], ['80', 'монет ⚡'], ['0', 'банов']].map(([v, l]) => (
+              <div key={l} className="rounded-xl border border-line bg-card p-3">
+                <div className="font-display text-xl font-bold">{v}</div>
+                <div className="text-[10px] text-muted">{l}</div>
+              </div>
+            ))}
+          </div>
+          {rows.map((r) => (
+            <div key={r.n} className="flex items-center gap-3 rounded-lg border border-line bg-card px-3 py-2">
+              <div className="grid h-7 w-7 place-items-center rounded-full bg-elevated text-[11px] font-bold text-muted">{r.n[0]}</div>
+              <span className="text-sm font-medium">{r.n}</span>
+              <span className={`ml-auto text-xs font-semibold ${r.c}`}>{r.s}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function PlanCard({ name, price, per, desc, features, onStart, badge, highlight, cta }: {
+  name: string; price: string; per: string; desc: string; features: string[]; onStart: () => void; badge?: string; highlight?: boolean; cta?: string
+}) {
+  return (
+    <div className={`relative flex flex-col rounded-2xl border p-6 ${highlight ? 'border-spark-500/50 bg-spark-500/5' : 'border-line bg-card'}`}>
+      {badge && (
+        <span className="absolute -top-3 left-6 rounded-full bg-spark-gradient px-2.5 py-0.5 text-[11px] font-bold text-[#04150c]">{badge}</span>
+      )}
+      <div className="font-display text-lg font-bold">{name}</div>
+      <div className="mt-1 flex items-baseline gap-1.5">
+        <span className="font-display text-3xl font-bold">{price}</span>
+        <span className="text-sm text-muted">{per}</span>
+      </div>
+      <div className="mt-1 text-sm text-muted">{desc}</div>
+      <ul className="mt-5 flex flex-1 flex-col gap-2">
+        {features.map((f) => (
+          <li key={f} className="flex items-start gap-2 text-sm text-muted"><Check size={15} className="mt-0.5 shrink-0 text-spark-400" /> {f}</li>
+        ))}
+      </ul>
+      <button onClick={onStart} className={`mt-6 h-10 rounded-xl text-sm font-semibold ${highlight ? 'btn-primary' : 'btn-ghost border border-line'}`}>{cta || 'Выбрать'}</button>
+    </div>
+  )
+}
+
+function Comparison() {
+  const cell = (v: Cmp) =>
+    v === 'yes' ? <Check size={16} className="mx-auto text-spark-400" />
+      : v === 'partial' ? <Minus size={16} className="mx-auto text-amber-400" />
+        : <X size={16} className="mx-auto text-faint" />
+  const cols: { key: 'us' | 'parsers' | 'mailers' | 'neuro'; label: string; sub?: string }[] = [
+    { key: 'us', label: 'AI Incubator', sub: 'лучший выбор' },
+    { key: 'parsers', label: 'Парсеры', sub: 'аналитика каналов' },
+    { key: 'mailers', label: 'Рассыльщики', sub: 'ЛС-софт' },
+    { key: 'neuro', label: 'Нейросервисы', sub: 'комментинг' },
+  ]
+  return (
+    <div className="mt-8 overflow-x-auto">
+      <table className="w-full min-w-[640px] border-collapse text-sm">
+        <thead>
+          <tr>
+            <th className="p-3 text-left font-medium text-muted">Функция</th>
+            {cols.map((c) => (
+              <th key={c.key} className={`p-3 text-center ${c.key === 'us' ? 'rounded-t-xl bg-spark-500/8' : ''}`}>
+                <div className={`font-bold ${c.key === 'us' ? 'text-spark-300' : 'text-fg'}`}>{c.label}</div>
+                {c.sub && <div className="text-[11px] font-normal text-muted">{c.sub}</div>}
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {COMPARISON.map((row) => (
+            <tr key={row.feature} className="border-t border-line">
+              <td className="p-3 text-fg">{row.feature}</td>
+              {cols.map((c) => (
+                <td key={c.key} className={`p-3 ${c.key === 'us' ? 'bg-spark-500/8' : ''}`}>{cell(row[c.key])}</td>
+              ))}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  )
+}
+
+/**
+ * Калькулятор набора: клиент отмечает нужные модули и сразу видит цену со скидкой
+ * готового сетапа. Цену считает сервер (quoteSubscription). «Полная лицензия» — тумблер:
+ * включает всё, поштучный выбор гаснет (серые, неактивные) — уже включено.
+ */
+function PriceCalculator({ pricing, start, full, setFull, selected, setSelected }: {
+  pricing: Subscription
+  start: () => void
+  full: boolean
+  setFull: Dispatch<SetStateAction<boolean>>
+  selected: Set<string>
+  setSelected: Dispatch<SetStateAction<Set<string>>>
+}) {
+  const allKeys = useMemo(() => pricing.items.map((i) => i.key), [pricing.items])
+  const [period, setPeriod] = useState<'month' | 'year'>('month')
+  const [cost, setCost] = useState<SubCost | null>(null)
+
+  const activeKeys = useMemo(() => (full ? allKeys : [...selected]), [full, selected, allKeys])
+  useEffect(() => {
+    if (!activeKeys.length) { setCost(null); return }
+    let alive = true
+    void quoteSubscription(activeKeys).then((c) => { if (alive) setCost(c) }).catch(() => { if (alive) setCost(null) })
+    return () => { alive = false }
+  }, [activeKeys])
+
+  const perPeriod = (monthly: number) => (period === 'year' ? Math.round(monthly * 12 * (1 - ANNUAL_DISCOUNT)) : monthly)
+  const suffix = period === 'year' ? ' / год' : ' / мес'
+  const cur = pricing.currency
+
+  const toggle = (k: string) => {
+    if (full) return
+    setSelected((prev) => { const n = new Set(prev); if (n.has(k)) n.delete(k); else n.add(k); return n })
+  }
+
+  const total = cost ? perPeriod(cost.sum) : 0
+  const totalFull = cost ? perPeriod(cost.full) : 0
+  const hasDiscount = !!cost && cost.full > cost.sum
+
+  return (
+    <div className="mt-8 rounded-2xl border border-line bg-card p-6">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <div className="font-display text-lg font-bold">Калькулятор — соберите свой набор</div>
+          <p className="mt-1 text-sm text-muted">Отметьте нужные модули — цена посчитается сразу.</p>
+        </div>
+        <div className="flex rounded-xl border border-line bg-surface p-0.5 text-sm">
+          {(['month', 'year'] as const).map((p) => (
+            <button key={p} onClick={() => setPeriod(p)} className={`h-8 rounded-lg px-3 font-semibold transition-colors ${period === p ? 'bg-spark-500/15 text-spark-300' : 'text-muted hover:text-fg'}`}>
+              {p === 'month' ? 'Месяц' : 'Год'}
+              {p === 'year' && <span className="ml-1 text-[10px] text-spark-400">−{Math.round(ANNUAL_DISCOUNT * 100)}%</span>}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <button
+        onClick={() => setFull((v) => !v)}
+        className={`mt-4 flex w-full items-center gap-3 rounded-xl border p-4 text-left transition-colors ${full ? 'border-spark-500/50 bg-spark-500/10' : 'border-line bg-surface hover:border-spark-500/30'}`}
+      >
+        <span className={`grid h-6 w-6 shrink-0 place-items-center rounded-md border ${full ? 'border-spark-500 bg-spark-500 text-[#04150c]' : 'border-line'}`}>{full && <Check size={15} />}</span>
+        <span className="min-w-0 flex-1">
+          <span className="block font-semibold">Полная лицензия — всё включено</span>
+          <span className="block text-xs text-muted">Все {allKeys.length} модулей платформы. Новые — бесплатно.</span>
+        </span>
+      </button>
+
+      <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+        {pricing.items.map((m) => {
+          const on = full || selected.has(m.key)
+          const included = full
+          const Icon = moduleIcon(m.key)
+          return (
+            <div
+              key={m.key}
+              className={`relative flex flex-col rounded-xl border p-4 transition-colors ${included ? 'border-line bg-surface/40 opacity-60' : on ? 'border-spark-500/50 bg-spark-500/10' : 'border-line bg-surface'}`}
+            >
+              <button
+                onClick={() => toggle(m.key)}
+                disabled={included}
+                className={`flex items-start gap-3 text-left ${included ? 'cursor-not-allowed' : ''}`}
+              >
+                <span className={`mt-0.5 grid h-5 w-5 shrink-0 place-items-center rounded-md border ${on && !included ? 'border-spark-500 bg-spark-500 text-[#04150c]' : 'border-line text-muted'}`}>
+                  {included ? <Lock size={12} /> : on ? <Check size={13} /> : null}
+                </span>
+                <span className="min-w-0 flex-1">
+                  <span className="flex items-center gap-1.5 font-semibold"><Icon size={14} className="shrink-0 text-spark-300" /> {m.title}</span>
+                  <span className="mt-0.5 block text-[11px] leading-snug text-muted">{moduleTagline(m.key)}</span>
+                  <span className="mt-1 block text-sm"><span className="font-bold tabular-nums text-fg">{cur}{perPeriod(m.price)}</span><span className="text-xs font-normal text-muted">{suffix}</span></span>
+                </span>
+              </button>
+              <Link to={`/module/${m.key}`} className="mt-2 inline-flex items-center gap-1 self-start text-[11px] font-semibold text-spark-300 hover:gap-1.5">
+                Подробнее <ArrowRight size={12} />
+              </Link>
+              {included && <span className="absolute right-3 top-3 rounded-md bg-white/8 px-1.5 py-0.5 text-[10px] font-bold text-muted">включено</span>}
+            </div>
+          )
+        })}
+      </div>
+
+      <div className="mt-5 flex flex-wrap items-center gap-x-4 gap-y-2 border-t border-line pt-5">
+        <div>
+          <div className="text-xs text-muted">{full ? 'Полная лицензия' : activeKeys.length ? `Выбрано модулей: ${activeKeys.length}` : 'Ничего не выбрано'}</div>
+          <div className="flex items-baseline gap-2">
+            <span className="font-display text-2xl font-bold text-fg">{cur}{total}<span className="text-sm font-normal text-muted">{suffix}</span></span>
+            {hasDiscount && (
+              <>
+                <span className="text-sm text-muted line-through">{cur}{totalFull}</span>
+                <span className="rounded-md bg-spark-500/15 px-1.5 py-0.5 text-[10px] font-bold text-spark-300">−{Math.round((cost!.discount || 0) * 100)}%</span>
+              </>
+            )}
+          </div>
+        </div>
+        <button onClick={start} disabled={!activeKeys.length} className="btn-primary ml-auto h-11 px-6 text-base disabled:opacity-40">Оформить <ArrowRight size={17} /></button>
+      </div>
     </div>
   )
 }

@@ -1,4 +1,5 @@
 import type { TgAccount, AccountStatus, AccountStats, AccountChannel, AccountFolder } from '@/shared/types'
+import { apiGet } from './client'
 
 export type ServerAccount = TgAccount
 
@@ -105,4 +106,32 @@ export async function setAccountStatusManual(accountId: string, to: 'pause' | 'a
 export async function reconcileLocks(): Promise<{ ok: boolean; dropped: { accountId: string; taskId: string; moduleKey: string }[] }> {
   const res = await fetch('/api/modules/locks/reconcile', { method: 'POST' })
   return parseJson(res) as Promise<{ ok: boolean; dropped: { accountId: string; taskId: string; moduleKey: string }[] }>
+}
+
+/**
+ * Что аккаунт нам принёс: задачи, действия, токены, деньги, лиды — по модулям.
+ * Отдельно от профиля Telegram: тот отвечает «кто он», этот — «какая отдача».
+ */
+export interface AccountWorkModule { moduleKey: string; title: string; tasks: number; actions: number; tokens: number; spent: number }
+export interface AccountWork {
+  accountId: string
+  tasks: number
+  actions: number
+  spent: number
+  tokens: number
+  tokenCoins: number
+  totalCoins: number
+  errors: number
+  lastUsed: number
+  leads: { total: number; active: number; target: number }
+  byModule: AccountWorkModule[]
+  recent: { id: string; moduleKey: string; title: string; status: string; at: number; actions: number }[]
+}
+
+export async function fetchAccountWork(accountId: string, since?: number): Promise<AccountWork> {
+  const q = since ? `?since=${since}` : ''
+  // Через apiGet, а не голым fetch: он ставит X-User-Id, без которого серверный
+  // гейт не поймёт, кто спрашивает, и отдаст данные любому.
+  const r = await apiGet<{ ok: boolean; work: AccountWork }>(`/api/accounts/${accountId}/work${q}`)
+  return r.work
 }

@@ -3,19 +3,13 @@ import { getModuleStore, listModuleKeys, validateSettings, startModuleTask, stop
 import { releaseTaskLocks } from '../lib/accountLocks.js'
 import { assertAccountsAssignable, checkAccountsAssignable, loadAllMeta } from '../accountsMeta.js'
 
-/**
- * C2 (§5.1): модули, которые обращаются к ИИ и потому тратят монеты. Парсеры сюда
- * НЕ входят — они только читают Telegram, ничего не генерируют, и блокировать сбор
- * данных из-за нулевого баланса было бы произволом.
- */
-const AI_MODULES = new Set(['neuro-commenting', 'neuro-chatting', 'neuro-dialogs', 'mailing'])
 import { assertNoHotLeadConflict, assertActiveDialogLimit } from '../leads.js'
 import { findDuplicateActiveTask } from '../lib/taskDedup.js'
 import { getGoal, isGoalExpired } from '../goals.js'
 import { WARMING_MODULES, canStopWarming } from '../lib/safetyLimits.js'
 import { splitAudience } from '../lib/mailingAudience.js'
 import { canEditTask, pickEditableSettings } from '../lib/taskEdit.js'
-import { isAdminRequest } from '../lib/accessGuard.js'
+import { isAdminRequest, tasksForRequest, canTouchTask } from '../lib/accessGuard.js'
 
 export const modulesRouter = Router()
 
@@ -57,12 +51,82 @@ async function warmingStopBlockReason(req, moduleKey) {
   return 'Останавливать и ставить на паузу прогрев может только супер-админ: это недели работы аккаунтов, откатить нельзя.'
 }
 
+
+/**
+ * Хватает ли монет, чтобы (пере)запустить задачу модуля. Тот же гейт, что при
+ * создании: без него «Продолжить» на нулевом балансе стартовал бы задачу, которая
+ * встаёт на паузу после первого же действия — человек жмёт кнопку, ничего не
+ * происходит, причина видна только в логах.
+ * @returns {Promise<object|null>} тело отказа или null
+ */
+/**
+ * Оплачен ли модуль. Заказчик (23.07): набор модулей клиент собирает сам и платит
+ * только за них — значит запуск надо проверять не только по балансу и роли, но и
+ * по тому, что куплено. Три независимые оси: роль (что разрешил админ), подписка
+ * (что оплачено), монеты (есть ли чем платить за действия).
+ * @returns {Promise<object|null>} тело отказа или null
+ */
+/** Роль «без оплаты» (тест/модератор): доступ к модулям даёт роль, а не подписка. */
+async function userHasFreeAccess(userId) {
+  if (!userId) return false
+  try {
+    const { getUser } = await import('../users.js')
+    const { rolesForUser } = await import('../roles.js')
+    const user = await getUser(userId)
+    if (!user) return false
+    const roles = await rolesForUser(user)
+    return roles.some((r) => !!r?.permissions?.freeAccess)
+  } catch { return false }
+}
+
+async function notInPlanPayload(req, moduleKey) {
+  // Роль без оплаты обходит подписку — но не роль и не монеты (это отдельные оси).
+  if (await userHasFreeAccess(req.header('x-user-id'))) return null
+  const { getBalance, modulesAllow } = await import('../balance.js')
+  const { modules } = await getBalance(req.header('x-user-id'))
+  if (modulesAllow(modules, moduleKey)) return null
+  const { moduleTitle } = await import('../lib/moduleTitles.js')
+  return {
+    ok: false,
+    error: `Модуль «${moduleTitle(moduleKey)}» не оплачен. Добавьте его в подписку в разделе «Мои модули».`,
+    needSubscription: true,
+    moduleKey,
+  }
+}
+
+async function noCoinsPayload(req, moduleKey) {
+  const { actionPrice } = await import('../pricing.js')
+  if (actionPrice(moduleKey) <= 0) return null
+  const { getBalance } = await import('../balance.js')
+  const { coins } = await getBalance(req.header('x-user-id'))
+  if (coins > 0) return null
+  return {
+    ok: false,
+    error: 'Закончились монеты — модули остановлены. Пополните баланс, чтобы продолжить.',
+    needTopUp: true,
+  }
+}
+
+/**
+ * Своя ли это задача. Скрытие чужих в списке без этой проверки было бы косметикой:
+ * id виден в интерфейсе, и остановить чужой запуск можно было бы прямым запросом.
+ * @returns {Promise<string|null>} текст отказа или null
+ */
+async function foreignTaskReason(req, moduleKey, id) {
+  const store = getModuleStore(moduleKey)
+  if (!store) return null // модуль не найден — пусть отвечает сам обработчик
+  const task = await store.loadTask(id).catch(() => null)
+  if (!task) return null // нет задачи — тоже забота обработчика (404)
+  if (await canTouchTask(req, task)) return null
+  return 'Задача не найдена'
+}
+
 modulesRouter.get('/', (_req, res) => {
   res.json({ ok: true, modules: listModuleKeys() })
 })
 
 // Агрегат всех задач по всем модулям (дашборд «Задачи», §3.9). До /:moduleKey/tasks.
-modulesRouter.get('/tasks', async (_req, res) => {
+modulesRouter.get('/tasks', async (req, res) => {
   try {
     const { listModuleKeys, getModuleStore } = await import('./registry.js')
     const all = []
@@ -75,7 +139,8 @@ modulesRouter.get('/tasks', async (_req, res) => {
       } catch { /* skip module */ }
     }
     all.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0))
-    res.json({ ok: true, tasks: all })
+    // Каждому — его запуски; весь дашборд видит админ и роль с правом allTasks.
+    res.json({ ok: true, tasks: await tasksForRequest(req, all) })
   } catch (err) {
     res.status(500).json({ ok: false, error: err instanceof Error ? err.message : 'Ошибка' })
   }
@@ -86,7 +151,7 @@ modulesRouter.get('/:moduleKey/tasks', async (req, res) => {
     const store = getModuleStore(req.params.moduleKey)
     if (!store) return res.status(404).json({ ok: false, error: 'Модуль не найден' })
     const tasks = await store.listTasks()
-    res.json({ ok: true, tasks })
+    res.json({ ok: true, tasks: await tasksForRequest(req, tasks) })
   } catch (err) {
     res.status(500).json({ ok: false, error: err instanceof Error ? err.message : 'Ошибка' })
   }
@@ -98,7 +163,13 @@ modulesRouter.get('/:moduleKey/tasks/:id', async (req, res) => {
     if (!store) return res.status(404).json({ ok: false, error: 'Модуль не найден' })
     const task = await store.loadTask(req.params.id)
     if (!task) return res.status(404).json({ ok: false, error: 'Задача не найдена' })
-    res.json({ ok: true, task: store.taskToDto(task) })
+    // Чужая задача = «не найдена»: подтверждать существование чужого запуска незачем.
+    if (!(await canTouchTask(req, task))) return res.status(404).json({ ok: false, error: 'Задача не найдена' })
+    // Расход ИИ именно этой задачи: «во сколько обошёлся запуск» — первый вопрос
+    // при разборе счёта, а из общего баланса он не отвечается.
+    const { tokenSummary } = await import('../tokenLedger.js')
+    const tokens = await tokenSummary({ taskId: task.id }).catch(() => null)
+    res.json({ ok: true, task: { ...store.taskToDto(task), tokens: tokens?.tokens || 0, tokenCalls: tokens?.calls || 0 } })
   } catch (err) {
     res.status(500).json({ ok: false, error: err instanceof Error ? err.message : 'Ошибка' })
   }
@@ -117,6 +188,8 @@ modulesRouter.get('/:moduleKey/tasks/:id/audience', async (req, res) => {
     if (!store) return res.status(404).json({ ok: false, error: 'Модуль не найден' })
     const task = await store.loadTask(req.params.id)
     if (!task) return res.status(404).json({ ok: false, error: 'Задача не найдена' })
+    // Аудитория — это список людей, кому писали. Чужую не отдаём.
+    if (!(await canTouchTask(req, task))) return res.status(404).json({ ok: false, error: 'Задача не найдена' })
     const targets = task.settings?.targets || task.settings?.numbers || []
     // Аккаунты задачи нужны, чтобы восстановить, кем писали, там где в истории
     // сохранилось только имя, — без id переписку не открыть.
@@ -141,21 +214,18 @@ modulesRouter.post('/:moduleKey/tasks', async (req, res) => {
       return res.status(403).json({ ok: false, error: 'Запускать аккаунты ниже порога trust может только админ' })
     }
 
-    // C2 (§5.1): при нулевом балансе боевые модули не запускаем. Парсеры пропускаем —
-    // они не обращаются к ИИ и ничего не тратят, а запрет на сбор данных из-за монет
-    // выглядел бы произволом. Проверяем ДО создания задачи: узнать о нуле из логов
-    // уже запущенной рассылки — худший из возможных способов.
-    if (AI_MODULES.has(moduleKey)) {
-      const { getBalance } = await import('../balance.js')
-      const { coins } = await getBalance()
-      if (coins <= 0) {
-        return res.status(402).json({
-          ok: false,
-          error: 'Закончились монеты — боевые модули остановлены. Пополните баланс, чтобы продолжить.',
-          needTopUp: true,
-        })
-      }
-    }
+    // §5.1: платный модуль на нуле не запускаем. Платные — все, у кого в прайсе
+    // ненулевая цена действия: бесплатных модулей в системе не осталось, иначе
+    // половиной платформы можно было пользоваться, не платя вообще. Проверяем ДО
+    // создания задачи: узнать о нуле из логов уже запущенной рассылки — худший
+    // из возможных способов.
+    // Считаем баланс ТОГО, кто запускает: кошельки у пользователей разные,
+    // и запуск на чужие монеты был бы дырой в биллинге.
+    const noCoins = await noCoinsPayload(req, moduleKey)
+    if (noCoins) return res.status(402).json(noCoins)
+    // Тариф может быть поштучным — модуль должен быть в него включён.
+    const notInPlan = await notInPlanPayload(req, moduleKey)
+    if (notInPlan) return res.status(402).json(notInPlan)
 
     // Guard безопасного назначения (§3.2/§3.3): не отдаём непрогретые/занятые статусом профили.
     // Недоступные можно исключить — тогда задача идёт на оставшихся, а не падает целиком.
@@ -187,6 +257,9 @@ modulesRouter.post('/:moduleKey/tasks', async (req, res) => {
     task.initiator = settings.initiator || 'operator' // §3.9: кто запустил
     task.goalId = settings.goalId ?? null // §3.6: к какой цели
     task.campaignId = settings.campaignId ?? null // §0: под какой кампанией
+    // Чей кошелёк платит за ИИ этой задачи. Кошельки пер-юзерные, а списание идёт
+    // из воркера в фоне — если не запомнить владельца при запуске, потом уже негде взять.
+    task.userId = req.header('x-user-id') || ''
     try {
       await store.saveTask(task)
       const { startWorker } = await import('./workers.js')
@@ -199,7 +272,22 @@ modulesRouter.post('/:moduleKey/tasks', async (req, res) => {
         scope: { taskId: task.id, accounts: settings.accountIds || [] },
         reason: `Запуск задачи ${moduleKey}`,
       }).catch(() => {})
-      res.json({ ok: true, task: store.taskToDto(task) })
+      // §4.4 (D4): анти-кластерные предупреждения отдаём вместе с задачей — они
+      // НЕ запрещают запуск (решение за оператором), но он должен увидеть риск
+      // сразу, а не после того, как Telegram забанит группу волной.
+      let clusterWarnings = []
+      try {
+        const { clusterWarnings: warn } = await import('../lib/antiCluster.js')
+        const all = await loadAllMeta()
+        const proxyByAccount = {}
+        for (const id of settings.accountIds || []) proxyByAccount[id] = all[id]?.proxy || ''
+        clusterWarnings = warn({
+          proxyByAccount,
+          accountIds: settings.accountIds || [],
+          targets: settings.channels || settings.targets || [],
+        })
+      } catch { /* предупреждения не должны мешать запуску */ }
+      res.json({ ok: true, task: store.taskToDto(task), clusterWarnings })
     } catch (err) {
       releaseTaskLocks(task.id)
       throw err
@@ -211,6 +299,8 @@ modulesRouter.post('/:moduleKey/tasks', async (req, res) => {
 
 modulesRouter.post('/:moduleKey/tasks/:id/stop', async (req, res) => {
   try {
+    const foreign = await foreignTaskReason(req, req.params.moduleKey, req.params.id)
+    if (foreign) return res.status(404).json({ ok: false, error: foreign })
     const blocked = await warmingStopBlockReason(req, req.params.moduleKey)
     if (blocked) return res.status(403).json({ ok: false, error: blocked })
     const task = await stopModuleTask(req.params.moduleKey, req.params.id)
@@ -242,6 +332,7 @@ modulesRouter.patch('/:moduleKey/tasks/:id/settings', async (req, res) => {
     if (!store) return res.status(404).json({ ok: false, error: 'Модуль не найден' })
     const task = await store.loadTask(req.params.id)
     if (!task) return res.status(404).json({ ok: false, error: 'Задача не найдена' })
+    if (!(await canTouchTask(req, task))) return res.status(404).json({ ok: false, error: 'Задача не найдена' })
 
     const gate = canEditTask(task.status)
     if (!gate.ok) return res.status(409).json({ ok: false, error: gate.reason, status: task.status })
@@ -271,6 +362,8 @@ modulesRouter.patch('/:moduleKey/tasks/:id/settings', async (req, res) => {
 
 modulesRouter.post('/:moduleKey/tasks/:id/pause', async (req, res) => {
   try {
+    const foreign = await foreignTaskReason(req, req.params.moduleKey, req.params.id)
+    if (foreign) return res.status(404).json({ ok: false, error: foreign })
     const blocked = await warmingStopBlockReason(req, req.params.moduleKey)
     if (blocked) return res.status(403).json({ ok: false, error: blocked })
     const task = await pauseModuleTask(req.params.moduleKey, req.params.id)
@@ -286,6 +379,13 @@ modulesRouter.post('/:moduleKey/tasks/:id/pause', async (req, res) => {
 // Продолжить приостановленную задачу (§3.9): перезахват локов + запуск с сохранённым прогрессом.
 modulesRouter.post('/:moduleKey/tasks/:id/resume', async (req, res) => {
   try {
+    const foreign = await foreignTaskReason(req, req.params.moduleKey, req.params.id)
+    if (foreign) return res.status(404).json({ ok: false, error: foreign })
+    const noCoins = await noCoinsPayload(req, req.params.moduleKey)
+    if (noCoins) return res.status(402).json(noCoins)
+    // И подписку тоже: иначе задачу отключённого модуля можно было продолжать.
+    const notInPlan = await notInPlanPayload(req, req.params.moduleKey)
+    if (notInPlan) return res.status(402).json(notInPlan)
     const task = await resumeModuleTask(req.params.moduleKey, req.params.id)
     if (!task) return res.status(404).json({ ok: false, error: 'Задача не найдена' })
     const { appendAudit } = await import('../lib/auditLog.js')
@@ -304,6 +404,11 @@ modulesRouter.post('/:moduleKey/tasks/:id/restart', async (req, res) => {
     if (!store) return res.status(404).json({ ok: false, error: 'Модуль не найден' })
     const old = await store.loadTask(id)
     if (!old) return res.status(404).json({ ok: false, error: 'Задача не найдена' })
+    if (!(await canTouchTask(req, old))) return res.status(404).json({ ok: false, error: 'Задача не найдена' })
+    const noCoins = await noCoinsPayload(req, moduleKey)
+    if (noCoins) return res.status(402).json(noCoins)
+    const notInPlan = await notInPlanPayload(req, moduleKey)
+    if (notInPlan) return res.status(402).json(notInPlan)
     const settings = { ...(old.settings || {}), initiator: req.body?.initiator || 'operator' }
 
     const err = validateSettings(moduleKey, settings)
@@ -314,6 +419,9 @@ modulesRouter.post('/:moduleKey/tasks/:id/restart', async (req, res) => {
 
     const { store: s, task, worker } = startModuleTask(moduleKey, settings)
     task.initiator = settings.initiator
+    // Перезапуск создаёт НОВУЮ задачу — владельца надо проставить заново, иначе
+    // она станет ничьей и списываться будет с общего кошелька.
+    task.userId = req.header('x-user-id') || old.userId || ''
     task.goalId = settings.goalId ?? null
     task.restartOf = id
     try {

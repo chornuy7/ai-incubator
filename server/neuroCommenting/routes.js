@@ -33,6 +33,16 @@ neuroCommentingRouter.get('/tasks/:id', async (req, res) => {
 })
 
 neuroCommentingRouter.post('/tasks', async (req, res) => {
+  // ЛЕГАСИ-путь запуска, вытесненный /api/modules/neuro-commenting/tasks. Его воркер
+  // шлёт реальные комментарии, но НЕ проверяет подписку/баланс и НЕ списывает монеты —
+  // то есть боевая работа шла бы бесплатно и мимо биллинга. Интерфейс сюда не ходит
+  // (компонент NeuroCommentingModule не смонтирован), поэтому запуск закрыт. Чтение
+  // задач/истории ниже оставлено, чтобы старые данные оставались видимы.
+  return res.status(410).json({
+    ok: false,
+    error: 'Этот способ запуска отключён. Используйте модуль «Нейрокомментинг» — он считает подписку и монеты.',
+  })
+  // eslint-disable-next-line no-unreachable
   try {
     const settings = req.body?.settings ?? req.body
     if (!settings?.accountIds?.length) {

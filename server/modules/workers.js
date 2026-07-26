@@ -51,6 +51,8 @@ import { limitReached, incAction } from '../lib/dailyActions.js'
 import { cleanMailingNumbers, classifyMailingTargets, pickMailingAccount } from '../lib/mailing.js'
 import { listLeads, sortDialogsByLeadPriority, upsertLead, updateLead } from '../leads.js'
 import { classifyLeadReply, shouldAdvance } from '../lib/leadClassifier.js'
+import { chargeActions, chargeCollected, refundShrunk } from '../lib/actionBilling.js'
+import { serializeHits, restoreHits, keepIntersecting } from '../lib/parserIntersect.js'
 import { isSemanticEnabled, embedText, cosineSimilarity } from '../lib/semantic.js'
 import { parseTelegramPostLinks, resolvePostPeer } from '../lib/postLink.js'
 import { findChannelChat, isChannelPeer } from '../lib/channelChat.js'
@@ -164,10 +166,14 @@ function targets(settings) {
   return filterBlacklisted(list)
 }
 
-function bumpProgress(task, store) {
+async function bumpProgress(task, store) {
   task.progress.actionsDone = (task.progress.actionsDone || 0) + 1
   task.progress.done = task.progress.actionsDone
   if (task.progress.commentsSent !== undefined) task.progress.commentsSent = task.progress.actionsDone
+  // ЖДЁМ списание: оно при нуле ставит task.pauseRequested, а saveTask ниже должен
+  // сохранить уже выставленный флаг. Иначе цикл перезагрузит задачу с диска и
+  // затрёт паузу — модуль сделал бы несколько лишних действий на нулевом балансе.
+  await chargeActions(task, store, 1)
   return store.saveTask(task)
 }
 
@@ -205,7 +211,7 @@ export async function runNeuroCommenting(task, store) {
   const semanticThreshold = Number(s.semanticThreshold ?? 0.2)
   let goalVec = null
   if (semanticOn) {
-    goalVec = await embedText(goalCtx)
+    goalVec = await embedText(goalCtx, task.userId)
     await store.appendLog(task, goalVec ? 'info' : 'warning', goalVec
       ? `Семантический фильтр к цели включён (порог ${semanticThreshold})`
       : 'Семантический фильтр недоступен (нет ответа embeddings) — работаем без него')
@@ -312,7 +318,7 @@ export async function runNeuroCommenting(task, store) {
             const postText = (post.message || '').trim() || (post.media ? '[медиа]' : '')
             // §3.5 семантика: пропускаем посты, семантически далёкие от цели кампании.
             if (goalVec) {
-              const pv = await embedText(postText)
+              const pv = await embedText(postText, task.userId)
               const sim = pv ? cosineSimilarity(pv, goalVec) : 1 // нет вектора поста → не режем
               if (sim < semanticThreshold) {
                 await store.appendLog(task, 'info', `Пропуск по семантике (близость к цели ${sim.toFixed(2)} < ${semanticThreshold})`, meta.name)
@@ -326,7 +332,7 @@ export async function runNeuroCommenting(task, store) {
             task.usedTexts = task.usedTexts || []
             const { text, mode, reason, usage } = await generateComment(postText, typeIdx, sysPrompt + goalCtx + agentCtx, { avoid: task.usedTexts, variantSeed: accountId })
             // C1: расход токенов — построчно, с привязкой к модулю/аккаунту/задаче.
-            if (usage?.tokens) await recordTokens({ ...usage, module: task.moduleKey, accountId, taskId: task.id, campaignId: s.campaignId })
+            if (usage?.tokens) await recordTokens({ ...usage, module: task.moduleKey, accountId, taskId: task.id, campaignId: s.campaignId, userId: task.userId })
             // Ключ мёртв: продолжать — значит лить шаблонные отписки от живых аккаунтов
             // в реальные каналы (прогон 21.07). Останавливаем всю задачу, а не аккаунт.
             if (mode === 'fatal') {
@@ -482,7 +488,7 @@ export async function runNeuroChatting(task, store) {
         await sleep(pickDelay(s.delays?.action?.[0] ?? 42, s.delays?.action?.[1] ?? 78, mul) * 1000)
         task.usedTexts = task.usedTexts || []
         const { text: reply, mode, reason, usage } = await generateComment(msg.message || '', s.promptIndex ?? 0, resolveSystemPrompt(s) + goalCtx + agentCtx, { avoid: task.usedTexts, variantSeed: accountId })
-        if (usage?.tokens) await recordTokens({ ...usage, module: task.moduleKey, accountId, taskId: task.id, campaignId: s.campaignId })
+        if (usage?.tokens) await recordTokens({ ...usage, module: task.moduleKey, accountId, taskId: task.id, campaignId: s.campaignId, userId: task.userId })
         if (mode === 'fatal') {
           await store.appendLog(task, 'error', `ИИ недоступен: ${reason}. Задача остановлена — писать в чаты без ИИ не будем.`, meta.name)
           await disconnectAccount(client, accountId)
@@ -1143,7 +1149,7 @@ export async function runNeuroDialogs(task, store) {
           const sysPrompt = dialogSystemPrompt(s, goal, goalObj, effStatus, stageForStatus(goalObj?.stages, effStatus))
             + (isFollowUp ? followUpPrompt(fuOwner, rawStatus, decision.left) : '')
           const gen = await generateComment(prompt, s.promptIndex ?? 0, sysPrompt, accountId)
-          if (gen?.usage?.tokens) await recordTokens({ ...gen.usage, module: task.moduleKey, accountId, taskId: task.id, campaignId: s.campaignId })
+          if (gen?.usage?.tokens) await recordTokens({ ...gen.usage, module: task.moduleKey, accountId, taskId: task.id, campaignId: s.campaignId, userId: task.userId })
           const mode = gen.mode
           // Диалог подаётся модели стенограммой «Я: … / Собеседник: …», и она регулярно
           // копирует эту разметку в ответ. Живой человек 21.07 получил «Я: Отлично!…» —
@@ -1220,6 +1226,7 @@ export async function runNeuroDialogs(task, store) {
                 currentStatus: cur?.status || 'cold',
                 goalName: goalObj?.name || '',
                 targetAction: goalObj?.targetAction || '',
+                userId: task.userId,
               })
               if (isFollowUp) {
                 // В дожиме обычная воронка не работает: она ходит только вперёд, а лид
@@ -1419,7 +1426,12 @@ export async function runChannelParser(task, store, kind) {
   const keywords = (s.keywords || []).map((k) => String(k).trim()).filter(Boolean)
   const endings = (s.endings || []).map((e) => String(e).trim()).filter(Boolean)
   const andMode = !!s.intersect && keywords.length > 1 // §3.8: канал должен совпасть со ВСЕМИ ключами
-  const hitsByKey = new Map() // channelKey → Set<индекс ключевого слова> (для AND)
+  // channelKey → Set<индекс ключевого слова> (для AND). ВОССТАНАВЛИВАЕМ из задачи:
+  // при «Продолжить» ранние запросы не переигрываются (курсор их пропускает), и без
+  // сохранённой карты финальное AND-пересечение выбросило бы всё, собранное до паузы.
+  const hitsByKey = restoreHits(task.hitsByKey)
+  // Сериализация карты в задачу перед каждым сохранением — иначе пауза теряет хиты.
+  const syncHits = () => { if (andMode) task.hitsByKey = serializeHits(hitsByKey) }
   const queries = []
   const seenQuery = new Set()
   const pushQuery = (q, kwIdx) => { const v = q.trim(); if (v && !seenQuery.has(v.toLowerCase())) { seenQuery.add(v.toLowerCase()); queries.push({ q: v, kwIdx }) } }
@@ -1461,6 +1473,18 @@ export async function runChannelParser(task, store, kind) {
       ? `Парсинг продолжен с запроса ${startFrom + 1} из ${queries.length} · уже собрано: ${task.results.length}`
       : `Парсинг запущен · запросов: ${queries.length} · аккаунтов: ${accountIds.length}`,
   )
+
+  // Пересечение (AND) применяется в КОНЦЕ, когда собраны все ключи. Пока идёт сбор,
+  // в результатах видно промежуточное — и это читается как «фильтр не работает»
+  // (живая обратная связь заказчика: «якось криво він працює»). Предупреждаем сразу.
+  if (andMode) {
+    await store.appendLog(
+      task,
+      'info',
+      `Пересечение (AND) по ${keywords.length} ключам применится В КОНЦЕ, когда пройдут все запросы. `
+      + 'До этого в результатах видно промежуточный сбор — часть строк уйдёт, деньги за них вернутся.',
+    )
+  }
 
   try {
     for (let qi = startFrom; qi < queries.length; qi++) {
@@ -1525,7 +1549,9 @@ export async function runChannelParser(task, store, kind) {
           added += 1
           task.progress.actionsDone = task.results.length
           task.progress.done = task.results.length
+          await chargeCollected(task, store)
           task.progress.total = Math.max(task.results.length, task.progress.total || 0)
+          syncHits()
           await store.saveTask(task)
         }
         await store.appendLog(task, added ? 'success' : 'info', `«${q}» → +${added} ${unitLabel} (всего ${task.results.length})`, meta.name)
@@ -1538,15 +1564,21 @@ export async function runChannelParser(task, store, kind) {
       }
 
       task = (await store.loadTask(task.id)) || task
+      // Диск — источник истины после reload (там могли выставить pause/stop). Наши
+      // хиты мы туда только что записали через syncHits, так что карта не отстаёт.
+      for (const [k, v] of restoreHits(task.hitsByKey)) hitsByKey.set(k, v)
       await sleep(pickDelay(reqFrom, reqTo, mul) * 1000)
     }
 
-    // §3.8 AND-пересечение: оставляем только каналы, совпавшие со ВСЕМИ ключевыми словами.
-    if (andMode && !task.stopRequested) {
+    // §3.8 AND-пересечение: оставляем только каналы, совпавшие со ВСЕМИ ключевыми
+    // словами. ТОЛЬКО на завершении, не на паузе: на паузе сбор ещё частичный, и
+    // пересечение вычеркнуло бы каналы, чьи остальные ключи придут после «Продолжить»,
+    // — а курсор их уже не переиграет, и они пропали бы навсегда (карту хитов мы
+    // сохраняем, но сами строки удалять рано).
+    if (andMode && !task.stopRequested && !task.pauseRequested) {
       const need = keywords.length
       const before = task.results.length
-      const keep = (r) => (hitsByKey.get((r.username || r.id).toLowerCase())?.size || 0) >= need
-      task.results = task.results.filter(keep).slice(0, limit === Infinity ? undefined : limit)
+      task.results = keepIntersecting(task.results, hitsByKey, need, limit)
       const keepSet = new Set(task.results.map((r) => (r.username || r.id).toLowerCase()))
       for (let i = baseChannels.length - 1; i >= 0; i--) {
         if (!keepSet.has((baseChannels[i].username || baseChannels[i].tgPeerId || '').toString().toLowerCase())) baseChannels.splice(i, 1)
@@ -1557,10 +1589,14 @@ export async function runChannelParser(task, store, kind) {
     task.progress.total = task.results.length
     task.progress.done = task.results.length
     task.progress.actionsDone = task.results.length
+    // Хвост: то, что докопилось после последнего списания в цикле сбора,
+    // и возврат за строки, которые срезали фильтры (AND-пересечение, чёрный список).
+    await chargeCollected(task, store)
+    await refundShrunk(task, store)
     task.status = statusAfterRun(task)
     // Курсор нужен только между паузой и продолжением. На завершении/стопе сбрасываем,
     // иначе «Перезапуск» начал бы с конца очереди и не сделал бы ничего.
-    if (task.status !== 'paused') task.cursor = 0
+    if (task.status !== 'paused') { task.cursor = 0; delete task.hitsByKey }
     // §3.8/§4: найденные каналы — в общую базу одним батчем (дедуп, без потери данных).
     try { const n = await upsertMany(baseChannels, `parse:${task.id}`); if (n) await store.appendLog(task, 'info', `В базу каналов: ${n}`) } catch { /* ignore */ }
     await store.appendLog(task, 'info', `Готово · найдено ${task.results.length} ${unitLabel}`)
@@ -2129,7 +2165,7 @@ export async function runMailing(task, store) {
 «${message || opener}»` : '',
           ].filter(Boolean).join(' ')
           const gen = await generateComment(openerTask, s.promptIndex ?? 0, resolveSystemPrompt(s) + goalCtx + agentCtx, account)
-          if (gen?.usage?.tokens) await recordTokens({ ...gen.usage, module: task.moduleKey, accountId, taskId: task.id, campaignId: s.campaignId })
+          if (gen?.usage?.tokens) await recordTokens({ ...gen.usage, module: task.moduleKey, accountId, taskId: task.id, campaignId: s.campaignId, userId: task.userId })
           // Чистим так же, как в диалогах: модель повторяет ярлыки промпта и оставляет
           // заготовки. С заглушкой лучше отправить текст из цели, чем «[тут вставь ссылку]».
           const cleaned = cleanDialogReply(gen.text)

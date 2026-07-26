@@ -13,7 +13,10 @@ import { listChannels } from './channels.js'
 import { loadAllMeta } from './accountsMeta.js'
 import { listGroups } from './accountGroups.js'
 
-const ROLES_FILE = process.env.ROLES_FILE || dataPath('roles.json')
+// Путь — ФУНКЦИЯ, а не константа: при вычислении на импорте тесты, выставляющие
+// env позже, писали бы в боевые data/. Так и случилось — прогон накопил там
+// 22 лишние роли и 36 пользователей.
+const ROLES_FILE = () => process.env.ROLES_FILE || dataPath('roles.json')
 
 export const ALLOW = 'allow'
 export const DENY = 'deny'
@@ -60,6 +63,10 @@ export const RESOURCE_TYPES = [
   { type: 'channels', label: 'Целевые каналы', perItem: true },
   { type: 'timers', label: 'Таймеры / планировщик', perItem: false },
   { type: 'searchTemplates', label: 'Шаблоны поиска', perItem: false },
+  // По умолчанию человек видит в Дашборде только СВОИ запуски: чужие задачи — это
+  // чужие аккаунты, цели и переписка. Это право открывает весь дашборд целиком —
+  // выдаётся тимлиду или тому, кто отвечает за всю сетку.
+  { type: 'allTasks', label: 'Чужие задачи (видеть и управлять всеми в Дашборде)', perItem: false },
 ]
 
 /** Нормализовать значение доступа: всё, что не 'allow', — deny. @param {*} v */
@@ -98,6 +105,8 @@ export function normalizeRole(input = {}) {
     name: String(input.name ?? '').trim(),
     isTemplate: !!input.isTemplate,
     permissions: {
+      // Роль «без оплаты» (тест/модератор): доступ к модулям в обход подписки.
+      freeAccess: !!p.freeAccess,
       modules: normPermMap(p.modules),
       blocks: normPermMap(p.blocks), // ключ = `${moduleKey}:${blockKey}`
       sections: normPermMap(p.sections), // ключ = путь раздела (напр. '/panel/proxies')
@@ -109,6 +118,7 @@ export function normalizeRole(input = {}) {
         folderChannels: normFolderChannels(r.folderChannels),
         timers: normPerm(r.timers),
         searchTemplates: normPerm(r.searchTemplates),
+        allTasks: normPerm(r.allTasks),
       },
     },
   }
@@ -138,14 +148,14 @@ function defaultRoles() {
   const OUTREACH = mods.filter((k) => ['neuro-chatting', 'neuro-dialogs', 'mailing'].includes(k))
   const ENGAGE = mods.filter((k) => ['neuro-commenting', 'neuro-chatting', 'neuro-dialogs', 'mass-react', 'mass-looking'].includes(k))
   const roleTpl = (id, name, permissions) => ({ id, name, builtin: false, isTemplate: true, permissions, createdAt: now, updatedAt: now })
-  const res = (over = {}) => ({ accounts: {}, folders: {}, channels: {}, timers: DENY, searchTemplates: DENY, ...over })
+  const res = (over = {}) => ({ accounts: {}, folders: {}, channels: {}, timers: DENY, searchTemplates: DENY, allTasks: DENY, ...over })
   return [
     {
       id: ADMIN_ROLE_ID,
       name: 'Администратор',
       builtin: true,
       isTemplate: false,
-      permissions: { modules: {}, blocks: {}, sections: {}, resources: res({ timers: ALLOW, searchTemplates: ALLOW }) },
+      permissions: { modules: {}, blocks: {}, sections: {}, resources: res({ timers: ALLOW, searchTemplates: ALLOW, allTasks: ALLOW }) },
       createdAt: now,
       updatedAt: now,
     },
@@ -181,10 +191,10 @@ function defaultRoles() {
 }
 
 export async function listRoles() {
-  const roles = await readJson(ROLES_FILE, null)
+  const roles = await readJson(ROLES_FILE(), null)
   if (!Array.isArray(roles)) {
     const seed = defaultRoles()
-    await writeJson(ROLES_FILE, seed)
+    await writeJson(ROLES_FILE(), seed)
     return seed
   }
   // §12: у ролей, созданных до групп аккаунтов, поля нет — дошиваем пустую карту,
@@ -203,7 +213,7 @@ export async function listRoles() {
     const missing = defaultRoles().filter((r) => r.id !== ADMIN_ROLE_ID && !have.has(r.id))
     if (missing.length) {
       const merged = [...roles, ...missing]
-      await writeJson(ROLES_FILE, merged)
+      await writeJson(ROLES_FILE(), merged)
       return merged
     }
   }
@@ -218,7 +228,7 @@ export async function listRoles() {
       migrated = true
     }
   }
-  if (migrated) await writeJson(ROLES_FILE, roles)
+  if (migrated) await writeJson(ROLES_FILE(), roles)
   return roles
 }
 
@@ -240,7 +250,7 @@ export async function createRole(input) {
     updatedAt: Date.now(),
   }
   roles.push(role)
-  await writeJson(ROLES_FILE, roles)
+  await writeJson(ROLES_FILE(), roles)
   return role
 }
 
@@ -262,7 +272,7 @@ export async function updateRole(id, patch = {}) {
     ...(roles[i].id === ADMIN_ROLE_ID ? {} : { permissions: clean.permissions }),
     updatedAt: Date.now(),
   }
-  await writeJson(ROLES_FILE, roles)
+  await writeJson(ROLES_FILE(), roles)
   return roles[i]
 }
 
@@ -273,7 +283,7 @@ export async function deleteRole(id) {
   if (!target) return false
   if (target.builtin) throw new Error('Встроенную роль удалить нельзя')
   const next = roles.filter((r) => r.id !== id)
-  await writeJson(ROLES_FILE, next)
+  await writeJson(ROLES_FILE(), next)
   return true
 }
 
@@ -296,6 +306,7 @@ export async function buildCatalog() {
     { type: 'channels', label: 'Целевые каналы', perItem: true, items: channels.map((c) => ({ id: c.id, label: c.title || (c.username ? '@' + c.username : c.id) })) },
     { type: 'timers', label: 'Таймеры / планировщик', perItem: false },
     { type: 'searchTemplates', label: 'Шаблоны поиска', perItem: false },
+    { type: 'allTasks', label: 'Чужие задачи (видеть и управлять всеми в Дашборде)', perItem: false },
   ]
   return { modules, blocks: BLOCKS, sections: SECTIONS, resources }
 }
@@ -304,7 +315,7 @@ export async function buildCatalog() {
  * Разрешён ли доступ роли к цели. Чистая функция (юнит-тест + будущий enforcement).
  * Админ (builtin ADMIN_ROLE_ID) — всегда true. По умолчанию — deny.
  * @param {object|null} role
- * @param {'module'|'block'|'section'|'account'|'accountGroup'|'folder'|'channel'|'timers'|'searchTemplates'} kind
+ * @param {'module'|'block'|'section'|'account'|'accountGroup'|'folder'|'channel'|'timers'|'searchTemplates'|'allTasks'} kind
  * @param {string} [key]
  */
 export function can(role, kind, key) {
@@ -321,6 +332,7 @@ export function can(role, kind, key) {
     case 'channel': return p.resources?.channels?.[key] === ALLOW
     case 'timers': return p.resources?.timers === ALLOW
     case 'searchTemplates': return p.resources?.searchTemplates === ALLOW
+    case 'allTasks': return p.resources?.allTasks === ALLOW
     default: return false
   }
 }
@@ -386,7 +398,7 @@ function mergeItem(map, key, value) {
 }
 
 export function mergePermissions(roles = []) {
-  const resources = { accounts: {}, accountGroups: {}, folders: {}, channels: {}, folderChannels: {}, timers: DENY, searchTemplates: DENY }
+  const resources = { accounts: {}, accountGroups: {}, folders: {}, channels: {}, folderChannels: {}, timers: DENY, searchTemplates: DENY, allTasks: DENY }
   const merged = { modules: {}, blocks: {}, sections: {}, resources }
   const wholeFolder = new Set() // папки, где хоть одна роль дала «все каналы»
   for (const role of roles) {
@@ -405,6 +417,10 @@ export function mergePermissions(roles = []) {
     for (const [k, v] of Object.entries(r.channels || {})) if (v === ALLOW || v === DENY) mergeItem(resources.channels, k, v)
     if (r.timers === ALLOW) resources.timers = ALLOW
     if (r.searchTemplates === ALLOW) resources.searchTemplates = ALLOW
+    // Без этой строки право «чужие задачи» терялось при объединении ролей: сервер
+    // читает роли напрямую и работал верно, а фронт получал права БЕЗ него и
+    // молча отказывал — расхождение, которое видно только в интерфейсе.
+    if (r.allTasks === ALLOW) resources.allTasks = ALLOW
     const fc = r.folderChannels || {}
     for (const [folderId, v] of Object.entries(r.folders || {})) {
       // Запрет на папку тоже должен доживать до клиента и побеждать разрешение другой

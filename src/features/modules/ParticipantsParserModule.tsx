@@ -17,6 +17,7 @@ import { promptDialog } from '@/shared/lib/dialog'
 import { DedupeButton } from '@/shared/ui/DedupeButton'
 import { fetchModuleTasks, fetchModuleTask, type ModuleTaskSettings } from '@/api/modulesApi'
 import { fetchTgstatOptions, fetchTgstatSession, fetchTgstatTargets, type TgstatOptions, type TgstatSession } from '@/api/tgstatApi'
+import { LaunchCost } from './shared/LaunchCost'
 
 /** Стабильные ключи фильтров/лимитов по русским лейблам (для бэкенда). */
 const FILTER_KEY: Record<string, string> = {
@@ -350,6 +351,7 @@ function Inner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: string }) {
       <SectionCard icon={<Play size={18} />} title={running ? 'Выполнение' : 'Запуск & Логи'} badge={running ? 'LIVE' : undefined}>
         <LaunchPanel running={running} starting={starting} canStart={canStart} onStart={handleStart} onStop={stop} onSave={handleSave}
           primaryLabel={cfg.primaryAction ?? 'Начать'} stats={launchStats} task={task} warn={warn}
+          cost={<LaunchCost moduleKey={moduleKey} actions={P.unit ? (limits[lkey(P.unit.limitLabel)] || 0) : 0} />}
           presets={presets} onApplyPreset={applyPreset} onDeletePreset={deletePreset} />
       </SectionCard>
 

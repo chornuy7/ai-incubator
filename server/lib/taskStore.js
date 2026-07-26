@@ -72,6 +72,20 @@ export function createTaskStore(moduleKey, idPrefix) {
           moduleKey,
           status: t.status,
           initiator: t.initiator || null,
+          // Владелец нужен фильтру «свои задачи» (§8.1): без него дашборд не сможет
+          // отличить чужой запуск от своего и покажет либо всё, либо ничего.
+          userId: t.userId || '',
+          spentCoins: t.spentCoins || 0, // §5.1: во сколько обошёлся ЭТОТ запуск
+          // Счётчик ошибок — не сами логи: файл здесь и так читается целиком, а
+          // админке нужно «где болит», не таща в список весь журнал каждой задачи.
+          errors: (t.logs || []).reduce((n, l) => n + (l.level === 'error' ? 1 : 0), 0),
+          lastError: (t.logs || []).find((l) => l.level === 'error')?.message || '',
+          // Пауза из-за денег отличается от паузы рукой: первую чинит пополнение.
+          // Ищем ТОЧНУЮ фразу и только в последней записи: широкий поиск «монет|баланс»
+          // по всему журналу ловил и строку возврата «Возврат N монет», из-за чего
+          // задача, поставленная на паузу рукой, показывалась как «ждёт пополнения».
+          pausedByCoins: t.status === 'paused'
+            && /Закончились монеты/i.test(String((t.logs || [])[0]?.message || '')),
           goalId: t.goalId ?? t.settings?.goalId ?? null,
           campaignId: t.campaignId ?? null,
           createdAt: t.createdAt,
@@ -161,6 +175,8 @@ export function createTaskStore(moduleKey, idPrefix) {
       moduleKey: task.moduleKey || moduleKey,
       status: task.status,
       initiator: task.initiator || null,
+      userId: task.userId || '',
+      spentCoins: task.spentCoins || 0,
       goalId: task.goalId ?? task.settings?.goalId ?? null,
       campaignId: task.campaignId ?? null,
       createdAt: task.createdAt,

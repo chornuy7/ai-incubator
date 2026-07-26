@@ -8,13 +8,14 @@ import {
   MessageSquareText, AlertTriangle, Check, Star, UploadCloud, Bolt, MessageCircle, Filter, Heart, Smile,
   BarChart3 as BarChartIcon, Ban, Calendar, Cpu, MapPin, SlidersHorizontal, CheckSquare,
   Volume2, ArrowDown, Search, LayoutGrid, List, Send, ExternalLink, MessagesSquare, Trophy,
-  Tag, Activity, Database, ArrowUpDown, Pencil, RefreshCw, Radio, HelpCircle, Lock,
-} from 'lucide-react'
+  Tag, Activity, Database, ArrowUpDown, Pencil, RefreshCw, Radio, HelpCircle, Lock } from 'lucide-react'
 import { DIALOGS, type Dialog } from '@/mocks/dialogs'
 import { MODULES, LANGUAGES, type ModuleConfig } from '@/shared/config/modules'
 import { ROUTES } from '@/shared/config/routes'
 import { useApp, activeAccounts } from '@/mocks/store'
 import { useSession } from '@/features/auth/session'
+import { usePlan, planHasModule } from '@/features/billing/plan'
+import { ModuleNotPaid } from '@/features/billing/ModuleNotPaid'
 import { can } from '@/shared/lib/access'
 import { useUi } from '@/shared/lib/uiStore'
 import { seedLogs } from '@/mocks/logs'
@@ -73,9 +74,13 @@ export function ModuleRunner() {
   const route = ROUTES.find((r) => r.path === `/panel/modules/${moduleKey}`)
   const isNoSub = useApp((s) => s.userState === 'no-sub')
   const sessionUser = useSession((s) => s.user)
+  const planModules = usePlan((s) => s.modules)
   const loading = useMockLoading(450, [moduleKey])
 
   if (!cfg || !route) return <Navigate to="/panel" replace />
+
+  // Гейт подписки (§5.4): модуль не оплачен — не открываем даже админу.
+  if (!planHasModule(planModules, moduleKey)) return <ModuleNotPaid title={cfg.title} />
 
   // RBAC-гейт (§8.1): не-админ без доступа к модулю — прямой заход по URL запрещён.
   if (sessionUser && !sessionUser.isAdmin && !can(sessionUser.permissions, false, 'module', moduleKey)) {

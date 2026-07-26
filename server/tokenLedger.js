@@ -44,6 +44,7 @@ export async function recordTokens(entry = {}) {
     accountId: String(entry.accountId || ''),
     taskId: String(entry.taskId || ''),
     campaignId: String(entry.campaignId || ''),
+    userId: String(entry.userId || ''),
     model: String(entry.model || ''),
     tokens,
     promptTokens: Math.max(0, Number(entry.promptTokens) || 0),
@@ -63,10 +64,32 @@ export async function recordTokens(entry = {}) {
   if (row.coins > 0) {
     try {
       const { changeCoins } = await import('./balance.js')
-      await changeCoins(-row.coins, `${row.module || 'ИИ'}: ${row.tokens} токенов`)
+      // Списываем с кошелька того, кто запустил задачу. Без userId (старые задачи,
+      // автоматизация) — с общего: терять учёт расхода хуже, чем списать не с того.
+      await changeCoins(-row.coins, `${row.module || 'ИИ'}: ${row.tokens} токенов`, row.userId)
     } catch { /* не роняем задачу из-за биллинга */ }
   }
   return row
+}
+
+/**
+ * Учесть ответ OpenAI (`data.usage`) как расход. Обёртка нужна там, где вызов ИИ
+ * живёт не в воркере: подсказки, классификация лидов, эмбеддинги. Без неё эти
+ * токены не попадали в журнал вообще — отчёт клиенту показывал меньше, чем
+ * потрачено на самом деле.
+ * @param {{total_tokens?:number, prompt_tokens?:number, completion_tokens?:number}|undefined} usage
+ * @param {string} module @param {string} [userId] чей кошелёк платит
+ */
+export async function noteUsage(usage, module, userId) {
+  const tokens = Number(usage?.total_tokens) || 0
+  if (!tokens) return null
+  return recordTokens({
+    module,
+    tokens,
+    promptTokens: Number(usage?.prompt_tokens) || 0,
+    completionTokens: Number(usage?.completion_tokens) || 0,
+    userId,
+  }).catch(() => null)
 }
 
 /** Прочитать журнал (свежие сверху). @param {{limit?:number, taskId?:string, module?:string, accountId?:string, since?:number}} [filter] */

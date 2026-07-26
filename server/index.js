@@ -263,7 +263,7 @@ app.post('/api/ai/help', async (req, res) => {
   try {
     const { topic, context, question, history } = req.body || {}
     if (!question || !String(question).trim()) return res.status(400).json({ ok: false, error: 'Пустой вопрос' })
-    const { answer, mode } = await answerHelp({ topic, context, question, history })
+    const { answer, mode } = await answerHelp({ topic, context, question, history, userId: req.header('x-user-id') })
     res.json({ ok: true, answer, mode })
   } catch (err) {
     res.status(500).json({ ok: false, error: err instanceof Error ? err.message : 'Ошибка' })
@@ -352,6 +352,167 @@ app.get('/api/admin/overview', async (req, res) => {
     res.json({ ok: true, overview: await adminOverview({ since: req.query.since ? Number(req.query.since) : undefined }) })
   } catch (err) { res.status(500).json({ ok: false, error: err instanceof Error ? err.message : 'Ошибка' }) }
 })
+/**
+ * Что делал конкретный аккаунт: задачи, действия, токены, деньги, лиды.
+ *
+ * Гейт ЗДЕСЬ, а не «выше по цепочке» — выше его нет. Отдаём только тем, кому этот
+ * аккаунт доступен по правам: иначе любой запрос вытаскивал бы по чужому профилю
+ * список задач, потраченные деньги и число лидов — ровно то, что закрывает §8.1.
+ * Несуществующий id тоже отбиваем: без этого 200 с нулями подтверждал бы перебор.
+ */
+app.get('/api/accounts/:accountId/work', async (req, res) => {
+  try {
+    const id = String(req.params.accountId || '')
+    const { loadAllMeta } = await import('./accountsMeta.js')
+    const meta = await loadAllMeta().catch(() => ({}))
+    if (!meta || !meta[id]) return res.status(404).json({ ok: false, error: 'Аккаунт не найден' })
+
+    const { canSeeAccount } = await import('./lib/accessGuard.js')
+    if (!(await canSeeAccount(req, id))) {
+      return res.status(403).json({ ok: false, error: 'Нет доступа к этому аккаунту' })
+    }
+
+    const { accountReport } = await import('./adminStats.js')
+    const rep = await accountReport(id, { since: req.query.since ? Number(req.query.since) : undefined })
+    res.json({ ok: true, work: rep })
+  } catch (err) { res.status(500).json({ ok: false, error: err instanceof Error ? err.message : 'Ошибка' }) }
+})
+
+/** §5.3: где сейчас болит — ошибки задач, баны, работа вставшая из-за денег. */
+app.get('/api/admin/problems', async (req, res) => {
+  try {
+    if (!(await isAdminRequest(req))) return res.status(403).json({ ok: false, error: 'Статистика доступна только администратору' })
+    const { problems } = await import('./adminStats.js')
+    res.json({ ok: true, problems: await problems({ since: req.query.since ? Number(req.query.since) : undefined }) })
+  } catch (err) { res.status(500).json({ ok: false, error: err instanceof Error ? err.message : 'Ошибка' }) }
+})
+
+/**
+ * §5.4: наборы, которые админ собирает под клиента («парсер + комментинг за 20 $»).
+ * Только владелец: это цены, по которым пространство продаёт.
+ */
+app.post('/api/bundles', async (req, res) => {
+  try {
+    if (!(await isAdminRequest(req))) return res.status(403).json({ ok: false, error: 'Собирать наборы может только владелец' })
+    const { createBundle } = await import('./bundles.js')
+    const bundle = await createBundle(req.body || {})
+    await appendAudit({
+      action: 'bundle.create', module: 'billing', initiator: req.header('x-user-id') || 'system',
+      reason: `Набор «${bundle.name}»: ${bundle.modules.length} модулей за ${bundle.price}`,
+      meta: bundle,
+    }).catch(() => {})
+    res.json({ ok: true, bundle })
+  } catch (err) { res.status(400).json({ ok: false, error: err instanceof Error ? err.message : 'Ошибка' }) }
+})
+
+app.delete('/api/bundles/:id', async (req, res) => {
+  try {
+    if (!(await isAdminRequest(req))) return res.status(403).json({ ok: false, error: 'Удалять наборы может только владелец' })
+    const { deleteBundle } = await import('./bundles.js')
+    const gone = await deleteBundle(req.params.id)
+    if (!gone) return res.status(404).json({ ok: false, error: 'Набор не найден' })
+    await appendAudit({
+      action: 'bundle.delete', module: 'billing', initiator: req.header('x-user-id') || 'system',
+      reason: `Удалён набор ${req.params.id}`,
+    }).catch(() => {})
+    res.json({ ok: true })
+  } catch (err) { res.status(500).json({ ok: false, error: err instanceof Error ? err.message : 'Ошибка' }) }
+})
+
+/** §5.3: кто работает прямо сейчас — запущенные и вставшие задачи. */
+app.get('/api/admin/active', async (req, res) => {
+  try {
+    if (!(await isAdminRequest(req))) return res.status(403).json({ ok: false, error: 'Статистика доступна только администратору' })
+    const { activeNow } = await import('./adminStats.js')
+    res.json({ ok: true, active: await activeNow() })
+  } catch (err) { res.status(500).json({ ok: false, error: err instanceof Error ? err.message : 'Ошибка' }) }
+})
+
+/** §5.3: расход по дням — тренд, а не только итог за период. */
+app.get('/api/admin/daily', async (req, res) => {
+  try {
+    if (!(await isAdminRequest(req))) return res.status(403).json({ ok: false, error: 'Статистика доступна только администратору' })
+    const { dailySpend } = await import('./adminStats.js')
+    res.json({ ok: true, daily: await dailySpend({ days: req.query.days ? Number(req.query.days) : undefined }) })
+  } catch (err) { res.status(500).json({ ok: false, error: err instanceof Error ? err.message : 'Ошибка' }) }
+})
+
+/** §5.3 + CRM: воронка лидов, горячие и зависшие. */
+app.get('/api/admin/crm', async (req, res) => {
+  try {
+    if (!(await isAdminRequest(req))) return res.status(403).json({ ok: false, error: 'Статистика доступна только администратору' })
+    const { crmOverview } = await import('./adminStats.js')
+    res.json({ ok: true, crm: await crmOverview({ stuckDays: req.query.stuckDays ? Number(req.query.stuckDays) : undefined, since: req.query.since ? Number(req.query.since) : undefined }) })
+  } catch (err) { res.status(500).json({ ok: false, error: err instanceof Error ? err.message : 'Ошибка' }) }
+})
+
+/** §5.3: статистика по людям — кто сколько запустил и сколько с него списано. */
+app.get('/api/admin/users-report', async (req, res) => {
+  try {
+    if (!(await isAdminRequest(req))) return res.status(403).json({ ok: false, error: 'Статистика доступна только администратору' })
+    const { usersReport } = await import('./adminStats.js')
+    res.json({ ok: true, report: await usersReport({ since: req.query.since ? Number(req.query.since) : undefined }) })
+  } catch (err) { res.status(500).json({ ok: false, error: err instanceof Error ? err.message : 'Ошибка' }) }
+})
+
+/** §5.3: что и сколько куплено — пополнения кошельков по людям. Только админ. */
+app.get('/api/admin/purchases', async (req, res) => {
+  try {
+    if (!(await isAdminRequest(req))) return res.status(403).json({ ok: false, error: 'Статистика доступна только администратору' })
+    const { purchasesReport } = await import('./adminStats.js')
+    res.json({ ok: true, purchases: await purchasesReport({ since: req.query.since ? Number(req.query.since) : undefined }) })
+  } catch (err) { res.status(500).json({ ok: false, error: err instanceof Error ? err.message : 'Ошибка' }) }
+})
+
+/**
+ * §5.1: база оплат — все платежи с диапазоном дат (from..to) и пагинацией. Только админ.
+ * Индекс пересобирается из источников истины при каждом запросе — витрина не расходится
+ * с деньгами. Имена/почты джойним из users на лету (в БД не храним — они меняются).
+ */
+app.get('/api/admin/payments', async (req, res) => {
+  try {
+    if (!(await isAdminRequest(req))) return res.status(403).json({ ok: false, error: 'Оплаты доступны только администратору' })
+    const { syncPayments, queryPayments, paymentsSummary } = await import('./payments.js')
+    await syncPayments()
+    const q = req.query
+    const opts = {
+      from: q.from ? Number(q.from) : 0,
+      to: q.to ? Number(q.to) : 0,
+      userId: q.userId ? String(q.userId) : '',
+      kind: q.kind ? String(q.kind) : '',
+      q: q.q ? String(q.q) : '',
+      limit: q.limit ? Number(q.limit) : 50,
+      offset: q.offset ? Number(q.offset) : 0,
+    }
+    const { total, rows } = queryPayments(opts)
+    const summary = paymentsSummary({ from: opts.from, to: opts.to })
+    const { listUsers } = await import('./users.js')
+    const users = await listUsers().catch(() => [])
+    const nameOf = new Map(users.map((u) => [u.id, u.name || u.email || u.id]))
+    const emailOf = new Map(users.map((u) => [u.id, u.email || '']))
+    const items = rows.map((r) => ({
+      ...r,
+      name: nameOf.get(r.user_id) || (r.user_id === '__default' ? 'Системный кошелёк' : r.user_id),
+      email: emailOf.get(r.user_id) || '',
+    }))
+    res.json({ ok: true, payments: { total, items, summary, limit: opts.limit, offset: opts.offset } })
+  } catch (err) { res.status(500).json({ ok: false, error: err instanceof Error ? err.message : 'Ошибка' }) }
+})
+
+/**
+ * §5.3: ЛИЧНАЯ статистика — своя работа и свои расходы. Гейта админа тут нет: это
+ * данные самого пользователя, идентифицируем по X-User-Id. Без него (демо/дев)
+ * отдаём пусто — фронт в этом случае показывает демо-моки, а не реальный срез.
+ */
+app.get('/api/me/stats', async (req, res) => {
+  try {
+    const me = req.header('x-user-id')
+    if (!me) return res.status(400).json({ ok: false, error: 'Нет сессии' })
+    const { myStats } = await import('./adminStats.js')
+    res.json({ ok: true, stats: await myStats(me, { since: req.query.since ? Number(req.query.since) : undefined }) })
+  } catch (err) { res.status(500).json({ ok: false, error: err instanceof Error ? err.message : 'Ошибка' }) }
+})
+
 app.get('/api/admin/report', async (req, res) => {
   try {
     if (!(await isAdminRequest(req))) return res.status(403).json({ ok: false, error: 'Отчёт доступен только администратору' })
@@ -359,6 +520,7 @@ app.get('/api/admin/report', async (req, res) => {
     const report = await clientReport({
       since: req.query.since ? Number(req.query.since) : undefined,
       until: req.query.until ? Number(req.query.until) : undefined,
+      userId: req.query.userId ? String(req.query.userId) : undefined,
     })
     res.json({ ok: true, report })
   } catch (err) { res.status(500).json({ ok: false, error: err instanceof Error ? err.message : 'Ошибка' }) }
@@ -397,28 +559,157 @@ app.post('/api/accounts/activity', async (req, res) => {
   } catch (err) { res.status(400).json({ ok: false, error: err instanceof Error ? err.message : 'Ошибка' }) }
 })
 
+/**
+ * §5.1: прайс — сколько стоит одно действие каждого модуля. Отдаём с сервера, а не
+ * держим копию в вебе: цену утверждает заказчик, и расхождение витрины с тем, что
+ * реально спишется, — худший вид ошибки в биллинге.
+ */
+app.get('/api/pricing', async (_req, res) => {
+  try {
+    const { ACTION_PRICE, COIN_PACKS, CURRENCY } = await import('./pricing.js')
+    const { COINS_PER_1K_TOKENS } = await import('./tokenLedger.js')
+    const { moduleTitle } = await import('./lib/moduleTitles.js')
+    // Отдаём с названиями: в вебе нет конфига для mailing и autoposting (чужая
+    // дорожка), и в окне цен они показывались бы техническими ключами.
+    // Средний расход токенов на действие — из СВОЕЙ истории, а не из константы:
+    // длина промпта и ответа у каждого клиента своя, и чужое среднее врало бы.
+    // Нет истории — 0, и интерфейс честно скажет «пока не на чем считать».
+    const { tokenSummary } = await import('./tokenLedger.js')
+    const avgTokens = {}
+    for (const key of Object.keys(ACTION_PRICE)) {
+      const sum = await tokenSummary({ module: key }).catch(() => null)
+      avgTokens[key] = sum?.calls ? Math.round(sum.tokens / sum.calls) : 0
+    }
+    const items = Object.entries(ACTION_PRICE)
+      .map(([key, price]) => ({ key, title: moduleTitle(key), price, avgTokens: avgTokens[key] || 0 }))
+      .sort((a, b) => b.price - a.price || a.title.localeCompare(b.title, 'ru'))
+    res.json({ ok: true, items, actions: ACTION_PRICE, avgTokens, coinsPer1kTokens: COINS_PER_1K_TOKENS, packs: COIN_PACKS, currency: CURRENCY })
+  } catch (err) { res.status(500).json({ ok: false, error: err instanceof Error ? err.message : 'Ошибка' }) }
+})
+
+/**
+ * §5.4: витрина подписки — цена каждого модуля в месяц, готовые сетапы и что уже
+ * куплено. Считает сервер: витрина и то, что спишется, должны быть одним числом.
+ */
+app.get('/api/subscription', async (req, res) => {
+  try {
+    const { MODULE_MONTH_PRICE, SETUPS, CURRENCY, subscriptionCost } = await import('./pricing.js')
+    const { getBalance } = await import('./balance.js')
+    const { moduleTitle } = await import('./lib/moduleTitles.js')
+    const { listBundles } = await import('./bundles.js')
+    const { modules } = await getBalance(req.header('x-user-id'))
+    const bundles = await listBundles()
+    const items = Object.entries(MODULE_MONTH_PRICE)
+      .map(([key, price]) => ({ key, title: moduleTitle(key), price }))
+      .sort((a, b) => b.price - a.price || a.title.localeCompare(b.title, 'ru'))
+    // Одним списком со встроенными: для покупателя нет разницы, кто собрал набор —
+    // платформа или админ. `custom` нужен только админской кнопке «удалить».
+    const setups = [
+      ...SETUPS.map((s) => ({ ...s, cost: subscriptionCost(s.modules, bundles) })),
+      ...bundles.map((b) => {
+        const cost = subscriptionCost(b.modules, bundles)
+        return {
+          id: b.id, name: b.name, hint: b.hint, modules: b.modules,
+          custom: true, price: b.price,
+          // Скидка выводится из цены: «77 вместо 109» — это −29 %, и бейдж обязан
+          // так и говорить. Захардкоженный ноль показывал клиенту «−0%».
+          discount: cost.full ? Math.max(0, Math.round((1 - cost.sum / cost.full) * 100) / 100) : 0,
+          cost,
+        }
+      }),
+    ]
+    res.json({ ok: true, items, setups, currency: CURRENCY, mine: modules })
+  } catch (err) { res.status(500).json({ ok: false, error: err instanceof Error ? err.message : 'Ошибка' }) }
+})
+
+/** Сколько будет стоить набор — до оплаты. */
+app.post('/api/subscription/quote', async (req, res) => {
+  try {
+    const { subscriptionCost } = await import('./pricing.js')
+    const { listBundles } = await import('./bundles.js')
+    res.json({ ok: true, ...subscriptionCost(req.body?.modules || [], await listBundles()) })
+  } catch (err) { res.status(500).json({ ok: false, error: err instanceof Error ? err.message : 'Ошибка' }) }
+})
+
+/**
+ * Оформить подписку на выбранные модули. Оплаты в демо нет — записываем набор.
+ * Когда появится платёжный провайдер, сюда встанет проверка успешного платежа,
+ * а всё остальное (гейт запуска, меню) уже работает от этого набора.
+ */
+app.post('/api/subscription', async (req, res) => {
+  try {
+    const { setModules } = await import('./balance.js')
+    const { subscriptionCost } = await import('./pricing.js')
+    // Две покупки, два масштаба. КЛИЕНТ выбирает СВОЙ набор — это и есть продажа
+    // («зайшов і вибрав»), пока без оплаты. ВЛАДЕЛЕЦ без userId меняет общий набор
+    // пространства; чужой личный — тоже только владелец: это деньги другого человека.
+    const me = req.header('x-user-id')
+    const admin = await isAdminRequest(req)
+    if (req.body?.userId && !admin) {
+      return res.status(403).json({ ok: false, error: 'Чужую подписку меняет только владелец' })
+    }
+    const wanted = req.body?.modules
+    const list = wanted === 'all' ? 'all' : (Array.isArray(wanted) ? wanted : [])
+    const target = req.body?.userId || me
+    const { setUserModules } = await import('./balance.js')
+    // Админ без явного userId правит ОБЩИЙ набор; всё остальное — личная покупка.
+    const personal = !(admin && !req.body?.userId)
+    const months = Number(req.body?.months) || 0
+    const balance = personal ? await setUserModules(list, target, { months }) : await setModules(list, target, { months })
+    await appendAudit({
+      action: 'subscription.set',
+      module: 'billing',
+      initiator: req.header('x-user-id') || 'system',
+      reason: `Подписка${(admin && !req.body?.userId) ? ' пространства' : ` (${target || 'свой'})`}: ${list === 'all' ? 'все модули' : `${list.length} модулей`}`,
+      meta: { modules: list, cost: list === 'all' ? null : subscriptionCost(list, await (await import('./bundles.js')).listBundles()) },
+    }).catch(() => {})
+    res.json({ ok: true, balance })
+  } catch (err) { res.status(500).json({ ok: false, error: err instanceof Error ? err.message : 'Ошибка' }) }
+})
+
+/**
+ * §5.1: операции по кошельку — «за что списали». Свой журнал видит каждый,
+ * чужой — только админ: это деньги конкретного человека.
+ */
+app.get('/api/balance/history', async (req, res) => {
+  try {
+    const { walletHistory } = await import('./balance.js')
+    const me = req.header('x-user-id')
+    const target = req.query.userId ? String(req.query.userId) : me
+    if (req.query.userId && req.query.userId !== me && !(await isAdminRequest(req))) {
+      return res.status(403).json({ ok: false, error: 'Чужие операции доступны только администратору' })
+    }
+    const rows = await walletHistory({ userId: target, limit: req.query.limit ? Number(req.query.limit) : undefined })
+    res.json({ ok: true, rows })
+  } catch (err) { res.status(500).json({ ok: false, error: err instanceof Error ? err.message : 'Ошибка' }) }
+})
+
 // §5.1 (B2): баланс монет и тариф. Читают все — шапка показывает их на каждой странице.
 // Менять (пополнение/списание/смена тарифа) — только админ: это деньги, а не настройка.
-app.get('/api/balance', async (_req, res) => {
+app.get('/api/balance', async (req, res) => {
   try {
+    // Свой баланс у каждого пользователя: ключ — X-User-Id. Без сессии (дев)
+    // отдаётся общий кошелёк, как и раньше.
     const { getBalance } = await import('./balance.js')
-    res.json({ ok: true, balance: await getBalance() })
+    res.json({ ok: true, balance: await getBalance(req.header('x-user-id')) })
   } catch (err) { res.status(500).json({ ok: false, error: err instanceof Error ? err.message : 'Ошибка' }) }
 })
 app.post('/api/balance', async (req, res) => {
   try {
     if (!(await isAdminRequest(req))) return res.status(403).json({ ok: false, error: 'Менять баланс может только админ' })
     const { getBalance, changeCoins, setPlan } = await import('./balance.js')
-    const { amount, planId, reason } = req.body ?? {}
+    const { amount, planId, reason, userId } = req.body ?? {}
+    // Админ может пополнить ЧУЖОЙ кошелёк, явно указав userId — иначе правит свой.
+    const target = userId || req.header('x-user-id')
     let changed = null
-    if (amount !== undefined) changed = await changeCoins(amount, reason)
-    if (planId !== undefined) await setPlan(planId)
-    const balance = await getBalance()
+    if (amount !== undefined) changed = await changeCoins(amount, reason, target)
+    if (planId !== undefined) await setPlan(planId, target)
+    const balance = await getBalance(target)
     await appendAudit({
       action: 'balance.change', module: 'balance', initiator: req.header('x-user-id') || 'operator',
       reason: planId !== undefined
-        ? `Тариф: ${balance.plan.name}`
-        : `Баланс: ${changed?.before} → ${changed?.after}${reason ? ` (${reason})` : ''}`,
+        ? `Тариф ${target || 'общий'}: ${balance.plan.name}`
+        : `Баланс ${target || 'общий'}: ${changed?.before} → ${changed?.after}${reason ? ` (${reason})` : ''}`,
       meta: { ...changed, planId: balance.planId },
     }).catch(() => {})
     res.json({ ok: true, balance })

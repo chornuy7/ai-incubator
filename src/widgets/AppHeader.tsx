@@ -1,20 +1,26 @@
 import { useNavigate } from 'react-router-dom'
 import { useState, useEffect } from 'react'
 import {
-  Menu, Zap, Sun, Moon, Radar, ChevronDown, UserCog, LogOut, Wallet, Check,
+  Menu, Zap, Sun, Moon, Radar, ChevronDown, UserCog, LogOut, Wallet, Check, AlertTriangle, Package,
 } from 'lucide-react'
 import { useApp, activeAccounts } from '@/mocks/store'
-import { fetchBalance, type Balance } from '@/api/balanceApi'
+import { fetchBalance, fetchPricing, type Balance, type Pricing } from '@/api/balanceApi'
 import { useSession } from '@/features/auth/session'
+import { usePlan } from '@/features/billing/plan'
 import { useUi } from '@/shared/lib/uiStore'
 import { coins as fmtCoins } from '@/shared/lib/utils'
 import { Dropdown, MenuItem, Modal, Avatar } from '@/shared/ui'
 import { LANGUAGES } from '@/shared/config/modules'
 
-const COIN_PACKS = [
-  { coins: 50, price: '4.99 $' },
-  { coins: 200, price: '17.99 $', best: true },
-  { coins: 500, price: '39.99 $' },
+/**
+ * Запасные пакеты — на случай, если прайс с сервера не приехал. Настоящие цены
+ * живут в server/pricing.js: курс монеты определяет реальную выручку с действия,
+ * и копия в вебе неизбежно разъедется с прайсом и счётом.
+ */
+const FALLBACK_PACKS = [
+  { coins: 50, price: 4.99 },
+  { coins: 200, price: 17.99, best: true },
+  { coins: 500, price: 39.99 },
 ]
 
 export function AppHeader() {
@@ -31,6 +37,9 @@ export function AppHeader() {
     const t = setInterval(load, 30000)
     return () => clearInterval(t)
   }, [])
+  // Прайс — с сервера: копия в вебе рано или поздно разошлась бы с тем, что списывается.
+  const [pricing, setPricing] = useState<Pricing | null>(null)
+  useEffect(() => { void fetchPricing().then(setPricing).catch(() => {}) }, [])
   const theme = useApp((s) => s.theme)
   const toggleTheme = useApp((s) => s.toggleTheme)
   const locale = useApp((s) => s.locale)
@@ -40,8 +49,24 @@ export function AppHeader() {
   const pushToast = useApp((s) => s.pushToast)
   const sessionUser = useSession((s) => s.user)
   const logout = useSession((s) => s.logout)
+  // Права перечитываем с сервера: выданный или отозванный админом доступ должен
+  // применяться в текущей сессии, а не «после перезахода» — про перезаход человеку
+  // никто не скажет, а отзыв доступа, ждущий перелогина, это уже дыра.
+  const refreshSession = useSession((s) => s.refresh)
+  // Подписку тянем тем же тиком: оплатили модуль — он появляется в меню сам,
+  // как и выданное админом право.
+  const loadPlan = usePlan((s) => s.load)
+  useEffect(() => {
+    void refreshSession(); void loadPlan()
+    const t = setInterval(() => { void refreshSession(); void loadPlan() }, 30000)
+    return () => clearInterval(t)
+  }, [refreshSession, loadPlan])
   const coinsOpen = useUi((s) => s.coinsOpen)
   const setCoinsOpen = useUi((s) => s.setCoinsOpen)
+  const noCoins = useUi((s) => s.noCoins)
+  const setNoCoins = useUi((s) => s.setNoCoins)
+  const noSubscription = useUi((s) => s.noSubscription)
+  const setNoSubscription = useUi((s) => s.setNoSubscription)
   const [langOpenTick, setLangOpenTick] = useState(0)
 
   const active = activeAccounts(data).length
@@ -157,12 +182,75 @@ export function AppHeader() {
         </div>
       </div>
 
+      {/*
+        Нулевой баланс: окно по центру вместо тоста в углу. Запуск не состоялся —
+        значит человеку нужно не уведомление, а следующий шаг, и кнопка ведёт
+        прямо в пополнение, а не оставляет искать его в меню.
+      */}
+      <Modal
+        open={!!noCoins}
+        onClose={() => setNoCoins('')}
+        title="Недостаточно монет"
+        subtitle="Модули остановлены"
+        icon={<AlertTriangle size={22} />}
+        size="sm"
+        footer={(
+          <>
+            <button onClick={() => setNoCoins('')} className="btn-ghost">Закрыть</button>
+            <button
+              onClick={() => { setNoCoins(''); setCoinsOpen(true) }}
+              className="btn-primary inline-flex items-center gap-1.5"
+            >
+              <Zap size={16} fill="currentColor" /> Пополнить баланс
+            </button>
+          </>
+        )}
+      >
+        <p className="text-sm leading-relaxed text-muted">{noCoins}</p>
+        <div className="mt-4 flex items-center justify-between rounded-2xl border border-amber-500/30 bg-amber-500/10 px-4 py-3">
+          <span className="text-sm font-medium text-muted">Текущий баланс</span>
+          <span className="flex items-center gap-1.5 font-display text-xl font-bold text-amber-300">
+            <Zap size={18} fill="currentColor" /> {fmtCoins(balance?.coins ?? 0)}
+          </span>
+        </div>
+        <p className="mt-3 text-xs text-muted">
+          Платные все модули, включая сбор данных. Цены по действиям — в окне «Пополнить баланс».
+        </p>
+      </Modal>
+
+      {/* Модуль не оплачен — это не про монеты, и путь отсюда в кабинет. */}
+      <Modal
+        open={!!noSubscription}
+        onClose={() => setNoSubscription('')}
+        title="Модуль не оплачен"
+        subtitle="Его нет в вашей подписке"
+        icon={<Package size={22} />}
+        size="sm"
+        footer={(
+          <>
+            <button onClick={() => setNoSubscription('')} className="btn-ghost">Закрыть</button>
+            <button
+              onClick={() => { setNoSubscription(''); nav('/panel/user/subscription') }}
+              className="btn-primary inline-flex items-center gap-1.5"
+            >
+              <Package size={16} /> Мои модули
+            </button>
+          </>
+        )}
+      >
+        <p className="text-sm leading-relaxed text-muted">{noSubscription}</p>
+        <p className="mt-3 text-xs text-muted">
+          Подписка и монеты — разные вещи: монеты тратятся на действия внутри модуля,
+          подписка открывает сам модуль. Менять набор может владелец рабочего пространства.
+        </p>
+      </Modal>
+
       {/* Coins modal */}
       <Modal
         open={coinsOpen}
         onClose={() => setCoinsOpen(false)}
         title="Баланс монет"
-        subtitle="Монеты ⚡ тратятся на запуск модулей и проверки AIR"
+        subtitle="Монеты ⚡ — топливо: тратятся за каждое действие. Какие модули открыты — это подписка"
         icon={<Zap size={22} fill="currentColor" />}
         size="md"
       >
@@ -172,8 +260,25 @@ export function AppHeader() {
             <Zap size={20} fill="currentColor" /> {fmtCoins(balance?.coins ?? data.coins)}
           </span>
         </div>
+        {/* Прайс: человек должен видеть, за что уходят монеты, до пополнения, а не после. */}
+        {pricing && (
+          <div className="mb-4 rounded-2xl border border-line bg-elevated/50 p-3">
+            <div className="mb-2 text-xs font-bold uppercase tracking-wide text-muted">Сколько стоит действие</div>
+            <div className="max-h-44 overflow-y-auto pr-1">
+              {pricing.items.map((p) => (
+                <div key={p.key} className="flex items-center justify-between border-b border-line/50 py-1 text-sm last:border-0">
+                  <span className="text-muted">{p.title}</span>
+                  <span className="font-semibold tabular-nums text-fg">{p.price} ⚡</span>
+                </div>
+              ))}
+            </div>
+            <div className="mt-2 text-xs text-muted">
+              Плюс расход ИИ по факту: {pricing.coinsPer1kTokens} ⚡ за 1000 токенов.
+            </div>
+          </div>
+        )}
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-          {COIN_PACKS.map((p) => (
+          {(pricing?.packs?.length ? pricing.packs : FALLBACK_PACKS).map((p) => (
             <button
               key={p.coins}
               onClick={() => { pushToast({ type: 'info', title: 'Оплата в демо отключена', desc: `Пакет ${p.coins} ⚡ — только визуал.` }); setCoinsOpen(false) }}
@@ -182,7 +287,9 @@ export function AppHeader() {
               {p.best && <span className="absolute -top-2 rounded-full bg-spark-gradient px-2 py-0.5 text-[10px] font-bold text-[#04150c]">ВЫГОДНО</span>}
               <Zap size={22} className="text-amber-400" fill="currentColor" />
               <span className="font-display text-xl font-bold text-fg">{p.coins}</span>
-              <span className="text-sm font-semibold text-muted">{p.price}</span>
+              <span className="text-sm font-semibold text-muted">{p.price} {pricing?.currency ?? '$'}</span>
+              {/* Цена монеты в пакете: «выгодно» должно быть посчитано, а не заявлено. */}
+              <span className="text-[10px] text-faint">{(p.price / p.coins).toFixed(3)} {pricing?.currency ?? '$'} / ⚡</span>
             </button>
           ))}
         </div>

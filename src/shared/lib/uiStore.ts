@@ -6,6 +6,21 @@ interface UiStore {
   setTasksOpen: (v: boolean) => void
   setCoinsOpen: (v: boolean) => void
 
+  /**
+   * Текст ошибки «кончились монеты» (пусто = окна нет). Отдельное состояние, а не
+   * тост: тост уезжает в угол и его пропускают — а запуск при этом НЕ состоялся,
+   * и человек должен увидеть и причину, и путь к пополнению, не ища их сам.
+   */
+  noCoins: string
+  setNoCoins: (v: string) => void
+
+  /**
+   * Текст ошибки «модуль не оплачен». Отдельно от `noCoins`: причина другая и
+   * следующий шаг другой — в кабинет подписки, а не пополнять монеты.
+   */
+  noSubscription: string
+  setNoSubscription: (v: string) => void
+
   helpOpen: boolean
   helpTopic: string
   setHelpOpen: (v: boolean) => void
@@ -17,6 +32,12 @@ export const useUi = create<UiStore>((set) => ({
   coinsOpen: false,
   setTasksOpen: (v) => set({ tasksOpen: v }),
   setCoinsOpen: (v) => set({ coinsOpen: v }),
+
+  noCoins: '',
+  setNoCoins: (v) => set({ noCoins: v }),
+
+  noSubscription: '',
+  setNoSubscription: (v) => set({ noSubscription: v }),
 
   helpOpen: false,
   helpTopic: '',

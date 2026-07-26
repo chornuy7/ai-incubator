@@ -53,20 +53,59 @@ export function isAccountAllowed(
   return groups.some((g) => can(permissions, false, 'accountGroup', g.id) && g.accountIds.includes(accountId))
 }
 
-/** Извлечь ключ модуля из пути роутинга (/panel/modules/<key>). */
+/**
+ * Извлечь ключ модуля из пути роутинга (/panel/modules/<key>[/...]).
+ * Вложенные страницы модуля — часть модуля: доступ к ним даёт то же право.
+ */
 export function moduleKeyFromPath(path: string): string | null {
-  const m = path.match(/^\/panel\/modules\/([^/]+)$/)
+  const m = path.match(/^\/panel\/modules\/([^/]+)/)
   return m ? m[1] : null
 }
 
-/** Страницы только для админа (управление ролями/пользователями). §8.1 */
+/**
+ * Может ли роль УПРАВЛЯТЬ задачей модуля (запуск/пауза/стоп/правка).
+ *
+ * Спрашиваем именно доступ к модулю, а не блок `<key>:run`: блоки применяются
+ * не на всех типах страниц (парсеры их не гейтят), и в Дашборде это давало бы
+ * расхождение — человек запускает парсер с его страницы, но кнопок у своей же
+ * задачи не видит.
+ *
+ * Нет сессии — дев/демо, как и в остальных гейтах.
+ */
+export function canControlModule(permissions: RolePermissions | null, isAdmin: boolean, moduleKey: string): boolean {
+  if (isAdmin) return true
+  return can(permissions, false, 'module', moduleKey)
+}
+
+/**
+ * Страницы только для админа: роли и пользователи. Подписка сюда НЕ входит:
+ * клиент сам заходит в «Мои модули» и покупает свой набор — личная покупка
+ * перекрывает общий набор только для него. §8.1 / §5.4
+ */
 export const ADMIN_ONLY_PATHS = new Set(['/panel/roles', '/panel/users'])
-/** Минимум, доступный всем всегда (свой профиль + поддержка) — не гейтится ролью. */
-export const ALWAYS_ON_PATHS = new Set(['/panel/user/profile', '/panel/support'])
+/**
+ * Минимум, доступный всем всегда — не гейтится ролью: свой профиль, поддержка и
+ * «Мои модули». Последнее — витрина, где клиент покупает себе набор: закрывать её
+ * ролью значит закрывать саму продажу.
+ */
+export const ALWAYS_ON_PATHS = new Set([
+  '/panel', // Менеджер аккаунтов — базовый «в подарок»; сами аккаунты всё равно фильтрует роль
+  '/panel/user/profile', '/panel/support', '/panel/user/subscription', '/panel/my-statistics',
+])
 /** Модули вне /panel/modules/* — их доступ проверяется как 'module' по этому ключу. */
 const SPECIAL_MODULE_PATHS: Record<string, string> = {
   '/panel/mailing': 'mailing',
   '/panel/autoposting': 'autoposting',
+}
+
+/**
+ * Ключ модуля для ЛЮБОГО его пути, включая мейлинг и автопостинг, которые живут
+ * не под `/panel/modules/*`. Нужен подписке: без него эти два оставались в меню
+ * при любом наборе — человек видел купленным то, чего не покупал, и узнавал об
+ * этом только по отказу на запуске.
+ */
+export function anyModuleKeyFromPath(path: string): string | null {
+  return moduleKeyFromPath(path) ?? SPECIAL_MODULE_PATHS[path] ?? null
 }
 
 /**
@@ -80,5 +119,22 @@ export function canAccessPath(permissions: RolePermissions | null, isAdmin: bool
   if (ALWAYS_ON_PATHS.has(path)) return true
   const mk = moduleKeyFromPath(path) ?? SPECIAL_MODULE_PATHS[path]
   if (mk) return can(permissions, false, 'module', mk)
-  return can(permissions, false, 'section', path)
+  if (can(permissions, false, 'section', path)) return true
+  // Вложенная страница наследует доступ раздела: карточка задачи живёт по
+  // /panel/tasks/<id>, и точное сравнение пути закрывало её даже тому, кому
+  // Дашборд открыт — он видел список, но не мог открыть ни одну свою задачу.
+  // Корень /panel из наследования исключён: он есть почти у всех, и через него
+  // открылась бы вообще любая страница панели.
+  return allowedByParentSection(permissions, path)
+}
+
+/** Разрешён ли какой-нибудь родительский раздел пути (глубже, чем корень /panel). */
+function allowedByParentSection(permissions: RolePermissions | null, path: string): boolean {
+  const parts = path.split('/').filter(Boolean) // ['panel','tasks','pr_1']
+  for (let i = parts.length - 1; i > 1; i -= 1) {
+    const parent = '/' + parts.slice(0, i).join('/')
+    if (ADMIN_ONLY_PATHS.has(parent)) return false // /panel/roles/<id> — тоже только админу
+    if (can(permissions, false, 'section', parent)) return true
+  }
+  return false
 }

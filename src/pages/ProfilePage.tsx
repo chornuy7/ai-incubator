@@ -1,11 +1,12 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
+import { Link } from 'react-router-dom'
 import {
-  UserCog, User, Shield, Bell, Handshake, Cable, Save, Copy, RefreshCw, Eye, EyeOff, Check, Zap,
-} from 'lucide-react'
+  UserCog, User, Shield, Bell, Handshake, Cable, Save, Copy, RefreshCw, Eye, EyeOff, Check, Zap, History as HistoryIcon, Package, CalendarClock } from 'lucide-react'
 import { useApp } from '@/mocks/store'
+import { fetchBalance, fetchWalletHistory, type Balance, type WalletEntry } from '@/api/balanceApi'
 import { useSession } from '@/features/auth/session'
 import { PageHeader, Card, Switch, Badge } from '@/shared/ui'
-import { cn } from '@/shared/lib/utils'
+import { cn, coins as fmtCoins } from '@/shared/lib/utils'
 
 const TABS = [
   { key: 'profile', label: 'Настройки профиля', icon: User },
@@ -18,6 +19,16 @@ const TABS = [
 
 export function ProfilePage() {
   const data = useApp((s) => s.data)
+  // Тариф, лимит и баланс — с сервера, а не из моков: раньше на странице профиля
+  // висели те же нарисованные «Базовая» и 80.00, что и в шапке, и пополнение
+  // сверить было не с чем.
+  const [balance, setBalance] = useState<Balance | null>(null)
+  useEffect(() => {
+    const load = () => { void fetchBalance().then(setBalance).catch(() => {}) }
+    load()
+    const t = setInterval(load, 30000)
+    return () => clearInterval(t)
+  }, [])
   const updateUser = useApp((s) => s.updateUser)
   const toggleNotification = useApp((s) => s.toggleNotification)
   const pushToast = useApp((s) => s.pushToast)
@@ -38,6 +49,9 @@ export function ProfilePage() {
   return (
     <div>
       <PageHeader title="Мой аккаунт" subtitle="Профиль, безопасность и интеграции" icon={<UserCog size={22} />} />
+
+      {/* План и подписка: какой тариф/набор подключён и до какого числа. */}
+      <SubscriptionCard balance={balance} />
 
       <div className="grid gap-4 lg:grid-cols-[240px_1fr]">
         {/* Subtabs */}
@@ -85,13 +99,17 @@ export function ProfilePage() {
           {tab === 'account' && (
             <Card className="space-y-5">
               <div className="flex items-center justify-between rounded-2xl border border-line bg-elevated p-4">
-                <div><div className="text-sm text-muted">Текущий тариф</div><div className="font-display text-lg font-bold text-fg">{data.plan.name}</div></div>
+                <div><div className="text-sm text-muted">Текущий тариф</div><div className="font-display text-lg font-bold text-fg">{balance?.plan.name ?? data.plan.name}</div></div>
                 <button onClick={() => pushToast({ type: 'info', title: 'Смена тарифа (демо)' })} className="btn-iris h-10">Изменить тариф</button>
               </div>
               <div className="grid gap-3 sm:grid-cols-2">
-                <div className="rounded-2xl border border-line bg-elevated p-4"><div className="text-sm text-muted">Лимит аккаунтов</div><div className="font-display text-lg font-bold text-fg">{data.accounts.filter((a) => !a.inTrash).length} / {data.plan.accountLimit}</div></div>
-                <div className="rounded-2xl border border-line bg-elevated p-4"><div className="flex items-center gap-1.5 text-sm text-muted"><Zap size={14} className="text-amber-400" /> Баланс монет</div><div className="font-display text-lg font-bold text-fg">{data.coins.toFixed(2)}</div></div>
+                <div className="rounded-2xl border border-line bg-elevated p-4"><div className="text-sm text-muted">Лимит аккаунтов</div><div className="font-display text-lg font-bold text-fg">{data.accounts.filter((a) => !a.inTrash).length} / {balance?.plan.accountLimit ?? data.plan.accountLimit}</div></div>
+                <div className="rounded-2xl border border-line bg-elevated p-4"><div className="flex items-center gap-1.5 text-sm text-muted"><Zap size={14} className="text-amber-400" /> Баланс монет</div><div className="font-display text-lg font-bold text-fg">{fmtCoins(balance?.coins ?? data.coins)}</div></div>
               </div>
+              {/* §5.1: «за что списали». Баланс отвечает «сколько сейчас», а на
+                  претензию по деньгам без истории операций ответить нечем. */}
+              <WalletHistory />
+
               <div>
                 <label className="label">Часовой пояс</label>
                 <input defaultValue="UTC+3 (Moscow)" className="input max-w-xs" />
@@ -185,5 +203,96 @@ export function ProfilePage() {
         </div>
       </div>
     </div>
+  )
+}
+
+
+/**
+ * История операций по кошельку: когда, за что, сколько и что осталось.
+ *
+ * Показываем «до → после» рядом с суммой: одна цифра «−0.15» не даёт понять, было
+ * это списание с 80 или последние монеты. Свои операции видит каждый, чужие — только
+ * админ (проверяется на сервере).
+ */
+function WalletHistory() {
+  const [rows, setRows] = useState<WalletEntry[] | null>(null)
+  const [open, setOpen] = useState(false)
+
+  useEffect(() => {
+    if (!open || rows) return
+    void fetchWalletHistory(50).then(setRows).catch(() => setRows([]))
+  }, [open, rows])
+
+  return (
+    <div className="rounded-2xl border border-line bg-elevated p-4">
+      <button onClick={() => setOpen(!open)} className="flex w-full items-center gap-2 text-left">
+        <HistoryIcon size={15} className="text-muted" />
+        <span className="text-sm font-semibold text-fg">История операций</span>
+        <span className="ml-auto text-xs text-muted">{open ? 'свернуть' : 'показать'}</span>
+      </button>
+
+      {open && (
+        <div className="mt-3">
+          {!rows ? (
+            <div className="text-sm text-muted">Загрузка…</div>
+          ) : !rows.length ? (
+            <div className="text-sm text-muted">Операций пока не было.</div>
+          ) : (
+            <div className="space-y-1">
+              {rows.map((r, i) => (
+                <div key={r.ts + '-' + i} className="flex flex-wrap items-baseline gap-x-3 gap-y-0.5 border-b border-line/40 py-1.5 text-sm last:border-0">
+                  <span className={cn('w-20 shrink-0 font-semibold tabular-nums', r.amount > 0 ? 'text-spark-300' : 'text-amber-300')}>
+                    {r.amount > 0 ? '+' : ''}{fmtCoins(r.amount)}
+                  </span>
+                  <span className="min-w-0 flex-1 truncate text-muted">{r.reason || 'без описания'}</span>
+                  <span className="shrink-0 text-xs tabular-nums text-faint">{fmtCoins(r.before)} → {fmtCoins(r.after)}</span>
+                  <span className="shrink-0 text-xs text-faint">{new Date(r.ts).toLocaleString('ru-RU')}</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
+/**
+ * План и подписка: какой тариф/набор подключён и до какого числа. Срок берётся с
+ * сервера (expiresAt); нет срока — «бессрочно (демо)», пока не подключён провайдер.
+ */
+function SubscriptionCard({ balance }: { balance: Balance | null }) {
+  const modules = balance?.modules
+  const sub = modules === 'all' || modules == null ? 'Все модули' : `${modules.length} ${modules.length === 1 ? 'модуль' : 'модулей'}`
+  const exp = balance?.expiresAt || 0
+  const now = Date.now()
+  const active = !exp || exp > now
+  const fmtDate = (ts: number) => new Date(ts).toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit', year: 'numeric' })
+  const daysLeft = exp ? Math.max(0, Math.ceil((exp - now) / (24 * 60 * 60 * 1000))) : 0
+  return (
+    <Card className="mb-4 p-4">
+      <div className="flex flex-wrap items-center gap-x-8 gap-y-3">
+        <div className="flex items-center gap-2.5">
+          <div className="grid h-10 w-10 place-items-center rounded-xl bg-spark-500/12 text-spark-300"><Package size={18} /></div>
+          <div>
+            <div className="text-[11px] uppercase tracking-wide text-muted">Тариф</div>
+            <div className="font-semibold text-fg">{balance?.plan?.name || '—'}</div>
+          </div>
+        </div>
+        <div>
+          <div className="text-[11px] uppercase tracking-wide text-muted">Подписка</div>
+          <div className="font-semibold text-fg">{sub}</div>
+        </div>
+        <div>
+          <div className="text-[11px] uppercase tracking-wide text-muted">Срок</div>
+          <div className={cn('flex items-center gap-1.5 font-semibold', active ? 'text-fg' : 'text-red-300')}>
+            <CalendarClock size={14} className="text-muted" />
+            {exp ? (active ? `активна до ${fmtDate(exp)}` : `истекла ${fmtDate(exp)}`) : 'бессрочно (демо)'}
+          </div>
+          {!!exp && active && <div className="text-[11px] text-muted">осталось {daysLeft} дн.</div>}
+        </div>
+        <Link to="/panel/user/subscription" className="btn-ghost ml-auto h-9 border border-line text-sm"><Package size={14} /> Мои модули</Link>
+      </div>
+    </Card>
   )
 }

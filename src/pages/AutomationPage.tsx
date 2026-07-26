@@ -238,7 +238,7 @@ function RuleEditor({ rule, onClose, onSaved }: {
             <input value={name} onChange={(e) => setName(e.target.value)} className="input" placeholder="Утренний прогрев" />
           </div>
           <div>
-            <label className="label">Кампания <span className="font-normal normal-case text-faint">(§6 — модуль и аккаунты возьмутся из неё)</span></label>
+            <label className="label">Кампания <span className="font-normal normal-case text-faint">(модуль и аккаунты возьмутся из неё)</span></label>
             <Select
               value={campaignId}
               onChange={setCampaignId}

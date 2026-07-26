@@ -32,6 +32,21 @@ export async function parseJson<T>(res: Response): Promise<T> {
     throw new Error(`Некорректный ответ API (HTTP ${res.status})`)
   }
   if (!res.ok || (data && typeof data === 'object' && 'ok' in data && !(data as { ok?: boolean }).ok)) {
+    // Нулевой баланс — ошибка, которую нельзя «закрыть и забыть»: без пополнения
+    // не заработает ни один модуль. Поднимаем окно по центру из одного места,
+    // чтобы каждый экран не переоткрывал его по-своему.
+    //
+    // ВАЖНО: только needTopUp. Тем же 402 отвечает неоплаченный модуль, и раньше
+    // на него открывалось окно «Недостаточно монет» с кнопкой «Пополнить баланс» —
+    // человека слали пополнять деньги, когда дело было в подписке.
+    if ((data as { needTopUp?: boolean })?.needTopUp) {
+      const msg = (data as { error?: string }).error || 'Закончились монеты.'
+      void import('@/shared/lib/uiStore').then(({ useUi }) => useUi.getState().setNoCoins(msg))
+    }
+    if ((data as { needSubscription?: boolean })?.needSubscription) {
+      const msg = (data as { error?: string }).error || 'Модуль не оплачен.'
+      void import('@/shared/lib/uiStore').then(({ useUi }) => useUi.getState().setNoSubscription(msg))
+    }
     throw new ApiError(
       (data as { error?: string }).error || `HTTP ${res.status}`,
       res.status,

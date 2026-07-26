@@ -1,4 +1,5 @@
 // AI-помощник Help Center: отвечает на вопросы по разделу с учётом документации модуля.
+import { noteUsage } from './tokenLedger.js'
 // Использует OpenAI при наличии OPENAI_API_KEY, иначе — осмысленный fallback по фактам системы.
 
 const GENERAL_FACTS = `Общие правила системы (для точных ответов про тайминги/безопасность):
@@ -13,7 +14,7 @@ const GENERAL_FACTS = `Общие правила системы (для точн
  * @param {{ topic?: string, context?: string, question: string, history?: {role:string,text:string}[] }} p
  * @returns {Promise<{ answer: string, mode: 'openai'|'template_error'|'template_no_key' }>}
  */
-export async function answerHelp({ topic, context, question, history }) {
+export async function answerHelp({ topic, context, question, history, userId }) {
   const apiKey = process.env.OPENAI_API_KEY?.trim()
   const q = String(question || '').trim()
   if (!q) return { answer: 'Задайте вопрос по настройкам раздела.', mode: apiKey ? 'template_error' : 'template_no_key' }
@@ -46,6 +47,9 @@ export async function answerHelp({ topic, context, question, history }) {
       if (res.ok) {
         const data = await res.json()
         const text = data?.choices?.[0]?.message?.content?.trim()
+        // Подсказка стоит денег так же, как комментарий. Пока расход сюда не попадал,
+        // журнал врал: в отчёте клиенту эти токены просто отсутствовали.
+        await noteUsage(data?.usage, 'ai-help', userId)
         if (text && text.length >= 2) return { answer: text, mode: 'openai' }
       } else {
         console.warn('[aiHelp] OpenAI HTTP', res.status, (await res.text().catch(() => '')).slice(0, 200))

@@ -323,7 +323,7 @@ export function ImportModal({ open, onClose, onImported }: { open: boolean; onCl
               <Select value={proxyMode} onChange={(v) => setProxyMode(v as ProxyMode)} options={(Object.keys(PROXY_MODE_LABELS) as ProxyMode[]).map((m) => ({ value: m, label: PROXY_MODE_LABELS[m] }))} />
               {proxyMode === 'pool' && (
                 <div className={`mt-1 text-xs ${notEnoughProxies ? 'text-amber-300' : 'text-white/40'}`}>
-                  Свободно прокси: {freeProxies}{notEnoughProxies ? ` — на ${chosen.length} аккаунтов не хватит, лишние будут пропущены` : ' · один прокси на один аккаунт (§6)'}
+                  Свободно прокси: {freeProxies}{notEnoughProxies ? ` — на ${chosen.length} аккаунтов не хватит, лишние будут пропущены` : ' · один прокси на один аккаунт'}
                 </div>
               )}
             </div>

@@ -234,3 +234,16 @@ test('7.4 точечный запрет сильнее группового ра
   // «Не задано» — это не запрет: ключа просто нет, поведение нейтральное.
   assert.equal(mergePermissions([allowRole]).resources.accounts.acc_3, undefined)
 })
+
+/**
+ * §8.1: право «чужие задачи» должно переживать объединение ролей. Без этого сервер
+ * работал верно (читает роли напрямую), а фронт получал права БЕЗ него и молча
+ * отказывал — расхождение, заметное только в интерфейсе.
+ */
+test('mergePermissions переносит allTasks', () => {
+  const plain = { permissions: { resources: { allTasks: 'deny' } } }
+  const lead = { permissions: { resources: { allTasks: 'allow' } } }
+  assert.equal(mergePermissions([plain]).resources.allTasks, 'deny')
+  assert.equal(mergePermissions([plain, lead]).resources.allTasks, 'allow', 'union: даёт любая роль')
+  assert.equal(mergePermissions([]).resources.allTasks, 'deny', 'по умолчанию — deny')
+})

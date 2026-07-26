@@ -167,3 +167,22 @@ export async function updateCampaign(id: string, patch: Partial<CampaignInput>):
 export async function deleteCampaign(id: string): Promise<void> {
   await apiDelete(`/api/campaigns/${id}`)
 }
+
+/** D5 (SPEC §2.4): что система поняла из намерения, написанного словами. */
+export interface IntentSuggestion {
+  modules: { moduleKey: string; why: string }[]
+  targets: string[]
+  result: { amount: number; unit: string } | null
+  needsLink: boolean
+  warnings: string[]
+  understood: boolean
+}
+
+/**
+ * Разобрать намерение. Заказчик: «я хочу создать кампанию, а не настроить модуль».
+ * Возвращает ПРЕДЛОЖЕНИЕ — оператор видит, что понято, и правит.
+ */
+export async function parseIntent(text: string): Promise<IntentSuggestion> {
+  const data = await apiPost<{ ok: boolean; suggestion: IntentSuggestion }>('/api/campaigns/intent', { text })
+  return data.suggestion
+}

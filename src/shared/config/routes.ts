@@ -2,8 +2,7 @@ import type { LucideIcon } from 'lucide-react'
 import {
   LayoutGrid, BarChart3, LifeBuoy, MessageSquareText, Bot, Sparkles, Eye,
   Flame, MessagesSquare, Trophy, Radar, Users, Search, MessageCircle,
-  Hash, History, UserCog, CalendarClock, Target, ListChecks, Contact, TrendingUp, Rocket, Radio, ScrollText, Inbox, ShieldCheck, Users2, Network, Mail, Megaphone, PieChart,
-} from 'lucide-react'
+  Hash, History, UserCog, CalendarClock, Target, ListChecks, Contact, TrendingUp, Rocket, Radio, ScrollText, Inbox, ShieldCheck, Users2, Network, Mail, Megaphone, Package } from 'lucide-react'
 
 export interface RouteDef {
   path: string
@@ -23,10 +22,9 @@ export const ROUTES: RouteDef[] = [
   { path: '/panel/tasks', label: 'Дашборд задач', icon: ListChecks, group: 'main' },
   { path: '/panel/crm', label: 'CRM · Лиды', icon: Contact, group: 'main' },
   { path: '/panel/analytics', label: 'Аналитика', icon: TrendingUp, group: 'main' },
-  { path: '/panel/my-statistics', label: 'Моя статистика', icon: BarChart3, group: 'main' },
-  // §5.3 (E1/E2): свод по системе и отчёт клиенту. Сервер отдаёт только админу —
-  // пункт видят все, но внутри честный отказ, а не пустая страница.
-  { path: '/panel/admin-stats', label: 'Статистика (админ)', icon: PieChart, group: 'main' },
+  { path: '/panel/my-statistics', label: 'Статистика', icon: BarChart3, group: 'main' },
+  // §5.3 (E1/E2): полная админ-панель живёт ОТДЕЛЬНОЙ ссылкой /admin со своим входом
+  // (см. AdminEntry), а не пунктом сайдбара — здесь её намеренно нет.
   { path: '/panel/logs', label: 'Логи', icon: ScrollText, group: 'main' },
   { path: '/panel/inbox', label: 'Обзор аккаунта', icon: Inbox, group: 'main' },
   { path: '/panel/support', label: 'Поддержка', icon: LifeBuoy, group: 'main' },
@@ -50,6 +48,7 @@ export const ROUTES: RouteDef[] = [
   { path: '/panel/parsing-history', label: 'Логи парсинга', icon: History, group: 'parsing' },
 
   { path: '/panel/user/profile', label: 'Мой аккаунт', icon: UserCog, group: 'account' },
+  { path: '/panel/user/subscription', label: 'Мои модули', icon: Package, group: 'account' },
   { path: '/panel/roles', label: 'Роли и доступы', icon: ShieldCheck, group: 'account' },
   { path: '/panel/users', label: 'Пользователи', icon: Users2, group: 'account' },
 ]

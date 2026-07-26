@@ -1,0 +1,142 @@
+import { useEffect, useState } from 'react'
+import { useParams, useNavigate, Link } from 'react-router-dom'
+import { ArrowRight, ArrowLeft, Check, Zap, CircleCheck } from 'lucide-react'
+import { fetchSubscription, type Subscription } from '@/api/balanceApi'
+import { getModule, ANNUAL_DISCOUNT, BONUS_MODULE, MODULE_FEATURES } from './catalog'
+
+/**
+ * Страница одного модуля — отдельная ссылка /module/:key (как «Купить X» у
+ * конкурентов, но в нашей теме и по нашим ценам). Герой + цена за 30/365 дней +
+ * «как это работает». Цена берётся с сервера по ключу модуля.
+ */
+export function ModuleLandingPage() {
+  const { key = '' } = useParams()
+  const nav = useNavigate()
+  const mod = getModule(key)
+  const [pricing, setPricing] = useState<Subscription | null>(null)
+  useEffect(() => { void fetchSubscription().then(setPricing).catch(() => {}) }, [])
+
+  if (!mod) {
+    return (
+      <div className="grid min-h-screen place-items-center bg-bg text-fg">
+        <div className="text-center">
+          <div className="font-display text-xl font-bold">Модуль не найден</div>
+          <Link to="/" className="btn-primary mt-4 inline-flex h-10 px-5">На главную</Link>
+        </div>
+      </div>
+    )
+  }
+
+  const cur = pricing?.currency || '$'
+  const price = pricing?.items.find((i) => i.key === mod.key)?.price ?? 0
+  const isBonus = mod.key === BONUS_MODULE.key
+  const yearFull = price * 12
+  const yearPrice = Math.round(yearFull * (1 - ANNUAL_DISCOUNT))
+  const yearSave = yearFull - yearPrice
+  const Icon = mod.icon
+  const start = () => nav('/login')
+
+  return (
+    <div className="min-h-screen bg-bg text-fg">
+      <header className="sticky top-0 z-40 border-b border-line bg-surface/80 backdrop-blur-xl">
+        <div className="mx-auto flex max-w-6xl items-center gap-3 px-5 py-3.5">
+          <Link to="/" className="flex items-center gap-2.5">
+            <div className="grid h-9 w-9 place-items-center rounded-xl bg-spark-gradient text-[#04150c]">
+              <Zap size={18} fill="currentColor" />
+            </div>
+            <div className="font-display text-sm font-bold leading-tight">AI Incubator</div>
+          </Link>
+          <Link to="/#tarify" className="btn-ghost ml-auto h-9 px-4 text-sm"><ArrowLeft size={15} /> Все тарифы</Link>
+          <button onClick={start} className="btn-primary h-9 px-4 text-sm">Войти <ArrowRight size={15} /></button>
+        </div>
+      </header>
+
+      <section className="mx-auto grid max-w-6xl gap-10 px-5 py-14 lg:grid-cols-[1.3fr_1fr] lg:py-20">
+        {/* Левая — что это */}
+        <div>
+          <span className="inline-flex items-center gap-2 rounded-full border border-spark-500/30 bg-spark-500/10 px-3 py-1 text-xs font-semibold text-spark-200">
+            <span className="h-1.5 w-1.5 rounded-full bg-spark-400" /> Модуль работает 24/7
+          </span>
+          <div className="mt-5 flex items-center gap-3">
+            <div className="grid h-12 w-12 place-items-center rounded-2xl bg-spark-500/12 text-spark-300"><Icon size={24} /></div>
+            <h1 className="font-display text-3xl font-bold sm:text-4xl">{mod.title}</h1>
+          </div>
+          <p className="mt-4 max-w-xl text-lg leading-relaxed text-muted">{mod.description}</p>
+
+          <div className="mt-8 rounded-2xl border border-line bg-card p-5">
+            <div className="mb-3 text-sm font-semibold text-fg">Как это работает</div>
+            <ul className="grid gap-2.5 sm:grid-cols-2">
+              {mod.how.map((h) => (
+                <li key={h} className="flex items-start gap-2 text-sm text-muted">
+                  <CircleCheck size={16} className="mt-0.5 shrink-0 text-spark-400" /> {h}
+                </li>
+              ))}
+            </ul>
+          </div>
+
+          {!!MODULE_FEATURES[mod.key]?.length && (
+            <div className="mt-4 rounded-2xl border border-line bg-card p-5">
+              <div className="mb-3 text-sm font-semibold text-fg">Возможности модуля</div>
+              <ul className="grid gap-2.5 sm:grid-cols-2">
+                {MODULE_FEATURES[mod.key].map((f) => (
+                  <li key={f} className="flex items-start gap-2 text-sm text-muted">
+                    <Check size={16} className="mt-0.5 shrink-0 text-spark-400" /> {f}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+
+          {mod.unique && (
+            <div className="mt-4 inline-flex items-center gap-2 rounded-xl border border-iris-500/25 bg-iris-500/10 px-3 py-2 text-sm text-iris-200">
+              <Sparkle /> Есть у нас — редко у кого из конкурентов
+            </div>
+          )}
+        </div>
+
+        {/* Правая — цена */}
+        <div className="lg:pt-2">
+          {isBonus ? (
+            <div className="rounded-2xl border border-spark-500/40 bg-spark-500/8 p-6">
+              <div className="text-sm font-semibold text-spark-300">В подарок</div>
+              <div className="mt-1 font-display text-3xl font-bold">Бесплатно</div>
+              <p className="mt-2 text-sm text-muted">Идёт с любым набором модулей.</p>
+              <button onClick={start} className="btn-primary mt-5 h-11 w-full">Начать <ArrowRight size={17} /></button>
+            </div>
+          ) : (
+            <div className="space-y-3">
+              {/* Год — выгоднее */}
+              <div className="rounded-2xl border border-spark-500/40 bg-spark-500/8 p-5">
+                <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-wide text-muted">
+                  365 дней
+                  <span className="rounded-md bg-spark-500/20 px-1.5 py-0.5 text-[10px] text-spark-300">выгода {Math.round(ANNUAL_DISCOUNT * 100)}%</span>
+                </div>
+                <div className="mt-1 font-display text-3xl font-bold">{cur}{yearPrice}</div>
+                <div className="mt-1 text-sm text-muted">≈ {cur}{Math.round(yearPrice / 12)} / месяц · экономия {cur}{yearSave}</div>
+                <button onClick={start} className="btn-primary mt-4 h-11 w-full">Выбрать <ArrowRight size={16} /></button>
+              </div>
+              {/* Месяц */}
+              <div className="rounded-2xl border border-line bg-card p-5">
+                <div className="text-xs font-bold uppercase tracking-wide text-muted">30 дней</div>
+                <div className="mt-1 font-display text-3xl font-bold">{cur}{price}</div>
+                <div className="mt-1 text-sm text-muted">{cur}{price} / месяц</div>
+                <button onClick={start} className="btn-ghost mt-4 h-11 w-full border border-line">Выбрать</button>
+              </div>
+              <div className="flex items-center gap-2 px-1 text-xs text-muted">
+                <Check size={14} className="text-spark-400" /> Доступ сразу · обновления без доплат · работа ИИ оплачивается монетами
+              </div>
+            </div>
+          )}
+        </div>
+      </section>
+
+      <footer className="mx-auto max-w-6xl px-5 py-8 text-xs text-muted">
+        <Link to="/" className="hover:text-fg">← AI Incubator — все модули и тарифы</Link>
+      </footer>
+    </div>
+  )
+}
+
+function Sparkle() {
+  return <span className="text-iris-300">★</span>
+}

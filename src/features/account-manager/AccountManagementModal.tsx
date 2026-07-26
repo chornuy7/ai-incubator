@@ -1,4 +1,5 @@
 import { useEffect, useState, useCallback } from 'react'
+import { WorkTab } from './WorkTab'
 import {
   User, Globe, BarChart3, Calendar, Zap, HeartPulse, Hash, FolderClosed,
   Copy, Check, ShieldCheck, ShieldAlert, ShieldQuestion, Loader2, RefreshCw, Unlock, AlertCircle,
@@ -13,10 +14,13 @@ import {
 import type { TgAccount, AccountStats, AccountChannel, AccountFolder } from '@/shared/types'
 import { FLAGS as GEO_FLAGS, COUNTRY_NAME, COUNTRIES } from '@/shared/config/geo'
 
-export type TabKey = 'profile' | 'proxy' | 'status' | 'dates' | 'actions' | 'health' | 'channels' | 'folders'
+export type TabKey = 'profile' | 'work' | 'proxy' | 'status' | 'dates' | 'actions' | 'health' | 'channels' | 'folders'
 
 export const TABS: { key: TabKey; label: string; icon: React.ReactNode }[] = [
+  // «Работа» первой после профиля: на вопрос «что этот аккаунт нам принёс»
+  // отвечают чаще, чем на «какие у него папки».
   { key: 'profile', label: 'Профиль', icon: <User size={15} /> },
+  { key: 'work', label: 'Работа', icon: <Zap size={15} /> },
   { key: 'proxy', label: 'Прокси', icon: <Globe size={15} /> },
   { key: 'status', label: 'Статус', icon: <BarChart3 size={15} /> },
   { key: 'dates', label: 'Даты', icon: <Calendar size={15} /> },
@@ -137,6 +141,7 @@ export function AccountManagementModal({ account, onClose }: { account: TgAccoun
           ) : (
             <div className="animate-fade-in">
               {tab === 'profile' && <ProfileTab account={account} stats={stats} />}
+              {tab === 'work' && <WorkTab accountId={account.id} />}
               {tab === 'proxy' && <ProxyTab account={account} stats={stats} loading={loading} onRecheck={() => void load()} />}
               {tab === 'status' && <StatusTab stats={stats} spamChecking={spamChecking} onSpamCheck={() => void runSpamCheck()} />}
               {tab === 'dates' && <DatesTab stats={stats} />}
@@ -274,7 +279,7 @@ function GeoRecoCard({ account, stats }: { account: TgAccount; stats: AccountSta
     <SectionCard title="Гео и рекомендации" icon={<Globe size={15} className="text-iris-300" />}>
       <Field label="Страна номера" value={country ? <span>{flagOf(country)} {nameOf(country)}</span> : dash} />
       <div className="mt-2 rounded-xl border border-spark-500/25 bg-spark-500/8 px-3 py-2 text-xs leading-relaxed text-muted">
-        Прокси в стране номера ({flagOf(country)} {nameOf(country)}) или соседней по региону — лучше для траста аккаунта (§3.4).
+        Прокси в стране номера ({flagOf(country)} {nameOf(country)}) или соседней по региону — лучше для траста аккаунта.
       </div>
       <div className="mt-2.5 text-[11px] font-bold uppercase tracking-wide text-faint">Рекомендуемое гео прокси</div>
       <div className="mt-1.5 flex flex-wrap gap-1.5">
@@ -472,7 +477,7 @@ function DailyLimitsCard({ accountId }: { accountId: string }) {
     return () => { alive = false }
   }, [accountId])
   return (
-    <SectionCard title="Суточные лимиты (§6)" icon={<BarChart3 size={15} className="text-spark-300" />}>
+    <SectionCard title="Суточные лимиты" icon={<BarChart3 size={15} className="text-spark-300" />}>
       {!daily ? (
         <div className="py-3 text-center text-sm text-muted">Загрузка…</div>
       ) : (
@@ -494,7 +499,7 @@ function DailyLimitsCard({ accountId }: { accountId: string }) {
               </div>
             )
           })}
-          <div className="pt-1 text-[11px] text-faint">Сбрасывается в полночь. При достижении потолка модули пропускают аккаунт (§6).</div>
+          <div className="pt-1 text-[11px] text-faint">Сбрасывается в полночь. При достижении потолка модули пропускают аккаунт.</div>
         </div>
       )}
     </SectionCard>
@@ -512,7 +517,7 @@ function TrustCard({ trust }: { trust: AccountStats['trust'] }) {
     { key: 'age', label: 'Возраст / AIR', w: '20%' },
   ]
   return (
-    <SectionCard title="Trust score (§6)" icon={<BarChart3 size={15} style={{ color: tone.c }} />}>
+    <SectionCard title="Trust score" icon={<BarChart3 size={15} style={{ color: tone.c }} />}>
       <div className="flex items-center gap-4 py-1">
         <Gauge value={trust.score} color={tone.c} />
         <div className="min-w-0">
@@ -533,7 +538,7 @@ function TrustCard({ trust }: { trust: AccountStats['trust'] }) {
           </div>
         ))}
       </div>
-      <div className="pt-2 text-[11px] text-faint">Пороги §6: &lt;40 — авто-стоп → прогрев · 40–70 — консервативный режим · &gt;70 — в пул.</div>
+      <div className="pt-2 text-[11px] text-faint">Пороги: &lt;40 — авто-стоп → прогрев · 40–70 — консервативный режим · &gt;70 — в пул.</div>
     </SectionCard>
   )
 }

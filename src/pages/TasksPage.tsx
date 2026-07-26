@@ -10,12 +10,13 @@ import { fetchGoals, type Goal } from '@/api/goalsApi'
 import { fetchCampaigns, type Campaign } from '@/api/campaignsApi'
 import { fetchAccounts } from '@/api/accountsApi'
 import type { TgAccount } from '@/shared/types'
-import { cn } from '@/shared/lib/utils'
+import { cn, coins as fmtCoins } from '@/shared/lib/utils'
 import { confirmDialog, promptDialog } from '@/shared/lib/dialog'
 import { TaskAudiencePanel } from '@/features/mailing/TaskAudiencePanel'
 import { launchWithSkip } from '@/features/modules/shared/launchWithSkip'
 import { massStopConfirmSteps, canStopWarming, containsWarming } from '@/shared/lib/massAction'
 import { useSession } from '@/features/auth/session'
+import { canControlModule } from '@/shared/lib/access'
 import { downloadXls } from '@/shared/lib/exportXls'
 
 const STATUS: Record<string, { label: string; tone: 'spark' | 'iris' | 'amber' | 'rose' | 'muted' }> = {
@@ -192,7 +193,11 @@ export function TasksPage() {
     (!fStatus || t.status === fStatus),
   ), [tasks, fGoal, fModule, fStatus])
 
-  const selectedTasks = useMemo(() => filtered.filter((t) => selected.has(t.id)), [filtered, selected])
+  // Нет доступа к модулю — нет и кнопок. Показывать управление, которое ответит
+  // отказом, значит предлагать действие и тут же его отбирать.
+  const canControl = (t: ModuleTask) => !me || canControlModule(me.permissions, me.isAdmin, t.moduleKey)
+
+  const selectedTasks = useMemo(() => filtered.filter((t) => selected.has(t.id) && canControl(t)), [filtered, selected, me])
   const allSelected = filtered.length > 0 && filtered.every((t) => selected.has(t.id))
   const toggleAll = () => setSelected(allSelected ? new Set() : new Set(filtered.map((t) => t.id)))
   // Кому какое действие применимо: запуск/возобновление (пауза→resume, стоп/готово/ошибка→restart),
@@ -382,11 +387,13 @@ export function TasksPage() {
             <input type="checkbox" checked={allSelected} onChange={toggleAll} className="h-4 w-4 accent-spark-500" />
             {selected.size > 0 ? `Выбрано: ${selected.size}` : 'Выбрать все'}
           </label>
-          <div className="ml-auto flex flex-wrap items-center gap-2">
+          {/* Если ни одной подконтрольной задачи в списке нет — массовых кнопок не
+              показываем: они предлагали бы действия, которые все до одного отказали бы. */}
+          {filtered.some(canControl) && <div className="ml-auto flex flex-wrap items-center gap-2">
             <BulkBtn onClick={bulkStart} disabled={busy !== null || startTargets.length === 0} tone="green" icon={<Play size={13} />} label="Запустить / возобновить" count={startTargets.length} />
             <BulkBtn onClick={bulkPause} disabled={busy !== null || pauseTargets.length === 0} tone="amber" icon={<Pause size={13} />} label="Пауза" count={pauseTargets.length} />
             <BulkBtn onClick={() => void bulkStop()} disabled={busy !== null || stopTargets.length === 0} tone="rose" icon={<Square size={13} />} label="Стоп" count={stopTargets.length} />
-          </div>
+          </div>}
         </div>
       )}
 
@@ -412,7 +419,7 @@ export function TasksPage() {
               <div className="h-1.5 overflow-hidden rounded bg-white/10"><div className="h-full rounded bg-iris-500 transition-all" style={{ width: `${g.prog}%` }} /></div>
               <div className="mt-1 text-[11px] text-white/40">Прогресс к цели: {g.prog}%</div>
               <div className="mt-2 grid gap-1.5 sm:grid-cols-2">
-                {g.tasks.map((t) => <TaskCard key={`${t.moduleKey}:${t.id}`} t={t} goalName={null} busy={busy} onOpen={openTask} onStop={doStop} onRestart={doRestart} onPause={doPause} onResume={doResume} compact />)}
+                {g.tasks.map((t) => <TaskCard key={`${t.moduleKey}:${t.id}`} t={t} goalName={null} busy={busy} onOpen={openTask} onStop={doStop} onRestart={doRestart} onPause={doPause} onResume={doResume} canControl={canControl(t)} compact />)}
               </div>
             </Card>
           ))}
@@ -420,7 +427,7 @@ export function TasksPage() {
         )
       ) : (
         <div className="grid gap-2 lg:grid-cols-2">
-          {filtered.map((t) => <TaskCard key={`${t.moduleKey}:${t.id}`} t={t} goalName={goalName(t.goalId)} busy={busy} onOpen={openTask} onStop={doStop} onRestart={doRestart} onPause={doPause} onResume={doResume} selected={selected.has(t.id)} onToggleSelect={toggleSel} />)}
+          {filtered.map((t) => <TaskCard key={`${t.moduleKey}:${t.id}`} t={t} goalName={goalName(t.goalId)} busy={busy} onOpen={openTask} onStop={doStop} onRestart={doRestart} onPause={doPause} onResume={doResume} canControl={canControl(t)} selected={selected.has(t.id)} onToggleSelect={toggleSel} />)}
         </div>
       )}
     </div>
@@ -450,11 +457,14 @@ function BulkBtn({ onClick, disabled, tone, icon, label, count }: {
 
 /** Кнопки управления на карточке задачи: старт/возобновление (зелёная), пауза (янтарь), стоп (красная).
  *  Активна только применимая по статусу — остальные приглушены. */
-function CardControls({ t, busy, onStop, onRestart, onPause, onResume }: {
+function CardControls({ t, busy, onStop, onRestart, onPause, onResume, canControl = true }: {
   t: ModuleTask; busy: string | null
   onStop: (t: ModuleTask) => void; onRestart: (t: ModuleTask) => void
-  onPause: (t: ModuleTask) => void; onResume: (t: ModuleTask) => void
+  onPause: (t: ModuleTask) => void; onResume: (t: ModuleTask) => void; canControl?: boolean
 }) {
+  // Нет доступа к модулю — управления нет вовсе. Неактивная кнопка тут читалась бы
+  // как «сейчас нельзя», хотя нельзя вообще.
+  if (!canControl) return null
   const disabled = busy === t.id
   const canStart = ['paused', 'stopped', 'done', 'error'].includes(t.status)
   const canPause = t.status === 'running'
@@ -470,11 +480,11 @@ function CardControls({ t, busy, onStop, onRestart, onPause, onResume }: {
   )
 }
 
-function TaskCard({ t, goalName, busy, onOpen, onStop, onRestart, onPause, onResume, compact, selected, onToggleSelect }: {
+function TaskCard({ t, goalName, busy, onOpen, onStop, onRestart, onPause, onResume, canControl = true, compact, selected, onToggleSelect }: {
   t: ModuleTask; goalName: string | null; busy: string | null
   onOpen: (t: ModuleTask) => void
   onStop: (t: ModuleTask) => void; onRestart: (t: ModuleTask) => void
-  onPause: (t: ModuleTask) => void; onResume: (t: ModuleTask) => void; compact?: boolean
+  onPause: (t: ModuleTask) => void; onResume: (t: ModuleTask) => void; canControl?: boolean; compact?: boolean
   selected?: boolean; onToggleSelect?: (id: string) => void
 }) {
   const st = STATUS[t.status] || { label: t.status, tone: 'muted' as const }
@@ -504,11 +514,14 @@ function TaskCard({ t, goalName, busy, onOpen, onStop, onRestart, onPause, onRes
           <span className="tabular-nums">{t.progress?.done ?? t.progress?.actionsDone ?? 0}/{t.progress?.total ?? 0}</span>
           {goalName && <span className="text-iris-300"><Target size={11} className="mb-0.5 inline" /> {goalName}</span>}
           {t.initiator && <span>кто: {t.initiator}</span>}
+          {/* Во сколько обошёлся запуск. Из общего баланса не понять, куда ушли монеты,
+              а «сколько стоила вот эта задача» — первый вопрос при разборе счёта. */}
+          {!!t.spentCoins && <span className="tabular-nums text-amber-300/80" title="Потрачено монет на эту задачу">⚡ {fmtCoins(t.spentCoins)}</span>}
           <span>{new Date(t.createdAt).toLocaleString('ru-RU', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}</span>
         </div>
       </div>
       </button>
-      <CardControls t={t} busy={busy} onStop={onStop} onRestart={onRestart} onPause={onPause} onResume={onResume} />
+      <CardControls t={t} busy={busy} onStop={onStop} onRestart={onRestart} onPause={onPause} onResume={onResume} canControl={canControl} />
     </Card>
   )
 }
@@ -553,6 +566,7 @@ const LOG_COLOR: Record<string, string> = { error: 'text-rose-300', warning: 'te
  */
 export function TaskDetailPage() {
   const { id = '' } = useParams()
+  const me = useSession((s) => s.user)
   const [sp] = useSearchParams()
   const moduleKey = sp.get('m') || ''
   const navigate = useNavigate()
@@ -666,6 +680,8 @@ export function TaskDetailPage() {
   }
 
   const t = task
+  // Право на управление — по модулю задачи. Тот же критерий, что в списке.
+  const canControl = !me || canControlModule(me.permissions, me.isAdmin, t.moduleKey)
   const st = STATUS[t.status] || { label: t.status, tone: 'muted' as const }
   const p = pct(t)
   const s = t.settings || {}
@@ -688,13 +704,15 @@ export function TaskDetailPage() {
             <Badge tone={st.tone}>{st.label}</Badge>
             <div className="mt-1 text-sm text-white/60">{t.progress?.done ?? t.progress?.actionsDone ?? 0} / {t.progress?.total ?? 0} действий</div>
           </div>
+          {/* Управление — только тем, у кого есть доступ к модулю задачи. */}
           <div className="flex shrink-0 gap-1">
-            {isActive(t) && <button onClick={doPause} disabled={busy} className="btn-icon h-9 w-9" title="Пауза"><Pause size={15} /></button>}
-            {t.status === 'paused' && <button onClick={doResume} disabled={busy} className="btn-icon h-9 w-9 text-spark-400" title="Продолжить"><Play size={15} /></button>}
-            {isActive(t) && <button onClick={doStop} disabled={busy} className="btn-icon h-9 w-9 text-rose-300" title="Стоп"><Square size={15} /></button>}
+            {canControl && isActive(t) && <button onClick={doPause} disabled={busy} className="btn-icon h-9 w-9" title="Пауза"><Pause size={15} /></button>}
+            {canControl && t.status === 'paused' && <button onClick={doResume} disabled={busy} className="btn-icon h-9 w-9 text-spark-400" title="Продолжить"><Play size={15} /></button>}
+            {canControl && isActive(t) && <button onClick={doStop} disabled={busy} className="btn-icon h-9 w-9 text-rose-300" title="Стоп"><Square size={15} /></button>}
             {/* §9.8: правка только на паузе. Кнопку показываем всегда, но у работающей
-                задачи она заблокирована и объясняет причину — так понятнее, чем её отсутствие. */}
-            <button
+                задачи она заблокирована и объясняет причину — так понятнее, чем её отсутствие.
+                А вот без доступа к модулю её нет вовсе: это не «пока нельзя», а «нельзя». */}
+            {canControl && <button
               onClick={() => startEdit(s)}
               disabled={busy || t.status !== 'paused'}
               className="btn-icon h-9 w-9 disabled:opacity-40"
@@ -703,8 +721,8 @@ export function TaskDetailPage() {
                 : isActive(t)
                   ? 'Править можно только на паузе: сейчас задача выполняется и часть аккаунтов уже отработала по текущим настройкам'
                   : 'Задача завершена — править нечего, перезапустите её'}
-            ><Pencil size={15} /></button>
-            <button onClick={doRestart} disabled={busy} className="btn-icon h-9 w-9" title="Перезапуск"><RotateCw size={16} /></button>
+            ><Pencil size={15} /></button>}
+            {canControl && <button onClick={doRestart} disabled={busy} className="btn-icon h-9 w-9" title="Перезапуск"><RotateCw size={16} /></button>}
           </div>
         </div>
 
@@ -761,6 +779,12 @@ export function TaskDetailPage() {
           <Info label="Создана" value={new Date(t.createdAt).toLocaleString('ru-RU')} />
           <Info label="Обновлена" value={new Date(t.updatedAt).toLocaleString('ru-RU')} />
           <Info label="Результатов" value={String(results.length)} />
+          {/* Цена запуска: монеты — точно, токены — по журналу. Показываем всегда,
+              даже когда ноль: «бесплатно» это тоже ответ, а прочерк — нет. */}
+          <Info
+            label="Потрачено"
+            value={`${fmtCoins(t.spentCoins || 0)} ⚡${t.tokens ? ` · ${t.tokens.toLocaleString('ru-RU')} токенов` : ''}`}
+          />
         </div>
 
         <ChipList

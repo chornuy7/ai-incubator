@@ -75,6 +75,35 @@ function hasProxy(a: { proxy?: string }) {
   return !!p && p !== '—'
 }
 
+/**
+ * Сортировки списка аккаунтов. Держим таблицей функций, а не цепочкой if: добавить
+ * порядок = добавить строку, и подпись в выпадающем списке не разъедется с логикой.
+ *
+ * `default` — прежнее поведение: занятые в работе уходят вниз, чтобы свободные,
+ * которые и надо выбирать для запуска, были под рукой.
+ */
+type SortKey = 'default' | 'name' | 'status' | 'country' | 'newest' | 'oldest'
+
+const str = (v: unknown) => String(v ?? '')
+const SORTS: Record<SortKey, (a: TgAccount, b: TgAccount) => number> = {
+  default: (a, b) => Number(!!a.busyIn) - Number(!!b.busyIn),
+  name: (a, b) => str(a.name || a.username).localeCompare(str(b.name || b.username), 'ru'),
+  status: (a, b) => str(a.status).localeCompare(str(b.status)),
+  country: (a, b) => str(a.country).localeCompare(str(b.country), 'ru'),
+  // Свежие сверху: у аккаунтов без даты ставим 0, иначе они всплывали бы наверх.
+  newest: (a, b) => (Number(b.createdAt) || 0) - (Number(a.createdAt) || 0),
+  oldest: (a, b) => (Number(a.createdAt) || 0) - (Number(b.createdAt) || 0),
+}
+
+const SORT_LABELS: { key: SortKey; label: string }[] = [
+  { key: 'default', label: 'Свободные сверху' },
+  { key: 'name', label: 'По имени' },
+  { key: 'status', label: 'По статусу' },
+  { key: 'country', label: 'По стране' },
+  { key: 'newest', label: 'Сначала новые' },
+  { key: 'oldest', label: 'Сначала старые' },
+]
+
 export function AccountsPage() {
   const data = useApp((s) => s.data)
   const isNoSub = useApp((s) => s.userState === 'no-sub')
@@ -194,6 +223,9 @@ export function AccountsPage() {
   const [importOpen, setImportOpen] = useState(false)
   const [proxyPoolOpen, setProxyPoolOpen] = useState(false)
   const [detailAcc, setDetailAcc] = useState<TgAccount | null>(null)
+  // Сортировка списка. По умолчанию «занятые вниз» — так было и раньше, но теперь
+  // это осознанный выбор из списка, а не единственный жёсткий порядок.
+  const [sortKey, setSortKey] = useState<SortKey>('default')
   const [proxyAcc, setProxyAcc] = useState<TgAccount | null>(null)
 
   const loading = accountsLoading
@@ -255,13 +287,15 @@ export function AccountsPage() {
       if (fatigueMin > 0 && fatiguePct(a.id) < fatigueMin) return false
       return true
     })
-    // Свободные — сверху, занятые (в работе) — в самый низ. Стабильно сохраняем прочий порядок.
+    // Сортируем стабильно: сравнение по ключу, при равенстве — исходный порядок,
+    // иначе строки прыгали бы между перерисовками при одинаковых значениях.
+    const cmp = SORTS[sortKey]
     return list
       .map((a, i) => ({ a, i }))
-      .sort((x, y) => (Number(!!x.a.busyIn) - Number(!!y.a.busyIn)) || (x.i - y.i))
+      .sort((x, y) => cmp(x.a, y.a) || (x.i - y.i))
       .map((x) => x.a)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [source, tab, statusFilter, campaignFilter, campaigns, pinnedMap, countryFilter, moduleFilter, query, trashAlive, fatigueMin, activity])
+  }, [source, tab, statusFilter, campaignFilter, campaigns, pinnedMap, countryFilter, moduleFilter, query, trashAlive, sortKey, fatigueMin, activity])
 
   const pageCount = Math.max(1, Math.ceil(filtered.length / pageSize))
   const pageItems = filtered.slice(page * pageSize, page * pageSize + pageSize)
@@ -485,6 +519,15 @@ export function AccountsPage() {
           <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted" />
           <input value={query} onChange={(e) => { setQuery(e.target.value); setPage(0) }} className="input pl-9" placeholder="Поиск по имени, @username, номеру…" />
         </div>
+
+        {/* Сортировка рядом с поиском: это две половины одного действия — найти нужный
+            аккаунт в списке на сотни строк. */}
+        <Select
+          value={sortKey}
+          onChange={(v) => { setSortKey(v as SortKey); setPage(0) }}
+          options={SORT_LABELS.map((s) => ({ value: s.key, label: s.label }))}
+          className="w-full sm:w-48"
+        />
 
         {/* Filters dropdown */}
         <Dropdown
@@ -1052,8 +1095,8 @@ function AccountsTable(props: {
                         if (d.anyReached) {
                           const hit = d.items.filter((x) => x.reached).map((x) => DAILY_CAP_LABELS[x.action] ?? x.action).join(', ')
                           return (
-                            <span className="rounded-md bg-rose-500/15 px-1.5 py-0.5 text-[10px] font-bold text-rose-300" title={`Суточный лимит §6 достигнут: ${hit}. Модули пропускают аккаунт до сброса в полночь.`}>
-                              §6 лимит: {hit}
+                            <span className="rounded-md bg-rose-500/15 px-1.5 py-0.5 text-[10px] font-bold text-rose-300" title={`Суточный лимит достигнут: ${hit}. Модули пропускают аккаунт до сброса в полночь.`}>
+                              Лимит: {hit}
                             </span>
                           )
                         }
@@ -1062,8 +1105,8 @@ function AccountsTable(props: {
                         if (near.length) {
                           const lbl = near.map((x) => `${DAILY_CAP_LABELS[x.action] ?? x.action} ${x.used}/${x.cap}`).join(', ')
                           return (
-                            <span className="rounded-md bg-amber-500/15 px-1.5 py-0.5 text-[10px] font-bold text-amber-300" title={`Близко к суточному лимиту §6: ${lbl}. Скоро модули начнут пропускать аккаунт.`}>
-                              §6 близко: {near.map((x) => DAILY_CAP_LABELS[x.action] ?? x.action).join(', ')}
+                            <span className="rounded-md bg-amber-500/15 px-1.5 py-0.5 text-[10px] font-bold text-amber-300" title={`Близко к суточному лимиту: ${lbl}. Скоро модули начнут пропускать аккаунт.`}>
+                              Близко: {near.map((x) => DAILY_CAP_LABELS[x.action] ?? x.action).join(', ')}
                             </span>
                           )
                         }
@@ -1077,7 +1120,7 @@ function AccountsTable(props: {
                         if (act.resting) {
                           const left = Math.ceil((act.restUntil - Date.now()) / 60000)
                           return (
-                            <span className="rounded-md bg-iris-500/15 px-1.5 py-0.5 text-[10px] font-bold text-iris-300" title={`Аккаунт отдыхает после нагрузки — освободится через ${left} мин. Отдых общий для всех модулей (§4.1).`}>
+                            <span className="rounded-md bg-iris-500/15 px-1.5 py-0.5 text-[10px] font-bold text-iris-300" title={`Аккаунт отдыхает после нагрузки — освободится через ${left} мин. Отдых общий для всех модулей.`}>
                               отдыхает {left > 0 ? `${left} мин` : ''}
                             </span>
                           )

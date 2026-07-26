@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { useApp } from '@/mocks/store'
 import { launchWithSkip } from './launchWithSkip'
+import { ApiError } from '@/api/client'
 import {
   startModuleTask,
   fetchModuleTask,
@@ -109,6 +110,12 @@ export function useModuleTask(moduleKey: string) {
       // при трёх десятках профилей кто-то в блоке почти всегда.
       const t = await launchWithSkip((skip) => startModuleTask(moduleKey, settings, skip))
       if (!t) return false
+      // §4.4 (D4): риск волнового бана показываем сразу после запуска. Не блокируем —
+      // решение за оператором, — но молчать об этом нельзя: Telegram банит группами,
+      // и узнать о паттерне постфактум означает потерять сразу несколько профилей.
+      for (const w of (t as { clusterWarnings?: string[] }).clusterWarnings || []) {
+        pushToast({ type: 'error', title: 'Риск блокировки группой', desc: w })
+      }
       setTaskId(t.id)
       setTask(t)
       persistActiveTaskId(moduleKey, t.id)
@@ -125,7 +132,11 @@ export function useModuleTask(moduleKey: string) {
       void loadAccountBusy()
       return true
     } catch (e) {
-      pushToast({ type: 'error', title: 'Ошибка запуска', desc: e instanceof Error ? e.message : '' })
+      // 402 «нет монет» уже показан окном по центру (см. api/client) — второй тост
+      // в углу про то же самое только шумит.
+      if (!(e instanceof ApiError && e.status === 402)) {
+        pushToast({ type: 'error', title: 'Ошибка запуска', desc: e instanceof Error ? e.message : '' })
+      }
       return false
     } finally {
       setStarting(false)

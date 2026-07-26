@@ -12,6 +12,8 @@ import {
   fetchAutomationRules, createAutomationRule, updateAutomationRule, deleteAutomationRule, runAutomationRuleNow,
   type AutomationRule, type AutomationSchedule,
 } from '@/api/automationApi'
+import { usePlan, planHasModule } from '@/features/billing/plan'
+import { ModuleNotPaid } from '@/features/billing/ModuleNotPaid'
 
 /** Локальная дата-время в формат `datetime-local` (без сдвига в UTC, как делает toISOString). */
 function toLocalInput(ts: number): string {
@@ -28,6 +30,10 @@ function scheduleLabel(s: AutomationSchedule): string {
 }
 
 export function AutopostingPage() {
+  // §5.4: модуль живёт не под /panel/modules/*, поэтому гейт подписки — здесь же.
+  const planModules = usePlan((st) => st.modules)
+  if (!planHasModule(planModules, 'autoposting')) return <ModuleNotPaid title="Автопостинг" />
+
   const nav = useNavigate()
   const pushToast = useApp((s) => s.pushToast)
   const [selected, setSelected] = useState<Set<string>>(new Set())
@@ -187,7 +193,7 @@ export function AutopostingPage() {
     <div>
       <PageHeader
         title="Автопостинг"
-        subtitle="Публикация постов в СВОИ каналы/группы. Безопасно — не спам (§8.10)."
+        subtitle="Публикация постов в СВОИ каналы/группы. Безопасно — не спам."
         icon={<Megaphone size={22} />}
       />
 

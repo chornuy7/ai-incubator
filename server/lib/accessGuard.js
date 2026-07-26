@@ -2,8 +2,9 @@
  * Серверный enforcement RBAC (§8.1): гейт доступа к модулю по роли пользователя.
  * Пользователь идентифицируется заголовком `X-User-Id` (клиент шлёт id из сессии).
  *
- * Дев-модель: если заголовка нет — пропускаем (демо/админ без сессии). Если есть и юзер
- * не админ — проверяем `can(role,'module',key)`; при отказе — 403. Продакшн-шаг: заменить
+ * Дев-модель: если заголовка нет — пропускаем (демо/админ без сессии). Если есть —
+ * отключённый или неизвестный пользователь получает 403, админ проходит, остальным
+ * проверяем `can(role,'module',key)`; при отказе — 403. Продакшн-шаг: заменить
  * заголовок на подписанный токен сессии (см. docs/CONTRACT-rbac.md §7).
  */
 import { getUser } from '../users.js'
@@ -21,7 +22,12 @@ export function moduleAccessGuard(keyFrom) {
       const key = keyFrom(req)
       if (!key) return next() // не модульный путь (список задач и т.п.)
       const user = await getUser(userId)
-      if (!user || !user.active) return next()
+      // Неизвестный или отключённый — fail-closed, как в isAdminRequest и
+      // tasksForRequest. Раньше здесь стоял next(), то есть отключённый сотрудник
+      // проходил гейт модулей: увольнение не закрывало доступ.
+      if (!user || !user.active) {
+        return res.status(403).json({ ok: false, error: 'Пользователь отключён' })
+      }
       if (hasAdminRole(userRoleIds(user))) return next() // админ среди ролей — bypass
       const roles = await rolesForUser(user)
       if (roles.some((role) => can(role, 'module', key))) return next() // union: доступ даёт любая роль
@@ -91,6 +97,76 @@ export async function foldersForRequest(req, folders = []) {
     out.push({ ...f, targets: allowed })
   }
   return out
+}
+
+/**
+ * §8.1: чьи задачи видит автор запроса.
+ *
+ * По умолчанию человек видит в Дашборде ТОЛЬКО свои запуски: чужая задача — это
+ * чужие аккаунты, цели и переписка, и показывать их всем подряд нельзя. Дашборд
+ * целиком открывают админ и роль с правом `allTasks` (тимлид, ответственный
+ * за сетку) — как и просил заказчик: «всё видит админ или тот, кому он дал доступ».
+ *
+ * Задачи без владельца (созданные до того, как владельца стали запоминать) считаем
+ * общими — только для тех, кто и так видит всё. Отдавать их всем значило бы оставить
+ * дыру ровно того размера, что и была.
+ *
+ * @param {import('express').Request} req
+ * @param {Array<{userId?:string}>} tasks
+ * @returns {Promise<Array<object>>}
+ */
+/**
+ * Доступен ли автору запроса конкретный аккаунт (§8.1, ресурс `accounts`).
+ *
+ * Нужен там, где отдаём данные ПО аккаунту, а не список: список фильтрует фронт
+ * через `filterAccountsByAccess`, но точечный запрос по id так не прикрыть —
+ * без этой проверки чужой профиль отдавал бы задачи, деньги и лиды.
+ * @param {import('express').Request} req @param {string} accountId
+ */
+export async function canSeeAccount(req, accountId) {
+  const userId = req.header('x-user-id')
+  if (!userId) return true // нет сессии — дев/демо, как в moduleAccessGuard
+  let user = null
+  try {
+    user = await getUser(userId)
+  } catch {
+    return false // fail-closed: не смогли проверить — не отдаём
+  }
+  if (!user || !user.active) return false
+  if (hasAdminRole(userRoleIds(user))) return true
+  const roles = await rolesForUser(user)
+  if (!roles.length) return false
+  // Хотя бы одна роль разрешает этот аккаунт — union, как и везде в §8.1.
+  return roles.some((role) => can(role, 'account', String(accountId)))
+}
+
+export async function tasksForRequest(req, tasks = []) {
+  const userId = req.header('x-user-id')
+  if (!userId) return tasks // нет сессии — дев/демо, как в moduleAccessGuard
+  let user = null
+  try {
+    user = await getUser(userId)
+  } catch {
+    return [] // fail-closed: не смогли проверить — не показываем чужую работу
+  }
+  if (!user || !user.active) return []
+  if (hasAdminRole(userRoleIds(user))) return tasks
+  const roles = await rolesForUser(user)
+  if (roles.some((role) => can(role, 'allTasks'))) return tasks
+  return tasks.filter((t) => t && t.userId === userId)
+}
+
+/**
+ * Доступна ли автору запроса конкретная задача — для чтения и для управления
+ * (пауза/стоп/перезапуск/правка). Без этой проверки скрытие в списке было бы
+ * косметикой: id задачи виден в интерфейсе, и остановить чужую можно было бы
+ * прямым запросом.
+ * @returns {Promise<boolean>}
+ */
+export async function canTouchTask(req, task) {
+  if (!task) return false
+  const [visible] = await tasksForRequest(req, [task])
+  return Boolean(visible)
 }
 
 /** Ключ модуля из /api/modules/<key>/... (первый сегмент; 'tasks' — не модуль). */

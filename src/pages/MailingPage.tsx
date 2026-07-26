@@ -13,8 +13,14 @@ import { startModuleTask } from '@/api/modulesApi'
 import { fetchSettings, saveSettings } from '@/api/settingsApi'
 import { fetchLeads } from '@/api/leadsApi'
 import { confirmDialog } from '@/shared/lib/dialog'
+import { usePlan, planHasModule } from '@/features/billing/plan'
+import { ModuleNotPaid } from '@/features/billing/ModuleNotPaid'
 
 export function MailingPage() {
+  // §5.4: модуль живёт не под /panel/modules/*, поэтому гейт подписки — здесь же.
+  const planModules = usePlan((st) => st.modules)
+  if (!planHasModule(planModules, 'mailing')) return <ModuleNotPaid title="Мейлинг" />
+
   const nav = useNavigate()
   const pushToast = useApp((s) => s.pushToast)
   const [selected, setSelected] = useState<Set<string>>(new Set())
