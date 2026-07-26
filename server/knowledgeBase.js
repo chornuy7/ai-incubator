@@ -10,12 +10,16 @@ const KB_FILE = process.env.KB_FILE || dataPath('knowledge.json')
 
 /** @param {object} input */
 export function normalizeKb(input = {}) {
-  const kind = ['text', 'file', 'image'].includes(input.kind) ? input.kind : 'text'
+  // `link` — страница/ссылка: её текст вытягивается при добавлении, чтобы в промпт
+  // попали факты, а не голый URL (модель по ссылке не ходит).
+  const kind = ['text', 'file', 'image', 'link'].includes(input.kind) ? input.kind : 'text'
   return {
     kind,
     title: String(input.title ?? '').trim(),
     content: String(input.content ?? ''),
     fileRef: input.fileRef ? String(input.fileRef) : null,
+    // Исходная ссылка — чтобы страницу можно было открыть и перечитать руками.
+    url: input.url ? String(input.url).trim().slice(0, 2000) : null,
     scope: String(input.scope ?? 'all'),
   }
 }

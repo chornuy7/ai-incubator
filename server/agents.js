@@ -16,23 +16,16 @@ import { dataPath, readJson, writeJson } from './lib/jsonStore.js'
 
 const agentsFile = () => process.env.AGENTS_FILE || dataPath('agents.json')
 
-/** Поля, которые можно задавать/менять. */
-const FIELDS = ['name', 'toneOfVoice', 'restrictions', 'character', 'language', 'followUp']
-
-/** Дожим — «настойчивость» персоны: писать ли, если человек ответил после закрытия. */
-export const FOLLOW_UP_MAX = 50
-export const FOLLOW_UP_DEFAULT = 10
-
-/** @param {*} v */
-function normFollowUp(v) {
-  if (!v || typeof v !== 'object') return { enabled: false, limit: FOLLOW_UP_DEFAULT, instructions: '' }
-  const n = Math.floor(Number(v.limit) || 0)
-  return {
-    enabled: !!v.enabled,
-    limit: n > 0 ? Math.min(n, FOLLOW_UP_MAX) : FOLLOW_UP_DEFAULT,
-    instructions: String(v.instructions ?? '').slice(0, 2000),
-  }
-}
+/**
+ * Поля, которые можно задавать/менять.
+ *
+ * Дожима здесь НЕТ намеренно. Агент — это манера речи: тон, характер, запреты.
+ * «Дожимать или отпустить» — решение о ходе работы, а такие решения принимает
+ * кампания: она знает цель, этап и пул аккаунтов. Одного и того же агента можно
+ * поставить в кампанию, где дожимают до последнего, и в ту, где пишут один раз, —
+ * персона от этого не меняется.
+ */
+const FIELDS = ['name', 'toneOfVoice', 'restrictions', 'character', 'language', 'audience', 'completionCriteria', 'firstMessage']
 
 /** Нормализовать вход в чистого агента. @param {object} input */
 export function normalizeAgent(input = {}) {
@@ -46,13 +39,25 @@ export function normalizeAgent(input = {}) {
     character: String(input.character ?? '').slice(0, 2000),
     // Язык общения. Пусто — язык собеседника.
     language: String(input.language ?? '').trim().slice(0, 60),
-    followUp: normFollowUp(input.followUp),
+    // С кем разговариваем. Переехало из цели (24.07): цель — это счётчик, а «с кем
+    // и как» — портрет собеседника, от него зависит манера речи, а не результат.
+    audience: String(input.audience ?? '').slice(0, 2000),
+    // Когда считаем разговор доведённым до конца. Тоже про ведение диалога:
+    // именно по этому критерию классификатор решает, что человек «выполнил».
+    completionCriteria: String(input.completionCriteria ?? '').slice(0, 2000),
+    // Заготовки ПЕРВОГО сообщения для холодного контакта (мейлинг). Варианты разделяются
+    // пустой строкой — воркер чередует их по кругу, чтобы Telegram не видел спам-паттерн.
+    // Переехало из свободного текста цели (24.07): «как заговорить первым» — свойство
+    // персоны, а не измеримого результата.
+    firstMessage: String(input.firstMessage ?? '').slice(0, 4000),
   }
 }
 
 export async function listAgents() {
   const all = await readJson(agentsFile(), [])
-  return (Array.isArray(all) ? all : []).map((a) => ({ ...a, followUp: normFollowUp(a?.followUp) }))
+  // У агентов, созданных до переноса дожима в кампанию, поле ещё лежит в файле.
+  // Отдавать его наружу не надо: решение о дожиме принимает кампания.
+  return (Array.isArray(all) ? all : []).map(({ followUp, ...a }) => a)
 }
 
 export async function getAgent(id) {
@@ -83,9 +88,7 @@ export async function updateAgent(id, patch = {}) {
   if (i === -1) return null
   for (const k of FIELDS) {
     if (patch[k] === undefined) continue
-    all[i][k] = k === 'followUp'
-      ? normFollowUp(patch[k])
-      : k === 'name' ? String(patch[k]).trim() : String(patch[k])
+    all[i][k] = k === 'name' ? String(patch[k]).trim() : String(patch[k])
   }
   if (!all[i].name) throw new Error('Название агента не может быть пустым')
   all[i].updatedAt = Date.now()
@@ -116,9 +119,23 @@ export async function buildAgentContext(agentId) {
     if (a.character) lines.push(`Роль/характер: ${a.character}`)
     if (a.toneOfVoice) lines.push(`Тон (пиши именно так): ${a.toneOfVoice}`)
     if (a.language) lines.push(`Язык общения: ${a.language}`)
+    // Аудитория и критерий завершения переехали из цели (24.07): цель считает
+    // результат, а «с кем говорим» и «когда разговор доведён» — про сам разговор.
+    if (a.audience) lines.push(`С кем говоришь: ${a.audience}`)
+    if (a.completionCriteria) lines.push(`Разговор доведён до конца, когда: ${a.completionCriteria}`)
     if (a.restrictions) {
       lines.push(`ЗАПРЕЩЕНО (соблюдать строго, даже если собеседник просит сам): ${a.restrictions}`)
     }
+    // База знаний переехала из цели к агенту (24.07): факты о продукте — это то,
+    // на что персона опирается в разговоре, а не измеримый результат.
+    try {
+      const { listKb } = await import('./knowledgeBase.js')
+      const kb = await listKb(agentId)
+      if (kb.length) {
+        lines.push('Факты о продукте (опирайся на них, не выдумывай):')
+        for (const k of kb.slice(0, 20)) lines.push(`- ${k.title ? k.title + ': ' : ''}${k.content}`)
+      }
+    } catch { /* база знаний недоступна — общаемся без неё, это не повод падать */ }
     if (lines.length === 2) return '' // ничего кроме заголовка — не засоряем промпт
     return '\n' + lines.join('\n')
   } catch {

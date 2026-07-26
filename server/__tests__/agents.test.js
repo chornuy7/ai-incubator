@@ -28,12 +28,13 @@ test('createAgent: имя обязательно', async () => {
   })
 })
 
-test('normalizeAgent: поля обрезаются, followUp с дефолтом', async () => {
+test('normalizeAgent: поля обрезаются, дожима у агента нет', async () => {
   await withStore(async ({ normalizeAgent }) => {
     const a = normalizeAgent({ name: ' Спорщик ', toneOfVoice: 'резко', restrictions: 'без мата' })
     assert.equal(a.name, 'Спорщик')
     assert.equal(a.toneOfVoice, 'резко')
-    assert.deepEqual(a.followUp, { enabled: false, limit: 10, instructions: '' })
+    // Дожим — решение кампании: она знает цель, этап и пул. Агент только говорит.
+    assert.equal(a.followUp, undefined)
   })
 })
 
@@ -69,10 +70,11 @@ test('buildAgentContext: пустой агент и несуществующий
   })
 })
 
-test('дожим: лимит клампится, кривой followUp не ломает', async () => {
+test('дожим нельзя записать в агента даже напрямую', async () => {
+  // Переезд в кампанию (24.07). Если поле снова начнёт сохраняться у агента,
+  // настройка раздвоится и никто не поймёт, какая из двух победила.
   await withStore(async ({ createAgent }) => {
     const a = await createAgent({ name: 'F', followUp: { enabled: true, limit: 999 } })
-    assert.equal(a.followUp.limit, 50, 'потолок 50')
-    assert.equal(a.followUp.enabled, true)
+    assert.equal(a.followUp, undefined)
   })
 })
