@@ -28,11 +28,18 @@ export function normalizeLead(input = {}) {
   const status = mapLeadStatus(input.status)
   return {
     goalId: input.goalId ? String(input.goalId) : null,
+    // Кампания, которая привела лида и ведёт его по воронке (24.07): статусы в CRM
+    // проставляет она, поэтому лид должен помнить свою кампанию — для отчёта и фильтра.
+    campaignId: input.campaignId ? String(input.campaignId) : null,
     accountId: input.accountId ? String(input.accountId) : null, // ответственный аккаунт
     peer: String(input.peer ?? '').trim(), // с кем диалог (username/id)
     status,
     result: String(input.result ?? ''),
     note: String(input.note ?? ''),
+    // Сколько раз человека дожимали — писали после того, как диалог был закрыт,
+    // потому что он написал сам. Считаем отдельно от обычной воронки: дожатый лид
+    // прошёл другой путь, и мерить его вместе с остальными — не понимать, что сработало.
+    followUps: Math.max(0, Math.floor(Number(input.followUps) || 0)),
   }
 }
 
@@ -41,6 +48,7 @@ export async function listLeads(filter = {}) {
   const all = await readJson(LEADS_FILE, [])
   return all.filter((l) =>
     (!filter.goalId || l.goalId === filter.goalId) &&
+    (!filter.campaignId || l.campaignId === filter.campaignId) &&
     (!filter.status || l.status === filter.status) &&
     (!filter.accountId || l.accountId === filter.accountId),
   )
@@ -67,13 +75,17 @@ export async function updateLead(id, patch = {}) {
   const all = await readJson(LEADS_FILE, [])
   const i = all.findIndex((l) => l.id === id)
   if (i === -1) return null
-  const FIELDS = ['goalId', 'accountId', 'peer', 'status', 'result', 'note']
+  const FIELDS = ['goalId', 'campaignId', 'accountId', 'peer', 'status', 'result', 'note', 'followUps']
   for (const k of FIELDS) {
     if (patch[k] !== undefined) {
       if (k === 'status') {
         // Легаси-алиас поддерживаем; genuinely невалидный статус не затирает старый.
         const mapped = LEGACY_STATUS[patch[k]] || patch[k]
         if (LEAD_STATUSES.includes(mapped)) all[i].status = mapped
+        continue
+      }
+      if (k === 'followUps') {
+        all[i].followUps = Math.max(0, Math.floor(Number(patch[k]) || 0))
         continue
       }
       all[i][k] = k === 'peer' ? String(patch[k]).trim() : (patch[k] === null ? null : String(patch[k]))
@@ -171,6 +183,8 @@ export async function upsertLead(input) {
     all[i].status = advanced
     all[i].isHot = advanced === 'hot'
     if (clean.accountId) all[i].accountId = clean.accountId
+    // Кампанию проставляем, если её ещё нет: первый приведший её и «владеет».
+    if (clean.campaignId && !all[i].campaignId) all[i].campaignId = clean.campaignId
     all[i].updatedAt = Date.now()
     result = { lead: all[i], created: false }
     return all

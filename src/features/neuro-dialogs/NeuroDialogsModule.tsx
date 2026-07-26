@@ -495,12 +495,15 @@ export function NeuroDialogsModule() {
           presets={presets}
           onApplyPreset={applyPreset}
           onDeletePreset={deletePreset}
+          extras={(
+            // Ссылка на логи — перед плавающим баром, иначе рендерилась бы под ним внизу экрана.
+            <div className="mt-4 flex justify-end">
+              <a href={task ? `/panel/tasks?task=${task.id}` : '/panel/tasks'} className="inline-flex items-center gap-1 text-xs font-semibold text-spark-300 hover:underline" title="Логи по этой задаче — в Дашборде задач">
+                <Terminal size={13} /> Логи выполнения — в Дашборде задач <ArrowUpRight size={13} />
+              </a>
+            </div>
+          )}
         />
-        <div className="mt-4 flex justify-end">
-          <a href={task ? `/panel/tasks?task=${task.id}` : '/panel/tasks'} className="inline-flex items-center gap-1 text-xs font-semibold text-spark-300 hover:underline" title="Логи по этой задаче — в Дашборде задач">
-            <Terminal size={13} /> Логи выполнения — в Дашборде задач <ArrowUpRight size={13} />
-          </a>
-        </div>
       </SectionCard>
 
       <div id="nd-dialogs-anchor" className="scroll-mt-4" />

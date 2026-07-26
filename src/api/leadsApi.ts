@@ -8,6 +8,8 @@ export const LEAD_STATUSES: LeadStatus[] = ['cold', 'contacted', 'warm', 'intere
 export interface Lead {
   id: string
   goalId: string | null
+  /** Кампания, которая привела лида и ведёт его по воронке (проставляет статусы). */
+  campaignId: string | null
   accountId: string | null
   peer: string
   status: LeadStatus
@@ -21,13 +23,14 @@ export interface Lead {
 export interface LeadInput {
   peer: string
   goalId?: string | null
+  campaignId?: string | null
   accountId?: string | null
   status?: LeadStatus
   result?: string
   note?: string
 }
 
-export async function fetchLeads(filter: { goalId?: string; status?: LeadStatus } = {}): Promise<Lead[]> {
+export async function fetchLeads(filter: { goalId?: string; campaignId?: string; status?: LeadStatus } = {}): Promise<Lead[]> {
   // Отбрасываем пустые/undefined фильтры — иначе URLSearchParams слал бы "goalId=undefined",
   // и бэкенд отфильтровал бы всех лидов в ноль (список CRM оказывался пустым).
   const params = Object.fromEntries(Object.entries(filter).filter(([, v]) => v != null && v !== ''))

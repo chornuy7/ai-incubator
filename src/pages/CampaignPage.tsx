@@ -1,14 +1,15 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Rocket, Check, Clock, Power, Trash2, CalendarClock, Plus, Pencil, ArrowLeft, Lock, LockOpen, Target as TargetIcon } from 'lucide-react'
+import { Rocket, Check, Clock, Power, Trash2, CalendarClock, Plus, Pencil, ArrowLeft, Lock, LockOpen, Zap, Target as TargetIcon } from 'lucide-react'
 import { activeAccounts, trashedAccounts, useApp } from '@/mocks/store'
-import { PageHeader, Card, Select, Badge } from '@/shared/ui'
+import { PageHeader, Card, Select, Badge, EmptyState } from '@/shared/ui'
 import { HelpButton } from '@/features/neuro-commenting/moduleUi'
-import { MODULES } from '@/shared/config/modules'
+import { moduleTitle } from '@/shared/config/modules'
 import { fetchGoals, type Goal } from '@/api/goalsApi'
 import {
   launchCampaign, fetchSchedules, createSchedule, updateSchedule, deleteSchedule,
   fetchCampaigns, createCampaign, updateCampaign, deleteCampaign, CAMPAIGN_STATUSES,
+  FOLLOW_UP_MAX, FOLLOW_UP_DEFAULT,
   type CampaignResult, type CampaignSchedule, type Campaign, type CampaignStatus, type PinnedMap,
 } from '@/api/campaignsApi'
 import { fetchModulePresets, type ModulePreset } from '@/api/modulesApi'
@@ -18,11 +19,18 @@ import { fetchAccountGroups, createAccountGroup, accountsOfGroupsLocal, type Acc
 import { fetchChannels, type Channel } from '@/api/channelsApi'
 import { fetchAgents, type Agent } from '@/api/agentsApi'
 import { FolderPicker } from '@/features/modules/shared/FolderPicker'
+import { isAvailableForWork } from '@/shared/lib/accountStatus'
 
-// Модули, которые осмысленно вести к цели (принимают целевые каналы/группы).
-// Модули, которые осмысленно ставить в кампанию. Рассылки здесь не было вовсе —
-// поэтому связку «комментинг приводит людей, рассылка им пишет» собрать было нельзя.
-const CAMPAIGN_MODULES = ['neuro-commenting', 'mailing', 'neuro-chatting', 'mass-react', 'mass-looking']
+// Модули, которые осмысленно ставить в кампанию — все действующие «к цели».
+// Парсеры и AIR сюда не входят: они собирают аудиторию/оценивают, а не работают на этап.
+// Рассылка (`mailing`) стоит рядом: связка «комментинг приводит людей, рассылка им пишет».
+const CAMPAIGN_MODULES = [
+  'neuro-commenting', 'neuro-chatting', 'neuro-dialogs', 'mailing',
+  'mass-react', 'mass-looking', 'warming', 'autoposting',
+]
+
+/** Рассылка: её «цель» — получатель (номер/юзернейм), а не канал, поэтому получателей задаём отдельно. */
+const MAILING_KEY = 'mailing'
 
 /**
  * Модули, которые сами ведут переписку. Для них «добавить чатинг» бессмысленно:
@@ -49,6 +57,8 @@ export function CampaignPage() {
   const [picked, setPicked] = useState<Set<string>>(new Set())
   const [launching, setLaunching] = useState(false)
   const [result, setResult] = useState<CampaignResult | null>(null)
+  /** Разовый запуск открыт отдельным экраном — страница показывает только кампании. */
+  const [oneOffOpen, setOneOffOpen] = useState(false)
   const [schedules, setSchedules] = useState<CampaignSchedule[]>([])
   const [runAt, setRunAt] = useState('')
   const [repeat, setRepeat] = useState<'none' | 'daily'>('none')
@@ -78,12 +88,22 @@ export function CampaignPage() {
   // §0: настройки модуля для кампании. Держим их пресетом: у каждого модуля свой
   // набор полей, дублировать все формы внутри кампании — верный способ разойтись
   // с самим модулем. Пресет собирается там, где его удобно настраивать и проверять.
-  const [cSettings, setCSettings] = useState<Record<string, unknown> | null>(null)
-  const [cPresetId, setCPresetId] = useState('')
-  const [modulePresets, setModulePresets] = useState<ModulePreset[]>([])
+  // Теперь пресет у КАЖДОГО модуля свой (moduleKey → …): добавил модуль — под ним свой
+  // блок настроек. Раньше пресет был один на кампанию, и второй модуль шёл с дефолтом.
+  const [cModuleSettings, setCModuleSettings] = useState<Record<string, Record<string, unknown>>>({})
+  const [cModulePresetId, setCModulePresetId] = useState<Record<string, string>>({})
+  const [modulePresets, setModulePresets] = useState<Record<string, ModulePreset[]>>({})
+  // Получатели рассылки — отдельно от целевых каналов: номера и юзернеймы разными строками.
+  const [cMailNumbers, setCMailNumbers] = useState('')
+  const [cMailUsernames, setCMailUsernames] = useState('')
   const [cChat, setCChat] = useState(false)
   const [cChatGoal, setCChatGoal] = useState('')
   const [cChatScope, setCChatScope] = useState<'unread' | 'all'>('unread')
+  // Дожим и дедлайн переехали сюда из агента и цели (24.07): оркестрация — дело кампании.
+  const [cDeadline, setCDeadline] = useState('')
+  const [cFollowUp, setCFollowUp] = useState(false)
+  const [cFollowUpLimit, setCFollowUpLimit] = useState(FOLLOW_UP_DEFAULT)
+  const [cFollowUpText, setCFollowUpText] = useState('')
   const [cChatLimitMode, setCChatLimitMode] = useState<'untilTarget' | 'count'>('untilTarget')
   const [cChatMaxReplies, setCChatMaxReplies] = useState(5)
   const [cChatMaxDialogs, setCChatMaxDialogs] = useState(0)
@@ -107,8 +127,9 @@ export function CampaignPage() {
     void fetchAgents().then(setAgents).catch(() => {})
   }, [])
 
-  // Свободные аккаунты (не занятые другой задачей) — их и распределим.
-  const freeIds = useMemo(() => accounts.filter((a) => !a.busyIn).map((a) => a.id), [accounts])
+  // Свободные для работы аккаунты — их и распределим. Не только «не занят задачей»,
+  // но и рабочий статус: спамблок/карантин/непрогретый в кампанию лить нельзя.
+  const freeIds = useMemo(() => accounts.filter(isAvailableForWork).map((a) => a.id), [accounts])
   // Цели = вручную введённые + выбранные из базы каналов (без дублей).
   const targets = useMemo(() => {
     const typed = targetsText.split(/[\n,;]+/).map((t) => t.trim()).filter(Boolean)
@@ -173,9 +194,12 @@ export function CampaignPage() {
     catch (e) { pushToast({ type: 'error', title: 'Ошибка', desc: e instanceof Error ? e.message : '' }) }
   }
 
-  // §5: свободные аккаунты = активные, не закреплённые ЧУЖОЙ кампанией.
+  // §5: свободные аккаунты = свободные ДЛЯ РАБОТЫ (не занят задачей, рабочий статус)
+  // и не закреплённые ЧУЖОЙ кампанией. Раньше показывались все активные подряд, включая
+  // спамблок/карантин/занятых — их всё равно нельзя запустить, а в списке они путали.
   const freeForCampaign = useMemo(
     () => accounts.filter((a) => {
+      if (!isAvailableForWork(a)) return false
       const pin = pinnedMap[a.id]
       return !pin || pin.campaignId === editingCampaign?.id
     }),
@@ -185,29 +209,40 @@ export function CampaignPage() {
   const openNewCampaign = () => {
     setEditingCampaign(null)
     setCName(''); setCGoalId(''); setCModules(['neuro-commenting']); setCModuleAgents({}); setCAccounts([]); setCTargets('')
+    setCModuleSettings({}); setCModulePresetId({}); setCMailNumbers(''); setCMailUsernames('')
     setCPinned(true); setCStatus('draft'); setPickMode(0); setTakeN(5)
     setCChat(false); setCChatGoal(''); setCChatScope('unread')
     setCChatLimitMode('untilTarget'); setCChatMaxReplies(5); setCChatMaxDialogs(0)
+    setCDeadline(''); setCFollowUp(false); setCFollowUpLimit(FOLLOW_UP_DEFAULT); setCFollowUpText('')
     setFormOpen(true)
   }
-  // Пресеты берём для ПЕРВОГО модуля: настройки в кампании пока одни на задачу,
-  // а первый модуль — основной (он приводит людей, остальные работают по ним).
+  // Первый модуль — основной (приводит людей). На него смотрят чат-блок и заголовки.
   useEffect(() => { setCModule(cModules[0] || '') }, [cModules])
 
+  // Пресеты грузим для КАЖДОГО выбранного модуля: у каждого свой блок настроек.
   useEffect(() => {
-    setCPresetId(''); setCSettings(null); setModulePresets([])
-    if (!cModule) return
     let cancelled = false
-    void fetchModulePresets(cModule)
-      .then((p) => { if (!cancelled) setModulePresets(p) })
-      .catch(() => { /* нет пресетов — не беда, кампания запустится с настройками по умолчанию */ })
+    void Promise.all(cModules.map((k) =>
+      fetchModulePresets(k).then((p) => [k, p] as const).catch(() => [k, [] as ModulePreset[]] as const),
+    )).then((pairs) => { if (!cancelled) setModulePresets(Object.fromEntries(pairs)) })
     return () => { cancelled = true }
-  }, [cModule])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cModules.join(',')])
 
   const openEditCampaign = (c: Campaign) => {
     setEditingCampaign(c)
     setCName(c.name); setCGoalId(c.goalId || ''); setCModules(c.modules?.length ? c.modules : [c.moduleKey].filter(Boolean)); setCModuleAgents(c.moduleAgents || {}); setCAccounts(c.accountIds || [])
     setCTargets((c.targets || []).join('\n'))
+    // Пресеты каждого модуля. Обратной привязки «settings → id пресета» нет, поэтому
+    // селект показывает «По умолчанию», но сохранённые настройки применяются как есть.
+    setCModuleSettings(c.moduleSettings || (c.settings && Object.keys(c.settings).length ? { [c.moduleKey]: c.settings } : {}))
+    setCModulePresetId({})
+    // Получатели рассылки: раскладываем обратно на номера и юзернеймы (буквы → юзернейм).
+    const mail = c.moduleTargets?.[MAILING_KEY] || []
+    setCMailNumbers(mail.filter((t) => !/[a-zA-Zа-яА-Я_]/.test(t)).join('\n'))
+    setCMailUsernames(mail.filter((t) => /[a-zA-Zа-яА-Я_]/.test(t)).join('\n'))
+    setCDeadline(c.deadline || ''); setCFollowUp(c.followUp?.enabled === true)
+    setCFollowUpLimit(c.followUp?.limit || FOLLOW_UP_DEFAULT); setCFollowUpText(c.followUp?.instructions || '')
     setCPinned(c.pinned); setCStatus(c.status); setPickMode(1); setTakeN(c.accountIds?.length || 5)
     const ch = c.chat?.settings || {}
     setCChat(c.chat?.enabled === true)
@@ -228,11 +263,18 @@ export function CampaignPage() {
       : pickMode === 2
         ? accountsOfGroupsLocal(groups, pickedGroups).filter((id) => freeForCampaign.some((a) => a.id === id))
         : cAccounts
+    // Получатели рассылки — отдельная цель модуля mailing (номера + юзернеймы).
+    const mailTargets = cModules.includes(MAILING_KEY)
+      ? [...cMailNumbers.split(/[\n,;]+/), ...cMailUsernames.split(/[\n,;]+/)].map((x) => x.trim()).filter(Boolean)
+      : []
     setCSaving(true)
     try {
       const payload = {
         name: cName.trim(), goalId: cGoalId || null, moduleKey: cModules[0] || '', modules: cModules, moduleAgents: cModuleAgents, accountIds: ids, pinned: cPinned, status: cStatus,
-        ...(cSettings ? { settings: cSettings } : {}),
+        moduleSettings: cModuleSettings,
+        // Совместимость: старые места читают одиночный `settings` — кладём пресет первого модуля.
+        settings: cModuleSettings[cModules[0]] || {},
+        moduleTargets: (mailTargets.length ? { [MAILING_KEY]: mailTargets } : {}) as Record<string, string[]>,
         targets: cTargets.split(/[\n,;]+/).map((x) => x.trim()).filter(Boolean),
         chat: {
           enabled: cChat,
@@ -244,6 +286,9 @@ export function CampaignPage() {
             maxActiveDialogs: cChatMaxDialogs,
           },
         },
+        // Оркестрация — дело кампании: срок этапа и настойчивость в диалоге.
+        deadline: cDeadline || null,
+        followUp: { enabled: cFollowUp, limit: cFollowUpLimit, instructions: cFollowUpText.trim() },
       }
       if (editingCampaign) {
         await updateCampaign(editingCampaign.id, payload)
@@ -277,7 +322,6 @@ export function CampaignPage() {
    * Аккаунты кампании делятся между модулями на сервере (`splitAccounts`), цели берём из цели кампании.
    */
   const launchSaved = async (c: Campaign) => {
-    const goal = goals.find((g) => g.id === c.goalId)
     // Все модули кампании разом: они и должны работать вместе на общем пуле.
     const keys = c.modules?.length ? c.modules : [c.moduleKey].filter(Boolean)
     // A3.2: агент выбирается на СТРОКЕ модуля, поэтому кладём его в настройки задачи —
@@ -286,7 +330,10 @@ export function CampaignPage() {
     const modules = [
       ...keys.map((moduleKey) => ({
         moduleKey,
-        settings: { ...c.settings, agentId: c.moduleAgents?.[moduleKey] || undefined },
+        // Свои цели модуля (рассылка: получатели). Пусто — модуль возьмёт общие каналы кампании.
+        ...(c.moduleTargets?.[moduleKey]?.length ? { targets: c.moduleTargets[moduleKey] } : {}),
+        // Пресет ИМЕННО этого модуля (фолбэк на общий settings для старых кампаний).
+        settings: { ...(c.moduleSettings?.[moduleKey] || c.settings), agentId: c.moduleAgents?.[moduleKey] || undefined },
       })),
       ...(c.chat?.enabled ? [{ moduleKey: 'neuro-dialogs', settings: c.chat.settings }] : []),
     ]
@@ -294,15 +341,19 @@ export function CampaignPage() {
     if (!ids.length) return pushToast({ type: 'error', title: 'В кампании нет аккаунтов' })
     if (!(await confirmDialog({
       title: `Запустить «${c.name}»?`,
-      message: `${modules.map((m) => MODULES[m.moduleKey]?.title || m.moduleKey).join(' + ')} · ${ids.length} акк.`,
+      message: `${modules.map((m) => moduleTitle(m.moduleKey)).join(' + ')} · ${ids.length} акк.`,
       confirmLabel: 'Запустить',
     }))) return
     try {
-      // §9.0: сначала СВОИ каналы кампании, и только если их нет — каналы цели.
-      // Раньше был только фолбэк на цель, поэтому кампания не могла иметь собственных
-      // целей, и рядом жил отдельный запускатор со своим полем (тест 1.2).
-      const targets = (c.targets?.length ? c.targets : goal?.channels) || []
-      const r = await launchCampaign({ goalId: c.goalId, accountIds: ids, targets, modules })
+      // Каналы — свойство КАМПАНИИ (24.07). Раньше был фолбэк на каналы цели, но
+      // цель про группы «по-хорошему знать не должна», и это поле из неё убрано.
+      const targets = c.targets || []
+      const r = await launchCampaign({
+        goalId: c.goalId, campaignId: c.id, accountIds: ids, targets, modules,
+        // Дедлайн и дожим кампании доезжают до воркеров в настройках задачи.
+        deadline: c.deadline || null,
+        followUp: c.followUp || null,
+      })
       setResult(r)
       pushToast({
         type: r.tasks.length ? 'success' : 'error',
@@ -376,66 +427,100 @@ export function CampaignPage() {
                       on ? 'border-spark-500/50 bg-spark-500/12 text-spark-200' : 'border-line bg-elevated text-muted hover:border-spark-500/30'
                     }`}
                   >
-                    {on ? '✓ ' : ''}{MODULES[k]?.title || k}
+                    {on ? '✓ ' : ''}{moduleTitle(k)}
                   </button>
                 )
               })}
             </div>
             {!cModules.length && <div className="mt-1 text-xs text-rose-300">Выберите хотя бы один модуль</div>}
+          </div>
 
-            {/* A3.2: у каждого выбранного модуля — свой агент. Пусто = «без агента»:
-                модуль отработает на общих настройках, тон возьмётся по умолчанию. */}
-            {cModules.length > 0 && (
-              <div className="mt-3 space-y-2">
-                <div className="text-xs text-white/50">Кто ведёт модуль <span className="text-white/30">— AI-персона (тон, ограничения, дожим)</span></div>
-                {cModules.map((k) => (
-                  <div key={k} className="flex flex-wrap items-center gap-2">
-                    <span className="min-w-[150px] text-sm text-fg">{MODULES[k]?.title || k}</span>
-                    <Select
-                      value={cModuleAgents[k] || ''}
-                      onChange={(v) => setCModuleAgents((prev) => ({ ...prev, [k]: v }))}
-                      placeholder="Без агента"
-                      className="w-56"
-                      options={[{ value: '', label: 'Без агента' }, ...agents.map((a) => ({ value: a.id, label: a.name }))]}
-                    />
+          {/* Под каждым выбранным модулем — свой блок: кто ведёт (агент) + пресет настроек.
+              Добавил модуль — появился ещё один блок. Раньше пресет был один на кампанию,
+              и второй модуль запускался с настройками по умолчанию, даже если для него был
+              сохранён свой пресет (A3.2 — агент всегда был свой у каждого модуля). */}
+          {cModules.length > 0 && (
+            <div className="space-y-2">
+              <div className="text-xs text-white/50">Настройки модулей <span className="text-white/30">— агент и пресет у каждого свои</span></div>
+              {!agents.length && (
+                <div className="text-xs text-amber-300">Агентов пока нет — заведите их в разделе «Агенты», иначе тон будет по умолчанию.</div>
+              )}
+              {cModules.map((k) => {
+                const presets = modulePresets[k] || []
+                return (
+                  <div key={k} className="rounded-xl border border-line bg-elevated/40 p-3">
+                    <div className="mb-2 flex items-center justify-between gap-2">
+                      <span className="text-sm font-semibold text-fg">{moduleTitle(k)}</span>
+                      <a href={`/panel/modules/${k}`} className="text-xs font-semibold text-spark-300 hover:underline">
+                        Настроить и сохранить пресет →
+                      </a>
+                    </div>
+                    <div className="grid gap-2 sm:grid-cols-2">
+                      <div>
+                        <div className="mb-1 text-xs text-white/50">Кто ведёт <span className="text-white/30">(AI-персона)</span></div>
+                        <Select
+                          value={cModuleAgents[k] || ''}
+                          onChange={(v) => setCModuleAgents((prev) => ({ ...prev, [k]: v }))}
+                          placeholder="Без агента"
+                          options={[{ value: '', label: 'Без агента' }, ...agents.map((a) => ({ value: a.id, label: a.name }))]}
+                        />
+                      </div>
+                      <div>
+                        <div className="mb-1 text-xs text-white/50">Пресет настроек</div>
+                        {presets.length ? (
+                          <Select
+                            value={cModulePresetId[k] || ''}
+                            onChange={(v) => {
+                              setCModulePresetId((prev) => ({ ...prev, [k]: v }))
+                              setCModuleSettings((prev) => {
+                                const next = { ...prev }
+                                const s = v ? (presets.find((p) => p.id === v)?.settings as unknown as Record<string, unknown>) : undefined
+                                if (s) next[k] = s
+                                else delete next[k]
+                                return next
+                              })
+                            }}
+                            options={[
+                              { value: '', label: 'По умолчанию (настройки модуля)' },
+                              ...presets.map((p) => ({ value: p.id, label: p.name })),
+                            ]}
+                          />
+                        ) : (
+                          <div className="pt-1.5 text-xs text-white/40">Пресетов нет — запустится с настройками модуля по умолчанию.</div>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Рассылка: получатели — это номера/юзернеймы, а не каналы. Задаём их
+                        отдельно (юзернеймы — своей строкой): общие целевые каналы кампании сюда
+                        не годятся, писать в ЛС каналу нельзя. Модуль сам разберёт номер vs юзернейм. */}
+                    {k === MAILING_KEY && (
+                      <div className="mt-3 grid gap-2 border-t border-line pt-3 sm:grid-cols-2">
+                        <div>
+                          <div className="mb-1 text-xs text-white/50">Получатели — номера <span className="text-white/30">(по одному на строку)</span></div>
+                          <textarea
+                            className="input min-h-[64px] font-mono text-sm"
+                            value={cMailNumbers}
+                            onChange={(e) => setCMailNumbers(e.target.value)}
+                            placeholder={'+79991234567\n+380671234567'}
+                          />
+                        </div>
+                        <div>
+                          <div className="mb-1 text-xs text-white/50">Получатели — юзернеймы <span className="text-white/30">(по одному на строку)</span></div>
+                          <textarea
+                            className="input min-h-[64px] font-mono text-sm"
+                            value={cMailUsernames}
+                            onChange={(e) => setCMailUsernames(e.target.value)}
+                            placeholder={'@username1\n@username2'}
+                          />
+                        </div>
+                      </div>
+                    )}
                   </div>
-                ))}
-                {!agents.length && (
-                  <div className="text-xs text-amber-300">Агентов пока нет — заведите их в разделе «Агенты», иначе тон будет по умолчанию.</div>
-                )}
-              </div>
-            )}
-          </div>
-
-          {/* §0: настройки модуля для кампании — пресетом. Свою копию формы модуля здесь
-              заводить нельзя: у каждого модуля свой набор полей, и две формы неизбежно
-              разойдутся. Пресет собирается в самом модуле, где его видно и можно проверить. */}
-          <div className="rounded-xl border border-line bg-elevated/40 p-3">
-            <div className="mb-1 flex items-center justify-between text-xs text-white/50">
-              <span>Настройки модуля «{MODULES[cModule]?.title || cModule}»</span>
-              <a href={`/panel/modules/${cModule}`} className="font-semibold text-spark-300 hover:underline">
-                Настроить и сохранить пресет
-              </a>
+                )
+              })}
             </div>
-            {modulePresets.length ? (
-              <Select
-                value={cPresetId}
-                onChange={(v) => {
-                  setCPresetId(v)
-                  setCSettings(v ? (modulePresets.find((p) => p.id === v)?.settings as unknown as Record<string, unknown>) ?? null : null)
-                }}
-                options={[
-                  { value: '', label: 'По умолчанию (настройки модуля)' },
-                  ...modulePresets.map((p) => ({ value: p.id, label: p.name })),
-                ]}
-              />
-            ) : (
-              <div className="text-xs text-white/40">
-                Пресетов для этого модуля пока нет — кампания запустится с настройками модуля по умолчанию.
-                Чтобы задать свои, откройте модуль, настройте и нажмите «Сохранить пресет».
-              </div>
-            )}
-          </div>
+          )}
 
           {/* §9.0: СВОИ каналы кампании. Раньше их было негде задать: форма каналов не
               показывала, запуск брал их из цели, а рядом на странице жил отдельный
@@ -445,6 +530,16 @@ export function CampaignPage() {
             <div className="mb-1 text-xs text-white/50">
               Целевые каналы/группы <span className="text-white/30">(по одному на строку; пусто — возьмём каналы цели)</span>
             </div>
+            {/* Папки целей: раньше выбрать папку можно было только в разовом запуске, а в форме
+                кампании — нет, и большие списки каналов приходилось вставлять руками. */}
+            <FolderPicker
+              targets={cTargets.split(/[\n,;]+/).map((x) => x.trim()).filter(Boolean)}
+              onLoad={(loaded) => setCTargets((prev) => {
+                const have = new Set(prev.split(/[\n,;]+/).map((x) => x.trim()).filter(Boolean))
+                const add = loaded.map((x) => x.trim()).filter(Boolean).filter((x) => !have.has(x) && !have.has(`@${x}`))
+                return [...prev.split(/[\n,;]+/).map((x) => x.trim()).filter(Boolean), ...add].join('\n')
+              })}
+            />
             <textarea
               className="input min-h-[72px] font-mono text-sm"
               value={cTargets}
@@ -457,14 +552,14 @@ export function CampaignPage() {
               людей, чатинг ведёт ответивших к цели и сам прощается по выполнению.
               Если основной модуль САМ диалоговый — добавлять к нему чатинг не к чему:
               он и так ведёт переписку, вторая копия дублировала бы ответы. */}
-          {!DIALOG_MODULES.has(cModule) && (
+          {!cModules.some((m) => DIALOG_MODULES.has(m)) && (
           <div className="rounded-xl border border-line bg-elevated/40 p-3">
             <label className="flex cursor-pointer items-start gap-2.5">
               <input type="checkbox" checked={cChat} onChange={(e) => setCChat(e.target.checked)} className="mt-0.5 h-4 w-4 accent-spark" />
               <span>
                 <span className="text-sm font-semibold">Добавить чатинг</span>
                 <span className="mt-0.5 block text-xs text-white/45">
-                  Те, кто ответил на «{MODULES[cModule]?.title || cModule}», попадают в воронку — ИИ доводит их до цели
+                  Те, кто ответил на «{moduleTitle(cModule)}», попадают в воронку — ИИ доводит их до цели
                   и прощается, когда целевое действие выполнено.
                 </span>
               </span>
@@ -578,6 +673,48 @@ export function CampaignPage() {
             </label>
           </div>
 
+          {/* Оркестрация: срок этапа и настойчивость в диалоге. Раньше дедлайн жил
+              в цели, а дожим — в агенте. Оба переехали сюда (24.07): цель — счётчик,
+              агент — манера речи, а решения о ходе работы принимает кампания. */}
+          <div className="rounded-xl border border-line bg-elevated/40 p-3">
+            <div className="mb-2 text-sm font-semibold text-fg">Оркестрация</div>
+
+            <label className="mb-1 block text-xs text-white/50">
+              Дедлайн этапа <span className="text-white/30">(необязательно)</span>
+            </label>
+            <input type="date" value={cDeadline} onChange={(e) => setCDeadline(e.target.value)} className="input h-9 max-w-[220px]" />
+            <p className="mt-1 text-xs text-white/40">
+              После этой даты кампания не запускается, а уже идущие задачи останавливаются.
+            </p>
+
+            <label className="mt-3 flex cursor-pointer items-start gap-2">
+              <input type="checkbox" className="mt-1 h-4 w-4 rounded border-line accent-spark-500" checked={cFollowUp} onChange={(e) => setCFollowUp(e.target.checked)} />
+              <span>
+                <span className="text-sm font-semibold text-fg">Дожимать, если написал сам после закрытия</span>
+                <span className="mt-0.5 block text-xs text-white/45">
+                  Диалог закрыт (цель достигнута или отказ), но человек написал сам — это входящий
+                  интерес, а не наша навязчивость. Отвечаем, но не больше указанного числа сообщений.
+                </span>
+              </span>
+            </label>
+            {cFollowUp && (
+              <div className="mt-3 grid gap-3 sm:grid-cols-[160px_1fr]">
+                <div>
+                  <label className="mb-1 block text-xs text-white/50">Максимум сообщений</label>
+                  <input
+                    type="number" min={1} max={FOLLOW_UP_MAX} className="input"
+                    value={cFollowUpLimit}
+                    onChange={(e) => setCFollowUpLimit(Math.min(FOLLOW_UP_MAX, Math.max(1, Number(e.target.value) || FOLLOW_UP_DEFAULT)))}
+                  />
+                </div>
+                <div>
+                  <label className="mb-1 block text-xs text-white/50">Что делать в дожиме <span className="text-white/30">(необязательно)</span></label>
+                  <input className="input" value={cFollowUpText} onChange={(e) => setCFollowUpText(e.target.value)} placeholder="Напр. узнать, что не подошло" />
+                </div>
+              </div>
+            )}
+          </div>
+
           <div className="flex justify-end gap-2 border-t border-line pt-4">
             <button onClick={() => setFormOpen(false)} className="btn-ghost h-10">Отмена</button>
             <button onClick={() => void saveCampaign()} disabled={cSaving} className="btn-primary h-10">{cSaving ? 'Сохранение…' : editingCampaign ? 'Сохранить' : 'Создать кампанию'}</button>
@@ -587,23 +724,43 @@ export function CampaignPage() {
     )
   }
 
-  return (
+  // §9.0: РАЗОВЫЙ запуск — отдельный экран, а не блок под списком.
+  //
+  // Раньше он висел прямо на странице, и получалось две разные вещи с одним названием:
+  // сущность «Кампания» (cmp_) сверху и безымянный запуск (camp_), который генерил свой
+  // id и ни к какой кампании не привязывался. Тестировщик на прогоне 21–22.07 не смог
+  // понять, откуда запускать (тест 1.2). Теперь страница показывает ТОЛЬКО кампании,
+  // а всё остальное открывается кнопкой — как в «Агентах» и «Задачах».
+  const mainScreen = (
     <div>
       <PageHeader
-        title="Кампания"
-        subtitle="Кампания = цель + один модуль + свои каналы и аккаунты. Ниже — разовый запуск без сохранения."
+        title="Кампании"
+        subtitle="Кампания = цель + модули + свои каналы и аккаунты. Запускается повторно и помнит настройки."
         icon={<Rocket size={22} />}
-        actions={<div className="flex items-center gap-2"><HelpButton topic="campaign" className="h-10 w-10" /><button onClick={openNewCampaign} className="btn-primary h-10"><Plus size={16} /> Создать кампанию</button></div>}
+        actions={(
+          <div className="flex items-center gap-2">
+            <HelpButton topic="campaign" className="h-10 w-10" />
+            <button onClick={() => setOneOffOpen(true)} className="btn-ghost h-10" title="Запустить модули один раз, не заводя кампанию">
+              <Zap size={15} /> Разовый запуск
+            </button>
+            <button onClick={openNewCampaign} className="btn-primary h-10"><Plus size={16} /> Создать кампанию</button>
+          </div>
+        )}
       />
 
-      {/* §5: список кампаний — сущность, а не только разовый запуск. */}
-      <Card className="mb-4 p-4">
-        <div className="mb-2 flex items-center gap-2 text-sm font-semibold text-fg">
-          <Rocket size={15} className="text-spark-400" /> Кампании ({campaigns.length})
-        </div>
-        {campaigns.length === 0 ? (
-          <p className="text-sm text-white/50">Кампаний пока нет. Кампания = цель + настроенный модуль (+ чатинг) + закреплённые аккаунты.</p>
-        ) : (
+      {/* §5: список кампаний — единственное, что показывает страница. */}
+      {campaigns.length === 0 ? (
+        <EmptyState
+          icon={<Rocket size={26} />}
+          title="Кампаний пока нет"
+          desc="Кампания — это этап работы к цели: несколько модулей, свои каналы и свой пул аккаунтов. Настраивается один раз и запускается сколько угодно."
+          action={<button onClick={openNewCampaign} className="btn-primary h-9"><Plus size={15} /> Создать кампанию</button>}
+        />
+      ) : (
+        <Card className="mb-4 p-4">
+          <div className="mb-2 flex items-center gap-2 text-sm font-semibold text-fg">
+            <Rocket size={15} className="text-spark-400" /> Кампании ({campaigns.length})
+          </div>
           <div className="flex flex-col gap-2">
             {campaigns.map((c) => (
               <div key={c.id} className="flex flex-wrap items-center gap-2 rounded-xl border border-line bg-elevated/40 p-3">
@@ -611,7 +768,7 @@ export function CampaignPage() {
                   {{ draft: 'Черновик', active: 'Активна', paused: 'Пауза', done: 'Завершена' }[c.status]}
                 </Badge>
                 <span className="font-semibold text-white">{c.name}</span>
-                <span className="text-xs text-white/50">{MODULES[c.moduleKey]?.title || c.moduleKey}</span>
+                <span className="text-xs text-white/50">{moduleTitle(c.moduleKey)}</span>
                 {c.chat?.enabled && <Badge tone="iris">+ чатинг</Badge>}
                 {c.goalId && <span className="text-xs text-iris-300"><TargetIcon size={11} className="mb-0.5 inline" /> {goalNameOf(c.goalId)}</span>}
                 <span className="inline-flex items-center gap-1 text-xs text-white/50" title={c.pinned ? 'Аккаунты закреплены — вышли из общего пула' : 'Аккаунты используются без лока'}>
@@ -625,22 +782,34 @@ export function CampaignPage() {
               </div>
             ))}
           </div>
-        )}
-      </Card>
+        </Card>
+      )}
 
-      {/* §9.0: РАЗОВЫЙ запуск, а не вторая «кампания». Этот блок остался от старой модели
-          «одна цель → несколько модулей» и генерит свой id camp_xxx, не связанный с
-          сущностью кампании (cmp_xxx). Пока он жил без подписи, на одной странице
-          оказывалось две разные вещи с одинаковым названием, и тестировщик закономерно
-          путался, откуда запускать (прогон 21–22.07, тест 1.2). Кампанию заводят выше;
-          здесь — быстрый запуск без сохранения. */}
-      <div className="mb-2 mt-6 flex flex-wrap items-baseline gap-2">
-        <span className="font-display text-base font-bold text-fg">Разовый запуск</span>
-        <span className="text-xs text-muted">
-          без сохранения кампании: цель + сразу несколько модулей на общем пуле.
-          Задача не будет привязана к кампании — для повторяемой работы заведите кампанию выше.
-        </span>
-      </div>
+      {schedules.length > 0 && (
+        <Card className="mt-4 p-4">
+          <div className="mb-2 text-sm font-semibold text-fg">Запланированные кампании</div>
+          <div className="flex flex-col gap-2">
+            {schedules.map((s) => (
+              <div key={s.id} className={`flex flex-wrap items-center gap-2 rounded-xl border p-2.5 ${s.enabled ? 'border-line bg-elevated/40' : 'border-line/60 bg-elevated/20 opacity-60'}`}>
+                <Badge tone={s.enabled ? 'spark' : 'muted'}>{s.enabled ? 'вкл' : 'выкл'}</Badge>
+                <span className="truncate text-sm font-medium text-fg">{s.name}</span>
+                <Badge tone="iris">{s.repeat === 'daily' ? 'ежедневно' : 'один раз'}</Badge>
+                <span className="text-xs text-white/50"><Clock size={11} className="mb-0.5 mr-0.5 inline" />{new Date(s.runAt).toLocaleString()}</span>
+                {s.lastRunAt && <span className="text-xs text-white/40">· последний: {new Date(s.lastRunAt).toLocaleString()}{s.lastResult?.error ? ` (${s.lastResult.error})` : s.lastResult ? ` (задач: ${s.lastResult.tasks})` : ''}</span>}
+                <div className="ml-auto flex items-center gap-1">
+                  <button onClick={() => void toggleSchedule(s)} className="btn-icon h-8 w-8" aria-label="Вкл/выкл"><Power size={14} className={s.enabled ? 'text-spark-400' : 'text-white/40'} /></button>
+                  <button onClick={() => void removeSchedule(s)} className="btn-icon-danger h-8 w-8" aria-label="Удалить расписание" title="Удалить расписание"><Trash2 size={14} /></button>
+                </div>
+              </div>
+            ))}
+          </div>
+        </Card>
+      )}
+    </div>
+  )
+
+  const oneOffBody = (
+    <>
       <div className="grid gap-3 lg:grid-cols-2">
         <Card className="p-4">
           <div className="mb-1 text-xs text-white/50">Цель кампании</div>
@@ -651,7 +820,7 @@ export function CampaignPage() {
             {CAMPAIGN_MODULES.map((k) => (
               <button key={k} onClick={() => toggle(k)} className={`flex items-center gap-2 rounded-lg border px-3 py-2 text-left text-sm ${mods.has(k) ? 'border-spark-500/40 bg-spark-500/10 text-white' : 'border-white/10 text-white/70'}`}>
                 <span className={`flex h-4 w-4 items-center justify-center rounded border ${mods.has(k) ? 'border-spark-500 bg-spark-500 text-black' : 'border-white/30'}`}>{mods.has(k) && <Check size={11} />}</span>
-                {MODULES[k]?.title || k}
+                {moduleTitle(k)}
               </button>
             ))}
           </div>
@@ -713,27 +882,6 @@ export function CampaignPage() {
         </Card>
       </div>
 
-      {schedules.length > 0 && (
-        <Card className="mt-4 p-4">
-          <div className="mb-2 text-sm font-semibold text-fg">Запланированные кампании</div>
-          <div className="flex flex-col gap-2">
-            {schedules.map((s) => (
-              <div key={s.id} className={`flex flex-wrap items-center gap-2 rounded-xl border p-2.5 ${s.enabled ? 'border-line bg-elevated/40' : 'border-line/60 bg-elevated/20 opacity-60'}`}>
-                <Badge tone={s.enabled ? 'spark' : 'muted'}>{s.enabled ? 'вкл' : 'выкл'}</Badge>
-                <span className="truncate text-sm font-medium text-fg">{s.name}</span>
-                <Badge tone="iris">{s.repeat === 'daily' ? 'ежедневно' : 'один раз'}</Badge>
-                <span className="text-xs text-white/50"><Clock size={11} className="mb-0.5 mr-0.5 inline" />{new Date(s.runAt).toLocaleString()}</span>
-                {s.lastRunAt && <span className="text-xs text-white/40">· последний: {new Date(s.lastRunAt).toLocaleString()}{s.lastResult?.error ? ` (${s.lastResult.error})` : s.lastResult ? ` (задач: ${s.lastResult.tasks})` : ''}</span>}
-                <div className="ml-auto flex items-center gap-1">
-                  <button onClick={() => void toggleSchedule(s)} className="btn-icon h-8 w-8" aria-label="Вкл/выкл"><Power size={14} className={s.enabled ? 'text-spark-400' : 'text-white/40'} /></button>
-                  <button onClick={() => void removeSchedule(s)} className="btn-icon-danger h-8 w-8" aria-label="Удалить расписание" title="Удалить расписание"><Trash2 size={14} /></button>
-                </div>
-              </div>
-            ))}
-          </div>
-        </Card>
-      )}
-
       {result && (
         <Card className="mt-4 p-4">
           <div className="mb-2 flex items-center gap-2 text-sm text-white/70">
@@ -744,20 +892,36 @@ export function CampaignPage() {
             {result.tasks.map((t) => (
               <div key={t.taskId} className="flex items-center gap-2 rounded bg-white/5 px-3 py-1.5 text-sm">
                 <Badge tone="spark">запущено</Badge>
-                <span className="text-white">{MODULES[t.moduleKey]?.title || t.moduleKey}</span>
+                <span className="text-white">{moduleTitle(t.moduleKey)}</span>
                 <span className="text-xs text-white/40">{t.accounts} акк.</span>
               </div>
             ))}
             {result.skipped.map((s, i) => (
               <div key={i} className="flex items-center gap-2 rounded bg-white/5 px-3 py-1.5 text-sm">
                 <Badge tone="amber">пропущено</Badge>
-                <span className="text-white/70">{MODULES[s.moduleKey]?.title || s.moduleKey}</span>
+                <span className="text-white/70">{moduleTitle(s.moduleKey)}</span>
                 <span className="text-xs text-white/40">— {s.reason}</span>
               </div>
             ))}
           </div>
         </Card>
       )}
-    </div>
+    </>
   )
+
+  if (oneOffOpen) {
+    return (
+      <div>
+        <button onClick={() => setOneOffOpen(false)} className="btn-ghost mb-3 h-9"><ArrowLeft size={15} /> Назад к кампаниям</button>
+        <PageHeader
+          title="Разовый запуск"
+          subtitle="Без сохранения кампании: цель + сразу несколько модулей на общем пуле. Задача не привяжется к кампании — для повторяемой работы заведите кампанию."
+          icon={<Rocket size={22} />}
+        />
+        {oneOffBody}
+      </div>
+    )
+  }
+
+  return mainScreen
 }

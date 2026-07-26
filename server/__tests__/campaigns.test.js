@@ -78,6 +78,34 @@ test('CRUD кампаний на изолированном файле', async (
   delete process.env.CAMPAIGNS_FILE
 })
 
+test('updateCampaign: массивы и per-module карты не строкифицируются', async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'campaigns-pm-'))
+  process.env.CAMPAIGNS_FILE = path.join(dir, 'campaigns.json')
+  const C = await import('../campaigns.js?pm=' + Date.now())
+
+  const created = await C.createCampaign({ name: 'Мульти', moduleKey: 'neuro-commenting' })
+  // Редактирование шлёт весь набор (как форма): modules — массив, moduleAgents/moduleSettings —
+  // объекты, targets — массив. Раньше цикл по FIELDS прогонял их через String() и портил.
+  const upd = await C.updateCampaign(created.id, {
+    moduleKey: 'neuro-commenting',
+    modules: ['neuro-commenting', 'mailing'],
+    moduleAgents: { 'neuro-commenting': 'ag1', mailing: 'ag2' },
+    moduleSettings: { 'neuro-commenting': { maxComments: 20 }, mailing: {} },
+    moduleTargets: { mailing: ['+79991234567', '@user1'] },
+    targets: ['@Crypto', 'crypto'],
+  })
+  assert.deepEqual(upd.modules, ['neuro-commenting', 'mailing'])
+  assert.deepEqual(upd.moduleAgents, { 'neuro-commenting': 'ag1', mailing: 'ag2' })
+  // Пустой пресет модуля отбрасывается, непустой сохраняется как объект.
+  assert.deepEqual(upd.moduleSettings, { 'neuro-commenting': { maxComments: 20 } })
+  // Номер получателя рассылки НЕ приводится к нижнему регистру и не теряет '+'.
+  assert.deepEqual(upd.moduleTargets, { mailing: ['+79991234567', '@user1'] })
+  // Общие каналы нормализуются (без @, нижний регистр, без дублей) — @Crypto и crypto = один.
+  assert.deepEqual(upd.targets, ['crypto'])
+
+  delete process.env.CAMPAIGNS_FILE
+})
+
 test('createCampaign: без имени и без модуля — ошибка', async () => {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'campaigns-err-'))
   process.env.CAMPAIGNS_FILE = path.join(dir, 'campaigns.json')
@@ -86,4 +114,42 @@ test('createCampaign: без имени и без модуля — ошибка'
   // §0: кампания обязана настраивать модуль — «неконтролируемая кампания» не нужна
   await assert.rejects(() => C.createCampaign({ name: 'Без модуля' }), /модул/i)
   delete process.env.CAMPAIGNS_FILE
+})
+
+// ── Дедлайн и дожим переехали в кампанию (решение 24.07) ──
+test('дедлайн кампании: отсекаем опечатки в годе и несуществующие даты', async () => {
+  const { normalizeCampaign } = await import('../campaigns.js')
+  // Найдено ручным тестом 21.07 (тогда поле было у цели): проходил год 123123 —
+  // на карточке рисовалось «до 24.07.123123», и срок не наступал никогда.
+  assert.equal(normalizeCampaign({ name: 'x', deadline: '123123-07-24' }).deadline, null)
+  assert.equal(normalizeCampaign({ name: 'x', deadline: '1899-01-01' }).deadline, null)
+  assert.equal(normalizeCampaign({ name: 'x', deadline: 'abc' }).deadline, null)
+  // Date «доворачивает» 31 февраля на март — такую дату не принимаем.
+  assert.equal(normalizeCampaign({ name: 'x', deadline: '2026-02-31' }).deadline, null)
+  // Нормальные проходят; прошлое разрешено — по нему проверяют «просрочено».
+  assert.equal(normalizeCampaign({ name: 'x', deadline: '2026-12-31' }).deadline, '2026-12-31')
+  assert.equal(normalizeCampaign({ name: 'x' }).deadline, null)
+})
+
+test('дожим у кампании, а не у агента: лимит клампится, мусор не ломает', async () => {
+  const { normalizeCampaign, FOLLOW_UP_MAX, FOLLOW_UP_DEFAULT } = await import('../campaigns.js')
+  assert.deepEqual(normalizeCampaign({ name: 'x' }).followUp,
+    { enabled: false, limit: FOLLOW_UP_DEFAULT, instructions: '' })
+  const c = normalizeCampaign({ name: 'x', followUp: { enabled: true, limit: 999 } })
+  assert.equal(c.followUp.limit, FOLLOW_UP_MAX, 'потолок держим')
+  assert.equal(c.followUp.enabled, true)
+  assert.equal(normalizeCampaign({ name: 'x', followUp: 'мусор' }).followUp.enabled, false)
+})
+
+test('агент не решает, дожимать ли — это дело кампании', async () => {
+  const { normalizeAgent } = await import('../agents.js')
+  const a = normalizeAgent({ name: 'A', followUp: { enabled: true, limit: 5 } })
+  assert.equal(a.followUp, undefined, 'агент — про манеру речи, а не про ход работы')
+})
+
+test('агент принял аудиторию и критерий завершения из цели', async () => {
+  const { normalizeAgent } = await import('../agents.js')
+  const a = normalizeAgent({ name: 'A', audience: 'трейдеры', completionCriteria: 'перешёл по ссылке' })
+  assert.equal(a.audience, 'трейдеры')
+  assert.equal(a.completionCriteria, 'перешёл по ссылке')
 })

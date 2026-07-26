@@ -69,6 +69,9 @@ import { getGoal, isGoalExpired } from '../goals.js'
  * @param {object} settings @returns {Promise<boolean>}
  */
 async function goalExpired(settings) {
+  // Дедлайн переехал из цели в кампанию (24.07) и приезжает в настройках задачи.
+  // Цель проверяем следом — только ради кампаний, заведённых до переезда.
+  if (settings?.deadline) return isGoalExpired({ deadline: settings.deadline })
   if (!settings?.goalId) return false
   try {
     const goal = await getGoal(settings.goalId)
@@ -216,6 +219,9 @@ export async function runNeuroCommenting(task, store) {
   // (все выбрали лимит на аккаунт или недоступны), а общий лимit при малом числе аккаунтов может быть
   // недостижим — без этого while крутился бы вхолостую на 100% CPU. Тогда завершаем задачу.
   let idleLap = 0
+  // Почему круг оказался пустым: без этого задача завершалась словами «исчерпали
+  // лимиты» даже когда всех отсеял распорядок — и ноль действий читался как поломка.
+  let lastSkip = ''
   const accountIds = s.accountIds || []
 
   try {
@@ -227,25 +233,32 @@ export async function runNeuroCommenting(task, store) {
         break
       }
       if (idleLap >= accountIds.length) {
-        await store.appendLog(task, 'info', 'Все аккаунты исчерпали лимиты на эту задачу — завершаем')
+        // Почему круг оказался пустым. Без этой оговорки задача завершалась словами
+        // «исчерпали лимиты» даже когда всех до одного отсеял распорядок — и оператор
+        // читал нулевой результат как поломку продукта (живой прогон 23.07).
+        await store.appendLog(task, 'info', lastSkip
+          ? `Ни один аккаунт не может работать сейчас (${lastSkip}) — завершаем`
+          : 'Все аккаунты исчерпали лимиты на эту задачу — завершаем')
         break
       }
       const accountId = accountIds[idx++ % accountIds.length]
       const meta = await getAccountMeta(accountId)
       if (!isAccountRunnable(meta.status || 'active')) {
         idleLap += 1
+        lastSkip = `статус ${meta.status}`
         await store.appendLog(task, 'warning', `Пропуск: ${meta.status}`, meta.name)
         continue
       }
-      if (perAccountLimitReached(s, accountId, task)) { idleLap += 1; continue }
+      if (perAccountLimitReached(s, accountId, task)) { idleLap += 1; lastSkip = 'лимит на аккаунт'; continue }
       // §4.1–§4.2 (D1/D3): усталость и распорядок — СКВОЗЬ модули. Счётчики живут
       // у аккаунта, поэтому профиль, только что отработавший смену в другом модуле,
       // сюда уже не попадёт: раньше каждая задача считала с нуля и освободившийся
       // аккаунт тут же уходил лить реакции.
       const human = await canWorkNow(accountId)
-      if (!human.ok) { idleLap += 1; await store.appendLog(task, 'info', `Пропуск: ${human.reason}`, meta.name); continue }
-      if (await limitReached(accountId, 'comments')) { idleLap += 1; await store.appendLog(task, 'info', 'Суточный лимит комментариев достигнут (§6)', meta.name); continue }
+      if (!human.ok) { idleLap += 1; lastSkip = human.reason; await store.appendLog(task, 'info', `Пропуск: ${human.reason}`, meta.name); continue }
+      if (await limitReached(accountId, 'comments')) { idleLap += 1; lastSkip = 'суточный лимит'; await store.appendLog(task, 'info', 'Суточный лимит комментариев достигнут (§6)', meta.name); continue }
       idleLap = 0
+      lastSkip = ''
 
       let client
       let progressed = false
@@ -405,6 +418,9 @@ export async function runNeuroChatting(task, store) {
   const groups = targets(s)
   let idx = 0
   let idleLap = 0
+  // Почему круг оказался пустым: без этого задача завершалась словами «исчерпали
+  // лимиты» даже когда всех отсеял распорядок — и ноль действий читался как поломка.
+  let lastSkip = ''
   const accountIds = s.accountIds || []
 
   try {
@@ -416,14 +432,22 @@ export async function runNeuroChatting(task, store) {
         break
       }
       if (idleLap >= accountIds.length) {
-        await store.appendLog(task, 'info', 'Все аккаунты исчерпали лимиты на эту задачу — завершаем')
+        await store.appendLog(task, 'info', lastSkip
+          ? `Ни один аккаунт не может работать сейчас (${lastSkip}) — завершаем`
+          : 'Все аккаунты исчерпали лимиты на эту задачу — завершаем')
         break
       }
       const accountId = accountIds[idx++ % accountIds.length]
       const meta = await getAccountMeta(accountId)
-      if (!isAccountRunnable(meta.status || 'active') || perAccountLimitReached(s, accountId, task)) { idleLap += 1; continue }
-      if (await limitReached(accountId, 'comments')) { idleLap += 1; await store.appendLog(task, 'info', 'Суточный лимит сообщений достигнут (§6)', meta.name); continue }
+      if (!isAccountRunnable(meta.status || 'active') || perAccountLimitReached(s, accountId, task)) { idleLap += 1; lastSkip = 'статус или лимит на аккаунт'; continue }
+      // §4.1–§4.2: усталость и распорядок — во ВСЕХ модулях, а не только в комментинге.
+      // Иначе «сквозной отдых» дырявый: аккаунт, отработавший смену тут, копил усталость,
+      // но никто её не проверял — и он же уходил лить реакции в соседнем модуле.
+      const human = await canWorkNow(accountId)
+      if (!human.ok) { idleLap += 1; lastSkip = human.reason; await store.appendLog(task, 'info', `Пропуск: ${human.reason}`, meta.name); continue }
+      if (await limitReached(accountId, 'comments')) { idleLap += 1; lastSkip = 'суточный лимит'; await store.appendLog(task, 'info', 'Суточный лимит сообщений достигнут (§6)', meta.name); continue }
       idleLap = 0
+      lastSkip = ''
       let client
       let progressed = false
       try {
@@ -523,6 +547,9 @@ export async function runMassReact(task, store) {
   const fixedPosts = parseTelegramPostLinks(s.postUrls).filter((p) => !p.username || !isBlacklistedSync(p.username))
   let idx = 0
   let idleLap = 0
+  // Почему круг оказался пустым: без этого задача завершалась словами «исчерпали
+  // лимиты» даже когда всех отсеял распорядок — и ноль действий читался как поломка.
+  let lastSkip = ''
   const accountIds = s.accountIds || []
 
   try {
@@ -534,14 +561,21 @@ export async function runMassReact(task, store) {
         break
       }
       if (idleLap >= accountIds.length) {
-        await store.appendLog(task, 'info', 'Все аккаунты исчерпали лимиты на эту задачу — завершаем')
+        await store.appendLog(task, 'info', lastSkip
+          ? `Ни один аккаунт не может работать сейчас (${lastSkip}) — завершаем`
+          : 'Все аккаунты исчерпали лимиты на эту задачу — завершаем')
         break
       }
       const accountId = accountIds[idx++ % accountIds.length]
       const meta = await getAccountMeta(accountId)
-      if (!isAccountRunnable(meta.status || 'active') || perAccountLimitReached(s, accountId, task)) { idleLap += 1; continue }
-      if (await limitReached(accountId, 'reactions')) { idleLap += 1; await store.appendLog(task, 'info', 'Суточный лимит реакций достигнут (§6)', meta.name); continue }
+      if (!isAccountRunnable(meta.status || 'active') || perAccountLimitReached(s, accountId, task)) { idleLap += 1; lastSkip = 'статус или лимит на аккаунт'; continue }
+      // §4.1–§4.2: реакции — самый «дешёвый» модуль, и именно им добивали уставшие
+      // аккаунты. Проверка та же, что в комментинге: усталость общая.
+      const human = await canWorkNow(accountId)
+      if (!human.ok) { idleLap += 1; lastSkip = human.reason; await store.appendLog(task, 'info', `Пропуск: ${human.reason}`, meta.name); continue }
+      if (await limitReached(accountId, 'reactions')) { idleLap += 1; lastSkip = 'суточный лимит'; await store.appendLog(task, 'info', 'Суточный лимит реакций достигнут (§6)', meta.name); continue }
       idleLap = 0
+      lastSkip = ''
       let client
       try {
         ;({ client } = await connectAccount(accountId, task.id))
@@ -628,6 +662,9 @@ export async function runMassLooking(task, store) {
   const tgs = targets(s)
   let idx = 0
   let idleLap = 0
+  // Почему круг оказался пустым: без этого задача завершалась словами «исчерпали
+  // лимиты» даже когда всех отсеял распорядок — и ноль действий читался как поломка.
+  let lastSkip = ''
   const accountIds = s.accountIds || []
   const lookMode = ['stories', 'posts', 'both'].includes(s.lookMode) ? s.lookMode : 'stories'
   const postsCount = Math.min(Math.max(Math.trunc(Number(s.lookPostsCount) || 0) || 3, 1), 50)
@@ -641,13 +678,19 @@ export async function runMassLooking(task, store) {
         break
       }
       if (idleLap >= accountIds.length) {
-        await store.appendLog(task, 'info', 'Все аккаунты исчерпали лимиты на эту задачу — завершаем')
+        await store.appendLog(task, 'info', lastSkip
+          ? `Ни один аккаунт не может работать сейчас (${lastSkip}) — завершаем`
+          : 'Все аккаунты исчерпали лимиты на эту задачу — завершаем')
         break
       }
       const accountId = accountIds[idx++ % accountIds.length]
       const meta = await getAccountMeta(accountId)
-      if (!isAccountRunnable(meta.status || 'active') || perAccountLimitReached(s, accountId, task)) { idleLap += 1; continue }
+      if (!isAccountRunnable(meta.status || 'active') || perAccountLimitReached(s, accountId, task)) { idleLap += 1; lastSkip = 'статус или лимит на аккаунт'; continue }
+      // §4.1–§4.2: просмотры тоже расходуют аккаунт — усталость и распорядок общие.
+      const human = await canWorkNow(accountId)
+      if (!human.ok) { idleLap += 1; lastSkip = human.reason; await store.appendLog(task, 'info', `Пропуск: ${human.reason}`, meta.name); continue }
       idleLap = 0
+      lastSkip = ''
       let client
       try {
         ;({ client } = await connectAccount(accountId, task.id))
@@ -1064,7 +1107,11 @@ export async function runNeuroDialogs(task, store) {
           // (или есть непрочитанные), — но условие пишем явно, чтобы дожим не начал
           // срабатывать сам, если фильтрация выше однажды изменится.
           const hasIncoming = d.unread > 0 || !d.lastOut
-          const decision = followUpDecision(leadNow, agentObj || goalObj, fuDone, hasIncoming)
+          // Дожим настраивает КАМПАНИЯ (24.07): она знает цель, этап и пул.
+          // `s.followUp` приезжает из настроек задачи; цель — только для кампаний,
+          // заведённых до переезда.
+          const fuOwner = s.followUp ? { followUp: s.followUp } : goalObj
+          const decision = followUpDecision(leadNow, fuOwner, fuDone, hasIncoming)
           if (decision.mode === 'skip') {
             await store.appendLog(task, 'info', `«${peerKey}» ${decision.reason}`, meta.name)
             answeredUpTo.set(`${accountId}:${d.id}`, Math.max(d.lastMessageId ?? 0, answeredUpTo.get(`${accountId}:${d.id}`) ?? 0))
@@ -1094,7 +1141,7 @@ export async function runNeuroDialogs(task, store) {
           // В дожиме — свой тон: человек уже прошёл воронку, продавать ему то же
           // самое повторно это верный способ получить блокировку.
           const sysPrompt = dialogSystemPrompt(s, goal, goalObj, effStatus, stageForStatus(goalObj?.stages, effStatus))
-            + (isFollowUp ? followUpPrompt(agentObj || goalObj, rawStatus, decision.left) : '')
+            + (isFollowUp ? followUpPrompt(fuOwner, rawStatus, decision.left) : '')
           const gen = await generateComment(prompt, s.promptIndex ?? 0, sysPrompt, accountId)
           if (gen?.usage?.tokens) await recordTokens({ ...gen.usage, module: task.moduleKey, accountId, taskId: task.id, campaignId: s.campaignId })
           const mode = gen.mode
@@ -1133,7 +1180,15 @@ export async function runNeuroDialogs(task, store) {
           task.leadReplies[peerKey] = sentToLead + 1 // §9: счётчик ответов этому лиду
           // Дожим считаем отдельно: у него свой потолок из цели, и обычный лимит
           // ответов на лида к нему отношения не имеет.
-          if (isFollowUp) task.followUps[peerKey] = (task.followUps[peerKey] || 0) + 1
+          if (isFollowUp) {
+            task.followUps[peerKey] = (task.followUps[peerKey] || 0) + 1
+            // Дожим отмечаем и У ЛИДА: счётчик в задаче живёт до её конца, а цели
+            // нужно знать, скольких довели дожимом, — это отдельная цифра в отчёте.
+            if (leadNow?.id) {
+              await updateLead(leadNow.id, { followUps: (Number(leadNow.followUps) || 0) + 1 })
+                .catch(() => { /* CRM недоступна — из-за счётчика диалог не рвём */ })
+            }
+          }
           await incAction(accountId, 'dm') // §6: суточный лимит ЛС
           await bumpProgress(task, store)
         await noteAction(accountId) // §4.3: усталость общая для всех модулей
@@ -1146,7 +1201,7 @@ export async function runNeuroDialogs(task, store) {
           // двигает только вперёд, поэтому прогретый лид этим вызовом не сбросится.
           if (s.goalId) {
             try {
-              const { created } = await upsertLead({ goalId: s.goalId, accountId, peer: peerKey, status: 'contacted' })
+              const { created } = await upsertLead({ goalId: s.goalId, campaignId: s.campaignId, accountId, peer: peerKey, status: 'contacted' })
               if (created) await store.appendLog(task, 'info', `Новый лид в CRM: ${peerKey}`, meta.name)
             } catch (e) {
               // CRM не должна ронять переписку — диалог важнее записи о нём.
@@ -1179,7 +1234,7 @@ export async function runNeuroDialogs(task, store) {
                     `Дожим «${peerKey}»: ${cur.status} → ${next} (${verdict.reason})`, meta.name)
                 }
               } else if (shouldAdvance(cur?.status || 'cold', verdict.status)) {
-                await upsertLead({ peer: peerKey, goalId: s.goalId, accountId, status: verdict.status })
+                await upsertLead({ peer: peerKey, goalId: s.goalId, campaignId: s.campaignId, accountId, status: verdict.status })
                 await store.appendLog(
                   task,
                   verdict.status === 'hot' || verdict.status === 'target' ? 'success' : 'info',
@@ -1924,18 +1979,25 @@ export async function runMailing(task, store) {
   // Дожим тоже принадлежит агенту: «дожимать или отпускать» — манера общения.
   // Для задач без агента остаётся цель — старые кампании продолжают работать.
   const agentObj = s.agentId ? await getAgent(s.agentId).catch(() => null) : null
-  // §9: заготовки первого сообщения живут в самой ЦЕЛИ («Первое сообщение:» и
-  // «Альтернативное…» в описании). Раньше текст приходилось дублировать в модуле,
-  // и он расходился с целью. Теперь: нет своего текста — берём из цели, по кругу.
+  // Заготовки первого сообщения теперь живут у АГЕНТА (24.07): «как заговорить первым» —
+  // свойство персоны, а не измеримого результата. Варианты в поле `firstMessage` агента,
+  // разделены пустой строкой; чередуем по кругу. Для СТАРЫХ целей, где текст лежал в
+  // описании цели («Первое сообщение:»), оставлен fallback — их не ломаем.
   const goalOpeners = await (async () => {
+    const { splitMessageVariants, firstMessagesFromGoal } = await import('../lib/goalContext.js')
+    const fromAgent = splitMessageVariants(agentObj?.firstMessage)
+    if (fromAgent.length) {
+      await store.appendLog(task, 'info', `Первое сообщение из агента: ${fromAgent.length} вариант(ов), чередуем`)
+      return fromAgent
+    }
     if (!s.goalId) return []
     try {
       const { getGoal } = await import('../goals.js')
-      const { firstMessagesFromGoal } = await import('../lib/goalContext.js')
-      return firstMessagesFromGoal(await getGoal(s.goalId))
+      const legacy = firstMessagesFromGoal(await getGoal(s.goalId))
+      if (legacy.length) await store.appendLog(task, 'info', `Первое сообщение из цели (устар.): ${legacy.length} вариант(ов), чередуем`)
+      return legacy
     } catch { return [] }
   })()
-  if (goalOpeners.length) await store.appendLog(task, 'info', `Первое сообщение из цели: ${goalOpeners.length} вариант(ов), чередуем`)
   const useAi = !!s.aiPerRecipient && isAiGenerationEnabled()
   // Пустой текст — не повод останавливаться: заготовка может лежать в самой цели
   // («Первое сообщение:» в описании) или текст сгенерит ИИ к цели.
@@ -2105,6 +2167,7 @@ export async function runMailing(task, store) {
             await upsertLead({
               peer: user.username ? `@${user.username}` : label,
               goalId: s.goalId,
+              campaignId: s.campaignId,
               accountId: account,
               status: 'cold',
             })

@@ -23,9 +23,15 @@ export const CAMPAIGN_STATUSES = ['draft', 'active', 'paused', 'done']
 // §0: `modules` — кампания ведёт НЕСКОЛЬКО модулей (звонок 22.07). §9.0: `targets` —
 // у кампании СВОИ целевые каналы (раньше брались из цели, из-за чего рядом жил отдельный
 // «разовый запускатор» и на странице было две сущности «кампания», тест 1.2).
-const FIELDS = ['name', 'goalId', 'moduleKey', 'modules', 'moduleAgents', 'settings', 'accountIds', 'pinned', 'status', 'chat', 'targets']
+const FIELDS = ['name', 'goalId', 'moduleKey', 'modules', 'moduleAgents', 'moduleSettings', 'moduleTargets', 'settings', 'accountIds', 'pinned', 'status', 'chat', 'targets']
 
 const normIds = (v) => (Array.isArray(v) ? [...new Set(v.map((x) => String(x || '').trim()).filter(Boolean))] : [])
+
+/** Целевые каналы: без @, без пробелов, нижний регистр, без дублей (см. normalizeCampaign). */
+function normTargets(v) {
+  return [...new Set((Array.isArray(v) ? v : [])
+    .map((x) => String(x || '').trim().replace(/^@/, '').toLowerCase()).filter(Boolean))]
+}
 
 /** Модуль-«догоняющий»: ведёт переписку с теми, кто ответил на основной модуль. */
 export const CHAT_MODULE = 'neuro-dialogs'
@@ -41,6 +47,52 @@ function normChat(v) {
   return {
     enabled: c.enabled === true,
     settings: c.settings && typeof c.settings === 'object' ? c.settings : {},
+  }
+}
+
+/** Сколько сообщений подряд можно дожимать одного человека, если он написал сам. */
+export const FOLLOW_UP_MAX = 50
+export const FOLLOW_UP_DEFAULT = 10
+
+/** Разумные границы дедлайна — те же, что были у цели. */
+export const DEADLINE_MIN_YEAR = 2000
+export const DEADLINE_MAX_YEAR = new Date().getFullYear() + 20
+
+/**
+ * Дедлайн кампании — строго 'YYYY-MM-DD' в разумных годах, иначе null.
+ * Проверка жёсткая не от вредности: раньше в базу проходил год 123123 (опечатка),
+ * на карточке рисовалось «до 24.07.123123», и срок не наступал никогда.
+ * @param {*} v
+ */
+function normDeadline(v) {
+  if (!v) return null
+  const s = String(v).trim()
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(s)
+  if (!m) return null
+  const year = Number(m[1])
+  if (year < DEADLINE_MIN_YEAR || year > DEADLINE_MAX_YEAR) return null
+  const d = new Date(`${s}T00:00:00Z`)
+  if (isNaN(d.getTime())) return null
+  // Отсекаем несуществующие даты вроде 2026-02-31 — Date их «доворачивает» на март.
+  if (d.getUTCFullYear() !== year || d.getUTCMonth() + 1 !== Number(m[2]) || d.getUTCDate() !== Number(m[3])) return null
+  return s
+}
+
+/**
+ * Дожим живёт в КАМПАНИИ, а не в агенте (решение звонка 24.07).
+ *
+ * Агент — это манера речи; «дожимать или отпустить» — решение о ходе работы, а его
+ * принимает тот, кто знает цель, этап и пул. Одного агента ставят и в кампанию,
+ * где дожимают до последнего, и в ту, где пишут один раз.
+ * @param {*} v
+ */
+function normFollowUp(v) {
+  if (!v || typeof v !== 'object') return { enabled: false, limit: FOLLOW_UP_DEFAULT, instructions: '' }
+  const n = Math.floor(Number(v.limit) || 0)
+  return {
+    enabled: !!v.enabled,
+    limit: n > 0 ? Math.min(n, FOLLOW_UP_MAX) : FOLLOW_UP_DEFAULT,
+    instructions: String(v.instructions ?? '').slice(0, 2000),
   }
 }
 
@@ -75,8 +127,44 @@ function normModuleAgents(map, modules) {
   return out
 }
 
+/**
+ * Настройки (пресет) КАЖДОГО модуля кампании: `moduleKey → settings`. Раньше пресет был
+ * один на кампанию (первый модуль) — второй модуль запускался с настройками по умолчанию,
+ * даже если для него сохранён свой пресет. Держим только ключи выбранных модулей — мусор
+ * от переключений в форме не копится.
+ * @param {*} map @param {string[]} modules
+ */
+function normModuleSettings(map, modules) {
+  const src = map && typeof map === 'object' ? map : {}
+  const out = {}
+  for (const k of modules) {
+    const v = src[k]
+    if (v && typeof v === 'object' && Object.keys(v).length) out[k] = v
+  }
+  return out
+}
+
+/**
+ * Свои цели у отдельного модуля: `moduleKey → [цели]`. Нужно рассылке — её «цель» это
+ * получатель (номер/юзернейм), а не канал, поэтому мешать её в общие целевые каналы
+ * кампании нельзя. Номера НЕ приводим к нижнему регистру и не режем @ — рассылка сама
+ * разбирает номер vs юзернейм (`classifyMailingTargets`); порча формата номера сломала бы разбор.
+ * @param {*} map @param {string[]} modules
+ */
+function normModuleTargets(map, modules) {
+  const src = map && typeof map === 'object' ? map : {}
+  const out = {}
+  for (const k of modules) {
+    const arr = Array.isArray(src[k]) ? src[k] : []
+    const clean = [...new Set(arr.map((x) => String(x || '').trim()).filter(Boolean))]
+    if (clean.length) out[k] = clean
+  }
+  return out
+}
+
 export function normalizeCampaign(input = {}) {
   const status = CAMPAIGN_STATUSES.includes(input.status) ? input.status : 'draft'
+  const modules = normModules(input.modules, input.moduleKey)
   return {
     name: String(input.name ?? '').trim(),
     goalId: input.goalId ? String(input.goalId) : null,
@@ -84,19 +172,26 @@ export function normalizeCampaign(input = {}) {
     // комментинг приводит людей, рассылка пишет им, чатинг ловит ответы. Раньше
     // кампания держала ровно один модуль, и «комментинг + рассылка» собрать было нельзя,
     // хотя сам запуск (`launchCampaign`) несколько модулей принимал всегда.
-    modules: normModules(input.modules, input.moduleKey),
-    moduleAgents: normModuleAgents(input.moduleAgents, normModules(input.modules, input.moduleKey)),
+    modules,
+    moduleAgents: normModuleAgents(input.moduleAgents, modules),
+    // Пресет КАЖДОГО модуля отдельно (раньше — один на кампанию, второй модуль шёл с дефолтом).
+    moduleSettings: normModuleSettings(input.moduleSettings, modules),
+    // Свои цели у модуля (рассылка: получатели-номера/юзернеймы, а не общие каналы).
+    moduleTargets: normModuleTargets(input.moduleTargets, modules),
     // Первый модуль дублируем в moduleKey: на него смотрят фильтры и старые кампании.
-    moduleKey: normModules(input.modules, input.moduleKey)[0] || '',
-    settings: input.settings && typeof input.settings === 'object' ? input.settings : {}, // пресет модуля
+    moduleKey: modules[0] || '',
+    settings: input.settings && typeof input.settings === 'object' ? input.settings : {}, // общий пресет (совместимость)
     accountIds: normIds(input.accountIds),
     // Нормализуем как цели папок: без @, без пробелов, нижний регистр, без дублей —
     // иначе @Crypto и @crypto дали бы двойную обработку одним аккаунтом (ср. 11.7-d).
-    targets: [...new Set((Array.isArray(input.targets) ? input.targets : [])
-      .map((x) => String(x || '').trim().replace(/^@/, '').toLowerCase()).filter(Boolean))],
+    targets: normTargets(input.targets),
     pinned: input.pinned !== false, // по умолчанию аккаунты закрепляются (выходят из общего пула)
     status,
     chat: normChat(input.chat), // §9: опциональный догоняющий чатинг
+    followUp: normFollowUp(input.followUp), // дожим — решение кампании, не агента
+    // Дедлайн переехал из цели (24.07): срок — свойство ЭТАПА работы. Цель «200
+    // переходов» бессрочна сама по себе; это кампания обязана уложиться к дате.
+    deadline: normDeadline(input.deadline),
   }
 }
 
@@ -139,15 +234,23 @@ export async function updateCampaign(id, patch = {}) {
   await mutateJson(CAMPAIGNS_FILE, (all) => {
   const i = all.findIndex((c) => c.id === id)
   if (i === -1) return undefined
+  // modules обрабатываем ПЕРВЫМ из «сложных» полей: moduleAgents/moduleSettings/
+  // moduleTargets фильтруются по актуальному списку модулей. FIELDS уже задаёт этот порядок
+  // (moduleKey → modules → moduleAgents → moduleSettings → moduleTargets).
   for (const k of FIELDS) {
     if (patch[k] === undefined) continue
     if (k === 'accountIds') all[i].accountIds = normIds(patch[k])
+    else if (k === 'modules') all[i].modules = normModules(patch[k], patch.moduleKey ?? all[i].moduleKey)
+    else if (k === 'moduleAgents') all[i].moduleAgents = normModuleAgents(patch[k], all[i].modules)
+    else if (k === 'moduleSettings') all[i].moduleSettings = normModuleSettings(patch[k], all[i].modules)
+    else if (k === 'moduleTargets') all[i].moduleTargets = normModuleTargets(patch[k], all[i].modules)
+    else if (k === 'targets') all[i].targets = normTargets(patch[k])
     else if (k === 'settings') all[i].settings = patch[k] && typeof patch[k] === 'object' ? patch[k] : all[i].settings
     else if (k === 'pinned') all[i].pinned = patch[k] !== false
     else if (k === 'status') { if (CAMPAIGN_STATUSES.includes(patch[k])) all[i].status = patch[k] }
     else if (k === 'goalId') all[i].goalId = patch[k] ? String(patch[k]) : null
     else if (k === 'chat') all[i].chat = normChat(patch[k])
-    else all[i][k] = String(patch[k]).trim()
+    else all[i][k] = String(patch[k]).trim() // name, moduleKey — строки
   }
   if (!all[i].name) throw new Error('Название кампании не может быть пустым')
   if (!all[i].modules?.length && !all[i].moduleKey) throw new Error('У кампании должен быть модуль')

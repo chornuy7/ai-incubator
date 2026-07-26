@@ -1,50 +1,52 @@
 import { useEffect, useState } from 'react'
-import { Target, Plus, Pencil, Trash2, BookOpen, Hash, X, ArrowLeft, Copy } from 'lucide-react'
+import { Target, Plus, Pencil, Trash2, X, Copy, Rocket } from 'lucide-react'
 import { useApp } from '@/mocks/store'
-import { PageHeader, Card, EmptyState, Badge } from '@/shared/ui'
+import { PageHeader, Card, EmptyState, Badge, Select } from '@/shared/ui'
 import { HelpButton } from '@/features/neuro-commenting/moduleUi'
 import { confirmDialog } from '@/shared/lib/dialog'
-import { FolderPicker } from '@/features/modules/shared'
 import {
-  fetchGoals, createGoal, updateGoal, deleteGoal, isGoalExpired, isSaneDeadline,
-  DEADLINE_MIN_YEAR, DEADLINE_MAX_YEAR, LEAD_TARGET_MAX,
-  type Goal, type GoalInput,
-  fetchKb, createKb, deleteKb, uploadKbFile, kbFileUrl, KB_FILE_MAX_BYTES, type KbItem,
+  fetchGoals, createGoal, updateGoal, deleteGoal,
+  fetchGoalProgress,
+  METRIC_LABELS, LEAD_TARGET_MAX,
+  GOAL_STATUSES, GOAL_STATUS_LABELS, GOAL_PRIORITIES, GOAL_PRIORITY_LABELS,
+  type Goal, type GoalInput, type MetricKind, type GoalProgress, type GoalStatus, type GoalPriority,
 } from '@/api/goalsApi'
-import { fetchLeads } from '@/api/leadsApi'
 import { fetchCampaigns, type Campaign } from '@/api/campaignsApi'
 
-const EMPTY: GoalInput = { name: '', description: '', targetAction: '', stages: [], completionCriteria: '', audience: '', channels: [], deadline: '', leadTarget: 0 }
+const EMPTY: GoalInput = {
+  name: '', description: '', metric: { kind: 'leads', target: 0, unit: '' },
+  status: 'active', priority: 'mid', period: { mode: 'all', from: null },
+}
 
+/**
+ * «Цели» — СЧЁТЧИК результата, и ничего больше.
+ *
+ * Решения звонков 22.07 и 24.07 (docs/SPEC-2026-07-22, §1):
+ *   тон, запреты, характер, язык, аудитория, критерий завершения, база знаний → АГЕНТ
+ *   дожим, дедлайн, каналы, модули, этапы                                     → КАМПАНИЯ
+ * Прямая цитата заказчика: «Цель нахуй не знает ни про модули, ни про общение,
+ * ни про тон. Она и про группы, по сути, ничего знать не должна.»
+ *
+ * Здесь остаётся: что хотим получить (словами), что считаем и сколько нужно.
+ * Счёт цель ведёт сама и отдаёт его кампаниям для статистики.
+ */
 export function GoalsPage() {
   const pushToast = useApp((s) => s.pushToast)
   const [goals, setGoals] = useState<Goal[]>([])
   const [loading, setLoading] = useState(true)
-  const [editing, setEditing] = useState<Goal | null>(null)
-  const [open, setOpen] = useState(false)
-  const [form, setForm] = useState<GoalInput>(EMPTY)
-  const [stagesText, setStagesText] = useState('')
-  const [channels, setChannels] = useState<string[]>([])
-  const [chInput, setChInput] = useState('')
+  const [editingId, setEditingId] = useState<string | null>(null)
+  const [form, setForm] = useState<GoalInput | null>(null)
   const [saving, setSaving] = useState(false)
-  const [kb, setKb] = useState<KbItem[]>([])
-  const [kbTitle, setKbTitle] = useState('')
-  const [kbContent, setKbContent] = useState('')
-  const [kbUploading, setKbUploading] = useState(false) // §4: загрузка файла в КБ
-  const [leadsByGoal, setLeadsByGoal] = useState<Record<string, number>>({}) // §4: сколько лидов у цели
-  const [campaignsByGoal, setCampaignsByGoal] = useState<Record<string, Campaign[]>>({}) // §4: цель оркестрирует кампании
+  /** Счётчики целей. Считает сервер: тот же счёт читает статистика кампаний. */
+  const [progress, setProgress] = useState<Record<string, GoalProgress>>({})
+  /** Кампании цели: счёт отдаётся им для статистики. */
+  const [campaignsByGoal, setCampaignsByGoal] = useState<Record<string, Campaign[]>>({})
 
   const load = async () => {
     setLoading(true)
     try {
       setGoals(await fetchGoals())
-      // §4: считаем лидов по каждой цели для прогресса к «цели по лидам».
-      void fetchLeads().then((leads) => {
-        const by: Record<string, number> = {}
-        for (const l of leads) if (l.goalId) by[l.goalId] = (by[l.goalId] || 0) + 1
-        setLeadsByGoal(by)
-      }).catch(() => {})
-      // §4: цель оркестрирует кампании — показываем их под целью.
+      void fetchGoalProgress().then(setProgress).catch(() => {})
       void fetchCampaigns().then(({ campaigns }) => {
         const by: Record<string, Campaign[]> = {}
         for (const c of campaigns) if (c.goalId) (by[c.goalId] ||= []).push(c)
@@ -52,146 +54,167 @@ export function GoalsPage() {
       }).catch(() => {})
     } catch (err) {
       pushToast({ type: 'error', title: 'Не удалось загрузить цели', desc: err instanceof Error ? err.message : '' })
-    } finally {
-      setLoading(false)
-    }
+    } finally { setLoading(false) }
   }
   useEffect(() => { void load() }, [])
 
-  const openNew = () => {
-    setEditing(null); setForm(EMPTY); setStagesText(''); setChannels([]); setChInput(''); setKb([]); setOpen(true)
-  }
+  const set = (patch: Partial<GoalInput>) => setForm((f) => ({ ...(f as GoalInput), ...patch }))
+  const setMetric = (patch: Partial<NonNullable<GoalInput['metric']>>) =>
+    setForm((f) => ({ ...(f as GoalInput), metric: { ...(f?.metric || {}), ...patch } }))
+
+  const openNew = () => { setEditingId(null); setForm({ ...EMPTY, metric: { ...EMPTY.metric! } }) }
   const openEdit = (g: Goal) => {
-    setEditing(g)
-    setForm({ name: g.name, description: g.description, targetAction: g.targetAction, completionCriteria: g.completionCriteria, audience: g.audience, deadline: g.deadline || '', leadTarget: g.leadTarget || 0 })
-    setStagesText((g.stages || []).join('\n'))
-    setChannels(g.channels || []); setChInput('')
-    setKb([]); setKbTitle(''); setKbContent('')
-    void fetchKb(g.id).then(setKb).catch(() => {})
-    setOpen(true)
-  }
-
-  const addChannels = () => {
-    const parsed = chInput.split(/[\n,\s]+/).map((s) => s.trim().replace(/^@/, '').replace(/https?:\/\/t\.me\//i, '').split('/')[0]).filter(Boolean)
-    if (!parsed.length) return
-    setChannels((prev) => [...new Set([...parsed, ...prev])])
-    setChInput('')
-  }
-
-  const addKb = async () => {
-    if (!editing || !kbContent.trim()) return
-    try {
-      await createKb(editing.id, { title: kbTitle.trim(), content: kbContent.trim() })
-      setKbTitle(''); setKbContent('')
-      setKb(await fetchKb(editing.id))
-    } catch (err) {
-      pushToast({ type: 'error', title: 'Ошибка базы знаний', desc: err instanceof Error ? err.message : '' })
-    }
-  }
-  // §4: база знаний с файлами — грузим и сразу обновляем список.
-  const addKbFile = async (file: File | undefined) => {
-    if (!editing || !file) return
-    // Размер проверяем ЗДЕСЬ, до отправки. Файл уходит как data-URL, то есть base64
-    // раздувает его примерно на треть: 4 МБ превращались в 5.33 МБ и пробивали лимит
-    // тела запроса express (5mb) — запрос умирал ДО серверной проверки, express отдавал
-    // HTML-страницу PayloadTooLargeError, фронт не мог её разобрать и показывал
-    // «API недоступен — перезапустите npm run dev», хотя API был исправен. Вежливое
-    // «Файл больше 3 МБ» показывалось лишь в узком окне 3–3.6 МБ (тест 5.6).
-    if (file.size > KB_FILE_MAX_BYTES) {
-      const mb = (n: number) => `${(n / 1024 / 1024).toFixed(1)} МБ`
-      return pushToast({
-        type: 'error',
-        title: `Файл больше ${mb(KB_FILE_MAX_BYTES)}`,
-        desc: `«${file.name}» весит ${mb(file.size)} — уменьшите или загрузите ссылкой.`,
-      })
-    }
-    setKbUploading(true)
-    try {
-      await uploadKbFile(editing.id, file)
-      setKb(await fetchKb(editing.id))
-      pushToast({ type: 'success', title: 'Файл добавлен в базу знаний', desc: file.name })
-    } catch (err) {
-      pushToast({ type: 'error', title: 'Файл не загружен', desc: err instanceof Error ? err.message : '' })
-    } finally { setKbUploading(false) }
-  }
-
-  const removeKb = async (item: KbItem) => {
-    if (!editing) return
-    if (!window.confirm('Удалить элемент базы знаний? Действие необратимо.')) return
-    try {
-      await deleteKb(editing.id, item.id)
-      setKb(await fetchKb(editing.id))
-    } catch (err) {
-      pushToast({ type: 'error', title: 'Ошибка удаления', desc: err instanceof Error ? err.message : '' })
-    }
+    setEditingId(g.id)
+    setForm({ name: g.name, description: g.description, metric: { ...g.metric } })
   }
 
   const save = async () => {
-    if (!form.name.trim()) return pushToast({ type: 'error', title: 'Укажите название цели' })
+    if (!form?.name.trim()) return pushToast({ type: 'error', title: 'Укажите название цели' })
     setSaving(true)
-    const payload: GoalInput = { ...form, stages: stagesText.split('\n').map((s) => s.trim()).filter(Boolean), channels }
     try {
-      if (editing) {
-        await updateGoal(editing.id, payload)
-        pushToast({ type: 'success', title: 'Цель обновлена', desc: form.name })
-      } else {
-        await createGoal(payload)
-        pushToast({ type: 'success', title: 'Цель создана', desc: form.name })
-      }
-      setOpen(false)
-      await load()
-    } catch (err) {
-      pushToast({ type: 'error', title: 'Ошибка сохранения', desc: err instanceof Error ? err.message : '' })
-    } finally {
-      setSaving(false)
-    }
+      if (editingId) { await updateGoal(editingId, form); pushToast({ type: 'success', title: 'Цель сохранена' }) }
+      else { await createGoal(form); pushToast({ type: 'success', title: 'Цель создана' }) }
+      setForm(null); setEditingId(null); await load()
+    } catch (e) {
+      pushToast({ type: 'error', title: 'Ошибка сохранения', desc: e instanceof Error ? e.message : '' })
+    } finally { setSaving(false) }
   }
 
-  /**
-   * Копия цели со всей начинкой. Цели у нас объёмные — этапы, критерий, тон,
-   * ограничения, дожим, — и под каждую новую кампанию их переписывали руками.
-   * База знаний не копируется: она привязана к своей цели и обычно другая.
-   */
   const duplicate = async (g: Goal) => {
     try {
-      const copy = await createGoal({
-        name: `${g.name} — копия`,
-        description: g.description,
-        targetAction: g.targetAction,
-        stages: g.stages,
-        completionCriteria: g.completionCriteria,
-        audience: g.audience,
-        channels: g.channels,
-        // Дедлайн и цель по лидам НЕ копируем: это план конкретной кампании,
-        // у копии он свой. Чужой дедлайн мог бы сразу оказаться просроченным.
-      })
-      pushToast({ type: 'success', title: 'Цель скопирована', desc: copy.name })
+      await createGoal({ name: `${g.name} — копия`, description: g.description, metric: g.metric })
+      pushToast({ type: 'success', title: 'Цель скопирована' })
       await load()
-      openEdit(copy)
-    } catch (err) {
-      pushToast({ type: 'error', title: 'Не удалось скопировать', desc: err instanceof Error ? err.message : '' })
-    }
+    } catch (e) { pushToast({ type: 'error', title: 'Не удалось скопировать', desc: e instanceof Error ? e.message : '' }) }
   }
 
   const remove = async (g: Goal) => {
-    if (!(await confirmDialog({ title: 'Удалить цель?', message: `«${g.name}» будет удалена.`, confirmLabel: 'Удалить', tone: 'danger' }))) return
-    try {
-      await deleteGoal(g.id)
-      pushToast({ type: 'success', title: 'Цель удалена', desc: g.name })
-      await load()
-    } catch (err) {
-      pushToast({ type: 'error', title: 'Ошибка удаления', desc: err instanceof Error ? err.message : '' })
-    }
+    const used = campaignsByGoal[g.id]?.length || 0
+    if (!(await confirmDialog({
+      title: 'Удалить цель?',
+      message: used
+        ? `«${g.name}» используют ${used} кампани(й) — они останутся без цели.`
+        : `«${g.name}» будет удалена.`,
+      confirmLabel: 'Удалить',
+      tone: 'danger',
+    }))) return
+    try { await deleteGoal(g.id); pushToast({ type: 'success', title: 'Цель удалена' }); await load() }
+    catch (e) { pushToast({ type: 'error', title: 'Ошибка удаления', desc: e instanceof Error ? e.message : '' }) }
   }
 
-  const set = (patch: Partial<GoalInput>) => setForm((f) => ({ ...f, ...patch }))
+  // ── Форма ──
+  if (form) {
+    const kind = (form.metric?.kind || 'leads') as MetricKind
+    return (
+      <div>
+        <button onClick={() => { setForm(null); setEditingId(null) }} className="btn-ghost mb-3 h-9"><X size={15} /> Назад к целям</button>
+        <PageHeader
+          title={editingId ? 'Изменить цель' : 'Новая цель'}
+          subtitle="Цель — это счётчик: что нужно получить и сколько. Как разговаривать — у агента, сроки и модули — у кампании."
+          icon={<Target size={22} />}
+        />
+        <Card className="space-y-4 p-4">
+          <div>
+            <label className="mb-1 block text-xs text-white/50">Название *</label>
+            <input className="input" value={form.name} onChange={(e) => set({ name: e.target.value })} placeholder="Напр. Продвижение крипто-канала" />
+          </div>
 
+          {/* «Что хочу получить своими словами» убрано: этот текст уходил в ИИ, а цель
+              не должна руководить агентом. Как разговаривать и первое сообщение — у Агента. */}
+          <div className="grid gap-3 sm:grid-cols-2">
+            <div>
+              <label className="mb-1 block text-xs text-white/50">Статус</label>
+              <Select
+                value={form.status || 'active'}
+                onChange={(v) => set({ status: v as GoalStatus })}
+                options={GOAL_STATUSES.map((s) => ({ value: s, label: GOAL_STATUS_LABELS[s] }))}
+              />
+            </div>
+            <div>
+              <label className="mb-1 block text-xs text-white/50">Приоритет</label>
+              <Select
+                value={form.priority || 'mid'}
+                onChange={(v) => set({ priority: v as GoalPriority })}
+                options={GOAL_PRIORITIES.map((p) => ({ value: p, label: GOAL_PRIORITY_LABELS[p] }))}
+              />
+            </div>
+          </div>
+
+          {/* Измеримый результат — «число + единица» (SPEC §1.1). Без него цель не
+              сможет честно сказать «достигнута». */}
+          <div className="rounded-lg border border-white/10 p-3">
+            <div className="mb-2 text-sm font-semibold text-fg">Измеримый результат</div>
+            <div className="grid gap-3 sm:grid-cols-[1fr_140px_1fr]">
+              <div>
+                <label className="mb-1 block text-xs text-white/50">Что считаем</label>
+                <Select
+                  value={kind}
+                  onChange={(v) => setMetric({ kind: v as MetricKind, unit: '' })}
+                  options={(Object.keys(METRIC_LABELS) as MetricKind[]).map((k) => ({ value: k, label: METRIC_LABELS[k] }))}
+                />
+              </div>
+              <div>
+                <label className="mb-1 block text-xs text-white/50">Сколько нужно</label>
+                <input
+                  type="number" min={0} max={LEAD_TARGET_MAX} className="input"
+                  value={form.metric?.target || 0}
+                  onChange={(e) => setMetric({ target: Math.min(LEAD_TARGET_MAX, Math.max(0, Number(e.target.value) || 0)) })}
+                />
+              </div>
+              <div>
+                <label className="mb-1 block text-xs text-white/50">Единица <span className="text-white/30">(пусто — как слева)</span></label>
+                <input
+                  className="input"
+                  value={form.metric?.unit || ''}
+                  onChange={(e) => setMetric({ unit: e.target.value })}
+                  placeholder={METRIC_LABELS[kind]}
+                />
+              </div>
+            </div>
+            {kind !== 'leads' && (
+              <p className="mt-2 text-xs text-amber-300/80">
+                Автоматически система считает пока только горячих лидов (из CRM).
+                Остальное нужно подтверждать счётчиком — переходы по ссылке считаются
+                через нашу короткую ссылку.
+              </p>
+            )}
+            {/* Период учёта: за какой срок считается счётчик. Раньше всегда «за всё время». */}
+            <div className="mt-3 border-t border-white/10 pt-3">
+              <label className="mb-1 block text-xs text-white/50">Период учёта <span className="text-white/30">— за какой срок считаем результат</span></label>
+              <div className="flex flex-wrap items-center gap-2">
+                <Select
+                  value={form.period?.mode || 'all'}
+                  onChange={(v) => set({ period: { mode: v as 'all' | 'from', from: v === 'from' ? (form.period?.from || '') : null } })}
+                  className="w-52"
+                  options={[{ value: 'all', label: 'За всё время' }, { value: 'from', label: 'С даты' }]}
+                />
+                {form.period?.mode === 'from' && (
+                  <input
+                    type="date"
+                    className="input h-9 max-w-[200px]"
+                    value={form.period?.from || ''}
+                    onChange={(e) => set({ period: { mode: 'from', from: e.target.value } })}
+                  />
+                )}
+              </div>
+            </div>
+          </div>
+
+          <div className="flex justify-end gap-2">
+            <button onClick={() => { setForm(null); setEditingId(null) }} className="btn-ghost h-10">Отмена</button>
+            <button onClick={() => void save()} disabled={saving} className="btn-primary h-10">{editingId ? 'Сохранить' : 'Создать'}</button>
+          </div>
+        </Card>
+      </div>
+    )
+  }
+
+  // ── Список ──
   return (
     <div>
-      {!open && (<>
       <PageHeader
         title="Цели"
-        subtitle="Цель кампании: целевое действие, этапы и критерий завершения. AI-модули работают к выбранной цели."
+        subtitle="Цель = измеримый результат: что получить и сколько. Счёт ведётся здесь и уходит в кампании для статистики."
         icon={<Target size={22} />}
         actions={<div className="flex items-center gap-2"><HelpButton topic="goals" className="h-10 w-10" /><button onClick={openNew} className="btn-primary h-10"><Plus size={16} /> Новая цель</button></div>}
       />
@@ -202,231 +225,104 @@ export function GoalsPage() {
         <EmptyState
           icon={<Target size={26} />}
           title="Целей пока нет"
-          desc="Создайте цель кампании — к ней привяжутся задачи и база знаний."
+          desc="Цель — это счётчик результата: «200 переходов по ссылке», «80 горячих лидов». Кампании работают к ней и отчитываются в неё."
           action={<button onClick={openNew} className="btn-primary h-10"><Plus size={16} /> Создать цель</button>}
         />
       ) : (
         <div className="grid gap-3 sm:grid-cols-2">
           {goals.map((g) => (
-            <Card key={g.id} className="flex flex-col gap-2 p-4">
-              <div className="flex items-start justify-between gap-2">
-                <div className="min-w-0">
-                  <div className="truncate font-semibold text-white">{g.name}</div>
-                  {g.targetAction && <div className="mt-0.5 text-xs text-spark-300">Действие: {g.targetAction}</div>}
-                </div>
-                <div className="flex shrink-0 gap-1">
-                  <button onClick={() => openEdit(g)} className="btn-icon h-8 w-8" aria-label="Изменить"><Pencil size={14} /></button>
-                  <button onClick={() => void duplicate(g)} className="btn-icon h-8 w-8" aria-label="Дублировать цель" title="Дублировать цель"><Copy size={14} /></button>
-                  <button onClick={() => remove(g)} className="btn-icon-danger h-8 w-8" aria-label="Удалить цель" title="Удалить цель"><Trash2 size={14} /></button>
-                </div>
-              </div>
-              {g.description && <div className="text-sm text-white/60">{g.description}</div>}
-              {g.stages?.length > 0 && (
-                <div className="flex flex-wrap gap-1">
-                  {g.stages.map((s, i) => <Badge key={i} tone="iris">{i + 1}. {s}</Badge>)}
-                </div>
-              )}
-
-              {g.followUp?.enabled && (
-                <Badge tone="iris">
-                  Дожим до {g.followUp.limit} сообщ.
-                </Badge>
-              )}
-
-              {/* §4: дедлайн + прогресс по лидам */}
-              {(g.deadline || g.leadTarget > 0) && (
-                <div className="flex flex-wrap items-center gap-2">
-                  {g.deadline && (
-                    <Badge tone={isGoalExpired(g) ? 'rose' : 'amber'}>
-                      {isGoalExpired(g) ? '⏱ Дедлайн истёк' : `⏱ до ${new Date(g.deadline).toLocaleDateString('ru-RU')}`}
-                    </Badge>
-                  )}
-                  {g.leadTarget > 0 && (() => {
-                    const have = leadsByGoal[g.id] || 0
-                    const done = have >= g.leadTarget
-                    return (
-                      <span className="inline-flex min-w-[140px] flex-col gap-0.5">
-                        <span className="flex items-center justify-between text-[11px] text-white/50">
-                          <span>Лиды к цели</span><span className={done ? 'text-spark-300' : 'text-white/70'}>{have}/{g.leadTarget}</span>
-                        </span>
-                        <span className="h-1.5 overflow-hidden rounded-full bg-line">
-                          <span className="block h-full rounded-full bg-spark-500 transition-all" style={{ width: `${Math.min(100, Math.round((have / g.leadTarget) * 100))}%` }} />
-                        </span>
-                      </span>
-                    )
-                  })()}
-                </div>
-              )}
-
-              {/* §4: кампании под этой целью — цель их оркестрирует */}
-              {(campaignsByGoal[g.id]?.length ?? 0) > 0 && (
-                <div className="rounded-lg border border-line bg-elevated/40 p-2">
-                  <div className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-muted">Кампании цели ({campaignsByGoal[g.id].length})</div>
-                  <div className="flex flex-wrap gap-1.5">
-                    {campaignsByGoal[g.id].map((c) => (
-                      <a key={c.id} href="/panel/campaign" title={`${c.moduleKey} · ${c.accountIds.length} акк.`}
-                        className="inline-flex items-center gap-1 rounded-lg border border-line bg-surface px-2 py-0.5 text-xs text-fg hover:border-spark-500/40">
-                        <span className={`h-1.5 w-1.5 rounded-full ${c.status === 'active' ? 'bg-spark-400' : c.status === 'paused' ? 'bg-amber-400' : c.status === 'done' ? 'bg-faint' : 'bg-iris-400'}`} />
-                        {c.name}
-                      </a>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              <div className="mt-1 flex flex-wrap gap-x-4 gap-y-1 text-xs text-white/40">
-                {(g.channels?.length ?? 0) > 0 && <span className="text-spark-300"><Hash size={11} className="mb-0.5 inline" /> {g.channels.length} каналов/групп</span>}
-                {g.completionCriteria && <span>Критерий: {g.completionCriteria}</span>}
-                {g.audience && <span>Аудитория: {g.audience}</span>}
-              </div>
-            </Card>
+            <GoalCard
+              key={g.id}
+              goal={g}
+              progress={progress[g.id]}
+              campaigns={campaignsByGoal[g.id] || []}
+              onEdit={() => openEdit(g)}
+              onCopy={() => void duplicate(g)}
+              onRemove={() => void remove(g)}
+            />
           ))}
         </div>
       )}
-      </>)}
+    </div>
+  )
+}
 
-      {/* §4: создание/редактирование цели — полноэкранная вьюшка, а не модалка. */}
-      {open && (
-      <div>
-        <button onClick={() => setOpen(false)} className="btn-ghost mb-3 h-9"><ArrowLeft size={15} /> Назад к целям</button>
-        <PageHeader
-          title={editing ? 'Изменить цель' : 'Новая цель'}
-          subtitle="AI будет вести кампанию к этой цели"
-          icon={<Target size={22} />}
-        />
-        <Card className="p-4">
-        <div className="space-y-3">
-          <div>
-            <label className="mb-1 block text-xs text-white/50">Название *</label>
-            <input className="input" value={form.name} onChange={(e) => set({ name: e.target.value })} placeholder="Продажа курса" />
-          </div>
-          <div>
-            <label className="mb-1 block text-xs text-white/50">Целевое действие</label>
-            <input className="input" value={form.targetAction} onChange={(e) => set({ targetAction: e.target.value })} placeholder="Оплата / заявка / переход по ссылке" />
-          </div>
-          <div>
-            <label className="mb-1 block text-xs text-white/50">Описание</label>
-            <textarea className="input min-h-[64px]" value={form.description} onChange={(e) => set({ description: e.target.value })} placeholder="О чём кампания и продукт" />
-          </div>
-          <div>
-            <label className="mb-1 block text-xs text-white/50">Этапы (по одному на строку)</label>
-            <textarea className="input min-h-[64px]" value={stagesText} onChange={(e) => setStagesText(e.target.value)} placeholder={'знакомство\nинтерес\nоффер'} />
-          </div>
+/** Карточка цели: имя, желание словами и сам счётчик с прогрессом. */
+function GoalCard(props: {
+  goal: Goal
+  progress?: GoalProgress
+  campaigns: Campaign[]
+  onEdit: () => void
+  onCopy: () => void
+  onRemove: () => void
+}) {
+  const { goal: g, progress: p, campaigns } = props
+  const target = p?.target ?? g.metric?.target ?? 0
+  const unit = p?.unit || g.metric?.unit || METRIC_LABELS[g.metric?.kind || 'leads']
+  const done = p?.done ?? 0
+  // Считать умеем не всё: для видов без счётчика показываем только план, чтобы не
+  // рисовать «0 из 200» там, где нечем мерить, и не выдавать это за факт.
+  const counted = p?.counted ?? false
+  const pct = p?.pct ?? 0
 
-          <div>
-            <label className="mb-1 flex items-center gap-1.5 text-xs text-white/50"><Hash size={12} /> Каналы / группы цели <span className="text-white/30">— где ведём к цели ({channels.length})</span></label>
-            <FolderPicker targets={channels} onLoad={(t) => setChannels((prev) => [...new Set([...t, ...prev])])} />
-            <div className="flex gap-2">
-              <input value={chInput} onChange={(e) => setChInput(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); addChannels() } }} className="input" placeholder="@channel или t.me/channel — или загрузите папку выше" />
-              <button type="button" onClick={addChannels} className="btn-ghost h-11 shrink-0 px-4"><Plus size={15} /> Добавить</button>
-            </div>
-            {channels.length > 0 && (
-              <div className="mt-2 flex max-h-32 flex-wrap gap-1.5 overflow-y-auto rounded-xl border border-line bg-elevated/40 p-2.5">
-                {channels.map((c) => (
-                  <span key={c} className="inline-flex items-center gap-1 rounded-lg border border-line bg-surface px-2 py-0.5 text-xs font-medium text-fg">
-                    @{c}
-                    <button type="button" onClick={() => setChannels((arr) => arr.filter((x) => x !== c))} className="text-faint hover:text-rose-300"><X size={12} /></button>
-                  </span>
-                ))}
-              </div>
-            )}
+  return (
+    <Card className="flex flex-col gap-2 p-4">
+      <div className="flex items-start justify-between gap-2">
+        <div className="min-w-0 truncate font-semibold text-white">{g.name}</div>
+        <div className="flex shrink-0 gap-1">
+          <button onClick={props.onEdit} className="btn-icon h-8 w-8" aria-label="Изменить"><Pencil size={14} /></button>
+          <button onClick={props.onCopy} className="btn-icon h-8 w-8" aria-label="Дублировать цель" title="Дублировать цель"><Copy size={14} /></button>
+          <button onClick={props.onRemove} className="btn-icon-danger h-8 w-8" aria-label="Удалить цель" title="Удалить цель"><Trash2 size={14} /></button>
+        </div>
+      </div>
+
+      <div className="flex flex-wrap items-center gap-1.5">
+        <Badge tone={g.status === 'active' ? 'spark' : g.status === 'achieved' ? 'iris' : 'muted'}>
+          {GOAL_STATUS_LABELS[g.status || 'active']}
+        </Badge>
+        <Badge tone={g.priority === 'high' ? 'amber' : 'muted'}>
+          приоритет: {GOAL_PRIORITY_LABELS[g.priority || 'mid'].toLowerCase()}
+        </Badge>
+        {g.period?.mode === 'from' && g.period.from && (
+          <span className="text-xs text-white/40">учёт с {g.period.from}</span>
+        )}
+      </div>
+
+      {target > 0 ? (
+        <div>
+          <div className="flex items-baseline justify-between text-xs">
+            <span className="text-white/50">{counted ? 'Набрано' : 'Нужно набрать'}</span>
+            <span className="font-mono text-white">
+              {counted && <span className="text-spark-300">{done}</span>}
+              {counted && ' / '}{target} <span className="text-white/40">{unit}</span>
+            </span>
           </div>
-          <div className="grid gap-3 sm:grid-cols-2">
-            <div>
-              <label className="mb-1 block text-xs text-white/50">Критерий завершения</label>
-              <input className="input" value={form.completionCriteria} onChange={(e) => set({ completionCriteria: e.target.value })} placeholder="Получен целевой ответ" />
-            </div>
-            <div>
-              <label className="mb-1 block text-xs text-white/50">Аудитория</label>
-              <input className="input" value={form.audience} onChange={(e) => set({ audience: e.target.value })} placeholder="IT-предприниматели" />
-            </div>
-          </div>
-
-          {/* §4: дедлайн цели + цель по лидам (оба опциональны). */}
-          <div className="grid gap-3 sm:grid-cols-2">
-            <div>
-              <label className="mb-1 block text-xs text-white/50">Дедлайн <span className="text-white/30">(опционально — по истечении работа останавливается)</span></label>
-              <div className="flex gap-2">
-                {/* §4: без границ в поле даты проходил год 123123 — карточка рисовала
-                    «до 24.07.123123», и цель не истекала никогда. Те же границы на сервере. */}
-                <input
-                  type="date" className="input"
-                  min={`${DEADLINE_MIN_YEAR}-01-01`} max={`${DEADLINE_MAX_YEAR}-12-31`}
-                  value={form.deadline || ''} onChange={(e) => set({ deadline: e.target.value })}
-                />
-                {form.deadline && <button type="button" onClick={() => set({ deadline: '' })} className="btn-ghost h-auto shrink-0 px-3 text-xs">Сбросить</button>}
-              </div>
-              {form.deadline && !isSaneDeadline(form.deadline) && (
-                <div className="mt-1 text-xs text-rose-300">Дата вне допустимого диапазона ({DEADLINE_MIN_YEAR}–{DEADLINE_MAX_YEAR}) — проверьте год</div>
-              )}
-            </div>
-            <div>
-              <label className="mb-1 block text-xs text-white/50">Цель по лидам <span className="text-white/30">(0 = не задано, максимум {LEAD_TARGET_MAX.toLocaleString('ru-RU')})</span></label>
-              {/* Без потолка сюда проходило 999999999999, и прогресс-бар терял смысл. */}
-              <input type="number" min={0} max={LEAD_TARGET_MAX} className="input" value={form.leadTarget || 0} onChange={(e) => set({ leadTarget: Math.min(LEAD_TARGET_MAX, Math.max(0, Number(e.target.value) || 0)) })} placeholder="Напр. 50" />
-            </div>
-          </div>
-
-          {/* SPEC §1.2 (решение звонка 22.07): тон, ограничения и дожим убраны из Цели —
-              это свойства АГЕНТА. Цель отвечает за измеримый результат, критерий завершения,
-              дедлайн и аудиторию; кто и как говорит — задаёт агент, выбранный в задаче
-              кампании. Настройки переехали в раздел «Агенты». */}
-
-
-          {editing && (
-            <div className="rounded-lg border border-white/10 p-3">
-              <div className="mb-2 flex items-center gap-2 text-sm text-white/70">
-                <BookOpen size={15} /> База знаний <span className="text-white/30">— что AI знает о продукте</span>
-              </div>
-              {kb.length > 0 && (
-                <div className="mb-2 flex flex-col gap-1">
-                  {kb.map((k) => (
-                    <div key={k.id} className="flex items-start justify-between gap-2 rounded bg-white/5 px-2 py-1.5">
-                      <div className="flex min-w-0 items-center gap-2">
-                        {k.fileRef && k.kind === 'image' && (
-                          <img src={kbFileUrl(k.fileRef)} alt="" className="h-8 w-8 shrink-0 rounded object-cover" />
-                        )}
-                        <div className="min-w-0">
-                          {k.title && <div className="text-xs font-semibold text-white">{k.title}</div>}
-                          <div className="truncate text-xs text-white/60">{k.content}</div>
-                          {k.fileRef && (
-                            <a href={kbFileUrl(k.fileRef)} target="_blank" rel="noreferrer" className="text-[11px] font-semibold text-spark-300 hover:underline">
-                              открыть файл
-                            </a>
-                          )}
-                        </div>
-                      </div>
-                      <button onClick={() => void removeKb(k)} className="btn-icon-danger h-6 w-6 shrink-0" aria-label="Удалить из базы знаний" title="Удалить"><Trash2 size={12} /></button>
-                    </div>
-                  ))}
-                </div>
-              )}
-              <input className="input mb-1" value={kbTitle} onChange={(e) => setKbTitle(e.target.value)} placeholder="Заголовок (опционально)" />
-              <textarea className="input min-h-[52px]" value={kbContent} onChange={(e) => setKbContent(e.target.value)} placeholder="Факт о продукте / условие / ответ на частый вопрос" />
-              <button onClick={() => void addKb()} disabled={!kbContent.trim()} className="btn-ghost mt-1 h-8 text-xs"><Plus size={13} /> Добавить в базу знаний</button>
-              {/* §4: файлы, а не только текст */}
-              <div className="mt-2 border-t border-line pt-2">
-                <label className="flex cursor-pointer items-center gap-2 text-xs text-white/60">
-                  <input
-                    type="file"
-                    className="hidden"
-                    accept=".png,.jpg,.jpeg,.webp,.gif,.pdf,.txt,.csv,.md,.doc,.docx,.xls,.xlsx"
-                    onChange={(e) => { void addKbFile(e.target.files?.[0]); e.target.value = '' }}
-                  />
-                  <span className="btn-ghost h-8 px-3 text-xs">{kbUploading ? 'Загрузка…' : '+ Прикрепить файл'}</span>
-                  <span className="text-white/40">картинка или документ, до 3 МБ</span>
-                </label>
-              </div>
+          {counted && (
+            <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-white/10">
+              <div className="h-full rounded-full bg-spark-500 transition-all" style={{ width: `${pct}%` }} />
             </div>
           )}
         </div>
-          <div className="mt-4 flex justify-end gap-2 border-t border-line pt-4">
-            <button onClick={() => setOpen(false)} className="btn-ghost h-10">Отмена</button>
-            <button onClick={save} disabled={saving} className="btn-primary h-10">{saving ? 'Сохранение…' : editing ? 'Сохранить' : 'Создать'}</button>
-          </div>
-        </Card>
-      </div>
+      ) : (
+        <span className="text-xs text-amber-300/80">Не задано, сколько нужно — цель не сможет завершиться сама</span>
       )}
-    </div>
+
+      {/* Дожатые — отдельная цифра: эти люди прошли другой путь (написали сами
+          после закрытия), и складывать их с остальными значит не понимать, что
+          сработало. Уходит в статистику кампании. */}
+      {(p?.followUpsDone ?? 0) > 0 && (
+        <span className="text-xs text-iris-300" title="Люди, которых довели дожимом: диалог был закрыт, но они написали сами">
+          дожато: {p!.followUpsDone}
+        </span>
+      )}
+
+      {campaigns.length > 0 && (
+        <div className="flex flex-wrap items-center gap-1 border-t border-line pt-2">
+          <Rocket size={11} className="text-spark-400" />
+          <span className="mr-1 text-xs text-white/40">кампании:</span>
+          {campaigns.map((c) => <Badge key={c.id} tone="muted">{c.name}</Badge>)}
+        </div>
+      )}
+    </Card>
   )
 }

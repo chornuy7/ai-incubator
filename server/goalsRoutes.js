@@ -1,6 +1,6 @@
 /** CRUD-роуты сущности «Цель» (§3.6). Монтируется в /api/goals. */
 import { Router } from 'express'
-import { listGoals, getGoal, createGoal, updateGoal, deleteGoal } from './goals.js'
+import { listGoals, getGoal, createGoal, updateGoal, deleteGoal, goalProgress, allGoalProgress } from './goals.js'
 import { listKb, createKb, updateKb, deleteKb, deleteKbByGoal } from './knowledgeBase.js'
 import { saveKbFile, readKbFile, deleteKbFile, isValidRef } from './kbFiles.js'
 
@@ -13,6 +13,23 @@ function fail(res, err, code = 400) {
 goalsRouter.get('/', async (_req, res) => {
   try {
     res.json({ ok: true, goals: await listGoals() })
+  } catch (err) { fail(res, err, 500) }
+})
+
+/**
+ * Счётчики по всем целям разом. Отдельным роутом (и ДО `/:id`, иначе «progress»
+ * уедет в параметр), потому что этот же счёт читает статистика кампаний: цель
+ * считает, кампания показывает.
+ */
+goalsRouter.get('/progress', async (_req, res) => {
+  try {
+    res.json({ ok: true, progress: await allGoalProgress() })
+  } catch (err) { fail(res, err, 500) }
+})
+
+goalsRouter.get('/:id/progress', async (req, res) => {
+  try {
+    res.json({ ok: true, progress: await goalProgress(req.params.id) })
   } catch (err) { fail(res, err, 500) }
 })
 

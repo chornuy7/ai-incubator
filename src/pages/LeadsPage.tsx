@@ -6,6 +6,7 @@ import { HelpButton } from '@/features/neuro-commenting/moduleUi'
 import { confirmDialog } from '@/shared/lib/dialog'
 import { fetchLeads, createLead, updateLead, deleteLead, sortLeadsByPriority, LEAD_STATUSES, type Lead, type LeadStatus } from '@/api/leadsApi'
 import { fetchGoals, type Goal } from '@/api/goalsApi'
+import { fetchCampaigns, type Campaign } from '@/api/campaignsApi'
 import { LeadConversationModal } from '@/features/leads/LeadConversationModal'
 import { fetchAccounts, type ServerAccount } from '@/api/accountsApi'
 
@@ -24,8 +25,10 @@ export function LeadsPage() {
   const pushToast = useApp((s) => s.pushToast)
   const [leads, setLeads] = useState<Lead[]>([])
   const [goals, setGoals] = useState<Goal[]>([])
+  const [campaigns, setCampaigns] = useState<Campaign[]>([])
   const [loading, setLoading] = useState(true)
   const [fGoal, setFGoal] = useState('')
+  const [fCampaign, setFCampaign] = useState('')
   const [fStatus, setFStatus] = useState('')
   const [peer, setPeer] = useState('')
   const [newGoal, setNewGoal] = useState('')
@@ -42,6 +45,11 @@ export function LeadsPage() {
     return (id?: string | null) => (id ? m.get(id) || '—' : '')
   }, [goals])
 
+  const campaignName = useMemo(() => {
+    const m = new Map(campaigns.map((c) => [c.id, c.name]))
+    return (id?: string | null) => (id ? m.get(id) || '—' : '')
+  }, [campaigns])
+
   const accountOptions = useMemo(
     () => [{ value: '', label: 'Без аккаунта' }, ...accounts.map((a) => ({ value: a.id, label: a.name || a.id.slice(-6) }))],
     [accounts],
@@ -53,19 +61,20 @@ export function LeadsPage() {
 
   const load = async () => {
     try {
-      const [l, g, a] = await Promise.all([
-        fetchLeads({ goalId: fGoal || undefined, status: (fStatus as LeadStatus) || undefined }),
+      const [l, g, a, cs] = await Promise.all([
+        fetchLeads({ goalId: fGoal || undefined, campaignId: fCampaign || undefined, status: (fStatus as LeadStatus) || undefined }),
         fetchGoals().catch(() => []),
         fetchAccounts().catch(() => []),
+        fetchCampaigns().then(({ campaigns }) => campaigns).catch(() => []),
       ])
-      setLeads(l); setGoals(g); setAccounts(a)
+      setLeads(l); setGoals(g); setAccounts(a); setCampaigns(cs)
     } catch (err) {
       pushToast({ type: 'error', title: 'Не удалось загрузить лидов', desc: err instanceof Error ? err.message : '' })
     } finally {
       setLoading(false)
     }
   }
-  useEffect(() => { void load() }, [fGoal, fStatus])
+  useEffect(() => { void load() }, [fGoal, fCampaign, fStatus])
 
   const counts = useMemo(() => {
     const c = Object.fromEntries(LEAD_STATUSES.map((s) => [s, 0])) as Record<LeadStatus, number>
@@ -114,6 +123,7 @@ export function LeadsPage() {
   }
 
   const goalOptions = [{ value: '', label: 'Все цели' }, ...goals.map((g) => ({ value: g.id, label: g.name }))]
+  const campaignOptions = [{ value: '', label: 'Все кампании' }, ...campaigns.map((c) => ({ value: c.id, label: c.name }))]
   const statusOptions = [{ value: '', label: 'Все статусы' }, ...LEAD_STATUSES.map((s) => ({ value: s, label: STATUS[s].label }))]
 
   return (
@@ -144,6 +154,7 @@ export function LeadsPage() {
 
       <div className="mb-3 flex flex-wrap items-center gap-2">
         <Select value={fGoal} onChange={setFGoal} options={goalOptions} className="w-48" />
+        <Select value={fCampaign} onChange={setFCampaign} options={campaignOptions} className="w-48" />
         <Select value={fStatus} onChange={setFStatus} options={statusOptions} className="w-40" />
         <div className="ml-auto flex items-center gap-2">
           <input className="input h-9 w-44" value={peer} onChange={(e) => setPeer(e.target.value)} placeholder="@username лида" onKeyDown={(e) => e.key === 'Enter' && void add()} />
@@ -172,6 +183,7 @@ export function LeadsPage() {
                 {l.peer}
               </button>
               {l.goalId && <span className="text-xs text-iris-300">цель: {goalName(l.goalId)}</span>}
+              {l.campaignId && <span className="text-xs text-spark-300">кампания: {campaignName(l.campaignId)}</span>}
               {/* Горячий лид без ответственного аккаунта не защищает никого — говорим об этом прямо. */}
               {l.status === 'hot' && !l.accountId && (
                 <span className="rounded-md bg-amber-500/15 px-1.5 py-0.5 text-[11px] font-bold text-amber-300" title="Гвардия «горячий лид» ищет совпадение по ответственному аккаунту. Пока его нет, аккаунт можно забрать в другой модуль посреди диалога.">

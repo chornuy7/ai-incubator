@@ -3,7 +3,18 @@ import assert from 'node:assert/strict'
 import fs from 'fs/promises'
 import os from 'os'
 import path from 'path'
-import { buildGoalContext, firstMessagesFromGoal, pickFirstMessage, cleanDialogReply, hasPlaceholder } from '../lib/goalContext.js'
+import { buildGoalContext, firstMessagesFromGoal, pickFirstMessage, cleanDialogReply, hasPlaceholder, splitMessageVariants } from '../lib/goalContext.js'
+
+test('splitMessageVariants: варианты первого сообщения из текста агента (разделитель — пустая строка)', () => {
+  assert.deepEqual(splitMessageVariants('Привет!\n\nЗдравствуйте, можно спросить?'), ['Привет!', 'Здравствуйте, можно спросить?'])
+  assert.deepEqual(splitMessageVariants('  один вариант  '), ['один вариант'])
+  assert.deepEqual(splitMessageVariants(''), [])
+  assert.deepEqual(splitMessageVariants(null), [])
+  // чередование по кругу тем же pickFirstMessage
+  const v = splitMessageVariants('a\n\nb')
+  assert.equal(pickFirstMessage(v, 0), 'a')
+  assert.equal(pickFirstMessage(v, 3), 'b')
+})
 
 test('buildGoalContext: пустой/нет цели → пустая строка (генерация как раньше)', async () => {
   assert.equal(await buildGoalContext(null), '')
@@ -111,9 +122,14 @@ test('buildGoalContext: тон и запреты в промпт цели НЕ �
   const { createGoal } = await import('../goals.js')
   const goal = await createGoal({
     name: 'Продвижение канала',
-    targetAction: 'подписка',
+    description: 'хочу переходы по ссылке',
+    metric: { kind: 'clicks', target: 200 },
+    // Всё нижеследующее цель обязана проигнорировать: тон и запреты — у агента,
+    // аудитория и критерий — тоже у агента, дедлайн — у кампании.
     toneOfVoice: 'на «ты», коротко, без канцелярита',
     restrictions: 'не обещать доход, не давить',
+    audience: 'трейдеры',
+    completionCriteria: 'перешёл по ссылке',
   })
 
   const ctx = await buildGoalContext(goal.id)
@@ -121,9 +137,12 @@ test('buildGoalContext: тон и запреты в промпт цели НЕ �
   assert.doesNotMatch(ctx, /без канцелярита/)
   assert.doesNotMatch(ctx, /ЗАПРЕЩЕНО/)
   assert.doesNotMatch(ctx, /не обещать доход/)
-  // Цель по-прежнему отвечает за «чего добиваемся» — это остаётся в промпте.
+  assert.doesNotMatch(ctx, /трейдеры/, 'аудитория — свойство агента')
+  assert.doesNotMatch(ctx, /Критерий завершения/, 'критерий — свойство агента')
+  // Цель отвечает только за «чего добиваемся и сколько».
   assert.match(ctx, /Цель: Продвижение канала/)
-  assert.match(ctx, /Целевое действие: подписка/)
+  assert.match(ctx, /хочу переходы по ссылке/)
+  assert.match(ctx, /200 переходов по ссылке/)
 })
 
 test('buildGoalContext: пустые тон и запреты не засоряют промпт', async (t) => {

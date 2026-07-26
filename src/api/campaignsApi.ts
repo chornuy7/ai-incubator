@@ -9,11 +9,16 @@ export interface CampaignModuleInput {
 
 export interface CampaignLaunchInput {
   goalId?: string | null
+  /** Id сохранённой кампании (cmp_) — лиды и токены привязываются к ней в CRM/статистике. */
+  campaignId?: string | null
   accountIds: string[]
   targets?: string[]
   settings?: Record<string, unknown> // общие лимиты/задержки кампании (прокидываются в модули)
   modules: CampaignModuleInput[]
   initiator?: string
+  /** Дедлайн и дожим кампании — доезжают до воркеров в настройках задачи. */
+  deadline?: string | null
+  followUp?: CampaignFollowUp | null
 }
 
 export interface CampaignResult {
@@ -89,25 +94,54 @@ export interface Campaign {
   accountIds: string[]
   /** A3.2: какой агент ведёт каждый модуль кампании (moduleKey → agentId). */
   moduleAgents?: Record<string, string>
+  /** Пресет (настройки) каждого модуля кампании отдельно (moduleKey → settings). */
+  moduleSettings?: Record<string, Record<string, unknown>>
+  /** Свои цели у модуля (moduleKey → цели). Рассылке — получатели-номера/юзернеймы, а не общие каналы. */
+  moduleTargets?: Record<string, string[]>
   /** §9.0: собственные целевые каналы кампании (нормализованы: без @, нижний регистр). */
   targets?: string[]
   pinned: boolean
   status: CampaignStatus
   chat?: CampaignChat
+  /**
+   * Дожим: писать ли, если человек ответил после закрытия диалога.
+   * Переехал из агента (24.07) — агент отвечает за манеру речи, а «дожимать или
+   * отпустить» это решение о ходе работы, и принимает его тот, кто знает цель и этап.
+   */
+  followUp?: CampaignFollowUp
+  /** Срок этапа. Переехал из цели (24.07): цель бессрочна, укладывается кампания. */
+  deadline?: string | null
   createdAt: number
   updatedAt: number
 }
+
+export interface CampaignFollowUp {
+  enabled: boolean
+  /** Сколько сообщений подряд можно дожимать одного человека. */
+  limit: number
+  /** Свободные указания ИИ на время дожима (необязательно). */
+  instructions: string
+}
+
+export const FOLLOW_UP_MAX = 50
+export const FOLLOW_UP_DEFAULT = 10
 
 export interface CampaignInput {
   name: string
   goalId?: string | null
   modules?: string[]
   moduleKey: string
+  moduleAgents?: Record<string, string>
+  moduleSettings?: Record<string, Record<string, unknown>>
+  moduleTargets?: Record<string, string[]>
   settings?: Record<string, unknown>
   accountIds?: string[]
   pinned?: boolean
   status?: CampaignStatus
   chat?: CampaignChat
+  targets?: string[]
+  deadline?: string | null
+  followUp?: CampaignFollowUp | null
 }
 
 /** Карта «аккаунт → кампания, которая его закрепила». */

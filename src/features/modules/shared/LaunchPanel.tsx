@@ -7,7 +7,7 @@ import { presetHex } from './SavePresetModal'
 
 export function LaunchPanel({
   running, starting, canStart, onStart, onSave, primaryLabel, stats, task, warn,
-  presets, onApplyPreset, onDeletePreset,
+  presets, onApplyPreset, onDeletePreset, extras,
 }: {
   running: boolean; starting: boolean; canStart: boolean
   onStart: () => void; onStop?: () => void; onSave: () => void
@@ -18,6 +18,12 @@ export function LaunchPanel({
   presets?: ModulePreset[]
   onApplyPreset?: (settings: ModuleTaskSettings) => void
   onDeletePreset?: (id: string) => void
+  /**
+   * Доп. блоки запуска (расписание, ссылка на логи). Рендерятся В ПОТОКЕ, ПЕРЕД плавающим
+   * баром: сам бар обязан быть последним элементом, иначе его заглушка резервирует место
+   * в середине, а бар висит внизу экрана поверх этого контента — та самая «двойная плашка».
+   */
+  extras?: React.ReactNode
 }) {
   return (
     <>
@@ -30,23 +36,8 @@ export function LaunchPanel({
           <div className="text-sm text-rose-300">{warn}</div>
         </div>
       )}
-      <FloatingBar>
-        <div className="flex items-center gap-2 text-sm font-semibold text-muted">
-          <span className={cn('h-2.5 w-2.5 rounded-full', running ? 'bg-spark-400 animate-pulse' : 'bg-faint')} />
-          {running ? 'Выполняется' : task?.status === 'done' ? 'Завершено' : 'Готов'}
-        </div>
-        <div className="flex flex-1 flex-wrap items-center justify-center gap-2">
-          <button type="button" onClick={onStart} disabled={starting || !canStart} className="btn-primary h-11 min-w-[180px]">
-            {starting ? <Loader2 size={17} className="animate-spin" /> : <Play size={17} />} {primaryLabel}
-          </button>
-          {running && (
-            <a href="/panel/tasks" className="btn-ghost h-11 text-sm" title="Управление, прогресс и логи — в Дашборде задач"><ArrowUpRight size={15} /> В Дашборде задач</a>
-          )}
-        </div>
-        <button type="button" onClick={onSave} className="btn-ghost h-11 text-sm"><Save size={15} /> Сохранить пресет</button>
-      </FloatingBar>
       {onApplyPreset && presets && presets.length > 0 && (
-        <div className="mt-3 rounded-2xl border border-line bg-elevated/40 p-3">
+        <div className="mb-3 rounded-2xl border border-line bg-elevated/40 p-3">
           <div className="mb-2 flex items-center gap-2 text-xs font-bold uppercase tracking-wide text-muted">
             <Bookmark size={13} /> Мои пресеты
           </div>
@@ -88,6 +79,24 @@ export function LaunchPanel({
           <p className="mt-2 text-xs text-muted">Клик по названию — подставить сохранённые настройки. Выбор аккаунтов не меняется.</p>
         </div>
       )}
+      {extras}
+      {/* Плавающий бар — ПОСЛЕДНИЙ элемент: его заглушка резервирует место в самом низу
+          карточки, ничего не рендерится ниже, и бар чисто «отрывается» ко дну экрана. */}
+      <FloatingBar>
+        <div className="flex items-center gap-2 text-sm font-semibold text-muted">
+          <span className={cn('h-2.5 w-2.5 rounded-full', running ? 'bg-spark-400 animate-pulse' : 'bg-faint')} />
+          {running ? 'Выполняется' : task?.status === 'done' ? 'Завершено' : 'Готов'}
+        </div>
+        <div className="flex flex-1 flex-wrap items-center justify-center gap-2">
+          <button type="button" onClick={onStart} disabled={starting || !canStart} className="btn-primary h-11 min-w-[180px]">
+            {starting ? <Loader2 size={17} className="animate-spin" /> : <Play size={17} />} {primaryLabel}
+          </button>
+          {running && (
+            <a href="/panel/tasks" className="btn-ghost h-11 text-sm" title="Управление, прогресс и логи — в Дашборде задач"><ArrowUpRight size={15} /> В Дашборде задач</a>
+          )}
+        </div>
+        <button type="button" onClick={onSave} className="btn-ghost h-11 text-sm"><Save size={15} /> Сохранить пресет</button>
+      </FloatingBar>
     </>
   )
 }

@@ -41,7 +41,15 @@ export function buildCampaignPlan(input = {}) {
       targets: m.targets || input.targets || [],
       channels: m.targets || input.targets || [],
       goalId: input.goalId || null,
+      // Id СОХРАНЁННОЙ кампании (cmp_) — чтобы лиды и токены в CRM/статистике привязались
+      // к кампании-сущности, а не терялись. Раньше в план не прокидывался, и s.campaignId
+      // у задач кампании был пуст (лиды/токены без кампании).
+      campaignId: input.campaignId || null,
       initiator: input.initiator || 'operator',
+      // Дедлайн и дожим — свойства КАМПАНИИ (24.07). Кладём их в настройки задачи,
+      // иначе воркер знал бы только про цель, а там этих полей больше нет.
+      deadline: input.deadline || null,
+      followUp: input.followUp || null,
     },
   }))
 }

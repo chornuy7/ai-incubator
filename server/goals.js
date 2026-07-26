@@ -22,13 +22,12 @@ const goalsFile = () => process.env.GOALS_FILE || dataPath('goals.json')
 // навязывать один голос всем кампаниям (сценарий «500 хвалят / 500 спорят»).
 // Старые цели с этими полями читаются как есть — миграция не нужна, поля просто
 // перестают участвовать в промпте и в форме.
-const FIELDS = ['name', 'description', 'targetAction', 'stages', 'completionCriteria', 'audience', 'channels', 'deadline', 'leadTarget']
+const FIELDS = ['name', 'description', 'metric', 'status', 'priority', 'period']
 
-/** Нормализовать список каналов/групп цели: trim, без @, без дублей. @param {*} v */
-function normChannels(v) {
-  if (!Array.isArray(v)) return []
-  return [...new Set(v.map((x) => String(x || '').trim().replace(/^@/, '')).filter(Boolean))]
-}
+/** Жизненный цикл цели: активна → достигнута/в архиве. Управляется вручную. */
+export const GOAL_STATUSES = ['active', 'achieved', 'archived']
+/** Приоритет цели — чтобы понимать, какая важнее для кампаний. */
+export const GOAL_PRIORITIES = ['low', 'mid', 'high']
 
 /** §4: разумные границы дедлайна. Прошлое разрешаем — по нему проверяют «цель просрочена». */
 export const DEADLINE_MIN_YEAR = 2000
@@ -60,7 +59,7 @@ function normDeadline(v) {
 }
 
 /**
- * §4: сколько лидов должна привести цель (0 = не задано).
+ * Сколько единиц нужно набрать (0 = не задано).
  * Ограничено сверху: без потолка в поле проходило `999999999999`, и прогресс-бар
  * на карточке становился бессмысленным.
  * @param {*} v
@@ -72,6 +71,62 @@ function normLeadTarget(v) {
 }
 
 /**
+ * Что именно считаем. Виды берём не с потолка: это те результаты, которые система
+ * умеет посчитать сама. Для остального — `custom`, там оператор ведёт счёт руками.
+ */
+export const METRIC_KINDS = ['leads', 'clicks', 'joins', 'replies', 'custom']
+
+/** Человеческие названия единиц — для карточки и отчёта кампании. */
+export const METRIC_LABELS = {
+  leads: 'горячих лидов',
+  clicks: 'переходов по ссылке',
+  joins: 'вступлений',
+  replies: 'ответов',
+  custom: 'шт.',
+}
+
+/**
+ * Измеримый результат цели — «число + единица» из §1.1 спеки.
+ *
+ * Это и есть вся цель: ЧТО получить и СКОЛЬКО. Ни модулей, ни каналов, ни тона —
+ * цель про результат, а не про способ. Считает система, отдаёт кампании для статистики.
+ * @param {*} v @param {*} legacyLeadTarget старое поле `leadTarget` — не ломаем цели до правки
+ */
+function normMetric(v, legacyLeadTarget) {
+  const m = v && typeof v === 'object' ? v : {}
+  const kind = METRIC_KINDS.includes(m.kind) ? m.kind : 'leads'
+  return {
+    kind,
+    target: normLeadTarget(m.target ?? legacyLeadTarget),
+    // Единица словами: пусто — берём стандартную по виду.
+    unit: String(m.unit ?? '').trim().slice(0, 40) || METRIC_LABELS[kind],
+  }
+}
+
+/** Статус цели из белого списка, иначе 'active'. @param {*} v */
+function normStatus(v) {
+  return GOAL_STATUSES.includes(v) ? v : 'active'
+}
+
+/** Приоритет из белого списка, иначе 'mid'. @param {*} v */
+function normPriority(v) {
+  return GOAL_PRIORITIES.includes(v) ? v : 'mid'
+}
+
+/**
+ * Период учёта счётчика: `all` — за всё время, `from` — с даты `from` (та же проверка
+ * даты, что у дедлайна). Раньше период статистики нигде не задавался (открытый вопрос
+ * §10 отчёта) — счёт всегда шёл за всё время.
+ * @param {*} v @returns {{mode:'all'|'from', from:string|null}}
+ */
+function normPeriod(v) {
+  const p = v && typeof v === 'object' ? v : {}
+  const from = normDeadline(p.from) // 'YYYY-MM-DD' в разумных годах или null
+  const mode = p.mode === 'from' && from ? 'from' : 'all'
+  return { mode, from: mode === 'from' ? from : null }
+}
+
+/**
  * §4: дедлайн задали, но он не прошёл проверку. Нужен, чтобы форма показала ошибку,
  * а не молча «забыла» дату — иначе оператор уверен, что дедлайн стоит.
  * @param {*} input
@@ -80,38 +135,48 @@ function rejectedDeadline(input) {
   return Boolean(input?.deadline) && normDeadline(input.deadline) === null
 }
 
-/** Нормализовать вход в чистую цель. @param {object} input */
+/**
+ * Нормализовать вход в чистую цель.
+ *
+ * Цель — это СЧЁТЧИК: что нужно получить и сколько. Всё остальное вынесено
+ * (решения звонков 22.07 и 24.07):
+ *   тон, ограничения, характер, язык, критерий завершения, аудитория, база знаний → АГЕНТ
+ *   дожим, дедлайн, каналы, модули                                               → КАМПАНИЯ
+ * Прямая цитата заказчика: «Цель нахуй не знает ни про модули, ни про общение,
+ * ни про тон. Она и про группы, по сути, ничего знать не должна.»
+ *
+ * Старые цели с лишними полями читаются как есть: поля просто перестают
+ * участвовать — отдельная миграция не нужна.
+ * @param {object} input
+ */
 export function normalizeGoal(input = {}) {
   return {
     name: String(input.name ?? '').trim(),
+    // Свободный текст желания сохраняется в модели для СТАРЫХ целей (мейлинг ещё читает
+    // из него варианты первого сообщения), но из формы убран: цель не «руководит» ИИ.
+    // Источник первого сообщения переезжает в Агента (шаг «мейлинг↔агент»).
     description: String(input.description ?? ''),
-    targetAction: String(input.targetAction ?? ''),
-    stages: Array.isArray(input.stages) ? input.stages.map((s) => String(s)) : [],
-    completionCriteria: String(input.completionCriteria ?? ''),
-    audience: String(input.audience ?? ''),
-    channels: normChannels(input.channels),
-    deadline: normDeadline(input.deadline), // §4: дедлайн (опц.)
-    leadTarget: normLeadTarget(input.leadTarget), // §4: цель по лидам (опц.)
-
-    // §9: как писать и чего не делать. Одно место на всю кампанию — иначе правила
-    // расходятся между модулями: в рассылке один тон, в комментариях другой.
-
+    // Измеримый результат: что считаем и сколько нужно.
+    metric: normMetric(input.metric, input.leadTarget),
+    // Жизненный цикл, приоритет и период учёта счётчика.
+    status: normStatus(input.status),
+    priority: normPriority(input.priority),
+    period: normPeriod(input.period),
   }
 }
 
-/** Сколько сообщений подряд можно дожимать одного человека, если он написал сам. */
-export const FOLLOW_UP_MAX = 50
-export const FOLLOW_UP_DEFAULT = 10
-
-
 /**
- * §4: истёк ли дедлайн цели. Чистая функция. По истечении дедлайна работа по цели
- * должна останавливаться (воркеры), а цель — помечаться завершённой/просроченной.
- * @param {{deadline?: string|null}} goal @param {number} [now]
+ * §4: истёк ли дедлайн. Чистая функция.
+ *
+ * Дедлайн переехал из цели в КАМПАНИЮ (решение 24.07): срок — это про этап работы,
+ * а не про желаемый результат. Функция осталась общей: ей всё равно, у кого читать
+ * поле `deadline`, — вызывающий передаёт кампанию. Имя сохранено, чтобы не трогать
+ * вызовы в воркерах ради переименования.
+ * @param {{deadline?: string|null}} owner цель (legacy) или кампания @param {number} [now]
  */
-export function isGoalExpired(goal, now = Date.now()) {
-  if (!goal?.deadline) return false
-  const d = new Date(goal.deadline)
+export function isGoalExpired(owner, now = Date.now()) {
+  if (!owner?.deadline) return false
+  const d = new Date(owner.deadline)
   if (isNaN(d.getTime())) return false
   // Дедлайн — конец указанного дня (включительно).
   return now > d.getTime() + 24 * 60 * 60 * 1000 - 1
@@ -119,9 +184,12 @@ export function isGoalExpired(goal, now = Date.now()) {
 
 export async function listGoals() {
   const all = await readJson(goalsFile(), [])
-  // Цели, созданные до появления поля, отдаём с дефолтом: иначе воркеру и форме
-  // пришлось бы проверять `undefined` в каждом месте, где читается дожим.
-  return Array.isArray(all) ? all : []
+  if (!Array.isArray(all)) return []
+  // Цели, заведённые до переезда полей, лежат в файле как есть — но наружу отдаём
+  // только то, чем цель является сейчас. Иначе форма и промпт продолжали бы видеть
+  // тон, каналы и дедлайн, которых у цели больше нет, и модель тихо поехала бы назад.
+  // Файл при этом не трогаем: перезапишется при первом сохранении цели.
+  return all.map((g) => ({ id: g.id, ...normalizeGoal(g), createdAt: g.createdAt, updatedAt: g.updatedAt }))
 }
 
 export async function getGoal(id) {
@@ -153,22 +221,79 @@ export async function updateGoal(id, patch = {}) {
   if (i === -1) return null
   if (rejectedDeadline(patch)) throw new Error(`Проверьте дедлайн: нужна дата в формате ГГГГ-ММ-ДД, год от ${DEADLINE_MIN_YEAR} до ${DEADLINE_MAX_YEAR}`)
   for (const k of FIELDS) {
-    if (patch[k] !== undefined) {
-      goals[i][k] = k === 'stages'
-        ? (Array.isArray(patch[k]) ? patch[k].map((s) => String(s)) : goals[i].stages)
-        : k === 'channels'
-          ? normChannels(patch[k])
-          : k === 'deadline'
-            ? normDeadline(patch[k])
-            : k === 'leadTarget'
-              ? normLeadTarget(patch[k])
-              : (k === 'name' ? String(patch[k]).trim() : String(patch[k]))
-    }
+    if (patch[k] === undefined) continue
+    if (k === 'metric') goals[i].metric = normMetric(patch[k], goals[i].metric?.target)
+    else if (k === 'status') goals[i].status = normStatus(patch[k])
+    else if (k === 'priority') goals[i].priority = normPriority(patch[k])
+    else if (k === 'period') goals[i].period = normPeriod(patch[k]) // объект — String() сломал бы
+    else if (k === 'name') goals[i].name = String(patch[k]).trim()
+    else goals[i][k] = String(patch[k]) // description
   }
   if (!goals[i].name) throw new Error('Название цели не может быть пустым')
   goals[i].updatedAt = Date.now()
   await writeJson(goalsFile(), goals)
   return goals[i]
+}
+
+/**
+ * Счётчик цели: сколько уже набрано против того, сколько нужно.
+ *
+ * Считает СЕРВЕР, а не карточка: тот же счёт нужен кампании для статистики и отчёта
+ * клиенту. Пока он жил в форме целей, кампания о нём не знала и показать «сколько
+ * сделали к цели» не могла.
+ *
+ * Что во что засчитывается:
+ *   `leads`   — лиды со статусом `target` («выполнил целевое действие»). Это единственный
+ *               вид, который система считает сама и без доп. инфраструктуры (SPEC §1.3).
+ *   `clicks`  — переходы по нашей короткой ссылке (linkTracker).
+ *   остальные — счётчика пока нет: отдаём `counted: false`, чтобы интерфейс не рисовал
+ *               «0 из 200» там, где считать нечем, и не выдавал это за правду.
+ *
+ * Отдельно считаем **дожатых** — тех, кого довели после закрытия диалога: это уже не
+ * та же воронка, и мерить их вместе с остальными значит не понимать, что сработало.
+ *
+ * @param {string} goalId @returns {Promise<{done:number, target:number, pct:number,
+ *   counted:boolean, followUpsDone:number, unit:string, kind:string}>}
+ */
+export async function goalProgress(goalId) {
+  const goal = await getGoal(goalId)
+  const metric = goal?.metric || { kind: 'leads', target: 0, unit: '' }
+  const out = {
+    kind: metric.kind, target: metric.target || 0, unit: metric.unit || '',
+    done: 0, pct: 0, counted: false, followUpsDone: 0,
+  }
+  if (!goal) return out
+
+  try {
+    if (metric.kind === 'leads') {
+      const { listLeads } = await import('./leads.js')
+      const leads = await listLeads()
+      const mine = (Array.isArray(leads) ? leads : []).filter((l) => l.goalId === goalId)
+      // Цель достигнута — это статус `target`. Просто «есть лид» целью не считается:
+      // иначе счётчик показывал бы успех там, где человек ещё ничего не сделал.
+      out.done = mine.filter((l) => l.status === 'target').length
+      out.followUpsDone = mine.filter((l) => (Number(l.followUps) || 0) > 0).length
+      out.counted = true
+    } else if (metric.kind === 'clicks') {
+      const { goalHits } = await import('./linkTracker.js')
+      const h = await goalHits(goalId)
+      // Считаем УНИКАЛЬНЫЕ переходы: «20 000 переходов» — это люди, а не обновления
+      // страницы одним и тем же человеком.
+      out.done = h.uniqueHits || h.hits || 0
+      out.counted = true
+    }
+  } catch { /* счётчик недоступен — отдаём план без факта, это честнее нуля */ }
+
+  out.pct = out.target > 0 ? Math.min(100, Math.round((out.done / out.target) * 100)) : 0
+  return out
+}
+
+/** Счётчики сразу по всем целям — для списка и для статистики кампаний. */
+export async function allGoalProgress() {
+  const goals = await listGoals()
+  const out = {}
+  for (const g of goals) out[g.id] = await goalProgress(g.id)
+  return out
 }
 
 /** @param {string} id @returns {Promise<boolean>} */

@@ -12,16 +12,14 @@ export async function buildGoalContext(goalId) {
   try {
     const goal = await getGoal(goalId)
     if (!goal) return ''
+    // SPEC §1 (решения звонков 22.07 и 24.07): цель — это СЧЁТЧИК. В промпт от неё
+    // идёт только «чего добиваемся и сколько». Тон, запреты, аудитория и критерий
+    // завершения кладёт `buildAgentContext(settings.agentId)`; дедлайн и дожим —
+    // свойства кампании. Раньше всё это лежало здесь, и одна цель навязывала один
+    // голос всем кампаниям: «500 хвалят / 500 спорят» под одной целью было не собрать.
     const lines = ['', '--- Кампания ведётся к цели ---', `Цель: ${goal.name}`]
-    if (goal.targetAction) lines.push(`Целевое действие: ${goal.targetAction}`)
-    if (Array.isArray(goal.stages) && goal.stages.length) lines.push(`Этапы: ${goal.stages.join(' → ')}`)
-    if (goal.completionCriteria) lines.push(`Критерий завершения: ${goal.completionCriteria}`)
-    if (goal.audience) lines.push(`Аудитория: ${goal.audience}`)
-    // SPEC §1.2 (решение звонка 22.07): тон, ограничения и дожим — это свойства АГЕНТА,
-    // а не цели. Цель отвечает на «чего добиваемся», агент — «кто и как говорит».
-    // Раньше они жили здесь, и одна цель навязывала один голос всем кампаниям: нельзя
-    // было запустить «500 хвалят / 500 спорят» под одной целью. Теперь их кладёт
-    // `buildAgentContext(settings.agentId)` — см. A3.3.
+    if (goal.description) lines.push(`Что нужно получить: ${goal.description}`)
+    if (goal.metric?.target) lines.push(`Измеримый результат: ${goal.metric.target} ${goal.metric.unit || ''}`.trim())
 
     const kb = await listKb(goalId)
     if (kb.length) {
@@ -72,6 +70,16 @@ export function pickFirstMessage(variants, index = 0) {
 }
 
 /**
+ * Варианты первого сообщения из свободного текста (Агент): разделитель — ПУСТАЯ строка.
+ * Проще, чем заголовки «Первое сообщение:» у цели: оператор просто отделяет варианты
+ * пустой строкой. Пусто → пустой массив.
+ * @param {string} text @returns {string[]}
+ */
+export function splitMessageVariants(text) {
+  return String(text || '').split(/\n\s*\n/).map((s) => s.trim()).filter(Boolean)
+}
+
+/**
  * §9: этап цели по статусу лида. Статус — это и есть номер этапа: воронка одна,
  * просто в цели этапы названы словами заказчика («Получение согласия»), а в CRM
  * машинными статусами. Раньше этапы уходили в промпт общим списком, и ИИ не понимал,
@@ -100,7 +108,9 @@ export function stageForStatus(stages, status) {
  * @param {object|null} goal @returns {string[]}
  */
 export function linksFromGoal(goal) {
-  const text = [goal?.completionCriteria, goal?.description, goal?.targetAction].filter(Boolean).join('\n')
+  // Критерий завершения переехал в агента — принимаем оба объекта, ссылка может
+  // лежать и там, и там; терять её нельзя, иначе в письмо уйдёт «[вставь ссылку]».
+  const text = [goal?.completionCriteria, goal?.description, goal?.metric?.unit].filter(Boolean).join('\n')
   const found = String(text).match(/https?:\/\/[^\s<>"')]+/g) || []
   return [...new Set(found)]
 }

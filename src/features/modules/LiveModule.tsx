@@ -212,12 +212,13 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
   )
   // #5: сумма процентов типов не должна превышать 100 — иначе запуск блокируется.
   const typesOver100 = moduleKey === 'neuro-commenting' && weightSum > 100
-  // §4: цель с истёкшим дедлайном «останавливает работу» — не даём запуск (зеркало 409 бэкенда).
+  // Кампания с истёкшим дедлайном «останавливает работу» — не даём запуск
+  // (зеркало 409 бэкенда). Дедлайн переехал из цели в кампанию (24.07): срок —
+  // свойство этапа работы, цель «200 переходов» сама по себе бессрочна.
   const goalExpired = useMemo(() => {
-    const effGoalId = campaignId ? campaigns.find((c) => c.id === campaignId)?.goalId : goalId
-    const g = effGoalId ? goals.find((x) => x.id === effGoalId) : null
-    return g ? isGoalExpired(g) : false
-  }, [goalId, goals])
+    const c = campaignId ? campaigns.find((x) => x.id === campaignId) : null
+    return c ? isGoalExpired(c) : false
+  }, [campaignId, campaigns])
   const canStart = (isGgr
     ? selected.size > 0
     : selected.size > 0 && busySelectedCount === 0 && (!needsTargets || targets.length > 0 || hasPostTargets))
@@ -629,55 +630,60 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
           presets={presets}
           onApplyPreset={applyPreset}
           onDeletePreset={deletePreset}
-        />
-        {/* §6: автоматизация прямо в модуле — запуск по времени, одно-/многоразово. */}
-        {!running && (
-          <div className="mt-3 rounded-xl border border-line bg-elevated/30">
-            <button type="button" onClick={() => setSchedOpen((v) => !v)}
-              className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm font-semibold text-muted hover:text-fg">
-              <Clock size={15} className="text-iris-300" />
-              Запуск по расписанию
-              <span className="text-xs font-normal text-faint">— создать правило, не запуская сейчас</span>
-              <span className="ml-auto text-xs text-faint">{schedOpen ? 'скрыть ▲' : 'настроить ▾'}</span>
-            </button>
-            {schedOpen && (
-              <div className="space-y-3 border-t border-line px-3 pb-3 pt-3">
-                <Segmented options={['Однократно', 'Ежедневно', 'Каждые N минут']} value={schedMode} onChange={setSchedMode} size="sm" />
-                {schedMode === 0 && (
-                  <div>
-                    <div className="mb-1 text-xs text-white/50">Дата и время запуска</div>
-                    <input type="datetime-local" className="input h-9" value={schedAt} onChange={(e) => setSchedAt(e.target.value)} />
-                  </div>
-                )}
-                {schedMode === 1 && (
-                  <div>
-                    <div className="mb-1 text-xs text-white/50">Время ежедневного запуска</div>
-                    <input type="time" className="input h-9 w-32" value={schedTime} onChange={(e) => setSchedTime(e.target.value)} />
-                  </div>
-                )}
-                {schedMode === 2 && (
-                  <div>
-                    <div className="mb-1 text-xs text-white/50">Интервал (минуты)</div>
-                    <input type="number" min={1} className="input h-9 w-32" value={schedEvery} onChange={(e) => setSchedEvery(Math.max(1, Number(e.target.value) || 1))} />
-                  </div>
-                )}
-                <p className="text-[11px] text-white/40">
-                  Правило заберёт текущие настройки модуля{campaignId ? ' и кампанию' : ''}. Управление — в разделе «Автоматизация».
-                </p>
-                <button type="button" onClick={() => void createSchedule()} disabled={schedSaving || !canStart}
-                  className="btn-ghost h-9 text-sm disabled:opacity-40">
-                  <Clock size={14} /> {schedSaving ? 'Создание…' : 'Создать правило'}
-                </button>
-              </div>
-            )}
-          </div>
-        )}
+          extras={(
+            <>
+              {/* §6: автоматизация прямо в модуле — запуск по времени, одно-/многоразово.
+                  Идёт в extras (перед плавающим баром), иначе рендерился бы под баром внизу экрана. */}
+              {!running && (
+                <div className="mt-3 rounded-xl border border-line bg-elevated/30">
+                  <button type="button" onClick={() => setSchedOpen((v) => !v)}
+                    className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm font-semibold text-muted hover:text-fg">
+                    <Clock size={15} className="text-iris-300" />
+                    Запуск по расписанию
+                    <span className="text-xs font-normal text-faint">— создать правило, не запуская сейчас</span>
+                    <span className="ml-auto text-xs text-faint">{schedOpen ? 'скрыть ▲' : 'настроить ▾'}</span>
+                  </button>
+                  {schedOpen && (
+                    <div className="space-y-3 border-t border-line px-3 pb-3 pt-3">
+                      <Segmented options={['Однократно', 'Ежедневно', 'Каждые N минут']} value={schedMode} onChange={setSchedMode} size="sm" />
+                      {schedMode === 0 && (
+                        <div>
+                          <div className="mb-1 text-xs text-white/50">Дата и время запуска</div>
+                          <input type="datetime-local" className="input h-9" value={schedAt} onChange={(e) => setSchedAt(e.target.value)} />
+                        </div>
+                      )}
+                      {schedMode === 1 && (
+                        <div>
+                          <div className="mb-1 text-xs text-white/50">Время ежедневного запуска</div>
+                          <input type="time" className="input h-9 w-32" value={schedTime} onChange={(e) => setSchedTime(e.target.value)} />
+                        </div>
+                      )}
+                      {schedMode === 2 && (
+                        <div>
+                          <div className="mb-1 text-xs text-white/50">Интервал (минуты)</div>
+                          <input type="number" min={1} className="input h-9 w-32" value={schedEvery} onChange={(e) => setSchedEvery(Math.max(1, Number(e.target.value) || 1))} />
+                        </div>
+                      )}
+                      <p className="text-[11px] text-white/40">
+                        Правило заберёт текущие настройки модуля{campaignId ? ' и кампанию' : ''}. Управление — в разделе «Автоматизация».
+                      </p>
+                      <button type="button" onClick={() => void createSchedule()} disabled={schedSaving || !canStart}
+                        className="btn-ghost h-9 text-sm disabled:opacity-40">
+                        <Clock size={14} /> {schedSaving ? 'Создание…' : 'Создать правило'}
+                      </button>
+                    </div>
+                  )}
+                </div>
+              )}
 
-        <div className="mt-4 flex flex-wrap items-center gap-3">
-          <a href={`/panel/tasks?module=${moduleKey}${task ? `&task=${task.id}` : ''}`} className="ml-auto inline-flex items-center gap-1 text-xs font-semibold text-spark-300 hover:underline" title="Открыть Дашборд задач, отфильтрованный по этому модулю">
-            <Terminal size={13} /> Логи выполнения — в Дашборде задач <ArrowUpRight size={13} />
-          </a>
-        </div>
+              <div className="mt-4 flex flex-wrap items-center gap-3">
+                <a href={`/panel/tasks?module=${moduleKey}${task ? `&task=${task.id}` : ''}`} className="ml-auto inline-flex items-center gap-1 text-xs font-semibold text-spark-300 hover:underline" title="Открыть Дашборд задач, отфильтрованный по этому модулю">
+                  <Terminal size={13} /> Логи выполнения — в Дашборде задач <ArrowUpRight size={13} />
+                </a>
+              </div>
+            </>
+          )}
+        />
       </SectionCard>
       )}
 

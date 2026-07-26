@@ -86,10 +86,37 @@ export function startModuleTask(moduleKey, settings) {
   return { store, task, worker }
 }
 
+/**
+ * §4.4: предупредить о кластере по прокси на старте задачи.
+ *
+ * Проверка была написана и оттестирована, но её никто не вызывал — а именно так
+ * Telegram и находит группу: пачка аккаунтов выходит с одного IP в одну минуту,
+ * банят одного, следом добивают похожих. Ошибкой это не считаем: прокси бывает
+ * один на всех осознанно, и запрет остановил бы работу. Оператор должен ВИДЕТЬ
+ * риск в логе задачи, а решение — за ним.
+ */
+async function warnAboutProxyCluster(task, store, accountIds) {
+  try {
+    const [{ proxySpreadGate }, { getAccountMeta }] = await Promise.all([
+      import('../lib/antiCluster.js'),
+      import('../accountsMeta.js'),
+    ])
+    const byAccount = {}
+    for (const id of accountIds) {
+      const meta = await getAccountMeta(id)
+      byAccount[id] = meta?.proxy || ''
+    }
+    const gate = proxySpreadGate(byAccount, accountIds)
+    if (!gate.ok) await store.appendLog(task, 'warning', `Риск кластера (§4.4): ${gate.reason}`)
+  } catch { /* предупреждение не должно мешать запуску задачи */ }
+}
+
 export async function launchTask(moduleKey, task, store) {
   const worker = getWorker(moduleKey)
   if (!worker) return
   await store.saveTask(task)
+  const ids = task.settings?.accountIds || []
+  if (ids.length > 1) await warnAboutProxyCluster(task, store, ids)
   startWorker(task.id, store, worker)
 }
 
