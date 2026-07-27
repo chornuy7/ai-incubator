@@ -59,6 +59,22 @@ test('C1: журнал отдаёт свежие сверху', async () => {
   assert.equal(rows[0].module, 'mailing', 'последняя запись — первой')
 })
 
+test('§10.5: coinMultiplier наценивает монеты за изображение, не трогая токены', async () => {
+  await changeCoins(100)
+  const before = (await getBalance()).coins
+  const row = await recordTokens({ tokens: 1000, module: 'neuro-dialogs', taskId: 'img', coinMultiplier: 4 })
+  assert.equal(row.tokens, 1000, 'в журнале честное число токенов')
+  assert.equal(row.coins, 4, '1000 токенов ×4 = 4 монеты')
+  assert.equal(before - (await getBalance()).coins, 4, 'с баланса списано с наценкой')
+})
+
+test('§10.5: множитель <1 или мусор игнорируется (не удешевляет расход)', async () => {
+  const a = await recordTokens({ tokens: 1000, module: 'm', taskId: 'img2', coinMultiplier: 0.1 })
+  assert.equal(a.coins, 1, 'множитель <1 не применяется — минимум ×1')
+  const b = await recordTokens({ tokens: 1000, module: 'm', taskId: 'img2', coinMultiplier: 'x' })
+  assert.equal(b.coins, 1, 'нечисловой множитель = ×1')
+})
+
 test.after(async () => {
   await fs.rm(dir, { recursive: true, force: true })
   delete process.env.TOKEN_LEDGER_FILE

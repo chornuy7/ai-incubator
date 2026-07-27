@@ -59,6 +59,8 @@ import { findChannelChat, isChannelPeer } from '../lib/channelChat.js'
 import { followUpDecision, followUpPrompt, followUpStatus } from '../lib/followUp.js'
 import { buildAgentContext, getAgent } from '../agents.js'
 import { recordTokens } from '../tokenLedger.js'
+import { describeIncomingImage, messageHasPhoto } from '../lib/visionDescribe.js'
+import { effectivePrices } from '../priceStore.js'
 import { canWorkNow, noteAction } from '../accountActivity.js'
 import { humanPace } from '../lib/antiCluster.js'
 import { getGoal, isGoalExpired } from '../goals.js'
@@ -1137,7 +1139,24 @@ export async function runNeuroDialogs(task, store) {
           const msgs = await client.getMessages(d.entity, { limit: 6 })
           const last = msgs[0]
           const incoming = (last?.message || '').trim()
-          const prompt = buildDialogPrompt(msgs)
+          // §10.5: если оператор включил анализ изображений и последнее входящее — с фото,
+          // описываем картинку словами и подмешиваем в промпт, чтобы ИИ отвечал по сути,
+          // а не игнорировал присланное. Расход vision биллим отдельно, с множителем
+          // «картинка ×N» из админки (priceStore.imageMultiplier). Всё best-effort:
+          // осечка описания диалог не рвёт — отвечаем по тексту.
+          let imageNote = ''
+          if (s.analyzeImages && last && messageHasPhoto(last)) {
+            const desc = await describeIncomingImage(client, last).catch(() => null)
+            if (desc?.text) {
+              imageNote = desc.text
+              let coinMultiplier = 4
+              try { coinMultiplier = (await effectivePrices()).imageMultiplier } catch { /* дефолт ×4 */ }
+              await recordTokens({ ...desc.usage, module: task.moduleKey, accountId, taskId: task.id, campaignId: s.campaignId, userId: task.userId, coinMultiplier })
+                .catch(() => { /* биллинг картинки не роняет ответ */ })
+              await store.appendLog(task, 'info', `«${peerKey}»: на входящем фото — «${imageNote.slice(0, 60)}»`, meta.name)
+            }
+          }
+          const prompt = buildDialogPrompt(msgs) + (imageNote ? `\n\n[Собеседник прислал изображение: ${imageNote}]` : '')
           // Знакомство уже состоялось, если МЫ этому человеку писали (мейлинг отправил
           // первое сообщение). Иначе на первом же ответе лид ещё `cold`, этап — 1/5
           // «Знакомство», и ИИ здоровается второй раз, будто разговора не было.

@@ -41,6 +41,8 @@ export interface Pricing {
   /** Пакеты пополнения — цена самой монеты. С сервера, не копией в вебе. */
   packs?: { coins: number; price: number; best?: boolean }[]
   currency?: string
+  /** §10.5: наценка на анализ изображения (расход vision ×N). Из админки, не из кода. */
+  imageMultiplier?: number
 }
 export async function fetchPricing(): Promise<Pricing> {
   const r = await apiGet<Pricing & { ok: boolean }>('/api/pricing')
@@ -49,6 +51,7 @@ export async function fetchPricing(): Promise<Pricing> {
   return {
     items: r.items || [], actions: r.actions || {}, avgTokens: r.avgTokens || {},
     coinsPer1kTokens: r.coinsPer1kTokens ?? 1, packs: r.packs, currency: r.currency,
+    imageMultiplier: r.imageMultiplier,
   }
 }
 

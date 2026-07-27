@@ -42,11 +42,16 @@ export function tokensToCoins(tokens) {
  * Записать расход. Best-effort: журнал не должен ронять генерацию — если запись
  * не удалась, работа модуля продолжается, а мы теряем строку статистики, но не задачу.
  * @param {{module?:string, accountId?:string, taskId?:string, campaignId?:string,
- *          tokens?:number, promptTokens?:number, completionTokens?:number, model?:string}} entry
+ *          tokens?:number, promptTokens?:number, completionTokens?:number, model?:string,
+ *          coinMultiplier?:number}} entry
+ *   `coinMultiplier` (§10.5): множитель монет за расход — для анализа изображений
+ *   (vision дороже текста, заказчик выставляет «картинка ×N» в админке). На токены
+ *   не влияет: в журнале честное число токенов, дороже только пересчёт в монеты.
  */
 export async function recordTokens(entry = {}) {
   const tokens = Math.max(0, Number(entry.tokens) || 0)
   if (!tokens) return null
+  const mult = Math.max(1, Number(entry.coinMultiplier) || 1)
   const row = {
     ts: Date.now(),
     module: String(entry.module || ''),
@@ -58,7 +63,7 @@ export async function recordTokens(entry = {}) {
     tokens,
     promptTokens: Math.max(0, Number(entry.promptTokens) || 0),
     completionTokens: Math.max(0, Number(entry.completionTokens) || 0),
-    coins: tokensToCoins(tokens),
+    coins: Math.round(tokensToCoins(tokens) * mult * 100) / 100,
   }
   const db = sb()
   if (db) {

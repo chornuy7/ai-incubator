@@ -2,12 +2,14 @@ import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   Play, Sparkles, Search, MessagesSquare, Mail, Users,
   RefreshCw, Loader2, ChevronDown, ExternalLink, Terminal, ArrowUpRight,
+  Check, Image as ImageIcon,
 } from 'lucide-react'
 import { MODULES } from '@/shared/config/modules'
 import { useApp } from '@/mocks/store'
 import { Avatar, Badge, Switch, Select, Segmented } from '@/shared/ui'
 import { AccountPicker } from '@/features/account-picker/AccountPicker'
 import { fetchGoals, type Goal } from '@/api/goalsApi'
+import { fetchPricing } from '@/api/balanceApi'
 import { upsertLead } from '@/api/leadsApi'
 import { cn } from '@/shared/lib/utils'
 import { promptDialog } from '@/shared/lib/dialog'
@@ -42,6 +44,7 @@ const cfg = MODULES['neuro-dialogs']!
 const GOAL_KEY = 'neuro-dialogs:goal'
 const GOAL_ID_KEY = 'neuro-dialogs:goalId'
 const SCOPE_KEY = 'neuro-dialogs:replyAll'
+const IMG_KEY = 'neuro-dialogs:analyzeImages' // §10.5
 
 function peerRef(d: Pick<InboxDialog, 'peerId' | 'accessHash' | 'username'>) {
   return { peerId: d.peerId, accessHash: d.accessHash, username: d.username || undefined }
@@ -104,6 +107,8 @@ export function NeuroDialogsModule() {
   const [aiEnabled, setAiEnabled] = useState(true)
   const [replyAll, setReplyAll] = useState(() => localStorage.getItem(SCOPE_KEY) === '1')
   const [dialogGoal, setDialogGoal] = useState(() => localStorage.getItem(GOAL_KEY) ?? '')
+  const [analyzeImages, setAnalyzeImages] = useState(() => localStorage.getItem(IMG_KEY) === '1') // §10.5
+  const [imageMult, setImageMult] = useState<number | null>(null) // §10.5: наценка «картинка ×N» из админки
   const [goals, setGoals] = useState<Goal[]>([])
   const [goalId, setGoalId] = useState(() => localStorage.getItem(GOAL_ID_KEY) ?? '') // §9: цель кампании
   const [aiProtect, setAiProtect] = useState(true)
@@ -165,6 +170,9 @@ export function NeuroDialogsModule() {
   useEffect(() => { localStorage.setItem(GOAL_KEY, dialogGoal) }, [dialogGoal])
   useEffect(() => { localStorage.setItem(GOAL_ID_KEY, goalId) }, [goalId])
   useEffect(() => { localStorage.setItem(SCOPE_KEY, replyAll ? '1' : '0') }, [replyAll])
+  useEffect(() => { localStorage.setItem(IMG_KEY, analyzeImages ? '1' : '0') }, [analyzeImages])
+  // §10.5: подтягиваем актуальную наценку за изображение — показать «×N» у тумблера.
+  useEffect(() => { void fetchPricing().then((p) => setImageMult(p.imageMultiplier ?? null)).catch(() => {}) }, [])
   useEffect(() => { void fetchGoals().then(setGoals).catch(() => {}) }, [])
 
   const buildSettings = useCallback((): ModuleTaskSettings => ({
@@ -183,11 +191,12 @@ export function NeuroDialogsModule() {
     probability: aiEnabled ? 100 : 0,
     replyScope: replyAll ? 'all' : 'unread',
     dialogGoal: dialogGoal.trim(),
+    analyzeImages, // §10.5: описывать входящие фото vision-моделью
     // §9: сколько сообщений пишем ОДНОМУ лиду — числом или до целевого действия.
     replyLimitMode,
     maxRepliesPerLead: replyLimitMode === 'count' ? maxRepliesPerLead : 0,
     ...(goalId ? { goalId } : {}), // §9: привязка диалога к цели кампании (наследует KB/этапы, лиды к цели)
-  }), [accountIds, aiProtect, protLevel, activePrompt, promptBodies, maxActions, minActions, maxPerAcc, minPerAcc, delayPreset, delays, aiEnabled, replyAll, dialogGoal, goalId, replyLimitMode, maxRepliesPerLead])
+  }), [accountIds, aiProtect, protLevel, activePrompt, promptBodies, maxActions, minActions, maxPerAcc, minPerAcc, delayPreset, delays, aiEnabled, replyAll, dialogGoal, analyzeImages, goalId, replyLimitMode, maxRepliesPerLead])
 
   const applyPreset = useCallback((s: ModuleTaskSettings) => {
     if (s.aiProtection !== undefined) setAiProtect(s.aiProtection)
@@ -203,6 +212,7 @@ export function NeuroDialogsModule() {
     if (s.probability !== undefined) setAiEnabled(s.probability > 0)
     if (s.replyScope) setReplyAll(s.replyScope === 'all')
     if (typeof s.dialogGoal === 'string') setDialogGoal(s.dialogGoal)
+    if (typeof s.analyzeImages === 'boolean') setAnalyzeImages(s.analyzeImages)
     if (typeof s.goalId === 'string') setGoalId(s.goalId)
     if (s.replyLimitMode === 'count' || s.replyLimitMode === 'untilTarget') setReplyLimitMode(s.replyLimitMode)
     if (typeof s.maxRepliesPerLead === 'number' && s.maxRepliesPerLead > 0) setMaxRepliesPerLead(s.maxRepliesPerLead)
@@ -393,6 +403,23 @@ export function NeuroDialogsModule() {
                 Добавляется к выбранному промпту и применяется к каждому авто-ответу: кем быть, как общаться и к чему вести диалог.
               </p>
             </div>
+
+            {/* §10.5: анализ входящих изображений. Отдельный тумблер, т.к. vision дороже
+                текста — расход считается с наценкой «картинка ×N» из админки. */}
+            <button
+              type="button"
+              onClick={() => setAnalyzeImages((v) => !v)}
+              className={`flex w-full items-center gap-3 rounded-xl border p-3 text-left transition-colors ${analyzeImages ? 'border-spark-500/50 bg-spark-500/10' : 'border-line bg-surface hover:border-spark-500/30'}`}
+            >
+              <span className={`grid h-5 w-5 shrink-0 place-items-center rounded-md border ${analyzeImages ? 'border-spark-500 bg-spark-500 text-[#04150c]' : 'border-line'}`}>{analyzeImages && <Check size={13} />}</span>
+              <span className="min-w-0 flex-1">
+                <span className="flex items-center gap-1.5 text-sm font-semibold text-fg"><ImageIcon size={14} className="shrink-0 text-spark-300" /> Анализировать входящие изображения</span>
+                <span className="mt-0.5 block text-[11px] leading-snug text-muted">
+                  Если собеседник прислал фото — ИИ опишет его и учтёт в ответе. Расход vision дороже текста
+                  {imageMult ? <> — <b className="text-fg">×{imageMult}</b> за изображение</> : ' (наценка задаётся в админке)'}.
+                </span>
+              </span>
+            </button>
 
             <p className="rounded-xl border border-line bg-elevated/60 px-3 py-2 text-xs leading-relaxed text-muted">
               Авто-режим (кнопка «Запустить») отвечает {replyAll

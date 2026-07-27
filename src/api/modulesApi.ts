@@ -70,6 +70,7 @@ export interface ModuleTaskSettings {
   // ── НейроДиалоги ──
   replyScope?: 'unread' | 'all' // 'unread' — только новые ЛС, 'all' — все, где последнее слово за собеседником
   dialogGoal?: string // инструкция для ИИ: как себя вести и к чему вести диалог
+  analyzeImages?: boolean // §10.5: описывать входящие фото vision-моделью (расход ×imageMultiplier)
   /** §9: сколько сообщений пишем ОДНОМУ лиду — до целевого действия или фиксированным числом. */
   replyLimitMode?: 'untilTarget' | 'count'
   /** §9: лимит ответов на лида при replyLimitMode='count' (0 = без лимита). */
