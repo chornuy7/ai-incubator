@@ -157,9 +157,11 @@ export const ANNUAL_DISCOUNT = 0.2
  * месячная цена: раньше годовую подписку за ~$192 писали в базу оплат как $20.
  * @param {number} monthlySum @param {number} [months]
  */
-export function periodCost(monthlySum, months = 1) {
+export function periodCost(monthlySum, months = 1, annualDiscount = ANNUAL_DISCOUNT) {
   const m = Math.max(1, Number(months) || 1)
-  const discount = m >= 12 ? ANNUAL_DISCOUNT : 0
+  // Скидка действует от 12 месяцев. Значение — эффективное (правится из админки),
+  // а не константа: иначе поле «скидка за год» в админке было бы мёртвым.
+  const discount = m >= 12 ? (Number(annualDiscount) || 0) : 0
   return Math.round(Number(monthlySum) * m * (1 - discount) * 100) / 100
 }
 

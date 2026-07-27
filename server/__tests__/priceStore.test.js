@@ -67,3 +67,13 @@ test('новые из звонка: tokenUsd по умолчанию не зад
   assert.equal(eff.imageMultiplier, 5)
   await fs.rm(f, { force: true })
 })
+
+test('годовая скидка редактируется и effectivePrices её отдаёт', async () => {
+  const { S, f } = await fresh()
+  let eff = await S.effectivePrices()
+  assert.equal(eff.annualDiscount, 0.2, 'дефолт из кода')
+  await S.setOverrides({ annualDiscount: 0.3 })
+  eff = await S.effectivePrices()
+  assert.equal(eff.annualDiscount, 0.3, 'правка видна')
+  await fs.rm(f, { force: true })
+})

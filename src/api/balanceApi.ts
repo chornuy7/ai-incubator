@@ -43,8 +43,13 @@ export interface Pricing {
   currency?: string
 }
 export async function fetchPricing(): Promise<Pricing> {
-  const r = await apiGet<{ items?: PriceItem[]; actions?: Record<string, number>; avgTokens?: Record<string, number>; coinsPer1kTokens: number }>('/api/pricing')
-  return { items: r.items || [], actions: r.actions || {}, avgTokens: r.avgTokens || {}, coinsPer1kTokens: r.coinsPer1kTokens ?? 1 }
+  const r = await apiGet<Pricing & { ok: boolean }>('/api/pricing')
+  // Пробрасываем packs/currency — без них шапка всегда рисовала запасные пакеты,
+  // игнорируя цены с сервера (и правки монет из админки).
+  return {
+    items: r.items || [], actions: r.actions || {}, avgTokens: r.avgTokens || {},
+    coinsPer1kTokens: r.coinsPer1kTokens ?? 1, packs: r.packs, currency: r.currency,
+  }
 }
 
 /** §5.4: подписка на модули — витрина и то, что уже куплено. */
@@ -61,11 +66,13 @@ export interface SubSetup {
   custom?: boolean
   price?: number
 }
-export interface Subscription { items: SubModule[]; setups: SubSetup[]; currency: string; mine: string[] | 'all' }
+export interface Subscription { items: SubModule[]; setups: SubSetup[]; currency: string; mine: string[] | 'all'   /** Годовая скидка (эффективная, из админки). */
+  annualDiscount?: number
+}
 
 export async function fetchSubscription(): Promise<Subscription> {
   const r = await apiGet<Subscription & { ok: boolean }>('/api/subscription')
-  return { items: r.items || [], setups: r.setups || [], currency: r.currency || '$', mine: r.mine ?? 'all' }
+  return { items: r.items || [], setups: r.setups || [], currency: r.currency || '$', mine: r.mine ?? 'all', annualDiscount: r.annualDiscount }
 }
 
 export async function quoteSubscription(modules: string[]): Promise<SubCost> {

@@ -6,7 +6,6 @@ import { usePlan } from '@/features/billing/plan'
 import { useSession } from '@/features/auth/session'
 import { fetchSubscription, saveSubscription, createBundle, deleteBundle, type Subscription } from '@/api/balanceApi'
 import { cn } from '@/shared/lib/utils'
-import { ANNUAL_DISCOUNT } from '@/pages/landing/catalog'
 
 /**
  * §5.4: кабинет подписки — клиент СОБИРАЕТ набор модулей сам.
@@ -124,6 +123,8 @@ export function SubscriptionPage() {
 
   if (!data) return <div className="p-8 text-center text-muted"><Loader2 className="mx-auto animate-spin" /></div>
   const cur = data.currency
+  // Годовая скидка — с сервера (правится из админки), не из статичного catalog.
+  const annualDiscount = data.annualDiscount ?? 0.2
   const mineSet = new Set(data.mine === 'all' ? data.items.map((i) => i.key) : data.mine)
   const changed = keys.length !== mineSet.size || keys.some((k) => !mineSet.has(k))
 
@@ -249,12 +250,12 @@ export function SubscriptionPage() {
             {cost.setup && <> · набор «{data.setups.find((s) => s.id === cost.setup)?.name}» — скидка {Math.round(cost.discount * 100)}%</>}
           </div>
           <div className="flex items-baseline gap-2">
-            {/* Год — со скидкой ANNUAL_DISCOUNT от 12 месяцев. Единый источник с
-                лендингом и сервером (server/pricing.periodCost), иначе витрина и
-                запись о платеже разойдутся. */}
-            <span className="font-display text-2xl font-bold text-fg">{period === 'year' ? Math.round(cost.sum * 12 * (1 - ANNUAL_DISCOUNT)) : cost.sum} {cur}</span>
+            {/* Год — со скидкой annualDiscount от 12 месяцев. Скидка приходит с
+                сервера (правится в админке) — витрина, запись платежа и админский
+                контрол теперь одно число, а не три. */}
+            <span className="font-display text-2xl font-bold text-fg">{period === 'year' ? Math.round(cost.sum * 12 * (1 - annualDiscount)) : cost.sum} {cur}</span>
             <span className="text-sm text-muted">{period === 'year' ? 'за год' : 'в месяц'}</span>
-            {period === 'year' && <span className="rounded-md bg-spark-500/15 px-1.5 py-0.5 text-[10px] font-bold text-spark-300">−{Math.round(ANNUAL_DISCOUNT * 100)}%</span>}
+            {period === 'year' && <span className="rounded-md bg-spark-500/15 px-1.5 py-0.5 text-[10px] font-bold text-spark-300">−{Math.round(annualDiscount * 100)}%</span>}
             {period === 'month' && cost.discount > 0 && <span className="text-sm text-muted line-through">{cost.full} {cur}</span>}
           </div>
         </div>
@@ -262,7 +263,7 @@ export function SubscriptionPage() {
         <div className="flex rounded-xl border border-line bg-elevated p-0.5 text-sm">
           {(['month', 'year'] as const).map((p) => (
             <button key={p} onClick={() => setPeriod(p)} className={cn('h-9 rounded-lg px-3 font-semibold transition-colors', period === p ? 'bg-spark-500/15 text-spark-300' : 'text-muted hover:text-fg')}>
-              {p === 'month' ? 'Месяц' : 'Год'}{p === 'year' && <span className="ml-1 text-[10px] text-spark-400">−{Math.round(ANNUAL_DISCOUNT * 100)}%</span>}
+              {p === 'month' ? 'Месяц' : 'Год'}{p === 'year' && <span className="ml-1 text-[10px] text-spark-400">−{Math.round(annualDiscount * 100)}%</span>}
             </button>
           ))}
         </div>

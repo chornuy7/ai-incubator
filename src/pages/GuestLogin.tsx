@@ -51,7 +51,7 @@ export function GuestLogin() {
           </div>
           <div>
             <div className="font-display text-xl font-bold text-fg">AI Incubator</div>
-            <div className="text-xs text-muted">Комбайн автоматизации Telegram</div>
+            <div className="text-xs text-muted">Платформа автоматизации Telegram</div>
           </div>
         </div>
 

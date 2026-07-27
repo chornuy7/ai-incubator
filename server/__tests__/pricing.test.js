@@ -125,3 +125,13 @@ test('periodCost: год со скидкой, месяц без', async () => {
   assert.equal(periodCost(20, 6), 120, '6 месяцев — без годовой скидки')
   assert.equal(periodCost(20, 0), 20, 'ноль/пусто → как месяц')
 })
+
+test('periodCost: годовая скидка — параметр, не константа (правится из админки)', async () => {
+  const { periodCost } = await import('../pricing.js')
+  // При скидке 0.3 год = 12 мес × 0.7
+  assert.equal(periodCost(20, 12, 0.3), Math.round(20 * 12 * 0.7 * 100) / 100)
+  // Нулевая скидка — год = 12 полных месяцев
+  assert.equal(periodCost(20, 12, 0), 240)
+  // Месяц скидку игнорирует при любом значении
+  assert.equal(periodCost(20, 1, 0.5), 20)
+})

@@ -43,6 +43,8 @@ export function LandingPage() {
   const [params] = useSearchParams()
   const variant = params.get('v') === 'marketing' ? 'marketing' : 'platform'
   const hero = HERO_VARIANTS[variant]
+  // Годовая скидка — с сервера (правится в админке), catalog-константа как fallback.
+  const annualDiscount = pricing?.annualDiscount ?? ANNUAL_DISCOUNT
 
   const setupAll = pricing?.setups.find((s) => s.id === 'setup-all') || null
 
@@ -151,7 +153,7 @@ export function LandingPage() {
               {(['month', 'year'] as const).map((p) => (
                 <button key={p} onClick={() => setPlanPeriod(p)} className={`h-9 rounded-lg px-4 font-semibold transition-colors ${planPeriod === p ? 'bg-spark-500/15 text-spark-300' : 'text-muted hover:text-fg'}`}>
                   {p === 'month' ? 'Помесячно' : 'На год'}
-                  {p === 'year' && <span className="ml-1.5 text-[11px] text-spark-400">−{Math.round(ANNUAL_DISCOUNT * 100)}%</span>}
+                  {p === 'year' && <span className="ml-1.5 text-[11px] text-spark-400">−{Math.round(annualDiscount * 100)}%</span>}
                 </button>
               ))}
             </div>
@@ -160,15 +162,15 @@ export function LandingPage() {
           {pricing && setupAll && (() => {
             const yr = planPeriod === 'year'
             const per = yr ? '/ год' : '/ мес'
-            const perAll = yr ? Math.round(setupAll.cost.sum * 12 * (1 - ANNUAL_DISCOUNT)) : setupAll.cost.sum
-            const perMin = yr ? Math.round(8 * 12 * (1 - ANNUAL_DISCOUNT)) : 8
+            const perAll = yr ? Math.round(setupAll.cost.sum * 12 * (1 - annualDiscount)) : setupAll.cost.sum
+            const perMin = yr ? Math.round(8 * 12 * (1 - annualDiscount)) : 8
             return (
               <div className="mx-auto mt-6 grid max-w-3xl gap-5 sm:grid-cols-2">
                 <PlanCard
                   name="Полная подписка"
                   price={`${pricing.currency}${perAll}`}
                   per={per}
-                  badge={yr ? `выгодно · −${Math.round(ANNUAL_DISCOUNT * 100)}%` : undefined}
+                  badge={yr ? `выгодно · −${Math.round(annualDiscount * 100)}%` : undefined}
                   highlight
                   desc={yr ? 'Все модули на год — дешевле помесячной.' : 'Доступ ко всем модулям на месяц.'}
                   features={['Все модули платформы', 'Новые модули — бесплатно', 'Менеджер аккаунтов в подарок']}
@@ -457,7 +459,8 @@ function PriceCalculator({ pricing, start, full, setFull, selected, setSelected 
     return () => { alive = false }
   }, [activeKeys])
 
-  const perPeriod = (monthly: number) => (period === 'year' ? Math.round(monthly * 12 * (1 - ANNUAL_DISCOUNT)) : monthly)
+  const annualDiscount = pricing.annualDiscount ?? ANNUAL_DISCOUNT
+  const perPeriod = (monthly: number) => (period === 'year' ? Math.round(monthly * 12 * (1 - annualDiscount)) : monthly)
   const suffix = period === 'year' ? ' / год' : ' / мес'
   const cur = pricing.currency
 
@@ -481,7 +484,7 @@ function PriceCalculator({ pricing, start, full, setFull, selected, setSelected 
           {(['month', 'year'] as const).map((p) => (
             <button key={p} onClick={() => setPeriod(p)} className={`h-8 rounded-lg px-3 font-semibold transition-colors ${period === p ? 'bg-spark-500/15 text-spark-300' : 'text-muted hover:text-fg'}`}>
               {p === 'month' ? 'Месяц' : 'Год'}
-              {p === 'year' && <span className="ml-1 text-[10px] text-spark-400">−{Math.round(ANNUAL_DISCOUNT * 100)}%</span>}
+              {p === 'year' && <span className="ml-1 text-[10px] text-spark-400">−{Math.round(annualDiscount * 100)}%</span>}
             </button>
           ))}
         </div>

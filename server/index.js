@@ -649,7 +649,7 @@ app.get('/api/subscription', async (req, res) => {
         }
       }),
     ]
-    res.json({ ok: true, items, setups, currency: CURRENCY, mine: modules })
+    res.json({ ok: true, items, setups, currency: CURRENCY, mine: modules, annualDiscount: eff.annualDiscount })
   } catch (err) { res.status(500).json({ ok: false, error: err instanceof Error ? err.message : 'Ошибка' }) }
 })
 
@@ -695,7 +695,7 @@ app.post('/api/subscription', async (req, res) => {
     const effPrices = await effectivePrices()
     const monthly = list === 'all' ? null : subCost(list, bundlesList, effPrices.monthMap)
     // paid — то, что реально заряжено за период (год со скидкой), НЕ месячная цена.
-    const paid = monthly ? periodCost(monthly.sum, months || 1) : null
+    const paid = monthly ? periodCost(monthly.sum, months || 1, effPrices.annualDiscount) : null
     await appendAudit({
       action: 'subscription.set',
       module: 'billing',
