@@ -1,5 +1,6 @@
 import { Routes, Route, Navigate } from 'react-router-dom'
 import { useApp } from '@/mocks/store'
+import { useSession } from '@/features/auth/session'
 import { Layout } from '@/app/Layout'
 import { AccountsPage } from '@/pages/AccountsPage'
 import { StatisticsPage } from '@/pages/StatisticsPage'
@@ -32,8 +33,13 @@ import { GuestLogin } from '@/pages/GuestLogin'
 
 export default function App() {
   const userState = useApp((s) => s.userState)
+  const sessionUser = useSession((s) => s.user)
 
-  if (userState === 'guest') {
+  // Панель доступна ТОЛЬКО с реальной сессией. Нет входа (или явный «гость») →
+  // публичные страницы: лендинг, вход, админка. Раньше гейт стоял на dev-флаге
+  // `userState`, и свежий посетитель без входа видел пустую панель (данные при этом
+  // 401-ились сервером, но UX был сломан) вместо лендинга.
+  if (!sessionUser || userState === 'guest') {
     // B1 (SPEC §5.2): лендинг — единственная страница ВНЕ auth-гейта. Раньше гость
     // на любом адресе видел форму входа: человек, пришедший по ссылке из рекламы,
     // упирался в логин, не понимая, что это за продукт.
