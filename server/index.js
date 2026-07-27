@@ -656,12 +656,17 @@ app.post('/api/subscription', async (req, res) => {
     const personal = !(admin && !req.body?.userId)
     const months = Number(req.body?.months) || 0
     const balance = personal ? await setUserModules(list, target, { months }) : await setModules(list, target, { months })
+    const { subscriptionCost: subCost, periodCost } = await import('./pricing.js')
+    const bundlesList = await (await import('./bundles.js')).listBundles()
+    const monthly = list === 'all' ? null : subCost(list, bundlesList)
+    // paid — то, что реально заряжено за период (год со скидкой), НЕ месячная цена.
+    const paid = monthly ? periodCost(monthly.sum, months || 1) : null
     await appendAudit({
       action: 'subscription.set',
       module: 'billing',
       initiator: req.header('x-user-id') || 'system',
       reason: `Подписка${(admin && !req.body?.userId) ? ' пространства' : ` (${target || 'свой'})`}: ${list === 'all' ? 'все модули' : `${list.length} модулей`}`,
-      meta: { modules: list, cost: list === 'all' ? null : subscriptionCost(list, await (await import('./bundles.js')).listBundles()) },
+      meta: { modules: list, months: months || 1, cost: monthly, paid },
     }).catch(() => {})
     res.json({ ok: true, balance })
   } catch (err) { res.status(500).json({ ok: false, error: err instanceof Error ? err.message : 'Ошибка' }) }

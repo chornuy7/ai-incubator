@@ -145,6 +145,24 @@ export function modulePrice(moduleKey) {
  * Считаем на сервере: витрина и то, что спишется, должны быть одним числом.
  * @param {string[]} moduleKeys @returns {{sum:number, full:number, setup:string|null, discount:number}}
  */
+/**
+ * Скидка за годовую оплату. ЕДИНЫЙ источник: и витрина, и запись о платеже берут
+ * отсюда, иначе годовой план продаётся по одной цене, а в базу оплат пишется другая.
+ */
+export const ANNUAL_DISCOUNT = 0.2
+
+/**
+ * Сколько РЕАЛЬНО заряжается за период. Месяц — месячная сумма; год (12 мес) —
+ * со скидкой ANNUAL_DISCOUNT. Именно это число уходит в журнал платежей, а не
+ * месячная цена: раньше годовую подписку за ~$192 писали в базу оплат как $20.
+ * @param {number} monthlySum @param {number} [months]
+ */
+export function periodCost(monthlySum, months = 1) {
+  const m = Math.max(1, Number(months) || 1)
+  const discount = m >= 12 ? ANNUAL_DISCOUNT : 0
+  return Math.round(Number(monthlySum) * m * (1 - discount) * 100) / 100
+}
+
 export function subscriptionCost(moduleKeys = [], customBundles = []) {
   const keys = [...new Set(moduleKeys.filter((k) => MODULE_MONTH_PRICE[k] !== undefined))]
   const full = keys.reduce((acc, k) => acc + modulePrice(k), 0)

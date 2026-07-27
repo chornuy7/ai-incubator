@@ -108,3 +108,20 @@ test('формат монет: тысячные видны, лишний нол�
   assert.equal(fmtCoins(79.4), '79.40', 'обычные суммы — привычные два знака')
   assert.equal(fmtCoins(0), '0.00')
 })
+
+/**
+ * §10.1: сумма, которая пишется в базу оплат, обязана учитывать период.
+ * Merge оставил баг: годовую подписку за ~$192 писали как месячные $20 —
+ * журнал платежей и вкладка «Покупки» недосчитывали выручку с годовых планов.
+ */
+test('periodCost: год со скидкой, месяц без', async () => {
+  const { periodCost, ANNUAL_DISCOUNT, subscriptionCost } = await import('../pricing.js')
+  const monthly = subscriptionCost(['neuro-chatting', 'mailing']).sum // 40
+  assert.equal(periodCost(monthly, 1), monthly, 'месяц — месячная цена')
+  assert.equal(periodCost(monthly, 12), Math.round(monthly * 12 * (1 - ANNUAL_DISCOUNT) * 100) / 100, 'год = 12 мес − скидка')
+  assert.ok(periodCost(monthly, 12) > monthly, 'год дороже месяца')
+  assert.ok(periodCost(monthly, 12) < monthly * 12, 'но дешевле 12 месяцев без скидки')
+  // Граница: меньше 12 месяцев скидки не даёт.
+  assert.equal(periodCost(20, 6), 120, '6 месяцев — без годовой скидки')
+  assert.equal(periodCost(20, 0), 20, 'ноль/пусто → как месяц')
+})

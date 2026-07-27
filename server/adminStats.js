@@ -51,13 +51,6 @@ const ACTIVITY_OF_MODULE = {
 }
 
 /**
- * Человекочитаемые имена модулей для отчёта клиенту. Держим здесь, а не тянем с фронта:
- * отчёт должен собираться на сервере целиком, иначе «инвойс» нельзя будет отдать
- * ни письмом, ни выгрузкой — только из открытой вкладки.
- */
-
-
-/**
  * Свод для админ-панели.
  * @param {{since?:number}} [opts] начало периода (по умолчанию — последние 30 дней)
  */
@@ -97,11 +90,10 @@ export async function adminOverview(opts = {}) {
     }
   }
 
-  const [tokens, balance, coinTotal, subscription, users] = await Promise.all([
+  const [tokens, balance, coinTotal, users] = await Promise.all([
     tokenSummary({ since }).catch(() => ({ tokens: 0, coins: 0, calls: 0, byModule: {}, byAccount: {} })),
     getBalance().catch(() => null),
     totalCoins().catch(() => ({ coins: 0, wallets: 0 })),
-    subscriptionState().catch(() => null),
     listUsers().catch(() => []),
   ])
 
@@ -119,7 +111,6 @@ export async function adminOverview(opts = {}) {
     // пользователям: именно её показывает админ-панель как «монет в системе».
     balance,
     coinTotal,
-    subscription,
     users: {
       total: users.length,
       active: users.filter((u) => u.active !== false).length,
@@ -317,61 +308,6 @@ export async function accountReport(accountId, opts = {}) {
   }
 }
 
-/**
- * Что оплачено СЕЙЧАС: набор модулей, во сколько он обходится в месяц и когда его
- * меняли в последний раз.
- *
- * Админка показывала деньги и задачи, но не показывала подписку — то есть на вопрос
- * «за что мы вообще платим ежемесячно» ответить было нечем, хотя это первая строка
- * расходов. Подписка одна на пространство, поэтому живёт в общей сводке, а не в
- * разрезе по людям.
- */
-export async function subscriptionState() {
-  const { getBalance } = await import('./balance.js')
-  const { subscriptionCost, MODULE_MONTH_PRICE, CURRENCY } = await import('./pricing.js')
-  const { listBundles } = await import('./bundles.js')
-  const { modules } = await getBalance()
-
-  const all = Object.keys(MODULE_MONTH_PRICE)
-  const keys = modules === 'all' ? all : (Array.isArray(modules) ? modules : [])
-  // С учётом наборов админа: клиент, купивший «парсер + комментинг за 20», должен
-  // видеть в карточке 20, а не поштучные 28.
-  const cost = subscriptionCost(keys, await listBundles().catch(() => []))
-
-  // Когда меняли: берём последнюю запись из аудита — «с какого числа платим столько».
-  let changedAt = 0
-  try {
-    // Фильтр по действию, а не перебор всего журнала: смена подписки — событие
-    // редкое, и в последних N записях её может не быть вовсе.
-    const audit = await readAudit({ action: 'subscription.set', limit: 1 })
-    const last = audit[0]
-    // В аудите ts — ISO-строка, а не число (в отличие от журнала токенов).
-    // Number('2026-07-24T08:17:55Z') даёт NaN, и дата молча превращалась в «—».
-    changedAt = last?.ts ? Date.parse(last.ts) || 0 : 0
-  } catch { /* журнал не критичен для карточки */ }
-
-  return {
-    // 'all' — набор ещё не выбирали явно, открыто всё. Это НЕ то же самое, что
-    // «купили все модули»: платить за такое пространство пока не начинали.
-    explicit: modules !== 'all',
-    modules: keys.map((k) => ({ key: k, title: moduleTitle(k), price: MODULE_MONTH_PRICE[k] || 0 }))
-      .sort((a, b) => b.price - a.price),
-    count: keys.length,
-    total: all.length,
-    cost,
-    currency: CURRENCY,
-    changedAt,
-  }
-}
-
-/**
- * §5.3: то, за чем владелец следит каждый день — где сейчас болит.
- *
- * Сводка отвечает «сколько всего сделано», но не «что сломалось». Задачи с ошибками,
- * аккаунты в бане и работа, вставшая из-за нуля на балансе, — это три разные беды с
- * разными действиями, поэтому считаем их отдельно, а не одной кучей «проблемы: 7».
- * @param {{since?:number}} [opts]
- */
 export async function problems(opts = {}) {
   const since = Number(opts.since) || 0
 
@@ -734,7 +670,7 @@ export async function purchasesReport(opts = {}) {
   for (const e of auditRows) {
     const ts = Number(e.ts) || 0
     if (since && ts < since) continue
-    const sum = Number(e.meta?.cost?.sum) || 0
+    const sum = Number(e.meta?.paid ?? e.meta?.cost?.sum) || 0
     if (sum <= 0) continue // 'all'/пустой набор — не покупка
     const id = e.initiator && e.initiator !== 'system' ? e.initiator : '—'
     const mods = e.meta?.modules

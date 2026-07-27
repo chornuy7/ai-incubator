@@ -78,7 +78,7 @@ async function doSync() {
     // Покупки планов ($): события подписки с ценой (набор «все»/пустой — не покупка).
     const audit = await readAudit({ action: 'subscription.set', limit: 100000 }).catch(() => [])
     for (const e of audit) {
-      const sum = Number(e.meta?.cost?.sum) || 0
+      const sum = Number(e.meta?.paid ?? e.meta?.cost?.sum) || 0
       if (sum <= 0) continue
       const ts = Number(e.ts) || 0
       const uid = e.initiator && e.initiator !== 'system' ? e.initiator : '—'

@@ -12,7 +12,7 @@
  *
  * Хранение — data/bundles.json; путь через env BUNDLES_FILE (изоляция тестов).
  */
-import { dataPath, readJson, writeJson } from './lib/jsonStore.js'
+import { dataPath, readJson, mutateJson } from './lib/jsonStore.js'
 import { MODULE_MONTH_PRICE } from './pricing.js'
 
 const BUNDLES_FILE = () => process.env.BUNDLES_FILE || dataPath('bundles.json')
@@ -50,16 +50,23 @@ export async function createBundle(input = {}) {
     price,
     createdAt: Date.now(),
   }
-  const all = await listBundles()
-  await writeJson(BUNDLES_FILE(), [...all, bundle])
+  // mutateJson, а не read+write: он сериализует запись в файл (очередь _fileChains).
+  // Два одновременных createBundle через writeJson затирали бы друг друга — набор терялся.
+  await mutateJson(BUNDLES_FILE(), (raw) => {
+    const list = Array.isArray(raw) ? raw : []
+    return [...list, bundle]
+  }, [])
   return bundle
 }
 
 /** Удалить набор. Уже проданные подписки не трогаем: у клиента остаётся его список модулей. */
 export async function deleteBundle(id) {
-  const all = await listBundles()
-  const next = all.filter((b) => b.id !== id)
-  if (next.length === all.length) return false
-  await writeJson(BUNDLES_FILE(), next)
-  return true
+  let removed = false
+  await mutateJson(BUNDLES_FILE(), (raw) => {
+    const list = Array.isArray(raw) ? raw : []
+    const next = list.filter((b) => b.id !== id)
+    removed = next.length !== list.length
+    return next
+  }, [])
+  return removed
 }
