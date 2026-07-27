@@ -7,6 +7,24 @@
  */
 import crypto from 'crypto'
 import { dataPath, readJson, writeJson } from './lib/jsonStore.js'
+import { getSupabase, supabaseEnabled } from './lib/supabase.js'
+
+function sb() { return supabaseEnabled() ? getSupabase() : null }
+const rowToUser = (r) => ({
+  id: r.id, email: r.email, name: r.name || '',
+  roleId: (r.role_ids || [])[0] || '', roleIds: r.role_ids || [],
+  active: r.active !== false, passwordHash: r.password_hash || null,
+  parentId: r.parent_id || null,
+  createdAt: r.created_at ? new Date(r.created_at).getTime() : 0,
+  updatedAt: r.updated_at ? new Date(r.updated_at).getTime() : 0,
+})
+const userToRow = (u) => ({
+  id: u.id, email: u.email, name: u.name || '', password_hash: u.passwordHash || null,
+  role_ids: u.roleIds || (u.roleId ? [u.roleId] : []), active: u.active !== false,
+  parent_id: u.parentId || null,
+  created_at: new Date(u.createdAt || Date.now()).toISOString(),
+  updated_at: new Date(u.updatedAt || Date.now()).toISOString(),
+})
 import { ADMIN_ROLE_ID } from './roles.js'
 
 // Путь — ФУНКЦИЯ, а не константа: при вычислении на импорте тесты, выставляющие
@@ -88,6 +106,11 @@ function defaultUsers() {
 }
 
 export async function listUsers() {
+  const db = sb()
+  if (db) {
+    const { data } = await db.from('users').select('*').order('created_at', { ascending: true })
+    return (data || []).map(rowToUser)
+  }
   const users = await readJson(USERS_FILE(), null)
   if (!Array.isArray(users)) {
     const seed = defaultUsers()
@@ -136,6 +159,8 @@ export async function createUser(input = {}) {
     createdAt: Date.now(),
     updatedAt: Date.now(),
   }
+  const db = sb()
+  if (db) { await db.from('users').insert(userToRow(user)); return user }
   users.push(user)
   await writeJson(USERS_FILE(), users)
   return user
@@ -157,13 +182,20 @@ export async function updateUser(id, patch = {}) {
     users[i].passwordHash = hashPassword(patch.password)
   }
   users[i].updatedAt = Date.now()
+  const db = sb()
+  if (db) { await db.from('users').update(userToRow(users[i])).eq('id', id); return users[i] }
   await writeJson(USERS_FILE(), users)
   return users[i]
 }
 
 export async function deleteUser(id) {
-  const users = await listUsers()
   if (id === 'usr_admin') throw new Error('Встроенного администратора удалить нельзя')
+  const db = sb()
+  if (db) {
+    const { data } = await db.from('users').delete().eq('id', id).select('id')
+    return !!(data && data.length)
+  }
+  const users = await listUsers()
   const next = users.filter((u) => u.id !== id)
   if (next.length === users.length) return false
   await writeJson(USERS_FILE(), next)

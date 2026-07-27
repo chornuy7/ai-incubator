@@ -7,6 +7,11 @@
  */
 import crypto from 'crypto'
 import { dataPath, readJson, writeJson } from './lib/jsonStore.js'
+import { getSupabase, supabaseEnabled } from './lib/supabase.js'
+
+function sbRoles() { return supabaseEnabled() ? getSupabase() : null }
+const rowToRole = (r) => ({ id: r.id, name: r.name, permissions: r.permissions || {}, builtin: !!r.builtin })
+const roleToRow = (r) => ({ id: r.id, name: r.name, permissions: r.permissions || {}, builtin: !!r.builtin })
 import { MODULE_LABELS } from './lib/accountLocks.js'
 import { listFolders } from './targetFolders.js'
 import { listChannels } from './channels.js'
@@ -191,6 +196,11 @@ function defaultRoles() {
 }
 
 export async function listRoles() {
+  const db = sbRoles()
+  if (db) {
+    const { data } = await db.from('roles').select('*').order('created_at', { ascending: true })
+    return (data || []).map(rowToRole)
+  }
   const roles = await readJson(ROLES_FILE(), null)
   if (!Array.isArray(roles)) {
     const seed = defaultRoles()
@@ -249,6 +259,8 @@ export async function createRole(input) {
     createdAt: Date.now(),
     updatedAt: Date.now(),
   }
+  const db = sbRoles()
+  if (db) { await db.from('roles').insert(roleToRow(role)); return role }
   roles.push(role)
   await writeJson(ROLES_FILE(), roles)
   return role
@@ -272,6 +284,8 @@ export async function updateRole(id, patch = {}) {
     ...(roles[i].id === ADMIN_ROLE_ID ? {} : { permissions: clean.permissions }),
     updatedAt: Date.now(),
   }
+  const db = sbRoles()
+  if (db) { await db.from('roles').update(roleToRow(roles[i])).eq('id', id); return roles[i] }
   await writeJson(ROLES_FILE(), roles)
   return roles[i]
 }
@@ -282,6 +296,8 @@ export async function deleteRole(id) {
   const target = roles.find((r) => r.id === id)
   if (!target) return false
   if (target.builtin) throw new Error('Встроенную роль удалить нельзя')
+  const db = sbRoles()
+  if (db) { await db.from('roles').delete().eq('id', id); return true }
   const next = roles.filter((r) => r.id !== id)
   await writeJson(ROLES_FILE(), next)
   return true
