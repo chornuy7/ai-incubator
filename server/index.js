@@ -273,6 +273,40 @@ app.use('/api/automation', automationRouter)
 app.use('/api/goals', goalsRouter)
 app.use('/api/agents', agentsRouter)
 app.use('/api/leads', leadsRouter)
+
+/** §10.3: управление API-ключами «мозгов» — только владелец. */
+app.get('/api/admin/api-keys', async (req, res) => {
+  try {
+    if (!(await isAdminRequest(req))) return res.status(403).json({ ok: false, error: 'Ключи видит только владелец' })
+    const { listKeys } = await import('./apiKeys.js')
+    res.json({ ok: true, keys: await listKeys() })
+  } catch (err) { res.status(500).json({ ok: false, error: err instanceof Error ? err.message : 'Ошибка' }) }
+})
+
+app.post('/api/admin/api-keys', async (req, res) => {
+  try {
+    if (!(await isAdminRequest(req))) return res.status(403).json({ ok: false, error: 'Выпускать ключи может только владелец' })
+    const { issueKey } = await import('./apiKeys.js')
+    const key = await issueKey({ name: req.body?.name, ownerId: req.header('x-user-id') })
+    await appendAudit({ action: 'apikey.issue', module: 'api', initiator: req.header('x-user-id') || 'system', reason: `Выпущен ключ «${key.name}»`, meta: { id: key.id } }).catch(() => {})
+    res.json({ ok: true, key }) // ПОЛНЫЙ ключ — единственный раз
+  } catch (err) { res.status(400).json({ ok: false, error: err instanceof Error ? err.message : 'Ошибка' }) }
+})
+
+app.delete('/api/admin/api-keys/:id', async (req, res) => {
+  try {
+    if (!(await isAdminRequest(req))) return res.status(403).json({ ok: false, error: 'Отзывать ключи может только владелец' })
+    const { revokeKey } = await import('./apiKeys.js')
+    const gone = await revokeKey(req.params.id)
+    if (!gone) return res.status(404).json({ ok: false, error: 'Ключ не найден' })
+    await appendAudit({ action: 'apikey.revoke', module: 'api', initiator: req.header('x-user-id') || 'system', reason: `Отозван ключ ${req.params.id}` }).catch(() => {})
+    res.json({ ok: true })
+  } catch (err) { res.status(500).json({ ok: false, error: err instanceof Error ? err.message : 'Ошибка' }) }
+})
+
+// §10.3: публичный API v1 для внешнего AI-оркестратора (закрытый ключ внутри роутера).
+const { apiV1Router } = await import('./apiV1.js')
+app.use('/api/v1', apiV1Router)
 app.use('/api/account-groups', accountGroupsRouter) // §12: группы аккаунтов
 app.use('/api/campaigns', campaignsRouter)
 app.use('/api/channels', channelsRouter)

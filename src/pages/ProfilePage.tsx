@@ -1,10 +1,11 @@
 import { useState, useEffect } from 'react'
 import { Link } from 'react-router-dom'
 import {
-  UserCog, User, Shield, Bell, Handshake, Cable, Save, Copy, RefreshCw, Eye, EyeOff, Check, Zap, History as HistoryIcon, Package, CalendarClock } from 'lucide-react'
+  UserCog, User, Shield, Bell, Handshake, Cable, Save, Copy, Zap, History as HistoryIcon, Package, CalendarClock } from 'lucide-react'
 import { useApp } from '@/mocks/store'
 import { fetchBalance, fetchWalletHistory, type Balance, type WalletEntry } from '@/api/balanceApi'
 import { useSession } from '@/features/auth/session'
+import { ApiKeysPanel } from '@/features/billing/ApiKeysPanel'
 import { PageHeader, Card, Switch, Badge } from '@/shared/ui'
 import { cn, coins as fmtCoins } from '@/shared/lib/utils'
 
@@ -38,12 +39,10 @@ export function ProfilePage() {
   const [firstName, setFirstName] = useState(data.user.firstName)
   const [lastName, setLastName] = useState(data.user.lastName)
   const [nick, setNick] = useState(data.user.nick)
-  const [showKey, setShowKey] = useState(false)
 
   const save = () => { updateUser({ firstName, lastName, nick }); pushToast({ type: 'success', title: 'Изменения сохранены' }) }
   const copy = (text: string, label: string) => { navigator.clipboard?.writeText(text).catch(() => {}); pushToast({ type: 'success', title: `${label} скопирован` }) }
 
-  const apiKey = 'aii_live_sk_9f2c8b71e4a6d0f3c5b8a1e7'
   const refLink = 'https://incubator.ai/r/illia7'
 
   return (
@@ -180,24 +179,13 @@ export function ProfilePage() {
 
           {tab === 'api' && (
             <Card className="space-y-4">
-              <div className="flex items-center justify-between">
-                <div><div className="text-sm font-bold text-fg">API-ключ</div><div className="text-xs text-muted">Для интеграции с внешними сервисами</div></div>
-                <Badge tone="spark">Активен</Badge>
-              </div>
-              <div className="flex gap-2">
-                <div className="relative flex-1">
-                  <input value={showKey ? apiKey : '•'.repeat(apiKey.length)} readOnly className="input pr-11 font-mono text-sm" />
-                  <button onClick={() => setShowKey((v) => !v)} className="absolute right-3 top-1/2 -translate-y-1/2 text-muted hover:text-fg">{showKey ? <EyeOff size={16} /> : <Eye size={16} />}</button>
+              {sessionUser?.isAdmin || !sessionUser ? (
+                <ApiKeysPanel />
+              ) : (
+                <div className="text-sm text-muted">
+                  API-ключи для интеграции с внешними сервисами выпускает владелец рабочего пространства.
                 </div>
-                <button onClick={() => copy(apiKey, 'API-ключ')} className="btn-ghost h-[42px] px-4"><Copy size={16} /></button>
-                <button onClick={() => pushToast({ type: 'success', title: 'Ключ перевыпущен (демо)' })} className="btn-ghost h-[42px] px-4"><RefreshCw size={16} /></button>
-              </div>
-              <div className="rounded-xl border border-line bg-elevated p-4">
-                <div className="mb-2 text-sm font-bold text-fg">Быстрый старт</div>
-                <pre className="overflow-x-auto rounded-lg bg-bg p-3 font-mono text-xs text-spark-300">{`curl https://api.incubator.ai/v1/accounts \\
-  -H "Authorization: Bearer ${showKey ? apiKey : 'aii_live_sk_***'}"`}</pre>
-              </div>
-              <div className="flex items-center gap-2 text-xs text-muted"><Check size={14} className="text-spark-400" /> Документация API доступна на docs.incubator.ai (демо-ссылка)</div>
+              )}
             </Card>
           )}
         </div>

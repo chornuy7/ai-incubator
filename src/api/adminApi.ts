@@ -1,4 +1,4 @@
-import { apiGet, apiPatch } from './client'
+import { apiGet, apiPatch, apiPost, apiDelete } from './client'
 
 /** §5.3 (E1): свод для админ-панели. */
 export interface AdminOverview {
@@ -214,4 +214,17 @@ export interface PricePatch {
 
 export async function savePrices(patch: PricePatch): Promise<EffectivePrices> {
   return (await apiPatch<{ ok: boolean; prices: EffectivePrices }>('/api/admin/prices', patch)).prices
+}
+
+/** §10.3: API-ключи для внешнего AI-оркестратора. */
+export interface ApiKeyInfo { id: string; name: string; prefix: string; createdAt: number; lastUsedAt: number; revoked: boolean }
+
+export async function fetchApiKeys(): Promise<ApiKeyInfo[]> {
+  return (await apiGet<{ ok: boolean; keys: ApiKeyInfo[] }>('/api/admin/api-keys')).keys
+}
+export async function issueApiKey(name: string): Promise<{ id: string; name: string; key: string; prefix: string }> {
+  return (await apiPost<{ ok: boolean; key: { id: string; name: string; key: string; prefix: string } }>('/api/admin/api-keys', { name })).key
+}
+export async function revokeApiKey(id: string): Promise<void> {
+  await apiDelete(`/api/admin/api-keys/${id}`)
 }
