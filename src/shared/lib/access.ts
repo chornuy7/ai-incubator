@@ -90,7 +90,7 @@ export const ADMIN_ONLY_PATHS = new Set(['/panel/roles', '/panel/users'])
  */
 export const ALWAYS_ON_PATHS = new Set([
   '/panel', // Менеджер аккаунтов — базовый «в подарок»; сами аккаунты всё равно фильтрует роль
-  '/panel/user/profile', '/panel/support', '/panel/user/subscription', '/panel/my-statistics',
+  '/panel/user/profile', '/panel/support', '/panel/user/subscription', '/panel/my-statistics', '/panel/learning',
 ])
 /** Модули вне /panel/modules/* — их доступ проверяется как 'module' по этому ключу. */
 const SPECIAL_MODULE_PATHS: Record<string, string> = {
