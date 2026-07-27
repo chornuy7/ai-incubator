@@ -92,6 +92,15 @@ export async function apiPut<T>(path: string, body?: unknown): Promise<T> {
   return parseJson<T>(res)
 }
 
+export async function apiPatch<T>(path: string, body?: unknown): Promise<T> {
+  const res = await fetch(path, {
+    method: 'PATCH',
+    headers: authHeaders({ 'Content-Type': 'application/json' }),
+    body: body !== undefined ? JSON.stringify(body) : undefined,
+  })
+  return parseJson<T>(res)
+}
+
 export async function apiDelete<T>(path: string): Promise<T> {
   const res = await fetch(path, { method: 'DELETE', headers: authHeaders() })
   return parseJson<T>(res)

@@ -136,8 +136,8 @@ export const SETUPS = [
 ]
 
 /** Цена подписки на модуль в месяц. Неизвестный — 0. @param {string} moduleKey */
-export function modulePrice(moduleKey) {
-  return MODULE_MONTH_PRICE[moduleKey] ?? 0
+export function modulePrice(moduleKey, priceMap = MODULE_MONTH_PRICE) {
+  return (priceMap && priceMap[moduleKey]) ?? MODULE_MONTH_PRICE[moduleKey] ?? 0
 }
 
 /**
@@ -163,9 +163,9 @@ export function periodCost(monthlySum, months = 1) {
   return Math.round(Number(monthlySum) * m * (1 - discount) * 100) / 100
 }
 
-export function subscriptionCost(moduleKeys = [], customBundles = []) {
+export function subscriptionCost(moduleKeys = [], customBundles = [], priceMap = MODULE_MONTH_PRICE) {
   const keys = [...new Set(moduleKeys.filter((k) => MODULE_MONTH_PRICE[k] !== undefined))]
-  const full = keys.reduce((acc, k) => acc + modulePrice(k), 0)
+  const full = keys.reduce((acc, k) => acc + modulePrice(k, priceMap), 0)
   // Скидку даёт сетап, ВСЕ модули которого выбраны: иначе «почти сетап» получал бы
   // цену сетапа, и поштучная покупка была бы бессмысленной.
   let best = { setup: null, discount: 0, sum: full }

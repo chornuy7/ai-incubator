@@ -1,4 +1,4 @@
-import { apiGet } from './client'
+import { apiGet, apiPatch } from './client'
 
 /** §5.3 (E1): свод для админ-панели. */
 export interface AdminOverview {
@@ -183,4 +183,35 @@ export async function fetchPayments(opts: PaymentsQuery = {}): Promise<PaymentsR
   if (opts.offset) p.set('offset', String(opts.offset))
   const data = await apiGet<{ ok: boolean; payments: PaymentsResult }>(`/api/admin/payments?${p.toString()}`)
   return data.payments
+}
+
+/** §10.4: цены из БД — эффективные значения + пометка «изменено». */
+export interface PriceModule { key: string; title: string; month: number; action: number; overridden: { month: boolean; action: boolean } }
+export interface EffectivePrices {
+  modules: PriceModule[]
+  monthMap: Record<string, number>
+  actionMap: Record<string, number>
+  coinPacks: { coins: number; price: number; best?: boolean }[]
+  annualDiscount: number
+  coinsPer1kTokens: number
+  /** Курс токен→доллар. null — ждёт числа от бизнеса. */
+  tokenUsd: number | null
+  imageMultiplier: number
+}
+
+export async function fetchPrices(): Promise<EffectivePrices> {
+  return (await apiGet<{ ok: boolean; prices: EffectivePrices }>('/api/admin/prices')).prices
+}
+
+export interface PricePatch {
+  modules?: Record<string, { month?: number | string; action?: number | string }>
+  annualDiscount?: number | string
+  coinsPer1kTokens?: number | string
+  tokenUsd?: number | string
+  imageMultiplier?: number | string
+  coinPacks?: { coins: number; price: number; best?: boolean }[]
+}
+
+export async function savePrices(patch: PricePatch): Promise<EffectivePrices> {
+  return (await apiPatch<{ ok: boolean; prices: EffectivePrices }>('/api/admin/prices', patch)).prices
 }

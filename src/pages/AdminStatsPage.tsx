@@ -1,14 +1,13 @@
 import { coins as fmtCoins, cn } from '@/shared/lib/utils'
 import { useEffect, useMemo, useState } from 'react'
-import { BarChart3, Users, ListChecks, Coins, Download, RefreshCw, AlertTriangle, Contact, Power, ChevronDown, Activity, Plus, Radar, Search, ShoppingCart } from 'lucide-react'
+import { BarChart3, Users, ListChecks, Coins, Download, RefreshCw, AlertTriangle, Contact, Power, ChevronDown, Activity, Plus, Radar, Search, ShoppingCart, Loader2, Check } from 'lucide-react'
 import { PageHeader, Card, Segmented, EmptyState } from '@/shared/ui'
 import { useApp } from '@/mocks/store'
 import {
   fetchAdminOverview, fetchClientReport, fetchUsersReport, fetchProblems, fetchCrmOverview,
   fetchActiveNow, fetchDailySpend, fetchPurchases, fetchPayments,
   type AdminOverview, type ClientReport, type UsersReport, type Problems, type CrmOverview,
-  type ActiveNow, type ActiveTask, type DailySpend, type Purchases, type PaymentsResult, type UserRow,
-} from '@/api/adminApi'
+  type ActiveNow, type ActiveTask, type DailySpend, type Purchases, type PaymentsResult, type UserRow, fetchPrices, savePrices, type EffectivePrices, type PricePatch } from '@/api/adminApi'
 import { updateUser } from '@/api/usersApi'
 import { changeBalance } from '@/api/balanceApi'
 import { promptDialog } from '@/shared/lib/dialog'
@@ -138,7 +137,7 @@ export function AdminStatsPage() {
       />
 
       <div className="mb-4 flex flex-wrap items-center gap-3">
-        <Segmented options={['Панель', 'Сейчас', 'По дням', 'Пользователи', 'Покупки', 'Проблемы', 'CRM', 'Отчёт']} value={tab} onChange={setTab} />
+        <Segmented options={['Панель', 'Сейчас', 'По дням', 'Пользователи', 'Покупки', 'Цены', 'Проблемы', 'CRM', 'Отчёт']} value={tab} onChange={setTab} />
         <Segmented options={PERIODS.map((p) => p.label)} value={periodIdx} onChange={setPeriodIdx} size="sm" />
       </div>
 
@@ -155,8 +154,10 @@ export function AdminStatsPage() {
       ) : tab === 4 ? (
         <PurchasesTab p={purchases} />
       ) : tab === 5 ? (
-        <ProblemsTab p={problems} />
+        <PricesTab />
       ) : tab === 6 ? (
+        <ProblemsTab p={problems} />
+      ) : tab === 7 ? (
         <CrmTab crm={crm} />
       ) : (
         <ReportTab report={report} onExport={exportCsv} users={users?.rows || []} since={since} />
@@ -1064,3 +1065,139 @@ function DailyTab({ daily }: { daily: DailySpend | null }) {
   )
 }
 
+/**
+ * §10.4: управление ценами ИЗ АДМИНКИ, а не правкой кода.
+ *
+ * Требование созвона 27.07: «внутри самого кода этого вообще быть не должно».
+ * Две цены на модуль — ДОСТУП (подписка $/мес) и ИСПОЛЬЗОВАНИЕ (⚡ за действие),
+ * плюс годовая скидка, курс токена и множитель за картинку. Меняешь тут — сразу на
+ * витрине, в кабинете и в счёте. «изм.» помечает, где цена отличается от заводской.
+ */
+function PricesTab() {
+  const pushToast = useApp((s) => s.pushToast)
+  const [prices, setPrices] = useState<EffectivePrices | null>(null)
+  const [draft, setDraft] = useState<Record<string, { month: string; action: string }>>({})
+  const [extra, setExtra] = useState({ annualDiscount: '', tokenUsd: '', imageMultiplier: '' })
+  const [saving, setSaving] = useState(false)
+
+  const load = async () => {
+    const p = await fetchPrices()
+    setPrices(p)
+    const d: Record<string, { month: string; action: string }> = {}
+    for (const m of p.modules) d[m.key] = { month: String(m.month), action: String(m.action) }
+    setDraft(d)
+    setExtra({
+      annualDiscount: String(Math.round(p.annualDiscount * 100)),
+      tokenUsd: p.tokenUsd == null ? '' : String(p.tokenUsd),
+      imageMultiplier: String(p.imageMultiplier),
+    })
+  }
+  useEffect(() => { void load().catch(() => {}) }, [])
+
+  if (!prices) return <Card className="p-6 text-sm text-muted">Загрузка…</Card>
+
+  const dirty =
+    prices.modules.some((m) => draft[m.key] && (draft[m.key].month !== String(m.month) || draft[m.key].action !== String(m.action))) ||
+    extra.annualDiscount !== String(Math.round(prices.annualDiscount * 100)) ||
+    extra.tokenUsd !== (prices.tokenUsd == null ? '' : String(prices.tokenUsd)) ||
+    extra.imageMultiplier !== String(prices.imageMultiplier)
+
+  const save = async () => {
+    setSaving(true)
+    try {
+      const modules: Record<string, { month?: string; action?: string }> = {}
+      for (const m of prices.modules) {
+        const d = draft[m.key]
+        if (d) modules[m.key] = { month: d.month, action: d.action }
+      }
+      const patch: PricePatch = { modules }
+      const pct = Number(extra.annualDiscount)
+      if (Number.isFinite(pct)) patch.annualDiscount = Math.max(0, Math.min(90, pct)) / 100
+      patch.tokenUsd = extra.tokenUsd
+      patch.imageMultiplier = extra.imageMultiplier
+      const fresh = await savePrices(patch)
+      setPrices(fresh)
+      pushToast({ type: 'success', title: 'Цены сохранены', desc: 'Сразу на витрине, в кабинете и в счёте' })
+      await load()
+    } catch (e) {
+      pushToast({ type: 'error', title: 'Не удалось сохранить', desc: e instanceof Error ? e.message : '' })
+    } finally { setSaving(false) }
+  }
+
+  return (
+    <div className="space-y-4">
+      <Card className="p-4">
+        <p className="mb-3 text-xs text-muted">
+          Две цены на модуль: <b className="text-fg">Доступ</b> — подписка в $/мес, <b className="text-fg">Действие</b> — сколько ⚡
+          списывается за одно действие. «изм.» — цена отличается от заводской; верните её обратно, и метка снимется.
+        </p>
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-line text-left text-xs text-muted">
+                <th className="pb-2 pr-3 font-medium">Модуль</th>
+                <th className="pb-2 pr-3 text-right font-medium">Доступ, $/мес</th>
+                <th className="pb-2 text-right font-medium">Действие, ⚡</th>
+              </tr>
+            </thead>
+            <tbody>
+              {prices.modules.map((m) => (
+                <tr key={m.key} className="border-b border-line/50">
+                  <td className="py-1.5 pr-3 text-fg">{m.title}</td>
+                  <td className="py-1.5 pr-3 text-right">
+                    <span className="inline-flex items-center gap-1.5">
+                      {m.overridden.month && <span className="rounded bg-amber-500/15 px-1 text-[9px] font-bold text-amber-300">изм.</span>}
+                      <input value={draft[m.key]?.month ?? ''} inputMode="decimal"
+                        onChange={(e) => setDraft((d) => ({ ...d, [m.key]: { ...d[m.key], month: e.target.value } }))}
+                        className="input h-8 w-20 text-right tabular-nums" />
+                    </span>
+                  </td>
+                  <td className="py-1.5 text-right">
+                    <span className="inline-flex items-center gap-1.5">
+                      {m.overridden.action && <span className="rounded bg-amber-500/15 px-1 text-[9px] font-bold text-amber-300">изм.</span>}
+                      <input value={draft[m.key]?.action ?? ''} inputMode="decimal"
+                        onChange={(e) => setDraft((d) => ({ ...d, [m.key]: { ...d[m.key], action: e.target.value } }))}
+                        className="input h-8 w-20 text-right tabular-nums" />
+                    </span>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </Card>
+
+      <Card className="p-4">
+        <div className="mb-3 text-xs font-bold uppercase tracking-wide text-muted">Общие настройки</div>
+        <div className="grid gap-4 sm:grid-cols-3">
+          <label className="block">
+            <span className="text-xs text-muted">Скидка за год, %</span>
+            <input value={extra.annualDiscount} onChange={(e) => setExtra((x) => ({ ...x, annualDiscount: e.target.value }))}
+              className="input mt-1 h-9 w-full tabular-nums" inputMode="numeric" placeholder="20" />
+          </label>
+          <label className="block">
+            <span className="text-xs text-muted">Цена токена, $ за 1 токен</span>
+            <input value={extra.tokenUsd} onChange={(e) => setExtra((x) => ({ ...x, tokenUsd: e.target.value }))}
+              className="input mt-1 h-9 w-full tabular-nums" inputMode="decimal" placeholder="не задано (ждёт Николая)" />
+          </label>
+          <label className="block">
+            <span className="text-xs text-muted">Картинка дороже текста, ×</span>
+            <input value={extra.imageMultiplier} onChange={(e) => setExtra((x) => ({ ...x, imageMultiplier: e.target.value }))}
+              className="input mt-1 h-9 w-full tabular-nums" inputMode="decimal" placeholder="4" />
+          </label>
+        </div>
+        <p className="mt-3 text-[11px] text-muted">
+          Цена токена и множитель картинки — из §10 звонка. Пока цена токена не задана, доллары из токенов не считаются;
+          проставьте число, когда Николай пришлёт.
+        </p>
+      </Card>
+
+      <div className="sticky bottom-4 flex items-center gap-3 rounded-2xl border border-line bg-surface/95 px-4 py-3 backdrop-blur-xl">
+        <span className="text-xs text-muted">Изменения применяются сразу к витрине, кабинету и счёту клиенту.</span>
+        <button onClick={() => void save()} disabled={saving || !dirty} className="btn-primary ml-auto h-10 min-w-[140px] disabled:opacity-40">
+          {saving ? <Loader2 size={16} className="animate-spin" /> : <Check size={16} />} Сохранить цены
+        </button>
+      </div>
+    </div>
+  )
+}

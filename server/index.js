@@ -419,6 +419,31 @@ app.delete('/api/bundles/:id', async (req, res) => {
   } catch (err) { res.status(500).json({ ok: false, error: err instanceof Error ? err.message : 'Ошибка' }) }
 })
 
+/**
+ * §10.4: цены — из БД, не из кода. Читать эффективные цены может любой (витрине
+ * они и так видны), МЕНЯТЬ — только владелец: это выручка пространства.
+ */
+app.get('/api/admin/prices', async (req, res) => {
+  try {
+    const { effectivePrices } = await import('./priceStore.js')
+    res.json({ ok: true, prices: await effectivePrices() })
+  } catch (err) { res.status(500).json({ ok: false, error: err instanceof Error ? err.message : 'Ошибка' }) }
+})
+
+app.patch('/api/admin/prices', async (req, res) => {
+  try {
+    if (!(await isAdminRequest(req))) return res.status(403).json({ ok: false, error: 'Менять цены может только владелец' })
+    const { setOverrides } = await import('./priceStore.js')
+    const prices = await setOverrides(req.body || {})
+    await appendAudit({
+      action: 'prices.update', module: 'billing', initiator: req.header('x-user-id') || 'system',
+      reason: 'Изменены цены из админки',
+      meta: { patch: req.body },
+    }).catch(() => {})
+    res.json({ ok: true, prices })
+  } catch (err) { res.status(400).json({ ok: false, error: err instanceof Error ? err.message : 'Ошибка' }) }
+})
+
 /** §5.3: кто работает прямо сейчас — запущенные и вставшие задачи. */
 app.get('/api/admin/active', async (req, res) => {
   try {
@@ -566,24 +591,28 @@ app.post('/api/accounts/activity', async (req, res) => {
  */
 app.get('/api/pricing', async (_req, res) => {
   try {
-    const { ACTION_PRICE, COIN_PACKS, CURRENCY } = await import('./pricing.js')
-    const { COINS_PER_1K_TOKENS } = await import('./tokenLedger.js')
-    const { moduleTitle } = await import('./lib/moduleTitles.js')
-    // Отдаём с названиями: в вебе нет конфига для mailing и autoposting (чужая
-    // дорожка), и в окне цен они показывались бы техническими ключами.
+    const { CURRENCY } = await import('./pricing.js')
+    const { effectivePrices } = await import('./priceStore.js')
+    const { tokenSummary } = await import('./tokenLedger.js')
+    // Цены действий и пакеты — эффективные (код + правки админки).
+    const eff = await effectivePrices()
     // Средний расход токенов на действие — из СВОЕЙ истории, а не из константы:
     // длина промпта и ответа у каждого клиента своя, и чужое среднее врало бы.
     // Нет истории — 0, и интерфейс честно скажет «пока не на чем считать».
-    const { tokenSummary } = await import('./tokenLedger.js')
     const avgTokens = {}
-    for (const key of Object.keys(ACTION_PRICE)) {
+    for (const key of Object.keys(eff.actionMap)) {
       const sum = await tokenSummary({ module: key }).catch(() => null)
       avgTokens[key] = sum?.calls ? Math.round(sum.tokens / sum.calls) : 0
     }
-    const items = Object.entries(ACTION_PRICE)
-      .map(([key, price]) => ({ key, title: moduleTitle(key), price, avgTokens: avgTokens[key] || 0 }))
+    const items = eff.modules
+      .filter((m) => m.action > 0)
+      .map((m) => ({ key: m.key, title: m.title, price: m.action, avgTokens: avgTokens[m.key] || 0 }))
       .sort((a, b) => b.price - a.price || a.title.localeCompare(b.title, 'ru'))
-    res.json({ ok: true, items, actions: ACTION_PRICE, avgTokens, coinsPer1kTokens: COINS_PER_1K_TOKENS, packs: COIN_PACKS, currency: CURRENCY })
+    res.json({
+      ok: true, items, actions: eff.actionMap, avgTokens,
+      coinsPer1kTokens: eff.coinsPer1kTokens, packs: eff.coinPacks, currency: CURRENCY,
+      tokenUsd: eff.tokenUsd, imageMultiplier: eff.imageMultiplier,
+    })
   } catch (err) { res.status(500).json({ ok: false, error: err instanceof Error ? err.message : 'Ошибка' }) }
 })
 
@@ -593,21 +622,23 @@ app.get('/api/pricing', async (_req, res) => {
  */
 app.get('/api/subscription', async (req, res) => {
   try {
-    const { MODULE_MONTH_PRICE, SETUPS, CURRENCY, subscriptionCost } = await import('./pricing.js')
+    const { SETUPS, CURRENCY, subscriptionCost } = await import('./pricing.js')
     const { getBalance } = await import('./balance.js')
-    const { moduleTitle } = await import('./lib/moduleTitles.js')
     const { listBundles } = await import('./bundles.js')
+    const { effectivePrices } = await import('./priceStore.js')
     const { modules } = await getBalance(req.header('x-user-id'))
     const bundles = await listBundles()
-    const items = Object.entries(MODULE_MONTH_PRICE)
-      .map(([key, price]) => ({ key, title: moduleTitle(key), price }))
+    // Цены — эффективные (код + переопределения из админки), а не константа: правка
+    // цены в админке должна тут же менять витрину.
+    const eff = await effectivePrices()
+    const priceMap = eff.monthMap
+    const items = eff.modules
+      .map((m) => ({ key: m.key, title: m.title, price: m.month }))
       .sort((a, b) => b.price - a.price || a.title.localeCompare(b.title, 'ru'))
-    // Одним списком со встроенными: для покупателя нет разницы, кто собрал набор —
-    // платформа или админ. `custom` нужен только админской кнопке «удалить».
     const setups = [
-      ...SETUPS.map((s) => ({ ...s, cost: subscriptionCost(s.modules, bundles) })),
+      ...SETUPS.map((s) => ({ ...s, cost: subscriptionCost(s.modules, bundles, priceMap) })),
       ...bundles.map((b) => {
-        const cost = subscriptionCost(b.modules, bundles)
+        const cost = subscriptionCost(b.modules, bundles, priceMap)
         return {
           id: b.id, name: b.name, hint: b.hint, modules: b.modules,
           custom: true, price: b.price,
@@ -627,7 +658,9 @@ app.post('/api/subscription/quote', async (req, res) => {
   try {
     const { subscriptionCost } = await import('./pricing.js')
     const { listBundles } = await import('./bundles.js')
-    res.json({ ok: true, ...subscriptionCost(req.body?.modules || [], await listBundles()) })
+    const { effectivePrices } = await import('./priceStore.js')
+    const eff = await effectivePrices()
+    res.json({ ok: true, ...subscriptionCost(req.body?.modules || [], await listBundles(), eff.monthMap) })
   } catch (err) { res.status(500).json({ ok: false, error: err instanceof Error ? err.message : 'Ошибка' }) }
 })
 
@@ -657,8 +690,10 @@ app.post('/api/subscription', async (req, res) => {
     const months = Number(req.body?.months) || 0
     const balance = personal ? await setUserModules(list, target, { months }) : await setModules(list, target, { months })
     const { subscriptionCost: subCost, periodCost } = await import('./pricing.js')
+    const { effectivePrices } = await import('./priceStore.js')
     const bundlesList = await (await import('./bundles.js')).listBundles()
-    const monthly = list === 'all' ? null : subCost(list, bundlesList)
+    const effPrices = await effectivePrices()
+    const monthly = list === 'all' ? null : subCost(list, bundlesList, effPrices.monthMap)
     // paid — то, что реально заряжено за период (год со скидкой), НЕ месячная цена.
     const paid = monthly ? periodCost(monthly.sum, months || 1) : null
     await appendAudit({
