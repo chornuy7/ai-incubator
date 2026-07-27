@@ -48,12 +48,16 @@ export function LowBalanceLoginModal() {
 
   if (!open || coins === null) return null
 
+  // Ноль — это не «заканчивается», а «закончился»: боевые модули уже стоят. Разводим
+  // формулировки, иначе при 0.00 заголовок противоречит цифре под ним.
+  const empty = coins <= 0
+
   return (
     <Modal
       open={open}
       onClose={close}
-      title="Баланс заканчивается"
-      subtitle={`Осталось ${fmtCoins(coins)} ⚡`}
+      title={empty ? 'Баланс закончился' : 'Баланс заканчивается'}
+      subtitle={empty ? 'На счету 0.00 ⚡' : `Осталось ${fmtCoins(coins)} ⚡`}
       icon={<Zap size={22} fill="currentColor" />}
       size="sm"
       footer={(
@@ -66,8 +70,9 @@ export function LowBalanceLoginModal() {
       )}
     >
       <p className="text-sm leading-relaxed text-muted">
-        Монет скоро не хватит, чтобы закрыть задачу — модули остановятся на нуле с сохранением
-        прогресса. Пополните баланс, чтобы работа не прерывалась.
+        {empty
+          ? 'Монеты закончились — боевые модули остановлены на нуле, прогресс сохранён. Пополните баланс, чтобы продолжить работу.'
+          : 'Монет скоро не хватит, чтобы закрыть задачу — модули остановятся на нуле с сохранением прогресса. Пополните баланс, чтобы работа не прерывалась.'}
       </p>
       {isAdmin && (
         <label className="mt-4 flex cursor-pointer items-center gap-2 text-sm text-muted">

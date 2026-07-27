@@ -33,6 +33,9 @@ export function LowBalanceBar() {
   const coins = balance?.coins
   if (coins === undefined || coins > LOW) return null
 
+  // Три состояния: ноль (модули УЖЕ стоят), почти ноль (не запустятся), мало (скоро не хватит).
+  // При 0.00 «почти на нуле» противоречит цифре — деньги не «почти», а закончились.
+  const empty = coins <= 0
   const critical = coins <= CRITICAL
   return (
     <button
@@ -46,9 +49,11 @@ export function LowBalanceBar() {
       title="Пополнить баланс"
     >
       <AlertTriangle size={14} />
-      {critical
-        ? `Баланс почти на нуле: ${fmtCoins(coins)} ⚡ — задачи не запустятся. Пополнить →`
-        : `Осталось ${fmtCoins(coins)} ⚡ — скоро не хватит закрыть задачу. Пополнить →`}
+      {empty
+        ? 'Баланс на нуле — боевые модули остановлены. Пополнить →'
+        : critical
+          ? `Баланс почти на нуле: ${fmtCoins(coins)} ⚡ — задачи не запустятся. Пополнить →`
+          : `Осталось ${fmtCoins(coins)} ⚡ — скоро не хватит закрыть задачу. Пополнить →`}
     </button>
   )
 }
