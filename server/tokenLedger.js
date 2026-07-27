@@ -13,6 +13,15 @@
 import fs from 'fs/promises'
 import path from 'path'
 import { dataPath } from './lib/jsonStore.js'
+import { getSupabase, supabaseEnabled } from './lib/supabase.js'
+
+function sb() { return supabaseEnabled() ? getSupabase() : null }
+const ledgerRowFromDb = (r) => ({
+  ts: r.ts ? new Date(r.ts).getTime() : 0, module: r.module || '', accountId: r.account_id || '',
+  taskId: r.task_id || '', campaignId: r.campaign_id || '', userId: r.user_id || '', model: r.model || '',
+  tokens: Number(r.tokens) || 0, promptTokens: Number(r.prompt_tokens) || 0,
+  completionTokens: Number(r.completion_tokens) || 0, coins: Number(r.coins) || 0,
+})
 
 const LEDGER_FILE = () => process.env.TOKEN_LEDGER_FILE || dataPath('token-ledger.jsonl')
 
@@ -51,12 +60,23 @@ export async function recordTokens(entry = {}) {
     completionTokens: Math.max(0, Number(entry.completionTokens) || 0),
     coins: tokensToCoins(tokens),
   }
-  try {
-    const file = LEDGER_FILE()
-    await fs.mkdir(path.dirname(file), { recursive: true })
-    await fs.appendFile(file, JSON.stringify(row) + '\n', 'utf8')
-  } catch {
-    return null
+  const db = sb()
+  if (db) {
+    try {
+      await db.from('token_ledger').insert({
+        ts: new Date(row.ts).toISOString(), module: row.module, account_id: row.accountId,
+        task_id: row.taskId, campaign_id: row.campaignId, user_id: row.userId, model: row.model,
+        tokens: row.tokens, prompt_tokens: row.promptTokens, completion_tokens: row.completionTokens, coins: row.coins,
+      })
+    } catch { return null }
+  } else {
+    try {
+      const file = LEDGER_FILE()
+      await fs.mkdir(path.dirname(file), { recursive: true })
+      await fs.appendFile(file, JSON.stringify(row) + '\n', 'utf8')
+    } catch {
+      return null
+    }
   }
   // C2 (§5.1): за расход ИИ сразу списываем монеты. Best-effort по той же причине,
   // что и запись журнала: сбой биллинга не должен ронять работающую задачу — деньги
@@ -94,6 +114,18 @@ export async function noteUsage(usage, module, userId) {
 
 /** Прочитать журнал (свежие сверху). @param {{limit?:number, taskId?:string, module?:string, accountId?:string, since?:number}} [filter] */
 export async function readLedger(filter = {}) {
+  const db = sb()
+  if (db) {
+    let q = db.from('token_ledger').select('*').order('ts', { ascending: false })
+    if (filter.taskId) q = q.eq('task_id', filter.taskId)
+    if (filter.module) q = q.eq('module', filter.module)
+    if (filter.accountId) q = q.eq('account_id', filter.accountId)
+    if (filter.since) q = q.gte('ts', new Date(Number(filter.since)).toISOString())
+    if (filter.limit) q = q.limit(filter.limit)
+    else q = q.limit(100000)
+    const { data } = await q
+    return (data || []).map(ledgerRowFromDb)
+  }
   let raw = ''
   try {
     raw = await fs.readFile(LEDGER_FILE(), 'utf8')
