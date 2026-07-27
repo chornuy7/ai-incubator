@@ -9,7 +9,7 @@ import {
   type AdminOverview, type ClientReport, type UsersReport, type Problems, type CrmOverview,
   type ActiveNow, type ActiveTask, type DailySpend, type Purchases, type PaymentsResult, type UserRow, fetchPrices, savePrices, type EffectivePrices, type PricePatch } from '@/api/adminApi'
 import { updateUser } from '@/api/usersApi'
-import { changeBalance } from '@/api/balanceApi'
+import { changeBalance, fetchSubscription, saveUserModules } from '@/api/balanceApi'
 import { promptDialog } from '@/shared/lib/dialog'
 
 /**
@@ -363,6 +363,40 @@ function UsersTab({ report, onReload }: { report: UsersReport | null; onReload: 
   const [open, setOpen] = useState<string | null>(null)
   const [busy, setBusy] = useState<string | null>(null)
   const [q, setQ] = useState('')
+  // §10.4: каталог модулей + черновик доступа по юзеру — админ включает/выключает
+  // модули конкретному человеку, не уходя со страницы.
+  const [catalog, setCatalog] = useState<{ key: string; title: string }[]>([])
+  const [modDraft, setModDraft] = useState<Record<string, string[] | 'all'>>({})
+  useEffect(() => {
+    void fetchSubscription().then((d) => setCatalog(d.items.map((i) => ({ key: i.key, title: i.title })))).catch(() => {})
+  }, [])
+
+  const openUser = (r: UserRow) => {
+    const willOpen = open !== r.userId
+    setOpen(willOpen ? r.userId : null)
+    if (willOpen && !modDraft[r.userId]) {
+      setModDraft((d) => ({ ...d, [r.userId]: r.subscription?.all ? 'all' : (r.subscription?.keys ?? []) }))
+    }
+  }
+  const toggleUserMod = (userId: string, key: string) => setModDraft((d) => {
+    const cur = d[userId] === 'all' ? catalog.map((c) => c.key) : [...(d[userId] as string[] || [])]
+    const i = cur.indexOf(key)
+    if (i >= 0) cur.splice(i, 1); else cur.push(key)
+    return { ...d, [userId]: cur }
+  })
+  const setUserAll = (userId: string, all: boolean) => setModDraft((d) => ({ ...d, [userId]: all ? 'all' : [] }))
+  const saveUserAccess = async (userId: string, email: string) => {
+    setBusy(userId)
+    try {
+      const mods = modDraft[userId]
+      await saveUserModules(userId, mods === 'all' ? 'all' : (mods || []))
+      pushToast({ type: 'success', title: 'Доступ обновлён', desc: email })
+      onReload()
+    } catch (e) {
+      pushToast({ type: 'error', title: 'Не удалось сохранить доступ', desc: e instanceof Error ? e.message : '' })
+    } finally { setBusy(null) }
+  }
+
   if (!report) return <Card className="p-6 text-sm text-muted">Загрузка…</Card>
   if (!report.rows.length) return <EmptyState icon={<Users size={22} />} title="Пользователей нет" />
 
@@ -450,7 +484,7 @@ function UsersTab({ report, onReload }: { report: UsersReport | null; onReload: 
                 <tr
                   key={r.userId}
                   className="cursor-pointer border-b border-line/50 hover:bg-white/[.02]"
-                  onClick={() => setOpen(isOpen ? null : r.userId)}
+                  onClick={() => openUser(r)}
                 >
                   <td className="py-2 pr-3">
                     <div className="flex items-center gap-1.5">
@@ -511,6 +545,42 @@ function UsersTab({ report, onReload }: { report: UsersReport | null; onReload: 
                 isOpen ? (
                   <tr key={r.userId + '-where'} className="border-b border-line/50 bg-white/[.02]">
                     <td colSpan={8} className="px-3 py-3">
+                      {real && (
+                        <div className="mb-4 rounded-xl border border-line bg-elevated/50 p-3">
+                          <div className="mb-2 flex flex-wrap items-center gap-2">
+                            <span className="text-[11px] font-bold uppercase tracking-wide text-muted">Доступ к модулям</span>
+                            <label className="ml-auto flex cursor-pointer items-center gap-1.5 text-xs text-muted">
+                              <input type="checkbox" checked={modDraft[r.userId] === 'all'}
+                                onChange={(e) => setUserAll(r.userId, e.target.checked)}
+                                className="h-3.5 w-3.5 rounded border-line accent-spark-500" />
+                              Все модули
+                            </label>
+                          </div>
+                          {modDraft[r.userId] !== 'all' && (
+                            <div className="flex flex-wrap gap-1.5">
+                              {catalog.map((c) => {
+                                const on = (modDraft[r.userId] as string[] || []).includes(c.key)
+                                return (
+                                  <button key={c.key} onClick={() => toggleUserMod(r.userId, c.key)}
+                                    className={cn('rounded-lg border px-2 py-1 text-xs transition-colors',
+                                      on ? 'border-spark-500/50 bg-spark-500/10 text-spark-200' : 'border-line text-muted hover:border-spark-500/25')}>
+                                    {on ? '✓ ' : ''}{c.title}
+                                  </button>
+                                )
+                              })}
+                            </div>
+                          )}
+                          <div className="mt-2.5 flex items-center gap-2">
+                            <span className="text-[11px] text-muted">
+                              {modDraft[r.userId] === 'all' ? 'Открыты все модули' : `Выбрано: ${(modDraft[r.userId] as string[] || []).length}`}
+                            </span>
+                            <button onClick={() => void saveUserAccess(r.userId, r.email)} disabled={busy === r.userId}
+                              className="btn-primary ml-auto h-8 text-xs disabled:opacity-40">
+                              {busy === r.userId ? <Loader2 size={13} className="animate-spin" /> : <Check size={13} />} Применить доступ
+                            </button>
+                          </div>
+                        </div>
+                      )}
                       {!r.where.length && !r.log.length ? (
                         <span className="text-xs text-muted">За выбранный период ничего не запускал.</span>
                       ) : (

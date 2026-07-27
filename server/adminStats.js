@@ -438,9 +438,9 @@ export async function usersReport(opts = {}) {
     try { modsByUser[u.id] = (await getBalance(u.id)).modules } catch { modsByUser[u.id] = 'all' }
   }))
   const subOf = (mods) => {
-    if (mods === 'all' || mods == null) return { all: true, count: 0, titles: [] }
+    if (mods === 'all' || mods == null) return { all: true, count: 0, titles: [], keys: [] }
     const arr = Array.isArray(mods) ? mods : []
-    return { all: false, count: arr.length, titles: arr.map((k) => moduleTitle(k)) }
+    return { all: false, count: arr.length, titles: arr.map((k) => moduleTitle(k)), keys: arr }
   }
 
   // Собираем задачи один раз и раскладываем по владельцу: задач много, юзеров мало.

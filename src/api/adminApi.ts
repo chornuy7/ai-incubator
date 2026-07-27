@@ -60,7 +60,7 @@ export interface UserRow {
   /** Монет на счету сейчас. */
   coins: number
   /** Подписка: какие модули открыты. all=true — набор не выбран (открыто всё). null — синтетическая строка. */
-  subscription: { all: boolean; count: number; titles: string[] } | null
+  subscription: { all: boolean; count: number; titles: string[]; keys: string[] } | null
   tasks: number
   actions: number
   /** Сколько списано за действия по его задачам. */

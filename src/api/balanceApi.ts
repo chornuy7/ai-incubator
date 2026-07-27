@@ -78,6 +78,12 @@ export async function saveSubscription(modules: string[] | 'all', months = 0): P
   return r.balance
 }
 
+/** §10.4: админ выдаёт/снимает модули КОНКРЕТНОМУ юзеру (userId — admin-only на сервере). */
+export async function saveUserModules(userId: string, modules: string[] | 'all'): Promise<Balance> {
+  const r = await apiPost<{ balance: Balance }>('/api/subscription', { modules, userId })
+  return r.balance
+}
+
 /** §5.1: операция по кошельку — «за что списали». */
 export interface WalletEntry { ts: number; userId: string; amount: number; before: number; after: number; reason: string }
 
