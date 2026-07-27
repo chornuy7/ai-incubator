@@ -14,6 +14,10 @@
  */
 import { dataPath, readJson, mutateJson } from './lib/jsonStore.js'
 import { MODULE_MONTH_PRICE } from './pricing.js'
+import { getSupabase, supabaseEnabled } from './lib/supabase.js'
+
+function sb() { return supabaseEnabled() ? getSupabase() : null }
+const rowToBundle = (r) => ({ id: r.id, name: r.name, hint: r.hint || '', modules: r.modules || [], price: Number(r.price), createdAt: r.created_at ? new Date(r.created_at).getTime() : 0 })
 
 const BUNDLES_FILE = () => process.env.BUNDLES_FILE || dataPath('bundles.json')
 
@@ -21,6 +25,11 @@ const newId = () => `bun_${Math.random().toString(16).slice(2, 10)}`
 
 /** @returns {Promise<Array<{id:string,name:string,hint:string,modules:string[],price:number,createdAt:number}>>} */
 export async function listBundles() {
+  const db = sb()
+  if (db) {
+    const { data } = await db.from('bundles').select('*').order('created_at', { ascending: true })
+    return (data || []).map(rowToBundle)
+  }
   const raw = await readJson(BUNDLES_FILE(), [])
   return Array.isArray(raw) ? raw : []
 }
@@ -50,6 +59,11 @@ export async function createBundle(input = {}) {
     price,
     createdAt: Date.now(),
   }
+  const db = sb()
+  if (db) {
+    await db.from('bundles').insert({ id: bundle.id, name: bundle.name, hint: bundle.hint, modules: bundle.modules, price: bundle.price, created_at: new Date(bundle.createdAt).toISOString() })
+    return bundle
+  }
   // mutateJson, а не read+write: он сериализует запись в файл (очередь _fileChains).
   // Два одновременных createBundle через writeJson затирали бы друг друга — набор терялся.
   await mutateJson(BUNDLES_FILE(), (raw) => {
@@ -61,6 +75,11 @@ export async function createBundle(input = {}) {
 
 /** Удалить набор. Уже проданные подписки не трогаем: у клиента остаётся его список модулей. */
 export async function deleteBundle(id) {
+  const db = sb()
+  if (db) {
+    const { data } = await db.from('bundles').delete().eq('id', id).select('id')
+    return !!(data && data.length)
+  }
   let removed = false
   await mutateJson(BUNDLES_FILE(), (raw) => {
     const list = Array.isArray(raw) ? raw : []

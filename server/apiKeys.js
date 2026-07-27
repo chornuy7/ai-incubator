@@ -11,14 +11,27 @@
  */
 import crypto from 'node:crypto'
 import { dataPath, readJson, mutateJson } from './lib/jsonStore.js'
+import { getSupabase, supabaseEnabled } from './lib/supabase.js'
 
 const KEYS_FILE = () => process.env.API_KEYS_FILE || dataPath('api-keys.json')
 
 /** Префикс — чтобы ключ узнавался в логах и не путался с чужими токенами. */
 const PREFIX = 'aii_live_sk_'
 
+function sb() { return supabaseEnabled() ? getSupabase() : null }
+const hash = (v) => crypto.createHash('sha256').update(String(v || '')).digest('hex')
+
 /** @returns {Promise<Array<object>>} */
 export async function listKeys() {
+  const db = sb()
+  if (db) {
+    const { data } = await db.from('api_keys').select('id, name, prefix, created_at, last_used_at, revoked').order('created_at', { ascending: false })
+    return (data || []).map((k) => ({
+      id: k.id, name: k.name, prefix: k.prefix,
+      createdAt: k.created_at ? new Date(k.created_at).getTime() : 0,
+      lastUsedAt: k.last_used_at ? new Date(k.last_used_at).getTime() : 0, revoked: !!k.revoked,
+    }))
+  }
   const raw = await readJson(KEYS_FILE(), [])
   const arr = Array.isArray(raw) ? raw : []
   // Наружу — без секрета: только префикс для узнавания.
@@ -45,6 +58,15 @@ export async function issueKey(input = {}) {
     lastUsedAt: 0,
     revoked: false,
   }
+  const db = sb()
+  if (db) {
+    // В БД храним ХЭШ, не значение: утёкшая таблица не отдаёт рабочие ключи.
+    await db.from('api_keys').insert({
+      id: rec.id, name: rec.name, key_hash: hash(secret), prefix: rec.prefix,
+      owner_id: rec.ownerId || null, created_at: new Date(rec.createdAt).toISOString(), revoked: false,
+    })
+    return { id: rec.id, name: rec.name, key: secret, prefix: rec.prefix, createdAt: rec.createdAt }
+  }
   await mutateJson(KEYS_FILE(), (raw) => {
     const arr = Array.isArray(raw) ? raw : []
     return [rec, ...arr]
@@ -54,6 +76,11 @@ export async function issueKey(input = {}) {
 
 /** Отозвать ключ (мягко: помечаем revoked, чтобы аудит помнил, что он был). */
 export async function revokeKey(id) {
+  const db = sb()
+  if (db) {
+    const { data } = await db.from('api_keys').update({ revoked: true }).eq('id', id).select('id')
+    return !!(data && data.length)
+  }
   let found = false
   await mutateJson(KEYS_FILE(), (raw) => {
     const arr = Array.isArray(raw) ? raw : []
@@ -72,6 +99,13 @@ export async function revokeKey(id) {
 export async function verifyKey(raw) {
   const token = String(raw || '').replace(/^Bearer\s+/i, '').trim()
   if (!token.startsWith(PREFIX)) return null
+  const db = sb()
+  if (db) {
+    const { data: rec } = await db.from('api_keys').select('id, name, owner_id').eq('key_hash', hash(token)).eq('revoked', false).maybeSingle()
+    if (!rec) return null
+    db.from('api_keys').update({ last_used_at: new Date().toISOString() }).eq('id', rec.id).then(() => {}, () => {})
+    return { id: rec.id, name: rec.name, ownerId: rec.owner_id || '' }
+  }
   const arr = await readJson(KEYS_FILE(), [])
   const rec = (Array.isArray(arr) ? arr : []).find((k) => k.key === token && !k.revoked)
   if (!rec) return null
