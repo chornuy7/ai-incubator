@@ -13,6 +13,17 @@
 Supabase → слева **SQL Editor** → **New query** → вставить весь `schema.sql` → **Run**.
 Скрипт идемпотентный (`IF NOT EXISTS`), можно прогонять повторно без вреда.
 
+Затем ОДИН раз выдать бэкенд-роли права на таблицы (новые sb_secret-ключи не
+получают их автоматически при выключенном авто-expose):
+
+```sql
+grant usage on schema public to service_role;
+grant all privileges on all tables in schema public to service_role;
+grant all privileges on all sequences in schema public to service_role;
+alter default privileges in schema public grant all on tables to service_role;
+alter default privileges in schema public grant all on sequences to service_role;
+```
+
 Проверить: слева **Table Editor** — должны появиться таблицы `users`, `coin_balance`,
 `subscriptions`, `price_overrides`, `bundles`, `wallet_log`, `token_ledger`,
 `api_keys`, `goals`, `campaigns`, `leads`, `accounts_meta`, `parsed_channels`.

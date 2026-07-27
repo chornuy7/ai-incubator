@@ -47,13 +47,15 @@ create table if not exists coin_balance (
 
 -- Подписка на модули. scope='user' — личная (перекрывает общую), 'workspace' — общая.
 -- modules: 'all' (json "all") или массив ключей.
+-- id = 'workspace' (общая) или user_id (личная). PK не может быть null, поэтому
+-- отдельный текстовый ключ, а не (scope, user_id).
 create table if not exists subscriptions (
+  id          text primary key,
   scope       text not null,               -- 'user' | 'workspace'
   user_id     text references users(id) on delete cascade, -- null для workspace
   modules     jsonb not null default '"all"',
   expires_at  timestamptz,                 -- null = бессрочно (демо)
-  updated_at  timestamptz not null default now(),
-  primary key (scope, user_id)
+  updated_at  timestamptz not null default now()
 );
 
 -- Переопределения цен из админки (§10.4): пусто = коды-дефолты в pricing.js.

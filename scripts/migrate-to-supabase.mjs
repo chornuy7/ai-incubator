@@ -65,16 +65,16 @@ const coinRows = []
 const subRows = []
 for (const [k, v] of Object.entries(balance || {})) {
   if (k === '__subscription') {
-    subRows.push({ scope: 'workspace', user_id: null, modules: v.modules ?? 'all', expires_at: ts(v.expiresAt), updated_at: ts(v.updatedAt) })
+    subRows.push({ id: 'workspace', scope: 'workspace', user_id: null, modules: v.modules ?? 'all', expires_at: ts(v.expiresAt), updated_at: ts(v.updatedAt) })
     continue
   }
   if (k === '__default') continue
   if (!userIds.has(k)) continue // FK: только существующие пользователи
   if (typeof v.coins === 'number') coinRows.push({ user_id: k, coins: v.coins, updated_at: ts(v.updatedAt) })
-  if (v.modules !== undefined) subRows.push({ scope: 'user', user_id: k, modules: v.modules, expires_at: ts(v.expiresAt), updated_at: ts(v.updatedAt) })
+  if (v.modules !== undefined) subRows.push({ id: k, scope: 'user', user_id: k, modules: v.modules, expires_at: ts(v.expiresAt), updated_at: ts(v.updatedAt) })
 }
 await upsert('coin_balance', coinRows, { onConflict: 'user_id' })
-await upsert('subscriptions', subRows, { onConflict: 'scope,user_id' })
+await upsert('subscriptions', subRows, { onConflict: 'id' })
 
 // 4. Переопределения цен (одна строка)
 const prices = await readJson('prices.json', null)
