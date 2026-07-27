@@ -444,6 +444,19 @@ function UsersTab({ report, onReload }: { report: UsersReport | null; onReload: 
     } finally { setBusy(null) }
   }
 
+  // §10.4: назначить/снять родителя (суб-юзер под админом). Бэкенд бьёт по циклам и
+  // несуществующему родителю — здесь просто отражаем результат.
+  const setParent = async (userId: string, parentId: string) => {
+    setBusy(userId)
+    try {
+      await updateUser(userId, { parentId: parentId || null })
+      pushToast({ type: 'success', title: parentId ? 'Подчинение назначено' : 'Подчинение снято' })
+      onReload()
+    } catch (e) {
+      pushToast({ type: 'error', title: 'Не удалось изменить подчинение', desc: e instanceof Error ? e.message : '' })
+    } finally { setBusy(null) }
+  }
+
   return (
     <Card className="p-4">
       <div className="mb-3 flex flex-wrap items-center gap-3">
@@ -496,6 +509,8 @@ function UsersTab({ report, onReload }: { report: UsersReport | null; onReload: 
                           {r.name || r.email || r.userId}
                         </span>
                         {!!r.name && !!r.email && <span className="block truncate text-[11px] text-muted">{r.email}</span>}
+                        {/* §10.4: суб-юзер — показываем, под каким админом он вложен. */}
+                        {!!r.parentId && <span className="block truncate text-[11px] text-iris-300">↳ суб-юзер · под {r.parentName || r.parentId}</span>}
                       </span>
                       {!r.active && real && <span className="rounded-md bg-white/8 px-1.5 py-0.5 text-[10px] font-bold text-muted">отключён</span>}
                     </div>
@@ -579,6 +594,27 @@ function UsersTab({ report, onReload }: { report: UsersReport | null; onReload: 
                               {busy === r.userId ? <Loader2 size={13} className="animate-spin" /> : <Check size={13} />} Применить доступ
                             </button>
                           </div>
+                        </div>
+                      )}
+                      {/* §10.4: вложенность — под каким админом этот юзер. Меняем сразу по выбору;
+                          в списке нельзя выбрать себя, бэкенд дополнительно ловит циклы. */}
+                      {real && (
+                        <div className="mb-4 flex flex-wrap items-center gap-2 rounded-xl border border-line bg-elevated/50 p-3">
+                          <span className="text-[11px] font-bold uppercase tracking-wide text-muted">Подчинение</span>
+                          <span className="text-xs text-muted">Суб-юзер под админом:</span>
+                          <select
+                            value={r.parentId || ''}
+                            disabled={busy === r.userId}
+                            onChange={(e) => void setParent(r.userId, e.target.value)}
+                            className="input h-8 min-w-[180px] text-xs disabled:opacity-40"
+                          >
+                            <option value="">— самостоятельный (без родителя)</option>
+                            {report.rows
+                              .filter((u) => u.userId !== r.userId && !u.email.startsWith('без владельца') && !u.email.startsWith('удалённый'))
+                              .map((u) => (
+                                <option key={u.userId} value={u.userId}>{u.name || u.email || u.userId}</option>
+                              ))}
+                          </select>
                         </div>
                       )}
                       {!r.where.length && !r.log.length ? (

@@ -501,6 +501,8 @@ export async function usersReport(opts = {}) {
     .map(([key, v]) => ({ moduleKey: key, title: moduleTitle(key), ...v }))
     .sort((a, b) => b.actions - a.actions || b.tokens - a.tokens)
 
+  // §10.4: имя родителя для «суб-юзер под <кем>» — по id из того же списка.
+  const nameById = new Map(users.map((u) => [u.id, u.name || u.email || u.id]))
   const rows = users.map((u) => {
     const st = byUser.get(u.id) || { tasks: 0, actions: 0, spent: 0, tokens: 0, byModule: {}, log: [] }
     byUser.delete(u.id)
@@ -509,6 +511,9 @@ export async function usersReport(opts = {}) {
       email: u.email || '',
       name: u.name || '',
       active: u.active !== false,
+      // §10.4: вложенность — кто чей суб-юзер. parentName для показа без второго запроса.
+      parentId: u.parentId || null,
+      parentName: u.parentId ? (nameById.get(u.parentId) || null) : null,
       coins: round3(coins[u.id] ?? 0),
       subscription: subOf(modsByUser[u.id]),
       tasks: st.tasks,

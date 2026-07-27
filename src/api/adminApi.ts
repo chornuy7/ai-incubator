@@ -57,6 +57,9 @@ export interface UserRow {
   email: string
   name: string
   active: boolean
+  /** §10.4: под каким админом вложен этот суб-юзер (null — верхнеуровневый). */
+  parentId?: string | null
+  parentName?: string | null
   /** Монет на счету сейчас. */
   coins: number
   /** Подписка: какие модули открыты. all=true — набор не выбран (открыто всё). null — синтетическая строка. */

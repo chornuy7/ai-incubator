@@ -140,7 +140,7 @@ async function findByEmail(email) {
   return users.find((u) => normEmail(u.email) === e) || null
 }
 
-/** @param {{ email, name, roleId, password, active }} input */
+/** @param {{ email, name, roleId, password, active, parentId }} input */
 export async function createUser(input = {}) {
   const email = normEmail(input.email)
   if (!email) throw new Error('Укажите e-mail')
@@ -148,6 +148,10 @@ export async function createUser(input = {}) {
   if (await findByEmail(email)) throw new Error('Пользователь с таким e-mail уже есть')
   const users = await listUsers()
   const { roleIds, roleId } = normUserRoles(input, ['role_moderator'])
+  // §10.4: суб-юзер вложен под своего админа. Проверяем, что родитель существует —
+  // иначе висячая ссылка (в БД её отсечёт FK, но на файловом бэкенде некому).
+  const parentId = input.parentId ? String(input.parentId) : null
+  if (parentId && !users.some((u) => u.id === parentId)) throw new Error('Родительский пользователь не найден')
   const user = {
     id: `usr_${crypto.randomUUID().slice(0, 8)}`,
     email,
@@ -155,6 +159,7 @@ export async function createUser(input = {}) {
     roleId,
     roleIds,
     active: input.active !== false,
+    parentId,
     passwordHash: hashPassword(input.password),
     createdAt: Date.now(),
     updatedAt: Date.now(),
@@ -177,6 +182,24 @@ export async function updateUser(id, patch = {}) {
     users[i].roleIds = roleIds; users[i].roleId = roleId
   }
   if (patch.active !== undefined) users[i].active = !!patch.active
+  if (patch.parentId !== undefined) {
+    // §10.4: сменить/снять родителя. Нельзя назначить родителем себя или несуществующего,
+    // и нельзя замкнуть цепочку (родитель, чьим предком уже является этот юзер).
+    const pid = patch.parentId ? String(patch.parentId) : null
+    if (pid) {
+      if (pid === id) throw new Error('Пользователь не может быть родителем сам себе')
+      if (!users.some((u) => u.id === pid)) throw new Error('Родительский пользователь не найден')
+      // защита от цикла: поднимаемся по родителям pid — не должны встретить id
+      let cur = users.find((u) => u.id === pid)
+      const seen = new Set()
+      while (cur?.parentId && !seen.has(cur.parentId)) {
+        if (cur.parentId === id) throw new Error('Нельзя создать цикл подчинения')
+        seen.add(cur.parentId)
+        cur = users.find((u) => u.id === cur.parentId)
+      }
+    }
+    users[i].parentId = pid
+  }
   if (patch.password) {
     if (String(patch.password).length < 6) throw new Error('Пароль минимум 6 символов')
     users[i].passwordHash = hashPassword(patch.password)
@@ -198,6 +221,9 @@ export async function deleteUser(id) {
   const users = await listUsers()
   const next = users.filter((u) => u.id !== id)
   if (next.length === users.length) return false
+  // §10.4: осиротить суб-юзеров (как FK `on delete set null` в БД) — удаление админа
+  // не должно молча удалять подключённых им людей.
+  for (const u of next) if (u.parentId === id) u.parentId = null
   await writeJson(USERS_FILE(), next)
   return true
 }

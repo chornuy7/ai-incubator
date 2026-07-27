@@ -55,3 +55,36 @@ test('CRUD + authenticate на изолированном файле, сид т�
 
   delete process.env.USERS_FILE
 })
+
+test('§10.4: вложенные юзеры — родитель, защита от циклов, осиротение при удалении', async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'users-nested-'))
+  process.env.USERS_FILE = path.join(dir, 'users.json')
+  const u = await import('../users.js?nested=' + Date.now())
+  await u.listUsers() // сид
+
+  const boss = await u.createUser({ email: 'boss@x.y', password: 'secret1', name: 'Админ-клиент' })
+  const sub = await u.createUser({ email: 'sub@x.y', password: 'secret1', name: 'Сотрудник', parentId: boss.id })
+  assert.equal(sub.parentId, boss.id, 'суб-юзер вложен под своего админа')
+
+  // Несуществующий родитель — отказ.
+  await assert.rejects(() => u.createUser({ email: 'q@x.y', password: 'secret1', parentId: 'usr_ghost' }), /не найден/i)
+
+  // Нельзя стать родителем себе.
+  await assert.rejects(() => u.updateUser(sub.id, { parentId: sub.id }), /сам себе/i)
+
+  // Цикл: boss под sub, при том что sub уже под boss — запрещено.
+  await assert.rejects(() => u.updateUser(boss.id, { parentId: sub.id }), /цикл/i)
+
+  // Снять родителя.
+  const freed = await u.updateUser(sub.id, { parentId: null })
+  assert.equal(freed.parentId, null)
+
+  // Удаление админа осиротляет суб-юзеров (as `on delete set null`), не удаляет их.
+  await u.updateUser(sub.id, { parentId: boss.id })
+  assert.equal(await u.deleteUser(boss.id), true)
+  const subAfter = await u.getUser(sub.id)
+  assert.ok(subAfter, 'суб-юзер не удалён вместе с админом')
+  assert.equal(subAfter.parentId, null, 'ссылка на удалённого админа снята')
+
+  delete process.env.USERS_FILE
+})
