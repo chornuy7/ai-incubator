@@ -169,7 +169,10 @@ modulesRouter.get('/:moduleKey/tasks/:id', async (req, res) => {
     // при разборе счёта, а из общего баланса он не отвечается.
     const { tokenSummary } = await import('../tokenLedger.js')
     const tokens = await tokenSummary({ taskId: task.id }).catch(() => null)
-    res.json({ ok: true, task: { ...store.taskToDto(task), tokens: tokens?.tokens || 0, tokenCalls: tokens?.calls || 0 } })
+    // §10.1: помимо числа токенов отдаём и МОНЕТЫ за них. Раньше «Потрачено» на карточке
+    // показывало только spentCoins (действия), а монеты за токены ИИ recordTokens списывал
+    // отдельно и в сумму не попадали — цена запуска выходила заниженной.
+    res.json({ ok: true, task: { ...store.taskToDto(task), tokens: tokens?.tokens || 0, tokenCalls: tokens?.calls || 0, tokenCoins: tokens?.coins || 0 } })
   } catch (err) {
     res.status(500).json({ ok: false, error: err instanceof Error ? err.message : 'Ошибка' })
   }

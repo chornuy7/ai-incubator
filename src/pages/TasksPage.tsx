@@ -526,11 +526,12 @@ function TaskCard({ t, goalName, busy, onOpen, onStop, onRestart, onPause, onRes
   )
 }
 
-function Info({ label, value }: { label: string; value: ReactNode }) {
+function Info({ label, value, hint }: { label: string; value: ReactNode; hint?: string }) {
   return (
     <div className="rounded-xl border border-line bg-elevated/40 px-3 py-2">
       <div className="text-[10px] font-bold uppercase tracking-wide text-white/40">{label}</div>
-      <div className="mt-0.5 truncate text-sm font-semibold text-fg">{value}</div>
+      <div className="mt-0.5 truncate text-sm font-semibold text-fg" title={hint}>{value}</div>
+      {hint && <div className="mt-0.5 truncate text-[10px] text-muted">{hint}</div>}
     </div>
   )
 }
@@ -779,11 +780,13 @@ export function TaskDetailPage() {
           <Info label="Создана" value={new Date(t.createdAt).toLocaleString('ru-RU')} />
           <Info label="Обновлена" value={new Date(t.updatedAt).toLocaleString('ru-RU')} />
           <Info label="Результатов" value={String(results.length)} />
-          {/* Цена запуска: монеты — точно, токены — по журналу. Показываем всегда,
-              даже когда ноль: «бесплатно» это тоже ответ, а прочерк — нет. */}
+          {/* §10.1: полная цена запуска = действия + токены ИИ. Раньше показывали только
+              spentCoins (действия), а монеты за токены списывались отдельно и в сумму не
+              входили — «Потрачено» выходило заниженным. Разбивку даём в подписи. */}
           <Info
             label="Потрачено"
-            value={`${fmtCoins(t.spentCoins || 0)} ⚡${t.tokens ? ` · ${t.tokens.toLocaleString('ru-RU')} токенов` : ''}`}
+            value={`${fmtCoins((t.spentCoins || 0) + (t.tokenCoins || 0))} ⚡${t.tokens ? ` · ${t.tokens.toLocaleString('ru-RU')} токенов` : ''}`}
+            hint={t.tokenCoins ? `${fmtCoins(t.spentCoins || 0)} ⚡ за действия + ${fmtCoins(t.tokenCoins)} ⚡ за ИИ` : undefined}
           />
         </div>
 
