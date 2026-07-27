@@ -1,7 +1,17 @@
 import fs from 'fs/promises'
 import path from 'path'
 import { mutateJson } from './lib/jsonStore.js'
+import { getSupabase, supabaseEnabled } from './lib/supabase.js'
 import { SESSIONS_DIR } from './config.js'
+
+function sbA() { return supabaseEnabled() ? getSupabase() : null }
+// Полный объект меты живёт в data-jsonb; индексируемые колонки — для запросов
+// (админка «проблемы»: бан/flood/без прокси).
+const metaToRow = (id, m) => ({
+  id, name: m.name || null, username: m.username || null, phone: m.phone || null,
+  status: m.status || null, proxy: m.proxy || null, country: m.country || null,
+  in_trash: !!m.inTrash, data: m, updated_at: new Date(m.updatedAt || Date.now()).toISOString(),
+})
 import { buildStatusPatch, normalizeStatus, nextStatusAfterExpiry, canModuleUseAccount } from './lib/accountStatus.js'
 import { appendAudit } from './lib/auditLog.js'
 import { getTrustCache } from './lib/trustCache.js'
@@ -29,6 +39,13 @@ const DEFAULT_META = {
 }
 
 export async function loadAllMeta() {
+  const db = sbA()
+  if (db) {
+    const { data } = await db.from('accounts_meta').select('id, data')
+    const out = {}
+    for (const r of data || []) out[r.id] = r.data || {}
+    return out
+  }
   try {
     const raw = await fs.readFile(metaFile(), 'utf8')
     return /** @type {Record<string, object>} */ (JSON.parse(raw))
@@ -50,6 +67,15 @@ export async function getAccountMeta(accountId) {
  * отпечатки и облачные пароли у 37 аккаунтов.
  */
 export async function setAccountMeta(accountId, patch) {
+  const db = sbA()
+  if (db) {
+    const { data: row } = await db.from('accounts_meta').select('data').eq('id', accountId).maybeSingle()
+    const cur = row?.data || {}
+    const merged = { ...DEFAULT_META, ...cur, ...patch, updatedAt: Date.now() }
+    if (!merged.createdAt) merged.createdAt = Date.now()
+    await db.from('accounts_meta').upsert(metaToRow(accountId, merged), { onConflict: 'id' })
+    return merged
+  }
   let result = null
   await mutateJson(metaFile(), (all) => {
     const next = all && typeof all === 'object' ? all : {}

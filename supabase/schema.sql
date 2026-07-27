@@ -153,16 +153,18 @@ create table if not exists campaigns (
 );
 
 create table if not exists leads (
-  id         text primary key,
-  goal_id    text references goals(id) on delete set null,
-  account_id text,
-  peer       text,
-  status     text not null default 'cold',
-  is_hot     boolean not null default false,
-  result     text default '',
-  note       text default '',
-  created_at timestamptz not null default now(),
-  updated_at timestamptz not null default now()
+  id          text primary key,
+  goal_id     text references goals(id) on delete set null,
+  campaign_id text,
+  account_id  text,
+  peer        text,
+  status      text not null default 'cold',
+  is_hot      boolean not null default false,
+  result      text default '',
+  note        text default '',
+  followups   integer not null default 0,
+  created_at  timestamptz not null default now(),
+  updated_at  timestamptz not null default now()
 );
 create index if not exists leads_status_idx on leads(status);
 

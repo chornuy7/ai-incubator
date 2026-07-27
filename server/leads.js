@@ -4,6 +4,21 @@
  */
 import crypto from 'crypto'
 import { dataPath, readJson, writeJson, mutateJson } from './lib/jsonStore.js'
+import { getSupabase, supabaseEnabled } from './lib/supabase.js'
+
+function sbL() { return supabaseEnabled() ? getSupabase() : null }
+const rowToLead = (r) => ({
+  id: r.id, goalId: r.goal_id || null, campaignId: r.campaign_id || null, accountId: r.account_id || null,
+  peer: r.peer || '', status: r.status || 'cold', isHot: !!r.is_hot, result: r.result || '', note: r.note || '',
+  followUps: Number(r.followups) || 0,
+  createdAt: r.created_at ? new Date(r.created_at).getTime() : 0, updatedAt: r.updated_at ? new Date(r.updated_at).getTime() : 0,
+})
+const leadToRow = (l) => ({
+  id: l.id, goal_id: l.goalId || null, campaign_id: l.campaignId || null, account_id: l.accountId || null,
+  peer: l.peer || '', status: l.status || 'cold', is_hot: !!l.isHot, result: l.result || '', note: l.note || '',
+  followups: Number(l.followUps) || 0,
+  created_at: new Date(l.createdAt || Date.now()).toISOString(), updated_at: new Date(l.updatedAt || Date.now()).toISOString(),
+})
 
 const LEADS_FILE = process.env.LEADS_FILE || dataPath('leads.json')
 
@@ -45,7 +60,10 @@ export function normalizeLead(input = {}) {
 
 /** @param {{ goalId?: string, status?: string, accountId?: string }} [filter] */
 export async function listLeads(filter = {}) {
-  const all = await readJson(LEADS_FILE, [])
+  const db = sbL()
+  const all = db
+    ? ((await db.from('leads').select('*').order('created_at', { ascending: false })).data || []).map(rowToLead)
+    : await readJson(LEADS_FILE, [])
   return all.filter((l) =>
     (!filter.goalId || l.goalId === filter.goalId) &&
     (!filter.campaignId || l.campaignId === filter.campaignId) &&
@@ -65,39 +83,55 @@ export async function createLead(input) {
     createdAt: Date.now(),
     updatedAt: Date.now(),
   }
+  const db = sbL()
+  if (db) { await db.from('leads').insert(leadToRow(lead)); return lead }
   all.unshift(lead)
   await writeJson(LEADS_FILE, all)
   return lead
 }
 
 /** @param {string} id @param {object} patch */
+function applyLeadPatch(target, patch) {
+  const FIELDS = ['goalId', 'campaignId', 'accountId', 'peer', 'status', 'result', 'note', 'followUps']
+  for (const k of FIELDS) {
+    if (patch[k] === undefined) continue
+    if (k === 'status') {
+      const mapped = LEGACY_STATUS[patch[k]] || patch[k]
+      if (LEAD_STATUSES.includes(mapped)) target.status = mapped
+      continue
+    }
+    if (k === 'followUps') { target.followUps = Math.max(0, Math.floor(Number(patch[k]) || 0)); continue }
+    target[k] = k === 'peer' ? String(patch[k]).trim() : (patch[k] === null ? null : String(patch[k]))
+  }
+  target.isHot = target.status === 'hot'
+  target.updatedAt = Date.now()
+  return target
+}
+
+/** @param {string} id @param {object} patch */
 export async function updateLead(id, patch = {}) {
+  const db = sbL()
+  if (db) {
+    const { data } = await db.from('leads').select('*').eq('id', id).maybeSingle()
+    if (!data) return null
+    const updated = applyLeadPatch(rowToLead(data), patch)
+    await db.from('leads').update(leadToRow(updated)).eq('id', id)
+    return updated
+  }
   const all = await readJson(LEADS_FILE, [])
   const i = all.findIndex((l) => l.id === id)
   if (i === -1) return null
-  const FIELDS = ['goalId', 'campaignId', 'accountId', 'peer', 'status', 'result', 'note', 'followUps']
-  for (const k of FIELDS) {
-    if (patch[k] !== undefined) {
-      if (k === 'status') {
-        // Легаси-алиас поддерживаем; genuinely невалидный статус не затирает старый.
-        const mapped = LEGACY_STATUS[patch[k]] || patch[k]
-        if (LEAD_STATUSES.includes(mapped)) all[i].status = mapped
-        continue
-      }
-      if (k === 'followUps') {
-        all[i].followUps = Math.max(0, Math.floor(Number(patch[k]) || 0))
-        continue
-      }
-      all[i][k] = k === 'peer' ? String(patch[k]).trim() : (patch[k] === null ? null : String(patch[k]))
-    }
-  }
-  all[i].isHot = all[i].status === 'hot'
-  all[i].updatedAt = Date.now()
+  applyLeadPatch(all[i], patch)
   await writeJson(LEADS_FILE, all)
   return all[i]
 }
 
 export async function deleteLead(id) {
+  const db = sbL()
+  if (db) {
+    const { data } = await db.from('leads').delete().eq('id', id).select('id')
+    return !!(data && data.length)
+  }
   const all = await readJson(LEADS_FILE, [])
   const next = all.filter((l) => l.id !== id)
   if (next.length === all.length) return false

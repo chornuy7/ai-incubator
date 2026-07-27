@@ -13,6 +13,14 @@
  */
 import crypto from 'crypto'
 import { dataPath, readJson, mutateJson } from './lib/jsonStore.js'
+import { getSupabase, supabaseEnabled } from './lib/supabase.js'
+
+function sbC() { return supabaseEnabled() ? getSupabase() : null }
+const rowToCampaign = (r) => ({ id: r.id, name: r.name, goalId: r.goal_id || null, modules: r.modules || [], ...(r.data || {}), createdAt: r.created_at ? new Date(r.created_at).getTime() : 0, updatedAt: r.updated_at ? new Date(r.updated_at).getTime() : 0 })
+const campaignToRow = (c) => {
+  const { id, name, goalId, modules, createdAt, updatedAt, ...data } = c
+  return { id, name, goal_id: goalId || null, modules: modules || [], data, created_at: new Date(createdAt || Date.now()).toISOString(), updated_at: new Date(updatedAt || Date.now()).toISOString() }
+}
 
 const CAMPAIGNS_FILE = process.env.CAMPAIGNS_FILE || dataPath('campaigns.json')
 
@@ -196,7 +204,10 @@ export function normalizeCampaign(input = {}) {
 }
 
 export async function listCampaigns(filter = {}) {
-  const all = await readJson(CAMPAIGNS_FILE, [])
+  const db = sbC()
+  const all = db
+    ? ((await db.from('campaigns').select('*').order('created_at', { ascending: false })).data || []).map(rowToCampaign)
+    : await readJson(CAMPAIGNS_FILE, [])
   // Кампании, созданные до многомодульности, отдаём с `modules` — иначе фронту
   // пришлось бы проверять оба поля в каждом месте.
   return all
@@ -209,8 +220,36 @@ export async function listCampaigns(filter = {}) {
 }
 
 export async function getCampaign(id) {
+  const db = sbC()
+  if (db) {
+    const { data } = await db.from('campaigns').select('*').eq('id', id).maybeSingle()
+    return data ? rowToCampaign(data) : null
+  }
   const all = await readJson(CAMPAIGNS_FILE, [])
   return all.find((c) => c.id === id) || null
+}
+
+/** Применить patch к кампании на месте — общая логика для файла и БД. @returns {campaign} */
+function applyCampaignPatch(target, patch) {
+  for (const k of FIELDS) {
+    if (patch[k] === undefined) continue
+    if (k === 'accountIds') target.accountIds = normIds(patch[k])
+    else if (k === 'modules') target.modules = normModules(patch[k], patch.moduleKey ?? target.moduleKey)
+    else if (k === 'moduleAgents') target.moduleAgents = normModuleAgents(patch[k], target.modules)
+    else if (k === 'moduleSettings') target.moduleSettings = normModuleSettings(patch[k], target.modules)
+    else if (k === 'moduleTargets') target.moduleTargets = normModuleTargets(patch[k], target.modules)
+    else if (k === 'targets') target.targets = normTargets(patch[k])
+    else if (k === 'settings') target.settings = patch[k] && typeof patch[k] === 'object' ? patch[k] : target.settings
+    else if (k === 'pinned') target.pinned = patch[k] !== false
+    else if (k === 'status') { if (CAMPAIGN_STATUSES.includes(patch[k])) target.status = patch[k] }
+    else if (k === 'goalId') target.goalId = patch[k] ? String(patch[k]) : null
+    else if (k === 'chat') target.chat = normChat(patch[k])
+    else target[k] = String(patch[k]).trim()
+  }
+  if (!target.name) throw new Error('Название кампании не может быть пустым')
+  if (!target.modules?.length && !target.moduleKey) throw new Error('У кампании должен быть модуль')
+  target.updatedAt = Date.now()
+  return target
 }
 
 /** @param {object} input @throws если нет имени или модуля */
@@ -224,44 +263,38 @@ export async function createCampaign(input) {
     createdAt: Date.now(),
     updatedAt: Date.now(),
   }
+  const db = sbC()
+  if (db) { await db.from('campaigns').insert(campaignToRow(campaign)); return campaign }
   await mutateJson(CAMPAIGNS_FILE, (all) => { all.unshift(campaign); return all }, [])
   return campaign
 }
 
 /** @param {string} id @param {object} patch */
 export async function updateCampaign(id, patch = {}) {
+  const db = sbC()
+  if (db) {
+    const cur = await getCampaign(id)
+    if (!cur) return null
+    const updated = applyCampaignPatch(cur, patch)
+    await db.from('campaigns').update(campaignToRow(updated)).eq('id', id)
+    return updated
+  }
   let result = null
   await mutateJson(CAMPAIGNS_FILE, (all) => {
-  const i = all.findIndex((c) => c.id === id)
-  if (i === -1) return undefined
-  // modules обрабатываем ПЕРВЫМ из «сложных» полей: moduleAgents/moduleSettings/
-  // moduleTargets фильтруются по актуальному списку модулей. FIELDS уже задаёт этот порядок
-  // (moduleKey → modules → moduleAgents → moduleSettings → moduleTargets).
-  for (const k of FIELDS) {
-    if (patch[k] === undefined) continue
-    if (k === 'accountIds') all[i].accountIds = normIds(patch[k])
-    else if (k === 'modules') all[i].modules = normModules(patch[k], patch.moduleKey ?? all[i].moduleKey)
-    else if (k === 'moduleAgents') all[i].moduleAgents = normModuleAgents(patch[k], all[i].modules)
-    else if (k === 'moduleSettings') all[i].moduleSettings = normModuleSettings(patch[k], all[i].modules)
-    else if (k === 'moduleTargets') all[i].moduleTargets = normModuleTargets(patch[k], all[i].modules)
-    else if (k === 'targets') all[i].targets = normTargets(patch[k])
-    else if (k === 'settings') all[i].settings = patch[k] && typeof patch[k] === 'object' ? patch[k] : all[i].settings
-    else if (k === 'pinned') all[i].pinned = patch[k] !== false
-    else if (k === 'status') { if (CAMPAIGN_STATUSES.includes(patch[k])) all[i].status = patch[k] }
-    else if (k === 'goalId') all[i].goalId = patch[k] ? String(patch[k]) : null
-    else if (k === 'chat') all[i].chat = normChat(patch[k])
-    else all[i][k] = String(patch[k]).trim() // name, moduleKey — строки
-  }
-  if (!all[i].name) throw new Error('Название кампании не может быть пустым')
-  if (!all[i].modules?.length && !all[i].moduleKey) throw new Error('У кампании должен быть модуль')
-  all[i].updatedAt = Date.now()
-  result = all[i]
-  return all
+    const i = all.findIndex((c) => c.id === id)
+    if (i === -1) return undefined
+    result = applyCampaignPatch(all[i], patch)
+    return all
   }, [])
   return result
 }
 
 export async function deleteCampaign(id) {
+  const db = sbC()
+  if (db) {
+    const { data } = await db.from('campaigns').delete().eq('id', id).select('id')
+    return !!(data && data.length)
+  }
   let removed = false
   await mutateJson(CAMPAIGNS_FILE, (all) => {
     const next = all.filter((c) => c.id !== id)

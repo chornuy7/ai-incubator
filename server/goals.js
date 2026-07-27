@@ -5,6 +5,15 @@
  */
 import crypto from 'crypto'
 import { dataPath, readJson, writeJson } from './lib/jsonStore.js'
+import { getSupabase, supabaseEnabled } from './lib/supabase.js'
+
+function sbGoals() { return supabaseEnabled() ? getSupabase() : null }
+// row → полный объект цели: data-jsonb несёт все поля кроме id/name/времени.
+const rowToGoal = (r) => ({ id: r.id, name: r.name, ...(r.data || {}), createdAt: r.created_at ? new Date(r.created_at).getTime() : 0, updatedAt: r.updated_at ? new Date(r.updated_at).getTime() : 0 })
+const goalToRow = (g) => {
+  const { id, name, createdAt, updatedAt, ...data } = g
+  return { id, name, data, created_at: new Date(createdAt || Date.now()).toISOString(), updated_at: new Date(updatedAt || Date.now()).toISOString() }
+}
 
 /**
  * Путь считаем ЛЕНИВО, при каждом обращении.
@@ -183,6 +192,11 @@ export function isGoalExpired(owner, now = Date.now()) {
 }
 
 export async function listGoals() {
+  const db = sbGoals()
+  if (db) {
+    const { data } = await db.from('goals').select('*').order('created_at', { ascending: false })
+    return (data || []).map((r) => { const g = rowToGoal(r); return { id: g.id, ...normalizeGoal(g), createdAt: g.createdAt, updatedAt: g.updatedAt } })
+  }
   const all = await readJson(goalsFile(), [])
   if (!Array.isArray(all)) return []
   // Цели, заведённые до переезда полей, лежат в файле как есть — но наружу отдаём
@@ -209,6 +223,8 @@ export async function createGoal(input) {
     createdAt: Date.now(),
     updatedAt: Date.now(),
   }
+  const db = sbGoals()
+  if (db) { await db.from('goals').insert(goalToRow(goal)); return goal }
   goals.unshift(goal)
   await writeJson(goalsFile(), goals)
   return goal
@@ -231,6 +247,8 @@ export async function updateGoal(id, patch = {}) {
   }
   if (!goals[i].name) throw new Error('Название цели не может быть пустым')
   goals[i].updatedAt = Date.now()
+  const db = sbGoals()
+  if (db) { await db.from('goals').update(goalToRow(goals[i])).eq('id', id); return goals[i] }
   await writeJson(goalsFile(), goals)
   return goals[i]
 }
@@ -298,6 +316,11 @@ export async function allGoalProgress() {
 
 /** @param {string} id @returns {Promise<boolean>} */
 export async function deleteGoal(id) {
+  const db = sbGoals()
+  if (db) {
+    const { data } = await db.from('goals').delete().eq('id', id).select('id')
+    return !!(data && data.length)
+  }
   const goals = await listGoals()
   const next = goals.filter((g) => g.id !== id)
   if (next.length === goals.length) return false
