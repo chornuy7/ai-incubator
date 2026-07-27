@@ -332,7 +332,23 @@ export async function runNeuroCommenting(task, store) {
             const typeIdx = useDist ? weightedPickIndex(s.typeWeights) : (s.promptIndex ?? 0)
             const sysPrompt = useDist ? resolveSystemPrompt({ ...s, promptIndex: typeIdx, promptText: '' }) : resolveSystemPrompt(s)
             task.usedTexts = task.usedTexts || []
-            const { text, mode, reason, usage } = await generateComment(postText, typeIdx, sysPrompt + goalCtx + agentCtx, { avoid: task.usedTexts, variantSeed: accountId })
+            // §10.5: если включён анализ изображений и в посте есть фото — описываем
+            // картинку и добавляем к тексту поста, чтобы коммент был по сути изображения,
+            // а не по «[медиа]». Семантику (выше) считаем по исходному тексту, чтобы фильтр
+            // не поехал; обогащаем только то, что уходит в генерацию. Расход vision — с
+            // множителем «картинка ×N» из админки. Всё best-effort.
+            let genText = postText
+            if (s.analyzeImages && messageHasPhoto(post)) {
+              const desc = await describeIncomingImage(client, post).catch(() => null)
+              if (desc?.text) {
+                genText = postText && postText !== '[медиа]' ? `${postText}\n[на изображении: ${desc.text}]` : `[изображение: ${desc.text}]`
+                let coinMultiplier = 4
+                try { coinMultiplier = (await effectivePrices()).imageMultiplier } catch { /* дефолт ×4 */ }
+                await recordTokens({ ...desc.usage, module: task.moduleKey, accountId, taskId: task.id, campaignId: s.campaignId, userId: task.userId, coinMultiplier })
+                  .catch(() => { /* биллинг картинки не роняет коммент */ })
+              }
+            }
+            const { text, mode, reason, usage } = await generateComment(genText, typeIdx, sysPrompt + goalCtx + agentCtx, { avoid: task.usedTexts, variantSeed: accountId })
             // C1: расход токенов — построчно, с привязкой к модулю/аккаунту/задаче.
             if (usage?.tokens) await recordTokens({ ...usage, module: task.moduleKey, accountId, taskId: task.id, campaignId: s.campaignId, userId: task.userId })
             // Ключ мёртв: продолжать — значит лить шаблонные отписки от живых аккаунтов

@@ -90,6 +90,7 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
   const [postWindow, setPostWindow] = useState(10) // §3.5: сколько последних постов обрабатывать
   const [stopWordsText, setStopWordsText] = useState('') // §3.5: пропускать посты с этими словами
   const [semanticFilter, setSemanticFilter] = useState(false) // §3.5: семантическая релевантность к цели
+  const [analyzeImages, setAnalyzeImages] = useState(false) // §10.5: анализ фото в посте vision-моделью
   const [typeWeights, setTypeWeights] = useState<number[]>(() => {
     const n = cfg.messagePrompts?.length || 0
     return n ? Array.from({ length: n }, () => Math.round(100 / n)) : []
@@ -198,13 +199,13 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
     ...(campaignId ? { campaignId } : {}),
     ...((campaignId ? campaigns.find((c) => c.id === campaignId)?.goalId : goalId) ? { goalId: (campaignId ? campaigns.find((c) => c.id === campaignId)?.goalId : goalId) as string } : {}),
     ...(cfg.warmingLayout ? { warmLevel } : {}),
-    ...(moduleKey === 'neuro-commenting' ? { postWindow, stopWords: stopWordsText.split(/[\n,;]+/).map((w) => w.trim()).filter(Boolean), semanticFilter } : {}),
+    ...(moduleKey === 'neuro-commenting' ? { postWindow, stopWords: stopWordsText.split(/[\n,;]+/).map((w) => w.trim()).filter(Boolean), semanticFilter, analyzeImages } : {}),
     ...(moduleKey === 'neuro-commenting' && weightSum > 0 ? { typeWeights } : {}),
     ...(cfg.lookingLayout ? {
       lookMode: cfg.lookModeOptions?.[lookModeIdx]?.value ?? 'stories',
       lookPostsCount,
     } : {}),
-  }), [selected, targets, postUrls, toggles, probability, maxActions, minActions, maxPerAcc, minPerAcc, minWords, durationMinutes, aiProtect, protLevel, activePrompt, promptBodies, delayPreset, palette, delays, keywords, isGgr, accounts, cfg, lookModeIdx, lookPostsCount, goalId, campaignId, campaigns, warmLevel, postWindow, stopWordsText, semanticFilter, moduleKey, typeWeights, weightSum])
+  }), [selected, targets, postUrls, toggles, probability, maxActions, minActions, maxPerAcc, minPerAcc, minWords, durationMinutes, aiProtect, protLevel, activePrompt, promptBodies, delayPreset, palette, delays, keywords, isGgr, accounts, cfg, lookModeIdx, lookPostsCount, goalId, campaignId, campaigns, warmLevel, postWindow, stopWordsText, semanticFilter, analyzeImages, moduleKey, typeWeights, weightSum])
 
   const hasPostTargets = postUrls.length > 0
   const busySelectedCount = useMemo(
@@ -534,6 +535,12 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
             <label className="mt-3 flex items-center gap-2 text-xs text-white/60">
               <input type="checkbox" checked={semanticFilter} onChange={(e) => setSemanticFilter(e.target.checked)} className="h-4 w-4 rounded border-line accent-spark-500" />
               Семантический фильтр к цели <span className="text-white/30">(ИИ-релевантность поста к цели, нужен OPENAI_API_KEY и выбранная цель)</span>
+            </label>
+            {/* §10.5: анализ картинок в посте — vision опишет фото, коммент будет по сути
+                изображения, а не по «[медиа]». Расход дороже: наценка «картинка ×N» из админки. */}
+            <label className="mt-2 flex items-center gap-2 text-xs text-white/60">
+              <input type="checkbox" checked={analyzeImages} onChange={(e) => setAnalyzeImages(e.target.checked)} className="h-4 w-4 rounded border-line accent-spark-500" />
+              Анализировать картинки в посте <span className="text-white/30">(vision опишет фото; расход ×N за изображение, нужен OPENAI_API_KEY)</span>
             </label>
           </div>
         )}
