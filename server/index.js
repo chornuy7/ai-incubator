@@ -44,6 +44,11 @@ const app = express()
 app.use(cors())
 app.use(express.json({ limit: '5mb' }))
 
+// Продакшн-замок: личность из подписанного токена, при SESSION_SECRET — вход обязателен.
+// Монтируется ДО всех /api-роутов, чтобы RBAC ниже работал на доверенной личности.
+const { sessionGuard } = await import('./lib/authGuard.js')
+app.use('/api', sessionGuard)
+
 app.get('/api/health', (_req, res) => {
   res.json({
     ok: true,

@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { Zap, Eye, EyeOff, ArrowRight, ShieldCheck, Bot, Radar, Sparkles } from 'lucide-react'
 import { useApp } from '@/mocks/store'
 import { useSession } from '@/features/auth/session'
-import { loginUser } from '@/api/usersApi'
+import { loginUser, registerUser } from '@/api/usersApi'
 
 const FEATURES = [
   { icon: Bot, title: 'Нейромодули', desc: 'Комментинг, чаттинг и диалоги на ИИ' },
@@ -17,22 +17,36 @@ export function GuestLogin() {
   const setUserState = useApp((s) => s.setUserState)
   const pushToast = useApp((s) => s.pushToast)
   const signIn = useSession((s) => s.login)
-  const [email, setEmail] = useState('illia@incubator.ai')
-  const [pass, setPass] = useState('demo12345')
+  // Регистрация с лендинга: тестер заводит аккаунт сам, доступ к модулям выдаёт админ.
+  const [mode, setMode] = useState<'login' | 'register'>('login')
+  const [email, setEmail] = useState('')
+  const [pass, setPass] = useState('')
+  const [name, setName] = useState('')
   const [show, setShow] = useState(false)
   const [loading, setLoading] = useState(false)
+  const isReg = mode === 'register'
 
-  const login = async (e: React.FormEvent) => {
+  const submit = async (e: React.FormEvent) => {
     e.preventDefault()
     setLoading(true)
     try {
-      const { user, role } = await loginUser(email.trim(), pass)
+      const { user, role } = isReg
+        ? await registerUser(email.trim(), pass, name.trim())
+        : await loginUser(email.trim(), pass)
       signIn(user, role && role.permissions ? { id: role.id, name: role.name, permissions: role.permissions } : null)
       setUserState('with-data')
-      pushToast({ type: 'success', title: `Добро пожаловать, ${user.name}!`, desc: role?.name ? `Роль: ${role.name}` : 'Вход выполнен.' })
+      pushToast({
+        type: 'success',
+        title: isReg ? `Аккаунт создан, ${user.name}!` : `Добро пожаловать, ${user.name}!`,
+        desc: isReg ? 'Доступ к модулям выдаст администратор.' : (role?.name ? `Роль: ${role.name}` : 'Вход выполнен.'),
+      })
       nav('/panel')
     } catch (err) {
-      pushToast({ type: 'error', title: 'Не удалось войти', desc: err instanceof Error ? err.message : 'Проверьте e-mail и пароль' })
+      pushToast({
+        type: 'error',
+        title: isReg ? 'Не удалось зарегистрироваться' : 'Не удалось войти',
+        desc: err instanceof Error ? err.message : 'Проверьте данные',
+      })
     } finally {
       setLoading(false)
     }
@@ -88,10 +102,18 @@ export function GuestLogin() {
             <span className="font-display text-lg font-bold text-fg">AI Incubator</span>
           </div>
 
-          <h2 className="font-display text-2xl font-bold text-fg">Вход в панель</h2>
-          <p className="mt-1 text-sm text-muted">Демо-режим — данные подставлены автоматически.</p>
+          <h2 className="font-display text-2xl font-bold text-fg">{isReg ? 'Регистрация' : 'Вход в панель'}</h2>
+          <p className="mt-1 text-sm text-muted">
+            {isReg ? 'Заведите аккаунт — доступ к модулям выдаст администратор.' : 'Войдите под своей учётной записью.'}
+          </p>
 
-          <form onSubmit={login} className="mt-6 space-y-4">
+          <form onSubmit={submit} className="mt-6 space-y-4">
+            {isReg && (
+              <div>
+                <label className="label">Имя</label>
+                <input value={name} onChange={(e) => setName(e.target.value)} className="input" placeholder="Как к вам обращаться" />
+              </div>
+            )}
             <div>
               <label className="label">E-mail</label>
               <input value={email} onChange={(e) => setEmail(e.target.value)} className="input" placeholder="you@example.com" />
@@ -111,22 +133,21 @@ export function GuestLogin() {
                 </button>
               </div>
             </div>
-            <div className="flex items-center justify-between text-sm">
-              <label className="flex cursor-pointer items-center gap-2 text-muted">
-                <input type="checkbox" defaultChecked className="h-4 w-4 rounded border-line accent-spark-500" /> Запомнить
-              </label>
-              <button type="button" onClick={() => pushToast({ type: 'info', title: 'Восстановление в демо недоступно' })} className="font-semibold text-spark-300 hover:underline">
-                Забыли пароль?
-              </button>
-            </div>
             <button type="submit" disabled={loading} className="btn-primary h-11 w-full">
-              {loading ? 'Входим…' : <>Войти в демо <ArrowRight size={17} /></>}
+              {loading ? (isReg ? 'Создаём…' : 'Входим…') : (isReg ? <>Зарегистрироваться <ArrowRight size={17} /></> : <>Войти <ArrowRight size={17} /></>)}
             </button>
           </form>
 
-          <div className="mt-6 rounded-xl border border-line bg-elevated p-3 text-center text-xs text-muted">
-            Нажимая «Войти», вы попадаете в сценарий <span className="font-semibold text-fg">«С данными»</span>.
-            Переключить сценарии можно в Dev-панели.
+          <div className="mt-6 text-center text-sm text-muted">
+            {isReg ? (
+              <>Уже есть аккаунт?{' '}
+                <button type="button" onClick={() => setMode('login')} className="font-semibold text-spark-300 hover:underline">Войти</button>
+              </>
+            ) : (
+              <>Нет аккаунта?{' '}
+                <button type="button" onClick={() => setMode('register')} className="font-semibold text-spark-300 hover:underline">Зарегистрироваться</button>
+              </>
+            )}
           </div>
         </div>
       </div>

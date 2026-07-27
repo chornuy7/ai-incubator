@@ -4,6 +4,17 @@ import { listUsers, getUser, createUser, updateUser, deleteUser, authenticate, p
 import { rolesForUser, mergePermissions, userRoleIds, hasAdminRole } from './roles.js'
 import { appendAudit } from './lib/auditLog.js'
 import { clockIn, clockOut, summariesFor } from './workLog.js'
+import { signSession } from './lib/session.js'
+
+/** Собрать ответ входа: публичный юзер + роль (для гейта UI) + подписанный токен. */
+async function sessionPayload(user) {
+  const ids = userRoleIds(user)
+  const roles = await rolesForUser(user)
+  const isAdmin = hasAdminRole(ids)
+  const permissions = isAdmin || roles.length === 0 ? null : mergePermissions(roles)
+  const role = { id: user.roleId || '', name: roles.map((r) => r.name).join(' + '), permissions }
+  return { user, role, roles, token: signSession(user.id) }
+}
 
 export const usersRouter = Router()
 
@@ -18,7 +29,7 @@ usersRouter.get('/', async (_req, res) => {
   } catch (err) { fail(res, err, 500) }
 })
 
-/** Логин: возвращает публичного юзера + его роль (с правами) для гейтинга UI. */
+/** Логин: публичный юзер + роль (гейт UI) + подписанный токен сессии. */
 usersRouter.post('/login', async (req, res) => {
   try {
     const { email, password } = req.body ?? {}
@@ -27,18 +38,28 @@ usersRouter.post('/login', async (req, res) => {
       await appendAudit({ action: 'user.login.fail', module: 'auth', initiator: 'system', reason: `Неудачный вход: ${String(email || '').slice(0, 60)}` })
       return res.status(401).json({ ok: false, error: 'Неверный e-mail или пароль' })
     }
-    // Мульти-роль: объединяем права всех ролей пользователя (union). Админ среди ролей → bypass.
-    const ids = userRoleIds(user)
-    const roles = await rolesForUser(user)
-    const isAdmin = hasAdminRole(ids)
-    // Админ или нет разрешимых ролей → null (bypass/не гейтим, как прежде); иначе — union прав.
-    const permissions = isAdmin || roles.length === 0 ? null : mergePermissions(roles)
-    const roleName = roles.map((r) => r.name).join(' + ')
-    const role = { id: user.roleId || '', name: roleName, permissions }
     await clockIn(user.id) // учёт рабочего времени (§8.1): старт сессии труда
-    await appendAudit({ action: 'user.login', module: 'auth', initiator: user.email, reason: `Вход: ${user.name}`, meta: { userId: user.id, roleIds: ids } })
-    res.json({ ok: true, user, role, roles })
+    await appendAudit({ action: 'user.login', module: 'auth', initiator: user.email, reason: `Вход: ${user.name}`, meta: { userId: user.id, roleIds: userRoleIds(user) } })
+    res.json({ ok: true, ...(await sessionPayload(user)) })
   } catch (err) { fail(res, err, 500) }
+})
+
+/**
+ * Самостоятельная регистрация с лендинга.
+ *
+ * Заводит юзера БЕЗ ролей — то есть без доступа к модулям, пока админ не выдаст его
+ * вручную (фокус-группа: «зарегался → админ дал бесплатно на его аккаунты»). Сразу
+ * логиним (возвращаем токен), чтобы человек попал в кабинет и ждал выдачи, а не входил
+ * повторно. Пароль/почта проверяются в createUser (scrypt-хэш, уникальность e-mail).
+ */
+usersRouter.post('/register', async (req, res) => {
+  try {
+    const { email, password, name } = req.body ?? {}
+    const user = await createUser({ email, password, name, roleIds: [], active: true })
+    await appendAudit({ action: 'user.register', module: 'auth', initiator: user.email, reason: `Регистрация: ${user.name}`, meta: { userId: user.id } })
+    const pub = publicUser(user)
+    res.json({ ok: true, ...(await sessionPayload(pub)) })
+  } catch (err) { fail(res, err, 400) }
 })
 
 /**

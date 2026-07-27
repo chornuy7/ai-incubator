@@ -56,7 +56,14 @@ export async function parseJson<T>(res: Response): Promise<T> {
   return data as T
 }
 
-/** Заголовок идентификации пользователя для серверного RBAC-гейта (§8.1). */
+/**
+ * Заголовки идентификации для серверного RBAC (§8.1) + продакшн-сессии.
+ *
+ * На проде решает подписанный токен (`Authorization: Bearer`) — его сервер проверяет
+ * и сам ставит доверенный `x-user-id`. Присланный нами `X-User-Id` на проде срезается
+ * (подделать нельзя), но в дев-режиме (без SESSION_SECRET) он остаётся как личность —
+ * поэтому шлём оба: токен для прода, id для локальной разработки.
+ */
 function authHeaders(base?: Record<string, string>): Record<string, string> {
   const headers: Record<string, string> = { ...(base ?? {}) }
   try {
@@ -65,6 +72,8 @@ function authHeaders(base?: Record<string, string>): Record<string, string> {
       const u = JSON.parse(raw) as { id?: string }
       if (u?.id) headers['X-User-Id'] = u.id
     }
+    const token = localStorage.getItem('ai-incubator:token')
+    if (token) headers['Authorization'] = `Bearer ${token}`
   } catch { /* ignore */ }
   return headers
 }

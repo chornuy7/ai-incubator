@@ -88,3 +88,21 @@ test('§10.4: вложенные юзеры — родитель, защита �
 
   delete process.env.USERS_FILE
 })
+
+test('регистрация: явный пустой roleIds → БЕЗ доступа, пока админ не выдал', async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'users-reg-'))
+  process.env.USERS_FILE = path.join(dir, 'users.json')
+  const u = await import('../users.js?reg=' + Date.now())
+
+  // Самостоятельная регистрация — роли пустые явно: доступа нет.
+  const guest = await u.createUser({ email: 'tester@focus.io', password: 'secret1', name: 'Тестер', roleIds: [] })
+  assert.deepEqual(guest.roleIds, [], 'ролей нет')
+  assert.equal(guest.roleId, '', 'первичной роли нет')
+  assert.equal(guest.active, true, 'войти может, но доступа к модулям нет')
+
+  // Админ создаёт оператора БЕЗ указания роли — тут дефолт «Модератор» остаётся.
+  const oper = await u.createUser({ email: 'oper@x.y', password: 'secret1' })
+  assert.deepEqual(oper.roleIds, ['role_moderator'], 'поведение админ-формы не изменилось')
+
+  delete process.env.USERS_FILE
+})

@@ -18,8 +18,26 @@ export async function fetchUsers(): Promise<User[]> {
   return data.users
 }
 
+/** Токен сессии храним отдельным ключом — его шлёт `authHeaders` в `Authorization`. */
+const TOKEN_KEY = 'ai-incubator:token'
+function saveToken(token?: string) {
+  try { if (token) localStorage.setItem(TOKEN_KEY, token); else localStorage.removeItem(TOKEN_KEY) } catch { /* quota */ }
+}
+export function clearToken() { saveToken(undefined) }
+
 export async function loginUser(email: string, password: string): Promise<{ user: User; role: Role | null }> {
-  const data = await apiPost<{ user: User; role: Role | null }>('/api/users/login', { email, password })
+  const data = await apiPost<{ user: User; role: Role | null; token?: string }>('/api/users/login', { email, password })
+  saveToken(data.token)
+  return { user: data.user, role: data.role }
+}
+
+/**
+ * Самостоятельная регистрация с лендинга. Заводит юзера БЕЗ доступа к модулям —
+ * админ выдаёт его вручную (фокус-группа). Сразу логинит (возвращает токен).
+ */
+export async function registerUser(email: string, password: string, name?: string): Promise<{ user: User; role: Role | null }> {
+  const data = await apiPost<{ user: User; role: Role | null; token?: string }>('/api/users/register', { email, password, name })
+  saveToken(data.token)
   return { user: data.user, role: data.role }
 }
 
@@ -47,6 +65,7 @@ export async function deleteUser(id: string): Promise<void> {
 }
 
 export async function logoutUser(userId: string): Promise<void> {
+  clearToken() // токен недействителен для нас — убираем локально в любом случае
   try { await apiPost('/api/users/logout', { userId }) } catch { /* best-effort */ }
 }
 

@@ -147,7 +147,11 @@ export async function createUser(input = {}) {
   if (!input.password || String(input.password).length < 6) throw new Error('Пароль минимум 6 символов')
   if (await findByEmail(email)) throw new Error('Пользователь с таким e-mail уже есть')
   const users = await listUsers()
-  const { roleIds, roleId } = normUserRoles(input, ['role_moderator'])
+  // Явно переданный список ролей уважаем, даже пустой (самостоятельная регистрация →
+  // БЕЗ доступа, пока админ не выдаст). Только когда роли не переданы вовсе — дефолт
+  // «Модератор» (админ создаёт оператора через форму и роль не указал).
+  const hasExplicitRoles = Array.isArray(input.roleIds) || input.roleId != null
+  const { roleIds, roleId } = normUserRoles(input, hasExplicitRoles ? [] : ['role_moderator'])
   // §10.4: суб-юзер вложен под своего админа. Проверяем, что родитель существует —
   // иначе висячая ссылка (в БД её отсечёт FK, но на файловом бэкенде некому).
   const parentId = input.parentId ? String(input.parentId) : null
