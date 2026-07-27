@@ -8,6 +8,8 @@ import { DevPanel } from '@/widgets/DevPanel'
 import { TasksDrawer } from '@/widgets/TasksDrawer'
 import { HelpCenterDrawer } from '@/widgets/HelpCenterDrawer'
 import { PaywallBanner } from '@/features/paywall/Paywall'
+import { LowBalanceBar } from '@/features/billing/LowBalanceBar'
+import { LowBalanceLoginModal } from '@/features/billing/LowBalanceLoginModal'
 import { useApp } from '@/mocks/store'
 import { useSession } from '@/features/auth/session'
 import { canAccessPath } from '@/shared/lib/access'
@@ -71,6 +73,8 @@ export function Layout() {
 
       {/* Main column */}
       <div className="flex min-w-0 flex-1 flex-col">
+        {/* §10.1: лента низкого баланса — в самом верху, над шапкой, без крестика. */}
+        <LowBalanceBar />
         <AppHeader />
         <main className="mx-auto w-full max-w-[1400px] flex-1 px-4 py-6 sm:px-6 lg:px-8">
           {isNoSub && <PaywallBanner />}
@@ -80,6 +84,7 @@ export function Layout() {
 
       {/* Help Center — сайдбар в потоке: сужает страницу, а не оверлеит (§3.1). */}
       <HelpCenterDrawer />
+      <LowBalanceLoginModal />
 
       <Toasts />
       <DialogHost />

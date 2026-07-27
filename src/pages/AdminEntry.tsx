@@ -1,4 +1,6 @@
 import { useState } from 'react'
+import { LowBalanceBar } from '@/features/billing/LowBalanceBar'
+import { LowBalanceLoginModal } from '@/features/billing/LowBalanceLoginModal'
 import { Link } from 'react-router-dom'
 import { Zap, Eye, EyeOff, ArrowRight, LogOut, ShieldAlert } from 'lucide-react'
 import { useApp } from '@/mocks/store'
@@ -35,6 +37,8 @@ function AdminShell() {
 
   return (
     <div className="min-h-screen bg-bg text-fg">
+      {/* §10.1: лента низкого баланса и в админке — тут её видит владелец. */}
+      <LowBalanceBar />
       <header className="sticky top-0 z-40 border-b border-line bg-surface/80 backdrop-blur-xl">
         <div className="mx-auto flex max-w-[1400px] items-center gap-3 px-5 py-3">
           <div className="grid h-9 w-9 place-items-center rounded-xl bg-iris-500/15 text-iris-300">
@@ -57,6 +61,7 @@ function AdminShell() {
 
       <Toasts />
       <DialogHost />
+      <LowBalanceLoginModal />
     </div>
   )
 }
