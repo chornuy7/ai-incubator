@@ -86,7 +86,7 @@ export function LandingPage() {
             <Stat value="0" label="ручной рутины" />
           </div>
         </div>
-        <HeroMock />
+        <HeroCarousel />
       </section>
 
       {/* ── Как работает ─────────────────────────────────────── */}
@@ -312,16 +312,34 @@ function Stat({ value, label }: { value: string; label: string }) {
   )
 }
 
-/** Декоративный «скриншот» кабинета — чистый CSS, не картинка. */
-function HeroMock() {
-  const rows = [
-    { n: 'Ethan Walker', s: 'Валидный', c: 'text-spark-300' },
-    { n: 'Mia Hartley', s: 'Прогрев', c: 'text-amber-300' },
-    { n: 'Sophie Dane', s: 'Валидный', c: 'text-spark-300' },
-    { n: 'Nexus Media', s: 'Реакции', c: 'text-iris-300' },
-  ]
+/**
+ * §10.6: карусель «скриншотов» кабинета — чистый CSS, не картинки (реальных скринов
+ * под лендинг ещё нет, а один статичный мок показывал только менеджер аккаунтов).
+ * Три экрана — аккаунты / нейродиалоги / отчёт — сами сменяются каждые ~4с, показывая
+ * ширину продукта. Пауза при наведении; экраны сложены абсолютно и переключаются
+ * через opacity, поэтому рамка не «прыгает» по высоте.
+ */
+const HERO_SCREENS = [
+  { key: 'accounts', label: 'Аккаунты' },
+  { key: 'dialogs', label: 'НейроДиалоги' },
+  { key: 'report', label: 'Отчёт' },
+] as const
+
+function HeroCarousel() {
+  const [i, setI] = useState(0)
+  const [paused, setPaused] = useState(false)
+  useEffect(() => {
+    if (paused) return
+    const id = setInterval(() => setI((p) => (p + 1) % HERO_SCREENS.length), 4000)
+    return () => clearInterval(id)
+  }, [paused])
+
   return (
-    <div className="relative">
+    <div
+      className="relative"
+      onMouseEnter={() => setPaused(true)}
+      onMouseLeave={() => setPaused(false)}
+    >
       <div className="pointer-events-none absolute -right-10 -top-10 h-56 w-56 rounded-full bg-spark-500/15 blur-3xl" />
       <div className="pointer-events-none absolute -bottom-10 left-0 h-56 w-56 rounded-full bg-iris-500/15 blur-3xl" />
       <div className="relative overflow-hidden rounded-2xl border border-line bg-surface shadow-pop">
@@ -329,23 +347,105 @@ function HeroMock() {
           <span className="h-2.5 w-2.5 rounded-full bg-red-400/70" />
           <span className="h-2.5 w-2.5 rounded-full bg-amber-400/70" />
           <span className="h-2.5 w-2.5 rounded-full bg-spark-400/70" />
-          <span className="ml-3 text-[11px] text-muted">Менеджер аккаунтов</span>
-        </div>
-        <div className="space-y-2 p-4">
-          <div className="mb-3 grid grid-cols-3 gap-2">
-            {[['6', 'Активные'], ['80', 'монет ⚡'], ['0', 'банов']].map(([v, l]) => (
-              <div key={l} className="rounded-xl border border-line bg-card p-3">
-                <div className="font-display text-xl font-bold">{v}</div>
-                <div className="text-[10px] text-muted">{l}</div>
-              </div>
+          <span className="ml-3 text-[11px] text-muted">{HERO_SCREENS[i].label}</span>
+          <div className="ml-auto flex gap-1.5">
+            {HERO_SCREENS.map((s, k) => (
+              <button
+                key={s.key}
+                onClick={() => setI(k)}
+                aria-label={s.label}
+                className={`h-1.5 rounded-full transition-all ${k === i ? 'w-5 bg-spark-400' : 'w-1.5 bg-line hover:bg-muted'}`}
+              />
             ))}
           </div>
-          {rows.map((r) => (
-            <div key={r.n} className="flex items-center gap-3 rounded-lg border border-line bg-card px-3 py-2">
-              <div className="grid h-7 w-7 place-items-center rounded-full bg-elevated text-[11px] font-bold text-muted">{r.n[0]}</div>
-              <span className="text-sm font-medium">{r.n}</span>
-              <span className={`ml-auto text-xs font-semibold ${r.c}`}>{r.s}</span>
+        </div>
+        {/* Фиксированная высота — экраны сложены абсолютно, рамка не скачет при смене. */}
+        <div className="relative h-[300px]">
+          {HERO_SCREENS.map((s, k) => (
+            <div
+              key={s.key}
+              className={`absolute inset-0 p-4 transition-opacity duration-500 ${k === i ? 'opacity-100' : 'pointer-events-none opacity-0'}`}
+              aria-hidden={k !== i}
+            >
+              {s.key === 'accounts' && <HeroAccounts />}
+              {s.key === 'dialogs' && <HeroDialogs />}
+              {s.key === 'report' && <HeroReport />}
             </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function HeroAccounts() {
+  const rows = [
+    { n: 'Ethan Walker', s: 'Валидный', c: 'text-spark-300' },
+    { n: 'Mia Hartley', s: 'Прогрев', c: 'text-amber-300' },
+    { n: 'Sophie Dane', s: 'Валидный', c: 'text-spark-300' },
+    { n: 'Nexus Media', s: 'Реакции', c: 'text-iris-300' },
+  ]
+  return (
+    <div className="space-y-2">
+      <div className="mb-3 grid grid-cols-3 gap-2">
+        {[['6', 'Активные'], ['80', 'монет ⚡'], ['0', 'банов']].map(([v, l]) => (
+          <div key={l} className="rounded-xl border border-line bg-card p-3">
+            <div className="font-display text-xl font-bold">{v}</div>
+            <div className="text-[10px] text-muted">{l}</div>
+          </div>
+        ))}
+      </div>
+      {rows.map((r) => (
+        <div key={r.n} className="flex items-center gap-3 rounded-lg border border-line bg-card px-3 py-2">
+          <div className="grid h-7 w-7 place-items-center rounded-full bg-elevated text-[11px] font-bold text-muted">{r.n[0]}</div>
+          <span className="text-sm font-medium">{r.n}</span>
+          <span className={`ml-auto text-xs font-semibold ${r.c}`}>{r.s}</span>
+        </div>
+      ))}
+    </div>
+  )
+}
+
+function HeroDialogs() {
+  const msgs = [
+    { out: false, t: 'Привет! Подскажите по тарифам?' },
+    { out: true, t: 'Здравствуйте! Конечно — под какую задачу подбираем? 🙂' },
+    { out: false, t: 'Реклама канала, хочу живых подписчиков' },
+    { out: true, t: 'Отлично, это наш профиль. Соберём аудиторию и приведём к вам — покажу как.' },
+  ]
+  return (
+    <div className="flex h-full flex-col gap-2">
+      {msgs.map((m, k) => (
+        <div key={k} className={`max-w-[82%] rounded-2xl px-3 py-2 text-xs leading-snug ${m.out ? 'ml-auto bg-spark-500/15 text-fg' : 'bg-card text-muted'}`}>
+          {m.t}
+        </div>
+      ))}
+      <div className="mt-auto flex items-center gap-2 rounded-xl border border-line bg-card px-3 py-2 text-[11px] text-faint">
+        <Bot size={13} className="text-spark-300" /> ИИ ведёт диалог к цели · отвечает на языке собеседника
+      </div>
+    </div>
+  )
+}
+
+function HeroReport() {
+  const bars = [70, 45, 88, 60, 95, 52, 78]
+  return (
+    <div className="space-y-3">
+      <div className="grid grid-cols-3 gap-2">
+        {[['1 240', 'лидов'], ['18%', 'в диалог'], ['4.2×', 'ROI']].map(([v, l]) => (
+          <div key={l} className="rounded-xl border border-line bg-card p-3">
+            <div className="font-display text-xl font-bold text-spark-300">{v}</div>
+            <div className="text-[10px] text-muted">{l}</div>
+          </div>
+        ))}
+      </div>
+      <div className="rounded-xl border border-line bg-card p-3">
+        <div className="mb-2 flex items-center justify-between text-[11px] text-muted">
+          <span>Активность за неделю</span><span className="inline-flex items-center gap-1 text-spark-300"><TrendingUp size={12} /> рост</span>
+        </div>
+        <div className="flex h-24 items-end gap-2">
+          {bars.map((h, k) => (
+            <div key={k} className="flex-1 rounded-t bg-spark-gradient" style={{ height: `${h}%` }} />
           ))}
         </div>
       </div>
