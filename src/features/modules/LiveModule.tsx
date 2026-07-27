@@ -635,7 +635,7 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
           onStop={stop}
           onSave={handleSave}
           primaryLabel={cfg.primaryAction ?? 'Начать'}
-          cost={<LaunchCost moduleKey={moduleKey} actions={maxActions} />}
+          cost={<LaunchCost moduleKey={moduleKey} actions={maxActions} accounts={selected.size} delaySec={delays.action} />}
           stats={launchStats}
           task={task}
           warn={warn}
