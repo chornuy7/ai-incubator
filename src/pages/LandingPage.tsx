@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo, type Dispatch, type SetStateAction } from 'react'
-import { useNavigate, Link } from 'react-router-dom'
+import { useNavigate, useSearchParams, Link } from 'react-router-dom'
 import {
   ArrowRight, Check, Zap, Lock, Minus, X, Quote, TrendingUp, Clock, Bot, Star,
 } from 'lucide-react'
@@ -13,6 +13,25 @@ import { MODULES, BONUS_MODULE, FUNNEL_STEPS, COMPARISON, REVIEWS, CASES, ANNUAL
  * сравнение → отзывы → кейсы), но НА НАШИХ данных: наши модули, наши цены с сервера,
  * наши уникальные фичи (цели/CRM, умный прогрев, AIR). Не копия — адаптация.
  */
+/**
+ * §10.6: два позиционирования одного продукта, переключаемые GET-параметром `?v=`.
+ * Для SEO/маркетинга: одна и та же платформа под разные кампании — «all-in-one
+ * платформа» и «маркетинговый сервис для роста в Telegram». URL — единственный
+ * источник варианта, чтобы ссылку можно было расшарить и проиндексировать.
+ */
+const HERO_VARIANTS = {
+  platform: {
+    eyebrow: 'ИИ-платформа · Telegram',
+    title: <>Десятки Telegram-профилей,<br /> которые работают <span className="text-gradient">к вашей цели</span></>,
+    text: 'Парсинг, нейрокомментинг, нейрочаттинг, рассылки, прогрев и защита аккаунтов — в одном кабинете. Агенты со своим характером ведут людей по воронке до целевого действия.',
+  },
+  marketing: {
+    eyebrow: 'Маркетинговый сервис · Telegram',
+    title: <>Автоматический рост<br /> вашего бизнеса <span className="text-gradient">в Telegram</span></>,
+    text: 'Поставьте цель — реклама группы, бота или сбор клиентов — и сервис ведёт её сам: находит аудиторию, пишет, вовлекает и приводит к целевому действию. Настроили и забыли.',
+  },
+} as const
+
 export function LandingPage() {
   // Цены — с сервера, не из копии в вебе: публичная страница и счёт называют одно число.
   const [pricing, setPricing] = useState<Subscription | null>(null)
@@ -20,6 +39,10 @@ export function LandingPage() {
 
   const nav = useNavigate()
   const start = () => nav('/login')
+
+  const [params] = useSearchParams()
+  const variant = params.get('v') === 'marketing' ? 'marketing' : 'platform'
+  const hero = HERO_VARIANTS[variant]
 
   const setupAll = pricing?.setups.find((s) => s.id === 'setup-all') || null
 
@@ -43,16 +66,13 @@ export function LandingPage() {
       <section className="mx-auto grid max-w-6xl items-center gap-10 px-5 pb-16 pt-14 lg:grid-cols-[1.1fr_1fr] lg:pt-20">
         <div>
           <span className="inline-flex items-center gap-1.5 rounded-full border border-iris-500/30 bg-iris-500/10 px-3 py-1 text-xs font-semibold text-iris-200">
-            <Bot size={13} /> ИИ-комбайн · Telegram
+            <Bot size={13} /> {hero.eyebrow}
           </span>
           <h1 className="mt-5 font-display text-4xl font-bold leading-[1.1] sm:text-5xl">
-            Десятки Telegram-профилей,
-            <br /> которые работают <span className="text-gradient">к вашей цели</span>
+            {hero.title}
           </h1>
           <p className="mt-5 max-w-xl text-lg leading-relaxed text-muted">
-            Парсинг, нейрокомментинг, нейрочаттинг, рассылки, прогрев и защита аккаунтов —
-            в одном кабинете. Агенты со своим характером и распорядком дня ведут людей по
-            воронке до целевого действия.
+            {hero.text}
           </p>
           <div className="mt-8 flex flex-wrap items-center gap-3">
             <button onClick={start} className="btn-primary h-11 px-6 text-base">Начать <ArrowRight size={17} /></button>
@@ -123,7 +143,7 @@ export function LandingPage() {
       {/* ── Цены ─────────────────────────────────────────────── */}
       <section id="tarify" className="border-y border-line bg-surface/40">
         <div className="mx-auto max-w-6xl px-5 py-16">
-          <SectionHead eyebrow="Доступные тарифы" title="Цены" desc="Весь комбайн или отдельные модули — от $8. Работа ИИ оплачивается монетами: не работаете — не тратите." center />
+          <SectionHead eyebrow="Доступные тарифы" title="Цены" desc="Все модули или по отдельности — от $8. Работа ИИ оплачивается монетами: не работаете — не тратите." center />
 
           {/* Переключатель периода: помесячно или на год (год дешевле). */}
           <div className="mt-6 flex justify-center">
@@ -145,13 +165,13 @@ export function LandingPage() {
             return (
               <div className="mx-auto mt-6 grid max-w-3xl gap-5 sm:grid-cols-2">
                 <PlanCard
-                  name="Весь комбайн"
+                  name="Полная подписка"
                   price={`${pricing.currency}${perAll}`}
                   per={per}
                   badge={yr ? `выгодно · −${Math.round(ANNUAL_DISCOUNT * 100)}%` : undefined}
                   highlight
                   desc={yr ? 'Все модули на год — дешевле помесячной.' : 'Доступ ко всем модулям на месяц.'}
-                  features={['Все модули комбайна', 'Новые модули — бесплатно', 'Менеджер аккаунтов в подарок']}
+                  features={['Все модули платформы', 'Новые модули — бесплатно', 'Менеджер аккаунтов в подарок']}
                   onStart={start}
                 />
                 <PlanCard
