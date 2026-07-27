@@ -18,6 +18,16 @@
  * что была у accounts-meta).
  */
 import { dataPath, readJson, mutateJson } from './lib/jsonStore.js'
+import { getSupabase, supabaseEnabled } from './lib/supabase.js'
+
+/**
+ * §10.2: когда DATA_BACKEND=supabase, баланс/подписки/журнал живут в БД, а не в
+ * файле. Гейт — `sb()`: возвращает клиента только если включён Supabase и он
+ * сконфигурирован; иначе null → работает файловый путь (и все тесты на файлах).
+ */
+function sb() { return supabaseEnabled() ? getSupabase() : null }
+const iso = (ms) => (ms ? new Date(Number(ms)).toISOString() : null)
+const ms = (t) => (t ? new Date(t).getTime() : 0)
 
 // Путь берём функцией, а не константой: константа фиксируется в момент импорта модуля,
 // и env, выставленный тестом позже, уже не действует — тест молча писал бы в боевой файл.
@@ -72,6 +82,14 @@ export function modulesAllow(modules, moduleKey) {
 export async function setModules(modules, userId, opts = {}) {
   const list = modules === 'all' ? 'all' : [...new Set((modules || []).map(String).filter(Boolean))]
   const expiresAt = subExpiry(opts)
+  const db = sb()
+  if (db) {
+    await db.from('subscriptions').upsert(
+      { id: 'workspace', scope: 'workspace', user_id: null, modules: list, expires_at: iso(expiresAt), updated_at: new Date().toISOString() },
+      { onConflict: 'id' },
+    )
+    return getBalance(userId)
+  }
   await mutateJson(BALANCE_FILE(), (all) => {
     const next = { ...(all || {}) }
     delete next.coins; delete next.planId; delete next.updatedAt
@@ -103,6 +121,14 @@ export async function setUserModules(modules, userId, opts = {}) {
   const list = modules === 'all' ? 'all' : [...new Set((modules || []).map(String).filter(Boolean))]
   const expiresAt = subExpiry(opts)
   const k = key(userId)
+  const db = sb()
+  if (db) {
+    await db.from('subscriptions').upsert(
+      { id: k, scope: 'user', user_id: k, modules: list, expires_at: iso(expiresAt), updated_at: new Date().toISOString() },
+      { onConflict: 'id' },
+    )
+    return getBalance(userId)
+  }
   await mutateJson(BALANCE_FILE(), (all) => {
     const next = { ...(all || {}) }
     delete next.coins; delete next.planId; delete next.updatedAt
@@ -133,6 +159,30 @@ const normCoins = (v) => Math.max(0, Math.round((Number(v) || 0) * COIN_PRECISIO
 
 /** @returns {Promise<{planId:string, plan:{name:string,accountLimit:number}, coins:number, updatedAt:number}>} */
 export async function getBalance(userId) {
+  const db = sb()
+  if (db) {
+    const k = key(userId)
+    const [coinRes, subRes, wsRes] = await Promise.all([
+      db.from('coin_balance').select('coins, updated_at').eq('user_id', k).maybeSingle(),
+      db.from('subscriptions').select('modules, expires_at').eq('id', k).maybeSingle(),
+      db.from('subscriptions').select('modules, expires_at').eq('id', 'workspace').maybeSingle(),
+    ])
+    const personal = subRes.data
+    const ws = wsRes.data
+    const modules = personal?.modules !== undefined && personal?.modules !== null
+      ? personal.modules
+      : (ws?.modules ?? DEFAULT_MODULES)
+    const expiresAt = (personal ? personal.expires_at : ws?.expires_at) ? ms(personal ? personal.expires_at : ws.expires_at) : null
+    const planId = DEFAULT_STATE.planId
+    return {
+      planId,
+      plan: PLANS[planId],
+      modules,
+      expiresAt,
+      coins: normCoins(coinRes.data?.coins ?? 0),
+      updatedAt: ms(coinRes.data?.updated_at),
+    }
+  }
   const all = await readJson(BALANCE_FILE(), {})
   // Старый формат — один кошелёк в корне файла. Читаем его как баланс `__default`,
   // чтобы уже начисленные монеты не пропали при переходе на пер-юзерное хранение.
@@ -164,6 +214,17 @@ export async function getBalance(userId) {
  * @returns {Promise<{coins:number, wallets:number}>}
  */
 export async function totalCoins() {
+  const db = sb()
+  if (db) {
+    const { data } = await db.from('coin_balance').select('user_id, coins')
+    let coins = 0; let wallets = 0; let service = 0
+    for (const r of data || []) {
+      if (r.user_id === DEFAULT_USER) { service = Number(r.coins) || 0; continue }
+      coins = Math.round((coins + (Number(r.coins) || 0)) * COIN_PRECISION) / COIN_PRECISION
+      wallets += 1
+    }
+    return { coins, wallets, service }
+  }
   const all = await readJson(BALANCE_FILE(), {})
   let coins = 0
   let wallets = 0
@@ -188,6 +249,16 @@ export async function totalCoins() {
  * @returns {Promise<Record<string, number>>}
  */
 export async function coinsByUser() {
+  const db = sb()
+  if (db) {
+    const { data } = await db.from('coin_balance').select('user_id, coins')
+    const out = {}
+    for (const r of data || []) {
+      if (r.user_id === DEFAULT_USER) continue
+      out[r.user_id] = Number(r.coins) || 0
+    }
+    return out
+  }
   const all = await readJson(BALANCE_FILE(), {})
   const out = {}
   for (const [k, v] of Object.entries(all || {})) {
@@ -207,6 +278,18 @@ export async function changeCoins(amount, reason = '', userId) {
   const delta = Math.round((Number(amount) || 0) * COIN_PRECISION) / COIN_PRECISION
   const k = key(userId)
   let result = null
+  const db = sb()
+  if (db) {
+    // Read-modify-write. Для демо-нагрузки достаточно; продакшн-шаг — атомарная
+    // Postgres-функция (rpc), чтобы параллельные списания не гонялись.
+    const { data: cur } = await db.from('coin_balance').select('coins').eq('user_id', k).maybeSingle()
+    const before = normCoins(cur?.coins ?? 0)
+    const after = normCoins(before + delta)
+    await db.from('coin_balance').upsert({ user_id: k, coins: after, updated_at: new Date().toISOString() }, { onConflict: 'user_id' })
+    result = { before, after, applied: Math.round((after - before) * COIN_PRECISION) / COIN_PRECISION, reason, userId: k }
+    if (result.applied) await appendWalletEntry(result).catch(() => {})
+    return result
+  }
   await mutateJson(BALANCE_FILE(), (all) => {
     const cur = (all && all[k]) || (k === DEFAULT_USER && typeof all?.coins === 'number' ? { coins: all.coins, planId: all.planId } : {})
     const before = normCoins(cur?.coins ?? DEFAULT_STATE.coins)
@@ -233,6 +316,14 @@ export async function changeCoins(amount, reason = '', userId) {
 const WALLET_LOG = () => process.env.WALLET_LOG_FILE || dataPath('wallet-log.jsonl')
 
 async function appendWalletEntry(entry) {
+  const db = sb()
+  if (db) {
+    await db.from('wallet_log').insert({
+      ts: new Date().toISOString(), user_id: entry.userId, amount: entry.applied,
+      before_val: entry.before, after_val: entry.after, reason: String(entry.reason || ''),
+    })
+    return
+  }
   const fs = await import('node:fs/promises')
   const path = await import('node:path')
   const file = WALLET_LOG()
@@ -253,6 +344,19 @@ async function appendWalletEntry(entry) {
  * @param {{userId?:string, limit?:number, since?:number}} [filter]
  */
 export async function walletHistory(filter = {}) {
+  const limitN = Math.min(1000, Math.max(1, Number(filter.limit) || 100))
+  const db = sb()
+  if (db) {
+    let q = db.from('wallet_log').select('ts, user_id, amount, before_val, after_val, reason').order('ts', { ascending: false }).limit(limitN)
+    if (filter.userId) q = q.eq('user_id', key(filter.userId))
+    if (filter.since) q = q.gte('ts', new Date(Number(filter.since)).toISOString())
+    const { data } = await q
+    return (data || []).map((r) => ({
+      ts: ms(r.ts), userId: r.user_id, amount: Number(r.amount),
+      before: r.before_val == null ? null : Number(r.before_val),
+      after: r.after_val == null ? null : Number(r.after_val), reason: r.reason || '',
+    }))
+  }
   const fs = await import('node:fs/promises')
   let raw = ''
   try { raw = await fs.readFile(WALLET_LOG(), 'utf8') } catch { return [] }
@@ -277,6 +381,9 @@ export async function walletHistory(filter = {}) {
 export async function setPlan(planId, userId) {
   if (!PLANS[planId]) throw new Error(`Неизвестный тариф: ${planId}`)
   const k = key(userId)
+  // В Supabase тариф не храним отдельно (он легаси и фиксирован: getBalance всегда
+  // отдаёт 'basic'). Модель перешла на наборы модулей — plan-колонки в схеме нет.
+  if (sb()) return getBalance(userId)
   await mutateJson(BALANCE_FILE(), (all) => {
     const next = { ...(all || {}) }
     delete next.coins; delete next.planId; delete next.updatedAt
