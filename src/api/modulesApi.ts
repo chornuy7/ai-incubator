@@ -106,11 +106,13 @@ export interface ModuleTask {
   initiator?: string | null
   goalId?: string | null
   campaignId?: string | null // §0: под какой кампанией идёт задача
-  /** §5.1: во сколько монет обошёлся ЭТОТ запуск (действия + токены ИИ). */
+  /** §5.1: монеты за ДЕЙСТВИЯ этого запуска (парсинг/комменты/ЛС). Без токенов ИИ — те в tokenCoins. */
   spentCoins?: number
   /** Токенов ИИ по этой задаче (только в ответе одной задачи, не в списке). */
   tokens?: number
   tokenCalls?: number
+  /** §10.1: монеты, списанные за токены ИИ по этой задаче. Полная цена = spentCoins + tokenCoins. */
+  tokenCoins?: number
   createdAt: number
   updatedAt: number
   progress: ModuleTaskProgress

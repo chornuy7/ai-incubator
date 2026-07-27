@@ -1,5 +1,5 @@
-import { useMemo, useState } from 'react'
-import { GraduationCap, Search, ChevronRight } from 'lucide-react'
+import { useEffect, useMemo, useState } from 'react'
+import { GraduationCap, Search, ChevronRight, Eye, Cog, Network, Lightbulb, ShieldAlert, Sparkles } from 'lucide-react'
 import { PageHeader, Card } from '@/shared/ui'
 import { HELP_DOCS, type HelpDoc } from '@/shared/config/helpDocs'
 import { cn } from '@/shared/lib/utils'
@@ -35,6 +35,45 @@ export function LearningPage() {
   })).filter((g) => g.items.length), [needle])
 
   const activeDoc = active ? HELP_DOCS[active] : null
+
+  return (
+    <LearningView
+      q={q} setQ={setQ} groups={groups} active={active} setActive={setActive} activeDoc={activeDoc}
+    />
+  )
+}
+
+/**
+ * §10.7: карточка темы — не «простыня» из шести абзацев сразу (созвон: «слишком сложно
+ * для восприятия»), а вкладки. Человек видит один смысловой кусок за раз и сам решает,
+ * копать ли глубже. Тот же компонент потом продублируется на публичный сайт.
+ */
+function LearningView({ q, setQ, groups, active, setActive, activeDoc }: {
+  q: string
+  setQ: (v: string) => void
+  groups: { title: string; items: { key: string; doc: HelpDoc }[] }[]
+  active: string | null
+  setActive: (k: string) => void
+  activeDoc: HelpDoc | null
+}) {
+  // Вкладки собираем только из непустых секций дока — у разных тем свой набор.
+  const tabs = useMemo(() => {
+    if (!activeDoc) return [] as { key: string; label: string; icon: typeof Eye; body?: string; tips?: string[]; accent?: boolean; warn?: boolean }[]
+    return [
+      { key: 'what', label: 'Обзор', icon: Eye, body: activeDoc.what },
+      { key: 'how', label: 'Как работает', icon: Cog, body: activeDoc.how },
+      { key: 'together', label: 'Связи', icon: Network, body: activeDoc.together },
+      { key: 'example', label: 'Пример', icon: Sparkles, body: activeDoc.example, accent: true },
+      ...(activeDoc.risks ? [{ key: 'risks', label: 'Риски', icon: ShieldAlert, body: activeDoc.risks, warn: true }] : []),
+      ...(activeDoc.tips?.length ? [{ key: 'tips', label: 'Советы', icon: Lightbulb, tips: activeDoc.tips }] : []),
+    ].filter((t) => t.tips?.length || t.body?.trim())
+  }, [activeDoc])
+
+  const [tab, setTab] = useState('what')
+  // Сменили тему — возвращаемся на «Обзор», иначе открытая вкладка «Риски» перетекала
+  // бы на тему, где рисков нет, и пользователь видел бы пустую карточку.
+  useEffect(() => { setTab('what') }, [active])
+  const shown = tabs.find((t) => t.key === tab) ?? tabs[0]
 
   return (
     <div className="space-y-4">
@@ -77,23 +116,45 @@ export function LearningPage() {
               <div className="text-sm">Выберите тему слева — откроется подробное объяснение:<br />что это, как работает, риски и пример.</div>
             </div>
           ) : (
-            <article className="space-y-5">
+            <article className="space-y-4">
               <h2 className="font-display text-2xl font-bold text-fg">{activeDoc.title}</h2>
-              <Section title="Что это" body={activeDoc.what} />
-              <Section title="Как работает внутри" body={activeDoc.how} />
-              <Section title="Вместе с остальными" body={activeDoc.together} />
-              <Section title="Пример" body={activeDoc.example} accent />
-              {activeDoc.risks && <Section title="Риски и безопасность" body={activeDoc.risks} warn />}
-              {activeDoc.tips?.length ? (
-                <div>
-                  <div className="mb-1.5 text-xs font-bold uppercase tracking-wide text-muted">Советы</div>
-                  <ul className="space-y-1">
-                    {activeDoc.tips.map((t, i) => (
-                      <li key={i} className="flex gap-2 text-sm text-muted"><span className="text-spark-400">•</span> {t}</li>
-                    ))}
-                  </ul>
-                </div>
-              ) : null}
+
+              {/* Вкладки: один кусок за раз вместо шести абзацев подряд. */}
+              <div className="flex flex-wrap gap-1.5 border-b border-line pb-3">
+                {tabs.map((t) => {
+                  const on = shown?.key === t.key
+                  const Icon = t.icon
+                  return (
+                    <button
+                      key={t.key}
+                      onClick={() => setTab(t.key)}
+                      className={cn('inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold transition-colors',
+                        on
+                          ? (t.warn ? 'bg-amber-500/15 text-amber-200' : 'bg-spark-500/15 text-spark-200')
+                          : 'text-muted hover:bg-white/[.04] hover:text-fg')}
+                    >
+                      <Icon size={13} /> {t.label}
+                    </button>
+                  )
+                })}
+              </div>
+
+              {/* Тело активной вкладки. Заголовок не дублируем — он уже на самой вкладке. */}
+              <div key={shown?.key}>
+                {shown?.tips
+                  ? (
+                    <ul className="space-y-2">
+                      {shown.tips.map((t, i) => (
+                        <li key={i} className="flex gap-2.5 rounded-xl border border-line bg-elevated/40 p-3 text-sm text-muted">
+                          <Lightbulb size={15} className="mt-0.5 shrink-0 text-spark-400" /> {t}
+                        </li>
+                      ))}
+                    </ul>
+                  )
+                  : shown
+                    ? <Section body={shown.body || ''} accent={shown.accent} warn={shown.warn} />
+                    : null}
+              </div>
             </article>
           )}
         </Card>
@@ -102,10 +163,10 @@ export function LearningPage() {
   )
 }
 
-function Section({ title, body, accent, warn }: { title: string; body: string; accent?: boolean; warn?: boolean }) {
+function Section({ title, body, accent, warn }: { title?: string; body: string; accent?: boolean; warn?: boolean }) {
   return (
     <div>
-      <div className={cn('mb-1.5 text-xs font-bold uppercase tracking-wide', warn ? 'text-amber-300' : 'text-muted')}>{title}</div>
+      {title && <div className={cn('mb-1.5 text-xs font-bold uppercase tracking-wide', warn ? 'text-amber-300' : 'text-muted')}>{title}</div>}
       <p className={cn('whitespace-pre-wrap text-sm leading-relaxed',
         accent ? 'rounded-xl border border-spark-500/25 bg-spark-500/6 p-3 text-fg' : warn ? 'text-amber-100/80' : 'text-muted')}>{body}</p>
     </div>
