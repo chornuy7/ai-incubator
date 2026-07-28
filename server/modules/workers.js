@@ -338,14 +338,15 @@ export async function runNeuroCommenting(task, store) {
             // не поехал; обогащаем только то, что уходит в генерацию. Расход vision — с
             // множителем «картинка ×N» из админки. Всё best-effort.
             let genText = postText
+            let imageBill = null // §10.5: биллим vision ПОСЛЕ успешной отправки коммента,
+            // иначе неудачная отправка (пост не помечается) переописывала/перебилливала фото каждый круг.
             if (s.analyzeImages && messageHasPhoto(post)) {
               const desc = await describeIncomingImage(client, post).catch(() => null)
               if (desc?.text) {
                 genText = postText && postText !== '[медиа]' ? `${postText}\n[на изображении: ${desc.text}]` : `[изображение: ${desc.text}]`
                 let coinMultiplier = 4
                 try { coinMultiplier = (await effectivePrices()).imageMultiplier } catch { /* дефолт ×4 */ }
-                await recordTokens({ ...desc.usage, module: task.moduleKey, accountId, taskId: task.id, campaignId: s.campaignId, userId: task.userId, coinMultiplier })
-                  .catch(() => { /* биллинг картинки не роняет коммент */ })
+                imageBill = { ...desc.usage, module: task.moduleKey, accountId, taskId: task.id, campaignId: s.campaignId, userId: task.userId, coinMultiplier }
               }
             }
             const { text, mode, reason, usage } = await generateComment(genText, typeIdx, sysPrompt + goalCtx + agentCtx, { avoid: task.usedTexts, variantSeed: accountId })
@@ -367,6 +368,8 @@ export async function runNeuroCommenting(task, store) {
             try {
               await sendChannelComment(client, channel, post.id, text)
               task.actionKeys.push(key)
+              // §10.5: коммент ушёл — теперь биллим расход vision (описание картинки поста).
+              if (imageBill) await recordTokens(imageBill).catch(() => { /* биллинг не роняет коммент */ })
               task.accountStats[accountId] = task.accountStats[accountId] || { actions: 0, floodWaits: 0 }
               task.accountStats[accountId].actions += 1
               await incAction(accountId, 'comments') // §6: суточный лимит действий
@@ -1161,14 +1164,16 @@ export async function runNeuroDialogs(task, store) {
           // «картинка ×N» из админки (priceStore.imageMultiplier). Всё best-effort:
           // осечка описания диалог не рвёт — отвечаем по тексту.
           let imageNote = ''
-          if (s.analyzeImages && last && messageHasPhoto(last)) {
+          let imageBill = null // §10.5: расход vision биллим ПОСЛЕ успешной отправки (см. ниже),
+          // иначе неудачные проходы (нет OpenAI / заглушка) переописывали и перебилливали
+          // то же фото ×N каждый круг. Только ВХОДЯЩЕЕ фото (`!last.out`) — не своё исходящее.
+          if (s.analyzeImages && last && !last.out && messageHasPhoto(last)) {
             const desc = await describeIncomingImage(client, last).catch(() => null)
             if (desc?.text) {
               imageNote = desc.text
               let coinMultiplier = 4
               try { coinMultiplier = (await effectivePrices()).imageMultiplier } catch { /* дефолт ×4 */ }
-              await recordTokens({ ...desc.usage, module: task.moduleKey, accountId, taskId: task.id, campaignId: s.campaignId, userId: task.userId, coinMultiplier })
-                .catch(() => { /* биллинг картинки не роняет ответ */ })
+              imageBill = { ...desc.usage, module: task.moduleKey, accountId, taskId: task.id, campaignId: s.campaignId, userId: task.userId, coinMultiplier }
               await store.appendLog(task, 'info', `«${peerKey}»: на входящем фото — «${imageNote.slice(0, 60)}»`, meta.name)
             }
           }
@@ -1213,6 +1218,8 @@ export async function runNeuroDialogs(task, store) {
           await sleep(pickDelay(s.delays?.action?.[0] ?? 5, s.delays?.action?.[1] ?? 30, mul) * 1000)
           await sleep(humanPace(reply, incoming.length).totalMs) // §4.4: читаем и печатаем как человек
           await client.sendMessage(d.entity, { message: reply })
+          // §10.5: теперь, когда ответ реально ушёл, биллим расход vision (описание фото).
+          if (imageBill) await recordTokens(imageBill).catch(() => { /* биллинг не роняет диалог */ })
           // Помечаем прочитанным, чтобы не отвечать повторно одному и тому же собеседнику.
           await readUserHistory(client, d.entity)
           answeredUpTo.set(`${accountId}:${d.id}`, Math.max(last?.id ?? 0, d.lastMessageId ?? 0))

@@ -119,7 +119,9 @@ export async function adminOverview(opts = {}) {
   for (const [id, m] of Object.entries(meta)) {
     if (m?.inTrash) continue
     accounts.total += 1
-    const st = m?.status || 'active'
+    // Нормализуем как в accountsHealth: иначе 'working'/'valid'/'' попадают в отдельные
+    // корзины, и «Панель» и «Мониторинг» показывают один аккаунт под разными статусами.
+    const st = normalizeStatus(m?.status)
     accounts.byStatus[st] = (accounts.byStatus[st] || 0) + 1
     const a = activity[id]
     if (a?.resting) accounts.resting += 1
@@ -636,7 +638,7 @@ export async function myStats(userId, opts = {}) {
   const myTaskIds = new Set()
 
   const touchDay = (k) => {
-    if (!daily.has(k)) daily.set(k, { day: k, comments: 0, reactions: 0, messages: 0, actions: 0, tokens: 0, coins: 0 })
+    if (!daily.has(k)) daily.set(k, { day: k, comments: 0, reactions: 0, messages: 0, views: 0, pm: 0, actions: 0, tokens: 0, coins: 0 })
     return daily.get(k)
   }
   const mod = (key) => {

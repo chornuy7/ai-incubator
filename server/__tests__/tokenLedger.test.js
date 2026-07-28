@@ -11,11 +11,14 @@ import path from 'path'
 const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'ledger-'))
 process.env.TOKEN_LEDGER_FILE = path.join(dir, 'ledger.jsonl')
 process.env.BALANCE_FILE = path.join(dir, 'balance.json')
+// Изолируем прайс: recordTokens теперь читает админский курс coinsPer1kTokens из priceStore.
+process.env.PRICES_FILE = path.join(dir, 'prices.json')
 
 const { recordTokens, readLedger, tokenSummary, tokensToCoins } = await import('../tokenLedger.js')
 const { getBalance, changeCoins } = await import('../balance.js')
+const { setOverrides } = await import('../priceStore.js')
 
-test('C1: курс токенов в монеты — до сотых', () => {
+test('C1: курс токенов в монеты — до тысячных', () => {
   assert.equal(tokensToCoins(1000), 1)
   assert.equal(tokensToCoins(2500), 2.5)
   assert.equal(tokensToCoins(0), 0)
@@ -75,7 +78,22 @@ test('§10.5: множитель <1 или мусор игнорируется (
   assert.equal(b.coins, 1, 'нечисловой множитель = ×1')
 })
 
+test('§10.1: точность до тысячных — 5 токенов не округляются до 0.01 и не в 0', async () => {
+  const r = await recordTokens({ tokens: 5, module: 'm', taskId: 'prec' })
+  assert.equal(r.coins, 0.005, '5 токенов = 0.005 монеты (а не 0.01 и не 0)')
+})
+
+test('§10.1: АДМИНСКИЙ курс токен→монета влияет на списание (не только на витрину)', async () => {
+  await setOverrides({ coinsPer1kTokens: 5 }) // админ поднял курс в 5 раз
+  const r = await recordTokens({ tokens: 1000, module: 'm', taskId: 'rate' })
+  assert.equal(r.coins, 5, '1000 токенов при курсе 5 = 5 монет (курс из БД применён)')
+  const withMult = await recordTokens({ tokens: 1000, module: 'm', taskId: 'rate', coinMultiplier: 4 })
+  assert.equal(withMult.coins, 20, 'курс ×5 и картинка ×4 перемножаются: 5×4=20')
+  await setOverrides({ coinsPer1kTokens: 1 }) // вернуть, чтобы не влиять на другие тесты в файле
+})
+
 test.after(async () => {
+  delete process.env.PRICES_FILE
   await fs.rm(dir, { recursive: true, force: true })
   delete process.env.TOKEN_LEDGER_FILE
   delete process.env.BALANCE_FILE

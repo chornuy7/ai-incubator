@@ -148,6 +148,7 @@ export async function effectivePrices() {
     coinsPer1kTokens: typeof ov.coinsPer1kTokens === 'number' ? ov.coinsPer1kTokens : COINS_PER_1K_TOKENS,
     tokenUsd,
     tokenUsdAuto: !tokenUsdManual, // true = рассчитано из модели, false = задано вручную
+    tokenUsdComputed: autoTokenUsd, // ВСЕГДА цена из модели (даже при ручном override) — для подсказки «авто»
     tokenUsdModel: currentModel(), // из какой модели считается себестоимость
     imageMultiplier: typeof ov.imageMultiplier === 'number' ? ov.imageMultiplier : 4,
   }

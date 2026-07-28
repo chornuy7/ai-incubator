@@ -408,7 +408,10 @@ function UsersTab({ report, onReload }: { report: UsersReport | null; onReload: 
   const openUser = (r: UserRow) => {
     const willOpen = open !== r.userId
     setOpen(willOpen ? r.userId : null)
-    if (willOpen && !modDraft[r.userId]) {
+    // При КАЖДОМ открытии переинициализируем черновик доступа из серверной правды.
+    // Иначе брошенный (несохранённый) черновик прошлого открытия переживал reload и мог
+    // перетереть текущий доступ при «Применить»: показывал устаревшие галочки как реальные.
+    if (willOpen) {
       setModDraft((d) => ({ ...d, [r.userId]: r.subscription?.all ? 'all' : (r.subscription?.keys ?? []) }))
     }
   }
@@ -1494,8 +1497,10 @@ function PricesTab() {
         if (d) modules[m.key] = { month: d.month, action: d.action }
       }
       const patch: PricePatch = { modules }
-      const pct = Number(extra.annualDiscount)
-      if (Number.isFinite(pct)) patch.annualDiscount = Math.max(0, Math.min(90, pct)) / 100
+      // Пустое поле = вернуть заводскую скидку: шлём '' (бэкенд удалит override), а не 0 —
+      // иначе Number('')===0 записал бы явные 0% поверх дефолта (как tokenUsd/картинка).
+      if (extra.annualDiscount.trim() === '') patch.annualDiscount = ''
+      else { const pct = Number(extra.annualDiscount); if (Number.isFinite(pct)) patch.annualDiscount = Math.max(0, Math.min(90, pct)) / 100 }
       patch.tokenUsd = extra.tokenUsd
       patch.imageMultiplier = extra.imageMultiplier
       const fresh = await savePrices(patch)
@@ -1564,11 +1569,11 @@ function PricesTab() {
             <span className="text-xs text-muted">Цена токена, $ за 1 токен</span>
             <input value={extra.tokenUsd} onChange={(e) => setExtra((x) => ({ ...x, tokenUsd: cleanPrice(e.target.value, 1) }))}
               className="input mt-1 h-9 w-full tabular-nums" inputMode="decimal"
-              placeholder={prices.tokenUsd != null ? `авто: ${fmtUsd(prices.tokenUsd)}` : 'авто'} />
+              placeholder={prices.tokenUsdComputed != null ? `авто: ${fmtUsd(prices.tokenUsdComputed)}` : 'авто'} />
             <span className="mt-1 block text-[10px] text-muted">
               {extra.tokenUsd.trim()
                 ? 'Задано вручную. Очистите поле — вернётся авто-расчёт.'
-                : <>Считается из модели <b className="text-fg">{prices.tokenUsdModel || '—'}</b> ≈ <b className="text-fg">${fmtUsd(prices.tokenUsd)}</b>/токен. Впишите своё, чтобы переопределить.</>}
+                : <>Считается из модели <b className="text-fg">{prices.tokenUsdModel || '—'}</b> ≈ <b className="text-fg">${fmtUsd(prices.tokenUsdComputed)}</b>/токен. Впишите своё, чтобы переопределить.</>}
             </span>
           </label>
           <label className="block">

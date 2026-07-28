@@ -46,6 +46,10 @@ export default function App() {
     return (
       <Routes>
         <Route path="/" element={<LandingPage />} />
+        {/* /landing — тот же лендинг под явным путём: авторизованный уходит на него по
+            клику на логотип, и расшаренная гостю ссылка /landing должна открывать лендинг,
+            а не форму входа. */}
+        <Route path="/landing" element={<LandingPage />} />
         {/* Страницы модулей — часть публичного лендинга, доступны «гостю». */}
         <Route path="/module/:key" element={<ModuleLandingPage />} />
         {/* Админ-панель — отдельная ссылка со своим входом, доступна и «гостю». */}

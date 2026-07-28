@@ -223,6 +223,8 @@ export interface EffectivePrices {
   tokenUsd: number | null
   /** true — цена рассчитана автоматически из модели; false — задана вручную. */
   tokenUsdAuto?: boolean
+  /** Всегда цена из модели (даже при ручном override) — для подсказки «авто». */
+  tokenUsdComputed?: number | null
   /** Модель, из которой считается себестоимость (для подписи в админке). */
   tokenUsdModel?: string
   imageMultiplier: number

@@ -26,16 +26,22 @@ const ledgerRowFromDb = (r) => ({
 const LEDGER_FILE = () => process.env.TOKEN_LEDGER_FILE || dataPath('token-ledger.jsonl')
 
 /**
- * Курс пересчёта в монеты. Держим здесь одним местом: прайсы заказчик утверждает
- * отдельно, и менять их нужно будет в одной строке, а не по всему коду.
- * 1000 токенов = 1 монета — временное значение до утверждения прайса.
+ * Курс пересчёта в монеты по умолчанию (1000 токенов = 1 монета) — fallback, если
+ * админский курс недоступен. Реальный курс `coinsPer1kTokens` заказчик правит в админке
+ * (priceStore), и он ДОЛЖЕН влиять на списание (пивот 27.07: «цены из БД, не из кода»).
  */
 export const COINS_PER_1K_TOKENS = 1
 
-/** @param {number} tokens @returns {number} монеты с точностью до сотых */
-export function tokensToCoins(tokens) {
+/**
+ * Токены → монеты по курсу `per1k` монет за 1000 токенов (по умолчанию — код-константа).
+ * Точность — до ТЫСЯЧНЫХ (как COIN_PRECISION в balance.js): округление до сотых делало
+ * 5 токенов = 0.005 → 0.01 (вдвое дороже), а 1–4 токена → 0 (бесплатно).
+ * @param {number} tokens @param {number} [per1k] монет за 1000 токенов @returns {number}
+ */
+export function tokensToCoins(tokens, per1k = COINS_PER_1K_TOKENS) {
   const t = Math.max(0, Number(tokens) || 0)
-  return Math.round((t / 1000) * COINS_PER_1K_TOKENS * 100) / 100
+  const rate = Number(per1k) > 0 ? Number(per1k) : COINS_PER_1K_TOKENS
+  return Math.round((t / 1000) * rate * 1000) / 1000
 }
 
 /**
@@ -53,6 +59,10 @@ export async function recordTokens(entry = {}) {
   const tokens = Math.max(0, Number(entry.tokens) || 0)
   if (!tokens) return null
   const mult = Math.max(1, Number(entry.coinMultiplier) || 1)
+  // §10.1/пивот: списываем по АДМИНСКОМУ курсу токен→монета (priceStore), а не по код-константе.
+  // Best-effort: нет прайса — падаем на дефолт, генерацию не роняем.
+  let per1k = COINS_PER_1K_TOKENS
+  try { const { effectivePrices } = await import('./priceStore.js'); const r = (await effectivePrices()).coinsPer1kTokens; if (Number(r) > 0) per1k = Number(r) } catch { /* дефолт */ }
   const row = {
     ts: Date.now(),
     module: String(entry.module || ''),
@@ -64,7 +74,7 @@ export async function recordTokens(entry = {}) {
     tokens,
     promptTokens: Math.max(0, Number(entry.promptTokens) || 0),
     completionTokens: Math.max(0, Number(entry.completionTokens) || 0),
-    coins: Math.round(tokensToCoins(tokens) * mult * 100) / 100,
+    coins: Math.round(tokensToCoins(tokens, per1k) * mult * 1000) / 1000,
   }
   const db = sb()
   if (db) {
