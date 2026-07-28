@@ -11,9 +11,9 @@ const GROUP_ORDER: RouteDef['group'][] = ['main', 'modules', 'parsing', 'account
 
 function Logo({ collapsed }: { collapsed: boolean }) {
   return (
-    // Клик по логотипу ведёт на главную (лендинг), как на большинстве сайтов —
-    // привычный «домой». Гость видит лендинг, авторизованный уходит на /panel.
-    <Link to="/" className="flex items-center gap-2.5 rounded-xl transition-opacity hover:opacity-80" title="На главную">
+    // Клик по логотипу ведёт на лендинг (как «домой» на большинстве сайтов). Путь
+    // /landing, а не «/», потому что «/» у авторизованного уходит на панель.
+    <Link to="/landing" className="flex items-center gap-2.5 rounded-xl transition-opacity hover:opacity-80" title="На лендинг">
       <div className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-spark-gradient shadow-[0_4px_16px_-4px_rgba(14,196,100,0.6)]">
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
           <path d="M12 3c3.6 0 6.2 3.7 6.2 7.8 0 3.4-2.8 6.2-6.2 6.2s-6.2-2.8-6.2-6.2C5.8 6.7 8.4 3 12 3Z" stroke="#04150c" strokeWidth="1.8" />

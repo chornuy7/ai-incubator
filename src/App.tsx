@@ -86,6 +86,10 @@ export default function App() {
       </Route>
       {/* Админ-панель — вне Layout: своя шапка, свой вход, отдельная ссылка. */}
       <Route path="/admin" element={<AdminEntry />} />
+      {/* Публичный лендинг доступен и авторизованному (клик по логотипу): «/» уходит
+          на панель, поэтому у лендинга свой путь /landing, без редиректа. */}
+      <Route path="/landing" element={<LandingPage />} />
+      <Route path="/module/:key" element={<ModuleLandingPage />} />
       <Route path="/" element={<Navigate to="/panel" replace />} />
       <Route path="*" element={<Navigate to="/panel" replace />} />
     </Routes>
