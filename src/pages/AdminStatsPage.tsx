@@ -183,7 +183,7 @@ export function AdminStatsPage() {
       ) : tab === 8 ? (
         <ReportTab report={report} onExport={exportCsv} users={users?.rows || []} since={since} />
       ) : tab === 9 ? (
-        <MonitoringTab health={health} />
+        <MonitoringTab health={health} active={active} daily={daily} />
       ) : (
         /* §10.4: управление ролями доступа — из sudo-админки (создание/права/блоки). */
         <RolesPage />
@@ -977,9 +977,17 @@ function PaymentsExplorer() {
  * по каждому проблемному. Всегда виден (в отличие от «Проблем», которые прячутся,
  * когда тихо): владелец должен видеть парк аккаунтов и почему кто-то выпал.
  */
-function MonitoringTab({ health }: { health: AccountsHealth | null }) {
+function MonitoringTab({ health, active, daily }: { health: AccountsHealth | null; active: ActiveNow | null; daily: DailySpend | null }) {
   if (!health) return <Card className="p-6 text-sm text-muted">Загрузка…</Card>
   if (!health.total) return <EmptyState icon={<AlertTriangle size={22} />} title="Аккаунтов нет" desc="Добавьте аккаунты в менеджере профилей." />
+
+  // §10.9: нагрузка системы «сейчас» — сколько задач крутится, сколько аккаунтов
+  // занято, сегодняшний поток действий, сколько встало из-за баланса.
+  const running = active?.running ?? []
+  const paused = active?.paused ?? []
+  const accountsInWork = running.reduce((s, t) => s + (t.accounts || 0), 0)
+  const pausedByCoins = paused.filter((t) => t.pausedByCoins).length
+  const todayActions = daily?.rows?.length ? daily.rows[daily.rows.length - 1].actions : 0
 
   const statusTone: Record<string, string> = {
     floodwait: 'text-amber-300', quarantine: 'text-amber-300',
@@ -995,6 +1003,31 @@ function MonitoringTab({ health }: { health: AccountsHealth | null }) {
 
   return (
     <div className="space-y-3">
+      {/* §10.9: нагрузка «сейчас» — задачи в работе, занятые аккаунты, поток действий. */}
+      <div className="grid gap-3 sm:grid-cols-4">
+        <Card className="p-4">
+          <div className="text-xs text-muted">Задач в работе</div>
+          <div className="font-display text-2xl font-bold text-spark-300">{fmt(running.length)}</div>
+          <div className="mt-0.5 text-[11px] text-muted">на паузе {fmt(paused.length)}{pausedByCoins ? ` · из-за баланса ${fmt(pausedByCoins)}` : ''}</div>
+        </Card>
+        <Card className="p-4">
+          <div className="text-xs text-muted">Аккаунтов занято</div>
+          <div className="font-display text-2xl font-bold text-fg">{fmt(accountsInWork)}</div>
+          <div className="mt-0.5 text-[11px] text-muted">в активных задачах</div>
+        </Card>
+        <Card className="p-4">
+          <div className="text-xs text-muted">Действий сегодня</div>
+          <div className="font-display text-2xl font-bold text-fg">{fmt(todayActions)}</div>
+          <div className="mt-0.5 text-[11px] text-muted">поток за день</div>
+        </Card>
+        <Card className="p-4">
+          <div className="text-xs text-muted">Аккаунтов всего</div>
+          <div className="font-display text-2xl font-bold text-fg">{fmt(health.total)}</div>
+          <div className="mt-0.5 text-[11px] text-muted">работают {fmt(health.healthy)} · падают {fmt(health.problem)}</div>
+        </Card>
+      </div>
+
+      <div className="mb-1 mt-4 text-xs font-bold uppercase tracking-wide text-muted">Здоровье аккаунтов</div>
       <div className="grid gap-3 sm:grid-cols-4">
         <Card className="p-4">
           <div className="text-xs text-muted">Всего аккаунтов</div>
@@ -1549,7 +1582,7 @@ function PricesTab() {
           </label>
           <label className="block">
             <span className="text-xs text-muted">Цена токена, $ за 1 токен</span>
-            <input value={extra.tokenUsd} onChange={(e) => setExtra((x) => ({ ...x, tokenUsd: e.target.value }))}
+            <input value={extra.tokenUsd} onChange={(e) => setExtra((x) => ({ ...x, tokenUsd: cleanPrice(e.target.value, 1) }))}
               className="input mt-1 h-9 w-full tabular-nums" inputMode="decimal"
               placeholder={prices.tokenUsd != null ? `авто: ${fmtUsd(prices.tokenUsd)}` : 'авто'} />
             <span className="mt-1 block text-[10px] text-muted">
