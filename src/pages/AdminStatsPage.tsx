@@ -1,18 +1,21 @@
 import { coins as fmtCoins, cn } from '@/shared/lib/utils'
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { BarChart3, Users, ListChecks, Coins, Download, RefreshCw, AlertTriangle, Contact, Power, ChevronDown, Activity, Plus, Radar, Search, ShoppingCart, Loader2, Check, Trash2 } from 'lucide-react'
+import { BarChart3, Users, ListChecks, Coins, Download, RefreshCw, AlertTriangle, Contact, Power, ChevronDown, Activity, Plus, Radar, Search, ShoppingCart, Loader2, Check } from 'lucide-react'
 import { PageHeader, Card, Segmented, EmptyState } from '@/shared/ui'
 import { useApp } from '@/mocks/store'
 import {
   fetchAdminOverview, fetchClientReport, fetchUsersReport, fetchProblems, fetchCrmOverview,
   fetchActiveNow, fetchDailySpend, fetchPurchases, fetchPayments, fetchAccountsHealth,
   type AdminOverview, type ClientReport, type UsersReport, type Problems, type CrmOverview,
-  type ActiveNow, type ActiveTask, type DailySpend, type Purchases, type PaymentsResult, type UserRow, type AccountsHealth, type PriceModule, fetchPrices, savePrices, type EffectivePrices, type PricePatch } from '@/api/adminApi'
+  type ActiveNow, type ActiveTask, type DailySpend, type Purchases, type PaymentsResult, type UserRow, type AccountsHealth, fetchPrices, savePrices, type EffectivePrices, type PricePatch } from '@/api/adminApi'
 import { updateUser } from '@/api/usersApi'
 import { fetchRoles } from '@/api/rolesApi'
 import { RolesPage } from '@/pages/RolesPage'
-import { changeBalance, fetchSubscription, saveUserModules, createBundle, deleteBundle, type SubSetup } from '@/api/balanceApi'
+import { changeBalance, fetchSubscription, saveUserModules } from '@/api/balanceApi'
 import { promptDialog } from '@/shared/lib/dialog'
+import { fmt, fmtDate, cleanPrice, fmtUsd, usdEq } from '@/pages/admin/adminShared'
+import { MonitoringTab } from '@/pages/admin/MonitoringTab'
+import { BundlesEditor } from '@/pages/admin/BundlesEditor'
 
 /**
  * §5.3 (E1/E2): админ-панель со статистикой и постатейный отчёт клиенту.
@@ -42,30 +45,6 @@ const STATUS_RU: Record<string, string> = {
   done: 'Готово', running: 'Выполняется', stopped: 'Остановлены', queued: 'В очереди', error: 'Ошибка', paused: 'Пауза',
 }
 
-const fmt = (n: number) => new Intl.NumberFormat('ru-RU').format(Math.round(n))
-const fmtDate = (ts: number) => new Date(ts).toLocaleDateString('ru-RU')
-/** Санитайзер цены: только цифры и одна точка, значение капим (иначе поле принимало
- *  «221231…» и цифры не влезали). Разрешаем незавершённый ввод «12.» / «12.0». */
-const cleanPrice = (v: string, max: number): string => {
-  let s = v.replace(/[^\d.]/g, '')
-  const i = s.indexOf('.')
-  if (i !== -1) s = s.slice(0, i + 1) + s.slice(i + 1).replace(/\./g, '') // только одна точка
-  s = s.replace(/^0+(?=\d)/, '') // «020» → «20» (но «0.5» и «0» сохраняем) — без ложного «изменено»
-  const n = Number(s)
-  return Number.isFinite(n) && n > max ? String(max) : s
-}
-
-/** §10.1: цена токена мизерная (2.6e-7) — показываем обычным десятичным, без 'e-7'. */
-const fmtUsd = (n: number | null | undefined) => {
-  if (n == null || !Number.isFinite(n)) return '—'
-  if (n === 0) return '0'
-  // до 12 знаков, срезаем хвостовые нули: 0.0000002625, а не 2.625e-7 и не …000
-  return n.toFixed(12).replace(/0+$/, '').replace(/\.$/, '')
-}
-
-/** §10.4: «≈ $X» — $-эквивалент монет по курсу. null, если показывать нечего (одно правило на все места). */
-const usdEq = (coins?: number | null, rate?: number): string | null =>
-  coins && rate ? `≈ $${(coins * rate).toFixed(2)}` : null
 
 export function AdminStatsPage() {
   const pushToast = useApp((s) => s.pushToast)
@@ -986,107 +965,6 @@ function PaymentsExplorer() {
  * §5.3: где сейчас болит. Три беды разведены намеренно — у них разные действия:
  * ошибки чинит настройка, бан/flood — замена аккаунта, пауза из-за денег — пополнение.
  */
-/** Плитка-метрика: подпись, крупное число, необязательный подтекст и тон значения. */
-function MetricTile({ label, value, sub, tone }: { label: string; value: string; sub?: string; tone?: string }) {
-  return (
-    <Card className="p-4">
-      <div className="text-xs text-muted">{label}</div>
-      <div className={cn('font-display text-2xl font-bold', tone || 'text-fg')}>{value}</div>
-      {sub && <div className="mt-0.5 text-[11px] text-muted">{sub}</div>}
-    </Card>
-  )
-}
-
-/**
- * §10.9: мониторинг здоровья аккаунтов — работают / на паузе / падают, с причиной
- * по каждому проблемному. Всегда виден (в отличие от «Проблем», которые прячутся,
- * когда тихо): владелец должен видеть парк аккаунтов и почему кто-то выпал.
- */
-function MonitoringTab({ health, active, daily }: { health: AccountsHealth | null; active: ActiveNow | null; daily: DailySpend | null }) {
-  if (!health) return <Card className="p-6 text-sm text-muted">Загрузка…</Card>
-  if (!health.total) return <EmptyState icon={<AlertTriangle size={22} />} title="Аккаунтов нет" desc="Добавьте аккаунты в менеджере профилей." />
-
-  // §10.9: нагрузка системы «сейчас» — сколько задач крутится, сколько аккаунтов
-  // занято, сегодняшний поток действий, сколько встало из-за баланса.
-  const running = active?.running ?? []
-  const paused = active?.paused ?? []
-  const accountsInWork = running.reduce((s, t) => s + (t.accounts || 0), 0)
-  const pausedByCoins = paused.filter((t) => t.pausedByCoins).length
-  const lastDay = daily?.rows?.[(daily.rows.length || 0) - 1]
-  const todayActions = lastDay?.actions ?? 0
-
-  const statusTone: Record<string, string> = {
-    floodwait: 'text-amber-300', quarantine: 'text-amber-300',
-    spamblock: 'text-red-300', invalid: 'text-red-300', reauth: 'text-iris-300',
-  }
-  const untilText = (until: number) => {
-    if (!until) return ''
-    const left = until - Date.now()
-    if (left <= 0) return 'срок истёк'
-    const min = Math.round(left / 60000)
-    return min >= 60 ? `ещё ~${Math.round(min / 60)} ч` : `ещё ~${min} мин`
-  }
-
-  return (
-    <div className="space-y-3">
-      {/* §10.9: нагрузка «сейчас» — задачи в работе, занятые аккаунты, поток действий. */}
-      <div className="grid gap-3 sm:grid-cols-4">
-        <MetricTile label="Задач в работе" value={fmt(running.length)} tone="text-spark-300" sub={`на паузе ${fmt(paused.length)}${pausedByCoins ? ` · из-за баланса ${fmt(pausedByCoins)}` : ''}`} />
-        <MetricTile label="Аккаунтов занято" value={fmt(accountsInWork)} sub="в активных задачах" />
-        <MetricTile label="Действий сегодня" value={fmt(todayActions)} sub="поток за день" />
-        <MetricTile label="Аккаунтов всего" value={fmt(health.total)} sub={`работают ${fmt(health.healthy)} · падают ${fmt(health.problem)}`} />
-      </div>
-
-      <div className="mb-1 mt-4 text-xs font-bold uppercase tracking-wide text-muted">Здоровье аккаунтов</div>
-      <div className="grid gap-3 sm:grid-cols-4">
-        <MetricTile label="Всего аккаунтов" value={fmt(health.total)} />
-        <MetricTile label="Работают" value={fmt(health.healthy)} tone="text-spark-300" sub="активны + прогрев" />
-        <MetricTile label="На паузе" value={fmt(health.idle)} sub="остановлены командой" />
-        <MetricTile label="Падают" value={fmt(health.problem)} tone={health.problem ? 'text-red-300' : undefined} sub="flood / бан / невалид" />
-      </div>
-
-      {/* Раскладка по статусам + усталость. */}
-      <Card className="p-4">
-        <div className="mb-2 text-sm font-semibold text-fg">По статусам</div>
-        <div className="flex flex-wrap gap-2">
-          {Object.entries(health.byStatus).sort((a, b) => b[1] - a[1]).map(([st, n]) => (
-            <span key={st} className={cn('rounded-lg border border-line px-2 py-1 text-xs', statusTone[st] || 'text-muted')}>
-              {STATUS_LABEL_RU[st] || st}: <b className="text-fg">{n}</b>
-            </span>
-          ))}
-          {!!health.resting && <span className="rounded-lg border border-line px-2 py-1 text-xs text-muted">отдыхают: <b className="text-fg">{health.resting}</b></span>}
-          {!!health.tired && <span className="rounded-lg border border-line px-2 py-1 text-xs text-amber-300">устали (≥70%): <b className="text-fg">{health.tired}</b></span>}
-        </div>
-      </Card>
-
-      {/* Проблемные — по каждому причина и до какого времени. */}
-      {health.problems.length ? (
-        <Card className="p-4">
-          <div className="mb-2 text-sm font-semibold text-fg">Падающие аккаунты — почему ({health.problems.length})</div>
-          <div className="space-y-1.5">
-            {health.problems.map((a) => (
-              <div key={a.id} className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5 border-b border-line/40 pb-1.5 text-sm last:border-0">
-                <span className="font-medium text-fg">{a.name}</span>
-                {!!a.phone && <span className="text-xs text-muted">{a.phone}</span>}
-                <span className={cn('rounded-md px-1.5 py-0.5 text-[11px] font-bold', statusTone[a.status] || 'text-muted', 'bg-white/8')}>{a.statusLabel}</span>
-                {!!a.reason && <span className="w-full text-xs text-muted sm:w-auto sm:flex-1 sm:truncate">{a.reason}</span>}
-                {!!a.until && <span className="shrink-0 text-[11px] text-faint">{untilText(a.until)}</span>}
-              </div>
-            ))}
-          </div>
-        </Card>
-      ) : (
-        <Card className="p-4 text-sm text-muted">Падающих аккаунтов нет — весь парк в работе или на паузе.</Card>
-      )}
-    </div>
-  )
-}
-
-const STATUS_LABEL_RU: Record<string, string> = {
-  active: 'Активны', warming: 'Прогрев', pause: 'На паузе', floodwait: 'FloodWait',
-  quarantine: 'Карантин', spamblock: 'Спам-блок', reauth: 'Нужен вход', invalid: 'Невалидны',
-}
-
 function ProblemsTab({ p }: { p: Problems | null }) {
   if (!p) return <Card className="p-6 text-sm text-muted">Загрузка…</Card>
   const quiet = !p.failedTotal && !p.pausedNoCoins.length && !p.accounts.banned && !p.accounts.flood && !p.accounts.noProxy
@@ -1368,102 +1246,6 @@ function DailyTab({ daily }: { daily: DailySpend | null }) {
  * плюс годовая скидка, курс токена и множитель за картинку. Меняешь тут — сразу на
  * витрине, в кабинете и в счёте. «изм.» помечает, где цена отличается от заводской.
  */
-/**
- * §10.4/§10.6: редактор готовых наборов (шаблонов модулей, что продаём) — из админки.
- * Раньше жил только в кабинете подписки; по звонку всё, что продаём, должно собираться
- * и управляться из админки. Набор = имя + явная цена + состав модулей; на витрине лендинга
- * это «готовые наборы».
- */
-function BundlesEditor({ modules, currency }: { modules: PriceModule[]; currency: string }) {
-  const pushToast = useApp((s) => s.pushToast)
-  const [bundles, setBundles] = useState<SubSetup[]>([])
-  const [name, setName] = useState('')
-  const [price, setPrice] = useState('')
-  const [picked, setPicked] = useState<Set<string>>(new Set())
-  const [busy, setBusy] = useState(false)
-
-  const load = async () => {
-    try {
-      const sub = await fetchSubscription()
-      setBundles(sub.setups.filter((s) => s.custom))
-    } catch { /* витрина недоступна — просто пусто */ }
-  }
-  useEffect(() => { void load() }, [])
-
-  const toggle = (k: string) => setPicked((p) => { const n = new Set(p); n.has(k) ? n.delete(k) : n.add(k); return n })
-
-  const create = async () => {
-    const p = Number(price)
-    if (!name.trim()) { pushToast({ type: 'error', title: 'Укажите название набора' }); return }
-    if (!picked.size) { pushToast({ type: 'error', title: 'Выберите хотя бы один модуль' }); return }
-    if (!Number.isFinite(p) || p <= 0) { pushToast({ type: 'error', title: 'Укажите цену набора' }); return }
-    setBusy(true)
-    try {
-      await createBundle({ name: name.trim(), modules: [...picked], price: p })
-      pushToast({ type: 'success', title: 'Набор создан', desc: 'Уже на витрине лендинга и в кабинете' })
-      setName(''); setPrice(''); setPicked(new Set())
-      await load()
-    } catch (e) { pushToast({ type: 'error', title: 'Не удалось создать', desc: e instanceof Error ? e.message : '' }) }
-    finally { setBusy(false) }
-  }
-
-  const remove = async (id: string, nm: string) => {
-    setBusy(true)
-    try { await deleteBundle(id); pushToast({ type: 'success', title: 'Набор удалён', desc: nm }); await load() }
-    catch (e) { pushToast({ type: 'error', title: 'Не удалось удалить', desc: e instanceof Error ? e.message : '' }) }
-    finally { setBusy(false) }
-  }
-
-  return (
-    <Card className="p-4">
-      <div className="mb-3 text-xs font-bold uppercase tracking-wide text-muted">Готовые наборы (что продаём)</div>
-
-      {/* Существующие наборы */}
-      {bundles.length ? (
-        <div className="mb-4 space-y-1.5">
-          {bundles.map((b) => (
-            <div key={b.id} className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5 border-b border-line/40 pb-1.5 text-sm last:border-0">
-              <span className="font-medium text-fg">{b.name}</span>
-              <span className="font-semibold tabular-nums text-spark-300">{currency}{b.price ?? b.cost.sum}</span>
-              <span className="text-xs text-muted">· {b.modules.length} мод.</span>
-              <span className="min-w-0 flex-1 truncate text-xs text-faint">{b.modules.map((k) => modules.find((m) => m.key === k)?.title || k).join(', ')}</span>
-              <button onClick={() => void remove(b.id, b.name)} disabled={busy}
-                className="shrink-0 rounded-md border border-line px-2 py-0.5 text-xs text-muted hover:border-red-500/40 hover:text-red-300 disabled:opacity-40">
-                <Trash2 size={12} />
-              </button>
-            </div>
-          ))}
-        </div>
-      ) : <p className="mb-4 text-xs text-muted">Наборов пока нет — соберите первый ниже.</p>}
-
-      {/* Конструктор нового набора */}
-      <div className="rounded-xl border border-line bg-elevated/40 p-3">
-        <div className="mb-2 flex flex-wrap gap-2">
-          <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Название набора" className="input h-9 flex-1 text-sm" />
-          <input value={price} onChange={(e) => setPrice(cleanPrice(e.target.value, 100000))} inputMode="decimal" placeholder="Цена $/мес" className="input h-9 w-32 text-sm tabular-nums" />
-        </div>
-        <div className="flex flex-wrap gap-1.5">
-          {modules.map((m) => {
-            const on = picked.has(m.key)
-            return (
-              <button key={m.key} onClick={() => toggle(m.key)}
-                className={cn('rounded-lg border px-2 py-1 text-xs transition-colors', on ? 'border-spark-500/50 bg-spark-500/10 text-spark-200' : 'border-line text-muted hover:border-spark-500/25')}>
-                {on ? '✓ ' : ''}{m.title}
-              </button>
-            )
-          })}
-        </div>
-        <div className="mt-3 flex items-center gap-2">
-          <span className="text-[11px] text-muted">Выбрано: {picked.size}</span>
-          <button onClick={() => void create()} disabled={busy} className="btn-primary ml-auto h-8 text-xs disabled:opacity-40">
-            {busy ? <Loader2 size={13} className="animate-spin" /> : <Plus size={13} />} Создать набор
-          </button>
-        </div>
-      </div>
-    </Card>
-  )
-}
-
 function PricesTab() {
   const pushToast = useApp((s) => s.pushToast)
   const [prices, setPrices] = useState<EffectivePrices | null>(null)
