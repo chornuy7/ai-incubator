@@ -650,7 +650,8 @@ app.get('/api/pricing', async (_req, res) => {
     res.json({
       ok: true, items, actions: eff.actionMap, avgTokens,
       coinsPer1kTokens: eff.coinsPer1kTokens, packs: eff.coinPacks, currency: CURRENCY,
-      tokenUsd: eff.tokenUsd, imageMultiplier: eff.imageMultiplier,
+      tokenUsd: eff.tokenUsd, tokenUsdAuto: eff.tokenUsdAuto, tokenUsdModel: eff.tokenUsdModel,
+      imageMultiplier: eff.imageMultiplier,
     })
   } catch (err) { res.status(500).json({ ok: false, error: err instanceof Error ? err.message : 'Ошибка' }) }
 })

@@ -56,16 +56,34 @@ test('неизвестный модуль и мусорные значения �
   await fs.rm(f, { force: true })
 })
 
-test('новые из звонка: tokenUsd по умолчанию не задан, картинка ×4', async () => {
+test('§10.1: tokenUsd считается сам из модели, картинка ×4', async () => {
   const { S, f } = await fresh()
   let eff = await S.effectivePrices()
-  assert.equal(eff.tokenUsd, null, 'курс токена ждёт числа от Николая')
+  // Больше не null: себестоимость токена выведена из прайса модели (gpt-4o-mini).
+  assert.ok(typeof eff.tokenUsd === 'number' && eff.tokenUsd > 0, 'цена токена рассчитана, а не пуста')
+  assert.equal(eff.tokenUsdAuto, true, 'по умолчанию — авто-расчёт')
+  assert.equal(eff.tokenUsdModel, 'gpt-4o-mini')
   assert.equal(eff.imageMultiplier, 4)
+  // Админский override побеждает авто-расчёт и помечает tokenUsdAuto=false.
   await S.setOverrides({ tokenUsd: 0.00009, imageMultiplier: 5 })
   eff = await S.effectivePrices()
   assert.equal(eff.tokenUsd, 0.00009)
+  assert.equal(eff.tokenUsdAuto, false, 'после ручной правки — не авто')
   assert.equal(eff.imageMultiplier, 5)
   await fs.rm(f, { force: true })
+})
+
+test('§10.1: себестоимость токена — смешанная ставка input/output модели', async () => {
+  const { tokenUsdForModel } = await import('../lib/modelPricing.js')
+  // gpt-4o-mini: input $0.15/1M, output $0.60/1M, доля input 0.75 →
+  // (0.15*0.75 + 0.60*0.25)/1e6 = 0.2625/1e6 = 0.0000002625
+  assert.equal(tokenUsdForModel('gpt-4o-mini'), 0.0000002625)
+  // Датированное имя модели матчится на базовый прайс.
+  assert.equal(tokenUsdForModel('gpt-4o-mini-2024-07-18'), 0.0000002625)
+  // gpt-4o дороже мини.
+  assert.ok(tokenUsdForModel('gpt-4o') > tokenUsdForModel('gpt-4o-mini'))
+  // Незнакомая модель — null (админка попросит задать вручную).
+  assert.equal(tokenUsdForModel('unknown-model-x'), null)
 })
 
 test('годовая скидка редактируется и effectivePrices её отдаёт', async () => {

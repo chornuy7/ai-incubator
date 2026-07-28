@@ -42,6 +42,13 @@ const STATUS_RU: Record<string, string> = {
 
 const fmt = (n: number) => new Intl.NumberFormat('ru-RU').format(Math.round(n))
 const fmtDate = (ts: number) => new Date(ts).toLocaleDateString('ru-RU')
+/** §10.1: цена токена мизерная (2.6e-7) — показываем обычным десятичным, без 'e-7'. */
+const fmtUsd = (n: number | null | undefined) => {
+  if (n == null || !Number.isFinite(n)) return '—'
+  if (n === 0) return '0'
+  // до 12 знаков, срезаем хвостовые нули: 0.0000002625, а не 2.625e-7 и не …000
+  return n.toFixed(12).replace(/0+$/, '').replace(/\.$/, '')
+}
 
 export function AdminStatsPage() {
   const pushToast = useApp((s) => s.pushToast)
@@ -1194,7 +1201,9 @@ function PricesTab() {
     setDraft(d)
     setExtra({
       annualDiscount: String(Math.round(p.annualDiscount * 100)),
-      tokenUsd: p.tokenUsd == null ? '' : String(p.tokenUsd),
+      // §10.1: авто-цена — поле ПУСТОЕ (пусто = «считать из модели»), рассчитанное
+      // значение показываем плейсхолдером. Ручной override — показываем числом.
+      tokenUsd: p.tokenUsdAuto ? '' : (p.tokenUsd == null ? '' : String(p.tokenUsd)),
       imageMultiplier: String(p.imageMultiplier),
     })
   }
@@ -1205,7 +1214,7 @@ function PricesTab() {
   const dirty =
     prices.modules.some((m) => draft[m.key] && (draft[m.key].month !== String(m.month) || draft[m.key].action !== String(m.action))) ||
     extra.annualDiscount !== String(Math.round(prices.annualDiscount * 100)) ||
-    extra.tokenUsd !== (prices.tokenUsd == null ? '' : String(prices.tokenUsd)) ||
+    extra.tokenUsd !== (prices.tokenUsdAuto ? '' : (prices.tokenUsd == null ? '' : String(prices.tokenUsd))) ||
     extra.imageMultiplier !== String(prices.imageMultiplier)
 
   const save = async () => {
@@ -1284,7 +1293,13 @@ function PricesTab() {
           <label className="block">
             <span className="text-xs text-muted">Цена токена, $ за 1 токен</span>
             <input value={extra.tokenUsd} onChange={(e) => setExtra((x) => ({ ...x, tokenUsd: e.target.value }))}
-              className="input mt-1 h-9 w-full tabular-nums" inputMode="decimal" placeholder="не задано (ждёт Николая)" />
+              className="input mt-1 h-9 w-full tabular-nums" inputMode="decimal"
+              placeholder={prices.tokenUsd != null ? `авто: ${fmtUsd(prices.tokenUsd)}` : 'авто'} />
+            <span className="mt-1 block text-[10px] text-muted">
+              {extra.tokenUsd.trim()
+                ? 'Задано вручную. Очистите поле — вернётся авто-расчёт.'
+                : <>Считается из модели <b className="text-fg">{prices.tokenUsdModel || '—'}</b> ≈ <b className="text-fg">${fmtUsd(prices.tokenUsd)}</b>/токен. Впишите своё, чтобы переопределить.</>}
+            </span>
           </label>
           <label className="block">
             <span className="text-xs text-muted">Картинка дороже текста, ×</span>
@@ -1293,8 +1308,9 @@ function PricesTab() {
           </label>
         </div>
         <p className="mt-3 text-[11px] text-muted">
-          Цена токена и множитель картинки — из §10 звонка. Пока цена токена не задана, доллары из токенов не считаются;
-          проставьте число, когда Николай пришлёт.
+          Цена токена — <b className="text-fg">себестоимость у OpenAI</b>, платформа считает её сама из прайса текущей модели
+          (обновляется при смене модели). Заполните поле только чтобы переопределить вручную; пусто = авто-расчёт.
+          Множитель картинки (×N) — наценка на анализ изображения поверх токенов.
         </p>
       </Card>
 

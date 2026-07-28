@@ -197,8 +197,12 @@ export interface EffectivePrices {
   coinPacks: { coins: number; price: number; best?: boolean }[]
   annualDiscount: number
   coinsPer1kTokens: number
-  /** Курс токен→доллар. null — ждёт числа от бизнеса. */
+  /** §10.1: себестоимость токена ($). Считается из модели, если админ не переопределил. */
   tokenUsd: number | null
+  /** true — цена рассчитана автоматически из модели; false — задана вручную. */
+  tokenUsdAuto?: boolean
+  /** Модель, из которой считается себестоимость (для подписи в админке). */
+  tokenUsdModel?: string
   imageMultiplier: number
 }
 
