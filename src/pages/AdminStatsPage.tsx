@@ -1,15 +1,16 @@
 import { coins as fmtCoins, cn } from '@/shared/lib/utils'
 import { useEffect, useMemo, useState } from 'react'
-import { BarChart3, Users, ListChecks, Coins, Download, RefreshCw, AlertTriangle, Contact, Power, ChevronDown, Activity, Plus, Radar, Search, ShoppingCart, Loader2, Check } from 'lucide-react'
+import { BarChart3, Users, ListChecks, Coins, Download, RefreshCw, AlertTriangle, Contact, Power, ChevronDown, Activity, Plus, Radar, Search, ShoppingCart, Loader2, Check, Trash2 } from 'lucide-react'
 import { PageHeader, Card, Segmented, EmptyState } from '@/shared/ui'
 import { useApp } from '@/mocks/store'
 import {
   fetchAdminOverview, fetchClientReport, fetchUsersReport, fetchProblems, fetchCrmOverview,
   fetchActiveNow, fetchDailySpend, fetchPurchases, fetchPayments, fetchAccountsHealth,
   type AdminOverview, type ClientReport, type UsersReport, type Problems, type CrmOverview,
-  type ActiveNow, type ActiveTask, type DailySpend, type Purchases, type PaymentsResult, type UserRow, type AccountsHealth, fetchPrices, savePrices, type EffectivePrices, type PricePatch } from '@/api/adminApi'
+  type ActiveNow, type ActiveTask, type DailySpend, type Purchases, type PaymentsResult, type UserRow, type AccountsHealth, type PriceModule, fetchPrices, savePrices, type EffectivePrices, type PricePatch } from '@/api/adminApi'
 import { updateUser } from '@/api/usersApi'
-import { changeBalance, fetchSubscription, saveUserModules } from '@/api/balanceApi'
+import { RolesPage } from '@/pages/RolesPage'
+import { changeBalance, fetchSubscription, saveUserModules, createBundle, deleteBundle, type SubSetup } from '@/api/balanceApi'
 import { promptDialog } from '@/shared/lib/dialog'
 
 /**
@@ -156,7 +157,7 @@ export function AdminStatsPage() {
       />
 
       <div className="mb-4 flex flex-wrap items-center gap-3">
-        <Segmented options={['Панель', 'Сейчас', 'По дням', 'Пользователи', 'Покупки', 'Цены', 'Проблемы', 'CRM', 'Отчёт', 'Мониторинг']} value={tab} onChange={setTab} />
+        <Segmented options={['Панель', 'Сейчас', 'По дням', 'Пользователи', 'Покупки', 'Цены', 'Проблемы', 'CRM', 'Отчёт', 'Мониторинг', 'Роли']} value={tab} onChange={setTab} />
         <Segmented options={PERIODS.map((p) => p.label)} value={periodIdx} onChange={setPeriodIdx} size="sm" />
       </div>
 
@@ -180,8 +181,11 @@ export function AdminStatsPage() {
         <CrmTab crm={crm} />
       ) : tab === 8 ? (
         <ReportTab report={report} onExport={exportCsv} users={users?.rows || []} since={since} />
-      ) : (
+      ) : tab === 9 ? (
         <MonitoringTab health={health} />
+      ) : (
+        /* §10.4: управление ролями доступа — из sudo-админки (создание/права/блоки). */
+        <RolesPage />
       )}
     </div>
   )
@@ -1298,6 +1302,102 @@ function DailyTab({ daily }: { daily: DailySpend | null }) {
  * плюс годовая скидка, курс токена и множитель за картинку. Меняешь тут — сразу на
  * витрине, в кабинете и в счёте. «изм.» помечает, где цена отличается от заводской.
  */
+/**
+ * §10.4/§10.6: редактор готовых наборов (шаблонов модулей, что продаём) — из админки.
+ * Раньше жил только в кабинете подписки; по звонку всё, что продаём, должно собираться
+ * и управляться из админки. Набор = имя + явная цена + состав модулей; на витрине лендинга
+ * это «готовые наборы».
+ */
+function BundlesEditor({ modules, currency }: { modules: PriceModule[]; currency: string }) {
+  const pushToast = useApp((s) => s.pushToast)
+  const [bundles, setBundles] = useState<SubSetup[]>([])
+  const [name, setName] = useState('')
+  const [price, setPrice] = useState('')
+  const [picked, setPicked] = useState<Set<string>>(new Set())
+  const [busy, setBusy] = useState(false)
+
+  const load = async () => {
+    try {
+      const sub = await fetchSubscription()
+      setBundles(sub.setups.filter((s) => s.custom))
+    } catch { /* витрина недоступна — просто пусто */ }
+  }
+  useEffect(() => { void load() }, [])
+
+  const toggle = (k: string) => setPicked((p) => { const n = new Set(p); n.has(k) ? n.delete(k) : n.add(k); return n })
+
+  const create = async () => {
+    const p = Number(price)
+    if (!name.trim()) { pushToast({ type: 'error', title: 'Укажите название набора' }); return }
+    if (!picked.size) { pushToast({ type: 'error', title: 'Выберите хотя бы один модуль' }); return }
+    if (!Number.isFinite(p) || p <= 0) { pushToast({ type: 'error', title: 'Укажите цену набора' }); return }
+    setBusy(true)
+    try {
+      await createBundle({ name: name.trim(), modules: [...picked], price: p })
+      pushToast({ type: 'success', title: 'Набор создан', desc: 'Уже на витрине лендинга и в кабинете' })
+      setName(''); setPrice(''); setPicked(new Set())
+      await load()
+    } catch (e) { pushToast({ type: 'error', title: 'Не удалось создать', desc: e instanceof Error ? e.message : '' }) }
+    finally { setBusy(false) }
+  }
+
+  const remove = async (id: string, nm: string) => {
+    setBusy(true)
+    try { await deleteBundle(id); pushToast({ type: 'success', title: 'Набор удалён', desc: nm }); await load() }
+    catch (e) { pushToast({ type: 'error', title: 'Не удалось удалить', desc: e instanceof Error ? e.message : '' }) }
+    finally { setBusy(false) }
+  }
+
+  return (
+    <Card className="p-4">
+      <div className="mb-3 text-xs font-bold uppercase tracking-wide text-muted">Готовые наборы (что продаём)</div>
+
+      {/* Существующие наборы */}
+      {bundles.length ? (
+        <div className="mb-4 space-y-1.5">
+          {bundles.map((b) => (
+            <div key={b.id} className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5 border-b border-line/40 pb-1.5 text-sm last:border-0">
+              <span className="font-medium text-fg">{b.name}</span>
+              <span className="font-semibold tabular-nums text-spark-300">{currency}{b.price ?? b.cost.sum}</span>
+              <span className="text-xs text-muted">· {b.modules.length} мод.</span>
+              <span className="min-w-0 flex-1 truncate text-xs text-faint">{b.modules.map((k) => modules.find((m) => m.key === k)?.title || k).join(', ')}</span>
+              <button onClick={() => void remove(b.id, b.name)} disabled={busy}
+                className="shrink-0 rounded-md border border-line px-2 py-0.5 text-xs text-muted hover:border-red-500/40 hover:text-red-300 disabled:opacity-40">
+                <Trash2 size={12} />
+              </button>
+            </div>
+          ))}
+        </div>
+      ) : <p className="mb-4 text-xs text-muted">Наборов пока нет — соберите первый ниже.</p>}
+
+      {/* Конструктор нового набора */}
+      <div className="rounded-xl border border-line bg-elevated/40 p-3">
+        <div className="mb-2 flex flex-wrap gap-2">
+          <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Название набора" className="input h-9 flex-1 text-sm" />
+          <input value={price} onChange={(e) => setPrice(cleanPrice(e.target.value, 100000))} inputMode="decimal" placeholder="Цена $/мес" className="input h-9 w-32 text-sm tabular-nums" />
+        </div>
+        <div className="flex flex-wrap gap-1.5">
+          {modules.map((m) => {
+            const on = picked.has(m.key)
+            return (
+              <button key={m.key} onClick={() => toggle(m.key)}
+                className={cn('rounded-lg border px-2 py-1 text-xs transition-colors', on ? 'border-spark-500/50 bg-spark-500/10 text-spark-200' : 'border-line text-muted hover:border-spark-500/25')}>
+                {on ? '✓ ' : ''}{m.title}
+              </button>
+            )
+          })}
+        </div>
+        <div className="mt-3 flex items-center gap-2">
+          <span className="text-[11px] text-muted">Выбрано: {picked.size}</span>
+          <button onClick={() => void create()} disabled={busy} className="btn-primary ml-auto h-8 text-xs disabled:opacity-40">
+            {busy ? <Loader2 size={13} className="animate-spin" /> : <Plus size={13} />} Создать набор
+          </button>
+        </div>
+      </div>
+    </Card>
+  )
+}
+
 function PricesTab() {
   const pushToast = useApp((s) => s.pushToast)
   const [prices, setPrices] = useState<EffectivePrices | null>(null)
@@ -1432,6 +1532,9 @@ function PricesTab() {
           Множитель картинки (×N) — наценка на анализ изображения поверх токенов.
         </p>
       </Card>
+
+      {/* §10.4/§10.6: готовые наборы (что продаём) — собираются и правятся из админки. */}
+      <BundlesEditor modules={prices.modules} currency="$" />
 
       <div className="sticky bottom-4 flex items-center gap-3 rounded-2xl border border-line bg-surface/95 px-4 py-3 backdrop-blur-xl">
         <span className="text-xs text-muted">Изменения применяются сразу к витрине, кабинету и счёту клиенту.</span>
