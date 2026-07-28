@@ -62,6 +62,10 @@ const fmtUsd = (n: number | null | undefined) => {
   return n.toFixed(12).replace(/0+$/, '').replace(/\.$/, '')
 }
 
+/** §10.4: «≈ $X» — $-эквивалент монет по курсу. null, если показывать нечего (одно правило на все места). */
+const usdEq = (coins?: number | null, rate?: number): string | null =>
+  coins && rate ? `≈ $${(coins * rate).toFixed(2)}` : null
+
 export function AdminStatsPage() {
   const pushToast = useApp((s) => s.pushToast)
   const [tab, setTab] = useState(0)
@@ -570,7 +574,7 @@ function UsersTab({ report, onReload }: { report: UsersReport | null; onReload: 
                       <span className="tabular-nums text-fg">
                         {r.coins ? fmtCoins(r.coins) : '—'}
                         {/* §10.4: баланс «в долларах» — эквивалент по курсу пакетов. */}
-                        {!!r.coins && !!report.coinUsd && <span className="ml-1 text-[10px] text-muted">≈ ${(r.coins * report.coinUsd).toFixed(2)}</span>}
+                        {usdEq(r.coins, report.coinUsd) && <span className="ml-1 text-[10px] text-muted">{usdEq(r.coins, report.coinUsd)}</span>}
                       </span>
                       {real && (
                         <button
@@ -945,8 +949,8 @@ function PaymentsExplorer() {
               {r.kind === 'plan' ? `$${r.amount_fiat}` : `+${fmtCoins(r.coins ?? 0)} ⚡`}
             </span>
             {/* §10.4: для пополнений — $-эквивалент по курсу пакетов (реальный $ будет с платёжкой). */}
-            {r.kind !== 'plan' && !!data?.coinUsd && !!r.coins && (
-              <span className="tabular-nums text-[10px] text-muted">≈ ${(r.coins * data.coinUsd).toFixed(2)}</span>
+            {r.kind !== 'plan' && usdEq(r.coins, data?.coinUsd) && (
+              <span className="tabular-nums text-[10px] text-muted">{usdEq(r.coins, data?.coinUsd)}</span>
             )}
             {!!r.reason && <span className="min-w-0 flex-1 truncate text-muted">{r.reason}</span>}
             <span className="ml-auto shrink-0 tabular-nums text-faint">{fmtDt(r.ts)}</span>
@@ -972,6 +976,17 @@ function PaymentsExplorer() {
  * §5.3: где сейчас болит. Три беды разведены намеренно — у них разные действия:
  * ошибки чинит настройка, бан/flood — замена аккаунта, пауза из-за денег — пополнение.
  */
+/** Плитка-метрика: подпись, крупное число, необязательный подтекст и тон значения. */
+function MetricTile({ label, value, sub, tone }: { label: string; value: string; sub?: string; tone?: string }) {
+  return (
+    <Card className="p-4">
+      <div className="text-xs text-muted">{label}</div>
+      <div className={cn('font-display text-2xl font-bold', tone || 'text-fg')}>{value}</div>
+      {sub && <div className="mt-0.5 text-[11px] text-muted">{sub}</div>}
+    </Card>
+  )
+}
+
 /**
  * §10.9: мониторинг здоровья аккаунтов — работают / на паузе / падают, с причиной
  * по каждому проблемному. Всегда виден (в отличие от «Проблем», которые прячутся,
@@ -987,7 +1002,8 @@ function MonitoringTab({ health, active, daily }: { health: AccountsHealth | nul
   const paused = active?.paused ?? []
   const accountsInWork = running.reduce((s, t) => s + (t.accounts || 0), 0)
   const pausedByCoins = paused.filter((t) => t.pausedByCoins).length
-  const todayActions = daily?.rows?.length ? daily.rows[daily.rows.length - 1].actions : 0
+  const lastDay = daily?.rows?.[(daily.rows.length || 0) - 1]
+  const todayActions = lastDay?.actions ?? 0
 
   const statusTone: Record<string, string> = {
     floodwait: 'text-amber-300', quarantine: 'text-amber-300',
@@ -1005,49 +1021,18 @@ function MonitoringTab({ health, active, daily }: { health: AccountsHealth | nul
     <div className="space-y-3">
       {/* §10.9: нагрузка «сейчас» — задачи в работе, занятые аккаунты, поток действий. */}
       <div className="grid gap-3 sm:grid-cols-4">
-        <Card className="p-4">
-          <div className="text-xs text-muted">Задач в работе</div>
-          <div className="font-display text-2xl font-bold text-spark-300">{fmt(running.length)}</div>
-          <div className="mt-0.5 text-[11px] text-muted">на паузе {fmt(paused.length)}{pausedByCoins ? ` · из-за баланса ${fmt(pausedByCoins)}` : ''}</div>
-        </Card>
-        <Card className="p-4">
-          <div className="text-xs text-muted">Аккаунтов занято</div>
-          <div className="font-display text-2xl font-bold text-fg">{fmt(accountsInWork)}</div>
-          <div className="mt-0.5 text-[11px] text-muted">в активных задачах</div>
-        </Card>
-        <Card className="p-4">
-          <div className="text-xs text-muted">Действий сегодня</div>
-          <div className="font-display text-2xl font-bold text-fg">{fmt(todayActions)}</div>
-          <div className="mt-0.5 text-[11px] text-muted">поток за день</div>
-        </Card>
-        <Card className="p-4">
-          <div className="text-xs text-muted">Аккаунтов всего</div>
-          <div className="font-display text-2xl font-bold text-fg">{fmt(health.total)}</div>
-          <div className="mt-0.5 text-[11px] text-muted">работают {fmt(health.healthy)} · падают {fmt(health.problem)}</div>
-        </Card>
+        <MetricTile label="Задач в работе" value={fmt(running.length)} tone="text-spark-300" sub={`на паузе ${fmt(paused.length)}${pausedByCoins ? ` · из-за баланса ${fmt(pausedByCoins)}` : ''}`} />
+        <MetricTile label="Аккаунтов занято" value={fmt(accountsInWork)} sub="в активных задачах" />
+        <MetricTile label="Действий сегодня" value={fmt(todayActions)} sub="поток за день" />
+        <MetricTile label="Аккаунтов всего" value={fmt(health.total)} sub={`работают ${fmt(health.healthy)} · падают ${fmt(health.problem)}`} />
       </div>
 
       <div className="mb-1 mt-4 text-xs font-bold uppercase tracking-wide text-muted">Здоровье аккаунтов</div>
       <div className="grid gap-3 sm:grid-cols-4">
-        <Card className="p-4">
-          <div className="text-xs text-muted">Всего аккаунтов</div>
-          <div className="font-display text-2xl font-bold text-fg">{fmt(health.total)}</div>
-        </Card>
-        <Card className="p-4">
-          <div className="text-xs text-muted">Работают</div>
-          <div className="font-display text-2xl font-bold text-spark-300">{fmt(health.healthy)}</div>
-          <div className="mt-0.5 text-[11px] text-muted">активны + прогрев</div>
-        </Card>
-        <Card className="p-4">
-          <div className="text-xs text-muted">На паузе</div>
-          <div className="font-display text-2xl font-bold text-fg">{fmt(health.idle)}</div>
-          <div className="mt-0.5 text-[11px] text-muted">остановлены командой</div>
-        </Card>
-        <Card className="p-4">
-          <div className="text-xs text-muted">Падают</div>
-          <div className={cn('font-display text-2xl font-bold', health.problem ? 'text-red-300' : 'text-fg')}>{fmt(health.problem)}</div>
-          <div className="mt-0.5 text-[11px] text-muted">flood / бан / невалид</div>
-        </Card>
+        <MetricTile label="Всего аккаунтов" value={fmt(health.total)} />
+        <MetricTile label="Работают" value={fmt(health.healthy)} tone="text-spark-300" sub="активны + прогрев" />
+        <MetricTile label="На паузе" value={fmt(health.idle)} sub="остановлены командой" />
+        <MetricTile label="Падают" value={fmt(health.problem)} tone={health.problem ? 'text-red-300' : undefined} sub="flood / бан / невалид" />
       </div>
 
       {/* Раскладка по статусам + усталость. */}
@@ -1570,14 +1555,9 @@ function PricesTab() {
         <div className="grid gap-4 sm:grid-cols-3">
           <label className="block">
             <span className="text-xs text-muted">Скидка за год, % <span className="text-faint">(0–90)</span></span>
-            {/* Скидка не может быть больше 100% — раньше поле принимало хоть миллиард.
-                Оставляем только цифры и капим 0–90 прямо на вводе. */}
+            {/* Скидка не может быть больше 90% — тот же санитайзер cleanPrice, что и у цен. */}
             <input value={extra.annualDiscount}
-              onChange={(e) => {
-                const digits = e.target.value.replace(/\D/g, '')
-                const capped = digits === '' ? '' : String(Math.min(90, Number(digits)))
-                setExtra((x) => ({ ...x, annualDiscount: capped }))
-              }}
+              onChange={(e) => setExtra((x) => ({ ...x, annualDiscount: cleanPrice(e.target.value, 90) }))}
               className="input mt-1 h-9 w-full tabular-nums" inputMode="numeric" placeholder="20" />
           </label>
           <label className="block">
