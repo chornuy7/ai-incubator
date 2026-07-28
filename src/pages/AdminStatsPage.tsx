@@ -11,6 +11,7 @@ import {
 import { updateUser } from '@/api/usersApi'
 import { changeBalance, fetchSubscription, saveUserModules } from '@/api/balanceApi'
 import { promptDialog } from '@/shared/lib/dialog'
+import { ApiDocsTab } from '@/features/billing/ApiDocsTab'
 
 /**
  * §5.3 (E1/E2): админ-панель со статистикой и постатейный отчёт клиенту.
@@ -137,7 +138,7 @@ export function AdminStatsPage() {
       />
 
       <div className="mb-4 flex flex-wrap items-center gap-3">
-        <Segmented options={['Панель', 'Сейчас', 'По дням', 'Пользователи', 'Покупки', 'Цены', 'Проблемы', 'CRM', 'Отчёт']} value={tab} onChange={setTab} />
+        <Segmented options={['Панель', 'Сейчас', 'По дням', 'Пользователи', 'Покупки', 'Цены', 'Проблемы', 'CRM', 'Отчёт', 'API']} value={tab} onChange={setTab} />
         <Segmented options={PERIODS.map((p) => p.label)} value={periodIdx} onChange={setPeriodIdx} size="sm" />
       </div>
 
@@ -159,8 +160,10 @@ export function AdminStatsPage() {
         <ProblemsTab p={problems} />
       ) : tab === 7 ? (
         <CrmTab crm={crm} />
-      ) : (
+      ) : tab === 8 ? (
         <ReportTab report={report} onExport={exportCsv} users={users?.rows || []} since={since} />
+      ) : (
+        <ApiDocsTab />
       )}
     </div>
   )
