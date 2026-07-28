@@ -2,7 +2,18 @@ import { useState, useEffect, useMemo, useRef, type Dispatch, type SetStateActio
 import { useNavigate, useSearchParams, Link } from 'react-router-dom'
 import {
   ArrowRight, Check, Zap, Lock, Minus, X, Quote, TrendingUp, Clock, Bot, Star,
+  Coins, ShoppingBag, Clapperboard, Building2, Rocket, type LucideIcon,
 } from 'lucide-react'
+
+/** §10.6: иконка кейса по отрасли — узнаётся по ключевому слову в названии. */
+function caseIcon(title: string): LucideIcon {
+  const t = title.toLowerCase()
+  if (t.includes('крипт')) return Coins
+  if (t.includes('магаз')) return ShoppingBag
+  if (t.includes('креатор') || t.includes('контент')) return Clapperboard
+  if (t.includes('агентств')) return Building2
+  return Rocket
+}
 import { fetchSubscription, quoteSubscription, type Subscription, type SubCost } from '@/api/balanceApi'
 import { MODULES, BONUS_MODULE, FUNNEL_STEPS, COMPARISON, REVIEWS, CASES, ANNUAL_DISCOUNT, moduleTagline, moduleIcon, type Cmp } from './landing/catalog'
 
@@ -240,17 +251,28 @@ export function LandingPage() {
       {/* ── Истории успеха ───────────────────────────────────── */}
       <section className="mx-auto max-w-6xl px-5 py-16">
         <SectionHead eyebrow="Кейсы" title="Реальные истории успеха" desc="Как бизнесы используют AI Incubator для роста в Telegram (демо-примеры)." center />
+        {/* §10.6: кейсы переработаны — фокус на РЕЗУЛЬТАТЕ. Метрика вынесена вверх крупно
+            (это и есть крючок), отрасль — иконкой, срок — бейджем. */}
         <div className="mt-8 grid gap-5 md:grid-cols-2">
-          {CASES.map((c) => (
-            <div key={c.title} className="rounded-2xl border border-line bg-card p-5">
-              <div className="font-display text-lg font-bold">{c.title}</div>
-              <p className="mt-2 text-sm leading-relaxed text-muted">{c.text}</p>
-              <div className="mt-4 flex flex-wrap gap-2 text-xs">
-                <span className="inline-flex items-center gap-1 rounded-lg bg-spark-500/12 px-2 py-1 font-semibold text-spark-300"><TrendingUp size={13} /> {c.metric}</span>
-                <span className="inline-flex items-center gap-1 rounded-lg bg-elevated px-2 py-1 text-muted"><Clock size={13} /> {c.period}</span>
+          {CASES.map((c) => {
+            const Icon = caseIcon(c.title)
+            return (
+              <div key={c.title} className="group relative overflow-hidden rounded-2xl border border-line bg-card p-5 transition-colors hover:border-spark-500/30">
+                <div className="pointer-events-none absolute -right-8 -top-8 h-28 w-28 rounded-full bg-spark-500/8 blur-2xl transition-opacity group-hover:opacity-80" />
+                <div className="relative flex items-start gap-4">
+                  <div className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-spark-500/12 text-spark-300"><Icon size={22} /></div>
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-baseline justify-between gap-2">
+                      <span className="text-xs font-semibold uppercase tracking-wide text-muted">{c.title}</span>
+                      <span className="inline-flex shrink-0 items-center gap-1 rounded-md bg-elevated px-1.5 py-0.5 text-[11px] text-muted"><Clock size={12} /> {c.period}</span>
+                    </div>
+                    <div className="mt-1 font-display text-2xl font-bold leading-tight text-gradient">{c.metric}</div>
+                  </div>
+                </div>
+                <p className="relative mt-3 text-sm leading-relaxed text-muted">{c.text}</p>
               </div>
-            </div>
-          ))}
+            )
+          })}
         </div>
       </section>
 
