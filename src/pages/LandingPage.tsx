@@ -53,6 +53,9 @@ export function LandingPage() {
 
   const [params] = useSearchParams()
   const variant = params.get('v') === 'marketing' ? 'marketing' : 'platform'
+  // §10.6: два варианта шапки-героя, переключаются GET-параметром — чтобы можно было
+  // выбрать без правки кода. `?hero=static` — один статичный экран; иначе — карусель.
+  const heroStatic = params.get('hero') === 'static'
   const hero = HERO_VARIANTS[variant]
   // Годовая скидка — с сервера (правится в админке), catalog-константа как fallback.
   const annualDiscount = pricing?.annualDiscount ?? ANNUAL_DISCOUNT
@@ -97,13 +100,13 @@ export function LandingPage() {
             <Stat value="0" label="ручной рутины" />
           </div>
         </div>
-        <HeroCarousel />
+        <HeroCarousel staticMode={heroStatic} />
       </section>
 
       {/* ── Как работает ─────────────────────────────────────── */}
       <section className="border-y border-line bg-surface/40">
         <div className="mx-auto max-w-6xl px-5 py-16">
-          <SectionHead eyebrow="Полный Telegram-конвейер" title="Как это работает" desc="Пять шагов от холодной базы до лидов — каждый закрывают наши модули." />
+          <SectionHead eyebrow="Автоматический конвейер" title="Настроили — и забыли" desc="Ставите цель — система сама ведёт её от холодной базы до заявок в CRM. Пять шагов, всё на автопилоте." />
           <div className="mt-8 grid gap-3 sm:grid-cols-3 lg:grid-cols-5">
             {FUNNEL_STEPS.map((s, i) => (
               <div key={s.title} className="rounded-2xl border border-line bg-card p-4">
@@ -347,14 +350,15 @@ const HERO_SCREENS = [
   { key: 'report', label: 'Отчёт' },
 ] as const
 
-function HeroCarousel() {
+function HeroCarousel({ staticMode = false }: { staticMode?: boolean }) {
   const [i, setI] = useState(0)
   const [paused, setPaused] = useState(false)
   useEffect(() => {
-    if (paused) return
+    // §10.6: статичный вариант шапки — без автопрокрутки (показываем один экран).
+    if (paused || staticMode) return
     const id = setInterval(() => setI((p) => (p + 1) % HERO_SCREENS.length), 4000)
     return () => clearInterval(id)
-  }, [paused])
+  }, [paused, staticMode])
 
   return (
     <div
@@ -370,16 +374,19 @@ function HeroCarousel() {
           <span className="h-2.5 w-2.5 rounded-full bg-amber-400/70" />
           <span className="h-2.5 w-2.5 rounded-full bg-spark-400/70" />
           <span className="ml-3 text-[11px] text-muted">{HERO_SCREENS[i].label}</span>
-          <div className="ml-auto flex gap-1.5">
-            {HERO_SCREENS.map((s, k) => (
-              <button
-                key={s.key}
-                onClick={() => setI(k)}
-                aria-label={s.label}
-                className={`h-1.5 rounded-full transition-all ${k === i ? 'w-5 bg-spark-400' : 'w-1.5 bg-line hover:bg-muted'}`}
-              />
-            ))}
-          </div>
+          {/* Точки-переключатели только в режиме карусели. */}
+          {!staticMode && (
+            <div className="ml-auto flex gap-1.5">
+              {HERO_SCREENS.map((s, k) => (
+                <button
+                  key={s.key}
+                  onClick={() => setI(k)}
+                  aria-label={s.label}
+                  className={`h-1.5 rounded-full transition-all ${k === i ? 'w-5 bg-spark-400' : 'w-1.5 bg-line hover:bg-muted'}`}
+                />
+              ))}
+            </div>
+          )}
         </div>
         {/* Фиксированная высота — экраны сложены абсолютно, рамка не скачет при смене. */}
         <div className="relative h-[300px]">
