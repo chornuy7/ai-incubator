@@ -519,6 +519,9 @@ function UsersTab({ report, onReload }: { report: UsersReport | null; onReload: 
                         {/* §10.4: суб-юзер — показываем, под каким админом он вложен. */}
                         {!!r.parentId && <span className="block truncate text-[11px] text-iris-300">↳ суб-юзер · под {r.parentName || r.parentId}</span>}
                       </span>
+                      {/* §10.4: роль(и) юзера — читаемым именем сбоку. */}
+                      {real && r.roleName && <span className="shrink-0 rounded-md bg-iris-500/12 px-1.5 py-0.5 text-[10px] font-bold text-iris-300">{r.roleName}</span>}
+                      {real && !r.roleName && <span className="shrink-0 rounded-md bg-white/8 px-1.5 py-0.5 text-[10px] font-bold text-muted">без роли</span>}
                       {!r.active && real && <span className="rounded-md bg-white/8 px-1.5 py-0.5 text-[10px] font-bold text-muted">отключён</span>}
                     </div>
                   </td>

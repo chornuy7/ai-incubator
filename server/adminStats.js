@@ -17,6 +17,7 @@ import { loadAllMeta } from './accountsMeta.js'
 import { listActivity } from './accountActivity.js'
 import { readAudit } from './lib/auditLog.js'
 import { listUsers } from './users.js'
+import { listRoles } from './roles.js'
 
 /** Округление денег — до ТЫСЯЧНЫХ, как считает биллинг (строка парсера 0.005). */
 const round3 = (v) => Math.round((Number(v) || 0) * 1000) / 1000
@@ -425,11 +426,15 @@ export async function crmOverview(opts = {}) {
  */
 export async function usersReport(opts = {}) {
   const since = Number(opts.since) || 0
-  const [users, coins, ledger] = await Promise.all([
+  const [users, coins, ledger, roles] = await Promise.all([
     listUsers().catch(() => []),
     coinsByUser().catch(() => ({})),
     readLedger({ since: since || undefined, limit: 100000 }).catch(() => []),
+    listRoles().catch(() => []),
   ])
+  // §10.4: имя роли на карточку — из roleIds юзера собираем читаемые названия.
+  const roleNameById = new Map(roles.map((r) => [r.id, r.name]))
+  const roleNamesOf = (u) => (u.roleIds || []).map((id) => roleNameById.get(id)).filter(Boolean).join(' + ')
 
   // Подписка каждого: какие модули ему открыты. 'all' — набор не выбран (открыто всё).
   // Нужно админу, чтобы прямо в списке видеть, кто на что подписан.
@@ -514,6 +519,8 @@ export async function usersReport(opts = {}) {
       // §10.4: вложенность — кто чей суб-юзер. parentName для показа без второго запроса.
       parentId: u.parentId || null,
       parentName: u.parentId ? (nameById.get(u.parentId) || null) : null,
+      // §10.4: роль(и) юзера — читаемым именем, на карточку.
+      roleName: roleNamesOf(u) || null,
       coins: round3(coins[u.id] ?? 0),
       subscription: subOf(modsByUser[u.id]),
       tasks: st.tasks,
