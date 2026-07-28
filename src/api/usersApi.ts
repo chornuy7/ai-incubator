@@ -35,10 +35,15 @@ export async function loginUser(email: string, password: string): Promise<{ user
  * Самостоятельная регистрация с лендинга. Заводит юзера БЕЗ доступа к модулям —
  * админ выдаёт его вручную (фокус-группа). Сразу логинит (возвращает токен).
  */
-export async function registerUser(email: string, password: string, name?: string): Promise<{ user: User; role: Role | null }> {
-  const data = await apiPost<{ user: User; role: Role | null; token?: string }>('/api/users/register', { email, password, name })
+export async function registerUser(email: string, password: string, name?: string, captchaToken?: string): Promise<{ user: User; role: Role | null }> {
+  const data = await apiPost<{ user: User; role: Role | null; token?: string }>('/api/users/register', { email, password, name, captchaToken })
   saveToken(data.token)
   return { user: data.user, role: data.role }
+}
+
+/** §10.2: включена ли капча на регистрации + её site-key (для виджета Turnstile). */
+export async function fetchAuthConfig(): Promise<{ captcha: { enabled: boolean; siteKey: string } }> {
+  return apiGet<{ captcha: { enabled: boolean; siteKey: string } }>('/api/users/auth-config')
 }
 
 /**

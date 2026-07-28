@@ -1,9 +1,10 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Zap, Eye, EyeOff, ArrowRight, ShieldCheck, Bot, Radar, Sparkles } from 'lucide-react'
 import { useApp } from '@/mocks/store'
 import { useSession } from '@/features/auth/session'
-import { loginUser, registerUser } from '@/api/usersApi'
+import { loginUser, registerUser, fetchAuthConfig } from '@/api/usersApi'
+import { Turnstile } from '@/features/auth/Turnstile'
 
 const FEATURES = [
   { icon: Bot, title: 'Нейромодули', desc: 'Комментинг, чаттинг и диалоги на ИИ' },
@@ -25,13 +26,22 @@ export function GuestLogin() {
   const [show, setShow] = useState(false)
   const [loading, setLoading] = useState(false)
   const isReg = mode === 'register'
+  // §10.2: капча на регистрации — показываем виджет только если она включена на сервере.
+  const [captcha, setCaptcha] = useState<{ enabled: boolean; siteKey: string }>({ enabled: false, siteKey: '' })
+  const [captchaToken, setCaptchaToken] = useState('')
+  useEffect(() => { void fetchAuthConfig().then((c) => setCaptcha(c.captcha)).catch(() => {}) }, [])
+  const needCaptcha = isReg && captcha.enabled
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault()
+    if (needCaptcha && !captchaToken) {
+      pushToast({ type: 'error', title: 'Подтвердите, что вы не робот', desc: 'Пройдите проверку ниже.' })
+      return
+    }
     setLoading(true)
     try {
       const { user, role } = isReg
-        ? await registerUser(email.trim(), pass, name.trim())
+        ? await registerUser(email.trim(), pass, name.trim(), captchaToken)
         : await loginUser(email.trim(), pass)
       signIn(user, role && role.permissions ? { id: role.id, name: role.name, permissions: role.permissions } : null)
       setUserState('with-data')
@@ -133,7 +143,9 @@ export function GuestLogin() {
                 </button>
               </div>
             </div>
-            <button type="submit" disabled={loading} className="btn-primary h-11 w-full">
+            {/* §10.2: капча — только на регистрации и только если включена на сервере. */}
+            {needCaptcha && <Turnstile siteKey={captcha.siteKey} onToken={setCaptchaToken} />}
+            <button type="submit" disabled={loading || (needCaptcha && !captchaToken)} className="btn-primary h-11 w-full disabled:opacity-50">
               {loading ? (isReg ? 'Создаём…' : 'Входим…') : (isReg ? <>Зарегистрироваться <ArrowRight size={17} /></> : <>Войти <ArrowRight size={17} /></>)}
             </button>
           </form>

@@ -1,5 +1,5 @@
 import { coins as fmtCoins, cn } from '@/shared/lib/utils'
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { BarChart3, Users, ListChecks, Coins, Download, RefreshCw, AlertTriangle, Contact, Power, ChevronDown, Activity, Plus, Radar, Search, ShoppingCart, Loader2, Check, Trash2 } from 'lucide-react'
 import { PageHeader, Card, Segmented, EmptyState } from '@/shared/ui'
 import { useApp } from '@/mocks/store'
@@ -50,6 +50,7 @@ const cleanPrice = (v: string, max: number): string => {
   let s = v.replace(/[^\d.]/g, '')
   const i = s.indexOf('.')
   if (i !== -1) s = s.slice(0, i + 1) + s.slice(i + 1).replace(/\./g, '') // только одна точка
+  s = s.replace(/^0+(?=\d)/, '') // «020» → «20» (но «0.5» и «0» сохраняем) — без ложного «изменено»
   const n = Number(s)
   return Number.isFinite(n) && n > max ? String(max) : s
 }
@@ -893,8 +894,14 @@ function PaymentsExplorer() {
   const fromTs = from ? new Date(from + 'T00:00:00').getTime() : 0
   const toTs = to ? new Date(to + 'T23:59:59.999').getTime() : 0
 
-  useEffect(() => { setPage(0) }, [from, to, kind, q])
+  // Смена фильтра должна вернуть на 1-ю страницу БЕЗ лишнего запроса на старом offset
+  // (раньше было два fetch: пустой на старой странице → мигание → правильный). Сравниваем
+  // сигнатуру фильтров: при их изменении сбрасываем page и не грузим на этом проходе.
+  const sig = `${fromTs}|${toTs}|${kind}|${q.trim()}`
+  const lastSig = useRef(sig)
   useEffect(() => {
+    if (lastSig.current !== sig && page !== 0) { lastSig.current = sig; setPage(0); return }
+    lastSig.current = sig
     let alive = true
     setLoading(true)
     fetchPayments({ from: fromTs, to: toTs, kind, q: q.trim(), limit: LIMIT, offset: page * LIMIT })
@@ -902,7 +909,7 @@ function PaymentsExplorer() {
       .catch(() => { if (alive) setData(null) })
       .finally(() => { if (alive) setLoading(false) })
     return () => { alive = false }
-  }, [fromTs, toTs, kind, q, page])
+  }, [sig, fromTs, toTs, kind, q, page])
 
   const fmtDt = (ts: number) => ts ? new Date(ts).toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : '—'
   const s = data?.summary
