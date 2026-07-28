@@ -9,6 +9,7 @@ import {
   type AdminOverview, type ClientReport, type UsersReport, type Problems, type CrmOverview,
   type ActiveNow, type ActiveTask, type DailySpend, type Purchases, type PaymentsResult, type UserRow, type AccountsHealth, type PriceModule, fetchPrices, savePrices, type EffectivePrices, type PricePatch } from '@/api/adminApi'
 import { updateUser } from '@/api/usersApi'
+import { fetchRoles } from '@/api/rolesApi'
 import { RolesPage } from '@/pages/RolesPage'
 import { changeBalance, fetchSubscription, saveUserModules, createBundle, deleteBundle, type SubSetup } from '@/api/balanceApi'
 import { promptDialog } from '@/shared/lib/dialog'
@@ -392,8 +393,12 @@ function UsersTab({ report, onReload }: { report: UsersReport | null; onReload: 
   // модули конкретному человеку, не уходя со страницы.
   const [catalog, setCatalog] = useState<{ key: string; title: string }[]>([])
   const [modDraft, setModDraft] = useState<Record<string, string[] | 'all'>>({})
+  // §10.4: доступные роли — чтобы назначать роль юзеру прямо из админки (раз редактор
+  // ролей теперь здесь же, логично и раздавать их отсюда).
+  const [roles, setRoles] = useState<{ id: string; name: string }[]>([])
   useEffect(() => {
     void fetchSubscription().then((d) => setCatalog(d.items.map((i) => ({ key: i.key, title: i.title })))).catch(() => {})
+    void fetchRoles().then((rs) => setRoles(rs.map((r) => ({ id: r.id, name: r.name })))).catch(() => {})
   }, [])
 
   const openUser = (r: UserRow) => {
@@ -479,6 +484,19 @@ function UsersTab({ report, onReload }: { report: UsersReport | null; onReload: 
       onReload()
     } catch (e) {
       pushToast({ type: 'error', title: 'Не удалось изменить подчинение', desc: e instanceof Error ? e.message : '' })
+    } finally { setBusy(null) }
+  }
+
+  // §10.4: назначить/снять роль юзеру (мульти-роль). Тоггл добавляет/убирает id.
+  const toggleRole = async (userId: string, current: string[], roleId: string) => {
+    const next = current.includes(roleId) ? current.filter((r) => r !== roleId) : [...current, roleId]
+    setBusy(userId)
+    try {
+      await updateUser(userId, { roleIds: next })
+      pushToast({ type: 'success', title: 'Роли обновлены' })
+      onReload()
+    } catch (e) {
+      pushToast({ type: 'error', title: 'Не удалось изменить роли', desc: e instanceof Error ? e.message : '' })
     } finally { setBusy(null) }
   }
 
@@ -626,6 +644,26 @@ function UsersTab({ report, onReload }: { report: UsersReport | null; onReload: 
                               {busy === r.userId ? <Loader2 size={13} className="animate-spin" /> : <Check size={13} />} Применить доступ
                             </button>
                           </div>
+                        </div>
+                      )}
+                      {/* §10.4: назначение ролей — раз редактор ролей теперь в админке,
+                          отсюда же их и раздаём. Клик по роли добавляет/убирает её у юзера. */}
+                      {real && !!roles.length && (
+                        <div className="mb-4 rounded-xl border border-line bg-elevated/50 p-3">
+                          <div className="mb-2 text-[11px] font-bold uppercase tracking-wide text-muted">Роли доступа</div>
+                          <div className="flex flex-wrap gap-1.5">
+                            {roles.map((role) => {
+                              const on = (r.roleIds || []).includes(role.id)
+                              return (
+                                <button key={role.id} onClick={() => void toggleRole(r.userId, r.roleIds || [], role.id)} disabled={busy === r.userId}
+                                  className={cn('rounded-lg border px-2 py-1 text-xs transition-colors disabled:opacity-40',
+                                    on ? 'border-iris-500/50 bg-iris-500/10 text-iris-200' : 'border-line text-muted hover:border-iris-500/25')}>
+                                  {on ? '✓ ' : ''}{role.name}
+                                </button>
+                              )
+                            })}
+                          </div>
+                          <div className="mt-1.5 text-[10px] text-muted">Роли создаются на вкладке «Роли». Без ролей — доступа к разделам нет.</div>
                         </div>
                       )}
                       {/* §10.4: вложенность — под каким админом этот юзер. Меняем сразу по выбору;

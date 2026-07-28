@@ -573,8 +573,9 @@ export async function usersReport(opts = {}) {
       // §10.4: вложенность — кто чей суб-юзер. parentName для показа без второго запроса.
       parentId: u.parentId || null,
       parentName: u.parentId ? (nameById.get(u.parentId) || null) : null,
-      // §10.4: роль(и) юзера — читаемым именем, на карточку.
+      // §10.4: роль(и) юзера — читаемым именем на карточку + id для назначения из админки.
       roleName: roleNamesOf(u) || null,
+      roleIds: u.roleIds || [],
       coins: round3(coins[u.id] ?? 0),
       subscription: subOf(modsByUser[u.id]),
       tasks: st.tasks,
