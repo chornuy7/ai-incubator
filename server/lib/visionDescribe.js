@@ -5,17 +5,19 @@
  * («что за картинку он показал?»). Здесь мы скачиваем изображение и просим
  * vision-модель описать его словами; описание подмешивается в промпт ответа.
  *
- * Отдельным модулем, а не внутри воркера: vision — это отдельная (более дорогая)
- * модель и отдельный расход, который биллинг считает с множителем «картинка ×N»
- * (priceStore.imageMultiplier). Держать это рядом с генерацией текста нельзя — иначе
- * не разделить, где текстовые токены, а где vision.
+ * Отдельным модулем, а не внутри воркера: у vision свой формат запроса (image_url),
+ * свой (переопределяемый) выбор модели и ОТДЕЛЬНЫЙ расход, который биллинг наценивает
+ * множителем «картинка ×N» (priceStore.imageMultiplier). Наценку даёт именно множитель,
+ * а не модель: по умолчанию это тот же gpt-4o-mini, что и для текста. Держать это рядом
+ * с генерацией текста нельзя — иначе не разделить, где текстовые токены, а где vision.
  *
  * Всё best-effort: любая осечка (нет ключа, не скачалось, vision недоступен) →
  * возвращаем null, и диалог продолжается по тексту. Молчание vision не должно
  * ронять ответ живому человеку.
  */
 
-/** Vision-модель. Отдельная от текстовой (OPENAI_MODEL по умолчанию mini — без картинок). */
+/** Vision-модель. По умолчанию тот же gpt-4o-mini, но можно поднять на более сильную
+ *  через OPENAI_VISION_MODEL, не трогая текстовую (OPENAI_MODEL). */
 const VISION_MODEL = () => process.env.OPENAI_VISION_MODEL || 'gpt-4o-mini'
 
 /** Ограничение на размер картинки в vision-запрос: крупные фото раздувают расход и время. */
@@ -57,17 +59,25 @@ export async function describeIncomingImage(client, msg) {
   if (!apiKey || !client || !messageHasPhoto(msg)) return null
   let buf
   try {
-    buf = await client.downloadMedia(msg, {})
+    // Тоже с таймаутом: медленная/огромная загрузка медиа не должна вешать цикл.
+    buf = await Promise.race([
+      client.downloadMedia(msg, {}),
+      new Promise((_, rej) => setTimeout(() => rej(new Error('download timeout')), 20000)),
+    ])
   } catch {
-    return null // не скачалось — молча пропускаем
+    return null // не скачалось / долго — молча пропускаем
   }
   if (!buf || !buf.length || buf.length > MAX_IMAGE_BYTES) return null
   const b64 = Buffer.from(buf).toString('base64')
   const dataUrl = `data:${sniffMime(buf)};base64,${b64}`
   try {
+    // Таймаут ОБЯЗАТЕЛЕН: без него зависший коннект к OpenAI повесил бы весь цикл
+    // нейродиалогов/комментинга навсегда (.catch не ловит «никогда не резолвится»),
+    // и задача стала бы неостановимой. 20с — с запасом на low-detail vision.
     const res = await fetch('https://api.openai.com/v1/chat/completions', {
       method: 'POST',
       headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+      signal: AbortSignal.timeout(20000),
       body: JSON.stringify({
         model: VISION_MODEL(),
         messages: [{

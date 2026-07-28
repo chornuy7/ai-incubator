@@ -111,6 +111,12 @@
     @apply w-full rounded-xl border border-line bg-elevated px-3.5 py-2.5 text-sm text-fg placeholder:text-faint
       transition-colors focus:border-spark-500/70 focus:outline-none focus:ring-4 focus:ring-spark-500/10;
   }
+  /* Нативный <select> с .input клиппил текст: у него меньше вертикального запаса, чем
+     у текстового поля, а фиксированные h-8/h-9 вместе с py-2.5 срезали низ строки.
+     Меньший вертикальный padding именно для select — текст помещается на любой высоте. */
+  select.input {
+    @apply py-1.5;
+  }
   .label {
     @apply mb-1.5 block text-xs font-semibold uppercase tracking-wide text-muted;
   }

@@ -3,6 +3,7 @@ import { useParams, useNavigate, Link } from 'react-router-dom'
 import { ArrowRight, ArrowLeft, Check, Zap, CircleCheck } from 'lucide-react'
 import { fetchSubscription, type Subscription } from '@/api/balanceApi'
 import { getModule, ANNUAL_DISCOUNT, BONUS_MODULE, MODULE_FEATURES } from './catalog'
+import { HELP_DOCS } from '@/shared/config/helpDocs'
 
 /**
  * Страница одного модуля — отдельная ссылка /module/:key (как «Купить X» у
@@ -35,6 +36,10 @@ export function ModuleLandingPage() {
   const yearSave = yearFull - yearPrice
   const Icon = mod.icon
   const start = () => nav('/login')
+  // §10.7: подтягиваем глубокую доку модуля (тот же источник, что «Обучение») —
+  // страница была бедной: только «как работает» + цена. Теперь пример, связка,
+  // риски и советы, если они есть для этого модуля.
+  const doc = HELP_DOCS[mod.key]
 
   return (
     <div className="min-h-screen bg-bg text-fg">
@@ -44,7 +49,7 @@ export function ModuleLandingPage() {
             <div className="grid h-9 w-9 place-items-center rounded-xl bg-spark-gradient text-[#04150c]">
               <Zap size={18} fill="currentColor" />
             </div>
-            <div className="font-display text-sm font-bold leading-tight">AI Incubator</div>
+            <div className="font-display text-sm font-bold leading-tight">Murmex</div>
           </Link>
           <Link to="/#tarify" className="btn-ghost ml-auto h-9 px-4 text-sm"><ArrowLeft size={15} /> Все тарифы</Link>
           <button onClick={start} className="btn-primary h-9 px-4 text-sm">Войти <ArrowRight size={15} /></button>
@@ -82,6 +87,38 @@ export function ModuleLandingPage() {
                   <li key={f} className="flex items-start gap-2 text-sm text-muted">
                     <Check size={16} className="mt-0.5 shrink-0 text-spark-400" /> {f}
                   </li>
+                ))}
+              </ul>
+            </div>
+          )}
+
+          {doc?.example && (
+            <div className="mt-4 rounded-2xl border border-spark-500/25 bg-spark-500/6 p-5">
+              <div className="mb-2 text-sm font-semibold text-fg">Пример</div>
+              <p className="whitespace-pre-wrap text-sm leading-relaxed text-fg/90">{doc.example}</p>
+            </div>
+          )}
+
+          {doc?.together && (
+            <div className="mt-4 rounded-2xl border border-line bg-card p-5">
+              <div className="mb-2 text-sm font-semibold text-fg">Работает в связке</div>
+              <p className="whitespace-pre-wrap text-sm leading-relaxed text-muted">{doc.together}</p>
+            </div>
+          )}
+
+          {doc?.risks && (
+            <div className="mt-4 rounded-2xl border border-amber-500/25 bg-amber-500/[.06] p-5">
+              <div className="mb-2 text-sm font-semibold text-amber-300">Риски и безопасность</div>
+              <p className="whitespace-pre-wrap text-sm leading-relaxed text-amber-100/80">{doc.risks}</p>
+            </div>
+          )}
+
+          {!!doc?.tips?.length && (
+            <div className="mt-4 rounded-2xl border border-line bg-card p-5">
+              <div className="mb-2 text-sm font-semibold text-fg">Советы</div>
+              <ul className="space-y-1.5">
+                {doc.tips.map((t) => (
+                  <li key={t} className="flex gap-2 text-sm text-muted"><span className="text-spark-400">•</span> {t}</li>
                 ))}
               </ul>
             </div>
@@ -131,7 +168,7 @@ export function ModuleLandingPage() {
       </section>
 
       <footer className="mx-auto max-w-6xl px-5 py-8 text-xs text-muted">
-        <Link to="/" className="hover:text-fg">← AI Incubator — все модули и тарифы</Link>
+        <Link to="/" className="hover:text-fg">← Murmex — все модули и тарифы</Link>
       </footer>
     </div>
   )

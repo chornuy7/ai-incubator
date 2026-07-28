@@ -1,0 +1,40 @@
+# CI: проверка кода на каждый push и PR — типы, тесты, сборка.
+# Отдельно от deploy.yml (тот катит на сервер): здесь цель — поймать поломку ДО того,
+# как она уедет. Двое пушат в одну ветку, поэтому красный крестик на коммите/PR важнее,
+# чем что-либо: видно сразу, чей push сломал типы или тесты.
+name: ci
+
+on:
+  push:
+    branches: ['**']
+  pull_request: {}
+
+# Новый push в ту же ветку отменяет предыдущий прогон — не гоняем устаревшее.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install
+        run: npm ci
+
+      # Типы: tsc --noEmit. Отдельным шагом, чтобы в логе было видно, что упало именно тут.
+      - name: Типы (tsc)
+        run: npm run lint
+
+      # Тесты изолированы от .env через preload (_files-backend.mjs), Supabase не нужен.
+      - name: Тесты
+        run: npm test
+
+      - name: Сборка
+        run: npm run build

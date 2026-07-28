@@ -2,7 +2,18 @@ import { useState, useEffect, useMemo, useRef, type Dispatch, type SetStateActio
 import { useNavigate, useSearchParams, Link } from 'react-router-dom'
 import {
   ArrowRight, Check, Zap, Lock, Minus, X, Quote, TrendingUp, Clock, Bot, Star,
+  Coins, ShoppingBag, Clapperboard, Building2, Rocket, type LucideIcon,
 } from 'lucide-react'
+
+/** §10.6: иконка кейса по отрасли — узнаётся по ключевому слову в названии. */
+function caseIcon(title: string): LucideIcon {
+  const t = title.toLowerCase()
+  if (t.includes('крипт')) return Coins
+  if (t.includes('магаз')) return ShoppingBag
+  if (t.includes('креатор') || t.includes('контент')) return Clapperboard
+  if (t.includes('агентств')) return Building2
+  return Rocket
+}
 import { fetchSubscription, quoteSubscription, type Subscription, type SubCost } from '@/api/balanceApi'
 import { MODULES, BONUS_MODULE, FUNNEL_STEPS, COMPARISON, REVIEWS, CASES, ANNUAL_DISCOUNT, moduleTagline, moduleIcon, type Cmp } from './landing/catalog'
 
@@ -42,6 +53,9 @@ export function LandingPage() {
 
   const [params] = useSearchParams()
   const variant = params.get('v') === 'marketing' ? 'marketing' : 'platform'
+  // §10.6: два варианта шапки-героя, переключаются GET-параметром — чтобы можно было
+  // выбрать без правки кода. `?hero=static` — один статичный экран; иначе — карусель.
+  const heroStatic = params.get('hero') === 'static'
   const hero = HERO_VARIANTS[variant]
   // Годовая скидка — с сервера (правится в админке), catalog-константа как fallback.
   const annualDiscount = pricing?.annualDiscount ?? ANNUAL_DISCOUNT
@@ -86,13 +100,13 @@ export function LandingPage() {
             <Stat value="0" label="ручной рутины" />
           </div>
         </div>
-        <HeroCarousel />
+        <HeroCarousel staticMode={heroStatic} />
       </section>
 
       {/* ── Как работает ─────────────────────────────────────── */}
       <section className="border-y border-line bg-surface/40">
         <div className="mx-auto max-w-6xl px-5 py-16">
-          <SectionHead eyebrow="Полный Telegram-конвейер" title="Как это работает" desc="Пять шагов от холодной базы до лидов — каждый закрывают наши модули." />
+          <SectionHead eyebrow="Автоматический конвейер" title="Настроили — и забыли" desc="Ставите цель — система сама ведёт её от холодной базы до заявок в CRM. Пять шагов, всё на автопилоте." />
           <div className="mt-8 grid gap-3 sm:grid-cols-3 lg:grid-cols-5">
             {FUNNEL_STEPS.map((s, i) => (
               <div key={s.title} className="rounded-2xl border border-line bg-card p-4">
@@ -225,7 +239,7 @@ export function LandingPage() {
 
       {/* ── Сравнение ────────────────────────────────────────── */}
       <section className="mx-auto max-w-6xl px-5 py-16">
-        <SectionHead eyebrow="Сравнение" title="Почему выбирают AI Incubator" desc="Наши возможности против типовых альтернатив на рынке." center />
+        <SectionHead eyebrow="Сравнение" title="Почему выбирают Murmex" desc="Наши возможности против типовых альтернатив на рынке." center />
         <Comparison />
       </section>
 
@@ -239,18 +253,29 @@ export function LandingPage() {
 
       {/* ── Истории успеха ───────────────────────────────────── */}
       <section className="mx-auto max-w-6xl px-5 py-16">
-        <SectionHead eyebrow="Кейсы" title="Реальные истории успеха" desc="Как бизнесы используют AI Incubator для роста в Telegram (демо-примеры)." center />
+        <SectionHead eyebrow="Кейсы" title="Реальные истории успеха" desc="Как бизнесы используют Murmex для роста в Telegram (демо-примеры)." center />
+        {/* §10.6: кейсы переработаны — фокус на РЕЗУЛЬТАТЕ. Метрика вынесена вверх крупно
+            (это и есть крючок), отрасль — иконкой, срок — бейджем. */}
         <div className="mt-8 grid gap-5 md:grid-cols-2">
-          {CASES.map((c) => (
-            <div key={c.title} className="rounded-2xl border border-line bg-card p-5">
-              <div className="font-display text-lg font-bold">{c.title}</div>
-              <p className="mt-2 text-sm leading-relaxed text-muted">{c.text}</p>
-              <div className="mt-4 flex flex-wrap gap-2 text-xs">
-                <span className="inline-flex items-center gap-1 rounded-lg bg-spark-500/12 px-2 py-1 font-semibold text-spark-300"><TrendingUp size={13} /> {c.metric}</span>
-                <span className="inline-flex items-center gap-1 rounded-lg bg-elevated px-2 py-1 text-muted"><Clock size={13} /> {c.period}</span>
+          {CASES.map((c) => {
+            const Icon = caseIcon(c.title)
+            return (
+              <div key={c.title} className="group relative overflow-hidden rounded-2xl border border-line bg-card p-5 transition-colors hover:border-spark-500/30">
+                <div className="pointer-events-none absolute -right-8 -top-8 h-28 w-28 rounded-full bg-spark-500/8 blur-2xl transition-opacity group-hover:opacity-80" />
+                <div className="relative flex items-start gap-4">
+                  <div className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-spark-500/12 text-spark-300"><Icon size={22} /></div>
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-baseline justify-between gap-2">
+                      <span className="text-xs font-semibold uppercase tracking-wide text-muted">{c.title}</span>
+                      <span className="inline-flex shrink-0 items-center gap-1 rounded-md bg-elevated px-1.5 py-0.5 text-[11px] text-muted"><Clock size={12} /> {c.period}</span>
+                    </div>
+                    <div className="mt-1 font-display text-2xl font-bold leading-tight text-gradient">{c.metric}</div>
+                  </div>
+                </div>
+                <p className="relative mt-3 text-sm leading-relaxed text-muted">{c.text}</p>
               </div>
-            </div>
-          ))}
+            )
+          })}
         </div>
       </section>
 
@@ -266,7 +291,7 @@ export function LandingPage() {
       </section>
 
       <footer className="mx-auto max-w-6xl px-5 py-8 text-xs text-muted">
-        AI Incubator — платформа управления Telegram-профилями.
+        Murmex — платформа управления Telegram-профилями.
       </footer>
     </div>
   )
@@ -280,7 +305,7 @@ function Header({ start }: { start: () => void }) {
       <div className="mx-auto flex max-w-6xl items-center gap-3 px-5 py-3.5">
         <div className="grid h-9 w-9 place-items-center rounded-xl bg-spark-gradient text-[#04150c]"><Zap size={18} fill="currentColor" /></div>
         <div>
-          <div className="font-display text-sm font-bold leading-tight">AI Incubator</div>
+          <div className="font-display text-sm font-bold leading-tight">Murmex</div>
           <div className="text-[11px] leading-tight text-muted">управление Telegram-профилями</div>
         </div>
         <nav className="ml-auto hidden items-center gap-6 text-sm text-muted md:flex">
@@ -325,14 +350,15 @@ const HERO_SCREENS = [
   { key: 'report', label: 'Отчёт' },
 ] as const
 
-function HeroCarousel() {
+function HeroCarousel({ staticMode = false }: { staticMode?: boolean }) {
   const [i, setI] = useState(0)
   const [paused, setPaused] = useState(false)
   useEffect(() => {
-    if (paused) return
+    // §10.6: статичный вариант шапки — без автопрокрутки (показываем один экран).
+    if (paused || staticMode) return
     const id = setInterval(() => setI((p) => (p + 1) % HERO_SCREENS.length), 4000)
     return () => clearInterval(id)
-  }, [paused])
+  }, [paused, staticMode])
 
   return (
     <div
@@ -348,16 +374,19 @@ function HeroCarousel() {
           <span className="h-2.5 w-2.5 rounded-full bg-amber-400/70" />
           <span className="h-2.5 w-2.5 rounded-full bg-spark-400/70" />
           <span className="ml-3 text-[11px] text-muted">{HERO_SCREENS[i].label}</span>
-          <div className="ml-auto flex gap-1.5">
-            {HERO_SCREENS.map((s, k) => (
-              <button
-                key={s.key}
-                onClick={() => setI(k)}
-                aria-label={s.label}
-                className={`h-1.5 rounded-full transition-all ${k === i ? 'w-5 bg-spark-400' : 'w-1.5 bg-line hover:bg-muted'}`}
-              />
-            ))}
-          </div>
+          {/* Точки-переключатели только в режиме карусели. */}
+          {!staticMode && (
+            <div className="ml-auto flex gap-1.5">
+              {HERO_SCREENS.map((s, k) => (
+                <button
+                  key={s.key}
+                  onClick={() => setI(k)}
+                  aria-label={s.label}
+                  className={`h-1.5 rounded-full transition-all ${k === i ? 'w-5 bg-spark-400' : 'w-1.5 bg-line hover:bg-muted'}`}
+                />
+              ))}
+            </div>
+          )}
         </div>
         {/* Фиксированная высота — экраны сложены абсолютно, рамка не скачет при смене. */}
         <div className="relative h-[300px]">
@@ -577,7 +606,7 @@ function Comparison() {
       : v === 'partial' ? <Minus size={16} className="mx-auto text-amber-400" />
         : <X size={16} className="mx-auto text-faint" />
   const cols: { key: 'us' | 'parsers' | 'mailers' | 'neuro'; label: string; sub?: string }[] = [
-    { key: 'us', label: 'AI Incubator', sub: 'лучший выбор' },
+    { key: 'us', label: 'Murmex', sub: 'лучший выбор' },
     { key: 'parsers', label: 'Парсеры', sub: 'аналитика каналов' },
     { key: 'mailers', label: 'Рассыльщики', sub: 'ЛС-софт' },
     { key: 'neuro', label: 'Нейросервисы', sub: 'комментинг' },

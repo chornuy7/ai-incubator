@@ -519,6 +519,15 @@ app.get('/api/admin/users-report', async (req, res) => {
   } catch (err) { res.status(500).json({ ok: false, error: err instanceof Error ? err.message : 'Ошибка' }) }
 })
 
+/** §10.9: здоровье аккаунтов — активные/на паузе/падающие + причина. Только админ. */
+app.get('/api/admin/accounts-health', async (req, res) => {
+  try {
+    if (!(await isAdminRequest(req))) return res.status(403).json({ ok: false, error: 'Мониторинг доступен только администратору' })
+    const { accountsHealth } = await import('./adminStats.js')
+    res.json({ ok: true, health: await accountsHealth() })
+  } catch (err) { res.status(500).json({ ok: false, error: err instanceof Error ? err.message : 'Ошибка' }) }
+})
+
 /** §5.3: что и сколько куплено — пополнения кошельков по людям. Только админ. */
 app.get('/api/admin/purchases', async (req, res) => {
   try {
@@ -559,7 +568,11 @@ app.get('/api/admin/payments', async (req, res) => {
       name: nameOf.get(r.user_id) || (r.user_id === '__default' ? 'Системный кошелёк' : r.user_id),
       email: emailOf.get(r.user_id) || '',
     }))
-    res.json({ ok: true, payments: { total, items, summary, limit: opts.limit, offset: opts.offset } })
+    // §10.4: курс монета→$ для показа $-эквивалента пополнений (реальный $ — с платёжкой).
+    // Единый хелпер priceStore, чтобы правило «цена монеты» не дублировалось.
+    let coinUsd = 0
+    try { const { coinUsdRate } = await import('./priceStore.js'); coinUsd = await coinUsdRate() } catch { /* нет прайса */ }
+    res.json({ ok: true, payments: { total, items, summary, limit: opts.limit, offset: opts.offset, coinUsd } })
   } catch (err) { res.status(500).json({ ok: false, error: err instanceof Error ? err.message : 'Ошибка' }) }
 })
 
@@ -650,7 +663,8 @@ app.get('/api/pricing', async (_req, res) => {
     res.json({
       ok: true, items, actions: eff.actionMap, avgTokens,
       coinsPer1kTokens: eff.coinsPer1kTokens, packs: eff.coinPacks, currency: CURRENCY,
-      tokenUsd: eff.tokenUsd, imageMultiplier: eff.imageMultiplier,
+      tokenUsd: eff.tokenUsd, tokenUsdAuto: eff.tokenUsdAuto, tokenUsdComputed: eff.tokenUsdComputed, tokenUsdModel: eff.tokenUsdModel,
+      imageMultiplier: eff.imageMultiplier,
     })
   } catch (err) { res.status(500).json({ ok: false, error: err instanceof Error ? err.message : 'Ошибка' }) }
 })

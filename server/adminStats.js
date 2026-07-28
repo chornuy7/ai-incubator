@@ -17,6 +17,8 @@ import { loadAllMeta } from './accountsMeta.js'
 import { listActivity } from './accountActivity.js'
 import { readAudit } from './lib/auditLog.js'
 import { listUsers } from './users.js'
+import { listRoles } from './roles.js'
+import { normalizeStatus } from './lib/accountStatus.js'
 
 /** Округление денег — до ТЫСЯЧНЫХ, как считает биллинг (строка парсера 0.005). */
 const round3 = (v) => Math.round((Number(v) || 0) * 1000) / 1000
@@ -54,6 +56,59 @@ const ACTIVITY_OF_MODULE = {
  * Свод для админ-панели.
  * @param {{since?:number}} [opts] начало периода (по умолчанию — последние 30 дней)
  */
+/**
+ * §10.9: мониторинг здоровья аккаунтов для админки — сколько в работе, сколько
+ * отдыхают и сколько «падают», с ПРИЧИНОЙ по каждому проблемному. Владелец должен
+ * видеть не только «40 аккаунтов», а «3 в карантине после FloodWait, 1 забанен за спам».
+ *
+ * Раскладка статусов (accountStatus): healthy = active/warming (работают),
+ * idle = pause (стоят по команде), problem = floodwait/quarantine/spamblock/reauth/invalid.
+ */
+const PROBLEM_STATUSES = new Set(['floodwait', 'quarantine', 'spamblock', 'reauth', 'invalid'])
+const HEALTHY_STATUSES = new Set(['active', 'warming'])
+/** Человекочитаемая расшифровка статуса — для подписи в мониторинге. */
+const STATUS_LABEL = {
+  active: 'Активен', warming: 'Прогрев', pause: 'На паузе', floodwait: 'FloodWait',
+  quarantine: 'Карантин', spamblock: 'Спам-блок', reauth: 'Нужен вход', invalid: 'Невалиден',
+}
+
+export async function accountsHealth() {
+  const meta = await loadAllMeta().catch(() => ({}))
+  const activity = await listActivity().catch(() => ({}))
+  const out = {
+    total: 0, healthy: 0, idle: 0, problem: 0, resting: 0, tired: 0,
+    byStatus: {}, problems: [],
+  }
+  for (const [id, m] of Object.entries(meta)) {
+    if (m?.inTrash) continue
+    out.total += 1
+    const st = normalizeStatus(m?.status)
+    out.byStatus[st] = (out.byStatus[st] || 0) + 1
+    if (HEALTHY_STATUSES.has(st)) out.healthy += 1
+    else if (st === 'pause') out.idle += 1
+    else if (PROBLEM_STATUSES.has(st)) {
+      out.problem += 1
+      // Причина: statusReason/Code (почему упал) + до какого времени (FloodWait/карантин).
+      out.problems.push({
+        id,
+        name: m.name || m.username || m.phone || id,
+        phone: m.phone || '',
+        status: st,
+        statusLabel: STATUS_LABEL[st] || st,
+        reason: m.statusReason || m.statusCode || '',
+        since: Number(m.statusSince) || 0,
+        until: Number(m.statusUntil) || 0,
+      })
+    }
+    const a = activity[id]
+    if (a?.resting) out.resting += 1
+    else if (a && a.threshold > 0 && a.fatigue / a.threshold >= 0.7) out.tired += 1
+  }
+  // Самые «свежие» проблемы сверху — их разбирают первыми.
+  out.problems.sort((a, b) => b.since - a.since)
+  return out
+}
+
 export async function adminOverview(opts = {}) {
   const since = Number(opts.since) || Date.now() - 30 * DAY_MS
 
@@ -64,7 +119,9 @@ export async function adminOverview(opts = {}) {
   for (const [id, m] of Object.entries(meta)) {
     if (m?.inTrash) continue
     accounts.total += 1
-    const st = m?.status || 'active'
+    // Нормализуем как в accountsHealth: иначе 'working'/'valid'/'' попадают в отдельные
+    // корзины, и «Панель» и «Мониторинг» показывают один аккаунт под разными статусами.
+    const st = normalizeStatus(m?.status)
     accounts.byStatus[st] = (accounts.byStatus[st] || 0) + 1
     const a = activity[id]
     if (a?.resting) accounts.resting += 1
@@ -425,11 +482,15 @@ export async function crmOverview(opts = {}) {
  */
 export async function usersReport(opts = {}) {
   const since = Number(opts.since) || 0
-  const [users, coins, ledger] = await Promise.all([
+  const [users, coins, ledger, roles] = await Promise.all([
     listUsers().catch(() => []),
     coinsByUser().catch(() => ({})),
     readLedger({ since: since || undefined, limit: 100000 }).catch(() => []),
+    listRoles().catch(() => []),
   ])
+  // §10.4: имя роли на карточку — из roleIds юзера собираем читаемые названия.
+  const roleNameById = new Map(roles.map((r) => [r.id, r.name]))
+  const roleNamesOf = (u) => (u.roleIds || []).map((id) => roleNameById.get(id)).filter(Boolean).join(' + ')
 
   // Подписка каждого: какие модули ему открыты. 'all' — набор не выбран (открыто всё).
   // Нужно админу, чтобы прямо в списке видеть, кто на что подписан.
@@ -514,6 +575,9 @@ export async function usersReport(opts = {}) {
       // §10.4: вложенность — кто чей суб-юзер. parentName для показа без второго запроса.
       parentId: u.parentId || null,
       parentName: u.parentId ? (nameById.get(u.parentId) || null) : null,
+      // §10.4: роль(и) юзера — читаемым именем на карточку + id для назначения из админки.
+      roleName: roleNamesOf(u) || null,
+      roleIds: u.roleIds || [],
       coins: round3(coins[u.id] ?? 0),
       subscription: subOf(modsByUser[u.id]),
       tasks: st.tasks,
@@ -547,7 +611,11 @@ export async function usersReport(opts = {}) {
     tokens: acc.tokens + r.tokens,
   }), { coins: 0, tasks: 0, actions: 0, spent: 0, tokens: 0 })
 
-  return { since, rows, totals }
+  // §10.4: курс монета→$ для показа баланса «в долларах» — единый хелпер priceStore.
+  let coinUsd = 0
+  try { const { coinUsdRate } = await import('./priceStore.js'); coinUsd = await coinUsdRate() } catch { /* нет прайса */ }
+
+  return { since, rows, totals, coinUsd }
 }
 
 /**
@@ -570,7 +638,7 @@ export async function myStats(userId, opts = {}) {
   const myTaskIds = new Set()
 
   const touchDay = (k) => {
-    if (!daily.has(k)) daily.set(k, { day: k, comments: 0, reactions: 0, messages: 0, actions: 0, tokens: 0, coins: 0 })
+    if (!daily.has(k)) daily.set(k, { day: k, comments: 0, reactions: 0, messages: 0, views: 0, pm: 0, actions: 0, tokens: 0, coins: 0 })
     return daily.get(k)
   }
   const mod = (key) => {

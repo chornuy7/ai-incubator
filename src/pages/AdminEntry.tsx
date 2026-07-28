@@ -1,6 +1,4 @@
 import { useState } from 'react'
-import { LowBalanceBar } from '@/features/billing/LowBalanceBar'
-import { LowBalanceLoginModal } from '@/features/billing/LowBalanceLoginModal'
 import { Link } from 'react-router-dom'
 import { Zap, Eye, EyeOff, ArrowRight, LogOut, ShieldAlert } from 'lucide-react'
 import { useApp } from '@/mocks/store'
@@ -37,15 +35,15 @@ function AdminShell() {
 
   return (
     <div className="min-h-screen bg-bg text-fg">
-      {/* §10.1: лента низкого баланса и в админке — тут её видит владелец. */}
-      <LowBalanceBar />
+      {/* §10.1: в sudo-админке ленту/модалку низкого баланса НЕ показываем — это пульт
+          управления системой, а не кабинет клиента; владельца незачем пушить платить. */}
       <header className="sticky top-0 z-40 border-b border-line bg-surface/80 backdrop-blur-xl">
         <div className="mx-auto flex max-w-[1400px] items-center gap-3 px-5 py-3">
           <div className="grid h-9 w-9 place-items-center rounded-xl bg-iris-500/15 text-iris-300">
             <Zap size={18} fill="currentColor" />
           </div>
           <div className="min-w-0">
-            <div className="font-display text-sm font-bold leading-tight">AI Incubator · Админ-панель</div>
+            <div className="font-display text-sm font-bold leading-tight">Murmex · Админ-панель</div>
             <div className="truncate text-[11px] leading-tight text-muted">{sessionUser?.email}</div>
           </div>
           <Link to="/panel" className="btn-ghost ml-auto h-9 px-3 text-sm">В панель</Link>
@@ -61,7 +59,6 @@ function AdminShell() {
 
       <Toasts />
       <DialogHost />
-      <LowBalanceLoginModal />
     </div>
   )
 }

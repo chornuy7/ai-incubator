@@ -1,9 +1,10 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Zap, Eye, EyeOff, ArrowRight, ShieldCheck, Bot, Radar, Sparkles } from 'lucide-react'
 import { useApp } from '@/mocks/store'
 import { useSession } from '@/features/auth/session'
-import { loginUser, registerUser } from '@/api/usersApi'
+import { loginUser, registerUser, fetchAuthConfig } from '@/api/usersApi'
+import { Turnstile } from '@/features/auth/Turnstile'
 
 const FEATURES = [
   { icon: Bot, title: 'Нейромодули', desc: 'Комментинг, чаттинг и диалоги на ИИ' },
@@ -25,13 +26,22 @@ export function GuestLogin() {
   const [show, setShow] = useState(false)
   const [loading, setLoading] = useState(false)
   const isReg = mode === 'register'
+  // §10.2: капча на регистрации — показываем виджет только если она включена на сервере.
+  const [captcha, setCaptcha] = useState<{ enabled: boolean; siteKey: string }>({ enabled: false, siteKey: '' })
+  const [captchaToken, setCaptchaToken] = useState('')
+  useEffect(() => { void fetchAuthConfig().then((c) => setCaptcha(c.captcha)).catch(() => {}) }, [])
+  const needCaptcha = isReg && captcha.enabled
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault()
+    if (needCaptcha && !captchaToken) {
+      pushToast({ type: 'error', title: 'Подтвердите, что вы не робот', desc: 'Пройдите проверку ниже.' })
+      return
+    }
     setLoading(true)
     try {
       const { user, role } = isReg
-        ? await registerUser(email.trim(), pass, name.trim())
+        ? await registerUser(email.trim(), pass, name.trim(), captchaToken)
         : await loginUser(email.trim(), pass)
       signIn(user, role && role.permissions ? { id: role.id, name: role.name, permissions: role.permissions } : null)
       setUserState('with-data')
@@ -64,7 +74,7 @@ export function GuestLogin() {
             </svg>
           </div>
           <div>
-            <div className="font-display text-xl font-bold text-fg">AI Incubator</div>
+            <div className="font-display text-xl font-bold text-fg">Murmex</div>
             <div className="text-xs text-muted">Платформа автоматизации Telegram</div>
           </div>
         </div>
@@ -87,7 +97,7 @@ export function GuestLogin() {
           </div>
         </div>
 
-        <div className="text-xs text-faint">© 2026 AI Incubator · демо-версия</div>
+        <div className="text-xs text-faint">© 2026 Murmex · демо-версия</div>
         <div className="pointer-events-none absolute -right-20 -top-20 h-80 w-80 rounded-full bg-spark-500/20 blur-3xl" />
         <div className="pointer-events-none absolute -bottom-24 right-10 h-72 w-72 rounded-full bg-iris-500/20 blur-3xl" />
       </div>
@@ -99,7 +109,7 @@ export function GuestLogin() {
             <div className="grid h-10 w-10 place-items-center rounded-xl bg-spark-gradient">
               <Zap size={20} className="text-[#04150c]" fill="currentColor" />
             </div>
-            <span className="font-display text-lg font-bold text-fg">AI Incubator</span>
+            <span className="font-display text-lg font-bold text-fg">Murmex</span>
           </div>
 
           <h2 className="font-display text-2xl font-bold text-fg">{isReg ? 'Регистрация' : 'Вход в панель'}</h2>
@@ -133,7 +143,9 @@ export function GuestLogin() {
                 </button>
               </div>
             </div>
-            <button type="submit" disabled={loading} className="btn-primary h-11 w-full">
+            {/* §10.2: капча — только на регистрации и только если включена на сервере. */}
+            {needCaptcha && <Turnstile siteKey={captcha.siteKey} onToken={setCaptchaToken} />}
+            <button type="submit" disabled={loading || (needCaptcha && !captchaToken)} className="btn-primary h-11 w-full disabled:opacity-50">
               {loading ? (isReg ? 'Создаём…' : 'Входим…') : (isReg ? <>Зарегистрироваться <ArrowRight size={17} /></> : <>Войти <ArrowRight size={17} /></>)}
             </button>
           </form>

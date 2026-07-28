@@ -60,6 +60,10 @@ export interface UserRow {
   /** §10.4: под каким админом вложен этот суб-юзер (null — верхнеуровневый). */
   parentId?: string | null
   parentName?: string | null
+  /** §10.4: роль(и) юзера читаемым именем (для бейджа на карточке). */
+  roleName?: string | null
+  /** §10.4: id ролей юзера — для назначения ролей из админки. */
+  roleIds?: string[]
   /** Монет на счету сейчас. */
   coins: number
   /** Подписка: какие модули открыты. all=true — набор не выбран (открыто всё). null — синтетическая строка. */
@@ -77,6 +81,8 @@ export interface UsersReport {
   since: number
   rows: UserRow[]
   totals: { coins: number; tasks: number; actions: number; spent: number; tokens: number }
+  /** §10.4: курс монета→$ для показа баланса юзера в долларах. 0 = нет прайса. */
+  coinUsd?: number
 }
 
 /** §5.3: где сейчас болит. */
@@ -132,6 +138,20 @@ export async function fetchCrmOverview(since?: number): Promise<CrmOverview> {
   return (await apiGet<{ ok: boolean; crm: CrmOverview }>(`/api/admin/crm${q}`)).crm
 }
 
+/** §10.9: здоровье аккаунтов — активные/на паузе/падающие + причина по каждому. */
+export interface AccountProblem {
+  id: string; name: string; phone: string; status: string; statusLabel: string
+  reason: string; since: number; until: number
+}
+export interface AccountsHealth {
+  total: number; healthy: number; idle: number; problem: number; resting: number; tired: number
+  byStatus: Record<string, number>
+  problems: AccountProblem[]
+}
+export async function fetchAccountsHealth(): Promise<AccountsHealth> {
+  return (await apiGet<{ ok: boolean; health: AccountsHealth }>('/api/admin/accounts-health')).health
+}
+
 export async function fetchUsersReport(since?: number): Promise<UsersReport> {
   const q = since ? `?since=${since}` : ''
   const data = await apiGet<{ ok: boolean; report: UsersReport }>(`/api/admin/users-report${q}`)
@@ -171,6 +191,8 @@ export interface PaymentsResult {
   total: number; limit: number; offset: number
   items: PaymentRow[]
   summary: { coinsTotal: number; coinsCount: number; planTotal: number; planCount: number }
+  /** §10.4: курс монета→$ (для показа $-эквивалента пополнений). 0 = нет прайса. */
+  coinUsd?: number
 }
 export interface PaymentsQuery { from?: number; to?: number; userId?: string; kind?: string; q?: string; limit?: number; offset?: number }
 
@@ -197,8 +219,14 @@ export interface EffectivePrices {
   coinPacks: { coins: number; price: number; best?: boolean }[]
   annualDiscount: number
   coinsPer1kTokens: number
-  /** Курс токен→доллар. null — ждёт числа от бизнеса. */
+  /** §10.1: себестоимость токена ($). Считается из модели, если админ не переопределил. */
   tokenUsd: number | null
+  /** true — цена рассчитана автоматически из модели; false — задана вручную. */
+  tokenUsdAuto?: boolean
+  /** Всегда цена из модели (даже при ручном override) — для подсказки «авто». */
+  tokenUsdComputed?: number | null
+  /** Модель, из которой считается себестоимость (для подписи в админке). */
+  tokenUsdModel?: string
   imageMultiplier: number
 }
 

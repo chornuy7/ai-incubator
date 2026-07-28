@@ -9,12 +9,15 @@
  * интерфейс (`effectivePrices`/`setOverrides`) остаётся.
  *
  * Что переопределяемо: цена подписки на модуль ($/мес) и цена действия (⚡),
- * пакеты монет, годовая скидка, курс токенов, курс токен→доллар и множитель за
- * анализ картинки (§10.5). Два последних — новые из звонка, у них placeholder,
- * который заказчик проставит из админки, когда Николай пришлёт числа.
+ * пакеты монет, годовая скидка, курс токенов, себестоимость токена ($) и множитель
+ * за анализ картинки (§10.5).
+ *
+ * §10.1: себестоимость токена НЕ ждём «сверху» — считаем сами из прайса текущей модели
+ * (lib/modelPricing.js). Админ может переопределить число вручную; пусто = авто-расчёт.
  */
 import { dataPath, readJson, mutateJson } from './lib/jsonStore.js'
 import { getSupabase, supabaseEnabled } from './lib/supabase.js'
+import { tokenUsdForModel, currentModel } from './lib/modelPricing.js'
 
 function sb() { return supabaseEnabled() ? getSupabase() : null }
 
@@ -128,6 +131,14 @@ export async function effectivePrices() {
     }
   })
 
+  // §10.1: себестоимость токена считаем САМИ из прайса текущей модели, а не ждём числа
+  // «сверху». Админский override (число) побеждает; иначе — авто-расчёт по модели.
+  // Флаги auto/model нужны админке, чтобы показать «рассчитано из gpt-4o-mini» и дать
+  // переопределить, а не гадать, откуда цифра.
+  const tokenUsdManual = typeof ov.tokenUsd === 'number'
+  const autoTokenUsd = tokenUsdForModel()
+  const tokenUsd = tokenUsdManual ? ov.tokenUsd : autoTokenUsd
+
   return {
     modules,
     monthMap,
@@ -135,11 +146,24 @@ export async function effectivePrices() {
     coinPacks: Array.isArray(ov.coinPacks) && ov.coinPacks.length ? ov.coinPacks : COIN_PACKS,
     annualDiscount: typeof ov.annualDiscount === 'number' ? ov.annualDiscount : ANNUAL_DISCOUNT,
     coinsPer1kTokens: typeof ov.coinsPer1kTokens === 'number' ? ov.coinsPer1kTokens : COINS_PER_1K_TOKENS,
-    // Новые из звонка §10.1/§10.5. Пока не заданы — null: интерфейс покажет
-    // «не задано», а не выдуманное число.
-    tokenUsd: typeof ov.tokenUsd === 'number' ? ov.tokenUsd : null,
+    tokenUsd,
+    tokenUsdAuto: !tokenUsdManual, // true = рассчитано из модели, false = задано вручную
+    tokenUsdComputed: autoTokenUsd, // ВСЕГДА цена из модели (даже при ручном override) — для подсказки «авто»
+    tokenUsdModel: currentModel(), // из какой модели считается себестоимость
     imageMultiplier: typeof ov.imageMultiplier === 'number' ? ov.imageMultiplier : 4,
   }
+}
+
+/**
+ * §10.4: курс «монета → $» — лучший (оптовый) курс из пакетов монет. Один источник
+ * правды для показа $-эквивалента баланса/пополнений (иначе правило дублировалось
+ * по эндпоинтам и могло разойтись). 0 — если пакетов/цен нет.
+ * @returns {Promise<number>} $ за одну монету
+ */
+export async function coinUsdRate() {
+  const packs = (await effectivePrices()).coinPacks || []
+  const rates = packs.filter((p) => p.coins > 0 && p.price > 0).map((p) => p.price / p.coins)
+  return rates.length ? Math.min(...rates) : 0
 }
 
 /**

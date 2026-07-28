@@ -1,17 +1,22 @@
 import { coins as fmtCoins, cn } from '@/shared/lib/utils'
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { BarChart3, Users, ListChecks, Coins, Download, RefreshCw, AlertTriangle, Contact, Power, ChevronDown, Activity, Plus, Radar, Search, ShoppingCart, Loader2, Check } from 'lucide-react'
 import { PageHeader, Card, Segmented, EmptyState } from '@/shared/ui'
 import { useApp } from '@/mocks/store'
 import {
   fetchAdminOverview, fetchClientReport, fetchUsersReport, fetchProblems, fetchCrmOverview,
-  fetchActiveNow, fetchDailySpend, fetchPurchases, fetchPayments,
+  fetchActiveNow, fetchDailySpend, fetchPurchases, fetchPayments, fetchAccountsHealth,
   type AdminOverview, type ClientReport, type UsersReport, type Problems, type CrmOverview,
-  type ActiveNow, type ActiveTask, type DailySpend, type Purchases, type PaymentsResult, type UserRow, fetchPrices, savePrices, type EffectivePrices, type PricePatch } from '@/api/adminApi'
+  type ActiveNow, type ActiveTask, type DailySpend, type Purchases, type PaymentsResult, type UserRow, type AccountsHealth, fetchPrices, savePrices, type EffectivePrices, type PricePatch } from '@/api/adminApi'
 import { updateUser } from '@/api/usersApi'
+import { fetchRoles } from '@/api/rolesApi'
+import { RolesPage } from '@/pages/RolesPage'
 import { changeBalance, fetchSubscription, saveUserModules } from '@/api/balanceApi'
 import { promptDialog } from '@/shared/lib/dialog'
 import { ApiDocsTab } from '@/features/billing/ApiDocsTab'
+import { fmt, fmtDate, cleanPrice, fmtUsd, usdEq } from '@/pages/admin/adminShared'
+import { MonitoringTab } from '@/pages/admin/MonitoringTab'
+import { BundlesEditor } from '@/pages/admin/BundlesEditor'
 
 /**
  * §5.3 (E1/E2): админ-панель со статистикой и постатейный отчёт клиенту.
@@ -41,8 +46,6 @@ const STATUS_RU: Record<string, string> = {
   done: 'Готово', running: 'Выполняется', stopped: 'Остановлены', queued: 'В очереди', error: 'Ошибка', paused: 'Пауза',
 }
 
-const fmt = (n: number) => new Intl.NumberFormat('ru-RU').format(Math.round(n))
-const fmtDate = (ts: number) => new Date(ts).toLocaleDateString('ru-RU')
 
 export function AdminStatsPage() {
   const pushToast = useApp((s) => s.pushToast)
@@ -56,6 +59,7 @@ export function AdminStatsPage() {
   const [active, setActive] = useState<ActiveNow | null>(null)
   const [daily, setDaily] = useState<DailySpend | null>(null)
   const [purchases, setPurchases] = useState<Purchases | null>(null)
+  const [health, setHealth] = useState<AccountsHealth | null>(null)
   const [loading, setLoading] = useState(true)
   const [denied, setDenied] = useState(false)
 
@@ -69,13 +73,14 @@ export function AdminStatsPage() {
     try {
       // Грузим всё одним заходом: цифры на разных вкладках должны быть на один момент
       // времени, иначе «в панели 82 задачи, а по людям 80» читается как ошибка счёта.
-      const [o, r, u, p, c, a, d, pur] = await Promise.all([
+      const [o, r, u, p, c, a, d, pur, h] = await Promise.all([
         fetchAdminOverview(since), fetchClientReport(since),
         fetchUsersReport(since), fetchProblems(since), fetchCrmOverview(since),
         fetchActiveNow(), fetchDailySpend(PERIODS[periodIdx].days || 90), fetchPurchases(since),
+        fetchAccountsHealth(),
       ])
       setOverview(o); setReport(r); setUsers(u); setProblems(p); setCrm(c)
-      setActive(a); setDaily(d); setPurchases(pur); setDenied(false)
+      setActive(a); setDaily(d); setPurchases(pur); setHealth(h); setDenied(false)
     } catch (e) {
       // 403 — не ошибка сборки, а честный отказ: показываем это отдельно, иначе
       // оператор будет думать, что страница сломалась.
@@ -138,7 +143,7 @@ export function AdminStatsPage() {
       />
 
       <div className="mb-4 flex flex-wrap items-center gap-3">
-        <Segmented options={['Панель', 'Сейчас', 'По дням', 'Пользователи', 'Покупки', 'Цены', 'Проблемы', 'CRM', 'Отчёт', 'API']} value={tab} onChange={setTab} />
+        <Segmented options={['Панель', 'Сейчас', 'По дням', 'Пользователи', 'Покупки', 'Цены', 'Проблемы', 'CRM', 'Отчёт', 'Мониторинг', 'Роли', 'API']} value={tab} onChange={setTab} />
         <Segmented options={PERIODS.map((p) => p.label)} value={periodIdx} onChange={setPeriodIdx} size="sm" />
       </div>
 
@@ -162,6 +167,11 @@ export function AdminStatsPage() {
         <CrmTab crm={crm} />
       ) : tab === 8 ? (
         <ReportTab report={report} onExport={exportCsv} users={users?.rows || []} since={since} />
+      ) : tab === 9 ? (
+        <MonitoringTab health={health} active={active} daily={daily} />
+      ) : tab === 10 ? (
+        /* §10.4: управление ролями доступа — из sudo-админки (создание/права/блоки). */
+        <RolesPage />
       ) : (
         <ApiDocsTab />
       )}
@@ -370,14 +380,21 @@ function UsersTab({ report, onReload }: { report: UsersReport | null; onReload: 
   // модули конкретному человеку, не уходя со страницы.
   const [catalog, setCatalog] = useState<{ key: string; title: string }[]>([])
   const [modDraft, setModDraft] = useState<Record<string, string[] | 'all'>>({})
+  // §10.4: доступные роли — чтобы назначать роль юзеру прямо из админки (раз редактор
+  // ролей теперь здесь же, логично и раздавать их отсюда).
+  const [roles, setRoles] = useState<{ id: string; name: string }[]>([])
   useEffect(() => {
     void fetchSubscription().then((d) => setCatalog(d.items.map((i) => ({ key: i.key, title: i.title })))).catch(() => {})
+    void fetchRoles().then((rs) => setRoles(rs.map((r) => ({ id: r.id, name: r.name })))).catch(() => {})
   }, [])
 
   const openUser = (r: UserRow) => {
     const willOpen = open !== r.userId
     setOpen(willOpen ? r.userId : null)
-    if (willOpen && !modDraft[r.userId]) {
+    // При КАЖДОМ открытии переинициализируем черновик доступа из серверной правды.
+    // Иначе брошенный (несохранённый) черновик прошлого открытия переживал reload и мог
+    // перетереть текущий доступ при «Применить»: показывал устаревшие галочки как реальные.
+    if (willOpen) {
       setModDraft((d) => ({ ...d, [r.userId]: r.subscription?.all ? 'all' : (r.subscription?.keys ?? []) }))
     }
   }
@@ -460,6 +477,19 @@ function UsersTab({ report, onReload }: { report: UsersReport | null; onReload: 
     } finally { setBusy(null) }
   }
 
+  // §10.4: назначить/снять роль юзеру (мульти-роль). Тоггл добавляет/убирает id.
+  const toggleRole = async (userId: string, current: string[], roleId: string) => {
+    const next = current.includes(roleId) ? current.filter((r) => r !== roleId) : [...current, roleId]
+    setBusy(userId)
+    try {
+      await updateUser(userId, { roleIds: next })
+      pushToast({ type: 'success', title: 'Роли обновлены' })
+      onReload()
+    } catch (e) {
+      pushToast({ type: 'error', title: 'Не удалось изменить роли', desc: e instanceof Error ? e.message : '' })
+    } finally { setBusy(null) }
+  }
+
   return (
     <Card className="p-4">
       <div className="mb-3 flex flex-wrap items-center gap-3">
@@ -515,6 +545,9 @@ function UsersTab({ report, onReload }: { report: UsersReport | null; onReload: 
                         {/* §10.4: суб-юзер — показываем, под каким админом он вложен. */}
                         {!!r.parentId && <span className="block truncate text-[11px] text-iris-300">↳ суб-юзер · под {r.parentName || r.parentId}</span>}
                       </span>
+                      {/* §10.4: роль(и) юзера — читаемым именем сбоку. */}
+                      {real && r.roleName && <span className="shrink-0 rounded-md bg-iris-500/12 px-1.5 py-0.5 text-[10px] font-bold text-iris-300">{r.roleName}</span>}
+                      {real && !r.roleName && <span className="shrink-0 rounded-md bg-white/8 px-1.5 py-0.5 text-[10px] font-bold text-muted">без роли</span>}
                       {!r.active && real && <span className="rounded-md bg-white/8 px-1.5 py-0.5 text-[10px] font-bold text-muted">отключён</span>}
                     </div>
                   </td>
@@ -524,7 +557,11 @@ function UsersTab({ report, onReload }: { report: UsersReport | null; onReload: 
                   <td className="py-2 pr-3 text-right tabular-nums text-amber-300">{r.spent ? fmtCoins(r.spent) : '—'}</td>
                   <td className="py-2 pr-3 text-right">
                     <div className="flex items-center justify-end gap-1.5">
-                      <span className="tabular-nums text-fg">{r.coins ? fmtCoins(r.coins) : '—'}</span>
+                      <span className="tabular-nums text-fg">
+                        {r.coins ? fmtCoins(r.coins) : '—'}
+                        {/* §10.4: баланс «в долларах» — эквивалент по курсу пакетов. */}
+                        {usdEq(r.coins, report.coinUsd) && <span className="ml-1 text-[10px] text-muted">{usdEq(r.coins, report.coinUsd)}</span>}
+                      </span>
                       {real && (
                         <button
                           onClick={(e) => { e.stopPropagation(); void topUp(r.userId, r.email) }}
@@ -597,6 +634,26 @@ function UsersTab({ report, onReload }: { report: UsersReport | null; onReload: 
                               {busy === r.userId ? <Loader2 size={13} className="animate-spin" /> : <Check size={13} />} Применить доступ
                             </button>
                           </div>
+                        </div>
+                      )}
+                      {/* §10.4: назначение ролей — раз редактор ролей теперь в админке,
+                          отсюда же их и раздаём. Клик по роли добавляет/убирает её у юзера. */}
+                      {real && !!roles.length && (
+                        <div className="mb-4 rounded-xl border border-line bg-elevated/50 p-3">
+                          <div className="mb-2 text-[11px] font-bold uppercase tracking-wide text-muted">Роли доступа</div>
+                          <div className="flex flex-wrap gap-1.5">
+                            {roles.map((role) => {
+                              const on = (r.roleIds || []).includes(role.id)
+                              return (
+                                <button key={role.id} onClick={() => void toggleRole(r.userId, r.roleIds || [], role.id)} disabled={busy === r.userId}
+                                  className={cn('rounded-lg border px-2 py-1 text-xs transition-colors disabled:opacity-40',
+                                    on ? 'border-iris-500/50 bg-iris-500/10 text-iris-200' : 'border-line text-muted hover:border-iris-500/25')}>
+                                  {on ? '✓ ' : ''}{role.name}
+                                </button>
+                              )
+                            })}
+                          </div>
+                          <div className="mt-1.5 text-[10px] text-muted">Роли создаются на вкладке «Роли». Без ролей — доступа к разделам нет.</div>
                         </div>
                       )}
                       {/* §10.4: вложенность — под каким админом этот юзер. Меняем сразу по выбору;
@@ -819,8 +876,14 @@ function PaymentsExplorer() {
   const fromTs = from ? new Date(from + 'T00:00:00').getTime() : 0
   const toTs = to ? new Date(to + 'T23:59:59.999').getTime() : 0
 
-  useEffect(() => { setPage(0) }, [from, to, kind, q])
+  // Смена фильтра должна вернуть на 1-ю страницу БЕЗ лишнего запроса на старом offset
+  // (раньше было два fetch: пустой на старой странице → мигание → правильный). Сравниваем
+  // сигнатуру фильтров: при их изменении сбрасываем page и не грузим на этом проходе.
+  const sig = `${fromTs}|${toTs}|${kind}|${q.trim()}`
+  const lastSig = useRef(sig)
   useEffect(() => {
+    if (lastSig.current !== sig && page !== 0) { lastSig.current = sig; setPage(0); return }
+    lastSig.current = sig
     let alive = true
     setLoading(true)
     fetchPayments({ from: fromTs, to: toTs, kind, q: q.trim(), limit: LIMIT, offset: page * LIMIT })
@@ -828,7 +891,7 @@ function PaymentsExplorer() {
       .catch(() => { if (alive) setData(null) })
       .finally(() => { if (alive) setLoading(false) })
     return () => { alive = false }
-  }, [fromTs, toTs, kind, q, page])
+  }, [sig, fromTs, toTs, kind, q, page])
 
   const fmtDt = (ts: number) => ts ? new Date(ts).toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : '—'
   const s = data?.summary
@@ -877,6 +940,10 @@ function PaymentsExplorer() {
             <span className={cn('font-semibold tabular-nums', r.kind === 'plan' ? 'text-fg' : 'text-spark-300')}>
               {r.kind === 'plan' ? `$${r.amount_fiat}` : `+${fmtCoins(r.coins ?? 0)} ⚡`}
             </span>
+            {/* §10.4: для пополнений — $-эквивалент по курсу пакетов (реальный $ будет с платёжкой). */}
+            {r.kind !== 'plan' && usdEq(r.coins, data?.coinUsd) && (
+              <span className="tabular-nums text-[10px] text-muted">{usdEq(r.coins, data?.coinUsd)}</span>
+            )}
             {!!r.reason && <span className="min-w-0 flex-1 truncate text-muted">{r.reason}</span>}
             <span className="ml-auto shrink-0 tabular-nums text-faint">{fmtDt(r.ts)}</span>
           </div>
@@ -1197,7 +1264,9 @@ function PricesTab() {
     setDraft(d)
     setExtra({
       annualDiscount: String(Math.round(p.annualDiscount * 100)),
-      tokenUsd: p.tokenUsd == null ? '' : String(p.tokenUsd),
+      // §10.1: авто-цена — поле ПУСТОЕ (пусто = «считать из модели»), рассчитанное
+      // значение показываем плейсхолдером. Ручной override — показываем числом.
+      tokenUsd: p.tokenUsdAuto ? '' : (p.tokenUsd == null ? '' : String(p.tokenUsd)),
       imageMultiplier: String(p.imageMultiplier),
     })
   }
@@ -1208,7 +1277,7 @@ function PricesTab() {
   const dirty =
     prices.modules.some((m) => draft[m.key] && (draft[m.key].month !== String(m.month) || draft[m.key].action !== String(m.action))) ||
     extra.annualDiscount !== String(Math.round(prices.annualDiscount * 100)) ||
-    extra.tokenUsd !== (prices.tokenUsd == null ? '' : String(prices.tokenUsd)) ||
+    extra.tokenUsd !== (prices.tokenUsdAuto ? '' : (prices.tokenUsd == null ? '' : String(prices.tokenUsd))) ||
     extra.imageMultiplier !== String(prices.imageMultiplier)
 
   const save = async () => {
@@ -1220,8 +1289,10 @@ function PricesTab() {
         if (d) modules[m.key] = { month: d.month, action: d.action }
       }
       const patch: PricePatch = { modules }
-      const pct = Number(extra.annualDiscount)
-      if (Number.isFinite(pct)) patch.annualDiscount = Math.max(0, Math.min(90, pct)) / 100
+      // Пустое поле = вернуть заводскую скидку: шлём '' (бэкенд удалит override), а не 0 —
+      // иначе Number('')===0 записал бы явные 0% поверх дефолта (как tokenUsd/картинка).
+      if (extra.annualDiscount.trim() === '') patch.annualDiscount = ''
+      else { const pct = Number(extra.annualDiscount); if (Number.isFinite(pct)) patch.annualDiscount = Math.max(0, Math.min(90, pct)) / 100 }
       patch.tokenUsd = extra.tokenUsd
       patch.imageMultiplier = extra.imageMultiplier
       const fresh = await savePrices(patch)
@@ -1257,16 +1328,16 @@ function PricesTab() {
                     <span className="inline-flex items-center gap-1.5">
                       {m.overridden.month && <span className="rounded bg-amber-500/15 px-1 text-[9px] font-bold text-amber-300">изм.</span>}
                       <input value={draft[m.key]?.month ?? ''} inputMode="decimal"
-                        onChange={(e) => setDraft((d) => ({ ...d, [m.key]: { ...d[m.key], month: e.target.value } }))}
-                        className="input h-8 w-20 text-right tabular-nums" />
+                        onChange={(e) => setDraft((d) => ({ ...d, [m.key]: { ...d[m.key], month: cleanPrice(e.target.value, 100000) } }))}
+                        className="input h-8 w-24 text-right tabular-nums" />
                     </span>
                   </td>
                   <td className="py-1.5 text-right">
                     <span className="inline-flex items-center gap-1.5">
                       {m.overridden.action && <span className="rounded bg-amber-500/15 px-1 text-[9px] font-bold text-amber-300">изм.</span>}
                       <input value={draft[m.key]?.action ?? ''} inputMode="decimal"
-                        onChange={(e) => setDraft((d) => ({ ...d, [m.key]: { ...d[m.key], action: e.target.value } }))}
-                        className="input h-8 w-20 text-right tabular-nums" />
+                        onChange={(e) => setDraft((d) => ({ ...d, [m.key]: { ...d[m.key], action: cleanPrice(e.target.value, 1000) } }))}
+                        className="input h-8 w-24 text-right tabular-nums" />
                     </span>
                   </td>
                 </tr>
@@ -1280,26 +1351,38 @@ function PricesTab() {
         <div className="mb-3 text-xs font-bold uppercase tracking-wide text-muted">Общие настройки</div>
         <div className="grid gap-4 sm:grid-cols-3">
           <label className="block">
-            <span className="text-xs text-muted">Скидка за год, %</span>
-            <input value={extra.annualDiscount} onChange={(e) => setExtra((x) => ({ ...x, annualDiscount: e.target.value }))}
+            <span className="text-xs text-muted">Скидка за год, % <span className="text-faint">(0–90)</span></span>
+            {/* Скидка не может быть больше 90% — тот же санитайзер cleanPrice, что и у цен. */}
+            <input value={extra.annualDiscount}
+              onChange={(e) => setExtra((x) => ({ ...x, annualDiscount: cleanPrice(e.target.value, 90) }))}
               className="input mt-1 h-9 w-full tabular-nums" inputMode="numeric" placeholder="20" />
           </label>
           <label className="block">
             <span className="text-xs text-muted">Цена токена, $ за 1 токен</span>
-            <input value={extra.tokenUsd} onChange={(e) => setExtra((x) => ({ ...x, tokenUsd: e.target.value }))}
-              className="input mt-1 h-9 w-full tabular-nums" inputMode="decimal" placeholder="не задано (ждёт Николая)" />
+            <input value={extra.tokenUsd} onChange={(e) => setExtra((x) => ({ ...x, tokenUsd: cleanPrice(e.target.value, 1) }))}
+              className="input mt-1 h-9 w-full tabular-nums" inputMode="decimal"
+              placeholder={prices.tokenUsdComputed != null ? `авто: ${fmtUsd(prices.tokenUsdComputed)}` : 'авто'} />
+            <span className="mt-1 block text-[10px] text-muted">
+              {extra.tokenUsd.trim()
+                ? 'Задано вручную. Очистите поле — вернётся авто-расчёт.'
+                : <>Считается из модели <b className="text-fg">{prices.tokenUsdModel || '—'}</b> ≈ <b className="text-fg">${fmtUsd(prices.tokenUsdComputed)}</b>/токен. Впишите своё, чтобы переопределить.</>}
+            </span>
           </label>
           <label className="block">
             <span className="text-xs text-muted">Картинка дороже текста, ×</span>
-            <input value={extra.imageMultiplier} onChange={(e) => setExtra((x) => ({ ...x, imageMultiplier: e.target.value }))}
+            <input value={extra.imageMultiplier} onChange={(e) => setExtra((x) => ({ ...x, imageMultiplier: cleanPrice(e.target.value, 100) }))}
               className="input mt-1 h-9 w-full tabular-nums" inputMode="decimal" placeholder="4" />
           </label>
         </div>
         <p className="mt-3 text-[11px] text-muted">
-          Цена токена и множитель картинки — из §10 звонка. Пока цена токена не задана, доллары из токенов не считаются;
-          проставьте число, когда Николай пришлёт.
+          Цена токена — <b className="text-fg">себестоимость у OpenAI</b>, платформа считает её сама из прайса текущей модели
+          (обновляется при смене модели). Заполните поле только чтобы переопределить вручную; пусто = авто-расчёт.
+          Множитель картинки (×N) — наценка на анализ изображения поверх токенов.
         </p>
       </Card>
+
+      {/* §10.4/§10.6: готовые наборы (что продаём) — собираются и правятся из админки. */}
+      <BundlesEditor modules={prices.modules} currency="$" />
 
       <div className="sticky bottom-4 flex items-center gap-3 rounded-2xl border border-line bg-surface/95 px-4 py-3 backdrop-blur-xl">
         <span className="text-xs text-muted">Изменения применяются сразу к витрине, кабинету и счёту клиенту.</span>

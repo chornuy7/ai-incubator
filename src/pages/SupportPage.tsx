@@ -54,7 +54,7 @@ export function SupportPage() {
     <div>
       <PageHeader
         title="Поддержка"
-        subtitle="Тикеты и связь с командой AI Incubator"
+        subtitle="Тикеты и связь с командой Murmex"
         icon={<LifeBuoy size={22} />}
         actions={<>
           <HelpButton topic="support" className="h-10 w-10" />

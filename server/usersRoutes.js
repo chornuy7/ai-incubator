@@ -52,9 +52,21 @@ usersRouter.post('/login', async (req, res) => {
  * логиним (возвращаем токен), чтобы человек попал в кабинет и ждал выдачи, а не входил
  * повторно. Пароль/почта проверяются в createUser (scrypt-хэш, уникальность e-mail).
  */
+/** §10.2: включена ли капча + site-key — фронт спрашивает, показывать ли виджет. */
+usersRouter.get('/auth-config', async (_req, res) => {
+  const { turnstileConfig } = await import('./lib/turnstile.js')
+  res.json({ ok: true, captcha: turnstileConfig() })
+})
+
 usersRouter.post('/register', async (req, res) => {
   try {
-    const { email, password, name } = req.body ?? {}
+    const { email, password, name, captchaToken } = req.body ?? {}
+    // §10.2: капча (если настроена) — до создания юзера. Не настроена → verifyTurnstile=true.
+    const { verifyTurnstile } = await import('./lib/turnstile.js')
+    const ip = req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.socket?.remoteAddress
+    if (!(await verifyTurnstile(captchaToken, ip))) {
+      return res.status(400).json({ ok: false, error: 'Проверка «я не робот» не пройдена — обновите страницу и попробуйте снова.' })
+    }
     const user = await createUser({ email, password, name, roleIds: [], active: true })
     await appendAudit({ action: 'user.register', module: 'auth', initiator: user.email, reason: `Регистрация: ${user.name}`, meta: { userId: user.id } })
     const pub = publicUser(user)
