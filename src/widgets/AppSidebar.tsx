@@ -1,4 +1,4 @@
-import { NavLink, useLocation } from 'react-router-dom'
+import { NavLink, Link, useLocation } from 'react-router-dom'
 import { PanelLeftClose, PanelLeftOpen, X, LogOut } from 'lucide-react'
 import { ROUTES, GROUP_LABELS, type RouteDef } from '@/shared/config/routes'
 import { useApp } from '@/mocks/store'
@@ -11,7 +11,9 @@ const GROUP_ORDER: RouteDef['group'][] = ['main', 'modules', 'parsing', 'account
 
 function Logo({ collapsed }: { collapsed: boolean }) {
   return (
-    <div className="flex items-center gap-2.5">
+    // Клик по логотипу ведёт на главную (лендинг), как на большинстве сайтов —
+    // привычный «домой». Гость видит лендинг, авторизованный уходит на /panel.
+    <Link to="/" className="flex items-center gap-2.5 rounded-xl transition-opacity hover:opacity-80" title="На главную">
       <div className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-spark-gradient shadow-[0_4px_16px_-4px_rgba(14,196,100,0.6)]">
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
           <path d="M12 3c3.6 0 6.2 3.7 6.2 7.8 0 3.4-2.8 6.2-6.2 6.2s-6.2-2.8-6.2-6.2C5.8 6.7 8.4 3 12 3Z" stroke="#04150c" strokeWidth="1.8" />
@@ -20,11 +22,11 @@ function Logo({ collapsed }: { collapsed: boolean }) {
       </div>
       {!collapsed && (
         <div className="min-w-0 leading-tight">
-          <div className="font-display text-[15px] font-bold text-fg">AI Incubator</div>
+          <div className="font-display text-[15px] font-bold text-fg">Murmex</div>
           <div className="text-[11px] font-medium text-muted">панель управления</div>
         </div>
       )}
-    </div>
+    </Link>
   )
 }
 

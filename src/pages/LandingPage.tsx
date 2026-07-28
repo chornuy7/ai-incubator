@@ -239,7 +239,7 @@ export function LandingPage() {
 
       {/* ── Сравнение ────────────────────────────────────────── */}
       <section className="mx-auto max-w-6xl px-5 py-16">
-        <SectionHead eyebrow="Сравнение" title="Почему выбирают AI Incubator" desc="Наши возможности против типовых альтернатив на рынке." center />
+        <SectionHead eyebrow="Сравнение" title="Почему выбирают Murmex" desc="Наши возможности против типовых альтернатив на рынке." center />
         <Comparison />
       </section>
 
@@ -253,7 +253,7 @@ export function LandingPage() {
 
       {/* ── Истории успеха ───────────────────────────────────── */}
       <section className="mx-auto max-w-6xl px-5 py-16">
-        <SectionHead eyebrow="Кейсы" title="Реальные истории успеха" desc="Как бизнесы используют AI Incubator для роста в Telegram (демо-примеры)." center />
+        <SectionHead eyebrow="Кейсы" title="Реальные истории успеха" desc="Как бизнесы используют Murmex для роста в Telegram (демо-примеры)." center />
         {/* §10.6: кейсы переработаны — фокус на РЕЗУЛЬТАТЕ. Метрика вынесена вверх крупно
             (это и есть крючок), отрасль — иконкой, срок — бейджем. */}
         <div className="mt-8 grid gap-5 md:grid-cols-2">
@@ -291,7 +291,7 @@ export function LandingPage() {
       </section>
 
       <footer className="mx-auto max-w-6xl px-5 py-8 text-xs text-muted">
-        AI Incubator — платформа управления Telegram-профилями.
+        Murmex — платформа управления Telegram-профилями.
       </footer>
     </div>
   )
@@ -305,7 +305,7 @@ function Header({ start }: { start: () => void }) {
       <div className="mx-auto flex max-w-6xl items-center gap-3 px-5 py-3.5">
         <div className="grid h-9 w-9 place-items-center rounded-xl bg-spark-gradient text-[#04150c]"><Zap size={18} fill="currentColor" /></div>
         <div>
-          <div className="font-display text-sm font-bold leading-tight">AI Incubator</div>
+          <div className="font-display text-sm font-bold leading-tight">Murmex</div>
           <div className="text-[11px] leading-tight text-muted">управление Telegram-профилями</div>
         </div>
         <nav className="ml-auto hidden items-center gap-6 text-sm text-muted md:flex">
@@ -606,7 +606,7 @@ function Comparison() {
       : v === 'partial' ? <Minus size={16} className="mx-auto text-amber-400" />
         : <X size={16} className="mx-auto text-faint" />
   const cols: { key: 'us' | 'parsers' | 'mailers' | 'neuro'; label: string; sub?: string }[] = [
-    { key: 'us', label: 'AI Incubator', sub: 'лучший выбор' },
+    { key: 'us', label: 'Murmex', sub: 'лучший выбор' },
     { key: 'parsers', label: 'Парсеры', sub: 'аналитика каналов' },
     { key: 'mailers', label: 'Рассыльщики', sub: 'ЛС-софт' },
     { key: 'neuro', label: 'Нейросервисы', sub: 'комментинг' },

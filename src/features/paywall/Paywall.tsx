@@ -20,7 +20,7 @@ export function PaywallBanner() {
       </div>
       <div className="flex-1">
         <div className="font-display text-lg font-bold text-fg">Подписка не активна</div>
-        <div className="text-sm text-muted">Оформите тариф, чтобы разблокировать все модули и лимиты AI Incubator.</div>
+        <div className="text-sm text-muted">Оформите тариф, чтобы разблокировать все модули и лимиты Murmex.</div>
       </div>
       <div className="flex gap-2">
         <button onClick={() => setUserState('with-data')} className="btn-ghost h-10">Демо-доступ</button>

@@ -43,7 +43,7 @@ function AdminShell() {
             <Zap size={18} fill="currentColor" />
           </div>
           <div className="min-w-0">
-            <div className="font-display text-sm font-bold leading-tight">AI Incubator · Админ-панель</div>
+            <div className="font-display text-sm font-bold leading-tight">Murmex · Админ-панель</div>
             <div className="truncate text-[11px] leading-tight text-muted">{sessionUser?.email}</div>
           </div>
           <Link to="/panel" className="btn-ghost ml-auto h-9 px-3 text-sm">В панель</Link>

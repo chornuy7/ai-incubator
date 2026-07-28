@@ -44,7 +44,7 @@ export function ModuleLandingPage() {
             <div className="grid h-9 w-9 place-items-center rounded-xl bg-spark-gradient text-[#04150c]">
               <Zap size={18} fill="currentColor" />
             </div>
-            <div className="font-display text-sm font-bold leading-tight">AI Incubator</div>
+            <div className="font-display text-sm font-bold leading-tight">Murmex</div>
           </Link>
           <Link to="/#tarify" className="btn-ghost ml-auto h-9 px-4 text-sm"><ArrowLeft size={15} /> Все тарифы</Link>
           <button onClick={start} className="btn-primary h-9 px-4 text-sm">Войти <ArrowRight size={15} /></button>
@@ -131,7 +131,7 @@ export function ModuleLandingPage() {
       </section>
 
       <footer className="mx-auto max-w-6xl px-5 py-8 text-xs text-muted">
-        <Link to="/" className="hover:text-fg">← AI Incubator — все модули и тарифы</Link>
+        <Link to="/" className="hover:text-fg">← Murmex — все модули и тарифы</Link>
       </footer>
     </div>
   )

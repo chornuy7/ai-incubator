@@ -64,7 +64,7 @@ export function GuestLogin() {
             </svg>
           </div>
           <div>
-            <div className="font-display text-xl font-bold text-fg">AI Incubator</div>
+            <div className="font-display text-xl font-bold text-fg">Murmex</div>
             <div className="text-xs text-muted">Платформа автоматизации Telegram</div>
           </div>
         </div>
@@ -87,7 +87,7 @@ export function GuestLogin() {
           </div>
         </div>
 
-        <div className="text-xs text-faint">© 2026 AI Incubator · демо-версия</div>
+        <div className="text-xs text-faint">© 2026 Murmex · демо-версия</div>
         <div className="pointer-events-none absolute -right-20 -top-20 h-80 w-80 rounded-full bg-spark-500/20 blur-3xl" />
         <div className="pointer-events-none absolute -bottom-24 right-10 h-72 w-72 rounded-full bg-iris-500/20 blur-3xl" />
       </div>
@@ -99,7 +99,7 @@ export function GuestLogin() {
             <div className="grid h-10 w-10 place-items-center rounded-xl bg-spark-gradient">
               <Zap size={20} className="text-[#04150c]" fill="currentColor" />
             </div>
-            <span className="font-display text-lg font-bold text-fg">AI Incubator</span>
+            <span className="font-display text-lg font-bold text-fg">Murmex</span>
           </div>
 
           <h2 className="font-display text-2xl font-bold text-fg">{isReg ? 'Регистрация' : 'Вход в панель'}</h2>
