@@ -42,6 +42,16 @@ const STATUS_RU: Record<string, string> = {
 
 const fmt = (n: number) => new Intl.NumberFormat('ru-RU').format(Math.round(n))
 const fmtDate = (ts: number) => new Date(ts).toLocaleDateString('ru-RU')
+/** Санитайзер цены: только цифры и одна точка, значение капим (иначе поле принимало
+ *  «221231…» и цифры не влезали). Разрешаем незавершённый ввод «12.» / «12.0». */
+const cleanPrice = (v: string, max: number): string => {
+  let s = v.replace(/[^\d.]/g, '')
+  const i = s.indexOf('.')
+  if (i !== -1) s = s.slice(0, i + 1) + s.slice(i + 1).replace(/\./g, '') // только одна точка
+  const n = Number(s)
+  return Number.isFinite(n) && n > max ? String(max) : s
+}
+
 /** §10.1: цена токена мизерная (2.6e-7) — показываем обычным десятичным, без 'e-7'. */
 const fmtUsd = (n: number | null | undefined) => {
   if (n == null || !Number.isFinite(n)) return '—'
@@ -1357,16 +1367,16 @@ function PricesTab() {
                     <span className="inline-flex items-center gap-1.5">
                       {m.overridden.month && <span className="rounded bg-amber-500/15 px-1 text-[9px] font-bold text-amber-300">изм.</span>}
                       <input value={draft[m.key]?.month ?? ''} inputMode="decimal"
-                        onChange={(e) => setDraft((d) => ({ ...d, [m.key]: { ...d[m.key], month: e.target.value } }))}
-                        className="input h-8 w-20 text-right tabular-nums" />
+                        onChange={(e) => setDraft((d) => ({ ...d, [m.key]: { ...d[m.key], month: cleanPrice(e.target.value, 100000) } }))}
+                        className="input h-8 w-24 text-right tabular-nums" />
                     </span>
                   </td>
                   <td className="py-1.5 text-right">
                     <span className="inline-flex items-center gap-1.5">
                       {m.overridden.action && <span className="rounded bg-amber-500/15 px-1 text-[9px] font-bold text-amber-300">изм.</span>}
                       <input value={draft[m.key]?.action ?? ''} inputMode="decimal"
-                        onChange={(e) => setDraft((d) => ({ ...d, [m.key]: { ...d[m.key], action: e.target.value } }))}
-                        className="input h-8 w-20 text-right tabular-nums" />
+                        onChange={(e) => setDraft((d) => ({ ...d, [m.key]: { ...d[m.key], action: cleanPrice(e.target.value, 1000) } }))}
+                        className="input h-8 w-24 text-right tabular-nums" />
                     </span>
                   </td>
                 </tr>
@@ -1380,8 +1390,15 @@ function PricesTab() {
         <div className="mb-3 text-xs font-bold uppercase tracking-wide text-muted">Общие настройки</div>
         <div className="grid gap-4 sm:grid-cols-3">
           <label className="block">
-            <span className="text-xs text-muted">Скидка за год, %</span>
-            <input value={extra.annualDiscount} onChange={(e) => setExtra((x) => ({ ...x, annualDiscount: e.target.value }))}
+            <span className="text-xs text-muted">Скидка за год, % <span className="text-faint">(0–90)</span></span>
+            {/* Скидка не может быть больше 100% — раньше поле принимало хоть миллиард.
+                Оставляем только цифры и капим 0–90 прямо на вводе. */}
+            <input value={extra.annualDiscount}
+              onChange={(e) => {
+                const digits = e.target.value.replace(/\D/g, '')
+                const capped = digits === '' ? '' : String(Math.min(90, Number(digits)))
+                setExtra((x) => ({ ...x, annualDiscount: capped }))
+              }}
               className="input mt-1 h-9 w-full tabular-nums" inputMode="numeric" placeholder="20" />
           </label>
           <label className="block">
@@ -1397,7 +1414,7 @@ function PricesTab() {
           </label>
           <label className="block">
             <span className="text-xs text-muted">Картинка дороже текста, ×</span>
-            <input value={extra.imageMultiplier} onChange={(e) => setExtra((x) => ({ ...x, imageMultiplier: e.target.value }))}
+            <input value={extra.imageMultiplier} onChange={(e) => setExtra((x) => ({ ...x, imageMultiplier: cleanPrice(e.target.value, 100) }))}
               className="input mt-1 h-9 w-full tabular-nums" inputMode="decimal" placeholder="4" />
           </label>
         </div>
