@@ -568,7 +568,17 @@ app.get('/api/admin/payments', async (req, res) => {
       name: nameOf.get(r.user_id) || (r.user_id === '__default' ? 'Системный кошелёк' : r.user_id),
       email: emailOf.get(r.user_id) || '',
     }))
-    res.json({ ok: true, payments: { total, items, summary, limit: opts.limit, offset: opts.offset } })
+    // §10.4: курс монета→$ для показа стоимости пополнений в долларах. Пополнения в
+    // журнале хранят только монеты (реальный $ появится с платёжкой), поэтому даём
+    // ЭКВИВАЛЕНТ по прайсу пакетов — цена монеты у самого выгодного пакета.
+    let coinUsd = 0
+    try {
+      const { effectivePrices } = await import('./priceStore.js')
+      const packs = (await effectivePrices()).coinPacks || []
+      const rates = packs.filter((p) => p.coins > 0 && p.price > 0).map((p) => p.price / p.coins)
+      if (rates.length) coinUsd = Math.min(...rates) // лучший (оптовый) курс — не завышаем оценку
+    } catch { /* нет прайса — просто не покажем $ */ }
+    res.json({ ok: true, payments: { total, items, summary, limit: opts.limit, offset: opts.offset, coinUsd } })
   } catch (err) { res.status(500).json({ ok: false, error: err instanceof Error ? err.message : 'Ошибка' }) }
 })
 

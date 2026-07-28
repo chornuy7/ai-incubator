@@ -187,6 +187,8 @@ export interface PaymentsResult {
   total: number; limit: number; offset: number
   items: PaymentRow[]
   summary: { coinsTotal: number; coinsCount: number; planTotal: number; planCount: number }
+  /** §10.4: курс монета→$ (для показа $-эквивалента пополнений). 0 = нет прайса. */
+  coinUsd?: number
 }
 export interface PaymentsQuery { from?: number; to?: number; userId?: string; kind?: string; q?: string; limit?: number; offset?: number }
 

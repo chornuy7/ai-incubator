@@ -898,6 +898,10 @@ function PaymentsExplorer() {
             <span className={cn('font-semibold tabular-nums', r.kind === 'plan' ? 'text-fg' : 'text-spark-300')}>
               {r.kind === 'plan' ? `$${r.amount_fiat}` : `+${fmtCoins(r.coins ?? 0)} ⚡`}
             </span>
+            {/* §10.4: для пополнений — $-эквивалент по курсу пакетов (реальный $ будет с платёжкой). */}
+            {r.kind !== 'plan' && !!data?.coinUsd && !!r.coins && (
+              <span className="tabular-nums text-[10px] text-muted">≈ ${(r.coins * data.coinUsd).toFixed(2)}</span>
+            )}
             {!!r.reason && <span className="min-w-0 flex-1 truncate text-muted">{r.reason}</span>}
             <span className="ml-auto shrink-0 tabular-nums text-faint">{fmtDt(r.ts)}</span>
           </div>
