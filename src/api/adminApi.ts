@@ -79,6 +79,8 @@ export interface UsersReport {
   since: number
   rows: UserRow[]
   totals: { coins: number; tasks: number; actions: number; spent: number; tokens: number }
+  /** §10.4: курс монета→$ для показа баланса юзера в долларах. 0 = нет прайса. */
+  coinUsd?: number
 }
 
 /** §5.3: где сейчас болит. */

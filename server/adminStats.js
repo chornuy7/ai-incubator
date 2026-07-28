@@ -608,7 +608,17 @@ export async function usersReport(opts = {}) {
     tokens: acc.tokens + r.tokens,
   }), { coins: 0, tasks: 0, actions: 0, spent: 0, tokens: 0 })
 
-  return { since, rows, totals }
+  // §10.4: курс монета→$ — чтобы на карточке показать баланс «в долларах» (из звонка:
+  // «сколько денег на счету именно в долларах»). Берём лучший курс из пакетов монет.
+  let coinUsd = 0
+  try {
+    const { effectivePrices } = await import('./priceStore.js')
+    const packs = (await effectivePrices()).coinPacks || []
+    const rates = packs.filter((p) => p.coins > 0 && p.price > 0).map((p) => p.price / p.coins)
+    if (rates.length) coinUsd = Math.min(...rates)
+  } catch { /* нет прайса — $ не покажем */ }
+
+  return { since, rows, totals, coinUsd }
 }
 
 /**

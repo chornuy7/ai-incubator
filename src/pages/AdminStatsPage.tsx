@@ -545,7 +545,11 @@ function UsersTab({ report, onReload }: { report: UsersReport | null; onReload: 
                   <td className="py-2 pr-3 text-right tabular-nums text-amber-300">{r.spent ? fmtCoins(r.spent) : '—'}</td>
                   <td className="py-2 pr-3 text-right">
                     <div className="flex items-center justify-end gap-1.5">
-                      <span className="tabular-nums text-fg">{r.coins ? fmtCoins(r.coins) : '—'}</span>
+                      <span className="tabular-nums text-fg">
+                        {r.coins ? fmtCoins(r.coins) : '—'}
+                        {/* §10.4: баланс «в долларах» — эквивалент по курсу пакетов. */}
+                        {!!r.coins && !!report.coinUsd && <span className="ml-1 text-[10px] text-muted">≈ ${(r.coins * report.coinUsd).toFixed(2)}</span>}
+                      </span>
                       {real && (
                         <button
                           onClick={(e) => { e.stopPropagation(); void topUp(r.userId, r.email) }}
