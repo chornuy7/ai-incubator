@@ -42,8 +42,9 @@ export function tokensToCoins(tokens) {
  * Записать расход. Best-effort: журнал не должен ронять генерацию — если запись
  * не удалась, работа модуля продолжается, а мы теряем строку статистики, но не задачу.
  * @param {{module?:string, accountId?:string, taskId?:string, campaignId?:string,
- *          tokens?:number, promptTokens?:number, completionTokens?:number, model?:string,
- *          coinMultiplier?:number}} entry
+ *          userId?:string, tokens?:number, promptTokens?:number, completionTokens?:number,
+ *          model?:string, coinMultiplier?:number}} entry
+ *   `userId` — чей кошелёк платит за расход (без него списывается с общего).
  *   `coinMultiplier` (§10.5): множитель монет за расход — для анализа изображений
  *   (vision дороже текста, заказчик выставляет «картинка ×N» в админке). На токены
  *   не влияет: в журнале честное число токенов, дороже только пересчёт в монеты.
