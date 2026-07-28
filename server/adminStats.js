@@ -18,6 +18,7 @@ import { listActivity } from './accountActivity.js'
 import { readAudit } from './lib/auditLog.js'
 import { listUsers } from './users.js'
 import { listRoles } from './roles.js'
+import { normalizeStatus } from './lib/accountStatus.js'
 
 /** Округление денег — до ТЫСЯЧНЫХ, как считает биллинг (строка парсера 0.005). */
 const round3 = (v) => Math.round((Number(v) || 0) * 1000) / 1000
@@ -55,6 +56,59 @@ const ACTIVITY_OF_MODULE = {
  * Свод для админ-панели.
  * @param {{since?:number}} [opts] начало периода (по умолчанию — последние 30 дней)
  */
+/**
+ * §10.9: мониторинг здоровья аккаунтов для админки — сколько в работе, сколько
+ * отдыхают и сколько «падают», с ПРИЧИНОЙ по каждому проблемному. Владелец должен
+ * видеть не только «40 аккаунтов», а «3 в карантине после FloodWait, 1 забанен за спам».
+ *
+ * Раскладка статусов (accountStatus): healthy = active/warming (работают),
+ * idle = pause (стоят по команде), problem = floodwait/quarantine/spamblock/reauth/invalid.
+ */
+const PROBLEM_STATUSES = new Set(['floodwait', 'quarantine', 'spamblock', 'reauth', 'invalid'])
+const HEALTHY_STATUSES = new Set(['active', 'warming'])
+/** Человекочитаемая расшифровка статуса — для подписи в мониторинге. */
+const STATUS_LABEL = {
+  active: 'Активен', warming: 'Прогрев', pause: 'На паузе', floodwait: 'FloodWait',
+  quarantine: 'Карантин', spamblock: 'Спам-блок', reauth: 'Нужен вход', invalid: 'Невалиден',
+}
+
+export async function accountsHealth() {
+  const meta = await loadAllMeta().catch(() => ({}))
+  const activity = await listActivity().catch(() => ({}))
+  const out = {
+    total: 0, healthy: 0, idle: 0, problem: 0, resting: 0, tired: 0,
+    byStatus: {}, problems: [],
+  }
+  for (const [id, m] of Object.entries(meta)) {
+    if (m?.inTrash) continue
+    out.total += 1
+    const st = normalizeStatus(m?.status)
+    out.byStatus[st] = (out.byStatus[st] || 0) + 1
+    if (HEALTHY_STATUSES.has(st)) out.healthy += 1
+    else if (st === 'pause') out.idle += 1
+    else if (PROBLEM_STATUSES.has(st)) {
+      out.problem += 1
+      // Причина: statusReason/Code (почему упал) + до какого времени (FloodWait/карантин).
+      out.problems.push({
+        id,
+        name: m.name || m.username || m.phone || id,
+        phone: m.phone || '',
+        status: st,
+        statusLabel: STATUS_LABEL[st] || st,
+        reason: m.statusReason || m.statusCode || '',
+        since: Number(m.statusSince) || 0,
+        until: Number(m.statusUntil) || 0,
+      })
+    }
+    const a = activity[id]
+    if (a?.resting) out.resting += 1
+    else if (a && a.threshold > 0 && a.fatigue / a.threshold >= 0.7) out.tired += 1
+  }
+  // Самые «свежие» проблемы сверху — их разбирают первыми.
+  out.problems.sort((a, b) => b.since - a.since)
+  return out
+}
+
 export async function adminOverview(opts = {}) {
   const since = Number(opts.since) || Date.now() - 30 * DAY_MS
 

@@ -519,6 +519,15 @@ app.get('/api/admin/users-report', async (req, res) => {
   } catch (err) { res.status(500).json({ ok: false, error: err instanceof Error ? err.message : 'Ошибка' }) }
 })
 
+/** §10.9: здоровье аккаунтов — активные/на паузе/падающие + причина. Только админ. */
+app.get('/api/admin/accounts-health', async (req, res) => {
+  try {
+    if (!(await isAdminRequest(req))) return res.status(403).json({ ok: false, error: 'Мониторинг доступен только администратору' })
+    const { accountsHealth } = await import('./adminStats.js')
+    res.json({ ok: true, health: await accountsHealth() })
+  } catch (err) { res.status(500).json({ ok: false, error: err instanceof Error ? err.message : 'Ошибка' }) }
+})
+
 /** §5.3: что и сколько куплено — пополнения кошельков по людям. Только админ. */
 app.get('/api/admin/purchases', async (req, res) => {
   try {

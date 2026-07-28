@@ -134,6 +134,20 @@ export async function fetchCrmOverview(since?: number): Promise<CrmOverview> {
   return (await apiGet<{ ok: boolean; crm: CrmOverview }>(`/api/admin/crm${q}`)).crm
 }
 
+/** §10.9: здоровье аккаунтов — активные/на паузе/падающие + причина по каждому. */
+export interface AccountProblem {
+  id: string; name: string; phone: string; status: string; statusLabel: string
+  reason: string; since: number; until: number
+}
+export interface AccountsHealth {
+  total: number; healthy: number; idle: number; problem: number; resting: number; tired: number
+  byStatus: Record<string, number>
+  problems: AccountProblem[]
+}
+export async function fetchAccountsHealth(): Promise<AccountsHealth> {
+  return (await apiGet<{ ok: boolean; health: AccountsHealth }>('/api/admin/accounts-health')).health
+}
+
 export async function fetchUsersReport(since?: number): Promise<UsersReport> {
   const q = since ? `?since=${since}` : ''
   const data = await apiGet<{ ok: boolean; report: UsersReport }>(`/api/admin/users-report${q}`)

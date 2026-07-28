@@ -5,9 +5,9 @@ import { PageHeader, Card, Segmented, EmptyState } from '@/shared/ui'
 import { useApp } from '@/mocks/store'
 import {
   fetchAdminOverview, fetchClientReport, fetchUsersReport, fetchProblems, fetchCrmOverview,
-  fetchActiveNow, fetchDailySpend, fetchPurchases, fetchPayments,
+  fetchActiveNow, fetchDailySpend, fetchPurchases, fetchPayments, fetchAccountsHealth,
   type AdminOverview, type ClientReport, type UsersReport, type Problems, type CrmOverview,
-  type ActiveNow, type ActiveTask, type DailySpend, type Purchases, type PaymentsResult, type UserRow, fetchPrices, savePrices, type EffectivePrices, type PricePatch } from '@/api/adminApi'
+  type ActiveNow, type ActiveTask, type DailySpend, type Purchases, type PaymentsResult, type UserRow, type AccountsHealth, fetchPrices, savePrices, type EffectivePrices, type PricePatch } from '@/api/adminApi'
 import { updateUser } from '@/api/usersApi'
 import { changeBalance, fetchSubscription, saveUserModules } from '@/api/balanceApi'
 import { promptDialog } from '@/shared/lib/dialog'
@@ -62,6 +62,7 @@ export function AdminStatsPage() {
   const [active, setActive] = useState<ActiveNow | null>(null)
   const [daily, setDaily] = useState<DailySpend | null>(null)
   const [purchases, setPurchases] = useState<Purchases | null>(null)
+  const [health, setHealth] = useState<AccountsHealth | null>(null)
   const [loading, setLoading] = useState(true)
   const [denied, setDenied] = useState(false)
 
@@ -75,13 +76,14 @@ export function AdminStatsPage() {
     try {
       // Грузим всё одним заходом: цифры на разных вкладках должны быть на один момент
       // времени, иначе «в панели 82 задачи, а по людям 80» читается как ошибка счёта.
-      const [o, r, u, p, c, a, d, pur] = await Promise.all([
+      const [o, r, u, p, c, a, d, pur, h] = await Promise.all([
         fetchAdminOverview(since), fetchClientReport(since),
         fetchUsersReport(since), fetchProblems(since), fetchCrmOverview(since),
         fetchActiveNow(), fetchDailySpend(PERIODS[periodIdx].days || 90), fetchPurchases(since),
+        fetchAccountsHealth(),
       ])
       setOverview(o); setReport(r); setUsers(u); setProblems(p); setCrm(c)
-      setActive(a); setDaily(d); setPurchases(pur); setDenied(false)
+      setActive(a); setDaily(d); setPurchases(pur); setHealth(h); setDenied(false)
     } catch (e) {
       // 403 — не ошибка сборки, а честный отказ: показываем это отдельно, иначе
       // оператор будет думать, что страница сломалась.
@@ -144,7 +146,7 @@ export function AdminStatsPage() {
       />
 
       <div className="mb-4 flex flex-wrap items-center gap-3">
-        <Segmented options={['Панель', 'Сейчас', 'По дням', 'Пользователи', 'Покупки', 'Цены', 'Проблемы', 'CRM', 'Отчёт']} value={tab} onChange={setTab} />
+        <Segmented options={['Панель', 'Сейчас', 'По дням', 'Пользователи', 'Покупки', 'Цены', 'Проблемы', 'CRM', 'Отчёт', 'Мониторинг']} value={tab} onChange={setTab} />
         <Segmented options={PERIODS.map((p) => p.label)} value={periodIdx} onChange={setPeriodIdx} size="sm" />
       </div>
 
@@ -166,8 +168,10 @@ export function AdminStatsPage() {
         <ProblemsTab p={problems} />
       ) : tab === 7 ? (
         <CrmTab crm={crm} />
-      ) : (
+      ) : tab === 8 ? (
         <ReportTab report={report} onExport={exportCsv} users={users?.rows || []} since={since} />
+      ) : (
+        <MonitoringTab health={health} />
       )}
     </div>
   )
@@ -908,6 +912,93 @@ function PaymentsExplorer() {
  * §5.3: где сейчас болит. Три беды разведены намеренно — у них разные действия:
  * ошибки чинит настройка, бан/flood — замена аккаунта, пауза из-за денег — пополнение.
  */
+/**
+ * §10.9: мониторинг здоровья аккаунтов — работают / на паузе / падают, с причиной
+ * по каждому проблемному. Всегда виден (в отличие от «Проблем», которые прячутся,
+ * когда тихо): владелец должен видеть парк аккаунтов и почему кто-то выпал.
+ */
+function MonitoringTab({ health }: { health: AccountsHealth | null }) {
+  if (!health) return <Card className="p-6 text-sm text-muted">Загрузка…</Card>
+  if (!health.total) return <EmptyState icon={<AlertTriangle size={22} />} title="Аккаунтов нет" desc="Добавьте аккаунты в менеджере профилей." />
+
+  const statusTone: Record<string, string> = {
+    floodwait: 'text-amber-300', quarantine: 'text-amber-300',
+    spamblock: 'text-red-300', invalid: 'text-red-300', reauth: 'text-iris-300',
+  }
+  const untilText = (until: number) => {
+    if (!until) return ''
+    const left = until - Date.now()
+    if (left <= 0) return 'срок истёк'
+    const min = Math.round(left / 60000)
+    return min >= 60 ? `ещё ~${Math.round(min / 60)} ч` : `ещё ~${min} мин`
+  }
+
+  return (
+    <div className="space-y-3">
+      <div className="grid gap-3 sm:grid-cols-4">
+        <Card className="p-4">
+          <div className="text-xs text-muted">Всего аккаунтов</div>
+          <div className="font-display text-2xl font-bold text-fg">{fmt(health.total)}</div>
+        </Card>
+        <Card className="p-4">
+          <div className="text-xs text-muted">Работают</div>
+          <div className="font-display text-2xl font-bold text-spark-300">{fmt(health.healthy)}</div>
+          <div className="mt-0.5 text-[11px] text-muted">активны + прогрев</div>
+        </Card>
+        <Card className="p-4">
+          <div className="text-xs text-muted">На паузе</div>
+          <div className="font-display text-2xl font-bold text-fg">{fmt(health.idle)}</div>
+          <div className="mt-0.5 text-[11px] text-muted">остановлены командой</div>
+        </Card>
+        <Card className="p-4">
+          <div className="text-xs text-muted">Падают</div>
+          <div className={cn('font-display text-2xl font-bold', health.problem ? 'text-red-300' : 'text-fg')}>{fmt(health.problem)}</div>
+          <div className="mt-0.5 text-[11px] text-muted">flood / бан / невалид</div>
+        </Card>
+      </div>
+
+      {/* Раскладка по статусам + усталость. */}
+      <Card className="p-4">
+        <div className="mb-2 text-sm font-semibold text-fg">По статусам</div>
+        <div className="flex flex-wrap gap-2">
+          {Object.entries(health.byStatus).sort((a, b) => b[1] - a[1]).map(([st, n]) => (
+            <span key={st} className={cn('rounded-lg border border-line px-2 py-1 text-xs', statusTone[st] || 'text-muted')}>
+              {STATUS_LABEL_RU[st] || st}: <b className="text-fg">{n}</b>
+            </span>
+          ))}
+          {!!health.resting && <span className="rounded-lg border border-line px-2 py-1 text-xs text-muted">отдыхают: <b className="text-fg">{health.resting}</b></span>}
+          {!!health.tired && <span className="rounded-lg border border-line px-2 py-1 text-xs text-amber-300">устали (≥70%): <b className="text-fg">{health.tired}</b></span>}
+        </div>
+      </Card>
+
+      {/* Проблемные — по каждому причина и до какого времени. */}
+      {health.problems.length ? (
+        <Card className="p-4">
+          <div className="mb-2 text-sm font-semibold text-fg">Падающие аккаунты — почему ({health.problems.length})</div>
+          <div className="space-y-1.5">
+            {health.problems.map((a) => (
+              <div key={a.id} className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5 border-b border-line/40 pb-1.5 text-sm last:border-0">
+                <span className="font-medium text-fg">{a.name}</span>
+                {!!a.phone && <span className="text-xs text-muted">{a.phone}</span>}
+                <span className={cn('rounded-md px-1.5 py-0.5 text-[11px] font-bold', statusTone[a.status] || 'text-muted', 'bg-white/8')}>{a.statusLabel}</span>
+                {!!a.reason && <span className="w-full text-xs text-muted sm:w-auto sm:flex-1 sm:truncate">{a.reason}</span>}
+                {!!a.until && <span className="shrink-0 text-[11px] text-faint">{untilText(a.until)}</span>}
+              </div>
+            ))}
+          </div>
+        </Card>
+      ) : (
+        <Card className="p-4 text-sm text-muted">Падающих аккаунтов нет — весь парк в работе или на паузе.</Card>
+      )}
+    </div>
+  )
+}
+
+const STATUS_LABEL_RU: Record<string, string> = {
+  active: 'Активны', warming: 'Прогрев', pause: 'На паузе', floodwait: 'FloodWait',
+  quarantine: 'Карантин', spamblock: 'Спам-блок', reauth: 'Нужен вход', invalid: 'Невалидны',
+}
+
 function ProblemsTab({ p }: { p: Problems | null }) {
   if (!p) return <Card className="p-6 text-sm text-muted">Загрузка…</Card>
   const quiet = !p.failedTotal && !p.pausedNoCoins.length && !p.accounts.banned && !p.accounts.flood && !p.accounts.noProxy
