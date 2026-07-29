@@ -31,18 +31,28 @@ import { MODULES, BONUS_MODULE, FUNNEL_VARIANTS, COMPARISON, REVIEWS, CASES, ANN
  * платформа» и «маркетинговый сервис для роста в Telegram». URL — единственный
  * источник варианта, чтобы ссылку можно было расшарить и проиндексировать.
  */
-const HERO_VARIANTS = {
-  platform: {
-    eyebrow: 'ИИ-платформа · Telegram',
+/**
+ * §10.6: истории-«шапки». Обычный лендинг показывает ОДНУ статично; вариант-карусель
+ * прокручивает их по кругу — меняет и заголовок, и текст, и мокап (как договорились на
+ * звонке: «карусель рассказывает разные истории»). screen — какой мок-экран под историю.
+ */
+const HERO_STORIES = [
+  {
+    key: 'platform', eyebrow: 'ИИ-платформа · Telegram', screen: 'accounts', label: 'Аккаунты',
     title: <>Десятки Telegram-профилей,<br /> которые работают <span className="text-gradient">к вашей цели</span></>,
     text: 'Парсинг, нейрокомментинг, нейрочаттинг, рассылки и аккаунты, которые не улетают в бан — в одном кабинете. Агенты со своим характером ведут людей по воронке до целевого действия.',
   },
-  marketing: {
-    eyebrow: 'Маркетинговый сервис · Telegram',
+  {
+    key: 'marketing', eyebrow: 'Маркетинговый сервис · Telegram', screen: 'report', label: 'Отчёт',
     title: <>Автоматический рост<br /> вашего бизнеса <span className="text-gradient">в Telegram</span></>,
     text: 'Поставьте цель — реклама группы, бота или сбор клиентов — и сервис ведёт её сам: находит аудиторию, пишет, вовлекает и приводит к целевому действию. Настроили и забыли.',
   },
-} as const
+  {
+    key: 'dialogs', eyebrow: 'Живые диалоги · Telegram', screen: 'dialogs', label: 'НейроДиалоги',
+    title: <>Живой диалог,<br /> который <span className="text-gradient">доводит до заявки</span></>,
+    text: 'ИИ-агент со своим характером отвечает на языке собеседника, ведёт лид к цели круглосуточно и складывает заявки в CRM — без единого менеджера.',
+  },
+] as const
 
 /**
  * §10.6: две ссылки — два разных языка одного продукта. `platform` говорит на языке
@@ -92,11 +102,14 @@ export function LandingPage() {
   // Отличаются И текстом, И подачей мокапа: `platform` (по умолчанию) — статичный
   // один экран; `marketing` (?v=marketing) — карусель из 3 экранов, показывает ширину
   // продукта. `?hero=static|carousel` — необязательный явный оверрайд подачи.
+  // Один вариант — обычный лендинг (статичная шапка), другой — карусель, которая
+  // прокручивает истории. По умолчанию platform статичный, marketing карусель;
+  // `?hero=static|carousel` — явный оверрайд. startIdx — с какой истории начинать.
   const heroParam = params.get('hero')
-  const heroStatic = heroParam === 'static' ? true
-    : heroParam === 'carousel' ? false
-    : variant === 'platform'
-  const hero = HERO_VARIANTS[variant]
+  const heroCarousel = heroParam === 'carousel' ? true
+    : heroParam === 'static' ? false
+    : variant === 'marketing'
+  const heroStartIdx = variant === 'platform' ? 0 : 1
   const copy = VARIANT_COPY[variant]
   // §10.6: тело страницы тоже разное — иначе варианты выглядят одинаково при скролле.
   const funnelSteps = FUNNEL_VARIANTS[variant]
@@ -105,6 +118,10 @@ export function LandingPage() {
   const cases = CASES.filter((c) => c.v === 'both' || c.v === vTag)
   // Годовая скидка — с сервера (правится в админке), catalog-константа как fallback.
   const annualDiscount = pricing?.annualDiscount ?? ANNUAL_DISCOUNT
+  // «от $N» — из самого дешёвого модуля прайса (админка), а не захардкоженная восьмёрка:
+  // поменяли цену в админке — «от $N» на витрине тоже меняется.
+  const minMonth = pricing?.items.length ? Math.min(...pricing.items.map((i) => i.price)) : null
+  const priceDesc = `Все модули или по отдельности${minMonth != null ? ` — от ${pricing?.currency || '$'}${minMonth}` : ''}. Работа ИИ оплачивается монетами: не работаете — не тратите.`
 
   const setupAll = pricing?.setups.find((s) => s.id === 'setup-all') || null
 
@@ -125,29 +142,7 @@ export function LandingPage() {
       <Header start={start} />
 
       {/* ── Герой ─────────────────────────────────────────────── */}
-      <section className="mx-auto grid max-w-6xl items-center gap-10 px-5 pb-16 pt-14 lg:grid-cols-[1.1fr_1fr] lg:pt-20">
-        <div>
-          <span className="inline-flex items-center gap-1.5 rounded-full border border-iris-500/30 bg-iris-500/10 px-3 py-1 text-xs font-semibold text-iris-200">
-            <Bot size={13} /> {hero.eyebrow}
-          </span>
-          <h1 className="mt-5 font-display text-4xl font-bold leading-[1.1] sm:text-5xl">
-            {hero.title}
-          </h1>
-          <p className="mt-5 max-w-xl text-lg leading-relaxed text-muted">
-            {hero.text}
-          </p>
-          <div className="mt-8 flex flex-wrap items-center gap-3">
-            <button onClick={start} className="btn-primary h-11 px-6 text-base">Начать <ArrowRight size={17} /></button>
-            <a href="#modules" className="btn-ghost h-11 px-6 text-base">Возможности</a>
-          </div>
-          <div className="mt-8 flex flex-wrap gap-x-8 gap-y-3 text-sm">
-            <Stat value="10+" label="модулей автоматизации" />
-            <Stat value="24/7" label="работа к цели" />
-            <Stat value="0" label="ручной рутины" />
-          </div>
-        </div>
-        <HeroCarousel staticMode={heroStatic} />
-      </section>
+      <HeroSection carousel={heroCarousel} startIdx={heroStartIdx} start={start} />
 
       {/* ── Как работает ─────────────────────────────────────── */}
       <section className="border-y border-line bg-surface/40">
@@ -205,7 +200,7 @@ export function LandingPage() {
       {/* ── Цены ─────────────────────────────────────────────── */}
       <section id="tarify" className="border-y border-line bg-surface/40">
         <div className="mx-auto max-w-6xl px-5 py-16">
-          <SectionHead eyebrow="Доступные тарифы" title="Цены" desc="Все модули или по отдельности — от $8. Работа ИИ оплачивается монетами: не работаете — не тратите." center />
+          <SectionHead eyebrow="Доступные тарифы" title="Цены" desc={priceDesc} center />
 
           {/* Переключатель периода: помесячно или на год (год дешевле). */}
           <div className="mt-6 flex justify-center">
@@ -223,7 +218,9 @@ export function LandingPage() {
             const yr = planPeriod === 'year'
             const per = yr ? '/ год' : '/ мес'
             const perAll = yr ? Math.round(setupAll.cost.sum * 12 * (1 - annualDiscount)) : setupAll.cost.sum
-            const perMin = yr ? Math.round(8 * 12 * (1 - annualDiscount)) : 8
+            // «от $N» тоже из прайса: самый дешёвый модуль, а не захардкоженная 8.
+            const base = pricing.items.length ? Math.min(...pricing.items.map((i) => i.price)) : 8
+            const perMin = yr ? Math.round(base * 12 * (1 - annualDiscount)) : base
             return (
               <div className="mx-auto mt-6 grid max-w-3xl gap-5 sm:grid-cols-2">
                 <PlanCard
@@ -384,34 +381,66 @@ function Stat({ value, label }: { value: string; label: string }) {
 }
 
 /**
- * §10.6: карусель «скриншотов» кабинета — чистый CSS, не картинки (реальных скринов
- * под лендинг ещё нет, а один статичный мок показывал только менеджер аккаунтов).
- * Три экрана — аккаунты / нейродиалоги / отчёт — сами сменяются каждые ~4с, показывая
- * ширину продукта. Пауза при наведении; экраны сложены абсолютно и переключаются
- * через opacity, поэтому рамка не «прыгает» по высоте.
+ * §10.6: шапка. `carousel=false` — обычный лендинг: одна статичная история.
+ * `carousel=true` — прокручивает истории (заголовок + текст + мокап синхронно) каждые
+ * ~5с, с точками и паузой при наведении. Так вариант-карусель «рассказывает разные
+ * истории», а обычный — фиксированную. startIdx — с какой истории начинать.
  */
-const HERO_SCREENS = [
-  { key: 'accounts', label: 'Аккаунты' },
-  { key: 'dialogs', label: 'НейроДиалоги' },
-  { key: 'report', label: 'Отчёт' },
-] as const
-
-function HeroCarousel({ staticMode = false }: { staticMode?: boolean }) {
-  const [i, setI] = useState(0)
+function HeroSection({ carousel, startIdx, start }: { carousel: boolean; startIdx: number; start: () => void }) {
+  const [i, setI] = useState(startIdx)
   const [paused, setPaused] = useState(false)
   useEffect(() => {
-    // §10.6: статичный вариант шапки — без автопрокрутки (показываем один экран).
-    if (paused || staticMode) return
-    const id = setInterval(() => setI((p) => (p + 1) % HERO_SCREENS.length), 4000)
+    if (!carousel || paused) return
+    const id = setInterval(() => setI((p) => (p + 1) % HERO_STORIES.length), 5000)
     return () => clearInterval(id)
-  }, [paused, staticMode])
+  }, [carousel, paused])
+  const story = HERO_STORIES[carousel ? i : startIdx]
 
   return (
-    <div
-      className="relative"
+    <section
+      className="mx-auto grid max-w-6xl items-center gap-10 px-5 pb-16 pt-14 lg:grid-cols-[1.1fr_1fr] lg:pt-20"
       onMouseEnter={() => setPaused(true)}
       onMouseLeave={() => setPaused(false)}
     >
+      <div>
+        {/* key — чтобы при смене истории контент мягко перерисовывался (fade). */}
+        <span key={story.key + 'e'} className="animate-fade-in inline-flex items-center gap-1.5 rounded-full border border-iris-500/30 bg-iris-500/10 px-3 py-1 text-xs font-semibold text-iris-200">
+          <Bot size={13} /> {story.eyebrow}
+        </span>
+        <h1 key={story.key + 't'} className="animate-fade-in mt-5 font-display text-4xl font-bold leading-[1.1] sm:min-h-[132px] sm:text-5xl">
+          {story.title}
+        </h1>
+        <p key={story.key + 'p'} className="animate-fade-in mt-5 max-w-xl text-lg leading-relaxed text-muted sm:min-h-[84px]">
+          {story.text}
+        </p>
+        <div className="mt-8 flex flex-wrap items-center gap-3">
+          <button onClick={start} className="btn-primary h-11 px-6 text-base">Начать <ArrowRight size={17} /></button>
+          <a href="#modules" className="btn-ghost h-11 px-6 text-base">Возможности</a>
+        </div>
+        {/* Точки — только у варианта-карусели. */}
+        {carousel && (
+          <div className="mt-6 flex gap-1.5">
+            {HERO_STORIES.map((s, k) => (
+              <button key={s.key} onClick={() => setI(k)} aria-label={s.label}
+                className={`h-1.5 rounded-full transition-all ${k === i ? 'w-6 bg-spark-400' : 'w-2 bg-line hover:bg-muted'}`} />
+            ))}
+          </div>
+        )}
+        <div className="mt-8 flex flex-wrap gap-x-8 gap-y-3 text-sm">
+          <Stat value="10+" label="модулей автоматизации" />
+          <Stat value="24/7" label="работа к цели" />
+          <Stat value="0" label="ручной рутины" />
+        </div>
+      </div>
+      <HeroMock screen={story.screen} label={story.label} storyKey={story.key} />
+    </section>
+  )
+}
+
+/** Мок-«окно» кабинета под конкретную историю (аккаунты / диалоги / отчёт). */
+function HeroMock({ screen, label, storyKey }: { screen: string; label: string; storyKey: string }) {
+  return (
+    <div className="relative">
       <div className="pointer-events-none absolute -right-10 -top-10 h-56 w-56 rounded-full bg-spark-500/15 blur-3xl" />
       <div className="pointer-events-none absolute -bottom-10 left-0 h-56 w-56 rounded-full bg-iris-500/15 blur-3xl" />
       <div className="relative overflow-hidden rounded-2xl border border-line bg-surface shadow-pop">
@@ -419,34 +448,12 @@ function HeroCarousel({ staticMode = false }: { staticMode?: boolean }) {
           <span className="h-2.5 w-2.5 rounded-full bg-red-400/70" />
           <span className="h-2.5 w-2.5 rounded-full bg-amber-400/70" />
           <span className="h-2.5 w-2.5 rounded-full bg-spark-400/70" />
-          <span className="ml-3 text-[11px] text-muted">{HERO_SCREENS[i].label}</span>
-          {/* Точки-переключатели только в режиме карусели. */}
-          {!staticMode && (
-            <div className="ml-auto flex gap-1.5">
-              {HERO_SCREENS.map((s, k) => (
-                <button
-                  key={s.key}
-                  onClick={() => setI(k)}
-                  aria-label={s.label}
-                  className={`h-1.5 rounded-full transition-all ${k === i ? 'w-5 bg-spark-400' : 'w-1.5 bg-line hover:bg-muted'}`}
-                />
-              ))}
-            </div>
-          )}
+          <span className="ml-3 text-[11px] text-muted">{label}</span>
         </div>
-        {/* Фиксированная высота — экраны сложены абсолютно, рамка не скачет при смене. */}
-        <div className="relative h-[300px]">
-          {HERO_SCREENS.map((s, k) => (
-            <div
-              key={s.key}
-              className={`absolute inset-0 p-4 transition-opacity duration-500 ${k === i ? 'opacity-100' : 'pointer-events-none opacity-0'}`}
-              aria-hidden={k !== i}
-            >
-              {s.key === 'accounts' && <HeroAccounts />}
-              {s.key === 'dialogs' && <HeroDialogs />}
-              {s.key === 'report' && <HeroReport />}
-            </div>
-          ))}
+        <div key={storyKey} className="animate-fade-in relative h-[300px] p-4">
+          {screen === 'accounts' && <HeroAccounts />}
+          {screen === 'dialogs' && <HeroDialogs />}
+          {screen === 'report' && <HeroReport />}
         </div>
       </div>
     </div>
