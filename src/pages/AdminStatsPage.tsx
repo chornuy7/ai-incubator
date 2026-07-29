@@ -11,7 +11,7 @@ import {
 import { updateUser } from '@/api/usersApi'
 import { fetchRoles } from '@/api/rolesApi'
 import { RolesPage } from '@/pages/RolesPage'
-import { changeBalance, fetchSubscription, saveUserModules } from '@/api/balanceApi'
+import { changeBalance, fetchSubscription, saveUserModules, fetchWalletHistory, type WalletEntry } from '@/api/balanceApi'
 import { promptDialog } from '@/shared/lib/dialog'
 import { ApiDocsTab } from '@/features/billing/ApiDocsTab'
 import { fmt, fmtDate, cleanPrice, fmtUsd, usdEq } from '@/pages/admin/adminShared'
@@ -383,6 +383,9 @@ function UsersTab({ report, onReload }: { report: UsersReport | null; onReload: 
   // §10.4: доступные роли — чтобы назначать роль юзеру прямо из админки (раз редактор
   // ролей теперь здесь же, логично и раздавать их отсюда).
   const [roles, setRoles] = useState<{ id: string; name: string }[]>([])
+  // §10.4: пополнения кошелька по человеку (что купил из токенов/монет) — тянем лениво
+  // при раскрытии карточки. 'loading' пока грузится, массив — только пополнения (amount>0).
+  const [topups, setTopups] = useState<Record<string, WalletEntry[] | 'loading'>>({})
   useEffect(() => {
     void fetchSubscription().then((d) => setCatalog(d.items.map((i) => ({ key: i.key, title: i.title })))).catch(() => {})
     void fetchRoles().then((rs) => setRoles(rs.map((r) => ({ id: r.id, name: r.name })))).catch(() => {})
@@ -396,6 +399,13 @@ function UsersTab({ report, onReload }: { report: UsersReport | null; onReload: 
     // перетереть текущий доступ при «Применить»: показывал устаревшие галочки как реальные.
     if (willOpen) {
       setModDraft((d) => ({ ...d, [r.userId]: r.subscription?.all ? 'all' : (r.subscription?.keys ?? []) }))
+      // Пополнения кошелька этого юзера — грузим один раз на открытие (что он покупал).
+      if (topups[r.userId] === undefined) {
+        setTopups((t) => ({ ...t, [r.userId]: 'loading' }))
+        void fetchWalletHistory(50, r.userId)
+          .then((rows) => setTopups((t) => ({ ...t, [r.userId]: rows.filter((e) => e.amount > 0) })))
+          .catch(() => setTopups((t) => ({ ...t, [r.userId]: [] })))
+      }
     }
   }
   const toggleUserMod = (userId: string, key: string) => setModDraft((d) => {
@@ -675,6 +685,40 @@ function UsersTab({ report, onReload }: { report: UsersReport | null; onReload: 
                                 <option key={u.userId} value={u.userId}>{u.name || u.email || u.userId}</option>
                               ))}
                           </select>
+                        </div>
+                      )}
+                      {/* §10.4: что человек КУПИЛ — модули (подписка) и пополнения кошелька.
+                          Отдельно от «что запускал»: одно отвечает «за что платил», другое «что делал». */}
+                      {real && (
+                        <div className="mb-4 grid gap-4 rounded-xl border border-line bg-elevated/50 p-3 sm:grid-cols-2">
+                          <div>
+                            <div className="mb-1.5 text-[11px] font-bold uppercase tracking-wide text-muted">Купленные модули</div>
+                            {r.subscription?.all
+                              ? <span className="text-xs text-spark-300">Все модули (полный доступ)</span>
+                              : r.subscription?.count
+                                ? <div className="flex flex-wrap gap-1">
+                                    {r.subscription.titles.map((t) => (
+                                      <span key={t} className="rounded-md bg-white/8 px-1.5 py-0.5 text-[11px] text-fg">{t}</span>
+                                    ))}
+                                  </div>
+                                : <span className="text-xs text-muted">Ничего не куплено</span>}
+                          </div>
+                          <div>
+                            <div className="mb-1.5 text-[11px] font-bold uppercase tracking-wide text-muted">Пополнения (монеты)</div>
+                            {topups[r.userId] === 'loading'
+                              ? <span className="text-xs text-muted">Загрузка…</span>
+                              : (topups[r.userId] as WalletEntry[] | undefined)?.length
+                                ? <div className="max-h-40 space-y-1 overflow-y-auto pr-1">
+                                    {(topups[r.userId] as WalletEntry[]).map((e, i) => (
+                                      <div key={i} className="flex items-baseline justify-between gap-2 border-b border-line/30 pb-1 text-xs last:border-0">
+                                        <span className="tabular-nums text-spark-300">+{fmtCoins(e.amount)} ⚡</span>
+                                        {usdEq(e.amount, report.coinUsd) && <span className="text-[10px] text-muted">{usdEq(e.amount, report.coinUsd)}</span>}
+                                        <span className="ml-auto shrink-0 tabular-nums text-faint">{new Date(e.ts).toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit', year: '2-digit' })}</span>
+                                      </div>
+                                    ))}
+                                  </div>
+                                : <span className="text-xs text-muted">Пополнений не было</span>}
+                          </div>
                         </div>
                       )}
                       {!r.where.length && !r.log.length ? (
