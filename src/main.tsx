@@ -4,6 +4,10 @@ import { BrowserRouter } from 'react-router-dom'
 import App from './App'
 import './index.css'
 import { useApp } from '@/mocks/store'
+import { installFetchAuth } from '@/shared/lib/fetchAuth'
+
+// Токен сессии — на КАЖДЫЙ запрос к /api (иначе прод-замок 401-ит прямые fetch).
+installFetchAuth()
 
 // Применяем сохранённую тему до первого рендера
 const theme = useApp.getState().theme

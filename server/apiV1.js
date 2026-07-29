@@ -38,8 +38,8 @@ async function capabilities() {
       run: {
         method: 'POST',
         path: `/api/v1/modules/${key}/run`,
+        note: 'Аккаунт берётся из ключа (1 ключ = 1 аккаунт) — передавать его не нужно.',
         body: {
-          accountIds: 'string[] — аккаунты, которыми работать (обязательно)',
           ...(def.requiresTargets ? { targets: `string[] — ${def.targetLabel || 'цели'} (обязательно)` } : {}),
           maxActions: 'number — сколько действий (лимит)',
           goalId: 'string? — под какой целью',
@@ -64,6 +64,7 @@ apiV1Router.get('/mcp', async (_req, res) => {
   try {
     const caps = await capabilities()
     const tools = [
+      { name: 'my_account', description: 'К какому аккаунту привязан ключ (1 ключ = 1 аккаунт)', method: 'GET', path: '/api/v1/account', input: {} },
       { name: 'create_goal', description: 'Создать цель (измеримый результат)', method: 'POST', path: '/api/v1/goals', input: { name: 'string', metric: 'string?', target: 'number?', deadline: 'YYYY-MM-DD?' } },
       { name: 'create_campaign', description: 'Создать кампанию под цель', method: 'POST', path: '/api/v1/campaigns', input: { name: 'string', modules: 'string[]', goalId: 'string?' } },
       { name: 'estimate', description: 'Оценить стоимость и время до запуска', method: 'POST', path: '/api/v1/modules/:key/estimate', input: { actions: 'number', accounts: 'number?' } },
@@ -118,12 +119,34 @@ apiV1Router.post('/modules/:key/estimate', async (req, res) => {
   } catch (err) { res.status(500).json({ ok: false, error: msg(err) }) }
 })
 
-/** §10.3(3): запуск модуля. Та же функция, что у UI, — валидации те же. */
+/**
+ * К какому аккаунту привязан этот ключ. «Мозги» спрашивают это, чтобы не подключаться
+ * вслепую: ключ = один аккаунт, вот он. Данные аккаунта — только по его id (без чужого).
+ */
+apiV1Router.get('/account', async (req, res) => {
+  try {
+    const accountId = req.apiKey?.accountId
+    if (!accountId) return res.status(400).json({ ok: false, error: 'Ключ не привязан к аккаунту — перевыпустите его в админке' })
+    const { getAccountMeta } = await import('./accountsMeta.js')
+    const meta = await getAccountMeta(accountId).catch(() => ({}))
+    res.json({ ok: true, account: { id: accountId, name: meta?.name || '', status: meta?.status || '' } })
+  } catch (err) { res.status(500).json({ ok: false, error: msg(err) }) }
+})
+
+/**
+ * §10.3(3): запуск модуля. Та же функция, что у UI, — валидации те же.
+ *
+ * Аккаунт НЕ передаётся вызывающим: он жёстко привязан к ключу. Что бы «мозги» ни
+ * прислали в accountIds — сервер работает ТОЛЬКО аккаунтом ключа. Так ключ физически
+ * не может выйти за свой аккаунт (решение заказчика: 1 ключ = 1 аккаунт).
+ */
 apiV1Router.post('/modules/:key/run', async (req, res) => {
   try {
     const key = req.params.key
     if (!MODULE_DEFS[key]) return res.status(404).json({ ok: false, error: 'Неизвестный модуль' })
-    const settings = { ...(req.body || {}), initiator: 'api' }
+    const accountId = req.apiKey?.accountId
+    if (!accountId) return res.status(400).json({ ok: false, error: 'Ключ не привязан к аккаунту — перевыпустите его в админке' })
+    const settings = { ...(req.body || {}), accountIds: [accountId], initiator: 'api' }
     const { store, task, worker } = startModuleTask(key, settings)
     // Запуск воркера — тем же способом, что и UI-роут (modules/routes.js).
     const { startWorker } = await import('./modules/workers.js')

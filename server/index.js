@@ -292,8 +292,8 @@ app.post('/api/admin/api-keys', async (req, res) => {
   try {
     if (!(await isAdminRequest(req))) return res.status(403).json({ ok: false, error: 'Выпускать ключи может только владелец' })
     const { issueKey } = await import('./apiKeys.js')
-    const key = await issueKey({ name: req.body?.name, ownerId: req.header('x-user-id') })
-    await appendAudit({ action: 'apikey.issue', module: 'api', initiator: req.header('x-user-id') || 'system', reason: `Выпущен ключ «${key.name}»`, meta: { id: key.id } }).catch(() => {})
+    const key = await issueKey({ name: req.body?.name, accountId: req.body?.accountId, ownerId: req.header('x-user-id') })
+    await appendAudit({ action: 'apikey.issue', module: 'api', initiator: req.header('x-user-id') || 'system', reason: `Выпущен ключ «${key.name}» для аккаунта ${key.accountId}`, meta: { id: key.id, accountId: key.accountId } }).catch(() => {})
     res.json({ ok: true, key }) // ПОЛНЫЙ ключ — единственный раз
   } catch (err) { res.status(400).json({ ok: false, error: err instanceof Error ? err.message : 'Ошибка' }) }
 })

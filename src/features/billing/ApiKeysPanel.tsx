@@ -1,6 +1,8 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { Copy, Trash2, Plus, KeyRound, Loader2 } from 'lucide-react'
 import { fetchApiKeys, issueApiKey, revokeApiKey, type ApiKeyInfo } from '@/api/adminApi'
+import { fetchAccounts, type ServerAccount } from '@/api/accountsApi'
+import { Select } from '@/shared/ui'
 import { useApp } from '@/mocks/store'
 
 /**
@@ -14,16 +16,27 @@ export function ApiKeysPanel() {
   const pushToast = useApp((s) => s.pushToast)
   const [keys, setKeys] = useState<ApiKeyInfo[] | null>(null)
   const [name, setName] = useState('')
+  const [accountId, setAccountId] = useState('')
+  const [accounts, setAccounts] = useState<ServerAccount[]>([])
   const [busy, setBusy] = useState(false)
   const [fresh, setFresh] = useState<{ id: string; key: string } | null>(null)
 
   const load = () => { void fetchApiKeys().then(setKeys).catch(() => setKeys([])) }
   useEffect(load, [])
+  // Ключ выпускается ПОД аккаунт — нужен их список для выбора.
+  useEffect(() => { void fetchAccounts().then((a) => setAccounts(a.filter((x) => !x.inTrash))).catch(() => {}) }, [])
+
+  const accountName = useMemo(() => {
+    const m: Record<string, string> = {}
+    for (const a of accounts) m[a.id] = a.name || a.username || a.phone || a.id.slice(-6)
+    return m
+  }, [accounts])
 
   const issue = async () => {
+    if (!accountId) { pushToast({ type: 'error', title: 'Выберите аккаунт', desc: 'Ключ выпускается под конкретный аккаунт' }); return }
     setBusy(true)
     try {
-      const k = await issueApiKey(name.trim() || 'API-ключ')
+      const k = await issueApiKey(name.trim() || 'API-ключ', accountId)
       setFresh({ id: k.id, key: k.key })
       setName('')
       pushToast({ type: 'success', title: 'Ключ выпущен', desc: 'Скопируйте — потом он не покажется' })
@@ -66,10 +79,19 @@ export function ApiKeysPanel() {
         </div>
       )}
 
-      <div className="flex flex-wrap items-center gap-2">
-        <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Название ключа — например «Оркестратор»"
-          className="input h-9 min-w-0 flex-1 sm:max-w-xs" />
-        <button onClick={() => void issue()} disabled={busy} className="btn-primary h-9 disabled:opacity-40">
+      {/* Ключ = 1 аккаунт: выбираем, под какой аккаунт он выдаётся. «Мозги» этим ключом
+          работают только с ним и не могут выйти на другие аккаунты. */}
+      <div className="grid gap-2 sm:grid-cols-[1fr_1fr_auto]">
+        <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Название — напр. «Оркестратор Клиента А»"
+          className="input h-9 min-w-0" />
+        <Select
+          value={accountId}
+          onChange={setAccountId}
+          searchable
+          placeholder="Аккаунт для ключа *"
+          options={accounts.map((a) => ({ value: a.id, label: accountName[a.id] || a.id }))}
+        />
+        <button onClick={() => void issue()} disabled={busy || !accountId} className="btn-primary h-9 disabled:opacity-40">
           {busy ? <Loader2 size={15} className="animate-spin" /> : <Plus size={15} />} Выпустить ключ
         </button>
       </div>
@@ -84,6 +106,11 @@ export function ApiKeysPanel() {
             <div key={k.id} className="flex flex-wrap items-center gap-3 border-b border-line/60 px-3 py-2.5 text-sm last:border-0">
               <span className={k.revoked ? 'text-muted line-through' : 'text-fg'}>{k.name}</span>
               <code className="rounded bg-elevated px-1.5 py-0.5 font-mono text-xs text-muted">{k.prefix}</code>
+              {k.accountId && (
+                <span className="rounded bg-iris-500/12 px-1.5 py-0.5 text-[10px] font-bold text-iris-300" title={`Ключ работает только с аккаунтом ${k.accountId}`}>
+                  → {accountName[k.accountId] || k.accountId.slice(-6)}
+                </span>
+              )}
               {k.revoked && <span className="rounded bg-white/8 px-1.5 py-0.5 text-[10px] font-bold text-muted">отозван</span>}
               <span className="text-xs text-faint">
                 {k.lastUsedAt ? `использован ${new Date(k.lastUsedAt).toLocaleDateString('ru-RU')}` : 'ещё не использован'}

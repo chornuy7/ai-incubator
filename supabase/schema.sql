@@ -129,6 +129,10 @@ create table if not exists api_keys (
   last_used_at timestamptz,
   revoked      boolean not null default false
 );
+-- Ключ генерируется ПОД ОДИН аккаунт: «мозги» этим ключом работают только с ним,
+-- на другие аккаунты выйти нельзя (enforcement в apiV1). Идемпотентно — можно
+-- прогонять на уже существующей таблице.
+alter table api_keys add column if not exists account_id text;
 
 -- ─────────────────────────────────────────────────────────────
 -- ЯДРО: ЦЕЛИ → КАМПАНИИ → ЛИДЫ, АККАУНТЫ (§9)
