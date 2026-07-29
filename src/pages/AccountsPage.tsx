@@ -2,7 +2,7 @@ import { useMemo, useState, useEffect, useRef } from 'react'
 import {
   Plus, UploadCloud, Server, RefreshCw, Columns3, ListChecks, Search, Filter,
   MoreHorizontal, Trash2, KeyRound, Info, Users, Check, X, Undo2, Loader2, Pause,
-  Lock, LockOpen, Rocket, AlertTriangle,
+  Lock, LockOpen, Rocket, AlertTriangle, ShieldCheck,
 } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import { useApp, activeAccounts, trashedAccounts, STATUS_META } from '@/mocks/store'
@@ -31,6 +31,7 @@ import { fetchAccountGroups, type AccountGroup } from '@/api/accountGroupsApi'
 import { fetchProxies, toProxyUrl, type Proxy as ApiProxy } from '@/api/proxiesApi'
 import { assignProxies, proxyCapacity } from '@/api/accountImportApi'
 import { fetchActivity, setActivity, type ActivityMap, type SchedulePercent } from '@/api/accountActivityApi'
+import { startUnblock, fetchUnblockStatus, stopUnblock, type UnblockStatus } from '@/api/accountActivityApi'
 
 const STATUS_ORDER: AccountStatus[] = ['active', 'working', 'warming', 'pause', 'floodwait', 'quarantine', 'spamblock', 'invalid', 'frozen', 'reauth']
 const COLS = [
@@ -149,6 +150,7 @@ export function AccountsPage() {
   // §4 (D1/D3): усталость общая для всех модулей — показываем в списке, кто отдыхает.
   const [activity, setActivityMap] = useState<ActivityMap>({})
   const [fatigueOpen, setFatigueOpen] = useState(false)
+  const [unblockOpen, setUnblockOpen] = useState(false)
   // §4 (D2): фильтр по усталости — ползунок «показать усталость ≥ N%» (вместо колонки «Проект»).
   const [fatigueMin, setFatigueMin] = useState(0)
   // Усталость можно задать и ОДНОМУ аккаунту (не только массово): клик по ячейке усталости.
@@ -644,6 +646,15 @@ export function AccountsPage() {
           {/* §4.5, прямой запрос владельца: «чтобы можно было МАССОВО всем задавать
               усталость и отдых от модулей, как живой человек». */}
           <button disabled={!has} onClick={() => setFatigueOpen(true)} className={btn('border-line text-fg hover:bg-elevated')}><Pause size={14} /> Усталость и отдых</button>
+          {/* Снятие спамблока через @SpamBot — массово, с рандомными задержками (анти-кластер). */}
+          {(() => {
+            const spamIds = active.filter((a) => a.status === 'spamblock').map((a) => a.id)
+            return (
+              <button disabled={!spamIds.length} onClick={() => setUnblockOpen(true)} className={btn('border-amber-500/40 bg-amber-500/8 text-amber-300 hover:bg-amber-500/15')} title="Апелляция в @SpamBot с рандомными задержками">
+                <ShieldCheck size={14} /> Снять спамблок{spamIds.length ? ` (${spamIds.length})` : ''}
+              </button>
+            )
+          })()}
           {/* Раздача прокси была только в момент импорта. Дальше — пул сдох, купили новый,
               и всё это руками по одному через карточку. */}
           <button disabled={!has} onClick={() => setAssignProxyOpen(true)} className={btn('border-line text-fg hover:bg-elevated')}><Server size={14} /> Назначить прокси</button>
@@ -777,6 +788,17 @@ export function AccountsPage() {
         onClose={() => { setFatigueOpen(false); setFatigueOne(null) }}
         onDone={(map, msg) => { setActivityMap(map); setFatigueOpen(false); setFatigueOne(null); if (!fatigueOne) setSelected(new Set()); pushToast({ type: 'success', title: msg }) }}
         onError={(e) => pushToast({ type: 'error', title: 'Не применилось', desc: e })}
+      />
+      <UnblockModal
+        open={unblockOpen}
+        ids={(() => {
+          const sel = active.filter((a) => selected.has(a.id) && a.status === 'spamblock').map((a) => a.id)
+          return sel.length ? sel : active.filter((a) => a.status === 'spamblock').map((a) => a.id)
+        })()}
+        names={Object.fromEntries(active.map((a) => [a.id, a.name || a.username || a.phone || a.id.slice(-6)]))}
+        onClose={() => setUnblockOpen(false)}
+        onFinished={() => { void loadAccounts() }}
+        pushToast={pushToast}
       />
       <AssignProxyModal
         open={assignProxyOpen}
@@ -1457,6 +1479,120 @@ const DAY_PRESETS: Record<string, { label: string; hint: string; hours: Schedule
     hint: '100% круглосуточно — быстро, но заметно',
     hours: hours(Array.from({ length: 24 }, () => 100)),
   },
+}
+
+/**
+ * Массовое снятие спамблока через @SpamBot с РАНДОМНЫМИ задержками (анти-кластер §4.4).
+ *
+ * Апелляция ≠ гарантия: это жалоба модераторам Telegram. Временные ограничения часто
+ * снимаются, жёсткий спамблок может остаться. Показываем честный итог по каждому аккаунту.
+ * Операция фоновая — прогресс опрашиваем; успешно снятые сразу возвращаются в «active».
+ */
+function UnblockModal({ open, ids, names, onClose, onFinished, pushToast }: {
+  open: boolean
+  ids: string[]
+  names: Record<string, string>
+  onClose: () => void
+  onFinished: () => void
+  pushToast: (t: { type: 'success' | 'error' | 'info'; title: string; desc?: string }) => void
+}) {
+  const [delayMin, setDelayMin] = useState(30)
+  const [delayMax, setDelayMax] = useState(120)
+  const [status, setStatus] = useState<UnblockStatus | null>(null)
+  const [starting, setStarting] = useState(false)
+  const finishedRef = useRef(false)
+
+  // Пока модалка открыта и идёт снятие — опрашиваем прогресс.
+  useEffect(() => {
+    if (!open) return
+    let alive = true
+    const tick = async () => {
+      try {
+        const s = await fetchUnblockStatus()
+        if (!alive) return
+        setStatus(s)
+        if (!s.running && (s.done > 0) && !finishedRef.current) { finishedRef.current = true; onFinished() }
+      } catch { /* ignore */ }
+    }
+    void tick()
+    const t = setInterval(tick, 3000)
+    return () => { alive = false; clearInterval(t) }
+  }, [open, onFinished])
+
+  useEffect(() => { if (open) { finishedRef.current = false; setStatus(null) } }, [open])
+
+  const running = status?.running
+  const run = async () => {
+    if (!ids.length) return
+    setStarting(true)
+    try {
+      const r = await startUnblock(ids, delayMin, delayMax)
+      pushToast({ type: 'info', title: `Снятие запущено: ${r.started} акк.`, desc: `Задержки ${r.delayMin}–${r.delayMax}с между аккаунтами` })
+    } catch (e) {
+      pushToast({ type: 'error', title: 'Не запустилось', desc: e instanceof Error ? e.message : '' })
+    } finally { setStarting(false) }
+  }
+
+  const stateLabel: Record<string, { t: string; c: string }> = {
+    clean: { t: 'снят', c: 'bg-spark-500/15 text-spark-300' },
+    appealed: { t: 'жалоба подана', c: 'bg-iris-500/15 text-iris-300' },
+    blocked: { t: 'остался', c: 'bg-rose-500/15 text-rose-300' },
+    unknown: { t: 'неясно', c: 'bg-white/8 text-white/50' },
+    error: { t: 'ошибка', c: 'bg-rose-500/15 text-rose-300' },
+  }
+
+  return (
+    <Modal open={open} onClose={onClose} title="Снять спамблок через @SpamBot">
+      <div className="space-y-4">
+        <p className="text-sm text-white/60">
+          Апелляция в @SpamBot по <b className="text-white">{ids.length}</b> аккаунт(ам) со спамблоком,
+          по одному, с рандомными паузами. <span className="text-amber-300/80">Это жалоба модераторам —
+          временные ограничения часто снимаются, жёсткий спамблок может остаться.</span>
+        </p>
+
+        <div className="grid grid-cols-2 gap-3">
+          <label className="label">Пауза от, сек
+            <NumberField value={delayMin} onChange={(v) => setDelayMin(Math.max(5, v))} min={5} max={600} />
+          </label>
+          <label className="label">Пауза до, сек
+            <NumberField value={delayMax} onChange={(v) => setDelayMax(Math.max(delayMin, v))} min={5} max={600} />
+          </label>
+        </div>
+
+        {status && (status.running || status.done > 0) && (
+          <div className="rounded-xl border border-line bg-elevated/40 p-3">
+            <div className="flex items-center gap-2 text-sm">
+              {status.running && <Loader2 size={14} className="animate-spin text-spark-400" />}
+              <span className="text-white/70">Обработано {status.done} из {status.total}</span>
+              <span className="ml-auto font-semibold text-spark-300">снято: {status.cleared}</span>
+            </div>
+            {status.results.length > 0 && (
+              <div className="mt-2 max-h-52 space-y-1 overflow-y-auto">
+                {status.results.slice().reverse().map((r) => (
+                  <div key={r.accountId + r.ts} className="flex items-center gap-2 text-xs">
+                    <span className="w-32 shrink-0 truncate text-white/70">{names[r.accountId] || r.name}</span>
+                    <span className={`rounded px-1.5 py-0.5 text-[10px] font-bold ${(stateLabel[r.state] || stateLabel.unknown).c}`}>{(stateLabel[r.state] || stateLabel.unknown).t}</span>
+                    {r.text && <span className="truncate text-white/40" title={r.text}>{r.text}</span>}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
+        <div className="flex justify-end gap-2">
+          {running ? (
+            <button onClick={() => void stopUnblock()} className="btn-ghost h-10 text-rose-300"><X size={15} /> Остановить</button>
+          ) : (
+            <button onClick={onClose} className="btn-ghost h-10">Закрыть</button>
+          )}
+          <button onClick={() => void run()} disabled={starting || running || !ids.length} className="btn-primary h-10 disabled:opacity-40">
+            {starting || running ? <><Loader2 size={15} className="animate-spin" /> Идёт…</> : <><ShieldCheck size={15} /> Снять с {ids.length}</>}
+          </button>
+        </div>
+      </div>
+    </Modal>
+  )
 }
 
 /**

@@ -612,6 +612,30 @@ app.get('/api/accounts/activity', async (_req, res) => {
     res.json({ ok: true, activity: await listActivity() })
   } catch (err) { res.status(500).json({ ok: false, error: err instanceof Error ? err.message : 'Ошибка' }) }
 })
+// Массовое снятие спамблока через @SpamBot с рандомными задержками (фоновая операция).
+app.post('/api/accounts/unblock', async (req, res) => {
+  try {
+    const { startUnblock } = await import('./spamUnblock.js')
+    const { accountIds, delayMin, delayMax } = req.body ?? {}
+    if (!Array.isArray(accountIds) || !accountIds.length) return res.status(400).json({ ok: false, error: 'Выберите аккаунты' })
+    const r = await startUnblock(accountIds, { delayMin, delayMax })
+    await appendAudit({ action: 'accounts.unblock.start', module: 'accounts', initiator: req.header('x-user-id') || 'operator', reason: `Запущено снятие спамблока: ${r.started} акк. (задержки ${r.delayMin}–${r.delayMax}с)`, scope: { accounts: accountIds } }).catch(() => {})
+    res.json({ ok: true, ...r })
+  } catch (err) { res.status(400).json({ ok: false, error: err instanceof Error ? err.message : 'Ошибка' }) }
+})
+app.get('/api/accounts/unblock', async (_req, res) => {
+  try {
+    const { unblockStatus } = await import('./spamUnblock.js')
+    res.json({ ok: true, ...unblockStatus() })
+  } catch (err) { res.status(500).json({ ok: false, error: err instanceof Error ? err.message : 'Ошибка' }) }
+})
+app.post('/api/accounts/unblock/stop', async (_req, res) => {
+  try {
+    const { stopUnblock } = await import('./spamUnblock.js')
+    res.json({ ok: true, stopped: stopUnblock() })
+  } catch (err) { res.status(500).json({ ok: false, error: err instanceof Error ? err.message : 'Ошибка' }) }
+})
+
 app.post('/api/accounts/activity', async (req, res) => {
   try {
     const { setActivityProfile, restAccounts } = await import('./accountActivity.js')
