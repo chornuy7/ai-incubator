@@ -4,7 +4,7 @@ import { cn } from '@/shared/lib/utils'
 import type { AccountsHealth, ActiveNow, DailySpend } from '@/api/adminApi'
 import { fmt, MetricTile } from './adminShared'
 
-const STATUS_LABEL_RU: Record<string, string> = {
+export const STATUS_LABEL_RU: Record<string, string> = {
   active: 'Активны', warming: 'Прогрев', pause: 'На паузе', floodwait: 'FloodWait',
   quarantine: 'Карантин', spamblock: 'Спам-блок', reauth: 'Нужен вход', invalid: 'Невалидны',
 }

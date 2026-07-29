@@ -16,6 +16,7 @@ import { promptDialog } from '@/shared/lib/dialog'
 import { ApiDocsTab } from '@/features/billing/ApiDocsTab'
 import { fmt, fmtDate, cleanPrice, fmtUsd, usdEq } from '@/pages/admin/adminShared'
 import { MonitoringTab } from '@/pages/admin/MonitoringTab'
+import { AccountsTab } from '@/pages/admin/AccountsTab'
 import { BundlesEditor } from '@/pages/admin/BundlesEditor'
 
 /**
@@ -143,7 +144,7 @@ export function AdminStatsPage() {
       />
 
       <div className="mb-4 flex flex-wrap items-center gap-3">
-        <Segmented options={['Панель', 'Сейчас', 'По дням', 'Пользователи', 'Покупки', 'Цены', 'Проблемы', 'CRM', 'Отчёт', 'Мониторинг', 'Роли', 'API']} value={tab} onChange={setTab} />
+        <Segmented options={['Панель', 'Сейчас', 'По дням', 'Пользователи', 'Покупки', 'Цены', 'Проблемы', 'CRM', 'Отчёт', 'Мониторинг', 'Аккаунты', 'Роли', 'API']} value={tab} onChange={setTab} />
         <Segmented options={PERIODS.map((p) => p.label)} value={periodIdx} onChange={setPeriodIdx} size="sm" />
       </div>
 
@@ -170,6 +171,9 @@ export function AdminStatsPage() {
       ) : tab === 9 ? (
         <MonitoringTab health={health} active={active} daily={daily} />
       ) : tab === 10 ? (
+        /* §10.10: управление аккаунтами из sudo-админки — список всех + пауза/запуск/стоп. */
+        <AccountsTab />
+      ) : tab === 11 ? (
         /* §10.4: управление ролями доступа — из sudo-админки (создание/права/блоки). */
         <RolesPage />
       ) : (
