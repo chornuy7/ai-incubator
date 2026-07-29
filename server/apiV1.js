@@ -21,6 +21,14 @@ export const apiV1Router = Router()
 
 apiV1Router.use(requireApiKey())
 
+// Ключ действует ОТ ИМЕНИ пользователя-владельца: подставляем его в x-user-id, чтобы
+// весь RBAC (доступ к модулям/аккаунтам) применялся к нему. Так «мозги» этим ключом
+// делают ровно то, что можно самому пользователю, — не больше.
+apiV1Router.use((req, _res, next) => {
+  if (req.apiKey?.ownerId) req.headers['x-user-id'] = req.apiKey.ownerId
+  next()
+})
+
 /** Собрать «что умеет модуль» — из дефинишенов + эффективных цен. */
 async function capabilities() {
   const { effectivePrices } = await import('./priceStore.js')
@@ -38,8 +46,9 @@ async function capabilities() {
       run: {
         method: 'POST',
         path: `/api/v1/modules/${key}/run`,
-        note: 'Аккаунт берётся из ключа (1 ключ = 1 аккаунт) — передавать его не нужно.',
+        note: 'Доступны только аккаунты пользователя ключа — чужие отклоняются (403).',
         body: {
+          accountIds: 'string[] — аккаунты, которыми работать (из доступных пользователю)',
           ...(def.requiresTargets ? { targets: `string[] — ${def.targetLabel || 'цели'} (обязательно)` } : {}),
           maxActions: 'number — сколько действий (лимит)',
           goalId: 'string? — под какой целью',
@@ -64,7 +73,7 @@ apiV1Router.get('/mcp', async (_req, res) => {
   try {
     const caps = await capabilities()
     const tools = [
-      { name: 'my_account', description: 'К какому аккаунту привязан ключ (1 ключ = 1 аккаунт)', method: 'GET', path: '/api/v1/account', input: {} },
+      { name: 'whoami', description: 'Пользователь продукта, от чьего имени работает ключ', method: 'GET', path: '/api/v1/me', input: {} },
       { name: 'create_goal', description: 'Создать цель (измеримый результат)', method: 'POST', path: '/api/v1/goals', input: { name: 'string', metric: 'string?', target: 'number?', deadline: 'YYYY-MM-DD?' } },
       { name: 'create_campaign', description: 'Создать кампанию под цель', method: 'POST', path: '/api/v1/campaigns', input: { name: 'string', modules: 'string[]', goalId: 'string?' } },
       { name: 'estimate', description: 'Оценить стоимость и время до запуска', method: 'POST', path: '/api/v1/modules/:key/estimate', input: { actions: 'number', accounts: 'number?' } },
@@ -120,33 +129,42 @@ apiV1Router.post('/modules/:key/estimate', async (req, res) => {
 })
 
 /**
- * К какому аккаунту привязан этот ключ. «Мозги» спрашивают это, чтобы не подключаться
- * вслепую: ключ = один аккаунт, вот он. Данные аккаунта — только по его id (без чужого).
+ * Кто «я» (какой пользователь продукта стоит за ключом). «Мозги» спрашивают это,
+ * чтобы понимать, от чьего имени и с какими правами работают.
  */
-apiV1Router.get('/account', async (req, res) => {
+apiV1Router.get('/me', async (req, res) => {
   try {
-    const accountId = req.apiKey?.accountId
-    if (!accountId) return res.status(400).json({ ok: false, error: 'Ключ не привязан к аккаунту — перевыпустите его в админке' })
-    const { getAccountMeta } = await import('./accountsMeta.js')
-    const meta = await getAccountMeta(accountId).catch(() => ({}))
-    res.json({ ok: true, account: { id: accountId, name: meta?.name || '', status: meta?.status || '' } })
+    const userId = req.apiKey?.ownerId
+    if (!userId) return res.status(400).json({ ok: false, error: 'Ключ не привязан к пользователю — перевыпустите его в админке' })
+    const { getUser, publicUser } = await import('./users.js')
+    const user = await getUser(userId).catch(() => null)
+    if (!user) return res.status(404).json({ ok: false, error: 'Пользователь ключа не найден' })
+    res.json({ ok: true, user: publicUser(user) })
   } catch (err) { res.status(500).json({ ok: false, error: msg(err) }) }
 })
 
 /**
  * §10.3(3): запуск модуля. Та же функция, что у UI, — валидации те же.
  *
- * Аккаунт НЕ передаётся вызывающим: он жёстко привязан к ключу. Что бы «мозги» ни
- * прислали в accountIds — сервер работает ТОЛЬКО аккаунтом ключа. Так ключ физически
- * не может выйти за свой аккаунт (решение заказчика: 1 ключ = 1 аккаунт).
+ * Ключ действует ОТ ИМЕНИ пользователя (x-user-id уже подставлен). Аккаунты берём из
+ * запроса, но каждый проверяем: доступен ли он этому пользователю по его роли —
+ * чужой аккаунт → 403. Так ключ работает только с тем, что можно самому человеку.
  */
 apiV1Router.post('/modules/:key/run', async (req, res) => {
   try {
     const key = req.params.key
     if (!MODULE_DEFS[key]) return res.status(404).json({ ok: false, error: 'Неизвестный модуль' })
-    const accountId = req.apiKey?.accountId
-    if (!accountId) return res.status(400).json({ ok: false, error: 'Ключ не привязан к аккаунту — перевыпустите его в админке' })
-    const settings = { ...(req.body || {}), accountIds: [accountId], initiator: 'api' }
+    if (!req.apiKey?.ownerId) return res.status(400).json({ ok: false, error: 'Ключ не привязан к пользователю — перевыпустите его в админке' })
+    const accountIds = Array.isArray(req.body?.accountIds) ? req.body.accountIds : []
+    if (!accountIds.length) return res.status(400).json({ ok: false, error: 'Укажите accountIds — аккаунты, которыми работать' })
+    // Каждый аккаунт должен быть доступен пользователю ключа (RBAC по роли).
+    const { canSeeAccount } = await import('./lib/accessGuard.js')
+    for (const id of accountIds) {
+      if (!(await canSeeAccount(req, id))) {
+        return res.status(403).json({ ok: false, error: `Аккаунт ${id} недоступен пользователю этого ключа` })
+      }
+    }
+    const settings = { ...(req.body || {}), accountIds, initiator: 'api' }
     const { store, task, worker } = startModuleTask(key, settings)
     // Запуск воркера — тем же способом, что и UI-роут (modules/routes.js).
     const { startWorker } = await import('./modules/workers.js')

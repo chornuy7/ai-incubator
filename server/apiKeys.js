@@ -25,18 +25,18 @@ const hash = (v) => crypto.createHash('sha256').update(String(v || '')).digest('
 export async function listKeys() {
   const db = sb()
   if (db) {
-    const { data } = await db.from('api_keys').select('id, name, prefix, account_id, created_at, last_used_at, revoked').order('created_at', { ascending: false })
+    const { data } = await db.from('api_keys').select('id, name, prefix, owner_id, created_at, last_used_at, revoked').order('created_at', { ascending: false })
     return (data || []).map((k) => ({
-      id: k.id, name: k.name, prefix: k.prefix, accountId: k.account_id || '',
+      id: k.id, name: k.name, prefix: k.prefix, ownerId: k.owner_id || '',
       createdAt: k.created_at ? new Date(k.created_at).getTime() : 0,
       lastUsedAt: k.last_used_at ? new Date(k.last_used_at).getTime() : 0, revoked: !!k.revoked,
     }))
   }
   const raw = await readJson(KEYS_FILE(), [])
   const arr = Array.isArray(raw) ? raw : []
-  // Наружу — без секрета: только префикс для узнавания + к какому аккаунту привязан.
+  // Наружу — без секрета: только префикс для узнавания + для какого пользователя ключ.
   return arr.map((k) => ({
-    id: k.id, name: k.name, prefix: k.prefix, accountId: k.accountId || '', createdAt: k.createdAt,
+    id: k.id, name: k.name, prefix: k.prefix, ownerId: k.ownerId || '', createdAt: k.createdAt,
     lastUsedAt: k.lastUsedAt || 0, revoked: !!k.revoked,
   }))
 }
@@ -47,18 +47,18 @@ export async function listKeys() {
  */
 export async function issueKey(input = {}) {
   const name = String(input.name || '').trim() || 'API-ключ'
-  // Ключ генерируется ПОД ОДИН аккаунт (решение заказчика): «мозги» работают только
-  // с ним. Без аккаунта ключ выпускать нельзя — иначе он «висит в пустоте».
-  const accountId = String(input.accountId || '').trim()
-  if (!accountId) throw new Error('Ключ выпускается под конкретный аккаунт — выберите аккаунт')
+  // Ключ выпускается ДЛЯ ПОЛЬЗОВАТЕЛЯ продукта (человек из таблицы users, входит по
+  // логину/паролю). «Мозги» этим ключом действуют ОТ ЕГО ИМЕНИ — с его правами и его
+  // доступными аккаунтами. Без пользователя ключ не выпускаем: иначе он «в пустоте».
+  const userId = String(input.userId || '').trim()
+  if (!userId) throw new Error('Ключ выпускается для пользователя — выберите пользователя')
   const secret = PREFIX + crypto.randomBytes(24).toString('hex')
   const rec = {
     id: `key_${crypto.randomUUID().slice(0, 8)}`,
     name,
     key: secret,
     prefix: secret.slice(0, PREFIX.length + 6) + '…',
-    ownerId: input.ownerId || '',
-    accountId,
+    ownerId: userId, // владелец ключа = пользователь продукта
     createdAt: Date.now(),
     lastUsedAt: 0,
     revoked: false,
@@ -68,16 +68,15 @@ export async function issueKey(input = {}) {
     // В БД храним ХЭШ, не значение: утёкшая таблица не отдаёт рабочие ключи.
     await db.from('api_keys').insert({
       id: rec.id, name: rec.name, key_hash: hash(secret), prefix: rec.prefix,
-      owner_id: rec.ownerId || null, account_id: accountId,
-      created_at: new Date(rec.createdAt).toISOString(), revoked: false,
+      owner_id: userId, created_at: new Date(rec.createdAt).toISOString(), revoked: false,
     })
-    return { id: rec.id, name: rec.name, key: secret, prefix: rec.prefix, accountId, createdAt: rec.createdAt }
+    return { id: rec.id, name: rec.name, key: secret, prefix: rec.prefix, ownerId: userId, createdAt: rec.createdAt }
   }
   await mutateJson(KEYS_FILE(), (raw) => {
     const arr = Array.isArray(raw) ? raw : []
     return [rec, ...arr]
   }, [])
-  return { id: rec.id, name: rec.name, key: secret, prefix: rec.prefix, accountId, createdAt: rec.createdAt }
+  return { id: rec.id, name: rec.name, key: secret, prefix: rec.prefix, ownerId: userId, createdAt: rec.createdAt }
 }
 
 /** Отозвать ключ (мягко: помечаем revoked, чтобы аудит помнил, что он был). */
@@ -107,17 +106,17 @@ export async function verifyKey(raw) {
   if (!token.startsWith(PREFIX)) return null
   const db = sb()
   if (db) {
-    const { data: rec } = await db.from('api_keys').select('id, name, owner_id, account_id').eq('key_hash', hash(token)).eq('revoked', false).maybeSingle()
+    const { data: rec } = await db.from('api_keys').select('id, name, owner_id').eq('key_hash', hash(token)).eq('revoked', false).maybeSingle()
     if (!rec) return null
     db.from('api_keys').update({ last_used_at: new Date().toISOString() }).eq('id', rec.id).then(() => {}, () => {})
-    return { id: rec.id, name: rec.name, ownerId: rec.owner_id || '', accountId: rec.account_id || '' }
+    return { id: rec.id, name: rec.name, ownerId: rec.owner_id || '' }
   }
   const arr = await readJson(KEYS_FILE(), [])
   const rec = (Array.isArray(arr) ? arr : []).find((k) => k.key === token && !k.revoked)
   if (!rec) return null
   // Отметку «последнее использование» пишем best-effort, не роняя запрос.
   mutateJson(KEYS_FILE(), (r) => (Array.isArray(r) ? r : []).map((k) => (k.id === rec.id ? { ...k, lastUsedAt: Date.now() } : k)), []).catch(() => {})
-  return { id: rec.id, name: rec.name, ownerId: rec.ownerId, accountId: rec.accountId || '' }
+  return { id: rec.id, name: rec.name, ownerId: rec.ownerId }
 }
 
 /**

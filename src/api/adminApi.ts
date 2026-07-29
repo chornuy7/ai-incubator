@@ -248,14 +248,14 @@ export async function savePrices(patch: PricePatch): Promise<EffectivePrices> {
 }
 
 /** §10.3: API-ключи для внешнего AI-оркестратора. */
-/** accountId — к какому аккаунту привязан ключ (1 ключ = 1 аккаунт). */
-export interface ApiKeyInfo { id: string; name: string; prefix: string; accountId: string; createdAt: number; lastUsedAt: number; revoked: boolean }
+/** ownerId — для какого ПОЛЬЗОВАТЕЛЯ продукта выпущен ключ (users.id). */
+export interface ApiKeyInfo { id: string; name: string; prefix: string; ownerId: string; createdAt: number; lastUsedAt: number; revoked: boolean }
 
 export async function fetchApiKeys(): Promise<ApiKeyInfo[]> {
   return (await apiGet<{ ok: boolean; keys: ApiKeyInfo[] }>('/api/admin/api-keys')).keys
 }
-export async function issueApiKey(name: string, accountId: string): Promise<{ id: string; name: string; key: string; prefix: string; accountId: string }> {
-  return (await apiPost<{ ok: boolean; key: { id: string; name: string; key: string; prefix: string; accountId: string } }>('/api/admin/api-keys', { name, accountId })).key
+export async function issueApiKey(name: string, userId: string): Promise<{ id: string; name: string; key: string; prefix: string; ownerId: string }> {
+  return (await apiPost<{ ok: boolean; key: { id: string; name: string; key: string; prefix: string; ownerId: string } }>('/api/admin/api-keys', { name, userId })).key
 }
 export async function revokeApiKey(id: string): Promise<void> {
   await apiDelete(`/api/admin/api-keys/${id}`)
