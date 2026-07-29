@@ -15,6 +15,7 @@ function caseIcon(title: string): LucideIcon {
   return Rocket
 }
 import { fetchSubscription, quoteSubscription, type Subscription, type SubCost } from '@/api/balanceApi'
+import { useSession } from '@/features/auth/session'
 import { MODULES, BONUS_MODULE, FUNNEL_STEPS, COMPARISON, REVIEWS, CASES, ANNUAL_DISCOUNT, moduleTagline, moduleIcon, type Cmp } from './landing/catalog'
 
 /**
@@ -43,6 +44,29 @@ const HERO_VARIANTS = {
   },
 } as const
 
+/**
+ * §10.6: две ссылки — два разных языка одного продукта. `platform` говорит на языке
+ * инструмента (для тех, кто ищет софт: модули, интерфейс, контроль), `marketing` — на
+ * языке результата (для бизнеса, которому нужны клиенты). Меняется не только герой, но
+ * и заголовки секций/финальный призыв — иначе варианты выглядят одинаково.
+ */
+const VARIANT_COPY = {
+  platform: {
+    funnel: { eyebrow: 'Автоматический конвейер', title: 'Настроили — и забыли', desc: 'Ставите цель — система сама ведёт её от холодной базы до заявок в CRM. Пять шагов, всё на автопилоте.' },
+    modules: { eyebrow: 'Возможности', title: 'Всё, что нужно для продвижения', desc: '10 модулей и менеджер аккаунтов в подарок. Один интерфейс, общий пул профилей.' },
+    compare: { title: 'Почему выбирают Murmex', desc: 'Наши возможности против типовых альтернатив на рынке.' },
+    cases: { title: 'Реальные истории успеха', desc: 'Как бизнесы используют Murmex для роста в Telegram (демо-примеры).' },
+    final: { title: 'Попробуйте на своих каналах', desc: 'Заведите профили, задайте цель — первые результаты видно в тот же день.', cta: 'Начать' },
+  },
+  marketing: {
+    funnel: { eyebrow: 'Как это работает', title: 'От холодной базы — до заявок', desc: 'Вы ставите цель, сервис делает остальное: находит аудиторию, пишет, вовлекает и приводит людей к целевому действию. Пять шагов — без вашего участия.' },
+    modules: { eyebrow: 'Что внутри', title: 'Всё для потока клиентов', desc: 'Поиск аудитории, живые диалоги, прогрев и защита аккаунтов — работают вместе на одну цель: заявки.' },
+    compare: { title: 'Дешевле и стабильнее агентства', desc: 'Что вы получаете против найма подрядчика или ручного продвижения.' },
+    cases: { title: 'Результаты клиентов', desc: 'Реальные задачи бизнеса, которые сервис закрыл в Telegram (демо-примеры).' },
+    final: { title: 'Первые заявки — уже сегодня', desc: 'Задайте цель — сервис начнёт приводить аудиторию к целевому действию в тот же день.', cta: 'Получить клиентов' },
+  },
+} as const
+
 export function LandingPage() {
   // Цены — с сервера, не из копии в вебе: публичная страница и счёт называют одно число.
   const [pricing, setPricing] = useState<Subscription | null>(null)
@@ -51,12 +75,27 @@ export function LandingPage() {
   const nav = useNavigate()
   const start = () => nav('/login')
 
+  // §5.4: модули, уже подключённые на аккаунте — в калькуляторе они серые и некликабельные
+  // (докупать уже купленное нельзя). Только для залогиненного: гостю x-user-id не уходит,
+  // и сервер вернул бы дефолтное 'all', ошибочно заблокировав весь калькулятор.
+  const me = useSession((s) => s.user)
+  const ownedModules = useMemo(() => {
+    if (!me || !pricing) return new Set<string>()
+    return new Set(pricing.mine === 'all' ? pricing.items.map((i) => i.key) : pricing.mine)
+  }, [me, pricing])
+
   const [params] = useSearchParams()
   const variant = params.get('v') === 'marketing' ? 'marketing' : 'platform'
-  // §10.6: два варианта шапки-героя, переключаются GET-параметром — чтобы можно было
-  // выбрать без правки кода. `?hero=static` — один статичный экран; иначе — карусель.
-  const heroStatic = params.get('hero') === 'static'
+  // §10.6: две маркетинговые ссылки под разные кампании, обе ведут к продукту.
+  // Отличаются И текстом, И подачей мокапа: `platform` (по умолчанию) — статичный
+  // один экран; `marketing` (?v=marketing) — карусель из 3 экранов, показывает ширину
+  // продукта. `?hero=static|carousel` — необязательный явный оверрайд подачи.
+  const heroParam = params.get('hero')
+  const heroStatic = heroParam === 'static' ? true
+    : heroParam === 'carousel' ? false
+    : variant === 'platform'
   const hero = HERO_VARIANTS[variant]
+  const copy = VARIANT_COPY[variant]
   // Годовая скидка — с сервера (правится в админке), catalog-константа как fallback.
   const annualDiscount = pricing?.annualDiscount ?? ANNUAL_DISCOUNT
 
@@ -106,7 +145,7 @@ export function LandingPage() {
       {/* ── Как работает ─────────────────────────────────────── */}
       <section className="border-y border-line bg-surface/40">
         <div className="mx-auto max-w-6xl px-5 py-16">
-          <SectionHead eyebrow="Автоматический конвейер" title="Настроили — и забыли" desc="Ставите цель — система сама ведёт её от холодной базы до заявок в CRM. Пять шагов, всё на автопилоте." />
+          <SectionHead eyebrow={copy.funnel.eyebrow} title={copy.funnel.title} desc={copy.funnel.desc} />
           <div className="mt-8 grid gap-3 sm:grid-cols-3 lg:grid-cols-5">
             {FUNNEL_STEPS.map((s, i) => (
               <div key={s.title} className="rounded-2xl border border-line bg-card p-4">
@@ -124,7 +163,7 @@ export function LandingPage() {
 
       {/* ── Модули (возможности) ─────────────────────────────── */}
       <section id="modules" className="mx-auto max-w-6xl px-5 py-16">
-        <SectionHead eyebrow="Возможности" title="Всё, что нужно для продвижения" desc="10 модулей и менеджер аккаунтов в подарок. Один интерфейс, общий пул профилей." />
+        <SectionHead eyebrow={copy.modules.eyebrow} title={copy.modules.title} desc={copy.modules.desc} />
         <div className="mt-8 grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
           {MODULES.map((m) => (
             <div key={m.key} className="flex flex-col rounded-2xl border border-line bg-card p-5 transition-colors hover:border-spark-500/30">
@@ -232,14 +271,14 @@ export function LandingPage() {
           )}
 
           <div id="calc" className="scroll-mt-8">
-            {pricing && <PriceCalculator pricing={pricing} start={start} full={calcFull} setFull={setCalcFull} selected={calcSelected} setSelected={setCalcSelected} />}
+            {pricing && <PriceCalculator pricing={pricing} start={start} full={calcFull} setFull={setCalcFull} selected={calcSelected} setSelected={setCalcSelected} owned={ownedModules} />}
           </div>
         </div>
       </section>
 
       {/* ── Сравнение ────────────────────────────────────────── */}
       <section className="mx-auto max-w-6xl px-5 py-16">
-        <SectionHead eyebrow="Сравнение" title="Почему выбирают Murmex" desc="Наши возможности против типовых альтернатив на рынке." center />
+        <SectionHead eyebrow="Сравнение" title={copy.compare.title} desc={copy.compare.desc} center />
         <Comparison />
       </section>
 
@@ -253,7 +292,7 @@ export function LandingPage() {
 
       {/* ── Истории успеха ───────────────────────────────────── */}
       <section className="mx-auto max-w-6xl px-5 py-16">
-        <SectionHead eyebrow="Кейсы" title="Реальные истории успеха" desc="Как бизнесы используют Murmex для роста в Telegram (демо-примеры)." center />
+        <SectionHead eyebrow="Кейсы" title={copy.cases.title} desc={copy.cases.desc} center />
         {/* §10.6: кейсы переработаны — фокус на РЕЗУЛЬТАТЕ. Метрика вынесена вверх крупно
             (это и есть крючок), отрасль — иконкой, срок — бейджем. */}
         <div className="mt-8 grid gap-5 md:grid-cols-2">
@@ -283,10 +322,10 @@ export function LandingPage() {
       <section className="border-t border-line bg-surface/40">
         <div className="mx-auto flex max-w-6xl flex-col items-start gap-5 px-5 py-14 sm:flex-row sm:items-center">
           <div>
-            <div className="font-display text-xl font-bold">Попробуйте на своих каналах</div>
-            <p className="mt-1.5 text-sm text-muted">Заведите профили, задайте цель — первые результаты видно в тот же день.</p>
+            <div className="font-display text-xl font-bold">{copy.final.title}</div>
+            <p className="mt-1.5 text-sm text-muted">{copy.final.desc}</p>
           </div>
-          <button onClick={start} className="btn-primary h-11 shrink-0 px-6 text-base sm:ml-auto">Начать <ArrowRight size={17} /></button>
+          <button onClick={start} className="btn-primary h-11 shrink-0 px-6 text-base sm:ml-auto">{copy.final.cta} <ArrowRight size={17} /></button>
         </div>
       </section>
 
@@ -645,19 +684,26 @@ function Comparison() {
  * готового сетапа. Цену считает сервер (quoteSubscription). «Полная лицензия» — тумблер:
  * включает всё, поштучный выбор гаснет (серые, неактивные) — уже включено.
  */
-function PriceCalculator({ pricing, start, full, setFull, selected, setSelected }: {
+function PriceCalculator({ pricing, start, full, setFull, selected, setSelected, owned }: {
   pricing: Subscription
   start: () => void
   full: boolean
   setFull: Dispatch<SetStateAction<boolean>>
   selected: Set<string>
   setSelected: Dispatch<SetStateAction<Set<string>>>
+  /** §5.4: модули, уже подключённые на аккаунте — серые, некликабельные, не входят в счёт. */
+  owned: Set<string>
 }) {
   const allKeys = useMemo(() => pricing.items.map((i) => i.key), [pricing.items])
   const [period, setPeriod] = useState<'month' | 'year'>('month')
   const [cost, setCost] = useState<SubCost | null>(null)
 
-  const activeKeys = useMemo(() => (full ? allKeys : [...selected]), [full, selected, allKeys])
+  const allOwned = owned.size > 0 && allKeys.every((k) => owned.has(k))
+  // Купленное в счёт не идёт: «полная лицензия» докупает только недостающее.
+  const activeKeys = useMemo(
+    () => (full ? allKeys : [...selected]).filter((k) => !owned.has(k)),
+    [full, selected, allKeys, owned],
+  )
   useEffect(() => {
     if (!activeKeys.length) { setCost(null); return }
     let alive = true
@@ -671,7 +717,7 @@ function PriceCalculator({ pricing, start, full, setFull, selected, setSelected 
   const cur = pricing.currency
 
   const toggle = (k: string) => {
-    if (full) return
+    if (full || owned.has(k)) return // купленное и «полная лицензия» — не переключаем
     setSelected((prev) => { const n = new Set(prev); if (n.has(k)) n.delete(k); else n.add(k); return n })
   }
 
@@ -698,32 +744,42 @@ function PriceCalculator({ pricing, start, full, setFull, selected, setSelected 
 
       <button
         onClick={() => setFull((v) => !v)}
-        className={`mt-4 flex w-full items-center gap-3 rounded-xl border p-4 text-left transition-colors ${full ? 'border-spark-500/50 bg-spark-500/10' : 'border-line bg-surface hover:border-spark-500/30'}`}
+        disabled={allOwned}
+        className={`mt-4 flex w-full items-center gap-3 rounded-xl border p-4 text-left transition-colors ${allOwned ? 'cursor-not-allowed border-line bg-surface/40 opacity-60' : full ? 'border-spark-500/50 bg-spark-500/10' : 'border-line bg-surface hover:border-spark-500/30'}`}
       >
-        <span className={`grid h-6 w-6 shrink-0 place-items-center rounded-md border ${full ? 'border-spark-500 bg-spark-500 text-[#04150c]' : 'border-line'}`}>{full && <Check size={15} />}</span>
+        <span className={`grid h-6 w-6 shrink-0 place-items-center rounded-md border ${full && !allOwned ? 'border-spark-500 bg-spark-500 text-[#04150c]' : 'border-line'}`}>{allOwned ? <Lock size={13} /> : full && <Check size={15} />}</span>
         <span className="min-w-0 flex-1">
           <span className="block font-semibold">Полная лицензия — всё включено</span>
           <span className="block text-xs text-muted">Все {allKeys.length} модулей платформы. Новые — бесплатно.</span>
         </span>
       </button>
 
+      {/* Подсказка про серые модули — только если что-то уже подключено на аккаунте. */}
+      {owned.size > 0 && (
+        <p className="mt-3 flex items-center gap-1.5 text-xs text-muted">
+          <Lock size={12} className="shrink-0 text-spark-400" />
+          {allOwned ? 'Все модули уже подключены на вашем аккаунте — докупать нечего.' : 'Серые модули уже подключены на вашем аккаунте — их нельзя выбрать повторно.'}
+        </p>
+      )}
+
       <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
         {pricing.items.map((m) => {
-          const on = full || selected.has(m.key)
-          const included = full
+          const isOwned = owned.has(m.key)
+          const on = !isOwned && (full || selected.has(m.key))
+          const locked = isOwned || full // выбирать нельзя: уже есть или взято полной лицензией
           const Icon = moduleIcon(m.key)
           return (
             <div
               key={m.key}
-              className={`relative flex flex-col rounded-xl border p-4 transition-colors ${included ? 'border-line bg-surface/40 opacity-60' : on ? 'border-spark-500/50 bg-spark-500/10' : 'border-line bg-surface'}`}
+              className={`relative flex flex-col rounded-xl border p-4 transition-colors ${isOwned ? 'border-line bg-surface/30 opacity-55' : full ? 'border-line bg-surface/40 opacity-60' : on ? 'border-spark-500/50 bg-spark-500/10' : 'border-line bg-surface'}`}
             >
               <button
                 onClick={() => toggle(m.key)}
-                disabled={included}
-                className={`flex items-start gap-3 text-left ${included ? 'cursor-not-allowed' : ''}`}
+                disabled={locked}
+                className={`flex items-start gap-3 text-left ${locked ? 'cursor-not-allowed' : ''}`}
               >
-                <span className={`mt-0.5 grid h-5 w-5 shrink-0 place-items-center rounded-md border ${on && !included ? 'border-spark-500 bg-spark-500 text-[#04150c]' : 'border-line text-muted'}`}>
-                  {included ? <Lock size={12} /> : on ? <Check size={13} /> : null}
+                <span className={`mt-0.5 grid h-5 w-5 shrink-0 place-items-center rounded-md border ${on ? 'border-spark-500 bg-spark-500 text-[#04150c]' : 'border-line text-muted'}`}>
+                  {locked ? <Lock size={12} /> : on ? <Check size={13} /> : null}
                 </span>
                 <span className="min-w-0 flex-1">
                   <span className="flex items-center gap-1.5 font-semibold"><Icon size={14} className="shrink-0 text-spark-300" /> {m.title}</span>
@@ -734,7 +790,9 @@ function PriceCalculator({ pricing, start, full, setFull, selected, setSelected 
               <Link to={`/module/${m.key}`} className="mt-2 inline-flex items-center gap-1 self-start text-[11px] font-semibold text-spark-300 hover:gap-1.5">
                 Подробнее <ArrowRight size={12} />
               </Link>
-              {included && <span className="absolute right-3 top-3 rounded-md bg-white/8 px-1.5 py-0.5 text-[10px] font-bold text-muted">включено</span>}
+              {isOwned
+                ? <span className="absolute right-3 top-3 rounded-md bg-spark-500/15 px-1.5 py-0.5 text-[10px] font-bold text-spark-300">уже есть</span>
+                : full && <span className="absolute right-3 top-3 rounded-md bg-white/8 px-1.5 py-0.5 text-[10px] font-bold text-muted">включено</span>}
             </div>
           )
         })}

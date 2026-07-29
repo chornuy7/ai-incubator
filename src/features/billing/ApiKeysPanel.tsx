@@ -64,7 +64,7 @@ export function ApiKeysPanel() {
       <div>
         <div className="flex items-center gap-2 text-sm font-bold text-fg"><KeyRound size={15} /> API-ключи для «мозгов»</div>
         <p className="mt-1 text-xs text-muted">
-          Ключом внешний AI-оркестратор создаёт цели, кампании и задачи по API (§10.3).
+          Ключом внешний AI-оркестратор создаёт цели, кампании и задачи по API.
           Полное значение видно один раз при выпуске.
         </p>
       </div>

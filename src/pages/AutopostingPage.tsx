@@ -278,7 +278,7 @@ export function AutopostingPage() {
             </div>
             {!canWrite && (
               <div className="mt-3 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-200">
-                Публикацию создаёт только администратор (единый отправитель, §11). У вас нет прав на отправку.
+                Публикацию создаёт только администратор (единый отправитель). У вас нет прав на отправку.
               </div>
             )}
             <div className="mt-3 flex gap-2">
