@@ -7,6 +7,7 @@ import { useApp, activeAccounts } from '@/mocks/store'
 import { fetchBalance, fetchPricing, type Balance, type Pricing } from '@/api/balanceApi'
 import { useSession } from '@/features/auth/session'
 import { usePlan } from '@/features/billing/plan'
+import { CRITICAL } from '@/features/billing/LowBalanceBar'
 import { useUi } from '@/shared/lib/uiStore'
 import { coins as fmtCoins } from '@/shared/lib/utils'
 import { Dropdown, MenuItem, Modal, Avatar } from '@/shared/ui'
@@ -106,13 +107,29 @@ export function AppHeader() {
           </div>
 
           {/* Coins */}
-          <button
-            onClick={() => setCoinsOpen(true)}
-            className="flex items-center gap-1.5 rounded-xl border border-amber-500/30 bg-amber-500/10 px-3 py-1.5 transition-colors hover:bg-amber-500/15"
-          >
-            <Zap size={16} className="text-amber-400" fill="currentColor" />
-            <span className="text-sm font-bold text-amber-300">{fmtCoins(balance?.coins ?? data.coins)}</span>
-          </button>
+          {/* §11.5: на нуле/почти нуле чип КРАСНЫЙ и со словом «Пополнить» — по звонку
+              29.07 это критическое уведомление, оно должно тревожить, а не выглядеть
+              спокойно-зелёным. Пороги — общие с лентой (LowBalanceBar). */}
+          {(() => {
+            const c = balance?.coins ?? data.coins
+            const alarm = c <= CRITICAL
+            return (
+              <button
+                onClick={() => setCoinsOpen(true)}
+                title={alarm ? 'Баланс на нуле — пополнить' : 'Пополнить баланс'}
+                className={
+                  'flex items-center gap-1.5 rounded-xl border px-3 py-1.5 transition-colors ' +
+                  (alarm
+                    ? 'border-red-500/50 bg-red-500/15 hover:bg-red-500/25'
+                    : 'border-amber-500/30 bg-amber-500/10 hover:bg-amber-500/15')
+                }
+              >
+                <Zap size={16} className={alarm ? 'text-red-400' : 'text-amber-400'} fill="currentColor" />
+                <span className={'text-sm font-bold ' + (alarm ? 'text-red-300' : 'text-amber-300')}>{fmtCoins(c)}</span>
+                {alarm && <span className="text-xs font-bold text-red-300">Пополнить</span>}
+              </button>
+            )
+          })()}
 
           {/* Theme */}
           <button onClick={toggleTheme} className="btn-icon" aria-label="Тема">
@@ -197,9 +214,11 @@ export function AppHeader() {
         footer={(
           <>
             <button onClick={() => setNoCoins('')} className="btn-ghost">Закрыть</button>
+            {/* §11.5: «Пополнить» — красным, а не зелёным btn-primary: это тревожное
+                уведомление, а не радостное действие. */}
             <button
               onClick={() => { setNoCoins(''); setCoinsOpen(true) }}
-              className="btn-primary inline-flex items-center gap-1.5"
+              className="inline-flex items-center gap-1.5 rounded-xl bg-red-500 px-4 py-2 text-sm font-bold text-white transition-colors hover:bg-red-400"
             >
               <Zap size={16} fill="currentColor" /> Пополнить баланс
             </button>

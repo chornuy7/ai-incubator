@@ -17,6 +17,7 @@ function caseIcon(title: string): LucideIcon {
 import { fetchSubscription, quoteSubscription, type Subscription, type SubCost } from '@/api/balanceApi'
 import { useSession } from '@/features/auth/session'
 import { MODULES, BONUS_MODULE, FUNNEL_VARIANTS, COMPARISON, REVIEWS, CASES, ANNUAL_DISCOUNT, moduleTagline, moduleIcon, type Cmp } from './landing/catalog'
+import { AuthCta } from './landing/AuthCta'
 
 /**
  * B1 (SPEC §5.2): публичный лендинг — единственная страница вне auth-гейта.
@@ -139,7 +140,7 @@ export function LandingPage() {
 
   return (
     <div className="min-h-screen bg-bg text-fg">
-      <Header start={start} />
+      <Header />
 
       {/* ── Герой ─────────────────────────────────────────────── */}
       <HeroSection carousel={heroCarousel} startIdx={heroStartIdx} start={start} />
@@ -342,7 +343,7 @@ export function LandingPage() {
 
 /* ─────────────────────────── Части ─────────────────────────── */
 
-function Header({ start }: { start: () => void }) {
+function Header() {
   return (
     <header className="sticky top-0 z-40 border-b border-line bg-surface/80 backdrop-blur-xl">
       <div className="mx-auto flex max-w-6xl items-center gap-3 px-5 py-3.5">
@@ -355,7 +356,7 @@ function Header({ start }: { start: () => void }) {
           <a href="#modules" className="hover:text-fg">Возможности</a>
           <a href="#tarify" className="hover:text-fg">Тарифы</a>
         </nav>
-        <button onClick={start} className="ml-4 btn-primary h-9 px-4 text-sm">Войти <ArrowRight size={15} /></button>
+        <AuthCta className="ml-4" />
       </div>
     </header>
   )

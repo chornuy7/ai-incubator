@@ -63,7 +63,9 @@ export function LowBalanceLoginModal() {
       footer={(
         <>
           <button onClick={close} className="btn-ghost">Понятно</button>
-          <button onClick={() => { close(); setCoinsOpen(true) }} className="btn-primary inline-flex items-center gap-1.5">
+          {/* §11.5: «Пополнить» красным — критическое уведомление, не радостное действие. */}
+          <button onClick={() => { close(); setCoinsOpen(true) }}
+            className="inline-flex items-center gap-1.5 rounded-xl bg-red-500 px-4 py-2 text-sm font-bold text-white transition-colors hover:bg-red-400">
             <Zap size={16} /> Пополнить
           </button>
         </>

@@ -4,6 +4,7 @@ import { ArrowRight, ArrowLeft, Check, Zap, CircleCheck } from 'lucide-react'
 import { fetchSubscription, type Subscription } from '@/api/balanceApi'
 import { getModule, ANNUAL_DISCOUNT, BONUS_MODULE, MODULE_FEATURES } from './catalog'
 import { HELP_DOCS } from '@/shared/config/helpDocs'
+import { AuthCta } from './AuthCta'
 import { cn } from '@/shared/lib/utils'
 
 /**
@@ -65,7 +66,7 @@ export function ModuleLandingPage() {
             <div className="font-display text-sm font-bold leading-tight">Murmex</div>
           </Link>
           <Link to="/#tarify" className="btn-ghost ml-auto h-9 px-4 text-sm"><ArrowLeft size={15} /> Все тарифы</Link>
-          <button onClick={start} className="btn-primary h-9 px-4 text-sm">Войти <ArrowRight size={15} /></button>
+          <AuthCta />
         </div>
       </header>
 

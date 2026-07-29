@@ -15,8 +15,10 @@ import { coins as fmtCoins } from '@/shared/lib/utils'
  * от Николая): точную «$2 не хватит» посчитать нечем. Когда курс появится, сюда
  * встанет расчёт «хватит ли на типичную задачу».
  */
-const LOW = 5 // ⚡ — мало
-const CRITICAL = 0.5 // ⚡ — почти ноль
+// §11.5: экспортируем — шапка красит чип баланса по тем же порогам, чтобы лента и
+// чип не расходились в оценке «всё плохо».
+export const LOW = 5 // ⚡ — мало
+export const CRITICAL = 0.5 // ⚡ — почти ноль
 
 export function LowBalanceBar() {
   const [balance, setBalance] = useState<Balance | null>(null)
