@@ -2,7 +2,7 @@ import { useState, useEffect, useMemo, useRef, type Dispatch, type SetStateActio
 import { useNavigate, useSearchParams, Link } from 'react-router-dom'
 import {
   ArrowRight, Check, Zap, Lock, Minus, X, Quote, TrendingUp, Clock, Bot, Star,
-  Coins, ShoppingBag, Clapperboard, Building2, Rocket, type LucideIcon,
+  Coins, ShoppingBag, Clapperboard, Building2, Rocket, ChevronLeft, ChevronRight, type LucideIcon,
 } from 'lucide-react'
 
 /** §10.6: иконка кейса по отрасли — узнаётся по ключевому слову в названии. */
@@ -290,7 +290,7 @@ export function LandingPage() {
       <section className="border-y border-line bg-surface/40">
         <div className="mx-auto max-w-6xl px-5 py-16">
           <SectionHead eyebrow="Отзывы" title={copy.reviews.title} desc={copy.reviews.desc} center />
-          <ReviewsCarousel reviews={reviews} />
+          <ReviewsCarousel reviews={reviews} carousel={heroCarousel} />
         </div>
       </section>
 
@@ -395,6 +395,7 @@ function HeroSection({ carousel, startIdx, start }: { carousel: boolean; startId
     return () => clearInterval(id)
   }, [carousel, paused])
   const story = HERO_STORIES[carousel ? i : startIdx]
+  const go = (dir: number) => setI((p) => (p + dir + HERO_STORIES.length) % HERO_STORIES.length)
 
   return (
     <section
@@ -432,7 +433,22 @@ function HeroSection({ carousel, startIdx, start }: { carousel: boolean; startId
           <Stat value="0" label="ручной рутины" />
         </div>
       </div>
-      <HeroMock screen={story.screen} label={story.label} storyKey={story.key} />
+      <div className="relative">
+        {/* Стрелки по бокам мокапа — листать историю не только точками. */}
+        {carousel && (
+          <>
+            <button onClick={() => go(-1)} aria-label="Предыдущая история"
+              className="absolute -left-3 top-1/2 z-10 grid h-9 w-9 -translate-y-1/2 place-items-center rounded-full border border-line bg-surface/90 text-muted backdrop-blur transition-colors hover:border-spark-500/40 hover:text-fg sm:-left-5">
+              <ChevronLeft size={18} />
+            </button>
+            <button onClick={() => go(1)} aria-label="Следующая история"
+              className="absolute -right-3 top-1/2 z-10 grid h-9 w-9 -translate-y-1/2 place-items-center rounded-full border border-line bg-surface/90 text-muted backdrop-blur transition-colors hover:border-spark-500/40 hover:text-fg sm:-right-5">
+              <ChevronRight size={18} />
+            </button>
+          </>
+        )}
+        <HeroMock screen={story.screen} label={story.label} storyKey={story.key} />
+      </div>
     </section>
   )
 }
@@ -565,7 +581,26 @@ function PlanCard({ name, price, per, desc, features, onStart, badge, highlight,
  * 5с, пауза при наведении/фокусе, точки-навигация. Основа — нативный scroll-snap:
  * сам по себе адаптивен (2 карточки на десктопе, 1 на телефоне) и не ломает клавиатуру.
  */
-function ReviewsCarousel({ reviews }: { reviews: typeof REVIEWS }) {
+function ReviewCard({ r }: { r: (typeof REVIEWS)[number] }) {
+  return (
+    <figure className="flex h-full flex-col rounded-2xl border border-line bg-card p-5">
+      <Quote size={22} className="text-spark-400/60" />
+      <p className="mt-3 flex-1 text-sm leading-relaxed text-muted">{r.text}</p>
+      <figcaption className="mt-4 flex items-center gap-3">
+        <div className="grid h-9 w-9 place-items-center rounded-full bg-spark-500/15 font-bold text-spark-300">{r.name[0]}</div>
+        <div>
+          <div className="text-sm font-semibold">{r.name}</div>
+          <div className="text-xs text-muted">{r.role}</div>
+        </div>
+        <div className="ml-auto flex items-center gap-0.5 text-amber-300">
+          {Array.from({ length: 5 }).map((_, i) => <Star key={i} size={13} fill="currentColor" />)}
+        </div>
+      </figcaption>
+    </figure>
+  )
+}
+
+function ReviewsCarousel({ reviews, carousel }: { reviews: typeof REVIEWS; carousel: boolean }) {
   const trackRef = useRef<HTMLDivElement>(null)
   const [active, setActive] = useState(0)
   const [paused, setPaused] = useState(false)
@@ -576,33 +611,33 @@ function ReviewsCarousel({ reviews }: { reviews: typeof REVIEWS }) {
     const card = track.children[i] as HTMLElement | undefined
     if (card) track.scrollTo({ left: card.offsetLeft - track.offsetLeft, behavior: 'smooth' })
   }
+  const go = (dir: number) => { const n = (active + dir + reviews.length) % reviews.length; setActive(n); scrollTo(n) }
 
-  // Автопрокрутка: раз в 5с к следующей карточке, по кругу. Пауза — при наведении,
-  // чтобы читающий отзыв не «уезжал» из-под курсора.
   useEffect(() => {
-    if (paused) return
-    const id = setInterval(() => {
-      setActive((prev) => {
-        const next = (prev + 1) % reviews.length
-        scrollTo(next)
-        return next
-      })
-    }, 5000)
+    if (!carousel || paused) return
+    const id = setInterval(() => setActive((prev) => { const next = (prev + 1) % reviews.length; scrollTo(next); return next }), 5000)
     return () => clearInterval(id)
-  }, [paused])
+  }, [carousel, paused, reviews.length])
 
-  // Активная точка следует за реальным скроллом (свайп/клавиатура/автопрокрутка) —
-  // считаем ближайшую к левому краю карточку.
+  // Активная точка следует за реальным скроллом (свайп/стрелки/автопрокрутка).
   const onScroll = () => {
     const track = trackRef.current
     if (!track) return
-    let nearest = 0
-    let best = Infinity
+    let nearest = 0, best = Infinity
     Array.from(track.children).forEach((c, i) => {
       const d = Math.abs((c as HTMLElement).offsetLeft - track.offsetLeft - track.scrollLeft)
       if (d < best) { best = d; nearest = i }
     })
     setActive(nearest)
+  }
+
+  // Обычный лендинг — статичная сетка, без карусели/точек/стрелок.
+  if (!carousel) {
+    return (
+      <div className="mt-8 grid gap-5 md:grid-cols-2">
+        {reviews.map((r) => <ReviewCard key={r.name} r={r} />)}
+      </div>
+    )
   }
 
   return (
@@ -613,40 +648,29 @@ function ReviewsCarousel({ reviews }: { reviews: typeof REVIEWS }) {
       onFocusCapture={() => setPaused(true)}
       onBlurCapture={() => setPaused(false)}
     >
-      <div
-        ref={trackRef}
-        onScroll={onScroll}
-        className="no-scrollbar flex snap-x snap-mandatory gap-5 overflow-x-auto scroll-smooth pb-1"
-      >
-        {reviews.map((r) => (
-          <figure
-            key={r.name}
-            className="flex w-[85%] shrink-0 snap-start flex-col rounded-2xl border border-line bg-card p-5 sm:w-[calc(50%-10px)]"
-          >
-            <Quote size={22} className="text-spark-400/60" />
-            <p className="mt-3 flex-1 text-sm leading-relaxed text-muted">{r.text}</p>
-            <figcaption className="mt-4 flex items-center gap-3">
-              <div className="grid h-9 w-9 place-items-center rounded-full bg-spark-500/15 font-bold text-spark-300">{r.name[0]}</div>
-              <div>
-                <div className="text-sm font-semibold">{r.name}</div>
-                <div className="text-xs text-muted">{r.role}</div>
-              </div>
-              <div className="ml-auto flex items-center gap-0.5 text-amber-300">
-                {Array.from({ length: 5 }).map((_, i) => <Star key={i} size={13} fill="currentColor" />)}
-              </div>
-            </figcaption>
-          </figure>
-        ))}
+      {/* Стрелки по бокам — листать не только точками снизу. */}
+      <div className="relative">
+        <button onClick={() => go(-1)} aria-label="Предыдущий отзыв"
+          className="absolute -left-3 top-1/2 z-10 grid h-9 w-9 -translate-y-1/2 place-items-center rounded-full border border-line bg-surface/90 text-muted backdrop-blur transition-colors hover:border-spark-500/40 hover:text-fg sm:-left-5">
+          <ChevronLeft size={18} />
+        </button>
+        <button onClick={() => go(1)} aria-label="Следующий отзыв"
+          className="absolute -right-3 top-1/2 z-10 grid h-9 w-9 -translate-y-1/2 place-items-center rounded-full border border-line bg-surface/90 text-muted backdrop-blur transition-colors hover:border-spark-500/40 hover:text-fg sm:-right-5">
+          <ChevronRight size={18} />
+        </button>
+        <div ref={trackRef} onScroll={onScroll} className="no-scrollbar flex snap-x snap-mandatory gap-5 overflow-x-auto scroll-smooth pb-1">
+          {reviews.map((r) => (
+            <div key={r.name} className="w-[85%] shrink-0 snap-start sm:w-[calc(50%-10px)]">
+              <ReviewCard r={r} />
+            </div>
+          ))}
+        </div>
       </div>
 
       <div className="mt-5 flex justify-center gap-2">
         {reviews.map((r, i) => (
-          <button
-            key={r.name}
-            onClick={() => { setActive(i); scrollTo(i) }}
-            aria-label={`Отзыв ${i + 1}`}
-            className={`h-2 rounded-full transition-all ${i === active ? 'w-6 bg-spark-400' : 'w-2 bg-line hover:bg-muted'}`}
-          />
+          <button key={r.name} onClick={() => { setActive(i); scrollTo(i) }} aria-label={`Отзыв ${i + 1}`}
+            className={`h-2 rounded-full transition-all ${i === active ? 'w-6 bg-spark-400' : 'w-2 bg-line hover:bg-muted'}`} />
         ))}
       </div>
     </div>
