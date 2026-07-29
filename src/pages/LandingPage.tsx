@@ -16,7 +16,7 @@ function caseIcon(title: string): LucideIcon {
 }
 import { fetchSubscription, quoteSubscription, type Subscription, type SubCost } from '@/api/balanceApi'
 import { useSession } from '@/features/auth/session'
-import { MODULES, BONUS_MODULE, FUNNEL_STEPS, COMPARISON, REVIEWS, CASES, ANNUAL_DISCOUNT, moduleTagline, moduleIcon, type Cmp } from './landing/catalog'
+import { MODULES, BONUS_MODULE, FUNNEL_VARIANTS, COMPARISON, REVIEWS, CASES, ANNUAL_DISCOUNT, moduleTagline, moduleIcon, type Cmp } from './landing/catalog'
 
 /**
  * B1 (SPEC §5.2): публичный лендинг — единственная страница вне auth-гейта.
@@ -55,13 +55,15 @@ const VARIANT_COPY = {
     funnel: { eyebrow: 'Автоматический конвейер', title: 'Настроили — и забыли', desc: 'Ставите цель — система сама ведёт её от холодной базы до заявок в CRM. Пять шагов, всё на автопилоте.' },
     modules: { eyebrow: 'Возможности', title: 'Всё, что нужно для продвижения', desc: '10 модулей и менеджер аккаунтов в подарок. Один интерфейс, общий пул профилей.' },
     compare: { title: 'Почему выбирают Murmex', desc: 'Наши возможности против типовых альтернатив на рынке.' },
-    cases: { title: 'Реальные истории успеха', desc: 'Как бизнесы используют Murmex для роста в Telegram (демо-примеры).' },
+    reviews: { title: 'Что о нас говорят', desc: 'Как команды и агентства управляют парком аккаунтов (демо-версия).' },
+    cases: { title: 'Реальные истории успеха', desc: 'Как из одной панели управляют сеткой аккаунтов (демо-примеры).' },
     final: { title: 'Попробуйте на своих каналах', desc: 'Заведите профили, задайте цель — первые результаты видно в тот же день.', cta: 'Начать' },
   },
   marketing: {
     funnel: { eyebrow: 'Как это работает', title: 'От холодной базы — до заявок', desc: 'Вы ставите цель, сервис делает остальное: находит аудиторию, пишет, вовлекает и приводит людей к целевому действию. Пять шагов — без вашего участия.' },
     modules: { eyebrow: 'Что внутри', title: 'Всё для потока клиентов', desc: 'Поиск аудитории, живые диалоги и аккаунты, которые не банят, — работают вместе на одну цель: заявки.' },
     compare: { title: 'Дешевле и стабильнее агентства', desc: 'Что вы получаете против найма подрядчика или ручного продвижения.' },
+    reviews: { title: 'Истории тех, кто уже растёт', desc: 'Как бизнесы получают клиентов из Telegram (демо-версия).' },
     cases: { title: 'Результаты клиентов', desc: 'Реальные задачи бизнеса, которые сервис закрыл в Telegram (демо-примеры).' },
     final: { title: 'Первые заявки — уже сегодня', desc: 'Задайте цель — сервис начнёт приводить аудиторию к целевому действию в тот же день.', cta: 'Получить клиентов' },
   },
@@ -96,6 +98,11 @@ export function LandingPage() {
     : variant === 'platform'
   const hero = HERO_VARIANTS[variant]
   const copy = VARIANT_COPY[variant]
+  // §10.6: тело страницы тоже разное — иначе варианты выглядят одинаково при скролле.
+  const funnelSteps = FUNNEL_VARIANTS[variant]
+  const vTag = variant === 'platform' ? 'p' : 'm'
+  const reviews = REVIEWS.filter((r) => r.v === 'both' || r.v === vTag)
+  const cases = CASES.filter((c) => c.v === 'both' || c.v === vTag)
   // Годовая скидка — с сервера (правится в админке), catalog-константа как fallback.
   const annualDiscount = pricing?.annualDiscount ?? ANNUAL_DISCOUNT
 
@@ -147,7 +154,7 @@ export function LandingPage() {
         <div className="mx-auto max-w-6xl px-5 py-16">
           <SectionHead eyebrow={copy.funnel.eyebrow} title={copy.funnel.title} desc={copy.funnel.desc} />
           <div className="mt-8 grid gap-3 sm:grid-cols-3 lg:grid-cols-5">
-            {FUNNEL_STEPS.map((s, i) => (
+            {funnelSteps.map((s, i) => (
               <div key={s.title} className="rounded-2xl border border-line bg-card p-4">
                 <div className="mb-3 flex items-center justify-between">
                   <div className="grid h-9 w-9 place-items-center rounded-xl bg-spark-500/12 text-spark-300"><s.icon size={18} /></div>
@@ -285,8 +292,8 @@ export function LandingPage() {
       {/* ── Отзывы ───────────────────────────────────────────── */}
       <section className="border-y border-line bg-surface/40">
         <div className="mx-auto max-w-6xl px-5 py-16">
-          <SectionHead eyebrow="Отзывы" title="Что о нас говорят" desc="Иллюстративные отзывы — в демо-версии." center />
-          <ReviewsCarousel />
+          <SectionHead eyebrow="Отзывы" title={copy.reviews.title} desc={copy.reviews.desc} center />
+          <ReviewsCarousel reviews={reviews} />
         </div>
       </section>
 
@@ -296,7 +303,7 @@ export function LandingPage() {
         {/* §10.6: кейсы переработаны — фокус на РЕЗУЛЬТАТЕ. Метрика вынесена вверх крупно
             (это и есть крючок), отрасль — иконкой, срок — бейджем. */}
         <div className="mt-8 grid gap-5 md:grid-cols-2">
-          {CASES.map((c) => {
+          {cases.map((c) => {
             const Icon = caseIcon(c.title)
             return (
               <div key={c.title} className="group relative overflow-hidden rounded-2xl border border-line bg-card p-5 transition-colors hover:border-spark-500/30">
@@ -551,7 +558,7 @@ function PlanCard({ name, price, per, desc, features, onStart, badge, highlight,
  * 5с, пауза при наведении/фокусе, точки-навигация. Основа — нативный scroll-snap:
  * сам по себе адаптивен (2 карточки на десктопе, 1 на телефоне) и не ломает клавиатуру.
  */
-function ReviewsCarousel() {
+function ReviewsCarousel({ reviews }: { reviews: typeof REVIEWS }) {
   const trackRef = useRef<HTMLDivElement>(null)
   const [active, setActive] = useState(0)
   const [paused, setPaused] = useState(false)
@@ -569,7 +576,7 @@ function ReviewsCarousel() {
     if (paused) return
     const id = setInterval(() => {
       setActive((prev) => {
-        const next = (prev + 1) % REVIEWS.length
+        const next = (prev + 1) % reviews.length
         scrollTo(next)
         return next
       })
@@ -604,7 +611,7 @@ function ReviewsCarousel() {
         onScroll={onScroll}
         className="no-scrollbar flex snap-x snap-mandatory gap-5 overflow-x-auto scroll-smooth pb-1"
       >
-        {REVIEWS.map((r) => (
+        {reviews.map((r) => (
           <figure
             key={r.name}
             className="flex w-[85%] shrink-0 snap-start flex-col rounded-2xl border border-line bg-card p-5 sm:w-[calc(50%-10px)]"
@@ -626,7 +633,7 @@ function ReviewsCarousel() {
       </div>
 
       <div className="mt-5 flex justify-center gap-2">
-        {REVIEWS.map((r, i) => (
+        {reviews.map((r, i) => (
           <button
             key={r.name}
             onClick={() => { setActive(i); scrollTo(i) }}
