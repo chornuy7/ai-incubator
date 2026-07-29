@@ -66,6 +66,8 @@ export interface UserRow {
   roleIds?: string[]
   /** Монет на счету сейчас. */
   coins: number
+  /** §11.9: последний вход — когда (ISO) и с какого IP. null — входов в аудите нет. */
+  lastLogin?: { at: string; ip: string } | null
   /** Подписка: какие модули открыты. all=true — набор не выбран (открыто всё). null — синтетическая строка. */
   subscription: { all: boolean; count: number; titles: string[]; keys: string[] } | null
   tasks: number

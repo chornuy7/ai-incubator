@@ -33,13 +33,17 @@ usersRouter.get('/', async (_req, res) => {
 usersRouter.post('/login', async (req, res) => {
   try {
     const { email, password } = req.body ?? {}
+    // §11.9: пишем IP входа — по звонку 29.07 надо понимать, откуда заходят
+    // (сценарий: доступ забрал уволенный сотрудник). За прокси берём первый
+    // адрес из x-forwarded-for, иначе — сокет.
+    const ip = req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.socket?.remoteAddress || ''
     const user = await authenticate(email, password)
     if (!user) {
-      await appendAudit({ action: 'user.login.fail', module: 'auth', initiator: 'system', reason: `Неудачный вход: ${String(email || '').slice(0, 60)}` })
+      await appendAudit({ action: 'user.login.fail', module: 'auth', initiator: 'system', reason: `Неудачный вход: ${String(email || '').slice(0, 60)}`, meta: { ip } })
       return res.status(401).json({ ok: false, error: 'Неверный e-mail или пароль' })
     }
     await clockIn(user.id) // учёт рабочего времени (§8.1): старт сессии труда
-    await appendAudit({ action: 'user.login', module: 'auth', initiator: user.email, reason: `Вход: ${user.name}`, meta: { userId: user.id, roleIds: userRoleIds(user) } })
+    await appendAudit({ action: 'user.login', module: 'auth', initiator: user.email, reason: `Вход: ${user.name}`, meta: { userId: user.id, roleIds: userRoleIds(user), ip } })
     res.json({ ok: true, ...(await sessionPayload(user)) })
   } catch (err) { fail(res, err, 500) }
 })

@@ -564,6 +564,21 @@ export async function usersReport(opts = {}) {
 
   // §10.4: имя родителя для «суб-юзер под <кем>» — по id из того же списка.
   const nameById = new Map(users.map((u) => [u.id, u.name || u.email || u.id]))
+
+  // §11.9: последний вход и IP — из аудита (action='user.login'). Нужно, чтобы админ
+  // видел, откуда заходят: сценарий со звонка — доступ забрал уволенный сотрудник.
+  // Аудит пишется по e-mail (initiator), поэтому и мапим по нему; берём самую свежую
+  // запись (readAudit отдаёт в обратном порядке — первая встреченная и есть последняя).
+  const lastLoginByEmail = new Map()
+  try {
+    const { readAudit } = await import('./lib/auditLog.js')
+    for (const e of await readAudit({ action: 'user.login', limit: 1000 })) {
+      const key = String(e.initiator || '').toLowerCase()
+      if (!key || lastLoginByEmail.has(key)) continue
+      lastLoginByEmail.set(key, { at: e.ts || e.time || 0, ip: e.meta?.ip || '' })
+    }
+  } catch { /* аудита нет — просто не покажем последний вход */ }
+
   const rows = users.map((u) => {
     const st = byUser.get(u.id) || { tasks: 0, actions: 0, spent: 0, tokens: 0, byModule: {}, log: [] }
     byUser.delete(u.id)
@@ -579,6 +594,8 @@ export async function usersReport(opts = {}) {
       roleName: roleNamesOf(u) || null,
       roleIds: u.roleIds || [],
       coins: round3(coins[u.id] ?? 0),
+      // §11.9: когда и с какого IP заходил последний раз (null — входов в аудите нет).
+      lastLogin: lastLoginByEmail.get(String(u.email || '').toLowerCase()) || null,
       subscription: subOf(modsByUser[u.id]),
       tasks: st.tasks,
       actions: st.actions,

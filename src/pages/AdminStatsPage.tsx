@@ -691,6 +691,22 @@ function UsersTab({ report, onReload }: { report: UsersReport | null; onReload: 
                           </select>
                         </div>
                       )}
+                      {/* §11.9: последний вход и IP — админ должен видеть, откуда заходят
+                          (сценарий со звонка: доступ забрал уволенный сотрудник). Блокировка —
+                          кнопка «Отключить» справа в строке: она закрывает и вход, и сессию. */}
+                      {real && (
+                        <div className="mb-4 flex flex-wrap items-center gap-x-3 gap-y-1 rounded-xl border border-line bg-elevated/50 p-3 text-xs">
+                          <span className="text-[11px] font-bold uppercase tracking-wide text-muted">Последний вход</span>
+                          {r.lastLogin ? (
+                            <>
+                              <span className="text-fg">{new Date(r.lastLogin.at).toLocaleString('ru-RU')}</span>
+                              {r.lastLogin.ip
+                                ? <span className="rounded-md bg-white/8 px-1.5 py-0.5 font-mono text-[11px] text-muted">IP {r.lastLogin.ip}</span>
+                                : <span className="text-faint">IP не записан</span>}
+                            </>
+                          ) : <span className="text-muted">входов в журнале нет</span>}
+                        </div>
+                      )}
                       {/* §10.4: что человек КУПИЛ — модули (подписка) и пополнения кошелька.
                           Отдельно от «что запускал»: одно отвечает «за что платил», другое «что делал». */}
                       {real && (

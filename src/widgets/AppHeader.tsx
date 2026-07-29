@@ -110,22 +110,37 @@ export function AppHeader() {
           {/* §11.5: на нуле/почти нуле чип КРАСНЫЙ и со словом «Пополнить» — по звонку
               29.07 это критическое уведомление, оно должно тревожить, а не выглядеть
               спокойно-зелёным. Пороги — общие с лентой (LowBalanceBar). */}
+          {/* §11.4: деньги и токены — РАЗДЕЛЬНО. По звонку 29.07 владельцу нужен
+              отдельно долларовый баланс («баланс всегда в долларах») и отдельно
+              количество токенов; «токены в долларах» одним числом — бесполезно.
+              Курс монеты берём из пакетов пополнения (та же формула, что на сервере). */}
           {(() => {
             const c = balance?.coins ?? data.coins
             const alarm = c <= CRITICAL
+            const rate = (pricing?.packs || []).reduce(
+              (min, p) => (p.coins > 0 ? Math.min(min, p.price / p.coins) : min), Infinity)
+            const usd = Number.isFinite(rate) ? c * rate : null
+            const cur = pricing?.currency || '$'
             return (
               <button
                 onClick={() => setCoinsOpen(true)}
-                title={alarm ? 'Баланс на нуле — пополнить' : 'Пополнить баланс'}
+                title={alarm ? 'Баланс на нуле — пополнить' : 'Баланс и токены — пополнить'}
                 className={
-                  'flex items-center gap-1.5 rounded-xl border px-3 py-1.5 transition-colors ' +
+                  'flex items-center gap-2 rounded-xl border px-3 py-1.5 transition-colors ' +
                   (alarm
                     ? 'border-red-500/50 bg-red-500/15 hover:bg-red-500/25'
                     : 'border-amber-500/30 bg-amber-500/10 hover:bg-amber-500/15')
                 }
               >
-                <Zap size={16} className={alarm ? 'text-red-400' : 'text-amber-400'} fill="currentColor" />
-                <span className={'text-sm font-bold ' + (alarm ? 'text-red-300' : 'text-amber-300')}>{fmtCoins(c)}</span>
+                {usd != null && (
+                  <span className={'text-sm font-bold tabular-nums ' + (alarm ? 'text-red-300' : 'text-fg')}>
+                    {cur}{usd.toFixed(2)}
+                  </span>
+                )}
+                <span className={'flex items-center gap-1 ' + (usd != null ? 'border-l border-white/10 pl-2' : '')}>
+                  <Zap size={15} className={alarm ? 'text-red-400' : 'text-amber-400'} fill="currentColor" />
+                  <span className={'text-sm font-bold tabular-nums ' + (alarm ? 'text-red-300' : 'text-amber-300')}>{fmtCoins(c)}</span>
+                </span>
                 {alarm && <span className="text-xs font-bold text-red-300">Пополнить</span>}
               </button>
             )
