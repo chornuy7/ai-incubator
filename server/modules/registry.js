@@ -21,6 +21,8 @@ export const MODULE_DEFS = {
   'parsing-users': { idPrefix: 'pu', requiresTargets: true, targetLabel: 'группу' },
   'parsing-messages': { idPrefix: 'pm', requiresTargets: true, targetLabel: 'канал' },
   'parsing-comments': { idPrefix: 'pc', requiresTargets: true, targetLabel: 'канал' },
+  // Сервисная задача (не кампанийный модуль): снятие спамблока через @SpamBot.
+  'spam-unblock': { idPrefix: 'sub', requiresTargets: false },
 }
 
 export function getModuleStore(moduleKey) {

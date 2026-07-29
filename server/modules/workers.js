@@ -1,3 +1,4 @@
+import { runSpamUnblock } from '../spamUnblock.js'
 import { generateComment, isAiGenerationEnabled, resolveSystemPrompt } from '../neuroCommenting/commentGenerator.js'
 import { buildGoalContext, stageForStatus, linksFromGoal, cleanDialogReply, hasPlaceholder } from '../lib/goalContext.js'
 import { upsertMany } from '../channels.js'
@@ -2398,4 +2399,5 @@ export const WORKERS = {
   'parsing-users': (t, s) => runParticipantsParser(t, s, 'parsing-users'),
   'parsing-messages': (t, s) => runParticipantsParser(t, s, 'parsing-messages'),
   'parsing-comments': (t, s) => runParticipantsParser(t, s, 'parsing-comments'),
+  'spam-unblock': runSpamUnblock,
 }

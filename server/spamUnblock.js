@@ -1,104 +1,95 @@
 /**
- * Массовое снятие спамблока через @SpamBot — с РАНДОМНЫМИ задержками между аккаунтами.
+ * Снятие спамблока через @SpamBot — как НАСТОЯЩАЯ фоновая задача (модуль `spam-unblock`).
  *
- * Почему задержки случайные: пачка апелляций «под копирку» в одну минуту с похожих
- * аккаунтов — сама по себе паттерн (§4.4 анти-кластер). Живой человек так не делает.
+ * Раньше это был отдельный in-memory джоб со своим статусом. Теперь — обычная задача:
+ * видна в «Дашборде задач», со своими логами/прогрессом, кнопкой «Стоп», переживает
+ * ничего лишнего. Идёт по спамблокнутым аккаунтам ПО ОДНОМУ с РАНДОМНЫМИ паузами
+ * (пачка апелляций «под копирку» в минуту — сам по себе кластерный признак, §4.4).
  *
- * Джоб — один на процесс, в памяти: старт кладёт задание, фоновый цикл идёт по аккаунтам,
- * прогресс читается опросом. Не воркер задачи — это разовая сервисная операция.
+ * ⚠️ Апелляция ≠ гарантия: это жалоба модераторам Telegram.
  */
 import { loadSessionString, createClient } from './tgAuth.js'
 import { accountFingerprint } from './lib/deviceFingerprint.js'
 import { getAccountMeta, setAccountStatus, setAccountMeta } from './accountsMeta.js'
 import { appealSpamblock } from './lib/spamAppeal.js'
-import { appendAudit } from './lib/auditLog.js'
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 
-/** Одно задание на процесс. null — ничего не идёт. */
-let job = null
-
-/** Текущее состояние для опроса из UI. */
-export function unblockStatus() {
-  if (!job) return { running: false, total: 0, done: 0, cleared: 0, results: [] }
-  return {
-    running: job.running,
-    total: job.total,
-    done: job.done,
-    cleared: job.cleared,
-    startedAt: job.startedAt,
-    finishedAt: job.finishedAt || null,
-    delay: { min: job.delayMin, max: job.delayMax },
-    results: job.results.slice(-200), // последние — не раздуваем ответ
-  }
+const LABEL = {
+  clean: 'ограничение СНЯТО',
+  appealed: 'жалоба подана — ждём модерацию',
+  blocked: 'ограничение осталось',
+  unknown: 'статус неясен',
+  error: 'ошибка подключения',
 }
 
-/** Снять спамблок с одного аккаунта: подключиться, апеллировать, при успехе — вернуть в строй. */
+/** Снять спамблок с одного аккаунта: подключиться, апеллировать, при успехе — в строй. */
 async function appealOne(accountId) {
   const meta = await getAccountMeta(accountId).catch(() => ({}))
   const name = meta?.name || accountId.slice(-6)
   const sessionStr = await loadSessionString(accountId).catch(() => '')
-  if (!sessionStr) return { accountId, name, state: 'unknown', text: 'нет сессии', appealed: false, ts: Date.now() }
+  if (!sessionStr) return { name, state: 'error', text: 'нет сессии', appealed: false }
   let client
   try {
     client = await createClient(sessionStr, meta.proxy, accountFingerprint(accountId, meta))
     const res = await appealSpamblock(client)
     try { await client.disconnect() } catch { /* ignore */ }
     if (res.state === 'clean') {
-      // Ограничений больше нет — возвращаем аккаунт в работу. Переход может быть
-      // не разрешён state-machine — тогда мягкий fallback, как в accountRunner.
       try {
         await setAccountStatus(accountId, 'active', { code: '', reason: 'Спамблок снят через @SpamBot', initiator: 'system' })
       } catch { await setAccountMeta(accountId, { status: 'active', statusReason: 'Спамблок снят через @SpamBot' }).catch(() => {}) }
     }
-    return { accountId, name, state: res.state, text: res.text, appealed: res.appealed, ts: Date.now() }
+    return { name, state: res.state, text: res.text, appealed: res.appealed }
   } catch (e) {
     try { if (client) await client.disconnect() } catch { /* ignore */ }
-    return { accountId, name, state: 'error', text: e instanceof Error ? e.message : 'ошибка подключения', appealed: false, ts: Date.now() }
+    return { name, state: 'error', text: e instanceof Error ? e.message : 'ошибка', appealed: false }
   }
 }
 
 /**
- * Запустить массовое снятие. Фоновый цикл; запрос возвращается сразу.
- * @param {string[]} accountIds @param {{delayMin?:number, delayMax?:number}} [opts]
+ * Воркер задачи `spam-unblock`. Сигнатура как у остальных: (task, store).
+ * @param {object} task @param {object} store
  */
-export async function startUnblock(accountIds, opts = {}) {
-  if (job?.running) throw new Error('Снятие спамблока уже идёт — дождитесь окончания')
-  const ids = [...new Set((Array.isArray(accountIds) ? accountIds : []).map((x) => String(x || '').trim()).filter(Boolean))]
-  if (!ids.length) throw new Error('Не выбраны аккаунты')
-  // Задержки: минимум 5 c (иначе @SpamBot сам ограничит темп), по умолчанию 30–120 c.
-  const delayMin = Math.max(5, Math.round(Number(opts.delayMin) || 30))
-  const delayMax = Math.max(delayMin, Math.round(Number(opts.delayMax) || 120))
+export async function runSpamUnblock(task, store) {
+  const s = task.settings || {}
+  const ids = Array.isArray(s.accountIds) ? s.accountIds : []
+  const delayMin = Math.max(5, Math.round(Number(s.delayMin) || 30))
+  const delayMax = Math.max(delayMin, Math.round(Number(s.delayMax) || 120))
 
-  job = { running: true, total: ids.length, done: 0, cleared: 0, results: [], startedAt: Date.now(), finishedAt: null, delayMin, delayMax, stopRequested: false }
+  task.status = 'running'
+  task.progress = { done: 0, total: ids.length, actionsDone: 0, cleared: 0 }
+  await store.saveTask(task)
+  await store.appendLog(task, 'info', `Снятие спамблока: ${ids.length} акк., паузы ${delayMin}–${delayMax}с (вразнобой)`)
 
-  ;(async () => {
-    for (let i = 0; i < ids.length; i++) {
-      if (job.stopRequested) break
-      const r = await appealOne(ids[i])
-      job.results.push(r)
-      job.done += 1
-      if (r.state === 'clean') job.cleared += 1
-      // Рандомная пауза перед следующим (после последнего не ждём).
-      if (i < ids.length - 1 && !job.stopRequested) {
-        const secs = delayMin + Math.random() * (delayMax - delayMin)
-        await sleep(Math.round(secs * 1000))
-      }
+  for (let i = 0; i < ids.length; i++) {
+    // Перечитываем задачу — операторский «Стоп»/«Пауза» выставляет флаг на диске.
+    task = (await store.loadTask(task.id)) || task
+    if (task.stopRequested || task.pauseRequested) {
+      await store.appendLog(task, 'info', 'Остановлено оператором — прервано')
+      break
     }
-    job.running = false
-    job.finishedAt = Date.now()
-    await appendAudit({
-      action: 'accounts.unblock', module: 'accounts', initiator: 'operator',
-      reason: `Снятие спамблока: снято ${job.cleared} из ${job.done} (задержки ${delayMin}–${delayMax}с)`,
-      meta: { total: job.total, cleared: job.cleared },
-    }).catch(() => {})
-  })()
 
-  return { started: ids.length, delayMin, delayMax }
-}
+    const r = await appealOne(ids[i])
+    const level = r.state === 'clean' ? 'success' : r.state === 'error' ? 'error' : 'info'
+    await store.appendLog(task, level, `@SpamBot: ${LABEL[r.state] || r.state}${r.text ? ` — ${r.text}` : ''}`, r.name)
 
-/** Остановить текущее снятие (мягко — после текущего аккаунта). */
-export function stopUnblock() {
-  if (job?.running) { job.stopRequested = true; return true }
-  return false
+    task = (await store.loadTask(task.id)) || task
+    task.progress.done = i + 1
+    task.progress.actionsDone = i + 1
+    if (r.state === 'clean') task.progress.cleared = (task.progress.cleared || 0) + 1
+    await store.saveTask(task)
+
+    // Рандомная пауза перед следующим (после последнего не ждём).
+    if (i < ids.length - 1 && !task.stopRequested) {
+      const secs = delayMin + Math.random() * (delayMax - delayMin)
+      await sleep(Math.round(secs * 1000))
+    }
+  }
+
+  task = (await store.loadTask(task.id)) || task
+  if (task.status === 'running') {
+    task.status = 'done'
+    await store.appendLog(task, 'info', `Готово · снято ${task.progress.cleared || 0} из ${task.progress.done}`)
+    await store.saveTask(task)
+  }
 }

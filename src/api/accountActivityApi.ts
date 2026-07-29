@@ -41,27 +41,9 @@ export async function setActivity(patch: {
 }
 
 /**
- * §4.4: массовое снятие спамблока через @SpamBot с РАНДОМНЫМИ задержками.
- * Фоновая операция — прогресс опрашивается через unblockStatus.
+ * §4.4: снятие спамблока через @SpamBot с РАНДОМНЫМИ задержками. Заводит НАСТОЯЩУЮ
+ * фоновую задачу (модуль `spam-unblock`) — прогресс и стоп смотрятся в «Дашборде задач».
  */
-export interface UnblockResult { accountId: string; name: string; state: 'clean' | 'appealed' | 'blocked' | 'unknown' | 'error'; text: string; appealed: boolean; ts: number }
-export interface UnblockStatus {
-  running: boolean
-  total: number
-  done: number
-  cleared: number
-  startedAt?: number
-  finishedAt?: number | null
-  delay?: { min: number; max: number }
-  results: UnblockResult[]
-}
-
-export async function startUnblock(accountIds: string[], delayMin: number, delayMax: number): Promise<{ started: number; delayMin: number; delayMax: number }> {
+export async function startUnblock(accountIds: string[], delayMin: number, delayMax: number): Promise<{ taskId: string; started: number }> {
   return apiPost('/api/accounts/unblock', { accountIds, delayMin, delayMax })
-}
-export async function fetchUnblockStatus(): Promise<UnblockStatus> {
-  return apiGet<UnblockStatus>('/api/accounts/unblock')
-}
-export async function stopUnblock(): Promise<{ stopped: boolean }> {
-  return apiPost('/api/accounts/unblock/stop', {})
 }
