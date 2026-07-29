@@ -53,10 +53,14 @@ export function LandingPage() {
 
   const [params] = useSearchParams()
   const variant = params.get('v') === 'marketing' ? 'marketing' : 'platform'
-  // §10.6: два варианта шапки-героя, переключаются GET-параметром (не тумблером на странице):
-  // владелец даёт разные маркетинговые ссылки под разные кампании, обе ведут к продукту.
-  // `?hero=static` — один статичный экран; иначе — карусель.
-  const heroStatic = params.get('hero') === 'static'
+  // §10.6: две маркетинговые ссылки под разные кампании, обе ведут к продукту.
+  // Отличаются И текстом, И подачей мокапа: `platform` (по умолчанию) — статичный
+  // один экран; `marketing` (?v=marketing) — карусель из 3 экранов, показывает ширину
+  // продукта. `?hero=static|carousel` — необязательный явный оверрайд подачи.
+  const heroParam = params.get('hero')
+  const heroStatic = heroParam === 'static' ? true
+    : heroParam === 'carousel' ? false
+    : variant === 'platform'
   const hero = HERO_VARIANTS[variant]
   // Годовая скидка — с сервера (правится в админке), catalog-константа как fallback.
   const annualDiscount = pricing?.annualDiscount ?? ANNUAL_DISCOUNT
