@@ -68,7 +68,7 @@ export function ChannelsPage() {
     <div>
       <PageHeader
         title="Каналы"
-        subtitle="Общая база каналов: без дублей, со статистикой. «Обновить сейчас» тянет свежие данные свободным аккаунтом (§3.9)."
+        subtitle="Общая база каналов: без дублей, со статистикой. «Обновить сейчас» тянет свежие данные свободным аккаунтом."
         icon={<Radio size={22} />}
         badge={channels.length ? `${channels.length}` : undefined}
       />
@@ -89,7 +89,7 @@ export function ChannelsPage() {
               <div className="min-w-0 flex-1">
                 <div className="flex items-center gap-2">
                   <span className="truncate font-semibold text-white">{c.title || c.username || c.link}</span>
-                  {(() => { const r = channelRating(c); return <span title="Рейтинг: приоритет активности, не только подписчики (§3.8)" className="cursor-help"><Badge tone={r >= 7 ? 'spark' : r >= 4 ? 'amber' : 'rose'}>★ {r}/10</Badge></span> })()}
+                  {(() => { const r = channelRating(c); return <span title="Рейтинг: приоритет активности, не только подписчики" className="cursor-help"><Badge tone={r >= 7 ? 'spark' : r >= 4 ? 'amber' : 'rose'}>★ {r}/10</Badge></span> })()}
                   {c.hasComments && <Badge tone="iris"><MessageSquare size={10} className="mb-0.5 inline" /> комменты</Badge>}
                   {c.activityLabel && <Badge tone={c.activityLabel === 'high' ? 'spark' : c.activityLabel === 'medium' ? 'amber' : c.activityLabel === 'stale' ? 'rose' : 'muted'}>{({ high: 'активный', medium: 'умеренный', low: 'редко', stale: 'нет постов' } as const)[c.activityLabel]}</Badge>}
                 </div>

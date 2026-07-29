@@ -53,8 +53,9 @@ export function LandingPage() {
 
   const [params] = useSearchParams()
   const variant = params.get('v') === 'marketing' ? 'marketing' : 'platform'
-  // §10.6: два варианта шапки-героя, переключаются GET-параметром — чтобы можно было
-  // выбрать без правки кода. `?hero=static` — один статичный экран; иначе — карусель.
+  // §10.6: два варианта шапки-героя, переключаются GET-параметром (не тумблером на странице):
+  // владелец даёт разные маркетинговые ссылки под разные кампании, обе ведут к продукту.
+  // `?hero=static` — один статичный экран; иначе — карусель.
   const heroStatic = params.get('hero') === 'static'
   const hero = HERO_VARIANTS[variant]
   // Годовая скидка — с сервера (правится в админке), catalog-константа как fallback.

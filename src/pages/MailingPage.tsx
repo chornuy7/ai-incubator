@@ -207,14 +207,14 @@ export function MailingPage() {
     <div>
       <PageHeader
         title="Мейлинг"
-        subtitle="Рассылка в Telegram по номерам и юзернеймам (§8.4). Резолв цели → аккаунт → ЛС."
+        subtitle="Рассылка в Telegram по номерам и юзернеймам. Резолв цели → аккаунт → ЛС."
         icon={<Mail size={22} />}
         badge="live"
       />
 
       <Card className="mb-4 flex items-start gap-2 border-amber-500/30 bg-amber-500/5 p-3 text-sm text-amber-200/90">
         <AlertTriangle size={16} className="mt-0.5 shrink-0" />
-        <span>Отправка <b>реальная</b>. Массовая рассылка незнакомым — высокий риск спам-блока <b>ваших аккаунтов</b> и нарушение ToS Telegram. Предохранители §6: рассылают только аккаунты с trust&gt;70, действует суточный лимит ЛС (20–30/аккаунт) и паузы 90–300с; номера не из Telegram пропускаются. Держите лимиты низкими.</span>
+        <span>Отправка <b>реальная</b>. Массовая рассылка незнакомым — высокий риск спам-блока <b>ваших аккаунтов</b> и нарушение ToS Telegram. Предохранители: рассылают только аккаунты с trust&gt;70, действует суточный лимит ЛС (20–30/аккаунт) и паузы 90–300с; номера не из Telegram пропускаются. Держите лимиты низкими.</span>
       </Card>
 
       <div className="grid gap-4 lg:grid-cols-2">
@@ -343,7 +343,7 @@ export function MailingPage() {
             </div>
             {!canWrite && (
               <div className="mt-3 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-200">
-                Рассылку создаёт только администратор (единый отправитель, §11). У вас нет прав на отправку.
+                Рассылку создаёт только администратор (единый отправитель). У вас нет прав на отправку.
               </div>
             )}
 

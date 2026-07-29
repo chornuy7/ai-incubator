@@ -312,7 +312,7 @@ export function TasksPage() {
     <div>
       <PageHeader
         title="Дашборд задач"
-        subtitle="Цели → Задачи → Модули: единый экран прогресса. Фильтры-воронка + преследование цели. §8.8"
+        subtitle="Цели → Задачи → Модули: единый экран прогресса. Фильтры-воронка + преследование цели."
         icon={<ListChecks size={22} />}
         badge={funnel.active ? `${funnel.active} активных` : undefined}
         actions={<div className="flex items-center gap-2"><HelpButton topic="tasks" className="h-10 w-10" /><button onClick={() => void load()} className="btn-ghost h-10"><RefreshCw size={16} /> Обновить</button></div>}

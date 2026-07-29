@@ -91,7 +91,7 @@ export function ProxiesPage() {
     <div>
       <PageHeader
         title="Прокси"
-        subtitle="Каталог прокси (статические / мобильные / своя ферма) и привязка к аккаунтам. §3.2/3.4"
+        subtitle="Каталог прокси (статические / мобильные / своя ферма) и привязка к аккаунтам."
         icon={<Network size={22} />}
         badge={proxies.length ? `${proxies.length}` : undefined}
         actions={(

@@ -858,7 +858,7 @@ function AssignProxyModal({ open, ids, onClose, onDone, onError }: {
         <p className={cn('mt-2 text-xs', notEnough ? 'text-amber-300' : 'text-white/45')}>
           Свободно прокси: {free}. {notEnough
             ? `Выбрано ${ids.length} — на всех не хватит, остальные останутся как есть.`
-            : 'Один прокси — один аккаунт (§6).'}
+            : 'Один прокси — один аккаунт.'}
         </p>
       )}
 
@@ -886,7 +886,7 @@ function AssignProxyModal({ open, ids, onClose, onDone, onError }: {
             options={proxies.map((p) => ({ value: toProxyUrl(p), label: `${p.label || p.host}:${p.port}` }))}
           />
           <p className="mt-2 text-xs text-amber-300/80">
-            Вся пачка выйдет с одного IP — Telegram видит такую группу и банит волной (§4.4).
+            Вся пачка выйдет с одного IP — Telegram видит такую группу и банит волной.
             Осознанный выбор, но не для больших пачек.
           </p>
         </>
