@@ -24,12 +24,13 @@ interface Endpoint {
 }
 
 const ENDPOINTS: Endpoint[] = [
-  { method: 'GET', path: '/capabilities', title: 'Что умеет каждый модуль (ключ, цели, цены, как запускать)' },
+  { method: 'GET', path: '/account', title: 'К какому аккаунту привязан ключ (1 ключ = 1 аккаунт)' },
+  { method: 'GET', path: '/capabilities', title: 'Что умеет каждый модуль (цели, цены, как запускать)' },
   { method: 'GET', path: '/mcp', title: 'Те же возможности как MCP-манифест инструментов (для AI-оркестратора)' },
   { method: 'POST', path: '/goals', title: 'Создать цель (измеримый результат)', body: '{ "name": "200 переходов", "metric": { "kind": "clicks", "target": 200 } }' },
   { method: 'POST', path: '/campaigns', title: 'Создать кампанию под цель', body: '{ "name": "Крипто · этап 1", "modules": ["neuro-commenting"], "goalId": "goal_…" }' },
-  { method: 'POST', path: '/modules/:key/estimate', title: 'Оценить стоимость и время ДО запуска', body: '{ "actions": 100, "accounts": 5 }' },
-  { method: 'POST', path: '/modules/:key/run', title: 'Запустить модуль', body: '{ "accountIds": ["acc_…"], "targets": ["@channel"], "maxActions": 50, "goalId": "goal_…" }' },
+  { method: 'POST', path: '/modules/:key/estimate', title: 'Оценить стоимость и время ДО запуска', body: '{ "actions": 100 }' },
+  { method: 'POST', path: '/modules/:key/run', title: 'Запустить модуль (аккаунт — из ключа, передавать не нужно)', body: '{ "targets": ["@channel"], "maxActions": 50, "goalId": "goal_…" }' },
 ]
 
 export function ApiDocsTab() {
@@ -57,7 +58,9 @@ export function ApiDocsTab() {
         <div className="flex items-center gap-2 text-sm font-bold text-fg"><BookOpen size={15} /> Как работать с API</div>
         <p className="mt-1 text-xs text-muted">
           Приватный API — доступ только по ключу, ничего бесплатно. Внешний AI-оркестратор
-          («мозги») создаёт цели/кампании и запускает модули этим ключом.
+          («мозги») создаёт цели/кампании и запускает модули этим ключом. <b className="text-fg">Каждый
+          ключ привязан к одному аккаунту</b> — работает только с ним, выйти на другие нельзя.
+          Какой это аккаунт — узнать через <code>GET /account</code>.
         </p>
 
         <div className="mt-4 grid gap-3 sm:grid-cols-2">
