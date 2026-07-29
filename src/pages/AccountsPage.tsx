@@ -31,7 +31,7 @@ import { fetchAccountGroups, type AccountGroup } from '@/api/accountGroupsApi'
 import { fetchProxies, toProxyUrl, type Proxy as ApiProxy } from '@/api/proxiesApi'
 import { assignProxies, proxyCapacity } from '@/api/accountImportApi'
 import { fetchActivity, setActivity, type ActivityMap, type SchedulePercent } from '@/api/accountActivityApi'
-import { startUnblock, fetchUnblockStatus, stopUnblock, type UnblockStatus } from '@/api/accountActivityApi'
+import { startUnblock } from '@/api/accountActivityApi'
 
 const STATUS_ORDER: AccountStatus[] = ['active', 'working', 'warming', 'pause', 'floodwait', 'quarantine', 'spamblock', 'invalid', 'frozen', 'reauth']
 const COLS = [
@@ -1488,7 +1488,7 @@ const DAY_PRESETS: Record<string, { label: string; hint: string; hours: Schedule
  * снимаются, жёсткий спамблок может остаться. Показываем честный итог по каждому аккаунту.
  * Операция фоновая — прогресс опрашиваем; успешно снятые сразу возвращаются в «active».
  */
-function UnblockModal({ open, ids, names, onClose, onFinished, pushToast }: {
+function UnblockModal({ open, ids, onClose, onFinished, pushToast }: {
   open: boolean
   ids: string[]
   names: Record<string, string>
@@ -1496,58 +1496,35 @@ function UnblockModal({ open, ids, names, onClose, onFinished, pushToast }: {
   onFinished: () => void
   pushToast: (t: { type: 'success' | 'error' | 'info'; title: string; desc?: string }) => void
 }) {
+  const navigate = useNavigate()
   const [delayMin, setDelayMin] = useState(30)
   const [delayMax, setDelayMax] = useState(120)
-  const [status, setStatus] = useState<UnblockStatus | null>(null)
   const [starting, setStarting] = useState(false)
-  const finishedRef = useRef(false)
 
-  // Пока модалка открыта и идёт снятие — опрашиваем прогресс.
-  useEffect(() => {
-    if (!open) return
-    let alive = true
-    const tick = async () => {
-      try {
-        const s = await fetchUnblockStatus()
-        if (!alive) return
-        setStatus(s)
-        if (!s.running && (s.done > 0) && !finishedRef.current) { finishedRef.current = true; onFinished() }
-      } catch { /* ignore */ }
-    }
-    void tick()
-    const t = setInterval(tick, 3000)
-    return () => { alive = false; clearInterval(t) }
-  }, [open, onFinished])
-
-  useEffect(() => { if (open) { finishedRef.current = false; setStatus(null) } }, [open])
-
-  const running = status?.running
   const run = async () => {
     if (!ids.length) return
     setStarting(true)
     try {
-      const r = await startUnblock(ids, delayMin, delayMax)
-      pushToast({ type: 'info', title: `Снятие запущено: ${r.started} акк.`, desc: `Задержки ${r.delayMin}–${r.delayMax}с между аккаунтами` })
+      await startUnblock(ids, delayMin, delayMax)
+      pushToast({ type: 'success', title: `Задача снятия спамблока запущена: ${ids.length} акк.`, desc: 'Идёт в фоне — прогресс в «Дашборде задач»' })
+      onClose()
+      onFinished()
+      navigate('/panel/tasks')
     } catch (e) {
       pushToast({ type: 'error', title: 'Не запустилось', desc: e instanceof Error ? e.message : '' })
     } finally { setStarting(false) }
-  }
-
-  const stateLabel: Record<string, { t: string; c: string }> = {
-    clean: { t: 'снят', c: 'bg-spark-500/15 text-spark-300' },
-    appealed: { t: 'жалоба подана', c: 'bg-iris-500/15 text-iris-300' },
-    blocked: { t: 'остался', c: 'bg-rose-500/15 text-rose-300' },
-    unknown: { t: 'неясно', c: 'bg-white/8 text-white/50' },
-    error: { t: 'ошибка', c: 'bg-rose-500/15 text-rose-300' },
   }
 
   return (
     <Modal open={open} onClose={onClose} title="Снять спамблок через @SpamBot">
       <div className="space-y-4">
         <p className="text-sm text-white/60">
-          Апелляция в @SpamBot по <b className="text-white">{ids.length}</b> аккаунт(ам) со спамблоком,
-          по одному, с рандомными паузами. <span className="text-amber-300/80">Это жалоба модераторам —
-          временные ограничения часто снимаются, жёсткий спамблок может остаться.</span>
+          Запустит <b className="text-white">фоновую задачу</b>: апелляция в @SpamBot по{' '}
+          <b className="text-white">{ids.length}</b> аккаунт(ам) со спамблоком, по одному, с рандомными
+          паузами. Прогресс и «Стоп» — в «Дашборде задач».
+        </p>
+        <p className="text-xs text-amber-300/80">
+          Это жалоба модераторам Telegram — временные ограничения часто снимаются, жёсткий спамблок может остаться.
         </p>
 
         <div className="grid grid-cols-2 gap-3">
@@ -1559,35 +1536,10 @@ function UnblockModal({ open, ids, names, onClose, onFinished, pushToast }: {
           </label>
         </div>
 
-        {status && (status.running || status.done > 0) && (
-          <div className="rounded-xl border border-line bg-elevated/40 p-3">
-            <div className="flex items-center gap-2 text-sm">
-              {status.running && <Loader2 size={14} className="animate-spin text-spark-400" />}
-              <span className="text-white/70">Обработано {status.done} из {status.total}</span>
-              <span className="ml-auto font-semibold text-spark-300">снято: {status.cleared}</span>
-            </div>
-            {status.results.length > 0 && (
-              <div className="mt-2 max-h-52 space-y-1 overflow-y-auto">
-                {status.results.slice().reverse().map((r) => (
-                  <div key={r.accountId + r.ts} className="flex items-center gap-2 text-xs">
-                    <span className="w-32 shrink-0 truncate text-white/70">{names[r.accountId] || r.name}</span>
-                    <span className={`rounded px-1.5 py-0.5 text-[10px] font-bold ${(stateLabel[r.state] || stateLabel.unknown).c}`}>{(stateLabel[r.state] || stateLabel.unknown).t}</span>
-                    {r.text && <span className="truncate text-white/40" title={r.text}>{r.text}</span>}
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        )}
-
         <div className="flex justify-end gap-2">
-          {running ? (
-            <button onClick={() => void stopUnblock()} className="btn-ghost h-10 text-rose-300"><X size={15} /> Остановить</button>
-          ) : (
-            <button onClick={onClose} className="btn-ghost h-10">Закрыть</button>
-          )}
-          <button onClick={() => void run()} disabled={starting || running || !ids.length} className="btn-primary h-10 disabled:opacity-40">
-            {starting || running ? <><Loader2 size={15} className="animate-spin" /> Идёт…</> : <><ShieldCheck size={15} /> Снять с {ids.length}</>}
+          <button onClick={onClose} className="btn-ghost h-10">Отмена</button>
+          <button onClick={() => void run()} disabled={starting || !ids.length} className="btn-primary h-10 disabled:opacity-40">
+            {starting ? <><Loader2 size={15} className="animate-spin" /> Запуск…</> : <><ShieldCheck size={15} /> Запустить для {ids.length}</>}
           </button>
         </div>
       </div>

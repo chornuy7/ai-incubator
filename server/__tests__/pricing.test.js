@@ -8,8 +8,12 @@ import assert from 'node:assert/strict'
 import { ACTION_PRICE, actionPrice, estimateCost, subscriptionCost, modulePrice, MODULE_MONTH_PRICE, SETUPS } from '../pricing.js'
 import { MODULE_DEFS } from '../modules/registry.js'
 
-test('цена проставлена каждому модулю системы и она больше нуля', () => {
+// Сервисные (не кампанийные, не тарифицируемые) модули — цены у них нет намеренно.
+const FREE_SERVICE_MODULES = new Set(['spam-unblock'])
+
+test('цена проставлена каждому платному модулю системы и она больше нуля', () => {
   for (const key of Object.keys(MODULE_DEFS)) {
+    if (FREE_SERVICE_MODULES.has(key)) continue
     assert.ok(key in ACTION_PRICE, `нет цены для модуля ${key}`)
     assert.ok(actionPrice(key) > 0, `модуль ${key} бесплатный`)
   }

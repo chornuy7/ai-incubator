@@ -21,6 +21,7 @@ export const MODULE_TITLES = {
   'parsing-messages': 'Парсер сообщений',
   'parsing-comments': 'Парсер комментариев',
   ggr: 'AIR — AI Rating',
+  'spam-unblock': 'Снятие спамблока',
 }
 
 /** @param {string} key */

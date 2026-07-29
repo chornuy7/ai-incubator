@@ -612,28 +612,26 @@ app.get('/api/accounts/activity', async (_req, res) => {
     res.json({ ok: true, activity: await listActivity() })
   } catch (err) { res.status(500).json({ ok: false, error: err instanceof Error ? err.message : 'Ошибка' }) }
 })
-// Массовое снятие спамблока через @SpamBot с рандомными задержками (фоновая операция).
+// Снятие спамблока через @SpamBot — заводит НАСТОЯЩУЮ фоновую задачу (модуль spam-unblock),
+// видна в «Дашборде задач» со своими логами/прогрессом/стопом.
 app.post('/api/accounts/unblock', async (req, res) => {
   try {
-    const { startUnblock } = await import('./spamUnblock.js')
     const { accountIds, delayMin, delayMax } = req.body ?? {}
     if (!Array.isArray(accountIds) || !accountIds.length) return res.status(400).json({ ok: false, error: 'Выберите аккаунты' })
-    const r = await startUnblock(accountIds, { delayMin, delayMax })
-    await appendAudit({ action: 'accounts.unblock.start', module: 'accounts', initiator: req.header('x-user-id') || 'operator', reason: `Запущено снятие спамблока: ${r.started} акк. (задержки ${r.delayMin}–${r.delayMax}с)`, scope: { accounts: accountIds } }).catch(() => {})
-    res.json({ ok: true, ...r })
+    const ids = [...new Set(accountIds.map((x) => String(x || '').trim()).filter(Boolean))]
+    const { getModuleStore, getWorker } = await import('./modules/registry.js')
+    const { startWorker } = await import('./modules/workers.js')
+    const store = getModuleStore('spam-unblock')
+    // Локи не берём: снятие спамблока — лёгкая сервисная операция, не кампанийное действие,
+    // и блокировать 20 аккаунтов ради апелляции в @SpamBot незачем.
+    const task = store.createTask({ accountIds: ids, delayMin, delayMax, initiator: req.header('x-user-id') || 'operator' },
+      { progress: { done: 0, total: ids.length, actionsDone: 0, cleared: 0 } })
+    task.initiator = req.header('x-user-id') || 'operator'
+    await store.saveTask(task)
+    startWorker(task.id, store, getWorker('spam-unblock'))
+    await appendAudit({ action: 'accounts.unblock.start', module: 'accounts', initiator: task.initiator, reason: `Задача снятия спамблока: ${ids.length} акк.`, scope: { accounts: ids, taskId: task.id } }).catch(() => {})
+    res.json({ ok: true, taskId: task.id, started: ids.length })
   } catch (err) { res.status(400).json({ ok: false, error: err instanceof Error ? err.message : 'Ошибка' }) }
-})
-app.get('/api/accounts/unblock', async (_req, res) => {
-  try {
-    const { unblockStatus } = await import('./spamUnblock.js')
-    res.json({ ok: true, ...unblockStatus() })
-  } catch (err) { res.status(500).json({ ok: false, error: err instanceof Error ? err.message : 'Ошибка' }) }
-})
-app.post('/api/accounts/unblock/stop', async (_req, res) => {
-  try {
-    const { stopUnblock } = await import('./spamUnblock.js')
-    res.json({ ok: true, stopped: stopUnblock() })
-  } catch (err) { res.status(500).json({ ok: false, error: err instanceof Error ? err.message : 'Ошибка' }) }
 })
 
 app.post('/api/accounts/activity', async (req, res) => {
