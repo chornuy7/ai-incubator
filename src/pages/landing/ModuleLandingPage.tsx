@@ -4,6 +4,7 @@ import { ArrowRight, ArrowLeft, Check, Zap, CircleCheck } from 'lucide-react'
 import { fetchSubscription, type Subscription } from '@/api/balanceApi'
 import { getModule, ANNUAL_DISCOUNT, BONUS_MODULE, MODULE_FEATURES } from './catalog'
 import { HELP_DOCS } from '@/shared/config/helpDocs'
+import { cn } from '@/shared/lib/utils'
 
 /**
  * Страница одного модуля — отдельная ссылка /module/:key (как «Купить X» у
@@ -15,6 +16,7 @@ export function ModuleLandingPage() {
   const nav = useNavigate()
   const mod = getModule(key)
   const [pricing, setPricing] = useState<Subscription | null>(null)
+  const [periodKey, setPeriodKey] = useState('year') // по умолчанию — выгодный годовой
   useEffect(() => { void fetchSubscription().then(setPricing).catch(() => {}) }, [])
 
   if (!mod) {
@@ -31,9 +33,20 @@ export function ModuleLandingPage() {
   const cur = pricing?.currency || '$'
   const price = pricing?.items.find((i) => i.key === mod.key)?.price ?? 0
   const isBonus = mod.key === BONUS_MODULE.key
-  const yearFull = price * 12
-  const yearPrice = Math.round(yearFull * (1 - ANNUAL_DISCOUNT))
-  const yearSave = yearFull - yearPrice
+  // Периоды подписки — переключаются табом (а не двумя карточками стеком). Массив,
+  // чтобы «6 мес» и т.п. добавлялись одной строкой, когда решим скидку по нему.
+  // months — длительность, discount — скидка к базовой (месячной) цене за месяц.
+  const PERIODS: { key: string; label: string; months: number; days: number; discount: number }[] = [
+    { key: 'month', label: 'Месяц', months: 1, days: 30, discount: 0 },
+    { key: 'year', label: 'Год', months: 12, days: 365, discount: ANNUAL_DISCOUNT },
+    // { key: 'half', label: '6 мес', months: 6, days: 180, discount: 0.10 }, // добавить, когда утвердим скидку
+  ]
+  const periods = PERIODS.map((p) => {
+    const full = price * p.months
+    const total = Math.round(full * (1 - p.discount))
+    return { ...p, total, perMonth: Math.round(total / p.months), save: full - total }
+  })
+  const sel = periods.find((p) => p.key === periodKey) ?? periods[0]
   const Icon = mod.icon
   const start = () => nav('/login')
   // §10.7: подтягиваем глубокую доку модуля (тот же источник, что «Обучение») —
@@ -142,23 +155,35 @@ export function ModuleLandingPage() {
             </div>
           ) : (
             <div className="space-y-3">
-              {/* Год — выгоднее */}
-              <div className="rounded-2xl border border-spark-500/40 bg-spark-500/8 p-5">
+              {/* Переключатель периода — таб вместо двух карточек стеком. */}
+              <div className="inline-flex w-full rounded-xl border border-line bg-card p-1">
+                {periods.map((p) => (
+                  <button key={p.key} onClick={() => setPeriodKey(p.key)}
+                    className={cn(
+                      'flex-1 rounded-lg px-3 py-1.5 text-sm font-medium transition-colors',
+                      periodKey === p.key ? 'bg-spark-500/20 text-spark-200' : 'text-muted hover:text-fg',
+                    )}>
+                    {p.label}
+                    {p.discount > 0 && <span className="ml-1 text-[10px] text-spark-300">−{Math.round(p.discount * 100)}%</span>}
+                  </button>
+                ))}
+              </div>
+
+              {/* Одна карта — обновляется по выбранному периоду. */}
+              <div className={cn('rounded-2xl border p-5', sel.save > 0 ? 'border-spark-500/40 bg-spark-500/8' : 'border-line bg-card')}>
                 <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-wide text-muted">
-                  365 дней
-                  <span className="rounded-md bg-spark-500/20 px-1.5 py-0.5 text-[10px] text-spark-300">выгода {Math.round(ANNUAL_DISCOUNT * 100)}%</span>
+                  {sel.days} дней
+                  {sel.save > 0 && <span className="rounded-md bg-spark-500/20 px-1.5 py-0.5 text-[10px] text-spark-300">выгода {Math.round(sel.discount * 100)}%</span>}
                 </div>
-                <div className="mt-1 font-display text-3xl font-bold">{cur}{yearPrice}</div>
-                <div className="mt-1 text-sm text-muted">≈ {cur}{Math.round(yearPrice / 12)} / месяц · экономия {cur}{yearSave}</div>
+                <div className="mt-1 font-display text-3xl font-bold">{cur}{sel.total}</div>
+                <div className="mt-1 text-sm text-muted">
+                  {sel.months > 1
+                    ? <>≈ {cur}{sel.perMonth} / месяц · экономия {cur}{sel.save}</>
+                    : <>{cur}{sel.perMonth} / месяц</>}
+                </div>
                 <button onClick={start} className="btn-primary mt-4 h-11 w-full">Выбрать <ArrowRight size={16} /></button>
               </div>
-              {/* Месяц */}
-              <div className="rounded-2xl border border-line bg-card p-5">
-                <div className="text-xs font-bold uppercase tracking-wide text-muted">30 дней</div>
-                <div className="mt-1 font-display text-3xl font-bold">{cur}{price}</div>
-                <div className="mt-1 text-sm text-muted">{cur}{price} / месяц</div>
-                <button onClick={start} className="btn-ghost mt-4 h-11 w-full border border-line">Выбрать</button>
-              </div>
+
               <div className="flex items-center gap-2 px-1 text-xs text-muted">
                 <Check size={14} className="text-spark-400" /> Доступ сразу · обновления без доплат · работа ИИ оплачивается монетами
               </div>
