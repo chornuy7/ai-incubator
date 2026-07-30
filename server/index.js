@@ -632,10 +632,17 @@ app.post('/api/admin/provision-auth', async (req, res) => {
 
     const { listUsers } = await import('./users.js')
     const users = await listUsers()
+    // Можно ограничить список адресатов: письмо уйдёт только на указанные почты
+    // (у остальных доступа к ящику может не быть, слать им приглашение бессмысленно
+    // и жжёт лимит бесплатного мейлера).
+    const only = Array.isArray(req.body?.emails) && req.body.emails.length
+      ? new Set(req.body.emails.map((e) => String(e).trim().toLowerCase()))
+      : null
     const invited = []; const skipped = []; const failed = []
     for (const u of users) {
       const email = String(u.email || '').trim()
       if (!email) continue
+      if (only && !only.has(email.toLowerCase())) { skipped.push(email); continue }
       if (have.has(email.toLowerCase())) { skipped.push(email); continue }
       const { error } = await db.auth.admin.inviteUserByEmail(email, { data: { name: u.name || '' } })
       if (error) failed.push({ email, error: error.message }); else invited.push(email)
