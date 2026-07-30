@@ -30,10 +30,24 @@ rolesRouter.get('/:id', async (req, res) => {
   } catch (err) { fail(res, err, 500) }
 })
 
+/**
+ * §11.3: держать `user_types`/`user_type_modules` в согласии с ролями.
+ *
+ * Синхронизируем ПОСЛЕ ответа и best-effort: таблицы типов — проекция для БД и отчётов,
+ * гейт доступа читает roles.permissions. Если проекция не обновится, доступы не поедут,
+ * поэтому падение синка не должно валить сохранение роли.
+ */
+function resyncTypes() {
+  void import('./lib/typesSync.js')
+    .then((m) => m.syncTypesAndModules())
+    .catch((e) => console.warn('[types] синхронизация после правки роли не удалась:', e?.message || e))
+}
+
 rolesRouter.post('/', async (req, res) => {
   try {
     const role = await createRole(req.body ?? {})
-    await appendAudit({ action: 'role.create', module: 'rbac', initiator: 'operator', reason: `Создана роль «${role.name}»`, meta: { roleId: role.id } })
+    await appendAudit({ action: 'role.create', module: 'rbac', initiator: req.header('x-user-id') || 'operator', reason: `Создана роль «${role.name}»`, meta: { roleId: role.id } })
+    resyncTypes()
     res.json({ ok: true, role })
   } catch (err) { fail(res, err) }
 })
@@ -42,7 +56,8 @@ rolesRouter.put('/:id', async (req, res) => {
   try {
     const role = await updateRole(req.params.id, req.body ?? {})
     if (!role) return res.status(404).json({ ok: false, error: 'Роль не найдена' })
-    await appendAudit({ action: 'role.update', module: 'rbac', initiator: 'operator', reason: `Изменена роль «${role.name}»`, meta: { roleId: role.id } })
+    await appendAudit({ action: 'role.update', module: 'rbac', initiator: req.header('x-user-id') || 'operator', reason: `Изменена роль «${role.name}»`, meta: { roleId: role.id } })
+    resyncTypes()
     res.json({ ok: true, role })
   } catch (err) { fail(res, err) }
 })
@@ -51,7 +66,8 @@ rolesRouter.delete('/:id', async (req, res) => {
   try {
     const ok = await deleteRole(req.params.id)
     if (!ok) return res.status(404).json({ ok: false, error: 'Роль не найдена' })
-    await appendAudit({ action: 'role.delete', module: 'rbac', initiator: 'operator', reason: 'Удалена роль', meta: { roleId: req.params.id } })
+    await appendAudit({ action: 'role.delete', module: 'rbac', initiator: req.header('x-user-id') || 'operator', reason: 'Удалена роль', meta: { roleId: req.params.id } })
+    resyncTypes()
     res.json({ ok: true })
   } catch (err) { fail(res, err) }
 })

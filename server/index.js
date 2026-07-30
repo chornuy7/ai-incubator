@@ -555,6 +555,25 @@ app.get('/api/admin/user-dialogs', async (req, res) => {
   } catch (err) { res.status(500).json({ ok: false, error: err instanceof Error ? err.message : 'Ошибка' }) }
 })
 
+/**
+ * §11.3: наполнить таблицы типов и прав из реальных ролей. Только админ.
+ * Идемпотентно — можно жать повторно. Гейт доступа при этом не меняется
+ * (см. lib/typesSync.js: это проекция модульного среза, а не замена RBAC).
+ */
+app.post('/api/admin/sync-types', async (req, res) => {
+  try {
+    if (!(await isAdminRequest(req))) return res.status(403).json({ ok: false, error: 'Доступно только администратору' })
+    const { syncTypesAndModules } = await import('./lib/typesSync.js')
+    const report = await syncTypesAndModules()
+    await appendAudit({
+      action: 'types.sync', module: 'admin', initiator: req.header('x-user-id') || 'system',
+      reason: `Синхронизация типов и прав: типов ${report.types || 0}, связей ${report.links || 0}`,
+      meta: report,
+    }).catch(() => {})
+    res.json({ ok: true, report })
+  } catch (err) { res.status(500).json({ ok: false, error: err instanceof Error ? err.message : 'Ошибка' }) }
+})
+
 /** §10.9: здоровье аккаунтов — активные/на паузе/падающие + причина. Только админ. */
 app.get('/api/admin/accounts-health', async (req, res) => {
   try {
