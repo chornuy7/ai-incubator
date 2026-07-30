@@ -16,7 +16,7 @@ accountGroupsRouter.get('/', async (_req, res) => {
 })
 
 accountGroupsRouter.post('/', async (req, res) => {
-  try { res.json({ ok: true, group: await createGroup(req.body ?? {}) }) } catch (e) { fail(res, e) }
+  try { res.json({ ok: true, group: await createGroup({ ...(req.body ?? {}), userId: req.header('x-user-id') || '' }) }) } catch (e) { fail(res, e) }
 })
 
 accountGroupsRouter.get('/:id', async (req, res) => {

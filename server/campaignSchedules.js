@@ -12,13 +12,13 @@ const FILE = process.env.CAMPAIGN_SCHEDULES_FILE || dataPath('campaign-schedules
 const schedStore = listStore({
   table: 'campaign_schedules',
   file: () => FILE,
-  toRow: (x) => { const { id, name, createdAt, updatedAt, ...data } = x; return {
-    id, name: name || '', data,
+  toRow: (x) => { const { id, name, userId, createdAt, updatedAt, ...data } = x; return {
+    id, name: name || '', data, user_id: userId || null,
     created_at: new Date(createdAt || Date.now()).toISOString(),
     updated_at: new Date(updatedAt || Date.now()).toISOString(),
   } },
   fromRow: (r) => ({
-    ...(r.data || {}), id: r.id, name: r.name || '',
+    ...(r.data || {}), id: r.id, name: r.name || '', userId: r.user_id || undefined,
     createdAt: r.created_at ? new Date(r.created_at).getTime() : 0,
     updatedAt: r.updated_at ? new Date(r.updated_at).getTime() : 0,
   }),
@@ -41,6 +41,8 @@ export async function createSchedule(input = {}) {
     runAt: Number(input.runAt) || Date.now(),
     repeat: input.repeat === 'daily' ? 'daily' : 'none',
     enabled: input.enabled !== false,
+    userId: String(input.userId || '').trim() || undefined, // §11.3: кто создал расписание
+
     lastRunAt: null,
     lastResult: null,
     createdAt: Date.now(),

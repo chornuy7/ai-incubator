@@ -21,13 +21,13 @@ const groupsStore = listStore({
   file: () => GROUPS_FILE,
   toRow: (g) => ({
     id: g.id, name: g.name || '', account_ids: g.accountIds || [],
-    color: g.color || '', note: g.note || '',
+    color: g.color || '', note: g.note || '', user_id: g.userId || null,
     created_at: new Date(g.createdAt || Date.now()).toISOString(),
     updated_at: new Date(g.updatedAt || Date.now()).toISOString(),
   }),
   fromRow: (r) => ({
     id: r.id, name: r.name || '', accountIds: r.account_ids || [],
-    color: r.color || '', note: r.note || '',
+    color: r.color || '', note: r.note || '', userId: r.user_id || undefined,
     createdAt: r.created_at ? new Date(r.created_at).getTime() : 0,
     updatedAt: r.updated_at ? new Date(r.updated_at).getTime() : 0,
   }),
@@ -59,7 +59,8 @@ export async function getGroup(id) {
 export async function createGroup(input) {
   const clean = normalizeGroup(input)
   if (!clean.name) throw new Error('Укажите название группы')
-  const group = { id: `grp_${crypto.randomUUID().slice(0, 8)}`, ...clean, createdAt: Date.now(), updatedAt: Date.now() }
+  // §11.3: кто создал группу.
+  const group = { id: `grp_${crypto.randomUUID().slice(0, 8)}`, ...clean, userId: String(input?.userId || '').trim() || undefined, createdAt: Date.now(), updatedAt: Date.now() }
   await groupsStore.mutate((all) => { all.unshift(group); return all })
   return group
 }

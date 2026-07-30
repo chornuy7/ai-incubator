@@ -21,6 +21,7 @@ function sbCh() { return supabaseEnabled() ? getSupabase() : null }
 const rowToChannel = (r) => ({
   ...(r.data || {}),
   id: r.id,
+  userId: r.user_id || undefined,
   title: r.title || '',
   username: r.username || '',
   link: r.link || '',
@@ -34,9 +35,10 @@ const rowToChannel = (r) => ({
 
 /** Объект канала → строка БД. */
 const channelToRow = (c) => {
-  const { id, title, username, link, subscribers, hasComments, tgPeerId, rating, createdAt, updatedAt, ...rest } = c
+  const { id, title, username, link, subscribers, hasComments, tgPeerId, rating, userId, createdAt, updatedAt, ...rest } = c
   return {
     id,
+    user_id: userId || null,
     title: title || '',
     username: username || '',
     link: link || '',

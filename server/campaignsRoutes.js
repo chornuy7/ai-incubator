@@ -87,7 +87,7 @@ campaignsRouter.get('/schedules', async (_req, res) => {
 })
 campaignsRouter.post('/schedules', async (req, res) => {
   try {
-    const sched = await createSchedule(req.body ?? {})
+    const sched = await createSchedule({ ...(req.body ?? {}), userId: req.header('x-user-id') || '' })
     // §11.1: пишем РЕАЛЬНОГО инициатора — обезличенный 'operator' не привязывается
     // к человеку, и событие пропадает из журнала активности юзера в админке.
     await appendAudit({ action: 'campaign.schedule.create', module: 'campaign', initiator: req.header('x-user-id') || 'operator', reason: `Запланирована кампания «${sched.name}»`, meta: { scheduleId: sched.id, runAt: sched.runAt, repeat: sched.repeat } })
