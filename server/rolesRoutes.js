@@ -45,7 +45,8 @@ function resyncTypes() {
 
 rolesRouter.post('/', async (req, res) => {
   try {
-    const role = await createRole(req.body ?? {})
+    // §11.3: кто создал роль (личность из подписанной сессии).
+    const role = await createRole({ ...(req.body ?? {}), userId: req.header('x-user-id') || '' })
     await appendAudit({ action: 'role.create', module: 'rbac', initiator: req.header('x-user-id') || 'operator', reason: `Создана роль «${role.name}»`, meta: { roleId: role.id } })
     resyncTypes()
     res.json({ ok: true, role })

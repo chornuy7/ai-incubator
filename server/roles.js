@@ -10,8 +10,9 @@ import { dataPath, readJson, writeJson } from './lib/jsonStore.js'
 import { getSupabase, supabaseEnabled } from './lib/supabase.js'
 
 function sbRoles() { return supabaseEnabled() ? getSupabase() : null }
-const rowToRole = (r) => ({ id: r.id, name: r.name, permissions: r.permissions || {}, builtin: !!r.builtin })
-const roleToRow = (r) => ({ id: r.id, name: r.name, permissions: r.permissions || {}, builtin: !!r.builtin })
+const rowToRole = (r) => ({ id: r.id, name: r.name, permissions: r.permissions || {}, builtin: !!r.builtin, userId: r.user_id || undefined })
+// §11.3: user_id — кто создал роль (до применения миграции колонки нет, см. ownerColumn).
+const roleToRow = (r) => ({ id: r.id, name: r.name, permissions: r.permissions || {}, builtin: !!r.builtin, user_id: r.userId || null })
 import { MODULE_LABELS } from './lib/accountLocks.js'
 import { listFolders } from './targetFolders.js'
 import { listChannels } from './channels.js'
@@ -260,7 +261,11 @@ export async function createRole(input) {
     updatedAt: Date.now(),
   }
   const db = sbRoles()
-  if (db) { await db.from('roles').insert(roleToRow(role)); return role }
+  if (db) {
+    const { insertWithOwner } = await import('./lib/ownerColumn.js')
+    await insertWithOwner(db, 'roles', roleToRow(role))
+    return role
+  }
   roles.push(role)
   await writeJson(ROLES_FILE(), roles)
   return role
@@ -285,7 +290,14 @@ export async function updateRole(id, patch = {}) {
     updatedAt: Date.now(),
   }
   const db = sbRoles()
-  if (db) { await db.from('roles').update(roleToRow(roles[i])).eq('id', id); return roles[i] }
+  if (db) {
+    // §11.3: updateWithOwner — до применения миграции колонки user_id нет, и обычный
+    // update уронил бы правку роли целиком. Владелец при этом сохраняется: rowToRole
+    // читает его из БД, roleToRow кладёт обратно.
+    const { updateWithOwner } = await import('./lib/ownerColumn.js')
+    await updateWithOwner(db, 'roles', roleToRow(roles[i]), 'id', id)
+    return roles[i]
+  }
   await writeJson(ROLES_FILE(), roles)
   return roles[i]
 }

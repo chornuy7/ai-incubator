@@ -57,11 +57,16 @@ export async function createBundle(input = {}) {
     hint: String(input.hint || '').trim(),
     modules,
     price,
+    // §11.3: кто собрал набор (нормализация выше владельца не знает).
+    userId: String(input.userId || '').trim() || undefined,
     createdAt: Date.now(),
   }
   const db = sb()
   if (db) {
-    await db.from('bundles').insert({ id: bundle.id, name: bundle.name, hint: bundle.hint, modules: bundle.modules, price: bundle.price, created_at: new Date(bundle.createdAt).toISOString() })
+    // §11.3: «кто собрал набор» — та же привязка к юзеру, что и у остальных данных.
+    // Через insertWithOwner: до применения миграции колонки нет, и вставка не должна падать.
+    const { insertWithOwner } = await import('./lib/ownerColumn.js')
+    await insertWithOwner(db, 'bundles', { id: bundle.id, name: bundle.name, hint: bundle.hint, modules: bundle.modules, price: bundle.price, user_id: bundle.userId || null, created_at: new Date(bundle.createdAt).toISOString() })
     return bundle
   }
   // mutateJson, а не read+write: он сериализует запись в файл (очередь _fileChains).
