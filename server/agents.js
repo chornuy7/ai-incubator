@@ -13,8 +13,25 @@
  */
 import crypto from 'crypto'
 import { dataPath, readJson, writeJson } from './lib/jsonStore.js'
+import { listStore } from './lib/tableStore.js'
 
 const agentsFile = () => process.env.AGENTS_FILE || dataPath('agents.json')
+
+// §10.2: агенты — сущность со своим жизненным циклом, место в БД, а не в файле.
+const agentsStore = listStore({
+  table: 'agents',
+  file: agentsFile,
+  toRow: (a) => { const { id, name, userId, createdAt, updatedAt, ...data } = a; return {
+    id, name: name || '', data, user_id: userId || null,
+    created_at: new Date(createdAt || Date.now()).toISOString(),
+    updated_at: new Date(updatedAt || Date.now()).toISOString(),
+  } },
+  fromRow: (r) => ({
+    ...(r.data || {}), id: r.id, name: r.name || '', userId: r.user_id || undefined,
+    createdAt: r.created_at ? new Date(r.created_at).getTime() : 0,
+    updatedAt: r.updated_at ? new Date(r.updated_at).getTime() : 0,
+  }),
+})
 
 /**
  * Поля, которые можно задавать/менять.
@@ -54,7 +71,7 @@ export function normalizeAgent(input = {}) {
 }
 
 export async function listAgents() {
-  const all = await readJson(agentsFile(), [])
+  const all = await agentsStore.readAll()
   // У агентов, созданных до переноса дожима в кампанию, поле ещё лежит в файле.
   // Отдавать его наружу не надо: решение о дожиме принимает кампания.
   return (Array.isArray(all) ? all : []).map(({ followUp, ...a }) => a)
@@ -77,7 +94,7 @@ export async function createAgent(input) {
     updatedAt: Date.now(),
   }
   all.unshift(agent)
-  await writeJson(agentsFile(), all)
+  await agentsStore.writeAll(all)
   return agent
 }
 
@@ -92,7 +109,7 @@ export async function updateAgent(id, patch = {}) {
   }
   if (!all[i].name) throw new Error('Название агента не может быть пустым')
   all[i].updatedAt = Date.now()
-  await writeJson(agentsFile(), all)
+  await agentsStore.writeAll(all)
   return all[i]
 }
 
@@ -100,7 +117,7 @@ export async function deleteAgent(id) {
   const all = await listAgents()
   const next = all.filter((a) => a.id !== id)
   if (next.length === all.length) return false
-  await writeJson(agentsFile(), next)
+  await agentsStore.writeAll(next)
   return true
 }
 

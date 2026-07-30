@@ -8,6 +8,78 @@ import { dataPath, readJson, writeJson } from './lib/jsonStore.js'
 
 const CHANNELS_FILE = process.env.CHANNELS_FILE || dataPath('channels.json')
 
+// §10.2: каналы переехали в Supabase (таблица `channels`). Стор исторически работает
+// со ВСЕМ списком (read-modify-write), и переписывать его логику на точечные запросы
+// значило бы трогать дедуп и слияние карточек — самую тонкую часть парсера. Поэтому
+// здесь адаптер: те же «прочитать список / записать список», но поверх БД.
+// Записей десятки-сотни, и пишет их пакетный парсер, а не горячий путь.
+import { getSupabase, supabaseEnabled } from './lib/supabase.js'
+
+function sbCh() { return supabaseEnabled() ? getSupabase() : null }
+
+/** Строка БД → объект канала (ключевые поля колонками, остальное в data). */
+const rowToChannel = (r) => ({
+  ...(r.data || {}),
+  id: r.id,
+  title: r.title || '',
+  username: r.username || '',
+  link: r.link || '',
+  subscribers: Number(r.subscribers) || 0,
+  hasComments: r.has_comments ?? null,
+  tgPeerId: r.tg_peer_id || null,
+  rating: r.rating ?? null,
+  createdAt: r.created_at ? new Date(r.created_at).getTime() : 0,
+  updatedAt: r.updated_at ? new Date(r.updated_at).getTime() : 0,
+})
+
+/** Объект канала → строка БД. */
+const channelToRow = (c) => {
+  const { id, title, username, link, subscribers, hasComments, tgPeerId, rating, createdAt, updatedAt, ...rest } = c
+  return {
+    id,
+    title: title || '',
+    username: username || '',
+    link: link || '',
+    subscribers: Number(subscribers) || 0,
+    has_comments: hasComments ?? false,
+    tg_peer_id: tgPeerId || '',
+    rating: rating ?? null,
+    data: rest,
+    created_at: new Date(createdAt || Date.now()).toISOString(),
+    updated_at: new Date(updatedAt || Date.now()).toISOString(),
+  }
+}
+
+/** Прочитать весь список — из БД либо из файла. */
+async function readAll() {
+  const db = sbCh()
+  if (db) {
+    const { data, error } = await db.from('channels').select('*').order('updated_at', { ascending: false })
+    // Таблицы ещё нет (миграция не применена) — работаем по файлу, не роняя парсер.
+    if (error) return readJson(CHANNELS_FILE, [])
+    return (data || []).map(rowToChannel)
+  }
+  return readJson(CHANNELS_FILE, [])
+}
+
+/** Записать весь список: upsert всех + удаление тех, кого в списке больше нет. */
+async function writeAll(all) {
+  const db = sbCh()
+  if (!db) return writeJson(CHANNELS_FILE, all)
+  const rows = (all || []).map(channelToRow)
+  if (rows.length) {
+    const { error } = await db.from('channels').upsert(rows, { onConflict: 'id' })
+    if (error) { console.warn('[channels] запись в БД не удалась:', error.message); return writeJson(CHANNELS_FILE, all) }
+  }
+  // Удалённые каналы: чего нет в списке — нет и в таблице.
+  const { data: existing } = await db.from('channels').select('id')
+  const keep = new Set(rows.map((r) => r.id))
+  const gone = (existing || []).map((r) => r.id).filter((id) => !keep.has(id))
+  if (gone.length) await db.from('channels').delete().in('id', gone)
+  return all
+}
+
+
 /** Нормализовать ключ дедупа: username в нижнем регистре без @, либо peerId. */
 export function channelKey(input = {}) {
   const u = String(input.username || '').replace(/^@/, '').toLowerCase()
@@ -18,7 +90,7 @@ export function channelKey(input = {}) {
 }
 
 export async function listChannels() {
-  return readJson(CHANNELS_FILE, [])
+  return readAll()
 }
 
 export async function getChannel(id) {
@@ -63,7 +135,7 @@ export async function upsertChannel(input = {}, source) {
     merged.sources = [...sources]
     merged.updatedAt = now
     all[idx] = merged
-    await writeJson(CHANNELS_FILE, all)
+    await writeAll(all)
     return merged
   }
 
@@ -79,7 +151,7 @@ export async function upsertChannel(input = {}, source) {
     updatedAt: now,
   }
   all.unshift(channel)
-  await writeJson(CHANNELS_FILE, all)
+  await writeAll(all)
   return channel
 }
 
@@ -124,7 +196,7 @@ export async function upsertMany(items = [], source) {
     }
     n += 1
   }
-  await writeJson(CHANNELS_FILE, all)
+  await writeAll(all)
   return n
 }
 
@@ -144,7 +216,7 @@ export async function recordChannelStats(id, stats = {}, statsBy) {
   all[i].lastStatsAt = Date.now()
   all[i].statsBy = statsBy || 'system'
   all[i].updatedAt = Date.now()
-  await writeJson(CHANNELS_FILE, all)
+  await writeAll(all)
   return all[i]
 }
 
@@ -156,7 +228,7 @@ export async function updateChannel(id, patch = {}) {
   const EDITABLE = ['botInGroup', 'category', 'language', 'region', 'title', 'hasComments']
   for (const k of EDITABLE) if (patch[k] !== undefined) all[i][k] = patch[k]
   all[i].updatedAt = Date.now()
-  await writeJson(CHANNELS_FILE, all)
+  await writeAll(all)
   return all[i]
 }
 
@@ -164,6 +236,6 @@ export async function deleteChannel(id) {
   const all = await listChannels()
   const next = all.filter((c) => c.id !== id)
   if (next.length === all.length) return false
-  await writeJson(CHANNELS_FILE, next)
+  await writeAll(next)
   return true
 }

@@ -9,6 +9,7 @@
  * Хранение — JSON `data/settings.json`; путь через env SETTINGS_FILE (тесты).
  */
 import { dataPath, readJson, mutateJson } from './lib/jsonStore.js'
+import { kvRead, kvWrite } from './lib/kvStore.js'
 
 const SETTINGS_FILE = process.env.SETTINGS_FILE || dataPath('settings.json')
 
@@ -36,7 +37,8 @@ function clampSetting(key, value) {
 }
 
 export async function getSettings() {
-  const saved = await readJson(SETTINGS_FILE, {})
+  // §10.2: настройки — из БД (app_settings), файл остаётся для локального режима.
+  const saved = await kvRead('settings', () => SETTINGS_FILE, {})
   return { ...DEFAULT_SETTINGS, ...(saved && typeof saved === 'object' ? saved : {}) }
 }
 
@@ -51,16 +53,15 @@ export async function getSetting(key) {
  * @param {object} patch @returns {Promise<object>} актуальные настройки
  */
 export async function updateSettings(patch = {}) {
-  let result = null
-  await mutateJson(SETTINGS_FILE, (all) => {
-    const next = { ...DEFAULT_SETTINGS, ...(all && typeof all === 'object' ? all : {}) }
-    for (const [k, v] of Object.entries(patch)) {
-      if (!(k in DEFAULT_SETTINGS)) continue
-      const clean = clampSetting(k, v)
-      if (clean !== null) next[k] = clean
-    }
-    result = next
-    return next
-  }, {})
-  return result || (await getSettings())
+  // Читаем текущее из того же источника, куда пишем: иначе в режиме БД правка
+  // затирала бы настройки значениями из устаревшего файла.
+  const cur = await getSettings()
+  const next = { ...cur }
+  for (const [k, v] of Object.entries(patch)) {
+    if (!(k in DEFAULT_SETTINGS)) continue
+    const clean = clampSetting(k, v)
+    if (clean !== null) next[k] = clean
+  }
+  await kvWrite('settings', () => SETTINGS_FILE, next)
+  return next
 }

@@ -10,8 +10,28 @@
  */
 import crypto from 'crypto'
 import { dataPath, readJson, mutateJson } from './lib/jsonStore.js'
+import { listStore } from './lib/tableStore.js'
 
 const GROUPS_FILE = process.env.ACCOUNT_GROUPS_FILE || dataPath('account-groups.json')
+
+// §10.2: группы аккаунтов переехали в Supabase — на них выдаются права в ролях,
+// хранить их в файле рядом с процессом нельзя (на втором инстансе доступы разъедутся).
+const groupsStore = listStore({
+  table: 'account_groups',
+  file: () => GROUPS_FILE,
+  toRow: (g) => ({
+    id: g.id, name: g.name || '', account_ids: g.accountIds || [],
+    color: g.color || '', note: g.note || '',
+    created_at: new Date(g.createdAt || Date.now()).toISOString(),
+    updated_at: new Date(g.updatedAt || Date.now()).toISOString(),
+  }),
+  fromRow: (r) => ({
+    id: r.id, name: r.name || '', accountIds: r.account_ids || [],
+    color: r.color || '', note: r.note || '',
+    createdAt: r.created_at ? new Date(r.created_at).getTime() : 0,
+    updatedAt: r.updated_at ? new Date(r.updated_at).getTime() : 0,
+  }),
+})
 
 const FIELDS = ['name', 'accountIds', 'color', 'note']
 
@@ -28,11 +48,11 @@ export function normalizeGroup(input = {}) {
 }
 
 export async function listGroups() {
-  return readJson(GROUPS_FILE, [])
+  return groupsStore.readAll()
 }
 
 export async function getGroup(id) {
-  const all = await readJson(GROUPS_FILE, [])
+  const all = await groupsStore.readAll()
   return all.find((g) => g.id === id) || null
 }
 
@@ -40,13 +60,13 @@ export async function createGroup(input) {
   const clean = normalizeGroup(input)
   if (!clean.name) throw new Error('Укажите название группы')
   const group = { id: `grp_${crypto.randomUUID().slice(0, 8)}`, ...clean, createdAt: Date.now(), updatedAt: Date.now() }
-  await mutateJson(GROUPS_FILE, (all) => { all.unshift(group); return all }, [])
+  await groupsStore.mutate((all) => { all.unshift(group); return all })
   return group
 }
 
 export async function updateGroup(id, patch = {}) {
   let result = null
-  await mutateJson(GROUPS_FILE, (all) => {
+  await groupsStore.mutate((all) => {
   const i = all.findIndex((g) => g.id === id)
   if (i === -1) return undefined
   for (const k of FIELDS) {
@@ -58,18 +78,18 @@ export async function updateGroup(id, patch = {}) {
   all[i].updatedAt = Date.now()
   result = all[i]
   return all
-  }, [])
+  })
   return result
 }
 
 export async function deleteGroup(id) {
   let removed = false
-  await mutateJson(GROUPS_FILE, (all) => {
+  await groupsStore.mutate((all) => {
     const next = all.filter((g) => g.id !== id)
     if (next.length === all.length) return undefined
     removed = true
     return next
-  }, [])
+  })
   return removed
 }
 

@@ -4,12 +4,29 @@
  */
 import crypto from 'crypto'
 import { dataPath, readJson, writeJson } from './lib/jsonStore.js'
+import { listStore } from './lib/tableStore.js'
 
 const FILE = process.env.CAMPAIGN_SCHEDULES_FILE || dataPath('campaign-schedules.json')
+
+// §10.2: расписания кампаний — в БД (планировщик может работать не на одном инстансе).
+const schedStore = listStore({
+  table: 'campaign_schedules',
+  file: () => FILE,
+  toRow: (x) => { const { id, name, createdAt, updatedAt, ...data } = x; return {
+    id, name: name || '', data,
+    created_at: new Date(createdAt || Date.now()).toISOString(),
+    updated_at: new Date(updatedAt || Date.now()).toISOString(),
+  } },
+  fromRow: (r) => ({
+    ...(r.data || {}), id: r.id, name: r.name || '',
+    createdAt: r.created_at ? new Date(r.created_at).getTime() : 0,
+    updatedAt: r.updated_at ? new Date(r.updated_at).getTime() : 0,
+  }),
+})
 const DAY = 24 * 60 * 60 * 1000
 
 export async function listSchedules() {
-  const arr = await readJson(FILE, [])
+  const arr = await schedStore.readAll()
   return Array.isArray(arr) ? arr : []
 }
 
@@ -30,7 +47,7 @@ export async function createSchedule(input = {}) {
     updatedAt: Date.now(),
   }
   all.unshift(sched)
-  await writeJson(FILE, all)
+  await schedStore.writeAll(all)
   return sched
 }
 
@@ -45,7 +62,7 @@ export async function updateSchedule(id, patch = {}) {
   if (patch.repeat !== undefined) all[i].repeat = patch.repeat === 'daily' ? 'daily' : 'none'
   if (patch.body !== undefined && patch.body) all[i].body = patch.body
   all[i].updatedAt = Date.now()
-  await writeJson(FILE, all)
+  await schedStore.writeAll(all)
   return all[i]
 }
 
@@ -53,7 +70,7 @@ export async function deleteSchedule(id) {
   const all = await listSchedules()
   const next = all.filter((s) => s.id !== id)
   if (next.length === all.length) return false
-  await writeJson(FILE, next)
+  await schedStore.writeAll(next)
   return true
 }
 
@@ -77,7 +94,7 @@ export async function markRun(id, now, result) {
   all[i].lastResult = result ?? null
   if (all[i].repeat === 'none') all[i].enabled = false
   all[i].updatedAt = now
-  await writeJson(FILE, all)
+  await schedStore.writeAll(all)
   return all[i]
 }
 

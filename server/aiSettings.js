@@ -1,4 +1,5 @@
 import { dataPath, readJson, writeJson } from './lib/jsonStore.js'
+import { kvRead, kvWrite } from './lib/kvStore.js'
 
 const FILE = dataPath('ai-settings.json')
 
@@ -14,7 +15,7 @@ let loaded = false
 
 /** Загрузить настройки с диска в кэш (вызывать на старте API). */
 export async function loadAiSettings() {
-  const data = await readJson(FILE, {})
+  const data = await kvRead('ai-settings', FILE, {})
   cache = { ...DEFAULTS, ...(data || {}) }
   loaded = true
   return { ...cache }
@@ -40,6 +41,6 @@ export async function setAiSettings(patch) {
     updatedAt: Date.now(),
   }
   cache = next
-  await writeJson(FILE, next)
+  await kvWrite('ai-settings', FILE, next)
   return { ...cache }
 }

@@ -11,6 +11,7 @@
  * они затирали бы друг друга — та же болезнь, что была у accounts-meta.
  */
 import { dataPath, readJson, mutateJson } from './lib/jsonStore.js'
+import { mapStore } from './lib/tableStore.js'
 import {
   DEFAULT_FATIGUE, DEFAULT_SCHEDULE, applyAction, fatigueGate, scheduleGate,
   currentFatigue, normalizeFatigueProfile, normalizeSchedule, scheduleForAccount,
@@ -18,9 +19,34 @@ import {
 
 const FILE = () => process.env.ACCOUNT_ACTIVITY_FILE || dataPath('account-activity.json')
 
+// §10.2: усталость аккаунтов — в БД. Она общая для всех модулей и определяет, кого
+// можно брать в работу: на втором инстансе файл разъедется, и аккаунт получит двойную
+// нагрузку вместо отдыха.
+const activityStore = mapStore({
+  table: 'account_activity',
+  file: FILE,
+  keyCol: 'account_id',
+  toRow: (accountId, a) => { const { fatigue, restUntil, lastActionAt, actionsTotal, ...data } = a || {}; return {
+    account_id: accountId,
+    fatigue: Number(fatigue) || 0,
+    rest_until: Number(restUntil) || 0,
+    last_action_at: Number(lastActionAt) || 0,
+    actions_total: Number(actionsTotal) || 0,
+    data,
+    updated_at: new Date().toISOString(),
+  } },
+  fromRow: (r) => [r.account_id, {
+    ...(r.data || {}),
+    fatigue: Number(r.fatigue) || 0,
+    restUntil: Number(r.rest_until) || 0,
+    lastActionAt: Number(r.last_action_at) || 0,
+    actionsTotal: Number(r.actions_total) || 0,
+  }],
+})
+
 /** @returns {Promise<Record<string, object>>} */
 async function loadAll() {
-  const all = await readJson(FILE(), {})
+  const all = await activityStore.readAll()
   return all && typeof all === 'object' ? all : {}
 }
 
@@ -84,7 +110,7 @@ export async function getSchedulePercent(accountId) {
 export async function noteAction(accountId, now = Date.now()) {
   if (!accountId) return null
   let patch = null
-  await mutateJson(FILE(), (all) => {
+  await activityStore.mutate((all) => {
     const cur = (all && all[accountId]) || {}
     const profile = { ...DEFAULT_FATIGUE, ...(cur.profile || {}) }
     patch = applyAction(cur, profile, now)
@@ -123,7 +149,7 @@ export async function setActivityProfile(accountIds, patch = {}) {
   const profile = patch.profile ? normalizeFatigueProfile(patch.profile) : null
   const base = patch.schedule ? normalizeSchedule(patch.schedule) : null
   const spread = patch.spread !== false
-  await mutateJson(FILE(), (all) => {
+  await activityStore.mutate((all) => {
     const next = { ...(all || {}) }
     for (const id of ids) {
       const cur = next[id] || {}
@@ -145,7 +171,7 @@ export async function restAccounts(accountIds, minutes = 60, now = Date.now()) {
   const ids = (Array.isArray(accountIds) ? accountIds : []).filter(Boolean)
   if (!ids.length) return 0
   const until = now + Math.max(1, Number(minutes) || 1) * 60000
-  await mutateJson(FILE(), (all) => {
+  await activityStore.mutate((all) => {
     const next = { ...(all || {}) }
     for (const id of ids) next[id] = { ...(next[id] || {}), restUntil: until }
     return next

@@ -1,4 +1,5 @@
 import { dataPath, readJson, writeJson } from './lib/jsonStore.js'
+import { kvRead, kvWrite } from './lib/kvStore.js'
 
 const FILE = dataPath('ai-safety.json')
 
@@ -32,7 +33,7 @@ let cache = { ...DEFAULTS }
 let loaded = false
 
 export async function loadAiSafety() {
-  const data = await readJson(FILE, {})
+  const data = await kvRead('ai-safety', FILE, {})
   cache = { ...DEFAULTS, ...(data || {}) }
   loaded = true
   return { ...cache }
@@ -59,7 +60,7 @@ export async function setAiSafety(patch) {
   if (patch?.onBan) clean.onBan = String(patch.onBan)
   if (patch?.onSpamblock) clean.onSpamblock = String(patch.onSpamblock)
   cache = { ...cache, ...clean, updatedAt: Date.now() }
-  await writeJson(FILE, cache)
+  await kvWrite('ai-safety', FILE, cache)
   return { ...cache }
 }
 

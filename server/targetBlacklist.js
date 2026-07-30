@@ -1,4 +1,5 @@
 import { dataPath, readJson, writeJson } from './lib/jsonStore.js'
+import { kvRead, kvWrite } from './lib/kvStore.js'
 
 const FILE = dataPath('target-blacklist.json')
 
@@ -18,7 +19,7 @@ let cache = new Set()
 let loaded = false
 
 export async function loadBlacklist() {
-  const data = await readJson(FILE, { entries: [] })
+  const data = await kvRead('target-blacklist', FILE, { entries: [] })
   cache = new Set((data?.entries || []).map(normalizeTarget).filter(Boolean))
   loaded = true
   return [...cache]
@@ -42,7 +43,7 @@ export function isBlacklistedSync(target) {
 /** Полностью заменить список. @param {string[]} entries */
 export async function setBlacklist(entries) {
   cache = new Set((entries || []).map(normalizeTarget).filter(Boolean))
-  await writeJson(FILE, { entries: [...cache], updatedAt: Date.now() })
+  await kvWrite('target-blacklist', FILE, { entries: [...cache], updatedAt: Date.now() })
   return [...cache]
 }
 
@@ -54,7 +55,7 @@ export async function addToBlacklist(entry) {
     const n = normalizeTarget(e)
     if (n) cache.add(n)
   }
-  await writeJson(FILE, { entries: [...cache], updatedAt: Date.now() })
+  await kvWrite('target-blacklist', FILE, { entries: [...cache], updatedAt: Date.now() })
   return [...cache]
 }
 
@@ -62,7 +63,7 @@ export async function addToBlacklist(entry) {
 export async function removeFromBlacklist(entry) {
   if (!loaded) await loadBlacklist()
   cache.delete(normalizeTarget(entry))
-  await writeJson(FILE, { entries: [...cache], updatedAt: Date.now() })
+  await kvWrite('target-blacklist', FILE, { entries: [...cache], updatedAt: Date.now() })
   return [...cache]
 }
 
