@@ -1,8 +1,55 @@
-import { AlertTriangle } from 'lucide-react'
+import { useEffect, useRef, useState } from 'react'
+import { AlertTriangle, Activity, Cpu, MemoryStick } from 'lucide-react'
 import { Card, EmptyState } from '@/shared/ui'
 import { cn } from '@/shared/lib/utils'
-import type { AccountsHealth, ActiveNow, DailySpend } from '@/api/adminApi'
+import type { AccountsHealth, ActiveNow, DailySpend, SystemMetrics } from '@/api/adminApi'
+import { fetchSystemMetrics } from '@/api/adminApi'
 import { fmt, MetricTile } from './adminShared'
+
+/**
+ * §10.9 (кол 29.07): живая нагрузка сервера — RPS и загрузка CPU/памяти, опрос раз в 3 с.
+ * Отдельный компонент со своим таймером, чтобы пульс шёл независимо от остального экрана.
+ */
+function SystemLoad() {
+  const [sys, setSys] = useState<SystemMetrics | null>(null)
+  const [err, setErr] = useState(false)
+  const alive = useRef(true)
+
+  useEffect(() => {
+    alive.current = true
+    const tick = async () => {
+      try { const s = await fetchSystemMetrics(); if (alive.current) { setSys(s); setErr(false) } }
+      catch { if (alive.current) setErr(true) }
+    }
+    void tick()
+    const id = setInterval(() => void tick(), 3000)
+    return () => { alive.current = false; clearInterval(id) }
+  }, [])
+
+  if (err && !sys) return null // метрика недоступна — не мешаем остальному мониторингу
+  const cpuTone = !sys ? undefined : sys.cpu.procPct >= 85 ? 'text-red-300' : sys.cpu.procPct >= 60 ? 'text-amber-300' : 'text-spark-300'
+  const memTone = !sys ? undefined : sys.mem.rssMb >= 3000 ? 'text-red-300' : sys.mem.rssMb >= 2400 ? 'text-amber-300' : undefined
+  const upt = (s: number) => (s >= 86400 ? `${Math.floor(s / 86400)} д ${Math.floor((s % 86400) / 3600)} ч` : s >= 3600 ? `${Math.floor(s / 3600)} ч ${Math.floor((s % 3600) / 60)} мин` : `${Math.floor(s / 60)} мин`)
+
+  return (
+    <div>
+      <div className="mb-1 mt-1 flex items-center gap-1.5 text-xs font-bold uppercase tracking-wide text-muted">
+        <Activity size={13} /> Нагрузка сервера
+        <span className={cn('h-1.5 w-1.5 rounded-full', sys ? 'bg-spark-400 animate-pulse' : 'bg-faint')} />
+      </div>
+      <div className="grid gap-3 sm:grid-cols-4">
+        <MetricTile label="Запросов/сек" value={sys ? fmt(sys.rps1s) : '…'} tone="text-spark-300"
+          sub={sys ? `среднее за минуту ${sys.rps1m}/с` : 'API-трафик'} />
+        <MetricTile label={<span className="inline-flex items-center gap-1"><Cpu size={12} /> CPU процесса</span>} value={sys ? `${sys.cpu.procPct}%` : '…'} tone={cpuTone}
+          sub={sys ? `${sys.cpu.cores} ядер${sys.cpu.load1 ? ` · load ${sys.cpu.load1}` : ''}` : 'загрузка'} />
+        <MetricTile label={<span className="inline-flex items-center gap-1"><MemoryStick size={12} /> Память процесса</span>} value={sys ? `${fmt(sys.mem.rssMb)} МБ` : '…'} tone={memTone}
+          sub={sys ? `heap ${fmt(sys.mem.heapUsedMb)} МБ · лимит 3 ГБ` : 'RSS'} />
+        <MetricTile label="Память системы" value={sys ? `${sys.mem.systemUsedPct}%` : '…'}
+          sub={sys ? `из ${fmt(sys.mem.systemTotalMb)} МБ · аптайм ${upt(sys.uptimeSec)}` : 'всего'} />
+      </div>
+    </div>
+  )
+}
 
 export const STATUS_LABEL_RU: Record<string, string> = {
   active: 'Активны', warming: 'Прогрев', pause: 'На паузе', floodwait: 'FloodWait',
@@ -41,6 +88,9 @@ export function MonitoringTab({ health, active, daily }: { health: AccountsHealt
 
   return (
     <div className="space-y-3">
+      {/* §10.9: живой пульс сервера — RPS и CPU/память. */}
+      <SystemLoad />
+
       {/* §10.9: нагрузка «сейчас» — задачи в работе, занятые аккаунты, поток действий. */}
       <div className="grid gap-3 sm:grid-cols-4">
         <MetricTile label="Задач в работе" value={fmt(running.length)} tone="text-spark-300" sub={`на паузе ${fmt(paused.length)}${pausedByCoins ? ` · из-за баланса ${fmt(pausedByCoins)}` : ''}`} />

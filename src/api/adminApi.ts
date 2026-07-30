@@ -154,6 +154,17 @@ export async function fetchAccountsHealth(): Promise<AccountsHealth> {
   return (await apiGet<{ ok: boolean; health: AccountsHealth }>('/api/admin/accounts-health')).health
 }
 
+/** §10.9 (кол 29.07): нагрузка сервера сейчас — RPS и загрузка CPU/памяти. */
+export interface SystemMetrics {
+  rps1s: number; rps1m: number
+  cpu: { procPct: number; load1: number; cores: number }
+  mem: { rssMb: number; heapUsedMb: number; systemUsedPct: number; systemTotalMb: number }
+  uptimeSec: number
+}
+export async function fetchSystemMetrics(): Promise<SystemMetrics> {
+  return (await apiGet<{ ok: boolean; system: SystemMetrics }>('/api/admin/system')).system
+}
+
 /** §11.1: одна запись журнала активности юзера. bySelf=false — действие СДЕЛАЛИ над ним. */
 export interface ActivityRow {
   ts: string; action: string; module: string; reason: string; ip: string; account: string; bySelf: boolean

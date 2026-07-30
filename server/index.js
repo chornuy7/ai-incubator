@@ -39,10 +39,12 @@ import {
 } from './lib/accountLocks.js'
 import { buildAccountStats, listAccountChannels, listAccountFolders } from './accountStats.js'
 import { dailySummary, dailySummaryAll } from './lib/dailyActions.js'
+import { rpsMiddleware, systemMetrics } from './lib/systemMetrics.js'
 
 const app = express()
 app.use(cors())
 app.use(express.json({ limit: '5mb' }))
+app.use('/api', rpsMiddleware) // §10.9: считаем RPS по всем API-запросам для мониторинга нагрузки
 
 // Продакшн-замок: личность из подписанного токена, при SESSION_SECRET — вход обязателен.
 // Монтируется ДО всех /api-роутов, чтобы RBAC ниже работал на доверенной личности.
@@ -661,6 +663,14 @@ app.get('/api/admin/accounts-health', async (req, res) => {
     if (!(await isAdminRequest(req))) return res.status(403).json({ ok: false, error: 'Мониторинг доступен только администратору' })
     const { accountsHealth } = await import('./adminStats.js')
     res.json({ ok: true, health: await accountsHealth() })
+  } catch (err) { res.status(500).json({ ok: false, error: err instanceof Error ? err.message : 'Ошибка' }) }
+})
+
+/** §10.9 (кол 29.07): нагрузка сервера сейчас — RPS и загрузка CPU/памяти. Только админ. */
+app.get('/api/admin/system', async (req, res) => {
+  try {
+    if (!(await isAdminRequest(req))) return res.status(403).json({ ok: false, error: 'Мониторинг доступен только администратору' })
+    res.json({ ok: true, system: systemMetrics() })
   } catch (err) { res.status(500).json({ ok: false, error: err instanceof Error ? err.message : 'Ошибка' }) }
 })
 

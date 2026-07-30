@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react'
 import { Card } from '@/shared/ui'
 import { cn } from '@/shared/lib/utils'
 
@@ -33,7 +34,7 @@ export const usdEq = (coins?: number | null, rate?: number): string | null =>
   coins && rate ? `≈ $${(coins * rate).toFixed(2)}` : null
 
 /** Плитка-метрика: подпись, крупное число, необязательный подтекст и тон значения. */
-export function MetricTile({ label, value, sub, tone }: { label: string; value: string; sub?: string; tone?: string }) {
+export function MetricTile({ label, value, sub, tone }: { label: ReactNode; value: string; sub?: string; tone?: string }) {
   return (
     <Card className="p-4">
       <div className="text-xs text-muted">{label}</div>

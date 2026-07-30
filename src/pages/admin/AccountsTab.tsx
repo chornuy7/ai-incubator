@@ -1,17 +1,18 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Search, Play, Pause, Square, RefreshCw, Wifi, WifiOff } from 'lucide-react'
+import { useNavigate } from 'react-router-dom'
+import { Search, Play, Pause, Square, RefreshCw, Wifi, WifiOff, Trash2, RotateCcw, Upload, X } from 'lucide-react'
 import { Card, EmptyState } from '@/shared/ui'
 import { cn } from '@/shared/lib/utils'
 import { useApp } from '@/mocks/store'
-import { fetchAccounts, setAccountStatusManual, releaseAccountLock } from '@/api/accountsApi'
+import { fetchAccounts, setAccountStatusManual, releaseAccountLock, patchAccount, deleteAccount, emptyTrashApi } from '@/api/accountsApi'
 import type { TgAccount } from '@/shared/types'
 import { STATUS_LABEL_RU } from './MonitoringTab'
 
 /**
  * §10.10: управление аккаунтами из sudo-админки — полный список ВСЕХ аккаунтов
- * (сервер не скоупит их по юзеру, стор общий) с ключевыми действиями: пауза/запуск
- * и «стоп» (снять лок задачи). Не дублируем Менеджер профилей (импорт/прокси-ферма/
- * корзина живут там) — здесь оперативный пульт: кто работает, кто упал, быстро вмешаться.
+ * (сервер не скоупит их по юзеру, стор общий) с ключевыми действиями: пауза/запуск,
+ * «стоп» (снять лок задачи) и корзина (мягкое удаление/восстановление/очистка).
+ * Тяжёлый мастер импорта (сессии/прокси-ферма) не дублируем — ведём в Менеджер профилей.
  */
 const TONE: Record<string, string> = {
   floodwait: 'text-amber-300', quarantine: 'text-amber-300', warming: 'text-amber-200',
@@ -26,6 +27,10 @@ export function AccountsTab() {
   const [statusFilter, setStatusFilter] = useState('all')
   const [busy, setBusy] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
+  // §10.10: корзина прямо в админке — чтобы не ходить в Менеджер профилей за
+  // восстановлением/удалением. 'live' — рабочие, 'trash' — удалённые.
+  const [view, setView] = useState<'live' | 'trash'>('live')
+  const nav = useNavigate()
 
   const load = async () => {
     setLoading(true)
@@ -35,17 +40,18 @@ export function AccountsTab() {
   }
   useEffect(() => { void load() }, [])
 
-  // Корзину не показываем — это оперативный список рабочих аккаунтов (корзина в Менеджере).
   const live = useMemo(() => (accounts || []).filter((a) => !a.inTrash), [accounts])
+  const trashed = useMemo(() => (accounts || []).filter((a) => a.inTrash), [accounts])
   const byStatus = useMemo(() => {
     const m: Record<string, number> = {}
     for (const a of live) m[a.status] = (m[a.status] || 0) + 1
     return m
   }, [live])
 
+  const source = view === 'trash' ? trashed : live
   const needle = q.trim().toLowerCase()
-  const rows = live.filter((a) => {
-    if (statusFilter !== 'all' && a.status !== statusFilter) return false
+  const rows = source.filter((a) => {
+    if (view === 'live' && statusFilter !== 'all' && a.status !== statusFilter) return false
     if (!needle) return true
     return [a.name, a.phone, a.username].some((v) => (v || '').toLowerCase().includes(needle))
   })
@@ -62,37 +68,78 @@ export function AccountsTab() {
   const pause = (a: TgAccount) => act(a.id, () => setAccountStatusManual(a.id, 'pause'), `${a.name} — на паузе`)
   const resume = (a: TgAccount) => act(a.id, () => setAccountStatusManual(a.id, 'active'), `${a.name} — запущен`)
   const stop = (a: TgAccount) => act(a.id, async () => ({ ok: (await releaseAccountLock(a.id)).ok }), `${a.name} — освобождён`)
+  // §10.10: корзина. «В корзину» — мягкое удаление (inTrash), обратимо; «Удалить
+  // навсегда» — отвязывает сессию, необратимо, поэтому с подтверждением.
+  const toTrash = (a: TgAccount) => act(a.id, async () => ({ ok: (await patchAccount(a.id, { inTrash: true }))?.ok !== false }), `${a.name} — в корзине`)
+  const restore = (a: TgAccount) => act(a.id, async () => ({ ok: (await patchAccount(a.id, { inTrash: false }))?.ok !== false }), `${a.name} — восстановлен`)
+  const removeForever = (a: TgAccount) => {
+    if (!window.confirm(`Удалить «${a.name}» навсегда? Сессия аккаунта будет отвязана — это необратимо.`)) return
+    void act(a.id, async () => ({ ok: (await deleteAccount(a.id))?.ok !== false }), `${a.name} — удалён навсегда`)
+  }
+  const emptyTrash = () => {
+    if (!trashed.length || !window.confirm(`Очистить корзину? ${trashed.length} аккаунт(ов) будут удалены навсегда.`)) return
+    void act('__trash__', async () => { await emptyTrashApi(); return { ok: true } }, 'Корзина очищена')
+  }
 
   if (!accounts) return <Card className="p-6 text-sm text-muted">Загрузка…</Card>
-  if (!live.length) return <EmptyState icon={<Wifi size={22} />} title="Аккаунтов нет" desc="Добавьте аккаунты в менеджере профилей." />
+  if (!live.length && !trashed.length) return <EmptyState icon={<Wifi size={22} />} title="Аккаунтов нет" desc="Добавьте аккаунты в менеджере профилей." />
 
   return (
     <div className="space-y-3">
+      {/* Переключатель Рабочие/Корзина + импорт */}
+      <div className="flex flex-wrap items-center gap-2">
+        <div className="flex rounded-xl border border-line p-0.5">
+          <button onClick={() => setView('live')}
+            className={cn('rounded-lg px-3 py-1.5 text-xs font-medium transition-colors', view === 'live' ? 'bg-spark-500/12 text-spark-200' : 'text-muted hover:text-fg')}>
+            Рабочие <b className={view === 'live' ? 'text-spark-100' : 'text-fg'}>{live.length}</b>
+          </button>
+          <button onClick={() => setView('trash')}
+            className={cn('inline-flex items-center gap-1 rounded-lg px-3 py-1.5 text-xs font-medium transition-colors', view === 'trash' ? 'bg-red-500/12 text-red-200' : 'text-muted hover:text-fg')}>
+            <Trash2 size={13} /> Корзина <b className={view === 'trash' ? 'text-red-100' : 'text-fg'}>{trashed.length}</b>
+          </button>
+        </div>
+        <div className="ml-auto flex items-center gap-2">
+          {view === 'trash' && !!trashed.length && (
+            <button onClick={emptyTrash} disabled={!!busy}
+              className="inline-flex items-center gap-1 rounded-xl border border-red-500/40 px-3 py-1.5 text-xs text-red-300 hover:bg-red-500/10 disabled:opacity-40">
+              <X size={14} /> Очистить корзину
+            </button>
+          )}
+          {/* Импорт — тяжёлый мастер (сессии/прокси) живёт в Менеджере профилей; не дублируем, ведём туда. */}
+          <button onClick={() => nav('/panel')}
+            className="inline-flex items-center gap-1 rounded-xl border border-line px-3 py-1.5 text-xs text-muted hover:border-spark-500/40 hover:text-fg">
+            <Upload size={14} /> Импорт аккаунтов
+          </button>
+        </div>
+      </div>
+
       {/* Панель: поиск + обновить */}
       <div className="flex flex-wrap items-center gap-2">
         <div className="relative flex-1 min-w-[200px]">
           <Search size={15} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted" />
           <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Имя, телефон, @username" className="input h-9 w-full pl-9 text-sm" />
         </div>
-        <span className="text-xs text-muted">Всего: <b className="text-fg">{live.length}</b>{rows.length !== live.length ? ` · показано ${rows.length}` : ''}</span>
+        <span className="text-xs text-muted">Показано: <b className="text-fg">{rows.length}</b> из {source.length}</span>
         <button onClick={() => void load()} disabled={loading} className="btn-ghost h-9 rounded-xl border border-line px-3 text-sm disabled:opacity-40">
           <RefreshCw size={15} className={loading ? 'animate-spin' : ''} /> Обновить
         </button>
       </div>
 
-      {/* Фильтр по статусу */}
-      <div className="flex flex-wrap gap-1.5">
-        <button onClick={() => setStatusFilter('all')}
-          className={cn('rounded-lg border px-2 py-1 text-xs transition-colors', statusFilter === 'all' ? 'border-spark-500/50 bg-spark-500/10 text-spark-200' : 'border-line text-muted hover:border-spark-500/25')}>
-          Все <b className="text-fg">{live.length}</b>
-        </button>
-        {Object.entries(byStatus).sort((a, b) => b[1] - a[1]).map(([st, n]) => (
-          <button key={st} onClick={() => setStatusFilter(st)}
-            className={cn('rounded-lg border px-2 py-1 text-xs transition-colors', statusFilter === st ? 'border-spark-500/50 bg-spark-500/10 text-spark-200' : 'border-line text-muted hover:border-spark-500/25')}>
-            {STATUS_LABEL_RU[st] || st} <b className="text-fg">{n}</b>
+      {/* Фильтр по статусу — только для рабочих */}
+      {view === 'live' && (
+        <div className="flex flex-wrap gap-1.5">
+          <button onClick={() => setStatusFilter('all')}
+            className={cn('rounded-lg border px-2 py-1 text-xs transition-colors', statusFilter === 'all' ? 'border-spark-500/50 bg-spark-500/10 text-spark-200' : 'border-line text-muted hover:border-spark-500/25')}>
+            Все <b className="text-fg">{live.length}</b>
           </button>
-        ))}
-      </div>
+          {Object.entries(byStatus).sort((a, b) => b[1] - a[1]).map(([st, n]) => (
+            <button key={st} onClick={() => setStatusFilter(st)}
+              className={cn('rounded-lg border px-2 py-1 text-xs transition-colors', statusFilter === st ? 'border-spark-500/50 bg-spark-500/10 text-spark-200' : 'border-line text-muted hover:border-spark-500/25')}>
+              {STATUS_LABEL_RU[st] || st} <b className="text-fg">{n}</b>
+            </button>
+          ))}
+        </div>
+      )}
 
       {/* Таблица */}
       <Card className="overflow-x-auto p-0">
@@ -136,22 +183,41 @@ export function AccountsTab() {
                   </td>
                   <td className="px-4 py-2.5">
                     <div className="flex items-center justify-end gap-1.5">
-                      {a.busyIn && (
-                        <button onClick={() => void stop(a)} disabled={busy === a.id}
-                          className="inline-flex items-center gap-1 rounded-lg border border-line px-2 py-1 text-xs text-muted hover:border-red-500/40 hover:text-red-300 disabled:opacity-40">
-                          <Square size={12} /> Стоп
-                        </button>
-                      )}
-                      {paused ? (
-                        <button onClick={() => void resume(a)} disabled={busy === a.id}
-                          className="inline-flex items-center gap-1 rounded-lg border border-spark-500/40 bg-spark-500/10 px-2 py-1 text-xs text-spark-200 hover:bg-spark-500/15 disabled:opacity-40">
-                          <Play size={12} /> Запустить
-                        </button>
+                      {view === 'trash' ? (
+                        <>
+                          <button onClick={() => void restore(a)} disabled={busy === a.id}
+                            className="inline-flex items-center gap-1 rounded-lg border border-spark-500/40 bg-spark-500/10 px-2 py-1 text-xs text-spark-200 hover:bg-spark-500/15 disabled:opacity-40">
+                            <RotateCcw size={12} /> Восстановить
+                          </button>
+                          <button onClick={() => removeForever(a)} disabled={busy === a.id}
+                            className="inline-flex items-center gap-1 rounded-lg border border-line px-2 py-1 text-xs text-muted hover:border-red-500/40 hover:text-red-300 disabled:opacity-40">
+                            <Trash2 size={12} /> Навсегда
+                          </button>
+                        </>
                       ) : (
-                        <button onClick={() => void pause(a)} disabled={busy === a.id}
-                          className="inline-flex items-center gap-1 rounded-lg border border-line px-2 py-1 text-xs text-muted hover:border-amber-500/40 hover:text-amber-300 disabled:opacity-40">
-                          <Pause size={12} /> Пауза
-                        </button>
+                        <>
+                          {a.busyIn && (
+                            <button onClick={() => void stop(a)} disabled={busy === a.id}
+                              className="inline-flex items-center gap-1 rounded-lg border border-line px-2 py-1 text-xs text-muted hover:border-red-500/40 hover:text-red-300 disabled:opacity-40">
+                              <Square size={12} /> Стоп
+                            </button>
+                          )}
+                          {paused ? (
+                            <button onClick={() => void resume(a)} disabled={busy === a.id}
+                              className="inline-flex items-center gap-1 rounded-lg border border-spark-500/40 bg-spark-500/10 px-2 py-1 text-xs text-spark-200 hover:bg-spark-500/15 disabled:opacity-40">
+                              <Play size={12} /> Запустить
+                            </button>
+                          ) : (
+                            <button onClick={() => void pause(a)} disabled={busy === a.id}
+                              className="inline-flex items-center gap-1 rounded-lg border border-line px-2 py-1 text-xs text-muted hover:border-amber-500/40 hover:text-amber-300 disabled:opacity-40">
+                              <Pause size={12} /> Пауза
+                            </button>
+                          )}
+                          <button onClick={() => void toTrash(a)} disabled={busy === a.id} title="В корзину"
+                            className="inline-flex items-center gap-1 rounded-lg border border-line px-2 py-1 text-xs text-muted hover:border-red-500/40 hover:text-red-300 disabled:opacity-40">
+                            <Trash2 size={12} />
+                          </button>
+                        </>
                       )}
                     </div>
                   </td>

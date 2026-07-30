@@ -3,6 +3,8 @@ import { GraduationCap, Search, ChevronRight, Eye, Cog, Network, Lightbulb, Shie
 import { PageHeader, Card } from '@/shared/ui'
 import { HELP_DOCS, type HelpDoc } from '@/shared/config/helpDocs'
 import { cn } from '@/shared/lib/utils'
+import { ModuleShowcase } from './landing/ModuleShowcase'
+import { getModule } from './landing/catalog'
 
 /**
  * §10.7: страница «Обучение» — вся информация по работе в одном месте.
@@ -118,6 +120,10 @@ function LearningView({ q, setQ, groups, active, setActive, activeDoc }: {
           ) : (
             <article className="space-y-4">
               <h2 className="font-display text-2xl font-bold text-fg">{activeDoc.title}</h2>
+
+              {/* §11.6: если раздел — это модуль, показываем его картинку с выносками
+                  тем же компонентом, что на странице модуля: «все хотят смотреть глазками». */}
+              {active && getModule(active) && <ModuleShowcase moduleKey={active} title={activeDoc.title} />}
 
               {/* Вкладки: один кусок за раз вместо шести абзацев подряд. */}
               <div className="flex flex-wrap gap-1.5 border-b border-line pb-3">
