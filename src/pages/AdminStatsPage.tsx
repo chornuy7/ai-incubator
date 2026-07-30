@@ -5,7 +5,7 @@ import { PageHeader, Card, Segmented, EmptyState } from '@/shared/ui'
 import { useApp } from '@/mocks/store'
 import {
   fetchAdminOverview, fetchClientReport, fetchUsersReport, fetchProblems, fetchCrmOverview,
-  fetchActiveNow, fetchDailySpend, fetchPurchases, fetchPayments, fetchAccountsHealth,
+  fetchActiveNow, fetchDailySpend, fetchPurchases, fetchPayments, fetchAccountsHealth, fetchUserActivity, type UserActivity,
   type AdminOverview, type ClientReport, type UsersReport, type Problems, type CrmOverview,
   type ActiveNow, type ActiveTask, type DailySpend, type Purchases, type PaymentsResult, type UserRow, type AccountsHealth, fetchPrices, savePrices, type EffectivePrices, type PricePatch } from '@/api/adminApi'
 import { updateUser } from '@/api/usersApi'
@@ -390,6 +390,9 @@ function UsersTab({ report, onReload }: { report: UsersReport | null; onReload: 
   // §10.4: пополнения кошелька по человеку (что купил из токенов/монет) — тянем лениво
   // при раскрытии карточки. 'loading' пока грузится, массив — только пополнения (amount>0).
   const [topups, setTopups] = useState<Record<string, WalletEntry[] | 'loading'>>({})
+  // §11.1: журнал активности — тянем лениво при раскрытии карточки. Это ответственность
+  // за то, что делают чужие люди внутри нашей системы, поэтому лежит рядом с юзером.
+  const [activity, setActivity] = useState<Record<string, UserActivity | 'loading'>>({})
   useEffect(() => {
     void fetchSubscription().then((d) => setCatalog(d.items.map((i) => ({ key: i.key, title: i.title })))).catch(() => {})
     void fetchRoles().then((rs) => setRoles(rs.map((r) => ({ id: r.id, name: r.name })))).catch(() => {})
@@ -409,6 +412,13 @@ function UsersTab({ report, onReload }: { report: UsersReport | null; onReload: 
         void fetchWalletHistory(50, r.userId)
           .then((rows) => setTopups((t) => ({ ...t, [r.userId]: rows.filter((e) => e.amount > 0) })))
           .catch(() => setTopups((t) => ({ ...t, [r.userId]: [] })))
+      }
+      // §11.1: журнал активности этого юзера (аудит по нему и над ним).
+      if (activity[r.userId] === undefined) {
+        setActivity((a) => ({ ...a, [r.userId]: 'loading' }))
+        void fetchUserActivity(r.userId)
+          .then((act) => setActivity((a) => ({ ...a, [r.userId]: act })))
+          .catch(() => setActivity((a) => ({ ...a, [r.userId]: { userId: r.userId, email: '', total: 0, rows: [], actions: [] } })))
       }
     }
   }
@@ -787,6 +797,11 @@ function UsersTab({ report, onReload }: { report: UsersReport | null; onReload: 
                           </div>
                         </div>
                       )}
+
+                      {/* §11.1: полный журнал активности — «все логи, вся активность, все
+                          действия» по этому человеку. Не выжимка: владелец платформы отвечает
+                          за то, что делают чужие люди его аккаунтами, и должен видеть сырой поток. */}
+                      {real && <UserActivityLog state={activity[r.userId]} />}
                     </td>
                   </tr>
                 ) : null,
@@ -806,6 +821,83 @@ function UsersTab({ report, onReload }: { report: UsersReport | null; onReload: 
         </table>
       </div>
     </Card>
+  )
+}
+
+/** Человеческие названия событий аудита — админ читает журнал, а не грепает коды. */
+const ACTION_LABEL: Record<string, string> = {
+  'user.login': 'Вход', 'user.login.fail': 'Неудачный вход', 'user.logout': 'Выход',
+  'user.update': 'Изменён профиль', 'user.create': 'Создан юзер',
+  'task.start': 'Запуск задачи', 'task.stop': 'Остановка задачи', 'task.pause': 'Пауза задачи',
+  'balance.change': 'Изменение баланса', 'subscription.set': 'Изменение подписки',
+  'role.update': 'Изменение роли', 'prices.update': 'Изменение цен',
+  'account.status.change': 'Смена статуса аккаунта', 'account.transfer': 'Перенос аккаунта',
+  'apikey.issue': 'Выпущен API-ключ', 'apikey.revoke': 'Отозван API-ключ',
+  'bundle.create': 'Создан набор', 'bundle.delete': 'Удалён набор',
+}
+
+/**
+ * §11.1: журнал активности юзера в его карточке.
+ *
+ * Показываем и то, что он делал сам, и то, что делали НАД ним (смена баланса/роли
+ * админом) — при разборе инцидента важно и то и другое; чужие действия помечаем.
+ */
+function UserActivityLog({ state }: { state: UserActivity | 'loading' | undefined }) {
+  const [filter, setFilter] = useState('')
+  if (state === undefined) return null
+  if (state === 'loading') return <div className="mt-4 text-xs text-muted">Журнал загружается…</div>
+
+  const rows = filter ? state.rows.filter((r) => r.action === filter) : state.rows
+  return (
+    <div className="mt-4 rounded-xl border border-line bg-elevated/50 p-3">
+      <div className="mb-2 flex flex-wrap items-center gap-2">
+        <span className="text-[11px] font-bold uppercase tracking-wide text-muted">
+          Журнал активности ({state.total}{state.total > state.rows.length ? `, показаны ${state.rows.length}` : ''})
+        </span>
+        {/* Фильтр по типу события — иначе в потоке входов не найти смену баланса. */}
+        {state.actions.length > 1 && (
+          <div className="flex flex-wrap gap-1">
+            <button onClick={() => setFilter('')}
+              className={cn('rounded-md border px-1.5 py-0.5 text-[10px] transition-colors',
+                !filter ? 'border-spark-500/50 bg-spark-500/10 text-spark-200' : 'border-line text-muted hover:border-spark-500/25')}>
+              все
+            </button>
+            {state.actions.map((a) => (
+              <button key={a} onClick={() => setFilter(a === filter ? '' : a)}
+                className={cn('rounded-md border px-1.5 py-0.5 text-[10px] transition-colors',
+                  filter === a ? 'border-spark-500/50 bg-spark-500/10 text-spark-200' : 'border-line text-muted hover:border-spark-500/25')}>
+                {ACTION_LABEL[a] || a}
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {!rows.length ? (
+        <span className="text-xs text-muted">
+          {state.total ? 'По этому фильтру событий нет.' : 'Событий по этому юзеру в журнале нет.'}
+        </span>
+      ) : (
+        <div className="max-h-72 space-y-1 overflow-y-auto pr-1">
+          {rows.map((e, i) => (
+            <div key={i} className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5 border-b border-line/30 pb-1 text-xs last:border-0">
+              <span className="shrink-0 tabular-nums text-faint">
+                {new Date(e.ts).toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}
+              </span>
+              <span className="font-medium text-fg">{ACTION_LABEL[e.action] || e.action}</span>
+              {!e.bySelf && (
+                <span className="rounded bg-iris-500/12 px-1 text-[10px] font-bold text-iris-300" title="Действие совершил не он — сделали над ним">
+                  над ним
+                </span>
+              )}
+              {!!e.module && <span className="text-[10px] text-muted">{e.module}</span>}
+              {!!e.ip && <span className="rounded bg-white/8 px-1 font-mono text-[10px] text-muted">{e.ip}</span>}
+              {!!e.reason && <span className="min-w-0 flex-1 truncate text-muted" title={e.reason}>{e.reason}</span>}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
   )
 }
 

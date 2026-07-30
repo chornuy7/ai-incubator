@@ -154,6 +154,20 @@ export async function fetchAccountsHealth(): Promise<AccountsHealth> {
   return (await apiGet<{ ok: boolean; health: AccountsHealth }>('/api/admin/accounts-health')).health
 }
 
+/** §11.1: одна запись журнала активности юзера. bySelf=false — действие СДЕЛАЛИ над ним. */
+export interface ActivityRow {
+  ts: string; action: string; module: string; reason: string; ip: string; account: string; bySelf: boolean
+}
+export interface UserActivity {
+  userId: string; email: string; total: number; rows: ActivityRow[]; actions: string[]
+}
+/** §11.1: журнал активности конкретного юзера — что делал, когда, с какого IP. */
+export async function fetchUserActivity(userId: string, action = '', limit = 300): Promise<UserActivity> {
+  const q = new URLSearchParams({ userId, limit: String(limit) })
+  if (action) q.set('action', action)
+  return (await apiGet<{ ok: boolean; activity: UserActivity }>(`/api/admin/user-activity?${q}`)).activity
+}
+
 export async function fetchUsersReport(since?: number): Promise<UsersReport> {
   const q = since ? `?since=${since}` : ''
   const data = await apiGet<{ ok: boolean; report: UsersReport }>(`/api/admin/users-report${q}`)

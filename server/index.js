@@ -519,6 +519,28 @@ app.get('/api/admin/users-report', async (req, res) => {
   } catch (err) { res.status(500).json({ ok: false, error: err instanceof Error ? err.message : 'Ошибка' }) }
 })
 
+/**
+ * §11.1: журнал активности конкретного юзера — что делал, когда, с какого IP.
+ * Только админ: это инструмент контроля за тем, что происходит внутри нашей
+ * экосистемы чужими руками, а не пользовательская фича.
+ */
+app.get('/api/admin/user-activity', async (req, res) => {
+  try {
+    if (!(await isAdminRequest(req))) return res.status(403).json({ ok: false, error: 'Журнал доступен только администратору' })
+    const userId = String(req.query.userId || '')
+    if (!userId) return res.status(400).json({ ok: false, error: 'Нужен userId' })
+    const { userActivity } = await import('./adminStats.js')
+    res.json({
+      ok: true,
+      activity: await userActivity({
+        userId,
+        limit: req.query.limit ? Number(req.query.limit) : undefined,
+        action: String(req.query.action || ''),
+      }),
+    })
+  } catch (err) { res.status(500).json({ ok: false, error: err instanceof Error ? err.message : 'Ошибка' }) }
+})
+
 /** §10.9: здоровье аккаунтов — активные/на паузе/падающие + причина. Только админ. */
 app.get('/api/admin/accounts-health', async (req, res) => {
   try {

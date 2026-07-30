@@ -891,3 +891,56 @@ export async function clientReport(opts = {}) {
 export async function tokenDetails(filter = {}) {
   return readLedger({ limit: 200, ...filter })
 }
+
+/**
+ * §11.1: полный журнал активности КОНКРЕТНОГО юзера для админки.
+ *
+ * Со звонка 29.07: «мы должны видеть все логи, всю активность, все действия по любому
+ * юзеру» — это ответственность владельца платформы за то, что делают чужие люди нашими
+ * аккаунтами, а не удобство. Поэтому здесь не выжимка, а сырой поток событий.
+ *
+ * Аудит писался исторически по-разному: initiator бывает и id (`usr_admin`), и e-mail
+ * (`user.login`), поэтому матчим по обоим. Плюс отдаём события, где юзер — ОБЪЕКТ
+ * действия (`meta.userId`): «админ поменял ему баланс/роль» тоже часть его истории,
+ * и отличаем их флагом `bySelf`.
+ *
+ * ⚠️ Известный пробел: часть записей пишется с initiator='operator' (обезличенно) —
+ * такие события attribution не поддаются и в журнал юзера не попадут. Исправляется
+ * не здесь, а на местах записи аудита (передавать реального инициатора).
+ */
+export async function userActivity({ userId, limit = 300, action = '' } = {}) {
+  const users = await listUsers()
+  const u = users.find((x) => x.id === userId)
+  const email = String(u?.email || '').toLowerCase()
+  const id = String(userId || '').toLowerCase()
+  const keys = new Set([id, email].filter(Boolean))
+  if (!keys.size) return { userId, email: '', rows: [], total: 0, actions: [] }
+
+  const rows = []
+  const seenActions = new Set()
+  for (const e of await readAudit({ limit: 100000 })) {
+    const init = String(e.initiator || '').toLowerCase()
+    const target = String(e.meta?.userId || '').toLowerCase()
+    const bySelf = keys.has(init)
+    if (!bySelf && !(target && keys.has(target))) continue
+    seenActions.add(e.action)
+    if (action && e.action !== action) continue
+    rows.push({
+      ts: e.ts,
+      action: e.action,
+      module: e.module || '',
+      reason: e.reason || '',
+      // Полезное для разбора: откуда зашёл и какой аккаунт затронут.
+      ip: e.meta?.ip || '',
+      account: e.account || '',
+      bySelf,
+    })
+  }
+  return {
+    userId,
+    email: u?.email || '',
+    total: rows.length,
+    rows: rows.slice(0, limit),
+    actions: [...seenActions].sort(),
+  }
+}
