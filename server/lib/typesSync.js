@@ -114,3 +114,82 @@ export async function syncTypesAndModules() {
 
   return { ok: true, ...report }
 }
+
+/**
+ * §11.3: спроецировать модульные связи в нормальные таблицы.
+ *
+ * Подписки, наборы, кампании и цены ссылаются на модули СТРОКАМИ внутри jsonb —
+ * тот же приём, который заказчик критиковал у типов. Здесь они раскладываются по
+ * таблицам связей (`subscription_modules`, `bundle_modules`, `campaign_modules`) и
+ * цен (`module_prices`), чтобы в БД было видно отношения, а не текст в json.
+ *
+ * Источник правды НЕ меняется: биллинг и подписки продолжают читать jsonb. Переписывать
+ * их на эти таблицы — отдельная работа с тестами, а не побочный эффект синхронизации;
+ * ошибка там стоит денег клиента. Поэтому — проекция, пересобираемая при изменениях.
+ *
+ * Идемпотентна. Если миграция `2026-07-30-module-links.sql` не применена, тихо выходит:
+ * отсутствие проекции не должно ломать сохранение подписки или набора.
+ */
+export async function syncModuleLinks() {
+  if (!supabaseEnabled()) return { ok: false, reason: 'файловый бэкенд' }
+  const db = getSupabase()
+  if (!db) return { ok: false, reason: 'нет клиента Supabase' }
+
+  const { data: modRows, error: modErr } = await db.from('modules').select('id,key')
+  if (modErr) return { ok: false, reason: 'нет справочника modules — сначала sync-types' }
+  const modId = new Map((modRows || []).map((r) => [r.key, r.id]))
+  const report = { prices: 0, subscriptions: 0, bundles: 0, campaigns: 0, skipped: [] }
+
+  /** Ключи модулей из значения, которое может быть массивом, объектом или 'all'. */
+  const keysOf = (v) => {
+    if (Array.isArray(v)) return v.filter((x) => typeof x === 'string')
+    if (v && typeof v === 'object') return Object.keys(v)
+    return [] // 'all' и мусор — связями не выражаются, остаются флагом в исходной таблице
+  }
+
+  /** Перезалить связи одной таблицы: сначала удалить старые, потом вставить свежие. */
+  const relink = async (table, ownerCol, ownerId, keys) => {
+    await db.from(table).delete().eq(ownerCol, ownerId)
+    const rows = keys.map((k) => modId.get(k)).filter(Boolean).map((mid) => ({ [ownerCol]: ownerId, module_id: mid }))
+    if (rows.length) await db.from(table).upsert(rows, { onConflict: `${ownerCol},module_id` })
+    return rows.length
+  }
+
+  try {
+    // ── Цены модулей ─────────────────────────────────────────────────────────
+    const { effectivePrices } = await import('../priceStore.js')
+    const eff = await effectivePrices()
+    const priceRows = []
+    for (const m of eff.modules || []) {
+      const mid = modId.get(m.key)
+      if (!mid) continue
+      priceRows.push({ module_id: mid, month_price: m.month ?? 0, action_price: m.action ?? 0, updated_at: new Date().toISOString() })
+    }
+    if (priceRows.length) {
+      const { error } = await db.from('module_prices').upsert(priceRows, { onConflict: 'module_id' })
+      if (error) throw new Error(`module_prices: ${error.message}`)
+      report.prices = priceRows.length
+    }
+
+    // ── Подписки ─────────────────────────────────────────────────────────────
+    const { data: subs } = await db.from('subscriptions').select('id, modules')
+    for (const s of subs || []) report.subscriptions += await relink('subscription_modules', 'subscription_id', s.id, keysOf(s.modules))
+
+    // ── Наборы ───────────────────────────────────────────────────────────────
+    const { data: bundles } = await db.from('bundles').select('id, modules')
+    for (const b of bundles || []) report.bundles += await relink('bundle_modules', 'bundle_id', b.id, keysOf(b.modules))
+
+    // ── Кампании ─────────────────────────────────────────────────────────────
+    const { data: camps } = await db.from('campaigns').select('id, modules')
+    for (const c of camps || []) report.campaigns += await relink('campaign_modules', 'campaign_id', c.id, keysOf(c.modules))
+  } catch (e) {
+    // Таблиц ещё нет (миграция не применена) — это не ошибка вызывающего кода.
+    const msg = String(e?.message || e)
+    if (/module_prices|subscription_modules|bundle_modules|campaign_modules|does not exist|schema cache/i.test(msg)) {
+      return { ok: false, reason: 'примените supabase/migrations/2026-07-30-module-links.sql', ...report }
+    }
+    throw e
+  }
+
+  return { ok: true, ...report }
+}

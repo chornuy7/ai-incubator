@@ -441,6 +441,7 @@ app.post('/api/bundles', async (req, res) => {
       reason: `Набор «${bundle.name}»: ${bundle.modules.length} модулей за ${bundle.price}`,
       meta: bundle,
     }).catch(() => {})
+    resyncModuleLinks()
     res.json({ ok: true, bundle })
   } catch (err) { res.status(400).json({ ok: false, error: err instanceof Error ? err.message : 'Ошибка' }) }
 })
@@ -480,6 +481,7 @@ app.patch('/api/admin/prices', async (req, res) => {
       reason: 'Изменены цены из админки',
       meta: { patch: req.body },
     }).catch(() => {})
+    resyncModuleLinks()
     res.json({ ok: true, prices })
   } catch (err) { res.status(400).json({ ok: false, error: err instanceof Error ? err.message : 'Ошибка' }) }
 })
@@ -561,11 +563,24 @@ app.get('/api/admin/user-dialogs', async (req, res) => {
  * Идемпотентно — можно жать повторно. Гейт доступа при этом не меняется
  * (см. lib/typesSync.js: это проекция модульного среза, а не замена RBAC).
  */
+/**
+ * §11.3: пересобрать проекцию модульных связей после изменения подписки/набора/цен.
+ * После ответа и best-effort: проекция нужна для читаемости БД, а не для работы
+ * биллинга, поэтому её сбой не должен ронять сохранение.
+ */
+function resyncModuleLinks() {
+  void import('./lib/typesSync.js')
+    .then((m) => m.syncModuleLinks())
+    .catch((e) => console.warn('[links] пересборка связей модулей не удалась:', e?.message || e))
+}
+
 app.post('/api/admin/sync-types', async (req, res) => {
   try {
     if (!(await isAdminRequest(req))) return res.status(403).json({ ok: false, error: 'Доступно только администратору' })
-    const { syncTypesAndModules } = await import('./lib/typesSync.js')
+    const { syncTypesAndModules, syncModuleLinks } = await import('./lib/typesSync.js')
     const report = await syncTypesAndModules()
+    // §11.3: связи модулей (подписки/наборы/кампании/цены) — той же кнопкой.
+    report.moduleLinks = await syncModuleLinks().catch((e) => ({ ok: false, reason: e?.message }))
     await appendAudit({
       action: 'types.sync', module: 'admin', initiator: req.header('x-user-id') || 'system',
       reason: `Синхронизация типов и прав: типов ${report.types || 0}, связей ${report.links || 0}`,
@@ -853,6 +868,7 @@ app.post('/api/subscription', async (req, res) => {
       reason: `Подписка${(admin && !req.body?.userId) ? ' пространства' : ` (${target || 'свой'})`}: ${list === 'all' ? 'все модули' : `${list.length} модулей`}`,
       meta: { modules: list, months: months || 1, cost: monthly, paid },
     }).catch(() => {})
+    resyncModuleLinks() // §11.3: подписка изменилась — обновить проекцию связей
     res.json({ ok: true, balance })
   } catch (err) { res.status(500).json({ ok: false, error: err instanceof Error ? err.message : 'Ошибка' }) }
 })

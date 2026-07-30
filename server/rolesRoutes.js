@@ -39,7 +39,7 @@ rolesRouter.get('/:id', async (req, res) => {
  */
 function resyncTypes() {
   void import('./lib/typesSync.js')
-    .then((m) => m.syncTypesAndModules())
+    .then(async (m) => { await m.syncTypesAndModules(); await m.syncModuleLinks() })
     .catch((e) => console.warn('[types] синхронизация после правки роли не удалась:', e?.message || e))
 }
 
