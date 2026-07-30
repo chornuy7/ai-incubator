@@ -66,7 +66,12 @@ export async function runCampaign(body = {}) {
 
 campaignsRouter.post('/launch', async (req, res) => {
   try {
-    const { campaignId, tasks, skipped } = await runCampaign(req.body ?? {})
+    // §11.1: если фронт не передал инициатора явно — берём из сессии (заголовок),
+    // чтобы запуск кампании был привязан к человеку, а не к обезличенному 'operator'.
+    const { campaignId, tasks, skipped } = await runCampaign({
+      ...(req.body ?? {}),
+      initiator: req.body?.initiator || req.header('x-user-id') || undefined,
+    })
     if (!tasks.length) return res.status(409).json({ ok: false, error: 'Ни один модуль не запущен', skipped })
     res.json({ ok: true, campaignId, tasks, skipped })
   } catch (err) {
@@ -83,7 +88,9 @@ campaignsRouter.get('/schedules', async (_req, res) => {
 campaignsRouter.post('/schedules', async (req, res) => {
   try {
     const sched = await createSchedule(req.body ?? {})
-    await appendAudit({ action: 'campaign.schedule.create', module: 'campaign', initiator: 'operator', reason: `Запланирована кампания «${sched.name}»`, meta: { scheduleId: sched.id, runAt: sched.runAt, repeat: sched.repeat } })
+    // §11.1: пишем РЕАЛЬНОГО инициатора — обезличенный 'operator' не привязывается
+    // к человеку, и событие пропадает из журнала активности юзера в админке.
+    await appendAudit({ action: 'campaign.schedule.create', module: 'campaign', initiator: req.header('x-user-id') || 'operator', reason: `Запланирована кампания «${sched.name}»`, meta: { scheduleId: sched.id, runAt: sched.runAt, repeat: sched.repeat } })
     res.json({ ok: true, schedule: sched })
   } catch (e) { fail(res, e) }
 })

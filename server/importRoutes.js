@@ -110,7 +110,8 @@ importRouter.post('/run', async (req, res) => {
     await appendAudit({
       action: 'account.import',
       module: 'accounts',
-      initiator: 'operator',
+      // §11.1: реальный инициатор — иначе импорт не попадёт в журнал активности юзера.
+      initiator: req.header('x-user-id') || 'operator',
       reason: `Импорт аккаунтов: добавлено ${imported.length} из ${items.length}`,
       meta: { total: items.length, imported: imported.length, proxyMode, validate },
     }).catch(() => {})
