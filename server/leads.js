@@ -5,9 +5,11 @@
 import crypto from 'crypto'
 import { dataPath, readJson, writeJson, mutateJson } from './lib/jsonStore.js'
 import { getSupabase, supabaseEnabled } from './lib/supabase.js'
+import { insertWithOwner, updateWithOwner, ownerOf } from './lib/ownerColumn.js'
 
 function sbL() { return supabaseEnabled() ? getSupabase() : null }
 const rowToLead = (r) => ({
+  userId: ownerOf(r) || undefined,
   id: r.id, goalId: r.goal_id || null, campaignId: r.campaign_id || null, accountId: r.account_id || null,
   peer: r.peer || '', status: r.status || 'cold', isHot: !!r.is_hot, result: r.result || '', note: r.note || '',
   followUps: Number(r.followups) || 0,
@@ -17,6 +19,8 @@ const leadToRow = (l) => ({
   id: l.id, goal_id: l.goalId || null, campaign_id: l.campaignId || null, account_id: l.accountId || null,
   peer: l.peer || '', status: l.status || 'cold', is_hot: !!l.isHot, result: l.result || '', note: l.note || '',
   followups: Number(l.followUps) || 0,
+  // §11.3: чей лид — колонка user_id (FK на юзера).
+  user_id: l.userId || null,
   created_at: new Date(l.createdAt || Date.now()).toISOString(), updated_at: new Date(l.updatedAt || Date.now()).toISOString(),
 })
 
@@ -84,7 +88,7 @@ export async function createLead(input) {
     updatedAt: Date.now(),
   }
   const db = sbL()
-  if (db) { await db.from('leads').insert(leadToRow(lead)); return lead }
+  if (db) { await insertWithOwner(db, 'leads', leadToRow(lead)); return lead }
   all.unshift(lead)
   await writeJson(LEADS_FILE, all)
   return lead
@@ -115,7 +119,7 @@ export async function updateLead(id, patch = {}) {
     const { data } = await db.from('leads').select('*').eq('id', id).maybeSingle()
     if (!data) return null
     const updated = applyLeadPatch(rowToLead(data), patch)
-    await db.from('leads').update(leadToRow(updated)).eq('id', id)
+    await updateWithOwner(db, 'leads', leadToRow(updated), 'id', id)
     return updated
   }
   const all = await readJson(LEADS_FILE, [])

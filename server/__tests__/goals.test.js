@@ -180,3 +180,29 @@ test('счётчик: вид без адаптера честно говорит
   assert.equal(p.target, 100, 'план показываем всегда')
   delete process.env.GOALS_FILE
 })
+
+/**
+ * §11.3: цель должна быть завязана на юзера, который её создал. До этой правки запись
+ * содержала только id/name/данные и «висела в пустоте» — именно это заказчик показал,
+ * открыв базу на созвоне 29.07.
+ */
+test('§11.3: createGoal запоминает владельца, без него — undefined', async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'goalowner-'))
+  process.env.GOALS_FILE = path.join(dir, 'goals.json')
+  const g = await import('../goals.js?owner=' + Date.now())
+
+  const mine = await g.createGoal({ name: 'С владельцем', userId: 'usr_admin' })
+  assert.equal(mine.userId, 'usr_admin', 'владелец сохранён')
+
+  // Пустой/отсутствующий владелец не должен превращаться в строку '' — иначе
+  // в БД поедет пустышка вместо NULL, и FK на юзера станет бессмысленным.
+  const anon = await g.createGoal({ name: 'Без владельца' })
+  assert.equal(anon.userId, undefined)
+  const blank = await g.createGoal({ name: 'Пробелы', userId: '   ' })
+  assert.equal(blank.userId, undefined)
+
+  // Владелец переживает перечитывание из файла.
+  const again = await g.getGoal(mine.id)
+  assert.equal(again.userId, 'usr_admin')
+  delete process.env.GOALS_FILE
+})

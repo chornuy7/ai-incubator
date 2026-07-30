@@ -135,7 +135,8 @@ campaignsRouter.post('/', async (req, res) => {
       const err = await assertAccountsFree(body.accountIds)
       if (err) return res.status(409).json({ ok: false, error: err })
     }
-    res.json({ ok: true, campaign: await createCampaign(body) })
+    // §11.3: кампания привязывается к создателю (x-user-id ставит sessionGuard из подписанной сессии).
+    res.json({ ok: true, campaign: await createCampaign({ ...body, userId: body.userId || req.header('x-user-id') || '' }) })
   } catch (e) { fail(res, e) }
 })
 

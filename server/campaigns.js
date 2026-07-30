@@ -14,12 +14,14 @@
 import crypto from 'crypto'
 import { dataPath, readJson, mutateJson } from './lib/jsonStore.js'
 import { getSupabase, supabaseEnabled } from './lib/supabase.js'
+import { insertWithOwner, updateWithOwner, ownerOf } from './lib/ownerColumn.js'
 
 function sbC() { return supabaseEnabled() ? getSupabase() : null }
-const rowToCampaign = (r) => ({ id: r.id, name: r.name, goalId: r.goal_id || null, modules: r.modules || [], ...(r.data || {}), createdAt: r.created_at ? new Date(r.created_at).getTime() : 0, updatedAt: r.updated_at ? new Date(r.updated_at).getTime() : 0 })
+const rowToCampaign = (r) => ({ id: r.id, name: r.name, goalId: r.goal_id || null, modules: r.modules || [], ...(r.data || {}), userId: ownerOf(r) || undefined, createdAt: r.created_at ? new Date(r.created_at).getTime() : 0, updatedAt: r.updated_at ? new Date(r.updated_at).getTime() : 0 })
 const campaignToRow = (c) => {
   const { id, name, goalId, modules, createdAt, updatedAt, ...data } = c
-  return { id, name, goal_id: goalId || null, modules: modules || [], data, created_at: new Date(createdAt || Date.now()).toISOString(), updated_at: new Date(updatedAt || Date.now()).toISOString() }
+  // §11.3: владелец — в колонку (FK) и в data, чтобы работало до и после миграции.
+  return { id, name, goal_id: goalId || null, modules: modules || [], data, user_id: c.userId || null, created_at: new Date(createdAt || Date.now()).toISOString(), updated_at: new Date(updatedAt || Date.now()).toISOString() }
 }
 
 const CAMPAIGNS_FILE = process.env.CAMPAIGNS_FILE || dataPath('campaigns.json')
@@ -260,11 +262,13 @@ export async function createCampaign(input) {
   const campaign = {
     id: `cmp_${crypto.randomUUID().slice(0, 8)}`,
     ...clean,
+    // §11.3: кто создал кампанию (normalizeCampaign владельца не знает).
+    userId: String(input?.userId || '').trim() || undefined,
     createdAt: Date.now(),
     updatedAt: Date.now(),
   }
   const db = sbC()
-  if (db) { await db.from('campaigns').insert(campaignToRow(campaign)); return campaign }
+  if (db) { await insertWithOwner(db, 'campaigns', campaignToRow(campaign)); return campaign }
   await mutateJson(CAMPAIGNS_FILE, (all) => { all.unshift(campaign); return all }, [])
   return campaign
 }
@@ -276,7 +280,7 @@ export async function updateCampaign(id, patch = {}) {
     const cur = await getCampaign(id)
     if (!cur) return null
     const updated = applyCampaignPatch(cur, patch)
-    await db.from('campaigns').update(campaignToRow(updated)).eq('id', id)
+    await updateWithOwner(db, 'campaigns', campaignToRow(updated), 'id', id)
     return updated
   }
   let result = null

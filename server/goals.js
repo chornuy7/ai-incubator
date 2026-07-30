@@ -6,13 +6,21 @@
 import crypto from 'crypto'
 import { dataPath, readJson, writeJson } from './lib/jsonStore.js'
 import { getSupabase, supabaseEnabled } from './lib/supabase.js'
+import { insertWithOwner, updateWithOwner, ownerOf } from './lib/ownerColumn.js'
 
 function sbGoals() { return supabaseEnabled() ? getSupabase() : null }
 // row → полный объект цели: data-jsonb несёт все поля кроме id/name/времени.
-const rowToGoal = (r) => ({ id: r.id, name: r.name, ...(r.data || {}), createdAt: r.created_at ? new Date(r.created_at).getTime() : 0, updatedAt: r.updated_at ? new Date(r.updated_at).getTime() : 0 })
+const rowToGoal = (r) => ({ id: r.id, name: r.name, ...(r.data || {}), userId: ownerOf(r), createdAt: r.created_at ? new Date(r.created_at).getTime() : 0, updatedAt: r.updated_at ? new Date(r.updated_at).getTime() : 0 })
 const goalToRow = (g) => {
   const { id, name, createdAt, updatedAt, ...data } = g
-  return { id, name, data, created_at: new Date(createdAt || Date.now()).toISOString(), updated_at: new Date(updatedAt || Date.now()).toISOString() }
+  // §11.3: владелец идёт и в колонку user_id (FK), и в data — чтобы сборка работала
+  // до применения миграции и после неё (см. lib/ownerColumn.js).
+  return {
+    id, name, data,
+    user_id: g.userId || null,
+    created_at: new Date(createdAt || Date.now()).toISOString(),
+    updated_at: new Date(updatedAt || Date.now()).toISOString(),
+  }
 }
 
 /**
@@ -195,7 +203,9 @@ export async function listGoals() {
   const db = sbGoals()
   if (db) {
     const { data } = await db.from('goals').select('*').order('created_at', { ascending: false })
-    return (data || []).map((r) => { const g = rowToGoal(r); return { id: g.id, ...normalizeGoal(g), createdAt: g.createdAt, updatedAt: g.updatedAt } })
+    // §11.3: userId проносим мимо normalizeGoal — он чистит поля цели и владельца
+    // не знает, а без него запись снова «висит в пустоте».
+    return (data || []).map((r) => { const g = rowToGoal(r); return { id: g.id, ...normalizeGoal(g), userId: g.userId || undefined, createdAt: g.createdAt, updatedAt: g.updatedAt } })
   }
   const all = await readJson(goalsFile(), [])
   if (!Array.isArray(all)) return []
@@ -203,7 +213,7 @@ export async function listGoals() {
   // только то, чем цель является сейчас. Иначе форма и промпт продолжали бы видеть
   // тон, каналы и дедлайн, которых у цели больше нет, и модель тихо поехала бы назад.
   // Файл при этом не трогаем: перезапишется при первом сохранении цели.
-  return all.map((g) => ({ id: g.id, ...normalizeGoal(g), createdAt: g.createdAt, updatedAt: g.updatedAt }))
+  return all.map((g) => ({ id: g.id, ...normalizeGoal(g), userId: g.userId || undefined, createdAt: g.createdAt, updatedAt: g.updatedAt }))
 }
 
 export async function getGoal(id) {
@@ -220,11 +230,14 @@ export async function createGoal(input) {
   const goal = {
     id: `goal_${crypto.randomUUID().slice(0, 8)}`,
     ...clean,
+    // §11.3: кто создал. normalizeGoal чистит поля цели и владельца не знает,
+    // поэтому проставляем явно из входа (роут кладёт туда x-user-id).
+    userId: String(input?.userId || '').trim() || undefined,
     createdAt: Date.now(),
     updatedAt: Date.now(),
   }
   const db = sbGoals()
-  if (db) { await db.from('goals').insert(goalToRow(goal)); return goal }
+  if (db) { await insertWithOwner(db, 'goals', goalToRow(goal)); return goal }
   goals.unshift(goal)
   await writeJson(goalsFile(), goals)
   return goal
@@ -248,7 +261,7 @@ export async function updateGoal(id, patch = {}) {
   if (!goals[i].name) throw new Error('Название цели не может быть пустым')
   goals[i].updatedAt = Date.now()
   const db = sbGoals()
-  if (db) { await db.from('goals').update(goalToRow(goals[i])).eq('id', id); return goals[i] }
+  if (db) { await updateWithOwner(db, 'goals', goalToRow(goals[i]), 'id', id); return goals[i] }
   await writeJson(goalsFile(), goals)
   return goals[i]
 }

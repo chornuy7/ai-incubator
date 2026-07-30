@@ -43,7 +43,11 @@ goalsRouter.get('/:id', async (req, res) => {
 
 goalsRouter.post('/', async (req, res) => {
   try {
-    res.json({ ok: true, goal: await createGoal(req.body ?? {}) })
+    // §11.3: цель привязывается к создателю — иначе запись «висит в пустоте».
+    // Личность берём из x-user-id, который ставит sessionGuard из ПОДПИСАННОЙ сессии
+    // (присланный клиентом заголовок он срезает). Без сессии владелец пустой — это
+    // правильно: анонимную запись лучше оставить без владельца, чем приписать чужому.
+    res.json({ ok: true, goal: await createGoal({ ...(req.body ?? {}), userId: req.body?.userId || req.header('x-user-id') || '' }) })
   } catch (err) { fail(res, err) }
 })
 
