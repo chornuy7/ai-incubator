@@ -541,6 +541,20 @@ app.get('/api/admin/user-activity', async (req, res) => {
   } catch (err) { res.status(500).json({ ok: false, error: err instanceof Error ? err.message : 'Ошибка' }) }
 })
 
+/**
+ * §11.1: «с кем переписывается» — диалоги аккаунтов этого юзера. Только админ:
+ * это контроль за тем, что делают чужие люди нашими Telegram-аккаунтами.
+ */
+app.get('/api/admin/user-dialogs', async (req, res) => {
+  try {
+    if (!(await isAdminRequest(req))) return res.status(403).json({ ok: false, error: 'Доступно только администратору' })
+    const userId = String(req.query.userId || '')
+    if (!userId) return res.status(400).json({ ok: false, error: 'Нужен userId' })
+    const { userDialogs } = await import('./adminStats.js')
+    res.json({ ok: true, dialogs: await userDialogs({ userId }) })
+  } catch (err) { res.status(500).json({ ok: false, error: err instanceof Error ? err.message : 'Ошибка' }) }
+})
+
 /** §10.9: здоровье аккаунтов — активные/на паузе/падающие + причина. Только админ. */
 app.get('/api/admin/accounts-health', async (req, res) => {
   try {

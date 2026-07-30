@@ -944,3 +944,61 @@ export async function userActivity({ userId, limit = 300, action = '' } = {}) {
     actions: [...seenActions].sort(),
   }
 }
+
+/**
+ * §11.1: «с кем переписывается» — диалоги (лиды), которые ведут аккаунты этого юзера.
+ *
+ * Со звонка 29.07 это часть той же ответственности: владелец платформы отвечает за то,
+ * что чужие люди делают его Telegram-аккаунтами, и должен видеть не только «что запускал»,
+ * но и с кем идёт переписка.
+ *
+ * Связь юзер→диалог строим двумя путями, потому что одного не хватает:
+ *   • лид создан после §11.3 — у него есть свой `userId`;
+ *   • лид старый (владельца нет) — но его аккаунт участвовал в задаче этого юзера,
+ *     значит переписку вёл он. Поэтому собираем аккаунты из его задач.
+ *
+ * Тексты сообщений НЕ отдаём: их хранение — открытый вопрос (приватность и объём),
+ * пока показываем «кто, каким аккаунтом, в каком статусе и когда» — это отвечает на
+ * вопрос «с кем переписывается», не создавая нового хранилища.
+ */
+export async function userDialogs({ userId, limit = 200 } = {}) {
+  if (!userId) return { userId, rows: [], total: 0, accounts: 0 }
+
+  // 1. Аккаунты, которыми этот юзер работал (из его задач по всем модулям).
+  const accountIds = new Set()
+  for (const key of listModuleKeys()) {
+    const store = getModuleStore(key)
+    if (!store) continue
+    let list = []
+    try { list = await store.listTasks() } catch { continue }
+    for (const t of list) {
+      if (t.userId !== userId) continue
+      for (const a of t.settings?.accountIds || []) accountIds.add(a)
+    }
+  }
+
+  // 2. Лиды: свои по владельцу ИЛИ по аккаунтам из его задач.
+  const { listLeads } = await import('./leads.js')
+  const all = await listLeads({}).catch(() => [])
+  const mine = all.filter((l) => l.userId === userId || (l.accountId && accountIds.has(l.accountId)))
+
+  // 3. Имя аккаунта вместо id — админ разбирает инцидент, а не читает хэши.
+  const meta = await loadAllMeta().catch(() => ({}))
+  const rows = mine
+    .sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0))
+    .slice(0, limit)
+    .map((l) => ({
+      id: l.id,
+      peer: l.peer || '',
+      accountId: l.accountId || '',
+      accountName: meta[l.accountId]?.name || l.accountId || '',
+      status: l.status || '',
+      isHot: !!l.isHot,
+      note: l.note || '',
+      // По какому пути связали — чтобы не гадать, откуда взялся чужой на вид диалог.
+      viaOwner: l.userId === userId,
+      at: l.updatedAt || l.createdAt || 0,
+    }))
+
+  return { userId, rows, total: mine.length, accounts: accountIds.size }
+}

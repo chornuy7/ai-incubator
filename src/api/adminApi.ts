@@ -168,6 +168,17 @@ export async function fetchUserActivity(userId: string, action = '', limit = 300
   return (await apiGet<{ ok: boolean; activity: UserActivity }>(`/api/admin/user-activity?${q}`)).activity
 }
 
+/** §11.1: строка «с кем переписывается». viaOwner=false — связали через аккаунт из его задачи. */
+export interface DialogRow {
+  id: string; peer: string; accountId: string; accountName: string
+  status: string; isHot: boolean; note: string; viaOwner: boolean; at: number
+}
+export interface UserDialogs { userId: string; rows: DialogRow[]; total: number; accounts: number }
+/** §11.1: диалоги (лиды), которые ведут аккаунты этого юзера. */
+export async function fetchUserDialogs(userId: string): Promise<UserDialogs> {
+  return (await apiGet<{ ok: boolean; dialogs: UserDialogs }>(`/api/admin/user-dialogs?userId=${encodeURIComponent(userId)}`)).dialogs
+}
+
 export async function fetchUsersReport(since?: number): Promise<UsersReport> {
   const q = since ? `?since=${since}` : ''
   const data = await apiGet<{ ok: boolean; report: UsersReport }>(`/api/admin/users-report${q}`)

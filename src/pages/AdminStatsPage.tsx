@@ -5,7 +5,7 @@ import { PageHeader, Card, Segmented, EmptyState } from '@/shared/ui'
 import { useApp } from '@/mocks/store'
 import {
   fetchAdminOverview, fetchClientReport, fetchUsersReport, fetchProblems, fetchCrmOverview,
-  fetchActiveNow, fetchDailySpend, fetchPurchases, fetchPayments, fetchAccountsHealth, fetchUserActivity, type UserActivity,
+  fetchActiveNow, fetchDailySpend, fetchPurchases, fetchPayments, fetchAccountsHealth, fetchUserActivity, type UserActivity, fetchUserDialogs, type UserDialogs,
   type AdminOverview, type ClientReport, type UsersReport, type Problems, type CrmOverview,
   type ActiveNow, type ActiveTask, type DailySpend, type Purchases, type PaymentsResult, type UserRow, type AccountsHealth, fetchPrices, savePrices, type EffectivePrices, type PricePatch } from '@/api/adminApi'
 import { updateUser } from '@/api/usersApi'
@@ -393,6 +393,8 @@ function UsersTab({ report, onReload }: { report: UsersReport | null; onReload: 
   // §11.1: журнал активности — тянем лениво при раскрытии карточки. Это ответственность
   // за то, что делают чужие люди внутри нашей системы, поэтому лежит рядом с юзером.
   const [activity, setActivity] = useState<Record<string, UserActivity | 'loading'>>({})
+  // §11.1: «с кем переписывается» — диалоги аккаунтов этого юзера.
+  const [dialogs, setDialogs] = useState<Record<string, UserDialogs | 'loading'>>({})
   useEffect(() => {
     void fetchSubscription().then((d) => setCatalog(d.items.map((i) => ({ key: i.key, title: i.title })))).catch(() => {})
     void fetchRoles().then((rs) => setRoles(rs.map((r) => ({ id: r.id, name: r.name })))).catch(() => {})
@@ -414,6 +416,12 @@ function UsersTab({ report, onReload }: { report: UsersReport | null; onReload: 
           .catch(() => setTopups((t) => ({ ...t, [r.userId]: [] })))
       }
       // §11.1: журнал активности этого юзера (аудит по нему и над ним).
+      if (dialogs[r.userId] === undefined) {
+        setDialogs((d) => ({ ...d, [r.userId]: 'loading' }))
+        void fetchUserDialogs(r.userId)
+          .then((x) => setDialogs((d) => ({ ...d, [r.userId]: x })))
+          .catch(() => setDialogs((d) => ({ ...d, [r.userId]: { userId: r.userId, rows: [], total: 0, accounts: 0 } })))
+      }
       if (activity[r.userId] === undefined) {
         setActivity((a) => ({ ...a, [r.userId]: 'loading' }))
         void fetchUserActivity(r.userId)
@@ -801,6 +809,7 @@ function UsersTab({ report, onReload }: { report: UsersReport | null; onReload: 
                       {/* §11.1: полный журнал активности — «все логи, вся активность, все
                           действия» по этому человеку. Не выжимка: владелец платформы отвечает
                           за то, что делают чужие люди его аккаунтами, и должен видеть сырой поток. */}
+                      {real && <UserDialogsBlock state={dialogs[r.userId]} />}
                       {real && <UserActivityLog state={activity[r.userId]} />}
                     </td>
                   </tr>
@@ -821,6 +830,61 @@ function UsersTab({ report, onReload }: { report: UsersReport | null; onReload: 
         </table>
       </div>
     </Card>
+  )
+}
+
+/** Статус лида читаемо — админ разбирает переписку, а не коды. */
+const LEAD_STATUS_RU: Record<string, string> = {
+  cold: 'холодный', contacted: 'написали', replied: 'ответил', warm: 'тёплый',
+  target: 'целевой', refused: 'отказ', lost: 'потерян',
+}
+
+/**
+ * §11.1: «с кем переписывается» — диалоги аккаунтов юзера.
+ *
+ * Текстов сообщений тут нет намеренно: их хранение — открытый вопрос (приватность и
+ * объём). Показываем «кто, каким аккаунтом, в каком статусе и когда» — этого хватает,
+ * чтобы увидеть, с кем идёт работа, и не заводя нового хранилища.
+ */
+function UserDialogsBlock({ state }: { state: UserDialogs | 'loading' | undefined }) {
+  if (state === undefined) return null
+  if (state === 'loading') return <div className="mt-4 text-xs text-muted">Диалоги загружаются…</div>
+  if (!state.rows.length) {
+    return (
+      <div className="mt-4 rounded-xl border border-line bg-elevated/50 p-3 text-xs text-muted">
+        <span className="font-bold uppercase tracking-wide">С кем переписывается</span>
+        <span className="ml-2">диалогов не найдено{state.accounts ? ` (аккаунтов в его задачах: ${state.accounts})` : ''}.</span>
+      </div>
+    )
+  }
+  return (
+    <div className="mt-4 rounded-xl border border-line bg-elevated/50 p-3">
+      <div className="mb-2 flex flex-wrap items-baseline gap-2">
+        <span className="text-[11px] font-bold uppercase tracking-wide text-muted">
+          С кем переписывается ({state.total}{state.total > state.rows.length ? `, показаны ${state.rows.length}` : ''})
+        </span>
+        <span className="text-[10px] text-faint">аккаунтов задействовано: {state.accounts}</span>
+      </div>
+      <div className="max-h-64 space-y-1 overflow-y-auto pr-1">
+        {state.rows.map((d) => (
+          <div key={d.id} className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5 border-b border-line/30 pb-1 text-xs last:border-0">
+            <span className="font-medium text-fg">{d.peer || '—'}</span>
+            {d.isHot && <span className="rounded bg-red-500/12 px-1 text-[10px] font-bold text-red-300">горячий</span>}
+            <span className="text-muted">{LEAD_STATUS_RU[d.status] || d.status}</span>
+            <span className="text-[10px] text-faint">через {d.accountName}</span>
+            {!d.viaOwner && (
+              <span className="rounded bg-white/8 px-1 text-[10px] text-muted" title="Связано через аккаунт из его задачи — у самой записи владельца нет">
+                по аккаунту
+              </span>
+            )}
+            {!!d.note && <span className="min-w-0 flex-1 truncate text-muted" title={d.note}>{d.note}</span>}
+            <span className="ml-auto shrink-0 tabular-nums text-faint">
+              {d.at ? new Date(d.at).toLocaleDateString('ru-RU') : '—'}
+            </span>
+          </div>
+        ))}
+      </div>
+    </div>
   )
 }
 
