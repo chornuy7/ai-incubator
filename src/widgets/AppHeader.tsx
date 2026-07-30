@@ -117,14 +117,16 @@ export function AppHeader() {
           {(() => {
             const c = balance?.coins ?? data.coins
             const alarm = c <= CRITICAL
-            const rate = (pricing?.packs || []).reduce(
-              (min, p) => (p.coins > 0 ? Math.min(min, p.price / p.coins) : min), Infinity)
-            const usd = Number.isFinite(rate) ? c * rate : null
+            // §11.4: деньги — ОТДЕЛЬНЫЙ остаток с сервера, а не пересчёт токенов по
+            // курсу. Владелец: «баланс — это $, за них покупаем подписки и токены».
+            // Пока миграция usd-кошелька не применена, поле не приходит — тогда
+            // показываем только токены, а не выдуманный ноль долларов.
+            const usd = typeof balance?.usd === 'number' ? balance.usd : null
             const cur = pricing?.currency || '$'
             return (
               <button
                 onClick={() => setCoinsOpen(true)}
-                title={alarm ? 'Баланс на нуле — пополнить' : 'Баланс и токены — пополнить'}
+                title={alarm ? 'Токены на нуле — пополнить' : 'Деньги и токены'}
                 className={
                   'flex items-center gap-2 rounded-xl border px-3 py-1.5 transition-colors ' +
                   (alarm

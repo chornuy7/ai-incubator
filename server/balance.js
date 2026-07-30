@@ -138,7 +138,10 @@ export async function setUserModules(modules, userId, opts = {}) {
   return getBalance(userId)
 }
 
-export const DEFAULT_STATE = { planId: 'basic', coins: 0, updatedAt: 0 }
+export const DEFAULT_STATE = { planId: 'basic', coins: 0, usd: 0, updatedAt: 0 }
+
+/** §11.4: деньги считаем до центов — в отличие от токенов (тысячные доли действия). */
+const normUsd = (v) => Math.round((Number(v) || 0) * 100) / 100
 
 /** Кошелёк для запросов без пользователя: дев-режим и фоновые списания воркеров. */
 export const DEFAULT_USER = '__default'
@@ -163,7 +166,7 @@ export async function getBalance(userId) {
   if (db) {
     const k = key(userId)
     const [coinRes, subRes, wsRes] = await Promise.all([
-      db.from('coin_balance').select('coins, updated_at').eq('user_id', k).maybeSingle(),
+      db.from('coin_balance').select('coins, usd, updated_at').eq('user_id', k).maybeSingle(),
       db.from('subscriptions').select('modules, expires_at').eq('id', k).maybeSingle(),
       db.from('subscriptions').select('modules, expires_at').eq('id', 'workspace').maybeSingle(),
     ])
@@ -179,7 +182,9 @@ export async function getBalance(userId) {
       plan: PLANS[planId],
       modules,
       expiresAt,
+      // §11.4: два независимых остатка — деньги ($) и токены (coins).
       coins: normCoins(coinRes.data?.coins ?? 0),
+      usd: normUsd(coinRes.data?.usd ?? 0),
       updatedAt: ms(coinRes.data?.updated_at),
     }
   }
@@ -201,6 +206,7 @@ export async function getBalance(userId) {
       : ((all && all[SUBSCRIPTION_KEY]?.modules) ?? DEFAULT_MODULES),
     expiresAt: (saved?.modules !== undefined ? saved?.expiresAt : (all && all[SUBSCRIPTION_KEY]?.expiresAt)) ?? null,
     coins: normCoins(saved?.coins ?? DEFAULT_STATE.coins),
+    usd: normUsd(saved?.usd ?? 0),
     updatedAt: Number(saved?.updatedAt) || 0,
   }
 }
@@ -397,4 +403,78 @@ export async function setPlan(planId, userId) {
 export async function hasCoins(cost = 0, userId) {
   const { coins } = await getBalance(userId)
   return coins >= (Number(cost) || 0)
+}
+
+/**
+ * §11.4: изменить ДЕНЕЖНЫЙ баланс ($). Зеркало changeCoins, но для денег.
+ *
+ * Разделение со звонка 30.07: «$ — основное, за них покупаем подписки и токены».
+ * Поэтому пополнение платёжной системой и оплата подписки идут сюда, а расход
+ * модулей — по-прежнему в токены (changeCoins).
+ *
+ * @param {number} amount дельта в долларах (может быть отрицательной)
+ * @param {string} reason за что — попадает в журнал кошелька
+ */
+export async function changeUsd(amount, reason = '', userId) {
+  const delta = Math.round((Number(amount) || 0) * 100) / 100
+  const k = key(userId)
+  const db = sb()
+  if (db) {
+    const { data: cur } = await db.from('coin_balance').select('usd').eq('user_id', k).maybeSingle()
+    const before = normUsd(cur?.usd ?? 0)
+    const after = normUsd(before + delta)
+    const { error } = await db.from('coin_balance').upsert(
+      { user_id: k, usd: after, updated_at: new Date().toISOString() }, { onConflict: 'user_id' })
+    // Колонка появляется миграцией 2026-07-30-usd-wallet.sql. Пока её нет — честно
+    // говорим об этом, а не делаем вид, что деньги зачислены.
+    if (error) throw new Error(/usd/i.test(error.message) ? 'Денежный баланс недоступен: примените миграцию 2026-07-30-usd-wallet.sql' : error.message)
+    const result = { before, after, applied: Math.round((after - before) * 100) / 100, reason, userId: k, currency: 'usd' }
+    if (result.applied) await appendWalletEntry(result).catch(() => {})
+    return result
+  }
+  let result = null
+  await mutateJson(BALANCE_FILE(), (all) => {
+    const cur = (all && all[k]) || {}
+    const before = normUsd(cur?.usd ?? 0)
+    const after = normUsd(before + delta)
+    result = { before, after, applied: Math.round((after - before) * 100) / 100, reason, userId: k, currency: 'usd' }
+    const next = { ...(all || {}) }
+    next[k] = { ...cur, usd: after, updatedAt: Date.now() }
+    return next
+  }, {})
+  if (result?.applied) await appendWalletEntry(result).catch(() => {})
+  return result
+}
+
+/**
+ * §11.4: купить токены за деньги — «$ ↓, токены ↑», как описал владелец.
+ *
+ * Курс берём из пакетов пополнения (тот же, что показывает витрина), чтобы цена
+ * покупки и цена на сайте не разъезжались. Списываем деньги ПЕРВЫМИ: если на этом
+ * шаге не хватило — токены не начисляем. Обратный порядок мог бы выдать токены
+ * бесплатно при сбое между двумя записями.
+ *
+ * @param {{usd:number, userId?:string}} input сколько долларов потратить
+ */
+export async function buyTokens({ usd, userId } = {}) {
+  const spend = Math.round((Number(usd) || 0) * 100) / 100
+  if (!(spend > 0)) throw new Error('Укажите сумму больше нуля')
+
+  const { coinUsdRate } = await import('./priceStore.js')
+  const rate = await coinUsdRate() // $ за один токен
+  if (!(rate > 0)) throw new Error('Не задан курс токена — заполните пакеты пополнения в админке')
+
+  const bal = await getBalance(userId)
+  if ((bal.usd ?? 0) < spend) throw new Error(`Недостаточно средств: на счету $${(bal.usd ?? 0).toFixed(2)}`)
+
+  const tokens = Math.round((spend / rate) * COIN_PRECISION) / COIN_PRECISION
+  await changeUsd(-spend, `Покупка токенов: ${tokens} ⚡`, userId)
+  try {
+    await changeCoins(tokens, `Куплено за $${spend.toFixed(2)}`, userId)
+  } catch (e) {
+    // Деньги уже списаны — возвращаем их, иначе клиент теряет средства молча.
+    await changeUsd(spend, 'Возврат: не удалось начислить токены', userId).catch(() => {})
+    throw e
+  }
+  return { spentUsd: spend, tokens, rate, balance: await getBalance(userId) }
 }

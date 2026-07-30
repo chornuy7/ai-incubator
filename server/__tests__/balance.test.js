@@ -149,3 +149,51 @@ test('свой набор перекрывает общий, соседи не �
   assert.deepEqual((await B.getBalance('usr_client')).modules, ['neuro-chatting'])
   assert.deepEqual((await B.getBalance('usr_worker')).modules, ['warming'])
 })
+
+/**
+ * §11.4: деньги и токены — два независимых остатка.
+ *
+ * Модель владельца (30.07): «$ — основное, за них покупаем подписки и токены;
+ * токены тратятся на действия в модулях». Раньше кошелёк был один, и доллар был
+ * лишь пересчётом монет по курсу — на такой модели «докупить токенов» не выразить.
+ */
+test('§11.4: покупка токенов списывает деньги и начисляет токены', async () => {
+  const B = await fresh()
+  await B.changeUsd(100, 'пополнение', 'usr_m')
+
+  const before = await B.getBalance('usr_m')
+  assert.equal(before.usd, 100, 'деньги зачислены')
+  assert.equal(before.coins, 0, 'токены отдельно и пока пусты')
+
+  const out = await B.buyTokens({ usd: 20, userId: 'usr_m' })
+  assert.ok(out.tokens > 0, 'токены начислены')
+  assert.equal(out.spentUsd, 20)
+
+  const after = await B.getBalance('usr_m')
+  assert.equal(after.usd, 80, 'деньги уменьшились ровно на потраченное')
+  assert.equal(after.coins, out.tokens, 'токены выросли ровно на купленное')
+})
+
+test('§11.4: не хватает денег — ни списания, ни начисления', async () => {
+  const B = await fresh()
+  await B.changeUsd(5, 'пополнение', 'usr_p')
+  await assert.rejects(() => B.buyTokens({ usd: 50, userId: 'usr_p' }), /Недостаточно средств/)
+
+  const bal = await B.getBalance('usr_p')
+  assert.equal(bal.usd, 5, 'деньги на месте')
+  assert.equal(bal.coins, 0, 'токены не начислены')
+
+  // Ноль и мусор тоже не проходят: иначе «купил на 0» плодил бы записи в журнале.
+  await assert.rejects(() => B.buyTokens({ usd: 0, userId: 'usr_p' }), /больше нуля/)
+  await assert.rejects(() => B.buyTokens({ usd: -10, userId: 'usr_p' }), /больше нуля/)
+})
+
+test('§11.4: кошельки не пересекаются между юзерами', async () => {
+  const B = await fresh()
+  await B.changeUsd(50, 'пополнение', 'usr_x')
+  await B.changeUsd(10, 'пополнение', 'usr_y')
+  await B.buyTokens({ usd: 10, userId: 'usr_x' })
+
+  assert.equal((await B.getBalance('usr_y')).usd, 10, 'чужие деньги не тронуты')
+  assert.equal((await B.getBalance('usr_y')).coins, 0, 'чужие токены не начислены')
+})

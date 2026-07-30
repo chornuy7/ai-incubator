@@ -10,8 +10,10 @@ export interface Balance {
   plan: Plan
   /** §5.4: купленные модули. 'all' — набор ещё не выбирали, открыто всё. */
   modules: string[] | 'all'
-  /** Монеты с точностью до ТЫСЯЧНЫХ: строка парсера стоит 0.005 (C2). */
+  /** Токены с точностью до ТЫСЯЧНЫХ: строка парсера стоит 0.005 (C2). */
   coins: number
+  /** §11.4: денежный баланс ($) — им платят за подписку и покупают токены. */
+  usd?: number
   updatedAt: number
   /** Срок подписки: timestamp окончания или null («бессрочно» / демо без периода). */
   expiresAt?: number | null
@@ -25,7 +27,13 @@ export async function fetchBalance(): Promise<Balance> {
 
 /** Пополнить (amount > 0), списать (amount < 0) или сменить тариф. Только админ. */
 /** `userId` — чей кошелёк править. Без него правится свой; чужой доступен только админу. */
-export async function changeBalance(patch: { amount?: number; planId?: string; reason?: string; userId?: string }): Promise<Balance> {
+/** §11.4: купить токены за деньги — «$ ↓, токены ↑». */
+export async function buyTokens(usd: number, userId?: string): Promise<{ spentUsd: number; tokens: number; rate: number; balance: Balance }> {
+  return apiPost('/api/balance/buy-tokens', { usd, userId })
+}
+
+/** `amount` — токены (как раньше), `usd` — деньги (§11.4). */
+export async function changeBalance(patch: { amount?: number; usd?: number; planId?: string; reason?: string; userId?: string }): Promise<Balance> {
   const data = await apiPost<{ ok: boolean; balance: Balance }>('/api/balance', patch)
   return data.balance
 }

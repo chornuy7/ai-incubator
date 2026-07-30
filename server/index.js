@@ -886,12 +886,14 @@ app.get('/api/balance', async (req, res) => {
 app.post('/api/balance', async (req, res) => {
   try {
     if (!(await isAdminRequest(req))) return res.status(403).json({ ok: false, error: 'Менять баланс может только админ' })
-    const { getBalance, changeCoins, setPlan } = await import('./balance.js')
-    const { amount, planId, reason, userId } = req.body ?? {}
+    const { getBalance, changeCoins, changeUsd, setPlan } = await import('./balance.js')
+    const { amount, usd, planId, reason, userId } = req.body ?? {}
     // Админ может пополнить ЧУЖОЙ кошелёк, явно указав userId — иначе правит свой.
     const target = userId || req.header('x-user-id')
     let changed = null
+    // §11.4: два кошелька. `amount` — токены (как раньше), `usd` — деньги.
     if (amount !== undefined) changed = await changeCoins(amount, reason, target)
+    if (usd !== undefined) changed = await changeUsd(usd, reason, target)
     if (planId !== undefined) await setPlan(planId, target)
     const balance = await getBalance(target)
     await appendAudit({
@@ -902,6 +904,29 @@ app.post('/api/balance', async (req, res) => {
       meta: { ...changed, planId: balance.planId },
     }).catch(() => {})
     res.json({ ok: true, balance })
+  } catch (err) { res.status(400).json({ ok: false, error: err instanceof Error ? err.message : 'Ошибка' }) }
+})
+
+/**
+ * §11.4: купить токены за деньги. Свой кошелёк — сам, чужой — только админ:
+ * тратить чужие деньги без прав нельзя.
+ */
+app.post('/api/balance/buy-tokens', async (req, res) => {
+  try {
+    const { usd, userId } = req.body ?? {}
+    const me = req.header('x-user-id')
+    const target = userId || me
+    if (userId && userId !== me && !(await isAdminRequest(req))) {
+      return res.status(403).json({ ok: false, error: 'Покупать токены другому может только админ' })
+    }
+    const { buyTokens } = await import('./balance.js')
+    const out = await buyTokens({ usd, userId: target })
+    await appendAudit({
+      action: 'tokens.buy', module: 'balance', initiator: me || 'operator',
+      reason: `Куплено ${out.tokens} ⚡ за $${out.spentUsd.toFixed(2)}`,
+      meta: { userId: target, usd: out.spentUsd, tokens: out.tokens, rate: out.rate },
+    }).catch(() => {})
+    res.json({ ok: true, ...out })
   } catch (err) { res.status(400).json({ ok: false, error: err instanceof Error ? err.message : 'Ошибка' }) }
 })
 
