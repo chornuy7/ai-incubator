@@ -608,6 +608,46 @@ app.get('/api/admin/messages', async (req, res) => {
   } catch (err) { res.status(500).json({ ok: false, error: err instanceof Error ? err.message : 'Ошибка' }) }
 })
 
+/**
+ * §11.3: завести существующих пользователей в Supabase Auth (пригласительными письмами).
+ *
+ * Отвечает на «как юзеры попадут в БД» для тех, кто уже есть у нас: приглашение вместо
+ * ручного заведения. Пароли НЕ задаются здесь — человек переходит по ссылке из письма и
+ * задаёт свой. Так пароли не проходят ни через нас, ни через логи.
+ *
+ * Профиль создавать не нужно: его ставит триггер on_auth_user_created.
+ * Идемпотентно: у кого auth-запись уже есть — пропускаем.
+ */
+app.post('/api/admin/provision-auth', async (req, res) => {
+  try {
+    if (!(await isAdminRequest(req))) return res.status(403).json({ ok: false, error: 'Доступно только администратору' })
+    const { getSupabase, supabaseEnabled } = await import('./lib/supabase.js')
+    if (!supabaseEnabled()) return res.status(400).json({ ok: false, error: 'Нужен DATA_BACKEND=supabase' })
+    const db = getSupabase()
+    if (!db) return res.status(400).json({ ok: false, error: 'Нет клиента Supabase' })
+
+    const { data: authList, error: authErr } = await db.auth.admin.listUsers({ perPage: 1000 })
+    if (authErr) return res.status(500).json({ ok: false, error: `auth.users: ${authErr.message}` })
+    const have = new Set((authList?.users || []).map((u) => String(u.email || '').toLowerCase()))
+
+    const { listUsers } = await import('./users.js')
+    const users = await listUsers()
+    const invited = []; const skipped = []; const failed = []
+    for (const u of users) {
+      const email = String(u.email || '').trim()
+      if (!email) continue
+      if (have.has(email.toLowerCase())) { skipped.push(email); continue }
+      const { error } = await db.auth.admin.inviteUserByEmail(email, { data: { name: u.name || '' } })
+      if (error) failed.push({ email, error: error.message }); else invited.push(email)
+    }
+    await appendAudit({
+      action: 'auth.provision', module: 'admin', initiator: req.header('x-user-id') || 'system',
+      reason: `Приглашения в Supabase Auth: ${invited.length}`, meta: { invited, skipped, failed },
+    }).catch(() => {})
+    res.json({ ok: true, invited, skipped, failed })
+  } catch (err) { res.status(500).json({ ok: false, error: err instanceof Error ? err.message : 'Ошибка' }) }
+})
+
 /** §10.9: здоровье аккаунтов — активные/на паузе/падающие + причина. Только админ. */
 app.get('/api/admin/accounts-health', async (req, res) => {
   try {
