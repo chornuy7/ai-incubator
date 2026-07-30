@@ -69,13 +69,43 @@ export interface SubSetup {
   custom?: boolean
   price?: number
 }
+/** §11.2: период подписки из админки. discount — доля (0.2 = −20%). */
+export interface SubPeriod { unit: 'week' | 'month' | 'year' | string; count: number; discount: number }
+/** §11.2: длительность периода в месяцах (неделя ≈ 1/4 месяца) — для пересчёта цены. */
+export function periodMonths(p: SubPeriod): number {
+  return p.unit === 'year' ? p.count * 12 : p.unit === 'week' ? p.count / 4 : p.count
+}
+/** §11.2: длительность как существительное — «год», «6 месяцев». Для фраз «на …», «/ …»,
+ *  где подпись переключателя («На год») дала бы «на на год». */
+export function periodPhrase(p: SubPeriod): string {
+  if (p.unit === 'month' && p.count === 1) return 'месяц'
+  if (p.unit === 'year' && p.count === 1) return 'год'
+  return periodLabel(p)
+}
+/** §11.2: «На год» / «3 месяца» / «2 недели» — подпись для переключателя. */
+export function periodLabel(p: SubPeriod): string {
+  if (p.unit === 'month' && p.count === 1) return 'Помесячно'
+  if (p.unit === 'year' && p.count === 1) return 'На год'
+  const plural = (n: number, one: string, few: string, many: string) => {
+    const m10 = n % 10, m100 = n % 100
+    if (m10 === 1 && m100 !== 11) return one
+    if (m10 >= 2 && m10 <= 4 && (m100 < 12 || m100 > 14)) return few
+    return many
+  }
+  const word = p.unit === 'week' ? plural(p.count, 'неделя', 'недели', 'недель')
+    : p.unit === 'year' ? plural(p.count, 'год', 'года', 'лет')
+      : plural(p.count, 'месяц', 'месяца', 'месяцев')
+  return `${p.count} ${word}`
+}
 export interface Subscription { items: SubModule[]; setups: SubSetup[]; currency: string; mine: string[] | 'all'   /** Годовая скидка (эффективная, из админки). */
   annualDiscount?: number
+  /** §11.2: периоды со скидками — из них строится переключатель. */
+  periods?: SubPeriod[]
 }
 
 export async function fetchSubscription(): Promise<Subscription> {
   const r = await apiGet<Subscription & { ok: boolean }>('/api/subscription')
-  return { items: r.items || [], setups: r.setups || [], currency: r.currency || '$', mine: r.mine ?? 'all', annualDiscount: r.annualDiscount }
+  return { items: r.items || [], setups: r.setups || [], currency: r.currency || '$', mine: r.mine ?? 'all', annualDiscount: r.annualDiscount, periods: r.periods }
 }
 
 export async function quoteSubscription(modules: string[]): Promise<SubCost> {

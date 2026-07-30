@@ -746,7 +746,8 @@ app.get('/api/subscription', async (req, res) => {
         }
       }),
     ]
-    res.json({ ok: true, items, setups, currency: CURRENCY, mine: modules, annualDiscount: eff.annualDiscount })
+    // §11.2: periods — витрина строит переключатель из них, а не из «месяц/год» в коде.
+    res.json({ ok: true, items, setups, currency: CURRENCY, mine: modules, annualDiscount: eff.annualDiscount, periods: eff.periods })
   } catch (err) { res.status(500).json({ ok: false, error: err instanceof Error ? err.message : 'Ошибка' }) }
 })
 

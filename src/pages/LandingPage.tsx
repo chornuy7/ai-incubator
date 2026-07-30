@@ -14,7 +14,7 @@ function caseIcon(title: string): LucideIcon {
   if (t.includes('агентств')) return Building2
   return Rocket
 }
-import { fetchSubscription, quoteSubscription, type Subscription, type SubCost } from '@/api/balanceApi'
+import { fetchSubscription, quoteSubscription, periodMonths, periodLabel, periodPhrase, type Subscription, type SubCost, type SubPeriod } from '@/api/balanceApi'
 import { useSession } from '@/features/auth/session'
 import { MODULES, BONUS_MODULE, FUNNEL_VARIANTS, COMPARISON, REVIEWS, CASES, ANNUAL_DISCOUNT, moduleTagline, moduleIcon, type Cmp } from './landing/catalog'
 import { AuthCta } from './landing/AuthCta'
@@ -119,6 +119,11 @@ export function LandingPage() {
   const cases = CASES.filter((c) => c.v === 'both' || c.v === vTag)
   // Годовая скидка — с сервера (правится в админке), catalog-константа как fallback.
   const annualDiscount = pricing?.annualDiscount ?? ANNUAL_DISCOUNT
+  // §11.2: периоды из админки; пока их нет (старый прайс) — прежние «месяц + год».
+  const planPeriods: SubPeriod[] = pricing?.periods?.length ? pricing.periods : [
+    { unit: 'month', count: 1, discount: 0 },
+    { unit: 'year', count: 1, discount: annualDiscount },
+  ]
   // «от $N» — из самого дешёвого модуля прайса (админка), а не захардкоженная восьмёрка:
   // поменяли цену в админке — «от $N» на витрине тоже меняется.
   const minMonth = pricing?.items.length ? Math.min(...pricing.items.map((i) => i.price)) : null
@@ -129,7 +134,8 @@ export function LandingPage() {
   // Состояние калькулятора живёт здесь, чтобы готовые наборы могли его заполнять:
   // клик по пресету складывает его модули в калькулятор — иначе курируемые наборы
   // бесполезны рядом с ручной сборкой.
-  const [planPeriod, setPlanPeriod] = useState<'month' | 'year'>('month')
+  // §11.2: период выбирается из списка админки (не «месяц/год» в коде). Держим индекс.
+  const [planIdx, setPlanIdx] = useState(0)
   const [calcFull, setCalcFull] = useState(false)
   const [calcSelected, setCalcSelected] = useState<Set<string>>(new Set())
   const pickPreset = (mods: string[]) => {
@@ -203,34 +209,39 @@ export function LandingPage() {
         <div className="mx-auto max-w-6xl px-5 py-16">
           <SectionHead eyebrow="Доступные тарифы" title="Цены" desc={priceDesc} center />
 
-          {/* Переключатель периода: помесячно или на год (год дешевле). */}
+          {/* §11.2: переключатель строится из периодов админки — добавили «6 месяцев»
+              в админке, и он появился здесь сам, без правки кода. */}
           <div className="mt-6 flex justify-center">
-            <div className="flex rounded-xl border border-line bg-surface p-0.5 text-sm">
-              {(['month', 'year'] as const).map((p) => (
-                <button key={p} onClick={() => setPlanPeriod(p)} className={`h-9 rounded-lg px-4 font-semibold transition-colors ${planPeriod === p ? 'bg-spark-500/15 text-spark-300' : 'text-muted hover:text-fg'}`}>
-                  {p === 'month' ? 'Помесячно' : 'На год'}
-                  {p === 'year' && <span className="ml-1.5 text-[11px] text-spark-400">−{Math.round(annualDiscount * 100)}%</span>}
+            <div className="flex flex-wrap rounded-xl border border-line bg-surface p-0.5 text-sm">
+              {planPeriods.map((p, i) => (
+                <button key={`${p.unit}${p.count}`} onClick={() => setPlanIdx(i)}
+                  className={`h-9 rounded-lg px-4 font-semibold transition-colors ${planIdx === i ? 'bg-spark-500/15 text-spark-300' : 'text-muted hover:text-fg'}`}>
+                  {periodLabel(p)}
+                  {p.discount > 0 && <span className="ml-1.5 text-[11px] text-spark-400">−{Math.round(p.discount * 100)}%</span>}
                 </button>
               ))}
             </div>
           </div>
 
           {pricing && setupAll && (() => {
-            const yr = planPeriod === 'year'
-            const per = yr ? '/ год' : '/ мес'
-            const perAll = yr ? Math.round(setupAll.cost.sum * 12 * (1 - annualDiscount)) : setupAll.cost.sum
+            const sel = planPeriods[planIdx] || planPeriods[0]
+            const months = periodMonths(sel)
+            const mult = months * (1 - sel.discount)
+            const isMonth = sel.unit === 'month' && sel.count === 1
+            const per = isMonth ? '/ мес' : `/ ${periodPhrase(sel)}`
+            const perAll = isMonth ? setupAll.cost.sum : Math.round(setupAll.cost.sum * mult)
             // «от $N» тоже из прайса: самый дешёвый модуль, а не захардкоженная 8.
             const base = pricing.items.length ? Math.min(...pricing.items.map((i) => i.price)) : 8
-            const perMin = yr ? Math.round(base * 12 * (1 - annualDiscount)) : base
+            const perMin = isMonth ? base : Math.round(base * mult)
             return (
               <div className="mx-auto mt-6 grid max-w-3xl gap-5 sm:grid-cols-2">
                 <PlanCard
                   name="Полная подписка"
                   price={`${pricing.currency}${perAll}`}
                   per={per}
-                  badge={yr ? `выгодно · −${Math.round(annualDiscount * 100)}%` : undefined}
+                  badge={sel.discount > 0 ? `выгодно · −${Math.round(sel.discount * 100)}%` : undefined}
                   highlight
-                  desc={yr ? 'Все модули на год — дешевле помесячной.' : 'Доступ ко всем модулям на месяц.'}
+                  desc={sel.discount > 0 ? `Все модули на ${periodPhrase(sel)} — дешевле помесячной.` : 'Доступ ко всем модулям на месяц.'}
                   features={['Все модули платформы', 'Новые модули — бесплатно', 'Менеджер аккаунтов в подарок']}
                   onStart={start}
                 />
@@ -734,7 +745,8 @@ function PriceCalculator({ pricing, start, full, setFull, selected, setSelected,
   owned: Set<string>
 }) {
   const allKeys = useMemo(() => pricing.items.map((i) => i.key), [pricing.items])
-  const [period, setPeriod] = useState<'month' | 'year'>('month')
+  // §11.2: тот же список периодов, что и в блоке «Цены» — держим индекс.
+  const [periodIdx, setPeriodIdx] = useState(0)
   const [cost, setCost] = useState<SubCost | null>(null)
 
   const allOwned = owned.size > 0 && allKeys.every((k) => owned.has(k))
@@ -751,8 +763,14 @@ function PriceCalculator({ pricing, start, full, setFull, selected, setSelected,
   }, [activeKeys])
 
   const annualDiscount = pricing.annualDiscount ?? ANNUAL_DISCOUNT
-  const perPeriod = (monthly: number) => (period === 'year' ? Math.round(monthly * 12 * (1 - annualDiscount)) : monthly)
-  const suffix = period === 'year' ? ' / год' : ' / мес'
+  const periods: SubPeriod[] = pricing.periods?.length ? pricing.periods : [
+    { unit: 'month', count: 1, discount: 0 },
+    { unit: 'year', count: 1, discount: annualDiscount },
+  ]
+  const sel = periods[periodIdx] || periods[0]
+  const isMonth = sel.unit === 'month' && sel.count === 1
+  const perPeriod = (monthly: number) => (isMonth ? monthly : Math.round(monthly * periodMonths(sel) * (1 - sel.discount)))
+  const suffix = isMonth ? ' / мес' : ` / ${periodPhrase(sel)}`
   const cur = pricing.currency
 
   const toggle = (k: string) => {
@@ -771,11 +789,12 @@ function PriceCalculator({ pricing, start, full, setFull, selected, setSelected,
           <div className="font-display text-lg font-bold">Калькулятор — соберите свой набор</div>
           <p className="mt-1 text-sm text-muted">Отметьте нужные модули — цена посчитается сразу.</p>
         </div>
-        <div className="flex rounded-xl border border-line bg-surface p-0.5 text-sm">
-          {(['month', 'year'] as const).map((p) => (
-            <button key={p} onClick={() => setPeriod(p)} className={`h-8 rounded-lg px-3 font-semibold transition-colors ${period === p ? 'bg-spark-500/15 text-spark-300' : 'text-muted hover:text-fg'}`}>
-              {p === 'month' ? 'Месяц' : 'Год'}
-              {p === 'year' && <span className="ml-1 text-[10px] text-spark-400">−{Math.round(annualDiscount * 100)}%</span>}
+        <div className="flex flex-wrap rounded-xl border border-line bg-surface p-0.5 text-sm">
+          {periods.map((p, i) => (
+            <button key={`${p.unit}${p.count}`} onClick={() => setPeriodIdx(i)}
+              className={`h-8 rounded-lg px-3 font-semibold transition-colors ${periodIdx === i ? 'bg-spark-500/15 text-spark-300' : 'text-muted hover:text-fg'}`}>
+              {periodLabel(p)}
+              {p.discount > 0 && <span className="ml-1 text-[10px] text-spark-400">−{Math.round(p.discount * 100)}%</span>}
             </button>
           ))}
         </div>

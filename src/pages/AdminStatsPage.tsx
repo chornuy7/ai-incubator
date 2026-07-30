@@ -1,6 +1,6 @@
 import { coins as fmtCoins, cn } from '@/shared/lib/utils'
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { BarChart3, Users, ListChecks, Coins, Download, RefreshCw, AlertTriangle, Contact, Power, ChevronDown, Activity, Plus, Radar, Search, ShoppingCart, Loader2, Check } from 'lucide-react'
+import { BarChart3, Users, ListChecks, Coins, Download, RefreshCw, AlertTriangle, Contact, Power, ChevronDown, Activity, Plus, Radar, Search, ShoppingCart, Loader2, Check, Trash2 } from 'lucide-react'
 import { PageHeader, Card, Segmented, EmptyState } from '@/shared/ui'
 import { useApp } from '@/mocks/store'
 import {
@@ -1410,6 +1410,9 @@ function PricesTab() {
   const [prices, setPrices] = useState<EffectivePrices | null>(null)
   const [draft, setDraft] = useState<Record<string, { month: string; action: string }>>({})
   const [extra, setExtra] = useState({ annualDiscount: '', tokenUsd: '', imageMultiplier: '' })
+  // §11.2: периоды подписки — редактируемый список (единица + количество + скидка),
+  // а не «месяц/год» в коде. discount держим строкой в ПРОЦЕНТАХ, как в поле годовой.
+  const [periods, setPeriods] = useState<{ unit: string; count: number; discount: string }[]>([])
   const [saving, setSaving] = useState(false)
 
   const load = async () => {
@@ -1425,6 +1428,7 @@ function PricesTab() {
       tokenUsd: p.tokenUsdAuto ? '' : (p.tokenUsd == null ? '' : String(p.tokenUsd)),
       imageMultiplier: String(p.imageMultiplier),
     })
+    setPeriods((p.periods || []).map((x) => ({ unit: x.unit, count: x.count, discount: String(Math.round(x.discount * 100)) })))
   }
   useEffect(() => { void load().catch(() => {}) }, [])
 
@@ -1434,7 +1438,10 @@ function PricesTab() {
     prices.modules.some((m) => draft[m.key] && (draft[m.key].month !== String(m.month) || draft[m.key].action !== String(m.action))) ||
     extra.annualDiscount !== String(Math.round(prices.annualDiscount * 100)) ||
     extra.tokenUsd !== (prices.tokenUsdAuto ? '' : (prices.tokenUsd == null ? '' : String(prices.tokenUsd))) ||
-    extra.imageMultiplier !== String(prices.imageMultiplier)
+    extra.imageMultiplier !== String(prices.imageMultiplier) ||
+    // §11.2: список периодов сравниваем целиком — состав и порядок тоже правка.
+    JSON.stringify(periods.map((p) => ({ u: p.unit, c: p.count, d: p.discount }))) !==
+      JSON.stringify((prices.periods || []).map((p) => ({ u: p.unit, c: p.count, d: String(Math.round(p.discount * 100)) })))
 
   const save = async () => {
     setSaving(true)
@@ -1451,6 +1458,12 @@ function PricesTab() {
       else { const pct = Number(extra.annualDiscount); if (Number.isFinite(pct)) patch.annualDiscount = Math.max(0, Math.min(90, pct)) / 100 }
       patch.tokenUsd = extra.tokenUsd
       patch.imageMultiplier = extra.imageMultiplier
+      // §11.2: проценты → доля. Сервер ещё раз нормализует (единица/пределы/дубли).
+      patch.periods = periods.map((p) => ({
+        unit: p.unit,
+        count: p.count,
+        discount: Math.max(0, Math.min(90, Number(p.discount) || 0)) / 100,
+      }))
       const fresh = await savePrices(patch)
       setPrices(fresh)
       pushToast({ type: 'success', title: 'Цены сохранены', desc: 'Сразу на витрине, в кабинете и в счёте' })
@@ -1535,6 +1548,68 @@ function PricesTab() {
           (обновляется при смене модели). Заполните поле только чтобы переопределить вручную; пусто = авто-расчёт.
           Множитель картинки (×N) — наценка на анализ изображения поверх токенов.
         </p>
+      </Card>
+
+      {/* §11.2: периоды подписки генерируемым списком — со звонка 29.07: «плюсик, чтобы
+          добавить ещё, и период селектом», чтобы к этому больше не возвращаться. */}
+      <Card className="p-4">
+        <div className="mb-1 text-xs font-bold uppercase tracking-wide text-muted">Периоды подписки и скидки</div>
+        <p className="mb-3 text-[11px] text-muted">
+          Из этого списка строится переключатель на витрине и в кабинете. Скидка считается от месячной цены —
+          базовую цену модулей менять не нужно.
+        </p>
+        <div className="space-y-2">
+          {periods.map((p, i) => {
+            const max = p.unit === 'week' ? 4 : p.unit === 'month' ? 6 : 5
+            return (
+              <div key={i} className="flex flex-wrap items-center gap-2">
+                <select
+                  value={p.unit}
+                  onChange={(e) => setPeriods((list) => list.map((x, k) => {
+                    if (k !== i) return x
+                    const unit = e.target.value
+                    const lim = unit === 'week' ? 4 : unit === 'month' ? 6 : 5
+                    return { ...x, unit, count: Math.min(x.count, lim) } // счёт не должен превысить предел новой единицы
+                  }))}
+                  className="input h-9 w-28 text-sm"
+                >
+                  <option value="week">недели</option>
+                  <option value="month">месяцы</option>
+                  <option value="year">годы</option>
+                </select>
+                <select
+                  value={p.count}
+                  onChange={(e) => setPeriods((list) => list.map((x, k) => (k === i ? { ...x, count: Number(e.target.value) } : x)))}
+                  className="input h-9 w-20 text-sm tabular-nums"
+                >
+                  {Array.from({ length: max }, (_, n) => n + 1).map((n) => <option key={n} value={n}>{n}</option>)}
+                </select>
+                <label className="flex items-center gap-1.5">
+                  <span className="text-xs text-muted">скидка</span>
+                  <input
+                    value={p.discount}
+                    onChange={(e) => setPeriods((list) => list.map((x, k) => (k === i ? { ...x, discount: cleanPrice(e.target.value, 90) } : x)))}
+                    className="input h-9 w-16 text-sm tabular-nums" inputMode="numeric" placeholder="0" />
+                  <span className="text-xs text-muted">%</span>
+                </label>
+                <button
+                  onClick={() => setPeriods((list) => list.filter((_, k) => k !== i))}
+                  title="Убрать период"
+                  className="grid h-9 w-9 place-items-center rounded-xl border border-line text-muted transition-colors hover:border-red-500/40 hover:text-red-300"
+                >
+                  <Trash2 size={14} />
+                </button>
+              </div>
+            )
+          })}
+          {!periods.length && <div className="text-xs text-muted">Периодов нет — витрина покажет только помесячную оплату.</div>}
+        </div>
+        <button
+          onClick={() => setPeriods((list) => [...list, { unit: 'month', count: 3, discount: '10' }])}
+          className="btn-ghost mt-3 h-9 rounded-xl border border-line px-3 text-sm"
+        >
+          + Добавить период
+        </button>
       </Card>
 
       {/* §10.4/§10.6: готовые наборы (что продаём) — собираются и правятся из админки. */}

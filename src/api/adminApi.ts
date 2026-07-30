@@ -244,7 +244,12 @@ export interface EffectivePrices {
   /** Модель, из которой считается себестоимость (для подписи в админке). */
   tokenUsdModel?: string
   imageMultiplier: number
+  /** §11.2: периоды подписки со скидками — генерируемый список, не «месяц/год» в коде. */
+  periods?: SubPeriod[]
 }
+
+/** §11.2: период подписки. discount — доля (0.2 = −20%). */
+export interface SubPeriod { unit: 'week' | 'month' | 'year' | string; count: number; discount: number }
 
 export async function fetchPrices(): Promise<EffectivePrices> {
   return (await apiGet<{ ok: boolean; prices: EffectivePrices }>('/api/admin/prices')).prices
@@ -257,6 +262,7 @@ export interface PricePatch {
   tokenUsd?: number | string
   imageMultiplier?: number | string
   coinPacks?: { coins: number; price: number; best?: boolean }[]
+  periods?: SubPeriod[]
 }
 
 export async function savePrices(patch: PricePatch): Promise<EffectivePrices> {

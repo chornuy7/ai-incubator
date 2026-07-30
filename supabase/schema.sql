@@ -68,6 +68,9 @@ create table if not exists price_overrides (
   token_usd          numeric,               -- §10.1: цена токена в $ (ждёт Николая)
   image_multiplier   numeric,               -- §10.5: картинка дороже текста, ×N
   coin_packs         jsonb,                 -- [{coins, price, best}]
+  -- §11.2: периоды подписки со скидками — генерируемый список, а не «месяц/год» в коде.
+  -- [{unit:'week'|'month'|'year', count:1..N, discount:0..0.9}]
+  periods            jsonb,
   updated_at         timestamptz not null default now()
 );
 

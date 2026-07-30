@@ -31,7 +31,44 @@ function rowToOverrides(row) {
   if (row.token_usd != null) o.tokenUsd = Number(row.token_usd)
   if (row.image_multiplier != null) o.imageMultiplier = Number(row.image_multiplier)
   if (Array.isArray(row.coin_packs)) o.coinPacks = row.coin_packs
+  if (Array.isArray(row.periods)) o.periods = row.periods
   return o
+}
+
+/**
+ * §11.2: периоды подписки со скидками.
+ *
+ * По звонку 29.07 период — не «месяц/год» в коде, а генерируемый список: единица
+ * (неделя/месяц/год) + количество + скидка. Здесь только нормализация: единица из
+ * белого списка, count в разрешённых для неё пределах (нед. 1–4, мес. 1–6, год 1–5 —
+ * прямо со звонка), скидка 0–90%. Мусор молча отбрасываем, дубли схлопываем.
+ */
+const PERIOD_LIMITS = { week: 4, month: 6, year: 5 }
+export const PERIOD_UNITS = Object.keys(PERIOD_LIMITS)
+/** Длительность периода в месяцах — для пересчёта цены (неделя ≈ 1/4 месяца). */
+export function periodMonths(p) {
+  const n = Number(p?.count) || 1
+  return p?.unit === 'year' ? n * 12 : p?.unit === 'week' ? n / 4 : n
+}
+export function normalizePeriods(list) {
+  if (!Array.isArray(list)) return null
+  const seen = new Set()
+  const out = []
+  for (const raw of list) {
+    const unit = String(raw?.unit || '')
+    const max = PERIOD_LIMITS[unit]
+    if (!max) continue
+    const count = Math.round(Number(raw?.count))
+    if (!Number.isFinite(count) || count < 1 || count > max) continue
+    const key = `${unit}:${count}`
+    if (seen.has(key)) continue
+    seen.add(key)
+    const d = Number(raw?.discount)
+    out.push({ unit, count, discount: Number.isFinite(d) ? Math.min(0.9, Math.max(0, d)) : 0 })
+  }
+  // По возрастанию длительности — так их и показывают в переключателе.
+  out.sort((a, b) => periodMonths(a) - periodMonths(b))
+  return out.length ? out : null
 }
 function overridesToRow(ov) {
   return {
@@ -42,6 +79,7 @@ function overridesToRow(ov) {
     token_usd: ov.tokenUsd ?? null,
     image_multiplier: ov.imageMultiplier ?? null,
     coin_packs: ov.coinPacks ?? null,
+    periods: ov.periods ?? null,
     updated_at: new Date().toISOString(),
   }
 }
@@ -81,6 +119,12 @@ function mergeOverrides(cur, patch) {
     cur.coinPacks = patch.coinPacks
       .map((p) => ({ coins: Number(p.coins) || 0, price: round2(p.price), best: !!p.best }))
       .filter((p) => p.coins > 0 && p.price > 0)
+  }
+  // §11.2: periods — пустой массив означает «вернуть дефолт», поэтому удаляем ключ,
+  // а не сохраняем пустоту (иначе переключатель периодов исчез бы совсем).
+  if ('periods' in patch) {
+    const norm = normalizePeriods(patch.periods)
+    if (norm) cur.periods = norm; else delete cur.periods
   }
   return cur
 }
@@ -145,6 +189,12 @@ export async function effectivePrices() {
     actionMap,
     coinPacks: Array.isArray(ov.coinPacks) && ov.coinPacks.length ? ov.coinPacks : COIN_PACKS,
     annualDiscount: typeof ov.annualDiscount === 'number' ? ov.annualDiscount : ANNUAL_DISCOUNT,
+    // §11.2: список периодов. Пока админ его не задал — прежнее поведение (месяц + год
+    // со скидкой annualDiscount), чтобы витрина не изменилась сама по себе.
+    periods: normalizePeriods(ov.periods) || [
+      { unit: 'month', count: 1, discount: 0 },
+      { unit: 'year', count: 1, discount: typeof ov.annualDiscount === 'number' ? ov.annualDiscount : ANNUAL_DISCOUNT },
+    ],
     coinsPer1kTokens: typeof ov.coinsPer1kTokens === 'number' ? ov.coinsPer1kTokens : COINS_PER_1K_TOKENS,
     tokenUsd,
     tokenUsdAuto: !tokenUsdManual, // true = рассчитано из модели, false = задано вручную
@@ -177,7 +227,18 @@ export async function setOverrides(patch = {}) {
   if (db) {
     const cur = await getOverrides()
     const next = mergeOverrides(cur, patch)
-    await db.from('price_overrides').upsert(overridesToRow(next), { onConflict: 'id' })
+    const row = overridesToRow(next)
+    const { error } = await db.from('price_overrides').upsert(row, { onConflict: 'id' })
+    // §11.2: колонка periods добавляется миграцией (supabase/migrations/…-price-periods.sql).
+    // Пока её не применили, сохраняем всё остальное, а не роняем правку цен целиком.
+    if (error && /periods/i.test(error.message || '')) {
+      const { periods, ...rest } = row
+      void periods
+      await db.from('price_overrides').upsert(rest, { onConflict: 'id' })
+      console.warn('[prices] колонка periods отсутствует — примените supabase/migrations/2026-07-30-price-periods.sql')
+    } else if (error) {
+      throw new Error(error.message)
+    }
     return effectivePrices()
   }
   await mutateJson(PRICES_FILE(), (raw) => mergeOverrides(raw && typeof raw === 'object' ? raw : {}, patch), {})
