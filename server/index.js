@@ -574,6 +574,24 @@ app.post('/api/admin/sync-types', async (req, res) => {
   } catch (err) { res.status(500).json({ ok: false, error: err instanceof Error ? err.message : 'Ошибка' }) }
 })
 
+/**
+ * §11.1: сама переписка — реплики по конкретному собеседнику или по юзеру целиком.
+ * Только админ: это персональные данные третьих лиц, наружу они не отдаются.
+ */
+app.get('/api/admin/messages', async (req, res) => {
+  try {
+    if (!(await isAdminRequest(req))) return res.status(403).json({ ok: false, error: 'Доступно только администратору' })
+    const { listMessages } = await import('./messages.js')
+    const rows = await listMessages({
+      userId: String(req.query.userId || '') || undefined,
+      accountId: String(req.query.accountId || '') || undefined,
+      peer: String(req.query.peer || '') || undefined,
+      limit: req.query.limit ? Number(req.query.limit) : undefined,
+    })
+    res.json({ ok: true, messages: rows })
+  } catch (err) { res.status(500).json({ ok: false, error: err instanceof Error ? err.message : 'Ошибка' }) }
+})
+
 /** §10.9: здоровье аккаунтов — активные/на паузе/падающие + причина. Только админ. */
 app.get('/api/admin/accounts-health', async (req, res) => {
   try {

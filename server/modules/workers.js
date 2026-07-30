@@ -60,6 +60,7 @@ import { findChannelChat, isChannelPeer } from '../lib/channelChat.js'
 import { followUpDecision, followUpPrompt, followUpStatus } from '../lib/followUp.js'
 import { buildAgentContext, getAgent } from '../agents.js'
 import { recordTokens } from '../tokenLedger.js'
+import { recordMessage } from '../messages.js'
 import { describeIncomingImage, messageHasPhoto } from '../lib/visionDescribe.js'
 import { effectivePrices } from '../priceStore.js'
 import { canWorkNow, noteAction } from '../accountActivity.js'
@@ -525,6 +526,9 @@ export async function runNeuroChatting(task, store) {
         // и банит волной похожие аккаунты.
         await sleep(humanPace(reply, (msg.message || '').length).totalMs)
         await client.sendMessage(peer, { message: reply, replyTo: msg.id })
+        // §11.1: переписка в группах — тоже под контролем владельца.
+        void recordMessage({ accountId, peer: String(peer?.username || peer?.id || ''), direction: 'in', text: msg.message || '', userId: task.userId, moduleKey: task.moduleKey, taskId: task.id, campaignId: s.campaignId })
+        void recordMessage({ accountId, peer: String(peer?.username || peer?.id || ''), direction: 'out', text: reply, userId: task.userId, moduleKey: task.moduleKey, taskId: task.id, campaignId: s.campaignId })
         task.accountStats[accountId] = task.accountStats[accountId] || { actions: 0, floodWaits: 0 }
         task.accountStats[accountId].actions += 1
         await incAction(accountId, 'comments') // §6: групповые сообщения — под лимит комментариев
@@ -1219,6 +1223,10 @@ export async function runNeuroDialogs(task, store) {
           await sleep(pickDelay(s.delays?.action?.[0] ?? 5, s.delays?.action?.[1] ?? 30, mul) * 1000)
           await sleep(humanPace(reply, incoming.length).totalMs) // §4.4: читаем и печатаем как человек
           await client.sendMessage(d.entity, { message: reply })
+          // §11.1: сохраняем ОБЕ реплики — входящую и наш ответ. Владелец отвечает за то,
+          // что пишут его аккаунтами, поэтому переписка хранится целиком. Best-effort.
+          void recordMessage({ accountId, peer: peerKey, direction: 'in', text: incoming, userId: task.userId, moduleKey: task.moduleKey, taskId: task.id, campaignId: s.campaignId })
+          void recordMessage({ accountId, peer: peerKey, direction: 'out', text: reply, userId: task.userId, moduleKey: task.moduleKey, taskId: task.id, campaignId: s.campaignId })
           // §10.5: теперь, когда ответ реально ушёл, биллим расход vision (описание фото).
           if (imageBill) await recordTokens(imageBill).catch(() => { /* биллинг не роняет диалог */ })
           // Помечаем прочитанным, чтобы не отвечать повторно одному и тому же собеседнику.
@@ -2218,6 +2226,9 @@ export async function runMailing(task, store) {
         // 3) Пауза «по-человечески» и отправка (#6: прерываемая — стоп не шлёт лишнее ЛС).
         if (await interruptibleSleep(pickDelay(dm[0], dm[1], mul) * 1000, makeStopCheck(store, task.id))) { await disconnectAccount(client, account); break }
         await sendComposedMessage(client, user, text, s.mediaUrls) // §11: текст + медиа/ссылки
+        // §11.1: исходящее ЛС — под контролем владельца (рассылка чужим людям
+        // рискованнее всего, поэтому её текст видеть важнее прочего).
+        void recordMessage({ accountId: account, peer: String(tgt || user?.username || ''), direction: 'out', text, userId: task.userId, moduleKey: task.moduleKey, taskId: task.id, campaignId: s.campaignId })
         await incAction(account, 'dm') // §6: суточный лимит ЛС
         // Не засоряем адресную книгу аккаунта импортированными номерами.
         try { await client.invoke(new Api.contacts.DeleteContacts({ id: [user] })) } catch { /* не критично */ }

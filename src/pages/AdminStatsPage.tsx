@@ -5,7 +5,7 @@ import { PageHeader, Card, Segmented, EmptyState } from '@/shared/ui'
 import { useApp } from '@/mocks/store'
 import {
   fetchAdminOverview, fetchClientReport, fetchUsersReport, fetchProblems, fetchCrmOverview,
-  fetchActiveNow, fetchDailySpend, fetchPurchases, fetchPayments, fetchAccountsHealth, fetchUserActivity, type UserActivity, fetchUserDialogs, type UserDialogs,
+  fetchActiveNow, fetchDailySpend, fetchPurchases, fetchPayments, fetchAccountsHealth, fetchUserActivity, type UserActivity, fetchUserDialogs, type UserDialogs, fetchMessages, type MessageRow,
   type AdminOverview, type ClientReport, type UsersReport, type Problems, type CrmOverview,
   type ActiveNow, type ActiveTask, type DailySpend, type Purchases, type PaymentsResult, type UserRow, type AccountsHealth, fetchPrices, savePrices, type EffectivePrices, type PricePatch } from '@/api/adminApi'
 import { updateUser } from '@/api/usersApi'
@@ -847,6 +847,18 @@ const LEAD_STATUS_RU: Record<string, string> = {
  * чтобы увидеть, с кем идёт работа, и не заводя нового хранилища.
  */
 function UserDialogsBlock({ state }: { state: UserDialogs | 'loading' | undefined }) {
+  // §11.1: какой диалог раскрыт и его реплики. Тянем по клику — переписка тяжелее
+  // списка, грузить её на все диалоги сразу незачем.
+  const [open, setOpen] = useState('')
+  const [chat, setChat] = useState<MessageRow[] | 'loading' | null>(null)
+  const toggle = (d: { peer: string; accountId: string }) => {
+    if (open === d.peer) { setOpen(''); setChat(null); return }
+    setOpen(d.peer)
+    setChat('loading')
+    void fetchMessages({ peer: d.peer, accountId: d.accountId, limit: 200 })
+      .then((rows) => setChat([...rows].reverse())) // в чате читают снизу вверх: старые сначала
+      .catch(() => setChat([]))
+  }
   if (state === undefined) return null
   if (state === 'loading') return <div className="mt-4 text-xs text-muted">Диалоги загружаются…</div>
   if (!state.rows.length) {
@@ -867,8 +879,9 @@ function UserDialogsBlock({ state }: { state: UserDialogs | 'loading' | undefine
       </div>
       <div className="max-h-64 space-y-1 overflow-y-auto pr-1">
         {state.rows.map((d) => (
-          <div key={d.id} className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5 border-b border-line/30 pb-1 text-xs last:border-0">
-            <span className="font-medium text-fg">{d.peer || '—'}</span>
+          <div key={d.id} className="border-b border-line/30 pb-1 last:border-0">
+          <button onClick={() => toggle(d)} className="flex w-full flex-wrap items-baseline gap-x-2 gap-y-0.5 text-left text-xs">
+            <span className="font-medium text-fg underline decoration-dotted underline-offset-2">{d.peer || '—'}</span>
             {d.isHot && <span className="rounded bg-red-500/12 px-1 text-[10px] font-bold text-red-300">горячий</span>}
             <span className="text-muted">{LEAD_STATUS_RU[d.status] || d.status}</span>
             <span className="text-[10px] text-faint">через {d.accountName}</span>
@@ -881,6 +894,21 @@ function UserDialogsBlock({ state }: { state: UserDialogs | 'loading' | undefine
             <span className="ml-auto shrink-0 tabular-nums text-faint">
               {d.at ? new Date(d.at).toLocaleDateString('ru-RU') : '—'}
             </span>
+          </button>
+          {/* §11.1: сама переписка — раскрывается по клику на собеседнике. */}
+          {open === d.peer && (
+            <div className="mt-1 space-y-1 rounded-lg border border-line/60 bg-surface/60 p-2">
+              {chat === 'loading' && <div className="text-[11px] text-muted">Загрузка переписки…</div>}
+              {chat !== 'loading' && !chat?.length && <div className="text-[11px] text-muted">Реплик не сохранено (переписка велась до включения хранения).</div>}
+              {chat !== 'loading' && chat?.map((m) => (
+                <div key={m.id} className={cn('text-[11px] leading-snug', m.direction === 'out' ? 'text-spark-200' : 'text-fg')}>
+                  <span className="mr-1 text-faint">{new Date(m.at).toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}</span>
+                  <span className="mr-1 font-bold">{m.direction === 'out' ? 'мы →' : '← он'}</span>
+                  <span className="whitespace-pre-wrap">{m.text}</span>
+                </div>
+              ))}
+            </div>
+          )}
           </div>
         ))}
       </div>

@@ -179,6 +179,21 @@ export async function fetchUserDialogs(userId: string): Promise<UserDialogs> {
   return (await apiGet<{ ok: boolean; dialogs: UserDialogs }>(`/api/admin/user-dialogs?userId=${encodeURIComponent(userId)}`)).dialogs
 }
 
+/** §11.1: реплика переписки. direction: 'in' — написали нам, 'out' — написали мы. */
+export interface MessageRow {
+  id: string; accountId: string; userId: string; peer: string
+  direction: 'in' | 'out'; text: string; moduleKey: string; taskId: string; at: number
+}
+/** §11.1: переписка — по собеседнику, аккаунту или юзеру целиком. Только админ. */
+export async function fetchMessages(f: { userId?: string; accountId?: string; peer?: string; limit?: number }): Promise<MessageRow[]> {
+  const q = new URLSearchParams()
+  if (f.userId) q.set('userId', f.userId)
+  if (f.accountId) q.set('accountId', f.accountId)
+  if (f.peer) q.set('peer', f.peer)
+  if (f.limit) q.set('limit', String(f.limit))
+  return (await apiGet<{ ok: boolean; messages: MessageRow[] }>(`/api/admin/messages?${q}`)).messages
+}
+
 export async function fetchUsersReport(since?: number): Promise<UsersReport> {
   const q = since ? `?since=${since}` : ''
   const data = await apiGet<{ ok: boolean; report: UsersReport }>(`/api/admin/users-report${q}`)
