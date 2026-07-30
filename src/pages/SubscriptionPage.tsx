@@ -5,6 +5,7 @@ import { useApp } from '@/mocks/store'
 import { usePlan } from '@/features/billing/plan'
 import { useSession } from '@/features/auth/session'
 import { fetchSubscription, saveSubscription, createBundle, deleteBundle, type Subscription } from '@/api/balanceApi'
+import { savePrices } from '@/api/adminApi'
 import { cn } from '@/shared/lib/utils'
 
 /**
@@ -23,6 +24,8 @@ export function SubscriptionPage() {
   const loadPlan = usePlan((s) => s.load)
   // Конструктор наборов и их удаление — владельцу; клиент видит витрину и покупает.
   const sessionUser = useSession((st) => st.user)
+  // §11.2: черновик цены модуля (правит админ прямо в кабинете) — сохраняем на Enter/blur.
+  const [priceDraft, setPriceDraft] = useState<Record<string, string>>({})
   const isAdmin = !sessionUser || !!sessionUser.isAdmin
   const [data, setData] = useState<Subscription | null>(null)
   const [picked, setPicked] = useState<Set<string>>(new Set())
@@ -75,6 +78,31 @@ export function SubscriptionPage() {
   const reload = async () => {
     const fresh = await fetchSubscription()
     setData(fresh)
+  }
+
+  /**
+   * §11.2: сохранить цену модуля прямо из кабинета (со звонка 29.07 — «и там и там»).
+   * Пишем в тот же прайс, что и админка, поэтому витрина и счёт меняются вместе.
+   * Не трогаем сервер, если значение не изменилось или введён мусор.
+   */
+  const savePrice = async (key: string) => {
+    const raw = priceDraft[key]
+    if (raw === undefined) return
+    const current = data?.items.find((i) => i.key === key)?.price
+    const next = Number(raw)
+    if (!Number.isFinite(next) || next < 0) {
+      setPriceDraft((d) => { const n = { ...d }; delete n[key]; return n }) // вернуть показ текущей
+      return
+    }
+    if (next === current) { setPriceDraft((d) => { const n = { ...d }; delete n[key]; return n }); return }
+    try {
+      await savePrices({ modules: { [key]: { month: next } } })
+      setPriceDraft((d) => { const n = { ...d }; delete n[key]; return n })
+      await reload()
+      pushToast({ type: 'success', title: 'Цена обновлена', desc: 'Изменилась и на витрине, и в счёте' })
+    } catch (e) {
+      pushToast({ type: 'error', title: 'Не удалось сохранить цену', desc: e instanceof Error ? e.message : '' })
+    }
   }
 
   /**
@@ -184,23 +212,41 @@ export function SubscriptionPage() {
           {data.items.map((m) => {
             const on = picked.has(m.key)
             return (
-              <button
+              /* §11.2: строка — не <button>, потому что админу цена редактируется прямо
+                 здесь, а input внутри кнопки — невалидная вёрстка и ломает клик. */
+              <div
                 key={m.key}
-                onClick={() => toggle(m.key)}
                 className={cn(
-                  'flex items-center justify-between gap-3 rounded-xl border px-3.5 py-3 text-left transition-colors',
+                  'flex items-center justify-between gap-3 rounded-xl border px-3.5 py-3 transition-colors',
                   on ? 'border-spark-500/45 bg-spark-500/8' : 'border-line bg-elevated hover:border-spark-500/25',
                 )}
               >
-                <span className="flex items-center gap-2.5">
+                <button onClick={() => toggle(m.key)} className="flex min-w-0 flex-1 items-center gap-2.5 text-left">
                   <span className={cn('grid h-5 w-5 shrink-0 place-items-center rounded-md border', on ? 'border-spark-500 bg-spark-500 text-[#04150c]' : 'border-line')}>
                     {on && <Check size={13} strokeWidth={3} />}
                   </span>
-                  <span className="text-sm font-medium text-fg">{m.title}</span>
-                  {mineSet.has(m.key) && <span className="rounded-md bg-white/8 px-1.5 py-0.5 text-[10px] font-bold text-muted">оплачен</span>}
-                </span>
-                <span className="shrink-0 font-semibold tabular-nums text-fg">{m.price} {cur}</span>
-              </button>
+                  <span className="truncate text-sm font-medium text-fg">{m.title}</span>
+                  {mineSet.has(m.key) && <span className="shrink-0 rounded-md bg-white/8 px-1.5 py-0.5 text-[10px] font-bold text-muted">оплачен</span>}
+                </button>
+                {/* §11.2, со звонка 29.07: цену модуля правим «и там и там» — в админке
+                    и здесь. Обычный юзер видит цену текстом. */}
+                {isAdmin ? (
+                  <span className="flex shrink-0 items-center gap-1">
+                    <input
+                      value={priceDraft[m.key] ?? String(m.price)}
+                      onChange={(e) => setPriceDraft((d) => ({ ...d, [m.key]: e.target.value.replace(/[^\d.]/g, '') }))}
+                      onKeyDown={(e) => { if (e.key === 'Enter') void savePrice(m.key) }}
+                      onBlur={() => void savePrice(m.key)}
+                      title="Цена модуля — правится и здесь, и в админке"
+                      className="input h-8 w-20 text-right text-sm tabular-nums"
+                      inputMode="decimal"
+                    />
+                    <span className="text-sm text-muted">{cur}</span>
+                  </span>
+                ) : (
+                  <span className="shrink-0 font-semibold tabular-nums text-fg">{m.price} {cur}</span>
+                )}
+              </div>
             )
           })}
         </div>
