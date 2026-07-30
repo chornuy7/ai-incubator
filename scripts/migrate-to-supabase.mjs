@@ -35,6 +35,19 @@ async function readJsonl(name) {
     return raw.split('\n').filter(Boolean).map((l) => { try { return JSON.parse(l) } catch { return null } }).filter(Boolean)
   } catch { return [] }
 }
+
+/**
+ * Append-only журналы (wallet_log, token_ledger) пишутся через insert, а не upsert:
+ * у них нет естественного ключа. Повторный прогон скрипта поэтому ДУБЛИРУЕТ их —
+ * что и случилось 30.07 (wallet_log 497 → 2854). Заливаем такой журнал только если
+ * таблица пуста; если в ней уже что-то есть — пропускаем и говорим об этом.
+ */
+async function isEmpty(table) {
+  const { count, error } = await db.from(table).select('*', { count: 'exact', head: true })
+  if (error) return true // таблицы нет — заливать всё равно нечего
+  return (count || 0) === 0
+}
+
 async function upsert(table, rows, opts) {
   if (!rows.length) { console.log(`  ${table}: 0`); return }
   const { error } = await db.from(table).upsert(rows, opts)
@@ -130,22 +143,88 @@ await upsert('accounts_meta', Object.entries(meta || {}).map(([id, m]) => ({
   in_trash: !!m.inTrash, data: m, updated_at: ts(m.updatedAt),
 })), { onConflict: 'id' })
 
-// 9. Журналы денег (append-only — вставляем, дубли по id идентити не грозят)
+// 9. Журналы денег (append-only: заливаем ТОЛЬКО в пустую таблицу — см. isEmpty)
 const wallet = await readJsonl('wallet-log.jsonl')
 if (wallet.length) {
+  if (!(await isEmpty('wallet_log'))) {
+    console.log('  wallet_log: пропущен — таблица не пуста (журнал append-only, повтор создал бы дубли)')
+  } else {
   const { error } = await db.from('wallet_log').insert(wallet.map((w) => ({
     ts: ts(w.ts), user_id: w.userId || null, amount: w.amount, before_val: w.before ?? null, after_val: w.after ?? null, reason: w.reason || null,
   })))
   console.log(`  wallet_log: ${error ? 'ОШИБКА ' + error.message : wallet.length}`)
+  }
 }
 const ledger = await readJsonl('token-ledger.jsonl')
 if (ledger.length) {
+  if (!(await isEmpty('token_ledger'))) {
+    console.log('  token_ledger: пропущен — таблица не пуста (журнал append-only)')
+  } else {
   const { error } = await db.from('token_ledger').insert(ledger.map((e) => ({
     ts: ts(e.ts), user_id: e.userId || null, module: e.module || null, account_id: e.accountId || null,
     task_id: e.taskId || null, campaign_id: e.campaignId || null, model: e.model || null,
     tokens: e.tokens || 0, prompt_tokens: e.promptTokens || 0, completion_tokens: e.completionTokens || 0, coins: e.coins || 0,
   })))
   console.log(`  token_ledger: ${error ? 'ОШИБКА ' + error.message : ledger.length}`)
+  }
 }
+
+// ── Сторы, перенесённые аудитом 30.07 (§10.2) ────────────────────────────────
+// Таблицы создаёт 2026-07-30-remaining-stores.sql. Здесь — данные из файлов.
+// Идемпотентно (upsert по ключу), поэтому можно гонять повторно.
+
+const channels = await readJson('channels.json', [])
+await upsert('channels', (Array.isArray(channels) ? channels : []).map((c) => {
+  const { id, title, username, link, subscribers, hasComments, tgPeerId, rating, createdAt, updatedAt, ...rest } = c
+  return {
+    id, title: title || '', username: username || '', link: link || '',
+    subscribers: Number(subscribers) || 0, has_comments: hasComments ?? false,
+    tg_peer_id: tgPeerId || '', rating: rating ?? null, data: rest,
+    created_at: ts(createdAt) || new Date().toISOString(),
+    updated_at: ts(updatedAt) || new Date().toISOString(),
+  }
+}), { onConflict: 'id' })
+
+const groups = await readJson('account-groups.json', [])
+await upsert('account_groups', (Array.isArray(groups) ? groups : []).map((g) => ({
+  id: g.id, name: g.name || '', account_ids: g.accountIds || [],
+  color: g.color || '', note: g.note || '',
+  created_at: ts(g.createdAt) || new Date().toISOString(),
+  updated_at: ts(g.updatedAt) || new Date().toISOString(),
+})), { onConflict: 'id' })
+
+const activity = await readJson('account-activity.json', {})
+await upsert('account_activity', Object.entries(activity || {}).map(([accountId, a]) => {
+  const { fatigue, restUntil, lastActionAt, actionsTotal, ...data } = a || {}
+  return {
+    account_id: accountId, fatigue: Number(fatigue) || 0, rest_until: Number(restUntil) || 0,
+    last_action_at: Number(lastActionAt) || 0, actions_total: Number(actionsTotal) || 0, data,
+  }
+}), { onConflict: 'account_id' })
+
+const schedules = await readJson('campaign-schedules.json', [])
+await upsert('campaign_schedules', (Array.isArray(schedules) ? schedules : []).map((x) => {
+  const { id, name, createdAt, updatedAt, ...data } = x
+  return { id, name: name || '', data, created_at: ts(createdAt) || new Date().toISOString(), updated_at: ts(updatedAt) || new Date().toISOString() }
+}), { onConflict: 'id' })
+
+const agentsList = await readJson('agents.json', [])
+await upsert('agents', (Array.isArray(agentsList) ? agentsList : []).map((a) => {
+  const { id, name, userId, createdAt, updatedAt, ...data } = a
+  return { id, name: name || '', data, user_id: userId || null, created_at: ts(createdAt) || new Date().toISOString(), updated_at: ts(updatedAt) || new Date().toISOString() }
+}), { onConflict: 'id' })
+
+// Мелкие конфиги — в общий KV. Пишем только то, что реально есть в файлах.
+const kv = []
+for (const [key, file, fallback] of [
+  ['settings', 'settings.json', {}],
+  ['ai-settings', 'ai-settings.json', {}],
+  ['ai-safety', 'ai-safety.json', {}],
+  ['target-blacklist', 'target-blacklist.json', { entries: [] }],
+]) {
+  const value = await readJson(file, null)
+  if (value !== null) kv.push({ key, value: value ?? fallback })
+}
+await upsert('app_settings', kv, { onConflict: 'key' })
 
 console.log('Готово.')
