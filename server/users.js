@@ -7,7 +7,7 @@
  */
 import crypto from 'crypto'
 import { dataPath, readJson, writeJson } from './lib/jsonStore.js'
-import { getSupabase, supabaseEnabled } from './lib/supabase.js'
+import { getSupabase, supabaseEnabled, verifyAuthPassword } from './lib/supabase.js'
 
 function sb() { return supabaseEnabled() ? getSupabase() : null }
 const rowToUser = (r) => ({
@@ -240,5 +240,29 @@ export async function authenticate(email, password) {
   const user = await findByEmail(email)
   if (!user || !user.active) return null
   if (!verifyPassword(password, user.passwordHash)) return null
+  return publicUser(user)
+}
+
+/**
+ * §11.3 (кол 29.07): вход через Supabase Auth (новый источник истины паролей).
+ *
+ * Пароль проверяет GoTrue, а не наш scrypt-хэш. При успехе сопоставляем auth-аккаунт с
+ * нашей учёткой оператора (ради ролей/прав §8.1, завязанных на legacy-id `usr_…`):
+ *  1) по `profiles.legacy_id` (проставляется скриптом fill-profiles), иначе
+ *  2) по e-mail (человек уже в Auth, но профиль ещё не слинкован).
+ * Не нашли активную учётку — вход отклоняем. @returns публичный юзер или null.
+ */
+export async function authenticateSupabase(email, password) {
+  const authUser = await verifyAuthPassword(email, password)
+  if (!authUser) return null
+  const db = sb()
+  let user = null
+  if (db) {
+    const { data: prof } = await db.from('profiles').select('legacy_id, active').eq('id', authUser.id).maybeSingle()
+    if (prof && prof.active === false) return null // профиль выключен админом — не пускаем
+    if (prof?.legacy_id) user = await getUser(prof.legacy_id)
+  }
+  if (!user) user = await findByEmail(email)
+  if (!user || !user.active) return null
   return publicUser(user)
 }

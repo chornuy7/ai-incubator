@@ -1,6 +1,6 @@
 /** CRUD + аутентификация операторов (§8.1). Монтируется в /api/users. */
 import { Router } from 'express'
-import { listUsers, getUser, createUser, updateUser, deleteUser, authenticate, publicUser } from './users.js'
+import { listUsers, getUser, createUser, updateUser, deleteUser, authenticate, authenticateSupabase, publicUser } from './users.js'
 import { rolesForUser, mergePermissions, userRoleIds, hasAdminRole } from './roles.js'
 import { appendAudit } from './lib/auditLog.js'
 import { clockIn, clockOut, summariesFor } from './workLog.js'
@@ -37,13 +37,18 @@ usersRouter.post('/login', async (req, res) => {
     // (сценарий: доступ забрал уволенный сотрудник). За прокси берём первый
     // адрес из x-forwarded-for, иначе — сокет.
     const ip = req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.socket?.remoteAddress || ''
-    const user = await authenticate(email, password)
+    // §11.3 (кол 29.07): двухрежимный вход. Сначала Supabase Auth (новый источник истины
+    // паролей); если там пары нет или Auth не настроен — падаем на legacy scrypt-хэш, чтобы
+    // уже заведённые операторы продолжали заходить, пока их не перенесли в Auth.
+    let via = 'supabase'
+    let user = await authenticateSupabase(email, password)
+    if (!user) { user = await authenticate(email, password); via = 'legacy' }
     if (!user) {
       await appendAudit({ action: 'user.login.fail', module: 'auth', initiator: 'system', reason: `Неудачный вход: ${String(email || '').slice(0, 60)}`, meta: { ip } })
       return res.status(401).json({ ok: false, error: 'Неверный e-mail или пароль' })
     }
     await clockIn(user.id) // учёт рабочего времени (§8.1): старт сессии труда
-    await appendAudit({ action: 'user.login', module: 'auth', initiator: user.email, reason: `Вход: ${user.name}`, meta: { userId: user.id, roleIds: userRoleIds(user), ip } })
+    await appendAudit({ action: 'user.login', module: 'auth', initiator: user.email, reason: `Вход: ${user.name}`, meta: { userId: user.id, roleIds: userRoleIds(user), ip, via } })
     res.json({ ok: true, ...(await sessionPayload(user)) })
   } catch (err) { fail(res, err, 500) }
 })
