@@ -4,14 +4,14 @@ import {
   Menu, Zap, Sun, Moon, Radar, ChevronDown, UserCog, LogOut, Wallet, Check, AlertTriangle, Package,
 } from 'lucide-react'
 import { useApp, activeAccounts } from '@/mocks/store'
-import { fetchBalance, fetchPricing, type Balance, type Pricing } from '@/api/balanceApi'
+import { fetchBalance, fetchPricing, buyTokens, type Balance, type Pricing } from '@/api/balanceApi'
 import { useSession } from '@/features/auth/session'
 import { usePlan } from '@/features/billing/plan'
 import { CRITICAL } from '@/features/billing/LowBalanceBar'
 import { useUi } from '@/shared/lib/uiStore'
 import { coins as fmtCoins } from '@/shared/lib/utils'
 import { Dropdown, MenuItem, Modal, Avatar } from '@/shared/ui'
-import { LANGUAGES } from '@/shared/config/modules'
+import { LANGUAGES, moduleTitle } from '@/shared/config/modules'
 
 /**
  * Запасные пакеты — на случай, если прайс с сервера не приехал. Настоящие цены
@@ -80,6 +80,26 @@ export function AppHeader() {
   const email = sessionUser?.email || data.user.email
   const roleLabel = sessionUser ? (sessionUser.isAdmin ? 'Администратор' : (sessionUser.roleName || 'Роль не задана')) : null
   const doLogout = () => { logout(); setUserState('guest'); nav('/') }
+
+  // §11.4: $ — основной кошелёк. Купить токены = потратить деньги со счёта (buyTokens
+  // списывает $ и начисляет ⚡). Пополнение самих $ — через платёжку, которую ещё
+  // подключают, поэтому пока показываем честный статус, а не делаем вид, что зачислили.
+  const curSym = pricing?.currency || '$'
+  const [buying, setBuying] = useState<number | null>(null)
+  const buyPack = async (usd: number) => {
+    setBuying(usd)
+    try {
+      const r = await buyTokens(usd)
+      setBalance(r.balance)
+      pushToast({ type: 'success', title: `Куплено ${fmtCoins(r.tokens)} ⚡`, desc: `Списано ${curSym}${r.spentUsd.toFixed(2)}` })
+    } catch (e) {
+      pushToast({ type: 'error', title: 'Не удалось купить токены', desc: e instanceof Error ? e.message : 'Пополните $ на счёте' })
+    } finally { setBuying(null) }
+  }
+  const TOPUP_USD = [10, 25, 50, 100]
+  const topUpUsd = (amount: number) => {
+    pushToast({ type: 'info', title: 'Пополнение $ скоро', desc: `Оплата на ${curSym}${amount} — подключаем платёжную систему (VIVA/Stripe).` })
+  }
 
   return (
     <header className="sticky top-0 z-40 border-b border-line bg-surface/80 backdrop-blur-xl">
@@ -285,22 +305,94 @@ export function AppHeader() {
       <Modal
         open={coinsOpen}
         onClose={() => setCoinsOpen(false)}
-        title="Баланс монет"
-        subtitle="Монеты ⚡ — топливо: тратятся за каждое действие. Какие модули открыты — это подписка"
-        icon={<Zap size={22} fill="currentColor" />}
+        title="Кошелёк"
+        subtitle="Деньги, токены и подключённые модули"
+        icon={<Wallet size={22} />}
         size="md"
       >
-        <div className="mb-4 flex items-center justify-between rounded-2xl border border-amber-500/30 bg-amber-500/10 px-4 py-3.5">
-          <span className="text-sm font-medium text-muted">Текущий баланс</span>
-          <span className="flex items-center gap-1.5 font-display text-2xl font-bold text-amber-300">
-            <Zap size={20} fill="currentColor" /> {fmtCoins(balance?.coins ?? data.coins)}
-          </span>
+        {/* §11.4: ДЕНЬГИ ($) — основное, крупно и первым; токены ⚡ — вторично.
+            Разделение со звонка: «баланс — это $, за них покупаем подписки и токены». */}
+        <div className="mb-4 grid grid-cols-1 gap-3 sm:grid-cols-2">
+          <div className="rounded-2xl border border-spark-500/40 bg-spark-500/8 px-4 py-3.5">
+            <div className="text-xs font-medium text-muted">Деньги на счету</div>
+            <div className="mt-0.5 flex items-center gap-1.5 font-display text-2xl font-bold text-spark-200">
+              {curSym}{(balance?.usd ?? 0).toFixed(2)}
+            </div>
+            <div className="mt-0.5 text-[11px] text-muted">за них — подписки и токены</div>
+          </div>
+          <div className="rounded-2xl border border-amber-500/30 bg-amber-500/10 px-4 py-3.5">
+            <div className="text-xs font-medium text-muted">Токены (топливо)</div>
+            <div className="mt-0.5 flex items-center gap-1.5 font-display text-2xl font-bold text-amber-300">
+              <Zap size={20} fill="currentColor" /> {fmtCoins(balance?.coins ?? data.coins)}
+            </div>
+            <div className="mt-0.5 text-[11px] text-muted">тратятся за каждое действие</div>
+          </div>
         </div>
-        {/* Прайс: человек должен видеть, за что уходят монеты, до пополнения, а не после. */}
+
+        {/* §11.4: в кошельке лежит всё, что человек взял за $ — не только деньги и токены,
+            но и открытые модули (подписка). Держим это в одном месте, а не по разным экранам. */}
+        <div className="mb-4 rounded-2xl border border-line bg-elevated/50 p-3">
+          <div className="mb-2 flex items-center justify-between">
+            <span className="text-xs font-bold uppercase tracking-wide text-muted">Мои модули</span>
+            <button onClick={() => { setCoinsOpen(false); nav('/panel/user/subscription') }} className="text-xs text-spark-300 hover:text-spark-200">Изменить →</button>
+          </div>
+          {(() => {
+            const mods = balance?.modules
+            if (mods === 'all' || mods == null) return <div className="text-sm text-muted">Открыты <b className="text-fg">все модули</b> (набор не выбран).</div>
+            if (!mods.length) return <div className="text-sm text-muted">Модули не подключены — оформите подписку за {curSym}.</div>
+            return (
+              <div className="flex flex-wrap gap-1.5">
+                {mods.map((k) => (
+                  <span key={k} className="rounded-lg border border-spark-500/30 bg-spark-500/8 px-2 py-1 text-xs text-spark-200">{moduleTitle(k)}</span>
+                ))}
+              </div>
+            )
+          })()}
+        </div>
+
+        {/* Пополнить $ — основная валюта. Оплата подключается (VIVA/Stripe), пока — честный статус. */}
+        <div className="mb-4 rounded-2xl border border-line bg-elevated/50 p-3">
+          <div className="mb-2 text-xs font-bold uppercase tracking-wide text-muted">Пополнить счёт ({curSym})</div>
+          <div className="grid grid-cols-4 gap-2">
+            {TOPUP_USD.map((a) => (
+              <button
+                key={a}
+                onClick={() => topUpUsd(a)}
+                className="flex flex-col items-center gap-0.5 rounded-xl border border-line bg-card py-2.5 transition-colors hover:border-spark-500/40 hover:text-spark-200"
+              >
+                <span className="font-display text-lg font-bold text-fg">{curSym}{a}</span>
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* Обменять деньги на токены: списываем $ со счёта и начисляем ⚡ (buyTokens). */}
+        <div className="mb-4 rounded-2xl border border-line bg-elevated/50 p-3">
+          <div className="mb-2 text-xs font-bold uppercase tracking-wide text-muted">Купить токены за {curSym} со счёта</div>
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+            {(pricing?.packs?.length ? pricing.packs : FALLBACK_PACKS).map((p) => (
+              <button
+                key={p.coins}
+                onClick={() => void buyPack(p.price)}
+                disabled={buying !== null}
+                className={`relative flex flex-col items-center gap-1 rounded-2xl border p-4 transition-all hover:-translate-y-0.5 disabled:opacity-50 ${p.best ? 'border-spark-500/50 bg-spark-500/8' : 'border-line bg-elevated'}`}
+              >
+                {p.best && <span className="absolute -top-2 rounded-full bg-spark-gradient px-2 py-0.5 text-[10px] font-bold text-[#04150c]">ВЫГОДНО</span>}
+                <Zap size={22} className="text-amber-400" fill="currentColor" />
+                <span className="font-display text-xl font-bold text-fg">{p.coins}</span>
+                <span className="text-sm font-semibold text-muted">{p.price} {curSym}</span>
+                {/* Цена монеты в пакете: «выгодно» должно быть посчитано, а не заявлено. */}
+                <span className="text-[10px] text-faint">{(p.price / p.coins).toFixed(3)} {curSym} / ⚡</span>
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* Прайс: человек должен видеть, за что уходят токены, до покупки, а не после. */}
         {pricing && (
-          <div className="mb-4 rounded-2xl border border-line bg-elevated/50 p-3">
+          <div className="rounded-2xl border border-line bg-elevated/50 p-3">
             <div className="mb-2 text-xs font-bold uppercase tracking-wide text-muted">Сколько стоит действие</div>
-            <div className="max-h-44 overflow-y-auto pr-1">
+            <div className="max-h-40 overflow-y-auto pr-1">
               {pricing.items.map((p) => (
                 <div key={p.key} className="flex items-center justify-between border-b border-line/50 py-1 text-sm last:border-0">
                   <span className="text-muted">{p.title}</span>
@@ -313,22 +405,6 @@ export function AppHeader() {
             </div>
           </div>
         )}
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-          {(pricing?.packs?.length ? pricing.packs : FALLBACK_PACKS).map((p) => (
-            <button
-              key={p.coins}
-              onClick={() => { pushToast({ type: 'info', title: 'Оплата в демо отключена', desc: `Пакет ${p.coins} ⚡ — только визуал.` }); setCoinsOpen(false) }}
-              className={`relative flex flex-col items-center gap-1 rounded-2xl border p-4 transition-all hover:-translate-y-0.5 ${p.best ? 'border-spark-500/50 bg-spark-500/8' : 'border-line bg-elevated'}`}
-            >
-              {p.best && <span className="absolute -top-2 rounded-full bg-spark-gradient px-2 py-0.5 text-[10px] font-bold text-[#04150c]">ВЫГОДНО</span>}
-              <Zap size={22} className="text-amber-400" fill="currentColor" />
-              <span className="font-display text-xl font-bold text-fg">{p.coins}</span>
-              <span className="text-sm font-semibold text-muted">{p.price} {pricing?.currency ?? '$'}</span>
-              {/* Цена монеты в пакете: «выгодно» должно быть посчитано, а не заявлено. */}
-              <span className="text-[10px] text-faint">{(p.price / p.coins).toFixed(3)} {pricing?.currency ?? '$'} / ⚡</span>
-            </button>
-          ))}
-        </div>
       </Modal>
     </header>
   )

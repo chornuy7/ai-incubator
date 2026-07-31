@@ -1,11 +1,9 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Check, Package, Sparkles, Loader2, Trash2, Plus } from 'lucide-react'
+import { Check, Package, Sparkles, Loader2 } from 'lucide-react'
 import { PageHeader, Card } from '@/shared/ui'
 import { useApp } from '@/mocks/store'
 import { usePlan } from '@/features/billing/plan'
-import { useSession } from '@/features/auth/session'
-import { fetchSubscription, saveSubscription, createBundle, deleteBundle, type Subscription } from '@/api/balanceApi'
-import { savePrices } from '@/api/adminApi'
+import { fetchSubscription, saveSubscription, type Subscription } from '@/api/balanceApi'
 import { cn } from '@/shared/lib/utils'
 
 /**
@@ -16,25 +14,18 @@ import { cn } from '@/shared/lib/utils'
  * здесь не выбор из трёх коробок, а конструктор: отметил — увидел сумму — оплатил.
  * Готовые сетапы рядом как быстрый путь, они же дают скидку за связку.
  *
- * Сумму считает сервер (`/api/subscription/quote`): витрина и то, что спишется,
- * обязаны быть одним числом, а не двумя реализациями одной формулы.
+ * §11.2 (уточнение 31.07): это ТОЛЬКО ВЫБОР — как на лендинге. Правка цен и сборка
+ * наборов живут в АДМИН-панели (вкладки «Цены»/«Наборы»), а не в кабинете клиента:
+ * кабинет не должен выглядеть как редактор. Сумму считает сервер
+ * (`/api/subscription/quote`): витрина и то, что спишется, — одно число.
  */
 export function SubscriptionPage() {
   const pushToast = useApp((s) => s.pushToast)
   const loadPlan = usePlan((s) => s.load)
-  // Конструктор наборов и их удаление — владельцу; клиент видит витрину и покупает.
-  const sessionUser = useSession((st) => st.user)
-  // §11.2: черновик цены модуля (правит админ прямо в кабинете) — сохраняем на Enter/blur.
-  const [priceDraft, setPriceDraft] = useState<Record<string, string>>({})
-  const isAdmin = !sessionUser || !!sessionUser.isAdmin
   const [data, setData] = useState<Subscription | null>(null)
   const [picked, setPicked] = useState<Set<string>>(new Set())
   const [saving, setSaving] = useState(false)
   const [period, setPeriod] = useState<'month' | 'year'>('month')
-  // Форма «собрать набор под клиента»: имя + цена, состав берётся из текущего выбора.
-  const [bundleName, setBundleName] = useState('')
-  const [bundlePrice, setBundlePrice] = useState('')
-  const [bundleBusy, setBundleBusy] = useState(false)
 
   useEffect(() => {
     void fetchSubscription().then((d) => {
@@ -74,67 +65,6 @@ export function SubscriptionPage() {
     return next
   })
   const applySetup = (modules: string[]) => setPicked(new Set(modules))
-
-  const reload = async () => {
-    const fresh = await fetchSubscription()
-    setData(fresh)
-  }
-
-  /**
-   * §11.2: сохранить цену модуля прямо из кабинета (со звонка 29.07 — «и там и там»).
-   * Пишем в тот же прайс, что и админка, поэтому витрина и счёт меняются вместе.
-   * Не трогаем сервер, если значение не изменилось или введён мусор.
-   */
-  const savePrice = async (key: string) => {
-    const raw = priceDraft[key]
-    if (raw === undefined) return
-    const current = data?.items.find((i) => i.key === key)?.price
-    const next = Number(raw)
-    if (!Number.isFinite(next) || next < 0) {
-      setPriceDraft((d) => { const n = { ...d }; delete n[key]; return n }) // вернуть показ текущей
-      return
-    }
-    if (next === current) { setPriceDraft((d) => { const n = { ...d }; delete n[key]; return n }); return }
-    try {
-      await savePrices({ modules: { [key]: { month: next } } })
-      setPriceDraft((d) => { const n = { ...d }; delete n[key]; return n })
-      await reload()
-      pushToast({ type: 'success', title: 'Цена обновлена', desc: 'Изменилась и на витрине, и в счёте' })
-    } catch (e) {
-      pushToast({ type: 'error', title: 'Не удалось сохранить цену', desc: e instanceof Error ? e.message : '' })
-    }
-  }
-
-  /**
-   * Сохранить текущий выбор как именованный набор с ЯВНОЙ ценой. Это то, как
-   * реально продают: «клиенту нужен парсер + комментинг за 20 $» — админ собирает
-   * ровно этот пакет, и покупатель получает ровно эти модули.
-   */
-  const saveBundle = async () => {
-    const price = Number(String(bundlePrice).replace(',', '.'))
-    if (!bundleName.trim()) { pushToast({ type: 'error', title: 'Дайте набору имя', desc: 'Его увидит клиент' }); return }
-    if (!Number.isFinite(price) || price <= 0) { pushToast({ type: 'error', title: 'Нужна цена больше нуля', desc: 'Например 20' }); return }
-    if (!keys.length) { pushToast({ type: 'error', title: 'Отметьте модули', desc: 'Набор собирается из текущего выбора' }); return }
-    setBundleBusy(true)
-    try {
-      await createBundle({ name: bundleName.trim(), modules: keys, price })
-      pushToast({ type: 'success', title: `Набор «${bundleName.trim()}» создан`, desc: `${keys.length} модулей за ${price} ${data?.currency ?? '$'}` })
-      setBundleName(''); setBundlePrice('')
-      await reload()
-    } catch (e) {
-      pushToast({ type: 'error', title: 'Не удалось создать набор', desc: e instanceof Error ? e.message : '' })
-    } finally { setBundleBusy(false) }
-  }
-
-  const removeBundle = async (id: string, name: string) => {
-    try {
-      await deleteBundle(id)
-      pushToast({ type: 'success', title: `Набор «${name}» удалён`, desc: 'Уже купленные подписки не тронуты' })
-      await reload()
-    } catch (e) {
-      pushToast({ type: 'error', title: 'Не удалось удалить', desc: e instanceof Error ? e.message : '' })
-    }
-  }
 
   const save = async () => {
     setSaving(true)
@@ -178,19 +108,7 @@ export function SubscriptionPage() {
             >
               <div className="flex items-center gap-1.5 font-display text-base font-bold text-fg">
                 <Sparkles size={15} className="text-spark-400" /> {s.name}
-                {s.custom && <span className="rounded-md bg-iris-500/15 px-1.5 py-0.5 text-[10px] font-bold text-iris-300">ваш набор</span>}
-                {s.custom && isAdmin && (
-                  <span
-                    role="button"
-                    tabIndex={0}
-                    onClick={(e) => { e.stopPropagation(); void removeBundle(s.id, s.name) }}
-                    onKeyDown={(e) => { if (e.key === 'Enter') { e.stopPropagation(); void removeBundle(s.id, s.name) } }}
-                    className="ml-auto grid h-6 w-6 place-items-center rounded-md border border-line text-muted transition-colors hover:border-red-500/40 hover:text-red-300"
-                    title="Удалить набор (купленные подписки не тронет)"
-                  >
-                    <Trash2 size={12} />
-                  </span>
-                )}
+                {s.custom && <span className="rounded-md bg-iris-500/15 px-1.5 py-0.5 text-[10px] font-bold text-iris-300">набор</span>}
               </div>
               <div className="mt-1 text-xs leading-relaxed text-muted">{s.hint}</div>
               <div className="mt-2 flex items-baseline gap-2">
@@ -212,81 +130,28 @@ export function SubscriptionPage() {
           {data.items.map((m) => {
             const on = picked.has(m.key)
             return (
-              /* §11.2: строка — не <button>, потому что админу цена редактируется прямо
-                 здесь, а input внутри кнопки — невалидная вёрстка и ломает клик. */
-              <div
+              <button
                 key={m.key}
+                onClick={() => toggle(m.key)}
                 className={cn(
-                  'flex items-center justify-between gap-3 rounded-xl border px-3.5 py-3 transition-colors',
+                  'flex items-center justify-between gap-3 rounded-xl border px-3.5 py-3 text-left transition-colors',
                   on ? 'border-spark-500/45 bg-spark-500/8' : 'border-line bg-elevated hover:border-spark-500/25',
                 )}
               >
-                <button onClick={() => toggle(m.key)} className="flex min-w-0 flex-1 items-center gap-2.5 text-left">
+                <span className="flex min-w-0 flex-1 items-center gap-2.5">
                   <span className={cn('grid h-5 w-5 shrink-0 place-items-center rounded-md border', on ? 'border-spark-500 bg-spark-500 text-[#04150c]' : 'border-line')}>
                     {on && <Check size={13} strokeWidth={3} />}
                   </span>
                   <span className="truncate text-sm font-medium text-fg">{m.title}</span>
                   {mineSet.has(m.key) && <span className="shrink-0 rounded-md bg-white/8 px-1.5 py-0.5 text-[10px] font-bold text-muted">оплачен</span>}
-                </button>
-                {/* §11.2, со звонка 29.07: цену модуля правим «и там и там» — в админке
-                    и здесь. Обычный юзер видит цену текстом. */}
-                {isAdmin ? (
-                  <span className="flex shrink-0 items-center gap-1">
-                    <input
-                      value={priceDraft[m.key] ?? String(m.price)}
-                      onChange={(e) => setPriceDraft((d) => ({ ...d, [m.key]: e.target.value.replace(/[^\d.]/g, '') }))}
-                      onKeyDown={(e) => { if (e.key === 'Enter') void savePrice(m.key) }}
-                      onBlur={() => void savePrice(m.key)}
-                      title="Цена модуля — правится и здесь, и в админке"
-                      className="input h-8 w-20 text-right text-sm tabular-nums"
-                      inputMode="decimal"
-                    />
-                    <span className="text-sm text-muted">{cur}</span>
-                  </span>
-                ) : (
-                  <span className="shrink-0 font-semibold tabular-nums text-fg">{m.price} {cur}</span>
-                )}
-              </div>
+                </span>
+                {/* §11.2 (31.07): в кабинете цена — только текстом. Правка цен — в админ-панели. */}
+                <span className="shrink-0 font-semibold tabular-nums text-fg">{m.price} {cur}</span>
+              </button>
             )
           })}
         </div>
       </Card>
-
-      {/* Собрать набор под клиента: состав = текущий выбор, цена — явная.
-          Продают именно так: «парсер + комментинг за 20 $», а не «минус N % от прайса». */}
-      {isAdmin && (
-      <Card>
-        <div className="mb-1 text-xs font-bold uppercase tracking-wide text-muted">Собрать набор для клиента</div>
-        <p className="mb-3 text-xs text-muted">
-          Отметьте модули выше, назовите набор и цену — он появится в «Готовых наборах» и на лендинге.
-          Покупатель получит ровно эти модули; монеты за действия и токены ИИ — сверх, как обычно.
-        </p>
-        <div className="flex flex-wrap items-center gap-2">
-          <input
-            value={bundleName}
-            onChange={(e) => setBundleName(e.target.value)}
-            className="input h-10 min-w-0 flex-1 sm:max-w-xs"
-            placeholder="Название — например «Парсер + Комментинг»"
-          />
-          <input
-            value={bundlePrice}
-            onChange={(e) => setBundlePrice(e.target.value)}
-            className="input h-10 w-28 text-right tabular-nums"
-            placeholder="20"
-            inputMode="decimal"
-          />
-          <span className="text-sm text-muted">{cur} / мес</span>
-          <button
-            onClick={() => void saveBundle()}
-            disabled={bundleBusy}
-            className="btn-ghost h-10 border border-line disabled:opacity-40"
-          >
-            {bundleBusy ? <Loader2 size={15} className="animate-spin" /> : <Plus size={15} />}
-            Создать набор из выбранного ({keys.length})
-          </button>
-        </div>
-      </Card>
-      )}
 
       {/* Итог держим на виду: сумма меняется от каждого клика, и уезжать за ней вниз незачем. */}
       <div className="sticky bottom-4 flex flex-wrap items-center gap-3 rounded-2xl border border-line bg-surface/95 px-4 py-3 backdrop-blur-xl">

@@ -275,6 +275,33 @@ export async function coinsByUser() {
 }
 
 /**
+ * §11.4: ДЕНЬГИ ($) по каждому кошельку — id пользователя → сколько долларов сейчас.
+ *
+ * Зеркало coinsByUser для денежного остатка: со звонка 29.07 «$ — основное», и в
+ * админке «На счету» должно показываться прежде токенов. Служебные кошельки не отдаём.
+ * @returns {Promise<Record<string, number>>}
+ */
+export async function usdByUser() {
+  const db = sb()
+  if (db) {
+    const { data } = await db.from('coin_balance').select('user_id, usd')
+    const out = {}
+    for (const r of data || []) {
+      if (r.user_id === DEFAULT_USER) continue
+      out[r.user_id] = normUsd(r.usd ?? 0)
+    }
+    return out
+  }
+  const all = await readJson(BALANCE_FILE(), {})
+  const out = {}
+  for (const [k, v] of Object.entries(all || {})) {
+    if (k === SUBSCRIPTION_KEY || k === DEFAULT_USER) continue
+    if (typeof v?.usd === 'number') out[k] = normUsd(v.usd)
+  }
+  return out
+}
+
+/**
  * Пополнить (amount > 0) или списать (amount < 0).
  * Уходить в минус не даём: при нуле боевые модули должны останавливаться (C2),
  * а отрицательный баланс сделал бы это правило непроверяемым.

@@ -11,7 +11,7 @@
  */
 import { listModuleKeys, getModuleStore } from './modules/registry.js'
 import { tokenSummary, readLedger } from './tokenLedger.js'
-import { getBalance, totalCoins, coinsByUser } from './balance.js'
+import { getBalance, totalCoins, coinsByUser, usdByUser } from './balance.js'
 import { moduleTitle } from './lib/moduleTitles.js'
 import { loadAllMeta } from './accountsMeta.js'
 import { listActivity } from './accountActivity.js'
@@ -482,9 +482,10 @@ export async function crmOverview(opts = {}) {
  */
 export async function usersReport(opts = {}) {
   const since = Number(opts.since) || 0
-  const [users, coins, ledger, roles] = await Promise.all([
+  const [users, coins, usd, ledger, roles] = await Promise.all([
     listUsers().catch(() => []),
     coinsByUser().catch(() => ({})),
+    usdByUser().catch(() => ({})), // §11.4: денежный остаток ($) по каждому — «На счету» в админке
     readLedger({ since: since || undefined, limit: 100000 }).catch(() => []),
     listRoles().catch(() => []),
   ])
@@ -594,6 +595,8 @@ export async function usersReport(opts = {}) {
       roleName: roleNamesOf(u) || null,
       roleIds: u.roleIds || [],
       coins: round3(coins[u.id] ?? 0),
+      // §11.4: денежный остаток ($) — основной кошелёк, показывается прежде токенов.
+      usd: Math.round((usd[u.id] ?? 0) * 100) / 100,
       // §11.9: когда и с какого IP заходил последний раз (null — входов в аудите нет).
       lastLogin: lastLoginByEmail.get(String(u.email || '').toLowerCase()) || null,
       subscription: subOf(modsByUser[u.id]),
@@ -612,7 +615,7 @@ export async function usersReport(opts = {}) {
     rows.push({
       userId: id,
       email: id === '—' ? 'без владельца (старые задачи)' : `удалённый пользователь ${id}`,
-      name: '', active: false, coins: 0, subscription: null,
+      name: '', active: false, coins: 0, usd: 0, subscription: null,
       tasks: st.tasks, actions: st.actions, spent: st.spent, tokens: st.tokens,
       where: where(st.byModule),
       log: st.log.sort((a, b) => b.at - a.at).slice(0, 100),
@@ -622,11 +625,12 @@ export async function usersReport(opts = {}) {
   rows.sort((a, b) => b.spent - a.spent || b.actions - a.actions)
   const totals = rows.reduce((acc, r) => ({
     coins: round3(acc.coins + r.coins),
+    usd: Math.round((acc.usd + (r.usd || 0)) * 100) / 100,
     tasks: acc.tasks + r.tasks,
     actions: acc.actions + r.actions,
     spent: round3(acc.spent + r.spent),
     tokens: acc.tokens + r.tokens,
-  }), { coins: 0, tasks: 0, actions: 0, spent: 0, tokens: 0 })
+  }), { coins: 0, usd: 0, tasks: 0, actions: 0, spent: 0, tokens: 0 })
 
   // §10.4: курс монета→$ для показа баланса «в долларах» — единый хелпер priceStore.
   let coinUsd = 0

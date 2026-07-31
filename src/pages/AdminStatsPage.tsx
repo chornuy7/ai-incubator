@@ -1,6 +1,6 @@
 import { coins as fmtCoins, cn } from '@/shared/lib/utils'
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { BarChart3, Users, ListChecks, Coins, Download, RefreshCw, AlertTriangle, Contact, Power, ChevronDown, Activity, Plus, Radar, Search, ShoppingCart, Loader2, Check, Trash2 } from 'lucide-react'
+import { BarChart3, Users, ListChecks, Coins, Download, RefreshCw, AlertTriangle, Contact, Power, ChevronDown, Activity, Plus, Radar, Search, ShoppingCart, Loader2, Check, Trash2, ScrollText } from 'lucide-react'
 import { PageHeader, Card, Segmented, EmptyState } from '@/shared/ui'
 import { useApp } from '@/mocks/store'
 import {
@@ -464,21 +464,31 @@ function UsersTab({ report, onReload }: { report: UsersReport | null; onReload: 
    * Отрицательная сумма списывает: та же операция, тот же аудит.
    */
   const topUp = async (userId: string, email: string) => {
+    // §11.4: по умолчанию начисляем ДЕНЬГИ ($) — это основной кошелёк. Токены — топливо,
+    // их клиент покупает за $; но админу иногда надо выдать их напрямую (тест/бонус),
+    // поэтому суффикс ⚡ переключает на токены. Отрицательное число — списать.
     const raw = await promptDialog({
       title: 'Пополнить кошелёк',
-      message: `Сколько монет начислить: ${email}? Отрицательное число — списать.`,
+      message: `Сколько долларов ($) начислить: ${email}? Для токенов допишите ⚡ (напр. 100⚡). Отрицательное — списать.`,
       placeholder: '10',
     })
     if (raw === null) return
-    const amount = Number(String(raw).replace(',', '.'))
+    const s = String(raw).trim().replace(',', '.')
+    const isTokens = /⚡|\bт\b|t$/i.test(s)
+    const amount = Number(s.replace(/[^0-9.\-]/g, ''))
     if (!Number.isFinite(amount) || !amount) {
-      pushToast({ type: 'error', title: 'Нужно число', desc: 'Например 10 или -2.5' })
+      pushToast({ type: 'error', title: 'Нужно число', desc: 'Например 10 (это $10) или 100⚡ (токены)' })
       return
     }
     setBusy(userId)
     try {
-      await changeBalance({ amount, reason: 'Начисление из админ-панели', userId })
-      pushToast({ type: 'success', title: amount > 0 ? `Начислено ${amount} ⚡` : `Списано ${-amount} ⚡`, desc: email })
+      if (isTokens) {
+        await changeBalance({ amount, reason: 'Выдача токенов из админ-панели', userId })
+        pushToast({ type: 'success', title: amount > 0 ? `Начислено ${amount} ⚡` : `Списано ${-amount} ⚡`, desc: email })
+      } else {
+        await changeBalance({ usd: amount, reason: 'Пополнение $ из админ-панели', userId })
+        pushToast({ type: 'success', title: amount > 0 ? `Начислено $${amount}` : `Списано $${-amount}`, desc: email })
+      }
       onReload()
     } catch (e) {
       pushToast({ type: 'error', title: 'Не удалось изменить баланс', desc: e instanceof Error ? e.message : '' })
@@ -535,7 +545,7 @@ function UsersTab({ report, onReload }: { report: UsersReport | null; onReload: 
           />
         </div>
         <span className="text-xs text-muted">
-          Нажмите на строку — увидите, что человек запускал и когда.
+          Нажмите на строку — откроются <b className="text-fg">все действия</b> юзера: входы, запуски, изменения баланса, ролей и подписки.
         </span>
       </div>
       <div className="overflow-x-auto">
@@ -588,18 +598,18 @@ function UsersTab({ report, onReload }: { report: UsersReport | null; onReload: 
                   <td className="py-2 pr-3 text-right tabular-nums text-muted">{fmt(r.tokens)}</td>
                   <td className="py-2 pr-3 text-right tabular-nums text-amber-300">{r.spent ? fmtCoins(r.spent) : '—'}</td>
                   <td className="py-2 pr-3 text-right">
+                    {/* §11.4: деньги ($) — ОСНОВНОЕ, сверху; токены ⚡ — топливо, мельче под ними. */}
                     <div className="flex items-center justify-end gap-1.5">
-                      <span className="tabular-nums text-fg">
-                        {r.coins ? fmtCoins(r.coins) : '—'}
-                        {/* §10.4: баланс «в долларах» — эквивалент по курсу пакетов. */}
-                        {usdEq(r.coins, report.coinUsd) && <span className="ml-1 text-[10px] text-muted">{usdEq(r.coins, report.coinUsd)}</span>}
+                      <span className="leading-tight">
+                        <span className="block text-sm font-semibold tabular-nums text-fg">${(r.usd ?? 0).toFixed(2)}</span>
+                        <span className="block text-[11px] tabular-nums text-amber-300/80">{fmtCoins(r.coins ?? 0)} ⚡</span>
                       </span>
                       {real && (
                         <button
                           onClick={(e) => { e.stopPropagation(); void topUp(r.userId, r.email) }}
                           disabled={busy === r.userId}
                           className="grid h-6 w-6 shrink-0 place-items-center rounded-md border border-line text-muted transition-colors hover:border-spark-500/40 hover:text-spark-300 disabled:opacity-40"
-                          title="Пополнить кошелёк"
+                          title="Пополнить $ / выдать токены"
                         >
                           <Plus size={13} />
                         </button>
@@ -725,6 +735,10 @@ function UsersTab({ report, onReload }: { report: UsersReport | null; onReload: 
                           ) : <span className="text-muted">входов в журнале нет</span>}
                         </div>
                       )}
+                      {/* §11.1 (кол 29.07): ВСЕ действия юзера — подняты вверх карточки, сразу
+                          под входом. Это то, «где видеть всё, что человек делал»: раньше журнал
+                          был в самом низу и его не находили. */}
+                      {real && <UserActivityLog state={activity[r.userId]} />}
                       {/* §10.4: что человек КУПИЛ — модули (подписка) и пополнения кошелька.
                           Отдельно от «что запускал»: одно отвечает «за что платил», другое «что делал». */}
                       {real && (
@@ -806,11 +820,8 @@ function UsersTab({ report, onReload }: { report: UsersReport | null; onReload: 
                         </div>
                       )}
 
-                      {/* §11.1: полный журнал активности — «все логи, вся активность, все
-                          действия» по этому человеку. Не выжимка: владелец платформы отвечает
-                          за то, что делают чужие люди его аккаунтами, и должен видеть сырой поток. */}
+                      {/* §11.1: с кем переписывается — оставляем ниже, это отдельный разрез. */}
                       {real && <UserDialogsBlock state={dialogs[r.userId]} />}
-                      {real && <UserActivityLog state={activity[r.userId]} />}
                     </td>
                   </tr>
                 ) : null,
@@ -822,7 +833,10 @@ function UsersTab({ report, onReload }: { report: UsersReport | null; onReload: 
               <td className="py-2 pr-3 text-right tabular-nums text-fg">{fmt(report.totals.actions)}</td>
               <td className="py-2 pr-3 text-right tabular-nums text-fg">{fmt(report.totals.tokens)}</td>
               <td className="py-2 pr-3 text-right tabular-nums text-amber-300">{fmtCoins(report.totals.spent)}</td>
-              <td className="py-2 pr-3 text-right tabular-nums text-fg">{fmtCoins(report.totals.coins)}</td>
+              <td className="py-2 pr-3 text-right leading-tight">
+                <span className="block text-sm tabular-nums text-fg">${(report.totals.usd ?? 0).toFixed(2)}</span>
+                <span className="block text-[11px] tabular-nums text-amber-300/80">{fmtCoins(report.totals.coins)} ⚡</span>
+              </td>
               <td />
               <td />
             </tr>
@@ -941,10 +955,13 @@ function UserActivityLog({ state }: { state: UserActivity | 'loading' | undefine
 
   const rows = filter ? state.rows.filter((r) => r.action === filter) : state.rows
   return (
-    <div className="mt-4 rounded-xl border border-line bg-elevated/50 p-3">
+    <div className="mt-4 rounded-xl border border-spark-500/30 bg-spark-500/[0.04] p-3">
       <div className="mb-2 flex flex-wrap items-center gap-2">
-        <span className="text-[11px] font-bold uppercase tracking-wide text-muted">
-          Журнал активности ({state.total}{state.total > state.rows.length ? `, показаны ${state.rows.length}` : ''})
+        <span className="inline-flex items-center gap-1.5 text-sm font-bold text-fg">
+          <ScrollText size={15} className="text-spark-300" />
+          Все действия юзера
+          <span className="rounded-md bg-spark-500/15 px-1.5 py-0.5 text-[11px] font-bold text-spark-200">{state.total}</span>
+          {state.total > state.rows.length && <span className="text-[10px] font-normal text-muted">показаны {state.rows.length}</span>}
         </span>
         {/* Фильтр по типу события — иначе в потоке входов не найти смену баланса. */}
         {state.actions.length > 1 && (

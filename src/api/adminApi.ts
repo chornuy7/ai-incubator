@@ -64,8 +64,10 @@ export interface UserRow {
   roleName?: string | null
   /** §10.4: id ролей юзера — для назначения ролей из админки. */
   roleIds?: string[]
-  /** Монет на счету сейчас. */
+  /** Монет (токенов) на счету сейчас. */
   coins: number
+  /** §11.4: деньги ($) на счету — основной кошелёк, показывается прежде токенов. */
+  usd: number
   /** §11.9: последний вход — когда (ISO) и с какого IP. null — входов в аудите нет. */
   lastLogin?: { at: string; ip: string } | null
   /** Подписка: какие модули открыты. all=true — набор не выбран (открыто всё). null — синтетическая строка. */
@@ -82,7 +84,7 @@ export interface UserRow {
 export interface UsersReport {
   since: number
   rows: UserRow[]
-  totals: { coins: number; tasks: number; actions: number; spent: number; tokens: number }
+  totals: { coins: number; usd: number; tasks: number; actions: number; spent: number; tokens: number }
   /** §10.4: курс монета→$ для показа баланса юзера в долларах. 0 = нет прайса. */
   coinUsd?: number
 }
