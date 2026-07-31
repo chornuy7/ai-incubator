@@ -1,3 +1,5 @@
+import { useState, useEffect } from 'react'
+import { X } from 'lucide-react'
 import { MODULE_FEATURES } from './catalog'
 
 /**
@@ -32,8 +34,16 @@ function callouts(moduleKey: string): string[] {
 
 export function ModuleShowcase({ moduleKey, title }: { moduleKey: string; title: string }) {
   const points = callouts(moduleKey)
-  if (!points.length) return null
   const shot = MODULE_SHOTS[moduleKey]
+  // §11.6: клик по скриншоту раскрывает его на весь экран — в маленьком окне детали не читаются.
+  const [zoom, setZoom] = useState(false)
+  useEffect(() => {
+    if (!zoom) return
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setZoom(false) }
+    document.addEventListener('keydown', onKey)
+    return () => document.removeEventListener('keydown', onKey)
+  }, [zoom])
+  if (!points.length) return null
 
   return (
     <div className="mt-4 rounded-2xl border border-line bg-card p-5">
@@ -53,7 +63,10 @@ export function ModuleShowcase({ moduleKey, title }: { moduleKey: string; title:
           </div>
 
           {shot ? (
-            <img src={shot} alt={`Экран модуля «${title}»`} className="w-full" loading="lazy" />
+            <button type="button" onClick={() => setZoom(true)} className="group relative block w-full cursor-zoom-in" title="Нажмите, чтобы увеличить">
+              <img src={shot} alt={`Экран модуля «${title}»`} className="w-full" loading="lazy" />
+              <span className="pointer-events-none absolute bottom-2 right-2 rounded-md bg-black/60 px-2 py-1 text-[10px] font-medium text-white opacity-0 transition-opacity group-hover:opacity-100">Нажмите, чтобы увеличить</span>
+            </button>
           ) : (
             <div className="space-y-2 p-3">
               {points.map((_, i) => (
@@ -83,6 +96,31 @@ export function ModuleShowcase({ moduleKey, title }: { moduleKey: string; title:
           ))}
         </ul>
       </div>
+
+      {/* Лайтбокс: скриншот на весь экран. Клик по фону или ✕ / Escape — закрыть. */}
+      {zoom && shot && (
+        <div
+          onClick={() => setZoom(false)}
+          className="fixed inset-0 z-[100] flex items-center justify-center bg-black/85 p-4 backdrop-blur-sm"
+          role="dialog"
+          aria-modal="true"
+        >
+          <button
+            type="button"
+            onClick={() => setZoom(false)}
+            className="absolute right-4 top-4 grid h-9 w-9 place-items-center rounded-xl bg-white/10 text-white transition-colors hover:bg-white/20"
+            aria-label="Закрыть"
+          >
+            <X size={18} />
+          </button>
+          <img
+            src={shot}
+            alt={`Экран модуля «${title}»`}
+            onClick={(e) => e.stopPropagation()}
+            className="max-h-[92vh] max-w-[95vw] cursor-default rounded-xl border border-white/10 object-contain shadow-2xl"
+          />
+        </div>
+      )}
     </div>
   )
 }
