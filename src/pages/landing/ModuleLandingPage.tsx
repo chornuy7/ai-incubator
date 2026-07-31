@@ -26,7 +26,7 @@ export function ModuleLandingPage() {
       <div className="grid min-h-screen place-items-center bg-bg text-fg">
         <div className="text-center">
           <div className="font-display text-xl font-bold">Модуль не найден</div>
-          <Link to="/" className="btn-primary mt-4 inline-flex h-10 px-5">На главную</Link>
+          <Link to="/landing" className="btn-primary mt-4 inline-flex h-10 px-5">На главную</Link>
         </div>
       </div>
     )
@@ -60,13 +60,16 @@ export function ModuleLandingPage() {
     <div className="min-h-screen bg-bg text-fg">
       <header className="sticky top-0 z-40 border-b border-line bg-surface/80 backdrop-blur-xl">
         <div className="mx-auto flex max-w-6xl items-center gap-3 px-5 py-3.5">
-          <Link to="/" className="flex items-center gap-2.5">
+          {/* §11.6: ведём на /landing, а не «/»: у авторизованного «/» уходит в панель,
+              и «Все тарифы»/логотип с лендинга модуля выкидывали в кабинет. /landing —
+              лендинг и для гостя, и для залогиненного. */}
+          <Link to="/landing" className="flex items-center gap-2.5">
             <div className="grid h-9 w-9 place-items-center rounded-xl bg-spark-gradient text-[#04150c]">
               <Zap size={18} fill="currentColor" />
             </div>
             <div className="font-display text-sm font-bold leading-tight">Murmex</div>
           </Link>
-          <Link to="/#tarify" className="btn-ghost ml-auto h-9 px-4 text-sm"><ArrowLeft size={15} /> Все тарифы</Link>
+          <Link to="/landing#tarify" className="btn-ghost ml-auto h-9 px-4 text-sm"><ArrowLeft size={15} /> Все тарифы</Link>
           <AuthCta />
         </div>
       </header>
@@ -198,7 +201,7 @@ export function ModuleLandingPage() {
       </section>
 
       <footer className="mx-auto max-w-6xl px-5 py-8 text-xs text-muted">
-        <Link to="/" className="hover:text-fg">← Murmex — все модули и тарифы</Link>
+        <Link to="/landing" className="hover:text-fg">← Murmex — все модули и тарифы</Link>
       </footer>
     </div>
   )
