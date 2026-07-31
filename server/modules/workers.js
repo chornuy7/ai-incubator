@@ -1256,7 +1256,9 @@ export async function runNeuroDialogs(task, store) {
           // §9: лид попадает в CRM САМ. Сначала фиксируем сам факт переписки
           // (`contacted`), иначе ответы авто-ответчика проходили мимо CRM. upsertLead
           // двигает только вперёд, поэтому прогретый лид этим вызовом не сбросится.
-          if (s.goalId) {
+          // Цель — счётчик, воронкой владеет КАМПАНИЯ: лид создаётся, если есть кампания
+          // ИЛИ цель (раньше — только при цели, и кампания без цели не набирала CRM).
+          if (s.goalId || s.campaignId) {
             try {
               const { created } = await upsertLead({ goalId: s.goalId, campaignId: s.campaignId, taskId: task.id, accountId, peer: peerKey, status: 'contacted' })
               if (created) await store.appendLog(task, 'info', `Новый лид в CRM: ${peerKey}`, meta.name)
@@ -1269,9 +1271,10 @@ export async function runNeuroDialogs(task, store) {
           // §9: а по ТЕКСТУ ответа определяем стадию воронки и двигаем лида дальше.
           // «Верим на слово»: target ставится, если человек сам сказал, что подписался —
           // фактическая проверка (админ-аккаунт / инвайт-ссылки) будет отдельно.
-          if (s.goalId && incoming) {
+          if ((s.goalId || s.campaignId) && incoming) {
             try {
-              const cur = findLeadByPeer(await listLeads({ goalId: s.goalId }), peerKey)
+              // Лид ищем в его ячейке: кампания (если есть) владеет воронкой, иначе цель.
+              const cur = findLeadByPeer(await listLeads(s.campaignId ? { campaignId: s.campaignId } : { goalId: s.goalId }), peerKey)
               const verdict = await classifyLeadReply({
                 text: incoming,
                 currentStatus: cur?.status || 'cold',
@@ -2252,7 +2255,7 @@ export async function runMailing(task, store) {
         // §9: лид сразу в CRM со статусом «холодный» — это знаменатель конверсии
         // (скольким написали). Ответит — авто-ответчик продвинет его по воронке.
         // peer берём как @username (по нему матчатся входящие диалоги), иначе — телефон.
-        if (s.goalId) {
+        if (s.goalId || s.campaignId) {
           try {
             await upsertLead({
               peer: user.username ? `@${user.username}` : label,

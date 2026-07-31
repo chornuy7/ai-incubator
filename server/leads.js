@@ -187,6 +187,15 @@ export function sortLeadsByPriority(leads = []) {
 
 const normPeer = (x) => String(x ?? '').trim().toLowerCase().replace(/^@/, '')
 
+/**
+ * «Ячейка» лида в CRM. Решение 24–31.07: цель — это ЧИСТЫЙ СЧЁТЧИК, а воронкой владеет
+ * КАМПАНИЯ, поэтому лид уникален в пределах кампании (один и тот же человек в двух
+ * кампаниях — два лида, каждый со своей воронкой). Без кампании (ручной ввод, старые
+ * прогоны) откатываемся на цель, а совсем без обоих — на самого человека (peer).
+ * @param {{campaignId?:string|null, goalId?:string|null}} l
+ */
+const leadScope = (l) => (l.campaignId ? `c:${l.campaignId}` : (l.goalId ? `g:${l.goalId}` : ''))
+
 /** Терминальные статусы — их не откатываем при авто-обновлении (§9). */
 const TERMINAL_LEAD_STATUSES = new Set(['target', 'closed'])
 
@@ -214,7 +223,7 @@ export async function upsertLead(input) {
   // и обычный read-modify-write терял бы часть лидов (последняя запись затирала файл).
   let result = { lead: null, created: false }
   await mutateJson(LEADS_FILE, (all) => {
-    const i = all.findIndex((l) => normPeer(l.peer) === key && (l.goalId || '') === (clean.goalId || ''))
+    const i = all.findIndex((l) => normPeer(l.peer) === key && leadScope(l) === leadScope(clean))
     if (i === -1) {
       const lead = { id: `lead_${crypto.randomUUID().slice(0, 8)}`, ...clean, isHot: clean.status === 'hot', createdAt: Date.now(), updatedAt: Date.now() }
       all.unshift(lead)

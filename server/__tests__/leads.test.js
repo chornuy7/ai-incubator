@@ -127,25 +127,37 @@ test('§9 upsertLead: создаёт новый и продвигает суще
   delete process.env.LEADS_FILE
 })
 
-test('CRM «откуда пришёл»: лид помнит taskId, ПЕРВЫЙ прогон владеет источником', async () => {
+test('CRM «в кампании»: лид уникален по КАМПАНИИ, первый прогон владеет источником', async () => {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'leads-source-'))
   process.env.LEADS_FILE = path.join(dir, 'leads.json')
   const L = await import('../leads.js?source=' + Date.now())
 
   // Первое касание фиксирует источник (кампания + задача).
   const a = await L.upsertLead({ peer: '@lead', goalId: 'g1', campaignId: 'cmp_1', taskId: 'task_1', status: 'contacted' })
+  assert.equal(a.created, true)
   assert.equal(a.lead.taskId, 'task_1')
-  assert.equal(a.lead.campaignId, 'cmp_1')
 
-  // Второй прогон двигает статус, но источник (первый taskId) НЕ переписывает.
-  const b = await L.upsertLead({ peer: '@lead', goalId: 'g1', campaignId: 'cmp_2', taskId: 'task_2', status: 'warm' })
+  // Тот же человек, ТА ЖЕ кампания, другой прогон — это ТОТ ЖЕ лид: статус двигается,
+  // но источник (первая задача) не переписывается.
+  const b = await L.upsertLead({ peer: '@lead', goalId: 'g1', campaignId: 'cmp_1', taskId: 'task_2', status: 'warm' })
+  assert.equal(b.created, false)
   assert.equal(b.lead.status, 'warm')
   assert.equal(b.lead.taskId, 'task_1', 'источник остаётся за первой задачей')
-  assert.equal(b.lead.campaignId, 'cmp_1', 'кампания-источник тоже не переписывается')
+
+  // Тот же человек, но ДРУГАЯ кампания — отдельный лид со своей воронкой (цель — счётчик,
+  // воронка живёт в кампании).
+  const c = await L.upsertLead({ peer: '@lead', goalId: 'g1', campaignId: 'cmp_2', taskId: 'task_3', status: 'cold' })
+  assert.equal(c.created, true, 'другая кампания — новый лид')
+  assert.equal((await L.listLeads()).length, 2)
+
+  // Лид создаётся и БЕЗ цели — по одной кампании (цель необязательна).
+  const d = await L.upsertLead({ peer: '@nogoal', campaignId: 'cmp_1', taskId: 'task_1', status: 'cold' })
+  assert.equal(d.created, true)
+  assert.equal(d.lead.goalId, null)
 
   // Фильтр по задаче: «показать лидов ИМЕННО этой задачи».
-  assert.equal((await L.listLeads({ taskId: 'task_1' })).length, 1)
-  assert.equal((await L.listLeads({ taskId: 'task_2' })).length, 0)
+  assert.equal((await L.listLeads({ taskId: 'task_1' })).length, 2) // @lead(cmp_1) + @nogoal(cmp_1)
+  assert.equal((await L.listLeads({ campaignId: 'cmp_2' })).length, 1)
 
   delete process.env.LEADS_FILE
 })
