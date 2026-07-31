@@ -29,7 +29,6 @@ export function ImportModal({ open, onClose, onImported }: { open: boolean; onCl
   const [scanning, setScanning] = useState(false)
   const [items, setItems] = useState<ScannedAccount[]>([])
   const [picked, setPicked] = useState<Set<string>>(new Set())
-  const [passcode, setPasscode] = useState('')
   // §2: облачные пароли (2FA), введённые руками — только для тех, у кого не нашли рядом.
   const [passwords, setPasswords] = useState<Record<string, string>>({})
   // Локальные пароли tdata (passcode) — по аккаунту; заполняются полем или списком.
@@ -85,7 +84,7 @@ export function ImportModal({ open, onClose, onImported }: { open: boolean; onCl
     if (!dir) return
     setScanning(true); setErr('')
     try {
-      const r = await scanFolder(dir, passcode || undefined)
+      const r = await scanFolder(dir)
       setRoot(dir); setUploadToken(''); setPasswords({}); setPasscodes({})
       setItems(r.items)
       // Уже заведённые по умолчанию не отмечаем — чтобы повторный скан не плодил дубли.
@@ -184,7 +183,7 @@ export function ImportModal({ open, onClose, onImported }: { open: boolean; onCl
         }
       })
       const r = await runImport({
-        items: withPasswords, proxyMode, singleProxy, validate, passcode: passcode || undefined, root,
+        items: withPasswords, proxyMode, singleProxy, validate, root,
         // В ручном режиме раскладка уже перед глазами оператора — шлём её как есть.
         manualProxies: proxyMode === 'manual' ? pairs : undefined,
       })
@@ -206,7 +205,7 @@ export function ImportModal({ open, onClose, onImported }: { open: boolean; onCl
     if (!files?.length) return
     setUploading(true); setErr('')
     try {
-      const r = await uploadFolder([...files], passcode || undefined)
+      const r = await uploadFolder([...files])
       setRoot(r.root); setUploadToken(r.token)
       setItems(r.items)
       setPicked(new Set(r.items.filter((i) => !i.known).map(key)))
@@ -274,11 +273,6 @@ export function ImportModal({ open, onClose, onImported }: { open: boolean; onCl
               </div>
             </>
           )}
-
-          <div>
-            <div className="mb-1 flex items-center gap-1.5 text-xs text-white/50"><KeyRound size={12} /> Локальный пароль tdata <span className="text-white/30">(если Telegram Desktop был под паролем)</span></div>
-            <input className="input" type="password" value={passcode} onChange={(e) => setPasscode(e.target.value)} placeholder="обычно пусто" />
-          </div>
 
           {/* Загрузка папки с ПК. Локально — запасной путь (диск быстрее). На хостинге —
               единственный и основной: файлы летят с ПК пользователя, сервер делает
