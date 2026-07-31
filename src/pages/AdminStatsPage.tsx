@@ -1023,13 +1023,27 @@ function PurchasesTab({ p }: { p: Purchases | null }) {
 
   const fmtDt = (ts: number) => ts ? new Date(ts).toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : '—'
 
-  // Что и когда купил конкретный человек: его пополнения (⚡) и покупки планов ($)
-  // одной лентой по времени. Раскрывается по клику на строку.
+  // Что и когда занёс/купил человек: деньги ($), токены (⚡) и планы ($) одной лентой.
   const userOps = (uid: string) => {
-    const coins = (p.feed || []).filter((f) => f.userId === uid).map((f) => ({ ts: f.ts, kind: 'coin' as const, amount: f.amount, label: f.reason || 'пополнение' }))
+    const usd = (p.usd?.feed || []).filter((f) => f.userId === uid).map((f) => ({ ts: f.ts, kind: 'usd' as const, amount: f.amount, label: f.reason || 'пополнение $' }))
+    const coins = (p.feed || []).filter((f) => f.userId === uid).map((f) => ({ ts: f.ts, kind: 'coin' as const, amount: f.amount, label: f.reason || 'пополнение токенов' }))
     const pl = (p.plans?.feed || []).filter((f) => f.userId === uid).map((f) => ({ ts: f.ts, kind: 'plan' as const, amount: f.amount, label: f.modulesCount < 0 ? 'все модули' : `${f.modulesCount} мод.` }))
-    return [...coins, ...pl].sort((a, b) => b.ts - a.ts)
+    return [...usd, ...coins, ...pl].sort((a, b) => b.ts - a.ts)
   }
+
+  // §11.4: ОДИН список «кто занёс» — деньги ($) основное, токены (⚡) вторично.
+  // Сливаем оба потока по пользователю: кто-то заносил только $, кто-то только токены.
+  const brought = (() => {
+    const m = new Map<string, { userId: string; name: string; email: string; usd: number; coins: number; count: number; lastAt: number }>()
+    for (const r of p.rows) m.set(r.userId, { userId: r.userId, name: r.name, email: r.email, usd: 0, coins: r.coins, count: r.count, lastAt: r.lastAt })
+    for (const r of (p.usd?.rows || [])) {
+      const e = m.get(r.userId) || { userId: r.userId, name: r.name, email: r.email, usd: 0, coins: 0, count: 0, lastAt: 0 }
+      e.usd = r.usd; e.count += r.count; e.lastAt = Math.max(e.lastAt, r.lastAt)
+      e.name = e.name || r.name; e.email = e.email || r.email
+      m.set(r.userId, e)
+    }
+    return [...m.values()].sort((a, b) => b.usd - a.usd || b.coins - a.coins)
+  })()
 
   return (
     <div className="space-y-3">
@@ -1054,57 +1068,25 @@ function PurchasesTab({ p }: { p: Purchases | null }) {
         </Card>
       </div>
 
-      {/* §11.4: кто занёс ДЕНЬГИ ($) — отдельно от токенов, это и есть выручка. */}
-      {!!p.usd?.rows.length && (
-        <Card className="p-4">
-          <div className="mb-1 text-sm font-semibold text-fg">Кто занёс деньги ($)</div>
-          <div className="mb-2 text-xs text-muted">Пополнения баланса деньгами — за них покупают токены и подписки.</div>
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-line text-left text-xs text-muted">
-                  <th className="pb-2 pr-3 font-medium">Пользователь</th>
-                  <th className="pb-2 pr-3 text-right font-medium">Пополнений</th>
-                  <th className="pb-2 pr-3 text-right font-medium">Всего $</th>
-                  <th className="pb-2 text-right font-medium">Последнее</th>
-                </tr>
-              </thead>
-              <tbody>
-                {p.usd.rows.map((r) => (
-                  <tr key={r.userId} className="border-b border-line/50">
-                    <td className="py-2 pr-3">
-                      <div className="font-medium text-fg">{r.name}</div>
-                      {!!r.email && <div className="text-[11px] text-muted">{r.email}</div>}
-                    </td>
-                    <td className="py-2 pr-3 text-right tabular-nums text-muted">{fmt(r.count)}</td>
-                    <td className="py-2 pr-3 text-right font-semibold tabular-nums text-spark-300">${r.usd.toFixed(2)}</td>
-                    <td className="py-2 text-right tabular-nums text-faint">{fmtDt(r.lastAt)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </Card>
-      )}
-
       {/* База оплат: любой платёж за любой диапазон дат — «месяц назад» тоже. */}
       <PaymentsExplorer />
 
       <Card className="p-4">
-        <div className="mb-1 text-sm font-semibold text-fg">Кто сколько занёс (монеты ⚡)</div>
-        <div className="mb-2 text-xs text-muted">Нажмите на пользователя — увидите, что и когда он покупал.</div>
+        <div className="mb-1 text-sm font-semibold text-fg">Кто сколько занёс</div>
+        <div className="mb-2 text-xs text-muted">Деньги ($) — основное, токены (⚡) — рядом. Нажмите на пользователя — увидите, что и когда он заносил.</div>
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-line text-left text-xs text-muted">
                 <th className="pb-2 pr-3 font-medium">Пользователь</th>
                 <th className="pb-2 pr-3 text-right font-medium">Пополнений</th>
-                <th className="pb-2 pr-3 text-right font-medium">Всего монет</th>
+                <th className="pb-2 pr-3 text-right font-medium">Деньги $</th>
+                <th className="pb-2 pr-3 text-right font-medium">Токены ⚡</th>
                 <th className="pb-2 text-right font-medium">Последнее</th>
               </tr>
             </thead>
             <tbody>
-              {p.rows.map((r) => {
+              {brought.map((r) => {
                 const isOpen = open === r.userId
                 const ops = isOpen ? userOps(r.userId) : []
                 return [
@@ -1123,23 +1105,25 @@ function PurchasesTab({ p }: { p: Purchases | null }) {
                       </div>
                     </td>
                     <td className="py-2 pr-3 text-right tabular-nums text-muted">{fmt(r.count)}</td>
-                    <td className="py-2 pr-3 text-right font-semibold tabular-nums text-spark-300">{fmtCoins(r.coins)} ⚡</td>
+                    <td className="py-2 pr-3 text-right font-semibold tabular-nums text-spark-300">{r.usd ? `$${r.usd.toFixed(2)}` : '—'}</td>
+                    <td className="py-2 pr-3 text-right tabular-nums text-amber-300/80">{r.coins ? `${fmtCoins(r.coins)} ⚡` : '—'}</td>
                     <td className="py-2 text-right tabular-nums text-faint">{fmtDt(r.lastAt)}</td>
                   </tr>,
                   isOpen ? (
                     <tr key={r.userId + '-ops'} className="border-b border-line/50 bg-white/[.02]">
-                      <td colSpan={4} className="px-3 py-2">
+                      <td colSpan={5} className="px-3 py-2">
                         {!ops.length ? (
-                          <span className="text-xs text-muted">Покупок за период нет.</span>
+                          <span className="text-xs text-muted">Пополнений за период нет.</span>
                         ) : (
                           <div className="max-h-56 space-y-1 overflow-y-auto pr-1">
                             {ops.map((o, i) => (
                               <div key={o.ts + '-' + i} className="flex items-baseline gap-x-2 border-b border-line/30 pb-1 text-xs last:border-0">
-                                <span className={cn('rounded px-1 text-[10px] font-bold', o.kind === 'plan' ? 'bg-iris-500/15 text-iris-300' : 'bg-spark-500/12 text-spark-300')}>
-                                  {o.kind === 'plan' ? 'план' : 'монеты'}
+                                <span className={cn('rounded px-1 text-[10px] font-bold',
+                                  o.kind === 'plan' ? 'bg-iris-500/15 text-iris-300' : o.kind === 'usd' ? 'bg-spark-500/15 text-spark-200' : 'bg-amber-500/12 text-amber-300')}>
+                                  {o.kind === 'plan' ? 'план' : o.kind === 'usd' ? 'деньги $' : 'токены'}
                                 </span>
-                                <span className={cn('font-semibold tabular-nums', o.kind === 'plan' ? 'text-fg' : 'text-spark-300')}>
-                                  {o.kind === 'plan' ? `${p.plans.currency}${o.amount}` : `+${fmtCoins(o.amount)} ⚡`}
+                                <span className={cn('font-semibold tabular-nums', o.kind === 'plan' ? 'text-fg' : o.kind === 'usd' ? 'text-spark-200' : 'text-amber-300')}>
+                                  {o.kind === 'plan' ? `${p.plans.currency}${o.amount}` : o.kind === 'usd' ? `+$${o.amount.toFixed(2)}` : `+${fmtCoins(o.amount)} ⚡`}
                                 </span>
                                 <span className="min-w-0 flex-1 truncate text-muted">{o.label}</span>
                                 <span className="ml-auto shrink-0 tabular-nums text-faint">{fmtDt(o.ts)}</span>
@@ -1152,8 +1136,8 @@ function PurchasesTab({ p }: { p: Purchases | null }) {
                   ) : null,
                 ]
               })}
-              {!p.rows.length && (
-                <tr><td colSpan={4} className="py-3 text-center text-xs text-muted">Пополнений пока нет</td></tr>
+              {!brought.length && (
+                <tr><td colSpan={5} className="py-3 text-center text-xs text-muted">Пополнений пока нет</td></tr>
               )}
             </tbody>
           </table>
