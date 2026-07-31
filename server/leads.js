@@ -10,13 +10,13 @@ import { insertWithOwner, updateWithOwner, ownerOf } from './lib/ownerColumn.js'
 function sbL() { return supabaseEnabled() ? getSupabase() : null }
 const rowToLead = (r) => ({
   userId: ownerOf(r) || undefined,
-  id: r.id, goalId: r.goal_id || null, campaignId: r.campaign_id || null, accountId: r.account_id || null,
+  id: r.id, goalId: r.goal_id || null, campaignId: r.campaign_id || null, taskId: r.task_id || null, accountId: r.account_id || null,
   peer: r.peer || '', status: r.status || 'cold', isHot: !!r.is_hot, result: r.result || '', note: r.note || '',
   followUps: Number(r.followups) || 0,
   createdAt: r.created_at ? new Date(r.created_at).getTime() : 0, updatedAt: r.updated_at ? new Date(r.updated_at).getTime() : 0,
 })
 const leadToRow = (l) => ({
-  id: l.id, goal_id: l.goalId || null, campaign_id: l.campaignId || null, account_id: l.accountId || null,
+  id: l.id, goal_id: l.goalId || null, campaign_id: l.campaignId || null, task_id: l.taskId || null, account_id: l.accountId || null,
   peer: l.peer || '', status: l.status || 'cold', is_hot: !!l.isHot, result: l.result || '', note: l.note || '',
   followups: Number(l.followUps) || 0,
   // §11.3: чей лид — колонка user_id (FK на юзера).
@@ -50,6 +50,9 @@ export function normalizeLead(input = {}) {
     // Кампания, которая привела лида и ведёт его по воронке (24.07): статусы в CRM
     // проставляет она, поэтому лид должен помнить свою кампанию — для отчёта и фильтра.
     campaignId: input.campaignId ? String(input.campaignId) : null,
+    // Конкретная задача-прогон, приведшая лида (31.07): «откуда пришёл» по каждой задаче
+    // отдельно. Кампания может породить несколько задач — id кампании этого не различает.
+    taskId: input.taskId ? String(input.taskId) : null,
     accountId: input.accountId ? String(input.accountId) : null, // ответственный аккаунт
     peer: String(input.peer ?? '').trim(), // с кем диалог (username/id)
     status,
@@ -96,7 +99,7 @@ export async function createLead(input) {
 
 /** @param {string} id @param {object} patch */
 function applyLeadPatch(target, patch) {
-  const FIELDS = ['goalId', 'campaignId', 'accountId', 'peer', 'status', 'result', 'note', 'followUps']
+  const FIELDS = ['goalId', 'campaignId', 'taskId', 'accountId', 'peer', 'status', 'result', 'note', 'followUps']
   for (const k of FIELDS) {
     if (patch[k] === undefined) continue
     if (k === 'status') {
@@ -223,6 +226,9 @@ export async function upsertLead(input) {
     if (clean.accountId) all[i].accountId = clean.accountId
     // Кампанию проставляем, если её ещё нет: первый приведший её и «владеет».
     if (clean.campaignId && !all[i].campaignId) all[i].campaignId = clean.campaignId
+    // Задачу-источник тоже фиксируем один раз — за лидом остаётся ПЕРВЫЙ прогон,
+    // который его привёл (последующие касания статуса источник не переписывают).
+    if (clean.taskId && !all[i].taskId) all[i].taskId = clean.taskId
     all[i].updatedAt = Date.now()
     result = { lead: all[i], created: false }
     return all

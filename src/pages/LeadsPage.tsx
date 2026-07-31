@@ -184,6 +184,13 @@ export function LeadsPage() {
               </button>
               {l.goalId && <span className="text-xs text-iris-300">цель: {goalName(l.goalId)}</span>}
               {l.campaignId && <span className="text-xs text-spark-300">кампания: {campaignName(l.campaignId)}</span>}
+              {/* Источник по задаче: «откуда пришёл» отдельно от кампании — кампания могла
+                  породить несколько прогонов. Полный id — в подсказке, в строке — короткий. */}
+              {l.taskId && (
+                <span className="rounded-md bg-white/5 px-1.5 py-0.5 text-[11px] text-white/45" title={`Задача-источник: ${l.taskId}`}>
+                  задача: {l.taskId.slice(-6)}
+                </span>
+              )}
               {/* Горячий лид без ответственного аккаунта не защищает никого — говорим об этом прямо. */}
               {l.status === 'hot' && !l.accountId && (
                 <span className="rounded-md bg-amber-500/15 px-1.5 py-0.5 text-[11px] font-bold text-amber-300" title="Гвардия «горячий лид» ищет совпадение по ответственному аккаунту. Пока его нет, аккаунт можно забрать в другой модуль посреди диалога.">

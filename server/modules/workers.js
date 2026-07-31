@@ -1258,7 +1258,7 @@ export async function runNeuroDialogs(task, store) {
           // двигает только вперёд, поэтому прогретый лид этим вызовом не сбросится.
           if (s.goalId) {
             try {
-              const { created } = await upsertLead({ goalId: s.goalId, campaignId: s.campaignId, accountId, peer: peerKey, status: 'contacted' })
+              const { created } = await upsertLead({ goalId: s.goalId, campaignId: s.campaignId, taskId: task.id, accountId, peer: peerKey, status: 'contacted' })
               if (created) await store.appendLog(task, 'info', `Новый лид в CRM: ${peerKey}`, meta.name)
             } catch (e) {
               // CRM не должна ронять переписку — диалог важнее записи о нём.
@@ -1292,7 +1292,7 @@ export async function runNeuroDialogs(task, store) {
                     `Дожим «${peerKey}»: ${cur.status} → ${next} (${verdict.reason})`, meta.name)
                 }
               } else if (shouldAdvance(cur?.status || 'cold', verdict.status)) {
-                await upsertLead({ peer: peerKey, goalId: s.goalId, campaignId: s.campaignId, accountId, status: verdict.status })
+                await upsertLead({ peer: peerKey, goalId: s.goalId, campaignId: s.campaignId, taskId: task.id, accountId, status: verdict.status })
                 await store.appendLog(
                   task,
                   verdict.status === 'hot' || verdict.status === 'target' ? 'success' : 'info',
@@ -2258,6 +2258,7 @@ export async function runMailing(task, store) {
               peer: user.username ? `@${user.username}` : label,
               goalId: s.goalId,
               campaignId: s.campaignId,
+              taskId: task.id,
               accountId: account,
               status: 'cold',
             })

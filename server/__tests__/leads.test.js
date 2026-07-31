@@ -127,6 +127,25 @@ test('§9 upsertLead: создаёт новый и продвигает суще
   delete process.env.LEADS_FILE
 })
 
+test('CRM «откуда пришёл»: лид помнит taskId, ПЕРВЫЙ прогон владеет источником', async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'leads-source-'))
+  process.env.LEADS_FILE = path.join(dir, 'leads.json')
+  const L = await import('../leads.js?source=' + Date.now())
+
+  // Первое касание фиксирует источник (кампания + задача).
+  const a = await L.upsertLead({ peer: '@lead', goalId: 'g1', campaignId: 'cmp_1', taskId: 'task_1', status: 'contacted' })
+  assert.equal(a.lead.taskId, 'task_1')
+  assert.equal(a.lead.campaignId, 'cmp_1')
+
+  // Второй прогон двигает статус, но источник (первый taskId) НЕ переписывает.
+  const b = await L.upsertLead({ peer: '@lead', goalId: 'g1', campaignId: 'cmp_2', taskId: 'task_2', status: 'warm' })
+  assert.equal(b.lead.status, 'warm')
+  assert.equal(b.lead.taskId, 'task_1', 'источник остаётся за первой задачей')
+  assert.equal(b.lead.campaignId, 'cmp_1', 'кампания-источник тоже не переписывается')
+
+  delete process.env.LEADS_FILE
+})
+
 test('CRUD + фильтры + stats (изолированный файл)', async () => {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'leads-'))
   process.env.LEADS_FILE = path.join(dir, 'leads.json')

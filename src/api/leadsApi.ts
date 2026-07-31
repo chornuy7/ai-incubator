@@ -10,6 +10,8 @@ export interface Lead {
   goalId: string | null
   /** Кампания, которая привела лида и ведёт его по воронке (проставляет статусы). */
   campaignId: string | null
+  /** Задача-прогон, приведшая лида: «откуда пришёл» по каждой задаче отдельно. */
+  taskId: string | null
   accountId: string | null
   peer: string
   status: LeadStatus
