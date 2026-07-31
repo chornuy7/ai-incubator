@@ -2216,7 +2216,7 @@ export async function runMailing(task, store) {
 «${message || opener}»` : '',
           ].filter(Boolean).join(' ')
           const gen = await generateComment(openerTask, s.promptIndex ?? 0, resolveSystemPrompt(s) + goalCtx + agentCtx, account)
-          if (gen?.usage?.tokens) await recordTokens({ ...gen.usage, module: task.moduleKey, accountId, taskId: task.id, campaignId: s.campaignId, userId: task.userId })
+          if (gen?.usage?.tokens) await recordTokens({ ...gen.usage, module: task.moduleKey, accountId: account, taskId: task.id, campaignId: s.campaignId, userId: task.userId })
           // Чистим так же, как в диалогах: модель повторяет ярлыки промпта и оставляет
           // заготовки. С заглушкой лучше отправить текст из цели, чем «[тут вставь ссылку]».
           const cleaned = cleanDialogReply(gen.text)
@@ -2265,7 +2265,7 @@ export async function runMailing(task, store) {
         }
         await store.appendLog(task, 'success', `ЛС → ${label} (${user.firstName || 'user'})`, meta.name)
         await bumpProgress(task, store)
-        await noteAction(accountId) // §4.3: усталость общая для всех модулей
+        await noteAction(account) // §4.3: усталость общая для всех модулей
         await disconnectAccount(client, account)
       } catch (err) {
         if (client) await disconnectAccount(client, account)
