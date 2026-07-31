@@ -10,3 +10,4 @@ dist-ssr
 !.env.example
 server/data/
 /AI-Incubator-report-2026-07-26.docx
+backups/
