@@ -21,7 +21,17 @@ export async function parseJson<T>(res: Response): Promise<T> {
   const ct = res.headers.get('content-type') || ''
   if (text.trimStart().startsWith('<') || (!ct.includes('json') && text && !text.trimStart().startsWith('{'))) {
     if (text.includes('<!DOCTYPE') || text.includes('<html')) {
-      throw new Error('API недоступен — перезапустите npm run dev (нужны web + api на :5173 и :3001)')
+      // Сервер вернул HTML вместо JSON — запрос ушёл не на API, а на статику (SPA-фолбэк).
+      // В деве это значит «бэкенд не поднят», а на проде — «этого роута нет в задеплоенном
+      // бэкенде» (фронт новее сервера) или идёт обновление. Совет про `npm run dev` на проде
+      // вводил в заблуждение, поэтому текст зависит от среды. Среду берём по hostname:
+      // vite-типы (import.meta.env) в проекте не подключены, а location тут всегда есть.
+      const isLocal = typeof location !== 'undefined' && /^(localhost|127\.0\.0\.1|\[?::1\]?)$/.test(location.hostname)
+      throw new Error(
+        isLocal
+          ? 'API недоступен — перезапустите npm run dev (нужны web + api на :5173 и :3001)'
+          : 'API-сервер не отвечает на этот запрос — вероятно, идёт обновление или сервер устарел. Обновите страницу через минуту; если не пройдёт — сообщите администратору.',
+      )
     }
     throw new Error(text.slice(0, 160) || `HTTP ${res.status}`)
   }
