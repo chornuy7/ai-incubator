@@ -95,7 +95,9 @@ export async function syncTypesAndModules() {
     const first = (u.roleIds || [])[0] || u.roleId || ''
     const tid = typeId.get(first)
     if (!tid) continue
-    const { error } = await db.from('users').update({ user_type_id: tid }).eq('id', u.id)
+    // profiles — источник правды для чтения; users дублируем, пока таблица не удалена.
+    const { error } = await db.from('profiles').update({ user_type_id: tid }).eq('legacy_id', u.id)
+    await db.from('users').update({ user_type_id: tid }).eq('id', u.id).then(() => {}, () => {})
     if (!error) report.users += 1
   }
 
@@ -106,8 +108,9 @@ export async function syncTypesAndModules() {
   const roleIds = new Set(roles.map((r) => r.id))
   const orphans = (typeRows || []).filter((t) => !roleIds.has(t.name))
   for (const o of orphans) {
-    const { count } = await db.from('users').select('id', { count: 'exact', head: true }).eq('user_type_id', o.id)
-    if (count) continue // на тип кто-то ссылается — не трогаем
+    const { count } = await db.from('profiles').select('id', { count: 'exact', head: true }).eq('user_type_id', o.id)
+    const { count: uc } = await db.from('users').select('id', { count: 'exact', head: true }).eq('user_type_id', o.id)
+    if (count || uc) continue // на тип кто-то ссылается — не трогаем
     const { error } = await db.from('user_types').delete().eq('id', o.id)
     if (!error) report.removedTypes += 1
   }
