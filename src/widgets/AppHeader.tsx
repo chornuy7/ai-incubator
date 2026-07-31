@@ -97,8 +97,15 @@ export function AppHeader() {
     } finally { setBuying(null) }
   }
   const TOPUP_USD = [10, 25, 50, 100]
+  const [topupDraft, setTopupDraft] = useState('')
   const topUpUsd = (amount: number) => {
+    if (!(amount > 0)) { pushToast({ type: 'error', title: 'Укажите сумму больше нуля' }); return }
     pushToast({ type: 'info', title: 'Пополнение $ скоро', desc: `Оплата на ${curSym}${amount} — подключаем платёжную систему (VIVA/Stripe).` })
+  }
+  const topUpCustom = () => {
+    const v = Number(String(topupDraft).replace(',', '.'))
+    if (!Number.isFinite(v) || v <= 0) { pushToast({ type: 'error', title: 'Нужна сумма', desc: 'Например 30' }); return }
+    topUpUsd(Math.round(v * 100) / 100); setTopupDraft('')
   }
 
   return (
@@ -363,6 +370,21 @@ export function AppHeader() {
                 <span className="font-display text-lg font-bold text-fg">{curSym}{a}</span>
               </button>
             ))}
+          </div>
+          {/* Своя сумма — не только пресеты: человек вводит сколько хочет. */}
+          <div className="mt-2 flex items-center gap-2">
+            <div className="relative flex-1">
+              <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-muted">{curSym}</span>
+              <input
+                value={topupDraft}
+                onChange={(e) => setTopupDraft(e.target.value.replace(/[^\d.,]/g, ''))}
+                onKeyDown={(e) => { if (e.key === 'Enter') topUpCustom() }}
+                inputMode="decimal"
+                placeholder="своя сумма"
+                className="input h-9 w-full pl-7 text-sm"
+              />
+            </div>
+            <button onClick={topUpCustom} className="btn-ghost h-9 rounded-xl border border-line px-3 text-sm hover:border-spark-500/40 hover:text-spark-200">Пополнить</button>
           </div>
         </div>
 

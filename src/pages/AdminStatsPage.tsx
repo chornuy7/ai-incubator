@@ -1154,7 +1154,7 @@ function PurchasesTab({ p }: { p: Purchases | null }) {
 function PaymentsExplorer() {
   const [from, setFrom] = useState('')
   const [to, setTo] = useState('')
-  const [kind, setKind] = useState<'' | 'coins' | 'plan'>('')
+  const [kind, setKind] = useState<'' | 'usd' | 'coins' | 'plan'>('')
   const [q, setQ] = useState('')
   const [page, setPage] = useState(0)
   const [data, setData] = useState<PaymentsResult | null>(null)
@@ -1187,8 +1187,8 @@ function PaymentsExplorer() {
   const items = data?.items ?? []
   const shownFrom = total ? page * LIMIT + 1 : 0
   const shownTo = Math.min(total, (page + 1) * LIMIT)
-  const kinds: { v: '' | 'coins' | 'plan'; label: string }[] = [
-    { v: '', label: 'Все' }, { v: 'coins', label: 'Монеты ⚡' }, { v: 'plan', label: 'Планы $' },
+  const kinds: { v: '' | 'usd' | 'coins' | 'plan'; label: string }[] = [
+    { v: '', label: 'Все' }, { v: 'usd', label: 'Деньги $' }, { v: 'coins', label: 'Токены ⚡' }, { v: 'plan', label: 'Планы $' },
   ]
 
   return (
@@ -1197,7 +1197,7 @@ function PaymentsExplorer() {
         <span className="text-sm font-semibold text-fg">База оплат</span>
         {s && (
           <span className="text-xs text-muted">
-            {s.coinsCount} поп. на {fmtCoins(s.coinsTotal)} ⚡ · {s.planCount} планов на ${s.planTotal}
+            <b className="text-spark-300">${s.usdTotal ?? 0}</b> деньгами ({s.usdCount ?? 0}) · {s.coinsCount} поп. токенов на {fmtCoins(s.coinsTotal)} ⚡ · {s.planCount} планов на ${s.planTotal}
           </span>
         )}
         <RefreshCw size={13} className={cn('ml-auto text-muted', loading && 'animate-spin')} />
@@ -1220,16 +1220,17 @@ function PaymentsExplorer() {
       <div className="max-h-80 space-y-1 overflow-y-auto pr-1">
         {items.map((r) => (
           <div key={r.id} className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5 border-b border-line/30 pb-1 text-xs last:border-0">
-            <span className={cn('rounded px-1 text-[10px] font-bold', r.kind === 'plan' ? 'bg-iris-500/15 text-iris-300' : 'bg-spark-500/12 text-spark-300')}>
-              {r.kind === 'plan' ? 'план' : 'монеты'}
+            <span className={cn('rounded px-1 text-[10px] font-bold',
+              r.kind === 'plan' ? 'bg-iris-500/15 text-iris-300' : r.kind === 'usd' ? 'bg-spark-500/15 text-spark-200' : 'bg-amber-500/12 text-amber-300')}>
+              {r.kind === 'plan' ? 'план' : r.kind === 'usd' ? 'деньги $' : 'токены'}
             </span>
             <span className="text-fg">{r.name}</span>
             {!!r.email && <span className="text-muted">{r.email}</span>}
-            <span className={cn('font-semibold tabular-nums', r.kind === 'plan' ? 'text-fg' : 'text-spark-300')}>
-              {r.kind === 'plan' ? `$${r.amount_fiat}` : `+${fmtCoins(r.coins ?? 0)} ⚡`}
+            <span className={cn('font-semibold tabular-nums', r.kind === 'plan' ? 'text-fg' : r.kind === 'usd' ? 'text-spark-200' : 'text-amber-300')}>
+              {r.kind === 'plan' ? `$${r.amount_fiat}` : r.kind === 'usd' ? `+$${r.amount_fiat}` : `+${fmtCoins(r.coins ?? 0)} ⚡`}
             </span>
-            {/* §10.4: для пополнений — $-эквивалент по курсу пакетов (реальный $ будет с платёжкой). */}
-            {r.kind !== 'plan' && usdEq(r.coins, data?.coinUsd) && (
+            {/* §10.4: для пополнений токенами — $-эквивалент по курсу; для kind='usd' сумма уже в $. */}
+            {r.kind === 'coins' && usdEq(r.coins, data?.coinUsd) && (
               <span className="tabular-nums text-[10px] text-muted">{usdEq(r.coins, data?.coinUsd)}</span>
             )}
             {!!r.reason && <span className="min-w-0 flex-1 truncate text-muted">{r.reason}</span>}

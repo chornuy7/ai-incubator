@@ -239,9 +239,9 @@ export async function fetchPurchases(since?: number): Promise<Purchases> {
   return data.purchases
 }
 
-/** §5.1: строка из базы оплат (SQLite-индекс). kind: 'coins' (⚡) | 'plan' ($). */
+/** §5.1: строка из базы оплат (SQLite-индекс). kind: 'usd' (деньги $) | 'coins' (⚡) | 'plan' ($). */
 export interface PaymentRow {
-  id: string; ts: number; user_id: string; kind: 'coins' | 'plan'
+  id: string; ts: number; user_id: string; kind: 'usd' | 'coins' | 'plan'
   coins: number | null; amount_fiat: number | null; currency: string
   modules: number | null; status: string; reason: string
   name: string; email: string
@@ -249,7 +249,7 @@ export interface PaymentRow {
 export interface PaymentsResult {
   total: number; limit: number; offset: number
   items: PaymentRow[]
-  summary: { coinsTotal: number; coinsCount: number; planTotal: number; planCount: number }
+  summary: { coinsTotal: number; coinsCount: number; planTotal: number; planCount: number; usdTotal?: number; usdCount?: number }
   /** §10.4: курс монета→$ (для показа $-эквивалента пополнений). 0 = нет прайса. */
   coinUsd?: number
 }

@@ -14,9 +14,9 @@
 import { DatabaseSync } from 'node:sqlite'
 import { dataPath } from './lib/jsonStore.js'
 import { readAudit } from './lib/auditLog.js'
+import { walletHistory } from './balance.js'
 
 const DB_FILE = () => process.env.PAYMENTS_DB || dataPath('payments.db')
-const WALLET_LOG = () => process.env.WALLET_LOG_FILE || dataPath('wallet-log.jsonl')
 
 const round3 = (v) => Math.round((Number(v) || 0) * 1000) / 1000
 
@@ -28,9 +28,9 @@ function db() {
     id TEXT PRIMARY KEY,
     ts INTEGER NOT NULL,
     user_id TEXT,
-    kind TEXT,            -- 'coins' (пополнение ⚡) | 'plan' (покупка/продление подписки $)
+    kind TEXT,            -- 'usd' (пополнение баланса $) | 'coins' (пополнение ⚡) | 'plan' (подписка $)
     coins REAL,           -- сколько монет начислено (для kind='coins')
-    amount_fiat REAL,     -- сумма в валюте (для kind='plan')
+    amount_fiat REAL,     -- сумма в валюте (для kind='plan' и 'usd')
     currency TEXT,        -- '⚡' | '$'
     modules INTEGER,      -- число модулей в плане (-1 = все)
     status TEXT,          -- 'paid' | (в будущем) 'pending'|'failed'|'refunded'
@@ -56,24 +56,32 @@ export async function syncPayments() {
 }
 
 async function doSync() {
-  const fs = await import('node:fs/promises')
   const d = db()
   const upsert = d.prepare(
     'INSERT OR REPLACE INTO payments(id,ts,user_id,kind,coins,amount_fiat,currency,modules,status,reason) VALUES(?,?,?,?,?,?,?,?,?,?)',
   )
+  // §11.4: читаем журнал кошелька через walletHistory (backend-aware: файл ИЛИ Supabase),
+  // а не напрямую из файла — иначе в supabase-режиме индекс собирался бы из устаревшего
+  // файла и не видел бы реальных пополнений. Валюта из записи разводит деньги ($) и токены (⚡).
+  const wallet = await walletHistory({ limit: 100000 }).catch(() => [])
   d.exec('BEGIN')
   try {
-    // Пополнения монет (⚡): положительные операции кошелька.
-    let raw = ''
-    try { raw = await fs.readFile(WALLET_LOG(), 'utf8') } catch { /* нет файла — нет пополнений */ }
-    for (const line of raw.split('\n')) {
-      if (!line.trim()) continue
-      let r
-      try { r = JSON.parse(line) } catch { continue }
+    // Полная пересборка: индекс — проекция источников истины. Раньше источником был
+    // файл, теперь БД; чтобы старые файловые строки не остались сиротами, чистим и
+    // строим заново (объём небольшой, дёшево).
+    d.exec('DELETE FROM payments')
+    for (const r of wallet) {
       const amount = Number(r.amount) || 0
-      if (amount <= 0) continue
+      if (amount <= 0) continue // только пополнения/начисления, не списания
       const ts = Number(r.ts) || 0
-      upsert.run(`w:${ts}:${r.userId || '-'}:${amount}`, ts, r.userId || '—', 'coins', round3(amount), null, '⚡', null, 'paid', String(r.reason || ''))
+      const uid = r.userId || '—'
+      if (r.currency === 'usd') {
+        // Пополнение баланса ДЕНЬГАМИ ($).
+        upsert.run(`u:${ts}:${uid}:${amount}`, ts, uid, 'usd', null, round3(amount), '$', null, 'paid', String(r.reason || ''))
+      } else {
+        // Пополнение токенов (⚡).
+        upsert.run(`w:${ts}:${uid}:${amount}`, ts, uid, 'coins', round3(amount), null, '⚡', null, 'paid', String(r.reason || ''))
+      }
     }
     // Покупки планов ($): события подписки с ценой (набор «все»/пустой — не покупка).
     const audit = await readAudit({ action: 'subscription.set', limit: 100000 }).catch(() => [])
@@ -105,7 +113,7 @@ export function queryPayments(opts = {}) {
   if (from) { cond.push('ts >= ?'); args.push(Number(from)) }
   if (to) { cond.push('ts <= ?'); args.push(Number(to)) }
   if (userId) { cond.push('user_id = ?'); args.push(String(userId)) }
-  if (kind === 'coins' || kind === 'plan') { cond.push('kind = ?'); args.push(kind) }
+  if (kind === 'coins' || kind === 'plan' || kind === 'usd') { cond.push('kind = ?'); args.push(kind) }
   if (q) { cond.push('(user_id LIKE ? OR reason LIKE ?)'); args.push(`%${q}%`, `%${q}%`) }
   const w = cond.length ? 'WHERE ' + cond.join(' AND ') : ''
   const total = d.prepare(`SELECT COUNT(*) c FROM payments ${w}`).get(...args).c
@@ -125,7 +133,9 @@ export function paymentsSummary(opts = {}) {
   if (to) { base.push('ts <= ?'); args.push(Number(to)) }
   const wCoins = 'WHERE ' + [...base, "kind = 'coins'"].join(' AND ')
   const wPlans = 'WHERE ' + [...base, "kind = 'plan'"].join(' AND ')
+  const wUsd = 'WHERE ' + [...base, "kind = 'usd'"].join(' AND ')
   const coins = d.prepare(`SELECT COALESCE(SUM(coins),0) s, COUNT(*) c FROM payments ${wCoins}`).get(...args)
   const plans = d.prepare(`SELECT COALESCE(SUM(amount_fiat),0) s, COUNT(*) c FROM payments ${wPlans}`).get(...args)
-  return { coinsTotal: round3(coins.s), coinsCount: coins.c, planTotal: round3(plans.s), planCount: plans.c }
+  const usd = d.prepare(`SELECT COALESCE(SUM(amount_fiat),0) s, COUNT(*) c FROM payments ${wUsd}`).get(...args)
+  return { coinsTotal: round3(coins.s), coinsCount: coins.c, planTotal: round3(plans.s), planCount: plans.c, usdTotal: round3(usd.s), usdCount: usd.c }
 }
