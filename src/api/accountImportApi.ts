@@ -60,19 +60,45 @@ export interface ImportRunInput {
 /**
  * Залить папку через браузер и сразу просканировать. Нужно, когда бэкенд не на той
  * машине, где лежат аккаунты (удалённый сервер) — локально дешевле указать путь.
+ *
+ * `relPaths` — относительные пути внутри папки (для drag-and-drop, где у File нет
+ * `webkitRelativePath`). Если не заданы — берём `webkitRelativePath` (выбор папки кнопкой).
  */
-export async function uploadFolder(files: File[], passcode?: string): Promise<{ token: string; root: string; items: ScannedAccount[]; scannedDirs: number; tdata: number; files: number }> {
+export async function uploadFolder(files: File[], relPaths?: string[]): Promise<{ token: string; root: string; items: ScannedAccount[]; scannedDirs: number; tdata: number; files: number }> {
   const fd = new FormData()
-  for (const f of files) {
+  files.forEach((f, i) => {
     fd.append('files', f)
-    // webkitRelativePath хранит путь внутри выбранной папки — по нему сервер восстановит дерево.
-    fd.append('paths', (f as File & { webkitRelativePath?: string }).webkitRelativePath || f.name)
-  }
-  if (passcode) fd.append('passcode', passcode)
+    // Путь внутри выбранной папки — по нему сервер восстановит дерево tdata.
+    const rel = relPaths?.[i] || (f as File & { webkitRelativePath?: string }).webkitRelativePath || f.name
+    fd.append('paths', rel)
+  })
   const res = await fetch('/api/tg/import/upload', { method: 'POST', body: fd })
   const data = await res.json()
   if (!res.ok || !data.ok) throw new Error(data.error || 'Загрузка не удалась')
   return data
+}
+
+/**
+ * Рекурсивно собрать файлы папки из drag-and-drop (FileSystem Entry API) вместе с их
+ * относительными путями. Перетаскивание НЕ показывает нативный попап «загрузить N
+ * файлов», в отличие от выбора папки кнопкой — ради этого и городим обход дерева.
+ */
+export async function collectDroppedEntries(entry: FileSystemEntry, base = ''): Promise<{ file: File; path: string }[]> {
+  if (entry.isFile) {
+    const file = await new Promise<File>((res, rej) => (entry as FileSystemFileEntry).file(res, rej))
+    return [{ file, path: base + entry.name }]
+  }
+  const reader = (entry as FileSystemDirectoryEntry).createReader()
+  const all: FileSystemEntry[] = []
+  // readEntries отдаёт порциями — читаем, пока не кончатся.
+  for (;;) {
+    const batch = await new Promise<FileSystemEntry[]>((res, rej) => reader.readEntries(res, rej))
+    if (!batch.length) break
+    all.push(...batch)
+  }
+  const out: { file: File; path: string }[] = []
+  for (const e of all) out.push(...await collectDroppedEntries(e, `${base}${entry.name}/`))
+  return out
 }
 
 /** Удалить залитую пачку с сервера — после импорта или отмены. */
