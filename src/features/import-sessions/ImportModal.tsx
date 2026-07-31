@@ -3,7 +3,7 @@ import { UploadCloud, Folder, FolderOpen, ChevronRight, Loader2, Search, Check, 
 import { useRef } from 'react'
 import { Modal, Select, Badge } from '@/shared/ui'
 import { cn } from '@/shared/lib/utils'
-import { browseDirs, scanFolder, runImport, proxyCapacity, pairPreview, uploadFolder, cleanupUpload, type ScannedAccount, type ProxyMode, type ImportResultRow, type PairPoolItem } from '@/api/accountImportApi'
+import { browseDirs, scanFolder, runImport, proxyCapacity, pairPreview, uploadFolder, cleanupUpload, importCapabilities, type ScannedAccount, type ProxyMode, type ImportResultRow, type PairPoolItem } from '@/api/accountImportApi'
 import { fetchProxies, importProxies, toProxyUrl, type Proxy } from '@/api/proxiesApi'
 
 type Step = 'pick' | 'found' | 'proxy' | 'result'
@@ -30,8 +30,13 @@ export function ImportModal({ open, onClose, onImported }: { open: boolean; onCl
   const [items, setItems] = useState<ScannedAccount[]>([])
   const [picked, setPicked] = useState<Set<string>>(new Set())
   const [passcode, setPasscode] = useState('')
-  // §2: облачные пароли, введённые руками — только для тех, у кого не нашли рядом.
+  // §2: облачные пароли (2FA), введённые руками — только для тех, у кого не нашли рядом.
   const [passwords, setPasswords] = useState<Record<string, string>>({})
+  // Локальные пароли tdata (passcode) — по аккаунту; заполняются полем или списком.
+  const [passcodes, setPasscodes] = useState<Record<string, string>>({})
+  // Черновики массового ввода: вставил списком → разложили по отмеченным по порядку.
+  const [bulk2fa, setBulk2fa] = useState('')
+  const [bulkPass, setBulkPass] = useState('')
   const [proxyMode, setProxyMode] = useState<ProxyMode>('pool')
   const [proxies, setProxies] = useState<Proxy[]>([])
   const [singleProxy, setSingleProxy] = useState('')
@@ -51,6 +56,9 @@ export function ImportModal({ open, onClose, onImported }: { open: boolean; onCl
   const [uploadToken, setUploadToken] = useState('')
   const [uploading, setUploading] = useState(false)
   const folderRef = useRef<HTMLInputElement>(null)
+  // Прод (бэкенд на хостинге) диск сервера не показывает — только загрузка с ПК.
+  // Пока не знаем — считаем, что нельзя: безопасный дефолт, не мигаем проводником.
+  const [localFs, setLocalFs] = useState<boolean | null>(null)
 
   const key = (i: ScannedAccount) => `${i.path}#${i.accountIdx ?? 0}`
 
@@ -66,7 +74,9 @@ export function ImportModal({ open, onClose, onImported }: { open: boolean; onCl
   useEffect(() => {
     if (!open) return
     setStep('pick'); setItems([]); setResults([]); setErr('')
-    void go('')
+    void importCapabilities()
+      .then((c) => { setLocalFs(c.localFs); if (c.localFs) void go('') })
+      .catch(() => setLocalFs(false))
     void fetchProxies().then(setProxies).catch(() => {})
     void proxyCapacity().then((c) => setFreeProxies(c.free)).catch(() => {})
   }, [open])
@@ -76,7 +86,7 @@ export function ImportModal({ open, onClose, onImported }: { open: boolean; onCl
     setScanning(true); setErr('')
     try {
       const r = await scanFolder(dir, passcode || undefined)
-      setRoot(dir); setUploadToken(''); setPasswords({})
+      setRoot(dir); setUploadToken(''); setPasswords({}); setPasscodes({})
       setItems(r.items)
       // Уже заведённые по умолчанию не отмечаем — чтобы повторный скан не плодил дубли.
       setPicked(new Set(r.items.filter((i) => !i.known).map(key)))
@@ -90,8 +100,6 @@ export function ImportModal({ open, onClose, onImported }: { open: boolean; onCl
   const toggle = (i: ScannedAccount) => setPicked((prev) => {
     const n = new Set(prev); const k = key(i); n.has(k) ? n.delete(k) : n.add(k); return n
   })
-
-  const notEnoughProxies = proxyMode === 'pool' && chosen.length > freeProxies
 
   /**
    * Аккаунты для раскладки — в том порядке, в каком их нашли в папке.
@@ -146,12 +154,34 @@ export function ImportModal({ open, onClose, onImported }: { open: boolean; onCl
 
   const withoutProxy = pairs.filter((p) => !p).length
 
+  /**
+   * Разложить вставленный список (по строке на пароль) на ОТМЕЧЕННЫЕ аккаунты по
+   * порядку — как прокси. Пустые строки не затирают уже введённое у аккаунта.
+   */
+  const spreadList = (text: string, setter: (upd: (p: Record<string, string>) => Record<string, string>) => void) => {
+    const lines = text.split(/\r?\n/)
+    setter((prev) => {
+      const next = { ...prev }
+      chosen.forEach((it, idx) => {
+        const v = (lines[idx] ?? '').trim()
+        if (v) next[key(it)] = v
+      })
+      return next
+    })
+  }
+
   const run = async () => {
     setBusy(true); setErr('')
     try {
       const withPasswords = chosen.map((i) => {
         const typed = passwords[key(i)]?.trim()
-        return typed && !i.twoFA ? { ...i, twoFA: typed } : i
+        const pass = passcodes[key(i)]?.trim()
+        return {
+          ...i,
+          twoFA: typed && !i.twoFA ? typed : i.twoFA,
+          // passcode — только для tdata и только если ввели: пустой ничего не меняет.
+          ...(pass && i.kind === 'tdata' ? { passcode: pass } : {}),
+        }
       })
       const r = await runImport({
         items: withPasswords, proxyMode, singleProxy, validate, passcode: passcode || undefined, root,
@@ -168,7 +198,7 @@ export function ImportModal({ open, onClose, onImported }: { open: boolean; onCl
 
   const close = () => {
     if (uploadToken) void cleanupUpload(uploadToken).catch(() => {})
-    setStep('pick'); setItems([]); setResults([]); setUploadToken(''); setPasswords({}); onClose()
+    setStep('pick'); setItems([]); setResults([]); setUploadToken(''); setPasswords({}); setPasscodes({}); onClose()
   }
 
   /** Залить выбранную папку целиком — путь для удалённого сервера. */
@@ -210,49 +240,74 @@ export function ImportModal({ open, onClose, onImported }: { open: boolean; onCl
               <li>• Каждый аккаунт <b className="text-white/75">проверяем заходом в Telegram</b>: в систему попадут только живые, мёртвые останутся в отчёте с причиной.</li>
             </ul>
           </div>
-          <div className="flex gap-2">
-            <input
-              className="input flex-1 font-mono text-xs"
-              value={dir}
-              onChange={(e) => setDir(e.target.value)}
-              onKeyDown={(e) => { if (e.key === 'Enter') void go(dir) }}
-              placeholder="E:\accounts — можно вставить путь и нажать Enter"
-            />
-            <button onClick={() => void go(dir)} disabled={browsing} className="btn-ghost h-10 shrink-0">Открыть</button>
-          </div>
+          {/* Путь «с диска» — только когда бэкенд на машине оператора (локально).
+              На хостинге его нет: диск там серверный, гулять по нему клиенту нельзя. */}
+          {localFs && (
+            <>
+              <div className="flex gap-2">
+                <input
+                  className="input flex-1 font-mono text-xs"
+                  value={dir}
+                  onChange={(e) => setDir(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === 'Enter') void go(dir) }}
+                  placeholder="E:\accounts — можно вставить путь и нажать Enter"
+                />
+                <button onClick={() => void go(dir)} disabled={browsing} className="btn-ghost h-10 shrink-0">Открыть</button>
+              </div>
 
-          <div className="max-h-64 overflow-y-auto rounded-xl border border-line">
-            {parent !== null && (
-              <button onClick={() => void go(parent || '')} className="flex w-full items-center gap-2 border-b border-line/60 px-3 py-2 text-left text-sm hover:bg-elevated">
-                <ChevronRight size={14} className="rotate-180 text-white/40" /> <span className="text-white/60">Наверх</span>
-              </button>
-            )}
-            {browsing ? (
-              <div className="p-4 text-sm text-white/50"><Loader2 size={14} className="mr-2 inline animate-spin" /> Открываю…</div>
-            ) : dirs.length === 0 ? (
-              <div className="p-4 text-sm text-white/40">Вложенных папок нет</div>
-            ) : dirs.map((d) => (
-              <button key={d.path} onClick={() => void go(d.path)} className="flex w-full items-center gap-2 border-b border-line/60 px-3 py-2 text-left text-sm last:border-0 hover:bg-elevated">
-                {d.path.length <= 3 ? <HardDrive size={14} className="text-iris-300" /> : <Folder size={14} className="text-amber-300" />}
-                <span className="truncate">{d.name}</span>
-              </button>
-            ))}
-          </div>
+              <div className="max-h-64 overflow-y-auto rounded-xl border border-line">
+                {parent !== null && (
+                  <button onClick={() => void go(parent || '')} className="flex w-full items-center gap-2 border-b border-line/60 px-3 py-2 text-left text-sm hover:bg-elevated">
+                    <ChevronRight size={14} className="rotate-180 text-white/40" /> <span className="text-white/60">Наверх</span>
+                  </button>
+                )}
+                {browsing ? (
+                  <div className="p-4 text-sm text-white/50"><Loader2 size={14} className="mr-2 inline animate-spin" /> Открываю…</div>
+                ) : dirs.length === 0 ? (
+                  <div className="p-4 text-sm text-white/40">Вложенных папок нет</div>
+                ) : dirs.map((d) => (
+                  <button key={d.path} onClick={() => void go(d.path)} className="flex w-full items-center gap-2 border-b border-line/60 px-3 py-2 text-left text-sm last:border-0 hover:bg-elevated">
+                    {d.path.length <= 3 ? <HardDrive size={14} className="text-iris-300" /> : <Folder size={14} className="text-amber-300" />}
+                    <span className="truncate">{d.name}</span>
+                  </button>
+                ))}
+              </div>
+            </>
+          )}
 
           <div>
             <div className="mb-1 flex items-center gap-1.5 text-xs text-white/50"><KeyRound size={12} /> Локальный пароль tdata <span className="text-white/30">(если Telegram Desktop был под паролем)</span></div>
             <input className="input" type="password" value={passcode} onChange={(e) => setPasscode(e.target.value)} placeholder="обычно пусто" />
           </div>
 
-          {/* Запасной путь: если панель открыта не на той машине, где лежат аккаунты
-              (удалённый сервер), папку можно залить через браузер. */}
-          <div className="rounded-xl border border-line bg-elevated/40 p-3">
-            <div className="text-xs text-white/45">
-              Панель открыта не на том компьютере, где лежат аккаунты? Тогда папку нужно загрузить —
-              это медленнее (tdata весит десятки мегабайт на аккаунт), но работает с любой машины.
-            </div>
-            <button onClick={() => folderRef.current?.click()} disabled={uploading} className="btn-ghost mt-2 h-9">
-              {uploading ? <><Loader2 size={14} className="animate-spin" /> Загружаю…</> : <><UploadCloud size={14} /> Загрузить папку через браузер</>}
+          {/* Загрузка папки с ПК. Локально — запасной путь (диск быстрее). На хостинге —
+              единственный и основной: файлы летят с ПК пользователя, сервер делает
+              токен-сессию и стирает залитое. */}
+          <div className={cn(
+            'rounded-xl border p-3',
+            localFs ? 'border-line bg-elevated/40' : 'border-spark-500/25 bg-spark-500/5',
+          )}>
+            {localFs ? (
+              <div className="text-xs text-white/45">
+                Панель открыта не на том компьютере, где лежат аккаунты? Тогда папку нужно загрузить —
+                это медленнее (tdata весит десятки мегабайт на аккаунт), но работает с любой машины.
+              </div>
+            ) : (
+              <div>
+                <div className="text-sm font-semibold text-spark-200">Загрузите папку с аккаунтами со своего ПК</div>
+                <div className="mt-1 text-xs leading-relaxed text-white/55">
+                  Выберите папку с tdata / <b className="text-white/75">.session</b> — файлы уйдут на сервер, он
+                  зайдёт в Telegram, оставит только <b className="text-white/75">токен-сессию</b>, а сами tdata сотрёт.
+                  Диск сервера не показываем: чужие папки там выбирать нельзя.
+                </div>
+              </div>
+            )}
+            <button
+              onClick={() => folderRef.current?.click()}
+              disabled={uploading}
+              className={cn('mt-2 h-9', localFs ? 'btn-ghost' : 'btn-primary')}
+            >
+              {uploading ? <><Loader2 size={14} className="animate-spin" /> Загружаю…</> : <><UploadCloud size={14} /> {localFs ? 'Загрузить папку через браузер' : 'Выбрать папку и загрузить'}</>}
             </button>
             <input
               ref={folderRef}
@@ -268,9 +323,11 @@ export function ImportModal({ open, onClose, onImported }: { open: boolean; onCl
 
           <div className="flex justify-end gap-2">
             <button onClick={close} className="btn-ghost h-10">Отмена</button>
-            <button onClick={() => void scan()} disabled={!dir || scanning} className="btn-primary h-10">
-              {scanning ? <><Loader2 size={15} className="animate-spin" /> Сканирую…</> : <><Search size={15} /> Найти аккаунты</>}
-            </button>
+            {localFs && (
+              <button onClick={() => void scan()} disabled={!dir || scanning} className="btn-primary h-10">
+                {scanning ? <><Loader2 size={15} className="animate-spin" /> Сканирую…</> : <><Search size={15} /> Найти аккаунты</>}
+              </button>
+            )}
           </div>
         </div>
       )}
@@ -286,6 +343,24 @@ export function ImportModal({ open, onClose, onImported }: { open: boolean; onCl
             <button onClick={() => setPicked(new Set())} className="text-white/50 hover:text-white">Никого</button>
           </div>
 
+          {/* Пароли списком: вставь по строке на аккаунт — раскладываем на ОТМЕЧЕННЫЕ по
+              порядку (как прокси). Точечно поправить можно у каждого аккаунта ниже.
+              2FA — облачный пароль; passcode — локальный замок самой tdata. */}
+          {chosen.length > 0 && (
+            <div className="grid gap-3 rounded-xl border border-line bg-elevated/40 p-3 sm:grid-cols-2">
+              <div>
+                <div className="mb-1 text-xs text-white/55">Облачные пароли 2FA — по одному в строке, на {chosen.length} отмеч.</div>
+                <textarea rows={2} value={bulk2fa} onChange={(e) => setBulk2fa(e.target.value)} placeholder={'parol1\nparol2'} className="input w-full resize-y py-1.5 font-mono text-xs" />
+                <button onClick={() => spreadList(bulk2fa, setPasswords)} disabled={!bulk2fa.trim()} className="btn-ghost mt-1 h-8 text-xs disabled:opacity-40"><KeyRound size={12} /> Разложить 2FA</button>
+              </div>
+              <div>
+                <div className="mb-1 text-xs text-white/55">Локальные пароли tdata (passcode) — по одному в строке</div>
+                <textarea rows={2} value={bulkPass} onChange={(e) => setBulkPass(e.target.value)} placeholder={'lock1\nlock2'} className="input w-full resize-y py-1.5 font-mono text-xs" />
+                <button onClick={() => spreadList(bulkPass, setPasscodes)} disabled={!bulkPass.trim()} className="btn-ghost mt-1 h-8 text-xs disabled:opacity-40"><KeyRound size={12} /> Разложить passcode</button>
+              </div>
+            </div>
+          )}
+
           <div className="max-h-56 overflow-y-auto rounded-xl border border-line">
             {items.map((i) => (
               <div key={key(i)} className="border-b border-line/60 last:border-0">
@@ -296,21 +371,34 @@ export function ImportModal({ open, onClose, onImported }: { open: boolean; onCl
                   {i.phone && <span className="shrink-0 font-mono text-xs text-white/45">{i.phone}</span>}
                   {i.proxy && <Badge tone="iris">свой прокси</Badge>}
                   {i.twoFA && <Badge tone="spark"><KeyRound size={10} /> пароль есть</Badge>}
+                  {i.kind === 'tdata' && i.altSession && <Badge tone="iris">есть .session</Badge>}
                   {i.known && <Badge tone="amber">уже есть</Badge>}
                 </label>
-                {/* Поле пароля показываем ТОЛЬКО там, где его не нашли рядом с аккаунтом:
-                    у остальных спрашивать нечего. Пустое поле ничего не ломает — аккаунт
-                    просто импортируется без облачного пароля. */}
-                {picked.has(key(i)) && !i.twoFA && (
-                  <div className="flex items-center gap-2 px-3 pb-2 pl-9">
-                    <input
-                      type="password"
-                      className="input h-8 max-w-[220px] text-xs"
-                      placeholder="Облачный пароль (если есть)"
-                      value={passwords[key(i)] || ''}
-                      onChange={(e) => setPasswords((p) => ({ ...p, [key(i)]: e.target.value }))}
-                    />
-                    <span className="text-xs text-white/30">не нашли рядом с аккаунтом</span>
+                {/* Поля паролей у отмеченного аккаунта: облачный 2FA — только если не нашли
+                    рядом (иначе спрашивать нечего); локальный passcode — у tdata (вдруг под
+                    замком). Пустые поля ничего не ломают. Значения те же, что заполняет
+                    массовый список выше. */}
+                {picked.has(key(i)) && (!i.twoFA || i.kind === 'tdata') && (
+                  <div className="flex flex-wrap items-center gap-2 px-3 pb-2 pl-9">
+                    {!i.twoFA && (
+                      <input
+                        type="password"
+                        className="input h-8 max-w-[200px] text-xs"
+                        placeholder="Облачный пароль 2FA (если есть)"
+                        value={passwords[key(i)] || ''}
+                        onChange={(e) => setPasswords((p) => ({ ...p, [key(i)]: e.target.value }))}
+                      />
+                    )}
+                    {i.kind === 'tdata' && (
+                      <input
+                        type="password"
+                        className="input h-8 max-w-[200px] text-xs"
+                        placeholder="Локальный пароль tdata (passcode)"
+                        value={passcodes[key(i)] || ''}
+                        onChange={(e) => setPasscodes((p) => ({ ...p, [key(i)]: e.target.value }))}
+                      />
+                    )}
+                    {i.kind === 'tdata' && i.altSession && <span className="text-xs text-white/30">под замком — заведём из .session рядом</span>}
                   </div>
                 )}
               </div>
@@ -322,8 +410,8 @@ export function ImportModal({ open, onClose, onImported }: { open: boolean; onCl
               <div className="mb-1 text-xs text-white/50">Прокси для пачки</div>
               <Select value={proxyMode} onChange={(v) => setProxyMode(v as ProxyMode)} options={(Object.keys(PROXY_MODE_LABELS) as ProxyMode[]).map((m) => ({ value: m, label: PROXY_MODE_LABELS[m] }))} />
               {proxyMode === 'pool' && (
-                <div className={`mt-1 text-xs ${notEnoughProxies ? 'text-amber-300' : 'text-white/40'}`}>
-                  Свободно прокси: {freeProxies}{notEnoughProxies ? ` — на ${chosen.length} аккаунтов не хватит, лишние будут пропущены` : ' · один прокси на один аккаунт'}
+                <div className="mt-1 text-xs text-white/40">
+                  Прокси в пуле: {freeProxies > 0 ? `${freeProxies} свободных, ` : ''}раздаём по кругу — при нехватке один прокси идёт на несколько аккаунтов.
                 </div>
               )}
             </div>
@@ -386,7 +474,7 @@ export function ImportModal({ open, onClose, onImported }: { open: boolean; onCl
                 <AlertTriangle size={13} className="mb-0.5 inline" /> Без прокси остаются: {withoutProxy} — высокий риск блокировки.
               </span>
             ) : (
-              <span className="text-spark-400">Прокси хватает на всех — по одному на аккаунт.</span>
+              <span className="text-spark-400">Прокси назначены всем отмеченным (дубли разрешены).</span>
             )}
             {withoutProxy > 0 && (
               <div className="mt-1 text-xs leading-relaxed text-rose-200/70">
@@ -437,12 +525,13 @@ export function ImportModal({ open, onClose, onImported }: { open: boolean; onCl
           </div>
 
           <div className="max-h-72 overflow-y-auto rounded-xl border border-line">
-            {chosen.map((it, i) => {
-              // Прокси, уже отданный другой строке, в этом списке не показываем:
-              // «один прокси — один аккаунт» должно быть невозможно нарушить руками.
-              const takenElsewhere = new Set(pairs.filter((p, j) => p && j !== i) as string[])
-              const opts = pool.filter((p) => !takenElsewhere.has(p.url))
-              return (
+            {(() => {
+              // Дубли разрешены: один прокси можно поставить на несколько строк. В метке
+              // показываем, на сколько строк ЭТОЙ раскладки он уже назначен («× N»), плюс
+              // сколько аккаунтов сидит на нём вне импорта (из пула, `used`).
+              const localUse = new Map<string, number>()
+              for (const p of pairs) if (p) localUse.set(p, (localUse.get(p) || 0) + 1)
+              return chosen.map((it, i) => (
                 <div key={key(it)} className="flex items-center gap-2 border-b border-line/60 px-3 py-2 text-sm last:border-0">
                   <span className="w-6 shrink-0 text-right text-xs tabular-nums text-white/30">{i + 1}</span>
                   <span className="w-40 shrink-0 truncate font-semibold text-white" title={it.name}>{it.name}</span>
@@ -453,15 +542,19 @@ export function ImportModal({ open, onClose, onImported }: { open: boolean; onCl
                     placeholder="Без прокси"
                     options={[
                       { value: '', label: 'Без прокси' },
-                      ...opts.map((p) => ({
-                        value: p.url,
-                        label: `${p.url.replace(/^\w+:\/\/[^@]*@/, '')}${p.country ? ` · ${p.country.toUpperCase()}` : ''}${p.status === 'dead' ? ' · мёртвый' : ''}`,
-                      })),
+                      ...pool.map((p) => {
+                        const dup = localUse.get(p.url) || 0
+                        const busy = (p.used || 0) + (pairs[i] === p.url ? 0 : dup)
+                        return {
+                          value: p.url,
+                          label: `${p.url.replace(/^\w+:\/\/[^@]*@/, '')}${p.country ? ` · ${p.country.toUpperCase()}` : ''}${p.status === 'dead' ? ' · мёртвый' : ''}${busy > 0 ? ` · занят ${busy}` : ''}`,
+                        }
+                      }),
                     ]}
                   />
                 </div>
-              )
-            })}
+              ))
+            })()}
           </div>
 
           <div className="flex justify-end gap-2">

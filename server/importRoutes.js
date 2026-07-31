@@ -13,18 +13,38 @@ import fs from 'fs/promises'
 import multer from 'multer'
 import { scanFolder, listDirs } from './lib/accountScan.js'
 import { distributeProxies, pairByOrder, importOne, existingAccountKeys, isKnownByPhone } from './lib/accountImport.js'
-import { listProxies, toProxyUrl } from './proxies.js'
+import { listProxies, toProxyUrl, proxyUsageMap } from './proxies.js'
 import { loadAllMeta, setAccountMeta, countryFromPhone } from './accountsMeta.js'
 import { appendAudit } from './lib/auditLog.js'
+import { authEnforced } from './lib/session.js'
 
 export const importRouter = Router()
+
+/**
+ * Разрешён ли импорт «с диска сервера» (проводник по папкам, скан по пути).
+ *
+ * ⚠️ Критично: browse/scan читают ФС той машины, где крутится бэкенд. Локально это ПК
+ * оператора — норм. На хостинге (`SESSION_SECRET` задан) любой вошедший клиент через
+ * этот роут гулял бы по диску сервера — это утечка/обход доступа. Поэтому на проде
+ * путь «с диска» выключен: остаётся только загрузка папки с ПК пользователя.
+ * Явный `IMPORT_LOCAL_FS=1` может вернуть его (напр. одиночный self-hosted).
+ */
+function localFsAllowed() {
+  return !authEnforced() || process.env.IMPORT_LOCAL_FS === '1'
+}
 
 function fail(res, err, code = 400) {
   res.status(code).json({ ok: false, error: err instanceof Error ? err.message : 'Ошибка' })
 }
 
+/** Что умеет импорт в текущем окружении — чтобы форма не показывала недоступное. */
+importRouter.get('/capabilities', (_req, res) => {
+  res.json({ ok: true, localFs: localFsAllowed() })
+})
+
 /** Проводник по папкам сервера — чтобы не заставлять человека вручную писать путь. */
 importRouter.post('/browse', async (req, res) => {
+  if (!localFsAllowed()) return fail(res, 'Просмотр диска сервера отключён — загрузите папку с вашего ПК', 403)
   try {
     const dir = String(req.body?.path || '')
     res.json({ ok: true, path: dir, ...(await listDirs(dir)) })
@@ -33,6 +53,7 @@ importRouter.post('/browse', async (req, res) => {
 
 /** Найти аккаунты в папке. Ничего не импортирует — только показывает, что нашлось. */
 importRouter.post('/scan', async (req, res) => {
+  if (!localFsAllowed()) return fail(res, 'Импорт с диска сервера отключён — загрузите папку с вашего ПК', 403)
   try {
     const dir = String(req.body?.path || '').trim()
     if (!dir) return res.status(400).json({ ok: false, error: 'Укажите папку' })
@@ -63,23 +84,32 @@ importRouter.post('/run', async (req, res) => {
     if (!items.length) return res.status(400).json({ ok: false, error: 'Нечего импортировать' })
     const { proxyMode = 'pool', proxyIds = [], singleProxy = '', manualProxies = [], validate = true, passcode = '', root = '' } = req.body ?? {}
 
+    // На проде импорт с диска сервера запрещён (см. localFsAllowed): единственный
+    // легальный источник — залитая папка во временном каталоге. Всё остальное — отказ.
+    if (!localFsAllowed()) {
+      const up = path.resolve(UPLOAD_ROOT)
+      const base = root ? path.resolve(String(root)) : ''
+      if (!base || (base !== up && !base.startsWith(up + path.sep))) {
+        return res.status(403).json({ ok: false, error: 'Импорт с диска сервера отключён — загрузите папку с вашего ПК' })
+      }
+    }
+
     // Пути приходят от клиента, поэтому импортировать разрешаем только из той папки,
     // которую перед этим сканировали (или куда залили файлы). Иначе через этот роут
     // можно было бы ткнуть в произвольный файл на сервере.
     if (root) {
       const base = path.resolve(String(root))
-      const outside = items.find((it) => {
-        const p = path.resolve(String(it?.path || ''))
-        return p !== base && !p.startsWith(base + path.sep)
-      })
+      const inside = (p) => { const r = path.resolve(String(p || '')); return r === base || r.startsWith(base + path.sep) }
+      // Проверяем И основной путь, И запасной .session (altSession) — иначе через
+      // altSession можно было бы подсунуть произвольный файл с диска сервера.
+      const outside = items.find((it) => !inside(it?.path) || (it?.altSession && !inside(it.altSession)))
       if (outside) return res.status(400).json({ ok: false, error: 'Путь вне просканированной папки' })
     }
 
-    // Пул прокси: берём выбранные (или все живые) и исключаем уже занятые аккаунтами.
+    // Пул прокси: берём выбранные (или все живые). Дубли разрешены — «занятые» больше
+    // не исключаем: один прокси можно повесить на несколько аккаунтов.
     const all = await listProxies()
     const chosen = proxyIds.length ? all.filter((p) => proxyIds.includes(p.id)) : all.filter((p) => p.status !== 'dead')
-    const meta = await loadAllMeta()
-    const busy = new Set(Object.values(meta || {}).map((m) => m?.proxy).filter((u) => u && u !== '—'))
     const assigned = distributeProxies(items, {
       mode: proxyMode,
       proxyUrls: chosen.map(toProxyUrl),
@@ -87,7 +117,6 @@ importRouter.post('/run', async (req, res) => {
       // `manual` — раскладка из таблицы «аккаунт ↔ прокси»: оператор её уже видел
       // и поправил, переставлять нельзя.
       manual: manualProxies,
-      busy,
     })
 
     const results = []
@@ -95,7 +124,7 @@ importRouter.post('/run', async (req, res) => {
       const it = items[i]
       const proxy = assigned[i]
       if (proxyMode === 'pool' && !proxy) {
-        results.push({ name: it.name, ok: false, reason: 'не хватило свободных прокси в пуле' })
+        results.push({ name: it.name, ok: false, reason: 'нет ни одного прокси в пуле' })
         continue
       }
       try {
@@ -202,14 +231,20 @@ importRouter.post('/upload/:token/cleanup', async (req, res) => {
   } catch (err) { fail(res, err, 500) }
 })
 
-/** Подсказка для UI: сколько прокси реально свободно под импорт. */
+/**
+ * Подсказка для UI по прокси. Дубли разрешены, поэтому «свободно» — это прокси, на
+ * которых пока НОЛЬ аккаунтов (просто информативно), а не лимит. `usable` — сколько
+ * вообще можно раздавать (все не-мёртвые, каждый — на сколько угодно аккаунтов).
+ */
 importRouter.get('/proxy-capacity', async (_req, res) => {
   try {
     const all = await listProxies()
     const meta = await loadAllMeta()
-    const busy = new Set(Object.values(meta || {}).map((m) => m?.proxy).filter((u) => u && u !== '—'))
-    const free = all.filter((p) => p.status !== 'dead' && !busy.has(toProxyUrl(p)))
-    res.json({ ok: true, total: all.length, free: free.length, freeIds: free.map((p) => p.id) })
+    const usage = proxyUsageMap(meta)
+    const usable = all.filter((p) => p.status !== 'dead')
+    const unused = usable.filter((p) => !(usage[toProxyUrl(p)]?.length))
+    // `free` оставляем для обратной совместимости фронта = сколько ещё не занятых.
+    res.json({ ok: true, total: all.length, usable: usable.length, free: unused.length, freeIds: unused.map((p) => p.id) })
   } catch (err) { fail(res, err, 500) }
 })
 
@@ -228,15 +263,16 @@ importRouter.post('/pair-preview', async (req, res) => {
     }
     const all = await listProxies()
     const meta = await loadAllMeta()
-    const busy = new Set(Object.values(meta || {}).map((m) => m?.proxy).filter((u) => u && u !== '—'))
+    const usage = proxyUsageMap(meta) // url → [accountId], для счётчика «занят N»
 
     // Если форма прислала свой список (например, только что добавленные) — берём его
-    // в присланном порядке. Иначе — все свободные из пула.
+    // в присланном порядке. Иначе — ВЕСЬ пул: дубли разрешены, занятые не прячем,
+    // а показываем со счётчиком использования.
     const byUrl = new Map(all.map((p) => [toProxyUrl(p), p]))
+    const usedCount = (u) => (usage[u]?.length || 0)
     const pool = Array.isArray(proxyUrls) && proxyUrls.length
-      ? proxyUrls.map((u) => ({ url: u, country: byUrl.get(u)?.country || '', status: byUrl.get(u)?.status || 'unknown' }))
-      : all.filter((p) => !busy.has(toProxyUrl(p)))
-        .map((p) => ({ url: toProxyUrl(p), country: p.country || '', status: p.status }))
+      ? proxyUrls.map((u) => ({ url: u, country: byUrl.get(u)?.country || '', status: byUrl.get(u)?.status || 'unknown', used: usedCount(u) }))
+      : all.map((p) => ({ url: toProxyUrl(p), country: p.country || '', status: p.status, used: usedCount(toProxyUrl(p)) }))
 
     // Страна аккаунта выводится из номера — справочник кодов живёт на сервере,
     // держать его вторую копию в форме незачем.
@@ -260,10 +296,7 @@ importRouter.post('/pair-preview', async (req, res) => {
  * Раздача прокси была только в импорте: залил пачку — получил по прокси на каждого.
  * А дальше тупик: прокси сдох, купили новый пул, аккаунты переехали — и всё это
  * руками, по одному через карточку. Логику раздачи не дублируем, берём ту же
- * `distributeProxies`, чтобы правило «1 прокси = 1 аккаунт» жило в одном месте.
- *
- * Занятыми считаем прокси ЧУЖИХ аккаунтов: те, что висят на выбранных, освобождаются —
- * иначе перепривязка той же пачки на тот же пул сразу упиралась бы в «не хватило».
+ * `distributeProxies` — она раздаёт по кругу с разрешёнными дублями.
  */
 importRouter.post('/assign-proxies', async (req, res) => {
   try {
@@ -274,23 +307,16 @@ importRouter.post('/assign-proxies', async (req, res) => {
 
     const all = await listProxies()
     const chosen = proxyIds.length ? all.filter((p) => proxyIds.includes(p.id)) : all.filter((p) => p.status !== 'dead')
-    const meta = await loadAllMeta()
-    const mine = new Set(ids)
-    const busy = new Set(
-      Object.entries(meta || {})
-        .filter(([id]) => !mine.has(id))
-        .map(([, m]) => m?.proxy)
-        .filter((u) => u && u !== '—'),
-    )
+    // Дубли разрешены — «занятые» не исключаем: один прокси можно повесить на многих.
     const assigned = distributeProxies(ids.map((id) => ({ id })), {
-      mode, proxyUrls: chosen.map(toProxyUrl), single: singleProxy, busy,
+      mode, proxyUrls: chosen.map(toProxyUrl), single: singleProxy,
     })
 
     const rows = []
     for (let i = 0; i < ids.length; i++) {
       const proxy = assigned[i]
       if (mode === 'pool' && !proxy) {
-        rows.push({ accountId: ids[i], ok: false, reason: 'не хватило свободных прокси в пуле' })
+        rows.push({ accountId: ids[i], ok: false, reason: 'нет ни одного прокси в пуле' })
         continue
       }
       // «Без прокси» — это прочерк, а не пустая строка: так прямое подключение

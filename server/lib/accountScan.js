@@ -153,6 +153,12 @@ export async function scanFolder(root, opts = {}) {
       const json = entries.find((e) => e.isFile() && e.name.toLowerCase().endsWith('.json'))
       const meta = json ? await readSidecarJson(path.join(dir, json.name)) : null
       const passFile = await readPasswordFile(entries, dir)
+      // Продавцы часто кладут в ту же папку и `.session` (Telethon/Pyrogram) — ему
+      // локальный пароль tdata не нужен. Держим его как запасной источник: если tdata
+      // под passcode или в незнакомом формате, импорт заведёт аккаунт из `.session`.
+      // Только для одиночной tdata: при нескольких аккаунтах непонятно, чей это `.session`.
+      const sessionSibling = entries.find((e) => e.isFile() && e.name.toLowerCase().endsWith('.session'))
+      const altSession = idxs.length === 1 && sessionSibling ? path.join(dir, sessionSibling.name) : null
       // Имя аккаунта — это имя ЕГО папки. Если указали прямо на `tdata`, берём родителя:
       // сама по себе «tdata» ничего человеку не говорит.
       const base = path.basename(dir)
@@ -167,6 +173,7 @@ export async function scanFolder(root, opts = {}) {
           proxy: meta?.proxy || null,
           twoFA: meta?.twoFA || passFile || null,
           fingerprint: meta?.fingerprint || null,
+          altSession,
         })
       }
       return

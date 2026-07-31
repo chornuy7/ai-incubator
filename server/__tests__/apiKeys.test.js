@@ -53,3 +53,26 @@ test('revokeKey: неизвестный id — false', async () => {
   assert.equal(await K.revokeKey('key_нет'), false)
   await fs.rm(f, { force: true })
 })
+
+test('сервисный env-ключ: проходит до префикса/БД, отдаёт владельца из env', async () => {
+  const { K, f } = await fresh()
+  process.env.MURMEX_API_KEY = 'service-secret-xyz' // намеренно без префикса aii_live_sk_
+  process.env.MURMEX_API_KEY_OWNER = 'usr_boss'
+  assert.ok(K.serviceKeyConfigured(), 'ключ задан в окружении')
+  const ok = await K.verifyKey('Bearer service-secret-xyz')
+  assert.ok(ok, 'env-ключ проходит')
+  assert.equal(ok.ownerId, 'usr_boss', 'действует от имени владельца из env')
+  assert.equal(ok.service, true, 'помечен как сервисный')
+  assert.equal(await K.verifyKey('Bearer service-secret-XXX'), null, 'неверное значение — null')
+
+  // Без владельца — системный режим (ownerId пуст → RBAC даёт полный доступ).
+  delete process.env.MURMEX_API_KEY_OWNER
+  const sys = await K.verifyKey('service-secret-xyz')
+  assert.equal(sys.ownerId, '', 'без OWNER — системный ключ без пользователя')
+
+  // Снятие ключа из env закрывает доступ.
+  delete process.env.MURMEX_API_KEY
+  assert.ok(!K.serviceKeyConfigured(), 'ключа больше нет')
+  assert.equal(await K.verifyKey('service-secret-xyz'), null, 'без env-ключа — null')
+  await fs.rm(f, { force: true })
+})

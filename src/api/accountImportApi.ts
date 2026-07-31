@@ -10,6 +10,10 @@ export interface ScannedAccount {
   phone: string | null
   proxy: string | null
   twoFA: string | null
+  /** Запасной источник: `.session` рядом с tdata — заведём из него, если tdata под паролем. */
+  altSession?: string | null
+  /** Локальный пароль tdata (passcode) для этого аккаунта — из списка/поля в форме. */
+  passcode?: string
   /** Такой телефон уже заведён в системе — по умолчанию не отмечаем. */
   known?: boolean
 }
@@ -18,6 +22,14 @@ export interface BrowseResult {
   path: string
   parent: string | null
   dirs: { name: string; path: string }[]
+}
+
+/**
+ * Что доступно в текущем окружении. `localFs=false` (прод) — проводник по диску
+ * сервера выключен, остаётся только загрузка папки с ПК пользователя.
+ */
+export async function importCapabilities(): Promise<{ localFs: boolean }> {
+  return apiGet('/api/tg/import/capabilities')
 }
 
 /** Проводник по папкам сервера. Пустой путь = список дисков (C:\, D:\ …). */
@@ -90,7 +102,7 @@ export async function proxyCapacity(): Promise<{ total: number; free: number; fr
   return apiGet('/api/tg/import/proxy-capacity')
 }
 
-export interface PairPoolItem { url: string; country?: string; status?: string }
+export interface PairPoolItem { url: string; country?: string; status?: string; used?: number }
 
 /**
  * Предложенная раскладка «аккаунт ↔ прокси» перед импортом. Считает сервер: правило

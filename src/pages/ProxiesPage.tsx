@@ -129,6 +129,8 @@ export function ProxiesPage() {
                       </span>
                     )}
                     <Badge tone={sm.tone}>{sm.label}</Badge>
+                    {/* Дубли разрешены: сколько аккаунтов сидит на этом прокси. */}
+                    {(p.usedBy ?? 0) > 0 && <span title="На скольких аккаунтах висит этот прокси"><Badge tone="iris">занят {p.usedBy}</Badge></span>}
                   </div>
                   <div className="mt-0.5 truncate font-mono text-xs text-white/50">{p.scheme}://{p.username ? `${p.username}@` : ''}{p.host}:{p.port}</div>
                   {geoMap[p.id] && (

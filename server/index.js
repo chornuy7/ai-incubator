@@ -290,6 +290,18 @@ app.get('/api/admin/api-keys', async (req, res) => {
   } catch (err) { res.status(500).json({ ok: false, error: err instanceof Error ? err.message : 'Ошибка' }) }
 })
 
+/**
+ * §10.3: задан ли сервисный ключ «мозгов» в окружении. Само значение не отдаём —
+ * только факт «настроен / не настроен», чтобы владелец видел статус в админке.
+ */
+app.get('/api/admin/api-keys/service', async (req, res) => {
+  try {
+    if (!(await isAdminRequest(req))) return res.status(403).json({ ok: false, error: 'Доступ только владельцу' })
+    const { serviceKeyConfigured } = await import('./apiKeys.js')
+    res.json({ ok: true, configured: serviceKeyConfigured() })
+  } catch (err) { res.status(500).json({ ok: false, error: err instanceof Error ? err.message : 'Ошибка' }) }
+})
+
 app.post('/api/admin/api-keys', async (req, res) => {
   try {
     if (!(await isAdminRequest(req))) return res.status(403).json({ ok: false, error: 'Выпускать ключи может только владелец' })

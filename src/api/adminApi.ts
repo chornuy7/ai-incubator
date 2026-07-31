@@ -319,3 +319,7 @@ export async function issueApiKey(name: string, userId: string): Promise<{ id: s
 export async function revokeApiKey(id: string): Promise<void> {
   await apiDelete(`/api/admin/api-keys/${id}`)
 }
+/** Задан ли сервисный ключ «мозгов» в окружении сервера (значение не отдаётся). */
+export async function serviceKeyStatus(): Promise<{ configured: boolean }> {
+  return apiGet('/api/admin/api-keys/service')
+}
