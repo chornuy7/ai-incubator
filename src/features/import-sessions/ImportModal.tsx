@@ -9,10 +9,10 @@ import { fetchProxies, importProxies, toProxyUrl, type Proxy } from '@/api/proxi
 type Step = 'pick' | 'found' | 'proxy' | 'result'
 
 const PROXY_MODE_LABELS: Record<ProxyMode, string> = {
-  pool: 'По одному из пула на аккаунт',
+  manual: 'Из моих прокси — 1 к 1 (таблица)',
+  pool: 'По одному из пула на аккаунт (по кругу)',
   single: 'Один прокси на всю пачку',
   sidecar: 'Из файла рядом с аккаунтом',
-  manual: 'Разложить вручную (таблица)',
   none: 'Без прокси',
 }
 
@@ -433,7 +433,17 @@ export function ImportModal({ open, onClose, onImported }: { open: boolean; onCl
           <div className="grid gap-3 sm:grid-cols-2">
             <div>
               <div className="mb-1 text-xs text-white/50">Прокси для пачки</div>
-              <Select value={proxyMode} onChange={(v) => setProxyMode(v as ProxyMode)} options={(Object.keys(PROXY_MODE_LABELS) as ProxyMode[]).map((m) => ({ value: m, label: PROXY_MODE_LABELS[m] }))} />
+              <Select
+                value={proxyMode}
+                onChange={(v) => {
+                  const m = v as ProxyMode
+                  setProxyMode(m)
+                  // «Из моих прокси — 1к1»: сразу показываем таблицу и раскладываем пул
+                  // по порядку (1 к 1). Раньше это пряталось за отдельной кнопкой ниже.
+                  if (m === 'manual') { setStep('proxy'); void relayout(false) }
+                }}
+                options={(Object.keys(PROXY_MODE_LABELS) as ProxyMode[]).map((m) => ({ value: m, label: PROXY_MODE_LABELS[m] }))}
+              />
               {proxyMode === 'pool' && (
                 <div className="mt-1 text-xs text-white/40">
                   Прокси в пуле: {freeProxies > 0 ? `${freeProxies} свободных, ` : ''}раздаём по кругу — при нехватке один прокси идёт на несколько аккаунтов.
@@ -531,9 +541,30 @@ export function ImportModal({ open, onClose, onImported }: { open: boolean; onCl
             )}
           </div>
 
+          {/* Мои прокси из пула — те, из которых идёт раскладка 1 к 1. Видно, что есть в
+              наличии и сколько занято, до того как раздавать по аккаунтам. */}
+          {pool.length > 0 && (
+            <div className="rounded-xl border border-line">
+              <div className="flex items-center justify-between border-b border-line/60 px-3 py-1.5 text-xs text-white/50">
+                <span>Мои прокси в пуле: {pool.length}</span>
+                <span className="text-white/35">{freeProxies} свободных</span>
+              </div>
+              <div className="max-h-32 overflow-y-auto">
+                {pool.map((p) => (
+                  <div key={p.url} className="flex items-center gap-2 border-b border-line/40 px-3 py-1 text-xs last:border-0">
+                    <span className="truncate font-mono text-white/70">{p.url.replace(/^\w+:\/\/[^@]*@/, '')}</span>
+                    {p.country && <Badge tone="iris">{p.country.toUpperCase()}</Badge>}
+                    {p.status === 'dead' && <Badge tone="rose">мёртвый</Badge>}
+                    {(p.used || 0) > 0 && <span className="shrink-0 text-white/40">занят {p.used}</span>}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
           <div>
             <div className="mb-1 text-xs text-white/50">
-              Вставьте прокси списком — по одному в строке. Проверим живость и настоящую страну выхода.
+              Или вставьте прокси списком — по одному в строке. Проверим живость и настоящую страну выхода.
             </div>
             <textarea
               value={proxyText}
