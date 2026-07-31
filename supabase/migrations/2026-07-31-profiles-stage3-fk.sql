@@ -18,13 +18,18 @@ do $$
 declare r record;
 begin
   for r in
-    select con.conname as cname, rel.relname as tname
+    select con.conname as cname, rel.relname as tname, nsp.nspname as sname
     from pg_constraint con
-    join pg_class rel  on rel.oid  = con.conrelid
-    join pg_class fref on fref.oid = con.confrelid
-    where con.contype = 'f' and fref.relname = 'users' and rel.relname <> 'users'
+    join pg_class rel     on rel.oid  = con.conrelid
+    join pg_namespace nsp on nsp.oid  = rel.relnamespace
+    join pg_class fref    on fref.oid = con.confrelid
+    join pg_namespace fnsp on fnsp.oid = fref.relnamespace
+    where con.contype = 'f'
+      and fref.relname = 'users' and fnsp.nspname = 'public'  -- ТОЛЬКО наша public.users, не auth.users
+      and nsp.nspname = 'public'
+      and rel.relname <> 'users'
   loop
-    execute format('alter table %I drop constraint %I', r.tname, r.cname);
+    execute format('alter table %I.%I drop constraint %I', r.sname, r.tname, r.cname);
   end loop;
 end $$;
 
