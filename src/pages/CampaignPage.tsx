@@ -240,7 +240,9 @@ export function CampaignPage() {
     setCName(''); setCGoalId(''); setCModules(['neuro-commenting']); setCModuleAgents({}); setCAccounts([]); setCTargets('')
     setCModuleSettings({}); setCModulePresetId({}); setCMailNumbers(''); setCMailUsernames('')
     setCPinned(true); setCStatus('draft'); setPickMode(0); setTakeN(5)
-    setCChat(false); setCChatGoal(''); setCChatScope('unread')
+    // Вкл по умолчанию: кампания, которая пишет людям и не отвечает на ответы, сломана.
+    // Диалоговый основной модуль сам ведёт переписку — там галочка скрыта и не нужна.
+    setCChat(true); setCChatGoal(''); setCChatScope('unread')
     setCChatLimitMode('untilTarget'); setCChatMaxReplies(5); setCChatMaxDialogs(0)
     setCDeadline(''); setCFollowUp(false); setCFollowUpLimit(FOLLOW_UP_DEFAULT); setCFollowUpText('')
     setFormOpen(true)
@@ -643,10 +645,11 @@ export function CampaignPage() {
             <label className="flex cursor-pointer items-start gap-2.5">
               <input type="checkbox" checked={cChat} onChange={(e) => setCChat(e.target.checked)} className="mt-0.5 h-4 w-4 accent-spark" />
               <span>
-                <span className="text-sm font-semibold">Добавить чатинг</span>
+                <span className="text-sm font-semibold">Автоматически отвечать на ответы и вести к цели</span>
                 <span className="mt-0.5 block text-xs text-white/45">
-                  Те, кто ответил на «{moduleTitle(cModule)}», попадают в воронку — ИИ доводит их до цели
-                  и прощается, когда целевое действие выполнено.
+                  «{moduleTitle(cModule)}» пишет людям первым. Когда они отвечают — этот авто-ответчик
+                  подхватывает диалог, ведёт по воронке к цели и прощается по выполнении. Без него
+                  ответы остаются без внимания.
                 </span>
               </span>
             </label>
@@ -855,7 +858,7 @@ export function CampaignPage() {
                 </Badge>
                 <span className="font-semibold text-white">{c.name}</span>
                 <span className="text-xs text-white/50">{moduleTitle(c.moduleKey)}</span>
-                {c.chat?.enabled && <Badge tone="iris">+ чатинг</Badge>}
+                {c.chat?.enabled && <Badge tone="iris">+ авто-ответы</Badge>}
                 {c.goalId && <span className="text-xs text-iris-300"><TargetIcon size={11} className="mb-0.5 inline" /> {goalNameOf(c.goalId)}</span>}
                 <span className="inline-flex items-center gap-1 text-xs text-white/50" title={c.pinned ? 'Аккаунты закреплены — вышли из общего пула' : 'Аккаунты используются без лока'}>
                   {c.pinned ? <Lock size={11} className="text-amber-300" /> : <LockOpen size={11} />} {realCount(c.accountIds)} акк.
