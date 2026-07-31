@@ -32,8 +32,8 @@ const audit = (req, action, reason, lead) =>
 
 leadsRouter.get('/', async (req, res) => {
   try {
-    const { goalId, campaignId, status, accountId } = req.query
-    res.json({ ok: true, statuses: LEAD_STATUSES, leads: await listLeads({ goalId, campaignId, status, accountId }) })
+    const { goalId, campaignId, taskId, status, accountId } = req.query
+    res.json({ ok: true, statuses: LEAD_STATUSES, leads: await listLeads({ goalId, campaignId, taskId, status, accountId }) })
   } catch (err) { fail(res, err, 500) }
 })
 

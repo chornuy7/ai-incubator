@@ -143,6 +143,10 @@ test('CRM «откуда пришёл»: лид помнит taskId, ПЕРВЫ�
   assert.equal(b.lead.taskId, 'task_1', 'источник остаётся за первой задачей')
   assert.equal(b.lead.campaignId, 'cmp_1', 'кампания-источник тоже не переписывается')
 
+  // Фильтр по задаче: «показать лидов ИМЕННО этой задачи».
+  assert.equal((await L.listLeads({ taskId: 'task_1' })).length, 1)
+  assert.equal((await L.listLeads({ taskId: 'task_2' })).length, 0)
+
   delete process.env.LEADS_FILE
 })
 

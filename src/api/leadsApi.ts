@@ -32,7 +32,7 @@ export interface LeadInput {
   note?: string
 }
 
-export async function fetchLeads(filter: { goalId?: string; campaignId?: string; status?: LeadStatus } = {}): Promise<Lead[]> {
+export async function fetchLeads(filter: { goalId?: string; campaignId?: string; taskId?: string; status?: LeadStatus } = {}): Promise<Lead[]> {
   // Отбрасываем пустые/undefined фильтры — иначе URLSearchParams слал бы "goalId=undefined",
   // и бэкенд отфильтровал бы всех лидов в ноль (список CRM оказывался пустым).
   const params = Object.fromEntries(Object.entries(filter).filter(([, v]) => v != null && v !== ''))

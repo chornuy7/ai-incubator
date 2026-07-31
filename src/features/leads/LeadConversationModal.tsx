@@ -58,6 +58,13 @@ export function LeadConversationModal({ source, onClose }: { source: Conversatio
       <div className="space-y-3">
         <div className="flex flex-wrap items-center gap-2">
           {data?.lead?.goalId && <Badge tone="iris">по цели</Badge>}
+          {/* Источник лида: из какой задачи-прогона он пришёл — важно менеджеру,
+              который реагирует на горячего (полный id задачи — в подсказке). */}
+          {data?.lead?.taskId && (
+            <span className="rounded-md bg-white/5 px-1.5 py-0.5 text-[11px] text-white/50" title={`Задача-источник: ${data.lead.taskId}`}>
+              задача: {data.lead.taskId.slice(-6)}
+            </span>
+          )}
           {data?.busyIn && (
             <Badge tone="amber" >
               Аккаунт сейчас занят: {data.busyIn.moduleLabel}

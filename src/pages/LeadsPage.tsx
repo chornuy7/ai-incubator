@@ -29,6 +29,9 @@ export function LeadsPage() {
   const [loading, setLoading] = useState(true)
   const [fGoal, setFGoal] = useState('')
   const [fCampaign, setFCampaign] = useState('')
+  // Фильтр по задаче-источнику: «показать лидов ИМЕННО этой задачи». Ставится кликом
+  // по бейджу «задача:» у лида — быстрый способ увидеть, кого привёл конкретный прогон.
+  const [fTask, setFTask] = useState('')
   const [fStatus, setFStatus] = useState('')
   const [peer, setPeer] = useState('')
   const [newGoal, setNewGoal] = useState('')
@@ -62,7 +65,7 @@ export function LeadsPage() {
   const load = async () => {
     try {
       const [l, g, a, cs] = await Promise.all([
-        fetchLeads({ goalId: fGoal || undefined, campaignId: fCampaign || undefined, status: (fStatus as LeadStatus) || undefined }),
+        fetchLeads({ goalId: fGoal || undefined, campaignId: fCampaign || undefined, taskId: fTask || undefined, status: (fStatus as LeadStatus) || undefined }),
         fetchGoals().catch(() => []),
         fetchAccounts().catch(() => []),
         fetchCampaigns().then(({ campaigns }) => campaigns).catch(() => []),
@@ -74,7 +77,7 @@ export function LeadsPage() {
       setLoading(false)
     }
   }
-  useEffect(() => { void load() }, [fGoal, fCampaign, fStatus])
+  useEffect(() => { void load() }, [fGoal, fCampaign, fTask, fStatus])
 
   const counts = useMemo(() => {
     const c = Object.fromEntries(LEAD_STATUSES.map((s) => [s, 0])) as Record<LeadStatus, number>
@@ -156,6 +159,16 @@ export function LeadsPage() {
         <Select value={fGoal} onChange={setFGoal} options={goalOptions} className="w-48" />
         <Select value={fCampaign} onChange={setFCampaign} options={campaignOptions} className="w-48" />
         <Select value={fStatus} onChange={setFStatus} options={statusOptions} className="w-40" />
+        {/* Активный фильтр по задаче — виден и сбрасывается одним кликом. */}
+        {fTask && (
+          <button
+            onClick={() => setFTask('')}
+            className="inline-flex items-center gap-1 rounded-lg border border-spark-500/40 bg-spark-500/10 px-2.5 py-1.5 text-xs text-spark-200 hover:bg-spark-500/20"
+            title={`Показаны лиды задачи ${fTask}`}
+          >
+            задача: {fTask.slice(-6)} ✕
+          </button>
+        )}
         <div className="ml-auto flex items-center gap-2">
           <input className="input h-9 w-44" value={peer} onChange={(e) => setPeer(e.target.value)} placeholder="@username лида" onKeyDown={(e) => e.key === 'Enter' && void add()} />
           <Select value={newGoal} onChange={setNewGoal} options={goalOptions} className="w-40" placeholder="Цель" />
@@ -185,11 +198,16 @@ export function LeadsPage() {
               {l.goalId && <span className="text-xs text-iris-300">цель: {goalName(l.goalId)}</span>}
               {l.campaignId && <span className="text-xs text-spark-300">кампания: {campaignName(l.campaignId)}</span>}
               {/* Источник по задаче: «откуда пришёл» отдельно от кампании — кампания могла
-                  породить несколько прогонов. Полный id — в подсказке, в строке — короткий. */}
+                  породить несколько прогонов. Клик — отфильтровать лидов этой же задачи;
+                  полный id — в подсказке, в строке — короткий. */}
               {l.taskId && (
-                <span className="rounded-md bg-white/5 px-1.5 py-0.5 text-[11px] text-white/45" title={`Задача-источник: ${l.taskId}`}>
+                <button
+                  onClick={() => setFTask((cur) => (cur === l.taskId ? '' : l.taskId || ''))}
+                  className={`rounded-md px-1.5 py-0.5 text-[11px] transition-colors ${fTask === l.taskId ? 'bg-spark-500/20 text-spark-200' : 'bg-white/5 text-white/45 hover:text-white/70'}`}
+                  title={`Задача-источник: ${l.taskId} — нажмите, чтобы показать лидов этой задачи`}
+                >
                   задача: {l.taskId.slice(-6)}
-                </span>
+                </button>
               )}
               {/* Горячий лид без ответственного аккаунта не защищает никого — говорим об этом прямо. */}
               {l.status === 'hot' && !l.accountId && (

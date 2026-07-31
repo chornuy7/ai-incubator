@@ -74,6 +74,7 @@ export async function listLeads(filter = {}) {
   return all.filter((l) =>
     (!filter.goalId || l.goalId === filter.goalId) &&
     (!filter.campaignId || l.campaignId === filter.campaignId) &&
+    (!filter.taskId || l.taskId === filter.taskId) &&
     (!filter.status || l.status === filter.status) &&
     (!filter.accountId || l.accountId === filter.accountId),
   )
