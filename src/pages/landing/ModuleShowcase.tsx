@@ -13,7 +13,16 @@ import { MODULE_FEATURES } from './catalog'
  * выноски и подписи останутся на месте.
  */
 export const MODULE_SHOTS: Record<string, string> = {
-  // 'neuro-commenting': '/shots/neuro-commenting.png',
+  // Реальные скриншоты рабочих экранов (обрезаны: без сайдбара, шапки и ростера аккаунтов).
+  'neuro-commenting': '/shots/neuro-commenting.png',
+  'neuro-chatting': '/shots/neuro-chatting.png',
+  'neuro-dialogs': '/shots/neuro-dialogs.png',
+  'mass-react': '/shots/mass-react.png',
+  'mass-looking': '/shots/mass-looking.png',
+  warming: '/shots/warming.png',
+  parsing: '/shots/parsing.png',
+  autoposting: '/shots/autoposting.png',
+  ggr: '/shots/ggr.png',
 }
 
 /** Подписи-выноски: берём возможности модуля — они уже написаны языком выгоды. */
