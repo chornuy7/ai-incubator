@@ -218,6 +218,8 @@ export interface PurchaseUser { userId: string; name: string; email: string; cou
 export interface PurchaseFeedItem { ts: number; userId: string; name: string; email: string; amount: number; reason: string }
 /** Покупка/продление плана ($): modulesCount = -1 означает «все модули». */
 export interface PlanPurchase { ts: number; userId: string; name: string; email: string; amount: number; modulesCount: number; reason: string }
+/** §11.4: денежное пополнение баланса ($) по человеку. */
+export interface UsdTopUpUser { userId: string; name: string; email: string; count: number; usd: number; lastAt: number }
 export interface Purchases {
   since: number
   /** Всего начислено монет за период по всем кошелькам. */
@@ -227,6 +229,8 @@ export interface Purchases {
   feed: PurchaseFeedItem[]
   /** Покупки планов/подписок ($) — отдельный от монет поток. */
   plans: { currency: string; total: number; count: number; feed: PlanPurchase[] }
+  /** §11.4: пополнения баланса деньгами ($) — отдельно от токенов и планов. */
+  usd?: { currency: string; total: number; count: number; rows: UsdTopUpUser[]; feed: PurchaseFeedItem[] }
 }
 
 export async function fetchPurchases(since?: number): Promise<Purchases> {

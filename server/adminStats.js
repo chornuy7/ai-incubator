@@ -741,12 +741,26 @@ export async function purchasesReport(opts = {}) {
   const byUser = new Map()
   const feed = []
   let boughtTotal = 0
+  // §11.4 (31.07): ДЕНЬГИ ($) считаем ОТДЕЛЬНО от токенов — иначе пополнение баланса
+  // мешалось бы с покупкой токенов и завышало «занесено монет».
+  const usdByUserMap = new Map()
+  const usdFeed = []
+  let usdTotal = 0
+  const nameFor = (id) => nameOf.get(id) || (id === '__default' ? 'Системный кошелёк' : id)
   for (const r of rowsRaw) {
     const amount = Number(r.amount) || 0
     if (amount <= 0) continue // только пополнения/начисления, не списания
     const id = r.userId || '—'
+    if (r.currency === 'usd') {
+      if (!usdByUserMap.has(id)) usdByUserMap.set(id, { userId: id, name: nameFor(id), email: emailOf.get(id) || '', count: 0, usd: 0, lastAt: 0 })
+      const u = usdByUserMap.get(id)
+      u.count += 1; u.usd = Math.round((u.usd + amount) * 100) / 100; u.lastAt = Math.max(u.lastAt, Number(r.ts) || 0)
+      usdTotal = Math.round((usdTotal + amount) * 100) / 100
+      usdFeed.push({ ts: Number(r.ts) || 0, userId: id, name: u.name, email: u.email, amount, reason: r.reason || '' })
+      continue
+    }
     if (!byUser.has(id)) {
-      byUser.set(id, { userId: id, name: nameOf.get(id) || (id === '__default' ? 'Системный кошелёк' : id), email: emailOf.get(id) || '', count: 0, coins: 0, lastAt: 0 })
+      byUser.set(id, { userId: id, name: nameFor(id), email: emailOf.get(id) || '', count: 0, coins: 0, lastAt: 0 })
     }
     const u = byUser.get(id)
     u.count += 1; u.coins = round3(u.coins + amount); u.lastAt = Math.max(u.lastAt, Number(r.ts) || 0)
@@ -791,6 +805,14 @@ export async function purchasesReport(opts = {}) {
     // история — отдельная задача (диапазон дат from–to + пагинация).
     feed: feed.sort((a, b) => b.ts - a.ts).slice(0, 500),
     plans: { currency: CURRENCY, total: planTotal, count: planFeed.length, feed: planFeed.slice(0, 500) },
+    // §11.4: денежные пополнения баланса ($) — отдельно от токенов и планов.
+    usd: {
+      currency: CURRENCY,
+      total: usdTotal,
+      count: usdFeed.length,
+      rows: [...usdByUserMap.values()].sort((a, b) => b.usd - a.usd),
+      feed: usdFeed.sort((a, b) => b.ts - a.ts).slice(0, 500),
+    },
   }
 }
 

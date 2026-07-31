@@ -351,10 +351,16 @@ const WALLET_LOG = () => process.env.WALLET_LOG_FILE || dataPath('wallet-log.jso
 async function appendWalletEntry(entry) {
   const db = sb()
   if (db) {
-    await db.from('wallet_log').insert({
+    // §11.4: currency — 'usd' для денег, 'coins' для токенов. Колонка появляется
+    // миграцией 2026-07-31-wallet-currency.sql; пока её нет — пишем без валюты
+    // (запись не должна ломаться из-за неприменённой миграции).
+    const base = {
       ts: new Date().toISOString(), user_id: entry.userId, amount: entry.applied,
       before_val: entry.before, after_val: entry.after, reason: String(entry.reason || ''),
-    })
+    }
+    const currency = entry.currency === 'usd' ? 'usd' : 'coins'
+    const { error } = await db.from('wallet_log').insert({ ...base, currency })
+    if (error && /currency/i.test(error.message)) await db.from('wallet_log').insert(base)
     return
   }
   const fs = await import('node:fs/promises')
@@ -368,6 +374,7 @@ async function appendWalletEntry(entry) {
     before: entry.before,
     after: entry.after,
     reason: String(entry.reason || ''),
+    currency: entry.currency === 'usd' ? 'usd' : 'coins',
   }
   await fs.appendFile(file, JSON.stringify(row) + '\n', 'utf8')
 }
@@ -380,14 +387,21 @@ export async function walletHistory(filter = {}) {
   const limitN = Math.min(1000, Math.max(1, Number(filter.limit) || 100))
   const db = sb()
   if (db) {
-    let q = db.from('wallet_log').select('ts, user_id, amount, before_val, after_val, reason').order('ts', { ascending: false }).limit(limitN)
-    if (filter.userId) q = q.eq('user_id', key(filter.userId))
-    if (filter.since) q = q.gte('ts', new Date(Number(filter.since)).toISOString())
-    const { data } = await q
+    // §11.4: тянем и currency. Колонка появляется миграцией 2026-07-31 — если её ещё
+    // нет, PostgREST вернёт ошибку на весь select, поэтому при промахе повторяем без неё.
+    const build = (cols) => {
+      let q = db.from('wallet_log').select(cols).order('ts', { ascending: false }).limit(limitN)
+      if (filter.userId) q = q.eq('user_id', key(filter.userId))
+      if (filter.since) q = q.gte('ts', new Date(Number(filter.since)).toISOString())
+      return q
+    }
+    let { data, error } = await build('ts, user_id, amount, before_val, after_val, reason, currency')
+    if (error && /currency/i.test(error.message || '')) ({ data } = await build('ts, user_id, amount, before_val, after_val, reason'))
     return (data || []).map((r) => ({
       ts: ms(r.ts), userId: r.user_id, amount: Number(r.amount),
       before: r.before_val == null ? null : Number(r.before_val),
       after: r.after_val == null ? null : Number(r.after_val), reason: r.reason || '',
+      currency: r.currency === 'usd' ? 'usd' : 'coins',
     }))
   }
   const fs = await import('node:fs/promises')

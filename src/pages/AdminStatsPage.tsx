@@ -1033,13 +1033,19 @@ function PurchasesTab({ p }: { p: Purchases | null }) {
 
   return (
     <div className="space-y-3">
-      <div className="grid gap-3 sm:grid-cols-3">
+      <div className="grid gap-3 sm:grid-cols-4">
+        {/* §11.4: ДЕНЬГИ ($) — основное, первым. Это реальная выручка «занесли на баланс». */}
         <Card className="p-4">
-          <div className="mb-1 flex items-center gap-2 text-xs text-muted"><ShoppingCart size={14} /> Пополнено за период</div>
-          <div className="font-display text-2xl font-bold text-spark-300">{fmtCoins(p.boughtTotal)} ⚡</div>
+          <div className="mb-1 flex items-center gap-2 text-xs text-muted"><ShoppingCart size={14} /> Пополнено $ за период</div>
+          <div className="font-display text-2xl font-bold text-spark-300">${(p.usd?.total ?? 0).toFixed(2)}</div>
+          <div className="mt-0.5 text-[11px] text-muted">{fmt(p.usd?.count ?? 0)} операций · {fmt(p.usd?.rows.length ?? 0)} кошельков</div>
         </Card>
         <Card className="p-4">
-          <div className="mb-1 text-xs text-muted">Операций пополнения</div>
+          <div className="mb-1 text-xs text-muted">Пополнено токенов</div>
+          <div className="font-display text-2xl font-bold text-amber-300">{fmtCoins(p.boughtTotal)} ⚡</div>
+        </Card>
+        <Card className="p-4">
+          <div className="mb-1 text-xs text-muted">Операций (токены)</div>
           <div className="font-display text-2xl font-bold text-fg">{fmt(p.count)}</div>
         </Card>
         <Card className="p-4">
@@ -1047,6 +1053,39 @@ function PurchasesTab({ p }: { p: Purchases | null }) {
           <div className="font-display text-2xl font-bold text-fg">{fmt(p.rows.length)}</div>
         </Card>
       </div>
+
+      {/* §11.4: кто занёс ДЕНЬГИ ($) — отдельно от токенов, это и есть выручка. */}
+      {!!p.usd?.rows.length && (
+        <Card className="p-4">
+          <div className="mb-1 text-sm font-semibold text-fg">Кто занёс деньги ($)</div>
+          <div className="mb-2 text-xs text-muted">Пополнения баланса деньгами — за них покупают токены и подписки.</div>
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-line text-left text-xs text-muted">
+                  <th className="pb-2 pr-3 font-medium">Пользователь</th>
+                  <th className="pb-2 pr-3 text-right font-medium">Пополнений</th>
+                  <th className="pb-2 pr-3 text-right font-medium">Всего $</th>
+                  <th className="pb-2 text-right font-medium">Последнее</th>
+                </tr>
+              </thead>
+              <tbody>
+                {p.usd.rows.map((r) => (
+                  <tr key={r.userId} className="border-b border-line/50">
+                    <td className="py-2 pr-3">
+                      <div className="font-medium text-fg">{r.name}</div>
+                      {!!r.email && <div className="text-[11px] text-muted">{r.email}</div>}
+                    </td>
+                    <td className="py-2 pr-3 text-right tabular-nums text-muted">{fmt(r.count)}</td>
+                    <td className="py-2 pr-3 text-right font-semibold tabular-nums text-spark-300">${r.usd.toFixed(2)}</td>
+                    <td className="py-2 text-right tabular-nums text-faint">{fmtDt(r.lastAt)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </Card>
+      )}
 
       {/* База оплат: любой платёж за любой диапазон дат — «месяц назад» тоже. */}
       <PaymentsExplorer />
