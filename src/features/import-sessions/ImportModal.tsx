@@ -47,6 +47,7 @@ export function ImportModal({ open, onClose, onImported }: { open: boolean; onCl
   const [pairs, setPairs] = useState<(string | null)[]>([])
   const [validate, setValidate] = useState(true)
   const [busy, setBusy] = useState(false)
+  const [elapsed, setElapsed] = useState(0) // секунды с начала импорта — для «сколько уже идёт»
   const [err, setErr] = useState('')
   const [results, setResults] = useState<ImportResultRow[]>([])
   // §2: путь «загрузкой» — для случая, когда бэкенд не на машине с аккаунтами.
@@ -80,6 +81,14 @@ export function ImportModal({ open, onClose, onImported }: { open: boolean; onCl
     void proxyCapacity().then((c) => setFreeProxies(c.free)).catch(() => {})
   }, [open])
 
+  // Тикаем секунды, пока идёт импорт — чтобы было видно, что процесс живой, а не завис.
+  useEffect(() => {
+    if (!busy) { setElapsed(0); return }
+    const t0 = Date.now()
+    const id = setInterval(() => setElapsed(Math.round((Date.now() - t0) / 1000)), 500)
+    return () => clearInterval(id)
+  }, [busy])
+
   const scan = async () => {
     if (!dir) return
     setScanning(true); setErr('')
@@ -99,6 +108,16 @@ export function ImportModal({ open, onClose, onImported }: { open: boolean; onCl
   const toggle = (i: ScannedAccount) => setPicked((prev) => {
     const n = new Set(prev); const k = key(i); n.has(k) ? n.delete(k) : n.add(k); return n
   })
+
+  // Ориентир времени импорта: с проверкой каждый аккаунт реально логинится в Telegram
+  // (через свой прокси — дольше), поэтому это секунды на аккаунт, а не мгновенно.
+  const estSec = useMemo(() => {
+    const per = validate ? 9 : 3
+    return { lo: Math.max(3, Math.round(chosen.length * per * 0.6)), hi: Math.round(chosen.length * per * 1.5) }
+  }, [chosen.length, validate])
+
+  // Есть ли вообще живые прокси, которые можно раздать (для предупреждения перед импортом).
+  const hasProxies = useMemo(() => proxies.some((p) => p.status !== 'dead'), [proxies])
 
   /**
    * Аккаунты для раскладки — в том порядке, в каком их нашли в папке.
@@ -455,10 +474,32 @@ export function ImportModal({ open, onClose, onImported }: { open: boolean; onCl
             </span>
           </label>
 
+          {/* Импортировать без прокси можно, но аккаунты пойдут через ваш IP — предупреждаем
+              и даём прямой путь добавить свои, чтобы это не выяснялось уже по спамблокам. */}
+          {chosen.length > 0 && (proxyMode === 'none' || (proxyMode === 'pool' && !hasProxies)) && (
+            <div className="flex flex-wrap items-center gap-2 rounded-xl border border-rose-500/40 bg-rose-500/8 p-3 text-sm">
+              <AlertTriangle size={14} className="shrink-0 text-rose-300" />
+              <span className="text-rose-200">Прокси не назначены — аккаунты пойдут через ваш IP, высокий риск блокировки.</span>
+              <button onClick={() => { setProxyMode('manual'); setStep('proxy'); void relayout(false) }} className="btn-ghost h-8 text-xs">
+                <Network size={12} /> Вставить свои прокси
+              </button>
+            </div>
+          )}
+
+          {/* Ориентир по времени: импорт медленный не просто так — каждый аккаунт реально
+              логинится в Telegram (с проверкой), поэтому это секунды на аккаунт. */}
+          {chosen.length > 0 && (
+            <div className="text-center text-xs text-white/45">
+              {busy
+                ? `Импортирую ${chosen.length} — обычно ~${estSec.lo}–${estSec.hi} сек${validate ? ' (вхожу в Telegram каждым)' : ''}. Прошло: ${elapsed} сек`
+                : `Ориентир по времени: ~${estSec.lo}–${estSec.hi} сек на ${chosen.length} ${validate ? '(с проверкой входом — по паре секунд на аккаунт)' : ''}`}
+            </div>
+          )}
+
           <div className="flex justify-end gap-2">
-            <button onClick={() => setStep('pick')} className="btn-ghost h-10">Назад</button>
+            <button onClick={() => setStep('pick')} disabled={busy} className="btn-ghost h-10">Назад</button>
             <button onClick={() => void run()} disabled={!chosen.length || busy} className="btn-primary h-10">
-              {busy ? <><Loader2 size={15} className="animate-spin" /> Импортирую{validate ? ' и проверяю' : ''}…</> : <>Импортировать {chosen.length}</>}
+              {busy ? <><Loader2 size={15} className="animate-spin" /> Импортирую{validate ? ' и проверяю' : ''}… {elapsed}с</> : <>Импортировать {chosen.length}</>}
             </button>
           </div>
         </div>
@@ -562,10 +603,18 @@ export function ImportModal({ open, onClose, onImported }: { open: boolean; onCl
             })()}
           </div>
 
+          {chosen.length > 0 && (
+            <div className="text-center text-xs text-white/45">
+              {busy
+                ? `Импортирую ${chosen.length} — обычно ~${estSec.lo}–${estSec.hi} сек. Прошло: ${elapsed} сек`
+                : `Ориентир по времени: ~${estSec.lo}–${estSec.hi} сек на ${chosen.length}`}
+            </div>
+          )}
+
           <div className="flex justify-end gap-2">
-            <button onClick={() => setStep('found')} className="btn-ghost h-10">Назад</button>
+            <button onClick={() => setStep('found')} disabled={busy} className="btn-ghost h-10">Назад</button>
             <button onClick={() => void run()} disabled={!chosen.length || busy} className="btn-primary h-10">
-              {busy ? <><Loader2 size={15} className="animate-spin" /> Импортирую{validate ? ' и проверяю' : ''}…</> : <>Импортировать {chosen.length}</>}
+              {busy ? <><Loader2 size={15} className="animate-spin" /> Импортирую{validate ? ' и проверяю' : ''}… {elapsed}с</> : <>Импортировать {chosen.length}</>}
             </button>
           </div>
         </div>

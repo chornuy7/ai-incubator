@@ -39,6 +39,13 @@ test('parseProxyLine: пробелы и табы как разделители',
     { scheme: 'socks5', host: '1.2.3.4', port: 1080, username: 'vasya', password: 'secret' })
 })
 
+test('parseProxyLine: host:port:user:pass:ВЫХОДНОЙ_IP — 5-е поле (IPv4) не попадает в пароль', () => {
+  // Формат провайдера: host:port:user:pass:exit_ip. Раньше exit_ip приклеивался к паролю
+  // (password="8w2yd7amjcly:138.128.153.161") и прокси не подключался.
+  assert.deepEqual(parseProxyLine('45.38.84.116:7052:vjqccsei:8w2yd7amjcly:138.128.153.161'),
+    { scheme: 'socks5', host: '45.38.84.116', port: 7052, username: 'vjqccsei', password: '8w2yd7amjcly' })
+})
+
 test('parseProxyLine: мусор и комментарии → null', () => {
   for (const bad of ['', '   ', '# комментарий', '// тоже', 'просто текст', '1.2.3.4', '1.2.3.4:99999']) {
     assert.equal(parseProxyLine(bad), null, bad)
