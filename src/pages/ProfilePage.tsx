@@ -5,7 +5,6 @@ import {
 import { useApp } from '@/mocks/store'
 import { fetchBalance, fetchWalletHistory, type Balance, type WalletEntry } from '@/api/balanceApi'
 import { useSession } from '@/features/auth/session'
-import { ApiKeysPanel } from '@/features/billing/ApiKeysPanel'
 import { PageHeader, Card, Switch, Badge } from '@/shared/ui'
 import { cn, coins as fmtCoins } from '@/shared/lib/utils'
 
@@ -178,13 +177,21 @@ export function ProfilePage() {
           )}
 
           {tab === 'api' && (
-            <Card className="space-y-4">
+            <Card className="space-y-3">
+              <div className="text-sm font-semibold text-fg">Приватный API — «мозги» проекта</div>
+              <p className="text-sm text-muted">
+                Ключ доступа <b className="text-fg">не выпускается в интерфейсе</b> и не хранится в базе:
+                это один сервисный ключ, он живёт только в окружении сервера (<code>MURMEX_API_KEY</code>).
+                Так его нельзя выбрать или скопировать из панели.
+              </p>
               {sessionUser?.isAdmin || !sessionUser ? (
-                <ApiKeysPanel />
+                <p className="text-sm text-muted">
+                  Как задать ключ и подключиться (API / MCP) — в админ-панели, вкладка <b className="text-fg">API</b>.
+                </p>
               ) : (
-                <div className="text-sm text-muted">
-                  API-ключи для интеграции с внешними сервисами выпускает владелец рабочего пространства.
-                </div>
+                <p className="text-sm text-muted">
+                  Настройку ключа выполняет владелец рабочего пространства на сервере.
+                </p>
               )}
             </Card>
           )}

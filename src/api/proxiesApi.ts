@@ -25,6 +25,8 @@ export interface Proxy {
   lastCheckAt: number | null
   createdAt: number
   updatedAt: number
+  /** На скольких аккаунтах висит этот прокси (дубли разрешены — счётчик, а не запрет). */
+  usedBy?: number
 }
 
 export const PROXY_KIND_LABELS: Record<ProxyKind, string> = {

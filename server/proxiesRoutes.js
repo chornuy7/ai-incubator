@@ -1,6 +1,6 @@
 /** CRUD-роуты сущности «Прокси» (§3.2/3.4). Монтируется в /api/proxies. */
 import { Router } from 'express'
-import { listProxies, getProxy, createProxy, updateProxy, deleteProxy, checkAllProxies, sharedProxies, probeProxy, geoNote, tcpPing } from './proxies.js'
+import { listProxies, getProxy, createProxy, updateProxy, deleteProxy, checkAllProxies, sharedProxies, probeProxy, geoNote, tcpPing, proxyUsageMap, toProxyUrl } from './proxies.js'
 import { loadAllMeta } from './accountsMeta.js'
 import { parseProxyList, proxyKey, assignLabels } from './lib/proxyImport.js'
 import { appendAudit } from './lib/auditLog.js'
@@ -13,7 +13,11 @@ function fail(res, err, code = 400) {
 
 proxiesRouter.get('/', async (_req, res) => {
   try {
-    res.json({ ok: true, proxies: await listProxies() })
+    // Дубли разрешены: к каждому прокси добавляем счётчик `usedBy` — на скольких
+    // аккаунтах он висит (раньше это считалось нарушением, теперь — норма §6-обновл.).
+    const [proxies, meta] = await Promise.all([listProxies(), loadAllMeta()])
+    const usage = proxyUsageMap(meta)
+    res.json({ ok: true, proxies: proxies.map((p) => ({ ...p, usedBy: usage[toProxyUrl(p)]?.length || 0 })) })
   } catch (err) { fail(res, err, 500) }
 })
 

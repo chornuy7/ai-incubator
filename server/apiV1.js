@@ -135,7 +135,10 @@ apiV1Router.post('/modules/:key/estimate', async (req, res) => {
 apiV1Router.get('/me', async (req, res) => {
   try {
     const userId = req.apiKey?.ownerId
-    if (!userId) return res.status(400).json({ ok: false, error: 'Ключ не привязан к пользователю — перевыпустите его в админке' })
+    // Системный env-ключ без владельца — не пользователь, а сервис (полный доступ).
+    if (!userId) {
+      return res.json({ ok: true, user: { id: 'system', name: 'Сервисный ключ (env)', role: 'system', service: true } })
+    }
     const { getUser, publicUser } = await import('./users.js')
     const user = await getUser(userId).catch(() => null)
     if (!user) return res.status(404).json({ ok: false, error: 'Пользователь ключа не найден' })
@@ -154,7 +157,8 @@ apiV1Router.post('/modules/:key/run', async (req, res) => {
   try {
     const key = req.params.key
     if (!MODULE_DEFS[key]) return res.status(404).json({ ok: false, error: 'Неизвестный модуль' })
-    if (!req.apiKey?.ownerId) return res.status(400).json({ ok: false, error: 'Ключ не привязан к пользователю — перевыпустите его в админке' })
+    // Нужен либо владелец (ключ пользователя), либо системный env-ключ (полный доступ).
+    if (!req.apiKey?.ownerId && !req.apiKey?.service) return res.status(400).json({ ok: false, error: 'Ключ не привязан к пользователю' })
     const accountIds = Array.isArray(req.body?.accountIds) ? req.body.accountIds : []
     if (!accountIds.length) return res.status(400).json({ ok: false, error: 'Укажите accountIds — аккаунты, которыми работать' })
     // Каждый аккаунт должен быть доступен пользователю ключа (RBAC по роли).

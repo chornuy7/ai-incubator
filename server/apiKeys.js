@@ -21,6 +21,29 @@ const PREFIX = 'aii_live_sk_'
 function sb() { return supabaseEnabled() ? getSupabase() : null }
 const hash = (v) => crypto.createHash('sha256').update(String(v || '')).digest('hex')
 
+// ── Сервисный ключ из окружения (§10.3) ──────────────────────────────────────
+// «Мозги» проекта — один ключ на всю систему, живёт ТОЛЬКО в env, в админке не
+// выпускается и не выбирается. Задаётся `MURMEX_API_KEY` (или `API_SERVICE_KEY`).
+// Личность: если задан `MURMEX_API_KEY_OWNER` — ключ действует от имени этого
+// пользователя (его RBAC); иначе — системный полный доступ (как дев/демо без
+// сессии). Сам ключ и есть замок: пройти requireApiKey без него нельзя.
+const ENV_KEY = () => (process.env.MURMEX_API_KEY || process.env.API_SERVICE_KEY || '').trim()
+const ENV_KEY_OWNER = () => (process.env.MURMEX_API_KEY_OWNER || '').trim()
+
+/** Задан ли сервисный env-ключ (для подсказок в документации/UI). */
+export function serviceKeyConfigured() {
+  return !!ENV_KEY()
+}
+
+/** Совпадает ли токен с сервисным env-ключом — константное сравнение по времени. */
+function matchesEnvKey(token) {
+  const env = ENV_KEY()
+  if (!env || !token) return false
+  const a = Buffer.from(token)
+  const b = Buffer.from(env)
+  return a.length === b.length && crypto.timingSafeEqual(a, b)
+}
+
 /** @returns {Promise<Array<object>>} */
 export async function listKeys() {
   const db = sb()
@@ -103,6 +126,11 @@ export async function revokeKey(id) {
  */
 export async function verifyKey(raw) {
   const token = String(raw || '').replace(/^Bearer\s+/i, '').trim()
+  if (!token) return null
+  // Сервисный env-ключ — раньше всего: не в БД, не требует префикса, один на систему.
+  if (matchesEnvKey(token)) {
+    return { id: 'env', name: 'Сервисный ключ (env)', ownerId: ENV_KEY_OWNER(), service: true }
+  }
   if (!token.startsWith(PREFIX)) return null
   const db = sb()
   if (db) {

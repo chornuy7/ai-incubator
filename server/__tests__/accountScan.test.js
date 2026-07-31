@@ -8,10 +8,11 @@ import fs from 'fs/promises'
 import os from 'os'
 import path from 'path'
 import crypto from 'crypto'
-import { convertToTdata } from '@mtcute/convert'
+import { convertToTdata, convertToGramjsSession } from '@mtcute/convert'
 import { nodeCryptoProvider } from '../lib/tdataCrypto.js'
 import { scanFolder, listDirs, readSidecarJson } from '../lib/accountScan.js'
 import { distributeProxies } from '../lib/accountImport.js'
+import { toGramjsSession, ImportError } from '../lib/sessionImport.js'
 
 const sessionData = () => ({
   version: 3,
@@ -152,6 +153,46 @@ test('readSidecarJson: битый json не роняет сканер', async ()
   await fs.rm(dir, { recursive: true, force: true })
 })
 
+test('scanFolder: .session рядом с tdata помечается запасным источником (altSession)', async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'accscan-alt-'))
+  const acc = path.join(root, '+13824806835')
+  await fs.mkdir(path.join(acc, 'tdata'), { recursive: true })
+  await convertToTdata(sessionData(), { path: path.join(acc, 'tdata'), crypto: nodeCryptoProvider() })
+  await fs.writeFile(path.join(acc, '+13824806835.session'), 'не важно', 'utf8')
+  await fs.writeFile(path.join(acc, 'password.txt'), 'Cloud1\n', 'utf8')
+
+  const { items } = await scanFolder(root)
+  const it = items.find((i) => i.kind === 'tdata')
+  assert.ok(it, 'tdata найдена')
+  assert.ok(it.altSession && it.altSession.endsWith('.session'), 'сосед .session записан как запасной источник')
+  assert.equal(it.twoFA, 'Cloud1', 'пароль из txt тоже подхвачен')
+  await fs.rm(root, { recursive: true, force: true })
+})
+
+test('импорт: tdata под паролем не открывается, а .session-сосед — конвертируется', async () => {
+  // Ровно кейс с продавцовой пачкой: tdata под локальным паролем + рядом .session,
+  // которому пароль не нужен. Импорт обязан завестись из .session, а не упасть.
+  const sd = sessionData()
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'accimp-alt-'))
+  const acc = path.join(root, 'acc')
+  const tdataDir = path.join(acc, 'tdata')
+  await fs.mkdir(tdataDir, { recursive: true })
+  await convertToTdata(sd, { path: tdataDir, passcode: 'lockpass', crypto: nodeCryptoProvider() })
+  const altSession = path.join(acc, 'acc.session')
+  await fs.writeFile(altSession, convertToGramjsSession(sd), 'utf8')
+
+  // tdata без passcode — падает (passcode/decrypt).
+  await assert.rejects(
+    () => toGramjsSession({ kind: 'tdata', path: tdataDir }),
+    (e) => e instanceof ImportError,
+    'locked tdata бросает ImportError',
+  )
+  // .session рядом — конвертируется без пароля.
+  const { session } = await toGramjsSession({ kind: 'session-file', path: altSession })
+  assert.ok(typeof session === 'string' && session.length > 10, '.session даёт строку-сессию')
+  await fs.rm(root, { recursive: true, force: true })
+})
+
 test('listDirs: отдаёт только папки и умеет подниматься вверх', async () => {
   const root = await makeTree()
   const { dirs, parent } = await listDirs(root)
@@ -165,13 +206,18 @@ test('listDirs: отдаёт только папки и умеет подним�
 
 const items3 = [{ name: 'a' }, { name: 'b', proxy: 'socks5://own:1080' }, { name: 'c' }]
 
-test('distributeProxies: pool — каждому свой, занятые не выдаются (§6)', () => {
+test('distributeProxies: pool — каждому свой; busy НЕ исключает (дубли разрешены)', () => {
   const out = distributeProxies(items3, {
     mode: 'pool',
     proxyUrls: ['socks5://1:1080', 'socks5://2:1080', 'socks5://3:1080'],
-    busy: new Set(['socks5://2:1080']),
+    busy: new Set(['socks5://2:1080']), // раньше исключался — теперь игнорируется
   })
-  assert.deepEqual(out, ['socks5://1:1080', 'socks5://3:1080', null], 'занятый пропущен, третьему не хватило')
+  assert.deepEqual(out, ['socks5://1:1080', 'socks5://2:1080', 'socks5://3:1080'], 'занятый тоже раздаётся')
+})
+
+test('distributeProxies: pool — прокси меньше аккаунтов → второй круг (дубли)', () => {
+  const out = distributeProxies([{}, {}, {}, {}], { mode: 'pool', proxyUrls: ['p1', 'p2'] })
+  assert.deepEqual(out, ['p1', 'p2', 'p1', 'p2'], 'по кругу, никто не остаётся без прокси')
 })
 
 test('distributeProxies: single — один на всех, sidecar — из json, none — без прокси', () => {
@@ -189,19 +235,25 @@ test('pairByOrder: 1 к 1 по порядку — как лежат аккаун
   assert.deepEqual(pairByOrder(accs, px), ['p1', 'p2', 'p3'])
 })
 
-test('pairByOrder: прокси меньше, чем аккаунтов — хвост остаётся без прокси', () => {
-  // Молча зациклить пул нельзя: это нарушило бы «один прокси — один аккаунт»,
-  // а оператор увидел бы «всем раздали» вместо честной нехватки.
+test('pairByOrder: прокси меньше аккаунтов — сперва уникальные, хвост на второй круг', () => {
+  // Дубли разрешены: никто не остаётся без прокси, повтор — только когда уникальные кончились.
   return import('../lib/accountImport.js').then(({ pairByOrder }) => {
     const out = pairByOrder([{}, {}, {}], [{ url: 'p1' }, { url: 'p2' }])
-    assert.deepEqual(out, ['p1', 'p2', null])
+    assert.deepEqual(out, ['p1', 'p2', 'p1'])
   })
 })
 
-test('pairByOrder: мёртвые прокси не раздаются, если попросили их пропустить', async () => {
+test('pairByOrder: мёртвые пропускаем; живой переиспользуем на всех', async () => {
   const { pairByOrder } = await import('../lib/accountImport.js')
   const px = [{ url: 'p1', status: 'dead' }, { url: 'p2', status: 'ok' }]
-  assert.deepEqual(pairByOrder([{}, {}], px, { skipDead: true }), ['p2', null])
+  // Живой один — оба аккаунта идут через него (дубли разрешены), а не остаются без прокси.
+  assert.deepEqual(pairByOrder([{}, {}], px, { skipDead: true }), ['p2', 'p2'])
+})
+
+test('pairByOrder: пул пуст (все мёртвые при skipDead) — все без прокси', async () => {
+  const { pairByOrder } = await import('../lib/accountImport.js')
+  const px = [{ url: 'p1', status: 'dead' }]
+  assert.deepEqual(pairByOrder([{}, {}], px, { skipDead: true }), [null, null])
 })
 
 test('pairByOrder: гео важнее порядка — украинский аккаунт идёт через украинский IP', async () => {
@@ -219,10 +271,11 @@ test('pairByOrder: страна известна не у всех — остат
   assert.deepEqual(pairByOrder(accs, px, { matchGeo: true }), ['p_ua', 'p_de', 'p_x'])
 })
 
-test('pairByOrder: один прокси не достаётся двум аккаунтам', async () => {
+test('pairByOrder: один прокси МОЖЕТ достаться двум аккаунтам (дубли разрешены)', async () => {
   const { pairByOrder } = await import('../lib/accountImport.js')
+  // Два украинских аккаунта, один украинский прокси — оба идут через него, а не остаются без.
   const out = pairByOrder([{ country: 'ua' }, { country: 'ua' }], [{ url: 'p_ua', country: 'ua' }], { matchGeo: true })
-  assert.deepEqual(out, ['p_ua', null])
+  assert.deepEqual(out, ['p_ua', 'p_ua'])
 })
 
 test('distributeProxies: manual — раскладку оператора не переставляем', async () => {

@@ -4,7 +4,7 @@
 
 Зависимостей нет: только стандартная библиотека Python 3. Запуск:
 
-    # ключ выпускается в админке: /admin → вкладка API → «Выпустить ключ» (для пользователя)
+    # ключ — сервисный «мозгов», задан в окружении сервера (MURMEX_API_KEY на бэкенде)
     export MURMEX_API_KEY="aii_live_sk_..."
     export MURMEX_BASE_URL="https://myrmexgram.ai"   # или http://localhost:3001
     python3 test_api_v1.py
@@ -133,11 +133,12 @@ def main():
     st, _ = request("GET", f"{api}/capabilities", token="aii_live_sk_0000deadbeef0000")
     r.check("кривой ключ -> 401", st == 401, f"HTTP {st}")
 
-    # 4. me
+    # 4. me — либо пользователь-владелец (email), либо системный ключ (service)
     st, b = request("GET", f"{api}/me", token=key)
     user = b.get("user") or {}
-    r.check("me: 200 и есть пользователь", st == 200 and bool(user.get("email")),
-            f"HTTP {st}, user={user.get('email', '—')}")
+    who = user.get("email") or (user.get("id") if user.get("service") else "")
+    r.check("me: 200 и есть личность ключа", st == 200 and bool(who),
+            f"HTTP {st}, who={who or '—'}")
 
     # 5. capabilities
     st, b = request("GET", f"{api}/capabilities", token=key)

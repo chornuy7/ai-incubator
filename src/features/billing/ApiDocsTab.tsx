@@ -1,14 +1,16 @@
-import { useState } from 'react'
-import { Copy, Terminal, KeyRound, BookOpen } from 'lucide-react'
+import { useEffect, useState } from 'react'
+import { Copy, Terminal, KeyRound, BookOpen, ShieldCheck, ShieldAlert } from 'lucide-react'
 import { Card } from '@/shared/ui'
 import { useApp } from '@/mocks/store'
-import { ApiKeysPanel } from './ApiKeysPanel'
+import { serviceKeyStatus } from '@/api/adminApi'
 
 /**
- * §10.3: вкладка «API» в админ-панели — выпуск закрытого ключа + документация «мозгам».
+ * §10.3: вкладка «API» в админ-панели — документация «мозгам».
  *
- * Раньше выпуск ключей жил только в Профиле, а документация — в repo (docs/API-v1.md),
- * то есть владелец не видел, как этим пользоваться. Здесь и ключ, и справка в одном месте.
+ * Ключ здесь НЕ выпускается: приватный API — это «мозги» проекта, один сервисный ключ
+ * живёт только в окружении сервера (`MURMEX_API_KEY`), не в БД и не в интерфейсе. Так
+ * его нельзя выбрать/утащить через панель тому, у кого есть к ней доступ. Подключение —
+ * этим ключом через обычный API или MCP-манифест.
  */
 
 /** Базовый URL API берём с текущего домена — чтобы примеры были с рабочим адресом. */
@@ -24,7 +26,7 @@ interface Endpoint {
 }
 
 const ENDPOINTS: Endpoint[] = [
-  { method: 'GET', path: '/me', title: 'Пользователь продукта, от чьего имени работает ключ' },
+  { method: 'GET', path: '/me', title: 'От чьего имени работает ключ (владелец из MURMEX_API_KEY_OWNER, иначе — система)' },
   { method: 'GET', path: '/capabilities', title: 'Что умеет каждый модуль (цели, цены, как запускать)' },
   { method: 'GET', path: '/mcp', title: 'Те же возможности как MCP-манифест инструментов (для AI-оркестратора)' },
   { method: 'POST', path: '/goals', title: 'Создать цель (измеримый результат)', body: '{ "name": "200 переходов", "metric": { "kind": "clicks", "target": 200 } }' },
@@ -37,6 +39,8 @@ export function ApiDocsTab() {
   const pushToast = useApp((s) => s.pushToast)
   const base = apiBase()
   const [copied, setCopied] = useState('')
+  const [configured, setConfigured] = useState<boolean | null>(null)
+  useEffect(() => { void serviceKeyStatus().then((s) => setConfigured(s.configured)).catch(() => setConfigured(null)) }, [])
   const copy = (v: string, id = '') => {
     void navigator.clipboard?.writeText(v)
     setCopied(id); setTimeout(() => setCopied(''), 1200)
@@ -44,23 +48,47 @@ export function ApiDocsTab() {
   }
 
   const curlExample = `curl ${base}/capabilities \\
-  -H "Authorization: Bearer aii_live_sk_ВАШ_КЛЮЧ"`
+  -H "Authorization: Bearer $MURMEX_API_KEY"`
 
   return (
     <div className="space-y-4">
-      {/* 1. Выпуск ключа */}
+      {/* 1. Где живёт ключ «мозгов» */}
       <Card className="p-5">
-        <ApiKeysPanel />
+        <div className="flex items-center gap-2 text-sm font-bold text-fg"><KeyRound size={15} /> Сервисный ключ «мозгов»</div>
+        <p className="mt-1 text-xs text-muted">
+          Приватный API — это «мозги» проекта. Ключ <b className="text-fg">не выпускается здесь</b> и не
+          хранится в базе: он живёт только в окружении сервера, чтобы его нельзя было выбрать
+          или утащить через панель. Один ключ на всю систему — им «мозги» и MCP-клиенты
+          создают цели/кампании и запускают модули.
+        </p>
+        <div className="mt-3 rounded-lg border border-line bg-bg p-3">
+          <div className="text-xs font-semibold text-muted">Задать на сервере (env), затем перезапустить процесс:</div>
+          <pre className="mt-1.5 overflow-x-auto whitespace-pre font-mono text-xs text-fg">{`MURMEX_API_KEY=aii_live_sk_<длинная_случайная_строка>
+# необязательно: действовать от имени конкретного пользователя продукта
+MURMEX_API_KEY_OWNER=usr_...`}</pre>
+          <div className="mt-2 text-[11px] leading-relaxed text-faint">
+            Без <code>MURMEX_API_KEY_OWNER</code> ключ работает как система (полный доступ).
+            С ним — от имени этого пользователя, с его правами и аккаунтами.
+          </div>
+        </div>
+        <div className="mt-3">
+          {configured === null ? (
+            <span className="inline-flex items-center gap-1.5 rounded-lg border border-line bg-elevated/40 px-2.5 py-1 text-xs text-muted">Статус ключа неизвестен</span>
+          ) : configured ? (
+            <span className="inline-flex items-center gap-1.5 rounded-lg border border-spark-500/30 bg-spark-500/10 px-2.5 py-1 text-xs font-semibold text-spark-300"><ShieldCheck size={13} /> Ключ задан в окружении сервера</span>
+          ) : (
+            <span className="inline-flex items-center gap-1.5 rounded-lg border border-amber-500/30 bg-amber-500/10 px-2.5 py-1 text-xs font-semibold text-amber-300"><ShieldAlert size={13} /> Ключ не задан — API закрыт, пока не появится MURMEX_API_KEY</span>
+          )}
+        </div>
       </Card>
 
       {/* 2. Как подключиться */}
       <Card className="p-5">
-        <div className="flex items-center gap-2 text-sm font-bold text-fg"><BookOpen size={15} /> Как работать с API</div>
+        <div className="flex items-center gap-2 text-sm font-bold text-fg"><BookOpen size={15} /> Как подключиться (API / MCP)</div>
         <p className="mt-1 text-xs text-muted">
-          Приватный API — доступ только по ключу, ничего бесплатно. Внешний AI-оркестратор
-          («мозги») создаёт цели/кампании и запускает модули этим ключом. <b className="text-fg">Каждый
-          ключ выпущен для пользователя продукта</b> и действует от его имени — с его правами
-          и его доступными аккаунтами. Кто это — узнать через <code>GET /me</code>.
+          Любой запрос — с заголовком <code>Authorization: Bearer &lt;ключ&gt;</code>. MCP-клиент берёт
+          список инструментов из <code>GET /mcp</code>, а вызывает их обычными POST ниже. Кто владелец
+          ключа — <code>GET /me</code>. Без ключа или с неверным — <b>401</b>.
         </p>
 
         <div className="mt-4 grid gap-3 sm:grid-cols-2">

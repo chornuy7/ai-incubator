@@ -4,9 +4,10 @@
  * заходом в Telegram, после чего кладёт аккаунт в систему так же, как это делает
  * обычная авторизация по номеру (`tgAuth.js#finalizeAuth`).
  *
- * Правило §6 «один прокси — один аккаунт» соблюдается режимом `pool`: каждому
- * импортируемому достаётся свой свободный прокси, и если их не хватило — импорт
- * не молчит, а честно пишет это в отчёт по каждой строке.
+ * Прокси можно ПЕРЕИСПОЛЬЗОВАТЬ (решение заказчика 31.07, отменяет прежнее «1 прокси =
+ * 1 аккаунт»): один прокси разрешено вешать на несколько аккаунтов. Режим `pool`
+ * раздаёт по кругу — сперва уникальные по порядку, при нехватке идёт на второй круг.
+ * Сколько аккаунтов сидит на прокси — видно по счётчику использования (proxyUsageMap).
  */
 import { Api } from 'telegram'
 import { toGramjsSession, ImportError } from './sessionImport.js'
@@ -23,36 +24,39 @@ export const PROXY_MODES = ['pool', 'single', 'sidecar', 'manual', 'none']
 
 /**
  * Раздать прокси на пачку. Чистая функция — тестируется без сети.
+ *
+ * Дубли разрешены: в режиме `pool` прокси раздаются ПО КРУГУ — каждый аккаунт получает
+ * прокси, при нехватке список повторяется. `busy` больше не исключает прокси (прежнее
+ * «1:1» отменено), но принимается для обратной совместимости вызовов.
  * @param {object[]} items найденные аккаунты (у некоторых есть свой `proxy` из json)
  * @param {{ mode:string, proxyUrls?:string[], single?:string, busy?:Set<string>, manual?:(string|null)[] }} opts
  * @returns {(string|null)[]} прокси на каждый item в том же порядке (null = без прокси)
  */
 export function distributeProxies(items, opts = {}) {
   const mode = PROXY_MODES.includes(opts.mode) ? opts.mode : 'none'
-  const busy = opts.busy || new Set()
-  // Пул: только те, что ещё никому не назначены — иначе нарушим «1 прокси = 1 аккаунт».
-  const free = (opts.proxyUrls || []).filter((u) => u && !busy.has(u))
+  const urls = (opts.proxyUrls || []).filter(Boolean)
   const manual = Array.isArray(opts.manual) ? opts.manual : []
-  let cursor = 0
   return (items || []).map((it, i) => {
     if (mode === 'none') return null
     if (mode === 'single') return opts.single || null
     if (mode === 'sidecar') return it.proxy || null
     if (mode === 'manual') return manual[i] || null
-    // pool: свой прокси каждому, по порядку; закончились — null (в отчёте это будет видно)
-    return cursor < free.length ? free[cursor++] : null
+    // pool: по кругу — при нехватке прокси переиспользуем (дубли разрешены).
+    return urls.length ? urls[i % urls.length] : null
   })
 }
 
 /**
- * Предложить раскладку «аккаунт ↔ прокси» ПО ПОРЯДКУ, 1 к 1.
+ * Предложить раскладку «аккаунт ↔ прокси» ПО ПОРЯДКУ.
  *
- * Это дефолт по одной причине: у продавца папки и списки прокси обычно идут в одном
- * порядке, и совпадение по строкам — то, чего оператор и ждёт. Дальше он правит руками.
+ * Дефолт — 1 к 1 по строкам: у продавца папки и прокси обычно идут в одном порядке.
+ * Но прокси теперь можно ПЕРЕИСПОЛЬЗОВАТЬ: если аккаунтов больше, чем прокси, сперва
+ * раздаём уникальные по порядку, а хвост идёт на второй круг (дубли), а не остаётся
+ * без прокси. Оператор дальше правит руками.
  *
  * Гео важнее порядка, если страна известна у обеих сторон: аккаунт из Украины через
- * американский IP — заметная нестыковка, Telegram смотрит на неё в том числе. Поэтому
- * при `matchGeo` сперва раскладываем по совпадению стран, а остаток — по порядку.
+ * американский IP — заметная нестыковка. При `matchGeo` сперва раскладываем по стране
+ * (свободный того же гео, иначе — любой того же гео повторно), остаток — по порядку/кругу.
  *
  * @param {{country?:string}[]} accounts найденные аккаунты, в порядке находки
  * @param {{url:string, country?:string, status?:string}[]} proxies прокси, в порядке списка
@@ -61,28 +65,33 @@ export function distributeProxies(items, opts = {}) {
  */
 export function pairByOrder(accounts = [], proxies = [], opts = {}) {
   const pool = (proxies || []).filter((p) => p && p.url && (!opts.skipDead || p.status !== 'dead'))
-  const taken = new Set()
   const out = new Array(accounts.length).fill(null)
+  if (!pool.length) return out
+  const used = new Set() // индексы, уже отданные БЕЗ повтора — «сначала уникальные»
 
   if (opts.matchGeo) {
     for (let i = 0; i < accounts.length; i++) {
       const c = String(accounts[i]?.country || '').toLowerCase()
       if (!c) continue
-      const hit = pool.find((p, j) => !taken.has(j) && String(p.country || '').toLowerCase() === c)
-      if (!hit) continue
-      taken.add(pool.indexOf(hit))
-      out[i] = hit.url
+      let j = pool.findIndex((p, idx) => !used.has(idx) && String(p.country || '').toLowerCase() === c)
+      if (j === -1) j = pool.findIndex((p) => String(p.country || '').toLowerCase() === c) // повтор того же гео
+      if (j === -1) continue
+      used.add(j)
+      out[i] = pool[j].url
     }
   }
 
-  // Остаток — строго по порядку: первый свободный аккаунт получает первый свободный прокси.
+  // Остаток: сперва ещё не отданные уникальные по порядку, затем — по кругу (дубли).
   let cursor = 0
   for (let i = 0; i < accounts.length; i++) {
     if (out[i]) continue
-    while (cursor < pool.length && taken.has(cursor)) cursor++
-    if (cursor >= pool.length) break
-    taken.add(cursor)
-    out[i] = pool[cursor].url
+    while (cursor < pool.length && used.has(cursor)) cursor++
+    if (cursor < pool.length) {
+      used.add(cursor)
+      out[i] = pool[cursor].url
+    } else {
+      out[i] = pool[i % pool.length].url // всех уникальных раздали — на второй круг
+    }
   }
   return out
 }
@@ -96,17 +105,34 @@ export function pairByOrder(accounts = [], proxies = [], opts = {}) {
 export async function importOne(item, opts = {}) {
   let session
   let self = null
+  let source = item.kind
+  // passcode приоритетно берём у самого аккаунта (список/поле в форме), иначе общий из формы.
+  const passcode = item.passcode || opts.passcode
   try {
     const r = await toGramjsSession({
       kind: item.kind,
       path: item.path,
       accountIdx: item.accountIdx,
-      passcode: opts.passcode,
+      passcode,
     })
     session = r.session
     self = r.self
   } catch (e) {
-    return { ok: false, reason: e instanceof ImportError ? e.message : `не сконвертировался: ${e?.message || e}` }
+    const em = (x) => (x instanceof ImportError ? x.message : `не сконвертировался: ${x?.message || x}`)
+    // tdata не открылась (passcode/битая), но рядом есть `.session` — ему пароль tdata
+    // не нужен. Пробуем его: продавцы кладут оба формата как раз на этот случай.
+    if (item.kind === 'tdata' && item.altSession) {
+      try {
+        const r2 = await toGramjsSession({ kind: 'session-file', path: item.altSession })
+        session = r2.session
+        self = r2.self
+        source = 'session-file'
+      } catch (e2) {
+        return { ok: false, reason: `tdata: ${em(e)}; .session рядом тоже не зашла: ${em(e2)}` }
+      }
+    } else {
+      return { ok: false, reason: em(e) }
+    }
   }
 
   const proxy = opts.proxy || null
@@ -160,7 +186,7 @@ export async function importOne(item, opts = {}) {
     // Облачный пароль (2FA) из json или password.txt рядом. Без него аккаунт встанет
     // на первом же запросе подтверждения — а восстановить его потом неоткуда.
     twoFA: item.twoFA || null,
-    note: `Импортирован из ${item.kind === 'tdata' ? 'tdata' : 'файла сессии'}`,
+    note: `Импортирован из ${source === 'tdata' ? 'tdata' : 'файла сессии'}${source !== item.kind ? ' (tdata под паролем — завёлся из .session рядом)' : ''}`,
   })
 
   return {
