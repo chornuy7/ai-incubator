@@ -122,11 +122,9 @@ importRouter.post('/run', async (req, res) => {
     const results = []
     for (let i = 0; i < items.length; i++) {
       const it = items[i]
+      // Нет прокси (пул пуст) — НЕ отбраковываем аккаунт: заводим через прямой IP.
+      // Дубли прокси разрешены, «нехватки» больше нет; риск без прокси показан в UI.
       const proxy = assigned[i]
-      if (proxyMode === 'pool' && !proxy) {
-        results.push({ name: it.name, ok: false, reason: 'нет ни одного прокси в пуле' })
-        continue
-      }
       try {
         const r = await importOne(it, { proxy, validate, passcode })
         results.push({ name: it.name, proxy: proxy || null, ...r })

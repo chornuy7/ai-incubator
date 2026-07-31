@@ -72,7 +72,10 @@ export function parseProxyLine(raw, defaults = {}) {
   if (p.length >= 4) {
     // host:port:user:pass — самый частый у продавцов.
     if (isHost(p[0]) && isPort(p[1])) {
-      return { scheme, host: p[0], port: Number(p[1]), username: p[2] || '', password: p.slice(3).join(':') }
+      // Некоторые продавцы добавляют 5-м полем ВЫХОДНОЙ IP (host:port:user:pass:1.2.3.4).
+      // Это метаданные, а не часть пароля — если полей ровно 5 и последнее IPv4, отбрасываем.
+      const creds = (p.length === 5 && /^\d{1,3}(\.\d{1,3}){3}$/.test(p[4])) ? [p[3]] : p.slice(3)
+      return { scheme, host: p[0], port: Number(p[1]), username: p[2] || '', password: creds.join(':') }
     }
     // user:pass:host:port — встречается реже, но встречается.
     if (isHost(p[2]) && isPort(p[3])) {
