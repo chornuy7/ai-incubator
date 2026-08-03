@@ -302,15 +302,9 @@ app.get('/api/admin/api-keys/service', async (req, res) => {
   } catch (err) { res.status(500).json({ ok: false, error: err instanceof Error ? err.message : 'Ошибка' }) }
 })
 
-app.post('/api/admin/api-keys', async (req, res) => {
-  try {
-    if (!(await isAdminRequest(req))) return res.status(403).json({ ok: false, error: 'Выпускать ключи может только владелец' })
-    const { issueKey } = await import('./apiKeys.js')
-    const key = await issueKey({ name: req.body?.name, userId: req.body?.userId })
-    await appendAudit({ action: 'apikey.issue', module: 'api', initiator: req.header('x-user-id') || 'system', reason: `Выпущен ключ «${key.name}» для пользователя ${key.ownerId}`, meta: { id: key.id, userId: key.ownerId } }).catch(() => {})
-    res.json({ ok: true, key }) // ПОЛНЫЙ ключ — единственный раз
-  } catch (err) { res.status(400).json({ ok: false, error: err instanceof Error ? err.message : 'Ошибка' }) }
-})
+// §11.8: выпуск ключа ПОД ПОЛЬЗОВАТЕЛЯ убран — «мозги» ходят сервисным ключом из env
+// (MURMEX_API_KEY), а не персональными ключами из админки. Остаются только просмотр и
+// отзыв (ниже) — чтобы можно было погасить любой оставшийся легаси-ключ.
 
 app.delete('/api/admin/api-keys/:id', async (req, res) => {
   try {

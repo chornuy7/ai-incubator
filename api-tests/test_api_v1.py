@@ -118,7 +118,8 @@ def main():
 
     if not key:
         print("Нужен ключ: export MURMEX_API_KEY=aii_live_sk_... (или --key).")
-        print("Выпустить: /admin → вкладка API → «Выпустить ключ» (для пользователя).")
+        print("Ключ сервисный — задаётся в окружении сервера (MURMEX_API_KEY) и там же берётся.")
+        print("Статус ключа виден в /admin → вкладка API.")
         sys.exit(2)
 
     r = Runner()

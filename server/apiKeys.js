@@ -1,13 +1,14 @@
 /**
- * §10.3: закрытые API-ключи для внешнего AI-оркестратора («мозги»).
+ * §10.3 / §11.8: доступ к приватному API «мозгов» — по СЕРВИСНОМУ ключу из окружения.
  *
- * Ключом внешний AI создаёт цели/кампании/задачи и спрашивает, что умеет модуль.
- * Хранение — data/api-keys.json. Ключ показывается ОДИН раз при создании; дальше
- * в списке только префикс (как у Stripe/GitHub), чтобы утёкший список не отдал
- * рабочие ключи. Проверка — по полному значению из заголовка Authorization.
- *
- * Демо-упрощение: полное значение лежит в файле рядом (для сверки). Продакшн-шаг —
- * хранить только хэш и сверять хэшем; интерфейс (issue/verify/revoke) не изменится.
+ * Ключи ПОД ПОЛЬЗОВАТЕЛЯ больше не выпускаются (это была ошибка трактовки, §11.8):
+ * «мозги» — это сервер проекта, а не юзеры. Единственный ключ живёт только в env
+ * (`MURMEX_API_KEY`), в админке его не создать и не выбрать. Здесь остаётся:
+ *   • verifyKey — пускает по env-ключу (и по легаси-ключам из БД/файла, если такие
+ *     ещё есть, — для обратной совместимости; таблица api_keys штатно пуста);
+ *   • listKeys / revokeKey — посмотреть и ОТОЗВАТЬ любой оставшийся легаси-ключ
+ *     (управление, не генерация).
+ * Проверка легаси-ключа — по полному значению из заголовка Authorization.
  */
 import crypto from 'node:crypto'
 import { dataPath, readJson, mutateJson } from './lib/jsonStore.js'
@@ -62,44 +63,6 @@ export async function listKeys() {
     id: k.id, name: k.name, prefix: k.prefix, ownerId: k.ownerId || '', createdAt: k.createdAt,
     lastUsedAt: k.lastUsedAt || 0, revoked: !!k.revoked,
   }))
-}
-
-/**
- * Выпустить ключ. Возвращает ПОЛНОЕ значение — единственный раз, дальше его нет.
- * @param {{name?:string, ownerId?:string}} input
- */
-export async function issueKey(input = {}) {
-  const name = String(input.name || '').trim() || 'API-ключ'
-  // Ключ выпускается ДЛЯ ПОЛЬЗОВАТЕЛЯ продукта (человек из таблицы users, входит по
-  // логину/паролю). «Мозги» этим ключом действуют ОТ ЕГО ИМЕНИ — с его правами и его
-  // доступными аккаунтами. Без пользователя ключ не выпускаем: иначе он «в пустоте».
-  const userId = String(input.userId || '').trim()
-  if (!userId) throw new Error('Ключ выпускается для пользователя — выберите пользователя')
-  const secret = PREFIX + crypto.randomBytes(24).toString('hex')
-  const rec = {
-    id: `key_${crypto.randomUUID().slice(0, 8)}`,
-    name,
-    key: secret,
-    prefix: secret.slice(0, PREFIX.length + 6) + '…',
-    ownerId: userId, // владелец ключа = пользователь продукта
-    createdAt: Date.now(),
-    lastUsedAt: 0,
-    revoked: false,
-  }
-  const db = sb()
-  if (db) {
-    // В БД храним ХЭШ, не значение: утёкшая таблица не отдаёт рабочие ключи.
-    await db.from('api_keys').insert({
-      id: rec.id, name: rec.name, key_hash: hash(secret), prefix: rec.prefix,
-      owner_id: userId, created_at: new Date(rec.createdAt).toISOString(), revoked: false,
-    })
-    return { id: rec.id, name: rec.name, key: secret, prefix: rec.prefix, ownerId: userId, createdAt: rec.createdAt }
-  }
-  await mutateJson(KEYS_FILE(), (raw) => {
-    const arr = Array.isArray(raw) ? raw : []
-    return [rec, ...arr]
-  }, [])
-  return { id: rec.id, name: rec.name, key: secret, prefix: rec.prefix, ownerId: userId, createdAt: rec.createdAt }
 }
 
 /** Отозвать ключ (мягко: помечаем revoked, чтобы аудит помнил, что он был). */
