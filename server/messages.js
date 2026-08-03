@@ -9,18 +9,18 @@
  * должно ронять сам диалог. Поэтому все ошибки глотаются, а вызывающий код не ждёт
  * результата как условия продолжения.
  *
- * Таблица растёт быстрее остальных, поэтому:
- *   • текст режем по MAX_TEXT — гигантские пересланные простыни не нужны для контроля,
- *     а строку раздувают; факт обрезки помечаем в самом тексте, чтобы не выглядело
- *     как будто человек так и написал;
- *   • читаем только с лимитом, «выбрать всё» наружу не даём.
+ * Решение владельца (03.08): храним ЦЕЛИКОМ, БЕЗ обрезки — «у нас должно быть всё».
+ * По умолчанию лимита на длину нет. Оставлен только аварийный рычаг на случай
+ * патологически огромных пересланных «простыней»: env MESSAGES_MAX_TEXT (символы),
+ * 0/пусто = без обрезки (значение по умолчанию). Читаем всё равно с лимитом строк —
+ * «выбрать всё» одним запросом наружу не даём.
  */
 import { getSupabase, supabaseEnabled } from './lib/supabase.js'
 import { dataPath, readJson, mutateJson } from './lib/jsonStore.js'
 
 const MESSAGES_FILE = () => process.env.MESSAGES_FILE || dataPath('messages.json')
-/** Больше 4000 символов для контроля переписки не нужно — это уже документ, а не реплика. */
-const MAX_TEXT = 4000
+/** По умолчанию храним весь текст (0 = без обрезки). Аварийный лимит — env MESSAGES_MAX_TEXT. */
+const MAX_TEXT = Math.max(0, Number(process.env.MESSAGES_MAX_TEXT) || 0)
 const TRIM_MARK = '… [обрезано при сохранении]'
 
 function sb() { return supabaseEnabled() ? getSupabase() : null }
@@ -40,7 +40,9 @@ const rowToMsg = (r) => ({
 
 function clip(text) {
   const t = String(text ?? '')
-  return t.length > MAX_TEXT ? t.slice(0, MAX_TEXT) + TRIM_MARK : t
+  // MAX_TEXT=0 (по умолчанию) → храним ЦЕЛИКОМ. Лимит режет только при явном env.
+  if (!MAX_TEXT || t.length <= MAX_TEXT) return t
+  return t.slice(0, MAX_TEXT) + TRIM_MARK
 }
 
 /**
