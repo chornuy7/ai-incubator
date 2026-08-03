@@ -37,12 +37,13 @@ usersRouter.post('/login', async (req, res) => {
     // (сценарий: доступ забрал уволенный сотрудник). За прокси берём первый
     // адрес из x-forwarded-for, иначе — сокет.
     const ip = req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.socket?.remoteAddress || ''
-    // §11.3 (кол 29.07): двухрежимный вход. Сначала Supabase Auth (новый источник истины
-    // паролей); если там пары нет или Auth не настроен — падаем на legacy scrypt-хэш, чтобы
-    // уже заведённые операторы продолжали заходить, пока их не перенесли в Auth.
+    // §11.3 этап 4/4: вход ТОЛЬКО через Supabase Auth (источник истины паролей). Legacy
+    // scrypt-вход (по users.password_hash) снят. Аварийный рычаг: если после выката кто-то
+    // не может войти, выставить env AUTH_ALLOW_LEGACY=1 и перезапустить — вернёт fallback на
+    // legacy без отката кода (таблица users живёт как точка отката до этапа drop).
     let via = 'supabase'
     let user = await authenticateSupabase(email, password)
-    if (!user) { user = await authenticate(email, password); via = 'legacy' }
+    if (!user && process.env.AUTH_ALLOW_LEGACY) { user = await authenticate(email, password); via = 'legacy' }
     if (!user) {
       await appendAudit({ action: 'user.login.fail', module: 'auth', initiator: 'system', reason: `Неудачный вход: ${String(email || '').slice(0, 60)}`, meta: { ip } })
       return res.status(401).json({ ok: false, error: 'Неверный e-mail или пароль' })

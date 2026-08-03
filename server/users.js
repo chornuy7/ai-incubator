@@ -6,10 +6,10 @@
  * живут в `auth.users` (как просил замовник). Рабочий id остаётся `usr_…` — берём его
  * из `profiles.legacy_id`, чтобы не переписывать owner-ссылки в 13 таблицах данных.
  *
- * ПЕРЕХОДНЫЙ ПЕРИОД (пока таблица `users` не удалена): пишем ПАРАЛЛЕЛЬНО и в `users`
- * (dual-write) — она остаётся валидной точкой отката и FK-целью, а вход умеет
- * падать на её `password_hash`, пока люди не задали пароль в Auth. На финальном шаге
- * (drop users) dual-write и legacy-мостик убираются.
+ * ЭТАП 4/4 (03.08): dual-write в `users` СНЯТ, вход — только через Supabase Auth.
+ * Таблица `users` больше не пишется и не читается для входа; остаётся лишь как точка
+ * отката до её drop (см. supabase/migrations/2026-08-03-drop-users-stage4.sql). Legacy
+ * scrypt-вход (`authenticate`) вызывается только по аварийному флагу env AUTH_ALLOW_LEGACY.
  *
  * Файловый бэкенд (тесты, dev без Supabase) — БЕЗ изменений: старые users.json + scrypt.
  *
@@ -31,14 +31,6 @@ const rowToUser = (r) => ({
   createdAt: r.created_at ? new Date(r.created_at).getTime() : 0,
   updatedAt: r.updated_at ? new Date(r.updated_at).getTime() : 0,
 })
-const userToRow = (u) => ({
-  id: u.id, email: u.email, name: u.name || '', password_hash: u.passwordHash || null,
-  role_ids: u.roleIds || (u.roleId ? [u.roleId] : []), active: u.active !== false,
-  parent_id: u.parentId || null,
-  created_at: new Date(u.createdAt || Date.now()).toISOString(),
-  updated_at: new Date(u.updatedAt || Date.now()).toISOString(),
-})
-
 const USERS_FILE = () => process.env.USERS_FILE || dataPath('users.json')
 
 /** Хэш пароля: случайная соль + scrypt. Возвращает "salt:hash" (hex). @param {string} password */
@@ -193,8 +185,7 @@ export async function createUser(input = {}) {
     let parentUuid = null
     if (parentId) { const pp = await profileByLegacy(db, parentId); parentUuid = pp?.id || null }
     await db.from('profiles').update({ legacy_id: legacyId, name, active: input.active !== false, role_ids: roleIds, parent_id: parentUuid, updated_at: new Date().toISOString() }).eq('id', authId)
-    // 3. Dual-write: строка в users (FK-цель + откат), пока таблица не удалена.
-    await db.from('users').insert(userToRow({ id: legacyId, email, name, roleIds, active: input.active !== false, parentId, passwordHash: hashPassword(input.password), createdAt: now, updatedAt: now })).select('id').maybeSingle().then(() => {}, () => {})
+    // §11.3 этап 4/4: dual-write в `users` снят — источник истины profiles + auth.users.
     return { id: legacyId, email, name, roleId, roleIds, active: input.active !== false, parentId, createdAt: now, updatedAt: now }
   }
 
@@ -244,10 +235,7 @@ export async function updateUser(id, patch = {}) {
       if (String(patch.password).length < 6) throw new Error('Пароль минимум 6 символов')
       await db.auth.admin.updateUserById(prof.id, { password: String(patch.password) })
     }
-    // Dual-write в users (откат + FK): роли/имя/активность/parent, и хэш пароля для legacy-входа.
-    const mirror = { name: next.name, active: next.active, role_ids: next.roleIds, parent_id: next.parentId, updated_at: new Date().toISOString() }
-    if (patch.password) mirror.password_hash = hashPassword(patch.password)
-    await db.from('users').update(mirror).eq('id', id).then(() => {}, () => {})
+    // §11.3 этап 4/4: dual-write в `users` снят — профиль в profiles, пароль в auth.users.
     next.updatedAt = Date.now()
     return next
   }
@@ -292,7 +280,7 @@ export async function deleteUser(id) {
     // Удаляем auth-пользователя — profiles.id → auth.users on delete cascade снимет профиль.
     await db.auth.admin.deleteUser(prof.id).catch(() => {})
     await db.from('profiles').delete().eq('id', prof.id).then(() => {}, () => {}) // на случай, если auth-удаление не каскаднуло
-    await db.from('users').delete().eq('id', id).then(() => {}, () => {}) // dual-write
+    // §11.3 этап 4/4: dual-write в `users` снят.
     return true
   }
   const users = await listUsers()
