@@ -252,7 +252,7 @@ export function HelpCenterDrawer() {
                 <div className="mb-2 text-xs font-bold uppercase tracking-wide text-muted">Бизнес-правила</div>
                 <div className="flex flex-col gap-1.5">
                   {BUSINESS_TOPICS.map((k) => HELP_DOCS[k] && (
-                    <button key={k} onClick={() => setHelpTopic(HELP_DOCS[k].title)} className="rounded-lg border border-line bg-elevated/40 px-3 py-2 text-left text-sm text-fg transition-colors hover:border-spark-500/40 hover:text-spark-300">
+                    <button key={k} onClick={() => setHelpTopic(k)} className="rounded-lg border border-line bg-elevated/40 px-3 py-2 text-left text-sm text-fg transition-colors hover:border-spark-500/40 hover:text-spark-300">
                       {HELP_DOCS[k].title}
                     </button>
                   ))}
@@ -262,7 +262,7 @@ export function HelpCenterDrawer() {
                 <div className="mb-2 text-xs font-bold uppercase tracking-wide text-muted">Модули</div>
                 <div className="flex flex-wrap gap-1.5">
                   {MODULE_TOPICS.map((k) => HELP_DOCS[k] && (
-                    <button key={k} onClick={() => setHelpTopic(HELP_DOCS[k].title)} className="rounded-lg border border-line bg-elevated px-2.5 py-1 text-xs text-white/70 transition-colors hover:border-spark-500/40 hover:text-spark-300">
+                    <button key={k} onClick={() => setHelpTopic(k)} className="rounded-lg border border-line bg-elevated px-2.5 py-1 text-xs text-white/70 transition-colors hover:border-spark-500/40 hover:text-spark-300">
                       {HELP_DOCS[k].title}
                     </button>
                   ))}

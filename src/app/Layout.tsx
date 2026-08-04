@@ -94,7 +94,9 @@ export function Layout() {
       <button
         type="button"
         onClick={openHelp}
-        className="fixed right-5 top-24 z-[97] grid h-11 w-11 place-items-center rounded-full bg-spark-gradient text-[#04150c] shadow-pop transition-transform hover:scale-[1.04]"
+        // §8 (MR-46): кнопка Help Center опущена вниз — в правый нижний угол, над виджетом
+        // поддержки (раньше висела вверху справа и налезала на контент шапки).
+        className="fixed bottom-20 right-5 z-[97] grid h-11 w-11 place-items-center rounded-full border border-line bg-elevated/95 text-spark-300 shadow-pop backdrop-blur transition-transform hover:scale-[1.04]"
         aria-label="Help Center"
         title="Help Center"
       >
