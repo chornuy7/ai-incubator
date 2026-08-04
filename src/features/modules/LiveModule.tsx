@@ -1,12 +1,14 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import {
   Play, Sparkles, Hash, Settings2, Clock, Users, MessageSquareText,
-  Heart, Eye, Shield, MessageCircle, Database, Trophy, Link2, Plus, Target, Terminal, ArrowUpRight, Rocket,
+  Heart, Eye, Shield, MessageCircle, Database, Trophy, Link2, Plus, Target, Terminal, ArrowUpRight, Rocket, Lock, LockOpen,
 } from 'lucide-react'
 import { MODULES, isCombatModule, combatConfirmText, type ModuleConfig } from '@/shared/config/modules'
 import { activeAccounts, useApp } from '@/mocks/store'
 import { useSession } from '@/features/auth/session'
 import { can } from '@/shared/lib/access'
+import { cn } from '@/shared/lib/utils'
+import { equalize, equalizeUnlocked, redistribute, percentSum } from '@/shared/lib/percentDistribution'
 import { ToggleGroup, Segmented, EmptyState, Badge, Select } from '@/shared/ui'
 import { fetchGoals, isGoalExpired, type Goal } from '@/api/goalsApi'
 import { fetchCampaigns, type Campaign } from '@/api/campaignsApi'
@@ -91,19 +93,17 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
   const [stopWordsText, setStopWordsText] = useState('') // §3.5: пропускать посты с этими словами
   const [semanticFilter, setSemanticFilter] = useState(false) // §3.5: семантическая релевантность к цели
   const [analyzeImages, setAnalyzeImages] = useState(false) // §10.5: анализ фото в посте vision-моделью
-  const [typeWeights, setTypeWeights] = useState<number[]>(() => {
-    const n = cfg.messagePrompts?.length || 0
-    return n ? Array.from({ length: n }, () => Math.round(100 / n)) : []
-  })
-  const weightSum = typeWeights.reduce((a, b) => a + (Number(b) || 0), 0)
-  // #5: авто-выравнивание типов ровно в 100% (равномерно + остаток на первые).
+  const [typeWeights, setTypeWeights] = useState<number[]>(() => equalize(cfg.messagePrompts?.length || 0))
+  // §13 (MR-61): замки — закреплённое значение не трогается при перераспределении остатка.
+  const [lockedWeights, setLockedWeights] = useState<boolean[]>([])
+  const weightSum = percentSum(typeWeights)
+  // §13 (MR-61): «поровну» выравнивает только НЕзакреплённые (закреплённые сохраняются).
   const balanceTypeWeights = () => {
     const n = cfg.messagePrompts?.length ?? 0
     if (!n) return
-    const base = Math.floor(100 / n)
-    const rem = 100 - base * n
-    setTypeWeights(Array.from({ length: n }, (_, i) => base + (i < rem ? 1 : 0)))
+    setTypeWeights((w) => equalizeUnlocked(w.length === n ? w : equalize(n), lockedWeights))
   }
+  const toggleWeightLock = (i: number) => setLockedWeights((l) => { const n = [...l]; n[i] = !n[i]; return n })
   useEffect(() => { void fetchGoals().then(setGoals).catch(() => {}) }, [])
   // Кампании этого модуля (кампания настраивает ровно один модуль — §0).
   useEffect(() => {
@@ -561,29 +561,36 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
               {(cfg.messagePrompts ?? []).map((label, i) => {
                 const val = typeWeights[i] ?? 0
                 const share = weightSum > 0 ? Math.round((val / weightSum) * 100) : 0
+                const locked = !!lockedWeights[i]
+                const count = cfg.messagePrompts?.length ?? 0
                 return (
                   <div key={i} className="rounded-xl border border-line bg-surface/40 p-2">
                     <div className="mb-1.5 flex items-center gap-2">
                       <span className="min-w-0 flex-1 truncate text-xs font-medium text-fg">{label}</span>
-                      {/* Поле было w-14 со спиннерами: «17» показывалось как «1» — цифру
-                          съедали стрелки, и оператор не видел, что реально ввёл. Шире,
-                          спиннеры убраны, «%» подписан. Потолок 100 применяется в обработчике,
-                          а не только в атрибуте: атрибут не мешает вписать 500 руками. */}
+                      {/* §13 (MR-61): замок закрепляет значение — при изменении других оно не
+                          трогается; редактировать закреплённое можно, сняв замок. */}
+                      <button type="button" onClick={() => toggleWeightLock(i)}
+                        title={locked ? 'Открепить значение' : 'Закрепить: не менять при перераспределении'}
+                        className={cn('grid h-7 w-7 shrink-0 place-items-center rounded-md border', locked ? 'border-spark-500/50 bg-spark-500/10 text-spark-300' : 'border-line text-white/40 hover:text-white/70')}>
+                        {locked ? <Lock size={13} /> : <LockOpen size={13} />}
+                      </button>
+                      {/* §13 (MR-60/61): ввод незакреплённого значения авто-перераспределяет
+                          остаток между другими незакреплёнными; сумма всегда ≤ 100%. */}
                       <div className="flex shrink-0 items-center gap-1">
                         <input
-                          type="number" min={0} max={100} inputMode="numeric"
-                          className="input h-7 w-16 text-center text-sm [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+                          type="number" min={0} max={100} inputMode="numeric" disabled={locked}
+                          className="input h-7 w-16 text-center text-sm [appearance:textfield] disabled:opacity-50 [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
                           value={val}
-                          onChange={(e) => setTypeWeights((w) => { const n = [...w]; while (n.length < (cfg.messagePrompts?.length ?? 0)) n.push(0); n[i] = Math.min(100, Math.max(0, Number(e.target.value) || 0)); return n })} />
+                          onChange={(e) => setTypeWeights((w) => redistribute(w.length === count ? w : equalize(count), i, Number(e.target.value) || 0, lockedWeights))} />
                         <span className="text-[11px] text-white/40">%</span>
                       </div>
                     </div>
-                    <div className="h-1.5 overflow-hidden rounded-full bg-line"><div className="h-full rounded-full bg-spark-500 transition-all" style={{ width: `${share}%` }} /></div>
+                    <div className="h-1.5 overflow-hidden rounded-full bg-line"><div className={cn('h-full rounded-full transition-all', locked ? 'bg-spark-400' : 'bg-spark-500')} style={{ width: `${share}%` }} /></div>
                   </div>
                 )
               })}
             </div>
-            <p className="mt-2 text-[11px] text-white/40">Доля каждого типа при запуске нормируется к 100%. «Поровну» — раскидать одинаково.</p>
+            <p className="mt-2 text-[11px] text-white/40">Ввод значения авто-раскидывает остаток по незакреплённым (§13). Замок — закрепить долю. «Поровну» — поделить незакреплённые одинаково.</p>
           </div>
         )}
         {/* §0: задача запускается ПОД КАМПАНИЕЙ — цель наследуется от неё.
