@@ -1,17 +1,34 @@
 /** CRUD + аутентификация операторов (§8.1). Монтируется в /api/users. */
 import { Router } from 'express'
-import { listUsers, getUser, createUser, updateUser, deleteUser, authenticate, authenticateSupabase, publicUser } from './users.js'
+import { listUsers, getUser, createUser, updateUser, deleteUser, authenticate, authenticateSupabase, publicUser, isBlockedByOwner } from './users.js'
 import { rolesForUser, mergePermissions, userRoleIds, hasAdminRole } from './roles.js'
+import { capModules } from './subAccess.js'
+import { getBalance } from './balance.js'
 import { appendAudit } from './lib/auditLog.js'
 import { clockIn, clockOut, summariesFor } from './workLog.js'
 import { signSession } from './lib/session.js'
+
+/**
+ * Эффективные права пользователя (union ролей) + §4.1 (MR-28) обрезка модулей суба до
+ * оплаченных владельцем. Централизовано, чтобы вход и `/me` считали одинаково.
+ * freeAccess-роль (тест/модератор) — доступ в обход подписки, её не режем.
+ */
+async function effectivePermissions(user, roles, isAdmin) {
+  let permissions = isAdmin || roles.length === 0 ? null : mergePermissions(roles)
+  const freeAccess = roles.some((r) => r?.permissions?.freeAccess)
+  if (permissions && user.parentId && !freeAccess) {
+    const bal = await getBalance(user.id).catch(() => null)
+    permissions = capModules(permissions, bal?.modules)
+  }
+  return permissions
+}
 
 /** Собрать ответ входа: публичный юзер + роль (для гейта UI) + подписанный токен. */
 async function sessionPayload(user) {
   const ids = userRoleIds(user)
   const roles = await rolesForUser(user)
   const isAdmin = hasAdminRole(ids)
-  const permissions = isAdmin || roles.length === 0 ? null : mergePermissions(roles)
+  const permissions = await effectivePermissions(user, roles, isAdmin)
   const role = { id: user.roleId || '', name: roles.map((r) => r.name).join(' + '), permissions }
   return { user, role, roles, token: signSession(user.id) }
 }
@@ -47,6 +64,10 @@ usersRouter.post('/login', async (req, res) => {
     if (!user) {
       await appendAudit({ action: 'user.login.fail', module: 'auth', initiator: 'system', reason: `Неудачный вход: ${String(email || '').slice(0, 60)}`, meta: { ip } })
       return res.status(401).json({ ok: false, error: 'Неверный e-mail или пароль' })
+    }
+    // §4.1 (MR-28): зависимые статусы — если владелец отключён, суб внутрь не входит.
+    if (await isBlockedByOwner(user)) {
+      return res.status(403).json({ ok: false, error: 'Доступ закрыт: рабочее пространство владельца отключено' })
     }
     await clockIn(user.id) // учёт рабочего времени (§8.1): старт сессии труда
     await appendAudit({ action: 'user.login', module: 'auth', initiator: user.email, reason: `Вход: ${user.name}`, meta: { userId: user.id, roleIds: userRoleIds(user), ip, via } })
@@ -98,10 +119,12 @@ usersRouter.get('/me', async (req, res) => {
     if (!userId) return res.status(401).json({ ok: false, error: 'Нет сессии' })
     const user = await getUser(userId)
     if (!user || !user.active) return res.status(401).json({ ok: false, error: 'Пользователь отключён' })
+    // §4.1 (MR-28): отключили владельца — суб теряет доступ, не дожидаясь перелогина.
+    if (await isBlockedByOwner(user)) return res.status(403).json({ ok: false, error: 'Рабочее пространство владельца отключено' })
     const ids = userRoleIds(user)
     const roles = await rolesForUser(user)
     const isAdmin = hasAdminRole(ids)
-    const permissions = isAdmin || roles.length === 0 ? null : mergePermissions(roles)
+    const permissions = await effectivePermissions(user, roles, isAdmin)
     const role = { id: user.roleId || '', name: roles.map((r) => r.name).join(' + '), permissions }
     res.json({ ok: true, user: publicUser(user), role, roles })
   } catch (err) { fail(res, err, 500) }

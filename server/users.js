@@ -145,6 +145,34 @@ export async function getUser(id) {
   return users.find((u) => u.id === id) || null
 }
 
+/** §4.1 (MR-28): субпользователи владельца — все, у кого parentId === ownerId. */
+export async function listSubs(ownerId, all) {
+  const users = all || await listUsers()
+  return users.filter((u) => u.parentId === ownerId)
+}
+
+/**
+ * §4.1 (MR-28): «синхронизировать зависимые статусы владельца и субов». Суб теряет
+ * доступ, если отключён любой владелец выше по цепочке — блокировка владельца каскадит
+ * на всех его субов. Возвращает true, если доступ должен быть закрыт из-за владельца.
+ * (На проде это же делает триггер БД 2026-08-04-owner-sync.sql; здесь — надёжный
+ *  runtime-барьер, работающий в обоих бэкендах и до срабатывания триггера.)
+ * @param {object|null} user @param {object[]} [all] заранее загруженный список (без лишнего чтения)
+ */
+export async function isBlockedByOwner(user, all) {
+  if (!user?.parentId) return false
+  const users = all || await listUsers()
+  const byId = new Map(users.map((u) => [u.id, u]))
+  const seen = new Set([user.id])
+  let cur = byId.get(user.parentId)
+  while (cur && !seen.has(cur.id)) {
+    if (cur.active === false) return true
+    seen.add(cur.id)
+    cur = cur.parentId ? byId.get(cur.parentId) : null
+  }
+  return false
+}
+
 async function findByEmail(email) {
   const users = await listUsers()
   const e = normEmail(email)
