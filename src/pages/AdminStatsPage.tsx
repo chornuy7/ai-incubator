@@ -84,17 +84,26 @@ export function AdminStatsPage() {
     setOverview(s.o); setReport(s.r); setUsers(s.u); setProblems(s.p); setCrm(s.c)
     setActive(s.a); setDaily(s.d); setPurchases(s.pur); setHealth(s.h); setDenied(false)
   }
-  const load = async (force = false) => {
+  // §5.2 (MR-33): busyRef — идёт ли «видимая» (не фоновая) загрузка; автообновление
+  // пропускает тик, пока она идёт, чтобы фон не перебивал ручную загрузку/смену периода.
+  const busyRef = useRef(false)
+  const load = async ({ force = false, silent = false }: { force?: boolean; silent?: boolean } = {}) => {
     loadCtl.current?.abort()
     const ctl = new AbortController()
     loadCtl.current = ctl
     const { signal } = ctl
-    // Свежий кэш периода → мгновенно, без запроса (MR-32).
+    // Свежий кэш периода → мгновенно, без запроса (MR-32). Фоновое автообновление (silent)
+    // всегда идёт с force, поэтому кэш ему не мешает тянуть свежие данные.
     const cached = cacheRef.current.get(periodIdx)
     if (!force && cached && Date.now() - cached.ts < CACHE_TTL) { applySnap(cached.snap); setLoading(false); return }
-    setLoading(true)
-    // Чистим period-зависимые данные (Сейчас/Мониторинг — состояние «сейчас», не период — не трогаем).
-    setOverview(null); setReport(null); setUsers(null); setProblems(null); setCrm(null); setDaily(null); setPurchases(null)
+    // Фоновое обновление не трогает спиннер и не чистит область — данные меняются на месте,
+    // без мигания; видимую загрузку показываем только при смене периода/«Обновить».
+    if (!silent) {
+      busyRef.current = true
+      setLoading(true)
+      // Чистим period-зависимые данные (Сейчас/Мониторинг — состояние «сейчас», не период — не трогаем).
+      setOverview(null); setReport(null); setUsers(null); setProblems(null); setCrm(null); setDaily(null); setPurchases(null)
+    }
     try {
       // Грузим всё одним заходом: цифры на разных вкладках должны быть на один момент
       // времени, иначе «в панели 82 задачи, а по людям 80» читается как ошибка счёта.
@@ -115,9 +124,27 @@ export function AdminStatsPage() {
       const msg = e instanceof Error ? e.message : ''
       if (/администратор/i.test(msg)) setDenied(true)
       else pushToast({ type: 'error', title: 'Не удалось загрузить статистику', desc: msg })
-    } finally { if (loadCtl.current === ctl) setLoading(false) } // loading снимает только текущий загрузчик
+    } finally {
+      // loading/busy снимает только текущий видимый загрузчик; фоновый (silent) их не трогал.
+      if (loadCtl.current === ctl && !silent) { busyRef.current = false; setLoading(false) }
+    }
   }
   useEffect(() => { void load() }, [since]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // §5.2 (MR-33): автообновление — раз в 15с (в пределах 10–30с из ТЗ) молча тянем свежие
+  // данные текущего периода и состояний «сейчас» (мониторинг/задачи/ошибки), без спиннера и
+  // без мигания. Пропускаем тик, когда вкладка скрыта (не долбим сервер в фоне), при отказе
+  // доступа и пока идёт видимая загрузка. Тумблер позволяет выключить.
+  const [autoRefresh, setAutoRefresh] = useState(true)
+  useEffect(() => {
+    if (!autoRefresh) return
+    const id = setInterval(() => {
+      if (denied || busyRef.current) return
+      if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return
+      void load({ force: true, silent: true })
+    }, 15_000)
+    return () => clearInterval(id)
+  }, [autoRefresh, denied]) // eslint-disable-line react-hooks/exhaustive-deps
 
   /** Выгрузка «инвойса» в CSV — отчёт нужно отправить, а не показать на экране.
       Принимает отображаемый отчёт (общий или по конкретному клиенту). */
@@ -164,9 +191,15 @@ export function AdminStatsPage() {
         subtitle="Сводка по системе, деньги, покупки и постатейный отчёт клиенту"
         icon={<BarChart3 size={22} />}
         actions={
-          <button onClick={() => void load(true)} className="btn-ghost h-10" disabled={loading}>
-            <RefreshCw size={16} className={loading ? 'animate-spin' : ''} /> Обновить
-          </button>
+          <div className="flex items-center gap-3">
+            <label className="flex cursor-pointer select-none items-center gap-1.5 text-xs text-muted" title="Обновлять данные каждые 15 секунд без перезагрузки страницы">
+              <input type="checkbox" checked={autoRefresh} onChange={(e) => setAutoRefresh(e.target.checked)} className="accent-spark-500" />
+              Автообновление
+            </label>
+            <button onClick={() => void load({ force: true })} className="btn-ghost h-10" disabled={loading}>
+              <RefreshCw size={16} className={loading ? 'animate-spin' : ''} /> Обновить
+            </button>
+          </div>
         }
       />
 
