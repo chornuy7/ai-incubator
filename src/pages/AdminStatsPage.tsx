@@ -515,10 +515,11 @@ function UsersTab({ report, onReload }: { report: UsersReport | null; onReload: 
   if (!report) return <Card className="p-6 text-sm text-muted">Загрузка…</Card>
   if (!report.rows.length) return <EmptyState icon={<Users size={22} />} title="Пользователей нет" />
 
-  // Ищем и по имени, и по почте: человека помнят по имени, а находят иногда по почте.
+  // §4 (MR-27): ищем по имени, почте И по ID — у каждого юзера уникальный id, и иногда
+  // человека адресуют именно по нему (в логах, в поддержке).
   const needle = q.trim().toLowerCase()
   const shown = needle
-    ? report.rows.filter((r) => `${r.name} ${r.email}`.toLowerCase().includes(needle))
+    ? report.rows.filter((r) => `${r.name} ${r.email} ${r.userId}`.toLowerCase().includes(needle))
     : report.rows
 
   /**
@@ -581,7 +582,7 @@ function UsersTab({ report, onReload }: { report: UsersReport | null; onReload: 
             value={q}
             onChange={(e) => setQ(e.target.value)}
             className="input h-9 pl-9 text-sm"
-            placeholder="Поиск по имени или почте…"
+            placeholder="Поиск по имени, почте или ID…"
           />
         </div>
         <span className="text-xs text-muted">
@@ -728,7 +729,7 @@ function UsersTab({ report, onReload }: { report: UsersReport | null; onReload: 
                           ВЛАДЕЛЕЦ в своей панели «Команда». В общей админке — только просмотр:
                           назначение ролей клиента и распределение субов отсюда убрано. */}
                       {real && (
-                        <div className="mb-4 grid gap-3 rounded-xl border border-line bg-elevated/50 p-3 sm:grid-cols-2">
+                        <div className="mb-4 grid gap-3 rounded-xl border border-line bg-elevated/50 p-3">
                           <div>
                             <div className="mb-1.5 text-[11px] font-bold uppercase tracking-wide text-muted">Роли</div>
                             {(r.roleIds || []).length
@@ -771,7 +772,7 @@ function UsersTab({ report, onReload }: { report: UsersReport | null; onReload: 
                       {/* §10.4: что человек КУПИЛ — модули (подписка) и пополнения кошелька.
                           Отдельно от «что запускал»: одно отвечает «за что платил», другое «что делал». */}
                       {real && (
-                        <div className="mb-4 grid gap-4 rounded-xl border border-line bg-elevated/50 p-3 sm:grid-cols-2">
+                        <div className="mb-4 grid gap-4 rounded-xl border border-line bg-elevated/50 p-3">
                           <div>
                             <div className="mb-1.5 text-[11px] font-bold uppercase tracking-wide text-muted">Купленные модули</div>
                             {r.subscription?.all

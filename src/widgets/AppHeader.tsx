@@ -234,7 +234,7 @@ export function AppHeader() {
                 </div>
                 <div className="py-1">
                   <MenuItem icon={<UserCog size={16} />} onClick={() => { nav('/panel/user/profile'); close() }}>Мой аккаунт</MenuItem>
-                  <MenuItem icon={<Wallet size={16} />} onClick={() => { setCoinsOpen(true); close() }}>Пополнить монеты</MenuItem>
+                  <MenuItem icon={<Wallet size={16} />} onClick={() => { setCoinsOpen(true); close() }}>Пополнить токены</MenuItem>
                   <MenuItem icon={<LogOut size={16} />} tone="danger" onClick={() => { doLogout(); close() }}>Выйти</MenuItem>
                 </div>
               </>
