@@ -40,10 +40,10 @@ export function GuestLogin() {
     }
     setLoading(true)
     try {
-      const { user, role } = isReg
+      const { user, role, isOwner } = isReg
         ? await registerUser(email.trim(), pass, name.trim(), captchaToken)
         : await loginUser(email.trim(), pass)
-      signIn(user, role && role.permissions ? { id: role.id, name: role.name, permissions: role.permissions } : null)
+      signIn(user, role && role.permissions ? { id: role.id, name: role.name, permissions: role.permissions } : null, isOwner)
       setUserState('with-data')
       pushToast({
         type: 'success',

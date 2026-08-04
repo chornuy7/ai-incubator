@@ -9,6 +9,8 @@ export interface User {
   roleIds: string[] // мульти-роль: все роли пользователя (права суммируются)
   active: boolean
   parentId?: string | null // §10.4: под каким админом вложен суб-юзер (null — верхнеуровневый)
+  accountIds?: string[] // §5.4 (MR-37): выданные субу одиночные аккаунты из пула владельца
+  accountGroupIds?: string[] // §5.4 (MR-37): выданные субу группы аккаунтов
   createdAt: number
   updatedAt: number
 }
@@ -25,20 +27,20 @@ function saveToken(token?: string) {
 }
 export function clearToken() { saveToken(undefined) }
 
-export async function loginUser(email: string, password: string): Promise<{ user: User; role: Role | null }> {
-  const data = await apiPost<{ user: User; role: Role | null; token?: string }>('/api/users/login', { email, password })
+export async function loginUser(email: string, password: string): Promise<{ user: User; role: Role | null; isOwner: boolean }> {
+  const data = await apiPost<{ user: User; role: Role | null; token?: string; isOwner?: boolean }>('/api/users/login', { email, password })
   saveToken(data.token)
-  return { user: data.user, role: data.role }
+  return { user: data.user, role: data.role, isOwner: !!data.isOwner }
 }
 
 /**
  * Самостоятельная регистрация с лендинга. Заводит юзера БЕЗ доступа к модулям —
  * админ выдаёт его вручную (фокус-группа). Сразу логинит (возвращает токен).
  */
-export async function registerUser(email: string, password: string, name?: string, captchaToken?: string): Promise<{ user: User; role: Role | null }> {
-  const data = await apiPost<{ user: User; role: Role | null; token?: string }>('/api/users/register', { email, password, name, captchaToken })
+export async function registerUser(email: string, password: string, name?: string, captchaToken?: string): Promise<{ user: User; role: Role | null; isOwner: boolean }> {
+  const data = await apiPost<{ user: User; role: Role | null; token?: string; isOwner?: boolean }>('/api/users/register', { email, password, name, captchaToken })
   saveToken(data.token)
-  return { user: data.user, role: data.role }
+  return { user: data.user, role: data.role, isOwner: !!data.isOwner }
 }
 
 /** §10.2: включена ли капча на регистрации + её site-key (для виджета Turnstile). */
@@ -50,9 +52,9 @@ export async function fetchAuthConfig(): Promise<{ captcha: { enabled: boolean; 
  * Кто я сейчас, с актуальными правами. Нужен, чтобы выданный/отозванный доступ
  * применялся без перезахода: права снимались снимком при входе.
  */
-export async function fetchMe(): Promise<{ user: User; role: Role | null }> {
-  const r = await apiGet<{ user: User; role: Role | null }>('/api/users/me')
-  return { user: r.user, role: r.role }
+export async function fetchMe(): Promise<{ user: User; role: Role | null; isOwner: boolean }> {
+  const r = await apiGet<{ user: User; role: Role | null; isOwner?: boolean }>('/api/users/me')
+  return { user: r.user, role: r.role, isOwner: !!r.isOwner }
 }
 
 export async function createUser(input: { email: string; name?: string; roleId?: string; roleIds?: string[]; password: string; active?: boolean; parentId?: string | null }): Promise<User> {
@@ -60,7 +62,7 @@ export async function createUser(input: { email: string; name?: string; roleId?:
   return data.user
 }
 
-export async function updateUser(id: string, patch: { name?: string; roleId?: string; roleIds?: string[]; active?: boolean; password?: string; parentId?: string | null }): Promise<User> {
+export async function updateUser(id: string, patch: { name?: string; roleId?: string; roleIds?: string[]; active?: boolean; password?: string; parentId?: string | null; accountIds?: string[]; accountGroupIds?: string[] }): Promise<User> {
   const data = await apiPut<{ user: User }>(`/api/users/${id}`, patch)
   return data.user
 }

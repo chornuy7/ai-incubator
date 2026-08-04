@@ -1,12 +1,19 @@
 /** CRUD + аутентификация операторов (§8.1). Монтируется в /api/users. */
 import { Router } from 'express'
-import { listUsers, getUser, createUser, updateUser, deleteUser, authenticate, authenticateSupabase, publicUser, isBlockedByOwner } from './users.js'
-import { rolesForUser, mergePermissions, userRoleIds, hasAdminRole } from './roles.js'
+import { listUsers, getUser, createUser, updateUser, deleteUser, authenticate, authenticateSupabase, publicUser, isBlockedByOwner, listSubs } from './users.js'
+import { rolesForUser, mergePermissions, userRoleIds, hasAdminRole, ADMIN_ROLE_ID } from './roles.js'
 import { capModules } from './subAccess.js'
 import { getBalance } from './balance.js'
+import { requesterContext } from './lib/accessGuard.js'
 import { appendAudit } from './lib/auditLog.js'
 import { clockIn, clockOut, summariesFor } from './workLog.js'
 import { signSession } from './lib/session.js'
+
+/** §4.1 (MR-29): владелец не может назначать субу админ-роль (эскалация прав). */
+function sanitizeRoleIds(roleIds) {
+  if (roleIds === undefined) return undefined
+  return (Array.isArray(roleIds) ? roleIds : []).filter((r) => r !== ADMIN_ROLE_ID)
+}
 
 /**
  * Эффективные права пользователя (union ролей) + §4.1 (MR-28) обрезка модулей суба до
@@ -30,7 +37,8 @@ async function sessionPayload(user) {
   const isAdmin = hasAdminRole(ids)
   const permissions = await effectivePermissions(user, roles, isAdmin)
   const role = { id: user.roleId || '', name: roles.map((r) => r.name).join(' + '), permissions }
-  return { user, role, roles, token: signSession(user.id) }
+  const isOwner = !isAdmin && (await listSubs(user.id)).length > 0 // §4.1 (MR-29): доступ к «Команде»
+  return { user, role, roles, isOwner, token: signSession(user.id) }
 }
 
 export const usersRouter = Router()
@@ -39,10 +47,14 @@ function fail(res, err, code = 400) {
   res.status(code).json({ ok: false, error: err instanceof Error ? err.message : 'Ошибка' })
 }
 
-usersRouter.get('/', async (_req, res) => {
+usersRouter.get('/', async (req, res) => {
   try {
+    const ctx = await requesterContext(req)
+    if (ctx.blocked) return res.status(403).json({ ok: false, error: 'Пользователь отключён' })
     const users = await listUsers()
-    res.json({ ok: true, users: users.map(publicUser) })
+    // §4.1 (MR-29): владелец видит только своих субпользователей (+ себя); админ/дев — всех.
+    const visible = (ctx.noSession || ctx.isAdmin) ? users : users.filter((u) => u.parentId === ctx.id || u.id === ctx.id)
+    res.json({ ok: true, users: visible.map(publicUser) })
   } catch (err) { fail(res, err, 500) }
 })
 
@@ -126,7 +138,9 @@ usersRouter.get('/me', async (req, res) => {
     const isAdmin = hasAdminRole(ids)
     const permissions = await effectivePermissions(user, roles, isAdmin)
     const role = { id: user.roleId || '', name: roles.map((r) => r.name).join(' + '), permissions }
-    res.json({ ok: true, user: publicUser(user), role, roles })
+    // §4.1 (MR-29): владелец = у кого есть субпользователи → ему открыта «Команда».
+    const isOwner = !isAdmin && (await listSubs(user.id)).length > 0
+    res.json({ ok: true, user: publicUser(user), role, roles, isOwner })
   } catch (err) { fail(res, err, 500) }
 })
 
@@ -150,26 +164,51 @@ usersRouter.get('/worktime', async (_req, res) => {
 
 usersRouter.post('/', async (req, res) => {
   try {
-    const user = await createUser(req.body ?? {})
-    await appendAudit({ action: 'user.create', module: 'rbac', initiator: 'operator', reason: `Создан пользователь ${user.email}`, meta: { userId: user.id, roleId: user.roleId } })
+    const ctx = await requesterContext(req)
+    if (ctx.blocked) return res.status(403).json({ ok: false, error: 'Нет прав на создание пользователей' })
+    const body = { ...(req.body ?? {}) }
+    // §4.1 (MR-29): владелец заводит суба ТОЛЬКО под собой и без админ-роли.
+    if (!ctx.noSession && !ctx.isAdmin) {
+      body.parentId = ctx.id
+      body.roleIds = sanitizeRoleIds(body.roleIds)
+    }
+    const user = await createUser(body)
+    await appendAudit({ action: 'user.create', module: 'rbac', initiator: ctx.id || 'operator', reason: `Создан пользователь ${user.email}`, meta: { userId: user.id, roleId: user.roleId, parentId: user.parentId } })
     res.json({ ok: true, user: publicUser(user) })
   } catch (err) { fail(res, err) }
 })
 
 usersRouter.put('/:id', async (req, res) => {
   try {
-    const user = await updateUser(req.params.id, req.body ?? {})
+    const ctx = await requesterContext(req)
+    if (ctx.blocked) return res.status(403).json({ ok: false, error: 'Нет прав' })
+    let patch = req.body ?? {}
+    // §4.1 (MR-29): владелец правит ТОЛЬКО своих субов и ограниченный набор полей
+    // (роли/активность/имя/выдачи аккаунтов). parentId и пароль владельцу недоступны.
+    if (!ctx.noSession && !ctx.isAdmin) {
+      const target = await getUser(req.params.id)
+      if (!target || target.parentId !== ctx.id) return res.status(403).json({ ok: false, error: 'Можно управлять только своими субпользователями' })
+      const { name, active, roleIds, accountIds, accountGroupIds } = patch
+      patch = { name, active, roleIds: sanitizeRoleIds(roleIds), accountIds, accountGroupIds }
+    }
+    const user = await updateUser(req.params.id, patch)
     if (!user) return res.status(404).json({ ok: false, error: 'Пользователь не найден' })
-    await appendAudit({ action: 'user.update', module: 'rbac', initiator: 'operator', reason: `Изменён пользователь ${user.email}`, meta: { userId: user.id, roleId: user.roleId } })
+    await appendAudit({ action: 'user.update', module: 'rbac', initiator: ctx.id || 'operator', reason: `Изменён пользователь ${user.email}`, meta: { userId: user.id, roleId: user.roleId } })
     res.json({ ok: true, user: publicUser(user) })
   } catch (err) { fail(res, err) }
 })
 
 usersRouter.delete('/:id', async (req, res) => {
   try {
+    const ctx = await requesterContext(req)
+    if (ctx.blocked) return res.status(403).json({ ok: false, error: 'Нет прав' })
+    if (!ctx.noSession && !ctx.isAdmin) {
+      const target = await getUser(req.params.id)
+      if (!target || target.parentId !== ctx.id) return res.status(403).json({ ok: false, error: 'Можно удалять только своих субпользователей' })
+    }
     const ok = await deleteUser(req.params.id)
     if (!ok) return res.status(404).json({ ok: false, error: 'Пользователь не найден' })
-    await appendAudit({ action: 'user.delete', module: 'rbac', initiator: 'operator', reason: 'Удалён пользователь', meta: { userId: req.params.id } })
+    await appendAudit({ action: 'user.delete', module: 'rbac', initiator: ctx.id || 'operator', reason: 'Удалён пользователь', meta: { userId: req.params.id } })
     res.json({ ok: true })
   } catch (err) { fail(res, err) }
 })

@@ -57,3 +57,29 @@ test('isBlockedByOwner + listSubs: блокировка владельца ка�
 
   delete process.env.USERS_FILE
 })
+
+// ── §4.1 (MR-29): контекст автора запроса для owner-scoping ──
+test('requesterContext: нет заголовка → дев/полный доступ; неизвестный → blocked; владелец → не админ', async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'subusers-ctx-'))
+  process.env.USERS_FILE = path.join(dir, 'users.json')
+  const u = await import('../users.js?ctx=' + Date.now())
+  const { requesterContext } = await import('../lib/accessGuard.js?ctx=' + Date.now())
+  await u.listUsers() // сид
+  const boss = await u.createUser({ email: 'ctxowner@x.y', password: 'secret1', name: 'Владелец', roleIds: [] })
+
+  const req = (id) => ({ header: (h) => (h.toLowerCase() === 'x-user-id' ? id : undefined) })
+
+  const noSession = await requesterContext(req(undefined))
+  assert.equal(noSession.noSession, true)
+  assert.equal(noSession.isAdmin, true, 'без сессии — дев/полный доступ')
+
+  const unknown = await requesterContext(req('usr_ghost'))
+  assert.equal(unknown.blocked, true, 'неизвестный автор — отказать')
+
+  const owner = await requesterContext(req(boss.id))
+  assert.equal(owner.blocked, false)
+  assert.equal(owner.isAdmin, false, 'обычный владелец — не админ')
+  assert.equal(owner.id, boss.id)
+
+  delete process.env.USERS_FILE
+})

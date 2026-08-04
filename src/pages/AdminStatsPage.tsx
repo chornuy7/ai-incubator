@@ -569,31 +569,8 @@ function UsersTab({ report, onReload }: { report: UsersReport | null; onReload: 
     } finally { setBusy(null) }
   }
 
-  // §10.4: назначить/снять родителя (суб-юзер под админом). Бэкенд бьёт по циклам и
-  // несуществующему родителю — здесь просто отражаем результат.
-  const setParent = async (userId: string, parentId: string) => {
-    setBusy(userId)
-    try {
-      await updateUser(userId, { parentId: parentId || null })
-      pushToast({ type: 'success', title: parentId ? 'Подчинение назначено' : 'Подчинение снято' })
-      onReload()
-    } catch (e) {
-      pushToast({ type: 'error', title: 'Не удалось изменить подчинение', desc: e instanceof Error ? e.message : '' })
-    } finally { setBusy(null) }
-  }
-
-  // §10.4: назначить/снять роль юзеру (мульти-роль). Тоггл добавляет/убирает id.
-  const toggleRole = async (userId: string, current: string[], roleId: string) => {
-    const next = current.includes(roleId) ? current.filter((r) => r !== roleId) : [...current, roleId]
-    setBusy(userId)
-    try {
-      await updateUser(userId, { roleIds: next })
-      pushToast({ type: 'success', title: 'Роли обновлены' })
-      onReload()
-    } catch (e) {
-      pushToast({ type: 'error', title: 'Не удалось изменить роли', desc: e instanceof Error ? e.message : '' })
-    } finally { setBusy(null) }
-  }
+  // §4.1/§5.3 (MR-29): назначение ролей и подчинения субов ПЕРЕЕХАЛО в панель владельца
+  // («Команда»). В админке эти действия убраны — остался только просмотр (см. карточку).
 
   return (
     <Card className="p-4">
@@ -747,45 +724,28 @@ function UsersTab({ report, onReload }: { report: UsersReport | null; onReload: 
                           </div>
                         </div>
                       )}
-                      {/* §10.4: назначение ролей — раз редактор ролей теперь в админке,
-                          отсюда же их и раздаём. Клик по роли добавляет/убирает её у юзера. */}
-                      {real && !!roles.length && (
-                        <div className="mb-4 rounded-xl border border-line bg-elevated/50 p-3">
-                          <div className="mb-2 text-[11px] font-bold uppercase tracking-wide text-muted">Роли доступа</div>
-                          <div className="flex flex-wrap gap-1.5">
-                            {roles.map((role) => {
-                              const on = (r.roleIds || []).includes(role.id)
-                              return (
-                                <button key={role.id} onClick={() => void toggleRole(r.userId, r.roleIds || [], role.id)} disabled={busy === r.userId}
-                                  className={cn('rounded-lg border px-2 py-1 text-xs transition-colors disabled:opacity-40',
-                                    on ? 'border-iris-500/50 bg-iris-500/10 text-iris-200' : 'border-line text-muted hover:border-iris-500/25')}>
-                                  {on ? '✓ ' : ''}{role.name}
-                                </button>
-                              )
-                            })}
-                          </div>
-                          <div className="mt-1.5 text-[10px] text-muted">Роли создаются на вкладке «Роли». Без ролей — доступа к разделам нет.</div>
-                        </div>
-                      )}
-                      {/* §10.4: вложенность — под каким админом этот юзер. Меняем сразу по выбору;
-                          в списке нельзя выбрать себя, бэкенд дополнительно ловит циклы. */}
+                      {/* §4.1/§5.3 (MR-29): роли и подчинение субпользователей настраивает
+                          ВЛАДЕЛЕЦ в своей панели «Команда». В общей админке — только просмотр:
+                          назначение ролей клиента и распределение субов отсюда убрано. */}
                       {real && (
-                        <div className="mb-4 flex flex-wrap items-center gap-2 rounded-xl border border-line bg-elevated/50 p-3">
-                          <span className="text-[11px] font-bold uppercase tracking-wide text-muted">Подчинение</span>
-                          <span className="text-xs text-muted">Суб-юзер под админом:</span>
-                          <select
-                            value={r.parentId || ''}
-                            disabled={busy === r.userId}
-                            onChange={(e) => void setParent(r.userId, e.target.value)}
-                            className="input h-8 min-w-[180px] text-xs disabled:opacity-40"
-                          >
-                            <option value="">— самостоятельный (без родителя)</option>
-                            {report.rows
-                              .filter((u) => u.userId !== r.userId && !u.email.startsWith('без владельца') && !u.email.startsWith('удалённый'))
-                              .map((u) => (
-                                <option key={u.userId} value={u.userId}>{u.name || u.email || u.userId}</option>
-                              ))}
-                          </select>
+                        <div className="mb-4 grid gap-3 rounded-xl border border-line bg-elevated/50 p-3 sm:grid-cols-2">
+                          <div>
+                            <div className="mb-1.5 text-[11px] font-bold uppercase tracking-wide text-muted">Роли</div>
+                            {(r.roleIds || []).length
+                              ? <div className="flex flex-wrap gap-1">
+                                  {(r.roleIds || []).map((id) => (
+                                    <span key={id} className="rounded-md bg-iris-500/10 px-1.5 py-0.5 text-[11px] text-iris-200">{roles.find((x) => x.id === id)?.name || id}</span>
+                                  ))}
+                                </div>
+                              : <span className="text-xs text-muted">Ролей нет</span>}
+                            <div className="mt-1.5 text-[10px] text-faint">Настраивается в панели владельца → «Команда».</div>
+                          </div>
+                          <div>
+                            <div className="mb-1.5 text-[11px] font-bold uppercase tracking-wide text-muted">Подчинение</div>
+                            {r.parentId
+                              ? <span className="text-xs text-fg">Суб-юзер под: {report.rows.find((u) => u.userId === r.parentId)?.name || report.rows.find((u) => u.userId === r.parentId)?.email || r.parentId}</span>
+                              : <span className="text-xs text-muted">Самостоятельный владелец</span>}
+                          </div>
                         </div>
                       )}
                       {/* §11.9: последний вход и IP — админ должен видеть, откуда заходят

@@ -13,12 +13,14 @@ export interface SessionUser {
   roleIds: string[]
   roleName: string
   isAdmin: boolean
+  /** §4.1 (MR-29): владелец рабочего пространства (есть субпользователи) → доступна «Команда». */
+  isOwner: boolean
   permissions: RolePermissions | null
 }
 
 interface SessionStore {
   user: SessionUser | null
-  login: (user: User, role: { id: string; name: string; permissions: RolePermissions } | null) => void
+  login: (user: User, role: { id: string; name: string; permissions: RolePermissions } | null, isOwner?: boolean) => void
   logout: () => void
   /** Перечитать права с сервера (см. `fetchMe`). Тихо: сбой сети не выкидывает из сессии. */
   refresh: () => Promise<void>
@@ -40,7 +42,7 @@ function boot(): SessionUser | null {
 
 export const useSession = create<SessionStore>((set) => ({
   user: boot(),
-  login: (user, role) => {
+  login: (user, role, isOwner = false) => {
     const roleIds = user.roleIds?.length ? user.roleIds : (user.roleId ? [user.roleId] : [])
     const su: SessionUser = {
       id: user.id,
@@ -50,6 +52,7 @@ export const useSession = create<SessionStore>((set) => ({
       roleIds,
       roleName: role?.name ?? '',
       isAdmin: user.roleId === ADMIN_BYPASS_ID || roleIds.includes(ADMIN_BYPASS_ID),
+      isOwner,
       permissions: role?.permissions ?? null,
     }
     persist(su)
@@ -59,7 +62,7 @@ export const useSession = create<SessionStore>((set) => ({
     const cur = useSession.getState().user
     if (!cur) return
     try {
-      const { user, role } = await fetchMe()
+      const { user, role, isOwner } = await fetchMe()
       const roleIds = user.roleIds?.length ? user.roleIds : (user.roleId ? [user.roleId] : [])
       const su: SessionUser = {
         id: user.id,
@@ -69,6 +72,7 @@ export const useSession = create<SessionStore>((set) => ({
         roleIds,
         roleName: role?.name ?? '',
         isAdmin: user.roleId === ADMIN_BYPASS_ID || roleIds.includes(ADMIN_BYPASS_ID),
+        isOwner,
         permissions: role?.permissions ?? null,
       }
       persist(su)

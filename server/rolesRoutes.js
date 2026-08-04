@@ -1,6 +1,7 @@
 /** CRUD-роуты RBAC (§8.1). Монтируется в /api/roles. */
 import { Router } from 'express'
-import { listRoles, getRole, createRole, updateRole, deleteRole, buildCatalog } from './roles.js'
+import { listRoles, getRole, createRole, updateRole, deleteRole, buildCatalog, ADMIN_ROLE_ID } from './roles.js'
+import { requesterContext } from './lib/accessGuard.js'
 import { appendAudit } from './lib/auditLog.js'
 
 export const rolesRouter = Router()
@@ -9,9 +10,16 @@ function fail(res, err, code = 400) {
   res.status(code).json({ ok: false, error: err instanceof Error ? err.message : 'Ошибка' })
 }
 
-rolesRouter.get('/', async (_req, res) => {
+rolesRouter.get('/', async (req, res) => {
   try {
-    res.json({ ok: true, roles: await listRoles() })
+    const ctx = await requesterContext(req)
+    const roles = await listRoles()
+    // §4.1/§5.3 (MR-29): владелец видит системные роли-шаблоны (без user_id) + СВОИ созданные;
+    // админ-роль ему не показываем (эскалация), админ/дев — все роли.
+    const visible = (ctx.noSession || ctx.isAdmin)
+      ? roles
+      : roles.filter((r) => r.id !== ADMIN_ROLE_ID && (!r.userId || r.userId === ctx.id))
+    res.json({ ok: true, roles: visible })
   } catch (err) { fail(res, err, 500) }
 })
 
@@ -55,6 +63,12 @@ rolesRouter.post('/', async (req, res) => {
 
 rolesRouter.put('/:id', async (req, res) => {
   try {
+    // §4.1 (MR-29): владелец правит только свои роли; шаблоны/чужие/админ — только sudo.
+    const ctx = await requesterContext(req)
+    if (!ctx.noSession && !ctx.isAdmin) {
+      const target = await getRole(req.params.id)
+      if (!target || target.userId !== ctx.id) return res.status(403).json({ ok: false, error: 'Можно менять только свои роли' })
+    }
     const role = await updateRole(req.params.id, req.body ?? {})
     if (!role) return res.status(404).json({ ok: false, error: 'Роль не найдена' })
     await appendAudit({ action: 'role.update', module: 'rbac', initiator: req.header('x-user-id') || 'operator', reason: `Изменена роль «${role.name}»`, meta: { roleId: role.id } })
@@ -65,6 +79,12 @@ rolesRouter.put('/:id', async (req, res) => {
 
 rolesRouter.delete('/:id', async (req, res) => {
   try {
+    // §4.1 (MR-29): владелец удаляет только свои роли.
+    const ctx = await requesterContext(req)
+    if (!ctx.noSession && !ctx.isAdmin) {
+      const target = await getRole(req.params.id)
+      if (!target || target.userId !== ctx.id) return res.status(403).json({ ok: false, error: 'Можно удалять только свои роли' })
+    }
     const ok = await deleteRole(req.params.id)
     if (!ok) return res.status(404).json({ ok: false, error: 'Роль не найдена' })
     await appendAudit({ action: 'role.delete', module: 'rbac', initiator: req.header('x-user-id') || 'operator', reason: 'Удалена роль', meta: { roleId: req.params.id } })

@@ -60,6 +60,28 @@ export async function isAdminRequest(req) {
 }
 
 /**
+ * §4.1 (MR-29): контекст автора запроса для owner-scoping управления субами/ролями/группами.
+ * До этого CRUD users/roles/account-groups не проверял права на сервере вообще (гейт был
+ * только во фронте) — владелец мог править чужое прямым запросом. Здесь — единая точка:
+ *  - noSession (нет заголовка) → дев/демо, полный доступ (как isAdminRequest);
+ *  - blocked → отключённый/неизвестный, отказать;
+ *  - isAdmin → sudo-обход;
+ *  - иначе владелец: управляет только тем, что принадлежит ему (parentId/userId === id).
+ * @returns {Promise<{id:string, user:object|null, isAdmin:boolean, noSession:boolean, blocked:boolean}>}
+ */
+export async function requesterContext(req) {
+  const id = req.header('x-user-id') || ''
+  if (!id) return { id: '', user: null, isAdmin: true, noSession: true, blocked: false }
+  try {
+    const user = await getUser(id)
+    if (!user || !user.active) return { id, user: null, isAdmin: false, noSession: false, blocked: true }
+    return { id, user, isAdmin: hasAdminRole(userRoleIds(user)), noSession: false, blocked: false }
+  } catch {
+    return { id, user: null, isAdmin: false, noSession: false, blocked: true }
+  }
+}
+
+/**
  * §8.1: папки целей, доступные автору запроса, с урезанными списками каналов.
  *
  * Раньше фильтрация жила ТОЛЬКО во фронте (`visibleFolders`/`allowedTargets` в

@@ -83,6 +83,8 @@ export function canControlModule(permissions: RolePermissions | null, isAdmin: b
  * перекрывает общий набор только для него. §8.1 / §5.4
  */
 export const ADMIN_ONLY_PATHS = new Set(['/panel/roles', '/panel/users'])
+/** §4.1 (MR-29): «Команда» — страница управления субпользователями, открыта владельцу. */
+export const OWNER_TEAM_PATH = '/panel/users'
 /**
  * Минимум, доступный всем всегда — не гейтится ролью: свой профиль, поддержка и
  * «Мои модули». Последнее — витрина, где клиент покупает себе набор: закрывать её
@@ -113,9 +115,10 @@ export function anyModuleKeyFromPath(path: string): string | null {
  * Порядок: админ-страницы (только админ) → always-on → модули (по ключу) → остальное как 'section'.
  * @param isAdmin — bypass; permissions null трактуется как deny (кроме always-on).
  */
-export function canAccessPath(permissions: RolePermissions | null, isAdmin: boolean, path: string): boolean {
+export function canAccessPath(permissions: RolePermissions | null, isAdmin: boolean, path: string, isOwner = false): boolean {
   if (isAdmin) return true
-  if (ADMIN_ONLY_PATHS.has(path)) return false
+  // §4.1 (MR-29): владельцу открыта только «Команда» из админ-страниц; «Роли» — по-прежнему sudo.
+  if (ADMIN_ONLY_PATHS.has(path)) return isOwner && path === OWNER_TEAM_PATH
   if (ALWAYS_ON_PATHS.has(path)) return true
   const mk = moduleKeyFromPath(path) ?? SPECIAL_MODULE_PATHS[path]
   if (mk) return can(permissions, false, 'module', mk)

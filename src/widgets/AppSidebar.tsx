@@ -50,7 +50,7 @@ export function AppSidebar({ mobile = false }: { mobile?: boolean }) {
     const mk = anyModuleKeyFromPath(r.path)
     if (mk && !planHasModule(planModules, mk)) return false
     if (!sessionUser) return true
-    return canAccessPath(sessionUser.permissions, sessionUser.isAdmin, r.path)
+    return canAccessPath(sessionUser.permissions, sessionUser.isAdmin, r.path, sessionUser.isOwner)
   }
 
   return (

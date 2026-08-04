@@ -40,7 +40,7 @@ export function Layout() {
   const setHelpOpen = useUi((s) => s.setHelpOpen)
 
   // Guard: гейтим и прямой заход по URL, не только меню (§8.1). Демо (без сессии) — всё открыто.
-  const routeAllowed = !sessionUser || canAccessPath(sessionUser.permissions, sessionUser.isAdmin, location.pathname)
+  const routeAllowed = !sessionUser || canAccessPath(sessionUser.permissions, sessionUser.isAdmin, location.pathname, sessionUser.isOwner)
 
   const openHelp = () => {
     setHelpTopic('Помощь по настройкам')
