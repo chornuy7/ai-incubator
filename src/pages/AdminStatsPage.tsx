@@ -74,11 +74,24 @@ export function AdminStatsPage() {
   // периода не перезаписал новый. Данные периода чистим сразу — под новым периодом не
   // должны висеть цифры старого; вкладки при пустых данных показывают «Загрузка…».
   const loadCtl = useRef<AbortController | null>(null)
-  const load = async () => {
+  // §5.1 (MR-32): кэш загруженных периодов — при возврате на уже виденный период
+  // показываем данные мгновенно, без повторного запроса. Ключ — periodIdx (стабилен),
+  // TTL 60с — чтобы не держать вечно устаревшее; «Обновить» игнорирует кэш (force).
+  type StatsSnap = { o: AdminOverview; r: ClientReport; u: UsersReport; p: Problems; c: CrmOverview; a: ActiveNow; d: DailySpend; pur: Purchases; h: AccountsHealth }
+  const CACHE_TTL = 60_000
+  const cacheRef = useRef<Map<number, { snap: StatsSnap; ts: number }>>(new Map())
+  const applySnap = (s: StatsSnap) => {
+    setOverview(s.o); setReport(s.r); setUsers(s.u); setProblems(s.p); setCrm(s.c)
+    setActive(s.a); setDaily(s.d); setPurchases(s.pur); setHealth(s.h); setDenied(false)
+  }
+  const load = async (force = false) => {
     loadCtl.current?.abort()
     const ctl = new AbortController()
     loadCtl.current = ctl
     const { signal } = ctl
+    // Свежий кэш периода → мгновенно, без запроса (MR-32).
+    const cached = cacheRef.current.get(periodIdx)
+    if (!force && cached && Date.now() - cached.ts < CACHE_TTL) { applySnap(cached.snap); setLoading(false); return }
     setLoading(true)
     // Чистим period-зависимые данные (Сейчас/Мониторинг — состояние «сейчас», не период — не трогаем).
     setOverview(null); setReport(null); setUsers(null); setProblems(null); setCrm(null); setDaily(null); setPurchases(null)
@@ -92,8 +105,9 @@ export function AdminStatsPage() {
         fetchAccountsHealth(signal),
       ])
       if (signal.aborted) return // перебит новым периодом — результат не применяем
-      setOverview(o); setReport(r); setUsers(u); setProblems(p); setCrm(c)
-      setActive(a); setDaily(d); setPurchases(pur); setHealth(h); setDenied(false)
+      const snap: StatsSnap = { o, r, u, p, c, a, d, pur, h }
+      cacheRef.current.set(periodIdx, { snap, ts: Date.now() }) // кэшируем загруженный период
+      applySnap(snap)
     } catch (e) {
       if (signal.aborted || (e instanceof DOMException && e.name === 'AbortError')) return // отмена — не ошибка
       // 403 — не ошибка сборки, а честный отказ: показываем это отдельно, иначе
@@ -103,7 +117,7 @@ export function AdminStatsPage() {
       else pushToast({ type: 'error', title: 'Не удалось загрузить статистику', desc: msg })
     } finally { if (loadCtl.current === ctl) setLoading(false) } // loading снимает только текущий загрузчик
   }
-  useEffect(() => { void load() }, [since])
+  useEffect(() => { void load() }, [since]) // eslint-disable-line react-hooks/exhaustive-deps
 
   /** Выгрузка «инвойса» в CSV — отчёт нужно отправить, а не показать на экране.
       Принимает отображаемый отчёт (общий или по конкретному клиенту). */
@@ -150,7 +164,7 @@ export function AdminStatsPage() {
         subtitle="Сводка по системе, деньги, покупки и постатейный отчёт клиенту"
         icon={<BarChart3 size={22} />}
         actions={
-          <button onClick={() => void load()} className="btn-ghost h-10" disabled={loading}>
+          <button onClick={() => void load(true)} className="btn-ghost h-10" disabled={loading}>
             <RefreshCw size={16} className={loading ? 'animate-spin' : ''} /> Обновить
           </button>
         }
