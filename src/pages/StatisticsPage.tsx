@@ -184,6 +184,10 @@ function MoneyTile({ icon, label, value, hint, accent }: { icon: React.ReactNode
 /** «Куда идёт работа» — разрез по модулям: где именно тратятся действия и монеты. */
 function WhereCard({ where }: { where: MyStats['where'] }) {
   const max = Math.max(...where.map((w) => w.actions), 1)
+  // §7 (MR-42): итоговая строка «Всего» на экране — сумма действий и монет по всем
+  // модулям (раньше total был только в выгрузке CSV, на экране приходилось складывать глазами).
+  const totalActions = where.reduce((s, w) => s + w.actions, 0)
+  const totalSpent = where.reduce((s, w) => s + (w.spent || 0), 0)
   return (
     <Card className="p-4">
       <div className="mb-3 text-sm font-semibold text-fg">Куда идёт работа</div>
@@ -201,6 +205,16 @@ function WhereCard({ where }: { where: MyStats['where'] }) {
           </div>
         ))}
       </div>
+      {where.length > 0 && (
+        <div className="mt-3 flex items-center gap-3 border-t border-line pt-2.5">
+          <span className="w-40 shrink-0 text-xs font-bold uppercase tracking-wide text-muted">Всего</span>
+          <div className="h-2 flex-1" />
+          <span className="w-28 shrink-0 text-right text-xs font-bold tabular-nums text-fg">
+            {compact(totalActions)} действ.
+            {totalSpent ? <span className="text-amber-300"> · {fmtCoins(totalSpent)} ⚡</span> : null}
+          </span>
+        </div>
+      )}
     </Card>
   )
 }
