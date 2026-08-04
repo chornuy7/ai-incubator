@@ -30,6 +30,8 @@ const rowToUser = (r) => ({
   parentId: r.parent_id || null,
   // §5.4 (MR-37): выданные субу аккаунты/группы из пула владельца.
   accountIds: r.account_ids || [], accountGroupIds: r.account_group_ids || [],
+  // §4.2 (MR-30): режим баланса суба и лимит токенов.
+  balanceMode: r.balance_mode || 'shared', tokenLimit: r.token_limit ?? null,
   createdAt: r.created_at ? new Date(r.created_at).getTime() : 0,
   updatedAt: r.updated_at ? new Date(r.updated_at).getTime() : 0,
 })
@@ -113,6 +115,7 @@ function profileToUser(p, emailMap, legacyByUuid) {
     active: p.active !== false,
     parentId: p.parent_id ? (legacyByUuid.get(p.parent_id) || null) : null,
     accountIds: p.account_ids || [], accountGroupIds: p.account_group_ids || [], // §5.4 (MR-37)
+    balanceMode: p.balance_mode || 'shared', tokenLimit: p.token_limit ?? null, // §4.2 (MR-30)
     user_type_id: p.user_type_id ?? null,
     createdAt: p.created_at ? new Date(p.created_at).getTime() : 0,
     updatedAt: p.updated_at ? new Date(p.updated_at).getTime() : 0,
@@ -158,6 +161,46 @@ export async function getUser(id) {
 export async function listSubs(ownerId, all) {
   const users = all || await listUsers()
   return users.filter((u) => u.parentId === ownerId)
+}
+
+/**
+ * §4.2 (MR-30): чей кошелёк использовать для монет/денег пользователя. По умолчанию
+ * баланс ОБЩИЙ с владельцем — суб с `balanceMode!=='individual'` тратит из кошелька
+ * владельца (идём вверх по parentId, пока текущий делит баланс с владельцем). Как только
+ * встречаем `individual` или верхнего владельца — это и есть кошелёк.
+ *
+ * Лёгкий запрос: в Supabase тянем только profiles (без auth-e-mail, в отличие от listUsers) —
+ * функция на горячем пути (getBalance/списания). При росте — закэшировать.
+ * @param {string} userId @returns {Promise<string>} id владельца кошелька (или сам userId)
+ */
+export async function resolveWalletOwner(userId) {
+  const id = String(userId || '')
+  if (!id || id === '__default') return id
+  let byId = new Map()
+  const db = sb()
+  if (db) {
+    const { data } = await db.from('profiles').select('id, legacy_id, parent_id, balance_mode')
+    const rows = (data || []).filter((p) => p.legacy_id)
+    const legacyByUuid = new Map(rows.map((p) => [p.id, p.legacy_id]))
+    byId = new Map(rows.map((p) => [p.legacy_id, { id: p.legacy_id, parentId: p.parent_id ? (legacyByUuid.get(p.parent_id) || null) : null, balanceMode: p.balance_mode || 'shared' }]))
+  } else {
+    const users = await readJson(USERS_FILE(), [])
+    byId = new Map((Array.isArray(users) ? users : []).map((u) => [u.id, { id: u.id, parentId: u.parentId || null, balanceMode: u.balanceMode || 'shared' }]))
+  }
+  let cur = byId.get(id)
+  const seen = new Set()
+  while (cur && cur.parentId && cur.balanceMode !== 'individual' && !seen.has(cur.id)) {
+    seen.add(cur.id)
+    const parent = byId.get(cur.parentId)
+    if (!parent) break
+    cur = parent
+  }
+  return cur ? cur.id : id
+}
+
+/** §4.2 (MR-30): нормализовать режим баланса. */
+function normBalanceMode(v) {
+  return v === 'individual' ? 'individual' : 'shared'
 }
 
 /**
@@ -221,14 +264,16 @@ export async function createUser(input = {}) {
     const legacyId = prof?.legacy_id || `usr_${authId.replace(/-/g, '').slice(0, 12)}`
     let parentUuid = null
     if (parentId) { const pp = await profileByLegacy(db, parentId); parentUuid = pp?.id || null }
-    await db.from('profiles').update({ legacy_id: legacyId, name, active: input.active !== false, role_ids: roleIds, parent_id: parentUuid, updated_at: new Date().toISOString() }).eq('id', authId)
+    const balanceMode = normBalanceMode(input.balanceMode) // §4.2 (MR-30)
+    const tokenLimit = input.tokenLimit == null ? null : Math.max(0, Number(input.tokenLimit) || 0)
+    await db.from('profiles').update({ legacy_id: legacyId, name, active: input.active !== false, role_ids: roleIds, parent_id: parentUuid, balance_mode: balanceMode, token_limit: tokenLimit, updated_at: new Date().toISOString() }).eq('id', authId)
     // §11.3 этап 4/4: dual-write в `users` снят — источник истины profiles + auth.users.
-    return { id: legacyId, email, name, roleId, roleIds, active: input.active !== false, parentId, accountIds: [], accountGroupIds: [], createdAt: now, updatedAt: now }
+    return { id: legacyId, email, name, roleId, roleIds, active: input.active !== false, parentId, accountIds: [], accountGroupIds: [], balanceMode, tokenLimit, createdAt: now, updatedAt: now }
   }
 
   const users = await listUsers()
   if (parentId && !users.some((u) => u.id === parentId)) throw new Error('Родительский пользователь не найден')
-  const user = { id: `usr_${crypto.randomUUID().slice(0, 8)}`, email, name, roleId, roleIds, active: input.active !== false, parentId, accountIds: normIds(input.accountIds) || [], accountGroupIds: normIds(input.accountGroupIds) || [], passwordHash: hashPassword(input.password), createdAt: now, updatedAt: now }
+  const user = { id: `usr_${crypto.randomUUID().slice(0, 8)}`, email, name, roleId, roleIds, active: input.active !== false, parentId, accountIds: normIds(input.accountIds) || [], accountGroupIds: normIds(input.accountGroupIds) || [], balanceMode: normBalanceMode(input.balanceMode), tokenLimit: input.tokenLimit == null ? null : Math.max(0, Number(input.tokenLimit) || 0), passwordHash: hashPassword(input.password), createdAt: now, updatedAt: now }
   users.push(user)
   await writeJson(USERS_FILE(), users)
   return user
@@ -265,10 +310,12 @@ export async function updateUser(id, patch = {}) {
     }
     if (patch.accountIds !== undefined) next.accountIds = normIds(patch.accountIds) || [] // §5.4 (MR-37)
     if (patch.accountGroupIds !== undefined) next.accountGroupIds = normIds(patch.accountGroupIds) || []
-    // profiles — источник правды: роли/имя/активность/parent (uuid) + выдачи аккаунтов.
+    if (patch.balanceMode !== undefined) next.balanceMode = normBalanceMode(patch.balanceMode) // §4.2 (MR-30)
+    if (patch.tokenLimit !== undefined) next.tokenLimit = patch.tokenLimit == null ? null : Math.max(0, Number(patch.tokenLimit) || 0)
+    // profiles — источник правды: роли/имя/активность/parent (uuid) + выдачи + режим баланса.
     let parentUuid = null
     if (next.parentId) { const pp = await profileByLegacy(db, next.parentId); parentUuid = pp?.id || null }
-    await db.from('profiles').update({ name: next.name, active: next.active, role_ids: next.roleIds, parent_id: parentUuid, account_ids: next.accountIds || [], account_group_ids: next.accountGroupIds || [], updated_at: new Date().toISOString() }).eq('id', prof.id)
+    await db.from('profiles').update({ name: next.name, active: next.active, role_ids: next.roleIds, parent_id: parentUuid, account_ids: next.accountIds || [], account_group_ids: next.accountGroupIds || [], balance_mode: next.balanceMode || 'shared', token_limit: next.tokenLimit ?? null, updated_at: new Date().toISOString() }).eq('id', prof.id)
     // Пароль — только в auth.users.
     if (patch.password) {
       if (String(patch.password).length < 6) throw new Error('Пароль минимум 6 символов')
@@ -303,6 +350,8 @@ export async function updateUser(id, patch = {}) {
   }
   if (patch.accountIds !== undefined) users[i].accountIds = normIds(patch.accountIds) || [] // §5.4 (MR-37)
   if (patch.accountGroupIds !== undefined) users[i].accountGroupIds = normIds(patch.accountGroupIds) || []
+  if (patch.balanceMode !== undefined) users[i].balanceMode = normBalanceMode(patch.balanceMode) // §4.2 (MR-30)
+  if (patch.tokenLimit !== undefined) users[i].tokenLimit = patch.tokenLimit == null ? null : Math.max(0, Number(patch.tokenLimit) || 0)
   if (patch.password) {
     if (String(patch.password).length < 6) throw new Error('Пароль минимум 6 символов')
     users[i].passwordHash = hashPassword(patch.password)

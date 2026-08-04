@@ -90,6 +90,46 @@ test('isBlockedByOwner + listSubs: блокировка владельца ка�
   delete process.env.USERS_FILE
 })
 
+// ── §4.2 (MR-30): общий / индивидуальный баланс суба ──
+test('shared суб тратит из кошелька владельца; individual — из своего', async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'subusers-bal-'))
+  process.env.USERS_FILE = path.join(dir, 'users.json')
+  process.env.BALANCE_FILE = path.join(dir, 'balance.json')
+  const u = await import('../users.js?bal=' + Date.now())
+  const bal = await import('../balance.js?bal=' + Date.now())
+  await u.listUsers()
+
+  const boss = await u.createUser({ email: 'balowner@x.y', password: 'secret1' })
+  const shared = await u.createUser({ email: 'shared@x.y', password: 'secret1', parentId: boss.id })
+  const indiv = await u.createUser({ email: 'indiv@x.y', password: 'secret1', parentId: boss.id, balanceMode: 'individual', tokenLimit: 500 })
+  assert.equal(shared.balanceMode, 'shared', 'по умолчанию общий баланс')
+  assert.equal(indiv.balanceMode, 'individual')
+  assert.equal(indiv.tokenLimit, 500)
+
+  // resolveWalletOwner: shared → владелец, individual/владелец → сам.
+  assert.equal(await u.resolveWalletOwner(shared.id), boss.id)
+  assert.equal(await u.resolveWalletOwner(indiv.id), indiv.id)
+  assert.equal(await u.resolveWalletOwner(boss.id), boss.id)
+
+  // Пополняем кошелёк владельца.
+  await bal.changeCoins(100, 'top-up', boss.id)
+  assert.equal((await bal.getBalance(boss.id)).coins, 100)
+  // Общий суб ВИДИТ баланс владельца и тратит из него.
+  assert.equal((await bal.getBalance(shared.id)).coins, 100, 'shared суб видит кошелёк владельца')
+  await bal.changeCoins(-30, 'spend', shared.id)
+  assert.equal((await bal.getBalance(boss.id)).coins, 70, 'списание суба ушло из кошелька владельца')
+  assert.equal((await bal.getBalance(shared.id)).coins, 70)
+
+  // Индивидуальный суб — свой кошелёк, владельца не трогает.
+  assert.equal((await bal.getBalance(indiv.id)).coins, 0, 'у individual свой (пустой) кошелёк')
+  await bal.changeCoins(40, 'own', indiv.id)
+  assert.equal((await bal.getBalance(indiv.id)).coins, 40)
+  assert.equal((await bal.getBalance(boss.id)).coins, 70, 'кошелёк владельца не тронут individual-субом')
+
+  delete process.env.USERS_FILE
+  delete process.env.BALANCE_FILE
+})
+
 // ── §4.1 (MR-29): контекст автора запроса для owner-scoping ──
 test('requesterContext: нет заголовка → дев/полный доступ; неизвестный → blocked; владелец → не админ', async () => {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'subusers-ctx-'))

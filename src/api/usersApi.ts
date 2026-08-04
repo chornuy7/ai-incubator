@@ -11,6 +11,8 @@ export interface User {
   parentId?: string | null // §10.4: под каким админом вложен суб-юзер (null — верхнеуровневый)
   accountIds?: string[] // §5.4 (MR-37): выданные субу одиночные аккаунты из пула владельца
   accountGroupIds?: string[] // §5.4 (MR-37): выданные субу группы аккаунтов
+  balanceMode?: 'shared' | 'individual' // §4.2 (MR-30): общий с владельцем или индивидуальный лимит
+  tokenLimit?: number | null // §4.2 (MR-30): лимит токенов для индивидуального режима
   createdAt: number
   updatedAt: number
 }
@@ -57,12 +59,12 @@ export async function fetchMe(): Promise<{ user: User; role: Role | null; isOwne
   return { user: r.user, role: r.role, isOwner: !!r.isOwner }
 }
 
-export async function createUser(input: { email: string; name?: string; roleId?: string; roleIds?: string[]; password: string; active?: boolean; parentId?: string | null }): Promise<User> {
+export async function createUser(input: { email: string; name?: string; roleId?: string; roleIds?: string[]; password: string; active?: boolean; parentId?: string | null; balanceMode?: 'shared' | 'individual'; tokenLimit?: number | null }): Promise<User> {
   const data = await apiPost<{ user: User }>('/api/users', input)
   return data.user
 }
 
-export async function updateUser(id: string, patch: { name?: string; roleId?: string; roleIds?: string[]; active?: boolean; password?: string; parentId?: string | null; accountIds?: string[]; accountGroupIds?: string[] }): Promise<User> {
+export async function updateUser(id: string, patch: { name?: string; roleId?: string; roleIds?: string[]; active?: boolean; password?: string; parentId?: string | null; accountIds?: string[]; accountGroupIds?: string[]; balanceMode?: 'shared' | 'individual'; tokenLimit?: number | null }): Promise<User> {
   const data = await apiPut<{ user: User }>(`/api/users/${id}`, patch)
   return data.user
 }

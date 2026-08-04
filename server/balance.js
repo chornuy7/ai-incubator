@@ -19,6 +19,7 @@
  */
 import { dataPath, readJson, mutateJson } from './lib/jsonStore.js'
 import { getSupabase, supabaseEnabled } from './lib/supabase.js'
+import { resolveWalletOwner } from './users.js'
 
 /**
  * §10.2: когда DATA_BACKEND=supabase, баланс/подписки/журнал живут в БД, а не в
@@ -165,8 +166,11 @@ export async function getBalance(userId) {
   const db = sb()
   if (db) {
     const k = key(userId)
+    // §4.2 (MR-30): монеты/деньги — из кошелька владельца при общем балансе; подписка
+    // (модули) остаётся по своему ключу.
+    const wk = key(await resolveWalletOwner(userId))
     const [coinRes, subRes, wsRes] = await Promise.all([
-      db.from('coin_balance').select('coins, usd, updated_at').eq('user_id', k).maybeSingle(),
+      db.from('coin_balance').select('coins, usd, updated_at').eq('user_id', wk).maybeSingle(),
       db.from('subscriptions').select('modules, expires_at').eq('id', k).maybeSingle(),
       db.from('subscriptions').select('modules, expires_at').eq('id', 'workspace').maybeSingle(),
     ])
@@ -194,6 +198,11 @@ export async function getBalance(userId) {
   const legacy = typeof all?.coins === 'number' ? { coins: all.coins, planId: all.planId } : null
   const saved = (all && all[key(userId)]) || (key(userId) === DEFAULT_USER ? legacy : null) || {}
   const planId = PLANS[saved?.planId] ? saved.planId : DEFAULT_STATE.planId
+  // §4.2 (MR-30): монеты/деньги — из кошелька владельца при общем балансе; модули/подписку
+  // берём по своему ключу (saved). Ключи нормализуем через key() (undefined → __default).
+  const ownKey = key(userId)
+  const wk = key(await resolveWalletOwner(userId))
+  const walletRec = wk === ownKey ? saved : ((all && all[wk]) || (wk === DEFAULT_USER ? legacy : null) || {})
   return {
     planId,
     plan: PLANS[planId],
@@ -205,9 +214,9 @@ export async function getBalance(userId) {
       ? saved.modules
       : ((all && all[SUBSCRIPTION_KEY]?.modules) ?? DEFAULT_MODULES),
     expiresAt: (saved?.modules !== undefined ? saved?.expiresAt : (all && all[SUBSCRIPTION_KEY]?.expiresAt)) ?? null,
-    coins: normCoins(saved?.coins ?? DEFAULT_STATE.coins),
-    usd: normUsd(saved?.usd ?? 0),
-    updatedAt: Number(saved?.updatedAt) || 0,
+    coins: normCoins(walletRec?.coins ?? DEFAULT_STATE.coins),
+    usd: normUsd(walletRec?.usd ?? 0),
+    updatedAt: Number(walletRec?.updatedAt) || 0,
   }
 }
 
@@ -309,7 +318,7 @@ export async function usdByUser() {
  */
 export async function changeCoins(amount, reason = '', userId) {
   const delta = Math.round((Number(amount) || 0) * COIN_PRECISION) / COIN_PRECISION
-  const k = key(userId)
+  const k = key(await resolveWalletOwner(userId)) // §4.2 (MR-30): общий баланс → кошелёк владельца
   let result = null
   const db = sb()
   if (db) {
@@ -458,7 +467,7 @@ export async function hasCoins(cost = 0, userId) {
  */
 export async function changeUsd(amount, reason = '', userId) {
   const delta = Math.round((Number(amount) || 0) * 100) / 100
-  const k = key(userId)
+  const k = key(await resolveWalletOwner(userId)) // §4.2 (MR-30): общий баланс → кошелёк владельца
   const db = sb()
   if (db) {
     const { data: cur } = await db.from('coin_balance').select('usd').eq('user_id', k).maybeSingle()

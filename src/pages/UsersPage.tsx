@@ -142,7 +142,7 @@ export function UsersPage() {
   const [loading, setLoading] = useState(true)
   const [err, setErr] = useState('')
   const [open, setOpen] = useState(false)
-  const [form, setForm] = useState<{ email: string; name: string; password: string; roleIds: string[] }>({ email: '', name: '', password: '', roleIds: ['role_moderator'] })
+  const [form, setForm] = useState<{ email: string; name: string; password: string; roleIds: string[]; balanceMode: 'shared' | 'individual'; tokenLimit: string }>({ email: '', name: '', password: '', roleIds: ['role_moderator'], balanceMode: 'shared', tokenLimit: '' })
   const [saving, setSaving] = useState(false)
 
   async function load() {
@@ -188,10 +188,15 @@ export function UsersPage() {
   async function submit() {
     setSaving(true); setErr('')
     try {
-      const u = await createUser(form)
+      const u = await createUser({
+        email: form.email, name: form.name, password: form.password, roleIds: form.roleIds,
+        // §4.2 (MR-30): режим баланса и лимит токенов для индивидуального.
+        balanceMode: form.balanceMode,
+        tokenLimit: form.balanceMode === 'individual' && form.tokenLimit ? Number(form.tokenLimit) : null,
+      })
       setUsers((prev) => [...prev, u])
       setOpen(false)
-      setForm({ email: '', name: '', password: '', roleIds: ['role_moderator'] })
+      setForm({ email: '', name: '', password: '', roleIds: ['role_moderator'], balanceMode: 'shared', tokenLimit: '' })
     } catch (e) { setErr(e instanceof Error ? e.message : 'Ошибка') }
     finally { setSaving(false) }
   }
@@ -289,6 +294,26 @@ export function UsersPage() {
           <div>
             <label className="label">Роли <span className="font-normal text-white/40">(можно несколько — права суммируются)</span></label>
             <RolePicker roles={roles} value={form.roleIds} onChange={(ids) => setForm((f) => ({ ...f, roleIds: ids }))} />
+          </div>
+          {/* §4.2 (MR-30): баланс суба — общий с владельцем или индивидуальный лимит токенов. */}
+          <div>
+            <label className="label">Баланс субпользователя</label>
+            <div className="flex flex-col gap-1.5">
+              <label className="flex cursor-pointer items-start gap-2 rounded-lg border border-line p-2 text-sm">
+                <input type="radio" name="balmode" checked={form.balanceMode === 'shared'} onChange={() => setForm((f) => ({ ...f, balanceMode: 'shared' }))} className="mt-0.5 accent-spark-500" />
+                <span><span className="font-medium text-fg">Общий баланс владельца</span><span className="block text-xs text-white/45">Суб тратит из вашего кошелька (по умолчанию).</span></span>
+              </label>
+              <label className="flex cursor-pointer items-start gap-2 rounded-lg border border-line p-2 text-sm">
+                <input type="radio" name="balmode" checked={form.balanceMode === 'individual'} onChange={() => setForm((f) => ({ ...f, balanceMode: 'individual' }))} className="mt-0.5 accent-spark-500" />
+                <span><span className="font-medium text-fg">Индивидуальный лимит токенов</span><span className="block text-xs text-white/45">Отдельный кошелёк суба с ограничением.</span></span>
+              </label>
+              {form.balanceMode === 'individual' && (
+                <div className="flex flex-wrap items-center gap-2 pl-2">
+                  <input type="number" min={0} value={form.tokenLimit} onChange={(e) => setForm((f) => ({ ...f, tokenLimit: e.target.value }))} placeholder="Лимит токенов" className="input h-9 w-40 text-sm" />
+                  <span className="text-xs text-white/50">{form.tokenLimit ? `≈ ${Math.floor(Number(form.tokenLimit) / 1000).toLocaleString('ru-RU')} действий (ориентировочно)` : 'укажите лимит токенов'}</span>
+                </div>
+              )}
+            </div>
           </div>
           <div className="mt-1 flex justify-end gap-2">
             <button onClick={() => setOpen(false)} className="btn-ghost h-10">Отмена</button>
