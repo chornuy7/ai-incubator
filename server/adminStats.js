@@ -370,6 +370,11 @@ export async function problems(opts = {}) {
 
   const failedTasks = []
   const pausedNoCoins = []
+  // §5.2 (MR-34): «отчёт по модулям + статусы задач + ошибки» — в одном разделе.
+  // Считаем разбивку статусов задач и постатейный ролл-ап по модулям здесь же, за один
+  // проход, чтобы оператору не прыгать между вкладками «Отчёт» и «Проблемы».
+  const taskStatus = {} // status -> сколько задач
+  const modAgg = {}     // moduleKey -> { key, title, tasks, done, running, errorTasks, errors }
   for (const key of listModuleKeys()) {
     const store = getModuleStore(key)
     if (!store) continue
@@ -377,8 +382,16 @@ export async function problems(opts = {}) {
     try { list = await store.listTasks() } catch { continue }
     for (const t of list) {
       if ((Number(t.createdAt) || 0) < since) continue
+      const st = String(t.status || 'unknown')
+      taskStatus[st] = (taskStatus[st] || 0) + 1
+      const m = (modAgg[key] ||= { key, title: moduleTitle(key), tasks: 0, done: 0, running: 0, errorTasks: 0, errors: 0 })
+      m.tasks++
+      if (st === 'done') m.done++
+      if (st === 'running') m.running++
       const errors = Number(t.errors) || 0
+      m.errors += errors
       if (errors) {
+        m.errorTasks++
         failedTasks.push({
           id: t.id, moduleKey: key, title: moduleTitle(key), status: t.status,
           errors, lastError: t.lastError || '', userId: t.userId || '',
@@ -390,6 +403,7 @@ export async function problems(opts = {}) {
     }
   }
   failedTasks.sort((a, b) => b.errors - a.errors)
+  const modules = Object.values(modAgg).sort((a, b) => b.errors - a.errors || b.tasks - a.tasks)
 
   // Аккаунты: бан и flood — это простой оплаченного ресурса, их видно сразу.
   const meta = await loadAllMeta().catch(() => ({}))
@@ -408,6 +422,8 @@ export async function problems(opts = {}) {
 
   return {
     since,
+    taskStatus,
+    modules,
     failedTasks: failedTasks.slice(0, 20),
     failedTotal: failedTasks.length,
     pausedNoCoins,

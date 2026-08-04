@@ -435,6 +435,30 @@ app.get('/api/admin/problems', async (req, res) => {
 })
 
 /**
+ * §5.2 (MR-34): логи одной задачи по запросу — раскрывая ошибочную задачу в «Проблемах»,
+ * оператор видит не только причину, но и журнал. Грузим лениво (не тащим логи всех задач
+ * в общий ответ). Отдаём хвост журнала, ошибки первыми — по ним и разбираются.
+ */
+app.get('/api/admin/task-logs', async (req, res) => {
+  try {
+    if (!(await isAdminRequest(req))) return res.status(403).json({ ok: false, error: 'Логи доступны только администратору' })
+    const moduleKey = String(req.query.module || ''), id = String(req.query.id || '')
+    if (!moduleKey || !id) return res.status(400).json({ ok: false, error: 'Нужны module и id' })
+    const { getModuleStore } = await import('./modules/registry.js')
+    const store = getModuleStore(moduleKey)
+    if (!store) return res.status(404).json({ ok: false, error: 'Неизвестный модуль' })
+    const task = await store.loadTask(id)
+    if (!task) return res.status(404).json({ ok: false, error: 'Задача не найдена' })
+    // Последние 60 записей, каждую подрезаем — журнал одной задачи может быть большим.
+    const logs = (task.logs || []).slice(-60).map((l) => ({
+      ts: Number(l.ts) || 0, level: String(l.level || 'info'),
+      account: String(l.account || ''), message: String(l.message || '').slice(0, 500),
+    }))
+    res.json({ ok: true, id, moduleKey, status: task.status || '', logs })
+  } catch (err) { res.status(500).json({ ok: false, error: err instanceof Error ? err.message : 'Ошибка' }) }
+})
+
+/**
  * §5.4: наборы, которые админ собирает под клиента («парсер + комментинг за 20 $»).
  * Только владелец: это цены, по которым пространство продаёт.
  */

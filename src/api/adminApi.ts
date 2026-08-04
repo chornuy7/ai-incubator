@@ -91,12 +91,23 @@ export interface UsersReport {
 
 /** §5.3: где сейчас болит. */
 export interface FailedTask { id: string; moduleKey: string; title: string; status: string; errors: number; lastError: string; userId: string }
+/** §5.2 (MR-34): постатейный ролл-ап по модулю — отчёт + статусы + ошибки в одной строке. */
+export interface ProblemModule { key: string; title: string; tasks: number; done: number; running: number; errorTasks: number; errors: number }
 export interface Problems {
   since: number
+  taskStatus: Record<string, number>
+  modules: ProblemModule[]
   failedTasks: FailedTask[]
   failedTotal: number
   pausedNoCoins: { id: string; moduleKey: string; title: string; userId: string }[]
   accounts: { banned: number; flood: number; noProxy: number; bannedIds: { id: string; status: string }[]; floodIds: { id: string; status: string; until: number }[] }
+}
+export interface TaskLogEntry { ts: number; level: string; account: string; message: string }
+export interface TaskLogs { id: string; moduleKey: string; status: string; logs: TaskLogEntry[] }
+/** §5.2 (MR-34): ленивые логи одной задачи — грузим при раскрытии строки ошибки. */
+export async function fetchTaskLogs(moduleKey: string, id: string, signal?: AbortSignal): Promise<TaskLogs> {
+  const q = `?module=${encodeURIComponent(moduleKey)}&id=${encodeURIComponent(id)}`
+  return await apiGet<TaskLogs & { ok: boolean }>(`/api/admin/task-logs${q}`, { signal })
 }
 
 /** §5.3 + CRM: воронка лидов. */

@@ -7,7 +7,8 @@ import {
   fetchAdminOverview, fetchClientReport, fetchUsersReport, fetchProblems, fetchCrmOverview,
   fetchActiveNow, fetchDailySpend, fetchPurchases, fetchPayments, fetchAccountsHealth, fetchUserActivity, type UserActivity, fetchUserDialogs, type UserDialogs, fetchMessages, type MessageRow,
   type AdminOverview, type ClientReport, type UsersReport, type Problems, type CrmOverview,
-  type ActiveNow, type ActiveTask, type DailySpend, type Purchases, type PaymentsResult, type UserRow, type AccountsHealth, fetchPrices, savePrices, type EffectivePrices, type PricePatch } from '@/api/adminApi'
+  type ActiveNow, type ActiveTask, type DailySpend, type Purchases, type PaymentsResult, type UserRow, type AccountsHealth, fetchPrices, savePrices, type EffectivePrices, type PricePatch,
+  fetchTaskLogs, type FailedTask, type TaskLogs } from '@/api/adminApi'
 import { updateUser } from '@/api/usersApi'
 import { fetchRoles } from '@/api/rolesApi'
 import { RolesPage } from '@/pages/RolesPage'
@@ -204,7 +205,7 @@ export function AdminStatsPage() {
       />
 
       <div className="mb-4 flex flex-wrap items-center gap-3">
-        <Segmented options={['Панель', 'Сейчас', 'По дням', 'Пользователи', 'Покупки', 'Цены', 'Проблемы', 'CRM', 'Отчёт', 'Мониторинг', 'Аккаунты', 'Роли', 'API']} value={tab} onChange={setTab} />
+        <Segmented options={['Панель', 'Сейчас', 'По дням', 'Пользователи', 'Покупки', 'Цены', 'Задачи и ошибки', 'CRM', 'Отчёт', 'Мониторинг', 'Аккаунты', 'Роли', 'API']} value={tab} onChange={setTab} />
         <Segmented options={PERIODS.map((p) => p.label)} value={periodIdx} onChange={setPeriodIdx} size="sm" />
       </div>
 
@@ -1319,13 +1320,81 @@ function PaymentsExplorer() {
  * §5.3: где сейчас болит. Три беды разведены намеренно — у них разные действия:
  * ошибки чинит настройка, бан/flood — замена аккаунта, пауза из-за денег — пополнение.
  */
+/** Время записи лога — для журнала задачи дата+время важнее «просто даты». */
+const fmtLogTs = (ts: number) => (ts ? new Date(ts).toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit' }) : '')
+
+/**
+ * §5.2 (MR-34): строка ошибочной задачи с раскрытием журнала.
+ *
+ * Раньше в «Проблемах» была только последняя строка ошибки — чтобы понять, что
+ * произошло, приходилось идти в отдельный экран. Теперь по клику подгружаем логи
+ * задачи (лениво, отдельным запросом — не тащим журналы всех задач в общий ответ)
+ * и показываем причину и сам журнал рядом.
+ */
+function FailedTaskRow({ t }: { t: FailedTask }) {
+  const [open, setOpen] = useState(false)
+  const [logs, setLogs] = useState<TaskLogs | 'loading' | 'error' | null>(null)
+  const toggle = () => {
+    const next = !open; setOpen(next)
+    if (next && logs === null) {
+      setLogs('loading')
+      fetchTaskLogs(t.moduleKey, t.id).then((x) => setLogs(x)).catch(() => setLogs('error'))
+    }
+  }
+  return (
+    <div className="border-b border-line/40 pb-1.5 last:border-0">
+      <button onClick={toggle} className="flex w-full flex-wrap items-baseline gap-x-2 gap-y-0.5 text-left text-sm">
+        <ChevronDown size={13} className={cn('mt-0.5 shrink-0 text-muted transition-transform', open && 'rotate-180')} />
+        <span className="font-medium text-fg">{t.title}</span>
+        <span className="rounded-md bg-red-500/12 px-1.5 py-0.5 text-[11px] font-bold text-red-300">{t.errors} ош.</span>
+        <span className="text-xs text-muted">{t.id}</span>
+        {!!t.lastError && <span className="w-full text-xs text-muted sm:w-auto sm:flex-1 sm:truncate" title={t.lastError}>{t.lastError}</span>}
+      </button>
+      {open && (
+        <div className="ml-5 mt-1.5 rounded-lg border border-line/50 bg-elevated/40 p-2">
+          {logs === 'loading' ? (
+            <div className="flex items-center gap-1.5 text-xs text-muted"><RefreshCw size={12} className="animate-spin" /> Загрузка логов…</div>
+          ) : logs === 'error' ? (
+            <div className="text-xs text-red-300">Не удалось загрузить логи задачи</div>
+          ) : logs && typeof logs === 'object' && logs.logs.length ? (
+            <div className="max-h-64 space-y-0.5 overflow-y-auto font-mono text-[11px] leading-relaxed">
+              {logs.logs.map((l, i) => (
+                <div key={i} className="flex gap-2">
+                  <span className="shrink-0 text-muted/70">{fmtLogTs(l.ts)}</span>
+                  <span className={cn('shrink-0 font-bold uppercase', l.level === 'error' ? 'text-red-300' : l.level === 'warn' ? 'text-amber-300' : 'text-muted')}>{l.level}</span>
+                  {!!l.account && <span className="shrink-0 text-spark-300/80">{l.account}</span>}
+                  <span className="min-w-0 break-words text-fg/90">{l.message}</span>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="text-xs text-muted">Журнал задачи пуст</div>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
+/**
+ * §5.2 (MR-34): один раздел вместо трёх — отчёт по модулям, статусы задач и ошибки
+ * вместе. Оператору не нужно прыгать между вкладками, чтобы связать «какой модуль»,
+ * «в каком статусе задачи» и «что за ошибка»: всё на одном экране, ошибки — с логами.
+ */
 function ProblemsTab({ p }: { p: Problems | null }) {
   if (!p) return <Card className="p-6 text-sm text-muted">Загрузка…</Card>
   const quiet = !p.failedTotal && !p.pausedNoCoins.length && !p.accounts.banned && !p.accounts.flood && !p.accounts.noProxy
-  if (quiet) return <EmptyState icon={<AlertTriangle size={22} />} title="Всё спокойно" desc="Ошибок, банов и остановок из-за баланса нет." />
+  const hasTasks = Object.keys(p.taskStatus || {}).length > 0
+  if (quiet && !hasTasks) return <EmptyState icon={<AlertTriangle size={22} />} title="Всё спокойно" desc="Ошибок, банов и остановок из-за баланса нет, задач за период тоже." />
 
   return (
     <div className="space-y-3">
+      {quiet && (
+        <Card className="flex items-center gap-2 p-3 text-sm text-emerald-300">
+          <Check size={16} /> Ошибок, банов и остановок из-за баланса нет — ниже статусы задач за период.
+        </Card>
+      )}
+
       <div className="grid gap-3 sm:grid-cols-3">
         <Card className="p-4">
           <div className="text-xs text-muted">Задач с ошибками</div>
@@ -1345,19 +1414,51 @@ function ProblemsTab({ p }: { p: Problems | null }) {
         </Card>
       </div>
 
+      {/* Статусы задач за период — раньше жили в «Панели», теперь рядом с ошибками. */}
+      {hasTasks && <Breakdown title="Статусы задач за период" data={p.taskStatus} ru />}
+
+      {/* Отчёт по модулям: задачи + статусы + ошибки в одной таблице. */}
+      {!!p.modules.length && (
+        <Card className="p-4">
+          <div className="mb-2 text-sm font-semibold text-fg">По модулям: задачи, статусы, ошибки</div>
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="text-left text-xs text-muted">
+                  <th className="py-1 pr-3 font-medium">Модуль</th>
+                  <th className="px-2 py-1 text-right font-medium">Задач</th>
+                  <th className="px-2 py-1 text-right font-medium">Готово</th>
+                  <th className="px-2 py-1 text-right font-medium">Идут</th>
+                  <th className="px-2 py-1 text-right font-medium">С ошибками</th>
+                  <th className="py-1 pl-2 text-right font-medium">Ошибок</th>
+                </tr>
+              </thead>
+              <tbody>
+                {p.modules.map((m) => (
+                  <tr key={m.key} className="border-t border-line/40">
+                    <td className="py-1 pr-3 text-fg">{m.title}</td>
+                    <td className="px-2 py-1 text-right tabular-nums text-fg">{fmt(m.tasks)}</td>
+                    <td className="px-2 py-1 text-right tabular-nums text-muted">{fmt(m.done)}</td>
+                    <td className="px-2 py-1 text-right tabular-nums text-muted">{m.running ? fmt(m.running) : '—'}</td>
+                    <td className="px-2 py-1 text-right tabular-nums text-amber-300">{m.errorTasks ? fmt(m.errorTasks) : '—'}</td>
+                    <td className={cn('py-1 pl-2 text-right font-semibold tabular-nums', m.errors ? 'text-red-300' : 'text-muted')}>{m.errors ? fmt(m.errors) : '—'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </Card>
+      )}
+
       {!!p.failedTasks.length && (
         <Card className="p-4">
-          <div className="mb-2 text-sm font-semibold text-fg">Где именно ошибки</div>
+          <div className="mb-2 flex items-center gap-1.5 text-sm font-semibold text-fg"><ScrollText size={15} /> Где именно ошибки — причина и логи</div>
           <div className="space-y-1.5">
-            {p.failedTasks.map((t) => (
-              <div key={t.id} className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5 border-b border-line/40 pb-1.5 text-sm last:border-0">
-                <span className="font-medium text-fg">{t.title}</span>
-                <span className="rounded-md bg-red-500/12 px-1.5 py-0.5 text-[11px] font-bold text-red-300">{t.errors} ош.</span>
-                <span className="text-xs text-muted">{t.id}</span>
-                <span className="w-full text-xs text-muted sm:w-auto sm:flex-1 sm:truncate">{t.lastError}</span>
-              </div>
-            ))}
+            {p.failedTasks.map((t) => <FailedTaskRow key={t.id} t={t} />)}
           </div>
+          {p.failedTotal > p.failedTasks.length && (
+            <div className="mt-2 text-[11px] text-muted">Показаны {p.failedTasks.length} из {p.failedTotal} — верхушка по числу ошибок.</div>
+          )}
         </Card>
       )}
 
