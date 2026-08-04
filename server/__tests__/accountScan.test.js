@@ -72,7 +72,7 @@ test('scanFolder: находит tdata и .session, мусор игнориру�
   assert.ok(!items.some((i) => /readme/.test(i.name)), 'txt не аккаунт')
   assert.ok(!items.some((i) => i.path.includes('node_modules')), 'node_modules пропускается')
 
-  await fs.rm(root, { recursive: true, force: true })
+  await fs.rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
 })
 
 test('scanFolder: телефон и прокси подтягиваются из json рядом', async () => {
@@ -87,7 +87,7 @@ test('scanFolder: телефон и прокси подтягиваются из
   const nick = items.find((i) => i.name === 'nickname')
   assert.equal(nick.proxy, 'socks5://5.6.7.8:1080', 'прокси строкой тоже понимается')
 
-  await fs.rm(root, { recursive: true, force: true })
+  await fs.rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
 })
 
 test('scanFolder: телефон достаётся из имени папки/файла, когда json нет', async () => {
@@ -97,7 +97,7 @@ test('scanFolder: телефон достаётся из имени папки/�
   assert.ok(items.some((i) => i.kind === 'tdata' && i.phone === '+380671234567'), 'из имени папки')
   assert.ok(items.some((i) => i.kind === 'session-file' && i.phone === '+15550001111'), 'из имени файла')
 
-  await fs.rm(root, { recursive: true, force: true })
+  await fs.rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
 })
 
 test('scanFolder: облачный пароль из password.txt рядом с аккаунтом', async () => {
@@ -114,7 +114,7 @@ test('scanFolder: облачный пароль из password.txt рядом с 
   const fromJson = items.find((i) => i.phone === '+79001112233')
   assert.equal(fromJson.twoFA, 'parol123')
 
-  await fs.rm(root, { recursive: true, force: true })
+  await fs.rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
 })
 
 test('readSidecarJson: отпечаток устройства вытаскивается из json продавца', async () => {
@@ -134,7 +134,7 @@ test('readSidecarJson: отпечаток устройства вытаскив�
     device: 'SJV50PU', system: 'Windows 11 x64', appVersion: '6.9.3 x64',
     langCode: 'en', systemLangCode: 'en-US',
   })
-  await fs.rm(dir, { recursive: true, force: true })
+  await fs.rm(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
 })
 
 test('readSidecarJson: без полей устройства отпечатка нет (а не пустой объект)', async () => {
@@ -142,7 +142,7 @@ test('readSidecarJson: без полей устройства отпечатка
   const f = path.join(dir, 'acc.json')
   await fs.writeFile(f, JSON.stringify({ phone: '+15550001111' }), 'utf8')
   assert.equal((await readSidecarJson(f)).fingerprint, null)
-  await fs.rm(dir, { recursive: true, force: true })
+  await fs.rm(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
 })
 
 test('readSidecarJson: битый json не роняет сканер', async () => {
@@ -150,7 +150,7 @@ test('readSidecarJson: битый json не роняет сканер', async ()
   const f = path.join(dir, 'broken.json')
   await fs.writeFile(f, '{ это не json', 'utf8')
   assert.equal(await readSidecarJson(f), null)
-  await fs.rm(dir, { recursive: true, force: true })
+  await fs.rm(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
 })
 
 test('scanFolder: .session рядом с tdata помечается запасным источником (altSession)', async () => {
@@ -166,7 +166,7 @@ test('scanFolder: .session рядом с tdata помечается запасн
   assert.ok(it, 'tdata найдена')
   assert.ok(it.altSession && it.altSession.endsWith('.session'), 'сосед .session записан как запасной источник')
   assert.equal(it.twoFA, 'Cloud1', 'пароль из txt тоже подхвачен')
-  await fs.rm(root, { recursive: true, force: true })
+  await fs.rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
 })
 
 test('импорт: tdata под паролем не открывается, а .session-сосед — конвертируется', async () => {
@@ -190,7 +190,7 @@ test('импорт: tdata под паролем не открывается, а 
   // .session рядом — конвертируется без пароля.
   const { session } = await toGramjsSession({ kind: 'session-file', path: altSession })
   assert.ok(typeof session === 'string' && session.length > 10, '.session даёт строку-сессию')
-  await fs.rm(root, { recursive: true, force: true })
+  await fs.rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
 })
 
 test('listDirs: отдаёт только папки и умеет подниматься вверх', async () => {
@@ -199,7 +199,7 @@ test('listDirs: отдаёт только папки и умеет подним�
   assert.ok(dirs.every((d) => !d.name.endsWith('.txt')), 'файлов в списке нет')
   assert.ok(dirs.some((d) => d.name === 'sessions'))
   assert.ok(parent && parent !== root, 'есть куда подняться')
-  await fs.rm(root, { recursive: true, force: true })
+  await fs.rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
 })
 
 // ── раздача прокси ──
