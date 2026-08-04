@@ -7,6 +7,7 @@ import { DialogHost } from '@/widgets/DialogHost'
 import { DevPanel } from '@/widgets/DevPanel'
 import { TasksDrawer } from '@/widgets/TasksDrawer'
 import { HelpCenterDrawer } from '@/widgets/HelpCenterDrawer'
+import { SupportWidget } from '@/widgets/SupportWidget'
 import { PaywallBanner } from '@/features/paywall/Paywall'
 import { LowBalanceBar } from '@/features/billing/LowBalanceBar'
 import { LowBalanceLoginModal } from '@/features/billing/LowBalanceLoginModal'
@@ -99,6 +100,8 @@ export function Layout() {
       >
         <HelpCircle size={18} />
       </button>
+      {/* §8 (MR-45): быстрая поддержка — правый нижний угол, отдельно от Help Center. */}
+      <SupportWidget />
     </div>
   )
 }

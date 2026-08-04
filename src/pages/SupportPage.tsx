@@ -1,4 +1,5 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { LifeBuoy, Plus, Send, MessageSquare, Clock } from 'lucide-react'
 import { useApp } from '@/mocks/store'
 import { PageHeader, Card, EmptyState, Select, Modal, Badge } from '@/shared/ui'
@@ -31,6 +32,11 @@ export function SupportPage() {
   const [subject, setSubject] = useState('')
   const [body, setBody] = useState('')
   const [openTicket, setOpenTicket] = useState<Ticket | null>(null)
+  // §8 (MR-45): виджет поддержки открывает «Новый тикет» сразу — по ?new=1.
+  const [params, setParams] = useSearchParams()
+  useEffect(() => {
+    if (params.get('new') === '1') { setNewOpen(true); params.delete('new'); setParams(params, { replace: true }) }
+  }, [params, setParams])
 
   const filtered = filter === 'all' ? tickets : tickets.filter((t) => t.status === filter)
 
