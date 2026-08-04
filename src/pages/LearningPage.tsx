@@ -1,10 +1,37 @@
 import { useEffect, useMemo, useState } from 'react'
-import { GraduationCap, Search, ChevronRight, Eye, Cog, Network, Lightbulb, ShieldAlert, Sparkles } from 'lucide-react'
+import { GraduationCap, Search, ChevronRight, Eye, Cog, Network, Lightbulb, ShieldAlert, Sparkles, ListChecks } from 'lucide-react'
 import { PageHeader, Card } from '@/shared/ui'
 import { HELP_DOCS, type HelpDoc } from '@/shared/config/helpDocs'
 import { cn } from '@/shared/lib/utils'
+import { MODULES, isCombatModule } from '@/shared/config/modules'
 import { ModuleShowcase } from './landing/ModuleShowcase'
 import { getModule } from './landing/catalog'
+
+/**
+ * §9 (MR-47): пошаговый формат «с чего начать» по каждому модулю. Шаги СОБИРАЮТСЯ из
+ * конфига модуля (MODULES) — какие блоки ему нужны (аккаунты, цели, промпт, реакции,
+ * прогрев), поэтому инструкция всегда точна и не расходится с реальным интерфейсом, а
+ * не пишется руками для каждого модуля. Простые короткие шаги «сделай 1 → 2 → 3».
+ */
+export function moduleSteps(key: string): { title: string; text: string }[] | null {
+  const m = MODULES[key]
+  if (!m) return null
+  const steps: { title: string; text: string }[] = []
+  steps.push({ title: `Откройте «${m.title}»`, text: 'Модуль — в левом меню. Откроется страница запуска с настройками и кнопкой «Запустить» внизу.' })
+  if (m.accountPicker) steps.push({ title: 'Выберите аккаунты', text: 'Отметьте аккаунты из пула, которыми будет работать модуль. Занятые в другой задаче — недоступны. Больше аккаунтов — равномернее нагрузка и безопаснее.' })
+  if (m.warmingLayout) steps.push({ title: 'Настройте прогрев', text: 'Выберите уровень/интенсивность прогрева. Цели не нужны — модуль сам имитирует живую активность аккаунтов.' })
+  if (m.sourceTabs || m.postLinks) {
+    const unit = m.unit?.title ? m.unit.title.toLowerCase() : 'цели'
+    const src = m.postLinks ? `${unit} или ссылки на посты` : unit
+    steps.push({ title: `Добавьте ${unit}`, text: `Вставьте ${src} вручную, загрузите из папки или из прошлой задачи. Их число видно на карточке-счётчике. Ненужное можно занести в чёрный список.` })
+  }
+  if (m.messagePrompts?.length) steps.push({ title: 'Задайте тон / промпт', text: `Выберите тип (${m.messagePrompts.slice(0, 3).join(', ')}…). Если типов несколько — задайте их доли в процентах: сумма всегда 100%, замок закрепляет долю.` })
+  if (m.reactionSettings) steps.push({ title: 'Выберите реакции', text: 'Отметьте эмодзи, которыми аккаунты будут реагировать на посты.' })
+  steps.push({ title: 'Проверьте лимиты и стоимость', text: 'Сверху — карточки «Аккаунты», «Цели», «≈ время», «Лимит». Под ними — примерная стоимость запуска в токенах. Обязательные незаполненные поля подсвечены, кнопка запуска пока заблокирована.' })
+  steps.push({ title: 'Запустите', text: isCombatModule(key) ? 'Нажмите «Запустить» — для боевого модуля будет запрос подтверждения. Задача уйдёт в работу.' : 'Нажмите «Запустить» — задача уйдёт в работу.' })
+  steps.push({ title: 'Следите за результатом', text: 'Прогресс, лог каждого действия и управление (пауза/стоп) — в «Дашборде задач». Там же результаты и ошибки.' })
+  return steps
+}
 
 /**
  * §10.7: страница «Обучение» — вся информация по работе в одном месте.
@@ -60,21 +87,24 @@ function LearningView({ q, setQ, groups, active, setActive, activeDoc }: {
 }) {
   // Вкладки собираем только из непустых секций дока — у разных тем свой набор.
   const tabs = useMemo(() => {
-    if (!activeDoc) return [] as { key: string; label: string; icon: typeof Eye; body?: string; tips?: string[]; accent?: boolean; warn?: boolean }[]
+    if (!activeDoc) return [] as { key: string; label: string; icon: typeof Eye; body?: string; tips?: string[]; steps?: { title: string; text: string }[]; accent?: boolean; warn?: boolean }[]
+    // §9 (MR-47): для модуля первой идёт вкладка «С чего начать» — пошаговая инструкция.
+    const steps = active ? moduleSteps(active) : null
     return [
+      ...(steps ? [{ key: 'steps', label: 'С чего начать', icon: ListChecks, steps }] : []),
       { key: 'what', label: 'Обзор', icon: Eye, body: activeDoc.what },
       { key: 'how', label: 'Как работает', icon: Cog, body: activeDoc.how },
       { key: 'together', label: 'Связи', icon: Network, body: activeDoc.together },
       { key: 'example', label: 'Пример', icon: Sparkles, body: activeDoc.example, accent: true },
       ...(activeDoc.risks ? [{ key: 'risks', label: 'Риски', icon: ShieldAlert, body: activeDoc.risks, warn: true }] : []),
       ...(activeDoc.tips?.length ? [{ key: 'tips', label: 'Советы', icon: Lightbulb, tips: activeDoc.tips }] : []),
-    ].filter((t) => t.tips?.length || t.body?.trim())
-  }, [activeDoc])
+    ].filter((t) => t.tips?.length || t.steps?.length || t.body?.trim())
+  }, [activeDoc, active])
 
   const [tab, setTab] = useState('what')
-  // Сменили тему — возвращаемся на «Обзор», иначе открытая вкладка «Риски» перетекала
-  // бы на тему, где рисков нет, и пользователь видел бы пустую карточку.
-  useEffect(() => { setTab('what') }, [active])
+  // Сменили тему — открываем первую вкладку (для модуля это «С чего начать», иначе «Обзор»),
+  // иначе открытая вкладка «Риски» перетекала бы на тему, где рисков нет.
+  useEffect(() => { setTab(tabs[0]?.key ?? 'what') }, [active]) // eslint-disable-line react-hooks/exhaustive-deps
   const shown = tabs.find((t) => t.key === tab) ?? tabs[0]
 
   return (
@@ -147,25 +177,49 @@ function LearningView({ q, setQ, groups, active, setActive, activeDoc }: {
 
               {/* Тело активной вкладки. Заголовок не дублируем — он уже на самой вкладке. */}
               <div key={shown?.key}>
-                {shown?.tips
-                  ? (
-                    <ul className="space-y-2">
-                      {shown.tips.map((t, i) => (
-                        <li key={i} className="flex gap-2.5 rounded-xl border border-line bg-elevated/40 p-3 text-sm text-muted">
-                          <Lightbulb size={15} className="mt-0.5 shrink-0 text-spark-400" /> {t}
-                        </li>
-                      ))}
-                    </ul>
-                  )
-                  : shown
-                    ? <Section body={shown.body || ''} accent={shown.accent} warn={shown.warn} />
-                    : null}
+                {shown?.steps
+                  ? <StepList steps={shown.steps} />
+                  : shown?.tips
+                    ? (
+                      <ul className="space-y-2">
+                        {shown.tips.map((t, i) => (
+                          <li key={i} className="flex gap-2.5 rounded-xl border border-line bg-elevated/40 p-3 text-sm text-muted">
+                            <Lightbulb size={15} className="mt-0.5 shrink-0 text-spark-400" /> {t}
+                          </li>
+                        ))}
+                      </ul>
+                    )
+                    : shown
+                      ? <Section body={shown.body || ''} accent={shown.accent} warn={shown.warn} />
+                      : null}
               </div>
             </article>
           )}
         </Card>
       </div>
     </div>
+  )
+}
+
+/**
+ * §9 (MR-47): пошаговый формат — крупные пронумерованные шаги, соединённые линией.
+ * «Понятно даже ребёнку»: один шаг = одно действие, по порядку сверху вниз.
+ */
+function StepList({ steps }: { steps: { title: string; text: string }[] }) {
+  return (
+    <ol className="relative space-y-3">
+      {steps.map((s, i) => (
+        <li key={i} className="relative flex gap-3">
+          {/* Соединительная линия между кружками-номерами. */}
+          {i < steps.length - 1 && <span className="absolute left-[15px] top-8 h-[calc(100%-1rem)] w-px bg-line" aria-hidden />}
+          <span className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-spark-500/15 font-display text-sm font-bold text-spark-300 ring-1 ring-spark-500/30">{i + 1}</span>
+          <div className="min-w-0 flex-1 rounded-xl border border-line bg-elevated/40 p-3">
+            <div className="text-sm font-semibold text-fg">{s.title}</div>
+            <div className="mt-0.5 text-sm leading-relaxed text-muted">{s.text}</div>
+          </div>
+        </li>
+      ))}
+    </ol>
   )
 }
 
