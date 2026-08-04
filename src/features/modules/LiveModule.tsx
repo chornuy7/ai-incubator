@@ -316,7 +316,9 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
     ]
     return [
       { icon: <Users size={18} />, color: '#7145ff', label: 'Аккаунты', value: String(selected.size), warn: selected.size === 0 },
-      { icon: <Hash size={18} />, color: '#06b6d4', label: cfg.unit?.title ?? 'Цели', value: String(targets.length), warn: needsTargets && !targets.length && !hasPostTargets },
+      // §12 (MR-59): «цели» перед запуском — с учётом ссылок на посты (mass-react), а не
+      // только групп: иначе при выбранных постах счётчик показывал 0, хотя цели есть.
+      { icon: <Hash size={18} />, color: '#06b6d4', label: cfg.unit?.title ?? 'Цели', value: String(targets.length + postUrls.length), warn: needsTargets && !targets.length && !hasPostTargets },
       {
         icon: <Clock size={18} />, color: '#0ec464', label: '≈ время',
         value: (() => {
