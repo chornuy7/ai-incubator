@@ -120,7 +120,13 @@ export async function apiPatch<T>(path: string, body?: unknown): Promise<T> {
   return parseJson<T>(res)
 }
 
-export async function apiDelete<T>(path: string): Promise<T> {
-  const res = await fetch(path, { method: 'DELETE', headers: authHeaders() })
+export async function apiDelete<T>(path: string, body?: unknown): Promise<T> {
+  // Тело у DELETE опционально (напр. чёрный список удаляет конкретную запись по body).
+  // Заголовки авторизации ставим всегда — без них серверные проверки на проде не проходят.
+  const res = await fetch(path, {
+    method: 'DELETE',
+    headers: body !== undefined ? authHeaders({ 'Content-Type': 'application/json' }) : authHeaders(),
+    body: body !== undefined ? JSON.stringify(body) : undefined,
+  })
   return parseJson<T>(res)
 }

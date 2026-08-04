@@ -35,7 +35,10 @@ export function BlacklistEditor({ title = 'Чёрный список канал�
   }
 
   const remove = async (entry: string) => {
-    try { setEntries(await removeBlacklistEntry(entry)) } catch { /* ignore */ }
+    // §12 (MR-58): не глотаем ошибку молча — иначе неудачное удаление выглядело как
+    // «кнопка не работает». Показываем причину и не трогаем список при сбое.
+    try { setEntries(await removeBlacklistEntry(entry)) }
+    catch (e) { pushToast({ type: 'error', title: 'Не удалось убрать из ЧС', desc: e instanceof Error ? e.message : '' }) }
   }
 
   // Компактный режим (§7): маленький сворачиваемый блок рядом с каналами, а не большая секция.

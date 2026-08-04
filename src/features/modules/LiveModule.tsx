@@ -225,12 +225,22 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
     ? selected.size > 0
     : selected.size > 0 && busySelectedCount === 0 && (!needsTargets || targets.length > 0 || hasPostTargets))
     && !typesOver100 && !goalExpired
+  // §11 (MR-53): перечисляем ВСЕ незаполненные обязательные поля, а не первое попавшееся —
+  // чтобы оператор сразу видел всё, что мешает запуску, а не открывал по одному.
+  const missingRequired = useMemo(() => {
+    const m: string[] = []
+    if (isGgr) { if (!selected.size) m.push('выберите аккаунты для проверки'); return m }
+    if (!selected.size) m.push('выберите аккаунты')
+    else if (busySelectedCount) m.push(`освободите ${busySelectedCount} занятых аккаунта`)
+    if (needsTargets && !targets.length && !hasPostTargets) m.push('добавьте цель — группу или ссылку на пост')
+    return m
+  }, [isGgr, selected, busySelectedCount, needsTargets, targets, hasPostTargets])
   const warn = goalExpired
     ? 'Дедлайн выбранной цели истёк — работа по ней остановлена. Продлите дедлайн или уберите цель.'
     : typesOver100
       ? `Сумма типов комментариев ${weightSum}% > 100 — уменьшите (кнопка «= 100%»)`
-      : !canStart
-        ? (isGgr ? 'Выберите аккаунты для проверки' : busySelectedCount ? `${busySelectedCount} акк. заняты в другом модуле` : !selected.size ? 'Выберите аккаунты' : 'Добавьте группу или ссылку на пост')
+      : missingRequired.length
+        ? `Заполните обязательное: ${missingRequired.join('; ')}`
         : undefined
 
   // §3.5: предупреждать о математически противоречивых лимитах (макс vs аккаунты vs мин/акк).
@@ -461,7 +471,7 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
       )}
 
       {showBlock('targets') && (cfg.sourceTabs || needsTargets) && !isGgr && (
-        <SectionCard icon={<Hash size={18} />} title={cfg.sourceTabs?.label ?? 'Цели'} badge={String(targets.length)}>
+        <SectionCard icon={<Hash size={18} />} title={cfg.sourceTabs?.label ?? 'Цели'} badge={String(targets.length)} required={needsTargets && !cfg.postLinks}>
           <FolderPicker targets={targets} onLoad={(t) => setTargets((prev) => [...new Set([...t, ...prev])])} />
           <TargetsEditor
             tabs={cfg.sourceTabs?.tabs}

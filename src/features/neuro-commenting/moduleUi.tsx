@@ -67,8 +67,11 @@ export function HelpButton({ topic, className }: { topic: string; className?: st
   )
 }
 
-export function SectionCard({ icon, title, badge, right, children }: {
-  icon: React.ReactNode; title: string; badge?: string; right?: React.ReactNode; children: React.ReactNode
+export function SectionCard({ icon, title, badge, right, required, children }: {
+  icon: React.ReactNode; title: string; badge?: string; right?: React.ReactNode
+  /** §11 (MR-54): пометить блок обязательным — визуально отделить от необязательных настроек. */
+  required?: boolean
+  children: React.ReactNode
 }) {
   const setHelpTopic = useUi((s) => s.setHelpTopic)
   const setHelpOpen = useUi((s) => s.setHelpOpen)
@@ -79,6 +82,7 @@ export function SectionCard({ icon, title, badge, right, children }: {
       <div className="flex flex-wrap items-center gap-3 border-b border-line px-4 py-3.5">
         <span className="grid h-9 w-9 place-items-center rounded-xl bg-spark-500/12 text-spark-400">{icon}</span>
         <span className="font-display text-base font-bold text-fg">{title}</span>
+        {required && <span className="rounded-md bg-amber-500/15 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-amber-300" title="Без этого блока запуск недоступен">обязательно</span>}
         {badge && <span className="rounded-md bg-spark-500/12 px-2 py-0.5 text-xs font-bold text-spark-300">{badge}</span>}
         <div className="ml-auto flex items-center gap-2">
           {right && <div>{right}</div>}
