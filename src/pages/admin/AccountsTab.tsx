@@ -7,6 +7,9 @@ import { useApp } from '@/mocks/store'
 import { fetchAccounts, setAccountStatusManual, releaseAccountLock, patchAccount, deleteAccount, emptyTrashApi } from '@/api/accountsApi'
 import type { TgAccount } from '@/shared/types'
 import { STATUS_LABEL_RU } from './MonitoringTab'
+// §5.2 (MR-35): та же карточка аккаунта, что и в user-панели — полная информация
+// (профиль/работа/прокси) и действия. Не дублируем, переиспользуем один компонент.
+import { AccountManagementModal } from '@/features/account-manager/AccountManagementModal'
 
 /**
  * §10.10: управление аккаунтами из sudo-админки — полный список ВСЕХ аккаунтов
@@ -30,6 +33,8 @@ export function AccountsTab() {
   // §10.10: корзина прямо в админке — чтобы не ходить в Менеджер профилей за
   // восстановлением/удалением. 'live' — рабочие, 'trash' — удалённые.
   const [view, setView] = useState<'live' | 'trash'>('live')
+  // §5.2 (MR-35): выбранный аккаунт для карточки-деталей (клик по строке).
+  const [detailAcc, setDetailAcc] = useState<TgAccount | null>(null)
   const nav = useNavigate()
 
   const load = async () => {
@@ -160,13 +165,14 @@ export function AccountsTab() {
               return (
                 <tr key={a.id} className="border-b border-line/40 last:border-0">
                   <td className="px-4 py-2.5">
-                    <div className="flex items-center gap-2.5">
+                    {/* Клик по аккаунту открывает ту же карточку деталей, что и в user-панели (MR-35). */}
+                    <button onClick={() => setDetailAcc(a)} title="Открыть карточку аккаунта" className="group flex items-center gap-2.5 text-left">
                       <span className="grid h-7 w-7 shrink-0 place-items-center rounded-full bg-elevated text-[11px] font-bold text-muted">{(a.name || '?')[0]}</span>
                       <span className="min-w-0">
-                        <span className="block truncate font-medium text-fg">{a.name}</span>
+                        <span className="block truncate font-medium text-fg group-hover:text-spark-200">{a.name}</span>
                         <span className="block truncate text-[11px] text-muted">{a.phone || a.username || '—'}</span>
                       </span>
-                    </div>
+                    </button>
                   </td>
                   <td className="px-3 py-2.5">
                     <span className={cn('font-medium', TONE[a.status] || 'text-spark-300')}>{STATUS_LABEL_RU[a.status] || a.status}</span>
@@ -230,6 +236,10 @@ export function AccountsTab() {
           </tbody>
         </table>
       </Card>
+
+      {/* Карточка аккаунта из user-панели: полная информация + действия (MR-35).
+          После закрытия перезагружаем список — внутри могли снять лок/сменить статус. */}
+      <AccountManagementModal account={detailAcc} onClose={() => { setDetailAcc(null); void load() }} />
     </div>
   )
 }
