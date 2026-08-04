@@ -709,12 +709,14 @@ function UsersTab({ report, onReload }: { report: UsersReport | null; onReload: 
                         <div className="mb-4 rounded-xl border border-line bg-elevated/50 p-3">
                           <div className="mb-2 flex flex-wrap items-center gap-2">
                             <span className="text-[11px] font-bold uppercase tracking-wide text-muted">Доступ к модулям</span>
-                            <label className="ml-auto flex cursor-pointer items-center gap-1.5 text-xs text-muted">
-                              <input type="checkbox" checked={modDraft[r.userId] === 'all'}
-                                onChange={(e) => setUserAll(r.userId, e.target.checked)}
-                                className="h-3.5 w-3.5 rounded border-line accent-spark-500" />
-                              Все модули
-                            </label>
+                            <span className="text-xs text-muted">· {r.name || r.email}</span>
+                            {/* §5.3 (MR-36): один понятный переключатель уровня доступа вместо
+                                двух галочек — «Все модули» или «Выбранные» (ниже отмечаем какие). */}
+                            <div className="ml-auto">
+                              <Segmented size="sm" options={['Все модули', 'Выбранные']}
+                                value={modDraft[r.userId] === 'all' ? 0 : 1}
+                                onChange={(i) => setUserAll(r.userId, i === 0)} />
+                            </div>
                           </div>
                           {modDraft[r.userId] !== 'all' && (
                             <div className="flex flex-wrap gap-1.5">
@@ -732,7 +734,11 @@ function UsersTab({ report, onReload }: { report: UsersReport | null; onReload: 
                           )}
                           <div className="mt-2.5 flex items-center gap-2">
                             <span className="text-[11px] text-muted">
-                              {modDraft[r.userId] === 'all' ? 'Открыты все модули' : `Выбрано: ${(modDraft[r.userId] as string[] || []).length}`}
+                              {modDraft[r.userId] === 'all'
+                                ? 'Открыты все модули'
+                                : (modDraft[r.userId] as string[] || []).length
+                                  ? `Выбрано модулей: ${(modDraft[r.userId] as string[]).length}`
+                                  : 'Не выбрано ни одного модуля — доступа к модулям нет'}
                             </span>
                             <button onClick={() => void saveUserAccess(r.userId, r.email)} disabled={busy === r.userId}
                               className="btn-primary ml-auto h-8 text-xs disabled:opacity-40">
