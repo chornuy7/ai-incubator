@@ -10,16 +10,15 @@ import {
   launchCampaign, fetchSchedules, createSchedule, updateSchedule, deleteSchedule,
   fetchCampaigns, createCampaign, updateCampaign, deleteCampaign, CAMPAIGN_STATUSES,
   FOLLOW_UP_MAX, FOLLOW_UP_DEFAULT,
-  parseIntent, type IntentSuggestion,
-  type CampaignResult, type CampaignSchedule, type Campaign, type CampaignStatus, type PinnedMap,
+  type CampaignResult, type CampaignSchedule, type Campaign, type CampaignStatus,
 } from '@/api/campaignsApi'
 import { fetchModulePresets, type ModulePreset } from '@/api/modulesApi'
-import { confirmDialog, promptDialog } from '@/shared/lib/dialog'
+import { confirmDialog } from '@/shared/lib/dialog'
 import { DedupeButton } from '@/shared/ui/DedupeButton'
-import { fetchAccountGroups, createAccountGroup, accountsOfGroupsLocal, type AccountGroup } from '@/api/accountGroupsApi'
 import { fetchChannels, type Channel } from '@/api/channelsApi'
 import { fetchAgents, type Agent } from '@/api/agentsApi'
 import { FolderPicker } from '@/features/modules/shared/FolderPicker'
+import { AccountPicker } from '@/features/account-picker/AccountPicker'
 import { isAvailableForWork } from '@/shared/lib/accountStatus'
 
 // Модули, которые осмысленно ставить в кампанию — все действующие «к цели».
@@ -60,40 +59,11 @@ export function CampaignPage() {
 
   // ── §5: сущность «Кампания» — список + вьюшка создания/редактирования ──
   const [campaigns, setCampaigns] = useState<Campaign[]>([])
-  const [pinnedMap, setPinnedMap] = useState<PinnedMap>({})
   const [formOpen, setFormOpen] = useState(false)
   const [editingCampaign, setEditingCampaign] = useState<Campaign | null>(null)
   const [cName, setCName] = useState('')
   // §9.0: собственные каналы кампании — раньше их было негде задать (тест 1.2).
   const [cTargets, setCTargets] = useState('')
-  // D5 (SPEC §2.4): «я хочу создать кампанию, а не настроить модуль». Оператор пишет
-  // намерение словами, система предлагает раскладку — но НЕ применяет молча: раскладка
-  // чужого намерения по боевым модулям без подтверждения была бы опасной.
-  const [cIntent, setCIntent] = useState('')
-  const [suggestion, setSuggestion] = useState<IntentSuggestion | null>(null)
-  const [intentBusy, setIntentBusy] = useState(false)
-
-  const askIntent = async () => {
-    if (!cIntent.trim()) return
-    setIntentBusy(true)
-    try { setSuggestion(await parseIntent(cIntent)) }
-    catch (e) { pushToast({ type: 'error', title: 'Не разобрал', desc: e instanceof Error ? e.message : '' }) }
-    finally { setIntentBusy(false) }
-  }
-
-  /** Применить предложение: модули и каналы подставляются в форму, дальше правит человек. */
-  const applySuggestion = () => {
-    if (!suggestion) return
-    const keys = suggestion.modules.map((m) => m.moduleKey).filter((k) => CAMPAIGN_MODULES.includes(k))
-    if (keys.length) setCModules(keys)
-    if (suggestion.targets.length) {
-      setCTargets((prev) => {
-        const had = prev.split(/[\n,;]+/).map((x) => x.trim()).filter(Boolean)
-        return [...new Set([...had, ...suggestion.targets])].join('\n')
-      })
-    }
-    pushToast({ type: 'success', title: 'Раскладка подставлена', desc: 'Проверьте модули и каналы ниже' })
-  }
   const [cGoalId, setCGoalId] = useState('')
   const [cModule, setCModule] = useState('neuro-commenting')
   /** Модули кампании: несколько, работают вместе. `cModule` — первый из них. */
@@ -123,15 +93,9 @@ export function CampaignPage() {
   const [cFollowUp, setCFollowUp] = useState(false)
   const [cFollowUpLimit, setCFollowUpLimit] = useState(FOLLOW_UP_DEFAULT)
   const [cFollowUpText, setCFollowUpText] = useState('')
-  const [pickMode, setPickMode] = useState(0) // 0 — числом из пула, 1 — вручную
-  const [takeN, setTakeN] = useState(5)
-  // §5: третий режим выбора аккаунтов — папкой (группой). §12: группы — отдельная сущность.
-  const [groups, setGroups] = useState<AccountGroup[]>([])
-  const [pickedGroups, setPickedGroups] = useState<string[]>([])
-  const loadGroups = () => { void fetchAccountGroups().then(({ groups: gs }) => setGroups(gs)).catch(() => {}) }
 
   const loadCampaigns = () => {
-    void fetchCampaigns().then(({ campaigns: cs, pinned }) => { setCampaigns(cs); setPinnedMap(pinned) }).catch(() => {})
+    void fetchCampaigns().then(({ campaigns: cs }) => { setCampaigns(cs) }).catch(() => {})
   }
   const loadSchedules = () => { void fetchSchedules().then(setSchedules).catch(() => {}) }
   useEffect(() => {
@@ -139,7 +103,6 @@ export function CampaignPage() {
     void fetchChannels().then(setChannels).catch(() => {})
     loadSchedules()
     loadCampaigns()
-    loadGroups()
     void fetchAgents().then(setAgents).catch(() => {})
   }, [])
 
@@ -210,23 +173,12 @@ export function CampaignPage() {
     catch (e) { pushToast({ type: 'error', title: 'Ошибка', desc: e instanceof Error ? e.message : '' }) }
   }
 
-  // §5: свободные аккаунты = свободные ДЛЯ РАБОТЫ (не занят задачей, рабочий статус)
-  // и не закреплённые ЧУЖОЙ кампанией. Раньше показывались все активные подряд, включая
-  // спамблок/карантин/занятых — их всё равно нельзя запустить, а в списке они путали.
-  const freeForCampaign = useMemo(
-    () => accounts.filter((a) => {
-      if (!isAvailableForWork(a)) return false
-      const pin = pinnedMap[a.id]
-      return !pin || pin.campaignId === editingCampaign?.id
-    }),
-    [accounts, pinnedMap, editingCampaign],
-  )
 
   const openNewCampaign = () => {
     setEditingCampaign(null)
     setCName(''); setCGoalId(''); setCModules(['neuro-commenting']); setCModuleAgents({}); setCAccounts([]); setCTargets('')
     setCModuleSettings({}); setCModulePresetId({}); setCMailNumbers(''); setCMailUsernames('')
-    setCPinned(true); setCStatus('draft'); setPickMode(0); setTakeN(5)
+    setCPinned(true); setCStatus('draft')
     setCDeadline(''); setCFollowUp(false); setCFollowUpLimit(FOLLOW_UP_DEFAULT); setCFollowUpText('')
     setFormOpen(true)
   }
@@ -257,19 +209,15 @@ export function CampaignPage() {
     setCMailUsernames(mail.filter((t) => /[a-zA-Zа-яА-Я_]/.test(t)).join('\n'))
     setCDeadline(c.deadline || ''); setCFollowUp(c.followUp?.enabled === true)
     setCFollowUpLimit(c.followUp?.limit || FOLLOW_UP_DEFAULT); setCFollowUpText(c.followUp?.instructions || '')
-    setCPinned(c.pinned); setCStatus(c.status); setPickMode(1); setTakeN(c.accountIds?.length || 5)
+    setCPinned(c.pinned); setCStatus(c.status)
     setFormOpen(true)
   }
 
   const saveCampaign = async () => {
     if (!cName.trim()) return pushToast({ type: 'error', title: 'Укажите название кампании' })
     if (!cModule) return pushToast({ type: 'error', title: 'Кампания должна настраивать модуль' })
-    // Режим «числом» — берём N свободных аккаунтов из пула.
-    const ids = pickMode === 0
-      ? freeForCampaign.slice(0, Math.max(0, takeN)).map((a) => a.id)
-      : pickMode === 2
-        ? accountsOfGroupsLocal(groups, pickedGroups).filter((id) => freeForCampaign.some((a) => a.id === id))
-        : cAccounts
+    // Аккаунты кампании — выбранные в двухпанельном пикере (как в модулях).
+    const ids = cAccounts
     // Получатели рассылки — отдельная цель модуля mailing (номера + юзернеймы).
     const mailTargets = cModules.includes(MAILING_KEY)
       ? [...cMailNumbers.split(/[\n,;]+/), ...cMailUsernames.split(/[\n,;]+/)].map((x) => x.trim()).filter(Boolean)
@@ -299,19 +247,6 @@ export function CampaignPage() {
     } catch (e) {
       pushToast({ type: 'error', title: 'Не сохранено', desc: e instanceof Error ? e.message : '' })
     } finally { setCSaving(false) }
-  }
-
-  // §12: создать группу прямо из выбранных аккаунтов — чтобы не заводить их в чужом экране.
-  const saveSelectionAsGroup = async () => {
-    const name = await promptDialog({ title: 'Новая группа аккаунтов', message: 'Название группы', placeholder: 'Напр. Прогрев RU' })
-    if (!name?.trim()) return
-    try {
-      await createAccountGroup({ name: name.trim(), accountIds: cAccounts })
-      loadGroups()
-      pushToast({ type: 'success', title: 'Группа создана', desc: `${name.trim()} · ${cAccounts.length} акк.` })
-    } catch (e) {
-      pushToast({ type: 'error', title: 'Не создано', desc: e instanceof Error ? e.message : '' })
-    }
   }
 
   /**
@@ -381,63 +316,6 @@ export function CampaignPage() {
           icon={<Rocket size={22} />}
         />
         <Card className="space-y-4 p-4">
-          {/* D5 (SPEC §2.4): «я хочу создать кампанию, а не настроить модуль».
-              Оператор описывает задачу словами — система предлагает раскладку, но
-              подставляет её только по кнопке: молча разложить чужое намерение
-              по боевым модулям было бы опасно. Ручной путь ниже остаётся основным. */}
-          <div className="rounded-xl border border-iris-500/30 bg-iris-500/5 p-3">
-            <div className="mb-1.5 text-xs font-semibold text-iris-200">
-              Опишите задачу словами <span className="font-normal text-white/40">— система предложит модули и цели</span>
-            </div>
-            <div className="flex flex-wrap gap-2">
-              <input
-                className="input h-10 min-w-[280px] flex-1"
-                value={cIntent}
-                onChange={(e) => setCIntent(e.target.value)}
-                onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); void askIntent() } }}
-                placeholder="Напр. комментировать @cryptoz и вести людей в личку, нужно 200 переходов"
-              />
-              <button type="button" onClick={() => void askIntent()} disabled={intentBusy || !cIntent.trim()} className="btn-ghost h-10 shrink-0 px-4 disabled:opacity-40">
-                {intentBusy ? 'Разбираю…' : 'Разобрать'}
-              </button>
-            </div>
-
-            {suggestion && (
-              <div className="mt-3 rounded-lg border border-line bg-elevated/50 p-3">
-                {suggestion.understood ? (
-                  <>
-                    <div className="mb-2 text-xs text-white/50">Поняли так:</div>
-                    <div className="flex flex-col gap-1.5">
-                      {suggestion.modules.map((m) => (
-                        <div key={m.moduleKey} className="flex flex-wrap items-baseline gap-2 text-sm">
-                          <span className="font-semibold text-fg">{moduleTitle(m.moduleKey)}</span>
-                          <span className="text-xs text-muted">— {m.why}</span>
-                        </div>
-                      ))}
-                    </div>
-                    {!!suggestion.targets.length && (
-                      <div className="mt-2 text-xs text-muted">Цели из текста: <span className="text-fg">{suggestion.targets.join(', ')}</span></div>
-                    )}
-                    {suggestion.result && (
-                      <div className="mt-1 text-xs text-muted">
-                        Измеримый результат: <span className="text-fg">{suggestion.result.amount} {suggestion.result.unit}</span>
-                        {suggestion.needsLink && ' — считается по отслеживаемой ссылке'}
-                      </div>
-                    )}
-                    <button type="button" onClick={applySuggestion} className="btn-primary mt-3 h-9 text-sm">
-                      Подставить в форму
-                    </button>
-                  </>
-                ) : (
-                  <div className="text-sm text-amber-300">Не понял, что нужно сделать — опишите действие или заполните форму вручную.</div>
-                )}
-                {suggestion.warnings.map((w) => (
-                  <div key={w} className="mt-2 text-xs text-amber-300">⚠ {w}</div>
-                ))}
-              </div>
-            )}
-          </div>
-
           <div className="grid gap-3 sm:grid-cols-2">
             <div>
               <div className="mb-1 text-xs text-white/50">Название *</div>
@@ -600,58 +478,14 @@ export function CampaignPage() {
           </div>
 
           <div>
-            <div className="mb-1 text-xs text-white/50">Аккаунты — {freeForCampaign.length} свободных (не закреплены другой кампанией)</div>
-            <div className="mb-2 inline-flex rounded-lg border border-line bg-elevated p-0.5 text-xs">
-              {['Числом из пула', 'Выбрать вручную', 'Группой (папкой)'].map((l, i) => (
-                <button key={l} type="button" onClick={() => setPickMode(i)} className={`rounded px-3 py-1.5 font-semibold ${pickMode === i ? 'bg-spark-gradient text-[#04150c]' : 'text-muted'}`}>{l}</button>
-              ))}
-            </div>
-            {pickMode === 0 ? (
-              <div className="flex items-center gap-2">
-                <input type="number" min={0} max={freeForCampaign.length} value={takeN} onChange={(e) => setTakeN(Math.max(0, Number(e.target.value) || 0))} className="input h-9 w-28" />
-                <span className="text-xs text-white/50">из {freeForCampaign.length} свободных</span>
-              </div>
-            ) : (
-              <div className="flex max-h-48 flex-wrap gap-1.5 overflow-y-auto rounded-xl border border-line bg-elevated/40 p-2.5">
-                {freeForCampaign.length === 0 && <span className="text-xs text-white/40">Свободных аккаунтов нет — все закреплены другими кампаниями</span>}
-                {freeForCampaign.map((a) => {
-                  const on = cAccounts.includes(a.id)
-                  return (
-                    <button key={a.id} type="button"
-                      onClick={() => setCAccounts((prev) => (on ? prev.filter((x) => x !== a.id) : [...prev, a.id]))}
-                      className={`rounded-lg border px-2 py-1 text-xs ${on ? 'border-spark-500/50 bg-spark-500/12 text-spark-300' : 'border-line text-white/60'}`}>
-                      {a.name || a.phone || a.id.slice(-6)}
-                    </button>
-                  )
-                })}
-              </div>
-            )}
-            {pickMode === 2 && (
-              <div className="rounded-xl border border-line bg-elevated/40 p-2.5">
-                {groups.length === 0 ? (
-                  <p className="text-xs text-white/40">Групп аккаунтов пока нет. Выберите аккаунты вручную и сохраните их как группу — она появится здесь и в «Ролях и доступах».</p>
-                ) : (
-                  <div className="flex flex-wrap gap-1.5">
-                    {groups.map((g) => {
-                      const on = pickedGroups.includes(g.id)
-                      const free = g.accountIds.filter((id) => freeForCampaign.some((a) => a.id === id)).length
-                      return (
-                        <button key={g.id} type="button"
-                          onClick={() => setPickedGroups((prev) => (on ? prev.filter((x) => x !== g.id) : [...prev, g.id]))}
-                          className={`rounded-lg border px-2 py-1 text-xs ${on ? 'border-spark-500/50 bg-spark-500/12 text-spark-300' : 'border-line text-white/60'}`}>
-                          {g.name} <span className="text-white/40">· {free}/{realCount(g.accountIds)} свободны</span>
-                        </button>
-                      )
-                    })}
-                  </div>
-                )}
-              </div>
-            )}
-            {pickMode === 1 && cAccounts.length > 0 && (
-              <button type="button" onClick={() => void saveSelectionAsGroup()} className="btn-ghost mt-2 h-8 text-xs">
-                + Сохранить выбранные как группу
-              </button>
-            )}
+            {/* Тот же двухпанельный выбор аккаунтов, что и в модулях (поиск, фильтры,
+                «Добавить все», страны, VALID/PROXY). Конфликты по закреплению кампанией
+                отсеиваются на сервере при запуске. */}
+            <AccountPicker
+              selected={new Set(cAccounts)}
+              onChange={(next) => setCAccounts([...next])}
+              selectedTitle="Выбрано в кампанию"
+            />
             <label className="mt-2 flex items-center gap-2 text-xs text-white/60">
               <input type="checkbox" checked={cPinned} onChange={(e) => setCPinned(e.target.checked)} className="h-4 w-4 rounded border-line accent-spark-500" />
               Закрепить аккаунты за кампанией (выйдут из общего пула). Без галочки — «использовать без лока».
