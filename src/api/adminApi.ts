@@ -34,18 +34,18 @@ export interface ClientReport {
   totals: { tasks: number; actions: number; tokens: number; coins: number; actionCoins?: number; tokenCoins?: number }
 }
 
-export async function fetchAdminOverview(since?: number): Promise<AdminOverview> {
+export async function fetchAdminOverview(since?: number, signal?: AbortSignal): Promise<AdminOverview> {
   const q = since ? `?since=${since}` : ''
-  const data = await apiGet<{ ok: boolean; overview: AdminOverview }>(`/api/admin/overview${q}`)
+  const data = await apiGet<{ ok: boolean; overview: AdminOverview }>(`/api/admin/overview${q}`, { signal })
   return data.overview
 }
 
-export async function fetchClientReport(since?: number, userId?: string): Promise<ClientReport> {
+export async function fetchClientReport(since?: number, userId?: string, signal?: AbortSignal): Promise<ClientReport> {
   const p = new URLSearchParams()
   if (since) p.set('since', String(since))
   if (userId) p.set('userId', userId)
   const qs = p.toString()
-  const data = await apiGet<{ ok: boolean; report: ClientReport }>(`/api/admin/report${qs ? `?${qs}` : ''}`)
+  const data = await apiGet<{ ok: boolean; report: ClientReport }>(`/api/admin/report${qs ? `?${qs}` : ''}`, { signal })
   return data.report
 }
 
@@ -124,22 +124,22 @@ export interface ActiveNow { running: ActiveTask[]; paused: ActiveTask[] }
 export interface DailyRow { day: string; tokens: number; tokenCoins: number; actionCoins: number; coins: number; tasks: number; actions: number }
 export interface DailySpend { days: number; rows: DailyRow[] }
 
-export async function fetchActiveNow(): Promise<ActiveNow> {
-  return (await apiGet<{ ok: boolean; active: ActiveNow }>('/api/admin/active')).active
+export async function fetchActiveNow(signal?: AbortSignal): Promise<ActiveNow> {
+  return (await apiGet<{ ok: boolean; active: ActiveNow }>('/api/admin/active', { signal })).active
 }
 
-export async function fetchDailySpend(days = 30): Promise<DailySpend> {
-  return (await apiGet<{ ok: boolean; daily: DailySpend }>(`/api/admin/daily?days=${days}`)).daily
+export async function fetchDailySpend(days = 30, signal?: AbortSignal): Promise<DailySpend> {
+  return (await apiGet<{ ok: boolean; daily: DailySpend }>(`/api/admin/daily?days=${days}`, { signal })).daily
 }
 
-export async function fetchProblems(since?: number): Promise<Problems> {
+export async function fetchProblems(since?: number, signal?: AbortSignal): Promise<Problems> {
   const q = since ? `?since=${since}` : ''
-  return (await apiGet<{ ok: boolean; problems: Problems }>(`/api/admin/problems${q}`)).problems
+  return (await apiGet<{ ok: boolean; problems: Problems }>(`/api/admin/problems${q}`, { signal })).problems
 }
 
-export async function fetchCrmOverview(since?: number): Promise<CrmOverview> {
+export async function fetchCrmOverview(since?: number, signal?: AbortSignal): Promise<CrmOverview> {
   const q = since ? `?since=${since}` : ''
-  return (await apiGet<{ ok: boolean; crm: CrmOverview }>(`/api/admin/crm${q}`)).crm
+  return (await apiGet<{ ok: boolean; crm: CrmOverview }>(`/api/admin/crm${q}`, { signal })).crm
 }
 
 /** §10.9: здоровье аккаунтов — активные/на паузе/падающие + причина по каждому. */
@@ -152,8 +152,8 @@ export interface AccountsHealth {
   byStatus: Record<string, number>
   problems: AccountProblem[]
 }
-export async function fetchAccountsHealth(): Promise<AccountsHealth> {
-  return (await apiGet<{ ok: boolean; health: AccountsHealth }>('/api/admin/accounts-health')).health
+export async function fetchAccountsHealth(signal?: AbortSignal): Promise<AccountsHealth> {
+  return (await apiGet<{ ok: boolean; health: AccountsHealth }>('/api/admin/accounts-health', { signal })).health
 }
 
 /** §10.9 (кол 29.07): нагрузка сервера сейчас — RPS и загрузка CPU/памяти. */
@@ -207,9 +207,9 @@ export async function fetchMessages(f: { userId?: string; accountId?: string; pe
   return (await apiGet<{ ok: boolean; messages: MessageRow[] }>(`/api/admin/messages?${q}`)).messages
 }
 
-export async function fetchUsersReport(since?: number): Promise<UsersReport> {
+export async function fetchUsersReport(since?: number, signal?: AbortSignal): Promise<UsersReport> {
   const q = since ? `?since=${since}` : ''
-  const data = await apiGet<{ ok: boolean; report: UsersReport }>(`/api/admin/users-report${q}`)
+  const data = await apiGet<{ ok: boolean; report: UsersReport }>(`/api/admin/users-report${q}`, { signal })
   return data.report
 }
 
@@ -233,9 +233,9 @@ export interface Purchases {
   usd?: { currency: string; total: number; count: number; rows: UsdTopUpUser[]; feed: PurchaseFeedItem[] }
 }
 
-export async function fetchPurchases(since?: number): Promise<Purchases> {
+export async function fetchPurchases(since?: number, signal?: AbortSignal): Promise<Purchases> {
   const q = since ? `?since=${since}` : ''
-  const data = await apiGet<{ ok: boolean; purchases: Purchases }>(`/api/admin/purchases${q}`)
+  const data = await apiGet<{ ok: boolean; purchases: Purchases }>(`/api/admin/purchases${q}`, { signal })
   return data.purchases
 }
 

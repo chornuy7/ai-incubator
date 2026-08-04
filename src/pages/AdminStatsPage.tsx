@@ -69,26 +69,39 @@ export function AdminStatsPage() {
     return d ? Date.now() - d * 24 * 60 * 60 * 1000 : 0
   }, [periodIdx])
 
+  // §5.1 (MR-31): при смене периода отменяем предыдущий запрос (AbortController) и не
+  // применяем его результат (проверка signal.aborted), чтобы медленный ответ старого
+  // периода не перезаписал новый. Данные периода чистим сразу — под новым периодом не
+  // должны висеть цифры старого; вкладки при пустых данных показывают «Загрузка…».
+  const loadCtl = useRef<AbortController | null>(null)
   const load = async () => {
+    loadCtl.current?.abort()
+    const ctl = new AbortController()
+    loadCtl.current = ctl
+    const { signal } = ctl
     setLoading(true)
+    // Чистим period-зависимые данные (Сейчас/Мониторинг — состояние «сейчас», не период — не трогаем).
+    setOverview(null); setReport(null); setUsers(null); setProblems(null); setCrm(null); setDaily(null); setPurchases(null)
     try {
       // Грузим всё одним заходом: цифры на разных вкладках должны быть на один момент
       // времени, иначе «в панели 82 задачи, а по людям 80» читается как ошибка счёта.
       const [o, r, u, p, c, a, d, pur, h] = await Promise.all([
-        fetchAdminOverview(since), fetchClientReport(since),
-        fetchUsersReport(since), fetchProblems(since), fetchCrmOverview(since),
-        fetchActiveNow(), fetchDailySpend(PERIODS[periodIdx].days || 90), fetchPurchases(since),
-        fetchAccountsHealth(),
+        fetchAdminOverview(since, signal), fetchClientReport(since, undefined, signal),
+        fetchUsersReport(since, signal), fetchProblems(since, signal), fetchCrmOverview(since, signal),
+        fetchActiveNow(signal), fetchDailySpend(PERIODS[periodIdx].days || 90, signal), fetchPurchases(since, signal),
+        fetchAccountsHealth(signal),
       ])
+      if (signal.aborted) return // перебит новым периодом — результат не применяем
       setOverview(o); setReport(r); setUsers(u); setProblems(p); setCrm(c)
       setActive(a); setDaily(d); setPurchases(pur); setHealth(h); setDenied(false)
     } catch (e) {
+      if (signal.aborted || (e instanceof DOMException && e.name === 'AbortError')) return // отмена — не ошибка
       // 403 — не ошибка сборки, а честный отказ: показываем это отдельно, иначе
       // оператор будет думать, что страница сломалась.
       const msg = e instanceof Error ? e.message : ''
       if (/администратор/i.test(msg)) setDenied(true)
       else pushToast({ type: 'error', title: 'Не удалось загрузить статистику', desc: msg })
-    } finally { setLoading(false) }
+    } finally { if (loadCtl.current === ctl) setLoading(false) } // loading снимает только текущий загрузчик
   }
   useEffect(() => { void load() }, [since])
 
@@ -149,7 +162,9 @@ export function AdminStatsPage() {
       </div>
 
       {loading && !overview ? (
-        <Card className="p-6 text-sm text-muted">Загрузка…</Card>
+        <Card className="flex items-center gap-2 p-6 text-sm text-muted">
+          <RefreshCw size={15} className="animate-spin" /> Загрузка данных за период «{PERIODS[periodIdx].label}»…
+        </Card>
       ) : tab === 0 ? (
         <PanelTab o={overview} />
       ) : tab === 1 ? (

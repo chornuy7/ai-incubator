@@ -88,8 +88,8 @@ function authHeaders(base?: Record<string, string>): Record<string, string> {
   return headers
 }
 
-export async function apiGet<T>(path: string): Promise<T> {
-  const res = await fetch(path, { headers: authHeaders() })
+export async function apiGet<T>(path: string, opts?: { signal?: AbortSignal }): Promise<T> {
+  const res = await fetch(path, { headers: authHeaders(), signal: opts?.signal })
   return parseJson<T>(res)
 }
 
