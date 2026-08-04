@@ -11,6 +11,23 @@ import fs from 'fs/promises'
 import path from 'path'
 import crypto from 'crypto'
 import { fileURLToPath } from 'url'
+import { getSupabase, supabaseEnabled } from './supabase.js'
+
+function sb() { return supabaseEnabled() ? getSupabase() : null }
+
+/** Запись аудита ↔ строка таблицы `audit_log`. */
+const entryToRow = (e) => ({
+  id: e.id, ts: e.ts, action: e.action, module: e.module, initiator: e.initiator,
+  code: e.code || '', reason: e.reason || '', scope: e.scope || {},
+  account: e.account || null, meta: e.meta || null,
+})
+const rowToEntry = (r) => ({
+  id: r.id, ts: r.ts ? new Date(r.ts).toISOString() : '', action: r.action || 'legacy',
+  module: r.module || 'core', initiator: r.initiator || 'system', code: r.code || '',
+  reason: r.reason || '', scope: r.scope || {},
+  ...(r.account ? { account: r.account } : {}),
+  ...(r.meta ? { meta: r.meta } : {}),
+})
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 /** Путь можно переопределить env (для тестов/изоляции). */
@@ -47,6 +64,13 @@ export function buildAuditEntry(input = {}) {
  */
 export async function appendAudit(input) {
   const entry = buildAuditEntry(input)
+  // §10.2: в Supabase-режиме аудит живёт в таблице `audit_log` (запросы из админки —
+  // напрямую в БД). Если таблицы ещё нет / сбой — не теряем запись, падаем на файл.
+  const db = sb()
+  if (db) {
+    const { error } = await db.from('audit_log').insert(entryToRow(entry))
+    if (!error) return entry
+  }
   await fs.mkdir(path.dirname(AUDIT_FILE), { recursive: true })
   await fs.appendFile(AUDIT_FILE, JSON.stringify(entry) + '\n', 'utf8')
   // Best-effort ротация: если файл вырос — оставить последние KEEP_LINES строк.
@@ -68,6 +92,21 @@ export async function appendAudit(input) {
  */
 export async function readAudit(filter = {}) {
   const { limit = 200, action, initiator, account } = filter
+  const db = sb()
+  if (db) {
+    let q = db.from('audit_log').select('*').order('ts', { ascending: false })
+    if (action) q = q.eq('action', action)
+    if (initiator) q = q.eq('initiator', initiator)
+    // account встречается и в колонке, и в scope.accounts — вторую часть добираем в JS,
+    // поэтому под account-фильтр берём с запасом. Ошибка/нет таблицы → падаем на файл.
+    q = q.limit(account ? Math.max(limit, 2000) : limit)
+    const { data, error } = await q
+    if (!error) {
+      let out = (data || []).map(rowToEntry)
+      if (account) out = out.filter((e) => e.account === account || (e.scope?.accounts || []).includes(account))
+      return out.slice(0, limit)
+    }
+  }
   let lines
   try {
     lines = (await fs.readFile(AUDIT_FILE, 'utf8')).split('\n').filter(Boolean)
