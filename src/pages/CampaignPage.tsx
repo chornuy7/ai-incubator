@@ -33,13 +33,6 @@ const CAMPAIGN_MODULES = [
 /** Рассылка: её «цель» — получатель (номер/юзернейм), а не канал, поэтому получателей задаём отдельно. */
 const MAILING_KEY = 'mailing'
 
-/**
- * Модули, которые сами ведут переписку. Для них «добавить чатинг» бессмысленно:
- * получилось бы два диалоговых модуля на одних аккаунтах — оба отвечали бы
- * одному человеку.
- */
-const DIALOG_MODULES = new Set(['neuro-chatting', 'neuro-dialogs'])
-
 export function CampaignPage() {
   const nav = useNavigate()
   const pushToast = useApp((s) => s.pushToast)
@@ -125,17 +118,11 @@ export function CampaignPage() {
   // Получатели рассылки — отдельно от целевых каналов: номера и юзернеймы разными строками.
   const [cMailNumbers, setCMailNumbers] = useState('')
   const [cMailUsernames, setCMailUsernames] = useState('')
-  const [cChat, setCChat] = useState(false)
-  const [cChatGoal, setCChatGoal] = useState('')
-  const [cChatScope, setCChatScope] = useState<'unread' | 'all'>('unread')
   // Дожим и дедлайн переехали сюда из агента и цели (24.07): оркестрация — дело кампании.
   const [cDeadline, setCDeadline] = useState('')
   const [cFollowUp, setCFollowUp] = useState(false)
   const [cFollowUpLimit, setCFollowUpLimit] = useState(FOLLOW_UP_DEFAULT)
   const [cFollowUpText, setCFollowUpText] = useState('')
-  const [cChatLimitMode, setCChatLimitMode] = useState<'untilTarget' | 'count'>('untilTarget')
-  const [cChatMaxReplies, setCChatMaxReplies] = useState(5)
-  const [cChatMaxDialogs, setCChatMaxDialogs] = useState(0)
   const [pickMode, setPickMode] = useState(0) // 0 — числом из пула, 1 — вручную
   const [takeN, setTakeN] = useState(5)
   // §5: третий режим выбора аккаунтов — папкой (группой). §12: группы — отдельная сущность.
@@ -240,10 +227,6 @@ export function CampaignPage() {
     setCName(''); setCGoalId(''); setCModules(['neuro-commenting']); setCModuleAgents({}); setCAccounts([]); setCTargets('')
     setCModuleSettings({}); setCModulePresetId({}); setCMailNumbers(''); setCMailUsernames('')
     setCPinned(true); setCStatus('draft'); setPickMode(0); setTakeN(5)
-    // Вкл по умолчанию: кампания, которая пишет людям и не отвечает на ответы, сломана.
-    // Диалоговый основной модуль сам ведёт переписку — там галочка скрыта и не нужна.
-    setCChat(true); setCChatGoal(''); setCChatScope('unread')
-    setCChatLimitMode('untilTarget'); setCChatMaxReplies(5); setCChatMaxDialogs(0)
     setCDeadline(''); setCFollowUp(false); setCFollowUpLimit(FOLLOW_UP_DEFAULT); setCFollowUpText('')
     setFormOpen(true)
   }
@@ -275,13 +258,6 @@ export function CampaignPage() {
     setCDeadline(c.deadline || ''); setCFollowUp(c.followUp?.enabled === true)
     setCFollowUpLimit(c.followUp?.limit || FOLLOW_UP_DEFAULT); setCFollowUpText(c.followUp?.instructions || '')
     setCPinned(c.pinned); setCStatus(c.status); setPickMode(1); setTakeN(c.accountIds?.length || 5)
-    const ch = c.chat?.settings || {}
-    setCChat(c.chat?.enabled === true)
-    setCChatGoal(ch.dialogGoal || '')
-    setCChatScope(ch.replyScope === 'all' ? 'all' : 'unread')
-    setCChatLimitMode(ch.replyLimitMode === 'count' ? 'count' : 'untilTarget')
-    setCChatMaxReplies(ch.maxRepliesPerLead || 5)
-    setCChatMaxDialogs(ch.maxActiveDialogs || 0)
     setFormOpen(true)
   }
 
@@ -307,16 +283,6 @@ export function CampaignPage() {
         settings: cModuleSettings[cModules[0]] || {},
         moduleTargets: (mailTargets.length ? { [MAILING_KEY]: mailTargets } : {}) as Record<string, string[]>,
         targets: cTargets.split(/[\n,;]+/).map((x) => x.trim()).filter(Boolean),
-        chat: {
-          enabled: cChat,
-          settings: {
-            dialogGoal: cChatGoal.trim(),
-            replyScope: cChatScope,
-            replyLimitMode: cChatLimitMode,
-            maxRepliesPerLead: cChatLimitMode === 'count' ? cChatMaxReplies : 0,
-            maxActiveDialogs: cChatMaxDialogs,
-          },
-        },
         // Оркестрация — дело кампании: срок этапа и настойчивость в диалоге.
         deadline: cDeadline || null,
         followUp: { enabled: cFollowUp, limit: cFollowUpLimit, instructions: cFollowUpText.trim() },
@@ -366,7 +332,6 @@ export function CampaignPage() {
         // Пресет ИМЕННО этого модуля (фолбэк на общий settings для старых кампаний).
         settings: { ...(c.moduleSettings?.[moduleKey] || c.settings), agentId: c.moduleAgents?.[moduleKey] || undefined },
       })),
-      ...(c.chat?.enabled ? [{ moduleKey: 'neuro-dialogs', settings: c.chat.settings }] : []),
     ]
     const ids = c.accountIds.filter((id) => knownIds.has(id))
     if (!ids.length) return pushToast({ type: 'error', title: 'В кампании нет аккаунтов' })
@@ -508,8 +473,6 @@ export function CampaignPage() {
                     onClick={() => {
                       const next = on ? cModules.filter((x) => x !== k) : [...cModules, k]
                       setCModules(next)
-                      // Диалоговый модуль сам ведёт переписку — отдельный чатинг ему не нужен.
-                      if (next.some((m) => DIALOG_MODULES.has(m))) setCChat(false)
                     }}
                     className={`rounded-xl border px-3 py-2 text-sm font-semibold transition-colors ${
                       on ? 'border-spark-500/50 bg-spark-500/12 text-spark-200' : 'border-line bg-elevated text-muted hover:border-spark-500/30'
@@ -635,73 +598,6 @@ export function CampaignPage() {
               placeholder={'@channel1\nhttps://t.me/group2'}
             />
           </div>
-
-          {/* §9: кампания = основной модуль + опциональный чатинг. Основной модуль приводит
-              людей, чатинг ведёт ответивших к цели и сам прощается по выполнению.
-              Если основной модуль САМ диалоговый — добавлять к нему чатинг не к чему:
-              он и так ведёт переписку, вторая копия дублировала бы ответы. */}
-          {!cModules.some((m) => DIALOG_MODULES.has(m)) && (
-          <div className="rounded-xl border border-line bg-elevated/40 p-3">
-            <label className="flex cursor-pointer items-start gap-2.5">
-              <input type="checkbox" checked={cChat} onChange={(e) => setCChat(e.target.checked)} className="mt-0.5 h-4 w-4 accent-spark" />
-              <span>
-                <span className="text-sm font-semibold">Автоматически отвечать на ответы и вести к цели</span>
-                <span className="mt-0.5 block text-xs text-white/45">
-                  «{moduleTitle(cModule)}» пишет людям первым. Когда они отвечают — этот авто-ответчик
-                  подхватывает диалог, ведёт по воронке к цели и прощается по выполнении. Без него
-                  ответы остаются без внимания.
-                </span>
-              </span>
-            </label>
-
-            {cChat && (
-              <div className="mt-3 space-y-3 border-t border-line pt-3">
-                <div>
-                  <div className="mb-1 text-xs text-white/50">Инструкция ИИ — как вести диалог и к чему вести</div>
-                  <textarea
-                    className="input min-h-[76px] resize-y"
-                    value={cChatGoal}
-                    onChange={(e) => setCChatGoal(e.target.value)}
-                    placeholder={cGoalId ? `Цель «${goalNameOf(cGoalId)}» уже передаётся ИИ. Здесь — тон и детали: как знакомиться, что отвечать на возражения.` : 'Напр.: дружелюбно познакомиться, выяснить интерес и пригласить в канал.'}
-                  />
-                  <div className="mt-1 text-xs text-white/35">
-                    {cGoalId ? `Цель кампании: ${goalNameOf(cGoalId)} — целевое действие ИИ берёт из неё.` : 'Без цели лиды всё равно копятся в CRM по этой кампании — цель нужна лишь как счётчик целевого действия.'}
-                  </div>
-                </div>
-                <div className="grid gap-3 sm:grid-cols-2">
-                  <div>
-                    <div className="mb-1 text-xs text-white/50">Кому отвечаем</div>
-                    <Select value={cChatScope} onChange={(v) => setCChatScope(v as 'unread' | 'all')} options={[
-                      { value: 'unread', label: 'Только новые сообщения' },
-                      { value: 'all', label: 'Все диалоги, где ждут ответа' },
-                    ]} />
-                  </div>
-                  <div>
-                    <div className="mb-1 text-xs text-white/50">Сколько сообщений пишем одному лиду</div>
-                    <Select value={cChatLimitMode} onChange={(v) => setCChatLimitMode(v as 'untilTarget' | 'count')} options={[
-                      { value: 'untilTarget', label: 'Пока не выполнит целевое действие' },
-                      { value: 'count', label: 'Фиксированное число' },
-                    ]} />
-                  </div>
-                </div>
-                <div className="grid gap-3 sm:grid-cols-2">
-                  {cChatLimitMode === 'count' && (
-                    <div>
-                      <div className="mb-1 text-xs text-white/50">Максимум ответов на лида</div>
-                      <input type="number" min={1} className="input" value={cChatMaxReplies}
-                        onChange={(e) => setCChatMaxReplies(Math.max(1, Number(e.target.value) || 1))} />
-                    </div>
-                  )}
-                  <div>
-                    <div className="mb-1 text-xs text-white/50">Активных диалогов на аккаунт <span className="text-white/30">(0 — без лимита)</span></div>
-                    <input type="number" min={0} className="input" value={cChatMaxDialogs}
-                      onChange={(e) => setCChatMaxDialogs(Math.max(0, Number(e.target.value) || 0))} />
-                  </div>
-                </div>
-              </div>
-            )}
-          </div>
-          )}
 
           <div>
             <div className="mb-1 text-xs text-white/50">Аккаунты — {freeForCampaign.length} свободных (не закреплены другой кампанией)</div>
@@ -858,7 +754,6 @@ export function CampaignPage() {
                 </Badge>
                 <span className="font-semibold text-white">{c.name}</span>
                 <span className="text-xs text-white/50">{moduleTitle(c.moduleKey)}</span>
-                {c.chat?.enabled && <Badge tone="iris">+ авто-ответы</Badge>}
                 {c.goalId && <span className="text-xs text-iris-300"><TargetIcon size={11} className="mb-0.5 inline" /> {goalNameOf(c.goalId)}</span>}
                 <span className="inline-flex items-center gap-1 text-xs text-white/50" title={c.pinned ? 'Аккаунты закреплены — вышли из общего пула' : 'Аккаунты используются без лока'}>
                   {c.pinned ? <Lock size={11} className="text-amber-300" /> : <LockOpen size={11} />} {realCount(c.accountIds)} акк.
