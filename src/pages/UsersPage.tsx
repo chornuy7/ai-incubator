@@ -1,9 +1,13 @@
-import { useEffect, useState } from 'react'
-import { Users2, Plus, Trash2, ShieldCheck, Check } from 'lucide-react'
+import { useEffect, useMemo, useState } from 'react'
+import { Users2, Plus, Trash2, ShieldCheck, Check, Users, Wifi, ChevronDown, Search } from 'lucide-react'
 import { PageHeader, Card, EmptyState, Badge, Modal } from '@/shared/ui'
 import { confirmDialog } from '@/shared/lib/dialog'
 import { fetchUsers, createUser, updateUser, deleteUser, fetchWorktime, type User, type WorkSummary } from '@/api/usersApi'
 import { fetchRoles, type Role } from '@/api/rolesApi'
+import { fetchAccountGroups, type AccountGroup } from '@/api/accountGroupsApi'
+import { fetchAccounts } from '@/api/accountsApi'
+import type { TgAccount } from '@/shared/types'
+import { useSession } from '@/features/auth/session'
 import { ADMIN_BYPASS_ID } from '@/shared/config/rbac'
 import { HelpButton } from '@/features/neuro-commenting/moduleUi'
 import { cn } from '@/shared/lib/utils'
@@ -36,6 +40,89 @@ function RolePicker({ roles, value, onChange }: { roles: Role[]; value: string[]
   )
 }
 
+/**
+ * §5.4 (MR-37): владелец выдаёт субу аккаунты из своего пула — отдельно ГРУППЫ и отдельно
+ * ОДИНОЧНЫЕ аккаунты (назначение каждого раздела однозначно). Пишет прямые гранты на профиль
+ * суба (accountGroupIds/accountIds), которые вливаются в его эффективные права на сервере.
+ */
+function SubAccessEditor({ sub, groups, accounts, onSaved }: { sub: User; groups: AccountGroup[]; accounts: TgAccount[]; onSaved: (u: User) => void }) {
+  const [open, setOpen] = useState(false)
+  const [groupIds, setGroupIds] = useState<string[]>(sub.accountGroupIds || [])
+  const [accIds, setAccIds] = useState<string[]>(sub.accountIds || [])
+  const [q, setQ] = useState('')
+  const [saving, setSaving] = useState(false)
+  const [err, setErr] = useState('')
+
+  const toggleGroup = (id: string) => setGroupIds((v) => (v.includes(id) ? v.filter((x) => x !== id) : [...v, id]))
+  const toggleAcc = (id: string) => setAccIds((v) => (v.includes(id) ? v.filter((x) => x !== id) : [...v, id]))
+  const needle = q.trim().toLowerCase()
+  const shown = useMemo(
+    () => (needle ? accounts.filter((a) => [a.name, a.phone, a.username].some((s) => (s || '').toLowerCase().includes(needle))) : accounts),
+    [accounts, needle],
+  )
+  const save = async () => {
+    setSaving(true); setErr('')
+    try { onSaved(await updateUser(sub.id, { accountGroupIds: groupIds, accountIds: accIds })) }
+    catch (e) { setErr(e instanceof Error ? e.message : 'Ошибка') }
+    finally { setSaving(false) }
+  }
+
+  return (
+    <div className="mt-1 w-full">
+      <button onClick={() => setOpen(!open)} className="flex items-center gap-1.5 text-xs text-white/55 hover:text-white/85">
+        <ChevronDown size={13} className={cn('transition-transform', open && 'rotate-180')} />
+        Доступ к аккаунтам: {groupIds.length} групп · {accIds.length} отдельных
+      </button>
+      {open && (
+        <div className="mt-2 space-y-3 rounded-xl border border-line bg-elevated/40 p-3">
+          <div>
+            <div className="mb-1.5 flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wide text-white/50"><Users size={12} /> Группы аккаунтов</div>
+            {groups.length ? (
+              <div className="flex flex-wrap gap-1.5">
+                {groups.map((g) => {
+                  const on = groupIds.includes(g.id)
+                  return (
+                    <button key={g.id} onClick={() => toggleGroup(g.id)}
+                      className={cn('rounded-lg border px-2 py-1 text-xs transition-colors', on ? 'border-spark-500/50 bg-spark-500/10 text-spark-200' : 'border-line text-white/45 hover:text-white/80')}>
+                      {on ? '✓ ' : ''}{g.name} <span className="text-white/30">({g.accountIds.length})</span>
+                    </button>
+                  )
+                })}
+              </div>
+            ) : <div className="text-xs text-white/40">Групп нет — создайте их в «Менеджере аккаунтов».</div>}
+          </div>
+          <div>
+            <div className="mb-1.5 flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wide text-white/50"><Wifi size={12} /> Отдельные аккаунты</div>
+            <div className="relative mb-1.5">
+              <Search size={13} className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-white/40" />
+              <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Поиск аккаунта" className="input h-8 w-full pl-8 text-xs" />
+            </div>
+            <div className="max-h-44 space-y-0.5 overflow-y-auto pr-1">
+              {shown.map((a) => {
+                const on = accIds.includes(a.id)
+                return (
+                  <button key={a.id} onClick={() => toggleAcc(a.id)}
+                    className={cn('flex w-full items-center gap-2 rounded-lg border px-2 py-1 text-left text-xs transition-colors', on ? 'border-spark-500/40 bg-spark-500/10 text-spark-100' : 'border-transparent text-white/70 hover:bg-white/5')}>
+                    <span className={cn('grid h-4 w-4 shrink-0 place-items-center rounded border', on ? 'border-spark-400 bg-spark-500/30' : 'border-line')}>{on && <Check size={10} />}</span>
+                    <span className="truncate">{a.name}</span>
+                    <span className="ml-auto shrink-0 text-white/35">{a.phone || a.username}</span>
+                  </button>
+                )
+              })}
+              {!shown.length && <div className="px-1 py-2 text-xs text-white/40">Ничего не найдено.</div>}
+            </div>
+          </div>
+          {err && <div className="text-xs text-rose-300">{err}</div>}
+          <div className="flex items-center justify-end gap-2">
+            <span className="mr-auto text-[11px] text-white/40">Выдано: {groupIds.length} групп, {accIds.length} аккаунтов</span>
+            <button onClick={() => void save()} disabled={saving} className="btn-primary h-8 text-xs disabled:opacity-40">{saving ? 'Сохранение…' : 'Сохранить доступ'}</button>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
 /** мс → «2ч 15м» / «12м». */
 function fmtDur(ms: number): string {
   const min = Math.floor(ms / 60000)
@@ -46,9 +133,12 @@ function fmtDur(ms: number): string {
 }
 
 export function UsersPage() {
+  const sessionUser = useSession((s) => s.user)
   const [users, setUsers] = useState<User[]>([])
   const [roles, setRoles] = useState<Role[]>([])
   const [worktime, setWorktime] = useState<Record<string, WorkSummary>>({})
+  const [groups, setGroups] = useState<AccountGroup[]>([])
+  const [accounts, setAccounts] = useState<TgAccount[]>([])
   const [loading, setLoading] = useState(true)
   const [err, setErr] = useState('')
   const [open, setOpen] = useState(false)
@@ -58,12 +148,23 @@ export function UsersPage() {
   async function load() {
     setLoading(true)
     try {
-      const [us, rs, wt] = await Promise.all([fetchUsers(), fetchRoles(), fetchWorktime().catch(() => ({}))])
-      setUsers(us); setRoles(rs); setWorktime(wt)
+      // §5.4 (MR-37): группы и аккаунты пула — чтобы владелец мог выдавать их субам.
+      const [us, rs, wt, gr, accs] = await Promise.all([
+        fetchUsers(), fetchRoles(), fetchWorktime().catch(() => ({})),
+        fetchAccountGroups().then((r) => r.groups).catch(() => []),
+        fetchAccounts().catch(() => []),
+      ])
+      setUsers(us); setRoles(rs); setWorktime(wt); setGroups(gr); setAccounts(accs.filter((a) => !a.inTrash))
     } catch (e) { setErr(e instanceof Error ? e.message : 'Ошибка загрузки') }
     finally { setLoading(false) }
   }
   useEffect(() => { void load() }, [])
+
+  // §5.4 (MR-37): владелец раздаёт субам СВОИ группы (созданные им) + «общие» без владельца.
+  const myGroups = useMemo(
+    () => groups.filter((g) => !g.userId || g.userId === sessionUser?.id || !!sessionUser?.isAdmin),
+    [groups, sessionUser],
+  )
 
   async function assignRoles(u: User, roleIds: string[]) {
     try {
@@ -159,6 +260,12 @@ export function UsersPage() {
                     </button>
                   )}
                 </div>
+                {/* §5.4 (MR-37): выдача субу групп/аккаунтов из пула владельца. Не для главного
+                    админа и не для админ-ролей (у них и так полный доступ). */}
+                {!locked && !isAdmin && (
+                  <SubAccessEditor sub={u} groups={myGroups} accounts={accounts}
+                    onSaved={(upd) => setUsers((prev) => prev.map((x) => (x.id === upd.id ? upd : x)))} />
+                )}
               </Card>
             )
           })}

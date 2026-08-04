@@ -7,6 +7,7 @@ export interface AccountGroup {
   accountIds: string[]
   color: string
   note: string
+  userId?: string // §5.4 (MR-37): владелец-создатель группы (для фильтра «мои группы»)
   createdAt: number
   updatedAt: number
 }

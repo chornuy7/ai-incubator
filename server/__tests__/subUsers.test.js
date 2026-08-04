@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
-import { capModules } from '../subAccess.js'
+import { capModules, applyDirectGrants } from '../subAccess.js'
 
 // ── §4.1 (MR-28): обрезка модулей суба до оплаченных ──
 test('capModules: allow режется до оплаченных, deny сохраняется', () => {
@@ -24,6 +24,38 @@ test('capModules: набор "all" или null — не режем; null permiss
 test('capModules: пустой оплаченный список — суб не получает ни одного модуля', () => {
   const perms = { modules: { a: 'allow', b: 'allow' }, blocks: {}, resources: {} }
   assert.deepEqual(capModules(perms, []).modules, {}, 'ничего не оплачено — доступа к модулям нет')
+})
+
+// ── §5.4 (MR-37): прямые выдачи аккаунтов/групп субу ──
+test('applyDirectGrants: выдачи аккаунтов/групп вливаются как allow, deny не трогаем', () => {
+  const perms = { modules: {}, blocks: {}, resources: { accounts: { a3: 'deny' }, accountGroups: {} } }
+  const out = applyDirectGrants(perms, { accountIds: ['a1', 'a2', 'a3'], accountGroupIds: ['g1'] })
+  assert.equal(out.resources.accounts.a1, 'allow')
+  assert.equal(out.resources.accounts.a2, 'allow')
+  assert.equal(out.resources.accounts.a3, 'deny', 'точечный deny из роли не перетираем выдачей')
+  assert.equal(out.resources.accountGroups.g1, 'allow')
+})
+
+test('applyDirectGrants: без выдач и без прав — без изменений', () => {
+  const perms = { modules: {}, blocks: {}, resources: { accounts: {}, accountGroups: {} } }
+  assert.equal(applyDirectGrants(perms, {}), perms, 'нет выдач — тот же объект')
+  assert.equal(applyDirectGrants(null, { accountIds: ['a1'] }), null, 'нет прав — нечего дополнять')
+})
+
+test('updateUser сохраняет выдачи аккаунтов/групп субу (файловый бэкенд)', async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'subusers-grants-'))
+  process.env.USERS_FILE = path.join(dir, 'users.json')
+  const u = await import('../users.js?grants=' + Date.now())
+  await u.listUsers()
+  const boss = await u.createUser({ email: 'gowner@x.y', password: 'secret1' })
+  const sub = await u.createUser({ email: 'gsub@x.y', password: 'secret1', parentId: boss.id })
+  assert.deepEqual(sub.accountGroupIds, [], 'по умолчанию выдач нет')
+  const upd = await u.updateUser(sub.id, { accountGroupIds: ['grp_1', 'grp_1', ''], accountIds: ['acc_9'] })
+  assert.deepEqual(upd.accountGroupIds, ['grp_1'], 'нормализованы (уникальные, без пустых)')
+  assert.deepEqual(upd.accountIds, ['acc_9'])
+  const reread = await u.getUser(sub.id)
+  assert.deepEqual(reread.accountGroupIds, ['grp_1'], 'сохранилось на диск')
+  delete process.env.USERS_FILE
 })
 
 // ── §4.1 (MR-28): зависимые статусы владельца и субов (файловый бэкенд) ──

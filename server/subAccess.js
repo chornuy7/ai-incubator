@@ -29,3 +29,24 @@ export function capModules(permissions, paidModules) {
   }
   return { ...permissions, modules }
 }
+
+/**
+ * §5.4 (MR-37): влить прямые выдачи аккаунтов/групп (с профиля суба) в эффективные права —
+ * как `resources.accounts[id]='allow'` / `resources.accountGroups[id]='allow'`. За счёт этого
+ * существующий резолвер доступа (isAccountAllowedViaGroups / filterAccountsByAccess) работает
+ * без изменений — добавляем только данные. Точечный deny из ролей не перетираем.
+ * @param {import('./roles.js').RolePermissions|null} permissions
+ * @param {{accountIds?: string[], accountGroupIds?: string[]}} user
+ */
+export function applyDirectGrants(permissions, user) {
+  if (!permissions) return permissions
+  const accountIds = Array.isArray(user?.accountIds) ? user.accountIds : []
+  const groupIds = Array.isArray(user?.accountGroupIds) ? user.accountGroupIds : []
+  if (!accountIds.length && !groupIds.length) return permissions
+  const resources = permissions.resources || {}
+  const accounts = { ...(resources.accounts || {}) }
+  const accountGroups = { ...(resources.accountGroups || {}) }
+  for (const id of accountIds) if (accounts[id] !== 'deny') accounts[id] = ALLOW
+  for (const id of groupIds) if (accountGroups[id] !== 'deny') accountGroups[id] = ALLOW
+  return { ...permissions, resources: { ...resources, accounts, accountGroups } }
+}

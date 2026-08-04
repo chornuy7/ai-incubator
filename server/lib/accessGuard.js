@@ -8,7 +8,9 @@
  * заголовок на подписанный токен сессии (см. docs/CONTRACT-rbac.md §7).
  */
 import { getUser } from '../users.js'
-import { can, userRoleIds, hasAdminRole, rolesForUser, allowedFolderTargets } from '../roles.js'
+import { can, userRoleIds, hasAdminRole, rolesForUser, allowedFolderTargets, mergePermissions } from '../roles.js'
+import { applyDirectGrants } from '../subAccess.js'
+import { isAccountAllowedViaGroups, listGroups } from '../accountGroups.js'
 
 /**
  * Guard для монтирования на префикс модуля. `keyFrom(req)` извлекает ключ модуля.
@@ -157,9 +159,15 @@ export async function canSeeAccount(req, accountId) {
   if (!user || !user.active) return false
   if (hasAdminRole(userRoleIds(user))) return true
   const roles = await rolesForUser(user)
-  if (!roles.length) return false
-  // Хотя бы одна роль разрешает этот аккаунт — union, как и везде в §8.1.
-  return roles.some((role) => can(role, 'account', String(accountId)))
+  const hasGrants = (user.accountIds?.length || user.accountGroupIds?.length)
+  if (!roles.length && !hasGrants) return false
+  // §5.4 (MR-37): точечная проверка учитывает и группы, и прямые выдачи субу — как
+  // filterAccountsByAccess во фронте. Раньше здесь смотрели только прямые role.accounts,
+  // и доступ, выданный ГРУППОЙ, на точечном запросе молча не работал.
+  let perms = mergePermissions(roles)
+  perms = applyDirectGrants(perms, user)
+  const groups = await listGroups().catch(() => [])
+  return isAccountAllowedViaGroups(perms.resources.accounts, perms.resources.accountGroups, groups, String(accountId))
 }
 
 export async function tasksForRequest(req, tasks = []) {

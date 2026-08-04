@@ -2,7 +2,7 @@
 import { Router } from 'express'
 import { listUsers, getUser, createUser, updateUser, deleteUser, authenticate, authenticateSupabase, publicUser, isBlockedByOwner, listSubs } from './users.js'
 import { rolesForUser, mergePermissions, userRoleIds, hasAdminRole, ADMIN_ROLE_ID } from './roles.js'
-import { capModules } from './subAccess.js'
+import { capModules, applyDirectGrants } from './subAccess.js'
 import { getBalance } from './balance.js'
 import { requesterContext } from './lib/accessGuard.js'
 import { appendAudit } from './lib/auditLog.js'
@@ -27,6 +27,8 @@ async function effectivePermissions(user, roles, isAdmin) {
     const bal = await getBalance(user.id).catch(() => null)
     permissions = capModules(permissions, bal?.modules)
   }
+  // §5.4 (MR-37): прямые выдачи аккаунтов/групп субу — в эффективные права.
+  if (permissions) permissions = applyDirectGrants(permissions, user)
   return permissions
 }
 

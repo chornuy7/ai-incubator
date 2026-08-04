@@ -28,9 +28,17 @@ const rowToUser = (r) => ({
   roleId: (r.role_ids || [])[0] || '', roleIds: r.role_ids || [],
   active: r.active !== false, passwordHash: r.password_hash || null,
   parentId: r.parent_id || null,
+  // §5.4 (MR-37): выданные субу аккаунты/группы из пула владельца.
+  accountIds: r.account_ids || [], accountGroupIds: r.account_group_ids || [],
   createdAt: r.created_at ? new Date(r.created_at).getTime() : 0,
   updatedAt: r.updated_at ? new Date(r.updated_at).getTime() : 0,
 })
+
+/** Нормализовать список id (уникальные непустые строки). */
+function normIds(v) {
+  if (!Array.isArray(v)) return undefined
+  return [...new Set(v.map((x) => String(x || '').trim()).filter(Boolean))]
+}
 const USERS_FILE = () => process.env.USERS_FILE || dataPath('users.json')
 
 /** Хэш пароля: случайная соль + scrypt. Возвращает "salt:hash" (hex). @param {string} password */
@@ -104,6 +112,7 @@ function profileToUser(p, emailMap, legacyByUuid) {
     roleId, roleIds,
     active: p.active !== false,
     parentId: p.parent_id ? (legacyByUuid.get(p.parent_id) || null) : null,
+    accountIds: p.account_ids || [], accountGroupIds: p.account_group_ids || [], // §5.4 (MR-37)
     user_type_id: p.user_type_id ?? null,
     createdAt: p.created_at ? new Date(p.created_at).getTime() : 0,
     updatedAt: p.updated_at ? new Date(p.updated_at).getTime() : 0,
@@ -214,12 +223,12 @@ export async function createUser(input = {}) {
     if (parentId) { const pp = await profileByLegacy(db, parentId); parentUuid = pp?.id || null }
     await db.from('profiles').update({ legacy_id: legacyId, name, active: input.active !== false, role_ids: roleIds, parent_id: parentUuid, updated_at: new Date().toISOString() }).eq('id', authId)
     // §11.3 этап 4/4: dual-write в `users` снят — источник истины profiles + auth.users.
-    return { id: legacyId, email, name, roleId, roleIds, active: input.active !== false, parentId, createdAt: now, updatedAt: now }
+    return { id: legacyId, email, name, roleId, roleIds, active: input.active !== false, parentId, accountIds: [], accountGroupIds: [], createdAt: now, updatedAt: now }
   }
 
   const users = await listUsers()
   if (parentId && !users.some((u) => u.id === parentId)) throw new Error('Родительский пользователь не найден')
-  const user = { id: `usr_${crypto.randomUUID().slice(0, 8)}`, email, name, roleId, roleIds, active: input.active !== false, parentId, passwordHash: hashPassword(input.password), createdAt: now, updatedAt: now }
+  const user = { id: `usr_${crypto.randomUUID().slice(0, 8)}`, email, name, roleId, roleIds, active: input.active !== false, parentId, accountIds: normIds(input.accountIds) || [], accountGroupIds: normIds(input.accountGroupIds) || [], passwordHash: hashPassword(input.password), createdAt: now, updatedAt: now }
   users.push(user)
   await writeJson(USERS_FILE(), users)
   return user
@@ -254,10 +263,12 @@ export async function updateUser(id, patch = {}) {
       }
       next.parentId = pid
     }
-    // profiles — источник правды: роли/имя/активность/parent (uuid).
+    if (patch.accountIds !== undefined) next.accountIds = normIds(patch.accountIds) || [] // §5.4 (MR-37)
+    if (patch.accountGroupIds !== undefined) next.accountGroupIds = normIds(patch.accountGroupIds) || []
+    // profiles — источник правды: роли/имя/активность/parent (uuid) + выдачи аккаунтов.
     let parentUuid = null
     if (next.parentId) { const pp = await profileByLegacy(db, next.parentId); parentUuid = pp?.id || null }
-    await db.from('profiles').update({ name: next.name, active: next.active, role_ids: next.roleIds, parent_id: parentUuid, updated_at: new Date().toISOString() }).eq('id', prof.id)
+    await db.from('profiles').update({ name: next.name, active: next.active, role_ids: next.roleIds, parent_id: parentUuid, account_ids: next.accountIds || [], account_group_ids: next.accountGroupIds || [], updated_at: new Date().toISOString() }).eq('id', prof.id)
     // Пароль — только в auth.users.
     if (patch.password) {
       if (String(patch.password).length < 6) throw new Error('Пароль минимум 6 символов')
@@ -290,6 +301,8 @@ export async function updateUser(id, patch = {}) {
     }
     users[i].parentId = pid
   }
+  if (patch.accountIds !== undefined) users[i].accountIds = normIds(patch.accountIds) || [] // §5.4 (MR-37)
+  if (patch.accountGroupIds !== undefined) users[i].accountGroupIds = normIds(patch.accountGroupIds) || []
   if (patch.password) {
     if (String(patch.password).length < 6) throw new Error('Пароль минимум 6 символов')
     users[i].passwordHash = hashPassword(patch.password)
