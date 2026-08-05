@@ -713,6 +713,18 @@ app.get('/api/admin/purchases', async (req, res) => {
   } catch (err) { res.status(500).json({ ok: false, error: err instanceof Error ? err.message : 'Ошибка' }) }
 })
 
+/** §3.3 (MR-23): экономика — доходы, расходы, маржа, разрез по серверам. Только админ. */
+app.get('/api/admin/economy', async (req, res) => {
+  try {
+    if (!(await isAdminRequest(req))) return res.status(403).json({ ok: false, error: 'Экономика доступна только администратору' })
+    const { economyReport } = await import('./adminStats.js')
+    res.json({ ok: true, economy: await economyReport({
+      since: req.query.since ? Number(req.query.since) : undefined,
+      until: req.query.until ? Number(req.query.until) : undefined,
+    }) })
+  } catch (err) { res.status(500).json({ ok: false, error: err instanceof Error ? err.message : 'Ошибка' }) }
+})
+
 /**
  * §5.1: база оплат — все платежи с диапазоном дат (from..to) и пагинацией. Только админ.
  * Индекс пересобирается из источников истины при каждом запросе — витрина не расходится

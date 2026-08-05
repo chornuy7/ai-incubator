@@ -143,6 +143,35 @@ export async function fetchDailySpend(days = 30, signal?: AbortSignal): Promise<
   return (await apiGet<{ ok: boolean; daily: DailySpend }>(`/api/admin/daily?days=${days}`, { signal })).daily
 }
 
+// §3.3 (MR-23): экономика — доходы, расходы, маржа.
+export interface EconomyModuleCost { key: string; title: string; tokens: number; costUsd: number }
+export interface EconomyServer { name: string; accounts: number; aiCostUsd: number; costPerAccountUsd: number }
+export interface Economy {
+  since: number
+  until: number
+  currency: string
+  income: {
+    total: number
+    plans: number; plansCount: number
+    balanceTopups: number; balanceCount: number
+    tokens: number; tokensCoins: number; tokensCount: number; coinUsd: number
+  }
+  expenses: {
+    total: number
+    ai: number; tokensSpent: number; tokenUsd: number
+    tokenUsdAuto: boolean; tokenUsdModel: string
+    byModule: EconomyModuleCost[]
+  }
+  margin: number
+  marginPct: number
+  servers: EconomyServer[]
+}
+
+export async function fetchEconomy(since?: number, signal?: AbortSignal): Promise<Economy> {
+  const q = since ? `?since=${since}` : ''
+  return (await apiGet<{ ok: boolean; economy: Economy }>(`/api/admin/economy${q}`, { signal })).economy
+}
+
 export async function fetchProblems(since?: number, signal?: AbortSignal): Promise<Problems> {
   const q = since ? `?since=${since}` : ''
   return (await apiGet<{ ok: boolean; problems: Problems }>(`/api/admin/problems${q}`, { signal })).problems

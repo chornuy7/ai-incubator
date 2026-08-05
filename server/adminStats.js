@@ -177,6 +177,87 @@ export async function adminOverview(opts = {}) {
 }
 
 /**
+ * §3.3 (MR-23): экономика проекта — доходы, расходы, маржа за период.
+ *
+ * Доходы: подписки ($), пополнения баланса ($) и пополнения токенов (⚡ по курсу
+ * продажи) — из индекса оплат (payments.js), т.е. из тех же источников правды, что
+ * «База оплат», без второго счёта. Расходы: фактический расход токенов ИИ ×
+ * СЕБЕСТОИМОСТЬ токена (priceStore.tokenUsd) — сколько модули реально сожгли в деньгах.
+ * Маржа = доходы − расходы; пересчитывается на каждый запрос по факт-статистике, а не
+ * по «плановым» ценам, поэтому отражает реальную экономику, а не прайс.
+ *
+ * Разрез «по серверам»: пока платформа на одном сервере (мультисервер — MR-65),
+ * поэтому отдаём нагрузку текущего сервера — аккаунтов и себестоимость ИИ на аккаунт.
+ * Появятся сервера — здесь появится строка на каждый (ресурсы на кол-во аккаунтов).
+ *
+ * ВАЖНО про доходы: в демо (без платёжного провайдера, MR-64) пополнения начисляет
+ * админ, и «пополнение баланса» может пересекаться с последующей тратой на подписку/
+ * токены. Поэтому итог — ВАЛОВЫЙ приток, а не чистая выручка; UI показывает разбивку
+ * по строкам, чтобы это было видно.
+ */
+export async function economyReport(opts = {}) {
+  const since = Number(opts.since) || Date.now() - 30 * DAY_MS
+  const until = Number(opts.until) || Date.now()
+
+  const [{ syncPayments, paymentsSummary }, { effectivePrices, coinUsdRate }] = await Promise.all([
+    import('./payments.js'),
+    import('./priceStore.js'),
+  ])
+  await syncPayments()
+  const pay = paymentsSummary({ from: since, to: until })
+  const eff = await effectivePrices()
+  const tokenUsd = Number(eff.tokenUsd) || 0
+  const coinUsd = await coinUsdRate().catch(() => 0)
+
+  // ── Доходы ($) ───────────────────────────────────────────────────────────
+  const planIncome = round3(pay.planTotal)              // подписки
+  const balanceTopups = round3(pay.usdTotal)            // пополнения баланса деньгами
+  const tokenIncome = round3(pay.coinsTotal * coinUsd)  // проданные токены ⚡ → $ по курсу
+  const incomeTotal = round3(planIncome + balanceTopups + tokenIncome)
+
+  // ── Расходы ($): фактический расход токенов × себестоимость ───────────────
+  const tok = await tokenSummary({ since }).catch(() => ({ tokens: 0, byModule: {} }))
+  const tokensSpent = Number(tok.tokens) || 0
+  const aiCost = round3(tokensSpent * tokenUsd)
+  const byModule = Object.entries(tok.byModule || {})
+    .map(([key, tokens]) => ({ key, title: moduleTitle(key), tokens: Number(tokens) || 0, costUsd: round3((Number(tokens) || 0) * tokenUsd) }))
+    .sort((a, b) => b.costUsd - a.costUsd)
+  const expenseTotal = aiCost // себестоимость ИИ; инфраструктура сервера — в разрезе ниже
+
+  // ── Маржа ────────────────────────────────────────────────────────────────
+  const margin = round3(incomeTotal - expenseTotal)
+  const marginPct = incomeTotal > 0 ? Math.round((margin / incomeTotal) * 1000) / 10 : 0
+
+  // ── Разрез «по серверам» (пока один) ─────────────────────────────────────
+  const meta = await loadAllMeta().catch(() => ({}))
+  const accountsTotal = Object.values(meta).filter((m) => m && !m.inTrash).length
+  const servers = [{
+    name: process.env.SERVER_NAME || 'Основной сервер',
+    accounts: accountsTotal,
+    aiCostUsd: aiCost,
+    costPerAccountUsd: accountsTotal > 0 ? round3(aiCost / accountsTotal) : 0,
+  }]
+
+  return {
+    since, until, currency: '$',
+    income: {
+      total: incomeTotal,
+      plans: planIncome, plansCount: pay.planCount,
+      balanceTopups, balanceCount: pay.usdCount,
+      tokens: tokenIncome, tokensCoins: round3(pay.coinsTotal), tokensCount: pay.coinsCount, coinUsd,
+    },
+    expenses: {
+      total: expenseTotal,
+      ai: aiCost, tokensSpent, tokenUsd,
+      tokenUsdAuto: eff.tokenUsdAuto, tokenUsdModel: eff.tokenUsdModel,
+      byModule,
+    },
+    margin, marginPct,
+    servers,
+  }
+}
+
+/**
  * Кто работает ПРЯМО СЕЙЧАС: запущенные задачи с прогрессом и владельцем.
  *
  * Сводка за период отвечает «что было», а владельцу чаще нужно «что идёт»: успеет

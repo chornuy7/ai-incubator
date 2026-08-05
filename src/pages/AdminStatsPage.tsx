@@ -6,6 +6,7 @@ import { useApp } from '@/mocks/store'
 import {
   fetchAdminOverview, fetchClientReport, fetchUsersReport, fetchProblems, fetchCrmOverview,
   fetchActiveNow, fetchDailySpend, fetchPurchases, fetchPayments, fetchAccountsHealth, fetchUserActivity, type UserActivity, fetchUserDialogs, type UserDialogs, fetchMessages, type MessageRow,
+  fetchEconomy, type Economy,
   type AdminOverview, type ClientReport, type UsersReport, type Problems, type CrmOverview,
   type ActiveNow, type ActiveTask, type DailySpend, type Purchases, type PaymentsResult, type UserRow, type AccountsHealth, fetchPrices, savePrices, type EffectivePrices, type PricePatch,
   fetchTaskLogs, type FailedTask, type TaskLogs } from '@/api/adminApi'
@@ -15,7 +16,7 @@ import { RolesPage } from '@/pages/RolesPage'
 import { changeBalance, fetchSubscription, saveUserModules, fetchWalletHistory, type WalletEntry } from '@/api/balanceApi'
 import { promptDialog } from '@/shared/lib/dialog'
 import { ApiDocsTab } from '@/features/billing/ApiDocsTab'
-import { fmt, fmtDate, cleanPrice, fmtUsd, usdEq } from '@/pages/admin/adminShared'
+import { fmt, fmtDate, cleanPrice, fmtUsd, usdEq, MetricTile } from '@/pages/admin/adminShared'
 import { MonitoringTab } from '@/pages/admin/MonitoringTab'
 import { AccountsTab } from '@/pages/admin/AccountsTab'
 import { BundlesEditor } from '@/pages/admin/BundlesEditor'
@@ -62,6 +63,7 @@ export function AdminStatsPage() {
   const [daily, setDaily] = useState<DailySpend | null>(null)
   const [purchases, setPurchases] = useState<Purchases | null>(null)
   const [health, setHealth] = useState<AccountsHealth | null>(null)
+  const [economy, setEconomy] = useState<Economy | null>(null)
   const [loading, setLoading] = useState(true)
   const [denied, setDenied] = useState(false)
 
@@ -78,12 +80,12 @@ export function AdminStatsPage() {
   // §5.1 (MR-32): кэш загруженных периодов — при возврате на уже виденный период
   // показываем данные мгновенно, без повторного запроса. Ключ — periodIdx (стабилен),
   // TTL 60с — чтобы не держать вечно устаревшее; «Обновить» игнорирует кэш (force).
-  type StatsSnap = { o: AdminOverview; r: ClientReport; u: UsersReport; p: Problems; c: CrmOverview; a: ActiveNow; d: DailySpend; pur: Purchases; h: AccountsHealth }
+  type StatsSnap = { o: AdminOverview; r: ClientReport; u: UsersReport; p: Problems; c: CrmOverview; a: ActiveNow; d: DailySpend; pur: Purchases; h: AccountsHealth; econ: Economy }
   const CACHE_TTL = 60_000
   const cacheRef = useRef<Map<number, { snap: StatsSnap; ts: number }>>(new Map())
   const applySnap = (s: StatsSnap) => {
     setOverview(s.o); setReport(s.r); setUsers(s.u); setProblems(s.p); setCrm(s.c)
-    setActive(s.a); setDaily(s.d); setPurchases(s.pur); setHealth(s.h); setDenied(false)
+    setActive(s.a); setDaily(s.d); setPurchases(s.pur); setHealth(s.h); setEconomy(s.econ); setDenied(false)
   }
   // §5.2 (MR-33): busyRef — идёт ли «видимая» (не фоновая) загрузка; автообновление
   // пропускает тик, пока она идёт, чтобы фон не перебивал ручную загрузку/смену периода.
@@ -103,19 +105,19 @@ export function AdminStatsPage() {
       busyRef.current = true
       setLoading(true)
       // Чистим period-зависимые данные (Сейчас/Мониторинг — состояние «сейчас», не период — не трогаем).
-      setOverview(null); setReport(null); setUsers(null); setProblems(null); setCrm(null); setDaily(null); setPurchases(null)
+      setOverview(null); setReport(null); setUsers(null); setProblems(null); setCrm(null); setDaily(null); setPurchases(null); setEconomy(null)
     }
     try {
       // Грузим всё одним заходом: цифры на разных вкладках должны быть на один момент
       // времени, иначе «в панели 82 задачи, а по людям 80» читается как ошибка счёта.
-      const [o, r, u, p, c, a, d, pur, h] = await Promise.all([
+      const [o, r, u, p, c, a, d, pur, h, econ] = await Promise.all([
         fetchAdminOverview(since, signal), fetchClientReport(since, undefined, signal),
         fetchUsersReport(since, signal), fetchProblems(since, signal), fetchCrmOverview(since, signal),
         fetchActiveNow(signal), fetchDailySpend(PERIODS[periodIdx].days || 90, signal), fetchPurchases(since, signal),
-        fetchAccountsHealth(signal),
+        fetchAccountsHealth(signal), fetchEconomy(since, signal),
       ])
       if (signal.aborted) return // перебит новым периодом — результат не применяем
-      const snap: StatsSnap = { o, r, u, p, c, a, d, pur, h }
+      const snap: StatsSnap = { o, r, u, p, c, a, d, pur, h, econ }
       cacheRef.current.set(periodIdx, { snap, ts: Date.now() }) // кэшируем загруженный период
       applySnap(snap)
     } catch (e) {
@@ -205,7 +207,7 @@ export function AdminStatsPage() {
       />
 
       <div className="mb-4 flex flex-wrap items-center gap-3">
-        <Segmented options={['Панель', 'Сейчас', 'По дням', 'Пользователи', 'Покупки', 'Цены', 'Задачи и ошибки', 'CRM', 'Отчёт', 'Мониторинг', 'Аккаунты', 'Роли', 'API']} value={tab} onChange={setTab} />
+        <Segmented options={['Панель', 'Сейчас', 'По дням', 'Пользователи', 'Покупки', 'Экономика', 'Цены', 'Задачи и ошибки', 'CRM', 'Отчёт', 'Мониторинг', 'Аккаунты', 'Роли', 'API']} value={tab} onChange={setTab} />
         <Segmented options={PERIODS.map((p) => p.label)} value={periodIdx} onChange={setPeriodIdx} size="sm" />
       </div>
 
@@ -224,19 +226,22 @@ export function AdminStatsPage() {
       ) : tab === 4 ? (
         <PurchasesTab p={purchases} />
       ) : tab === 5 ? (
-        <PricesTab />
+        /* §3.3 (MR-23): экономика — доходы, расходы, маржа, разрез по серверам. */
+        <EconomyTab economy={economy} />
       ) : tab === 6 ? (
-        <ProblemsTab p={problems} />
+        <PricesTab />
       ) : tab === 7 ? (
-        <CrmTab crm={crm} />
+        <ProblemsTab p={problems} />
       ) : tab === 8 ? (
-        <ReportTab report={report} onExport={exportCsv} users={users?.rows || []} since={since} />
+        <CrmTab crm={crm} />
       ) : tab === 9 ? (
-        <MonitoringTab health={health} active={active} daily={daily} />
+        <ReportTab report={report} onExport={exportCsv} users={users?.rows || []} since={since} />
       ) : tab === 10 ? (
+        <MonitoringTab health={health} active={active} daily={daily} />
+      ) : tab === 11 ? (
         /* §10.10: управление аккаунтами из sudo-админки — список всех + пауза/запуск/стоп. */
         <AccountsTab />
-      ) : tab === 11 ? (
+      ) : tab === 12 ? (
         /* §10.4: управление ролями доступа — из sudo-админки (создание/права/блоки). */
         <RolesPage />
       ) : (
@@ -1047,6 +1052,133 @@ function UserActivityLog({ state }: { state: UserActivity | 'loading' | undefine
  * стороны счёта — сколько человек занёс и сколько сжёг. Списания сюда не идут, это
  * не покупка; здесь только положительные операции — начисления и пополнения.
  */
+/**
+ * §3.3 (MR-23): экономика — доходы, расходы (себестоимость ИИ), маржа и разрез по
+ * серверам. Все цифры с сервера (economyReport), пересчитаны по факт-статистике за
+ * выбранный период — не по «плановому» прайсу.
+ */
+function EconRow({ label, value, hint, tone }: { label: string; value: string; hint?: string; tone?: string }) {
+  return (
+    <div className="flex items-center justify-between gap-3">
+      <span className="min-w-0">
+        <span className="text-fg">{label}</span>
+        {hint && <span className="block text-[11px] text-muted">{hint}</span>}
+      </span>
+      <span className={cn('shrink-0 font-semibold tabular-nums', tone || 'text-fg')}>{value}</span>
+    </div>
+  )
+}
+
+function EconomyTab({ economy }: { economy: Economy | null }) {
+  if (!economy) return <Card className="p-6 text-sm text-muted">Загрузка…</Card>
+  const e = economy
+  // Деньги — суммы в $ с двумя знаками (для крошечной себестоимости токена берём fmtUsd).
+  const money = (n: number) => `$${(Math.round((Number(n) || 0) * 100) / 100).toLocaleString('ru-RU', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+  const marginOk = e.margin >= 0
+
+  return (
+    <div className="space-y-4">
+      {/* Итоги: доход / расход / маржа */}
+      <div className="grid gap-3 sm:grid-cols-3">
+        <MetricTile label="Доходы (валовый приток)" value={money(e.income.total)} tone="text-spark-300"
+          sub={`подписки ${money(e.income.plans)} · токены ${money(e.income.tokens)} · пополнения ${money(e.income.balanceTopups)}`} />
+        <MetricTile label="Расходы (себестоимость ИИ)" value={money(e.expenses.total)} tone="text-amber-300"
+          sub={`${fmt(e.expenses.tokensSpent)} токенов по факту`} />
+        <MetricTile label="Маржа" value={money(e.margin)} tone={marginOk ? 'text-spark-300' : 'text-red-400'}
+          sub={`${e.marginPct}% от дохода`} />
+      </div>
+
+      {/* Доходы — разбивка */}
+      <Card className="p-4">
+        <div className="mb-3 text-xs font-bold uppercase tracking-wide text-muted">Доходы за период</div>
+        <div className="space-y-2 text-sm">
+          <EconRow label="Подписки (планы)" value={money(e.income.plans)} hint={`${fmt(e.income.plansCount)} оплат`} />
+          <EconRow label="Продажа токенов" value={money(e.income.tokens)} hint={`${fmt(e.income.tokensCoins)} ⚡ · курс $${fmtUsd(e.income.coinUsd)}/⚡ · ${fmt(e.income.tokensCount)} пополнений`} />
+          <EconRow label="Пополнения баланса" value={money(e.income.balanceTopups)} hint={`${fmt(e.income.balanceCount)} операций`} />
+          <div className="flex items-center justify-between border-t border-line pt-2">
+            <span className="font-semibold text-fg">Итого приток</span>
+            <span className="font-semibold tabular-nums text-spark-300">{money(e.income.total)}</span>
+          </div>
+        </div>
+        <p className="mt-2 text-[11px] leading-relaxed text-muted">
+          В демо (без платёжного провайдера) пополнения начисляет админ, и «пополнение баланса» может пересекаться
+          с последующей тратой на подписку/токены — поэтому это валовый приток, а не чистая выручка.
+        </p>
+      </Card>
+
+      {/* Расходы: себестоимость ИИ по модулям */}
+      <Card className="p-4">
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+          <div className="text-xs font-bold uppercase tracking-wide text-muted">Расходы: себестоимость ИИ по модулям</div>
+          <div className="text-[11px] text-muted">
+            себестоимость токена ${fmtUsd(e.expenses.tokenUsd)} {e.expenses.tokenUsdAuto ? `· авто из модели ${e.expenses.tokenUsdModel}` : '· задана вручную'}
+          </div>
+        </div>
+        {e.expenses.byModule.length === 0 ? (
+          <div className="text-sm text-muted">За период расход ИИ не зафиксирован.</div>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="text-left text-[11px] uppercase text-muted">
+                  <th className="pb-1 font-semibold">Модуль</th>
+                  <th className="pb-1 text-right font-semibold">Токенов</th>
+                  <th className="pb-1 text-right font-semibold">Себестоимость</th>
+                </tr>
+              </thead>
+              <tbody>
+                {e.expenses.byModule.map((m) => (
+                  <tr key={m.key} className="border-t border-line/60">
+                    <td className="py-1.5">{m.title}</td>
+                    <td className="py-1.5 text-right tabular-nums">{fmt(m.tokens)}</td>
+                    <td className="py-1.5 text-right tabular-nums text-amber-300">{money(m.costUsd)}</td>
+                  </tr>
+                ))}
+                <tr className="border-t border-line font-semibold">
+                  <td className="py-1.5">Итого</td>
+                  <td className="py-1.5 text-right tabular-nums">{fmt(e.expenses.tokensSpent)}</td>
+                  <td className="py-1.5 text-right tabular-nums text-amber-300">{money(e.expenses.total)}</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        )}
+      </Card>
+
+      {/* Разрез по серверам (ресурсы на кол-во аккаунтов) */}
+      <Card className="p-4">
+        <div className="mb-3 text-xs font-bold uppercase tracking-wide text-muted">Ресурсы по серверам</div>
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="text-left text-[11px] uppercase text-muted">
+                <th className="pb-1 font-semibold">Сервер</th>
+                <th className="pb-1 text-right font-semibold">Аккаунтов</th>
+                <th className="pb-1 text-right font-semibold">Себестоимость ИИ</th>
+                <th className="pb-1 text-right font-semibold">На аккаунт</th>
+              </tr>
+            </thead>
+            <tbody>
+              {e.servers.map((s) => (
+                <tr key={s.name} className="border-t border-line/60">
+                  <td className="py-1.5">{s.name}</td>
+                  <td className="py-1.5 text-right tabular-nums">{fmt(s.accounts)}</td>
+                  <td className="py-1.5 text-right tabular-nums text-amber-300">{money(s.aiCostUsd)}</td>
+                  <td className="py-1.5 text-right tabular-nums">{money(s.costPerAccountUsd)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        <p className="mt-2 text-[11px] leading-relaxed text-muted">
+          Пока платформа на одном сервере. Когда добавится мультисервер (MR-65), здесь появится строка на каждый —
+          ресурсы на количество аккаунтов.
+        </p>
+      </Card>
+    </div>
+  )
+}
+
 function PurchasesTab({ p }: { p: Purchases | null }) {
   const [open, setOpen] = useState<string | null>(null)
   if (!p) return <Card className="p-6 text-sm text-muted">Загрузка…</Card>
