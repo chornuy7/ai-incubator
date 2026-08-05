@@ -1057,7 +1057,25 @@ app.get('/api/audit', async (req, res) => {
   try {
     const { readAudit } = await import('./lib/auditLog.js')
     const { limit, action, initiator, account } = req.query
-    const entries = await readAudit({ limit: limit ? Number(limit) : 300, action, initiator, account })
+    const wantLimit = limit ? Number(limit) : 300
+    // §7 (MR-41): в user-панели человек видит СВОИ логи + логи своих субпользователей
+    // (сотрудников), а не всё рабочее пространство. Админ/дев — все записи, как раньше.
+    const { requesterContext } = await import('./lib/accessGuard.js')
+    const ctx = await requesterContext(req)
+    if (ctx.noSession || ctx.isAdmin || !ctx.user) {
+      const entries = await readAudit({ limit: wantLimit, action, initiator, account })
+      return res.json({ ok: true, entries })
+    }
+    const { listSubs } = await import('./users.js')
+    const subs = await listSubs(ctx.id)
+    const allowed = new Set()
+    for (const u of [ctx.user, ...subs]) {
+      if (u.id) allowed.add(String(u.id).toLowerCase())
+      if (u.email) allowed.add(String(u.email).toLowerCase())
+    }
+    // Читаем шире (без initiator-фильтра) и оставляем только свои/субовские записи.
+    const pool = await readAudit({ limit: 10000, action, account })
+    const entries = pool.filter((e) => allowed.has(String(e.initiator || '').toLowerCase())).slice(0, wantLimit)
     res.json({ ok: true, entries })
   } catch (err) {
     res.status(500).json({ ok: false, error: err instanceof Error ? err.message : 'Ошибка' })
