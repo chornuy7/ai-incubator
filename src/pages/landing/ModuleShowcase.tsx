@@ -24,6 +24,14 @@ export const MODULE_SHOTS: Record<string, string[]> = {
   'mass-looking': ['/shots/mass-looking-hero.png', '/shots/mass-looking-s2.png'],
   'warming': ['/shots/warming-hero.png', '/shots/warming-s2.png'],
   'neuro-dialogs': ['/shots/neuro-dialogs-hero.png', '/shots/neuro-dialogs-s2.png'],
+  'ggr': ['/shots/ggr-hero.png', '/shots/ggr-s2.png'],
+  'mailing': ['/shots/mailing-hero.png'],
+  'autoposting': ['/shots/autoposting-hero.png', '/shots/autoposting-s2.png'],
+  'parsing': ['/shots/parsing-hero.png', '/shots/parsing-s3.png'],
+  'parsing-groups': ['/shots/parsing-groups-hero.png', '/shots/parsing-groups-s3.png'],
+  'parsing-users': ['/shots/parsing-users-hero.png', '/shots/parsing-users-s2.png'],
+  'parsing-messages': ['/shots/parsing-messages-hero.png', '/shots/parsing-messages-s2.png'],
+  'parsing-comments': ['/shots/parsing-comments-hero.png', '/shots/parsing-comments-s2.png'],
 }
 
 /** Подписи-выноски: берём возможности модуля — они уже написаны языком выгоды. */
