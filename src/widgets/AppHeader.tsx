@@ -10,6 +10,7 @@ import { usePlan } from '@/features/billing/plan'
 import { CRITICAL } from '@/features/billing/LowBalanceBar'
 import { useUi } from '@/shared/lib/uiStore'
 import { coins as fmtCoins } from '@/shared/lib/utils'
+import { confirmDialog } from '@/shared/lib/dialog'
 import { Dropdown, MenuItem, Modal, Avatar } from '@/shared/ui'
 import { LANGUAGES, moduleTitle } from '@/shared/config/modules'
 
@@ -86,7 +87,15 @@ export function AppHeader() {
   // подключают, поэтому пока показываем честный статус, а не делаем вид, что зачислили.
   const curSym = pricing?.currency || '$'
   const [buying, setBuying] = useState<number | null>(null)
-  const buyPack = async (usd: number) => {
+  // Покупка списывает деньги со счёта СРАЗУ — поэтому сначала явное подтверждение
+  // (человек жаловался: «нажал — и оно автоматом купило»). Без ok — ничего не списываем.
+  const buyPack = async (usd: number, coins: number) => {
+    const ok = await confirmDialog({
+      title: 'Купить токены',
+      message: `Купить ${fmtCoins(coins)} ⚡ за ${curSym}${usd}? Деньги спишутся со счёта сразу.`,
+      confirmLabel: `Купить за ${curSym}${usd}`,
+    })
+    if (!ok) return
     setBuying(usd)
     try {
       const r = await buyTokens(usd)
@@ -395,7 +404,7 @@ export function AppHeader() {
             {(pricing?.packs?.length ? pricing.packs : FALLBACK_PACKS).map((p) => (
               <button
                 key={p.coins}
-                onClick={() => void buyPack(p.price)}
+                onClick={() => void buyPack(p.price, p.coins)}
                 disabled={buying !== null}
                 className={`relative flex flex-col items-center gap-1 rounded-2xl border p-4 transition-all hover:-translate-y-0.5 disabled:opacity-50 ${p.best ? 'border-spark-500/50 bg-spark-500/8' : 'border-line bg-elevated'}`}
               >
