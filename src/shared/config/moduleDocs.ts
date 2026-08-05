@@ -284,7 +284,9 @@ export const MODULE_DOCS: Record<string, ModuleDoc> = {
     ],
   },
 
-  'mailing': {
+  // NB: helpDocs/learning-ключ мейлинга — 'mailing-rules' (модуль/роут — 'mailing'),
+  // поэтому вкладка «Интерфейс» цепляется по 'mailing-rules'.
+  'mailing-rules': {
     hero: '/shots/mailing-hero.png',
     intro: 'Экран модуля «Мейлинг» — массовая рассылка личных сообщений выбранной аудитории от имени ваших аккаунтов. Настраивается: аккаунты → аудитория → сообщение → тайминги → запуск.',
     sections: [
