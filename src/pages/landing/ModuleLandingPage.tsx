@@ -94,35 +94,38 @@ export function ModuleLandingPage() {
 
         {/* §2.1 (MR-3, уточнение заказчика): «Как это работает» и «Подписка» (цена) —
             РЯДОМ двумя колонками. «Возможности модуля» и всё прочее — на всю ширину. */}
-        <div className="grid gap-4 md:grid-cols-2 md:items-start">
+        <div className="grid gap-4 md:grid-cols-2 md:items-stretch">
           {/* Левая колонка — как работает */}
-          <div className="rounded-2xl border border-line bg-card p-5">
-            <div className="mb-3 text-sm font-semibold text-fg">Как это работает</div>
-            <ul className="grid gap-2.5">
+          <div className="flex flex-col rounded-2xl border border-line bg-card p-5">
+            <div className="mb-4 flex items-center gap-2">
+              <span className="grid h-7 w-7 place-items-center rounded-lg bg-spark-500/12 text-spark-400"><Zap size={15} fill="currentColor" /></span>
+              <span className="text-sm font-semibold text-fg">Как это работает</span>
+            </div>
+            <ul className="grid gap-3">
               {mod.how.map((h) => (
-                <li key={h} className="flex items-start gap-2 text-sm text-muted">
-                  <CircleCheck size={16} className="mt-0.5 shrink-0 text-spark-400" /> {h}
+                <li key={h} className="flex items-start gap-2.5 text-sm leading-relaxed text-muted">
+                  <CircleCheck size={17} className="mt-0.5 shrink-0 text-spark-400" /> {h}
                 </li>
               ))}
             </ul>
           </div>
 
-          {/* Правая колонка — подписка (цена). Внутри колонки складывается вертикально. */}
+          {/* Правая колонка — подписка (цена). Кнопка прижата к низу → выравнивание с левой. */}
           {isBonus ? (
-            <div className="rounded-2xl border border-spark-500/40 bg-spark-500/8 p-6">
+            <div className="flex flex-col rounded-2xl border border-spark-500/40 bg-spark-500/[.07] p-6">
               <div className="text-sm font-semibold text-spark-300">В подарок</div>
-              <div className="mt-1 font-display text-3xl font-bold">Бесплатно</div>
-              <p className="mt-1 text-sm text-muted">Идёт с любым набором модулей.</p>
-              <button onClick={start} className="btn-primary mt-4 h-12 w-full">Начать <ArrowRight size={17} /></button>
+              <div className="mt-1 font-display text-4xl font-bold">Бесплатно</div>
+              <p className="mt-1.5 text-sm text-muted">Идёт с любым набором модулей.</p>
+              <button onClick={start} className="btn-primary mt-auto h-12 w-full pt-0.5 text-base">Начать <ArrowRight size={17} /></button>
             </div>
           ) : (
-            <div className={cn('rounded-2xl border p-5', sel.save > 0 ? 'border-spark-500/40 bg-spark-500/8' : 'border-line bg-card')}>
-              {/* Переключатель периода — таб вместо двух карточек стеком. */}
-              <div className="inline-flex rounded-xl border border-line bg-elevated p-1">
+            <div className={cn('flex flex-col rounded-2xl border p-5', sel.save > 0 ? 'border-spark-500/40 bg-spark-500/[.07]' : 'border-line bg-card')}>
+              {/* Переключатель периода — на всю ширину карточки, ровный ряд. */}
+              <div className="flex rounded-xl border border-line bg-elevated p-1">
                 {periods.map((p, i) => (
                   <button key={`${p.unit}${p.count}`} onClick={() => setPeriodIdx(i)}
                     className={cn(
-                      'rounded-lg px-3 py-1.5 text-sm font-medium transition-colors',
+                      'flex-1 rounded-lg px-2 py-1.5 text-sm font-medium transition-colors',
                       p === sel ? 'bg-spark-500/20 text-spark-200' : 'text-muted hover:text-fg',
                     )}>
                     {periodLabel(p)}
@@ -130,8 +133,8 @@ export function ModuleLandingPage() {
                   </button>
                 ))}
               </div>
-              <div className="mt-3 flex items-baseline gap-2">
-                <span className="font-display text-3xl font-bold">{cur}{sel.total}</span>
+              <div className="mt-4 flex items-baseline gap-2">
+                <span className="font-display text-4xl font-bold tracking-tight">{cur}{sel.total}</span>
                 <span className="text-sm text-muted">{periodPhrase(sel)}</span>
                 {sel.save > 0 && <span className="rounded-md bg-spark-500/20 px-1.5 py-0.5 text-[10px] font-bold text-spark-300">выгода {Math.round(sel.discount * 100)}%</span>}
               </div>
@@ -140,9 +143,9 @@ export function ModuleLandingPage() {
                   ? <>≈ {cur}{sel.perMonth} / месяц · экономия {cur}{sel.save}</>
                   : <>{cur}{sel.perMonth} / месяц</>}
               </div>
-              <button onClick={start} className="btn-primary mt-4 h-12 w-full">Выбрать <ArrowRight size={16} /></button>
-              <div className="mt-3 flex items-center gap-2 text-xs text-muted">
-                <Check size={14} className="text-spark-400" /> Доступ сразу · обновления без доплат · работа ИИ оплачивается монетами
+              <button onClick={start} className="btn-primary mt-auto h-12 w-full text-base">Выбрать <ArrowRight size={16} /></button>
+              <div className="mt-3 flex items-start gap-2 text-xs leading-relaxed text-muted">
+                <Check size={14} className="mt-0.5 shrink-0 text-spark-400" /> Доступ сразу · обновления без доплат · работа ИИ оплачивается монетами
               </div>
             </div>
           )}
