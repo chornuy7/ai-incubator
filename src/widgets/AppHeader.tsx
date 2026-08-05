@@ -152,17 +152,21 @@ export function AppHeader() {
               Курс монеты берём из пакетов пополнения (та же формула, что на сервере). */}
           {(() => {
             const c = balance?.coins ?? data.coins
-            const alarm = c <= CRITICAL
             // §11.4: деньги — ОТДЕЛЬНЫЙ остаток с сервера, а не пересчёт токенов по
             // курсу. Владелец: «баланс — это $, за них покупаем подписки и токены».
             // Пока миграция usd-кошелька не применена, поле не приходит — тогда
             // показываем только токены, а не выдуманный ноль долларов.
             const usd = typeof balance?.usd === 'number' ? balance.usd : null
+            const tokensLow = c <= CRITICAL
+            const usdLow = usd != null && usd <= 0     // §11.5: $0 — тоже тревога (красным)
+            const alarm = tokensLow || usdLow          // чип красный, если пусто хоть одно
             const cur = pricing?.currency || '$'
             return (
               <button
                 onClick={() => setCoinsOpen(true)}
-                title={alarm ? 'Токены на нуле — пополнить' : 'Деньги и токены'}
+                title={usdLow && tokensLow ? 'Деньги и токены на нуле — пополнить'
+                  : usdLow ? 'Денег на счёте нет — пополнить'
+                    : tokensLow ? 'Токены на нуле — пополнить' : 'Деньги и токены'}
                 className={
                   'flex items-center gap-2 rounded-xl border px-3 py-1.5 transition-colors ' +
                   (alarm
@@ -171,13 +175,13 @@ export function AppHeader() {
                 }
               >
                 {usd != null && (
-                  <span className={'text-sm font-bold tabular-nums ' + (alarm ? 'text-red-300' : 'text-fg')}>
+                  <span className={'text-sm font-bold tabular-nums ' + (usdLow ? 'text-red-300' : 'text-fg')}>
                     {cur}{usd.toFixed(2)}
                   </span>
                 )}
                 <span className={'flex items-center gap-1 ' + (usd != null ? 'border-l border-white/10 pl-2' : '')}>
-                  <Zap size={15} className={alarm ? 'text-red-400' : 'text-amber-400'} fill="currentColor" />
-                  <span className={'text-sm font-bold tabular-nums ' + (alarm ? 'text-red-300' : 'text-amber-300')}>{fmtCoins(c)}</span>
+                  <Zap size={15} className={tokensLow ? 'text-red-400' : 'text-amber-400'} fill="currentColor" />
+                  <span className={'text-sm font-bold tabular-nums ' + (tokensLow ? 'text-red-300' : 'text-amber-300')}>{fmtCoins(c)}</span>
                 </span>
                 {alarm && <span className="text-xs font-bold text-red-300">Пополнить</span>}
               </button>
