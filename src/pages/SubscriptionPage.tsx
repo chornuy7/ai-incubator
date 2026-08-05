@@ -144,8 +144,17 @@ export function SubscriptionPage() {
                   <span className={cn('grid h-5 w-5 shrink-0 place-items-center rounded-md border', on ? 'border-spark-500 bg-spark-500 text-[#04150c]' : 'border-line')}>
                     {on && <Check size={13} strokeWidth={3} />}
                   </span>
-                  <span className="truncate text-sm font-medium text-fg">{m.title}</span>
-                  {mineSet.has(m.key) && <span className="shrink-0 rounded-md bg-white/8 px-1.5 py-0.5 text-[10px] font-bold text-muted">оплачен</span>}
+                  <span className="min-w-0">
+                    <span className="flex items-center gap-1.5">
+                      <span className="truncate text-sm font-medium text-fg">{m.title}</span>
+                      {mineSet.has(m.key) && <span className="shrink-0 rounded-md bg-white/8 px-1.5 py-0.5 text-[10px] font-bold text-muted">оплачен</span>}
+                    </span>
+                    {/* §3.2 (MR-22): калькулятор — сколько действий даёт 100 ⚡ для этого модуля. */}
+                    <span className="block text-[11px] text-muted">
+                      {m.action && m.action > 0 ? `≈ ${Math.round(100 / m.action).toLocaleString('ru-RU')} действий за 100 ⚡` : 'действия бесплатны'}
+                      {m.gift ? <span className="text-spark-300"> · +{m.gift} ⚡ в подарок</span> : null}
+                    </span>
+                  </span>
                 </span>
                 {/* §11.2 (31.07): в кабинете цена — только текстом. Правка цен — в админ-панели. */}
                 <span className="shrink-0 font-semibold tabular-nums text-fg">{m.price} {cur}</span>
