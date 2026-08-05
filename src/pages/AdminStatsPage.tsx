@@ -13,6 +13,7 @@ import {
   fetchTaskLogs, type FailedTask, type TaskLogs } from '@/api/adminApi'
 import { updateUser } from '@/api/usersApi'
 import { fetchTickets, fetchTicket, replyTicket, setTicketStatus, type ApiTicket, type TicketStatus } from '@/api/ticketsApi'
+import { fetchTgstatSession, uploadTgstatSession, verifyTgstatSession, clearTgstatSession, type TgstatSession } from '@/api/tgstatApi'
 import { fetchRoles } from '@/api/rolesApi'
 import { RolesPage } from '@/pages/RolesPage'
 import { changeBalance, fetchSubscription, saveUserModules, fetchWalletHistory, type WalletEntry } from '@/api/balanceApi'
@@ -209,7 +210,7 @@ export function AdminStatsPage() {
       />
 
       <div className="mb-4 flex flex-wrap items-center gap-3">
-        <Segmented options={['Панель', 'Сейчас', 'По дням', 'Пользователи', 'Покупки', 'Экономика', 'Цены', 'Задачи и ошибки', 'CRM', 'Отчёт', 'Мониторинг', 'Аккаунты', 'Роли', 'Тикеты', 'API']} value={tab} onChange={setTab} />
+        <Segmented options={['Панель', 'Сейчас', 'По дням', 'Пользователи', 'Покупки', 'Экономика', 'Цены', 'Задачи и ошибки', 'CRM', 'Отчёт', 'Мониторинг', 'Аккаунты', 'Роли', 'Тикеты', 'Парсер', 'API']} value={tab} onChange={setTab} />
         <Segmented options={PERIODS.map((p) => p.label)} value={periodIdx} onChange={setPeriodIdx} size="sm" />
       </div>
 
@@ -249,6 +250,9 @@ export function AdminStatsPage() {
       ) : tab === 13 ? (
         /* §8 (MR-44): тикеты поддержки — поддержка видит все, отвечает, двигает статус. */
         <AdminTicketsTab />
+      ) : tab === 14 ? (
+        /* §6 (MR-40b): сессия каталог-парсера (cookies) — управление из админки. */
+        <AdminParserSessionTab />
       ) : (
         <ApiDocsTab />
       )}
@@ -1057,6 +1061,101 @@ function UserActivityLog({ state }: { state: UserActivity | 'loading' | undefine
  * стороны счёта — сколько человек занёс и сколько сжёг. Списания сюда не идут, это
  * не покупка; здесь только положительные операции — начисления и пополнения.
  */
+/**
+ * §6 (MR-40b): управление сессией каталог-парсера ИЗ АДМИНКИ. Раньше cookies-сессия
+ * настраивалась только внутри модуля «Парсер по каталогу» (её мог трогать любой с
+ * доступом к парсеру); это общий системный ресурс, поэтому выносим управление в
+ * админ-панель. Переиспользуем готовые API (fetch/upload/verify/clear) — без дубля логики.
+ */
+function normalizeCookies(text: string): unknown {
+  const cleaned = text.replace(/^﻿/, '').trim()
+  if (!cleaned) throw new Error('Пусто.')
+  let raw: unknown
+  try { raw = JSON.parse(cleaned) } catch { throw new Error('Не JSON. Cookie-Editor → Export → JSON.') }
+  if (Array.isArray(raw)) return { cookies: raw }
+  if (raw && typeof raw === 'object') {
+    const o = raw as Record<string, unknown>
+    const ss = o.storage_state as { cookies?: unknown } | undefined
+    if (ss?.cookies) return ss
+    const data = o.data as { cookies?: unknown } | undefined
+    if (data?.cookies) return { cookies: data.cookies }
+    if (Array.isArray(o.cookies)) return { cookies: o.cookies }
+  }
+  throw new Error('В файле нет cookies.')
+}
+
+function AdminParserSessionTab() {
+  const pushToast = useApp((s) => s.pushToast)
+  const [session, setSession] = useState<TgstatSession | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [paste, setPaste] = useState('')
+  const [busy, setBusy] = useState<'' | 'upload' | 'verify' | 'clear'>('')
+
+  const load = useCallback(async () => {
+    setLoading(true)
+    try { setSession(await fetchTgstatSession()) } catch { /* нет */ } finally { setLoading(false) }
+  }, [])
+  useEffect(() => { void load() }, [load])
+
+  const upload = async () => {
+    if (!paste.trim()) return pushToast({ type: 'error', title: 'Вставьте JSON cookies' })
+    setBusy('upload')
+    try {
+      const s = await uploadTgstatSession(normalizeCookies(paste))
+      setSession(s)
+      const res = await verifyTgstatSession()
+      pushToast({ type: res.ok ? 'success' : 'error', title: res.ok ? 'Сессия работает' : 'Проверка не пройдена', desc: res.message })
+      setPaste(''); await load()
+    } catch (e) { pushToast({ type: 'error', title: 'Ошибка загрузки', desc: e instanceof Error ? e.message : '' }) }
+    finally { setBusy('') }
+  }
+  const verify = async () => {
+    setBusy('verify')
+    try { const res = await verifyTgstatSession(); pushToast({ type: res.ok ? 'success' : 'error', title: res.ok ? 'Сессия работает' : 'Не пройдена', desc: res.message }); await load() }
+    catch (e) { pushToast({ type: 'error', title: 'Ошибка', desc: e instanceof Error ? e.message : '' }) } finally { setBusy('') }
+  }
+  const clear = async () => {
+    setBusy('clear')
+    try { setSession(await clearTgstatSession()); pushToast({ type: 'info', title: 'Сессия каталога удалена' }) }
+    catch { pushToast({ type: 'error', title: 'Не удалось удалить' }) } finally { setBusy('') }
+  }
+
+  const ready = session?.has_session && session.status === 'active' && Boolean(session.last_verified_at)
+
+  return (
+    <div className="space-y-3">
+      <Card className="p-4">
+        <div className="mb-3 flex flex-wrap items-center gap-2">
+          <Radar size={16} className="text-spark-400" />
+          <span className="font-display text-base font-bold text-fg">Сессия каталог-парсера</span>
+          {loading ? <Loader2 size={14} className="animate-spin text-muted" />
+            : ready ? <Badge tone="spark"><Check size={12} /> Подключена</Badge>
+              : <Badge tone="amber"><AlertTriangle size={12} /> Не подключена</Badge>}
+          <button onClick={() => void load()} className="btn-ghost ml-auto h-8 text-xs"><RefreshCw size={14} className={loading ? 'animate-spin' : ''} /> Обновить</button>
+        </div>
+        <p className="mb-3 text-xs leading-relaxed text-muted">
+          Общая cookies-сессия каталога (массовый парсинг по категориям). Управляется здесь как системный
+          ресурс — раньше её настраивали только внутри модуля. Cookies берутся с сайта каталога (Cookie-Editor → Export → JSON).
+        </p>
+        {session && (
+          <div className="mb-3 grid gap-2 sm:grid-cols-3">
+            <MetricTile label="Статус" value={session.status === 'active' ? 'Активна' : session.status === 'error' ? 'Ошибка' : session.status === 'expired' ? 'Истекла' : 'Нет'} tone={ready ? 'text-spark-300' : 'text-amber-300'} sub={session.telegram_logged_in ? 'Telegram в каталоге ✓' : 'Без входа — лимит ~100'} />
+            <MetricTile label="Cookies" value={fmt(session.cookie_count || 0)} sub={session.cookie_summary || '—'} />
+            <MetricTile label="Проверена" value={session.last_verified_at ? new Date(session.last_verified_at).toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : '—'} sub={session.error_msg || ''} />
+          </div>
+        )}
+        <label className="label">Вставить cookies (JSON)</label>
+        <textarea value={paste} onChange={(e) => setPaste(e.target.value)} rows={4} className="input resize-none font-mono text-xs" placeholder='[{"name":"...","value":"...","domain":".tgstat.com"}, …]' />
+        <div className="mt-3 flex flex-wrap gap-2">
+          <button onClick={() => void upload()} disabled={busy !== '' || !paste.trim()} className="btn-primary h-10 disabled:opacity-50">{busy === 'upload' ? <Loader2 size={15} className="animate-spin" /> : <Check size={15} />} Загрузить и проверить</button>
+          <button onClick={() => void verify()} disabled={busy !== '' || !session?.has_session} className="btn-soft h-10 disabled:opacity-50">{busy === 'verify' ? <Loader2 size={15} className="animate-spin" /> : <RefreshCw size={15} />} Проверить</button>
+          <button onClick={() => void clear()} disabled={busy !== '' || !session?.has_session} className="btn-danger ml-auto h-10 disabled:opacity-50">{busy === 'clear' ? <Loader2 size={15} className="animate-spin" /> : <Trash2 size={15} />} Удалить</button>
+        </div>
+      </Card>
+    </div>
+  )
+}
+
 /**
  * §8 (MR-44): тикеты поддержки в админке — раньше обращения были моком в браузере и
  * поддержка их не видела. Теперь тянем все тикеты с сервера, отвечаем как «поддержка»
