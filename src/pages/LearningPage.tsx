@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { GraduationCap, Search, ChevronRight, Eye, Cog, Network, Lightbulb, ShieldAlert, Sparkles, ListChecks } from 'lucide-react'
+import { GraduationCap, Search, ChevronRight, Eye, Cog, Network, Lightbulb, ShieldAlert, Sparkles, ListChecks, BookOpen, Users, Flame, Hash, Heart, Gauge, Rocket, Activity, type LucideIcon } from 'lucide-react'
 import { PageHeader, Card } from '@/shared/ui'
 import { HELP_DOCS, type HelpDoc } from '@/shared/config/helpDocs'
 import { cn } from '@/shared/lib/utils'
@@ -13,23 +13,23 @@ import { getModule } from './landing/catalog'
  * прогрев), поэтому инструкция всегда точна и не расходится с реальным интерфейсом, а
  * не пишется руками для каждого модуля. Простые короткие шаги «сделай 1 → 2 → 3».
  */
-export function moduleSteps(key: string): { title: string; text: string }[] | null {
+export function moduleSteps(key: string): { title: string; text: string; icon: LucideIcon }[] | null {
   const m = MODULES[key]
   if (!m) return null
-  const steps: { title: string; text: string }[] = []
-  steps.push({ title: `Откройте «${m.title}»`, text: 'Модуль — в левом меню. Откроется страница запуска с настройками и кнопкой «Запустить» внизу.' })
-  if (m.accountPicker) steps.push({ title: 'Выберите аккаунты', text: 'Отметьте аккаунты из пула, которыми будет работать модуль. Занятые в другой задаче — недоступны. Больше аккаунтов — равномернее нагрузка и безопаснее.' })
-  if (m.warmingLayout) steps.push({ title: 'Настройте прогрев', text: 'Выберите уровень/интенсивность прогрева. Цели не нужны — модуль сам имитирует живую активность аккаунтов.' })
+  const steps: { title: string; text: string; icon: LucideIcon }[] = []
+  steps.push({ icon: BookOpen, title: `Откройте «${m.title}»`, text: 'Модуль — в левом меню. Откроется страница запуска с настройками и кнопкой «Запустить» внизу.' })
+  if (m.accountPicker) steps.push({ icon: Users, title: 'Выберите аккаунты', text: 'Отметьте аккаунты из пула, которыми будет работать модуль. Занятые в другой задаче — недоступны. Больше аккаунтов — равномернее нагрузка и безопаснее.' })
+  if (m.warmingLayout) steps.push({ icon: Flame, title: 'Настройте прогрев', text: 'Выберите уровень/интенсивность прогрева. Цели не нужны — модуль сам имитирует живую активность аккаунтов.' })
   if (m.sourceTabs || m.postLinks) {
     const unit = m.unit?.title ? m.unit.title.toLowerCase() : 'цели'
     const src = m.postLinks ? `${unit} или ссылки на посты` : unit
-    steps.push({ title: `Добавьте ${unit}`, text: `Вставьте ${src} вручную, загрузите из папки или из прошлой задачи. Их число видно на карточке-счётчике. Ненужное можно занести в чёрный список.` })
+    steps.push({ icon: Hash, title: `Добавьте ${unit}`, text: `Вставьте ${src} вручную, загрузите из папки или из прошлой задачи. Их число видно на карточке-счётчике. Ненужное можно занести в чёрный список.` })
   }
-  if (m.messagePrompts?.length) steps.push({ title: 'Задайте тон / промпт', text: `Выберите тип (${m.messagePrompts.slice(0, 3).join(', ')}…). Если типов несколько — задайте их доли в процентах: сумма всегда 100%, замок закрепляет долю.` })
-  if (m.reactionSettings) steps.push({ title: 'Выберите реакции', text: 'Отметьте эмодзи, которыми аккаунты будут реагировать на посты.' })
-  steps.push({ title: 'Проверьте лимиты и стоимость', text: 'Сверху — карточки «Аккаунты», «Цели», «≈ время», «Лимит». Под ними — примерная стоимость запуска в токенах. Обязательные незаполненные поля подсвечены, кнопка запуска пока заблокирована.' })
-  steps.push({ title: 'Запустите', text: isCombatModule(key) ? 'Нажмите «Запустить» — для боевого модуля будет запрос подтверждения. Задача уйдёт в работу.' : 'Нажмите «Запустить» — задача уйдёт в работу.' })
-  steps.push({ title: 'Следите за результатом', text: 'Прогресс, лог каждого действия и управление (пауза/стоп) — в «Дашборде задач». Там же результаты и ошибки.' })
+  if (m.messagePrompts?.length) steps.push({ icon: Sparkles, title: 'Задайте тон / промпт', text: `Выберите тип (${m.messagePrompts.slice(0, 3).join(', ')}…). Если типов несколько — задайте их доли в процентах: сумма всегда 100%, замок закрепляет долю.` })
+  if (m.reactionSettings) steps.push({ icon: Heart, title: 'Выберите реакции', text: 'Отметьте эмодзи, которыми аккаунты будут реагировать на посты.' })
+  steps.push({ icon: Gauge, title: 'Проверьте лимиты и стоимость', text: 'Сверху — карточки «Аккаунты», «Цели», «≈ время», «Лимит». Под ними — примерная стоимость запуска в токенах. Обязательные незаполненные поля подсвечены, кнопка запуска пока заблокирована.' })
+  steps.push({ icon: Rocket, title: 'Запустите', text: isCombatModule(key) ? 'Нажмите «Запустить» — для боевого модуля будет запрос подтверждения. Задача уйдёт в работу.' : 'Нажмите «Запустить» — задача уйдёт в работу.' })
+  steps.push({ icon: Activity, title: 'Следите за результатом', text: 'Прогресс, лог каждого действия и управление (пауза/стоп) — в «Дашборде задач». Там же результаты и ошибки.' })
   return steps
 }
 
@@ -87,7 +87,7 @@ function LearningView({ q, setQ, groups, active, setActive, activeDoc }: {
 }) {
   // Вкладки собираем только из непустых секций дока — у разных тем свой набор.
   const tabs = useMemo(() => {
-    if (!activeDoc) return [] as { key: string; label: string; icon: typeof Eye; body?: string; tips?: string[]; steps?: { title: string; text: string }[]; accent?: boolean; warn?: boolean }[]
+    if (!activeDoc) return [] as { key: string; label: string; icon: typeof Eye; body?: string; tips?: string[]; steps?: { title: string; text: string; icon: LucideIcon }[]; accent?: boolean; warn?: boolean }[]
     // §9 (MR-47): для модуля первой идёт вкладка «С чего начать» — пошаговая инструкция.
     const steps = active ? moduleSteps(active) : null
     return [
@@ -205,20 +205,27 @@ function LearningView({ q, setQ, groups, active, setActive, activeDoc }: {
  * §9 (MR-47): пошаговый формат — крупные пронумерованные шаги, соединённые линией.
  * «Понятно даже ребёнку»: один шаг = одно действие, по порядку сверху вниз.
  */
-function StepList({ steps }: { steps: { title: string; text: string }[] }) {
+function StepList({ steps }: { steps: { title: string; text: string; icon: LucideIcon }[] }) {
   return (
     <ol className="relative space-y-3">
-      {steps.map((s, i) => (
-        <li key={i} className="relative flex gap-3">
-          {/* Соединительная линия между кружками-номерами. */}
-          {i < steps.length - 1 && <span className="absolute left-[15px] top-8 h-[calc(100%-1rem)] w-px bg-line" aria-hidden />}
-          <span className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-spark-500/15 font-display text-sm font-bold text-spark-300 ring-1 ring-spark-500/30">{i + 1}</span>
-          <div className="min-w-0 flex-1 rounded-xl border border-line bg-elevated/40 p-3">
-            <div className="text-sm font-semibold text-fg">{s.title}</div>
-            <div className="mt-0.5 text-sm leading-relaxed text-muted">{s.text}</div>
-          </div>
-        </li>
-      ))}
+      {steps.map((s, i) => {
+        const Icon = s.icon
+        return (
+          <li key={i} className="relative flex gap-3">
+            {/* Соединительная линия между кружками-иконками. */}
+            {i < steps.length - 1 && <span className="absolute left-[17px] top-9 h-[calc(100%-1rem)] w-px bg-line" aria-hidden />}
+            {/* Номер + иконка шага: наглядно «даже ребёнку» — что за действие. */}
+            <span className="relative grid h-9 w-9 shrink-0 place-items-center rounded-full bg-spark-500/15 text-spark-300 ring-1 ring-spark-500/30">
+              <Icon size={17} />
+              <span className="absolute -left-1 -top-1 grid h-4 w-4 place-items-center rounded-full bg-spark-500 text-[10px] font-bold text-[#04150c]">{i + 1}</span>
+            </span>
+            <div className="min-w-0 flex-1 rounded-xl border border-line bg-elevated/40 p-3">
+              <div className="text-sm font-semibold text-fg">{s.title}</div>
+              <div className="mt-0.5 text-sm leading-relaxed text-muted">{s.text}</div>
+            </div>
+          </li>
+        )
+      })}
     </ol>
   )
 }
