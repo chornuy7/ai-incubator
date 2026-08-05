@@ -3,6 +3,7 @@ import { FlaskConical, X, WifiOff, RotateCcw } from 'lucide-react'
 import { useApp } from '@/mocks/store'
 import { Switch } from '@/shared/ui'
 import { cn } from '@/shared/lib/utils'
+import { isDevEnv } from '@/shared/lib/env'
 import type { UserState } from '@/shared/types'
 
 const SCENARIOS: { key: UserState; label: string; hint: string }[] = [
@@ -20,6 +21,10 @@ export function DevPanel() {
   const toggleNetErrors = useApp((s) => s.toggleNetErrors)
   const resetData = useApp((s) => s.resetData)
   const pushToast = useApp((s) => s.pushToast)
+
+  // §10 (MR-51): dev-панель (переключатель моков, сбой сети) — только в окружении
+  // development. На production её не должно быть — там нет ни моков, ни метки «Dev».
+  if (!isDevEnv()) return null
 
   return (
     <div className="fixed bottom-4 left-4 z-[90]">
