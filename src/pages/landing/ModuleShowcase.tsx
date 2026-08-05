@@ -15,8 +15,10 @@ import { ModuleMockScreen } from './ModuleMockScreen'
  * Справа — пронумерованные выноски (возможности модуля).
  */
 export const MODULE_SHOTS: Record<string, string[]> = {
-  // Реальные скриншоты (по желанию). Несколько экранов — добавьте `<key>-2.png` и т.д.
-  // Пусто = показываем рендер экрана в коде (ModuleMockScreen).
+  // §9 (MR-48): реальные скриншоты модуля вместо код-рисованного мока. Несколько экранов —
+  // добавьте `<key>-2.png` и т.д. Пусто = показываем рендер экрана в коде (ModuleMockScreen).
+  // Скрины анонимны (демо-аккаунты), снимаются scripts/_shots-all.mjs в public/shots/.
+  'neuro-commenting': ['/shots/neuro-commenting-hero.png', '/shots/neuro-commenting-comments.png'],
 }
 
 /** Подписи-выноски: берём возможности модуля — они уже написаны языком выгоды. */
