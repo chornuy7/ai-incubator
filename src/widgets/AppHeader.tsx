@@ -89,16 +89,23 @@ export function AppHeader() {
   const [buying, setBuying] = useState<number | null>(null)
   // Покупка списывает деньги со счёта СРАЗУ — поэтому сначала явное подтверждение
   // (человек жаловался: «нажал — и оно автоматом купило»). Без ok — ничего не списываем.
-  const buyPack = async (usd: number, coins: number) => {
+  const buyPack = async (price: number, coins: number) => {
+    // §11.5: нельзя купить, если на счёте нет денег — сразу говорим «пополните», а не
+    // даём подтвердить покупку, которую нечем оплатить.
+    const bal = typeof balance?.usd === 'number' ? balance.usd : null
+    if (bal != null && bal < price) {
+      pushToast({ type: 'error', title: 'Недостаточно средств', desc: `На счёте ${curSym}${bal.toFixed(2)} — пополните счёт, чтобы купить за ${curSym}${price}.` })
+      return
+    }
     const ok = await confirmDialog({
       title: 'Купить токены',
-      message: `Купить ${fmtCoins(coins)} ⚡ за ${curSym}${usd}? Деньги спишутся со счёта сразу.`,
-      confirmLabel: `Купить за ${curSym}${usd}`,
+      message: `Купить ${fmtCoins(coins)} ⚡ за ${curSym}${price}? Деньги спишутся со счёта сразу.`,
+      confirmLabel: `Купить за ${curSym}${price}`,
     })
     if (!ok) return
-    setBuying(usd)
+    setBuying(price)
     try {
-      const r = await buyTokens(usd)
+      const r = await buyTokens(price)
       setBalance(r.balance)
       pushToast({ type: 'success', title: `Куплено ${fmtCoins(r.tokens)} ⚡`, desc: `Списано ${curSym}${r.spentUsd.toFixed(2)}` })
     } catch (e) {
@@ -404,23 +411,41 @@ export function AppHeader() {
         {/* Обменять деньги на токены: списываем $ со счёта и начисляем ⚡ (buyTokens). */}
         <div className="mb-4 rounded-2xl border border-line bg-elevated/50 p-3">
           <div className="mb-2 text-xs font-bold uppercase tracking-wide text-muted">Купить токены за {curSym} со счёта</div>
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-            {(pricing?.packs?.length ? pricing.packs : FALLBACK_PACKS).map((p) => (
-              <button
-                key={p.coins}
-                onClick={() => void buyPack(p.price, p.coins)}
-                disabled={buying !== null}
-                className={`relative flex flex-col items-center gap-1 rounded-2xl border p-4 transition-all hover:-translate-y-0.5 disabled:opacity-50 ${p.best ? 'border-spark-500/50 bg-spark-500/8' : 'border-line bg-elevated'}`}
-              >
-                {p.best && <span className="absolute -top-2 rounded-full bg-spark-gradient px-2 py-0.5 text-[10px] font-bold text-[#04150c]">ВЫГОДНО</span>}
-                <Zap size={22} className="text-amber-400" fill="currentColor" />
-                <span className="font-display text-xl font-bold text-fg">{p.coins}</span>
-                <span className="text-sm font-semibold text-muted">{p.price} {curSym}</span>
-                {/* Цена монеты в пакете: «выгодно» должно быть посчитано, а не заявлено. */}
-                <span className="text-[10px] text-faint">{(p.price / p.coins).toFixed(3)} {curSym} / ⚡</span>
-              </button>
-            ))}
-          </div>
+          {(() => {
+            // §11.5: денег на счёте нет — покупать нечем; пакеты недоступны, а не «жмётся,
+            // но падает с ошибкой». Если usd-кошелёк ещё не пришёл (null) — не блокируем.
+            const usdBal = typeof balance?.usd === 'number' ? balance.usd : null
+            return (
+              <>
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+                  {(pricing?.packs?.length ? pricing.packs : FALLBACK_PACKS).map((p) => {
+                    const cantAfford = usdBal != null && usdBal < p.price
+                    return (
+                      <button
+                        key={p.coins}
+                        onClick={() => void buyPack(p.price, p.coins)}
+                        disabled={buying !== null || cantAfford}
+                        title={cantAfford ? `Недостаточно средств: на счёте ${curSym}${usdBal?.toFixed(2)}` : undefined}
+                        className={`relative flex flex-col items-center gap-1 rounded-2xl border p-4 transition-all enabled:hover:-translate-y-0.5 disabled:cursor-not-allowed disabled:opacity-45 ${p.best ? 'border-spark-500/50 bg-spark-500/8' : 'border-line bg-elevated'}`}
+                      >
+                        {p.best && <span className="absolute -top-2 rounded-full bg-spark-gradient px-2 py-0.5 text-[10px] font-bold text-[#04150c]">ВЫГОДНО</span>}
+                        <Zap size={22} className="text-amber-400" fill="currentColor" />
+                        <span className="font-display text-xl font-bold text-fg">{p.coins}</span>
+                        <span className="text-sm font-semibold text-muted">{p.price} {curSym}</span>
+                        {/* Цена монеты в пакете: «выгодно» должно быть посчитано, а не заявлено. */}
+                        <span className="text-[10px] text-faint">{(p.price / p.coins).toFixed(3)} {curSym} / ⚡</span>
+                      </button>
+                    )
+                  })}
+                </div>
+                {usdBal != null && usdBal <= 0 && (
+                  <div className="mt-2.5 rounded-lg border border-amber-500/25 bg-amber-500/8 px-3 py-2 text-xs text-amber-200">
+                    На счёте {curSym}0.00 — сначала пополните счёт, тогда можно купить токены.
+                  </div>
+                )}
+              </>
+            )
+          })()}
         </div>
 
         {/* Прайс: человек должен видеть, за что уходят токены, до покупки, а не после. */}
