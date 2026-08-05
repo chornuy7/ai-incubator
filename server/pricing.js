@@ -165,8 +165,10 @@ export function periodCost(monthlySum, months = 1, annualDiscount = ANNUAL_DISCO
   return Math.round(Number(monthlySum) * m * (1 - discount) * 100) / 100
 }
 
-export function subscriptionCost(moduleKeys = [], customBundles = [], priceMap = MODULE_MONTH_PRICE) {
+export function subscriptionCost(moduleKeys = [], customBundles = [], priceMap = MODULE_MONTH_PRICE, giftMap = {}) {
   const keys = [...new Set(moduleKeys.filter((k) => MODULE_MONTH_PRICE[k] !== undefined))]
+  // §3 (MR-21): подарочные токены суммируются по выбранным модулям.
+  const giftTokens = keys.reduce((acc, k) => acc + (Number(giftMap[k]) || 0), 0)
   const full = keys.reduce((acc, k) => acc + modulePrice(k, priceMap), 0)
   // Скидку даёт сетап, ВСЕ модули которого выбраны: иначе «почти сетап» получал бы
   // цену сетапа, и поштучная покупка была бы бессмысленной.
@@ -190,7 +192,7 @@ export function subscriptionCost(moduleKeys = [], customBundles = [], priceMap =
       best = { setup: b.id, discount: full ? Math.round((1 - price / full) * 1000) / 1000 : 0, sum: price }
     }
   }
-  return { sum: best.sum, full, setup: best.setup, discount: best.discount }
+  return { sum: best.sum, full, setup: best.setup, discount: best.discount, giftTokens }
 }
 
 /**

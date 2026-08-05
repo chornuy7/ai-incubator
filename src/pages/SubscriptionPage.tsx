@@ -39,7 +39,9 @@ export function SubscriptionPage() {
   // Считаем на клиенте ТОЛЬКО для мгновенной реакции на клик; при сохранении
   // сумму пересчитывает сервер, и она — окончательная.
   const cost = useMemo(() => {
-    if (!data) return { sum: 0, full: 0, setup: null as string | null, discount: 0 }
+    if (!data) return { sum: 0, full: 0, setup: null as string | null, discount: 0, giftTokens: 0 }
+    // §3 (MR-21): подарочные токены суммируются по выбранным модулям.
+    const giftTokens = data.items.filter((i) => picked.has(i.key)).reduce((a, i) => a + (i.gift || 0), 0)
     const full = data.items.filter((i) => picked.has(i.key)).reduce((a, i) => a + i.price, 0)
     let best = { setup: null as string | null, discount: 0, sum: full }
     for (const s of data.setups) {
@@ -56,7 +58,7 @@ export function SubscriptionPage() {
         if (sum < best.sum) best = { setup: s.id, discount: s.discount, sum }
       }
     }
-    return { sum: best.sum, full, setup: best.setup, discount: best.discount }
+    return { sum: best.sum, full, setup: best.setup, discount: best.discount, giftTokens }
   }, [data, picked])
 
   const toggle = (key: string) => setPicked((prev) => {
@@ -159,6 +161,8 @@ export function SubscriptionPage() {
           <div className="text-xs text-muted">
             Выбрано модулей: <b className="text-fg">{keys.length}</b>
             {cost.setup && <> · набор «{data.setups.find((s) => s.id === cost.setup)?.name}» — скидка {Math.round(cost.discount * 100)}%</>}
+            {/* §3 (MR-21): подарочные токены, включённые в выбранный набор (суммируются). */}
+            {cost.giftTokens > 0 && <> · <b className="text-spark-300">+{cost.giftTokens} ⚡</b> в подарок</>}
           </div>
           <div className="flex items-baseline gap-2">
             {/* Год — со скидкой annualDiscount от 12 месяцев. Скидка приходит с

@@ -884,12 +884,12 @@ app.get('/api/subscription', async (req, res) => {
     const eff = await effectivePrices()
     const priceMap = eff.monthMap
     const items = eff.modules
-      .map((m) => ({ key: m.key, title: m.title, price: m.month }))
+      .map((m) => ({ key: m.key, title: m.title, price: m.month, gift: m.gift || 0 })) // §3 (MR-21): подарочные токены модуля
       .sort((a, b) => b.price - a.price || a.title.localeCompare(b.title, 'ru'))
     const setups = [
-      ...SETUPS.map((s) => ({ ...s, cost: subscriptionCost(s.modules, bundles, priceMap) })),
+      ...SETUPS.map((s) => ({ ...s, cost: subscriptionCost(s.modules, bundles, priceMap, eff.giftMap) })),
       ...bundles.map((b) => {
-        const cost = subscriptionCost(b.modules, bundles, priceMap)
+        const cost = subscriptionCost(b.modules, bundles, priceMap, eff.giftMap)
         return {
           id: b.id, name: b.name, hint: b.hint, modules: b.modules,
           custom: true, price: b.price,
@@ -912,7 +912,7 @@ app.post('/api/subscription/quote', async (req, res) => {
     const { listBundles } = await import('./bundles.js')
     const { effectivePrices } = await import('./priceStore.js')
     const eff = await effectivePrices()
-    res.json({ ok: true, ...subscriptionCost(req.body?.modules || [], await listBundles(), eff.monthMap) })
+    res.json({ ok: true, ...subscriptionCost(req.body?.modules || [], await listBundles(), eff.monthMap, eff.giftMap) })
   } catch (err) { res.status(500).json({ ok: false, error: err instanceof Error ? err.message : 'Ошибка' }) }
 })
 

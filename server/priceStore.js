@@ -104,6 +104,12 @@ function mergeOverrides(cur, patch) {
         if (a === undefined || a === def) delete entry.action
         else if (Number.isFinite(a) && a >= 0) entry.action = a
       }
+      // §3 (MR-21): подарочные токены на модуль — дефолт 0; храним только заданное >0.
+      if ('gift' in val) {
+        const g = clean(val.gift)
+        if (g === undefined || g === 0) delete entry.gift
+        else if (Number.isFinite(g) && g >= 0) entry.gift = Math.round(g)
+      }
       if (Object.keys(entry).length) mods[key] = entry; else delete mods[key]
     }
     cur.modules = mods
@@ -160,18 +166,22 @@ export async function effectivePrices() {
 
   const monthMap = {}
   const actionMap = {}
+  const giftMap = {} // §3 (MR-21): подарочные токены на модуль
   const modules = Object.keys(MODULE_MONTH_PRICE).map((key) => {
     const month = ovMod[key]?.month ?? MODULE_MONTH_PRICE[key]
     const action = ovMod[key]?.action ?? (ACTION_PRICE[key] ?? 0)
+    const gift = ovMod[key]?.gift ?? 0
     monthMap[key] = month
     actionMap[key] = action
+    giftMap[key] = gift
     return {
       key,
       title: moduleTitle(key),
       month: round2(month),
       action: Number(action),
+      gift: Number(gift),
       // Помечаем, что переопределено — админке показать «изменено», а не «дефолт».
-      overridden: { month: ovMod[key]?.month !== undefined, action: ovMod[key]?.action !== undefined },
+      overridden: { month: ovMod[key]?.month !== undefined, action: ovMod[key]?.action !== undefined, gift: ovMod[key]?.gift !== undefined },
     }
   })
 
@@ -187,6 +197,7 @@ export async function effectivePrices() {
     modules,
     monthMap,
     actionMap,
+    giftMap,
     coinPacks: Array.isArray(ov.coinPacks) && ov.coinPacks.length ? ov.coinPacks : COIN_PACKS,
     annualDiscount: typeof ov.annualDiscount === 'number' ? ov.annualDiscount : ANNUAL_DISCOUNT,
     // §11.2: список периодов. Пока админ его не задал — прежнее поведение (месяц + год

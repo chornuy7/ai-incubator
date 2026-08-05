@@ -281,11 +281,13 @@ export async function fetchPayments(opts: PaymentsQuery = {}): Promise<PaymentsR
 }
 
 /** §10.4: цены из БД — эффективные значения + пометка «изменено». */
-export interface PriceModule { key: string; title: string; month: number; action: number; overridden: { month: boolean; action: boolean } }
+export interface PriceModule { key: string; title: string; month: number; action: number; gift: number; overridden: { month: boolean; action: boolean; gift: boolean } }
 export interface EffectivePrices {
   modules: PriceModule[]
   monthMap: Record<string, number>
   actionMap: Record<string, number>
+  /** §3 (MR-21): подарочные токены на модуль (суммируются при выборе набора). */
+  giftMap: Record<string, number>
   coinPacks: { coins: number; price: number; best?: boolean }[]
   annualDiscount: number
   coinsPer1kTokens: number
@@ -310,7 +312,7 @@ export async function fetchPrices(): Promise<EffectivePrices> {
 }
 
 export interface PricePatch {
-  modules?: Record<string, { month?: number | string; action?: number | string }>
+  modules?: Record<string, { month?: number | string; action?: number | string; gift?: number | string }>
   annualDiscount?: number | string
   coinsPer1kTokens?: number | string
   tokenUsd?: number | string

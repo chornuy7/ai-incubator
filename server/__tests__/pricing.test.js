@@ -89,7 +89,7 @@ test('мусор и дубли в наборе игнорируются', () => 
 })
 
 test('пустой набор стоит 0', () => {
-  assert.deepEqual(subscriptionCost([]), { sum: 0, full: 0, setup: null, discount: 0 })
+  assert.deepEqual(subscriptionCost([]), { sum: 0, full: 0, setup: null, discount: 0, giftTokens: 0 })
 })
 
 /**

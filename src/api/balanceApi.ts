@@ -64,8 +64,8 @@ export async function fetchPricing(): Promise<Pricing> {
 }
 
 /** §5.4: подписка на модули — витрина и то, что уже куплено. */
-export interface SubModule { key: string; title: string; price: number }
-export interface SubCost { sum: number; full: number; setup: string | null; discount: number }
+export interface SubModule { key: string; title: string; price: number; gift?: number }
+export interface SubCost { sum: number; full: number; setup: string | null; discount: number; giftTokens?: number }
 export interface SubSetup {
   id: string
   name: string
