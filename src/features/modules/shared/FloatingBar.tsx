@@ -49,7 +49,9 @@ export function FloatingBar({ children, className }: { children: ReactNode; clas
         style={box ? { left: box.left, width: box.width } : undefined}
         className={cn(
           'fixed bottom-4 z-30 flex flex-col items-center gap-3 rounded-2xl border border-line',
-          'bg-elevated/95 p-4 shadow-lg shadow-black/40 backdrop-blur sm:flex-row',
+          // §11 (MR-56): справа резервируем место под плавающие виджеты (поддержка/Help
+          // в правом нижнем углу), чтобы кнопки бара не уходили под них.
+          'bg-elevated/95 p-4 shadow-lg shadow-black/40 backdrop-blur sm:flex-row sm:pr-16',
           className,
         )}
       >
