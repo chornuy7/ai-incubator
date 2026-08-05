@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import {
   Play, Sparkles, Search, Settings2, Timer, Users, Database, Filter, Radar,
   Plus, X, Trash2, Copy, Hash, Download, ExternalLink, ChevronLeft, ChevronRight,
@@ -15,7 +15,7 @@ import { downloadXls } from '@/shared/lib/exportXls'
 import { SaveToFolderModal } from './shared/FolderPicker'
 import { LaunchCost } from './shared/LaunchCost'
 import { promptDialog } from '@/shared/lib/dialog'
-import { fetchModuleTasks, fetchModuleTask, type ModuleTaskSettings } from '@/api/modulesApi'
+import { fetchModuleTasks, fetchModuleTask, lookupParserCache, type ModuleTaskSettings, type ParserCacheHit } from '@/api/modulesApi'
 
 /** Собирает username ранее спарсенных каналов/групп из истории модуля (для дедупа между запусками). */
 async function gatherAlreadyParsed(moduleKey: string): Promise<string[]> {
@@ -138,6 +138,10 @@ function ChannelParserInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: 
   const [page, setPage] = useState(1)
   const [cleared, setCleared] = useState(false)
   const [saveFolderOpen, setSaveFolderOpen] = useState(false)
+  // §6 (MR-38): кэш парсинга — есть ли сохранённый результат под текущий запрос, и
+  // показываем ли мы его сейчас (вместо результатов живой задачи).
+  const [cacheHit, setCacheHit] = useState<ParserCacheHit | null>(null)
+  const [usingCache, setUsingCache] = useState(false)
 
   const endings = useMemo(() => {
     if (endMode === 0) return manualEndings
@@ -145,6 +149,27 @@ function ChannelParserInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: 
   }, [endMode, manualEndings, endLang, endCount])
 
   const queryCount = keywords.length + keywords.length * endings.length
+
+  // §6 (MR-38): при совпадающем запросе спрашиваем базу — есть ли сохранённый результат.
+  // Дебаунс, чтобы не дёргать сервер на каждый набранный символ; во время работы задачи
+  // не спрашиваем (там копится живой результат). Сигнатура на сервере — по составу отбора.
+  useEffect(() => {
+    if (running || keywords.length === 0) { setCacheHit(null); setUsingCache(false); return }
+    const settings: Partial<ModuleTaskSettings> = {
+      keywords, endings,
+      minMembers: minMembers === '' ? 0 : minMembers,
+      maxMembers: maxMembers === '' ? 0 : maxMembers,
+      commentFilter,
+      intersect: intersect && method === 0,
+    }
+    let cancelled = false
+    const t = setTimeout(() => {
+      void lookupParserCache(moduleKey, settings).then((hit) => { if (!cancelled) setCacheHit(hit) }).catch(() => {})
+    }, 500)
+    return () => { cancelled = true; clearTimeout(t) }
+  }, [moduleKey, running, keywords, endings, minMembers, maxMembers, commentFilter, intersect, method])
+
+  const fmtCacheDate = (ts: number) => new Date(ts).toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' })
 
   const addKeywords = () => {
     const parsed = kwInput.split(/[,\n]+/).map((s) => s.trim()).filter(Boolean)
@@ -199,6 +224,7 @@ function ChannelParserInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: 
 
   const handleStart = async () => {
     setCleared(false)
+    setUsingCache(false) // §6: свежий запуск показывает живой результат, не кэш
     const settings = buildSettings()
     if (skipParsed) {
       const seen = await gatherAlreadyParsed(moduleKey)
@@ -228,7 +254,11 @@ function ChannelParserInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: 
     pushToast({ type: 'success', title: 'Пресет применён' })
   }, [pushToast])
 
-  const rawResults = (cleared ? [] : (task?.results ?? [])) as ParserResult[]
+  // §6 (MR-38): показываем либо результат живой задачи, либо сохранённый из базы (когда
+  // пользователь нажал «Показать из базы» под совпавший запрос).
+  const rawResults = (cleared
+    ? []
+    : (usingCache && cacheHit ? (cacheHit.results as ParserResult[]) : (task?.results ?? []))) as ParserResult[]
 
   const results = useMemo(() => {
     let r = rawResults
@@ -515,6 +545,28 @@ function ChannelParserInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: 
 
       {/* Результаты поиска */}
       <SectionCard icon={<Database size={18} />} title={cfg.resultsTitle ?? 'Результаты поиска'} badge={String(rawResults.length)}>
+        {/* §6 (MR-38): по совпадающему запросу в базе уже есть сохранённый результат —
+            предлагаем отдать его сразу, с датой обновления, не гоняя аккаунты заново. */}
+        {cacheHit && !running && (
+          <div className={cn(
+            'mb-4 flex flex-wrap items-center gap-3 rounded-2xl border px-4 py-3 text-sm',
+            usingCache ? 'border-iris-500/40 bg-iris-500/10' : 'border-spark-500/30 bg-spark-500/8',
+          )}>
+            <Database size={16} className={usingCache ? 'text-iris-300' : 'text-spark-400'} />
+            <span className="min-w-0 flex-1">
+              {usingCache ? (
+                <>Показано <b className="text-fg">из базы</b> · {cacheHit.count} {isGroups ? 'групп' : 'каналов'} · сохранено {fmtCacheDate(cacheHit.updatedAt)}</>
+              ) : (
+                <>В базе есть сохранённый результат под этот запрос: <b className="text-fg">{cacheHit.count}</b> {isGroups ? 'групп' : 'каналов'} · обновлено {fmtCacheDate(cacheHit.updatedAt)}</>
+              )}
+            </span>
+            {usingCache ? (
+              <button type="button" onClick={() => setUsingCache(false)} className="btn-ghost h-8 shrink-0 text-xs">Скрыть из базы</button>
+            ) : (
+              <button type="button" onClick={() => { setUsingCache(true); setCleared(false) }} className="btn-soft h-8 shrink-0 text-xs"><Database size={14} /> Показать из базы</button>
+            )}
+          </div>
+        )}
         <div className="mb-4 flex flex-wrap items-center gap-2">
           <div className="relative min-w-[180px] flex-1">
             <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted" />

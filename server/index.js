@@ -726,6 +726,20 @@ app.get('/api/admin/economy', async (req, res) => {
 })
 
 /**
+ * §6 (MR-38): есть ли сохранённый результат парсинга под этот запрос (кэш-первым).
+ * Отдаёт результат + дату обновления, чтобы витрина показала «из базы от …» без нового
+ * прохода. POST — запрос описывается набором ключей/окончаний/фильтров (settings).
+ */
+app.post('/api/parser/cache/lookup', async (req, res) => {
+  try {
+    const { kind, settings } = req.body || {}
+    if (!kind || !settings) return res.status(400).json({ ok: false, error: 'Нужны kind и settings' })
+    const { lookupParserResults } = await import('./parserCache.js')
+    res.json({ ok: true, cache: lookupParserResults(String(kind), settings) })
+  } catch (err) { res.status(500).json({ ok: false, error: err instanceof Error ? err.message : 'Ошибка' }) }
+})
+
+/**
  * §5.1: база оплат — все платежи с диапазоном дат (from..to) и пагинацией. Только админ.
  * Индекс пересобирается из источников истины при каждом запросе — витрина не расходится
  * с деньгами. Имена/почты джойним из users на лету (в БД не храним — они меняются).

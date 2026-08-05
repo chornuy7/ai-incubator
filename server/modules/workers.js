@@ -1653,6 +1653,14 @@ export async function runChannelParser(task, store, kind) {
     if (task.status !== 'paused') { task.cursor = 0; delete task.hitsByKey }
     // §3.8/§4: найденные каналы — в общую базу одним батчем (дедуп, без потери данных).
     try { const n = await upsertMany(baseChannels, `parse:${task.id}`); if (n) await store.appendLog(task, 'info', `В базу каналов: ${n}`) } catch { /* ignore */ }
+    // §6 (MR-38): завершённый сбор — в кэш результатов под сигнатуру запроса, чтобы
+    // повтор того же поиска отдавался из базы с датой, без нового прохода по аккаунтам.
+    // Только на 'done' (не пауза/стоп — там сбор частичный) и вне горячего цикла.
+    if (task.status === 'done') {
+      // Динамический импорт (как payments.js): parserCache тянет node:sqlite, и если он
+      // в этой среде недоступен — падает только кэш (в catch), а не загрузка воркеров.
+      try { const { saveParserResults } = await import('../parserCache.js'); saveParserResults(kind, s, task.results) } catch { /* кэш необязателен — молча */ }
+    }
     await store.appendLog(task, 'info', `Готово · найдено ${task.results.length} ${unitLabel}`)
   } catch (err) {
     task.status = 'error'

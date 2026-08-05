@@ -260,3 +260,14 @@ export interface TaskAudience {
 export async function fetchTaskAudience(moduleKey: string, id: string): Promise<{ audience: TaskAudience; total: number }> {
   return apiGet<{ audience: TaskAudience; total: number }>(`/api/modules/${moduleKey}/tasks/${id}/audience`)
 }
+
+/** §6 (MR-38): сохранённый результат парсинга под совпадающий запрос (кэш-первым). */
+export interface ParserCacheHit {
+  updatedAt: number
+  count: number
+  results: Record<string, unknown>[]
+}
+export async function lookupParserCache(kind: string, settings: Partial<ModuleTaskSettings>): Promise<ParserCacheHit | null> {
+  const r = await apiPost<{ ok: boolean; cache: ParserCacheHit | null }>(`/api/parser/cache/lookup`, { kind, settings })
+  return r.cache
+}
