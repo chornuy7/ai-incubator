@@ -739,6 +739,71 @@ app.post('/api/parser/cache/lookup', async (req, res) => {
   } catch (err) { res.status(500).json({ ok: false, error: err instanceof Error ? err.message : 'Ошибка' }) }
 })
 
+// ── §8 (MR-44): тикеты поддержки — свои у клиента, все у админа (интеграция с админкой) ──
+const ticketErr = (res, err) => res.status(500).json({ ok: false, error: err instanceof Error ? err.message : 'Ошибка' })
+
+/** Список тикетов: клиент видит свои, админ (и дев без сессии) — все. */
+app.get('/api/tickets', async (req, res) => {
+  try {
+    const { requesterContext } = await import('./lib/accessGuard.js')
+    const ctx = await requesterContext(req)
+    if (ctx.blocked) return res.status(403).json({ ok: false, error: 'Нет доступа' })
+    const { listTickets } = await import('./tickets.js')
+    res.json({ ok: true, tickets: await listTickets({ userId: ctx.id, all: ctx.isAdmin || ctx.noSession }) })
+  } catch (err) { ticketErr(res, err) }
+})
+
+/** Создать тикет — владелец всегда автор запроса (клиент не может создать за другого). */
+app.post('/api/tickets', async (req, res) => {
+  try {
+    const { requesterContext } = await import('./lib/accessGuard.js')
+    const ctx = await requesterContext(req)
+    if (ctx.blocked) return res.status(403).json({ ok: false, error: 'Нет доступа' })
+    const { createTicket } = await import('./tickets.js')
+    const { subject, category, body } = req.body || {}
+    res.json({ ok: true, ticket: await createTicket({ userId: ctx.id, subject, category, body }) })
+  } catch (err) { res.status(400).json({ ok: false, error: err instanceof Error ? err.message : 'Ошибка' }) }
+})
+
+/** Один тикет с перепиской — только владелец или админ. */
+app.get('/api/tickets/:id', async (req, res) => {
+  try {
+    const { requesterContext } = await import('./lib/accessGuard.js')
+    const ctx = await requesterContext(req)
+    if (ctx.blocked) return res.status(403).json({ ok: false, error: 'Нет доступа' })
+    const { getTicket } = await import('./tickets.js')
+    const t = await getTicket(String(req.params.id))
+    if (!t) return res.status(404).json({ ok: false, error: 'Тикет не найден' })
+    if (!ctx.isAdmin && !ctx.noSession && t.userId !== ctx.id) return res.status(403).json({ ok: false, error: 'Нет доступа к тикету' })
+    res.json({ ok: true, ticket: t })
+  } catch (err) { ticketErr(res, err) }
+})
+
+/** Ответ в тикет: админ пишет как «поддержка», клиент — как «user» (и только в свой). */
+app.post('/api/tickets/:id/reply', async (req, res) => {
+  try {
+    const { requesterContext } = await import('./lib/accessGuard.js')
+    const ctx = await requesterContext(req)
+    if (ctx.blocked) return res.status(403).json({ ok: false, error: 'Нет доступа' })
+    const { getTicket, addMessage } = await import('./tickets.js')
+    const t = await getTicket(String(req.params.id))
+    if (!t) return res.status(404).json({ ok: false, error: 'Тикет не найден' })
+    const isSupport = ctx.isAdmin || ctx.noSession
+    if (!isSupport && t.userId !== ctx.id) return res.status(403).json({ ok: false, error: 'Нет доступа к тикету' })
+    const ticket = await addMessage(String(req.params.id), { from: isSupport ? 'support' : 'user', authorId: ctx.id, text: (req.body || {}).text })
+    res.json({ ok: true, ticket })
+  } catch (err) { res.status(400).json({ ok: false, error: err instanceof Error ? err.message : 'Ошибка' }) }
+})
+
+/** Сменить статус тикета — только поддержка (админ). */
+app.post('/api/tickets/:id/status', async (req, res) => {
+  try {
+    if (!(await isAdminRequest(req))) return res.status(403).json({ ok: false, error: 'Статусы меняет только поддержка' })
+    const { setStatus } = await import('./tickets.js')
+    res.json({ ok: true, ticket: await setStatus(String(req.params.id), String((req.body || {}).status)) })
+  } catch (err) { res.status(400).json({ ok: false, error: err instanceof Error ? err.message : 'Ошибка' }) }
+})
+
 /**
  * §5.1: база оплат — все платежи с диапазоном дат (from..to) и пагинацией. Только админ.
  * Индекс пересобирается из источников истины при каждом запросе — витрина не расходится

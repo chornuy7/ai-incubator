@@ -1,16 +1,18 @@
 import { coins as fmtCoins, cn } from '@/shared/lib/utils'
-import { useEffect, useMemo, useRef, useState } from 'react'
-import { BarChart3, Users, ListChecks, Coins, Download, RefreshCw, AlertTriangle, Contact, Power, ChevronDown, Activity, Plus, Radar, Search, ShoppingCart, Loader2, Check, Trash2, ScrollText } from 'lucide-react'
-import { PageHeader, Card, Segmented, EmptyState } from '@/shared/ui'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { BarChart3, Users, ListChecks, Coins, Download, RefreshCw, AlertTriangle, Contact, Power, ChevronDown, Activity, Plus, Radar, Search, ShoppingCart, Loader2, Check, Trash2, ScrollText, Send, MessageSquare, LifeBuoy } from 'lucide-react'
+import { PageHeader, Card, Segmented, EmptyState, Modal, Select, Badge } from '@/shared/ui'
 import { useApp } from '@/mocks/store'
 import {
   fetchAdminOverview, fetchClientReport, fetchUsersReport, fetchProblems, fetchCrmOverview,
   fetchActiveNow, fetchDailySpend, fetchPurchases, fetchPayments, fetchAccountsHealth, fetchUserActivity, type UserActivity, fetchUserDialogs, type UserDialogs, fetchMessages, type MessageRow,
   fetchEconomy, type Economy,
+
   type AdminOverview, type ClientReport, type UsersReport, type Problems, type CrmOverview,
   type ActiveNow, type ActiveTask, type DailySpend, type Purchases, type PaymentsResult, type UserRow, type AccountsHealth, fetchPrices, savePrices, type EffectivePrices, type PricePatch,
   fetchTaskLogs, type FailedTask, type TaskLogs } from '@/api/adminApi'
 import { updateUser } from '@/api/usersApi'
+import { fetchTickets, fetchTicket, replyTicket, setTicketStatus, type ApiTicket, type TicketStatus } from '@/api/ticketsApi'
 import { fetchRoles } from '@/api/rolesApi'
 import { RolesPage } from '@/pages/RolesPage'
 import { changeBalance, fetchSubscription, saveUserModules, fetchWalletHistory, type WalletEntry } from '@/api/balanceApi'
@@ -207,7 +209,7 @@ export function AdminStatsPage() {
       />
 
       <div className="mb-4 flex flex-wrap items-center gap-3">
-        <Segmented options={['Панель', 'Сейчас', 'По дням', 'Пользователи', 'Покупки', 'Экономика', 'Цены', 'Задачи и ошибки', 'CRM', 'Отчёт', 'Мониторинг', 'Аккаунты', 'Роли', 'API']} value={tab} onChange={setTab} />
+        <Segmented options={['Панель', 'Сейчас', 'По дням', 'Пользователи', 'Покупки', 'Экономика', 'Цены', 'Задачи и ошибки', 'CRM', 'Отчёт', 'Мониторинг', 'Аккаунты', 'Роли', 'Тикеты', 'API']} value={tab} onChange={setTab} />
         <Segmented options={PERIODS.map((p) => p.label)} value={periodIdx} onChange={setPeriodIdx} size="sm" />
       </div>
 
@@ -244,6 +246,9 @@ export function AdminStatsPage() {
       ) : tab === 12 ? (
         /* §10.4: управление ролями доступа — из sudo-админки (создание/права/блоки). */
         <RolesPage />
+      ) : tab === 13 ? (
+        /* §8 (MR-44): тикеты поддержки — поддержка видит все, отвечает, двигает статус. */
+        <AdminTicketsTab />
       ) : (
         <ApiDocsTab />
       )}
@@ -1052,6 +1057,132 @@ function UserActivityLog({ state }: { state: UserActivity | 'loading' | undefine
  * стороны счёта — сколько человек занёс и сколько сжёг. Списания сюда не идут, это
  * не покупка; здесь только положительные операции — начисления и пополнения.
  */
+/**
+ * §8 (MR-44): тикеты поддержки в админке — раньше обращения были моком в браузере и
+ * поддержка их не видела. Теперь тянем все тикеты с сервера, отвечаем как «поддержка»
+ * и двигаем статус. Самодостаточная вкладка (грузит свои данные, вне общего снапшота).
+ */
+const TICKET_STATUS_META: Record<TicketStatus, { label: string; tone: 'spark' | 'iris' | 'amber' | 'rose' | 'muted' }> = {
+  open: { label: 'Открыт', tone: 'spark' },
+  progress: { label: 'В работе', tone: 'iris' },
+  waiting: { label: 'Ожидает ответа', tone: 'amber' },
+  escalated: { label: 'Эскалирован', tone: 'rose' },
+  closed: { label: 'Закрыт', tone: 'muted' },
+}
+const TICKET_STATUS_OPTS = (Object.keys(TICKET_STATUS_META) as TicketStatus[]).map((v) => ({ value: v, label: TICKET_STATUS_META[v].label }))
+const ticketTs = (ts: number) => ts ? new Date(ts).toLocaleString('ru-RU', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' }) : ''
+
+function AdminTicketsTab() {
+  const pushToast = useApp((s) => s.pushToast)
+  const [tickets, setTickets] = useState<ApiTicket[]>([])
+  const [loading, setLoading] = useState(true)
+  const [statusFilter, setStatusFilter] = useState('all')
+  const [open, setOpen] = useState<ApiTicket | null>(null)
+  const [reply, setReply] = useState('')
+  const [busy, setBusy] = useState(false)
+
+  const load = useCallback(async () => {
+    setLoading(true)
+    try { setTickets(await fetchTickets()) } catch { /* пусто */ } finally { setLoading(false) }
+  }, [])
+  useEffect(() => { void load() }, [load])
+
+  const rows = statusFilter === 'all' ? tickets : tickets.filter((t) => t.status === statusFilter)
+  const openThread = async (t: ApiTicket) => { setOpen(t); setReply(''); try { setOpen(await fetchTicket(t.id)) } catch { /* keep */ } }
+
+  const send = async () => {
+    if (!open || !reply.trim()) return
+    setBusy(true)
+    try {
+      const upd = await replyTicket(open.id, reply.trim())
+      setOpen(upd); setReply(''); setTickets((l) => l.map((x) => x.id === upd.id ? upd : x))
+    } catch (e) { pushToast({ type: 'error', title: 'Не отправлено', desc: e instanceof Error ? e.message : '' }) }
+    finally { setBusy(false) }
+  }
+  const changeStatus = async (status: string) => {
+    if (!open) return
+    try {
+      const upd = await setTicketStatus(open.id, status as TicketStatus)
+      setOpen(upd); setTickets((l) => l.map((x) => x.id === upd.id ? upd : x))
+      pushToast({ type: 'success', title: 'Статус обновлён' })
+    } catch (e) { pushToast({ type: 'error', title: 'Не удалось', desc: e instanceof Error ? e.message : '' }) }
+  }
+
+  return (
+    <div className="space-y-3">
+      <div className="flex flex-wrap items-center gap-2">
+        <Select className="w-52" value={statusFilter} onChange={setStatusFilter} options={[{ value: 'all', label: 'Все статусы' }, ...TICKET_STATUS_OPTS]} />
+        <span className="text-sm text-muted">Тикетов: {rows.length}</span>
+        <button onClick={() => void load()} className="btn-ghost ml-auto h-9" disabled={loading}><RefreshCw size={15} className={loading ? 'animate-spin' : ''} /> Обновить</button>
+      </div>
+
+      {loading ? (
+        <Card className="flex items-center gap-2 p-6 text-sm text-muted"><Loader2 size={15} className="animate-spin" /> Загрузка тикетов…</Card>
+      ) : rows.length === 0 ? (
+        <Card><EmptyState icon={<LifeBuoy size={24} />} title="Тикетов нет" desc="Обращения клиентов появятся здесь." /></Card>
+      ) : (
+        <div className="space-y-2">
+          {rows.map((t) => {
+            const m = TICKET_STATUS_META[t.status]
+            const last = t.messages[t.messages.length - 1]
+            return (
+              <button key={t.id} onClick={() => void openThread(t)} className="card flex w-full items-center gap-3 p-3.5 text-left transition-colors hover:border-spark-500/30">
+                <div className="grid h-10 w-10 shrink-0 place-items-center rounded-xl border border-line bg-elevated text-muted"><MessageSquare size={17} /></div>
+                <div className="min-w-0 flex-1">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="font-mono text-xs text-muted">{t.id}</span>
+                    <Badge tone={m.tone}>{m.label}</Badge>
+                    <span className="text-[11px] text-muted">от {t.userId}</span>
+                  </div>
+                  <div className="mt-0.5 truncate font-semibold text-fg">{t.subject}</div>
+                  <div className="truncate text-xs text-muted">{last ? `${last.from === 'support' ? 'Поддержка: ' : ''}${last.text}` : '—'}</div>
+                </div>
+                <div className="hidden shrink-0 flex-col items-end gap-1 text-xs text-muted sm:flex">
+                  <span>{ticketTs(t.updatedAt)}</span>
+                  <span className="flex items-center gap-1"><MessageSquare size={12} /> {t.messages.length}</span>
+                </div>
+              </button>
+            )
+          })}
+        </div>
+      )}
+
+      <Modal open={!!open} onClose={() => setOpen(null)} title={open?.subject} subtitle={open ? `${open.id} · клиент ${open.userId}` : ''} icon={<MessageSquare size={22} />} size="md">
+        {open && (
+          <div className="space-y-3">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-xs text-muted">Статус:</span>
+              <Select className="w-48" value={open.status} onChange={(v) => void changeStatus(v)} options={TICKET_STATUS_OPTS} />
+              <span className="ml-auto text-xs text-muted">Обновлён {ticketTs(open.updatedAt)}</span>
+            </div>
+            <div className="max-h-[42vh] space-y-2 overflow-y-auto pr-1">
+              {open.messages.length === 0 ? (
+                <div className="rounded-xl border border-line bg-elevated p-3.5 text-sm text-muted">Сообщений нет.</div>
+              ) : open.messages.map((msg) => (
+                <div key={msg.id} className={msg.from === 'support'
+                  ? 'rounded-xl border border-spark-500/25 bg-spark-500/8 p-3.5 text-sm text-fg'
+                  : 'rounded-xl border border-line bg-elevated p-3.5 text-sm text-fg'}>
+                  <div className="mb-1 flex items-center gap-2 text-[11px] text-muted">
+                    <span className={msg.from === 'support' ? 'font-semibold text-spark-300' : 'font-semibold text-fg'}>{msg.from === 'support' ? 'Поддержка' : 'Клиент'}</span>
+                    <span>· {ticketTs(msg.ts)}</span>
+                  </div>
+                  <div className="whitespace-pre-wrap">{msg.text}</div>
+                </div>
+              ))}
+            </div>
+            <div className="flex gap-2 pt-1">
+              <input value={reply} onChange={(e) => setReply(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && void send()} className="input flex-1" placeholder="Ответ поддержки…" />
+              <button onClick={() => void send()} disabled={busy || !reply.trim()} className="btn-primary h-[42px] px-4 disabled:opacity-50">
+                {busy ? <Loader2 size={16} className="animate-spin" /> : <Send size={16} />}
+              </button>
+            </div>
+          </div>
+        )}
+      </Modal>
+    </div>
+  )
+}
+
 /**
  * §3.3 (MR-23): экономика — доходы, расходы (себестоимость ИИ), маржа и разрез по
  * серверам. Все цифры с сервера (economyReport), пересчитаны по факт-статистике за
