@@ -342,11 +342,45 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
     ]
   }, [selected, targets, postUrls, hasPostTargets, delays, maxActions, cfg, isGgr, accounts, results, task, needsTargets])
 
+  // §11 (MR-55): пошаговый roadmap обязательных действий перед запуском — что уже
+  // сделано и что осталось, по порядку. Последний шаг «Запуск» становится текущим,
+  // когда всё обязательное заполнено (совпадает с гейтом canStart).
+  const launchSteps = useMemo(() => {
+    const steps: { label: string; done: boolean; current?: boolean }[] = []
+    if (cfg.accountPicker) steps.push({ label: 'Аккаунты', done: selected.size > 0 })
+    if (needsTargets && !cfg.warmingLayout) steps.push({ label: cfg.unit?.title || 'Цели', done: targets.length > 0 || hasPostTargets })
+    steps.push({ label: 'Запуск', done: false })
+    const idx = steps.findIndex((s) => !s.done)
+    if (idx >= 0) steps[idx].current = true
+    return steps
+  }, [cfg, selected, needsTargets, targets, hasPostTargets])
+
   return (
     <div className="space-y-4">
       <TaskStartedModal task={justStarted} moduleTitle={cfg.title} onClose={dismissJustStarted} />
       <SaveToFolderModal open={folderSave !== null} onClose={() => setFolderSave(null)} targets={folderSave ?? []} />
       <SavePresetModal open={presetModalOpen} onClose={() => setPresetModalOpen(false)} onSave={(name, color, owner) => savePreset(name, buildSettings(), color, owner)} />
+      {/* §11 (MR-55): roadmap обязательных шагов — видно, что осталось до запуска. */}
+      {!running && launchSteps.length > 1 && (
+        <div className="flex flex-wrap items-center gap-x-2 gap-y-1.5 rounded-2xl border border-line bg-elevated/40 px-3 py-2.5">
+          <span className="mr-1 text-[11px] font-bold uppercase tracking-wide text-muted">Шаги запуска</span>
+          {launchSteps.map((s, i) => (
+            <div key={s.label} className="flex items-center gap-2">
+              <span className={cn('flex items-center gap-1.5 rounded-lg border px-2.5 py-1 text-xs font-medium',
+                s.done ? 'border-spark-500/40 bg-spark-500/10 text-spark-200'
+                  : s.current ? 'border-amber-500/40 bg-amber-500/10 text-amber-200'
+                    : 'border-line text-muted')}>
+                <span className={cn('grid h-4 w-4 shrink-0 place-items-center rounded-full text-[10px] font-bold',
+                  s.done ? 'bg-spark-500/30 text-spark-100' : s.current ? 'bg-amber-500/25 text-amber-100' : 'bg-white/10 text-muted')}>
+                  {s.done ? '✓' : i + 1}
+                </span>
+                {s.label}
+              </span>
+              {i < launchSteps.length - 1 && <span className="text-white/20">→</span>}
+            </div>
+          ))}
+        </div>
+      )}
       {cfg.accountPicker && showBlock('run') && (
         <AccountPicker selected={selected} onChange={setSelected} actions={cfg.accountActions} withFilters={!!cfg.accountFilters} selectedTitle={cfg.selectedTitle ?? 'Выбрано'} />
       )}
