@@ -19,6 +19,11 @@ export const MODULE_SHOTS: Record<string, string[]> = {
   // добавьте `<key>-2.png` и т.д. Пусто = показываем рендер экрана в коде (ModuleMockScreen).
   // Скрины анонимны (демо-аккаунты), снимаются scripts/_shots-all.mjs в public/shots/.
   'neuro-commenting': ['/shots/neuro-commenting-hero.png', '/shots/neuro-commenting-comments.png'],
+  'neuro-chatting': ['/shots/neuro-chatting-hero.png', '/shots/neuro-chatting-s3.png'],
+  'mass-react': ['/shots/mass-react-hero.png', '/shots/mass-react-s2.png'],
+  'mass-looking': ['/shots/mass-looking-hero.png', '/shots/mass-looking-s2.png'],
+  'warming': ['/shots/warming-hero.png', '/shots/warming-s2.png'],
+  'neuro-dialogs': ['/shots/neuro-dialogs-hero.png', '/shots/neuro-dialogs-s2.png'],
 }
 
 /** Подписи-выноски: берём возможности модуля — они уже написаны языком выгоды. */
