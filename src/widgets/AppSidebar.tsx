@@ -1,5 +1,6 @@
+import { useState } from 'react'
 import { NavLink, Link, useLocation } from 'react-router-dom'
-import { PanelLeftClose, PanelLeftOpen, X, LogOut } from 'lucide-react'
+import { PanelLeftClose, PanelLeftOpen, X, LogOut, ChevronDown } from 'lucide-react'
 import { ROUTES, GROUP_LABELS, type RouteDef } from '@/shared/config/routes'
 import { useApp } from '@/mocks/store'
 import { useSession } from '@/features/auth/session'
@@ -39,6 +40,18 @@ export function AppSidebar({ mobile = false }: { mobile?: boolean }) {
   const setUserState = useApp((s) => s.setUserState)
   const location = useLocation()
   const planModules = usePlan((s) => s.modules)
+  // §10 (MR-50): сворачиваемые группы меню — чтобы одновременно видимых пунктов было меньше.
+  // Свёрнутые группы храним в localStorage; группа с активной страницей всегда открыта.
+  const NAV_LS = 'ai-incubator:nav-collapsed'
+  const [closedGroups, setClosedGroups] = useState<Set<string>>(() => {
+    try { return new Set(JSON.parse(localStorage.getItem(NAV_LS) || '[]')) } catch { return new Set() }
+  })
+  const toggleGroup = (g: string) => setClosedGroups((prev) => {
+    const next = new Set(prev)
+    if (next.has(g)) next.delete(g); else next.add(g)
+    try { localStorage.setItem(NAV_LS, JSON.stringify([...next])) } catch { /* quota */ }
+    return next
+  })
 
   const signOut = () => { logout(); setUserState('guest') }
 
@@ -78,14 +91,23 @@ export function AppSidebar({ mobile = false }: { mobile?: boolean }) {
         {GROUP_ORDER.map((group) => {
           const items = ROUTES.filter((r) => r.group === group && allowed(r))
           if (items.length === 0) return null
+          const hasActive = items.some((r) => r.path === location.pathname)
+          // В icon-режиме групп не сворачиваем (заголовков нет); иначе — по состоянию,
+          // но группа с активной страницей всегда открыта, чтобы текущий пункт не пропал.
+          const groupOpen = collapsed ? true : (!closedGroups.has(group) || hasActive)
           return (
             <div key={group} className="mb-4">
               {!collapsed && (
-                <div className="px-3 pb-1.5 pt-2 text-[11px] font-bold uppercase tracking-wider text-faint">
+                <button
+                  type="button"
+                  onClick={() => toggleGroup(group)}
+                  className="flex w-full items-center gap-1.5 px-3 pb-1.5 pt-2 text-[11px] font-bold uppercase tracking-wider text-faint transition-colors hover:text-muted"
+                >
+                  <ChevronDown size={12} className={cn('shrink-0 transition-transform', !groupOpen && '-rotate-90')} />
                   {GROUP_LABELS[group]}
-                </div>
+                </button>
               )}
-              <div className="space-y-0.5">
+              <div className={cn('space-y-0.5', !groupOpen && 'hidden')}>
                 {items.map((r) => {
                   const active = location.pathname === r.path
                   const Icon = r.icon
