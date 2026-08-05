@@ -5,7 +5,7 @@ import { PageHeader, Card, EmptyState, Select, Badge, Skeleton } from '@/shared/
 import { compact, cn } from '@/shared/lib/utils'
 import { fetchParsingHistory, fetchHistoryResults, type HistoryItem } from '@/api/parsingHistoryApi'
 
-const MODULES_FILTER = ['Все модули', 'Каналы', 'Группы', 'Пользователи', 'Сообщения', 'Комментарии', 'TGStat']
+const MODULES_FILTER = ['Все модули', 'Каналы', 'Группы', 'Пользователи', 'Сообщения', 'Комментарии', 'Каталог каналов']
 const STATUS_FILTER = [
   { value: 'all', label: 'Все статусы' },
   { value: 'done', label: 'Завершено' },
@@ -19,7 +19,7 @@ const STATUS_META = {
 }
 const MODULE_ICON: Record<string, React.ReactNode> = {
   Каналы: <Radio size={13} />, Группы: <Users size={13} />, Пользователи: <Users size={13} />,
-  Сообщения: <MessageCircle size={13} />, Комментарии: <Hash size={13} />, TGStat: <Database size={13} />,
+  Сообщения: <MessageCircle size={13} />, Комментарии: <Hash size={13} />, 'Каталог каналов': <Database size={13} />,
 }
 
 function fmtDate(ts: number) {

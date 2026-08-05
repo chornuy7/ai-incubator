@@ -495,21 +495,21 @@ function TgstatSourceButton({ onFill }: { onFill: (usernames: string[]) => void 
       const usernames = t.map((x) => x.username).filter(Boolean)
       if (!usernames.length) { pushToast({ type: 'info', title: 'Ничего не найдено', desc: 'Попробуйте другую категорию/регион' }); return }
       onFill(usernames)
-      pushToast({ type: 'success', title: `Добавлено ${usernames.length} целей из TGStat` })
+      pushToast({ type: 'success', title: `Добавлено ${usernames.length} целей из каталога` })
       setOpen(false)
-    } catch (e) { pushToast({ type: 'error', title: 'Ошибка TGStat', desc: e instanceof Error ? e.message : '' }) } finally { setLoading(false) }
+    } catch (e) { pushToast({ type: 'error', title: 'Ошибка каталога', desc: e instanceof Error ? e.message : '' }) } finally { setLoading(false) }
   }
 
   return (
     <>
       <button type="button" onClick={openModal} className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-amber-500/40 bg-amber-500/12 px-2.5 text-xs font-semibold text-amber-200 hover:bg-amber-500/20">
-        <Cookie size={13} /> Взять цели из TGStat
+        <Cookie size={13} /> Взять цели из каталога
       </button>
-      <Modal open={open} onClose={() => setOpen(false)} title="Взять цели из TGStat" subtitle="Каталог TGStat как источник групп/каналов" icon={<Cookie size={22} />} size="sm">
+      <Modal open={open} onClose={() => setOpen(false)} title="Взять цели из каталога" subtitle="Каталог каналов как источник групп/каналов" icon={<Cookie size={22} />} size="sm">
         <div className="space-y-3">
           {session && !session.has_session && (
             <div className="rounded-xl border border-amber-500/30 bg-amber-500/8 p-3 text-sm text-amber-200">
-              TGStat не подключён. Подключите cookies в «Парсер каналов» → вкладка «Парсер каналов TGStat».
+              Каталог не подключён. Подключите cookies в «Парсер каналов» → вкладка «Парсер по каталогу».
             </div>
           )}
           <div>

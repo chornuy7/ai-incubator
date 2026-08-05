@@ -43,7 +43,7 @@ function parseSessionJson(text: string): { cookies: unknown[] } {
     if (o.data && typeof o.data === 'object' && Array.isArray((o.data as Record<string, unknown>).cookies)) return { cookies: (o.data as Record<string, unknown>).cookies as unknown[] }
     if (Array.isArray(o.cookies)) return { cookies: o.cookies }
   }
-  throw new Error('В файле нет cookies. Экспортируйте их Cookie-Editor на uk.tgstat.com.')
+  throw new Error('В файле нет cookies. Экспортируйте их Cookie-Editor на сайте каталога (uk.tgstat.com).')
 }
 
 /** Амбер-карточка (визуально отделяет блок TGStat). */
@@ -158,14 +158,14 @@ export function TgStatParserModule() {
   }
 
   const handleClear = async () => {
-    try { setSession(await clearTgstatSession()); pushToast({ type: 'info', title: 'Сессия TGStat удалена' }) }
+    try { setSession(await clearTgstatSession()); pushToast({ type: 'info', title: 'Сессия каталога удалена' }) }
     catch { pushToast({ type: 'error', title: 'Не удалось удалить' }) }
   }
 
   const handleCreate = async () => {
     if (!category) return pushToast({ type: 'error', title: 'Выберите категорию' })
     if (mp > 1 && !session?.telegram_logged_in) {
-      pushToast({ type: 'error', title: `Для >${itemsPerStep} каналов нужен вход в TGStat через Telegram (cookies с tgstat_sirk)` })
+      pushToast({ type: 'error', title: `Для >${itemsPerStep} каналов нужен вход в каталог через Telegram (cookies с tgstat_sirk)` })
       return
     }
     setCreating(true)
@@ -189,8 +189,8 @@ export function TgStatParserModule() {
       <div className="flex items-center gap-3 rounded-2xl border border-amber-500/40 bg-amber-500/8 p-4">
         <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-amber-500/15 text-amber-300"><Cookie size={20} /></span>
         <div>
-          <div className="font-display font-bold text-fg">Парсер каналов TGStat</div>
-          <div className="text-xs text-muted">Массовый парсинг каталога TGStat по категориям и регионам через cookies-сессию. Не требует Telegram-аккаунтов панели.</div>
+          <div className="font-display font-bold text-fg">Парсер по каталогу</div>
+          <div className="text-xs text-muted">Массовый парсинг по категориям и регионам через cookies-сессию. Не требует Telegram-аккаунтов панели.</div>
         </div>
         <div className="ml-auto">
           {sessionReady ? <Badge tone="spark"><CheckCircle2 size={12} /> Подключён</Badge> : <Badge tone="amber"><AlertTriangle size={12} /> Не подключён</Badge>}
@@ -203,11 +203,13 @@ export function TgStatParserModule() {
       <Segmented options={['Каталог по категориям', 'Расширенный поиск (фильтры)']} value={tgMode} onChange={setTgMode} />
 
       {/* Инструкция + загрузка cookies */}
-      <AmberCard icon={<Cookie size={18} />} title="Этап 1 — подключить TGStat" badge={sessionReady ? 'готово' : 'обязательно'}>
+      <AmberCard icon={<Cookie size={18} />} title="Этап 1 — подключить каталог" badge={sessionReady ? 'готово' : 'обязательно'}>
         <ol className="mb-4 list-decimal space-y-1.5 pl-5 text-sm text-muted">
-          <li>В Chrome откройте <a href="https://uk.tgstat.com/login" target="_blank" rel="noreferrer" className="text-amber-300 hover:underline">uk.tgstat.com</a> и войдите через Telegram (@tg_analytics_bot → START).</li>
+          {/* §6 (MR-40): наружу каталог нейтрален, но сам источник cookies — внешний сайт,
+              куда пользователь физически заходит; ссылку оставляем, иначе брать cookies негде. */}
+          <li>В Chrome откройте <a href="https://uk.tgstat.com/login" target="_blank" rel="noreferrer" className="text-amber-300 hover:underline">сайт каталога</a> и войдите через Telegram (@tg_analytics_bot → START).</li>
           <li>Установите расширение <a href={COOKIE_EDITOR_URL} target="_blank" rel="noreferrer" className="text-amber-300 hover:underline">Cookie-Editor</a>.</li>
-          <li>На странице TGStat: Cookie-Editor → <b className="text-fg">Export</b> → формат <b className="text-fg">JSON</b> → сохраните файл.</li>
+          <li>На открывшейся странице: Cookie-Editor → <b className="text-fg">Export</b> → формат <b className="text-fg">JSON</b> → сохраните файл.</li>
           <li>Загрузите этот JSON кнопкой ниже.</li>
         </ol>
         <div className="grid gap-2 sm:grid-cols-2">
@@ -236,7 +238,7 @@ export function TgStatParserModule() {
       </AmberCard>
 
       {/* Статус сессии */}
-      <AmberCard icon={<ShieldCheck size={18} />} title="Статус подключения TGStat"
+      <AmberCard icon={<ShieldCheck size={18} />} title="Статус подключения каталога"
         right={<button onClick={loadSession} className="btn-icon h-8 w-8"><RefreshCw size={14} /></button>}>
         {session ? (
           <div className="space-y-3">
@@ -246,7 +248,7 @@ export function TgStatParserModule() {
               </Badge>
               {session.has_session && (
                 <Badge tone={session.telegram_logged_in ? 'spark' : 'amber'}>
-                  {session.telegram_logged_in ? 'Telegram на TGStat ✓' : 'Нет входа — лимит ~100'}
+                  {session.telegram_logged_in ? 'Telegram в каталоге ✓' : 'Нет входа — лимит ~100'}
                 </Badge>
               )}
               {session.cookie_count > 0 && <Badge tone="muted">{session.cookie_count} cookies</Badge>}
@@ -289,7 +291,7 @@ export function TgStatParserModule() {
             <label className="label">Сколько страниц парсить (≈{itemsPerStep}/шаг)</label>
             <input type="number" min={1} max={100} value={maxPages} onChange={(e) => setMaxPages(e.target.value === "" ? "" : Math.max(1, Math.min(100, Number(e.target.value))))} className="input h-10" />
             {mp > 1 && !session?.telegram_logged_in && (
-              <p className="mt-1 text-xs text-amber-300">Для &gt;1 страницы нужен вход в TGStat через Telegram (cookies с tgstat_sirk).</p>
+              <p className="mt-1 text-xs text-amber-300">Для &gt;1 страницы нужен вход в каталог через Telegram (cookies с tgstat_sirk).</p>
             )}
           </div>
           <div>
@@ -310,7 +312,7 @@ export function TgStatParserModule() {
             </button>
           )
         })()}
-        {!sessionReady && <p className="mt-2 text-center text-xs text-amber-300">Сначала подключите и проверьте сессию TGStat (этап 1) — кнопка станет активной.</p>}
+        {!sessionReady && <p className="mt-2 text-center text-xs text-amber-300">Сначала подключите и проверьте сессию каталога (этап 1) — кнопка станет активной.</p>}
         {sessionReady && <p className="mt-2 text-center text-xs text-muted">После запуска результаты появятся ниже в блоке «История импортов» (🔍 — открыть, ⭳ — Excel или CSV).</p>}
       </AmberCard>
 
@@ -318,7 +320,7 @@ export function TgStatParserModule() {
       <AmberCard icon={<Database size={18} />} title={`История импортов (${imports.length})`}
         right={<button onClick={loadImports} className="btn-icon h-8 w-8"><RefreshCw size={14} /></button>}>
         {imports.length === 0 ? (
-          <EmptyState icon={<Database size={22} />} title="Импортов пока нет" desc="Подключите TGStat и запустите импорт по категории." />
+          <EmptyState icon={<Database size={22} />} title="Импортов пока нет" desc="Подключите каталог и запустите импорт по категории." />
         ) : (
           <div className="space-y-2">
             {imports.map((imp) => {

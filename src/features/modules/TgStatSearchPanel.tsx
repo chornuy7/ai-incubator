@@ -85,7 +85,7 @@ export function TgStatSearchPanel() {
   }), [q, inAbout, category, subFrom, subTo, reachFrom, er, ci, age, flags, sort])
 
   const runSearch = async () => {
-    if (!ready) return pushToast({ type: 'error', title: 'Подключите TGStat', desc: 'Загрузите cookies во вкладке TGStat' })
+    if (!ready) return pushToast({ type: 'error', title: 'Подключите каталог', desc: 'Загрузите cookies во вкладке «Парсер по каталогу»' })
     if (!q.trim() && !category) return pushToast({ type: 'error', title: 'Укажите ключевое слово или категорию' })
     setLoading(true)
     try {
@@ -114,7 +114,7 @@ export function TgStatSearchPanel() {
       <div className="rounded-2xl border border-amber-500/30 bg-surface shadow-card">
         <div className="flex items-center gap-3 border-b border-amber-500/20 px-4 py-3.5">
           <span className="grid h-9 w-9 place-items-center rounded-xl bg-amber-500/12 text-amber-300"><SlidersHorizontal size={18} /></span>
-          <span className="font-display text-base font-bold text-fg">Расширенный поиск TGStat</span>
+          <span className="font-display text-base font-bold text-fg">Расширенный поиск по каталогу</span>
           {ready ? <Badge tone="spark">Подключён</Badge> : <Badge tone="amber"><Cookie size={12} /> Нужны cookies</Badge>}
         </div>
         <div className="space-y-4 p-4">
@@ -168,7 +168,7 @@ export function TgStatSearchPanel() {
             style={{ background: 'linear-gradient(90deg, #f59e0b, #fbbf24)' }}>
             {loading ? <Loader2 size={17} className="animate-spin" /> : <Search size={17} />} Найти каналы
           </button>
-          {!ready && <p className="text-center text-xs text-amber-300">Сначала подключите TGStat (вкладка «Парсер каналов TGStat» → загрузить cookies).</p>}
+          {!ready && <p className="text-center text-xs text-amber-300">Сначала подключите каталог (вкладка «Парсер по каталогу» → загрузить cookies).</p>}
         </div>
       </div>
 

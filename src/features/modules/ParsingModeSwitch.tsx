@@ -7,7 +7,11 @@ import { TgStatParserModule } from './TgStatParserModule'
 /**
  * Страница «Парсер каналов» с двумя режимами:
  *  1. Прямой парсер каналов TG (через аккаунты, зелёный).
- *  2. Парсер каналов TGStat (через cookies-сессию, жёлтый/амбер-блок).
+ *  2. Парсер по каталогу (массовый, через cookies-сессию, жёлтый/амбер-блок).
+ *
+ * §6 (MR-40): наружу не светим название внешнего сервиса — режим называется
+ * нейтрально «Парсер по каталогу». Единственная неизбежная ссылка на источник —
+ * в шаге экспорта cookies (туда пользователь физически заходит за ними).
  */
 export function ParsingModeSwitch({ moduleKey }: { moduleKey: string }) {
   const [mode, setMode] = useState<'direct' | 'tgstat'>('direct')
@@ -40,8 +44,8 @@ export function ParsingModeSwitch({ moduleKey }: { moduleKey: string }) {
         >
           <span className={cn('grid h-10 w-10 shrink-0 place-items-center rounded-xl', mode === 'tgstat' ? 'bg-amber-500/25 text-amber-200' : 'bg-amber-500/10 text-amber-300')}><Cookie size={20} /></span>
           <span className="min-w-0">
-            <span className={cn('block text-sm font-bold', mode === 'tgstat' ? 'text-amber-100' : 'text-amber-300')}>Парсер каналов TGStat</span>
-            <span className="block text-[11px] text-muted">Массовый парсинг каталога TGStat по категориям (cookies-сессия)</span>
+            <span className={cn('block text-sm font-bold', mode === 'tgstat' ? 'text-amber-100' : 'text-amber-300')}>Парсер по каталогу</span>
+            <span className="block text-[11px] text-muted">Массовый парсинг по категориям и регионам (cookies-сессия)</span>
           </span>
         </button>
       </div>
