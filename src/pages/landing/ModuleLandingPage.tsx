@@ -92,58 +92,10 @@ export function ModuleLandingPage() {
           <p className="mt-4 max-w-2xl text-lg leading-relaxed text-muted">{mod.description}</p>
         </div>
 
-        {/* Цена — full-width полоса (была правым сайдбаром). Период и сумма в один ряд,
-            CTA справа; на узком экране складывается в столбик. */}
-        {isBonus ? (
-          <div className="rounded-2xl border border-spark-500/40 bg-spark-500/8 p-6">
-            <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-              <div>
-                <div className="text-sm font-semibold text-spark-300">В подарок</div>
-                <div className="mt-1 font-display text-3xl font-bold">Бесплатно</div>
-                <p className="mt-1 text-sm text-muted">Идёт с любым набором модулей.</p>
-              </div>
-              <button onClick={start} className="btn-primary h-12 w-full sm:w-auto sm:px-8">Начать <ArrowRight size={17} /></button>
-            </div>
-          </div>
-        ) : (
-          <div className={cn('rounded-2xl border p-5', sel.save > 0 ? 'border-spark-500/40 bg-spark-500/8' : 'border-line bg-card')}>
-            <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
-              <div className="min-w-0 flex-1">
-                {/* Переключатель периода — таб вместо двух карточек стеком. */}
-                <div className="inline-flex rounded-xl border border-line bg-elevated p-1">
-                  {periods.map((p, i) => (
-                    <button key={`${p.unit}${p.count}`} onClick={() => setPeriodIdx(i)}
-                      className={cn(
-                        'rounded-lg px-3 py-1.5 text-sm font-medium transition-colors',
-                        p === sel ? 'bg-spark-500/20 text-spark-200' : 'text-muted hover:text-fg',
-                      )}>
-                      {periodLabel(p)}
-                      {p.discount > 0 && <span className="ml-1 text-[10px] text-spark-300">−{Math.round(p.discount * 100)}%</span>}
-                    </button>
-                  ))}
-                </div>
-                <div className="mt-3 flex items-baseline gap-2">
-                  <span className="font-display text-3xl font-bold">{cur}{sel.total}</span>
-                  <span className="text-sm text-muted">{periodPhrase(sel)}</span>
-                  {sel.save > 0 && <span className="rounded-md bg-spark-500/20 px-1.5 py-0.5 text-[10px] font-bold text-spark-300">выгода {Math.round(sel.discount * 100)}%</span>}
-                </div>
-                <div className="mt-1 text-sm text-muted">
-                  {sel.months > 1
-                    ? <>≈ {cur}{sel.perMonth} / месяц · экономия {cur}{sel.save}</>
-                    : <>{cur}{sel.perMonth} / месяц</>}
-                </div>
-              </div>
-              <button onClick={start} className="btn-primary h-12 w-full lg:w-auto lg:px-10">Выбрать <ArrowRight size={16} /></button>
-            </div>
-            <div className="mt-4 flex items-center gap-2 text-xs text-muted">
-              <Check size={14} className="text-spark-400" /> Доступ сразу · обновления без доплат · работа ИИ оплачивается монетами
-            </div>
-          </div>
-        )}
-
-        {/* «Как это работает» и «Возможности модуля» — единственная пара в одну строку
-            двумя колонками. Если возможностей нет — «как работает» занимает всю ширину. */}
-        <div className={cn('grid gap-4', hasFeatures && 'md:grid-cols-2')}>
+        {/* §2.1 (MR-3, уточнение заказчика): «Как это работает» и «Подписка» (цена) —
+            РЯДОМ двумя колонками. «Возможности модуля» и всё прочее — на всю ширину. */}
+        <div className="grid gap-4 md:grid-cols-2 md:items-start">
+          {/* Левая колонка — как работает */}
           <div className="rounded-2xl border border-line bg-card p-5">
             <div className="mb-3 text-sm font-semibold text-fg">Как это работает</div>
             <ul className="grid gap-2.5">
@@ -155,19 +107,60 @@ export function ModuleLandingPage() {
             </ul>
           </div>
 
-          {hasFeatures && (
-            <div className="rounded-2xl border border-line bg-card p-5">
-              <div className="mb-3 text-sm font-semibold text-fg">Возможности модуля</div>
-              <ul className="grid gap-2.5">
-                {MODULE_FEATURES[mod.key].map((f) => (
-                  <li key={f} className="flex items-start gap-2 text-sm text-muted">
-                    <Check size={16} className="mt-0.5 shrink-0 text-spark-400" /> {f}
-                  </li>
+          {/* Правая колонка — подписка (цена). Внутри колонки складывается вертикально. */}
+          {isBonus ? (
+            <div className="rounded-2xl border border-spark-500/40 bg-spark-500/8 p-6">
+              <div className="text-sm font-semibold text-spark-300">В подарок</div>
+              <div className="mt-1 font-display text-3xl font-bold">Бесплатно</div>
+              <p className="mt-1 text-sm text-muted">Идёт с любым набором модулей.</p>
+              <button onClick={start} className="btn-primary mt-4 h-12 w-full">Начать <ArrowRight size={17} /></button>
+            </div>
+          ) : (
+            <div className={cn('rounded-2xl border p-5', sel.save > 0 ? 'border-spark-500/40 bg-spark-500/8' : 'border-line bg-card')}>
+              {/* Переключатель периода — таб вместо двух карточек стеком. */}
+              <div className="inline-flex rounded-xl border border-line bg-elevated p-1">
+                {periods.map((p, i) => (
+                  <button key={`${p.unit}${p.count}`} onClick={() => setPeriodIdx(i)}
+                    className={cn(
+                      'rounded-lg px-3 py-1.5 text-sm font-medium transition-colors',
+                      p === sel ? 'bg-spark-500/20 text-spark-200' : 'text-muted hover:text-fg',
+                    )}>
+                    {periodLabel(p)}
+                    {p.discount > 0 && <span className="ml-1 text-[10px] text-spark-300">−{Math.round(p.discount * 100)}%</span>}
+                  </button>
                 ))}
-              </ul>
+              </div>
+              <div className="mt-3 flex items-baseline gap-2">
+                <span className="font-display text-3xl font-bold">{cur}{sel.total}</span>
+                <span className="text-sm text-muted">{periodPhrase(sel)}</span>
+                {sel.save > 0 && <span className="rounded-md bg-spark-500/20 px-1.5 py-0.5 text-[10px] font-bold text-spark-300">выгода {Math.round(sel.discount * 100)}%</span>}
+              </div>
+              <div className="mt-1 text-sm text-muted">
+                {sel.months > 1
+                  ? <>≈ {cur}{sel.perMonth} / месяц · экономия {cur}{sel.save}</>
+                  : <>{cur}{sel.perMonth} / месяц</>}
+              </div>
+              <button onClick={start} className="btn-primary mt-4 h-12 w-full">Выбрать <ArrowRight size={16} /></button>
+              <div className="mt-3 flex items-center gap-2 text-xs text-muted">
+                <Check size={14} className="text-spark-400" /> Доступ сразу · обновления без доплат · работа ИИ оплачивается монетами
+              </div>
             </div>
           )}
         </div>
+
+        {/* Возможности модуля — на всю ширину (список в две колонны). */}
+        {hasFeatures && (
+          <div className="rounded-2xl border border-line bg-card p-5">
+            <div className="mb-3 text-sm font-semibold text-fg">Возможности модуля</div>
+            <ul className="grid gap-2.5 sm:grid-cols-2">
+              {MODULE_FEATURES[mod.key].map((f) => (
+                <li key={f} className="flex items-start gap-2 text-sm text-muted">
+                  <Check size={16} className="mt-0.5 shrink-0 text-spark-400" /> {f}
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
 
         {/* §11.6: картинка модуля с выносками — «все хотят смотреть глазками». */}
         <ModuleShowcase moduleKey={mod.key} title={mod.title} />
