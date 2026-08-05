@@ -10,18 +10,26 @@ export interface RouteDef {
   icon: LucideIcon
   group: 'main' | 'modules' | 'parsing' | 'account'
   badge?: string
+  /**
+   * §10 (MR-49): раздел скрыт из меню, но НЕ удалён — маршрут остаётся рабочим по
+   * прямой ссылке, код на месте. Так прячем недоделанные разделы до готовности; чтобы
+   * вернуть — просто снять флаг. Фильтруется в сайдбаре (AppSidebar).
+   */
+  hidden?: boolean
 }
 
 export const ROUTES: RouteDef[] = [
   { path: '/panel', label: 'Менеджер аккаунтов', icon: LayoutGrid, group: 'main' },
   { path: '/panel/proxies', label: 'Прокси', icon: Network, group: 'main' },
   { path: '/panel/automation', label: 'Автоматизация', icon: CalendarClock, group: 'main' },
-  { path: '/panel/goals', label: 'Цели', icon: Target, group: 'main' },
-  { path: '/panel/agents', label: 'Агенты', icon: Bot, group: 'main' },
-  { path: '/panel/campaign', label: 'Кампания', icon: Rocket, group: 'main' },
+  // §10 (MR-49): «Цели», «Агенты», «Кампания» и «Аналитика» скрыты из меню до готовности
+  // (не удаляем — маршрут и код остаются, снять `hidden` = вернуть в меню).
+  { path: '/panel/goals', label: 'Цели', icon: Target, group: 'main', hidden: true },
+  { path: '/panel/agents', label: 'Агенты', icon: Bot, group: 'main', hidden: true },
+  { path: '/panel/campaign', label: 'Кампания', icon: Rocket, group: 'main', hidden: true },
   { path: '/panel/tasks', label: 'Дашборд задач', icon: ListChecks, group: 'main' },
   { path: '/panel/crm', label: 'CRM · Лиды', icon: Contact, group: 'main' },
-  { path: '/panel/analytics', label: 'Аналитика', icon: TrendingUp, group: 'main' },
+  { path: '/panel/analytics', label: 'Аналитика', icon: TrendingUp, group: 'main', hidden: true },
   { path: '/panel/my-statistics', label: 'Статистика', icon: BarChart3, group: 'main' },
   // §5.3 (E1/E2): полная админ-панель живёт ОТДЕЛЬНОЙ ссылкой /admin со своим входом
   // (см. AdminEntry), а не пунктом сайдбара — здесь её намеренно нет.
@@ -54,6 +62,15 @@ export const ROUTES: RouteDef[] = [
   // из кабинета убрали. Сам маршрут /panel/roles остаётся доступным по прямой ссылке.
   { path: '/panel/users', label: 'Пользователи', icon: Users2, group: 'account' },
 ]
+
+/**
+ * §10 (MR-49): скрыт ли раздел по прямому пути. Единый источник правды — флаг `hidden`
+ * в ROUTES: и меню, и ссылки внутри страниц (напр. «+ Создать кампанию» в модуле)
+ * сверяются с ним, поэтому снятие флага возвращает раздел везде разом.
+ */
+export function isHidden(path: string): boolean {
+  return ROUTES.find((r) => r.path === path)?.hidden === true
+}
 
 export const GROUP_LABELS: Record<RouteDef['group'], string> = {
   main: 'Главная',

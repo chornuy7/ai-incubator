@@ -89,7 +89,8 @@ export function AppSidebar({ mobile = false }: { mobile?: boolean }) {
 
       <nav className="flex-1 overflow-y-auto px-3 pb-4 no-scrollbar">
         {GROUP_ORDER.map((group) => {
-          const items = ROUTES.filter((r) => r.group === group && allowed(r))
+          // §10 (MR-49): `!r.hidden` убирает скрытые разделы из меню (маршрут жив).
+          const items = ROUTES.filter((r) => r.group === group && !r.hidden && allowed(r))
           if (items.length === 0) return null
           const hasActive = items.some((r) => r.path === location.pathname)
           // В icon-режиме групп не сворачиваем (заголовков нет); иначе — по состоянию,

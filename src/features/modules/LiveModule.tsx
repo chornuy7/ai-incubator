@@ -4,6 +4,7 @@ import {
   Heart, Eye, Shield, MessageCircle, Database, Trophy, Link2, Plus, Target, Terminal, ArrowUpRight, Rocket, Lock, LockOpen,
 } from 'lucide-react'
 import { MODULES, isCombatModule, combatConfirmText, type ModuleConfig } from '@/shared/config/modules'
+import { isHidden } from '@/shared/config/routes'
 import { activeAccounts, useApp } from '@/mocks/store'
 import { useSession } from '@/features/auth/session'
 import { can } from '@/shared/lib/access'
@@ -645,7 +646,10 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
           <div className="mb-3">
             <label className="mb-1 flex items-center justify-between text-xs text-white/50">
               <span><Rocket size={11} className="mb-0.5 inline" /> Кампания</span>
-              <a href="/panel/campaign" className="font-semibold text-spark-300 hover:underline">+ Создать кампанию</a>
+              {/* §10 (MR-49): пока раздел «Кампания» скрыт — не ведём на скрытую страницу. */}
+              {!isHidden('/panel/campaign') && (
+                <a href="/panel/campaign" className="font-semibold text-spark-300 hover:underline">+ Создать кампанию</a>
+              )}
             </label>
             {campaigns.length > 0 ? (
               <>
