@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import {
   Play, Sparkles, Hash, Settings2, Clock, Users, MessageSquareText,
-  Heart, Eye, Shield, MessageCircle, Database, Trophy, Link2, Plus, Target, Terminal, ArrowUpRight, Rocket, Lock, LockOpen,
+  Heart, Eye, Shield, MessageCircle, Database, Trophy, Link2, Plus, Target, Terminal, ArrowUpRight, Rocket, Lock, LockOpen, Check,
 } from 'lucide-react'
 import { MODULES, isCombatModule, combatConfirmText, type ModuleConfig } from '@/shared/config/modules'
 import { isHidden } from '@/shared/config/routes'
@@ -361,25 +361,36 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
       <TaskStartedModal task={justStarted} moduleTitle={cfg.title} onClose={dismissJustStarted} />
       <SaveToFolderModal open={folderSave !== null} onClose={() => setFolderSave(null)} targets={folderSave ?? []} />
       <SavePresetModal open={presetModalOpen} onClose={() => setPresetModalOpen(false)} onSave={(name, color, owner) => savePreset(name, buildSettings(), color, owner)} />
-      {/* §11 (MR-55): roadmap обязательных шагов — видно, что осталось до запуска. */}
+      {/* §11 (MR-55): пошаговый мастер запуска — кружки с номерами, соединённые линиями,
+          подпись под каждым. Первый шаг всегда «Аккаунты» — их выбор обязателен. Текущий
+          шаг подсвечен, пройденные — с галочкой и «залитой» линией. */}
       {!running && launchSteps.length > 1 && (
-        <div className="flex flex-wrap items-center gap-x-2 gap-y-1.5 rounded-2xl border border-line bg-elevated/40 px-3 py-2.5">
-          <span className="mr-1 text-[11px] font-bold uppercase tracking-wide text-muted">Шаги запуска</span>
-          {launchSteps.map((s, i) => (
-            <div key={s.label} className="flex items-center gap-2">
-              <span className={cn('flex items-center gap-1.5 rounded-lg border px-2.5 py-1 text-xs font-medium',
-                s.done ? 'border-spark-500/40 bg-spark-500/10 text-spark-200'
-                  : s.current ? 'border-amber-500/40 bg-amber-500/10 text-amber-200'
-                    : 'border-line text-muted')}>
-                <span className={cn('grid h-4 w-4 shrink-0 place-items-center rounded-full text-[10px] font-bold',
-                  s.done ? 'bg-spark-500/30 text-spark-100' : s.current ? 'bg-amber-500/25 text-amber-100' : 'bg-white/10 text-muted')}>
-                  {s.done ? '✓' : i + 1}
+        <div className="rounded-2xl border border-line bg-elevated/40 px-4 py-4">
+          <div className="flex items-start">
+            {launchSteps.map((s, i) => (
+              <div key={s.label} className="flex flex-1 flex-col items-center">
+                <div className="flex w-full items-center">
+                  {/* левая половина соединителя (у первого — прозрачная) */}
+                  <span className={cn('h-0.5 flex-1 rounded-full',
+                    i === 0 ? 'opacity-0' : launchSteps[i - 1].done ? 'bg-spark-500/60' : 'bg-line')} />
+                  {/* кружок шага */}
+                  <span className={cn('grid h-9 w-9 shrink-0 place-items-center rounded-full border-2 text-sm font-bold transition-colors',
+                    s.done ? 'border-spark-500 bg-spark-500 text-[#04150c]'
+                      : s.current ? 'border-spark-500 bg-spark-500/15 text-spark-200 ring-4 ring-spark-500/15'
+                        : 'border-line bg-elevated text-muted')}>
+                    {s.done ? <Check size={16} strokeWidth={3} /> : i + 1}
+                  </span>
+                  {/* правая половина соединителя (у последнего — прозрачная) */}
+                  <span className={cn('h-0.5 flex-1 rounded-full',
+                    i === launchSteps.length - 1 ? 'opacity-0' : s.done ? 'bg-spark-500/60' : 'bg-line')} />
+                </div>
+                <span className={cn('mt-2 text-center text-xs',
+                  s.current ? 'font-bold text-fg' : s.done ? 'font-medium text-spark-200' : 'text-muted')}>
+                  {s.label}
                 </span>
-                {s.label}
-              </span>
-              {i < launchSteps.length - 1 && <span className="text-white/20">→</span>}
-            </div>
-          ))}
+              </div>
+            ))}
+          </div>
         </div>
       )}
       {cfg.accountPicker && showBlock('run') && (
