@@ -70,7 +70,9 @@ export function ModuleShowcase({ moduleKey, title }: { moduleKey: string; title:
         Экран модуля «{title}». {isImg ? 'Нажмите на картинку, чтобы увеличить.' : 'Цифры — блоки, которыми вы управляете.'}
       </p>
 
-      <div className="grid gap-5 md:grid-cols-[1.15fr_1fr]">
+      {/* §9 (MR-48): Unreal-стиль — крупный экран модуля НА ВСЮ ШИРИНУ сверху, а
+          пронумерованные возможности — списком под ним. */}
+      <div className="space-y-4">
         <div>
           <div className="overflow-hidden rounded-xl border border-line bg-surface">
             <div className="flex items-center gap-1.5 border-b border-line px-3 py-2">
@@ -123,12 +125,12 @@ export function ModuleShowcase({ moduleKey, title }: { moduleKey: string; title:
           <p className="mt-2 text-xs leading-snug text-muted">{view.caption}</p>
         </div>
 
-        {/* Выноски: номер ↔ возможность модуля. */}
-        <ul className="space-y-2.5">
+        {/* Выноски: номер ↔ возможность модуля — сеткой под крупным экраном. */}
+        <ul className="grid gap-2.5 sm:grid-cols-2">
           {points.map((p, i) => (
-            <li key={p} className="flex gap-2.5">
-              <span className="grid h-5 w-5 shrink-0 place-items-center rounded-md bg-spark-500/15 text-[11px] font-bold text-spark-300">{i + 1}</span>
-              <span className="text-sm leading-snug text-muted">{p}</span>
+            <li key={p} className="flex gap-2.5 rounded-xl border border-line bg-elevated/40 p-2.5">
+              <span className="grid h-6 w-6 shrink-0 place-items-center rounded-lg bg-spark-500/15 text-xs font-bold text-spark-300">{i + 1}</span>
+              <span className="text-sm leading-snug text-fg">{p}</span>
             </li>
           ))}
         </ul>
