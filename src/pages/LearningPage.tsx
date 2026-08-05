@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState } from 'react'
-import { GraduationCap, Search, ChevronRight, Eye, Cog, Network, Lightbulb, ShieldAlert, Sparkles, ListChecks, BookOpen, Users, Flame, Hash, Heart, Gauge, Rocket, Activity, type LucideIcon } from 'lucide-react'
+import { GraduationCap, Search, ChevronRight, Eye, Cog, Network, Lightbulb, ShieldAlert, Sparkles, ListChecks, BookOpen, Users, Flame, Hash, Heart, Gauge, Rocket, Activity, LayoutGrid, type LucideIcon } from 'lucide-react'
 import { PageHeader, Card } from '@/shared/ui'
 import { HELP_DOCS, type HelpDoc } from '@/shared/config/helpDocs'
+import { MODULE_DOCS, type ModuleDoc } from '@/shared/config/moduleDocs'
 import { cn } from '@/shared/lib/utils'
 import { MODULES, isCombatModule } from '@/shared/config/modules'
 import { ModuleShowcase } from './landing/ModuleShowcase'
@@ -87,18 +88,21 @@ function LearningView({ q, setQ, groups, active, setActive, activeDoc }: {
 }) {
   // Вкладки собираем только из непустых секций дока — у разных тем свой набор.
   const tabs = useMemo(() => {
-    if (!activeDoc) return [] as { key: string; label: string; icon: typeof Eye; body?: string; tips?: string[]; steps?: { title: string; text: string; icon: LucideIcon }[]; accent?: boolean; warn?: boolean }[]
+    if (!activeDoc) return [] as { key: string; label: string; icon: typeof Eye; body?: string; tips?: string[]; steps?: { title: string; text: string; icon: LucideIcon }[]; doc?: ModuleDoc; accent?: boolean; warn?: boolean }[]
     // §9 (MR-47): для модуля первой идёт вкладка «С чего начать» — пошаговая инструкция.
     const steps = active ? moduleSteps(active) : null
+    // §9 (MR-48): подробный разбор интерфейса — как в Unreal docs (скрин + каждая кнопка).
+    const iface = active ? MODULE_DOCS[active] : null
     return [
       ...(steps ? [{ key: 'steps', label: 'С чего начать', icon: ListChecks, steps }] : []),
+      ...(iface ? [{ key: 'interface', label: 'Интерфейс', icon: LayoutGrid, doc: iface }] : []),
       { key: 'what', label: 'Обзор', icon: Eye, body: activeDoc.what },
       { key: 'how', label: 'Как работает', icon: Cog, body: activeDoc.how },
       { key: 'together', label: 'Связи', icon: Network, body: activeDoc.together },
       { key: 'example', label: 'Пример', icon: Sparkles, body: activeDoc.example, accent: true },
       ...(activeDoc.risks ? [{ key: 'risks', label: 'Риски', icon: ShieldAlert, body: activeDoc.risks, warn: true }] : []),
       ...(activeDoc.tips?.length ? [{ key: 'tips', label: 'Советы', icon: Lightbulb, tips: activeDoc.tips }] : []),
-    ].filter((t) => t.tips?.length || t.steps?.length || t.body?.trim())
+    ].filter((t) => t.tips?.length || t.steps?.length || t.doc || t.body?.trim())
   }, [activeDoc, active])
 
   const [tab, setTab] = useState('what')
@@ -153,7 +157,9 @@ function LearningView({ q, setQ, groups, active, setActive, activeDoc }: {
 
               {/* §11.6: если раздел — это модуль, показываем его картинку с выносками
                   тем же компонентом, что на странице модуля: «все хотят смотреть глазками». */}
-              {active && getModule(active) && <ModuleShowcase moduleKey={active} title={activeDoc.title} />}
+              {/* §9 (MR-48): если у модуля есть подробная дока интерфейса (вкладка «Интерфейс»)
+                  — не показываем код-рисованный мок, чтобы не дублировать реальными скринами. */}
+              {active && getModule(active) && !MODULE_DOCS[active] && <ModuleShowcase moduleKey={active} title={activeDoc.title} />}
 
               {/* Вкладки: один кусок за раз вместо шести абзацев подряд. */}
               <div className="flex flex-wrap gap-1.5 border-b border-line pb-3">
@@ -177,7 +183,9 @@ function LearningView({ q, setQ, groups, active, setActive, activeDoc }: {
 
               {/* Тело активной вкладки. Заголовок не дублируем — он уже на самой вкладке. */}
               <div key={shown?.key}>
-                {shown?.steps
+                {shown?.doc
+                  ? <ModuleInterfaceDoc doc={shown.doc} />
+                  : shown?.steps
                   ? <StepList steps={shown.steps} />
                   : shown?.tips
                     ? (
@@ -227,6 +235,51 @@ function StepList({ steps }: { steps: { title: string; text: string; icon: Lucid
         )
       })}
     </ol>
+  )
+}
+
+/**
+ * §9 (MR-48): подробный разбор интерфейса модуля — как в документации Unreal Engine:
+ * реальный скриншот экрана + по каждой секции её close-up и таблица «элемент → что делает».
+ */
+function ModuleInterfaceDoc({ doc }: { doc: ModuleDoc }) {
+  return (
+    <div className="space-y-6">
+      {doc.hero && (
+        <figure>
+          <img src={doc.hero} alt="Экран модуля" loading="lazy" className="w-full rounded-2xl border border-line" />
+          <figcaption className="mt-1.5 text-xs text-muted">Так выглядит экран модуля целиком. Ниже — разбор каждой секции.</figcaption>
+        </figure>
+      )}
+      <p className="text-sm leading-relaxed text-muted">{doc.intro}</p>
+      {doc.sections.map((s) => (
+        <section key={s.title} className="space-y-2.5">
+          <h3 className="font-display text-lg font-bold text-fg">{s.title}</h3>
+          {s.image && <img src={s.image} alt={s.title} loading="lazy" className="w-full rounded-xl border border-line" />}
+          <p className="text-sm leading-relaxed text-muted">{s.description}</p>
+          {!!s.controls?.length && (
+            <div className="overflow-x-auto rounded-xl border border-line">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b border-line bg-elevated/60 text-left text-[11px] font-bold uppercase tracking-wide text-muted">
+                    <th className="px-3 py-2">Элемент</th>
+                    <th className="px-3 py-2">Что делает</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {s.controls.map((c) => (
+                    <tr key={c.name} className="border-t border-line/60 align-top">
+                      <td className="whitespace-nowrap px-3 py-2 font-semibold text-fg">{c.name}</td>
+                      <td className="px-3 py-2 leading-relaxed text-muted">{c.desc}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </section>
+      ))}
+    </div>
   )
 }
 
