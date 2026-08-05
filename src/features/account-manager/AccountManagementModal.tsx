@@ -83,7 +83,7 @@ export function AccountManagementModal({ account, onClose }: { account: TgAccoun
     setSpamChecking(true)
     try {
       await load({ spam: true })
-      pushToast({ type: 'info', title: 'Спамблок проверен через @SpamBot' })
+      pushToast({ type: 'success', title: 'Спамблок проверен через @SpamBot' })
     } finally {
       setSpamChecking(false)
     }

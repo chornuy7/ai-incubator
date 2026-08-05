@@ -82,7 +82,7 @@ export function AccountOverviewPage() {
 
   const runSpamCheck = async () => {
     setSpamChecking(true)
-    try { await load({ spam: true }); pushToast({ type: 'info', title: 'Спамблок проверен через @SpamBot' }) }
+    try { await load({ spam: true }); pushToast({ type: 'success', title: 'Спамблок проверен через @SpamBot' }) }
     finally { setSpamChecking(false) }
   }
 
