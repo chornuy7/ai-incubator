@@ -57,6 +57,48 @@ export function ModuleLandingPage() {
   const doc = HELP_DOCS[mod.key]
   const hasFeatures = !!MODULE_FEATURES[mod.key]?.length
 
+  // Плашка с ценой — выносим в переменную, чтобы показать её И сверху (в паре с «Как
+  // это работает»), И в самом конце длинной страницы: до нижнего CTA доскроллил — цена
+  // снова перед глазами (правка заказчика).
+  const priceCard = isBonus ? (
+    <div className="flex flex-col rounded-2xl border border-spark-500/40 bg-spark-500/[.07] p-6">
+      <div className="text-sm font-semibold text-spark-300">В подарок</div>
+      <div className="mt-1 font-display text-4xl font-bold">Бесплатно</div>
+      <p className="mt-1.5 text-sm text-muted">Идёт с любым набором модулей.</p>
+      <button onClick={start} className="btn-primary mt-auto h-12 w-full pt-0.5 text-base">Начать <ArrowRight size={17} /></button>
+    </div>
+  ) : (
+    <div className={cn('flex flex-col rounded-2xl border p-5', sel.save > 0 ? 'border-spark-500/40 bg-spark-500/[.07]' : 'border-line bg-card')}>
+      {/* Переключатель периода — на всю ширину карточки, ровный ряд. */}
+      <div className="flex rounded-xl border border-line bg-elevated p-1">
+        {periods.map((p, i) => (
+          <button key={`${p.unit}${p.count}`} onClick={() => setPeriodIdx(i)}
+            className={cn(
+              'flex-1 rounded-lg px-2 py-1.5 text-sm font-medium transition-colors',
+              p === sel ? 'bg-spark-500/20 text-spark-200' : 'text-muted hover:text-fg',
+            )}>
+            {periodLabel(p)}
+            {p.discount > 0 && <span className="ml-1 text-[10px] text-spark-300">−{Math.round(p.discount * 100)}%</span>}
+          </button>
+        ))}
+      </div>
+      <div className="mt-4 flex items-baseline gap-2">
+        <span className="font-display text-4xl font-bold tracking-tight">{cur}{sel.total}</span>
+        <span className="text-sm text-muted">{periodPhrase(sel)}</span>
+        {sel.save > 0 && <span className="rounded-md bg-spark-500/20 px-1.5 py-0.5 text-[10px] font-bold text-spark-300">выгода {Math.round(sel.discount * 100)}%</span>}
+      </div>
+      <div className="mt-1 text-sm text-muted">
+        {sel.months > 1
+          ? <>≈ {cur}{sel.perMonth} / месяц · экономия {cur}{sel.save}</>
+          : <>{cur}{sel.perMonth} / месяц</>}
+      </div>
+      <button onClick={start} className="btn-primary mt-auto h-12 w-full text-base">Выбрать <ArrowRight size={16} /></button>
+      <div className="mt-3 flex items-start gap-2 text-xs leading-relaxed text-muted">
+        <Check size={14} className="mt-0.5 shrink-0 text-spark-400" /> Доступ сразу · обновления без доплат · работа ИИ оплачивается монетами
+      </div>
+    </div>
+  )
+
   return (
     <div className="min-h-screen bg-bg text-fg">
       <header className="sticky top-0 z-40 border-b border-line bg-surface/80 backdrop-blur-xl">
@@ -111,44 +153,7 @@ export function ModuleLandingPage() {
           </div>
 
           {/* Правая колонка — подписка (цена). Кнопка прижата к низу → выравнивание с левой. */}
-          {isBonus ? (
-            <div className="flex flex-col rounded-2xl border border-spark-500/40 bg-spark-500/[.07] p-6">
-              <div className="text-sm font-semibold text-spark-300">В подарок</div>
-              <div className="mt-1 font-display text-4xl font-bold">Бесплатно</div>
-              <p className="mt-1.5 text-sm text-muted">Идёт с любым набором модулей.</p>
-              <button onClick={start} className="btn-primary mt-auto h-12 w-full pt-0.5 text-base">Начать <ArrowRight size={17} /></button>
-            </div>
-          ) : (
-            <div className={cn('flex flex-col rounded-2xl border p-5', sel.save > 0 ? 'border-spark-500/40 bg-spark-500/[.07]' : 'border-line bg-card')}>
-              {/* Переключатель периода — на всю ширину карточки, ровный ряд. */}
-              <div className="flex rounded-xl border border-line bg-elevated p-1">
-                {periods.map((p, i) => (
-                  <button key={`${p.unit}${p.count}`} onClick={() => setPeriodIdx(i)}
-                    className={cn(
-                      'flex-1 rounded-lg px-2 py-1.5 text-sm font-medium transition-colors',
-                      p === sel ? 'bg-spark-500/20 text-spark-200' : 'text-muted hover:text-fg',
-                    )}>
-                    {periodLabel(p)}
-                    {p.discount > 0 && <span className="ml-1 text-[10px] text-spark-300">−{Math.round(p.discount * 100)}%</span>}
-                  </button>
-                ))}
-              </div>
-              <div className="mt-4 flex items-baseline gap-2">
-                <span className="font-display text-4xl font-bold tracking-tight">{cur}{sel.total}</span>
-                <span className="text-sm text-muted">{periodPhrase(sel)}</span>
-                {sel.save > 0 && <span className="rounded-md bg-spark-500/20 px-1.5 py-0.5 text-[10px] font-bold text-spark-300">выгода {Math.round(sel.discount * 100)}%</span>}
-              </div>
-              <div className="mt-1 text-sm text-muted">
-                {sel.months > 1
-                  ? <>≈ {cur}{sel.perMonth} / месяц · экономия {cur}{sel.save}</>
-                  : <>{cur}{sel.perMonth} / месяц</>}
-              </div>
-              <button onClick={start} className="btn-primary mt-auto h-12 w-full text-base">Выбрать <ArrowRight size={16} /></button>
-              <div className="mt-3 flex items-start gap-2 text-xs leading-relaxed text-muted">
-                <Check size={14} className="mt-0.5 shrink-0 text-spark-400" /> Доступ сразу · обновления без доплат · работа ИИ оплачивается монетами
-              </div>
-            </div>
-          )}
+          {priceCard}
         </div>
 
         {/* Возможности модуля — на всю ширину (список в две колонны). */}
@@ -205,6 +210,10 @@ export function ModuleLandingPage() {
             <Sparkle /> Есть у нас — редко у кого из конкурентов
           </div>
         )}
+
+        {/* Дубль прайса в самом конце — доскроллил длинную страницу, цена снова перед
+            глазами (правка заказчика). Центрируем как финальный CTA. */}
+        <div className="mx-auto w-full max-w-md pt-2">{priceCard}</div>
       </section>
 
       <footer className="mx-auto max-w-6xl px-5 py-8 text-xs text-muted">
