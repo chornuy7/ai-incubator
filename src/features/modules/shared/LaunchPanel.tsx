@@ -1,12 +1,11 @@
 import { Play, Save, AlertTriangle, Loader2, Bookmark, X, ArrowUpRight } from 'lucide-react'
-import { cn } from '@/shared/lib/utils'
 import type { ModuleTask, ModulePreset, ModuleTaskSettings } from '@/api/modulesApi'
 import { LaunchStat } from './index'
 import { FloatingBar } from './FloatingBar'
 import { presetHex } from './SavePresetModal'
 
 export function LaunchPanel({
-  running, starting, canStart, onStart, onSave, primaryLabel, stats, task, warn, cost,
+  running, starting, canStart, onStart, onSave, primaryLabel, stats, warn, cost,
   presets, onApplyPreset, onDeletePreset, extras,
 }: {
   running: boolean; starting: boolean; canStart: boolean
@@ -86,10 +85,6 @@ export function LaunchPanel({
       {/* Плавающий бар — ПОСЛЕДНИЙ элемент: его заглушка резервирует место в самом низу
           карточки, ничего не рендерится ниже, и бар чисто «отрывается» ко дну экрана. */}
       <FloatingBar>
-        <div className="flex items-center gap-2 text-sm font-semibold text-muted">
-          <span className={cn('h-2.5 w-2.5 rounded-full', running ? 'bg-spark-400 animate-pulse' : 'bg-faint')} />
-          {running ? 'Выполняется' : task?.status === 'done' ? 'Завершено' : 'Готов'}
-        </div>
         <div className="flex flex-1 flex-wrap items-center justify-center gap-2">
           <button type="button" onClick={onStart} disabled={starting || !canStart} className="btn-primary h-11 min-w-[180px]">
             {starting ? <Loader2 size={17} className="animate-spin" /> : <Play size={17} />} {primaryLabel}

@@ -43,12 +43,15 @@ export function FloatingBar({ children, className }: { children: ReactNode; clas
 
   return (
     <>
-      <div ref={holderRef} style={{ height: barH ? barH + 8 : undefined }} />
+      <div ref={holderRef} style={{ height: barH || undefined }} />
       <div
         ref={barRef}
         style={box ? { left: box.left, width: box.width } : undefined}
         className={cn(
-          'fixed bottom-4 z-30 flex flex-col items-center gap-3 rounded-2xl border border-line',
+          // Сплошной бар, прижатый к самому низу (bottom-0, без отступа) и во всю ширину
+          // рабочей области «край в край» — без скругления, только верхняя граница.
+          // Всегда виден, не выглядит как плавающая плашка (правка заказчика).
+          'fixed bottom-0 z-30 flex flex-col items-center gap-3 border-t border-line',
           // §11 (MR-56): справа резервируем место под плавающие виджеты (поддержка/Help
           // в правом нижнем углу), чтобы кнопки бара не уходили под них.
           'bg-elevated/95 p-4 shadow-lg shadow-black/40 backdrop-blur sm:flex-row sm:pr-16',
