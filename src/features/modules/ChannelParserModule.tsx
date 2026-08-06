@@ -517,7 +517,7 @@ function ChannelParserInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: 
           onStart={handleStart}
           onStop={stop}
           onSave={handleSave}
-          primaryLabel={cfg.primaryAction ?? 'Запустить парсинг'}
+          primaryLabel={cfg.primaryAction ?? 'Начать'}
           steps={!running ? <LaunchSteps steps={markCurrentStep([
             { label: 'Аккаунты', done: selected.size > 0 && busySelectedCount === 0, anchor: 'sec-accounts' },
             { label: 'Ключевые слова', done: keywords.length > 0, anchor: 'sec-settings' },

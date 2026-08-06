@@ -564,7 +564,7 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
         )}
         {showBlock('settings') && moduleKey === 'neuro-commenting' && !running && (
           <div className="mb-3">
-            <NumberField label="Окно постов" value={postWindow} onChange={(n) => setPostWindow(Math.max(1, Math.min(50, n)))} min={1} max={50} suffix="1–50" />
+            <NumberField label="Сколько последних постов обрабатывать" value={postWindow} onChange={(n) => setPostWindow(Math.max(1, Math.min(50, n)))} min={1} max={50} suffix="1–50" />
             <div className="mt-1 text-xs text-white/40">Сколько последних постов обрабатывать, не всю историю</div>
             <div className="mt-3 mb-1 text-xs text-white/50">Стоп-слова <span className="text-white/30">(пропускать посты с этими словами, через запятую)</span></div>
             <input value={stopWordsText} onChange={(e) => setStopWordsText(e.target.value)} className="input h-9" placeholder="политика, скам, крипт…" />

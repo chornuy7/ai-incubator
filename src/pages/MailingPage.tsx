@@ -405,7 +405,7 @@ export function MailingPage() {
               </div>
             )}
             <button onClick={() => void launch()} disabled={!canLaunch} className="btn-primary mt-3 h-10 w-full disabled:opacity-40">
-              <Send size={16} /> {launching ? 'Создание…' : 'Создать рассылку'}
+              <Send size={16} /> {launching ? 'Запуск…' : 'Начать'}
             </button>
           </Card>
         </div>
