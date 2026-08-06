@@ -6,11 +6,13 @@ import { presetHex } from './SavePresetModal'
 
 export function LaunchPanel({
   running, starting, canStart, onStart, onSave, primaryLabel, stats, warn, cost,
-  presets, onApplyPreset, onDeletePreset, extras,
+  presets, onApplyPreset, onDeletePreset, extras, steps,
 }: {
   running: boolean; starting: boolean; canStart: boolean
   onStart: () => void; onStop?: () => void; onSave: () => void
   primaryLabel: string
+  /** Компактные шаги запуска — строкой ПОД кнопкой, внутри самой панели. */
+  steps?: React.ReactNode
   stats: { icon: React.ReactNode; color: string; label: string; value: string; warn?: boolean }[]
   task: ModuleTask | null
   warn?: string
@@ -84,16 +86,20 @@ export function LaunchPanel({
       {extras}
       {/* Плавающий бар — ПОСЛЕДНИЙ элемент: его заглушка резервирует место в самом низу
           карточки, ничего не рендерится ниже, и бар чисто «отрывается» ко дну экрана. */}
+      {/* Внутри панели — колонка: ряд с кнопками, а под ним компактные шаги запуска. */}
       <FloatingBar>
-        <div className="flex flex-1 flex-wrap items-center justify-center gap-2">
-          <button type="button" onClick={onStart} disabled={starting || !canStart} className="btn-primary h-11 min-w-[180px]">
-            {starting ? <Loader2 size={17} className="animate-spin" /> : <Play size={17} />} {primaryLabel}
-          </button>
-          {running && (
-            <a href="/panel/tasks" className="btn-ghost h-11 text-sm" title="Управление, прогресс и логи — в Дашборде задач"><ArrowUpRight size={15} /> В Дашборде задач</a>
-          )}
+        <div className="flex w-full flex-col items-center gap-3 sm:flex-row sm:pr-16">
+          <div className="flex flex-1 flex-wrap items-center justify-center gap-2">
+            <button type="button" onClick={onStart} disabled={starting || !canStart} className="btn-primary h-11 min-w-[180px]">
+              {starting ? <Loader2 size={17} className="animate-spin" /> : <Play size={17} />} {primaryLabel}
+            </button>
+            {running && (
+              <a href="/panel/tasks" className="btn-ghost h-11 text-sm" title="Управление, прогресс и логи — в Дашборде задач"><ArrowUpRight size={15} /> В Дашборде задач</a>
+            )}
+          </div>
+          <button type="button" onClick={onSave} className="btn-ghost h-11 text-sm"><Save size={15} /> Сохранить пресет</button>
         </div>
-        <button type="button" onClick={onSave} className="btn-ghost h-11 text-sm"><Save size={15} /> Сохранить пресет</button>
+        {steps}
       </FloatingBar>
     </>
   )

@@ -2,59 +2,60 @@ import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 're
 import { cn } from '@/shared/lib/utils'
 
 /**
- * Панель, которая висит над страницей и ходит за человеком.
+ * Нижняя панель запуска: всегда видна, прижата ко дну рабочей области.
  *
  * Настройки модулей длинные, и до кнопки «Начать» приходилось прокручивать вниз.
- * Раньше стояло `sticky`, но оно держится только внутри своей карточки: стоило
- * проскроллить дальше — кнопка пропадала.
- *
- * `fixed` считает координаты от окна, поэтому панель заехала бы на боковое меню
- * (которое к тому же сворачивается). Чтобы этого не было, ширину и левый край берём
- * с невидимой заглушки, стоящей в обычном потоке. Она же держит высоту — иначе
- * нижний блок страницы прятался бы под панелью.
+ * `sticky` тут не годится: он держится только в пределах своего родителя, а блок
+ * запуска заканчивается сразу под панелью — стоит проскроллить дальше, и она уезжает.
+ * Поэтому `fixed`, но координаты считаем от ГЛАВНОЙ КОЛОНКИ (сестра сайдбара): левый
+ * край = правый край меню, ширина = вся оставшаяся ширина экрана. Так панель идёт
+ * «край в край» и не наезжает на боковое меню, которое к тому же сворачивается.
  */
 export function FloatingBar({ children, className }: { children: ReactNode; className?: string }) {
-  const holderRef = useRef<HTMLDivElement>(null)
   const barRef = useRef<HTMLDivElement>(null)
   const [box, setBox] = useState<{ left: number; width: number } | null>(null)
   const [barH, setBarH] = useState(0)
 
   useLayoutEffect(() => {
+    // Главная колонка — родитель <main> (сайдбар ей сестра, поэтому её левый край
+    // ровно там, где кончается меню).
+    const col = () => document.querySelector('main')?.parentElement ?? null
     const measure = () => {
-      const h = holderRef.current
-      if (!h) return
-      const r = h.getBoundingClientRect()
-      setBox({ left: Math.round(r.left), width: Math.round(r.width) })
+      const c = col()
+      if (c) {
+        const r = c.getBoundingClientRect()
+        setBox({ left: Math.round(r.left), width: Math.round(r.width) })
+      }
       if (barRef.current) setBarH(barRef.current.offsetHeight)
     }
     measure()
     window.addEventListener('resize', measure)
-    // Меню сворачивается анимацией — следим за шириной родителя, а не только окна.
+    // Меню сворачивается анимацией — следим за шириной колонки, а не только окна.
     const ro = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(measure) : null
-    if (ro && holderRef.current?.parentElement) ro.observe(holderRef.current.parentElement)
+    const c = col()
+    if (ro && c) ro.observe(c)
     return () => { window.removeEventListener('resize', measure); ro?.disconnect() }
   }, [])
 
-  // Высота меняется от содержимого (появилось предупреждение, вторая кнопка) —
-  // держим заглушку такой же.
+  // Высота меняется от содержимого (появились шаги, вторая кнопка) — держим заглушку
+  // такой же, иначе нижний блок страницы прячется под панелью.
   useEffect(() => {
     if (barRef.current) setBarH(barRef.current.offsetHeight)
   })
 
   return (
     <>
-      <div ref={holderRef} style={{ height: barH || undefined }} />
+      <div style={{ height: barH || undefined }} />
       <div
         ref={barRef}
         style={box ? { left: box.left, width: box.width } : undefined}
         className={cn(
-          // Сплошной бар, прижатый к самому низу (bottom-0, без отступа) и во всю ширину
-          // рабочей области «край в край» — без скругления, только верхняя граница.
-          // Всегда виден, не выглядит как плавающая плашка (правка заказчика).
-          'fixed bottom-0 z-30 flex flex-col items-center gap-3 border-t border-line',
+          // Сплошная панель у самого низа: без отступа и скругления, только верхняя
+          // граница — «край в край» рабочей области (правка заказчика).
+          'fixed bottom-0 z-30 flex flex-col items-center gap-2 border-t border-line',
           // §11 (MR-56): справа резервируем место под плавающие виджеты (поддержка/Help
-          // в правом нижнем углу), чтобы кнопки бара не уходили под них.
-          'bg-elevated/95 p-4 shadow-lg shadow-black/40 backdrop-blur sm:flex-row sm:pr-16',
+          // в правом нижнем углу), чтобы кнопки панели не уходили под них.
+          'bg-elevated/95 px-4 py-3 shadow-lg shadow-black/40 backdrop-blur',
           className,
         )}
       >
