@@ -2176,6 +2176,14 @@ function PricesTab() {
                         onChange={(e) => setDraft((d) => ({ ...d, [m.key]: { ...d[m.key], gift: e.target.value.replace(/[^\d]/g, '') } }))}
                         className="input h-8 w-24 text-right tabular-nums" placeholder="0" />
                     </span>
+                    {/* На сколько ДЕЙСТВИЙ хватит подарочных токенов = подарок ÷ цена действия.
+                        Считаем по текущему черновику — обновляется прямо при вводе подарка/цены. */}
+                    {(() => {
+                      const g = Number(draft[m.key]?.gift ?? m.gift ?? 0)
+                      const a = Number(draft[m.key]?.action ?? m.action ?? 0)
+                      if (!g || !a) return null
+                      return <div className="mt-0.5 pr-1 text-[10px] text-muted">≈ {Math.floor(g / a).toLocaleString('ru-RU')} действий</div>
+                    })()}
                   </td>
                 </tr>
               ))}
