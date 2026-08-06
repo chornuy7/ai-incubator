@@ -343,15 +343,18 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
     ]
   }, [selected, targets, postUrls, hasPostTargets, delays, maxActions, cfg, isGgr, accounts, results, task, needsTargets])
 
-  // §11 (MR-55): пошаговый roadmap обязательных действий перед запуском — что уже
-  // сделано и что осталось, по порядку. Последний шаг «Запуск» становится текущим,
-  // когда всё обязательное заполнено (совпадает с гейтом canStart).
+  // §11 (MR-55): пошаговый roadmap перед запуском — что сделано и что осталось.
+  // `anchor` — «связка» с блоком на странице: клик по шагу прокручивает к нему.
+  // `optional` — необязательный шаг (тонкая настройка): показываем серым, он не
+  // становится «текущим» и не мешает запуску.
   const launchSteps = useMemo(() => {
-    const steps: { label: string; done: boolean; current?: boolean }[] = []
-    if (cfg.accountPicker) steps.push({ label: 'Аккаунты', done: selected.size > 0 })
-    if (needsTargets && !cfg.warmingLayout) steps.push({ label: cfg.unit?.title || 'Цели', done: targets.length > 0 || hasPostTargets })
-    steps.push({ label: 'Запуск', done: false })
-    const idx = steps.findIndex((s) => !s.done)
+    const steps: { label: string; done: boolean; current?: boolean; anchor: string; optional?: boolean }[] = []
+    if (cfg.accountPicker) steps.push({ label: 'Аккаунты', done: selected.size > 0, anchor: 'sec-accounts' })
+    if (needsTargets && !cfg.warmingLayout) steps.push({ label: cfg.unit?.title || 'Цели', done: targets.length > 0 || hasPostTargets, anchor: 'sec-targets' })
+    steps.push({ label: 'Настройки', done: true, optional: true, anchor: 'sec-settings' })
+    steps.push({ label: 'Запуск', done: false, anchor: 'sec-run' })
+    // Текущий — первый невыполненный ОБЯЗАТЕЛЬНЫЙ шаг (опциональные пропускаем).
+    const idx = steps.findIndex((s) => !s.done && !s.optional)
     if (idx >= 0) steps[idx].current = true
     return steps
   }, [cfg, selected, needsTargets, targets, hasPostTargets])
@@ -362,7 +365,9 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
       <SaveToFolderModal open={folderSave !== null} onClose={() => setFolderSave(null)} targets={folderSave ?? []} />
       <SavePresetModal open={presetModalOpen} onClose={() => setPresetModalOpen(false)} onSave={(name, color, owner) => savePreset(name, buildSettings(), color, owner)} />
       {cfg.accountPicker && showBlock('run') && (
-        <AccountPicker selected={selected} onChange={setSelected} actions={cfg.accountActions} withFilters={!!cfg.accountFilters} selectedTitle={cfg.selectedTitle ?? 'Выбрано'} />
+        <div id="sec-accounts" className="scroll-mt-24">
+          <AccountPicker selected={selected} onChange={setSelected} actions={cfg.accountActions} withFilters={!!cfg.accountFilters} selectedTitle={cfg.selectedTitle ?? 'Выбрано'} />
+        </div>
       )}
 
       {/* §7: AI-промпты — сразу под выбором аккаунтов (это основа модуля). */}
@@ -393,6 +398,7 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
       )}
 
       {showBlock('settings') && (cfg.aiProtection || cfg.richLayout || cfg.lookingLayout || cfg.warmingLayout || isGgr) && (
+        <div id="sec-settings" className="scroll-mt-24">
         <SectionCard icon={<Settings2 size={18} />} title={cfg.settingsTitle ?? 'Настройки'} badge={targets.length ? `${targets.length} целей` : undefined}>
           {cfg.aiProtection && <ProtectionBlock enabled={aiProtect} onEnabled={setAiProtect} level={protLevel} onLevel={setProtLevel} />}
 
@@ -482,9 +488,11 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
             <p className="text-sm text-muted">Лимиты и задержки настраиваются в секции «Тайминги и задержки» ниже.</p>
           )}
         </SectionCard>
+        </div>
       )}
 
       {showBlock('targets') && (cfg.sourceTabs || needsTargets) && !isGgr && (
+        <div id="sec-targets" className="scroll-mt-24">
         <SectionCard icon={<Hash size={18} />} title={cfg.sourceTabs?.label ?? 'Цели'} badge={String(targets.length)} required={needsTargets && !cfg.postLinks}>
           <FolderPicker targets={targets} onLoad={(t) => setTargets((prev) => [...new Set([...t, ...prev])])} />
           <TargetsEditor
@@ -506,6 +514,7 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
             </div>
           )}
         </SectionCard>
+        </div>
       )}
 
       {showBlock('targets') && cfg.postLinks && (
@@ -537,8 +546,11 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
         </SectionCard>
       )}
 
+      {/* Заголовок не «Запуск»: так он дублировал последний шаг мастера. Здесь лежат
+          параметры и лимиты прогона, сама кнопка — в нижней панели. */}
       {showBlock('run') && (
-      <SectionCard icon={<Play size={18} />} title={running ? 'Выполнение' : 'Запуск'} badge={running ? 'LIVE' : undefined}>
+      <div id="sec-run" className="scroll-mt-24">
+      <SectionCard icon={<Play size={18} />} title={running ? 'Выполнение' : 'Параметры и лимиты'} badge={running ? 'LIVE' : undefined}>
         {limitWarn && !running && (
           <div className="mb-3 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-300">⚠ {limitWarn}</div>
         )}
@@ -682,21 +694,40 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
           stats={launchStats}
           task={task}
           warn={warn}
+          // Кнопка серая — прямо в панели говорим, ЧТО именно осталось заполнить,
+          // а не только баннером выше по странице (правка заказчика).
+          blockedBy={!running && !canStart
+            ? (goalExpired ? ['дедлайн цели истёк — продлите или уберите цель']
+              : typesOver100 ? [`сумма типов ${weightSum}% > 100 — уменьшите`]
+                : missingRequired)
+            : []}
           // §11 (MR-55): шаги запуска — компактной строкой ПОД кнопкой запуска (а не
           // большим блоком вверху страницы): всё видно сразу, без прокрутки.
           steps={!running && launchSteps.length > 1 ? (
             <div className="flex flex-wrap items-center justify-center gap-x-1.5 gap-y-1">
               {launchSteps.map((s, i) => (
                 <span key={s.label} className="flex items-center gap-1.5">
-                  {i > 0 && <span className={cn('h-px w-4 rounded-full', launchSteps[i - 1].done ? 'bg-spark-500/60' : 'bg-line')} />}
-                  <span className={cn('grid h-5 w-5 shrink-0 place-items-center rounded-full border text-[10px] font-bold',
-                    s.done ? 'border-spark-500 bg-spark-500 text-[#04150c]'
-                      : s.current ? 'border-spark-500 bg-spark-500/15 text-spark-200'
-                        : 'border-line bg-elevated text-muted')}>
-                    {s.done ? <Check size={11} strokeWidth={3} /> : i + 1}
-                  </span>
-                  <span className={cn('text-[11px]',
-                    s.current ? 'font-bold text-fg' : s.done ? 'text-spark-200' : 'text-muted')}>{s.label}</span>
+                  {i > 0 && <span className={cn('h-px w-4 rounded-full', launchSteps[i - 1].done && !launchSteps[i - 1].optional ? 'bg-spark-500/60' : 'bg-line')} />}
+                  {/* Клик по шагу — «связка» с блоком: прокручиваем к нему. */}
+                  <button
+                    type="button"
+                    onClick={() => document.getElementById(s.anchor)?.scrollIntoView({ behavior: 'smooth', block: 'start' })}
+                    title={s.optional ? `${s.label} — необязательно, можно запускать без них` : `Перейти к разделу «${s.label}»`}
+                    className="flex items-center gap-1.5 rounded-md px-1 py-0.5 transition-opacity hover:opacity-80"
+                  >
+                    <span className={cn('grid h-5 w-5 shrink-0 place-items-center rounded-full border text-[10px] font-bold',
+                      s.optional ? 'border-dashed border-line bg-transparent text-faint'
+                        : s.done ? 'border-spark-500 bg-spark-500 text-[#04150c]'
+                          : s.current ? 'border-spark-500 bg-spark-500/15 text-spark-200'
+                            : 'border-line bg-elevated text-muted')}>
+                      {s.done && !s.optional ? <Check size={11} strokeWidth={3} /> : i + 1}
+                    </span>
+                    <span className={cn('text-[11px]',
+                      s.optional ? 'text-faint'
+                        : s.current ? 'font-bold text-fg' : s.done ? 'text-spark-200' : 'text-muted')}>
+                      {s.label}{s.optional && <span className="ml-1 text-[10px]">(необяз.)</span>}
+                    </span>
+                  </button>
                 </span>
               ))}
             </div>
@@ -759,6 +790,7 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
           )}
         />
       </SectionCard>
+      </div>
       )}
 
       {/* §7: тайминги и задержки — вниз (меняются редко). */}

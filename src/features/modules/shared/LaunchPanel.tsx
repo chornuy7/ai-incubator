@@ -6,13 +6,15 @@ import { presetHex } from './SavePresetModal'
 
 export function LaunchPanel({
   running, starting, canStart, onStart, onSave, primaryLabel, stats, warn, cost,
-  presets, onApplyPreset, onDeletePreset, extras, steps,
+  presets, onApplyPreset, onDeletePreset, extras, steps, blockedBy = [],
 }: {
   running: boolean; starting: boolean; canStart: boolean
   onStart: () => void; onStop?: () => void; onSave: () => void
   primaryLabel: string
   /** Компактные шаги запуска — строкой ПОД кнопкой, внутри самой панели. */
   steps?: React.ReactNode
+  /** Что мешает запуску: показываем рядом с серой кнопкой, чтобы не гадать. */
+  blockedBy?: string[]
   stats: { icon: React.ReactNode; color: string; label: string; value: string; warn?: boolean }[]
   task: ModuleTask | null
   warn?: string
@@ -86,19 +88,37 @@ export function LaunchPanel({
       {extras}
       {/* Плавающий бар — ПОСЛЕДНИЙ элемент: его заглушка резервирует место в самом низу
           карточки, ничего не рендерится ниже, и бар чисто «отрывается» ко дну экрана. */}
-      {/* Внутри панели — колонка: ряд с кнопками, а под ним компактные шаги запуска. */}
+      {/* Внутри панели — три колонки одной ширины: кнопка строго по центру панели,
+          «Сохранить пресет» прижат вправо (с запасом под плавающие виджеты). Под ними —
+          шаги и, если запуск заблокирован, чего не хватает. */}
       <FloatingBar>
-        <div className="flex w-full flex-col items-center gap-3 sm:flex-row sm:pr-16">
-          <div className="flex flex-1 flex-wrap items-center justify-center gap-2">
-            <button type="button" onClick={onStart} disabled={starting || !canStart} className="btn-primary h-11 min-w-[180px]">
+        <div className="grid w-full grid-cols-1 items-center gap-2 sm:grid-cols-[1fr_auto_1fr]">
+          <span className="hidden sm:block" />
+          <div className="flex flex-wrap items-center justify-center gap-2">
+            <button
+              type="button"
+              onClick={onStart}
+              disabled={starting || !canStart}
+              title={!canStart && blockedBy.length ? `Осталось: ${blockedBy.join('; ')}` : undefined}
+              className="btn-primary h-11 min-w-[180px]"
+            >
               {starting ? <Loader2 size={17} className="animate-spin" /> : <Play size={17} />} {primaryLabel}
             </button>
             {running && (
               <a href="/panel/tasks" className="btn-ghost h-11 text-sm" title="Управление, прогресс и логи — в Дашборде задач"><ArrowUpRight size={15} /> В Дашборде задач</a>
             )}
           </div>
-          <button type="button" onClick={onSave} className="btn-ghost h-11 text-sm"><Save size={15} /> Сохранить пресет</button>
+          <div className="flex justify-center sm:justify-end sm:pr-14">
+            <button type="button" onClick={onSave} className="btn-ghost h-11 text-sm"><Save size={15} /> Сохранить пресет</button>
+          </div>
         </div>
+        {/* Кнопка серая — сразу видно, что осталось заполнить (а не догадываться). */}
+        {!running && blockedBy.length > 0 && (
+          <div className="flex items-center gap-1.5 text-center text-[11px] text-amber-300">
+            <AlertTriangle size={12} className="shrink-0" />
+            <span>Осталось: {blockedBy.join(' · ')}</span>
+          </div>
+        )}
         {steps}
       </FloatingBar>
     </>
