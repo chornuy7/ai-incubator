@@ -212,8 +212,8 @@ export function ModuleLandingPage() {
         )}
 
         {/* Дубль прайса в самом конце — доскроллил длинную страницу, цена снова перед
-            глазами (правка заказчика). Центрируем как финальный CTA. */}
-        <div className="mx-auto w-full max-w-md pt-2">{priceCard}</div>
+            глазами. На всю ширину, как остальные блоки (не узкой центрированной плашкой). */}
+        <div className="w-full pt-2">{priceCard}</div>
       </section>
 
       <footer className="mx-auto max-w-6xl px-5 py-8 text-xs text-muted">
