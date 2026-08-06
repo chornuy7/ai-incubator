@@ -151,7 +151,7 @@ function RuleEditor({ rule, onClose, onSaved }: {
   const pushToast = useApp((s) => s.pushToast)
   const [name, setName] = useState(rule?.name ?? '')
   const [moduleKey, setModuleKey] = useState(rule?.moduleKey ?? AUTOMATABLE[0])
-  // §6: правило крепится к кампании — модуль/аккаунты/пресет берутся из неё.
+  // §6: правило крепится к кампании — модуль/аккаунты/шаблон берутся из неё.
   const [campaigns, setCampaigns] = useState<Campaign[]>([])
   const [campaignId, setCampaignId] = useState(rule?.campaignId ?? '')
   useEffect(() => {
@@ -178,7 +178,7 @@ function RuleEditor({ rule, onClose, onSaved }: {
     // При выбранной кампании аккаунты НЕ обязательны: resolveRuleTarget
     // (automation/store.js) сам возьмёт закреплённые за кампанией, если у правила
     // своих нет. Раньше форма требовала их вручную, хотя подсказка обещала «модуль,
-    // аккаунты и пресет — из кампании» — бэкенд это умел, а UI не пускал (тест 6.10).
+    // аккаунты и шаблон — из кампании» — бэкенд это умел, а UI не пускал (тест 6.10).
     if (!campaignId && !selected.size) return pushToast({ type: 'error', title: 'Выберите аккаунты' })
     const targets = targetsText.split(/[\n,\s]+/).map((s) => s.trim().replace(/^@/, '')).filter(Boolean)
     if (needsTargets && !targets.length) return pushToast({ type: 'error', title: 'Добавьте цели' })
@@ -227,7 +227,7 @@ function RuleEditor({ rule, onClose, onSaved }: {
       <button onClick={onClose} className="btn-ghost mb-3 h-9"><ArrowLeft size={15} /> Назад к автоматизации</button>
       <PageHeader
         title={rule ? 'Редактировать правило' : 'Новое правило автоматизации'}
-        subtitle="Правило крепится к кампании: модуль, аккаунты и пресет берутся из неё"
+        subtitle="Правило крепится к кампании: модуль, аккаунты и шаблон берутся из неё"
         icon={<CalendarClock size={22} />}
       />
       <Card className="p-4">
@@ -250,8 +250,8 @@ function RuleEditor({ rule, onClose, onSaved }: {
               const n = (c?.accountIds || []).length
               return (
                 <p className="mt-1 text-[11px] text-muted">
-                  Модуль, аккаунты и пресет — из кампании ({n ? `${n} акк.` : 'аккаунтов пока нет'}).
-                  Настройки ниже перекроют пресет кампании; выбирать аккаунты вручную не обязательно —
+                  Модуль, аккаунты и шаблон — из кампании ({n ? `${n} акк.` : 'аккаунтов пока нет'}).
+                  Настройки ниже перекроют шаблон кампании; выбирать аккаунты вручную не обязательно —
                   но если выберете, они будут приоритетнее.
                 </p>
               )

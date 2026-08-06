@@ -502,12 +502,12 @@ function RichModule({ cfg }: { cfg: ModuleConfig }) {
         <div className="card p-0">
           <button onClick={() => setPresetsOpen((v) => !v)} className="flex w-full items-center gap-3 px-4 py-3.5 text-left">
             <span className="grid h-9 w-9 place-items-center rounded-xl bg-iris-500/12 text-iris-400"><Bookmark size={18} /></span>
-            <span className="font-display text-base font-bold text-fg">Пресеты настроек</span>
+            <span className="font-display text-base font-bold text-fg">Шаблоны настроек</span>
             <ChevronDown size={18} className={cn('ml-auto text-muted transition-transform', !presetsOpen && '-rotate-90')} />
           </button>
           {presetsOpen && (
             <div className="border-t border-line p-4">
-              <EmptyState icon={<Bookmark size={22} />} title="Сохранённых пресетов нет" desc="Сохраните текущие настройки, чтобы быстро применять их позже." />
+              <EmptyState icon={<Bookmark size={22} />} title="Сохранённых шаблонов нет" desc="Сохраните текущие настройки, чтобы быстро применять их позже." />
             </div>
           )}
         </div>

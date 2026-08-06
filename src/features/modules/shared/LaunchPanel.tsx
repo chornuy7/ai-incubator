@@ -45,7 +45,7 @@ export function LaunchPanel({
       {onApplyPreset && presets && presets.length > 0 && (
         <div className="mb-3 rounded-2xl border border-line bg-elevated/40 p-3">
           <div className="mb-2 flex items-center gap-2 text-xs font-bold uppercase tracking-wide text-muted">
-            <Bookmark size={13} /> Мои пресеты
+            <Bookmark size={13} /> Мои шаблоны
           </div>
           <div className="flex flex-wrap gap-2">
             {presets.map((p) => (
@@ -59,13 +59,13 @@ export function LaunchPanel({
                   type="button"
                   onClick={() => onApplyPreset(p.settings)}
                   disabled={running}
-                  title="Применить пресет к настройкам"
+                  title="Применить шаблон к настройкам"
                   className="max-w-[180px] truncate text-left disabled:opacity-50"
                 >
                   {p.name}
                 </button>
                 {p.owner && (
-                  <span className="shrink-0 rounded-md bg-elevated px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-muted" title="Владелец пресета">
+                  <span className="shrink-0 rounded-md bg-elevated px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-muted" title="Владелец шаблона">
                     {p.owner}
                   </span>
                 )}
@@ -73,7 +73,7 @@ export function LaunchPanel({
                   <button
                     type="button"
                     onClick={() => onDeletePreset(p.id)}
-                    title="Удалить пресет"
+                    title="Удалить шаблон"
                     className="grid h-5 w-5 shrink-0 place-items-center rounded-lg text-faint hover:bg-rose-500/12 hover:text-rose-300"
                   >
                     <X size={13} />
@@ -89,7 +89,7 @@ export function LaunchPanel({
       {/* Плавающий бар — ПОСЛЕДНИЙ элемент: его заглушка резервирует место в самом низу
           карточки, ничего не рендерится ниже, и бар чисто «отрывается» ко дну экрана. */}
       {/* Внутри панели — три колонки одной ширины: кнопка строго по центру панели,
-          «Сохранить пресет» прижат вправо (с запасом под плавающие виджеты). Под ними —
+          «Сохранить шаблон» прижат вправо (с запасом под плавающие виджеты). Под ними —
           шаги и, если запуск заблокирован, чего не хватает. */}
       <FloatingBar>
         <div className="grid w-full grid-cols-1 items-center gap-2 sm:grid-cols-[1fr_auto_1fr]">
@@ -109,7 +109,7 @@ export function LaunchPanel({
             )}
           </div>
           <div className="flex justify-center sm:justify-end sm:pr-14">
-            <button type="button" onClick={onSave} className="btn-ghost h-11 text-sm"><Save size={15} /> Сохранить пресет</button>
+            <button type="button" onClick={onSave} className="btn-ghost h-11 text-sm"><Save size={15} /> Сохранить шаблон</button>
           </div>
         </div>
         {/* Кнопка серая — сразу видно, что осталось заполнить (а не догадываться). */}

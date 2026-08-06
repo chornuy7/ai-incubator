@@ -261,7 +261,7 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
     if (isCombatModule(moduleKey) && !(await confirmDialog({ title: 'Реальные действия в Telegram', message: combatConfirmText(moduleKey), confirmLabel: 'Запустить', tone: 'danger' }))) return
     void start(buildSettings(), `${cfg.title} · ${selected.size} акк.`)
   }
-  // §7: пресет — цветная метка + владелец; открываем модалку вместо простого prompt.
+  // §7: шаблон — цветная метка + владелец; открываем модалку вместо простого prompt.
   const handleSave = () => setPresetModalOpen(true)
 
   // §6: создать правило автоматизации с текущими настройками модуля (не запуская сейчас).
@@ -289,7 +289,7 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
     } finally { setSchedSaving(false) }
   }
 
-  // Восстанавливает настройки из пресета в форму (аккаунты не трогаем — они ситуативны).
+  // Восстанавливает настройки из шаблона в форму (аккаунты не трогаем — они ситуативны).
   const applyPreset = useCallback((s: ModuleTaskSettings) => {
     setToggles({ 0: s.commentMode ?? 0, 1: s.workMode ?? 0, 2: s.postFilter ?? 0 })
     if (s.aiProtection !== undefined) setAiProtect(s.aiProtection)
@@ -313,7 +313,7 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
       if (i >= 0) setLookModeIdx(i)
     }
     if (s.lookPostsCount !== undefined) setLookPostsCount(s.lookPostsCount)
-    pushToast({ type: 'success', title: 'Пресет применён' })
+    pushToast({ type: 'success', title: 'Шаблон применён' })
   }, [cfg.lookModeOptions, pushToast])
 
   const results = task?.results ?? []
@@ -558,7 +558,7 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
             <Segmented options={WARM_LEVELS} value={warmLevel} onChange={setWarmLevel} />
             <div className="mt-2 rounded-lg border border-line/60 bg-elevated/40 px-3 py-2 text-[11px] text-white/50">
               💡 <b className="text-white/70">Уровень</b> задаёт темп (~40 / 20 / 10 действий в день) и множитель пауз.
-              Секции «Защита» и «Тайминги и задержки» ниже — это <b className="text-white/70">тонкая подстройка поверх уровня</b> (для опытных): защита × пресет × уровень перемножаются. Для старта достаточно выбрать уровень.
+              Секции «Защита» и «Тайминги и задержки» ниже — это <b className="text-white/70">тонкая подстройка поверх уровня</b> (для опытных): защита × шаблон × уровень перемножаются. Для старта достаточно выбрать уровень.
             </div>
           </div>
         )}

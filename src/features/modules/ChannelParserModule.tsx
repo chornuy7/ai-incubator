@@ -251,7 +251,7 @@ function ChannelParserInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: 
     if (s.langDetection !== undefined) setLangDetect(s.langDetection)
     if (s.delays?.request) setReqDelay(s.delays.request)
     if (s.delays?.channel) setChDelay(s.delays.channel)
-    pushToast({ type: 'success', title: 'Пресет применён' })
+    pushToast({ type: 'success', title: 'Шаблон применён' })
   }, [pushToast])
 
   // §6 (MR-38): показываем либо результат живой задачи, либо сохранённый из базы (когда

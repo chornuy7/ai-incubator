@@ -77,11 +77,11 @@ export function CampaignPage() {
   const [cStatus, setCStatus] = useState<CampaignStatus>('draft')
   const [cSaving, setCSaving] = useState(false)
   // §9: догоняющий чатинг — второй модуль кампании. Основной выбор не трогаем.
-  // §0: настройки модуля для кампании. Держим их пресетом: у каждого модуля свой
+  // §0: настройки модуля для кампании. Держим их шаблоном: у каждого модуля свой
   // набор полей, дублировать все формы внутри кампании — верный способ разойтись
-  // с самим модулем. Пресет собирается там, где его удобно настраивать и проверять.
-  // Теперь пресет у КАЖДОГО модуля свой (moduleKey → …): добавил модуль — под ним свой
-  // блок настроек. Раньше пресет был один на кампанию, и второй модуль шёл с дефолтом.
+  // с самим модулем. Шаблон собирается там, где его удобно настраивать и проверять.
+  // Теперь шаблон у КАЖДОГО модуля свой (moduleKey → …): добавил модуль — под ним свой
+  // блок настроек. Раньше шаблон был один на кампанию, и второй модуль шёл с дефолтом.
   const [cModuleSettings, setCModuleSettings] = useState<Record<string, Record<string, unknown>>>({})
   const [cModulePresetId, setCModulePresetId] = useState<Record<string, string>>({})
   const [modulePresets, setModulePresets] = useState<Record<string, ModulePreset[]>>({})
@@ -185,7 +185,7 @@ export function CampaignPage() {
   // Первый модуль — основной (приводит людей). На него смотрят чат-блок и заголовки.
   useEffect(() => { setCModule(cModules[0] || '') }, [cModules])
 
-  // Пресеты грузим для КАЖДОГО выбранного модуля: у каждого свой блок настроек.
+  // Шаблоны грузим для КАЖДОГО выбранного модуля: у каждого свой блок настроек.
   useEffect(() => {
     let cancelled = false
     void Promise.all(cModules.map((k) =>
@@ -199,7 +199,7 @@ export function CampaignPage() {
     setEditingCampaign(c)
     setCName(c.name); setCGoalId(c.goalId || ''); setCModules(c.modules?.length ? c.modules : [c.moduleKey].filter(Boolean)); setCModuleAgents(c.moduleAgents || {}); setCAccounts(c.accountIds || [])
     setCTargets((c.targets || []).join('\n'))
-    // Пресеты каждого модуля. Обратной привязки «settings → id пресета» нет, поэтому
+    // Шаблоны каждого модуля. Обратной привязки «settings → id шаблона» нет, поэтому
     // селект показывает «По умолчанию», но сохранённые настройки применяются как есть.
     setCModuleSettings(c.moduleSettings || (c.settings && Object.keys(c.settings).length ? { [c.moduleKey]: c.settings } : {}))
     setCModulePresetId({})
@@ -227,7 +227,7 @@ export function CampaignPage() {
       const payload = {
         name: cName.trim(), goalId: cGoalId || null, moduleKey: cModules[0] || '', modules: cModules, moduleAgents: cModuleAgents, accountIds: ids, pinned: cPinned, status: cStatus,
         moduleSettings: cModuleSettings,
-        // Совместимость: старые места читают одиночный `settings` — кладём пресет первого модуля.
+        // Совместимость: старые места читают одиночный `settings` — кладём шаблон первого модуля.
         settings: cModuleSettings[cModules[0]] || {},
         moduleTargets: (mailTargets.length ? { [MAILING_KEY]: mailTargets } : {}) as Record<string, string[]>,
         targets: cTargets.split(/[\n,;]+/).map((x) => x.trim()).filter(Boolean),
@@ -264,7 +264,7 @@ export function CampaignPage() {
         moduleKey,
         // Свои цели модуля (рассылка: получатели). Пусто — модуль возьмёт общие каналы кампании.
         ...(c.moduleTargets?.[moduleKey]?.length ? { targets: c.moduleTargets[moduleKey] } : {}),
-        // Пресет ИМЕННО этого модуля (фолбэк на общий settings для старых кампаний).
+        // Шаблон ИМЕННО этого модуля (фолбэк на общий settings для старых кампаний).
         settings: { ...(c.moduleSettings?.[moduleKey] || c.settings), agentId: c.moduleAgents?.[moduleKey] || undefined },
       })),
     ]
@@ -364,13 +364,13 @@ export function CampaignPage() {
             {!cModules.length && <div className="mt-1 text-xs text-rose-300">Выберите хотя бы один модуль</div>}
           </div>
 
-          {/* Под каждым выбранным модулем — свой блок: кто ведёт (агент) + пресет настроек.
-              Добавил модуль — появился ещё один блок. Раньше пресет был один на кампанию,
+          {/* Под каждым выбранным модулем — свой блок: кто ведёт (агент) + шаблон настроек.
+              Добавил модуль — появился ещё один блок. Раньше шаблон был один на кампанию,
               и второй модуль запускался с настройками по умолчанию, даже если для него был
-              сохранён свой пресет (A3.2 — агент всегда был свой у каждого модуля). */}
+              сохранён свой шаблон (A3.2 — агент всегда был свой у каждого модуля). */}
           {cModules.length > 0 && (
             <div className="space-y-2">
-              <div className="text-xs text-white/50">Настройки модулей <span className="text-white/30">— агент и пресет у каждого свои</span></div>
+              <div className="text-xs text-white/50">Настройки модулей <span className="text-white/30">— агент и шаблон у каждого свои</span></div>
               {!agents.length && (
                 <div className="text-xs text-amber-300">Агентов пока нет — заведите их в разделе «Агенты», иначе тон будет по умолчанию.</div>
               )}
@@ -381,7 +381,7 @@ export function CampaignPage() {
                     <div className="mb-2 flex items-center justify-between gap-2">
                       <span className="text-sm font-semibold text-fg">{moduleTitle(k)}</span>
                       <a href={`/panel/modules/${k}`} className="text-xs font-semibold text-spark-300 hover:underline">
-                        Настроить и сохранить пресет →
+                        Настроить и сохранить шаблон →
                       </a>
                     </div>
                     <div className="grid gap-2 sm:grid-cols-2">
@@ -395,7 +395,7 @@ export function CampaignPage() {
                         />
                       </div>
                       <div>
-                        <div className="mb-1 text-xs text-white/50">Пресет настроек</div>
+                        <div className="mb-1 text-xs text-white/50">Шаблон настроек</div>
                         {presets.length ? (
                           <Select
                             value={cModulePresetId[k] || ''}
@@ -415,7 +415,7 @@ export function CampaignPage() {
                             ]}
                           />
                         ) : (
-                          <div className="pt-1.5 text-xs text-white/40">Пресетов нет — запустится с настройками модуля по умолчанию.</div>
+                          <div className="pt-1.5 text-xs text-white/40">Шаблонов нет — запустится с настройками модуля по умолчанию.</div>
                         )}
                       </div>
                     </div>

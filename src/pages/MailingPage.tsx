@@ -314,14 +314,14 @@ export function MailingPage() {
 
           <Card className="p-4">
             <div className="mb-2 text-sm font-semibold text-fg">Безопасность</div>
-            {/* §11: паритет с masslooking/warming — уровень защиты и пресет задержек (множители пауз). */}
+            {/* §11: паритет с masslooking/warming — уровень защиты и шаблон задержек (множители пауз). */}
             <div className="mb-3 grid gap-3 sm:grid-cols-2">
               <div>
                 <div className="mb-1 text-xs text-white/50">Уровень защиты</div>
                 <Segmented options={['Консерв.', 'Сбаланс.', 'Агресс.']} value={protLevel} onChange={setProtLevel} size="sm" />
               </div>
               <div>
-                <div className="mb-1 text-xs text-white/50">Пресет задержек</div>
+                <div className="mb-1 text-xs text-white/50">Шаблон задержек</div>
                 <Segmented options={['Мин', 'Реком.', 'Макс']} value={delayPreset} onChange={setDelayPreset} size="sm" />
               </div>
             </div>

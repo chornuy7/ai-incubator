@@ -94,7 +94,7 @@ export interface Campaign {
   accountIds: string[]
   /** A3.2: какой агент ведёт каждый модуль кампании (moduleKey → agentId). */
   moduleAgents?: Record<string, string>
-  /** Пресет (настройки) каждого модуля кампании отдельно (moduleKey → settings). */
+  /** Шаблон (настройки) каждого модуля кампании отдельно (moduleKey → settings). */
   moduleSettings?: Record<string, Record<string, unknown>>
   /** Свои цели у модуля (moduleKey → цели). Рассылке — получатели-номера/юзернеймы, а не общие каналы. */
   moduleTargets?: Record<string, string[]>

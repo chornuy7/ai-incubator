@@ -207,8 +207,8 @@ export interface ModulePreset {
   name: string
   createdAt: number
   settings: ModuleTaskSettings
-  color?: string // §7: цветовая метка пресета (ключ из PRESET_COLORS)
-  owner?: string // §7: владелец персонального пресета (Маша/Паша)
+  color?: string // §7: цветовая метка шаблона (ключ из PRESET_COLORS)
+  owner?: string // §7: владелец персонального шаблона (Маша/Паша)
 }
 
 export async function saveModulePreset(moduleKey: string, name: string, settings: ModuleTaskSettings, color?: string, owner?: string) {

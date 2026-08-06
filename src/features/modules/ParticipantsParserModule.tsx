@@ -149,7 +149,7 @@ function Inner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: string }) {
     void start({ ...buildSettings(), parallelAccounts: parallel }, `${cfg.title} · ${selected.size} акк.`)
   }
 
-  const handleSave = async () => { const n = await promptDialog({ title: 'Сохранить пресет', message: 'Название пресета настроек', placeholder: 'Напр. Парсер участников' }); if (n) void savePreset(n, buildSettings()) }
+  const handleSave = async () => { const n = await promptDialog({ title: 'Сохранить шаблон', message: 'Название шаблона настроек', placeholder: 'Напр. Парсер участников' }); if (n) void savePreset(n, buildSettings()) }
 
   // Цели (targetList) не восстанавливаем — они ситуативны; переносим фильтры, лимиты и задержки.
   const applyPreset = useCallback((s: ModuleTaskSettings) => {
@@ -162,7 +162,7 @@ function Inner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: string }) {
     if (s.delayChat !== undefined) setDelayChat(s.delayChat)
     if (s.delayItem !== undefined) setDelayItem(s.delayItem)
     if (s.delays?.join) { setJoinMin(s.delays.join[0]); setJoinMax(s.delays.join[1]) }
-    pushToast({ type: 'success', title: 'Пресет применён' })
+    pushToast({ type: 'success', title: 'Шаблон применён' })
   }, [pushToast])
 
   const raw = (cleared ? [] : (task?.results ?? [])) as UserResult[]

@@ -218,7 +218,7 @@ export function NeuroDialogsModule() {
     if (typeof s.goalId === 'string') setGoalId(s.goalId)
     if (s.replyLimitMode === 'count' || s.replyLimitMode === 'untilTarget') setReplyLimitMode(s.replyLimitMode)
     if (typeof s.maxRepliesPerLead === 'number' && s.maxRepliesPerLead > 0) setMaxRepliesPerLead(s.maxRepliesPerLead)
-    pushToast({ type: 'success', title: 'Пресет применён' })
+    pushToast({ type: 'success', title: 'Шаблон применён' })
   }, [pushToast])
 
   const loadInbox = useCallback(async (silent = false) => {
@@ -518,7 +518,7 @@ export function NeuroDialogsModule() {
           onStart={() => { void start(buildSettings(), `${cfg.title} · ${selected.size} акк.`) }}
           onStop={stop}
           onSave={async () => {
-            const name = await promptDialog({ title: 'Сохранить пресет', message: 'Название пресета настроек', placeholder: 'Напр. Тёплый диалог' })
+            const name = await promptDialog({ title: 'Сохранить шаблон', message: 'Название шаблона настроек', placeholder: 'Напр. Тёплый диалог' })
             if (name) void savePreset(name, buildSettings())
           }}
           primaryLabel={cfg.primaryAction ?? 'Запустить'}

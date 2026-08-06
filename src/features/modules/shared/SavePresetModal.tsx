@@ -2,8 +2,8 @@ import { useEffect, useState } from 'react'
 import { Bookmark, Save } from 'lucide-react'
 import { Modal } from '@/shared/ui'
 
-// §7: пресет модуля = быстрый конфиг с цветовой меткой и «владельцем» (персональные — Маша/Паша).
-// Палитра меток — фиксированный набор, чтобы пресеты визуально различались в списке.
+// §7: шаблон модуля = быстрый конфиг с цветовой меткой и «владельцем» (персональные — Маша/Паша).
+// Палитра меток — фиксированный набор, чтобы шаблоны визуально различались в списке.
 export const PRESET_COLORS: { key: string; hex: string; label: string }[] = [
   { key: 'spark', hex: '#0ec464', label: 'Зелёный' },
   { key: 'iris', hex: '#7145ff', label: 'Фиолетовый' },
@@ -45,8 +45,8 @@ export function SavePresetModal({ open, onClose, onSave }: {
     <Modal
       open={open}
       onClose={onClose}
-      title="Сохранить пресет"
-      subtitle="Быстрый конфиг настроек: цветовая метка и владелец для персональных пресетов"
+      title="Сохранить шаблон"
+      subtitle="Быстрый конфиг настроек: цветовая метка и владелец для персональных шаблонов"
       icon={<Bookmark size={22} />}
       size="sm"
       footer={
@@ -84,7 +84,7 @@ export function SavePresetModal({ open, onClose, onSave }: {
         ))}
       </div>
 
-      <label className="mb-1.5 mt-4 block text-xs font-semibold uppercase tracking-wide text-muted">Владелец <span className="normal-case text-faint">(опционально — персональный пресет)</span></label>
+      <label className="mb-1.5 mt-4 block text-xs font-semibold uppercase tracking-wide text-muted">Владелец <span className="normal-case text-faint">(опционально — персональный шаблон)</span></label>
       <input
         value={owner}
         onChange={(e) => setOwner(e.target.value)}
@@ -92,7 +92,7 @@ export function SavePresetModal({ open, onClose, onSave }: {
         placeholder="Напр. Маша, Паша…"
         className="input h-11 w-full"
       />
-      <p className="mt-2 text-xs text-muted">Метка и владелец помогают быстро найти нужный пресет в списке.</p>
+      <p className="mt-2 text-xs text-muted">Метка и владелец помогают быстро найти нужный шаблон в списке.</p>
     </Modal>
   )
 }

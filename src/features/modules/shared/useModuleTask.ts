@@ -161,7 +161,7 @@ export function useModuleTask(moduleKey: string) {
     await saveModulePreset(moduleKey, name, settings, color, owner)
     const p = await fetchModulePresets(moduleKey)
     setPresets(p)
-    pushToast({ type: 'success', title: 'Пресет сохранён', desc: owner ? `${name} · ${owner}` : name })
+    pushToast({ type: 'success', title: 'Шаблон сохранён', desc: owner ? `${name} · ${owner}` : name })
   }, [moduleKey, pushToast])
 
   const deletePreset = useCallback(async (id: string) => {

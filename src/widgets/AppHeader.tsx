@@ -391,7 +391,7 @@ export function AppHeader() {
               </button>
             ))}
           </div>
-          {/* Своя сумма — не только пресеты: человек вводит сколько хочет. */}
+          {/* Своя сумма — не только шаблоны: человек вводит сколько хочет. */}
           <div className="mt-2 flex items-center gap-2">
             <div className="relative flex-1">
               <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-muted">{curSym}</span>
