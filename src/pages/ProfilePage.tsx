@@ -76,6 +76,18 @@ export function ProfilePage() {
                 <div className="min-w-0">
                   <div className="font-display text-lg font-bold text-fg">{sessionUser?.name || `${firstName} ${lastName}`}</div>
                   <div className="truncate text-sm text-muted">{sessionUser?.email || `@${nick} · ${data.user.email}`}</div>
+                  {/* Свой UID — чтобы можно было отправить в поддержку при обращении. */}
+                  {sessionUser?.id && (
+                    <div className="mt-1 flex items-center gap-1.5 text-[11px] text-muted">
+                      <span className="font-mono">UID: {sessionUser.id}</span>
+                      <button
+                        onClick={() => { void navigator.clipboard?.writeText(sessionUser.id || ''); pushToast({ type: 'success', title: 'UID скопирован', desc: 'Можно отправить в поддержку' }) }}
+                        className="text-spark-300 hover:underline"
+                      >
+                        копировать
+                      </button>
+                    </div>
+                  )}
                   {sessionUser && (
                     <Badge tone={sessionUser.isAdmin ? 'iris' : 'spark'}>
                       {sessionUser.isAdmin ? 'Администратор' : `Роль: ${sessionUser.roleName || 'не задана'}`}

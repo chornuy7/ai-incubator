@@ -536,6 +536,23 @@ function UsersTab({ report, onReload }: { report: UsersReport | null; onReload: 
     ? report.rows.filter((r) => `${r.name} ${r.email} ${r.userId}`.toLowerCase().includes(needle))
     : report.rows
 
+  // §10.4: кластеризация — каждый владелец, а СРАЗУ ПОД НИМ его суб-юзеры (с отступом).
+  // Раньше суб-юзеры были размазаны по списку, и «кто чей» читалось только по подписи.
+  const clustered = useMemo(() => {
+    const kids = new Map<string, typeof shown>()
+    for (const r of shown) if (r.parentId) { const a = kids.get(r.parentId) || []; a.push(r); kids.set(r.parentId, a) }
+    const out: typeof shown = []
+    const seen = new Set<string>()
+    for (const r of shown) {
+      if (r.parentId || seen.has(r.userId)) continue // суб-юзеров кладём под владельцем ниже
+      seen.add(r.userId); out.push(r)
+      for (const k of kids.get(r.userId) || []) if (!seen.has(k.userId)) { seen.add(k.userId); out.push(k) }
+    }
+    // Осиротевшие суб-юзеры (владельца нет в списке) — в конец, чтобы не потерялись.
+    for (const r of shown) if (!seen.has(r.userId)) { seen.add(r.userId); out.push(r) }
+    return out
+  }, [shown])
+
   /**
    * Пополнение прямо из таблицы: админ видит, у кого кончаются монеты, и тут же
    * доливает — иначе за этим надо уходить в чужой профиль и терять, кому доливал.
@@ -618,7 +635,7 @@ function UsersTab({ report, onReload }: { report: UsersReport | null; onReload: 
             </tr>
           </thead>
           <tbody>
-            {shown.map((r) => {
+            {clustered.map((r) => {
               // Строки без реального пользователя (удалённые, задачи без владельца)
               // отключать нечего — кнопки у них нет, но из счёта они не исчезают.
               const real = !!r.userId && !r.email.startsWith('без владельца') && !r.email.startsWith('удалённый')
@@ -626,10 +643,10 @@ function UsersTab({ report, onReload }: { report: UsersReport | null; onReload: 
               return [
                 <tr
                   key={r.userId}
-                  className="cursor-pointer border-b border-line/50 hover:bg-white/[.02]"
+                  className={cn('cursor-pointer border-b border-line/50 hover:bg-white/[.02]', r.parentId && 'bg-iris-500/[.03]')}
                   onClick={() => openUser(r)}
                 >
-                  <td className="py-2 pr-3">
+                  <td className={cn('py-2 pr-3', r.parentId && 'pl-6')}>
                     <div className="flex items-center gap-1.5">
                       <ChevronDown size={13} className={cn('text-muted transition-transform', isOpen && 'rotate-180')} />
                       {/* Имя — то, чем человека называют. Почта под ним: она нужна,
@@ -639,6 +656,8 @@ function UsersTab({ report, onReload }: { report: UsersReport | null; onReload: 
                           {r.name || r.email || r.userId}
                         </span>
                         {!!r.name && !!r.email && <span className="block truncate text-[11px] text-muted">{r.email}</span>}
+                        {/* UID — мелким, чтобы можно было сверить/отправить в поддержку. */}
+                        {real && <span className="block truncate font-mono text-[10px] text-faint" title="UID пользователя">{r.userId}</span>}
                         {/* §10.4: суб-юзер — показываем, под каким админом он вложен. */}
                         {!!r.parentId && <span className="block truncate text-[11px] text-iris-300">↳ суб-юзер · под {r.parentName || r.parentId}</span>}
                       </span>
