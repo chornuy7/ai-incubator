@@ -127,6 +127,8 @@ export function NumberField({ label, value, onChange, suffix, min = 0, max, step
           type="text"
           inputMode="numeric"
           value={draft}
+          // Клик выделяет значение: иначе ввод дописывается к нулю — «012» вместо «12».
+          onFocus={(e) => e.currentTarget.select()}
           onChange={(e) => { if (/^\d*$/.test(e.target.value)) setDraft(e.target.value) }}
           onBlur={() => commit(draft)}
           onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); commit(draft) } }}
@@ -221,6 +223,8 @@ function Stepper({ value, onChange, suffix, min = 0, max }: {
           type="text"
           inputMode="numeric"
           value={draft}
+          // Клик выделяет значение: иначе ввод дописывается к нулю — «012» вместо «12».
+          onFocus={(e) => e.currentTarget.select()}
           onChange={(e) => { if (/^\d*$/.test(e.target.value)) setDraft(e.target.value) }}
           onBlur={() => commit(draft)}
           onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); commit(draft) } }}

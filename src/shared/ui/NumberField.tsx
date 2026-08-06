@@ -50,6 +50,8 @@ export function NumberField({
       min={min}
       max={max}
       value={draft}
+      // Клик выделяет значение: иначе ввод дописывается к нулю — «012» вместо «12».
+      onFocus={(e) => e.currentTarget.select()}
       onChange={(e) => setDraft(e.target.value)}
       onBlur={commit}
       onKeyDown={(e) => { if (e.key === 'Enter') commit() }}

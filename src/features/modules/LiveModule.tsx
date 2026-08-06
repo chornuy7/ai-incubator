@@ -619,7 +619,14 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
                           type="number" min={0} max={100} inputMode="numeric" disabled={locked}
                           className="input h-7 w-16 text-center text-sm [appearance:textfield] disabled:opacity-50 [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
                           value={val}
-                          onChange={(e) => setTypeWeights((w) => redistribute(w.length === count ? w : equalize(count), i, Number(e.target.value) || 0, lockedWeights))} />
+                          // Клик по полю выделяет значение целиком: иначе ввод дописывался
+                          // к нулю и получалось «012», «055» вместо «12», «55».
+                          onFocus={(e) => e.currentTarget.select()}
+                          onChange={(e) => {
+                            // Срезаем ведущие нули — «07» это 7, а не 07.
+                            const n = Number(e.target.value.replace(/^0+(?=\d)/, '')) || 0
+                            setTypeWeights((w) => redistribute(w.length === count ? w : equalize(count), i, n, lockedWeights))
+                          }} />
                         <span className="text-[11px] text-white/40">%</span>
                       </div>
                     </div>

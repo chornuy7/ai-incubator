@@ -109,6 +109,9 @@ export function AccountManagementModal({ account, onClose }: { account: TgAccoun
       open={!!account}
       onClose={onClose}
       size="xl"
+      // Карточка аккаунта — боковая панель, а не попап посреди экрана: не закрывает
+      // список и читается как «деталь выбранной строки» (правка заказчика).
+      side
       icon={<div className="grid h-10 w-10 place-items-center rounded-xl bg-iris-500/15 text-iris-300"><User size={20} /></div>}
       title="Управление аккаунтом"
       subtitle={account ? `${account.name} · @${stats?.profile.username ?? account.username}` : ''}

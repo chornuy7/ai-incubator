@@ -74,6 +74,11 @@ export default {
           '100%': { opacity: '1', transform: 'scale(1)' },
         },
         shimmer: { '100%': { transform: 'translateX(100%)' } },
+        // Боковая панель (карточка аккаунта) выезжает от правого края.
+        'slide-in-right': {
+          '0%': { opacity: '0', transform: 'translateX(24px)' },
+          '100%': { opacity: '1', transform: 'translateX(0)' },
+        },
         'pulse-ring': {
           '0%': { boxShadow: '0 0 0 0 rgba(14,196,100,0.5)' },
           '70%': { boxShadow: '0 0 0 8px rgba(14,196,100,0)' },
@@ -87,6 +92,7 @@ export default {
       animation: {
         'fade-in': 'fade-in 0.24s ease-out',
         'scale-in': 'scale-in 0.16s ease-out',
+        'slide-in-right': 'slide-in-right 0.2s ease-out',
         'pulse-ring': 'pulse-ring 1.8s infinite',
         float: 'float 6s ease-in-out infinite',
       },
