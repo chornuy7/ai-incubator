@@ -67,18 +67,21 @@ export function HelpButton({ topic, className }: { topic: string; className?: st
   )
 }
 
-export function SectionCard({ icon, title, badge, right, required, children }: {
+export function SectionCard({ icon, title, badge, right, required, children, id }: {
   icon: React.ReactNode; title: string; badge?: string; right?: React.ReactNode
   /** §11 (MR-54): пометить блок обязательным — визуально отделить от необязательных настроек. */
   required?: boolean
   children: React.ReactNode
+  /** Якорь для шагов мастера запуска: клик по шагу прокручивает к этому блоку. */
+  id?: string
 }) {
   const setHelpTopic = useUi((s) => s.setHelpTopic)
   const setHelpOpen = useUi((s) => s.setHelpOpen)
   const rootRef = useRef<HTMLDivElement>(null)
 
+  // scroll-mt — чтобы липкая шапка не накрывала заголовок при переходе по якорю.
   return (
-    <div ref={rootRef} className="card p-0">
+    <div ref={rootRef} id={id} className="card scroll-mt-24 p-0">
       <div className="flex flex-wrap items-center gap-3 border-b border-line px-4 py-3.5">
         <span className="grid h-9 w-9 place-items-center rounded-xl bg-spark-500/12 text-spark-400">{icon}</span>
         <span className="font-display text-base font-bold text-fg">{title}</span>

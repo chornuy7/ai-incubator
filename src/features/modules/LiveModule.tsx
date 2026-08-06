@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import {
   Play, Sparkles, Hash, Settings2, Clock, Users, MessageSquareText,
-  Heart, Eye, Shield, MessageCircle, Database, Trophy, Link2, Plus, Target, Terminal, ArrowUpRight, Rocket, Lock, LockOpen, Check,
+  Heart, Eye, Shield, MessageCircle, Database, Trophy, Link2, Plus, Target, Terminal, ArrowUpRight, Rocket, Lock, LockOpen,
 } from 'lucide-react'
 import { MODULES, isCombatModule, combatConfirmText, type ModuleConfig } from '@/shared/config/modules'
 import { isHidden } from '@/shared/config/routes'
@@ -20,6 +20,7 @@ import {
   SectionCard, NumberField,
   ProtectionBlock, TargetsEditor, LaunchPanel, PromptCards, loadPromptBodies, AiGenerationNotice,
   FolderPicker, BlacklistEditor, GlobalPromptEditor, TimingSection, SaveToFolderModal, TaskStartedModal, SavePresetModal,
+  LaunchSteps, markCurrentStep, type LaunchStep,
 } from './shared'
 import type { ModuleTaskSettings } from '@/api/modulesApi'
 import { confirmDialog } from '@/shared/lib/dialog'
@@ -348,15 +349,12 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
   // `optional` — необязательный шаг (тонкая настройка): показываем серым, он не
   // становится «текущим» и не мешает запуску.
   const launchSteps = useMemo(() => {
-    const steps: { label: string; done: boolean; current?: boolean; anchor: string; optional?: boolean }[] = []
+    const steps: LaunchStep[] = []
     if (cfg.accountPicker) steps.push({ label: 'Аккаунты', done: selected.size > 0, anchor: 'sec-accounts' })
     if (needsTargets && !cfg.warmingLayout) steps.push({ label: cfg.unit?.title || 'Цели', done: targets.length > 0 || hasPostTargets, anchor: 'sec-targets' })
     steps.push({ label: 'Настройки', done: true, optional: true, anchor: 'sec-settings' })
     steps.push({ label: 'Запуск', done: false, anchor: 'sec-run' })
-    // Текущий — первый невыполненный ОБЯЗАТЕЛЬНЫЙ шаг (опциональные пропускаем).
-    const idx = steps.findIndex((s) => !s.done && !s.optional)
-    if (idx >= 0) steps[idx].current = true
-    return steps
+    return markCurrentStep(steps)
   }, [cfg, selected, needsTargets, targets, hasPostTargets])
 
   return (
@@ -710,35 +708,7 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
             : []}
           // §11 (MR-55): шаги запуска — компактной строкой ПОД кнопкой запуска (а не
           // большим блоком вверху страницы): всё видно сразу, без прокрутки.
-          steps={!running && launchSteps.length > 1 ? (
-            <div className="flex flex-wrap items-center justify-center gap-x-1.5 gap-y-1">
-              {launchSteps.map((s, i) => (
-                <span key={s.label} className="flex items-center gap-1.5">
-                  {i > 0 && <span className={cn('h-px w-4 rounded-full', launchSteps[i - 1].done && !launchSteps[i - 1].optional ? 'bg-spark-500/60' : 'bg-line')} />}
-                  {/* Клик по шагу — «связка» с блоком: прокручиваем к нему. */}
-                  <button
-                    type="button"
-                    onClick={() => document.getElementById(s.anchor)?.scrollIntoView({ behavior: 'smooth', block: 'start' })}
-                    title={s.optional ? `${s.label} — необязательно, можно запускать без них` : `Перейти к разделу «${s.label}»`}
-                    className="flex items-center gap-1.5 rounded-md px-1 py-0.5 transition-opacity hover:opacity-80"
-                  >
-                    <span className={cn('grid h-5 w-5 shrink-0 place-items-center rounded-full border text-[10px] font-bold',
-                      s.optional ? 'border-dashed border-line bg-transparent text-faint'
-                        : s.done ? 'border-spark-500 bg-spark-500 text-[#04150c]'
-                          : s.current ? 'border-spark-500 bg-spark-500/15 text-spark-200'
-                            : 'border-line bg-elevated text-muted')}>
-                      {s.done && !s.optional ? <Check size={11} strokeWidth={3} /> : i + 1}
-                    </span>
-                    <span className={cn('text-[11px]',
-                      s.optional ? 'text-faint'
-                        : s.current ? 'font-bold text-fg' : s.done ? 'text-spark-200' : 'text-muted')}>
-                      {s.label}{s.optional && <span className="ml-1 text-[10px]">(необяз.)</span>}
-                    </span>
-                  </button>
-                </span>
-              ))}
-            </div>
-          ) : null}
+          steps={!running ? <LaunchSteps steps={launchSteps} /> : null}
           presets={presets}
           onApplyPreset={applyPreset}
           onDeletePreset={deletePreset}

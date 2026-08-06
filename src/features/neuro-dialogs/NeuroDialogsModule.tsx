@@ -27,6 +27,8 @@ import {
   HelpButton,
   NumberField,
   LaunchPanel,
+  LaunchSteps,
+  markCurrentStep,
   PromptCards,
   loadPromptBodies,
   ProtectionBlock,
@@ -329,13 +331,15 @@ export function NeuroDialogsModule() {
   return (
     <div className="space-y-4">
       <TaskStartedModal task={justStarted} moduleTitle={cfg.title} onClose={dismissJustStarted} />
-      <AccountPicker
-        selected={selected}
-        onChange={setSelected}
-        actions={cfg.accountActions}
-        withFilters={!!cfg.accountFilters}
-        selectedTitle={cfg.selectedTitle ?? 'Выбрано'}
-      />
+      <div id="sec-accounts" className="scroll-mt-24">
+        <AccountPicker
+          selected={selected}
+          onChange={setSelected}
+          actions={cfg.accountActions}
+          withFilters={!!cfg.accountFilters}
+          selectedTitle={cfg.selectedTitle ?? 'Выбрано'}
+        />
+      </div>
 
       <div className="card p-0">
         <div className="flex items-center gap-3 px-4 py-3.5">
@@ -452,7 +456,7 @@ export function NeuroDialogsModule() {
       </div>
 
       {/* §9: сколько сообщений ведём с ОДНИМ лидом — переключатель режима. */}
-      <SectionCard icon={<MessagesSquare size={18} />} title="Переписка с одним лидом">
+      <SectionCard icon={<MessagesSquare size={18} />} title="Переписка с одним лидом" id="sec-settings">
         <div className="flex flex-col gap-3">
           <Segmented
             options={['До целевого действия', 'Фиксировано']}
@@ -499,11 +503,18 @@ export function NeuroDialogsModule() {
         Если поставить «от» = 0, задача может случайно завершиться после первого же ответа. По умолчанию «от» = «до», то есть лимит фиксированный.
       </p>
 
-      <SectionCard icon={<Play size={18} />} title={running ? 'Мониторинг' : 'Запуск'} badge={running ? 'LIVE' : undefined}>
+      {/* Заголовок не «Запуск» — так он дублировал последний шаг мастера. */}
+      <SectionCard id="sec-run" icon={<Play size={18} />} title={running ? 'Мониторинг' : 'Параметры и лимиты'} badge={running ? 'LIVE' : undefined}>
         <LaunchPanel
           running={running}
           starting={starting}
           canStart={canStart}
+          steps={!running ? <LaunchSteps steps={markCurrentStep([
+            { label: 'Аккаунты', done: accountIds.length > 0, anchor: 'sec-accounts' },
+            { label: 'Настройки', done: true, optional: true, anchor: 'sec-settings' },
+            { label: 'Запуск', done: false, anchor: 'sec-run' },
+          ])} /> : null}
+          blockedBy={!running && !canStart ? ['выберите аккаунты'] : []}
           onStart={() => { void start(buildSettings(), `${cfg.title} · ${selected.size} акк.`) }}
           onStop={stop}
           onSave={async () => {

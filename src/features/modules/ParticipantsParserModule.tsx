@@ -9,7 +9,7 @@ import { activeAccounts, useApp } from '@/mocks/store'
 import { Switch, Select, Badge, EmptyState, Modal } from '@/shared/ui'
 import { AccountPicker } from '@/features/account-picker/AccountPicker'
 import { useModuleTask } from './shared/useModuleTask'
-import { SectionCard, NumberField, ProtectionBlock, LaunchPanel, TaskStartedModal, SchedulePanel } from './shared'
+import { SectionCard, NumberField, ProtectionBlock, LaunchPanel, LaunchSteps, markCurrentStep, TaskStartedModal, SchedulePanel } from './shared'
 import { cn } from '@/shared/lib/utils'
 import { downloadXls } from '@/shared/lib/exportXls'
 import { FolderPicker, SaveToFolderModal } from './shared/FolderPicker'
@@ -203,9 +203,11 @@ function Inner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: string }) {
   return (
     <div className="space-y-4">
       <TaskStartedModal task={justStarted} moduleTitle={cfg.title} onClose={dismissJustStarted} />
-      <AccountPicker selected={selected} onChange={setSelected} actions={cfg.accountActions} withFilters={!!cfg.accountFilters} selectedTitle={cfg.selectedTitle ?? 'Выбрано для парсинга'} />
+      <div id="sec-accounts" className="scroll-mt-24">
+        <AccountPicker selected={selected} onChange={setSelected} actions={cfg.accountActions} withFilters={!!cfg.accountFilters} selectedTitle={cfg.selectedTitle ?? 'Выбрано для парсинга'} />
+      </div>
 
-      <SectionCard icon={<Settings2 size={18} />} title="Настройки парсинга" badge={targetList.length ? `${targetList.length} целей` : undefined}>
+      <SectionCard id="sec-settings" icon={<Settings2 size={18} />} title="Настройки парсинга" badge={targetList.length ? `${targetList.length} целей` : undefined}>
         {cfg.aiProtection && <ProtectionBlock enabled={aiProtect} onEnabled={setAiProtect} level={protLevel} onLevel={setProtLevel} />}
 
         <div className="grid gap-4 lg:grid-cols-2">
@@ -348,9 +350,18 @@ function Inner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: string }) {
         </div>
       </SectionCard>
 
-      <SectionCard icon={<Play size={18} />} title={running ? 'Выполнение' : 'Запуск & Логи'} badge={running ? 'LIVE' : undefined}>
+      <SectionCard id="sec-run" icon={<Play size={18} />} title={running ? 'Выполнение' : 'Логи и параметры'} badge={running ? 'LIVE' : undefined}>
         <LaunchPanel running={running} starting={starting} canStart={canStart} onStart={handleStart} onStop={stop} onSave={handleSave}
           primaryLabel={cfg.primaryAction ?? 'Начать'} stats={launchStats} task={task} warn={warn}
+          steps={!running ? <LaunchSteps steps={markCurrentStep([
+            { label: 'Аккаунты', done: selected.size > 0 && busySelectedCount === 0, anchor: 'sec-accounts' },
+            { label: P.sourceTitle, done: targetList.length > 0, anchor: 'sec-settings' },
+            { label: 'Запуск', done: false, anchor: 'sec-run' },
+          ])} /> : null}
+          blockedBy={!running && !canStart ? [
+            ...(busySelectedCount ? [`${busySelectedCount} акк. заняты`] : !selected.size ? ['выберите аккаунты'] : []),
+            ...(targetList.length ? [] : [`добавьте ${P.sourceTitle.toLowerCase()}`]),
+          ] : []}
           cost={<LaunchCost moduleKey={moduleKey} actions={P.unit ? (limits[lkey(P.unit.limitLabel)] || 0) : 0} />}
           presets={presets} onApplyPreset={applyPreset} onDeletePreset={deletePreset} />
       </SectionCard>

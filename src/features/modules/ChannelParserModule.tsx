@@ -9,7 +9,7 @@ import { activeAccounts, useApp } from '@/mocks/store'
 import { Segmented, Switch, Badge, Select, EmptyState } from '@/shared/ui'
 import { AccountPicker } from '@/features/account-picker/AccountPicker'
 import { useModuleTask } from './shared/useModuleTask'
-import { SectionCard, NumberField, ProtectionBlock, DelayFields, LaunchPanel, TaskStartedModal, SchedulePanel } from './shared'
+import { SectionCard, NumberField, ProtectionBlock, DelayFields, LaunchPanel, LaunchSteps, markCurrentStep, TaskStartedModal, SchedulePanel } from './shared'
 import { cn } from '@/shared/lib/utils'
 import { downloadXls } from '@/shared/lib/exportXls'
 import { SaveToFolderModal } from './shared/FolderPicker'
@@ -319,7 +319,9 @@ function ChannelParserInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: 
     <div className="space-y-4">
       <TaskStartedModal task={justStarted} moduleTitle={cfg.title} onClose={dismissJustStarted} />
       {/* Выбор аккаунтов */}
-      <AccountPicker selected={selected} onChange={setSelected} actions={cfg.accountActions} withFilters={!!cfg.accountFilters} selectedTitle={cfg.selectedTitle ?? 'Выбрано для парсинга'} />
+      <div id="sec-accounts" className="scroll-mt-24">
+        <AccountPicker selected={selected} onChange={setSelected} actions={cfg.accountActions} withFilters={!!cfg.accountFilters} selectedTitle={cfg.selectedTitle ?? 'Выбрано для парсинга'} />
+      </div>
 
       {/* Шаблоны */}
       {cfg.templates && cfg.templates.length > 0 && (
@@ -348,7 +350,7 @@ function ChannelParserInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: 
       )}
 
       {/* Настройки поиска */}
-      <SectionCard icon={<Settings2 size={18} />} title="Настройки поиска" badge={`${keywords.length} ключевых слов`}>
+      <SectionCard id="sec-settings" icon={<Settings2 size={18} />} title="Настройки поиска" badge={`${keywords.length} ключевых слов`}>
         {cfg.aiProtection && <ProtectionBlock enabled={aiProtect} onEnabled={setAiProtect} level={protLevel} onLevel={setProtLevel} />}
 
         <div className="mb-4">
@@ -507,7 +509,7 @@ function ChannelParserInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: 
       )}
 
       {/* Запуск & Логи */}
-      <SectionCard icon={<Play size={18} />} title={running ? 'Выполнение' : 'Запуск & Логи'} badge={running ? 'LIVE' : undefined}>
+      <SectionCard id="sec-run" icon={<Play size={18} />} title={running ? 'Выполнение' : 'Логи и параметры'} badge={running ? 'LIVE' : undefined}>
         <LaunchPanel
           running={running}
           starting={starting}
@@ -516,6 +518,15 @@ function ChannelParserInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: 
           onStop={stop}
           onSave={handleSave}
           primaryLabel={cfg.primaryAction ?? 'Запустить парсинг'}
+          steps={!running ? <LaunchSteps steps={markCurrentStep([
+            { label: 'Аккаунты', done: selected.size > 0 && busySelectedCount === 0, anchor: 'sec-accounts' },
+            { label: 'Ключевые слова', done: keywords.length > 0, anchor: 'sec-settings' },
+            { label: 'Запуск', done: false, anchor: 'sec-run' },
+          ])} /> : null}
+          blockedBy={!running && !canStart ? [
+            ...(busySelectedCount ? [`${busySelectedCount} акк. заняты в другом модуле`] : !selected.size ? ['выберите аккаунты'] : []),
+            ...(keywords.length ? [] : ['добавьте хотя бы одно ключевое слово']),
+          ] : []}
           cost={<LaunchCost moduleKey={moduleKey} actions={limit} />}
           stats={launchStats}
           task={task}

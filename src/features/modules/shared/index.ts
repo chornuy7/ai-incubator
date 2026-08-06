@@ -16,6 +16,8 @@ export { DEFAULT_PROMPT_BODIES, loadPromptBodies, savePromptBodies } from './pro
 export { ProtectionBlock } from './ProtectionBlock'
 export { TargetsEditor } from './TargetsEditor'
 export { LaunchPanel } from './LaunchPanel'
+export { LaunchSteps, markCurrentStep } from './LaunchSteps'
+export type { LaunchStep } from './LaunchSteps'
 export { FloatingBar } from './FloatingBar'
 export { TaskStartedModal } from './TaskStartedModal'
 export { FolderPicker, SaveToFolderModal } from './FolderPicker'
