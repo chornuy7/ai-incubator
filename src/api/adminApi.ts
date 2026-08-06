@@ -68,6 +68,8 @@ export interface UserRow {
   coins: number
   /** §11.4: деньги ($) на счету — основной кошелёк, показывается прежде токенов. */
   usd: number
+  /** §4.2 (MR-30): режим баланса суба — 'shared' (общий с владельцем) / 'individual' (свой лимит). */
+  balanceMode?: 'shared' | 'individual'
   /** §11.9: последний вход — когда (ISO) и с какого IP. null — входов в аудите нет. */
   lastLogin?: { at: string; ip: string } | null
   /** Подписка: какие модули открыты. all=true — набор не выбран (открыто всё). null — синтетическая строка. */

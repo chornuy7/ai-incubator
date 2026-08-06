@@ -673,22 +673,36 @@ function UsersTab({ report, onReload }: { report: UsersReport | null; onReload: 
                   <td className="py-2 pr-3 text-right tabular-nums text-amber-300">{r.spent ? fmtCoins(r.spent) : '—'}</td>
                   <td className="py-2 pr-3 text-right">
                     {/* §11.4: деньги ($) — ОСНОВНОЕ, сверху; токены ⚡ — топливо, мельче под ними. */}
-                    <div className="flex items-center justify-end gap-1.5">
-                      <span className="leading-tight">
-                        <span className="block text-sm font-semibold tabular-nums text-fg">${(r.usd ?? 0).toFixed(2)}</span>
-                        <span className="block text-[11px] tabular-nums text-amber-300/80">{fmtCoins(r.coins ?? 0)} ⚡</span>
+                    {/* §4.2 (MR-30): суб с ОБЩИМ балансом отдельного кошелька не имеет — тратит из
+                        кошелька владельца (getBalance/списания резолвят resolveWalletOwner). Раньше тут
+                        показывался «сырой» остаток coin_balance суба — он вводил в заблуждение («$45 у
+                        суба», хотя платит владелец). Показываем правду; отдельная сумма и пополнение —
+                        только у владельца и у субов с индивидуальным лимитом. */}
+                    {r.parentId && r.balanceMode !== 'individual' ? (
+                      <span className="block leading-tight">
+                        <span className="block text-[11px] font-medium text-iris-300">Общий с владельцем</span>
+                        <span className="block text-[10px] text-muted">тратит из кошелька владельца</span>
                       </span>
-                      {real && (
-                        <button
-                          onClick={(e) => { e.stopPropagation(); void topUp(r.userId, r.email) }}
-                          disabled={busy === r.userId}
-                          className="grid h-6 w-6 shrink-0 place-items-center rounded-md border border-line text-muted transition-colors hover:border-spark-500/40 hover:text-spark-300 disabled:opacity-40"
-                          title="Пополнить $ / выдать токены"
-                        >
-                          <Plus size={13} />
-                        </button>
-                      )}
-                    </div>
+                    ) : (
+                      <div className="flex items-center justify-end gap-1.5">
+                        <span className="leading-tight">
+                          <span className="block text-sm font-semibold tabular-nums text-fg">${(r.usd ?? 0).toFixed(2)}</span>
+                          <span className="block text-[11px] tabular-nums text-amber-300/80">
+                            {fmtCoins(r.coins ?? 0)} ⚡{r.parentId ? <span className="ml-1 text-iris-300/80">· лимит</span> : null}
+                          </span>
+                        </span>
+                        {real && (
+                          <button
+                            onClick={(e) => { e.stopPropagation(); void topUp(r.userId, r.email) }}
+                            disabled={busy === r.userId}
+                            className="grid h-6 w-6 shrink-0 place-items-center rounded-md border border-line text-muted transition-colors hover:border-spark-500/40 hover:text-spark-300 disabled:opacity-40"
+                            title="Пополнить $ / выдать токены"
+                          >
+                            <Plus size={13} />
+                          </button>
+                        )}
+                      </div>
+                    )}
                   </td>
                   <td className="py-2 pr-3">
                     {r.subscription

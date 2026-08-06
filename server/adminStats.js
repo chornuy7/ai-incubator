@@ -694,6 +694,9 @@ export async function usersReport(opts = {}) {
       coins: round3(coins[u.id] ?? 0),
       // §11.4: денежный остаток ($) — основной кошелёк, показывается прежде токенов.
       usd: Math.round((usd[u.id] ?? 0) * 100) / 100,
+      // §4.2 (MR-30): режим баланса суба — 'shared' (общий с владельцем) или 'individual'
+      // (свой лимит). Нужен фронту, чтобы не показывать «сырой» остаток общему субу.
+      balanceMode: u.balanceMode || 'shared',
       // §11.9: когда и с какого IP заходил последний раз (null — входов в аудите нет).
       lastLogin: lastLoginByEmail.get(String(u.email || '').toLowerCase()) || null,
       subscription: subOf(modsByUser[u.id]),
