@@ -369,7 +369,9 @@ export function StatusTab({ stats, spamChecking, onSpamCheck }: { stats: Account
         tone={st.spamblock === 'clean' ? 'ok' : st.spamblock === 'blocked' ? 'bad' : 'neutral'}
         title="Спамблок"
         value={st.spamblock === 'clean' ? 'Чисто' : st.spamblock === 'blocked' ? 'Ограничен' : 'Неизвестно'}
-        desc={st.spamblock === 'unknown' ? 'Не проверялся' : (st.spamblockText || '')}
+        // MR-63: у проверенного аккаунта показываем ДАТУ проверки («прошёл проверку и когда»),
+        // а не только текст ответа @SpamBot. Результат теперь персистится (не «пропадает»).
+        desc={st.spamblock === 'unknown' ? 'Не проверялся' : (st.spamblockAt ? `Проверено: ${fmtDate(st.spamblockAt)}` : (st.spamblockText || ''))}
         footer={
           <button onClick={onSpamCheck} disabled={spamChecking} className="btn-soft mt-2 h-7 w-full text-xs disabled:opacity-50">
             {spamChecking ? <Loader2 size={12} className="animate-spin" /> : <RefreshCw size={12} />} Проверить @SpamBot
@@ -413,6 +415,7 @@ export function DatesTab({ stats }: { stats: AccountStats | null }) {
     <SectionCard title="Даты" icon={<Calendar size={15} className="text-iris-300" />}>
       <Field label="Добавлен в систему" value={fmtDate(d?.addedAt)} />
       <Field label="Последняя проверка" value={fmtDate(d?.lastCheckAt)} />
+      <Field label="Проверка спамблока" value={fmtDate(d?.spamblockAt)} />
       <Field label="Проверка прокси" value={fmtDate(d?.proxyCheckAt)} />
     </SectionCard>
   )

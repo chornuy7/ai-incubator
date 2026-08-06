@@ -181,6 +181,7 @@ export interface AccountStats {
     sessionOk: boolean
     spamblock: 'clean' | 'blocked' | 'unknown'
     spamblockText: string | null
+    spamblockAt: number | null // MR-63: когда спамблок проверяли в последний раз
     warmingDays: number
     warmingActive: boolean
     accountStatus: string
@@ -189,6 +190,7 @@ export interface AccountStats {
     addedAt: number | null
     lastCheckAt: number | null
     proxyCheckAt: number | null
+    spamblockAt: number | null // MR-63
   }
   health: {
     score: number

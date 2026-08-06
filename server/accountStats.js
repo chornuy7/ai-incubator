@@ -1,5 +1,5 @@
 /** Реальная статистика аккаунта для модалки «Управление аккаунтом». */
-import { getAccountMeta, loadAllMeta, setAccountStatus } from './accountsMeta.js'
+import { getAccountMeta, loadAllMeta, setAccountStatus, setAccountMeta } from './accountsMeta.js'
 import { loadSessionString, createClient } from './tgAuth.js'
 import { parseProxy } from './proxy.js'
 import { getAccountLock } from './lib/accountLocks.js'
@@ -244,6 +244,11 @@ export async function buildAccountStats(accountId, opts = {}) {
       if (opts.spam) {
         const sb = await checkSpamblock(client)
         proxy._spamblock = sb
+        // MR-63: персистим ОПРЕДЕЛЁННЫЙ результат (clean/blocked) + дату проверки. Иначе на
+        // следующей загрузке (без opts.spam) спамблок снова «Неизвестно» — результат «пропадал».
+        if (sb.state === 'clean' || sb.state === 'blocked') {
+          try { await setAccountMeta(accountId, { spamblock: sb.state, spamblockAt: Date.now(), spamblockText: sb.text || '' }) } catch { /* non-fatal */ }
+        }
       }
       await client.disconnect()
     } catch {
@@ -271,7 +276,11 @@ export async function buildAccountStats(accountId, opts = {}) {
   const effectiveStatus = busyIn ? (meta.status || 'working') : (!sessionStr ? 'reauth' : sessionOk ? 'active' : 'reauth')
   const valid = busyIn ? meta.status !== 'reauth' && meta.status !== 'invalid' : sessionOk
 
-  const spamblock = proxy._spamblock?.state || 'unknown'
+  // MR-63: свежая проверка (opts.spam) приоритетнее, но только если дала определённый ответ;
+  // иначе показываем ПОСЛЕДНИЙ сохранённый результат из meta (а не сбрасываем в «Неизвестно»).
+  const freshSpam = proxy._spamblock?.state
+  const spamblock = (freshSpam === 'clean' || freshSpam === 'blocked') ? freshSpam : (meta.spamblock || 'unknown')
+  const spamblockAt = (freshSpam === 'clean' || freshSpam === 'blocked') ? Date.now() : (meta.spamblockAt || null)
   const warmingDays = addedAt ? Math.max(0, Math.round(ageDays)) : 0
   const warmingActive = busyIn ? true : sessionOk
 
@@ -315,7 +324,8 @@ export async function buildAccountStats(accountId, opts = {}) {
       valid,
       sessionOk: sessionOk || (busyIn ? valid : false),
       spamblock,
-      spamblockText: proxy._spamblock?.text || null,
+      spamblockText: proxy._spamblock?.text || meta.spamblockText || null,
+      spamblockAt, // MR-63: когда спамблок проверяли в последний раз (для «Проверено: дата»)
       warmingDays,
       warmingActive,
       accountStatus: effectiveStatus,
@@ -324,6 +334,7 @@ export async function buildAccountStats(accountId, opts = {}) {
       addedAt,
       lastCheckAt,
       proxyCheckAt,
+      spamblockAt, // MR-63
     },
     health,
     longevity,
