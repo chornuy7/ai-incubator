@@ -536,22 +536,44 @@ function UsersTab({ report, onReload }: { report: UsersReport | null; onReload: 
     ? report.rows.filter((r) => `${r.name} ${r.email} ${r.userId}`.toLowerCase().includes(needle))
     : report.rows
 
-  // §10.4: кластеризация — каждый владелец, а СРАЗУ ПОД НИМ его суб-юзеры (с отступом).
-  // Раньше суб-юзеры были размазаны по списку, и «кто чей» читалось только по подписи.
+  // §10.4: кластеризация — суб-юзеры СПРЯТАНЫ ВНУТРЬ владельца и раскрываются по клику.
+  // Показывать их всегда нельзя: на 10 владельцах по 100 субов список превращается в
+  // сплошной шум, и владельцев в нём уже не найти. По умолчанию видны только владельцы,
+  // у каждого — счётчик «N суб-юзеров»; поиск раскрывает совпавшие кластеры сам.
+  const [openSubs, setOpenSubs] = useState<Set<string>>(new Set())
+  const toggleSubs = (ownerId: string) => setOpenSubs((prev) => {
+    const n = new Set(prev); n.has(ownerId) ? n.delete(ownerId) : n.add(ownerId); return n
+  })
+
+  /** Суб-юзеры по владельцу — считаем по ВСЕМ строкам, а не по отфильтрованным. */
+  const subsByOwner = useMemo(() => {
+    const m = new Map<string, typeof report.rows>()
+    for (const r of report.rows) if (r.parentId) { const a = m.get(r.parentId) || []; a.push(r); m.set(r.parentId, a) }
+    return m
+  }, [report.rows])
+
   const clustered = useMemo(() => {
-    const kids = new Map<string, typeof shown>()
-    for (const r of shown) if (r.parentId) { const a = kids.get(r.parentId) || []; a.push(r); kids.set(r.parentId, a) }
     const out: typeof shown = []
     const seen = new Set<string>()
+    // Идёт поиск — раскрываем всё, иначе найденный суб-юзер остался бы невидимым.
+    const searching = !!needle
+    // Владельцы, которые реально показаны: их субы либо раскрыты, либо СПРЯТАНЫ —
+    // и в «осиротевшие» их добавлять нельзя, иначе свёрнутое вылезет обратно.
+    const ownersShown = new Set(shown.filter((r) => !r.parentId).map((r) => r.userId))
     for (const r of shown) {
-      if (r.parentId || seen.has(r.userId)) continue // суб-юзеров кладём под владельцем ниже
+      if (r.parentId || seen.has(r.userId)) continue // субов покажем под владельцем
       seen.add(r.userId); out.push(r)
-      for (const k of kids.get(r.userId) || []) if (!seen.has(k.userId)) { seen.add(k.userId); out.push(k) }
+      if (!searching && !openSubs.has(r.userId)) continue // свёрнут — субов не выводим
+      for (const k of (subsByOwner.get(r.userId) || [])) if (!seen.has(k.userId)) { seen.add(k.userId); out.push(k) }
     }
-    // Осиротевшие суб-юзеры (владельца нет в списке) — в конец, чтобы не потерялись.
-    for (const r of shown) if (!seen.has(r.userId)) { seen.add(r.userId); out.push(r) }
+    // Осиротевшие субы (владельца нет в выборке вообще) — в конец, чтобы не потерялись.
+    for (const r of shown) {
+      if (seen.has(r.userId)) continue
+      if (r.parentId && ownersShown.has(r.parentId)) continue // просто свёрнут у владельца
+      seen.add(r.userId); out.push(r)
+    }
     return out
-  }, [shown])
+  }, [shown, needle, openSubs, subsByOwner])
 
   /**
    * Пополнение прямо из таблицы: админ видит, у кого кончаются монеты, и тут же
@@ -665,6 +687,19 @@ function UsersTab({ report, onReload }: { report: UsersReport | null; onReload: 
                       {real && r.roleName && <span className="shrink-0 rounded-md bg-iris-500/12 px-1.5 py-0.5 text-[10px] font-bold text-iris-300">{r.roleName}</span>}
                       {real && !r.roleName && <span className="shrink-0 rounded-md bg-white/8 px-1.5 py-0.5 text-[10px] font-bold text-muted">без роли</span>}
                       {!r.active && real && <span className="rounded-md bg-white/8 px-1.5 py-0.5 text-[10px] font-bold text-muted">отключён</span>}
+                      {/* Суб-юзеры спрятаны внутрь владельца: разворачиваем по кнопке,
+                          чтобы сотни субов не забивали список. Клик не открывает карточку. */}
+                      {!r.parentId && (subsByOwner.get(r.userId)?.length ?? 0) > 0 && (
+                        <button
+                          type="button"
+                          onClick={(e) => { e.stopPropagation(); toggleSubs(r.userId) }}
+                          title={openSubs.has(r.userId) ? 'Свернуть суб-юзеров' : 'Показать суб-юзеров этого владельца'}
+                          className="ml-1 inline-flex shrink-0 items-center gap-1 rounded-md border border-iris-500/30 bg-iris-500/10 px-1.5 py-0.5 text-[10px] font-bold text-iris-300 hover:bg-iris-500/20"
+                        >
+                          <ChevronDown size={11} className={cn('transition-transform', openSubs.has(r.userId) && 'rotate-180')} />
+                          {subsByOwner.get(r.userId)?.length} суб-юзеров
+                        </button>
+                      )}
                     </div>
                   </td>
                   <td className="py-2 pr-3 text-right tabular-nums text-muted">{fmt(r.tasks)}</td>
