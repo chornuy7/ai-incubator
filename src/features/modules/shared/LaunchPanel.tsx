@@ -88,38 +88,41 @@ export function LaunchPanel({
       {extras}
       {/* Плавающий бар — ПОСЛЕДНИЙ элемент: его заглушка резервирует место в самом низу
           карточки, ничего не рендерится ниже, и бар чисто «отрывается» ко дну экрана. */}
-      {/* Внутри панели — три колонки одной ширины: кнопка строго по центру панели,
-          «Сохранить шаблон» прижат вправо (с запасом под плавающие виджеты). Под ними —
-          шаги и, если запуск заблокирован, чего не хватает. */}
+      {/* §4 (UI-001): раскладка нижней панели по решению созвона — ШАБЛОН слева,
+          параметры/навигация (шаги + чего не хватает) по ЦЕНТРУ, кнопка «Начать» справа
+          (с запасом под плавающие виджеты). */}
       <FloatingBar>
-        <div className="grid w-full grid-cols-1 items-center gap-2 sm:grid-cols-[1fr_auto_1fr]">
-          <span className="hidden sm:block" />
-          <div className="flex flex-wrap items-center justify-center gap-2">
+        <div className="grid w-full grid-cols-1 items-center gap-x-3 gap-y-2 sm:grid-cols-[auto_1fr_auto]">
+          {/* Слева — шаблон */}
+          <div className="flex justify-center sm:justify-start">
+            <button type="button" onClick={onSave} className="btn-ghost h-11 text-sm"><Save size={15} /> Сохранить шаблон</button>
+          </div>
+          {/* По центру — навигация (шаги) и, если запуск заблокирован, чего не хватает */}
+          <div className="flex min-w-0 flex-col items-center gap-1">
+            {steps}
+            {!running && blockedBy.length > 0 && (
+              <div className="flex items-center gap-1.5 text-center text-[11px] text-amber-300">
+                <AlertTriangle size={12} className="shrink-0" />
+                <span>Осталось: {blockedBy.join(' · ')}</span>
+              </div>
+            )}
+          </div>
+          {/* Справа — «Начать» */}
+          <div className="flex flex-wrap items-center justify-center gap-2 sm:justify-end sm:pr-14">
+            {running && (
+              <a href="/panel/tasks" className="btn-ghost h-11 text-sm" title="Управление, прогресс и логи — в Дашборде задач"><ArrowUpRight size={15} /> В Дашборде задач</a>
+            )}
             <button
               type="button"
               onClick={onStart}
               disabled={starting || !canStart}
               title={!canStart && blockedBy.length ? `Осталось: ${blockedBy.join('; ')}` : undefined}
-              className="btn-primary h-11 min-w-[180px]"
+              className="btn-primary h-11 min-w-[160px]"
             >
               {starting ? <Loader2 size={17} className="animate-spin" /> : <Play size={17} />} {primaryLabel}
             </button>
-            {running && (
-              <a href="/panel/tasks" className="btn-ghost h-11 text-sm" title="Управление, прогресс и логи — в Дашборде задач"><ArrowUpRight size={15} /> В Дашборде задач</a>
-            )}
-          </div>
-          <div className="flex justify-center sm:justify-end sm:pr-14">
-            <button type="button" onClick={onSave} className="btn-ghost h-11 text-sm"><Save size={15} /> Сохранить шаблон</button>
           </div>
         </div>
-        {/* Кнопка серая — сразу видно, что осталось заполнить (а не догадываться). */}
-        {!running && blockedBy.length > 0 && (
-          <div className="flex items-center gap-1.5 text-center text-[11px] text-amber-300">
-            <AlertTriangle size={12} className="shrink-0" />
-            <span>Осталось: {blockedBy.join(' · ')}</span>
-          </div>
-        )}
-        {steps}
       </FloatingBar>
     </>
   )
