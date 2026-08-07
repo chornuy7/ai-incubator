@@ -92,25 +92,44 @@ export function AppSidebar({ mobile = false }: { mobile?: boolean }) {
           // §10 (MR-49): `!r.hidden` убирает скрытые разделы из меню (маршрут жив).
           const items = ROUTES.filter((r) => r.group === group && !r.hidden && allowed(r))
           if (items.length === 0) return null
-          const hasActive = items.some((r) => r.path === location.pathname)
-          // В icon-режиме групп не сворачиваем (заголовков нет); иначе — по состоянию,
-          // но группа с активной страницей всегда открыта, чтобы текущий пункт не пропал.
-          const groupOpen = collapsed ? true : (!closedGroups.has(group) || hasActive)
+          // «Внутри группы» — не только точное совпадение: страницы вида
+          // /panel/accounts/:id и /panel/modules/:key должны подсвечивать свою группу.
+          // Для корневого /panel сравниваем строго, иначе он совпал бы со всем подряд.
+          const hasActive = items.some((r) => (
+            r.path === location.pathname || (r.path !== '/panel' && location.pathname.startsWith(r.path + '/'))
+          ))
+          // В icon-режиме групп не сворачиваем (заголовков нет). Раньше группа с активной
+          // страницей ПРИНУДИТЕЛЬНО оставалась открытой — из-за этого свернуть её было
+          // нельзя, и группировка «не работала» именно там, где человек сейчас находится.
+          // Теперь сворачивается любая, а где ты — видно по зелёному заголовку.
+          const groupOpen = collapsed ? true : !closedGroups.has(group)
           return (
             <div key={group} className="mb-4">
               {!collapsed && (
                 <button
                   type="button"
                   onClick={() => toggleGroup(group)}
-                  className="flex w-full items-center gap-1.5 px-3 pb-1.5 pt-2 text-[11px] font-bold uppercase tracking-wider text-faint transition-colors hover:text-muted"
+                  title={hasActive ? 'Вы сейчас в этой группе' : undefined}
+                  className={cn(
+                    'flex w-full items-center gap-1.5 px-3 pb-1.5 pt-2 text-[11px] font-bold uppercase tracking-wider transition-colors',
+                    // Зелёный заголовок = текущая страница внутри этой группы. Нужен
+                    // прежде всего у СВЁРНУТОЙ группы: пункт скрыт, а понять, где ты,
+                    // всё равно надо.
+                    hasActive ? 'text-spark-300' : 'text-faint hover:text-muted',
+                  )}
                 >
                   <ChevronDown size={12} className={cn('shrink-0 transition-transform', !groupOpen && '-rotate-90')} />
                   {GROUP_LABELS[group]}
+                  {/* Точка — маркер «ты здесь», когда сам пункт спрятан под свёрнутой группой. */}
+                  {hasActive && !groupOpen && <span className="ml-1 h-1.5 w-1.5 shrink-0 rounded-full bg-spark-400" />}
                 </button>
               )}
               <div className={cn('space-y-0.5', !groupOpen && 'hidden')}>
                 {items.map((r) => {
-                  const active = location.pathname === r.path
+                  // Вложенные страницы (/panel/accounts/:id, /panel/tasks/:id) тоже
+                  // подсвечивают свой пункт — иначе на них меню выглядит «нигде».
+                  const active = r.path === location.pathname
+                    || (r.path !== '/panel' && location.pathname.startsWith(r.path + '/'))
                   const Icon = r.icon
                   return (
                     <NavLink
