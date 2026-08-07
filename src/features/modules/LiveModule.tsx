@@ -544,6 +544,33 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
         </SectionCard>
       )}
 
+      {/* §3.1 (UI-002): «Тайминги и задержки» — ПЕРЕД нижней панелью запуска (§4: тайминги до запуска). */}
+      {showBlock('settings') && !isParser && !isGgr && (cfg.aiProtection || cfg.richLayout || cfg.lookingLayout || cfg.warmingLayout) && (
+        <TimingSection
+          workModeOptions={cfg.toggleGroups?.[1]?.options}
+          workMode={g(1)}
+          onWorkMode={(v) => setTg(1, v)}
+          workModeLabel={cfg.toggleGroups?.[1]?.label}
+          durationMinutes={durationMinutes}
+          onDuration={setDurationMinutes}
+          showDurationAlways={!!cfg.reactionSettings}
+          durationPeriodHint={`Период работы: ${durationPeriodMin}–${durationMinutes} мин`}
+          totalLabel={cfg.reactionSettings?.max.label ?? cfg.workModeFields?.maxLabel ?? 'Всего действий'}
+          computedTotal={{ value: maxActions, accounts: accCount }}
+          perAccount={{ min: minPerAcc, max: maxPerAcc, onMin: setMinPerAcc, onMax: setMaxPerAcc }}
+          minWords={cfg.workModeFields?.minWords ? { value: minWords, onChange: setMinWords } : null}
+          delays={delays}
+          onDelays={(updater) => setDelays(updater)}
+          showComment={!!cfg.richLayout && !cfg.reactionSettings && moduleKey === 'neuro-commenting'}
+          showAction={!(cfg.richLayout && !cfg.reactionSettings && moduleKey === 'neuro-commenting')}
+          showJoin
+          labels={{ action: cfg.reactionSettings ? 'Задержка между реакциями' : 'Задержка действия', join: 'Задержка вступления' }}
+          delayPresets={cfg.delayPresets ?? ['Мин', 'Рекомендуемые', 'Макс']}
+          delayPreset={delayPreset}
+          onDelayPreset={setDelayPreset}
+        />
+      )}
+
       {/* Заголовок не «Запуск»: так он дублировал последний шаг мастера. Здесь лежат
           параметры и лимиты прогона, сама кнопка — в нижней панели. */}
       {showBlock('run') && (
@@ -558,7 +585,7 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
             <Segmented options={WARM_LEVELS} value={warmLevel} onChange={setWarmLevel} />
             <div className="mt-2 rounded-lg border border-line/60 bg-elevated/40 px-3 py-2 text-[11px] text-white/50">
               💡 <b className="text-white/70">Уровень</b> задаёт темп (~40 / 20 / 10 действий в день) и множитель пауз.
-              Секции «Защита» и «Тайминги и задержки» ниже — это <b className="text-white/70">тонкая подстройка поверх уровня</b> (для опытных): защита × шаблон × уровень перемножаются. Для старта достаточно выбрать уровень.
+              Секции «Защита» и «Тайминги и задержки» выше — это <b className="text-white/70">тонкая подстройка поверх уровня</b> (для опытных): защита × шаблон × уровень перемножаются. Для старта достаточно выбрать уровень.
             </div>
           </div>
         )}
@@ -768,33 +795,6 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
         />
       </SectionCard>
       </div>
-      )}
-
-      {/* §7: тайминги и задержки — вниз (меняются редко). */}
-      {showBlock('settings') && !isParser && !isGgr && (cfg.aiProtection || cfg.richLayout || cfg.lookingLayout || cfg.warmingLayout) && (
-        <TimingSection
-          workModeOptions={cfg.toggleGroups?.[1]?.options}
-          workMode={g(1)}
-          onWorkMode={(v) => setTg(1, v)}
-          workModeLabel={cfg.toggleGroups?.[1]?.label}
-          durationMinutes={durationMinutes}
-          onDuration={setDurationMinutes}
-          showDurationAlways={!!cfg.reactionSettings}
-          durationPeriodHint={`Период работы: ${durationPeriodMin}–${durationMinutes} мин`}
-          totalLabel={cfg.reactionSettings?.max.label ?? cfg.workModeFields?.maxLabel ?? 'Всего действий'}
-          computedTotal={{ value: maxActions, accounts: accCount }}
-          perAccount={{ min: minPerAcc, max: maxPerAcc, onMin: setMinPerAcc, onMax: setMaxPerAcc }}
-          minWords={cfg.workModeFields?.minWords ? { value: minWords, onChange: setMinWords } : null}
-          delays={delays}
-          onDelays={(updater) => setDelays(updater)}
-          showComment={!!cfg.richLayout && !cfg.reactionSettings && moduleKey === 'neuro-commenting'}
-          showAction={!(cfg.richLayout && !cfg.reactionSettings && moduleKey === 'neuro-commenting')}
-          showJoin
-          labels={{ action: cfg.reactionSettings ? 'Задержка между реакциями' : 'Задержка действия', join: 'Задержка вступления' }}
-          delayPresets={cfg.delayPresets ?? ['Мин', 'Рекомендуемые', 'Макс']}
-          delayPreset={delayPreset}
-          onDelayPreset={setDelayPreset}
-        />
       )}
 
       {/* §7: блок «История сообщений» убран. Результаты остаются только для парсера/проверки (GGR) —
