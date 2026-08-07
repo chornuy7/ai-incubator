@@ -540,11 +540,6 @@ function UsersTab({ report, onReload }: { report: UsersReport | null; onReload: 
   // Показывать их всегда нельзя: на 10 владельцах по 100 субов список превращается в
   // сплошной шум, и владельцев в нём уже не найти. По умолчанию видны только владельцы,
   // у каждого — счётчик «N суб-юзеров»; поиск раскрывает совпавшие кластеры сам.
-  const [openSubs, setOpenSubs] = useState<Set<string>>(new Set())
-  const toggleSubs = (ownerId: string) => setOpenSubs((prev) => {
-    const n = new Set(prev); n.has(ownerId) ? n.delete(ownerId) : n.add(ownerId); return n
-  })
-
   /** Суб-юзеры по владельцу — считаем по ВСЕМ строкам, а не по отфильтрованным. */
   const subsByOwner = useMemo(() => {
     const m = new Map<string, typeof report.rows>()
@@ -552,28 +547,29 @@ function UsersTab({ report, onReload }: { report: UsersReport | null; onReload: 
     return m
   }, [report.rows])
 
-  const clustered = useMemo(() => {
-    const out: typeof shown = []
-    const seen = new Set<string>()
-    // Идёт поиск — раскрываем всё, иначе найденный суб-юзер остался бы невидимым.
-    const searching = !!needle
-    // Владельцы, которые реально показаны: их субы либо раскрыты, либо СПРЯТАНЫ —
-    // и в «осиротевшие» их добавлять нельзя, иначе свёрнутое вылезет обратно.
-    const ownersShown = new Set(shown.filter((r) => !r.parentId).map((r) => r.userId))
-    for (const r of shown) {
-      if (r.parentId || seen.has(r.userId)) continue // субов покажем под владельцем
-      seen.add(r.userId); out.push(r)
-      if (!searching && !openSubs.has(r.userId)) continue // свёрнут — субов не выводим
-      for (const k of (subsByOwner.get(r.userId) || [])) if (!seen.has(k.userId)) { seen.add(k.userId); out.push(k) }
+  /** Главная таблица — ТОЛЬКО владельцы: субы вынесены вниз отдельным разделом. */
+  const clustered = useMemo(() => shown.filter((r) => !r.parentId), [shown])
+
+  /**
+   * Раздел «САБ-ЮЗЕРЫ» — все субы из выборки, сгруппированные по владельцу.
+   * Показываем компактно и в СВОЁМ разрезе: у суба нет своих денег и подписки
+   * (кошелёк обычно общий с владельцем), поэтому широкая таблица владельцев для
+   * него — пустые колонки. Здесь только то, что про суба реально что-то говорит.
+   */
+  const subGroups = useMemo(() => {
+    const subs = shown.filter((r) => r.parentId)
+    const byOwner = new Map<string, { owner: string; rows: typeof shown }>()
+    for (const s of subs) {
+      const key = s.parentId || '—'
+      const title = s.parentName
+        || report.rows.find((u) => u.userId === s.parentId)?.name
+        || report.rows.find((u) => u.userId === s.parentId)?.email
+        || key
+      const g = byOwner.get(key) || { owner: title, rows: [] as typeof shown }
+      g.rows.push(s); byOwner.set(key, g)
     }
-    // Осиротевшие субы (владельца нет в выборке вообще) — в конец, чтобы не потерялись.
-    for (const r of shown) {
-      if (seen.has(r.userId)) continue
-      if (r.parentId && ownersShown.has(r.parentId)) continue // просто свёрнут у владельца
-      seen.add(r.userId); out.push(r)
-    }
-    return out
-  }, [shown, needle, openSubs, subsByOwner])
+    return [...byOwner.entries()].map(([ownerId, g]) => ({ ownerId, ...g }))
+  }, [shown, report.rows])
 
   /**
    * Пополнение прямо из таблицы: админ видит, у кого кончаются монеты, и тут же
@@ -627,6 +623,7 @@ function UsersTab({ report, onReload }: { report: UsersReport | null; onReload: 
   // («Команда»). В админке эти действия убраны — остался только просмотр (см. карточку).
 
   return (
+    <>
     <Card className="p-4">
       <div className="mb-3 flex flex-wrap items-center gap-3">
         <div className="relative min-w-0 flex-1 sm:max-w-xs">
@@ -687,17 +684,16 @@ function UsersTab({ report, onReload }: { report: UsersReport | null; onReload: 
                       {real && r.roleName && <span className="shrink-0 rounded-md bg-iris-500/12 px-1.5 py-0.5 text-[10px] font-bold text-iris-300">{r.roleName}</span>}
                       {real && !r.roleName && <span className="shrink-0 rounded-md bg-white/8 px-1.5 py-0.5 text-[10px] font-bold text-muted">без роли</span>}
                       {!r.active && real && <span className="rounded-md bg-white/8 px-1.5 py-0.5 text-[10px] font-bold text-muted">отключён</span>}
-                      {/* Суб-юзеры спрятаны внутрь владельца: разворачиваем по кнопке,
-                          чтобы сотни субов не забивали список. Клик не открывает карточку. */}
-                      {!r.parentId && (subsByOwner.get(r.userId)?.length ?? 0) > 0 && (
+                      {/* Субы не мешаются в списке владельцев: тут только счётчик, а сами
+                          они — отдельным разделом внизу. Клик уводит к своей группе. */}
+                      {(subsByOwner.get(r.userId)?.length ?? 0) > 0 && (
                         <button
                           type="button"
-                          onClick={(e) => { e.stopPropagation(); toggleSubs(r.userId) }}
-                          title={openSubs.has(r.userId) ? 'Свернуть суб-юзеров' : 'Показать суб-юзеров этого владельца'}
+                          onClick={(e) => { e.stopPropagation(); document.getElementById(`subs-${r.userId}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' }) }}
+                          title="Показать его суб-юзеров в разделе «САБ-ЮЗЕРЫ» внизу"
                           className="ml-1 inline-flex shrink-0 items-center gap-1 rounded-md border border-iris-500/30 bg-iris-500/10 px-1.5 py-0.5 text-[10px] font-bold text-iris-300 hover:bg-iris-500/20"
                         >
-                          <ChevronDown size={11} className={cn('transition-transform', openSubs.has(r.userId) && 'rotate-180')} />
-                          {subsByOwner.get(r.userId)?.length} суб-юзеров
+                          <Users size={10} /> {subsByOwner.get(r.userId)?.length} субов
                         </button>
                       )}
                     </div>
@@ -956,6 +952,71 @@ function UsersTab({ report, onReload }: { report: UsersReport | null; onReload: 
         </table>
       </div>
     </Card>
+
+    {/* ── САБ-ЮЗЕРЫ ── отдельным разделом ВНИЗУ, чтобы список владельцев оставался
+        читаемым. Разрез свой: у суба нет своих денег и подписки (кошелёк обычно
+        общий с владельцем), поэтому широкие колонки владельцев ему не нужны —
+        показываем плитками по владельцам, всё видно сразу и без раскрытий. */}
+    {subGroups.length > 0 && (
+      <Card className="mt-3 p-4">
+        <div className="mb-3 flex flex-wrap items-baseline gap-2">
+          <span className="font-display text-sm font-bold uppercase tracking-wide text-iris-300">Саб-юзеры</span>
+          <span className="rounded-md bg-iris-500/12 px-2 py-0.5 text-xs font-bold text-iris-300">
+            {subGroups.reduce((n, g) => n + g.rows.length, 0)}
+          </span>
+          <span className="text-xs text-muted">сгруппированы по владельцу · клик по карточке — все действия юзера</span>
+        </div>
+
+        <div className="grid gap-3 lg:grid-cols-2">
+          {subGroups.map((g) => (
+            <div key={g.ownerId} id={`subs-${g.ownerId}`} className="scroll-mt-24 rounded-xl border border-line bg-elevated/30 p-2.5">
+              <div className="mb-2 flex items-center gap-1.5 text-xs">
+                <Users size={12} className="shrink-0 text-iris-300" />
+                <span className="truncate font-semibold text-fg">{g.owner}</span>
+                <span className="shrink-0 text-muted">· {g.rows.length}</span>
+              </div>
+              <div className="flex flex-col gap-1.5">
+                {g.rows.map((s) => (
+                  <div
+                    key={s.userId}
+                    onClick={() => openUser(s)}
+                    className="cursor-pointer rounded-lg border border-line/60 bg-surface/60 px-2.5 py-1.5 transition-colors hover:border-iris-500/40"
+                  >
+                    <div className="flex items-center gap-2">
+                      <span className={cn('min-w-0 flex-1 truncate text-sm text-fg', !s.active && 'text-muted line-through')}>
+                        {s.name || s.email || s.userId}
+                      </span>
+                      {s.roleName
+                        ? <span className="shrink-0 rounded bg-iris-500/12 px-1.5 py-0.5 text-[10px] font-bold text-iris-300">{s.roleName}</span>
+                        : <span className="shrink-0 rounded bg-white/8 px-1.5 py-0.5 text-[10px] font-bold text-muted">без роли</span>}
+                      <button
+                        onClick={(e) => { e.stopPropagation(); void toggle(s.userId, s.active) }}
+                        disabled={busy === s.userId}
+                        className={cn('shrink-0 rounded-md border px-1.5 py-0.5 text-[10px] font-bold disabled:opacity-40',
+                          s.active ? 'border-line text-muted hover:border-red-500/40 hover:text-red-300' : 'border-spark-500/40 text-spark-300')}
+                      >
+                        {s.active ? 'выкл' : 'вкл'}
+                      </button>
+                    </div>
+                    {/* Вторая строка — вся суть про суба одним взглядом: почта, UID,
+                        кошелёк и его активность. Без раскрытий и лишних колонок. */}
+                    <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[10px] text-muted">
+                      <span className="truncate">{s.email}</span>
+                      <span className="font-mono text-faint">{s.userId}</span>
+                      <span className={s.balanceMode === 'individual' ? 'text-amber-300' : 'text-iris-300/80'}>
+                        {s.balanceMode === 'individual' ? `свой лимит · ${fmtCoins(s.coins ?? 0)} ⚡` : 'кошелёк владельца'}
+                      </span>
+                      <span>{fmt(s.tasks)} задач · {fmt(s.actions)} действий</span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
+      </Card>
+    )}
+    </>
   )
 }
 
