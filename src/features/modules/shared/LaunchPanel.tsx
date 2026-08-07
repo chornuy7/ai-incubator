@@ -86,10 +86,13 @@ export function LaunchPanel({
           что там было. Панель держим узкой: две строки, мелкий шрифт, детали — в
           подсказках. Кнопки «Сохранить шаблон» и «Начать» стоят рядом справа. */}
       <FloatingBar>
-        <div className="grid w-full grid-cols-1 items-center gap-x-4 gap-y-1.5 sm:grid-cols-[1fr_auto]">
-          {/* Слева — сводка и навигация */}
-          <div className="flex min-w-0 flex-col gap-1">
-            <div className="flex flex-wrap items-center justify-center gap-x-3 gap-y-1 text-[11px] text-muted sm:justify-start">
+        {/* Две строки. Верхняя: слева сводка (в два ряда — так она вдвое уже), справа
+            кнопки. Нижняя: дорожная карта строго по центру ВСЕЙ панели — своей строкой
+            ей хватает ширины, и она не ломается на четыре ряда, как в три колонки. */}
+        <div className="flex w-full flex-col gap-1.5">
+          <div className="flex flex-wrap items-center justify-center gap-x-5 gap-y-2 sm:flex-nowrap sm:justify-between">
+            {/* Сводка: чипы идут сверху вниз, затем следующая колонка (rows-2). */}
+            <div className="grid grid-flow-col grid-rows-2 gap-x-3 gap-y-0.5 text-[11px] text-muted">
               {stats.map((s) => (
                 <span key={s.label} className="inline-flex items-center gap-1" title={s.label}>
                   <span className={cn('shrink-0', s.color)}>{s.icon}</span>
@@ -99,31 +102,34 @@ export function LaunchPanel({
               ))}
               {!running && cost}
             </div>
-            <div className="flex flex-wrap items-center justify-center gap-x-3 gap-y-1 sm:justify-start">
-              {steps}
-              {!running && (blockedBy.length > 0 || warn) && (
-                <span className="inline-flex items-center gap-1.5 text-[11px] text-amber-300">
-                  <AlertTriangle size={12} className="shrink-0" />
-                  {blockedBy.length ? `Осталось: ${blockedBy.join(' · ')}` : warn}
-                </span>
+
+            {/* Кнопки — «Сохранить шаблон» и «Начать» рядом, с запасом под виджеты. */}
+            <div className="flex shrink-0 flex-wrap items-center justify-center gap-2 sm:justify-end sm:pr-14">
+              {running && (
+                <a href="/panel/tasks" className="btn-ghost h-10 text-sm" title="Управление, прогресс и логи — в Дашборде задач"><ArrowUpRight size={15} /> В Дашборде задач</a>
               )}
+              <button type="button" onClick={onSave} className="btn-ghost h-10 text-sm"><Save size={15} /> Сохранить шаблон</button>
+              <button
+                type="button"
+                onClick={onStart}
+                disabled={starting || !canStart}
+                title={!canStart && blockedBy.length ? `Осталось: ${blockedBy.join('; ')}` : undefined}
+                className="btn-primary h-10 min-w-[150px]"
+              >
+                {starting ? <Loader2 size={17} className="animate-spin" /> : <Play size={17} />} {primaryLabel}
+              </button>
             </div>
           </div>
-          {/* Справа — «Сохранить шаблон» и «Начать» рядом */}
-          <div className="flex flex-wrap items-center justify-center gap-2 sm:justify-end sm:pr-14">
-            {running && (
-              <a href="/panel/tasks" className="btn-ghost h-10 text-sm" title="Управление, прогресс и логи — в Дашборде задач"><ArrowUpRight size={15} /> В Дашборде задач</a>
+
+          {/* Дорожная карта — по центру панели, под ней (если есть) чего не хватает. */}
+          <div className="flex flex-col items-center gap-0.5">
+            {steps}
+            {!running && (blockedBy.length > 0 || warn) && (
+              <span className="inline-flex items-center gap-1.5 text-center text-[11px] text-amber-300">
+                <AlertTriangle size={12} className="shrink-0" />
+                {blockedBy.length ? `Осталось: ${blockedBy.join(' · ')}` : warn}
+              </span>
             )}
-            <button type="button" onClick={onSave} className="btn-ghost h-10 text-sm"><Save size={15} /> Сохранить шаблон</button>
-            <button
-              type="button"
-              onClick={onStart}
-              disabled={starting || !canStart}
-              title={!canStart && blockedBy.length ? `Осталось: ${blockedBy.join('; ')}` : undefined}
-              className="btn-primary h-10 min-w-[150px]"
-            >
-              {starting ? <Loader2 size={17} className="animate-spin" /> : <Play size={17} />} {primaryLabel}
-            </button>
           </div>
         </div>
       </FloatingBar>

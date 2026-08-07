@@ -47,6 +47,14 @@ const PERIODS = [
   { label: 'Всё время', days: 0 },
 ]
 
+/**
+ * Вкладки, где переключатель периода бессмыслен и только сбивает с толку:
+ * «Сейчас» (1) и «Мониторинг» (10) — снимки текущего состояния сервера и задач;
+ * «Цены» (6), «Роли» (12), «Тикеты» (13), «Парсер» (14), «API» (15) — справочники
+ * и настройки, фильтровать их по времени нечем.
+ */
+const PERIODLESS_TABS = new Set([1, 6, 10, 12, 13, 14, 15])
+
 const STATUS_RU: Record<string, string> = {
   active: 'Активные', working: 'В работе', warming: 'Прогрев', pause: 'На паузе',
   floodwait: 'FloodWait', quarantine: 'Карантин', spamblock: 'Спамблок',
@@ -283,7 +291,13 @@ export function AdminStatsPage() {
 
       <div className="mb-4 flex flex-wrap items-center gap-3">
         <Segmented options={['Панель', 'Сейчас', 'По дням', 'Пользователи', 'Покупки', 'Экономика', 'Цены', 'Задачи и ошибки', 'CRM', 'Отчёт', 'Мониторинг', 'Аккаунты', 'Роли', 'Тикеты', 'Парсер', 'API']} value={tab} onChange={setTab} />
-        <Segmented options={PERIODS.map((p) => p.label)} value={periodIdx} onChange={setPeriodIdx} size="sm" />
+        {/* Период показываем только там, где он реально фильтрует. «Сейчас» (1) и
+            «Мониторинг» (10) — снимки текущего состояния сервера и задач: период на
+            них не влияет и только сбивал с толку. То же для справочных вкладок
+            (цены, роли, тикеты, парсер, API) — там нечего фильтровать по времени. */}
+        {!PERIODLESS_TABS.has(tab) && (
+          <Segmented options={PERIODS.map((p) => p.label)} value={periodIdx} onChange={setPeriodIdx} size="sm" />
+        )}
       </div>
 
       {loading && !overview ? (
