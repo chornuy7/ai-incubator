@@ -331,35 +331,6 @@ export function AutopostingPage() {
           </SectionCard>
         </div>
 
-        {/* 5. Запуск — единая нижняя панель со степпером, как во всех модулях. */}
-        <div id="sec-run" className="scroll-mt-24">
-          <SectionCard icon={<Play size={18} />} title={running ? 'Выполнение' : 'Публикация'} badge={running ? 'LIVE' : undefined}>
-            <LaunchPanel
-              running={running}
-              starting={mode === 'now' ? starting : savingRule}
-              canStart={canStart}
-              onStart={() => void launch()}
-              onStop={stop}
-              onSave={handleSave}
-              primaryLabel={primaryLabel}
-              steps={!running ? <LaunchSteps steps={markCurrentStep([
-                { label: 'Аккаунты', done: selected.size > 0, anchor: 'sec-accounts' },
-                { label: 'Каналы', done: channels.length > 0, anchor: 'sec-targets' },
-                { label: 'Текст', done: text.trim().length > 0, anchor: 'sec-message' },
-                { label: mode === 'now' ? 'Публикация' : 'Расписание', done: true, optional: true, anchor: 'sec-settings' },
-                { label: 'Запуск', done: false, anchor: 'sec-run' },
-              ])} /> : null}
-              blockedBy={blockedBy}
-              cost={<LaunchCost compact moduleKey="autoposting" actions={channels.length} />}
-              stats={launchStats}
-              task={task}
-              presets={presets}
-              onApplyPreset={applyPreset}
-              onDeletePreset={deletePreset}
-            />
-          </SectionCard>
-        </div>
-
         {/* §11: запланированные посты — их можно отредактировать (аккаунты, каналы, текст, время),
             опубликовать досрочно или удалить. Это те же правила автоматизации, вид со стороны постинга. */}
         <SectionCard
@@ -402,6 +373,34 @@ export function AutopostingPage() {
             </div>
           )}
         </SectionCard>
+
+        {/* 5. Запуск — плавающая нижняя панель со степпером (без обёртки-карточки; идёт ПОСЛЕ
+            списка «Запланированные посты», чтобы фиксированный бар их не перекрывал). */}
+        <div id="sec-run" className="scroll-mt-24">
+          <LaunchPanel
+            running={running}
+            starting={mode === 'now' ? starting : savingRule}
+            canStart={canStart}
+            onStart={() => void launch()}
+            onStop={stop}
+            onSave={handleSave}
+            primaryLabel={primaryLabel}
+            steps={!running ? <LaunchSteps steps={markCurrentStep([
+              { label: 'Аккаунты', done: selected.size > 0, anchor: 'sec-accounts' },
+              { label: 'Каналы', done: channels.length > 0, anchor: 'sec-targets' },
+              { label: 'Текст', done: text.trim().length > 0, anchor: 'sec-message' },
+              { label: mode === 'now' ? 'Публикация' : 'Расписание', done: true, optional: true, anchor: 'sec-settings' },
+              { label: 'Запуск', done: false, anchor: 'sec-run' },
+            ])} /> : null}
+            blockedBy={blockedBy}
+            cost={<LaunchCost compact moduleKey="autoposting" actions={channels.length} />}
+            stats={launchStats}
+            task={task}
+            presets={presets}
+            onApplyPreset={applyPreset}
+            onDeletePreset={deletePreset}
+          />
+        </div>
       </div>
     </div>
   )

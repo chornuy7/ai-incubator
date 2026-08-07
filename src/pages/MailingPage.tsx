@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useLocation } from 'react-router-dom'
-import { Mail, Send, AlertTriangle, ShieldAlert, Users, Target, MessageSquareText, Shield, Play } from 'lucide-react'
+import { Mail, Send, AlertTriangle, ShieldAlert, Users, Target, MessageSquareText, Shield } from 'lucide-react'
 import { PageHeader, Card, Select, Segmented } from '@/shared/ui'
 import { DedupeButton } from '@/shared/ui/DedupeButton'
 import type { MailingPrefill } from '@/features/mailing/TaskAudiencePanel'
@@ -442,10 +442,10 @@ export function MailingPage() {
           </SectionCard>
         </div>
 
-        {/* 5. Запуск — единая нижняя панель со степпером, как во всех модулях. */}
+        {/* 5. Запуск — плавающая нижняя панель со степпером (без обёртки-карточки:
+            панель уходит в фиксированный бар внизу, карточка осталась бы пустой). */}
         <div id="sec-run" className="scroll-mt-24">
-          <SectionCard icon={<Play size={18} />} title={running ? 'Выполнение' : 'Запуск'} badge={running ? 'LIVE' : undefined}>
-            <LaunchPanel
+          <LaunchPanel
               running={running}
               starting={starting}
               canStart={canStart}
@@ -468,7 +468,6 @@ export function MailingPage() {
               onApplyPreset={applyPreset}
               onDeletePreset={deletePreset}
             />
-          </SectionCard>
         </div>
       </div>
     </div>
