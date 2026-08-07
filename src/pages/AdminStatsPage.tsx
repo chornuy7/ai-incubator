@@ -547,29 +547,15 @@ function UsersTab({ report, onReload }: { report: UsersReport | null; onReload: 
     return m
   }, [report.rows])
 
-  /** Главная таблица — ТОЛЬКО владельцы: субы вынесены вниз отдельным разделом. */
+  /** Главная таблица — ТОЛЬКО владельцы: субы раскрываются строкой под своим владельцем. */
   const clustered = useMemo(() => shown.filter((r) => !r.parentId), [shown])
 
-  /**
-   * Раздел «САБ-ЮЗЕРЫ» — все субы из выборки, сгруппированные по владельцу.
-   * Показываем компактно и в СВОЁМ разрезе: у суба нет своих денег и подписки
-   * (кошелёк обычно общий с владельцем), поэтому широкая таблица владельцев для
-   * него — пустые колонки. Здесь только то, что про суба реально что-то говорит.
-   */
-  const subGroups = useMemo(() => {
-    const subs = shown.filter((r) => r.parentId)
-    const byOwner = new Map<string, { owner: string; rows: typeof shown }>()
-    for (const s of subs) {
-      const key = s.parentId || '—'
-      const title = s.parentName
-        || report.rows.find((u) => u.userId === s.parentId)?.name
-        || report.rows.find((u) => u.userId === s.parentId)?.email
-        || key
-      const g = byOwner.get(key) || { owner: title, rows: [] as typeof shown }
-      g.rows.push(s); byOwner.set(key, g)
-    }
-    return [...byOwner.entries()].map(([ownerId, g]) => ({ ownerId, ...g }))
-  }, [shown, report.rows])
+  /** Какие владельцы раскрыты — их субы показываются строкой сразу под ними. */
+  const [openSubs, setOpenSubs] = useState<Set<string>>(new Set())
+  const toggleSubs = (ownerId: string) => setOpenSubs((prev) => {
+    const n = new Set(prev); n.has(ownerId) ? n.delete(ownerId) : n.add(ownerId); return n
+  })
+
 
   /**
    * Пополнение прямо из таблицы: админ видит, у кого кончаются монеты, и тут же
@@ -684,16 +670,20 @@ function UsersTab({ report, onReload }: { report: UsersReport | null; onReload: 
                       {real && r.roleName && <span className="shrink-0 rounded-md bg-iris-500/12 px-1.5 py-0.5 text-[10px] font-bold text-iris-300">{r.roleName}</span>}
                       {real && !r.roleName && <span className="shrink-0 rounded-md bg-white/8 px-1.5 py-0.5 text-[10px] font-bold text-muted">без роли</span>}
                       {!r.active && real && <span className="rounded-md bg-white/8 px-1.5 py-0.5 text-[10px] font-bold text-muted">отключён</span>}
-                      {/* Субы не мешаются в списке владельцев: тут только счётчик, а сами
-                          они — отдельным разделом внизу. Клик уводит к своей группе. */}
+                      {/* Субы раскрываются строкой ПРЯМО ПОД владельцем — как карточка
+                          аккаунта. Клик по бейджу не открывает карточку самого владельца. */}
                       {(subsByOwner.get(r.userId)?.length ?? 0) > 0 && (
                         <button
                           type="button"
-                          onClick={(e) => { e.stopPropagation(); document.getElementById(`subs-${r.userId}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' }) }}
-                          title="Показать его суб-юзеров в разделе «САБ-ЮЗЕРЫ» внизу"
-                          className="ml-1 inline-flex shrink-0 items-center gap-1 rounded-md border border-iris-500/30 bg-iris-500/10 px-1.5 py-0.5 text-[10px] font-bold text-iris-300 hover:bg-iris-500/20"
+                          onClick={(e) => { e.stopPropagation(); toggleSubs(r.userId) }}
+                          title={openSubs.has(r.userId) ? 'Свернуть суб-юзеров' : 'Показать суб-юзеров этого владельца'}
+                          className={cn('ml-1 inline-flex shrink-0 items-center gap-1 rounded-md border px-1.5 py-0.5 text-[10px] font-bold',
+                            openSubs.has(r.userId)
+                              ? 'border-iris-500/50 bg-iris-500/20 text-iris-200'
+                              : 'border-iris-500/30 bg-iris-500/10 text-iris-300 hover:bg-iris-500/20')}
                         >
-                          <Users size={10} /> {subsByOwner.get(r.userId)?.length} субов
+                          <ChevronDown size={10} className={cn('transition-transform', openSubs.has(r.userId) && 'rotate-180')} />
+                          {subsByOwner.get(r.userId)?.length} субов
                         </button>
                       )}
                     </div>
@@ -758,6 +748,55 @@ function UsersTab({ report, onReload }: { report: UsersReport | null; onReload: 
                     ) : <span className="text-xs text-muted">—</span>}
                   </td>
                 </tr>,
+                // §10.4: суб-юзеры раскрываются СТРОКОЙ ПОД своим владельцем —
+                // компактными карточками, всё видно сразу и без ухода со страницы.
+                openSubs.has(r.userId) && (subsByOwner.get(r.userId)?.length ?? 0) > 0 ? (
+                  <tr key={r.userId + '-subs'} className="border-b border-line/50 bg-iris-500/[.04]">
+                    <td colSpan={8} className="px-3 pb-3 pt-1">
+                      <div className="rounded-xl border border-iris-500/25 bg-elevated/40 p-2.5">
+                        <div className="mb-2 flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wide text-iris-300">
+                          <Users size={12} /> Саб-юзеры
+                          <span className="rounded bg-iris-500/15 px-1.5 py-0.5">{subsByOwner.get(r.userId)?.length}</span>
+                          <span className="font-normal normal-case tracking-normal text-muted">· клик по карточке — все действия юзера</span>
+                        </div>
+                        <div className="grid gap-1.5 lg:grid-cols-2">
+                          {(subsByOwner.get(r.userId) || []).map((s) => (
+                            <div
+                              key={s.userId}
+                              onClick={(e) => { e.stopPropagation(); openUser(s) }}
+                              className="cursor-pointer rounded-lg border border-line/60 bg-surface/60 px-2.5 py-1.5 transition-colors hover:border-iris-500/40"
+                            >
+                              <div className="flex items-center gap-2">
+                                <span className={cn('min-w-0 flex-1 truncate text-sm text-fg', !s.active && 'text-muted line-through')}>
+                                  {s.name || s.email || s.userId}
+                                </span>
+                                {s.roleName
+                                  ? <span className="shrink-0 rounded bg-iris-500/12 px-1.5 py-0.5 text-[10px] font-bold text-iris-300">{s.roleName}</span>
+                                  : <span className="shrink-0 rounded bg-white/8 px-1.5 py-0.5 text-[10px] font-bold text-muted">без роли</span>}
+                                <button
+                                  onClick={(e) => { e.stopPropagation(); void toggle(s.userId, s.active) }}
+                                  disabled={busy === s.userId}
+                                  className={cn('shrink-0 rounded-md border px-1.5 py-0.5 text-[10px] font-bold disabled:opacity-40',
+                                    s.active ? 'border-line text-muted hover:border-red-500/40 hover:text-red-300' : 'border-spark-500/40 text-spark-300')}
+                                >
+                                  {s.active ? 'выкл' : 'вкл'}
+                                </button>
+                              </div>
+                              <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[10px] text-muted">
+                                <span className="truncate">{s.email}</span>
+                                <span className="font-mono text-faint">{s.userId}</span>
+                                <span className={s.balanceMode === 'individual' ? 'text-amber-300' : 'text-iris-300/80'}>
+                                  {s.balanceMode === 'individual' ? `свой лимит · ${fmtCoins(s.coins ?? 0)} ⚡` : 'кошелёк владельца'}
+                                </span>
+                                <span>{fmt(s.tasks)} задач · {fmt(s.actions)} действий</span>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    </td>
+                  </tr>
+                ) : null,
                 isOpen ? (
                   <tr key={r.userId + '-where'} className="border-b border-line/50 bg-white/[.02]">
                     <td colSpan={8} className="px-3 py-3">
@@ -953,69 +992,6 @@ function UsersTab({ report, onReload }: { report: UsersReport | null; onReload: 
       </div>
     </Card>
 
-    {/* ── САБ-ЮЗЕРЫ ── отдельным разделом ВНИЗУ, чтобы список владельцев оставался
-        читаемым. Разрез свой: у суба нет своих денег и подписки (кошелёк обычно
-        общий с владельцем), поэтому широкие колонки владельцев ему не нужны —
-        показываем плитками по владельцам, всё видно сразу и без раскрытий. */}
-    {subGroups.length > 0 && (
-      <Card className="mt-3 p-4">
-        <div className="mb-3 flex flex-wrap items-baseline gap-2">
-          <span className="font-display text-sm font-bold uppercase tracking-wide text-iris-300">Саб-юзеры</span>
-          <span className="rounded-md bg-iris-500/12 px-2 py-0.5 text-xs font-bold text-iris-300">
-            {subGroups.reduce((n, g) => n + g.rows.length, 0)}
-          </span>
-          <span className="text-xs text-muted">сгруппированы по владельцу · клик по карточке — все действия юзера</span>
-        </div>
-
-        <div className="grid gap-3 lg:grid-cols-2">
-          {subGroups.map((g) => (
-            <div key={g.ownerId} id={`subs-${g.ownerId}`} className="scroll-mt-24 rounded-xl border border-line bg-elevated/30 p-2.5">
-              <div className="mb-2 flex items-center gap-1.5 text-xs">
-                <Users size={12} className="shrink-0 text-iris-300" />
-                <span className="truncate font-semibold text-fg">{g.owner}</span>
-                <span className="shrink-0 text-muted">· {g.rows.length}</span>
-              </div>
-              <div className="flex flex-col gap-1.5">
-                {g.rows.map((s) => (
-                  <div
-                    key={s.userId}
-                    onClick={() => openUser(s)}
-                    className="cursor-pointer rounded-lg border border-line/60 bg-surface/60 px-2.5 py-1.5 transition-colors hover:border-iris-500/40"
-                  >
-                    <div className="flex items-center gap-2">
-                      <span className={cn('min-w-0 flex-1 truncate text-sm text-fg', !s.active && 'text-muted line-through')}>
-                        {s.name || s.email || s.userId}
-                      </span>
-                      {s.roleName
-                        ? <span className="shrink-0 rounded bg-iris-500/12 px-1.5 py-0.5 text-[10px] font-bold text-iris-300">{s.roleName}</span>
-                        : <span className="shrink-0 rounded bg-white/8 px-1.5 py-0.5 text-[10px] font-bold text-muted">без роли</span>}
-                      <button
-                        onClick={(e) => { e.stopPropagation(); void toggle(s.userId, s.active) }}
-                        disabled={busy === s.userId}
-                        className={cn('shrink-0 rounded-md border px-1.5 py-0.5 text-[10px] font-bold disabled:opacity-40',
-                          s.active ? 'border-line text-muted hover:border-red-500/40 hover:text-red-300' : 'border-spark-500/40 text-spark-300')}
-                      >
-                        {s.active ? 'выкл' : 'вкл'}
-                      </button>
-                    </div>
-                    {/* Вторая строка — вся суть про суба одним взглядом: почта, UID,
-                        кошелёк и его активность. Без раскрытий и лишних колонок. */}
-                    <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[10px] text-muted">
-                      <span className="truncate">{s.email}</span>
-                      <span className="font-mono text-faint">{s.userId}</span>
-                      <span className={s.balanceMode === 'individual' ? 'text-amber-300' : 'text-iris-300/80'}>
-                        {s.balanceMode === 'individual' ? `свой лимит · ${fmtCoins(s.coins ?? 0)} ⚡` : 'кошелёк владельца'}
-                      </span>
-                      <span>{fmt(s.tasks)} задач · {fmt(s.actions)} действий</span>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          ))}
-        </div>
-      </Card>
-    )}
     </>
   )
 }
