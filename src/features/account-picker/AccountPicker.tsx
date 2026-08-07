@@ -56,8 +56,8 @@ export function AccountPicker({
   const [role, setRole] = useState('Все роли')
   const [country, setCountry] = useState('all')
   const [workingProxies, setWorkingProxies] = useState(false)
-  const [hideWorking, setHideWorking] = useState(false)
   const [liteMode, setLiteMode] = useState(false)
+  // §6.3 (AM-003): раскрытие нижней панели «Показать нерабочие (N)» (по умолчанию свёрнута).
   const [showBroken, setShowBroken] = useState(false)
 
   const available = useMemo(
@@ -66,21 +66,20 @@ export function AccountPicker({
       if (role !== 'Все роли' && a.role !== role) return false
       if (!matchesGeo(a.country, country)) return false
       if (workingProxies && a.proxy === '—') return false
-      if (hideWorking && (a.status === 'working' || a.busyIn)) return false
       // §6.3 (AM-002): id включён в поиск, чтобы «нерабочий» аккаунт находился по ID даже когда он скрыт.
       const q = query.trim().toLowerCase()
       if (q && !`${a.name} ${a.username} ${a.phone} ${a.id}`.toLowerCase().includes(q)) return false
-      // §6.3 (AM-002): нерабочие (мёртвый прокси / нерабочий статус) скрыты по умолчанию — их
-      // не предлагаем для запуска. Показываются при «Показать нерабочие» или при явном поиске.
-      if (isBrokenAccount(a) && !showBroken && !q) return false
+      // §6.3 (AM-002/003): нерабочие (мёртвый прокси / нерабочий статус) не в основном списке —
+      // они в нижней панели «Показать нерабочие». При явном поиске показываем (найти по ID/имени).
+      if (isBrokenAccount(a) && !q) return false
       return true
     }),
-    [accounts, selected, role, country, workingProxies, hideWorking, query, showBroken],
+    [accounts, selected, role, country, workingProxies, query],
   )
 
-  // §6.3 (AM-002): сколько нерабочих скрыто — для тумблера «Показать нерабочие (N)».
-  const brokenCount = useMemo(
-    () => accounts.filter((a) => !selected.has(a.id) && isBrokenAccount(a) && matchesGeo(a.country, country) && (role === 'Все роли' || a.role === role)).length,
+  // §6.3 (AM-003): список нерабочих для нижней раскрывающейся панели «Показать нерабочие (N)».
+  const brokenList = useMemo(
+    () => accounts.filter((a) => !selected.has(a.id) && isBrokenAccount(a) && matchesGeo(a.country, country) && (role === 'Все роли' || a.role === role)),
     [accounts, selected, country, role],
   )
 
@@ -94,11 +93,10 @@ export function AccountPicker({
       if (selected.has(a.id)) return false
       if (role !== 'Все роли' && a.role !== role) return false
       if (!matchesGeo(a.country, country)) return false
-      if (hideWorking && (a.status === 'working' || a.busyIn)) return false
       if (query && !`${a.name} ${a.username} ${a.phone}`.toLowerCase().includes(query.toLowerCase())) return false
       return a.proxy === '—'
     }).length
-  }, [accounts, selected, role, country, hideWorking, query, workingProxies])
+  }, [accounts, selected, role, country, query, workingProxies])
 
   const selectedList = accounts.filter((a) => selected.has(a.id))
 
@@ -176,11 +174,6 @@ export function AccountPicker({
                   {actions.includes('Добавить все') && <button onClick={addAll} className="btn-soft h-8 text-xs"><ChevronsRight size={14} /> Добавить все</button>}
                   <Check label="Рабочие прокси" checked={workingProxies} onChange={setWorkingProxies} />
                   <Check label="Лайт-режим" checked={liteMode} onChange={setLiteMode} />
-                  <Check label="Скрыть рабочие" checked={hideWorking} onChange={setHideWorking} title="Скрыть аккаунты в работе и занятые в других модулях" />
-                  {/* §6.3 (AM-002): нерабочие (мёртвый прокси / нерабочий статус) скрыты; можно раскрыть. */}
-                  {brokenCount > 0 && (
-                    <Check label={`Показать нерабочие (${brokenCount})`} checked={showBroken} onChange={setShowBroken} title="Аккаунты с мёртвым прокси или в нерабочем статусе — по умолчанию скрыты и не предлагаются для запуска" />
-                  )}
                 </div>
               </div>
             )}
@@ -208,7 +201,7 @@ export function AccountPicker({
                       ))}
                     </div>
                   ))}
-                  {busyAvailable.length > 0 && !hideWorking && (
+                  {busyAvailable.length > 0 && (
                     <div className="mt-2 border-t border-line pt-2">
                       <div className="px-2 py-1 text-xs font-bold text-rose-300">Недоступны · {busyAvailable.length}</div>
                       {busyAvailable.map((a) => (
@@ -219,6 +212,24 @@ export function AccountPicker({
                 </>
               )}
             </div>
+            {/* §6.3 (AM-003): нижняя раскрывающаяся панель «Показать нерабочие (N)» — свёрнута по умолчанию,
+                нерабочие не предлагаются для запуска. При активном поиске они уже в основном списке. */}
+            {brokenList.length > 0 && !query.trim() && (
+              <div className="border-t border-line">
+                <button type="button" onClick={() => setShowBroken((v) => !v)} className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs font-semibold text-rose-300 hover:bg-rose-500/[.06]">
+                  <ChevronDown size={14} className={cn('shrink-0 transition-transform', !showBroken && '-rotate-90')} />
+                  Показать нерабочие ({brokenList.length})
+                  <span className="ml-auto hidden truncate font-normal text-muted sm:block">мёртвый прокси / нерабочий статус — не для запуска</span>
+                </button>
+                {showBroken && (
+                  <div className="max-h-64 overflow-y-auto px-2 pb-2">
+                    {brokenList.map((a) => (
+                      <AccountRow key={a.id} account={a} liteMode={liteMode} busy disabled />
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
           </div>
 
           {/* Selected */}
