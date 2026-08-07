@@ -368,33 +368,6 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
         </div>
       )}
 
-      {/* §7: AI-промпты — сразу под выбором аккаунтов (это основа модуля). */}
-      {showBlock('templates') && cfg.messagePrompts && (
-        <SectionCard icon={<Sparkles size={18} />} title="AI / промпты">
-          <div className="space-y-3">
-            <AiGenerationNotice />
-            <GlobalPromptEditor />
-            <PromptCards
-            moduleKey={moduleKey}
-            labels={cfg.messagePrompts}
-            activeIndex={activePrompt}
-            onActiveChange={setActivePrompt}
-            onBodiesChange={setPromptBodies}
-          />
-          </div>
-        </SectionCard>
-      )}
-
-      {showBlock('templates') && cfg.reactionPalette && (
-        <SectionCard icon={<Heart size={18} />} title="Эмодзи">
-          <div className="flex flex-wrap gap-2">
-            {cfg.reactionPalette.map((e) => (
-              <button key={e} type="button" onClick={() => { const n = new Set(palette); n.has(e) ? n.delete(e) : n.add(e); setPalette(n) }} className={`grid h-11 w-11 place-items-center rounded-xl border text-xl ${palette.has(e) ? 'border-spark-500/50 bg-spark-500/12' : 'border-line bg-elevated'}`}>{e}</button>
-            ))}
-          </div>
-        </SectionCard>
-      )}
-
       {showBlock('settings') && (cfg.aiProtection || cfg.richLayout || cfg.lookingLayout || cfg.warmingLayout || isGgr) && (
         <div id="sec-settings" className="scroll-mt-24">
         <SectionCard icon={<Settings2 size={18} />} title={cfg.settingsTitle ?? 'Настройки'} badge={targets.length ? `${targets.length} целей` : undefined}>
@@ -487,6 +460,33 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
           )}
         </SectionCard>
         </div>
+      )}
+
+      {/* §3.1 (UI-002): промпты / уникальные параметры модуля — ПОСЛЕ блока «Настройки» (Защита + настройки модуля). */}
+      {showBlock('templates') && cfg.messagePrompts && (
+        <SectionCard icon={<Sparkles size={18} />} title="AI / промпты">
+          <div className="space-y-3">
+            <AiGenerationNotice />
+            <GlobalPromptEditor />
+            <PromptCards
+            moduleKey={moduleKey}
+            labels={cfg.messagePrompts}
+            activeIndex={activePrompt}
+            onActiveChange={setActivePrompt}
+            onBodiesChange={setPromptBodies}
+          />
+          </div>
+        </SectionCard>
+      )}
+
+      {showBlock('templates') && cfg.reactionPalette && (
+        <SectionCard icon={<Heart size={18} />} title="Эмодзи">
+          <div className="flex flex-wrap gap-2">
+            {cfg.reactionPalette.map((e) => (
+              <button key={e} type="button" onClick={() => { const n = new Set(palette); n.has(e) ? n.delete(e) : n.add(e); setPalette(n) }} className={`grid h-11 w-11 place-items-center rounded-xl border text-xl ${palette.has(e) ? 'border-spark-500/50 bg-spark-500/12' : 'border-line bg-elevated'}`}>{e}</button>
+            ))}
+          </div>
+        </SectionCard>
       )}
 
       {showBlock('targets') && (cfg.sourceTabs || needsTargets) && !isGgr && (
