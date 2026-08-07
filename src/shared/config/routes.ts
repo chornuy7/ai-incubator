@@ -46,7 +46,8 @@ export const ROUTES: RouteDef[] = [
   { path: '/panel/modules/neuro-dialogs', label: 'НейроДиалоги', icon: MessagesSquare, group: 'modules' },
   { path: '/panel/mailing', label: 'Мейлинг', icon: Mail, group: 'modules' },
   { path: '/panel/autoposting', label: 'Автопостинг', icon: Megaphone, group: 'modules' },
-  { path: '/panel/modules/ggr', label: 'AIR — AI Rating', icon: Trophy, group: 'modules', badge: 'БЕТА' },
+  // §20 (RATING-001): AI Rating недоделан/не протестирован — временно скрыт из меню (код остаётся).
+  { path: '/panel/modules/ggr', label: 'AIR — AI Rating', icon: Trophy, group: 'modules', badge: 'БЕТА', hidden: true },
 
   { path: '/panel/modules/parsing', label: 'Парсер каналов', icon: Radar, group: 'parsing' },
   { path: '/panel/modules/parsing-groups', label: 'Парсер групп', icon: Users, group: 'parsing' },

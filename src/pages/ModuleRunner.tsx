@@ -122,10 +122,9 @@ function HeaderActions({ cfg }: { cfg: ModuleConfig }) {
   const setCoinsOpen = useUi((s) => s.setCoinsOpen)
 
   if (cfg.ggrLayout) {
-    const coins = useApp.getState().data.coins
     return (
       <>
-        <div className="hidden items-center gap-1.5 rounded-xl border border-amber-500/30 bg-amber-500/10 px-3 py-1.5 sm:flex"><span className="text-[10px] font-bold uppercase text-muted">Баланс</span><span className="text-sm font-bold text-amber-300">{coins.toFixed(2)}</span><Bolt size={13} className="text-amber-400" /></div>
+        {/* §20 (RATING-001): свой виджет «Баланс» убран — он дублировал баланс в шапке приложения. */}
         <div className="hidden items-center gap-1.5 rounded-xl border border-line bg-elevated px-3 py-1.5 sm:flex"><span className="text-[10px] font-bold uppercase text-muted">Проверка</span><span className="text-sm font-bold text-fg">0.20</span><Bolt size={13} className="text-amber-400" /></div>
         <button onClick={() => setCoinsOpen(true)} className="btn-ghost h-10">КУПИТЬ</button>
         <div className="hidden flex-col items-center px-2 leading-tight md:flex"><span className="text-[10px] font-bold uppercase text-muted">Шкала</span><span className="text-xs font-bold text-fg">1.0 — 10.0</span></div>
