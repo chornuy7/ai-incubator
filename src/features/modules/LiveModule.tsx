@@ -508,12 +508,11 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
             onRemove={(t) => setTargets((arr) => arr.filter((x) => x !== t))}
             placeholder={cfg.sourceTabs?.placeholder ?? '@username или t.me/...'}
           />
-          {/* §7: чёрный список — компактным блоком рядом с каналами. */}
-          {(cfg.blacklistSection || cfg.blacklistEmpty) && (
-            <div className="mt-3">
-              <BlacklistEditor title={cfg.blacklistSection ?? 'Чёрный список каналов'} compact />
-            </div>
-          )}
+          {/* §12 (UI-004): чёрный список — во ВСЕХ модулях с целями (решение заказчика «да, ко всем»);
+              компактным блоком рядом с группами. Принимает и отдельный канал, и целую группу. */}
+          <div className="mt-3">
+            <BlacklistEditor title={cfg.blacklistSection ?? 'Чёрный список групп и каналов'} compact />
+          </div>
         </SectionCard>
         </div>
       )}
