@@ -1,9 +1,8 @@
-import { useState } from 'react'
-import { Shield, Settings2, Bolt, HelpCircle, ChevronDown } from 'lucide-react'
-import { Badge, Switch } from '@/shared/ui'
+import { Shield, Settings2, Bolt, HelpCircle } from 'lucide-react'
+import { Switch } from '@/shared/ui'
 import { HelpButton } from '@/features/neuro-commenting/moduleUi'
+import { useUi } from '@/shared/lib/uiStore'
 import { cn } from '@/shared/lib/utils'
-import { PROTECTION_STEPS } from '@/shared/config/protectionInfo'
 
 const LEVELS = [
   {
@@ -29,9 +28,6 @@ const LEVELS = [
   },
 ]
 
-const BLOCK_TIP =
-  'Автозащита аккаунтов: при FloodWait — пауза и ожидание; после нескольких FloodWait подряд аккаунт уходит в карантин. Аккаунты со статусами quarantine, spamblock, frozen и reauth пропускаются.'
-
 function InfoTip({ text, className }: { text: string; className?: string }) {
   return (
     <span className={cn('group/tip relative inline-flex shrink-0 align-middle', className)}>
@@ -54,7 +50,11 @@ function InfoTip({ text, className }: { text: string; className?: string }) {
 export function ProtectionBlock({ enabled, onEnabled, level, onLevel }: {
   enabled: boolean; onEnabled: (v: boolean) => void; level: number; onLevel: (n: number) => void
 }) {
-  const [howOpen, setHowOpen] = useState(false)
+  // HELP-001 (§8): «Как работает защита» больше не раскрывается инлайн-дублем —
+  // и знак вопроса, и текстовая ссылка открывают одну статью Help Center в боковой панели.
+  const setHelpTopic = useUi((s) => s.setHelpTopic)
+  const setHelpOpen = useUi((s) => s.setHelpOpen)
+  const openHelp = () => { setHelpTopic('Защита аккаунтов'); setHelpOpen(true) }
   return (
     <div className="mb-4 rounded-2xl border border-spark-500/40 bg-spark-500/8 p-4">
       <div className="flex items-center gap-3">
@@ -62,10 +62,10 @@ export function ProtectionBlock({ enabled, onEnabled, level, onLevel }: {
           <Shield size={20} />
         </div>
         <div className="flex-1">
+          {/* HELP-001 (§8): убраны избыточная плашка «AI» и дублирующий «?» (InfoTip) —
+              рядом с «Защита аккаунтов» остаётся один знак вопроса, ведущий в Help Center. */}
           <div className="flex items-center gap-2">
             <span className="font-bold text-fg">Защита аккаунтов</span>
-            <Badge tone="spark">AI</Badge>
-            <InfoTip text={BLOCK_TIP} />
             <HelpButton topic="Защита аккаунтов" />
           </div>
           <div className="text-xs text-muted">FloodWait → пауза → карантин · пропуск quarantine / spamblock / frozen</div>
@@ -96,6 +96,7 @@ export function ProtectionBlock({ enabled, onEnabled, level, onLevel }: {
                   <Icon size={16} />
                 </span>
                 <div className="min-w-0 flex-1">
+                  {/* §8: маленькие подсказки у отдельных режимов оставляем. */}
                   <div className="flex items-center gap-1.5">
                     <span className={cn('text-sm font-bold', i === level ? 'text-fg' : 'text-muted')}>{lvl.label}</span>
                     <InfoTip text={lvl.tooltip} />
@@ -110,22 +111,11 @@ export function ProtectionBlock({ enabled, onEnabled, level, onLevel }: {
       <div className="mt-3 border-t border-spark-500/20 pt-3">
         <button
           type="button"
-          onClick={() => setHowOpen((v) => !v)}
-          className="flex w-full items-center gap-1.5 text-left text-xs font-bold uppercase tracking-wide text-spark-300"
+          onClick={openHelp}
+          className="text-xs font-bold uppercase tracking-wide text-spark-300 transition-colors hover:text-spark-200"
         >
-          <ChevronDown size={14} className={cn('transition-transform', !howOpen && '-rotate-90')} />
-          Как работает защита
+          Как работает защита →
         </button>
-        {howOpen && (
-          <ul className="mt-2 space-y-2">
-            {PROTECTION_STEPS.map((s) => (
-              <li key={s.title} className="rounded-xl border border-line bg-elevated/50 p-2.5">
-                <div className="text-xs font-bold text-fg">{s.title}</div>
-                <div className="mt-0.5 text-[11px] leading-relaxed text-muted">{s.body}</div>
-              </li>
-            ))}
-          </ul>
-        )}
       </div>
     </div>
   )
