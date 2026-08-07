@@ -123,6 +123,19 @@ export interface CrmOverview {
   conversion: number
   /** Кто ведёт лидов — аккаунт-исполнитель, именем а не id. */
   owners: { accountId: string; name: string; count: number }[]
+  /**
+   * ПОЛНЫЙ список лидов всех пользователей: от кого пришёл, каким аккаунтом ведётся,
+   * чей это юзер и из какой кампании — чтобы админ мог открыть переписку и разобрать
+   * конкретный случай, а не только смотреть сводку.
+   */
+  rows: {
+    id: string; peer: string; status: string; isHot: boolean
+    accountId: string; accountName: string
+    userId: string; userName: string
+    campaignId: string; campaignName: string; goalId: string; taskId: string
+    note: string; result: string
+    createdAt: number; updatedAt: number
+  }[]
 }
 
 /** §5.3: что идёт прямо сейчас. */

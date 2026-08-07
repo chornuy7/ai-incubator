@@ -12,6 +12,7 @@ import { BarChart } from '@/shared/ui/BarChart'
 import { compact, coins as fmtCoins, cn } from '@/shared/lib/utils'
 import { fetchMyStats, type MyStats } from '@/api/meApi'
 import { fetchWalletHistory, type WalletEntry } from '@/api/balanceApi'
+import { useTabParam } from '@/shared/lib/useTabParam'
 
 const RANGES = ['Сегодня', 'Неделя', 'Месяц', 'За всё время']
 /** Дней в периоде; 0 — «всё время» (since уходит в 0). Зеркалит периоды админ-панели. */
@@ -45,7 +46,7 @@ const fmtInt = (n: number) => compact(Math.round(n || 0))
 function MyStatistics() {
   const pushToast = useApp((s) => s.pushToast)
   const [range, setRange] = useState(2)
-  const [tab, setTab] = useState('dashboard')
+  const [tab, setTab] = useTabParam<string>('dashboard')
   const [stats, setStats] = useState<MyStats | null>(null)
   const [loading, setLoading] = useState(true)
 
@@ -360,7 +361,7 @@ function DemoStatistics() {
   const data = useApp((s) => s.data)
   const pushToast = useApp((s) => s.pushToast)
   const [range, setRange] = useState(1)
-  const [tab, setTab] = useState('dashboard')
+  const [tab, setTab] = useTabParam<string>('dashboard')
   const loading = useMockLoading(600, [range, tab])
 
   const mul = [0.16, 1, 3.4, 9.2][range]

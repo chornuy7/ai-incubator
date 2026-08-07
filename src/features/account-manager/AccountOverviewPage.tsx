@@ -7,6 +7,7 @@ import { cn } from '@/shared/lib/utils'
 import { useApp, activeAccounts } from '@/mocks/store'
 import { fetchAccountStats, releaseAccountLock } from '@/api/accountsApi'
 import type { AccountStats } from '@/shared/types'
+import { useTabParam } from '@/shared/lib/useTabParam'
 import {
   TABS, HeroBanner, ProfileTab, ProxyTab, StatusTab, DatesTab, ActionsTab, HealthTab, ChannelsTab, FoldersTab,
   type TabKey,
@@ -58,7 +59,7 @@ export function AccountOverviewPage() {
   // Аккаунт из URL ищем среди ВСЕХ: прямая ссылка должна открываться, даже если он вне выбора.
   const account = useMemo(() => accounts.find((a) => a.id === id) ?? scope[0] ?? accounts[0] ?? null, [accounts, scope, id])
 
-  const [tab, setTab] = useState<TabKey>('profile')
+  const [tab, setTab] = useTabParam<TabKey>('profile', 'card')
   const [resetToProfile, setResetToProfile] = useState(false)
   const [stats, setStats] = useState<AccountStats | null>(null)
   const [loading, setLoading] = useState(false)

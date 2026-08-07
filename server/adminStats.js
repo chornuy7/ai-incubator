@@ -555,6 +555,42 @@ export async function crmOverview(opts = {}) {
     }))
     .sort((a, b) => b.count - a.count)
 
+  // §5.3: сводка отвечает «сколько», но не «кто именно». Админу нужен ПОЛНЫЙ список
+  // лидов всех пользователей: от кого пришёл, каким аккаунтом ведётся, чей это юзер,
+  // из какой кампании/задачи и когда последняя активность — чтобы открыть переписку
+  // и разобрать конкретный случай, а не смотреть на столбики.
+  const { listUsers } = await import('./users.js')
+  const users = await listUsers().catch(() => [])
+  const userById = new Map(users.map((u) => [u.id, u]))
+  const { listCampaigns } = await import('./campaigns.js')
+  const campaigns = await listCampaigns().catch(() => [])
+  const campaignById = new Map(campaigns.map((c) => [c.id, c]))
+
+  const rows = leads
+    .slice()
+    .sort((a, b) => (Number(b.updatedAt) || 0) - (Number(a.updatedAt) || 0))
+    .map((l) => {
+      const u = l.userId ? userById.get(l.userId) : null
+      return {
+        id: l.id,
+        peer: l.peer,
+        status: l.status,
+        isHot: !!l.isHot,
+        accountId: l.accountId || '',
+        accountName: (l.accountId && (meta?.[l.accountId]?.name || meta?.[l.accountId]?.username)) || l.accountId || '',
+        userId: l.userId || '',
+        userName: u ? (u.name || u.email || u.id) : '',
+        campaignId: l.campaignId || '',
+        campaignName: l.campaignId ? (campaignById.get(l.campaignId)?.name || l.campaignId) : '',
+        goalId: l.goalId || '',
+        taskId: l.taskId || '',
+        note: l.note || '',
+        result: l.result || '',
+        createdAt: Number(l.createdAt) || 0,
+        updatedAt: Number(l.updatedAt) || 0,
+      }
+    })
+
   return {
     total: leads.length,
     byStatus,
@@ -565,6 +601,7 @@ export async function crmOverview(opts = {}) {
     // Конверсия в целевое действие — то, ради чего всё и делается.
     conversion: leads.length ? Math.round((target / leads.length) * 1000) / 10 : 0,
     owners,
+    rows,
   }
 }
 

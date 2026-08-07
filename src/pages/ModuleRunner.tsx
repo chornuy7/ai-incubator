@@ -32,6 +32,7 @@ import { ModuleLiveRouter, isLiveModule } from '@/features/modules'
 import { FloatingBar } from '@/features/modules/shared'
 import { cn, compact, uid } from '@/shared/lib/utils'
 import type { ParseResult } from '@/shared/types'
+import { useTabParam } from '@/shared/lib/useTabParam'
 
 /** Плавный скролл к якорю; если нативный smooth не сработал (некоторые встроенные
  *  браузеры/webview делают его no-op) — мгновенный доскролл, чтобы кнопка всегда работала. */
@@ -1352,7 +1353,7 @@ function DialogsModule({ cfg }: { cfg: ModuleConfig }) {
   const [aiEnabled, setAiEnabled] = useState(true)
   const [promptIdx, setPromptIdx] = useState(0)
   const [running, setRunning] = useState(false)
-  const [view, setView] = useState<'visual' | 'logs'>('visual')
+  const [view, setView] = useTabParam<'visual' | 'logs'>('visual', 'view')
   const [grid, setGrid] = useState(false)
   const [search, setSearch] = useState('')
   const [activeId, setActiveId] = useState<string | null>(null)

@@ -24,6 +24,7 @@ import { MonitoringTab } from '@/pages/admin/MonitoringTab'
 import { AccountsTab } from '@/pages/admin/AccountsTab'
 import { BundlesEditor } from '@/pages/admin/BundlesEditor'
 import { useTabParam } from '@/shared/lib/useTabParam'
+import { LeadConversationModal } from '@/features/leads/LeadConversationModal'
 
 /**
  * §5.3 (E1/E2): админ-панель со статистикой и постатейный отчёт клиенту.
@@ -158,6 +159,8 @@ export function AdminStatsPage() {
   // Ref, а не state: защита от повторного запуска должна срабатывать синхронно внутри
   // тика — state обновится только к следующему рендеру и второй запрос бы проскочил.
   const refreshingRef = useRef(false)
+  /** Пока true — счётчик стоит: на экране «обновлено», отсчёт ещё не начался. */
+  const justRefreshedRef = useRef(false)
   useEffect(() => {
     if (!autoRefresh) { setSecLeft(AUTO_REFRESH_SEC); setJustRefreshed(false); setRefreshing(false); return }
     const id = setInterval(() => {
@@ -165,6 +168,10 @@ export function AdminStatsPage() {
       // дёргаем сервер; счётчик замирает, это честно отражает происходящее.
       if (denied || busyRef.current) return
       if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return
+      // Пока горит «обновлено» — счётчик стоит: сначала человек видит факт обновления,
+      // и только потом отсчёт стартует заново с 15. Иначе галочка и новый отсчёт
+      // наезжали друг на друга.
+      if (justRefreshedRef.current) return
       setSecLeft((s) => {
         if (s > 1) return s - 1
         // Дошли до нуля — идём за данными. Отсчёт перезапускаем ПОСЛЕ ответа: пока
@@ -181,9 +188,15 @@ export function AdminStatsPage() {
         void load({ force: true, silent: true }).finally(() => {
           refreshingRef.current = false
           setRefreshing(false)
-          setSecLeft(AUTO_REFRESH_SEC)
+          // Сначала показываем, что обновилось (счётчик на паузе), и только через
+          // секунду запускаем отсчёт заново — как просил заказчик.
+          justRefreshedRef.current = true
           setJustRefreshed(true)
-          setTimeout(() => setJustRefreshed(false), 1200)
+          setTimeout(() => {
+            justRefreshedRef.current = false
+            setJustRefreshed(false)
+            setSecLeft(AUTO_REFRESH_SEC)
+          }, 1200)
         })
         return 0
       })
@@ -243,19 +256,22 @@ export function AdminStatsPage() {
               {/* Видимое доказательство, что цикл живой. Счётчик НЕ подменяем: галочка
                   и спиннер живут рядом, поэтому не теряется ни одна секунда отсчёта. */}
               {autoRefresh && (
-                <span className="inline-flex items-center gap-1">
-                  {refreshing && <Loader2 size={11} className="animate-spin text-spark-300" />}
-                  {justRefreshed && !refreshing && (
-                    <Check size={12} strokeWidth={3} className="text-spark-400" aria-label="Данные обновлены" />
-                  )}
-                  <span
-                    className={cn('inline-flex min-w-[34px] justify-center rounded-md px-1.5 py-0.5 font-mono tabular-nums transition-colors',
-                      justRefreshed ? 'bg-spark-500/15 text-spark-300' : 'bg-white/6 text-fg/70')}
-                    title={refreshing ? 'Идёт обновление…' : 'Секунд до следующего обновления'}
-                  >
-                    {secLeft}с
+                justRefreshed ? (
+                  // Сначала — факт обновления, счётчик на паузе. Через секунду вернётся отсчёт.
+                  <span className="inline-flex items-center gap-1 rounded-md bg-spark-500/15 px-1.5 py-0.5 font-semibold text-spark-300" title="Данные только что обновлены">
+                    <Check size={11} strokeWidth={3} /> обновлено
                   </span>
-                </span>
+                ) : (
+                  <span className="inline-flex items-center gap-1">
+                    {refreshing && <Loader2 size={11} className="animate-spin text-spark-300" />}
+                    <span
+                      className="inline-flex min-w-[34px] justify-center rounded-md bg-white/6 px-1.5 py-0.5 font-mono tabular-nums text-fg/70"
+                      title={refreshing ? 'Идёт обновление…' : 'Секунд до следующего обновления'}
+                    >
+                      {secLeft}с
+                    </span>
+                  </span>
+                )
               )}
             </label>
             <button onClick={() => void load({ force: true })} className="btn-ghost h-10" disabled={loading}>
@@ -2035,7 +2051,105 @@ function CrmTab({ crm }: { crm: CrmOverview | null }) {
           ))}
         </div>
       </Card>
+
+      {/* §5.3: полный список лидов ВСЕХ пользователей. Сводка выше отвечает «сколько»,
+          а разбирать приходится конкретный случай: от кого пришёл, каким аккаунтом
+          ведётся, чей юзер, из какой кампании — и открыть саму переписку. */}
+      <CrmLeadsTable rows={crm.rows || []} labels={LABELS} />
     </div>
+  )
+}
+
+/** Таблица всех лидов в админке + открытие переписки по клику. */
+function CrmLeadsTable({ rows, labels }: { rows: NonNullable<CrmOverview['rows']>; labels: Record<string, string> }) {
+  const [q, setQ] = useState('')
+  const [status, setStatus] = useState('')
+  const [chat, setChat] = useState<{ peer: string; accountId: string } | null>(null)
+
+  const needle = q.trim().toLowerCase()
+  const shown = rows.filter((r) =>
+    (!status || r.status === status)
+    && (!needle || `${r.peer} ${r.accountName} ${r.userName} ${r.campaignName} ${r.taskId}`.toLowerCase().includes(needle)),
+  )
+
+  return (
+    <Card className="p-4">
+      <div className="mb-3 flex flex-wrap items-center gap-2">
+        <span className="text-sm font-semibold text-fg">Все лиды</span>
+        <span className="rounded-md bg-spark-500/12 px-2 py-0.5 text-xs font-bold text-spark-300">{rows.length}</span>
+        <div className="relative min-w-0 flex-1 sm:max-w-xs">
+          <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted" />
+          <input value={q} onChange={(e) => setQ(e.target.value)} className="input h-9 pl-9 text-sm" placeholder="Контакт, аккаунт, юзер, кампания…" />
+        </div>
+        <Select
+          value={status}
+          onChange={setStatus}
+          className="w-44"
+          options={[{ value: '', label: 'Все статусы' }, ...Object.entries(labels).map(([k, l]) => ({ value: k, label: l }))]}
+        />
+        <span className="text-xs text-muted">клик по строке — переписка аккаунта с этим человеком</span>
+      </div>
+
+      {!shown.length ? (
+        <div className="py-6 text-center text-sm text-muted">Ничего не найдено по фильтру.</div>
+      ) : (
+        <div className="max-h-[520px] overflow-auto">
+          <table className="w-full text-sm">
+            <thead className="sticky top-0 bg-surface">
+              <tr className="border-b border-line text-left text-xs text-muted">
+                <th className="pb-2 pr-3 font-medium">Лид</th>
+                <th className="pb-2 pr-3 font-medium">Статус</th>
+                <th className="pb-2 pr-3 font-medium">Аккаунт</th>
+                <th className="pb-2 pr-3 font-medium">Пользователь</th>
+                <th className="pb-2 pr-3 font-medium">Источник</th>
+                <th className="pb-2 text-right font-medium">Активность</th>
+              </tr>
+            </thead>
+            <tbody>
+              {shown.map((r) => (
+                <tr
+                  key={r.id}
+                  onClick={() => r.accountId && setChat({ peer: r.peer, accountId: r.accountId })}
+                  className={cn('border-b border-line/50', r.accountId ? 'cursor-pointer hover:bg-white/[.02]' : 'opacity-70')}
+                  title={r.accountId ? 'Открыть переписку' : 'Нет аккаунта — переписку не прочитать'}
+                >
+                  <td className="py-2 pr-3">
+                    <span className="flex items-center gap-1.5">
+                      <span className="truncate font-medium text-fg">{r.peer}</span>
+                      {r.isHot && <span className="shrink-0 rounded bg-rose-500/15 px-1.5 py-0.5 text-[10px] font-bold text-rose-300">🔥</span>}
+                    </span>
+                    {r.note && <span className="block truncate text-[11px] text-muted">{r.note}</span>}
+                  </td>
+                  <td className="py-2 pr-3"><span className="text-xs text-fg">{labels[r.status] || r.status}</span></td>
+                  <td className="py-2 pr-3">
+                    <span className="block truncate text-xs text-fg">{r.accountName || '—'}</span>
+                    {r.accountId && <span className="block truncate font-mono text-[10px] text-faint">{r.accountId}</span>}
+                  </td>
+                  <td className="py-2 pr-3">
+                    <span className="block truncate text-xs text-fg">{r.userName || '—'}</span>
+                    {r.userId && <span className="block truncate font-mono text-[10px] text-faint">{r.userId}</span>}
+                  </td>
+                  <td className="py-2 pr-3">
+                    <span className="block truncate text-xs text-iris-300">{r.campaignName || '—'}</span>
+                    {r.taskId && <span className="block truncate font-mono text-[10px] text-faint">задача {r.taskId.slice(-6)}</span>}
+                  </td>
+                  <td className="py-2 text-right text-xs text-muted">
+                    {r.updatedAt ? new Date(r.updatedAt).toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : '—'}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {/* Переписка читается из самого Telegram аккаунтом-владельцем — тем же
+          компонентом, что и в пользовательской CRM (одна логика на оба места). */}
+      <LeadConversationModal
+        source={chat ? { kind: 'peer', peer: chat.peer, accountId: chat.accountId } : null}
+        onClose={() => setChat(null)}
+      />
+    </Card>
   )
 }
 
