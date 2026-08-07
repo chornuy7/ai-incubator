@@ -6,6 +6,7 @@ import { loadSessionString, createClient } from './tgAuth.js'
 import { getAccountLock } from './lib/accountLocks.js'
 import { getAllTrustCache } from './lib/trustCache.js'
 import { accountFingerprint } from './lib/deviceFingerprint.js'
+import { listProxies, toProxyUrl } from './proxies.js'
 
 async function listSessionIds() {
   await fs.mkdir(SESSIONS_DIR, { recursive: true })
@@ -83,6 +84,9 @@ export async function tgListAccounts(opts = {}) {
   const ids = await listSessionIds()
   const accounts = []
   const trustAll = await getAllTrustCache()
+  // §6.3 (AM-002): статус прокси по его URL — чтобы пометить аккаунты с мёртвым прокси.
+  const proxyStatusByUrl = {}
+  try { for (const p of await listProxies()) { try { proxyStatusByUrl[toProxyUrl(p)] = p.status } catch { /* skip */ } } } catch { /* прокси недоступны — не помечаем */ }
 
   for (const accountId of ids) {
     let meta = await getAccountMeta(accountId)
@@ -115,6 +119,10 @@ export async function tgListAccounts(opts = {}) {
     const dto = toAccountDto(accountId, meta, me, sessionOk)
     const t = trustAll[accountId]
     if (t) { dto.trustScore = t.score; dto.trustBand = t.band }
+    // §6.3 (AM-002): прокси «рабочий», если его нет (прямое подключение) либо он не 'dead'.
+    // Ручной прокси не из каталога → статус неизвестен → не помечаем нерабочим (не прячем зря).
+    const purl = meta.proxy && meta.proxy !== '—' ? meta.proxy : null
+    dto.proxyOk = !purl || proxyStatusByUrl[purl] !== 'dead'
     accounts.push(dto)
   }
 

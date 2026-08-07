@@ -28,6 +28,8 @@ export interface TgAccount {
   status: AccountStatus
   lastSeen: string // "отлёжка"
   proxy: string
+  /** §6.3 (AM-002): прокси рабочий (нет прокси или не 'dead'). false — мёртвый прокси, аккаунт не предлагаем для запуска. */
+  proxyOk?: boolean
   ggr?: number // GramGPT Рейтинг 0..100
   trustScore?: number // §3.3 кэш trust score 0..100
   trustBand?: 'low' | 'mid' | 'high'

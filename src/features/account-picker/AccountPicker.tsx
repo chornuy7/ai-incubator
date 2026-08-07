@@ -23,6 +23,10 @@ const STATUS_RU: Record<string, string> = {
 }
 const statusBlocks = (a: TgAccount) => NON_RUNNABLE.has(a.status)
 const isUnavailable = (a: TgAccount) => isBusy(a) || statusBlocks(a)
+// §6.3 (AM-002): «нерабочий» аккаунт — мёртвый прокси или статус, из которого не запустишь
+// (не путать с временными warming/pause/floodwait и с «в работе»). Такие по умолчанию скрыты.
+const BROKEN_STATUS = new Set(['reauth', 'invalid', 'spamblock', 'quarantine', 'frozen'])
+const isBroken = (a: TgAccount) => a.proxyOk === false || BROKEN_STATUS.has(a.status)
 /** Реальная причина недоступности для бейджа/тултипа (не общее «ЗАНЯТ»). */
 const isWorking = (a: TgAccount) => !!a.busyIn || a.status === 'working'
 const unavailLabel = (a: TgAccount) => (isWorking(a) ? 'В работе' : STATUS_RU[a.status] || 'недоступен')
@@ -58,6 +62,7 @@ export function AccountPicker({
   const [workingProxies, setWorkingProxies] = useState(false)
   const [hideWorking, setHideWorking] = useState(false)
   const [liteMode, setLiteMode] = useState(false)
+  const [showBroken, setShowBroken] = useState(false)
 
   const available = useMemo(
     () => accounts.filter((a) => {
@@ -66,10 +71,21 @@ export function AccountPicker({
       if (!matchesGeo(a.country, country)) return false
       if (workingProxies && a.proxy === '—') return false
       if (hideWorking && (a.status === 'working' || a.busyIn)) return false
-      if (query && !`${a.name} ${a.username} ${a.phone}`.toLowerCase().includes(query.toLowerCase())) return false
+      // §6.3 (AM-002): id включён в поиск, чтобы «нерабочий» аккаунт находился по ID даже когда он скрыт.
+      const q = query.trim().toLowerCase()
+      if (q && !`${a.name} ${a.username} ${a.phone} ${a.id}`.toLowerCase().includes(q)) return false
+      // §6.3 (AM-002): нерабочие (мёртвый прокси / нерабочий статус) скрыты по умолчанию — их
+      // не предлагаем для запуска. Показываются при «Показать нерабочие» или при явном поиске.
+      if (isBroken(a) && !showBroken && !q) return false
       return true
     }),
-    [accounts, selected, role, country, workingProxies, hideWorking, query],
+    [accounts, selected, role, country, workingProxies, hideWorking, query, showBroken],
+  )
+
+  // §6.3 (AM-002): сколько нерабочих скрыто — для тумблера «Показать нерабочие (N)».
+  const brokenCount = useMemo(
+    () => accounts.filter((a) => !selected.has(a.id) && isBroken(a) && matchesGeo(a.country, country) && (role === 'Все роли' || a.role === role)).length,
+    [accounts, selected, country, role],
   )
 
   const busyAvailable = useMemo(() => available.filter(isUnavailable), [available])
@@ -165,6 +181,10 @@ export function AccountPicker({
                   <Check label="Рабочие прокси" checked={workingProxies} onChange={setWorkingProxies} />
                   <Check label="Лайт-режим" checked={liteMode} onChange={setLiteMode} />
                   <Check label="Скрыть рабочие" checked={hideWorking} onChange={setHideWorking} title="Скрыть аккаунты в работе и занятые в других модулях" />
+                  {/* §6.3 (AM-002): нерабочие (мёртвый прокси / нерабочий статус) скрыты; можно раскрыть. */}
+                  {brokenCount > 0 && (
+                    <Check label={`Показать нерабочие (${brokenCount})`} checked={showBroken} onChange={setShowBroken} title="Аккаунты с мёртвым прокси или в нерабочем статусе — по умолчанию скрыты и не предлагаются для запуска" />
+                  )}
                 </div>
               </div>
             )}
