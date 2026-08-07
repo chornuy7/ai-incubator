@@ -189,31 +189,38 @@ export function AppHeader() {
             {notifOpen && (
               <>
                 <div className="fixed inset-0 z-40" onClick={() => setNotifOpen(false)} />
-                <div className="absolute right-0 top-[calc(100%+8px)] z-50 w-72 rounded-xl border border-line bg-surface p-2 shadow-xl">
-                  <div className="flex items-center justify-between px-2 py-1.5">
-                    <span className="text-xs font-bold uppercase tracking-wide text-muted">Отвалившиеся аккаунты · {shown.length}</span>
-                    {shown.length > 0 && <button onClick={dismissAll} className="text-[11px] font-semibold text-spark-300 hover:underline">Скрыть все</button>}
+                <div className="absolute right-0 top-[calc(100%+8px)] z-50 w-80 overflow-hidden rounded-2xl border border-line bg-surface shadow-2xl shadow-black/40">
+                  <div className="flex items-center justify-between border-b border-line px-3 py-2.5">
+                    <span className="flex items-center gap-2 text-xs font-bold uppercase tracking-wide text-muted">
+                      <Bell size={13} className={shown.length > 0 ? 'text-rose-400' : 'text-muted'} /> Отвалившиеся · {shown.length}
+                    </span>
+                    {shown.length > 0 && <button onClick={dismissAll} className="rounded-md px-2 py-0.5 text-[11px] font-semibold text-spark-300 transition-colors hover:bg-spark-500/10">Скрыть все</button>}
                   </div>
                   {shown.length === 0 ? (
-                    <div className="px-2 py-3 text-center text-sm text-muted">Все аккаунты рабочие 👍</div>
+                    <div className="flex flex-col items-center gap-1.5 px-3 py-6 text-center">
+                      <Check size={22} className="text-spark-400" />
+                      <span className="text-sm text-muted">Все аккаунты рабочие</span>
+                    </div>
                   ) : (
-                    <div className="max-h-72 overflow-y-auto">
+                    <div className="max-h-72 overflow-y-auto p-1.5">
                       {shown.slice(0, 20).map((a) => (
-                        <div key={a.id} className="group flex items-center gap-2 rounded-lg px-2 py-1.5 hover:bg-white/[.04]">
-                          <AlertTriangle size={14} className="shrink-0 text-rose-400" />
+                        <div key={a.id} className="flex items-center gap-2.5 rounded-xl px-2 py-2 transition-colors hover:bg-white/[.04]">
+                          <span className="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-rose-500/12 text-rose-400"><AlertTriangle size={15} /></span>
                           <button onClick={() => { setNotifOpen(false); nav('/panel') }} className="min-w-0 flex-1 text-left">
-                            <span className="block truncate text-sm text-fg">{a.name}</span>
-                            <span className="block text-[11px] text-muted">{a.proxyOk === false ? 'мёртвый прокси' : 'нерабочий статус'}</span>
+                            <span className="block truncate text-sm font-medium text-fg">{a.name}</span>
+                            <span className="block text-[11px] text-rose-300/80">{a.proxyOk === false ? 'мёртвый прокси' : 'нерабочий статус'}</span>
                           </button>
                           {/* §6.3 (доработка): закрыть это уведомление вручную. */}
-                          <button onClick={() => dismiss(a.id)} title="Скрыть уведомление" className="shrink-0 rounded-md p-1 text-faint opacity-0 transition-opacity hover:bg-rose-500/12 hover:text-rose-300 group-hover:opacity-100">
-                            <X size={13} />
+                          <button onClick={() => dismiss(a.id)} title="Скрыть уведомление" className="grid h-6 w-6 shrink-0 place-items-center rounded-md text-faint transition-colors hover:bg-rose-500/12 hover:text-rose-300">
+                            <X size={14} />
                           </button>
                         </div>
                       ))}
                     </div>
                   )}
-                  <button onClick={() => { setNotifOpen(false); nav('/panel') }} className="mt-1 w-full rounded-lg border border-line px-2 py-1.5 text-xs font-semibold text-spark-300 hover:bg-spark-500/10">Открыть менеджер аккаунтов</button>
+                  <div className="border-t border-line p-1.5">
+                    <button onClick={() => { setNotifOpen(false); nav('/panel') }} className="w-full rounded-xl px-2 py-2 text-xs font-semibold text-spark-300 transition-colors hover:bg-spark-500/10">Открыть менеджер аккаунтов →</button>
+                  </div>
                 </div>
               </>
             )}
