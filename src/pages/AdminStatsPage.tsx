@@ -146,13 +146,20 @@ export function AdminStatsPage() {
   const AUTO_REFRESH_SEC = 15
   const [autoRefresh, setAutoRefresh] = useState(true)
   // Обновление молчаливое, и по экрану не понять, работает ли оно вообще. Поэтому
-  // рядом с тумблером — обратный отсчёт до следующего тика и галочка «обновлено»
-  // на секунду после успешного тика. Тикаем раз в секунду, а не раз в 15: сам счётчик
-  // и есть индикатор, что цикл живой.
+  // рядом с тумблером — обратный отсчёт до следующего тика.
+  //
+  // Счётчик виден ВСЕГДА, а отметка «обновлено» показывается РЯДОМ с ним: если ею
+  // подменять счётчик, секунда «15» проглатывается и выглядит так, будто сначала
+  // обновилось, а потом заново пошёл отсчёт. Порядок теперь честный:
+  //   3с → 2с → 1с → 0с (идёт запрос) → ✓ 15с → 14с → …
   const [secLeft, setSecLeft] = useState(AUTO_REFRESH_SEC)
   const [justRefreshed, setJustRefreshed] = useState(false)
+  const [refreshing, setRefreshing] = useState(false)
+  // Ref, а не state: защита от повторного запуска должна срабатывать синхронно внутри
+  // тика — state обновится только к следующему рендеру и второй запрос бы проскочил.
+  const refreshingRef = useRef(false)
   useEffect(() => {
-    if (!autoRefresh) { setSecLeft(AUTO_REFRESH_SEC); return }
+    if (!autoRefresh) { setSecLeft(AUTO_REFRESH_SEC); setJustRefreshed(false); setRefreshing(false); return }
     const id = setInterval(() => {
       // Вкладка скрыта, отказ доступа или идёт видимая загрузка — не тикаем и не
       // дёргаем сервер; счётчик замирает, это честно отражает происходящее.
@@ -160,11 +167,25 @@ export function AdminStatsPage() {
       if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return
       setSecLeft((s) => {
         if (s > 1) return s - 1
-        void load({ force: true, silent: true }).then(() => {
+        // Дошли до нуля — идём за данными. Отсчёт перезапускаем ПОСЛЕ ответа: пока
+        // запрос в полёте, на экране «0с» и спиннер, то есть счётчик не врёт, будто
+        // до обновления ещё 15 секунд.
+        //
+        // Запуск живёт внутри тика (а не отдельным эффектом по secLeft===0) намеренно:
+        // если в этот момент шла ручная загрузка, тик просто пропускается и повторит
+        // попытку через секунду. Отдельный эффект в такой ситуации залипал бы на нуле
+        // навсегда — его зависимости больше не менялись бы.
+        if (refreshingRef.current) return 0
+        refreshingRef.current = true
+        setRefreshing(true)
+        void load({ force: true, silent: true }).finally(() => {
+          refreshingRef.current = false
+          setRefreshing(false)
+          setSecLeft(AUTO_REFRESH_SEC)
           setJustRefreshed(true)
-          setTimeout(() => setJustRefreshed(false), 1000)
+          setTimeout(() => setJustRefreshed(false), 1200)
         })
-        return AUTO_REFRESH_SEC
+        return 0
       })
     }, 1000)
     return () => clearInterval(id)
@@ -219,21 +240,22 @@ export function AdminStatsPage() {
             <label className="flex cursor-pointer select-none items-center gap-1.5 text-xs text-muted" title="Обновлять данные каждые 15 секунд без перезагрузки страницы">
               <input type="checkbox" checked={autoRefresh} onChange={(e) => setAutoRefresh(e.target.checked)} className="accent-spark-500" />
               Автообновление
-              {/* Видимое доказательство, что цикл живой: отсчёт до следующего тика, а
-                  сразу после успешного — галочка «обновлено» на секунду. */}
+              {/* Видимое доказательство, что цикл живой. Счётчик НЕ подменяем: галочка
+                  и спиннер живут рядом, поэтому не теряется ни одна секунда отсчёта. */}
               {autoRefresh && (
-                justRefreshed ? (
-                  <span className="inline-flex items-center gap-1 rounded-md bg-spark-500/15 px-1.5 py-0.5 font-semibold text-spark-300" title="Данные обновлены только что">
-                    <Check size={11} strokeWidth={3} /> обновлено
-                  </span>
-                ) : (
+                <span className="inline-flex items-center gap-1">
+                  {refreshing && <Loader2 size={11} className="animate-spin text-spark-300" />}
+                  {justRefreshed && !refreshing && (
+                    <Check size={12} strokeWidth={3} className="text-spark-400" aria-label="Данные обновлены" />
+                  )}
                   <span
-                    className="inline-flex min-w-[34px] justify-center rounded-md bg-white/6 px-1.5 py-0.5 font-mono tabular-nums text-fg/70"
-                    title={busyRef.current ? 'Пауза: идёт загрузка' : 'Секунд до следующего обновления'}
+                    className={cn('inline-flex min-w-[34px] justify-center rounded-md px-1.5 py-0.5 font-mono tabular-nums transition-colors',
+                      justRefreshed ? 'bg-spark-500/15 text-spark-300' : 'bg-white/6 text-fg/70')}
+                    title={refreshing ? 'Идёт обновление…' : 'Секунд до следующего обновления'}
                   >
                     {secLeft}с
                   </span>
-                )
+                </span>
               )}
             </label>
             <button onClick={() => void load({ force: true })} className="btn-ghost h-10" disabled={loading}>
