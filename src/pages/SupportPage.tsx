@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
-import { LifeBuoy, Plus, Send, MessageSquare, Clock, Loader2 } from 'lucide-react'
+import { LifeBuoy, Plus, Send, MessageSquare, Clock, Loader2, ArrowLeft } from 'lucide-react'
 import { useApp } from '@/mocks/store'
 import { PageHeader, Card, EmptyState, Select, Modal, Badge } from '@/shared/ui'
 import { HelpButton } from '@/features/neuro-commenting/moduleUi'
@@ -87,6 +87,46 @@ export function SupportPage() {
     finally { setReplying(false) }
   }
 
+  // §8: «Новый тикет» — ОТДЕЛЬНЫЙ ЭКРАН, а не попап поверх списка. Форма обращения —
+  // это работа, а не подтверждение: модалка сжимала её в окошко, перекрывала список и
+  // терялась при случайном клике мимо. Здесь та же страница, только вместо списка форма.
+  if (newOpen) {
+    return (
+      <div>
+        <button onClick={() => setNewOpen(false)} className="btn-ghost mb-3 h-9"><ArrowLeft size={15} /> Назад к обращениям</button>
+        <PageHeader
+          title="Новый тикет"
+          subtitle="Опишите проблему — команда ответит в течение суток"
+          icon={<LifeBuoy size={22} />}
+        />
+        <Card className="max-w-2xl space-y-4 p-5">
+          <div>
+            <label className="label">Тема</label>
+            <input value={subject} onChange={(e) => setSubject(e.target.value)} className="input" placeholder="Кратко о проблеме" autoFocus />
+          </div>
+          <div>
+            <label className="label">Категория</label>
+            <Select value={category} onChange={setCategory} options={[
+              { value: 'tech', label: 'Технический вопрос' },
+              { value: 'billing', label: 'Оплата и тариф' },
+              { value: 'accounts', label: 'Аккаунты и прокси' },
+            ]} />
+          </div>
+          <div>
+            <label className="label">Сообщение</label>
+            <textarea value={body} onChange={(e) => setBody(e.target.value)} rows={8} className="input resize-y" placeholder="Подробное описание: что делали, что ожидали, что получилось…" />
+          </div>
+          <div className="flex justify-end gap-2 border-t border-line pt-4">
+            <button onClick={() => setNewOpen(false)} className="btn-ghost h-10">Отмена</button>
+            <button onClick={() => void submitTicket()} disabled={saving} className="btn-primary h-10 disabled:opacity-50">
+              {saving ? <Loader2 size={16} className="animate-spin" /> : null} Создать тикет
+            </button>
+          </div>
+        </Card>
+      </div>
+    )
+  }
+
   return (
     <div>
       <PageHeader
@@ -140,40 +180,6 @@ export function SupportPage() {
           })}
         </div>
       )}
-
-      {/* New ticket */}
-      <Modal
-        open={newOpen}
-        onClose={() => setNewOpen(false)}
-        title="Новый тикет"
-        subtitle="Опишите проблему — приложите детали"
-        icon={<LifeBuoy size={22} />}
-        footer={<>
-          <button onClick={() => setNewOpen(false)} className="btn-ghost h-10">Отмена</button>
-          <button onClick={() => void submitTicket()} disabled={saving} className="btn-primary h-10 disabled:opacity-50">
-            {saving ? <Loader2 size={16} className="animate-spin" /> : null} Создать тикет
-          </button>
-        </>}
-      >
-        <div className="space-y-4">
-          <div>
-            <label className="label">Тема</label>
-            <input value={subject} onChange={(e) => setSubject(e.target.value)} className="input" placeholder="Кратко о проблеме" />
-          </div>
-          <div>
-            <label className="label">Категория</label>
-            <Select value={category} onChange={setCategory} options={[
-              { value: 'tech', label: 'Технический вопрос' },
-              { value: 'billing', label: 'Оплата и тариф' },
-              { value: 'accounts', label: 'Аккаунты и прокси' },
-            ]} />
-          </div>
-          <div>
-            <label className="label">Сообщение</label>
-            <textarea value={body} onChange={(e) => setBody(e.target.value)} rows={4} className="input resize-none" placeholder="Подробное описание…" />
-          </div>
-        </div>
-      </Modal>
 
       {/* Ticket thread */}
       <Modal open={!!openTicket} onClose={() => setOpenTicket(null)} title={openTicket?.subject} subtitle={openTicket?.id} icon={<MessageSquare size={22} />} size="md">
