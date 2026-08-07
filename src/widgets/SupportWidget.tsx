@@ -20,7 +20,10 @@ export function SupportWidget() {
     // на страницах модулей виджет поднимается над панелью, на остальных — стоит внизу.
     <div
       style={{ bottom: 'calc(var(--launch-bar-h, 0px) + 1.25rem)' }}
-      className="fixed right-5 z-[96] flex flex-col items-end gap-2 print:hidden"
+      // z выше кнопки Help Center (97): раскрытая карточка поддержки растёт вверх и
+      // попадала ровно на неё — «?» торчал поверх содержимого. Теперь Help уходит под
+      // карточку, а закроешь её — снова доступен. Ниже модалок (100) и тостов (200).
+      className="fixed right-5 z-[98] flex flex-col items-end gap-2 print:hidden"
     >
       {open && (
         <div className="w-64 origin-bottom-right rounded-2xl border border-line bg-elevated/95 p-3 shadow-lg shadow-black/40 backdrop-blur">
