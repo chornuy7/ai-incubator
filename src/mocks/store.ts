@@ -251,6 +251,11 @@ export const useApp = create<AppStore>((set, get) => {
 export const activeAccounts = (d: AppData) => d.accounts.filter((a) => !a.inTrash)
 export const trashedAccounts = (d: AppData) => d.accounts.filter((a) => a.inTrash)
 
+// §6.3 (AM-002 / NOTIFY-001): «нерабочий» аккаунт — мёртвый прокси (proxyOk===false) или статус,
+// из которого не запустишь. Общий предикат для пикера аккаунтов и колокольчика в шапке.
+export const BROKEN_ACCOUNT_STATUS = new Set<string>(['reauth', 'invalid', 'spamblock', 'quarantine', 'frozen'])
+export const isBrokenAccount = (a: { proxyOk?: boolean; status: string }) => a.proxyOk === false || BROKEN_ACCOUNT_STATUS.has(a.status)
+
 export const STATUS_META: Record<AccountStatus, { label: string; text: string; bg: string; dot: string }> = {
   active: { label: 'Активные', text: 'text-spark-300', bg: 'bg-spark-500/12 border-spark-500/30', dot: 'bg-spark-400' },
   working: { label: 'В работе', text: 'text-iris-300', bg: 'bg-iris-500/12 border-iris-500/30', dot: 'bg-iris-400' },

@@ -1,9 +1,9 @@
 import { useNavigate } from 'react-router-dom'
 import { useState, useEffect } from 'react'
 import {
-  Menu, Zap, Sun, Moon, Radar, ChevronDown, UserCog, LogOut, Wallet, Check, AlertTriangle, Package,
+  Menu, Zap, Sun, Moon, Radar, ChevronDown, UserCog, LogOut, Wallet, Check, AlertTriangle, Package, Bell,
 } from 'lucide-react'
-import { useApp, activeAccounts } from '@/mocks/store'
+import { useApp, activeAccounts, isBrokenAccount } from '@/mocks/store'
 import { fetchBalance, fetchPricing, buyTokens, type Balance, type Pricing } from '@/api/balanceApi'
 import { useSession } from '@/features/auth/session'
 import { usePlan } from '@/features/billing/plan'
@@ -42,6 +42,9 @@ export function AppHeader() {
   // Прайс — с сервера: копия в вебе рано или поздно разошлась бы с тем, что списывается.
   const [pricing, setPricing] = useState<Pricing | null>(null)
   useEffect(() => { void fetchPricing().then(setPricing).catch(() => {}) }, [])
+  // §6.3 (NOTIFY-001): колокольчик — сколько аккаунтов «отвалилось» (мёртвый прокси / нерабочий статус).
+  const [notifOpen, setNotifOpen] = useState(false)
+  const broken = activeAccounts(data).filter(isBrokenAccount)
   const theme = useApp((s) => s.theme)
   const toggleTheme = useApp((s) => s.toggleTheme)
   const locale = useApp((s) => s.locale)
@@ -147,6 +150,47 @@ export function AppHeader() {
           <div className="flex items-center gap-1.5 rounded-xl border border-line bg-elevated px-3 py-1.5">
             <span className="text-sm font-bold text-fg">{active} / {limit}</span>
             <span className="hidden text-xs text-muted sm:inline">акк.</span>
+          </div>
+
+          {/* §6.3 (NOTIFY-001): колокольчик — сколько аккаунтов отвалилось (мёртвый прокси / нерабочий статус). */}
+          <div className="relative">
+            <button
+              onClick={() => setNotifOpen((v) => !v)}
+              className={`btn-icon relative ${broken.length > 0 ? 'text-rose-400' : ''}`}
+              aria-label="Уведомления"
+              title={broken.length > 0 ? `${broken.length} нерабочих аккаунтов` : 'Все аккаунты рабочие'}
+            >
+              <Bell size={18} />
+              {broken.length > 0 && (
+                <span className="absolute -right-0.5 -top-0.5 grid h-4 min-w-4 place-items-center rounded-full bg-rose-500 px-1 text-[10px] font-bold leading-none text-white">
+                  {broken.length > 99 ? '99+' : broken.length}
+                </span>
+              )}
+            </button>
+            {notifOpen && (
+              <>
+                <div className="fixed inset-0 z-40" onClick={() => setNotifOpen(false)} />
+                <div className="absolute right-0 top-[calc(100%+8px)] z-50 w-72 rounded-xl border border-line bg-surface p-2 shadow-xl">
+                  <div className="px-2 py-1.5 text-xs font-bold uppercase tracking-wide text-muted">Отвалившиеся аккаунты · {broken.length}</div>
+                  {broken.length === 0 ? (
+                    <div className="px-2 py-3 text-center text-sm text-muted">Все аккаунты рабочие 👍</div>
+                  ) : (
+                    <div className="max-h-72 overflow-y-auto">
+                      {broken.slice(0, 20).map((a) => (
+                        <button key={a.id} onClick={() => { setNotifOpen(false); nav('/panel') }} className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left hover:bg-white/[.04]">
+                          <AlertTriangle size={14} className="shrink-0 text-rose-400" />
+                          <span className="min-w-0 flex-1">
+                            <span className="block truncate text-sm text-fg">{a.name}</span>
+                            <span className="block text-[11px] text-muted">{a.proxyOk === false ? 'мёртвый прокси' : 'нерабочий статус'}</span>
+                          </span>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                  <button onClick={() => { setNotifOpen(false); nav('/panel') }} className="mt-1 w-full rounded-lg border border-line px-2 py-1.5 text-xs font-semibold text-spark-300 hover:bg-spark-500/10">Открыть менеджер аккаунтов</button>
+                </div>
+              </>
+            )}
           </div>
 
           {/* Coins */}

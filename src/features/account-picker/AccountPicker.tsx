@@ -2,7 +2,7 @@ import { useMemo, useState, useEffect } from 'react'
 import {
   Search, Users, CheckCheck, ChevronsRight, ChevronsLeft, RefreshCw, ChevronDown, Inbox, ShieldCheck, Loader2, Lock, AlertTriangle,
 } from 'lucide-react'
-import { useApp, activeAccounts } from '@/mocks/store'
+import { useApp, activeAccounts, isBrokenAccount } from '@/mocks/store'
 import { useSession } from '@/features/auth/session'
 import { Avatar, Select } from '@/shared/ui'
 import { HelpButton } from '@/features/neuro-commenting/moduleUi'
@@ -23,10 +23,6 @@ const STATUS_RU: Record<string, string> = {
 }
 const statusBlocks = (a: TgAccount) => NON_RUNNABLE.has(a.status)
 const isUnavailable = (a: TgAccount) => isBusy(a) || statusBlocks(a)
-// §6.3 (AM-002): «нерабочий» аккаунт — мёртвый прокси или статус, из которого не запустишь
-// (не путать с временными warming/pause/floodwait и с «в работе»). Такие по умолчанию скрыты.
-const BROKEN_STATUS = new Set(['reauth', 'invalid', 'spamblock', 'quarantine', 'frozen'])
-const isBroken = (a: TgAccount) => a.proxyOk === false || BROKEN_STATUS.has(a.status)
 /** Реальная причина недоступности для бейджа/тултипа (не общее «ЗАНЯТ»). */
 const isWorking = (a: TgAccount) => !!a.busyIn || a.status === 'working'
 const unavailLabel = (a: TgAccount) => (isWorking(a) ? 'В работе' : STATUS_RU[a.status] || 'недоступен')
@@ -76,7 +72,7 @@ export function AccountPicker({
       if (q && !`${a.name} ${a.username} ${a.phone} ${a.id}`.toLowerCase().includes(q)) return false
       // §6.3 (AM-002): нерабочие (мёртвый прокси / нерабочий статус) скрыты по умолчанию — их
       // не предлагаем для запуска. Показываются при «Показать нерабочие» или при явном поиске.
-      if (isBroken(a) && !showBroken && !q) return false
+      if (isBrokenAccount(a) && !showBroken && !q) return false
       return true
     }),
     [accounts, selected, role, country, workingProxies, hideWorking, query, showBroken],
@@ -84,7 +80,7 @@ export function AccountPicker({
 
   // §6.3 (AM-002): сколько нерабочих скрыто — для тумблера «Показать нерабочие (N)».
   const brokenCount = useMemo(
-    () => accounts.filter((a) => !selected.has(a.id) && isBroken(a) && matchesGeo(a.country, country) && (role === 'Все роли' || a.role === role)).length,
+    () => accounts.filter((a) => !selected.has(a.id) && isBrokenAccount(a) && matchesGeo(a.country, country) && (role === 'Все роли' || a.role === role)).length,
     [accounts, selected, country, role],
   )
 
