@@ -7,6 +7,7 @@ import { cn } from '@/shared/lib/utils'
 import { MODULES, isCombatModule } from '@/shared/config/modules'
 import { ModuleShowcase } from './landing/ModuleShowcase'
 import { getModule } from './landing/catalog'
+import { useTabParam } from '@/shared/lib/useTabParam'
 
 /**
  * §9 (MR-47): пошаговый формат «с чего начать» по каждому модулю. Шаги СОБИРАЮТСЯ из
@@ -105,7 +106,7 @@ function LearningView({ q, setQ, groups, active, setActive, activeDoc }: {
     ].filter((t) => t.tips?.length || t.steps?.length || t.doc || t.body?.trim())
   }, [activeDoc, active])
 
-  const [tab, setTab] = useState('what')
+  const [tab, setTab] = useTabParam<string>('what')
   // Сменили тему — открываем первую вкладку (для модуля это «С чего начать», иначе «Обзор»),
   // иначе открытая вкладка «Риски» перетекала бы на тему, где рисков нет.
   useEffect(() => { setTab(tabs[0]?.key ?? 'what') }, [active]) // eslint-disable-line react-hooks/exhaustive-deps

@@ -18,6 +18,7 @@ import { massStopConfirmSteps, canStopWarming, containsWarming } from '@/shared/
 import { useSession } from '@/features/auth/session'
 import { canControlModule } from '@/shared/lib/access'
 import { downloadXls } from '@/shared/lib/exportXls'
+import { useTabParam } from '@/shared/lib/useTabParam'
 
 const STATUS: Record<string, { label: string; tone: 'spark' | 'iris' | 'amber' | 'rose' | 'muted' }> = {
   running: { label: 'Выполняется', tone: 'spark' },
@@ -93,7 +94,7 @@ export function TasksPage() {
   const [goals, setGoals] = useState<Goal[]>([])
   const [loading, setLoading] = useState(true)
   const [busy, setBusy] = useState<string | null>(null)
-  const [view, setView] = useState(0) // 0 — список, 1 — по целям (воронка)
+  const [view, setView] = useTabParam<number>(0, 'view') // 0 — список, 1 — по целям (воронка)
   const navigate = useNavigate()
   // §8: задача открывается отдельной вьюшкой /panel/tasks/:id, а не модалкой.
   const openTask = (t: ModuleTask) => navigate(`/panel/tasks/${t.id}?m=${t.moduleKey}`)

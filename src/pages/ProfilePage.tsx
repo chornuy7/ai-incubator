@@ -7,6 +7,7 @@ import { fetchBalance, fetchWalletHistory, type Balance, type WalletEntry } from
 import { useSession } from '@/features/auth/session'
 import { PageHeader, Card, Switch, Badge } from '@/shared/ui'
 import { cn, coins as fmtCoins } from '@/shared/lib/utils'
+import { useTabParam } from '@/shared/lib/useTabParam'
 
 const TABS = [
   { key: 'profile', label: 'Настройки профиля', icon: User },
@@ -33,7 +34,7 @@ export function ProfilePage() {
   const toggleNotification = useApp((s) => s.toggleNotification)
   const pushToast = useApp((s) => s.pushToast)
   const sessionUser = useSession((s) => s.user)
-  const [tab, setTab] = useState('profile')
+  const [tab, setTab] = useTabParam<string>('profile')
 
   const [firstName, setFirstName] = useState(data.user.firstName)
   const [lastName, setLastName] = useState(data.user.lastName)

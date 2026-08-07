@@ -12,6 +12,7 @@ import {
 } from '@/api/neuroDialogsApi'
 import { fetchAccountChannels } from '@/api/accountsApi'
 import type { AccountChannel } from '@/shared/types'
+import { useTabParam } from '@/shared/lib/useTabParam'
 
 const peerOf = (d: InboxDialog): PeerRef => ({ peerId: d.peerId, accessHash: d.accessHash, username: d.username })
 
@@ -32,7 +33,7 @@ export function InboxPage() {
   const [draft, setDraft] = useState('')
   const [sending, setSending] = useState(false)
   const endRef = useRef<HTMLDivElement>(null)
-  const [tab, setTab] = useState(0) // 0 = диалоги, 1 = группы/каналы
+  const [tab, setTab] = useTabParam<number>(0) // 0 = диалоги, 1 = группы/каналы
   const [groups, setGroups] = useState<(AccountChannel & { accountName: string })[]>([])
   const [loadingGroups, setLoadingGroups] = useState(false)
 

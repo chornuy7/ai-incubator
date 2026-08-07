@@ -23,6 +23,7 @@ import { fmt, fmtDate, cleanPrice, fmtUsd, usdEq, MetricTile } from '@/pages/adm
 import { MonitoringTab } from '@/pages/admin/MonitoringTab'
 import { AccountsTab } from '@/pages/admin/AccountsTab'
 import { BundlesEditor } from '@/pages/admin/BundlesEditor'
+import { useTabParam } from '@/shared/lib/useTabParam'
 
 /**
  * §5.3 (E1/E2): админ-панель со статистикой и постатейный отчёт клиенту.
@@ -55,7 +56,8 @@ const STATUS_RU: Record<string, string> = {
 
 export function AdminStatsPage() {
   const pushToast = useApp((s) => s.pushToast)
-  const [tab, setTab] = useState(0)
+  // Вкладка в адресе (?tab=) — F5 больше не выбрасывает на первую.
+  const [tab, setTab] = useTabParam<number>(0)
   const [periodIdx, setPeriodIdx] = useState(2)
   const [overview, setOverview] = useState<AdminOverview | null>(null)
   const [report, setReport] = useState<ClientReport | null>(null)

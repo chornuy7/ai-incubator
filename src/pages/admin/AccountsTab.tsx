@@ -11,6 +11,7 @@ import { STATUS_LABEL_RU } from './MonitoringTab'
 // (профиль/работа/прокси) и действия. Не дублируем, переиспользуем один компонент.
 // В админке она разворачивается под строкой аккаунта, поэтому берём тело без модалки.
 import { AccountCardBody } from '@/features/account-manager/AccountManagementModal'
+import { useTabParam } from '@/shared/lib/useTabParam'
 
 /**
  * §10.10: управление аккаунтами из sudo-админки — полный список ВСЕХ аккаунтов
@@ -40,7 +41,7 @@ export function AccountsTab() {
   const [loading, setLoading] = useState(false)
   // §10.10: корзина прямо в админке — чтобы не ходить в Менеджер профилей за
   // восстановлением/удалением. 'live' — рабочие, 'trash' — удалённые.
-  const [view, setView] = useState<'live' | 'trash'>('live')
+  const [view, setView] = useTabParam<'live' | 'trash'>('live', 'acc')
   // §5.2 (MR-35): выбранный аккаунт для карточки-деталей (клик по строке).
   // Карточка раскрывается прямо под строкой аккаунта, а не боковой панелью:
   // так видно, к какой именно строке относится, и список остаётся на месте.

@@ -32,6 +32,7 @@ import { fetchProxies, toProxyUrl, type Proxy as ApiProxy } from '@/api/proxiesA
 import { assignProxies, proxyCapacity } from '@/api/accountImportApi'
 import { fetchActivity, setActivity, type ActivityMap, type SchedulePercent } from '@/api/accountActivityApi'
 import { startUnblock } from '@/api/accountActivityApi'
+import { useTabParam } from '@/shared/lib/useTabParam'
 
 const STATUS_ORDER: AccountStatus[] = ['active', 'working', 'warming', 'pause', 'floodwait', 'quarantine', 'spamblock', 'invalid', 'frozen', 'reauth']
 const COLS = [
@@ -121,7 +122,7 @@ export function AccountsPage() {
   const setTasksOpen = useUi((s) => s.setTasksOpen)
   const navigate = useNavigate() // §3: обзор аккаунта — вьюшка, а не модалка
 
-  const [tab, setTab] = useState<'accounts' | 'trash'>('accounts')
+  const [tab, setTab] = useTabParam<'accounts' | 'trash'>('accounts')
   const [statusFilter, setStatusFilter] = useState<AccountStatus | 'all'>('all')
   const [roleFilter, setRoleFilter] = useState('Все роли')
   // §1: «роль как группа» уходит — аккаунт работает ПОД КАМПАНИЕЙ. Закрепление живёт
