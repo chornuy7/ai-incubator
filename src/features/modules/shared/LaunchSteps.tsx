@@ -56,7 +56,9 @@ export function LaunchSteps({ steps }: { steps: LaunchStep[] }) {
             <span className={cn('text-[11px]',
               s.optional ? 'text-faint'
                 : s.current ? 'font-bold text-fg' : s.done ? 'text-spark-200' : 'text-muted')}>
-              {s.label}{s.optional && <span className="ml-1 text-[10px]">(необяз.)</span>}
+              {/* Слово «(необяз.)» убрано: пунктирный серый кружок и подсказка при
+                  наведении говорят то же, а строка была шире панели. */}
+              {s.label}
             </span>
           </button>
         </span>

@@ -78,58 +78,56 @@ export function LaunchPanel({
       {extras}
       {/* Плавающий бар — ПОСЛЕДНИЙ элемент: его заглушка резервирует место в самом низу
           карточки, ничего не рендерится ниже, и бар чисто «отрывается» ко дну экрана. */}
-      {/* §4 (UI-001): раскладка нижней панели по решению созвона — ШАБЛОН слева,
-          параметры/навигация (шаги + чего не хватает) по ЦЕНТРУ, кнопка «Начать» справа
-          (с запасом под плавающие виджеты). */}
-      {/* Вся сводка запуска — В САМОЙ ПАНЕЛИ, компактными чипами: раньше она жила
-          широкими плитками выше по странице, и до кнопки «Начать» приходилось помнить,
-          что там было. Панель держим узкой: две строки, мелкий шрифт, детали — в
-          подсказках. Кнопки «Сохранить шаблон» и «Начать» стоят рядом справа. */}
+      {/* §4 (UI-001): вся сводка запуска живёт В САМОЙ ПАНЕЛИ компактными чипами —
+          раньше она была широкими плитками выше по странице, и до кнопки «Начать»
+          приходилось помнить, что там было. Детали цены — в подсказке. */}
       <FloatingBar>
-        {/* Две строки. Верхняя: слева сводка (в два ряда — так она вдвое уже), справа
-            кнопки. Нижняя: дорожная карта строго по центру ВСЕЙ панели — своей строкой
-            ей хватает ширины, и она не ломается на четыре ряда, как в три колонки. */}
-        <div className="flex w-full flex-col gap-1.5">
-          <div className="flex flex-wrap items-center justify-center gap-x-5 gap-y-2 sm:flex-nowrap sm:justify-between">
-            {/* Сводка: чипы идут сверху вниз, затем следующая колонка (rows-2). */}
-            <div className="grid grid-flow-col grid-rows-2 gap-x-3 gap-y-0.5 text-[11px] text-muted">
-              {stats.map((s) => (
-                <span key={s.label} className="inline-flex items-center gap-1" title={s.label}>
-                  <span className={cn('shrink-0', s.color)}>{s.icon}</span>
-                  <span className="uppercase tracking-wide">{s.label}</span>
-                  <b className={cn('font-semibold', s.warn ? 'text-amber-300' : 'text-fg')}>{s.value}</b>
-                </span>
-              ))}
-              {!running && cost}
-            </div>
-
-            {/* Кнопки — «Сохранить шаблон» и «Начать» рядом, с запасом под виджеты. */}
-            <div className="flex shrink-0 flex-wrap items-center justify-center gap-2 sm:justify-end">
-              {running && (
-                <a href="/panel/tasks" className="btn-ghost h-10 text-sm" title="Управление, прогресс и логи — в Дашборде задач"><ArrowUpRight size={15} /> В Дашборде задач</a>
-              )}
-              <button type="button" onClick={onSave} className="btn-ghost h-10 text-sm"><Save size={15} /> Сохранить шаблон</button>
-              <button
-                type="button"
-                onClick={onStart}
-                disabled={starting || !canStart}
-                title={!canStart && blockedBy.length ? `Осталось: ${blockedBy.join('; ')}` : undefined}
-                className="btn-primary h-10 min-w-[150px]"
-              >
-                {starting ? <Loader2 size={17} className="animate-spin" /> : <Play size={17} />} {primaryLabel}
-              </button>
-            </div>
+        {/* Всё одной строкой и по ЦЕНТРУ: сводка (в два ряда) — дорожная карта — кнопки.
+            Раньше сводка жалась влево, кнопки вправо (justify-between), и посередине
+            зияла пустота, а карта уезжала на отдельную строку. Сгруппированное по центру
+            занимает ровно ширину панели и экономит целый ряд по высоте.
+            На узких экранах блоки переносятся сами (flex-wrap). */}
+        <div className="flex w-full flex-wrap items-center justify-center gap-x-4 gap-y-2">
+          {/* Сводка: чипы идут сверху вниз, затем следующая колонка (rows-2). */}
+          <div className="grid grid-flow-col grid-rows-2 gap-x-3 gap-y-0.5 text-[11px] text-muted">
+            {stats.map((s) => (
+              <span key={s.label} className="inline-flex items-center gap-1" title={s.label}>
+                <span className={cn('shrink-0', s.color)}>{s.icon}</span>
+                <span className="uppercase tracking-wide">{s.label}</span>
+                <b className={cn('font-semibold', s.warn ? 'text-amber-300' : 'text-fg')}>{s.value}</b>
+              </span>
+            ))}
+            {!running && cost}
           </div>
 
-          {/* Дорожная карта — по центру панели, под ней (если есть) чего не хватает. */}
-          <div className="flex flex-col items-center gap-0.5">
+          {/* Дорожная карта — центральный блок, под ней (если есть) чего не хватает.
+              Ширину ограничиваем: длинная строка «Осталось: …» растягивала блок и
+              выдавливала кнопки на вторую строку — теперь она переносится сама. */}
+          <div className="flex min-w-0 max-w-[360px] flex-col items-center gap-0.5">
             {steps}
             {!running && (blockedBy.length > 0 || warn) && (
-              <span className="inline-flex items-center gap-1.5 text-center text-[11px] text-amber-300">
+              <span className="inline-flex items-center gap-1.5 text-center text-[11px] leading-tight text-amber-300">
                 <AlertTriangle size={12} className="shrink-0" />
                 {blockedBy.length ? `Осталось: ${blockedBy.join(' · ')}` : warn}
               </span>
             )}
+          </div>
+
+          {/* Кнопки — «Сохранить шаблон» и «Начать» рядом. */}
+          <div className="flex shrink-0 flex-wrap items-center justify-center gap-2">
+            {running && (
+              <a href="/panel/tasks" className="btn-ghost h-10 text-sm" title="Управление, прогресс и логи — в Дашборде задач"><ArrowUpRight size={15} /> В Дашборде задач</a>
+            )}
+            <button type="button" onClick={onSave} title="Сохранить шаблон настроек" className="btn-ghost h-10 text-sm"><Save size={15} /> Шаблон</button>
+            <button
+              type="button"
+              onClick={onStart}
+              disabled={starting || !canStart}
+              title={!canStart && blockedBy.length ? `Осталось: ${blockedBy.join('; ')}` : undefined}
+              className="btn-primary h-10 min-w-[130px]"
+            >
+              {starting ? <Loader2 size={17} className="animate-spin" /> : <Play size={17} />} {primaryLabel}
+            </button>
           </div>
         </div>
       </FloatingBar>
