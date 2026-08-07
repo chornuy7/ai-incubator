@@ -1,17 +1,16 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import {
   Play, Sparkles, Hash, Settings2, Clock, Users, MessageSquareText,
-  Heart, Eye, Shield, MessageCircle, Database, Trophy, Link2, Plus, Target, Terminal, ArrowUpRight, Rocket, Lock, LockOpen,
+  Heart, Eye, Shield, MessageCircle, Database, Trophy, Link2, Plus, Terminal, ArrowUpRight, Lock, LockOpen,
 } from 'lucide-react'
 import { MODULES, isCombatModule, combatConfirmText, type ModuleConfig } from '@/shared/config/modules'
-import { isHidden } from '@/shared/config/routes'
 import { activeAccounts, useApp } from '@/mocks/store'
 import { useSession } from '@/features/auth/session'
 import { can } from '@/shared/lib/access'
 import { cn } from '@/shared/lib/utils'
 import { equalize, equalizeUnlocked, redistribute, percentSum } from '@/shared/lib/percentDistribution'
-import { ToggleGroup, Segmented, EmptyState, Badge, Select } from '@/shared/ui'
-import { fetchGoals, isGoalExpired, type Goal } from '@/api/goalsApi'
+import { ToggleGroup, Segmented, EmptyState, Badge } from '@/shared/ui'
+import { isGoalExpired } from '@/api/goalsApi'
 import { fetchCampaigns, type Campaign } from '@/api/campaignsApi'
 import { createAutomationRule } from '@/api/automationApi'
 import { AccountPicker } from '@/features/account-picker/AccountPicker'
@@ -84,12 +83,11 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
   const [promptBodies, setPromptBodies] = useState(() => loadPromptBodies(moduleKey, cfg.messagePrompts ?? []))
   const [delayPreset, setDelayPreset] = useState(1)
   const [delays, setDelays] = useState(DEFAULT_DELAYS)
-  const [goals, setGoals] = useState<Goal[]>([])
-  const [goalId, setGoalId] = useState('')
+  const [goalId] = useState('')
   // §0: задача запускается ПОД КАМПАНИЕЙ; цель наследуется из кампании.
   // Пока кампаний нет — остаётся прямой выбор цели (мягкая миграция, ничего не ломаем).
   const [campaigns, setCampaigns] = useState<Campaign[]>([])
-  const [campaignId, setCampaignId] = useState('')
+  const [campaignId] = useState('')
   const [warmLevel, setWarmLevel] = useState(1)
   const [postWindow, setPostWindow] = useState(10) // §3.5: сколько последних постов обрабатывать
   const [stopWordsText, setStopWordsText] = useState('') // §3.5: пропускать посты с этими словами
@@ -109,7 +107,6 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
     setTouchedWeights([])
   }
   const toggleWeightLock = (i: number) => setLockedWeights((l) => { const n = [...l]; n[i] = !n[i]; return n })
-  useEffect(() => { void fetchGoals().then(setGoals).catch(() => {}) }, [])
   // Кампании этого модуля (кампания настраивает ровно один модуль — §0).
   useEffect(() => {
     void fetchCampaigns({ moduleKey }).then(({ campaigns: cs }) => setCampaigns(cs.filter((c) => c.status !== 'done'))).catch(() => {})
@@ -670,57 +667,11 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
             <p className="mt-2 text-[11px] text-white/40">Ввод значения авто-раскидывает остаток по незакреплённым (§13). Замок — закрепить долю. «Поровну» — поделить незакреплённые одинаково.</p>
           </div>
         )}
-        {/* §0: задача запускается ПОД КАМПАНИЕЙ — цель наследуется от неё.
-            Пока кампаний для модуля нет, остаётся прямой выбор цели (мягкая миграция). */}
-        {showBlock('targets') && !running && (
-          <div className="mb-3">
-            <label className="mb-1 flex items-center justify-between text-xs text-white/50">
-              <span><Rocket size={11} className="mb-0.5 inline" /> Кампания</span>
-              {/* §10 (MR-49): пока раздел «Кампания» скрыт — не ведём на скрытую страницу. */}
-              {!isHidden('/panel/campaign') && (
-                <a href="/panel/campaign" className="font-semibold text-spark-300 hover:underline">+ Создать кампанию</a>
-              )}
-            </label>
-            {campaigns.length > 0 ? (
-              <>
-                <Select
-                  value={campaignId}
-                  onChange={setCampaignId}
-                  placeholder="Без кампании"
-                  options={[{ value: '', label: 'Без кампании' }, ...campaigns.map((c) => ({ value: c.id, label: c.name }))]}
-                />
-                {campaignId && (
-                  <div className="mt-1 text-[11px] text-white/50">
-                    <Target size={11} className="mb-0.5 inline" /> Цель — из кампании:{' '}
-                    <b className="text-iris-300">
-                      {goals.find((g) => g.id === campaigns.find((c) => c.id === campaignId)?.goalId)?.name || 'без цели'}
-                    </b>
-                  </div>
-                )}
-              </>
-            ) : (
-              <div className="rounded-xl border border-line bg-elevated/40 px-3 py-2 text-xs text-white/50">
-                Кампаний для этого модуля пока нет. <a href="/panel/campaign" className="text-spark-300 hover:underline">Создайте кампанию</a> — задачи должны идти под кампанией. Пока можно выбрать цель напрямую:
-              </div>
-            )}
-
-            {/* Прямой выбор цели — fallback, пока кампания не выбрана */}
-            {!campaignId && (
-              <div className="mt-2">
-                <label className="mb-1 flex items-center justify-between text-xs text-white/50">
-                  <span><Target size={11} className="mb-0.5 inline" /> Цель напрямую (без кампании)</span>
-                  <a href="/panel/goals" className="font-semibold text-spark-300 hover:underline">+ Создать цель</a>
-                </label>
-                <Select
-                  value={goalId}
-                  onChange={setGoalId}
-                  placeholder="Без цели"
-                  options={[{ value: '', label: 'Без цели' }, ...goals.map((gg) => ({ value: gg.id, label: gg.name }))]}
-                />
-              </div>
-            )}
-          </div>
-        )}
+        {/* §10 (MR-49): выбор кампании и цели убран из модулей — эти разделы скрыты
+            из меню, и держать их выбор здесь было некуда. Задача запускается сама по
+            себе; привязка к кампании/цели приходит из настроек кампании при запуске
+            через неё (buildCampaignPlan прокидывает campaignId и goalId в settings).
+            Состояние campaignId/goalId оставлено: оно всё ещё уходит в задачу. */}
         <LaunchPanel
           running={running}
           starting={starting}

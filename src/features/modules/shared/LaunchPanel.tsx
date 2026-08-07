@@ -104,7 +104,7 @@ export function LaunchPanel({
             </div>
 
             {/* Кнопки — «Сохранить шаблон» и «Начать» рядом, с запасом под виджеты. */}
-            <div className="flex shrink-0 flex-wrap items-center justify-center gap-2 sm:justify-end sm:pr-14">
+            <div className="flex shrink-0 flex-wrap items-center justify-center gap-2 sm:justify-end">
               {running && (
                 <a href="/panel/tasks" className="btn-ghost h-10 text-sm" title="Управление, прогресс и логи — в Дашборде задач"><ArrowUpRight size={15} /> В Дашборде задач</a>
               )}

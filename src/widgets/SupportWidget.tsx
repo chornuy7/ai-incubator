@@ -16,7 +16,12 @@ export function SupportWidget() {
   const go = (to: string) => { setOpen(false); nav(to) }
 
   return (
-    <div className="fixed bottom-5 right-5 z-[96] flex flex-col items-end gap-2 print:hidden">
+    // bottom считаем от высоты нижней панели запуска (её публикует FloatingBar):
+    // на страницах модулей виджет поднимается над панелью, на остальных — стоит внизу.
+    <div
+      style={{ bottom: 'calc(var(--launch-bar-h, 0px) + 1.25rem)' }}
+      className="fixed right-5 z-[96] flex flex-col items-end gap-2 print:hidden"
+    >
       {open && (
         <div className="w-64 origin-bottom-right rounded-2xl border border-line bg-elevated/95 p-3 shadow-lg shadow-black/40 backdrop-blur">
           <div className="mb-1.5 flex items-center justify-between">

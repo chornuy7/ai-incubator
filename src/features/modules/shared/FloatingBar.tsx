@@ -43,6 +43,15 @@ export function FloatingBar({ children, className }: { children: ReactNode; clas
     if (barRef.current) setBarH(barRef.current.offsetHeight)
   })
 
+  // Публикуем высоту панели в CSS-переменную: плавающие виджеты справа снизу
+  // (поддержка, Help Center) поднимаются ровно на неё и больше не наезжают на
+  // панель. Пока модуль не открыт, переменной нет — виджеты стоят как обычно.
+  useEffect(() => {
+    const root = document.documentElement
+    root.style.setProperty('--launch-bar-h', `${barH}px`)
+    return () => { root.style.removeProperty('--launch-bar-h') }
+  }, [barH])
+
   return (
     <>
       <div style={{ height: barH || undefined }} />
@@ -53,8 +62,8 @@ export function FloatingBar({ children, className }: { children: ReactNode; clas
           // Сплошная панель у самого низа: без отступа и скругления, только верхняя
           // граница — «край в край» рабочей области (правка заказчика).
           'fixed bottom-0 z-30 flex flex-col items-center gap-2 border-t border-line',
-          // §11 (MR-56): справа резервируем место под плавающие виджеты (поддержка/Help
-          // в правом нижнем углу), чтобы кнопки панели не уходили под них.
+          // Резерв справа больше не нужен: виджеты (поддержка/Help) сами поднимаются
+          // над панелью по её высоте — см. --launch-bar-h выше.
           'bg-elevated/95 px-4 py-3 shadow-lg shadow-black/40 backdrop-blur',
           className,
         )}

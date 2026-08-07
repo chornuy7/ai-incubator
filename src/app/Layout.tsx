@@ -96,7 +96,10 @@ export function Layout() {
         onClick={openHelp}
         // §8 (MR-46): кнопка Help Center опущена вниз — в правый нижний угол, над виджетом
         // поддержки (раньше висела вверху справа и налезала на контент шапки).
-        className="fixed bottom-20 right-5 z-[97] grid h-11 w-11 place-items-center rounded-full border border-line bg-elevated/95 text-spark-300 shadow-pop backdrop-blur transition-transform hover:scale-[1.04]"
+        // bottom считаем от высоты нижней панели запуска (переменная от FloatingBar):
+        // в модулях кнопка поднимается над панелью и больше на неё не налезает.
+        style={{ bottom: 'calc(var(--launch-bar-h, 0px) + 5rem)' }}
+        className="fixed right-5 z-[97] grid h-11 w-11 place-items-center rounded-full border border-line bg-elevated/95 text-spark-300 shadow-pop backdrop-blur transition-transform hover:scale-[1.04]"
         aria-label="Help Center"
         title="Help Center"
       >
