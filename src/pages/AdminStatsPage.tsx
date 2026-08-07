@@ -141,14 +141,30 @@ export function AdminStatsPage() {
   // данные текущего периода и состояний «сейчас» (мониторинг/задачи/ошибки), без спиннера и
   // без мигания. Пропускаем тик, когда вкладка скрыта (не долбим сервер в фоне), при отказе
   // доступа и пока идёт видимая загрузка. Тумблер позволяет выключить.
+  const AUTO_REFRESH_SEC = 15
   const [autoRefresh, setAutoRefresh] = useState(true)
+  // Обновление молчаливое, и по экрану не понять, работает ли оно вообще. Поэтому
+  // рядом с тумблером — обратный отсчёт до следующего тика и галочка «обновлено»
+  // на секунду после успешного тика. Тикаем раз в секунду, а не раз в 15: сам счётчик
+  // и есть индикатор, что цикл живой.
+  const [secLeft, setSecLeft] = useState(AUTO_REFRESH_SEC)
+  const [justRefreshed, setJustRefreshed] = useState(false)
   useEffect(() => {
-    if (!autoRefresh) return
+    if (!autoRefresh) { setSecLeft(AUTO_REFRESH_SEC); return }
     const id = setInterval(() => {
+      // Вкладка скрыта, отказ доступа или идёт видимая загрузка — не тикаем и не
+      // дёргаем сервер; счётчик замирает, это честно отражает происходящее.
       if (denied || busyRef.current) return
       if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return
-      void load({ force: true, silent: true })
-    }, 15_000)
+      setSecLeft((s) => {
+        if (s > 1) return s - 1
+        void load({ force: true, silent: true }).then(() => {
+          setJustRefreshed(true)
+          setTimeout(() => setJustRefreshed(false), 1000)
+        })
+        return AUTO_REFRESH_SEC
+      })
+    }, 1000)
     return () => clearInterval(id)
   }, [autoRefresh, denied]) // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -201,6 +217,22 @@ export function AdminStatsPage() {
             <label className="flex cursor-pointer select-none items-center gap-1.5 text-xs text-muted" title="Обновлять данные каждые 15 секунд без перезагрузки страницы">
               <input type="checkbox" checked={autoRefresh} onChange={(e) => setAutoRefresh(e.target.checked)} className="accent-spark-500" />
               Автообновление
+              {/* Видимое доказательство, что цикл живой: отсчёт до следующего тика, а
+                  сразу после успешного — галочка «обновлено» на секунду. */}
+              {autoRefresh && (
+                justRefreshed ? (
+                  <span className="inline-flex items-center gap-1 rounded-md bg-spark-500/15 px-1.5 py-0.5 font-semibold text-spark-300" title="Данные обновлены только что">
+                    <Check size={11} strokeWidth={3} /> обновлено
+                  </span>
+                ) : (
+                  <span
+                    className="inline-flex min-w-[34px] justify-center rounded-md bg-white/6 px-1.5 py-0.5 font-mono tabular-nums text-fg/70"
+                    title={busyRef.current ? 'Пауза: идёт загрузка' : 'Секунд до следующего обновления'}
+                  >
+                    {secLeft}с
+                  </span>
+                )
+              )}
             </label>
             <button onClick={() => void load({ force: true })} className="btn-ghost h-10" disabled={loading}>
               <RefreshCw size={16} className={loading ? 'animate-spin' : ''} /> Обновить
