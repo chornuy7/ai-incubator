@@ -308,7 +308,7 @@ export function TgStatParserModule() {
                 disabled ? 'cursor-not-allowed border border-line bg-elevated text-muted' : 'text-[#1a1200] hover:opacity-90',
               )}
               style={disabled ? undefined : { background: 'linear-gradient(90deg, #f59e0b, #fbbf24)' }}>
-              {creating ? <Loader2 size={17} className="animate-spin" /> : <Plus size={17} />} Запустить импорт
+              {creating ? <Loader2 size={17} className="animate-spin" /> : <Plus size={17} />} Начать импорт
             </button>
           )
         })()}

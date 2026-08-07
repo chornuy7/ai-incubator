@@ -103,7 +103,8 @@ function Inner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: string }) {
   const [saveFolderOpen, setSaveFolderOpen] = useState(false)
 
   const targetList = useMemo(() => targets.split(/[\n,]+/).map((s) => s.trim()).filter(Boolean), [targets])
-  const keywordList = useMemo(() => keywords.split(/[\n,]+/).map((s) => s.trim()).filter(Boolean), [keywords])
+  // MR-104: ключевые слова разделяются точкой с запятой (и переносом строки) — чтобы фраза могла содержать запятую.
+  const keywordList = useMemo(() => keywords.split(/[;\n]+/).map((s) => s.trim()).filter(Boolean), [keywords])
 
   const setF = (k: string, v: boolean) => setFilters((s) => ({ ...s, [k]: v }))
   const setL = (k: string, v: number) => setLimits((s) => ({ ...s, [k]: v }))
@@ -263,7 +264,7 @@ function Inner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: string }) {
               <div>
                 <div className="label flex items-center gap-1.5"><Search size={14} className="text-spark-400" /> {P.keywords.label}</div>
                 <p className="mb-1 text-xs text-muted">{P.keywords.hint}</p>
-                <input value={keywords} onChange={(e) => setKeywords(e.target.value)} className="input h-10 text-sm" placeholder="Слова через запятую…" />
+                <input value={keywords} onChange={(e) => setKeywords(e.target.value)} className="input h-10 text-sm" placeholder="крипта; p2p обмен; заработок…" />
               </div>
             )}
 

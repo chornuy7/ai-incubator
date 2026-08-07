@@ -196,7 +196,8 @@ export const MODULES: Record<string, ModuleConfig> = {
     subtitle: 'ИИ-комментарии под постами каналов. Мониторинг каналов и автоматическая генерация умных комментариев нейросетью.',
     accent: 'spark',
     richLayout: true,
-    settingsTitle: 'Настройки комментирования',
+    // MR-104: во всех модулях блок настроек называется одинаково — «Настройки» (дефолт).
+
     selectedTitle: 'Выбрано для комментирования',
     unit: { gen: 'каналов', title: 'Каналы', maxLabel: 'Макс. комментариев' },
     accountPicker: true,
@@ -255,7 +256,8 @@ export const MODULES: Record<string, ModuleConfig> = {
     subtitle: 'ИИ-ответы в группах и чатах. Мониторинг диалогов в группах и автоматические умные ответы нейросетью.',
     accent: 'spark',
     richLayout: true,
-    settingsTitle: 'Настройки чаттинга',
+    // MR-104: единое название блока настроек — «Настройки».
+
     selectedTitle: 'Выбрано для чаттинга',
     unit: { gen: 'групп', title: 'Группы', maxLabel: 'Макс. сообщений' },
     accountPicker: true,
@@ -314,7 +316,8 @@ export const MODULES: Record<string, ModuleConfig> = {
     subtitle: 'Автоматические реакции на посты в каналах и группах. Мониторинг новых постов или реакции на существующие с настраиваемыми эмодзи.',
     accent: 'spark',
     richLayout: true,
-    settingsTitle: 'Настройки реакций',
+    // MR-104: единое название блока настроек — «Настройки».
+
     selectedTitle: 'Выбрано для реакций',
     unit: { gen: 'групп', title: 'Группы', maxLabel: 'Цель' },
     accountPicker: true,
@@ -554,7 +557,7 @@ export const MODULES: Record<string, ModuleConfig> = {
       sourceHint: 'Введите username, ссылки, ID или инвайт-ссылки на приватные чаты (по одному на строку)',
       formatHint: 'Форматы: @username, t.me/group, t.me/+hash, -1001234567890',
       historyBtn: 'Из истории групп',
-      keywords: { label: 'Ключевые слова', hint: 'Сообщения, содержащие хотя бы одно из этих слов, будут найдены' },
+      keywords: { label: 'Ключевые слова', hint: 'Несколько слов — через точку с запятой «;». Сообщения, содержащие хотя бы одно из них, будут найдены' },
       limits: [{ label: 'Лимит сообщений', value: 1000, hint: 'Максимальное количество сообщений для анализа в каждом чате (1-50000)' }, { label: 'Фильтр по дням', value: 30, hint: 'Искать сообщения за последние N дней (1-365)' }],
       baseFilters: [{ label: 'Пропустить ботов', on: true }, { label: 'Пропустить удаленных', on: true }, { label: 'Пропустить заблокированных/scam' }],
       profileFilters: [{ label: 'Только с username' }, { label: 'Только с фото' }, { label: 'Только Premium', premium: true }],
@@ -585,7 +588,7 @@ export const MODULES: Record<string, ModuleConfig> = {
       sourceHint: 'Введите username, ссылки или инвайт-ссылки на приватные каналы (по одному на строку)',
       formatHint: 'Форматы: @channel, t.me/channel, t.me/+hash, -1001234567890',
       historyBtn: 'Из истории каналов',
-      keywords: { label: 'Ключевые слова', hint: 'Фильтровать комментарии по ключевым словам. Если не указано, парсятся все комментарии' },
+      keywords: { label: 'Ключевые слова', hint: 'Несколько слов — через точку с запятой «;». Если не указано, парсятся все комментарии' },
       limits: [{ label: 'Лимит постов', value: 50, hint: 'Количество последних постов для анализа в каждом канале (1-500)' }, { label: 'Комментариев на пост', value: 100, hint: 'Максимальное количество комментариев для чтения под каждым постом (1-1000)' }, { label: 'Минимальная длина комментария', value: 10, hint: 'Игнорировать короткие комментарии (символов)' }],
       baseFilters: [{ label: 'Пропустить ботов', on: true }, { label: 'Пропустить удаленных', on: true }, { label: 'Пропустить заблокированных/scam' }, { label: 'Сохранять текст комментария' }],
       profileFilters: [{ label: 'Только с username' }, { label: 'Только с фото' }, { label: 'Только Premium', premium: true }],

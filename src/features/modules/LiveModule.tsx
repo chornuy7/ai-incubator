@@ -174,7 +174,7 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
     accountIds: [...selected],
     targets,
     channels: targets,
-    keywords: keywords.split(/[\n,;]+/).map((k) => k.trim()).filter(Boolean),
+    keywords: keywords.split(/[\n;]+/).map((k) => k.trim()).filter(Boolean),
     commentMode: g(0),
     workMode: g(1),
     postFilter: g(2),
@@ -201,7 +201,7 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
     ...(campaignId ? { campaignId } : {}),
     ...((campaignId ? campaigns.find((c) => c.id === campaignId)?.goalId : goalId) ? { goalId: (campaignId ? campaigns.find((c) => c.id === campaignId)?.goalId : goalId) as string } : {}),
     ...(cfg.warmingLayout ? { warmLevel } : {}),
-    ...(moduleKey === 'neuro-commenting' ? { postWindow, stopWords: stopWordsText.split(/[\n,;]+/).map((w) => w.trim()).filter(Boolean), analyzeImages } : {}),
+    ...(moduleKey === 'neuro-commenting' ? { postWindow, stopWords: stopWordsText.split(/[\n;]+/).map((w) => w.trim()).filter(Boolean), analyzeImages } : {}),
     ...(moduleKey === 'neuro-commenting' && weightSum > 0 ? { typeWeights } : {}),
     ...(cfg.lookingLayout ? {
       lookMode: cfg.lookModeOptions?.[lookModeIdx]?.value ?? 'stories',
@@ -258,7 +258,7 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
 
   const handleStart = async () => {
     // #4: запуск боевого модуля = реальные действия в Telegram — подтверждаем.
-    if (isCombatModule(moduleKey) && !(await confirmDialog({ title: 'Реальные действия в Telegram', message: combatConfirmText(moduleKey), confirmLabel: 'Запустить', tone: 'danger' }))) return
+    if (isCombatModule(moduleKey) && !(await confirmDialog({ title: 'Реальные действия в Telegram', message: combatConfirmText(moduleKey), confirmLabel: 'Начать', tone: 'danger' }))) return
     void start(buildSettings(), `${cfg.title} · ${selected.size} акк.`)
   }
   // §7: шаблон — цветная метка + владелец; открываем модалку вместо простого prompt.
@@ -352,7 +352,7 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
     const steps: LaunchStep[] = []
     if (cfg.accountPicker) steps.push({ label: 'Аккаунты', done: selected.size > 0, anchor: 'sec-accounts' })
     if (needsTargets && !cfg.warmingLayout) steps.push({ label: cfg.unit?.title || 'Группы', done: targets.length > 0 || hasPostTargets, anchor: 'sec-targets' })
-    steps.push({ label: 'Настройки', done: true, optional: true, anchor: 'sec-settings' })
+    steps.push({ label: 'Защита', done: true, optional: true, anchor: 'sec-settings' })
     steps.push({ label: 'Запуск', done: false, anchor: 'sec-run' })
     return markCurrentStep(steps)
   }, [cfg, selected, needsTargets, targets, hasPostTargets])
@@ -368,9 +368,65 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
         </div>
       )}
 
+      {/* §3.1 (MR-100): порядок блоков = степпер (Аккаунты → Группы → Защита → Запуск).
+          Цели «Группы»/«Посты» идут СРАЗУ после аккаунтов, до блока «Защита» — одинаково во всех модулях. */}
+      {showBlock('targets') && (cfg.sourceTabs || needsTargets) && !isGgr && (
+        <div id="sec-targets" className="scroll-mt-24">
+        <SectionCard icon={<Hash size={18} />} title={cfg.sourceTabs?.label ?? 'Группы'} badge={String(targets.length)} required={needsTargets && !cfg.postLinks}>
+          <FolderPicker targets={targets} onLoad={(t) => setTargets((prev) => [...new Set([...t, ...prev])])} />
+          <TargetsEditor
+            tabs={cfg.sourceTabs?.tabs}
+            tab={srcTab}
+            onTab={setSrcTab}
+            input={input}
+            onInput={setInput}
+            targets={targets}
+            onAdd={addTargets}
+            onClear={() => setTargets([])}
+            onRemove={(t) => setTargets((arr) => arr.filter((x) => x !== t))}
+            placeholder={cfg.sourceTabs?.placeholder ?? '@username или t.me/...'}
+          />
+          {/* §12 (UI-004): чёрный список — во ВСЕХ модулях с целями (решение заказчика «да, ко всем»);
+              компактным блоком рядом с группами. Принимает и отдельный канал, и целую группу. */}
+          <div className="mt-3">
+            <BlacklistEditor title={cfg.blacklistSection ?? 'Чёрный список групп и каналов'} compact />
+          </div>
+        </SectionCard>
+        </div>
+      )}
+
+      {showBlock('targets') && cfg.postLinks && (
+        <SectionCard icon={<Link2 size={18} />} title={cfg.postLinks.label} badge={String(postUrls.length)}>
+          {cfg.postLinks.hint && <p className="mb-3 text-xs text-muted">{cfg.postLinks.hint}</p>}
+          <FolderPicker targets={postUrls} onLoad={(t) => setPostUrls((prev) => [...new Set([...t, ...prev])])} />
+          <div className="flex gap-2">
+            <textarea
+              value={postInput}
+              onChange={(e) => setPostInput(e.target.value)}
+              rows={3}
+              className="input resize-none font-mono text-sm"
+              placeholder={cfg.postLinks.placeholder}
+            />
+            <button type="button" onClick={addPostUrls} className="btn-ghost h-auto shrink-0 flex-col px-4">
+              <Plus size={16} /> Добавить
+            </button>
+          </div>
+          {postUrls.length > 0 && (
+            <div className="mt-4 flex max-h-52 flex-col gap-1.5 overflow-y-auto rounded-xl border border-line bg-elevated/40 p-3">
+              {postUrls.map((url) => (
+                <span key={url} className="inline-flex items-center justify-between gap-2 rounded-lg border border-line bg-surface px-2 py-1.5 text-xs font-medium text-fg">
+                  <span className="truncate font-mono">{url}</span>
+                  <button type="button" onClick={() => setPostUrls((arr) => arr.filter((x) => x !== url))} className="shrink-0 text-faint hover:text-rose-300">×</button>
+                </span>
+              ))}
+            </div>
+          )}
+        </SectionCard>
+      )}
+
       {showBlock('settings') && (cfg.aiProtection || cfg.richLayout || cfg.lookingLayout || cfg.warmingLayout || isGgr) && (
         <div id="sec-settings" className="scroll-mt-24">
-        <SectionCard icon={<Settings2 size={18} />} title={cfg.settingsTitle ?? 'Настройки'} badge={targets.length ? `${targets.length} целей` : undefined}>
+        <SectionCard icon={<Settings2 size={18} />} title={cfg.settingsTitle ?? 'Защита'} badge={targets.length ? `${targets.length} целей` : undefined}>
           {cfg.aiProtection && <ProtectionBlock enabled={aiProtect} onEnabled={setAiProtect} level={protLevel} onLevel={setProtLevel} />}
 
           {cfg.reactionSettings ? (
@@ -387,7 +443,7 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
           ) : cfg.toggleGroups ? (
             <div className="rounded-2xl border border-line bg-elevated/40 p-4 space-y-4">
               <ToggleGroup label={cfg.toggleGroups[0].label} options={cfg.toggleGroups[0].options} value={g(0)} onChange={(v) => setTg(0, v)} />
-              {g(0) === 1 && <textarea value={keywords} onChange={(e) => setKeywords(e.target.value)} rows={2} className="input resize-none text-sm" placeholder="ключевые слова" />}
+              {g(0) === 1 && <textarea value={keywords} onChange={(e) => setKeywords(e.target.value)} rows={2} className="input resize-none text-sm" placeholder="Ключевые слова через ; или с новой строки — крипта; p2p обмен" />}
               <div>
                 <div className="mb-1 flex justify-between text-sm text-muted"><span>{cfg.probabilitySlider?.label ?? 'Вероятность'}</span><span className="text-spark-300">{probability}%</span></div>
                 <input type="range" min={0} max={100} value={probability} onChange={(e) => setProbability(Number(e.target.value))} className="w-full accent-spark-500" />
@@ -489,61 +545,8 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
         </SectionCard>
       )}
 
-      {showBlock('targets') && (cfg.sourceTabs || needsTargets) && !isGgr && (
-        <div id="sec-targets" className="scroll-mt-24">
-        <SectionCard icon={<Hash size={18} />} title={cfg.sourceTabs?.label ?? 'Группы'} badge={String(targets.length)} required={needsTargets && !cfg.postLinks}>
-          <FolderPicker targets={targets} onLoad={(t) => setTargets((prev) => [...new Set([...t, ...prev])])} />
-          <TargetsEditor
-            tabs={cfg.sourceTabs?.tabs}
-            tab={srcTab}
-            onTab={setSrcTab}
-            input={input}
-            onInput={setInput}
-            targets={targets}
-            onAdd={addTargets}
-            onClear={() => setTargets([])}
-            onRemove={(t) => setTargets((arr) => arr.filter((x) => x !== t))}
-            placeholder={cfg.sourceTabs?.placeholder ?? '@username или t.me/...'}
-          />
-          {/* §12 (UI-004): чёрный список — во ВСЕХ модулях с целями (решение заказчика «да, ко всем»);
-              компактным блоком рядом с группами. Принимает и отдельный канал, и целую группу. */}
-          <div className="mt-3">
-            <BlacklistEditor title={cfg.blacklistSection ?? 'Чёрный список групп и каналов'} compact />
-          </div>
-        </SectionCard>
-        </div>
-      )}
-
-      {showBlock('targets') && cfg.postLinks && (
-        <SectionCard icon={<Link2 size={18} />} title={cfg.postLinks.label} badge={String(postUrls.length)}>
-          {cfg.postLinks.hint && <p className="mb-3 text-xs text-muted">{cfg.postLinks.hint}</p>}
-          <FolderPicker targets={postUrls} onLoad={(t) => setPostUrls((prev) => [...new Set([...t, ...prev])])} />
-          <div className="flex gap-2">
-            <textarea
-              value={postInput}
-              onChange={(e) => setPostInput(e.target.value)}
-              rows={3}
-              className="input resize-none font-mono text-sm"
-              placeholder={cfg.postLinks.placeholder}
-            />
-            <button type="button" onClick={addPostUrls} className="btn-ghost h-auto shrink-0 flex-col px-4">
-              <Plus size={16} /> Добавить
-            </button>
-          </div>
-          {postUrls.length > 0 && (
-            <div className="mt-4 flex max-h-52 flex-col gap-1.5 overflow-y-auto rounded-xl border border-line bg-elevated/40 p-3">
-              {postUrls.map((url) => (
-                <span key={url} className="inline-flex items-center justify-between gap-2 rounded-lg border border-line bg-surface px-2 py-1.5 text-xs font-medium text-fg">
-                  <span className="truncate font-mono">{url}</span>
-                  <button type="button" onClick={() => setPostUrls((arr) => arr.filter((x) => x !== url))} className="shrink-0 text-faint hover:text-rose-300">×</button>
-                </span>
-              ))}
-            </div>
-          )}
-        </SectionCard>
-      )}
-
-      {/* §3.1 (UI-002): «Тайминги и задержки» — ПЕРЕД нижней панелью запуска (§4: тайминги до запуска). */}
+      {/* §3.1 (MR-100): «Тайминги и задержки» — ПЕРЕД нижней панелью запуска (§4: тайминги до запуска).
+          Блоки «Группы»/«Посты» перенесены ВЫШЕ — сразу после аккаунтов (порядок блоков = степпер). */}
       {showBlock('settings') && !isParser && !isGgr && (cfg.aiProtection || cfg.richLayout || cfg.lookingLayout || cfg.warmingLayout) && (
         <TimingSection
           workModeOptions={cfg.toggleGroups?.[1]?.options}
@@ -592,8 +595,8 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
           <div className="mb-3">
             <NumberField label="Сколько последних постов обрабатывать" value={postWindow} onChange={(n) => setPostWindow(Math.max(1, Math.min(50, n)))} min={1} max={50} suffix="1–50" />
             <div className="mt-1 text-xs text-white/40">Сколько последних постов обрабатывать, не всю историю</div>
-            <div className="mt-3 mb-1 text-xs text-white/50">Стоп-слова <span className="text-white/30">(пропускать посты с этими словами, через запятую)</span></div>
-            <input value={stopWordsText} onChange={(e) => setStopWordsText(e.target.value)} className="input h-9" placeholder="политика, скам, крипт…" />
+            <div className="mt-3 mb-1 text-xs text-white/50">Стоп-слова <span className="text-white/30">(пропускать посты с этими словами; несколько — через точку с запятой «;»)</span></div>
+            <input value={stopWordsText} onChange={(e) => setStopWordsText(e.target.value)} className="input h-9" placeholder="политика; скам; крипта…" />
             {/* §3.2 (UI-006): «Семантический фильтр к цели» / «Релевантность поста к цели» удалены по ТЗ 06.08. */}
             {/* §10.5: анализ картинок в посте — vision опишет фото, коммент будет по сути
                 изображения, а не по «[медиа]». Расход дороже: наценка «картинка ×N» из админки. */}

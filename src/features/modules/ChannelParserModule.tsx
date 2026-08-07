@@ -172,13 +172,14 @@ function ChannelParserInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: 
   const fmtCacheDate = (ts: number) => new Date(ts).toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' })
 
   const addKeywords = () => {
-    const parsed = kwInput.split(/[,\n]+/).map((s) => s.trim()).filter(Boolean)
+    // MR-104: разделитель ключевых слов — точка с запятой (и перенос строки), чтобы сама фраза могла содержать запятую.
+    const parsed = kwInput.split(/[;\n]+/).map((s) => s.trim()).filter(Boolean)
     if (!parsed.length) return
     setKeywords((k) => [...new Set([...k, ...parsed])])
     setKwInput('')
   }
   const addManualEndings = () => {
-    const parsed = manualEndInput.split(/[,\n]+/).map((s) => s.trim()).filter(Boolean)
+    const parsed = manualEndInput.split(/[;\n]+/).map((s) => s.trim()).filter(Boolean)
     if (!parsed.length) return
     setManualEndings((e) => [...new Set([...e, ...parsed])])
     setManualEndInput('')
@@ -362,8 +363,9 @@ function ChannelParserInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: 
           <div className="space-y-4">
             <div>
               <div className="label flex items-center gap-1.5"><Search size={14} /> Ключевые слова *</div>
+              <div className="mb-1 text-[11px] text-muted">Несколько слов — через точку с запятой «;» или Enter. Так фраза может содержать запятую.</div>
               <div className="flex gap-2">
-                <input value={kwInput} onChange={(e) => setKwInput(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && addKeywords()} className="input h-10 text-sm" placeholder="Слова через запятую…" />
+                <input value={kwInput} onChange={(e) => setKwInput(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && addKeywords()} className="input h-10 text-sm" placeholder="крипта; заработок в интернете; p2p…" />
                 <button type="button" onClick={addKeywords} className="btn-primary h-10 shrink-0 px-4"><Plus size={16} /> Добавить</button>
               </div>
               {keywords.length > 0 && (
@@ -412,7 +414,7 @@ function ChannelParserInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: 
               ) : (
                 <div className="space-y-2">
                   <div className="flex gap-2">
-                    <input value={manualEndInput} onChange={(e) => setManualEndInput(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && addManualEndings()} className="input h-9 text-sm" placeholder="Окончания через запятую…" />
+                    <input value={manualEndInput} onChange={(e) => setManualEndInput(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && addManualEndings()} className="input h-9 text-sm" placeholder="Окончания через ; или Enter…" />
                     <button type="button" onClick={addManualEndings} className="btn-soft h-9 shrink-0 px-3"><Plus size={15} /></button>
                   </div>
                   {manualEndings.length > 0 && (
@@ -432,7 +434,7 @@ function ChannelParserInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: 
           {/* Правая колонка: быстрые опции + фильтры + лимиты */}
           <div className="space-y-3">
             <ToggleRowInline icon={<Zap size={15} />} label="Быстрая работа" desc="Без задержек между запросами" checked={fastWork} onChange={setFastWork} />
-            <ToggleRowInline icon={<Filter size={15} />} label="Не собирать уже спарсенные" desc="Вырежем каналы из истории парсинга" checked={skipParsed} onChange={setSkipParsed} />
+            <ToggleRowInline icon={<Filter size={15} />} label="Не собирать уже спарсенные" desc="Вырежем каналы из логов парсинга" checked={skipParsed} onChange={setSkipParsed} />
             {method === 0 && keywords.length > 1 && (
               <ToggleRowInline
                 icon={<Check size={15} />}

@@ -129,7 +129,7 @@ export function ParsingHistoryPage() {
       {loading ? (
         <Card className="space-y-3"><Skeleton className="h-6 w-full" /><Skeleton className="h-6 w-full" /><Skeleton className="h-6 w-2/3" /></Card>
       ) : filtered.length === 0 ? (
-        <Card><EmptyState icon={<History size={26} />} title="История пуста" desc="Запуски парсеров появятся здесь после первого прогона." /></Card>
+        <Card><EmptyState icon={<History size={26} />} title="Логи пусты" desc="Запуски парсеров появятся здесь после первого прогона." /></Card>
       ) : (
         <Card className="p-0">
           <div className="overflow-x-auto">

@@ -426,7 +426,7 @@ export function NeuroDialogsModule() {
             </button>
 
             <p className="rounded-xl border border-line bg-elevated/60 px-3 py-2 text-xs leading-relaxed text-muted">
-              Авто-режим (кнопка «Запустить») отвечает {replyAll
+              Авто-режим (кнопка «Начать») отвечает {replyAll
                 ? <b className="text-fg">всем, кто написал последним</b>
                 : <b className="text-fg">только на непрочитанные входящие ЛС</b>} выбранных аккаунтов — сам первым никому не пишет.
               Без ключа OpenAI ответы будут шаблонными и цель диалога учтена не будет. <b className="text-fg">Переписки</b> ниже — ручной инбокс: читайте и отвечайте руками.
@@ -521,7 +521,7 @@ export function NeuroDialogsModule() {
             const name = await promptDialog({ title: 'Сохранить шаблон', message: 'Название шаблона настроек', placeholder: 'Напр. Тёплый диалог' })
             if (name) void savePreset(name, buildSettings())
           }}
-          primaryLabel={cfg.primaryAction ?? 'Запустить'}
+          primaryLabel={cfg.primaryAction ?? 'Начать'}
           stats={[
             { icon: <MessagesSquare size={18} />, color: '#06b6d4', label: 'Диалогов', value: String(dialogs.length) },
             { icon: <Users size={18} />, color: '#7145ff', label: 'Аккаунтов', value: String(selected.size), warn: !selected.size },
