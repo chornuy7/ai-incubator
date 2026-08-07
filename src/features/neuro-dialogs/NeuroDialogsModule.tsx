@@ -1,10 +1,11 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
-  Play, Sparkles, Search, MessagesSquare, Mail, Users,
-  RefreshCw, Loader2, ChevronDown, ExternalLink, Terminal, ArrowUpRight,
+  Sparkles, Search, MessagesSquare, Mail, Users,
+  RefreshCw, Loader2, ChevronDown, ExternalLink,
   Check, Image as ImageIcon,
 } from 'lucide-react'
 import { MODULES } from '@/shared/config/modules'
+import { isHidden } from '@/shared/config/routes'
 import { useApp } from '@/mocks/store'
 import { Avatar, Badge, Switch, Select, Segmented } from '@/shared/ui'
 import { AccountPicker } from '@/features/account-picker/AccountPicker'
@@ -372,20 +373,23 @@ export function NeuroDialogsModule() {
               desc="Не только новым: ИИ ответит в каждом ЛС, где последнее сообщение от собеседника — даже если оно уже прочитано"
             />
 
-            {/* §9: привязка диалогов к цели кампании — лиды пойдут к этой цели, ИИ наследует её базу знаний и этапы. */}
-            <div className="space-y-1.5">
-              <div className="flex items-center justify-between gap-2">
-                <span className="text-sm font-semibold text-fg">Цель кампании <span className="text-[11px] font-normal text-faint">(опционально)</span></span>
-                <a href="/panel/goals" className="text-[11px] font-semibold text-spark-300 hover:underline">+ Создать цель</a>
+            {/* §10 (MR-49): цели/кампании скрыты глобально — «Цель кампании» прячем вместе с ними.
+                Вернут раздел «Цели» (снимут hidden) — привязка к цели появится снова. */}
+            {!isHidden('/panel/goals') && (
+              <div className="space-y-1.5">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-sm font-semibold text-fg">Цель кампании <span className="text-[11px] font-normal text-faint">(опционально)</span></span>
+                  <a href="/panel/goals" className="text-[11px] font-semibold text-spark-300 hover:underline">+ Создать цель</a>
+                </div>
+                <Select
+                  value={goalId}
+                  onChange={setGoalId}
+                  placeholder="Без цели"
+                  options={[{ value: '', label: 'Без цели' }, ...goals.map((g) => ({ value: g.id, label: g.name }))]}
+                />
+                <p className="text-[11px] leading-relaxed text-muted">Диалоги привяжутся к цели: ИИ учтёт её этапы и базу знаний, а лиды попадут в CRM к этой цели.</p>
               </div>
-              <Select
-                value={goalId}
-                onChange={setGoalId}
-                placeholder="Без цели"
-                options={[{ value: '', label: 'Без цели' }, ...goals.map((g) => ({ value: g.id, label: g.name }))]}
-              />
-              <p className="text-[11px] leading-relaxed text-muted">Диалоги привяжутся к цели: ИИ учтёт её этапы и базу знаний, а лиды попадут в CRM к этой цели.</p>
-            </div>
+            )}
 
             <div className="space-y-2">
               <div className="flex items-center justify-between gap-2">
@@ -503,47 +507,6 @@ export function NeuroDialogsModule() {
         Если поставить «от» = 0, задача может случайно завершиться после первого же ответа. По умолчанию «от» = «до», то есть лимит фиксированный.
       </p>
 
-      {/* Заголовок не «Запуск» — так он дублировал последний шаг мастера. */}
-      <SectionCard id="sec-run" icon={<Play size={18} />} title={running ? 'Мониторинг' : 'Параметры и лимиты'} badge={running ? 'LIVE' : undefined}>
-        <LaunchPanel
-          running={running}
-          starting={starting}
-          canStart={canStart}
-          steps={!running ? <LaunchSteps steps={markCurrentStep([
-            { label: 'Аккаунты', done: accountIds.length > 0, anchor: 'sec-accounts' },
-            { label: 'Настройки', done: true, optional: true, anchor: 'sec-settings' },
-            { label: 'Запуск', done: false, anchor: 'sec-run' },
-          ])} /> : null}
-          blockedBy={!running && !canStart ? ['выберите аккаунты'] : []}
-          onStart={() => { void start(buildSettings(), `${cfg.title} · ${selected.size} акк.`) }}
-          onStop={stop}
-          onSave={async () => {
-            const name = await promptDialog({ title: 'Сохранить шаблон', message: 'Название шаблона настроек', placeholder: 'Напр. Тёплый диалог' })
-            if (name) void savePreset(name, buildSettings())
-          }}
-          primaryLabel={cfg.primaryAction ?? 'Начать'}
-          stats={[
-            { icon: <MessagesSquare size={18} />, color: '#06b6d4', label: 'Диалогов', value: String(dialogs.length) },
-            { icon: <Users size={18} />, color: '#7145ff', label: 'Аккаунтов', value: String(selected.size), warn: !selected.size },
-            { icon: <Mail size={18} />, color: '#f59e0b', label: 'Непрочит.', value: String(totalUnread) },
-            { icon: <Sparkles size={18} />, color: '#0ec464', label: 'ИИ', value: aiEnabled ? 'ON' : 'OFF' },
-          ]}
-          task={task}
-          warn={!canStart ? 'Выберите хотя бы один аккаунт' : undefined}
-          presets={presets}
-          onApplyPreset={applyPreset}
-          onDeletePreset={deletePreset}
-          extras={(
-            // Ссылка на логи — перед плавающим баром, иначе рендерилась бы под ним внизу экрана.
-            <div className="mt-4 flex justify-end">
-              <a href={task ? `/panel/tasks?task=${task.id}` : '/panel/tasks'} className="inline-flex items-center gap-1 text-xs font-semibold text-spark-300 hover:underline" title="Логи по этой задаче — в Дашборде задач">
-                <Terminal size={13} /> Логи выполнения — в Дашборде задач <ArrowUpRight size={13} />
-              </a>
-            </div>
-          )}
-        />
-      </SectionCard>
-
       <div id="nd-dialogs-anchor" className="scroll-mt-4" />
         <div className="card grid min-h-[520px] gap-0 overflow-hidden p-0 lg:grid-cols-[minmax(280px,340px)_1fr]">
           <div className="flex flex-col border-b border-line lg:border-b-0 lg:border-r">
@@ -652,6 +615,40 @@ export function NeuroDialogsModule() {
             )}
           </div>
         </div>
+
+      {/* Запуск — плавающая нижняя панель ПОСЛЕ списка диалогов, чтобы фиксированный бар их не перекрывал
+          (без обёртки-карточки: панель уходит в нижний бар, карточка осталась бы пустой). */}
+      <div id="sec-run" className="scroll-mt-24">
+        <LaunchPanel
+          running={running}
+          starting={starting}
+          canStart={canStart}
+          steps={!running ? <LaunchSteps steps={markCurrentStep([
+            { label: 'Аккаунты', done: accountIds.length > 0, anchor: 'sec-accounts' },
+            { label: 'Настройки', done: true, optional: true, anchor: 'sec-settings' },
+            { label: 'Запуск', done: false, anchor: 'sec-run' },
+          ])} /> : null}
+          blockedBy={!running && !canStart ? ['выберите аккаунты'] : []}
+          onStart={() => { void start(buildSettings(), `${cfg.title} · ${selected.size} акк.`) }}
+          onStop={stop}
+          onSave={async () => {
+            const name = await promptDialog({ title: 'Сохранить шаблон', message: 'Название шаблона настроек', placeholder: 'Напр. Тёплый диалог' })
+            if (name) void savePreset(name, buildSettings())
+          }}
+          primaryLabel={cfg.primaryAction ?? 'Начать'}
+          stats={[
+            { icon: <MessagesSquare size={18} />, color: '#06b6d4', label: 'Диалогов', value: String(dialogs.length) },
+            { icon: <Users size={18} />, color: '#7145ff', label: 'Аккаунтов', value: String(selected.size), warn: !selected.size },
+            { icon: <Mail size={18} />, color: '#f59e0b', label: 'Непрочит.', value: String(totalUnread) },
+            { icon: <Sparkles size={18} />, color: '#0ec464', label: 'ИИ', value: aiEnabled ? 'ON' : 'OFF' },
+          ]}
+          task={task}
+          warn={!canStart ? 'Выберите хотя бы один аккаунт' : undefined}
+          presets={presets}
+          onApplyPreset={applyPreset}
+          onDeletePreset={deletePreset}
+        />
+      </div>
     </div>
   )
 }

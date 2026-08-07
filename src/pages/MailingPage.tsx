@@ -15,6 +15,7 @@ import { fetchLeads } from '@/api/leadsApi'
 import { confirmDialog, promptDialog } from '@/shared/lib/dialog'
 import { usePlan, planHasModule } from '@/features/billing/plan'
 import { ModuleNotPaid } from '@/features/billing/ModuleNotPaid'
+import { isHidden } from '@/shared/config/routes'
 // §3.1 (MR-114): рассылка приведена к общей структуре модулей — те же переиспользуемые
 // блоки (SectionCard + нижняя LaunchPanel со степпером), что и в LiveModule/парсерах.
 import { SectionCard, LaunchPanel, LaunchSteps, markCurrentStep, TaskStartedModal } from '@/features/modules/shared'
@@ -282,7 +283,7 @@ export function MailingPage() {
 
         {/* 3. Сообщение и цель. */}
         <div id="sec-message" className="scroll-mt-24">
-          <SectionCard icon={<MessageSquareText size={18} />} title="Сообщение и цель" required={needOwnText}>
+          <SectionCard icon={<MessageSquareText size={18} />} title="Сообщение" required={needOwnText}>
             {goalId && (
               <label className="mb-2 flex cursor-pointer items-start gap-2">
                 <input type="checkbox" checked={ownText} onChange={(e) => setOwnText(e.target.checked)} className="mt-0.5 h-4 w-4 accent-spark" />
@@ -306,7 +307,9 @@ export function MailingPage() {
                         «Альтернативное первое сообщение:» — одинаковая рассылка ловит спамблок быстрее.
                       </span>}
                 </div>}
-            {goals.length > 0 && (
+            {/* §10 (MR-49): цели/кампании скрыты глобально — селектор цели прячем вместе с ними.
+                Когда раздел «Цели» вернут (снимут hidden), выбор цели и нейрочатинг под целью появятся снова. */}
+            {!isHidden('/panel/goals') && goals.length > 0 && (
               <div className="mt-2">
                 <div className="mb-1 text-xs text-white/50">Цель (опционально — генерация к цели)</div>
                 <Select value={goalId} onChange={setGoalId} options={[{ value: '', label: 'Без цели' }, ...goals.map((g) => ({ value: g.id, label: g.name }))]} />
@@ -353,7 +356,7 @@ export function MailingPage() {
 
         {/* 4. Настройки/Безопасность — необязательный шаг (тонкая подстройка). */}
         <div id="sec-settings" className="scroll-mt-24">
-          <SectionCard icon={<Shield size={18} />} title="Безопасность">
+          <SectionCard icon={<Shield size={18} />} title="Защита">
             {/* §11: паритет с masslooking/warming — уровень защиты и шаблон задержек (множители пауз). */}
             <div className="mb-3 grid gap-3 sm:grid-cols-2">
               <div>
@@ -457,7 +460,7 @@ export function MailingPage() {
                 { label: 'Аккаунты', done: selected.size > 0, anchor: 'sec-accounts' },
                 { label: 'Получатели', done: numbers.length > 0, anchor: 'sec-targets' },
                 { label: 'Сообщение', done: messageReady, anchor: 'sec-message' },
-                { label: 'Настройки', done: true, optional: true, anchor: 'sec-settings' },
+                { label: 'Защита', done: true, optional: true, anchor: 'sec-settings' },
                 { label: 'Запуск', done: false, anchor: 'sec-run' },
               ])} /> : null}
               blockedBy={blockedBy}
