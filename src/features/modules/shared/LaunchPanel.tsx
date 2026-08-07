@@ -1,6 +1,6 @@
 import { Play, Save, AlertTriangle, Loader2, Bookmark, X, ArrowUpRight } from 'lucide-react'
 import type { ModuleTask, ModulePreset, ModuleTaskSettings } from '@/api/modulesApi'
-import { LaunchStat } from './index'
+import { cn } from '@/shared/lib/utils'
 import { FloatingBar } from './FloatingBar'
 import { presetHex } from './SavePresetModal'
 
@@ -32,16 +32,6 @@ export function LaunchPanel({
 }) {
   return (
     <>
-      <div className="mb-4 grid grid-cols-2 gap-2.5 lg:grid-cols-4">
-        {stats.map((s) => <LaunchStat key={s.label} {...s} />)}
-      </div>
-      {!running && cost}
-      {warn && !running && (
-        <div className="mb-4 flex items-center gap-2.5 rounded-2xl border border-rose-500/30 bg-rose-500/8 p-4">
-          <AlertTriangle size={18} className="text-rose-400" />
-          <div className="text-sm text-rose-300">{warn}</div>
-        </div>
-      )}
       {onApplyPreset && presets && presets.length > 0 && (
         <div className="mb-3 rounded-2xl border border-line bg-elevated/40 p-3">
           <div className="mb-2 flex items-center gap-2 text-xs font-bold uppercase tracking-wide text-muted">
@@ -91,33 +81,46 @@ export function LaunchPanel({
       {/* §4 (UI-001): раскладка нижней панели по решению созвона — ШАБЛОН слева,
           параметры/навигация (шаги + чего не хватает) по ЦЕНТРУ, кнопка «Начать» справа
           (с запасом под плавающие виджеты). */}
+      {/* Вся сводка запуска — В САМОЙ ПАНЕЛИ, компактными чипами: раньше она жила
+          широкими плитками выше по странице, и до кнопки «Начать» приходилось помнить,
+          что там было. Панель держим узкой: две строки, мелкий шрифт, детали — в
+          подсказках. Кнопки «Сохранить шаблон» и «Начать» стоят рядом справа. */}
       <FloatingBar>
-        <div className="grid w-full grid-cols-1 items-center gap-x-3 gap-y-2 sm:grid-cols-[auto_1fr_auto]">
-          {/* Слева — шаблон */}
-          <div className="flex justify-center sm:justify-start">
-            <button type="button" onClick={onSave} className="btn-ghost h-11 text-sm"><Save size={15} /> Сохранить шаблон</button>
+        <div className="grid w-full grid-cols-1 items-center gap-x-4 gap-y-1.5 sm:grid-cols-[1fr_auto]">
+          {/* Слева — сводка и навигация */}
+          <div className="flex min-w-0 flex-col gap-1">
+            <div className="flex flex-wrap items-center justify-center gap-x-3 gap-y-1 text-[11px] text-muted sm:justify-start">
+              {stats.map((s) => (
+                <span key={s.label} className="inline-flex items-center gap-1" title={s.label}>
+                  <span className={cn('shrink-0', s.color)}>{s.icon}</span>
+                  <span className="uppercase tracking-wide">{s.label}</span>
+                  <b className={cn('font-semibold', s.warn ? 'text-amber-300' : 'text-fg')}>{s.value}</b>
+                </span>
+              ))}
+              {!running && cost}
+            </div>
+            <div className="flex flex-wrap items-center justify-center gap-x-3 gap-y-1 sm:justify-start">
+              {steps}
+              {!running && (blockedBy.length > 0 || warn) && (
+                <span className="inline-flex items-center gap-1.5 text-[11px] text-amber-300">
+                  <AlertTriangle size={12} className="shrink-0" />
+                  {blockedBy.length ? `Осталось: ${blockedBy.join(' · ')}` : warn}
+                </span>
+              )}
+            </div>
           </div>
-          {/* По центру — навигация (шаги) и, если запуск заблокирован, чего не хватает */}
-          <div className="flex min-w-0 flex-col items-center gap-1">
-            {steps}
-            {!running && blockedBy.length > 0 && (
-              <div className="flex items-center gap-1.5 text-center text-[11px] text-amber-300">
-                <AlertTriangle size={12} className="shrink-0" />
-                <span>Осталось: {blockedBy.join(' · ')}</span>
-              </div>
-            )}
-          </div>
-          {/* Справа — «Начать» */}
+          {/* Справа — «Сохранить шаблон» и «Начать» рядом */}
           <div className="flex flex-wrap items-center justify-center gap-2 sm:justify-end sm:pr-14">
             {running && (
-              <a href="/panel/tasks" className="btn-ghost h-11 text-sm" title="Управление, прогресс и логи — в Дашборде задач"><ArrowUpRight size={15} /> В Дашборде задач</a>
+              <a href="/panel/tasks" className="btn-ghost h-10 text-sm" title="Управление, прогресс и логи — в Дашборде задач"><ArrowUpRight size={15} /> В Дашборде задач</a>
             )}
+            <button type="button" onClick={onSave} className="btn-ghost h-10 text-sm"><Save size={15} /> Сохранить шаблон</button>
             <button
               type="button"
               onClick={onStart}
               disabled={starting || !canStart}
               title={!canStart && blockedBy.length ? `Осталось: ${blockedBy.join('; ')}` : undefined}
-              className="btn-primary h-11 min-w-[160px]"
+              className="btn-primary h-10 min-w-[150px]"
             >
               {starting ? <Loader2 size={17} className="animate-spin" /> : <Play size={17} />} {primaryLabel}
             </button>

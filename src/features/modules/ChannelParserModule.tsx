@@ -527,7 +527,7 @@ function ChannelParserInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: 
             ...(busySelectedCount ? [`${busySelectedCount} акк. заняты в другом модуле`] : !selected.size ? ['выберите аккаунты'] : []),
             ...(keywords.length ? [] : ['добавьте хотя бы одно ключевое слово']),
           ] : []}
-          cost={<LaunchCost moduleKey={moduleKey} actions={limit} />}
+          cost={<LaunchCost compact moduleKey={moduleKey} actions={limit} />}
           stats={launchStats}
           task={task}
           warn={warn}

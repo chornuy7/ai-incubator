@@ -362,7 +362,7 @@ function Inner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: string }) {
             ...(busySelectedCount ? [`${busySelectedCount} акк. заняты`] : !selected.size ? ['выберите аккаунты'] : []),
             ...(targetList.length ? [] : [`добавьте ${P.sourceTitle.toLowerCase()}`]),
           ] : []}
-          cost={<LaunchCost moduleKey={moduleKey} actions={P.unit ? (limits[lkey(P.unit.limitLabel)] || 0) : 0} />}
+          cost={<LaunchCost compact moduleKey={moduleKey} actions={P.unit ? (limits[lkey(P.unit.limitLabel)] || 0) : 0} />}
           presets={presets} onApplyPreset={applyPreset} onDeletePreset={deletePreset} />
       </SectionCard>
 

@@ -13,13 +13,18 @@ import { coins as fmtCoins } from '@/shared/lib/utils'
  *    потому что длина промпта и ответа заранее неизвестна.
  * Если истории ещё нет — честно говорим, что считать не на чем, вместо выдуманного числа.
  */
-export function LaunchCost({ moduleKey, actions, accounts, delaySec }: {
+export function LaunchCost({ moduleKey, actions, accounts, delaySec, compact }: {
   moduleKey: string
   actions: number
   /** Сколько аккаунтов делят работу — для оценки времени (§10.1). */
   accounts?: number
   /** Диапазон задержки между действиями, секунды [min, max] — для времени. */
   delaySec?: [number, number]
+  /**
+   * Компактно — строкой-чипом для нижней панели запуска: там место дорогое, а
+   * подробности (сколько действий × цена, сколько токенов) уезжают в подсказку.
+   */
+  compact?: boolean
 }) {
   const [pricing, setPricing] = useState<Pricing | null>(null)
   useEffect(() => { void fetchPricing().then(setPricing).catch(() => {}) }, [])
@@ -45,6 +50,25 @@ export function LaunchCost({ moduleKey, actions, accounts, delaySec }: {
   const tokensCost = r3((tokens / 1000) * pricing.coinsPer1kTokens)
   const total = r3(actionsCost + tokensCost)
   const fmt = fmtCoins
+
+  // Компактный вид для нижней панели: цена и время — чипами, детали — в подсказке.
+  if (compact) {
+    const detail = `${n} ${plural(n, 'действие', 'действия', 'действий')} × ${price} ⚡ = ${fmt(actionsCost)} ⚡`
+      + (avgTokens > 0 ? ` · ИИ ≈ ${Math.round(tokens).toLocaleString('ru-RU')} токенов (${fmt(tokensCost)} ⚡)` : ' · расход ИИ добавится по факту')
+    return (
+      <>
+        <span className="inline-flex items-center gap-1 text-amber-300" title={detail}>
+          <Zap size={12} fill="currentColor" />
+          <b className="font-semibold">{avgTokens ? '≈' : ''}{fmt(total)} ⚡</b>
+        </span>
+        {timeMin && (
+          <span className="inline-flex items-center gap-1 text-emerald-300" title="Ориентировочное время прогона">
+            <Clock size={12} /> {timeMin === timeMax ? timeMin : `${timeMin}–${timeMax}`}
+          </span>
+        )}
+      </>
+    )
+  }
 
   return (
     <div className="mb-4 flex flex-wrap items-center gap-x-2 gap-y-1 rounded-2xl border border-amber-500/25 bg-amber-500/8 px-4 py-2.5 text-sm">

@@ -729,7 +729,7 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
           onStop={stop}
           onSave={handleSave}
           primaryLabel={cfg.primaryAction ?? 'Начать'}
-          cost={<LaunchCost moduleKey={moduleKey} actions={maxActions} accounts={selected.size} delaySec={delays.action} />}
+          cost={<LaunchCost compact moduleKey={moduleKey} actions={maxActions} accounts={selected.size} delaySec={delays.action} />}
           stats={launchStats}
           task={task}
           warn={warn}
@@ -850,7 +850,8 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
               : task?.status === 'done' ? 'Завершено' : 'Готов к запуску'}
           </span>
           {selected.size > 0 && <span className="text-xs text-muted">· {selected.size} акк.</span>}
-          {warn && !running && <span className="text-xs text-amber-300">· {warn}</span>}
+          {/* Что мешает запуску — теперь в нижней панели рядом с кнопкой; здесь это
+              дублировало то же сообщение вторым текстом. */}
           <a
             href={`/panel/tasks?module=${moduleKey}${task ? `&task=${task.id}` : ''}`}
             className="ml-auto inline-flex items-center gap-1 text-xs font-semibold text-spark-300 hover:underline"
