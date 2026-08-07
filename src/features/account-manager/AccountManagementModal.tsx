@@ -52,7 +52,14 @@ function fmtTime(ts: string) {
   return d.toLocaleString('ru-RU', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })
 }
 
-export function AccountManagementModal({ account, onClose }: { account: TgAccount | null; onClose: () => void }) {
+/**
+ * Тело карточки аккаунта: баннер, вкладки и их содержимое.
+ *
+ * Вынесено из модалки, чтобы одну и ту же карточку можно было показать двумя способами:
+ * боковой панелью (user-панель) и раскрытой строкой прямо под аккаунтом (админка).
+ * Логика загрузки и действий живёт здесь — оба способа получают её одинаковой.
+ */
+export function AccountCardBody({ account }: { account: TgAccount }) {
   const pushToast = useApp((s) => s.pushToast)
   const loadAccountBusy = useApp((s) => s.loadAccountBusy)
   const [tab, setTab] = useState<TabKey>('profile')
@@ -62,7 +69,6 @@ export function AccountManagementModal({ account, onClose }: { account: TgAccoun
   const [releasing, setReleasing] = useState(false)
 
   const load = useCallback(async (opts?: { spam?: boolean }) => {
-    if (!account) return
     setLoading(true)
     try {
       const s = await fetchAccountStats(account.id, opts)
@@ -75,9 +81,10 @@ export function AccountManagementModal({ account, onClose }: { account: TgAccoun
   }, [account, pushToast])
 
   useEffect(() => {
-    if (!account) { setStats(null); setTab('profile'); return }
+    setStats(null)
+    setTab('profile')
     void load()
-  }, [account?.id])
+  }, [account.id])
 
   const runSpamCheck = async () => {
     setSpamChecking(true)
@@ -90,7 +97,6 @@ export function AccountManagementModal({ account, onClose }: { account: TgAccoun
   }
 
   const runRelease = async () => {
-    if (!account) return
     setReleasing(true)
     try {
       const r = await releaseAccountLock(account.id)
@@ -105,19 +111,6 @@ export function AccountManagementModal({ account, onClose }: { account: TgAccoun
   }
 
   return (
-    <Modal
-      open={!!account}
-      onClose={onClose}
-      size="xl"
-      // Карточка аккаунта — боковая панель, а не попап посреди экрана: не закрывает
-      // список и читается как «деталь выбранной строки» (правка заказчика).
-      side
-      icon={<div className="grid h-10 w-10 place-items-center rounded-xl bg-iris-500/15 text-iris-300"><User size={20} /></div>}
-      title="Управление аккаунтом"
-      subtitle={account ? `${account.name} · @${stats?.profile.username ?? account.username}` : ''}
-      footer={<button onClick={onClose} className="btn-primary h-10">Закрыть</button>}
-    >
-      {account && (
         <div className="space-y-4">
           <HeroBanner account={account} stats={stats} />
 
@@ -165,7 +158,29 @@ export function AccountManagementModal({ account, onClose }: { account: TgAccoun
             </div>
           )}
         </div>
-      )}
+  )
+}
+
+/**
+ * Та же карточка боковой панелью — как её открывает user-панель.
+ * В админке карточка разворачивается прямо под строкой аккаунта, там вызывается
+ * AccountCardBody напрямую.
+ */
+export function AccountManagementModal({ account, onClose }: { account: TgAccount | null; onClose: () => void }) {
+  return (
+    <Modal
+      open={!!account}
+      onClose={onClose}
+      size="xl"
+      // Боковая панель, а не попап посреди экрана: не закрывает список
+      // и читается как «деталь выбранной строки».
+      side
+      icon={<div className="grid h-10 w-10 place-items-center rounded-xl bg-iris-500/15 text-iris-300"><User size={20} /></div>}
+      title="Управление аккаунтом"
+      subtitle={account ? `${account.name} · @${account.username}` : ''}
+      footer={<button onClick={onClose} className="btn-primary h-10">Закрыть</button>}
+    >
+      {account && <AccountCardBody account={account} />}
     </Modal>
   )
 }

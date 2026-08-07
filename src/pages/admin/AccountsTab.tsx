@@ -1,6 +1,6 @@
-import { useEffect, useMemo, useState } from 'react'
+import { Fragment, useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Search, Play, Pause, Square, RefreshCw, Wifi, WifiOff, Trash2, RotateCcw, Upload, X } from 'lucide-react'
+import { Search, Play, Pause, Square, RefreshCw, Wifi, WifiOff, Trash2, RotateCcw, Upload, X, ChevronRight } from 'lucide-react'
 import { Card, EmptyState } from '@/shared/ui'
 import { cn } from '@/shared/lib/utils'
 import { useApp } from '@/mocks/store'
@@ -9,7 +9,8 @@ import type { TgAccount } from '@/shared/types'
 import { STATUS_LABEL_RU } from './MonitoringTab'
 // §5.2 (MR-35): та же карточка аккаунта, что и в user-панели — полная информация
 // (профиль/работа/прокси) и действия. Не дублируем, переиспользуем один компонент.
-import { AccountManagementModal } from '@/features/account-manager/AccountManagementModal'
+// В админке она разворачивается под строкой аккаунта, поэтому берём тело без модалки.
+import { AccountCardBody } from '@/features/account-manager/AccountManagementModal'
 
 /**
  * §10.10: управление аккаунтами из sudo-админки — полный список ВСЕХ аккаунтов
@@ -23,6 +24,13 @@ const TONE: Record<string, string> = {
 }
 const bandTone = (b?: string) => (b === 'high' ? 'text-spark-300' : b === 'mid' ? 'text-amber-300' : b === 'low' ? 'text-red-300' : 'text-muted')
 
+/**
+ * Из каких статусов сервер вообще пускает в паузу — зеркало TRANSITIONS
+ * в server/lib/accountStatus.js. Раньше кнопка «Пауза» висела на любой строке,
+ * и на reauth/invalid сервер отвечал ILLEGAL_TRANSITION — оператор жал и получал ошибку.
+ */
+const PAUSABLE = new Set(['active', 'warming', 'floodwait', 'quarantine', 'spamblock'])
+
 export function AccountsTab() {
   const pushToast = useApp((s) => s.pushToast)
   const [accounts, setAccounts] = useState<TgAccount[] | null>(null)
@@ -34,7 +42,11 @@ export function AccountsTab() {
   // восстановлением/удалением. 'live' — рабочие, 'trash' — удалённые.
   const [view, setView] = useState<'live' | 'trash'>('live')
   // §5.2 (MR-35): выбранный аккаунт для карточки-деталей (клик по строке).
-  const [detailAcc, setDetailAcc] = useState<TgAccount | null>(null)
+  // Карточка раскрывается прямо под строкой аккаунта, а не боковой панелью:
+  // так видно, к какой именно строке относится, и список остаётся на месте.
+  const [expandedId, setExpandedId] = useState<string | null>(null)
+  // Свернули — перечитываем список: внутри карточки могли снять лок или сменить статус.
+  const collapse = () => { setExpandedId(null); void load() }
   const nav = useNavigate()
 
   const load = async () => {
@@ -162,11 +174,19 @@ export function AccountsTab() {
           <tbody>
             {rows.map((a) => {
               const paused = a.status === 'pause'
+              const open = expandedId === a.id
               return (
-                <tr key={a.id} className="border-b border-line/40 last:border-0">
+                <Fragment key={a.id}>
+                <tr className={cn('border-b border-line/40 last:border-0', open && 'bg-elevated/40')}>
                   <td className="px-4 py-2.5">
-                    {/* Клик по аккаунту открывает ту же карточку деталей, что и в user-панели (MR-35). */}
-                    <button onClick={() => setDetailAcc(a)} title="Открыть карточку аккаунта" className="group flex items-center gap-2.5 text-left">
+                    {/* Клик по аккаунту раскрывает ту же карточку деталей, что и в user-панели (MR-35). */}
+                    <button
+                      onClick={() => (open ? collapse() : setExpandedId(a.id))}
+                      title={open ? 'Свернуть карточку' : 'Открыть карточку аккаунта'}
+                      aria-expanded={open}
+                      className="group flex items-center gap-2.5 text-left"
+                    >
+                      <ChevronRight size={14} className={cn('shrink-0 text-muted transition-transform', open && 'rotate-90 text-spark-300')} />
                       <span className="grid h-7 w-7 shrink-0 place-items-center rounded-full bg-elevated text-[11px] font-bold text-muted">{(a.name || '?')[0]}</span>
                       <span className="min-w-0">
                         <span className="block truncate font-medium text-fg group-hover:text-spark-200">{a.name}</span>
@@ -208,17 +228,22 @@ export function AccountsTab() {
                               <Square size={12} /> Стоп
                             </button>
                           )}
+                          {/* Пауза НЕ останавливает текущую работу — она лишь исключает
+                              аккаунт из выдачи в новые задачи (server: canAssign → isRunnable).
+                              Поэтому пока аккаунт занят, показываем только «Стоп»: пауза там
+                              ничего не даст и вводит в заблуждение. */}
                           {paused ? (
                             <button onClick={() => void resume(a)} disabled={busy === a.id}
                               className="inline-flex items-center gap-1 rounded-lg border border-spark-500/40 bg-spark-500/10 px-2 py-1 text-xs text-spark-200 hover:bg-spark-500/15 disabled:opacity-40">
                               <Play size={12} /> Запустить
                             </button>
-                          ) : (
+                          ) : !a.busyIn && PAUSABLE.has(a.status) ? (
                             <button onClick={() => void pause(a)} disabled={busy === a.id}
+                              title="Не выдавать аккаунт в новые задачи. Текущую работу не трогает."
                               className="inline-flex items-center gap-1 rounded-lg border border-line px-2 py-1 text-xs text-muted hover:border-amber-500/40 hover:text-amber-300 disabled:opacity-40">
                               <Pause size={12} /> Пауза
                             </button>
-                          )}
+                          ) : null}
                           <button onClick={() => void toTrash(a)} disabled={busy === a.id} title="В корзину"
                             className="inline-flex items-center gap-1 rounded-lg border border-line px-2 py-1 text-xs text-muted hover:border-red-500/40 hover:text-red-300 disabled:opacity-40">
                             <Trash2 size={12} />
@@ -228,6 +253,24 @@ export function AccountsTab() {
                     </div>
                   </td>
                 </tr>
+
+                {/* Карточка аккаунта раскрытой строкой — под тем аккаунтом, к которому относится. */}
+                {open && (
+                  <tr className="border-b border-line/40 bg-elevated/40">
+                    <td colSpan={6} className="px-4 pb-4 pt-0">
+                      <div className="rounded-2xl border border-line bg-surface p-4">
+                        <div className="mb-3 flex items-center justify-between gap-3">
+                          <span className="text-xs font-semibold uppercase tracking-wide text-muted">Управление аккаунтом</span>
+                          <button onClick={collapse} className="btn-icon" aria-label="Свернуть карточку">
+                            <X size={16} />
+                          </button>
+                        </div>
+                        <AccountCardBody account={a} />
+                      </div>
+                    </td>
+                  </tr>
+                )}
+                </Fragment>
               )
             })}
             {!rows.length && (
@@ -236,10 +279,6 @@ export function AccountsTab() {
           </tbody>
         </table>
       </Card>
-
-      {/* Карточка аккаунта из user-панели: полная информация + действия (MR-35).
-          После закрытия перезагружаем список — внутри могли снять лок/сменить статус. */}
-      <AccountManagementModal account={detailAcc} onClose={() => { setDetailAcc(null); void load() }} />
     </div>
   )
 }
