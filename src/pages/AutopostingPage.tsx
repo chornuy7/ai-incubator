@@ -1,19 +1,25 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Megaphone, Send, Info, CalendarClock, Pencil, Trash2, Play, X } from 'lucide-react'
+import { Megaphone, Info, CalendarClock, Pencil, Trash2, Play, X, Users, Radio, MessageSquareText, Target } from 'lucide-react'
 import { PageHeader, Card, NumberField } from '@/shared/ui'
 import { useApp } from '@/mocks/store'
 import { AccountPicker } from '@/features/account-picker/AccountPicker'
 import { MessageComposer } from '@/features/composer/MessageComposer'
 import { useSession } from '@/features/auth/session'
-import { startModuleTask } from '@/api/modulesApi'
-import { confirmDialog } from '@/shared/lib/dialog'
+import { type ModuleTaskSettings } from '@/api/modulesApi'
+import { confirmDialog, promptDialog } from '@/shared/lib/dialog'
 import {
   fetchAutomationRules, createAutomationRule, updateAutomationRule, deleteAutomationRule, runAutomationRuleNow,
   type AutomationRule, type AutomationSchedule,
 } from '@/api/automationApi'
 import { usePlan, planHasModule } from '@/features/billing/plan'
 import { ModuleNotPaid } from '@/features/billing/ModuleNotPaid'
+// §3.1 (MR-115): автопостинг приведён к общей структуре модулей — те же переиспользуемые
+// блоки (SectionCard + нижняя LaunchPanel со степпером), что и в LiveModule/парсерах.
+// Публикации сохраняются как правила автоматизации (moduleKey='autoposting') и переживают рестарт.
+import { SectionCard, LaunchPanel, LaunchSteps, markCurrentStep, TaskStartedModal } from '@/features/modules/shared'
+import { LaunchCost } from '@/features/modules/shared/LaunchCost'
+import { useModuleTask } from '@/features/modules/shared/useModuleTask'
 
 /** Локальная дата-время в формат `datetime-local` (без сдвига в UTC, как делает toISOString). */
 function toLocalInput(ts: number): string {
@@ -42,7 +48,9 @@ export function AutopostingPage() {
   const [media, setMedia] = useState<string[]>([])
   const [delayMin, setDelayMin] = useState(60)
   const [delayMax, setDelayMax] = useState(180)
-  const [launching, setLaunching] = useState(false)
+  // §11: сохранение запланированного поста (правило автоматизации) — свой индикатор,
+  // немедленная публикация («Сейчас») идёт через общую машину задач (useModuleTask).
+  const [savingRule, setSavingRule] = useState(false)
 
   // §11: пост можно опубликовать сразу или запланировать. Планирование не плодит второй
   // планировщик — это правило автоматизации с moduleKey='autoposting' (§6), поэтому
@@ -59,6 +67,10 @@ export function AutopostingPage() {
   const [loadingRules, setLoadingRules] = useState(true)
   const [showSpent, setShowSpent] = useState(false)
 
+  // Общая машина задач модуля — как у остальных модулей: немедленная публикация,
+  // состояние, шаблоны, поп-ап со ссылкой в Дашборд задач.
+  const { running, starting, start, stop, savePreset, deletePreset, presets, task, justStarted, dismissJustStarted } = useModuleTask('autoposting')
+
   // «Отработавшее» = разовое правило, которое уже выключилось после запуска. Оно ничего
   // больше не сделает, но занимало место наравне с живыми (баг 10.5-b).
   const spentRules = useMemo(() => rules.filter((r) => !r.enabled && r.schedule?.type === 'once'), [rules])
@@ -74,7 +86,7 @@ export function AutopostingPage() {
   const me = useSession((s) => s.user)
   const canWrite = !me || me.isAdmin
   const ready = selected.size > 0 && channels.length > 0 && text.trim().length > 0
-  const canLaunch = canWrite && ready && !launching
+  const canStart = canWrite && ready
 
   const loadRules = async () => {
     setLoadingRules(true)
@@ -90,7 +102,7 @@ export function AutopostingPage() {
     return { type: 'interval', intervalMinutes: schedInterval }
   }
 
-  const settings = () => ({
+  const settings = (): ModuleTaskSettings => ({
     accountIds: [...selected],
     targets: channels,
     promptText: text.trim(),
@@ -152,15 +164,28 @@ export function AutopostingPage() {
     }
   }
 
+  const handleSave = async () => {
+    const n = await promptDialog({ title: 'Сохранить шаблон', message: 'Название шаблона настроек поста', placeholder: 'Напр. Анонс' })
+    if (n) void savePreset(n, settings())
+  }
+
+  // Восстановить настройки из шаблона (аккаунты не трогаем).
+  const applyPreset = (s: ModuleTaskSettings) => {
+    if (Array.isArray(s.targets)) setChannelsText(s.targets.join('\n'))
+    if (typeof s.promptText === 'string') setText(s.promptText)
+    if (Array.isArray(s.mediaUrls)) setMedia(s.mediaUrls)
+    if (s.delays?.action) { setDelayMin(s.delays.action[0]); setDelayMax(s.delays.action[1]) }
+  }
+
   async function launch() {
-    setLaunching(true)
+    // «Сейчас» — немедленная задача через общую машину (поп-ап со ссылкой в Дашборд задач).
+    if (mode === 'now') {
+      await start(settings(), `Автопостинг · ${channels.length} каналов`)
+      return
+    }
+    // «По расписанию» — сохраняем/обновляем правило автоматизации (публикация сохраняется).
+    setSavingRule(true)
     try {
-      if (mode === 'now') {
-        await startModuleTask('autoposting', settings())
-        pushToast({ type: 'success', title: 'Автопостинг создан', desc: `${channels.length} каналов · ${selected.size} аккаунтов` })
-        nav('/panel/tasks')
-        return
-      }
       const payload = {
         // Автоимя должно РАЗЛИЧАТЬ посты: раньше все безымянные звались «Пост в N канал(ов)»,
         // и в списке висели одинаковые карточки, а диалог удаления подставлял то же неуникальное
@@ -183,11 +208,26 @@ export function AutopostingPage() {
       await loadRules()
     } catch (e) {
       pushToast({ type: 'error', title: 'Не удалось сохранить', desc: e instanceof Error ? e.message : '' })
-    } finally { setLaunching(false) }
+    } finally { setSavingRule(false) }
   }
 
   const seg = (active: boolean) =>
     `flex-1 rounded-lg px-3 py-1.5 text-sm font-semibold transition-all ${active ? 'bg-spark-gradient text-[#04150c]' : 'text-muted hover:text-fg'}`
+
+  const primaryLabel = mode === 'schedule' ? (editingId ? 'Сохранить изменения' : 'Запланировать') : 'Опубликовать'
+
+  const launchStats = [
+    { icon: <Users size={18} />, color: 'text-iris-300', label: 'Аккаунты', value: String(selected.size), warn: selected.size === 0 },
+    { icon: <Radio size={18} />, color: 'text-cyan-300', label: 'Каналы', value: String(channels.length), warn: channels.length === 0 },
+    { icon: <CalendarClock size={18} />, color: 'text-amber-300', label: 'Режим', value: mode === 'now' ? 'Сейчас' : 'Расписание' },
+  ]
+
+  const blockedBy = !canStart ? [
+    ...(canWrite ? [] : ['только администратор']),
+    ...(selected.size ? [] : ['выберите аккаунты']),
+    ...(channels.length ? [] : ['добавьте каналы']),
+    ...(text.trim() ? [] : ['введите текст поста']),
+  ] : []
 
   return (
     <div>
@@ -202,24 +242,32 @@ export function AutopostingPage() {
         <span>Аккаунт-отправитель должен быть <b>админом</b> канала с правом публикации. Постим только в свои каналы — риска бана нет.</span>
       </Card>
 
-      <div className="grid gap-4 lg:grid-cols-2">
-        <Card className="p-4">
-          <div className="mb-2 text-sm font-semibold text-fg">Аккаунты (админы каналов)</div>
+      <div className="space-y-4">
+        <TaskStartedModal task={justStarted} moduleTitle="Автопостинг" onClose={dismissJustStarted} />
+
+        {/* 1. Аккаунты — единый полноширинный выбор, как во всех модулях. */}
+        <div id="sec-accounts" className="scroll-mt-24">
           <AccountPicker selected={selected} onChange={setSelected} selectedTitle="Выбрано для постинга" />
-        </Card>
+        </div>
 
-        <div className="space-y-4">
-          <Card className="p-4">
-            <div className="mb-1 text-xs text-white/50">Каналы/группы ({channels.length}) — свои, где аккаунт админ</div>
+        {/* 2. Каналы (аналог блока «Цели/Каналы» в общей структуре). */}
+        <div id="sec-targets" className="scroll-mt-24">
+          <SectionCard icon={<Target size={18} />} title="Каналы/группы" badge={String(channels.length)} required>
+            <div className="mb-1 text-xs text-white/50">Свои каналы/группы, где аккаунт — админ с правом публикации</div>
             <textarea className="input min-h-[80px] font-mono text-sm" value={channelsText} onChange={(e) => setChannelsText(e.target.value)} placeholder={'@my_channel\nhttps://t.me/my_group'} />
-          </Card>
+          </SectionCard>
+        </div>
 
-          <Card className="p-4">
+        {/* 3. Текст поста. */}
+        <div id="sec-message" className="scroll-mt-24">
+          <SectionCard icon={<MessageSquareText size={18} />} title="Текст поста" required>
             <MessageComposer value={text} onChange={setText} media={media} onMedia={setMedia} label="Текст поста" placeholder="Текст, который опубликуется в каналах…" />
-          </Card>
+          </SectionCard>
+        </div>
 
-          <Card className="p-4">
-            <div className="mb-2 text-sm font-semibold text-fg">Когда публиковать</div>
+        {/* 4. Публикация и темп — необязательный шаг («Сейчас» ничего не требует). */}
+        <div id="sec-settings" className="scroll-mt-24">
+          <SectionCard icon={<CalendarClock size={18} />} title="Публикация и темп" badge={mode === 'now' ? 'Сейчас' : 'Расписание'}>
             <div className="mb-3 flex gap-1 rounded-xl bg-elevated p-1">
               <button onClick={() => setMode('now')} className={seg(mode === 'now')}>Сейчас</button>
               <button onClick={() => setMode('schedule')} className={seg(mode === 'schedule')}>По расписанию</button>
@@ -272,74 +320,89 @@ export function AutopostingPage() {
                 <NumberField value={delayMax} onChange={setDelayMax} min={delayMin} />
               </label>
             </div>
-            <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-xs text-white/50">
-              <span>Каналов: <b className="text-white">{channels.length}</b></span>
-              <span>Аккаунтов: <b className="text-white">{selected.size}</b></span>
-            </div>
             {!canWrite && (
               <div className="mt-3 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-200">
                 Публикацию создаёт только администратор (единый отправитель). У вас нет прав на отправку.
               </div>
             )}
-            <div className="mt-3 flex gap-2">
-              <button onClick={() => void launch()} disabled={!canLaunch} className="btn-primary h-10 flex-1 disabled:opacity-40">
-                {mode === 'schedule' ? <CalendarClock size={16} /> : <Send size={16} />}
-                {launching ? 'Сохранение…' : mode === 'now' ? 'Опубликовать' : editingId ? 'Сохранить изменения' : 'Запланировать'}
-              </button>
-              {editingId && (
-                <button onClick={resetForm} className="btn-ghost h-10" title="Отменить редактирование"><X size={16} /> Отмена</button>
-              )}
-            </div>
-          </Card>
+            {editingId && (
+              <button onClick={resetForm} className="btn-ghost mt-3 h-9 text-sm" title="Отменить редактирование запланированного поста"><X size={15} /> Отменить редактирование</button>
+            )}
+          </SectionCard>
         </div>
-      </div>
 
-      {/* §11: запланированные посты — их можно отредактировать (аккаунты, каналы, текст, время),
-          опубликовать досрочно или удалить. Это те же правила автоматизации, вид со стороны постинга. */}
-      <Card className="mt-4 p-4">
-        <div className="mb-3 flex items-center gap-2">
-          <CalendarClock size={16} className="text-spark-400" />
-          <span className="font-display text-base font-bold text-fg">Запланированные посты</span>
-          <span className="rounded-md bg-spark-500/12 px-2 py-0.5 text-xs font-bold text-spark-300">{activeRules.length}</span>
-          {/* Разовое правило после срабатывания навсегда остаётся в списке со статусом «выключен».
-              За месяц ежедневной работы список превращается в свалку мёртвых записей, среди которых
-              надо выискивать живые (баг 10.5-b). Прячем их за переключатель. */}
-          {spentRules.length > 0 && (
+        {/* 5. Запуск — единая нижняя панель со степпером, как во всех модулях. */}
+        <div id="sec-run" className="scroll-mt-24">
+          <SectionCard icon={<Play size={18} />} title={running ? 'Выполнение' : 'Публикация'} badge={running ? 'LIVE' : undefined}>
+            <LaunchPanel
+              running={running}
+              starting={mode === 'now' ? starting : savingRule}
+              canStart={canStart}
+              onStart={() => void launch()}
+              onStop={stop}
+              onSave={handleSave}
+              primaryLabel={primaryLabel}
+              steps={!running ? <LaunchSteps steps={markCurrentStep([
+                { label: 'Аккаунты', done: selected.size > 0, anchor: 'sec-accounts' },
+                { label: 'Каналы', done: channels.length > 0, anchor: 'sec-targets' },
+                { label: 'Текст', done: text.trim().length > 0, anchor: 'sec-message' },
+                { label: mode === 'now' ? 'Публикация' : 'Расписание', done: true, optional: true, anchor: 'sec-settings' },
+                { label: 'Запуск', done: false, anchor: 'sec-run' },
+              ])} /> : null}
+              blockedBy={blockedBy}
+              cost={<LaunchCost compact moduleKey="autoposting" actions={channels.length} />}
+              stats={launchStats}
+              task={task}
+              presets={presets}
+              onApplyPreset={applyPreset}
+              onDeletePreset={deletePreset}
+            />
+          </SectionCard>
+        </div>
+
+        {/* §11: запланированные посты — их можно отредактировать (аккаунты, каналы, текст, время),
+            опубликовать досрочно или удалить. Это те же правила автоматизации, вид со стороны постинга. */}
+        <SectionCard
+          icon={<CalendarClock size={18} />}
+          title="Запланированные посты"
+          badge={String(activeRules.length)}
+          right={spentRules.length > 0 ? (
             <button
               type="button"
               onClick={() => setShowSpent((v) => !v)}
-              className="ml-auto text-xs font-semibold text-muted hover:text-fg"
+              className="text-xs font-semibold text-muted hover:text-fg"
             >
               {showSpent ? 'Скрыть отработавшие' : `Показать отработавшие (${spentRules.length})`}
             </button>
-          )}
-        </div>
-        {loadingRules ? (
-          <p className="text-sm text-muted">Загрузка…</p>
-        ) : visibleRules.length === 0 ? (
-          <p className="text-sm text-muted">Пока ничего не запланировано. Выберите «По расписанию» выше — пост появится здесь и опубликуется сам.</p>
-        ) : (
-          <div className="flex flex-col gap-2">
-            {visibleRules.map((r) => (
-              <div key={r.id} className={`flex flex-wrap items-center gap-3 rounded-lg border px-3 py-2 ${editingId === r.id ? 'border-spark-500/50 bg-spark-500/8' : 'border-line bg-elevated/50'}`}>
-                <div className="min-w-0 flex-1">
-                  <div className="truncate text-sm font-semibold text-fg">{r.name}</div>
-                  <div className="text-xs text-muted">
-                    {scheduleLabel(r.schedule)} · {(r.settings?.targets || []).length} канал(ов) · {(r.accountIds || []).length} аккаунт(ов)
-                    {r.nextRun ? ` · следующий ${new Date(r.nextRun).toLocaleString('ru-RU', { dateStyle: 'short', timeStyle: 'short' })}` : ''}
-                    {r.enabled ? '' : ' · выключен'}
+          ) : undefined}
+        >
+          {loadingRules ? (
+            <p className="text-sm text-muted">Загрузка…</p>
+          ) : visibleRules.length === 0 ? (
+            <p className="text-sm text-muted">Пока ничего не запланировано. Выберите «По расписанию» выше — пост появится здесь и опубликуется сам.</p>
+          ) : (
+            <div className="flex flex-col gap-2">
+              {visibleRules.map((r) => (
+                <div key={r.id} className={`flex flex-wrap items-center gap-3 rounded-lg border px-3 py-2 ${editingId === r.id ? 'border-spark-500/50 bg-spark-500/8' : 'border-line bg-elevated/50'}`}>
+                  <div className="min-w-0 flex-1">
+                    <div className="truncate text-sm font-semibold text-fg">{r.name}</div>
+                    <div className="text-xs text-muted">
+                      {scheduleLabel(r.schedule)} · {(r.settings?.targets || []).length} канал(ов) · {(r.accountIds || []).length} аккаунт(ов)
+                      {r.nextRun ? ` · следующий ${new Date(r.nextRun).toLocaleString('ru-RU', { dateStyle: 'short', timeStyle: 'short' })}` : ''}
+                      {r.enabled ? '' : ' · выключен'}
+                    </div>
+                  </div>
+                  <div className="flex shrink-0 items-center gap-1.5">
+                    <button onClick={() => void publishRuleNow(r)} className="btn-ghost h-8 px-2 text-xs" title="Опубликовать сейчас, не дожидаясь расписания"><Play size={14} /></button>
+                    <button onClick={() => editRule(r)} className="btn-ghost h-8 px-2 text-xs" title="Редактировать пост: аккаунты, каналы, текст, время"><Pencil size={14} /></button>
+                    <button onClick={() => void removeRule(r)} className="btn-ghost h-8 px-2 text-xs text-rose-300 hover:bg-rose-500/10" title="Удалить запланированный пост"><Trash2 size={14} /></button>
                   </div>
                 </div>
-                <div className="flex shrink-0 items-center gap-1.5">
-                  <button onClick={() => void publishRuleNow(r)} className="btn-ghost h-8 px-2 text-xs" title="Опубликовать сейчас, не дожидаясь расписания"><Play size={14} /></button>
-                  <button onClick={() => editRule(r)} className="btn-ghost h-8 px-2 text-xs" title="Редактировать пост: аккаунты, каналы, текст, время"><Pencil size={14} /></button>
-                  <button onClick={() => void removeRule(r)} className="btn-ghost h-8 px-2 text-xs text-rose-300 hover:bg-rose-500/10" title="Удалить запланированный пост"><Trash2 size={14} /></button>
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
-      </Card>
+              ))}
+            </div>
+          )}
+        </SectionCard>
+      </div>
     </div>
   )
 }

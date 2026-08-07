@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
-import { useLocation, useNavigate } from 'react-router-dom'
-import { Mail, Send, AlertTriangle, ShieldAlert } from 'lucide-react'
+import { useLocation } from 'react-router-dom'
+import { Mail, Send, AlertTriangle, ShieldAlert, Users, Target, MessageSquareText, Shield, Play } from 'lucide-react'
 import { PageHeader, Card, Select, Segmented } from '@/shared/ui'
 import { DedupeButton } from '@/shared/ui/DedupeButton'
 import type { MailingPrefill } from '@/features/mailing/TaskAudiencePanel'
@@ -9,19 +9,23 @@ import { AccountPicker } from '@/features/account-picker/AccountPicker'
 import { MessageComposer } from '@/features/composer/MessageComposer'
 import { useSession } from '@/features/auth/session'
 import { fetchGoals, type Goal } from '@/api/goalsApi'
-import { startModuleTask } from '@/api/modulesApi'
+import { startModuleTask, type ModuleTaskSettings } from '@/api/modulesApi'
 import { fetchSettings, saveSettings } from '@/api/settingsApi'
 import { fetchLeads } from '@/api/leadsApi'
-import { confirmDialog } from '@/shared/lib/dialog'
+import { confirmDialog, promptDialog } from '@/shared/lib/dialog'
 import { usePlan, planHasModule } from '@/features/billing/plan'
 import { ModuleNotPaid } from '@/features/billing/ModuleNotPaid'
+// §3.1 (MR-114): рассылка приведена к общей структуре модулей — те же переиспользуемые
+// блоки (SectionCard + нижняя LaunchPanel со степпером), что и в LiveModule/парсерах.
+import { SectionCard, LaunchPanel, LaunchSteps, markCurrentStep, TaskStartedModal } from '@/features/modules/shared'
+import { LaunchCost } from '@/features/modules/shared/LaunchCost'
+import { useModuleTask } from '@/features/modules/shared/useModuleTask'
 
 export function MailingPage() {
   // §5.4: модуль живёт не под /panel/modules/*, поэтому гейт подписки — здесь же.
   const planModules = usePlan((st) => st.modules)
   if (!planHasModule(planModules, 'mailing')) return <ModuleNotPaid title="Мейлинг" />
 
-  const nav = useNavigate()
   const pushToast = useApp((s) => s.pushToast)
   const [selected, setSelected] = useState<Set<string>>(new Set())
   // §9.11: список, переданный кнопкой «В новую рассылку» из деталей прошлой задачи —
@@ -38,7 +42,6 @@ export function MailingPage() {
   const [goals, setGoals] = useState<Goal[]>([])
   const [goalId, setGoalId] = useState('')
   const [aiPerRecipient, setAiPerRecipient] = useState(false)
-  const [launching, setLaunching] = useState(false)
   // §9: текст берётся из цели. Свой нужен, только если хочется отойти от неё —
   // раньше он был обязательным, и запустить рассылку по цели было нельзя вообще.
   const [ownText, setOwnText] = useState(false)
@@ -67,6 +70,10 @@ export function MailingPage() {
     void fetchSettings().then((s) => { setMinTrust(s.mailingMinTrust); setTrustDraft(String(s.mailingMinTrust)) }).catch(() => {})
   }, [])
 
+  // Общая машина задач модуля — как у остальных модулей: запуск, состояние, шаблоны,
+  // поп-ап со ссылкой в Дашборд задач. Раньше рассылка вела свой параллельный запуск.
+  const { running, starting, start, stop, savePreset, deletePreset, presets, task, justStarted, dismissJustStarted } = useModuleTask('mailing')
+
   /**
    * Цели рассылки: номер ИЛИ юзернейм. Правило то же, что на сервере
    * (`server/lib/mailing.js#classifyMailingTargets`) — если разойдутся, человек
@@ -94,7 +101,6 @@ export function MailingPage() {
   }, [numbersText])
 
   const numbers = targetsParsed.all
-
 
   // §11: рассылку/пост создаёт только один ответственный — админ (единый отправитель).
   const me = useSession((s) => s.user)
@@ -133,8 +139,26 @@ export function MailingPage() {
       .filter((chunk) => chunk.split(/\n\s*\n/)[0].trim())
       .length
   }, [goals, goalId])
-  const canLaunch = canWrite && !blockedByTrust && selected.size > 0 && numbers.length > 0
-    && (!needOwnText || message.trim().length > 0) && pickedHot.length === 0 && !launching
+
+  const messageReady = !needOwnText || message.trim().length > 0
+  const canStart = canWrite && !blockedByTrust && selected.size > 0 && numbers.length > 0
+    && messageReady && pickedHot.length === 0
+
+  // Настройки задачи — единый билдер: и для запуска, и для сохранения шаблона.
+  const buildSettings = (): ModuleTaskSettings => ({
+    accountIds: [...selected],
+    targets: numbers,
+    threads: chatThreads,
+    promptText: needOwnText ? message.trim() : '',
+    maxPerAccount,
+    delays: { dm: [delayMin, delayMax], action: [delayMin, delayMax] },
+    protectionLevel: protLevel,
+    delayPreset,
+    ...(media.length ? { mediaUrls: media } : {}),
+    aiPerRecipient: aiPerRecipient && !!goalId,
+    ...(belowTrust.length ? { allowLowTrust: true } : {}),
+    ...(goalId ? { goalId } : {}),
+  })
 
   const applyTrust = async () => {
     const n = Number(trustDraft)
@@ -147,6 +171,22 @@ export function MailingPage() {
     } catch (e) {
       pushToast({ type: 'error', title: 'Не сохранено', desc: e instanceof Error ? e.message : '' })
     } finally { setSavingTrust(false) }
+  }
+
+  const handleSave = async () => {
+    const name = await promptDialog({ title: 'Сохранить шаблон', message: 'Название шаблона настроек рассылки', placeholder: 'Напр. Прогрев по номерам' })
+    if (name) void savePreset(name, buildSettings())
+  }
+
+  // Восстановить настройки из шаблона (выбор аккаунтов и получателей не трогаем).
+  const applyPreset = (s: ModuleTaskSettings) => {
+    if (typeof s.maxPerAccount === 'number') setMaxPerAccount(s.maxPerAccount)
+    if (typeof s.protectionLevel === 'number') setProtLevel(s.protectionLevel)
+    if (typeof s.delayPreset === 'number') setDelayPreset(s.delayPreset)
+    if (s.delays?.dm) { setDelayMin(s.delays.dm[0]); setDelayMax(s.delays.dm[1]) }
+    if (typeof s.threads === 'number') setChatThreads(s.threads)
+    if (s.promptText) { setMessage(s.promptText); setOwnText(true) }
+    if (s.goalId) setGoalId(s.goalId)
   }
 
   async function launch() {
@@ -163,45 +203,41 @@ export function MailingPage() {
       })
       if (!ok) return
     }
-    setLaunching(true)
-    try {
-      await startModuleTask('mailing', {
-        accountIds: [...selected],
-        targets: numbers,
-        threads: chatThreads,
-        promptText: needOwnText ? message.trim() : '',
-        maxPerAccount,
-        delays: { dm: [delayMin, delayMax], action: [delayMin, delayMax] },
-        protectionLevel: protLevel,
-        delayPreset,
-        ...(media.length ? { mediaUrls: media } : {}),
-        aiPerRecipient: aiPerRecipient && !!goalId,
-        ...(belowTrust.length ? { allowLowTrust: true } : {}),
-        ...(goalId ? { goalId } : {}),
-      })
-      // Чатинг поднимаем ТОЙ ЖЕ целью и теми же аккаунтами — он слушает ответы на рассылку.
-      if (goalId && withChat) {
-        try {
-          await startModuleTask('neuro-dialogs', {
-            accountIds: [...selected],
-            goalId,
-            replyScope: 'unread',
-            replyLimitMode: 'untilTarget',
-            threads: chatThreads,
-            delays: { dm: [delayMin, delayMax] },
-          })
-          pushToast({ type: 'success', title: 'Рассылка + чатинг запущены', desc: `${numbers.length} целей · одна цель на оба модуля` })
-        } catch (e) {
-          pushToast({ type: 'error', title: 'Рассылка пошла, чатинг — нет', desc: e instanceof Error ? e.message : '' })
-        }
-      } else {
-        pushToast({ type: 'success', title: 'Рассылка создана', desc: `${numbers.length} целей · ${selected.size} аккаунтов` })
+    const ok = await start(buildSettings(), `Мейлинг · ${numbers.length} целей`)
+    if (!ok) return
+    // §9: чатинг поднимаем ТОЙ ЖЕ целью и теми же аккаунтами — он слушает ответы на рассылку.
+    if (goalId && withChat) {
+      try {
+        await startModuleTask('neuro-dialogs', {
+          accountIds: [...selected],
+          goalId,
+          replyScope: 'unread',
+          replyLimitMode: 'untilTarget',
+          threads: chatThreads,
+          delays: { dm: [delayMin, delayMax] },
+        })
+        pushToast({ type: 'success', title: 'Нейрочатинг поднят под той же целью', desc: `${numbers.length} целей · одна цель на оба модуля` })
+      } catch (e) {
+        pushToast({ type: 'error', title: 'Рассылка пошла, чатинг — нет', desc: e instanceof Error ? e.message : '' })
       }
-      nav('/panel/tasks')
-    } catch (e) {
-      pushToast({ type: 'error', title: 'Не удалось создать', desc: e instanceof Error ? e.message : '' })
-    } finally { setLaunching(false) }
+    }
   }
+
+  const launchStats = [
+    { icon: <Users size={18} />, color: 'text-iris-300', label: 'Аккаунты', value: String(selected.size), warn: selected.size === 0 },
+    { icon: <Target size={18} />, color: 'text-cyan-300', label: 'Получатели', value: String(numbers.length), warn: numbers.length === 0 },
+    { icon: <Send size={18} />, color: 'text-amber-300', label: '≈ на аккаунт', value: String(perAcc) },
+    { icon: <Shield size={18} />, color: 'text-spark-300', label: 'Лимит', value: String(maxPerAccount) },
+  ]
+
+  const blockedBy = !canStart ? [
+    ...(canWrite ? [] : ['только администратор']),
+    ...(selected.size ? [] : ['выберите аккаунты']),
+    ...(numbers.length ? [] : ['добавьте получателей']),
+    ...(needOwnText && !message.trim() ? ['введите текст сообщения'] : []),
+    ...(pickedHot.length ? ['уберите аккаунты с горячими лидами'] : []),
+    ...(blockedByTrust ? ['аккаунты ниже порога trust'] : []),
+  ] : []
 
   return (
     <div>
@@ -217,16 +253,17 @@ export function MailingPage() {
         <span>Отправка <b>реальная</b>. Массовая рассылка незнакомым — высокий риск спам-блока <b>ваших аккаунтов</b> и нарушение ToS Telegram. Предохранители: рассылают только аккаунты с trust&gt;70, действует суточный лимит ЛС (20–30/аккаунт) и паузы 90–300с; номера не из Telegram пропускаются. Держите лимиты низкими.</span>
       </Card>
 
-      <div className="grid gap-4 lg:grid-cols-2">
-        <div className="space-y-4">
-          <Card className="p-4">
-            <div className="mb-2 text-sm font-semibold text-fg">Аккаунты-отправители</div>
-            <AccountPicker selected={selected} onChange={setSelected} selectedTitle="Выбрано для рассылки" />
-          </Card>
+      <div className="space-y-4">
+        <TaskStartedModal task={justStarted} moduleTitle="Мейлинг" onClose={dismissJustStarted} />
+
+        {/* 1. Аккаунты — единый полноширинный выбор, как во всех модулях. */}
+        <div id="sec-accounts" className="scroll-mt-24">
+          <AccountPicker selected={selected} onChange={setSelected} selectedTitle="Выбрано для рассылки" />
         </div>
 
-        <div className="space-y-4">
-          <Card className="p-4">
+        {/* 2. Получатели (аналог блока «Цели/Каналы» в общей структуре). */}
+        <div id="sec-targets" className="scroll-mt-24">
+          <SectionCard icon={<Target size={18} />} title="Получатели" badge={String(numbers.length)} required>
             <div className="mb-1 flex items-center gap-2">
               <span className="text-xs text-white/50">
                 Кому пишем — введено {targetsParsed.total}, уйдёт {numbers.length}
@@ -240,9 +277,12 @@ export function MailingPage() {
               <DedupeButton value={numbersText} onChange={setNumbersText} mode="auto" className="btn-soft ml-auto h-7 px-2 text-xs disabled:opacity-40" />
             </div>
             <textarea className="input min-h-[110px] font-mono text-sm" value={numbersText} onChange={(e) => setNumbersText(e.target.value)} placeholder={'+380671234567\n@username\nhttps://t.me/username'} />
-          </Card>
+          </SectionCard>
+        </div>
 
-          <Card className="p-4">
+        {/* 3. Сообщение и цель. */}
+        <div id="sec-message" className="scroll-mt-24">
+          <SectionCard icon={<MessageSquareText size={18} />} title="Сообщение и цель" required={needOwnText}>
             {goalId && (
               <label className="mb-2 flex cursor-pointer items-start gap-2">
                 <input type="checkbox" checked={ownText} onChange={(e) => setOwnText(e.target.checked)} className="mt-0.5 h-4 w-4 accent-spark" />
@@ -291,29 +331,29 @@ export function MailingPage() {
                       </span>
                     </label>
                     {withChat && (
-                      <>
-                        <div className="mt-2 flex items-center gap-2">
-                          <span className="text-[11px] text-white/50">Потоков</span>
-                          <input
-                            type="number" min={1} max={20}
-                            className="input h-8 w-16 text-xs"
-                            value={chatThreads}
-                            onChange={(e) => setChatThreads(Math.max(1, Math.min(20, Number(e.target.value) || 1)))}
-                          />
-                          <span className="text-[11px] text-white/35">
-                            аккаунты делятся между потоками — и рассылка, и ответы идут одновременно; 1 — по очереди
-                          </span>
-                        </div>
-                      </>
+                      <div className="mt-2 flex items-center gap-2">
+                        <span className="text-[11px] text-white/50">Потоков</span>
+                        <input
+                          type="number" min={1} max={20}
+                          className="input h-8 w-16 text-xs"
+                          value={chatThreads}
+                          onChange={(e) => setChatThreads(Math.max(1, Math.min(20, Number(e.target.value) || 1)))}
+                        />
+                        <span className="text-[11px] text-white/35">
+                          аккаунты делятся между потоками — и рассылка, и ответы идут одновременно; 1 — по очереди
+                        </span>
+                      </div>
                     )}
                   </div>
                 )}
               </div>
             )}
-          </Card>
+          </SectionCard>
+        </div>
 
-          <Card className="p-4">
-            <div className="mb-2 text-sm font-semibold text-fg">Безопасность</div>
+        {/* 4. Настройки/Безопасность — необязательный шаг (тонкая подстройка). */}
+        <div id="sec-settings" className="scroll-mt-24">
+          <SectionCard icon={<Shield size={18} />} title="Безопасность">
             {/* §11: паритет с masslooking/warming — уровень защиты и шаблон задержек (множители пауз). */}
             <div className="mb-3 grid gap-3 sm:grid-cols-2">
               <div>
@@ -335,11 +375,6 @@ export function MailingPage() {
               <label className="text-xs text-white/50">до (с)
                 <input type="number" min={delayMin} value={delayMax} onChange={(e) => setDelayMax(Math.max(delayMin, Number(e.target.value) || delayMin))} className="input mt-1 h-9" />
               </label>
-            </div>
-            <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-xs text-white/50">
-              <span>Номеров: <b className="text-white">{numbers.length}</b></span>
-              <span>Аккаунтов: <b className="text-white">{selected.size}</b></span>
-              <span>≈ на аккаунт: <b className="text-white">{perAcc}</b></span>
             </div>
             {!canWrite && (
               <div className="mt-3 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-200">
@@ -404,10 +439,36 @@ export function MailingPage() {
                 </div>
               </div>
             )}
-            <button onClick={() => void launch()} disabled={!canLaunch} className="btn-primary mt-3 h-10 w-full disabled:opacity-40">
-              <Send size={16} /> {launching ? 'Запуск…' : 'Начать'}
-            </button>
-          </Card>
+          </SectionCard>
+        </div>
+
+        {/* 5. Запуск — единая нижняя панель со степпером, как во всех модулях. */}
+        <div id="sec-run" className="scroll-mt-24">
+          <SectionCard icon={<Play size={18} />} title={running ? 'Выполнение' : 'Запуск'} badge={running ? 'LIVE' : undefined}>
+            <LaunchPanel
+              running={running}
+              starting={starting}
+              canStart={canStart}
+              onStart={() => void launch()}
+              onStop={stop}
+              onSave={handleSave}
+              primaryLabel="Начать"
+              steps={!running ? <LaunchSteps steps={markCurrentStep([
+                { label: 'Аккаунты', done: selected.size > 0, anchor: 'sec-accounts' },
+                { label: 'Получатели', done: numbers.length > 0, anchor: 'sec-targets' },
+                { label: 'Сообщение', done: messageReady, anchor: 'sec-message' },
+                { label: 'Настройки', done: true, optional: true, anchor: 'sec-settings' },
+                { label: 'Запуск', done: false, anchor: 'sec-run' },
+              ])} /> : null}
+              blockedBy={blockedBy}
+              cost={<LaunchCost compact moduleKey="mailing" actions={numbers.length} />}
+              stats={launchStats}
+              task={task}
+              presets={presets}
+              onApplyPreset={applyPreset}
+              onDeletePreset={deletePreset}
+            />
+          </SectionCard>
         </div>
       </div>
     </div>
