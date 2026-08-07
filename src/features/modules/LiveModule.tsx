@@ -333,7 +333,7 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
       { icon: <Users size={18} />, color: '#7145ff', label: 'Аккаунты', value: String(selected.size), warn: selected.size === 0 },
       // §12 (MR-59): «цели» перед запуском — с учётом ссылок на посты (mass-react), а не
       // только групп: иначе при выбранных постах счётчик показывал 0, хотя цели есть.
-      { icon: <Hash size={18} />, color: '#06b6d4', label: cfg.unit?.title ?? 'Цели', value: String(targets.length + postUrls.length), warn: needsTargets && !targets.length && !hasPostTargets },
+      { icon: <Hash size={18} />, color: '#06b6d4', label: cfg.unit?.title ?? 'Группы', value: String(targets.length + postUrls.length), warn: needsTargets && !targets.length && !hasPostTargets },
       {
         icon: <Clock size={18} />, color: '#0ec464', label: '≈ время',
         value: (() => {
@@ -354,7 +354,7 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
   const launchSteps = useMemo(() => {
     const steps: LaunchStep[] = []
     if (cfg.accountPicker) steps.push({ label: 'Аккаунты', done: selected.size > 0, anchor: 'sec-accounts' })
-    if (needsTargets && !cfg.warmingLayout) steps.push({ label: cfg.unit?.title || 'Цели', done: targets.length > 0 || hasPostTargets, anchor: 'sec-targets' })
+    if (needsTargets && !cfg.warmingLayout) steps.push({ label: cfg.unit?.title || 'Группы', done: targets.length > 0 || hasPostTargets, anchor: 'sec-targets' })
     steps.push({ label: 'Настройки', done: true, optional: true, anchor: 'sec-settings' })
     steps.push({ label: 'Запуск', done: false, anchor: 'sec-run' })
     return markCurrentStep(steps)
@@ -494,7 +494,7 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
 
       {showBlock('targets') && (cfg.sourceTabs || needsTargets) && !isGgr && (
         <div id="sec-targets" className="scroll-mt-24">
-        <SectionCard icon={<Hash size={18} />} title={cfg.sourceTabs?.label ?? 'Цели'} badge={String(targets.length)} required={needsTargets && !cfg.postLinks}>
+        <SectionCard icon={<Hash size={18} />} title={cfg.sourceTabs?.label ?? 'Группы'} badge={String(targets.length)} required={needsTargets && !cfg.postLinks}>
           <FolderPicker targets={targets} onLoad={(t) => setTargets((prev) => [...new Set([...t, ...prev])])} />
           <TargetsEditor
             tabs={cfg.sourceTabs?.tabs}

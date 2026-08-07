@@ -222,7 +222,7 @@ export const MODULES: Record<string, ModuleConfig> = {
     subscriptionsToggle: true,
     progressBar: true,
     sourceTabs: {
-      label: 'Целевые каналы', tabs: ['Юзернейм/Ссылка', 'Прошлые задачи', 'Папка'],
+      label: 'Группы', tabs: ['Юзернейм/Ссылка', 'Прошлые задачи', 'Группа'],
       addLabel: 'Добавить', clearLabel: 'Очистить все',
       placeholder: '@username или https://t.me/channel_name\nМожно вводить несколько ссылок (каждая с новой строки)', emptyRows: 'Строк: 0',
     },
@@ -279,7 +279,7 @@ export const MODULES: Record<string, ModuleConfig> = {
     seedTargetCount: 153,
     subscriptionsToggle: true,
     sourceTabs: {
-      label: 'Целевые группы', tabs: ['Юзернейм/Ссылка', 'Прошлые задачи', 'Папка'],
+      label: 'Группы', tabs: ['Юзернейм/Ссылка', 'Прошлые задачи', 'Группа'],
       addLabel: 'Добавить', clearLabel: 'Очистить все',
       placeholder: '@group или https://t.me/group\nМожно вводить несколько ссылок (каждая с новой строки)', emptyRows: 'Строк: 0',
     },
@@ -335,7 +335,7 @@ export const MODULES: Record<string, ModuleConfig> = {
     seedTargetCount: 93,
     subscriptionsToggle: true,
     sourceTabs: {
-      label: 'Цели', tabs: ['Username / Ссылка', 'Из заданий', 'Папка'],
+      label: 'Группы', tabs: ['Username / Ссылка', 'Из заданий', 'Группа'],
       addLabel: 'Добавить', clearLabel: 'Очистить',
       placeholder: 'Введите username или ссылку на группу\nПо одному на строку', emptyRows: 'Строк: 0',
     },
