@@ -97,12 +97,16 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
   const [typeWeights, setTypeWeights] = useState<number[]>(() => equalize(cfg.messagePrompts?.length || 0))
   // §13 (MR-61): замки — закреплённое значение не трогается при перераспределении остатка.
   const [lockedWeights, setLockedWeights] = useState<boolean[]>([])
+  // §13 (уточнение заказчика): «тронутые» — поля, куда пользователь ВВЁЛ значение вручную.
+  // Их сохраняем при перераспределении ДАЖЕ без замка; остаток делят только НЕтронутые.
+  const [touchedWeights, setTouchedWeights] = useState<boolean[]>([])
   const weightSum = percentSum(typeWeights)
-  // §13 (MR-61): «поровну» выравнивает только НЕзакреплённые (закреплённые сохраняются).
+  // §13 (MR-61): «поровну» выравнивает только НЕзакреплённые и сбрасывает ручной ввод.
   const balanceTypeWeights = () => {
     const n = cfg.messagePrompts?.length ?? 0
     if (!n) return
     setTypeWeights((w) => equalizeUnlocked(w.length === n ? w : equalize(n), lockedWeights))
+    setTouchedWeights([])
   }
   const toggleWeightLock = (i: number) => setLockedWeights((l) => { const n = [...l]; n[i] = !n[i]; return n })
   useEffect(() => { void fetchGoals().then(setGoals).catch(() => {}) }, [])
@@ -646,7 +650,15 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
                           onChange={(e) => {
                             // Срезаем ведущие нули — «07» это 7, а не 07.
                             const n = Number(e.target.value.replace(/^0+(?=\d)/, '')) || 0
-                            setTypeWeights((w) => redistribute(w.length === count ? w : equalize(count), i, n, lockedWeights))
+                            setTypeWeights((w) => {
+                              const base = w.length === count ? w : equalize(count)
+                              // §13 (уточнение): сохраняем залоченные И ранее введённые (touched) поля;
+                              // остаток делят только НЕтронутые незалоченные.
+                              const pinned = base.map((_, j) => j !== i && (!!lockedWeights[j] || !!touchedWeights[j]))
+                              return redistribute(base, i, n, pinned)
+                            })
+                            // §13: это поле теперь «тронуто» — при следующих правках его не перезапишем.
+                            setTouchedWeights((t) => { const nt = [...t]; nt[i] = true; return nt })
                           }} />
                         <span className="text-[11px] text-white/40">%</span>
                       </div>
