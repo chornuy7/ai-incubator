@@ -1,3 +1,5 @@
+import { useUi } from '@/shared/lib/uiStore'
+
 /**
  * Ошибка API вместе с телом ответа.
  *
@@ -51,11 +53,11 @@ export async function parseJson<T>(res: Response): Promise<T> {
     // человека слали пополнять деньги, когда дело было в подписке.
     if ((data as { needTopUp?: boolean })?.needTopUp) {
       const msg = (data as { error?: string }).error || 'Закончились монеты.'
-      void import('@/shared/lib/uiStore').then(({ useUi }) => useUi.getState().setNoCoins(msg))
+      useUi.getState().setNoCoins(msg)
     }
     if ((data as { needSubscription?: boolean })?.needSubscription) {
       const msg = (data as { error?: string }).error || 'Модуль не оплачен.'
-      void import('@/shared/lib/uiStore').then(({ useUi }) => useUi.getState().setNoSubscription(msg))
+      useUi.getState().setNoSubscription(msg)
     }
     throw new ApiError(
       (data as { error?: string }).error || `HTTP ${res.status}`,
