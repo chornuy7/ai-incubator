@@ -146,18 +146,41 @@ export function GuestLogin() {
             {isReg ? 'Заведите аккаунт — доступ к модулям выдаст администратор.' : 'Войдите под своей учётной записью.'}
           </p>
 
-          {/* §5.1 (AUTH-001): autoComplete=off — убираем автозаполнение формы. */}
+          {/*
+            §5.1 (AUTH-001): убираем автозаполнение. Одного `autoComplete="off"` мало —
+            Chrome его игнорирует, когда поле «похоже на e-mail» (по подписи и
+            placeholder) и есть сохранённые данные. Поэтому три приёма разом:
+              1) поля-приманки в начале формы — на них уходит автоподстановка браузера;
+              2) нестандартный токен autoComplete на регистрации: браузер не узнаёт тип
+                 поля и не предлагает сохранённые адреса/пароли;
+              3) data-1p-ignore / data-lpignore — то же для 1Password и LastPass.
+            На ВХОДЕ автозаполнение оставляем: там оно людям помогает.
+          */}
           <form onSubmit={submit} autoComplete="off" className="mt-6 space-y-4">
+            {isReg && (
+              <div aria-hidden className="pointer-events-none absolute h-0 w-0 overflow-hidden opacity-0">
+                <input type="text" tabIndex={-1} autoComplete="username" />
+                <input type="password" tabIndex={-1} autoComplete="current-password" />
+              </div>
+            )}
             {isReg && (
               <div>
                 <label className="label">Полное имя</label>
-                <input value={name} onChange={(e) => { setName(e.target.value); setErrors((x) => ({ ...x, name: undefined })) }} autoComplete="off" className={`input ${errors.name ? 'border-rose-500/60' : ''}`} placeholder="Имя и фамилия (минимум 4 символа)" />
+                <input value={name} onChange={(e) => { setName(e.target.value); setErrors((x) => ({ ...x, name: undefined })) }} autoComplete="off" data-1p-ignore data-lpignore="true" className={`input ${errors.name ? 'border-rose-500/60' : ''}`} placeholder="Имя и фамилия (минимум 4 символа)" />
                 {errors.name && <p className="mt-1 text-xs text-rose-400">{errors.name}</p>}
               </div>
             )}
             <div>
               <label className="label">E-mail</label>
-              <input value={email} onChange={(e) => { setEmail(e.target.value); setErrors((x) => ({ ...x, email: undefined, form: undefined })) }} autoComplete="off" className={`input ${errors.email ? 'border-rose-500/60' : ''}`} placeholder="you@example.com" />
+              <input
+                value={email}
+                onChange={(e) => { setEmail(e.target.value); setErrors((x) => ({ ...x, email: undefined, form: undefined })) }}
+                autoComplete={isReg ? 'murmex-no-autofill' : 'username'}
+                data-1p-ignore={isReg || undefined}
+                data-lpignore={isReg ? 'true' : undefined}
+                className={`input ${errors.email ? 'border-rose-500/60' : ''}`}
+                placeholder="you@example.com"
+              />
               {errors.email && <p className="mt-1 text-xs text-rose-400">{errors.email}</p>}
             </div>
             <div>
@@ -168,6 +191,8 @@ export function GuestLogin() {
                   value={pass}
                   onChange={(e) => { setPass(e.target.value); setErrors((x) => ({ ...x, pass: undefined })) }}
                   autoComplete={isReg ? 'new-password' : 'current-password'}
+                  data-1p-ignore={isReg || undefined}
+                  data-lpignore={isReg ? 'true' : undefined}
                   className={`input pr-11 ${errors.pass ? 'border-rose-500/60' : ''}`}
                   placeholder={isReg ? 'Минимум 6 символов' : '••••••••'}
                 />
@@ -180,7 +205,7 @@ export function GuestLogin() {
             {isReg && (
               <div>
                 <label className="label">Повтор пароля</label>
-                <input type={show ? 'text' : 'password'} value={pass2} onChange={(e) => { setPass2(e.target.value); setErrors((x) => ({ ...x, pass2: undefined })) }} autoComplete="new-password" className={`input ${errors.pass2 ? 'border-rose-500/60' : ''}`} placeholder="Повторите пароль" />
+                <input type={show ? 'text' : 'password'} value={pass2} onChange={(e) => { setPass2(e.target.value); setErrors((x) => ({ ...x, pass2: undefined })) }} autoComplete="new-password" data-1p-ignore data-lpignore="true" className={`input ${errors.pass2 ? 'border-rose-500/60' : ''}`} placeholder="Повторите пароль" />
                 {errors.pass2 && <p className="mt-1 text-xs text-rose-400">{errors.pass2}</p>}
               </div>
             )}
