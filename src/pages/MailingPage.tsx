@@ -18,7 +18,7 @@ import { ModuleNotPaid } from '@/features/billing/ModuleNotPaid'
 import { isHidden } from '@/shared/config/routes'
 // §3.1 (MR-114): рассылка приведена к общей структуре модулей — те же переиспользуемые
 // блоки (SectionCard + нижняя LaunchPanel со степпером), что и в LiveModule/парсерах.
-import { SectionCard, LaunchPanel, LaunchSteps, markCurrentStep, TaskStartedModal } from '@/features/modules/shared'
+import { SectionCard, LaunchPanel, LaunchSteps, markCurrentStep, TaskStartedModal, ProtectionBlock } from '@/features/modules/shared'
 import { LaunchCost } from '@/features/modules/shared/LaunchCost'
 import { useModuleTask } from '@/features/modules/shared/useModuleTask'
 
@@ -39,6 +39,7 @@ export function MailingPage() {
   const [delayMin, setDelayMin] = useState(90)
   const [delayMax, setDelayMax] = useState(300)
   const [protLevel, setProtLevel] = useState(0) // §11: паритет с masslooking/warming — уровень защиты
+  const [aiProtect, setAiProtect] = useState(true) // тумблер «Защита аккаунтов» (как в стандартных модулях)
   const [delayPreset, setDelayPreset] = useState(1) // множитель задержек (Мин/Реком/Макс)
   const [goals, setGoals] = useState<Goal[]>([])
   const [goalId, setGoalId] = useState('')
@@ -357,16 +358,12 @@ export function MailingPage() {
         {/* 4. Настройки/Безопасность — необязательный шаг (тонкая подстройка). */}
         <div id="sec-settings" className="scroll-mt-24">
           <SectionCard icon={<Shield size={18} />} title="Защита">
-            {/* §11: паритет с masslooking/warming — уровень защиты и шаблон задержек (множители пауз). */}
-            <div className="mb-3 grid gap-3 sm:grid-cols-2">
-              <div>
-                <div className="mb-1 text-xs text-white/50">Уровень защиты</div>
-                <Segmented options={['Консерв.', 'Сбаланс.', 'Агресс.']} value={protLevel} onChange={setProtLevel} size="sm" />
-              </div>
-              <div>
-                <div className="mb-1 text-xs text-white/50">Шаблон задержек</div>
-                <Segmented options={['Мин', 'Реком.', 'Макс']} value={delayPreset} onChange={setDelayPreset} size="sm" />
-              </div>
+            {/* MR-114: блок «Защита» — как во всех модулях (карточки ProtectionBlock), а не мелкий сегмент. */}
+            <ProtectionBlock enabled={aiProtect} onEnabled={setAiProtect} level={protLevel} onLevel={setProtLevel} />
+            {/* Шаблон задержек — множитель пауз (аналог пресета темпа в «Таймингах» стандартных модулей). */}
+            <div className="mb-3">
+              <div className="mb-1 text-xs text-white/50">Шаблон задержек <span className="text-white/30">(множитель пауз)</span></div>
+              <Segmented options={['Мин', 'Реком.', 'Макс']} value={delayPreset} onChange={setDelayPreset} size="sm" />
             </div>
             <div className="grid grid-cols-3 gap-3">
               <label className="text-xs text-white/50">Лимит на аккаунт

@@ -430,15 +430,12 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
           {cfg.aiProtection && <ProtectionBlock enabled={aiProtect} onEnabled={setAiProtect} level={protLevel} onLevel={setProtLevel} />}
 
           {cfg.reactionSettings ? (
-            <div className="grid gap-4 lg:grid-cols-2">
-              <div className="space-y-4 rounded-2xl border border-line bg-elevated/40 p-4">
-                <ToggleGroup label="Режим" options={cfg.reactionSettings.modes} value={g(0)} onChange={(v) => setTg(0, v)} />
-                <div>
-                  <div className="mb-1 flex justify-between text-sm text-muted"><span>{cfg.reactionSettings.probability.label}</span><span className="text-spark-300">{probability}%</span></div>
-                  <input type="range" min={0} max={100} value={probability} onChange={(e) => setProbability(Number(e.target.value))} className="w-full accent-spark-500" />
-                </div>
+            <div className="space-y-4 rounded-2xl border border-line bg-elevated/40 p-4">
+              <ToggleGroup label="Режим" options={cfg.reactionSettings.modes} value={g(0)} onChange={(v) => setTg(0, v)} />
+              <div>
+                <div className="mb-1 flex justify-between text-sm text-muted"><span>{cfg.reactionSettings.probability.label}</span><span className="text-spark-300">{probability}%</span></div>
+                <input type="range" min={0} max={100} value={probability} onChange={(e) => setProbability(Number(e.target.value))} className="w-full accent-spark-500" />
               </div>
-              <div className="rounded-2xl border border-line bg-elevated/40 p-4 text-sm text-muted">Лимиты, длительность и задержки — в секции «Тайминги и задержки» ниже.</div>
             </div>
           ) : cfg.toggleGroups ? (
             <div className="rounded-2xl border border-line bg-elevated/40 p-4 space-y-4">
