@@ -22,10 +22,26 @@ export function GuestLogin() {
   const [mode, setMode] = useState<'login' | 'register'>('login')
   const [email, setEmail] = useState('')
   const [pass, setPass] = useState('')
+  const [pass2, setPass2] = useState('') // §5.1: повтор пароля
   const [name, setName] = useState('')
   const [show, setShow] = useState(false)
   const [loading, setLoading] = useState(false)
+  // §5.1 (AUTH-001): ошибки валидации/API показываем в форме, а не только в тосте/консоли.
+  const [errors, setErrors] = useState<{ name?: string; email?: string; pass?: string; pass2?: string; form?: string }>({})
   const isReg = mode === 'register'
+
+  // §5.1 (AUTH-001): клиентская валидация. Полное имя ≥4, корректный e-mail, пароль ≥6, повтор совпадает.
+  const validate = () => {
+    const e: typeof errors = {}
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())) e.email = 'Введите корректный e-mail.'
+    if (!pass) e.pass = 'Введите пароль.'
+    if (isReg) {
+      if (name.trim().length < 4) e.name = 'Полное имя — минимум 4 символа.'
+      if (pass && pass.length < 6) e.pass = 'Пароль — минимум 6 символов.'
+      if (pass !== pass2) e.pass2 = 'Пароли не совпадают.'
+    }
+    return e
+  }
   // §10.2: капча на регистрации — показываем виджет только если она включена на сервере.
   const [captcha, setCaptcha] = useState<{ enabled: boolean; siteKey: string }>({ enabled: false, siteKey: '' })
   const [captchaToken, setCaptchaToken] = useState('')
@@ -34,6 +50,10 @@ export function GuestLogin() {
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault()
+    // §5.1 (AUTH-001): сначала клиентская валидация — ошибки показываем под полями.
+    const errs = validate()
+    setErrors(errs)
+    if (Object.keys(errs).length) return
     if (needCaptcha && !captchaToken) {
       pushToast({ type: 'error', title: 'Подтвердите, что вы не робот', desc: 'Пройдите проверку ниже.' })
       return
@@ -52,10 +72,16 @@ export function GuestLogin() {
       })
       nav('/panel')
     } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Проверьте данные'
+      // §5.1: понятное сообщение о существующем аккаунте вместо сырой ошибки Supabase/API.
+      const isDup = isReg && /exist|already|registered|duplicate|занят|уже|taken/i.test(msg)
+      const friendly = isDup ? 'Аккаунт с таким e-mail уже существует. Войдите или используйте другой e-mail.' : msg
+      // §5.1: ошибка видна В ФОРМЕ (не только в тосте/консоли).
+      setErrors(isDup ? { email: friendly } : { form: friendly })
       pushToast({
         type: 'error',
         title: isReg ? 'Не удалось зарегистрироваться' : 'Не удалось войти',
-        desc: err instanceof Error ? err.message : 'Проверьте данные',
+        desc: friendly,
       })
     } finally {
       setLoading(false)
@@ -117,16 +143,19 @@ export function GuestLogin() {
             {isReg ? 'Заведите аккаунт — доступ к модулям выдаст администратор.' : 'Войдите под своей учётной записью.'}
           </p>
 
-          <form onSubmit={submit} className="mt-6 space-y-4">
+          {/* §5.1 (AUTH-001): autoComplete=off — убираем автозаполнение формы. */}
+          <form onSubmit={submit} autoComplete="off" className="mt-6 space-y-4">
             {isReg && (
               <div>
-                <label className="label">Имя</label>
-                <input value={name} onChange={(e) => setName(e.target.value)} className="input" placeholder="Как к вам обращаться" />
+                <label className="label">Полное имя</label>
+                <input value={name} onChange={(e) => { setName(e.target.value); setErrors((x) => ({ ...x, name: undefined })) }} autoComplete="off" className={`input ${errors.name ? 'border-rose-500/60' : ''}`} placeholder="Имя и фамилия (минимум 4 символа)" />
+                {errors.name && <p className="mt-1 text-xs text-rose-400">{errors.name}</p>}
               </div>
             )}
             <div>
               <label className="label">E-mail</label>
-              <input value={email} onChange={(e) => setEmail(e.target.value)} className="input" placeholder="you@example.com" />
+              <input value={email} onChange={(e) => { setEmail(e.target.value); setErrors((x) => ({ ...x, email: undefined, form: undefined })) }} autoComplete="off" className={`input ${errors.email ? 'border-rose-500/60' : ''}`} placeholder="you@example.com" />
+              {errors.email && <p className="mt-1 text-xs text-rose-400">{errors.email}</p>}
             </div>
             <div>
               <label className="label">Пароль</label>
@@ -134,15 +163,27 @@ export function GuestLogin() {
                 <input
                   type={show ? 'text' : 'password'}
                   value={pass}
-                  onChange={(e) => setPass(e.target.value)}
-                  className="input pr-11"
-                  placeholder="••••••••"
+                  onChange={(e) => { setPass(e.target.value); setErrors((x) => ({ ...x, pass: undefined })) }}
+                  autoComplete={isReg ? 'new-password' : 'current-password'}
+                  className={`input pr-11 ${errors.pass ? 'border-rose-500/60' : ''}`}
+                  placeholder={isReg ? 'Минимум 6 символов' : '••••••••'}
                 />
                 <button type="button" onClick={() => setShow((v) => !v)} className="absolute right-3 top-1/2 -translate-y-1/2 text-muted hover:text-fg">
                   {show ? <EyeOff size={17} /> : <Eye size={17} />}
                 </button>
               </div>
+              {errors.pass && <p className="mt-1 text-xs text-rose-400">{errors.pass}</p>}
             </div>
+            {isReg && (
+              <div>
+                <label className="label">Повтор пароля</label>
+                <input type={show ? 'text' : 'password'} value={pass2} onChange={(e) => { setPass2(e.target.value); setErrors((x) => ({ ...x, pass2: undefined })) }} autoComplete="new-password" className={`input ${errors.pass2 ? 'border-rose-500/60' : ''}`} placeholder="Повторите пароль" />
+                {errors.pass2 && <p className="mt-1 text-xs text-rose-400">{errors.pass2}</p>}
+              </div>
+            )}
+            {errors.form && (
+              <div className="rounded-lg border border-rose-500/40 bg-rose-500/10 px-3 py-2 text-xs text-rose-300">{errors.form}</div>
+            )}
             {/* §10.2: капча — только на регистрации и только если включена на сервере. */}
             {needCaptcha && <Turnstile siteKey={captcha.siteKey} onToken={setCaptchaToken} />}
             <button type="submit" disabled={loading || (needCaptcha && !captchaToken)} className="btn-primary h-11 w-full disabled:opacity-50">
@@ -153,11 +194,11 @@ export function GuestLogin() {
           <div className="mt-6 text-center text-sm text-muted">
             {isReg ? (
               <>Уже есть аккаунт?{' '}
-                <button type="button" onClick={() => setMode('login')} className="font-semibold text-spark-300 hover:underline">Войти</button>
+                <button type="button" onClick={() => { setMode('login'); setErrors({}) }} className="font-semibold text-spark-300 hover:underline">Войти</button>
               </>
             ) : (
               <>Нет аккаунта?{' '}
-                <button type="button" onClick={() => setMode('register')} className="font-semibold text-spark-300 hover:underline">Зарегистрироваться</button>
+                <button type="button" onClick={() => { setMode('register'); setErrors({}) }} className="font-semibold text-spark-300 hover:underline">Зарегистрироваться</button>
               </>
             )}
           </div>
