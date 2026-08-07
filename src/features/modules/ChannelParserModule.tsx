@@ -592,7 +592,7 @@ function ChannelParserInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: 
           <button type="button" onClick={() => setCleared(true)} disabled={!rawResults.length} className="btn-danger h-10 text-sm disabled:opacity-40"><Trash2 size={15} /> Очистить</button>
           <button type="button" onClick={copyLinks} disabled={!results.length} className="btn-soft h-10 text-sm disabled:opacity-40"><Copy size={15} /> Скопировать ссылки</button>
           <button type="button" onClick={copyIds} disabled={!results.length} className="btn-soft h-10 text-sm disabled:opacity-40"><Hash size={15} /> Скопировать ID</button>
-          <button type="button" onClick={() => setSaveFolderOpen(true)} disabled={!results.length} className="btn-iris h-10 text-sm disabled:opacity-40"><FolderPlus size={15} /> Сохранить в папку</button>
+          <button type="button" onClick={() => setSaveFolderOpen(true)} disabled={!results.length} className="btn-iris h-10 text-sm disabled:opacity-40"><FolderPlus size={15} /> Сохранить в группу</button>
           <button type="button" onClick={() => exportData('csv')} disabled={!results.length} className="btn-primary h-10 text-sm disabled:opacity-40"><Download size={15} /> Экспорт CSV</button>
           <button type="button" onClick={() => downloadXls(results as unknown as Record<string, unknown>[], `${moduleKey}-results`)} disabled={!results.length} className="btn-soft h-10 text-sm disabled:opacity-40"><Download size={15} /> Excel</button>
           <button type="button" onClick={() => exportData('json')} disabled={!results.length} className="btn-ghost h-10 text-sm disabled:opacity-40"><Download size={15} /> JSON</button>

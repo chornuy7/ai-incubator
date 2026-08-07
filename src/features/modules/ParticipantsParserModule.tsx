@@ -89,7 +89,7 @@ function Inner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: string }) {
   // до 45 минут. Ставим осторожнее — вступление дешевле переждать, чем ловить бан.
   const [joinMin, setJoinMin] = useState(90)
   const [joinMax, setJoinMax] = useState(240)
-  // §3.9: асинхронный режим — цели делятся между аккаунтами, и каждый аккаунт работает
+  // §3.9: асинхронный режим — группы делятся между аккаунтами, и каждый аккаунт работает
   // СВОЕЙ задачей. Задачи независимы: свой прогресс, свои логи, свой «Стоп»; падение
   // одной не трогает остальные. Последовательный режим оставлен как был.
   const [parallel, setParallel] = useState(false)
@@ -207,7 +207,7 @@ function Inner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: string }) {
         <AccountPicker selected={selected} onChange={setSelected} actions={cfg.accountActions} withFilters={!!cfg.accountFilters} selectedTitle={cfg.selectedTitle ?? 'Выбрано для парсинга'} />
       </div>
 
-      <SectionCard id="sec-settings" icon={<Settings2 size={18} />} title="Настройки парсинга" badge={targetList.length ? `${targetList.length} целей` : undefined}>
+      <SectionCard id="sec-settings" icon={<Settings2 size={18} />} title="Настройки парсинга" badge={targetList.length ? `${targetList.length} групп` : undefined}>
         {cfg.aiProtection && <ProtectionBlock enabled={aiProtect} onEnabled={setAiProtect} level={protLevel} onLevel={setProtLevel} />}
 
         <div className="grid gap-4 lg:grid-cols-2">
@@ -292,7 +292,7 @@ function Inner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: string }) {
               label="Асинхронный режим"
               desc={selected.size > 1
                 ? `Одна задача: цели разделятся между ${selected.size} аккаунтами, они пойдут одновременно и стартуют вразнобой`
-                : 'Нужно минимум 2 аккаунта — цели делятся между ними внутри одной задачи'}
+                : 'Нужно минимум 2 аккаунта — группы делятся между ними внутри одной задачи'}
               checked={parallel}
               onChange={setParallel}
             />
@@ -397,7 +397,7 @@ function Inner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: string }) {
           <button type="button" onClick={() => setCleared(true)} disabled={!raw.length} className="btn-danger h-10 text-sm disabled:opacity-40"><Trash2 size={15} /> Очистить</button>
           <button type="button" onClick={copyLinks} disabled={!results.length} className="btn-soft h-10 text-sm disabled:opacity-40"><Copy size={15} /> Скопировать ссылки</button>
           <button type="button" onClick={copyIds} disabled={!results.length} className="btn-soft h-10 text-sm disabled:opacity-40"><Hash size={15} /> Скопировать ID</button>
-          <button type="button" onClick={() => setSaveFolderOpen(true)} disabled={!results.length} className="btn-iris h-10 text-sm disabled:opacity-40"><FolderPlus size={15} /> Сохранить в папку</button>
+          <button type="button" onClick={() => setSaveFolderOpen(true)} disabled={!results.length} className="btn-iris h-10 text-sm disabled:opacity-40"><FolderPlus size={15} /> Сохранить в группу</button>
           <button type="button" onClick={() => exportData('csv')} disabled={!results.length} className="btn-primary h-10 text-sm disabled:opacity-40"><Download size={15} /> Экспорт CSV</button>
           <button type="button" onClick={() => downloadXls(results as unknown as Record<string, unknown>[], `${moduleKey}-results`)} disabled={!results.length} className="btn-soft h-10 text-sm disabled:opacity-40"><Download size={15} /> Excel</button>
           <button type="button" onClick={() => exportData('json')} disabled={!results.length} className="btn-ghost h-10 text-sm disabled:opacity-40"><Download size={15} /> JSON</button>
@@ -481,7 +481,7 @@ function FilterCheck({ label, checked, onChange, star, admin }: { label: string;
   )
 }
 
-/** Уникальная фича: тянет группы/каналы из каталога TGStat как список целей. */
+/** Уникальная фича: тянет группы/каналы из каталога TGStat как список групп. */
 function TgstatSourceButton({ onFill }: { onFill: (usernames: string[]) => void }) {
   const pushToast = useApp((s) => s.pushToast)
   const [open, setOpen] = useState(false)
@@ -506,7 +506,7 @@ function TgstatSourceButton({ onFill }: { onFill: (usernames: string[]) => void 
       const usernames = t.map((x) => x.username).filter(Boolean)
       if (!usernames.length) { pushToast({ type: 'info', title: 'Ничего не найдено', desc: 'Попробуйте другую категорию/регион' }); return }
       onFill(usernames)
-      pushToast({ type: 'success', title: `Добавлено ${usernames.length} целей из каталога` })
+      pushToast({ type: 'success', title: `Добавлено ${usernames.length} групп из каталога` })
       setOpen(false)
     } catch (e) { pushToast({ type: 'error', title: 'Ошибка каталога', desc: e instanceof Error ? e.message : '' }) } finally { setLoading(false) }
   }
@@ -514,9 +514,9 @@ function TgstatSourceButton({ onFill }: { onFill: (usernames: string[]) => void 
   return (
     <>
       <button type="button" onClick={openModal} className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-amber-500/40 bg-amber-500/12 px-2.5 text-xs font-semibold text-amber-200 hover:bg-amber-500/20">
-        <Cookie size={13} /> Взять цели из каталога
+        <Cookie size={13} /> Взять группы из каталога
       </button>
-      <Modal open={open} onClose={() => setOpen(false)} title="Взять цели из каталога" subtitle="Каталог каналов как источник групп/каналов" icon={<Cookie size={22} />} size="sm">
+      <Modal open={open} onClose={() => setOpen(false)} title="Взять группы из каталога" subtitle="Каталог каналов как источник групп/каналов" icon={<Cookie size={22} />} size="sm">
         <div className="space-y-3">
           {session && !session.has_session && (
             <div className="rounded-xl border border-amber-500/30 bg-amber-500/8 p-3 text-sm text-amber-200">
