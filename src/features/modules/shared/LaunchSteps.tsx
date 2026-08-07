@@ -43,7 +43,7 @@ export function LaunchSteps({ steps }: { steps: LaunchStep[] }) {
           <button
             type="button"
             onClick={() => go(s.anchor)}
-            title={s.optional ? `${s.label} — необязательно, можно запускать без них` : `Перейти к разделу «${s.label}»`}
+            title={s.optional ? `${s.label} — необязательно, можно запускать без этого шага` : `Перейти к разделу «${s.label}»`}
             className="flex items-center gap-1.5 rounded-md px-1 py-0.5 transition-opacity hover:opacity-80"
           >
             <span className={cn('grid h-5 w-5 shrink-0 place-items-center rounded-full border text-[10px] font-bold',
