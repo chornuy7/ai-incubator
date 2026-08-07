@@ -51,7 +51,7 @@ export function BlacklistEditor({ title = 'Чёрный список канал�
           onChange={(e) => setInput(e.target.value)}
           rows={2}
           className="input resize-none font-mono text-sm"
-          placeholder="@channel или https://t.me/channel (по одному на строку)"
+          placeholder="@канал или @группа, ссылка t.me/… (по одному на строку)"
         />
         <button type="button" onClick={add} disabled={loading} className="btn-ghost h-auto shrink-0 flex-col px-4"><Plus size={16} /> Добавить</button>
       </div>

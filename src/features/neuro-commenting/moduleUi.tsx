@@ -85,8 +85,9 @@ export function SectionCard({ icon, title, badge, right, required, children, id 
       <div className="flex flex-wrap items-center gap-3 border-b border-line px-4 py-3.5">
         <span className="grid h-9 w-9 place-items-center rounded-xl bg-spark-500/12 text-spark-400">{icon}</span>
         <span className="font-display text-base font-bold text-fg">{title}</span>
-        {required && <span className="rounded-md bg-amber-500/15 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-amber-300" title="Без этого блока запуск недоступен">обязательно</span>}
+        {/* §12 (UI-004): счётчик (badge) — ДО отметки «обязательно». */}
         {badge && <span className="rounded-md bg-spark-500/12 px-2 py-0.5 text-xs font-bold text-spark-300">{badge}</span>}
+        {required && <span className="rounded-md bg-amber-500/15 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-amber-300" title="Без этого блока запуск недоступен">обязательно</span>}
         <div className="ml-auto flex items-center gap-2">
           {right && <div>{right}</div>}
           <button
