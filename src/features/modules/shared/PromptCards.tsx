@@ -3,6 +3,7 @@ import { Star, Sparkles, Check, RotateCcw, Pencil } from 'lucide-react'
 import { cn } from '@/shared/lib/utils'
 import { Modal } from '@/shared/ui'
 import { DEFAULT_PROMPT_BODIES, loadPromptBodies, savePromptBodies } from './promptDefaults'
+import { fetchAiSettings } from '@/api/featuresApi'
 
 interface PromptCardsProps {
   moduleKey: string
@@ -16,6 +17,16 @@ export function PromptCards({ moduleKey, labels, activeIndex, onActiveChange, on
   const [bodies, setBodies] = useState(() => loadPromptBodies(moduleKey, labels))
   const [modalIndex, setModalIndex] = useState<number | null>(null)
   const [draft, setDraft] = useState('')
+  // §9 (PROMPT-001): «Активный промпт» показывает ПОЛНЫЙ итоговый текст — глобальный
+  // системный промпт + промпт карточки (на бэкенде их объединяет resolveSystemPrompt).
+  // Слушаем 'ai-settings-changed', чтобы превью обновлялось сразу после сохранения глобального.
+  const [globalPrompt, setGlobalPrompt] = useState('')
+  useEffect(() => {
+    const load = () => { void fetchAiSettings().then((s) => setGlobalPrompt(s.globalSystemPrompt || '')).catch(() => {}) }
+    load()
+    window.addEventListener('ai-settings-changed', load)
+    return () => window.removeEventListener('ai-settings-changed', load)
+  }, [])
 
   useEffect(() => {
     setBodies(loadPromptBodies(moduleKey, labels))
@@ -107,7 +118,14 @@ export function PromptCards({ moduleKey, labels, activeIndex, onActiveChange, on
             )}
           </div>
           <p className="text-sm font-semibold text-fg">{labels[activeIndex]}</p>
-          <p className="mt-1 line-clamp-2 text-sm leading-relaxed text-muted">{activeBody}</p>
+          {/* §9 (PROMPT-001): полный итоговый промпт — сперва глобальный системный (если задан), затем карточка. */}
+          {globalPrompt && (
+            <div className="mt-1.5 rounded-lg border border-iris-500/25 bg-iris-500/8 px-2.5 py-1.5">
+              <div className="text-[10px] font-bold uppercase tracking-wide text-iris-300">Глобальный системный промпт</div>
+              <p className="mt-0.5 whitespace-pre-wrap text-xs leading-relaxed text-muted">{globalPrompt}</p>
+            </div>
+          )}
+          <p className="mt-1.5 whitespace-pre-wrap text-sm leading-relaxed text-muted">{activeBody}</p>
         </div>
       </div>
 

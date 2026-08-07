@@ -31,6 +31,8 @@ export function GlobalPromptEditor() {
       const s = await saveAiSettings({ globalSystemPrompt: draft })
       setPrompt(s.globalSystemPrompt || '')
       setOpen(false)
+      // §9 (PROMPT-001): уведомляем «Активный промпт» в модулях, чтобы он сразу показал новый глобальный текст.
+      window.dispatchEvent(new Event('ai-settings-changed'))
       pushToast({ type: 'success', title: 'Глобальный промпт сохранён' })
     } catch (e) {
       pushToast({ type: 'error', title: 'Ошибка', desc: e instanceof Error ? e.message : '' })
