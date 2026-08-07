@@ -1,7 +1,7 @@
 import { useNavigate } from 'react-router-dom'
 import { useState, useEffect } from 'react'
 import {
-  Menu, Zap, Sun, Moon, Radar, ChevronDown, UserCog, LogOut, Wallet, Check, AlertTriangle, Package, Bell,
+  Menu, Zap, Sun, Moon, Radar, ChevronDown, UserCog, LogOut, Wallet, Check, AlertTriangle, Package, Bell, X,
 } from 'lucide-react'
 import { useApp, activeAccounts, isBrokenAccount } from '@/mocks/store'
 import { fetchBalance, fetchPricing, buyTokens, type Balance, type Pricing } from '@/api/balanceApi'
@@ -45,6 +45,25 @@ export function AppHeader() {
   // §6.3 (NOTIFY-001): колокольчик — сколько аккаунтов «отвалилось» (мёртвый прокси / нерабочий статус).
   const [notifOpen, setNotifOpen] = useState(false)
   const broken = activeAccounts(data).filter(isBrokenAccount)
+  // §6.3 (NOTIFY-001, доработка): уведомление можно закрыть вручную. Отклонённые id храним в
+  // localStorage; если аккаунт восстановится и снова отвалится — уведомит заново.
+  const [dismissed, setDismissed] = useState<Set<string>>(() => {
+    try { return new Set(JSON.parse(localStorage.getItem('notif-dismissed') || '[]')) } catch { return new Set() }
+  })
+  useEffect(() => { localStorage.setItem('notif-dismissed', JSON.stringify([...dismissed])) }, [dismissed])
+  const brokenKey = broken.map((a) => a.id).sort().join(',')
+  useEffect(() => {
+    // восстановившиеся аккаунты убираем из «отклонённых» — новое падение снова уведомит.
+    setDismissed((prev) => {
+      const bset = new Set(broken.map((a) => a.id))
+      const next = new Set([...prev].filter((id) => bset.has(id)))
+      return next.size === prev.size ? prev : next
+    })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [brokenKey])
+  const shown = broken.filter((a) => !dismissed.has(a.id))
+  const dismiss = (id: string) => setDismissed((prev) => new Set(prev).add(id))
+  const dismissAll = () => setDismissed((prev) => { const n = new Set(prev); broken.forEach((a) => n.add(a.id)); return n })
   const theme = useApp((s) => s.theme)
   const toggleTheme = useApp((s) => s.toggleTheme)
   const locale = useApp((s) => s.locale)
@@ -156,14 +175,14 @@ export function AppHeader() {
           <div className="relative">
             <button
               onClick={() => setNotifOpen((v) => !v)}
-              className={`btn-icon relative ${broken.length > 0 ? 'text-rose-400' : ''}`}
+              className={`btn-icon relative ${shown.length > 0 ? 'text-rose-400' : ''}`}
               aria-label="Уведомления"
-              title={broken.length > 0 ? `${broken.length} нерабочих аккаунтов` : 'Все аккаунты рабочие'}
+              title={shown.length > 0 ? `${shown.length} нерабочих аккаунтов` : 'Все аккаунты рабочие'}
             >
               <Bell size={18} />
-              {broken.length > 0 && (
+              {shown.length > 0 && (
                 <span className="absolute -right-0.5 -top-0.5 grid h-4 min-w-4 place-items-center rounded-full bg-rose-500 px-1 text-[10px] font-bold leading-none text-white">
-                  {broken.length > 99 ? '99+' : broken.length}
+                  {shown.length > 99 ? '99+' : shown.length}
                 </span>
               )}
             </button>
@@ -171,19 +190,26 @@ export function AppHeader() {
               <>
                 <div className="fixed inset-0 z-40" onClick={() => setNotifOpen(false)} />
                 <div className="absolute right-0 top-[calc(100%+8px)] z-50 w-72 rounded-xl border border-line bg-surface p-2 shadow-xl">
-                  <div className="px-2 py-1.5 text-xs font-bold uppercase tracking-wide text-muted">Отвалившиеся аккаунты · {broken.length}</div>
-                  {broken.length === 0 ? (
+                  <div className="flex items-center justify-between px-2 py-1.5">
+                    <span className="text-xs font-bold uppercase tracking-wide text-muted">Отвалившиеся аккаунты · {shown.length}</span>
+                    {shown.length > 0 && <button onClick={dismissAll} className="text-[11px] font-semibold text-spark-300 hover:underline">Скрыть все</button>}
+                  </div>
+                  {shown.length === 0 ? (
                     <div className="px-2 py-3 text-center text-sm text-muted">Все аккаунты рабочие 👍</div>
                   ) : (
                     <div className="max-h-72 overflow-y-auto">
-                      {broken.slice(0, 20).map((a) => (
-                        <button key={a.id} onClick={() => { setNotifOpen(false); nav('/panel') }} className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left hover:bg-white/[.04]">
+                      {shown.slice(0, 20).map((a) => (
+                        <div key={a.id} className="group flex items-center gap-2 rounded-lg px-2 py-1.5 hover:bg-white/[.04]">
                           <AlertTriangle size={14} className="shrink-0 text-rose-400" />
-                          <span className="min-w-0 flex-1">
+                          <button onClick={() => { setNotifOpen(false); nav('/panel') }} className="min-w-0 flex-1 text-left">
                             <span className="block truncate text-sm text-fg">{a.name}</span>
                             <span className="block text-[11px] text-muted">{a.proxyOk === false ? 'мёртвый прокси' : 'нерабочий статус'}</span>
-                          </span>
-                        </button>
+                          </button>
+                          {/* §6.3 (доработка): закрыть это уведомление вручную. */}
+                          <button onClick={() => dismiss(a.id)} title="Скрыть уведомление" className="shrink-0 rounded-md p-1 text-faint opacity-0 transition-opacity hover:bg-rose-500/12 hover:text-rose-300 group-hover:opacity-100">
+                            <X size={13} />
+                          </button>
+                        </div>
                       ))}
                     </div>
                   )}
