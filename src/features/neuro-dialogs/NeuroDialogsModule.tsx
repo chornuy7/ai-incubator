@@ -360,6 +360,8 @@ export function NeuroDialogsModule() {
         </div>
         {aiOpen && (
           <div className="space-y-4 border-t border-line p-4">
+            {/* §3 (MR-113): «Защита аккаунтов» — первой в настройках ИИ-ответов. */}
+            <ProtectionBlock enabled={aiProtect} onEnabled={setAiProtect} level={protLevel} onLevel={setProtLevel} />
             <Switch
               checked={aiEnabled}
               onChange={setAiEnabled}
@@ -442,7 +444,6 @@ export function NeuroDialogsModule() {
                 в секции <b className="text-fg">«Тайминги и задержки»</b> всё равно стоит проверить перед первым запуском.
               </p>
             )}
-            <ProtectionBlock enabled={aiProtect} onEnabled={setAiProtect} level={protLevel} onLevel={setProtLevel} />
             {cfg.messagePrompts && (
               <div className="space-y-3">
                 <AiGenerationNotice />
