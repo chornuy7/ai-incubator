@@ -432,6 +432,18 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
         <SectionCard icon={<Settings2 size={18} />} title={cfg.settingsTitle ?? 'Защита'} badge={targets.length ? `${targets.length} целей` : undefined}>
           {cfg.aiProtection && <ProtectionBlock enabled={aiProtect} onEnabled={setAiProtect} level={protLevel} onLevel={setProtLevel} />}
 
+          {/* MR-112 (WARM-001): «Уровень прогрева» — в настройках, а не в панели запуска. */}
+          {cfg.warmingLayout && (
+            <div className="mb-4">
+              <div className="mb-1 text-xs text-white/50">Уровень прогрева <span className="text-white/30">(длиннее = естественнее)</span></div>
+              <Segmented options={WARM_LEVELS} value={warmLevel} onChange={setWarmLevel} />
+              <div className="mt-2 rounded-lg border border-line/60 bg-elevated/40 px-3 py-2 text-[11px] text-white/50">
+                💡 <b className="text-white/70">Уровень</b> задаёт темп (~40 / 20 / 10 действий в день) и множитель пауз.
+                «Защита» и «Тайминги и задержки» — тонкая подстройка поверх уровня (для опытных): защита × шаблон × уровень перемножаются. Для старта достаточно выбрать уровень.
+              </div>
+            </div>
+          )}
+
           {cfg.reactionSettings ? (
             <div className="space-y-4 rounded-2xl border border-line bg-elevated/40 p-4">
               <ToggleGroup label="Режим" options={cfg.reactionSettings.modes} value={g(0)} onChange={(v) => setTg(0, v)} />
@@ -580,16 +592,6 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
       <SectionCard icon={<Play size={18} />} title={running ? 'Выполнение' : 'Параметры и лимиты'} badge={running ? 'LIVE' : undefined}>
         {limitWarn && !running && (
           <div className="mb-3 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-300">⚠ {limitWarn}</div>
-        )}
-        {cfg.warmingLayout && !running && (
-          <div className="mb-3">
-            <div className="mb-1 text-xs text-white/50">Уровень прогрева <span className="text-white/30">(длиннее = естественнее)</span></div>
-            <Segmented options={WARM_LEVELS} value={warmLevel} onChange={setWarmLevel} />
-            <div className="mt-2 rounded-lg border border-line/60 bg-elevated/40 px-3 py-2 text-[11px] text-white/50">
-              💡 <b className="text-white/70">Уровень</b> задаёт темп (~40 / 20 / 10 действий в день) и множитель пауз.
-              Секции «Защита» и «Тайминги и задержки» выше — это <b className="text-white/70">тонкая подстройка поверх уровня</b> (для опытных): защита × шаблон × уровень перемножаются. Для старта достаточно выбрать уровень.
-            </div>
-          </div>
         )}
         {showBlock('settings') && moduleKey === 'neuro-commenting' && !running && (
           <div className="mb-3">
