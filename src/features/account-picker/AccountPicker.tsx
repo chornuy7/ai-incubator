@@ -10,7 +10,7 @@ import { filterAccountsByAccess } from '@/shared/lib/access'
 import { fetchAccountGroups, type AccountGroup } from '@/api/accountGroupsApi'
 import { cn } from '@/shared/lib/utils'
 import { ROLES } from '@/shared/config/modules'
-import { countryOptionsFrom, matchesGeo, FLAGS, COUNTRY_NAME } from '@/shared/config/geo'
+import { countryOptionsFrom, matchesGeo, FLAGS } from '@/shared/config/geo'
 import type { TgAccount } from '@/shared/types'
 
 /** Аккаунт «в работе»: заблокирован задачей (lock) или в статусе working — выбирать нельзя. */
@@ -100,13 +100,6 @@ export function AccountPicker({
 
   const selectedList = accounts.filter((a) => selected.has(a.id))
 
-  // группировка доступных по стране
-  const grouped = useMemo(() => {
-    const g: Record<string, TgAccount[]> = {}
-    for (const a of freeAvailable) (g[a.country] ||= []).push(a)
-    return Object.entries(g)
-  }, [freeAvailable])
-
   const addAll = () => {
     const ids = freeAvailable.map((a) => a.id)
     if (!ids.length) {
@@ -143,8 +136,8 @@ export function AccountPicker({
       <button onClick={() => setCollapsed((v) => !v)} className="flex w-full items-center gap-3 border-b border-line px-4 py-3.5 pr-14 text-left">
         <span className="grid h-9 w-9 place-items-center rounded-xl bg-spark-500/12 text-spark-400"><Users size={18} /></span>
         <span className="font-display text-base font-bold text-fg">Выбор аккаунтов</span>
-        <span className="rounded-md bg-spark-500/12 px-2 py-0.5 text-xs font-bold text-spark-300">{selected.size} выбрано</span>
-        <span className="rounded-md bg-elevated px-2 py-0.5 text-xs font-bold text-muted">{selected.size}/{limit}</span>
+        {/* MR-101 (UI-003): один счётчик в формате «2 из 50». */}
+        <span className="rounded-md bg-spark-500/12 px-2 py-0.5 text-xs font-bold text-spark-300">{selected.size} из {limit}</span>
         <ChevronDown size={18} className={cn('ml-auto text-muted transition-transform', collapsed && '-rotate-90')} />
       </button>
 
@@ -191,15 +184,10 @@ export function AccountPicker({
                 <div className="py-8 text-center text-sm text-muted">Нет аккаунтов, соответствующих фильтрам</div>
               ) : (
                 <>
-                  {grouped.map(([code, list]) => (
-                    <div key={code} className="mb-2">
-                      <div className="flex items-center gap-2 px-2 py-1 text-xs font-bold text-muted">
-                        <span>{FLAGS[code]}</span> {COUNTRY_NAME[code] ?? code.toUpperCase()} <span className="text-faint">{list.length}</span>
-                      </div>
-                      {list.map((a) => (
-                        <AccountRow key={a.id} account={a} liteMode={liteMode} onAdd={() => add(a.id)} />
-                      ))}
-                    </div>
+                  {/* MR-101 (UI-003): плоский список без заголовков-стран (страна видна флажком в строке;
+                      фильтр по стране остаётся в dropdown «Все страны»). */}
+                  {freeAvailable.map((a) => (
+                    <AccountRow key={a.id} account={a} liteMode={liteMode} onAdd={() => add(a.id)} />
                   ))}
                   {busyAvailable.length > 0 && (
                     <div className="mt-2 border-t border-line pt-2">
