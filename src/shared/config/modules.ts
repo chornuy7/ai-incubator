@@ -212,7 +212,7 @@ export const MODULES: Record<string, ModuleConfig> = {
     toggleGroups: [
       { label: 'Режим комментирования', options: ['Случайный', 'По ключевым словам', 'Все посты'] },
       { label: 'Режим работы', options: ['По количеству', 'По времени'] },
-      { label: 'Какие посты комментировать', options: ['Только новые', 'Только существующие', 'Сначала существующие, потом новые'] },
+      { label: 'Какие посты комментировать', options: ['Только новые', 'Только существующие', 'Все посты'] },
     ],
     probabilitySlider: { label: 'Вероятность комментария', value: 30 },
     workModeFields: { maxLabel: 'Макс. комментариев', maxValue: 100, perAccount: true, minWords: true },
