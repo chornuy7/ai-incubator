@@ -444,21 +444,25 @@ export function NeuroDialogsModule() {
                 в секции <b className="text-fg">«Тайминги и задержки»</b> всё равно стоит проверить перед первым запуском.
               </p>
             )}
-            {cfg.messagePrompts && (
-              <div className="space-y-3">
-                <AiGenerationNotice />
-                <PromptCards
-                moduleKey="neuro-dialogs"
-                labels={cfg.messagePrompts}
-                activeIndex={activePrompt}
-                onActiveChange={setActivePrompt}
-                  onBodiesChange={setPromptBodies}
-                />
-              </div>
-            )}
           </div>
         )}
       </div>
+
+      {/* §3 (MR-113 · ND-001): AI / промпты — ОТДЕЛЬНЫМ блоком, отдельно от настроек ИИ-ответов. */}
+      {cfg.messagePrompts && (
+        <SectionCard icon={<Sparkles size={18} />} title="AI / промпты">
+          <div className="space-y-3">
+            <AiGenerationNotice />
+            <PromptCards
+              moduleKey="neuro-dialogs"
+              labels={cfg.messagePrompts}
+              activeIndex={activePrompt}
+              onActiveChange={setActivePrompt}
+              onBodiesChange={setPromptBodies}
+            />
+          </div>
+        </SectionCard>
+      )}
 
       {/* §9: сколько сообщений ведём с ОДНИМ лидом — переключатель режима. */}
       <SectionCard icon={<MessagesSquare size={18} />} title="Переписка с одним лидом" id="sec-settings">
