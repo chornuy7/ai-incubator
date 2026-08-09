@@ -1,6 +1,8 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { Bookmark, Save } from 'lucide-react'
-import { Modal } from '@/shared/ui'
+import { Modal, Select } from '@/shared/ui'
+import { useSession } from '@/features/auth/session'
+import { fetchUsers, type User } from '@/api/usersApi'
 
 // §7: шаблон модуля = быстрый конфиг с цветовой меткой и «владельцем» (персональные — Маша/Паша).
 // Палитра меток — фиксированный набор, чтобы шаблоны визуально различались в списке.
@@ -22,6 +24,10 @@ export function SavePresetModal({ open, onClose, onSave }: {
   onClose: () => void
   onSave: (name: string, color: string, owner: string) => void | Promise<void>
 }) {
+  // §7 (MR-107 · TPL-001): владелец шаблона — выбор ТОЛЬКО среди подключённых пользователей,
+  // по умолчанию текущий пользователь (а не свободный ввод имени).
+  const me = useSession((s) => s.user)
+  const [users, setUsers] = useState<User[]>([])
   const [name, setName] = useState('')
   const [color, setColor] = useState(PRESET_COLORS[0].key)
   const [owner, setOwner] = useState('')
@@ -29,8 +35,16 @@ export function SavePresetModal({ open, onClose, onSave }: {
 
   useEffect(() => {
     if (!open) return
-    setName(''); setColor(PRESET_COLORS[0].key); setOwner('')
-  }, [open])
+    setName(''); setColor(PRESET_COLORS[0].key); setOwner(me?.name ?? '')
+    void fetchUsers().then(setUsers).catch(() => setUsers([]))
+  }, [open, me])
+
+  const ownerOptions = useMemo(() => {
+    const names: string[] = []
+    if (me?.name) names.push(me.name)
+    for (const u of users) if (u.name && !names.includes(u.name)) names.push(u.name)
+    return names.map((n) => ({ value: n, label: n === me?.name ? `${n} (вы)` : n }))
+  }, [users, me])
 
   const submit = async () => {
     if (!name.trim() || saving) return
@@ -84,15 +98,9 @@ export function SavePresetModal({ open, onClose, onSave }: {
         ))}
       </div>
 
-      <label className="mb-1.5 mt-4 block text-xs font-semibold uppercase tracking-wide text-muted">Владелец <span className="normal-case text-faint">(опционально — персональный шаблон)</span></label>
-      <input
-        value={owner}
-        onChange={(e) => setOwner(e.target.value)}
-        onKeyDown={(e) => { if (e.key === 'Enter') void submit() }}
-        placeholder="Напр. Маша, Паша…"
-        className="input h-11 w-full"
-      />
-      <p className="mt-2 text-xs text-muted">Метка и владелец помогают быстро найти нужный шаблон в списке.</p>
+      <label className="mb-1.5 mt-4 block text-xs font-semibold uppercase tracking-wide text-muted">Владелец <span className="normal-case text-faint">(персональный шаблон)</span></label>
+      <Select value={owner} onChange={setOwner} options={ownerOptions} placeholder="Выберите пользователя" />
+      <p className="mt-2 text-xs text-muted">Выбор только среди подключённых пользователей; по умолчанию — вы. Метка и владелец помогают быстро найти шаблон в списке.</p>
     </Modal>
   )
 }
