@@ -369,8 +369,10 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
       )}
 
       {/* §3.1 (MR-100): порядок блоков = степпер (Аккаунты → Группы → Защита → Запуск).
-          Цели «Группы»/«Посты» идут СРАЗУ после аккаунтов, до блока «Защита» — одинаково во всех модулях. */}
-      {showBlock('targets') && (cfg.sourceTabs || needsTargets) && !isGgr && (
+          Цели «Группы»/«Посты» идут СРАЗУ после аккаунтов, до блока «Защита» — одинаково во всех модулях.
+          §3 (MR-111): в Массовых реакциях цель зависит от режима — «Мониторинг» показывает Группы,
+          «Реакции на существующие» — ссылки на посты (ниже). */}
+      {showBlock('targets') && (cfg.sourceTabs || needsTargets) && !isGgr && (!cfg.reactionSettings || g(0) === 0) && (
         <div id="sec-targets" className="scroll-mt-24">
         <SectionCard icon={<Hash size={18} />} title={cfg.sourceTabs?.label ?? 'Группы'} badge={String(targets.length)} required={needsTargets && !cfg.postLinks}>
           <FolderPicker targets={targets} onLoad={(t) => setTargets((prev) => [...new Set([...t, ...prev])])} />
@@ -395,7 +397,8 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
         </div>
       )}
 
-      {showBlock('targets') && cfg.postLinks && (
+      {/* §3 (MR-111): ссылки на посты — только в режиме «Реакции на существующие» (mode 1). */}
+      {showBlock('targets') && cfg.postLinks && (!cfg.reactionSettings || g(0) === 1) && (
         <SectionCard icon={<Link2 size={18} />} title={cfg.postLinks.label} badge={String(postUrls.length)}>
           {cfg.postLinks.hint && <p className="mb-3 text-xs text-muted">{cfg.postLinks.hint}</p>}
           <FolderPicker targets={postUrls} onLoad={(t) => setPostUrls((prev) => [...new Set([...t, ...prev])])} />
