@@ -69,7 +69,7 @@ export function AutopostingPage() {
 
   // Общая машина задач модуля — как у остальных модулей: немедленная публикация,
   // состояние, шаблоны, поп-ап со ссылкой в Дашборд задач.
-  const { running, starting, start, stop, savePreset, deletePreset, presets, task, justStarted, dismissJustStarted } = useModuleTask('autoposting')
+  const { running, starting, start, stop, savePreset, deletePreset, editPreset, presets, task, justStarted, dismissJustStarted } = useModuleTask('autoposting')
 
   // «Отработавшее» = разовое правило, которое уже выключилось после запуска. Оно ничего
   // больше не сделает, но занимало место наравне с живыми (баг 10.5-b).
@@ -398,7 +398,7 @@ export function AutopostingPage() {
             task={task}
             presets={presets}
             onApplyPreset={applyPreset}
-            onDeletePreset={deletePreset}
+            onDeletePreset={deletePreset} onEditPreset={editPreset}
           />
         </div>
       </div>

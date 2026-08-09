@@ -1,4 +1,4 @@
-import { Play, Save, AlertTriangle, Loader2, Bookmark, X, ArrowUpRight } from 'lucide-react'
+import { Play, Save, AlertTriangle, Loader2, Bookmark, X, ArrowUpRight, Pencil } from 'lucide-react'
 import type { ModuleTask, ModulePreset, ModuleTaskSettings } from '@/api/modulesApi'
 import { cn } from '@/shared/lib/utils'
 import { FloatingBar } from './FloatingBar'
@@ -6,7 +6,7 @@ import { presetHex } from './SavePresetModal'
 
 export function LaunchPanel({
   running, starting, canStart, onStart, onSave, primaryLabel, stats, warn, cost,
-  presets, onApplyPreset, onDeletePreset, extras, steps, blockedBy = [],
+  presets, onApplyPreset, onDeletePreset, onEditPreset, extras, steps, blockedBy = [],
 }: {
   running: boolean; starting: boolean; canStart: boolean
   onStart: () => void; onStop?: () => void; onSave: () => void
@@ -23,6 +23,8 @@ export function LaunchPanel({
   presets?: ModulePreset[]
   onApplyPreset?: (settings: ModuleTaskSettings) => void
   onDeletePreset?: (id: string) => void
+  /** §7 (MR-108): редактирование (переименование) шаблона. */
+  onEditPreset?: (p: ModulePreset) => void
   /**
    * Доп. блоки запуска (расписание, ссылка на логи). Рендерятся В ПОТОКЕ, ПЕРЕД плавающим
    * баром: сам бар обязан быть последним элементом, иначе его заглушка резервирует место
@@ -58,6 +60,16 @@ export function LaunchPanel({
                   <span className="shrink-0 rounded-md bg-elevated px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-muted" title="Владелец шаблона">
                     {p.owner}
                   </span>
+                )}
+                {onEditPreset && (
+                  <button
+                    type="button"
+                    onClick={() => onEditPreset(p)}
+                    title="Переименовать шаблон"
+                    className="grid h-5 w-5 shrink-0 place-items-center rounded-lg text-faint hover:bg-spark-500/12 hover:text-spark-300"
+                  >
+                    <Pencil size={12} />
+                  </button>
                 )}
                 {onDeletePreset && (
                   <button

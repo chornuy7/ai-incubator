@@ -74,7 +74,7 @@ export function MailingPage() {
 
   // Общая машина задач модуля — как у остальных модулей: запуск, состояние, шаблоны,
   // поп-ап со ссылкой в Дашборд задач. Раньше рассылка вела свой параллельный запуск.
-  const { running, starting, start, stop, savePreset, deletePreset, presets, task, justStarted, dismissJustStarted } = useModuleTask('mailing')
+  const { running, starting, start, stop, savePreset, deletePreset, editPreset, presets, task, justStarted, dismissJustStarted } = useModuleTask('mailing')
 
   /**
    * Цели рассылки: номер ИЛИ юзернейм. Правило то же, что на сервере
@@ -466,7 +466,7 @@ export function MailingPage() {
               task={task}
               presets={presets}
               onApplyPreset={applyPreset}
-              onDeletePreset={deletePreset}
+              onDeletePreset={deletePreset} onEditPreset={editPreset}
             />
         </div>
       </div>

@@ -103,7 +103,7 @@ const DialogRow = memo(function DialogRow({
 
 export function NeuroDialogsModule() {
   const pushToast = useApp((s) => s.pushToast)
-  const { task, running, starting, start, stop, savePreset, deletePreset, presets, justStarted, dismissJustStarted } = useModuleTask('neuro-dialogs')
+  const { task, running, starting, start, stop, savePreset, deletePreset, editPreset, presets, justStarted, dismissJustStarted } = useModuleTask('neuro-dialogs')
 
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [aiOpen, setAiOpen] = useState(true)
@@ -647,7 +647,7 @@ export function NeuroDialogsModule() {
           warn={!canStart ? 'Выберите хотя бы один аккаунт' : undefined}
           presets={presets}
           onApplyPreset={applyPreset}
-          onDeletePreset={deletePreset}
+          onDeletePreset={deletePreset} onEditPreset={editPreset}
         />
       </div>
     </div>

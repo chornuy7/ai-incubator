@@ -90,7 +90,7 @@ export function ChannelParserModule({ moduleKey }: { moduleKey: string }) {
 function ChannelParserInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: string }) {
   const accounts = activeAccounts(useApp((s) => s.data))
   const pushToast = useApp((s) => s.pushToast)
-  const { task, running, starting, start, stop, savePreset, deletePreset, presets, justStarted, dismissJustStarted } = useModuleTask(moduleKey)
+  const { task, running, starting, start, stop, savePreset, deletePreset, editPreset, presets, justStarted, dismissJustStarted } = useModuleTask(moduleKey)
 
   const isGroups = moduleKey === 'parsing-groups'
   const resultLabel = cfg.resultLabel ?? (isGroups ? 'ГРУППА' : 'КАНАЛ')
@@ -535,7 +535,7 @@ function ChannelParserInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: 
           warn={warn}
           presets={presets}
           onApplyPreset={applyPreset}
-          onDeletePreset={deletePreset}
+          onDeletePreset={deletePreset} onEditPreset={editPreset}
         />
       </SectionCard>
 

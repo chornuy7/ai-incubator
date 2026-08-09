@@ -54,7 +54,7 @@ export function LiveModule({ moduleKey }: { moduleKey: string }) {
 
 function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: string }) {
   const accounts = activeAccounts(useApp((s) => s.data))
-  const { task, running, starting, start, stop, savePreset, deletePreset, presets, pushToast, justStarted, dismissJustStarted } = useModuleTask(moduleKey)
+  const { task, running, starting, start, stop, savePreset, deletePreset, editPreset, presets, pushToast, justStarted, dismissJustStarted } = useModuleTask(moduleKey)
 
   // R6: гейтинг блоков внутри модуля по правам роли. Демо/админ — всё видно.
   // run — запуск/аккаунты; settings — настройки/тайминги/защита; targets — цели/каналы;
@@ -701,7 +701,7 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
           steps={!running ? <LaunchSteps steps={launchSteps} /> : null}
           presets={presets}
           onApplyPreset={applyPreset}
-          onDeletePreset={deletePreset}
+          onDeletePreset={deletePreset} onEditPreset={editPreset}
           extras={(
             <>
               {/* §6: автоматизация прямо в модуле — запуск по времени, одно-/многоразово.

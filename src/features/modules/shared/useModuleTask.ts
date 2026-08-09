@@ -15,6 +15,7 @@ import {
   type ModulePreset,
 } from '@/api/modulesApi'
 import { persistActiveTaskId, readActiveTaskId, pickTaskIdToRestore, mapTaskStatus } from './activeTaskStorage'
+import { promptDialog } from '@/shared/lib/dialog'
 
 export function useModuleTask(moduleKey: string) {
   const addTask = useApp((s) => s.addTask)
@@ -176,5 +177,21 @@ export function useModuleTask(moduleKey: string) {
     }
   }, [moduleKey, presets, pushToast])
 
-  return { task, taskId, running, starting, restoring, start, stop, savePreset, deletePreset, presets, pushToast, guardNet, justStarted, dismissJustStarted: () => setJustStarted(null) }
+  // §7 (MR-108 · TPL-002): редактирование шаблона — переименование (настройки сохраняются:
+  // update-эндпоинта нет, поэтому пересоздаём с тем же settings/цветом/владельцем).
+  const editPreset = useCallback(async (p: ModulePreset) => {
+    const name = await promptDialog({ title: 'Переименовать шаблон', message: 'Новое название шаблона', placeholder: p.name })
+    if (!name || !name.trim() || name.trim() === p.name) return
+    try {
+      await deleteModulePreset(moduleKey, p.id)
+      await saveModulePreset(moduleKey, name.trim(), p.settings, p.color, p.owner)
+      setPresets(await fetchModulePresets(moduleKey))
+      pushToast({ type: 'success', title: 'Шаблон переименован', desc: name.trim() })
+    } catch (e) {
+      setPresets(await fetchModulePresets(moduleKey).catch(() => presets))
+      pushToast({ type: 'error', title: 'Не переименован', desc: e instanceof Error ? e.message : '' })
+    }
+  }, [moduleKey, presets, pushToast])
+
+  return { task, taskId, running, starting, restoring, start, stop, savePreset, deletePreset, editPreset, presets, pushToast, guardNet, justStarted, dismissJustStarted: () => setJustStarted(null) }
 }
