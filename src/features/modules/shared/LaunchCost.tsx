@@ -57,9 +57,14 @@ export function LaunchCost({ moduleKey, actions, accounts, delaySec, compact }: 
       + (avgTokens > 0 ? ` · ИИ ≈ ${Math.round(tokens).toLocaleString('ru-RU')} токенов (${fmt(tokensCost)} ⚡)` : ' · расход ИИ добавится по факту')
     return (
       <>
-        <span className="inline-flex items-center gap-1 text-amber-300" title={detail}>
+        {/* MR-136: стоимость расписана ИНЛАЙН (без наведения на «?»): «N × цена = сумма».
+            Расход ИИ — коротким хвостом; полная детализация всё ещё в тултипе. */}
+        <span className="inline-flex items-center gap-1 whitespace-nowrap text-amber-300" title={detail}>
           <Zap size={12} fill="currentColor" />
-          <b className="font-semibold">{avgTokens ? '≈' : ''}{fmt(total)} ⚡</b>
+          <span>
+            <b className="font-semibold">{n}</b> × {price} = <b className="font-semibold">{fmt(actionsCost)} ⚡</b>
+            {avgTokens > 0 && <span className="text-amber-300/80"> +ИИ≈{fmt(tokensCost)}</span>}
+          </span>
         </span>
         {timeMin && (
           <span className="inline-flex items-center gap-1 text-emerald-300" title="Ориентировочное время прогона">
