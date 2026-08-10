@@ -106,10 +106,56 @@ import { filterBlacklisted, isBlacklistedSync } from '../targetBlacklist.js'
 
 /** @type {Map<string, Promise<void>>} */
 const running = new Map()
+/**
+ * MR-130 (§3.9 «секвенс»): очередь задач, ждущих свободный слот. Раньше startWorker
+ * запускал КАЖДУЮ задачу сразу — десятки воркеров уходили в фон «в воздух», грузили
+ * CPU/сеть и путали оператора. Теперь одновременно работает не больше MAX_CONCURRENT,
+ * остальные висят здесь в статусе `queued` и стартуют по мере освобождения слотов.
+ * @type {Array<{ taskId: string, store: object, runner: Function }>}
+ */
+const waiting = []
+/** Сколько задач выполняется ОДНОВРЕМЕННО. Настраивается через env; по умолчанию 3. */
+const MAX_CONCURRENT = Math.max(1, Number(process.env.MAX_CONCURRENT_TASKS) || 3)
+
+/** Для тестов/диагностики: сколько сейчас работает и сколько ждёт слот. */
+export function getConcurrencyState() {
+  return { running: running.size, waiting: waiting.length, max: MAX_CONCURRENT }
+}
+
+/** Снять задачу из очереди ожидания (стоп/пауза до старта). @returns {boolean} была ли в очереди */
+function dropFromWaiting(taskId) {
+  const i = waiting.findIndex((w) => w.taskId === taskId)
+  if (i === -1) return false
+  waiting.splice(i, 1)
+  return true
+}
+
+/** Пометить ждущую задачу как «в очереди» — чтобы она была видна, а не «пропала». */
+async function markQueued(taskId, store) {
+  try {
+    const task = await store.loadTask(taskId)
+    if (!task || task.status === 'stopped' || task.stopRequested || task.pauseRequested) return
+    task.status = 'queued'
+    await store.appendLog(task, 'info', `В очереди — ждём свободный слот (одновременно не больше ${MAX_CONCURRENT})`)
+    await store.saveTask(task)
+  } catch { /* учёт очереди не должен ронять запуск */ }
+}
 
 /** @param {string} taskId @param {object} store @param {(task: object, store: object) => Promise<void>} runner */
 export function startWorker(taskId, store, runner) {
-  if (running.has(taskId)) return
+  if (running.has(taskId) || waiting.some((w) => w.taskId === taskId)) return
+  // Лок задача взяла ещё на POST — держим её «живой» и в очереди, иначе reconcileLocks
+  // счёл бы её локи бесхозными и отдал аккаунты другим, пока она ждёт слот.
+  markTaskLive(taskId)
+  if (running.size >= MAX_CONCURRENT) {
+    waiting.push({ taskId, store, runner })
+    void markQueued(taskId, store)
+    return
+  }
+  launchWorker(taskId, store, runner)
+}
+
+function launchWorker(taskId, store, runner) {
   markTaskLive(taskId)
   const job = (async () => {
     const task = await store.loadTask(taskId)
@@ -124,8 +170,18 @@ export function startWorker(taskId, store, runner) {
   })().finally(() => {
     running.delete(taskId)
     markTaskDone(taskId)
+    pumpWaiting()
   })
   running.set(taskId, job)
+}
+
+/** Освободился слот — запускаем следующую ждущую задачу (если её не сняли из очереди). */
+function pumpWaiting() {
+  while (running.size < MAX_CONCURRENT && waiting.length) {
+    const next = waiting.shift()
+    if (running.has(next.taskId)) continue
+    launchWorker(next.taskId, next.store, next.runner)
+  }
 }
 
 /**
@@ -142,12 +198,18 @@ export async function stopWorker(taskId, store) {
   const task = await store.loadTask(taskId)
   if (!task) return null
   task.stopRequested = true
-  if (task.status === 'paused' && !running.has(taskId)) {
+  // Задача НА ПАУЗЕ или В ОЧЕРЕДИ (ждёт слот) — живого воркера нет, флаг обработать
+  // некому. Останавливаем сами: снимаем из очереди, ставим статус, освобождаем аккаунты.
+  const wasWaiting = dropFromWaiting(taskId)
+  if ((task.status === 'paused' || task.status === 'queued' || wasWaiting) && !running.has(taskId)) {
     task.pauseRequested = false
     task.status = 'stopped'
-    await store.appendLog(task, 'info', 'Задача остановлена с паузы — аккаунты освобождены')
+    await store.appendLog(task, 'info', wasWaiting || task.status === 'queued'
+      ? 'Задача снята из очереди — остановлена, аккаунты освобождены'
+      : 'Задача остановлена с паузы — аккаунты освобождены')
     await store.saveTask(task)
     await finalizeAccounts(task.settings?.accountIds || [], task.id, false)
+    markTaskDone(taskId)
     return task
   }
   await store.saveTask(task)
@@ -163,6 +225,12 @@ export async function pauseWorker(taskId, store) {
   if (!task) return null
   if (task.status !== 'running' && task.status !== 'queued') return task
   task.pauseRequested = true
+  // Ждала слот и ещё не запускалась — ставим на паузу сами, без холостого запуска
+  // воркера, который тут же вышел бы. Локи держим (пауза их сохраняет) → задача «живая».
+  if (dropFromWaiting(taskId) && !running.has(taskId)) {
+    task.status = 'paused'
+    await store.appendLog(task, 'info', 'Задача снята из очереди — поставлена на паузу')
+  }
   await store.saveTask(task)
   return task
 }

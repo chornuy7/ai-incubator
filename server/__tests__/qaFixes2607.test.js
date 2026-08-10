@@ -125,6 +125,46 @@ test('MR-130: без стопа breakableDelay досыпает и возвра�
   assert.ok(!task.stopRequested && !task.pauseRequested)
 })
 
+// ── MR-130: секвенс — сверх лимита задачи ждут в очереди ─────────────────
+test('MR-130: сверх лимита задачи встают в очередь (queued) и стартуют по слоту', async () => {
+  const { startWorker, stopWorker, getConcurrencyState } = await import('../modules/workers.js')
+  const tick = () => new Promise((r) => setTimeout(r, 15))
+  const tasks = new Map()
+  const store = {
+    loadTask: async (id) => tasks.get(id) || null,
+    saveTask: async (t) => { tasks.set(t.id, t) },
+    appendLog: async () => {},
+  }
+  const gates = {} // gates[id]() завершает раннер этой задачи
+  const runner = (task) => new Promise((resolve) => { gates[task.id] = resolve })
+  const ids = ['q1', 'q2', 'q3', 'q4', 'q5'] // лимит по умолчанию = 3
+  for (const id of ids) {
+    tasks.set(id, { id, status: 'running', settings: { accountIds: [] } })
+    startWorker(id, store, runner)
+  }
+  await tick()
+  let st = getConcurrencyState()
+  assert.equal(st.running, 3, 'одновременно работает ровно лимит')
+  assert.equal(st.waiting, 2, 'остальные ждут свободный слот')
+  assert.equal(tasks.get('q4').status, 'queued', 'ждущая помечена как queued, а не «пропала»')
+
+  // Стоп ждущей в очереди — снимаем без холостого запуска.
+  await stopWorker('q5', store)
+  assert.equal(tasks.get('q5').status, 'stopped', 'снятая из очереди — stopped')
+  assert.equal(getConcurrencyState().waiting, 1, 'в очереди осталась одна (q4)')
+
+  // Одна работающая завершилась → освободившийся слот берёт ждущая q4.
+  gates.q1()
+  await tick()
+  st = getConcurrencyState()
+  assert.equal(st.waiting, 0, 'очередь опустела — q4 стартовала по слоту')
+  assert.equal(st.running, 3, 'слот переиспользован, не превышен')
+
+  // Прибираемся: завершаем оставшиеся раннеры.
+  gates.q2(); gates.q3(); gates.q4()
+  await tick()
+})
+
 // ── 1.3: шаблонный комментарий различается по аккаунту ───────────────────
 test('1.3: разные аккаунты под одним постом пишут РАЗНЫЙ текст', async (t) => {
   const key = process.env.OPENAI_API_KEY; delete process.env.OPENAI_API_KEY
