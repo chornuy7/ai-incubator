@@ -102,13 +102,18 @@ export function LaunchPanel({
         <div className="flex w-full flex-wrap items-center justify-center gap-x-4 gap-y-2">
           {/* Сводка: чипы идут сверху вниз, затем следующая колонка (rows-2). */}
           <div className="grid grid-flow-col grid-rows-2 gap-x-3 gap-y-0.5 text-[11px] text-muted">
-            {stats.map((s) => (
-              <span key={s.label} className="inline-flex items-center gap-1" title={s.label}>
-                <span className={cn('shrink-0', s.color)}>{s.icon}</span>
-                <span className="uppercase tracking-wide">{s.label}</span>
-                <b className={cn('font-semibold', s.warn ? 'text-amber-300' : 'text-fg')}>{s.value}</b>
-              </span>
-            ))}
+            {stats.map((s) => {
+              // MR-136: color может быть и CSS-классом (text-cyan-300), и hex (#f59e0b).
+              // Раньше hex подставлялся как класс — иконка (в т.ч. «Лимит») оставалась без цвета.
+              const isHex = s.color?.startsWith('#')
+              return (
+                <span key={s.label} className="inline-flex items-center gap-1" title={s.label}>
+                  <span className={cn('shrink-0', !isHex && s.color)} style={isHex ? { color: s.color } : undefined}>{s.icon}</span>
+                  <span className="uppercase tracking-wide">{s.label}</span>
+                  <b className={cn('font-semibold', s.warn ? 'text-amber-300' : 'text-fg')}>{s.value}</b>
+                </span>
+              )
+            })}
             {!running && cost}
           </div>
 
