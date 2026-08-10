@@ -143,6 +143,8 @@ export function AccountPicker({
         <span className="font-display text-base font-bold text-fg">Выбор аккаунтов</span>
         {/* MR-101 (UI-003): один счётчик в формате «2 из 50». */}
         <span className="rounded-md bg-spark-500/12 px-2 py-0.5 text-xs font-bold text-spark-300">{selected.size} из {limit}</span>
+        {/* MR-136: метка «обязательно» — как у блока «Группы» (без аккаунтов запуск невозможен). */}
+        <span className="rounded-md bg-amber-500/15 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-amber-300" title="Без выбора аккаунтов запуск недоступен">обязательно</span>
         <ChevronDown size={18} className={cn('ml-auto text-muted transition-transform', collapsed && '-rotate-90')} />
       </button>
 
