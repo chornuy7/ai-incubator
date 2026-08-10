@@ -1063,7 +1063,11 @@ function AccountsTable(props: {
                       <button
                         type="button"
                         onClick={() => props.onSetFatigue?.(a.id)}
-                        title="Задать усталость и распорядок этому аккаунту"
+                        // MR-129: «0/15» читалось непонятно. Поясняем: это «сделано действий /
+                        // порог, после которого аккаунт уходит на отдых» (осталось = порог − сделано).
+                        title={th > 0
+                          ? `Усталость: сделано ${act?.fatigue ?? 0} из ${th} действий до отдыха (осталось ${Math.max(0, th - (act?.fatigue ?? 0))}). На пороге аккаунт отдыхает во всех модулях. Клик — задать порог и распорядок.`
+                          : 'Задать усталость и распорядок этому аккаунту'}
                         className="flex w-28 items-center gap-2 text-left"
                       >
                         <span className="h-1.5 flex-1 overflow-hidden rounded-full bg-white/10">

@@ -14,20 +14,18 @@ import {
 import type { TgAccount, AccountStats, AccountChannel, AccountFolder } from '@/shared/types'
 import { FLAGS as GEO_FLAGS, COUNTRY_NAME, COUNTRIES } from '@/shared/config/geo'
 
-export type TabKey = 'profile' | 'work' | 'proxy' | 'status' | 'dates' | 'actions' | 'health' | 'channels' | 'folders'
+// MR-129 (10.08): табы переставлены по значимости и сокращены. «Статус» и «Действия»
+// переехали в шапку (статус уже там, кнопки-проверки — рядом с ним), «Даты» — в Профиль.
+// «Здоровье» поднято вперёд (сверхважный критерий), «Папки» переименованы в «Группы».
+export type TabKey = 'profile' | 'health' | 'proxy' | 'work' | 'channels' | 'folders'
 
 export const TABS: { key: TabKey; label: string; icon: React.ReactNode }[] = [
-  // «Работа» первой после профиля: на вопрос «что этот аккаунт нам принёс»
-  // отвечают чаще, чем на «какие у него папки».
   { key: 'profile', label: 'Профиль', icon: <User size={15} /> },
-  { key: 'work', label: 'Работа', icon: <Zap size={15} /> },
-  { key: 'proxy', label: 'Прокси', icon: <Globe size={15} /> },
-  { key: 'status', label: 'Статус', icon: <BarChart3 size={15} /> },
-  { key: 'dates', label: 'Даты', icon: <Calendar size={15} /> },
-  { key: 'actions', label: 'Действия', icon: <Zap size={15} /> },
   { key: 'health', label: 'Здоровье', icon: <HeartPulse size={15} /> },
+  { key: 'proxy', label: 'Прокси', icon: <Globe size={15} /> },
+  { key: 'work', label: 'Работа', icon: <Zap size={15} /> },
   { key: 'channels', label: 'Каналы', icon: <Hash size={15} /> },
-  { key: 'folders', label: 'Папки', icon: <FolderClosed size={15} /> },
+  { key: 'folders', label: 'Группы', icon: <FolderClosed size={15} /> },
 ]
 
 // Флаг/название страны по коду (регистр не важен) — полный набор из geo.ts (14 стран).
@@ -112,7 +110,16 @@ export function AccountCardBody({ account }: { account: TgAccount }) {
 
   return (
         <div className="space-y-4">
-          <HeroBanner account={account} stats={stats} />
+          <HeroBanner
+            account={account}
+            stats={stats}
+            actions={{
+              loading, spamChecking, releasing,
+              onRecheck: () => void load(),
+              onSpamCheck: () => void runSpamCheck(),
+              onRelease: () => void runRelease(),
+            }}
+          />
 
           <div className="flex gap-1 overflow-x-auto border-b border-line no-scrollbar">
             {TABS.map((t) => (
@@ -139,19 +146,6 @@ export function AccountCardBody({ account }: { account: TgAccount }) {
               {tab === 'profile' && <ProfileTab account={account} stats={stats} />}
               {tab === 'work' && <WorkTab accountId={account.id} />}
               {tab === 'proxy' && <ProxyTab account={account} stats={stats} loading={loading} onRecheck={() => void load()} />}
-              {tab === 'status' && <StatusTab stats={stats} spamChecking={spamChecking} onSpamCheck={() => void runSpamCheck()} />}
-              {tab === 'dates' && <DatesTab stats={stats} />}
-              {tab === 'actions' && (
-                <ActionsTab
-                  stats={stats}
-                  loading={loading}
-                  spamChecking={spamChecking}
-                  releasing={releasing}
-                  onRecheck={() => void load()}
-                  onSpamCheck={() => void runSpamCheck()}
-                  onRelease={() => void runRelease()}
-                />
-              )}
               {tab === 'health' && <HealthTab stats={stats} accountId={account.id} />}
               {tab === 'channels' && <ChannelsTab accountId={account.id} />}
               {tab === 'folders' && <FoldersTab accountId={account.id} />}
@@ -186,12 +180,23 @@ export function AccountManagementModal({ account, onClose }: { account: TgAccoun
 }
 
 /* ── Hero ── */
-export function HeroBanner({ account, stats }: { account: TgAccount; stats: AccountStats | null }) {
+export function HeroBanner({ account, stats, actions }: {
+  account: TgAccount; stats: AccountStats | null
+  // MR-129: действия и здоровье вынесены В шапку — раньше огромная шапка была
+  // нефункциональной (имя + гео), а проверки/статус/здоровье прятались по табам.
+  actions?: {
+    loading: boolean; spamChecking: boolean; releasing: boolean
+    onRecheck: () => void; onSpamCheck: () => void; onRelease: () => void
+  }
+}) {
   const geo = stats?.profile.geo ?? account.country.toUpperCase()
   const valid = stats?.status.valid
   const spam = stats?.status.spamblock ?? 'unknown'
   const warmingDays = stats?.status.warmingDays
   const active = stats?.status.warmingActive
+  const busy = stats?.busyIn
+  const health = stats?.health
+  const trust = stats?.trust
   return (
     <div className="relative overflow-hidden rounded-2xl bg-gradient-to-br from-iris-600 to-iris-800 p-5 text-white">
       <div className="flex items-start gap-4">
@@ -203,6 +208,13 @@ export function HeroBanner({ account, stats }: { account: TgAccount; stats: Acco
             <span className="opacity-60">{stats?.profile.phone ?? account.phone}</span>
             <span className="rounded-md bg-white/15 px-1.5 py-0.5 text-xs font-bold">{flagOf(geo)} {nameOf(geo) || geo}</span>
           </div>
+          {/* Здоровье и trust — сверхважные критерии, теперь видны сразу в шапке. */}
+          {(health || trust) && (
+            <div className="mt-2 flex flex-wrap items-center gap-2 text-xs">
+              {health && <span className="inline-flex items-center gap-1 rounded-lg bg-white/12 px-2 py-1 font-semibold"><HeartPulse size={12} /> Здоровье {health.score}/100 · {health.label}</span>}
+              {trust && <span className="inline-flex items-center gap-1 rounded-lg bg-white/12 px-2 py-1 font-semibold"><BarChart3 size={12} /> Trust {trust.score}/100</span>}
+            </div>
+          )}
         </div>
         <div className="flex shrink-0 flex-col items-end gap-1.5">
           <Pill tone={valid == null ? 'neutral' : valid ? 'ok' : 'bad'}>
@@ -219,7 +231,34 @@ export function HeroBanner({ account, stats }: { account: TgAccount; stats: Acco
           )}
         </div>
       </div>
+
+      {/* MR-129: статус-кнопки (Обновить / Проверить спамблок / Снять блокировку) — в шапке. */}
+      {actions && (
+        <div className="mt-4 flex flex-wrap gap-2 border-t border-white/15 pt-3">
+          <HeroBtn onClick={actions.onRecheck} loading={actions.loading} icon={<RefreshCw size={14} />} label="Обновить" />
+          <HeroBtn onClick={actions.onSpamCheck} loading={actions.spamChecking} icon={<ShieldQuestion size={14} />} label="Проверить спамблок" />
+          {busy && <HeroBtn onClick={actions.onRelease} loading={actions.releasing} icon={<Unlock size={14} />} label="Снять блокировку" tone="danger" />}
+        </div>
+      )}
     </div>
+  )
+}
+
+function HeroBtn({ onClick, loading, icon, label, tone }: {
+  onClick: () => void; loading?: boolean; icon: React.ReactNode; label: string; tone?: 'danger'
+}) {
+  return (
+    <button
+      onClick={onClick}
+      disabled={loading}
+      className={cn(
+        'inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-bold transition-colors disabled:opacity-50',
+        tone === 'danger' ? 'border-rose-200/50 bg-rose-500/20 text-rose-50 hover:bg-rose-500/30' : 'border-white/25 bg-white/12 text-white hover:bg-white/20',
+      )}
+    >
+      {loading ? <Loader2 size={14} className="animate-spin" /> : icon}
+      {label}
+    </button>
   )
 }
 
@@ -270,6 +309,7 @@ const dash = <span className="text-faint">—</span>
 /* ── Tabs ── */
 export function ProfileTab({ account, stats }: { account: TgAccount; stats: AccountStats | null }) {
   const p = stats?.profile
+  const d = stats?.dates
   return (
     <div className="grid gap-3 md:grid-cols-2">
       <SectionCard title="Telegram-профиль" icon={<User size={15} className="text-iris-300" />}>
@@ -285,6 +325,13 @@ export function ProfileTab({ account, stats }: { account: TgAccount; stats: Acco
         <Field label="Сессия сохранена" value={p?.saved ? 'Да' : 'Нет'} />
         <Field label="Роль" value={stats?.role ?? account.role ?? dash} />
         <Field label="Проект" value={account.project ?? dash} />
+      </SectionCard>
+      {/* MR-129: «Даты» больше не отдельный таб — переехали в Профиль (там им и место). */}
+      <SectionCard title="Даты" icon={<Calendar size={15} className="text-iris-300" />}>
+        <Field label="Добавлен в систему" value={fmtDate(d?.addedAt)} />
+        <Field label="Последняя проверка" value={fmtDate(d?.lastCheckAt)} />
+        <Field label="Проверка спамблока" value={fmtDate(d?.spamblockAt)} />
+        <Field label="Проверка прокси" value={fmtDate(d?.proxyCheckAt)} />
       </SectionCard>
     </div>
   )
@@ -367,121 +414,6 @@ function MiniStat({ label, value }: { label: string; value: string }) {
   )
 }
 
-export function StatusTab({ stats, spamChecking, onSpamCheck }: { stats: AccountStats | null; spamChecking: boolean; onSpamCheck: () => void }) {
-  const st = stats?.status
-  if (!st) return <div className="py-8 text-center text-sm text-muted">Нет данных</div>
-  return (
-    <div className="grid gap-3 sm:grid-cols-3">
-      <StatusCard
-        icon={st.valid ? <ShieldCheck size={22} /> : <ShieldAlert size={22} />}
-        tone={st.valid ? 'ok' : 'bad'}
-        title="Статус"
-        value={st.valid ? 'Валидный' : 'Невалидный'}
-        desc={st.sessionOk ? 'Сессия работает' : 'Сессия недоступна'}
-      />
-      <StatusCard
-        icon={st.spamblock === 'clean' ? <ShieldCheck size={22} /> : st.spamblock === 'blocked' ? <ShieldAlert size={22} /> : <ShieldQuestion size={22} />}
-        tone={st.spamblock === 'clean' ? 'ok' : st.spamblock === 'blocked' ? 'bad' : 'neutral'}
-        title="Спамблок"
-        value={st.spamblock === 'clean' ? 'Чисто' : st.spamblock === 'blocked' ? 'Ограничен' : 'Неизвестно'}
-        // MR-63: у проверенного аккаунта показываем ДАТУ проверки («прошёл проверку и когда»),
-        // а не только текст ответа @SpamBot. Результат теперь персистится (не «пропадает»).
-        desc={st.spamblock === 'unknown' ? 'Не проверялся' : (st.spamblockAt ? `Проверено: ${fmtDate(st.spamblockAt)}` : (st.spamblockText || ''))}
-        footer={
-          <button onClick={onSpamCheck} disabled={spamChecking} className="btn-soft mt-2 h-7 w-full text-xs disabled:opacity-50">
-            {spamChecking ? <Loader2 size={12} className="animate-spin" /> : <RefreshCw size={12} />} Проверить @SpamBot
-          </button>
-        }
-      />
-      <StatusCard
-        icon={<Zap size={22} />}
-        tone={st.warmingActive ? 'ok' : 'neutral'}
-        title="Прогрев"
-        value={st.warmingActive ? 'Активен' : 'Неактивен'}
-        desc={`${st.warmingDays} дн. в системе`}
-        pulse={st.warmingActive}
-      />
-    </div>
-  )
-}
-
-function StatusCard({ icon, tone, title, value, desc, footer, pulse }: {
-  icon: React.ReactNode; tone: 'ok' | 'bad' | 'neutral'; title: string; value: string; desc?: string; footer?: React.ReactNode; pulse?: boolean
-}) {
-  const tones = {
-    ok: 'text-spark-400 bg-spark-500/12',
-    bad: 'text-rose-400 bg-rose-500/12',
-    neutral: 'text-slate-300 bg-slate-500/12',
-  }
-  return (
-    <div className="rounded-2xl border border-line bg-elevated/40 p-4 text-center">
-      <div className={cn('mx-auto grid h-12 w-12 place-items-center rounded-2xl', tones[tone], pulse && 'animate-pulse-ring')}>{icon}</div>
-      <div className="mt-2 text-[11px] font-bold uppercase tracking-wide text-muted">{title}</div>
-      <div className="text-lg font-bold text-fg">{value}</div>
-      {desc && <div className="mt-0.5 line-clamp-2 text-xs text-muted">{desc}</div>}
-      {footer}
-    </div>
-  )
-}
-
-export function DatesTab({ stats }: { stats: AccountStats | null }) {
-  const d = stats?.dates
-  return (
-    <SectionCard title="Даты" icon={<Calendar size={15} className="text-iris-300" />}>
-      <Field label="Добавлен в систему" value={fmtDate(d?.addedAt)} />
-      <Field label="Последняя проверка" value={fmtDate(d?.lastCheckAt)} />
-      <Field label="Проверка спамблока" value={fmtDate(d?.spamblockAt)} />
-      <Field label="Проверка прокси" value={fmtDate(d?.proxyCheckAt)} />
-    </SectionCard>
-  )
-}
-
-export function ActionsTab({ stats, loading, spamChecking, releasing, onRecheck, onSpamCheck, onRelease }: {
-  stats: AccountStats | null; loading: boolean; spamChecking: boolean; releasing: boolean
-  onRecheck: () => void; onSpamCheck: () => void; onRelease: () => void
-}) {
-  const busy = stats?.busyIn
-  return (
-    <div className="space-y-3">
-      {busy && (
-        <div className="flex items-center gap-2 rounded-xl border border-amber-500/40 bg-amber-500/10 px-3 py-2.5 text-sm text-amber-200">
-          <Loader2 size={15} className="animate-spin" />
-          Аккаунт занят в модуле «{busy.moduleLabel}». Сетевые проверки выполнятся после освобождения.
-        </div>
-      )}
-      <SectionCard title="Проверки" icon={<Zap size={15} className="text-iris-300" />}>
-        <div className="grid gap-2 sm:grid-cols-2">
-          <ActionBtn onClick={onRecheck} loading={loading} icon={<RefreshCw size={15} />} label="Перепроверить сессию и прокси" />
-          <ActionBtn onClick={onSpamCheck} loading={spamChecking} icon={<ShieldQuestion size={15} />} label="Проверить спамблок (@SpamBot)" />
-        </div>
-      </SectionCard>
-      <SectionCard title="Блокировка" icon={<Unlock size={15} className="text-iris-300" />}>
-        <p className="mb-2 text-xs text-muted">
-          {busy ? 'Снимите блокировку, если задача зависла и аккаунт не освобождается.' : 'Активных блокировок нет.'}
-        </p>
-        <ActionBtn onClick={onRelease} loading={releasing} disabled={!busy} tone="danger" icon={<Unlock size={15} />} label="Снять блокировку аккаунта" />
-      </SectionCard>
-    </div>
-  )
-}
-
-function ActionBtn({ onClick, loading, disabled, icon, label, tone }: {
-  onClick: () => void; loading?: boolean; disabled?: boolean; icon: React.ReactNode; label: string; tone?: 'danger'
-}) {
-  return (
-    <button
-      onClick={onClick}
-      disabled={loading || disabled}
-      className={cn(
-        'flex items-center gap-2 rounded-xl border px-3 py-2.5 text-left text-sm font-semibold transition-colors disabled:opacity-40',
-        tone === 'danger' ? 'border-rose-500/30 text-rose-300 hover:bg-rose-500/10' : 'border-line text-fg hover:bg-elevated',
-      )}
-    >
-      {loading ? <Loader2 size={15} className="animate-spin" /> : icon}
-      {label}
-    </button>
-  )
-}
 
 const DAILY_ACTION_LABELS: Record<string, string> = {
   comments: 'Комментарии',
@@ -716,10 +648,10 @@ export function FoldersTab({ accountId }: { accountId: string }) {
     return () => { alive = false }
   }, [accountId])
 
-  if (state.loading) return <LiveLoading label="Загрузка папок из Telegram…" />
+  if (state.loading) return <LiveLoading label="Загрузка групп из Telegram…" />
   if (state.busy) return <BusyNotice label={state.busyLabel} />
   if (state.error) return <ErrorNotice error={state.error} />
-  if (!state.items.length) return <div className="py-10 text-center text-sm text-muted">Папок нет</div>
+  if (!state.items.length) return <div className="py-10 text-center text-sm text-muted">Групп нет</div>
   return (
     <div className="grid gap-2 sm:grid-cols-2">
       {state.items.map((f, i) => (

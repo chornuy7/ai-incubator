@@ -9,7 +9,7 @@ import { fetchAccountStats, releaseAccountLock } from '@/api/accountsApi'
 import type { AccountStats } from '@/shared/types'
 import { useTabParam } from '@/shared/lib/useTabParam'
 import {
-  TABS, HeroBanner, ProfileTab, ProxyTab, StatusTab, DatesTab, ActionsTab, HealthTab, ChannelsTab, FoldersTab,
+  TABS, HeroBanner, ProfileTab, ProxyTab, HealthTab, ChannelsTab, FoldersTab,
   type TabKey,
 } from './AccountManagementModal'
 
@@ -17,8 +17,8 @@ import {
  * §3: обзор аккаунта — ВЬЮШКА, а не модалка поверх списка (модалка перегружала экран).
  * Раскладка как почта/WhatsApp: слева колонка аккаунтов с фильтром, справа — те же табы.
  *
- * Выбранный таб СОХРАНЯЕТСЯ при переключении аккаунтов — так удобно сравнивать одно
- * и то же у разных профилей. Чекбокс возвращает прежнее поведение «сбрасывать на профиль».
+ * Выбранный таб СОХРАНЯЕТСЯ при переключении аккаунтов (useTabParam, в URL) — так удобно
+ * сравнивать одно и то же у разных профилей. MR-129: галочку «сбрасывать на профиль» убрали.
  */
 export function AccountOverviewPage() {
   const { id } = useParams()
@@ -161,7 +161,16 @@ export function AccountOverviewPage() {
             <EmptyState icon={<User size={26} />} title="Нет аккаунтов" desc="Добавьте аккаунт в менеджере." />
           ) : (
             <div className="space-y-4 overflow-y-auto p-4">
-              <HeroBanner account={account} stats={stats} />
+              <HeroBanner
+                account={account}
+                stats={stats}
+                actions={{
+                  loading, spamChecking, releasing,
+                  onRecheck: () => void load(),
+                  onSpamCheck: () => void runSpamCheck(),
+                  onRelease: () => void runRelease(),
+                }}
+              />
 
               <div className="flex gap-1 overflow-x-auto border-b border-line no-scrollbar">
                 {TABS.map((t) => (
@@ -188,19 +197,6 @@ export function AccountOverviewPage() {
                   {tab === 'profile' && <ProfileTab account={account} stats={stats} />}
                   {tab === 'work' && <WorkTab accountId={account.id} />}
                   {tab === 'proxy' && <ProxyTab account={account} stats={stats} loading={loading} onRecheck={() => void load()} />}
-                  {tab === 'status' && <StatusTab stats={stats} spamChecking={spamChecking} onSpamCheck={() => void runSpamCheck()} />}
-                  {tab === 'dates' && <DatesTab stats={stats} />}
-                  {tab === 'actions' && (
-                    <ActionsTab
-                      stats={stats}
-                      loading={loading}
-                      spamChecking={spamChecking}
-                      releasing={releasing}
-                      onRecheck={() => void load()}
-                      onSpamCheck={() => void runSpamCheck()}
-                      onRelease={() => void runRelease()}
-                    />
-                  )}
                   {tab === 'health' && <HealthTab stats={stats} accountId={account.id} />}
                   {tab === 'channels' && <ChannelsTab accountId={account.id} />}
                   {tab === 'folders' && <FoldersTab accountId={account.id} />}

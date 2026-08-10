@@ -86,8 +86,32 @@ export async function createClient(sessionString, proxyRaw, fingerprint) {
   const apiId = Number(fp.apiId) || API_ID
   const apiHash = fp.apiHash || API_HASH
   const client = new TelegramClient(new StringSession(sessionString), apiId, apiHash, opts)
-  await client.connect()
+  await connectWithTimeout(client)
   return client
+}
+
+/**
+ * MR-129: жёсткий предел на подключение. Без него мёртвый/медленный прокси с
+ * connectionRetries:5 держал соединение десятки секунд, и карточка аккаунта висела
+ * на «Загрузка данных из Telegram…» (вечный лоадер). Теперь через TG_CONNECT_TIMEOUT_MS
+ * (по умолчанию 12с — рабочий прокси коннектится за 1–3с, мёртвый падает быстро) падаем
+ * с понятной ошибкой — её ловит accountStats и показывает «прокси/сессия недоступны»
+ * вместо бесконечной загрузки.
+ */
+async function connectWithTimeout(client) {
+  const ms = Math.max(5000, Number(process.env.TG_CONNECT_TIMEOUT_MS) || 12000)
+  let timer
+  const timeout = new Promise((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`Не удалось подключиться за ${Math.round(ms / 1000)}с — проверьте прокси/сеть`)), ms)
+  })
+  try {
+    await Promise.race([client.connect(), timeout])
+  } catch (err) {
+    try { await client.disconnect() } catch { /* уже мертво — не важно */ }
+    throw err
+  } finally {
+    clearTimeout(timer)
+  }
 }
 
 function userPayload(me, accountId, phone, proxy) {

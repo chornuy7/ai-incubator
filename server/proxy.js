@@ -1,3 +1,5 @@
+import { parseProxyLine } from './lib/proxyImport.js'
+
 /** @param {string | undefined} raw */
 export function parseProxy(raw) {
   if (!raw || raw.trim() === '' || raw === '—') return null
@@ -23,7 +25,22 @@ export function parseProxy(raw) {
     }
     return proxy
   } catch {
-    return null
+    // MR-129: не URL — значит формат host:port[:user:pass] (как у продавцов и в импорте).
+    // Раньше parseProxy понимал ТОЛЬКО URL, поэтому такой прокси считался «не настроен»:
+    // раздел «Прокси» показывал пусто, а GramJS МОЛЧА шёл напрямую (аккаунт без прокси,
+    // риск бана). Тот же разбор, что при импорте прокси (server/lib/proxyImport.js).
+    const line = parseProxyLine(url)
+    if (!line) return null
+    const proxy = {
+      ip: line.host,
+      port: line.port,
+      username: line.username || undefined,
+      password: line.password || undefined,
+    }
+    if (line.scheme === 'socks5' || line.scheme === 'socks4') {
+      return { ...proxy, socksType: line.scheme === 'socks5' ? 5 : 4 }
+    }
+    return proxy
   }
 }
 
