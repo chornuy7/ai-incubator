@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
-import { Check, ChevronDown } from 'lucide-react'
+import { Check, ChevronDown, AlertTriangle } from 'lucide-react'
 import { cn } from '@/shared/lib/utils'
 import type { AccountStatus } from '@/shared/types'
 import { STATUS_META } from '@/mocks/store'
@@ -192,6 +192,33 @@ export function StatusBadge({ status, until, reason }: { status: AccountStatus; 
       <span className={cn('h-1.5 w-1.5 rounded-full', m.dot)} />
       {m.label}
       {left && <span className="font-normal opacity-70">· ещё {left}</span>}
+    </span>
+  )
+}
+
+/**
+ * MR-131: «зона риска» с конкретикой. Показываем рядом со статусом, когда аккаунт под
+ * угрозой (мёртвый/нет прокси, спамблок, низкий trust). Тултип перечисляет ПРИЧИНЫ с
+ * последствием и сроком — чтобы не было абстрактного «повышенный риск».
+ */
+export function RiskBadge({ risk, compact }: {
+  risk?: { level: 'none' | 'low' | 'medium' | 'high'; factors: { kind: string; text: string }[] }
+  compact?: boolean
+}) {
+  if (!risk || risk.level === 'none' || !risk.factors.length) return null
+  const tone = risk.level === 'high'
+    ? 'border-rose-500/40 bg-rose-500/12 text-rose-300'
+    : risk.level === 'medium'
+      ? 'border-amber-500/40 bg-amber-500/12 text-amber-300'
+      : 'border-slate-500/40 bg-slate-500/12 text-slate-300'
+  const label = risk.level === 'high' ? 'Зона риска' : risk.level === 'medium' ? 'Риск' : 'Внимание'
+  return (
+    <span
+      className={cn('inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-xs font-semibold', tone)}
+      title={risk.factors.map((f) => `• ${f.text}`).join('\n')}
+    >
+      <AlertTriangle size={12} />
+      {!compact && label}
     </span>
   )
 }

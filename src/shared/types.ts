@@ -30,6 +30,15 @@ export interface TgAccount {
   proxy: string
   /** §6.3 (AM-002): прокси рабочий (нет прокси или не 'dead'). false — мёртвый прокси, аккаунт не предлагаем для запуска. */
   proxyOk?: boolean
+  /** MR-131: у аккаунта вообще нет прокси (прямое подключение) — тоже зона риска, отдельно от мёртвого прокси. */
+  noProxy?: boolean
+  /** MR-131: «зона риска» с конкретикой. Две независимые оси: прокси и статус/здоровье. */
+  risk?: {
+    level: 'none' | 'low' | 'medium' | 'high'
+    factors: { kind: 'proxy' | 'status' | 'trust'; text: string }[]
+    proxyIssue: boolean
+    statusIssue: boolean
+  }
   ggr?: number // GramGPT Рейтинг 0..100
   trustScore?: number // §3.3 кэш trust score 0..100
   trustBand?: 'low' | 'mid' | 'high'

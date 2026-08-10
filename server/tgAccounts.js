@@ -7,6 +7,7 @@ import { getAccountLock } from './lib/accountLocks.js'
 import { getAllTrustCache } from './lib/trustCache.js'
 import { accountFingerprint } from './lib/deviceFingerprint.js'
 import { listProxies, toProxyUrl } from './proxies.js'
+import { computeAccountRisk } from './lib/accountRisk.js'
 
 async function listSessionIds() {
   await fs.mkdir(SESSIONS_DIR, { recursive: true })
@@ -123,6 +124,9 @@ export async function tgListAccounts(opts = {}) {
     // Ручной прокси не из каталога → статус неизвестен → не помечаем нерабочим (не прячем зря).
     const purl = meta.proxy && meta.proxy !== '—' ? meta.proxy : null
     dto.proxyOk = !purl || proxyStatusByUrl[purl] !== 'dead'
+    // MR-131: прокси мёртв ИЛИ отсутствует — обе ситуации риск, но разные (разделяем).
+    dto.noProxy = !purl
+    dto.risk = computeAccountRisk({ status: dto.status, proxyOk: dto.proxyOk, noProxy: dto.noProxy, trustBand: dto.trustBand })
     accounts.push(dto)
   }
 

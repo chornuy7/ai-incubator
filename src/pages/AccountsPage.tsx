@@ -10,7 +10,7 @@ import { useSession } from '@/features/auth/session'
 import { filterAccountsByAccess } from '@/shared/lib/access'
 import { useUi } from '@/shared/lib/uiStore'
 import {
-  PageHeader, Avatar, StatusBadge, EmptyState, Dropdown, MenuItem, Select, Skeleton, Modal, NumberField,
+  PageHeader, Avatar, StatusBadge, RiskBadge, EmptyState, Dropdown, MenuItem, Select, Skeleton, Modal, NumberField,
 } from '@/shared/ui'
 import { HelpButton } from '@/features/neuro-commenting/moduleUi'
 import { accountLabel, accountSub } from '@/features/conversation/AccountRail'
@@ -1083,7 +1083,16 @@ function AccountsTable(props: {
                 {showCol('status') && (
                   <td className="px-4 py-3">
                     <div className="flex flex-col items-start gap-1.5">
+                      {/* MR-131: при мёртвом/отсутствующем прокси НЕ показываем «Активный» — вместо него
+                      бейдж «Зона риска» с конкретикой; иначе статус + риск-бейдж рядом. */}
+                  {a.status === 'active' && a.risk?.proxyIssue ? (
+                    <RiskBadge risk={a.risk} />
+                  ) : (
+                    <span className="inline-flex flex-wrap items-center gap-1.5">
                       <StatusBadge status={a.status} until={a.statusUntil} reason={a.statusReason} />
+                      {a.risk && a.risk.level !== 'none' && <RiskBadge risk={a.risk} />}
+                    </span>
+                  )}
                       {a.busyIn ? (
                         a.busyIn.taskStatus === 'paused' ? (
                           <div className="flex items-center gap-1 text-[11px] font-semibold text-amber-300">
@@ -1223,7 +1232,16 @@ function AccountsTable(props: {
                 <div className="truncate font-semibold text-fg">{accountLabel(a)}</div>
                 <div className="truncate text-xs text-muted">{accountSub(a)}</div>
                 <div className="mt-1.5">
-                  <StatusBadge status={a.status} until={a.statusUntil} reason={a.statusReason} />
+                  {/* MR-131: при мёртвом/отсутствующем прокси НЕ показываем «Активный» — вместо него
+                      бейдж «Зона риска» с конкретикой; иначе статус + риск-бейдж рядом. */}
+                  {a.status === 'active' && a.risk?.proxyIssue ? (
+                    <RiskBadge risk={a.risk} />
+                  ) : (
+                    <span className="inline-flex flex-wrap items-center gap-1.5">
+                      <StatusBadge status={a.status} until={a.statusUntil} reason={a.statusReason} />
+                      {a.risk && a.risk.level !== 'none' && <RiskBadge risk={a.risk} />}
+                    </span>
+                  )}
                 {a.busyIn ? (
                   a.busyIn.taskStatus === 'paused' ? (
                     <div className="mt-1 flex items-center gap-1 text-[11px] font-semibold text-amber-300">

@@ -232,6 +232,20 @@ export function HeroBanner({ account, stats, actions }: {
         </div>
       </div>
 
+      {/* MR-131: «зона риска» с конкретикой прямо в шапке — последствие + срок,
+          отдельно про прокси и отдельно про статус/здоровье. */}
+      {account.risk && account.risk.level !== 'none' && account.risk.factors.length > 0 && (
+        <div className={cn(
+          'mt-4 space-y-1 rounded-xl border px-3 py-2.5 text-xs leading-relaxed',
+          account.risk.level === 'high' ? 'border-rose-300/40 bg-rose-500/20 text-rose-50' : 'border-amber-300/40 bg-amber-500/20 text-amber-50',
+        )}>
+          <div className="flex items-center gap-1.5 font-bold">
+            <ShieldAlert size={13} /> {account.risk.level === 'high' ? 'Зона риска' : 'Повышенный риск'}
+          </div>
+          {account.risk.factors.map((f, i) => <div key={i} className="opacity-90">• {f.text}</div>)}
+        </div>
+      )}
+
       {/* MR-129: статус-кнопки (Обновить / Проверить спамблок / Снять блокировку) — в шапке. */}
       {actions && (
         <div className="mt-4 flex flex-wrap gap-2 border-t border-white/15 pt-3">
