@@ -6,7 +6,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 
 import { normalizeTargets } from '../targetFolders.js'
-import { postErrorHint, stopWorker } from '../modules/workers.js'
+import { postErrorHint, stopWorker, breakableDelay } from '../modules/workers.js'
 import { generateComment } from '../neuroCommenting/commentGenerator.js'
 import { foldersForRequest } from '../lib/accessGuard.js'
 import { taskSignature, findDuplicateActiveTask } from '../lib/taskDedup.js'
@@ -105,6 +105,24 @@ test('6.2: у работающей задачи стоп только проси
   const out = await stopWorker('x_2', mockStore(task))
   assert.equal(out.stopRequested, true)
   assert.equal(out.status, 'running', 'воркер сам доведёт до stopped на выходе из цикла')
+})
+
+// ── MR-130: «Стоп» реагирует ВО ВРЕМЯ паузы между действиями ─────────────
+test('MR-130: breakableDelay ловит стоп из store за ~1с и переносит флаг в task', async () => {
+  const stored = { id: 'd_1', stopRequested: true }
+  const task = { id: 'd_1' } // in-memory копия воркера БЕЗ флага (как после старого saveTask)
+  const t0 = Date.now()
+  const broke = await breakableDelay(60_000, mockStore(stored), task)
+  assert.equal(broke, true, 'длинная пауза прерывается по стопу из store, а не спит минуту')
+  assert.ok(Date.now() - t0 < 5_000, 'реакция за пару секунд, а не за все 60с')
+  assert.equal(task.stopRequested, true, 'флаг перенесён в task → финальный статус будет stopped, не done')
+})
+
+test('MR-130: без стопа breakableDelay досыпает и возвращает false', async () => {
+  const task = { id: 'd_2' }
+  const broke = await breakableDelay(40, mockStore({ id: 'd_2' }), task)
+  assert.equal(broke, false)
+  assert.ok(!task.stopRequested && !task.pauseRequested)
 })
 
 // ── 1.3: шаблонный комментарий различается по аккаунту ───────────────────

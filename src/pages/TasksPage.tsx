@@ -94,6 +94,10 @@ export function TasksPage() {
   const [goals, setGoals] = useState<Goal[]>([])
   const [loading, setLoading] = useState(true)
   const [busy, setBusy] = useState<string | null>(null)
+  // MR-130: какое ИМЕННО действие идёт по busy-задаче — чтобы крутить лоадер на нажатой
+  // кнопке (Play/Pause/Stop), а не просто гасить все три. Пока действие не «сядет»
+  // (статус не сменится после load), нельзя слать повторные паузы/стопы.
+  const [busyAction, setBusyAction] = useState<'start' | 'pause' | 'stop' | null>(null)
   const [view, setView] = useTabParam<number>(0, 'view') // 0 — список, 1 — по целям (воронка)
   const navigate = useNavigate()
   // §8: задача открывается отдельной вьюшкой /panel/tasks/:id, а не модалкой.
@@ -140,15 +144,15 @@ export function TasksPage() {
   }, [])
 
   const doStop = async (t: ModuleTask) => {
-    setBusy(t.id)
+    setBusy(t.id); setBusyAction('stop')
     try { await stopModuleTask(t.moduleKey, t.id); pushToast({ type: 'success', title: 'Задача остановлена' }); await load() }
     catch (err) { pushToast({ type: 'error', title: 'Ошибка', desc: err instanceof Error ? err.message : '' }) }
-    finally { setBusy(null) }
+    finally { setBusy(null); setBusyAction(null) }
   }
   const doRestart = async (t: ModuleTask) => {
     // #4: рестарт боевого модуля = реальные действия в Telegram — подтверждаем.
     if (isCombatModule(t.moduleKey) && !(await confirmDialog({ title: 'Реальные действия в Telegram', message: combatConfirmText(t.moduleKey), confirmLabel: 'Запустить', tone: 'danger' }))) return
-    setBusy(t.id)
+    setBusy(t.id); setBusyAction('start')
     // Часть аккаунтов в карантине/спамблоке — не валим запуск, а предлагаем без них.
     // Рестарт создаёт НОВУЮ задачу, старая остаётся «Остановлена» — говорим об этом
     // явно, иначе выглядит как «ничего не произошло» (тест 6.2).
@@ -157,19 +161,19 @@ export function TasksPage() {
       if (fresh) { pushToast({ type: 'success', title: 'Создана новая задача', desc: `${fresh.id} — прежняя ${t.id} осталась остановленной` }); await load() }
     }
     catch (err) { pushToast({ type: 'error', title: 'Ошибка перезапуска', desc: err instanceof Error ? err.message : '' }) }
-    finally { setBusy(null) }
+    finally { setBusy(null); setBusyAction(null) }
   }
   const doPause = async (t: ModuleTask) => {
-    setBusy(t.id)
+    setBusy(t.id); setBusyAction('pause')
     try { await pauseModuleTask(t.moduleKey, t.id); pushToast({ type: 'success', title: 'Задача на паузе' }); await load() }
     catch (err) { pushToast({ type: 'error', title: 'Ошибка', desc: err instanceof Error ? err.message : '' }) }
-    finally { setBusy(null) }
+    finally { setBusy(null); setBusyAction(null) }
   }
   const doResume = async (t: ModuleTask) => {
-    setBusy(t.id)
+    setBusy(t.id); setBusyAction('start')
     try { await resumeModuleTask(t.moduleKey, t.id); pushToast({ type: 'success', title: 'Задача продолжена' }); await load() }
     catch (err) { pushToast({ type: 'error', title: 'Ошибка продолжения', desc: err instanceof Error ? err.message : '' }) }
-    finally { setBusy(null) }
+    finally { setBusy(null); setBusyAction(null) }
   }
 
   // ── Массовый выбор задач + действия над выбранными ──
@@ -420,7 +424,7 @@ export function TasksPage() {
               <div className="h-1.5 overflow-hidden rounded bg-white/10"><div className="h-full rounded bg-iris-500 transition-all" style={{ width: `${g.prog}%` }} /></div>
               <div className="mt-1 text-[11px] text-white/40">Прогресс к цели: {g.prog}%</div>
               <div className="mt-2 grid gap-1.5 sm:grid-cols-2">
-                {g.tasks.map((t) => <TaskCard key={`${t.moduleKey}:${t.id}`} t={t} goalName={null} busy={busy} onOpen={openTask} onStop={doStop} onRestart={doRestart} onPause={doPause} onResume={doResume} canControl={canControl(t)} compact />)}
+                {g.tasks.map((t) => <TaskCard key={`${t.moduleKey}:${t.id}`} t={t} goalName={null} busy={busy} busyAction={busyAction} onOpen={openTask} onStop={doStop} onRestart={doRestart} onPause={doPause} onResume={doResume} canControl={canControl(t)} compact />)}
               </div>
             </Card>
           ))}
@@ -428,7 +432,7 @@ export function TasksPage() {
         )
       ) : (
         <div className="grid gap-2 lg:grid-cols-2">
-          {filtered.map((t) => <TaskCard key={`${t.moduleKey}:${t.id}`} t={t} goalName={goalName(t.goalId)} busy={busy} onOpen={openTask} onStop={doStop} onRestart={doRestart} onPause={doPause} onResume={doResume} canControl={canControl(t)} selected={selected.has(t.id)} onToggleSelect={toggleSel} />)}
+          {filtered.map((t) => <TaskCard key={`${t.moduleKey}:${t.id}`} t={t} goalName={goalName(t.goalId)} busy={busy} busyAction={busyAction} onOpen={openTask} onStop={doStop} onRestart={doRestart} onPause={doPause} onResume={doResume} canControl={canControl(t)} selected={selected.has(t.id)} onToggleSelect={toggleSel} />)}
         </div>
       )}
     </div>
@@ -458,31 +462,34 @@ function BulkBtn({ onClick, disabled, tone, icon, label, count }: {
 
 /** Кнопки управления на карточке задачи: старт/возобновление (зелёная), пауза (янтарь), стоп (красная).
  *  Активна только применимая по статусу — остальные приглушены. */
-function CardControls({ t, busy, onStop, onRestart, onPause, onResume, canControl = true }: {
-  t: ModuleTask; busy: string | null
+function CardControls({ t, busy, busyAction, onStop, onRestart, onPause, onResume, canControl = true }: {
+  t: ModuleTask; busy: string | null; busyAction: 'start' | 'pause' | 'stop' | null
   onStop: (t: ModuleTask) => void; onRestart: (t: ModuleTask) => void
   onPause: (t: ModuleTask) => void; onResume: (t: ModuleTask) => void; canControl?: boolean
 }) {
   // Нет доступа к модулю — управления нет вовсе. Неактивная кнопка тут читалась бы
   // как «сейчас нельзя», хотя нельзя вообще.
   if (!canControl) return null
+  // MR-130: пока идёт действие по ЭТОЙ задаче — все три кнопки заблокированы, а на
+  // нажатой крутится лоадер (нельзя слать миллиард пауз/стопов, видно «в процессе»).
   const disabled = busy === t.id
   const canStart = ['paused', 'stopped', 'done', 'error'].includes(t.status)
   const canPause = t.status === 'running'
   const canStop = t.status === 'running' || t.status === 'queued' || t.status === 'paused'
   const startTitle = t.status === 'paused' ? 'Возобновить' : 'Запустить'
   const cls = (active: boolean, tone: string) => cn('btn-icon h-8 w-8', active && !disabled ? tone : 'text-white/20')
+  const spin = (a: 'start' | 'pause' | 'stop') => disabled && busyAction === a
   return (
     <div className="flex shrink-0 items-center gap-1">
-      <button onClick={() => (t.status === 'paused' ? onResume(t) : onRestart(t))} disabled={disabled || !canStart} className={cls(canStart, 'text-spark-400 hover:bg-spark-500/12')} aria-label={startTitle} title={startTitle}><Play size={13} /></button>
-      <button onClick={() => onPause(t)} disabled={disabled || !canPause} className={cls(canPause, 'text-amber-300 hover:bg-amber-500/12')} aria-label="Пауза" title="Пауза"><Pause size={13} /></button>
-      <button onClick={() => onStop(t)} disabled={disabled || !canStop} className={cls(canStop, 'text-rose-300 hover:bg-rose-500/12')} aria-label="Стоп" title="Стоп"><Square size={13} /></button>
+      <button onClick={() => (t.status === 'paused' ? onResume(t) : onRestart(t))} disabled={disabled || !canStart} className={cls(canStart, 'text-spark-400 hover:bg-spark-500/12')} aria-label={startTitle} title={spin('start') ? 'Запускается…' : startTitle}>{spin('start') ? <Loader2 size={13} className="animate-spin" /> : <Play size={13} />}</button>
+      <button onClick={() => onPause(t)} disabled={disabled || !canPause} className={cls(canPause, 'text-amber-300 hover:bg-amber-500/12')} aria-label="Пауза" title={spin('pause') ? 'В процессе паузы…' : 'Пауза'}>{spin('pause') ? <Loader2 size={13} className="animate-spin" /> : <Pause size={13} />}</button>
+      <button onClick={() => onStop(t)} disabled={disabled || !canStop} className={cls(canStop, 'text-rose-300 hover:bg-rose-500/12')} aria-label="Стоп" title={spin('stop') ? 'В процессе остановки…' : 'Стоп'}>{spin('stop') ? <Loader2 size={13} className="animate-spin" /> : <Square size={13} />}</button>
     </div>
   )
 }
 
-function TaskCard({ t, goalName, busy, onOpen, onStop, onRestart, onPause, onResume, canControl = true, compact, selected, onToggleSelect }: {
-  t: ModuleTask; goalName: string | null; busy: string | null
+function TaskCard({ t, goalName, busy, busyAction, onOpen, onStop, onRestart, onPause, onResume, canControl = true, compact, selected, onToggleSelect }: {
+  t: ModuleTask; goalName: string | null; busy: string | null; busyAction: 'start' | 'pause' | 'stop' | null
   onOpen: (t: ModuleTask) => void
   onStop: (t: ModuleTask) => void; onRestart: (t: ModuleTask) => void
   onPause: (t: ModuleTask) => void; onResume: (t: ModuleTask) => void; canControl?: boolean; compact?: boolean
@@ -522,7 +529,7 @@ function TaskCard({ t, goalName, busy, onOpen, onStop, onRestart, onPause, onRes
         </div>
       </div>
       </button>
-      <CardControls t={t} busy={busy} onStop={onStop} onRestart={onRestart} onPause={onPause} onResume={onResume} canControl={canControl} />
+      <CardControls t={t} busy={busy} busyAction={busyAction} onStop={onStop} onRestart={onRestart} onPause={onPause} onResume={onResume} canControl={canControl} />
     </Card>
   )
 }
@@ -580,6 +587,7 @@ export function TaskDetailPage() {
   const [accounts, setAccounts] = useState<TgAccount[]>([])
   const [campaignsList, setCampaignsList] = useState<Campaign[]>([])
   const [busy, setBusy] = useState(false)
+  const [busyAction, setBusyAction] = useState<'start' | 'pause' | 'stop' | null>(null)
 
   useEffect(() => {
     void fetchGoals().then(setGoals).catch(() => {})
@@ -603,27 +611,27 @@ export function TaskDetailPage() {
   const accountName = (aid: string) => { const a = accounts.find((x) => x.id === aid); return a ? (a.name || a.username || a.phone || a.id) : aid }
 
   const reload = async () => { try { setTask(await fetchModuleTask(moduleKey, id)) } catch { /* ignore */ } }
-  const run = async (fn: () => Promise<unknown>, okTitle: string) => {
-    setBusy(true)
+  const run = async (fn: () => Promise<unknown>, okTitle: string, action?: 'start' | 'pause' | 'stop') => {
+    setBusy(true); setBusyAction(action ?? null)
     try { await fn(); pushToast({ type: 'success', title: okTitle }); await reload() }
     catch (err) { pushToast({ type: 'error', title: 'Ошибка', desc: err instanceof Error ? err.message : '' }) }
-    finally { setBusy(false) }
+    finally { setBusy(false); setBusyAction(null) }
   }
-  const doStop = () => void run(() => stopModuleTask(moduleKey, id), 'Задача остановлена')
-  const doPause = () => void run(() => pauseModuleTask(moduleKey, id), 'Задача на паузе')
-  const doResume = () => void run(() => resumeModuleTask(moduleKey, id), 'Задача продолжена')
+  const doStop = () => void run(() => stopModuleTask(moduleKey, id), 'Задача остановлена', 'stop')
+  const doPause = () => void run(() => pauseModuleTask(moduleKey, id), 'Задача на паузе', 'pause')
+  const doResume = () => void run(() => resumeModuleTask(moduleKey, id), 'Задача продолжена', 'start')
   const doRestart = async () => {
     // #4: рестарт боевого модуля = реальные действия в Telegram — подтверждаем.
     if (isCombatModule(moduleKey) && !(await confirmDialog({ title: 'Реальные действия в Telegram', message: combatConfirmText(moduleKey), confirmLabel: 'Запустить', tone: 'danger' }))) return
     // Отказ в диалоге исключения — не ошибка. Рестарт заводит НОВУЮ задачу, старая
     // остаётся «Остановлена» — переходим на новую, иначе кажется, что кнопка не сработала (тест 6.2).
-    setBusy(true)
+    setBusy(true); setBusyAction('start')
     try {
       const fresh = await launchWithSkip((skip) => restartModuleTask(moduleKey, id, skip))
       if (fresh) { pushToast({ type: 'success', title: 'Создана новая задача', desc: fresh.id }); navigate(`/panel/tasks/${fresh.id}?m=${moduleKey}`) }
     } catch (err) {
       pushToast({ type: 'error', title: 'Ошибка', desc: err instanceof Error ? err.message : '' })
-    } finally { setBusy(false) }
+    } finally { setBusy(false); setBusyAction(null) }
   }
 
   // §9.8: правка задачи — только на паузе (сервер это тоже проверяет и вернёт 409).
@@ -708,9 +716,9 @@ export function TaskDetailPage() {
           </div>
           {/* Управление — только тем, у кого есть доступ к модулю задачи. */}
           <div className="flex shrink-0 gap-1">
-            {canControl && isActive(t) && <button onClick={doPause} disabled={busy} className="btn-icon h-9 w-9" title="Пауза"><Pause size={15} /></button>}
-            {canControl && t.status === 'paused' && <button onClick={doResume} disabled={busy} className="btn-icon h-9 w-9 text-spark-400" title="Продолжить"><Play size={15} /></button>}
-            {canControl && isActive(t) && <button onClick={doStop} disabled={busy} className="btn-icon h-9 w-9 text-rose-300" title="Стоп"><Square size={15} /></button>}
+            {canControl && isActive(t) && <button onClick={doPause} disabled={busy} className="btn-icon h-9 w-9" title={busyAction === 'pause' ? 'В процессе паузы…' : 'Пауза'}>{busyAction === 'pause' ? <Loader2 size={15} className="animate-spin" /> : <Pause size={15} />}</button>}
+            {canControl && t.status === 'paused' && <button onClick={doResume} disabled={busy} className="btn-icon h-9 w-9 text-spark-400" title={busyAction === 'start' ? 'Запускается…' : 'Продолжить'}>{busyAction === 'start' ? <Loader2 size={15} className="animate-spin" /> : <Play size={15} />}</button>}
+            {canControl && isActive(t) && <button onClick={doStop} disabled={busy} className="btn-icon h-9 w-9 text-rose-300" title={busyAction === 'stop' ? 'В процессе остановки…' : 'Стоп'}>{busyAction === 'stop' ? <Loader2 size={15} className="animate-spin" /> : <Square size={15} />}</button>}
             {/* §9.8: правка только на паузе. Кнопку показываем всегда, но у работающей
                 задачи она заблокирована и объясняет причину — так понятнее, чем её отсутствие.
                 А вот без доступа к модулю её нет вовсе: это не «пока нельзя», а «нельзя». */}

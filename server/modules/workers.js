@@ -44,6 +44,24 @@ import {
 function makeStopCheck(store, taskId) {
   return async () => { try { const t = await store.loadTask(taskId); return !!(t?.stopRequested || t?.pauseRequested) } catch { return false } }
 }
+
+/**
+ * MR-130: прерываемая пауза МЕЖДУ действиями. Раньше основные задержки были обычным
+ * `sleep(...)` — при высоком уровне защиты это десятки секунд/минуты, и «Стоп» всё это
+ * время игнорировался (задача «в воздухе»). Здесь спим кусками по 1с, читая стоп/паузу
+ * СВЕЖИМИ с диска (независимо от in-memory-копии воркера). Если снаружи пришёл стоп/пауза —
+ * переносим флаги в `task`, чтобы финальный статус был `stopped`/`paused`, а не `done`,
+ * и возвращаем true → вызывающий делает `break`. @returns {Promise<boolean>}
+ */
+export async function breakableDelay(ms, store, task) {
+  if (!(await interruptibleSleep(ms, makeStopCheck(store, task.id)))) return false
+  const fresh = await store.loadTask(task.id).catch(() => null)
+  if (fresh) {
+    task.stopRequested = task.stopRequested || fresh.stopRequested
+    task.pauseRequested = task.pauseRequested || fresh.pauseRequested
+  }
+  return true
+}
 import { getAccountMeta, setAccountMeta } from '../accountsMeta.js'
 import { releaseTaskLocks, markTaskLive, markTaskDone, assertAccountAvailable } from '../lib/accountLocks.js'
 import { loadSessionString, createClient } from '../tgAuth.js'
@@ -178,6 +196,11 @@ async function bumpProgress(task, store) {
   // сохранить уже выставленный флаг. Иначе цикл перезагрузит задачу с диска и
   // затрёт паузу — модуль сделал бы несколько лишних действий на нулевом балансе.
   await chargeActions(task, store, 1)
+  // MR-130: стоп/пауза могли прийти извне между reload'ами — свой save НЕ должен их
+  // затирать, иначе даже свежий makeStopCheck прочитает сброшенный флаг и «Стоп» потеряется.
+  const fresh = await store.loadTask(task.id).catch(() => null)
+  if (fresh?.stopRequested) task.stopRequested = true
+  if (fresh?.pauseRequested) task.pauseRequested = true
   return store.saveTask(task)
 }
 
@@ -414,7 +437,7 @@ export async function runNeuroCommenting(task, store) {
       task.readyTargets = task.readyTargets || []
       task.actionKeys = task.actionKeys || []
       await store.saveTask(task)
-      await sleep(pickDelay(5, 15, mul) * 1000)
+      if (await breakableDelay(pickDelay(5, 15, mul) * 1000, store, task)) break
     }
     task.status = statusAfterRun(task)
     await store.appendLog(task, 'info', task.status === 'done' ? 'Завершено' : 'Остановлено')
@@ -508,7 +531,7 @@ export async function runNeuroChatting(task, store) {
           if (trackIdlePass(task, false)) break
           continue
         }
-        await sleep(pickDelay(s.delays?.action?.[0] ?? 42, s.delays?.action?.[1] ?? 78, mul) * 1000)
+        if (await breakableDelay(pickDelay(s.delays?.action?.[0] ?? 42, s.delays?.action?.[1] ?? 78, mul) * 1000, store, task)) { await disconnectAccount(client, accountId); break }
         task.usedTexts = task.usedTexts || []
         const { text: reply, mode, reason, usage } = await generateComment(msg.message || '', s.promptIndex ?? 0, resolveSystemPrompt(s) + goalCtx + agentCtx, { avoid: task.usedTexts, variantSeed: accountId })
         if (usage?.tokens) await recordTokens({ ...usage, module: task.moduleKey, accountId, taskId: task.id, campaignId: s.campaignId, userId: task.userId })
@@ -553,7 +576,7 @@ export async function runNeuroChatting(task, store) {
       task = (await store.loadTask(task.id)) || task
       task.readyTargets = task.readyTargets || []
       await store.saveTask(task)
-      await sleep(pickDelay(5, 15, mul) * 1000)
+      if (await breakableDelay(pickDelay(5, 15, mul) * 1000, store, task)) break
     }
     task.status = statusAfterRun(task)
     await store.appendLog(task, 'info', 'Завершено')
@@ -611,7 +634,7 @@ export async function runMassReact(task, store) {
       let client
       try {
         ;({ client } = await connectAccount(accountId, task.id))
-        await sleep(pickDelay(s.delays?.action?.[0] ?? 30, s.delays?.action?.[1] ?? 120, mul) * 1000)
+        if (await breakableDelay(pickDelay(s.delays?.action?.[0] ?? 30, s.delays?.action?.[1] ?? 120, mul) * 1000, store, task)) { await disconnectAccount(client, accountId); break }
 
         let peer
         let postId
@@ -672,7 +695,7 @@ export async function runMassReact(task, store) {
         }
       }
       task = (await store.loadTask(task.id)) || task
-      await sleep(pickDelay(5, 15, mul) * 1000)
+      if (await breakableDelay(pickDelay(5, 15, mul) * 1000, store, task)) break
     }
     task.status = statusAfterRun(task)
     await store.appendLog(task, 'info', 'Завершено')
@@ -727,7 +750,7 @@ export async function runMassLooking(task, store) {
       try {
         ;({ client } = await connectAccount(accountId, task.id))
         const t = tgs[Math.floor(Math.random() * tgs.length)]
-        await sleep(pickDelay(s.delays?.action?.[0] ?? 20, s.delays?.action?.[1] ?? 60, mul) * 1000)
+        if (await breakableDelay(pickDelay(s.delays?.action?.[0] ?? 20, s.delays?.action?.[1] ?? 60, mul) * 1000, store, task)) { await disconnectAccount(client, accountId); break }
         const membership = await joinTargetOrSkip(
           client, t,
           (level, message, acc) => store.appendLog(task, level, message, acc),
@@ -768,7 +791,7 @@ export async function runMassLooking(task, store) {
         }
       }
       task = (await store.loadTask(task.id)) || task
-      await sleep(pickDelay(10, 30, mul) * 1000)
+      if (await breakableDelay(pickDelay(10, 30, mul) * 1000, store, task)) break
     }
     task.status = statusAfterRun(task)
     await store.appendLog(task, 'info', 'Завершено')
@@ -877,7 +900,7 @@ export async function runWarming(task, store) {
         }
       }
       task = (await store.loadTask(task.id)) || task
-      await sleep(pickDelay(30, 90, mul) * 1000)
+      if (await breakableDelay(pickDelay(30, 90, mul) * 1000, store, task)) break
     }
     task.status = statusAfterRun(task)
     await store.appendLog(task, 'info', 'Прогрев завершён')
@@ -2380,7 +2403,7 @@ export async function runAutoPosting(task, store) {
         await store.appendLog(task, 'success', `Пост в ${ch}`, meta.name)
         await store.saveTask(task)
         await disconnectAccount(client, accountId)
-        await sleep(pickDelay(s.delays?.action?.[0] ?? 60, s.delays?.action?.[1] ?? 180, mul) * 1000)
+        if (await breakableDelay(pickDelay(s.delays?.action?.[0] ?? 60, s.delays?.action?.[1] ?? 180, mul) * 1000, store, task)) break
       } catch (err) {
         if (client) await disconnectAccount(client, accountId)
         if (!(await handleFlood(task, accountId, store, err, s, meta.name))) {
