@@ -351,42 +351,13 @@ export function ProfileTab({ account, stats }: { account: TgAccount; stats: Acco
   )
 }
 
-function GeoRecoCard({ account, stats }: { account: TgAccount; stats: AccountStats | null }) {
-  const country = stats?.profile.geo ?? account.country
-  const rec = recommendedGeo(country)
-  return (
-    <SectionCard title="Гео и рекомендации" icon={<Globe size={15} className="text-iris-300" />}>
-      <Field label="Страна номера" value={country ? <span>{flagOf(country)} {nameOf(country)}</span> : dash} />
-      <div className="mt-2 rounded-xl border border-spark-500/25 bg-spark-500/8 px-3 py-2 text-xs leading-relaxed text-muted">
-        Прокси в стране номера ({flagOf(country)} {nameOf(country)}) или соседней по региону — лучше для траста аккаунта.
-      </div>
-      <div className="mt-2.5 text-[11px] font-bold uppercase tracking-wide text-faint">Рекомендуемое гео прокси</div>
-      <div className="mt-1.5 flex flex-wrap gap-1.5">
-        {rec.map((c) => (
-          <span key={c.code} className="inline-flex items-center gap-1.5 rounded-lg border border-line bg-elevated px-2.5 py-1 text-sm font-semibold text-fg">
-            <span className="text-base leading-none">{c.flag}</span> {c.label}
-          </span>
-        ))}
-      </div>
-    </SectionCard>
-  )
-}
-
 export function ProxyTab({ account, stats, loading, onRecheck }: { account: TgAccount; stats: AccountStats | null; loading: boolean; onRecheck: () => void }) {
   const px = stats?.proxy
-  if (!px?.configured) {
-    return (
-      <div className="space-y-3">
-        <GeoRecoCard account={account} stats={stats} />
-        <SectionCard title="Прокси" icon={<Globe size={15} className="text-iris-300" />}>
-          <div className="py-6 text-center text-sm text-muted">Прямое подключение (прокси не настроен)</div>
-        </SectionCard>
-      </div>
-    )
-  }
+  const country = stats?.profile.geo ?? account.country
+  const rec = recommendedGeo(country)
+  // MR-133: «Прокси» и «Гео-рекомендации» слиты в ОДИН блок — раньше рекомендации отдельной
+  // картой сжирали половину экрана. Теперь гео — компактный футер под данными прокси.
   return (
-    <div className="space-y-3">
-      <GeoRecoCard account={account} stats={stats} />
     <SectionCard
       title="Прокси"
       icon={<Globe size={15} className="text-iris-300" />}
@@ -396,25 +367,44 @@ export function ProxyTab({ account, stats, loading, onRecheck }: { account: TgAc
         </button>
       }
     >
-      <div className="mb-3 rounded-xl border border-line bg-elevated px-3 py-2 font-mono text-xs text-iris-300 break-all">{px.raw}</div>
-      <div className="mb-3">
-        {px.working == null ? (
-          <span className="inline-flex items-center gap-1.5 rounded-lg bg-slate-500/15 px-2.5 py-1 text-xs font-bold text-slate-300"><ShieldQuestion size={13} /> Не проверено</span>
-        ) : px.working ? (
-          <span className="inline-flex items-center gap-1.5 rounded-lg bg-spark-500/15 px-2.5 py-1 text-xs font-bold text-spark-300"><ShieldCheck size={13} /> Работает</span>
-        ) : (
-          <span className="inline-flex items-center gap-1.5 rounded-lg bg-rose-500/15 px-2.5 py-1 text-xs font-bold text-rose-300"><ShieldAlert size={13} /> Не отвечает</span>
-        )}
-        <span className="ml-2 text-xs text-muted">Проверено: {fmtDate(px.checkedAt)}</span>
-      </div>
-      <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-        <MiniStat label="Протокол" value={px.protocol ?? '—'} />
-        <MiniStat label="IP" value={px.ip ?? '—'} />
-        <MiniStat label="Порт" value={px.port != null ? String(px.port) : '—'} />
-        <MiniStat label="Логин" value={px.login ?? '—'} />
+      {!px?.configured ? (
+        <div className="py-5 text-center text-sm text-muted">Прямое подключение (прокси не настроен)</div>
+      ) : (
+        <>
+          <div className="mb-3 rounded-xl border border-line bg-elevated px-3 py-2 font-mono text-xs text-iris-300 break-all">{px.raw}</div>
+          <div className="mb-3">
+            {px.working == null ? (
+              <span className="inline-flex items-center gap-1.5 rounded-lg bg-slate-500/15 px-2.5 py-1 text-xs font-bold text-slate-300"><ShieldQuestion size={13} /> Не проверено</span>
+            ) : px.working ? (
+              <span className="inline-flex items-center gap-1.5 rounded-lg bg-spark-500/15 px-2.5 py-1 text-xs font-bold text-spark-300"><ShieldCheck size={13} /> Работает</span>
+            ) : (
+              <span className="inline-flex items-center gap-1.5 rounded-lg bg-rose-500/15 px-2.5 py-1 text-xs font-bold text-rose-300"><ShieldAlert size={13} /> Не отвечает</span>
+            )}
+            <span className="ml-2 text-xs text-muted">Проверено: {fmtDate(px.checkedAt)}</span>
+          </div>
+          <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+            <MiniStat label="Протокол" value={px.protocol ?? '—'} />
+            <MiniStat label="IP" value={px.ip ?? '—'} />
+            <MiniStat label="Порт" value={px.port != null ? String(px.port) : '—'} />
+            <MiniStat label="Логин" value={px.login ?? '—'} />
+          </div>
+        </>
+      )}
+      {/* Компактный футер гео-рекомендаций (слит в этот же блок). */}
+      <div className="mt-4 border-t border-line pt-3">
+        <div className="text-[11px] font-bold uppercase tracking-wide text-faint">
+          Рекомендуемое гео прокси · страна номера {flagOf(country)} {nameOf(country)}
+        </div>
+        <div className="mt-1.5 flex flex-wrap gap-1.5">
+          {rec.map((c) => (
+            <span key={c.code} className="inline-flex items-center gap-1.5 rounded-lg border border-line bg-elevated px-2.5 py-1 text-sm font-semibold text-fg">
+              <span className="text-base leading-none">{c.flag}</span> {c.label}
+            </span>
+          ))}
+        </div>
+        <div className="mt-2 text-[11px] leading-relaxed text-muted">Прокси в стране номера или соседней по региону — лучше для траста аккаунта.</div>
       </div>
     </SectionCard>
-    </div>
   )
 }
 

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
-import { Network, Plus, Trash2, Pencil, Link2, Check, Circle, Zap, Loader2, MapPin, Upload } from 'lucide-react'
+import { Network, Plus, Trash2, Pencil, Link2, Check, Circle, Zap, Loader2, MapPin, Upload, Skull, RotateCcw } from 'lucide-react'
 import { PageHeader, Card, EmptyState, Badge, Select, Modal } from '@/shared/ui'
 import { HelpButton } from '@/features/neuro-commenting/moduleUi'
 import {
@@ -10,6 +10,7 @@ import { fetchAccounts, patchAccount } from '@/api/accountsApi'
 import type { TgAccount } from '@/shared/types'
 import { FLAGS } from '@/shared/config/geo'
 import { confirmDialog } from '@/shared/lib/dialog'
+import { cn } from '@/shared/lib/utils'
 import { ImportProxiesModal } from '@/features/import-proxies/ImportProxiesModal'
 
 const STATUS_META: Record<Proxy['status'], { label: string; tone: 'spark' | 'rose' | 'amber' | 'muted'; hint?: string }> = {
@@ -77,6 +78,16 @@ export function ProxiesPage() {
       void doTest(saved) // авто-определение статуса и страны (выбирать вручную не нужно)
     } catch (e) { setErr(e instanceof Error ? e.message : 'Ошибка') }
     finally { setSaving(false) }
+  }
+
+  // MR-133: пометить/«убить» прокси вручную (dead) — сразу перестаёт предлагаться аккаунтам,
+  // не дожидаясь автотеста. Повторный клик снимает пометку (возврат в «Не проверен»).
+  async function toggleDead(p: Proxy) {
+    const next: Proxy['status'] = p.status === 'dead' ? 'unknown' : 'dead'
+    try {
+      const saved = await updateProxy(p.id, { status: next })
+      setProxies((prev) => prev.map((x) => (x.id === saved.id ? saved : x)))
+    } catch (e) { setErr(e instanceof Error ? e.message : 'Ошибка') }
   }
 
   async function remove(p: Proxy) {
@@ -150,6 +161,8 @@ export function ProxiesPage() {
                 <div className="flex items-center gap-1.5">
                   <button onClick={() => void doTest(p)} disabled={testing === p.id} className="btn-ghost h-9 text-xs disabled:opacity-50">{testing === p.id ? <Loader2 size={14} className="animate-spin" /> : <Zap size={14} />} Тест</button>
                   <button onClick={() => setAssignFor(p)} className="btn-ghost h-9 text-xs"><Link2 size={14} /> Назначить</button>
+                  {/* MR-133: ручная пометка «мёртвый» — сразу выводит прокси из выдачи аккаунтам. */}
+                  <button onClick={() => void toggleDead(p)} className={cn('btn-icon h-9 w-9', p.status === 'dead' ? 'text-spark-400' : 'text-rose-300')} title={p.status === 'dead' ? 'Снять пометку «мёртвый»' : 'Пометить мёртвым (не предлагать аккаунтам)'}>{p.status === 'dead' ? <RotateCcw size={14} /> : <Skull size={14} />}</button>
                   <button onClick={() => openEdit(p)} className="btn-icon h-9 w-9" aria-label="Изменить"><Pencil size={14} /></button>
                   <button onClick={() => void remove(p)} className="btn-icon-danger h-9 w-9" aria-label="Удалить прокси" title="Удалить прокси"><Trash2 size={14} /></button>
                 </div>
