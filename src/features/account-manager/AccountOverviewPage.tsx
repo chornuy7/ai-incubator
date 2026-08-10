@@ -59,8 +59,8 @@ export function AccountOverviewPage() {
   // Аккаунт из URL ищем среди ВСЕХ: прямая ссылка должна открываться, даже если он вне выбора.
   const account = useMemo(() => accounts.find((a) => a.id === id) ?? scope[0] ?? accounts[0] ?? null, [accounts, scope, id])
 
+  // MR-129 (10.08): вкладка ВСЕГДА сохраняется при переключении аккаунтов — галочку «сбрасывать» убрали.
   const [tab, setTab] = useTabParam<TabKey>('profile', 'card')
-  const [resetToProfile, setResetToProfile] = useState(false)
   const [stats, setStats] = useState<AccountStats | null>(null)
   const [loading, setLoading] = useState(false)
   const [spamChecking, setSpamChecking] = useState(false)
@@ -77,7 +77,6 @@ export function AccountOverviewPage() {
   useEffect(() => {
     if (!account) { setStats(null); return }
     setStats(null) // не показываем данные прежнего аккаунта, пока грузится новый
-    if (resetToProfile) setTab('profile')
     void load()
   }, [account?.id])
 
@@ -178,15 +177,6 @@ export function AccountOverviewPage() {
                     {tab === t.key && <span className="absolute inset-x-3 -bottom-px h-0.5 rounded-full bg-spark-gradient" />}
                   </button>
                 ))}
-                <label className="ml-auto flex shrink-0 cursor-pointer items-center gap-1.5 self-center pl-3 text-[11px] text-muted" title="По умолчанию таб сохраняется при переключении аккаунтов">
-                  <input
-                    type="checkbox"
-                    checked={resetToProfile}
-                    onChange={(e) => setResetToProfile(e.target.checked)}
-                    className="h-3.5 w-3.5 rounded border-line accent-spark-500"
-                  />
-                  сбрасывать на профиль
-                </label>
               </div>
 
               {loading && !stats ? (
