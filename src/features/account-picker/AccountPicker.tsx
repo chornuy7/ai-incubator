@@ -1,8 +1,9 @@
 import { useMemo, useState, useEffect } from 'react'
+import { useNavigate } from 'react-router-dom'
 import {
-  Search, Users, CheckCheck, ChevronsRight, ChevronsLeft, RefreshCw, ChevronDown, Inbox, ShieldCheck, Loader2, Lock, AlertTriangle,
+  Search, Users, CheckCheck, ChevronsRight, ChevronsLeft, RefreshCw, ChevronDown, Inbox, ShieldCheck, Loader2, Lock, AlertTriangle, Settings,
 } from 'lucide-react'
-import { useApp, activeAccounts, isBrokenAccount } from '@/mocks/store'
+import { useApp, activeAccounts, isBrokenAccount, hasProxyIssue } from '@/mocks/store'
 import { useSession } from '@/features/auth/session'
 import { Avatar, Select } from '@/shared/ui'
 import { HelpButton } from '@/features/neuro-commenting/moduleUi'
@@ -41,6 +42,10 @@ export function AccountPicker({
   const data = useApp((s) => s.data)
   const pushToast = useApp((s) => s.pushToast)
   const loadAccountBusy = useApp((s) => s.loadAccountBusy)
+  const navigate = useNavigate()
+  // MR-132: сломанный из-за прокси аккаунт чиним переходом в Менеджер → таб «Прокси»
+  // (не дублируем настройки прокси в пикере — только ссылка).
+  const fixProxy = (id: string) => navigate(`/panel/accounts/${id}?card=proxy`)
   const sessionUser = useSession((s) => s.user)
   // §12: группы нужны, чтобы доступ роли «на группу» действительно применялся к пикеру.
   const [accGroups, setAccGroups] = useState<AccountGroup[]>([])
@@ -207,12 +212,12 @@ export function AccountPicker({
                 <button type="button" onClick={() => setShowBroken((v) => !v)} className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs font-semibold text-rose-300 hover:bg-rose-500/[.06]">
                   <ChevronDown size={14} className={cn('shrink-0 transition-transform', !showBroken && '-rotate-90')} />
                   Показать нерабочие ({brokenList.length})
-                  <span className="ml-auto hidden truncate font-normal text-muted sm:block">мёртвый прокси / нерабочий статус — не для запуска</span>
+                  <span className="ml-auto hidden truncate font-normal text-muted sm:block">без прокси / мёртвый прокси / нерабочий статус — не для запуска</span>
                 </button>
                 {showBroken && (
                   <div className="max-h-64 overflow-y-auto px-2 pb-2">
                     {brokenList.map((a) => (
-                      <AccountRow key={a.id} account={a} liteMode={liteMode} busy disabled />
+                      <AccountRow key={a.id} account={a} liteMode={liteMode} busy disabled onFixProxy={hasProxyIssue(a) ? () => fixProxy(a.id) : undefined} />
                     ))}
                   </div>
                 )}
@@ -284,13 +289,19 @@ function MiniBadge({ children, tone, outline }: { children: React.ReactNode; ton
   return <span className={cn('inline-flex items-center gap-0.5 rounded border px-1 py-0.5 text-[9px] font-bold uppercase', tones[tone])}>{children}</span>
 }
 
-function AccountRow({ account: a, liteMode, onAdd, busy, disabled }: {
-  account: TgAccount; liteMode: boolean; onAdd?: () => void; busy?: boolean; disabled?: boolean
+function AccountRow({ account: a, liteMode, onAdd, busy, disabled, onFixProxy }: {
+  account: TgAccount; liteMode: boolean; onAdd?: () => void; busy?: boolean; disabled?: boolean; onFixProxy?: () => void
 }) {
   return (
     <div
-      title={disabled ? (a.busyIn ? `В работе: ${a.busyIn.moduleLabel} — выбрать нельзя` : `${unavailLabel(a)} — назначить в работу нельзя`) : undefined}
-      className={cn('group flex items-center gap-2.5 rounded-xl px-2 py-2', disabled ? 'cursor-not-allowed select-none opacity-60' : 'hover:bg-elevated')}
+      // MR-132: строка сломанного из-за прокси аккаунта кликабельна целиком — ведёт в
+      // Менеджер → Прокси (шестерёнка, не замок): проблему можно починить, а не «нельзя».
+      onClick={onFixProxy}
+      title={onFixProxy
+        ? 'Нет рабочего прокси — открыть Менеджер → Прокси и назначить'
+        : disabled ? (a.busyIn ? `В работе: ${a.busyIn.moduleLabel} — выбрать нельзя` : `${unavailLabel(a)} — назначить в работу нельзя`) : undefined}
+      className={cn('group flex items-center gap-2.5 rounded-xl px-2 py-2',
+        onFixProxy ? 'cursor-pointer hover:bg-iris-500/10' : disabled ? 'cursor-not-allowed select-none opacity-60' : 'hover:bg-elevated')}
     >
       <Avatar name={a.name} color={a.avatarColor} size={liteMode ? 26 : 32} />
       <div className="min-w-0 flex-1">
@@ -318,7 +329,10 @@ function AccountRow({ account: a, liteMode, onAdd, busy, disabled }: {
           )}
         </div>
       )}
-      {disabled ? (
+      {onFixProxy ? (
+        // MR-132: шестерёнка вместо замка — прокси можно назначить, это не «нельзя».
+        <button type="button" onClick={(e) => { e.stopPropagation(); onFixProxy() }} title="Назначить прокси в Менеджере" className="btn-icon h-7 w-7 shrink-0 text-iris-300"><Settings size={14} /></button>
+      ) : disabled ? (
         <Lock size={14} className="shrink-0 text-rose-300/70" />
       ) : (
         onAdd && <button type="button" onClick={onAdd} className="btn-icon h-7 w-7 shrink-0 text-spark-400"><ChevronsRight size={14} /></button>

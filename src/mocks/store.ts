@@ -251,10 +251,14 @@ export const useApp = create<AppStore>((set, get) => {
 export const activeAccounts = (d: AppData) => d.accounts.filter((a) => !a.inTrash)
 export const trashedAccounts = (d: AppData) => d.accounts.filter((a) => a.inTrash)
 
-// §6.3 (AM-002 / NOTIFY-001): «нерабочий» аккаунт — мёртвый прокси (proxyOk===false) или статус,
+// §6.3 (AM-002 / NOTIFY-001): «нерабочий» аккаунт — мёртвый прокси (proxyOk===false),
+// ОТСУТСТВУЮЩИЙ прокси (MR-132: без прокси = высокий риск бана, не для запуска) или статус,
 // из которого не запустишь. Общий предикат для пикера аккаунтов и колокольчика в шапке.
 export const BROKEN_ACCOUNT_STATUS = new Set<string>(['reauth', 'invalid', 'spamblock', 'quarantine', 'frozen'])
-export const isBrokenAccount = (a: { proxyOk?: boolean; status: string }) => a.proxyOk === false || BROKEN_ACCOUNT_STATUS.has(a.status)
+export const isBrokenAccount = (a: { proxyOk?: boolean; noProxy?: boolean; status: string }) =>
+  a.proxyOk === false || a.noProxy === true || BROKEN_ACCOUNT_STATUS.has(a.status)
+/** MR-132: причина «нерабочести» — именно прокси (мёртвый или отсутствует)? Тогда чиним переходом в Менеджер→Прокси. */
+export const hasProxyIssue = (a: { proxyOk?: boolean; noProxy?: boolean }) => a.proxyOk === false || a.noProxy === true
 
 export const STATUS_META: Record<AccountStatus, { label: string; text: string; bg: string; dot: string }> = {
   active: { label: 'Активные', text: 'text-spark-300', bg: 'bg-spark-500/12 border-spark-500/30', dot: 'bg-spark-400' },
