@@ -82,14 +82,13 @@ export function LaunchPanel({
           раньше она была широкими плитками выше по странице, и до кнопки «Начать»
           приходилось помнить, что там было. Детали цены — в подсказке. */}
       <FloatingBar>
-        {/* Всё одной строкой и по ЦЕНТРУ: сводка (в два ряда) — дорожная карта — кнопки.
-            Раньше сводка жалась влево, кнопки вправо (justify-between), и посередине
-            зияла пустота, а карта уезжала на отдельную строку. Сгруппированное по центру
-            занимает ровно ширину панели и экономит целый ряд по высоте.
-            На узких экранах блоки переносятся сами (flex-wrap). */}
-        <div className="flex w-full flex-wrap items-center justify-center gap-x-4 gap-y-2">
-          {/* Сводка: чипы идут сверху вниз, затем следующая колонка (rows-2). */}
-          <div className="grid grid-flow-col grid-rows-2 gap-x-3 gap-y-0.5 text-[11px] text-muted">
+        {/* Раскладка «лево — центр — право»: сводка прижата к левому краю, кнопки — к
+            правому, дорожная карта РАСТЯГИВАЕТСЯ (flex-1) на всё оставшееся место. Так
+            длинная подсказка «Осталось: …» встаёт в ОДНУ строку (а не переносится и не
+            задирает высоту), а по бокам появляется воздух. На узких экранах — flex-wrap. */}
+        <div className="flex w-full flex-wrap items-center justify-between gap-x-6 gap-y-2">
+          {/* Сводка (лево): компактные чипы в два ряда, у левого края. */}
+          <div className="grid shrink-0 grid-flow-col grid-rows-2 gap-x-3 gap-y-0 text-[11px] leading-tight text-muted">
             {stats.map((s) => (
               <span key={s.label} className="inline-flex items-center gap-1" title={s.label}>
                 <span className={cn('shrink-0', s.color)}>{s.icon}</span>
@@ -100,21 +99,20 @@ export function LaunchPanel({
             {!running && cost}
           </div>
 
-          {/* Дорожная карта — центральный блок, под ней (если есть) чего не хватает.
-              Ширину ограничиваем: длинная строка «Осталось: …» растягивала блок и
-              выдавливала кнопки на вторую строку — теперь она переносится сама. */}
-          <div className="flex min-w-0 max-w-[360px] flex-col items-center gap-0.5">
+          {/* Дорожная карта (центр): растягивается на всё свободное место; подсказка —
+              строкой под шагами, теперь ей хватает ширины на одну строку. */}
+          <div className="flex min-w-0 flex-1 basis-64 flex-col items-center gap-0.5">
             {steps}
             {!running && (blockedBy.length > 0 || warn) && (
-              <span className="inline-flex items-center gap-1.5 text-center text-[11px] leading-tight text-amber-300">
+              <span className="inline-flex max-w-full items-center gap-1.5 text-center text-[11px] leading-tight text-amber-300">
                 <AlertTriangle size={12} className="shrink-0" />
                 {blockedBy.length ? `Осталось: ${blockedBy.join(' · ')}` : warn}
               </span>
             )}
           </div>
 
-          {/* Кнопки — «Сохранить шаблон» и «Начать» рядом. */}
-          <div className="flex shrink-0 flex-wrap items-center justify-center gap-2">
+          {/* Кнопки (право): «Сохранить шаблон» и «Начать» рядом, у правого края. */}
+          <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
             {running && (
               <a href="/panel/tasks" className="btn-ghost h-10 text-sm" title="Управление, прогресс и логи — в Дашборде задач"><ArrowUpRight size={15} /> В Дашборде задач</a>
             )}

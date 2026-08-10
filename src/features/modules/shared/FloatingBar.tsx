@@ -64,7 +64,7 @@ export function FloatingBar({ children, className }: { children: ReactNode; clas
           'fixed bottom-0 z-30 flex flex-col items-center gap-2 border-t border-line',
           // Резерв справа больше не нужен: виджеты (поддержка/Help) сами поднимаются
           // над панелью по её высоте — см. --launch-bar-h выше.
-          'bg-elevated/95 px-4 py-3 shadow-lg shadow-black/40 backdrop-blur',
+          'bg-elevated/95 px-5 py-2.5 shadow-lg shadow-black/40 backdrop-blur',
           className,
         )}
       >
