@@ -107,6 +107,26 @@ import { filterBlacklisted, isBlacklistedSync } from '../targetBlacklist.js'
 /** @type {Map<string, Promise<void>>} */
 const running = new Map()
 /**
+ * Живые in-memory объекты задач работающих воркеров (taskId → task).
+ *
+ * stopWorker/pauseWorker грузят СВОЮ копию задачи с диска и ставят флаг на ней — но
+ * воркер крутит цикл над ДРУГИМ объектом и подхватывал флаг только когда сам перечитает
+ * диск (в breakableDelay). Между действиями (во время реального действия в TG) стоп
+ * игнорировался — «остановлена, а крутится». Держим ссылку на живой объект и ставим
+ * флаг прямо на нём → ближайший `if (task.stopRequested) break` срабатывает мгновенно.
+ * @type {Map<string, object>}
+ */
+const liveTasks = new Map()
+
+/** Мгновенно донести стоп/паузу до работающего воркера (не дожидаясь перечитки диска). */
+function signalLiveTask(taskId, { stop, pause } = {}) {
+  const live = liveTasks.get(taskId)
+  if (!live) return false
+  if (stop) live.stopRequested = true
+  if (pause) live.pauseRequested = true
+  return true
+}
+/**
  * MR-130 (§3.9 «секвенс»): очередь задач, ждущих свободный слот. Раньше startWorker
  * запускал КАЖДУЮ задачу сразу — десятки воркеров уходили в фон «в воздух», грузили
  * CPU/сеть и путали оператора. Теперь одновременно работает не больше MAX_CONCURRENT,
@@ -160,6 +180,9 @@ function launchWorker(taskId, store, runner) {
   const job = (async () => {
     const task = await store.loadTask(taskId)
     if (!task) return
+    // Регистрируем живой объект: stopWorker/pauseWorker поставят флаг прямо на нём,
+    // и воркер увидит стоп на ближайшем шаге, не дожидаясь перечитки диска.
+    liveTasks.set(taskId, task)
     try {
       await runner(task, store)
     } finally {
@@ -169,6 +192,7 @@ function launchWorker(taskId, store, runner) {
     }
   })().finally(() => {
     running.delete(taskId)
+    liveTasks.delete(taskId)
     markTaskDone(taskId)
     pumpWaiting()
   })
@@ -198,6 +222,9 @@ export async function stopWorker(taskId, store) {
   const task = await store.loadTask(taskId)
   if (!task) return null
   task.stopRequested = true
+  // Мгновенно доносим стоп до работающего воркера (его in-memory объект), иначе он
+  // увидел бы флаг только на следующей перечитке диска — «остановлена, а крутится».
+  signalLiveTask(taskId, { stop: true })
   // Задача НА ПАУЗЕ или В ОЧЕРЕДИ (ждёт слот) — живого воркера нет, флаг обработать
   // некому. Останавливаем сами: снимаем из очереди, ставим статус, освобождаем аккаунты.
   const wasWaiting = dropFromWaiting(taskId)
@@ -225,6 +252,8 @@ export async function pauseWorker(taskId, store) {
   if (!task) return null
   if (task.status !== 'running' && task.status !== 'queued') return task
   task.pauseRequested = true
+  // Мгновенно доносим паузу до работающего воркера (см. signalLiveTask в stopWorker).
+  signalLiveTask(taskId, { pause: true })
   // Ждала слот и ещё не запускалась — ставим на паузу сами, без холостого запуска
   // воркера, который тут же вышел бы. Локи держим (пауза их сохраняет) → задача «живая».
   if (dropFromWaiting(taskId) && !running.has(taskId)) {
