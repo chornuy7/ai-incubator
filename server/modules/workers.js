@@ -24,6 +24,7 @@ import {
   handleFlood,
   perAccountLimitReached,
   totalLimitReached,
+  abortTaskClients,
 } from '../lib/accountRunner.js'
 import { accountFingerprint } from '../lib/deviceFingerprint.js'
 import {
@@ -225,6 +226,10 @@ export async function stopWorker(taskId, store) {
   // Мгновенно доносим стоп до работающего воркера (его in-memory объект), иначе он
   // увидел бы флаг только на следующей перечитке диска — «остановлена, а крутится».
   signalLiveTask(taskId, { stop: true })
+  // Принудительно рвём соединения задачи: если воркер завис в сетевом gram-вызове
+  // (медленный прокси, нет таймаута), обрыв заставит вызов упасть — и воркер выйдет
+  // по стопу за секунды, а не спустя десятки секунд ожидания ответа.
+  void abortTaskClients(taskId)
   // Задача НА ПАУЗЕ или В ОЧЕРЕДИ (ждёт слот) — живого воркера нет, флаг обработать
   // некому. Останавливаем сами: снимаем из очереди, ставим статус, освобождаем аккаунты.
   const wasWaiting = dropFromWaiting(taskId)
@@ -254,6 +259,8 @@ export async function pauseWorker(taskId, store) {
   task.pauseRequested = true
   // Мгновенно доносим паузу до работающего воркера (см. signalLiveTask в stopWorker).
   signalLiveTask(taskId, { pause: true })
+  // Рвём соединения задачи — зависший сетевой вызов упадёт, воркер быстро выйдет на паузу.
+  void abortTaskClients(taskId)
   // Ждала слот и ещё не запускалась — ставим на паузу сами, без холостого запуска
   // воркера, который тут же вышел бы. Локи держим (пауза их сохраняет) → задача «живая».
   if (dropFromWaiting(taskId) && !running.has(taskId)) {

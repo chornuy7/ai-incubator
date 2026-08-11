@@ -7,6 +7,29 @@ import { getAiSafetySync } from '../aiSafety.js'
 import { resolvePerAccountTarget, resolveTotalTarget } from './targets.js'
 import { accountFingerprint } from './deviceFingerprint.js'
 
+/**
+ * Реестр живых клиентов по задачам: taskId → Set<client>. Нужен, чтобы «Стоп»/«Пауза»
+ * могли ПРИНУДИТЕЛЬНО оборвать соединение аккаунта. Сетевые вызовы gram (searchPublic,
+ * fetchPosts, sendReaction…) не имеют таймаута и не проверяют флаг стопа: на медленном
+ * прокси они висят десятки секунд, и «Стоп» игнорировался всё это время. При обрыве
+ * соединения такой вызов сразу падает → воркер попадает в catch → видит стоп → выходит.
+ * @type {Map<string, Set<import('telegram').TelegramClient>>}
+ */
+const taskClients = new Map()
+
+/** Прервать все живые соединения задачи — зависшие gram-вызовы упадут, воркер выйдет по стопу. */
+export async function abortTaskClients(taskId) {
+  const set = taskClients.get(taskId)
+  if (!set || !set.size) return 0
+  const clients = [...set]
+  taskClients.delete(taskId)
+  for (const c of clients) {
+    // Не ждём disconnect дольше 2с — на битом соединении он сам может подвиснуть.
+    try { await Promise.race([Promise.resolve().then(() => c.disconnect()).catch(() => {}), sleep(2000)]) } catch { /* ignore */ }
+  }
+  return clients.length
+}
+
 /** @param {string} accountId @param {string} [taskId] */
 export async function connectAccount(accountId, taskId) {
   assertAccountAvailable(accountId, taskId)
@@ -24,11 +47,21 @@ export async function connectAccount(accountId, taskId) {
   // после первого же действия становился обычным активным (тест 12.5).
   await setAccountMeta(accountId, { status: 'working', statusBefore: meta.status || 'active' })
   const client = await createClient(sessionStr, meta.proxy, accountFingerprint(accountId, meta))
+  // Регистрируем клиент под задачей — чтобы стоп/пауза могли его оборвать (см. abortTaskClients).
+  if (taskId) {
+    client.__taskId = taskId
+    let set = taskClients.get(taskId)
+    if (!set) { set = new Set(); taskClients.set(taskId, set) }
+    set.add(client)
+  }
   return { client, meta }
 }
 
 /** @param {import('telegram').TelegramClient} client @param {string} accountId */
 export async function disconnectAccount(client, accountId) {
+  // Снимаем из реестра задачи (если был зарегистрирован при connectAccount).
+  const taskId = client?.__taskId
+  if (taskId) { const set = taskClients.get(taskId); if (set) { set.delete(client); if (!set.size) taskClients.delete(taskId) } }
   try {
     await client.disconnect()
   } catch {
