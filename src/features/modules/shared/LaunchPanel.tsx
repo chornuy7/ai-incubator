@@ -107,9 +107,10 @@ export function LaunchPanel({
               // Раньше hex подставлялся как класс — иконка (в т.ч. «Лимит») оставалась без цвета.
               const isHex = s.color?.startsWith('#')
               return (
-                <span key={s.label} className="inline-flex items-center gap-1" title={s.label}>
+                <span key={s.label} className="inline-flex items-center gap-1" title={`${s.label}: ${s.value}`}>
                   <span className={cn('shrink-0', !isHex && s.color)} style={isHex ? { color: s.color } : undefined}>{s.icon}</span>
-                  <span className="uppercase tracking-wide">{s.label}</span>
+                  {/* MR-136: мало места → прячем текстовую подпись (остаётся иконка+значение, подпись — в тултипе). */}
+                  <span className="hidden uppercase tracking-wide xl:inline">{s.label}</span>
                   <b className={cn('font-semibold', s.warn ? 'text-amber-300' : 'text-fg')}>{s.value}</b>
                 </span>
               )
