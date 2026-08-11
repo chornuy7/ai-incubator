@@ -1,7 +1,7 @@
 import { useNavigate } from 'react-router-dom'
 import { useState, useEffect } from 'react'
 import {
-  Menu, Zap, Sun, Moon, Radar, ChevronDown, UserCog, LogOut, Wallet, Check, AlertTriangle, Package, Bell, X,
+  Menu, Zap, Sun, Moon, Radar, ChevronDown, UserCog, LogOut, Wallet, Check, AlertTriangle, Package, Bell, X, Clock,
 } from 'lucide-react'
 import { useApp, activeAccounts, isBrokenAccount } from '@/mocks/store'
 import { fetchAllTasks, type ModuleTask } from '@/api/modulesApi'
@@ -77,10 +77,42 @@ export function AppHeader() {
     const iv = setInterval(pull, 30000)
     return () => { alive = false; clearInterval(iv) }
   }, [])
-  // MR-134: задача может отключить уведомления о своём статусе (галочка в блоке запуска).
-  const taskAlertsAll = tasks.filter((t) => (t.status === 'error' || t.status === 'paused') && t.settings?.notifyOnStatus !== false)
+  // MR-134: колокольчик по статусу задачи — ошибка, пауза И завершение (по ТЗ 10.08).
+  // «Завершена» показываем только НЕДАВНО законченные (updatedAt за 12ч), иначе старые
+  // done копились бы вечно. Задача может отключить уведомления галочкой в блоке запуска.
+  const TASK_DONE_WINDOW = 12 * 60 * 60 * 1000
+  const taskAlertsAll = tasks.filter((t) =>
+    t.settings?.notifyOnStatus !== false && (
+      t.status === 'error' || t.status === 'paused' ||
+      (t.status === 'done' && !!t.updatedAt && (Date.now() - t.updatedAt) < TASK_DONE_WINDOW)
+    ),
+  )
   const taskAlerts = taskAlertsAll.filter((t) => !dismissed.has(`task:${t.id}`))
-  const alertCount = shown.length + taskAlerts.length
+
+  // MR-134 (модель заказчика 11.08): уведомления сгруппированы по ЦВЕТУ, а не по типу.
+  //  🔴 красный — ошибка (аккаунт в бане, прокси слетел, задача с ошибкой);
+  //  🟡 жёлтый — ожидание (задача на паузе/в процессе, без прокси, временное ограничение);
+  //  🟢 зелёный — хороший результат (задача выполнена).
+  const notifItems: { key: string; tone: 'red' | 'yellow' | 'green'; title: string; sub: string; go: string }[] = []
+  for (const t of taskAlerts) {
+    const tone = t.status === 'error' ? 'red' : t.status === 'done' ? 'green' : 'yellow'
+    const sub = t.status === 'error' ? 'задача с ошибкой' : t.status === 'done' ? 'задача выполнена' : 'задача на паузе — ожидание'
+    notifItems.push({ key: `task:${t.id}`, tone, title: moduleTitle(t.moduleKey), sub, go: `/panel/tasks/${t.id}?m=${t.moduleKey}` })
+  }
+  for (const a of shown) {
+    const deadProxy = a.proxyOk === false
+    const banned = ['invalid', 'spamblock', 'frozen', 'reauth'].includes(a.status)
+    const tone: 'red' | 'yellow' = (deadProxy || banned) ? 'red' : 'yellow'
+    const sub = deadProxy ? 'прокси слетел (мёртвый)' : banned ? `аккаунт в бане/блоке (${a.status})` : a.noProxy ? 'без прокси — риск бана' : 'временное ограничение — ожидание'
+    notifItems.push({ key: a.id, tone, title: a.name, sub, go: '/panel' })
+  }
+  const TONE_GROUPS = [
+    { tone: 'red' as const, label: 'Ошибки', box: 'bg-rose-500/12 text-rose-400', sub: 'text-rose-300/80', icon: <AlertTriangle size={15} /> },
+    { tone: 'yellow' as const, label: 'Ожидание', box: 'bg-amber-500/12 text-amber-400', sub: 'text-amber-300/80', icon: <Clock size={15} /> },
+    { tone: 'green' as const, label: 'Хороший результат', box: 'bg-spark-500/12 text-spark-400', sub: 'text-spark-300/80', icon: <Check size={15} /> },
+  ]
+  const alertCount = notifItems.length
+  const hasRed = notifItems.some((i) => i.tone === 'red')
   const theme = useApp((s) => s.theme)
   const toggleTheme = useApp((s) => s.toggleTheme)
   const locale = useApp((s) => s.locale)
@@ -192,13 +224,14 @@ export function AppHeader() {
           <div className="relative">
             <button
               onClick={() => setNotifOpen((v) => !v)}
-              className={`btn-icon relative ${alertCount > 0 ? 'text-rose-400' : ''}`}
+              // Цвет колокольчика — по высшей severity: есть ошибки → красный, иначе жёлтый.
+              className={`btn-icon relative ${!alertCount ? '' : hasRed ? 'text-rose-400' : 'text-amber-400'}`}
               aria-label="Уведомления"
-              title={alertCount > 0 ? `${shown.length} нерабочих аккаунтов · ${taskAlerts.length} задач с проблемой` : 'Всё в порядке'}
+              title={alertCount > 0 ? `Уведомлений: ${alertCount}` : 'Всё в порядке'}
             >
               <Bell size={18} />
               {alertCount > 0 && (
-                <span className="absolute -right-0.5 -top-0.5 grid h-4 min-w-4 place-items-center rounded-full bg-rose-500 px-1 text-[10px] font-bold leading-none text-white">
+                <span className={`absolute -right-0.5 -top-0.5 grid h-4 min-w-4 place-items-center rounded-full px-1 text-[10px] font-bold leading-none text-white ${hasRed ? 'bg-rose-500' : 'bg-amber-500'}`}>
                   {alertCount > 99 ? '99+' : alertCount}
                 </span>
               )}
@@ -220,38 +253,28 @@ export function AppHeader() {
                     </div>
                   ) : (
                     <div className="max-h-72 overflow-y-auto p-1.5">
-                      {/* MR-134: задачи с проблемой (ошибка / на паузе) — статус задачи в колокольчике. */}
-                      {taskAlerts.length > 0 && (
-                        <div className="px-1 pb-1 pt-1 text-[10px] font-bold uppercase tracking-wide text-faint">Задачи · {taskAlerts.length}</div>
-                      )}
-                      {taskAlerts.slice(0, 20).map((t) => (
-                        <div key={t.id} className="flex items-center gap-2.5 rounded-xl px-2 py-2 transition-colors hover:bg-white/[.04]">
-                          <span className={`grid h-8 w-8 shrink-0 place-items-center rounded-lg ${t.status === 'error' ? 'bg-rose-500/12 text-rose-400' : 'bg-amber-500/12 text-amber-400'}`}><AlertTriangle size={15} /></span>
-                          <button onClick={() => { setNotifOpen(false); nav(`/panel/tasks/${t.id}?m=${t.moduleKey}`) }} className="min-w-0 flex-1 text-left">
-                            <span className="block truncate text-sm font-medium text-fg">{moduleTitle(t.moduleKey)}</span>
-                            <span className={`block text-[11px] ${t.status === 'error' ? 'text-rose-300/80' : 'text-amber-300/80'}`}>{t.status === 'error' ? 'задача с ошибкой' : 'задача на паузе'}</span>
-                          </button>
-                          <button onClick={() => dismiss(`task:${t.id}`)} title="Скрыть уведомление" className="grid h-6 w-6 shrink-0 place-items-center rounded-md text-faint transition-colors hover:bg-rose-500/12 hover:text-rose-300">
-                            <X size={14} />
-                          </button>
-                        </div>
-                      ))}
-                      {shown.length > 0 && (
-                        <div className="px-1 pb-1 pt-2 text-[10px] font-bold uppercase tracking-wide text-faint">Отвалившиеся аккаунты · {shown.length}</div>
-                      )}
-                      {shown.slice(0, 20).map((a) => (
-                        <div key={a.id} className="flex items-center gap-2.5 rounded-xl px-2 py-2 transition-colors hover:bg-white/[.04]">
-                          <span className="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-rose-500/12 text-rose-400"><AlertTriangle size={15} /></span>
-                          <button onClick={() => { setNotifOpen(false); nav('/panel') }} className="min-w-0 flex-1 text-left">
-                            <span className="block truncate text-sm font-medium text-fg">{a.name}</span>
-                            <span className="block text-[11px] text-rose-300/80">{a.proxyOk === false ? 'мёртвый прокси' : a.noProxy ? 'без прокси' : 'нерабочий статус'}</span>
-                          </button>
-                          {/* §6.3 (доработка): закрыть это уведомление вручную. */}
-                          <button onClick={() => dismiss(a.id)} title="Скрыть уведомление" className="grid h-6 w-6 shrink-0 place-items-center rounded-md text-faint transition-colors hover:bg-rose-500/12 hover:text-rose-300">
-                            <X size={14} />
-                          </button>
-                        </div>
-                      ))}
+                      {/* MR-134: сгруппировано по цвету — Ошибки (красный) / Ожидание (жёлтый) / Хороший результат (зелёный). */}
+                      {TONE_GROUPS.map((g) => {
+                        const items = notifItems.filter((i) => i.tone === g.tone)
+                        if (!items.length) return null
+                        return (
+                          <div key={g.tone}>
+                            <div className={`px-1 pb-1 pt-2 text-[10px] font-bold uppercase tracking-wide ${g.sub}`}>{g.label} · {items.length}</div>
+                            {items.slice(0, 20).map((i) => (
+                              <div key={i.key} className="flex items-center gap-2.5 rounded-xl px-2 py-2 transition-colors hover:bg-white/[.04]">
+                                <span className={`grid h-8 w-8 shrink-0 place-items-center rounded-lg ${g.box}`}>{g.icon}</span>
+                                <button onClick={() => { setNotifOpen(false); nav(i.go) }} className="min-w-0 flex-1 text-left">
+                                  <span className="block truncate text-sm font-medium text-fg">{i.title}</span>
+                                  <span className={`block text-[11px] ${g.sub}`}>{i.sub}</span>
+                                </button>
+                                <button onClick={() => dismiss(i.key)} title="Скрыть уведомление" className="grid h-6 w-6 shrink-0 place-items-center rounded-md text-faint transition-colors hover:bg-white/10 hover:text-fg">
+                                  <X size={14} />
+                                </button>
+                              </div>
+                            ))}
+                          </div>
+                        )
+                      })}
                     </div>
                   )}
                   <div className="border-t border-line p-1.5">
