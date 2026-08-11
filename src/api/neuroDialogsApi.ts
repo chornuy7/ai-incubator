@@ -92,3 +92,10 @@ export async function markDialogRead(accountId: string, peer: PeerRef) {
     `/api/neuro-dialogs/${accountId}/read/${peer.peerId}${peerQuery(peer)}`,
   )
 }
+
+/** MR-134: диалоги, ждущие нашего ответа («пропущенные ЛС») — для колокольчика. */
+export interface AwaitingReply { accountId: string; peer: string; text: string; at: number }
+export async function fetchAwaitingReplies(): Promise<{ count: number; items: AwaitingReply[] }> {
+  const r = await apiGet<{ ok: boolean; count: number; items: AwaitingReply[] }>('/api/messages/awaiting')
+  return { count: r.count || 0, items: r.items || [] }
+}

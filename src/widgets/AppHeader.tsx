@@ -5,6 +5,8 @@ import {
 } from 'lucide-react'
 import { useApp, activeAccounts, isBrokenAccount } from '@/mocks/store'
 import { fetchAllTasks, type ModuleTask } from '@/api/modulesApi'
+import { fetchTickets, type ApiTicket } from '@/api/ticketsApi'
+import { fetchAwaitingReplies, type AwaitingReply } from '@/api/neuroDialogsApi'
 import { fetchBalance, fetchPricing, buyTokens, fetchWalletHistory, type Balance, type Pricing, type WalletEntry } from '@/api/balanceApi'
 import { useSession } from '@/features/auth/session'
 import { usePlan } from '@/features/billing/plan'
@@ -66,8 +68,8 @@ export function AppHeader() {
     // восстановившиеся аккаунты убираем из «отклонённых» — новое падение снова уведомит.
     setDismissed((prev) => {
       const bset = new Set(broken.map((a) => a.id))
-      // MR-134: task:* и wallet:*-дисмиссы не трогаем — они живут отдельно от аккаунтов.
-      const next = new Set([...prev].filter((id) => id.startsWith('task:') || id.startsWith('wallet:') || bset.has(id)))
+      // MR-134: task:/wallet:/ticket:/awaiting-дисмиссы не трогаем — они не про аккаунты.
+      const next = new Set([...prev].filter((id) => id.startsWith('task:') || id.startsWith('wallet:') || id.startsWith('ticket:') || id === 'awaiting' || bset.has(id)))
       return next.size === prev.size ? prev : next
     })
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -81,11 +83,15 @@ export function AppHeader() {
   // Тянем агрегат задач (лёгкий поллинг), выводим рядом с «отвалившимися аккаунтами».
   const [tasks, setTasks] = useState<ModuleTask[]>([])
   const [wallet, setWallet] = useState<WalletEntry[]>([]) // MR-134: пополнения баланса (зелёные)
+  const [tickets, setTickets] = useState<ApiTicket[]>([]) // MR-134: обращения в поддержку
+  const [awaiting, setAwaiting] = useState<{ count: number; items: AwaitingReply[] }>({ count: 0, items: [] }) // MR-134: пропущенные ЛС
   useEffect(() => {
     let alive = true
     const pull = () => {
       void fetchAllTasks().then((t) => { if (alive) setTasks(t) }).catch(() => {})
       void fetchWalletHistory(20).then((w) => { if (alive) setWallet(w) }).catch(() => {})
+      void fetchTickets().then((t) => { if (alive) setTickets(t) }).catch(() => {})
+      void fetchAwaitingReplies().then((a) => { if (alive) setAwaiting(a) }).catch(() => {})
     }
     pull()
     const iv = setInterval(pull, 30000)
@@ -140,6 +146,16 @@ export function AppHeader() {
     if (w.amount <= 0 || (Date.now() - w.ts) >= TASK_DONE_WINDOW || dismissed.has(`wallet:${w.ts}`)) continue
     if (!/пополнени|куплено|покупк/i.test(w.reason || '')) continue
     notifItems.push({ key: `wallet:${w.ts}`, tone: 'green', title: 'Пополнение баланса', sub: `${w.reason} · +${Math.round(w.amount * 1000) / 1000} ⚡`, go: '/panel/user/subscription' })
+  }
+  // MR-134: 🟡 обращения в поддержку (не закрытые) — «ответ поддержки» / «ждём ответа».
+  for (const tk of tickets) {
+    if (tk.status === 'closed' || dismissed.has(`ticket:${tk.id}`)) continue
+    const supReplied = tk.messages?.[tk.messages.length - 1]?.from === 'support'
+    notifItems.push({ key: `ticket:${tk.id}`, tone: 'yellow', title: `Поддержка: ${tk.subject}`, sub: supReplied ? 'поддержка ответила' : 'ожидается ответ поддержки', go: '/panel/support' })
+  }
+  // MR-134: 🟡 пропущенные ЛС — диалоги, ждущие нашего ответа дольше таймаута.
+  if (awaiting.count > 0 && !dismissed.has('awaiting')) {
+    notifItems.push({ key: 'awaiting', tone: 'yellow', title: 'Пропущенные ЛС', sub: `${awaiting.count} ${awaiting.count === 1 ? 'диалог ждёт' : 'диалогов ждут'} ответа`, go: '/panel/inbox' })
   }
   const TONE_GROUPS = [
     { tone: 'red' as const, label: 'Ошибки', box: 'bg-rose-500/12 text-rose-400', sub: 'text-rose-300/80', icon: <AlertTriangle size={15} /> },

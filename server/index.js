@@ -641,6 +641,35 @@ app.get('/api/admin/messages', async (req, res) => {
 })
 
 /**
+ * MR-134: диалоги, ждущие НАШЕГО ответа — «пропущенные ЛС». Последнее сообщение в
+ * диалоге входящее (direction 'in') и висит дольше таймаута (по умолчанию 15 мин):
+ * значит ИИ/оператор не ответил. Считаем по сообщениям (messages), группируя по
+ * (аккаунт, собеседник). Для колокольчика — отдельным жёлтым уведомлением.
+ */
+app.get('/api/messages/awaiting', async (req, res) => {
+  try {
+    const { listMessages } = await import('./messages.js')
+    const userId = req.header('x-user-id') || ''
+    const rows = await listMessages({ userId: userId || undefined, limit: 2000 })
+    const timeoutMs = Number(process.env.MISSED_DM_TIMEOUT_MS) || 15 * 60 * 1000
+    const byDialog = new Map()
+    for (const m of rows) {
+      const key = `${m.accountId}|${m.peer}`
+      const prev = byDialog.get(key)
+      if (!prev || (m.at || 0) > (prev.at || 0)) byDialog.set(key, m)
+    }
+    const now = Date.now()
+    const awaiting = [...byDialog.values()].filter((m) => m.direction === 'in' && (now - (m.at || 0)) > timeoutMs)
+    res.json({
+      ok: true,
+      count: awaiting.length,
+      items: awaiting.sort((a, b) => (b.at || 0) - (a.at || 0)).slice(0, 20)
+        .map((m) => ({ accountId: m.accountId, peer: m.peer, text: (m.text || '').slice(0, 60), at: m.at })),
+    })
+  } catch (err) { res.status(500).json({ ok: false, error: err instanceof Error ? err.message : 'Ошибка' }) }
+})
+
+/**
  * §11.3: завести существующих пользователей в Supabase Auth (пригласительными письмами).
  *
  * Отвечает на «как юзеры попадут в БД» для тех, кто уже есть у нас: приглашение вместо
