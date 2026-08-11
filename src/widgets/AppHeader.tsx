@@ -1,5 +1,5 @@
 import { useNavigate } from 'react-router-dom'
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import {
   Menu, Zap, Sun, Moon, Radar, ChevronDown, UserCog, LogOut, Wallet, Check, AlertTriangle, Package, Bell, X, Clock,
 } from 'lucide-react'
@@ -45,6 +45,15 @@ export function AppHeader() {
   useEffect(() => { void fetchPricing().then(setPricing).catch(() => {}) }, [])
   // §6.3 (NOTIFY-001): колокольчик — сколько аккаунтов «отвалилось» (мёртвый прокси / нерабочий статус).
   const [notifOpen, setNotifOpen] = useState(false)
+  // Закрытие колокольчика кликом ВНЕ него: прозрачный backdrop не срабатывал, т.к.
+  // сайдбар/шапка перекрывали его по бокам. Слушаем документ по ref — надёжно.
+  const notifRef = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    if (!notifOpen) return
+    const onDown = (e: MouseEvent) => { if (notifRef.current && !notifRef.current.contains(e.target as Node)) setNotifOpen(false) }
+    document.addEventListener('mousedown', onDown)
+    return () => document.removeEventListener('mousedown', onDown)
+  }, [notifOpen])
   const broken = activeAccounts(data).filter(isBrokenAccount)
   // §6.3 (NOTIFY-001, доработка): уведомление можно закрыть вручную. Отклонённые id храним в
   // localStorage; если аккаунт восстановится и снова отвалится — уведомит заново.
@@ -247,7 +256,7 @@ export function AppHeader() {
           </div>
 
           {/* §6.3 (NOTIFY-001): колокольчик — сколько аккаунтов отвалилось (мёртвый прокси / нерабочий статус). */}
-          <div className="relative">
+          <div className="relative" ref={notifRef}>
             <button
               onClick={() => setNotifOpen((v) => !v)}
               // Цвет колокольчика — по высшей severity: есть ошибки → красный, иначе жёлтый.
@@ -264,7 +273,6 @@ export function AppHeader() {
             </button>
             {notifOpen && (
               <>
-                <div className="fixed inset-0 z-40" onClick={() => setNotifOpen(false)} />
                 <div className="absolute right-0 top-[calc(100%+8px)] z-50 w-80 overflow-hidden rounded-2xl border border-line bg-surface shadow-2xl shadow-black/40">
                   <div className="flex items-center justify-between border-b border-line px-3 py-2.5">
                     <span className="flex items-center gap-2 text-xs font-bold uppercase tracking-wide text-muted">
