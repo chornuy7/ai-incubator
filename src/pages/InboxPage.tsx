@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { MessagesSquare, Search, RefreshCw, Users, Radio } from 'lucide-react'
 import { ConversationBubble } from '@/features/conversation/ConversationBubble'
 import { AccountRail } from '@/features/conversation/AccountRail'
@@ -38,6 +39,30 @@ export function InboxPage() {
   const [loadingGroups, setLoadingGroups] = useState(false)
 
   const toggleAcc = (id: string) => setSel((p) => { const n = new Set(p); n.has(id) ? n.delete(id) : n.add(id); return n })
+
+  // MR-134: диплинк из уведомления «Пропущенные ЛС» — /panel/inbox?account=…&peer=…
+  // Сразу выбираем аккаунт и запоминаем, какой диалог открыть, когда список подгрузится.
+  const [params, setParams] = useSearchParams()
+  const [pendingPeer, setPendingPeer] = useState<string | null>(null)
+  useEffect(() => {
+    const acc = params.get('account')
+    const peer = params.get('peer')
+    if (!acc) return
+    setSel(new Set([acc]))
+    if (peer) setPendingPeer(peer)
+    // чистим query, чтобы обновление страницы не переоткрывало диалог заново
+    setParams({}, { replace: true })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+  // когда диалоги выбранного аккаунта загрузились — открываем нужный (по username или id).
+  useEffect(() => {
+    if (!pendingPeer || !dialogs.length) return
+    const norm = (s: string) => String(s || '').replace(/^@/, '').toLowerCase()
+    const want = norm(pendingPeer)
+    const d = dialogs.find((x) => norm(x.username) === want || String(x.peerId) === String(pendingPeer))
+    if (d) { void openDialog(d); setPendingPeer(null) }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dialogs, pendingPeer])
 
   const loadInbox = async () => {
     if (!sel.size) { setDialogs([]); return }

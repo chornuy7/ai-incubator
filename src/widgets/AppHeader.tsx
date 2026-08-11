@@ -155,7 +155,13 @@ export function AppHeader() {
   }
   // MR-134: 🟡 пропущенные ЛС — диалоги, ждущие нашего ответа дольше таймаута.
   if (awaiting.count > 0 && !dismissed.has('awaiting')) {
-    notifItems.push({ key: 'awaiting', tone: 'yellow', title: 'Пропущенные ЛС', sub: `${awaiting.count} ${awaiting.count === 1 ? 'диалог ждёт' : 'диалогов ждут'} ответа`, go: '/panel/inbox' })
+    // Клик ведёт прямо на диалог: выбираем аккаунт и открываем нужную переписку.
+    // Раньше вело в пустой /panel/inbox (аккаунт не выбран — непонятно, где сообщение).
+    const first = awaiting.items[0]
+    const go = first
+      ? `/panel/inbox?account=${encodeURIComponent(first.accountId)}&peer=${encodeURIComponent(first.peer)}`
+      : '/panel/inbox'
+    notifItems.push({ key: 'awaiting', tone: 'yellow', title: 'Пропущенные ЛС', sub: `${awaiting.count} ${awaiting.count === 1 ? 'диалог ждёт' : 'диалогов ждут'} ответа`, go })
   }
   const TONE_GROUPS = [
     { tone: 'red' as const, label: 'Ошибки', box: 'bg-rose-500/12 text-rose-400', sub: 'text-rose-300/80', icon: <AlertTriangle size={15} /> },

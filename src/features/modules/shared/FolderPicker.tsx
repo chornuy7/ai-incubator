@@ -6,6 +6,7 @@ import {
   fetchFolders, createFolder, updateFolder, deleteFolder, validateFolder, type TargetFolder,
 } from '@/api/featuresApi'
 import { useSession, type SessionUser } from '@/features/auth/session'
+import { confirmDialog } from '@/shared/lib/dialog'
 
 const cleanTargets = (t: string[]) => [...new Set(t.map((x) => String(x || '').trim().replace(/^@/, '')).filter(Boolean))]
 
@@ -170,10 +171,20 @@ export function FolderPicker({ targets, onLoad }: {
   }
   const loadFolder = (f: TargetFolder) => {
     const allowed = allowedTargets(f, user)
+    // Дедуп относительно уже добавленных целей: чтобы не сыпать «загружено N», когда часть
+    // (или все) группы уже в списке — считаем сколько реально добавится и сколько повторов.
+    const have = new Set(targets.map(ntTarget))
+    const fresh = allowed.filter((t) => !have.has(ntTarget(t)))
+    const dupes = allowed.length - fresh.length
     onLoad(allowed)
     setLoadOpen(false)
     const hidden = f.targets.length - allowed.length
-    pushToast({ type: 'success', title: 'Группа загружена', desc: `${f.name} · ${allowed.length} групп${hidden > 0 ? ` (скрыто ${hidden})` : ''}` })
+    const tail = `${dupes > 0 ? ` · повторов ${dupes}` : ''}${hidden > 0 ? ` · скрыто ${hidden}` : ''}`
+    if (fresh.length === 0 && dupes > 0) {
+      pushToast({ type: 'info', title: 'Уже в списке', desc: `${f.name} · все ${dupes} ${plural(dupes, 'группа', 'группы', 'групп')} уже добавлены` })
+    } else {
+      pushToast({ type: 'success', title: 'Группа загружена', desc: `${f.name} · добавлено ${fresh.length}${tail}` })
+    }
   }
 
   return (
@@ -241,7 +252,6 @@ function FolderManageModal({ open, onClose, folders, onChanged, onLoad }: {
   const pushToast = useApp((s) => s.pushToast)
   const [editingId, setEditingId] = useState<string | null>(null)
   const [draftName, setDraftName] = useState('')
-  const [confirmId, setConfirmId] = useState<string | null>(null)
   const [validatingId, setValidatingId] = useState<string | null>(null)
 
   const validate = async (f: TargetFolder) => {
@@ -268,9 +278,15 @@ function FolderManageModal({ open, onClose, folders, onChanged, onLoad }: {
   }
 
   const remove = async (f: TargetFolder) => {
+    // Всегда спрашиваем подтверждение — удаление группы необратимо (§12).
+    if (!(await confirmDialog({
+      title: 'Удалить группу?',
+      message: `«${f.name}» (${f.targets.length} ${plural(f.targets.length, 'группа', 'группы', 'групп')}) будет удалена безвозвратно.`,
+      confirmLabel: 'Удалить',
+      tone: 'danger',
+    }))) return
     try {
       await deleteFolder(f.id)
-      setConfirmId(null)
       await onChanged()
       pushToast({ type: 'success', title: 'Группа удалена' })
     } catch (e) {
@@ -292,12 +308,6 @@ function FolderManageModal({ open, onClose, folders, onChanged, onLoad }: {
                   <button type="button" onClick={() => rename(f)} className="btn-icon h-8 w-8 text-spark-400"><Check size={15} /></button>
                   <button type="button" onClick={() => setEditingId(null)} className="btn-icon h-8 w-8"><X size={15} /></button>
                 </>
-              ) : confirmId === f.id ? (
-                <>
-                  <div className="min-w-0 flex-1 text-sm text-rose-300">Удалить группу «{f.name}»?</div>
-                  <button type="button" onClick={() => remove(f)} className="btn-danger h-8 px-3 text-xs">Удалить</button>
-                  <button type="button" onClick={() => setConfirmId(null)} className="btn-icon h-8 w-8"><X size={15} /></button>
-                </>
               ) : (
                 <>
                   <div className="min-w-0 flex-1">
@@ -307,7 +317,7 @@ function FolderManageModal({ open, onClose, folders, onChanged, onLoad }: {
                   <button type="button" onClick={() => { onLoad(f.targets); pushToast({ type: 'success', title: 'Загружено', desc: `${f.targets.length} групп` }) }} className="btn-icon h-8 w-8" title="Загрузить в группы"><Download size={15} /></button>
                   <button type="button" onClick={() => void validate(f)} disabled={validatingId === f.id || !f.targets.length} className="btn-icon h-8 w-8 text-spark-400 disabled:opacity-40" title="Проверить и удалить мёртвые">{validatingId === f.id ? <Loader2 size={15} className="animate-spin" /> : <ShieldCheck size={15} />}</button>
                   <button type="button" onClick={() => { setEditingId(f.id); setDraftName(f.name) }} className="btn-icon h-8 w-8" title="Переименовать"><Pencil size={15} /></button>
-                  <button type="button" onClick={() => setConfirmId(f.id)} className="btn-icon h-8 w-8 text-rose-300" title="Удалить"><Trash2 size={15} /></button>
+                  <button type="button" onClick={() => void remove(f)} className="btn-icon h-8 w-8 text-rose-300" title="Удалить"><Trash2 size={15} /></button>
                 </>
               )}
             </li>

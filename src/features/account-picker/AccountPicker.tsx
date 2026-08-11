@@ -155,7 +155,7 @@ export function AccountPicker({
             <div className="flex items-center justify-between border-b border-line px-3 py-2.5">
               <div>
                 <div className="text-sm font-bold text-fg">Доступные аккаунты</div>
-                <div className="text-[11px] text-muted">Свободно: {freeAvailable.length} · Занято: {busyAvailable.length} / {accounts.length}</div>
+                <div className="text-[11px] text-muted">Свободно: {freeAvailable.length} из {accounts.length}</div>
               </div>
               <button type="button" onClick={() => { void loadAccountBusy(); pushToast({ type: 'info', title: 'Статусы обновлены' }) }} className="btn-icon h-8 w-8"><RefreshCw size={14} /></button>
             </div>
