@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Timer, Bolt, Settings2, Shield, ChevronRight } from 'lucide-react'
+import { Timer, Bolt, Settings2, Shield, ChevronRight, SlidersHorizontal } from 'lucide-react'
 import { ToggleGroup } from '@/shared/ui'
 import { cn } from '@/shared/lib/utils'
 import { SectionCard, NumberField, MinMaxField, DelayFields, SingleDelayField } from './index'
@@ -88,24 +88,44 @@ export function TimingSection(props: TimingSectionProps) {
   // Нет пресета темпа — раскрываем детали сразу (иначе всё окажется спрятано ни за чем).
   const [advanced, setAdvanced] = useState(!hasPresets)
 
+  // MR-136 (доработка MR-103): «Custom» — 4-й пресет (индекс 3). На сервере
+  // PRESET_MUL[3] ?? 1 → ×1, поэтому Custom = задержки берутся как есть, без масштабирования.
+  const CUSTOM = 3
+  // Множители пресета темпа — ДОЛЖНЫ совпадать с сервером (server/lib/protection.js PRESET_MUL).
+  const PRESET_MUL = [0.6, 1, 1.8, 1]
+  const mul = PRESET_MUL[delayPreset] ?? 1
+  // «Эффективная» задержка = базовая × множитель пресета — то, что реально уйдёт на паузы;
+  // показываем её под карточками, чтобы выбор Мин/Рек/Макс СРАЗУ менял видимые значения.
+  const eff = (pair?: [number, number] | null) => pair ? `${Math.round(pair[0] * mul)}–${Math.round(pair[1] * mul)} с` : null
+  // MR-136: ручной ввод любой задержки → авто-переключение на «Custom» (пресет перестаёт «держать» значения).
+  const editDelays = (updater: (d: DelaysShape) => DelaysShape) => {
+    if (hasPresets && delayPreset !== CUSTOM) onDelayPreset!(CUSTOM)
+    onDelays(updater)
+  }
+
   const timeMode = !!workModeOptions && workMode === 1
   const showDuration = showDurationAlways || timeMode
   const showCounts = !workModeOptions || !timeMode
 
   return (
     <SectionCard icon={<Timer size={18} />} title="Тайминги и задержки">
-      {/* Пресет темпа — карточками, как «Защита аккаунтов». */}
+      {/* Пресет темпа — карточками, как «Защита аккаунтов». + «Custom» для ручных значений. */}
       {hasPresets && (
-        <div className="grid gap-2 sm:grid-cols-3">
-          {delayPresets!.map((label, i) => {
-            const meta = PRESET_META[i] ?? PRESET_META[1]
+        <>
+        <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+          {[...delayPresets!, 'Custom'].map((label, i) => {
+            const isCustom = i === CUSTOM
+            const meta = isCustom
+              ? { desc: 'Ручные значения задержек', icon: SlidersHorizontal, tooltip: 'Свои задержки: откроются «Расширенные настройки». Пресет темпа не масштабирует значения (×1) — работает ровно то, что задано.' }
+              : (PRESET_META[i] ?? PRESET_META[1])
             const Icon = meta.icon
             const active = i === delayPreset
             return (
               <button
                 key={label}
                 type="button"
-                onClick={() => onDelayPreset!(i)}
+                // MR-136: «Custom» ещё и раскрывает «Расширенные настройки».
+                onClick={() => { onDelayPreset!(i); if (isCustom) setAdvanced(true) }}
                 className={cn(
                   'flex items-center gap-2.5 rounded-xl border p-3 text-left transition-all',
                   active ? 'border-spark-500/60 bg-spark-500/10' : 'border-line bg-elevated hover:border-spark-500/30',
@@ -126,6 +146,13 @@ export function TimingSection(props: TimingSectionProps) {
             )
           })}
         </div>
+        {/* MR-136: эффективные задержки — видно СРАЗУ, что выбор Мин/Рек/Макс меняет значения. */}
+        <div className="mt-2 text-[11px] text-muted">
+          {delayPreset === CUSTOM
+            ? <>Задержки — ручные (заданы в «Расширенных настройках»).</>
+            : <>Эффективные задержки: {[eff(delays.action) && `действие ${eff(delays.action)}`, showComment && delays.comment && `комментарий ${eff(delays.comment)}`, showJoin && delays.join && `вступление ${eff(delays.join)}`].filter(Boolean).join(' · ') || '—'}</>}
+        </div>
+        </>
       )}
 
       {/* Расширенные настройки — режим работы, лимиты, точные задержки. */}
@@ -191,8 +218,8 @@ export function TimingSection(props: TimingSectionProps) {
                 <DelayFields
                   label={labels.comment ?? 'Задержка комментария'}
                   from={delays.comment[0]} to={delays.comment[1]}
-                  onFrom={(n) => onDelays((d) => ({ ...d, comment: [n, d.comment?.[1] ?? n] }))}
-                  onTo={(n) => onDelays((d) => ({ ...d, comment: [d.comment?.[0] ?? n, n] }))}
+                  onFrom={(n) => editDelays((d) => ({ ...d, comment: [n, d.comment?.[1] ?? n] }))}
+                  onTo={(n) => editDelays((d) => ({ ...d, comment: [d.comment?.[0] ?? n, n] }))}
                   unit="с"
                 />
               )}
@@ -200,8 +227,8 @@ export function TimingSection(props: TimingSectionProps) {
                 <DelayFields
                   label={labels.action ?? 'Задержка действия'}
                   from={delays.action[0]} to={delays.action[1]}
-                  onFrom={(n) => onDelays((d) => ({ ...d, action: [n, d.action?.[1] ?? n] }))}
-                  onTo={(n) => onDelays((d) => ({ ...d, action: [d.action?.[0] ?? n, n] }))}
+                  onFrom={(n) => editDelays((d) => ({ ...d, action: [n, d.action?.[1] ?? n] }))}
+                  onTo={(n) => editDelays((d) => ({ ...d, action: [d.action?.[0] ?? n, n] }))}
                   unit="с"
                 />
               )}
@@ -209,13 +236,13 @@ export function TimingSection(props: TimingSectionProps) {
                 <DelayFields
                   label={labels.join ?? 'Задержка вступления'}
                   from={delays.join[0]} to={delays.join[1]}
-                  onFrom={(n) => onDelays((d) => ({ ...d, join: [n, d.join?.[1] ?? n] }))}
-                  onTo={(n) => onDelays((d) => ({ ...d, join: [d.join?.[0] ?? n, n] }))}
+                  onFrom={(n) => editDelays((d) => ({ ...d, join: [n, d.join?.[1] ?? n] }))}
+                  onTo={(n) => editDelays((d) => ({ ...d, join: [d.join?.[0] ?? n, n] }))}
                   unit="с"
                 />
               )}
-              <SingleDelayField label="FloodWait задержка (сек)" value={delays.floodWait} onChange={(n) => onDelays((d) => ({ ...d, floodWait: n }))} unit="с" />
-              <SingleDelayField label="FloodWait до карантина" value={delays.floodQuarantine} onChange={(n) => onDelays((d) => ({ ...d, floodQuarantine: n }))} />
+              <SingleDelayField label="FloodWait задержка (сек)" value={delays.floodWait} onChange={(n) => editDelays((d) => ({ ...d, floodWait: n }))} unit="с" />
+              <SingleDelayField label="FloodWait до карантина" value={delays.floodQuarantine} onChange={(n) => editDelays((d) => ({ ...d, floodQuarantine: n }))} />
             </div>
           </div>
         </div>
