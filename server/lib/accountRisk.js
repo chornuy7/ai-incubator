@@ -27,7 +27,7 @@ export function computeAccountRisk(a) {
     factors.push({ kind: 'proxy', text: 'Прокси не отвечает — Telegram видит смену IP. Высокая вероятность блокировки в течение недели. Назначьте рабочий прокси.' })
     bump('high')
   } else if (a.noProxy) {
-    factors.push({ kind: 'proxy', text: 'Без прокси — работа с реального IP. Повышенный риск блокировки в течение ~2 недель. Назначьте прокси.' })
+    factors.push({ kind: 'proxy', text: 'Без прокси — работа с реального IP. Повышенный риск блокировки в течение недели. Назначьте прокси.' })
     bump('high')
   }
 
