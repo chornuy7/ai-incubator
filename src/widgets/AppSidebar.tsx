@@ -142,7 +142,10 @@ export function AppSidebar({ mobile = false }: { mobile?: boolean }) {
                         collapsed && 'justify-center',
                         active
                           ? 'bg-spark-500/12 text-spark-300'
-                          : 'text-muted hover:bg-elevated hover:text-fg',
+                          // MR-137: `muted` — «серый», второстепенный пункт: приглушён, но кликабелен.
+                          : r.muted
+                            ? 'text-faint opacity-60 hover:bg-elevated hover:text-muted hover:opacity-100'
+                            : 'text-muted hover:bg-elevated hover:text-fg',
                       )}
                     >
                       {active && <span className="absolute left-0 h-5 w-1 rounded-r-full bg-spark-gradient" />}
