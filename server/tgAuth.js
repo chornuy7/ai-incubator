@@ -7,6 +7,7 @@ import { Api } from 'telegram/tl/index.js'
 import { computeCheck } from 'telegram/Password.js'
 import { SESSIONS_DIR, API_ID, API_HASH, PENDING_TTL_MS } from './config.js'
 import { parseProxy, clientOptions } from './proxy.js'
+import { tcpPing } from './proxies.js'
 import { setAccountMeta, countryFromPhone, avatarColor } from './accountsMeta.js'
 
 /** @typedef {{ client: TelegramClient, phone: string, phoneCodeHash: string, proxy?: string, accountId?: string, timer: NodeJS.Timeout }} PendingAuth */
@@ -76,6 +77,13 @@ async function dropPending(authId) {
  */
 export async function createClient(sessionString, proxyRaw, fingerprint) {
   const proxy = parseProxy(proxyRaw)
+  // MR-129: быстрый TCP-пинг прокси ПЕРЕД тяжёлым TG-коннектом. Мёртвый прокси отсекаем
+  // за ~2.5с с понятной ошибкой «Прокси не отвечает», а не ждём таймаут подключения 12с.
+  // Ускоряет карточку, каналы и группы; ошибку ловит UI и показывает «прокси недоступен».
+  if (proxy && proxy.ip && proxy.port) {
+    const reachable = await tcpPing(proxy.ip, proxy.port, 2500)
+    if (!reachable) throw new Error('Прокси не отвечает — проверьте прокси или назначьте рабочий')
+  }
   const fp = fingerprint || {}
   const opts = clientOptions(proxy)
   if (fp.device) opts.deviceModel = fp.device

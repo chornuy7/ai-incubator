@@ -123,7 +123,11 @@ export async function tgListAccounts(opts = {}) {
     // §6.3 (AM-002): прокси «рабочий», если его нет (прямое подключение) либо он не 'dead'.
     // Ручной прокси не из каталога → статус неизвестен → не помечаем нерабочим (не прячем зря).
     const purl = meta.proxy && meta.proxy !== '—' ? meta.proxy : null
-    dto.proxyOk = !purl || proxyStatusByUrl[purl] !== 'dead'
+    // Прокси «рабочий», если: его нет (прямое подключение), ИЛИ он не 'dead' в каталоге,
+    // ИЛИ последняя живая проверка карточки не показала «не отвечает» (meta.proxyWorking).
+    // MR-129: раньше ручной прокси вне каталога всегда считался «ок» — и статус зря был
+    // «Активные», хотя карточка уже показывала «Не отвечает». Теперь список согласован с карточкой.
+    dto.proxyOk = !purl || (proxyStatusByUrl[purl] !== 'dead' && meta.proxyWorking !== false)
     // MR-131: прокси мёртв ИЛИ отсутствует — обе ситуации риск, но разные (разделяем).
     dto.noProxy = !purl
     dto.risk = computeAccountRisk({ status: dto.status, proxyOk: dto.proxyOk, noProxy: dto.noProxy, trustBand: dto.trustBand })

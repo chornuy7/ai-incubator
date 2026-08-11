@@ -81,7 +81,8 @@ export function Layout() {
         {/* §10.1: лента низкого баланса — в самом верху, над шапкой, без крестика. */}
         <LowBalanceBar />
         <AppHeader />
-        <main className="mx-auto w-full max-w-[1400px] flex-1 px-4 py-6 sm:px-6 lg:px-8">
+        {/* MR-129: карточка аккаунта — на всю ширину (без капа 1400px), остальное — как раньше. */}
+        <main className={`w-full flex-1 px-4 py-6 sm:px-6 lg:px-8 ${location.pathname.startsWith('/panel/accounts/') ? '' : 'mx-auto max-w-[1400px]'}`}>
           {isNoSub && <PaywallBanner />}
           {routeAllowed ? <Outlet /> : <AccessDenied />}
         </main>

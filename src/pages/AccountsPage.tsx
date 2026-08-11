@@ -2,7 +2,7 @@ import { useMemo, useState, useEffect, useRef } from 'react'
 import {
   Plus, UploadCloud, Server, RefreshCw, Columns3, ListChecks, Search, Filter,
   MoreHorizontal, Trash2, KeyRound, Info, Users, Check, X, Undo2, Loader2, Pause,
-  Lock, LockOpen, Rocket, AlertTriangle, ShieldCheck,
+  Lock, LockOpen, Rocket, AlertTriangle, ShieldCheck, Clock,
 } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import { useApp, activeAccounts, trashedAccounts, STATUS_META } from '@/mocks/store'
@@ -18,6 +18,7 @@ import { AddAccountWizard } from '@/features/add-tg-account/AddAccountWizard'
 import { ImportModal } from '@/features/import-sessions/ImportModal'
 import { ProxyPoolModal } from '@/features/proxy/ProxyPoolModal'
 import { AccountManagementModal } from '@/features/account-manager/AccountManagementModal'
+import { ChangeProxyModal } from '@/features/account-manager/ChangeProxyModal'
 import { AiSafetyModal } from '@/features/modules/shared'
 import { PaywallLock } from '@/features/paywall/Paywall'
 import { cn } from '@/shared/lib/utils'
@@ -88,7 +89,13 @@ type SortKey = 'default' | 'name' | 'status' | 'country' | 'newest' | 'oldest'
 
 const str = (v: unknown) => String(v ?? '')
 const SORTS: Record<SortKey, (a: TgAccount, b: TgAccount) => number> = {
-  default: (a, b) => Number(!!a.busyIn) - Number(!!b.busyIn),
+  // MR-129: порядок как просил заказчик — (1) свободные/занятые, (2) по прокси-региону
+  // (одинаковый прокси/регион рядом; без прокси — в конце своей группы), (3) по алфавиту.
+  default: (a, b) =>
+    (Number(!!a.busyIn) - Number(!!b.busyIn))
+    || (Number(!hasProxy(a)) - Number(!hasProxy(b)))
+    || str(a.proxy).localeCompare(str(b.proxy))
+    || str(a.name || a.username).localeCompare(str(b.name || b.username), 'ru'),
   name: (a, b) => str(a.name || a.username).localeCompare(str(b.name || b.username), 'ru'),
   status: (a, b) => str(a.status).localeCompare(str(b.status)),
   country: (a, b) => str(a.country).localeCompare(str(b.country), 'ru'),
@@ -1121,7 +1128,7 @@ function AccountsTable(props: {
                               ? `Trust ${a.trustScore} (>70): доступны все модули, включая мейлинг.`
                               : `Trust ${a.trustScore} (40–70): боевые модули только на «Консервативном» уровне; мейлинг недоступен (нужен trust>70).`}
                         >
-                          trust {a.trustScore}
+                          Доверие {a.trustScore}
                           {a.trustBand === 'low' ? ' · прогрев' : a.trustBand !== 'high' ? ' · без мейлинга' : ''}
                         </span>
                       )}
@@ -1171,12 +1178,13 @@ function AccountsTable(props: {
                         // §4.2: низкий шанс часа — самая частая причина «модуль ничего
                         // не делает». Без этой метки её ищут в логах задачи.
                         if (typeof act.chanceNow === 'number' && act.chanceNow < 20 && (a.proxy && a.proxy !== '—')) {
+                          // MR-129: не пишем явным текстом — только тихая иконка часов с подсказкой.
                           return (
                             <span
-                              className="rounded-md bg-white/5 px-1.5 py-0.5 text-[10px] font-bold text-white/45"
-                              title={`По распорядку сейчас шанс привлечения ${act.chanceNow}% — аккаунт чаще всего будет пропущен. Меняется в «Усталость и отдых».`}
+                              className="inline-flex items-center text-white/35"
+                              title={`Тихий час по распорядку: сейчас шанс действия ${act.chanceNow}% — аккаунт чаще всего будет пропущен. Меняется в «Усталость и отдых».`}
                             >
-                              по распорядку {act.chanceNow}%
+                              <Clock size={12} />
                             </span>
                           )
                         }
@@ -1201,15 +1209,24 @@ function AccountsTable(props: {
                 )}
                 {showCol('lastSeen') && <td className="px-4 py-3 text-muted">{a.lastSeen}</td>}
                 {showCol('proxy') && (
-                  // Прокси опционален — работать без него можно. Но «Прямое подключение»
-                  // звучало нейтрально, хотя означает, что аккаунт ходит с того же IP,
-                  // что и все остальные без прокси: Telegram видит группу и банит волной.
-                  <td className={cn('px-4 py-3 font-mono text-xs', hasProxy(a) ? 'text-muted' : 'font-bold text-rose-300')}>
-                    {hasProxy(a) ? formatProxyLabel(a.proxy) : (
-                      <span className="inline-flex items-center gap-1" title="Аккаунт ходит через ваш IP — тот же, что у остальных без прокси. Для Telegram это одна группа: находит один аккаунт и добивает похожие. Работать так можно, но живут такие аккаунты заметно меньше.">
-                        <AlertTriangle size={11} className="shrink-0" /> без прокси · высокий риск блока
-                      </span>
-                    )}
+                  // MR-129: прокси задаётся прямо из списка — клик по ячейке открывает «Сменить прокси»
+                  // (выбор из базы или новый). Раньше это было спрятано только в меню «…».
+                  <td className="px-4 py-3 font-mono text-xs">
+                    <button
+                      type="button"
+                      onClick={() => props.onProxy(a)}
+                      className="group/px inline-flex items-center gap-1.5 text-left transition-colors hover:text-spark-300"
+                      title={hasProxy(a) ? 'Сменить прокси' : 'Назначить прокси'}
+                    >
+                      {hasProxy(a) ? (
+                        <span className="text-muted group-hover/px:text-spark-300">{formatProxyLabel(a.proxy)}</span>
+                      ) : (
+                        <span className="inline-flex items-center gap-1 font-bold text-rose-300">
+                          <AlertTriangle size={11} className="shrink-0" /> без прокси · назначить
+                        </span>
+                      )}
+                      <Server size={11} className="shrink-0 opacity-0 transition-opacity group-hover/px:opacity-100" />
+                    </button>
                   </td>
                 )}
                 <td className="px-4 py-3 text-right">
@@ -1365,111 +1382,6 @@ function AssignCampaignModal({ acc, campaigns, current, onClose, onApply }: {
           </>
         )
       })()}
-    </Modal>
-  )
-}
-
-function ChangeProxyModal({ acc, onClose, onSave }: { acc: TgAccount | null; onClose: () => void; onSave: (id: string, proxy: string) => void }) {
-  const [useProxy, setUseProxy] = useState(true)
-  const [value, setValue] = useState('')
-  // §10: чаще всего прокси уже есть в базе — предлагаем выбрать, а не вбивать заново.
-  // Раньше пул читался из КЛИЕНТСКОГО мок-стора (`s.data.proxies`), который стартует
-  // пустым и наполняется только локальной кнопкой в этой же сессии: настоящая база
-  // прокси в модалку не попадала никогда, и оператор видел «База прокси пуста»
-  // при десятках записей на сервере (прогон 21–22.07, тест 9.7).
-  const [pool, setPool] = useState<ApiProxy[]>([])
-  const [fromPool, setFromPool] = useState(true)
-
-  useEffect(() => {
-    if (!acc) return
-    void fetchProxies().then(setPool).catch(() => setPool([]))
-  }, [acc?.id])
-
-  useEffect(() => {
-    if (!acc) return
-    const has = acc.proxy && acc.proxy !== '—'
-    setUseProxy(!!has)
-    setValue(has ? acc.proxy : '')
-  }, [acc?.id])
-
-  return (
-    <Modal
-      open={!!acc}
-      onClose={onClose}
-      title="Сменить прокси"
-      subtitle={acc?.name}
-      icon={<Server size={22} />}
-      size="sm"
-      footer={<>
-        <button onClick={onClose} className="btn-ghost h-10">Отмена</button>
-        <button
-          onClick={() => acc && onSave(acc.id, useProxy ? (value.trim() || acc.proxy) : '—')}
-          className="btn-primary h-10"
-        >
-          Сохранить
-        </button>
-      </>}
-    >
-      <div className="mb-3 inline-flex rounded-lg border border-line bg-elevated p-0.5">
-        <button
-          type="button"
-          onClick={() => setUseProxy(false)}
-          className={cn('rounded-md px-3 py-1 text-xs font-semibold', !useProxy ? 'bg-spark-gradient text-[#04150c]' : 'text-muted')}
-        >
-          Без прокси
-        </button>
-        <button
-          type="button"
-          onClick={() => setUseProxy(true)}
-          className={cn('rounded-md px-3 py-1 text-xs font-semibold', useProxy ? 'bg-spark-gradient text-[#04150c]' : 'text-muted')}
-        >
-          Через прокси
-        </button>
-      </div>
-      {useProxy ? (
-        <>
-          {/* §10: выбор из уже существующих прокси (мобильные и новые) либо ввод вручную. */}
-          <div className="mb-2 inline-flex rounded-lg border border-line bg-elevated p-0.5 text-xs">
-            <button type="button" onClick={() => setFromPool(true)}
-              className={cn('rounded-md px-2.5 py-1 font-semibold', fromPool ? 'bg-spark-gradient text-[#04150c]' : 'text-muted')}>
-              Из базы прокси
-            </button>
-            <button type="button" onClick={() => setFromPool(false)}
-              className={cn('rounded-md px-2.5 py-1 font-semibold', !fromPool ? 'bg-spark-gradient text-[#04150c]' : 'text-muted')}>
-              Ввести новый
-            </button>
-          </div>
-          {fromPool ? (
-            pool.length === 0 ? (
-              <p className="text-xs text-muted">База прокси пуста — введите новый, он попадёт в базу.</p>
-            ) : (
-              <>
-                <label className="label">Прокси из базы ({pool.length})</label>
-                <Select
-                  value={value}
-                  onChange={setValue}
-                  placeholder="Выберите прокси"
-                  options={pool.map((p) => {
-                    const auth = p.username ? `${p.username}${p.password ? ':' + p.password : ''}@` : ''
-                    const url = `${p.scheme}://${auth}${p.host}:${p.port}`
-                    const shown = `${p.scheme}://${p.host}:${p.port}`
-                    const geo = p.country ? ` · ${p.country.toUpperCase()}` : ''
-                    return { value: url, label: `${shown}${geo}${p.status === 'dead' ? ' · не отвечает' : ''}` }
-                  })}
-                />
-              </>
-            )
-          ) : (
-            <>
-              <label className="label">Новый прокси</label>
-              <input value={value} onChange={(e) => setValue(e.target.value)} className="input" placeholder="socks5://host:port" />
-            </>
-          )}
-          <p className="mt-2 text-xs text-muted">Текущий: <span className="font-mono">{formatProxyLabel(acc?.proxy ?? '')}</span></p>
-        </>
-      ) : (
-        <p className="text-sm text-muted">Аккаунт будет подключаться напрямую, без SOCKS5/HTTP прокси.</p>
-      )}
     </Modal>
   )
 }
