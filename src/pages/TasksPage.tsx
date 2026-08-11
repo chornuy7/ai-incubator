@@ -229,17 +229,29 @@ export function TasksPage() {
     }
     setBusy('bulk')
     const results = await Promise.allSettled(targets.map((t) => fn(t)))
-    const ok = results.filter((r) => r.status === 'fulfilled').length
-    const fail = results.length - ok
+    // Собираем ПРИЧИНЫ по каждой упавшей задаче — иначе «ошибок 2» ни о чём не говорит.
+    const failures = results.flatMap((r, i) => r.status === 'rejected'
+      ? [{ t: targets[i], msg: r.reason instanceof Error ? r.reason.message : String(r.reason) }]
+      : [])
+    const ok = results.length - failures.length
     // Снимаем «в процессе» только с тех, где сам запрос упал; остальные снимутся в load()
     // по факту остановки воркера.
-    if (pendingAction && fail) {
-      setPending((p) => { const n = { ...p }; targets.forEach((t, i) => { if (results[i].status === 'rejected') delete n[t.id] }); return n })
+    if (pendingAction && failures.length) {
+      setPending((p) => { const n = { ...p }; failures.forEach((f) => delete n[f.t.id]); return n })
     }
     setBusy(null)
     setSelected(new Set())
     await load()
-    pushToast({ type: fail ? 'error' : 'success', title: `${label}: ${ok} задач${fail ? ` · ошибок ${fail}` : ''}` })
+    // Успех и ошибки — РАЗНЫМИ тостами, ошибки с причиной по каждой задаче.
+    if (ok) pushToast({ type: 'success', title: `${label}: ${ok} задач${failures.length ? '' : ''}` })
+    if (failures.length) {
+      const lines = failures.slice(0, 6).map((f) => `${moduleTitle(f.t.moduleKey)} ${f.t.id} — ${f.msg}`).join('\n')
+      pushToast({
+        type: 'error',
+        title: `Не удалось: ${failures.length} задач${ok ? ` (успешно ${ok})` : ''}`,
+        desc: lines + (failures.length > 6 ? `\n…и ещё ${failures.length - 6}` : ''),
+      })
+    }
   }
 
   const modules = useMemo(() => [...new Set(tasks.map((t) => t.moduleKey))], [tasks])
