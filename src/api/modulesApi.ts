@@ -117,6 +117,11 @@ export interface ModuleTask {
   tokenCoins?: number
   createdAt: number
   updatedAt: number
+  /** MR-134: счётчик ошибок в логах задачи + текст последней — для уведомлений «идёт с ошибками». */
+  errors?: number
+  lastError?: string
+  /** MR-134: пауза именно из-за нулевого баланса (её чинит пополнение), а не рукой. */
+  pausedByCoins?: boolean
   progress: ModuleTaskProgress
   settings: ModuleTaskSettings
   logs: LogEntry[]

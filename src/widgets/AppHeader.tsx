@@ -81,10 +81,14 @@ export function AppHeader() {
   // «Завершена» показываем только НЕДАВНО законченные (updatedAt за 12ч), иначе старые
   // done копились бы вечно. Задача может отключить уведомления галочкой в блоке запуска.
   const TASK_DONE_WINDOW = 12 * 60 * 60 * 1000
+  const isRecentTask = (t: ModuleTask) => !!t.updatedAt && (Date.now() - t.updatedAt) < TASK_DONE_WINDOW
+  // MR-134: подтягиваем ВСЕ информативные состояния задачи из данных списка /tasks:
+  // ошибка/в очереди/пауза/идёт-с-ошибками — всегда; завершена/остановлена — недавние (12ч).
   const taskAlertsAll = tasks.filter((t) =>
     t.settings?.notifyOnStatus !== false && (
-      t.status === 'error' || t.status === 'paused' ||
-      (t.status === 'done' && !!t.updatedAt && (Date.now() - t.updatedAt) < TASK_DONE_WINDOW)
+      t.status === 'error' || t.status === 'paused' || t.status === 'queued' ||
+      (t.status === 'running' && (t.errors ?? 0) > 0) ||
+      ((t.status === 'done' || t.status === 'stopped') && isRecentTask(t))
     ),
   )
   const taskAlerts = taskAlertsAll.filter((t) => !dismissed.has(`task:${t.id}`))
@@ -95,8 +99,17 @@ export function AppHeader() {
   //  🟢 зелёный — хороший результат (задача выполнена).
   const notifItems: { key: string; tone: 'red' | 'yellow' | 'green'; title: string; sub: string; go: string }[] = []
   for (const t of taskAlerts) {
-    const tone = t.status === 'error' ? 'red' : t.status === 'done' ? 'green' : 'yellow'
-    const sub = t.status === 'error' ? 'задача с ошибкой' : t.status === 'done' ? 'задача выполнена' : 'задача на паузе — ожидание'
+    const acts = t.progress?.actionsDone ?? t.progress?.done ?? 0
+    let tone: 'red' | 'yellow' | 'green' = 'yellow'
+    let sub = ''
+    if (t.status === 'error') { tone = 'red'; sub = t.lastError ? `ошибка: ${t.lastError.slice(0, 40)}` : 'задача с ошибкой' }
+    else if (t.pausedByCoins) { tone = 'red'; sub = 'остановлена: закончились монеты' }
+    else if (t.status === 'running' && (t.errors ?? 0) > 0) { tone = 'red'; sub = `идёт с ошибками (${t.errors})` }
+    else if (t.status === 'paused') { tone = 'yellow'; sub = 'на паузе — ожидание' }
+    else if (t.status === 'queued') { tone = 'yellow'; sub = 'в очереди — ждёт слот' }
+    else if (t.status === 'stopped') { tone = 'yellow'; sub = 'остановлена' }
+    else if (t.status === 'done' && acts === 0) { tone = 'yellow'; sub = 'завершилась без действий' }
+    else { tone = 'green'; sub = acts ? `выполнена · ${acts} действий` : 'выполнена' }
     notifItems.push({ key: `task:${t.id}`, tone, title: moduleTitle(t.moduleKey), sub, go: `/panel/tasks/${t.id}?m=${t.moduleKey}` })
   }
   for (const a of shown) {
