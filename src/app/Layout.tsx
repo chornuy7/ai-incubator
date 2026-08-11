@@ -35,6 +35,10 @@ export function Layout() {
   const isNoSub = useApp((s) => s.userState === 'no-sub')
   const loadAccounts = useApp((s) => s.loadAccounts)
   const loadAccountBusy = useApp((s) => s.loadAccountBusy)
+  // MR-52: ширина сайдбара как CSS-переменная — чтобы плавающие кнопки (Help/Поддержка)
+  // прижимались к правому краю КОНТЕНТА (max-w-1400 внутри колонки после сайдбара), а не
+  // к краю окна: на любом разрешении они у контента и не налезают на него.
+  const sidebarCollapsed = useApp((s) => s.sidebarCollapsed)
   const sessionUser = useSession((s) => s.user)
   const location = useLocation()
   const setHelpTopic = useUi((s) => s.setHelpTopic)
@@ -56,7 +60,7 @@ export function Layout() {
   }, [loadAccounts, loadAccountBusy])
 
   return (
-    <div className="flex min-h-screen">
+    <div className="flex min-h-screen" style={{ '--sidebar-w': sidebarCollapsed ? '76px' : '256px' } as React.CSSProperties}>
       {/* Desktop sidebar */}
       <div className="hidden lg:block">
         <AppSidebar />
@@ -98,12 +102,12 @@ export function Layout() {
         // поддержки (раньше висела вверху справа и налезала на контент шапки).
         // bottom считаем от высоты нижней панели запуска (переменная от FloatingBar):
         // в модулях кнопка поднимается над панелью и больше на неё не налезает.
-        style={{ bottom: 'calc(var(--launch-bar-h, 0px) + 5rem)' }}
-        className="fixed right-5 z-[97] grid h-11 w-11 place-items-center rounded-full border border-line bg-elevated/95 text-spark-300 shadow-pop backdrop-blur transition-transform hover:scale-[1.04]"
+        style={{ bottom: 'calc(var(--launch-bar-h, 0px) + 3.75rem)', right: 'clamp(1rem, calc((100vw - var(--sidebar-w, 0px) - 1400px) / 2 - 1rem), 4rem)' }}
+        className="fixed z-[97] grid h-10 w-10 place-items-center rounded-full border border-line bg-elevated/95 text-spark-300 shadow-pop backdrop-blur transition-transform hover:scale-[1.04]"
         aria-label="Help Center"
         title="Help Center"
       >
-        <HelpCircle size={18} />
+        <HelpCircle size={16} />
       </button>
       {/* §8 (MR-45): быстрая поддержка — правый нижний угол, отдельно от Help Center. */}
       <SupportWidget />

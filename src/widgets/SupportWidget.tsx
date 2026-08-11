@@ -19,11 +19,11 @@ export function SupportWidget() {
     // bottom считаем от высоты нижней панели запуска (её публикует FloatingBar):
     // на страницах модулей виджет поднимается над панелью, на остальных — стоит внизу.
     <div
-      style={{ bottom: 'calc(var(--launch-bar-h, 0px) + 1.25rem)' }}
+      style={{ bottom: 'calc(var(--launch-bar-h, 0px) + 1.25rem)', right: 'clamp(1rem, calc((100vw - var(--sidebar-w, 0px) - 1400px) / 2 - 1rem), 4rem)' }}
       // z выше кнопки Help Center (97): раскрытая карточка поддержки растёт вверх и
       // попадала ровно на неё — «?» торчал поверх содержимого. Теперь Help уходит под
       // карточку, а закроешь её — снова доступен. Ниже модалок (100) и тостов (200).
-      className="fixed right-5 z-[98] flex flex-col items-end gap-2 print:hidden"
+      className="fixed z-[98] flex flex-col items-end gap-2 print:hidden"
     >
       {open && (
         <div className="w-64 origin-bottom-right rounded-2xl border border-line bg-elevated/95 p-3 shadow-lg shadow-black/40 backdrop-blur">
@@ -42,11 +42,11 @@ export function SupportWidget() {
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
-        className="grid h-12 w-12 place-items-center rounded-full bg-spark-gradient text-[#04150c] shadow-pop transition-transform hover:scale-[1.05]"
+        className="grid h-10 w-10 place-items-center rounded-full bg-spark-gradient text-[#04150c] shadow-pop transition-transform hover:scale-[1.05]"
         aria-label="Поддержка"
         title="Поддержка"
       >
-        {open ? <X size={20} /> : <LifeBuoy size={20} />}
+        {open ? <X size={18} /> : <LifeBuoy size={18} />}
       </button>
     </div>
   )
