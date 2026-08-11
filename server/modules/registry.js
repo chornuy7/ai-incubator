@@ -135,19 +135,28 @@ export async function pauseModuleTask(moduleKey, taskId) {
   return pauseWorker(taskId, store)
 }
 
-/** Продолжить приостановленную задачу: перезахват локов + запуск воркера с сохранённым прогрессом. */
+/**
+ * Продолжить задачу С ТОГО ЖЕ МЕСТА: перезахват локов + запуск воркера с сохранённым
+ * прогрессом. Работает и для `paused`, и для `stopped` — прогресс (actionsDone) стоп не
+ * обнуляет, а аккаунты стоп освободил, поэтому локи берём заново. Так «Возобновить»
+ * остановленной задачи продолжает ту же, а не плодит новую с нуля (это делает restart).
+ */
 export async function resumeModuleTask(moduleKey, taskId) {
   const store = getModuleStore(moduleKey)
   if (!store) return null
   const task = await store.loadTask(taskId)
   if (!task) return null
-  if (task.status !== 'paused') return task
+  if (task.status !== 'paused' && task.status !== 'stopped') return task
+  const wasStopped = task.status === 'stopped'
   const lockErr = tryAcquireLocks(task.settings?.accountIds || [], moduleKey, task.id, { goalId: task.settings?.goalId })
   if (lockErr) throw new Error(lockErr)
   task.pauseRequested = false
   task.stopRequested = false
   task.status = 'running'
-  await store.saveTask(task, { control: true }) // разрешаем сбросить флаги паузы
+  await store.appendLog(task, 'info', wasStopped
+    ? 'Возобновлена с места остановки — прогресс сохранён, аккаунты захвачены заново'
+    : 'Возобновлена с паузы')
+  await store.saveTask(task, { control: true }) // разрешаем сбросить флаги паузы/стопа
   startWorker(task.id, store, getWorker(moduleKey))
   return task
 }

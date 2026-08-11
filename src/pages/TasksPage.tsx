@@ -263,12 +263,15 @@ export function TasksPage() {
   const stopTargets = useMemo(() => selectedTasks.filter((t) => t.status === 'running' || t.status === 'queued' || t.status === 'paused'), [selectedTasks])
 
   const bulkStart = async () => {
-    // Боевые модули при перезапуске = реальные действия в Telegram — подтверждаем разово.
-    if (startTargets.some((t) => t.status !== 'paused' && isCombatModule(t.moduleKey)) &&
+    // paused/stopped — ПРОДОЛЖАЕМ ту же задачу с места (resume, прогресс сохранён);
+    // done/error — restart (новая задача с нуля). Подтверждение боевого модуля нужно
+    // только для настоящего перезапуска-с-нуля, не для продолжения.
+    const isResume = (t: ModuleTask) => t.status === 'paused' || t.status === 'stopped'
+    if (startTargets.some((t) => !isResume(t) && isCombatModule(t.moduleKey)) &&
         !(await confirmDialog({ title: 'Реальные действия в Telegram', message: 'Перезапуск боевых модулей выполнит реальные действия в Telegram (комментарии / ответы / реакции). Продолжить?', confirmLabel: 'Запустить', tone: 'danger' }))) return
     // Массовый запуск: недоступные аккаунты исключаем сразу. Спрашивать по каждой
     // задаче отдельно — двадцать одинаковых вопросов подряд, никто так не работает.
-    void runBulk('Запуск/возобновление', startTargets, (t) => (t.status === 'paused' ? resumeModuleTask(t.moduleKey, t.id) : restartModuleTask(t.moduleKey, t.id, true)))
+    void runBulk('Запуск/возобновление', startTargets, (t) => (isResume(t) ? resumeModuleTask(t.moduleKey, t.id) : restartModuleTask(t.moduleKey, t.id, true)))
   }
   const bulkPause = () => void runBulk('Пауза', pauseTargets, (t) => pauseModuleTask(t.moduleKey, t.id), 'pause')
   /**
@@ -530,12 +533,14 @@ function CardControls({ t, busy, busyAction, pendingAction, onStop, onRestart, o
   const canStart = ['paused', 'stopped', 'done', 'error'].includes(t.status)
   const canPause = t.status === 'running'
   const canStop = t.status === 'running' || t.status === 'queued' || t.status === 'paused'
-  const startTitle = t.status === 'paused' ? 'Возобновить' : 'Запустить'
+  // paused/stopped — продолжаем с места (resume); done/error — перезапуск с нуля (restart).
+  const canResume = t.status === 'paused' || t.status === 'stopped'
+  const startTitle = canResume ? 'Возобновить с места' : 'Запустить'
   const cls = (active: boolean, tone: string) => cn('btn-icon h-8 w-8', active && !disabled ? tone : 'text-white/20')
   const spin = (a: 'start' | 'pause' | 'stop') => (pendingAction ? pendingAction === a : busy === t.id && busyAction === a)
   return (
     <div className="flex shrink-0 items-center gap-1">
-      <button onClick={() => (t.status === 'paused' ? onResume(t) : onRestart(t))} disabled={disabled || !canStart} className={cls(canStart, 'text-spark-400 hover:bg-spark-500/12')} aria-label={startTitle} title={spin('start') ? 'Запускается…' : startTitle}>{spin('start') ? <Loader2 size={13} className="animate-spin" /> : <Play size={13} />}</button>
+      <button onClick={() => (canResume ? onResume(t) : onRestart(t))} disabled={disabled || !canStart} className={cls(canStart, 'text-spark-400 hover:bg-spark-500/12')} aria-label={startTitle} title={spin('start') ? 'Запускается…' : startTitle}>{spin('start') ? <Loader2 size={13} className="animate-spin" /> : <Play size={13} />}</button>
       <button onClick={() => onPause(t)} disabled={disabled || !canPause} className={cls(canPause, 'text-amber-300 hover:bg-amber-500/12')} aria-label="Пауза" title={spin('pause') ? 'В процессе паузы…' : 'Пауза'}>{spin('pause') ? <Loader2 size={13} className="animate-spin" /> : <Pause size={13} />}</button>
       <button onClick={() => onStop(t)} disabled={disabled || !canStop} className={cls(canStop, 'text-rose-300 hover:bg-rose-500/12')} aria-label="Стоп" title={spin('stop') ? 'В процессе остановки…' : 'Стоп'}>{spin('stop') ? <Loader2 size={13} className="animate-spin" /> : <Square size={13} />}</button>
     </div>
@@ -792,7 +797,7 @@ export function TaskDetailPage() {
           {/* Управление — только тем, у кого есть доступ к модулю задачи. */}
           <div className="flex shrink-0 gap-1">
             {canControl && (isActive(t) || !!pendingAct) && <button onClick={doPause} disabled={ctlBusy || !isActive(t)} className="btn-icon h-9 w-9" title={pendingAct === 'pause' || busyAction === 'pause' ? 'В процессе паузы…' : 'Пауза'}>{pendingAct === 'pause' || busyAction === 'pause' ? <Loader2 size={15} className="animate-spin" /> : <Pause size={15} />}</button>}
-            {canControl && t.status === 'paused' && !pendingAct && <button onClick={doResume} disabled={ctlBusy} className="btn-icon h-9 w-9 text-spark-400" title={busyAction === 'start' ? 'Запускается…' : 'Продолжить'}>{busyAction === 'start' ? <Loader2 size={15} className="animate-spin" /> : <Play size={15} />}</button>}
+            {canControl && (t.status === 'paused' || t.status === 'stopped') && !pendingAct && <button onClick={doResume} disabled={ctlBusy} className="btn-icon h-9 w-9 text-spark-400" title={busyAction === 'start' ? 'Запускается…' : t.status === 'stopped' ? 'Возобновить с места остановки' : 'Продолжить'}>{busyAction === 'start' ? <Loader2 size={15} className="animate-spin" /> : <Play size={15} />}</button>}
             {canControl && (isActive(t) || !!pendingAct) && <button onClick={doStop} disabled={ctlBusy} className="btn-icon h-9 w-9 text-rose-300" title={pendingAct === 'stop' || busyAction === 'stop' ? 'В процессе остановки…' : 'Стоп'}>{pendingAct === 'stop' || busyAction === 'stop' ? <Loader2 size={15} className="animate-spin" /> : <Square size={15} />}</button>}
             {/* §9.8: правка только на паузе. Кнопку показываем всегда, но у работающей
                 задачи она заблокирована и объясняет причину — так понятнее, чем её отсутствие.
