@@ -211,8 +211,10 @@ export async function checkAccountsAssignable(accountIds, moduleKey) {
   const gated = TRUST_GATED_MODULES.has(moduleKey)
   for (const id of accountIds) {
     const status = normalizeStatus((all[id] || {}).status)
+    // MR-134: имя аккаунта для понятного сообщения (раньше показывали хвост id вида «_hot_1»).
+    const name = (all[id] || {}).name || (all[id] || {}).username || String(id).slice(-6)
     if (!canModuleUseAccount(moduleKey, status)) {
-      blocked.push({ id, status, reason: 'статус' })
+      blocked.push({ id, name, status, reason: 'статус' })
       continue
     }
     if (gated) {
@@ -226,7 +228,7 @@ export async function checkAccountsAssignable(accountIds, moduleKey) {
       // Fail-closed: нет оценки ИЛИ ниже порога — не пускаем (тест 12.6). Свежий
       // аккаунт без истории максимально уязвим, гейт должен его останавливать.
       if (!t || Number(t.score) < TRUST_MIN) {
-        blocked.push({ id, status, reason: t ? `trust ${t.score}` : 'нет trust' })
+        blocked.push({ id, name, status, reason: t ? `trust ${t.score}` : 'нет trust' })
         continue
       }
     }
@@ -236,10 +238,13 @@ export async function checkAccountsAssignable(accountIds, moduleKey) {
   const byStatus = blocked.filter((b) => b.reason === 'статус')
   const byLowTrust = blocked.filter((b) => b.reason.startsWith('trust'))
   const byNoTrust = blocked.filter((b) => b.reason === 'нет trust')
+  // MR-134: человеческий статус вместо кода (reauth → «нужна авторизация» и т.п.).
+  const STATUS_RU = { reauth: 'нужна авторизация', invalid: 'невалиден', spamblock: 'спамблок', quarantine: 'карантин', frozen: 'заморожен', floodwait: 'флудвейт', pause: 'на паузе', working: 'занят' }
+  const nm = (b) => b.name || String(b.id).slice(-6)
   const parts = []
-  if (byStatus.length) parts.push(`недоступны по статусу: ${byStatus.map((b) => `${String(b.id).slice(-6)} (${b.status})`).join(', ')}`)
-  if (byLowTrust.length) parts.push(`ниже порога trust<${TRUST_MIN}: ${byLowTrust.map((b) => `${String(b.id).slice(-6)} (${b.reason})`).join(', ')}`)
-  if (byNoTrust.length) parts.push(`ещё не посчитан trust — в боевой модуль рано: ${byNoTrust.map((b) => String(b.id).slice(-6)).join(', ')}`)
+  if (byStatus.length) parts.push(`недоступны по статусу: ${byStatus.map((b) => `${nm(b)} (${STATUS_RU[b.status] || b.status})`).join(', ')}`)
+  if (byLowTrust.length) parts.push(`ниже порога trust<${TRUST_MIN}: ${byLowTrust.map((b) => `${nm(b)} (${b.reason})`).join(', ')}`)
+  if (byNoTrust.length) parts.push(`ещё не посчитан trust — в боевой модуль рано: ${byNoTrust.map((b) => nm(b)).join(', ')}`)
   return {
     error: `Часть профилей запустить нельзя — ${parts.join('; ')}.`,
     blocked,
