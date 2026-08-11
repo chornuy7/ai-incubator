@@ -202,6 +202,8 @@ export function InboxPage() {
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-2">
                       <span className="truncate text-sm font-medium text-white">{d.name}</span>
+                      {/* MR-135: бот vs человек — большая зелёная плашка «БОТ» (была мелким шрифтом). */}
+                      {d.isBot && <span className="shrink-0 rounded bg-emerald-500 px-1.5 py-0.5 text-[10px] font-bold uppercase leading-none text-white" title="Это Telegram-бот, а не человек">БОТ</span>}
                       {d.unread > 0 && <span className="ml-auto shrink-0 rounded-full bg-spark-500 px-1.5 text-xs font-bold text-black">{d.unread}</span>}
                     </div>
                     <div className="truncate text-xs text-white/40">{d.last || '—'}</div>
@@ -223,7 +225,11 @@ export function InboxPage() {
             ) : (
               <>
                 <div className="border-b border-white/10 px-4 py-2.5">
-                  <div className="font-semibold text-white">{active.name}</div>
+                  <div className="flex items-center gap-2">
+                    <div className="font-semibold text-white">{active.name}</div>
+                    {/* MR-135: крупная зелёная плашка «БОТ» рядом с названием диалога. */}
+                    {active.isBot && <span className="rounded-md bg-emerald-500 px-2 py-0.5 text-xs font-bold uppercase text-white" title="Это Telegram-бот, а не человек">БОТ</span>}
+                  </div>
                   <div className="text-xs text-white/40">{active.username ? `@${active.username} · ` : ''}через {active.accountName}</div>
                 </div>
                 <div className="flex-1 space-y-1.5 overflow-y-auto p-3">
