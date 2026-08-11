@@ -86,6 +86,8 @@ export function createTaskStore(moduleKey, idPrefix) {
           // задача, поставленная на паузу рукой, показывалась как «ждёт пополнения».
           pausedByCoins: t.status === 'paused'
             && /Закончились монеты/i.test(String((t.logs || [])[0]?.message || '')),
+          // MR-134: сколько FloodWait поймали аккаунты этой задачи — сигнал «упираемся в лимиты».
+          floodWaits: Object.values(t.accountStats || {}).reduce((n, s) => n + (Number(s?.floodWaits) || 0), 0),
           goalId: t.goalId ?? t.settings?.goalId ?? null,
           campaignId: t.campaignId ?? null,
           createdAt: t.createdAt,

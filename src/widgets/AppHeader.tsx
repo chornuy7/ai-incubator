@@ -87,7 +87,7 @@ export function AppHeader() {
   const taskAlertsAll = tasks.filter((t) =>
     t.settings?.notifyOnStatus !== false && (
       t.status === 'error' || t.status === 'paused' || t.status === 'queued' ||
-      (t.status === 'running' && (t.errors ?? 0) > 0) ||
+      (t.status === 'running' && ((t.errors ?? 0) > 0 || (t.floodWaits ?? 0) > 0)) ||
       ((t.status === 'done' || t.status === 'stopped') && isRecentTask(t))
     ),
   )
@@ -105,6 +105,7 @@ export function AppHeader() {
     if (t.status === 'error') { tone = 'red'; sub = t.lastError ? `ошибка: ${t.lastError.slice(0, 40)}` : 'задача с ошибкой' }
     else if (t.pausedByCoins) { tone = 'red'; sub = 'остановлена: закончились монеты' }
     else if (t.status === 'running' && (t.errors ?? 0) > 0) { tone = 'red'; sub = `идёт с ошибками (${t.errors})` }
+    else if ((t.floodWaits ?? 0) > 0) { tone = 'yellow'; sub = `упираемся в лимиты Telegram (FloodWait ×${t.floodWaits})` }
     else if (t.status === 'paused') { tone = 'yellow'; sub = 'на паузе — ожидание' }
     else if (t.status === 'queued') { tone = 'yellow'; sub = 'в очереди — ждёт слот' }
     else if (t.status === 'stopped') { tone = 'yellow'; sub = 'остановлена' }

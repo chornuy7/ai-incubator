@@ -122,6 +122,8 @@ export interface ModuleTask {
   lastError?: string
   /** MR-134: пауза именно из-за нулевого баланса (её чинит пополнение), а не рукой. */
   pausedByCoins?: boolean
+  /** MR-134: сумма FloodWait по аккаунтам задачи — «упираемся в лимиты Telegram». */
+  floodWaits?: number
   progress: ModuleTaskProgress
   settings: ModuleTaskSettings
   logs: LogEntry[]
