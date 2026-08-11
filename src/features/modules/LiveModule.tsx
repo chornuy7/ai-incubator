@@ -66,6 +66,7 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
   const [toggles, setToggles] = useState<Record<number, number>>({})
   const [aiProtect, setAiProtect] = useState(true)
   const [protLevel, setProtLevel] = useState(1)
+  const [notifyStatus, setNotifyStatus] = useState(true) // MR-134: уведомлять о статусе этой задачи
   const [probability, setProbability] = useState(cfg.probabilitySlider?.value ?? cfg.reactionSettings?.probability.value ?? 30)
   const [maxActions, setMaxActions] = useState(cfg.workModeFields?.maxValue ?? cfg.reactionSettings?.max.value ?? 100)
   const [minActions, setMinActions] = useState(0)
@@ -189,6 +190,7 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
     durationMinutes: g(1) === 1 ? durationMinutes : undefined,
     aiProtection: aiProtect,
     protectionLevel: protLevel,
+    notifyOnStatus: notifyStatus,
     promptIndex: activePrompt,
     promptText: promptBodies[activePrompt],
     promptOverrides: promptBodies,
@@ -207,7 +209,7 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
       lookMode: cfg.lookModeOptions?.[lookModeIdx]?.value ?? 'stories',
       lookPostsCount,
     } : {}),
-  }), [selected, targets, postUrls, toggles, probability, maxActions, minActions, maxPerAcc, minPerAcc, minWords, durationMinutes, aiProtect, protLevel, activePrompt, promptBodies, delayPreset, palette, delays, keywords, isGgr, accounts, cfg, lookModeIdx, lookPostsCount, goalId, campaignId, campaigns, warmLevel, postWindow, stopWordsText, analyzeImages, moduleKey, typeWeights, weightSum])
+  }), [selected, targets, postUrls, toggles, probability, maxActions, minActions, maxPerAcc, minPerAcc, minWords, durationMinutes, aiProtect, protLevel, notifyStatus, activePrompt, promptBodies, delayPreset, palette, delays, keywords, isGgr, accounts, cfg, lookModeIdx, lookPostsCount, goalId, campaignId, campaigns, warmLevel, postWindow, stopWordsText, analyzeImages, moduleKey, typeWeights, weightSum])
 
   const hasPostTargets = postUrls.length > 0
   const busySelectedCount = useMemo(
@@ -431,6 +433,15 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
         <div id="sec-settings" className="scroll-mt-24">
         <SectionCard icon={<Settings2 size={18} />} title={cfg.settingsTitle ?? 'Защита'} badge={targets.length ? `${targets.length} целей` : undefined}>
           {cfg.aiProtection && <ProtectionBlock enabled={aiProtect} onEnabled={setAiProtect} level={protLevel} onLevel={setProtLevel} />}
+
+          {/* MR-134: галочка вкл/выкл уведомлений о статусе ЭТОЙ задачи (ошибка/пауза) в колокольчике. */}
+          <label className="mt-3 flex cursor-pointer items-start gap-2 rounded-xl border border-line/60 bg-elevated/40 px-3 py-2.5">
+            <input type="checkbox" checked={notifyStatus} onChange={(e) => setNotifyStatus(e.target.checked)} className="mt-0.5 h-4 w-4 accent-spark-500" />
+            <span>
+              <span className="text-xs font-semibold text-fg">Уведомлять о статусе задачи</span>
+              <span className="mt-0.5 block text-[11px] text-white/45">Ошибка или пауза этой задачи попадут в колокольчик. Снимите, если не нужны уведомления по ней.</span>
+            </span>
+          </label>
 
           {/* MR-112 (WARM-001): «Уровень прогрева» — в настройках, а не в панели запуска. */}
           {cfg.warmingLayout && (

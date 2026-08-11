@@ -77,7 +77,8 @@ export function AppHeader() {
     const iv = setInterval(pull, 30000)
     return () => { alive = false; clearInterval(iv) }
   }, [])
-  const taskAlertsAll = tasks.filter((t) => t.status === 'error' || t.status === 'paused')
+  // MR-134: задача может отключить уведомления о своём статусе (галочка в блоке запуска).
+  const taskAlertsAll = tasks.filter((t) => (t.status === 'error' || t.status === 'paused') && t.settings?.notifyOnStatus !== false)
   const taskAlerts = taskAlertsAll.filter((t) => !dismissed.has(`task:${t.id}`))
   const alertCount = shown.length + taskAlerts.length
   const theme = useApp((s) => s.theme)

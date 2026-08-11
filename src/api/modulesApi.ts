@@ -21,6 +21,8 @@ export interface ModuleTaskSettings {
   durationMinutes?: number
   aiProtection?: boolean
   protectionLevel?: number
+  /** MR-134: уведомлять о статусе ЭТОЙ задачи (ошибка/пауза) в колокольчике. По умолчанию — да. */
+  notifyOnStatus?: boolean
   promptIndex?: number
   promptText?: string
   promptOverrides?: string[]
