@@ -170,10 +170,14 @@ export async function resumeModuleTask(moduleKey, taskId) {
   task.pauseRequested = false
   task.stopRequested = false
   task.status = 'running'
+  // ВАЖЕН ПОРЯДОК: сначала control-сейв сбрасывает stop/pause на диске, и только потом
+  // appendLog. appendLog внутри делает обычный (не control) saveTask, а тот перечитывает
+  // stopRequested с диска — если лог идёт ДО control-сейва, он вернёт старый stopRequested=true
+  // и возобновлённая задача стартует «уже остановленной» (воркер выходит мгновенно, 0 действий).
+  await store.saveTask(task, { control: true })
   await store.appendLog(task, 'info', wasStopped
     ? 'Возобновлена с места остановки — прогресс сохранён, аккаунты захвачены заново'
     : 'Возобновлена с паузы')
-  await store.saveTask(task, { control: true }) // разрешаем сбросить флаги паузы/стопа
   startWorker(task.id, store, getWorker(moduleKey))
   return task
 }
