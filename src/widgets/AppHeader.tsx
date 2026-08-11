@@ -5,7 +5,7 @@ import {
 } from 'lucide-react'
 import { useApp, activeAccounts, isBrokenAccount } from '@/mocks/store'
 import { fetchAllTasks, type ModuleTask } from '@/api/modulesApi'
-import { fetchBalance, fetchPricing, buyTokens, type Balance, type Pricing } from '@/api/balanceApi'
+import { fetchBalance, fetchPricing, buyTokens, fetchWalletHistory, type Balance, type Pricing, type WalletEntry } from '@/api/balanceApi'
 import { useSession } from '@/features/auth/session'
 import { usePlan } from '@/features/billing/plan'
 import { CRITICAL } from '@/features/billing/LowBalanceBar'
@@ -57,22 +57,27 @@ export function AppHeader() {
     // восстановившиеся аккаунты убираем из «отклонённых» — новое падение снова уведомит.
     setDismissed((prev) => {
       const bset = new Set(broken.map((a) => a.id))
-      // MR-134: task:*-дисмиссы не трогаем — они живут отдельно от аккаунтов.
-      const next = new Set([...prev].filter((id) => id.startsWith('task:') || bset.has(id)))
+      // MR-134: task:* и wallet:*-дисмиссы не трогаем — они живут отдельно от аккаунтов.
+      const next = new Set([...prev].filter((id) => id.startsWith('task:') || id.startsWith('wallet:') || bset.has(id)))
       return next.size === prev.size ? prev : next
     })
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [brokenKey])
   const shown = broken.filter((a) => !dismissed.has(a.id))
   const dismiss = (id: string) => setDismissed((prev) => new Set(prev).add(id))
-  const dismissAll = () => setDismissed((prev) => { const n = new Set(prev); broken.forEach((a) => n.add(a.id)); taskAlertsAll.forEach((t) => n.add(`task:${t.id}`)); return n })
+  // «Скрыть все» — прячем ровно то, что сейчас показано (задачи, аккаунты, пополнения).
+  const dismissAll = () => setDismissed((prev) => { const n = new Set(prev); notifItems.forEach((i) => n.add(i.key)); return n })
 
   // MR-134: уведомления по СТАТУСУ ЗАДАЧИ — ошибка/пауза требуют внимания оператора.
   // Тянем агрегат задач (лёгкий поллинг), выводим рядом с «отвалившимися аккаунтами».
   const [tasks, setTasks] = useState<ModuleTask[]>([])
+  const [wallet, setWallet] = useState<WalletEntry[]>([]) // MR-134: пополнения баланса (зелёные)
   useEffect(() => {
     let alive = true
-    const pull = () => { void fetchAllTasks().then((t) => { if (alive) setTasks(t) }).catch(() => {}) }
+    const pull = () => {
+      void fetchAllTasks().then((t) => { if (alive) setTasks(t) }).catch(() => {})
+      void fetchWalletHistory(20).then((w) => { if (alive) setWallet(w) }).catch(() => {})
+    }
     pull()
     const iv = setInterval(pull, 30000)
     return () => { alive = false; clearInterval(iv) }
@@ -119,6 +124,13 @@ export function AppHeader() {
     const tone: 'red' | 'yellow' = (deadProxy || banned) ? 'red' : 'yellow'
     const sub = deadProxy ? 'прокси слетел (мёртвый)' : banned ? `аккаунт в бане/блоке (${a.status})` : a.noProxy ? 'без прокси — риск бана' : 'временное ограничение — ожидание'
     notifItems.push({ key: a.id, tone, title: a.name, sub, go: '/panel' })
+  }
+  // MR-134: 🟢 успешное пополнение баланса — только реальные пополнения/покупки (по reason),
+  // недавние (12ч), а не любой служебный кредит/возврат, чтобы не засорять колокольчик.
+  for (const w of wallet) {
+    if (w.amount <= 0 || (Date.now() - w.ts) >= TASK_DONE_WINDOW || dismissed.has(`wallet:${w.ts}`)) continue
+    if (!/пополнени|куплено|покупк/i.test(w.reason || '')) continue
+    notifItems.push({ key: `wallet:${w.ts}`, tone: 'green', title: 'Пополнение баланса', sub: `${w.reason} · +${Math.round(w.amount * 1000) / 1000} ⚡`, go: '/panel/user/subscription' })
   }
   const TONE_GROUPS = [
     { tone: 'red' as const, label: 'Ошибки', box: 'bg-rose-500/12 text-rose-400', sub: 'text-rose-300/80', icon: <AlertTriangle size={15} /> },
