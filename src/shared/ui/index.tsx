@@ -46,20 +46,26 @@ export function PageHeader({
 
 /* ── Segmented ── */
 export function Segmented({
-  options, value, onChange, size = 'md', className,
+  options, value, onChange, size = 'md', className, disabled = false,
 }: {
   options: string[]; value: number; onChange: (i: number) => void; size?: 'sm' | 'md'; className?: string
+  /** Заблокировать переключение (напр. пока грузятся данные выбранного варианта). */
+  disabled?: boolean
 }) {
   return (
     <div className={cn('inline-flex flex-wrap gap-1 rounded-xl border border-line bg-elevated p-1', className)}>
       {options.map((o, i) => (
         <button
           key={o + i}
+          type="button"
+          disabled={disabled}
           onClick={() => onChange(i)}
           className={cn(
             'rounded-lg font-semibold transition-all',
             size === 'sm' ? 'px-2.5 py-1 text-xs' : 'px-3.5 py-1.5 text-sm',
             i === value ? 'bg-spark-gradient text-[#04150c] shadow-sm' : 'text-muted hover:text-fg',
+            disabled && 'cursor-not-allowed',
+            disabled && i !== value && 'opacity-40', // текущий остаётся ярким, остальные гаснут
           )}
         >
           {o}

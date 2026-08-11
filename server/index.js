@@ -778,7 +778,7 @@ app.get('/api/tickets', async (req, res) => {
     const ctx = await requesterContext(req)
     if (ctx.blocked) return res.status(403).json({ ok: false, error: 'Нет доступа' })
     const { listTickets } = await import('./tickets.js')
-    res.json({ ok: true, tickets: await listTickets({ userId: ctx.id, all: ctx.isAdmin || ctx.noSession }) })
+    res.json({ ok: true, tickets: await listTickets({ userId: ctx.id, all: ctx.isSupport }) })
   } catch (err) { ticketErr(res, err) }
 })
 
@@ -803,7 +803,7 @@ app.get('/api/tickets/:id', async (req, res) => {
     const { getTicket } = await import('./tickets.js')
     const t = await getTicket(String(req.params.id))
     if (!t) return res.status(404).json({ ok: false, error: 'Тикет не найден' })
-    if (!ctx.isAdmin && !ctx.noSession && t.userId !== ctx.id) return res.status(403).json({ ok: false, error: 'Нет доступа к тикету' })
+    if (!ctx.isSupport && t.userId !== ctx.id) return res.status(403).json({ ok: false, error: 'Нет доступа к тикету' })
     res.json({ ok: true, ticket: t })
   } catch (err) { ticketErr(res, err) }
 })
@@ -817,17 +817,19 @@ app.post('/api/tickets/:id/reply', async (req, res) => {
     const { getTicket, addMessage } = await import('./tickets.js')
     const t = await getTicket(String(req.params.id))
     if (!t) return res.status(404).json({ ok: false, error: 'Тикет не найден' })
-    const isSupport = ctx.isAdmin || ctx.noSession
+    const isSupport = ctx.isSupport
     if (!isSupport && t.userId !== ctx.id) return res.status(403).json({ ok: false, error: 'Нет доступа к тикету' })
     const ticket = await addMessage(String(req.params.id), { from: isSupport ? 'support' : 'user', authorId: ctx.id, text: (req.body || {}).text })
     res.json({ ok: true, ticket })
   } catch (err) { res.status(400).json({ ok: false, error: err instanceof Error ? err.message : 'Ошибка' }) }
 })
 
-/** Сменить статус тикета — только поддержка (админ). */
+/** Сменить статус тикета — поддержка (роль «Поддержка») или админ. */
 app.post('/api/tickets/:id/status', async (req, res) => {
   try {
-    if (!(await isAdminRequest(req))) return res.status(403).json({ ok: false, error: 'Статусы меняет только поддержка' })
+    const { requesterContext } = await import('./lib/accessGuard.js')
+    const ctx = await requesterContext(req)
+    if (!ctx.isSupport) return res.status(403).json({ ok: false, error: 'Статусы меняет только поддержка' })
     const { setStatus } = await import('./tickets.js')
     res.json({ ok: true, ticket: await setStatus(String(req.params.id), String((req.body || {}).status)) })
   } catch (err) { res.status(400).json({ ok: false, error: err instanceof Error ? err.message : 'Ошибка' }) }

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { LifeBuoy, Plus, Send, MessageSquare, Clock, Loader2, ArrowLeft } from 'lucide-react'
 import { useApp } from '@/mocks/store'
+import { useSession } from '@/features/auth/session'
 import { PageHeader, Card, EmptyState, Select, Modal, Badge } from '@/shared/ui'
 import { HelpButton } from '@/features/neuro-commenting/moduleUi'
 import { fetchTickets, fetchTicket, createTicket, replyTicket, type ApiTicket, type TicketStatus } from '@/api/ticketsApi'
@@ -33,6 +34,10 @@ const preview = (t: ApiTicket) => t.messages.length ? t.messages[t.messages.leng
 export function SupportPage() {
   const pushToast = useApp((s) => s.pushToast)
   const guardNet = useApp((s) => s.guardNet)
+  // Смотрит поддержка (роль «Поддержка» или админ)? Тогда это ВСЕ тикеты пользователей,
+  // а не свои: сервер отдаёт их целиком, а мы подписываем сообщения «Клиент», не «Вы».
+  const sessionUser = useSession((s) => s.user)
+  const isSupportView = !!(sessionUser?.isAdmin || sessionUser?.permissions?.resources?.support === 'allow')
   const [tickets, setTickets] = useState<ApiTicket[]>([])
   const [loading, setLoading] = useState(true)
   const [filter, setFilter] = useState('all')
@@ -130,13 +135,18 @@ export function SupportPage() {
   return (
     <div>
       <PageHeader
-        title="Поддержка"
-        subtitle="Тикеты и связь с командой Murmex"
+        title={isSupportView ? 'Поддержка · обращения' : 'Поддержка'}
+        subtitle={isSupportView ? 'Все тикеты пользователей — отвечаете как поддержка' : 'Тикеты и связь с командой Murmex'}
         icon={<LifeBuoy size={22} />}
         actions={<>
           <HelpButton topic="support" className="h-10 w-10" />
-          <button onClick={() => pushToast({ type: 'info', title: 'Открываю Telegram', desc: '@ai_incubator_support (демо).' })} className="btn-ghost h-10"><Send size={16} /> Написать в Telegram</button>
-          <button onClick={() => setNewOpen(true)} className="btn-primary h-10"><Plus size={16} /> Новый тикет</button>
+          {/* Поддержка отвечает, а не создаёт тикеты — «Новый тикет»/«Telegram» ей не нужны. */}
+          {!isSupportView && (
+            <>
+              <button onClick={() => pushToast({ type: 'info', title: 'Открываю Telegram', desc: '@ai_incubator_support (демо).' })} className="btn-ghost h-10"><Send size={16} /> Написать в Telegram</button>
+              <button onClick={() => setNewOpen(true)} className="btn-primary h-10"><Plus size={16} /> Новый тикет</button>
+            </>
+          )}
         </>}
       />
 
@@ -198,7 +208,7 @@ export function SupportPage() {
                   : 'rounded-xl border border-line bg-elevated p-3.5 text-sm text-fg'}>
                   <div className="mb-1 flex items-center gap-2 text-[11px] text-muted">
                     <span className={msg.from === 'support' ? 'font-semibold text-spark-300' : 'font-semibold text-fg'}>
-                      {msg.from === 'support' ? 'Поддержка' : 'Вы'}
+                      {msg.from === 'support' ? 'Поддержка' : (isSupportView ? 'Клиент' : 'Вы')}
                     </span>
                     <span>· {fmtTs(msg.ts)}</span>
                   </div>

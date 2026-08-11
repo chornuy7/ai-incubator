@@ -154,19 +154,19 @@ test('CRUD ролей на изолированном файле + сид по �
   process.env.ROLES_FILE = path.join(dir, 'roles.json')
   const r = await import('../roles.js?crud=' + Date.now())
 
-  // Первое чтение сидит дефолты: Администратор + Оператор + Модератор + Sales + Viewer.
+  // Первое чтение сидит дефолты: Администратор + Оператор + Модератор + Sales + Viewer + Поддержка.
   const seed = await r.listRoles()
-  assert.equal(seed.length, 5)
+  assert.equal(seed.length, 6)
   assert.ok(seed.some((x) => x.id === r.ADMIN_ROLE_ID && x.builtin))
   assert.deepEqual(
     seed.filter((x) => x.isTemplate).map((x) => x.id).sort(),
-    ['role_moderator', 'role_operator', 'role_sales', 'role_viewer'],
+    ['role_moderator', 'role_operator', 'role_sales', 'role_support', 'role_viewer'],
   )
 
   const created = await r.createRole({ name: 'Контент', permissions: { modules: { 'neuro-commenting': 'allow' } } })
   assert.ok(created.id.startsWith('role_'))
   assert.equal(created.builtin, false)
-  assert.equal((await r.listRoles()).length, 6)
+  assert.equal((await r.listRoles()).length, 7)
 
   const upd = await r.updateRole(created.id, { name: 'Контент+', permissions: { modules: { 'neuro-commenting': 'deny' } } })
   assert.equal(upd.name, 'Контент+')
@@ -180,7 +180,7 @@ test('CRUD ролей на изолированном файле + сид по �
   await assert.rejects(() => r.deleteRole(r.ADMIN_ROLE_ID), /встроенн/i)
   assert.equal(await r.deleteRole(created.id), true)
   assert.equal(await r.deleteRole('нет'), false)
-  assert.equal((await r.listRoles()).length, 5)
+  assert.equal((await r.listRoles()).length, 6)
 
   delete process.env.ROLES_FILE
 })

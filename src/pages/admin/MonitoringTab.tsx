@@ -56,6 +56,61 @@ export const STATUS_LABEL_RU: Record<string, string> = {
   quarantine: 'Карантин', spamblock: 'Спам-блок', reauth: 'Нужен вход', invalid: 'Невалидны',
 }
 
+const statusTone: Record<string, string> = {
+  floodwait: 'text-amber-300', quarantine: 'text-amber-300',
+  spamblock: 'text-red-300', invalid: 'text-red-300', reauth: 'text-iris-300',
+}
+const untilText = (until: number) => {
+  if (!until) return ''
+  const left = until - Date.now()
+  if (left <= 0) return 'срок истёк'
+  const min = Math.round(left / 60000)
+  return min >= 60 ? `ещё ~${Math.round(min / 60)} ч` : `ещё ~${min} мин`
+}
+
+/**
+ * Блоки «По статусам» + «Падающие аккаунты — почему». Вынесены сюда, чтобы жить на
+ * вкладке «Задачи и ошибки» (перенос по просьбе заказчика), а не в мониторинге.
+ */
+export function AccountsHealthBlocks({ health }: { health: AccountsHealth | null }) {
+  if (!health) return null
+  return (
+    <>
+      <Card className="p-4">
+        <div className="mb-2 text-sm font-semibold text-fg">По статусам</div>
+        <div className="flex flex-wrap gap-2">
+          {Object.entries(health.byStatus).sort((a, b) => b[1] - a[1]).map(([st, n]) => (
+            <span key={st} className={cn('rounded-lg border border-line px-2 py-1 text-xs', statusTone[st] || 'text-muted')}>
+              {STATUS_LABEL_RU[st] || st}: <b className="text-fg">{n}</b>
+            </span>
+          ))}
+          {!!health.resting && <span className="rounded-lg border border-line px-2 py-1 text-xs text-muted">отдыхают: <b className="text-fg">{health.resting}</b></span>}
+          {!!health.tired && <span className="rounded-lg border border-line px-2 py-1 text-xs text-amber-300">устали (≥70%): <b className="text-fg">{health.tired}</b></span>}
+        </div>
+      </Card>
+
+      {health.problems.length ? (
+        <Card className="p-4">
+          <div className="mb-2 text-sm font-semibold text-fg">Падающие аккаунты — почему ({health.problems.length})</div>
+          <div className="space-y-1.5">
+            {health.problems.map((a) => (
+              <div key={a.id} className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5 border-b border-line/40 pb-1.5 text-sm last:border-0">
+                <span className="font-medium text-fg">{a.name}</span>
+                {!!a.phone && <span className="text-xs text-muted">{a.phone}</span>}
+                <span className={cn('rounded-md px-1.5 py-0.5 text-[11px] font-bold', statusTone[a.status] || 'text-muted', 'bg-white/8')}>{a.statusLabel}</span>
+                {!!a.reason && <span className="w-full text-xs text-muted sm:w-auto sm:flex-1 sm:truncate">{a.reason}</span>}
+                {!!a.until && <span className="shrink-0 text-[11px] text-faint">{untilText(a.until)}</span>}
+              </div>
+            ))}
+          </div>
+        </Card>
+      ) : (
+        <Card className="p-4 text-sm text-muted">Падающих аккаунтов нет — весь парк в работе или на паузе.</Card>
+      )}
+    </>
+  )
+}
+
 /**
  * §10.9: мониторинг здоровья аккаунтов — работают / на паузе / падают, с причиной
  * по каждому проблемному. Всегда виден (в отличие от «Проблем», которые прячутся,
@@ -73,18 +128,6 @@ export function MonitoringTab({ health, active, daily }: { health: AccountsHealt
   const pausedByCoins = paused.filter((t) => t.pausedByCoins).length
   const lastDay = daily?.rows?.[(daily.rows.length || 0) - 1]
   const todayActions = lastDay?.actions ?? 0
-
-  const statusTone: Record<string, string> = {
-    floodwait: 'text-amber-300', quarantine: 'text-amber-300',
-    spamblock: 'text-red-300', invalid: 'text-red-300', reauth: 'text-iris-300',
-  }
-  const untilText = (until: number) => {
-    if (!until) return ''
-    const left = until - Date.now()
-    if (left <= 0) return 'срок истёк'
-    const min = Math.round(left / 60000)
-    return min >= 60 ? `ещё ~${Math.round(min / 60)} ч` : `ещё ~${min} мин`
-  }
 
   return (
     <div className="space-y-3">
@@ -106,40 +149,8 @@ export function MonitoringTab({ health, active, daily }: { health: AccountsHealt
         <MetricTile label="На паузе" value={fmt(health.idle)} sub="остановлены командой" />
         <MetricTile label="Падают" value={fmt(health.problem)} tone={health.problem ? 'text-red-300' : undefined} sub="flood / бан / невалид" />
       </div>
-
-      {/* Раскладка по статусам + усталость. */}
-      <Card className="p-4">
-        <div className="mb-2 text-sm font-semibold text-fg">По статусам</div>
-        <div className="flex flex-wrap gap-2">
-          {Object.entries(health.byStatus).sort((a, b) => b[1] - a[1]).map(([st, n]) => (
-            <span key={st} className={cn('rounded-lg border border-line px-2 py-1 text-xs', statusTone[st] || 'text-muted')}>
-              {STATUS_LABEL_RU[st] || st}: <b className="text-fg">{n}</b>
-            </span>
-          ))}
-          {!!health.resting && <span className="rounded-lg border border-line px-2 py-1 text-xs text-muted">отдыхают: <b className="text-fg">{health.resting}</b></span>}
-          {!!health.tired && <span className="rounded-lg border border-line px-2 py-1 text-xs text-amber-300">устали (≥70%): <b className="text-fg">{health.tired}</b></span>}
-        </div>
-      </Card>
-
-      {/* Проблемные — по каждому причина и до какого времени. */}
-      {health.problems.length ? (
-        <Card className="p-4">
-          <div className="mb-2 text-sm font-semibold text-fg">Падающие аккаунты — почему ({health.problems.length})</div>
-          <div className="space-y-1.5">
-            {health.problems.map((a) => (
-              <div key={a.id} className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5 border-b border-line/40 pb-1.5 text-sm last:border-0">
-                <span className="font-medium text-fg">{a.name}</span>
-                {!!a.phone && <span className="text-xs text-muted">{a.phone}</span>}
-                <span className={cn('rounded-md px-1.5 py-0.5 text-[11px] font-bold', statusTone[a.status] || 'text-muted', 'bg-white/8')}>{a.statusLabel}</span>
-                {!!a.reason && <span className="w-full text-xs text-muted sm:w-auto sm:flex-1 sm:truncate">{a.reason}</span>}
-                {!!a.until && <span className="shrink-0 text-[11px] text-faint">{untilText(a.until)}</span>}
-              </div>
-            ))}
-          </div>
-        </Card>
-      ) : (
-        <Card className="p-4 text-sm text-muted">Падающих аккаунтов нет — весь парк в работе или на паузе.</Card>
-      )}
+      {/* «По статусам» и «Падающие аккаунты — почему» перенесены на вкладку «Задачи и ошибки»
+          (AccountsHealthBlocks) — по просьбе заказчика. */}
     </div>
   )
 }

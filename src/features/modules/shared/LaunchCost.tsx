@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Zap, Clock } from 'lucide-react'
+import { Zap, Clock, Info } from 'lucide-react'
 import { fetchPricing, type Pricing } from '@/api/balanceApi'
 import { coins as fmtCoins } from '@/shared/lib/utils'
 
@@ -53,17 +53,37 @@ export function LaunchCost({ moduleKey, actions, accounts, delaySec, compact }: 
 
   // Компактный вид для нижней панели: цена и время — чипами, детали — в подсказке.
   if (compact) {
-    const detail = `${n} ${plural(n, 'действие', 'действия', 'действий')} × ${price} ⚡ = ${fmt(actionsCost)} ⚡`
-      + (avgTokens > 0 ? ` · ИИ ≈ ${Math.round(tokens).toLocaleString('ru-RU')} токенов (${fmt(tokensCost)} ⚡)` : ' · расход ИИ добавится по факту')
+    // Полная математика в подсказке: из чего складывается списание. Перевод строки
+    // (\n) нативный title рендерит построчно — отдельный попап пока не заводим.
+    const tk = Math.round(tokens).toLocaleString('ru-RU')
+    const detail = [
+      'Как считается списание:',
+      `• Действия: ${n} × ${price} ⚡ (цена за действие) = ${fmt(actionsCost)} ⚡`,
+      avgTokens > 0
+        ? `• Текст ИИ: ${n} действий × ~${avgTokens} ток./действие = ${tk} ток.\n   ${tk} ÷ 1000 × ${pricing.coinsPer1kTokens} ⚡/1k = ${fmt(tokensCost)} ⚡\n   (оценка по средней истории модуля — спишется по факту)`
+        : '• Текст ИИ: добавится по факту — истории модуля пока нет для оценки',
+      `Итого: ${avgTokens ? '≈ ' : ''}${fmt(total)} ⚡`,
+    ].join('\n')
     return (
       <>
-        {/* MR-136: стоимость расписана ИНЛАЙН (без наведения на «?»): «N × цена = сумма».
-            Расход ИИ — коротким хвостом; полная детализация всё ещё в тултипе. */}
-        <span className="inline-flex items-center gap-1 whitespace-nowrap text-amber-300" title={detail}>
+        {/* Кастомная подсказка вместо серого браузерного title: попап над чипом (group-hover),
+            в стиле приложения. Плюс короткий расчёт виден СРАЗУ, без наведения. */}
+        <span className="group relative inline-flex cursor-help items-center gap-1 text-amber-300">
           <Zap size={12} fill="currentColor" />
-          <span>
-            <b className="font-semibold">{n}</b> × {price} = <b className="font-semibold">{fmt(actionsCost)} ⚡</b>
-            {avgTokens > 0 && <span className="text-amber-300/80"> +ИИ≈{fmt(tokensCost)}</span>}
+          <b className="font-semibold">{avgTokens ? '≈' : ''}{fmt(total)} ⚡</b>
+          <span className="font-normal text-amber-300/60">
+            = {fmt(actionsCost)}{avgTokens > 0 ? ` + ${fmt(tokensCost)} ИИ` : ''}
+          </span>
+          <Info size={11} className="text-amber-300/70" aria-label="Как считается" />
+          {/* Попап с полной математикой — в стиле приложения (тёмная карточка, рамка, тень).
+              Фон задаём inline через CSS-переменную --elevated: непрозрачный и тему уважает
+              (класс bg-elevated/98 JIT не всегда подхватывает — попап выходил прозрачным). */}
+          <span
+            role="tooltip"
+            style={{ backgroundColor: 'rgb(var(--elevated))' }}
+            className="pointer-events-none absolute bottom-full left-1/2 z-[60] mb-2 hidden max-w-[92vw] -translate-x-1/2 whitespace-pre rounded-xl border border-amber-500/25 px-3 py-2 text-left font-normal leading-relaxed text-fg shadow-lg shadow-black/50 group-hover:block"
+          >
+            {detail}
           </span>
         </span>
         {timeMin && (
@@ -83,7 +103,7 @@ export function LaunchCost({ moduleKey, actions, accounts, delaySec, compact }: 
       </span>
       <span className="text-muted">
         — {n} {plural(n, 'действие', 'действия', 'действий')} × {price} ⚡ = {fmt(actionsCost)} ⚡
-        {avgTokens > 0 && <> · ИИ ≈ {Math.round(tokens).toLocaleString('ru-RU')} токенов ({fmt(tokensCost)} ⚡)</>}
+        {avgTokens > 0 && <> · текст ИИ ≈ {Math.round(tokens).toLocaleString('ru-RU')} ток. ÷ 1000 × {pricing.coinsPer1kTokens} ⚡ = {fmt(tokensCost)} ⚡</>}
       </span>
       {timeMin && (
         <span className="ml-auto inline-flex items-center gap-1 text-sm font-semibold text-emerald-300">

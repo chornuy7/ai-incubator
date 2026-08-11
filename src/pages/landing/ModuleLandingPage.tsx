@@ -20,6 +20,9 @@ export function ModuleLandingPage() {
   const [pricing, setPricing] = useState<Subscription | null>(null)
   const [periodIdx, setPeriodIdx] = useState(-1) // -1 = ещё не выбирали: возьмём самый выгодный
   useEffect(() => { void fetchSubscription().then(setPricing).catch(() => {}) }, [])
+  // Открываем страницу модуля СВЕРХУ: SPA-переход сохраняет позицию скролла лендинга,
+  // из-за чего «Подробнее» показывал середину. Сбрасываем на 0 при монтировании и смене модуля.
+  useEffect(() => { window.scrollTo({ top: 0, left: 0 }) }, [key])
 
   if (!mod) {
     return (
@@ -50,7 +53,9 @@ export function ModuleLandingPage() {
   const bestIdx = periods.reduce((best, p, i) => (p.discount > periods[best].discount ? i : best), 0)
   const sel = periods[periodIdx >= 0 ? periodIdx : bestIdx]
   const Icon = mod.icon
-  const start = () => nav('/login')
+  // Гость выбрал модуль → ведём на РЕГИСТРАЦИЮ и запоминаем выбор: после регистрации
+  // откроется страница подписки с этим модулем. У кого есть аккаунт — переключит на вход.
+  const start = () => nav(`/login?mode=register&plan=${encodeURIComponent(key)}`)
   // §10.7: подтягиваем глубокую доку модуля (тот же источник, что «Обучение») —
   // страница была бедной: только «как работает» + цена. Теперь пример, связка,
   // риски и советы, если они есть для этого модуля.
