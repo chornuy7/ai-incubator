@@ -9,7 +9,7 @@ import { fetchAccountStats, releaseAccountLock } from '@/api/accountsApi'
 import type { AccountStats } from '@/shared/types'
 import { useTabParam } from '@/shared/lib/useTabParam'
 import {
-  TABS, HeroBanner, ProfileTab, ProxyTab, HealthTab, ChannelsTab, FoldersTab,
+  TABS, HeroBanner, ProfileTab, ProxyTab, HealthTab, ChannelsTab,
   type TabKey,
 } from './AccountManagementModal'
 
@@ -66,11 +66,11 @@ export function AccountOverviewPage() {
   const [spamChecking, setSpamChecking] = useState(false)
   const [releasing, setReleasing] = useState(false)
 
-  const load = useCallback(async (opts?: { spam?: boolean }) => {
-    if (!account) return
+  const load = useCallback(async (opts?: { spam?: boolean }): Promise<AccountStats | null> => {
+    if (!account) return null
     setLoading(true)
-    try { setStats(await fetchAccountStats(account.id, opts)) }
-    catch (e) { pushToast({ type: 'error', title: 'Не удалось получить данные аккаунта', desc: e instanceof Error ? e.message : undefined }) }
+    try { const s = await fetchAccountStats(account.id, opts); setStats(s); return s }
+    catch (e) { pushToast({ type: 'error', title: 'Не удалось получить данные аккаунта', desc: e instanceof Error ? e.message : undefined }); return null }
     finally { setLoading(false) }
   }, [account, pushToast])
 
@@ -80,10 +80,31 @@ export function AccountOverviewPage() {
     void load()
   }, [account?.id])
 
+  // MR-129: проверка прокси с явным результатом-тостом (раньше клик «Проверить» ничего не сообщал).
+  const runProxyCheck = async () => {
+    const s = await load()
+    if (!s) return
+    const px = s.proxy
+    if (!px.configured) pushToast({ type: 'info', title: 'Прокси не настроен', desc: 'Аккаунт подключается напрямую' })
+    else if (px.working) pushToast({ type: 'success', title: 'Прокси работает', desc: `${px.protocol ?? ''} ${px.ip ?? ''}:${px.port ?? ''}`.trim() })
+    else pushToast({ type: 'error', title: 'Прокси не отвечает', desc: 'Смените прокси на рабочий' })
+  }
+
   const runSpamCheck = async () => {
     setSpamChecking(true)
-    try { await load({ spam: true }); pushToast({ type: 'success', title: 'Спамблок проверен через @SpamBot' }) }
-    finally { setSpamChecking(false) }
+    try {
+      const s = await load({ spam: true })
+      if (!s) return // ошибка сети уже показана в load()
+      // MR-129: не рапортуем «проверено», если живой проверки не было (мёртвый прокси/сессия).
+      if (!s.status.sessionOk) {
+        pushToast({ type: 'error', title: 'Спамблок не проверен', desc: 'Прокси не отвечает или сессия недоступна — назначьте рабочий прокси' })
+        return
+      }
+      const sb = s.status.spamblock
+      if (sb === 'blocked') pushToast({ type: 'error', title: 'Обнаружен спамблок', desc: s.status.spamblockText || 'Аккаунт ограничен @SpamBot' })
+      else if (sb === 'clean') pushToast({ type: 'success', title: 'Спамблок не найден — чисто', desc: 'Проверено через @SpamBot' })
+      else pushToast({ type: 'info', title: 'Спамблок: результат неизвестен', desc: 'Не удалось получить ответ @SpamBot' })
+    } finally { setSpamChecking(false) }
   }
 
   const runRelease = async () => {
@@ -134,11 +155,10 @@ export function AccountOverviewPage() {
               <button
                 key={a.id}
                 type="button"
-                // ?sel= сохраняем при переключении: без него выборка «только выбранные»
-                // терялась с ПЕРВОГО же клика, кнопка «Только выбранные · N» исчезала и
-                // вернуться к ней было нельзя — а переключение между аккаунтами и есть
-                // основной сценарий этого экрана (прогон 21–22.07, тест 3.12).
-                onClick={() => navigate(`/panel/accounts/${a.id}${params.get('sel') ? `?sel=${params.get('sel')}` : ''}`)}
+                // Сохраняем ВСЕ query-параметры при переключении: и ?sel= (выборка «только
+                // выбранные»), и ?card= (активная вкладка). Раньше тянули только sel, поэтому
+                // вкладка сбрасывалась на «Профиль» при каждом переключении аккаунта (MR-129).
+                onClick={() => { const qs = params.toString(); navigate(`/panel/accounts/${a.id}${qs ? `?${qs}` : ''}`) }}
                 className={cn(
                   'flex w-full items-center gap-3 border-b border-line/50 p-3 text-left transition-colors hover:bg-elevated',
                   account?.id === a.id && 'bg-iris-500/10',
@@ -149,7 +169,11 @@ export function AccountOverviewPage() {
                   <div className="truncate text-sm font-semibold text-fg">{a.name}</div>
                   <div className="truncate text-xs text-muted">@{a.username}</div>
                 </div>
-                <StatusBadge status={a.status} />
+                {/* MR-129: в левом списке тоже показываем «Зона риска» (как в менеджере), а не
+                    голый статус — иначе аккаунт с мёртвым/отсутствующим прокси выглядел «Активным». */}
+                {a.risk && a.risk.level !== 'none'
+                  ? <span className="shrink-0 rounded-md bg-amber-500/15 px-1.5 py-0.5 text-[10px] font-bold text-amber-300">Зона риска</span>
+                  : <StatusBadge status={a.status} />}
               </button>
             ))}
           </div>
@@ -196,10 +220,9 @@ export function AccountOverviewPage() {
                 <div className="animate-fade-in">
                   {tab === 'profile' && <ProfileTab account={account} stats={stats} />}
                   {tab === 'work' && <WorkTab accountId={account.id} />}
-                  {tab === 'proxy' && <ProxyTab account={account} stats={stats} loading={loading} onRecheck={() => void load()} />}
+                  {tab === 'proxy' && <ProxyTab account={account} stats={stats} loading={loading} onRecheck={() => void runProxyCheck()} />}
                   {tab === 'health' && <HealthTab stats={stats} accountId={account.id} />}
                   {tab === 'channels' && <ChannelsTab accountId={account.id} />}
-                  {tab === 'folders' && <FoldersTab accountId={account.id} />}
                 </div>
               )}
             </div>

@@ -37,7 +37,7 @@ import {
   reconcileLocks,
   forceReleaseAccount,
 } from './lib/accountLocks.js'
-import { buildAccountStats, listAccountChannels, listAccountFolders } from './accountStats.js'
+import { buildAccountStats, listAccountChannels, listAccountFolders, leaveAccountChannel } from './accountStats.js'
 import { dailySummary, dailySummaryAll } from './lib/dailyActions.js'
 import { rpsMiddleware, systemMetrics } from './lib/systemMetrics.js'
 
@@ -199,6 +199,17 @@ app.get('/api/tg/accounts/:accountId/channels', async (req, res) => {
   try {
     const result = await listAccountChannels(req.params.accountId)
     res.json({ ok: true, ...result })
+  } catch (err) {
+    res.status(500).json({ ok: false, error: err instanceof Error ? err.message : 'Ошибка' })
+  }
+})
+
+// MR-129: выход аккаунта из канала/группы прямо из карточки.
+app.post('/api/tg/accounts/:accountId/channels/:channelId/leave', async (req, res) => {
+  try {
+    const r = await leaveAccountChannel(req.params.accountId, req.params.channelId)
+    if (!r.ok) return res.status(400).json(r)
+    res.json(r)
   } catch (err) {
     res.status(500).json({ ok: false, error: err instanceof Error ? err.message : 'Ошибка' })
   }

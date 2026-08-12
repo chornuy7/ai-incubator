@@ -278,6 +278,8 @@ export async function buildAccountStats(accountId, opts = {}) {
   if (sessionStr && !busyIn && !blocked) {
     let client
     try {
+      // createClient сам делает быстрый TCP-пинг прокси и падает за ~2.5с на мёртвом прокси
+      // (MR-129) — карточка/каналы/группы больше не ждут таймаут подключения 12с.
       client = await createClient(sessionStr, meta.proxy, accountFingerprint(accountId, meta))
       me = await client.getMe()
       sessionOk = true
@@ -308,6 +310,12 @@ export async function buildAccountStats(accountId, opts = {}) {
         if (proxy.configured) proxy.working = false
       }
       try { if (client) await client.disconnect() } catch { /* ignore */ }
+    }
+    // MR-129: персистим результат живой проверки прокси — чтобы СПИСОК менеджера тоже знал,
+    // что прокси не отвечает (иначе ручной прокси вне каталога считался «ок» и статус зря
+    // показывался «Активные», хотя карточка уже показывает «Не отвечает» / «Невалидный»).
+    if (live && proxy.configured) {
+      try { await setAccountMeta(accountId, { proxyWorking: proxy.working, proxyCheckAt: Date.now() }) } catch { /* non-fatal */ }
     }
   }
 
@@ -453,6 +461,37 @@ export async function listAccountChannels(accountId) {
   } catch (err) {
     try { if (client) await client.disconnect() } catch { /* ignore */ }
     return { busy: false, channels: [], error: err instanceof Error ? err.message : 'error' }
+  }
+}
+
+/**
+ * MR-129: аккаунт выходит из канала/группы прямо из карточки («Каналы»).
+ * accessHash у нас нет — резолвим сущность через getDialogs (как в списке) и выходим.
+ * @param {string} accountId @param {string} channelId
+ */
+export async function leaveAccountChannel(accountId, channelId) {
+  if (getAccountLock(accountId)) return { ok: false, error: 'busy' }
+  const sessionStr = await loadSessionString(accountId)
+  if (!sessionStr) return { ok: false, error: 'no_session' }
+  const meta = await getAccountMeta(accountId)
+  let client
+  try {
+    client = await createClient(sessionStr, meta.proxy, accountFingerprint(accountId, meta))
+    const dialogs = await client.getDialogs({ limit: 300 })
+    const d = dialogs.find((x) => x.entity && x.entity.id?.toString?.() === String(channelId))
+    if (!d || !d.entity) { await client.disconnect(); return { ok: false, error: 'not_found' } }
+    const e = d.entity
+    if (e.className === 'Chat') {
+      const me = await client.getMe()
+      await client.invoke(new Api.messages.DeleteChatUser({ chatId: e.id, userId: me.id }))
+    } else {
+      await client.invoke(new Api.channels.LeaveChannel({ channel: e }))
+    }
+    await client.disconnect()
+    return { ok: true }
+  } catch (err) {
+    try { if (client) await client.disconnect() } catch { /* ignore */ }
+    return { ok: false, error: err instanceof Error ? err.message : 'error' }
   }
 }
 

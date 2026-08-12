@@ -1,5 +1,5 @@
 import type { TgAccount, AccountStatus, AccountStats, AccountChannel, AccountFolder } from '@/shared/types'
-import { apiGet } from './client'
+import { apiGet, apiPost } from './client'
 
 export type ServerAccount = TgAccount
 
@@ -61,6 +61,11 @@ export async function fetchAccountStats(accountId: string, opts?: { spam?: boole
 export async function fetchAccountChannels(accountId: string): Promise<{ busy: boolean; channels: AccountChannel[]; error?: string; busyIn?: { moduleLabel: string } }> {
   const res = await fetch(`/api/tg/accounts/${accountId}/channels`)
   return parseJson(res) as Promise<{ busy: boolean; channels: AccountChannel[]; error?: string; busyIn?: { moduleLabel: string } }>
+}
+
+/** MR-129: аккаунт выходит из канала/группы (по id из списка каналов). */
+export async function leaveAccountChannel(accountId: string, channelId: string): Promise<{ ok: boolean; error?: string }> {
+  return apiPost<{ ok: boolean; error?: string }>(`/api/tg/accounts/${accountId}/channels/${channelId}/leave`, {})
 }
 
 export type DailyActionItem = { action: 'comments' | 'dm' | 'joins' | 'reactions'; used: number; cap: number; reached: boolean }

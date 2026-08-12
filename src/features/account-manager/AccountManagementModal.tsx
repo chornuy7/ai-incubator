@@ -1,23 +1,26 @@
 import { useEffect, useState, useCallback } from 'react'
 import { WorkTab } from './WorkTab'
 import {
-  User, Globe, BarChart3, Calendar, Zap, HeartPulse, Hash, FolderClosed,
-  Copy, Check, ShieldCheck, ShieldAlert, ShieldQuestion, Loader2, RefreshCw, Unlock, AlertCircle,
+  User, Globe, BarChart3, Calendar, Zap, HeartPulse, Hash,
+  Copy, Check, ShieldCheck, ShieldAlert, ShieldQuestion, Loader2, RefreshCw, Unlock, AlertCircle, Server, LogOut, ExternalLink,
 } from 'lucide-react'
-import { Modal, Avatar } from '@/shared/ui'
+import { Modal, Avatar, Segmented } from '@/shared/ui'
 import { cn } from '@/shared/lib/utils'
 import { useApp } from '@/mocks/store'
+import { confirmDialog } from '@/shared/lib/dialog'
+import { ChangeProxyModal } from './ChangeProxyModal'
 import {
-  fetchAccountStats, fetchAccountChannels, fetchAccountFolders, releaseAccountLock,
+  fetchAccountStats, fetchAccountChannels, leaveAccountChannel, releaseAccountLock,
   fetchAccountDaily, type AccountDaily,
 } from '@/api/accountsApi'
-import type { TgAccount, AccountStats, AccountChannel, AccountFolder } from '@/shared/types'
-import { FLAGS as GEO_FLAGS, COUNTRY_NAME, COUNTRIES } from '@/shared/config/geo'
+import type { TgAccount, AccountStats, AccountChannel } from '@/shared/types'
+import { FLAGS as GEO_FLAGS, COUNTRY_NAME } from '@/shared/config/geo'
 
 // MR-129 (10.08): табы переставлены по значимости и сокращены. «Статус» и «Действия»
 // переехали в шапку (статус уже там, кнопки-проверки — рядом с ним), «Даты» — в Профиль.
-// «Здоровье» поднято вперёд (сверхважный критерий), «Папки» переименованы в «Группы».
-export type TabKey = 'profile' | 'health' | 'proxy' | 'work' | 'channels' | 'folders'
+// «Здоровье» поднято вперёд (сверхважный критерий). MR-129: вкладку «Группы» (Telegram-папки)
+// убрали — она всегда была пустой и дублировала «Каналы» (там и каналы, и группы).
+export type TabKey = 'profile' | 'health' | 'proxy' | 'work' | 'channels'
 
 export const TABS: { key: TabKey; label: string; icon: React.ReactNode }[] = [
   { key: 'profile', label: 'Профиль', icon: <User size={15} /> },
@@ -25,20 +28,11 @@ export const TABS: { key: TabKey; label: string; icon: React.ReactNode }[] = [
   { key: 'proxy', label: 'Прокси', icon: <Globe size={15} /> },
   { key: 'work', label: 'Работа', icon: <Zap size={15} /> },
   { key: 'channels', label: 'Каналы', icon: <Hash size={15} /> },
-  { key: 'folders', label: 'Группы', icon: <FolderClosed size={15} /> },
 ]
 
 // Флаг/название страны по коду (регистр не важен) — полный набор из geo.ts (14 стран).
 const flagOf = (code?: string | null) => (code ? GEO_FLAGS[code.toLowerCase()] ?? '' : '')
 const nameOf = (code?: string | null) => (code ? COUNTRY_NAME[code.toLowerCase()] ?? code.toUpperCase() : '')
-
-/** Рекомендуемое гео прокси: та же страна номера + соседи по региону (для траста, §3.4). */
-function recommendedGeo(code?: string | null) {
-  const c = (code || '').toLowerCase()
-  const self = COUNTRIES.find((x) => x.code === c)
-  const region = self?.region ?? 'europe'
-  return [...(self ? [self] : []), ...COUNTRIES.filter((x) => x.region === region && x.code !== c)].slice(0, 5)
-}
 
 function fmtDate(ts: number | null | undefined) {
   if (!ts) return '—'
@@ -148,7 +142,6 @@ export function AccountCardBody({ account }: { account: TgAccount }) {
               {tab === 'proxy' && <ProxyTab account={account} stats={stats} loading={loading} onRecheck={() => void load()} />}
               {tab === 'health' && <HealthTab stats={stats} accountId={account.id} />}
               {tab === 'channels' && <ChannelsTab accountId={account.id} />}
-              {tab === 'folders' && <FoldersTab accountId={account.id} />}
             </div>
           )}
         </div>
@@ -214,7 +207,7 @@ export function HeroBanner({ account, stats, actions }: {
           {(health || trust) && (
             <div className="mt-2 flex flex-wrap items-center gap-2 text-xs">
               {health && <span className="inline-flex items-center gap-1 rounded-lg bg-white/12 px-2 py-1 font-semibold"><HeartPulse size={12} /> Здоровье {health.score}/100 · {health.label}</span>}
-              {trust && <span className="inline-flex items-center gap-1 rounded-lg bg-white/12 px-2 py-1 font-semibold"><BarChart3 size={12} /> Trust {trust.score}/100</span>}
+              {trust && <span className="inline-flex items-center gap-1 rounded-lg bg-white/12 px-2 py-1 font-semibold"><BarChart3 size={12} /> Доверие {trust.score}/100</span>}
             </div>
           )}
         </div>
@@ -238,7 +231,8 @@ export function HeroBanner({ account, stats, actions }: {
           </Pill>
           {active && (
             <Pill tone="ok">
-              <Loader2 size={12} className="animate-spin" /> Активен{warmingDays != null ? ` (${warmingDays}д)` : ''}
+              {/* MR-129: это статус, а не загрузка — был вечно крутящийся спиннер. Ставим статичную точку. */}
+              <span className="h-1.5 w-1.5 rounded-full bg-current" /> Активен{warmingDays != null ? ` (${warmingDays}д)` : ''}
             </Pill>
           )}
         </div>
@@ -367,18 +361,24 @@ export function ProfileTab({ account, stats }: { account: TgAccount; stats: Acco
 
 export function ProxyTab({ account, stats, loading, onRecheck }: { account: TgAccount; stats: AccountStats | null; loading: boolean; onRecheck: () => void }) {
   const px = stats?.proxy
-  const country = stats?.profile.geo ?? account.country
-  const rec = recommendedGeo(country)
-  // MR-133: «Прокси» и «Гео-рекомендации» слиты в ОДИН блок — раньше рекомендации отдельной
-  // картой сжирали половину экрана. Теперь гео — компактный футер под данными прокси.
+  const setAccountProxy = useApp((s) => s.setAccountProxy)
+  const pushToast = useApp((s) => s.pushToast)
+  const [changeOpen, setChangeOpen] = useState(false)
   return (
+    <>
     <SectionCard
       title="Прокси"
       icon={<Globe size={15} className="text-iris-300" />}
       action={
-        <button onClick={onRecheck} disabled={loading} className="btn-soft h-8 text-xs disabled:opacity-50">
-          {loading ? <Loader2 size={13} className="animate-spin" /> : <RefreshCw size={13} />} Проверить
-        </button>
+        <div className="flex items-center gap-2">
+          {/* MR-129: сменить прокси прямо из карточки — выбор из базы прокси или ввод нового. */}
+          <button onClick={() => setChangeOpen(true)} className="btn-soft h-8 text-xs">
+            <Server size={13} /> Сменить прокси
+          </button>
+          <button onClick={onRecheck} disabled={loading} className="btn-soft h-8 text-xs disabled:opacity-50">
+            {loading ? <Loader2 size={13} className="animate-spin" /> : <RefreshCw size={13} />} Проверить
+          </button>
+        </div>
       }
     >
       {!px?.configured ? (
@@ -417,21 +417,13 @@ export function ProxyTab({ account, stats, loading, onRecheck }: { account: TgAc
           </div>
         </>
       )}
-      {/* Компактный футер гео-рекомендаций (слит в этот же блок). */}
-      <div className="mt-4 border-t border-line pt-3">
-        <div className="text-[11px] font-bold uppercase tracking-wide text-faint">
-          Рекомендуемое гео прокси · страна номера {flagOf(country)} {nameOf(country)}
-        </div>
-        <div className="mt-1.5 flex flex-wrap gap-1.5">
-          {rec.map((c) => (
-            <span key={c.code} className="inline-flex items-center gap-1.5 rounded-lg border border-line bg-elevated px-2.5 py-1 text-sm font-semibold text-fg">
-              <span className="text-base leading-none">{c.flag}</span> {c.label}
-            </span>
-          ))}
-        </div>
-        <div className="mt-2 text-[11px] leading-relaxed text-muted">Прокси в стране номера или соседней по региону — лучше для траста аккаунта.</div>
-      </div>
     </SectionCard>
+    <ChangeProxyModal
+      acc={changeOpen ? account : null}
+      onClose={() => setChangeOpen(false)}
+      onSave={(id, p) => { void setAccountProxy(id, p).then(() => { pushToast({ type: 'success', title: 'Прокси обновлён', desc: 'Нажмите «Проверить», чтобы проверить новый прокси' }); setChangeOpen(false); onRecheck() }) }}
+    />
+    </>
   )
 }
 
@@ -501,7 +493,7 @@ function TrustCard({ trust }: { trust: AccountStats['trust'] }) {
     { key: 'age', label: 'Возраст / AIR', w: '20%' },
   ]
   return (
-    <SectionCard title="Trust score" icon={<BarChart3 size={15} style={{ color: tone.c }} />}>
+    <SectionCard title="Оценка доверия" icon={<BarChart3 size={15} style={{ color: tone.c }} />}>
       <div className="flex items-center gap-4 py-1">
         <Gauge value={trust.score} color={tone.c} />
         <div className="min-w-0">
@@ -631,17 +623,42 @@ export function ChannelsTab({ accountId }: { accountId: string }) {
     return () => { alive = false }
   }, [accountId])
 
+  const pushToast = useApp((s) => s.pushToast)
   const [q, setQ] = useState('')
+  const [kind, setKind] = useState(0) // 0 — все, 1 — каналы, 2 — группы
+  const [leavingId, setLeavingId] = useState<string | null>(null)
+
+  const leave = async (c: AccountChannel) => {
+    if (!(await confirmDialog({
+      title: c.kind === 'channel' ? 'Выйти из канала?' : 'Выйти из группы?',
+      message: `Аккаунт покинет «${c.title}». Действие можно отменить только повторным вступлением.`,
+      confirmLabel: 'Выйти', tone: 'danger',
+    }))) return
+    setLeavingId(c.id)
+    try {
+      const r = await leaveAccountChannel(accountId, c.id)
+      if (!r.ok) { pushToast({ type: 'error', title: 'Не удалось выйти', desc: r.error || '' }); return }
+      setState((s) => ({ ...s, items: s.items.filter((x) => x.id !== c.id) }))
+      pushToast({ type: 'success', title: c.kind === 'channel' ? 'Вышли из канала' : 'Вышли из группы', desc: c.title })
+    } catch (e) {
+      pushToast({ type: 'error', title: 'Ошибка', desc: e instanceof Error ? e.message : '' })
+    } finally { setLeavingId(null) }
+  }
+
   if (state.loading) return <LiveLoading label="Загрузка каналов из Telegram…" />
   if (state.busy) return <BusyNotice label={state.busyLabel} />
   if (state.error) return <ErrorNotice error={state.error} />
   if (!state.items.length) return <div className="py-10 text-center text-sm text-muted">Каналов и групп не найдено</div>
-  // §3: фильтр внутри блока — переключаемся между диалогами, не стакая их снаружи.
-  const shown = q.trim()
-    ? state.items.filter((c) => `${c.title} ${c.username}`.toLowerCase().includes(q.trim().toLowerCase()))
-    : state.items
+
+  const channelsN = state.items.filter((c) => c.kind === 'channel').length
+  const groupsN = state.items.length - channelsN
+  const shown = state.items
+    .filter((c) => kind === 0 || (kind === 1 ? c.kind === 'channel' : c.kind === 'group'))
+    .filter((c) => !q.trim() || `${c.title} ${c.username}`.toLowerCase().includes(q.trim().toLowerCase()))
+
   return (
     <div className="space-y-2">
+      <Segmented options={[`Все · ${state.items.length}`, `Каналы · ${channelsN}`, `Группы · ${groupsN}`]} value={kind} onChange={setKind} size="sm" />
       <input
         value={q}
         onChange={(e) => setQ(e.target.value)}
@@ -651,49 +668,46 @@ export function ChannelsTab({ accountId }: { accountId: string }) {
       <div className="max-h-96 space-y-1.5 overflow-y-auto">
       {shown.length === 0 && <div className="py-6 text-center text-sm text-muted">Ничего не найдено</div>}
       {shown.map((c) => (
-        <div key={c.id} className="flex items-center gap-3 rounded-xl border border-line bg-elevated/40 px-3 py-2.5">
+        <div key={c.id} className="group/ch flex items-center gap-3 rounded-xl border border-line bg-elevated/40 px-3 py-2.5">
           <span className={cn('grid h-8 w-8 shrink-0 place-items-center rounded-lg text-xs font-bold', c.kind === 'channel' ? 'bg-iris-500/15 text-iris-300' : 'bg-spark-500/15 text-spark-300')}>
             {c.kind === 'channel' ? <Hash size={15} /> : <User size={15} />}
           </span>
-          <div className="min-w-0 flex-1">
-            <div className="truncate text-sm font-semibold text-fg">{c.title}</div>
-            <div className="truncate text-xs text-muted">{c.username ? `@${c.username}` : c.kind === 'channel' ? 'Канал' : 'Группа'}{c.members ? ` · ${c.members.toLocaleString('ru-RU')} уч.` : ''}</div>
-          </div>
+          {/* Клик по строке — открыть канал/группу в Telegram (если есть публичный @username). */}
+          {c.username ? (
+            <a href={`https://t.me/${c.username}`} target="_blank" rel="noreferrer" className="min-w-0 flex-1" title="Открыть в Telegram">
+              <div className="flex items-center gap-1.5 truncate text-sm font-semibold text-fg transition-colors group-hover/ch:text-spark-300">{c.title}<ExternalLink size={12} className="shrink-0 opacity-0 transition-opacity group-hover/ch:opacity-100" /></div>
+              <div className="truncate text-xs text-muted">@{c.username}{c.members ? ` · ${c.members.toLocaleString('ru-RU')} уч.` : ''}</div>
+            </a>
+          ) : (
+            <div className="min-w-0 flex-1">
+              <div className="truncate text-sm font-semibold text-fg">{c.title}</div>
+              <div className="truncate text-xs text-muted">{c.kind === 'channel' ? 'Канал' : 'Группа'} · приватный{c.members ? ` · ${c.members.toLocaleString('ru-RU')} уч.` : ''}</div>
+            </div>
+          )}
           {c.unread > 0 && <span className="rounded-full bg-rose-500/15 px-2 py-0.5 text-[11px] font-bold text-rose-300">{c.unread}</span>}
+          {/* MR-129: «взять отсюда» — копируем ссылку/@username, чтобы вставить канал как цель. */}
+          {c.username && (
+            <button
+              type="button"
+              onClick={() => { void navigator.clipboard?.writeText(`https://t.me/${c.username}`); pushToast({ type: 'success', title: 'Скопировано', desc: `@${c.username}` }) }}
+              className="btn-icon h-8 w-8 shrink-0 text-muted hover:text-spark-300"
+              title="Скопировать ссылку канала (вставить как цель)"
+            >
+              <Copy size={14} />
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={() => void leave(c)}
+            disabled={leavingId === c.id}
+            className="btn-icon h-8 w-8 shrink-0 text-rose-300 hover:bg-rose-500/10 disabled:opacity-50"
+            title="Выйти из канала/группы"
+          >
+            {leavingId === c.id ? <Loader2 size={14} className="animate-spin" /> : <LogOut size={14} />}
+          </button>
         </div>
       ))}
       </div>
-    </div>
-  )
-}
-
-export function FoldersTab({ accountId }: { accountId: string }) {
-  const [state, setState] = useState<{ loading: boolean; busy: boolean; busyLabel?: string; error?: string; items: AccountFolder[] }>({ loading: true, busy: false, items: [] })
-  useEffect(() => {
-    let alive = true
-    setState({ loading: true, busy: false, items: [] }) // §3: не показываем каналы/папки прежнего аккаунта, пока грузим нового
-    void fetchAccountFolders(accountId).then((r) => {
-      if (!alive) return
-      setState({ loading: false, busy: r.busy, busyLabel: r.busyIn?.moduleLabel, error: r.error, items: r.folders })
-    }).catch((e) => alive && setState({ loading: false, busy: false, error: e instanceof Error ? e.message : 'error', items: [] }))
-    return () => { alive = false }
-  }, [accountId])
-
-  if (state.loading) return <LiveLoading label="Загрузка групп из Telegram…" />
-  if (state.busy) return <BusyNotice label={state.busyLabel} />
-  if (state.error) return <ErrorNotice error={state.error} />
-  if (!state.items.length) return <div className="py-10 text-center text-sm text-muted">Групп нет</div>
-  return (
-    <div className="grid gap-2 sm:grid-cols-2">
-      {state.items.map((f, i) => (
-        <div key={f.id ?? i} className="flex items-center gap-3 rounded-xl border border-line bg-elevated/40 px-3 py-2.5">
-          <span className="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-iris-500/15 text-iris-300"><FolderClosed size={15} /></span>
-          <div className="min-w-0 flex-1">
-            <div className="truncate text-sm font-semibold text-fg">{f.title}</div>
-            <div className="text-xs text-muted">{f.included} чатов{f.pinned ? ` · ${f.pinned} закреп.` : ''}</div>
-          </div>
-        </div>
-      ))}
     </div>
   )
 }
