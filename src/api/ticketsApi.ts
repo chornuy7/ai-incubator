@@ -7,8 +7,10 @@ export interface TicketMessage {
   id: string
   from: 'user' | 'support'
   authorId: string
-  /** Имя автора на момент отправки: мейл/имя клиента или «Поддержка». */
+  /** Имя автора на момент отправки: имя клиента или «Поддержка». */
   authorName?: string
+  /** Почта автора — основная подпись в чате (имя в базе бывает ролевым). */
+  authorEmail?: string
   text: string
   ts: number
 }

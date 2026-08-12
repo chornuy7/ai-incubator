@@ -6,7 +6,7 @@ import { useSession } from '@/features/auth/session'
 import { PageHeader, Card, EmptyState, Select, Badge } from '@/shared/ui'
 import { HelpButton } from '@/features/neuro-commenting/moduleUi'
 import { fetchTickets, fetchTicket, createTicket, replyTicket, type ApiTicket, type TicketStatus } from '@/api/ticketsApi'
-import { TicketChat } from '@/features/support/TicketChat'
+import { TicketChat, shortId } from '@/features/support/TicketChat'
 import { cn } from '@/shared/lib/utils'
 
 const STATUS_META: Record<TicketStatus, { label: string; tone: 'spark' | 'iris' | 'amber' | 'rose' | 'muted' }> = {
@@ -171,7 +171,7 @@ export function SupportPage() {
         <button onClick={() => setOpenTicket(null)} className="btn-ghost mb-3 h-9"><ArrowLeft size={15} /> Назад к обращениям</button>
         <PageHeader
           title={openTicket.subject}
-          subtitle={`${openTicket.id}${isSupportView && (openTicket.ownerName || openTicket.ownerEmail) ? ` · клиент ${openTicket.ownerName || openTicket.ownerEmail}` : ''}`}
+          subtitle={`${openTicket.id}${isSupportView && (openTicket.ownerEmail || openTicket.ownerName) ? ` · клиент ${openTicket.ownerEmail || openTicket.ownerName} · ID ${shortId(openTicket.userId)}` : ''}`}
           icon={<MessageSquare size={22} />}
           badge={meta.label}
         />
@@ -254,7 +254,7 @@ export function SupportPage() {
                     {!!t.unread && <span className="grid min-w-[20px] place-items-center rounded-full bg-rose-500 px-1.5 text-[11px] font-bold text-white">{t.unread}</span>}
                     {/* Поддержке важно СРАЗУ видеть, чей это тикет. */}
                     {isSupportView && (t.ownerEmail || t.ownerName) && (
-                      <span className="truncate text-[11px] text-iris-300">{t.ownerName || t.ownerEmail}</span>
+                      <span className="truncate text-[11px] text-iris-300">{t.ownerEmail || t.ownerName}</span>
                     )}
                   </div>
                   <div className={cn('mt-0.5 truncate', t.unread ? 'font-bold text-fg' : 'font-semibold text-fg')}>{t.subject}</div>

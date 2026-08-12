@@ -771,8 +771,8 @@ app.post('/api/parser/cache/lookup', async (req, res) => {
 // ── §8 (MR-44): тикеты поддержки — свои у клиента, все у админа (интеграция с админкой) ──
 const ticketErr = (res, err) => res.status(500).json({ ok: false, error: err instanceof Error ? err.message : 'Ошибка' })
 
-/** Имя, под которым текущий автор пишет КАК КЛИЕНТ (мейл/имя, не роль). */
-const ticketClientName = (ctx) => String(ctx.user?.name || ctx.user?.email || ctx.id || 'Клиент')
+/** Автор-клиент: id + имя + ПОЧТА. Почта — главная подпись в чате (имя бывает ролевым). */
+const ticketAuthor = (ctx) => ({ id: ctx.id, name: String(ctx.user?.name || ''), email: String(ctx.user?.email || '') })
 
 /** Резолвер владельцев тикетов id→{ownerName,ownerEmail} одним запросом — «от кого» в списке. */
 async function ticketOwnerResolver() {
@@ -832,7 +832,7 @@ app.post('/api/tickets', async (req, res) => {
     if (ctx.blocked) return res.status(403).json({ ok: false, error: 'Нет доступа' })
     const { createTicket } = await import('./tickets.js')
     const { subject, category, body } = req.body || {}
-    res.json({ ok: true, ticket: await createTicket({ userId: ctx.id, authorName: ticketClientName(ctx), subject, category, body }) })
+    res.json({ ok: true, ticket: await createTicket({ userId: ctx.id, author: ticketAuthor(ctx), subject, category, body }) })
   } catch (err) { res.status(400).json({ ok: false, error: err instanceof Error ? err.message : 'Ошибка' }) }
 })
 
@@ -866,8 +866,9 @@ app.post('/api/tickets/:id/reply', async (req, res) => {
     if (!asSupport && t.userId !== ctx.id) return res.status(403).json({ ok: false, error: 'Нет доступа к тикету' })
     const ticket = await addMessage(String(req.params.id), {
       from: asSupport ? 'support' : 'user',
-      authorId: ctx.id,
-      authorName: asSupport ? 'Поддержка' : ticketClientName(ctx),
+      // Поддержка подписывается ролью (клиенту не нужен личный контакт оператора),
+      // клиент — своей почтой/именем.
+      author: asSupport ? { id: ctx.id, name: 'Поддержка' } : ticketAuthor(ctx),
       text: (req.body || {}).text,
     })
     res.json({ ok: true, ticket })

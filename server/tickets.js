@@ -23,13 +23,18 @@ function genId(now, existing) {
   return id
 }
 
-const msg = (from, authorId, authorName, text, ts) => ({
+/**
+ * @param {'user'|'support'} from
+ * @param {{id?:string, name?:string, email?:string}} author автор на момент отправки
+ */
+const msg = (from, author, text, ts) => ({
   id: `m${ts}${Math.floor(ts % 1000)}`,
   from: from === 'support' ? 'support' : 'user',
-  authorId: authorId || '—',
-  // Denормализуем ИМЯ автора в момент отправки — чтобы в чате было видно, КТО написал
-  // (мейл/имя клиента), а не роль. Для поддержки — «Поддержка».
-  authorName: String(authorName || (from === 'support' ? 'Поддержка' : 'Клиент')).trim(),
+  authorId: author?.id || '—',
+  // Денормализуем автора в момент отправки: в чате должно быть видно КТО написал —
+  // почта/имя человека, а не роль. Для поддержки — «Поддержка».
+  authorName: String(author?.name || (from === 'support' ? 'Поддержка' : 'Клиент')).trim(),
+  authorEmail: String(author?.email || '').trim(),
   text: String(text).trim(),
   ts,
 })
@@ -86,7 +91,7 @@ export async function getTicket(id) {
   return tickets.find((t) => t.id === id) || null
 }
 
-export async function createTicket({ userId = '', authorName = '', subject = '', category = 'tech', body = '' }) {
+export async function createTicket({ userId = '', author = null, subject = '', category = 'tech', body = '' }) {
   const subj = String(subject || '').trim()
   if (!subj) throw new Error('Укажите тему обращения')
   const tickets = await readTickets()
@@ -104,7 +109,7 @@ export async function createTicket({ userId = '', authorName = '', subject = '',
     reads: { user: now, support: 0 },
   }
   const text = String(body || '').trim()
-  if (text) ticket.messages.push(msg('user', userId, authorName, text, now))
+  if (text) ticket.messages.push(msg('user', { id: userId, ...(author || {}) }, text, now))
   tickets.push(ticket)
   await writeJson(ticketsFile(), tickets)
   return ticket
@@ -125,14 +130,14 @@ export async function markRead(id, side) {
  * Добавить сообщение в тикет. Ответ поддержки переводит открытый/ожидающий тикет
  * в «в работе»; ответ клиента по закрытому — снова открывает (переписка продолжилась).
  */
-export async function addMessage(id, { from = 'user', authorId = '', authorName = '', text = '' }) {
+export async function addMessage(id, { from = 'user', author = null, text = '' }) {
   const t = String(text || '').trim()
   if (!t) throw new Error('Пустое сообщение')
   const tickets = await readTickets()
   const ticket = tickets.find((x) => x.id === id)
   if (!ticket) throw new Error('Тикет не найден')
   const now = Date.now()
-  ticket.messages.push(msg(from, authorId, authorName, t, now))
+  ticket.messages.push(msg(from, author, t, now))
   ticket.updatedAt = now
   // Своя сторона, отправив сообщение, автоматически «прочитала» тикет до текущего момента.
   ticket.reads = ticket.reads || {}

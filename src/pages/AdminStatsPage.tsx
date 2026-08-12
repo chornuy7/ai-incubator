@@ -13,7 +13,7 @@ import {
   fetchTaskLogs, type FailedTask, type TaskLogs } from '@/api/adminApi'
 import { updateUser } from '@/api/usersApi'
 import { fetchTickets, fetchTicket, replyTicket, setTicketStatus, fetchTicketsUnread, type ApiTicket, type TicketStatus } from '@/api/ticketsApi'
-import { TicketChat } from '@/features/support/TicketChat'
+import { TicketChat, shortId } from '@/features/support/TicketChat'
 import { fetchTgstatSession, uploadTgstatSession, verifyTgstatSession, clearTgstatSession, type TgstatSession } from '@/api/tgstatApi'
 import { fetchRoles } from '@/api/rolesApi'
 import { RolesPage } from '@/pages/RolesPage'
@@ -1459,7 +1459,8 @@ function AdminTicketsTab() {
                       <span className={cn('min-w-0 flex-1 truncate text-sm', t.unread ? 'font-bold text-fg' : 'font-semibold text-fg')}>{t.subject}</span>
                       {!!t.unread && <span className="grid min-w-[18px] shrink-0 place-items-center rounded-full bg-rose-500 px-1 text-[10px] font-bold text-white">{t.unread}</span>}
                     </div>
-                    <div className="truncate text-[11px] text-iris-300">{t.ownerName || t.ownerEmail || t.userId}</div>
+                    <div className="truncate text-[11px] text-iris-300">{t.ownerEmail || t.ownerName || t.userId}</div>
+                    <div className="truncate font-mono text-[10px] text-faint">ID {shortId(t.userId)}</div>
                     <div className="truncate text-[11px] text-muted">{last ? `${last.from === 'support' ? 'Поддержка: ' : ''}${last.text}` : '—'}</div>
                     <div className="mt-0.5 flex items-center gap-1.5">
                       <Badge tone={m.tone}>{m.label}</Badge>
@@ -1486,7 +1487,7 @@ function AdminTicketsTab() {
                   <button onClick={() => setOpen(null)} className="btn-ghost h-8 px-2 lg:hidden"><ArrowLeft size={15} /></button>
                   <div className="min-w-0">
                     <div className="truncate text-sm font-bold text-fg">{open.subject}</div>
-                    <div className="truncate text-[11px] text-muted">{open.id} · клиент {open.ownerName || open.ownerEmail || open.userId}</div>
+                    <div className="truncate text-[11px] text-muted">{open.id} · клиент {open.ownerEmail || open.ownerName || open.userId} · ID {shortId(open.userId)}</div>
                   </div>
                   <Select className="ml-auto w-44" value={open.status} onChange={(v) => void changeStatus(v)} options={TICKET_STATUS_OPTS} />
                 </div>
