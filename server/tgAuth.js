@@ -95,7 +95,32 @@ export async function createClient(sessionString, proxyRaw, fingerprint) {
   const apiHash = fp.apiHash || API_HASH
   const client = new TelegramClient(new StringSession(sessionString), apiId, apiHash, opts)
   await connectWithTimeout(client)
+  wrapInvoke(client)
   return client
+}
+
+/**
+ * Жёсткий предел на КАЖДЫЙ RPC-вызов + поддержка мгновенного обрыва.
+ *
+ * `connectWithTimeout` ограничивает только подключение. Сам вызов (getMe, getDialogs,
+ * searchPublic…) таймаута не имеет: на прокси, который принял соединение, но наружу не
+ * пускает, gram ждёт ответа бесконечно — карточка аккаунта висела на «Загрузка данных из
+ * Telegram…» минутами (замер 12.08: 5 из 6 аккаунтов >45с), а «Стоп» задачи игнорировался.
+ * Обёртка живёт здесь, а не в воркерах, чтобы предел действовал ВЕЗДЕ: карточка, каналы,
+ * папки, модули. Флаг `client.__aborted` (его взводит abortTaskClients при стопе/паузе)
+ * отклоняет висящий вызов за ~0.25с.
+ * @param {any} client
+ */
+const RPC_TIMEOUT_MS = Math.max(5000, Number(process.env.TG_RPC_TIMEOUT_MS) || 25000)
+function wrapInvoke(client) {
+  const orig = client.invoke.bind(client)
+  client.invoke = (...args) => new Promise((resolve, reject) => {
+    let settled = false
+    const finish = (fn) => (x) => { if (!settled) { settled = true; clearInterval(poll); clearTimeout(hard); fn(x) } }
+    const poll = setInterval(() => { if (client.__aborted) finish(reject)(new Error('ABORTED_BY_STOP')) }, 250)
+    const hard = setTimeout(() => finish(reject)(new Error(`RPC_TIMEOUT (${Math.round(RPC_TIMEOUT_MS / 1000)}с)`)), RPC_TIMEOUT_MS)
+    orig(...args).then(finish(resolve), finish(reject))
+  })
 }
 
 /**

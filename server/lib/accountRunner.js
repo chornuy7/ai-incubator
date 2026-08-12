@@ -33,25 +33,6 @@ export async function abortTaskClients(taskId) {
   return clients.length
 }
 
-/**
- * Оборачиваем client.invoke: гонка настоящего вызова против (а) флага аборта — стоп/пауза
- * взводят client.__aborted и вызов падает за ~0.25с; (б) жёсткого таймаута — на мёртвом
- * канале RPC gram висит бесконечно (disconnect его не отклоняет), из-за чего «Стоп»
- * игнорировался десятки секунд. Все действия модулей идут через invoke (в т.ч. getMessages/
- * getDialogs внутри), поэтому одной обёртки хватает на все модули. @param {any} client
- */
-const RPC_TIMEOUT_MS = Math.max(8000, Number(process.env.TG_RPC_TIMEOUT_MS) || 30000)
-function wrapInvoke(client) {
-  const orig = client.invoke.bind(client)
-  client.invoke = (...args) => new Promise((resolve, reject) => {
-    let settled = false
-    const finish = (fn) => (x) => { if (!settled) { settled = true; clearInterval(poll); clearTimeout(hard); fn(x) } }
-    const poll = setInterval(() => { if (client.__aborted) finish(reject)(new Error('ABORTED_BY_STOP')) }, 250)
-    const hard = setTimeout(() => finish(reject)(new Error(`RPC_TIMEOUT (${Math.round(RPC_TIMEOUT_MS / 1000)}с)`)), RPC_TIMEOUT_MS)
-    orig(...args).then(finish(resolve), finish(reject))
-  })
-}
-
 /** @param {string} accountId @param {string} [taskId] */
 export async function connectAccount(accountId, taskId) {
   assertAccountAvailable(accountId, taskId)
@@ -68,9 +49,9 @@ export async function connectAccount(accountId, taskId) {
   // возвращал жёстко 'active' и стирал 'warming' — аккаунт, который прогревается,
   // после первого же действия становился обычным активным (тест 12.5).
   await setAccountMeta(accountId, { status: 'working', statusBefore: meta.status || 'active' })
+  // invoke уже обёрнут в createClient (жёсткий лимит RPC + флаг __aborted) — предел
+  // действует и здесь, и в карточке аккаунта, и в каналах.
   const client = await createClient(sessionStr, meta.proxy, accountFingerprint(accountId, meta))
-  // invoke оборачиваем всегда — чтобы висящий RPC на мёртвом канале не морозил воркер.
-  wrapInvoke(client)
   // Регистрируем клиент под задачей — чтобы стоп/пауза могли его оборвать (см. abortTaskClients).
   if (taskId) {
     client.__taskId = taskId

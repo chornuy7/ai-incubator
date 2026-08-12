@@ -11,6 +11,8 @@ import { Api } from 'telegram/tl/index.js'
 import { accountFingerprint } from './lib/deviceFingerprint.js'
 
 const DAY = 24 * 60 * 60 * 1000
+/** Сколько ждём ответ Telegram в карточке аккаунта, прежде чем признать проверку сорванной. */
+const STATS_BUDGET_MS = Math.max(4000, Number(process.env.TG_STATS_TIMEOUT_MS) || 12000)
 
 function sleep(ms) {
   return new Promise((r) => setTimeout(r, ms))
@@ -281,7 +283,13 @@ export async function buildAccountStats(accountId, opts = {}) {
       // createClient сам делает быстрый TCP-пинг прокси и падает за ~2.5с на мёртвом прокси
       // (MR-129) — карточка/каналы/группы больше не ждут таймаут подключения 12с.
       client = await createClient(sessionStr, meta.proxy, accountFingerprint(accountId, meta))
-      me = await client.getMe()
+      // Общий бюджет живой проверки. Даже с лимитом на каждый RPC карточка не должна
+      // ждать десятки секунд: прокси, который принял соединение, но наружу не пускает,
+      // держал «Загрузку данных из Telegram…» минутами (замер 12.08: >45с).
+      me = await Promise.race([
+        client.getMe(),
+        new Promise((_, rej) => setTimeout(() => rej(new Error(`STATS_TIMEOUT: Telegram не ответил за ${Math.round(STATS_BUDGET_MS / 1000)}с`)), STATS_BUDGET_MS)),
+      ])
       sessionOk = true
       live = true
       if (proxy.configured) proxy.working = true
