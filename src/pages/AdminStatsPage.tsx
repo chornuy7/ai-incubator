@@ -61,7 +61,11 @@ const PERIODLESS_TABS = new Set([1, 6, 10, 12, 13, 14, 15])
  * Тикеты, Парсер, API. На них тумблер «Автообновление» скрыт и фон не тикает. «Сейчас» и
  * «Мониторинг» — живые, там автообновление ОСТАЁТСЯ.
  */
-const NO_AUTOREFRESH_TABS = new Set([6, 12, 13, 14, 15])
+/** Индекс вкладки «Тикеты» — у неё автообновление своё (список обращений, не статистика). */
+const TICKETS_TAB = 13
+// Справочные вкладки, где обновлять по таймеру нечего: цены (6), роли (12), парсер (14), API (15).
+// «Тикеты» (13) СЮДА НЕ ВХОДЯТ: это живая переписка, её надо тянуть автоматически.
+const NO_AUTOREFRESH_TABS = new Set([6, 12, 14, 15])
 
 const STATUS_RU: Record<string, string> = {
   active: 'Активные', working: 'В работе', warming: 'Прогрев', pause: 'На паузе',
@@ -172,6 +176,11 @@ export function AdminStatsPage() {
   loadRef.current = load
   const tabRef = useRef(tab)
   tabRef.current = tab
+  // На вкладке «Тикеты» общий цикл обновляет НЕ статистику, а список обращений: вкладка
+  // сама регистрирует здесь свою тихую перезагрузку. Так тумблер и отсчёт остаются одни
+  // на всю админку, а тянется ровно то, что показано на экране.
+  const ticketsReloadRef = useRef<(() => Promise<void>) | null>(null)
+  const registerTicketsReload = useCallback((fn: (() => Promise<void>) | null) => { ticketsReloadRef.current = fn }, [])
 
   // §5.2 (MR-33): автообновление — раз в 15с (в пределах 10–30с из ТЗ) молча тянем свежие
   // данные текущего периода и состояний «сейчас» (мониторинг/задачи/ошибки), без спиннера и
@@ -218,7 +227,11 @@ export function AdminStatsPage() {
         if (refreshingRef.current) return 0
         refreshingRef.current = true
         setRefreshing(true)
-        void loadRef.current({ force: true, silent: true }).finally(() => {
+        // На «Тикетах» тянем переписку (её зарегистрировала сама вкладка), иначе — статистику.
+        const pull = tabRef.current === TICKETS_TAB && ticketsReloadRef.current
+          ? ticketsReloadRef.current()
+          : loadRef.current({ force: true, silent: true })
+        void pull.finally(() => {
           refreshingRef.current = false
           setRefreshing(false)
           // Сначала показываем, что обновилось (счётчик на паузе), и только через
@@ -366,7 +379,7 @@ export function AdminStatsPage() {
         <RolesPage />
       ) : tab === 13 ? (
         /* §8 (MR-44): тикеты поддержки — поддержка видит все, отвечает, двигает статус. */
-        <AdminTicketsTab />
+        <AdminTicketsTab autoRefresh={autoRefresh} registerReload={registerTicketsReload} />
       ) : tab === 14 ? (
         /* §6 (MR-40b): сессия каталог-парсера (cookies) — управление из админки. */
         <AdminParserSessionTab />
@@ -1361,32 +1374,71 @@ const TICKET_STATUS_META: Record<TicketStatus, { label: string; tone: 'spark' | 
 const TICKET_STATUS_OPTS = (Object.keys(TICKET_STATUS_META) as TicketStatus[]).map((v) => ({ value: v, label: TICKET_STATUS_META[v].label }))
 const ticketTs = (ts: number) => ts ? new Date(ts).toLocaleString('ru-RU', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' }) : ''
 
-function AdminTicketsTab() {
+function AdminTicketsTab({ autoRefresh = true, registerReload }: {
+  autoRefresh?: boolean
+  /** Отдаём наверх тихую перезагрузку — её зовёт общий цикл автообновления админки. */
+  registerReload?: (fn: (() => Promise<void>) | null) => void
+}) {
   const pushToast = useApp((s) => s.pushToast)
   const [tickets, setTickets] = useState<ApiTicket[]>([])
   const [loading, setLoading] = useState(true)
   const [statusFilter, setStatusFilter] = useState('all')
   const [open, setOpen] = useState<ApiTicket | null>(null)
+  /** Выбранный КЛИЕНТ: провалились в человека — снизу все его обращения. */
+  const [client, setClient] = useState<string | null>(null)
   const [reply, setReply] = useState('')
   const [busy, setBusy] = useState(false)
 
-  const load = useCallback(async () => {
-    setLoading(true)
-    try { setTickets(await fetchTickets(true)) } catch { /* пусто */ } finally { setLoading(false) }
+  // silent — фоновое обновление: не гасим список «Загрузкой», иначе на каждом тике
+  // экран моргал бы заглушкой поверх переписки.
+  const load = useCallback(async (opts?: { silent?: boolean }) => {
+    if (!opts?.silent) setLoading(true)
+    try { setTickets(await fetchTickets(true)) } catch { /* пусто */ } finally { if (!opts?.silent) setLoading(false) }
   }, [])
   useEffect(() => { void load() }, [load])
+  useEffect(() => {
+    registerReload?.(() => load({ silent: true }))
+    return () => registerReload?.(null)
+  }, [registerReload, load])
 
   const rows = statusFilter === 'all' ? tickets : tickets.filter((t) => t.status === statusFilter)
+
+  /**
+   * Кластеры по клиенту: один человек может завести десяток обращений, и плоским
+   * списком это каша. Сначала показываем людей (с суммой непрочитанного), а внутри —
+   * его тикеты.
+   */
+  const clients = useMemo(() => {
+    const map = new Map<string, { userId: string; label: string; tickets: ApiTicket[]; unread: number; updatedAt: number }>()
+    for (const t of rows) {
+      const key = t.userId || '—'
+      const cur = map.get(key) || { userId: key, label: t.ownerEmail || t.ownerName || key, tickets: [], unread: 0, updatedAt: 0 }
+      cur.tickets.push(t)
+      cur.unread += t.unread || 0
+      cur.updatedAt = Math.max(cur.updatedAt, t.updatedAt || 0)
+      map.set(key, cur)
+    }
+    // Сначала те, у кого есть непрочитанное, потом по свежести.
+    return [...map.values()].sort((a, b) => (b.unread - a.unread) || (b.updatedAt - a.updatedAt))
+  }, [rows])
+  const clientRows = useMemo(() => clients.find((c) => c.userId === client)?.tickets || [], [clients, client])
+
   // Открытие как поддержка: GET отмечает прочитанным для стороны поддержки → гасим значок.
   const openThread = async (t: ApiTicket) => {
     setOpen(t); setReply('')
     try { const fresh = await fetchTicket(t.id, true); setOpen(fresh); setTickets((l) => l.map((x) => x.id === fresh.id ? { ...fresh, unread: 0 } : x)) } catch { /* keep */ }
   }
+  /** Проваливаемся в клиента. Если обращение одно — сразу открываем его. */
+  const openClient = (c: { userId: string; tickets: ApiTicket[] }) => {
+    setClient(c.userId)
+    if (c.tickets.length === 1) void openThread(c.tickets[0])
+    else setOpen(null)
+  }
 
   // Живой диалог: пока чат открыт — подтягиваем новые сообщения клиента (как в мессенджере).
   const openId = open?.id
   useEffect(() => {
-    if (!openId) return
+    if (!openId || !autoRefresh) return
     const iv = setInterval(() => {
       void fetchTicket(openId, true)
         .then((fresh) => {
@@ -1396,7 +1448,7 @@ function AdminTicketsTab() {
         .catch(() => { /* сеть моргнула */ })
     }, 5000)
     return () => clearInterval(iv)
-  }, [openId])
+  }, [openId, autoRefresh])
 
   const feedRef = useRef<HTMLDivElement>(null)
   const msgCount = open?.messages.length ?? 0
@@ -1428,7 +1480,7 @@ function AdminTicketsTab() {
     <div className="space-y-3">
       <div className="flex flex-wrap items-center gap-2">
         <Select className="w-52" value={statusFilter} onChange={setStatusFilter} options={[{ value: 'all', label: 'Все статусы' }, ...TICKET_STATUS_OPTS]} />
-        <span className="text-sm text-muted">Тикетов: {rows.length}</span>
+        <span className="text-sm text-muted">Клиентов: {clients.length} · обращений: {rows.length}</span>
         <button onClick={() => void load()} className="btn-ghost ml-auto h-9" disabled={loading}><RefreshCw size={15} className={loading ? 'animate-spin' : ''} /> Обновить</button>
       </div>
 
@@ -1438,38 +1490,72 @@ function AdminTicketsTab() {
         <Card><EmptyState icon={<LifeBuoy size={24} />} title="Тикетов нет" desc="Обращения клиентов появятся здесь." /></Card>
       ) : (
         <div className="grid gap-3 lg:grid-cols-[minmax(260px,340px)_1fr]">
-          {/* Список диалогов. На узком экране прячется, когда открыт чат. */}
+          {/* Слева — КЛИЕНТЫ (кластер обращений), внутри клиента — его тикеты.
+              На узком экране панель прячется, когда открыт чат. */}
           <Card className={cn('h-[calc(100vh-22rem)] min-h-[320px] overflow-y-auto p-1.5', open && 'hidden lg:block')}>
-            {rows.map((t) => {
-              const m = TICKET_STATUS_META[t.status]
-              const last = t.messages[t.messages.length - 1]
-              const active = open?.id === t.id
-              return (
+            {!client ? (
+              clients.map((c) => (
                 <button
-                  key={t.id}
-                  onClick={() => void openThread(t)}
-                  className={cn(
-                    'flex w-full items-start gap-2.5 rounded-xl p-2.5 text-left transition-colors',
-                    active ? 'bg-spark-500/12' : 'hover:bg-elevated',
-                  )}
+                  key={c.userId}
+                  onClick={() => openClient(c)}
+                  className="flex w-full items-start gap-2.5 rounded-xl p-2.5 text-left transition-colors hover:bg-elevated"
                 >
-                  <div className="grid h-9 w-9 shrink-0 place-items-center rounded-full border border-line bg-elevated text-muted"><MessageSquare size={16} /></div>
+                  <div className="grid h-9 w-9 shrink-0 place-items-center rounded-full border border-line bg-elevated text-muted"><Users size={16} /></div>
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-1.5">
-                      <span className={cn('min-w-0 flex-1 truncate text-sm', t.unread ? 'font-bold text-fg' : 'font-semibold text-fg')}>{t.subject}</span>
-                      {!!t.unread && <span className="grid min-w-[18px] shrink-0 place-items-center rounded-full bg-rose-500 px-1 text-[10px] font-bold text-white">{t.unread}</span>}
+                      <span className={cn('min-w-0 flex-1 truncate text-sm', c.unread ? 'font-bold text-fg' : 'font-semibold text-fg')}>{c.label}</span>
+                      {!!c.unread && <span className="grid min-w-[18px] shrink-0 place-items-center rounded-full bg-rose-500 px-1 text-[10px] font-bold text-white">{c.unread}</span>}
                     </div>
-                    <div className="truncate text-[11px] text-iris-300">{t.ownerEmail || t.ownerName || t.userId}</div>
-                    <div className="truncate font-mono text-[10px] text-faint">ID {shortId(t.userId)}</div>
-                    <div className="truncate text-[11px] text-muted">{last ? `${last.from === 'support' ? 'Поддержка: ' : ''}${last.text}` : '—'}</div>
-                    <div className="mt-0.5 flex items-center gap-1.5">
-                      <Badge tone={m.tone}>{m.label}</Badge>
-                      <span className="text-[10px] text-muted">{ticketTs(t.updatedAt)}</span>
+                    <div className="truncate font-mono text-[10px] text-faint">ID {shortId(c.userId)}</div>
+                    <div className="mt-0.5 flex items-center gap-1.5 text-[11px] text-muted">
+                      <MessageSquare size={11} /> обращений: {c.tickets.length}
+                      <span className="text-[10px]">· {ticketTs(c.updatedAt)}</span>
                     </div>
                   </div>
                 </button>
-              )
-            })}
+              ))
+            ) : (
+              <>
+                {/* Провалились в человека: шапка с ним + ВСЕ его обращения ниже. */}
+                <div className="mb-1 flex items-center gap-2 border-b border-line px-1.5 pb-2">
+                  <button onClick={() => { setClient(null); setOpen(null) }} className="btn-ghost h-8 px-2"><ArrowLeft size={15} /></button>
+                  <div className="min-w-0">
+                    <div className="truncate text-sm font-bold text-fg">{clients.find((c) => c.userId === client)?.label || client}</div>
+                    <div className="truncate font-mono text-[10px] text-faint">ID {shortId(client)} · обращений: {clientRows.length}</div>
+                  </div>
+                </div>
+                {clientRows.map((t) => {
+                  const m = TICKET_STATUS_META[t.status]
+                  const last = t.messages[t.messages.length - 1]
+                  const active = open?.id === t.id
+                  return (
+                    <button
+                      key={t.id}
+                      onClick={() => void openThread(t)}
+                      className={cn(
+                        'flex w-full items-start gap-2.5 rounded-xl p-2.5 text-left transition-colors',
+                        active ? 'bg-spark-500/12' : 'hover:bg-elevated',
+                      )}
+                    >
+                      <div className="grid h-9 w-9 shrink-0 place-items-center rounded-full border border-line bg-elevated text-muted"><MessageSquare size={16} /></div>
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center gap-1.5">
+                          <span className={cn('min-w-0 flex-1 truncate text-sm', t.unread ? 'font-bold text-fg' : 'font-semibold text-fg')}>{t.subject}</span>
+                          {!!t.unread && <span className="grid min-w-[18px] shrink-0 place-items-center rounded-full bg-rose-500 px-1 text-[10px] font-bold text-white">{t.unread}</span>}
+                        </div>
+                        <div className={cn('truncate text-[11px]', t.unread ? 'font-semibold text-rose-300' : 'text-muted')}>
+                          {last ? `${last.from === 'support' ? 'Поддержка: ' : ''}${last.text}` : '—'}
+                        </div>
+                        <div className="mt-0.5 flex items-center gap-1.5">
+                          <Badge tone={m.tone}>{m.label}</Badge>
+                          <span className="text-[10px] text-muted">{ticketTs(t.updatedAt)}</span>
+                        </div>
+                      </div>
+                    </button>
+                  )
+                })}
+              </>
+            )}
           </Card>
 
           {/* Переписка. */}
@@ -1478,7 +1564,7 @@ function AdminTicketsTab() {
               <div className="grid flex-1 place-items-center p-6 text-center text-sm text-muted">
                 <div>
                   <MessageSquare size={26} className="mx-auto mb-2 opacity-40" />
-                  Выберите обращение слева — переписка откроется здесь.
+                  {client ? 'Выберите обращение клиента слева.' : 'Выберите клиента слева — его обращения и переписка откроются здесь.'}
                 </div>
               </div>
             ) : (
