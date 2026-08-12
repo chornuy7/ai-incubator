@@ -47,14 +47,20 @@ function describeProxy(raw) {
   }
 }
 
-/** Признан ли прокси нерабочим совсем недавно (см. DEAD_PROXY_TRUST_MS). */
-async function recentlyDeadProxy(url) {
+/**
+ * Признан ли прокси нерабочим совсем недавно (см. DEAD_PROXY_TRUST_MS).
+ * Смотрим каталог, а если прокси там нет (назначен вручную строкой) — отметку в мете
+ * аккаунта: иначе для «ручных» прокси быстрый путь не работал и карточка каждый раз
+ * заново ждала пробу.
+ * @param {string} url @param {object} meta
+ */
+async function recentlyDeadProxy(url, meta = {}) {
   if (!url || url === '—') return false
   try {
     const p = await findProxyByUrl(url)
-    if (!p || p.status !== 'dead') return false
-    return !!p.lastCheckAt && (Date.now() - p.lastCheckAt) < DEAD_PROXY_TRUST_MS
-  } catch { return false }
+    if (p) return p.status === 'dead' && !!p.lastCheckAt && (Date.now() - p.lastCheckAt) < DEAD_PROXY_TRUST_MS
+  } catch { /* каталог недоступен — падаем на мету */ }
+  return meta.proxyWorking === false && !!meta.proxyCheckAt && (Date.now() - meta.proxyCheckAt) < DEAD_PROXY_TRUST_MS
 }
 
 /**
@@ -279,7 +285,7 @@ export async function buildAccountStats(accountId, opts = {}) {
     // Прокси не назначен — по сети не ходим вообще. Раньше шли напрямую с сервера,
     // ловили произвольную ошибку и писали «невалиден»: подменяли причину.
     blocked = 'no_proxy'
-  } else if (sessionStr && !busyIn && await recentlyDeadProxy(meta.proxy)) {
+  } else if (sessionStr && !busyIn && await recentlyDeadProxy(meta.proxy, meta)) {
     // Прокси уже признан нерабочим только что — не ждём сеть ещё раз (карточка
     // открывалась по 15с на каждом заходе). Через DEAD_PROXY_TRUST_MS проверим снова.
     blocked = 'proxy_down'
