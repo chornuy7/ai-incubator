@@ -19,6 +19,11 @@ export interface Proxy {
   password: string
   country: string
   status: ProxyStatus
+  /**
+   * Почему такой статус: 'no_telegram' — наружу ходит, но в Telegram не пускает,
+   * 'protocol' — не тот протокол, 'unreachable' — хост мёртв.
+   */
+  reason?: string
   /** Откуда взята страна: реальный выходной IP или адрес шлюза («примерно»). */
   geoSource: GeoSource
   note: string

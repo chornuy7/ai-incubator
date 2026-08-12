@@ -14,10 +14,27 @@ import { cn } from '@/shared/lib/utils'
 import { ImportProxiesModal } from '@/features/import-proxies/ImportProxiesModal'
 
 const STATUS_META: Record<Proxy['status'], { label: string; tone: 'spark' | 'rose' | 'amber' | 'muted'; hint?: string }> = {
-  ok: { label: 'Рабочий', tone: 'spark', hint: 'Через прокси удалось выйти в интернет' },
+  ok: { label: 'Рабочий', tone: 'spark', hint: 'Через прокси открывается интернет И доступны серверы Telegram' },
   bad: { label: 'Не тот протокол', tone: 'amber', hint: 'Порт открыт, но выйти наружу не удалось — обычно помогает сменить схему http ↔ socks5' },
   dead: { label: 'Мёртвый', tone: 'rose', hint: 'Хост не отвечает' },
   unknown: { label: 'Не проверен', tone: 'muted' },
+}
+
+/**
+ * Статус с ПРИЧИНОЙ. Главный случай — `no_telegram`: прокси прекрасно ходит в интернет
+ * (гео определяется, ip-api отвечает), но соединение с ДЦ Telegram не проходит. Раньше
+ * такой прокси числился «Рабочим», а аккаунты на нём молча висели на таймаутах.
+ */
+function statusMeta(p: Proxy) {
+  const base = STATUS_META[p.status]
+  if (p.status === 'bad' && p.reason === 'no_telegram') {
+    return {
+      label: 'Не пускает в Telegram',
+      tone: 'rose' as const,
+      hint: 'Через прокси открывается обычный интернет, но соединение с серверами Telegram не проходит. Для аккаунтов такой прокси бесполезен — замените его.',
+    }
+  }
+  return base
 }
 
 const emptyForm = (): Partial<Proxy> => ({ label: '', kind: 'static', scheme: 'socks5', host: '', port: 1080, username: '', password: '', country: '', note: '', status: 'unknown' })
@@ -199,7 +216,7 @@ export function ProxiesPage() {
       ) : (
         <div className="flex flex-col gap-2">
           {visible.map((p) => {
-            const sm = STATUS_META[p.status]
+            const sm = statusMeta(p)
             return (
               <Card key={p.id} className="flex flex-wrap items-center gap-3 p-3">
                 <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-iris-500/12 text-iris-300"><Network size={18} /></span>
@@ -306,7 +323,7 @@ function ProxyDetailModal({ proxy, accountsCount, onClose, onUpdated }: {
   }
   useEffect(() => { void run() /* авто-проверка при открытии */ }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
-  const sm = STATUS_META[p.status]
+  const sm = statusMeta(p)
   const fmtDate = (t: number | null | undefined) => (t ? new Date(t).toLocaleString('ru-RU') : '—')
 
   return (
