@@ -64,6 +64,27 @@ async function recentlyDeadProxy(url, meta = {}) {
 }
 
 /**
+ * Сохранённый вердикт по прокси — БЕЗ похода в сеть. Источник правды: каталог прокси
+ * (его обновляет фоновая проверка раз в 30 минут и кнопки «Тест»/«Проверить все»), а для
+ * «ручных» прокси вне каталога — отметка в мете аккаунта.
+ * @returns {Promise<'ok'|'down'|null>} null — вердикта ещё нет
+ */
+async function cachedProxyVerdict(url, meta = {}) {
+  if (!url || url === '—') return null
+  try {
+    const p = await findProxyByUrl(url)
+    if (p && p.lastCheckAt) {
+      if (p.status === 'ok') return 'ok'
+      // dead — хост не отвечает; bad — не тот протокол или не пускает в Telegram.
+      if (p.status === 'dead' || p.status === 'bad') return 'down'
+      return null
+    }
+  } catch { /* каталог недоступен — падаем на мету */ }
+  if (meta.proxyCheckAt && typeof meta.proxyWorking === 'boolean') return meta.proxyWorking ? 'ok' : 'down'
+  return null
+}
+
+/**
  * Похожа ли ошибка подключения на проблему ПРОКСИ/сети, а не сессии.
  *
  * Без этого любая сетевая беда записывалась аккаунту в «невалиден»: сдох прокси —
@@ -280,11 +301,24 @@ export async function buildAccountStats(accountId, opts = {}) {
    */
   let blocked = null
 
-  // Не трогаем аккаунт по сети, если он занят активной задачей — отдаём кэш из meta.
+  /**
+   * Живую проверку делаем ТОЛЬКО по явной просьбе (кнопка «Проверить» / проверка
+   * спамблока). По умолчанию отдаём СОХРАНЁННЫЙ вердикт: статус прокси лежит в каталоге,
+   * результат последней проверки аккаунта — в его мете. Раньше карточка лезла в сеть на
+   * каждом открытии и ждала до 15с, хотя ответ уже был известен. Фон обновляет каталог
+   * сам (проверка всех прокси раз в 30 минут).
+   */
+  const wantLive = !!opts.force || !!opts.spam
+
   if (sessionStr && !busyIn && !proxy.configured) {
     // Прокси не назначен — по сети не ходим вообще. Раньше шли напрямую с сервера,
     // ловили произвольную ошибку и писали «невалиден»: подменяли причину.
     blocked = 'no_proxy'
+  } else if (sessionStr && !busyIn && !wantLive) {
+    // Быстрый путь: берём вердикт из базы. Прокси нерабочий — так и говорим, сеть не трогаем.
+    const cached = await cachedProxyVerdict(meta.proxy, meta)
+    if (cached === 'down') { blocked = 'proxy_down'; proxy.working = false }
+    else if (cached === 'ok') proxy.working = true
   } else if (sessionStr && !busyIn && await recentlyDeadProxy(meta.proxy, meta)) {
     // Прокси уже признан нерабочим только что — не ждём сеть ещё раз (карточка
     // открывалась по 15с на каждом заходе). Через DEAD_PROXY_TRUST_MS проверим снова.
@@ -304,7 +338,7 @@ export async function buildAccountStats(accountId, opts = {}) {
     }
   }
 
-  if (sessionStr && !busyIn && !blocked) {
+  if (sessionStr && !busyIn && !blocked && wantLive) {
     let client
     try {
       // createClient сам делает быстрый TCP-пинг прокси и падает за ~2.5с на мёртвом прокси
@@ -352,6 +386,11 @@ export async function buildAccountStats(accountId, opts = {}) {
     if (live && proxy.configured) {
       try { await setAccountMeta(accountId, { proxyWorking: proxy.working, proxyCheckAt: Date.now() }) } catch { /* non-fatal */ }
     }
+    // Запоминаем ВЕРДИКТ по сессии: следующее открытие карточки покажет его мгновенно,
+    // без похода в сеть. Пишем только когда реально проверяли и не упёрлись в прокси.
+    if (live && !blocked) {
+      try { await setAccountMeta(accountId, { lastValid: sessionOk, lastValidAt: Date.now() }) } catch { /* non-fatal */ }
+    }
   }
 
   const phone = me?.phone || meta.phone || ''
@@ -370,14 +409,20 @@ export async function buildAccountStats(accountId, opts = {}) {
   // Статус valid: если удалось живьём — по факту; если занят/нет прокси/прокси мёртв —
   // по meta (последнее известное). Про сессию в этих случаях НИЧЕГО не известно, и
   // объявлять аккаунт невалидным нельзя: причина не в нём.
-  const lastKnownValid = meta.status !== 'reauth' && meta.status !== 'invalid'
+  // Последнее ИЗВЕСТНОЕ: сначала сохранённый вердикт живой проверки, иначе — по статусу.
+  const lastKnownValid = typeof meta.lastValid === 'boolean'
+    ? meta.lastValid
+    : (meta.status !== 'reauth' && meta.status !== 'invalid')
+  // Живой проверки в этом вызове не было (кэш-режим) — не выдумываем вердикт, берём
+  // сохранённый. Иначе карточка, открытая без «Проверить», клеймила бы аккаунт невалидным.
+  const cachedView = !live && !!sessionStr && !busyIn
   const effectiveStatus = busyIn
     ? (meta.status || 'working')
-    : blocked
+    : (blocked || cachedView)
       ? (meta.status || 'active')
       : (!sessionStr ? 'reauth' : sessionOk ? 'active' : 'reauth')
-  const valid = (busyIn || blocked) ? lastKnownValid : sessionOk
-  const sessionKnownOk = sessionOk || ((busyIn || blocked) ? valid : false)
+  const valid = (busyIn || blocked || cachedView) ? lastKnownValid : sessionOk
+  const sessionKnownOk = sessionOk || ((busyIn || blocked || cachedView) ? valid : false)
 
   // MR-63: свежая проверка (opts.spam) приоритетнее, но только если дала определённый ответ;
   // иначе показываем ПОСЛЕДНИЙ сохранённый результат из meta (а не сбрасываем в «Неизвестно»).
@@ -429,6 +474,10 @@ export async function buildAccountStats(accountId, opts = {}) {
     },
     status: {
       valid,
+      /** Данные из базы (живой проверки сейчас не было) — интерфейс предлагает «Проверить». */
+      fromCache: cachedView,
+      /** Когда проверяли по-настоящему в последний раз. */
+      lastValidAt: meta.lastValidAt || null,
       // Почему проверка не доведена до конца (null — доведена).
       checkBlocked: blocked,
       checkNote: blocked === 'no_proxy'

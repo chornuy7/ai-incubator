@@ -66,7 +66,7 @@ export function AccountOverviewPage() {
   const [spamChecking, setSpamChecking] = useState(false)
   const [releasing, setReleasing] = useState(false)
 
-  const load = useCallback(async (opts?: { spam?: boolean }): Promise<AccountStats | null> => {
+  const load = useCallback(async (opts?: { spam?: boolean; force?: boolean }): Promise<AccountStats | null> => {
     if (!account) return null
     setLoading(true)
     try { const s = await fetchAccountStats(account.id, opts); setStats(s); return s }
@@ -82,7 +82,7 @@ export function AccountOverviewPage() {
 
   // MR-129: проверка прокси с явным результатом-тостом (раньше клик «Проверить» ничего не сообщал).
   const runProxyCheck = async () => {
-    const s = await load()
+    const s = await load({ force: true })
     if (!s) return
     const px = s.proxy
     if (!px.configured) pushToast({ type: 'info', title: 'Прокси не настроен', desc: 'Аккаунт подключается напрямую' })
@@ -192,7 +192,7 @@ export function AccountOverviewPage() {
                 stats={stats}
                 actions={{
                   loading, spamChecking, releasing,
-                  onRecheck: () => void load(),
+                  onRecheck: () => void load({ force: true }),
                   onSpamCheck: () => void runSpamCheck(),
                   onRelease: () => void runRelease(),
                 }}

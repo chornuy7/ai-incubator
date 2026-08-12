@@ -51,8 +51,12 @@ export async function patchAccountStatus(accountId: string, status: AccountStatu
   return patchAccount(accountId, { status })
 }
 
-export async function fetchAccountStats(accountId: string, opts?: { spam?: boolean }): Promise<AccountStats> {
-  const qs = opts?.spam ? '?spam=1' : ''
+/**
+ * Статистика аккаунта. По умолчанию — СОХРАНЁННЫЙ вердикт (мгновенно, без сети).
+ * `force` — живая перепроверка по кнопке «Проверить».
+ */
+export async function fetchAccountStats(accountId: string, opts?: { spam?: boolean; force?: boolean }): Promise<AccountStats> {
+  const qs = opts?.spam ? '?spam=1' : opts?.force ? '?force=1' : ''
   const res = await fetch(`/api/tg/accounts/${accountId}/stats${qs}`)
   const data = await parseJson(res)
   return data.stats as AccountStats

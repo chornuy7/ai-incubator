@@ -60,7 +60,7 @@ export function AccountCardBody({ account }: { account: TgAccount }) {
   const [spamChecking, setSpamChecking] = useState(false)
   const [releasing, setReleasing] = useState(false)
 
-  const load = useCallback(async (opts?: { spam?: boolean }) => {
+  const load = useCallback(async (opts?: { spam?: boolean; force?: boolean }) => {
     setLoading(true)
     try {
       const s = await fetchAccountStats(account.id, opts)
@@ -109,7 +109,7 @@ export function AccountCardBody({ account }: { account: TgAccount }) {
             stats={stats}
             actions={{
               loading, spamChecking, releasing,
-              onRecheck: () => void load(),
+              onRecheck: () => void load({ force: true }),
               onSpamCheck: () => void runSpamCheck(),
               onRelease: () => void runRelease(),
             }}
@@ -139,7 +139,7 @@ export function AccountCardBody({ account }: { account: TgAccount }) {
             <div className="animate-fade-in">
               {tab === 'profile' && <ProfileTab account={account} stats={stats} />}
               {tab === 'work' && <WorkTab accountId={account.id} />}
-              {tab === 'proxy' && <ProxyTab account={account} stats={stats} loading={loading} onRecheck={() => void load()} />}
+              {tab === 'proxy' && <ProxyTab account={account} stats={stats} loading={loading} onRecheck={() => void load({ force: true })} />}
               {tab === 'health' && <HealthTab stats={stats} accountId={account.id} />}
               {tab === 'channels' && <ChannelsTab accountId={account.id} />}
             </div>
@@ -225,6 +225,13 @@ export function HeroBanner({ account, stats, actions }: {
               {valid == null ? <ShieldQuestion size={12} /> : valid ? <ShieldCheck size={12} /> : <ShieldAlert size={12} />}
               {valid == null ? 'Проверка…' : valid ? 'Валидный' : 'Невалидный'}
             </Pill>
+          )}
+          {/* Честно говорим, что показываем сохранённый результат, а не свежий: живая
+              проверка идёт только по кнопке «Обновить» (иначе карточка каждый раз ждала сеть). */}
+          {stats?.status.fromCache && (
+            <span className="text-[10px] text-white/60" title={stats.status.lastValidAt ? `Последняя живая проверка: ${fmtDate(stats.status.lastValidAt)}` : 'Живой проверки ещё не было'}>
+              данные сохранённые · {stats.status.lastValidAt ? fmtDate(stats.status.lastValidAt) : 'не проверялся'}
+            </span>
           )}
           <Pill tone={spam === 'clean' ? 'ok' : spam === 'blocked' ? 'bad' : 'neutral'}>
             {spam === 'clean' ? 'Без спамблока' : spam === 'blocked' ? 'Спамблок' : 'Спамблок: —'}

@@ -179,7 +179,9 @@ app.get('/api/tg/accounts/daily-all', async (_req, res) => {
 app.get('/api/tg/accounts/:accountId/stats', async (req, res) => {
   try {
     const spam = req.query.spam === '1' || req.query.spam === 'true'
-    const stats = await buildAccountStats(req.params.accountId, { spam })
+    // force=1 — живая проверка по кнопке. Без него отдаём сохранённый вердикт мгновенно.
+    const force = req.query.force === '1' || req.query.force === 'true'
+    const stats = await buildAccountStats(req.params.accountId, { spam, force })
     res.json({ ok: true, stats })
   } catch (err) {
     res.status(500).json({ ok: false, error: err instanceof Error ? err.message : 'Ошибка' })

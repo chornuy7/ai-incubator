@@ -193,6 +193,10 @@ export interface AccountStats {
   }
   status: {
     valid: boolean
+    /** Данные из базы — живой проверки сейчас не делали (кнопка «Проверить» её запускает). */
+    fromCache?: boolean
+    /** Когда проверяли по-настоящему в последний раз. */
+    lastValidAt?: number | null
     /** Проверку не довели до конца: причина в прокси, а не в аккаунте. */
     checkBlocked?: 'no_proxy' | 'proxy_down' | null
     checkNote?: string | null

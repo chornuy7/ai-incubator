@@ -51,7 +51,24 @@ export async function connectAccount(accountId, taskId) {
   await setAccountMeta(accountId, { status: 'working', statusBefore: meta.status || 'active' })
   // invoke уже обёрнут в createClient (жёсткий лимит RPC + флаг __aborted) — предел
   // действует и здесь, и в карточке аккаунта, и в каналах.
-  const client = await createClient(sessionStr, meta.proxy, accountFingerprint(accountId, meta))
+  let client
+  try {
+    client = await createClient(sessionStr, meta.proxy, accountFingerprint(accountId, meta))
+  } catch (err) {
+    // Прокси подвёл в БОЮ — помечаем нерабочим сразу, а не ждём получасовой авто-проверки:
+    // иначе следующая задача снова возьмёт этот прокси и снова встанет на таймаутах.
+    const msg = String(err?.message || '')
+    if (meta.proxy && meta.proxy !== '—' && !/AUTH_KEY|SESSION_REVOKED/i.test(msg)) {
+      try {
+        const { markProxyStatusByUrl } = await import('../proxies.js')
+        await markProxyStatusByUrl(meta.proxy, 'dead')
+      } catch { /* non-fatal */ }
+      try { await setAccountMeta(accountId, { proxyWorking: false, proxyCheckAt: Date.now() }) } catch { /* non-fatal */ }
+    }
+    // Аккаунт из 'working' надо вернуть — статус ему выставили ДО подключения.
+    try { await setAccountMeta(accountId, { status: meta.status || 'active', statusBefore: null }) } catch { /* non-fatal */ }
+    throw err
+  }
   // Регистрируем клиент под задачей — чтобы стоп/пауза могли его оборвать (см. abortTaskClients).
   if (taskId) {
     client.__taskId = taskId
