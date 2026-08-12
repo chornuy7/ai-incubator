@@ -21,6 +21,19 @@ export const PROXY_SCHEMES = ['socks5', 'http']
  */
 export const PROXY_STATUSES = ['ok', 'bad', 'dead', 'unknown']
 
+/**
+ * Годится ли прокси, чтобы ВЫДАВАТЬ его аккаунту.
+ *
+ * Отсеиваем и `dead` (хост молчит), и `bad` — в том числе «не пускает в Telegram»:
+ * раньше проверялся только `dead`, поэтому полсотни прокси, которые ходят в интернет,
+ * но не пускают в Telegram, спокойно раздавались аккаунтам (правка заказчика 12.08).
+ * `unknown` оставляем: он ещё не проверялся, а не признан плохим.
+ * @param {{status?: string}} p
+ */
+export function isUsableProxy(p) {
+  return p?.status !== 'dead' && p?.status !== 'bad'
+}
+
 /** Построить URL-строку прокси (совместимо с parseProxy). @param {object} p */
 export function toProxyUrl(p) {
   if (!p || !p.host || !p.port) return ''

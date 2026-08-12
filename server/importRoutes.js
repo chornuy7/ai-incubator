@@ -13,7 +13,7 @@ import fs from 'fs/promises'
 import multer from 'multer'
 import { scanFolder, listDirs } from './lib/accountScan.js'
 import { distributeProxies, pairByOrder, importOne, existingAccountKeys, isKnownByPhone } from './lib/accountImport.js'
-import { listProxies, toProxyUrl, proxyUsageMap } from './proxies.js'
+import { listProxies, toProxyUrl, proxyUsageMap, isUsableProxy } from './proxies.js'
 import { loadAllMeta, setAccountMeta, countryFromPhone } from './accountsMeta.js'
 import { appendAudit } from './lib/auditLog.js'
 import { authEnforced } from './lib/session.js'
@@ -109,7 +109,7 @@ importRouter.post('/run', async (req, res) => {
     // Пул прокси: берём выбранные (или все живые). Дубли разрешены — «занятые» больше
     // не исключаем: один прокси можно повесить на несколько аккаунтов.
     const all = await listProxies()
-    const chosen = proxyIds.length ? all.filter((p) => proxyIds.includes(p.id)) : all.filter((p) => p.status !== 'dead')
+    const chosen = proxyIds.length ? all.filter((p) => proxyIds.includes(p.id)) : all.filter(isUsableProxy)
     const assigned = distributeProxies(items, {
       mode: proxyMode,
       proxyUrls: chosen.map(toProxyUrl),
@@ -239,7 +239,7 @@ importRouter.get('/proxy-capacity', async (_req, res) => {
     const all = await listProxies()
     const meta = await loadAllMeta()
     const usage = proxyUsageMap(meta)
-    const usable = all.filter((p) => p.status !== 'dead')
+    const usable = all.filter(isUsableProxy)
     const unused = usable.filter((p) => !(usage[toProxyUrl(p)]?.length))
     // `free` оставляем для обратной совместимости фронта = сколько ещё не занятых.
     res.json({ ok: true, total: all.length, usable: usable.length, free: unused.length, freeIds: unused.map((p) => p.id) })
@@ -304,7 +304,7 @@ importRouter.post('/assign-proxies', async (req, res) => {
     if (mode === 'single' && !singleProxy) return res.status(400).json({ ok: false, error: 'Выберите прокси' })
 
     const all = await listProxies()
-    const chosen = proxyIds.length ? all.filter((p) => proxyIds.includes(p.id)) : all.filter((p) => p.status !== 'dead')
+    const chosen = proxyIds.length ? all.filter((p) => proxyIds.includes(p.id)) : all.filter(isUsableProxy)
     // Дубли разрешены — «занятые» не исключаем: один прокси можно повесить на многих.
     const assigned = distributeProxies(ids.map((id) => ({ id })), {
       mode, proxyUrls: chosen.map(toProxyUrl), single: singleProxy,

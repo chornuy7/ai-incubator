@@ -34,6 +34,17 @@ export interface Proxy {
   usedBy?: number
 }
 
+/**
+ * Годится ли прокси, чтобы ПРЕДЛАГАТЬ его аккаунту.
+ *
+ * `dead` и `bad` (в т.ч. «не пускает в Telegram») из выбора убираем: назначить заведомо
+ * нерабочий — значит сознательно отправить аккаунт в таймауты. `unknown` оставляем: он
+ * ещё не проверялся, а не признан плохим.
+ */
+export function isUsableProxy(p: Proxy): boolean {
+  return p.status !== 'dead' && p.status !== 'bad'
+}
+
 export const PROXY_KIND_LABELS: Record<ProxyKind, string> = {
   static: 'Статический',
   mobile: 'Мобильный',
