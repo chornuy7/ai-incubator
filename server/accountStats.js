@@ -2,7 +2,7 @@
 import { getAccountMeta, loadAllMeta, setAccountStatus, setAccountMeta } from './accountsMeta.js'
 import { loadSessionString, createClient } from './tgAuth.js'
 import { parseProxy } from './proxy.js'
-import { probeProxyProtocol, markProxyStatusByUrl } from './proxies.js'
+import { probeProxyProtocol, markProxyStatusByUrl, findProxyByUrl } from './proxies.js'
 import { getAccountLock } from './lib/accountLocks.js'
 import { accountTrust } from './lib/trustScore.js'
 import { setTrustCache } from './lib/trustCache.js'
@@ -12,7 +12,13 @@ import { accountFingerprint } from './lib/deviceFingerprint.js'
 
 const DAY = 24 * 60 * 60 * 1000
 /** Сколько ждём ответ Telegram в карточке аккаунта, прежде чем признать проверку сорванной. */
-const STATS_BUDGET_MS = Math.max(4000, Number(process.env.TG_STATS_TIMEOUT_MS) || 12000)
+const STATS_BUDGET_MS = Math.max(4000, Number(process.env.TG_STATS_TIMEOUT_MS) || 8000)
+/**
+ * Насколько доверяем свежему вердикту «прокси нерабочий». В это окно карточка НЕ ходит
+ * в сеть повторно: смысла ждать те же 15с на каждом открытии нет, ответ известен.
+ * По истечении окна проверка идёт заново — вердикт сам себя лечит, если прокси починили.
+ */
+const DEAD_PROXY_TRUST_MS = 10 * 60 * 1000
 
 function sleep(ms) {
   return new Promise((r) => setTimeout(r, ms))
@@ -39,6 +45,16 @@ function describeProxy(raw) {
     login: parsed?.username ?? null,
     configured: !!parsed,
   }
+}
+
+/** Признан ли прокси нерабочим совсем недавно (см. DEAD_PROXY_TRUST_MS). */
+async function recentlyDeadProxy(url) {
+  if (!url || url === '—') return false
+  try {
+    const p = await findProxyByUrl(url)
+    if (!p || p.status !== 'dead') return false
+    return !!p.lastCheckAt && (Date.now() - p.lastCheckAt) < DEAD_PROXY_TRUST_MS
+  } catch { return false }
 }
 
 /**
@@ -263,6 +279,11 @@ export async function buildAccountStats(accountId, opts = {}) {
     // Прокси не назначен — по сети не ходим вообще. Раньше шли напрямую с сервера,
     // ловили произвольную ошибку и писали «невалиден»: подменяли причину.
     blocked = 'no_proxy'
+  } else if (sessionStr && !busyIn && await recentlyDeadProxy(meta.proxy)) {
+    // Прокси уже признан нерабочим только что — не ждём сеть ещё раз (карточка
+    // открывалась по 15с на каждом заходе). Через DEAD_PROXY_TRUST_MS проверим снова.
+    blocked = 'proxy_down'
+    proxy.working = false
   } else if (sessionStr && !busyIn) {
     // Сначала дёшево проверяем САМ прокси (рукопожатие по протоколу). Если он мёртв,
     // Telegram-проверка всё равно упадёт — но выглядело бы это как смерть аккаунта.
