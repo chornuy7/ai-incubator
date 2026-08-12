@@ -929,6 +929,10 @@ export async function runWarming(task, store) {
   }
   let idx = 0
   let idleLap = 0
+  /** Ошибок подряд по аккаунту и кто уже исключён из этого прогона. */
+  const fails = new Map()
+  const burned = new Set()
+  const MAX_ACCOUNT_FAILS = 3
 
   try {
     while (!task.stopRequested && !task.pauseRequested && !totalLimitReached(s, task)) {
@@ -945,6 +949,9 @@ export async function runWarming(task, store) {
       const accountId = accountIds[idx++ % accountIds.length]
       const meta = await getAccountMeta(accountId)
       if (!isAccountRunnable(meta.status || 'active')) { idleLap += 1; continue }
+      // Аккаунт уже исключён из прогона (см. счётчик ошибок ниже) — не долбимся в него
+      // снова. Когда исключены все, сработает проверка idleLap выше и задача завершится.
+      if (burned.has(accountId)) { idleLap += 1; continue }
       idleLap = 0
       let client
       try {
@@ -994,6 +1001,7 @@ export async function runWarming(task, store) {
         }
         task.accountStats[accountId] = task.accountStats[accountId] || { actions: 0, floodWaits: 0 }
         task.accountStats[accountId].actions += 1
+        fails.delete(accountId) // получилось — счётчик ошибок подряд обнуляем
         await bumpProgress(task, store)
         await noteAction(accountId) // §4.3: усталость общая для всех модулей
         await disconnectAccount(client, accountId)
@@ -1001,6 +1009,15 @@ export async function runWarming(task, store) {
         if (client) await disconnectAccount(client, accountId)
         if (!(await handleFlood(task, accountId, store, err, s, meta.name))) {
           await store.appendLog(task, 'warning', mapTelegramError(err), meta.name)
+        }
+        // Аккаунт, который валится раз за разом (мёртвый прокси, битая сессия), нельзя
+        // дёргать вечно: до этой правки задача часами писала один и тот же таймаут и не
+        // делала ни одного действия. Три ошибки подряд — исключаем до конца прогона.
+        const n = (fails.get(accountId) || 0) + 1
+        fails.set(accountId, n)
+        if (n >= MAX_ACCOUNT_FAILS && !burned.has(accountId)) {
+          burned.add(accountId)
+          await store.appendLog(task, 'warning', `Аккаунт исключён из прогона: ${MAX_ACCOUNT_FAILS} ошибки подряд · ${mapTelegramError(err)}`, meta.name)
         }
       }
       task = (await store.loadTask(task.id)) || task

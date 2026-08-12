@@ -124,6 +124,14 @@ export function mapTelegramError(err) {
   if (msg.includes('FLOOD')) return 'FloodWait'
   if (msg.includes('INVITE_REQUEST_SENT')) return 'Заявка на вступление отправлена — нужно одобрение админа'
   if (msg.includes('NOT_A_MEMBER')) return 'Аккаунт не в группе/канале — вступите или дождитесь одобрения'
+  // Сетевые/служебные коды — человеческим языком: в логах задачи оператор видел сырой
+  // «RPC_TIMEOUT (25с)» и не понимал ни причины, ни что с этим делать.
+  if (msg.includes('ABORTED_BY_STOP')) return 'Действие прервано остановкой задачи'
+  if (msg.includes('RPC_TIMEOUT')) return 'Telegram не ответил — прокси принимает соединение, но не пропускает трафик Telegram. Замените прокси.'
+  if (msg.includes('NO_SESSION')) return 'Нет сессии — аккаунт нужно переавторизовать'
+  if (msg.includes('AUTH_KEY') || msg.includes('SESSION_REVOKED')) return 'Сессия недействительна — нужна переавторизация'
+  if (/Прокси не отвечает|Не удалось подключиться/i.test(msg)) return 'Прокси не отвечает — замените его на рабочий'
+  if (/socks|ECONNREFUSED|ECONNRESET|ETIMEDOUT|EHOSTUNREACH|ENETUNREACH/i.test(msg)) return 'Сеть/прокси недоступны — проверьте прокси аккаунта'
   if (msg) return msg.slice(0, 120)
   return 'Ошибка Telegram'
 }

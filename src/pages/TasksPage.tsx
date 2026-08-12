@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
-import { ListChecks, RefreshCw, Square, RotateCw, Target, Activity, Gauge, Pause, Play, Loader2, ArrowLeft, Pencil, Download } from 'lucide-react'
+import { ListChecks, RefreshCw, Square, RotateCw, Target, Activity, Gauge, Pause, Play, Loader2, ArrowLeft, Pencil, Download, AlertTriangle } from 'lucide-react'
 import { useApp } from '@/mocks/store'
 import { PageHeader, Card, EmptyState, Badge, Select, Segmented } from '@/shared/ui'
 import { HelpButton } from '@/features/neuro-commenting/moduleUi'
@@ -19,6 +19,7 @@ import { useSession } from '@/features/auth/session'
 import { canControlModule } from '@/shared/lib/access'
 import { downloadXls } from '@/shared/lib/exportXls'
 import { useTabParam } from '@/shared/lib/useTabParam'
+import { AccountCardBody } from '@/features/account-manager/AccountManagementModal'
 
 const STATUS: Record<string, { label: string; tone: 'spark' | 'iris' | 'amber' | 'rose' | 'muted' }> = {
   running: { label: 'Выполняется', tone: 'spark' },
@@ -620,6 +621,72 @@ function Info({ label, value, hint }: { label: string; value: ReactNode; hint?: 
   )
 }
 
+/**
+ * Аккаунты задачи — кликабельные: раскрывают карточку прямо под списком (как в админке).
+ *
+ * Раньше это были мёртвые подписи: задача сыпала ошибками по конкретному аккаунту, а
+ * чтобы понять, что с ним (сессия, прокси, здоровье), надо было уходить в менеджер и
+ * искать его руками. Теперь всё по нему видно здесь же.
+ */
+function TaskAccounts({ accountIds, accounts }: { accountIds: string[]; accounts: TgAccount[] }) {
+  const [openId, setOpenId] = useState<string | null>(null)
+  const byId = useMemo(() => new Map(accounts.map((a) => [a.id, a])), [accounts])
+  const open = openId ? byId.get(openId) : null
+  /** Коротко о проблеме — чтобы она была видна до раскрытия карточки. */
+  const problemOf = (a?: TgAccount) => {
+    if (!a) return ''
+    if (!a.proxy || a.proxy === '—') return 'нет прокси'
+    if (a.proxyOk === false) return 'прокси не отвечает'
+    if (a.status === 'reauth') return 'нужна переавторизация'
+    if (a.status === 'invalid') return 'невалиден'
+    if (a.status === 'spamblock') return 'спамблок'
+    if (a.status === 'quarantine') return 'карантин'
+    return ''
+  }
+  return (
+    <div className="rounded-2xl border border-line bg-elevated/40 p-3">
+      <div className="mb-2 text-sm font-bold text-fg">Аккаунты в работе <span className="text-white/40">({accountIds.length})</span></div>
+      {accountIds.length === 0 ? (
+        <div className="py-1 text-xs text-white/40">Аккаунты не заданы</div>
+      ) : (
+        <div className="flex flex-wrap gap-1.5">
+          {accountIds.map((aid) => {
+            const a = byId.get(aid)
+            const label = a ? (a.name || a.username || a.phone || aid) : aid
+            const problem = problemOf(a)
+            const active = openId === aid
+            return (
+              <button
+                key={aid}
+                type="button"
+                onClick={() => setOpenId(active ? null : aid)}
+                disabled={!a}
+                title={a ? 'Открыть карточку аккаунта' : 'Аккаунт не найден в списке'}
+                className={cn(
+                  'inline-flex max-w-full items-center gap-1.5 truncate rounded-lg border px-2 py-0.5 text-xs transition-colors',
+                  active ? 'border-spark-500/50 bg-spark-500/15 text-spark-200'
+                    : problem ? 'border-amber-500/40 bg-amber-500/10 text-amber-200 hover:border-amber-400/60'
+                      : 'border-iris-500/25 bg-iris-500/10 text-iris-200 hover:border-iris-400/50',
+                  !a && 'opacity-50',
+                )}
+              >
+                {problem && <AlertTriangle size={11} className="shrink-0" />}
+                {label}
+                {problem && <span className="text-[10px] opacity-80">· {problem}</span>}
+              </button>
+            )
+          })}
+        </div>
+      )}
+      {open && (
+        <div className="mt-3 border-t border-line pt-3">
+          <AccountCardBody account={open} />
+        </div>
+      )}
+    </div>
+  )
+}
+
 /** Список чипов (аккаунты / каналы / ссылки) в деталях задачи. */
 function ChipList({ title, count, items, empty, tone, mono }: {
   title: string; count: number; items: string[]; empty: string; tone: 'iris' | 'spark'; mono?: boolean
@@ -694,7 +761,6 @@ export function TaskDetailPage() {
   }, [task, pendingAct])
 
   const goalName = (gid?: string | null) => { const g = goals.find((x) => x.id === gid); return g?.name || (gid ? '—' : null) }
-  const accountName = (aid: string) => { const a = accounts.find((x) => x.id === aid); return a ? (a.name || a.username || a.phone || a.id) : aid }
 
   const reload = async () => { try { setTask(await fetchModuleTask(moduleKey, id)) } catch { /* ignore */ } }
   const run = async (fn: () => Promise<unknown>, okTitle: string, action?: 'start' | 'pause' | 'stop') => {
@@ -891,13 +957,7 @@ export function TaskDetailPage() {
           />
         </div>
 
-        <ChipList
-          title="Аккаунты в работе"
-          count={(s.accountIds || []).length}
-          items={(s.accountIds || []).map((aid) => accountName(aid))}
-          empty="Аккаунты не заданы"
-          tone="iris"
-        />
+        <TaskAccounts accountIds={s.accountIds || []} accounts={accounts} />
         <ChipList
           title="Каналы / чаты — где работает модуль"
           count={(s.channels || s.targets || []).length}
