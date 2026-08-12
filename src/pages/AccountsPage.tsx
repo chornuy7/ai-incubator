@@ -1204,12 +1204,18 @@ function AccountsTable(props: {
                   // Прокси опционален — работать без него можно. Но «Прямое подключение»
                   // звучало нейтрально, хотя означает, что аккаунт ходит с того же IP,
                   // что и все остальные без прокси: Telegram видит группу и банит волной.
-                  <td className={cn('px-4 py-3 font-mono text-xs', hasProxy(a) ? 'text-muted' : 'font-bold text-rose-300')}>
-                    {hasProxy(a) ? formatProxyLabel(a.proxy) : (
+                  <td className={cn('px-4 py-3 font-mono text-xs', hasProxy(a) && a.proxyOk !== false ? 'text-muted' : 'font-bold text-rose-300')}>
+                    {!hasProxy(a) ? (
                       <span className="inline-flex items-center gap-1" title="Аккаунт ходит через ваш IP — тот же, что у остальных без прокси. Для Telegram это одна группа: находит один аккаунт и добивает похожие. Работать так можно, но живут такие аккаунты заметно меньше.">
-                        <AlertTriangle size={11} className="shrink-0" /> без прокси · высокий риск блока
+                        <AlertTriangle size={11} className="shrink-0" /> нет прокси · высокий риск блока
                       </span>
-                    )}
+                    ) : a.proxyOk === false ? (
+                      // Прокси назначен, но помечен нерабочим — аккаунт через него не выйдет.
+                      // Без этой строки в таблице всё выглядело исправным, а работа молча падала.
+                      <span className="inline-flex items-center gap-1" title="Прокси не отвечает и помечен нерабочим в каталоге. Назначьте аккаунту живой прокси — иначе задачи будут падать.">
+                        <AlertTriangle size={11} className="shrink-0" /> прокси не отвечает
+                      </span>
+                    ) : formatProxyLabel(a.proxy)}
                   </td>
                 )}
                 <td className="px-4 py-3 text-right">

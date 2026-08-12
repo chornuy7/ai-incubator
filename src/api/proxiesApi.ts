@@ -70,6 +70,12 @@ export async function checkProxy(id: string): Promise<{ proxy: Proxy; geo: Proxy
   return apiPost<{ proxy: Proxy; geo: ProxyGeo | null; geoSource?: GeoSource; ms?: number | null }>(`/api/proxies/${id}/check`)
 }
 
+/** Проверить ВЕСЬ каталог разом (сервер идёт пачками по 8). Возвращает итоговые статусы. */
+export async function checkAllProxies(): Promise<{ id: string; status: Proxy['status']; country?: string }[]> {
+  const r = await apiPost<{ ok: boolean; results: { id: string; status: Proxy['status']; country?: string }[] }>('/api/proxies/check-all')
+  return r.results || []
+}
+
 /** Реальная проверка прокси по host:port ДО сохранения — TCP-пинг + гео выхода (§3.4). */
 export async function probeProxy(input: { host: string; port: number; scheme?: string; username?: string; password?: string }): Promise<{ alive: boolean; ms: number; geo: ProxyGeo | null; geoSource?: GeoSource }> {
   return apiPost<{ alive: boolean; ms: number; geo: ProxyGeo | null; geoSource?: GeoSource }>('/api/proxies/probe', input)
