@@ -19,7 +19,6 @@ import { useSession } from '@/features/auth/session'
 import { canControlModule } from '@/shared/lib/access'
 import { downloadXls } from '@/shared/lib/exportXls'
 import { useTabParam } from '@/shared/lib/useTabParam'
-import { AccountCardBody } from '@/features/account-manager/AccountManagementModal'
 
 const STATUS: Record<string, { label: string; tone: 'spark' | 'iris' | 'amber' | 'rose' | 'muted' }> = {
   running: { label: 'Выполняется', tone: 'spark' },
@@ -622,17 +621,14 @@ function Info({ label, value, hint }: { label: string; value: ReactNode; hint?: 
 }
 
 /**
- * Аккаунты задачи — кликабельные: раскрывают карточку прямо под списком (как в админке).
- *
- * Раньше это были мёртвые подписи: задача сыпала ошибками по конкретному аккаунту, а
- * чтобы понять, что с ним (сессия, прокси, здоровье), надо было уходить в менеджер и
- * искать его руками. Теперь всё по нему видно здесь же.
+ * Аккаунты задачи. Рядом с именем — короткая пометка проблемы (нет прокси, прокси не
+ * отвечает, нужна переавторизация): задача сыпала ошибками по аккаунту, а по списку было
+ * не понять, по какому именно и почему. Разворачивать полную карточку здесь не нужно —
+ * за деталями идут в менеджер аккаунтов (правка заказчика 12.08).
  */
 function TaskAccounts({ accountIds, accounts }: { accountIds: string[]; accounts: TgAccount[] }) {
-  const [openId, setOpenId] = useState<string | null>(null)
   const byId = useMemo(() => new Map(accounts.map((a) => [a.id, a])), [accounts])
-  const open = openId ? byId.get(openId) : null
-  /** Коротко о проблеме — чтобы она была видна до раскрытия карточки. */
+  /** Коротко о проблеме — видно прямо в списке. */
   const problemOf = (a?: TgAccount) => {
     if (!a) return ''
     if (!a.proxy || a.proxy === '—') return 'нет прокси'
@@ -654,33 +650,23 @@ function TaskAccounts({ accountIds, accounts }: { accountIds: string[]; accounts
             const a = byId.get(aid)
             const label = a ? (a.name || a.username || a.phone || aid) : aid
             const problem = problemOf(a)
-            const active = openId === aid
             return (
-              <button
+              <span
                 key={aid}
-                type="button"
-                onClick={() => setOpenId(active ? null : aid)}
-                disabled={!a}
-                title={a ? 'Открыть карточку аккаунта' : 'Аккаунт не найден в списке'}
+                title={problem ? `Проблема: ${problem}. Чинится в менеджере аккаунтов.` : undefined}
                 className={cn(
-                  'inline-flex max-w-full items-center gap-1.5 truncate rounded-lg border px-2 py-0.5 text-xs transition-colors',
-                  active ? 'border-spark-500/50 bg-spark-500/15 text-spark-200'
-                    : problem ? 'border-amber-500/40 bg-amber-500/10 text-amber-200 hover:border-amber-400/60'
-                      : 'border-iris-500/25 bg-iris-500/10 text-iris-200 hover:border-iris-400/50',
-                  !a && 'opacity-50',
+                  'inline-flex max-w-full items-center gap-1.5 truncate rounded-lg border px-2 py-0.5 text-xs',
+                  problem
+                    ? 'border-amber-500/40 bg-amber-500/10 text-amber-200'
+                    : 'border-iris-500/25 bg-iris-500/10 text-iris-200',
                 )}
               >
                 {problem && <AlertTriangle size={11} className="shrink-0" />}
                 {label}
                 {problem && <span className="text-[10px] opacity-80">· {problem}</span>}
-              </button>
+              </span>
             )
           })}
-        </div>
-      )}
-      {open && (
-        <div className="mt-3 border-t border-line pt-3">
-          <AccountCardBody account={open} />
         </div>
       )}
     </div>
