@@ -12,7 +12,8 @@ import {
   type ActiveNow, type ActiveTask, type DailySpend, type Purchases, type PaymentsResult, type UserRow, type AccountsHealth, fetchPrices, savePrices, type EffectivePrices, type PricePatch,
   fetchTaskLogs, type FailedTask, type TaskLogs } from '@/api/adminApi'
 import { updateUser } from '@/api/usersApi'
-import { fetchTickets, fetchTicket, replyTicket, setTicketStatus, type ApiTicket, type TicketStatus } from '@/api/ticketsApi'
+import { fetchTickets, fetchTicket, replyTicket, setTicketStatus, fetchTicketsUnread, type ApiTicket, type TicketStatus } from '@/api/ticketsApi'
+import { TicketChat } from '@/features/support/TicketChat'
 import { fetchTgstatSession, uploadTgstatSession, verifyTgstatSession, clearTgstatSession, type TgstatSession } from '@/api/tgstatApi'
 import { fetchRoles } from '@/api/rolesApi'
 import { RolesPage } from '@/pages/RolesPage'
@@ -74,6 +75,15 @@ export function AdminStatsPage() {
   const pushToast = useApp((s) => s.pushToast)
   // Вкладка в адресе (?tab=) — F5 больше не выбрасывает на первую.
   const [tab, setTab] = useTabParam<number>(0)
+  // Значок непрочитанных обращений на вкладке «Тикеты» (сторона поддержки).
+  const [ticketsUnread, setTicketsUnread] = useState(0)
+  useEffect(() => {
+    let alive = true
+    const tick = () => { void fetchTicketsUnread(true).then((n) => { if (alive) setTicketsUnread(n) }) }
+    tick()
+    const id = setInterval(tick, 20000)
+    return () => { alive = false; clearInterval(id) }
+  }, [tab])
   const [periodIdx, setPeriodIdx] = useState(2)
   const [overview, setOverview] = useState<AdminOverview | null>(null)
   const [report, setReport] = useState<ClientReport | null>(null)
@@ -309,7 +319,7 @@ export function AdminStatsPage() {
       />
 
       <div className="mb-4 flex flex-wrap items-center gap-3">
-        <Segmented options={['Панель', 'Сейчас', 'По дням', 'Пользователи', 'Покупки', 'Экономика', 'Цены', 'Задачи и ошибки', 'CRM', 'Отчёт', 'Мониторинг', 'Аккаунты', 'Роли', 'Тикеты', 'Парсер', 'API']} value={tab} onChange={setTab} />
+        <Segmented options={['Панель', 'Сейчас', 'По дням', 'Пользователи', 'Покупки', 'Экономика', 'Цены', 'Задачи и ошибки', 'CRM', 'Отчёт', 'Мониторинг', 'Аккаунты', 'Роли', ticketsUnread > 0 ? `Тикеты (${ticketsUnread})` : 'Тикеты', 'Парсер', 'API']} value={tab} onChange={setTab} />
         {/* Период показываем только там, где он реально фильтрует. «Сейчас» (1) и
             «Мониторинг» (10) — снимки текущего состояния сервера и задач: период на
             них не влияет и только сбивал с толку. То же для справочных вкладок
@@ -1362,19 +1372,23 @@ function AdminTicketsTab() {
 
   const load = useCallback(async () => {
     setLoading(true)
-    try { setTickets(await fetchTickets()) } catch { /* пусто */ } finally { setLoading(false) }
+    try { setTickets(await fetchTickets(true)) } catch { /* пусто */ } finally { setLoading(false) }
   }, [])
   useEffect(() => { void load() }, [load])
 
   const rows = statusFilter === 'all' ? tickets : tickets.filter((t) => t.status === statusFilter)
-  const openThread = async (t: ApiTicket) => { setOpen(t); setReply(''); try { setOpen(await fetchTicket(t.id)) } catch { /* keep */ } }
+  // Открытие как поддержка: GET отмечает прочитанным для стороны поддержки → гасим значок.
+  const openThread = async (t: ApiTicket) => {
+    setOpen(t); setReply('')
+    try { const fresh = await fetchTicket(t.id, true); setOpen(fresh); setTickets((l) => l.map((x) => x.id === fresh.id ? { ...fresh, unread: 0 } : x)) } catch { /* keep */ }
+  }
 
   const send = async () => {
     if (!open || !reply.trim()) return
     setBusy(true)
     try {
-      const upd = await replyTicket(open.id, reply.trim())
-      setOpen(upd); setReply(''); setTickets((l) => l.map((x) => x.id === upd.id ? upd : x))
+      const upd = await replyTicket(open.id, reply.trim(), true)
+      setOpen(upd); setReply(''); setTickets((l) => l.map((x) => x.id === upd.id ? { ...upd, unread: 0 } : x))
     } catch (e) { pushToast({ type: 'error', title: 'Не отправлено', desc: e instanceof Error ? e.message : '' }) }
     finally { setBusy(false) }
   }
@@ -1411,9 +1425,10 @@ function AdminTicketsTab() {
                   <div className="flex flex-wrap items-center gap-2">
                     <span className="font-mono text-xs text-muted">{t.id}</span>
                     <Badge tone={m.tone}>{m.label}</Badge>
-                    <span className="text-[11px] text-muted">от {t.userId}</span>
+                    {!!t.unread && <span className="grid min-w-[20px] place-items-center rounded-full bg-rose-500 px-1.5 text-[11px] font-bold text-white">{t.unread}</span>}
+                    <span className="text-[11px] text-iris-300">от {t.ownerName || t.ownerEmail || t.userId}</span>
                   </div>
-                  <div className="mt-0.5 truncate font-semibold text-fg">{t.subject}</div>
+                  <div className={t.unread ? 'mt-0.5 truncate font-bold text-fg' : 'mt-0.5 truncate font-semibold text-fg'}>{t.subject}</div>
                   <div className="truncate text-xs text-muted">{last ? `${last.from === 'support' ? 'Поддержка: ' : ''}${last.text}` : '—'}</div>
                 </div>
                 <div className="hidden shrink-0 flex-col items-end gap-1 text-xs text-muted sm:flex">
@@ -1426,7 +1441,7 @@ function AdminTicketsTab() {
         </div>
       )}
 
-      <Modal open={!!open} onClose={() => setOpen(null)} title={open?.subject} subtitle={open ? `${open.id} · клиент ${open.userId}` : ''} icon={<MessageSquare size={22} />} size="md">
+      <Modal open={!!open} onClose={() => setOpen(null)} title={open?.subject} subtitle={open ? `${open.id} · клиент ${open.ownerName || open.ownerEmail || open.userId}` : ''} icon={<MessageSquare size={22} />} size="md">
         {open && (
           <div className="space-y-3">
             <div className="flex flex-wrap items-center gap-2">
@@ -1434,20 +1449,8 @@ function AdminTicketsTab() {
               <Select className="w-48" value={open.status} onChange={(v) => void changeStatus(v)} options={TICKET_STATUS_OPTS} />
               <span className="ml-auto text-xs text-muted">Обновлён {ticketTs(open.updatedAt)}</span>
             </div>
-            <div className="max-h-[42vh] space-y-2 overflow-y-auto pr-1">
-              {open.messages.length === 0 ? (
-                <div className="rounded-xl border border-line bg-elevated p-3.5 text-sm text-muted">Сообщений нет.</div>
-              ) : open.messages.map((msg) => (
-                <div key={msg.id} className={msg.from === 'support'
-                  ? 'rounded-xl border border-spark-500/25 bg-spark-500/8 p-3.5 text-sm text-fg'
-                  : 'rounded-xl border border-line bg-elevated p-3.5 text-sm text-fg'}>
-                  <div className="mb-1 flex items-center gap-2 text-[11px] text-muted">
-                    <span className={msg.from === 'support' ? 'font-semibold text-spark-300' : 'font-semibold text-fg'}>{msg.from === 'support' ? 'Поддержка' : 'Клиент'}</span>
-                    <span>· {ticketTs(msg.ts)}</span>
-                  </div>
-                  <div className="whitespace-pre-wrap">{msg.text}</div>
-                </div>
-              ))}
+            <div className="max-h-[48vh] overflow-y-auto pr-1">
+              <TicketChat ticket={open} viewerIsSupport={true} />
             </div>
             <div className="flex gap-2 pt-1">
               <input value={reply} onChange={(e) => setReply(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && void send()} className="input flex-1" placeholder="Ответ поддержки…" />

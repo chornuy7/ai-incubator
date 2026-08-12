@@ -23,13 +23,27 @@ function genId(now, existing) {
   return id
 }
 
-const msg = (from, authorId, text, ts) => ({
+const msg = (from, authorId, authorName, text, ts) => ({
   id: `m${ts}${Math.floor(ts % 1000)}`,
   from: from === 'support' ? 'support' : 'user',
   authorId: authorId || '—',
+  // Denормализуем ИМЯ автора в момент отправки — чтобы в чате было видно, КТО написал
+  // (мейл/имя клиента), а не роль. Для поддержки — «Поддержка».
+  authorName: String(authorName || (from === 'support' ? 'Поддержка' : 'Клиент')).trim(),
   text: String(text).trim(),
   ts,
 })
+
+/**
+ * Сколько НЕПРОЧИТАННЫХ сообщений для стороны `side` ('support' видит непрочитанные от
+ * клиента; владелец 'user' — непрочитанные от поддержки). reads[side] — метка «прочитано до».
+ * @param {object} ticket @param {'support'|'user'} side
+ */
+export function unreadFor(ticket, side) {
+  const seen = (ticket.reads || {})[side] || 0
+  const fromOther = side === 'support' ? 'user' : 'support'
+  return (ticket.messages || []).filter((m) => m.from === fromOther && (m.ts || 0) > seen).length
+}
 
 export async function listTickets({ userId = '', all = false } = {}) {
   const tickets = await readJson(ticketsFile(), [])
@@ -42,7 +56,7 @@ export async function getTicket(id) {
   return tickets.find((t) => t.id === id) || null
 }
 
-export async function createTicket({ userId = '', subject = '', category = 'tech', body = '' }) {
+export async function createTicket({ userId = '', authorName = '', subject = '', category = 'tech', body = '' }) {
   const subj = String(subject || '').trim()
   if (!subj) throw new Error('Укажите тему обращения')
   const tickets = await readJson(ticketsFile(), [])
@@ -56,10 +70,23 @@ export async function createTicket({ userId = '', subject = '', category = 'tech
     createdAt: now,
     updatedAt: now,
     messages: [],
+    // Метки «прочитано до» по сторонам. Владелец только что создал — своё считаем прочитанным.
+    reads: { user: now, support: 0 },
   }
   const text = String(body || '').trim()
-  if (text) ticket.messages.push(msg('user', userId, text, now))
+  if (text) ticket.messages.push(msg('user', userId, authorName, text, now))
   tickets.push(ticket)
+  await writeJson(ticketsFile(), tickets)
+  return ticket
+}
+
+/** Отметить тикет прочитанным для стороны (обнуляет её счётчик непрочитанного). */
+export async function markRead(id, side) {
+  const tickets = await readJson(ticketsFile(), [])
+  const ticket = tickets.find((x) => x.id === id)
+  if (!ticket) return null
+  ticket.reads = ticket.reads || {}
+  ticket.reads[side === 'support' ? 'support' : 'user'] = Date.now()
   await writeJson(ticketsFile(), tickets)
   return ticket
 }
@@ -68,15 +95,18 @@ export async function createTicket({ userId = '', subject = '', category = 'tech
  * Добавить сообщение в тикет. Ответ поддержки переводит открытый/ожидающий тикет
  * в «в работе»; ответ клиента по закрытому — снова открывает (переписка продолжилась).
  */
-export async function addMessage(id, { from = 'user', authorId = '', text = '' }) {
+export async function addMessage(id, { from = 'user', authorId = '', authorName = '', text = '' }) {
   const t = String(text || '').trim()
   if (!t) throw new Error('Пустое сообщение')
   const tickets = await readJson(ticketsFile(), [])
   const ticket = tickets.find((x) => x.id === id)
   if (!ticket) throw new Error('Тикет не найден')
   const now = Date.now()
-  ticket.messages.push(msg(from, authorId, t, now))
+  ticket.messages.push(msg(from, authorId, authorName, t, now))
   ticket.updatedAt = now
+  // Своя сторона, отправив сообщение, автоматически «прочитала» тикет до текущего момента.
+  ticket.reads = ticket.reads || {}
+  ticket.reads[from === 'support' ? 'support' : 'user'] = now
   if (from === 'support') { if (ticket.status === 'open' || ticket.status === 'waiting') ticket.status = 'progress' }
   else if (ticket.status === 'closed') ticket.status = 'open'
   await writeJson(ticketsFile(), tickets)

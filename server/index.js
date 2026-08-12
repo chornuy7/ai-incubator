@@ -771,14 +771,56 @@ app.post('/api/parser/cache/lookup', async (req, res) => {
 // ── §8 (MR-44): тикеты поддержки — свои у клиента, все у админа (интеграция с админкой) ──
 const ticketErr = (res, err) => res.status(500).json({ ok: false, error: err instanceof Error ? err.message : 'Ошибка' })
 
-/** Список тикетов: клиент видит свои, админ (и дев без сессии) — все. */
+/** Имя, под которым текущий автор пишет КАК КЛИЕНТ (мейл/имя, не роль). */
+const ticketClientName = (ctx) => String(ctx.user?.name || ctx.user?.email || ctx.id || 'Клиент')
+
+/** Резолвер владельцев тикетов id→{ownerName,ownerEmail} одним запросом — «от кого» в списке. */
+async function ticketOwnerResolver() {
+  try {
+    const { listUsers } = await import('./users.js')
+    const users = await listUsers()
+    const m = new Map(users.map((u) => [String(u.id), u]))
+    return (t) => { const u = m.get(String(t.userId)); return { ownerName: u?.name || '', ownerEmail: u?.email || '' } }
+  } catch { return () => ({ ownerName: '', ownerEmail: '' }) }
+}
+
+/**
+ * Сторона запроса: 'support' (видит все тикеты, отвечает как поддержка) или 'user' (владелец).
+ * Поддержкой считаем ТОЛЬКО когда фронт явно просит (?scope=all / ?as=support / asSupport:true)
+ * И у автора есть право. Иначе — владелец: так админ на своей странице /panel/support пишет
+ * от своего имени как обычный клиент, а «Поддержкой» отвечает из Админ-панели → «Тикеты».
+ */
+function ticketSide(req, ctx) {
+  const wantSupport = String(req.query.scope || '') === 'all'
+    || String(req.query.as || '') === 'support'
+    || (req.body && req.body.asSupport === true)
+  return wantSupport && ctx.isSupport ? 'support' : 'user'
+}
+
+/** Список тикетов: ?scope=all — все (только поддержка), иначе свои. С «от кого» и непрочитанным. */
 app.get('/api/tickets', async (req, res) => {
   try {
     const { requesterContext } = await import('./lib/accessGuard.js')
     const ctx = await requesterContext(req)
     if (ctx.blocked) return res.status(403).json({ ok: false, error: 'Нет доступа' })
-    const { listTickets } = await import('./tickets.js')
-    res.json({ ok: true, tickets: await listTickets({ userId: ctx.id, all: ctx.isSupport }) })
+    const { listTickets, unreadFor } = await import('./tickets.js')
+    const side = ticketSide(req, ctx)
+    const rows = await listTickets({ userId: ctx.id, all: side === 'support' })
+    const owner = await ticketOwnerResolver()
+    res.json({ ok: true, tickets: rows.map((t) => ({ ...t, ...owner(t), unread: unreadFor(t, side) })) })
+  } catch (err) { ticketErr(res, err) }
+})
+
+/** Суммарно непрочитанных для стороны запроса — для красного значка в навигации. */
+app.get('/api/tickets/unread-count', async (req, res) => {
+  try {
+    const { requesterContext } = await import('./lib/accessGuard.js')
+    const ctx = await requesterContext(req)
+    if (ctx.blocked) return res.json({ ok: true, count: 0 })
+    const { listTickets, unreadFor } = await import('./tickets.js')
+    const side = ticketSide(req, ctx)
+    const rows = await listTickets({ userId: ctx.id, all: side === 'support' })
+    res.json({ ok: true, count: rows.reduce((n, t) => n + unreadFor(t, side), 0), side })
   } catch (err) { ticketErr(res, err) }
 })
 
@@ -790,25 +832,28 @@ app.post('/api/tickets', async (req, res) => {
     if (ctx.blocked) return res.status(403).json({ ok: false, error: 'Нет доступа' })
     const { createTicket } = await import('./tickets.js')
     const { subject, category, body } = req.body || {}
-    res.json({ ok: true, ticket: await createTicket({ userId: ctx.id, subject, category, body }) })
+    res.json({ ok: true, ticket: await createTicket({ userId: ctx.id, authorName: ticketClientName(ctx), subject, category, body }) })
   } catch (err) { res.status(400).json({ ok: false, error: err instanceof Error ? err.message : 'Ошибка' }) }
 })
 
-/** Один тикет с перепиской — только владелец или админ. */
+/** Один тикет с перепиской — владелец или поддержка. Открытие отмечает прочитанным для стороны. */
 app.get('/api/tickets/:id', async (req, res) => {
   try {
     const { requesterContext } = await import('./lib/accessGuard.js')
     const ctx = await requesterContext(req)
     if (ctx.blocked) return res.status(403).json({ ok: false, error: 'Нет доступа' })
-    const { getTicket } = await import('./tickets.js')
+    const { getTicket, markRead, unreadFor } = await import('./tickets.js')
     const t = await getTicket(String(req.params.id))
     if (!t) return res.status(404).json({ ok: false, error: 'Тикет не найден' })
     if (!ctx.isSupport && t.userId !== ctx.id) return res.status(403).json({ ok: false, error: 'Нет доступа к тикету' })
-    res.json({ ok: true, ticket: t })
+    const side = ticketSide(req, ctx)
+    const fresh = (await markRead(String(req.params.id), side)) || t
+    const owner = await ticketOwnerResolver()
+    res.json({ ok: true, ticket: { ...fresh, ...owner(fresh), unread: unreadFor(fresh, side) } })
   } catch (err) { ticketErr(res, err) }
 })
 
-/** Ответ в тикет: админ пишет как «поддержка», клиент — как «user» (и только в свой). */
+/** Ответ: поддержка (asSupport) пишет как «Поддержка», клиент — от своего имени (только в свой тикет). */
 app.post('/api/tickets/:id/reply', async (req, res) => {
   try {
     const { requesterContext } = await import('./lib/accessGuard.js')
@@ -817,11 +862,31 @@ app.post('/api/tickets/:id/reply', async (req, res) => {
     const { getTicket, addMessage } = await import('./tickets.js')
     const t = await getTicket(String(req.params.id))
     if (!t) return res.status(404).json({ ok: false, error: 'Тикет не найден' })
-    const isSupport = ctx.isSupport
-    if (!isSupport && t.userId !== ctx.id) return res.status(403).json({ ok: false, error: 'Нет доступа к тикету' })
-    const ticket = await addMessage(String(req.params.id), { from: isSupport ? 'support' : 'user', authorId: ctx.id, text: (req.body || {}).text })
+    const asSupport = (req.body || {}).asSupport === true && ctx.isSupport
+    if (!asSupport && t.userId !== ctx.id) return res.status(403).json({ ok: false, error: 'Нет доступа к тикету' })
+    const ticket = await addMessage(String(req.params.id), {
+      from: asSupport ? 'support' : 'user',
+      authorId: ctx.id,
+      authorName: asSupport ? 'Поддержка' : ticketClientName(ctx),
+      text: (req.body || {}).text,
+    })
     res.json({ ok: true, ticket })
   } catch (err) { res.status(400).json({ ok: false, error: err instanceof Error ? err.message : 'Ошибка' }) }
+})
+
+/** Отметить тикет прочитанным для стороны запроса (?as=support для поддержки). */
+app.post('/api/tickets/:id/read', async (req, res) => {
+  try {
+    const { requesterContext } = await import('./lib/accessGuard.js')
+    const ctx = await requesterContext(req)
+    if (ctx.blocked) return res.status(403).json({ ok: false, error: 'Нет доступа' })
+    const { getTicket, markRead } = await import('./tickets.js')
+    const t = await getTicket(String(req.params.id))
+    if (!t) return res.status(404).json({ ok: false, error: 'Тикет не найден' })
+    if (!ctx.isSupport && t.userId !== ctx.id) return res.status(403).json({ ok: false, error: 'Нет доступа' })
+    await markRead(String(req.params.id), ticketSide(req, ctx))
+    res.json({ ok: true })
+  } catch (err) { ticketErr(res, err) }
 })
 
 /** Сменить статус тикета — поддержка (роль «Поддержка») или админ. */
