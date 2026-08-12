@@ -52,12 +52,28 @@ export function Layout() {
     setHelpOpen(true)
   }
 
+  /**
+   * «Кто сейчас занят задачей» нужен ТОЛЬКО там, где на экране аккаунты: менеджер,
+   * пикер при запуске модуля, дашборд задач. Раньше этот опрос молотил раз в 4 секунды
+   * на ЛЮБОЙ странице — на «Прокси» это был бесконечный поток запросов ни за чем
+   * (замечание заказчика 12.08). Плюс он не замирал на скрытой вкладке.
+   */
+  const needsBusy = /^\/panel(\/(accounts|modules|tasks|automation)\b|\/?$)/.test(location.pathname)
+
   useEffect(() => {
     void loadAccounts()
+  }, [loadAccounts])
+
+  useEffect(() => {
+    if (!needsBusy) return
     void loadAccountBusy()
-    const id = setInterval(() => void loadAccountBusy(), 4000)
+    const id = setInterval(() => {
+      // Вкладка свёрнута — не дёргаем сервер: обновим, когда на неё вернутся.
+      if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return
+      void loadAccountBusy()
+    }, 10000)
     return () => clearInterval(id)
-  }, [loadAccounts, loadAccountBusy])
+  }, [needsBusy, loadAccountBusy])
 
   return (
     <div className="flex min-h-screen" style={{ '--sidebar-w': sidebarCollapsed ? '76px' : '256px' } as React.CSSProperties}>

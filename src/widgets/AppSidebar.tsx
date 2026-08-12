@@ -63,9 +63,13 @@ export function AppSidebar({ mobile = false }: { mobile?: boolean }) {
   const [supportUnread, setSupportUnread] = useState(0)
   useEffect(() => {
     let alive = true
-    const tick = () => { void fetchTicketsUnread(supportSide).then((n) => { if (alive) setSupportUnread(n) }) }
+    const tick = () => {
+      // Скрытая вкладка — не опрашиваем: значок всё равно никто не видит.
+      if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return
+      void fetchTicketsUnread(supportSide).then((n) => { if (alive) setSupportUnread(n) })
+    }
     tick()
-    const id = setInterval(tick, 20000)
+    const id = setInterval(tick, 60000)
     return () => { alive = false; clearInterval(id) }
   }, [supportSide])
 

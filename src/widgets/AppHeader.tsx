@@ -94,7 +94,12 @@ export function AppHeader() {
       void fetchAwaitingReplies().then((a) => { if (alive) setAwaiting(a) }).catch(() => {})
     }
     pull()
-    const iv = setInterval(pull, 30000)
+    // Колокольчик — фон, а не рабочий инструмент: раз в минуту достаточно, и на скрытой
+    // вкладке молчим. Раньше это были 4 запроса каждые 30с на ЛЮБОЙ странице.
+    const iv = setInterval(() => {
+      if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return
+      pull()
+    }, 60000)
     return () => { alive = false; clearInterval(iv) }
   }, [])
   // MR-134: колокольчик по статусу задачи — ошибка, пауза И завершение (по ТЗ 10.08).
