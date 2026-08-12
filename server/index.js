@@ -51,6 +51,12 @@ app.use('/api', rpsMiddleware) // §10.9: считаем RPS по всем API-�
 const { sessionGuard } = await import('./lib/authGuard.js')
 app.use('/api', sessionGuard)
 
+// Отключённый профиль (active=false) не должен видеть НИЧЕГО, кроме своего состояния,
+// оплаты и поддержки. RLS в Supabase это не закроет: бэкенд ходит сервисным ключом и
+// RLS обходит — значит правило живёт здесь, сразу после проверки личности.
+const { accessGate } = await import('./lib/accessGate.js')
+app.use('/api', accessGate)
+
 app.get('/api/health', (_req, res) => {
   res.json({
     ok: true,
