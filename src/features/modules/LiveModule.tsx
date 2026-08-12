@@ -374,7 +374,10 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
     if (cfg.accountPicker) steps.push({ label: 'Аккаунты', done: selected.size > 0, anchor: 'sec-accounts' })
     if (needsTargets && !cfg.warmingLayout) steps.push({ label: cfg.sourceTabs?.label ?? 'Группы', done: targets.length > 0 || hasPostTargets, anchor: 'sec-targets' })
     steps.push({ label: 'Защита', done: true, optional: true, anchor: 'sec-settings' })
-    steps.push({ label: 'Запуск', done: false, anchor: 'sec-run' })
+    // MR-136: шаг назван «Параметры» (а не «Запуск») — он ведёт к секции «Параметры и лимиты»,
+    // а не к запуску. Раньше клик по «Запуск» кидал на «Параметры» (сбивало), плюс «Запуск»
+    // конфликтовал по смыслу с кнопкой «Начать». Запуск — это кнопка «Начать».
+    steps.push({ label: 'Параметры', done: true, optional: true, anchor: 'sec-run' })
     return markCurrentStep(steps)
   }, [cfg, selected, needsTargets, targets, hasPostTargets])
 
