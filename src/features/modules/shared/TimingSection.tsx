@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Timer, Bolt, Settings2, Shield, ChevronRight, SlidersHorizontal } from 'lucide-react'
 import { ToggleGroup } from '@/shared/ui'
 import { cn } from '@/shared/lib/utils'
@@ -87,6 +87,9 @@ export function TimingSection(props: TimingSectionProps) {
   const hasPresets = !!(delayPresets && onDelayPreset)
   // Нет пресета темпа — раскрываем детали сразу (иначе всё окажется спрятано ни за чем).
   const [advanced, setAdvanced] = useState(!hasPresets)
+  // MR-136: помним, открыл ли «Расширенные» сам пользователь. Тогда при возврате с Custom
+  // на пресет панель НЕ схлопывается (авто-открытие только для Custom, ручное — держится).
+  const [userOpened, setUserOpened] = useState(!hasPresets)
 
   // MR-136 (доработка MR-103): «Custom» — 4-й пресет (индекс 3). На сервере
   // PRESET_MUL[3] ?? 1 → ×1, поэтому Custom = задержки берутся как есть, без масштабирования.
@@ -97,15 +100,49 @@ export function TimingSection(props: TimingSectionProps) {
   // «Эффективная» задержка = базовая × множитель пресета — то, что реально уйдёт на паузы;
   // показываем её под карточками, чтобы выбор Мин/Рек/Макс СРАЗУ менял видимые значения.
   const eff = (pair?: [number, number] | null) => pair ? `${Math.round(pair[0] * mul)}–${Math.round(pair[1] * mul)} с` : null
-  // MR-136: ручной ввод любой задержки → авто-переключение на «Custom» (пресет перестаёт «держать» значения).
+  // MR-136: поля задержек показывают ЭФФЕКТИВНОЕ значение (базовое × множитель пресета) —
+  // чтобы выбор Мин/Макс сразу менял видимые числа. При ручном правке уходим в Custom (×1),
+  // и введённое (уже масштабированное) значение становится базовым — эффект сохраняется.
+  const sc = (n: number) => Math.round(n * mul)
+  // MR-136: авто-раскрытие «Расширенных» — только для Custom. На пресетах держим состояние,
+  // которое задал сам пользователь (иначе после Custom панель оставалась открытой навсегда).
+  useEffect(() => {
+    if (!hasPresets) return
+    setAdvanced(delayPreset === CUSTOM ? true : userOpened)
+  }, [delayPreset, hasPresets, userOpened])
+  // MR-136: ручной ввод любой задержки → авто-переключение на «Custom». Чтобы значения не
+  // «прыгнули» (поля показывают масштабированные ×mul, а Custom = ×1), при переходе ЗАПЕКАЕМ
+  // текущий множитель в базовые задержки — тогда видимые числа остаются те же.
   const editDelays = (updater: (d: DelaysShape) => DelaysShape) => {
-    if (hasPresets && delayPreset !== CUSTOM) onDelayPreset!(CUSTOM)
-    onDelays(updater)
+    const goingCustom = hasPresets && delayPreset !== CUSTOM
+    if (goingCustom) onDelayPreset!(CUSTOM)
+    onDelays((d) => updater(goingCustom
+      ? { ...d, comment: [sc(d.comment[0]), sc(d.comment[1])], action: [sc(d.action[0]), sc(d.action[1])], join: [sc(d.join[0]), sc(d.join[1])] }
+      : d))
   }
 
   const timeMode = !!workModeOptions && workMode === 1
   const showDuration = showDurationAlways || timeMode
   const showCounts = !workModeOptions || !timeMode
+
+  // MR-136: пресет темпа выставляет и Длительность, и лимит «Сколько сделает 1 аккаунт».
+  // Множители к базовым (реком.) значениям, зафиксированным при первом рендере:
+  // Мин — короче/больше действий (быстрее, риск), Макс — дольше/меньше (безопаснее).
+  const DUR_FACTOR = [0.75, 1, 1.5, 1]
+  const LIM_FACTOR = [1.5, 1, 0.6, 1]
+  const baseRef = useRef({ dur: durationMinutes, limMin: perAccount?.min ?? 0, limMax: perAccount?.max ?? 0 })
+  const applyPresetExtras = (i: number) => {
+    if (i === CUSTOM) return
+    const b = baseRef.current
+    if (onDuration && showDuration) onDuration(Math.max(1, Math.round(b.dur * DUR_FACTOR[i])))
+    if (perAccount) { perAccount.onMin(Math.round(b.limMin * LIM_FACTOR[i])); perAccount.onMax(Math.round(b.limMax * LIM_FACTOR[i])) }
+  }
+  // Ручная правка Длительности/лимита → Custom + запоминаем как новое базовое значение.
+  const editDuration = (v: number) => { if (hasPresets && delayPreset !== CUSTOM) onDelayPreset!(CUSTOM); baseRef.current.dur = v; onDuration?.(v) }
+  const editPerAccount = (which: 'min' | 'max', v: number) => {
+    if (hasPresets && delayPreset !== CUSTOM) onDelayPreset!(CUSTOM)
+    if (which === 'min') { baseRef.current.limMin = v; perAccount?.onMin(v) } else { baseRef.current.limMax = v; perAccount?.onMax(v) }
+  }
 
   return (
     <SectionCard icon={<Timer size={18} />} title="Тайминги и задержки">
@@ -124,8 +161,9 @@ export function TimingSection(props: TimingSectionProps) {
               <button
                 key={label}
                 type="button"
-                // MR-136: «Custom» ещё и раскрывает «Расширенные настройки».
-                onClick={() => { onDelayPreset!(i); if (isCustom) setAdvanced(true) }}
+                // MR-136: раскрытие «Расширенных» для Custom делает эффект по delayPreset;
+                // пресет также выставляет Длительность и лимит «Сколько сделает 1 аккаунт».
+                onClick={() => { onDelayPreset!(i); applyPresetExtras(i) }}
                 className={cn(
                   'flex items-center gap-2.5 rounded-xl border p-3 text-left transition-all',
                   active ? 'border-spark-500/60 bg-spark-500/10' : 'border-line bg-elevated hover:border-spark-500/30',
@@ -159,7 +197,7 @@ export function TimingSection(props: TimingSectionProps) {
       {hasPresets && (
         <button
           type="button"
-          onClick={() => setAdvanced((v) => !v)}
+          onClick={() => { const nv = !advanced; setAdvanced(nv); setUserOpened(nv) }}
           className="mt-3 flex items-center gap-1.5 text-sm font-semibold text-muted transition-colors hover:text-fg"
         >
           <ChevronRight size={15} className={cn('transition-transform', advanced && 'rotate-90')} />
@@ -177,7 +215,7 @@ export function TimingSection(props: TimingSectionProps) {
               )}
               {showDuration && onDuration && (
                 <div>
-                  <NumberField label="Длительность (мин)" value={durationMinutes} onChange={onDuration} suffix={`${durationMinutes}m`} />
+                  <NumberField label="Длительность (мин)" value={durationMinutes} onChange={editDuration} suffix={`${durationMinutes}m`} />
                   {durationPeriodHint && <p className="mt-1 text-xs text-muted">{durationPeriodHint}</p>}
                 </div>
               )}
@@ -199,7 +237,7 @@ export function TimingSection(props: TimingSectionProps) {
 
             <div className="space-y-4 rounded-2xl border border-line bg-elevated/40 p-4">
               {perAccount && (
-                <MinMaxField label={computedTotal ? 'Сколько сделает 1 аккаунт для цели' : 'На аккаунт'} min={perAccount.min} max={perAccount.max} onMin={perAccount.onMin} onMax={perAccount.onMax} />
+                <MinMaxField label={computedTotal ? 'Сколько сделает 1 аккаунт для цели' : 'На аккаунт'} min={perAccount.min} max={perAccount.max} onMin={(v) => editPerAccount('min', v)} onMax={(v) => editPerAccount('max', v)} />
               )}
               {minWords && (
                 <NumberField label="Мин. слов в посте" value={minWords.value} onChange={minWords.onChange} />
@@ -217,7 +255,7 @@ export function TimingSection(props: TimingSectionProps) {
               {showComment && delays.comment && (
                 <DelayFields
                   label={labels.comment ?? 'Задержка комментария'}
-                  from={delays.comment[0]} to={delays.comment[1]}
+                  from={sc(delays.comment[0])} to={sc(delays.comment[1])}
                   onFrom={(n) => editDelays((d) => ({ ...d, comment: [n, d.comment?.[1] ?? n] }))}
                   onTo={(n) => editDelays((d) => ({ ...d, comment: [d.comment?.[0] ?? n, n] }))}
                   unit="с"
@@ -226,7 +264,7 @@ export function TimingSection(props: TimingSectionProps) {
               {showAction && delays.action && (
                 <DelayFields
                   label={labels.action ?? 'Задержка действия'}
-                  from={delays.action[0]} to={delays.action[1]}
+                  from={sc(delays.action[0])} to={sc(delays.action[1])}
                   onFrom={(n) => editDelays((d) => ({ ...d, action: [n, d.action?.[1] ?? n] }))}
                   onTo={(n) => editDelays((d) => ({ ...d, action: [d.action?.[0] ?? n, n] }))}
                   unit="с"
@@ -235,7 +273,7 @@ export function TimingSection(props: TimingSectionProps) {
               {showJoin && delays.join && (
                 <DelayFields
                   label={labels.join ?? 'Задержка вступления'}
-                  from={delays.join[0]} to={delays.join[1]}
+                  from={sc(delays.join[0])} to={sc(delays.join[1])}
                   onFrom={(n) => editDelays((d) => ({ ...d, join: [n, d.join?.[1] ?? n] }))}
                   onTo={(n) => editDelays((d) => ({ ...d, join: [d.join?.[0] ?? n, n] }))}
                   unit="с"

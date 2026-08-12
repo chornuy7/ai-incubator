@@ -1308,7 +1308,7 @@ function RowMenu({ a, tab, onDetail, onProxy, onTrash, onRestore, onReauth, onMa
                 <MenuItem icon={<KeyRound size={15} />} onClick={() => { onMarkReauth(a); close() }}>Отправить на реавторизацию</MenuItem>
               )}
               <MenuItem icon={<Rocket size={15} />} onClick={() => { onAssign(a); close() }}>Кампания аккаунта</MenuItem>
-              <MenuItem icon={<Server size={15} />} onClick={() => { onProxy(a); close() }}>Сменить прокси</MenuItem>
+              <MenuItem icon={<Server size={15} />} onClick={() => { onProxy(a); close() }}>{hasProxy(a) ? 'Сменить прокси' : 'Добавить прокси'}</MenuItem>
               <MenuItem icon={<Trash2 size={15} />} tone="danger" onClick={() => { onTrash(a); close() }}>В корзину</MenuItem>
             </>
           ) : (

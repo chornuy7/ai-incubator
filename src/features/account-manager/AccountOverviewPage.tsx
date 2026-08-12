@@ -121,7 +121,9 @@ export function AccountOverviewPage() {
   }
 
   return (
-    <div>
+    // MR-129: карточка на всю ширину, но справа резервируем «коридор» под плавающие кнопки
+    // (Help/Поддержка), чтобы они не налезали на кнопки строк (копировать/выйти) и низ шапки.
+    <div className="lg:pr-16 xl:pr-20">
       <button onClick={() => navigate('/panel')} className="btn-ghost mb-3 h-9"><ArrowLeft size={15} /> Назад к менеджеру</button>
 
       <div className="card grid min-h-[560px] gap-0 overflow-hidden p-0 lg:grid-cols-[minmax(240px,300px)_1fr]">
