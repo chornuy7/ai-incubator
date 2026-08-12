@@ -188,7 +188,7 @@ export function TimingSection(props: TimingSectionProps) {
         <div className="mt-2 text-[11px] text-muted">
           {delayPreset === CUSTOM
             ? <>Задержки — ручные (заданы в «Расширенных настройках»).</>
-            : <>Эффективные задержки: {[eff(delays.action) && `действие ${eff(delays.action)}`, showComment && delays.comment && `комментарий ${eff(delays.comment)}`, showJoin && delays.join && `вступление ${eff(delays.join)}`].filter(Boolean).join(' · ') || '—'}</>}
+            : <>Эффективные задержки: {[showAction && delays.action && `действие ${eff(delays.action)}`, showComment && delays.comment && `комментарий ${eff(delays.comment)}`, showJoin && delays.join && `вступление ${eff(delays.join)}`].filter(Boolean).join(' · ') || '—'}</>}
         </div>
         </>
       )}
