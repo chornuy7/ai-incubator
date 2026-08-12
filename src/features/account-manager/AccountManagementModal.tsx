@@ -60,17 +60,23 @@ export function AccountCardBody({ account }: { account: TgAccount }) {
   const [spamChecking, setSpamChecking] = useState(false)
   const [releasing, setReleasing] = useState(false)
 
+  const loadAccounts = useApp((s) => s.loadAccounts)
+
   const load = useCallback(async (opts?: { spam?: boolean; force?: boolean }) => {
     setLoading(true)
     try {
       const s = await fetchAccountStats(account.id, opts)
       setStats(s)
+      // После ЖИВОЙ проверки перечитываем список аккаунтов: «Зона риска» в шапке берётся
+      // из него, и без этого карточка спорила сама с собой — вкладка «Прокси» показывала
+      // «Работает», а плашка сверху всё ещё «Прокси не отвечает» (замечание 12.08).
+      if (opts?.force || opts?.spam) void loadAccounts()
     } catch (e) {
       pushToast({ type: 'error', title: 'Не удалось получить данные аккаунта', desc: e instanceof Error ? e.message : undefined })
     } finally {
       setLoading(false)
     }
-  }, [account, pushToast])
+  }, [account, pushToast, loadAccounts])
 
   useEffect(() => {
     setStats(null)

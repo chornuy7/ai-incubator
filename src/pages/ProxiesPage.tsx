@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
-import { Network, Plus, Trash2, Pencil, Link2, Check, Circle, Zap, Loader2, MapPin, Upload, Skull, RotateCcw } from 'lucide-react'
+import { Network, Plus, Trash2, Pencil, Link2, Check, Circle, Zap, Loader2, MapPin, Upload } from 'lucide-react'
 import { PageHeader, Card, EmptyState, Badge, Select, Modal } from '@/shared/ui'
 import { HelpButton } from '@/features/neuro-commenting/moduleUi'
 import {
@@ -134,14 +134,39 @@ export function ProxiesPage() {
     finally { setSaving(false) }
   }
 
-  // MR-133: пометить/«убить» прокси вручную (dead) — сразу перестаёт предлагаться аккаунтам,
-  // не дожидаясь автотеста. Повторный клик снимает пометку (возврат в «Не проверен»).
-  async function toggleDead(p: Proxy) {
-    const next: Proxy['status'] = p.status === 'dead' ? 'unknown' : 'dead'
-    try {
-      const saved = await updateProxy(p.id, { status: next })
-      setProxies((prev) => prev.map((x) => (x.id === saved.id ? saved : x)))
-    } catch (e) { setErr(e instanceof Error ? e.message : 'Ошибка') }
+  // Ручная пометка «мёртвый» убрана: статус ставит настоящая проверка (доступность
+  // Telegram через прокси), и нерабочие уже не предлагаются аккаунтам. Кнопка только
+  // путала — два источника правды об одном и том же.
+
+  // ── Массовый выбор и удаление ────────────────────────────────────────────
+  // Каталог на полсотни записей чистить по одной — работа на полчаса; особенно когда
+  // разом померла целая закупка (правка заказчика 12.08).
+  const [selected, setSelected] = useState<Set<string>>(new Set())
+  const toggleSel = (id: string) => setSelected((prev) => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n })
+  const allVisibleSelected = visible.length > 0 && visible.every((p) => selected.has(p.id))
+  const toggleAllVisible = () => setSelected(allVisibleSelected ? new Set() : new Set(visible.map((p) => p.id)))
+  const [removing, setRemoving] = useState(false)
+
+  async function removeSelected() {
+    const list = proxies.filter((p) => selected.has(p.id))
+    if (!list.length) return
+    const busyOn = list.reduce((n, p) => n + (usedBy[p.id] ?? 0), 0)
+    if (!(await confirmDialog({
+      title: `Удалить прокси: ${list.length}?`,
+      message: busyOn
+        ? `Из них назначены аккаунтам: ${busyOn}. Аккаунты останутся с этой строкой подключения — назначьте им рабочие прокси.`
+        : 'Прокси будут удалены из каталога.',
+      confirmLabel: 'Удалить',
+      tone: 'danger',
+    }))) return
+    setRemoving(true)
+    const results = await Promise.allSettled(list.map((p) => deleteProxy(p.id)))
+    const okIds = list.filter((_, i) => results[i].status === 'fulfilled').map((p) => p.id)
+    setProxies((prev) => prev.filter((x) => !okIds.includes(x.id)))
+    setSelected(new Set())
+    setRemoving(false)
+    const failed = results.length - okIds.length
+    if (failed) setErr(`Удалено ${okIds.length}, не удалось ${failed}`)
   }
 
   async function remove(p: Proxy) {
@@ -203,6 +228,29 @@ export function ProxiesPage() {
         </div>
       )}
 
+      {/* Массовый выбор: «Выбрать все» относится к ТЕКУЩЕЙ выборке — так «Нерабочие» +
+          «Выбрать все» + «Удалить» чистят каталог одним движением. */}
+      {visible.length > 0 && (
+        <div className="mb-3 flex flex-wrap items-center gap-2 rounded-xl border border-line bg-elevated/40 p-2.5">
+          <label className="flex cursor-pointer items-center gap-2 text-xs font-semibold text-white/70">
+            <input type="checkbox" checked={allVisibleSelected} onChange={toggleAllVisible} className="h-4 w-4 accent-spark-500" />
+            {selected.size > 0 ? `Выбрано: ${selected.size}` : `Выбрать все (${visible.length})`}
+          </label>
+          {selected.size > 0 && (
+            <>
+              <button onClick={() => setSelected(new Set())} className="btn-ghost h-8 text-xs">Снять выбор</button>
+              <button
+                onClick={() => void removeSelected()}
+                disabled={removing}
+                className="ml-auto inline-flex h-8 items-center gap-1.5 rounded-lg border border-rose-500/30 bg-rose-500/15 px-3 text-xs font-semibold text-rose-300 transition-colors hover:bg-rose-500/25 disabled:opacity-50"
+              >
+                {removing ? <Loader2 size={13} className="animate-spin" /> : <Trash2 size={13} />} Удалить выбранные ({selected.size})
+              </button>
+            </>
+          )}
+        </div>
+      )}
+
       {loading ? (
         <Card className="p-6 text-sm text-white/50">Загрузка…</Card>
       ) : proxies.length === 0 ? (
@@ -216,7 +264,14 @@ export function ProxiesPage() {
           {visible.map((p) => {
             const sm = statusMeta(p)
             return (
-              <Card key={p.id} className="flex flex-wrap items-center gap-3 p-3">
+              <Card key={p.id} className={cn('flex flex-wrap items-center gap-3 p-3', selected.has(p.id) && 'border-spark-500/40 bg-spark-500/5')}>
+                <input
+                  type="checkbox"
+                  checked={selected.has(p.id)}
+                  onChange={() => toggleSel(p.id)}
+                  className="h-4 w-4 shrink-0 accent-spark-500"
+                  aria-label="Выбрать прокси"
+                />
                 <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-iris-500/12 text-iris-300"><Network size={18} /></span>
                 <div role="button" tabIndex={0} onClick={() => setDetailProxy(p)} onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setDetailProxy(p) } }} className="group min-w-0 flex-1 cursor-pointer text-left" title="Открыть детали прокси">
                   <div className="flex flex-wrap items-center gap-2">
@@ -253,8 +308,6 @@ export function ProxiesPage() {
                 <div className="flex items-center gap-1.5">
                   <button onClick={() => void doTest(p)} disabled={testing === p.id} className="btn-ghost h-9 text-xs disabled:opacity-50">{testing === p.id ? <Loader2 size={14} className="animate-spin" /> : <Zap size={14} />} Тест</button>
                   <button onClick={() => setAssignFor(p)} className="btn-ghost h-9 text-xs"><Link2 size={14} /> Назначить</button>
-                  {/* MR-133: ручная пометка «мёртвый» — сразу выводит прокси из выдачи аккаунтам. */}
-                  <button onClick={() => void toggleDead(p)} className={cn('btn-icon h-9 w-9', p.status === 'dead' ? 'text-spark-400' : 'text-rose-300')} title={p.status === 'dead' ? 'Снять пометку «мёртвый»' : 'Пометить мёртвым (не предлагать аккаунтам)'}>{p.status === 'dead' ? <RotateCcw size={14} /> : <Skull size={14} />}</button>
                   <button onClick={() => openEdit(p)} className="btn-icon h-9 w-9" aria-label="Изменить"><Pencil size={14} /></button>
                   <button onClick={() => void remove(p)} className="btn-icon-danger h-9 w-9" aria-label="Удалить прокси" title="Удалить прокси"><Trash2 size={14} /></button>
                 </div>
