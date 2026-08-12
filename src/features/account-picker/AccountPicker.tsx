@@ -1,7 +1,7 @@
 import { useMemo, useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import {
-  Search, Users, CheckCheck, ChevronsRight, ChevronsLeft, RefreshCw, ChevronDown, Inbox, ShieldCheck, Loader2, Lock, AlertTriangle, Settings,
+  Search, Users, CheckCheck, ChevronsRight, ChevronsLeft, RefreshCw, ChevronDown, Inbox, Loader2, Lock, AlertTriangle, Settings,
 } from 'lucide-react'
 import { useApp, activeAccounts, isBrokenAccount, hasProxyIssue } from '@/mocks/store'
 import { useSession } from '@/features/auth/session'
@@ -26,7 +26,13 @@ const statusBlocks = (a: TgAccount) => NON_RUNNABLE.has(a.status)
 const isUnavailable = (a: TgAccount) => isBusy(a) || statusBlocks(a)
 /** Реальная причина недоступности для бейджа/тултипа (не общее «ЗАНЯТ»). */
 const isWorking = (a: TgAccount) => !!a.busyIn || a.status === 'working'
-const unavailLabel = (a: TgAccount) => (isWorking(a) ? 'В работе' : STATUS_RU[a.status] || 'недоступен')
+// MR-132: конкретная причина, а не общее «недоступен» — человек должен понимать, что именно.
+const unavailLabel = (a: TgAccount) => {
+  if (isWorking(a)) return 'В работе'
+  if (a.noProxy) return 'нет прокси'
+  if (a.proxyOk === false) return 'прокси не отвечает'
+  return STATUS_RU[a.status] || 'недоступен'
+}
 
 /** Двухпанельный выбор аккаунтов: Доступные | Выбрано. */
 export function AccountPicker({
@@ -319,15 +325,14 @@ function AccountRow({ account: a, liteMode, onAdd, busy, disabled, onFixProxy }:
           </div>
         )}
       </div>
+      {/* MR-132: вместо избыточных VALID/Proxy OK показываем осмысленное — статус и Доверие
+          (как в менеджере), а для занятых/нерабочих — конкретную причину недоступности. */}
       {!liteMode && (
         <div className="flex shrink-0 items-center gap-1">
           {busy ? (
             <MiniBadge tone="rose">{isWorking(a) ? <><Loader2 size={9} className="animate-spin" /> В работе</> : unavailLabel(a)}</MiniBadge>
           ) : (
-            <>
-              {a.status === 'active' && <MiniBadge tone="spark">VALID</MiniBadge>}
-              {a.proxy !== '—' && <MiniBadge tone="spark" outline><ShieldCheck size={9} /> Proxy OK</MiniBadge>}
-            </>
+            <MiniBadge tone="spark"><span className="h-1.5 w-1.5 rounded-full bg-current" /> Активные</MiniBadge>
           )}
         </div>
       )}
