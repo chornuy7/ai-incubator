@@ -7,6 +7,51 @@ import { getAiSafetySync } from '../aiSafety.js'
 import { resolvePerAccountTarget, resolveTotalTarget } from './targets.js'
 import { accountFingerprint } from './deviceFingerprint.js'
 
+/**
+ * Реестр живых клиентов по задачам: taskId → Set<client>. Нужен, чтобы «Стоп»/«Пауза»
+ * могли ПРИНУДИТЕЛЬНО оборвать соединение аккаунта. Сетевые вызовы gram (searchPublic,
+ * fetchPosts, sendReaction…) не имеют таймаута и не проверяют флаг стопа: на медленном
+ * прокси они висят десятки секунд, и «Стоп» игнорировался всё это время. При обрыве
+ * соединения такой вызов сразу падает → воркер попадает в catch → видит стоп → выходит.
+ * @type {Map<string, Set<import('telegram').TelegramClient>>}
+ */
+const taskClients = new Map()
+
+/** Прервать все живые соединения задачи — зависшие gram-вызовы упадут, воркер выйдет по стопу. */
+export async function abortTaskClients(taskId) {
+  const set = taskClients.get(taskId)
+  if (!set || !set.size) return 0
+  const clients = [...set]
+  taskClients.delete(taskId)
+  for (const c of clients) {
+    // Взводим флаг аборта — обёртка invoke (см. wrapInvoke) отклонит ЛЮБОЙ висящий
+    // RPC-вызов за ~0.25с. disconnect() сам по себе pending-вызов gram НЕ отклоняет.
+    c.__aborted = true
+    // Не ждём disconnect дольше 2с — на битом соединении он сам может подвиснуть.
+    try { await Promise.race([Promise.resolve().then(() => c.disconnect()).catch(() => {}), sleep(2000)]) } catch { /* ignore */ }
+  }
+  return clients.length
+}
+
+/**
+ * Оборачиваем client.invoke: гонка настоящего вызова против (а) флага аборта — стоп/пауза
+ * взводят client.__aborted и вызов падает за ~0.25с; (б) жёсткого таймаута — на мёртвом
+ * канале RPC gram висит бесконечно (disconnect его не отклоняет), из-за чего «Стоп»
+ * игнорировался десятки секунд. Все действия модулей идут через invoke (в т.ч. getMessages/
+ * getDialogs внутри), поэтому одной обёртки хватает на все модули. @param {any} client
+ */
+const RPC_TIMEOUT_MS = Math.max(8000, Number(process.env.TG_RPC_TIMEOUT_MS) || 30000)
+function wrapInvoke(client) {
+  const orig = client.invoke.bind(client)
+  client.invoke = (...args) => new Promise((resolve, reject) => {
+    let settled = false
+    const finish = (fn) => (x) => { if (!settled) { settled = true; clearInterval(poll); clearTimeout(hard); fn(x) } }
+    const poll = setInterval(() => { if (client.__aborted) finish(reject)(new Error('ABORTED_BY_STOP')) }, 250)
+    const hard = setTimeout(() => finish(reject)(new Error(`RPC_TIMEOUT (${Math.round(RPC_TIMEOUT_MS / 1000)}с)`)), RPC_TIMEOUT_MS)
+    orig(...args).then(finish(resolve), finish(reject))
+  })
+}
+
 /** @param {string} accountId @param {string} [taskId] */
 export async function connectAccount(accountId, taskId) {
   assertAccountAvailable(accountId, taskId)
@@ -24,11 +69,23 @@ export async function connectAccount(accountId, taskId) {
   // после первого же действия становился обычным активным (тест 12.5).
   await setAccountMeta(accountId, { status: 'working', statusBefore: meta.status || 'active' })
   const client = await createClient(sessionStr, meta.proxy, accountFingerprint(accountId, meta))
+  // invoke оборачиваем всегда — чтобы висящий RPC на мёртвом канале не морозил воркер.
+  wrapInvoke(client)
+  // Регистрируем клиент под задачей — чтобы стоп/пауза могли его оборвать (см. abortTaskClients).
+  if (taskId) {
+    client.__taskId = taskId
+    let set = taskClients.get(taskId)
+    if (!set) { set = new Set(); taskClients.set(taskId, set) }
+    set.add(client)
+  }
   return { client, meta }
 }
 
 /** @param {import('telegram').TelegramClient} client @param {string} accountId */
 export async function disconnectAccount(client, accountId) {
+  // Снимаем из реестра задачи (если был зарегистрирован при connectAccount).
+  const taskId = client?.__taskId
+  if (taskId) { const set = taskClients.get(taskId); if (set) { set.delete(client); if (!set.size) taskClients.delete(taskId) } }
   try {
     await client.disconnect()
   } catch {

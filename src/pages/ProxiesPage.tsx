@@ -3,7 +3,7 @@ import { Network, Plus, Trash2, Pencil, Link2, Check, Circle, Zap, Loader2, MapP
 import { PageHeader, Card, EmptyState, Badge, Select, Modal } from '@/shared/ui'
 import { HelpButton } from '@/features/neuro-commenting/moduleUi'
 import {
-  fetchProxies, createProxy, updateProxy, deleteProxy, toProxyUrl, checkProxy,
+  fetchProxies, createProxy, updateProxy, deleteProxy, toProxyUrl, checkProxy, checkAllProxies,
   PROXY_KIND_LABELS, type Proxy, type ProxyKind, type ProxyGeo,
 } from '@/api/proxiesApi'
 import { fetchAccounts, patchAccount } from '@/api/accountsApi'
@@ -49,15 +49,54 @@ export function ProxiesPage() {
     finally { setTesting(null) }
   }
 
-  async function load() {
-    setLoading(true)
+  // silent — фоновое обновление: список не гасим «Загрузкой», иначе экран моргал бы
+  // заглушкой каждые полминуты.
+  async function load(opts?: { silent?: boolean }) {
+    if (!opts?.silent) setLoading(true)
     try {
       const [px, accs] = await Promise.all([fetchProxies(), fetchAccounts().catch(() => [])])
       setProxies(px); setAccounts(accs)
-    } catch (e) { setErr(e instanceof Error ? e.message : 'Ошибка загрузки') }
-    finally { setLoading(false) }
+    } catch (e) { if (!opts?.silent) setErr(e instanceof Error ? e.message : 'Ошибка загрузки') }
+    finally { if (!opts?.silent) setLoading(false) }
   }
   useEffect(() => { void load() }, [])
+
+  // Автообновление: статусы меняет и фоновый чекер сервера (раз в 30 мин), и ручные
+  // тесты, и живая работа аккаунтов — страница обязана показывать свежее сама.
+  const [autoRefresh, setAutoRefresh] = useState(true)
+  useEffect(() => {
+    if (!autoRefresh) return
+    const id = setInterval(() => {
+      if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return
+      void load({ silent: true })
+    }, 30000)
+    return () => clearInterval(id)
+  }, [autoRefresh])
+
+  /** Проверить весь каталог разом — «нерабочие» обновятся без ручного тыка по каждому. */
+  const [checkingAll, setCheckingAll] = useState(false)
+  async function testAll() {
+    setCheckingAll(true)
+    try { await checkAllProxies(); await load({ silent: true }) }
+    catch (e) { setErr(e instanceof Error ? e.message : 'Ошибка проверки') }
+    finally { setCheckingAll(false) }
+  }
+
+  // Рабочие / нерабочие / не проверены. «Нерабочие» — это и мёртвые, и те, что не
+  // говорят своим протоколом: и то и другое аккаунту одинаково бесполезно.
+  const [statusFilter, setStatusFilter] = useState<'all' | 'ok' | 'broken' | 'unknown'>('all')
+  const counts = useMemo(() => ({
+    all: proxies.length,
+    ok: proxies.filter((p) => p.status === 'ok').length,
+    broken: proxies.filter((p) => p.status === 'dead' || p.status === 'bad').length,
+    unknown: proxies.filter((p) => p.status === 'unknown').length,
+  }), [proxies])
+  const visible = useMemo(() => proxies.filter((p) => (
+    statusFilter === 'all' ? true
+      : statusFilter === 'ok' ? p.status === 'ok'
+        : statusFilter === 'broken' ? (p.status === 'dead' || p.status === 'bad')
+          : p.status === 'unknown'
+  )), [proxies, statusFilter])
 
   const usedBy = useMemo(() => {
     const m: Record<string, number> = {}
@@ -108,6 +147,9 @@ export function ProxiesPage() {
         actions={(
           <div className="flex items-center gap-2">
             <HelpButton topic="proxy-policy" className="h-10 w-10" />
+            <button onClick={() => void testAll()} disabled={checkingAll || proxies.length === 0} className="btn-ghost h-10 disabled:opacity-50" title="Проверить весь каталог: нерабочие пометятся сразу">
+              {checkingAll ? <Loader2 size={16} className="animate-spin" /> : <Zap size={16} />} Проверить все
+            </button>
             <button onClick={() => setImportOpen(true)} className="btn-ghost h-10"><Upload size={16} /> Импорт списком</button>
             <button onClick={openNew} className="btn-primary h-10"><Plus size={16} /> Новый прокси</button>
           </div>
@@ -116,13 +158,47 @@ export function ProxiesPage() {
 
       {err && !editOpen && <Card className="mb-3 border-rose-500/30 p-3 text-sm text-rose-300">{err}</Card>}
 
+      {/* Фильтр «рабочие / нерабочие» + автообновление: статус прокси живёт своей жизнью
+          (фоновый чекер, работа аккаунтов), и страница обязана показывать свежее. */}
+      {proxies.length > 0 && (
+        <div className="mb-3 flex flex-wrap items-center gap-2">
+          {([
+            { key: 'all', label: 'Все', n: counts.all },
+            { key: 'ok', label: 'Рабочие', n: counts.ok },
+            { key: 'broken', label: 'Нерабочие', n: counts.broken },
+            { key: 'unknown', label: 'Не проверены', n: counts.unknown },
+          ] as const).map((f) => (
+            <button
+              key={f.key}
+              onClick={() => setStatusFilter(f.key)}
+              className={cn(
+                'inline-flex h-9 items-center gap-1.5 rounded-lg border px-3 text-xs font-semibold transition-colors',
+                statusFilter === f.key ? 'border-spark-500/40 bg-spark-500/12 text-spark-300' : 'border-line text-muted hover:text-fg',
+                f.key === 'broken' && f.n > 0 && statusFilter !== f.key && 'text-rose-300',
+              )}
+            >
+              {f.label}
+              <span className={cn('rounded px-1.5 py-0.5 text-[10px]', f.key === 'broken' && f.n > 0 ? 'bg-rose-500/20 text-rose-200' : 'bg-elevated text-muted')}>{f.n}</span>
+            </button>
+          ))}
+          <label className="ml-auto flex cursor-pointer select-none items-center gap-1.5 text-xs text-muted" title="Обновлять список каждые 30 секунд">
+            <input type="checkbox" checked={autoRefresh} onChange={(e) => setAutoRefresh(e.target.checked)} className="accent-spark-500" />
+            Автообновление
+          </label>
+        </div>
+      )}
+
       {loading ? (
         <Card className="p-6 text-sm text-white/50">Загрузка…</Card>
       ) : proxies.length === 0 ? (
         <EmptyState icon={<Network size={26} />} title="Прокси пока нет" desc="Добавьте прокси и назначайте их аккаунтам в менеджере." />
+      ) : visible.length === 0 ? (
+        <Card className="p-6 text-center text-sm text-muted">
+          {statusFilter === 'broken' ? 'Нерабочих прокси нет — все живые.' : 'В этой выборке пусто.'}
+        </Card>
       ) : (
         <div className="flex flex-col gap-2">
-          {proxies.map((p) => {
+          {visible.map((p) => {
             const sm = STATUS_META[p.status]
             return (
               <Card key={p.id} className="flex flex-wrap items-center gap-3 p-3">

@@ -314,6 +314,44 @@ export async function checkAllProxies(timeoutMs = 9000) {
 }
 
 /**
+ * Найти запись каталога по URL-строке, как она лежит в `meta.proxy` аккаунта.
+ * Сравниваем по host:port, а не по полной строке: URL мог прийти из импорта с другим
+ * порядком/кодировкой логина, и точное сравнение молча не находило бы прокси.
+ * @param {string} url
+ */
+export async function findProxyByUrl(url) {
+  const raw = String(url || '').trim()
+  if (!raw || raw === '—') return null
+  let host = ''
+  let port = ''
+  try {
+    const u = new URL(raw)
+    host = u.hostname
+    port = u.port
+  } catch {
+    const m = raw.replace(/^[a-z0-9]+:\/\//i, '').split('@').pop() || ''
+    const parts = m.split(':')
+    host = parts[0] || ''
+    port = parts[1] || ''
+  }
+  if (!host || !port) return null
+  const all = await listProxies()
+  return all.find((p) => String(p.host) === host && String(p.port) === String(port)) || null
+}
+
+/**
+ * Пометить прокси каталога по URL аккаунта (например `dead`) — чтобы сдохший прокси
+ * сразу попадал в «нерабочие», а не ждал получасовой авто-проверки.
+ * @param {string} url @param {'ok'|'bad'|'dead'|'unknown'} status
+ */
+export async function markProxyStatusByUrl(url, status) {
+  if (!PROXY_STATUSES.includes(status)) return null
+  const p = await findProxyByUrl(url)
+  if (!p || p.status === status) return p
+  try { return await updateProxy(p.id, { status, lastCheckAt: Date.now() }) } catch { return null }
+}
+
+/**
  * Карта использования прокси аккаунтами (§6: «1 прокси = 1 аккаунт»).
  * @param {Record<string, {proxy?: string}>} accountsMeta карта meta по accountId
  * @returns {Record<string, string[]>} proxyUrl → [accountId] (только реально назначенные)

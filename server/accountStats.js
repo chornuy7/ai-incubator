@@ -2,6 +2,7 @@
 import { getAccountMeta, loadAllMeta, setAccountStatus, setAccountMeta } from './accountsMeta.js'
 import { loadSessionString, createClient } from './tgAuth.js'
 import { parseProxy } from './proxy.js'
+import { probeProxyProtocol, markProxyStatusByUrl } from './proxies.js'
 import { getAccountLock } from './lib/accountLocks.js'
 import { accountTrust } from './lib/trustScore.js'
 import { setTrustCache } from './lib/trustCache.js'
@@ -18,21 +19,37 @@ function sleep(ms) {
 /** Разобрать строку прокси в структурированный вид (без секретов пароля). */
 function describeProxy(raw) {
   if (!raw || raw === '—') {
-    return { raw: '', protocol: null, ip: null, port: null, login: null, configured: false }
+    return { raw: '', protocol: null, scheme: null, ip: null, port: null, login: null, configured: false }
   }
   const parsed = parseProxy(raw)
   let protocol = null
   try {
     protocol = new URL(raw).protocol.replace(':', '').toUpperCase()
   } catch { /* ignore */ }
+  const proto = protocol || (parsed?.socksType ? `SOCKS${parsed.socksType}` : parsed ? 'HTTP' : null)
   return {
     raw,
-    protocol: protocol || (parsed?.socksType ? `SOCKS${parsed.socksType}` : parsed ? 'HTTP' : null),
+    protocol: proto,
+    // Схема в том виде, какой ждёт probeProxyProtocol (socks5/socks4/http).
+    scheme: proto ? (proto.startsWith('SOCKS') ? (proto === 'SOCKS4' ? 'socks4' : 'socks5') : 'http') : null,
     ip: parsed?.ip ?? null,
     port: parsed?.port ?? null,
     login: parsed?.username ?? null,
     configured: !!parsed,
   }
+}
+
+/**
+ * Похожа ли ошибка подключения на проблему ПРОКСИ/сети, а не сессии.
+ *
+ * Без этого любая сетевая беда записывалась аккаунту в «невалиден»: сдох прокси —
+ * а в интерфейсе «аккаунт умер». Ошибки авторизации Telegram (AUTH_KEY…) — это
+ * действительно сессия, всё остальное сетевое — прокси.
+ */
+function looksLikeProxyProblem(err) {
+  const msg = String(err?.message || err || '')
+  if (/AUTH_KEY|SESSION_REVOKED|USER_DEACTIVATED|AUTH_KEY_UNREGISTERED/i.test(msg)) return false
+  return /socks|proxy|ECONNREFUSED|ECONNRESET|ETIMEDOUT|EHOSTUNREACH|ENETUNREACH|timeout|Не удалось подключиться|connect/i.test(msg)
 }
 
 /**
@@ -231,9 +248,34 @@ export async function buildAccountStats(accountId, opts = {}) {
   let me = null
   let sessionOk = false
   let live = false
+  /**
+   * Почему проверку НЕ довели до конца: 'no_proxy' (прокси не назначен) или
+   * 'proxy_down' (назначен, но не отвечает). В обоих случаях про сессию ничего не
+   * известно — и метить аккаунт «невалидным» нельзя: причина другая.
+   * @type {null | 'no_proxy' | 'proxy_down'}
+   */
+  let blocked = null
 
   // Не трогаем аккаунт по сети, если он занят активной задачей — отдаём кэш из meta.
-  if (sessionStr && !busyIn) {
+  if (sessionStr && !busyIn && !proxy.configured) {
+    // Прокси не назначен — по сети не ходим вообще. Раньше шли напрямую с сервера,
+    // ловили произвольную ошибку и писали «невалиден»: подменяли причину.
+    blocked = 'no_proxy'
+  } else if (sessionStr && !busyIn) {
+    // Сначала дёшево проверяем САМ прокси (рукопожатие по протоколу). Если он мёртв,
+    // Telegram-проверка всё равно упадёт — но выглядело бы это как смерть аккаунта.
+    const alive = await probeProxyProtocol({ scheme: proxy.scheme, host: proxy.ip, port: proxy.port }, 6000)
+      .catch(() => false)
+    if (!alive) {
+      blocked = 'proxy_down'
+      live = true
+      proxy.working = false
+      // Сдох — сразу в «нерабочие» в каталоге, не дожидаясь получасовой авто-проверки.
+      try { await markProxyStatusByUrl(meta.proxy, 'dead') } catch { /* non-fatal */ }
+    }
+  }
+
+  if (sessionStr && !busyIn && !blocked) {
     let client
     try {
       // createClient сам делает быстрый TCP-пинг прокси и падает за ~2.5с на мёртвом прокси
@@ -243,6 +285,8 @@ export async function buildAccountStats(accountId, opts = {}) {
       sessionOk = true
       live = true
       if (proxy.configured) proxy.working = true
+      // Ожил — снимаем клеймо «нерабочий», если оно было.
+      try { await markProxyStatusByUrl(meta.proxy, 'ok') } catch { /* non-fatal */ }
       if (opts.spam) {
         const sb = await checkSpamblock(client)
         proxy._spamblock = sb
@@ -253,10 +297,18 @@ export async function buildAccountStats(accountId, opts = {}) {
         }
       }
       await client.disconnect()
-    } catch {
-      sessionOk = false
+    } catch (err) {
       live = true
-      if (proxy.configured) proxy.working = false
+      // Сетевая ошибка через прокси — вина ПРОКСИ, а не сессии. Иначе сдохший прокси
+      // «убивал» аккаунт: в списке он становился невалидным без всякой причины.
+      if (proxy.configured && looksLikeProxyProblem(err)) {
+        blocked = 'proxy_down'
+        proxy.working = false
+        try { await markProxyStatusByUrl(meta.proxy, 'dead') } catch { /* non-fatal */ }
+      } else {
+        sessionOk = false
+        if (proxy.configured) proxy.working = false
+      }
       try { if (client) await client.disconnect() } catch { /* ignore */ }
     }
     // MR-129: персистим результат живой проверки прокси — чтобы СПИСОК менеджера тоже знал,
@@ -280,9 +332,17 @@ export async function buildAccountStats(accountId, opts = {}) {
   const ageDays = addedAt ? (Date.now() - addedAt) / DAY : 0
   const profileComplete = !!(username && firstName)
 
-  // Статус valid: если удалось живьём — по факту; если занят/нет сессии — по meta.
-  const effectiveStatus = busyIn ? (meta.status || 'working') : (!sessionStr ? 'reauth' : sessionOk ? 'active' : 'reauth')
-  const valid = busyIn ? meta.status !== 'reauth' && meta.status !== 'invalid' : sessionOk
+  // Статус valid: если удалось живьём — по факту; если занят/нет прокси/прокси мёртв —
+  // по meta (последнее известное). Про сессию в этих случаях НИЧЕГО не известно, и
+  // объявлять аккаунт невалидным нельзя: причина не в нём.
+  const lastKnownValid = meta.status !== 'reauth' && meta.status !== 'invalid'
+  const effectiveStatus = busyIn
+    ? (meta.status || 'working')
+    : blocked
+      ? (meta.status || 'active')
+      : (!sessionStr ? 'reauth' : sessionOk ? 'active' : 'reauth')
+  const valid = (busyIn || blocked) ? lastKnownValid : sessionOk
+  const sessionKnownOk = sessionOk || ((busyIn || blocked) ? valid : false)
 
   // MR-63: свежая проверка (opts.spam) приоритетнее, но только если дала определённый ответ;
   // иначе показываем ПОСЛЕДНИЙ сохранённый результат из meta (а не сбрасываем в «Неизвестно»).
@@ -296,10 +356,10 @@ export async function buildAccountStats(accountId, opts = {}) {
   // Кэшируем trust для дешёвых проверок (assignment-gate, список) — вне сети.
   try { await setTrustCache(accountId, { score: trustResult.score, band: trustResult.band }) } catch { /* non-fatal */ }
 
-  const health = computeHealth(sessionOk || (busyIn ? valid : false), proxy, effectiveStatus, activity)
+  const health = computeHealth(sessionKnownOk, proxy, effectiveStatus, activity)
   const longevity = computeLongevity({
     ageDays,
-    sessionOk: sessionOk || (busyIn ? valid : false),
+    sessionOk: sessionKnownOk,
     profileComplete,
     actionCount,
     hadFloodOrQuarantine,
@@ -327,10 +387,21 @@ export async function buildAccountStats(accountId, opts = {}) {
       configured: proxy.configured,
       working: proxy.configured ? (proxy.working ?? null) : null,
       checkedAt: proxyCheckAt,
+      /** Явное состояние для интерфейса: нет прокси / не отвечает / рабочий / не проверялся. */
+      state: !proxy.configured ? 'none' : proxy.working === false ? 'down' : proxy.working === true ? 'ok' : 'unknown',
+      /** Человеческая причина — вместо «неизвестной ошибки». */
+      problem: blocked === 'no_proxy' ? 'Прокси не назначен' : blocked === 'proxy_down' ? 'Прокси не отвечает' : null,
     },
     status: {
       valid,
-      sessionOk: sessionOk || (busyIn ? valid : false),
+      // Почему проверка не доведена до конца (null — доведена).
+      checkBlocked: blocked,
+      checkNote: blocked === 'no_proxy'
+        ? 'Прокси не назначен — аккаунт не проверяли. Назначьте прокси.'
+        : blocked === 'proxy_down'
+          ? 'Прокси не отвечает — аккаунт не проверяли. Замените прокси.'
+          : null,
+      sessionOk: sessionKnownOk,
       spamblock,
       spamblockText: proxy._spamblock?.text || meta.spamblockText || null,
       spamblockAt, // MR-63: когда спамблок проверяли в последний раз (для «Проверено: дата»)

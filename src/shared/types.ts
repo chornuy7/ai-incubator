@@ -186,9 +186,16 @@ export interface AccountStats {
     configured: boolean
     working: boolean | null
     checkedAt: number | null
+    /** none — прокси не назначен, down — не отвечает, ok — рабочий, unknown — не проверялся. */
+    state?: 'none' | 'down' | 'ok' | 'unknown'
+    /** Человеческая причина вместо «неизвестной ошибки». */
+    problem?: string | null
   }
   status: {
     valid: boolean
+    /** Проверку не довели до конца: причина в прокси, а не в аккаунте. */
+    checkBlocked?: 'no_proxy' | 'proxy_down' | null
+    checkNote?: string | null
     sessionOk: boolean
     spamblock: 'clean' | 'blocked' | 'unknown'
     spamblockText: string | null

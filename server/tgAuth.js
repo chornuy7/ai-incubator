@@ -115,7 +115,14 @@ async function connectWithTimeout(client) {
   try {
     await Promise.race([client.connect(), timeout])
   } catch (err) {
-    try { await client.disconnect() } catch { /* уже мертво — не важно */ }
+    // НЕ ждём disconnect бесконечно: на битом socks-прокси (Socks5 auth failed и т.п.)
+    // client.disconnect() может зависнуть — и тогда весь воркер застревает ЗДЕСЬ, не
+    // доходя до точки проверки «Стоп» (breakableDelay), из-за чего стоп игнорируется
+    // десятками секунд. Гасим соединение в фоне с собственным лимитом и сразу пробрасываем ошибку.
+    void Promise.race([
+      Promise.resolve().then(() => client.disconnect()).catch(() => {}),
+      new Promise((r) => setTimeout(r, 3000)),
+    ])
     throw err
   } finally {
     clearTimeout(timer)

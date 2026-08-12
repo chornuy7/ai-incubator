@@ -1,11 +1,13 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { LifeBuoy, Plus, Send, MessageSquare, Clock, Loader2, ArrowLeft } from 'lucide-react'
 import { useApp } from '@/mocks/store'
 import { useSession } from '@/features/auth/session'
-import { PageHeader, Card, EmptyState, Select, Modal, Badge } from '@/shared/ui'
+import { PageHeader, Card, EmptyState, Select, Badge } from '@/shared/ui'
 import { HelpButton } from '@/features/neuro-commenting/moduleUi'
 import { fetchTickets, fetchTicket, createTicket, replyTicket, type ApiTicket, type TicketStatus } from '@/api/ticketsApi'
+import { TicketChat, shortId } from '@/features/support/TicketChat'
+import { cn } from '@/shared/lib/utils'
 
 const STATUS_META: Record<TicketStatus, { label: string; tone: 'spark' | 'iris' | 'amber' | 'rose' | 'muted' }> = {
   open: { label: 'Открыт', tone: 'spark' },
@@ -34,10 +36,11 @@ const preview = (t: ApiTicket) => t.messages.length ? t.messages[t.messages.leng
 export function SupportPage() {
   const pushToast = useApp((s) => s.pushToast)
   const guardNet = useApp((s) => s.guardNet)
-  // Смотрит поддержка (роль «Поддержка» или админ)? Тогда это ВСЕ тикеты пользователей,
-  // а не свои: сервер отдаёт их целиком, а мы подписываем сообщения «Клиент», не «Вы».
+  // На /panel/support сторона поддержки — ТОЛЬКО роль «Поддержка» (без админки): для них
+  // это рабочее место, все тикеты, ответ как «Поддержка». Админ здесь — обычный клиент
+  // (свои тикеты, пишет от своего имени); отвечает как поддержка из Админ-панели → «Тикеты».
   const sessionUser = useSession((s) => s.user)
-  const isSupportView = !!(sessionUser?.isAdmin || sessionUser?.permissions?.resources?.support === 'allow')
+  const isSupportView = !!(sessionUser?.permissions?.resources?.support === 'allow' && !sessionUser?.isAdmin)
   const [tickets, setTickets] = useState<ApiTicket[]>([])
   const [loading, setLoading] = useState(true)
   const [filter, setFilter] = useState('all')
@@ -52,14 +55,36 @@ export function SupportPage() {
   const [params, setParams] = useSearchParams()
 
   const load = useCallback(async () => {
-    try { setTickets(await fetchTickets()) } catch { /* API недоступен — пусто */ } finally { setLoading(false) }
-  }, [])
+    try { setTickets(await fetchTickets(isSupportView)) } catch { /* API недоступен — пусто */ } finally { setLoading(false) }
+  }, [isSupportView])
   useEffect(() => { void load() }, [load])
 
   // §8 (MR-45): виджет поддержки открывает «Новый тикет» сразу — по ?new=1.
   useEffect(() => {
     if (params.get('new') === '1') { setNewOpen(true); params.delete('new'); setParams(params, { replace: true }) }
   }, [params, setParams])
+
+  // Живая переписка: пока тикет открыт — подтягиваем новые сообщения, как в мессенджере.
+  const openId = openTicket?.id
+  useEffect(() => {
+    if (!openId) return
+    const iv = setInterval(() => {
+      void fetchTicket(openId, isSupportView)
+        .then((fresh) => {
+          setOpenTicket((cur) => (cur && cur.id === fresh.id ? fresh : cur))
+          setTickets((list) => list.map((x) => x.id === fresh.id ? { ...fresh, unread: 0 } : x))
+        })
+        .catch(() => { /* сеть моргнула — покажем на следующем тике */ })
+    }, 5000)
+    return () => clearInterval(iv)
+  }, [openId, isSupportView])
+
+  // Лента прокручивается к последнему сообщению — как в любом чате.
+  const feedRef = useRef<HTMLDivElement>(null)
+  const msgCount = openTicket?.messages.length ?? 0
+  useEffect(() => {
+    if (feedRef.current) feedRef.current.scrollTop = feedRef.current.scrollHeight
+  }, [msgCount, openId])
 
   const filtered = filter === 'all' ? tickets : tickets.filter((t) => t.status === filter)
 
@@ -78,16 +103,21 @@ export function SupportPage() {
 
   const openThread = async (t: ApiTicket) => {
     setOpenTicket(t); setReply('')
-    try { setOpenTicket(await fetchTicket(t.id)) } catch { /* оставляем то, что есть в списке */ }
+    // GET тикета отмечает его прочитанным для нашей стороны — сразу гасим счётчик в списке.
+    try {
+      const fresh = await fetchTicket(t.id, isSupportView)
+      setOpenTicket(fresh)
+      setTickets((list) => list.map((x) => x.id === fresh.id ? { ...fresh, unread: 0 } : x))
+    } catch { /* оставляем то, что есть в списке */ }
   }
 
   const sendReply = async () => {
     if (!openTicket || !reply.trim()) return
     setReplying(true)
     try {
-      const updated = await replyTicket(openTicket.id, reply.trim())
+      const updated = await replyTicket(openTicket.id, reply.trim(), isSupportView)
       setOpenTicket(updated); setReply('')
-      setTickets((list) => list.map((x) => x.id === updated.id ? updated : x))
+      setTickets((list) => list.map((x) => x.id === updated.id ? { ...updated, unread: 0 } : x))
     } catch (e) { pushToast({ type: 'error', title: 'Не отправлено', desc: e instanceof Error ? e.message : '' }) }
     finally { setReplying(false) }
   }
@@ -125,6 +155,49 @@ export function SupportPage() {
             <button onClick={() => setNewOpen(false)} className="btn-ghost h-10">Отмена</button>
             <button onClick={() => void submitTicket()} disabled={saving} className="btn-primary h-10 disabled:opacity-50">
               {saving ? <Loader2 size={16} className="animate-spin" /> : null} Создать тикет
+            </button>
+          </div>
+        </Card>
+      </div>
+    )
+  }
+
+  // Переписка — ОТДЕЛЬНАЯ СТРАНИЦА, а не попап: в модалке лента жалась в окошко и
+  // закрывалась случайным кликом мимо. Здесь тот же экран, только вместо списка — чат.
+  if (openTicket) {
+    const meta = STATUS_META[openTicket.status]
+    return (
+      <div>
+        <button onClick={() => setOpenTicket(null)} className="btn-ghost mb-3 h-9"><ArrowLeft size={15} /> Назад к обращениям</button>
+        <PageHeader
+          title={openTicket.subject}
+          subtitle={`${openTicket.id}${isSupportView && (openTicket.ownerEmail || openTicket.ownerName) ? ` · клиент ${openTicket.ownerEmail || openTicket.ownerName} · ID ${shortId(openTicket.userId)}` : ''}`}
+          icon={<MessageSquare size={22} />}
+          badge={meta.label}
+        />
+        <Card className="flex flex-col overflow-hidden p-0">
+          <div className="flex items-center gap-2 border-b border-line px-4 py-2.5">
+            <Badge tone={meta.tone}>{meta.label}</Badge>
+            <span className="text-xs text-muted">Обновлён {fmtTs(openTicket.updatedAt)}</span>
+          </div>
+          {/* Лента во всю доступную высоту — чат, а не окошко. */}
+          <div ref={feedRef} className="h-[calc(100vh-24rem)] min-h-[280px] overflow-y-auto bg-surface/40 px-4 py-3">
+            <TicketChat ticket={openTicket} viewerIsSupport={isSupportView} />
+          </div>
+          {openTicket.status === 'closed' && (
+            <div className="border-t border-line bg-surface px-4 py-2 text-center text-xs text-muted">Тикет закрыт. Новый ответ откроет его снова.</div>
+          )}
+          <div className="flex gap-2 border-t border-line p-3">
+            <input
+              value={reply}
+              onChange={(e) => setReply(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && void sendReply()}
+              className="input flex-1"
+              placeholder={isSupportView ? 'Ответ поддержки…' : 'Ваше сообщение…'}
+              autoFocus
+            />
+            <button onClick={() => void sendReply()} disabled={replying || !reply.trim()} className="btn-primary h-[42px] px-4 disabled:opacity-50">
+              {replying ? <Loader2 size={16} className="animate-spin" /> : <Send size={16} />}
             </button>
           </div>
         </Card>
@@ -177,8 +250,14 @@ export function SupportPage() {
                   <div className="flex items-center gap-2">
                     <span className="font-mono text-xs text-muted">{t.id}</span>
                     <Badge tone={m.tone}>{m.label}</Badge>
+                    {/* Красный значок непрочитанного — новые сообщения от другой стороны. */}
+                    {!!t.unread && <span className="grid min-w-[20px] place-items-center rounded-full bg-rose-500 px-1.5 text-[11px] font-bold text-white">{t.unread}</span>}
+                    {/* Поддержке важно СРАЗУ видеть, чей это тикет. */}
+                    {isSupportView && (t.ownerEmail || t.ownerName) && (
+                      <span className="truncate text-[11px] text-iris-300">{t.ownerEmail || t.ownerName}</span>
+                    )}
                   </div>
-                  <div className="mt-0.5 truncate font-semibold text-fg">{t.subject}</div>
+                  <div className={cn('mt-0.5 truncate', t.unread ? 'font-bold text-fg' : 'font-semibold text-fg')}>{t.subject}</div>
                   <div className="truncate text-xs text-muted">{preview(t)}</div>
                 </div>
                 <div className="hidden shrink-0 flex-col items-end gap-1 text-xs text-muted sm:flex">
@@ -191,43 +270,6 @@ export function SupportPage() {
         </div>
       )}
 
-      {/* Ticket thread */}
-      <Modal open={!!openTicket} onClose={() => setOpenTicket(null)} title={openTicket?.subject} subtitle={openTicket?.id} icon={<MessageSquare size={22} />} size="md">
-        {openTicket && (
-          <div className="space-y-3">
-            <div className="flex items-center gap-2">
-              <Badge tone={STATUS_META[openTicket.status].tone}>{STATUS_META[openTicket.status].label}</Badge>
-              <span className="text-xs text-muted">Обновлён {fmtTs(openTicket.updatedAt)}</span>
-            </div>
-            <div className="max-h-[45vh] space-y-2 overflow-y-auto pr-1">
-              {openTicket.messages.length === 0 ? (
-                <div className="rounded-xl border border-line bg-elevated p-3.5 text-sm text-muted">Пока нет сообщений. Напишите первым.</div>
-              ) : openTicket.messages.map((msg) => (
-                <div key={msg.id} className={msg.from === 'support'
-                  ? 'rounded-xl border border-spark-500/25 bg-spark-500/8 p-3.5 text-sm text-fg'
-                  : 'rounded-xl border border-line bg-elevated p-3.5 text-sm text-fg'}>
-                  <div className="mb-1 flex items-center gap-2 text-[11px] text-muted">
-                    <span className={msg.from === 'support' ? 'font-semibold text-spark-300' : 'font-semibold text-fg'}>
-                      {msg.from === 'support' ? 'Поддержка' : (isSupportView ? 'Клиент' : 'Вы')}
-                    </span>
-                    <span>· {fmtTs(msg.ts)}</span>
-                  </div>
-                  <div className="whitespace-pre-wrap">{msg.text}</div>
-                </div>
-              ))}
-            </div>
-            {openTicket.status === 'closed' ? (
-              <div className="rounded-xl border border-line bg-surface p-3 text-center text-xs text-muted">Тикет закрыт. Новый ответ откроет его снова.</div>
-            ) : null}
-            <div className="flex gap-2 pt-1">
-              <input value={reply} onChange={(e) => setReply(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && void sendReply()} className="input flex-1" placeholder="Ваш ответ…" />
-              <button onClick={() => void sendReply()} disabled={replying || !reply.trim()} className="btn-primary h-[42px] px-4 disabled:opacity-50">
-                {replying ? <Loader2 size={16} className="animate-spin" /> : <Send size={16} />}
-              </button>
-            </div>
-          </div>
-        )}
-      </Modal>
     </div>
   )
 }

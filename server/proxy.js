@@ -48,7 +48,11 @@ export function parseProxy(raw) {
 export function clientOptions(proxy) {
   /** @type {Record<string, unknown>} */
   const opts = {
-    connectionRetries: 5,
+    // Меньше ретраев = битый/мёртвый прокси падает быстрее, и воркер быстрее
+    // возвращается к точке проверки «Стоп». Полный лимит по времени всё равно
+    // держит connectWithTimeout (TG_CONNECT_TIMEOUT_MS). Было 5 — стоп на битом
+    // прокси игнорировался десятками секунд, пока шли повторные попытки коннекта.
+    connectionRetries: 2,
     useWSS: false,
   }
   if (proxy) opts.proxy = proxy

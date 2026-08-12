@@ -1,6 +1,18 @@
 import { createTaskStore } from '../lib/taskStore.js'
 import { WORKERS, startWorker, stopWorker, pauseWorker } from './workers.js'
 import { tryAcquireLocks } from '../lib/accountLocks.js'
+import { getGoal, isGoalExpired } from '../goals.js'
+
+/**
+ * Просрочена ли цель/дедлайн задачи — та же проверка, что делает воркер в цикле (§9.4).
+ * Нужна ДО запуска: иначе resume переведёт задачу в running, воркер тут же увидит
+ * просрочку и вернёт её в stopped — со стороны это «возобновление не доходит».
+ */
+async function taskGoalExpired(settings) {
+  if (settings?.deadline) return isGoalExpired({ deadline: settings.deadline })
+  if (!settings?.goalId) return false
+  try { const g = await getGoal(settings.goalId); return !!g && isGoalExpired(g) } catch { return false }
+}
 
 /** @type {Record<string, ReturnType<typeof createTaskStore>>} */
 const stores = {}
@@ -135,19 +147,37 @@ export async function pauseModuleTask(moduleKey, taskId) {
   return pauseWorker(taskId, store)
 }
 
-/** Продолжить приостановленную задачу: перезахват локов + запуск воркера с сохранённым прогрессом. */
+/**
+ * Продолжить задачу С ТОГО ЖЕ МЕСТА: перезахват локов + запуск воркера с сохранённым
+ * прогрессом. Работает и для `paused`, и для `stopped` — прогресс (actionsDone) стоп не
+ * обнуляет, а аккаунты стоп освободил, поэтому локи берём заново. Так «Возобновить»
+ * остановленной задачи продолжает ту же, а не плодит новую с нуля (это делает restart).
+ */
 export async function resumeModuleTask(moduleKey, taskId) {
   const store = getModuleStore(moduleKey)
   if (!store) return null
   const task = await store.loadTask(taskId)
   if (!task) return null
-  if (task.status !== 'paused') return task
+  if (task.status !== 'paused' && task.status !== 'stopped') return task
+  const wasStopped = task.status === 'stopped'
+  // Pre-flight: если цель просрочена — воркер сразу же остановит задачу. Не переводим её
+  // в running зря (мигание running→stopped), а честно отвечаем причиной.
+  if (await taskGoalExpired(task.settings)) {
+    throw new Error('Цель просрочена — возобновить нельзя. Продлите дедлайн кампании или запустите новую задачу.')
+  }
   const lockErr = tryAcquireLocks(task.settings?.accountIds || [], moduleKey, task.id, { goalId: task.settings?.goalId })
   if (lockErr) throw new Error(lockErr)
   task.pauseRequested = false
   task.stopRequested = false
   task.status = 'running'
-  await store.saveTask(task, { control: true }) // разрешаем сбросить флаги паузы
+  // ВАЖЕН ПОРЯДОК: сначала control-сейв сбрасывает stop/pause на диске, и только потом
+  // appendLog. appendLog внутри делает обычный (не control) saveTask, а тот перечитывает
+  // stopRequested с диска — если лог идёт ДО control-сейва, он вернёт старый stopRequested=true
+  // и возобновлённая задача стартует «уже остановленной» (воркер выходит мгновенно, 0 действий).
+  await store.saveTask(task, { control: true })
+  await store.appendLog(task, 'info', wasStopped
+    ? 'Возобновлена с места остановки — прогресс сохранён, аккаунты захвачены заново'
+    : 'Возобновлена с паузы')
   startWorker(task.id, store, getWorker(moduleKey))
   return task
 }

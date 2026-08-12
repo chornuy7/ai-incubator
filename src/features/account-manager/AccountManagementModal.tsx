@@ -184,6 +184,8 @@ export function HeroBanner({ account, stats, actions }: {
 }) {
   const geo = stats?.profile.geo ?? account.country.toUpperCase()
   const valid = stats?.status.valid
+  /** Проверку сорвал прокси — причина показывается вместо «Невалидный». */
+  const blockedBy = stats?.status.checkBlocked ?? null
   const spam = stats?.status.spamblock ?? 'unknown'
   const warmingDays = stats?.status.warmingDays
   const active = stats?.status.warmingActive
@@ -210,10 +212,20 @@ export function HeroBanner({ account, stats, actions }: {
           )}
         </div>
         <div className="flex shrink-0 flex-col items-end gap-1.5">
-          <Pill tone={valid == null ? 'neutral' : valid ? 'ok' : 'bad'}>
-            {valid == null ? <ShieldQuestion size={12} /> : valid ? <ShieldCheck size={12} /> : <ShieldAlert size={12} />}
-            {valid == null ? 'Проверка…' : valid ? 'Валидный' : 'Невалидный'}
-          </Pill>
+          {/* Проверку мог сорвать ПРОКСИ (не назначен / не отвечает) — тогда про сессию
+              ничего не известно, и писать «Невалидный» нельзя: это оговор аккаунта.
+              Показываем настоящую причину. */}
+          {blockedBy ? (
+            <Pill tone="warn">
+              <ShieldAlert size={12} />
+              {blockedBy === 'no_proxy' ? 'Нет прокси' : 'Прокси не отвечает'}
+            </Pill>
+          ) : (
+            <Pill tone={valid == null ? 'neutral' : valid ? 'ok' : 'bad'}>
+              {valid == null ? <ShieldQuestion size={12} /> : valid ? <ShieldCheck size={12} /> : <ShieldAlert size={12} />}
+              {valid == null ? 'Проверка…' : valid ? 'Валидный' : 'Невалидный'}
+            </Pill>
+          )}
           <Pill tone={spam === 'clean' ? 'ok' : spam === 'blocked' ? 'bad' : 'neutral'}>
             {spam === 'clean' ? 'Без спамблока' : spam === 'blocked' ? 'Спамблок' : 'Спамблок: —'}
           </Pill>
@@ -270,10 +282,12 @@ function HeroBtn({ onClick, loading, icon, label, tone }: {
   )
 }
 
-function Pill({ children, tone }: { children: React.ReactNode; tone: 'ok' | 'bad' | 'neutral' }) {
+function Pill({ children, tone }: { children: React.ReactNode; tone: 'ok' | 'bad' | 'neutral' | 'warn' }) {
   const tones = {
     ok: 'bg-spark-500/25 text-spark-50 border-spark-300/40',
     bad: 'bg-rose-500/25 text-rose-50 border-rose-300/40',
+    // Проблема НЕ в аккаунте (прокси) — янтарный, чтобы не путать с «невалидным».
+    warn: 'bg-amber-500/30 text-amber-50 border-amber-300/50',
     neutral: 'bg-white/15 text-white/90 border-white/25',
   }
   return <span className={cn('inline-flex items-center gap-1 rounded-full border px-2.5 py-1 text-xs font-bold', tones[tone])}>{children}</span>
@@ -369,7 +383,14 @@ export function ProxyTab({ account, stats, loading, onRecheck }: { account: TgAc
       }
     >
       {!px?.configured ? (
-        <div className="py-5 text-center text-sm text-muted">Прямое подключение (прокси не настроен)</div>
+        // Прокси НЕ назначен. Раньше здесь было «Прямое подключение» — звучало как рабочий
+        // режим, хотя на деле аккаунт вообще не проверяется и идёт с общего IP сервера.
+        <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 px-3 py-4 text-center">
+          <div className="inline-flex items-center gap-1.5 text-sm font-bold text-amber-200"><ShieldAlert size={15} /> Нет прокси</div>
+          <div className="mt-1 text-xs text-amber-200/80">
+            Аккаунт не проверяется и не идёт в работу без прокси — назначьте его в менеджере аккаунтов.
+          </div>
+        </div>
       ) : (
         <>
           <div className="mb-3 rounded-xl border border-line bg-elevated px-3 py-2 font-mono text-xs text-iris-300 break-all">{px.raw}</div>
@@ -379,10 +400,16 @@ export function ProxyTab({ account, stats, loading, onRecheck }: { account: TgAc
             ) : px.working ? (
               <span className="inline-flex items-center gap-1.5 rounded-lg bg-spark-500/15 px-2.5 py-1 text-xs font-bold text-spark-300"><ShieldCheck size={13} /> Работает</span>
             ) : (
-              <span className="inline-flex items-center gap-1.5 rounded-lg bg-rose-500/15 px-2.5 py-1 text-xs font-bold text-rose-300"><ShieldAlert size={13} /> Не отвечает</span>
+              <span className="inline-flex items-center gap-1.5 rounded-lg bg-rose-500/15 px-2.5 py-1 text-xs font-bold text-rose-300"><ShieldAlert size={13} /> Не отвечает · помечен нерабочим</span>
             )}
             <span className="ml-2 text-xs text-muted">Проверено: {fmtDate(px.checkedAt)}</span>
           </div>
+          {/* Причина прямым текстом: почему аккаунт не удалось проверить. */}
+          {stats?.status.checkNote && (
+            <div className="mb-3 rounded-lg border border-amber-500/25 bg-amber-500/8 px-3 py-2 text-xs text-amber-200">
+              {stats.status.checkNote}
+            </div>
+          )}
           <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
             <MiniStat label="Протокол" value={px.protocol ?? '—'} />
             <MiniStat label="IP" value={px.ip ?? '—'} />

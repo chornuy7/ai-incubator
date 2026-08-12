@@ -1,5 +1,6 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { NavLink, Link, useLocation } from 'react-router-dom'
+import { fetchTicketsUnread } from '@/api/ticketsApi'
 import { PanelLeftClose, PanelLeftOpen, X, LogOut, ChevronDown } from 'lucide-react'
 import { ROUTES, GROUP_LABELS, type RouteDef } from '@/shared/config/routes'
 import { useApp } from '@/mocks/store'
@@ -54,6 +55,19 @@ export function AppSidebar({ mobile = false }: { mobile?: boolean }) {
   })
 
   const signOut = () => { logout(); setUserState('guest') }
+
+  // Уведомления поддержки: сколько НЕПРОЧИТАННЫХ для моей стороны (клиент видит ответы
+  // поддержки; роль «Поддержка» — новые обращения). Красный значок на пункте «Поддержка».
+  // Роль «Поддержка» (без админки) смотрит сторону поддержки; остальные — свою.
+  const supportSide = !!(sessionUser?.permissions?.resources?.support === 'allow' && !sessionUser?.isAdmin)
+  const [supportUnread, setSupportUnread] = useState(0)
+  useEffect(() => {
+    let alive = true
+    const tick = () => { void fetchTicketsUnread(supportSide).then((n) => { if (alive) setSupportUnread(n) }) }
+    tick()
+    const id = setInterval(tick, 20000)
+    return () => { alive = false; clearInterval(id) }
+  }, [supportSide])
 
   // Две независимые оси. РОЛЬ (§8.1) — что админ разрешил сотруднику. ПОДПИСКА
   // (§5.4) — что рабочее пространство оплатило: «купив нейрочатінг — бачить
@@ -150,8 +164,18 @@ export function AppSidebar({ mobile = false }: { mobile?: boolean }) {
                     >
                       {active && <span className="absolute left-0 h-5 w-1 rounded-r-full bg-spark-gradient" />}
                       <Icon size={19} className="shrink-0" />
+                      {/* Красный значок непрочитанного на «Поддержке». В свёрнутом меню — точка. */}
+                      {r.path === '/panel/support' && supportUnread > 0 && (
+                        collapsed
+                          ? <span className="absolute right-1.5 top-1.5 h-2.5 w-2.5 rounded-full bg-rose-500 ring-2 ring-surface" />
+                          : null
+                      )}
                       {!collapsed && <span className="truncate">{r.label}</span>}
-                      {!collapsed && r.badge && (
+                      {!collapsed && r.path === '/panel/support' && supportUnread > 0 ? (
+                        <span className="ml-auto grid min-w-[20px] place-items-center rounded-full bg-rose-500 px-1.5 py-0.5 text-[10px] font-bold text-white">
+                          {supportUnread}
+                        </span>
+                      ) : !collapsed && r.badge && (
                         <span className="ml-auto rounded bg-iris-500/15 px-1.5 py-0.5 text-[10px] font-bold text-iris-300">
                           {r.badge}
                         </span>

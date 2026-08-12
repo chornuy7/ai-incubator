@@ -1209,21 +1209,30 @@ function AccountsTable(props: {
                 )}
                 {showCol('lastSeen') && <td className="px-4 py-3 text-muted">{a.lastSeen}</td>}
                 {showCol('proxy') && (
-                  // MR-129: прокси задаётся прямо из списка — клик по ячейке открывает «Сменить прокси»
-                  // (выбор из базы или новый). Раньше это было спрятано только в меню «…».
+                  // MR-129: прокси задаётся прямо из списка — клик по ячейке открывает «Сменить прокси».
+                  // Плюс состояние: нет прокси / прокси не отвечает (помечен нерабочим в каталоге) —
+                  // раньше в таблице всё выглядело исправным, а работа молча падала.
                   <td className="px-4 py-3 font-mono text-xs">
                     <button
                       type="button"
                       onClick={() => props.onProxy(a)}
                       className="group/px inline-flex items-center gap-1.5 text-left transition-colors hover:text-spark-300"
-                      title={hasProxy(a) ? 'Сменить прокси' : 'Назначить прокси'}
+                      title={!hasProxy(a)
+                        ? 'Аккаунт ходит через ваш IP — тот же, что у остальных без прокси. Для Telegram это одна группа: находит один аккаунт и добивает похожие. Нажмите, чтобы назначить прокси.'
+                        : a.proxyOk === false
+                          ? 'Прокси не отвечает и помечен нерабочим в каталоге. Нажмите, чтобы назначить живой — иначе задачи будут падать.'
+                          : 'Сменить прокси'}
                     >
-                      {hasProxy(a) ? (
-                        <span className="text-muted group-hover/px:text-spark-300">{formatProxyLabel(a.proxy)}</span>
-                      ) : (
+                      {!hasProxy(a) ? (
                         <span className="inline-flex items-center gap-1 font-bold text-rose-300">
-                          <AlertTriangle size={11} className="shrink-0" /> без прокси · назначить
+                          <AlertTriangle size={11} className="shrink-0" /> нет прокси · назначить
                         </span>
+                      ) : a.proxyOk === false ? (
+                        <span className="inline-flex items-center gap-1 font-bold text-rose-300">
+                          <AlertTriangle size={11} className="shrink-0" /> прокси не отвечает · сменить
+                        </span>
+                      ) : (
+                        <span className="text-muted group-hover/px:text-spark-300">{formatProxyLabel(a.proxy)}</span>
                       )}
                       <Server size={11} className="shrink-0 opacity-0 transition-opacity group-hover/px:opacity-100" />
                     </button>
