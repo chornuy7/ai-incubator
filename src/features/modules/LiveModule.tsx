@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import {
   Play, Sparkles, Hash, Settings2, Clock, Users, MessageSquareText,
-  Heart, Eye, Shield, MessageCircle, Database, Trophy, Link2, Plus, Terminal, ArrowUpRight, Lock, LockOpen,
+  Heart, Eye, Shield, MessageCircle, Database, Trophy, Link2, Plus, Terminal, ArrowUpRight, Lock, LockOpen, Flame,
 } from 'lucide-react'
 import { MODULES, isCombatModule, combatConfirmText, type ModuleConfig } from '@/shared/config/modules'
 import { activeAccounts, useApp } from '@/mocks/store'
@@ -44,6 +44,25 @@ function fmtDur(sec: number): string {
   if (sec < 60) return `${Math.round(sec)}с`
   if (sec < 3600) return `${Math.round(sec / 60)} мин`
   return `${(sec / 3600).toFixed(1)} ч`
+}
+
+/** Чего именно лимит — по типу модуля, чтобы в панели было «Лимит комментариев», а не голое «Лимит». */
+function limitNoun(moduleKey: string, cfg: ModuleConfig): string {
+  const byKey: Record<string, string> = {
+    'neuro-commenting': 'комментариев',
+    'neuro-chatting': 'сообщений',
+    'neuro-dialogs': 'сообщений',
+    'mass-react': 'реакций',
+    'mass-looking': 'просмотров',
+    warming: 'действий',
+    ggr: 'проверок',
+    'parsing-users': 'участников',
+    'parsing-messages': 'сообщений',
+    'parsing-comments': 'комментариев',
+  }
+  if (byKey[moduleKey]) return byKey[moduleKey]
+  if (cfg.reactionSettings) return 'реакций'
+  return 'действий'
 }
 
 export function LiveModule({ moduleKey }: { moduleKey: string }) {
@@ -342,7 +361,7 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
           return `${fmtDur(delays.action[0] * perAcc)}–${fmtDur(delays.action[1] * perAcc)}`
         })(),
       },
-      { icon: cfg.reactionSettings ? <Heart size={18} /> : <MessageSquareText size={18} />, color: '#f59e0b', label: 'Лимит', value: String(maxActions) },
+      { icon: cfg.reactionSettings ? <Heart size={18} /> : <MessageSquareText size={18} />, color: '#f59e0b', label: `Лимит ${limitNoun(moduleKey, cfg)}`, value: String(maxActions) },
     ]
   }, [selected, targets, postUrls, hasPostTargets, delays, maxActions, cfg, isGgr, accounts, results, task, needsTargets])
 
@@ -594,6 +613,20 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
           delayPreset={delayPreset}
           onDelayPreset={setDelayPreset}
         />
+      )}
+
+      {/* §3.5: «Уровень прогрева» — ОТДЕЛЬНЫЙ блок (как «Тайминги и задержки»), а не
+          строчка внутри «Параметры и лимиты»: это главный выбор прогрева, ему нужен свой
+          заголовок. Показываем только для warming-модуля и не во время выполнения. */}
+      {cfg.warmingLayout && !running && (
+        <SectionCard icon={<Flame size={18} />} title="Уровень прогрева">
+          <div className="mb-1.5 text-xs text-white/40">Длиннее = естественнее</div>
+          <Segmented options={WARM_LEVELS} value={warmLevel} onChange={setWarmLevel} />
+          <div className="mt-3 rounded-lg border border-line/60 bg-elevated/40 px-3 py-2 text-[11px] text-white/50">
+            💡 <b className="text-white/70">Уровень</b> задаёт темп (~40 / 20 / 10 действий в день) и множитель пауз.
+            Секции «Защита» и «Тайминги и задержки» — это <b className="text-white/70">тонкая подстройка поверх уровня</b> (для опытных): защита × шаблон × уровень перемножаются. Для старта достаточно выбрать уровень.
+          </div>
+        </SectionCard>
       )}
 
       {/* Заголовок не «Запуск»: так он дублировал последний шаг мастера. Здесь лежат

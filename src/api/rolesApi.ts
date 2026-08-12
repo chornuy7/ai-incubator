@@ -20,6 +20,8 @@ export interface RolePermissions {
     searchTemplates: Perm
     /** Видеть и вести в Дашборде ЧУЖИЕ задачи. По умолчанию человек видит только свои. */
     allTasks?: Perm
+    /** Поддержка: видеть все тикеты пользователей и отвечать в них «как поддержка». */
+    support?: Perm
   }
 }
 
@@ -38,7 +40,7 @@ export interface CatalogBlock { key: string; label: string }
 export interface CatalogSection { key: string; label: string }
 export interface CatalogResourceItem { id: string; label: string; channels?: string[] }
 export interface CatalogResource {
-  type: 'accounts' | 'accountGroups' | 'folders' | 'channels' | 'timers' | 'searchTemplates' | 'allTasks'
+  type: 'accounts' | 'accountGroups' | 'folders' | 'channels' | 'timers' | 'searchTemplates' | 'allTasks' | 'support'
   label: string
   perItem: boolean
   items?: CatalogResourceItem[]

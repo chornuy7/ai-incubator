@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, useSearchParams } from 'react-router-dom'
 import { Zap, Eye, EyeOff, ArrowRight, ShieldCheck, Bot, Radar, Sparkles } from 'lucide-react'
 import { useApp } from '@/mocks/store'
 import { useSession } from '@/features/auth/session'
@@ -18,8 +18,11 @@ export function GuestLogin() {
   const setUserState = useApp((s) => s.setUserState)
   const pushToast = useApp((s) => s.pushToast)
   const signIn = useSession((s) => s.login)
-  // Регистрация с лендинга: тестер заводит аккаунт сам, доступ к модулям выдаёт админ.
-  const [mode, setMode] = useState<'login' | 'register'>('login')
+  // С лендинга приходим с ?mode=register&plan=<модуль>: сразу открываем регистрацию, а
+  // после успеха ведём на подписку с выбранным модулем (доступ включается там же).
+  const [params] = useSearchParams()
+  const planKey = params.get('plan') || ''
+  const [mode, setMode] = useState<'login' | 'register'>(params.get('mode') === 'register' ? 'register' : 'login')
   const [email, setEmail] = useState('')
   const [pass, setPass] = useState('')
   const [pass2, setPass2] = useState('') // §5.1: повтор пароля
@@ -71,9 +74,10 @@ export function GuestLogin() {
       pushToast({
         type: 'success',
         title: isReg ? `Аккаунт создан, ${user.name}!` : `Добро пожаловать, ${user.name}!`,
-        desc: isReg ? 'Доступ к модулям выдаст администратор.' : (role?.name ? `Роль: ${role.name}` : 'Вход выполнен.'),
+        desc: planKey ? 'Подтвердите подписку — доступ включится сразу.' : (isReg ? 'Доступ к модулям выдаст администратор.' : (role?.name ? `Роль: ${role.name}` : 'Вход выполнен.')),
       })
-      nav('/panel')
+      // Пришёл с лендинга с выбранным модулем → на страницу подписки с предвыбором, иначе — в кабинет.
+      nav(planKey ? `/panel/user/subscription?apply=${encodeURIComponent(planKey)}` : '/panel')
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Проверьте данные'
       // §5.1: понятное сообщение о существующем аккаунте вместо сырой ошибки Supabase/API.

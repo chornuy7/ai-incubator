@@ -229,7 +229,7 @@ export function MailingPage() {
     { icon: <Users size={18} />, color: 'text-iris-300', label: 'Аккаунты', value: String(selected.size), warn: selected.size === 0 },
     { icon: <Target size={18} />, color: 'text-cyan-300', label: 'Получатели', value: String(numbers.length), warn: numbers.length === 0 },
     { icon: <Send size={18} />, color: 'text-amber-300', label: '≈ на аккаунт', value: String(perAcc) },
-    { icon: <Shield size={18} />, color: 'text-spark-300', label: 'Лимит', value: String(maxPerAccount) },
+    { icon: <Shield size={18} />, color: 'text-spark-300', label: 'Лимит сообщений', value: String(maxPerAccount) },
   ]
 
   const blockedBy = !canStart ? [

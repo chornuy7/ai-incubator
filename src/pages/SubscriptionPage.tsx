@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { Check, Package, Sparkles, Loader2 } from 'lucide-react'
 import { PageHeader, Card } from '@/shared/ui'
 import { useApp } from '@/mocks/store'
@@ -27,12 +28,17 @@ export function SubscriptionPage() {
   const [saving, setSaving] = useState(false)
   const [period, setPeriod] = useState<'month' | 'year'>('month')
 
+  // Модуль, пришедший с лендинга (?apply=<key>) — предвыбираем его поверх текущего набора.
+  const [params] = useSearchParams()
+  const applyKey = params.get('apply') || ''
   useEffect(() => {
     void fetchSubscription().then((d) => {
       setData(d)
-      setPicked(new Set(d.mine === 'all' ? d.items.map((i) => i.key) : d.mine))
+      const base = new Set(d.mine === 'all' ? d.items.map((i) => i.key) : d.mine)
+      if (applyKey && d.items.some((i) => i.key === applyKey)) base.add(applyKey)
+      setPicked(base)
     }).catch(() => {})
-  }, [])
+  }, [applyKey])
 
   const keys = useMemo(() => [...picked], [picked])
 

@@ -20,7 +20,7 @@ import { changeBalance, fetchSubscription, saveUserModules, fetchWalletHistory, 
 import { promptDialog } from '@/shared/lib/dialog'
 import { ApiDocsTab } from '@/features/billing/ApiDocsTab'
 import { fmt, fmtDate, cleanPrice, fmtUsd, usdEq, MetricTile } from '@/pages/admin/adminShared'
-import { MonitoringTab } from '@/pages/admin/MonitoringTab'
+import { MonitoringTab, AccountsHealthBlocks } from '@/pages/admin/MonitoringTab'
 import { AccountsTab } from '@/pages/admin/AccountsTab'
 import { BundlesEditor } from '@/pages/admin/BundlesEditor'
 import { useTabParam } from '@/shared/lib/useTabParam'
@@ -54,6 +54,13 @@ const PERIODS = [
  * и настройки, фильтровать их по времени нечем.
  */
 const PERIODLESS_TABS = new Set([1, 6, 10, 12, 13, 14, 15])
+
+/**
+ * Вкладки, которым автообновление НЕ нужно (статичные справочники/конфиг): Цены, Роли,
+ * Тикеты, Парсер, API. На них тумблер «Автообновление» скрыт и фон не тикает. «Сейчас» и
+ * «Мониторинг» — живые, там автообновление ОСТАЁТСЯ.
+ */
+const NO_AUTOREFRESH_TABS = new Set([6, 12, 13, 14, 15])
 
 const STATUS_RU: Record<string, string> = {
   active: 'Активные', working: 'В работе', warming: 'Прогрев', pause: 'На паузе',
@@ -148,6 +155,14 @@ export function AdminStatsPage() {
   }
   useEffect(() => { void load() }, [since]) // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Интервал автообновления стабилен (deps [autoRefresh]), но обязан звать АКТУАЛЬНУЮ
+  // load (текущий период) и знать ТЕКУЩУЮ вкладку. Иначе фон тянул данные периода по
+  // умолчанию и затирал выбранный. Держим свежие значения в ref-ах.
+  const loadRef = useRef(load)
+  loadRef.current = load
+  const tabRef = useRef(tab)
+  tabRef.current = tab
+
   // §5.2 (MR-33): автообновление — раз в 15с (в пределах 10–30с из ТЗ) молча тянем свежие
   // данные текущего периода и состояний «сейчас» (мониторинг/задачи/ошибки), без спиннера и
   // без мигания. Пропускаем тик, когда вкладка скрыта (не долбим сервер в фоне), при отказе
@@ -172,9 +187,9 @@ export function AdminStatsPage() {
   useEffect(() => {
     if (!autoRefresh) { setSecLeft(AUTO_REFRESH_SEC); setJustRefreshed(false); setRefreshing(false); return }
     const id = setInterval(() => {
-      // Вкладка скрыта, отказ доступа или идёт видимая загрузка — не тикаем и не
-      // дёргаем сервер; счётчик замирает, это честно отражает происходящее.
-      if (denied || busyRef.current) return
+      // Вкладка скрыта, отказ доступа, конфиг-вкладка (автообновление не нужно) или идёт
+      // видимая загрузка — не тикаем и не дёргаем сервер; счётчик замирает.
+      if (denied || busyRef.current || NO_AUTOREFRESH_TABS.has(tabRef.current)) return
       if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return
       // Пока горит «обновлено» — счётчик стоит: сначала человек видит факт обновления,
       // и только потом отсчёт стартует заново с 15. Иначе галочка и новый отсчёт
@@ -193,7 +208,7 @@ export function AdminStatsPage() {
         if (refreshingRef.current) return 0
         refreshingRef.current = true
         setRefreshing(true)
-        void load({ force: true, silent: true }).finally(() => {
+        void loadRef.current({ force: true, silent: true }).finally(() => {
           refreshingRef.current = false
           setRefreshing(false)
           // Сначала показываем, что обновилось (счётчик на паузе), и только через
@@ -258,6 +273,9 @@ export function AdminStatsPage() {
         icon={<BarChart3 size={22} />}
         actions={
           <div className="flex items-center gap-3">
+            {/* Автообновление — только на живых/данных-вкладках; на справочниках (Цены, Роли,
+                Тикеты, Парсер, API) скрыто: там обновлять по таймеру нечего. */}
+            {!NO_AUTOREFRESH_TABS.has(tab) && (
             <label className="flex cursor-pointer select-none items-center gap-1.5 text-xs text-muted" title="Обновлять данные каждые 15 секунд без перезагрузки страницы">
               <input type="checkbox" checked={autoRefresh} onChange={(e) => setAutoRefresh(e.target.checked)} className="accent-spark-500" />
               Автообновление
@@ -282,6 +300,7 @@ export function AdminStatsPage() {
                 )
               )}
             </label>
+            )}
             <button onClick={() => void load({ force: true })} className="btn-ghost h-10" disabled={loading}>
               <RefreshCw size={16} className={loading ? 'animate-spin' : ''} /> Обновить
             </button>
@@ -296,7 +315,9 @@ export function AdminStatsPage() {
             них не влияет и только сбивал с толку. То же для справочных вкладок
             (цены, роли, тикеты, парсер, API) — там нечего фильтровать по времени. */}
         {!PERIODLESS_TABS.has(tab) && (
-          <Segmented options={PERIODS.map((p) => p.label)} value={periodIdx} onChange={setPeriodIdx} size="sm" />
+          // Пока грузится статистика выбранного периода — остальные периоды заблокированы
+          // (каждый период тянет свой запрос; не даём накликать гонку и путаницу).
+          <Segmented options={PERIODS.map((p) => p.label)} value={periodIdx} onChange={setPeriodIdx} size="sm" disabled={loading} />
         )}
       </div>
 
@@ -320,7 +341,7 @@ export function AdminStatsPage() {
       ) : tab === 6 ? (
         <PricesTab />
       ) : tab === 7 ? (
-        <ProblemsTab p={problems} />
+        <ProblemsTab p={problems} health={health} />
       ) : tab === 8 ? (
         <CrmTab crm={crm} />
       ) : tab === 9 ? (
@@ -1869,20 +1890,27 @@ function FailedTaskRow({ t }: { t: FailedTask }) {
  * вместе. Оператору не нужно прыгать между вкладками, чтобы связать «какой модуль»,
  * «в каком статусе задачи» и «что за ошибка»: всё на одном экране, ошибки — с логами.
  */
-function ProblemsTab({ p }: { p: Problems | null }) {
+function ProblemsTab({ p, health }: { p: Problems | null; health: AccountsHealth | null }) {
   if (!p) return <Card className="p-6 text-sm text-muted">Загрузка…</Card>
-  const quiet = !p.failedTotal && !p.pausedNoCoins.length && !p.accounts.banned && !p.accounts.flood && !p.accounts.noProxy
+  // «Спокойствие» считаем ТОЛЬКО по задачам: баны/flood/без-прокси аккаунтов теперь
+  // отдельными блоками сверху (AccountsHealthBlocks) и не должны прятать зелёную плашку.
+  const taskQuiet = !p.failedTotal && !p.pausedNoCoins.length
   const hasTasks = Object.keys(p.taskStatus || {}).length > 0
-  if (quiet && !hasTasks) return <EmptyState icon={<AlertTriangle size={22} />} title="Всё спокойно" desc="Ошибок, банов и остановок из-за баланса нет, задач за период тоже." />
 
   return (
     <div className="space-y-3">
-      {quiet && (
-        <Card className="flex items-center gap-2 p-3 text-sm text-emerald-300">
-          <Check size={16} /> Ошибок, банов и остановок из-за баланса нет — ниже статусы задач за период.
-        </Card>
-      )}
+      {/* Статусы аккаунтов + «Падающие аккаунты — почему» — перенесены сюда из «Мониторинга». */}
+      <AccountsHealthBlocks health={health} />
 
+      {/* Нет ошибок задач → зелёная плашка (текст зависит от того, были ли задачи).
+          Есть ошибки → три карточки-счётчика. Статусы задач и таблицы — ниже, всегда. */}
+      {taskQuiet ? (
+        <Card className="flex items-center gap-2 p-3 text-sm text-emerald-300">
+          <Check size={16} /> {hasTasks
+            ? 'По задачам ошибок и остановок из-за баланса нет — ниже статусы задач за период.'
+            : 'По задачам всё спокойно — за выбранный период задач не было.'}
+        </Card>
+      ) : (
       <div className="grid gap-3 sm:grid-cols-3">
         <Card className="p-4">
           <div className="text-xs text-muted">Задач с ошибками</div>
@@ -1901,6 +1929,7 @@ function ProblemsTab({ p }: { p: Problems | null }) {
           </div>
         </Card>
       </div>
+      )}
 
       {/* Статусы задач за период — раньше жили в «Панели», теперь рядом с ошибками. */}
       {hasTasks && <Breakdown title="Статусы задач за период" data={p.taskStatus} ru />}

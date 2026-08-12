@@ -73,6 +73,9 @@ export const RESOURCE_TYPES = [
   // чужие аккаунты, цели и переписка. Это право открывает весь дашборд целиком —
   // выдаётся тимлиду или тому, кто отвечает за всю сетку.
   { type: 'allTasks', label: 'Чужие задачи (видеть и управлять всеми в Дашборде)', perItem: false },
+  // Право поддержки: видеть ВСЕ тикеты пользователей и отвечать в них «как поддержка»
+  // (а не как обычный юзер). Обычно выдаётся роли «Поддержка», которой больше ничего не нужно.
+  { type: 'support', label: 'Поддержка (видеть все тикеты и отвечать как поддержка)', perItem: false },
 ]
 
 /** Нормализовать значение доступа: всё, что не 'allow', — deny. @param {*} v */
@@ -125,6 +128,7 @@ export function normalizeRole(input = {}) {
         timers: normPerm(r.timers),
         searchTemplates: normPerm(r.searchTemplates),
         allTasks: normPerm(r.allTasks),
+        support: normPerm(r.support),
       },
     },
   }
@@ -154,7 +158,7 @@ function defaultRoles() {
   const OUTREACH = mods.filter((k) => ['neuro-chatting', 'neuro-dialogs', 'mailing'].includes(k))
   const ENGAGE = mods.filter((k) => ['neuro-commenting', 'neuro-chatting', 'neuro-dialogs', 'mass-react', 'mass-looking'].includes(k))
   const roleTpl = (id, name, permissions) => ({ id, name, builtin: false, isTemplate: true, permissions, createdAt: now, updatedAt: now })
-  const res = (over = {}) => ({ accounts: {}, folders: {}, channels: {}, timers: DENY, searchTemplates: DENY, allTasks: DENY, ...over })
+  const res = (over = {}) => ({ accounts: {}, folders: {}, channels: {}, timers: DENY, searchTemplates: DENY, allTasks: DENY, support: DENY, ...over })
   return [
     {
       id: ADMIN_ROLE_ID,
@@ -193,6 +197,14 @@ function defaultRoles() {
       sections: sectionMap(ALLOW, ['/panel/tasks', '/panel/analytics', '/panel/my-statistics', '/panel/logs', '/panel/inbox']),
       resources: res(),
     }),
+    // Поддержка — только тикеты: видит все обращения, отвечает как поддержка. Больше
+    // ничего (никаких модулей/разделов, кроме «Поддержки»).
+    roleTpl('role_support', 'Поддержка', {
+      modules: {},
+      blocks: {},
+      sections: sectionMap(ALLOW, ['/panel/support']),
+      resources: res({ support: ALLOW }),
+    }),
   ]
 }
 
@@ -227,6 +239,12 @@ export async function listRoles() {
       await writeJson(ROLES_FILE(), merged)
       return merged
     }
+  }
+  // Точечная миграция: роль «Поддержка» добавлена позже — дошиваем её, если её нет
+  // (остальные дефолт-роли при этом уже могут быть, поэтому отдельно от блока выше).
+  if (!have.has('role_support')) {
+    const supp = defaultRoles().find((r) => r.id === 'role_support')
+    if (supp) { roles.push(supp); await writeJson(ROLES_FILE(), roles) }
   }
   // Миграция поля `sections` (добавлено позже). Принцип: НЕ уменьшать доступ. До появления
   // `sections` все роли видели ВСЕ разделы — значит роли без этого поля получают весь набор
@@ -395,6 +413,11 @@ export function userRoleIds(user) {
 /** Есть ли у набора ролей админ (bypass). @param {string[]} ids */
 export function hasAdminRole(ids = []) {
   return ids.includes(ADMIN_ROLE_ID)
+}
+
+/** Есть ли у роли право «Поддержка» (видеть все тикеты и отвечать как поддержка). @param {object[]} roles */
+export function hasSupportCap(roles = []) {
+  return (roles || []).some((r) => r?.permissions?.resources?.support === ALLOW)
 }
 
 /** Загрузить объекты ролей пользователя. @param {object|null} user @returns {Promise<object[]>} */

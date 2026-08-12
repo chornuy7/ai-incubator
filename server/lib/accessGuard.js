@@ -8,7 +8,7 @@
  * заголовок на подписанный токен сессии (см. docs/CONTRACT-rbac.md §7).
  */
 import { getUser } from '../users.js'
-import { can, userRoleIds, hasAdminRole, rolesForUser, allowedFolderTargets, mergePermissions } from '../roles.js'
+import { can, userRoleIds, hasAdminRole, hasSupportCap, rolesForUser, allowedFolderTargets, mergePermissions } from '../roles.js'
 import { applyDirectGrants } from '../subAccess.js'
 import { isAccountAllowedViaGroups, listGroups } from '../accountGroups.js'
 
@@ -73,13 +73,17 @@ export async function isAdminRequest(req) {
  */
 export async function requesterContext(req) {
   const id = req.header('x-user-id') || ''
-  if (!id) return { id: '', user: null, isAdmin: true, noSession: true, blocked: false }
+  if (!id) return { id: '', user: null, isAdmin: true, noSession: true, isSupport: true, blocked: false }
   try {
     const user = await getUser(id)
-    if (!user || !user.active) return { id, user: null, isAdmin: false, noSession: false, blocked: true }
-    return { id, user, isAdmin: hasAdminRole(userRoleIds(user)), noSession: false, blocked: false }
+    if (!user || !user.active) return { id, user: null, isAdmin: false, noSession: false, isSupport: false, blocked: true }
+    const isAdmin = hasAdminRole(userRoleIds(user))
+    // isSupport: админ, дев-режим (см. выше) или роль с правом «Поддержка» — видит все
+    // тикеты и отвечает как поддержка.
+    const isSupport = isAdmin || hasSupportCap(await rolesForUser(user))
+    return { id, user, isAdmin, noSession: false, isSupport, blocked: false }
   } catch {
-    return { id, user: null, isAdmin: false, noSession: false, blocked: true }
+    return { id, user: null, isAdmin: false, noSession: false, isSupport: false, blocked: true }
   }
 }
 
