@@ -1,9 +1,9 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { LifeBuoy, Plus, Send, MessageSquare, Clock, Loader2, ArrowLeft } from 'lucide-react'
 import { useApp } from '@/mocks/store'
 import { useSession } from '@/features/auth/session'
-import { PageHeader, Card, EmptyState, Select, Modal, Badge } from '@/shared/ui'
+import { PageHeader, Card, EmptyState, Select, Badge } from '@/shared/ui'
 import { HelpButton } from '@/features/neuro-commenting/moduleUi'
 import { fetchTickets, fetchTicket, createTicket, replyTicket, type ApiTicket, type TicketStatus } from '@/api/ticketsApi'
 import { TicketChat } from '@/features/support/TicketChat'
@@ -63,6 +63,28 @@ export function SupportPage() {
   useEffect(() => {
     if (params.get('new') === '1') { setNewOpen(true); params.delete('new'); setParams(params, { replace: true }) }
   }, [params, setParams])
+
+  // Живая переписка: пока тикет открыт — подтягиваем новые сообщения, как в мессенджере.
+  const openId = openTicket?.id
+  useEffect(() => {
+    if (!openId) return
+    const iv = setInterval(() => {
+      void fetchTicket(openId, isSupportView)
+        .then((fresh) => {
+          setOpenTicket((cur) => (cur && cur.id === fresh.id ? fresh : cur))
+          setTickets((list) => list.map((x) => x.id === fresh.id ? { ...fresh, unread: 0 } : x))
+        })
+        .catch(() => { /* сеть моргнула — покажем на следующем тике */ })
+    }, 5000)
+    return () => clearInterval(iv)
+  }, [openId, isSupportView])
+
+  // Лента прокручивается к последнему сообщению — как в любом чате.
+  const feedRef = useRef<HTMLDivElement>(null)
+  const msgCount = openTicket?.messages.length ?? 0
+  useEffect(() => {
+    if (feedRef.current) feedRef.current.scrollTop = feedRef.current.scrollHeight
+  }, [msgCount, openId])
 
   const filtered = filter === 'all' ? tickets : tickets.filter((t) => t.status === filter)
 
@@ -140,6 +162,49 @@ export function SupportPage() {
     )
   }
 
+  // Переписка — ОТДЕЛЬНАЯ СТРАНИЦА, а не попап: в модалке лента жалась в окошко и
+  // закрывалась случайным кликом мимо. Здесь тот же экран, только вместо списка — чат.
+  if (openTicket) {
+    const meta = STATUS_META[openTicket.status]
+    return (
+      <div>
+        <button onClick={() => setOpenTicket(null)} className="btn-ghost mb-3 h-9"><ArrowLeft size={15} /> Назад к обращениям</button>
+        <PageHeader
+          title={openTicket.subject}
+          subtitle={`${openTicket.id}${isSupportView && (openTicket.ownerName || openTicket.ownerEmail) ? ` · клиент ${openTicket.ownerName || openTicket.ownerEmail}` : ''}`}
+          icon={<MessageSquare size={22} />}
+          badge={meta.label}
+        />
+        <Card className="flex flex-col overflow-hidden p-0">
+          <div className="flex items-center gap-2 border-b border-line px-4 py-2.5">
+            <Badge tone={meta.tone}>{meta.label}</Badge>
+            <span className="text-xs text-muted">Обновлён {fmtTs(openTicket.updatedAt)}</span>
+          </div>
+          {/* Лента во всю доступную высоту — чат, а не окошко. */}
+          <div ref={feedRef} className="h-[calc(100vh-24rem)] min-h-[280px] overflow-y-auto bg-surface/40 px-4 py-3">
+            <TicketChat ticket={openTicket} viewerIsSupport={isSupportView} />
+          </div>
+          {openTicket.status === 'closed' && (
+            <div className="border-t border-line bg-surface px-4 py-2 text-center text-xs text-muted">Тикет закрыт. Новый ответ откроет его снова.</div>
+          )}
+          <div className="flex gap-2 border-t border-line p-3">
+            <input
+              value={reply}
+              onChange={(e) => setReply(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && void sendReply()}
+              className="input flex-1"
+              placeholder={isSupportView ? 'Ответ поддержки…' : 'Ваше сообщение…'}
+              autoFocus
+            />
+            <button onClick={() => void sendReply()} disabled={replying || !reply.trim()} className="btn-primary h-[42px] px-4 disabled:opacity-50">
+              {replying ? <Loader2 size={16} className="animate-spin" /> : <Send size={16} />}
+            </button>
+          </div>
+        </Card>
+      </div>
+    )
+  }
+
   return (
     <div>
       <PageHeader
@@ -205,29 +270,6 @@ export function SupportPage() {
         </div>
       )}
 
-      {/* Ticket thread */}
-      <Modal open={!!openTicket} onClose={() => setOpenTicket(null)} title={openTicket?.subject} subtitle={openTicket?.id} icon={<MessageSquare size={22} />} size="md">
-        {openTicket && (
-          <div className="space-y-3">
-            <div className="flex items-center gap-2">
-              <Badge tone={STATUS_META[openTicket.status].tone}>{STATUS_META[openTicket.status].label}</Badge>
-              <span className="text-xs text-muted">Обновлён {fmtTs(openTicket.updatedAt)}</span>
-            </div>
-            <div className="max-h-[52vh] overflow-y-auto pr-1">
-              <TicketChat ticket={openTicket} viewerIsSupport={isSupportView} />
-            </div>
-            {openTicket.status === 'closed' ? (
-              <div className="rounded-xl border border-line bg-surface p-3 text-center text-xs text-muted">Тикет закрыт. Новый ответ откроет его снова.</div>
-            ) : null}
-            <div className="flex gap-2 pt-1">
-              <input value={reply} onChange={(e) => setReply(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && void sendReply()} className="input flex-1" placeholder="Ваш ответ…" />
-              <button onClick={() => void sendReply()} disabled={replying || !reply.trim()} className="btn-primary h-[42px] px-4 disabled:opacity-50">
-                {replying ? <Loader2 size={16} className="animate-spin" /> : <Send size={16} />}
-              </button>
-            </div>
-          </div>
-        )}
-      </Modal>
     </div>
   )
 }

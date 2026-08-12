@@ -1,7 +1,7 @@
 import { coins as fmtCoins, cn } from '@/shared/lib/utils'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { BarChart3, Users, ListChecks, Coins, Download, RefreshCw, AlertTriangle, Contact, Power, ChevronDown, Activity, Plus, Radar, Search, ShoppingCart, Loader2, Check, Trash2, ScrollText, Send, MessageSquare, LifeBuoy } from 'lucide-react'
-import { PageHeader, Card, Segmented, EmptyState, Modal, Select, Badge } from '@/shared/ui'
+import { BarChart3, Users, ListChecks, Coins, Download, RefreshCw, AlertTriangle, Contact, Power, ChevronDown, Activity, Plus, Radar, Search, ShoppingCart, Loader2, Check, Trash2, ScrollText, Send, MessageSquare, LifeBuoy, ArrowLeft } from 'lucide-react'
+import { PageHeader, Card, Segmented, EmptyState, Select, Badge } from '@/shared/ui'
 import { useApp } from '@/mocks/store'
 import {
   fetchAdminOverview, fetchClientReport, fetchUsersReport, fetchProblems, fetchCrmOverview,
@@ -1383,6 +1383,27 @@ function AdminTicketsTab() {
     try { const fresh = await fetchTicket(t.id, true); setOpen(fresh); setTickets((l) => l.map((x) => x.id === fresh.id ? { ...fresh, unread: 0 } : x)) } catch { /* keep */ }
   }
 
+  // Живой диалог: пока чат открыт — подтягиваем новые сообщения клиента (как в мессенджере).
+  const openId = open?.id
+  useEffect(() => {
+    if (!openId) return
+    const iv = setInterval(() => {
+      void fetchTicket(openId, true)
+        .then((fresh) => {
+          setOpen((cur) => (cur && cur.id === fresh.id ? fresh : cur))
+          setTickets((l) => l.map((x) => x.id === fresh.id ? { ...fresh, unread: 0 } : x))
+        })
+        .catch(() => { /* сеть моргнула */ })
+    }, 5000)
+    return () => clearInterval(iv)
+  }, [openId])
+
+  const feedRef = useRef<HTMLDivElement>(null)
+  const msgCount = open?.messages.length ?? 0
+  useEffect(() => {
+    if (feedRef.current) feedRef.current.scrollTop = feedRef.current.scrollHeight
+  }, [msgCount, openId])
+
   const send = async () => {
     if (!open || !reply.trim()) return
     setBusy(true)
@@ -1401,6 +1422,8 @@ function AdminTicketsTab() {
     } catch (e) { pushToast({ type: 'error', title: 'Не удалось', desc: e instanceof Error ? e.message : '' }) }
   }
 
+  // Мессенджер, а не «провал внутрь»: слева список диалогов, справа переписка. Так видно
+  // очередь обращений и ответ пишется, не теряя контекст (правка заказчика 12.08).
   return (
     <div className="space-y-3">
       <div className="flex flex-wrap items-center gap-2">
@@ -1414,53 +1437,73 @@ function AdminTicketsTab() {
       ) : rows.length === 0 ? (
         <Card><EmptyState icon={<LifeBuoy size={24} />} title="Тикетов нет" desc="Обращения клиентов появятся здесь." /></Card>
       ) : (
-        <div className="space-y-2">
-          {rows.map((t) => {
-            const m = TICKET_STATUS_META[t.status]
-            const last = t.messages[t.messages.length - 1]
-            return (
-              <button key={t.id} onClick={() => void openThread(t)} className="card flex w-full items-center gap-3 p-3.5 text-left transition-colors hover:border-spark-500/30">
-                <div className="grid h-10 w-10 shrink-0 place-items-center rounded-xl border border-line bg-elevated text-muted"><MessageSquare size={17} /></div>
-                <div className="min-w-0 flex-1">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <span className="font-mono text-xs text-muted">{t.id}</span>
-                    <Badge tone={m.tone}>{m.label}</Badge>
-                    {!!t.unread && <span className="grid min-w-[20px] place-items-center rounded-full bg-rose-500 px-1.5 text-[11px] font-bold text-white">{t.unread}</span>}
-                    <span className="text-[11px] text-iris-300">от {t.ownerName || t.ownerEmail || t.userId}</span>
+        <div className="grid gap-3 lg:grid-cols-[minmax(260px,340px)_1fr]">
+          {/* Список диалогов. На узком экране прячется, когда открыт чат. */}
+          <Card className={cn('h-[calc(100vh-22rem)] min-h-[320px] overflow-y-auto p-1.5', open && 'hidden lg:block')}>
+            {rows.map((t) => {
+              const m = TICKET_STATUS_META[t.status]
+              const last = t.messages[t.messages.length - 1]
+              const active = open?.id === t.id
+              return (
+                <button
+                  key={t.id}
+                  onClick={() => void openThread(t)}
+                  className={cn(
+                    'flex w-full items-start gap-2.5 rounded-xl p-2.5 text-left transition-colors',
+                    active ? 'bg-spark-500/12' : 'hover:bg-elevated',
+                  )}
+                >
+                  <div className="grid h-9 w-9 shrink-0 place-items-center rounded-full border border-line bg-elevated text-muted"><MessageSquare size={16} /></div>
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-1.5">
+                      <span className={cn('min-w-0 flex-1 truncate text-sm', t.unread ? 'font-bold text-fg' : 'font-semibold text-fg')}>{t.subject}</span>
+                      {!!t.unread && <span className="grid min-w-[18px] shrink-0 place-items-center rounded-full bg-rose-500 px-1 text-[10px] font-bold text-white">{t.unread}</span>}
+                    </div>
+                    <div className="truncate text-[11px] text-iris-300">{t.ownerName || t.ownerEmail || t.userId}</div>
+                    <div className="truncate text-[11px] text-muted">{last ? `${last.from === 'support' ? 'Поддержка: ' : ''}${last.text}` : '—'}</div>
+                    <div className="mt-0.5 flex items-center gap-1.5">
+                      <Badge tone={m.tone}>{m.label}</Badge>
+                      <span className="text-[10px] text-muted">{ticketTs(t.updatedAt)}</span>
+                    </div>
                   </div>
-                  <div className={t.unread ? 'mt-0.5 truncate font-bold text-fg' : 'mt-0.5 truncate font-semibold text-fg'}>{t.subject}</div>
-                  <div className="truncate text-xs text-muted">{last ? `${last.from === 'support' ? 'Поддержка: ' : ''}${last.text}` : '—'}</div>
+                </button>
+              )
+            })}
+          </Card>
+
+          {/* Переписка. */}
+          <Card className={cn('flex h-[calc(100vh-22rem)] min-h-[320px] flex-col overflow-hidden p-0', !open && 'hidden lg:flex')}>
+            {!open ? (
+              <div className="grid flex-1 place-items-center p-6 text-center text-sm text-muted">
+                <div>
+                  <MessageSquare size={26} className="mx-auto mb-2 opacity-40" />
+                  Выберите обращение слева — переписка откроется здесь.
                 </div>
-                <div className="hidden shrink-0 flex-col items-end gap-1 text-xs text-muted sm:flex">
-                  <span>{ticketTs(t.updatedAt)}</span>
-                  <span className="flex items-center gap-1"><MessageSquare size={12} /> {t.messages.length}</span>
+              </div>
+            ) : (
+              <>
+                <div className="flex flex-wrap items-center gap-2 border-b border-line px-3 py-2.5">
+                  <button onClick={() => setOpen(null)} className="btn-ghost h-8 px-2 lg:hidden"><ArrowLeft size={15} /></button>
+                  <div className="min-w-0">
+                    <div className="truncate text-sm font-bold text-fg">{open.subject}</div>
+                    <div className="truncate text-[11px] text-muted">{open.id} · клиент {open.ownerName || open.ownerEmail || open.userId}</div>
+                  </div>
+                  <Select className="ml-auto w-44" value={open.status} onChange={(v) => void changeStatus(v)} options={TICKET_STATUS_OPTS} />
                 </div>
-              </button>
-            )
-          })}
+                <div ref={feedRef} className="flex-1 overflow-y-auto bg-surface/40 px-3 py-3">
+                  <TicketChat ticket={open} viewerIsSupport={true} />
+                </div>
+                <div className="flex gap-2 border-t border-line p-2.5">
+                  <input value={reply} onChange={(e) => setReply(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && void send()} className="input flex-1" placeholder="Ответ поддержки…" />
+                  <button onClick={() => void send()} disabled={busy || !reply.trim()} className="btn-primary h-[42px] px-4 disabled:opacity-50">
+                    {busy ? <Loader2 size={16} className="animate-spin" /> : <Send size={16} />}
+                  </button>
+                </div>
+              </>
+            )}
+          </Card>
         </div>
       )}
-
-      <Modal open={!!open} onClose={() => setOpen(null)} title={open?.subject} subtitle={open ? `${open.id} · клиент ${open.ownerName || open.ownerEmail || open.userId}` : ''} icon={<MessageSquare size={22} />} size="md">
-        {open && (
-          <div className="space-y-3">
-            <div className="flex flex-wrap items-center gap-2">
-              <span className="text-xs text-muted">Статус:</span>
-              <Select className="w-48" value={open.status} onChange={(v) => void changeStatus(v)} options={TICKET_STATUS_OPTS} />
-              <span className="ml-auto text-xs text-muted">Обновлён {ticketTs(open.updatedAt)}</span>
-            </div>
-            <div className="max-h-[48vh] overflow-y-auto pr-1">
-              <TicketChat ticket={open} viewerIsSupport={true} />
-            </div>
-            <div className="flex gap-2 pt-1">
-              <input value={reply} onChange={(e) => setReply(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && void send()} className="input flex-1" placeholder="Ответ поддержки…" />
-              <button onClick={() => void send()} disabled={busy || !reply.trim()} className="btn-primary h-[42px] px-4 disabled:opacity-50">
-                {busy ? <Loader2 size={16} className="animate-spin" /> : <Send size={16} />}
-              </button>
-            </div>
-          </div>
-        )}
-      </Modal>
     </div>
   )
 }

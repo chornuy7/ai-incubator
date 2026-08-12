@@ -35,6 +35,36 @@ const msg = (from, authorId, authorName, text, ts) => ({
 })
 
 /**
+ * Разовая починка старых записей. До 12.08 ответ АВТОРА тикета сохранялся как `support`
+ * (роль определялась по правам, а не по тому, кем человек пишет) — в переписке все
+ * реплики выглядели как «Поддержка», включая свои. Распознаём такие по автору: если
+ * писал сам владелец тикета, это сообщение клиента. Трогаем только legacy-записи (без
+ * `authorName`) — новые сохраняются уже правильно. @returns {boolean} чинили ли что-то
+ */
+function healLegacyAuthors(tickets) {
+  let changed = false
+  for (const t of tickets || []) {
+    for (const m of t.messages || []) {
+      if (m.authorName) continue // новая запись — не трогаем
+      if (m.from === 'support' && m.authorId && m.authorId !== '—' && m.authorId === t.userId) {
+        m.from = 'user'
+        changed = true
+      }
+    }
+  }
+  return changed
+}
+
+/** Единая точка чтения: чинит legacy-авторов и сохраняет результат один раз. */
+async function readTickets() {
+  const tickets = await readJson(ticketsFile(), [])
+  if (healLegacyAuthors(tickets)) {
+    try { await writeJson(ticketsFile(), tickets) } catch { /* починка не должна ронять чтение */ }
+  }
+  return tickets
+}
+
+/**
  * Сколько НЕПРОЧИТАННЫХ сообщений для стороны `side` ('support' видит непрочитанные от
  * клиента; владелец 'user' — непрочитанные от поддержки). reads[side] — метка «прочитано до».
  * @param {object} ticket @param {'support'|'user'} side
@@ -46,20 +76,20 @@ export function unreadFor(ticket, side) {
 }
 
 export async function listTickets({ userId = '', all = false } = {}) {
-  const tickets = await readJson(ticketsFile(), [])
+  const tickets = await readTickets()
   const rows = all ? tickets : tickets.filter((t) => t.userId === userId)
   return rows.slice().sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0))
 }
 
 export async function getTicket(id) {
-  const tickets = await readJson(ticketsFile(), [])
+  const tickets = await readTickets()
   return tickets.find((t) => t.id === id) || null
 }
 
 export async function createTicket({ userId = '', authorName = '', subject = '', category = 'tech', body = '' }) {
   const subj = String(subject || '').trim()
   if (!subj) throw new Error('Укажите тему обращения')
-  const tickets = await readJson(ticketsFile(), [])
+  const tickets = await readTickets()
   const now = Date.now()
   const ticket = {
     id: genId(now, tickets),
@@ -82,7 +112,7 @@ export async function createTicket({ userId = '', authorName = '', subject = '',
 
 /** Отметить тикет прочитанным для стороны (обнуляет её счётчик непрочитанного). */
 export async function markRead(id, side) {
-  const tickets = await readJson(ticketsFile(), [])
+  const tickets = await readTickets()
   const ticket = tickets.find((x) => x.id === id)
   if (!ticket) return null
   ticket.reads = ticket.reads || {}
@@ -98,7 +128,7 @@ export async function markRead(id, side) {
 export async function addMessage(id, { from = 'user', authorId = '', authorName = '', text = '' }) {
   const t = String(text || '').trim()
   if (!t) throw new Error('Пустое сообщение')
-  const tickets = await readJson(ticketsFile(), [])
+  const tickets = await readTickets()
   const ticket = tickets.find((x) => x.id === id)
   if (!ticket) throw new Error('Тикет не найден')
   const now = Date.now()
@@ -115,7 +145,7 @@ export async function addMessage(id, { from = 'user', authorId = '', authorName 
 
 export async function setStatus(id, status) {
   if (!STATUS_SET.has(status)) throw new Error('Неизвестный статус')
-  const tickets = await readJson(ticketsFile(), [])
+  const tickets = await readTickets()
   const ticket = tickets.find((x) => x.id === id)
   if (!ticket) throw new Error('Тикет не найден')
   ticket.status = status
