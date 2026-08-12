@@ -37,7 +37,7 @@ export function ChangeProxyModal({ acc, onClose, onSave }: { acc: TgAccount | nu
     <Modal
       open={!!acc}
       onClose={onClose}
-      title="Сменить прокси"
+      title={acc?.proxy && acc.proxy !== '—' ? 'Сменить прокси' : 'Добавить прокси'}
       subtitle={acc?.name}
       icon={<Server size={22} />}
       size="sm"

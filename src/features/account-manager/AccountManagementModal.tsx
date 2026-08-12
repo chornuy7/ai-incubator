@@ -193,7 +193,7 @@ export function HeroBanner({ account, stats, actions }: {
   const health = stats?.health
   const trust = stats?.trust
   return (
-    <div className="relative overflow-hidden rounded-2xl bg-gradient-to-br from-iris-600 to-iris-800 p-5 text-white">
+    <div className="relative overflow-hidden rounded-2xl border border-iris-500/20 bg-gradient-to-br from-iris-800/70 to-iris-950/80 p-5 text-white">
       <div className="flex items-start gap-4">
         <Avatar name={account.name} color={account.avatarColor} size={54} />
         <div className="min-w-0 flex-1">
@@ -361,6 +361,7 @@ export function ProfileTab({ account, stats }: { account: TgAccount; stats: Acco
 
 export function ProxyTab({ account, stats, loading, onRecheck }: { account: TgAccount; stats: AccountStats | null; loading: boolean; onRecheck: () => void }) {
   const px = stats?.proxy
+  const hasPx = !!(account.proxy && account.proxy !== '—') // MR-129: нет прокси → «Добавить», есть → «Сменить»
   const setAccountProxy = useApp((s) => s.setAccountProxy)
   const pushToast = useApp((s) => s.pushToast)
   const [changeOpen, setChangeOpen] = useState(false)
@@ -373,7 +374,7 @@ export function ProxyTab({ account, stats, loading, onRecheck }: { account: TgAc
         <div className="flex items-center gap-2">
           {/* MR-129: сменить прокси прямо из карточки — выбор из базы прокси или ввод нового. */}
           <button onClick={() => setChangeOpen(true)} className="btn-soft h-8 text-xs">
-            <Server size={13} /> Сменить прокси
+            <Server size={13} /> {hasPx ? 'Сменить прокси' : 'Добавить прокси'}
           </button>
           <button onClick={onRecheck} disabled={loading} className="btn-soft h-8 text-xs disabled:opacity-50">
             {loading ? <Loader2 size={13} className="animate-spin" /> : <RefreshCw size={13} />} Проверить
