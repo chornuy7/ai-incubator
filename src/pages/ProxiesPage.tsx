@@ -13,24 +13,22 @@ import { confirmDialog } from '@/shared/lib/dialog'
 import { cn } from '@/shared/lib/utils'
 import { ImportProxiesModal } from '@/features/import-proxies/ImportProxiesModal'
 
+// Для оператора важно одно: годится прокси в работу или нет. Поэтому на плашке — только
+// «Рабочий»/«Нерабочий», а ПОЧЕМУ именно нерабочий (не пускает в Telegram, не тот
+// протокол, хост мёртв) уходит в подсказку: причина нужна при разборе, а не в списке.
 const STATUS_META: Record<Proxy['status'], { label: string; tone: 'spark' | 'rose' | 'amber' | 'muted'; hint?: string }> = {
   ok: { label: 'Рабочий', tone: 'spark', hint: 'Через прокси открывается интернет И доступны серверы Telegram' },
-  bad: { label: 'Не тот протокол', tone: 'amber', hint: 'Порт открыт, но выйти наружу не удалось — обычно помогает сменить схему http ↔ socks5' },
-  dead: { label: 'Мёртвый', tone: 'rose', hint: 'Хост не отвечает' },
+  bad: { label: 'Нерабочий', tone: 'rose', hint: 'Порт открыт, но выйти наружу не удалось — обычно помогает сменить схему http ↔ socks5' },
+  dead: { label: 'Нерабочий', tone: 'rose', hint: 'Хост не отвечает' },
   unknown: { label: 'Не проверен', tone: 'muted' },
 }
 
-/**
- * Статус с ПРИЧИНОЙ. Главный случай — `no_telegram`: прокси прекрасно ходит в интернет
- * (гео определяется, ip-api отвечает), но соединение с ДЦ Telegram не проходит. Раньше
- * такой прокси числился «Рабочим», а аккаунты на нём молча висели на таймаутах.
- */
+/** Подсказка с причиной: главный случай — прокси ходит в интернет, но не пускает в Telegram. */
 function statusMeta(p: Proxy) {
   const base = STATUS_META[p.status]
   if (p.status === 'bad' && p.reason === 'no_telegram') {
     return {
-      label: 'Не пускает в Telegram',
-      tone: 'rose' as const,
+      ...base,
       hint: 'Через прокси открывается обычный интернет, но соединение с серверами Telegram не проходит. Для аккаунтов такой прокси бесполезен — замените его.',
     }
   }
@@ -232,9 +230,10 @@ export function ProxiesPage() {
                         {p.geoSource === 'gateway' && <span className="ml-0.5 text-[10px] text-amber-300">≈</span>}
                       </span>
                     )}
-                    <Badge tone={sm.tone}>{sm.label}</Badge>
-                    {/* Дубли разрешены: сколько аккаунтов сидит на этом прокси. */}
-                    {(p.usedBy ?? 0) > 0 && <span title="На скольких аккаунтах висит этот прокси"><Badge tone="iris">занят {p.usedBy}</Badge></span>}
+                    {/* Сколько аккаунтов сидит на прокси, показано справа («аккаунтов: N») —
+                        второй такой же бейдж здесь только дублировал бы его.
+                        Причина «нерабочести» — в подсказке: в списке она была бы шумом. */}
+                    <span title={sm.hint}><Badge tone={sm.tone}>{sm.label}</Badge></span>
                   </div>
                   <div className="mt-0.5 truncate font-mono text-xs text-white/50">{p.scheme}://{p.username ? `${p.username}@` : ''}{p.host}:{p.port}</div>
                   {geoMap[p.id] && (
@@ -339,7 +338,17 @@ function ProxyDetailModal({ proxy, accountsCount, onClose, onUpdated }: {
         <div className="flex items-center gap-2 py-6 text-sm text-white/50"><Loader2 size={16} className="animate-spin" /> Проверяем прокси и тянем гео выхода…</div>
       ) : (
         <div className="grid grid-cols-2 gap-2">
-          <ProxyInfo label="Статус"><Badge tone={sm.tone}>{sm.label}</Badge></ProxyInfo>
+          {/* В деталях причину пишем текстом — сюда приходят именно разбираться. */}
+          <ProxyInfo label="Статус">
+            <span title={sm.hint}><Badge tone={sm.tone}>{sm.label}</Badge></span>
+            {p.status !== 'ok' && p.status !== 'unknown' && (
+              <div className="mt-1 text-[11px] leading-snug text-muted">
+                {p.reason === 'no_telegram' ? 'Интернет открывается, но соединение с серверами Telegram не проходит — замените прокси.'
+                  : p.reason === 'protocol' ? 'Порт открыт, но наружу не пускает — попробуйте сменить схему http ↔ socks5.'
+                    : 'Хост не отвечает.'}
+              </div>
+            )}
+          </ProxyInfo>
           <ProxyInfo label="Тип">{PROXY_KIND_LABELS[p.kind]}</ProxyInfo>
           <ProxyInfo label="Пинг">{ms != null ? `${ms} мс` : '—'}</ProxyInfo>
           <ProxyInfo label="Назначено аккаунтов">{accountsCount}</ProxyInfo>
