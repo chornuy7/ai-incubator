@@ -24,9 +24,15 @@ import { useModuleTask } from '@/features/modules/shared/useModuleTask'
 
 export function MailingPage() {
   // §5.4: модуль живёт не под /panel/modules/*, поэтому гейт подписки — здесь же.
+  // MR-157: гейт — в тонкой обёртке. planModules грузится асинхронно (null→набор); если
+  // держать гейт перед остальными хуками страницы, при переключении число хуков менялось
+  // и React падал («Rendered fewer hooks»). Тело — в MailingInner (монтируется, когда оплачено).
   const planModules = usePlan((st) => st.modules)
-  if (!planHasModule(planModules, 'mailing')) return <ModuleNotPaid title="Мейлинг" />
+  if (!planHasModule(planModules, 'mailing')) return <ModuleNotPaid title="Мейлинг" moduleKey="mailing" />
+  return <MailingInner />
+}
 
+function MailingInner() {
   const pushToast = useApp((s) => s.pushToast)
   const [selected, setSelected] = useState<Set<string>>(new Set())
   // §9.11: список, переданный кнопкой «В новую рассылку» из деталей прошлой задачи —

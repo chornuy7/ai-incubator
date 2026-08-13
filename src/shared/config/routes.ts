@@ -61,7 +61,7 @@ export const ROUTES: RouteDef[] = [
   { path: '/panel/parsing-history', label: 'Логи парсинга', icon: History, group: 'parsing' },
 
   { path: '/panel/user/profile', label: 'Мой аккаунт', icon: UserCog, group: 'account' },
-  { path: '/panel/user/subscription', label: 'Мои модули', icon: Package, group: 'account' },
+  { path: '/panel/user/subscription', label: 'Подписки', icon: Package, group: 'account' }, // MR-157: было «Мои модули»
   // §10.4 (созвон): управление ролями — ТОЛЬКО из sudo-админки (вкладка «Роли»),
   // из кабинета убрали. Сам маршрут /panel/roles остаётся доступным по прямой ссылке.
   { path: '/panel/users', label: 'Пользователи', icon: Users2, group: 'account' },

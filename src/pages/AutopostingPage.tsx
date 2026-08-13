@@ -36,10 +36,14 @@ function scheduleLabel(s: AutomationSchedule): string {
 }
 
 export function AutopostingPage() {
-  // §5.4: модуль живёт не под /panel/modules/*, поэтому гейт подписки — здесь же.
+  // §5.4/MR-157: гейт — в тонкой обёртке (planModules грузится асинхронно; гейт перед
+  // остальными хуками ронял React «Rendered fewer hooks»). Тело — в AutopostingInner.
   const planModules = usePlan((st) => st.modules)
-  if (!planHasModule(planModules, 'autoposting')) return <ModuleNotPaid title="Автопостинг" />
+  if (!planHasModule(planModules, 'autoposting')) return <ModuleNotPaid title="Автопостинг" moduleKey="autoposting" />
+  return <AutopostingInner />
+}
 
+function AutopostingInner() {
   const nav = useNavigate()
   const pushToast = useApp((s) => s.pushToast)
   const [selected, setSelected] = useState<Set<string>>(new Set())
