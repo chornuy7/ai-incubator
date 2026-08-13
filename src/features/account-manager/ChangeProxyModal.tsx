@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { Server } from 'lucide-react'
 import { Modal, Select } from '@/shared/ui'
 import { cn } from '@/shared/lib/utils'
-import { fetchProxies, type Proxy as ApiProxy } from '@/api/proxiesApi'
+import { fetchProxies, isUsableProxy, type Proxy as ApiProxy } from '@/api/proxiesApi'
 import type { TgAccount } from '@/shared/types'
 
 function formatProxyLabel(proxy: string) {
@@ -23,7 +23,9 @@ export function ChangeProxyModal({ acc, onClose, onSave }: { acc: TgAccount | nu
 
   useEffect(() => {
     if (!acc) return
-    void fetchProxies().then(setPool).catch(() => setPool([]))
+    // Нерабочие прокси в выбор НЕ предлагаем: назначать заведомо мёртвый — значит
+    // сознательно поставить аккаунт в очередь на таймауты (правка заказчика 12.08).
+    void fetchProxies().then((list) => setPool(list.filter(isUsableProxy))).catch(() => setPool([]))
   }, [acc?.id])
 
   useEffect(() => {
@@ -81,10 +83,10 @@ export function ChangeProxyModal({ acc, onClose, onSave }: { acc: TgAccount | nu
           </div>
           {fromPool ? (
             pool.length === 0 ? (
-              <p className="text-xs text-muted">База прокси пуста — введите новый, он попадёт в базу.</p>
+              <p className="text-xs text-muted">Рабочих прокси в базе нет — введите новый, он попадёт в базу.</p>
             ) : (
               <>
-                <label className="label">Прокси из базы ({pool.length})</label>
+                <label className="label">Рабочие прокси из базы ({pool.length})</label>
                 <Select
                   value={value}
                   onChange={setValue}
@@ -94,7 +96,8 @@ export function ChangeProxyModal({ acc, onClose, onSave }: { acc: TgAccount | nu
                     const url = `${p.scheme}://${auth}${p.host}:${p.port}`
                     const shown = `${p.scheme}://${p.host}:${p.port}`
                     const geo = p.country ? ` · ${p.country.toUpperCase()}` : ''
-                    return { value: url, label: `${shown}${geo}${p.status === 'dead' ? ' · не отвечает' : ''}` }
+                    // Про «не отвечает» писать больше не нужно: нерабочие сюда не попадают.
+                    return { value: url, label: `${shown}${geo}${p.status === 'unknown' ? ' · не проверен' : ''}` }
                   })}
                 />
               </>

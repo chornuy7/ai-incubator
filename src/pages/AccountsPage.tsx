@@ -29,7 +29,7 @@ import type { AccountStatus, TgAccount } from '@/shared/types'
 import { patchAccount, releaseAccountLock, setAccountStatusManual, fetchDailyAll, type DailyAllMap } from '@/api/accountsApi'
 import { fetchCampaigns, updateCampaign, type Campaign, type PinnedMap } from '@/api/campaignsApi'
 import { fetchAccountGroups, type AccountGroup } from '@/api/accountGroupsApi'
-import { fetchProxies, toProxyUrl, type Proxy as ApiProxy } from '@/api/proxiesApi'
+import { fetchProxies, toProxyUrl, isUsableProxy, type Proxy as ApiProxy } from '@/api/proxiesApi'
 import { assignProxies, proxyCapacity } from '@/api/accountImportApi'
 import { fetchActivity, setActivity, type ActivityMap, type SchedulePercent } from '@/api/accountActivityApi'
 import { startUnblock } from '@/api/accountActivityApi'
@@ -842,7 +842,8 @@ function AssignProxyModal({ open, ids, onClose, onDone, onError }: {
 
   useEffect(() => {
     if (!open) return
-    void fetchProxies().then(setProxies).catch(() => {})
+    // Нерабочие в выбор не предлагаем — см. isUsableProxy.
+    void fetchProxies().then((list) => setProxies(list.filter(isUsableProxy))).catch(() => {})
     void proxyCapacity().then((c) => setFree(c.free)).catch(() => {})
   }, [open])
 

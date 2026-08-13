@@ -21,6 +21,19 @@ export const PROXY_SCHEMES = ['socks5', 'http']
  */
 export const PROXY_STATUSES = ['ok', 'bad', 'dead', 'unknown']
 
+/**
+ * Годится ли прокси, чтобы ВЫДАВАТЬ его аккаунту.
+ *
+ * Отсеиваем и `dead` (хост молчит), и `bad` — в том числе «не пускает в Telegram»:
+ * раньше проверялся только `dead`, поэтому полсотни прокси, которые ходят в интернет,
+ * но не пускают в Telegram, спокойно раздавались аккаунтам (правка заказчика 12.08).
+ * `unknown` оставляем: он ещё не проверялся, а не признан плохим.
+ * @param {{status?: string}} p
+ */
+export function isUsableProxy(p) {
+  return p?.status !== 'dead' && p?.status !== 'bad'
+}
+
 /** Построить URL-строку прокси (совместимо с parseProxy). @param {object} p */
 export function toProxyUrl(p) {
   if (!p || !p.host || !p.port) return ''
@@ -48,6 +61,10 @@ export function normalizeProxy(input = {}) {
     // при импорте и раньше считалась ошибкой формата (тест 9.11).
     rotateUrl: String(input.rotateUrl ?? '').trim(),
     status: PROXY_STATUSES.includes(input.status) ? input.status : 'unknown',
+    // Почему статус такой: 'no_telegram' — наружу ходит, но в Telegram не пускает,
+    // 'protocol' — не тот протокол, 'unreachable' — хост мёртв. Без причины «Нерабочий»
+    // ничего не объясняет, а именно она решает, менять прокси или схему.
+    reason: String(input.reason ?? ''),
     note: String(input.note ?? ''),
   }
 }
@@ -152,34 +169,92 @@ export function probeProxyProtocol(p, timeoutMs = 6000) {
 }
 
 /**
- * Проверить прокси по-настоящему: сначала протокольное рукопожатие (быстро и точно —
- * отсекает «не тот протокол»), затем выход наружу за реальной страной. Порт открыт,
- * но наружу не пускает → статус `bad` + гео по шлюзу (помечено как приблизительное).
+ * Дата-центры Telegram (адреса стабильны и публичны). Проверяем доступность именно их:
+ * прокси может прекрасно ходить в обычный интернет и при этом не пускать в Telegram —
+ * тогда аккаунты через него молча висят на таймаутах.
+ */
+const TG_DCS = [
+  { host: '149.154.167.51', port: 443 }, // DC2, Amsterdam
+  { host: '149.154.175.53', port: 443 }, // DC1, Miami
+]
+
+/**
+ * Пускает ли прокси в Telegram: пробуем установить соединение с ДЦ Telegram ЧЕРЕЗ прокси.
+ *
+ * Ради этого всё и затевалось: раньше «Рабочий» означал «через прокси открылся ip-api.com»,
+ * из-за чего полсотни канадских прокси числились рабочими, а задачи на них не делали
+ * ничего и сыпали таймаутами (прогон 12.08).
+ * @param {object} proxy @param {number} [timeoutMs] @returns {Promise<boolean>}
+ */
+export async function probeTelegramThroughProxy(proxy = {}, timeoutMs = 8000) {
+  const host = String(proxy.host || '')
+  const port = Number(proxy.port || 0)
+  if (!host || !port) return false
+  const scheme = proxy.scheme || (proxy.socksType === 4 ? 'socks4' : 'socks5')
+  for (const dc of TG_DCS) {
+    try {
+      if (scheme === 'socks5' || scheme === 'socks4') {
+        const info = await SocksClient.createConnection({
+          proxy: { host, port, type: scheme === 'socks4' ? 4 : 5, userId: proxy.username || undefined, password: proxy.password || undefined },
+          command: 'connect',
+          destination: { host: dc.host, port: dc.port },
+          timeout: timeoutMs,
+        })
+        try { info.socket.destroy() } catch { /* noop */ }
+        return true
+      }
+      // HTTP-прокси: CONNECT до ДЦ; успех — статус 200.
+      const ok = await new Promise((resolve) => {
+        const sock = net.connect(port, host)
+        let done = false
+        const finish = (v) => { if (done) return; done = true; try { sock.destroy() } catch { /* noop */ } resolve(v) }
+        sock.setTimeout(timeoutMs, () => finish(false))
+        sock.once('error', () => finish(false))
+        sock.once('connect', () => {
+          const auth = proxy.username ? `Proxy-Authorization: Basic ${Buffer.from(`${proxy.username}:${proxy.password || ''}`).toString('base64')}\r\n` : ''
+          sock.write(`CONNECT ${dc.host}:${dc.port} HTTP/1.1\r\nHost: ${dc.host}:${dc.port}\r\n${auth}\r\n`)
+        })
+        sock.once('data', (buf) => finish(/^HTTP\/1\.[01] 2\d\d/.test(buf.toString('latin1', 0, 32))))
+      })
+      if (ok) return true
+    } catch { /* пробуем следующий ДЦ */ }
+  }
+  return false
+}
+
+/**
+ * Проверить прокси по-настоящему: протокольное рукопожатие (отсекает «не тот протокол»),
+ * затем ДОСТУПНОСТЬ TELEGRAM через него, и уже потом гео. Порт открыт, но наружу не
+ * пускает → `bad`; наружу ходит, а в Telegram не пускает → тоже `bad`, но с причиной
+ * `no_telegram`: для платформы такой прокси бесполезен, и он обязан попасть в «нерабочие».
  * @param {object} p @param {number} [timeoutMs]
- * @returns {Promise<{status:string, geo:object|null, geoSource:string|null}>}
+ * @returns {Promise<{status:string, geo:object|null, geoSource:string|null, reason?:string}>}
  */
 export async function probeProxy(p, timeoutMs = 9000) {
   const speaks = await probeProxyProtocol(p, Math.min(timeoutMs, 6000))
   if (!speaks) {
     // Хост вообще не отвечает — dead; отвечает, но не тем протоколом — bad.
     const reachable = await tcpPing(p.host, p.port, Math.min(timeoutMs, 6000))
-    if (!reachable) return { status: 'dead', geo: null, geoSource: null }
+    if (!reachable) return { status: 'dead', geo: null, geoSource: null, reason: 'unreachable' }
     const gw = await probeProxyGeo(p.host, Math.min(timeoutMs, 6000))
-    return { status: 'bad', geo: gw, geoSource: gw ? 'gateway' : null }
+    return { status: 'bad', geo: gw, geoSource: gw ? 'gateway' : null, reason: 'protocol' }
   }
+  const tgOk = await probeTelegramThroughProxy(p, Math.min(timeoutMs, 8000))
   const exit = await probeProxyExitGeo(p, timeoutMs)
-  if (exit) return { status: 'ok', geo: exit, geoSource: 'exit' }
-  const gateway = await probeProxyGeo(p.host, Math.min(timeoutMs, 6000))
-  return { status: 'ok', geo: gateway, geoSource: gateway ? 'gateway' : null }
+  const geo = exit || await probeProxyGeo(p.host, Math.min(timeoutMs, 6000))
+  const geoSource = exit ? 'exit' : (geo ? 'gateway' : null)
+  if (!tgOk) return { status: 'bad', geo, geoSource, reason: 'no_telegram' }
+  return { status: 'ok', geo, geoSource, reason: '' }
 }
 
 /** Проверить один прокси и записать статус + актуальные гео/geoSource. */
 export async function checkProxyLiveness(id, timeoutMs = 9000) {
   const p = await getProxy(id)
   if (!p) return null
-  const { status, geo, geoSource } = await probeProxy(p, timeoutMs)
+  const { status, geo, geoSource, reason } = await probeProxy(p, timeoutMs)
   return updateProxy(id, {
     status,
+    reason: reason || '',
     lastCheckAt: Date.now(),
     ...(geo ? { country: geo.country || p.country, geoSource, note: geoNote(geo) } : {}),
   })
@@ -299,15 +374,16 @@ export async function checkAllProxies(timeoutMs = 9000) {
     // параллельные записи затирали бы друг друга.
     for (let k = 0; k < batch.length; k += 1) {
       const p = batch[k]
-      const { status, geo, geoSource } = probed[k]
+      const { status, geo, geoSource, reason } = probed[k]
       try {
         await updateProxy(p.id, {
           status,
+          reason: reason || '',
           lastCheckAt: Date.now(),
           ...(geo ? { country: geo.country || p.country, geoSource, note: geoNote(geo) } : {}),
         })
       } catch { /* skip */ }
-      results.push({ id: p.id, status, country: geo?.country || p.country || '', geoSource })
+      results.push({ id: p.id, status, reason: reason || '', country: geo?.country || p.country || '', geoSource })
     }
   }
   return results

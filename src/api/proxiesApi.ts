@@ -19,6 +19,11 @@ export interface Proxy {
   password: string
   country: string
   status: ProxyStatus
+  /**
+   * Почему такой статус: 'no_telegram' — наружу ходит, но в Telegram не пускает,
+   * 'protocol' — не тот протокол, 'unreachable' — хост мёртв.
+   */
+  reason?: string
   /** Откуда взята страна: реальный выходной IP или адрес шлюза («примерно»). */
   geoSource: GeoSource
   note: string
@@ -27,6 +32,17 @@ export interface Proxy {
   updatedAt: number
   /** На скольких аккаунтах висит этот прокси (дубли разрешены — счётчик, а не запрет). */
   usedBy?: number
+}
+
+/**
+ * Годится ли прокси, чтобы ПРЕДЛАГАТЬ его аккаунту.
+ *
+ * `dead` и `bad` (в т.ч. «не пускает в Telegram») из выбора убираем: назначить заведомо
+ * нерабочий — значит сознательно отправить аккаунт в таймауты. `unknown` оставляем: он
+ * ещё не проверялся, а не признан плохим.
+ */
+export function isUsableProxy(p: Proxy): boolean {
+  return p.status !== 'dead' && p.status !== 'bad'
 }
 
 export const PROXY_KIND_LABELS: Record<ProxyKind, string> = {

@@ -1,6 +1,7 @@
 import { createTaskStore } from '../lib/taskStore.js'
 import { WORKERS, startWorker, stopWorker, pauseWorker } from './workers.js'
-import { tryAcquireLocks } from '../lib/accountLocks.js'
+import { tryAcquireLocks, releaseTaskLocks } from '../lib/accountLocks.js'
+import { preflightAndLog } from '../lib/preflight.js'
 import { getGoal, isGoalExpired } from '../goals.js'
 
 /**
@@ -131,7 +132,29 @@ export async function launchTask(moduleKey, task, store) {
   await store.saveTask(task)
   const ids = task.settings?.accountIds || []
   if (ids.length > 1) await warnAboutProxyCluster(task, store, ids)
+  // Предстартовая проверка: у кого нет сессии/прокси — сразу видно в логе, а не через
+  // час холостых RPC-таймаутов. Если ехать некому — не запускаем воркер вовсе.
+  if (!(await gateOnPreflight(task, store))) return
   startWorker(task.id, store, worker)
+}
+
+/**
+ * Пускать ли задачу: проверяем аккаунты и пишем причины в лог. Ни одного пригодного —
+ * останавливаем сразу с понятным текстом (раньше такая задача часами «выполнялась»,
+ * не сделав ни одного действия). @returns {Promise<boolean>}
+ */
+async function gateOnPreflight(task, store) {
+  const ids = task.settings?.accountIds || []
+  if (!ids.length) return true // модули без аккаунтов (парсер по ссылке) — не наше дело
+  const { ready, problems } = await preflightAndLog(task, store)
+  if (ready.length) return true
+  task.status = 'stopped'
+  task.stopRequested = true
+  const why = problems.map((p) => `${p.name} — ${p.reason}`).join('; ')
+  await store.appendLog(task, 'error', `Запуск отменён: ни один аккаунт не готов. ${why}`)
+  await store.saveTask(task, { control: true })
+  try { releaseTaskLocks(task.id) } catch { /* локов могло не быть */ }
+  return false
 }
 
 export async function stopModuleTask(moduleKey, taskId) {
@@ -178,6 +201,9 @@ export async function resumeModuleTask(moduleKey, taskId) {
   await store.appendLog(task, 'info', wasStopped
     ? 'Возобновлена с места остановки — прогресс сохранён, аккаунты захвачены заново'
     : 'Возобновлена с паузы')
+  // Та же проверка, что и при первом запуске: повторный запуск на мёртвых прокси —
+  // это ровно тот случай, когда задача часами «выполняется» вхолостую.
+  if (!(await gateOnPreflight(task, store))) return task
   startWorker(task.id, store, getWorker(moduleKey))
   return task
 }

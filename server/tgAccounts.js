@@ -6,7 +6,7 @@ import { loadSessionString, createClient } from './tgAuth.js'
 import { getAccountLock } from './lib/accountLocks.js'
 import { getAllTrustCache } from './lib/trustCache.js'
 import { accountFingerprint } from './lib/deviceFingerprint.js'
-import { listProxies, toProxyUrl } from './proxies.js'
+import { listProxies, toProxyUrl, isUsableProxy } from './proxies.js'
 import { computeAccountRisk } from './lib/accountRisk.js'
 
 async function listSessionIds() {
@@ -127,7 +127,10 @@ export async function tgListAccounts(opts = {}) {
     // ИЛИ последняя живая проверка карточки не показала «не отвечает» (meta.proxyWorking).
     // MR-129: раньше ручной прокси вне каталога всегда считался «ок» — и статус зря был
     // «Активные», хотя карточка уже показывала «Не отвечает». Теперь список согласован с карточкой.
-    dto.proxyOk = !purl || (proxyStatusByUrl[purl] !== 'dead' && meta.proxyWorking !== false)
+    // Правило одно с выдачей прокси аккаунтам (isUsableProxy): нерабочий — это и `dead`,
+    // и `bad` (в т.ч. «не пускает в Telegram»). Раньше здесь сверялись только с `dead`,
+    // поэтому прокси, не пускающий в Telegram, в списке выглядел исправным.
+    dto.proxyOk = !purl || (isUsableProxy({ status: proxyStatusByUrl[purl] }) && meta.proxyWorking !== false)
     // MR-131: прокси мёртв ИЛИ отсутствует — обе ситуации риск, но разные (разделяем).
     dto.noProxy = !purl
     dto.risk = computeAccountRisk({ status: dto.status, proxyOk: dto.proxyOk, noProxy: dto.noProxy, trustBand: dto.trustBand })

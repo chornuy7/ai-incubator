@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
-import { Network, Plus, Trash2, Pencil, Link2, Check, Circle, Zap, Loader2, MapPin, Upload, Skull, RotateCcw } from 'lucide-react'
+import { Network, Plus, Trash2, Pencil, Link2, Check, Circle, Zap, Loader2, MapPin, Upload } from 'lucide-react'
 import { PageHeader, Card, EmptyState, Badge, Select, Modal } from '@/shared/ui'
 import { HelpButton } from '@/features/neuro-commenting/moduleUi'
 import {
@@ -13,11 +13,26 @@ import { confirmDialog } from '@/shared/lib/dialog'
 import { cn } from '@/shared/lib/utils'
 import { ImportProxiesModal } from '@/features/import-proxies/ImportProxiesModal'
 
+// Для оператора важно одно: годится прокси в работу или нет. Поэтому на плашке — только
+// «Рабочий»/«Нерабочий», а ПОЧЕМУ именно нерабочий (не пускает в Telegram, не тот
+// протокол, хост мёртв) уходит в подсказку: причина нужна при разборе, а не в списке.
 const STATUS_META: Record<Proxy['status'], { label: string; tone: 'spark' | 'rose' | 'amber' | 'muted'; hint?: string }> = {
-  ok: { label: 'Рабочий', tone: 'spark', hint: 'Через прокси удалось выйти в интернет' },
-  bad: { label: 'Не тот протокол', tone: 'amber', hint: 'Порт открыт, но выйти наружу не удалось — обычно помогает сменить схему http ↔ socks5' },
-  dead: { label: 'Мёртвый', tone: 'rose', hint: 'Хост не отвечает' },
+  ok: { label: 'Рабочий', tone: 'spark', hint: 'Через прокси открывается интернет И доступны серверы Telegram' },
+  bad: { label: 'Нерабочий', tone: 'rose', hint: 'Порт открыт, но выйти наружу не удалось — обычно помогает сменить схему http ↔ socks5' },
+  dead: { label: 'Нерабочий', tone: 'rose', hint: 'Хост не отвечает' },
   unknown: { label: 'Не проверен', tone: 'muted' },
+}
+
+/** Подсказка с причиной: главный случай — прокси ходит в интернет, но не пускает в Telegram. */
+function statusMeta(p: Proxy) {
+  const base = STATUS_META[p.status]
+  if (p.status === 'bad' && p.reason === 'no_telegram') {
+    return {
+      ...base,
+      hint: 'Через прокси открывается обычный интернет, но соединение с серверами Telegram не проходит. Для аккаунтов такой прокси бесполезен — замените его.',
+    }
+  }
+  return base
 }
 
 const emptyForm = (): Partial<Proxy> => ({ label: '', kind: 'static', scheme: 'socks5', host: '', port: 1080, username: '', password: '', country: '', note: '', status: 'unknown' })
@@ -119,14 +134,39 @@ export function ProxiesPage() {
     finally { setSaving(false) }
   }
 
-  // MR-133: пометить/«убить» прокси вручную (dead) — сразу перестаёт предлагаться аккаунтам,
-  // не дожидаясь автотеста. Повторный клик снимает пометку (возврат в «Не проверен»).
-  async function toggleDead(p: Proxy) {
-    const next: Proxy['status'] = p.status === 'dead' ? 'unknown' : 'dead'
-    try {
-      const saved = await updateProxy(p.id, { status: next })
-      setProxies((prev) => prev.map((x) => (x.id === saved.id ? saved : x)))
-    } catch (e) { setErr(e instanceof Error ? e.message : 'Ошибка') }
+  // Ручная пометка «мёртвый» убрана: статус ставит настоящая проверка (доступность
+  // Telegram через прокси), и нерабочие уже не предлагаются аккаунтам. Кнопка только
+  // путала — два источника правды об одном и том же.
+
+  // ── Массовый выбор и удаление ────────────────────────────────────────────
+  // Каталог на полсотни записей чистить по одной — работа на полчаса; особенно когда
+  // разом померла целая закупка (правка заказчика 12.08).
+  const [selected, setSelected] = useState<Set<string>>(new Set())
+  const toggleSel = (id: string) => setSelected((prev) => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n })
+  const allVisibleSelected = visible.length > 0 && visible.every((p) => selected.has(p.id))
+  const toggleAllVisible = () => setSelected(allVisibleSelected ? new Set() : new Set(visible.map((p) => p.id)))
+  const [removing, setRemoving] = useState(false)
+
+  async function removeSelected() {
+    const list = proxies.filter((p) => selected.has(p.id))
+    if (!list.length) return
+    const busyOn = list.reduce((n, p) => n + (usedBy[p.id] ?? 0), 0)
+    if (!(await confirmDialog({
+      title: `Удалить прокси: ${list.length}?`,
+      message: busyOn
+        ? `Из них назначены аккаунтам: ${busyOn}. Аккаунты останутся с этой строкой подключения — назначьте им рабочие прокси.`
+        : 'Прокси будут удалены из каталога.',
+      confirmLabel: 'Удалить',
+      tone: 'danger',
+    }))) return
+    setRemoving(true)
+    const results = await Promise.allSettled(list.map((p) => deleteProxy(p.id)))
+    const okIds = list.filter((_, i) => results[i].status === 'fulfilled').map((p) => p.id)
+    setProxies((prev) => prev.filter((x) => !okIds.includes(x.id)))
+    setSelected(new Set())
+    setRemoving(false)
+    const failed = results.length - okIds.length
+    if (failed) setErr(`Удалено ${okIds.length}, не удалось ${failed}`)
   }
 
   async function remove(p: Proxy) {
@@ -188,6 +228,29 @@ export function ProxiesPage() {
         </div>
       )}
 
+      {/* Массовый выбор: «Выбрать все» относится к ТЕКУЩЕЙ выборке — так «Нерабочие» +
+          «Выбрать все» + «Удалить» чистят каталог одним движением. */}
+      {visible.length > 0 && (
+        <div className="mb-3 flex flex-wrap items-center gap-2 rounded-xl border border-line bg-elevated/40 p-2.5">
+          <label className="flex cursor-pointer items-center gap-2 text-xs font-semibold text-white/70">
+            <input type="checkbox" checked={allVisibleSelected} onChange={toggleAllVisible} className="h-4 w-4 accent-spark-500" />
+            {selected.size > 0 ? `Выбрано: ${selected.size}` : `Выбрать все (${visible.length})`}
+          </label>
+          {selected.size > 0 && (
+            <>
+              <button onClick={() => setSelected(new Set())} className="btn-ghost h-8 text-xs">Снять выбор</button>
+              <button
+                onClick={() => void removeSelected()}
+                disabled={removing}
+                className="ml-auto inline-flex h-8 items-center gap-1.5 rounded-lg border border-rose-500/30 bg-rose-500/15 px-3 text-xs font-semibold text-rose-300 transition-colors hover:bg-rose-500/25 disabled:opacity-50"
+              >
+                {removing ? <Loader2 size={13} className="animate-spin" /> : <Trash2 size={13} />} Удалить выбранные ({selected.size})
+              </button>
+            </>
+          )}
+        </div>
+      )}
+
       {loading ? (
         <Card className="p-6 text-sm text-white/50">Загрузка…</Card>
       ) : proxies.length === 0 ? (
@@ -199,9 +262,16 @@ export function ProxiesPage() {
       ) : (
         <div className="flex flex-col gap-2">
           {visible.map((p) => {
-            const sm = STATUS_META[p.status]
+            const sm = statusMeta(p)
             return (
-              <Card key={p.id} className="flex flex-wrap items-center gap-3 p-3">
+              <Card key={p.id} className={cn('flex flex-wrap items-center gap-3 p-3', selected.has(p.id) && 'border-spark-500/40 bg-spark-500/5')}>
+                <input
+                  type="checkbox"
+                  checked={selected.has(p.id)}
+                  onChange={() => toggleSel(p.id)}
+                  className="h-4 w-4 shrink-0 accent-spark-500"
+                  aria-label="Выбрать прокси"
+                />
                 <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-iris-500/12 text-iris-300"><Network size={18} /></span>
                 <div role="button" tabIndex={0} onClick={() => setDetailProxy(p)} onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setDetailProxy(p) } }} className="group min-w-0 flex-1 cursor-pointer text-left" title="Открыть детали прокси">
                   <div className="flex flex-wrap items-center gap-2">
@@ -215,9 +285,10 @@ export function ProxiesPage() {
                         {p.geoSource === 'gateway' && <span className="ml-0.5 text-[10px] text-amber-300">≈</span>}
                       </span>
                     )}
-                    <Badge tone={sm.tone}>{sm.label}</Badge>
-                    {/* Дубли разрешены: сколько аккаунтов сидит на этом прокси. */}
-                    {(p.usedBy ?? 0) > 0 && <span title="На скольких аккаунтах висит этот прокси"><Badge tone="iris">занят {p.usedBy}</Badge></span>}
+                    {/* Сколько аккаунтов сидит на прокси, показано справа («аккаунтов: N») —
+                        второй такой же бейдж здесь только дублировал бы его.
+                        Причина «нерабочести» — в подсказке: в списке она была бы шумом. */}
+                    <span title={sm.hint}><Badge tone={sm.tone}>{sm.label}</Badge></span>
                   </div>
                   <div className="mt-0.5 truncate font-mono text-xs text-white/50">{p.scheme}://{p.username ? `${p.username}@` : ''}{p.host}:{p.port}</div>
                   {geoMap[p.id] && (
@@ -237,8 +308,6 @@ export function ProxiesPage() {
                 <div className="flex items-center gap-1.5">
                   <button onClick={() => void doTest(p)} disabled={testing === p.id} className="btn-ghost h-9 text-xs disabled:opacity-50">{testing === p.id ? <Loader2 size={14} className="animate-spin" /> : <Zap size={14} />} Тест</button>
                   <button onClick={() => setAssignFor(p)} className="btn-ghost h-9 text-xs"><Link2 size={14} /> Назначить</button>
-                  {/* MR-133: ручная пометка «мёртвый» — сразу выводит прокси из выдачи аккаунтам. */}
-                  <button onClick={() => void toggleDead(p)} className={cn('btn-icon h-9 w-9', p.status === 'dead' ? 'text-spark-400' : 'text-rose-300')} title={p.status === 'dead' ? 'Снять пометку «мёртвый»' : 'Пометить мёртвым (не предлагать аккаунтам)'}>{p.status === 'dead' ? <RotateCcw size={14} /> : <Skull size={14} />}</button>
                   <button onClick={() => openEdit(p)} className="btn-icon h-9 w-9" aria-label="Изменить"><Pencil size={14} /></button>
                   <button onClick={() => void remove(p)} className="btn-icon-danger h-9 w-9" aria-label="Удалить прокси" title="Удалить прокси"><Trash2 size={14} /></button>
                 </div>
@@ -306,7 +375,7 @@ function ProxyDetailModal({ proxy, accountsCount, onClose, onUpdated }: {
   }
   useEffect(() => { void run() /* авто-проверка при открытии */ }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
-  const sm = STATUS_META[p.status]
+  const sm = statusMeta(p)
   const fmtDate = (t: number | null | undefined) => (t ? new Date(t).toLocaleString('ru-RU') : '—')
 
   return (
@@ -322,7 +391,17 @@ function ProxyDetailModal({ proxy, accountsCount, onClose, onUpdated }: {
         <div className="flex items-center gap-2 py-6 text-sm text-white/50"><Loader2 size={16} className="animate-spin" /> Проверяем прокси и тянем гео выхода…</div>
       ) : (
         <div className="grid grid-cols-2 gap-2">
-          <ProxyInfo label="Статус"><Badge tone={sm.tone}>{sm.label}</Badge></ProxyInfo>
+          {/* В деталях причину пишем текстом — сюда приходят именно разбираться. */}
+          <ProxyInfo label="Статус">
+            <span title={sm.hint}><Badge tone={sm.tone}>{sm.label}</Badge></span>
+            {p.status !== 'ok' && p.status !== 'unknown' && (
+              <div className="mt-1 text-[11px] leading-snug text-muted">
+                {p.reason === 'no_telegram' ? 'Интернет открывается, но соединение с серверами Telegram не проходит — замените прокси.'
+                  : p.reason === 'protocol' ? 'Порт открыт, но наружу не пускает — попробуйте сменить схему http ↔ socks5.'
+                    : 'Хост не отвечает.'}
+              </div>
+            )}
+          </ProxyInfo>
           <ProxyInfo label="Тип">{PROXY_KIND_LABELS[p.kind]}</ProxyInfo>
           <ProxyInfo label="Пинг">{ms != null ? `${ms} мс` : '—'}</ProxyInfo>
           <ProxyInfo label="Назначено аккаунтов">{accountsCount}</ProxyInfo>
