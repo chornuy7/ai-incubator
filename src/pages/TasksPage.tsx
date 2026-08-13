@@ -32,7 +32,12 @@ const STATUS: Record<string, { label: string; tone: 'spark' | 'iris' | 'amber' |
 const STATUS_COLOR: Record<string, string> = {
   done: '#0ec464', running: '#38bdf8', queued: '#7145ff', paused: '#f59e0b', stopped: '#f59e0b', error: '#ef4444',
 }
-const STATUS_KEYS = ['', 'running', 'queued', 'done', 'stopped', 'error']
+const STATUS_KEYS = ['', 'running', 'queued', 'stopped', 'error', 'done']
+// Порядок сортировки/фильтров (MR-147): выполняется→в очереди→(пауза)→остановлено→ошибка→готово.
+const STATUS_RANK: Record<string, number> = {
+  running: 0, queued: 1, paused: 2, stopped: 3, error: 4, done: 5,
+}
+const statusRank = (t: ModuleTask) => STATUS_RANK[t.status] ?? 9
 
 // mailing/autoposting — отдельные страницы, их нет в MODULES; задаём читаемые названия.
 const EXTRA_MODULE_TITLES: Record<string, string> = { mailing: 'Мейлинг', autoposting: 'Автопостинг' }
@@ -259,7 +264,10 @@ export function TasksPage() {
     (!fGoal || (fGoal === 'none' ? !t.goalId : t.goalId === fGoal)) &&
     (!fModule || t.moduleKey === fModule) &&
     (!fStatus || t.status === fStatus),
-  ), [tasks, fGoal, fModule, fStatus])
+  // MR-147: сортировка по статусу (выполняется→очередь→пауза→стоп→ошибка→готово),
+  // внутри статуса — свежие сверху.
+  ).sort((a, b) => statusRank(a) - statusRank(b) || (b.updatedAt || 0) - (a.updatedAt || 0)),
+  [tasks, fGoal, fModule, fStatus])
 
   // Нет доступа к модулю — нет и кнопок. Показывать управление, которое ответит
   // отказом, значит предлагать действие и тут же его отбирать.
