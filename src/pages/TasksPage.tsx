@@ -809,6 +809,8 @@ export function TaskDetailPage() {
   // в белый/чёрный экран, как только задача догрузится.
   const RES_PER_PAGE = 50
   const [resPage, setResPage] = useState(1)
+  // MR-147: карточка задачи = вкладки «Описание»/«Настройки».
+  const [detTab, setDetTab] = useState<'desc' | 'settings'>('desc')
 
   const startEdit = (s: ModuleTaskSettings) => {
     setEdTargets((s.channels || s.targets || []).join('\n'))
@@ -874,94 +876,108 @@ export function TaskDetailPage() {
         <div className="flex items-center gap-4 rounded-2xl border border-line bg-elevated/40 p-4">
           <Ring value={p} color={pendingAct ? STATUS_COLOR.stopped : (STATUS_COLOR[t.status] || '#94a3b8')} size={66} stroke={6} pulse={isActive(t) || !!pendingAct} />
           <div className="min-w-0 flex-1">
-            <Badge tone={st.tone}>{st.label}</Badge>
-            <div className="mt-1 text-sm text-white/60">{t.progress?.done ?? t.progress?.actionsDone ?? 0} / {t.progress?.total ?? 0} действий</div>
+            <div className="flex flex-wrap items-center gap-2">
+              <Badge tone={st.tone}>{st.label}</Badge>
+              <span className="text-sm font-semibold text-fg">{moduleTitle(t.moduleKey)}</span>
+            </div>
+            {/* MR-147: «Модуль» и «Потрачено» перенесены сюда, к прогрессу. */}
+            <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-sm text-white/60">
+              <span>{t.progress?.done ?? t.progress?.actionsDone ?? 0} / {t.progress?.total ?? 0} действий</span>
+              <span className="tabular-nums text-amber-300/80" title={t.tokenCoins ? `${fmtCoins(t.spentCoins || 0)} ⚡ за действия + ${fmtCoins(t.tokenCoins)} ⚡ за ИИ` : 'Потрачено на задачу'}>⚡ {fmtCoins((t.spentCoins || 0) + (t.tokenCoins || 0))}{t.tokens ? ` · ${t.tokens.toLocaleString('ru-RU')} токенов` : ''}</span>
+            </div>
           </div>
           {/* Управление — только тем, у кого есть доступ к модулю задачи. */}
           <div className="flex shrink-0 gap-1">
             {canControl && (isActive(t) || !!pendingAct) && <button onClick={doPause} disabled={ctlBusy || !isActive(t)} className="btn-icon h-9 w-9" title={pendingAct === 'pause' || busyAction === 'pause' ? 'В процессе паузы…' : 'Пауза'}>{pendingAct === 'pause' || busyAction === 'pause' ? <Loader2 size={15} className="animate-spin" /> : <Pause size={15} />}</button>}
             {canControl && (t.status === 'paused' || t.status === 'stopped') && !pendingAct && <button onClick={doResume} disabled={ctlBusy} className="btn-icon h-9 w-9 text-spark-400" title={busyAction === 'start' ? 'Запускается…' : t.status === 'stopped' ? 'Возобновить с места остановки' : 'Продолжить'}>{busyAction === 'start' ? <Loader2 size={15} className="animate-spin" /> : <Play size={15} />}</button>}
             {canControl && (isActive(t) || !!pendingAct) && <button onClick={doStop} disabled={ctlBusy} className="btn-icon h-9 w-9 text-rose-300" title={pendingAct === 'stop' || busyAction === 'stop' ? 'В процессе остановки…' : 'Стоп'}>{pendingAct === 'stop' || busyAction === 'stop' ? <Loader2 size={15} className="animate-spin" /> : <Square size={15} />}</button>}
-            {/* §9.8: правка только на паузе. Кнопку показываем всегда, но у работающей
-                задачи она заблокирована и объясняет причину — так понятнее, чем её отсутствие.
-                А вот без доступа к модулю её нет вовсе: это не «пока нельзя», а «нельзя». */}
-            {canControl && <button
-              onClick={() => startEdit(s)}
-              disabled={ctlBusy || t.status !== 'paused'}
-              className="btn-icon h-9 w-9 disabled:opacity-40"
-              title={t.status === 'paused'
-                ? 'Редактировать настройки задачи'
-                : isActive(t)
-                  ? 'Править можно только на паузе: сейчас задача выполняется и часть аккаунтов уже отработала по текущим настройкам'
-                  : 'Задача завершена — править нечего, перезапустите её'}
-            ><Pencil size={15} /></button>}
+            {/* §9.8: правка только на паузе — вынесена во вкладку «Настройки». */}
             {canControl && <button onClick={doRestart} disabled={ctlBusy} className="btn-icon h-9 w-9" title="Перезапуск"><RotateCw size={16} /></button>}
           </div>
         </div>
 
-        {/* Причина блокировки правки — ТЕКСТОМ, а не в title кнопки: браузеры не показывают
-            подсказки на disabled-элементах (они не получают событий мыши), поэтому оператор
-            видел «не могу нажать» и ни намёка почему (прогон 21–22.07, тест 6.3). */}
-        {t.status !== 'paused' && (
-          <div className="mt-2 text-xs text-muted">
-            {isActive(t)
-              ? 'Настройки задачи правятся только на паузе — сейчас она выполняется, и часть аккаунтов уже отработала по текущим настройкам. Нажмите «Пауза», затем карандаш.'
-              : 'Задача завершена — править нечего. Нажмите «Перезапуск», чтобы создать новую с этими настройками.'}
-          </div>
-        )}
-
-        {editing && (
-          <div className="rounded-2xl border border-spark-500/40 bg-spark-500/5 p-4">
-            <div className="mb-3 text-sm font-bold text-fg">Правка задачи (на паузе)</div>
-            <div className="grid gap-3 sm:grid-cols-2">
-              <label className="text-xs text-white/50 sm:col-span-2">Каналы / чаты — по одному на строку
-                <textarea value={edTargets} onChange={(e) => setEdTargets(e.target.value)} className="input mt-1 min-h-[80px] font-mono text-sm" placeholder="@channel" />
-              </label>
-              <label className="text-xs text-white/50">Всего действий: от
-                <input type="number" min={0} value={edMinActions} onChange={(e) => setEdMinActions(e.target.value)} placeholder="не задано" className="input mt-1 h-9" />
-              </label>
-              <label className="text-xs text-white/50">до
-                <input type="number" min={0} value={edMaxActions} onChange={(e) => setEdMaxActions(e.target.value)} placeholder="не задано" className="input mt-1 h-9" />
-              </label>
-              <label className="text-xs text-white/50">На аккаунт: от
-                <input type="number" min={0} value={edMinPerAcc} onChange={(e) => setEdMinPerAcc(e.target.value)} placeholder="не задано" className="input mt-1 h-9" />
-              </label>
-              <label className="text-xs text-white/50">до
-                <input type="number" min={0} value={edMaxPerAcc} onChange={(e) => setEdMaxPerAcc(e.target.value)} placeholder="не задано" className="input mt-1 h-9" />
-              </label>
-            </div>
-            <div className="mt-3 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-200">
-              Состав аккаунтов здесь не меняется: за задачей держатся блокировки профилей. Нужны другие
-              исполнители — остановите задачу и создайте новую.
-            </div>
-            <div className="mt-3 flex gap-2">
-              <button onClick={() => void saveEdit()} disabled={busy} className="btn-primary h-9">Сохранить</button>
-              <button onClick={() => setEditing(false)} disabled={busy} className="btn-ghost h-9">Отмена</button>
-            </div>
-          </div>
-        )}
-        <div className="grid gap-2 sm:grid-cols-3">
-          <Info label="Модуль" value={moduleTitle(t.moduleKey)} />
-          {/* §8: разводим «цель кампании» (Goal) и «каналы, куда идёт работа» — раньше путались. */}
-          <Info label="Кампания" value={t.campaignId ? (campaignsList.find((c) => c.id === t.campaignId)?.name || t.campaignId) : 'без кампании'} />
-          <Info label="Цель кампании" value={goalName(t.goalId) || 'без цели'} />
-          <Info label="Инициатор" value={t.initiator || '—'} />
-          <Info label="Аккаунтов" value={String((s.accountIds || []).length)} />
-          <Info label="Каналов / чатов" value={String((s.channels || s.targets || []).length)} />
-          <Info label="На аккаунт" value={`${s.minPerAccount ?? 0}–${s.maxPerAccount ?? 0}`} />
-          <Info label="Создана" value={new Date(t.createdAt).toLocaleString('ru-RU')} />
-          <Info label="Обновлена" value={new Date(t.updatedAt).toLocaleString('ru-RU')} />
-          <Info label="Результатов" value={String(results.length)} />
-          {/* §10.1: полная цена запуска = действия + токены ИИ. Раньше показывали только
-              spentCoins (действия), а монеты за токены списывались отдельно и в сумму не
-              входили — «Потрачено» выходило заниженным. Разбивку даём в подписи. */}
-          <Info
-            label="Потрачено"
-            value={`${fmtCoins((t.spentCoins || 0) + (t.tokenCoins || 0))} ⚡${t.tokens ? ` · ${t.tokens.toLocaleString('ru-RU')} токенов` : ''}`}
-            hint={t.tokenCoins ? `${fmtCoins(t.spentCoins || 0)} ⚡ за действия + ${fmtCoins(t.tokenCoins)} ⚡ за ИИ` : undefined}
-          />
+        {/* MR-147: мелкая серая строка вместо плашек Кампания/Цель/Инициатор/Создана/Обновлена. */}
+        <div className="text-xs text-muted">
+          Создана {new Date(t.createdAt).toLocaleString('ru-RU')} · обновлена {new Date(t.updatedAt).toLocaleString('ru-RU')}
+          {t.campaignId ? ` · кампания: ${campaignsList.find((c) => c.id === t.campaignId)?.name || t.campaignId}` : ''}
+          {t.goalId ? ` · цель: ${goalName(t.goalId)}` : ''}
+          {t.initiator ? ` · ${t.initiator}` : ''}
         </div>
 
+        {/* MR-147: вкладки «Описание» / «Настройки». */}
+        <div className="flex gap-1 rounded-xl border border-line bg-elevated/40 p-1">
+          {([['desc', 'Описание'], ['settings', 'Настройки']] as const).map(([key, label]) => (
+            <button
+              key={key}
+              onClick={() => setDetTab(key)}
+              className={`h-9 flex-1 rounded-lg text-sm font-semibold transition ${detTab === key ? 'bg-spark-500/15 text-spark-200' : 'text-white/55 hover:text-white/80'}`}
+            >{label}</button>
+          ))}
+        </div>
+
+        {detTab === 'settings' && (
+          <div className="space-y-3">
+            <div className="grid gap-2 sm:grid-cols-3">
+              <Info label="Аккаунтов" value={String((s.accountIds || []).length)} />
+              <Info label="Каналов / чатов" value={String((s.channels || s.targets || []).length)} />
+              <Info label="Всего действий" value={(s.minActions || s.maxActions) ? `${s.minActions ?? 0}–${s.maxActions ?? 0}` : 'не задано'} />
+              <Info label="На аккаунт" value={(s.minPerAccount || s.maxPerAccount) ? `${s.minPerAccount ?? 0}–${s.maxPerAccount ?? 0}` : 'не задано'} />
+              {/* §8: цель кампании и кампания — редко, но нужны; держим в настройках. */}
+              <Info label="Кампания" value={t.campaignId ? (campaignsList.find((c) => c.id === t.campaignId)?.name || t.campaignId) : 'без кампании'} />
+              <Info label="Цель кампании" value={goalName(t.goalId) || 'без цели'} />
+            </div>
+
+            {!editing && (
+              <div>
+                {canControl && (
+                  <button onClick={() => startEdit(s)} disabled={ctlBusy || t.status !== 'paused'} className="btn-soft h-9 disabled:opacity-40"><Pencil size={14} /> Редактировать</button>
+                )}
+                {/* §9.8/6.3: причина блокировки правки — текстом (title на disabled не показывается). */}
+                {t.status !== 'paused' && (
+                  <div className="mt-2 text-xs text-muted">
+                    {isActive(t)
+                      ? 'Настройки правятся только на паузе — сейчас задача выполняется, часть аккаунтов уже отработала. Нажмите «Пауза», затем «Редактировать».'
+                      : 'Задача завершена — править нечего. «Перезапуск» создаст новую с этими настройками.'}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {editing && (
+              <div className="rounded-2xl border border-spark-500/40 bg-spark-500/5 p-4">
+                <div className="mb-3 text-sm font-bold text-fg">Правка задачи (на паузе)</div>
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <label className="text-xs text-white/50 sm:col-span-2">Каналы / чаты — по одному на строку
+                    <textarea value={edTargets} onChange={(e) => setEdTargets(e.target.value)} className="input mt-1 min-h-[80px] font-mono text-sm" placeholder="@channel" />
+                  </label>
+                  <label className="text-xs text-white/50">Всего действий: от
+                    <input type="number" min={0} value={edMinActions} onChange={(e) => setEdMinActions(e.target.value)} placeholder="не задано" className="input mt-1 h-9" />
+                  </label>
+                  <label className="text-xs text-white/50">до
+                    <input type="number" min={0} value={edMaxActions} onChange={(e) => setEdMaxActions(e.target.value)} placeholder="не задано" className="input mt-1 h-9" />
+                  </label>
+                  <label className="text-xs text-white/50">На аккаунт: от
+                    <input type="number" min={0} value={edMinPerAcc} onChange={(e) => setEdMinPerAcc(e.target.value)} placeholder="не задано" className="input mt-1 h-9" />
+                  </label>
+                  <label className="text-xs text-white/50">до
+                    <input type="number" min={0} value={edMaxPerAcc} onChange={(e) => setEdMaxPerAcc(e.target.value)} placeholder="не задано" className="input mt-1 h-9" />
+                  </label>
+                </div>
+                <div className="mt-3 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-200">
+                  Состав аккаунтов здесь не меняется: за задачей держатся блокировки профилей. Нужны другие
+                  исполнители — остановите задачу и создайте новую.
+                </div>
+                <div className="mt-3 flex gap-2">
+                  <button onClick={() => void saveEdit()} disabled={busy} className="btn-primary h-9">Сохранить</button>
+                  <button onClick={() => setEditing(false)} disabled={busy} className="btn-ghost h-9">Отмена</button>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {detTab === 'desc' && (
+          <div className="space-y-4">
         <TaskAccounts accountIds={s.accountIds || []} accounts={accounts} />
         <ChipList
           title="Каналы / чаты — где работает модуль"
@@ -1086,6 +1102,8 @@ export function TaskDetailPage() {
             </div>
           )}
         </div>
+          </div>
+        )}
       </div>
     </div>
   )
