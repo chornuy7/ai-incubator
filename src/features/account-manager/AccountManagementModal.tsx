@@ -232,13 +232,9 @@ export function HeroBanner({ account, stats, actions }: {
               {valid == null ? 'Проверка…' : valid ? 'Валидный' : 'Невалидный'}
             </Pill>
           )}
-          {/* Честно говорим, что показываем сохранённый результат, а не свежий: живая
-              проверка идёт только по кнопке «Обновить» (иначе карточка каждый раз ждала сеть). */}
-          {stats?.status.fromCache && (
-            <span className="text-[10px] text-white/60" title={stats.status.lastValidAt ? `Последняя живая проверка: ${fmtDate(stats.status.lastValidAt)}` : 'Живой проверки ещё не было'}>
-              данные сохранённые · {stats.status.lastValidAt ? fmtDate(stats.status.lastValidAt) : 'не проверялся'}
-            </span>
-          )}
+          {/* MR-154: убрана «лишняя строка» «данные сохранённые · HH:MM» — дублировала поле
+              «Последняя проверка» ниже и засоряла шапку статусов. Время живой проверки —
+              там же, ниже, в блоке проверок. */}
           <Pill tone={spam === 'clean' ? 'ok' : spam === 'blocked' ? 'bad' : 'neutral'}>
             {spam === 'clean' ? 'Без спамблока' : spam === 'blocked' ? 'Спамблок' : 'Спамблок: —'}
           </Pill>
