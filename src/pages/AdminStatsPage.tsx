@@ -18,7 +18,7 @@ import { fetchTgstatSession, uploadTgstatSession, verifyTgstatSession, clearTgst
 import { fetchRoles } from '@/api/rolesApi'
 import { RolesPage } from '@/pages/RolesPage'
 import { changeBalance, fetchSubscription, saveUserModules, fetchWalletHistory, type WalletEntry } from '@/api/balanceApi'
-import { promptDialog } from '@/shared/lib/dialog'
+import { promptDialog, confirmDialog } from '@/shared/lib/dialog'
 import { ApiDocsTab } from '@/features/billing/ApiDocsTab'
 import { fmt, fmtDate, cleanPrice, fmtUsd, usdEq, MetricTile } from '@/pages/admin/adminShared'
 import { MonitoringTab, AccountsHealthBlocks } from '@/pages/admin/MonitoringTab'
@@ -1473,6 +1473,13 @@ function AdminTicketsTab({ autoRefresh = true, registerReload }: {
       pushToast({ type: 'success', title: 'Статус обновлён' })
     } catch (e) { pushToast({ type: 'error', title: 'Не удалось', desc: e instanceof Error ? e.message : '' }) }
   }
+  // MR-152: единственное ручное действие поддержки — «Закрыть» (с подтверждением). Остальные
+  // статусы (в работе / ожидает ответа) выставляются автоматически, дропдаун убран.
+  const closeTicket = async () => {
+    if (!open) return
+    if (!(await confirmDialog({ title: 'Закрыть обращение?', message: `«${open.subject}» будет помечено закрытым. Новый ответ клиента откроет его снова.`, confirmLabel: 'Закрыть', tone: 'danger' }))) return
+    await changeStatus('closed')
+  }
 
   // Мессенджер, а не «провал внутрь»: слева список диалогов, справа переписка. Так видно
   // очередь обращений и ответ пишется, не теряя контекст (правка заказчика 12.08).
@@ -1575,7 +1582,15 @@ function AdminTicketsTab({ autoRefresh = true, registerReload }: {
                     <div className="truncate text-sm font-bold text-fg">{open.subject}</div>
                     <div className="truncate text-[11px] text-muted">{open.id} · клиент {open.ownerEmail || open.ownerName || open.userId} · ID {shortId(open.userId)}</div>
                   </div>
-                  <Select className="ml-auto w-44" value={open.status} onChange={(v) => void changeStatus(v)} options={TICKET_STATUS_OPTS} />
+                  {/* MR-152: вместо дропдауна статусов — бейдж текущего статуса + кнопка «Закрыть». */}
+                  <div className="ml-auto flex items-center gap-2">
+                    <Badge tone={TICKET_STATUS_META[open.status].tone}>{TICKET_STATUS_META[open.status].label}</Badge>
+                    {open.status === 'closed' ? (
+                      <button onClick={() => void changeStatus('open')} className="btn-ghost h-8 px-3 text-xs">Открыть снова</button>
+                    ) : (
+                      <button onClick={() => void closeTicket()} className="btn-ghost h-8 px-3 text-xs text-rose-300">Закрыть</button>
+                    )}
+                  </div>
                 </div>
                 <div ref={feedRef} className="flex-1 overflow-y-auto bg-surface/40 px-3 py-3">
                   <TicketChat ticket={open} viewerIsSupport={true} />
