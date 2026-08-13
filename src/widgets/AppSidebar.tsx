@@ -77,9 +77,12 @@ export function AppSidebar({ mobile = false }: { mobile?: boolean }) {
   // (§5.4) — что рабочее пространство оплатило: «купив нейрочатінг — бачить
   // нейрочатінг», остальных модулей в меню быть не должно. Проходить надо обе:
   // админ не увидит неоплаченный модуль, а сотрудник — оплаченный, но закрытый ему.
+  // MR-157: пока не куплен НИ ОДИН модуль (пустой набор / незарегистрированный) — показываем
+  // ВСЕ модули как промо (клик → панель «купить доступ»). Купили ≥1 — прячем неоплаченные.
+  const ownsNoModules = Array.isArray(planModules) && planModules.length === 0
   const allowed = (r: RouteDef) => {
     const mk = anyModuleKeyFromPath(r.path)
-    if (mk && !planHasModule(planModules, mk)) return false
+    if (mk && !ownsNoModules && !planHasModule(planModules, mk)) return false
     if (!sessionUser) return true
     return canAccessPath(sessionUser.permissions, sessionUser.isAdmin, r.path, sessionUser.isOwner)
   }
