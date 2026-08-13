@@ -576,7 +576,8 @@ function TaskCard({ t, goalName, busy, busyAction, pendingAction, onOpen, onStop
   const running = isActive(t) || !!pendingAction
   const ringColor = pendingAction ? STATUS_COLOR.stopped : (STATUS_COLOR[t.status] || '#94a3b8')
   return (
-    <Card className={compact ? 'flex items-center gap-3 bg-elevated/40 p-2.5' : 'flex items-center gap-3 p-3'}>
+    <Card className={compact ? 'bg-elevated/40 p-2.5' : 'p-3'}>
+      <div className="flex items-center gap-3">
       {onToggleSelect && (
         <input
           type="checkbox"
@@ -606,6 +607,16 @@ function TaskCard({ t, goalName, busy, busyAction, pendingAction, onOpen, onStop
       </div>
       </button>
       <CardControls t={t} busy={busy} busyAction={busyAction} pendingAction={pendingAction} onStop={onStop} onRestart={onRestart} onPause={onPause} onResume={onResume} canControl={canControl} />
+      </div>
+      {/* MR-145 (созвон 12.08): задача с ошибкой — карточка двойной высоты: вторая половина
+          отдана под описание ошибки со скроллом, чтобы разбирать провал прямо здесь, а не
+          открывать каждую задачу и лазить в логи. */}
+      {t.status === 'error' && (
+        <div className="mt-2.5 rounded-xl border border-rose-500/25 bg-rose-500/[.07] p-3">
+          <div className="mb-1 flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wide text-rose-300"><AlertTriangle size={12} /> Ошибка задачи</div>
+          <div className="max-h-24 overflow-y-auto whitespace-pre-wrap break-words text-xs leading-relaxed text-rose-200/90">{t.lastError || 'Задача завершилась с ошибкой — подробности в логах задачи.'}</div>
+        </div>
+      )}
     </Card>
   )
 }

@@ -2,6 +2,7 @@
 import { Router } from 'express'
 import { listProxies, getProxy, createProxy, updateProxy, deleteProxy, checkAllProxies, sharedProxies, probeProxy, geoNote, tcpPing, proxyUsageMap, toProxyUrl } from './proxies.js'
 import { loadAllMeta } from './accountsMeta.js'
+import { loadSessionString } from './tgAuth.js'
 import { parseProxyList, proxyKey, assignLabels } from './lib/proxyImport.js'
 import { appendAudit } from './lib/auditLog.js'
 
@@ -16,7 +17,15 @@ proxiesRouter.get('/', async (_req, res) => {
     // Дубли разрешены: к каждому прокси добавляем счётчик `usedBy` — на скольких
     // аккаунтах он висит (раньше это считалось нарушением, теперь — норма §6-обновл.).
     const [proxies, meta] = await Promise.all([listProxies(), loadAllMeta()])
-    const usage = proxyUsageMap(meta)
+    // usedBy считаем только по РЕАЛЬНЫМ аккаунтам: с сессией и не в корзине. Иначе «сиротские»
+    // meta (импорт без сессии, демо-сиды) раздували «занят N» — прокси числился занятым
+    // аккаунтами, которых нет в менеджере (там показываются только аккаунты с сессией).
+    const realMeta = {}
+    await Promise.all(Object.entries(meta).map(async ([id, m]) => {
+      if (m?.inTrash) return
+      if (await loadSessionString(id)) realMeta[id] = m
+    }))
+    const usage = proxyUsageMap(realMeta)
     res.json({ ok: true, proxies: proxies.map((p) => ({ ...p, usedBy: usage[toProxyUrl(p)]?.length || 0 })) })
   } catch (err) { fail(res, err, 500) }
 })
