@@ -327,7 +327,7 @@ function SubscriptionCard({ balance }: { balance: Balance | null }) {
           </div>
           {!!exp && active && <div className="text-[11px] text-muted">осталось {daysLeft} дн.</div>}
         </div>
-        <Link to="/panel/user/subscription" className="btn-ghost ml-auto h-9 border border-line text-sm"><Package size={14} /> Мои модули</Link>
+        <Link to="/panel/user/subscription" className="btn-ghost ml-auto h-9 border border-line text-sm"><Package size={14} /> Подписки</Link>
       </div>
     </Card>
   )

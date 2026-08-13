@@ -13,9 +13,9 @@ export function ModuleNotPaid({ title }: { title: string }) {
       <Package size={28} className="mx-auto text-amber-300/70" />
       <div className="mt-3 text-base font-semibold text-fg">Модуль не в вашей подписке</div>
       <div className="mt-1 text-sm text-muted">
-        «{title}» не оплачен. Добавьте его в разделе «Мои модули» — платите только за то, чем пользуетесь.
+        «{title}» не оплачен. Добавьте его в разделе «Подписки» — платите только за то, чем пользуетесь.
       </div>
-      <Link to="/panel/user/subscription" className="btn-primary mt-5 inline-flex h-10">Мои модули</Link>
+      <Link to="/panel/user/subscription" className="btn-primary mt-5 inline-flex h-10">Подписки</Link>
     </div>
   )
 }

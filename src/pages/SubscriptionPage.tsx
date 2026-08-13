@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
-import { Check, Package, Sparkles, Loader2 } from 'lucide-react'
+import { Check, Package, Sparkles, Loader2, Zap } from 'lucide-react'
 import { PageHeader, Card } from '@/shared/ui'
 import { useApp } from '@/mocks/store'
 import { usePlan } from '@/features/billing/plan'
@@ -61,11 +61,12 @@ export function SubscriptionPage() {
           best = { setup: s.id, discount: full ? Math.round((1 - price / full) * 1000) / 1000 : 0, sum: price }
         }
       } else if (s.modules.every((m) => picked.has(m))) {
-        const sum = Math.round(full * (1 - s.discount) * 100) / 100
+        // MR-150: цены округляем ВВЕРХ до целых (CEIL) — «дробные $ путают».
+        const sum = Math.ceil(full * (1 - s.discount))
         if (sum < best.sum) best = { setup: s.id, discount: s.discount, sum }
       }
     }
-    return { sum: best.sum, full, setup: best.setup, discount: best.discount, giftTokens }
+    return { sum: Math.ceil(best.sum), full: Math.ceil(full), setup: best.setup, discount: best.discount, giftTokens }
   }, [data, picked])
 
   const toggle = (key: string) => setPicked((prev) => {
@@ -99,7 +100,7 @@ export function SubscriptionPage() {
     <div className="space-y-4">
       <PageHeader
         icon={<Package size={20} />}
-        title="Мои модули"
+        title="Подписки"
         subtitle="Выберите модули, которыми пользуетесь. Платите только за них — сумма пересчитывается сразу."
       />
 
@@ -121,8 +122,8 @@ export function SubscriptionPage() {
               </div>
               <div className="mt-1 text-xs leading-relaxed text-muted">{s.hint}</div>
               <div className="mt-2 flex items-baseline gap-2">
-                <span className="font-display text-xl font-bold text-fg">{s.cost.sum} {cur}</span>
-                {s.cost.sum < s.cost.full && <span className="text-xs text-muted line-through">{s.cost.full} {cur}</span>}
+                <span className="font-display text-xl font-bold text-fg">{Math.ceil(s.cost.sum)} {cur}</span>
+                {s.cost.sum < s.cost.full && <span className="text-xs text-muted line-through">{Math.ceil(s.cost.full)} {cur}</span>}
                 {s.discount > 0 && (
                   <span className="rounded-md bg-spark-500/15 px-1.5 py-0.5 text-[10px] font-bold text-spark-300">−{Math.round(s.discount * 100)}%</span>
                 )}
@@ -177,18 +178,22 @@ export function SubscriptionPage() {
           <div className="text-xs text-muted">
             Выбрано модулей: <b className="text-fg">{keys.length}</b>
             {cost.setup && <> · набор «{data.setups.find((s) => s.id === cost.setup)?.name}» — скидка {Math.round(cost.discount * 100)}%</>}
-            {/* §3 (MR-21): подарочные токены, включённые в выбранный набор (суммируются). */}
-            {cost.giftTokens > 0 && <> · <b className="text-spark-300">+{cost.giftTokens} ⚡</b> в подарок</>}
           </div>
           <div className="flex items-baseline gap-2">
             {/* Год — со скидкой annualDiscount от 12 месяцев. Скидка приходит с
                 сервера (правится в админке) — витрина, запись платежа и админский
-                контрол теперь одно число, а не три. */}
-            <span className="font-display text-2xl font-bold text-fg">{period === 'year' ? Math.round(cost.sum * 12 * (1 - annualDiscount)) : cost.sum} {cur}</span>
+                контрол теперь одно число, а не три. MR-150: цена CEIL до целых. */}
+            <span className="font-display text-2xl font-bold text-fg">{period === 'year' ? Math.ceil(cost.sum * 12 * (1 - annualDiscount)) : cost.sum} {cur}</span>
             <span className="text-sm text-muted">{period === 'year' ? 'за год' : 'в месяц'}</span>
             {period === 'year' && <span className="rounded-md bg-spark-500/15 px-1.5 py-0.5 text-[10px] font-bold text-spark-300">−{Math.round(annualDiscount * 100)}%</span>}
             {period === 'month' && cost.discount > 0 && <span className="text-sm text-muted line-through">{cost.full} {cur}</span>}
           </div>
+          {/* MR-150: подарочные токены — отдельной жёлтой строкой, а не в общей серой. */}
+          {cost.giftTokens > 0 && (
+            <div className="mt-1 flex items-center gap-1 text-xs font-semibold text-amber-300">
+              <Zap size={12} fill="currentColor" /> +{cost.giftTokens.toLocaleString('ru-RU')} ⚡ токенов в подарок
+            </div>
+          )}
         </div>
         {/* Период подписки: на месяц или на год — определяет срок действия (expiresAt). */}
         <div className="flex rounded-xl border border-line bg-elevated p-0.5 text-sm">

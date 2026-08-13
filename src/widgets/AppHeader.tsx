@@ -513,7 +513,7 @@ export function AppHeader() {
               onClick={() => { setNoSubscription(''); nav('/panel/user/subscription') }}
               className="btn-primary inline-flex items-center gap-1.5"
             >
-              <Package size={16} /> Мои модули
+              <Package size={16} /> Подписки
             </button>
           </>
         )}
@@ -557,7 +557,7 @@ export function AppHeader() {
             но и открытые модули (подписка). Держим это в одном месте, а не по разным экранам. */}
         <div className="mb-4 rounded-2xl border border-line bg-elevated/50 p-3">
           <div className="mb-2 flex items-center justify-between">
-            <span className="text-xs font-bold uppercase tracking-wide text-muted">Мои модули</span>
+            <span className="text-xs font-bold uppercase tracking-wide text-muted">Подписки</span>
             <button onClick={() => { setCoinsOpen(false); nav('/panel/user/subscription') }} className="text-xs text-spark-300 hover:text-spark-200">Изменить →</button>
           </div>
           {(() => {
