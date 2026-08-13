@@ -67,6 +67,20 @@ function TriStateCheckbox({ checked, indeterminate, onChange, title }: {
   )
 }
 
+// MR-154: расшифровка статусов — по «?» рядом с заголовком колонки.
+const STATUS_HELP = [
+  'Активные — свободен, готов к работе',
+  'В работе — занят задачей прямо сейчас',
+  'Прогрев — идёт прогрев аккаунта',
+  'На паузе — временно остановлен',
+  'FloodWait — Telegram временно ограничил действия',
+  'На карантине — отдыхает после риска',
+  'Спамблок — ограничен спам-фильтром Telegram',
+  'Невалидные — сессия недействительна, нужен повторный вход',
+  'Замороженные — отключён вручную',
+  'Реавторизация — требуется повторный вход',
+].join('\n')
+
 function formatProxyLabel(proxy: string) {
   if (!proxy || proxy === '—') return 'Прямое подключение'
   return proxy
@@ -85,9 +99,14 @@ function hasProxy(a: { proxy?: string }) {
  * `default` — прежнее поведение: занятые в работе уходят вниз, чтобы свободные,
  * которые и надо выбирать для запуска, были под рукой.
  */
-type SortKey = 'default' | 'name' | 'status' | 'country' | 'newest' | 'oldest'
+type SortKey = 'default' | 'problems' | 'name' | 'status' | 'country' | 'newest' | 'oldest'
 
 const str = (v: unknown) => String(v ?? '')
+// MR-154: «отвалившийся» аккаунт — нет прокси / прокси не отвечает / нерабочий статус.
+const PROBLEM_STATUSES = new Set(['invalid', 'reauth', 'spamblock', 'quarantine', 'frozen'])
+const isProblemAccount = (a: TgAccount) => !hasProxy(a) || a.proxyOk === false || PROBLEM_STATUSES.has(str(a.status))
+// Кириллица (0) — выше латиницы (1); пустое имя — в самый низ.
+const scriptRank = (s: string) => { const c = s.trim(); return !c ? 2 : /^[Ѐ-ӿ]/.test(c) ? 0 : 1 }
 const SORTS: Record<SortKey, (a: TgAccount, b: TgAccount) => number> = {
   // MR-129: порядок как просил заказчик — (1) свободные/занятые, (2) по прокси-региону
   // (одинаковый прокси/регион рядом; без прокси — в конце своей группы), (3) по алфавиту.
@@ -95,6 +114,11 @@ const SORTS: Record<SortKey, (a: TgAccount, b: TgAccount) => number> = {
     (Number(!!a.busyIn) - Number(!!b.busyIn))
     || (Number(!hasProxy(a)) - Number(!hasProxy(b)))
     || str(a.proxy).localeCompare(str(b.proxy))
+    || str(a.name || a.username).localeCompare(str(b.name || b.username), 'ru'),
+  // MR-154: проблемные сверху, затем кириллица→латиница, затем по алфавиту.
+  problems: (a, b) =>
+    (Number(isProblemAccount(b)) - Number(isProblemAccount(a)))
+    || (scriptRank(str(a.name || a.username)) - scriptRank(str(b.name || b.username)))
     || str(a.name || a.username).localeCompare(str(b.name || b.username), 'ru'),
   name: (a, b) => str(a.name || a.username).localeCompare(str(b.name || b.username), 'ru'),
   status: (a, b) => str(a.status).localeCompare(str(b.status)),
@@ -106,6 +130,7 @@ const SORTS: Record<SortKey, (a: TgAccount, b: TgAccount) => number> = {
 
 const SORT_LABELS: { key: SortKey; label: string }[] = [
   { key: 'default', label: 'Свободные сверху' },
+  { key: 'problems', label: 'Проблемные сверху' },
   { key: 'name', label: 'По имени' },
   { key: 'status', label: 'По статусу' },
   { key: 'country', label: 'По стране' },
@@ -1018,7 +1043,14 @@ function AccountsTable(props: {
               {showAccountCol && <th className="px-4 py-3">Аккаунт</th>}
               {showCol('campaign') && <th className="px-4 py-3">Кампания</th>}
               {showCol('fatigue') && <th className="px-4 py-3">Усталость</th>}
-              {showCol('status') && <th className="px-4 py-3">Статус</th>}
+              {showCol('status') && (
+                <th className="px-4 py-3">
+                  <span className="inline-flex items-center gap-1">
+                    Статус
+                    <span title={STATUS_HELP} className="grid h-4 w-4 cursor-help place-items-center rounded-full border border-line text-[10px] font-bold text-muted">?</span>
+                  </span>
+                </th>
+              )}
               {showCol('lastSeen') && <th className="px-4 py-3">Отлёжка</th>}
               {showCol('proxy') && <th className="px-4 py-3">Прокси</th>}
               <th className="px-4 py-3 text-right">Действия</th>
