@@ -135,10 +135,25 @@ function signalLiveTask(taskId, { stop, pause } = {}) {
  * @type {Array<{ taskId: string, store: object, runner: Function }>}
  */
 const waiting = []
-/** Сколько задач выполняется ОДНОВРЕМЕННО. Настраивается через env; по умолчанию 3. */
-const MAX_CONCURRENT = Math.max(1, Number(process.env.MAX_CONCURRENT_TASKS) || 3)
+/**
+ * Сколько задач выполняется ОДНОВРЕМЕННО. MR-144: значение стало настраиваемым (панель
+ * владельца → settings.maxParallelTasks). Стартовое — из env, дальше его переопределяет
+ * setMaxConcurrent() при загрузке настроек и при их изменении через API. Держим `let`,
+ * а не const, и читаем через переменную во всех местах гейта очереди.
+ */
+let MAX_CONCURRENT = Math.max(1, Number(process.env.MAX_CONCURRENT_TASKS) || 3)
 
-/** Для тестов/диагностики: сколько сейчас работает и сколько ждёт слот. */
+/** MR-144: применить новый лимит параллельных задач. Если слотов стало больше — сразу
+ *  дотягиваем очередь (pumpWaiting), чтобы ждущие задачи не висели до следующего события. */
+export function setMaxConcurrent(n) {
+  const v = Math.max(1, Math.min(20, Math.round(Number(n)) || MAX_CONCURRENT))
+  if (v === MAX_CONCURRENT) return MAX_CONCURRENT
+  MAX_CONCURRENT = v
+  pumpWaiting()
+  return MAX_CONCURRENT
+}
+
+/** Для тестов/диагностики и дашборда: сколько сейчас работает, сколько ждёт и лимит. */
 export function getConcurrencyState() {
   return { running: running.size, waiting: waiting.length, max: MAX_CONCURRENT }
 }

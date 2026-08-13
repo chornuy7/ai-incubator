@@ -40,6 +40,7 @@ import {
 import { buildAccountStats, listAccountChannels, listAccountFolders, leaveAccountChannel } from './accountStats.js'
 import { dailySummary, dailySummaryAll } from './lib/dailyActions.js'
 import { rpsMiddleware, systemMetrics } from './lib/systemMetrics.js'
+import { setMaxConcurrent, getConcurrencyState } from './modules/workers.js'
 
 const app = express()
 app.use(cors())
@@ -1247,10 +1248,17 @@ app.get('/api/settings', async (_req, res) => {
   try { res.json({ ok: true, settings: await getSettings() }) }
   catch (err) { res.status(500).json({ ok: false, error: err instanceof Error ? err.message : 'Ошибка' }) }
 })
+// MR-144: текущее состояние параллельности для дашборда — сколько работает, сколько ждёт, лимит.
+app.get('/api/tasks/concurrency', (_req, res) => {
+  try { res.json({ ok: true, ...getConcurrencyState() }) }
+  catch (err) { res.status(500).json({ ok: false, error: err instanceof Error ? err.message : 'Ошибка' }) }
+})
 app.put('/api/settings', async (req, res) => {
   try {
     if (!(await isAdminRequest(req))) return res.status(403).json({ ok: false, error: 'Менять настройки безопасности может только админ' })
     const settings = await updateSettings(req.body ?? {})
+    // MR-144: лимит параллельных задач применяем к живому пулу воркеров сразу.
+    if (Object.prototype.hasOwnProperty.call(req.body ?? {}, 'maxParallelTasks')) setMaxConcurrent(settings.maxParallelTasks)
     await appendAudit({
       action: 'settings.update', module: 'settings', initiator: req.header('x-user-id') || 'operator',
       reason: `Изменены настройки: ${Object.keys(req.body ?? {}).join(', ')}`, meta: settings,
@@ -1296,6 +1304,10 @@ await Promise.all([
   loadAiSafety().catch(() => {}),
   loadBlacklist().catch(() => {}),
 ])
+
+// MR-144: применить сохранённый лимит параллельных задач при старте (иначе до первой
+// правки настроек действовал бы только env-дефолт).
+try { setMaxConcurrent((await getSettings()).maxParallelTasks) } catch { /* дефолт остаётся */ }
 
 const { flipped, cleared } = await reconcileStaleTasksOnBoot()
 if (flipped.length) {

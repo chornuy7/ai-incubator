@@ -9,6 +9,7 @@ import { fetchAllTasks, fetchModuleTask, stopModuleTask, restartModuleTask, paus
 import { fetchGoals, type Goal } from '@/api/goalsApi'
 import { fetchCampaigns, type Campaign } from '@/api/campaignsApi'
 import { fetchAccounts } from '@/api/accountsApi'
+import { fetchConcurrency, saveSettings, type ConcurrencyState } from '@/api/settingsApi'
 import type { TgAccount } from '@/shared/types'
 import { cn, coins as fmtCoins } from '@/shared/lib/utils'
 import { confirmDialog, promptDialog } from '@/shared/lib/dialog'
@@ -122,6 +123,9 @@ export function TasksPage() {
   // MR-146: аккаунты для warning-системы. Грузим ОТДЕЛЬНО и редко (раз в 60с), а не в 5с-поллинге
   // задач — здоровье аккаунтов не меняется ежесекундно, лишний трафик на дашборде не нужен.
   const [accounts, setAccounts] = useState<TgAccount[]>([])
+  // MR-144: состояние очереди (running/waiting/max) + редактирование лимита владельцем.
+  const [conc, setConc] = useState<ConcurrencyState | null>(null)
+  const [limitEdit, setLimitEdit] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
   const [busy, setBusy] = useState<string | null>(null)
   // MR-130: какое ИМЕННО действие идёт по busy-задаче — чтобы крутить лоадер на нажатой
@@ -151,6 +155,7 @@ export function TasksPage() {
     try {
       const [t, g] = await Promise.all([fetchAllTasks(), fetchGoals().catch(() => [])])
       setTasks(t); setGoals(g)
+      void fetchConcurrency().then(setConc).catch(() => {}) // MR-144: не блокирует список задач
       // Снимаем «в процессе» с задач, которые реально встали (или пропали / зависли).
       setPending((prev) => {
         const ids = Object.keys(prev)
@@ -417,6 +422,18 @@ export function TasksPage() {
     }).sort((a, b) => b.active - a.active || b.tasks.length - a.tasks.length)
   }, [filtered, goalName, goalSel])
 
+  // MR-144: владелец/админ меняет лимит параллельных задач прямо с дашборда.
+  const canEditLimit = !me || me.isAdmin || me.isOwner
+  const saveLimit = async () => {
+    const n = Math.max(1, Math.min(20, Math.round(Number(limitEdit)) || (conc?.max ?? 3)))
+    try {
+      await saveSettings({ maxParallelTasks: n })
+      setLimitEdit(null)
+      void fetchConcurrency().then(setConc).catch(() => {})
+      pushToast({ type: 'success', title: 'Лимит обновлён', desc: `Одновременно выполняется до ${n} задач` })
+    } catch (e) { pushToast({ type: 'error', title: 'Не удалось изменить лимит', desc: e instanceof Error ? e.message : '' }) }
+  }
+
   const stat = (icon: React.ReactNode, label: string, value: React.ReactNode, tone = 'text-spark-300') => (
     <Card className="flex items-center gap-3 p-3">
       <span className={`grid h-9 w-9 place-items-center rounded-xl bg-elevated ${tone}`}>{icon}</span>
@@ -471,6 +488,25 @@ export function TasksPage() {
           {stat(<Gauge size={17} />, 'Средний прогресс', `${funnel.avg}%`)}
         </div>
       </div>
+
+      {/* MR-144: лимит параллельных задач — значение на дашборде + правка владельцем/админом. */}
+      {conc && (
+        <div className="mb-3 flex flex-wrap items-center gap-x-3 gap-y-1.5 rounded-2xl border border-line bg-elevated/40 px-4 py-2.5 text-sm">
+          <Activity size={15} className="text-amber-300" />
+          <span className="text-white/70">Параллельно задач:</span>
+          <span className="font-bold tabular-nums text-fg">{conc.running} / {conc.max}</span>
+          {conc.waiting > 0 && <span className="text-white/40">· {conc.waiting} в очереди</span>}
+          {canEditLimit && (limitEdit === null ? (
+            <button onClick={() => setLimitEdit(String(conc.max))} className="btn-ghost ml-auto h-8 text-xs">Изменить лимит</button>
+          ) : (
+            <span className="ml-auto flex items-center gap-1.5">
+              <input type="number" min={1} max={20} value={limitEdit} onChange={(e) => setLimitEdit(e.target.value)} className="input h-8 w-20" autoFocus />
+              <button onClick={() => void saveLimit()} className="btn-primary h-8 text-xs">Сохранить</button>
+              <button onClick={() => setLimitEdit(null)} className="btn-ghost h-8 text-xs">Отмена</button>
+            </span>
+          ))}
+        </div>
+      )}
 
       {/* Фильтры + режим */}
       <div className="mb-3 flex flex-wrap items-center gap-2">
