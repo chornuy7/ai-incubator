@@ -49,6 +49,19 @@ function pct(t: ModuleTask) {
 }
 const isActive = (t: ModuleTask) => t.status === 'running' || t.status === 'queued'
 
+// MR-146: «отвалившийся» аккаунт задачи — по тем же признакам, что в менеджере/пикере.
+// Возвращает короткую причину проблемы или '' если аккаунт в порядке.
+function acctProblem(a?: TgAccount): string {
+  if (!a) return 'нет в системе'
+  if (!a.proxy || a.proxy === '—') return 'нет прокси'
+  if (a.proxyOk === false) return 'прокси не отвечает'
+  if (a.status === 'reauth') return 'нужна переавторизация'
+  if (a.status === 'invalid') return 'невалиден'
+  if (a.status === 'spamblock') return 'спамблок'
+  if (a.status === 'quarantine') return 'карантин'
+  return ''
+}
+
 // «Стоп»/«Пауза» лишь ПРОСЯТ воркера остановиться — фактически он выходит из цикла
 // позже (доделав текущее действие). Достигла ли задача ожидаемого состояния?
 const isTerminal = (t: ModuleTask) => t.status === 'stopped' || t.status === 'done' || t.status === 'error'
@@ -106,6 +119,9 @@ export function TasksPage() {
   const me = useSession((s) => s.user) // §12: прогрев останавливает только супер-админ
   const [tasks, setTasks] = useState<ModuleTask[]>([])
   const [goals, setGoals] = useState<Goal[]>([])
+  // MR-146: аккаунты для warning-системы. Грузим ОТДЕЛЬНО и редко (раз в 60с), а не в 5с-поллинге
+  // задач — здоровье аккаунтов не меняется ежесекундно, лишний трафик на дашборде не нужен.
+  const [accounts, setAccounts] = useState<TgAccount[]>([])
   const [loading, setLoading] = useState(true)
   const [busy, setBusy] = useState<string | null>(null)
   // MR-130: какое ИМЕННО действие идёт по busy-задаче — чтобы крутить лоадер на нажатой
@@ -157,6 +173,27 @@ export function TasksPage() {
     const id = setInterval(() => { void load() }, 5000)
     return () => clearInterval(id)
   }, [])
+  // MR-146: аккаунты — отдельным редким циклом.
+  useEffect(() => {
+    const loadAcc = () => void fetchAccounts().then(setAccounts).catch(() => {})
+    loadAcc()
+    const id = setInterval(loadAcc, 60000)
+    return () => clearInterval(id)
+  }, [])
+  // MR-146: на каждую задачу — сколько её аккаунтов «отвалилось» (нет прокси/не отвечает/нерабочий статус).
+  const acctById = useMemo(() => new Map(accounts.map((a) => [a.id, a])), [accounts])
+  const taskProblems = useMemo(() => {
+    const fn = (t: ModuleTask): { bad: number; total: number } => {
+      const ids = t.settings?.accountIds || []
+      // Пока список аккаунтов не загрузился — НЕ судим (иначе первые ~60с все задачи
+      // мигали бы ложным «все аккаунты с проблемой», т.к. byId ещё пуст).
+      if (acctById.size === 0) return { bad: 0, total: ids.length }
+      let bad = 0
+      for (const id of ids) if (acctProblem(acctById.get(id))) bad += 1
+      return { bad, total: ids.length }
+    }
+    return fn
+  }, [acctById])
   // Пока есть задачи «в процессе» — опрашиваем чаще, чтобы кнопки разблокировались и
   // статус обновился сразу, как воркер встанет (а не через общий 5-секундный цикл).
   const hasPending = Object.keys(pending).length > 0
@@ -498,7 +535,7 @@ export function TasksPage() {
               <div className="h-1.5 overflow-hidden rounded bg-white/10"><div className="h-full rounded bg-iris-500 transition-all" style={{ width: `${g.prog}%` }} /></div>
               <div className="mt-1 text-[11px] text-white/40">Прогресс к цели: {g.prog}%</div>
               <div className="mt-2 grid gap-1.5 sm:grid-cols-2">
-                {g.tasks.map((t) => <TaskCard key={`${t.moduleKey}:${t.id}`} t={t} goalName={null} busy={busy} busyAction={busyAction} pendingAction={pending[t.id]?.action} onOpen={openTask} onStop={doStop} onRestart={doRestart} onPause={doPause} onResume={doResume} canControl={canControl(t)} compact />)}
+                {g.tasks.map((t) => <TaskCard key={`${t.moduleKey}:${t.id}`} t={t} goalName={null} busy={busy} busyAction={busyAction} pendingAction={pending[t.id]?.action} onOpen={openTask} onStop={doStop} onRestart={doRestart} onPause={doPause} onResume={doResume} canControl={canControl(t)} problem={taskProblems(t)} compact />)}
               </div>
             </Card>
           ))}
@@ -506,7 +543,7 @@ export function TasksPage() {
         )
       ) : (
         <div className="grid gap-2 lg:grid-cols-2">
-          {filtered.map((t) => <TaskCard key={`${t.moduleKey}:${t.id}`} t={t} goalName={goalName(t.goalId)} busy={busy} busyAction={busyAction} pendingAction={pending[t.id]?.action} onOpen={openTask} onStop={doStop} onRestart={doRestart} onPause={doPause} onResume={doResume} canControl={canControl(t)} selected={selected.has(t.id)} onToggleSelect={toggleSel} />)}
+          {filtered.map((t) => <TaskCard key={`${t.moduleKey}:${t.id}`} t={t} goalName={goalName(t.goalId)} busy={busy} busyAction={busyAction} pendingAction={pending[t.id]?.action} onOpen={openTask} onStop={doStop} onRestart={doRestart} onPause={doPause} onResume={doResume} canControl={canControl(t)} selected={selected.has(t.id)} onToggleSelect={toggleSel} problem={taskProblems(t)} />)}
         </div>
       )}
     </div>
@@ -567,13 +604,14 @@ function CardControls({ t, busy, busyAction, pendingAction, onStop, onRestart, o
   )
 }
 
-function TaskCard({ t, goalName, busy, busyAction, pendingAction, onOpen, onStop, onRestart, onPause, onResume, canControl = true, compact, selected, onToggleSelect }: {
+function TaskCard({ t, goalName, busy, busyAction, pendingAction, onOpen, onStop, onRestart, onPause, onResume, canControl = true, compact, selected, onToggleSelect, problem }: {
   t: ModuleTask; goalName: string | null; busy: string | null; busyAction: 'start' | 'pause' | 'stop' | null
   pendingAction?: 'pause' | 'stop'
   onOpen: (t: ModuleTask) => void
   onStop: (t: ModuleTask) => void; onRestart: (t: ModuleTask) => void
   onPause: (t: ModuleTask) => void; onResume: (t: ModuleTask) => void; canControl?: boolean; compact?: boolean
   selected?: boolean; onToggleSelect?: (id: string) => void
+  problem?: { bad: number; total: number } // MR-146: сколько аккаунтов задачи «отвалилось»
 }) {
   // Оптимистичный статус: пока воркер реально не встал, показываем «Останавливается…» —
   // честнее, чем застывшее «Выполняется», и сразу видно, что кнопка сработала.
@@ -625,6 +663,22 @@ function TaskCard({ t, goalName, busy, busyAction, pendingAction, onOpen, onStop
           <div className="max-h-24 overflow-y-auto whitespace-pre-wrap break-words text-xs leading-relaxed text-rose-200/90">{t.lastError || 'Задача завершилась с ошибкой — подробности в логах задачи.'}</div>
         </div>
       )}
+      {/* MR-146: warning-система — если аккаунты задачи отвалились, показываем второй блок
+          «N из M с проблемой». Градация: боевые модули (нейродиалог/чаттинг/…) — ошибка (красный),
+          остальные (прогрев/парсинг) — предупреждение (жёлтый). На задаче «Ошибка» не дублируем. */}
+      {t.status !== 'error' && problem && problem.bad > 0 && (() => {
+        const hard = isCombatModule(t.moduleKey)
+        return (
+          <div className={cn('mt-2.5 rounded-xl border p-2.5', hard ? 'border-rose-500/25 bg-rose-500/[.07]' : 'border-amber-500/25 bg-amber-500/[.07]')}>
+            <div className={cn('flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wide', hard ? 'text-rose-300' : 'text-amber-300')}>
+              <AlertTriangle size={12} /> {hard ? 'Проблема с аккаунтами' : 'Предупреждение'} · {problem.bad} из {problem.total} с проблемой
+            </div>
+            <div className={cn('mt-0.5 text-[11px] leading-relaxed', hard ? 'text-rose-200/80' : 'text-amber-200/80')}>
+              Часть аккаунтов недоступна (нет прокси / не отвечает / нерабочий статус). Проверьте их в менеджере перед запуском.
+            </div>
+          </div>
+        )
+      })()}
     </Card>
   )
 }
