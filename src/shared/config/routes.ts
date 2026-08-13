@@ -32,7 +32,7 @@ export const ROUTES: RouteDef[] = [
   { path: '/panel/tasks', label: 'Дашборд задач', icon: ListChecks, group: 'main' },
   { path: '/panel/crm', label: 'CRM · Лиды', icon: Contact, group: 'main', muted: true }, // MR-137: серым (второстепенное)
   { path: '/panel/analytics', label: 'Аналитика', icon: TrendingUp, group: 'main', hidden: true },
-  { path: '/panel/my-statistics', label: 'Статистика', icon: BarChart3, group: 'main', muted: true }, // MR-137: серым (второстепенное)
+  { path: '/panel/my-statistics', label: 'Статистика', icon: BarChart3, group: 'main' }, // MR-158: вернули в цвет (полноценный раздел)
   // §5.3 (E1/E2): полная админ-панель живёт ОТДЕЛЬНОЙ ссылкой /admin со своим входом
   // (см. AdminEntry), а не пунктом сайдбара — здесь её намеренно нет.
   // MR-137: Обзор аккаунта / Логи / Поддержка — вниз, в раздел «Аккаунт».

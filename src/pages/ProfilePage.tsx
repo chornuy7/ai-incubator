@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import { Link } from 'react-router-dom'
 import {
-  UserCog, User, Shield, Bell, Handshake, Cable, Save, Copy, Zap, History as HistoryIcon, Package, CalendarClock } from 'lucide-react'
+  UserCog, Shield, Bell, Handshake, Cable, Save, Copy, Zap, History as HistoryIcon, Package, CalendarClock } from 'lucide-react'
 import { useApp } from '@/mocks/store'
 import { fetchBalance, fetchWalletHistory, type Balance, type WalletEntry } from '@/api/balanceApi'
 import { useSession } from '@/features/auth/session'
@@ -9,9 +9,9 @@ import { PageHeader, Card, Switch, Badge } from '@/shared/ui'
 import { cn, coins as fmtCoins } from '@/shared/lib/utils'
 import { useTabParam } from '@/shared/lib/useTabParam'
 
+// MR-158: «Настройки профиля» и «Настройки аккаунта» объединены в один раздел.
 const TABS = [
-  { key: 'profile', label: 'Настройки профиля', icon: User },
-  { key: 'account', label: 'Настройки аккаунта', icon: UserCog },
+  { key: 'profile', label: 'Профиль и аккаунт', icon: UserCog },
   { key: 'security', label: 'Настройки безопасности', icon: Shield },
   { key: 'notifications', label: 'Уведомления', icon: Bell },
   { key: 'partner', label: 'Партнёрская программа', icon: Handshake },
@@ -39,9 +39,21 @@ export function ProfilePage() {
   const [firstName, setFirstName] = useState(data.user.firstName)
   const [lastName, setLastName] = useState(data.user.lastName)
   const [nick, setNick] = useState(data.user.nick)
+  // MR-158: смена пароля с валидацией (длина ≥ 8, новый ≠ текущий, повтор совпадает).
+  const [pwCur, setPwCur] = useState('')
+  const [pwNew, setPwNew] = useState('')
+  const [pwRepeat, setPwRepeat] = useState('')
 
   const save = () => { updateUser({ firstName, lastName, nick }); pushToast({ type: 'success', title: 'Изменения сохранены' }) }
-  const copy = (text: string, label: string) => { navigator.clipboard?.writeText(text).catch(() => {}); pushToast({ type: 'success', title: `${label} скопирован` }) }
+  const saveSecurity = () => {
+    if (!pwNew && !pwRepeat && !pwCur) { pushToast({ type: 'success', title: 'Настройки безопасности сохранены' }); return }
+    if (pwNew.length < 8) { pushToast({ type: 'error', title: 'Пароль слишком короткий', desc: 'Минимум 8 символов' }); return }
+    if (!/[0-9]/.test(pwNew) || !/[a-zA-Zа-яА-Я]/.test(pwNew)) { pushToast({ type: 'error', title: 'Слабый пароль', desc: 'Нужны и буквы, и цифры' }); return }
+    if (pwNew !== pwRepeat) { pushToast({ type: 'error', title: 'Пароли не совпадают' }); return }
+    if (pwNew === pwCur) { pushToast({ type: 'error', title: 'Новый пароль совпадает с текущим' }); return }
+    setPwCur(''); setPwNew(''); setPwRepeat('')
+    pushToast({ type: 'success', title: 'Пароль обновлён' })
+  }
 
   const refLink = 'https://incubator.ai/r/illia7'
 
@@ -69,6 +81,7 @@ export function ProfilePage() {
         {/* Content */}
         <div>
           {tab === 'profile' && (
+            <div className="space-y-4">
             <Card>
               <div className="mb-5 flex items-center gap-4">
                 <div className="grid h-16 w-16 place-items-center rounded-2xl bg-iris-gradient text-2xl font-bold text-white">
@@ -105,9 +118,9 @@ export function ProfilePage() {
               </div>
               <div className="mt-5 flex justify-end"><button onClick={save} className="btn-primary h-10"><Save size={16} /> Сохранить изменения</button></div>
             </Card>
-          )}
 
-          {tab === 'account' && (
+            {/* MR-158: бывшая вкладка «Настройки аккаунта» — тариф/лимиты/часовой пояс.
+                «История операций» убрана из профиля (живёт в разделе подписки). */}
             <Card className="space-y-5">
               <div className="flex items-center justify-between rounded-2xl border border-line bg-elevated p-4">
                 <div><div className="text-sm text-muted">Текущий тариф</div><div className="font-display text-lg font-bold text-fg">{balance?.plan.name ?? data.plan.name}</div></div>
@@ -117,19 +130,23 @@ export function ProfilePage() {
                 <div className="rounded-2xl border border-line bg-elevated p-4"><div className="text-sm text-muted">Лимит аккаунтов</div><div className="font-display text-lg font-bold text-fg">{data.accounts.filter((a) => !a.inTrash).length} / {balance?.plan.accountLimit ?? data.plan.accountLimit}</div></div>
                 <div className="rounded-2xl border border-line bg-elevated p-4"><div className="flex items-center gap-1.5 text-sm text-muted"><Zap size={14} className="text-amber-400" /> Баланс монет</div><div className="font-display text-lg font-bold text-fg">{fmtCoins(balance?.coins ?? data.coins)}</div></div>
               </div>
-              {/* §5.1: «за что списали». Баланс отвечает «сколько сейчас», а на
-                  претензию по деньгам без истории операций ответить нечем. */}
-              <WalletHistory />
 
               <div>
                 <label className="label">Часовой пояс</label>
-                <input defaultValue="UTC+3 (Moscow)" className="input max-w-xs" />
+                <select defaultValue="Europe/Kyiv" className="input max-w-xs">
+                  <option value="Europe/Kyiv">Киев (UTC+3)</option>
+                  <option value="Europe/Moscow">Москва (UTC+3)</option>
+                  <option value="Europe/Warsaw">Варшава (UTC+2)</option>
+                  <option value="Europe/London">Лондон (UTC+1)</option>
+                  <option value="UTC">UTC</option>
+                </select>
               </div>
               <div className="flex justify-between rounded-2xl border border-rose-500/30 bg-rose-500/8 p-4">
                 <div><div className="text-sm font-bold text-fg">Удалить аккаунт</div><div className="text-xs text-muted">Все данные будут удалены безвозвратно</div></div>
                 <button onClick={() => pushToast({ type: 'error', title: 'Удаление в демо отключено' })} className="btn-danger h-9">Удалить</button>
               </div>
             </Card>
+            </div>
           )}
 
           {tab === 'security' && (
@@ -137,10 +154,12 @@ export function ProfilePage() {
               <div>
                 <div className="mb-3 text-sm font-bold text-fg">Смена пароля</div>
                 <div className="grid gap-3 sm:grid-cols-2">
-                  <div><label className="label">Текущий пароль</label><input type="password" className="input" placeholder="••••••••" /></div>
-                  <div /><div><label className="label">Новый пароль</label><input type="password" className="input" placeholder="••••••••" /></div>
-                  <div><label className="label">Повторите пароль</label><input type="password" className="input" placeholder="••••••••" /></div>
+                  <div><label className="label">Текущий пароль</label><input type="password" value={pwCur} onChange={(e) => setPwCur(e.target.value)} className="input" placeholder="••••••••" /></div>
+                  <div /><div><label className="label">Новый пароль</label><input type="password" value={pwNew} onChange={(e) => setPwNew(e.target.value)} className="input" placeholder="минимум 8 символов" /></div>
+                  <div><label className="label">Повторите пароль</label><input type="password" value={pwRepeat} onChange={(e) => setPwRepeat(e.target.value)} className="input" placeholder="••••••••" /></div>
                 </div>
+                {pwNew && pwNew.length < 8 && <div className="mt-2 text-xs text-rose-300">Пароль должен быть не короче 8 символов.</div>}
+                {pwRepeat && pwNew !== pwRepeat && <div className="mt-1 text-xs text-rose-300">Пароли не совпадают.</div>}
               </div>
               <div className="border-t border-line pt-4">
                 <Switch checked label="Двухфакторная аутентификация" desc="Дополнительная защита входа через приложение" onChange={() => pushToast({ type: 'info', title: '2FA (демо)' })} />
@@ -156,7 +175,7 @@ export function ProfilePage() {
                   ))}
                 </div>
               </div>
-              <div className="flex justify-end"><button onClick={() => pushToast({ type: 'success', title: 'Настройки безопасности сохранены' })} className="btn-primary h-10"><Save size={16} /> Сохранить</button></div>
+              <div className="flex justify-end"><button onClick={saveSecurity} className="btn-primary h-10"><Save size={16} /> Сохранить</button></div>
             </Card>
           )}
 
@@ -172,20 +191,29 @@ export function ProfilePage() {
           )}
 
           {tab === 'partner' && (
-            <div className="space-y-4">
-              <div className="grid gap-3 sm:grid-cols-3">
-                {[['Приглашено', '12'], ['Активных', '5'], ['Заработано', '340 ⚡']].map(([l, v]) => (
-                  <Card key={l} className="p-4"><div className="font-display text-2xl font-bold text-fg">{v}</div><div className="text-xs text-muted">{l}</div></Card>
-                ))}
-              </div>
-              <Card>
-                <div className="text-sm font-bold text-fg">Ваша реферальная ссылка</div>
-                <div className="mt-2 flex gap-2">
-                  <input value={refLink} readOnly className="input font-mono text-sm" />
-                  <button onClick={() => copy(refLink, 'Реф-ссылка')} className="btn-primary h-[42px] px-4"><Copy size={16} /></button>
+            // MR-158: партнёрка пока недоступна — контент под blur + пометка «Скоро».
+            <div className="relative">
+              <div className="pointer-events-none select-none space-y-4 blur-sm">
+                <div className="grid gap-3 sm:grid-cols-3">
+                  {[['Приглашено', '12'], ['Активных', '5'], ['Заработано', '340 ⚡']].map(([l, v]) => (
+                    <Card key={l} className="p-4"><div className="font-display text-2xl font-bold text-fg">{v}</div><div className="text-xs text-muted">{l}</div></Card>
+                  ))}
                 </div>
-                <p className="mt-2 text-xs text-muted">Получайте 20% от пополнений приглашённых пользователей в монетах ⚡.</p>
-              </Card>
+                <Card>
+                  <div className="text-sm font-bold text-fg">Ваша реферальная ссылка</div>
+                  <div className="mt-2 flex gap-2">
+                    <input value={refLink} readOnly className="input font-mono text-sm" />
+                    <button className="btn-primary h-[42px] px-4"><Copy size={16} /></button>
+                  </div>
+                  <p className="mt-2 text-xs text-muted">Получайте 20% от пополнений приглашённых пользователей в монетах ⚡.</p>
+                </Card>
+              </div>
+              <div className="absolute inset-0 grid place-items-center">
+                <div className="rounded-2xl border border-line bg-elevated/90 px-5 py-3 text-center shadow-lg">
+                  <div className="text-sm font-bold text-fg">Партнёрская программа скоро</div>
+                  <div className="mt-0.5 text-xs text-muted">Раздел в разработке — уведомим о запуске.</div>
+                </div>
+              </div>
             </div>
           )}
 
@@ -222,7 +250,7 @@ export function ProfilePage() {
  * это списание с 80 или последние монеты. Свои операции видит каждый, чужие — только
  * админ (проверяется на сервере).
  */
-function WalletHistory() {
+export function WalletHistory() {
   const [rows, setRows] = useState<WalletEntry[] | null>(null)
   const [open, setOpen] = useState(false)
 

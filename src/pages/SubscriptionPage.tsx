@@ -6,6 +6,7 @@ import { useApp } from '@/mocks/store'
 import { usePlan } from '@/features/billing/plan'
 import { fetchSubscription, saveSubscription, type Subscription } from '@/api/balanceApi'
 import { cn } from '@/shared/lib/utils'
+import { WalletHistory } from '@/pages/ProfilePage'
 
 /**
  * §5.4: кабинет подписки — клиент СОБИРАЕТ набор модулей сам.
@@ -213,6 +214,9 @@ export function SubscriptionPage() {
         не показываются в меню и не запускаются. Права ролей действуют отдельно: сотрудник видит только
         то, что и оплачено, и разрешено ему администратором.
       </p>
+
+      {/* MR-158: «История операций» перенесена сюда из профиля — это раздел про деньги/подписку. */}
+      <WalletHistory />
     </div>
   )
 }
