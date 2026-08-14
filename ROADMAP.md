@@ -352,8 +352,12 @@ contract-тест не даст смержить иначе.
 - ☑ **Этап 0 (14.08)** — формат дескриптора + полная карта нейрокомментинга (32 параметра,
   9 блоков, 2 набора пресетов, со ссылками на код): [VISION](./docs/mcp/MCP-VISION.md) ·
   [SPEC](./docs/mcp/MCP-SPEC.md) · [MAP](./docs/mcp/MCP-MAP.md) · [ROADMAP](./docs/mcp/MCP-ROADMAP.md)
-- ☐ **Этап 1 (15.08)** — дескриптор в коде (`server/mcp/descriptors/`) + **contract-тест**
-  (поле есть в воркере, нет в дескрипторе → красный) + `GET /api/v1/modules/:key/describe`
+- ☑ **Этап 1 (14.08)** — дескриптор нейрокомментинга в коде (`server/mcp/descriptors/`, 9 блоков,
+  29 параметров / 32 поля, пресеты, примеры) + **contract-тест** (`mcpDescriptors.test.js`, 10 проверок:
+  поле в воркере без схемы → красный, поле в схеме без кода → красный, числа пресетов сверяются
+  с поведением сервера) + `GET /api/v1/modules/:key/describe` и `GET /api/v1/modules`;
+  `GET /api/v1/mcp` отдаёт JSON Schema для описанных и честный `schema: 'partial'` для остальных.
+  Тесты 612/612.
 - ☐ **Этап 2 (16–17.08)** — настоящий MCP-сервер: JSON-RPC 2.0 + Streamable HTTP,
   `tools/list`/`tools/call`/`resources/*`; инструменты `describe_module`, `describe_block`,
   `validate_task`, `estimate_task`, `create_task`, `list_modules`

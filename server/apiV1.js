@@ -16,6 +16,7 @@ import { Router } from 'express'
 import { requireApiKey } from './apiKeys.js'
 import { MODULE_DEFS, listModuleKeys, startModuleTask } from './modules/registry.js'
 import { moduleTitle } from './lib/moduleTitles.js'
+import { describeModule, getDescriptor, listDescriptorKeys, summarizeModule } from './mcp/descriptors/index.js'
 
 export const apiV1Router = Router()
 
@@ -29,7 +30,13 @@ apiV1Router.use((req, _res, next) => {
   next()
 })
 
-/** Собрать «что умеет модуль» — из дефинишенов + эффективных цен. */
+/**
+ * Собрать «что умеет модуль» — из дефинишенов + эффективных цен.
+ *
+ * Где есть MCP-дескриптор, отдаём полную схему; где нет — честно помечаем
+ * `schema: 'partial'`. Раньше ответ выглядел одинаково полным для всех модулей,
+ * и «мозги» принимали 5 полей за исчерпывающий список при реальных 32 (созвон 14.08).
+ */
 async function capabilities() {
   const { effectivePrices } = await import('./priceStore.js')
   const eff = await effectivePrices()
@@ -37,16 +44,26 @@ async function capabilities() {
   return listModuleKeys().map((key) => {
     const def = MODULE_DEFS[key]
     const p = priceOf(key)
+    const desc = getDescriptor(key)
     return {
       key,
       title: moduleTitle(key),
       requiresTargets: !!def.requiresTargets,
       targetLabel: def.targetLabel || null,
+      // Главное поле для оркестратора: можно ли доверять этому описанию как полному.
+      schema: desc ? 'full' : 'partial',
+      schemaVersion: desc?.version ?? null,
+      summary: desc?.whoAmI?.summary || null,
+      tags: desc?.tags || [],
+      describe: desc ? `/api/v1/modules/${key}/describe` : null,
       pricing: { subscriptionPerMonth: p.month, perAction: p.action, currency: eff.currency || '$', coinsPer1kTokens: eff.coinsPer1kTokens },
       run: {
         method: 'POST',
         path: `/api/v1/modules/${key}/run`,
-        note: 'Доступны только аккаунты пользователя ключа — чужие отклоняются (403).',
+        note: desc
+          ? 'Полный список полей и ограничений — по ссылке describe. Доступны только аккаунты пользователя ключа (иначе 403).'
+          : 'ВНИМАНИЕ: схема этого модуля ещё не описана — перечислены только общие поля, модуль принимает больше. '
+            + 'Доступны только аккаунты пользователя ключа (иначе 403).',
         body: {
           accountIds: 'string[] — аккаунты, которыми работать (из доступных пользователю)',
           ...(def.requiresTargets ? { targets: `string[] — ${def.targetLabel || 'цели'} (обязательно)` } : {}),
@@ -66,20 +83,99 @@ apiV1Router.get('/capabilities', async (_req, res) => {
 })
 
 /**
+ * Полное описание модуля для «мозгов»: все параметры, ограничения, блоки, пресеты,
+ * примеры и машинная JSON Schema входа. Собирается из дескриптора
+ * (`server/mcp/descriptors/`), а он сверяется с кодом contract-тестом.
+ *
+ * До готовности MCP-транспорта (этап 2) это способ посмотреть результат обычным curl.
+ */
+apiV1Router.get('/modules/:key/describe', (req, res) => {
+  const key = req.params.key
+  if (!MODULE_DEFS[key]) return res.status(404).json({ ok: false, error: 'Неизвестный модуль' })
+  const module = describeModule(key)
+  if (!module) {
+    // Не выдумываем описание для неописанного модуля: пустая правда полезнее
+    // правдоподобной выдумки — на ней «мозги» уже один раз построили нерабочие задачи.
+    return res.status(404).json({
+      ok: false,
+      error: `Схема модуля «${key}» ещё не описана`,
+      described: listDescriptorKeys(),
+    })
+  }
+  res.json({ ok: true, module })
+})
+
+/** Список модулей с пометкой, у каких схема полная. */
+apiV1Router.get('/modules', async (_req, res) => {
+  try {
+    const caps = await capabilities()
+    res.json({
+      ok: true,
+      described: listDescriptorKeys().length,
+      total: caps.length,
+      modules: caps.map((c) => ({
+        key: c.key,
+        title: c.title,
+        schema: c.schema,
+        summary: c.summary,
+        describe: c.describe,
+        // Сколько полей описано — «мозгам» видно, что за модулем стоит реальная схема,
+        // а не заглушка, ещё до перехода по ссылке.
+        paramCount: summarizeModule(c.key)?.paramCount ?? null,
+      })),
+    })
+  } catch (err) { res.status(500).json({ ok: false, error: msg(err) }) }
+})
+
+/**
  * MCP-манифест: те же возможности, оформленные как список инструментов. Внешний
  * оркестратор может брать отсюда tools, а вызывать — обычными POST ниже.
+ *
+ * Переходная форма: настоящий MCP-сервер (JSON-RPC 2.0 + Streamable HTTP) — этап 2
+ * в docs/mcp/MCP-ROADMAP.md. Здесь важно другое: у модулей с дескриптором `input`
+ * теперь настоящая JSON Schema с ограничениями, а не список строк-подсказок.
  */
 apiV1Router.get('/mcp', async (_req, res) => {
   try {
     const caps = await capabilities()
     const tools = [
       { name: 'whoami', description: 'Пользователь продукта, от чьего имени работает ключ', method: 'GET', path: '/api/v1/me', input: {} },
+      { name: 'list_modules', description: 'Список модулей и признак, у каких описание полное. Ключевые слова: модули, capabilities, modules', method: 'GET', path: '/api/v1/modules', input: {} },
+      {
+        name: 'describe_module',
+        description: 'Полное описание модуля: все параметры, ограничения, блоки интерфейса, расшифровка пресетов, примеры запусков и JSON Schema входа. Ключевые слова: схема, параметры, ограничения, help, schema, params',
+        method: 'GET',
+        path: '/api/v1/modules/:key/describe',
+        input: { key: `string — один из: ${listDescriptorKeys().join(', ')}` },
+      },
       { name: 'create_goal', description: 'Создать цель (измеримый результат)', method: 'POST', path: '/api/v1/goals', input: { name: 'string', metric: 'string?', target: 'number?', deadline: 'YYYY-MM-DD?' } },
       { name: 'create_campaign', description: 'Создать кампанию под цель', method: 'POST', path: '/api/v1/campaigns', input: { name: 'string', modules: 'string[]', goalId: 'string?' } },
       { name: 'estimate', description: 'Оценить стоимость и время до запуска', method: 'POST', path: '/api/v1/modules/:key/estimate', input: { actions: 'number', accounts: 'number?' } },
-      ...caps.map((c) => ({ name: `run_${c.key.replace(/-/g, '_')}`, description: `Запустить модуль «${c.title}»`, method: 'POST', path: c.run.path, input: c.run.body })),
+      ...caps.map((c) => {
+        const module = describeModule(c.key)
+        return {
+          name: `run_${c.key.replace(/-/g, '_')}`,
+          description: module
+            ? `${module.whoAmI.summary} Ключевые слова: ${module.tags.join(', ')}.`
+            : `Запустить модуль «${c.title}» (схема не описана — список полей неполный)`,
+          method: 'POST',
+          path: c.run.path,
+          schema: c.schema,
+          // У описанных модулей — настоящая JSON Schema; у остальных прежние подсказки,
+          // но с честной пометкой `schema: 'partial'`, чтобы их не принимали за полные.
+          input: module ? module.inputSchema : c.run.body,
+          ...(module ? { _meta: { tags: module.tags, version: module.version, describe: c.describe } } : {}),
+        }
+      }),
     ]
-    res.json({ ok: true, name: 'murmex', version: '1', tools })
+    res.json({
+      ok: true,
+      name: 'murmex',
+      version: '1',
+      note: 'Переходный REST-манифест. Настоящий MCP-сервер (JSON-RPC 2.0) — в разработке, см. docs/mcp/.',
+      coverage: { described: listDescriptorKeys().length, total: caps.length },
+      tools,
+    })
   } catch (err) { res.status(500).json({ ok: false, error: msg(err) }) }
 })
 
