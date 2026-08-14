@@ -1,11 +1,12 @@
 import { useState, useEffect, useRef } from 'react'
 import { Link } from 'react-router-dom'
 import {
-  UserCog, Shield, Bell, Handshake, Cable, Save, Copy, Zap, History as HistoryIcon, Package, CalendarClock } from 'lucide-react'
+  UserCog, Shield, Bell, Handshake, Cable, Save, Copy, Zap, History as HistoryIcon, Package, CalendarClock, AlertTriangle, Trash2 } from 'lucide-react'
 import { useApp } from '@/mocks/store'
 import { fetchBalance, fetchWalletHistory, type Balance, type WalletEntry } from '@/api/balanceApi'
+import { deleteUser } from '@/api/usersApi'
 import { useSession } from '@/features/auth/session'
-import { PageHeader, Card, Switch, Badge } from '@/shared/ui'
+import { PageHeader, Card, Switch, Badge, Modal } from '@/shared/ui'
 import { cn, coins as fmtCoins } from '@/shared/lib/utils'
 import { useTabParam } from '@/shared/lib/useTabParam'
 
@@ -52,6 +53,25 @@ export function ProfilePage() {
   const [pwCur, setPwCur] = useState('')
   const [pwNew, setPwNew] = useState('')
   const [pwRepeat, setPwRepeat] = useState('')
+
+  // Правка 14.08: удаление аккаунта — ВСЕГДА 2 подтверждения. Шаг 1 (осознание) → шаг 2
+  // (ввод слова УДАЛИТЬ). Демо-заглушки «удаление отключено» больше нет — рвём по-настоящему.
+  const logout = useSession((s) => s.logout)
+  const [delStep, setDelStep] = useState<0 | 1 | 2>(0)
+  const [delWord, setDelWord] = useState('')
+  const [delBusy, setDelBusy] = useState(false)
+  const doDelete = async () => {
+    if (!sessionUser?.id) { pushToast({ type: 'error', title: 'Нет активной сессии' }); return }
+    setDelBusy(true)
+    try {
+      await deleteUser(sessionUser.id)
+      pushToast({ type: 'success', title: 'Аккаунт удалён' })
+      setDelStep(0)
+      logout()
+    } catch (e) {
+      pushToast({ type: 'error', title: 'Не удалось удалить', desc: e instanceof Error ? e.message : '' })
+    } finally { setDelBusy(false) }
+  }
 
   // Правка 12.08: загрузка аватара (файл юзера) + сохранение локально, чтобы переживало перезагрузку.
   const avatarKey = sessionUser?.id ? `ai-incubator:avatar:${sessionUser.id}` : 'ai-incubator:avatar'
@@ -180,9 +200,63 @@ export function ProfilePage() {
               </div>
               <div className="flex justify-between rounded-2xl border border-rose-500/30 bg-rose-500/8 p-4">
                 <div><div className="text-sm font-bold text-fg">Удалить аккаунт</div><div className="text-xs text-muted">Все данные будут удалены безвозвратно</div></div>
-                <button onClick={() => pushToast({ type: 'error', title: 'Удаление в демо отключено' })} className="btn-danger h-9">Удалить</button>
+                <button onClick={() => { setDelWord(''); setDelStep(1) }} className="btn-danger h-9">Удалить</button>
               </div>
             </Card>
+
+            {/* Удаление аккаунта — ВСЕГДА 2 подтверждения (правка заказчика 14.08). */}
+            <Modal
+              open={delStep === 1}
+              onClose={() => setDelStep(0)}
+              size="sm"
+              icon={<AlertTriangle size={20} className="text-rose-400" />}
+              title="Удалить аккаунт?"
+              subtitle="Подтверждение 1 из 2"
+              footer={
+                <div className="flex justify-end gap-2">
+                  <button onClick={() => setDelStep(0)} className="btn-ghost h-9">Отмена</button>
+                  <button onClick={() => { setDelWord(''); setDelStep(2) }} className="btn-danger h-9">Продолжить</button>
+                </div>
+              }
+            >
+              <p className="text-sm leading-relaxed text-muted">
+                Будут <b className="text-fg">безвозвратно</b> удалены профиль, привязанные Telegram-аккаунты,
+                задачи, история и баланс. Восстановить данные будет нельзя.
+              </p>
+            </Modal>
+
+            <Modal
+              open={delStep === 2}
+              onClose={() => setDelStep(0)}
+              size="sm"
+              icon={<Trash2 size={20} className="text-rose-400" />}
+              title="Последнее подтверждение"
+              subtitle="Подтверждение 2 из 2"
+              footer={
+                <div className="flex justify-end gap-2">
+                  <button onClick={() => setDelStep(1)} className="btn-ghost h-9">Назад</button>
+                  <button
+                    disabled={delWord.trim().toUpperCase() !== 'УДАЛИТЬ' || delBusy}
+                    onClick={() => void doDelete()}
+                    className="btn-danger h-9 disabled:cursor-not-allowed disabled:opacity-40"
+                  >
+                    {delBusy ? 'Удаление…' : 'Удалить навсегда'}
+                  </button>
+                </div>
+              }
+            >
+              <p className="mb-3 text-sm text-muted">
+                Чтобы подтвердить, введите слово <b className="text-fg">УДАЛИТЬ</b> в поле ниже.
+              </p>
+              <input
+                autoFocus
+                value={delWord}
+                onChange={(e) => setDelWord(e.target.value)}
+                onKeyDown={(e) => { if (e.key === 'Enter' && delWord.trim().toUpperCase() === 'УДАЛИТЬ') void doDelete() }}
+                className="input"
+                placeholder="УДАЛИТЬ"
+              />
+            </Modal>
             </div>
           )}
 
