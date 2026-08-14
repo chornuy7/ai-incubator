@@ -37,7 +37,10 @@ export function LaunchCost({ moduleKey, actions, accounts, delaySec, compact }: 
   // на каждом с задержкой — «100 аккаунтов × 10 c → 6–8 часов». min–max от разброса
   // задержки. Без аккаунтов/задержки время не показываем, а не выдумываем.
   const acc = Math.max(1, Math.round(accounts || 0))
-  const perAcc = accounts ? Math.ceil(n / acc) : 0
+  // Аккаунты ещё не выбраны — считаем время как для ОДНОГО (худший случай: всё делает
+  // один профиль). Раньше время в этом случае просто не показывалось, и после того как
+  // из панели убрали чип «≈ ВРЕМЯ», его не стало видно вовсе (замечание 13.08).
+  const perAcc = Math.ceil(n / acc)
   const timeMin = perAcc && delaySec ? fmtDur(perAcc * delaySec[0]) : null
   const timeMax = perAcc && delaySec ? fmtDur(perAcc * delaySec[1]) : null
 
@@ -63,8 +66,9 @@ export function LaunchCost({ moduleKey, actions, accounts, delaySec, compact }: 
           className="inline-flex h-10 items-center gap-1.5 rounded-xl border border-amber-500/30 bg-amber-500/10 px-3.5 text-sm font-bold text-amber-300"
           title="Спишется с баланса за этот запуск"
         >
+          {/* Иконка уже есть — символ ⚡ в тексте давал две молнии подряд. */}
           <Zap size={16} fill="currentColor" />
-          {avgTokens ? '≈' : ''}{fmt(total)} ⚡
+          {avgTokens ? '≈' : ''}{fmt(total)}
         </span>
         {timeMin && (
           <span
