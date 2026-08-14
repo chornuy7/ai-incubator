@@ -6,11 +6,12 @@
 
 Дата среза: **14.08.2026**. Формат описания — [MCP-SPEC.md](./MCP-SPEC.md).
 
-> **Этап 1 закрыт.** Карта ниже переехала в исполняемый дескриптор
+> **Этапы 1 и 2 закрыты.** Карта ниже переехала в исполняемый дескриптор
 > [`server/mcp/descriptors/neuro-commenting.js`](../../server/mcp/descriptors/neuro-commenting.js)
-> и проверяется contract-тестом. Посмотреть машинный ответ:
-> `GET /api/v1/modules/neuro-commenting/describe` (Bearer-ключ).
-> Список модулей с покрытием — `GET /api/v1/modules`.
+> и проверяется contract-тестом. Доступ:
+> - **MCP-протокол** — `POST /api/v1/mcp` (JSON-RPC 2.0, Bearer-ключ), инструмент `describe_module`;
+> - глазами через REST — `GET /api/v1/modules/neuro-commenting/describe`;
+> - покрытие модулей — `GET /api/v1/modules`.
 
 ---
 

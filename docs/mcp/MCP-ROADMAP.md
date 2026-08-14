@@ -52,19 +52,38 @@
 **DoD выполнен.** «MCP, полностью заполненный хотя бы для одного модуля» готов за 3 дня
 до дедлайна 17.08.
 
-## Этап 2 — Настоящий MCP-сервер `16–17.08` — ☐
+## Этап 2 — Настоящий MCP-сервер `14.08` — ☑
 
 **Что:** протокол вместо REST-заглушки.
 
-- ☐ JSON-RPC 2.0 + Streamable HTTP, точка входа `POST /mcp`, авторизация Bearer.
-- ☐ `initialize`, `tools/list`, `tools/call`, `resources/list`, `resources/read`.
-- ☐ Инструменты: `list_modules`, `describe_module`, `describe_block`, `validate_task`,
-  `estimate_task`, `create_task`.
-- ☐ Ресурсы: `murmex://module/<key>`, `murmex://help/<key>/<block>`.
-- ☐ Проверка живым MCP-клиентом (подключение, `tools/list`, вызов `describe_module`).
+- ☑ JSON-RPC 2.0 поверх Streamable HTTP — [`server/mcp/server.js`](../../server/mcp/server.js).
+  Точка входа **`POST /api/v1/mcp`**, авторизация `Authorization: Bearer <api-key>`,
+  права владельца ключа. GET того же адреса остался за старым манифестом — им уже пользуются.
+- ☑ `initialize` (согласование версии протокола + `instructions` с порядком работы),
+  `notifications/*` → 202 без тела, `ping`, `tools/list`, `tools/call`,
+  `resources/list`, `resources/read`, `prompts/list`.
+- ☑ Инструменты — [`server/mcp/tools.js`](../../server/mcp/tools.js): `list_modules`,
+  `describe_module`, `describe_block`, `validate_task`, `estimate_task`, `create_task`.
+- ☑ Ресурсы: `murmex://module/<key>` и `murmex://help/<key>/<block>` — 10 штук для
+  нейрокомментинга (модуль + 9 блоков).
+- ☑ Валидатор схемы — [`server/mcp/validate.js`](../../server/mcp/validate.js):
+  типы, границы, enum, неизвестные поля + правила, невыразимые схемой
+  (`requiredWhen`, `effectiveWhen`, `supersededBy`) — и всё это на русском, с указанием поля.
+- ☑ Тесты — [`server/__tests__/mcpServer.test.js`](../../server/__tests__/mcpServer.test.js), 18 шт.
+- ☑ Проверено живым HTTP: `initialize` → 2025-06-18, `tools/list` → 6 инструментов,
+  `describe_module` → 9 блоков / 29 параметров, `validate_task` ловит `probability: 150`
+  и отсутствующий `durationMinutes`, без ключа — 401.
 
-**DoD:** «мозги» подключаются штатным MCP-клиентом и получают схему нейрокомментинга,
-проверяют черновик через `validate_task` и запускают задачу — не трогая наш REST.
+**Два решения, принятых по ходу:**
+
+1. **Ошибка инструмента ≠ ошибка протокола.** Неописанный модуль, неверные аргументы,
+   невалидная задача возвращаются как `isError: true` с текстом — модель это читает и
+   исправляется. Транспортные коды (-32600/-32601/-32602) остались за нарушениями JSON-RPC.
+2. **`create_task` валидирует ТЕМ ЖЕ кодом, что и `validate_task`.** Расхождение между
+   «проверил» и «запустил» — худшее, что можно сделать с оркестратором.
+
+**DoD выполнен.** Клиент подключается по протоколу, получает схему, проверяет черновик
+без запуска, узнаёт цену и создаёт задачу — не трогая REST.
 
 ## Этап 3 — Покрытие остальных модулей `18–22.08` — ☐
 
@@ -104,8 +123,18 @@
 |---|---|
 | 14.08 (пт) | ☑ Формат + полная карта нейрокомментинга (markdown) |
 | 14.08 (пт) | ☑ Тот же модуль машинным JSON (`/describe`) + тест, который не даёт схеме соврать |
-| 16–17.08 (вс) | Рабочий MCP-сервер: подключается клиентом, отдаёт схему, валидирует, запускает |
+| 14.08 (пт) | ☑ Рабочий MCP-сервер: подключается клиентом, отдаёт схему, валидирует, оценивает, запускает |
 | 18–22.08 | Остальные 14 модулей |
+
+## Как подключиться (для «мозгов»)
+
+```
+URL:  https://myrmexgram.ai/api/v1/mcp     (POST, JSON-RPC 2.0)
+Auth: Authorization: Bearer <api-key>
+```
+
+Порядок работы: `list_modules` → `describe_module` → `validate_task` → `estimate_task` → `create_task`.
+Тот же порядок сервер возвращает в `instructions` при `initialize`, так что клиент узнаёт его сам.
 
 ## Владение
 

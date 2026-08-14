@@ -17,6 +17,7 @@ import { requireApiKey } from './apiKeys.js'
 import { MODULE_DEFS, listModuleKeys, startModuleTask } from './modules/registry.js'
 import { moduleTitle } from './lib/moduleTitles.js'
 import { describeModule, getDescriptor, listDescriptorKeys, summarizeModule } from './mcp/descriptors/index.js'
+import { mcpPostHandler, SERVER_INFO, SUPPORTED_PROTOCOL_VERSIONS } from './mcp/server.js'
 
 export const apiV1Router = Router()
 
@@ -172,12 +173,28 @@ apiV1Router.get('/mcp', async (_req, res) => {
       ok: true,
       name: 'murmex',
       version: '1',
-      note: 'Переходный REST-манифест. Настоящий MCP-сервер (JSON-RPC 2.0) — в разработке, см. docs/mcp/.',
+      // Совместимость: этим GET уже пользуются, ломать нельзя. Но настоящий вход —
+      // POST на этот же адрес, и клиент должен о нём узнать.
+      note: 'REST-срез для просмотра глазами. Полноценный MCP — JSON-RPC 2.0 на POST этого же адреса.',
+      mcp: {
+        endpoint: '/api/v1/mcp',
+        transport: 'streamable-http (JSON-RPC 2.0 через POST)',
+        protocolVersions: SUPPORTED_PROTOCOL_VERSIONS,
+        serverInfo: SERVER_INFO,
+        auth: 'Authorization: Bearer <api-key>',
+      },
       coverage: { described: listDescriptorKeys().length, total: caps.length },
       tools,
     })
   } catch (err) { res.status(500).json({ ok: false, error: msg(err) }) }
 })
+
+/**
+ * Точка входа MCP-протокола. Тот же путь, что у манифеста: GET — посмотреть глазами,
+ * POST — говорить по JSON-RPC. Авторизация общая (`requireApiKey` на весь роутер),
+ * права — владельца ключа, как и у остального API.
+ */
+apiV1Router.post('/mcp', mcpPostHandler)
 
 /** §10.3(1): цели. */
 apiV1Router.get('/goals', async (_req, res) => {

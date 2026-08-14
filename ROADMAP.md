@@ -358,9 +358,12 @@ contract-тест не даст смержить иначе.
   с поведением сервера) + `GET /api/v1/modules/:key/describe` и `GET /api/v1/modules`;
   `GET /api/v1/mcp` отдаёт JSON Schema для описанных и честный `schema: 'partial'` для остальных.
   Тесты 612/612.
-- ☐ **Этап 2 (16–17.08)** — настоящий MCP-сервер: JSON-RPC 2.0 + Streamable HTTP,
-  `tools/list`/`tools/call`/`resources/*`; инструменты `describe_module`, `describe_block`,
-  `validate_task`, `estimate_task`, `create_task`, `list_modules`
+- ☑ **Этап 2 (14.08)** — настоящий MCP-сервер: JSON-RPC 2.0 + Streamable HTTP на
+  **`POST /api/v1/mcp`** (Bearer), `initialize`/`tools/list`/`tools/call`/`resources/*`;
+  6 инструментов (`list_modules`, `describe_module`, `describe_block`, `validate_task`,
+  `estimate_task`, `create_task`) + 10 ресурсов `murmex://…`; валидатор черновика задачи
+  без запуска (ошибки с указанием поля + предупреждения о полях, которые не сработают).
+  Проверено живым HTTP, тесты 630/630
 - ☐ **Этап 3 (18–22.08)** — остальные 14 модулей + help-слой по блокам
 - ☐ **Этап 4** — «мозги» пишут задачи через MCP (`initiator: 'mcp'`, задача не редактируется руками)
 - ☐ **Этап 5** — вынос в отдельный сервис (общие аккаунты с Instagram)
