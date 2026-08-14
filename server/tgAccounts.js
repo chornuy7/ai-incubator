@@ -6,8 +6,8 @@ import { loadSessionString, createClient } from './tgAuth.js'
 import { getAccountLock } from './lib/accountLocks.js'
 import { getAllTrustCache } from './lib/trustCache.js'
 import { accountFingerprint } from './lib/deviceFingerprint.js'
-import { listProxies, toProxyUrl, isUsableProxy } from './proxies.js'
 import { computeAccountRisk } from './lib/accountRisk.js'
+import { cachedProxyVerdict } from './accountStats.js'
 
 async function listSessionIds() {
   await fs.mkdir(SESSIONS_DIR, { recursive: true })
@@ -85,9 +85,6 @@ export async function tgListAccounts(opts = {}) {
   const ids = await listSessionIds()
   const accounts = []
   const trustAll = await getAllTrustCache()
-  // §6.3 (AM-002): статус прокси по его URL — чтобы пометить аккаунты с мёртвым прокси.
-  const proxyStatusByUrl = {}
-  try { for (const p of await listProxies()) { try { proxyStatusByUrl[toProxyUrl(p)] = p.status } catch { /* skip */ } } } catch { /* прокси недоступны — не помечаем */ }
 
   for (const accountId of ids) {
     let meta = await getAccountMeta(accountId)
@@ -123,14 +120,15 @@ export async function tgListAccounts(opts = {}) {
     // §6.3 (AM-002): прокси «рабочий», если его нет (прямое подключение) либо он не 'dead'.
     // Ручной прокси не из каталога → статус неизвестен → не помечаем нерабочим (не прячем зря).
     const purl = meta.proxy && meta.proxy !== '—' ? meta.proxy : null
-    // Прокси «рабочий», если: его нет (прямое подключение), ИЛИ он не 'dead' в каталоге,
-    // ИЛИ последняя живая проверка карточки не показала «не отвечает» (meta.proxyWorking).
-    // MR-129: раньше ручной прокси вне каталога всегда считался «ок» — и статус зря был
-    // «Активные», хотя карточка уже показывала «Не отвечает». Теперь список согласован с карточкой.
-    // Правило одно с выдачей прокси аккаунтам (isUsableProxy): нерабочий — это и `dead`,
-    // и `bad` (в т.ч. «не пускает в Telegram»). Раньше здесь сверялись только с `dead`,
-    // поэтому прокси, не пускающий в Telegram, в списке выглядел исправным.
-    dto.proxyOk = !purl || (isUsableProxy({ status: proxyStatusByUrl[purl] }) && meta.proxyWorking !== false)
+    // ЕДИНЫЙ источник правды с вкладкой «Прокси» (важно: раньше здесь противоречие).
+    // Вкладка карточки показывает «Работает / Не отвечает» через cachedProxyVerdict
+    // (accountStats.buildAccountStats). Список же считал свой proxyOk по другой формуле
+    // (isUsableProxy(каталог) && meta.proxyWorking!==false) — и они расходились: каталог
+    // «ok», но stale meta.proxyWorking=false → шапка/риск «прокси не отвечает», а вкладка
+    // «Работает» (и наоборот). Теперь ОБА зовут одну функцию → противоречие исключено.
+    // Вердикт: 'down' → нерабочий; 'ok'/null (ещё не проверен) → не пугаем «не отвечает».
+    const proxyVerdict = purl ? await cachedProxyVerdict(purl, meta) : null
+    dto.proxyOk = !purl || proxyVerdict !== 'down'
     // MR-131: прокси мёртв ИЛИ отсутствует — обе ситуации риск, но разные (разделяем).
     dto.noProxy = !purl
     dto.risk = computeAccountRisk({ status: dto.status, proxyOk: dto.proxyOk, noProxy: dto.noProxy, trustBand: dto.trustBand })
