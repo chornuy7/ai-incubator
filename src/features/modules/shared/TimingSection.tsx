@@ -97,6 +97,11 @@ export function TimingSection(props: TimingSectionProps) {
   // Множители пресета темпа — ДОЛЖНЫ совпадать с сервером (server/lib/protection.js PRESET_MUL).
   const PRESET_MUL = [0.6, 1, 1.8, 1]
   const mul = PRESET_MUL[delayPreset] ?? 1
+  // Правка 14.08: значения Мин/Рекомендуемые/Макс — ЗАФИКСИРОВАНЫ. Пока выбран пресет темпа
+  // (не Custom), все поля «Расширенных» заблокированы: раньше правка на пресете молча
+  // перекидывала в Custom, из-за чего казалось, что пресеты «не держат» значения. Теперь
+  // ручная правка — только в Custom, а пресеты всегда подставляют свои фиксированные числа.
+  const locked = hasPresets && delayPreset !== CUSTOM
   // «Эффективная» задержка = базовая × множитель пресета — то, что реально уйдёт на паузы;
   // показываем её под карточками, чтобы выбор Мин/Рек/Макс СРАЗУ менял видимые значения.
   const eff = (pair?: [number, number] | null) => pair ? `${Math.round(pair[0] * mul)}–${Math.round(pair[1] * mul)} с` : null
@@ -206,7 +211,13 @@ export function TimingSection(props: TimingSectionProps) {
       )}
 
       {advanced && (
-        <div className={cn('space-y-4', hasPresets && 'mt-3')}>
+        <fieldset disabled={locked} className={cn('space-y-4 border-0 p-0 m-0 min-w-0', hasPresets && 'mt-3', locked && 'opacity-60')}>
+          {locked && (
+            <div className="flex items-center gap-1.5 rounded-lg border border-line bg-elevated px-3 py-2 text-[11px] text-muted">
+              <Shield size={13} className="shrink-0 text-spark-300" />
+              Значения зафиксированы пресетом «{delayPresets![delayPreset]}». Чтобы задать вручную — выберите «Custom».
+            </div>
+          )}
           {/* Режим работы + лимиты */}
           <div className="grid gap-4 lg:grid-cols-2">
             <div className="space-y-4 rounded-2xl border border-line bg-elevated/40 p-4">
@@ -283,7 +294,7 @@ export function TimingSection(props: TimingSectionProps) {
               <SingleDelayField label="FloodWait до карантина" value={delays.floodQuarantine} onChange={(n) => editDelays((d) => ({ ...d, floodQuarantine: n }))} />
             </div>
           </div>
-        </div>
+        </fieldset>
       )}
     </SectionCard>
   )
