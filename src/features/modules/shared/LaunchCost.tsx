@@ -4,6 +4,31 @@ import { fetchPricing, type Pricing } from '@/api/balanceApi'
 import { coins as fmtCoins } from '@/shared/lib/utils'
 
 /**
+ * Прайс один на всё приложение и меняется редко — держим его в модульном кэше.
+ *
+ * Раньше КАЖДОЕ открытие модуля заново дёргало `/api/pricing`, и до ответа плашки не
+ * рисовались вовсе: «появляется долго, аж раздражает» (13.08). Теперь первый запрос
+ * один на сессию, а все последующие открытия берут готовое значение синхронно.
+ * `inflight` нужен, чтобы два модуля, смонтированные разом, не слали два запроса.
+ */
+let pricingCache: Pricing | null = null
+let inflight: Promise<Pricing> | null = null
+
+function usePricing(): Pricing | null {
+  const [pricing, setPricing] = useState<Pricing | null>(pricingCache)
+  useEffect(() => {
+    if (pricingCache) return // уже знаем — рисуем сразу, без сети
+    let alive = true
+    inflight = inflight || fetchPricing()
+    void inflight
+      .then((p) => { pricingCache = p; if (alive) setPricing(p) })
+      .catch(() => { inflight = null }) // дать шанс повторить на следующем открытии
+    return () => { alive = false }
+  }, [])
+  return pricing
+}
+
+/**
  * §5.1: во сколько обойдётся запуск — ДО нажатия «Начать».
  *
  * Раньше цену узнавали по факту: человек запускал и смотрел, как убывает баланс.
@@ -26,12 +51,14 @@ export function LaunchCost({ moduleKey, actions, accounts, delaySec, compact }: 
    */
   compact?: boolean
 }) {
-  const [pricing, setPricing] = useState<Pricing | null>(null)
-  useEffect(() => { void fetchPricing().then(setPricing).catch(() => {}) }, [])
+  const pricing = usePricing()
 
   const n = Math.max(0, Math.round(actions) || 0)
   const price = pricing?.actions?.[moduleKey] ?? 0
-  if (!pricing || !price || !n) return null
+  // Время НЕ зависит от прайса — оно считается из действий, аккаунтов и задержек. Раньше
+  // общий ранний выход прятал и его тоже, пока не ответит `/api/pricing`.
+  const hasCost = !!pricing && !!price && !!n
+  if (!n) return null
 
   // §10.1: оценка времени. Действия делятся между аккаунтами и идут последовательно
   // на каждом с задержкой — «100 аккаунтов × 10 c → 6–8 часов». min–max от разброса
@@ -59,9 +86,9 @@ export function LaunchCost({ moduleKey, actions, accounts, delaySec, compact }: 
   // (3 строки парсера: обещали 0.02, списывается 0.015).
   const r3 = (x: number) => Math.round(x * 1000) / 1000
   const actionsCost = r3(price * n)
-  const avgTokens = pricing.avgTokens?.[moduleKey] ?? 0
+  const avgTokens = pricing?.avgTokens?.[moduleKey] ?? 0
   const tokens = avgTokens * n
-  const tokensCost = r3((tokens / 1000) * pricing.coinsPer1kTokens)
+  const tokensCost = r3((tokens / 1000) * (pricing?.coinsPer1kTokens ?? 0))
   const total = r3(actionsCost + tokensCost)
   const fmt = fmtCoins
 
@@ -81,6 +108,8 @@ export function LaunchCost({ moduleKey, actions, accounts, delaySec, compact }: 
 
     return (
       <>
+        {/* Цена ждёт прайс, время — нет: показываем каждую плашку, как только она готова. */}
+        {hasCost && (
         <span
           className="inline-flex h-10 cursor-help items-center gap-1.5 rounded-xl border border-amber-500/30 bg-amber-500/10 px-3.5 text-sm font-bold text-amber-300"
           title={costHint}
@@ -89,6 +118,7 @@ export function LaunchCost({ moduleKey, actions, accounts, delaySec, compact }: 
           <Zap size={16} fill="currentColor" />
           {avgTokens ? '≈' : ''}{fmt(total)}
         </span>
+        )}
         {timeAvg && (
           <span
             className="inline-flex h-10 cursor-help items-center gap-1.5 rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-3.5 text-sm font-bold text-emerald-300"
@@ -101,6 +131,9 @@ export function LaunchCost({ moduleKey, actions, accounts, delaySec, compact }: 
     )
   }
 
+  // Полный вид — это карточка ПРО ЦЕНУ: без прайса показывать нечего.
+  if (!hasCost) return null
+
   return (
     <div className="mb-4 flex flex-wrap items-center gap-x-2 gap-y-1 rounded-2xl border border-amber-500/25 bg-amber-500/8 px-4 py-2.5 text-sm">
       <Zap size={15} className="text-amber-400" fill="currentColor" />
@@ -109,7 +142,7 @@ export function LaunchCost({ moduleKey, actions, accounts, delaySec, compact }: 
       </span>
       <span className="text-muted">
         — {n} {plural(n, 'действие', 'действия', 'действий')} × {price} ⚡ = {fmt(actionsCost)} ⚡
-        {avgTokens > 0 && <> · текст ИИ ≈ {Math.round(tokens).toLocaleString('ru-RU')} ток. ÷ 1000 × {pricing.coinsPer1kTokens} ⚡ = {fmt(tokensCost)} ⚡</>}
+        {avgTokens > 0 && <> · текст ИИ ≈ {Math.round(tokens).toLocaleString('ru-RU')} ток. ÷ 1000 × {pricing?.coinsPer1kTokens ?? 0} ⚡ = {fmt(tokensCost)} ⚡</>}
       </span>
       {timeAvg && (
         <span className="ml-auto inline-flex cursor-help items-center gap-1 text-sm font-semibold text-emerald-300" title={timeHint}>
@@ -153,8 +186,9 @@ function plural(n: number, one: string, few: string, many: string): string {
  * Если действия у модуля бесплатны (нет цены) — не показываем.
  */
 export function ActionPriceCalc({ moduleKey }: { moduleKey: string }) {
-  const [pricing, setPricing] = useState<Pricing | null>(null)
-  useEffect(() => { void fetchPricing().then(setPricing).catch(() => {}) }, [])
+  // Тот же кэш прайса, что и у LaunchCost: два компонента на одной странице больше не
+  // шлют два запроса, а при повторном открытии модуля цена рисуется сразу.
+  const pricing = usePricing()
   const price = pricing?.actions?.[moduleKey] ?? 0
   if (!pricing || !price) return null
   const avgTokens = pricing.avgTokens?.[moduleKey] ?? 0
