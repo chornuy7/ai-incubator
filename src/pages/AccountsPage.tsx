@@ -39,7 +39,10 @@ const STATUS_ORDER: AccountStatus[] = ['active', 'working', 'warming', 'pause', 
 const COLS = [
   { key: 'avatar', label: 'Аватар' },
   { key: 'name', label: 'Имя' },
-  { key: 'campaign', label: 'Кампания' },
+  // MR-154 (созвон 12.08): колонку «Кампания» скрыли — кампаний в системе пока нет
+  // («компании надо убрать, у нас же сейчас нету компаний»). Код кампаний остаётся,
+  // вернуть колонку = раскомментировать строку ниже.
+  // { key: 'campaign', label: 'Кампания' },
   { key: 'fatigue', label: 'Усталость' },
   { key: 'status', label: 'Статус' },
   { key: 'lastSeen', label: 'Отлёжка' },

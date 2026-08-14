@@ -122,7 +122,9 @@ export function AppHeader() {
   //  🔴 красный — ошибка (аккаунт в бане, прокси слетел, задача с ошибкой);
   //  🟡 жёлтый — ожидание (задача на паузе/в процессе, без прокси, временное ограничение);
   //  🟢 зелёный — хороший результат (задача выполнена).
-  const notifItems: { key: string; tone: 'red' | 'yellow' | 'green'; title: string; sub: string; go: string }[] = []
+  // MR-134 (созвон 12.08): у каждого уведомления есть время (ts) — список сортируется ПО ВРЕМЕНИ
+  // (свежие сверху), а не группами по цвету; время показывается в строке. Цвет по-прежнему разный.
+  const notifItems: { key: string; tone: 'red' | 'yellow' | 'green'; title: string; sub: string; go: string; ts: number }[] = []
   for (const t of taskAlerts) {
     const acts = t.progress?.actionsDone ?? t.progress?.done ?? 0
     let tone: 'red' | 'yellow' | 'green' = 'yellow'
@@ -136,27 +138,27 @@ export function AppHeader() {
     else if (t.status === 'stopped') { tone = 'yellow'; sub = 'остановлена' }
     else if (t.status === 'done' && acts === 0) { tone = 'yellow'; sub = 'завершилась без действий' }
     else { tone = 'green'; sub = acts ? `выполнена · ${acts} действий` : 'выполнена' }
-    notifItems.push({ key: `task:${t.id}`, tone, title: moduleTitle(t.moduleKey), sub, go: `/panel/tasks/${t.id}?m=${t.moduleKey}` })
+    notifItems.push({ key: `task:${t.id}`, tone, title: moduleTitle(t.moduleKey), sub, go: `/panel/tasks/${t.id}?m=${t.moduleKey}`, ts: t.updatedAt || t.createdAt || Date.now() })
   }
   for (const a of shown) {
     const deadProxy = a.proxyOk === false
     const banned = ['invalid', 'spamblock', 'frozen', 'reauth'].includes(a.status)
     const tone: 'red' | 'yellow' = (deadProxy || banned) ? 'red' : 'yellow'
     const sub = deadProxy ? 'прокси слетел (мёртвый)' : banned ? `аккаунт в бане/блоке (${a.status})` : a.noProxy ? 'без прокси — риск бана' : 'временное ограничение — ожидание'
-    notifItems.push({ key: a.id, tone, title: a.name, sub, go: '/panel' })
+    notifItems.push({ key: a.id, tone, title: a.name, sub, go: '/panel', ts: (a as { updatedAt?: number }).updatedAt || Date.now() })
   }
   // MR-134: 🟢 успешное пополнение баланса — только реальные пополнения/покупки (по reason),
   // недавние (12ч), а не любой служебный кредит/возврат, чтобы не засорять колокольчик.
   for (const w of wallet) {
     if (w.amount <= 0 || (Date.now() - w.ts) >= TASK_DONE_WINDOW || dismissed.has(`wallet:${w.ts}`)) continue
     if (!/пополнени|куплено|покупк/i.test(w.reason || '')) continue
-    notifItems.push({ key: `wallet:${w.ts}`, tone: 'green', title: 'Пополнение баланса', sub: `${w.reason} · +${Math.round(w.amount * 1000) / 1000} ⚡`, go: '/panel/user/subscription' })
+    notifItems.push({ key: `wallet:${w.ts}`, tone: 'green', title: 'Пополнение баланса', sub: `${w.reason} · +${Math.round(w.amount * 1000) / 1000} ⚡`, go: '/panel/user/subscription', ts: w.ts })
   }
   // MR-134: 🟡 обращения в поддержку (не закрытые) — «ответ поддержки» / «ждём ответа».
   for (const tk of tickets) {
     if (tk.status === 'closed' || dismissed.has(`ticket:${tk.id}`)) continue
     const supReplied = tk.messages?.[tk.messages.length - 1]?.from === 'support'
-    notifItems.push({ key: `ticket:${tk.id}`, tone: 'yellow', title: `Поддержка: ${tk.subject}`, sub: supReplied ? 'поддержка ответила' : 'ожидается ответ поддержки', go: '/panel/support' })
+    notifItems.push({ key: `ticket:${tk.id}`, tone: 'yellow', title: `Поддержка: ${tk.subject}`, sub: supReplied ? 'поддержка ответила' : 'ожидается ответ поддержки', go: '/panel/support', ts: tk.updatedAt || Date.now() })
   }
   // MR-134: 🟡 пропущенные ЛС — диалоги, ждущие нашего ответа дольше таймаута.
   if (awaiting.count > 0 && !dismissed.has('awaiting')) {
@@ -166,13 +168,16 @@ export function AppHeader() {
     const go = first
       ? `/panel/inbox?account=${encodeURIComponent(first.accountId)}&peer=${encodeURIComponent(first.peer)}`
       : '/panel/inbox'
-    notifItems.push({ key: 'awaiting', tone: 'yellow', title: 'Пропущенные ЛС', sub: `${awaiting.count} ${awaiting.count === 1 ? 'диалог ждёт' : 'диалогов ждут'} ответа`, go })
+    notifItems.push({ key: 'awaiting', tone: 'yellow', title: 'Пропущенные ЛС', sub: `${awaiting.count} ${awaiting.count === 1 ? 'диалог ждёт' : 'диалогов ждут'} ответа`, go, ts: Date.now() })
   }
-  const TONE_GROUPS = [
-    { tone: 'red' as const, label: 'Ошибки', box: 'bg-rose-500/12 text-rose-400', sub: 'text-rose-300/80', icon: <AlertTriangle size={15} /> },
-    { tone: 'yellow' as const, label: 'Ожидание', box: 'bg-amber-500/12 text-amber-400', sub: 'text-amber-300/80', icon: <Clock size={15} /> },
-    { tone: 'green' as const, label: 'Хороший результат', box: 'bg-spark-500/12 text-spark-400', sub: 'text-spark-300/80', icon: <Check size={15} /> },
-  ]
+  // MR-134 (12.08): сортируем ПО ВРЕМЕНИ — свежие сверху (а не группами ошибки→ожидание→готово).
+  notifItems.sort((a, b) => b.ts - a.ts)
+  // Стиль по тону (цвет остаётся разным, как просил заказчик): иконка/фон/подпись.
+  const TONE_STYLE: Record<'red' | 'yellow' | 'green', { box: string; sub: string; icon: JSX.Element }> = {
+    red: { box: 'bg-rose-500/12 text-rose-400', sub: 'text-rose-300/80', icon: <AlertTriangle size={15} /> },
+    yellow: { box: 'bg-amber-500/12 text-amber-400', sub: 'text-amber-300/80', icon: <Clock size={15} /> },
+    green: { box: 'bg-spark-500/12 text-spark-400', sub: 'text-spark-300/80', icon: <Check size={15} /> },
+  }
   const alertCount = notifItems.length
   const hasRed = notifItems.some((i) => i.tone === 'red')
   const theme = useApp((s) => s.theme)
@@ -313,34 +318,29 @@ export function AppHeader() {
                       <span className="text-sm text-muted">Всё в порядке</span>
                     </div>
                   ) : (
-                    <div className="max-h-72 overflow-y-auto p-1.5">
-                      {/* MR-134: сгруппировано по цвету — Ошибки (красный) / Ожидание (жёлтый) / Хороший результат (зелёный). */}
-                      {TONE_GROUPS.map((g) => {
-                        const items = notifItems.filter((i) => i.tone === g.tone)
-                        if (!items.length) return null
+                    <div className="max-h-80 overflow-y-auto p-1.5">
+                      {/* MR-134 (12.08): единый список ПО ВРЕМЕНИ (свежие сверху), у каждого — время;
+                          цвет по типу (ошибка/ожидание/готово). Без группировки и без нижней кнопки. */}
+                      {notifItems.slice(0, 30).map((i) => {
+                        const st = TONE_STYLE[i.tone]
                         return (
-                          <div key={g.tone}>
-                            <div className={`px-1 pb-1 pt-2 text-[10px] font-bold uppercase tracking-wide ${g.sub}`}>{g.label} · {items.length}</div>
-                            {items.slice(0, 20).map((i) => (
-                              <div key={i.key} className="flex items-center gap-2.5 rounded-xl px-2 py-2 transition-colors hover:bg-white/[.04]">
-                                <span className={`grid h-8 w-8 shrink-0 place-items-center rounded-lg ${g.box}`}>{g.icon}</span>
-                                <button onClick={() => { setNotifOpen(false); nav(i.go) }} className="min-w-0 flex-1 text-left">
-                                  <span className="block truncate text-sm font-medium text-fg">{i.title}</span>
-                                  <span className={`block text-[11px] ${g.sub}`}>{i.sub}</span>
-                                </button>
-                                <button onClick={() => dismiss(i.key)} title="Скрыть уведомление" className="grid h-6 w-6 shrink-0 place-items-center rounded-md text-faint transition-colors hover:bg-white/10 hover:text-fg">
-                                  <X size={14} />
-                                </button>
-                              </div>
-                            ))}
+                          <div key={i.key} className="flex items-center gap-2.5 rounded-xl px-2 py-2 transition-colors hover:bg-white/[.04]">
+                            <span className={`grid h-8 w-8 shrink-0 place-items-center rounded-lg ${st.box}`}>{st.icon}</span>
+                            <button onClick={() => { setNotifOpen(false); nav(i.go) }} className="min-w-0 flex-1 text-left">
+                              <span className="flex items-center justify-between gap-2">
+                                <span className="truncate text-sm font-medium text-fg">{i.title}</span>
+                                <span className="shrink-0 text-[10px] tabular-nums text-faint">{new Date(i.ts).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })}</span>
+                              </span>
+                              <span className={`block text-[11px] ${st.sub}`}>{i.sub}</span>
+                            </button>
+                            <button onClick={() => dismiss(i.key)} title="Скрыть уведомление" className="grid h-6 w-6 shrink-0 place-items-center rounded-md text-faint transition-colors hover:bg-white/10 hover:text-fg">
+                              <X size={14} />
+                            </button>
                           </div>
                         )
                       })}
                     </div>
                   )}
-                  <div className="border-t border-line p-1.5">
-                    <button onClick={() => { setNotifOpen(false); nav('/panel') }} className="w-full rounded-xl px-2 py-2 text-xs font-semibold text-spark-300 transition-colors hover:bg-spark-500/10">Открыть менеджер аккаунтов →</button>
-                  </div>
                 </div>
               </>
             )}

@@ -138,6 +138,11 @@ export function LeadsPage() {
         actions={<HelpButton topic="crm" className="h-10 w-10" />}
       />
 
+      {/* MR-158 (созвон 12.08): CRM · Лиды — раздел в разработке. Содержимое под ДВОЙНЫМ blur
+          (размытие контента + затемняющий backdrop-blur сверху), чтобы данные не читались. */}
+      <div className="relative">
+      <div className="pointer-events-none select-none blur-lg">
+
       {/* §9: горячие лиды — заметный алерт-баннер, требуют немедленного внимания. */}
       {counts.hot > 0 && (
         <div className="mb-4 flex items-center gap-2 rounded-xl border border-rose-500/40 bg-rose-500/10 px-4 py-3 text-sm font-semibold text-rose-200">
@@ -237,6 +242,17 @@ export function LeadsPage() {
       )}
 
       <LeadConversationModal source={chatLead ? { kind: 'lead', lead: chatLead } : null} onClose={() => setChatLead(null)} />
+      </div>
+      {/* Слой 2: затемняющий backdrop-blur поверх размытого контента. */}
+      <div className="absolute inset-0 bg-surface/55 backdrop-blur-sm" />
+      {/* Сообщение «в разработке». */}
+      <div className="absolute inset-0 grid place-items-center">
+        <div className="rounded-2xl border border-line bg-elevated/95 px-6 py-4 text-center shadow-xl">
+          <div className="text-base font-bold text-fg">CRM · Лиды — в разработке</div>
+          <div className="mt-1 text-sm text-muted">Раздел скоро будет доступен.</div>
+        </div>
+      </div>
+      </div>
     </div>
   )
 }
