@@ -344,6 +344,32 @@ modulesRouter.patch('/:moduleKey/tasks/:id/settings', async (req, res) => {
     if (!Object.keys(settings).length) {
       return res.status(400).json({ ok: false, error: 'Нечего менять: не передано ни одного изменяемого поля', rejected })
     }
+
+    // Смена состава исполнителей (звонок 12.08). Локи переоформляем: снимаем все за этой
+    // задачей и берём заново на новый состав. Иначе выбывшие аккаунты остались бы
+    // «занятыми» этой задачей, а добавленные работали бы без защиты от второй.
+    if (Array.isArray(settings.accountIds)) {
+      const next = settings.accountIds.filter(Boolean)
+      if (!next.length) return res.status(400).json({ ok: false, error: 'Оставьте хотя бы один аккаунт' })
+      const { releaseTaskLocks, tryAcquireLocks } = await import('../lib/accountLocks.js')
+      const prev = task.settings?.accountIds || []
+      const changed = next.length !== prev.length || next.some((id) => !prev.includes(id))
+      if (changed) {
+        // Пауза держит локи; у остановленной их уже нет — releaseTaskLocks в обоих случаях безопасен.
+        releaseTaskLocks(task.id)
+        // Локи берём заново ТОЛЬКО для задачи, которую ещё продолжат (пауза). Завершённая
+        // задача исполнителей не держит — состав просто сохраняем к перезапуску.
+        if (task.status === 'paused') {
+          const lockErr = tryAcquireLocks(next, req.params.moduleKey, task.id, { goalId: task.settings?.goalId })
+          if (lockErr) {
+            // Не смогли занять новых — возвращаем прежний состав, чтобы задача не осталась ни с чем.
+            tryAcquireLocks(prev, req.params.moduleKey, task.id, { goalId: task.settings?.goalId })
+            return res.status(409).json({ ok: false, error: lockErr })
+          }
+        }
+      }
+    }
+
     task.settings = { ...task.settings, ...settings }
     await store.saveTask(task)
 
@@ -353,7 +379,7 @@ modulesRouter.patch('/:moduleKey/tasks/:id/settings', async (req, res) => {
       module: req.params.moduleKey,
       initiator: req.body?.initiator || 'operator',
       scope: { taskId: req.params.id },
-      reason: `Правка задачи на паузе: ${Object.keys(settings).join(', ')}`,
+      reason: `Правка задачи (${task.status}): ${Object.keys(settings).join(', ')}`,
       meta: { fields: Object.keys(settings) },
     }).catch(() => {})
 
