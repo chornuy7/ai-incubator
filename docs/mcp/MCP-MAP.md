@@ -21,8 +21,8 @@
 |---|---|---|---|---|---|
 | 1 | `neuro-commenting` | Нейрокомментинг | ☑ [код](../../server/mcp/descriptors/neuro-commenting.js) | **32/32** | v1 |
 | 2 | `neuro-chatting` | Нейрочаттинг | ☑ [код](../../server/mcp/descriptors/neuro-chatting.js) | **22/22** | v1 |
-| 3 | `neuro-dialogs` | Нейродиалоги | ☐ | — | — |
-| 4 | `mailing` | Мейлинг | ☐ | — | — |
+| 3 | `neuro-dialogs` | Нейродиалоги | ☑ [код](../../server/mcp/descriptors/neuro-dialogs.js) | **23/23** | v1 |
+| 4 | `mailing` | Мейлинг | ☑ [код](../../server/mcp/descriptors/mailing.js) | **19/19** | v1 |
 | 5 | `mass-react` | Массовые реакции | ☑ [код](../../server/mcp/descriptors/mass-react.js) | **19/19** | v1 |
 | 6 | `mass-looking` | Масслукинг | ☐ | — | — |
 | 7 | `warming` | Прогрев | ☐ | — | — |
@@ -207,3 +207,5 @@
 | 14.08.2026 | все | — | Добавлен `deadline`: его читает `goalExpired` во ВСЕХ воркерах, а в схеме его не было. Нашлось при расширении покрытия |
 | 14.08.2026 | `neuro-chatting` | v1 | Дескриптор: 9 блоков, 20 параметров (22 поля) |
 | 14.08.2026 | `mass-react` | v1 | Дескриптор: 8 блоков, 17 параметров (19 полей) |
+| 14.08.2026 | `neuro-dialogs` | v1 | Дескриптор: 9 блоков, 21 параметр (23 поля). `maxPerAccount` у модуля НЕ работает — воркер его не читает, в схему не включён |
+| 14.08.2026 | `mailing` | v1 | Дескриптор: 8 блоков, 16 параметров (19 полей). `deadline` у модуля нет — `goalExpired` не вызывается |

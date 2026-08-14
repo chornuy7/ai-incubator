@@ -22,12 +22,16 @@
 import neuroCommenting from './neuro-commenting.js'
 import neuroChatting from './neuro-chatting.js'
 import massReact from './mass-react.js'
+import neuroDialogs from './neuro-dialogs.js'
+import mailing from './mailing.js'
 
 /** Все дескрипторы по ключу модуля. Новый модуль — импорт + строка здесь. */
 export const DESCRIPTORS = {
   'neuro-commenting': neuroCommenting,
   'neuro-chatting': neuroChatting,
   'mass-react': massReact,
+  'neuro-dialogs': neuroDialogs,
+  mailing,
 }
 
 export function getDescriptor(key) {

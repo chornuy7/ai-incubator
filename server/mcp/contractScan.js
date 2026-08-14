@@ -57,13 +57,18 @@ export function extractFunctionBody(source, symbol) {
 const DIRECT = /(?<![\w$.])(?:s|settings)\s*\??\.\s*([A-Za-z_$][\w$]*)/g
 const VIA_TASK = /task\s*\??\.\s*settings\s*\??\.\s*([A-Za-z_$][\w$]*)/g
 
+// Строковые литералы выкидываем до разбора: путь `import('../settings.js')` иначе
+// читается как обращение к полю `settings.js`, и в схему требуется несуществующее поле.
+const STRING_LITERAL = /'(?:[^'\\\n]|\\.)*'|"(?:[^"\\\n]|\\.)*"|`(?:[^`\\]|\\.)*`/g
+
 /** Имена ключей настроек, встреченные в куске кода. */
 export function scanSettingsKeys(code) {
+  const clean = code.replace(STRING_LITERAL, "''")
   const out = new Set()
   for (const re of [DIRECT, VIA_TASK]) {
     re.lastIndex = 0
     let m
-    while ((m = re.exec(code)) !== null) out.add(m[1])
+    while ((m = re.exec(clean)) !== null) out.add(m[1])
   }
   return out
 }
