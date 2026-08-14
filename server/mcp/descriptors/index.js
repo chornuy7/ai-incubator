@@ -20,10 +20,14 @@
  * @property {{sources: {file: string, symbols: string[]}[], ignore?: string[]}} contract
  */
 import neuroCommenting from './neuro-commenting.js'
+import neuroChatting from './neuro-chatting.js'
+import massReact from './mass-react.js'
 
 /** Все дескрипторы по ключу модуля. Новый модуль — импорт + строка здесь. */
 export const DESCRIPTORS = {
   'neuro-commenting': neuroCommenting,
+  'neuro-chatting': neuroChatting,
+  'mass-react': massReact,
 }
 
 export function getDescriptor(key) {

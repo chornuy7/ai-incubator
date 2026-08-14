@@ -156,8 +156,8 @@ export default {
         'Цель подмешивает свой текст и базу знаний в системный промпт и включает семантический фильтр. '
         + 'Просроченная цель останавливает уже идущую задачу, а не только новые запуски. Кампания нужна '
         + 'для отчётности и биллинга. Агент задаёт тон, роль, запреты и манеру общения.',
-      api: { method: 'POST', path: '/api/modules/neuro-commenting/tasks', fills: ['goalId', 'campaignId', 'agentId'] },
-      params: ['goalId', 'campaignId', 'agentId'],
+      api: { method: 'POST', path: '/api/modules/neuro-commenting/tasks', fills: ['goalId', 'campaignId', 'agentId', 'deadline'] },
+      params: ['goalId', 'campaignId', 'agentId', 'deadline'],
     },
   ],
 
@@ -626,6 +626,22 @@ export default {
 
     // ── binding ───────────────────────────────────────────────────────────────
     {
+      name: 'deadline',
+      block: 'binding',
+      title: 'Дедлайн',
+      type: 'string',
+      pattern: '^\d{4}-\d{2}-\d{2}$',
+      purpose: 'Дата, после которой работа по задаче прекращается.',
+      constraints: [
+        'формат YYYY-MM-DD; дедлайн включает указанный день целиком (истекает в конце суток)',
+        'приезжает из кампании; если не задан — берётся дедлайн цели по goalId',
+        'останавливает УЖЕ ИДУЩУЮ задачу, а не только новые запуски',
+      ],
+      examples: ['2026-09-01'],
+      seeAlso: ['goalId', 'campaignId'],
+      storedAs: 'task.settings.deadline',
+    },
+    {
       name: 'goalId',
       block: 'binding',
       title: 'Цель',
@@ -743,7 +759,7 @@ export default {
    */
   contract: {
     sources: [
-      { file: 'server/modules/workers.js', symbols: ['runNeuroCommenting', 'targets'] },
+      { file: 'server/modules/workers.js', symbols: ['runNeuroCommenting', 'targets', 'goalExpired'] },
       { file: 'server/lib/workerLoop.js', symbols: ['pickCommentCandidates'] },
       { file: 'server/lib/targets.js', symbols: ['resolveTotalTarget', 'resolvePerAccountTarget'] },
       { file: 'server/lib/accountRunner.js', symbols: ['totalLimitReached', 'perAccountLimitReached', 'handleFlood'] },

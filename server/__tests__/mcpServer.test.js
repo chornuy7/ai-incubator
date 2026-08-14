@@ -2,6 +2,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { handleMessage, listResources, readResource, SUPPORTED_PROTOCOL_VERSIONS, SERVER_INFO } from '../mcp/server.js'
 import { TOOLS } from '../mcp/tools.js'
+import { listDescriptorKeys } from '../mcp/descriptors/index.js'
 
 // Контекст HTTP-запроса: нужен только create_task (проверка прав на аккаунты).
 // Здесь его не вызываем — запуск живой задачи в юнит-тестах не место.
@@ -70,7 +71,10 @@ test('list_modules: честно разделяет описанные моду�
   const d = dataOf(await call('list_modules', {}))
 
   assert.ok(d.total >= 15, 'перечислены все модули платформы')
-  assert.equal(d.described, 1, 'описан пока один — нейрокомментинг')
+  // Число описанных растёт по мере покрытия — сверяем с реестром, а не с константой,
+  // иначе тест краснеет на каждом новом дескрипторе и его начинают править не глядя.
+  assert.equal(d.described, listDescriptorKeys().length)
+  assert.ok(d.described < d.total, 'покрытие ещё неполное — это должно быть видно в ответе')
 
   const nc = d.modules.find((m) => m.key === 'neuro-commenting')
   assert.equal(nc.described, true)

@@ -1,0 +1,530 @@
+/**
+ * MCP-дескриптор модуля «Нейрочаттинг».
+ *
+ * Формат — docs/mcp/MCP-SPEC.md, правила правки — docs/mcp/MCP-CONTRIBUTING.md.
+ * Список полей сверяется с кодом contract-тестом: то, что читает воркер, обязано быть здесь.
+ *
+ * Модуль похож на нейрокомментинг, но отличий больше, чем кажется, и оркестратор на них
+ * спотыкается: цель — ГРУППЫ, а не каналы; окна постов нет (всегда последние 15 сообщений);
+ * задержка называется `delays.action`, а не `delays.comment`; фильтров по словам и семантике
+ * нет вовсе — отбор идёт только вероятностью.
+ */
+
+/** @type {import('./index.js').ModuleDescriptor} */
+export default {
+  key: 'neuro-chatting',
+  version: 1,
+  title: 'Нейрочаттинг',
+  platform: 'telegram',
+  tags: ['чаты', 'группы', 'chats', 'groups', 'ии', 'ai', 'диалог', 'общение'],
+
+  whoAmI: {
+    summary: 'Отвечает ИИ-сообщениями на реплики участников в группах Telegram от имени управляемых аккаунтов.',
+    does: [
+      'вступает в группу, если аккаунт ещё не состоит в ней',
+      'берёт случайное сообщение из последних 15 в чате',
+      'генерирует ответ моделью с учётом цели, базы знаний и агента',
+      'выдерживает человеческий темп — паузу «на чтение» и время «на набор» по длине текста',
+      'отвечает реплаем на выбранное сообщение и сохраняет обе стороны переписки',
+    ],
+    doesNot: [
+      'не пишет комментарии под постами каналов — это «Нейрокомментинг»',
+      'не пишет в личные сообщения — это «Мейлинг» и «Нейродиалоги»',
+      'не выбирает сообщения по ключевым словам и смыслу: фильтров содержания у модуля нет, '
+      + 'отбор идёт только вероятностью',
+    ],
+    requires: [
+      'минимум один аккаунт в статусе, допускающем работу, с рабочим прокси',
+      'минимум одна группа-цель',
+      'рабочий ключ OpenAI: без него задача останавливается, а не пишет шаблоны',
+    ],
+    risks:
+      'Реальные сообщения в живых чатах. Ответ не в тему или слишком частые сообщения → жалобы, '
+      + 'FloodWait, спамблок. Сообщения в группах считаются по тому же суточному лимиту, что и комментарии.',
+    costModel: 'Списывается за действие по прайсу модуля; генерация текста включена в цену действия.',
+  },
+
+  blocks: [
+    {
+      id: 'accounts',
+      title: 'Выберите аккаунты',
+      purpose: 'Какими управляемыми аккаунтами выполняется задача.',
+      howItWorks:
+        'Аккаунты перебираются по кругу. Занятый другой задачей не выдаётся (один аккаунт = одна задача); '
+        + 'проблемные статусы, усталость, распорядок и суточный лимит пропускаются с записью в лог.',
+      api: { method: 'POST', path: '/api/modules/neuro-chatting/tasks', fills: ['accountIds'] },
+      params: ['accountIds'],
+    },
+    {
+      id: 'targets',
+      title: 'Группы',
+      purpose: 'В каких группах модуль отвечает участникам.',
+      howItWorks:
+        'На каждой итерации группа выбирается случайно. Перед первым действием аккаунт вступает в неё. '
+        + 'Из чата читаются последние 15 сообщений, и одно берётся случайно — настройки глубины нет.',
+      api: { method: 'POST', path: '/api/modules/neuro-chatting/tasks', fills: ['channels'] },
+      params: ['channels'],
+    },
+    {
+      id: 'modes',
+      title: 'Режим работы',
+      purpose: 'Чем ограничена задача — числом сообщений или временем.',
+      howItWorks: 'По количеству — до достижения цели; по времени — до истечения длительности.',
+      api: { method: 'POST', path: '/api/modules/neuro-chatting/tasks', fills: ['workMode', 'durationMinutes'] },
+      params: ['workMode', 'durationMinutes'],
+    },
+    {
+      id: 'filters',
+      title: 'Отбор сообщений',
+      purpose: 'Насколько часто модуль вступает в разговор.',
+      howItWorks:
+        'Единственный отбор — вероятность: сообщение выбрано случайно, и с заданной вероятностью на него '
+        + 'пишется ответ. Ни ключевых слов, ни стоп-слов, ни семантики у модуля нет.',
+      api: { method: 'POST', path: '/api/modules/neuro-chatting/tasks', fills: ['probability'] },
+      params: ['probability'],
+    },
+    {
+      id: 'limits',
+      title: 'Лимиты',
+      purpose: 'Сколько сообщений отправить всего и сколько одним аккаунтом.',
+      howItWorks:
+        'Фактическая цель — случайное число из [min, max], детерминированное по ID задачи: '
+        + 'одинаковые круглые числа выдают автоматизацию.',
+      api: { method: 'POST', path: '/api/modules/neuro-chatting/tasks', fills: ['maxActions', 'minActions', 'maxPerAccount', 'minPerAccount'] },
+      params: ['maxActions', 'minActions', 'maxPerAccount', 'minPerAccount'],
+    },
+    {
+      id: 'prompts',
+      title: 'Промпты и генерация',
+      purpose: 'Каким тоном пишется ответ.',
+      howItWorks:
+        'Приоритет: promptText → promptOverrides[promptIndex] → встроенная карточка promptIndex. '
+        + 'Поверх добавляются глобальный системный промпт, контекст цели с базой знаний и контекст агента. '
+        + 'Последние 50 отправленных текстов запоминаются, чтобы разные аккаунты не написали одно и то же.',
+      api: { method: 'POST', path: '/api/modules/neuro-chatting/tasks', fills: ['promptIndex', 'promptText', 'promptOverrides'] },
+      params: ['promptIndex', 'promptText', 'promptOverrides'],
+    },
+    {
+      id: 'protection',
+      title: 'Защита аккаунтов',
+      purpose: 'Множитель задержек и потолок вероятности действий.',
+      howItWorks: 'Уровень защиты умножает задержки и ограничивает вероятность сверху.',
+      api: { method: 'POST', path: '/api/modules/neuro-chatting/tasks', fills: ['aiProtection', 'protectionLevel'] },
+      params: ['aiProtection', 'protectionLevel'],
+    },
+    {
+      id: 'timings',
+      title: 'Тайминги и задержки',
+      purpose: 'Паузы между действиями и поведение при FloodWait.',
+      howItWorks:
+        'Поверх заданных задержек модуль ВСЕГДА выдерживает человеческий темп: паузу на чтение исходного '
+        + 'сообщения и время на набор ответа по его длине. Мгновенный ответ и «100 слов за полсекунды» — '
+        + 'то, по чему Telegram узнаёт бота и банит волной похожие аккаунты. Отключить это нельзя.',
+      api: { method: 'POST', path: '/api/modules/neuro-chatting/tasks', fills: ['delayPreset', 'delays'] },
+      params: ['delayPreset', 'delays'],
+    },
+    {
+      id: 'binding',
+      title: 'Привязка',
+      purpose: 'К какой цели, кампании и агенту относится задача.',
+      howItWorks:
+        'Цель и её база знаний подмешиваются в системный промпт; просроченная цель останавливает уже идущую '
+        + 'задачу. Агент задаёт тон, роль и запреты. Кампания нужна для отчётности и биллинга.',
+      api: { method: 'POST', path: '/api/modules/neuro-chatting/tasks', fills: ['goalId', 'campaignId', 'agentId', 'deadline'] },
+      params: ['goalId', 'campaignId', 'agentId', 'deadline'],
+    },
+  ],
+
+  params: [
+    {
+      name: 'accountIds',
+      block: 'accounts',
+      title: 'Аккаунты',
+      type: 'array',
+      items: 'string',
+      required: true,
+      minItems: 1,
+      purpose: 'ID управляемых аккаунтов, которыми выполняется задача.',
+      constraints: ['пустой список → отказ «Выберите хотя бы один аккаунт»'],
+      examples: [['acc_1'], ['acc_1', 'acc_2']],
+      storedAs: 'task.settings.accountIds',
+    },
+    {
+      name: 'channels',
+      block: 'targets',
+      title: 'Группы-цели',
+      type: 'array',
+      items: 'string',
+      required: true,
+      minItems: 1,
+      aliases: ['targets'],
+      purpose: 'Группы, в которых модуль отвечает участникам.',
+      constraints: [
+        'формат: @username или https://t.me/<username>; ведущая @ отбрасывается',
+        'цели из чёрного списка отсеиваются до любых действий',
+      ],
+      examples: [['@some_chat'], ['https://t.me/some_chat', '@another_chat']],
+      storedAs: 'task.settings.channels (сервер принимает и targets)',
+    },
+    {
+      name: 'workMode',
+      block: 'modes',
+      title: 'Режим работы',
+      type: 'integer',
+      default: 0,
+      enum: [
+        { value: 0, label: 'По количеству', means: 'Задача идёт, пока не достигнута цель по числу сообщений.' },
+        { value: 1, label: 'По времени', means: 'Задача идёт, пока не истечёт durationMinutes.' },
+      ],
+      purpose: 'Чем ограничена задача — числом действий или временем.',
+      constraints: ['при workMode = 1 обязателен durationMinutes: иначе у задачи нет условия завершения'],
+      seeAlso: ['durationMinutes', 'maxActions'],
+      storedAs: 'task.settings.workMode',
+    },
+    {
+      name: 'durationMinutes',
+      block: 'modes',
+      title: 'Длительность',
+      type: 'integer',
+      default: 60,
+      min: 1,
+      unit: 'мин',
+      requiredWhen: { workMode: 1 },
+      effectiveWhen: { workMode: 1 },
+      purpose: 'Сколько задача работает в режиме «По времени».',
+      constraints: [
+        'трактуется как МАКСИМУМ: фактическая длительность — случайное число из [min, durationMinutes], '
+        + 'где min задаёт уровень защиты (консервативный 60, сбалансированный 45, агрессивный 30 минут)',
+      ],
+      examples: [60, 240],
+      seeAlso: ['workMode', 'protectionLevel'],
+      storedAs: 'task.settings.durationMinutes',
+    },
+    {
+      name: 'probability',
+      block: 'filters',
+      title: 'Вероятность ответа',
+      type: 'integer',
+      default: 30,
+      min: 0,
+      max: 100,
+      unit: '%',
+      purpose: 'С какой вероятностью на выбранное сообщение будет написан ответ.',
+      constraints: [
+        'при aiProtection = true потолок урезается уровнем защиты: консервативный ≤25 %, сбалансированный ≤45 %, агрессивный без ограничения',
+      ],
+      examples: [10, 30, 100],
+      seeAlso: ['aiProtection', 'protectionLevel'],
+      storedAs: 'task.settings.probability',
+    },
+    {
+      name: 'maxActions',
+      block: 'limits',
+      title: 'Макс. сообщений',
+      type: 'integer',
+      default: 100,
+      min: 1,
+      aliases: ['maxComments'],
+      purpose: 'Верхняя граница числа сообщений за всю задачу.',
+      constraints: ['должен быть ≥ minActions, иначе запуск отклоняется («Минимум больше максимума»)'],
+      examples: [10, 100],
+      seeAlso: ['minActions', 'maxPerAccount'],
+      storedAs: 'task.settings.maxActions',
+    },
+    {
+      name: 'minActions',
+      block: 'limits',
+      title: 'Мин. сообщений',
+      type: 'integer',
+      default: 0,
+      min: 0,
+      aliases: ['minComments'],
+      purpose: 'Нижняя граница цели задачи. Фактическая цель — случайное число из [min, max].',
+      constraints: ['должен быть ≤ maxActions', 'цель детерминирована по ID задачи'],
+      seeAlso: ['maxActions'],
+      storedAs: 'task.settings.minActions',
+    },
+    {
+      name: 'maxPerAccount',
+      block: 'limits',
+      title: 'Макс. на аккаунт',
+      type: 'integer',
+      default: 0,
+      min: 0,
+      purpose: 'Потолок сообщений одним аккаунтом за задачу.',
+      constraints: [
+        '0 = ограничения на аккаунт нет',
+        'независимо от него действует суточный лимит §6 у аккаунта, общий для всех модулей',
+      ],
+      examples: [0, 10],
+      storedAs: 'task.settings.maxPerAccount',
+    },
+    {
+      name: 'minPerAccount',
+      block: 'limits',
+      title: 'Мин. на аккаунт',
+      type: 'integer',
+      default: 0,
+      min: 0,
+      effectiveWhen: { maxPerAccount: '*' },
+      purpose: 'Нижняя граница цели на один аккаунт.',
+      constraints: ['должен быть ≤ maxPerAccount', 'работает только когда maxPerAccount > 0'],
+      storedAs: 'task.settings.minPerAccount',
+    },
+    {
+      name: 'promptIndex',
+      block: 'prompts',
+      title: 'Тип ответа',
+      type: 'integer',
+      default: 0,
+      enum: [
+        { value: 0, label: 'Позитивный', means: 'Доброжелательная поддержка собеседника.' },
+        { value: 1, label: 'Интимный', means: 'Личный, доверительный тон.' },
+        { value: 2, label: 'Эмоциональный отклик', means: 'Выражение эмоции по поводу реплики.' },
+        { value: 3, label: 'Вопрос собеседнику', means: 'Уточняющий вопрос — продолжает разговор.' },
+        { value: 4, label: 'Краткий отзыв', means: 'Одна-две фразы по существу.' },
+        { value: 5, label: 'Аналитический подход', means: 'Разбор по сути с аргументом.' },
+      ],
+      supersededBy: ['promptText'],
+      purpose: 'Какая встроенная карточка промпта используется для генерации ответа.',
+      storedAs: 'task.settings.promptIndex',
+    },
+    {
+      name: 'promptText',
+      block: 'prompts',
+      title: 'Свой системный промпт',
+      type: 'string',
+      default: '',
+      purpose: 'Собственная инструкция модели вместо встроенной карточки.',
+      constraints: ['непустое значение перекрывает promptIndex и promptOverrides'],
+      examples: ['Отвечай коротко и по делу, без эмодзи, максимум два предложения.'],
+      storedAs: 'task.settings.promptText',
+    },
+    {
+      name: 'promptOverrides',
+      block: 'prompts',
+      title: 'Переопределение карточек',
+      type: 'array',
+      items: 'string',
+      default: [],
+      supersededBy: ['promptText'],
+      purpose: 'Заменить текст конкретных карточек, не отказываясь от выбора по индексу.',
+      constraints: ['индекс элемента соответствует promptIndex'],
+      storedAs: 'task.settings.promptOverrides',
+    },
+    {
+      name: 'aiProtection',
+      block: 'protection',
+      title: 'ИИ-защита',
+      type: 'boolean',
+      default: true,
+      purpose: 'Включает потолок вероятности из уровня защиты.',
+      seeAlso: ['protectionLevel', 'probability'],
+      storedAs: 'task.settings.aiProtection',
+    },
+    {
+      name: 'protectionLevel',
+      block: 'protection',
+      title: 'Уровень защиты',
+      type: 'integer',
+      default: 1,
+      enum: [
+        { value: 0, label: 'Консервативный', means: 'Задержки ×1.8, вероятность ≤25 %, минимальная длительность 60 мин.' },
+        { value: 1, label: 'Сбалансированный', means: 'Задержки ×1, вероятность ≤45 %, минимальная длительность 45 мин.' },
+        { value: 2, label: 'Агрессивный', means: 'Задержки ×0.75, вероятность без ограничения, минимальная длительность 30 мин.' },
+      ],
+      purpose: 'Насколько осторожно ведёт себя аккаунт.',
+      constraints: ['ВНИМАНИЕ: нумерация ОБРАТНА delayPreset — здесь 0 самый безопасный'],
+      seeAlso: ['delayPreset', 'probability'],
+      storedAs: 'task.settings.protectionLevel',
+    },
+    {
+      name: 'delayPreset',
+      block: 'timings',
+      title: 'Пресет темпа',
+      type: 'integer',
+      default: 1,
+      enum: [
+        { value: 0, label: 'Агрессивный', means: 'Паузы ×0.6, длительность ×0.75. Быстрее, выше шанс FloodWait.' },
+        { value: 1, label: 'Сбалансированный', means: 'Базовые задержки ×1.' },
+        { value: 2, label: 'Консервативный', means: 'Паузы ×1.8, длительность ×1.5.' },
+        { value: 3, label: 'Custom', means: 'Задержки берутся как заданы, без масштабирования.' },
+      ],
+      purpose: 'Масштабирует все задержки задачи.',
+      constraints: ['ВНИМАНИЕ: нумерация ОБРАТНА protectionLevel — здесь 0 самый быстрый'],
+      seeAlso: ['protectionLevel', 'delays'],
+      storedAs: 'task.settings.delayPreset',
+    },
+    {
+      name: 'delays',
+      block: 'timings',
+      title: 'Задержки',
+      type: 'object',
+      purpose: 'Базовые интервалы, к которым применяются множители защиты и пресета.',
+      constraints: [
+        'у этого модуля пауза между действиями называется `action` (в нейрокомментинге — `comment`)',
+      ],
+      properties: [
+        {
+          name: 'action',
+          title: 'Пауза перед ответом',
+          type: 'array',
+          items: 'number',
+          minItems: 2,
+          maxItems: 2,
+          default: [42, 78],
+          unit: 'с',
+          purpose: 'Диапазон [мин, макс] паузы перед отправкой ответа.',
+          constraints: [
+            'фактическая пауза — случайная из диапазона × множители, но не меньше 5 секунд',
+            'поверх неё всегда добавляется человеческий темп: чтение исходного сообщения + набор ответа',
+          ],
+        },
+        {
+          name: 'join',
+          title: 'Пауза перед вступлением',
+          type: 'array',
+          items: 'number',
+          minItems: 2,
+          maxItems: 2,
+          default: [50, 120],
+          unit: 'с',
+          purpose: 'Диапазон [мин, макс] паузы перед вступлением в группу.',
+          constraints: ['жёсткий пол 60 секунд: вступления Telegram считает жёстче остальных действий'],
+        },
+        {
+          name: 'floodWait',
+          title: 'Запас после FloodWait',
+          type: 'number',
+          default: 120,
+          min: 0,
+          unit: 'с',
+          purpose: 'Сколько ждать сверх длительности, которую вернул Telegram.',
+        },
+        {
+          name: 'floodQuarantine',
+          title: 'FloodWait до карантина',
+          type: 'integer',
+          default: 3,
+          min: 1,
+          purpose: 'Сколько FloodWait подряд выдерживает аккаунт до отправки в карантин.',
+        },
+      ],
+      storedAs: 'task.settings.delays',
+    },
+    {
+      name: 'deadline',
+      block: 'binding',
+      title: 'Дедлайн',
+      type: 'string',
+      pattern: '^\d{4}-\d{2}-\d{2}$',
+      purpose: 'Дата, после которой работа по задаче прекращается.',
+      constraints: [
+        'формат YYYY-MM-DD; дедлайн включает указанный день целиком (истекает в конце суток)',
+        'приезжает из кампании; если не задан — берётся дедлайн цели по goalId',
+        'останавливает УЖЕ ИДУЩУЮ задачу, а не только новые запуски',
+      ],
+      examples: ['2026-09-01'],
+      seeAlso: ['goalId', 'campaignId'],
+      storedAs: 'task.settings.deadline',
+    },
+    {
+      name: 'goalId',
+      block: 'binding',
+      title: 'Цель',
+      type: 'string',
+      purpose: 'Цель, к которой ведётся разговор: её текст и база знаний идут в системный промпт.',
+      constraints: [
+        'должна существовать; получить список — GET /api/v1/goals',
+        'просроченная цель останавливает уже идущую задачу',
+      ],
+      seeAlso: ['campaignId'],
+      storedAs: 'task.settings.goalId',
+    },
+    {
+      name: 'campaignId',
+      block: 'binding',
+      title: 'Кампания',
+      type: 'string',
+      purpose: 'Кампания для отчётности и привязки расхода токенов.',
+      constraints: ['должна существовать; получить список — GET /api/v1/campaigns'],
+      storedAs: 'task.settings.campaignId',
+    },
+    {
+      name: 'agentId',
+      block: 'binding',
+      title: 'Агент',
+      type: 'string',
+      purpose: 'Агент задаёт тон, роль, запреты и манеру общения.',
+      constraints: ['без агента остаётся только контекст цели'],
+      storedAs: 'task.settings.agentId',
+    },
+  ],
+
+  presets: [
+    {
+      param: 'delayPreset',
+      title: 'Пресет темпа',
+      source: 'server/lib/protection.js — PRESET_MUL',
+      values: [
+        { value: 0, label: 'Агрессивный', multiplier: 0.6, means: 'Паузы ×0.6, длительность ×0.75.', useWhen: 'прогретые «расходные» аккаунты' },
+        { value: 1, label: 'Сбалансированный', multiplier: 1, means: 'Базовые задержки.', useWhen: 'повседневная работа' },
+        { value: 2, label: 'Консервативный', multiplier: 1.8, means: 'Паузы ×1.8, длительность ×1.5.', useWhen: 'новые и дорогие аккаунты' },
+        { value: 3, label: 'Custom', multiplier: 1, means: 'Без масштабирования.', useWhen: 'ручная настройка' },
+      ],
+    },
+    {
+      param: 'protectionLevel',
+      title: 'Уровень защиты',
+      source: 'server/lib/protection.js — LEVEL_MUL + effectiveProbability; server/lib/workModeDuration.js',
+      values: [
+        { value: 0, label: 'Консервативный', multiplier: 1.8, probabilityCap: 25, minDurationMinutes: 60, means: 'Задержки ×1.8, вероятность ≤25 %.' },
+        { value: 1, label: 'Сбалансированный', multiplier: 1, probabilityCap: 45, minDurationMinutes: 45, means: 'Задержки ×1, вероятность ≤45 %.' },
+        { value: 2, label: 'Агрессивный', multiplier: 0.75, probabilityCap: 100, minDurationMinutes: 30, means: 'Задержки ×0.75, вероятность без ограничения.' },
+      ],
+    },
+  ],
+
+  examples: [
+    {
+      title: 'Осторожное присутствие в одном чате',
+      when: 'проверка связки аккаунт + прокси на живой группе',
+      input: {
+        accountIds: ['acc_1'],
+        channels: ['@some_chat'],
+        maxActions: 3,
+        maxPerAccount: 3,
+        probability: 100,
+        aiProtection: true,
+        protectionLevel: 0,
+        delayPreset: 2,
+      },
+    },
+    {
+      title: 'Работа к цели на нескольких аккаунтах',
+      when: 'есть цель и база знаний, нужно набрать присутствие в тематических чатах',
+      input: {
+        accountIds: ['acc_1', 'acc_2', 'acc_3'],
+        channels: ['@chat_one', '@chat_two'],
+        goalId: 'goal_123',
+        agentId: 'agent_1',
+        maxActions: 60,
+        maxPerAccount: 20,
+        probability: 40,
+        protectionLevel: 1,
+        delayPreset: 1,
+      },
+    },
+  ],
+
+  contract: {
+    sources: [
+      { file: 'server/modules/workers.js', symbols: ['runNeuroChatting', 'targets', 'goalExpired'] },
+      { file: 'server/lib/targets.js', symbols: ['resolveTotalTarget', 'resolvePerAccountTarget'] },
+      { file: 'server/lib/accountRunner.js', symbols: ['totalLimitReached', 'perAccountLimitReached', 'handleFlood'] },
+      { file: 'server/lib/workModeDuration.js', symbols: ['resolveDurationPeriodMinutes'] },
+      { file: 'server/neuroCommenting/commentGenerator.js', symbols: ['resolveSystemPrompt'] },
+    ],
+    ignore: ['initiator', 'userId'],
+  },
+}
