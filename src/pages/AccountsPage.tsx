@@ -36,6 +36,17 @@ import { startUnblock } from '@/api/accountActivityApi'
 import { useTabParam } from '@/shared/lib/useTabParam'
 
 const STATUS_ORDER: AccountStatus[] = ['active', 'working', 'warming', 'pause', 'floodwait', 'quarantine', 'spamblock', 'invalid', 'frozen', 'reauth']
+
+// Правка 14.08: «Зона риска» — это не один статус, а несколько независимых причин.
+// Заказчик просил показать их ОТДЕЛЬНЫМИ плитками-счётчиками (мёртвый прокси, нет
+// прокси, низкое доверие), а не свалкой в один бейдж. Каждая — отдельный фильтр.
+type RiskKey = 'deadProxy' | 'noProxy' | 'lowTrust'
+const RISK_ORDER: RiskKey[] = ['deadProxy', 'noProxy', 'lowTrust']
+const RISK_META: Record<RiskKey, { label: string; dot: string; bg: string; match: (a: { proxyOk?: boolean; noProxy?: boolean; trustBand?: string }) => boolean }> = {
+  deadProxy: { label: 'Мёртвый прокси', dot: 'bg-rose-400', bg: 'bg-rose-500/12 border-rose-500/30', match: (a) => a.proxyOk === false && a.noProxy !== true },
+  noProxy: { label: 'Нет прокси', dot: 'bg-orange-400', bg: 'bg-orange-500/12 border-orange-500/30', match: (a) => a.noProxy === true },
+  lowTrust: { label: 'Низкое доверие', dot: 'bg-amber-400', bg: 'bg-amber-500/12 border-amber-500/30', match: (a) => a.trustBand === 'low' },
+}
 const COLS = [
   { key: 'avatar', label: 'Аватар' },
   { key: 'name', label: 'Имя' },
@@ -161,6 +172,7 @@ export function AccountsPage() {
 
   const [tab, setTab] = useTabParam<'accounts' | 'trash'>('accounts')
   const [statusFilter, setStatusFilter] = useState<AccountStatus | 'all'>('all')
+  const [riskFilter, setRiskFilter] = useState<RiskKey | 'all'>('all')
   const [roleFilter, setRoleFilter] = useState('Все роли')
   // §1: «роль как группа» уходит — аккаунт работает ПОД КАМПАНИЕЙ. Закрепление живёт
   // в самой кампании (см. server/campaigns.js), поэтому accountsMeta.role не трогаем.
@@ -294,6 +306,14 @@ export function AccountsPage() {
     return c
   }, [active])
 
+  // Правка 14.08: счётчики причин риска — отдельно (мёртвый прокси / нет прокси / низкое доверие).
+  // Один аккаунт может попасть в несколько (у него бывает и мёртвый прокси, и низкий trust).
+  const riskCounts = useMemo(() => {
+    const c: Record<RiskKey, number> = { deadProxy: 0, noProxy: 0, lowTrust: 0 }
+    for (const a of active) for (const k of RISK_ORDER) if (RISK_META[k].match(a)) c[k] += 1
+    return c
+  }, [active])
+
   // (8) Сводка по модулям: сколько аккаунтов сейчас работают в каждом модуле.
   const moduleSummary = useMemo(() => {
     const map = new Map<string, { label: string; count: number }>()
@@ -310,6 +330,7 @@ export function AccountsPage() {
   const filtered = useMemo(() => {
     const list = source.filter((a) => {
       if (tab === 'accounts' && statusFilter !== 'all' && a.status !== statusFilter) return false
+      if (tab === 'accounts' && riskFilter !== 'all' && !RISK_META[riskFilter].match(a)) return false
       // §2: в корзине можно отсеять «мёртвые» — оставить только валидные сессии.
       if (tab === 'trash' && trashAlive && (a.status === 'invalid' || a.status === 'reauth')) return false
       if (campaignFilter === 'pool' && campaignOf(a.id)) return false
@@ -335,7 +356,7 @@ export function AccountsPage() {
       .sort((x, y) => cmp(x.a, y.a) || (x.i - y.i))
       .map((x) => x.a)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [source, tab, statusFilter, campaignFilter, campaigns, pinnedMap, countryFilter, moduleFilter, query, trashAlive, sortKey, fatigueMin, activity])
+  }, [source, tab, statusFilter, riskFilter, campaignFilter, campaigns, pinnedMap, countryFilter, moduleFilter, query, trashAlive, sortKey, fatigueMin, activity])
 
   const pageCount = Math.max(1, Math.ceil(filtered.length / pageSize))
   const pageItems = filtered.slice(page * pageSize, page * pageSize + pageSize)
@@ -497,14 +518,14 @@ export function AccountsPage() {
       />
 
       {/* Status cards */}
-      <div className="mb-5 grid grid-cols-2 gap-2.5 sm:grid-cols-4 xl:grid-cols-7">
+      <div className="mb-3 grid grid-cols-2 gap-2.5 sm:grid-cols-4 xl:grid-cols-7">
         {STATUS_ORDER.map((st) => {
           const m = STATUS_META[st]
           const activeCard = statusFilter === st
           return (
             <button
               key={st}
-              onClick={() => { setStatusFilter(activeCard ? 'all' : st); setPage(0); setTab('accounts') }}
+              onClick={() => { setStatusFilter(activeCard ? 'all' : st); setRiskFilter('all'); setPage(0); setTab('accounts') }}
               className={cn(
                 'flex items-center gap-3 rounded-2xl border p-3 text-left transition-all',
                 activeCard ? 'border-spark-500/50 bg-spark-500/8 shadow-spark-glow' : 'border-line bg-surface hover:border-spark-500/30',
@@ -515,6 +536,33 @@ export function AccountsPage() {
               </span>
               <div className="min-w-0">
                 <div className="font-display text-xl font-bold text-fg">{statusCounts[st]}</div>
+                <div className="truncate text-[11px] font-semibold text-muted">{m.label}</div>
+              </div>
+            </button>
+          )
+        })}
+      </div>
+
+      {/* Правка 14.08: причины «Зоны риска» — отдельными плитками-фильтрами (не свалка в один бейдж). */}
+      <div className="mb-5 flex flex-wrap items-center gap-2.5">
+        <span className="text-[11px] font-bold uppercase tracking-wide text-faint">Зона риска:</span>
+        {RISK_ORDER.map((rk) => {
+          const m = RISK_META[rk]
+          const activeCard = riskFilter === rk
+          return (
+            <button
+              key={rk}
+              onClick={() => { setRiskFilter(activeCard ? 'all' : rk); setStatusFilter('all'); setPage(0); setTab('accounts') }}
+              className={cn(
+                'flex items-center gap-2.5 rounded-xl border px-3 py-2 text-left transition-all',
+                activeCard ? 'border-rose-500/50 bg-rose-500/8' : 'border-line bg-surface hover:border-rose-500/30',
+              )}
+            >
+              <span className={cn('grid h-7 w-7 shrink-0 place-items-center rounded-lg border', m.bg)}>
+                <span className={cn('h-2 w-2 rounded-full', m.dot)} />
+              </span>
+              <div className="min-w-0">
+                <div className="font-display text-base font-bold leading-none text-fg">{riskCounts[rk]}</div>
                 <div className="truncate text-[11px] font-semibold text-muted">{m.label}</div>
               </div>
             </button>
