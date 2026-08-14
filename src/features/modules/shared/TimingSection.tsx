@@ -130,23 +130,35 @@ export function TimingSection(props: TimingSectionProps) {
   const showDuration = showDurationAlways || timeMode
   const showCounts = !workModeOptions || !timeMode
 
-  // MR-136: пресет темпа выставляет и Длительность, и лимит «Сколько сделает 1 аккаунт».
-  // Множители к базовым (реком.) значениям, зафиксированным при первом рендере:
-  // Мин — короче/больше действий (быстрее, риск), Макс — дольше/меньше (безопаснее).
+  // Пресет темпа выставляет Длительность. Множитель к базовой (реком.) длительности:
+  // Мин — короче (быстрее), Макс — дольше (безопаснее).
   const DUR_FACTOR = [0.75, 1, 1.5, 1]
-  const LIM_FACTOR = [1.5, 1, 0.6, 1]
-  const baseRef = useRef({ dur: durationMinutes, limMin: perAccount?.min ?? 0, limMax: perAccount?.max ?? 0 })
+  // Правка 14.08: НЕИЗМЕННАЯ база пресетов. Захватывается ОДИН раз при первом рендере и
+  // больше НИКОГДА не мутируется. Раньше правка в Custom писала в baseRef — и значения
+  // «протекали» в Мин/Рек/Макс (баг: пресеты переставали держать свои числа). Теперь
+  // пресет всегда подставляет ровно эту базу, а Custom правит только текущее состояние.
+  const frozen = useRef({
+    dur: durationMinutes,
+    limMin: perAccount?.min ?? 0,
+    limMax: perAccount?.max ?? 0,
+    delays: { ...delays },
+  })
   const applyPresetExtras = (i: number) => {
     if (i === CUSTOM) return
-    const b = baseRef.current
+    const b = frozen.current
     if (onDuration && showDuration) onDuration(Math.max(1, Math.round(b.dur * DUR_FACTOR[i])))
-    if (perAccount) { perAccount.onMin(Math.round(b.limMin * LIM_FACTOR[i])); perAccount.onMax(Math.round(b.limMax * LIM_FACTOR[i])) }
+    // Лимит «Сколько сделает 1 аккаунт» НЕ масштабируется пресетом — одинаковый (базовый)
+    // на Мин/Рек/Макс, меняется только в Custom. (Заказчик 14.08: «всюди 10, крім кастом».)
+    if (perAccount) { perAccount.onMin(b.limMin); perAccount.onMax(b.limMax) }
+    // Задержки — всегда из неизменной базы: любая правка в Custom не должна их сдвигать.
+    onDelays(() => ({ ...b.delays }))
   }
-  // Ручная правка Длительности/лимита → Custom + запоминаем как новое базовое значение.
-  const editDuration = (v: number) => { if (hasPresets && delayPreset !== CUSTOM) onDelayPreset!(CUSTOM); baseRef.current.dur = v; onDuration?.(v) }
+  // Ручная правка Длительности/лимита возможна ТОЛЬКО в Custom (на пресетах поля заблокированы).
+  // База (frozen) при этом НЕ трогается — поэтому возврат на пресет всегда даёт исходные числа.
+  const editDuration = (v: number) => { if (hasPresets && delayPreset !== CUSTOM) onDelayPreset!(CUSTOM); onDuration?.(v) }
   const editPerAccount = (which: 'min' | 'max', v: number) => {
     if (hasPresets && delayPreset !== CUSTOM) onDelayPreset!(CUSTOM)
-    if (which === 'min') { baseRef.current.limMin = v; perAccount?.onMin(v) } else { baseRef.current.limMax = v; perAccount?.onMax(v) }
+    if (which === 'min') perAccount?.onMin(v); else perAccount?.onMax(v)
   }
 
   return (
@@ -168,7 +180,21 @@ export function TimingSection(props: TimingSectionProps) {
                 type="button"
                 // MR-136: раскрытие «Расширенных» для Custom делает эффект по delayPreset;
                 // пресет также выставляет Длительность и лимит «Сколько сделает 1 аккаунт».
-                onClick={() => { onDelayPreset!(i); applyPresetExtras(i) }}
+                onClick={() => {
+                  // Вход в Custom из пресета: «запекаем» видимые (масштабированные ×mul)
+                  // задержки в текущее состояние, чтобы числа не прыгнули (Custom = ×1).
+                  // База (frozen) при этом не трогается.
+                  if (i === CUSTOM && delayPreset !== CUSTOM) {
+                    const m = PRESET_MUL[delayPreset] ?? 1
+                    onDelays((d) => ({
+                      ...d,
+                      comment: d.comment ? [Math.round(d.comment[0] * m), Math.round(d.comment[1] * m)] : d.comment,
+                      action: d.action ? [Math.round(d.action[0] * m), Math.round(d.action[1] * m)] : d.action,
+                      join: d.join ? [Math.round(d.join[0] * m), Math.round(d.join[1] * m)] : d.join,
+                    }))
+                  }
+                  onDelayPreset!(i); applyPresetExtras(i)
+                }}
                 className={cn(
                   'flex items-center gap-2.5 rounded-xl border p-3 text-left transition-all',
                   active ? 'border-spark-500/60 bg-spark-500/10' : 'border-line bg-elevated hover:border-spark-500/30',
