@@ -24,6 +24,16 @@ import neuroChatting from './neuro-chatting.js'
 import massReact from './mass-react.js'
 import neuroDialogs from './neuro-dialogs.js'
 import mailing from './mailing.js'
+import warming from './warming.js'
+import massLooking from './mass-looking.js'
+import autoposting from './autoposting.js'
+import parsing from './parsing.js'
+import parsingGroups from './parsing-groups.js'
+import parsingUsers from './parsing-users.js'
+import parsingMessages from './parsing-messages.js'
+import parsingComments from './parsing-comments.js'
+import ggr from './ggr.js'
+import spamUnblock from './spam-unblock.js'
 
 /** Все дескрипторы по ключу модуля. Новый модуль — импорт + строка здесь. */
 export const DESCRIPTORS = {
@@ -32,6 +42,16 @@ export const DESCRIPTORS = {
   'mass-react': massReact,
   'neuro-dialogs': neuroDialogs,
   mailing,
+  warming,
+  'mass-looking': massLooking,
+  autoposting,
+  parsing,
+  'parsing-groups': parsingGroups,
+  'parsing-users': parsingUsers,
+  'parsing-messages': parsingMessages,
+  'parsing-comments': parsingComments,
+  ggr,
+  'spam-unblock': spamUnblock,
 }
 
 export function getDescriptor(key) {

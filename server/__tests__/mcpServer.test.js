@@ -72,17 +72,16 @@ test('list_modules: честно разделяет описанные моду�
   const d = dataOf(await call('list_modules', {}))
 
   assert.ok(d.total >= 15, 'перечислены все модули платформы')
-  // Число описанных растёт по мере покрытия — сверяем с реестром, а не с константой,
-  // иначе тест краснеет на каждом новом дескрипторе и его начинают править не глядя.
+  // Сверяем с реестром, а не с константой: иначе тест краснеет на каждом новом
+  // дескрипторе и его начинают править не глядя.
   assert.equal(d.described, listDescriptorKeys().length)
-  assert.ok(d.described < d.total, 'покрытие ещё неполное — это должно быть видно в ответе')
+  // Покрытие полное с 14.08. Если модуль появится без дескриптора — тест это поймает,
+  // и «мозги» узнают об этом раньше, чем соберут задачу по неполному описанию.
+  assert.equal(d.described, d.total, 'у каждого модуля платформы должен быть дескриптор')
+  assert.equal(d.modules.every((m) => m.described), true)
 
   const nc = d.modules.find((m) => m.key === 'neuro-commenting')
-  assert.equal(nc.described, true)
   assert.ok(nc.paramCount >= 25, 'у описанного модуля видно число параметров')
-
-  const other = d.modules.find((m) => m.key === 'warming')
-  assert.equal(other.described, false)
   assert.match(d.note, /described = true/)
 })
 
@@ -111,10 +110,13 @@ test('describe_block: справка по блоку с указанием API �
   assert.match(miss.content[0].text, /Есть: /, 'ошибка подсказывает существующие блоки')
 })
 
-test('неописанный модуль: отказ с объяснением, а не выдуманная схема', async () => {
-  const r = await call('describe_module', { module: 'warming' })
+test('несуществующий модуль: отказ со списком доступных, а не выдуманная схема', async () => {
+  // Раньше здесь проверялся неописанный модуль, но с 14.08 описаны все 15. Осталась
+  // вторая ветка того же правила: схему нельзя выдумывать и для того, чего вовсе нет.
+  const r = await call('describe_module', { module: 'нет-такого-модуля' })
   assert.equal(r.isError, true)
-  assert.match(r.content[0].text, /ещё не описана/)
+  assert.match(r.content[0].text, /Неизвестный модуль/)
+  assert.match(r.content[0].text, /Доступные: /, 'ошибка обязана подсказать, что существует')
   // Ошибка инструмента — это результат вызова, модель должна её прочитать и исправиться.
   assert.ok(!r.error, 'не должно быть транспортной ошибки JSON-RPC')
 })

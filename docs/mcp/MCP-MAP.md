@@ -6,7 +6,7 @@
 
 Дата среза: **14.08.2026**. Формат описания — [MCP-SPEC.md](./MCP-SPEC.md).
 
-> **Этапы 1 и 2 закрыты.** Карта ниже переехала в исполняемый дескриптор
+> **Покрытие полное: 15 модулей из 15 (14.08).** Этапы 1–3 закрыты. Карта ниже переехала в исполняемый дескриптор
 > [`server/mcp/descriptors/neuro-commenting.js`](../../server/mcp/descriptors/neuro-commenting.js)
 > и проверяется contract-тестом. Доступ:
 > - **MCP-протокол** — `POST /api/v1/mcp` (JSON-RPC 2.0, Bearer-ключ), инструмент `describe_module`;
@@ -17,23 +17,23 @@
 
 ## 1. Реестр модулей и покрытие
 
-| # | Ключ | Название | Дескриптор | Параметров описано | Версия |
-|---|---|---|---|---|---|
-| 1 | `neuro-commenting` | Нейрокомментинг | ☑ [код](../../server/mcp/descriptors/neuro-commenting.js) | **32/32** | v1 |
-| 2 | `neuro-chatting` | Нейрочаттинг | ☑ [код](../../server/mcp/descriptors/neuro-chatting.js) | **22/22** | v1 |
-| 3 | `neuro-dialogs` | Нейродиалоги | ☑ [код](../../server/mcp/descriptors/neuro-dialogs.js) | **23/23** | v1 |
-| 4 | `mailing` | Мейлинг | ☑ [код](../../server/mcp/descriptors/mailing.js) | **19/19** | v1 |
-| 5 | `mass-react` | Массовые реакции | ☑ [код](../../server/mcp/descriptors/mass-react.js) | **19/19** | v1 |
-| 6 | `mass-looking` | Масслукинг | ☐ | — | — |
-| 7 | `warming` | Прогрев | ☐ | — | — |
-| 8 | `autoposting` | Автопостинг | ☐ | — | — |
-| 9 | `parsing` | Парсинг каналов | ☐ | — | — |
-| 10 | `parsing-groups` | Парсер групп | ☐ | — | — |
-| 11 | `parsing-users` | Парсер пользователей | ☐ | — | — |
-| 12 | `parsing-messages` | Парсер по сообщениям | ☐ | — | — |
-| 13 | `parsing-comments` | Парсер комментариев | ☐ | — | — |
-| 14 | `ggr` | AI Rating | ☐ | — | — |
-| 15 | `spam-unblock` | Снятие спамблока | ☐ | — | — |
+| # | Ключ | Название | Дескриптор | Полей | Блоков | Версия |
+|---|---|---|---|---|---|---|
+| 1 | `neuro-commenting` | Нейрокомментинг | ☑ [код](../../server/mcp/descriptors/neuro-commenting.js) | **33** | 9 | v1 |
+| 2 | `neuro-chatting` | Нейрочаттинг | ☑ [код](../../server/mcp/descriptors/neuro-chatting.js) | **23** | 9 | v1 |
+| 3 | `neuro-dialogs` | Нейродиалоги | ☑ [код](../../server/mcp/descriptors/neuro-dialogs.js) | **25** | 10 | v1 |
+| 4 | `mailing` | Мейлинг | ☑ [код](../../server/mcp/descriptors/mailing.js) | **19** | 8 | v1 |
+| 5 | `mass-react` | Массовые реакции | ☑ [код](../../server/mcp/descriptors/mass-react.js) | **19** | 8 | v1 |
+| 6 | `mass-looking` | Масслукинг | ☑ [код](../../server/mcp/descriptors/mass-looking.js) | **17** | 8 | v1 |
+| 7 | `warming` | Прогрев | ☑ [код](../../server/mcp/descriptors/warming.js) | **12** | 7 | v1 |
+| 8 | `autoposting` | Автопостинг | ☑ [код](../../server/mcp/descriptors/autoposting.js) | **9** | 5 | v1 |
+| 9 | `parsing` | Парсинг каналов | ☑ [код](../../server/mcp/descriptors/parsing.js) | **13** | 5 | v1 |
+| 10 | `parsing-groups` | Парсер групп | ☑ [код](../../server/mcp/descriptors/parsing-groups.js) | **13** | 5 | v1 |
+| 11 | `parsing-users` | Парсер пользователей | ☑ [код](../../server/mcp/descriptors/parsing-users.js) | **27** | 6 | v1 |
+| 12 | `parsing-messages` | Парсер по сообщениям | ☑ [код](../../server/mcp/descriptors/parsing-messages.js) | **25** | 5 | v1 |
+| 13 | `parsing-comments` | Парсер комментариев | ☑ [код](../../server/mcp/descriptors/parsing-comments.js) | **25** | 5 | v1 |
+| 14 | `ggr` | AI Rating | ☑ [код](../../server/mcp/descriptors/ggr.js) | **1** | 1 | v1 |
+| 15 | `spam-unblock` | Снятие спамблока | ☑ [код](../../server/mcp/descriptors/spam-unblock.js) | **3** | 2 | v1 |
 
 Источник списка: `MODULE_DEFS` в [server/modules/registry.js](../../server/modules/registry.js).
 
@@ -64,9 +64,9 @@
 | `prompts` | Промпты и генерация | Каким тоном и по какому шаблону пишется комментарий | → `promptIndex`, `promptText`, `promptOverrides`, `typeWeights`, `analyzeImages` |
 | `protection` | Защита аккаунтов | Множитель задержек и потолок вероятности действий | → `aiProtection`, `protectionLevel` |
 | `timings` | Тайминги и задержки | Паузы между действиями и реакция на FloodWait | → `delayPreset`, `delays.*` |
-| `binding` | Привязка | К какой цели/кампании/агенту относится задача | → `goalId`, `campaignId`, `agentId` |
+| `binding` | Привязка | К какой цели/кампании/агенту относится задача и когда она прекращается | → `goalId`, `campaignId`, `agentId`, `deadline` |
 
-### 2.3. Параметры (32)
+### 2.3. Параметры (33 поля, 30 верхнеуровневых ключей)
 
 Легенда: **тип** · **деф.** — значение по умолчанию · **огр.** — ограничения.
 
@@ -209,3 +209,7 @@
 | 14.08.2026 | `mass-react` | v1 | Дескриптор: 8 блоков, 17 параметров (19 полей) |
 | 14.08.2026 | `neuro-dialogs` | v1 | Дескриптор: 9 блоков, 21 параметр (23 поля). `maxPerAccount` у модуля НЕ работает — воркер его не читает, в схему не включён |
 | 14.08.2026 | `mailing` | v1 | Дескриптор: 8 блоков, 16 параметров (19 полей). `deadline` у модуля нет — `goalExpired` не вызывается |
+| 14.08.2026 | `warming`, `mass-looking`, `autoposting` | v1 | Дескрипторы. У прогрева `maxPerAccount` не работает; у автопостинга нет ни дедлайна, ни лимитов — объём задачи это число каналов |
+| 14.08.2026 | парсеры (5 шт.) | v1 | Дескрипторы через две общие фабрики: воркеров два, ключей пять. Поля пересечения читаются общим воркером всегда, но применяются только у `parsing-users` — у остальных в схему не включены |
+| 14.08.2026 | `ggr`, `spam-unblock` | v1 | Служебные модули. У AI Rating пустой список аккаунтов = «проверить все» (единственный такой модуль); у снятия спамблока свои поля пауз `delayMin`/`delayMax` вместо общей структуры `delays` |
+| **14.08.2026** | **все 15** | — | **Покрытие полное. Contract-тест держит схему в соответствии с кодом по каждому модулю** |
