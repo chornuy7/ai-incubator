@@ -2,7 +2,7 @@ import { useEffect, useState, useCallback } from 'react'
 import { WorkTab } from './WorkTab'
 import {
   User, Globe, BarChart3, Calendar, Zap, HeartPulse, Hash,
-  Copy, Check, ShieldCheck, ShieldAlert, ShieldQuestion, Loader2, RefreshCw, Unlock, AlertCircle, Server, LogOut, ExternalLink, MessageSquare,
+  Copy, Check, ShieldCheck, ShieldAlert, ShieldQuestion, Loader2, RefreshCw, Unlock, AlertCircle, Server, LogOut, MessageSquare,
 } from 'lucide-react'
 import { Modal, Avatar, Segmented } from '@/shared/ui'
 import { cn } from '@/shared/lib/utils'
@@ -683,28 +683,13 @@ export function ChannelsTab({ accountId }: { accountId: string }) {
           <span className={cn('grid h-8 w-8 shrink-0 place-items-center rounded-lg text-xs font-bold', c.kind === 'channel' ? 'bg-iris-500/15 text-iris-300' : 'bg-spark-500/15 text-spark-300')}>
             {c.kind === 'channel' ? <Hash size={15} /> : <User size={15} />}
           </span>
-          {/* Клик по строке — открыть канал/группу в Telegram (если есть публичный @username). */}
-          {c.username ? (
-            <a href={`https://t.me/${c.username}`} target="_blank" rel="noreferrer" className="min-w-0 flex-1" title="Открыть в Telegram">
-              <div className="flex items-center gap-1.5 truncate text-sm font-semibold text-fg transition-colors group-hover/ch:text-spark-300">{c.title}<ExternalLink size={12} className="shrink-0 opacity-0 transition-opacity group-hover/ch:opacity-100" /></div>
-              <div className="truncate text-xs text-muted">@{c.username}{c.members ? ` · ${c.members.toLocaleString('ru-RU')} уч.` : ''}</div>
-            </a>
-          ) : (
-            <div className="min-w-0 flex-1">
-              <div className="truncate text-sm font-semibold text-fg">{c.title}</div>
-              <div className="truncate text-xs text-muted">{c.kind === 'channel' ? 'Канал' : 'Группа'} · приватный{c.members ? ` · ${c.members.toLocaleString('ru-RU')} уч.` : ''}</div>
-            </div>
-          )}
-          {c.unread > 0 && <span className="rounded-full bg-rose-500/15 px-2 py-0.5 text-[11px] font-bold text-rose-300">{c.unread}</span>}
-          {/* MR-164: посмотреть последние сообщения канала/группы (как переписку в НейроДиалогах). */}
-          <button
-            type="button"
-            onClick={() => setMsgView(c)}
-            className="btn-icon h-8 w-8 shrink-0 text-muted hover:text-iris-300"
-            title="Посмотреть последние сообщения"
-          >
-            <MessageSquare size={14} />
+          {/* MR-164: клик по названию открывает ПЕРЕПИСКУ канала/группы (не Telegram) —
+              последние сообщения в модалке, как диалог. «Открыть в Telegram» ушло в кнопку-копирование. */}
+          <button onClick={() => setMsgView(c)} className="min-w-0 flex-1 text-left" title="Открыть переписку">
+            <div className="flex items-center gap-1.5 truncate text-sm font-semibold text-fg transition-colors group-hover/ch:text-iris-300">{c.title}<MessageSquare size={12} className="shrink-0 opacity-0 transition-opacity group-hover/ch:opacity-100" /></div>
+            <div className="truncate text-xs text-muted">{c.username ? `@${c.username}` : `${c.kind === 'channel' ? 'Канал' : 'Группа'} · приватный`}{c.members ? ` · ${c.members.toLocaleString('ru-RU')} уч.` : ''}</div>
           </button>
+          {c.unread > 0 && <span className="rounded-full bg-rose-500/15 px-2 py-0.5 text-[11px] font-bold text-rose-300">{c.unread}</span>}
           {/* MR-129: «взять отсюда» — копируем ссылку/@username, чтобы вставить канал как цель. */}
           {c.username && (
             <button
