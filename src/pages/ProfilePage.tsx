@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { Link } from 'react-router-dom'
 import {
   UserCog, Shield, Bell, Handshake, Cable, Save, Copy, Zap, History as HistoryIcon, Package, CalendarClock } from 'lucide-react'
@@ -8,6 +8,15 @@ import { useSession } from '@/features/auth/session'
 import { PageHeader, Card, Switch, Badge } from '@/shared/ui'
 import { cn, coins as fmtCoins } from '@/shared/lib/utils'
 import { useTabParam } from '@/shared/lib/useTabParam'
+
+// Все часовые пояса (IANA) — из браузера; фолбэк, если Intl.supportedValuesOf нет.
+const ALL_TIMEZONES: string[] = (() => {
+  try {
+    const f = (Intl as unknown as { supportedValuesOf?: (k: string) => string[] }).supportedValuesOf
+    if (typeof f === 'function') return f('timeZone')
+  } catch { /* fallback ниже */ }
+  return ['UTC', 'Europe/Kyiv', 'Europe/Moscow', 'Europe/Warsaw', 'Europe/London', 'Europe/Berlin', 'America/New_York', 'America/Los_Angeles', 'Asia/Dubai', 'Asia/Tokyo']
+})()
 
 // MR-158: «Настройки профиля» и «Настройки аккаунта» объединены в один раздел.
 const TABS = [
@@ -39,10 +48,39 @@ export function ProfilePage() {
   const [firstName, setFirstName] = useState(data.user.firstName)
   const [lastName, setLastName] = useState(data.user.lastName)
   const [nick, setNick] = useState(data.user.nick)
-  // MR-158: смена пароля с валидацией (длина ≥ 8, новый ≠ текущий, повтор совпадает).
+  // MR-158: смена пароля с валидацией (длина ≥ 8, новый ≠ текущий, повтор совпадает) + индикатор прочности.
   const [pwCur, setPwCur] = useState('')
   const [pwNew, setPwNew] = useState('')
   const [pwRepeat, setPwRepeat] = useState('')
+
+  // Правка 12.08: загрузка аватара (файл юзера) + сохранение локально, чтобы переживало перезагрузку.
+  const avatarKey = sessionUser?.id ? `ai-incubator:avatar:${sessionUser.id}` : 'ai-incubator:avatar'
+  const [avatar, setAvatar] = useState<string | null>(() => { try { return localStorage.getItem(avatarKey) } catch { return null } })
+  const fileRef = useRef<HTMLInputElement>(null)
+  const onPickAvatar = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const f = e.target.files?.[0]; e.target.value = ''
+    if (!f) return
+    if (!f.type.startsWith('image/')) { pushToast({ type: 'error', title: 'Нужен файл-изображение' }); return }
+    if (f.size > 2 * 1024 * 1024) { pushToast({ type: 'error', title: 'Файл слишком большой', desc: 'Максимум 2 МБ' }); return }
+    const reader = new FileReader()
+    reader.onload = () => {
+      const url = String(reader.result || '')
+      setAvatar(url)
+      try { localStorage.setItem(avatarKey, url) } catch { /* превышена квота — оставляем в памяти */ }
+      pushToast({ type: 'success', title: 'Фото обновлено' })
+    }
+    reader.readAsDataURL(f)
+  }
+  // Прочность нового пароля: 0 (нет) … 4 (сильный).
+  const pwScore = (p: string) => {
+    if (!p) return 0
+    let s = 0
+    if (p.length >= 8) s += 1
+    if (p.length >= 12) s += 1
+    if (/[0-9]/.test(p) && /[a-zа-яA-ZА-Я]/.test(p)) s += 1
+    if (/[^A-Za-zА-Яа-я0-9]/.test(p)) s += 1
+    return s
+  }
 
   const save = () => { updateUser({ firstName, lastName, nick }); pushToast({ type: 'success', title: 'Изменения сохранены' }) }
   const saveSecurity = () => {
@@ -84,8 +122,10 @@ export function ProfilePage() {
             <div className="space-y-4">
             <Card>
               <div className="mb-5 flex items-center gap-4">
-                <div className="grid h-16 w-16 place-items-center rounded-2xl bg-iris-gradient text-2xl font-bold text-white">
-                  {(sessionUser?.name || `${firstName} ${lastName}`).trim().slice(0, 2).toUpperCase()}
+                <div className="h-16 w-16 shrink-0 overflow-hidden rounded-2xl">
+                  {avatar
+                    ? <img src={avatar} alt="Аватар" className="h-full w-full object-cover" />
+                    : <div className="grid h-full w-full place-items-center bg-iris-gradient text-2xl font-bold text-white">{(sessionUser?.name || `${firstName} ${lastName}`).trim().slice(0, 2).toUpperCase()}</div>}
                 </div>
                 <div className="min-w-0">
                   <div className="font-display text-lg font-bold text-fg">{sessionUser?.name || `${firstName} ${lastName}`}</div>
@@ -108,7 +148,8 @@ export function ProfilePage() {
                     </Badge>
                   )}
                 </div>
-                <button onClick={() => pushToast({ type: 'info', title: 'Загрузка аватара (демо)' })} className="btn-ghost ml-auto h-9">Сменить фото</button>
+                <input ref={fileRef} type="file" accept="image/*" onChange={onPickAvatar} className="hidden" />
+                <button onClick={() => fileRef.current?.click()} className="btn-ghost ml-auto h-9">Сменить фото</button>
               </div>
               <div className="grid gap-4 sm:grid-cols-2">
                 <div><label className="label">Имя</label><input value={firstName} onChange={(e) => setFirstName(e.target.value)} className="input" /></div>
@@ -134,11 +175,7 @@ export function ProfilePage() {
               <div>
                 <label className="label">Часовой пояс</label>
                 <select defaultValue="Europe/Kyiv" className="input max-w-xs">
-                  <option value="Europe/Kyiv">Киев (UTC+3)</option>
-                  <option value="Europe/Moscow">Москва (UTC+3)</option>
-                  <option value="Europe/Warsaw">Варшава (UTC+2)</option>
-                  <option value="Europe/London">Лондон (UTC+1)</option>
-                  <option value="UTC">UTC</option>
+                  {ALL_TIMEZONES.map((tz) => <option key={tz} value={tz}>{tz}</option>)}
                 </select>
               </div>
               <div className="flex justify-between rounded-2xl border border-rose-500/30 bg-rose-500/8 p-4">
@@ -153,12 +190,31 @@ export function ProfilePage() {
             <Card className="space-y-5">
               <div>
                 <div className="mb-3 text-sm font-bold text-fg">Смена пароля</div>
+                {/* autoComplete=new-password/off — чтобы браузер НЕ подставлял сохранённый пароль
+                    в поле «текущий» (был баг: поле приходило заполненным). */}
                 <div className="grid gap-3 sm:grid-cols-2">
-                  <div><label className="label">Текущий пароль</label><input type="password" value={pwCur} onChange={(e) => setPwCur(e.target.value)} className="input" placeholder="••••••••" /></div>
-                  <div /><div><label className="label">Новый пароль</label><input type="password" value={pwNew} onChange={(e) => setPwNew(e.target.value)} className="input" placeholder="минимум 8 символов" /></div>
-                  <div><label className="label">Повторите пароль</label><input type="password" value={pwRepeat} onChange={(e) => setPwRepeat(e.target.value)} className="input" placeholder="••••••••" /></div>
+                  <div><label className="label">Текущий пароль</label><input type="password" autoComplete="off" value={pwCur} onChange={(e) => setPwCur(e.target.value)} className="input" placeholder="••••••••" /></div>
+                  <div />
+                  <div>
+                    <label className="label">Новый пароль</label>
+                    <input type="password" autoComplete="new-password" value={pwNew} onChange={(e) => setPwNew(e.target.value)} className="input" placeholder="минимум 8 символов" />
+                    {pwNew && (() => {
+                      const m = [
+                        { w: '25%', c: 'bg-rose-500', t: 'Очень слабый', tc: 'text-rose-300' },
+                        { w: '50%', c: 'bg-rose-400', t: 'Слабый', tc: 'text-rose-300' },
+                        { w: '75%', c: 'bg-amber-400', t: 'Средний', tc: 'text-amber-300' },
+                        { w: '100%', c: 'bg-spark-500', t: 'Сильный', tc: 'text-spark-300' },
+                      ][Math.max(0, pwScore(pwNew) - 1)]
+                      return (
+                        <div className="mt-1.5">
+                          <div className="h-1 w-full overflow-hidden rounded-full bg-line"><div className={cn('h-full rounded-full transition-all', m.c)} style={{ width: m.w }} /></div>
+                          <div className={cn('mt-0.5 text-[11px]', m.tc)}>Прочность: {m.t}{pwNew.length < 8 ? ' · нужно ≥ 8 символов' : ''}</div>
+                        </div>
+                      )
+                    })()}
+                  </div>
+                  <div><label className="label">Повторите пароль</label><input type="password" autoComplete="new-password" value={pwRepeat} onChange={(e) => setPwRepeat(e.target.value)} className="input" placeholder="••••••••" /></div>
                 </div>
-                {pwNew && pwNew.length < 8 && <div className="mt-2 text-xs text-rose-300">Пароль должен быть не короче 8 символов.</div>}
                 {pwRepeat && pwNew !== pwRepeat && <div className="mt-1 text-xs text-rose-300">Пароли не совпадают.</div>}
               </div>
               <div className="border-t border-line pt-4">
