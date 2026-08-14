@@ -69,7 +69,7 @@ async function recentlyDeadProxy(url, meta = {}) {
  * «ручных» прокси вне каталога — отметка в мете аккаунта.
  * @returns {Promise<'ok'|'down'|null>} null — вердикта ещё нет
  */
-async function cachedProxyVerdict(url, meta = {}) {
+export async function cachedProxyVerdict(url, meta = {}) {
   if (!url || url === '—') return null
   try {
     const p = await findProxyByUrl(url)
