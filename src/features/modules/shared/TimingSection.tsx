@@ -105,6 +105,21 @@ export function TimingSection(props: TimingSectionProps) {
   // «Эффективная» задержка = базовая × множитель пресета — то, что реально уйдёт на паузы;
   // показываем её под карточками, чтобы выбор Мин/Рек/Макс СРАЗУ менял видимые значения.
   const eff = (pair?: [number, number] | null) => pair ? `${Math.round(pair[0] * mul)}–${Math.round(pair[1] * mul)} с` : null
+  // Правка 14.08: под пресетами показываем ПОЛНОЕ (общее) время задачи одним числом, а не
+  // два диапазона задержек. Считается как LaunchCost: действий-на-аккаунт × средняя задержка
+  // между действиями (×множитель пресета). Совпадает с чипом времени внизу панели запуска.
+  const fmtDur = (sec: number): string | null => {
+    if (!sec || sec <= 0) return null
+    const m = Math.round(sec / 60)
+    if (m < 1) return `${Math.round(sec)} с`
+    if (m < 60) return `${m} мин`
+    const h = Math.floor(m / 60), r = m % 60
+    return r ? `${h} ч ${r} мин` : `${h} ч`
+  }
+  const actsPerAcc = computedTotal?.value ?? perAccount?.max ?? 0
+  const primaryDelay = (showAction && delays.action) ? delays.action : (showComment && delays.comment) ? delays.comment : (delays.action || delays.comment || null)
+  const avgDelaySec = primaryDelay ? ((primaryDelay[0] + primaryDelay[1]) / 2) * mul : 0
+  const fullTime = fmtDur(actsPerAcc * avgDelaySec)
   // MR-136: поля задержек показывают ЭФФЕКТИВНОЕ значение (базовое × множитель пресета) —
   // чтобы выбор Мин/Макс сразу менял видимые числа. При ручном правке уходим в Custom (×1),
   // и введённое (уже масштабированное) значение становится базовым — эффект сохраняется.
@@ -215,11 +230,14 @@ export function TimingSection(props: TimingSectionProps) {
             )
           })}
         </div>
-        {/* MR-136: эффективные задержки — видно СРАЗУ, что выбор Мин/Рек/Макс меняет значения. */}
+        {/* Правка 14.08: ПОЛНОЕ время задачи одним числом (а не два диапазона задержек).
+            Если посчитать не из чего (нет действий/задержки) — падаем на эффективные задержки. */}
         <div className="mt-2 text-[11px] text-muted">
-          {delayPreset === CUSTOM
-            ? <>Задержки — ручные (заданы в «Расширенных настройках»).</>
-            : <>Эффективные задержки: {[showAction && delays.action && `действие ${eff(delays.action)}`, showComment && delays.comment && `комментарий ${eff(delays.comment)}`, showJoin && delays.join && `вступление ${eff(delays.join)}`].filter(Boolean).join(' · ') || '—'}</>}
+          {fullTime
+            ? <>Полное время: ≈ {fullTime} <span className="text-faint">(на 1 аккаунт{delayPreset === CUSTOM ? '' : `, пресет «${delayPresets![delayPreset]}»`})</span></>
+            : delayPreset === CUSTOM
+              ? <>Задержки — ручные (заданы в «Расширенных настройках»).</>
+              : <>Эффективные задержки: {[showAction && delays.action && `действие ${eff(delays.action)}`, showComment && delays.comment && `комментарий ${eff(delays.comment)}`, showJoin && delays.join && `вступление ${eff(delays.join)}`].filter(Boolean).join(' · ') || '—'}</>}
         </div>
         </>
       )}
