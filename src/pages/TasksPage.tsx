@@ -1007,7 +1007,12 @@ export function TaskDetailPage() {
             {/* MR-147: «Модуль» и «Потрачено» перенесены сюда, к прогрессу. */}
             <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-sm text-white/60">
               <span>{t.progress?.done ?? t.progress?.actionsDone ?? 0} / {t.progress?.total ?? 0} действий</span>
-              <span className="tabular-nums text-amber-300/80" title={t.tokenCoins ? `${fmtCoins(t.spentCoins || 0)} ⚡ за действия + ${fmtCoins(t.tokenCoins)} ⚡ за ИИ` : 'Потрачено на задачу'}>⚡ {fmtCoins((t.spentCoins || 0) + (t.tokenCoins || 0))}{t.tokens ? ` · ${t.tokens.toLocaleString('ru-RU')} токенов` : ''}</span>
+              {/* Голая цифра «⚡ 0.00» ни о чём не говорила — подписываем, что это расход
+                  ИМЕННО этой задачи (из общего баланса он не читается). */}
+              <span className="inline-flex items-baseline gap-1 tabular-nums text-amber-300/80" title={t.tokenCoins ? `${fmtCoins(t.spentCoins || 0)} ⚡ за действия + ${fmtCoins(t.tokenCoins)} ⚡ за ИИ` : undefined}>
+                <span className="text-[11px] text-white/40">потрачено</span>
+                ⚡ {fmtCoins((t.spentCoins || 0) + (t.tokenCoins || 0))}{t.tokens ? ` · ${t.tokens.toLocaleString('ru-RU')} токенов` : ''}
+              </span>
             </div>
           </div>
           {/* Управление — только тем, у кого есть доступ к модулю задачи. */}
