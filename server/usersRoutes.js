@@ -1,6 +1,6 @@
 /** CRUD + аутентификация операторов (§8.1). Монтируется в /api/users. */
 import { Router } from 'express'
-import { listUsers, getUser, createUser, updateUser, deleteUser, authenticate, authenticateSupabase, publicUser, isBlockedByOwner, listSubs } from './users.js'
+import { listUsers, getUser, createUser, updateUser, deleteUser, authenticate, authenticateSupabase, verifyPassword, publicUser, isBlockedByOwner, listSubs } from './users.js'
 import { rolesForUser, mergePermissions, userRoleIds, hasAdminRole, ADMIN_ROLE_ID } from './roles.js'
 import { capModules, applyDirectGrants } from './subAccess.js'
 import { getBalance } from './balance.js'
@@ -144,6 +144,36 @@ usersRouter.get('/me', async (req, res) => {
     const isOwner = !isAdmin && (await listSubs(user.id)).length > 0
     res.json({ ok: true, user: publicUser(user), role, roles, isOwner })
   } catch (err) { fail(res, err, 500) }
+})
+
+/**
+ * Смена собственного пароля (правка 14.08). Раньше это была демо-заглушка на фронте
+ * (просто тост, без проверки). Теперь:
+ *   - текущий пароль проверяется в БД (Supabase-вход; для файлового бэкенда — scrypt-хэш);
+ *   - лимит надёжности нового пароля (≥8, буквы+цифры) — как на фронте;
+ *   - обновление идёт через updateUser → Supabase Auth (или scrypt-хэш).
+ */
+usersRouter.post('/me/password', async (req, res) => {
+  try {
+    const userId = req.header('x-user-id')
+    if (!userId) return res.status(401).json({ ok: false, error: 'Нет сессии' })
+    const user = await getUser(userId)
+    if (!user || !user.active) return res.status(401).json({ ok: false, error: 'Пользователь отключён' })
+    const { currentPassword, newPassword } = req.body ?? {}
+    const nw = String(newPassword ?? '')
+    // Лимит надёжности — тот же, что на фронте.
+    if (nw.length < 8) return res.status(400).json({ ok: false, error: 'Новый пароль слишком короткий — минимум 8 символов' })
+    if (!/[0-9]/.test(nw) || !/[a-zA-Zа-яА-Я]/.test(nw)) return res.status(400).json({ ok: false, error: 'Пароль должен содержать и буквы, и цифры' })
+    if (nw === String(currentPassword ?? '')) return res.status(400).json({ ok: false, error: 'Новый пароль совпадает с текущим' })
+    // ПРОВЕРКА ТЕКУЩЕГО ПАРОЛЯ ИЗ БД: сначала Supabase-вход, затем (файловый бэкенд) scrypt-хэш.
+    let ok = false
+    try { ok = !!(await authenticateSupabase(user.email, String(currentPassword ?? ''))) } catch { ok = false }
+    if (!ok && user.passwordHash) ok = verifyPassword(String(currentPassword ?? ''), user.passwordHash)
+    if (!ok) return res.status(403).json({ ok: false, error: 'Текущий пароль неверный' })
+    await updateUser(user.id, { password: nw })
+    await appendAudit({ action: 'user.password', module: 'auth', initiator: user.id, reason: 'Смена пароля', meta: { userId: user.id } })
+    res.json({ ok: true })
+  } catch (err) { fail(res, err) }
 })
 
 /** Выход: закрыть сессию рабочего времени. */

@@ -4,7 +4,7 @@ import {
   UserCog, Shield, Bell, Handshake, Cable, Save, Copy, Zap, History as HistoryIcon, Package, CalendarClock, AlertTriangle, Trash2 } from 'lucide-react'
 import { useApp } from '@/mocks/store'
 import { fetchBalance, fetchWalletHistory, type Balance, type WalletEntry } from '@/api/balanceApi'
-import { deleteUser } from '@/api/usersApi'
+import { deleteUser, changeMyPassword } from '@/api/usersApi'
 import { useSession } from '@/features/auth/session'
 import { PageHeader, Card, Switch, Badge, Modal } from '@/shared/ui'
 import { cn, coins as fmtCoins } from '@/shared/lib/utils'
@@ -103,14 +103,25 @@ export function ProfilePage() {
   }
 
   const save = () => { updateUser({ firstName, lastName, nick }); pushToast({ type: 'success', title: 'Изменения сохранены' }) }
-  const saveSecurity = () => {
+  const [pwBusy, setPwBusy] = useState(false)
+  const saveSecurity = async () => {
     if (!pwNew && !pwRepeat && !pwCur) { pushToast({ type: 'success', title: 'Настройки безопасности сохранены' }); return }
+    // Правка 14.08: текущий пароль обязателен — сервер сверит его с БД.
+    if (!pwCur) { pushToast({ type: 'error', title: 'Введите текущий пароль' }); return }
     if (pwNew.length < 8) { pushToast({ type: 'error', title: 'Пароль слишком короткий', desc: 'Минимум 8 символов' }); return }
     if (!/[0-9]/.test(pwNew) || !/[a-zA-Zа-яА-Я]/.test(pwNew)) { pushToast({ type: 'error', title: 'Слабый пароль', desc: 'Нужны и буквы, и цифры' }); return }
+    // Лимит надёжности: не слабее «Среднего» (score ≥ 3) — иначе не даём сохранить.
+    if (pwScore(pwNew) < 3) { pushToast({ type: 'error', title: 'Пароль слишком простой', desc: 'Сделайте длиннее (12+) или добавьте спецсимвол' }); return }
     if (pwNew !== pwRepeat) { pushToast({ type: 'error', title: 'Пароли не совпадают' }); return }
     if (pwNew === pwCur) { pushToast({ type: 'error', title: 'Новый пароль совпадает с текущим' }); return }
-    setPwCur(''); setPwNew(''); setPwRepeat('')
-    pushToast({ type: 'success', title: 'Пароль обновлён' })
+    setPwBusy(true)
+    try {
+      await changeMyPassword(pwCur, pwNew) // сервер проверит текущий пароль по БД
+      setPwCur(''); setPwNew(''); setPwRepeat('')
+      pushToast({ type: 'success', title: 'Пароль обновлён' })
+    } catch (e) {
+      pushToast({ type: 'error', title: 'Не удалось сменить пароль', desc: e instanceof Error ? e.message : 'Проверьте текущий пароль' })
+    } finally { setPwBusy(false) }
   }
 
   const refLink = 'https://incubator.ai/r/illia7'
@@ -305,7 +316,7 @@ export function ProfilePage() {
                   ))}
                 </div>
               </div>
-              <div className="flex justify-end"><button onClick={saveSecurity} className="btn-primary h-10"><Save size={16} /> Сохранить</button></div>
+              <div className="flex justify-end"><button onClick={() => void saveSecurity()} disabled={pwBusy} className="btn-primary h-10 disabled:opacity-50"><Save size={16} /> {pwBusy ? 'Сохранение…' : 'Сохранить'}</button></div>
             </Card>
           )}
 

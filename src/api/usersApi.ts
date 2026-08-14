@@ -73,6 +73,11 @@ export async function deleteUser(id: string): Promise<void> {
   await apiDelete(`/api/users/${id}`)
 }
 
+/** Смена собственного пароля: сервер проверяет текущий пароль по БД. */
+export async function changeMyPassword(currentPassword: string, newPassword: string): Promise<void> {
+  await apiPost('/api/users/me/password', { currentPassword, newPassword })
+}
+
 export async function logoutUser(userId: string): Promise<void> {
   clearToken() // токен недействителен для нас — убираем локально в любом случае
   try { await apiPost('/api/users/logout', { userId }) } catch { /* best-effort */ }
