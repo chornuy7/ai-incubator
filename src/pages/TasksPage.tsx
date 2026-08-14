@@ -50,6 +50,9 @@ function pct(t: ModuleTask) {
 }
 const isActive = (t: ModuleTask) => t.status === 'running' || t.status === 'queued'
 
+/** Проблемные аккаунты задачи: сколько, из скольких и ЧТО именно не так у каждого. */
+type TaskProblem = { bad: number; total: number; items: { name: string; reason: string }[] }
+
 // MR-146: «отвалившийся» аккаунт задачи — по тем же признакам, что в менеджере/пикере.
 // Возвращает короткую причину проблемы или '' если аккаунт в порядке.
 function acctProblem(a?: TgAccount): string {
@@ -188,14 +191,21 @@ export function TasksPage() {
   // MR-146: на каждую задачу — сколько её аккаунтов «отвалилось» (нет прокси/не отвечает/нерабочий статус).
   const acctById = useMemo(() => new Map(accounts.map((a) => [a.id, a])), [accounts])
   const taskProblems = useMemo(() => {
-    const fn = (t: ModuleTask): { bad: number; total: number } => {
+    const fn = (t: ModuleTask): TaskProblem => {
       const ids = t.settings?.accountIds || []
       // Пока список аккаунтов не загрузился — НЕ судим (иначе первые ~60с все задачи
       // мигали бы ложным «все аккаунты с проблемой», т.к. byId ещё пуст).
-      if (acctById.size === 0) return { bad: 0, total: ids.length }
-      let bad = 0
-      for (const id of ids) if (acctProblem(acctById.get(id))) bad += 1
-      return { bad, total: ids.length }
+      if (acctById.size === 0) return { bad: 0, total: ids.length, items: [] }
+      // Собираем не только счётчик, но и ПРИЧИНУ по каждому аккаунту: «нет прокси» и
+      // «нужна переавторизация» чинятся по-разному, а раньше показывался общий текст
+      // со списком всех возможных причин сразу — читать его было бесполезно.
+      const items: { name: string; reason: string }[] = []
+      for (const id of ids) {
+        const a = acctById.get(id)
+        const reason = acctProblem(a)
+        if (reason) items.push({ name: a ? (a.name || a.username || a.phone || id) : id, reason })
+      }
+      return { bad: items.length, total: ids.length, items }
     }
     return fn
   }, [acctById])
@@ -647,7 +657,7 @@ function TaskCard({ t, goalName, busy, busyAction, pendingAction, onOpen, onStop
   onStop: (t: ModuleTask) => void; onRestart: (t: ModuleTask) => void
   onPause: (t: ModuleTask) => void; onResume: (t: ModuleTask) => void; canControl?: boolean; compact?: boolean
   selected?: boolean; onToggleSelect?: (id: string) => void
-  problem?: { bad: number; total: number } // MR-146: сколько аккаунтов задачи «отвалилось»
+  problem?: TaskProblem // MR-146: сколько аккаунтов задачи «отвалилось» и почему
 }) {
   // Оптимистичный статус: пока воркер реально не встал, показываем «Останавливается…» —
   // честнее, чем застывшее «Выполняется», и сразу видно, что кнопка сработала.
@@ -704,13 +714,34 @@ function TaskCard({ t, goalName, busy, busyAction, pendingAction, onOpen, onStop
           остальные (прогрев/парсинг) — предупреждение (жёлтый). На задаче «Ошибка» не дублируем. */}
       {t.status !== 'error' && problem && problem.bad > 0 && (() => {
         const hard = isCombatModule(t.moduleKey)
+        // Заголовок: при одном аккаунте «1 из 1 с проблемой» звучит как отчёт бухгалтера —
+        // пишем просто «аккаунт недоступен». Счётчик нужен, только когда есть из чего выбирать.
+        const head = problem.total === 1
+          ? (hard ? 'Аккаунт недоступен' : 'Аккаунт недоступен')
+          : `${hard ? 'Проблема с аккаунтами' : 'Предупреждение'} · ${problem.bad} из ${problem.total}`
+        // Причины группируем: «нет прокси» и «нужна переавторизация» чинятся по-разному,
+        // и оператор должен видеть, ЧТО именно чинить, а не список всех возможных бед.
+        const byReason = new Map<string, string[]>()
+        for (const it of problem.items || []) {
+          const list = byReason.get(it.reason) || []
+          list.push(it.name)
+          byReason.set(it.reason, list)
+        }
         return (
           <div className={cn('mt-2.5 rounded-xl border p-2.5', hard ? 'border-rose-500/25 bg-rose-500/[.07]' : 'border-amber-500/25 bg-amber-500/[.07]')}>
             <div className={cn('flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wide', hard ? 'text-rose-300' : 'text-amber-300')}>
-              <AlertTriangle size={12} /> {hard ? 'Проблема с аккаунтами' : 'Предупреждение'} · {problem.bad} из {problem.total} с проблемой
+              <AlertTriangle size={12} /> {head}
             </div>
-            <div className={cn('mt-0.5 text-[11px] leading-relaxed', hard ? 'text-rose-200/80' : 'text-amber-200/80')}>
-              Часть аккаунтов недоступна (нет прокси / не отвечает / нерабочий статус). Проверьте их в менеджере перед запуском.
+            <div className={cn('mt-0.5 space-y-0.5 text-[11px] leading-relaxed', hard ? 'text-rose-200/80' : 'text-amber-200/80')}>
+              {[...byReason.entries()].map(([reason, names]) => (
+                <div key={reason} className="truncate">
+                  <b className="font-semibold">{reason}</b>
+                  {': '}
+                  {names.slice(0, 3).join(', ')}
+                  {names.length > 3 ? ` и ещё ${names.length - 3}` : ''}
+                </div>
+              ))}
+              <div className="opacity-70">Чинится в менеджере аккаунтов.</div>
             </div>
           </div>
         )
