@@ -76,7 +76,7 @@ export async function parseJson<T>(res: Response): Promise<T> {
  * (подделать нельзя), но в дев-режиме (без SESSION_SECRET) он остаётся как личность —
  * поэтому шлём оба: токен для прода, id для локальной разработки.
  */
-function authHeaders(base?: Record<string, string>): Record<string, string> {
+export function authHeaders(base?: Record<string, string>): Record<string, string> {
   const headers: Record<string, string> = { ...(base ?? {}) }
   try {
     const raw = localStorage.getItem('ai-incubator:session')

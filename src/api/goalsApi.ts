@@ -1,4 +1,4 @@
-import { apiGet, apiPost, apiDelete, parseJson } from './client'
+import { apiGet, apiPost, apiDelete, apiPut } from './client'
 
 /** Что именно считаем. Виды — те результаты, которые система умеет посчитать сама. */
 export type MetricKind = 'leads' | 'clicks' | 'joins' | 'replies' | 'custom'
@@ -134,12 +134,7 @@ export async function createGoal(input: GoalInput): Promise<Goal> {
 }
 
 export async function updateGoal(id: string, patch: Partial<GoalInput>): Promise<Goal> {
-  const res = await fetch(`/api/goals/${id}`, {
-    method: 'PUT',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(patch),
-  })
-  const data = await parseJson<{ ok: boolean; goal: Goal }>(res)
+  const data = await apiPut<{ ok: boolean; goal: Goal }>(`/api/goals/${id}`, patch)
   return data.goal
 }
 

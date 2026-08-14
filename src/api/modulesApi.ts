@@ -1,5 +1,5 @@
 import type { LogEntry } from '@/shared/types'
-import { apiGet, apiPost, apiDelete } from './client'
+import { apiGet, apiPost, apiDelete, apiPatch } from './client'
 
 export interface ModuleTaskSettings {
   accountIds: string[]
@@ -190,14 +190,8 @@ export async function pauseModuleTask(moduleKey: string, taskId: string): Promis
 export async function updateModuleTaskSettings(
   moduleKey: string, taskId: string, settings: Partial<ModuleTaskSettings>,
 ): Promise<ModuleTask> {
-  const res = await fetch(`${base(moduleKey)}/tasks/${taskId}/settings`, {
-    method: 'PATCH',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ settings }),
-  })
-  const data = await res.json()
-  if (!res.ok || !data.ok) throw new Error(data.error || `HTTP ${res.status}`)
-  return data.task as ModuleTask
+  const data = await apiPatch<{ ok: boolean; task: ModuleTask }>(`${base(moduleKey)}/tasks/${taskId}/settings`, { settings })
+  return data.task
 }
 
 export async function resumeModuleTask(moduleKey: string, taskId: string): Promise<ModuleTask> {

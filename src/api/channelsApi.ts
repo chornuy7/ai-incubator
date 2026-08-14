@@ -1,4 +1,4 @@
-import { apiGet, apiPost, apiDelete } from './client'
+import { apiGet, apiPost, apiDelete, apiPut } from './client'
 
 export interface Channel {
   id: string
@@ -58,13 +58,7 @@ export async function upsertChannel(input: Partial<Channel> & { source?: string 
 }
 
 export async function updateChannel(id: string, patch: Partial<Channel>): Promise<Channel> {
-  const res = await fetch(`/api/channels/${id}`, {
-    method: 'PUT',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(patch),
-  })
-  const data = await res.json()
-  if (!res.ok || data.ok === false) throw new Error(data.error || `HTTP ${res.status}`)
+  const data = await apiPut<{ ok: boolean; channel: Channel }>(`/api/channels/${id}`, patch)
   return data.channel
 }
 

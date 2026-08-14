@@ -1,4 +1,5 @@
 import { COUNTRIES } from '@/shared/config/countries'
+import { apiPost } from './client'
 
 export { COUNTRIES }
 
@@ -23,18 +24,8 @@ export interface VerifyCodeResult {
   account?: TgAccountPayload
 }
 
-async function post<T>(path: string, body: Record<string, unknown>): Promise<T> {
-  const res = await fetch(path, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-  })
-  const data = await res.json()
-  if (!res.ok || data.ok === false) {
-    throw new Error(data.error || `HTTP ${res.status}`)
-  }
-  return data as T
-}
+// Через authed-клиент (X-User-Id + Bearer) — добавление аккаунтов идёт от имени владельца.
+async function post<T>(path: string, body: Record<string, unknown>): Promise<T> { return apiPost<T>(path, body) }
 
 /** Отправка реального SMS/Telegram-кода через MTProto API. proxy — опционально. */
 export async function sendCode(phone: string, proxy?: string, accountId?: string): Promise<SendCodeResult> {

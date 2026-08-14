@@ -1,4 +1,4 @@
-import { apiGet, apiPost } from './client'
+import { apiGet, apiPost, authHeaders } from './client'
 
 /** §2: массовый импорт аккаунтов из tdata / .session. */
 
@@ -72,7 +72,9 @@ export async function uploadFolder(files: File[], relPaths?: string[]): Promise<
     const rel = relPaths?.[i] || (f as File & { webkitRelativePath?: string }).webkitRelativePath || f.name
     fd.append('paths', rel)
   })
-  const res = await fetch('/api/tg/import/upload', { method: 'POST', body: fd })
+  // FormData: заголовки авторизации ставим сами (Content-Type НЕ трогаем — браузер сам
+  // выставит multipart-boundary). Без токена сервер отвечал бы 401 при активной авторизации.
+  const res = await fetch('/api/tg/import/upload', { method: 'POST', headers: authHeaders(), body: fd })
   const data = await res.json()
   if (!res.ok || !data.ok) throw new Error(data.error || 'Загрузка не удалась')
   return data

@@ -1,4 +1,4 @@
-import { apiGet, apiPost, apiDelete, parseJson } from './client'
+import { apiGet, apiPost, apiDelete, apiPut } from './client'
 
 // Воронка прогрева лида (§9 созвона 17.07): холодный → только написал → прогретый →
 // заинтересованный → горячий (+ мгновенный алерт), плюс терминальные цель/закрыт.
@@ -58,12 +58,7 @@ export async function upsertLead(input: LeadInput): Promise<{ lead: Lead; create
 }
 
 export async function updateLead(id: string, patch: Partial<LeadInput>): Promise<Lead> {
-  const res = await fetch(`/api/leads/${id}`, {
-    method: 'PUT',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(patch),
-  })
-  const data = await parseJson<{ ok: boolean; lead: Lead }>(res)
+  const data = await apiPut<{ ok: boolean; lead: Lead }>(`/api/leads/${id}`, patch)
   return data.lead
 }
 
