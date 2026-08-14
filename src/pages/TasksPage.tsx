@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { ListChecks, RefreshCw, Square, RotateCw, Target, Activity, Gauge, Pause, Play, Loader2, ArrowLeft, Download, AlertTriangle } from 'lucide-react'
 import { useApp } from '@/mocks/store'
-import { PageHeader, Card, EmptyState, Badge, Select, Segmented } from '@/shared/ui'
+import { PageHeader, Card, EmptyState, Badge, Select } from '@/shared/ui'
 import { HelpButton } from '@/features/neuro-commenting/moduleUi'
 import { MODULES, isCombatModule, combatConfirmText } from '@/shared/config/modules'
 import { fetchAllTasks, fetchModuleTask, stopModuleTask, restartModuleTask, pauseModuleTask, resumeModuleTask, updateModuleTaskSettings, type ModuleTask } from '@/api/modulesApi'
@@ -141,7 +141,7 @@ export function TasksPage() {
   // (~100мс) — статус ещё «running», можно было спамить стоп, а тост «Остановлена» врал.
   const [pending, setPending] = useState<Record<string, { action: 'pause' | 'stop'; at: number }>>({})
   const clearPending = (id: string) => setPending((p) => { if (!p[id]) return p; const n = { ...p }; delete n[id]; return n })
-  const [view, setView] = useTabParam<number>(0, 'view') // 0 — список, 1 — по целям (воронка)
+  const [view] = useTabParam<number>(0, 'view') // 0 — список, 1 — по целям (воронка)
   const navigate = useNavigate()
   // §8: задача открывается отдельной вьюшкой /panel/tasks/:id, а не модалкой.
   const openTask = (t: ModuleTask) => navigate(`/panel/tasks/${t.id}?m=${t.moduleKey}`)
@@ -521,7 +521,9 @@ export function TasksPage() {
 
       {/* Фильтры + режим */}
       <div className="mb-3 flex flex-wrap items-center gap-2">
-        <Segmented value={view} onChange={setView} size="sm" options={['Список', 'По целям']} />
+        {/* Переключатель «Список / По целям» скрыт (правка 13.08): целей в работе обычно
+            нет, и вкладка «По целям» стояла пустой, занимая место. Сам разрез не удалён —
+            открывается по ссылке ?view=1, чтобы вернуть его одной строкой, когда цели пойдут. */}
         <Select value={fGoal} onChange={setFGoal} className="w-48" options={[{ value: '', label: 'Все цели' }, { value: 'none', label: 'Без цели' }, ...goals.map((g) => ({ value: g.id, label: g.name }))]} />
         <Select value={fModule} onChange={setFModule} className="w-48" options={[{ value: '', label: 'Все модули' }, ...modules.map((m) => ({ value: m, label: moduleTitle(m) })), ...(fModule && !modules.includes(fModule) ? [{ value: fModule, label: moduleTitle(fModule) }] : [])]} />
         <Select value={fStatus} onChange={setFStatus} className="w-44" options={STATUS_KEYS.map((s) => ({ value: s, label: s ? STATUS[s].label : 'Все статусы' }))} />
