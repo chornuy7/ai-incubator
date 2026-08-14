@@ -28,14 +28,10 @@ const FALLBACK_PACKS = [
   { coins: 500, price: 39.99 },
 ]
 
-// Уведомления (12.08): сегодня — только время (12:45), другой день — с датой (12 авг, 16:20),
-// иначе «16:20» вчера выглядело новее «12:45» сегодня.
+// Уведомления (12.08): всегда показываем ДАТУ и время («14 авг, 13:46»), чтобы было
+// видно, за какой день событие (раньше был только час — вчерашнее путалось с сегодняшним).
 function fmtNotifTs(ts: number): string {
-  const d = new Date(ts)
-  const sameDay = d.toDateString() === new Date().toDateString()
-  return sameDay
-    ? d.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })
-    : d.toLocaleString('ru-RU', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })
+  return new Date(ts).toLocaleString('ru-RU', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })
 }
 
 export function AppHeader() {
