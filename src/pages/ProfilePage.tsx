@@ -9,14 +9,15 @@ import { PageHeader, Card, Switch, Badge } from '@/shared/ui'
 import { cn, coins as fmtCoins } from '@/shared/lib/utils'
 import { useTabParam } from '@/shared/lib/useTabParam'
 
-// Все часовые пояса (IANA) — из браузера; фолбэк, если Intl.supportedValuesOf нет.
-const ALL_TIMEZONES: string[] = (() => {
-  try {
-    const f = (Intl as unknown as { supportedValuesOf?: (k: string) => string[] }).supportedValuesOf
-    if (typeof f === 'function') return f('timeZone')
-  } catch { /* fallback ниже */ }
-  return ['UTC', 'Europe/Kyiv', 'Europe/Moscow', 'Europe/Warsaw', 'Europe/London', 'Europe/Berlin', 'America/New_York', 'America/Los_Angeles', 'Asia/Dubai', 'Asia/Tokyo']
-})()
+// Часовые пояса по СМЕЩЕНИЮ UTC (стандартные ~30, с городом-подсказкой) — а не 400+ IANA-имён.
+const ALL_TIMEZONES: string[] = [
+  'UTC-12:00', 'UTC-11:00', 'UTC-10:00 · Гонолулу', 'UTC-09:00', 'UTC-08:00 · Лос-Анджелес',
+  'UTC-07:00 · Денвер', 'UTC-06:00 · Чикаго', 'UTC-05:00 · Нью-Йорк', 'UTC-04:00', 'UTC-03:00 · Буэнос-Айрес',
+  'UTC-02:00', 'UTC-01:00', 'UTC+00:00 · Лондон', 'UTC+01:00 · Берлин', 'UTC+02:00 · Варшава',
+  'UTC+03:00 · Киев / Москва', 'UTC+03:30 · Тегеран', 'UTC+04:00 · Дубай', 'UTC+05:00', 'UTC+05:30 · Дели',
+  'UTC+06:00', 'UTC+07:00 · Бангкок', 'UTC+08:00 · Пекин', 'UTC+09:00 · Токио', 'UTC+09:30',
+  'UTC+10:00 · Сидней', 'UTC+11:00', 'UTC+12:00 · Окленд', 'UTC+13:00', 'UTC+14:00',
+]
 
 // MR-158: «Настройки профиля» и «Настройки аккаунта» объединены в один раздел.
 const TABS = [
@@ -174,7 +175,7 @@ export function ProfilePage() {
 
               <div>
                 <label className="label">Часовой пояс</label>
-                <select defaultValue="Europe/Kyiv" className="input max-w-xs">
+                <select defaultValue="UTC+03:00 · Киев / Москва" className="input max-w-xs">
                   {ALL_TIMEZONES.map((tz) => <option key={tz} value={tz}>{tz}</option>)}
                 </select>
               </div>
