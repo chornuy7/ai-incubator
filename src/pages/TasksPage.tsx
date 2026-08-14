@@ -456,7 +456,7 @@ export function TasksPage() {
     <div>
       <PageHeader
         title="Дашборд задач"
-        subtitle="Цели → Задачи → Модули: единый экран прогресса. Фильтры-воронка + преследование цели."
+        subtitle="Задачи и модули: единый экран прогресса, статусов и запуска."
         icon={<ListChecks size={22} />}
         badge={funnel.active ? `${funnel.active} активных` : undefined}
         actions={<div className="flex items-center gap-2"><HelpButton topic="tasks" className="h-10 w-10" /><button onClick={() => void load()} className="btn-ghost h-10"><RefreshCw size={16} /> Обновить</button></div>}
@@ -492,8 +492,9 @@ export function TasksPage() {
           </div>
         </Card>
 
+        {/* Плашка «Целей в работе» скрыта (правка 13.08): целей нет, счётчик вечно 0 и
+            занимал четверть блока. Метрика жива в funnel — вернуть = одна строка. */}
         <div className="grid grid-cols-2 gap-2">
-          {stat(<Target size={17} />, 'Целей в работе', funnel.goals, 'text-iris-300')}
           {stat(<ListChecks size={17} />, 'Задач (в фильтре)', funnel.tasks)}
           {stat(<Activity size={17} />, 'Активных / модулей', `${funnel.active} / ${funnel.modulesWorking}`, 'text-amber-300')}
           {stat(<Gauge size={17} />, 'Средний прогресс', `${funnel.avg}%`)}
@@ -524,7 +525,11 @@ export function TasksPage() {
         {/* Переключатель «Список / По целям» скрыт (правка 13.08): целей в работе обычно
             нет, и вкладка «По целям» стояла пустой, занимая место. Сам разрез не удалён —
             открывается по ссылке ?view=1, чтобы вернуть его одной строкой, когда цели пойдут. */}
-        <Select value={fGoal} onChange={setFGoal} className="w-48" options={[{ value: '', label: 'Все цели' }, { value: 'none', label: 'Без цели' }, ...goals.map((g) => ({ value: g.id, label: g.name }))]} />
+        {/* Фильтр по целям скрыт вместе с плашкой: фильтровать нечего, пока целей нет.
+            Сам фильтр рабочий — показываем, как только цель появится. */}
+        {goals.length > 0 && (
+          <Select value={fGoal} onChange={setFGoal} className="w-48" options={[{ value: '', label: 'Все цели' }, { value: 'none', label: 'Без цели' }, ...goals.map((g) => ({ value: g.id, label: g.name }))]} />
+        )}
         <Select value={fModule} onChange={setFModule} className="w-48" options={[{ value: '', label: 'Все модули' }, ...modules.map((m) => ({ value: m, label: moduleTitle(m) })), ...(fModule && !modules.includes(fModule) ? [{ value: fModule, label: moduleTitle(fModule) }] : [])]} />
         <Select value={fStatus} onChange={setFStatus} className="w-44" options={STATUS_KEYS.map((s) => ({ value: s, label: s ? STATUS[s].label : 'Все статусы' }))} />
       </div>
