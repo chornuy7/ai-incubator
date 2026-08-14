@@ -53,42 +53,25 @@ export function LaunchCost({ moduleKey, actions, accounts, delaySec, compact }: 
 
   // Компактный вид для нижней панели: цена и время — чипами, детали — в подсказке.
   if (compact) {
-    // Полная математика в подсказке: из чего складывается списание. Перевод строки
-    // (\n) нативный title рендерит построчно — отдельный попап пока не заводим.
-    const tk = Math.round(tokens).toLocaleString('ru-RU')
-    const detail = [
-      'Как считается списание:',
-      `• Действия: ${n} × ${price} ⚡ (цена за действие) = ${fmt(actionsCost)} ⚡`,
-      avgTokens > 0
-        ? `• Текст ИИ: ${n} действий × ~${avgTokens} ток./действие = ${tk} ток.\n   ${tk} ÷ 1000 × ${pricing.coinsPer1kTokens} ⚡/1k = ${fmt(tokensCost)} ⚡\n   (оценка по средней истории модуля — спишется по факту)`
-        : '• Текст ИИ: добавится по факту — истории модуля пока нет для оценки',
-      `Итого: ${avgTokens ? '≈ ' : ''}${fmt(total)} ⚡`,
-    ].join('\n')
+    // В панели запуска — только ИТОГ и время, крупными плашками под стать кнопкам справа.
+    // Разбивку «= действия + ИИ» и попап с математикой убрали (правка заказчика 13.08):
+    // оператору перед запуском нужны две цифры — сколько спишется и сколько ждать, а
+    // из чего складывается цена (и что часть уходит на ИИ) — не его забота.
     return (
       <>
-        {/* Кастомная подсказка вместо серого браузерного title: попап над чипом (group-hover),
-            в стиле приложения. Плюс короткий расчёт виден СРАЗУ, без наведения. */}
-        <span className="group relative inline-flex cursor-help items-center gap-1 text-amber-300">
-          <Zap size={12} fill="currentColor" />
-          <b className="font-semibold">{avgTokens ? '≈' : ''}{fmt(total)} ⚡</b>
-          <span className="font-normal text-amber-300/60">
-            = {fmt(actionsCost)}{avgTokens > 0 ? ` + ${fmt(tokensCost)} ИИ` : ''}
-          </span>
-          <Info size={11} className="text-amber-300/70" aria-label="Как считается" />
-          {/* Попап с полной математикой — в стиле приложения (тёмная карточка, рамка, тень).
-              Фон задаём inline через CSS-переменную --elevated: непрозрачный и тему уважает
-              (класс bg-elevated/98 JIT не всегда подхватывает — попап выходил прозрачным). */}
-          <span
-            role="tooltip"
-            style={{ backgroundColor: 'rgb(var(--elevated))' }}
-            className="pointer-events-none absolute bottom-full left-1/2 z-[60] mb-2 hidden max-w-[92vw] -translate-x-1/2 whitespace-pre rounded-xl border border-amber-500/25 px-3 py-2 text-left font-normal leading-relaxed text-fg shadow-lg shadow-black/50 group-hover:block"
-          >
-            {detail}
-          </span>
+        <span
+          className="inline-flex h-10 items-center gap-1.5 rounded-xl border border-amber-500/30 bg-amber-500/10 px-3.5 text-sm font-bold text-amber-300"
+          title="Спишется с баланса за этот запуск"
+        >
+          <Zap size={16} fill="currentColor" />
+          {avgTokens ? '≈' : ''}{fmt(total)} ⚡
         </span>
         {timeMin && (
-          <span className="inline-flex items-center gap-1 text-emerald-300" title="Ориентировочное время прогона">
-            <Clock size={12} /> {timeMin === timeMax ? timeMin : `${timeMin}–${timeMax}`}
+          <span
+            className="inline-flex h-10 items-center gap-1.5 rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-3.5 text-sm font-bold text-emerald-300"
+            title="Ориентировочное время прогона"
+          >
+            <Clock size={16} /> {timeMin === timeMax ? timeMin : `${timeMin}–${timeMax}`}
           </span>
         )}
       </>
