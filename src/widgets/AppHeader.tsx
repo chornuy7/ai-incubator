@@ -28,6 +28,16 @@ const FALLBACK_PACKS = [
   { coins: 500, price: 39.99 },
 ]
 
+// Уведомления (12.08): сегодня — только время (12:45), другой день — с датой (12 авг, 16:20),
+// иначе «16:20» вчера выглядело новее «12:45» сегодня.
+function fmtNotifTs(ts: number): string {
+  const d = new Date(ts)
+  const sameDay = d.toDateString() === new Date().toDateString()
+  return sameDay
+    ? d.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })
+    : d.toLocaleString('ru-RU', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })
+}
+
 export function AppHeader() {
   const nav = useNavigate()
   const data = useApp((s) => s.data)
@@ -334,7 +344,7 @@ export function AppHeader() {
                             <button onClick={() => { setNotifOpen(false); nav(i.go) }} className="min-w-0 flex-1 text-left">
                               <span className="flex items-center justify-between gap-2">
                                 <span className="truncate text-sm font-medium text-fg">{i.title}</span>
-                                <span className="shrink-0 text-[10px] tabular-nums text-faint">{new Date(i.ts).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })}</span>
+                                <span className="shrink-0 text-[10px] tabular-nums text-faint">{fmtNotifTs(i.ts)}</span>
                               </span>
                               <span className={`block text-[11px] ${st.sub}`}>{i.sub}</span>
                             </button>
