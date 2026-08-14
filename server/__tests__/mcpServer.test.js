@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import { handleMessage, listResources, readResource, SUPPORTED_PROTOCOL_VERSIONS, SERVER_INFO } from '../mcp/server.js'
 import { TOOLS } from '../mcp/tools.js'
 import { listDescriptorKeys } from '../mcp/descriptors/index.js'
+import { originAllowed, checkHttpPreconditions, wantsEventStream, mcpDeleteHandler } from '../mcp/server.js'
 
 // Контекст HTTP-запроса: нужен только create_task (проверка прав на аккаунты).
 // Здесь его не вызываем — запуск живой задачи в юнит-тестах не место.
@@ -245,4 +246,59 @@ test('create_task объявлен как реальное действие и �
   assert.match(tool.description, /РЕАЛЬНОЕ/)
   assert.match(tool.description, /validate_task/)
   assert.equal(tool.annotations.openWorldHint, true)
+})
+
+// ── соответствие транспорту Streamable HTTP ─────────────────────────────────────
+// Всё ниже добавлено после сверки с текстом спецификации 2025-06-18: каждый пункт —
+// «сервер ОБЯЗАН», которое мы сначала не выполняли.
+
+test('Origin проверяется — защита от DNS rebinding', () => {
+  // Без Origin (curl, сервер-к-серверу, MCP-клиент вне браузера) — пропускаем:
+  // атака возможна только из браузера, а он Origin ставит всегда.
+  assert.equal(originAllowed(undefined), true)
+  assert.equal(originAllowed('https://myrmexgram.ai'), true)
+  assert.equal(originAllowed('http://localhost:5173'), true)
+
+  assert.equal(originAllowed('https://evil.example.com'), false)
+  assert.equal(originAllowed('не-урл'), false)
+
+  const blocked = checkHttpPreconditions({ headers: { origin: 'https://evil.example.com' } })
+  assert.equal(blocked.status, 403)
+})
+
+test('MCP-Protocol-Version: неизвестная версия → 400, отсутствие заголовка допустимо', () => {
+  assert.equal(checkHttpPreconditions({ headers: {} }), null, 'без заголовка работаем (совместимость с 2025-03-26)')
+  assert.equal(checkHttpPreconditions({ headers: { 'mcp-protocol-version': '2025-06-18' } }), null)
+
+  const bad = checkHttpPreconditions({ headers: { 'mcp-protocol-version': '2030-01-01' } })
+  assert.equal(bad.status, 400, 'спецификация требует именно 400')
+  assert.match(bad.body.error, /Доступны:/)
+})
+
+test('GET с Accept: text/event-stream распознаётся как попытка открыть поток', () => {
+  // Поток мы не держим, поэтому такой GET обязан получить 405 — иначе клиент примет
+  // наш REST-манифест за открытый SSE-поток и будет ждать сообщений, которых нет.
+  assert.equal(wantsEventStream({ headers: { accept: 'text/event-stream' } }), true)
+  assert.equal(wantsEventStream({ headers: { accept: 'application/json, text/event-stream' } }), true)
+  // А обычный GET по тому же адресу — это человек смотрит манифест, ему 405 не нужен.
+  assert.equal(wantsEventStream({ headers: { accept: 'application/json' } }), false)
+  assert.equal(wantsEventStream({ headers: {} }), false)
+})
+
+test('DELETE (завершение сессии) — 405: сессий не держим', () => {
+  let status = 0
+  let body = null
+  mcpDeleteHandler({}, { status(s) { status = s; return this }, json(b) { body = b } })
+  assert.equal(status, 405)
+  assert.match(body.error, /Сессии/)
+})
+
+test('JSON-RPC ответ от клиента принимается молча (202), а не как битый конверт', async () => {
+  // У нас нет запросов К клиенту, но по спецификации такой вход валиден и требует 202.
+  assert.equal(await handleMessage({ jsonrpc: '2.0', id: 7, result: {} }, CTX), null)
+  assert.equal(await handleMessage({ jsonrpc: '2.0', id: 7, error: { code: -1, message: 'x' } }, CTX), null)
+
+  // А вот мусор без method и без result/error — по-прежнему ошибка конверта.
+  const junk = await handleMessage({ jsonrpc: '2.0', id: 8 }, CTX)
+  assert.equal(junk.error.code, -32600)
 })

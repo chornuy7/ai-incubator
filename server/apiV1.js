@@ -17,7 +17,10 @@ import { requireApiKey } from './apiKeys.js'
 import { MODULE_DEFS, listModuleKeys, startModuleTask } from './modules/registry.js'
 import { moduleTitle } from './lib/moduleTitles.js'
 import { describeModule, getDescriptor, listDescriptorKeys, summarizeModule } from './mcp/descriptors/index.js'
-import { mcpPostHandler, SERVER_INFO, SUPPORTED_PROTOCOL_VERSIONS } from './mcp/server.js'
+import {
+  mcpPostHandler, mcpDeleteHandler, wantsEventStream, checkHttpPreconditions,
+  SERVER_INFO, SUPPORTED_PROTOCOL_VERSIONS,
+} from './mcp/server.js'
 
 export const apiV1Router = Router()
 
@@ -136,8 +139,16 @@ apiV1Router.get('/modules', async (_req, res) => {
  * в docs/mcp/MCP-ROADMAP.md. Здесь важно другое: у модулей с дескриптором `input`
  * теперь настоящая JSON Schema с ограничениями, а не список строк-подсказок.
  */
-apiV1Router.get('/mcp', async (_req, res) => {
+apiV1Router.get('/mcp', async (req, res) => {
   try {
+    // Клиент пришёл открывать SSE-поток. Мы его не держим — спецификация обязывает
+    // ответить 405, иначе клиент примет наш JSON-манифест за открытый поток.
+    if (wantsEventStream(req)) {
+      return res.status(405).json({ error: 'SSE-поток не поддерживается: сервер не инициирует сообщения. Используйте POST.' })
+    }
+    const bad = checkHttpPreconditions(req)
+    if (bad) return res.status(bad.status).json(bad.body)
+
     const caps = await capabilities()
     const tools = [
       { name: 'whoami', description: 'Пользователь продукта, от чьего имени работает ключ', method: 'GET', path: '/api/v1/me', input: {} },
@@ -195,6 +206,7 @@ apiV1Router.get('/mcp', async (_req, res) => {
  * права — владельца ключа, как и у остального API.
  */
 apiV1Router.post('/mcp', mcpPostHandler)
+apiV1Router.delete('/mcp', mcpDeleteHandler)
 
 /** §10.3(1): цели. */
 apiV1Router.get('/goals', async (_req, res) => {

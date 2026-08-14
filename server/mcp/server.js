@@ -77,6 +77,11 @@ export async function handleMessage(message, ctx) {
   if (!message || typeof message !== 'object' || Array.isArray(message)) {
     return failure(null, ERR.INVALID_REQUEST, 'Ожидается одно JSON-RPC сообщение. Пакетные запросы протоколом не поддерживаются.')
   }
+  // Клиент прислал ОТВЕТ на наш запрос (есть result/error, нет method). Своих запросов
+  // к клиенту мы не делаем, но по спецификации такой вход принимается молча — 202.
+  if (message.jsonrpc === '2.0' && message.method === undefined && ('result' in message || 'error' in message)) {
+    return null
+  }
   if (message.jsonrpc !== '2.0' || typeof message.method !== 'string') {
     return failure(message.id, ERR.INVALID_REQUEST, 'Неверный конверт JSON-RPC: нужны jsonrpc: "2.0" и method')
   }
@@ -156,10 +161,66 @@ export async function handleMessage(message, ctx) {
   }
 }
 
+/**
+ * Разрешённые Origin. Спецификация Streamable HTTP требует проверять заголовок:
+ * без этого сайт в браузере жертвы может дозвониться до MCP-сервера через DNS rebinding.
+ * Запросы БЕЗ Origin (curl, сервер-к-серверу, MCP-клиенты вне браузера) пропускаем —
+ * атака возможна только из браузера, а он Origin ставит всегда.
+ */
+const ALLOWED_ORIGIN_HOSTS = new Set(['myrmexgram.ai', 'www.myrmexgram.ai', 'myrmex.io', 'localhost', '127.0.0.1'])
+
+export function originAllowed(origin) {
+  if (!origin) return true
+  try { return ALLOWED_ORIGIN_HOSTS.has(new URL(origin).hostname) } catch { return false }
+}
+
+/**
+ * Проверки уровня HTTP, общие для запросов к MCP-эндпоинту.
+ * @returns {{status: number, body: object}|null} ошибка или null, если всё в порядке
+ */
+export function checkHttpPreconditions(req) {
+  if (!originAllowed(req.headers?.origin)) {
+    return { status: 403, body: { error: 'Origin не разрешён' } }
+  }
+  // Спецификация: клиент обязан слать MCP-Protocol-Version на всех запросах после
+  // initialize; при неизвестной версии сервер ОБЯЗАН ответить 400. Если заголовка нет —
+  // считаем 2025-03-26, как велит раздел обратной совместимости.
+  const asked = req.headers?.['mcp-protocol-version']
+  if (asked && !SUPPORTED_PROTOCOL_VERSIONS.includes(String(asked))) {
+    return {
+      status: 400,
+      body: { error: `Версия протокола ${asked} не поддерживается. Доступны: ${SUPPORTED_PROTOCOL_VERSIONS.join(', ')}` },
+    }
+  }
+  return null
+}
+
 /** Express-обработчик POST: тело уже разобрано express.json(). */
 export async function mcpPostHandler(req, res) {
+  const bad = checkHttpPreconditions(req)
+  if (bad) return res.status(bad.status).json(bad.body)
+
   const response = await handleMessage(req.body, { req })
-  // Уведомление: тела нет, по спецификации отвечаем 202.
+  // Уведомление или ответ клиента: тела нет, по спецификации отвечаем 202.
   if (response === null) return res.status(202).end()
   res.json(response)
+}
+
+/**
+ * GET на MCP-эндпоинт клиент шлёт, чтобы ОТКРЫТЬ SSE-поток для серверных сообщений.
+ * Спецификация оставляет ровно два варианта ответа: `text/event-stream` или **405**.
+ * Мы поток не держим (серверных уведомлений у нас нет), значит обязаны отдать 405 —
+ * иначе клиент получит 200 с JSON и решит, что поток открыт.
+ *
+ * При этом по тому же адресу живёт REST-манифест «посмотреть глазами», и ломать его
+ * нельзя — им уже пользуются. Различаем по Accept: просит SSE — 405, просит обычный
+ * ответ — манифест.
+ */
+export function wantsEventStream(req) {
+  return String(req.headers?.accept || '').includes('text/event-stream')
+}
+
+/** DELETE — завершение сессии. Сессий мы не держим, спецификация разрешает 405. */
+export function mcpDeleteHandler(_req, res) {
+  res.status(405).json({ error: 'Сессии не используются — завершать нечего' })
 }
