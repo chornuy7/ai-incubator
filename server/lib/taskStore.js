@@ -1,6 +1,7 @@
 import fs from 'fs/promises'
 import path from 'path'
 import crypto from 'crypto'
+import { resolveTotalTarget } from './targets.js'
 import { fileURLToPath } from 'url'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
@@ -49,11 +50,34 @@ export function createTaskStore(moduleKey, idPrefix) {
     await fs.writeFile(taskPath(task.id), JSON.stringify(task, null, 2), 'utf8')
   }
 
+  /**
+   * Починка знаменателя прогресса у задач, СОЗДАННЫХ РАНЬШЕ правки.
+   *
+   * Цель задачи — случайная в [min, max] и детерминирована по её id, а в `progress.total`
+   * писался максимум диапазона. Из-за этого задача с целью 9 при maxActions=10 честно
+   * доходила до конца, вставала как «Готово», но полоса показывала 9/10 = 90%.
+   * Пересчитываем ТУ ЖЕ функцию, по которой воркер решал «хватит» — значение совпадает
+   * с тем, что реально было целью. Только для чтения: файл не переписываем.
+   * @param {object} task
+   */
+  function withRealTarget(task) {
+    if (!task?.progress || !task.settings) return task
+    const byDuration = task.settings.workMode === 1 && task.settings.durationMinutes
+    if (byDuration) return task // режим «по времени» — счётчик действий не показателен
+    try {
+      const target = resolveTotalTarget(task.settings, task)
+      if (target > 0 && task.progress.total !== target) {
+        return { ...task, progress: { ...task.progress, total: target } }
+      }
+    } catch { /* не смогли уточнить — оставляем как есть */ }
+    return task
+  }
+
   /** @param {string} taskId */
   async function loadTask(taskId) {
     try {
       const raw = await fs.readFile(taskPath(taskId), 'utf8')
-      return JSON.parse(raw)
+      return withRealTarget(JSON.parse(raw))
     } catch {
       return null
     }
@@ -66,7 +90,7 @@ export function createTaskStore(moduleKey, idPrefix) {
     for (const f of files.filter((x) => x.endsWith('.json'))) {
       try {
         const raw = await fs.readFile(path.join(tasksDir, f), 'utf8')
-        const t = JSON.parse(raw)
+        const t = withRealTarget(JSON.parse(raw))
         tasks.push({
           id: t.id,
           moduleKey,

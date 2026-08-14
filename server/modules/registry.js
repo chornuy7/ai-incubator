@@ -2,6 +2,7 @@ import { createTaskStore } from '../lib/taskStore.js'
 import { WORKERS, startWorker, stopWorker, pauseWorker } from './workers.js'
 import { tryAcquireLocks, releaseTaskLocks } from '../lib/accountLocks.js'
 import { preflightAndLog } from '../lib/preflight.js'
+import { resolveTotalTarget } from '../lib/targets.js'
 import { getGoal, isGoalExpired } from '../goals.js'
 
 /**
@@ -95,6 +96,21 @@ export function startModuleTask(moduleKey, settings) {
     results: [],
     commentHistory: [],
   })
+  // Прогресс считаем от РЕАЛЬНОЙ цели, а не от максимума диапазона.
+  //
+  // Цель выбирается случайно в [min, max] и детерминирована по id задачи (§4: чтобы
+  // аккаунты не работали одинаково). Воркер останавливается по ней, а в прогресс писался
+  // максимум — поэтому задача с целью 9 при maxActions=10 доходила до конца и вставала
+  // как «Готово» на 9/10 = 90%. Теперь знаменатель — та же цель, по которой воркер решает
+  // «хватит»: 9/9 = 100%. Для режима «по времени» счётчик действий не показателен —
+  // там оставляем максимум как есть.
+  try {
+    const byDuration = settings.workMode === 1 && settings.durationMinutes
+    if (!byDuration) {
+      const target = resolveTotalTarget(settings, task)
+      if (target > 0) task.progress.total = target
+    }
+  } catch { /* не смогли уточнить — остаётся максимум, как было */ }
   // goalId нужен локам: мейлинг и чатинг под ОДНОЙ целью делят аккаунты (§9).
   const lockErr = tryAcquireLocks(settings.accountIds, moduleKey, task.id, { goalId: settings.goalId })
   if (lockErr) throw new Error(lockErr)
