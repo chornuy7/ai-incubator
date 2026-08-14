@@ -502,7 +502,7 @@ export function NeuroDialogsModule() {
         showAction
         showJoin={false}
         labels={{ action: 'Задержка между ответами' }}
-        delayPresets={['Мин', 'Рекомендуемые', 'Макс']}
+        delayPresets={['Агрессивный', 'Сбалансированный', 'Консервативный']}
         delayPreset={delayPreset}
         onDelayPreset={setDelayPreset}
       />

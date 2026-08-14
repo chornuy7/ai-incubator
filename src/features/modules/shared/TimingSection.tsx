@@ -56,16 +56,16 @@ export interface TimingSectionProps {
 // задержки (быстрее), 1 — рекомендуемо, 2 — максимальные задержки (безопаснее).
 const PRESET_META = [
   {
-    desc: 'Минимальные задержки — быстрее, выше риск', icon: Bolt,
-    tooltip: 'Паузы ~×0.6 (чаще), лимит на аккаунт ~×1.5 (больше действий), длительность ~×0.75 (короче). Быстрее и больше — но выше шанс FloodWait, карантина и ограничений. Для прогретых, «расходных» аккаунтов.',
+    desc: 'Выше скорость, выше риск', icon: Bolt,
+    tooltip: 'Паузы ~×0.6 (чаще), длительность ~×0.75 (короче). Быстрее — но выше шанс FloodWait, карантина и ограничений. Для прогретых, «расходных» аккаунтов. Лимит действий берётся базовый (меняется только в Custom).',
   },
   {
-    desc: 'Оптимальный баланс — по умолчанию', icon: Settings2,
-    tooltip: 'Базовые значения (×1): паузы, лимит на аккаунт и длительность — как заданы. Оптимальный баланс скорости и безопасности, для повседневной работы.',
+    desc: 'Рекомендуется', icon: Settings2,
+    tooltip: 'Базовые задержки (×1) и длительность. Оптимальный баланс скорости и безопасности, для повседневной работы.',
   },
   {
-    desc: 'Максимальные задержки — безопаснее, медленнее', icon: Shield,
-    tooltip: 'Паузы ~×1.8 (реже), лимит на аккаунт ~×0.6 (меньше действий), длительность ~×1.5 (дольше). Медленнее и меньше — минимум FloodWait и риска бана. Для новых и дорогих аккаунтов.',
+    desc: 'Макс. задержки, безопаснее', icon: Shield,
+    tooltip: 'Паузы ~×1.8 (реже), длительность ~×1.5 (дольше). Медленнее — минимум FloodWait и риска бана. Для новых и дорогих аккаунтов. Лимит действий берётся базовый (меняется только в Custom).',
   },
 ]
 
@@ -105,6 +105,21 @@ export function TimingSection(props: TimingSectionProps) {
   // «Эффективная» задержка = базовая × множитель пресета — то, что реально уйдёт на паузы;
   // показываем её под карточками, чтобы выбор Мин/Рек/Макс СРАЗУ менял видимые значения.
   const eff = (pair?: [number, number] | null) => pair ? `${Math.round(pair[0] * mul)}–${Math.round(pair[1] * mul)} с` : null
+  // Правка 14.08: под пресетами показываем ПОЛНОЕ (общее) время задачи одним числом, а не
+  // два диапазона задержек. Считается как LaunchCost: действий-на-аккаунт × средняя задержка
+  // между действиями (×множитель пресета). Совпадает с чипом времени внизу панели запуска.
+  const fmtDur = (sec: number): string | null => {
+    if (!sec || sec <= 0) return null
+    const m = Math.round(sec / 60)
+    if (m < 1) return `${Math.round(sec)} с`
+    if (m < 60) return `${m} мин`
+    const h = Math.floor(m / 60), r = m % 60
+    return r ? `${h} ч ${r} мин` : `${h} ч`
+  }
+  const actsPerAcc = computedTotal?.value ?? perAccount?.max ?? 0
+  const primaryDelay = (showAction && delays.action) ? delays.action : (showComment && delays.comment) ? delays.comment : (delays.action || delays.comment || null)
+  const avgDelaySec = primaryDelay ? ((primaryDelay[0] + primaryDelay[1]) / 2) * mul : 0
+  const fullTime = fmtDur(actsPerAcc * avgDelaySec)
   // MR-136: поля задержек показывают ЭФФЕКТИВНОЕ значение (базовое × множитель пресета) —
   // чтобы выбор Мин/Макс сразу менял видимые числа. При ручном правке уходим в Custom (×1),
   // и введённое (уже масштабированное) значение становится базовым — эффект сохраняется.
@@ -130,23 +145,35 @@ export function TimingSection(props: TimingSectionProps) {
   const showDuration = showDurationAlways || timeMode
   const showCounts = !workModeOptions || !timeMode
 
-  // MR-136: пресет темпа выставляет и Длительность, и лимит «Сколько сделает 1 аккаунт».
-  // Множители к базовым (реком.) значениям, зафиксированным при первом рендере:
-  // Мин — короче/больше действий (быстрее, риск), Макс — дольше/меньше (безопаснее).
+  // Пресет темпа выставляет Длительность. Множитель к базовой (реком.) длительности:
+  // Мин — короче (быстрее), Макс — дольше (безопаснее).
   const DUR_FACTOR = [0.75, 1, 1.5, 1]
-  const LIM_FACTOR = [1.5, 1, 0.6, 1]
-  const baseRef = useRef({ dur: durationMinutes, limMin: perAccount?.min ?? 0, limMax: perAccount?.max ?? 0 })
+  // Правка 14.08: НЕИЗМЕННАЯ база пресетов. Захватывается ОДИН раз при первом рендере и
+  // больше НИКОГДА не мутируется. Раньше правка в Custom писала в baseRef — и значения
+  // «протекали» в Мин/Рек/Макс (баг: пресеты переставали держать свои числа). Теперь
+  // пресет всегда подставляет ровно эту базу, а Custom правит только текущее состояние.
+  const frozen = useRef({
+    dur: durationMinutes,
+    limMin: perAccount?.min ?? 0,
+    limMax: perAccount?.max ?? 0,
+    delays: { ...delays },
+  })
   const applyPresetExtras = (i: number) => {
     if (i === CUSTOM) return
-    const b = baseRef.current
+    const b = frozen.current
     if (onDuration && showDuration) onDuration(Math.max(1, Math.round(b.dur * DUR_FACTOR[i])))
-    if (perAccount) { perAccount.onMin(Math.round(b.limMin * LIM_FACTOR[i])); perAccount.onMax(Math.round(b.limMax * LIM_FACTOR[i])) }
+    // Лимит «Сколько сделает 1 аккаунт» НЕ масштабируется пресетом — одинаковый (базовый)
+    // на Мин/Рек/Макс, меняется только в Custom. (Заказчик 14.08: «всюди 10, крім кастом».)
+    if (perAccount) { perAccount.onMin(b.limMin); perAccount.onMax(b.limMax) }
+    // Задержки — всегда из неизменной базы: любая правка в Custom не должна их сдвигать.
+    onDelays(() => ({ ...b.delays }))
   }
-  // Ручная правка Длительности/лимита → Custom + запоминаем как новое базовое значение.
-  const editDuration = (v: number) => { if (hasPresets && delayPreset !== CUSTOM) onDelayPreset!(CUSTOM); baseRef.current.dur = v; onDuration?.(v) }
+  // Ручная правка Длительности/лимита возможна ТОЛЬКО в Custom (на пресетах поля заблокированы).
+  // База (frozen) при этом НЕ трогается — поэтому возврат на пресет всегда даёт исходные числа.
+  const editDuration = (v: number) => { if (hasPresets && delayPreset !== CUSTOM) onDelayPreset!(CUSTOM); onDuration?.(v) }
   const editPerAccount = (which: 'min' | 'max', v: number) => {
     if (hasPresets && delayPreset !== CUSTOM) onDelayPreset!(CUSTOM)
-    if (which === 'min') { baseRef.current.limMin = v; perAccount?.onMin(v) } else { baseRef.current.limMax = v; perAccount?.onMax(v) }
+    if (which === 'min') perAccount?.onMin(v); else perAccount?.onMax(v)
   }
 
   return (
@@ -168,7 +195,21 @@ export function TimingSection(props: TimingSectionProps) {
                 type="button"
                 // MR-136: раскрытие «Расширенных» для Custom делает эффект по delayPreset;
                 // пресет также выставляет Длительность и лимит «Сколько сделает 1 аккаунт».
-                onClick={() => { onDelayPreset!(i); applyPresetExtras(i) }}
+                onClick={() => {
+                  // Вход в Custom из пресета: «запекаем» видимые (масштабированные ×mul)
+                  // задержки в текущее состояние, чтобы числа не прыгнули (Custom = ×1).
+                  // База (frozen) при этом не трогается.
+                  if (i === CUSTOM && delayPreset !== CUSTOM) {
+                    const m = PRESET_MUL[delayPreset] ?? 1
+                    onDelays((d) => ({
+                      ...d,
+                      comment: d.comment ? [Math.round(d.comment[0] * m), Math.round(d.comment[1] * m)] : d.comment,
+                      action: d.action ? [Math.round(d.action[0] * m), Math.round(d.action[1] * m)] : d.action,
+                      join: d.join ? [Math.round(d.join[0] * m), Math.round(d.join[1] * m)] : d.join,
+                    }))
+                  }
+                  onDelayPreset!(i); applyPresetExtras(i)
+                }}
                 className={cn(
                   'flex items-center gap-2.5 rounded-xl border p-3 text-left transition-all',
                   active ? 'border-spark-500/60 bg-spark-500/10' : 'border-line bg-elevated hover:border-spark-500/30',
@@ -189,11 +230,14 @@ export function TimingSection(props: TimingSectionProps) {
             )
           })}
         </div>
-        {/* MR-136: эффективные задержки — видно СРАЗУ, что выбор Мин/Рек/Макс меняет значения. */}
+        {/* Правка 14.08: ПОЛНОЕ время задачи одним числом (а не два диапазона задержек).
+            Если посчитать не из чего (нет действий/задержки) — падаем на эффективные задержки. */}
         <div className="mt-2 text-[11px] text-muted">
-          {delayPreset === CUSTOM
-            ? <>Задержки — ручные (заданы в «Расширенных настройках»).</>
-            : <>Эффективные задержки: {[showAction && delays.action && `действие ${eff(delays.action)}`, showComment && delays.comment && `комментарий ${eff(delays.comment)}`, showJoin && delays.join && `вступление ${eff(delays.join)}`].filter(Boolean).join(' · ') || '—'}</>}
+          {fullTime
+            ? <>Полное время: ≈ {fullTime} <span className="text-faint">(на 1 аккаунт{delayPreset === CUSTOM ? '' : `, пресет «${delayPresets![delayPreset]}»`})</span></>
+            : delayPreset === CUSTOM
+              ? <>Задержки — ручные (заданы в «Расширенных настройках»).</>
+              : <>Эффективные задержки: {[showAction && delays.action && `действие ${eff(delays.action)}`, showComment && delays.comment && `комментарий ${eff(delays.comment)}`, showJoin && delays.join && `вступление ${eff(delays.join)}`].filter(Boolean).join(' · ') || '—'}</>}
         </div>
         </>
       )}
