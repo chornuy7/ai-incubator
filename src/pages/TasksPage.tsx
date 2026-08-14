@@ -1,11 +1,11 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
-import { ListChecks, RefreshCw, Square, RotateCw, Target, Activity, Gauge, Pause, Play, Loader2, ArrowLeft, Pencil, Download, AlertTriangle } from 'lucide-react'
+import { ListChecks, RefreshCw, Square, RotateCw, Target, Activity, Gauge, Pause, Play, Loader2, ArrowLeft, Download, AlertTriangle } from 'lucide-react'
 import { useApp } from '@/mocks/store'
 import { PageHeader, Card, EmptyState, Badge, Select, Segmented } from '@/shared/ui'
 import { HelpButton } from '@/features/neuro-commenting/moduleUi'
 import { MODULES, isCombatModule, combatConfirmText } from '@/shared/config/modules'
-import { fetchAllTasks, fetchModuleTask, stopModuleTask, restartModuleTask, pauseModuleTask, resumeModuleTask, updateModuleTaskSettings, type ModuleTask, type ModuleTaskSettings } from '@/api/modulesApi'
+import { fetchAllTasks, fetchModuleTask, stopModuleTask, restartModuleTask, pauseModuleTask, resumeModuleTask, updateModuleTaskSettings, type ModuleTask } from '@/api/modulesApi'
 import { fetchGoals, type Goal } from '@/api/goalsApi'
 import { fetchCampaigns, type Campaign } from '@/api/campaignsApi'
 import { fetchAccounts } from '@/api/accountsApi'
@@ -20,6 +20,7 @@ import { useSession } from '@/features/auth/session'
 import { canControlModule } from '@/shared/lib/access'
 import { downloadXls } from '@/shared/lib/exportXls'
 import { useTabParam } from '@/shared/lib/useTabParam'
+import { AccountPicker } from '@/features/account-picker/AccountPicker'
 
 const STATUS: Record<string, { label: string; tone: 'spark' | 'iris' | 'amber' | 'rose' | 'muted' }> = {
   running: { label: 'Выполняется', tone: 'spark' },
@@ -49,6 +50,9 @@ function pct(t: ModuleTask) {
   return total > 0 ? Math.min(100, Math.round((done / total) * 100)) : 0
 }
 const isActive = (t: ModuleTask) => t.status === 'running' || t.status === 'queued'
+
+/** Проблемные аккаунты задачи: сколько, из скольких и ЧТО именно не так у каждого. */
+type TaskProblem = { bad: number; total: number; items: { name: string; reason: string }[] }
 
 // MR-146: «отвалившийся» аккаунт задачи — по тем же признакам, что в менеджере/пикере.
 // Возвращает короткую причину проблемы или '' если аккаунт в порядке.
@@ -188,14 +192,21 @@ export function TasksPage() {
   // MR-146: на каждую задачу — сколько её аккаунтов «отвалилось» (нет прокси/не отвечает/нерабочий статус).
   const acctById = useMemo(() => new Map(accounts.map((a) => [a.id, a])), [accounts])
   const taskProblems = useMemo(() => {
-    const fn = (t: ModuleTask): { bad: number; total: number } => {
+    const fn = (t: ModuleTask): TaskProblem => {
       const ids = t.settings?.accountIds || []
       // Пока список аккаунтов не загрузился — НЕ судим (иначе первые ~60с все задачи
       // мигали бы ложным «все аккаунты с проблемой», т.к. byId ещё пуст).
-      if (acctById.size === 0) return { bad: 0, total: ids.length }
-      let bad = 0
-      for (const id of ids) if (acctProblem(acctById.get(id))) bad += 1
-      return { bad, total: ids.length }
+      if (acctById.size === 0) return { bad: 0, total: ids.length, items: [] }
+      // Собираем не только счётчик, но и ПРИЧИНУ по каждому аккаунту: «нет прокси» и
+      // «нужна переавторизация» чинятся по-разному, а раньше показывался общий текст
+      // со списком всех возможных причин сразу — читать его было бесполезно.
+      const items: { name: string; reason: string }[] = []
+      for (const id of ids) {
+        const a = acctById.get(id)
+        const reason = acctProblem(a)
+        if (reason) items.push({ name: a ? (a.name || a.username || a.phone || id) : id, reason })
+      }
+      return { bad: items.length, total: ids.length, items }
     }
     return fn
   }, [acctById])
@@ -647,7 +658,7 @@ function TaskCard({ t, goalName, busy, busyAction, pendingAction, onOpen, onStop
   onStop: (t: ModuleTask) => void; onRestart: (t: ModuleTask) => void
   onPause: (t: ModuleTask) => void; onResume: (t: ModuleTask) => void; canControl?: boolean; compact?: boolean
   selected?: boolean; onToggleSelect?: (id: string) => void
-  problem?: { bad: number; total: number } // MR-146: сколько аккаунтов задачи «отвалилось»
+  problem?: TaskProblem // MR-146: сколько аккаунтов задачи «отвалилось» и почему
 }) {
   // Оптимистичный статус: пока воркер реально не встал, показываем «Останавливается…» —
   // честнее, чем застывшее «Выполняется», и сразу видно, что кнопка сработала.
@@ -704,13 +715,34 @@ function TaskCard({ t, goalName, busy, busyAction, pendingAction, onOpen, onStop
           остальные (прогрев/парсинг) — предупреждение (жёлтый). На задаче «Ошибка» не дублируем. */}
       {t.status !== 'error' && problem && problem.bad > 0 && (() => {
         const hard = isCombatModule(t.moduleKey)
+        // Заголовок: при одном аккаунте «1 из 1 с проблемой» звучит как отчёт бухгалтера —
+        // пишем просто «аккаунт недоступен». Счётчик нужен, только когда есть из чего выбирать.
+        const head = problem.total === 1
+          ? (hard ? 'Аккаунт недоступен' : 'Аккаунт недоступен')
+          : `${hard ? 'Проблема с аккаунтами' : 'Предупреждение'} · ${problem.bad} из ${problem.total}`
+        // Причины группируем: «нет прокси» и «нужна переавторизация» чинятся по-разному,
+        // и оператор должен видеть, ЧТО именно чинить, а не список всех возможных бед.
+        const byReason = new Map<string, string[]>()
+        for (const it of problem.items || []) {
+          const list = byReason.get(it.reason) || []
+          list.push(it.name)
+          byReason.set(it.reason, list)
+        }
         return (
           <div className={cn('mt-2.5 rounded-xl border p-2.5', hard ? 'border-rose-500/25 bg-rose-500/[.07]' : 'border-amber-500/25 bg-amber-500/[.07]')}>
             <div className={cn('flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wide', hard ? 'text-rose-300' : 'text-amber-300')}>
-              <AlertTriangle size={12} /> {hard ? 'Проблема с аккаунтами' : 'Предупреждение'} · {problem.bad} из {problem.total} с проблемой
+              <AlertTriangle size={12} /> {head}
             </div>
-            <div className={cn('mt-0.5 text-[11px] leading-relaxed', hard ? 'text-rose-200/80' : 'text-amber-200/80')}>
-              Часть аккаунтов недоступна (нет прокси / не отвечает / нерабочий статус). Проверьте их в менеджере перед запуском.
+            <div className={cn('mt-0.5 space-y-0.5 text-[11px] leading-relaxed', hard ? 'text-rose-200/80' : 'text-amber-200/80')}>
+              {[...byReason.entries()].map(([reason, names]) => (
+                <div key={reason} className="truncate">
+                  <b className="font-semibold">{reason}</b>
+                  {': '}
+                  {names.slice(0, 3).join(', ')}
+                  {names.length > 3 ? ` и ещё ${names.length - 3}` : ''}
+                </div>
+              ))}
+              <div className="opacity-70">Чинится в менеджере аккаунтов.</div>
             </div>
           </div>
         )
@@ -719,15 +751,6 @@ function TaskCard({ t, goalName, busy, busyAction, pendingAction, onOpen, onStop
   )
 }
 
-function Info({ label, value, hint }: { label: string; value: ReactNode; hint?: string }) {
-  return (
-    <div className="rounded-xl border border-line bg-elevated/40 px-3 py-2">
-      <div className="text-[10px] font-bold uppercase tracking-wide text-white/40">{label}</div>
-      <div className="mt-0.5 truncate text-sm font-semibold text-fg" title={hint}>{value}</div>
-      {hint && <div className="mt-0.5 truncate text-[10px] text-muted">{hint}</div>}
-    </div>
-  )
-}
 
 /**
  * Аккаунты задачи. Рядом с именем — короткая пометка проблемы (нет прокси, прокси не
@@ -884,7 +907,6 @@ export function TaskDetailPage() {
   }
 
   // §9.8: правка задачи — только на паузе (сервер это тоже проверяет и вернёт 409).
-  const [editing, setEditing] = useState(false)
   const [edTargets, setEdTargets] = useState('')
   // Лимиты держим СТРОКАМИ: пустая строка = «не задано». Раньше здесь были числа и
   // `s.maxActions ?? 0`, поэтому незаданный лимит показывался нулём; оператор принимал
@@ -902,15 +924,27 @@ export function TaskDetailPage() {
   // MR-147: карточка задачи = вкладки «Описание»/«Настройки».
   const [detTab, setDetTab] = useState<'desc' | 'settings'>('desc')
 
-  const startEdit = (s: ModuleTaskSettings) => {
+  /** Состав исполнителей задачи — правится тем же пикером, что и при создании (12.08). */
+  const [edAccounts, setEdAccounts] = useState<Set<string>>(new Set())
+  /** Править можно всё, что не бежит прямо сейчас (то же правило, что на сервере). */
+  const canEditNow = !!task && task.status !== 'running' && task.status !== 'queued'
+
+  // Форма настроек открыта ВСЕГДА (карандаш убран) — значит заполняем её из задачи, как
+  // только та загрузилась, и переливаем заново при смене задачи.
+  useEffect(() => {
+    const s = task?.settings
+    if (!s) return
     setEdTargets((s.channels || s.targets || []).join('\n'))
     const str = (v: number | null | undefined) => (v === null || v === undefined ? '' : String(v))
     setEdMinActions(str(s.minActions))
     setEdMaxActions(str(s.maxActions))
     setEdMinPerAcc(str(s.minPerAccount))
     setEdMaxPerAcc(str(s.maxPerAccount))
-    setEditing(true)
-  }
+    setEdAccounts(new Set(s.accountIds || []))
+    // Перезаливаем только при СМЕНЕ задачи: иначе живой опрос (раз в 3с) затирал бы
+    // то, что человек прямо сейчас печатает.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [task?.id])
 
   const saveEdit = async () => {
     const targets = edTargets.split(/[\n,;]+/).map((x) => x.trim()).filter(Boolean)
@@ -918,13 +952,13 @@ export function TaskDetailPage() {
     const num = (v: string) => (v.trim() === '' ? undefined : Math.max(0, Number(v) || 0))
     await run(
       () => updateModuleTaskSettings(moduleKey, id, {
+        accountIds: [...edAccounts],
         targets, channels: targets,
         minActions: num(edMinActions), maxActions: num(edMaxActions),
         minPerAccount: num(edMinPerAcc), maxPerAccount: num(edMaxPerAcc),
       }),
       'Настройки задачи обновлены',
     )
-    setEditing(false)
   }
 
   const back = (
@@ -1006,61 +1040,57 @@ export function TaskDetailPage() {
         </div>
 
         {detTab === 'settings' && (
+          // Настройки задачи выглядят как её СОЗДАНИЕ (звонок 12.08): тот же блок выбора
+          // аккаунтов, что в модуле, и поля сразу открыты — без карандаша и без плашек
+          // «Аккаунтов 1 / Каналов 1 / Кампания», которые ничего не давали править.
           <div className="space-y-3">
-            <div className="grid gap-2 sm:grid-cols-3">
-              <Info label="Аккаунтов" value={String((s.accountIds || []).length)} />
-              <Info label="Каналов / чатов" value={String((s.channels || s.targets || []).length)} />
-              <Info label="Всего действий" value={(s.minActions || s.maxActions) ? `${s.minActions ?? 0}–${s.maxActions ?? 0}` : 'не задано'} />
-              <Info label="На аккаунт" value={(s.minPerAccount || s.maxPerAccount) ? `${s.minPerAccount ?? 0}–${s.maxPerAccount ?? 0}` : 'не задано'} />
-              {/* §8: цель кампании и кампания — редко, но нужны; держим в настройках. */}
-              <Info label="Кампания" value={t.campaignId ? (campaignsList.find((c) => c.id === t.campaignId)?.name || t.campaignId) : 'без кампании'} />
-              <Info label="Цель кампании" value={goalName(t.goalId) || 'без цели'} />
-            </div>
-
-            {!editing && (
-              <div>
-                {canControl && (
-                  <button onClick={() => startEdit(s)} disabled={ctlBusy || t.status !== 'paused'} className="btn-soft h-9 disabled:opacity-40"><Pencil size={14} /> Редактировать</button>
-                )}
-                {/* §9.8/6.3: причина блокировки правки — текстом (title на disabled не показывается). */}
-                {t.status !== 'paused' && (
-                  <div className="mt-2 text-xs text-muted">
-                    {isActive(t)
-                      ? 'Настройки правятся только на паузе — сейчас задача выполняется, часть аккаунтов уже отработала. Нажмите «Пауза», затем «Редактировать».'
-                      : 'Задача завершена — править нечего. «Перезапуск» создаст новую с этими настройками.'}
-                  </div>
-                )}
+            {!canEditNow && (
+              <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-200">
+                Задача выполняется — часть аккаунтов уже отработала по текущим настройкам.
+                Нажмите «Пауза» или «Стоп», и настройки станут доступны.
               </div>
             )}
 
-            {editing && (
-              <div className="rounded-2xl border border-spark-500/40 bg-spark-500/5 p-4">
-                <div className="mb-3 text-sm font-bold text-fg">Правка задачи (на паузе)</div>
-                <div className="grid gap-3 sm:grid-cols-2">
-                  <label className="text-xs text-white/50 sm:col-span-2">Каналы / чаты — по одному на строку
-                    <textarea value={edTargets} onChange={(e) => setEdTargets(e.target.value)} className="input mt-1 min-h-[80px] font-mono text-sm" placeholder="@channel" />
-                  </label>
-                  <label className="text-xs text-white/50">Всего действий: от
-                    <input type="number" min={0} value={edMinActions} onChange={(e) => setEdMinActions(e.target.value)} placeholder="не задано" className="input mt-1 h-9" />
-                  </label>
-                  <label className="text-xs text-white/50">до
-                    <input type="number" min={0} value={edMaxActions} onChange={(e) => setEdMaxActions(e.target.value)} placeholder="не задано" className="input mt-1 h-9" />
-                  </label>
-                  <label className="text-xs text-white/50">На аккаунт: от
-                    <input type="number" min={0} value={edMinPerAcc} onChange={(e) => setEdMinPerAcc(e.target.value)} placeholder="не задано" className="input mt-1 h-9" />
-                  </label>
-                  <label className="text-xs text-white/50">до
-                    <input type="number" min={0} value={edMaxPerAcc} onChange={(e) => setEdMaxPerAcc(e.target.value)} placeholder="не задано" className="input mt-1 h-9" />
-                  </label>
-                </div>
-                <div className="mt-3 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-200">
-                  Состав аккаунтов здесь не меняется: за задачей держатся блокировки профилей. Нужны другие
-                  исполнители — остановите задачу и создайте новую.
-                </div>
-                <div className="mt-3 flex gap-2">
-                  <button onClick={() => void saveEdit()} disabled={busy} className="btn-primary h-9">Сохранить</button>
-                  <button onClick={() => setEditing(false)} disabled={busy} className="btn-ghost h-9">Отмена</button>
-                </div>
+            {/* Аккаунты: переиспользуем готовый пикер из модулей — поиск, фильтры, статусы,
+                видно и выбранные, и доступные. Плюс-минус прямо здесь. */}
+            <div className={cn('rounded-2xl border border-line bg-elevated/40 p-3', !canEditNow && 'pointer-events-none opacity-60')}>
+              <div className="mb-2 flex items-center gap-2 text-sm font-bold text-fg">
+                Аккаунты задачи <span className="text-white/40">({edAccounts.size})</span>
+              </div>
+              <AccountPicker selected={edAccounts} onChange={setEdAccounts} selectedTitle="В задаче" />
+            </div>
+
+            <div className={cn('rounded-2xl border border-line bg-elevated/40 p-3', !canEditNow && 'pointer-events-none opacity-60')}>
+              <div className="mb-2 text-sm font-bold text-fg">Параметры модуля</div>
+              <div className="grid gap-3 sm:grid-cols-2">
+                <label className="text-xs text-white/50 sm:col-span-2">Каналы / чаты — по одному на строку
+                  <textarea value={edTargets} onChange={(e) => setEdTargets(e.target.value)} className="input mt-1 min-h-[80px] font-mono text-sm" placeholder="@channel" />
+                </label>
+                <label className="text-xs text-white/50">Всего действий: от
+                  <input type="number" min={0} value={edMinActions} onChange={(e) => setEdMinActions(e.target.value)} placeholder="не задано" className="input mt-1 h-9" />
+                </label>
+                <label className="text-xs text-white/50">до
+                  <input type="number" min={0} value={edMaxActions} onChange={(e) => setEdMaxActions(e.target.value)} placeholder="не задано" className="input mt-1 h-9" />
+                </label>
+                <label className="text-xs text-white/50">На аккаунт: от
+                  <input type="number" min={0} value={edMinPerAcc} onChange={(e) => setEdMinPerAcc(e.target.value)} placeholder="не задано" className="input mt-1 h-9" />
+                </label>
+                <label className="text-xs text-white/50">до
+                  <input type="number" min={0} value={edMaxPerAcc} onChange={(e) => setEdMaxPerAcc(e.target.value)} placeholder="не задано" className="input mt-1 h-9" />
+                </label>
+              </div>
+              {/* Что применится сразу, а что — при следующем запуске. Иначе непонятно,
+                  зачем править остановленную задачу. */}
+              <div className="mt-2 text-[11px] text-muted">
+                {t.status === 'paused'
+                  ? 'Применится, как только продолжите задачу.'
+                  : 'Применится при следующем запуске этой задачи.'}
+              </div>
+            </div>
+
+            {canControl && (
+              <div className="flex gap-2">
+                <button onClick={() => void saveEdit()} disabled={busy || !canEditNow} className="btn-primary h-9 disabled:opacity-40">Сохранить</button>
               </div>
             )}
           </div>

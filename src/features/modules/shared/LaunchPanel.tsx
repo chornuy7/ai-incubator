@@ -1,11 +1,10 @@
 import { Play, Save, AlertTriangle, Loader2, Bookmark, X, ArrowUpRight, Pencil } from 'lucide-react'
 import type { ModuleTask, ModulePreset, ModuleTaskSettings } from '@/api/modulesApi'
-import { cn } from '@/shared/lib/utils'
 import { FloatingBar } from './FloatingBar'
 import { presetHex } from './SavePresetModal'
 
 export function LaunchPanel({
-  running, starting, canStart, onStart, onSave, primaryLabel, stats, warn, cost,
+  running, starting, canStart, onStart, onSave, primaryLabel, warn, cost,
   presets, onApplyPreset, onDeletePreset, onEditPreset, extras, steps, blockedBy = [],
 }: {
   running: boolean; starting: boolean; canStart: boolean
@@ -15,7 +14,9 @@ export function LaunchPanel({
   steps?: React.ReactNode
   /** Что мешает запуску: показываем рядом с серой кнопкой, чтобы не гадать. */
   blockedBy?: string[]
-  stats: { icon: React.ReactNode; color: string; label: string; value: string; warn?: boolean }[]
+  /** Сводка модуля. Панель её БОЛЬШЕ НЕ РИСУЕТ (правка 13.08) — оставлено, чтобы не
+   *  переписывать вызовы во всех модулях; данные для неё они и так считают для себя. */
+  stats?: { icon: React.ReactNode; color: string; label: string; value: string; warn?: boolean }[]
   task: ModuleTask | null
   warn?: string
   /** §5.1: во сколько обойдётся запуск — показываем ДО кнопки, а не по факту списания. */
@@ -99,21 +100,11 @@ export function LaunchPanel({
             длинная подсказка «Осталось: …» встаёт в ОДНУ строку (а не переносится и не
             задирает высоту), а по бокам появляется воздух. На узких экранах — flex-wrap. */}
         <div className="flex w-full flex-wrap items-center justify-between gap-x-6 gap-y-2">
-          {/* Сводка (лево): компактные чипы в два ряда, у левого края. */}
-          <div className="grid shrink-0 grid-flow-col grid-rows-2 gap-x-3 gap-y-0 text-[11px] leading-tight text-muted">
-            {stats.map((s) => {
-              // MR-136: color может быть и CSS-классом (text-cyan-300), и hex (#f59e0b).
-              // Раньше hex подставлялся как класс — иконка (в т.ч. «Лимит») оставалась без цвета.
-              const isHex = s.color?.startsWith('#')
-              return (
-                <span key={s.label} className="inline-flex items-center gap-1" title={`${s.label}: ${s.value}`}>
-                  <span className={cn('shrink-0', !isHex && s.color)} style={isHex ? { color: s.color } : undefined}>{s.icon}</span>
-                  {/* MR-136: мало места → прячем текстовую подпись (остаётся иконка+значение, подпись — в тултипе). */}
-                  <span className="hidden uppercase tracking-wide xl:inline">{s.label}</span>
-                  <b className={cn('font-semibold', s.warn ? 'text-amber-300' : 'text-fg')}>{s.value}</b>
-                </span>
-              )
-            })}
+          {/* Сводка (лево): только ЦЕНА и ВРЕМЯ — крупными плашками, как кнопки справа.
+              Чипы «Аккаунты / Группы / Лимит» убраны (правка заказчика 13.08): выбранные
+              аккаунты и цели человек только что задал выше по странице, дублировать их в
+              панели незачем — а вот «сколько спишется» и «сколько ждать» видно только здесь. */}
+          <div className="flex shrink-0 items-center gap-2">
             {!running && cost}
           </div>
 
