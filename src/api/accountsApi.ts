@@ -53,6 +53,14 @@ export async function fetchAccountChannels(accountId: string): Promise<{ busy: b
   return apiGet(`/api/tg/accounts/${accountId}/channels`)
 }
 
+/** MR-164: одно сообщение канала/группы для просмотра переписки из карточки. */
+export interface ChannelMessage { id: number; text: string; date: number; out: boolean; hasMedia: boolean; sender: string }
+
+/** MR-164: последние сообщения канала/группы аккаунта (живой Telegram-запрос через сессию). */
+export async function fetchAccountChannelMessages(accountId: string, peer: string): Promise<{ busy?: boolean; title?: string; messages: ChannelMessage[]; error?: string }> {
+  return apiGet(`/api/tg/accounts/${accountId}/channel-messages?peer=${encodeURIComponent(peer)}`)
+}
+
 /** MR-129: аккаунт выходит из канала/группы (по id из списка каналов). */
 export async function leaveAccountChannel(accountId: string, channelId: string): Promise<{ ok: boolean; error?: string }> {
   return apiPost<{ ok: boolean; error?: string }>(`/api/tg/accounts/${accountId}/channels/${channelId}/leave`, {})

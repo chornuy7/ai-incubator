@@ -580,6 +580,50 @@ export async function leaveAccountChannel(accountId, channelId) {
 }
 
 /**
+ * MR-164: последние сообщения канала/группы аккаунта — для просмотра переписки прямо из
+ * карточки (клик по каналу во вкладке «Каналы»). accessHash у нас нет, поэтому резолвим
+ * сущность через getDialogs (как в leave/list). Это ЖИВАЯ Telegram-операция: подключение
+ * сессией через прокси аккаунта, поэтому уважаем блокировку и мёртвый прокси падает ошибкой.
+ * @param {string} accountId @param {string} peer id или @username канала/группы @param {number} limit
+ */
+export async function listAccountChannelMessages(accountId, peer, limit = 30) {
+  const lock = getAccountLock(accountId)
+  if (lock) return { busy: true, busyIn: { moduleLabel: lock.moduleLabel }, messages: [] }
+  const sessionStr = await loadSessionString(accountId)
+  if (!sessionStr) return { busy: false, messages: [], error: 'no_session' }
+  const meta = await getAccountMeta(accountId)
+  let client
+  try {
+    client = await createClient(sessionStr, meta.proxy, accountFingerprint(accountId, meta))
+    const dialogs = await client.getDialogs({ limit: 300 })
+    const uname = String(peer || '').replace(/^@/, '')
+    const d = dialogs.find((x) => x.entity && (x.entity.id?.toString?.() === String(peer) || x.entity.username === uname || x.entity.usernames?.some?.((u) => u.username === uname)))
+    if (!d || !d.entity) { await client.disconnect(); return { busy: false, messages: [], error: 'not_found' } }
+    const title = d.entity.title || d.title || d.name || ''
+    const msgs = await client.getMessages(d.entity, { limit: Math.min(50, Math.max(1, Number(limit) || 30)) })
+    const messages = []
+    for (const m of msgs || []) {
+      const text = m.message || m.text || ''
+      if (!text && !m.media) continue
+      messages.push({
+        id: m.id,
+        text: String(text).slice(0, 2000),
+        date: m.date ? Number(m.date) * 1000 : Date.now(),
+        out: !!m.out,
+        hasMedia: !!m.media,
+        sender: m.postAuthor || (m.sender ? (m.sender.firstName || m.sender.title || '') : ''),
+      })
+    }
+    await client.disconnect()
+    messages.reverse() // старые сверху, свежие снизу — как в обычной переписке
+    return { busy: false, title, messages }
+  } catch (err) {
+    try { if (client) await client.disconnect() } catch { /* ignore */ }
+    return { busy: false, messages: [], error: err instanceof Error ? err.message : 'error' }
+  }
+}
+
+/**
  * Список папок (dialog filters) аккаунта. Уважает блокировку.
  * @param {string} accountId
  */

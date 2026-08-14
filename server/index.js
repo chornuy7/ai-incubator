@@ -37,7 +37,7 @@ import {
   reconcileLocks,
   forceReleaseAccount,
 } from './lib/accountLocks.js'
-import { buildAccountStats, listAccountChannels, listAccountFolders, leaveAccountChannel } from './accountStats.js'
+import { buildAccountStats, listAccountChannels, listAccountChannelMessages, listAccountFolders, leaveAccountChannel } from './accountStats.js'
 import { dailySummary, dailySummaryAll } from './lib/dailyActions.js'
 import { rpsMiddleware, systemMetrics } from './lib/systemMetrics.js'
 import { setMaxConcurrent, getConcurrencyState } from './modules/workers.js'
@@ -207,6 +207,16 @@ app.get('/api/tg/accounts/:accountId/daily', async (req, res) => {
 app.get('/api/tg/accounts/:accountId/channels', async (req, res) => {
   try {
     const result = await listAccountChannels(req.params.accountId)
+    res.json({ ok: true, ...result })
+  } catch (err) {
+    res.status(500).json({ ok: false, error: err instanceof Error ? err.message : 'Ошибка' })
+  }
+})
+
+// MR-164: последние сообщения канала/группы аккаунта — просмотр переписки из карточки.
+app.get('/api/tg/accounts/:accountId/channel-messages', async (req, res) => {
+  try {
+    const result = await listAccountChannelMessages(req.params.accountId, String(req.query.peer || ''), Number(req.query.limit) || 30)
     res.json({ ok: true, ...result })
   } catch (err) {
     res.status(500).json({ ok: false, error: err instanceof Error ? err.message : 'Ошибка' })

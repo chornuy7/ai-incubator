@@ -281,11 +281,16 @@ export function AppHeader() {
             <Radar size={16} /> Парсинг данных
           </button>
 
-          {/* Accounts limit */}
-          <div className="flex items-center gap-1.5 rounded-xl border border-line bg-elevated px-3 py-1.5">
+          {/* Accounts limit — кликабельно, ведёт в менеджер аккаунтов (правка 12.08). */}
+          <button
+            type="button"
+            onClick={() => nav('/panel')}
+            className="flex items-center gap-1.5 rounded-xl border border-line bg-elevated px-3 py-1.5 transition-colors hover:border-spark-500/40 hover:bg-elevated/70"
+            title="Открыть менеджер аккаунтов"
+          >
             <span className="text-sm font-bold text-fg">{active} / {limit}</span>
             <span className="hidden text-xs text-muted sm:inline">акк.</span>
-          </div>
+          </button>
 
           {/* §6.3 (NOTIFY-001): колокольчик — сколько аккаунтов отвалилось (мёртвый прокси / нерабочий статус). */}
           <div className="relative" ref={notifRef}>

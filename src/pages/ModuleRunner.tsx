@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { revealHelpBlock } from '@/features/neuro-commenting/moduleUi'
-import { useParams, Navigate } from 'react-router-dom'
+import { useParams, Navigate, useNavigate } from 'react-router-dom'
 import {
   Play, Save, Square, Sparkles, Plus, Trash2, FileText, Clock, Globe, Copy, Download,
   ArrowUp, ListChecks, ShoppingCart, History as HistoryIcon, ChevronRight, X, ChevronDown,
@@ -121,6 +121,11 @@ function HeaderActions({ cfg }: { cfg: ModuleConfig }) {
   const pushToast = useApp((s) => s.pushToast)
   const setTasksOpen = useUi((s) => s.setTasksOpen)
   const setCoinsOpen = useUi((s) => s.setCoinsOpen)
+  // Правка 12.08: «О модуле» и «Статьи» — рабочие (не демо). «О модуле» открывает справку
+  // модуля (Help Center по теме модуля), «Статьи» ведут в «Обучение» (база знаний).
+  const setHelpTopic = useUi((s) => s.setHelpTopic)
+  const setHelpOpen = useUi((s) => s.setHelpOpen)
+  const navHeader = useNavigate()
 
   if (cfg.ggrLayout) {
     return (
@@ -148,8 +153,8 @@ function HeaderActions({ cfg }: { cfg: ModuleConfig }) {
   return (
     <>
       {(cfg.richLayout || cfg.lookingLayout || cfg.warmingLayout || cfg.parserLayout || cfg.participantsLayout) && <>
-        <button onClick={() => pushToast({ type: 'info', title: 'О модуле', desc: `${cfg.title} — справка (демо).` })} className="btn-ghost h-10">О модуле</button>
-        <button onClick={() => pushToast({ type: 'info', title: 'Статьи', desc: 'База знаний (демо).' })} className="btn-ghost h-10">Статьи</button>
+        <button onClick={() => { setHelpTopic(cfg.title); setHelpOpen(true) }} className="btn-ghost h-10">О модуле</button>
+        <button onClick={() => navHeader('/panel/learning')} className="btn-ghost h-10">Статьи</button>
       </>}
       {cfg.templateButtons?.map((b) => (
         <button key={b} onClick={() => pushToast({ type: 'info', title: b, desc: 'Шаблоны настроек (демо).' })} className="btn-ghost h-10">{b === 'Новый шаблон' && <Plus size={15} />}{b}</button>

@@ -2,7 +2,7 @@ import { useEffect, useState, useCallback } from 'react'
 import { WorkTab } from './WorkTab'
 import {
   User, Globe, BarChart3, Calendar, Zap, HeartPulse, Hash,
-  Copy, Check, ShieldCheck, ShieldAlert, ShieldQuestion, Loader2, RefreshCw, Unlock, AlertCircle, Server, LogOut, ExternalLink,
+  Copy, Check, ShieldCheck, ShieldAlert, ShieldQuestion, Loader2, RefreshCw, Unlock, AlertCircle, Server, LogOut, ExternalLink, MessageSquare,
 } from 'lucide-react'
 import { Modal, Avatar, Segmented } from '@/shared/ui'
 import { cn } from '@/shared/lib/utils'
@@ -11,7 +11,7 @@ import { confirmDialog } from '@/shared/lib/dialog'
 import { ChangeProxyModal } from './ChangeProxyModal'
 import {
   fetchAccountStats, fetchAccountChannels, leaveAccountChannel, releaseAccountLock,
-  fetchAccountDaily, type AccountDaily,
+  fetchAccountDaily, fetchAccountChannelMessages, type AccountDaily, type ChannelMessage,
 } from '@/api/accountsApi'
 import type { TgAccount, AccountStats, AccountChannel } from '@/shared/types'
 import { FLAGS as GEO_FLAGS, COUNTRY_NAME } from '@/shared/config/geo'
@@ -637,6 +637,7 @@ export function ChannelsTab({ accountId }: { accountId: string }) {
   const [q, setQ] = useState('')
   const [kind, setKind] = useState(0) // 0 — все, 1 — каналы, 2 — группы
   const [leavingId, setLeavingId] = useState<string | null>(null)
+  const [msgView, setMsgView] = useState<AccountChannel | null>(null) // MR-164: просмотр сообщений канала/группы
 
   const leave = async (c: AccountChannel) => {
     if (!(await confirmDialog({
@@ -695,6 +696,15 @@ export function ChannelsTab({ accountId }: { accountId: string }) {
             </div>
           )}
           {c.unread > 0 && <span className="rounded-full bg-rose-500/15 px-2 py-0.5 text-[11px] font-bold text-rose-300">{c.unread}</span>}
+          {/* MR-164: посмотреть последние сообщения канала/группы (как переписку в НейроДиалогах). */}
+          <button
+            type="button"
+            onClick={() => setMsgView(c)}
+            className="btn-icon h-8 w-8 shrink-0 text-muted hover:text-iris-300"
+            title="Посмотреть последние сообщения"
+          >
+            <MessageSquare size={14} />
+          </button>
           {/* MR-129: «взять отсюда» — копируем ссылку/@username, чтобы вставить канал как цель. */}
           {c.username && (
             <button
@@ -718,7 +728,52 @@ export function ChannelsTab({ accountId }: { accountId: string }) {
         </div>
       ))}
       </div>
+      {msgView && <ChannelMessagesModal accountId={accountId} channel={msgView} onClose={() => setMsgView(null)} />}
     </div>
+  )
+}
+
+/** MR-164: модалка с последними сообщениями канала/группы (живой Telegram-запрос). */
+function ChannelMessagesModal({ accountId, channel, onClose }: { accountId: string; channel: AccountChannel; onClose: () => void }) {
+  const [st, setSt] = useState<{ loading: boolean; error?: string; busy?: boolean; msgs: ChannelMessage[] }>({ loading: true, msgs: [] })
+  useEffect(() => {
+    let alive = true
+    setSt({ loading: true, msgs: [] })
+    void fetchAccountChannelMessages(accountId, channel.username || channel.id).then((r) => {
+      if (!alive) return
+      setSt({ loading: false, busy: r.busy, error: r.error, msgs: r.messages || [] })
+    }).catch((e) => alive && setSt({ loading: false, error: e instanceof Error ? e.message : 'error', msgs: [] }))
+    return () => { alive = false }
+  }, [accountId, channel])
+
+  const errText = st.error === 'no_session' ? 'Нет сессии аккаунта.'
+    : st.error === 'not_found' ? 'Канал/группа не найдены у этого аккаунта.'
+    : st.error ? `Не удалось загрузить (${st.error}). Возможно, мёртвый прокси.` : ''
+
+  return (
+    <Modal open onClose={onClose} title={channel.title} subtitle={channel.username ? `@${channel.username} · последние сообщения` : 'последние сообщения'} icon={channel.kind === 'channel' ? <Hash size={20} /> : <User size={20} />} size="md">
+      {st.loading ? (
+        <LiveLoading label="Загрузка сообщений из Telegram…" />
+      ) : st.busy ? (
+        <div className="py-10 text-center text-sm text-amber-300">Аккаунт занят — сообщения недоступны.</div>
+      ) : errText ? (
+        <div className="py-10 text-center text-sm text-rose-300">{errText}</div>
+      ) : !st.msgs.length ? (
+        <div className="py-10 text-center text-sm text-muted">Сообщений нет.</div>
+      ) : (
+        <div className="max-h-[60vh] space-y-2 overflow-y-auto pr-1">
+          {st.msgs.map((m) => (
+            <div key={m.id} className={cn('rounded-xl border px-3 py-2', m.out ? 'ml-8 border-spark-500/25 bg-spark-500/[.06]' : 'mr-8 border-line bg-elevated/50')}>
+              <div className="mb-0.5 flex items-center justify-between gap-2 text-[10px] text-muted">
+                <span className="truncate">{m.sender || (m.out ? 'Вы' : channel.title)}</span>
+                <span className="shrink-0 tabular-nums">{new Date(m.date).toLocaleString('ru-RU', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}</span>
+              </div>
+              <div className="whitespace-pre-wrap break-words text-sm text-fg">{m.text || (m.hasMedia ? '[медиа]' : '')}</div>
+            </div>
+          ))}
+        </div>
+      )}
+    </Modal>
   )
 }
 
