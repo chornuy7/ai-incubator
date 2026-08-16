@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Zap, Clock, Info } from 'lucide-react'
+import { Zap, Clock } from 'lucide-react'
 import { fetchPricing, type Pricing } from '@/api/balanceApi'
 import { coins as fmtCoins } from '@/shared/lib/utils'
 
@@ -179,11 +179,15 @@ function plural(n: number, one: string, few: string, many: string): string {
 }
 
 /**
- * MR-149: мини-калькулятор в шапке модуля (перед «Выбором аккаунтов»). Показывает
- * ЕДИНУЮ цену за действие — отправка + генерация текста ИИ объединены в одну сумму —
- * и сколько символов покрывает одно действие (лимит Telegram ~5000 / 1024 с картинкой).
- * Себестоимость текста берём как среднюю по истории модуля (как в LaunchCost).
- * Если действия у модуля бесплатны (нет цены) — не показываем.
+ * MR-149 → MR-163: мини-калькулятор в шапке модуля (перед «Выбором аккаунтов»).
+ *
+ * Показывает ЦЕНУ ЗА ОДНО ДЕЙСТВИЕ ровно такой, как она задана в админ-панели. Раньше
+ * сюда подмешивалась средняя себестоимость текста, и на витрине вместо «0.05» появлялось
+ * «0.0715» — заказчик 14.08: «значение должно быть такое же, как написано в админке…
+ * чистое значение». Полная стоимость задачи считается внизу, в панели запуска, и
+ * дублировать её сверху нельзя.
+ *
+ * Если действия у модуля бесплатны (нет цены) — блок не показываем.
  */
 export function ActionPriceCalc({ moduleKey }: { moduleKey: string }) {
   // Тот же кэш прайса, что и у LaunchCost: два компонента на одной странице больше не
@@ -191,18 +195,13 @@ export function ActionPriceCalc({ moduleKey }: { moduleKey: string }) {
   const pricing = usePricing()
   const price = pricing?.actions?.[moduleKey] ?? 0
   if (!pricing || !price) return null
-  const avgTokens = pricing.avgTokens?.[moduleKey] ?? 0
-  const tokenCost = avgTokens ? (avgTokens / 1000) * pricing.coinsPer1kTokens : 0
-  // Единая цена за действие = действие + текст (по максимуму символов чарджим одинаково).
-  const perAction = Math.round((price + tokenCost) * 1000) / 1000
   return (
     <div className="flex flex-wrap items-center gap-x-4 gap-y-1 rounded-2xl border border-amber-500/20 bg-amber-500/[.05] px-4 py-2.5 text-sm">
       <span className="flex items-center gap-1.5 font-bold text-amber-300">
-        <Zap size={15} fill="currentColor" /> {fmtCoins(perAction)} ⚡
+        <Zap size={15} fill="currentColor" /> {fmtCoins(price)} ⚡
         <span className="font-normal text-white/60">за действие</span>
       </span>
       <span className="text-white/50">1 действие = до 5000 символов (1024 с картинкой)</span>
-      {avgTokens > 0 && <span className="flex items-center gap-1 text-xs text-white/35"><Info size={12} /> цена включает генерацию текста ИИ</span>}
     </div>
   )
 }

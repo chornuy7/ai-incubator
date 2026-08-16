@@ -11,6 +11,12 @@ import { fetchBalance, fetchPricing, buyTokens, fetchWalletHistory, type Balance
 import { useSession } from '@/features/auth/session'
 import { usePlan } from '@/features/billing/plan'
 import { CRITICAL } from '@/features/billing/LowBalanceBar'
+
+/**
+ * Сколько токенов считается «запасом» — при таком балансе чип зелёный (MR-166, 14.08).
+ * Порог назвал заказчик: «больше 500 токенов пусть оно становится зелёным».
+ */
+const HEALTHY_COINS = 500
 import { useUi } from '@/shared/lib/uiStore'
 import { coins as fmtCoins } from '@/shared/lib/utils'
 import { confirmDialog } from '@/shared/lib/dialog'
@@ -373,20 +379,29 @@ export function AppHeader() {
             // показываем только токены, а не выдуманный ноль долларов.
             const usd = typeof balance?.usd === 'number' ? balance.usd : null
             const tokensLow = c <= CRITICAL
-            const usdLow = usd != null && usd <= 0     // §11.5: $0 — тоже тревога (красным)
-            const alarm = tokensLow || usdLow          // чип красный, если пусто хоть одно
+            const usdLow = usd != null && usd <= 0
+            // MR-166 (14.08): цвет чипа определяют ТОКЕНЫ, а не деньги. Раньше нулевой
+            // долларовый остаток красил всё в красный при полном балансе токенов, и
+            // заказчик читал это как аварию: «наша система работает на токенах, оно
+            // должно смотреть на токены в первую очередь». Деньги остаются видны и
+            // подсвечиваются отдельно, но общей тревоги больше не поднимают.
+            const alarm = tokensLow
+            // Запас есть — чип зелёный. Порог 500 задан заказчиком на созвоне 14.08.
+            const tokensHealthy = c >= HEALTHY_COINS
             const cur = pricing?.currency || '$'
             return (
               <button
                 onClick={() => setCoinsOpen(true)}
-                title={usdLow && tokensLow ? 'Деньги и токены на нуле — пополнить'
-                  : usdLow ? 'Денег на счёте нет — пополнить'
-                    : tokensLow ? 'Токены на нуле — пополнить' : 'Деньги и токены'}
+                title={tokensLow ? 'Токены на нуле — пополнить'
+                  : usdLow ? 'Токены есть, но денег на счёте нет'
+                    : 'Деньги и токены'}
                 className={
                   'flex items-center gap-2 rounded-xl border px-3 py-1.5 transition-colors ' +
                   (alarm
                     ? 'border-red-500/50 bg-red-500/15 hover:bg-red-500/25'
-                    : 'border-amber-500/30 bg-amber-500/10 hover:bg-amber-500/15')
+                    : tokensHealthy
+                      ? 'border-emerald-500/30 bg-emerald-500/10 hover:bg-emerald-500/15'
+                      : 'border-amber-500/30 bg-amber-500/10 hover:bg-amber-500/15')
                 }
               >
                 {usd != null && (
@@ -395,8 +410,8 @@ export function AppHeader() {
                   </span>
                 )}
                 <span className={'flex items-center gap-1 ' + (usd != null ? 'border-l border-white/10 pl-2' : '')}>
-                  <Zap size={15} className={tokensLow ? 'text-red-400' : 'text-amber-400'} fill="currentColor" />
-                  <span className={'text-sm font-bold tabular-nums ' + (tokensLow ? 'text-red-300' : 'text-amber-300')}>{fmtCoins(c)}</span>
+                  <Zap size={15} className={tokensLow ? 'text-red-400' : tokensHealthy ? 'text-emerald-400' : 'text-amber-400'} fill="currentColor" />
+                  <span className={'text-sm font-bold tabular-nums ' + (tokensLow ? 'text-red-300' : tokensHealthy ? 'text-emerald-300' : 'text-amber-300')}>{fmtCoins(c)}</span>
                 </span>
                 {alarm && <span className="text-xs font-bold text-red-300">Пополнить</span>}
               </button>

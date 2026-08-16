@@ -588,16 +588,21 @@ export function TasksPage() {
               </div>
               <div className="h-1.5 overflow-hidden rounded bg-white/10"><div className="h-full rounded bg-iris-500 transition-all" style={{ width: `${g.prog}%` }} /></div>
               <div className="mt-1 text-[11px] text-white/40">Прогресс к цели: {g.prog}%</div>
-              <div className="mt-2 grid gap-1.5 sm:grid-cols-2">
-                {g.tasks.map((t) => <TaskCard key={`${t.moduleKey}:${t.id}`} t={t} goalName={null} busy={busy} busyAction={busyAction} pendingAction={pending[t.id]?.action} onOpen={openTask} onStop={doStop} onRestart={doRestart} onPause={doPause} onResume={doResume} canControl={canControl(t)} problem={taskProblems(t)} compact />)}
+              <div className="mt-2 flex flex-wrap items-start gap-1.5">
+                {g.tasks.map((t) => <div key={`${t.moduleKey}:${t.id}`} className="min-w-0 basis-full sm:grow sm:basis-[calc(50%-0.1875rem)]"><TaskCard t={t} goalName={null} busy={busy} busyAction={busyAction} pendingAction={pending[t.id]?.action} onOpen={openTask} onStop={doStop} onRestart={doRestart} onPause={doPause} onResume={doResume} canControl={canControl(t)} problem={taskProblems(t)} compact /></div>)}
               </div>
             </Card>
           ))}
         </div>
         )
       ) : (
-        <div className="grid gap-2 lg:grid-cols-2">
-          {filtered.map((t) => <TaskCard key={`${t.moduleKey}:${t.id}`} t={t} goalName={goalName(t.goalId)} busy={busy} busyAction={busyAction} pendingAction={pending[t.id]?.action} onOpen={openTask} onStop={doStop} onRestart={doRestart} onPause={doPause} onResume={doResume} canControl={canControl(t)} selected={selected.has(t.id)} onToggleSelect={toggleSel} problem={taskProblems(t)} />)}
+        // Правка 14.08: карточки раскладываются flex'ом, а не гридом. Грид держит все
+        // карточки строки одной высоты и одного шага, и когда одна из них пустая
+        // (остановленная задача без прогресса), соседняя визуально «поднимается» — правая
+        // читается как стоящая ПЕРЕД левой, хотя порядок обратный. Flex с `items-start`
+        // даёт каждой карточке свою высоту. На сортировку не влияет.
+        <div className="flex flex-wrap items-start gap-2">
+          {filtered.map((t) => <div key={`${t.moduleKey}:${t.id}`} className="min-w-0 basis-full lg:grow lg:basis-[calc(50%-0.25rem)]"><TaskCard t={t} goalName={goalName(t.goalId)} busy={busy} busyAction={busyAction} pendingAction={pending[t.id]?.action} onOpen={openTask} onStop={doStop} onRestart={doRestart} onPause={doPause} onResume={doResume} canControl={canControl(t)} selected={selected.has(t.id)} onToggleSelect={toggleSel} problem={taskProblems(t)} /></div>)}
         </div>
       )}
     </div>
