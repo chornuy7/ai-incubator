@@ -1,9 +1,10 @@
 import { useMemo, useState, useEffect, useRef } from 'react'
 import {
-  Plus, UploadCloud, Server, RefreshCw, Columns3, ListChecks, Search, Filter,
-  MoreHorizontal, Trash2, KeyRound, Info, Users, Check, X, Undo2, Loader2, Pause,
-  Lock, LockOpen, Rocket, AlertTriangle, ShieldCheck, Clock,
+  Plus, UploadCloud, Server, RefreshCw, ListChecks, Search, Filter,
+  MoreHorizontal, Trash2, KeyRound, Info, Users, Undo2, Loader2, Pause,
+  Lock, LockOpen, Rocket, AlertTriangle, ShieldCheck, Clock, Play, Square, Power, Moon, Eye,
 } from 'lucide-react'
+import type React from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useApp, activeAccounts, trashedAccounts, STATUS_META } from '@/mocks/store'
 import { useSession } from '@/features/auth/session'
@@ -46,6 +47,35 @@ const RISK_META: Record<RiskKey, { label: string; dot: string; bg: string; match
   deadProxy: { label: 'Мёртвый прокси', dot: 'bg-rose-400', bg: 'bg-rose-500/12 border-rose-500/30', match: (a) => a.proxyOk === false && a.noProxy !== true },
   noProxy: { label: 'Нет прокси', dot: 'bg-orange-400', bg: 'bg-orange-500/12 border-orange-500/30', match: (a) => a.noProxy === true },
   lowTrust: { label: 'Низкое доверие', dot: 'bg-amber-400', bg: 'bg-amber-500/12 border-amber-500/30', match: (a) => a.trustBand === 'low' },
+}
+
+// Правка 14.08: кнопки-иконки с кастомным тёмным плавающим тултипом (не нативный title).
+// Панель управления и тулбар просили сделать иконками с всплывашкой при наведении.
+function IconBtn({ icon, label, onClick, disabled, tone, active }: {
+  icon: React.ReactNode; label: string; onClick: () => void; disabled?: boolean; tone?: string; active?: boolean
+}) {
+  return (
+    <span className="group/ib relative inline-flex">
+      <button
+        type="button"
+        onClick={onClick}
+        disabled={disabled}
+        aria-label={label}
+        className={cn(
+          'grid h-9 w-9 place-items-center rounded-lg border transition-colors disabled:cursor-not-allowed',
+          disabled ? 'border-line text-white/25' : (active ? 'border-spark-500/50 bg-spark-500/12 text-spark-300' : (tone || 'border-line text-fg hover:bg-elevated')),
+        )}
+      >
+        {icon}
+      </button>
+      <span
+        role="tooltip"
+        className="pointer-events-none absolute bottom-[calc(100%+6px)] left-1/2 z-50 -translate-x-1/2 whitespace-nowrap rounded-lg border border-line bg-surface px-2 py-1 text-[11px] font-medium text-fg opacity-0 shadow-xl transition-opacity group-hover/ib:opacity-100"
+      >
+        {label}
+      </span>
+    </span>
+  )
 }
 const COLS = [
   { key: 'avatar', label: 'Аватар' },
@@ -264,7 +294,8 @@ export function AccountsPage() {
   const [moduleFilter, setModuleFilter] = useState('all')
   const [moveOpen, setMoveOpen] = useState(false)
   const [query, setQuery] = useState('')
-  const [visibleCols, setVisibleCols] = useState<string[]>(COLS.map((c) => c.key))
+  // Правка 14.08: кнопка «Колонки» убрана — 6 колонок фиксированы, набор больше не меняется.
+  const [visibleCols] = useState<string[]>(COLS.map((c) => c.key))
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [page, setPage] = useState(0)
   const [pageSize, setPageSize] = useState(25)
@@ -543,32 +574,7 @@ export function AccountsPage() {
         })}
       </div>
 
-      {/* Правка 14.08: причины «Зоны риска» — отдельными плитками-фильтрами (не свалка в один бейдж). */}
-      <div className="mb-5 flex flex-wrap items-center gap-2.5">
-        <span className="text-[11px] font-bold uppercase tracking-wide text-faint">Зона риска:</span>
-        {RISK_ORDER.map((rk) => {
-          const m = RISK_META[rk]
-          const activeCard = riskFilter === rk
-          return (
-            <button
-              key={rk}
-              onClick={() => { setRiskFilter(activeCard ? 'all' : rk); setStatusFilter('all'); setPage(0); setTab('accounts') }}
-              className={cn(
-                'flex items-center gap-2.5 rounded-xl border px-3 py-2 text-left transition-all',
-                activeCard ? 'border-rose-500/50 bg-rose-500/8' : 'border-line bg-surface hover:border-rose-500/30',
-              )}
-            >
-              <span className={cn('grid h-7 w-7 shrink-0 place-items-center rounded-lg border', m.bg)}>
-                <span className={cn('h-2 w-2 rounded-full', m.dot)} />
-              </span>
-              <div className="min-w-0">
-                <div className="font-display text-base font-bold leading-none text-fg">{riskCounts[rk]}</div>
-                <div className="truncate text-[11px] font-semibold text-muted">{m.label}</div>
-              </div>
-            </button>
-          )
-        })}
-      </div>
+      {/* Правка 14.08: причины «Зоны риска» перенесены в фильтры (не топ-статистика). */}
 
       {/* (8) Сводка по модулям */}
       {moduleSummary.length > 0 && (
@@ -592,42 +598,44 @@ export function AccountsPage() {
         </div>
       )}
 
-      {/* Toolbar */}
+      {/* Toolbar (правка 14.08: без таба «Аккаунты/Корзина», без «Колонки»; сортировка — в фильтрах;
+          «Обновить» и «Удалённые» — иконками справа). */}
       <div className="mb-4 flex flex-wrap items-center gap-2">
-        <div className="inline-flex rounded-xl border border-line bg-elevated p-1">
-          <button onClick={() => { setTab('accounts'); setPage(0); setSelected(new Set()) }} className={cn('rounded-lg px-3.5 py-1.5 text-sm font-semibold transition-all', tab === 'accounts' ? 'bg-spark-gradient text-[#04150c]' : 'text-muted hover:text-fg')}>
-            Аккаунты <span className="opacity-70">{active.length}</span>
-          </button>
-          <button onClick={() => { setTab('trash'); setPage(0); setSelected(new Set()) }} className={cn('rounded-lg px-3.5 py-1.5 text-sm font-semibold transition-all', tab === 'trash' ? 'bg-spark-gradient text-[#04150c]' : 'text-muted hover:text-fg')}>
-            Корзина <span className="opacity-70">{trashed.length}</span>
-          </button>
-        </div>
-
         <div className="relative min-w-0 flex-1 sm:max-w-xs">
           <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted" />
           <input value={query} onChange={(e) => { setQuery(e.target.value); setPage(0) }} className="input pl-9" placeholder="Поиск по имени, @username, номеру…" />
         </div>
 
-        {/* Сортировка рядом с поиском: это две половины одного действия — найти нужный
-            аккаунт в списке на сотни строк. */}
-        <Select
-          value={sortKey}
-          onChange={(v) => { setSortKey(v as SortKey); setPage(0) }}
-          options={SORT_LABELS.map((s) => ({ value: s.key, label: s.label }))}
-          className="w-full sm:w-48"
-        />
-
         {/* Filters dropdown */}
         <Dropdown
           width={260}
           trigger={({ toggle, open }) => (
-            <button onClick={toggle} className={cn('btn-ghost h-10', (roleFilter !== 'Все роли' || countryFilter !== 'all' || open) && 'border-spark-500/40 text-spark-300')}>
+            <button onClick={toggle} className={cn('btn-ghost h-10', (roleFilter !== 'Все роли' || countryFilter !== 'all' || riskFilter !== 'all' || open) && 'border-spark-500/40 text-spark-300')}>
               <Filter size={16} /> <span className="hidden sm:inline">Фильтры</span>
             </button>
           )}
         >
           {() => (
             <div className="p-1.5">
+              {/* Правка 14.08: сортировка («Свободные сверху» и др.) — внутри фильтров. */}
+              <div className="mb-1 px-1 text-[11px] font-bold uppercase tracking-wide text-faint">Сортировка</div>
+              <Select
+                className="mb-3"
+                value={sortKey}
+                onChange={(v) => { setSortKey(v as SortKey); setPage(0) }}
+                options={SORT_LABELS.map((s) => ({ value: s.key, label: s.label }))}
+              />
+              {/* Правка 14.08: «Зона риска» — фильтр (мёртвый прокси / нет прокси / низкое доверие). */}
+              <div className="mb-1 px-1 text-[11px] font-bold uppercase tracking-wide text-faint">Зона риска</div>
+              <Select
+                className="mb-3"
+                value={riskFilter}
+                onChange={(v) => { setRiskFilter(v as RiskKey | 'all'); setStatusFilter('all'); setPage(0); setTab('accounts') }}
+                options={[
+                  { value: 'all', label: 'Любая (без фильтра)' },
+                  ...RISK_ORDER.map((rk) => ({ value: rk, label: `${RISK_META[rk].label} (${riskCounts[rk]})` })),
+                ]}
+              />
               <div className="mb-1 px-1 text-[11px] font-bold uppercase tracking-wide text-faint">Кампания</div>
               <Select
                 className="mb-3"
@@ -661,41 +669,25 @@ export function AccountsPage() {
                 onChange={(e) => { setFatigueMin(Number(e.target.value) || 0); setPage(0) }}
                 className="w-full accent-spark-500"
               />
-              <button onClick={() => { setRoleFilter('Все роли'); setCountryFilter('all'); setModuleFilter('all'); setFatigueMin(0) }} className="btn-ghost mt-3 h-8 w-full text-xs">Сбросить фильтры</button>
+              <button onClick={() => { setRoleFilter('Все роли'); setCountryFilter('all'); setModuleFilter('all'); setFatigueMin(0); setRiskFilter('all'); setSortKey('default') }} className="btn-ghost mt-3 h-8 w-full text-xs">Сбросить фильтры</button>
             </div>
           )}
         </Dropdown>
 
-        <button onClick={() => { void loadAccounts(); pushToast({ type: 'info', title: 'Обновлено', desc: 'Список загружен с сервера.' }) }} className="btn-ghost h-10">
-          <RefreshCw size={16} /> <span className="hidden sm:inline">Обновить</span>
-        </button>
-
-        {/* Columns */}
-        <Dropdown
-          width={200}
-          trigger={({ toggle }) => <button onClick={toggle} className="btn-ghost h-10"><Columns3 size={16} /> <span className="hidden sm:inline">Колонки</span></button>}
-        >
-          {() => (
-            <div className="p-1">
-              {COLS.map((c) => (
-                <button
-                  key={c.key}
-                  onClick={() => setVisibleCols((v) => (v.includes(c.key) ? v.filter((x) => x !== c.key) : [...v, c.key]))}
-                  className="flex w-full items-center justify-between gap-2 rounded-lg px-3 py-2 text-left text-sm text-fg hover:bg-elevated"
-                >
-                  {c.label}
-                  {showCol(c.key) && <Check size={15} className="text-spark-400" />}
-                </button>
-              ))}
-            </div>
+        {/* Правки 14.08: «Задачи», «Обновить» и «Удалённые(корзина)» — иконками справа. */}
+        <div className="ml-auto flex items-center gap-2">
+          <IconBtn icon={<ListChecks size={17} />} label="Задачи" onClick={() => setTasksOpen(true)} />
+          <IconBtn icon={<RefreshCw size={17} />} label="Обновить список" onClick={() => { void loadAccounts(); pushToast({ type: 'info', title: 'Обновлено', desc: 'Список загружен с сервера.' }) }} />
+          <IconBtn
+            icon={<Trash2 size={17} />}
+            label={tab === 'trash' ? 'Вернуться к аккаунтам' : `Удалённые${trashed.length ? ` (${trashed.length})` : ''}`}
+            active={tab === 'trash'}
+            onClick={() => { setTab(tab === 'trash' ? 'accounts' : 'trash'); setPage(0); setSelected(new Set()) }}
+          />
+          {tab === 'trash' && trashed.length > 0 && (
+            <button onClick={() => { void emptyTrash().then(() => pushToast({ type: 'success', title: 'Корзина очищена' })) }} className="btn-danger h-10"><Trash2 size={16} /> Очистить</button>
           )}
-        </Dropdown>
-
-        <button onClick={() => setTasksOpen(true)} className="btn-ghost h-10"><ListChecks size={16} /> <span className="hidden sm:inline">Задачи</span></button>
-
-        {tab === 'trash' && trashed.length > 0 && (
-          <button onClick={() => { void emptyTrash().then(() => pushToast({ type: 'success', title: 'Корзина очищена' })) }} className="btn-danger h-10"><Trash2 size={16} /> Очистить корзину</button>
-        )}
+        </div>
       </div>
 
       {/* §2: корзина — массовое восстановление и фильтр «живых» (валидных) сессий. */}
@@ -719,53 +711,30 @@ export function AccountsPage() {
       {/* Панель управления выбранными — всегда видна на вкладке аккаунтов; серая, если ничего не выбрано */}
       {tab === 'accounts' && (() => {
         const has = selected.size > 0
-        const btn = (tone: string) => `flex h-8 items-center gap-1.5 rounded-lg border px-2.5 text-xs font-semibold transition-colors disabled:cursor-not-allowed ${has ? tone : 'border-line text-white/25'}`
+        const total = active.length
+        const spamIds = active.filter((a) => a.status === 'spamblock').map((a) => a.id)
         return (
-        <div className="mb-3 flex flex-wrap items-center gap-2 rounded-xl border border-line bg-elevated/40 px-4 py-2.5">
-          <span className={`text-sm font-bold ${has ? 'text-spark-300' : 'text-white/40'}`}>{has ? `Выбрано: ${selected.size}` : 'Выберите аккаунты для управления'}</span>
-          <button disabled={!has} onClick={() => bulkStatusManual('active', 'Включено')} className={btn('border-spark-500/50 bg-spark-500/12 text-spark-300 hover:bg-spark-500/20')}><Check size={14} /> Запустить</button>
-          <button disabled={!has} onClick={() => bulkStatusManual('pause', 'На паузе')} className={btn('border-amber-500/50 bg-amber-500/12 text-amber-300 hover:bg-amber-500/20')}><Pause size={14} /> Пауза</button>
-          <button disabled={!has} onClick={bulkRelease} className={btn('border-rose-500/50 bg-rose-500/12 text-rose-300 hover:bg-rose-500/20')}><RefreshCw size={14} /> Стоп / освободить</button>
-          <button disabled={!has} onClick={() => bulkSetStatus('frozen', 'Отключено (frozen)')} className={btn('border-rose-500/40 bg-rose-500/8 text-rose-300 hover:bg-rose-500/15')}><X size={14} /> Отключить</button>
+        // Правки 14.08: панель управления целиком в иконках + кастомные тултипы; счётчик «N из total».
+        <div className="mb-3 flex flex-wrap items-center gap-1.5 rounded-xl border border-line bg-elevated/40 px-3 py-2">
+          <span className={`mr-1 text-sm font-bold tabular-nums ${has ? 'text-spark-300' : 'text-white/40'}`}>{selected.size} из {total}</span>
+          <IconBtn disabled={!has} icon={<Play size={16} />} label="Запустить" onClick={() => bulkStatusManual('active', 'Включено')} tone="border-spark-500/50 bg-spark-500/12 text-spark-300 hover:bg-spark-500/20" />
+          <IconBtn disabled={!has} icon={<Pause size={16} />} label="Пауза" onClick={() => bulkStatusManual('pause', 'На паузе')} tone="border-amber-500/50 bg-amber-500/12 text-amber-300 hover:bg-amber-500/20" />
+          <IconBtn disabled={!has} icon={<Square size={15} />} label="Стоп / освободить" onClick={bulkRelease} tone="border-rose-500/50 bg-rose-500/12 text-rose-300 hover:bg-rose-500/20" />
+          <IconBtn disabled={!has} icon={<Power size={16} />} label="Отключить (frozen)" onClick={() => bulkSetStatus('frozen', 'Отключено (frozen)')} tone="border-rose-500/40 bg-rose-500/8 text-rose-300 hover:bg-rose-500/15" />
           <span className="mx-1 h-5 w-px bg-line" />
-          <button disabled={!has} onClick={() => setMoveOpen(true)} className={btn('border-line text-fg hover:bg-elevated')}><Users size={14} /> Переместить</button>
-          {/* §4.5, прямой запрос владельца: «чтобы можно было МАССОВО всем задавать
-              усталость и отдых от модулей, как живой человек». */}
-          <button disabled={!has} onClick={() => setFatigueOpen(true)} className={btn('border-line text-fg hover:bg-elevated')}><Pause size={14} /> Усталость и отдых</button>
-          {/* Снятие спамблока через @SpamBot — массово, с рандомными задержками (анти-кластер). */}
-          {(() => {
-            const spamIds = active.filter((a) => a.status === 'spamblock').map((a) => a.id)
-            return (
-              <button disabled={!spamIds.length} onClick={() => setUnblockOpen(true)} className={btn('border-amber-500/40 bg-amber-500/8 text-amber-300 hover:bg-amber-500/15')} title="Апелляция в @SpamBot с рандомными задержками">
-                <ShieldCheck size={14} /> Снять спамблок{spamIds.length ? ` (${spamIds.length})` : ''}
-              </button>
-            )
-          })()}
-          {/* Раздача прокси была только в момент импорта. Дальше — пул сдох, купили новый,
-              и всё это руками по одному через карточку. */}
-          <button disabled={!has} onClick={() => setAssignProxyOpen(true)} className={btn('border-line text-fg hover:bg-elevated')}><Server size={14} /> Назначить прокси</button>
-          <button disabled={!has} onClick={() => { void (async () => { for (const id of selected) await setAccountStatus(id, 'reauth'); pushToast({ type: 'info', title: 'Отправлено на реавторизацию' }); setSelected(new Set()) })() }} className={btn('border-line text-fg hover:bg-elevated')}><KeyRound size={14} /> Реавторизация</button>
-          {/* §2: «Управление» — мульти-просмотр ВЫБРАННЫХ аккаунтов: открываем обзор на первом
-              и передаём весь выбор в `?sel=`, чтобы слева был список только выбранных, а не всех. */}
-          <button
-            disabled={!has}
-            onClick={() => {
-              const chosen = active.filter((a) => selected.has(a.id))
-              if (!chosen.length) return
-              navigate(`/panel/accounts/${chosen[0].id}?sel=${chosen.map((a) => a.id).join(',')}`)
-            }}
-            title="Открыть обзор выбранных аккаунтов: слева — только они, справа — табы"
-            className={btn('border-iris-500/50 bg-iris-500/12 text-iris-200 hover:bg-iris-500/20')}
-          ><Users size={14} /> Управление</button>
-          {/* §2: «В корзину» — самая редкая деструктивная функция, поэтому крайняя справа. */}
-          <button
-            disabled={!has}
-            onClick={bulkTrash}
-            title={busySelected.length ? 'Среди выбранных есть аккаунты в работе — сначала остановите' : 'Переместить выбранные в корзину'}
-            className={cn(btn('border-line text-fg hover:bg-elevated'), 'ml-auto', busySelected.length && 'opacity-60')}
-          >
-            <Trash2 size={14} /> В корзину{busySelected.length ? ` (${busySelected.length} в работе)` : ''}
-          </button>
+          <IconBtn disabled={!has} icon={<Users size={16} />} label="Переместить" onClick={() => setMoveOpen(true)} />
+          {/* §4.5: массово задать усталость/отдых, «как живой человек». */}
+          <IconBtn disabled={!has} icon={<Moon size={16} />} label="Усталость и отдых" onClick={() => setFatigueOpen(true)} />
+          {/* Снятие спамблока через @SpamBot — массово, с рандомными задержками. */}
+          <IconBtn disabled={!spamIds.length} icon={<ShieldCheck size={16} />} label={`Снять спамблок${spamIds.length ? ` (${spamIds.length})` : ''}`} onClick={() => setUnblockOpen(true)} tone="border-amber-500/40 bg-amber-500/8 text-amber-300 hover:bg-amber-500/15" />
+          <IconBtn disabled={!has} icon={<Server size={16} />} label="Назначить прокси" onClick={() => setAssignProxyOpen(true)} />
+          <IconBtn disabled={!has} icon={<KeyRound size={16} />} label="Реавторизация" onClick={() => { void (async () => { for (const id of selected) await setAccountStatus(id, 'reauth'); pushToast({ type: 'info', title: 'Отправлено на реавторизацию' }); setSelected(new Set()) })() }} />
+          {/* «Управление» — мульти-просмотр выбранных: открываем обзор на первом, весь выбор в ?sel=. */}
+          <IconBtn disabled={!has} icon={<Eye size={16} />} label="Управление (обзор выбранных)" onClick={() => { const chosen = active.filter((a) => selected.has(a.id)); if (!chosen.length) return; navigate(`/panel/accounts/${chosen[0].id}?sel=${chosen.map((a) => a.id).join(',')}`) }} tone="border-iris-500/50 bg-iris-500/12 text-iris-200 hover:bg-iris-500/20" />
+          {/* «В корзину» — деструктивная, крайняя справа. */}
+          <span className="ml-auto inline-flex">
+            <IconBtn disabled={!has} icon={<Trash2 size={16} />} label={busySelected.length ? `В корзину — сначала остановите ${busySelected.length} в работе` : 'В корзину'} onClick={bulkTrash} tone="border-line text-fg hover:bg-elevated" />
+          </span>
         </div>
         )
       })()}
