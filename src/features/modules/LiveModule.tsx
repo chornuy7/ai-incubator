@@ -374,7 +374,9 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
     const steps: LaunchStep[] = []
     if (cfg.accountPicker) steps.push({ label: 'Аккаунты', done: selected.size > 0, anchor: 'sec-accounts' })
     if (needsTargets && !cfg.warmingLayout) steps.push({ label: cfg.sourceTabs?.label ?? 'Группы', done: targets.length > 0 || hasPostTargets, anchor: 'sec-targets' })
-    steps.push({ label: 'Защита', done: true, optional: true, anchor: 'sec-settings' })
+    // Правка 14.08: у прогрева блок «Защита» убран → в степпере вместо «Защита» шаг «Уровень».
+    if (cfg.warmingLayout) steps.push({ label: 'Уровень', done: true, optional: true, anchor: 'sec-warm' })
+    else steps.push({ label: 'Защита', done: true, optional: true, anchor: 'sec-settings' })
     // MR-136: шаг назван «Параметры» (а не «Запуск») — он ведёт к секции «Параметры и лимиты»,
     // а не к запуску. Раньше клик по «Запуск» кидал на «Параметры» (сбивало), плюс «Запуск»
     // конфликтовал по смыслу с кнопкой «Начать». Запуск — это кнопка «Начать».
@@ -454,7 +456,10 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
         </SectionCard>
       )}
 
-      {showBlock('settings') && (cfg.aiProtection || cfg.richLayout || cfg.lookingLayout || cfg.warmingLayout || isGgr) && (
+      {/* Правка 14.08: для ПРОГРЕВА блок «Защита» не показываем — он дублировал «Уровень
+          прогрева» (уровень уже задаёт безопасный темп и множитель пауз). Базовая защита
+          (FloodWait→пауза→карантин) работает на бэкенде и без UI-блока. QA §8, вариант а. */}
+      {showBlock('settings') && !cfg.warmingLayout && (cfg.aiProtection || cfg.richLayout || cfg.lookingLayout || isGgr) && (
         <div id="sec-settings" className="scroll-mt-24">
         <SectionCard icon={<Settings2 size={18} />} title={cfg.settingsTitle ?? 'Защита'} badge={targets.length ? `${targets.length} целей` : undefined}>
           {cfg.aiProtection && <ProtectionBlock enabled={aiProtect} onEnabled={setAiProtect} level={protLevel} onLevel={setProtLevel} />}
@@ -620,14 +625,24 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
           строчка внутри «Параметры и лимиты»: это главный выбор прогрева, ему нужен свой
           заголовок. Показываем только для warming-модуля и не во время выполнения. */}
       {cfg.warmingLayout && !running && (
+        <div id="sec-warm" className="scroll-mt-24">
         <SectionCard icon={<Flame size={18} />} title="Уровень прогрева">
           <div className="mb-1.5 text-xs text-white/40">Длиннее = естественнее</div>
           <Segmented options={WARM_LEVELS} value={warmLevel} onChange={setWarmLevel} />
           <div className="mt-3 rounded-lg border border-line/60 bg-elevated/40 px-3 py-2 text-[11px] text-white/50">
-            💡 <b className="text-white/70">Уровень</b> задаёт темп (~40 / 20 / 10 действий в день) и множитель пауз — этого достаточно для старта.
-            Секция «Защита» ниже — <b className="text-white/70">тонкая подстройка поверх уровня</b> (для опытных).
+            💡 <b className="text-white/70">Уровень</b> задаёт темп (~40 / 20 / 10 действий в день) и множитель пауз. Для старта достаточно выбрать уровень — базовая защита от блокировок работает автоматически.
           </div>
+          {/* Правка 14.08: блок «Защита» у прогрева убран (дублировал уровень) — галочку
+              уведомлений перенесли сюда. */}
+          <label className="mt-3 flex cursor-pointer items-start gap-2 rounded-xl border border-line/60 bg-elevated/40 px-3 py-2.5">
+            <input type="checkbox" checked={notifyStatus} onChange={(e) => setNotifyStatus(e.target.checked)} className="mt-0.5 h-4 w-4 accent-spark-500" />
+            <span>
+              <span className="text-xs font-semibold text-fg">Уведомлять о статусе задачи</span>
+              <span className="mt-0.5 block text-[11px] text-white/45">Ошибка или пауза прогрева попадут в колокольчик.</span>
+            </span>
+          </label>
         </SectionCard>
+        </div>
       )}
 
       {/* Заголовок не «Запуск»: так он дублировал последний шаг мастера. Здесь лежат
