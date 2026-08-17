@@ -223,7 +223,10 @@ export const MODULES: Record<string, ModuleConfig> = {
     subscriptionsToggle: true,
     progressBar: true,
     sourceTabs: {
-      label: 'Группы', tabs: ['Юзернейм/Ссылка', 'Прошлые задачи', 'Группа'],
+      // Правка 17.08: вкладки «Прошлые задачи»/«Группа» были мёртвыми (ничего не рендерили —
+      // ни в TargetsEditor, ни в ModuleRunner), а сохранённые группы уже даёт кнопка «Загрузить
+      // группу». Оставляем один ввод, без пустых вкладок («каждая кнопка должна иметь смысл»).
+      label: 'Группы', tabs: ['Юзернейм/Ссылка'],
       addLabel: 'Добавить', clearLabel: 'Очистить все',
       placeholder: '@username или https://t.me/channel_name\nМожно вводить несколько ссылок (каждая с новой строки)', emptyRows: 'Строк: 0',
     },
@@ -281,7 +284,10 @@ export const MODULES: Record<string, ModuleConfig> = {
     seedTargetCount: 153,
     subscriptionsToggle: true,
     sourceTabs: {
-      label: 'Группы', tabs: ['Юзернейм/Ссылка', 'Прошлые задачи', 'Группа'],
+      // Правка 17.08: вкладки «Прошлые задачи»/«Группа» были мёртвыми (ничего не рендерили —
+      // ни в TargetsEditor, ни в ModuleRunner), а сохранённые группы уже даёт кнопка «Загрузить
+      // группу». Оставляем один ввод, без пустых вкладок («каждая кнопка должна иметь смысл»).
+      label: 'Группы', tabs: ['Юзернейм/Ссылка'],
       addLabel: 'Добавить', clearLabel: 'Очистить все',
       placeholder: '@group или https://t.me/group\nМожно вводить несколько ссылок (каждая с новой строки)', emptyRows: 'Строк: 0',
     },
@@ -338,7 +344,8 @@ export const MODULES: Record<string, ModuleConfig> = {
     seedTargetCount: 93,
     subscriptionsToggle: true,
     sourceTabs: {
-      label: 'Группы', tabs: ['Username / Ссылка', 'Из заданий', 'Группа'],
+      // Правка 17.08: убраны мёртвые вкладки «Из заданий»/«Группа» (см. выше).
+      label: 'Группы', tabs: ['Username / Ссылка'],
       addLabel: 'Добавить', clearLabel: 'Очистить',
       placeholder: 'Введите username или ссылку на группу\nПо одному на строку', emptyRows: 'Строк: 0',
     },
