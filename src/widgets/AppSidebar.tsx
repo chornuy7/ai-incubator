@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { NavLink, Link, useLocation } from 'react-router-dom'
 import { fetchTicketsUnread } from '@/api/ticketsApi'
-import { PanelLeftClose, PanelLeftOpen, X, LogOut, ChevronDown } from 'lucide-react'
+import { X, LogOut, ChevronDown } from 'lucide-react'
 import { ROUTES, GROUP_LABELS, type RouteDef } from '@/shared/config/routes'
 import { useApp } from '@/mocks/store'
 import { useSession } from '@/features/auth/session'
@@ -35,7 +35,6 @@ function Logo({ collapsed }: { collapsed: boolean }) {
 
 export function AppSidebar({ mobile = false }: { mobile?: boolean }) {
   const collapsed = useApp((s) => s.sidebarCollapsed) && !mobile
-  const toggle = useApp((s) => s.toggleSidebar)
   // Правка 14.08: подсказка свёрнутого пункта — через портал с position:fixed, иначе
   // overflow-y-auto у nav обрезает её справа. Держим label + вертикальную позицию.
   const [tip, setTip] = useState<{ label: string; top: number; left: number } | null>(null)
@@ -108,17 +107,8 @@ export function AppSidebar({ mobile = false }: { mobile?: boolean }) {
         )}
       </div>
 
-      {/* Правка 14.08: кнопка сворачивания вынесена на ПРАВЫЙ КРАЙ сайдбара (плавающая),
-          чтобы не жалась в шапке и была заметна в свёрнутом режиме. */}
-      {!mobile && (
-        <button
-          onClick={toggle}
-          aria-label={collapsed ? 'Развернуть меню' : 'Свернуть меню'}
-          className="absolute -right-3 top-5 z-20 hidden h-6 w-6 place-items-center rounded-full border border-line bg-surface text-muted shadow-md transition-colors hover:border-spark-500/40 hover:text-spark-300 lg:grid"
-        >
-          {collapsed ? <PanelLeftOpen size={14} /> : <PanelLeftClose size={14} />}
-        </button>
-      )}
+      {/* Правка 14.08: кнопка сворачивания переехала в верхнюю шапку (AppHeader) — на краю
+          сайдбара её было почти не видно. */}
 
       <nav className="flex-1 overflow-y-auto px-3 pb-4 no-scrollbar">
         {GROUP_ORDER.map((group, gi) => {
