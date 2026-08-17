@@ -233,6 +233,21 @@ export function AccountsPage() {
   const [tab, setTab] = useTabParam<'accounts' | 'trash'>('accounts')
   const [statusFilter, setStatusFilter] = useState<AccountStatus | 'all'>('all')
   const [riskFilter, setRiskFilter] = useState<RiskKey | 'all'>('all')
+  // Правка 14.08: единый источник прокси — каталог (страница «Прокси»). В менеджере в колонке
+  // «Прокси» показываем НАЗВАНИЕ прокси из каталога (напр. «PL TEST 2»), а не сырой адрес.
+  const [proxyNames, setProxyNames] = useState<Record<string, string>>({})
+  useEffect(() => {
+    void fetchProxies().then((list) => {
+      const m: Record<string, string> = {}
+      for (const p of list) if (p.label) m[`${p.host}:${p.port}`] = p.label
+      setProxyNames(m)
+    }).catch(() => {})
+  }, [])
+  // Имя прокси по его URL (матчим по host:port — пароль/логин в строке могут отличаться форматом).
+  const proxyName = (url: string): string => {
+    const hp = (/^[a-z0-9]+:\/\/(?:[^@]*@)?([^/]+)/i.exec(url || '') || [])[1] || ''
+    return proxyNames[hp] || formatProxyLabel(url)
+  }
   const [roleFilter, setRoleFilter] = useState('Все роли')
   // §1: «роль как группа» уходит — аккаунт работает ПОД КАМПАНИЕЙ. Закрепление живёт
   // в самой кампании (см. server/campaigns.js), поэтому accountsMeta.role не трогаем.
@@ -829,6 +844,7 @@ export function AccountsPage() {
           <AccountsTable
             campaignOf={campaignOf}
             onAssign={setAssignAcc}
+            proxyName={proxyName}
             pageItems={pageItems}
             visibleCols={visibleCols}
             showCol={showCol}
@@ -1099,6 +1115,7 @@ function AccountsTable(props: {
   /** §1: под какой кампанией аккаунт и закреплён ли (замочек). */
   campaignOf: (accountId: string) => { name: string; locked: boolean } | null
   onAssign: (a: TgAccount) => void
+  proxyName?: (url: string) => string
 }) {
   const { pageItems, showCol, selected, toggleOne, allOnPageSelected, toggleAll, campaignOf } = props
   const showAccountCol = showCol('name') || showCol('avatar')
@@ -1346,7 +1363,7 @@ function AccountsTable(props: {
                           <AlertTriangle size={11} className="shrink-0" /> прокси не отвечает · сменить
                         </span>
                       ) : (
-                        <span className="text-muted group-hover/px:text-spark-300">{formatProxyLabel(a.proxy)}</span>
+                        <span className="text-muted group-hover/px:text-spark-300" title={a.proxy}>{props.proxyName ? props.proxyName(a.proxy) : formatProxyLabel(a.proxy)}</span>
                       )}
                       <Server size={11} className="shrink-0 opacity-0 transition-opacity group-hover/px:opacity-100" />
                     </button>
