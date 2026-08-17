@@ -81,10 +81,11 @@ function RiskChip({ a }: { a: { proxyOk?: boolean; noProxy?: boolean; trustBand?
   if (!rk) return null
   const m = RISK_META[rk]
   const text = rk === 'deadProxy' ? 'text-rose-300' : rk === 'noProxy' ? 'text-orange-300' : 'text-amber-300'
+  // MR-162: кастомный тултип (как у соседних чипов строки — усталость/лимиты), а не native title.
   return (
-    <span className={cn('inline-flex items-center gap-1 rounded-lg border px-2 py-0.5 text-xs font-bold', m.bg, text)} title={m.tip}>
+    <Tip text={m.tip} className={cn('items-center gap-1 rounded-lg border px-2 py-0.5 text-xs font-bold', m.bg, text)}>
       <AlertTriangle size={12} /> {m.label}
-    </span>
+    </Tip>
   )
 }
 
@@ -1244,9 +1245,9 @@ function AccountsTable(props: {
                           </div>
                         )
                       ) : a.status === 'pause' ? (
-                        <div className="flex items-center gap-1 text-[11px] font-semibold text-amber-300/70" title="Аккаунт поставлен на паузу оператором, а не задачей модуля">
+                        <Tip text="Аккаунт поставлен на паузу оператором, а не задачей модуля" className="items-center gap-1 text-[11px] font-semibold text-amber-300/70">
                           <Pause size={11} /> Пауза вручную · не в модуле
-                        </div>
+                        </Tip>
                       ) : null}
                       {/* §2: score виден ВСЕГДА (не только у проблемных) + подсказка, где можно/нельзя. */}
                       {typeof a.trustScore === 'number' && (
@@ -1314,24 +1315,24 @@ function AccountsTable(props: {
                         if (typeof act.chanceNow === 'number' && act.chanceNow < 20 && (a.proxy && a.proxy !== '—')) {
                           // MR-129: не пишем явным текстом — только тихая иконка часов с подсказкой.
                           return (
-                            <span
-                              className="inline-flex items-center text-white/35"
-                              title={`Тихий час по распорядку: сейчас шанс действия ${act.chanceNow}% — аккаунт чаще всего будет пропущен. Меняется в «Усталость и отдых».`}
+                            <Tip
+                              className="items-center text-white/35"
+                              text={`Тихий час по распорядку: сейчас шанс действия ${act.chanceNow}% — аккаунт чаще всего будет пропущен. Меняется в «Усталость и отдых».`}
                             >
                               <Clock size={12} />
-                            </span>
+                            </Tip>
                           )
                         }
                         return null
                       })()}
                       {/* Колонку «Прокси» можно скрыть в настройках таблицы — риск скрывать нельзя. */}
                       {!hasProxy(a) && !showCol('proxy') && (
-                        <span
+                        <Tip
                           className="rounded-md bg-rose-500/15 px-1.5 py-0.5 text-[10px] font-bold text-rose-300"
-                          title="Аккаунт ходит через ваш IP — тот же, что у остальных без прокси. Для Telegram это одна группа."
+                          text="Аккаунт ходит через ваш IP — тот же, что у остальных без прокси. Для Telegram это одна группа."
                         >
                           без прокси · риск блока
-                        </span>
+                        </Tip>
                       )}
                       {a.status === 'reauth' && props.tab === 'accounts' && (
                         <button type="button" onClick={() => props.onReauth(a)} className="text-xs font-semibold text-violet-300 hover:text-violet-200">
