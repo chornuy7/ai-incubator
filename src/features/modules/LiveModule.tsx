@@ -24,6 +24,7 @@ import {
 import type { ModuleTaskSettings } from '@/api/modulesApi'
 import { confirmDialog } from '@/shared/lib/dialog'
 import { LaunchCost, ActionPriceCalc } from './shared/LaunchCost'
+import { PRESET_MUL } from './shared/TimingSection'
 
 const DEFAULT_DELAYS = {
   comment: [30, 120] as [number, number],
@@ -373,7 +374,9 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
     const steps: LaunchStep[] = []
     if (cfg.accountPicker) steps.push({ label: 'Аккаунты', done: selected.size > 0, anchor: 'sec-accounts' })
     if (needsTargets && !cfg.warmingLayout) steps.push({ label: cfg.sourceTabs?.label ?? 'Группы', done: targets.length > 0 || hasPostTargets, anchor: 'sec-targets' })
-    steps.push({ label: 'Защита', done: true, optional: true, anchor: 'sec-settings' })
+    // Правка 14.08: у прогрева блок «Защита» убран → в степпере вместо «Защита» шаг «Уровень».
+    if (cfg.warmingLayout) steps.push({ label: 'Уровень', done: true, optional: true, anchor: 'sec-warm' })
+    else steps.push({ label: 'Защита', done: true, optional: true, anchor: 'sec-settings' })
     // MR-136: шаг назван «Параметры» (а не «Запуск») — он ведёт к секции «Параметры и лимиты»,
     // а не к запуску. Раньше клик по «Запуск» кидал на «Параметры» (сбивало), плюс «Запуск»
     // конфликтовал по смыслу с кнопкой «Начать». Запуск — это кнопка «Начать».
@@ -453,7 +456,10 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
         </SectionCard>
       )}
 
-      {showBlock('settings') && (cfg.aiProtection || cfg.richLayout || cfg.lookingLayout || cfg.warmingLayout || isGgr) && (
+      {/* Правка 14.08: для ПРОГРЕВА блок «Защита» не показываем — он дублировал «Уровень
+          прогрева» (уровень уже задаёт безопасный темп и множитель пауз). Базовая защита
+          (FloodWait→пауза→карантин) работает на бэкенде и без UI-блока. QA §8, вариант а. */}
+      {showBlock('settings') && !cfg.warmingLayout && (cfg.aiProtection || cfg.richLayout || cfg.lookingLayout || isGgr) && (
         <div id="sec-settings" className="scroll-mt-24">
         <SectionCard icon={<Settings2 size={18} />} title={cfg.settingsTitle ?? 'Защита'} badge={targets.length ? `${targets.length} целей` : undefined}>
           {cfg.aiProtection && <ProtectionBlock enabled={aiProtect} onEnabled={setAiProtect} level={protLevel} onLevel={setProtLevel} />}
@@ -467,17 +473,8 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
             </span>
           </label>
 
-          {/* MR-112 (WARM-001): «Уровень прогрева» — в настройках, а не в панели запуска. */}
-          {cfg.warmingLayout && (
-            <div className="mb-4">
-              <div className="mb-1 text-xs text-white/50">Уровень прогрева <span className="text-white/30">(длиннее = естественнее)</span></div>
-              <Segmented options={WARM_LEVELS} value={warmLevel} onChange={setWarmLevel} />
-              <div className="mt-2 rounded-lg border border-line/60 bg-elevated/40 px-3 py-2 text-[11px] text-white/50">
-                💡 <b className="text-white/70">Уровень</b> задаёт темп (~40 / 20 / 10 действий в день) и множитель пауз.
-                «Защита» и «Тайминги и задержки» — тонкая подстройка поверх уровня (для опытных): защита × шаблон × уровень перемножаются. Для старта достаточно выбрать уровень.
-              </div>
-            </div>
-          )}
+          {/* Правка 14.08: дубль «Уровень прогрева» здесь убран — он рендерился и в этом блоке,
+              и отдельным блоком ниже. Оставлен один отдельный блок «Уровень прогрева». */}
 
           {cfg.reactionSettings ? (
             <div className="space-y-4 rounded-2xl border border-line bg-elevated/40 p-4">
@@ -559,7 +556,9 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
               )}
             </div>
           ) : (
-            <p className="text-sm text-muted">Лимиты и задержки настраиваются в секции «Тайминги и задержки» ниже.</p>
+            <p className="text-sm text-muted">{cfg.warmingLayout
+              ? 'Темп и паузы задаёт «Уровень прогрева» — отдельная секция ниже.'
+              : 'Лимиты и задержки настраиваются в секции «Тайминги и задержки» ниже.'}</p>
           )}
         </SectionCard>
         </div>
@@ -594,7 +593,9 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
 
       {/* §3.1 (MR-100): «Тайминги и задержки» — ПЕРЕД нижней панелью запуска (§4: тайминги до запуска).
           Блоки «Группы»/«Посты» перенесены ВЫШЕ — сразу после аккаунтов (порядок блоков = степпер). */}
-      {showBlock('settings') && !isParser && !isGgr && (cfg.aiProtection || cfg.richLayout || cfg.lookingLayout || cfg.warmingLayout) && (
+      {/* Правка 14.08: для ПРОГРЕВА «Тайминги и задержки» не показываем — темп/паузы задаёт
+          «Уровень прогрева», отдельные тайминги дублировали и путали (QA §8, вариант а). */}
+      {showBlock('settings') && !isParser && !isGgr && !cfg.warmingLayout && (cfg.aiProtection || cfg.richLayout || cfg.lookingLayout) && (
         <TimingSection
           workModeOptions={cfg.toggleGroups?.[1]?.options}
           workMode={g(1)}
@@ -624,14 +625,24 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
           строчка внутри «Параметры и лимиты»: это главный выбор прогрева, ему нужен свой
           заголовок. Показываем только для warming-модуля и не во время выполнения. */}
       {cfg.warmingLayout && !running && (
+        <div id="sec-warm" className="scroll-mt-24">
         <SectionCard icon={<Flame size={18} />} title="Уровень прогрева">
           <div className="mb-1.5 text-xs text-white/40">Длиннее = естественнее</div>
           <Segmented options={WARM_LEVELS} value={warmLevel} onChange={setWarmLevel} />
           <div className="mt-3 rounded-lg border border-line/60 bg-elevated/40 px-3 py-2 text-[11px] text-white/50">
-            💡 <b className="text-white/70">Уровень</b> задаёт темп (~40 / 20 / 10 действий в день) и множитель пауз.
-            Секции «Защита» и «Тайминги и задержки» — это <b className="text-white/70">тонкая подстройка поверх уровня</b> (для опытных): защита × шаблон × уровень перемножаются. Для старта достаточно выбрать уровень.
+            💡 <b className="text-white/70">Уровень</b> задаёт темп (~40 / 20 / 10 действий в день) и множитель пауз. Для старта достаточно выбрать уровень — базовая защита от блокировок работает автоматически.
           </div>
+          {/* Правка 14.08: блок «Защита» у прогрева убран (дублировал уровень) — галочку
+              уведомлений перенесли сюда. */}
+          <label className="mt-3 flex cursor-pointer items-start gap-2 rounded-xl border border-line/60 bg-elevated/40 px-3 py-2.5">
+            <input type="checkbox" checked={notifyStatus} onChange={(e) => setNotifyStatus(e.target.checked)} className="mt-0.5 h-4 w-4 accent-spark-500" />
+            <span>
+              <span className="text-xs font-semibold text-fg">Уведомлять о статусе задачи</span>
+              <span className="mt-0.5 block text-[11px] text-white/45">Ошибка или пауза прогрева попадут в колокольчик.</span>
+            </span>
+          </label>
         </SectionCard>
+        </div>
       )}
 
       {/* Заголовок не «Запуск»: так он дублировал последний шаг мастера. Здесь лежат
@@ -734,7 +745,7 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
           onStop={stop}
           onSave={handleSave}
           primaryLabel={cfg.primaryAction ?? 'Начать'}
-          cost={<LaunchCost compact moduleKey={moduleKey} actions={maxActions} accounts={selected.size} delaySec={delays.action} />}
+          cost={<LaunchCost compact moduleKey={moduleKey} actions={maxActions} accounts={selected.size} delaySec={(() => { const m = PRESET_MUL[delayPreset] ?? 1; const d = delays.action ?? delays.comment; return d ? [Math.round(d[0] * m), Math.round(d[1] * m)] as [number, number] : d })()} />}
           stats={launchStats}
           task={task}
           warn={warn}

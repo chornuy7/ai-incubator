@@ -187,17 +187,49 @@ export function Avatar({ name, color, size = 36 }: { name: string; color: string
  *   в бейдж дописывается остаток — иначе оператор видит «спамблок» и не понимает,
  *   ждать ему или списывать аккаунт. Такие статусы система снимает сама.
  */
+/**
+ * Правка 14.08 (§3/MR-162): единый КАСТОМНЫЙ тултип вместо нативного title. Рендерит
+ * тёмную всплывашку порталом в body (position: fixed) — таблицы и карточки часто живут в
+ * контейнерах overflow-*, которые обрезали бы обычную absolute-подсказку. Позицию считаем
+ * на наведении. Возвращает пропсы-триггер для целевого элемента и узел-портал.
+ */
+export function useTooltip<T extends HTMLElement = HTMLElement>(text?: string) {
+  const ref = useRef<T | null>(null)
+  const [pos, setPos] = useState<{ x: number; y: number } | null>(null)
+  const onMouseEnter = () => {
+    const r = ref.current?.getBoundingClientRect()
+    if (r && text) setPos({ x: r.left + r.width / 2, y: r.top })
+  }
+  const onMouseLeave = () => setPos(null)
+  const node = pos && text
+    ? createPortal(
+      <span
+        role="tooltip"
+        style={{ position: 'fixed', left: pos.x, top: pos.y - 8, transform: 'translate(-50%, -100%)' }}
+        className="pointer-events-none z-[200] w-max max-w-[280px] whitespace-pre-line rounded-lg border border-line bg-surface px-2.5 py-1.5 text-left text-[11px] font-medium normal-case leading-snug text-fg shadow-xl"
+      >{text}</span>,
+      document.body,
+    )
+    : null
+  return { ref, onMouseEnter, onMouseLeave, node }
+}
+
 export function StatusBadge({ status, until, reason }: { status: AccountStatus; until?: number | null; reason?: string }) {
   const m = STATUS_META[status]
   const left = until && until > Date.now() ? formatLeft(until - Date.now()) : ''
+  const tip = [reason, until && until > Date.now() ? `Снимется автоматически ${new Date(until).toLocaleString('ru-RU')}` : ''].filter(Boolean).join(' · ')
+  const t = useTooltip<HTMLSpanElement>(tip || undefined)
   return (
     <span
+      ref={t.ref}
+      onMouseEnter={t.onMouseEnter}
+      onMouseLeave={t.onMouseLeave}
       className={cn('inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-xs font-semibold', m.bg, m.text)}
-      title={[reason, until && until > Date.now() ? `Снимется автоматически ${new Date(until).toLocaleString('ru-RU')}` : ''].filter(Boolean).join(' · ')}
     >
       <span className={cn('h-1.5 w-1.5 rounded-full', m.dot)} />
       {m.label}
       {left && <span className="font-normal opacity-70">· ещё {left}</span>}
+      {t.node}
     </span>
   )
 }
@@ -218,13 +250,17 @@ export function RiskBadge({ risk, compact }: {
       ? 'border-amber-500/40 bg-amber-500/12 text-amber-300'
       : 'border-slate-500/40 bg-slate-500/12 text-slate-300'
   const label = risk.level === 'high' ? 'Зона риска' : risk.level === 'medium' ? 'Риск' : 'Внимание'
+  const t = useTooltip<HTMLSpanElement>(risk.factors.map((f) => `• ${f.text}`).join('\n'))
   return (
     <span
+      ref={t.ref}
+      onMouseEnter={t.onMouseEnter}
+      onMouseLeave={t.onMouseLeave}
       className={cn('inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-xs font-semibold', tone)}
-      title={risk.factors.map((f) => `• ${f.text}`).join('\n')}
     >
       <AlertTriangle size={12} />
       {!compact && label}
+      {t.node}
     </span>
   )
 }
@@ -292,6 +328,8 @@ export function Tabs({
 export interface SelectOption {
   value: string
   label: ReactNode
+  /** Нельзя выбрать (например мёртвый прокси): гасим и не даём кликнуть. */
+  disabled?: boolean
 }
 
 export function Select({
@@ -392,14 +430,15 @@ export function Select({
             {shown.map((o) => (
               <button
                 key={o.value}
-                onClick={() => { onChange(o.value); setOpen(false) }}
+                disabled={o.disabled}
+                onClick={() => { if (o.disabled) return; onChange(o.value); setOpen(false) }}
                 className={cn(
                   'flex w-full items-center justify-between gap-2 rounded-lg px-3 py-2 text-left text-sm transition-colors',
-                  o.value === value ? 'bg-spark-500/12 text-spark-300' : 'text-fg hover:bg-elevated',
+                  o.disabled ? 'cursor-not-allowed text-faint opacity-50' : o.value === value ? 'bg-spark-500/12 text-spark-300' : 'text-fg hover:bg-elevated',
                 )}
               >
                 <span className="truncate">{o.label}</span>
-                {o.value === value && <Check size={15} className="shrink-0" />}
+                {o.value === value && !o.disabled && <Check size={15} className="shrink-0" />}
               </button>
             ))}
           </div>,

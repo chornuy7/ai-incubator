@@ -2,6 +2,7 @@ import { useNavigate } from 'react-router-dom'
 import { useState, useEffect, useRef } from 'react'
 import {
   Menu, Zap, Sun, Moon, Radar, ChevronDown, UserCog, LogOut, Wallet, Check, AlertTriangle, Package, Bell, X, Clock,
+  PanelLeftClose, PanelLeftOpen,
 } from 'lucide-react'
 import { useApp, activeAccounts, isBrokenAccount } from '@/mocks/store'
 import { fetchAllTasks, type ModuleTask } from '@/api/modulesApi'
@@ -197,6 +198,8 @@ export function AppHeader() {
   const locale = useApp((s) => s.locale)
   const setLocale = useApp((s) => s.setLocale)
   const setMobileNav = useApp((s) => s.setMobileNav)
+  const toggleSidebar = useApp((s) => s.toggleSidebar)
+  const sidebarCollapsed = useApp((s) => s.sidebarCollapsed)
   const setUserState = useApp((s) => s.setUserState)
   const pushToast = useApp((s) => s.pushToast)
   const sessionUser = useSession((s) => s.user)
@@ -276,7 +279,17 @@ export function AppHeader() {
 
   return (
     <header className="sticky top-0 z-40 border-b border-line bg-surface/80 backdrop-blur-xl">
-      <div className="mx-auto flex h-16 max-w-[1400px] items-center gap-2 px-4 sm:px-6 lg:px-8">
+      {/* Правка 14.08: кнопка сворачивания меню — у САМОГО левого края шапки (в пустом месте
+          у края сайдбара), а не внутри центрированного контейнера. */}
+      <button
+        onClick={toggleSidebar}
+        className="btn-icon absolute left-3 top-1/2 z-10 hidden -translate-y-1/2 lg:inline-flex"
+        aria-label={sidebarCollapsed ? 'Развернуть меню' : 'Свернуть меню'}
+        title={sidebarCollapsed ? 'Развернуть меню' : 'Свернуть меню'}
+      >
+        {sidebarCollapsed ? <PanelLeftOpen size={18} /> : <PanelLeftClose size={18} />}
+      </button>
+      <div className="mx-auto flex h-16 max-w-[1400px] items-center gap-2 px-4 sm:px-6 lg:px-8 lg:pl-14">
         <button onClick={() => setMobileNav(true)} className="btn-icon lg:hidden" aria-label="Меню">
           <Menu size={18} />
         </button>

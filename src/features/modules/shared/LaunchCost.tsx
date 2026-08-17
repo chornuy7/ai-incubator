@@ -1,7 +1,17 @@
 import { useEffect, useState } from 'react'
 import { Zap, Clock } from 'lucide-react'
 import { fetchPricing, type Pricing } from '@/api/balanceApi'
-import { coins as fmtCoins } from '@/shared/lib/utils'
+import { cn, coins as fmtCoins } from '@/shared/lib/utils'
+
+// Правка 14.08: кастомная тёмная плавающая подсказка (не нативный title) — как знаки «?».
+function CostTip({ hint, className, children }: { hint: string; className: string; children: React.ReactNode }) {
+  return (
+    <span className={cn('group/lc relative inline-flex cursor-help', className)}>
+      {children}
+      <span className="pointer-events-none absolute bottom-[calc(100%+8px)] left-1/2 z-50 w-max max-w-[280px] -translate-x-1/2 whitespace-pre-line rounded-lg border border-line bg-surface px-2.5 py-1.5 text-left text-[11px] font-medium leading-snug text-fg opacity-0 shadow-xl transition-opacity group-hover/lc:opacity-100">{hint}</span>
+    </span>
+  )
+}
 
 /**
  * Прайс один на всё приложение и меняется редко — держим его в модульном кэше.
@@ -110,22 +120,16 @@ export function LaunchCost({ moduleKey, actions, accounts, delaySec, compact }: 
       <>
         {/* Цена ждёт прайс, время — нет: показываем каждую плашку, как только она готова. */}
         {hasCost && (
-        <span
-          className="inline-flex h-10 cursor-help items-center gap-1.5 rounded-xl border border-amber-500/30 bg-amber-500/10 px-3.5 text-sm font-bold text-amber-300"
-          title={costHint}
-        >
+        <CostTip hint={costHint} className="h-10 items-center gap-1.5 rounded-xl border border-amber-500/30 bg-amber-500/10 px-3.5 text-sm font-bold text-amber-300">
           {/* Иконка уже есть — символ ⚡ в тексте давал две молнии подряд. */}
           <Zap size={16} fill="currentColor" />
           {avgTokens ? '≈' : ''}{fmt(total)}
-        </span>
+        </CostTip>
         )}
         {timeAvg && (
-          <span
-            className="inline-flex h-10 cursor-help items-center gap-1.5 rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-3.5 text-sm font-bold text-emerald-300"
-            title={timeHint}
-          >
+          <CostTip hint={timeHint} className="h-10 items-center gap-1.5 rounded-xl border border-emerald-500/30 bg-emerald-500/10 px-3.5 text-sm font-bold text-emerald-300">
             <Clock size={16} /> ≈ {timeAvg}
-          </span>
+          </CostTip>
         )}
       </>
     )
@@ -145,9 +149,9 @@ export function LaunchCost({ moduleKey, actions, accounts, delaySec, compact }: 
         {avgTokens > 0 && <> · текст ИИ ≈ {Math.round(tokens).toLocaleString('ru-RU')} ток. ÷ 1000 × {pricing?.coinsPer1kTokens ?? 0} ⚡ = {fmt(tokensCost)} ⚡</>}
       </span>
       {timeAvg && (
-        <span className="ml-auto inline-flex cursor-help items-center gap-1 text-sm font-semibold text-emerald-300" title={timeHint}>
+        <CostTip hint={timeHint} className="ml-auto items-center gap-1 text-sm font-semibold text-emerald-300">
           <Clock size={14} /> ≈ {timeAvg}
-        </span>
+        </CostTip>
       )}
       {avgTokens === 0 && (
         <span className="w-full text-xs text-muted">

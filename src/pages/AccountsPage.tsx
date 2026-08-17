@@ -1,16 +1,18 @@
 import { useMemo, useState, useEffect, useRef } from 'react'
 import {
-  Plus, UploadCloud, Server, RefreshCw, Columns3, ListChecks, Search, Filter,
-  MoreHorizontal, Trash2, KeyRound, Info, Users, Check, X, Undo2, Loader2, Pause,
-  Lock, LockOpen, Rocket, AlertTriangle, ShieldCheck, Clock,
+  Plus, UploadCloud, Server, RefreshCw, ListChecks, Search, Filter,
+  MoreHorizontal, Trash2, KeyRound, Info, Users, Undo2, Loader2, Pause,
+  Lock, LockOpen, Rocket, AlertTriangle, ShieldCheck, Clock, Play, Square, Power, Moon, Eye,
 } from 'lucide-react'
+import type React from 'react'
+import { createPortal } from 'react-dom'
 import { useNavigate } from 'react-router-dom'
 import { useApp, activeAccounts, trashedAccounts, STATUS_META } from '@/mocks/store'
 import { useSession } from '@/features/auth/session'
 import { filterAccountsByAccess } from '@/shared/lib/access'
 import { useUi } from '@/shared/lib/uiStore'
 import {
-  PageHeader, Avatar, StatusBadge, RiskBadge, EmptyState, Dropdown, MenuItem, Select, Skeleton, Modal, NumberField,
+  PageHeader, Avatar, StatusBadge, EmptyState, Dropdown, MenuItem, Select, Skeleton, Modal, NumberField, useTooltip,
 } from '@/shared/ui'
 import { HelpButton } from '@/features/neuro-commenting/moduleUi'
 import { accountLabel, accountSub } from '@/features/conversation/AccountRail'
@@ -37,15 +39,104 @@ import { useTabParam } from '@/shared/lib/useTabParam'
 
 const STATUS_ORDER: AccountStatus[] = ['active', 'working', 'warming', 'pause', 'floodwait', 'quarantine', 'spamblock', 'invalid', 'frozen', 'reauth']
 
+// Правка 14.08: подсказка по каждому статусу — при наведении на карточку (как в блоке «Защита»).
+const STATUS_TIP: Record<AccountStatus, string> = {
+  active: 'Свободен, готов к работе',
+  working: 'Занят задачей прямо сейчас',
+  warming: 'Идёт прогрев аккаунта',
+  pause: 'Временно остановлен оператором',
+  floodwait: 'Telegram временно ограничил действия — ждём снятия по сроку',
+  quarantine: 'Отдыхает после риска (карантин)',
+  spamblock: 'Ограничен спам-фильтром Telegram — снимите через @SpamBot',
+  invalid: 'Сессия недействительна — нужен повторный вход',
+  frozen: 'Отключён вручную',
+  reauth: 'Требуется повторный вход (реавторизация)',
+}
+
 // Правка 14.08: «Зона риска» — это не один статус, а несколько независимых причин.
 // Заказчик просил показать их ОТДЕЛЬНЫМИ плитками-счётчиками (мёртвый прокси, нет
 // прокси, низкое доверие), а не свалкой в один бейдж. Каждая — отдельный фильтр.
 type RiskKey = 'deadProxy' | 'noProxy' | 'lowTrust'
 const RISK_ORDER: RiskKey[] = ['deadProxy', 'noProxy', 'lowTrust']
-const RISK_META: Record<RiskKey, { label: string; dot: string; bg: string; match: (a: { proxyOk?: boolean; noProxy?: boolean; trustBand?: string }) => boolean }> = {
-  deadProxy: { label: 'Мёртвый прокси', dot: 'bg-rose-400', bg: 'bg-rose-500/12 border-rose-500/30', match: (a) => a.proxyOk === false && a.noProxy !== true },
-  noProxy: { label: 'Нет прокси', dot: 'bg-orange-400', bg: 'bg-orange-500/12 border-orange-500/30', match: (a) => a.noProxy === true },
-  lowTrust: { label: 'Низкое доверие', dot: 'bg-amber-400', bg: 'bg-amber-500/12 border-amber-500/30', match: (a) => a.trustBand === 'low' },
+const RISK_META: Record<RiskKey, { label: string; dot: string; bg: string; tip: string; match: (a: { proxyOk?: boolean; noProxy?: boolean; trustBand?: string }) => boolean }> = {
+  deadProxy: { label: 'Мёртвый прокси', dot: 'bg-rose-400', bg: 'bg-rose-500/12 border-rose-500/30', tip: 'Прокси не отвечает — Telegram видит смену IP, высокий риск блокировки. Назначьте рабочий прокси.', match: (a) => a.proxyOk === false && a.noProxy !== true },
+  noProxy: { label: 'Нет прокси', dot: 'bg-orange-400', bg: 'bg-orange-500/12 border-orange-500/30', tip: 'Без прокси — работа с реального IP сервера. Назначьте прокси.', match: (a) => a.noProxy === true },
+  lowTrust: { label: 'Низкое доверие', dot: 'bg-amber-400', bg: 'bg-amber-500/12 border-amber-500/30', tip: 'Низкий trust — модули работают консервативно, риск ограничений выше.', match: (a) => a.trustBand === 'low' },
+}
+
+// Правка 14.08: единый кастомный тултип (как у кнопок-иконок) — оборачиваем элементы вместо
+// нативного title, который выглядит некрасиво (широкая браузерная плашка).
+// Всплывашка рендерится ПОРТАЛОМ в body (position: fixed) — иначе таблица в контейнере
+// overflow-x-auto обрезала бы её у верхних строк. Позицию считаем на наведении.
+function Tip({ text, children, className }: { text: string; children: React.ReactNode; className?: string }) {
+  const ref = useRef<HTMLSpanElement>(null)
+  const [pos, setPos] = useState<{ x: number; y: number } | null>(null)
+  const show = () => {
+    const r = ref.current?.getBoundingClientRect()
+    if (r) setPos({ x: r.left + r.width / 2, y: r.top })
+  }
+  return (
+    <span
+      ref={ref}
+      onMouseEnter={show}
+      onMouseLeave={() => setPos(null)}
+      className={cn('relative inline-flex', className)}
+    >
+      {children}
+      {pos && createPortal(
+        <span
+          role="tooltip"
+          style={{ position: 'fixed', left: pos.x, top: pos.y - 8, transform: 'translate(-50%, -100%)' }}
+          className="pointer-events-none z-[200] w-max max-w-[260px] rounded-lg border border-line bg-surface px-2.5 py-1.5 text-left text-[11px] font-medium normal-case leading-snug text-fg shadow-xl"
+        >{text}</span>,
+        document.body,
+      )}
+    </span>
+  )
+}
+
+// Правка 14.08: на строке показываем КОНКРЕТНУЮ причину (Нет прокси / Мёртвый прокси /
+// Низкое доверие), а не общий бейдж «Зона риска» — статусы теперь раздельные.
+function RiskChip({ a }: { a: { proxyOk?: boolean; noProxy?: boolean; trustBand?: string } }) {
+  const rk = RISK_ORDER.find((k) => RISK_META[k].match(a))
+  if (!rk) return null
+  const m = RISK_META[rk]
+  const text = rk === 'deadProxy' ? 'text-rose-300' : rk === 'noProxy' ? 'text-orange-300' : 'text-amber-300'
+  // MR-162: кастомный тултип (как у соседних чипов строки — усталость/лимиты), а не native title.
+  return (
+    <Tip text={m.tip} className={cn('items-center gap-1 rounded-lg border px-2 py-0.5 text-xs font-bold', m.bg, text)}>
+      <AlertTriangle size={12} /> {m.label}
+    </Tip>
+  )
+}
+
+// Правка 14.08: кнопки-иконки с кастомным тёмным плавающим тултипом (не нативный title).
+// Панель управления и тулбар просили сделать иконками с всплывашкой при наведении.
+function IconBtn({ icon, label, onClick, disabled, tone, active }: {
+  icon: React.ReactNode; label: string; onClick: () => void; disabled?: boolean; tone?: string; active?: boolean
+}) {
+  return (
+    <span className="group/ib relative inline-flex">
+      <button
+        type="button"
+        onClick={onClick}
+        disabled={disabled}
+        aria-label={label}
+        className={cn(
+          'grid h-9 w-9 place-items-center rounded-lg border transition-colors disabled:cursor-not-allowed',
+          disabled ? 'border-line text-white/25' : (active ? 'border-spark-500/50 bg-spark-500/12 text-spark-300' : (tone || 'border-line text-fg hover:bg-elevated')),
+        )}
+      >
+        {icon}
+      </button>
+      <span
+        role="tooltip"
+        className="pointer-events-none absolute bottom-[calc(100%+6px)] left-1/2 z-50 -translate-x-1/2 whitespace-nowrap rounded-lg border border-line bg-surface px-2 py-1 text-[11px] font-medium text-fg opacity-0 shadow-xl transition-opacity group-hover/ib:opacity-100"
+      >
+        {label}
+      </span>
+    </span>
+  )
 }
 const COLS = [
   { key: 'avatar', label: 'Аватар' },
@@ -67,17 +158,22 @@ const DAILY_CAP_LABELS: Record<string, string> = { comments: 'комментар
 function TriStateCheckbox({ checked, indeterminate, onChange, title }: {
   checked: boolean; indeterminate: boolean; onChange: () => void; title?: string
 }) {
-  const ref = useRef<HTMLInputElement>(null)
-  useEffect(() => { if (ref.current) ref.current.indeterminate = indeterminate && !checked }, [indeterminate, checked])
+  // MR-162: кастомный тултип вместо нативного title. t.ref используем и для indeterminate.
+  const t = useTooltip<HTMLInputElement>(title)
+  useEffect(() => { if (t.ref.current) t.ref.current.indeterminate = indeterminate && !checked }, [indeterminate, checked, t.ref])
   return (
-    <input
-      ref={ref}
-      type="checkbox"
-      checked={checked}
-      onChange={onChange}
-      title={title}
-      className="h-4 w-4 rounded border-line accent-spark-500"
-    />
+    <>
+      <input
+        ref={t.ref}
+        type="checkbox"
+        checked={checked}
+        onChange={onChange}
+        onMouseEnter={t.onMouseEnter}
+        onMouseLeave={t.onMouseLeave}
+        className="h-4 w-4 rounded border-line accent-spark-500"
+      />
+      {t.node}
+    </>
   )
 }
 
@@ -94,7 +190,9 @@ const STATUS_HELP = [
   'Замороженные — отключён вручную',
   'Реавторизация — требуется повторный вход',
   '— — —',
-  'Зона риска — не статус, а предупреждение поверх него: мёртвый/отсутствующий прокси или низкое доверие. Показывается вместо «Активные», чтобы не гонять аккаунт под угрозой блокировки.',
+  'Мёртвый прокси — прокси не отвечает, высокий риск блокировки. Показывается вместо «Активные».',
+  'Нет прокси — работа с реального IP сервера, назначьте прокси.',
+  'Низкое доверие — низкий trust, модули работают консервативно.',
 ].join('\n')
 
 function formatProxyLabel(proxy: string) {
@@ -173,12 +271,28 @@ export function AccountsPage() {
   const [tab, setTab] = useTabParam<'accounts' | 'trash'>('accounts')
   const [statusFilter, setStatusFilter] = useState<AccountStatus | 'all'>('all')
   const [riskFilter, setRiskFilter] = useState<RiskKey | 'all'>('all')
+  // Правка 14.08: единый источник прокси — каталог (страница «Прокси»). В менеджере в колонке
+  // «Прокси» показываем НАЗВАНИЕ прокси из каталога (напр. «PL TEST 2»), а не сырой адрес.
+  const [proxyNames, setProxyNames] = useState<Record<string, string>>({})
+  useEffect(() => {
+    void fetchProxies().then((list) => {
+      const m: Record<string, string> = {}
+      for (const p of list) if (p.label) m[`${p.host}:${p.port}`] = p.label
+      setProxyNames(m)
+    }).catch(() => {})
+  }, [])
+  // Имя прокси по его URL (матчим по host:port — пароль/логин в строке могут отличаться форматом).
+  const proxyName = (url: string): string => {
+    const hp = (/^[a-z0-9]+:\/\/(?:[^@]*@)?([^/]+)/i.exec(url || '') || [])[1] || ''
+    return proxyNames[hp] || formatProxyLabel(url)
+  }
   const [roleFilter, setRoleFilter] = useState('Все роли')
   // §1: «роль как группа» уходит — аккаунт работает ПОД КАМПАНИЕЙ. Закрепление живёт
   // в самой кампании (см. server/campaigns.js), поэтому accountsMeta.role не трогаем.
   const [campaigns, setCampaigns] = useState<Campaign[]>([])
   const [pinnedMap, setPinnedMap] = useState<PinnedMap>({})
-  const [campaignFilter, setCampaignFilter] = useState('all')
+  // Фильтр «Кампания» скрыт (14.08) — оставляем 'all', сеттер не нужен.
+  const [campaignFilter] = useState('all')
   const [trashAlive, setTrashAlive] = useState(false) // §2: показать только «живые» среди удалённых
   // §12: без списка групп доступ роли «на группу» не применялся бы (был баг — фильтр не видел групп).
   const [accGroups, setAccGroups] = useState<AccountGroup[]>([])
@@ -264,7 +378,8 @@ export function AccountsPage() {
   const [moduleFilter, setModuleFilter] = useState('all')
   const [moveOpen, setMoveOpen] = useState(false)
   const [query, setQuery] = useState('')
-  const [visibleCols, setVisibleCols] = useState<string[]>(COLS.map((c) => c.key))
+  // Правка 14.08: кнопка «Колонки» убрана — 6 колонок фиксированы, набор больше не меняется.
+  const [visibleCols] = useState<string[]>(COLS.map((c) => c.key))
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [page, setPage] = useState(0)
   const [pageSize, setPageSize] = useState(25)
@@ -527,7 +642,7 @@ export function AccountsPage() {
               key={st}
               onClick={() => { setStatusFilter(activeCard ? 'all' : st); setRiskFilter('all'); setPage(0); setTab('accounts') }}
               className={cn(
-                'flex items-center gap-3 rounded-2xl border p-3 text-left transition-all',
+                'group/kpi relative flex items-center gap-3 rounded-2xl border p-3 text-left transition-all',
                 activeCard ? 'border-spark-500/50 bg-spark-500/8 shadow-spark-glow' : 'border-line bg-surface hover:border-spark-500/30',
               )}
             >
@@ -538,14 +653,12 @@ export function AccountsPage() {
                 <div className="font-display text-xl font-bold text-fg">{statusCounts[st]}</div>
                 <div className="truncate text-[11px] font-semibold text-muted">{m.label}</div>
               </div>
+              <span className="pointer-events-none absolute left-1/2 top-[calc(100%+6px)] z-50 w-max max-w-[220px] -translate-x-1/2 rounded-lg border border-line bg-surface px-2.5 py-1.5 text-left text-[11px] font-medium leading-snug text-fg opacity-0 shadow-xl transition-opacity group-hover/kpi:opacity-100">{STATUS_TIP[st]}</span>
             </button>
           )
         })}
-      </div>
-
-      {/* Правка 14.08: причины «Зоны риска» — отдельными плитками-фильтрами (не свалка в один бейдж). */}
-      <div className="mb-5 flex flex-wrap items-center gap-2.5">
-        <span className="text-[11px] font-bold uppercase tracking-wide text-faint">Зона риска:</span>
+        {/* Правка 14.08: 3 причины риска (мёртвый прокси / нет прокси / низкое доверие) —
+            карточками в верхнем ряду вместе со статусами (пока статусы не доработаны). */}
         {RISK_ORDER.map((rk) => {
           const m = RISK_META[rk]
           const activeCard = riskFilter === rk
@@ -554,20 +667,38 @@ export function AccountsPage() {
               key={rk}
               onClick={() => { setRiskFilter(activeCard ? 'all' : rk); setStatusFilter('all'); setPage(0); setTab('accounts') }}
               className={cn(
-                'flex items-center gap-2.5 rounded-xl border px-3 py-2 text-left transition-all',
-                activeCard ? 'border-rose-500/50 bg-rose-500/8' : 'border-line bg-surface hover:border-rose-500/30',
+                'group/kpi relative flex items-center gap-3 rounded-2xl border p-3 text-left transition-all',
+                activeCard ? 'border-rose-500/50 bg-rose-500/8 shadow-spark-glow' : 'border-line bg-surface hover:border-rose-500/30',
               )}
             >
-              <span className={cn('grid h-7 w-7 shrink-0 place-items-center rounded-lg border', m.bg)}>
+              <span className={cn('grid h-9 w-9 shrink-0 place-items-center rounded-xl border', m.bg)}>
                 <span className={cn('h-2 w-2 rounded-full', m.dot)} />
               </span>
               <div className="min-w-0">
-                <div className="font-display text-base font-bold leading-none text-fg">{riskCounts[rk]}</div>
+                <div className="font-display text-xl font-bold text-fg">{riskCounts[rk]}</div>
                 <div className="truncate text-[11px] font-semibold text-muted">{m.label}</div>
               </div>
+              <span className="pointer-events-none absolute left-1/2 top-[calc(100%+6px)] z-50 w-max max-w-[220px] -translate-x-1/2 rounded-lg border border-line bg-surface px-2.5 py-1.5 text-left text-[11px] font-medium leading-snug text-fg opacity-0 shadow-xl transition-opacity group-hover/kpi:opacity-100">{m.tip}</span>
             </button>
           )
         })}
+        {/* Корзина — тоже карточкой в верхнем ряду: аккаунты, отправленные в корзину. */}
+        <button
+          onClick={() => { setTab(tab === 'trash' ? 'accounts' : 'trash'); setStatusFilter('all'); setRiskFilter('all'); setPage(0); setSelected(new Set()) }}
+          className={cn(
+            'group/kpi relative flex items-center gap-3 rounded-2xl border p-3 text-left transition-all',
+            tab === 'trash' ? 'border-spark-500/50 bg-spark-500/8 shadow-spark-glow' : 'border-line bg-surface hover:border-spark-500/30',
+          )}
+        >
+          <span className="grid h-9 w-9 shrink-0 place-items-center rounded-xl border border-slate-500/30 bg-slate-500/12 text-slate-300">
+            <Trash2 size={15} />
+          </span>
+          <div className="min-w-0">
+            <div className="font-display text-xl font-bold text-fg">{trashed.length}</div>
+            <div className="truncate text-[11px] font-semibold text-muted">Корзина</div>
+          </div>
+          <span className="pointer-events-none absolute left-1/2 top-[calc(100%+6px)] z-50 w-max max-w-[220px] -translate-x-1/2 rounded-lg border border-line bg-surface px-2.5 py-1.5 text-left text-[11px] font-medium leading-snug text-fg opacity-0 shadow-xl transition-opacity group-hover/kpi:opacity-100">Аккаунты, отправленные в корзину. Клик — открыть/закрыть.</span>
+        </button>
       </div>
 
       {/* (8) Сводка по модулям */}
@@ -592,53 +723,34 @@ export function AccountsPage() {
         </div>
       )}
 
-      {/* Toolbar */}
+      {/* Toolbar (правка 14.08: без таба «Аккаунты/Корзина», без «Колонки»; сортировка — в фильтрах;
+          «Обновить» и «Удалённые» — иконками справа). */}
       <div className="mb-4 flex flex-wrap items-center gap-2">
-        <div className="inline-flex rounded-xl border border-line bg-elevated p-1">
-          <button onClick={() => { setTab('accounts'); setPage(0); setSelected(new Set()) }} className={cn('rounded-lg px-3.5 py-1.5 text-sm font-semibold transition-all', tab === 'accounts' ? 'bg-spark-gradient text-[#04150c]' : 'text-muted hover:text-fg')}>
-            Аккаунты <span className="opacity-70">{active.length}</span>
-          </button>
-          <button onClick={() => { setTab('trash'); setPage(0); setSelected(new Set()) }} className={cn('rounded-lg px-3.5 py-1.5 text-sm font-semibold transition-all', tab === 'trash' ? 'bg-spark-gradient text-[#04150c]' : 'text-muted hover:text-fg')}>
-            Корзина <span className="opacity-70">{trashed.length}</span>
-          </button>
-        </div>
-
         <div className="relative min-w-0 flex-1 sm:max-w-xs">
           <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted" />
           <input value={query} onChange={(e) => { setQuery(e.target.value); setPage(0) }} className="input pl-9" placeholder="Поиск по имени, @username, номеру…" />
         </div>
 
-        {/* Сортировка рядом с поиском: это две половины одного действия — найти нужный
-            аккаунт в списке на сотни строк. */}
-        <Select
-          value={sortKey}
-          onChange={(v) => { setSortKey(v as SortKey); setPage(0) }}
-          options={SORT_LABELS.map((s) => ({ value: s.key, label: s.label }))}
-          className="w-full sm:w-48"
-        />
-
         {/* Filters dropdown */}
         <Dropdown
           width={260}
           trigger={({ toggle, open }) => (
-            <button onClick={toggle} className={cn('btn-ghost h-10', (roleFilter !== 'Все роли' || countryFilter !== 'all' || open) && 'border-spark-500/40 text-spark-300')}>
+            <button onClick={toggle} className={cn('btn-ghost h-10', (roleFilter !== 'Все роли' || countryFilter !== 'all' || riskFilter !== 'all' || open) && 'border-spark-500/40 text-spark-300')}>
               <Filter size={16} /> <span className="hidden sm:inline">Фильтры</span>
             </button>
           )}
         >
           {() => (
             <div className="p-1.5">
-              <div className="mb-1 px-1 text-[11px] font-bold uppercase tracking-wide text-faint">Кампания</div>
+              {/* Правка 14.08: сортировка («Свободные сверху» и др.) — внутри фильтров. */}
+              <div className="mb-1 px-1 text-[11px] font-bold uppercase tracking-wide text-faint">Сортировка</div>
               <Select
                 className="mb-3"
-                value={campaignFilter}
-                onChange={setCampaignFilter}
-                options={[
-                  { value: 'all', label: 'Все кампании' },
-                  { value: 'pool', label: 'В общем пуле (не закреплены)' },
-                  ...campaigns.map((c) => ({ value: c.id, label: c.name })),
-                ]}
+                value={sortKey}
+                onChange={(v) => { setSortKey(v as SortKey); setPage(0) }}
+                options={SORT_LABELS.map((s) => ({ value: s.key, label: s.label }))}
               />
+              {/* Правка 14.08: фильтр «Кампания» скрыт в менеджере (кампаний пока нет). */}
               <div className="mb-1 px-1 text-[11px] font-bold uppercase tracking-wide text-faint">Страна</div>
               <Select className="mb-3" value={countryFilter} onChange={setCountryFilter} options={countryOptionsFrom(active.map((a) => a.country)).map((c) => ({ value: c.code, label: `${c.flag} ${c.label}`.trim() }))} />
               <div className="mb-1 px-1 text-[11px] font-bold uppercase tracking-wide text-faint">Модуль</div>
@@ -661,41 +773,20 @@ export function AccountsPage() {
                 onChange={(e) => { setFatigueMin(Number(e.target.value) || 0); setPage(0) }}
                 className="w-full accent-spark-500"
               />
-              <button onClick={() => { setRoleFilter('Все роли'); setCountryFilter('all'); setModuleFilter('all'); setFatigueMin(0) }} className="btn-ghost mt-3 h-8 w-full text-xs">Сбросить фильтры</button>
+              <button onClick={() => { setRoleFilter('Все роли'); setCountryFilter('all'); setModuleFilter('all'); setFatigueMin(0); setRiskFilter('all'); setSortKey('default') }} className="btn-ghost mt-3 h-8 w-full text-xs">Сбросить фильтры</button>
             </div>
           )}
         </Dropdown>
 
-        <button onClick={() => { void loadAccounts(); pushToast({ type: 'info', title: 'Обновлено', desc: 'Список загружен с сервера.' }) }} className="btn-ghost h-10">
-          <RefreshCw size={16} /> <span className="hidden sm:inline">Обновить</span>
-        </button>
-
-        {/* Columns */}
-        <Dropdown
-          width={200}
-          trigger={({ toggle }) => <button onClick={toggle} className="btn-ghost h-10"><Columns3 size={16} /> <span className="hidden sm:inline">Колонки</span></button>}
-        >
-          {() => (
-            <div className="p-1">
-              {COLS.map((c) => (
-                <button
-                  key={c.key}
-                  onClick={() => setVisibleCols((v) => (v.includes(c.key) ? v.filter((x) => x !== c.key) : [...v, c.key]))}
-                  className="flex w-full items-center justify-between gap-2 rounded-lg px-3 py-2 text-left text-sm text-fg hover:bg-elevated"
-                >
-                  {c.label}
-                  {showCol(c.key) && <Check size={15} className="text-spark-400" />}
-                </button>
-              ))}
-            </div>
+        {/* Правки 14.08: «Задачи» и «Обновить» — иконками справа. «Корзина/Удалённые» теперь
+            отдельной карточкой в верхнем ряду статусов. */}
+        <div className="ml-auto flex items-center gap-2">
+          <IconBtn icon={<ListChecks size={17} />} label="Задачи" onClick={() => setTasksOpen(true)} />
+          <IconBtn icon={<RefreshCw size={17} />} label="Обновить список" onClick={() => { void loadAccounts(); pushToast({ type: 'info', title: 'Обновлено', desc: 'Список загружен с сервера.' }) }} />
+          {tab === 'trash' && trashed.length > 0 && (
+            <button onClick={() => { void emptyTrash().then(() => pushToast({ type: 'success', title: 'Корзина очищена' })) }} className="btn-danger h-10"><Trash2 size={16} /> Очистить</button>
           )}
-        </Dropdown>
-
-        <button onClick={() => setTasksOpen(true)} className="btn-ghost h-10"><ListChecks size={16} /> <span className="hidden sm:inline">Задачи</span></button>
-
-        {tab === 'trash' && trashed.length > 0 && (
-          <button onClick={() => { void emptyTrash().then(() => pushToast({ type: 'success', title: 'Корзина очищена' })) }} className="btn-danger h-10"><Trash2 size={16} /> Очистить корзину</button>
-        )}
+        </div>
       </div>
 
       {/* §2: корзина — массовое восстановление и фильтр «живых» (валидных) сессий. */}
@@ -719,53 +810,30 @@ export function AccountsPage() {
       {/* Панель управления выбранными — всегда видна на вкладке аккаунтов; серая, если ничего не выбрано */}
       {tab === 'accounts' && (() => {
         const has = selected.size > 0
-        const btn = (tone: string) => `flex h-8 items-center gap-1.5 rounded-lg border px-2.5 text-xs font-semibold transition-colors disabled:cursor-not-allowed ${has ? tone : 'border-line text-white/25'}`
+        const total = active.length
+        const spamIds = active.filter((a) => a.status === 'spamblock').map((a) => a.id)
         return (
-        <div className="mb-3 flex flex-wrap items-center gap-2 rounded-xl border border-line bg-elevated/40 px-4 py-2.5">
-          <span className={`text-sm font-bold ${has ? 'text-spark-300' : 'text-white/40'}`}>{has ? `Выбрано: ${selected.size}` : 'Выберите аккаунты для управления'}</span>
-          <button disabled={!has} onClick={() => bulkStatusManual('active', 'Включено')} className={btn('border-spark-500/50 bg-spark-500/12 text-spark-300 hover:bg-spark-500/20')}><Check size={14} /> Запустить</button>
-          <button disabled={!has} onClick={() => bulkStatusManual('pause', 'На паузе')} className={btn('border-amber-500/50 bg-amber-500/12 text-amber-300 hover:bg-amber-500/20')}><Pause size={14} /> Пауза</button>
-          <button disabled={!has} onClick={bulkRelease} className={btn('border-rose-500/50 bg-rose-500/12 text-rose-300 hover:bg-rose-500/20')}><RefreshCw size={14} /> Стоп / освободить</button>
-          <button disabled={!has} onClick={() => bulkSetStatus('frozen', 'Отключено (frozen)')} className={btn('border-rose-500/40 bg-rose-500/8 text-rose-300 hover:bg-rose-500/15')}><X size={14} /> Отключить</button>
+        // Правки 14.08: панель управления целиком в иконках + кастомные тултипы; счётчик «N из total».
+        <div className="mb-3 flex flex-wrap items-center gap-1.5 rounded-xl border border-line bg-elevated/40 px-3 py-2">
+          <span className={`mr-1 text-sm font-bold tabular-nums ${has ? 'text-spark-300' : 'text-white/40'}`}>{selected.size} из {total}</span>
+          <IconBtn disabled={!has} icon={<Play size={16} />} label="Запустить" onClick={() => bulkStatusManual('active', 'Включено')} tone="border-spark-500/50 bg-spark-500/12 text-spark-300 hover:bg-spark-500/20" />
+          <IconBtn disabled={!has} icon={<Pause size={16} />} label="Пауза" onClick={() => bulkStatusManual('pause', 'На паузе')} tone="border-amber-500/50 bg-amber-500/12 text-amber-300 hover:bg-amber-500/20" />
+          <IconBtn disabled={!has} icon={<Square size={15} />} label="Стоп / освободить" onClick={bulkRelease} tone="border-rose-500/50 bg-rose-500/12 text-rose-300 hover:bg-rose-500/20" />
+          <IconBtn disabled={!has} icon={<Power size={16} />} label="Отключить (frozen)" onClick={() => bulkSetStatus('frozen', 'Отключено (frozen)')} tone="border-rose-500/40 bg-rose-500/8 text-rose-300 hover:bg-rose-500/15" />
           <span className="mx-1 h-5 w-px bg-line" />
-          <button disabled={!has} onClick={() => setMoveOpen(true)} className={btn('border-line text-fg hover:bg-elevated')}><Users size={14} /> Переместить</button>
-          {/* §4.5, прямой запрос владельца: «чтобы можно было МАССОВО всем задавать
-              усталость и отдых от модулей, как живой человек». */}
-          <button disabled={!has} onClick={() => setFatigueOpen(true)} className={btn('border-line text-fg hover:bg-elevated')}><Pause size={14} /> Усталость и отдых</button>
-          {/* Снятие спамблока через @SpamBot — массово, с рандомными задержками (анти-кластер). */}
-          {(() => {
-            const spamIds = active.filter((a) => a.status === 'spamblock').map((a) => a.id)
-            return (
-              <button disabled={!spamIds.length} onClick={() => setUnblockOpen(true)} className={btn('border-amber-500/40 bg-amber-500/8 text-amber-300 hover:bg-amber-500/15')} title="Апелляция в @SpamBot с рандомными задержками">
-                <ShieldCheck size={14} /> Снять спамблок{spamIds.length ? ` (${spamIds.length})` : ''}
-              </button>
-            )
-          })()}
-          {/* Раздача прокси была только в момент импорта. Дальше — пул сдох, купили новый,
-              и всё это руками по одному через карточку. */}
-          <button disabled={!has} onClick={() => setAssignProxyOpen(true)} className={btn('border-line text-fg hover:bg-elevated')}><Server size={14} /> Назначить прокси</button>
-          <button disabled={!has} onClick={() => { void (async () => { for (const id of selected) await setAccountStatus(id, 'reauth'); pushToast({ type: 'info', title: 'Отправлено на реавторизацию' }); setSelected(new Set()) })() }} className={btn('border-line text-fg hover:bg-elevated')}><KeyRound size={14} /> Реавторизация</button>
-          {/* §2: «Управление» — мульти-просмотр ВЫБРАННЫХ аккаунтов: открываем обзор на первом
-              и передаём весь выбор в `?sel=`, чтобы слева был список только выбранных, а не всех. */}
-          <button
-            disabled={!has}
-            onClick={() => {
-              const chosen = active.filter((a) => selected.has(a.id))
-              if (!chosen.length) return
-              navigate(`/panel/accounts/${chosen[0].id}?sel=${chosen.map((a) => a.id).join(',')}`)
-            }}
-            title="Открыть обзор выбранных аккаунтов: слева — только они, справа — табы"
-            className={btn('border-iris-500/50 bg-iris-500/12 text-iris-200 hover:bg-iris-500/20')}
-          ><Users size={14} /> Управление</button>
-          {/* §2: «В корзину» — самая редкая деструктивная функция, поэтому крайняя справа. */}
-          <button
-            disabled={!has}
-            onClick={bulkTrash}
-            title={busySelected.length ? 'Среди выбранных есть аккаунты в работе — сначала остановите' : 'Переместить выбранные в корзину'}
-            className={cn(btn('border-line text-fg hover:bg-elevated'), 'ml-auto', busySelected.length && 'opacity-60')}
-          >
-            <Trash2 size={14} /> В корзину{busySelected.length ? ` (${busySelected.length} в работе)` : ''}
-          </button>
+          <IconBtn disabled={!has} icon={<Users size={16} />} label="Переместить" onClick={() => setMoveOpen(true)} />
+          {/* §4.5: массово задать усталость/отдых, «как живой человек». */}
+          <IconBtn disabled={!has} icon={<Moon size={16} />} label="Усталость и отдых" onClick={() => setFatigueOpen(true)} />
+          {/* Снятие спамблока через @SpamBot — массово, с рандомными задержками. */}
+          <IconBtn disabled={!spamIds.length} icon={<ShieldCheck size={16} />} label={`Снять спамблок${spamIds.length ? ` (${spamIds.length})` : ''}`} onClick={() => setUnblockOpen(true)} tone="border-amber-500/40 bg-amber-500/8 text-amber-300 hover:bg-amber-500/15" />
+          <IconBtn disabled={!has} icon={<Server size={16} />} label="Назначить прокси" onClick={() => setAssignProxyOpen(true)} />
+          <IconBtn disabled={!has} icon={<KeyRound size={16} />} label="Реавторизация" onClick={() => { void (async () => { for (const id of selected) await setAccountStatus(id, 'reauth'); pushToast({ type: 'info', title: 'Отправлено на реавторизацию' }); setSelected(new Set()) })() }} />
+          {/* «Управление» — мульти-просмотр выбранных: открываем обзор на первом, весь выбор в ?sel=. */}
+          <IconBtn disabled={!has} icon={<Eye size={16} />} label="Управление (обзор выбранных)" onClick={() => { const chosen = active.filter((a) => selected.has(a.id)); if (!chosen.length) return; navigate(`/panel/accounts/${chosen[0].id}?sel=${chosen.map((a) => a.id).join(',')}`) }} tone="border-iris-500/50 bg-iris-500/12 text-iris-200 hover:bg-iris-500/20" />
+          {/* «В корзину» — деструктивная, крайняя справа. */}
+          <span className="ml-auto inline-flex">
+            <IconBtn disabled={!has} icon={<Trash2 size={16} />} label={busySelected.length ? `В корзину — сначала остановите ${busySelected.length} в работе` : 'В корзину'} onClick={bulkTrash} tone="border-line text-fg hover:bg-elevated" />
+          </span>
         </div>
         )
       })()}
@@ -805,6 +873,7 @@ export function AccountsPage() {
           <AccountsTable
             campaignOf={campaignOf}
             onAssign={setAssignAcc}
+            proxyName={proxyName}
             pageItems={pageItems}
             visibleCols={visibleCols}
             showCol={showCol}
@@ -1075,6 +1144,7 @@ function AccountsTable(props: {
   /** §1: под какой кампанией аккаунт и закреплён ли (замочек). */
   campaignOf: (accountId: string) => { name: string; locked: boolean } | null
   onAssign: (a: TgAccount) => void
+  proxyName?: (url: string) => string
 }) {
   const { pageItems, showCol, selected, toggleOne, allOnPageSelected, toggleAll, campaignOf } = props
   const showAccountCol = showCol('name') || showCol('avatar')
@@ -1100,7 +1170,11 @@ function AccountsTable(props: {
                 <th className="px-4 py-3">
                   <span className="inline-flex items-center gap-1">
                     Статус
-                    <span title={STATUS_HELP} className="grid h-4 w-4 cursor-help place-items-center rounded-full border border-line text-[10px] font-bold text-muted">?</span>
+                    {/* Правка 14.08: кастомная плавающая подсказка (как в блоке «Защита»), не нативный title. */}
+                    <span className="group/sh relative grid h-4 w-4 cursor-help place-items-center rounded-full border border-line text-[10px] font-bold text-muted">
+                      ?
+                      <span className="pointer-events-none absolute left-1/2 top-[calc(100%+8px)] z-50 w-[340px] -translate-x-1/2 whitespace-pre-line rounded-xl border border-line bg-surface px-3 py-2.5 text-left text-[11px] font-normal normal-case leading-relaxed text-muted opacity-0 shadow-xl transition-opacity group-hover/sh:opacity-100">{STATUS_HELP}</span>
+                    </span>
                   </span>
                 </th>
               )}
@@ -1115,13 +1189,15 @@ function AccountsTable(props: {
                 <td className="px-4 py-3"><input type="checkbox" checked={selected.has(a.id)} onChange={() => toggleOne(a.id)} className="h-4 w-4 rounded border-line accent-spark-500" /></td>
                 {showAccountCol && (
                 <td className="px-4 py-3">
-                  <button type="button" onClick={() => props.onDetail(a)} className="group flex items-center gap-3 text-left" title="Открыть статистику аккаунта">
-                    {showCol('avatar') && <Avatar name={accountLabel(a)} color={a.avatarColor} />}
-                    <div className="min-w-0">
-                      {showCol('name') && <div className="truncate font-semibold text-fg transition-colors group-hover:text-spark-300">{accountLabel(a)}</div>}
-                      <div className="truncate text-xs text-muted">{accountSub(a)}</div>
-                    </div>
-                  </button>
+                  <Tip text="Открыть статистику аккаунта" className="!flex min-w-0 max-w-full">
+                    <button type="button" onClick={() => props.onDetail(a)} className="group flex min-w-0 items-center gap-3 text-left">
+                      {showCol('avatar') && <Avatar name={accountLabel(a)} color={a.avatarColor} />}
+                      <div className="min-w-0">
+                        {showCol('name') && <div className="truncate font-semibold text-fg transition-colors group-hover:text-spark-300">{accountLabel(a)}</div>}
+                        <div className="truncate text-xs text-muted">{accountSub(a)}</div>
+                      </div>
+                    </button>
+                  </Tip>
                 </td>
                 )}
                 {showCol('campaign') && (
@@ -1134,13 +1210,13 @@ function AccountsTable(props: {
                         // янтарный замок против открытого серого) — тестировщик не смог
                         // отличить их даже на скриншоте. Добавляем словесную подпись:
                         // от неё зависит, уйдёт аккаунт в другую кампанию или нет (тест 3.3).
-                        <span className="inline-flex items-center gap-1 text-xs text-fg" title={c.locked ? `Закреплён за кампанией «${c.name}» — вышел из общего пула` : `Используется кампанией «${c.name}» без закрепления — остаётся доступен другим`}>
+                        <Tip className="items-center gap-1 text-xs text-fg" text={c.locked ? `Закреплён за кампанией «${c.name}» — вышел из общего пула` : `Используется кампанией «${c.name}» без закрепления — остаётся доступен другим`}>
                           {c.locked ? <Lock size={11} className="shrink-0 text-amber-300" /> : <LockOpen size={11} className="shrink-0 text-faint" />}
                           <span className="truncate">{c.name}</span>
                           <span className={`shrink-0 rounded px-1 py-0.5 text-[10px] font-bold ${c.locked ? 'bg-amber-500/15 text-amber-300' : 'bg-white/5 text-faint'}`}>
                             {c.locked ? 'закреплён' : 'без лока'}
                           </span>
-                        </span>
+                        </Tip>
                       )
                     })()}
                   </td>
@@ -1153,23 +1229,27 @@ function AccountsTable(props: {
                   const tone = resting ? 'bg-iris-400' : pct >= 70 ? 'bg-rose-400' : pct >= 40 ? 'bg-amber-400' : 'bg-spark-500'
                   return (
                     <td className="px-4 py-3">
-                      <button
-                        type="button"
-                        onClick={() => props.onSetFatigue?.(a.id)}
-                        // MR-129: «0/15» читалось непонятно. Поясняем: это «сделано действий /
-                        // порог, после которого аккаунт уходит на отдых» (осталось = порог − сделано).
-                        title={th > 0
+                      {/* MR-129: «0/15» читалось непонятно. Поясняем в кастомном тултипе (MR-162):
+                          «сделано действий / порог» (осталось = порог − сделано). */}
+                      <Tip
+                        className="!flex w-28"
+                        text={th > 0
                           ? `Усталость: сделано ${act?.fatigue ?? 0} из ${th} действий до отдыха (осталось ${Math.max(0, th - (act?.fatigue ?? 0))}). На пороге аккаунт отдыхает во всех модулях. Клик — задать порог и распорядок.`
                           : 'Задать усталость и распорядок этому аккаунту'}
-                        className="flex w-28 items-center gap-2 text-left"
                       >
-                        <span className="h-1.5 flex-1 overflow-hidden rounded-full bg-white/10">
-                          <span className={cn('block h-full rounded-full transition-all', tone)} style={{ width: `${pct}%` }} />
-                        </span>
-                        <span className="w-14 shrink-0 text-[11px] tabular-nums text-muted">
-                          {resting ? 'отдых' : th > 0 ? `${act?.fatigue ?? 0}/${th}` : '—'}
-                        </span>
-                      </button>
+                        <button
+                          type="button"
+                          onClick={() => props.onSetFatigue?.(a.id)}
+                          className="flex w-full items-center gap-2 text-left"
+                        >
+                          <span className="h-1.5 flex-1 overflow-hidden rounded-full bg-white/10">
+                            <span className={cn('block h-full rounded-full transition-all', tone)} style={{ width: `${pct}%` }} />
+                          </span>
+                          <span className="w-14 shrink-0 text-[11px] tabular-nums text-muted">
+                            {resting ? 'отдых' : th > 0 ? `${act?.fatigue ?? 0}/${th}` : '—'}
+                          </span>
+                        </button>
+                      </Tip>
                     </td>
                   )
                 })()}
@@ -1179,11 +1259,11 @@ function AccountsTable(props: {
                       {/* MR-131: при мёртвом/отсутствующем прокси НЕ показываем «Активный» — вместо него
                       бейдж «Зона риска» с конкретикой; иначе статус + риск-бейдж рядом. */}
                   {a.status === 'active' && a.risk?.proxyIssue ? (
-                    <RiskBadge risk={a.risk} />
+                    <RiskChip a={a} />
                   ) : (
                     <span className="inline-flex flex-wrap items-center gap-1.5">
                       <StatusBadge status={a.status} until={a.statusUntil} reason={a.statusReason} />
-                      {a.risk && a.risk.level !== 'none' && <RiskBadge risk={a.risk} />}
+                      {a.risk && a.risk.level !== 'none' && <RiskChip a={a} />}
                     </span>
                   )}
                       {a.busyIn ? (
@@ -1197,26 +1277,27 @@ function AccountsTable(props: {
                           </div>
                         )
                       ) : a.status === 'pause' ? (
-                        <div className="flex items-center gap-1 text-[11px] font-semibold text-amber-300/70" title="Аккаунт поставлен на паузу оператором, а не задачей модуля">
+                        <Tip text="Аккаунт поставлен на паузу оператором, а не задачей модуля" className="items-center gap-1 text-[11px] font-semibold text-amber-300/70">
                           <Pause size={11} /> Пауза вручную · не в модуле
-                        </div>
+                        </Tip>
                       ) : null}
                       {/* §2: score виден ВСЕГДА (не только у проблемных) + подсказка, где можно/нельзя. */}
                       {typeof a.trustScore === 'number' && (
-                        <span
-                          className={cn('rounded-md px-1.5 py-0.5 text-[10px] font-bold',
-                            a.trustBand === 'low' ? 'bg-rose-500/15 text-rose-300'
-                              : a.trustBand === 'high' ? 'bg-spark-500/15 text-spark-300'
-                                : 'bg-amber-500/15 text-amber-300')}
-                          title={a.trustBand === 'low'
-                            ? `Trust ${a.trustScore} (<40): в боевые модули не берётся — нужен прогрев. Мейлинг недоступен (нужен trust>70).`
-                            : a.trustBand === 'high'
-                              ? `Trust ${a.trustScore} (>70): доступны все модули, включая мейлинг.`
-                              : `Trust ${a.trustScore} (40–70): боевые модули только на «Консервативном» уровне; мейлинг недоступен (нужен trust>70).`}
-                        >
-                          Доверие {a.trustScore}
-                          {a.trustBand === 'low' ? ' · прогрев' : a.trustBand !== 'high' ? ' · без мейлинга' : ''}
-                        </span>
+                        <Tip text={a.trustBand === 'low'
+                          ? `Trust ${a.trustScore} (<40): в боевые модули не берётся — нужен прогрев. Мейлинг недоступен (нужен trust>70).`
+                          : a.trustBand === 'high'
+                            ? `Trust ${a.trustScore} (>70): доступны все модули, включая мейлинг.`
+                            : `Trust ${a.trustScore} (40–70): боевые модули только на «Консервативном» уровне; мейлинг недоступен (нужен trust>70).`}>
+                          <span
+                            className={cn('rounded-md px-1.5 py-0.5 text-[10px] font-bold',
+                              a.trustBand === 'low' ? 'bg-rose-500/15 text-rose-300'
+                                : a.trustBand === 'high' ? 'bg-spark-500/15 text-spark-300'
+                                  : 'bg-amber-500/15 text-amber-300')}
+                          >
+                            Доверие {a.trustScore}
+                            {a.trustBand === 'low' ? ' · прогрев' : a.trustBand !== 'high' ? ' · без мейлинга' : ''}
+                          </span>
+                        </Tip>
                       )}
                       {(() => {
                         const d = props.dailyAll?.[a.id]
@@ -1224,9 +1305,9 @@ function AccountsTable(props: {
                         if (d.anyReached) {
                           const hit = d.items.filter((x) => x.reached).map((x) => DAILY_CAP_LABELS[x.action] ?? x.action).join(', ')
                           return (
-                            <span className="rounded-md bg-rose-500/15 px-1.5 py-0.5 text-[10px] font-bold text-rose-300" title={`Суточный лимит достигнут: ${hit}. Модули пропускают аккаунт до сброса в полночь.`}>
-                              Лимит: {hit}
-                            </span>
+                            <Tip text={`Суточный лимит достигнут: ${hit}. Модули пропускают аккаунт до сброса в полночь.`}>
+                              <span className="rounded-md bg-rose-500/15 px-1.5 py-0.5 text-[10px] font-bold text-rose-300">Лимит: {hit}</span>
+                            </Tip>
                           )
                         }
                         // Раннее предупреждение: ≥75% любого потолка, но ещё не заблокирован.
@@ -1234,9 +1315,9 @@ function AccountsTable(props: {
                         if (near.length) {
                           const lbl = near.map((x) => `${DAILY_CAP_LABELS[x.action] ?? x.action} ${x.used}/${x.cap}`).join(', ')
                           return (
-                            <span className="rounded-md bg-amber-500/15 px-1.5 py-0.5 text-[10px] font-bold text-amber-300" title={`Близко к суточному лимиту: ${lbl}. Скоро модули начнут пропускать аккаунт.`}>
-                              Близко: {near.map((x) => DAILY_CAP_LABELS[x.action] ?? x.action).join(', ')}
-                            </span>
+                            <Tip text={`Близко к суточному лимиту: ${lbl}. Скоро модули начнут пропускать аккаунт.`}>
+                              <span className="rounded-md bg-amber-500/15 px-1.5 py-0.5 text-[10px] font-bold text-amber-300">Близко: {near.map((x) => DAILY_CAP_LABELS[x.action] ?? x.action).join(', ')}</span>
+                            </Tip>
                           )
                         }
                         return null
@@ -1249,16 +1330,16 @@ function AccountsTable(props: {
                         if (act.resting) {
                           const left = Math.ceil((act.restUntil - Date.now()) / 60000)
                           return (
-                            <span className="rounded-md bg-iris-500/15 px-1.5 py-0.5 text-[10px] font-bold text-iris-300" title={`Аккаунт отдыхает после нагрузки — освободится через ${left} мин. Отдых общий для всех модулей.`}>
-                              отдыхает {left > 0 ? `${left} мин` : ''}
-                            </span>
+                            <Tip text={`Аккаунт отдыхает после нагрузки — освободится через ${left} мин. Отдых общий для всех модулей.`}>
+                              <span className="rounded-md bg-iris-500/15 px-1.5 py-0.5 text-[10px] font-bold text-iris-300">отдыхает {left > 0 ? `${left} мин` : ''}</span>
+                            </Tip>
                           )
                         }
                         if (act.threshold > 0 && act.fatigue / act.threshold >= 0.7) {
                           return (
-                            <span className="rounded-md bg-amber-500/15 px-1.5 py-0.5 text-[10px] font-bold text-amber-300" title={`Усталость ${act.fatigue} из ${act.threshold} — скоро уйдёт на отдых во всех модулях.`}>
-                              устаёт {act.fatigue}/{act.threshold}
-                            </span>
+                            <Tip text={`Усталость ${act.fatigue} из ${act.threshold} — скоро уйдёт на отдых во всех модулях.`}>
+                              <span className="rounded-md bg-amber-500/15 px-1.5 py-0.5 text-[10px] font-bold text-amber-300">устаёт {act.fatigue}/{act.threshold}</span>
+                            </Tip>
                           )
                         }
                         // §4.2: низкий шанс часа — самая частая причина «модуль ничего
@@ -1266,24 +1347,24 @@ function AccountsTable(props: {
                         if (typeof act.chanceNow === 'number' && act.chanceNow < 20 && (a.proxy && a.proxy !== '—')) {
                           // MR-129: не пишем явным текстом — только тихая иконка часов с подсказкой.
                           return (
-                            <span
-                              className="inline-flex items-center text-white/35"
-                              title={`Тихий час по распорядку: сейчас шанс действия ${act.chanceNow}% — аккаунт чаще всего будет пропущен. Меняется в «Усталость и отдых».`}
+                            <Tip
+                              className="items-center text-white/35"
+                              text={`Тихий час по распорядку: сейчас шанс действия ${act.chanceNow}% — аккаунт чаще всего будет пропущен. Меняется в «Усталость и отдых».`}
                             >
                               <Clock size={12} />
-                            </span>
+                            </Tip>
                           )
                         }
                         return null
                       })()}
                       {/* Колонку «Прокси» можно скрыть в настройках таблицы — риск скрывать нельзя. */}
                       {!hasProxy(a) && !showCol('proxy') && (
-                        <span
+                        <Tip
                           className="rounded-md bg-rose-500/15 px-1.5 py-0.5 text-[10px] font-bold text-rose-300"
-                          title="Аккаунт ходит через ваш IP — тот же, что у остальных без прокси. Для Telegram это одна группа."
+                          text="Аккаунт ходит через ваш IP — тот же, что у остальных без прокси. Для Telegram это одна группа."
                         >
                           без прокси · риск блока
-                        </span>
+                        </Tip>
                       )}
                       {a.status === 'reauth' && props.tab === 'accounts' && (
                         <button type="button" onClick={() => props.onReauth(a)} className="text-xs font-semibold text-violet-300 hover:text-violet-200">
@@ -1299,29 +1380,32 @@ function AccountsTable(props: {
                   // Плюс состояние: нет прокси / прокси не отвечает (помечен нерабочим в каталоге) —
                   // раньше в таблице всё выглядело исправным, а работа молча падала.
                   <td className="px-4 py-3 font-mono text-xs">
-                    <button
-                      type="button"
-                      onClick={() => props.onProxy(a)}
-                      className="group/px inline-flex items-center gap-1.5 text-left transition-colors hover:text-spark-300"
-                      title={!hasProxy(a)
-                        ? 'Аккаунт ходит через ваш IP — тот же, что у остальных без прокси. Для Telegram это одна группа: находит один аккаунт и добивает похожие. Нажмите, чтобы назначить прокси.'
-                        : a.proxyOk === false
-                          ? 'Прокси не отвечает и помечен нерабочим в каталоге. Нажмите, чтобы назначить живой — иначе задачи будут падать.'
-                          : 'Сменить прокси'}
-                    >
-                      {!hasProxy(a) ? (
-                        <span className="inline-flex items-center gap-1 font-bold text-rose-300">
-                          <AlertTriangle size={11} className="shrink-0" /> нет прокси · назначить
-                        </span>
-                      ) : a.proxyOk === false ? (
-                        <span className="inline-flex items-center gap-1 font-bold text-rose-300">
-                          <AlertTriangle size={11} className="shrink-0" /> прокси не отвечает · сменить
-                        </span>
-                      ) : (
-                        <span className="text-muted group-hover/px:text-spark-300">{formatProxyLabel(a.proxy)}</span>
-                      )}
-                      <Server size={11} className="shrink-0 opacity-0 transition-opacity group-hover/px:opacity-100" />
-                    </button>
+                    {/* MR-162/MR-169: один кастомный тултип на ячейку. У рабочего прокси в подсказке —
+                        полный адрес (в строке показываем только название), у проблемного — что делать. */}
+                    <Tip text={!hasProxy(a)
+                      ? 'Аккаунт ходит через ваш IP — тот же, что у остальных без прокси. Для Telegram это одна группа: находит один аккаунт и добивает похожие. Нажмите, чтобы назначить прокси.'
+                      : a.proxyOk === false
+                        ? 'Прокси не отвечает и помечен нерабочим в каталоге. Нажмите, чтобы назначить живой — иначе задачи будут падать.'
+                        : `${a.proxy} — нажмите, чтобы сменить`}>
+                      <button
+                        type="button"
+                        onClick={() => props.onProxy(a)}
+                        className="group/px inline-flex items-center gap-1.5 text-left transition-colors hover:text-spark-300"
+                      >
+                        {!hasProxy(a) ? (
+                          <span className="inline-flex items-center gap-1 font-bold text-rose-300">
+                            <AlertTriangle size={11} className="shrink-0" /> нет прокси · назначить
+                          </span>
+                        ) : a.proxyOk === false ? (
+                          <span className="inline-flex items-center gap-1 font-bold text-rose-300">
+                            <AlertTriangle size={11} className="shrink-0" /> прокси не отвечает · сменить
+                          </span>
+                        ) : (
+                          <span className="text-muted group-hover/px:text-spark-300">{props.proxyName ? props.proxyName(a.proxy) : formatProxyLabel(a.proxy)}</span>
+                        )}
+                        <Server size={11} className="shrink-0 opacity-0 transition-opacity group-hover/px:opacity-100" />
+                      </button>
+                    </Tip>
                   </td>
                 )}
                 <td className="px-4 py-3 text-right">
@@ -1338,7 +1422,8 @@ function AccountsTable(props: {
         {pageItems.map((a) => (
           <div key={a.id} className={cn('flex items-center gap-3 p-3.5', a.busyIn && 'opacity-60')}>
             <input type="checkbox" checked={selected.has(a.id)} onChange={() => toggleOne(a.id)} className="h-4 w-4 rounded border-line accent-spark-500" />
-            <button type="button" onClick={() => props.onDetail(a)} className="flex min-w-0 flex-1 items-center gap-3 text-left" title="Открыть статистику аккаунта">
+            <Tip text="Открыть статистику аккаунта" className="!flex min-w-0 flex-1">
+            <button type="button" onClick={() => props.onDetail(a)} className="flex min-w-0 flex-1 items-center gap-3 text-left">
               <Avatar name={accountLabel(a)} color={a.avatarColor} />
               <div className="min-w-0 flex-1">
                 <div className="truncate font-semibold text-fg">{accountLabel(a)}</div>
@@ -1347,11 +1432,11 @@ function AccountsTable(props: {
                   {/* MR-131: при мёртвом/отсутствующем прокси НЕ показываем «Активный» — вместо него
                       бейдж «Зона риска» с конкретикой; иначе статус + риск-бейдж рядом. */}
                   {a.status === 'active' && a.risk?.proxyIssue ? (
-                    <RiskBadge risk={a.risk} />
+                    <RiskChip a={a} />
                   ) : (
                     <span className="inline-flex flex-wrap items-center gap-1.5">
                       <StatusBadge status={a.status} until={a.statusUntil} reason={a.statusReason} />
-                      {a.risk && a.risk.level !== 'none' && <RiskBadge risk={a.risk} />}
+                      {a.risk && a.risk.level !== 'none' && <RiskChip a={a} />}
                     </span>
                   )}
                 {a.busyIn ? (
@@ -1365,13 +1450,14 @@ function AccountsTable(props: {
                     </div>
                   )
                 ) : a.status === 'pause' ? (
-                  <div className="mt-1 flex items-center gap-1 text-[11px] font-semibold text-amber-300/70" title="Аккаунт поставлен на паузу оператором, а не задачей модуля">
+                  <Tip className="mt-1 items-center gap-1 text-[11px] font-semibold text-amber-300/70" text="Аккаунт поставлен на паузу оператором, а не задачей модуля">
                     <Pause size={11} /> Пауза вручную · не в модуле
-                  </div>
+                  </Tip>
                 ) : null}
                 </div>
               </div>
             </button>
+            </Tip>
             <RowMenu a={a} {...props} />
           </div>
         ))}

@@ -9,6 +9,7 @@ import { cn } from '@/shared/lib/utils'
 import { useApp } from '@/mocks/store'
 import { confirmDialog } from '@/shared/lib/dialog'
 import { ChangeProxyModal } from './ChangeProxyModal'
+import { fetchProxies } from '@/api/proxiesApi'
 import {
   fetchAccountStats, fetchAccountChannels, leaveAccountChannel, releaseAccountLock,
   fetchAccountDaily, fetchAccountChannelMessages, type AccountDaily, type ChannelMessage,
@@ -374,6 +375,16 @@ export function ProxyTab({ account, stats, loading, onRecheck }: { account: TgAc
   const setAccountProxy = useApp((s) => s.setAccountProxy)
   const pushToast = useApp((s) => s.pushToast)
   const [changeOpen, setChangeOpen] = useState(false)
+  // Правка 14.08: показываем НАЗВАНИЕ прокси из каталога (модуль «Прокси»), а не только адрес.
+  const [proxyName, setProxyName] = useState<string | null>(null)
+  useEffect(() => {
+    if (!hasPx) { setProxyName(null); return }
+    const hp = (/^[a-z0-9]+:\/\/(?:[^@]*@)?([^/]+)/i.exec(account.proxy || '') || [])[1] || ''
+    void fetchProxies().then((list) => {
+      const found = list.find((p) => `${p.host}:${p.port}` === hp)
+      setProxyName(found?.label || null)
+    }).catch(() => setProxyName(null))
+  }, [account.proxy, hasPx])
   return (
     <>
     <SectionCard
@@ -402,7 +413,10 @@ export function ProxyTab({ account, stats, loading, onRecheck }: { account: TgAc
         </div>
       ) : (
         <>
-          <div className="mb-3 rounded-xl border border-line bg-elevated px-3 py-2 font-mono text-xs text-iris-300 break-all">{px.raw}</div>
+          <div className="mb-3 rounded-xl border border-line bg-elevated px-3 py-2">
+            {proxyName && <div className="mb-0.5 text-sm font-bold text-fg">{proxyName}</div>}
+            <div className="font-mono text-xs text-iris-300 break-all">{px.raw}</div>
+          </div>
           <div className="mb-3">
             {px.working == null ? (
               <span className="inline-flex items-center gap-1.5 rounded-lg bg-slate-500/15 px-2.5 py-1 text-xs font-bold text-slate-300"><ShieldQuestion size={13} /> Не проверено</span>

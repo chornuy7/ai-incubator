@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { NavLink, Link, useLocation } from 'react-router-dom'
 import { fetchTicketsUnread } from '@/api/ticketsApi'
-import { PanelLeftClose, PanelLeftOpen, X, LogOut, ChevronDown } from 'lucide-react'
+import { X, LogOut, ChevronDown } from 'lucide-react'
 import { ROUTES, GROUP_LABELS, type RouteDef } from '@/shared/config/routes'
 import { useApp } from '@/mocks/store'
 import { useSession } from '@/features/auth/session'
@@ -34,7 +35,9 @@ function Logo({ collapsed }: { collapsed: boolean }) {
 
 export function AppSidebar({ mobile = false }: { mobile?: boolean }) {
   const collapsed = useApp((s) => s.sidebarCollapsed) && !mobile
-  const toggle = useApp((s) => s.toggleSidebar)
+  // Правка 14.08: подсказка свёрнутого пункта — через портал с position:fixed, иначе
+  // overflow-y-auto у nav обрезает её справа. Держим label + вертикальную позицию.
+  const [tip, setTip] = useState<{ label: string; top: number; left: number } | null>(null)
   const setMobileNav = useApp((s) => s.setMobileNav)
   const sessionUser = useSession((s) => s.user)
   const logout = useSession((s) => s.logout)
@@ -90,26 +93,25 @@ export function AppSidebar({ mobile = false }: { mobile?: boolean }) {
   return (
     <aside
       className={cn(
-        'flex h-screen flex-col border-r border-line bg-surface/80 backdrop-blur-xl transition-[width] duration-200',
+        'relative flex h-screen flex-col border-r border-line bg-surface/80 backdrop-blur-xl transition-[width] duration-200',
         mobile ? 'w-72' : 'sticky top-0',
         collapsed ? 'w-[76px]' : 'w-64',
       )}
     >
-      <div className="flex h-16 items-center justify-between px-4">
+      <div className={cn('flex h-16 items-center px-4', collapsed && !mobile && 'justify-center')}>
         <Logo collapsed={collapsed} />
-        {mobile ? (
-          <button onClick={() => setMobileNav(false)} className="btn-icon" aria-label="Закрыть меню">
+        {mobile && (
+          <button onClick={() => setMobileNav(false)} className="btn-icon ml-auto" aria-label="Закрыть меню">
             <X size={18} />
-          </button>
-        ) : (
-          <button onClick={toggle} className="btn-icon hidden lg:inline-flex" aria-label="Свернуть меню">
-            {collapsed ? <PanelLeftOpen size={18} /> : <PanelLeftClose size={18} />}
           </button>
         )}
       </div>
 
+      {/* Правка 14.08: кнопка сворачивания переехала в верхнюю шапку (AppHeader) — на краю
+          сайдбара её было почти не видно. */}
+
       <nav className="flex-1 overflow-y-auto px-3 pb-4 no-scrollbar">
-        {GROUP_ORDER.map((group) => {
+        {GROUP_ORDER.map((group, gi) => {
           // §10 (MR-49): `!r.hidden` убирает скрытые разделы из меню (маршрут жив).
           const items = ROUTES.filter((r) => r.group === group && !r.hidden && allowed(r))
           if (items.length === 0) return null
@@ -126,6 +128,9 @@ export function AppSidebar({ mobile = false }: { mobile?: boolean }) {
           const groupOpen = collapsed ? true : !closedGroups.has(group)
           return (
             <div key={group} className="mb-4">
+              {/* Правка 14.08: в свёрнутом меню заголовков групп нет — рисуем разделитель,
+                  иначе иконки сливаются и непонятно, где заканчивается одна группа. */}
+              {collapsed && gi > 0 && <div className="mx-2 mb-3 border-t border-line/70" />}
               {!collapsed && (
                 <button
                   type="button"
@@ -156,8 +161,9 @@ export function AppSidebar({ mobile = false }: { mobile?: boolean }) {
                     <NavLink
                       key={r.path}
                       to={r.path}
-                      onClick={() => mobile && setMobileNav(false)}
-                      title={collapsed ? r.label : undefined}
+                      onClick={() => { if (mobile) setMobileNav(false); setTip(null) }}
+                      onMouseEnter={(e) => { if (collapsed) { const rc = e.currentTarget.getBoundingClientRect(); setTip({ label: r.label, top: rc.top + rc.height / 2, left: rc.right + 10 }) } }}
+                      onMouseLeave={() => setTip(null)}
                       className={cn(
                         'group relative flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium transition-all',
                         collapsed && 'justify-center',
@@ -223,6 +229,16 @@ export function AppSidebar({ mobile = false }: { mobile?: boolean }) {
             </div>
           )}
         </div>
+      )}
+      {/* Правка 14.08: подсказка свёрнутого пункта — порталом (position:fixed), не обрезается nav. */}
+      {tip && collapsed && !mobile && createPortal(
+        <span
+          className="pointer-events-none fixed z-[200] -translate-y-1/2 whitespace-nowrap rounded-lg border border-line bg-surface px-2.5 py-1.5 text-xs font-medium text-fg shadow-xl"
+          style={{ top: tip.top, left: tip.left }}
+        >
+          {tip.label}
+        </span>,
+        document.body,
       )}
     </aside>
   )
