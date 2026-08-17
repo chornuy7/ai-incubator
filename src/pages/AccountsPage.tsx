@@ -38,15 +38,29 @@ import { useTabParam } from '@/shared/lib/useTabParam'
 
 const STATUS_ORDER: AccountStatus[] = ['active', 'working', 'warming', 'pause', 'floodwait', 'quarantine', 'spamblock', 'invalid', 'frozen', 'reauth']
 
+// Правка 14.08: подсказка по каждому статусу — при наведении на карточку (как в блоке «Защита»).
+const STATUS_TIP: Record<AccountStatus, string> = {
+  active: 'Свободен, готов к работе',
+  working: 'Занят задачей прямо сейчас',
+  warming: 'Идёт прогрев аккаунта',
+  pause: 'Временно остановлен оператором',
+  floodwait: 'Telegram временно ограничил действия — ждём снятия по сроку',
+  quarantine: 'Отдыхает после риска (карантин)',
+  spamblock: 'Ограничен спам-фильтром Telegram — снимите через @SpamBot',
+  invalid: 'Сессия недействительна — нужен повторный вход',
+  frozen: 'Отключён вручную',
+  reauth: 'Требуется повторный вход (реавторизация)',
+}
+
 // Правка 14.08: «Зона риска» — это не один статус, а несколько независимых причин.
 // Заказчик просил показать их ОТДЕЛЬНЫМИ плитками-счётчиками (мёртвый прокси, нет
 // прокси, низкое доверие), а не свалкой в один бейдж. Каждая — отдельный фильтр.
 type RiskKey = 'deadProxy' | 'noProxy' | 'lowTrust'
 const RISK_ORDER: RiskKey[] = ['deadProxy', 'noProxy', 'lowTrust']
-const RISK_META: Record<RiskKey, { label: string; dot: string; bg: string; match: (a: { proxyOk?: boolean; noProxy?: boolean; trustBand?: string }) => boolean }> = {
-  deadProxy: { label: 'Мёртвый прокси', dot: 'bg-rose-400', bg: 'bg-rose-500/12 border-rose-500/30', match: (a) => a.proxyOk === false && a.noProxy !== true },
-  noProxy: { label: 'Нет прокси', dot: 'bg-orange-400', bg: 'bg-orange-500/12 border-orange-500/30', match: (a) => a.noProxy === true },
-  lowTrust: { label: 'Низкое доверие', dot: 'bg-amber-400', bg: 'bg-amber-500/12 border-amber-500/30', match: (a) => a.trustBand === 'low' },
+const RISK_META: Record<RiskKey, { label: string; dot: string; bg: string; tip: string; match: (a: { proxyOk?: boolean; noProxy?: boolean; trustBand?: string }) => boolean }> = {
+  deadProxy: { label: 'Мёртвый прокси', dot: 'bg-rose-400', bg: 'bg-rose-500/12 border-rose-500/30', tip: 'Прокси не отвечает — Telegram видит смену IP, высокий риск блокировки. Назначьте рабочий прокси.', match: (a) => a.proxyOk === false && a.noProxy !== true },
+  noProxy: { label: 'Нет прокси', dot: 'bg-orange-400', bg: 'bg-orange-500/12 border-orange-500/30', tip: 'Без прокси — работа с реального IP сервера. Назначьте прокси.', match: (a) => a.noProxy === true },
+  lowTrust: { label: 'Низкое доверие', dot: 'bg-amber-400', bg: 'bg-amber-500/12 border-amber-500/30', tip: 'Низкий trust — модули работают консервативно, риск ограничений выше.', match: (a) => a.trustBand === 'low' },
 }
 
 // Правка 14.08: кнопки-иконки с кастомным тёмным плавающим тултипом (не нативный title).
@@ -558,7 +572,7 @@ export function AccountsPage() {
               key={st}
               onClick={() => { setStatusFilter(activeCard ? 'all' : st); setRiskFilter('all'); setPage(0); setTab('accounts') }}
               className={cn(
-                'flex items-center gap-3 rounded-2xl border p-3 text-left transition-all',
+                'group/kpi relative flex items-center gap-3 rounded-2xl border p-3 text-left transition-all',
                 activeCard ? 'border-spark-500/50 bg-spark-500/8 shadow-spark-glow' : 'border-line bg-surface hover:border-spark-500/30',
               )}
             >
@@ -569,12 +583,53 @@ export function AccountsPage() {
                 <div className="font-display text-xl font-bold text-fg">{statusCounts[st]}</div>
                 <div className="truncate text-[11px] font-semibold text-muted">{m.label}</div>
               </div>
+              <span className="pointer-events-none absolute left-1/2 top-[calc(100%+6px)] z-50 w-max max-w-[220px] -translate-x-1/2 rounded-lg border border-line bg-surface px-2.5 py-1.5 text-left text-[11px] font-medium leading-snug text-fg opacity-0 shadow-xl transition-opacity group-hover/kpi:opacity-100">{STATUS_TIP[st]}</span>
             </button>
           )
         })}
+        {/* Правка 14.08: 3 причины риска (мёртвый прокси / нет прокси / низкое доверие) —
+            карточками в верхнем ряду вместе со статусами (пока статусы не доработаны). */}
+        {RISK_ORDER.map((rk) => {
+          const m = RISK_META[rk]
+          const activeCard = riskFilter === rk
+          return (
+            <button
+              key={rk}
+              onClick={() => { setRiskFilter(activeCard ? 'all' : rk); setStatusFilter('all'); setPage(0); setTab('accounts') }}
+              className={cn(
+                'group/kpi relative flex items-center gap-3 rounded-2xl border p-3 text-left transition-all',
+                activeCard ? 'border-rose-500/50 bg-rose-500/8 shadow-spark-glow' : 'border-line bg-surface hover:border-rose-500/30',
+              )}
+            >
+              <span className={cn('grid h-9 w-9 shrink-0 place-items-center rounded-xl border', m.bg)}>
+                <span className={cn('h-2 w-2 rounded-full', m.dot)} />
+              </span>
+              <div className="min-w-0">
+                <div className="font-display text-xl font-bold text-fg">{riskCounts[rk]}</div>
+                <div className="truncate text-[11px] font-semibold text-muted">{m.label}</div>
+              </div>
+              <span className="pointer-events-none absolute left-1/2 top-[calc(100%+6px)] z-50 w-max max-w-[220px] -translate-x-1/2 rounded-lg border border-line bg-surface px-2.5 py-1.5 text-left text-[11px] font-medium leading-snug text-fg opacity-0 shadow-xl transition-opacity group-hover/kpi:opacity-100">{m.tip}</span>
+            </button>
+          )
+        })}
+        {/* Корзина — тоже карточкой в верхнем ряду: аккаунты, отправленные в корзину. */}
+        <button
+          onClick={() => { setTab(tab === 'trash' ? 'accounts' : 'trash'); setStatusFilter('all'); setRiskFilter('all'); setPage(0); setSelected(new Set()) }}
+          className={cn(
+            'group/kpi relative flex items-center gap-3 rounded-2xl border p-3 text-left transition-all',
+            tab === 'trash' ? 'border-spark-500/50 bg-spark-500/8 shadow-spark-glow' : 'border-line bg-surface hover:border-spark-500/30',
+          )}
+        >
+          <span className="grid h-9 w-9 shrink-0 place-items-center rounded-xl border border-slate-500/30 bg-slate-500/12 text-slate-300">
+            <Trash2 size={15} />
+          </span>
+          <div className="min-w-0">
+            <div className="font-display text-xl font-bold text-fg">{trashed.length}</div>
+            <div className="truncate text-[11px] font-semibold text-muted">Корзина</div>
+          </div>
+          <span className="pointer-events-none absolute left-1/2 top-[calc(100%+6px)] z-50 w-max max-w-[220px] -translate-x-1/2 rounded-lg border border-line bg-surface px-2.5 py-1.5 text-left text-[11px] font-medium leading-snug text-fg opacity-0 shadow-xl transition-opacity group-hover/kpi:opacity-100">Аккаунты, отправленные в корзину. Клик — открыть/закрыть.</span>
+        </button>
       </div>
-
-      {/* Правка 14.08: причины «Зоны риска» перенесены в фильтры (не топ-статистика). */}
 
       {/* (8) Сводка по модулям */}
       {moduleSummary.length > 0 && (
@@ -625,17 +680,6 @@ export function AccountsPage() {
                 onChange={(v) => { setSortKey(v as SortKey); setPage(0) }}
                 options={SORT_LABELS.map((s) => ({ value: s.key, label: s.label }))}
               />
-              {/* Правка 14.08: «Зона риска» — фильтр (мёртвый прокси / нет прокси / низкое доверие). */}
-              <div className="mb-1 px-1 text-[11px] font-bold uppercase tracking-wide text-faint">Зона риска</div>
-              <Select
-                className="mb-3"
-                value={riskFilter}
-                onChange={(v) => { setRiskFilter(v as RiskKey | 'all'); setStatusFilter('all'); setPage(0); setTab('accounts') }}
-                options={[
-                  { value: 'all', label: 'Любая (без фильтра)' },
-                  ...RISK_ORDER.map((rk) => ({ value: rk, label: `${RISK_META[rk].label} (${riskCounts[rk]})` })),
-                ]}
-              />
               <div className="mb-1 px-1 text-[11px] font-bold uppercase tracking-wide text-faint">Кампания</div>
               <Select
                 className="mb-3"
@@ -674,16 +718,11 @@ export function AccountsPage() {
           )}
         </Dropdown>
 
-        {/* Правки 14.08: «Задачи», «Обновить» и «Удалённые(корзина)» — иконками справа. */}
+        {/* Правки 14.08: «Задачи» и «Обновить» — иконками справа. «Корзина/Удалённые» теперь
+            отдельной карточкой в верхнем ряду статусов. */}
         <div className="ml-auto flex items-center gap-2">
           <IconBtn icon={<ListChecks size={17} />} label="Задачи" onClick={() => setTasksOpen(true)} />
           <IconBtn icon={<RefreshCw size={17} />} label="Обновить список" onClick={() => { void loadAccounts(); pushToast({ type: 'info', title: 'Обновлено', desc: 'Список загружен с сервера.' }) }} />
-          <IconBtn
-            icon={<Trash2 size={17} />}
-            label={tab === 'trash' ? 'Вернуться к аккаунтам' : `Удалённые${trashed.length ? ` (${trashed.length})` : ''}`}
-            active={tab === 'trash'}
-            onClick={() => { setTab(tab === 'trash' ? 'accounts' : 'trash'); setPage(0); setSelected(new Set()) }}
-          />
           {tab === 'trash' && trashed.length > 0 && (
             <button onClick={() => { void emptyTrash().then(() => pushToast({ type: 'success', title: 'Корзина очищена' })) }} className="btn-danger h-10"><Trash2 size={16} /> Очистить</button>
           )}
@@ -1069,7 +1108,11 @@ function AccountsTable(props: {
                 <th className="px-4 py-3">
                   <span className="inline-flex items-center gap-1">
                     Статус
-                    <span title={STATUS_HELP} className="grid h-4 w-4 cursor-help place-items-center rounded-full border border-line text-[10px] font-bold text-muted">?</span>
+                    {/* Правка 14.08: кастомная плавающая подсказка (как в блоке «Защита»), не нативный title. */}
+                    <span className="group/sh relative grid h-4 w-4 cursor-help place-items-center rounded-full border border-line text-[10px] font-bold text-muted">
+                      ?
+                      <span className="pointer-events-none absolute left-1/2 top-[calc(100%+8px)] z-50 w-[340px] -translate-x-1/2 whitespace-pre-line rounded-xl border border-line bg-surface px-3 py-2.5 text-left text-[11px] font-normal normal-case leading-relaxed text-muted opacity-0 shadow-xl transition-opacity group-hover/sh:opacity-100">{STATUS_HELP}</span>
+                    </span>
                   </span>
                 </th>
               )}
