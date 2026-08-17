@@ -468,17 +468,8 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
             </span>
           </label>
 
-          {/* MR-112 (WARM-001): «Уровень прогрева» — в настройках, а не в панели запуска. */}
-          {cfg.warmingLayout && (
-            <div className="mb-4">
-              <div className="mb-1 text-xs text-white/50">Уровень прогрева <span className="text-white/30">(длиннее = естественнее)</span></div>
-              <Segmented options={WARM_LEVELS} value={warmLevel} onChange={setWarmLevel} />
-              <div className="mt-2 rounded-lg border border-line/60 bg-elevated/40 px-3 py-2 text-[11px] text-white/50">
-                💡 <b className="text-white/70">Уровень</b> задаёт темп (~40 / 20 / 10 действий в день) и множитель пауз.
-                «Защита» и «Тайминги и задержки» — тонкая подстройка поверх уровня (для опытных): защита × шаблон × уровень перемножаются. Для старта достаточно выбрать уровень.
-              </div>
-            </div>
-          )}
+          {/* Правка 14.08: дубль «Уровень прогрева» здесь убран — он рендерился и в этом блоке,
+              и отдельным блоком ниже. Оставлен один отдельный блок «Уровень прогрева». */}
 
           {cfg.reactionSettings ? (
             <div className="space-y-4 rounded-2xl border border-line bg-elevated/40 p-4">
@@ -560,7 +551,9 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
               )}
             </div>
           ) : (
-            <p className="text-sm text-muted">Лимиты и задержки настраиваются в секции «Тайминги и задержки» ниже.</p>
+            <p className="text-sm text-muted">{cfg.warmingLayout
+              ? 'Темп и паузы задаёт «Уровень прогрева» — отдельная секция ниже.'
+              : 'Лимиты и задержки настраиваются в секции «Тайминги и задержки» ниже.'}</p>
           )}
         </SectionCard>
         </div>
@@ -595,7 +588,9 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
 
       {/* §3.1 (MR-100): «Тайминги и задержки» — ПЕРЕД нижней панелью запуска (§4: тайминги до запуска).
           Блоки «Группы»/«Посты» перенесены ВЫШЕ — сразу после аккаунтов (порядок блоков = степпер). */}
-      {showBlock('settings') && !isParser && !isGgr && (cfg.aiProtection || cfg.richLayout || cfg.lookingLayout || cfg.warmingLayout) && (
+      {/* Правка 14.08: для ПРОГРЕВА «Тайминги и задержки» не показываем — темп/паузы задаёт
+          «Уровень прогрева», отдельные тайминги дублировали и путали (QA §8, вариант а). */}
+      {showBlock('settings') && !isParser && !isGgr && !cfg.warmingLayout && (cfg.aiProtection || cfg.richLayout || cfg.lookingLayout) && (
         <TimingSection
           workModeOptions={cfg.toggleGroups?.[1]?.options}
           workMode={g(1)}
@@ -629,8 +624,8 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
           <div className="mb-1.5 text-xs text-white/40">Длиннее = естественнее</div>
           <Segmented options={WARM_LEVELS} value={warmLevel} onChange={setWarmLevel} />
           <div className="mt-3 rounded-lg border border-line/60 bg-elevated/40 px-3 py-2 text-[11px] text-white/50">
-            💡 <b className="text-white/70">Уровень</b> задаёт темп (~40 / 20 / 10 действий в день) и множитель пауз.
-            Секции «Защита» и «Тайминги и задержки» — это <b className="text-white/70">тонкая подстройка поверх уровня</b> (для опытных): защита × шаблон × уровень перемножаются. Для старта достаточно выбрать уровень.
+            💡 <b className="text-white/70">Уровень</b> задаёт темп (~40 / 20 / 10 действий в день) и множитель пауз — этого достаточно для старта.
+            Секция «Защита» ниже — <b className="text-white/70">тонкая подстройка поверх уровня</b> (для опытных).
           </div>
         </SectionCard>
       )}
