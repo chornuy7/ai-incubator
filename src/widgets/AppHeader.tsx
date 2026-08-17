@@ -279,18 +279,19 @@ export function AppHeader() {
 
   return (
     <header className="sticky top-0 z-40 border-b border-line bg-surface/80 backdrop-blur-xl">
-      <div className="mx-auto flex h-16 max-w-[1400px] items-center gap-2 px-4 sm:px-6 lg:px-8">
+      {/* Правка 14.08: кнопка сворачивания меню — у САМОГО левого края шапки (в пустом месте
+          у края сайдбара), а не внутри центрированного контейнера. */}
+      <button
+        onClick={toggleSidebar}
+        className="btn-icon absolute left-3 top-1/2 z-10 hidden -translate-y-1/2 lg:inline-flex"
+        aria-label={sidebarCollapsed ? 'Развернуть меню' : 'Свернуть меню'}
+        title={sidebarCollapsed ? 'Развернуть меню' : 'Свернуть меню'}
+      >
+        {sidebarCollapsed ? <PanelLeftOpen size={18} /> : <PanelLeftClose size={18} />}
+      </button>
+      <div className="mx-auto flex h-16 max-w-[1400px] items-center gap-2 px-4 sm:px-6 lg:px-8 lg:pl-14">
         <button onClick={() => setMobileNav(true)} className="btn-icon lg:hidden" aria-label="Меню">
           <Menu size={18} />
-        </button>
-        {/* Правка 14.08: кнопка сворачивания меню — в шапке (на краю сайдбара её почти не видно). */}
-        <button
-          onClick={toggleSidebar}
-          className="btn-icon hidden lg:inline-flex"
-          aria-label={sidebarCollapsed ? 'Развернуть меню' : 'Свернуть меню'}
-          title={sidebarCollapsed ? 'Развернуть меню' : 'Свернуть меню'}
-        >
-          {sidebarCollapsed ? <PanelLeftOpen size={18} /> : <PanelLeftClose size={18} />}
         </button>
 
         {/* Plan badge */}
