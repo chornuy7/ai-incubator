@@ -23,9 +23,11 @@ export function ChangeProxyModal({ acc, onClose, onSave }: { acc: TgAccount | nu
 
   useEffect(() => {
     if (!acc) return
-    // Нерабочие прокси в выбор НЕ предлагаем: назначать заведомо мёртвый — значит
-    // сознательно поставить аккаунт в очередь на таймауты (правка заказчика 12.08).
-    void fetchProxies().then((list) => setPool(list.filter(isUsableProxy))).catch(() => setPool([]))
+    // Правка заказчика 14.08: показываем ВСЕ прокси из базы (чтобы видеть больше двух),
+    // рабочие — сверху, нерабочие помечаем «не отвечает» и не даём выбрать по ошибке.
+    void fetchProxies()
+      .then((list) => setPool([...list].sort((a, b) => Number(isUsableProxy(b)) - Number(isUsableProxy(a)))))
+      .catch(() => setPool([]))
   }, [acc?.id])
 
   useEffect(() => {
@@ -86,7 +88,7 @@ export function ChangeProxyModal({ acc, onClose, onSave }: { acc: TgAccount | nu
               <p className="text-xs text-muted">Рабочих прокси в базе нет — введите новый, он попадёт в базу.</p>
             ) : (
               <>
-                <label className="label">Рабочие прокси из базы ({pool.length})</label>
+                <label className="label">Прокси из базы ({pool.length})</label>
                 <Select
                   value={value}
                   onChange={setValue}
@@ -94,10 +96,14 @@ export function ChangeProxyModal({ acc, onClose, onSave }: { acc: TgAccount | nu
                   options={pool.map((p) => {
                     const auth = p.username ? `${p.username}${p.password ? ':' + p.password : ''}@` : ''
                     const url = `${p.scheme}://${auth}${p.host}:${p.port}`
-                    const shown = `${p.scheme}://${p.host}:${p.port}`
+                    const addr = `${p.scheme}://${p.host}:${p.port}`
                     const geo = p.country ? ` · ${p.country.toUpperCase()}` : ''
-                    // Про «не отвечает» писать больше не нужно: нерабочие сюда не попадают.
-                    return { value: url, label: `${shown}${geo}${p.status === 'unknown' ? ' · не проверен' : ''}` }
+                    // Правка 14.08: сначала НАЗВАНИЕ прокси (title), потом адрес — по адресу
+                    // не вспомнишь, что это. Нерабочие помечаем и запрещаем выбор.
+                    const dead = !isUsableProxy(p)
+                    const status = dead ? ' · не отвечает' : p.status === 'unknown' ? ' · не проверен' : ''
+                    const title = p.label ? `${p.label} — ` : ''
+                    return { value: url, label: `${title}${addr}${geo}${status}`, disabled: dead }
                   })}
                 />
               </>

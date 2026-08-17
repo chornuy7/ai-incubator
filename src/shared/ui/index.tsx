@@ -292,6 +292,8 @@ export function Tabs({
 export interface SelectOption {
   value: string
   label: ReactNode
+  /** Нельзя выбрать (например мёртвый прокси): гасим и не даём кликнуть. */
+  disabled?: boolean
 }
 
 export function Select({
@@ -392,14 +394,15 @@ export function Select({
             {shown.map((o) => (
               <button
                 key={o.value}
-                onClick={() => { onChange(o.value); setOpen(false) }}
+                disabled={o.disabled}
+                onClick={() => { if (o.disabled) return; onChange(o.value); setOpen(false) }}
                 className={cn(
                   'flex w-full items-center justify-between gap-2 rounded-lg px-3 py-2 text-left text-sm transition-colors',
-                  o.value === value ? 'bg-spark-500/12 text-spark-300' : 'text-fg hover:bg-elevated',
+                  o.disabled ? 'cursor-not-allowed text-faint opacity-50' : o.value === value ? 'bg-spark-500/12 text-spark-300' : 'text-fg hover:bg-elevated',
                 )}
               >
                 <span className="truncate">{o.label}</span>
-                {o.value === value && <Check size={15} className="shrink-0" />}
+                {o.value === value && !o.disabled && <Check size={15} className="shrink-0" />}
               </button>
             ))}
           </div>,
