@@ -98,12 +98,12 @@ export function ChangeProxyModal({ acc, onClose, onSave }: { acc: TgAccount | nu
                     const url = `${p.scheme}://${auth}${p.host}:${p.port}`
                     const addr = `${p.scheme}://${p.host}:${p.port}`
                     const geo = p.country ? ` · ${p.country.toUpperCase()}` : ''
-                    // Правка 14.08: сначала НАЗВАНИЕ прокси (title), потом адрес — по адресу
-                    // не вспомнишь, что это. Нерабочие помечаем и запрещаем выбор.
+                    // Правка 14.08: показываем только НАЗВАНИЕ прокси (+ гео/статус), без полного
+                    // адреса — по адресу не вспомнишь, что это. Адрес — в подсказке (title).
                     const dead = !isUsableProxy(p)
                     const status = dead ? ' · не отвечает' : p.status === 'unknown' ? ' · не проверен' : ''
-                    const title = p.label ? `${p.label} — ` : ''
-                    return { value: url, label: `${title}${addr}${geo}${status}`, disabled: dead }
+                    const name = p.label || addr
+                    return { value: url, label: `${name}${geo}${status}`, disabled: dead }
                   })}
                 />
               </>
