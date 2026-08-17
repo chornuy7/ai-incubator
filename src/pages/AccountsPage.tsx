@@ -63,6 +63,17 @@ const RISK_META: Record<RiskKey, { label: string; dot: string; bg: string; tip: 
   lowTrust: { label: 'Низкое доверие', dot: 'bg-amber-400', bg: 'bg-amber-500/12 border-amber-500/30', tip: 'Низкий trust — модули работают консервативно, риск ограничений выше.', match: (a) => a.trustBand === 'low' },
 }
 
+// Правка 14.08: единый кастомный тултип (как у кнопок-иконок) — оборачиваем бейджи вместо
+// нативного title, который выглядит некрасиво (широкая браузерная плашка).
+function Tip({ text, children, className }: { text: string; children: React.ReactNode; className?: string }) {
+  return (
+    <span className={cn('group/tp relative inline-flex', className)}>
+      {children}
+      <span className="pointer-events-none absolute bottom-[calc(100%+6px)] left-1/2 z-50 w-max max-w-[260px] -translate-x-1/2 rounded-lg border border-line bg-surface px-2.5 py-1.5 text-left text-[11px] font-medium normal-case leading-snug text-fg opacity-0 shadow-xl transition-opacity group-hover/tp:opacity-100">{text}</span>
+    </span>
+  )
+}
+
 // Правка 14.08: на строке показываем КОНКРЕТНУЮ причину (Нет прокси / Мёртвый прокси /
 // Низкое доверие), а не общий бейдж «Зона риска» — статусы теперь раздельные.
 function RiskChip({ a }: { a: { proxyOk?: boolean; noProxy?: boolean; trustBand?: string } }) {
@@ -253,7 +264,8 @@ export function AccountsPage() {
   // в самой кампании (см. server/campaigns.js), поэтому accountsMeta.role не трогаем.
   const [campaigns, setCampaigns] = useState<Campaign[]>([])
   const [pinnedMap, setPinnedMap] = useState<PinnedMap>({})
-  const [campaignFilter, setCampaignFilter] = useState('all')
+  // Фильтр «Кампания» скрыт (14.08) — оставляем 'all', сеттер не нужен.
+  const [campaignFilter] = useState('all')
   const [trashAlive, setTrashAlive] = useState(false) // §2: показать только «живые» среди удалённых
   // §12: без списка групп доступ роли «на группу» не применялся бы (был баг — фильтр не видел групп).
   const [accGroups, setAccGroups] = useState<AccountGroup[]>([])
@@ -711,17 +723,7 @@ export function AccountsPage() {
                 onChange={(v) => { setSortKey(v as SortKey); setPage(0) }}
                 options={SORT_LABELS.map((s) => ({ value: s.key, label: s.label }))}
               />
-              <div className="mb-1 px-1 text-[11px] font-bold uppercase tracking-wide text-faint">Кампания</div>
-              <Select
-                className="mb-3"
-                value={campaignFilter}
-                onChange={setCampaignFilter}
-                options={[
-                  { value: 'all', label: 'Все кампании' },
-                  { value: 'pool', label: 'В общем пуле (не закреплены)' },
-                  ...campaigns.map((c) => ({ value: c.id, label: c.name })),
-                ]}
-              />
+              {/* Правка 14.08: фильтр «Кампания» скрыт в менеджере (кампаний пока нет). */}
               <div className="mb-1 px-1 text-[11px] font-bold uppercase tracking-wide text-faint">Страна</div>
               <Select className="mb-3" value={countryFilter} onChange={setCountryFilter} options={countryOptionsFrom(active.map((a) => a.country)).map((c) => ({ value: c.code, label: `${c.flag} ${c.label}`.trim() }))} />
               <div className="mb-1 px-1 text-[11px] font-bold uppercase tracking-wide text-faint">Модуль</div>
@@ -1248,20 +1250,21 @@ function AccountsTable(props: {
                       ) : null}
                       {/* §2: score виден ВСЕГДА (не только у проблемных) + подсказка, где можно/нельзя. */}
                       {typeof a.trustScore === 'number' && (
-                        <span
-                          className={cn('rounded-md px-1.5 py-0.5 text-[10px] font-bold',
-                            a.trustBand === 'low' ? 'bg-rose-500/15 text-rose-300'
-                              : a.trustBand === 'high' ? 'bg-spark-500/15 text-spark-300'
-                                : 'bg-amber-500/15 text-amber-300')}
-                          title={a.trustBand === 'low'
-                            ? `Trust ${a.trustScore} (<40): в боевые модули не берётся — нужен прогрев. Мейлинг недоступен (нужен trust>70).`
-                            : a.trustBand === 'high'
-                              ? `Trust ${a.trustScore} (>70): доступны все модули, включая мейлинг.`
-                              : `Trust ${a.trustScore} (40–70): боевые модули только на «Консервативном» уровне; мейлинг недоступен (нужен trust>70).`}
-                        >
-                          Доверие {a.trustScore}
-                          {a.trustBand === 'low' ? ' · прогрев' : a.trustBand !== 'high' ? ' · без мейлинга' : ''}
-                        </span>
+                        <Tip text={a.trustBand === 'low'
+                          ? `Trust ${a.trustScore} (<40): в боевые модули не берётся — нужен прогрев. Мейлинг недоступен (нужен trust>70).`
+                          : a.trustBand === 'high'
+                            ? `Trust ${a.trustScore} (>70): доступны все модули, включая мейлинг.`
+                            : `Trust ${a.trustScore} (40–70): боевые модули только на «Консервативном» уровне; мейлинг недоступен (нужен trust>70).`}>
+                          <span
+                            className={cn('rounded-md px-1.5 py-0.5 text-[10px] font-bold',
+                              a.trustBand === 'low' ? 'bg-rose-500/15 text-rose-300'
+                                : a.trustBand === 'high' ? 'bg-spark-500/15 text-spark-300'
+                                  : 'bg-amber-500/15 text-amber-300')}
+                          >
+                            Доверие {a.trustScore}
+                            {a.trustBand === 'low' ? ' · прогрев' : a.trustBand !== 'high' ? ' · без мейлинга' : ''}
+                          </span>
+                        </Tip>
                       )}
                       {(() => {
                         const d = props.dailyAll?.[a.id]
@@ -1269,9 +1272,9 @@ function AccountsTable(props: {
                         if (d.anyReached) {
                           const hit = d.items.filter((x) => x.reached).map((x) => DAILY_CAP_LABELS[x.action] ?? x.action).join(', ')
                           return (
-                            <span className="rounded-md bg-rose-500/15 px-1.5 py-0.5 text-[10px] font-bold text-rose-300" title={`Суточный лимит достигнут: ${hit}. Модули пропускают аккаунт до сброса в полночь.`}>
-                              Лимит: {hit}
-                            </span>
+                            <Tip text={`Суточный лимит достигнут: ${hit}. Модули пропускают аккаунт до сброса в полночь.`}>
+                              <span className="rounded-md bg-rose-500/15 px-1.5 py-0.5 text-[10px] font-bold text-rose-300">Лимит: {hit}</span>
+                            </Tip>
                           )
                         }
                         // Раннее предупреждение: ≥75% любого потолка, но ещё не заблокирован.
@@ -1279,9 +1282,9 @@ function AccountsTable(props: {
                         if (near.length) {
                           const lbl = near.map((x) => `${DAILY_CAP_LABELS[x.action] ?? x.action} ${x.used}/${x.cap}`).join(', ')
                           return (
-                            <span className="rounded-md bg-amber-500/15 px-1.5 py-0.5 text-[10px] font-bold text-amber-300" title={`Близко к суточному лимиту: ${lbl}. Скоро модули начнут пропускать аккаунт.`}>
-                              Близко: {near.map((x) => DAILY_CAP_LABELS[x.action] ?? x.action).join(', ')}
-                            </span>
+                            <Tip text={`Близко к суточному лимиту: ${lbl}. Скоро модули начнут пропускать аккаунт.`}>
+                              <span className="rounded-md bg-amber-500/15 px-1.5 py-0.5 text-[10px] font-bold text-amber-300">Близко: {near.map((x) => DAILY_CAP_LABELS[x.action] ?? x.action).join(', ')}</span>
+                            </Tip>
                           )
                         }
                         return null
@@ -1294,16 +1297,16 @@ function AccountsTable(props: {
                         if (act.resting) {
                           const left = Math.ceil((act.restUntil - Date.now()) / 60000)
                           return (
-                            <span className="rounded-md bg-iris-500/15 px-1.5 py-0.5 text-[10px] font-bold text-iris-300" title={`Аккаунт отдыхает после нагрузки — освободится через ${left} мин. Отдых общий для всех модулей.`}>
-                              отдыхает {left > 0 ? `${left} мин` : ''}
-                            </span>
+                            <Tip text={`Аккаунт отдыхает после нагрузки — освободится через ${left} мин. Отдых общий для всех модулей.`}>
+                              <span className="rounded-md bg-iris-500/15 px-1.5 py-0.5 text-[10px] font-bold text-iris-300">отдыхает {left > 0 ? `${left} мин` : ''}</span>
+                            </Tip>
                           )
                         }
                         if (act.threshold > 0 && act.fatigue / act.threshold >= 0.7) {
                           return (
-                            <span className="rounded-md bg-amber-500/15 px-1.5 py-0.5 text-[10px] font-bold text-amber-300" title={`Усталость ${act.fatigue} из ${act.threshold} — скоро уйдёт на отдых во всех модулях.`}>
-                              устаёт {act.fatigue}/{act.threshold}
-                            </span>
+                            <Tip text={`Усталость ${act.fatigue} из ${act.threshold} — скоро уйдёт на отдых во всех модулях.`}>
+                              <span className="rounded-md bg-amber-500/15 px-1.5 py-0.5 text-[10px] font-bold text-amber-300">устаёт {act.fatigue}/{act.threshold}</span>
+                            </Tip>
                           )
                         }
                         // §4.2: низкий шанс часа — самая частая причина «модуль ничего
