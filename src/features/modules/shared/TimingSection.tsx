@@ -101,7 +101,7 @@ export function TimingSection(props: TimingSectionProps) {
   // (не Custom), все поля «Расширенных» заблокированы: раньше правка на пресете молча
   // перекидывала в Custom, из-за чего казалось, что пресеты «не держат» значения. Теперь
   // ручная правка — только в Custom, а пресеты всегда подставляют свои фиксированные числа.
-  const locked = hasPresets && delayPreset !== CUSTOM
+  const onPreset = hasPresets && delayPreset !== CUSTOM
   // «Эффективная» задержка = базовая × множитель пресета — то, что реально уйдёт на паузы;
   // показываем её под карточками, чтобы выбор Мин/Рек/Макс СРАЗУ менял видимые значения.
   const eff = (pair?: [number, number] | null) => pair ? `${Math.round(pair[0] * mul)}–${Math.round(pair[1] * mul)} с` : null
@@ -255,11 +255,14 @@ export function TimingSection(props: TimingSectionProps) {
       )}
 
       {advanced && (
-        <fieldset disabled={locked} className={cn('space-y-4 border-0 p-0 m-0 min-w-0', hasPresets && 'mt-3', locked && 'opacity-60')}>
-          {locked && (
+        // Правка 14.08: «Расширенные» ВСЕГДА активны (не блокируем). На пресете видны его
+        // значения; изменил любое — автоматически переключает на Custom, а возврат на пресет
+        // сбрасывает всё на дефолт (frozen). Раньше поля были заблокированы — заказчик просил снять.
+        <div className={cn('space-y-4', hasPresets && 'mt-3')}>
+          {onPreset && (
             <div className="flex items-center gap-1.5 rounded-lg border border-line bg-elevated px-3 py-2 text-[11px] text-muted">
               <Shield size={13} className="shrink-0 text-spark-300" />
-              Значения зафиксированы пресетом «{delayPresets![delayPreset]}». Чтобы задать вручную — выберите «Custom».
+              Значения пресета «{delayPresets![delayPreset]}». Измените любое поле — переключится на «Custom».
             </div>
           )}
           {/* Режим работы + лимиты */}
@@ -338,7 +341,7 @@ export function TimingSection(props: TimingSectionProps) {
               <SingleDelayField label="FloodWait до карантина" value={delays.floodQuarantine} onChange={(n) => editDelays((d) => ({ ...d, floodQuarantine: n }))} />
             </div>
           </div>
-        </fieldset>
+        </div>
       )}
     </SectionCard>
   )
