@@ -12,7 +12,7 @@ import { useSession } from '@/features/auth/session'
 import { filterAccountsByAccess } from '@/shared/lib/access'
 import { useUi } from '@/shared/lib/uiStore'
 import {
-  PageHeader, Avatar, StatusBadge, EmptyState, Dropdown, MenuItem, Select, Skeleton, Modal, NumberField,
+  PageHeader, Avatar, StatusBadge, EmptyState, Dropdown, MenuItem, Select, Skeleton, Modal, NumberField, useTooltip,
 } from '@/shared/ui'
 import { HelpButton } from '@/features/neuro-commenting/moduleUi'
 import { accountLabel, accountSub } from '@/features/conversation/AccountRail'
@@ -158,17 +158,22 @@ const DAILY_CAP_LABELS: Record<string, string> = { comments: 'комментар
 function TriStateCheckbox({ checked, indeterminate, onChange, title }: {
   checked: boolean; indeterminate: boolean; onChange: () => void; title?: string
 }) {
-  const ref = useRef<HTMLInputElement>(null)
-  useEffect(() => { if (ref.current) ref.current.indeterminate = indeterminate && !checked }, [indeterminate, checked])
+  // MR-162: кастомный тултип вместо нативного title. t.ref используем и для indeterminate.
+  const t = useTooltip<HTMLInputElement>(title)
+  useEffect(() => { if (t.ref.current) t.ref.current.indeterminate = indeterminate && !checked }, [indeterminate, checked, t.ref])
   return (
-    <input
-      ref={ref}
-      type="checkbox"
-      checked={checked}
-      onChange={onChange}
-      title={title}
-      className="h-4 w-4 rounded border-line accent-spark-500"
-    />
+    <>
+      <input
+        ref={t.ref}
+        type="checkbox"
+        checked={checked}
+        onChange={onChange}
+        onMouseEnter={t.onMouseEnter}
+        onMouseLeave={t.onMouseLeave}
+        className="h-4 w-4 rounded border-line accent-spark-500"
+      />
+      {t.node}
+    </>
   )
 }
 
@@ -1184,13 +1189,15 @@ function AccountsTable(props: {
                 <td className="px-4 py-3"><input type="checkbox" checked={selected.has(a.id)} onChange={() => toggleOne(a.id)} className="h-4 w-4 rounded border-line accent-spark-500" /></td>
                 {showAccountCol && (
                 <td className="px-4 py-3">
-                  <button type="button" onClick={() => props.onDetail(a)} className="group flex items-center gap-3 text-left" title="Открыть статистику аккаунта">
-                    {showCol('avatar') && <Avatar name={accountLabel(a)} color={a.avatarColor} />}
-                    <div className="min-w-0">
-                      {showCol('name') && <div className="truncate font-semibold text-fg transition-colors group-hover:text-spark-300">{accountLabel(a)}</div>}
-                      <div className="truncate text-xs text-muted">{accountSub(a)}</div>
-                    </div>
-                  </button>
+                  <Tip text="Открыть статистику аккаунта" className="!flex min-w-0 max-w-full">
+                    <button type="button" onClick={() => props.onDetail(a)} className="group flex min-w-0 items-center gap-3 text-left">
+                      {showCol('avatar') && <Avatar name={accountLabel(a)} color={a.avatarColor} />}
+                      <div className="min-w-0">
+                        {showCol('name') && <div className="truncate font-semibold text-fg transition-colors group-hover:text-spark-300">{accountLabel(a)}</div>}
+                        <div className="truncate text-xs text-muted">{accountSub(a)}</div>
+                      </div>
+                    </button>
+                  </Tip>
                 </td>
                 )}
                 {showCol('campaign') && (
@@ -1222,23 +1229,27 @@ function AccountsTable(props: {
                   const tone = resting ? 'bg-iris-400' : pct >= 70 ? 'bg-rose-400' : pct >= 40 ? 'bg-amber-400' : 'bg-spark-500'
                   return (
                     <td className="px-4 py-3">
-                      <button
-                        type="button"
-                        onClick={() => props.onSetFatigue?.(a.id)}
-                        // MR-129: «0/15» читалось непонятно. Поясняем: это «сделано действий /
-                        // порог, после которого аккаунт уходит на отдых» (осталось = порог − сделано).
-                        title={th > 0
+                      {/* MR-129: «0/15» читалось непонятно. Поясняем в кастомном тултипе (MR-162):
+                          «сделано действий / порог» (осталось = порог − сделано). */}
+                      <Tip
+                        className="!flex w-28"
+                        text={th > 0
                           ? `Усталость: сделано ${act?.fatigue ?? 0} из ${th} действий до отдыха (осталось ${Math.max(0, th - (act?.fatigue ?? 0))}). На пороге аккаунт отдыхает во всех модулях. Клик — задать порог и распорядок.`
                           : 'Задать усталость и распорядок этому аккаунту'}
-                        className="flex w-28 items-center gap-2 text-left"
                       >
-                        <span className="h-1.5 flex-1 overflow-hidden rounded-full bg-white/10">
-                          <span className={cn('block h-full rounded-full transition-all', tone)} style={{ width: `${pct}%` }} />
-                        </span>
-                        <span className="w-14 shrink-0 text-[11px] tabular-nums text-muted">
-                          {resting ? 'отдых' : th > 0 ? `${act?.fatigue ?? 0}/${th}` : '—'}
-                        </span>
-                      </button>
+                        <button
+                          type="button"
+                          onClick={() => props.onSetFatigue?.(a.id)}
+                          className="flex w-full items-center gap-2 text-left"
+                        >
+                          <span className="h-1.5 flex-1 overflow-hidden rounded-full bg-white/10">
+                            <span className={cn('block h-full rounded-full transition-all', tone)} style={{ width: `${pct}%` }} />
+                          </span>
+                          <span className="w-14 shrink-0 text-[11px] tabular-nums text-muted">
+                            {resting ? 'отдых' : th > 0 ? `${act?.fatigue ?? 0}/${th}` : '—'}
+                          </span>
+                        </button>
+                      </Tip>
                     </td>
                   )
                 })()}
@@ -1411,7 +1422,8 @@ function AccountsTable(props: {
         {pageItems.map((a) => (
           <div key={a.id} className={cn('flex items-center gap-3 p-3.5', a.busyIn && 'opacity-60')}>
             <input type="checkbox" checked={selected.has(a.id)} onChange={() => toggleOne(a.id)} className="h-4 w-4 rounded border-line accent-spark-500" />
-            <button type="button" onClick={() => props.onDetail(a)} className="flex min-w-0 flex-1 items-center gap-3 text-left" title="Открыть статистику аккаунта">
+            <Tip text="Открыть статистику аккаунта" className="!flex min-w-0 flex-1">
+            <button type="button" onClick={() => props.onDetail(a)} className="flex min-w-0 flex-1 items-center gap-3 text-left">
               <Avatar name={accountLabel(a)} color={a.avatarColor} />
               <div className="min-w-0 flex-1">
                 <div className="truncate font-semibold text-fg">{accountLabel(a)}</div>
@@ -1445,6 +1457,7 @@ function AccountsTable(props: {
                 </div>
               </div>
             </button>
+            </Tip>
             <RowMenu a={a} {...props} />
           </div>
         ))}
