@@ -151,22 +151,24 @@ function HeaderActions({ cfg }: { cfg: ModuleConfig }) {
   }
 
   return (
-    <>
+    // Правка 14.08: кнопки шапки — одним рядом (flex-nowrap), а не переносом на 2 строки при
+    // узком пространстве (как норм выглядит на нейрокомментинге).
+    <div className="flex flex-nowrap items-center gap-2">
       {(cfg.richLayout || cfg.lookingLayout || cfg.warmingLayout || cfg.parserLayout || cfg.participantsLayout) && <>
-        <button onClick={() => { setHelpTopic(cfg.title); setHelpOpen(true) }} className="btn-ghost h-10">О модуле</button>
-        <button onClick={() => navHeader('/panel/learning')} className="btn-ghost h-10">Статьи</button>
+        <button onClick={() => { setHelpTopic(cfg.title); setHelpOpen(true) }} className="btn-ghost h-10 shrink-0 whitespace-nowrap">О модуле</button>
+        <button onClick={() => navHeader('/panel/learning')} className="btn-ghost h-10 shrink-0 whitespace-nowrap">Статьи</button>
       </>}
       {cfg.templateButtons?.map((b) => (
-        <button key={b} onClick={() => pushToast({ type: 'info', title: b, desc: 'Шаблоны настроек (демо).' })} className="btn-ghost h-10">{b === 'Новый шаблон' && <Plus size={15} />}{b}</button>
+        <button key={b} onClick={() => pushToast({ type: 'info', title: b, desc: 'Шаблоны настроек (демо).' })} className="btn-ghost h-10 shrink-0 whitespace-nowrap">{b === 'Новый шаблон' && <Plus size={15} />}{b}</button>
       ))}
       {cfg.extraButtons?.includes('Прошлые проверки') && (
-        <button onClick={() => pushToast({ type: 'info', title: 'Прошлые проверки', desc: 'История GGR (демо).' })} className="btn-ghost h-10"><HistoryIcon size={15} /> Прошлые проверки</button>
+        <button onClick={() => pushToast({ type: 'info', title: 'Прошлые проверки', desc: 'История GGR (демо).' })} className="btn-ghost h-10 shrink-0 whitespace-nowrap"><HistoryIcon size={15} /> Прошлые проверки</button>
       )}
       {cfg.extraButtons?.includes('КУПИТЬ') && (
-        <button onClick={() => setCoinsOpen(true)} className="btn-iris h-10"><ShoppingCart size={15} /> КУПИТЬ</button>
+        <button onClick={() => setCoinsOpen(true)} className="btn-iris h-10 shrink-0 whitespace-nowrap"><ShoppingCart size={15} /> КУПИТЬ</button>
       )}
-      <button onClick={() => setTasksOpen(true)} className="btn-ghost h-10"><ListChecks size={15} /> <span className="hidden sm:inline">Задачи</span></button>
-    </>
+      <button onClick={() => setTasksOpen(true)} className="btn-ghost h-10 shrink-0 whitespace-nowrap"><ListChecks size={15} /> <span className="hidden sm:inline">Задачи</span></button>
+    </div>
   )
 }
 
