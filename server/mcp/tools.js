@@ -307,6 +307,10 @@ const HANDLERS = {
     // иначе «мозги» продолжают считать, что она идёт по их плану (MR-148).
     const payload = { ...settings, accountIds, initiator: 'mcp' }
     const { store, task, worker } = startModuleTask(module, payload)
+    // Сохранить ОБЯЗАТЕЛЬНО до старта: startWorker поднимает задачу из хранилища по id,
+    // и без записи он молча не находит ничего. Задача «создавалась», получала id и
+    // никогда не выполнялась — нашлось на первом живом прогоне через протокол.
+    await store.saveTask(task)
     const { startWorker } = await import('../modules/workers.js')
     startWorker(task.id, store, worker)
 

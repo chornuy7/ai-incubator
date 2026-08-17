@@ -295,7 +295,10 @@ apiV1Router.post('/modules/:key/run', async (req, res) => {
     }
     const settings = { ...(req.body || {}), accountIds, initiator: 'api' }
     const { store, task, worker } = startModuleTask(key, settings)
-    // Запуск воркера — тем же способом, что и UI-роут (modules/routes.js).
+    // Тот же порядок, что и в UI-роуте: СНАЧАЛА запись, потом запуск. `startWorker`
+    // поднимает задачу из хранилища по id; без сохранения он не находит её и молча
+    // ничего не делает — задача получала id и никогда не выполнялась.
+    await store.saveTask(task)
     const { startWorker } = await import('./modules/workers.js')
     startWorker(task.id, store, worker)
     res.json({ ok: true, taskId: task.id, module: key, status: task.status })

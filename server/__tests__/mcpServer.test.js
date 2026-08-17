@@ -5,9 +5,10 @@ import { TOOLS } from '../mcp/tools.js'
 import { listDescriptorKeys } from '../mcp/descriptors/index.js'
 import { originAllowed, checkHttpPreconditions, wantsEventStream, mcpDeleteHandler } from '../mcp/server.js'
 
-// Контекст HTTP-запроса: нужен только create_task (проверка прав на аккаунты).
-// Здесь его не вызываем — запуск живой задачи в юнит-тестах не место.
-const CTX = { req: { headers: {} } }
+// Контекст HTTP-запроса: нужен create_task — он проверяет права на аккаунты через
+// accessGuard, а тот читает заголовки методом `header()`, как у express. Без него
+// вызов падает внутренней ошибкой протокола вместо понятного отказа инструмента.
+const CTX = { req: { headers: {}, header: () => undefined } }
 
 const rpc = (method, params, id = 1) => handleMessage({ jsonrpc: '2.0', id, method, params }, CTX)
 const call = async (name, args) => {
@@ -330,4 +331,19 @@ test('stop_task честно предупреждает, что сделанно
   // Останавливать можно, откатывать — нет: Telegram не отменяет отправленное.
   assert.match(tool.description, /не отменяются/)
   assert.equal(tool.annotations.idempotentHint, true, 'повторный стоп безопасен')
+})
+
+test('create_task СОХРАНЯЕТ задачу до запуска — иначе она молча не выполняется', async () => {
+  // Регресс живого прогона 14.08: startWorker поднимает задачу из хранилища по id.
+  // Без записи он ничего не находит и тихо выходит — задача получала id, показывала
+  // статус queued и никогда не выполнялась. Путь UI сохранял, оба API-пути — нет.
+  const created = dataOf(await call('create_task', { module: 'ggr', settings: { accountIds: ['acc_test_1'] } }))
+  assert.ok(created?.taskId, 'задача создана')
+
+  const seen = dataOf(await call('get_task', { module: 'ggr', taskId: created.taskId }))
+  assert.equal(seen.taskId, created.taskId, 'сразу после создания задача обязана читаться из хранилища')
+  assert.equal(seen.initiator, 'mcp', 'происхождение помечено — правка руками потом запрещена')
+
+  // Приберём за собой: тест не должен оставлять живую задачу в хранилище.
+  await call('stop_task', { module: 'ggr', taskId: created.taskId })
 })
