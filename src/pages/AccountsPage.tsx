@@ -11,7 +11,7 @@ import { useSession } from '@/features/auth/session'
 import { filterAccountsByAccess } from '@/shared/lib/access'
 import { useUi } from '@/shared/lib/uiStore'
 import {
-  PageHeader, Avatar, StatusBadge, RiskBadge, EmptyState, Dropdown, MenuItem, Select, Skeleton, Modal, NumberField,
+  PageHeader, Avatar, StatusBadge, EmptyState, Dropdown, MenuItem, Select, Skeleton, Modal, NumberField,
 } from '@/shared/ui'
 import { HelpButton } from '@/features/neuro-commenting/moduleUi'
 import { accountLabel, accountSub } from '@/features/conversation/AccountRail'
@@ -61,6 +61,20 @@ const RISK_META: Record<RiskKey, { label: string; dot: string; bg: string; tip: 
   deadProxy: { label: 'Мёртвый прокси', dot: 'bg-rose-400', bg: 'bg-rose-500/12 border-rose-500/30', tip: 'Прокси не отвечает — Telegram видит смену IP, высокий риск блокировки. Назначьте рабочий прокси.', match: (a) => a.proxyOk === false && a.noProxy !== true },
   noProxy: { label: 'Нет прокси', dot: 'bg-orange-400', bg: 'bg-orange-500/12 border-orange-500/30', tip: 'Без прокси — работа с реального IP сервера. Назначьте прокси.', match: (a) => a.noProxy === true },
   lowTrust: { label: 'Низкое доверие', dot: 'bg-amber-400', bg: 'bg-amber-500/12 border-amber-500/30', tip: 'Низкий trust — модули работают консервативно, риск ограничений выше.', match: (a) => a.trustBand === 'low' },
+}
+
+// Правка 14.08: на строке показываем КОНКРЕТНУЮ причину (Нет прокси / Мёртвый прокси /
+// Низкое доверие), а не общий бейдж «Зона риска» — статусы теперь раздельные.
+function RiskChip({ a }: { a: { proxyOk?: boolean; noProxy?: boolean; trustBand?: string } }) {
+  const rk = RISK_ORDER.find((k) => RISK_META[k].match(a))
+  if (!rk) return null
+  const m = RISK_META[rk]
+  const text = rk === 'deadProxy' ? 'text-rose-300' : rk === 'noProxy' ? 'text-orange-300' : 'text-amber-300'
+  return (
+    <span className={cn('inline-flex items-center gap-1 rounded-lg border px-2 py-0.5 text-xs font-bold', m.bg, text)} title={m.tip}>
+      <AlertTriangle size={12} /> {m.label}
+    </span>
+  )
 }
 
 // Правка 14.08: кнопки-иконки с кастомным тёмным плавающим тултипом (не нативный title).
@@ -138,7 +152,9 @@ const STATUS_HELP = [
   'Замороженные — отключён вручную',
   'Реавторизация — требуется повторный вход',
   '— — —',
-  'Зона риска — не статус, а предупреждение поверх него: мёртвый/отсутствующий прокси или низкое доверие. Показывается вместо «Активные», чтобы не гонять аккаунт под угрозой блокировки.',
+  'Мёртвый прокси — прокси не отвечает, высокий риск блокировки. Показывается вместо «Активные».',
+  'Нет прокси — работа с реального IP сервера, назначьте прокси.',
+  'Низкое доверие — низкий trust, модули работают консервативно.',
 ].join('\n')
 
 function formatProxyLabel(proxy: string) {
@@ -1191,11 +1207,11 @@ function AccountsTable(props: {
                       {/* MR-131: при мёртвом/отсутствующем прокси НЕ показываем «Активный» — вместо него
                       бейдж «Зона риска» с конкретикой; иначе статус + риск-бейдж рядом. */}
                   {a.status === 'active' && a.risk?.proxyIssue ? (
-                    <RiskBadge risk={a.risk} />
+                    <RiskChip a={a} />
                   ) : (
                     <span className="inline-flex flex-wrap items-center gap-1.5">
                       <StatusBadge status={a.status} until={a.statusUntil} reason={a.statusReason} />
-                      {a.risk && a.risk.level !== 'none' && <RiskBadge risk={a.risk} />}
+                      {a.risk && a.risk.level !== 'none' && <RiskChip a={a} />}
                     </span>
                   )}
                       {a.busyIn ? (
@@ -1359,11 +1375,11 @@ function AccountsTable(props: {
                   {/* MR-131: при мёртвом/отсутствующем прокси НЕ показываем «Активный» — вместо него
                       бейдж «Зона риска» с конкретикой; иначе статус + риск-бейдж рядом. */}
                   {a.status === 'active' && a.risk?.proxyIssue ? (
-                    <RiskBadge risk={a.risk} />
+                    <RiskChip a={a} />
                   ) : (
                     <span className="inline-flex flex-wrap items-center gap-1.5">
                       <StatusBadge status={a.status} until={a.statusUntil} reason={a.statusReason} />
-                      {a.risk && a.risk.level !== 'none' && <RiskBadge risk={a.risk} />}
+                      {a.risk && a.risk.level !== 'none' && <RiskChip a={a} />}
                     </span>
                   )}
                 {a.busyIn ? (
