@@ -24,6 +24,7 @@ import {
 import type { ModuleTaskSettings } from '@/api/modulesApi'
 import { confirmDialog } from '@/shared/lib/dialog'
 import { LaunchCost, ActionPriceCalc } from './shared/LaunchCost'
+import { PRESET_MUL } from './shared/TimingSection'
 
 const DEFAULT_DELAYS = {
   comment: [30, 120] as [number, number],
@@ -734,7 +735,7 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
           onStop={stop}
           onSave={handleSave}
           primaryLabel={cfg.primaryAction ?? 'Начать'}
-          cost={<LaunchCost compact moduleKey={moduleKey} actions={maxActions} accounts={selected.size} delaySec={delays.action} />}
+          cost={<LaunchCost compact moduleKey={moduleKey} actions={maxActions} accounts={selected.size} delaySec={(() => { const m = PRESET_MUL[delayPreset] ?? 1; const d = delays.action ?? delays.comment; return d ? [Math.round(d[0] * m), Math.round(d[1] * m)] as [number, number] : d })()} />}
           stats={launchStats}
           task={task}
           warn={warn}
