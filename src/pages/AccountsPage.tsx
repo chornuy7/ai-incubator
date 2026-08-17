@@ -5,6 +5,7 @@ import {
   Lock, LockOpen, Rocket, AlertTriangle, ShieldCheck, Clock, Play, Square, Power, Moon, Eye,
 } from 'lucide-react'
 import type React from 'react'
+import { createPortal } from 'react-dom'
 import { useNavigate } from 'react-router-dom'
 import { useApp, activeAccounts, trashedAccounts, STATUS_META } from '@/mocks/store'
 import { useSession } from '@/features/auth/session'
@@ -63,13 +64,33 @@ const RISK_META: Record<RiskKey, { label: string; dot: string; bg: string; tip: 
   lowTrust: { label: 'Низкое доверие', dot: 'bg-amber-400', bg: 'bg-amber-500/12 border-amber-500/30', tip: 'Низкий trust — модули работают консервативно, риск ограничений выше.', match: (a) => a.trustBand === 'low' },
 }
 
-// Правка 14.08: единый кастомный тултип (как у кнопок-иконок) — оборачиваем бейджи вместо
+// Правка 14.08: единый кастомный тултип (как у кнопок-иконок) — оборачиваем элементы вместо
 // нативного title, который выглядит некрасиво (широкая браузерная плашка).
+// Всплывашка рендерится ПОРТАЛОМ в body (position: fixed) — иначе таблица в контейнере
+// overflow-x-auto обрезала бы её у верхних строк. Позицию считаем на наведении.
 function Tip({ text, children, className }: { text: string; children: React.ReactNode; className?: string }) {
+  const ref = useRef<HTMLSpanElement>(null)
+  const [pos, setPos] = useState<{ x: number; y: number } | null>(null)
+  const show = () => {
+    const r = ref.current?.getBoundingClientRect()
+    if (r) setPos({ x: r.left + r.width / 2, y: r.top })
+  }
   return (
-    <span className={cn('group/tp relative inline-flex', className)}>
+    <span
+      ref={ref}
+      onMouseEnter={show}
+      onMouseLeave={() => setPos(null)}
+      className={cn('relative inline-flex', className)}
+    >
       {children}
-      <span className="pointer-events-none absolute bottom-[calc(100%+6px)] left-1/2 z-50 w-max max-w-[260px] -translate-x-1/2 rounded-lg border border-line bg-surface px-2.5 py-1.5 text-left text-[11px] font-medium normal-case leading-snug text-fg opacity-0 shadow-xl transition-opacity group-hover/tp:opacity-100">{text}</span>
+      {pos && createPortal(
+        <span
+          role="tooltip"
+          style={{ position: 'fixed', left: pos.x, top: pos.y - 8, transform: 'translate(-50%, -100%)' }}
+          className="pointer-events-none z-[200] w-max max-w-[260px] rounded-lg border border-line bg-surface px-2.5 py-1.5 text-left text-[11px] font-medium normal-case leading-snug text-fg shadow-xl"
+        >{text}</span>,
+        document.body,
+      )}
     </span>
   )
 }
@@ -1182,13 +1203,13 @@ function AccountsTable(props: {
                         // янтарный замок против открытого серого) — тестировщик не смог
                         // отличить их даже на скриншоте. Добавляем словесную подпись:
                         // от неё зависит, уйдёт аккаунт в другую кампанию или нет (тест 3.3).
-                        <span className="inline-flex items-center gap-1 text-xs text-fg" title={c.locked ? `Закреплён за кампанией «${c.name}» — вышел из общего пула` : `Используется кампанией «${c.name}» без закрепления — остаётся доступен другим`}>
+                        <Tip className="items-center gap-1 text-xs text-fg" text={c.locked ? `Закреплён за кампанией «${c.name}» — вышел из общего пула` : `Используется кампанией «${c.name}» без закрепления — остаётся доступен другим`}>
                           {c.locked ? <Lock size={11} className="shrink-0 text-amber-300" /> : <LockOpen size={11} className="shrink-0 text-faint" />}
                           <span className="truncate">{c.name}</span>
                           <span className={`shrink-0 rounded px-1 py-0.5 text-[10px] font-bold ${c.locked ? 'bg-amber-500/15 text-amber-300' : 'bg-white/5 text-faint'}`}>
                             {c.locked ? 'закреплён' : 'без лока'}
                           </span>
-                        </span>
+                        </Tip>
                       )
                     })()}
                   </td>
@@ -1348,29 +1369,32 @@ function AccountsTable(props: {
                   // Плюс состояние: нет прокси / прокси не отвечает (помечен нерабочим в каталоге) —
                   // раньше в таблице всё выглядело исправным, а работа молча падала.
                   <td className="px-4 py-3 font-mono text-xs">
-                    <button
-                      type="button"
-                      onClick={() => props.onProxy(a)}
-                      className="group/px inline-flex items-center gap-1.5 text-left transition-colors hover:text-spark-300"
-                      title={!hasProxy(a)
-                        ? 'Аккаунт ходит через ваш IP — тот же, что у остальных без прокси. Для Telegram это одна группа: находит один аккаунт и добивает похожие. Нажмите, чтобы назначить прокси.'
-                        : a.proxyOk === false
-                          ? 'Прокси не отвечает и помечен нерабочим в каталоге. Нажмите, чтобы назначить живой — иначе задачи будут падать.'
-                          : 'Сменить прокси'}
-                    >
-                      {!hasProxy(a) ? (
-                        <span className="inline-flex items-center gap-1 font-bold text-rose-300">
-                          <AlertTriangle size={11} className="shrink-0" /> нет прокси · назначить
-                        </span>
-                      ) : a.proxyOk === false ? (
-                        <span className="inline-flex items-center gap-1 font-bold text-rose-300">
-                          <AlertTriangle size={11} className="shrink-0" /> прокси не отвечает · сменить
-                        </span>
-                      ) : (
-                        <span className="text-muted group-hover/px:text-spark-300" title={a.proxy}>{props.proxyName ? props.proxyName(a.proxy) : formatProxyLabel(a.proxy)}</span>
-                      )}
-                      <Server size={11} className="shrink-0 opacity-0 transition-opacity group-hover/px:opacity-100" />
-                    </button>
+                    {/* MR-162/MR-169: один кастомный тултип на ячейку. У рабочего прокси в подсказке —
+                        полный адрес (в строке показываем только название), у проблемного — что делать. */}
+                    <Tip text={!hasProxy(a)
+                      ? 'Аккаунт ходит через ваш IP — тот же, что у остальных без прокси. Для Telegram это одна группа: находит один аккаунт и добивает похожие. Нажмите, чтобы назначить прокси.'
+                      : a.proxyOk === false
+                        ? 'Прокси не отвечает и помечен нерабочим в каталоге. Нажмите, чтобы назначить живой — иначе задачи будут падать.'
+                        : `${a.proxy} — нажмите, чтобы сменить`}>
+                      <button
+                        type="button"
+                        onClick={() => props.onProxy(a)}
+                        className="group/px inline-flex items-center gap-1.5 text-left transition-colors hover:text-spark-300"
+                      >
+                        {!hasProxy(a) ? (
+                          <span className="inline-flex items-center gap-1 font-bold text-rose-300">
+                            <AlertTriangle size={11} className="shrink-0" /> нет прокси · назначить
+                          </span>
+                        ) : a.proxyOk === false ? (
+                          <span className="inline-flex items-center gap-1 font-bold text-rose-300">
+                            <AlertTriangle size={11} className="shrink-0" /> прокси не отвечает · сменить
+                          </span>
+                        ) : (
+                          <span className="text-muted group-hover/px:text-spark-300">{props.proxyName ? props.proxyName(a.proxy) : formatProxyLabel(a.proxy)}</span>
+                        )}
+                        <Server size={11} className="shrink-0 opacity-0 transition-opacity group-hover/px:opacity-100" />
+                      </button>
+                    </Tip>
                   </td>
                 )}
                 <td className="px-4 py-3 text-right">
@@ -1414,9 +1438,9 @@ function AccountsTable(props: {
                     </div>
                   )
                 ) : a.status === 'pause' ? (
-                  <div className="mt-1 flex items-center gap-1 text-[11px] font-semibold text-amber-300/70" title="Аккаунт поставлен на паузу оператором, а не задачей модуля">
+                  <Tip className="mt-1 items-center gap-1 text-[11px] font-semibold text-amber-300/70" text="Аккаунт поставлен на паузу оператором, а не задачей модуля">
                     <Pause size={11} /> Пауза вручную · не в модуле
-                  </div>
+                  </Tip>
                 ) : null}
                 </div>
               </div>
