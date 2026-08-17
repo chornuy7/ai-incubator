@@ -489,10 +489,10 @@ function SubscriptionCard({ balance }: { balance: Balance | null }) {
           </div>
           {!!exp && active && <div className="text-[11px] text-muted">осталось {daysLeft} дн.</div>}
         </div>
-        {/* Правка 14.08: «Изменить тариф» перенесён СЮДА, справа от «Подписки». */}
+        {/* Правка 14.08: «Подписки» и «Изменить тариф» вели в одно место (/panel/user/subscription) —
+            убрали дубль, оставили одну кнопку с названием целевой страницы «Подписки». */}
         <div className="ml-auto flex items-center gap-2">
-          <Link to="/panel/user/subscription" className="btn-ghost h-9 border border-line text-sm"><Package size={14} /> Подписки</Link>
-          <Link to="/panel/user/subscription" className="btn-iris h-9 text-sm"><Package size={14} /> Изменить тариф</Link>
+          <Link to="/panel/user/subscription" className="btn-iris h-9 text-sm"><Package size={14} /> Подписки</Link>
         </div>
       </div>
     </Card>
