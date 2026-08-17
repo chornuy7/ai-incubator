@@ -64,6 +64,15 @@ export function createTaskStore(moduleKey, idPrefix) {
     if (!task?.progress || !task.settings) return task
     const byDuration = task.settings.workMode === 1 && task.settings.durationMinutes
     if (byDuration) return task // режим «по времени» — счётчик действий не показателен
+    // Лимита действий у задачи может не быть вовсе: у AI Rating объём — это число
+    // аккаунтов, у мейлинга и автопостинга — длина списка целей. Для них
+    // `resolveTotalTarget` подставляет свой дефолт (100) и выдаёт случайное число из
+    // диапазона — живой прогон 17.08 показал «6/35» там, где проверено 6 аккаунтов из 6.
+    // Уточнять знаменатель имеет смысл, только если лимит реально задан.
+    const s = task.settings
+    const hasLimit = [s.maxActions, s.maxComments, s.minActions, s.minComments]
+      .some((v) => v !== undefined && v !== null && v !== '')
+    if (!hasLimit) return task
     try {
       const target = resolveTotalTarget(task.settings, task)
       if (target > 0 && task.progress.total !== target) {

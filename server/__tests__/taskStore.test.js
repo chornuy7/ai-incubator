@@ -40,3 +40,23 @@ test('loadTask: несуществующая задача → null', async () =>
   assert.equal(r, null)
   await fs.rm(path.join(__dirname, '..', 'data', 'modules', moduleKey + '-x'), { recursive: true, force: true })
 })
+
+test('прогресс: без заданного лимита знаменатель не подменяется случайным числом', async () => {
+  // Живой прогон 17.08: AI Rating проверил 6 аккаунтов из 6, а дашборд показал «6/35».
+  // У модуля нет лимита действий — объём задачи это число аккаунтов, — но общий
+  // resolveTotalTarget подставлял свой дефолт (100) и сеял из него случайную цель.
+  const store = createTaskStore('ggr_progress_test', 'gpt')
+  const task = store.createTask({ accountIds: ['a', 'b', 'c'] }, {})
+  task.progress = { done: 3, total: 3, actionsDone: 3 }
+  await store.saveTask(task)
+
+  const loaded = await store.loadTask(task.id)
+  assert.equal(loaded.progress.total, 3, 'знаменатель остаётся числом аккаунтов')
+
+  // А там, где лимит задан, уточнение по-прежнему работает — «9 из 10» больше не «Готово».
+  const limited = store.createTask({ accountIds: ['a'], maxComments: 10, minComments: 10 }, {})
+  limited.progress = { done: 0, total: 999, actionsDone: 0 }
+  await store.saveTask(limited)
+  const back = await store.loadTask(limited.id)
+  assert.equal(back.progress.total, 10, 'заданный лимит по-прежнему уточняет знаменатель')
+})
