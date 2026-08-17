@@ -113,6 +113,7 @@ export function ProfilePage() {
     // «Слабый пароль» показывались раньше, чем «Текущий пароль неверный».
     if (!pwCur) { pushToast({ type: 'error', title: 'Введите текущий пароль' }); return }
     if (!pwNew) { pushToast({ type: 'error', title: 'Введите новый пароль' }); return }
+    if (pwNew.length > 64) { pushToast({ type: 'error', title: 'Слишком длинный пароль', desc: 'Максимум 64 символа' }); return }
     if (pwNew !== pwRepeat) { pushToast({ type: 'error', title: 'Пароли не совпадают' }); return }
     if (pwNew === pwCur) { pushToast({ type: 'error', title: 'Новый пароль совпадает с текущим' }); return }
     setPwBusy(true)
@@ -238,11 +239,11 @@ export function ProfilePage() {
                 {/* autoComplete=new-password/off — чтобы браузер НЕ подставлял сохранённый пароль
                     в поле «текущий» (был баг: поле приходило заполненным). */}
                 <div className="grid gap-3 sm:grid-cols-2">
-                  <div><label className="label">Текущий пароль</label><input type="password" autoComplete="off" value={pwCur} onChange={(e) => setPwCur(e.target.value)} className="input" placeholder="••••••••" /></div>
+                  <div><label className="label">Текущий пароль</label><input type="password" autoComplete="off" maxLength={64} value={pwCur} onChange={(e) => setPwCur(e.target.value)} className="input" placeholder="••••••••" /></div>
                   <div />
                   <div>
                     <label className="label">Новый пароль</label>
-                    <input type="password" autoComplete="new-password" value={pwNew} onChange={(e) => setPwNew(e.target.value)} className="input" placeholder="минимум 8 символов" />
+                    <input type="password" autoComplete="new-password" maxLength={64} value={pwNew} onChange={(e) => setPwNew(e.target.value)} className="input" placeholder="8–64 символа" />
                     {pwNew && (() => {
                       const m = [
                         { w: '25%', c: 'bg-rose-500', t: 'Очень слабый', tc: 'text-rose-300' },
@@ -258,7 +259,7 @@ export function ProfilePage() {
                       )
                     })()}
                   </div>
-                  <div><label className="label">Повторите пароль</label><input type="password" autoComplete="new-password" value={pwRepeat} onChange={(e) => setPwRepeat(e.target.value)} className="input" placeholder="••••••••" /></div>
+                  <div><label className="label">Повторите пароль</label><input type="password" autoComplete="new-password" maxLength={64} value={pwRepeat} onChange={(e) => setPwRepeat(e.target.value)} className="input" placeholder="••••••••" /></div>
                 </div>
                 {pwRepeat && pwNew !== pwRepeat && <div className="mt-1 text-xs text-rose-300">Пароли не совпадают.</div>}
               </div>

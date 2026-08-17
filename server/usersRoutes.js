@@ -167,8 +167,9 @@ usersRouter.post('/me/password', async (req, res) => {
     try { ok = !!(await authenticateSupabase(user.email, String(currentPassword ?? ''))) } catch { ok = false }
     if (!ok && user.passwordHash) ok = verifyPassword(String(currentPassword ?? ''), user.passwordHash)
     if (!ok) return res.status(403).json({ ok: false, error: 'Текущий пароль неверный' })
-    // Затем — надёжность нового: ≥8, буквы+цифры, не совпадает с текущим.
+    // Затем — надёжность нового: 8–64 символа, буквы+цифры, не совпадает с текущим.
     if (nw.length < 8) return res.status(400).json({ ok: false, error: 'Новый пароль слишком короткий — минимум 8 символов' })
+    if (nw.length > 64) return res.status(400).json({ ok: false, error: 'Новый пароль слишком длинный — максимум 64 символа' })
     if (!/[0-9]/.test(nw) || !/[a-zA-Zа-яА-Я]/.test(nw)) return res.status(400).json({ ok: false, error: 'Пароль должен содержать и буквы, и цифры' })
     if (nw === String(currentPassword ?? '')) return res.status(400).json({ ok: false, error: 'Новый пароль совпадает с текущим' })
     await updateUser(user.id, { password: nw })
