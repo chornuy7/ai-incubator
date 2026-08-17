@@ -161,15 +161,16 @@ usersRouter.post('/me/password', async (req, res) => {
     if (!user || !user.active) return res.status(401).json({ ok: false, error: 'Пользователь отключён' })
     const { currentPassword, newPassword } = req.body ?? {}
     const nw = String(newPassword ?? '')
-    // Лимит надёжности — тот же, что на фронте.
-    if (nw.length < 8) return res.status(400).json({ ok: false, error: 'Новый пароль слишком короткий — минимум 8 символов' })
-    if (!/[0-9]/.test(nw) || !/[a-zA-Zа-яА-Я]/.test(nw)) return res.status(400).json({ ok: false, error: 'Пароль должен содержать и буквы, и цифры' })
-    if (nw === String(currentPassword ?? '')) return res.status(400).json({ ok: false, error: 'Новый пароль совпадает с текущим' })
-    // ПРОВЕРКА ТЕКУЩЕГО ПАРОЛЯ ИЗ БД: сначала Supabase-вход, затем (файловый бэкенд) scrypt-хэш.
+    // Правка 14.08: валидация в ОБРАТНОМ порядке — СНАЧАЛА сверяем ТЕКУЩИЙ пароль с БД
+    // (Supabase-вход, затем scrypt-хэш для файлового бэкенда), и только потом правила нового.
     let ok = false
     try { ok = !!(await authenticateSupabase(user.email, String(currentPassword ?? ''))) } catch { ok = false }
     if (!ok && user.passwordHash) ok = verifyPassword(String(currentPassword ?? ''), user.passwordHash)
     if (!ok) return res.status(403).json({ ok: false, error: 'Текущий пароль неверный' })
+    // Затем — надёжность нового: ≥8, буквы+цифры, не совпадает с текущим.
+    if (nw.length < 8) return res.status(400).json({ ok: false, error: 'Новый пароль слишком короткий — минимум 8 символов' })
+    if (!/[0-9]/.test(nw) || !/[a-zA-Zа-яА-Я]/.test(nw)) return res.status(400).json({ ok: false, error: 'Пароль должен содержать и буквы, и цифры' })
+    if (nw === String(currentPassword ?? '')) return res.status(400).json({ ok: false, error: 'Новый пароль совпадает с текущим' })
     await updateUser(user.id, { password: nw })
     await appendAudit({ action: 'user.password', module: 'auth', initiator: user.id, reason: 'Смена пароля', meta: { userId: user.id } })
     res.json({ ok: true })

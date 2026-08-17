@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react'
 import { Link } from 'react-router-dom'
 import {
-  UserCog, Shield, Bell, Handshake, Cable, Save, Copy, Zap, History as HistoryIcon, Package, CalendarClock, AlertTriangle, Trash2 } from 'lucide-react'
+  UserCog, Shield, Bell, Handshake, Cable, Save, Copy, History as HistoryIcon, Package, CalendarClock, AlertTriangle, Trash2 } from 'lucide-react'
 import { useApp } from '@/mocks/store'
 import { fetchBalance, fetchWalletHistory, type Balance, type WalletEntry } from '@/api/balanceApi'
 import { deleteUser, changeMyPassword } from '@/api/usersApi'
@@ -26,7 +26,9 @@ const TABS = [
   { key: 'notifications', label: 'Уведомления', icon: Bell },
   { key: 'partner', label: 'Партнёрская программа', icon: Handshake },
   { key: 'api', label: 'API', icon: Cable },
-]
+  // Правка 14.08: удаление аккаунта — ОТДЕЛЬНЫЙ пункт меню, красным (не в профиле).
+  { key: 'delete', label: 'Удалить аккаунт', icon: Trash2, danger: true },
+] as const
 
 export function ProfilePage() {
   const data = useApp((s) => s.data)
@@ -106,17 +108,17 @@ export function ProfilePage() {
   const [pwBusy, setPwBusy] = useState(false)
   const saveSecurity = async () => {
     if (!pwNew && !pwRepeat && !pwCur) { pushToast({ type: 'success', title: 'Настройки безопасности сохранены' }); return }
-    // Правка 14.08: текущий пароль обязателен — сервер сверит его с БД.
+    // Правка 14.08: валидация в ОБРАТНОМ порядке — СНАЧАЛА текущий пароль (сервер сверит его
+    // с БД, current-first), и только потом надёжность нового. Раньше «Пароли не совпадают» /
+    // «Слабый пароль» показывались раньше, чем «Текущий пароль неверный».
     if (!pwCur) { pushToast({ type: 'error', title: 'Введите текущий пароль' }); return }
-    if (pwNew.length < 8) { pushToast({ type: 'error', title: 'Пароль слишком короткий', desc: 'Минимум 8 символов' }); return }
-    if (!/[0-9]/.test(pwNew) || !/[a-zA-Zа-яА-Я]/.test(pwNew)) { pushToast({ type: 'error', title: 'Слабый пароль', desc: 'Нужны и буквы, и цифры' }); return }
-    // Лимит надёжности: не слабее «Среднего» (score ≥ 3) — иначе не даём сохранить.
-    if (pwScore(pwNew) < 3) { pushToast({ type: 'error', title: 'Пароль слишком простой', desc: 'Сделайте длиннее (12+) или добавьте спецсимвол' }); return }
+    if (!pwNew) { pushToast({ type: 'error', title: 'Введите новый пароль' }); return }
     if (pwNew !== pwRepeat) { pushToast({ type: 'error', title: 'Пароли не совпадают' }); return }
     if (pwNew === pwCur) { pushToast({ type: 'error', title: 'Новый пароль совпадает с текущим' }); return }
     setPwBusy(true)
     try {
-      await changeMyPassword(pwCur, pwNew) // сервер проверит текущий пароль по БД
+      // Сервер: сначала проверяет ТЕКУЩИЙ пароль по БД, потом надёжность нового (лимит: ≥8, буквы+цифры).
+      await changeMyPassword(pwCur, pwNew)
       setPwCur(''); setPwNew(''); setPwRepeat('')
       pushToast({ type: 'success', title: 'Пароль обновлён' })
     } catch (e) {
@@ -140,7 +142,10 @@ export function ProfilePage() {
             <button
               key={t.key}
               onClick={() => setTab(t.key)}
-              className={cn('flex w-full items-center gap-2.5 rounded-xl px-3 py-2.5 text-left text-sm font-medium transition-colors', tab === t.key ? 'bg-spark-500/12 text-spark-300' : 'text-muted hover:bg-elevated hover:text-fg')}
+              className={cn('flex w-full items-center gap-2.5 rounded-xl px-3 py-2.5 text-left text-sm font-medium transition-colors',
+                'danger' in t && t.danger
+                  ? (tab === t.key ? 'bg-rose-500/12 text-rose-300' : 'text-rose-400/80 hover:bg-rose-500/8 hover:text-rose-300')
+                  : (tab === t.key ? 'bg-spark-500/12 text-spark-300' : 'text-muted hover:bg-elevated hover:text-fg'))}
             >
               <t.icon size={17} /> {t.label}
             </button>
@@ -191,84 +196,39 @@ export function ProfilePage() {
               <div className="mt-5 flex justify-end"><button onClick={save} className="btn-primary h-10"><Save size={16} /> Сохранить изменения</button></div>
             </Card>
 
-            {/* MR-158: бывшая вкладка «Настройки аккаунта» — тариф/лимиты/часовой пояс.
-                «История операций» убрана из профиля (живёт в разделе подписки). */}
+            {/* Правка 14.08: тариф/лимит/баланс убраны из профиля — они уже в шапке панели и в
+                карточке подписки сверху. Остаётся только часовой пояс. Удаление вынесено в
+                отдельный пункт меню (вкладка «Удалить аккаунт»). */}
             <Card className="space-y-5">
-              <div className="flex items-center justify-between rounded-2xl border border-line bg-elevated p-4">
-                <div><div className="text-sm text-muted">Текущий тариф</div><div className="font-display text-lg font-bold text-fg">{balance?.plan.name ?? data.plan.name}</div></div>
-                <button onClick={() => pushToast({ type: 'info', title: 'Смена тарифа (демо)' })} className="btn-iris h-10">Изменить тариф</button>
-              </div>
-              <div className="grid gap-3 sm:grid-cols-2">
-                <div className="rounded-2xl border border-line bg-elevated p-4"><div className="text-sm text-muted">Лимит аккаунтов</div><div className="font-display text-lg font-bold text-fg">{data.accounts.filter((a) => !a.inTrash).length} / {balance?.plan.accountLimit ?? data.plan.accountLimit}</div></div>
-                <div className="rounded-2xl border border-line bg-elevated p-4"><div className="flex items-center gap-1.5 text-sm text-muted"><Zap size={14} className="text-amber-400" /> Баланс монет</div><div className="font-display text-lg font-bold text-fg">{fmtCoins(balance?.coins ?? data.coins)}</div></div>
-              </div>
-
               <div>
                 <label className="label">Часовой пояс</label>
                 <select defaultValue="UTC+03:00 · Киев / Москва" className="input max-w-xs">
                   {ALL_TIMEZONES.map((tz) => <option key={tz} value={tz}>{tz}</option>)}
                 </select>
               </div>
-              <div className="flex justify-between rounded-2xl border border-rose-500/30 bg-rose-500/8 p-4">
-                <div><div className="text-sm font-bold text-fg">Удалить аккаунт</div><div className="text-xs text-muted">Все данные будут удалены безвозвратно</div></div>
-                <button onClick={() => { setDelWord(''); setDelStep(1) }} className="btn-danger h-9">Удалить</button>
+            </Card>
+            </div>
+          )}
+
+          {/* Правка 14.08: удаление аккаунта — ОТДЕЛЬНЫЙ пункт меню, с юридическим предупреждением
+              и подтверждением вводом e-mail (как GitHub). */}
+          {tab === 'delete' && (
+            <Card className="space-y-4 border-rose-500/30">
+              <div className="flex items-center gap-2 text-rose-300">
+                <AlertTriangle size={18} />
+                <h2 className="text-lg font-bold">Удаление аккаунта</h2>
+              </div>
+              <div className="space-y-2 rounded-2xl border border-line bg-elevated/50 p-4 text-sm leading-relaxed text-muted">
+                <p>Удаление аккаунта <b className="text-fg">закрывает ваш доступ</b> к сервису и рабочему пространству: профиль, привязанные Telegram-аккаунты, задачи, история и баланс перестанут быть доступны.</p>
+                <p>Мы удаляем ваш <b className="text-fg">доступ</b>, а не персональные данные третьих лиц. Часть данных может сохраняться в резервных копиях и журналах в объёме и на срок, которых требует закон, после чего удаляется в штатном порядке.</p>
+                <p>Действие <b className="text-rose-300">необратимо</b>. Если вы просто хотите приостановить работу — не удаляйте аккаунт, обратитесь в поддержку.</p>
+              </div>
+              <div className="flex justify-end">
+                <button onClick={() => { setDelWord(''); setDelStep(1) }} className="btn-danger h-10">
+                  <Trash2 size={16} /> Удалить аккаунт
+                </button>
               </div>
             </Card>
-
-            {/* Удаление аккаунта — ВСЕГДА 2 подтверждения (правка заказчика 14.08). */}
-            <Modal
-              open={delStep === 1}
-              onClose={() => setDelStep(0)}
-              size="sm"
-              icon={<AlertTriangle size={20} className="text-rose-400" />}
-              title="Удалить аккаунт?"
-              subtitle="Подтверждение 1 из 2"
-              footer={
-                <div className="flex justify-end gap-2">
-                  <button onClick={() => setDelStep(0)} className="btn-ghost h-9">Отмена</button>
-                  <button onClick={() => { setDelWord(''); setDelStep(2) }} className="btn-danger h-9">Продолжить</button>
-                </div>
-              }
-            >
-              <p className="text-sm leading-relaxed text-muted">
-                Будут <b className="text-fg">безвозвратно</b> удалены профиль, привязанные Telegram-аккаунты,
-                задачи, история и баланс. Восстановить данные будет нельзя.
-              </p>
-            </Modal>
-
-            <Modal
-              open={delStep === 2}
-              onClose={() => setDelStep(0)}
-              size="sm"
-              icon={<Trash2 size={20} className="text-rose-400" />}
-              title="Последнее подтверждение"
-              subtitle="Подтверждение 2 из 2"
-              footer={
-                <div className="flex justify-end gap-2">
-                  <button onClick={() => setDelStep(1)} className="btn-ghost h-9">Назад</button>
-                  <button
-                    disabled={delWord.trim().toUpperCase() !== 'УДАЛИТЬ' || delBusy}
-                    onClick={() => void doDelete()}
-                    className="btn-danger h-9 disabled:cursor-not-allowed disabled:opacity-40"
-                  >
-                    {delBusy ? 'Удаление…' : 'Удалить навсегда'}
-                  </button>
-                </div>
-              }
-            >
-              <p className="mb-3 text-sm text-muted">
-                Чтобы подтвердить, введите слово <b className="text-fg">УДАЛИТЬ</b> в поле ниже.
-              </p>
-              <input
-                autoFocus
-                value={delWord}
-                onChange={(e) => setDelWord(e.target.value)}
-                onKeyDown={(e) => { if (e.key === 'Enter' && delWord.trim().toUpperCase() === 'УДАЛИТЬ') void doDelete() }}
-                className="input"
-                placeholder="УДАЛИТЬ"
-              />
-            </Modal>
-            </div>
           )}
 
           {tab === 'security' && (
@@ -379,6 +339,66 @@ export function ProfilePage() {
           )}
         </div>
       </div>
+
+      {/* Удаление аккаунта — 2 подтверждения; финальное = ввод своего e-mail (как GitHub). */}
+      <Modal
+        open={delStep === 1}
+        onClose={() => setDelStep(0)}
+        size="sm"
+        icon={<AlertTriangle size={20} className="text-rose-400" />}
+        title="Удалить аккаунт?"
+        subtitle="Подтверждение 1 из 2"
+        footer={
+          <div className="flex justify-end gap-2">
+            <button onClick={() => setDelStep(0)} className="btn-ghost h-9">Отмена</button>
+            <button onClick={() => { setDelWord(''); setDelStep(2) }} className="btn-danger h-9">Продолжить</button>
+          </div>
+        }
+      >
+        <p className="text-sm leading-relaxed text-muted">
+          Будет <b className="text-fg">безвозвратно</b> закрыт доступ: профиль, привязанные
+          Telegram-аккаунты, задачи, история и баланс. Восстановить будет нельзя.
+        </p>
+      </Modal>
+
+      {(() => {
+        const email = (sessionUser?.email || '').trim()
+        const match = delWord.trim().toLowerCase() === email.toLowerCase() && !!email
+        return (
+          <Modal
+            open={delStep === 2}
+            onClose={() => setDelStep(0)}
+            size="sm"
+            icon={<Trash2 size={20} className="text-rose-400" />}
+            title="Последнее подтверждение"
+            subtitle="Подтверждение 2 из 2"
+            footer={
+              <div className="flex justify-end gap-2">
+                <button onClick={() => setDelStep(1)} className="btn-ghost h-9">Назад</button>
+                <button
+                  disabled={!match || delBusy}
+                  onClick={() => void doDelete()}
+                  className="btn-danger h-9 disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  {delBusy ? 'Удаление…' : 'Удалить навсегда'}
+                </button>
+              </div>
+            }
+          >
+            <p className="mb-3 text-sm text-muted">
+              Чтобы подтвердить, введите свой e-mail <b className="text-fg">{email}</b> в поле ниже.
+            </p>
+            <input
+              autoFocus
+              value={delWord}
+              onChange={(e) => setDelWord(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter' && match) void doDelete() }}
+              className="input"
+              placeholder={email}
+            />
+          </Modal>
+        )
+      })()}
     </div>
   )
 }
@@ -468,7 +488,11 @@ function SubscriptionCard({ balance }: { balance: Balance | null }) {
           </div>
           {!!exp && active && <div className="text-[11px] text-muted">осталось {daysLeft} дн.</div>}
         </div>
-        <Link to="/panel/user/subscription" className="btn-ghost ml-auto h-9 border border-line text-sm"><Package size={14} /> Подписки</Link>
+        {/* Правка 14.08: «Изменить тариф» перенесён СЮДА, справа от «Подписки». */}
+        <div className="ml-auto flex items-center gap-2">
+          <Link to="/panel/user/subscription" className="btn-ghost h-9 border border-line text-sm"><Package size={14} /> Подписки</Link>
+          <Link to="/panel/user/subscription" className="btn-iris h-9 text-sm"><Package size={14} /> Изменить тариф</Link>
+        </div>
       </div>
     </Card>
   )
