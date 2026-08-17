@@ -77,6 +77,12 @@ export async function deleteProxy(id: string): Promise<void> {
   await apiDelete(`/api/proxies/${id}`)
 }
 
+/** Пакетное удаление за один запрос (без гонки конкурентных DELETE). Возвращает число удалённых. */
+export async function deleteProxies(ids: string[]): Promise<number> {
+  const data = await apiPost<{ removed: number }>('/api/proxies/delete-batch', { ids })
+  return data.removed
+}
+
 export interface ProxyGeo { country: string; countryName: string; city: string; isp: string; ip: string }
 /** exit — гео реального выходного IP (через прокси); gateway — гео адреса шлюза (запасной вариант). */
 export type GeoSource = 'exit' | 'gateway' | null

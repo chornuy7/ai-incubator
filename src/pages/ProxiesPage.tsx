@@ -3,7 +3,7 @@ import { Network, Plus, Trash2, Pencil, Link2, Check, Circle, Zap, Loader2, MapP
 import { PageHeader, Card, EmptyState, Badge, Select, Modal } from '@/shared/ui'
 import { HelpButton } from '@/features/neuro-commenting/moduleUi'
 import {
-  fetchProxies, createProxy, updateProxy, deleteProxy, toProxyUrl, checkProxy, checkAllProxies,
+  fetchProxies, createProxy, updateProxy, deleteProxy, deleteProxies, toProxyUrl, checkProxy, checkAllProxies,
   PROXY_KIND_LABELS, type Proxy, type ProxyKind, type ProxyGeo,
 } from '@/api/proxiesApi'
 import { fetchAccounts, patchAccount } from '@/api/accountsApi'
@@ -160,13 +160,15 @@ export function ProxiesPage() {
       tone: 'danger',
     }))) return
     setRemoving(true)
-    const results = await Promise.allSettled(list.map((p) => deleteProxy(p.id)))
-    const okIds = list.filter((_, i) => results[i].status === 'fulfilled').map((p) => p.id)
-    setProxies((prev) => prev.filter((x) => !okIds.includes(x.id)))
-    setSelected(new Set())
-    setRemoving(false)
-    const failed = results.length - okIds.length
-    if (failed) setErr(`Удалено ${okIds.length}, не удалось ${failed}`)
+    // MR-170: ОДИН запрос на всё выделение (было N параллельных DELETE → гонка → «удалились все»).
+    const ids = list.map((p) => p.id)
+    try {
+      await deleteProxies(ids)
+      setProxies((prev) => prev.filter((x) => !ids.includes(x.id)))
+      setSelected(new Set())
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : 'Не удалось удалить')
+    } finally { setRemoving(false) }
   }
 
   async function remove(p: Proxy) {

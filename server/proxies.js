@@ -83,6 +83,11 @@ export async function createProxy(input) {
   const clean = normalizeProxy(input)
   if (!clean.host || !clean.port) throw new Error('Укажите host и port')
   const all = await listProxies()
+  // MR-169 (14.08): уникальность прокси — host+port+логин+пароль. Дубли раньше плодились
+  // и путали статистику/назначение. Проверяем ДО создания.
+  const dupe = all.find((p) => p.host === clean.host && p.port === clean.port
+    && (p.username || '') === (clean.username || '') && (p.password || '') === (clean.password || ''))
+  if (dupe) throw new Error(`Такой прокси уже есть в каталоге${dupe.label ? ` («${dupe.label}»)` : ''}`)
   const proxy = {
     id: `px_${crypto.randomUUID().slice(0, 8)}`,
     ...clean,
@@ -116,6 +121,22 @@ export async function deleteProxy(id) {
   if (next.length === all.length) return false
   await writeJson(PROXIES_FILE, next)
   return true
+}
+
+/**
+ * MR-170 (14.08): пакетное удаление за ОДНУ операцию чтение-запись.
+ * Раньше UI слал N параллельных DELETE /:id — конкурентные read-modify-write одного JSON
+ * теряли данные (last-write-wins), из-за чего «удалились все прокси». Теперь один проход.
+ * @param {string[]} ids @returns {Promise<number>} сколько удалено
+ */
+export async function deleteProxies(ids) {
+  const set = new Set((Array.isArray(ids) ? ids : []).map(String))
+  if (set.size === 0) return 0
+  const all = await listProxies()
+  const next = all.filter((p) => !set.has(p.id))
+  const removed = all.length - next.length
+  if (removed > 0) await writeJson(PROXIES_FILE, next)
+  return removed
 }
 
 // ── §6: авто-проверка живости прокси ──────────────────────────────────

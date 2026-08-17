@@ -1,6 +1,6 @@
 /** CRUD-роуты сущности «Прокси» (§3.2/3.4). Монтируется в /api/proxies. */
 import { Router } from 'express'
-import { listProxies, getProxy, createProxy, updateProxy, deleteProxy, checkAllProxies, sharedProxies, probeProxy, geoNote, tcpPing, proxyUsageMap, toProxyUrl } from './proxies.js'
+import { listProxies, getProxy, createProxy, updateProxy, deleteProxy, deleteProxies, checkAllProxies, sharedProxies, probeProxy, geoNote, tcpPing, proxyUsageMap, toProxyUrl } from './proxies.js'
 import { loadAllMeta } from './accountsMeta.js'
 import { loadSessionString } from './tgAuth.js'
 import { parseProxyList, proxyKey, assignLabels } from './lib/proxyImport.js'
@@ -181,6 +181,16 @@ proxiesRouter.put('/:id', async (req, res) => {
     const proxy = await updateProxy(req.params.id, req.body ?? {})
     if (!proxy) return res.status(404).json({ ok: false, error: 'Прокси не найден' })
     res.json({ ok: true, proxy })
+  } catch (err) { fail(res, err) }
+})
+
+// MR-170 (14.08): пакетное удаление за один проход (POST — тело DELETE местами режется прокси).
+proxiesRouter.post('/delete-batch', async (req, res) => {
+  try {
+    const ids = Array.isArray(req.body?.ids) ? req.body.ids : []
+    const removed = await deleteProxies(ids)
+    await appendAudit({ action: 'proxy.delete', module: 'proxy', initiator: 'operator', reason: `Удалено прокси: ${removed}`, meta: { ids, removed } })
+    res.json({ ok: true, removed })
   } catch (err) { fail(res, err) }
 })
 
