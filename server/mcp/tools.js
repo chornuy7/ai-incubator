@@ -6,7 +6,7 @@
  * убедиться, что он валиден, узнать цену — и только потом тратить деньги и аккаунты.
  * Раньше единственным способом проверить настройки был реальный запуск в Telegram.
  */
-import { MODULE_DEFS, startModuleTask, validateSettings } from '../modules/registry.js'
+import { MODULE_DEFS, getModuleStore, startModuleTask, validateSettings } from '../modules/registry.js'
 import { moduleTitle } from '../lib/moduleTitles.js'
 import {
   DESCRIPTORS, describeModule, getDescriptor, listDescriptorKeys, summarizeModule, buildInputSchema,
@@ -103,6 +103,39 @@ export const TOOLS = [
       required: ['module', 'actions'],
       additionalProperties: false,
     },
+  },
+  {
+    name: 'get_task',
+    title: 'Состояние задачи',
+    description:
+      'Что стало с ранее созданной задачей: статус, прогресс, кем запущена и последние записи лога. '
+      + 'Ключевые слова: статус, прогресс, логи, task, status, progress.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        module: { type: 'string', description: 'Ключ модуля, которым создана задача' },
+        taskId: { type: 'string', description: 'ID из ответа create_task' },
+      },
+      required: ['module', 'taskId'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'stop_task',
+    title: 'Остановить задачу',
+    description:
+      'Остановить выполняющуюся задачу. Уже сделанные действия не отменяются — Telegram их не '
+      + 'откатывает. Ключевые слова: стоп, остановить, отмена, stop, cancel.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        module: { type: 'string', description: 'Ключ модуля, которым создана задача' },
+        taskId: { type: 'string', description: 'ID из ответа create_task' },
+      },
+      required: ['module', 'taskId'],
+      additionalProperties: false,
+    },
+    annotations: { destructiveHint: false, idempotentHint: true, openWorldHint: true },
   },
   {
     name: 'create_task',
@@ -208,6 +241,49 @@ const HANDLERS = {
         maxSec: perAcc * 120,
         note: 'Оценка по базовым задержкам 30–120 с. Пресет темпа и уровень защиты меняют её множителем.',
       },
+    }
+  },
+
+  /**
+   * Без этого «мозги» умели запускать задачу и не умели узнать, чем она кончилась:
+   * create_task возвращал REST-путь, закрытый сессией. Дыра нашлась на первом же
+   * живом прогоне через протокол.
+   */
+  async get_task({ module, taskId }) {
+    const store = getModuleStore(module)
+    if (!store) throw new ToolError(`Неизвестный модуль «${module}»`)
+    const task = await store.loadTask(taskId)
+    if (!task) throw new ToolError(`Задача «${taskId}» у модуля «${module}» не найдена`)
+    return {
+      taskId: task.id,
+      module,
+      status: task.status,
+      initiator: task.settings?.initiator || 'operator',
+      progress: task.progress || null,
+      startedAt: task.startedAt || null,
+      updatedAt: task.updatedAt || null,
+      // Лог обрезаем: «мозгам» нужен хвост, а не весь журнал на сотни строк.
+      logs: (task.logs || []).slice(-20).map((l) => ({ level: l.level, message: l.message, account: l.account || null })),
+    }
+  },
+
+  /**
+   * Запустить и не иметь возможности остановить — худшая комбинация прав для
+   * оркестратора, поэтому стоп идёт в том же наборе, что и запуск.
+   */
+  async stop_task({ module, taskId }) {
+    const store = getModuleStore(module)
+    if (!store) throw new ToolError(`Неизвестный модуль «${module}»`)
+    const task = await store.loadTask(taskId)
+    if (!task) throw new ToolError(`Задача «${taskId}» у модуля «${module}» не найдена`)
+    const { stopWorker } = await import('../modules/workers.js')
+    await stopWorker(taskId, store)
+    const after = await store.loadTask(taskId)
+    return {
+      taskId,
+      module,
+      status: after?.status || 'stopped',
+      note: 'Задача остановлена. Уже выполненные действия в Telegram не отменяются.',
     }
   },
 

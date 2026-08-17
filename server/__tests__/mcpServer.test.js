@@ -58,7 +58,13 @@ test('tools/list: инструменты объявлены со схемами 
   const r = await rpc('tools/list', {})
   const names = r.result.tools.map((t) => t.name)
 
-  assert.deepEqual(names, ['list_modules', 'describe_module', 'describe_block', 'validate_task', 'estimate_task', 'create_task'])
+  assert.deepEqual(names, [
+    'list_modules', 'describe_module', 'describe_block', 'validate_task', 'estimate_task',
+    // Наблюдение и остановка добавлены после первого живого прогона: «мозги» умели
+    // запустить задачу и не умели узнать, чем она кончилась, — create_task возвращал
+    // REST-путь, закрытый сессией.
+    'get_task', 'stop_task', 'create_task',
+  ])
   for (const t of r.result.tools) {
     assert.ok(t.title && t.description, `${t.name}: нет названия или описания`)
     assert.equal(t.inputSchema.type, 'object', `${t.name}: inputSchema не объект`)
@@ -303,4 +309,25 @@ test('JSON-RPC ответ от клиента принимается молча 
   // А вот мусор без method и без result/error — по-прежнему ошибка конверта.
   const junk = await handleMessage({ jsonrpc: '2.0', id: 8 }, CTX)
   assert.equal(junk.error.code, -32600)
+})
+
+test('get_task и stop_task: понятный отказ на несуществующей задаче', async () => {
+  const missing = await call('get_task', { module: 'ggr', taskId: 'нет_такой' })
+  assert.equal(missing.isError, true)
+  assert.match(missing.content[0].text, /не найдена/)
+
+  const badModule = await call('get_task', { module: 'нет-модуля', taskId: 'x' })
+  assert.equal(badModule.isError, true)
+  assert.match(badModule.content[0].text, /Неизвестный модуль/)
+
+  const stopMissing = await call('stop_task', { module: 'ggr', taskId: 'нет_такой' })
+  assert.equal(stopMissing.isError, true)
+  assert.match(stopMissing.content[0].text, /не найдена/)
+})
+
+test('stop_task честно предупреждает, что сделанное не отменяется', () => {
+  const tool = TOOLS.find((t) => t.name === 'stop_task')
+  // Останавливать можно, откатывать — нет: Telegram не отменяет отправленное.
+  assert.match(tool.description, /не отменяются/)
+  assert.equal(tool.annotations.idempotentHint, true, 'повторный стоп безопасен')
 })

@@ -103,7 +103,8 @@ export async function handleMessage(message, ctx) {
           serverInfo: SERVER_INFO,
           instructions:
             'Порядок работы: list_modules → describe_module (полная схема параметров и ограничений) → '
-            + 'validate_task (проверка черновика без запуска) → estimate_task (цена и время) → create_task. '
+            + 'validate_task (проверка черновика без запуска) → estimate_task (цена и время) → create_task, '
+            + 'а дальше get_task для наблюдения и stop_task, если надо прервать. '
             + 'Схема есть не у всех модулей: у неописанных described = false, полагаться на их список полей нельзя.',
         })
       }
