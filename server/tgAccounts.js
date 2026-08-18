@@ -36,6 +36,11 @@ function toAccountDto(accountId, meta, me, sessionOk) {
   let status = meta.status || 'active'
   if (!sessionOk) status = 'reauth'
   else if (sessionOk && status === 'reauth') status = 'active'
+  // Спамблок хранится ОТДЕЛЬНЫМ полем (результат проверки @SpamBot, accountStats), и в
+  // карточке он виден, а в списке/счётчике «Спамблок» — нет: аккаунт светился «Активные».
+  // Отражаем блокировку как статус, если базовый статус рабочий — тогда строка, KPI-счётчик
+  // и действие «Снять спамблок» его видят. Снимется сам, когда проверка вернёт 'clean'.
+  if (meta.spamblock === 'blocked' && ['active', 'working', 'warming', 'pause'].includes(status)) status = 'spamblock'
 
   return {
     id: accountId,

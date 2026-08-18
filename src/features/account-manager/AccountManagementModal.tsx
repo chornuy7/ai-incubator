@@ -262,12 +262,21 @@ export function HeroBanner({ account, stats, actions }: {
         </div>
       )}
 
+      {/* Что такое спамблок и как снять — раньше плашка «Спамблок» висела без пояснения. */}
+      {spam === 'blocked' && (
+        <div className="mt-4 space-y-1 rounded-xl border border-rose-300/40 bg-rose-500/20 px-3 py-2.5 text-xs leading-relaxed text-rose-50">
+          <div className="flex items-center gap-1.5 font-bold"><ShieldAlert size={13} /> Спамблок Telegram</div>
+          <div className="opacity-90">Telegram ограничил аккаунт спам-фильтром — часть действий (комментарии, ЛС новым собеседникам) для него недоступна.</div>
+          <div className="opacity-90">Как снять: кнопка «Снять блокировку» подаёт апелляцию через @SpamBot; либо подождать и нажать «Проверить спамблок». До снятия аккаунт в задачи лучше не брать.</div>
+        </div>
+      )}
+
       {/* MR-129: статус-кнопки (Обновить / Проверить спамблок / Снять блокировку) — в шапке. */}
       {actions && (
         <div className="mt-4 flex flex-wrap gap-2 border-t border-white/15 pt-3">
           <HeroBtn onClick={actions.onRecheck} loading={actions.loading} icon={<RefreshCw size={14} />} label="Обновить" />
           <HeroBtn onClick={actions.onSpamCheck} loading={actions.spamChecking} icon={<ShieldQuestion size={14} />} label="Проверить спамблок" />
-          {busy && <HeroBtn onClick={actions.onRelease} loading={actions.releasing} icon={<Unlock size={14} />} label="Снять блокировку" tone="danger" />}
+          {(busy || spam === 'blocked') && <HeroBtn onClick={actions.onRelease} loading={actions.releasing} icon={<Unlock size={14} />} label="Снять блокировку" tone="danger" />}
         </div>
       )}
     </div>
