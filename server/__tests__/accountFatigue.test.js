@@ -4,6 +4,9 @@
  */
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
+import fs from 'node:fs/promises'
+import os from 'node:os'
+import path from 'node:path'
 
 import {
   DEFAULT_FATIGUE, DEFAULT_SCHEDULE, currentFatigue, fatigueGate,
@@ -160,4 +163,39 @@ test('§4.4: сдвиг не превращает рабочий день в м�
     const day = [10, 11, 12, 13, 14, 15, 16].map((h) => s[h])
     assert.ok(Math.max(...day) >= 0.5, `${id}: днём максимум ${Math.max(...day)} — аккаунт почти мёртв`)
   }
+})
+
+/**
+ * Профиль усталости должен ДОЕЗЖАТЬ до формы (правка 18.08).
+ *
+ * Список активности отдавал только `threshold`, поэтому окно «Усталость и отдых»
+ * рисовало умолчания 15/45/5 при каждом открытии. Пользователь читал это как «настройки
+ * слетели после деплоя», а повторное «Применить» действительно затирало заданное.
+ */
+test('listActivity отдаёт весь профиль, а не один порог', async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'fatigue-list-'))
+  process.env.ACCOUNT_ACTIVITY_FILE = path.join(dir, 'activity.json')
+  const A = await import(`../accountActivity.js?fatigue-list=${Date.now()}`)
+
+  await A.setActivityProfile(['acc_1'], { profile: { threshold: 40, restMinutes: 120, recoveryPerHour: 9 } })
+  const map = await A.listActivity()
+
+  assert.equal(map.acc_1.threshold, 40)
+  assert.equal(map.acc_1.restMinutes, 120, 'без этого поля форма покажет умолчание вместо заданного')
+  assert.equal(map.acc_1.recoveryPerHour, 9)
+})
+
+test('профили аккаунтов независимы: свой порог у каждого', async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'fatigue-each-'))
+  process.env.ACCOUNT_ACTIVITY_FILE = path.join(dir, 'activity.json')
+  const A = await import(`../accountActivity.js?fatigue-each=${Date.now()}`)
+
+  await A.setActivityProfile(['acc_a'], { profile: { threshold: 5, restMinutes: 30, recoveryPerHour: 2 } })
+  await A.setActivityProfile(['acc_b'], { profile: { threshold: 50, restMinutes: 300, recoveryPerHour: 20 } })
+  const map = await A.listActivity()
+
+  assert.equal(map.acc_a.threshold, 5)
+  assert.equal(map.acc_b.threshold, 50, 'настройка одного аккаунта не должна перетирать соседний')
+  assert.equal(map.acc_a.restMinutes, 30)
+  assert.equal(map.acc_b.restMinutes, 300)
 })

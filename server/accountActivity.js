@@ -82,7 +82,13 @@ export async function listActivity() {
       : scheduleForAccount(id)
     out[id] = {
       fatigue: currentFatigue(s, profile, now),
+      // Весь профиль, а не только порог: форма настройки обязана показывать СОХРАНЁННОЕ.
+      // Раньше отдавался один threshold, и окно «Усталость и отдых» каждый раз рисовало
+      // умолчания 15/45/5 — выглядело как сброс настроек, а повторное «Применить»
+      // действительно затирало заданное (правка 18.08).
       threshold: profile.threshold,
+      restMinutes: profile.restMinutes,
+      recoveryPerHour: profile.recoveryPerHour,
       restUntil: Number(s.restUntil) || 0,
       actionsTotal: Number(s.actionsTotal) || 0,
       resting: (Number(s.restUntil) || 0) > now,

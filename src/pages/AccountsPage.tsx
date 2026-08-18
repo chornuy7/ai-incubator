@@ -940,6 +940,7 @@ export function AccountsPage() {
       <FatigueModal
         open={fatigueOpen || !!fatigueOne}
         ids={fatigueOne ? [fatigueOne] : [...selected]}
+        activity={activity}
         onClose={() => { setFatigueOpen(false); setFatigueOne(null) }}
         onDone={(map, msg) => { setActivityMap(map); setFatigueOpen(false); setFatigueOne(null); if (!fatigueOne) setSelected(new Set()); pushToast({ type: 'success', title: msg }) }}
         onError={(e) => pushToast({ type: 'error', title: 'Не применилось', desc: e })}
@@ -1671,9 +1672,11 @@ function UnblockModal({ open, ids, onClose, onFinished, pushToast }: {
  * разово «сейчас», сбросить усталость — вернуть в строй раньше срока. Смешивать их
  * в одной кнопке значило бы, что оператор не понимает, что именно применил.
  */
-function FatigueModal({ open, ids, onClose, onDone, onError }: {
+function FatigueModal({ open, ids, activity, onClose, onDone, onError }: {
   open: boolean
   ids: string[]
+  /** Текущие профили аккаунтов — форма обязана показывать сохранённое, а не умолчания. */
+  activity: ActivityMap
   onClose: () => void
   onDone: (map: ActivityMap, message: string) => void
   onError: (e: string) => void
@@ -1681,6 +1684,27 @@ function FatigueModal({ open, ids, onClose, onDone, onError }: {
   const [threshold, setThreshold] = useState(15)
   const [restMinutes, setRestMinutes] = useState(45)
   const [recoveryPerHour, setRecoveryPerHour] = useState(5)
+  /** Значения выбранных аккаунтов различаются — предупреждаем, что «Применить» их сравняет. */
+  const [mixed, setMixed] = useState(false)
+
+  // Подставляем сохранённые значения при КАЖДОМ открытии (правка 18.08). Раньше поля
+  // всегда стартовали с 15/45/5, и это читалось как «настройки слетели после деплоя»;
+  // хуже того — повторное «Применить» записывало умолчания поверх заданного.
+  useEffect(() => {
+    if (!open) return
+    const rows = ids.map((id) => activity[id]).filter(Boolean)
+    if (!rows.length) { setMixed(false); return }
+    const pick = (get: (a: typeof rows[number]) => number | undefined, fallback: number) => {
+      const vals = rows.map(get).filter((v): v is number => typeof v === 'number')
+      if (!vals.length) return { value: fallback, same: true }
+      return { value: vals[0], same: vals.every((v) => v === vals[0]) }
+    }
+    const th = pick((a) => a.threshold, 15)
+    const rest = pick((a) => a.restMinutes, 45)
+    const rec = pick((a) => a.recoveryPerHour, 5)
+    setThreshold(th.value); setRestMinutes(rest.value); setRecoveryPerHour(rec.value)
+    setMixed(!(th.same && rest.same && rec.same))
+  }, [open, ids, activity])
   const [restNow, setRestNow] = useState(60)
   const [busy, setBusy] = useState(false)
   const [schedule, setSchedule] = useState<SchedulePercent>(() => ({ ...DAY_PRESETS.day.hours }))
@@ -1709,7 +1733,14 @@ function FatigueModal({ open, ids, onClose, onDone, onError }: {
       <p className="mb-3 text-xs text-white/45">
         Усталость общая для ВСЕХ модулей: аккаунт, отработавший смену в комментинге,
         не уйдёт тут же лить реакции — он отдыхает, как живой человек.
+        {ids.length === 1 ? ' Показаны настройки этого аккаунта.' : ' Значения можно задать каждому аккаунту свои — выберите один и откройте это окно из его меню.'}
       </p>
+      {mixed && (
+        <p className="mb-3 rounded-xl border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-200">
+          У выбранных аккаунтов значения различаются — показано значение первого.
+          «Применить» задаст одинаковые всем выбранным.
+        </p>
+      )}
 
       <label className="label">Порог усталости <span className="text-white/30">— действий до отдыха</span></label>
       <NumberField value={threshold} onChange={setThreshold} min={1} max={500} className="input h-10 w-full" />
