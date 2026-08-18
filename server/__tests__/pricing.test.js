@@ -5,7 +5,7 @@
  */
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { ACTION_PRICE, actionPrice, estimateCost, subscriptionCost, modulePrice, MODULE_MONTH_PRICE, SETUPS } from '../pricing.js'
+import { ACTION_PRICE, actionPrice, estimateCost, subscriptionCost, addedCost, modulePrice, MODULE_MONTH_PRICE, SETUPS } from '../pricing.js'
 import { MODULE_DEFS } from '../modules/registry.js'
 
 // Сервисные (не кампанийные, не тарифицируемые) модули — цены у них нет намеренно.
@@ -138,4 +138,32 @@ test('periodCost: годовая скидка — параметр, не кон�
   assert.equal(periodCost(20, 12, 0), 240)
   // Месяц скидку игнорирует при любом значении
   assert.equal(periodCost(20, 1, 0.5), 20)
+})
+
+/**
+ * §11.4 (18.08): платим только за ДОБАВЛЕННОЕ.
+ *
+ * До этого покупка не спрашивала денег вовсе — с нулём на счету открывался любой набор.
+ * Обратная крайность (брать за весь набор при каждом сохранении) наказывала бы за то,
+ * что человек убрал лишний модуль, поэтому считаем разницу.
+ */
+test('addedCost: платим за новые модули, за уже купленные — нет', () => {
+  const { added, monthly } = addedCost(['warming'], ['warming', 'mailing'])
+  assert.deepEqual(added, ['mailing'])
+  assert.equal(monthly, subscriptionCost(['mailing']).sum)
+})
+
+test('addedCost: отключение модуля ничего не стоит', () => {
+  assert.deepEqual(addedCost(['warming', 'mailing'], ['warming']), { added: [], monthly: 0 })
+  assert.deepEqual(addedCost(['warming'], ['warming']), { added: [], monthly: 0 })
+})
+
+test('addedCost: у кого «все модули» — добавлять нечего', () => {
+  assert.deepEqual(addedCost('all', ['mailing', 'warming']), { added: [], monthly: 0 })
+})
+
+test('addedCost: пустой стартовый набор — платим за весь выбор', () => {
+  const { added, monthly } = addedCost([], ['mailing', 'warming'])
+  assert.deepEqual(added.sort(), ['mailing', 'warming'])
+  assert.equal(monthly, subscriptionCost(['mailing', 'warming']).sum)
 })

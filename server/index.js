@@ -1208,11 +1208,10 @@ app.post('/api/subscription', async (req, res) => {
     let charged = 0
     if (personal && !admin && Array.isArray(list)) {
       const before = await getBalance(target)
-      const had = Array.isArray(before.modules) ? before.modules : (before.modules === 'all' ? list : [])
-      const added = list.filter((k) => !had.includes(k))
+      const { addedCost } = await import('./pricing.js')
+      const { added, monthly: addMonthly } = addedCost(before.modules, list, bundlesList, effPrices.monthMap)
       if (added.length) {
-        const addMonthly = subCost(added, bundlesList, effPrices.monthMap)
-        charged = periodCost(addMonthly.sum, months || 1, effPrices.annualDiscount)
+        charged = periodCost(addMonthly, months || 1, effPrices.annualDiscount)
         if ((Number(before.usd) || 0) + 1e-9 < charged) {
           return res.status(402).json({
             ok: false,

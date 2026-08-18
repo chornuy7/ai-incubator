@@ -200,6 +200,25 @@ export function periodCost(monthlySum, months = 1, annualDiscount = ANNUAL_DISCO
   return Math.round(Number(monthlySum) * m * (1 - discount) * 100) / 100
 }
 
+/**
+ * За что списать при смене подписки (§11.4, правка 18.08).
+ *
+ * Платим ТОЛЬКО за добавленное: пользователь, который убрал лишний модуль или просто
+ * пересохранил набор, второй раз платить не должен. До этого покупка вообще не спрашивала
+ * денег — с нулём на счету открывался любой набор.
+ *
+ * @param {string[]|'all'} had что уже оплачено
+ * @param {string[]} wanted что хочет получить
+ * @returns {{ added: string[], monthly: number }} добавленные модули и их цена за месяц
+ */
+export function addedCost(had, wanted, customBundles = [], priceMap = MODULE_MONTH_PRICE) {
+  if (had === 'all') return { added: [], monthly: 0 }
+  const owned = new Set(Array.isArray(had) ? had : [])
+  const added = [...new Set((Array.isArray(wanted) ? wanted : []).filter((k) => !owned.has(k)))]
+  if (!added.length) return { added: [], monthly: 0 }
+  return { added, monthly: subscriptionCost(added, customBundles, priceMap).sum }
+}
+
 export function subscriptionCost(moduleKeys = [], customBundles = [], priceMap = MODULE_MONTH_PRICE, giftMap = {}) {
   const keys = [...new Set(moduleKeys.filter((k) => MODULE_MONTH_PRICE[k] !== undefined))]
   // §3 (MR-21): подарочные токены суммируются по выбранным модулям.
