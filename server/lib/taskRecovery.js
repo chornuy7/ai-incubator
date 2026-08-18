@@ -25,6 +25,21 @@
 export const MAX_BOOT_RESUMES = 3
 
 /**
+ * Сколько действий задача успела сделать. Разные модули пишут прогресс по-разному
+ * (`done` у большинства, `actionsDone` у прогрева, `collected` у парсеров), поэтому
+ * берём максимум из известных счётчиков — нам нужен факт «сдвинулась», а не точное число.
+ */
+export function progressDone(task) {
+  const p = task?.progress || {}
+  return Math.max(
+    Number(p.done) || 0,
+    Number(p.actionsDone) || 0,
+    Number(p.collected) || 0,
+    Number(task?.progressDone) || 0,
+  )
+}
+
+/**
  * Пометить активные задачи как прерванные рестартом и мягко остановить воркеры.
  * Вызывается по сигналу завершения — до того, как процесс умрёт.
  *
@@ -82,7 +97,18 @@ export async function resumeMarkedTasks() {
       const full = await store.loadTask(t.id).catch(() => null)
       if (!full?.resumeOnBoot) continue
 
-      const attempts = Number(full.bootResumes || 0)
+      // Счётчик подъёмов считает ПЕТЛИ, а не деплои. Если с прошлого восстановления
+      // задача успела что-то сделать, значит она живая, а прервал её очередной рестарт —
+      // и счётчик обнуляется. Без этого при нескольких выкатках в день любая длинная
+      // задача умирала на третьей: ровно то, что случилось с прогревом wm_b7f289f9
+      // 18.08 (три деплоя подряд подняли её, четвёртый — остановил на 7/30).
+      const doneNow = progressDone(full)
+      // Обнуляем только при ДОКАЗАННОМ движении: если отметки с прошлого подъёма нет,
+      // сравнивать не с чем — считаем, что прогресса не было. Иначе задача без счётчика
+      // прогресса сбрасывала бы лимит на каждом старте и петля стала бы вечной.
+      const baseline = full.bootResumeProgress
+      const moved = baseline !== undefined && baseline !== null && doneNow > Number(baseline)
+      const attempts = moved ? 0 : Number(full.bootResumes || 0)
       if (attempts >= MAX_BOOT_RESUMES) {
         // Петля: задача поднимается и снова прерывается. Дальше — только руками,
         // иначе каждый старт будет воскрешать то, что стабильно роняет процесс.
@@ -98,6 +124,7 @@ export async function resumeMarkedTasks() {
 
       full.resumeOnBoot = false
       full.bootResumes = attempts + 1
+      full.bootResumeProgress = doneNow
       await store.saveTask(full, { control: true })
 
       try {

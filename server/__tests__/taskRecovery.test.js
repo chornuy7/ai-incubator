@@ -67,3 +67,47 @@ test('счётчик подъёмов растёт — иначе лимит н�
   await store.saveTask(t, { control: true })
   assert.equal(Number(t.bootResumes || 0), 0, 'новая задача начинает с нуля')
 })
+
+// Главный сценарий заказчика: «тысяча юзеров, выкатываем обнову — у всех всё слетает».
+// Деплой не должен тратить лимит автоподъёмов: он для ПЕТЕЛЬ, а не для выкаток.
+test('деплои не съедают лимит: задача, которая работает между рестартами, поднимается снова', async () => {
+  const store = getModuleStore('warming')
+  const t = store.createTask({ accountIds: ['acc_boot_progress'] }, {})
+  t.status = 'paused'
+  t.resumeOnBoot = true
+  // Три подъёма уже израсходованы, но с прошлого раза задача сделала ещё действия.
+  t.bootResumes = MAX_BOOT_RESUMES
+  t.bootResumeProgress = 7
+  t.progress = { done: 12, total: 30 }
+  await store.saveTask(t, { control: true })
+
+  const { skipped } = await resumeMarkedTasks()
+
+  // Проверяем РЕШЕНИЕ восстановления, а не судьбу воркера: в тестовой среде аккаунтов
+  // нет, поэтому поднятая задача тут же и завершится — это к делу не относится.
+  const after = await store.loadTask(t.id)
+  assert.ok(!skipped.some((s) => s.id === t.id && s.reason === 'превышен лимит автоподъёмов'),
+    'лимит не должен срабатывать на задаче, которая двигалась между рестартами')
+  assert.equal(after.bootResumes, 1, 'счётчик начат заново: три прошлых подъёма были деплоями, а не петлёй')
+  assert.equal(after.bootResumeProgress, 12, 'запомнили прогресс на момент подъёма — для следующей проверки')
+  const warned = (after.logs || []).some((l) => /Автовосстановление отключено/.test(l.message))
+  assert.ok(!warned, 'живую задачу не отключаем от автоподъёма')
+})
+
+test('петля без прогресса лимит всё-таки тратит', async () => {
+  const store = getModuleStore('warming')
+  const t = store.createTask({ accountIds: ['acc_boot_loop'] }, {})
+  t.status = 'paused'
+  t.resumeOnBoot = true
+  t.bootResumes = MAX_BOOT_RESUMES
+  // Прогресс не сдвинулся с прошлого подъёма — задача падает, не успев ничего сделать.
+  t.bootResumeProgress = 7
+  t.progress = { done: 7, total: 30 }
+  await store.saveTask(t, { control: true })
+
+  const { skipped } = await resumeMarkedTasks()
+
+  const after = await store.loadTask(t.id)
+  assert.equal(after.status, 'stopped')
+  assert.ok(skipped.some((s) => s.id === t.id && s.reason === 'превышен лимит автоподъёмов'))
+})
