@@ -15,12 +15,12 @@ import { presetHex } from './SavePresetModal'
  *
  * - `PresetBar` — полоса ПЕРЕД всеми настройками: применил шаблон → дальше правишь уже
  *   подставленное, а не заполняешь всё заново, обнаружив шаблоны внизу страницы.
- * - `PresetMenu` — та же кнопка «Шаблон» в нижнем баре, но теперь с выбором, а не только
- *   сохранением.
+ *   Показывается, только когда в модуле есть хотя бы один сохранённый шаблон.
+ * - `PresetMenu` — кнопка «Шаблон» в нижнем баре: выбрать существующий или, если их ещё
+ *   нет, создать первый. Здесь и живёт пустое состояние — оно под кликом и места не занимает.
  *
- * Пустое состояние показываем ЯВНО («шаблонов нет — создать»), а не прячем блок: раньше
- * полоса рендерилась только при `presets.length > 0`, поэтому у нового пользователя кнопка
- * «Шаблон» умела лишь сохранять, и выбор было негде взять.
+ * Раньше выбора не было вообще: кнопка умела только сохранять, а список применения рисовался
+ * внизу и лишь при `presets.length > 0`.
  */
 type PresetProps = {
   presets?: ModulePreset[]
@@ -34,66 +34,58 @@ type PresetProps = {
 }
 
 export function PresetBar({ presets = [], onApply, onSave, onEdit, onDelete, disabled }: PresetProps) {
-  const empty = presets.length === 0
+  // Пока шаблонов нет — полосы вверху НЕТ (правка 18.08): она занимала бы место в шапке
+  // модуля ради строки «у вас нет шаблонов». Создать первый можно из меню кнопки
+  // «Шаблон» внизу — там пустое состояние уместно, оно раскрывается по клику.
+  if (presets.length === 0) return null
   return (
     <div className="rounded-2xl border border-line bg-elevated/40 px-3 py-2.5">
       <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
         <span className="inline-flex shrink-0 items-center gap-1.5 text-xs font-bold uppercase tracking-wide text-muted">
           <Bookmark size={13} /> Шаблоны настроек
         </span>
-        {empty ? (
-          <>
-            <span className="text-sm text-muted">У вас нет шаблонов</span>
-            <button type="button" onClick={onSave} className="btn-ghost ml-auto h-8 text-xs">
-              <Plus size={14} /> Создать шаблон
-            </button>
-          </>
-        ) : (
-          <>
-            <div className="flex min-w-0 flex-wrap items-center gap-2">
-              {presets.map((p) => (
-                <span
-                  key={p.id}
-                  className="group inline-flex items-center gap-1.5 rounded-xl border border-line bg-surface py-1.5 pl-2.5 pr-1.5 text-sm font-medium text-fg transition-colors hover:border-spark-500/40"
-                  style={{ borderLeft: `3px solid ${presetHex(p.color)}` }}
-                >
-                  <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ background: presetHex(p.color) }} />
-                  <button
-                    type="button"
-                    onClick={() => onApply?.(p.settings)}
-                    disabled={disabled}
-                    title="Применить шаблон к настройкам"
-                    className="max-w-[180px] truncate text-left disabled:opacity-50"
-                  >
-                    {p.name}
-                  </button>
-                  {p.owner && (
-                    <span className="shrink-0 rounded-md bg-elevated px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-muted" title="Владелец шаблона">
-                      {p.owner}
-                    </span>
-                  )}
-                  {onEdit && (
-                    <button type="button" onClick={() => onEdit(p)} title="Переименовать шаблон"
-                      className="grid h-5 w-5 shrink-0 place-items-center rounded-lg text-faint hover:bg-spark-500/12 hover:text-spark-300">
-                      <Pencil size={12} />
-                    </button>
-                  )}
-                  {onDelete && (
-                    <button type="button" onClick={() => onDelete(p.id)} title="Удалить шаблон"
-                      className="grid h-5 w-5 shrink-0 place-items-center rounded-lg text-faint hover:bg-rose-500/12 hover:text-rose-300">
-                      <X size={13} />
-                    </button>
-                  )}
+        <div className="flex min-w-0 flex-wrap items-center gap-2">
+          {presets.map((p) => (
+            <span
+              key={p.id}
+              className="group inline-flex items-center gap-1.5 rounded-xl border border-line bg-surface py-1.5 pl-2.5 pr-1.5 text-sm font-medium text-fg transition-colors hover:border-spark-500/40"
+              style={{ borderLeft: `3px solid ${presetHex(p.color)}` }}
+            >
+              <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ background: presetHex(p.color) }} />
+              <button
+                type="button"
+                onClick={() => onApply?.(p.settings)}
+                disabled={disabled}
+                title="Применить шаблон к настройкам"
+                className="max-w-[180px] truncate text-left disabled:opacity-50"
+              >
+                {p.name}
+              </button>
+              {p.owner && (
+                <span className="shrink-0 rounded-md bg-elevated px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-muted" title="Владелец шаблона">
+                  {p.owner}
                 </span>
-              ))}
-            </div>
-            <button type="button" onClick={onSave} className="btn-ghost ml-auto h-8 shrink-0 text-xs" title="Сохранить текущие настройки как новый шаблон">
-              <Save size={14} /> Сохранить текущие
-            </button>
-          </>
-        )}
+              )}
+              {onEdit && (
+                <button type="button" onClick={() => onEdit(p)} title="Переименовать шаблон"
+                  className="grid h-5 w-5 shrink-0 place-items-center rounded-lg text-faint hover:bg-spark-500/12 hover:text-spark-300">
+                  <Pencil size={12} />
+                </button>
+              )}
+              {onDelete && (
+                <button type="button" onClick={() => onDelete(p.id)} title="Удалить шаблон"
+                  className="grid h-5 w-5 shrink-0 place-items-center rounded-lg text-faint hover:bg-rose-500/12 hover:text-rose-300">
+                  <X size={13} />
+                </button>
+              )}
+            </span>
+          ))}
+        </div>
+        <button type="button" onClick={onSave} className="btn-ghost ml-auto h-8 shrink-0 text-xs" title="Сохранить текущие настройки как новый шаблон">
+          <Save size={14} /> Сохранить текущие
+        </button>
       </div>
-      {!empty && <p className="mt-1.5 text-xs text-muted">Клик по названию — подставить сохранённые настройки. Выбор аккаунтов не меняется.</p>}
+      <p className="mt-1.5 text-xs text-muted">Клик по названию — подставить сохранённые настройки. Выбор аккаунтов не меняется.</p>
     </div>
   )
 }
