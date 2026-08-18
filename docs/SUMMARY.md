@@ -28,6 +28,7 @@
 * [Контракт: state machine аккаунта](CONTRACT-account-state-machine.md)
 * [Контракт: блокировки и lease](CONTRACT-locks-lease.md)
 * [Контракт: журнал аудита](CONTRACT-audit-log.md)
+* [Контракт: журнал действий модулей (LOG-001)](CONTRACT-action-log.md)
 * [Контракт: роли и доступы](CONTRACT-rbac.md)
 
 ## Прогоны и качество
