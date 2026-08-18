@@ -103,7 +103,7 @@ async function goalExpired(settings) {
     return !!goal && isGoalExpired(goal)
   } catch { return false } // сбой чтения цели не должен останавливать работу
 }
-import { filterBlacklisted, isBlacklistedSync } from '../targetBlacklist.js'
+import { filterBlacklisted, isBlacklistedSync, isBlacklistedMailingTarget } from '../targetBlacklist.js'
 
 /** @type {Map<string, Promise<void>>} */
 const running = new Map()
@@ -2243,7 +2243,13 @@ export async function runMailing(task, store) {
   const accountIds = Array.isArray(s.accountIds) ? s.accountIds : []
   // §8.4: цель рассылки — номер ИЛИ юзернейм. Раньше принимались только номера,
   // а юзернеймы молча превращались в чужие номера (из строки вырезались цифры).
-  const mailTargets = classifyMailingTargets(s.targets)
+  // Чёрный список действует и на рассылку. Раньше он применялся только к каналам и
+  // группам (через `targets()`), а получатели мейлинга шли мимо — то есть человеку,
+  // которого явно занесли в ЧС, спокойно уходило личное сообщение. Это худшее место
+  // для такой дыры: в ЛС «больше не пишите» означает жалобу, а не просто отписку.
+  const allMailTargets = classifyMailingTargets(s.targets)
+  const mailTargets = allMailTargets.filter((t) => !isBlacklistedMailingTarget(t.kind, t.value))
+  const blacklisted = allMailTargets.length - mailTargets.length
   const phonesCount = mailTargets.filter((t) => t.kind === 'phone').length
   const handlesCount = mailTargets.length - phonesCount
   const message = String(s.promptText || s.message || '').trim()
@@ -2253,6 +2259,9 @@ export async function runMailing(task, store) {
   task.accountStats = task.accountStats || {}
   await store.saveTask(task)
   await store.appendLog(task, 'info', `Мейлинг: ${mailTargets.length} целей (номеров ${phonesCount}, юзернеймов ${handlesCount}) на ${accountIds.length} аккаунт(ов)`)
+  // Сколько отсеял ЧС — отдельной строкой: молчаливое сокращение списка выглядит
+  // как потеря получателей, и оператор идёт искать несуществующий баг.
+  if (blacklisted) await store.appendLog(task, 'info', `Чёрный список: исключено получателей — ${blacklisted}`)
 
   if (!mailTargets.length) { await store.appendLog(task, 'warning', 'Нет корректных целей для рассылки'); task.status = 'done'; await store.saveTask(task); return }
   if (!accountIds.length) { await store.appendLog(task, 'warning', 'Не выбраны аккаунты'); task.status = 'done'; await store.saveTask(task); return }

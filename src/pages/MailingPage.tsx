@@ -18,7 +18,7 @@ import { ModuleNotPaid } from '@/features/billing/ModuleNotPaid'
 import { isHidden } from '@/shared/config/routes'
 // §3.1 (MR-114): рассылка приведена к общей структуре модулей — те же переиспользуемые
 // блоки (SectionCard + нижняя LaunchPanel со степпером), что и в LiveModule/парсерах.
-import { SectionCard, LaunchPanel, LaunchSteps, markCurrentStep, TaskStartedModal, ProtectionBlock } from '@/features/modules/shared'
+import { SectionCard, LaunchPanel, LaunchSteps, markCurrentStep, TaskStartedModal, ProtectionBlock, BlacklistEditor } from '@/features/modules/shared'
 import { LaunchCost } from '@/features/modules/shared/LaunchCost'
 import { useModuleTask } from '@/features/modules/shared/useModuleTask'
 
@@ -287,6 +287,14 @@ function MailingInner() {
             <textarea className="input min-h-[110px] font-mono text-sm" value={numbersText} onChange={(e) => setNumbersText(e.target.value)} placeholder={'+380671234567\n@username\nhttps://t.me/username'} />
           </SectionCard>
         </div>
+
+        {/*
+          Чёрный список — как в остальных модулях, но здесь он важнее всего: в личку
+          пишем незнакомым людям, и «больше не пишите» должно исполняться. Список общий
+          на всю платформу, поэтому занесённый однажды человек выпадает и из рассылок,
+          и из комментинга. Номера сверяются по цифрам, юзернеймы — как обычно.
+        */}
+        <BlacklistEditor title="Чёрный список получателей" compact />
 
         {/* 3. Защита — 3-м блоком, после «Получателей» (правка 10.08, MR-136). */}
         <div id="sec-settings" className="scroll-mt-24">

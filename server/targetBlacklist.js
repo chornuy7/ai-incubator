@@ -40,6 +40,28 @@ export function isBlacklistedSync(target) {
   return cache.has(normalizeTarget(target))
 }
 
+/**
+ * Проверка цели МЕЙЛИНГА — номера или юзернейма.
+ *
+ * Обычный `isBlacklistedSync` сравнивает нормализованные строки и для номеров не годится:
+ * в списке лежит «+380 50 123-45-67», а в рассылку приходит «380501234567» — с виду одно
+ * и то же, для Set это разные ключи. Номера сверяем по цифрам, юзернеймы — как раньше.
+ *
+ * @param {'phone'|'username'} kind @param {string} value
+ */
+export function isBlacklistedMailingTarget(kind, value) {
+  if (kind === 'username') return isBlacklistedSync(value)
+  const digits = String(value || '').replace(/\D/g, '')
+  if (digits.length < 7) return false
+  for (const entry of cache) {
+    const d = entry.replace(/\D/g, '')
+    // Хвост номера: «0501234567» в списке должен ловить «380501234567» в рассылке —
+    // один и тот же человек, записанный с кодом страны и без него.
+    if (d.length >= 7 && (d === digits || digits.endsWith(d) || d.endsWith(digits))) return true
+  }
+  return false
+}
+
 /** Полностью заменить список. @param {string[]} entries */
 export async function setBlacklist(entries) {
   cache = new Set((entries || []).map(normalizeTarget).filter(Boolean))
