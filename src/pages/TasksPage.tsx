@@ -68,8 +68,11 @@ const isActive = (t: ModuleTask) => t.status === 'running' || t.status === 'queu
 // (server/lib/workerLoop.js warmingPace: 0→40, 1→20, 2→10).
 const WARM_ACTIONS_PER_DAY = [40, 20, 10]
 
+// Статусы, для которых ETA имеет смысл: работа ещё не завершена. У running — время до
+// конца, у queued/paused/stopped — прогноз «при запуске». done/error — считать нечего.
+const ETA_STATUSES = new Set(['running', 'queued', 'paused', 'stopped'])
 function taskEtaMs(t: ModuleTask): number | null {
-  if (t.status !== 'running') return null
+  if (!ETA_STATUSES.has(t.status)) return null
   const done = t.progress?.done ?? t.progress?.actionsDone ?? 0
   const total = t.progress?.total ?? 0
   if (total <= done) return null
@@ -766,10 +769,11 @@ function TaskCard({ t, goalName, busy, busyAction, pendingAction, onOpen, onStop
               а «сколько стоила вот эта задача» — первый вопрос при разборе счёта. */}
           {!!t.spentCoins && <span className="tabular-nums text-amber-300/80" title="Потрачено монет на эту задачу">⚡ {fmtCoins(t.spentCoins)}</span>}
           <span>{new Date(t.createdAt).toLocaleString('ru-RU', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}</span>
-          {/* MR-109: ETA — прогноз, сколько ещё бежать. Только у работающих задач и только
-              когда есть по чему судить (уже что-то сделано) — иначе не показываем. */}
-          {(() => { const e = taskEtaMs(t); return e == null ? null : (
-            <span className="inline-flex items-center gap-1 tabular-nums text-emerald-300/80" title="Прогноз времени до завершения — по текущему темпу"><Clock size={11} /> ≈ {fmtDur(e / 1000)}</span>
+          {/* MR-109: ETA — прогноз оставшегося времени. У работающей задачи (зелёным) —
+              время до конца; у остановленной/на паузе (приглушённо, «при запуске») — сколько
+              займёт, если её запустить/возобновить. Не показываем у готовых и с ошибкой. */}
+          {(() => { const e = taskEtaMs(t); if (e == null) return null; const run = t.status === 'running'; return (
+            <span className={cn('inline-flex items-center gap-1 tabular-nums', run ? 'text-emerald-300/80' : 'text-white/35')} title={run ? 'Прогноз времени до завершения — по текущему темпу' : 'Сколько ещё займёт задача, если её запустить/возобновить'}><Clock size={11} /> ≈ {fmtDur(e / 1000)}{run ? '' : ' при запуске'}</span>
           ) })()}
         </div>
       </div>
@@ -1088,9 +1092,10 @@ export function TaskDetailPage() {
             {/* MR-147: «Модуль» и «Потрачено» перенесены сюда, к прогрессу. */}
             <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-sm text-white/60">
               <span>{t.progress?.done ?? t.progress?.actionsDone ?? 0} / {t.progress?.total ?? 0} действий</span>
-              {/* MR-109: ETA работающей задачи — прогноз по текущему темпу. */}
-              {(() => { const e = taskEtaMs(t); return e == null ? null : (
-                <span className="inline-flex items-center gap-1 tabular-nums text-emerald-300/80" title="Прогноз времени до завершения — по текущему темпу"><Clock size={13} /> ≈ {fmtDur(e / 1000)}</span>
+              {/* MR-109: ETA — у работающей задачи время до конца (зелёным), у остановленной/
+                  на паузе прогноз «при запуске» (приглушённо). */}
+              {(() => { const e = taskEtaMs(t); if (e == null) return null; const run = t.status === 'running'; return (
+                <span className={cn('inline-flex items-center gap-1 tabular-nums', run ? 'text-emerald-300/80' : 'text-white/40')} title={run ? 'Прогноз времени до завершения — по текущему темпу' : 'Сколько ещё займёт задача, если её запустить/возобновить'}><Clock size={13} /> ≈ {fmtDur(e / 1000)}{run ? '' : ' при запуске'}</span>
               ) })()}
               {/* Голая цифра «⚡ 0.00» ни о чём не говорила — подписываем, что это расход
                   ИМЕННО этой задачи (из общего баланса он не читается). */}
