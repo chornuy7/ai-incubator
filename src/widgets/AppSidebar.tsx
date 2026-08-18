@@ -12,6 +12,9 @@ import { cn } from '@/shared/lib/utils'
 
 const GROUP_ORDER: RouteDef['group'][] = ['main', 'modules', 'parsing', 'account']
 
+/** Страницы группы «Парсинг», которые не являются модулями и не имеют своей цены. */
+const PARSING_HELPER_PATHS = new Set(['/panel/channels', '/panel/parsing-history'])
+
 function Logo({ collapsed }: { collapsed: boolean }) {
   return (
     // Клик по логотипу ведёт на лендинг (как «домой» на большинстве сайтов). Путь
@@ -83,9 +86,16 @@ export function AppSidebar({ mobile = false }: { mobile?: boolean }) {
   // MR-157: пока не куплен НИ ОДИН модуль (пустой набор / незарегистрированный) — показываем
   // ВСЕ модули как промо (клик → панель «купить доступ»). Купили ≥1 — прячем неоплаченные.
   const ownsNoModules = Array.isArray(planModules) && planModules.length === 0
+  // Подсобные страницы парсинга — база каналов и логи парсинга — сами модулями не
+  // являются, поэтому проверку подписки они проходили насквозь. Купив нейродиалоги,
+  // человек получал в меню раздел «Парсинг» с двумя пунктами, которых не покупал
+  // (правка 18.08). Привязываем их к семье: есть хоть один парсер — есть и они.
+  const hasAnyParser = planModules === 'all'
+    || (Array.isArray(planModules) && planModules.some((k) => k === 'parsing' || k.startsWith('parsing-')))
   const allowed = (r: RouteDef) => {
     const mk = anyModuleKeyFromPath(r.path)
     if (mk && !ownsNoModules && !planHasModule(planModules, mk)) return false
+    if (PARSING_HELPER_PATHS.has(r.path) && !ownsNoModules && !hasAnyParser) return false
     if (!sessionUser) return true
     return canAccessPath(sessionUser.permissions, sessionUser.isAdmin, r.path, sessionUser.isOwner)
   }
