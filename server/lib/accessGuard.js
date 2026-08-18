@@ -42,12 +42,17 @@ export function moduleAccessGuard(keyFrom) {
         return res.status(403).json({ ok: false, error: `Нет доступа к модулю (роли «${names}»)` })
       }
 
-      // Подписка: `'all'` — без ограничений; пустой набор — состояние «ещё ничего не
-      // куплено», его гейт не трогает (витрина показывает модули как промо).
+      // Подписка: `'all'` — без ограничений, список — строго по нему. Пустой набор с
+      // 18.08 означает «не куплено ничего», и раньше он гейт не проходил, а обходил:
+      // свежая регистрация запускала любой модуль. Витрина по-прежнему показывает
+      // модули как промо — смотреть можно, работать нельзя.
       const { getBalance } = await import('../balance.js')
       const { modules } = await getBalance(userId)
-      if (Array.isArray(modules) && modules.length > 0 && !modules.includes(key)) {
-        return res.status(403).json({ ok: false, error: 'Модуль не входит в вашу подписку' })
+      if (Array.isArray(modules) && !modules.includes(key)) {
+        return res.status(403).json({
+          ok: false,
+          error: modules.length ? 'Модуль не входит в вашу подписку' : 'Модуль не оплачен — оформите подписку',
+        })
       }
       return next()
     } catch {

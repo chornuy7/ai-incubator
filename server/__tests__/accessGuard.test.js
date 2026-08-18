@@ -156,3 +156,21 @@ test('владелец без роли работает со своими опл
   assert.equal(denied?.code, 403, 'неоплаченный модуль закрыт даже владельцу')
   assert.match(denied?.body?.error || '', /подписк/i, 'причина отказа — подписка, а не роль')
 })
+
+test('ничего не куплено — модули не запускаются (промо только смотрит)', async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'guard-empty-'))
+  process.env.USERS_FILE = path.join(dir, 'users.json')
+  process.env.BALANCE_FILE = path.join(dir, 'balance.json')
+  const { createUser } = await import('../users.js')
+  const { moduleAccessGuard } = await import('../lib/accessGuard.js')
+
+  const fresh = await createUser({ email: 'guard.fresh@x.y', password: 'secret1', name: 'Новичок', roleIds: [] })
+  let denied = null
+  await moduleAccessGuard(() => 'neuro-chatting')(
+    { header: () => fresh.id },
+    { status: (code) => ({ json: (body) => { denied = { code, body } } }) },
+    () => { denied = 'passed' },
+  )
+  assert.equal(denied?.code, 403, 'свежая регистрация без покупки не запускает модули')
+  assert.match(denied?.body?.error || '', /не оплачен/i)
+})
