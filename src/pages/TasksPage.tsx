@@ -21,6 +21,7 @@ import { canControlModule } from '@/shared/lib/access'
 import { downloadXls } from '@/shared/lib/exportXls'
 import { useTabParam } from '@/shared/lib/useTabParam'
 import { AccountPicker } from '@/features/account-picker/AccountPicker'
+import { PRESET_MUL } from '@/features/modules/shared/TimingSection'
 
 const STATUS: Record<string, { label: string; tone: 'spark' | 'iris' | 'amber' | 'rose' | 'muted' }> = {
   running: { label: 'Выполняется', tone: 'spark' },
@@ -51,24 +52,44 @@ function pct(t: ModuleTask) {
 }
 const isActive = (t: ModuleTask) => t.status === 'running' || t.status === 'queued'
 
-// MR-109 (ТЗ 06.08, TASK-001): ETA — сколько ещё бежать РАБОТАЮЩЕЙ задаче. Считаем по
-// фактическому темпу: раз уже сделано `done` действий за прошедшее время, оставшиеся
-// `total-done` займут пропорционально столько же. Это честнее прогноза по задержкам
-// (тот врёт при FloodWait/паузах воркера), но требует, чтобы задача реально шла и хоть
-// что-то успела. До первого действия и у не-running задач ETA не показываем — врать «0 с»
-// хуже, чем не показать. Возвращает миллисекунды остатка или null.
+// MR-109 (ТЗ 06.08, TASK-001): ETA — сколько ещё бежать РАБОТАЮЩЕЙ задаче.
+//
+// Считаем НЕ по факту (прошедшее время / сделано): задачу могли создать вчера, поставить
+// на паузу и возобновить сегодня — тогда «прошедшее время» это сутки простоя, а не работы,
+// и ETA получался бы абсурдным («≈ 24 ч» на прогрев из двух действий). Считаем по ТЕМПУ
+// самого модуля — так же, как оценка времени в панели ДО запуска (§10.1), она стабильна и
+// не зависит от пауз воркера:
+//  - прогрев меряется днями: уровень задаёт «действий/день на аккаунт» (см. ниже);
+//  - остальные модули — «остаток действий × средняя задержка между действиями».
+// Остаток делится между аккаунтами: они работают параллельно. Показываем только у running
+// и только когда есть чем считать; иначе null (не врём «0 с»).
+
+// Прогрев: уровень → действий/день на аккаунт. ДОЛЖНО совпадать с сервером
+// (server/lib/workerLoop.js warmingPace: 0→40, 1→20, 2→10).
+const WARM_ACTIONS_PER_DAY = [40, 20, 10]
+
 function taskEtaMs(t: ModuleTask): number | null {
   if (t.status !== 'running') return null
   const done = t.progress?.done ?? t.progress?.actionsDone ?? 0
   const total = t.progress?.total ?? 0
-  if (done <= 0 || total <= done) return null
-  const elapsed = Date.now() - t.createdAt
-  if (elapsed <= 0) return null
-  const perAction = elapsed / done
-  return Math.round(perAction * (total - done))
+  if (total <= done) return null
+  const s = t.settings || {}
+  const accounts = Math.max(1, (s.accountIds || []).length)
+  const perAccRemaining = Math.ceil((total - done) / accounts)
+  // Прогрев: темп задаётся уровнем в действиях/день, а не задержкой между действиями.
+  if (t.moduleKey === 'warming') {
+    const perDay = WARM_ACTIONS_PER_DAY[s.warmLevel ?? 1] ?? 20
+    return perDay > 0 ? Math.round((perAccRemaining / perDay) * 86400 * 1000) : null
+  }
+  // Остальные модули: остаток × средняя задержка (та же формула, что в панели до запуска).
+  const d = s.delays?.action ?? s.delays?.comment
+  if (!d) return null
+  const mul = PRESET_MUL[s.delayPreset ?? 1] ?? 1
+  const avgDelaySec = ((d[0] + d[1]) / 2) * mul
+  return avgDelaySec > 0 ? Math.round(perAccRemaining * avgDelaySec * 1000) : null
 }
 
-/** Секунды → человекочитаемо: «45 с», «12 мин», «6 ч 20 мин» (как в панели запуска). */
+/** Секунды → человекочитаемо: «45 с», «12 мин», «6 ч 20 мин», «5 дн 4 ч» (как в панели запуска). */
 function fmtDur(sec: number): string {
   const s = Math.max(0, Math.round(sec))
   if (s < 60) return `${s} с`
@@ -76,7 +97,10 @@ function fmtDur(sec: number): string {
   if (m < 60) return `${m} мин`
   const h = Math.floor(m / 60)
   const rm = m % 60
-  return rm ? `${h} ч ${rm} мин` : `${h} ч`
+  if (h < 24) return rm ? `${h} ч ${rm} мин` : `${h} ч`
+  const dd = Math.floor(h / 24)
+  const rh = h % 24
+  return rh ? `${dd} дн ${rh} ч` : `${dd} дн`
 }
 
 /** Проблемные аккаунты задачи: сколько, из скольких и ЧТО именно не так у каждого. */
