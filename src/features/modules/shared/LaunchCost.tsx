@@ -101,12 +101,16 @@ export function LaunchCost({ moduleKey, actions, accounts, delaySec, compact }: 
   // токенов на витрине больше нет — цена действия фиксированная и предсказуемая.
   const total = r3(price * n)
   const fmt = fmtCoins
+  // Текст в цене есть только у ИИ-модулей — у просмотров/реакций/парсеров его нет (MR-149).
+  const hasText = (pricing?.maxTextTokens?.[moduleKey] ?? 0) > 0
 
   // Компактный вид для нижней панели: цена и время — чипами, детали — в подсказке.
   if (compact) {
     const costHint = [
       `${n} ${plural(n, 'действие', 'действия', 'действий')} × ${price} ⚡ = ${fmt(total)} ⚡`,
-      'Цена за действие фиксированная: текст оплачен по максимуму символов (4096 / 1024 с картинкой), сверх неё за токены не списывается.',
+      hasText
+        ? 'Цена за действие фиксированная: текст оплачен по максимуму символов (4096 / 1024 с картинкой), сверх неё за токены не списывается.'
+        : 'Цена за действие фиксированная.',
     ].join('\n')
 
     return (
@@ -134,7 +138,7 @@ export function LaunchCost({ moduleKey, actions, accounts, delaySec, compact }: 
       <Zap size={15} className="text-amber-400" fill="currentColor" />
       <span className="font-semibold text-fg">Спишется {fmt(total)} ⚡</span>
       <span className="text-muted">
-        — {n} {plural(n, 'действие', 'действия', 'действий')} × {price} ⚡ (текст по максимуму символов уже в цене)
+        — {n} {plural(n, 'действие', 'действия', 'действий')} × {price} ⚡{hasText ? ' (текст по максимуму символов уже в цене)' : ''}
       </span>
       {timeAvg && (
         <CostTip hint={timeHint} className="ml-auto items-center gap-1 text-sm font-semibold text-emerald-300">
@@ -183,13 +187,17 @@ export function ActionPriceCalc({ moduleKey }: { moduleKey: string }) {
   // MR-149: показываем ЕДИНУЮ цену действия (база + текст по максимуму). Фолбэк на базу.
   const price = pricing?.actionsFull?.[moduleKey] ?? pricing?.actions?.[moduleKey] ?? 0
   if (!pricing || !price) return null
+  // «Действие = до N символов» имеет смысл только там, где действие ГЕНЕРИТ ИИ-текст
+  // (комментинг/чаттинг/диалоги/мейлинг). У просмотров/реакций/парсеров текста нет —
+  // строку про символы там не показываем (MR-149).
+  const hasText = (pricing?.maxTextTokens?.[moduleKey] ?? 0) > 0
   return (
     <div className="flex flex-wrap items-center gap-x-4 gap-y-1 rounded-2xl border border-amber-500/20 bg-amber-500/[.05] px-4 py-2.5 text-sm">
       <span className="flex items-center gap-1.5 font-bold text-amber-300">
         <Zap size={15} fill="currentColor" /> {fmtCoins(price)} ⚡
         <span className="font-normal text-white/60">за действие</span>
       </span>
-      <span className="text-white/50">1 действие = до 4096 символов (1024 с картинкой)</span>
+      {hasText && <span className="text-white/50">1 действие = до 4096 символов (1024 с картинкой)</span>}
     </div>
   )
 }
