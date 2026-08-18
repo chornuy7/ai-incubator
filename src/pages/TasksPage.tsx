@@ -67,6 +67,10 @@ const isActive = (t: ModuleTask) => t.status === 'running' || t.status === 'queu
 // Прогрев: уровень → действий/день на аккаунт. ДОЛЖНО совпадать с сервером
 // (server/lib/workerLoop.js warmingPace: 0→40, 1→20, 2→10).
 const WARM_ACTIONS_PER_DAY = [40, 20, 10]
+// Дефолтная задержка между действиями, сек — та же, что в LiveModule DEFAULT_DELAYS.action.
+// Нужна как запасной темп для СТАРЫХ задач, у которых в settings задержки не сохранены
+// (тогда без фолбэка ETA не считался вовсе). У свежих задач задержки свои — берутся они.
+const DEFAULT_ACTION_DELAY: [number, number] = [30, 120]
 
 // Статусы, для которых ETA имеет смысл: работа ещё не завершена. У running — время до
 // конца, у queued/paused/stopped — прогноз «при запуске». done/error — считать нечего.
@@ -85,8 +89,9 @@ function taskEtaMs(t: ModuleTask): number | null {
     return perDay > 0 ? Math.round((perAccRemaining / perDay) * 86400 * 1000) : null
   }
   // Остальные модули: остаток × средняя задержка (та же формула, что в панели до запуска).
-  const d = s.delays?.action ?? s.delays?.comment
-  if (!d) return null
+  // Нет сохранённых задержек (старая задача) — берём дефолтный темп модуля, чтобы ETA
+  // всё же показать примерным, а не прятать его совсем.
+  const d = s.delays?.action ?? s.delays?.comment ?? DEFAULT_ACTION_DELAY
   const mul = PRESET_MUL[s.delayPreset ?? 1] ?? 1
   const avgDelaySec = ((d[0] + d[1]) / 2) * mul
   return avgDelaySec > 0 ? Math.round(perAccRemaining * avgDelaySec * 1000) : null
