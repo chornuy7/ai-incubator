@@ -13,7 +13,7 @@
 import { dataPath, readJson, mutateJson } from './lib/jsonStore.js'
 import { mapStore } from './lib/tableStore.js'
 import {
-  DEFAULT_FATIGUE, DEFAULT_SCHEDULE, applyAction, fatigueGate, scheduleGate,
+  DEFAULT_FATIGUE, DEFAULT_SCHEDULE, applyAction, fatigueGate, scheduleGate, freeAt,
   currentFatigue, normalizeFatigueProfile, normalizeSchedule, scheduleForAccount,
 } from './lib/accountFatigue.js'
 
@@ -92,6 +92,9 @@ export async function listActivity() {
       restUntil: Number(s.restUntil) || 0,
       actionsTotal: Number(s.actionsTotal) || 0,
       resting: (Number(s.restUntil) || 0) > now,
+      // Когда аккаунт вернётся в строй (0 — уже может). Карточка показывает обратный
+      // отсчёт: «устал» без срока — половина ответа.
+      freeAt: freeAt(s, profile, now),
       // Шанс текущего часа: без него «почему аккаунт ничего не делает» приходится
       // выяснять по логам задачи — а ответ обычно именно здесь.
       chanceNow: Math.round((schedule[hour] || 0) * 100),

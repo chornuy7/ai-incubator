@@ -9,6 +9,8 @@ export interface AccountActivity {
   restMinutes: number
   /** Восстановление — единиц усталости за час. */
   recoveryPerHour: number
+  /** Когда снова сможет работать (мс). 0 — может прямо сейчас. */
+  freeAt: number
   restUntil: number
   actionsTotal: number
   resting: boolean

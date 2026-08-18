@@ -9,7 +9,7 @@ import os from 'node:os'
 import path from 'node:path'
 
 import {
-  DEFAULT_FATIGUE, DEFAULT_SCHEDULE, currentFatigue, fatigueGate,
+  DEFAULT_FATIGUE, DEFAULT_SCHEDULE, currentFatigue, fatigueGate, freeAt,
   applyAction, scheduleGate, normalizeFatigueProfile,
   normalizeSchedule, scheduleToPercent, scheduleForAccount,
 } from '../lib/accountFatigue.js'
@@ -285,4 +285,32 @@ test('после отдыха новое действие снова копит 
   assert.equal(currentFatigue(state, profile, afterRest), 0)
   const again = applyAction(state, profile, afterRest)
   assert.equal(again.fatigue, 1, 'счёт начинается заново, а не продолжает старый')
+})
+
+/**
+ * Срок возврата в строй (правка 18.08): карточка писала «устал», но не говорила, до
+ * каких пор — и оператор шёл сбрасывать усталость руками, хотя ждать оставалось минуты.
+ */
+test('freeAt: во время перерыва — его конец', () => {
+  const M = 60000
+  const now = 1_000_000_000
+  const profile = { threshold: 1, restMinutes: 3, recoveryPerHour: 1 }
+  const state = applyAction({}, profile, now)
+  assert.equal(freeAt(state, profile, now + M), state.restUntil)
+})
+
+test('freeAt: порог понизили после работы — ждём восстановления', () => {
+  const H = 3600000
+  const now = 1_000_000_000
+  // Было «3 из 15», порог сменили на 1: перерыв не назначался, но работать нельзя.
+  const state = { fatigue: 3, lastActionAt: now, restUntil: 0 }
+  const profile = { threshold: 1, restMinutes: 45, recoveryPerHour: 1 }
+  // Нужно опустить 3 → 0 при 1 в час: три часа.
+  assert.equal(Math.round((freeAt(state, profile, now) - now) / H), 3)
+})
+
+test('freeAt: аккаунт в строю — ноль', () => {
+  const now = 1_000_000_000
+  assert.equal(freeAt({ fatigue: 0 }, DEFAULT_FATIGUE, now), 0)
+  assert.equal(freeAt({ fatigue: 3, lastActionAt: now }, DEFAULT_FATIGUE, now), 0, 'порог 15 — три действия не помеха')
 })

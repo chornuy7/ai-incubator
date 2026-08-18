@@ -1336,9 +1336,23 @@ function AccountsTable(props: {
                             </Tip>
                           )
                         }
+                        // «Устал» и «устаёт» — разные состояния, и раньше оба назывались
+                        // «устаёт»: аккаунт, который УЖЕ не берут в работу, выглядел как
+                        // тот, что вот-вот устанет. Плюс срок возврата — «устал» без него
+                        // отвечает лишь на половину вопроса (правка 18.08).
+                        if (act.threshold > 0 && act.fatigue >= act.threshold) {
+                          const left = act.freeAt ? Math.ceil((act.freeAt - Date.now()) / 60000) : 0
+                          return (
+                            <Tip text={`Усталость ${act.fatigue} из ${act.threshold} — в работу не берётся ни одним модулем${left > 0 ? `, вернётся через ${fmtLeft(left)}` : ''}.`}>
+                              <span className="rounded-md bg-rose-500/15 px-1.5 py-0.5 text-[10px] font-bold text-rose-300">
+                                устал {act.fatigue}/{act.threshold}{left > 0 ? ` · ${fmtLeft(left)}` : ''}
+                              </span>
+                            </Tip>
+                          )
+                        }
                         if (act.threshold > 0 && act.fatigue / act.threshold >= 0.7) {
                           return (
-                            <Tip text={`Усталость ${act.fatigue} из ${act.threshold} — скоро уйдёт на отдых во всех модулях.`}>
+                            <Tip text={`Усталость ${act.fatigue} из ${act.threshold} — скоро уйдёт на перерыв во всех модулях.`}>
                               <span className="rounded-md bg-amber-500/15 px-1.5 py-0.5 text-[10px] font-bold text-amber-300">устаёт {act.fatigue}/{act.threshold}</span>
                             </Tip>
                           )
@@ -1672,6 +1686,14 @@ function UnblockModal({ open, ids, onClose, onFinished, pushToast }: {
  * разово «сейчас», сбросить усталость — вернуть в строй раньше срока. Смешивать их
  * в одной кнопке значило бы, что оператор не понимает, что именно применил.
  */
+/** Остаток до возврата в строй: минуты человеческим текстом. */
+function fmtLeft(minutes: number): string {
+  if (minutes < 60) return `${minutes} мин`
+  const h = Math.floor(minutes / 60)
+  const m = minutes % 60
+  return m ? `${h} ч ${m} мин` : `${h} ч`
+}
+
 function FatigueModal({ open, ids, activity, onClose, onDone, onError }: {
   open: boolean
   ids: string[]
@@ -1854,6 +1876,23 @@ function FatigueModal({ open, ids, activity, onClose, onDone, onError }: {
         >
           Сбросить усталость и вернуть в строй
         </button>
+
+        {/* Текущее состояние выбранного аккаунта — внизу окна, где его и ищут: сколько
+            накоплено и когда вернётся в строй сам, без «сбросить». */}
+        {ids.length === 1 && activity[ids[0]] && (() => {
+          const a = activity[ids[0]]
+          const left = a.freeAt ? Math.ceil((a.freeAt - Date.now()) / 60000) : 0
+          return (
+            <p className="mt-3 rounded-xl border border-line bg-elevated/40 px-3 py-2 text-xs text-white/60">
+              Сейчас: усталость <b className="text-fg">{a.fatigue} из {a.threshold}</b>
+              {a.resting
+                ? <> · на перерыве, вернётся через <b className="text-fg">{fmtLeft(left)}</b></>
+                : left > 0
+                  ? <> · в работу не берётся, вернётся через <b className="text-fg">{fmtLeft(left)}</b></>
+                  : <> · <span className="text-spark-300">готов к работе</span></>}
+            </p>
+          )
+        })()}
       </div>
     </Modal>
   )

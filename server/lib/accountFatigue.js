@@ -149,6 +149,29 @@ export function currentFatigue(state = {}, profile = DEFAULT_FATIGUE, now = Date
 }
 
 /**
+ * Когда аккаунт снова сможет работать. 0 — может прямо сейчас.
+ *
+ * Две причины простоя дают разное время. Назначен обязательный перерыв — ждём его конца.
+ * Перерыва нет, но счётчик выше порога (так бывает, когда порог ПОНИЗИЛИ уже после
+ * работы: было «2 из 15», стало «2 из 1») — ждём, пока восстановление опустит его под
+ * порог. Без этого числа карточка говорила «устал», но не говорила, до каких пор.
+ */
+export function freeAt(state = {}, profile = DEFAULT_FATIGUE, now = Date.now()) {
+  const p = { ...DEFAULT_FATIGUE, ...(profile || {}) }
+  const rest = Number(state.restUntil) || 0
+  if (rest > now) return rest
+  const f = currentFatigue(state, p, now)
+  if (f < p.threshold) return 0
+  const rec = Math.max(1, Number(p.recoveryPerHour) || 1)
+  const last = Number(state.lastActionAt) || now
+  const base = Math.max(0, Number(state.fatigue) || 0)
+  // Счётчик целый (округление вверх), поэтому «ниже порога» наступает, когда сырое
+  // значение опустится до threshold - 1.
+  const hoursNeeded = (base - (p.threshold - 1)) / rec
+  return Math.max(now, last + hoursNeeded * HOUR_MS)
+}
+
+/**
  * Может ли аккаунт работать прямо сейчас: не устал ли и не на обязательном ли отдыхе.
  * @returns {{ok:true} | {ok:false, reason:string, until?:number}}
  */
