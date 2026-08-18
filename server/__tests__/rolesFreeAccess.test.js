@@ -37,6 +37,13 @@ test('роль-less владелец получает явные права, а 
   for (const k of keys) assert.equal(p.modules[k], 'allow', `модуль ${k} должен быть открыт владельцу`)
   assert.equal(p.sections['/panel/tasks'], 'allow', 'разделы панели тоже открыты')
   assert.equal(p.resources.allTasks, 'allow', 'свои задачи владелец видит все')
+  // Блоки именуются «модуль:блок» — плоские ключи не совпадали ни с чем, и страница
+  // модуля встречала владельца текстом «не выдан ни один блок».
+  for (const k of keys) {
+    assert.equal(p.blocks[`${k}:run`], 'allow', `блок запуска у ${k} должен быть открыт`)
+    assert.equal(p.blocks[`${k}:settings`], 'allow', `настройки у ${k} должны быть открыты`)
+  }
+  assert.equal(p.blocks.run, undefined, 'плоских ключей быть не должно — их никто не читает')
 })
 
 test('суб без роли прав НЕ получает — доступ выдаёт владелец', async () => {

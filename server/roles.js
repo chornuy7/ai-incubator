@@ -463,8 +463,12 @@ function mergeItem(map, key, value) {
 export function unrestrictedPermissions(moduleKeys = []) {
   const modules = {}
   for (const k of moduleKeys) modules[k] = ALLOW
+  // Блоки именуются «модуль:блок» (`neuro-chatting:run`), а не просто «run»: право
+  // выдаётся на блок КОНКРЕТНОГО модуля. Плоские ключи, выданные здесь поначалу, не
+  // совпадали ни с чем — владелец видел «доступ к модулю есть, но не выдан ни один
+  // блок» на пустой странице (прогон 18.08).
   const blocks = {}
-  for (const b of BLOCKS) blocks[b.key] = ALLOW
+  for (const m of moduleKeys) for (const b of BLOCKS) blocks[`${m}:${b.key}`] = ALLOW
   const sections = {}
   for (const s of SECTIONS) sections[s.key] = ALLOW
   return {
