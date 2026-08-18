@@ -11,11 +11,11 @@ import { AccountPicker } from '@/features/account-picker/AccountPicker'
 import { useModuleTask } from './shared/useModuleTask'
 import { SectionCard, NumberField, ProtectionBlock, DelayFields, LaunchPanel, LaunchSteps, markCurrentStep, TaskStartedModal, SchedulePanel } from './shared'
 import { PresetBar } from './shared/PresetBar'
+import { SavePresetModal } from './shared/SavePresetModal'
 import { cn } from '@/shared/lib/utils'
 import { downloadXls } from '@/shared/lib/exportXls'
 import { SaveToFolderModal } from './shared/FolderPicker'
 import { LaunchCost } from './shared/LaunchCost'
-import { promptDialog } from '@/shared/lib/dialog'
 import { fetchModuleTasks, fetchModuleTask, lookupParserCache, type ModuleTaskSettings, type ParserCacheHit } from '@/api/modulesApi'
 
 /** Собирает username ранее спарсенных каналов/групп из истории модуля (для дедупа между запусками). */
@@ -235,7 +235,9 @@ function ChannelParserInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: 
     }
     void start(settings, `${cfg.title} · ${selected.size} акк.`)
   }
-  const handleSave = async () => { const name = await promptDialog({ title: 'Сохранить шаблон', message: 'Название шаблона настроек', placeholder: 'Напр. Крипто-каналы' }); if (name) void savePreset(name, buildSettings()) }
+  // §10: сохранение через модалку (имя + цвет + владелец), как в остальных модулях.
+  const [presetModalOpen, setPresetModalOpen] = useState(false)
+  const handleSave = () => setPresetModalOpen(true)
 
   const applyPreset = useCallback((s: ModuleTaskSettings) => {
     if (Array.isArray(s.keywords)) setKeywords(s.keywords)
@@ -320,6 +322,8 @@ function ChannelParserInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: 
   return (
     <div className="space-y-4">
       <TaskStartedModal task={justStarted} moduleTitle={cfg.title} onClose={dismissJustStarted} />
+      <SavePresetModal open={presetModalOpen} onClose={() => setPresetModalOpen(false)}
+        onSave={(name, color, owner) => savePreset(name, buildSettings(), color, owner)} />
       {/* ТЗ 06.08 §10: выбор шаблона — вверху, до всех настроек (TPL-001). */}
       <PresetBar presets={presets} onApply={applyPreset} onSave={handleSave}
         onEdit={editPreset} onDelete={deletePreset} disabled={running} />

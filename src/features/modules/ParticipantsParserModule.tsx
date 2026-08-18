@@ -11,10 +11,10 @@ import { AccountPicker } from '@/features/account-picker/AccountPicker'
 import { useModuleTask } from './shared/useModuleTask'
 import { SectionCard, NumberField, ProtectionBlock, LaunchPanel, LaunchSteps, markCurrentStep, TaskStartedModal, SchedulePanel } from './shared'
 import { PresetBar } from './shared/PresetBar'
+import { SavePresetModal } from './shared/SavePresetModal'
 import { cn } from '@/shared/lib/utils'
 import { downloadXls } from '@/shared/lib/exportXls'
 import { FolderPicker, SaveToFolderModal } from './shared/FolderPicker'
-import { promptDialog } from '@/shared/lib/dialog'
 import { DedupeButton } from '@/shared/ui/DedupeButton'
 import { fetchModuleTasks, fetchModuleTask, type ModuleTaskSettings } from '@/api/modulesApi'
 import { fetchTgstatOptions, fetchTgstatSession, fetchTgstatTargets, type TgstatOptions, type TgstatSession } from '@/api/tgstatApi'
@@ -151,7 +151,9 @@ function Inner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: string }) {
     void start({ ...buildSettings(), parallelAccounts: parallel }, `${cfg.title} · ${selected.size} акк.`)
   }
 
-  const handleSave = async () => { const n = await promptDialog({ title: 'Сохранить шаблон', message: 'Название шаблона настроек', placeholder: 'Напр. Парсер участников' }); if (n) void savePreset(n, buildSettings()) }
+  // §10: сохранение через модалку (имя + цвет + владелец), как в остальных модулях.
+  const [presetModalOpen, setPresetModalOpen] = useState(false)
+  const handleSave = () => setPresetModalOpen(true)
 
   // Цели (targetList) не восстанавливаем — они ситуативны; переносим фильтры, лимиты и задержки.
   const applyPreset = useCallback((s: ModuleTaskSettings) => {
@@ -205,6 +207,8 @@ function Inner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: string }) {
   return (
     <div className="space-y-4">
       <TaskStartedModal task={justStarted} moduleTitle={cfg.title} onClose={dismissJustStarted} />
+      <SavePresetModal open={presetModalOpen} onClose={() => setPresetModalOpen(false)}
+        onSave={(name, color, owner) => savePreset(name, buildSettings(), color, owner)} />
       {/* ТЗ 06.08 §10: выбор шаблона — вверху, до всех настроек (TPL-001). */}
       <PresetBar presets={presets} onApply={applyPreset} onSave={handleSave}
         onEdit={editPreset} onDelete={deletePreset} disabled={running} />

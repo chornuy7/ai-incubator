@@ -12,7 +12,7 @@ import { fetchGoals, type Goal } from '@/api/goalsApi'
 import { startModuleTask, type ModuleTaskSettings } from '@/api/modulesApi'
 import { fetchSettings, saveSettings } from '@/api/settingsApi'
 import { fetchLeads } from '@/api/leadsApi'
-import { confirmDialog, promptDialog } from '@/shared/lib/dialog'
+import { confirmDialog } from '@/shared/lib/dialog'
 import { usePlan, planHasModule } from '@/features/billing/plan'
 import { ModuleNotPaid } from '@/features/billing/ModuleNotPaid'
 import { isHidden } from '@/shared/config/routes'
@@ -22,6 +22,7 @@ import { SectionCard, LaunchPanel, LaunchSteps, markCurrentStep, TaskStartedModa
 import { LaunchCost } from '@/features/modules/shared/LaunchCost'
 import { useModuleTask } from '@/features/modules/shared/useModuleTask'
 import { PresetBar } from '@/features/modules/shared/PresetBar'
+import { SavePresetModal } from '@/features/modules/shared/SavePresetModal'
 
 export function MailingPage() {
   // §5.4: модуль живёт не под /panel/modules/*, поэтому гейт подписки — здесь же.
@@ -182,10 +183,9 @@ function MailingInner() {
     } finally { setSavingTrust(false) }
   }
 
-  const handleSave = async () => {
-    const name = await promptDialog({ title: 'Сохранить шаблон', message: 'Название шаблона настроек рассылки', placeholder: 'Напр. Прогрев по номерам' })
-    if (name) void savePreset(name, buildSettings())
-  }
+  // §10: сохранение через модалку (имя + цвет + владелец), как в остальных модулях.
+  const [presetModalOpen, setPresetModalOpen] = useState(false)
+  const handleSave = () => setPresetModalOpen(true)
 
   // Восстановить настройки из шаблона (выбор аккаунтов и получателей не трогаем).
   const applyPreset = (s: ModuleTaskSettings) => {
@@ -264,6 +264,8 @@ function MailingInner() {
 
       <div className="space-y-4">
         <TaskStartedModal task={justStarted} moduleTitle="Мейлинг" onClose={dismissJustStarted} />
+        <SavePresetModal open={presetModalOpen} onClose={() => setPresetModalOpen(false)}
+          onSave={(name, color, owner) => savePreset(name, buildSettings(), color, owner)} />
         {/* ТЗ 06.08 §10: выбор шаблона — вверху, до всех настроек (TPL-001). */}
         <PresetBar presets={presets} onApply={applyPreset} onSave={handleSave}
           onEdit={editPreset} onDelete={deletePreset} disabled={running} />

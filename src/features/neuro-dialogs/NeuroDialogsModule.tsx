@@ -11,12 +11,12 @@ import { AccountPicker } from '@/features/account-picker/AccountPicker'
 import { fetchGoals, type Goal } from '@/api/goalsApi'
 import { fetchPricing } from '@/api/balanceApi'
 import { cn } from '@/shared/lib/utils'
-import { promptDialog } from '@/shared/lib/dialog'
 // Из API диалогов модулю нужен только СПИСОК: он показывает сводку «сколько диалогов и
 // непрочитанных», а читают и отвечают руками на «Обзоре аккаунта».
 import { fetchInbox, type InboxDialog } from '@/api/neuroDialogsApi'
 import { useModuleTask } from '@/features/modules/shared/useModuleTask'
 import { PresetBar } from '@/features/modules/shared/PresetBar'
+import { SavePresetModal } from '@/features/modules/shared/SavePresetModal'
 import {
   SectionCard,
   HelpButton,
@@ -175,15 +175,15 @@ export function NeuroDialogsModule() {
 
   const canStart = accountIds.length > 0
 
-  // Сохранение шаблона доступно из двух мест (полоса вверху и кнопка в баре) — обработчик один.
-  const handleSavePreset = async () => {
-    const name = await promptDialog({ title: 'Сохранить шаблон', message: 'Название шаблона настроек', placeholder: 'Напр. Тёплый диалог' })
-    if (name) void savePreset(name, buildSettings())
-  }
+  // §10: сохранение через модалку (имя + цвет + владелец), как в остальных модулях.
+  const [presetModalOpen, setPresetModalOpen] = useState(false)
+  const handleSavePreset = () => setPresetModalOpen(true)
 
   return (
     <div className="space-y-4">
       <TaskStartedModal task={justStarted} moduleTitle={cfg.title} onClose={dismissJustStarted} />
+      <SavePresetModal open={presetModalOpen} onClose={() => setPresetModalOpen(false)}
+        onSave={(name, color, owner) => savePreset(name, buildSettings(), color, owner)} />
       {/* ТЗ 06.08 §10: выбор шаблона — вверху, до всех настроек (TPL-001). */}
       <PresetBar presets={presets} onApply={applyPreset} onSave={handleSavePreset}
         onEdit={editPreset} onDelete={deletePreset} disabled={running} />

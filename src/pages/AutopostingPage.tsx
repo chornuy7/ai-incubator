@@ -7,7 +7,7 @@ import { AccountPicker } from '@/features/account-picker/AccountPicker'
 import { MessageComposer } from '@/features/composer/MessageComposer'
 import { useSession } from '@/features/auth/session'
 import { type ModuleTaskSettings } from '@/api/modulesApi'
-import { confirmDialog, promptDialog } from '@/shared/lib/dialog'
+import { confirmDialog } from '@/shared/lib/dialog'
 import {
   fetchAutomationRules, createAutomationRule, updateAutomationRule, deleteAutomationRule, runAutomationRuleNow,
   type AutomationRule, type AutomationSchedule,
@@ -21,6 +21,7 @@ import { SectionCard, LaunchPanel, LaunchSteps, markCurrentStep, TaskStartedModa
 import { LaunchCost } from '@/features/modules/shared/LaunchCost'
 import { useModuleTask } from '@/features/modules/shared/useModuleTask'
 import { PresetBar } from '@/features/modules/shared/PresetBar'
+import { SavePresetModal } from '@/features/modules/shared/SavePresetModal'
 
 /** Локальная дата-время в формат `datetime-local` (без сдвига в UTC, как делает toISOString). */
 function toLocalInput(ts: number): string {
@@ -169,10 +170,9 @@ function AutopostingInner() {
     }
   }
 
-  const handleSave = async () => {
-    const n = await promptDialog({ title: 'Сохранить шаблон', message: 'Название шаблона настроек поста', placeholder: 'Напр. Анонс' })
-    if (n) void savePreset(n, settings())
-  }
+  // §10: сохранение через модалку (имя + цвет + владелец), как в остальных модулях.
+  const [presetModalOpen, setPresetModalOpen] = useState(false)
+  const handleSave = () => setPresetModalOpen(true)
 
   // Восстановить настройки из шаблона (аккаунты не трогаем).
   const applyPreset = (s: ModuleTaskSettings) => {
@@ -249,6 +249,8 @@ function AutopostingInner() {
 
       <div className="space-y-4">
         <TaskStartedModal task={justStarted} moduleTitle="Автопостинг" onClose={dismissJustStarted} />
+        <SavePresetModal open={presetModalOpen} onClose={() => setPresetModalOpen(false)}
+          onSave={(name, color, owner) => savePreset(name, settings(), color, owner)} />
         {/* ТЗ 06.08 §10: выбор шаблона — вверху, до всех настроек (TPL-001). */}
         <PresetBar presets={presets} onApply={applyPreset} onSave={handleSave}
           onEdit={editPreset} onDelete={deletePreset} disabled={running} />
