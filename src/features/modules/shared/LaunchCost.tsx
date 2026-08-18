@@ -64,7 +64,8 @@ export function LaunchCost({ moduleKey, actions, accounts, delaySec, compact }: 
   const pricing = usePricing()
 
   const n = Math.max(0, Math.round(actions) || 0)
-  const price = pricing?.actions?.[moduleKey] ?? 0
+  // MR-149: показываем ЕДИНУЮ цену действия (база + текст по максимуму). Фолбэк на базу.
+  const price = pricing?.actionsFull?.[moduleKey] ?? pricing?.actions?.[moduleKey] ?? 0
   // Время НЕ зависит от прайса — оно считается из действий, аккаунтов и задержек. Раньше
   // общий ранний выход прятал и его тоже, пока не ответит `/api/pricing`.
   const hasCost = !!pricing && !!price && !!n
@@ -179,7 +180,8 @@ export function ActionPriceCalc({ moduleKey }: { moduleKey: string }) {
   // Тот же кэш прайса, что и у LaunchCost: два компонента на одной странице больше не
   // шлют два запроса, а при повторном открытии модуля цена рисуется сразу.
   const pricing = usePricing()
-  const price = pricing?.actions?.[moduleKey] ?? 0
+  // MR-149: показываем ЕДИНУЮ цену действия (база + текст по максимуму). Фолбэк на базу.
+  const price = pricing?.actionsFull?.[moduleKey] ?? pricing?.actions?.[moduleKey] ?? 0
   if (!pricing || !price) return null
   return (
     <div className="flex flex-wrap items-center gap-x-4 gap-y-1 rounded-2xl border border-amber-500/20 bg-amber-500/[.05] px-4 py-2.5 text-sm">

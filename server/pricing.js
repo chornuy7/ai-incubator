@@ -52,6 +52,36 @@ export function actionPrice(moduleKey) {
 }
 
 /**
+ * MR-149 (созвон 12.08 + 17.08): оплата за отправку и за генерацию текста — ОДНА цена
+ * за действие, посчитанная «как за МАКСИМУМ символов», а не по факту токенов.
+ *
+ * Лимит Telegram: 4096 символов (текст) / 1024 (текст + картинка). ~4 символа на токен.
+ * Стоимость текста считаем в коде из этого максимума и админского курса `coinsPer1kTokens`
+ * (его заказчик и так правит в админке) — чтобы НЕ поднимать цену каждого модуля вручную,
+ * и чтобы за текст всегда списывалось предсказуемо (как за макс), а не по факту.
+ */
+export const MAX_TEXT_CHARS = 4096
+export const CHARS_PER_TOKEN = 4
+export const MAX_TEXT_TOKENS = Math.ceil(MAX_TEXT_CHARS / CHARS_PER_TOKEN) // 1024
+/** Модули, где действие генерит ИИ-текст (к цене прибавляется макс-текст). */
+export const AI_TEXT_MODULES = new Set(['neuro-commenting', 'neuro-chatting', 'neuro-dialogs', 'mailing'])
+
+/** Сколько токенов «по максимуму» закладываем в цену действия. Не-ИИ модуль — 0. */
+export function maxTextTokens(moduleKey) {
+  return AI_TEXT_MODULES.has(moduleKey) ? MAX_TEXT_TOKENS : 0
+}
+
+/** Стоимость макс-текста за одно действие (монет), по админскому курсу. */
+export function maxTextCoins(moduleKey, coinsPer1kTokens = 0) {
+  return Math.round((maxTextTokens(moduleKey) / 1000) * (Number(coinsPer1kTokens) || 0) * 1000) / 1000
+}
+
+/** ЕДИНАЯ цена одного действия: фикс-действие + текст по максимуму символов (MR-149). */
+export function fullActionPrice(moduleKey, coinsPer1kTokens = 0) {
+  return Math.round((actionPrice(moduleKey) + maxTextCoins(moduleKey, coinsPer1kTokens)) * 1000) / 1000
+}
+
+/**
  * §5.4: ПОДПИСКА НА МОДУЛЬ — сколько стоит держать модуль открытым, в месяц.
  *
  * Заказчик (23.07): «людина хоче нейрочатінг + мейлінг — вибирає собі модулі які

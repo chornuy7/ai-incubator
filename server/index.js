@@ -1059,7 +1059,7 @@ app.post('/api/accounts/activity', async (req, res) => {
  */
 app.get('/api/pricing', async (_req, res) => {
   try {
-    const { CURRENCY } = await import('./pricing.js')
+    const { CURRENCY, maxTextTokens, fullActionPrice } = await import('./pricing.js')
     const { effectivePrices } = await import('./priceStore.js')
     const { tokenSummary } = await import('./tokenLedger.js')
     // Цены действий и пакеты — эффективные (код + правки админки).
@@ -1072,12 +1072,20 @@ app.get('/api/pricing', async (_req, res) => {
       const sum = await tokenSummary({ module: key }).catch(() => null)
       avgTokens[key] = sum?.calls ? Math.round(sum.tokens / sum.calls) : 0
     }
+    // MR-149: ЕДИНАЯ цена действия = фикс-действие + текст «по максимуму символов»
+    // (по курсу coinsPer1kTokens). Витрина показывает эту цену, за токены сверх не списываем.
+    const maxTokensMap = {}
+    const actionsFull = {}
+    for (const key of Object.keys(eff.actionMap)) {
+      maxTokensMap[key] = maxTextTokens(key)
+      actionsFull[key] = fullActionPrice(key, eff.coinsPer1kTokens)
+    }
     const items = eff.modules
       .filter((m) => m.action > 0)
       .map((m) => ({ key: m.key, title: m.title, price: m.action, avgTokens: avgTokens[m.key] || 0 }))
       .sort((a, b) => b.price - a.price || a.title.localeCompare(b.title, 'ru'))
     res.json({
-      ok: true, items, actions: eff.actionMap, avgTokens,
+      ok: true, items, actions: eff.actionMap, actionsFull, maxTextTokens: maxTokensMap, avgTokens,
       coinsPer1kTokens: eff.coinsPer1kTokens, packs: eff.coinPacks, currency: CURRENCY,
       tokenUsd: eff.tokenUsd, tokenUsdAuto: eff.tokenUsdAuto, tokenUsdComputed: eff.tokenUsdComputed, tokenUsdModel: eff.tokenUsdModel,
       imageMultiplier: eff.imageMultiplier,
