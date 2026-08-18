@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
-import { ListChecks, RefreshCw, Square, RotateCw, Target, Activity, Gauge, Pause, Play, Loader2, ArrowLeft, Download, AlertTriangle } from 'lucide-react'
+import { ListChecks, RefreshCw, Square, RotateCw, Target, Activity, Gauge, Pause, Play, Loader2, ArrowLeft, Download, AlertTriangle, Clock } from 'lucide-react'
 import { useApp } from '@/mocks/store'
 import { PageHeader, Card, EmptyState, Badge, Select } from '@/shared/ui'
 import { HelpButton } from '@/features/neuro-commenting/moduleUi'
@@ -50,6 +50,34 @@ function pct(t: ModuleTask) {
   return total > 0 ? Math.min(100, Math.round((done / total) * 100)) : 0
 }
 const isActive = (t: ModuleTask) => t.status === 'running' || t.status === 'queued'
+
+// MR-109 (ТЗ 06.08, TASK-001): ETA — сколько ещё бежать РАБОТАЮЩЕЙ задаче. Считаем по
+// фактическому темпу: раз уже сделано `done` действий за прошедшее время, оставшиеся
+// `total-done` займут пропорционально столько же. Это честнее прогноза по задержкам
+// (тот врёт при FloodWait/паузах воркера), но требует, чтобы задача реально шла и хоть
+// что-то успела. До первого действия и у не-running задач ETA не показываем — врать «0 с»
+// хуже, чем не показать. Возвращает миллисекунды остатка или null.
+function taskEtaMs(t: ModuleTask): number | null {
+  if (t.status !== 'running') return null
+  const done = t.progress?.done ?? t.progress?.actionsDone ?? 0
+  const total = t.progress?.total ?? 0
+  if (done <= 0 || total <= done) return null
+  const elapsed = Date.now() - t.createdAt
+  if (elapsed <= 0) return null
+  const perAction = elapsed / done
+  return Math.round(perAction * (total - done))
+}
+
+/** Секунды → человекочитаемо: «45 с», «12 мин», «6 ч 20 мин» (как в панели запуска). */
+function fmtDur(sec: number): string {
+  const s = Math.max(0, Math.round(sec))
+  if (s < 60) return `${s} с`
+  const m = Math.round(s / 60)
+  if (m < 60) return `${m} мин`
+  const h = Math.floor(m / 60)
+  const rm = m % 60
+  return rm ? `${h} ч ${rm} мин` : `${h} ч`
+}
 
 /** Проблемные аккаунты задачи: сколько, из скольких и ЧТО именно не так у каждого. */
 type TaskProblem = { bad: number; total: number; items: { name: string; reason: string }[] }
@@ -714,6 +742,11 @@ function TaskCard({ t, goalName, busy, busyAction, pendingAction, onOpen, onStop
               а «сколько стоила вот эта задача» — первый вопрос при разборе счёта. */}
           {!!t.spentCoins && <span className="tabular-nums text-amber-300/80" title="Потрачено монет на эту задачу">⚡ {fmtCoins(t.spentCoins)}</span>}
           <span>{new Date(t.createdAt).toLocaleString('ru-RU', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}</span>
+          {/* MR-109: ETA — прогноз, сколько ещё бежать. Только у работающих задач и только
+              когда есть по чему судить (уже что-то сделано) — иначе не показываем. */}
+          {(() => { const e = taskEtaMs(t); return e == null ? null : (
+            <span className="inline-flex items-center gap-1 tabular-nums text-emerald-300/80" title="Прогноз времени до завершения — по текущему темпу"><Clock size={11} /> ≈ {fmtDur(e / 1000)}</span>
+          ) })()}
         </div>
       </div>
       </button>
@@ -1031,6 +1064,10 @@ export function TaskDetailPage() {
             {/* MR-147: «Модуль» и «Потрачено» перенесены сюда, к прогрессу. */}
             <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-sm text-white/60">
               <span>{t.progress?.done ?? t.progress?.actionsDone ?? 0} / {t.progress?.total ?? 0} действий</span>
+              {/* MR-109: ETA работающей задачи — прогноз по текущему темпу. */}
+              {(() => { const e = taskEtaMs(t); return e == null ? null : (
+                <span className="inline-flex items-center gap-1 tabular-nums text-emerald-300/80" title="Прогноз времени до завершения — по текущему темпу"><Clock size={13} /> ≈ {fmtDur(e / 1000)}</span>
+              ) })()}
               {/* Голая цифра «⚡ 0.00» ни о чём не говорила — подписываем, что это расход
                   ИМЕННО этой задачи (из общего баланса он не читается). */}
               <span className="inline-flex items-baseline gap-1 tabular-nums text-amber-300/80" title={t.tokenCoins ? `${fmtCoins(t.spentCoins || 0)} ⚡ за действия + ${fmtCoins(t.tokenCoins)} ⚡ за ИИ` : undefined}>
