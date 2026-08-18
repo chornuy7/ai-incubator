@@ -588,27 +588,27 @@ export function TasksPage() {
               </div>
               <div className="h-1.5 overflow-hidden rounded bg-white/10"><div className="h-full rounded bg-iris-500 transition-all" style={{ width: `${g.prog}%` }} /></div>
               <div className="mt-1 text-[11px] text-white/40">Прогресс к цели: {g.prog}%</div>
-              {/* Тот же приём внутри цели: карточки разной высоты не должны оставлять дыр. */}
-              <div className="mt-2 columns-1 gap-1.5 sm:columns-2">
-                {g.tasks.map((t) => <div key={`${t.moduleKey}:${t.id}`} className="mb-1.5 break-inside-avoid"><TaskCard t={t} goalName={null} busy={busy} busyAction={busyAction} pendingAction={pending[t.id]?.action} onOpen={openTask} onStop={doStop} onRestart={doRestart} onPause={doPause} onResume={doResume} canControl={canControl(t)} problem={taskProblems(t)} compact /></div>)}
+              {/* Тот же приём внутри цели: строки + равная высота, порядок слева направо. */}
+              <div className="mt-2 grid items-stretch gap-1.5 sm:grid-cols-2">
+                {g.tasks.map((t) => <div key={`${t.moduleKey}:${t.id}`} className="min-w-0"><TaskCard t={t} goalName={null} busy={busy} busyAction={busyAction} pendingAction={pending[t.id]?.action} onOpen={openTask} onStop={doStop} onRestart={doRestart} onPause={doPause} onResume={doResume} canControl={canControl(t)} problem={taskProblems(t)} compact /></div>)}
               </div>
             </Card>
           ))}
         </div>
         )
       ) : (
-        // Раскладка колонками (правка 18.08). Ни грид, ни flex здесь не годятся: оба
-        // режут поток на СТРОКИ, а строка всегда высотой по самой большой карточке — под
-        // короткими остаются дыры. Особенно заметно, когда у задачи появляется блок
-        // «часть аккаунтов недоступна»: она становится вдвое выше соседней.
+        // Раскладка: СТРОКИ, порядок слева направо (правка 18.08, вторая итерация).
         //
-        // Многоколоночная вёрстка укладывает карточки сплошняком: каждая занимает ровно
-        // свою высоту, следующая начинается сразу под ней. Цена — порядок читается
-        // по колонкам (сверху вниз слева, потом справа), а не строками. Для списка,
-        // отсортированного по статусу, это даже честнее: активные задачи собираются
-        // вверху левой колонки, и ни одна карточка визуально не «обгоняет» предыдущую.
-        <div className="columns-1 gap-2 lg:columns-2">
-          {filtered.map((t) => <div key={`${t.moduleKey}:${t.id}`} className="mb-2 break-inside-avoid"><TaskCard t={t} goalName={goalName(t.goalId)} busy={busy} busyAction={busyAction} pendingAction={pending[t.id]?.action} onOpen={openTask} onStop={doStop} onRestart={doRestart} onPause={doPause} onResume={doResume} canControl={canControl(t)} selected={selected.has(t.id)} onToggleSelect={toggleSel} problem={taskProblems(t)} /></div>)}
+        // Колонки укладывали карточки без дыр, но ломали чтение: правая колонка
+        // начинается с СЕРЕДИНЫ списка, и отсортированный по статусу дашборд выглядит
+        // перемешанным. Порядок здесь важнее плотности — по нему ищут задачу.
+        //
+        // Дыры убраны иначе: карточки в строке тянутся до общей высоты (`items-stretch`
+        // у грида + `h-full` у карточки). Пустое место оказывается ВНУТРИ карточки, под
+        // её фоном, а не провалом между блоками — визуально это ровная сетка, а не
+        // рваная кладка.
+        <div className="grid items-stretch gap-2 lg:grid-cols-2">
+          {filtered.map((t) => <div key={`${t.moduleKey}:${t.id}`} className="min-w-0"><TaskCard t={t} goalName={goalName(t.goalId)} busy={busy} busyAction={busyAction} pendingAction={pending[t.id]?.action} onOpen={openTask} onStop={doStop} onRestart={doRestart} onPause={doPause} onResume={doResume} canControl={canControl(t)} selected={selected.has(t.id)} onToggleSelect={toggleSel} problem={taskProblems(t)} /></div>)}
         </div>
       )}
     </div>
@@ -687,7 +687,7 @@ function TaskCard({ t, goalName, busy, busyAction, pendingAction, onOpen, onStop
   const running = isActive(t) || !!pendingAction
   const ringColor = pendingAction ? STATUS_COLOR.stopped : (STATUS_COLOR[t.status] || '#94a3b8')
   return (
-    <Card className={compact ? 'bg-elevated/40 p-2.5' : 'p-3'}>
+    <Card className={cn('flex h-full flex-col', compact ? 'bg-elevated/40 p-2.5' : 'p-3')}>
       <div className="flex items-center gap-3">
       {onToggleSelect && (
         <input
