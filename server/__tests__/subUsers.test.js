@@ -155,3 +155,41 @@ test('requesterContext: нет заголовка → дев/полный дос
 
   delete process.env.USERS_FILE
 })
+
+/**
+ * Область видимости списка пользователей (правка 18.08).
+ *
+ * Баг: на странице «Пользователи» рабочей панели админу отдавался ВЕСЬ список
+ * платформы — 65 человек, из которых 59 чужих самостоятельных регистраций. Своё
+ * рабочее пространство и управление платформой оказались на одном экране.
+ *
+ * Правило теперь одно для всех: по умолчанию видно себя и своих субов. Полный список —
+ * только по явному запросу `scope=all` и только админу.
+ */
+function visibleUsers(users, ctx, scope) {
+  const wantAll = String(scope || '') === 'all' && (ctx.noSession || ctx.isAdmin)
+  return wantAll ? users : users.filter((u) => u.parentId === ctx.id || u.id === ctx.id)
+}
+
+test('список пользователей: по умолчанию даже админ видит только своих', () => {
+  const users = [
+    { id: 'usr_admin' },
+    { id: 'usr_sub', parentId: 'usr_admin' },
+    { id: 'usr_stranger' },
+    { id: 'usr_stranger_sub', parentId: 'usr_stranger' },
+  ]
+  const asAdmin = visibleUsers(users, { id: 'usr_admin', isAdmin: true })
+  assert.deepEqual(asAdmin.map((u) => u.id), ['usr_admin', 'usr_sub'],
+    'чужие регистрации не должны попадать в рабочую панель')
+})
+
+test('список пользователей: scope=all открывает платформу — но только админу', () => {
+  const users = [{ id: 'usr_admin' }, { id: 'usr_stranger' }]
+  assert.equal(visibleUsers(users, { id: 'usr_admin', isAdmin: true }, 'all').length, 2,
+    'админ не должен терять управление платформой — оно стало явным')
+  assert.deepEqual(
+    visibleUsers(users, { id: 'usr_stranger', isAdmin: false }, 'all').map((u) => u.id),
+    ['usr_stranger'],
+    'обычный владелец не открывает чужих подбором параметра в адресе',
+  )
+})

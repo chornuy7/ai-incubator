@@ -17,8 +17,12 @@ export interface User {
   updatedAt: number
 }
 
-export async function fetchUsers(): Promise<User[]> {
-  const data = await apiGet<{ users: User[] }>('/api/users')
+/**
+ * По умолчанию — только свои субпользователи (+ сам). `scope: 'all'` даёт список всей
+ * платформы и работает лишь у админа: обычному владельцу сервер всё равно вернёт своих.
+ */
+export async function fetchUsers(scope?: 'mine' | 'all'): Promise<User[]> {
+  const data = await apiGet<{ users: User[] }>(`/api/users${scope === 'all' ? '?scope=all' : ''}`)
   return data.users
 }
 

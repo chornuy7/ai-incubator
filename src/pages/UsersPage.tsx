@@ -144,13 +144,17 @@ export function UsersPage() {
   const [open, setOpen] = useState(false)
   const [form, setForm] = useState<{ email: string; name: string; password: string; roleIds: string[]; balanceMode: 'shared' | 'individual'; tokenLimit: string }>({ email: '', name: '', password: '', roleIds: ['role_moderator'], balanceMode: 'shared', tokenLimit: '' })
   const [saving, setSaving] = useState(false)
+  // Правка 18.08: страница «Пользователи» — про СВОЮ команду. Раньше админу сюда
+  // валился весь список платформы (65 юзеров, из них 59 чужих регистраций).
+  // Управление всеми осталось, но включается явно и только у админа.
+  const [scopeAll, setScopeAll] = useState(false)
 
   async function load() {
     setLoading(true)
     try {
       // §5.4 (MR-37): группы и аккаунты пула — чтобы владелец мог выдавать их субам.
       const [us, rs, wt, gr, accs] = await Promise.all([
-        fetchUsers(), fetchRoles(), fetchWorktime().catch(() => ({})),
+        fetchUsers(scopeAll ? 'all' : 'mine'), fetchRoles(), fetchWorktime().catch(() => ({})),
         fetchAccountGroups().then((r) => r.groups).catch(() => []),
         fetchAccounts().catch(() => []),
       ])
@@ -158,7 +162,7 @@ export function UsersPage() {
     } catch (e) { setErr(e instanceof Error ? e.message : 'Ошибка загрузки') }
     finally { setLoading(false) }
   }
-  useEffect(() => { void load() }, [])
+  useEffect(() => { void load() }, [scopeAll])
 
   // §5.4 (MR-37): владелец раздаёт субам СВОИ группы (созданные им) + «общие» без владельца.
   const myGroups = useMemo(
@@ -205,11 +209,24 @@ export function UsersPage() {
     <div>
       <PageHeader
         title="Пользователи"
-        subtitle="Операторы панели и их роли. Главный админ назначает роль и включает/отключает доступ."
+        subtitle={scopeAll
+          ? 'Все пользователи платформы — режим администратора.'
+          : 'Ваша команда: субпользователи и их роли. Роль назначает и доступ включает владелец пространства.'}
         icon={<Users2 size={22} />}
         badge={users.length ? `${users.length}` : undefined}
         actions={
           <div className="flex items-center gap-2">
+            {sessionUser?.isAdmin && (
+              <button
+                type="button"
+                onClick={() => setScopeAll((v) => !v)}
+                title={scopeAll ? 'Показывать только свою команду' : 'Показать всех пользователей платформы (доступно администратору)'}
+                className={cn('h-10 rounded-xl border px-3 text-sm font-medium transition-colors',
+                  scopeAll ? 'border-iris-500/50 bg-iris-500/15 text-iris-200' : 'border-line text-white/60 hover:text-white')}
+              >
+                {scopeAll ? 'Вся платформа' : 'Только моя команда'}
+              </button>
+            )}
             <HelpButton topic="rbac-roles" className="h-10 w-10" />
             <button onClick={() => setOpen(true)} className="btn-primary h-10"><Plus size={16} /> Новый пользователь</button>
           </div>

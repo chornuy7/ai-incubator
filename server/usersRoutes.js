@@ -54,8 +54,17 @@ usersRouter.get('/', async (req, res) => {
     const ctx = await requesterContext(req)
     if (ctx.blocked) return res.status(403).json({ ok: false, error: 'Пользователь отключён' })
     const users = await listUsers()
-    // §4.1 (MR-29): владелец видит только своих субпользователей (+ себя); админ/дев — всех.
-    const visible = (ctx.noSession || ctx.isAdmin) ? users : users.filter((u) => u.parentId === ctx.id || u.id === ctx.id)
+    // §4.1 (MR-29): владелец видит только своих субпользователей (+ себя).
+    //
+    // Правка 18.08: под это правило попал и АДМИН. Раньше ему отдавался весь список
+    // платформы — 65 юзеров, из них 59 чужих самостоятельных регистраций — прямо на
+    // странице «Команда» в рабочей панели. Своё рабочее пространство и управление
+    // платформой смешивались в одном экране.
+    //
+    // Возможность управлять всеми не отобрана, она стала явной: `?scope=all` (только
+    // админу) — переключатель в интерфейсе. По умолчанию любой видит только своих.
+    const wantAll = String(req.query.scope || '') === 'all' && (ctx.noSession || ctx.isAdmin)
+    const visible = wantAll ? users : users.filter((u) => u.parentId === ctx.id || u.id === ctx.id)
     res.json({ ok: true, users: visible.map(publicUser) })
   } catch (err) { fail(res, err, 500) }
 })
