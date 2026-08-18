@@ -1321,7 +1321,20 @@ try { setMaxConcurrent((await getSettings()).maxParallelTasks) } catch { /* де
 
 const { flipped, cleared } = await reconcileStaleTasksOnBoot()
 if (flipped.length) {
-  console.log(`Reconcile: ${flipped.length} устаревших задач помечены stopped, блокировки не восстановлены`)
+  console.log(`Reconcile: ${flipped.length} задач прервано рестартом — помечены на восстановление`)
+}
+
+// Деплой не должен убивать работу пользователей: задачи, прерванные перезапуском,
+// поднимаются сами и продолжают с места остановки. Запуск идёт через тот же
+// `resumeModuleTask`, что и кнопка «Возобновить», поэтому действуют все проверки,
+// а лимит параллельности ставит лишние задачи в очередь вместо залпа по Telegram.
+try {
+  const { resumeMarkedTasks } = await import('./lib/taskRecovery.js')
+  const { resumed, skipped } = await resumeMarkedTasks()
+  if (resumed.length) console.log(`Восстановлено после перезапуска: ${resumed.length} задач`)
+  if (skipped.length) console.log(`Не восстановлено: ${skipped.length} (причины — в логах задач)`)
+} catch (err) {
+  console.error('Восстановление задач не выполнено:', err instanceof Error ? err.message : err)
 }
 if (cleared?.length) {
   console.log(`Reconcile: ${cleared.length} аккаунтов сняты с зависшего статуса «в работе»`)
@@ -1431,3 +1444,47 @@ server.on('error', (err) => {
   console.error('[fatal] сервер не поднялся:', err?.stack || err)
   process.exit(1)
 })
+
+/**
+ * Корректное завершение по сигналу деплоя.
+ *
+ * systemd при рестарте шлёт SIGTERM и ждёт. Раньше мы просто умирали посреди действия:
+ * задача оставалась в статусе «выполняется», а на старте её помечали остановленной —
+ * то есть каждая выкатка обрывала работу всем пользователям. Теперь активные задачи
+ * помечаются как прерванные рестартом и просят воркеры выйти по паузе, дописав текущее
+ * действие. На старте они поднимаются сами.
+ *
+ * Тайм-аут нужен обязательно: если воркер завис на сетевом вызове, systemd через свой
+ * TimeoutStopSec убьёт процесс жёстко, и пометки не окажется на диске. Лучше выйти
+ * самим, сохранив то, что успели.
+ */
+let shuttingDown = false
+const GRACEFUL_EXIT_MS = Number(process.env.SHUTDOWN_GRACE_MS) || 15_000
+
+async function shutdown(signal) {
+  if (shuttingDown) return
+  shuttingDown = true
+  console.log(`[shutdown] ${signal}: помечаем активные задачи на восстановление…`)
+
+  const hardExit = setTimeout(() => {
+    console.warn('[shutdown] не уложились в отведённое время — выходим принудительно')
+    process.exit(0)
+  }, GRACEFUL_EXIT_MS)
+  hardExit.unref?.()
+
+  try {
+    const { markRunningTasksForResume } = await import('./lib/taskRecovery.js')
+    const marked = await markRunningTasksForResume()
+    console.log(`[shutdown] помечено задач: ${marked.length} — продолжатся после старта`)
+  } catch (err) {
+    console.error('[shutdown] пометить задачи не удалось:', err instanceof Error ? err.message : err)
+  }
+
+  clearTimeout(hardExit)
+  // Новые соединения не принимаем; активные HTTP-запросы короткие и завершатся сами.
+  server.close(() => process.exit(0))
+  setTimeout(() => process.exit(0), 2000).unref?.()
+}
+
+process.on('SIGTERM', () => void shutdown('SIGTERM'))
+process.on('SIGINT', () => void shutdown('SIGINT'))

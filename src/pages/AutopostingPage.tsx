@@ -17,7 +17,7 @@ import { ModuleNotPaid } from '@/features/billing/ModuleNotPaid'
 // §3.1 (MR-115): автопостинг приведён к общей структуре модулей — те же переиспользуемые
 // блоки (SectionCard + нижняя LaunchPanel со степпером), что и в LiveModule/парсерах.
 // Публикации сохраняются как правила автоматизации (moduleKey='autoposting') и переживают рестарт.
-import { SectionCard, LaunchPanel, LaunchSteps, markCurrentStep, TaskStartedModal } from '@/features/modules/shared'
+import { SectionCard, LaunchPanel, LaunchSteps, markCurrentStep, TaskStartedModal, BlacklistEditor } from '@/features/modules/shared'
 import { LaunchCost } from '@/features/modules/shared/LaunchCost'
 import { useModuleTask } from '@/features/modules/shared/useModuleTask'
 
@@ -261,6 +261,13 @@ function AutopostingInner() {
             <textarea className="input min-h-[80px] font-mono text-sm" value={channelsText} onChange={(e) => setChannelsText(e.target.value)} placeholder={'@my_channel\nhttps://t.me/my_group'} />
           </SectionCard>
         </div>
+
+        {/*
+          Чёрный список — общий на платформу, воркер уже вычитает его из целей через
+          `targets()`. Здесь не хватало только самого блока: список правился в других
+          модулях, а в автопостинге его не было видно, и казалось, что он тут не работает.
+        */}
+        <BlacklistEditor title="Чёрный список каналов" compact />
 
         {/* 3. Текст поста. */}
         <div id="sec-message" className="scroll-mt-24">
