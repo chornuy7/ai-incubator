@@ -77,7 +77,11 @@ export function GuestLogin() {
         desc: planKey ? 'Подтвердите подписку — доступ включится сразу.' : (isReg ? 'Доступ к модулям выдаст администратор.' : (role?.name ? `Роль: ${role.name}` : 'Вход выполнен.')),
       })
       // Пришёл с лендинга с выбранным модулем → на страницу подписки с предвыбором, иначе — в кабинет.
-      nav(planKey ? `/panel/user/subscription?apply=${encodeURIComponent(planKey)}` : '/panel')
+      // MR-142 (баг 1): жёсткая навигация (не SPA) = чистый boot без данных прошлого юзера.
+      // Раньше nav() оставлял в памяти модульные кэши/сторы прошлой сессии — «тянулись старые
+      // данные прошлой БД». Сессия уже в localStorage, после перезагрузки подхватится.
+      const dest = planKey ? `/panel/user/subscription?apply=${encodeURIComponent(planKey)}` : '/panel'
+      try { window.location.assign(dest) } catch { nav(dest) }
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Проверьте данные'
       // §5.1: понятное сообщение о существующем аккаунте вместо сырой ошибки Supabase/API.

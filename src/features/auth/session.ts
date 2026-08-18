@@ -83,6 +83,33 @@ export const useSession = create<SessionStore>((set) => ({
     const uid = useSession.getState().user?.id
     if (uid) void logoutUser(uid) // clock-out рабочего времени (§8.1)
     persist(null)
+    // MR-142 (баг 1): при выходе из панели снимаем и админ-гейт — иначе «Выйти» из панели
+    // оставлял бы админку разблокированной под тем же браузером.
+    lockAdminGate()
     set({ user: null })
+    // MR-142 (баг 1): чистим память приложения жёсткой перезагрузкой. Иначе после входа
+    // под другим аккаунтом в модульных кэшах (цены, стор) остаются данные прошлой сессии —
+    // «тянутся старые данные прошлой БД». Полный boot гарантирует чистое состояние.
+    try { window.location.assign('/') } catch { /* SSR/тест — просто пропускаем */ }
   },
+}))
+
+/**
+ * MR-142 (баг 2, созвон 12.08): вход в панель и в админку — ДВЕ РАЗНЫЕ авторизации.
+ *
+ * Раньше `/admin` открывался автоматически, если в панельной сессии был админ: панель и
+ * админка «шарили» один вход, и попасть в пульт со всеми деньгами/людьми можно было, просто
+ * зайдя в панель. Заказчик: «адмін панель повинна мати окремий доступ». Поэтому вход в
+ * админку теперь отдельный гейт: панельная сессия сама по себе его НЕ открывает — нужен
+ * явный вход через форму /admin. Ключ отдельный, снимается при выходе из любой из зон.
+ */
+const ADMIN_GATE_KEY = 'ai-incubator:admin'
+function readAdminGate(): boolean { try { return !!localStorage.getItem(ADMIN_GATE_KEY) } catch { return false } }
+export function lockAdminGate() { try { localStorage.removeItem(ADMIN_GATE_KEY) } catch { /* ignore */ } }
+
+interface AdminGateStore { unlocked: boolean; unlock: () => void; lock: () => void }
+export const useAdminGate = create<AdminGateStore>((set) => ({
+  unlocked: readAdminGate(),
+  unlock: () => { try { localStorage.setItem(ADMIN_GATE_KEY, '1') } catch { /* ignore */ } set({ unlocked: true }) },
+  lock: () => { lockAdminGate(); set({ unlocked: false }) },
 }))
