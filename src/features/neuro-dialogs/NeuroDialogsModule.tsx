@@ -296,7 +296,7 @@ export function NeuroDialogsModule() {
               Авто-режим (кнопка «Начать») отвечает {replyAll
                 ? <b className="text-fg">всем, кто написал последним</b>
                 : <b className="text-fg">только на непрочитанные входящие ЛС</b>} выбранных аккаунтов — сам первым никому не пишет.
-              Без ключа OpenAI ответы будут шаблонными и цель диалога учтена не будет. <b className="text-fg">Переписки</b> ниже — ручной инбокс: читайте и отвечайте руками.
+              Без ключа OpenAI ответы будут шаблонными и цель диалога учтена не будет. Переписки читайте и отвечайте вручную в <b className="text-fg">«Обзоре аккаунта»</b>.
             </p>
             {replyAll && (
               <p className="rounded-xl border border-amber-500/30 bg-amber-500/8 px-3 py-2 text-xs leading-relaxed text-amber-200/90">
@@ -389,6 +389,7 @@ export function NeuroDialogsModule() {
           canStart={canStart}
           steps={!running ? <LaunchSteps steps={markCurrentStep([
             { label: 'Аккаунты', done: accountIds.length > 0, anchor: 'sec-accounts' },
+            { label: 'Защита', done: true, optional: true, anchor: 'sec-protect' },
             { label: 'Настройки', done: true, optional: true, anchor: 'sec-settings' },
             { label: 'Запуск', done: false, anchor: 'sec-run' },
           ])} /> : null}
