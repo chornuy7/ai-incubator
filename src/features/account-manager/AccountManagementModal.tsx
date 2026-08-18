@@ -1,7 +1,8 @@
 import { useEffect, useState, useCallback } from 'react'
 import { WorkTab } from './WorkTab'
+import { HistoryTab } from './HistoryTab'
 import {
-  User, Globe, BarChart3, Calendar, Zap, HeartPulse, Hash,
+  User, Globe, BarChart3, Calendar, Zap, HeartPulse, Hash, History,
   Copy, Check, ShieldCheck, ShieldAlert, ShieldQuestion, Loader2, RefreshCw, Unlock, AlertCircle, Server, LogOut, MessageSquare,
 } from 'lucide-react'
 import { Modal, Avatar, Segmented } from '@/shared/ui'
@@ -21,13 +22,15 @@ import { FLAGS as GEO_FLAGS, COUNTRY_NAME } from '@/shared/config/geo'
 // переехали в шапку (статус уже там, кнопки-проверки — рядом с ним), «Даты» — в Профиль.
 // «Здоровье» поднято вперёд (сверхважный критерий). MR-129: вкладку «Группы» (Telegram-папки)
 // убрали — она всегда была пустой и дублировала «Каналы» (там и каналы, и группы).
-export type TabKey = 'profile' | 'health' | 'proxy' | 'work' | 'channels'
+export type TabKey = 'profile' | 'health' | 'proxy' | 'work' | 'history' | 'channels'
 
 export const TABS: { key: TabKey; label: string; icon: React.ReactNode }[] = [
   { key: 'profile', label: 'Профиль', icon: <User size={15} /> },
   { key: 'health', label: 'Здоровье', icon: <HeartPulse size={15} /> },
   { key: 'proxy', label: 'Прокси', icon: <Globe size={15} /> },
   { key: 'work', label: 'Работа', icon: <Zap size={15} /> },
+  // MR-122 (LOG-003): детальная история действий аккаунта — рядом со сводкой «Работа».
+  { key: 'history', label: 'История', icon: <History size={15} /> },
   { key: 'channels', label: 'Каналы', icon: <Hash size={15} /> },
 ]
 
@@ -146,6 +149,7 @@ export function AccountCardBody({ account }: { account: TgAccount }) {
             <div className="animate-fade-in">
               {tab === 'profile' && <ProfileTab account={account} stats={stats} />}
               {tab === 'work' && <WorkTab accountId={account.id} />}
+              {tab === 'history' && <HistoryTab accountId={account.id} />}
               {tab === 'proxy' && <ProxyTab account={account} stats={stats} loading={loading} onRecheck={() => void load({ force: true })} />}
               {tab === 'health' && <HealthTab stats={stats} accountId={account.id} />}
               {tab === 'channels' && <ChannelsTab accountId={account.id} />}

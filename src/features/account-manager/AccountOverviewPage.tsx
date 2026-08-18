@@ -1,5 +1,6 @@
 import { useEffect, useState, useCallback, useMemo } from 'react'
 import { WorkTab } from './WorkTab'
+import { HistoryTab } from './HistoryTab'
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { User, Loader2, ArrowLeft, Search } from 'lucide-react'
 import { Avatar, StatusBadge, EmptyState } from '@/shared/ui'
@@ -222,6 +223,7 @@ export function AccountOverviewPage() {
                 <div className="animate-fade-in">
                   {tab === 'profile' && <ProfileTab account={account} stats={stats} />}
                   {tab === 'work' && <WorkTab accountId={account.id} />}
+                  {tab === 'history' && <HistoryTab accountId={account.id} />}
                   {tab === 'proxy' && <ProxyTab account={account} stats={stats} loading={loading} onRecheck={() => void runProxyCheck()} />}
                   {tab === 'health' && <HealthTab stats={stats} accountId={account.id} />}
                   {tab === 'channels' && <ChannelsTab accountId={account.id} />}

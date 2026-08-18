@@ -80,6 +80,7 @@ import { followUpDecision, followUpPrompt, followUpStatus } from '../lib/followU
 import { buildAgentContext, getAgent } from '../agents.js'
 import { recordTokens } from '../tokenLedger.js'
 import { recordMessage } from '../messages.js'
+import { recordAction } from '../actionLog.js'
 import { describeIncomingImage, messageHasPhoto } from '../lib/visionDescribe.js'
 import { effectivePrices } from '../priceStore.js'
 import { canWorkNow, noteAction } from '../accountActivity.js'
@@ -560,6 +561,8 @@ export async function runNeuroCommenting(task, store) {
                 comment: text,
                 status: 'sent',
               }, 'commentHistory')
+              // LOG-002: единый журнал действий (docs/CONTRACT-action-log). Best-effort.
+              void recordAction({ type: 'comment', accountId, accountName: meta.name, target: ch, targetTitle: ch, objectRef: { postId: post.id, url: `https://t.me/${String(ch).replace(/^@/, '')}/${post.id}` }, value: { text }, moduleKey: task.moduleKey, taskId: task.id, goalId: task.goalId, initiator: task.initiator })
               // Запоминаем отправленное, чтобы следующий аккаунт не написал то же слово в слово.
               task.usedTexts.push(text)
               if (task.usedTexts.length > 50) task.usedTexts.shift()
@@ -708,6 +711,8 @@ export async function runNeuroChatting(task, store) {
         await bumpProgress(task, store)
         await noteAction(accountId) // §4.3: усталость общая для всех модулей
         await store.appendHistory(task, { id: `${task.id}_${Date.now()}`, ts: new Date().toISOString(), accountName: meta.name, target: g, text: reply, status: 'sent' })
+        // LOG-002: единый журнал действий. Best-effort.
+        void recordAction({ type: 'chat', accountId, accountName: meta.name, target: g, targetTitle: g, objectRef: { url: `https://t.me/${String(g).replace(/^@/, '')}` }, value: { text: reply }, moduleKey: task.moduleKey, taskId: task.id, goalId: task.goalId, initiator: task.initiator })
         task.usedTexts.push(reply)
         if (task.usedTexts.length > 50) task.usedTexts.shift()
         await store.appendLog(task, 'success', `Ответ в @${g}`, meta.name)
@@ -870,6 +875,8 @@ export async function runMassReact(task, store) {
         await bumpProgress(task, store)
         await noteAction(accountId) // §4.3: усталость общая для всех модулей
         await store.appendHistory(task, { id: `${task.id}_${Date.now()}`, ts: new Date().toISOString(), accountName: meta.name, target: targetLabel, emoji, postId, status: 'sent' })
+        // LOG-002: единый журнал действий. Best-effort.
+        void recordAction({ type: 'reaction', accountId, accountName: meta.name, target: targetLabel, targetTitle: targetLabel, objectRef: { postId, url: `https://t.me/${String(targetLabel).replace(/^@/, '')}/${postId}` }, value: { emoji }, moduleKey: task.moduleKey, taskId: task.id, goalId: task.goalId, initiator: task.initiator })
         await store.appendLog(task, 'success', `Реакция ${emoji} ${targetLabel} · пост #${postId}`, meta.name)
         await disconnectAccount(client, accountId)
       } catch (err) {
@@ -1474,6 +1481,8 @@ export async function runNeuroDialogs(task, store) {
           await bumpProgress(task, store)
         await noteAction(accountId) // §4.3: усталость общая для всех модулей
           await store.appendHistory(task, { id: `${task.id}_${Date.now()}`, ts: new Date().toISOString(), accountName: meta.name, target: d.name, text: reply, status: 'sent' })
+          // LOG-002: единый журнал действий (ответ в личном диалоге). Best-effort.
+          void recordAction({ type: 'dialog', accountId, accountName: meta.name, target: d.name, targetTitle: d.name, value: { text: reply }, moduleKey: task.moduleKey, taskId: task.id, goalId: task.goalId, initiator: task.initiator })
           const inPreview = incoming ? incoming.slice(0, 60) : '[без текста]'
           await store.appendLog(task, 'success', `Ответ в ЛС «${d.name}» → «${reply.slice(0, 60)}» (на: «${inPreview}»)`, meta.name)
 
