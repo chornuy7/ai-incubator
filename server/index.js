@@ -1190,7 +1190,6 @@ app.post('/api/subscription', async (req, res) => {
     // Админ без явного userId правит ОБЩИЙ набор; всё остальное — личная покупка.
     const personal = !(admin && !req.body?.userId)
     const months = Number(req.body?.months) || 0
-    const balance = personal ? await setUserModules(list, target, { months }) : await setModules(list, target, { months })
     const { subscriptionCost: subCost, periodCost } = await import('./pricing.js')
     const { effectivePrices } = await import('./priceStore.js')
     const bundlesList = await (await import('./bundles.js')).listBundles()
@@ -1198,12 +1197,38 @@ app.post('/api/subscription', async (req, res) => {
     const monthly = list === 'all' ? null : subCost(list, bundlesList, effPrices.monthMap)
     // paid — то, что реально заряжено за период (год со скидкой), НЕ месячная цена.
     const paid = monthly ? periodCost(monthly.sum, months || 1, effPrices.annualDiscount) : null
+
+    // §11.4 (правка 18.08): подписка ОПЛАЧИВАЕТСЯ. До этого набор применялся сразу и
+    // денег не спрашивал — с нулём на счету можно было открыть себе что угодно.
+    //
+    // Считаем только ДОБАВЛЕННЫЕ модули: смена набора и отключение лишнего не должны
+    // списывать повторно за то, что уже оплачено. Админ, раздающий доступ, не платит —
+    // это провижининг, а не покупка.
+    const { getBalance, changeUsd } = await import('./balance.js')
+    let charged = 0
+    if (personal && !admin && Array.isArray(list)) {
+      const before = await getBalance(target)
+      const had = Array.isArray(before.modules) ? before.modules : (before.modules === 'all' ? list : [])
+      const added = list.filter((k) => !had.includes(k))
+      if (added.length) {
+        const addMonthly = subCost(added, bundlesList, effPrices.monthMap)
+        charged = periodCost(addMonthly.sum, months || 1, effPrices.annualDiscount)
+        if ((Number(before.usd) || 0) + 1e-9 < charged) {
+          return res.status(402).json({
+            ok: false,
+            error: `Недостаточно средств: нужно $${charged.toFixed(2)}, на счету $${(Number(before.usd) || 0).toFixed(2)}. Пополните баланс.`,
+          })
+        }
+        await changeUsd(-charged, `Подписка: ${added.length} модул. на ${months || 1} мес.`, target)
+      }
+    }
+    const balance = personal ? await setUserModules(list, target, { months }) : await setModules(list, target, { months })
     await appendAudit({
       action: 'subscription.set',
       module: 'billing',
       initiator: req.header('x-user-id') || 'system',
       reason: `Подписка${(admin && !req.body?.userId) ? ' пространства' : ` (${target || 'свой'})`}: ${list === 'all' ? 'все модули' : `${list.length} модулей`}`,
-      meta: { modules: list, months: months || 1, cost: monthly, paid },
+      meta: { modules: list, months: months || 1, cost: monthly, paid, charged },
     }).catch(() => {})
     resyncModuleLinks() // §11.3: подписка изменилась — обновить проекцию связей
     res.json({ ok: true, balance })
