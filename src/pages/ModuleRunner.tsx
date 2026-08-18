@@ -29,6 +29,7 @@ import { LogsPanel } from '@/widgets/LogsPanel'
 import { AccountPicker } from '@/features/account-picker/AccountPicker'
 import { PaywallLock } from '@/features/paywall/Paywall'
 import { ModuleLiveRouter, isLiveModule } from '@/features/modules'
+import { ActionPriceCalc } from '@/features/modules/shared/LaunchCost'
 import { FloatingBar } from '@/features/modules/shared'
 import { cn, compact, uid } from '@/shared/lib/utils'
 import type { ParseResult } from '@/shared/types'
@@ -93,6 +94,8 @@ export function ModuleRunner() {
         icon={<route.icon size={22} />}
         actions={<HeaderActions cfg={cfg} />}
       />
+      {/* MR-149: мини-калькулятор цены действия — в шапке КАЖДОГО модуля, перед контентом. */}
+      <ActionPriceCalc moduleKey={moduleKey} />
       {isNoSub ? (
         <PaywallLock>{inner}</PaywallLock>
       ) : loading ? (

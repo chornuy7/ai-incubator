@@ -23,7 +23,7 @@ import {
 } from './shared'
 import type { ModuleTaskSettings } from '@/api/modulesApi'
 import { confirmDialog } from '@/shared/lib/dialog'
-import { LaunchCost, ActionPriceCalc } from './shared/LaunchCost'
+import { LaunchCost } from './shared/LaunchCost'
 import { PRESET_MUL } from './shared/TimingSection'
 import { PresetBar } from './shared/PresetBar'
 
@@ -400,8 +400,7 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
         onEdit={editPreset} onDelete={deletePreset} disabled={running} />
       <SaveToFolderModal open={folderSave !== null} onClose={() => setFolderSave(null)} targets={folderSave ?? []} />
       <SavePresetModal open={presetModalOpen} onClose={() => setPresetModalOpen(false)} onSave={(name, color, owner) => savePreset(name, buildSettings(), color, owner)} />
-      {/* MR-149: калькулятор цены за действие — в шапке модуля, перед «Выбором аккаунтов». */}
-      {showBlock('run') && <ActionPriceCalc moduleKey={moduleKey} />}
+      {/* MR-149: калькулятор цены за действие теперь в ModuleRunner (для всех модулей). */}
       {cfg.accountPicker && showBlock('run') && (
         <div id="sec-accounts" className="scroll-mt-24">
           <AccountPicker selected={selected} onChange={setSelected} actions={cfg.accountActions} withFilters={!!cfg.accountFilters} selectedTitle={cfg.selectedTitle ?? 'Выбрано'} />

@@ -8,7 +8,6 @@ import { isHidden } from '@/shared/config/routes'
 import { useApp } from '@/mocks/store'
 import { Badge, Switch, Select, Segmented } from '@/shared/ui'
 import { AccountPicker } from '@/features/account-picker/AccountPicker'
-import { ActionPriceCalc } from '@/features/modules/shared/LaunchCost'
 import { fetchGoals, type Goal } from '@/api/goalsApi'
 import { fetchPricing } from '@/api/balanceApi'
 import { cn } from '@/shared/lib/utils'
@@ -188,8 +187,6 @@ export function NeuroDialogsModule() {
       {/* ТЗ 06.08 §10: выбор шаблона — вверху, до всех настроек (TPL-001). */}
       <PresetBar presets={presets} onApply={applyPreset} onSave={handleSavePreset}
         onEdit={editPreset} onDelete={deletePreset} disabled={running} />
-      {/* MR-149: мини-калькулятор цены действия — в шапке, перед «Выбором аккаунтов». */}
-      <ActionPriceCalc moduleKey="neuro-dialogs" />
       <div id="sec-accounts" className="scroll-mt-24">
         <AccountPicker
           selected={selected}

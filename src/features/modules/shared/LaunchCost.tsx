@@ -192,7 +192,7 @@ export function ActionPriceCalc({ moduleKey }: { moduleKey: string }) {
   // строку про символы там не показываем (MR-149).
   const hasText = (pricing?.maxTextTokens?.[moduleKey] ?? 0) > 0
   return (
-    <div className="flex flex-wrap items-center gap-x-4 gap-y-1 rounded-2xl border border-amber-500/20 bg-amber-500/[.05] px-4 py-2.5 text-sm">
+    <div className="mb-4 flex flex-wrap items-center gap-x-4 gap-y-1 rounded-2xl border border-amber-500/20 bg-amber-500/[.05] px-4 py-2.5 text-sm">
       <span className="flex items-center gap-1.5 font-bold text-amber-300">
         <Zap size={15} fill="currentColor" /> {fmtCoins(price)} ⚡
         <span className="font-normal text-white/60">за действие</span>
