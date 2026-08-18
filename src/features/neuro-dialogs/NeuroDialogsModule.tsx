@@ -187,6 +187,12 @@ export function NeuroDialogsModule() {
         />
       </div>
 
+      {/* §3 (MR-113 · 17.08): «Защита аккаунтов» — ОТДЕЛЬНЫМ блоком, как во всех модулях
+          (раньше была вложена внутрь «ИИ авто-ответы» — расходилось с единой структурой). */}
+      <div id="sec-protect" className="scroll-mt-24">
+        <ProtectionBlock enabled={aiProtect} onEnabled={setAiProtect} level={protLevel} onLevel={setProtLevel} />
+      </div>
+
       <div className="card p-0">
         <div className="flex items-center gap-3 px-4 py-3.5">
           <button
@@ -205,8 +211,6 @@ export function NeuroDialogsModule() {
         </div>
         {aiOpen && (
           <div className="space-y-4 border-t border-line p-4">
-            {/* §3 (MR-113): «Защита аккаунтов» — первой в настройках ИИ-ответов. */}
-            <ProtectionBlock enabled={aiProtect} onEnabled={setAiProtect} level={protLevel} onLevel={setProtLevel} />
             <Switch
               checked={aiEnabled}
               onChange={setAiEnabled}
