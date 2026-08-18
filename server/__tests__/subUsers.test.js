@@ -193,3 +193,34 @@ test('список пользователей: scope=all открывает пл
     'обычный владелец не открывает чужих подбором параметра в адресе',
   )
 })
+
+/**
+ * MR-28: «суб получает доступ только к оплаченным владельцем модулям».
+ * Проверка из карточки: выдать субу модуль вне пула владельца — недоступен.
+ *
+ * Баг 18.08: суб без ЛИЧНОЙ подписки проваливался на общий набор `workspace`, а не на
+ * набор владельца. На проде это означало 14 модулей у суба против 3 оплаченных
+ * владельцем — включая тот, что был выдан ему ролью, но никем не куплен.
+ */
+test('набор модулей суба берётся у владельца, а не из общего набора пространства', async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'sub-modules-'))
+  process.env.USERS_FILE = path.join(dir, 'users.json')
+  process.env.BALANCE_FILE = path.join(dir, 'balance.json')
+
+  const { createUser } = await import('../users.js')
+  const { setUserModules, setModules, getBalance } = await import('../balance.js')
+
+  const owner = await createUser({ email: 'own2@x.y', password: 'secret1', name: 'Владелец', roleIds: [] })
+  const sub = await createUser({ email: 'sub2@x.y', password: 'secret1', name: 'Суб', parentId: owner.id, roleIds: [] })
+
+  // Пространство «оплатило» много, владелец лично — только два модуля.
+  await setModules(['mailing', 'warming', 'neuro-commenting', 'parsing'], undefined, {})
+  await setUserModules(['warming', 'parsing'], owner.id, {})
+
+  const balSub = await getBalance(sub.id)
+  assert.deepEqual([...balSub.modules].sort(), ['parsing', 'warming'],
+    'суб не должен получать модули, которых владелец не покупал')
+
+  const balOwner = await getBalance(owner.id)
+  assert.deepEqual([...balOwner.modules].sort(), ['parsing', 'warming'], 'у владельца — его собственный набор')
+})

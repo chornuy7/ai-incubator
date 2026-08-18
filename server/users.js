@@ -198,6 +198,43 @@ export async function resolveWalletOwner(userId) {
   return cur ? cur.id : id
 }
 
+/**
+ * §4.1 (MR-28): чья ПОДПИСКА определяет набор модулей пользователя.
+ *
+ * Модули покупает рабочее пространство, а не сотрудник, поэтому здесь идём вверх до
+ * самого владельца ВСЕГДА — в отличие от кошелька, где `individual` обрывает подъём:
+ * суб может тратить свои монеты, но купить себе модуль вне пула владельца не может.
+ *
+ * Без этого суб без личной подписки проваливался на общий набор `workspace` — то есть
+ * получал модули, которых владелец не покупал (прогон 18.08: владельцу оплачены три
+ * модуля, субу открывался нейрокомментинг из чужого набора).
+ * @param {string} userId @returns {Promise<string>} id владельца подписки (или сам userId)
+ */
+export async function resolveSubscriptionOwner(userId) {
+  const id = String(userId || '')
+  if (!id || id === '__default') return id
+  let byId = new Map()
+  const db = sb()
+  if (db) {
+    const { data } = await db.from('profiles').select('id, legacy_id, parent_id')
+    const rows = (data || []).filter((p) => p.legacy_id)
+    const legacyByUuid = new Map(rows.map((p) => [p.id, p.legacy_id]))
+    byId = new Map(rows.map((p) => [p.legacy_id, { id: p.legacy_id, parentId: p.parent_id ? (legacyByUuid.get(p.parent_id) || null) : null }]))
+  } else {
+    const users = await readJson(USERS_FILE(), [])
+    byId = new Map((Array.isArray(users) ? users : []).map((u) => [u.id, { id: u.id, parentId: u.parentId || null }]))
+  }
+  let cur = byId.get(id)
+  const seen = new Set()
+  while (cur && cur.parentId && !seen.has(cur.id)) {
+    seen.add(cur.id)
+    const parent = byId.get(cur.parentId)
+    if (!parent) break
+    cur = parent
+  }
+  return cur ? cur.id : id
+}
+
 /** §4.2 (MR-30): нормализовать режим баланса. */
 function normBalanceMode(v) {
   return v === 'individual' ? 'individual' : 'shared'

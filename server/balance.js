@@ -19,7 +19,7 @@
  */
 import { dataPath, readJson, mutateJson } from './lib/jsonStore.js'
 import { getSupabase, supabaseEnabled } from './lib/supabase.js'
-import { resolveWalletOwner } from './users.js'
+import { resolveWalletOwner, resolveSubscriptionOwner } from './users.js'
 
 /**
  * §10.2: когда DATA_BACKEND=supabase, баланс/подписки/журнал живут в БД, а не в
@@ -169,9 +169,13 @@ export async function getBalance(userId) {
     // §4.2 (MR-30): монеты/деньги — из кошелька владельца при общем балансе; подписка
     // (модули) остаётся по своему ключу.
     const wk = key(await resolveWalletOwner(userId))
+    // §4.1 (MR-28): набор модулей суба — это набор ВЛАДЕЛЬЦА. Раньше здесь стоял свой
+    // ключ, и суб без личной подписки проваливался на общий `workspace` — получая
+    // модули, которых владелец не покупал.
+    const sk = key(await resolveSubscriptionOwner(userId))
     const [coinRes, subRes, wsRes] = await Promise.all([
       db.from('coin_balance').select('coins, usd, updated_at').eq('user_id', wk).maybeSingle(),
-      db.from('subscriptions').select('modules, expires_at').eq('id', k).maybeSingle(),
+      db.from('subscriptions').select('modules, expires_at').eq('id', sk).maybeSingle(),
       db.from('subscriptions').select('modules, expires_at').eq('id', 'workspace').maybeSingle(),
     ])
     const personal = subRes.data
@@ -202,6 +206,9 @@ export async function getBalance(userId) {
   // берём по своему ключу (saved). Ключи нормализуем через key() (undefined → __default).
   const ownKey = key(userId)
   const wk = key(await resolveWalletOwner(userId))
+  // §4.1 (MR-28): подписку читаем у владельца пространства, а не у самого суба.
+  const sk = key(await resolveSubscriptionOwner(userId))
+  const subRec = sk === ownKey ? saved : ((all && all[sk]) || {})
   const walletRec = wk === ownKey ? saved : ((all && all[wk]) || (wk === DEFAULT_USER ? legacy : null) || {})
   return {
     planId,
@@ -210,10 +217,10 @@ export async function getBalance(userId) {
     // Клиент, выбравший «парсер + комментинг за 20», видит свои два модуля, а
     // сотрудник без личной покупки работает внутри купленного владельцем. Срок
     // подписки (expiresAt) берём из того же источника, что и набор.
-    modules: saved?.modules !== undefined
-      ? saved.modules
+    modules: subRec?.modules !== undefined
+      ? subRec.modules
       : ((all && all[SUBSCRIPTION_KEY]?.modules) ?? DEFAULT_MODULES),
-    expiresAt: (saved?.modules !== undefined ? saved?.expiresAt : (all && all[SUBSCRIPTION_KEY]?.expiresAt)) ?? null,
+    expiresAt: (subRec?.modules !== undefined ? subRec?.expiresAt : (all && all[SUBSCRIPTION_KEY]?.expiresAt)) ?? null,
     coins: normCoins(walletRec?.coins ?? DEFAULT_STATE.coins),
     usd: normUsd(walletRec?.usd ?? 0),
     updatedAt: Number(walletRec?.updatedAt) || 0,
