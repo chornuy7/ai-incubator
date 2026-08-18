@@ -132,6 +132,13 @@ export function currentFatigue(state = {}, profile = DEFAULT_FATIGUE, now = Date
   const base = Math.max(0, Number(state.fatigue) || 0)
   const last = Number(state.lastActionAt) || 0
   if (!base || !last) return base
+  // Обязательный отдых ОТБЫТ — усталость обнулена (правка 18.08). Иначе два параметра
+  // спорили друг с другом: человек ставил «отдых 3 минуты», но при восстановлении 1/час
+  // аккаунт после этих трёх минут оставался «устал 1 из 1» ещё почти час. Отдых для того
+  // и назначается, чтобы после него вернуться в строй; постепенное восстановление
+  // работает в обычных перерывах, когда до порога не дошли.
+  const rested = Number(state.restUntil) || 0
+  if (rested && now >= rested && last <= rested) return 0
   const hours = Math.max(0, (now - last) / HOUR_MS)
   const rec = Math.max(0, Number(profile.recoveryPerHour ?? DEFAULT_FATIGUE.recoveryPerHour))
   // Усталость — ЦЕЛОЕ число действий, а не дробь (правка 18.08). Дробные остатки

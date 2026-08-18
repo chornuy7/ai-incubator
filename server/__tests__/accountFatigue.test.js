@@ -242,3 +242,47 @@ test('усталость целая и при больших порогах', ()
     assert.equal(Number.isInteger(f), true, `дробь при ${hoursAgo} ч: ${f}`)
   }
 })
+
+/**
+ * Отдых и восстановление — РАЗНЫЕ вещи, но раньше они спорили (правка 18.08).
+ *
+ * Оператор ставил «порог 1, отдых 3 минуты, восстановление 1/час» и ожидал: одно
+ * действие → три минуты паузы → снова в строй. На деле после трёх минут аккаунт
+ * оставался «устал 1 из 1» ещё почти час: обязательный отдых счётчик не обнулял, а
+ * восстановление 1/час съедало единицу только за час.
+ */
+test('отбытый обязательный отдых обнуляет усталость', () => {
+  const M = 60000
+  const now = 1_000_000_000
+  const profile = { threshold: 1, restMinutes: 3, recoveryPerHour: 1 }
+
+  const state = applyAction({}, profile, now)
+  assert.equal(fatigueGate(state, profile, now + 1 * M).ok, false, 'внутри отдыха работать нельзя')
+  assert.equal(fatigueGate(state, profile, now + 4 * M).ok, true, 'отдых отбыт — аккаунт снова в строю')
+  assert.equal(currentFatigue(state, profile, now + 4 * M), 0, 'счётчик обнулён отдыхом, а не ждёт час восстановления')
+})
+
+test('восстановление работает в обычных перерывах, когда до порога не дошли', () => {
+  const H = 3600000
+  const now = 1_000_000_000
+  const profile = { threshold: 15, restMinutes: 45, recoveryPerHour: 5 }
+  // Пять действий, отдых не назначался (порог не достигнут) — тает по 5 единиц в час.
+  const state = { fatigue: 5, lastActionAt: now - 1 * H }
+  assert.equal(currentFatigue(state, profile, now), 0)
+  assert.equal(currentFatigue({ fatigue: 12, lastActionAt: now - 1 * H }, profile, now), 7)
+})
+
+test('после отдыха новое действие снова копит усталость', () => {
+  const M = 60000
+  const now = 1_000_000_000
+  const profile = { threshold: 2, restMinutes: 3, recoveryPerHour: 1 }
+
+  let state = applyAction({}, profile, now)                      // 1
+  state = { ...state, ...applyAction(state, profile, now + M) }  // 2 → отдых
+  assert.ok(state.restUntil > now + M)
+
+  const afterRest = now + 10 * M
+  assert.equal(currentFatigue(state, profile, afterRest), 0)
+  const again = applyAction(state, profile, afterRest)
+  assert.equal(again.fatigue, 1, 'счёт начинается заново, а не продолжает старый')
+})

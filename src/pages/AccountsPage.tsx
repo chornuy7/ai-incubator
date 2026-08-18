@@ -1742,14 +1742,26 @@ function FatigueModal({ open, ids, activity, onClose, onDone, onError }: {
         </p>
       )}
 
-      <label className="label">Порог усталости <span className="text-white/30">— действий до отдыха</span></label>
+      {/* Три поля описывают один цикл. Раньше «отдых» и «восстановление» читались как
+          одно и то же — подписи объясняют, чем они отличаются, на числах из формы. */}
+      <label className="label">1. Порог усталости <span className="text-white/30">— сколько действий подряд</span></label>
       <NumberField value={threshold} onChange={setThreshold} min={1} max={500} className="input h-10 w-full" />
+      <p className="mt-1 text-[11px] text-white/40">
+        Каждое действие в любом модуле — плюс единица. Набрал {threshold} — уходит на перерыв.
+      </p>
 
-      <label className="label mt-3">Отдых после переутомления, минут</label>
+      <label className="label mt-3">2. Перерыв после порога, минут <span className="text-white/30">— пауза целиком</span></label>
       <NumberField value={restMinutes} onChange={setRestMinutes} min={1} max={1440} className="input h-10 w-full" />
+      <p className="mt-1 text-[11px] text-white/40">
+        {restMinutes} мин аккаунт не берут НИ В ОДИН модуль. После перерыва счётчик обнуляется и он снова в строю.
+      </p>
 
-      <label className="label mt-3">Восстановление <span className="text-white/30">— единиц усталости за час</span></label>
+      <label className="label mt-3">3. Восстановление <span className="text-white/30">— за час простоя</span></label>
       <NumberField value={recoveryPerHour} onChange={setRecoveryPerHour} min={1} max={100} className="input h-10 w-full" />
+      <p className="mt-1 text-[11px] text-white/40">
+        Работает, пока до порога НЕ дошли: за час без действий счётчик падает на {recoveryPerHour}.
+        Это «отдышался между делом», а не перерыв из пункта 2.
+      </p>
 
       <button
         disabled={busy || !ids.length}
