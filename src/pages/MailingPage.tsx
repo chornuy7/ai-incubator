@@ -21,6 +21,7 @@ import { isHidden } from '@/shared/config/routes'
 import { SectionCard, LaunchPanel, LaunchSteps, markCurrentStep, TaskStartedModal, ProtectionBlock, BlacklistEditor } from '@/features/modules/shared'
 import { LaunchCost } from '@/features/modules/shared/LaunchCost'
 import { useModuleTask } from '@/features/modules/shared/useModuleTask'
+import { PresetBar } from '@/features/modules/shared/PresetBar'
 
 export function MailingPage() {
   // §5.4: модуль живёт не под /panel/modules/*, поэтому гейт подписки — здесь же.
@@ -263,6 +264,9 @@ function MailingInner() {
 
       <div className="space-y-4">
         <TaskStartedModal task={justStarted} moduleTitle="Мейлинг" onClose={dismissJustStarted} />
+        {/* ТЗ 06.08 §10: выбор шаблона — вверху, до всех настроек (TPL-001). */}
+        <PresetBar presets={presets} onApply={applyPreset} onSave={handleSave}
+          onEdit={editPreset} onDelete={deletePreset} disabled={running} />
 
         {/* 1. Аккаунты — единый полноширинный выбор, как во всех модулях. */}
         <div id="sec-accounts" className="scroll-mt-24">
@@ -478,7 +482,6 @@ function MailingInner() {
               task={task}
               presets={presets}
               onApplyPreset={applyPreset}
-              onDeletePreset={deletePreset} onEditPreset={editPreset}
             />
         </div>
       </div>

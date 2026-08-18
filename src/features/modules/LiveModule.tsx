@@ -25,6 +25,7 @@ import type { ModuleTaskSettings } from '@/api/modulesApi'
 import { confirmDialog } from '@/shared/lib/dialog'
 import { LaunchCost, ActionPriceCalc } from './shared/LaunchCost'
 import { PRESET_MUL } from './shared/TimingSection'
+import { PresetBar } from './shared/PresetBar'
 
 const DEFAULT_DELAYS = {
   comment: [30, 120] as [number, number],
@@ -387,6 +388,9 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
   return (
     <div className="space-y-4">
       <TaskStartedModal task={justStarted} moduleTitle={cfg.title} onClose={dismissJustStarted} />
+      {/* ТЗ 06.08 §10: выбор шаблона — вверху, до всех настроек (TPL-001). */}
+      <PresetBar presets={presets} onApply={applyPreset} onSave={handleSave}
+        onEdit={editPreset} onDelete={deletePreset} disabled={running} />
       <SaveToFolderModal open={folderSave !== null} onClose={() => setFolderSave(null)} targets={folderSave ?? []} />
       <SavePresetModal open={presetModalOpen} onClose={() => setPresetModalOpen(false)} onSave={(name, color, owner) => savePreset(name, buildSettings(), color, owner)} />
       {/* MR-149: калькулятор цены за действие — в шапке модуля, перед «Выбором аккаунтов». */}
@@ -761,7 +765,6 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
           steps={!running ? <LaunchSteps steps={launchSteps} /> : null}
           presets={presets}
           onApplyPreset={applyPreset}
-          onDeletePreset={deletePreset} onEditPreset={editPreset}
           extras={(
             <>
               {/* §6: автоматизация прямо в модуле — запуск по времени, одно-/многоразово.

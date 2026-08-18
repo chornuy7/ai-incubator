@@ -16,6 +16,7 @@ import { promptDialog } from '@/shared/lib/dialog'
 // непрочитанных», а читают и отвечают руками на «Обзоре аккаунта».
 import { fetchInbox, type InboxDialog } from '@/api/neuroDialogsApi'
 import { useModuleTask } from '@/features/modules/shared/useModuleTask'
+import { PresetBar } from '@/features/modules/shared/PresetBar'
 import {
   SectionCard,
   HelpButton,
@@ -174,9 +175,18 @@ export function NeuroDialogsModule() {
 
   const canStart = accountIds.length > 0
 
+  // Сохранение шаблона доступно из двух мест (полоса вверху и кнопка в баре) — обработчик один.
+  const handleSavePreset = async () => {
+    const name = await promptDialog({ title: 'Сохранить шаблон', message: 'Название шаблона настроек', placeholder: 'Напр. Тёплый диалог' })
+    if (name) void savePreset(name, buildSettings())
+  }
+
   return (
     <div className="space-y-4">
       <TaskStartedModal task={justStarted} moduleTitle={cfg.title} onClose={dismissJustStarted} />
+      {/* ТЗ 06.08 §10: выбор шаблона — вверху, до всех настроек (TPL-001). */}
+      <PresetBar presets={presets} onApply={applyPreset} onSave={handleSavePreset}
+        onEdit={editPreset} onDelete={deletePreset} disabled={running} />
       <div id="sec-accounts" className="scroll-mt-24">
         <AccountPicker
           selected={selected}
@@ -385,10 +395,7 @@ export function NeuroDialogsModule() {
           blockedBy={!running && !canStart ? ['выберите аккаунты'] : []}
           onStart={() => { void start(buildSettings(), `${cfg.title} · ${selected.size} акк.`) }}
           onStop={stop}
-          onSave={async () => {
-            const name = await promptDialog({ title: 'Сохранить шаблон', message: 'Название шаблона настроек', placeholder: 'Напр. Тёплый диалог' })
-            if (name) void savePreset(name, buildSettings())
-          }}
+          onSave={handleSavePreset}
           primaryLabel={cfg.primaryAction ?? 'Начать'}
           stats={[
             { icon: <MessagesSquare size={18} />, color: '#06b6d4', label: 'Диалогов', value: String(dialogs.length) },
@@ -400,7 +407,6 @@ export function NeuroDialogsModule() {
           warn={!canStart ? 'Выберите хотя бы один аккаунт' : undefined}
           presets={presets}
           onApplyPreset={applyPreset}
-          onDeletePreset={deletePreset} onEditPreset={editPreset}
         />
       </div>
     </div>

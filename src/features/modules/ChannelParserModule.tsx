@@ -10,6 +10,7 @@ import { Segmented, Switch, Badge, Select, EmptyState } from '@/shared/ui'
 import { AccountPicker } from '@/features/account-picker/AccountPicker'
 import { useModuleTask } from './shared/useModuleTask'
 import { SectionCard, NumberField, ProtectionBlock, DelayFields, LaunchPanel, LaunchSteps, markCurrentStep, TaskStartedModal, SchedulePanel } from './shared'
+import { PresetBar } from './shared/PresetBar'
 import { cn } from '@/shared/lib/utils'
 import { downloadXls } from '@/shared/lib/exportXls'
 import { SaveToFolderModal } from './shared/FolderPicker'
@@ -319,6 +320,9 @@ function ChannelParserInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: 
   return (
     <div className="space-y-4">
       <TaskStartedModal task={justStarted} moduleTitle={cfg.title} onClose={dismissJustStarted} />
+      {/* ТЗ 06.08 §10: выбор шаблона — вверху, до всех настроек (TPL-001). */}
+      <PresetBar presets={presets} onApply={applyPreset} onSave={handleSave}
+        onEdit={editPreset} onDelete={deletePreset} disabled={running} />
       {/* Выбор аккаунтов */}
       <div id="sec-accounts" className="scroll-mt-24">
         <AccountPicker selected={selected} onChange={setSelected} actions={cfg.accountActions} withFilters={!!cfg.accountFilters} selectedTitle={cfg.selectedTitle ?? 'Выбрано для парсинга'} />
@@ -535,7 +539,6 @@ function ChannelParserInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: 
           warn={warn}
           presets={presets}
           onApplyPreset={applyPreset}
-          onDeletePreset={deletePreset} onEditPreset={editPreset}
         />
       </SectionCard>
 

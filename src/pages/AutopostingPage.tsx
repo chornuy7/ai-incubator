@@ -20,6 +20,7 @@ import { ModuleNotPaid } from '@/features/billing/ModuleNotPaid'
 import { SectionCard, LaunchPanel, LaunchSteps, markCurrentStep, TaskStartedModal, BlacklistEditor } from '@/features/modules/shared'
 import { LaunchCost } from '@/features/modules/shared/LaunchCost'
 import { useModuleTask } from '@/features/modules/shared/useModuleTask'
+import { PresetBar } from '@/features/modules/shared/PresetBar'
 
 /** Локальная дата-время в формат `datetime-local` (без сдвига в UTC, как делает toISOString). */
 function toLocalInput(ts: number): string {
@@ -248,6 +249,9 @@ function AutopostingInner() {
 
       <div className="space-y-4">
         <TaskStartedModal task={justStarted} moduleTitle="Автопостинг" onClose={dismissJustStarted} />
+        {/* ТЗ 06.08 §10: выбор шаблона — вверху, до всех настроек (TPL-001). */}
+        <PresetBar presets={presets} onApply={applyPreset} onSave={handleSave}
+          onEdit={editPreset} onDelete={deletePreset} disabled={running} />
 
         {/* 1. Аккаунты — единый полноширинный выбор, как во всех модулях. */}
         <div id="sec-accounts" className="scroll-mt-24">
@@ -407,7 +411,6 @@ function AutopostingInner() {
             task={task}
             presets={presets}
             onApplyPreset={applyPreset}
-            onDeletePreset={deletePreset} onEditPreset={editPreset}
           />
         </div>
       </div>

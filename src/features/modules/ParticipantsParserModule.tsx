@@ -10,6 +10,7 @@ import { Switch, Select, Badge, EmptyState, Modal } from '@/shared/ui'
 import { AccountPicker } from '@/features/account-picker/AccountPicker'
 import { useModuleTask } from './shared/useModuleTask'
 import { SectionCard, NumberField, ProtectionBlock, LaunchPanel, LaunchSteps, markCurrentStep, TaskStartedModal, SchedulePanel } from './shared'
+import { PresetBar } from './shared/PresetBar'
 import { cn } from '@/shared/lib/utils'
 import { downloadXls } from '@/shared/lib/exportXls'
 import { FolderPicker, SaveToFolderModal } from './shared/FolderPicker'
@@ -204,6 +205,9 @@ function Inner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: string }) {
   return (
     <div className="space-y-4">
       <TaskStartedModal task={justStarted} moduleTitle={cfg.title} onClose={dismissJustStarted} />
+      {/* ТЗ 06.08 §10: выбор шаблона — вверху, до всех настроек (TPL-001). */}
+      <PresetBar presets={presets} onApply={applyPreset} onSave={handleSave}
+        onEdit={editPreset} onDelete={deletePreset} disabled={running} />
       <div id="sec-accounts" className="scroll-mt-24">
         <AccountPicker selected={selected} onChange={setSelected} actions={cfg.accountActions} withFilters={!!cfg.accountFilters} selectedTitle={cfg.selectedTitle ?? 'Выбрано для парсинга'} />
       </div>
@@ -364,7 +368,7 @@ function Inner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: string }) {
             ...(targetList.length ? [] : [`добавьте ${P.sourceTitle.toLowerCase()}`]),
           ] : []}
           cost={<LaunchCost compact moduleKey={moduleKey} actions={P.unit ? (limits[lkey(P.unit.limitLabel)] || 0) : 0} />}
-          presets={presets} onApplyPreset={applyPreset} onDeletePreset={deletePreset} onEditPreset={editPreset} />
+          presets={presets} onApplyPreset={applyPreset} />
       </SectionCard>
 
       {/* §3.9: расписание и здесь — раньше блок был только в LiveModule (тест 6.13). */}
