@@ -183,8 +183,14 @@ export function scheduleGate(schedule = DEFAULT_SCHEDULE, now = Date.now(), rnd 
   const hour = new Date(now).getHours()
   const table = schedule && typeof schedule === 'object' ? schedule : DEFAULT_SCHEDULE
   const p = Number(table[hour] ?? DEFAULT_SCHEDULE[hour] ?? 0)
-  if (p <= 0) return { ok: false, reason: `по распорядку в ${hour}:00 аккаунт не активен`, chance: 0 }
-  if (rnd() > p) return { ok: false, reason: `не попал в вероятность ${Math.round(p * 100)}% для ${hour}:00`, chance: p }
+  // `until` — когда есть смысл пробовать снова. Для распорядка это следующий час:
+  // раньше воркер получал только «нельзя» и завершал задачу, хотя ждать было минуту.
+  const nextHour = new Date(now)
+  nextHour.setMinutes(0, 0, 0)
+  nextHour.setHours(nextHour.getHours() + 1)
+  const until = nextHour.getTime()
+  if (p <= 0) return { ok: false, reason: `по распорядку в ${hour}:00 аккаунт не активен`, chance: 0, until }
+  if (rnd() > p) return { ok: false, reason: `не попал в вероятность ${Math.round(p * 100)}% для ${hour}:00`, chance: p, until }
   return { ok: true, chance: p }
 }
 

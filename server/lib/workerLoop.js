@@ -45,6 +45,34 @@ export function trackIdlePass(task, progressed, maxIdle = 5) {
   return task.idlePasses >= maxIdle
 }
 
+/**
+ * Максимум, сколько задача ждёт освобождения аккаунтов, прежде чем завершиться.
+ *
+ * Правка 18.08. Раньше круг, где ВСЕ аккаунты временно недоступны, означал конец
+ * задачи: живой прогон нейрокомментинга сделал 1 действие из 2 и завершился словами
+ * «отдыхает после нагрузки (ещё 2 мин)». Ждать две минуты было бы честнее, чем
+ * отдавать половину результата.
+ *
+ * Потолок нужен, чтобы задача не висела сутки из-за ночного распорядка: если ближайшее
+ * окно дальше, честнее закончить и сказать, когда аккаунты освободятся.
+ */
+export const IDLE_WAIT_CAP_MS = 30 * 60 * 1000
+
+/**
+ * Ждать ли, пока освободится хоть один аккаунт.
+ *
+ * @param {number} until  время ближайшего освобождения (0 — неизвестно)
+ * @param {number} [now]
+ * @returns {{wait:false} | {wait:true, ms:number, minutes:number}}
+ */
+export function idleWaitPlan(until, now = Date.now()) {
+  const ms = Number(until) - now
+  // Причина «исчерпан лимит» времени освобождения не имеет — ждать нечего.
+  if (!Number.isFinite(ms) || ms <= 0) return { wait: false }
+  if (ms > IDLE_WAIT_CAP_MS) return { wait: false }
+  return { wait: true, ms, minutes: Math.max(1, Math.ceil(ms / 60000)) }
+}
+
 /** Есть ли в тексте хотя бы одно из слов (регистронезависимо). @param {string} text @param {string[]} words */
 export function postContainsAny(text, words) {
   if (!words?.length) return false

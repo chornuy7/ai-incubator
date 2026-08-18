@@ -66,7 +66,7 @@ export async function breakableDelay(ms, store, task) {
 import { getAccountMeta, setAccountMeta } from '../accountsMeta.js'
 import { releaseTaskLocks, markTaskLive, markTaskDone, assertAccountAvailable } from '../lib/accountLocks.js'
 import { loadSessionString, createClient } from '../tgAuth.js'
-import { pickCommentCandidates, trackIdlePass, warmingPace, pickWeightedKey } from '../lib/workerLoop.js'
+import { pickCommentCandidates, trackIdlePass, warmingPace, pickWeightedKey, idleWaitPlan } from '../lib/workerLoop.js'
 import { limitReached, incAction } from '../lib/dailyActions.js'
 import { cleanMailingNumbers, classifyMailingTargets, pickMailingAccount } from '../lib/mailing.js'
 import { listLeads, sortDialogsByLeadPriority, upsertLead, updateLead } from '../leads.js'
@@ -408,6 +408,8 @@ export async function runNeuroCommenting(task, store) {
   // Почему круг оказался пустым: без этого задача завершалась словами «исчерпали
   // лимиты» даже когда всех отсеял распорядок — и ноль действий читался как поломка.
   let lastSkip = ''
+  // Ближайшее время, когда хоть один аккаунт снова сможет работать (0 — неизвестно).
+  let idleUntil = 0
   const accountIds = s.accountIds || []
 
   try {
@@ -419,6 +421,20 @@ export async function runNeuroCommenting(task, store) {
         break
       }
       if (idleLap >= accountIds.length) {
+        // Круг пустой: все аккаунты отпали. Причина бывает временной (отдых, распорядок)
+        // и окончательной (лимиты, статус). Во временном случае ЖДЁМ ближайшее окно, а не
+        // завершаем задачу: прогон 18.08 отдал 1 действие из 2, потому что аккаунту
+        // оставалось отдыхать две минуты. Потолок ожидания — IDLE_WAIT_CAP_MS.
+        const plan = idleWaitPlan(idleUntil)
+        if (plan.wait) {
+          await store.appendLog(task, 'info', `Все аккаунты заняты отдыхом — ждём ${plan.minutes} мин и продолжаем${lastSkip ? ` (${lastSkip})` : ''}`)
+          if (await breakableDelay(plan.ms, store, task)) break
+          task = (await store.loadTask(task.id)) || task
+          idleLap = 0
+          idleUntil = 0
+          lastSkip = ''
+          continue
+        }
         // Почему круг оказался пустым. Без этой оговорки задача завершалась словами
         // «исчерпали лимиты» даже когда всех до одного отсеял распорядок — и оператор
         // читал нулевой результат как поломку продукта (живой прогон 23.07).
@@ -441,7 +457,14 @@ export async function runNeuroCommenting(task, store) {
       // сюда уже не попадёт: раньше каждая задача считала с нуля и освободившийся
       // аккаунт тут же уходил лить реакции.
       const human = await canWorkNow(accountId)
-      if (!human.ok) { idleLap += 1; lastSkip = human.reason; await store.appendLog(task, 'info', `Пропуск: ${human.reason}`, meta.name); continue }
+      if (!human.ok) {
+        idleLap += 1
+        lastSkip = human.reason
+        // Берём САМОЕ РАННЕЕ окно по кругу: ждать надо до первого освободившегося.
+        if (human.until) idleUntil = idleUntil ? Math.min(idleUntil, human.until) : human.until
+        await store.appendLog(task, 'info', `Пропуск: ${human.reason}`, meta.name)
+        continue
+      }
       if (await limitReached(accountId, 'comments')) { idleLap += 1; lastSkip = 'суточный лимит'; await store.appendLog(task, 'info', 'Суточный лимит комментариев достигнут (§6)', meta.name); continue }
       idleLap = 0
       lastSkip = ''
@@ -627,6 +650,8 @@ export async function runNeuroChatting(task, store) {
   // Почему круг оказался пустым: без этого задача завершалась словами «исчерпали
   // лимиты» даже когда всех отсеял распорядок — и ноль действий читался как поломка.
   let lastSkip = ''
+  // Ближайшее время, когда хоть один аккаунт снова сможет работать (0 — неизвестно).
+  let idleUntil = 0
   const accountIds = s.accountIds || []
 
   try {
@@ -638,6 +663,18 @@ export async function runNeuroChatting(task, store) {
         break
       }
       if (idleLap >= accountIds.length) {
+        // Временная причина (отдых/распорядок) — ждём ближайшее окно, а не завершаем
+        // задачу на полпути (см. развёрнутый комментарий у первого такого блока).
+        const plan = idleWaitPlan(idleUntil)
+        if (plan.wait) {
+          await store.appendLog(task, 'info', `Все аккаунты заняты отдыхом — ждём ${plan.minutes} мин и продолжаем${lastSkip ? ` (${lastSkip})` : ''}`)
+          if (await breakableDelay(plan.ms, store, task)) break
+          task = (await store.loadTask(task.id)) || task
+          idleLap = 0
+          idleUntil = 0
+          lastSkip = ''
+          continue
+        }
         await store.appendLog(task, 'info', lastSkip
           ? `Ни один аккаунт не может работать сейчас (${lastSkip}) — завершаем`
           : 'Все аккаунты исчерпали лимиты на эту задачу — завершаем')
@@ -650,7 +687,14 @@ export async function runNeuroChatting(task, store) {
       // Иначе «сквозной отдых» дырявый: аккаунт, отработавший смену тут, копил усталость,
       // но никто её не проверял — и он же уходил лить реакции в соседнем модуле.
       const human = await canWorkNow(accountId)
-      if (!human.ok) { idleLap += 1; lastSkip = human.reason; await store.appendLog(task, 'info', `Пропуск: ${human.reason}`, meta.name); continue }
+      if (!human.ok) {
+        idleLap += 1
+        lastSkip = human.reason
+        // Берём САМОЕ РАННЕЕ окно по кругу: ждать надо до первого освободившегося.
+        if (human.until) idleUntil = idleUntil ? Math.min(idleUntil, human.until) : human.until
+        await store.appendLog(task, 'info', `Пропуск: ${human.reason}`, meta.name)
+        continue
+      }
       if (await limitReached(accountId, 'comments')) { idleLap += 1; lastSkip = 'суточный лимит'; await store.appendLog(task, 'info', 'Суточный лимит сообщений достигнут (§6)', meta.name); continue }
       idleLap = 0
       lastSkip = ''
@@ -772,6 +816,8 @@ export async function runMassReact(task, store) {
   // Почему круг оказался пустым: без этого задача завершалась словами «исчерпали
   // лимиты» даже когда всех отсеял распорядок — и ноль действий читался как поломка.
   let lastSkip = ''
+  // Ближайшее время, когда хоть один аккаунт снова сможет работать (0 — неизвестно).
+  let idleUntil = 0
   const accountIds = s.accountIds || []
 
   try {
@@ -783,6 +829,18 @@ export async function runMassReact(task, store) {
         break
       }
       if (idleLap >= accountIds.length) {
+        // Временная причина (отдых/распорядок) — ждём ближайшее окно, а не завершаем
+        // задачу на полпути (см. развёрнутый комментарий у первого такого блока).
+        const plan = idleWaitPlan(idleUntil)
+        if (plan.wait) {
+          await store.appendLog(task, 'info', `Все аккаунты заняты отдыхом — ждём ${plan.minutes} мин и продолжаем${lastSkip ? ` (${lastSkip})` : ''}`)
+          if (await breakableDelay(plan.ms, store, task)) break
+          task = (await store.loadTask(task.id)) || task
+          idleLap = 0
+          idleUntil = 0
+          lastSkip = ''
+          continue
+        }
         await store.appendLog(task, 'info', lastSkip
           ? `Ни один аккаунт не может работать сейчас (${lastSkip}) — завершаем`
           : 'Все аккаунты исчерпали лимиты на эту задачу — завершаем')
@@ -794,7 +852,14 @@ export async function runMassReact(task, store) {
       // §4.1–§4.2: реакции — самый «дешёвый» модуль, и именно им добивали уставшие
       // аккаунты. Проверка та же, что в комментинге: усталость общая.
       const human = await canWorkNow(accountId)
-      if (!human.ok) { idleLap += 1; lastSkip = human.reason; await store.appendLog(task, 'info', `Пропуск: ${human.reason}`, meta.name); continue }
+      if (!human.ok) {
+        idleLap += 1
+        lastSkip = human.reason
+        // Берём САМОЕ РАННЕЕ окно по кругу: ждать надо до первого освободившегося.
+        if (human.until) idleUntil = idleUntil ? Math.min(idleUntil, human.until) : human.until
+        await store.appendLog(task, 'info', `Пропуск: ${human.reason}`, meta.name)
+        continue
+      }
       if (await limitReached(accountId, 'reactions')) { idleLap += 1; lastSkip = 'суточный лимит'; await store.appendLog(task, 'info', 'Суточный лимит реакций достигнут (§6)', meta.name); continue }
       idleLap = 0
       lastSkip = ''
@@ -911,6 +976,8 @@ export async function runMassLooking(task, store) {
   // Почему круг оказался пустым: без этого задача завершалась словами «исчерпали
   // лимиты» даже когда всех отсеял распорядок — и ноль действий читался как поломка.
   let lastSkip = ''
+  // Ближайшее время, когда хоть один аккаунт снова сможет работать (0 — неизвестно).
+  let idleUntil = 0
   const accountIds = s.accountIds || []
   const lookMode = ['stories', 'posts', 'both'].includes(s.lookMode) ? s.lookMode : 'stories'
   const postsCount = Math.min(Math.max(Math.trunc(Number(s.lookPostsCount) || 0) || 3, 1), 50)
@@ -924,6 +991,18 @@ export async function runMassLooking(task, store) {
         break
       }
       if (idleLap >= accountIds.length) {
+        // Временная причина (отдых/распорядок) — ждём ближайшее окно, а не завершаем
+        // задачу на полпути (см. развёрнутый комментарий у первого такого блока).
+        const plan = idleWaitPlan(idleUntil)
+        if (plan.wait) {
+          await store.appendLog(task, 'info', `Все аккаунты заняты отдыхом — ждём ${plan.minutes} мин и продолжаем${lastSkip ? ` (${lastSkip})` : ''}`)
+          if (await breakableDelay(plan.ms, store, task)) break
+          task = (await store.loadTask(task.id)) || task
+          idleLap = 0
+          idleUntil = 0
+          lastSkip = ''
+          continue
+        }
         await store.appendLog(task, 'info', lastSkip
           ? `Ни один аккаунт не может работать сейчас (${lastSkip}) — завершаем`
           : 'Все аккаунты исчерпали лимиты на эту задачу — завершаем')
@@ -934,7 +1013,14 @@ export async function runMassLooking(task, store) {
       if (!isAccountRunnable(meta.status || 'active') || perAccountLimitReached(s, accountId, task)) { idleLap += 1; lastSkip = 'статус или лимит на аккаунт'; continue }
       // §4.1–§4.2: просмотры тоже расходуют аккаунт — усталость и распорядок общие.
       const human = await canWorkNow(accountId)
-      if (!human.ok) { idleLap += 1; lastSkip = human.reason; await store.appendLog(task, 'info', `Пропуск: ${human.reason}`, meta.name); continue }
+      if (!human.ok) {
+        idleLap += 1
+        lastSkip = human.reason
+        // Берём САМОЕ РАННЕЕ окно по кругу: ждать надо до первого освободившегося.
+        if (human.until) idleUntil = idleUntil ? Math.min(idleUntil, human.until) : human.until
+        await store.appendLog(task, 'info', `Пропуск: ${human.reason}`, meta.name)
+        continue
+      }
       idleLap = 0
       lastSkip = ''
       let client
@@ -1030,6 +1116,8 @@ export async function runWarming(task, store) {
         break
       }
       if (idleLap >= accountIds.length) {
+        // Прогрев усталость не спрашивает (у него собственный темп), поэтому ждать
+        // нечего — все аккаунты либо в неподходящем статусе, либо исключены по ошибкам.
         await store.appendLog(task, 'info', 'Нет доступных аккаунтов для прогрева — завершаем')
         break
       }
