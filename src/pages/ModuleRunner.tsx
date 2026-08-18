@@ -7,7 +7,7 @@ import {
   Shield, Settings2, Hash, Eye, Megaphone, Mail, Bookmark, Users, Timer,
   MessageSquareText, AlertTriangle, Check, Star, UploadCloud, Bolt, MessageCircle, Filter, Heart, Smile,
   BarChart3 as BarChartIcon, Ban, Calendar, Cpu, MapPin, SlidersHorizontal, CheckSquare,
-  Volume2, ArrowDown, Search, LayoutGrid, List, Send, ExternalLink, MessagesSquare, Trophy,
+  Volume2, Search, LayoutGrid, List, Send, ExternalLink, MessagesSquare, Trophy,
   Tag, Activity, Database, ArrowUpDown, Pencil, RefreshCw, Radio, HelpCircle, Lock } from 'lucide-react'
 import { DIALOGS, type Dialog } from '@/mocks/dialogs'
 import { MODULES, LANGUAGES, type ModuleConfig } from '@/shared/config/modules'
@@ -36,20 +36,6 @@ import { useTabParam } from '@/shared/lib/useTabParam'
 
 /** Плавный скролл к якорю; если нативный smooth не сработал (некоторые встроенные
  *  браузеры/webview делают его no-op) — мгновенный доскролл, чтобы кнопка всегда работала. */
-function scrollToAnchor(id: string): boolean {
-  const el = document.getElementById(id)
-  if (!el) return false
-  const se = document.scrollingElement || document.documentElement
-  const before = se.scrollTop
-  el.scrollIntoView({ behavior: 'smooth', block: 'start' })
-  // Фолбэк на setTimeout (не rAF — он заморожен в фоновых вкладках/webview):
-  // если плавный скролл не стартовал — доскроллим мгновенно.
-  setTimeout(() => {
-    if (Math.abs(se.scrollTop - before) < 2) el.scrollIntoView({ block: 'start' })
-  }, 80)
-  return true
-}
-
 const SYSTEM_PROMPTS_FALLBACK = [
   'Дружелюбный эксперт', 'Краткий и по делу', 'Продающий копирайтер',
   'Нейтральный комментатор', 'Вовлекающий вопрос', 'Поддерживающий тон',
@@ -140,13 +126,11 @@ function HeaderActions({ cfg }: { cfg: ModuleConfig }) {
   }
 
   if (cfg.dialogsLayout) {
+    // Инлайн-инбокс из нейродиалогов убран (чтение диалогов — в «Обзоре аккаунта»),
+    // поэтому кнопки «Очистить / К диалогам / Загрузить ЛС» (они вели к инбоксу) сняты,
+    // чтобы не вести в никуда. Остаётся только звук уведомлений авто-ответов.
     return (
-      <>
-        <button onClick={() => pushToast({ type: 'info', title: 'Очистить', desc: 'Очистка диалогов (демо).' })} className="btn-ghost h-10"><Trash2 size={15} /> Очистить</button>
-        <button onClick={() => { if (!scrollToAnchor('nd-dialogs-anchor')) pushToast({ type: 'info', title: 'К диалогам', desc: 'Список диалогов ниже.' }) }} className="btn-ghost h-10"><ArrowDown size={15} /> К диалогам</button>
-        <button onClick={() => pushToast({ type: 'info', title: 'Звук уведомлений', desc: 'Переключено (демо).' })} className="btn-icon h-10 w-10"><Volume2 size={16} /></button>
-        <button onClick={() => pushToast({ type: 'info', title: 'Загрузить ЛС (демо)', desc: 'Импорт истории переписок.' })} className="btn-iris h-10"><UploadCloud size={16} /> Загрузить ЛС</button>
-      </>
+      <button onClick={() => pushToast({ type: 'info', title: 'Звук уведомлений', desc: 'Переключено (демо).' })} className="btn-icon h-10 w-10"><Volume2 size={16} /></button>
     )
   }
 
