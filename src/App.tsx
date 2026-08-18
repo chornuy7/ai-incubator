@@ -31,6 +31,7 @@ import { MailingPage } from '@/pages/MailingPage'
 import { AutopostingPage } from '@/pages/AutopostingPage'
 import { GuestLogin } from '@/pages/GuestLogin'
 import { SessionGuard } from '@/features/auth/SessionGuard'
+import { BlockedOverlay } from '@/features/auth/BlockedOverlay'
 
 export default function App() {
   const userState = useApp((s) => s.userState)
@@ -64,6 +65,8 @@ export default function App() {
     <>
       {/* MR-141: локальный сторож — тайм-аут по бездействию + живость сессии/токена. */}
       <SessionGuard />
+      {/* MR-153: поп-ап-блок с blur, если админ отключил доступ (ACCESS_DISABLED). */}
+      <BlockedOverlay />
       <Routes>
       <Route element={<Layout />}>
         <Route path="/panel" element={<AccountsPage />} />
