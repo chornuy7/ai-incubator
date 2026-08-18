@@ -18,7 +18,7 @@ import { ModuleNotPaid } from '@/features/billing/ModuleNotPaid'
 // блоки (SectionCard + нижняя LaunchPanel со степпером), что и в LiveModule/парсерах.
 // Публикации сохраняются как правила автоматизации (moduleKey='autoposting') и переживают рестарт.
 import { SectionCard, LaunchPanel, LaunchSteps, markCurrentStep, TaskStartedModal, BlacklistEditor } from '@/features/modules/shared'
-import { LaunchCost } from '@/features/modules/shared/LaunchCost'
+import { LaunchCost, ActionPriceCalc } from '@/features/modules/shared/LaunchCost'
 import { useModuleTask } from '@/features/modules/shared/useModuleTask'
 import { PresetBar } from '@/features/modules/shared/PresetBar'
 import { SavePresetModal } from '@/features/modules/shared/SavePresetModal'
@@ -254,6 +254,9 @@ function AutopostingInner() {
         {/* ТЗ 06.08 §10: выбор шаблона — вверху, до всех настроек (TPL-001). */}
         <PresetBar presets={presets} onApply={applyPreset} onSave={handleSave}
           onEdit={editPreset} onDelete={deletePreset} disabled={running} />
+
+        {/* MR-149: мини-калькулятор цены действия — в шапке, перед «Выбором аккаунтов». */}
+        <ActionPriceCalc moduleKey="autoposting" />
 
         {/* 1. Аккаунты — единый полноширинный выбор, как во всех модулях. */}
         <div id="sec-accounts" className="scroll-mt-24">
