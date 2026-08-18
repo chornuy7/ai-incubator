@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react'
-import { Search, Check, Users } from 'lucide-react'
+import { Search, Users } from 'lucide-react'
 import { Avatar, StatusBadge } from '@/shared/ui'
 import { STATUS_META } from '@/mocks/store'
 import type { TgAccount } from '@/shared/types'
@@ -49,12 +49,12 @@ export function accountSub(a: TgAccount): string {
  * с сырыми id, где не видно ни имени, ни того, что аккаунт в спамблоке.
  */
 export function AccountRail({
-  accounts, selected, onToggle, onOnly,
+  accounts, selected, onOnly,
 }: {
   accounts: TgAccount[]
+  /** Одиночный выбор: множество осталось ради совместимости вызывающих экранов. */
   selected: Set<string>
-  onToggle: (id: string) => void
-  /** Клик по строке без модификатора — показать только этот аккаунт. */
+  /** Клик по строке — показать ЭТОТ аккаунт (и только его). */
   onOnly: (id: string) => void
 }) {
   const [q, setQ] = useState('')
@@ -80,7 +80,7 @@ export function AccountRail({
       <div className="border-b border-line p-2.5">
         <div className="mb-2 flex items-center gap-2 text-xs font-bold uppercase tracking-wide text-muted">
           <Users size={13} /> Аккаунты
-          <span className="ml-auto font-mono text-[11px] text-white/40">{selected.size}/{accounts.length}</span>
+          <span className="ml-auto font-mono text-[11px] text-white/40">{accounts.length}</span>
         </div>
         <div className="relative">
           <Search size={13} className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-white/30" />
@@ -116,9 +116,11 @@ export function AccountRail({
               onKeyDown={(e) => { if (e.key === 'Enter') onOnly(a.id) }}
               className={cn(
                 'flex cursor-pointer items-center gap-2.5 border-b border-line/50 px-2.5 py-2 transition-colors last:border-0',
-                on ? 'bg-spark-500/10' : 'hover:bg-white/4',
+                // Выбор одиночный, поэтому выделение должно читаться с первого взгляда:
+                // раньше это была почти незаметная подложка при живой галочке рядом.
+                on ? 'bg-spark-500/15 shadow-[inset_3px_0_0_0_theme(colors.spark.500)]' : 'hover:bg-white/4',
               )}
-              title="Открыть только этот аккаунт · галочка — добавить к выбранным"
+              title="Показать этот аккаунт"
             >
               <Avatar name={accountLabel(a)} color={a.avatarColor} size={30} />
               <div className="min-w-0 flex-1">
@@ -132,18 +134,6 @@ export function AccountRail({
                   </div>
                 )}
               </div>
-              <button
-                type="button"
-                onClick={(e) => { e.stopPropagation(); onToggle(a.id) }}
-                aria-label={on ? 'Убрать из выбранных' : 'Добавить к выбранным'}
-                title={on ? 'Убрать из выбранных' : 'Добавить к выбранным'}
-                className={cn(
-                  'grid h-6 w-6 shrink-0 place-items-center rounded-lg border transition-colors',
-                  on ? 'border-spark-500/50 bg-spark-500 text-black' : 'border-line text-white/25 hover:text-white/60',
-                )}
-              >
-                <Check size={13} />
-              </button>
             </div>
           )
         })}

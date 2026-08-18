@@ -38,7 +38,11 @@ export function InboxPage() {
   const [groups, setGroups] = useState<(AccountChannel & { accountName: string })[]>([])
   const [loadingGroups, setLoadingGroups] = useState(false)
 
-  const toggleAcc = (id: string) => setSel((p) => { const n = new Set(p); n.has(id) ? n.delete(id) : n.add(id); return n })
+  // Обзор аккаунта показывает ОДИН аккаунт «как будто открыли его Telegram»: несколько
+  // сразу здесь бессмысленны — диалоги разных людей в одном списке не читаются, и
+  // непонятно, от чьего имени отвечаешь. Множество оставлено, потому что дочерние
+  // панели принимают набор, но в нём всегда не больше одного.
+  const pickAcc = (id: string) => setSel(new Set([id]))
 
   // MR-134: диплинк из уведомления «Пропущенные ЛС» — /panel/inbox?account=…&peer=…
   // Сразу выбираем аккаунт и запоминаем, какой диалог открыть, когда список подгрузится.
@@ -163,8 +167,7 @@ export function InboxPage() {
         <AccountRail
           accounts={accounts}
           selected={sel}
-          onToggle={toggleAcc}
-          onOnly={(id) => setSel(new Set([id]))}
+          onOnly={pickAcc}
         />
 
         <div className="min-w-0">

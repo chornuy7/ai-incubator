@@ -285,16 +285,14 @@ function MailingInner() {
               <DedupeButton value={numbersText} onChange={setNumbersText} mode="auto" className="btn-soft ml-auto h-7 px-2 text-xs disabled:opacity-40" />
             </div>
             <textarea className="input min-h-[110px] font-mono text-sm" value={numbersText} onChange={(e) => setNumbersText(e.target.value)} placeholder={'+380671234567\n@username\nhttps://t.me/username'} />
+            {/* ЧС живёт ВНУТРИ блока получателей — как в остальных модулях он лежит
+                внутри блока целей. Отдельной карточкой он читался как самостоятельный
+                раздел, хотя это фильтр к списку выше. */}
+            <div className="mt-3">
+              <BlacklistEditor title="Чёрный список получателей" compact />
+            </div>
           </SectionCard>
         </div>
-
-        {/*
-          Чёрный список — как в остальных модулях, но здесь он важнее всего: в личку
-          пишем незнакомым людям, и «больше не пишите» должно исполняться. Список общий
-          на всю платформу, поэтому занесённый однажды человек выпадает и из рассылок,
-          и из комментинга. Номера сверяются по цифрам, юзернеймы — как обычно.
-        */}
-        <BlacklistEditor title="Чёрный список получателей" compact />
 
         {/* 3. Защита — 3-м блоком, после «Получателей» (правка 10.08, MR-136). */}
         <div id="sec-settings" className="scroll-mt-24">

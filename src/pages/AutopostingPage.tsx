@@ -259,15 +259,13 @@ function AutopostingInner() {
           <SectionCard icon={<Target size={18} />} title="Каналы/группы" badge={String(channels.length)} required>
             <div className="mb-1 text-xs text-white/50">Свои каналы/группы, где аккаунт — админ с правом публикации</div>
             <textarea className="input min-h-[80px] font-mono text-sm" value={channelsText} onChange={(e) => setChannelsText(e.target.value)} placeholder={'@my_channel\nhttps://t.me/my_group'} />
+            {/* ЧС внутри блока целей — единообразно с остальными модулями. На сервере
+                он тут работал и раньше (через общий `targets()`), не хватало блока. */}
+            <div className="mt-3">
+              <BlacklistEditor title="Чёрный список каналов" compact />
+            </div>
           </SectionCard>
         </div>
-
-        {/*
-          Чёрный список — общий на платформу, воркер уже вычитает его из целей через
-          `targets()`. Здесь не хватало только самого блока: список правился в других
-          модулях, а в автопостинге его не было видно, и казалось, что он тут не работает.
-        */}
-        <BlacklistEditor title="Чёрный список каналов" compact />
 
         {/* 3. Текст поста. */}
         <div id="sec-message" className="scroll-mt-24">
