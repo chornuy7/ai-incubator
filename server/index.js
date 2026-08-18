@@ -455,6 +455,29 @@ app.get('/api/accounts/:accountId/work', async (req, res) => {
   } catch (err) { res.status(500).json({ ok: false, error: err instanceof Error ? err.message : 'Ошибка' }) }
 })
 
+/**
+ * LOG-003 (MR-122): история действий одного аккаунта — все посты/комменты/реакции/чаты/
+ * вступления, что он совершил. Фильтры: тип действия, группа/канал, период. Ссылки на
+ * объекты формируются на фронте из objectRef. Читаем из журнала действий (LOG-002).
+ */
+app.get('/api/accounts/:accountId/actions', async (req, res) => {
+  try {
+    const id = String(req.params.accountId || '')
+    const { canSeeAccount } = await import('./lib/accessGuard.js')
+    if (!(await canSeeAccount(req, id))) return res.status(403).json({ ok: false, error: 'Нет доступа к этому аккаунту' })
+    const { readActions } = await import('./actionLog.js')
+    const actions = await readActions({
+      accountId: id,
+      type: req.query.type ? String(req.query.type) : undefined,
+      target: req.query.target ? String(req.query.target) : undefined,
+      since: req.query.since ? Number(req.query.since) : undefined,
+      until: req.query.until ? Number(req.query.until) : undefined,
+      limit: req.query.limit ? Math.min(2000, Number(req.query.limit)) : 500,
+    })
+    res.json({ ok: true, actions })
+  } catch (err) { res.status(500).json({ ok: false, error: err instanceof Error ? err.message : 'Ошибка' }) }
+})
+
 /** §5.3: где сейчас болит — ошибки задач, баны, работа вставшая из-за денег. */
 app.get('/api/admin/problems', async (req, res) => {
   try {
