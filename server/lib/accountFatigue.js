@@ -134,7 +134,11 @@ export function currentFatigue(state = {}, profile = DEFAULT_FATIGUE, now = Date
   if (!base || !last) return base
   const hours = Math.max(0, (now - last) / HOUR_MS)
   const rec = Math.max(0, Number(profile.recoveryPerHour ?? DEFAULT_FATIGUE.recoveryPerHour))
-  return Math.max(0, Math.round((base - hours * rec) * 100) / 100)
+  // Усталость — ЦЕЛОЕ число действий, а не дробь (правка 18.08). Дробные остатки
+  // восстановления давали «0.8 из 1»: аккаунт формально не дотягивал до порога и уходил
+  // делать ещё одно действие, хотя по счёту действие уже было сделано. Округляем ВВЕРХ:
+  // начатое действие считается сделанным, пока час восстановления не пройден целиком.
+  return Math.max(0, Math.ceil(base - hours * rec))
 }
 
 /**
@@ -162,7 +166,7 @@ export function fatigueGate(state = {}, profile = DEFAULT_FATIGUE, now = Date.no
  */
 export function applyAction(state = {}, profile = DEFAULT_FATIGUE, now = Date.now()) {
   const p = { ...DEFAULT_FATIGUE, ...(profile || {}) }
-  const f = Math.round((currentFatigue(state, p, now) + 1) * 100) / 100
+  const f = currentFatigue(state, p, now) + 1
   const patch = {
     fatigue: f,
     lastActionAt: now,

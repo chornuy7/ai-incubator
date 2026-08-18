@@ -199,3 +199,46 @@ test('профили аккаунтов независимы: свой поро�
   assert.equal(map.acc_a.restMinutes, 30)
   assert.equal(map.acc_b.restMinutes, 300)
 })
+
+/**
+ * Усталость — ЦЕЛОЕ число действий (правка 18.08).
+ *
+ * В интерфейсе висело «2.53/1» и «0.8/1»: восстановление размазывалось непрерывно, и
+ * аккаунт с 0.8 формально не дотягивал до порога 1 — уходил делать ещё одно действие,
+ * хотя одно уже сделал. Счёт должен быть человеческим: сделал действие — единица.
+ */
+test('усталость целая: дробных остатков восстановления не остаётся', () => {
+  const H = 3600000
+  const now = 1_000_000_000
+  const profile = { threshold: 1, restMinutes: 45, recoveryPerHour: 5 }
+
+  // Прошло ~2 минуты после действия: раньше выходило 0.8, теперь — единица.
+  const soon = currentFatigue({ fatigue: 1, lastActionAt: now - 0.04 * H }, profile, now)
+  assert.equal(soon, 1)
+  assert.equal(Number.isInteger(soon), true, 'в интерфейсе не должно быть «0.8 из 1»')
+
+  // Час восстановления прошёл целиком — счётчик обнулился.
+  assert.equal(currentFatigue({ fatigue: 1, lastActionAt: now - 0.5 * H }, profile, now), 0)
+})
+
+test('порог 1: после одного действия аккаунт уходит на отдых, а не делает второе', () => {
+  const now = 1_000_000_000
+  const profile = { threshold: 1, restMinutes: 45, recoveryPerHour: 5 }
+
+  const patch = applyAction({}, profile, now)
+  assert.equal(patch.fatigue, 1)
+  assert.ok(patch.restUntil > now, 'достигнут порог — назначен обязательный отдых')
+
+  const gate = fatigueGate({ ...patch }, profile, now + 60_000)
+  assert.equal(gate.ok, false, 'второе действие подряд при пороге 1 недопустимо')
+})
+
+test('усталость целая и при больших порогах', () => {
+  const H = 3600000
+  const now = 1_000_000_000
+  const profile = { threshold: 15, restMinutes: 45, recoveryPerHour: 5 }
+  for (const hoursAgo of [0.1, 0.37, 1.2, 2.9]) {
+    const f = currentFatigue({ fatigue: 12, lastActionAt: now - hoursAgo * H }, profile, now)
+    assert.equal(Number.isInteger(f), true, `дробь при ${hoursAgo} ч: ${f}`)
+  }
+})
