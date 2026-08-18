@@ -359,9 +359,9 @@ export function AdminStatsPage() {
               )}
             </label>
             )}
-            <button onClick={() => void load({ force: true })} className="btn-ghost h-10" disabled={loading}>
-              <RefreshCw size={16} className={loading ? 'animate-spin' : ''} /> Обновить
-            </button>
+            {/* MR-151: глобальную «Обновить» убрали из шапки (она перезагружала всю
+                админку). Теперь «Обновить» живёт в строке периода и обновляет ТОЛЬКО
+                текущую вкладку. */}
           </div>
         }
       />
@@ -376,6 +376,15 @@ export function AdminStatsPage() {
           // Пока грузится статистика выбранного периода — остальные периоды заблокированы
           // (каждый период тянет свой запрос; не даём накликать гонку и путаницу).
           <Segmented options={PERIODS.map((p) => p.label)} value={periodIdx} onChange={setPeriodIdx} size="sm" disabled={loading} />
+        )}
+        {/* MR-151: «Обновить» — здесь, рядом с периодом, и обновляет ТОЛЬКО текущую
+            вкладку (её датасеты), а не всю админку. На справочных вкладках, что грузят
+            своё сами (Цены/Аккаунты/Роли/Тикеты/Парсер/API), кнопку не показываем — у них
+            свой контрол обновления. */}
+        {(TAB_DATASETS[tab]?.length ?? 0) > 0 && (
+          <button onClick={() => void load({ force: true, only: TAB_DATASETS[tab] })} className="btn-ghost ml-auto h-9" disabled={loading} title="Обновить данные этой вкладки">
+            <RefreshCw size={15} className={loading ? 'animate-spin' : ''} /> Обновить
+          </button>
         )}
       </div>
 
