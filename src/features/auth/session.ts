@@ -20,6 +20,8 @@ export interface SessionUser {
   isAdmin: boolean
   /** §4.1 (MR-29): владелец рабочего пространства (есть субпользователи) → доступна «Команда». */
   isOwner: boolean
+  /** Суб-пользователь: работает в чужом пространстве, подписку не оформляет. */
+  isSub: boolean
   permissions: RolePermissions | null
 }
 
@@ -58,6 +60,7 @@ export const useSession = create<SessionStore>((set) => ({
       roleName: role?.name ?? '',
       isAdmin: user.roleId === ADMIN_BYPASS_ID || roleIds.includes(ADMIN_BYPASS_ID),
       isOwner,
+      isSub: !!user.parentId,
       permissions: role?.permissions ?? null,
     }
     persist(su)
@@ -79,6 +82,7 @@ export const useSession = create<SessionStore>((set) => ({
         roleName: role?.name ?? '',
         isAdmin: user.roleId === ADMIN_BYPASS_ID || roleIds.includes(ADMIN_BYPASS_ID),
         isOwner,
+        isSub: !!user.parentId,
         permissions: role?.permissions ?? null,
       }
       persist(su)

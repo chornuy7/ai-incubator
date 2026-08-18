@@ -115,7 +115,16 @@ export function anyModuleKeyFromPath(path: string): string | null {
  * Порядок: админ-страницы (только админ) → always-on → модули (по ключу) → остальное как 'section'.
  * @param isAdmin — bypass; permissions null трактуется как deny (кроме always-on).
  */
-export function canAccessPath(permissions: RolePermissions | null, isAdmin: boolean, path: string, isOwner = false): boolean {
+/** Страницы, недоступные субпользователю: деньги пространства — дело владельца. */
+export const OWNER_ONLY_PATHS = new Set(['/panel/user/subscription'])
+
+export function canAccessPath(
+  permissions: RolePermissions | null, isAdmin: boolean, path: string, isOwner = false, isSub = false,
+): boolean {
+  // Суб не оформляет подписку и не тратит деньги пространства — страница закрыта даже
+  // ему с ролью админа внутри чужого кабинета (правка 18.08). Проверка идёт ДО isAdmin:
+  // платформенный админ субом не бывает, так что его это не задевает.
+  if (isSub && OWNER_ONLY_PATHS.has(path)) return false
   if (isAdmin) return true
   // §4.1 (MR-29): владельцу открыта только «Команда» из админ-страниц; «Роли» — по-прежнему sudo.
   if (ADMIN_ONLY_PATHS.has(path)) return isOwner && path === OWNER_TEAM_PATH

@@ -1183,6 +1183,16 @@ app.post('/api/subscription', async (req, res) => {
     if (req.body?.userId && !admin) {
       return res.status(403).json({ ok: false, error: 'Чужую подписку меняет только владелец' })
     }
+    // Подписку оформляет ВЛАДЕЛЕЦ пространства. Суб платить не может: деньги общие,
+    // а набор модулей всё равно читается у владельца (MR-28) — его покупка просто
+    // сожгла бы средства впустую (правка 18.08).
+    if (me && !req.body?.userId) {
+      const { getUser } = await import('./users.js')
+      const meUser = await getUser(me).catch(() => null)
+      if (meUser?.parentId) {
+        return res.status(403).json({ ok: false, error: 'Подписку оформляет владелец пространства' })
+      }
+    }
     const wanted = req.body?.modules
     const list = wanted === 'all' ? 'all' : (Array.isArray(wanted) ? wanted : [])
     const target = req.body?.userId || me

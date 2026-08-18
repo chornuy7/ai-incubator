@@ -99,7 +99,7 @@ export function AppSidebar({ mobile = false }: { mobile?: boolean }) {
     if (mk && !planHasModule(planModules, mk)) return false
     if (PARSING_HELPER_PATHS.has(r.path) && !hasAnyParser) return false
     if (!sessionUser) return true
-    return canAccessPath(sessionUser.permissions, sessionUser.isAdmin, r.path, sessionUser.isOwner)
+    return canAccessPath(sessionUser.permissions, sessionUser.isAdmin, r.path, sessionUser.isOwner, sessionUser.isSub)
   }
 
   return (

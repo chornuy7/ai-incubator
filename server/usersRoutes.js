@@ -1,6 +1,6 @@
 /** CRUD + аутентификация операторов (§8.1). Монтируется в /api/users. */
 import { Router } from 'express'
-import { listUsers, getUser, createUser, updateUser, deleteUser, authenticate, authenticateSupabase, verifyPassword, publicUser, isBlockedByOwner, listSubs } from './users.js'
+import { listUsers, getUser, createUser, updateUser, deleteUser, authenticate, authenticateSupabase, verifyPassword, publicUser, isBlockedByOwner } from './users.js'
 import { rolesForUser, mergePermissions, unrestrictedPermissions, userRoleIds, hasAdminRole, ADMIN_ROLE_ID } from './roles.js'
 import { capModules, applyDirectGrants } from './subAccess.js'
 import { getBalance } from './balance.js'
@@ -48,9 +48,18 @@ async function sessionPayload(user) {
   const roles = await rolesForUser(user)
   const isAdmin = hasAdminRole(ids)
   const permissions = await effectivePermissions(user, roles, isAdmin)
-  const role = { id: user.roleId || '', name: roles.map((r) => r.name).join(' + '), permissions }
-  const isOwner = !isAdmin && (await listSubs(user.id)).length > 0 // §4.1 (MR-29): доступ к «Команде»
-  return { user, role, roles, isOwner, token: signSession(user.id) }
+  // Верхнеуровневый пользователь без роли — ВЛАДЕЛЕЦ своего пространства, а не «роль не
+  // задана» (правка 18.08). Полный доступ внутри своего кабинета у него уже есть, не
+  // хватало только имени: интерфейс показывал «Роль: Роль не задана» человеку, который
+  // только что зарегистрировался и купил модуль. Платформенным админом он при этом НЕ
+  // становится — sudo остаётся за ADMIN_ROLE_ID.
+  const isSub = !!user.parentId
+  const name = roles.length ? roles.map((r) => r.name).join(' + ') : (isAdmin ? 'Администратор' : (isSub ? '' : 'Владелец'))
+  const role = { id: user.roleId || '', name, permissions }
+  // §4.1 (MR-29): «Команда» — любому владельцу пространства, а не только тому, у кого
+  // субы УЖЕ есть: иначе первого суба некому было создать.
+  const isOwner = !isAdmin && !isSub
+  return { user, role, roles, isOwner, isSub, token: signSession(user.id) }
 }
 
 export const usersRouter = Router()
@@ -154,14 +163,10 @@ usersRouter.get('/me', async (req, res) => {
     if (!user || !user.active) return res.status(401).json({ ok: false, error: 'Пользователь отключён' })
     // §4.1 (MR-28): отключили владельца — суб теряет доступ, не дожидаясь перелогина.
     if (await isBlockedByOwner(user)) return res.status(403).json({ ok: false, error: 'Рабочее пространство владельца отключено' })
-    const ids = userRoleIds(user)
-    const roles = await rolesForUser(user)
-    const isAdmin = hasAdminRole(ids)
-    const permissions = await effectivePermissions(user, roles, isAdmin)
-    const role = { id: user.roleId || '', name: roles.map((r) => r.name).join(' + '), permissions }
-    // §4.1 (MR-29): владелец = у кого есть субпользователи → ему открыта «Команда».
-    const isOwner = !isAdmin && (await listSubs(user.id)).length > 0
-    res.json({ ok: true, user: publicUser(user), role, roles, isOwner })
+    // Та же сборка, что и при входе: расхождение «вошёл с одними правами, обновил
+    // страницу — с другими» ловится тяжелее всего.
+    const { role, roles, isOwner, isSub } = await sessionPayload(user)
+    res.json({ ok: true, user: publicUser(user), role, roles, isOwner, isSub })
   } catch (err) { fail(res, err, 500) }
 })
 
