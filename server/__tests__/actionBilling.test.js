@@ -44,6 +44,13 @@ test('MR-149: у не-ИИ модуля (парсер) текст в цену н
   assert.equal(w.coins(), 9.99)
 })
 
+test('MR-149: база «за действие» берётся из админки (actionMap), а не из кода', async () => {
+  const w = wallet(10, 1)
+  const deps = { ...w, actionMap: { 'neuro-commenting': 0.1 } } // админ поднял цену действия
+  await chargeActions({ moduleKey: 'neuro-commenting', userId: 'u1' }, storeMock(), 1, deps)
+  assert.equal(w.coins(), 8.876, '10 − (0.1 админ + 1.024 макс-текст) = учтена цена из админки')
+})
+
 test('на нуле ставит задачу на ПАУЗУ (не стоп) и пишет причину в логи', async () => {
   const w = wallet(0.05)
   const task = { moduleKey: 'neuro-commenting', userId: 'u1' }

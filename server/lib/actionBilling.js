@@ -9,12 +9,25 @@
 import { fullActionPrice } from '../pricing.js'
 
 /**
- * Админский курс токен→монета для расчёта макс-текста в цене действия (MR-149).
- * `deps.coinsPer1k` — подмена для тестов; иначе берём эффективную цену из priceStore.
+ * Эффективные цены для расчёта единой цены действия (MR-149): админский курс токен→монета
+ * и цена «за действие» из админки (eff.actionMap). `deps.coinsPer1k`/`deps.actionMap` —
+ * подмена для тестов; иначе берём из priceStore.
+ * @returns {Promise<{per1k:number, actionMap:Object|null}>}
  */
-async function resolvePer1k(deps = {}) {
-  if (deps.coinsPer1k != null) return Number(deps.coinsPer1k) || 0
-  try { const { effectivePrices } = await import('../priceStore.js'); return Number((await effectivePrices()).coinsPer1kTokens) || 0 } catch { return 0 }
+async function resolvePricing(deps = {}) {
+  if (deps.coinsPer1k != null || deps.actionMap != null) {
+    return { per1k: Number(deps.coinsPer1k) || 0, actionMap: deps.actionMap || null }
+  }
+  try {
+    const { effectivePrices } = await import('../priceStore.js')
+    const e = await effectivePrices()
+    return { per1k: Number(e.coinsPer1kTokens) || 0, actionMap: e.actionMap || null }
+  } catch { return { per1k: 0, actionMap: null } }
+}
+/** Единая цена действия по эффективным ценам (админ-база + макс-текст). */
+function priceFor(moduleKey, { per1k, actionMap }) {
+  const base = actionMap && actionMap[moduleKey] != null ? actionMap[moduleKey] : undefined
+  return fullActionPrice(moduleKey, per1k, base)
 }
 
 /**
@@ -40,9 +53,9 @@ export async function chargeActions(task, store, actions = 1, deps = {}) {
     const n = Math.max(0, Number(actions) || 0)
     // MR-149: цена действия ЕДИНАЯ = фикс-действие + текст «по максимуму символов»,
     // по админскому курсу coinsPer1kTokens (токены сверх не списываются — tokenLedger журнал).
-    const per1k = await resolvePer1k(deps)
+    const pricing = await resolvePricing(deps)
     // До тысячных: цена строки парсера — 0.005, и округление до сотых удваивало её.
-    const cost = Math.round(fullActionPrice(task?.moduleKey, per1k) * n * 1000) / 1000
+    const cost = Math.round(priceFor(task?.moduleKey, pricing) * n * 1000) / 1000
     if (cost <= 0) return null
     const balance = deps.changeCoins && deps.getBalance ? deps : await import('../balance.js')
     const res = await balance.changeCoins(-cost, `${task.moduleKey}: ${n} действ.`, task.userId)
@@ -98,7 +111,7 @@ export async function refundShrunk(task, store, deps = {}) {
     const total = task?.results?.length || 0
     const billed = task?.billedResults || 0
     if (billed <= total) return null
-    const back = Math.round(fullActionPrice(task?.moduleKey, await resolvePer1k(deps)) * (billed - total) * 1000) / 1000
+    const back = Math.round(priceFor(task?.moduleKey, await resolvePricing(deps)) * (billed - total) * 1000) / 1000
     task.billedResults = total
     if (back <= 0) return null
     const balance = deps.changeCoins && deps.getBalance ? deps : await import('../balance.js')

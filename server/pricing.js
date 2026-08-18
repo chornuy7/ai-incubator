@@ -76,9 +76,14 @@ export function maxTextCoins(moduleKey, coinsPer1kTokens = 0) {
   return Math.round((maxTextTokens(moduleKey) / 1000) * (Number(coinsPer1kTokens) || 0) * 1000) / 1000
 }
 
-/** ЕДИНАЯ цена одного действия: фикс-действие + текст по максимуму символов (MR-149). */
-export function fullActionPrice(moduleKey, coinsPer1kTokens = 0) {
-  return Math.round((actionPrice(moduleKey) + maxTextCoins(moduleKey, coinsPer1kTokens)) * 1000) / 1000
+/**
+ * ЕДИНАЯ цена одного действия: цена «за действие» (её задаёт админ) + текст по максимуму
+ * символов (считаем в коде). `base` — цена из админки (eff.actionMap); без неё берём код-цену.
+ * MR-149: админ выставляет ТОЛЬКО «за действие», всё остальное код добавляет сам.
+ */
+export function fullActionPrice(moduleKey, coinsPer1kTokens = 0, base) {
+  const b = base != null ? Number(base) || 0 : actionPrice(moduleKey)
+  return Math.round((b + maxTextCoins(moduleKey, coinsPer1kTokens)) * 1000) / 1000
 }
 
 /**

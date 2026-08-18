@@ -1078,7 +1078,8 @@ app.get('/api/pricing', async (_req, res) => {
     const actionsFull = {}
     for (const key of Object.keys(eff.actionMap)) {
       maxTokensMap[key] = maxTextTokens(key)
-      actionsFull[key] = fullActionPrice(key, eff.coinsPer1kTokens)
+      // База «за действие» — из админки (eff.actionMap), текст код добавляет сам.
+      actionsFull[key] = fullActionPrice(key, eff.coinsPer1kTokens, eff.actionMap[key])
     }
     const items = eff.modules
       .filter((m) => m.action > 0)
