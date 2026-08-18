@@ -119,7 +119,11 @@ export function mapTelegramError(err) {
   const msg = `${/** @type {{ errorMessage?: string, message?: string }} */ (err).errorMessage || /** @type {{ message?: string }} */ (err).message || ''}`
   if (msg.includes('PEER_NOT_FOUND')) return 'Контакт не найден — обновите список диалогов'
   if (msg.includes('NO_DISCUSSION') || msg.includes('MSG_ID_INVALID')) return 'Нет обсуждения у поста или комментарии недоступны'
-  if (msg.includes('USER_BANNED')) return 'Аккаунт забанен'
+  // Telegram различает две совершенно разные вещи, а мы обе называли «Аккаунт забанен»:
+  // из-за этого живой аккаунт, которому просто запретили писать в одном чате, выглядел
+  // сожжённым. Проверено 18.08: аккаунт с такой ошибкой спокойно входит и читает канал.
+  if (msg.includes('USER_BANNED_IN_CHANNEL')) return 'Аккаунту запрещено писать в этом чате/канале (не бан аккаунта)'
+  if (msg.includes('USER_BANNED') || msg.includes('USER_DEACTIVATED')) return 'Аккаунт заблокирован Telegram'
   if (msg.includes('CHANNEL_PRIVATE')) return 'Приватный канал/группа'
   if (msg.includes('FLOOD')) return 'FloodWait'
   if (msg.includes('INVITE_REQUEST_SENT')) return 'Заявка на вступление отправлена — нужно одобрение админа'
