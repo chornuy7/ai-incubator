@@ -56,20 +56,20 @@ export default {
       title: 'Цели',
       purpose: 'На что ставить реакции — на посты каналов или на конкретные посты по ссылкам.',
       howItWorks:
-        'Если задан postUrls, работа идёт ТОЛЬКО по этим ссылкам, а channels игнорируется. '
-        + 'Если postUrls пуст, аккаунт вступает в случайный канал из channels и реагирует на самый '
-        + 'свежий пост. Посты каналов из чёрного списка отсеиваются.',
-      api: { method: 'POST', path: '/api/modules/mass-react/tasks', fills: ['channels', 'postUrls'] },
-      params: ['channels', 'postUrls'],
+        'Если задан postUrls, работа идёт ТОЛЬКО по этим ссылкам, а channels и reactMode игнорируются. '
+        + 'Если postUrls пуст, аккаунт вступает в случайный канал из channels, а какой пост брать — '
+        + 'решает reactMode. Посты каналов из чёрного списка отсеиваются.',
+      api: { method: 'POST', path: '/api/modules/mass-react/tasks', fills: ['channels', 'postUrls', 'reactMode', 'lastPostsCount'] },
+      params: ['channels', 'postUrls', 'reactMode', 'lastPostsCount'],
     },
     {
       id: 'reactions',
       title: 'Реакции',
       purpose: 'Какие эмодзи ставятся и как часто.',
       howItWorks:
-        'Эмодзи выбирается случайно из набора на каждое действие. Вероятность применяется дважды: '
-        + 'при выборе поста в канале и перед самой отправкой реакции — фактическая доля действий '
-        + 'получается ниже заданной.',
+        'Эмодзи выбирается случайно из набора на каждое действие. Вероятность применяется один раз, '
+        + 'перед отправкой реакции (до 18.08 в ветке каналов она проверялась дважды, и фактическая '
+        + 'доля действий была ниже заданной).',
       api: { method: 'POST', path: '/api/modules/mass-react/tasks', fills: ['emojis', 'probability'] },
       params: ['emojis', 'probability'],
     },
@@ -163,6 +163,48 @@ export default {
       examples: [['https://t.me/durov/342']],
       seeAlso: ['channels'],
       storedAs: 'task.settings.postUrls',
+    },
+    {
+      name: 'reactMode',
+      block: 'targets',
+      title: 'Режим выбора поста',
+      type: 'number',
+      enum: [
+        { value: 0, label: 'Мониторинг новых', means: 'Реагирует только на посты, вышедшие после того, как аккаунт впервые зашёл в канал в рамках этой задачи.' },
+        { value: 1, label: 'Существующие посты', means: 'Реагирует на случайный пост из lastPostsCount последних.' },
+      ],
+      default: 0,
+      purpose: 'На какие посты канала ставить реакции — только на новые или на N последних.',
+      constraints: [
+        '0 — мониторинг: первый заход в канал ТОЛЬКО запоминает последний пост и реакцию не ставит; '
+        + 'дальше реагируем на посты, вышедшие после этого момента',
+        '1 — существующие: берётся случайный из lastPostsCount последних постов',
+        'планка «что уже было» живёт в памяти процесса: после рестарта она встаёт заново, '
+        + 'и посты из времени простоя новыми не считаются',
+        'игнорируется, когда задан postUrls',
+      ],
+      examples: [0, 1],
+      seeAlso: ['lastPostsCount', 'postUrls'],
+      storedAs: 'task.settings.reactMode',
+    },
+    {
+      name: 'lastPostsCount',
+      block: 'targets',
+      title: 'Сколько последних постов',
+      type: 'number',
+      min: 1,
+      max: 20,
+      default: 3,
+      purpose: 'Глубина выборки в режиме «существующие посты».',
+      constraints: [
+        'работает только при reactMode = 1',
+        'значения вне 1–20 обрезаются до границ; 0 и мусор дают 3',
+        'один аккаунт ставит не больше одной реакции на один пост, разные аккаунты — ставят',
+      ],
+      examples: [2, 3, 5],
+      effectiveWhen: { field: 'reactMode', equals: 1 },
+      seeAlso: ['reactMode'],
+      storedAs: 'task.settings.lastPostsCount',
     },
     {
       name: 'emojis',

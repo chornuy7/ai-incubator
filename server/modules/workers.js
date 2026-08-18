@@ -104,6 +104,7 @@ async function goalExpired(settings) {
   } catch { return false } // сбой чтения цели не должен останавливать работу
 }
 import { filterBlacklisted, isBlacklistedSync, isBlacklistedMailingTarget } from '../targetBlacklist.js'
+import { pickReactionPost, normalizeLastPostsCount } from '../lib/reactionPick.js'
 
 /** @type {Map<string, Promise<void>>} */
 const running = new Map()
@@ -749,6 +750,18 @@ export async function runMassReact(task, store) {
   const tgs = targets(s)
   // feature 10: исключаем посты из ЧС по username канала
   const fixedPosts = parseTelegramPostLinks(s.postUrls).filter((p) => !p.username || !isBlacklistedSync(p.username))
+  // Режим реакций (18.08). Раньше переключатель в UI никуда не доезжал: воркер всегда брал
+  // ПОСЛЕДНИЙ пост канала, поэтому «Мониторинг» и «Существующие сообщения» делали одно и то же.
+  //   0 — мониторинг новых: реагируем только на посты, вышедшие ПОСЛЕ старта задачи;
+  //   1 — существующие: реагируем на N последних постов.
+  const reactMode = Number(s.reactMode) === 1 ? 1 : 0
+  const lastPostsCount = normalizeLastPostsCount(s.lastPostsCount)
+  // Планка «что уже было» на канал, общая для всех аккаунтов задачи: первый зашедший аккаунт
+  // её ставит и не реагирует, дальше реагируем на всё, что вышло выше планки. Живёт в памяти —
+  // после рестарта планка встаёт заново, посты из времени простоя новыми не считаются.
+  const seenTop = new Map()
+  // Один аккаунт не ставит вторую реакцию на тот же пост; разные аккаунты — ставят (в этом смысл модуля).
+  const reacted = new Set()
   let idx = 0
   let idleLap = 0
   // Почему круг оказался пустым: без этого задача завершалась словами «исчерпали
@@ -788,6 +801,9 @@ export async function runMassReact(task, store) {
         let peer
         let postId
         let targetLabel
+        // Помечаем пост как «этот аккаунт отработал» только ПОСЛЕ успешной реакции: иначе
+        // пост, пропущенный по вероятности, для аккаунта потерян навсегда.
+        let reactKey = ''
 
         if (fixedPosts.length) {
           const pt = fixedPosts[Math.floor(Math.random() * fixedPosts.length)]
@@ -813,15 +829,33 @@ export async function runMassReact(task, store) {
           }
           peer = membership.peer
           if (membership.status === 'joined') await incAction(accountId, 'joins') // §6: суточный лимит вступлений
-          const posts = await fetchPosts(client, peer, 10)
-          const post = posts[0]
-          if (!post || Math.random() * 100 > prob) {
+          const posts = await fetchPosts(client, peer, reactMode === 1 ? lastPostsCount : 20)
+          const pick = pickReactionPost(posts, {
+            mode: reactMode,
+            lastPostsCount,
+            seenTop: seenTop.get(t),
+            reacted: (id) => reacted.has(`${accountId}|${t}|${id}`),
+          })
+          if (pick.action === 'baseline') {
+            seenTop.set(t, pick.topId)
+            await store.appendLog(task, 'info', `Мониторинг ${targetLabel}: ждём новые посты (последний #${pick.topId})`, meta.name)
             await disconnectAccount(client, accountId)
             continue
           }
-          postId = post.id
+          if (pick.action === 'skip') {
+            const why = pick.reason === 'no-posts' ? 'постов нет'
+              : pick.reason === 'no-new' ? 'новых постов нет'
+                : 'все последние посты уже отработаны этим аккаунтом'
+            await store.appendLog(task, 'info', `${targetLabel}: ${why}`, meta.name)
+            await disconnectAccount(client, accountId)
+            continue
+          }
+          postId = pick.post.id
+          reactKey = `${accountId}|${t}|${pick.post.id}`
         }
 
+        // Вероятность применяется ОДИН раз. Раньше в ветке групп она проверялась дважды,
+        // и «50%» на деле давали 25% — реакций выходило вдвое меньше обещанного.
         if (Math.random() * 100 > prob) {
           await disconnectAccount(client, accountId)
           continue
@@ -829,6 +863,7 @@ export async function runMassReact(task, store) {
 
         const emoji = emojis[Math.floor(Math.random() * emojis.length)]
         await sendReaction(client, peer, postId, emoji)
+        if (reactKey) reacted.add(reactKey)
         task.accountStats[accountId] = task.accountStats[accountId] || { actions: 0, floodWaits: 0 }
         task.accountStats[accountId].actions += 1
         await incAction(accountId, 'reactions') // §6: суточный лимит реакций

@@ -95,6 +95,8 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
   const [minPerAcc, setMinPerAcc] = useState(0)
   const [minWords, setMinWords] = useState(0)
   const [durationMinutes, setDurationMinutes] = useState(cfg.reactionSettings?.duration.value ?? 60)
+  // Массовые реакции, режим «Существующие посты»: сколько последних постов канала брать.
+  const [lastPostsCount, setLastPostsCount] = useState(3)
   const [srcTab, setSrcTab] = useState(0)
   const [input, setInput] = useState('')
   const [targets, setTargets] = useState<string[]>([])
@@ -224,6 +226,9 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
     ...(campaignId ? { campaignId } : {}),
     ...((campaignId ? campaigns.find((c) => c.id === campaignId)?.goalId : goalId) ? { goalId: (campaignId ? campaigns.find((c) => c.id === campaignId)?.goalId : goalId) as string } : {}),
     ...(cfg.warmingLayout ? { warmLevel } : {}),
+    // Массовые реакции: режим и глубина. Отдельным полем, а не общим commentMode —
+    // воркер читает именно reactMode, и дескриптор MCP описывает его.
+    ...(cfg.reactionSettings ? { reactMode: g(0), lastPostsCount } : {}),
     ...(moduleKey === 'neuro-commenting' ? { postWindow, stopWords: stopWordsText.split(/[\n;]+/).map((w) => w.trim()).filter(Boolean), analyzeImages } : {}),
     ...(moduleKey === 'neuro-commenting' && weightSum > 0 ? { typeWeights } : {}),
     ...(cfg.lookingLayout ? {
@@ -324,6 +329,8 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
     if (s.minPerAccount !== undefined) setMinPerAcc(s.minPerAccount)
     if (s.minWords !== undefined) setMinWords(s.minWords)
     if (s.durationMinutes !== undefined) setDurationMinutes(s.durationMinutes)
+    if (s.reactMode !== undefined) setToggles((t) => ({ ...t, 0: s.reactMode as number }))
+    if (s.lastPostsCount !== undefined) setLastPostsCount(s.lastPostsCount)
     if (Array.isArray(s.keywords)) setKeywords(s.keywords.join(', '))
     if (s.promptIndex !== undefined) setActivePrompt(s.promptIndex)
     if (Array.isArray(s.promptOverrides)) setPromptBodies(s.promptOverrides)
@@ -483,6 +490,17 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
           {cfg.reactionSettings ? (
             <div className="space-y-4 rounded-2xl border border-line bg-elevated/40 p-4">
               <ToggleGroup label="Режим" options={cfg.reactionSettings.modes} value={g(0)} onChange={(v) => setTg(0, v)} />
+              {g(0) === 0 ? (
+                <p className="text-xs text-muted">
+                  Реакции только на посты, вышедшие <b className="text-fg">после старта задачи</b>. Первый заход в канал
+                  запоминает последний пост и ничего не ставит — дальше реагируем на каждый новый.
+                </p>
+              ) : (
+                <div className="space-y-1">
+                  <NumberField label="Сколько последних постов" value={lastPostsCount} onChange={setLastPostsCount} min={1} max={20} />
+                  <p className="text-xs text-muted">Аккаунты разбирают N последних постов канала; один аккаунт — одна реакция на пост.</p>
+                </div>
+              )}
               <div>
                 <div className="mb-1 flex justify-between text-sm text-muted"><span>{cfg.reactionSettings.probability.label}</span><span className="text-spark-300">{probability}%</span></div>
                 <input type="range" min={0} max={100} value={probability} onChange={(e) => setProbability(Number(e.target.value))} className="w-full accent-spark-500" />

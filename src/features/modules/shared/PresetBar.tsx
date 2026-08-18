@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { Bookmark, Pencil, Plus, Save, X } from 'lucide-react'
+import { Bookmark, Pencil, Plus, X } from 'lucide-react'
 import type { ModulePreset, ModuleTaskSettings } from '@/api/modulesApi'
 import { presetHex } from './SavePresetModal'
 
@@ -82,7 +82,7 @@ export function PresetBar({ presets = [], onApply, onSave, onEdit, onDelete, dis
           ))}
         </div>
         <button type="button" onClick={onSave} className="btn-ghost ml-auto h-8 shrink-0 text-xs" title="Сохранить текущие настройки как новый шаблон">
-          <Save size={14} /> Сохранить текущие
+          <Plus size={14} /> Создать новый шаблон
         </button>
       </div>
       <p className="mt-1.5 text-xs text-muted">Клик по названию — подставить сохранённые настройки. Выбор аккаунтов не меняется.</p>
@@ -141,7 +141,7 @@ export function PresetMenu({ presets = [], onApply, onSave, disabled }: PresetPr
               </div>
               <div className="mt-1 border-t border-line pt-1">
                 <button type="button" onClick={() => { setOpen(false); onSave() }} className="btn-ghost h-9 w-full justify-start text-sm">
-                  <Save size={14} /> Сохранить текущие настройки
+                  <Plus size={14} /> Создать новый шаблон
                 </button>
               </div>
             </>

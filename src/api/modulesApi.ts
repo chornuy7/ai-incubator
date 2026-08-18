@@ -81,6 +81,10 @@ export interface ModuleTaskSettings {
   // ── Масслукинг: что смотреть и сколько последних постов ──
   lookMode?: 'stories' | 'posts' | 'both'
   lookPostsCount?: number
+  /** Массовые реакции: 0 — мониторинг новых постов, 1 — N последних постов. */
+  reactMode?: number
+  /** Массовые реакции, режим «Существующие посты»: сколько последних постов брать. */
+  lastPostsCount?: number
   delays?: {
     comment?: [number, number]
     action?: [number, number]

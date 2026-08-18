@@ -331,7 +331,7 @@ export const MODULES: Record<string, ModuleConfig> = {
     accountFilters: true,
     aiProtection: true,
     reactionSettings: {
-      modes: ['Мониторинг', 'Существующие сообщения'],
+      modes: ['Мониторинг новых', 'Существующие посты'],
       duration: { label: 'Длительность (минуты)', value: 60, hint: '0 = без лимита' },
       max: { label: 'Максимум реакций', value: 100 },
       perAccount: { label: 'Максимум реакций на 1 аккаунт' },
