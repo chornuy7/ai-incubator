@@ -30,6 +30,7 @@ import { ProxiesPage } from '@/pages/ProxiesPage'
 import { MailingPage } from '@/pages/MailingPage'
 import { AutopostingPage } from '@/pages/AutopostingPage'
 import { GuestLogin } from '@/pages/GuestLogin'
+import { SessionGuard } from '@/features/auth/SessionGuard'
 
 export default function App() {
   const userState = useApp((s) => s.userState)
@@ -60,7 +61,10 @@ export default function App() {
   }
 
   return (
-    <Routes>
+    <>
+      {/* MR-141: локальный сторож — тайм-аут по бездействию + живость сессии/токена. */}
+      <SessionGuard />
+      <Routes>
       <Route element={<Layout />}>
         <Route path="/panel" element={<AccountsPage />} />
         <Route path="/panel/accounts/:id" element={<AccountOverviewPage />} />
@@ -96,6 +100,7 @@ export default function App() {
       <Route path="/module/:key" element={<ModuleLandingPage />} />
       <Route path="/" element={<Navigate to="/panel" replace />} />
       <Route path="*" element={<Navigate to="/panel" replace />} />
-    </Routes>
+      </Routes>
+    </>
   )
 }

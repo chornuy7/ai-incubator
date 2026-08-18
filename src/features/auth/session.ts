@@ -4,6 +4,11 @@ import { logoutUser, fetchMe, type User } from '@/api/usersApi'
 import { ADMIN_BYPASS_ID } from '@/shared/config/rbac'
 
 const LS_KEY = 'ai-incubator:session'
+// MR-141: метка последней активности пользователя — для локального тайм-аута сессии по
+// бездействию (без запросов в БД). Обновляется на реальных действиях (SessionGuard) и
+// сбрасывается в «сейчас» при входе, чтобы свежая сессия не вылетела по старой метке.
+export const ACTIVITY_KEY = 'ai-incubator:activity'
+export function markActivity(now = Date.now()) { try { localStorage.setItem(ACTIVITY_KEY, String(now)) } catch { /* ignore */ } }
 
 export interface SessionUser {
   id: string
@@ -56,6 +61,7 @@ export const useSession = create<SessionStore>((set) => ({
       permissions: role?.permissions ?? null,
     }
     persist(su)
+    markActivity() // MR-141: свежая сессия → отсчёт бездействия с нуля
     set({ user: su })
   },
   refresh: async () => {
@@ -83,6 +89,7 @@ export const useSession = create<SessionStore>((set) => ({
     const uid = useSession.getState().user?.id
     if (uid) void logoutUser(uid) // clock-out рабочего времени (§8.1)
     persist(null)
+    try { localStorage.removeItem(ACTIVITY_KEY) } catch { /* ignore */ } // MR-141: сбрасываем метку бездействия
     // MR-142 (баг 1): при выходе из панели снимаем и админ-гейт — иначе «Выйти» из панели
     // оставлял бы админку разблокированной под тем же браузером.
     lockAdminGate()
