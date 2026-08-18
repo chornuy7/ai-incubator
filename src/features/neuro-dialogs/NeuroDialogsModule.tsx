@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import {
   Sparkles, MessagesSquare, Mail, Users,
-  ChevronDown, Check, Image as ImageIcon,
+  ChevronDown, Check, Image as ImageIcon, Settings2,
 } from 'lucide-react'
 import { MODULES } from '@/shared/config/modules'
 import { isHidden } from '@/shared/config/routes'
@@ -190,7 +190,9 @@ export function NeuroDialogsModule() {
       {/* §3 (MR-113 · 17.08): «Защита аккаунтов» — ОТДЕЛЬНЫМ блоком, как во всех модулях
           (раньше была вложена внутрь «ИИ авто-ответы» — расходилось с единой структурой). */}
       <div id="sec-protect" className="scroll-mt-24">
-        <ProtectionBlock enabled={aiProtect} onEnabled={setAiProtect} level={protLevel} onLevel={setProtLevel} />
+        <SectionCard icon={<Settings2 size={18} />} title="Защита">
+          <ProtectionBlock enabled={aiProtect} onEnabled={setAiProtect} level={protLevel} onLevel={setProtLevel} />
+        </SectionCard>
       </div>
 
       <div className="card p-0">
