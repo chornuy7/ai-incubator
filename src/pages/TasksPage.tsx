@@ -719,7 +719,7 @@ function TaskCard({ t, goalName, busy, busyAction, pendingAction, onOpen, onStop
       {t.status === 'error' && (
         <div className="mt-2.5 rounded-xl border border-rose-500/25 bg-rose-500/[.07] p-3">
           <div className="mb-1 flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wide text-rose-300"><AlertTriangle size={12} /> Ошибка задачи</div>
-          <div className="max-h-24 overflow-y-auto whitespace-pre-wrap break-words text-xs leading-relaxed text-rose-200/90">{t.lastError || 'Задача завершилась с ошибкой — подробности в логах задачи.'}</div>
+          <div className="max-h-24 overflow-y-auto whitespace-pre-wrap break-words text-xs leading-relaxed text-rose-200/90">{t.fatalError || t.lastError || 'Задача завершилась с ошибкой — подробности в логах задачи.'}</div>
         </div>
       )}
       {/* MR-146: warning-система — если аккаунты задачи отвалились, показываем второй блок

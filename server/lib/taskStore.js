@@ -45,6 +45,9 @@ export function createTaskStore(moduleKey, idPrefix) {
         const prev = JSON.parse(await fs.readFile(taskPath(task.id), 'utf8'))
         if (prev.stopRequested) task.stopRequested = true
         if (prev.pauseRequested) task.pauseRequested = true
+        // Фатальная ошибка — такой же «внешний» флаг: побочная запись лога не должна
+        // её стирать, иначе задача снова оказывается «готовой» вместо упавшей.
+        if (prev.fatalError && !task.fatalError) task.fatalError = prev.fatalError
       } catch { /* нет файла — первая запись */ }
     }
     await fs.writeFile(taskPath(task.id), JSON.stringify(task, null, 2), 'utf8')
@@ -113,6 +116,10 @@ export function createTaskStore(moduleKey, idPrefix) {
           // админке нужно «где болит», не таща в список весь журнал каждой задачи.
           errors: (t.logs || []).reduce((n, l) => n + (l.level === 'error' ? 1 : 0), 0),
           lastError: (t.logs || []).find((l) => l.level === 'error')?.message || '',
+          // Причина ПАДЕНИЯ отдельно от «последней строки с ошибкой»: у задачи могут
+          // быть рабочие ошибки по отдельным аккаунтам («невалидная сессия»), и в
+          // карточке нужно показывать то, из-за чего задача встала, а не последнюю жалобу.
+          fatalError: t.fatalError || '',
           // Пауза из-за денег отличается от паузы рукой: первую чинит пополнение.
           // Ищем ТОЧНУЮ фразу и только в последней записи: широкий поиск «монет|баланс»
           // по всему журналу ловил и строку возврата «Возврат N монет», из-за чего

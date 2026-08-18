@@ -288,7 +288,39 @@ export async function pauseWorker(taskId, store) {
 
 /** Итоговый статус воркера: пауза важнее стопа, стоп важнее «готово». @param {object} task */
 export function statusAfterRun(task) {
+  // Фатальная ошибка старше флагов остановки. Задача, упавшая из-за мёртвого ключа ИИ,
+  // не «остановлена оператором» и тем более не «готова»: в дашборде это ОШИБКА.
+  // Живой прогон 18.08: ключ OpenAI отклонён, задача доработала до конца и показала
+  // «Готово · 0/2» — по такому статусу человек считает, что всё в порядке.
+  if (task.fatalError) return 'error'
   return task.pauseRequested ? 'paused' : task.stopRequested ? 'stopped' : 'done'
+}
+
+/** Итоговая строка лога — по фактическому статусу, а не всегда «Завершено». */
+export function finishNote(task, doneText = 'Завершено') {
+  if (task.status === 'error') return `Задача завершилась с ошибкой: ${task.fatalError || 'см. записи выше'}`
+  if (task.status === 'paused') return 'Пауза'
+  if (task.status === 'stopped') return 'Остановлено'
+  return doneText
+}
+
+/**
+ * Свалить задачу с фатальной ошибкой: залогировать, пометить и СРАЗУ сохранить.
+ *
+ * Сохранение здесь обязательно. Воркер в конце круга перечитывает задачу с диска
+ * (`task = await store.loadTask(...)`), и невсохранённый `stopRequested` при этом
+ * терялся: цикл продолжался как ни в чём не бывало. Именно так после сообщения
+ * «Задача остановлена — комментарии без ИИ не публикуем» в логах появлялся ещё один
+ * «Пропуск по вероятности» (прогон 18.08).
+ *
+ * @param {object} task @param {object} store @param {string} reason @param {string} [accountName]
+ */
+export async function failTask(task, store, reason, accountName) {
+  await store.appendLog(task, 'error', reason, accountName)
+  task.fatalError = reason
+  task.stopRequested = true
+  task.status = 'error'
+  await store.saveTask(task)
 }
 
 async function finalizeAccounts(accountIds, taskId, paused = false) {
@@ -499,8 +531,7 @@ export async function runNeuroCommenting(task, store) {
             // Ключ мёртв: продолжать — значит лить шаблонные отписки от живых аккаунтов
             // в реальные каналы (прогон 21.07). Останавливаем всю задачу, а не аккаунт.
             if (mode === 'fatal') {
-              await store.appendLog(task, 'error', `ИИ недоступен: ${reason}. Задача остановлена — комментарии без ИИ не публикуем.`, meta.name)
-              task.stopRequested = true
+              await failTask(task, store, `ИИ недоступен: ${reason}. Задача остановлена — комментарии без ИИ не публикуем.`, meta.name)
               break
             }
             if (mode !== 'openai') {
@@ -559,7 +590,7 @@ export async function runNeuroCommenting(task, store) {
       if (await breakableDelay(pickDelay(5, 15, mul) * 1000, store, task)) break
     }
     task.status = statusAfterRun(task)
-    await store.appendLog(task, 'info', task.status === 'done' ? 'Завершено' : 'Остановлено')
+    await store.appendLog(task, task.status === 'error' ? 'error' : 'info', finishNote(task))
   } catch (err) {
     task.status = 'error'
     await store.appendLog(task, 'error', err instanceof Error ? err.message : 'Ошибка')
@@ -655,9 +686,8 @@ export async function runNeuroChatting(task, store) {
         const { text: reply, mode, reason, usage } = await generateComment(msg.message || '', s.promptIndex ?? 0, resolveSystemPrompt(s) + goalCtx + agentCtx, { avoid: task.usedTexts, variantSeed: accountId })
         if (usage?.tokens) await recordTokens({ ...usage, module: task.moduleKey, accountId, taskId: task.id, campaignId: s.campaignId, userId: task.userId })
         if (mode === 'fatal') {
-          await store.appendLog(task, 'error', `ИИ недоступен: ${reason}. Задача остановлена — писать в чаты без ИИ не будем.`, meta.name)
           await disconnectAccount(client, accountId)
-          task.stopRequested = true
+          await failTask(task, store, `ИИ недоступен: ${reason}. Задача остановлена — писать в чаты без ИИ не будем.`, meta.name)
           break
         }
         if (mode !== 'openai') {
@@ -698,7 +728,7 @@ export async function runNeuroChatting(task, store) {
       if (await breakableDelay(pickDelay(5, 15, mul) * 1000, store, task)) break
     }
     task.status = statusAfterRun(task)
-    await store.appendLog(task, 'info', 'Завершено')
+    await store.appendLog(task, task.status === 'error' ? 'error' : 'info', finishNote(task))
   } catch (err) {
     task.status = 'error'
     await store.appendLog(task, 'error', err instanceof Error ? err.message : 'Ошибка')
@@ -817,7 +847,7 @@ export async function runMassReact(task, store) {
       if (await breakableDelay(pickDelay(5, 15, mul) * 1000, store, task)) break
     }
     task.status = statusAfterRun(task)
-    await store.appendLog(task, 'info', 'Завершено')
+    await store.appendLog(task, task.status === 'error' ? 'error' : 'info', finishNote(task))
   } catch (err) {
     task.status = 'error'
     await store.appendLog(task, 'error', err instanceof Error ? err.message : 'Ошибка')
@@ -913,7 +943,7 @@ export async function runMassLooking(task, store) {
       if (await breakableDelay(pickDelay(10, 30, mul) * 1000, store, task)) break
     }
     task.status = statusAfterRun(task)
-    await store.appendLog(task, 'info', 'Завершено')
+    await store.appendLog(task, task.status === 'error' ? 'error' : 'info', finishNote(task))
   } catch (err) {
     task.status = 'error'
     await store.appendLog(task, 'error', err instanceof Error ? err.message : 'Ошибка')
@@ -1039,7 +1069,7 @@ export async function runWarming(task, store) {
       if (await breakableDelay(pickDelay(30, 90, mul) * 1000, store, task)) break
     }
     task.status = statusAfterRun(task)
-    await store.appendLog(task, 'info', 'Прогрев завершён')
+    await store.appendLog(task, task.status === 'error' ? 'error' : 'info', finishNote(task, 'Прогрев завершён'))
   } catch (err) {
     task.status = 'error'
     await store.appendLog(task, 'error', err instanceof Error ? err.message : 'Ошибка')
