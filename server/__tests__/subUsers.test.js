@@ -168,7 +168,7 @@ test('requesterContext: нет заголовка → дев/полный дос
  */
 function visibleUsers(users, ctx, scope) {
   const wantAll = String(scope || '') === 'all' && (ctx.noSession || ctx.isAdmin)
-  return wantAll ? users : users.filter((u) => u.parentId === ctx.id || u.id === ctx.id)
+  return wantAll ? users : users.filter((u) => u.parentId === ctx.id)
 }
 
 test('список пользователей: по умолчанию даже админ видит только своих', () => {
@@ -179,8 +179,8 @@ test('список пользователей: по умолчанию даже 
     { id: 'usr_stranger_sub', parentId: 'usr_stranger' },
   ]
   const asAdmin = visibleUsers(users, { id: 'usr_admin', isAdmin: true })
-  assert.deepEqual(asAdmin.map((u) => u.id), ['usr_admin', 'usr_sub'],
-    'чужие регистрации не должны попадать в рабочую панель')
+  assert.deepEqual(asAdmin.map((u) => u.id), ['usr_sub'],
+    'только свои сотрудники: ни чужих регистраций, ни собственной карточки')
 })
 
 test('список пользователей: scope=all открывает платформу — но только админу', () => {
@@ -189,7 +189,7 @@ test('список пользователей: scope=all открывает пл
     'админ не должен терять управление платформой — оно стало явным')
   assert.deepEqual(
     visibleUsers(users, { id: 'usr_stranger', isAdmin: false }, 'all').map((u) => u.id),
-    ['usr_stranger'],
+    [],
     'обычный владелец не открывает чужих подбором параметра в адресе',
   )
 })

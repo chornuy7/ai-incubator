@@ -71,7 +71,19 @@ app.get('/api/tg/accounts', async (req, res) => {
   try {
     // ?verify=1 — сходить в Telegram за каждым аккаунтом. Долго (подключение на аккаунт),
     // поэтому только по явному запросу: обычный список отдаётся из meta мгновенно.
-    const accounts = await tgListAccounts({ verify: req.query.verify === '1' || req.query.verify === 'true' })
+    // Аккаунты — имущество ПРОСТРАНСТВА. Сотрудник видит аккаунты своего владельца
+    // (дальше их ещё режет роль), посторонний — только свои. Админ и дев без сессии —
+    // все: у первого это работа, у второго нет пространства вовсе.
+    const me = req.header('x-user-id')
+    let ownerId = null
+    if (me && !(await isAdminRequest(req))) {
+      const { resolveSubscriptionOwner } = await import('./users.js')
+      ownerId = await resolveSubscriptionOwner(me)
+    }
+    const accounts = await tgListAccounts({
+      verify: req.query.verify === '1' || req.query.verify === 'true',
+      ...(ownerId ? { ownerId } : {}),
+    })
     res.json({ ok: true, accounts })
   } catch (err) {
     res.status(500).json({ ok: false, error: err instanceof Error ? err.message : 'Ошибка' })

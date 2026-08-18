@@ -283,3 +283,28 @@ test('distributeProxies: manual — раскладку оператора не �
   const out = distributeProxies([{}, {}, {}], { mode: 'manual', manual: ['p3', null, 'p1'] })
   assert.deepEqual(out, ['p3', null, 'p1'], 'оператор уже видел обе колонки и поправил пары')
 })
+
+/**
+ * Изоляция аккаунтов между пространствами (правка 18.08).
+ *
+ * `/api/tg/accounts` отдавал ВСЕ аккаунты платформы любому вошедшему — вместе с
+ * телефонами. Поймано на живом стенде: у свежей регистрации в списке «доступ к
+ * аккаунтам» лежали 6 чужих Telegram-аккаунтов с номерами.
+ *
+ * Правило: аккаунт принадлежит пространству. Заведённые до правки владельца не имеют —
+ * они наши, поэтому видны только админу (у него фильтр не применяется вовсе).
+ */
+function belongsTo(meta, ownerId) {
+  const owner = String(meta?.ownerId || '')
+  return owner ? owner === String(ownerId || '') : false
+}
+
+test('чужой аккаунт не виден: сравнение идёт по владельцу пространства', () => {
+  assert.equal(belongsTo({ ownerId: 'usr_a' }, 'usr_a'), true)
+  assert.equal(belongsTo({ ownerId: 'usr_a' }, 'usr_b'), false, 'сосед по платформе не должен видеть чужие номера')
+})
+
+test('аккаунт без владельца (заведён до правки) не достаётся никому из пользователей', () => {
+  assert.equal(belongsTo({}, 'usr_a'), false)
+  assert.equal(belongsTo({ ownerId: '' }, 'usr_a'), false)
+})

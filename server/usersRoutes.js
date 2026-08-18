@@ -83,7 +83,9 @@ usersRouter.get('/', async (req, res) => {
     // Возможность управлять всеми не отобрана, она стала явной: `?scope=all` (только
     // админу) — переключатель в интерфейсе. По умолчанию любой видит только своих.
     const wantAll = String(req.query.scope || '') === 'all' && (ctx.noSession || ctx.isAdmin)
-    const visible = wantAll ? users : users.filter((u) => u.parentId === ctx.id || u.id === ctx.id)
+    // Себя в списке команды нет (правка 18.08): страница про сотрудников, а собственная
+    // карточка только мешала — ролями себя не ограничивают, а клик по ним упирался в отказ.
+    const visible = wantAll ? users : users.filter((u) => u.parentId === ctx.id)
     res.json({ ok: true, users: visible.map(publicUser) })
   } catch (err) { fail(res, err, 500) }
 })
