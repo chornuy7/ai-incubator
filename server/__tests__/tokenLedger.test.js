@@ -30,22 +30,23 @@ test('C1: нулевой расход не засоряет журнал', async
   assert.equal((await readLedger()).length, 0)
 })
 
-test('C1+C2: расход пишется в журнал и списывается с баланса', async () => {
+test('MR-149: расход пишется в журнал, но монеты за токены НЕ списываются (одна цена за действие)', async () => {
   await changeCoins(10)
+  const before = (await getBalance()).coins
   await recordTokens({ tokens: 2500, module: 'neuro-commenting', accountId: 'a1', taskId: 't1' })
-  assert.equal((await getBalance()).coins, 7.5, 'за 2500 токенов списано 2.5 монеты')
+  assert.equal((await getBalance()).coins, before, 'баланс не меняется — за текст берёт фикс-цена действия')
 
   const rows = await readLedger({ taskId: 't1' })
   assert.equal(rows.length, 1)
   assert.equal(rows[0].tokens, 2500)
-  assert.equal(rows[0].coins, 2.5)
+  assert.equal(rows[0].coins, 2.5, 'в журнале — СПРАВОЧНАЯ стоимость токенов, не списание')
   assert.equal(rows[0].module, 'neuro-commenting')
 })
 
-test('C2: списание не уводит баланс в минус', async () => {
+test('MR-149: большой расход токенов не списывает деньги (платит цена действия)', async () => {
+  const before = (await getBalance()).coins
   await recordTokens({ tokens: 100000, module: 'mailing', accountId: 'a2', taskId: 't1' })
-  assert.equal((await getBalance()).coins, 0,
-    'иначе правило «при нуле боевые модули стоят» стало бы непроверяемым')
+  assert.equal((await getBalance()).coins, before, 'токены журналируются, но с баланса не списываются')
 })
 
 test('C1: свод по задаче — разрез по модулям и аккаунтам', async () => {
@@ -62,13 +63,12 @@ test('C1: журнал отдаёт свежие сверху', async () => {
   assert.equal(rows[0].module, 'mailing', 'последняя запись — первой')
 })
 
-test('§10.5: coinMultiplier наценивает монеты за изображение, не трогая токены', async () => {
-  await changeCoins(100)
+test('§10.5: coinMultiplier наценивает СПРАВОЧНУЮ стоимость токенов в журнале (деньги не трогаем)', async () => {
   const before = (await getBalance()).coins
   const row = await recordTokens({ tokens: 1000, module: 'neuro-dialogs', taskId: 'img', coinMultiplier: 4 })
   assert.equal(row.tokens, 1000, 'в журнале честное число токенов')
-  assert.equal(row.coins, 4, '1000 токенов ×4 = 4 монеты')
-  assert.equal(before - (await getBalance()).coins, 4, 'с баланса списано с наценкой')
+  assert.equal(row.coins, 4, '1000 токенов ×4 = 4 монеты (справочно)')
+  assert.equal((await getBalance()).coins, before, 'баланс не меняется — за токены не списываем (MR-149)')
 })
 
 test('§10.5: множитель <1 или мусор игнорируется (не удешевляет расход)', async () => {
