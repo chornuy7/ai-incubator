@@ -25,23 +25,28 @@ export function normalizeLastPostsCount(raw) {
 export function pickReactionPost(posts, { mode, lastPostsCount, seenTop, reacted }) {
   if (!posts.length) return { action: 'skip', reason: 'no-posts' }
 
+  // Порядок, в котором Telegram отдал сообщения, НЕ используем: считаем по id.
+  // Иначе вся логика «что новее» держалась бы на недокументированном допущении, и
+  // смена порядка молча превратила бы мониторинг в реакции на старые посты.
+  const byIdDesc = [...posts].sort((a, b) => b.id - a.id)
+
   let pool
   if (mode === 1) {
-    pool = posts.slice(0, normalizeLastPostsCount(lastPostsCount))
+    pool = byIdDesc.slice(0, normalizeLastPostsCount(lastPostsCount))
   } else if (seenTop === undefined) {
     // Первый заход в канал: запоминаем верхнюю границу и НЕ реагируем — иначе
     // «мониторинг новых» ставил бы реакцию на пост, который был опубликован до задачи.
-    return { action: 'baseline', topId: posts[0].id }
+    return { action: 'baseline', topId: byIdDesc[0].id }
   } else {
-    pool = posts.filter((m) => m.id > seenTop)
+    pool = byIdDesc.filter((m) => m.id > seenTop)
     if (!pool.length) return { action: 'skip', reason: 'no-new' }
   }
 
   const fresh = pool.filter((m) => !reacted(m.id))
   if (!fresh.length) return { action: 'skip', reason: mode === 1 ? 'all-reacted' : 'no-new' }
 
-  // Мониторинг: самый СТАРЫЙ из новых — при частых постах ранние иначе остались бы
-  // без реакций. Существующие посты: случайный, чтобы аккаунты не били в один и тот же.
+  // Мониторинг: самый СТАРЫЙ из новых (минимальный id) — при частых постах ранние иначе
+  // остались бы без реакций. Существующие посты: случайный, чтобы аккаунты не били в один.
   const post = mode === 1 ? fresh[Math.floor(Math.random() * fresh.length)] : fresh[fresh.length - 1]
   return { action: 'react', post }
 }

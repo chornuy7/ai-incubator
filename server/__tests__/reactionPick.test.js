@@ -64,3 +64,19 @@ test('пустой канал не роняет выбор', () => {
     { action: 'skip', reason: 'no-posts' },
   )
 })
+
+// Порядок выдачи Telegram нигде не зафиксирован — правило обязано считать по id.
+test('перемешанный порядок сообщений не меняет решение', () => {
+  const shuffled = [{ id: 51 }, { id: 53 }, { id: 50 }, { id: 52 }]
+  const base = pickReactionPost(shuffled, { mode: 0, lastPostsCount: 3, seenTop: undefined, reacted: never })
+  assert.deepEqual(base, { action: 'baseline', topId: 53 })
+
+  const r = pickReactionPost(shuffled, { mode: 0, lastPostsCount: 3, seenTop: 50, reacted: never })
+  assert.equal(r.post.id, 51)
+
+  const chosen = new Set()
+  for (let i = 0; i < 50; i++) {
+    chosen.add(pickReactionPost(shuffled, { mode: 1, lastPostsCount: 2, seenTop: undefined, reacted: never }).post.id)
+  }
+  assert.deepEqual([...chosen].sort(), [52, 53])
+})
