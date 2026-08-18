@@ -244,13 +244,19 @@ export function UsersPage() {
           {users.map((u) => {
             const roleIds = u.roleIds?.length ? u.roleIds : (u.roleId ? [u.roleId] : [])
             const isAdmin = roleIds.includes(ADMIN_BYPASS_ID)
-            const locked = u.id === 'usr_admin' // встроенного главного админа не трогаем
+            // Своя карточка — не объект управления (правка 18.08): роли ограничивают
+            // СОТРУДНИКА, а владелец и так работает без ограничений. Раньше здесь стояли
+            // кликабельные чипы, и попытка выдать роль себе упиралась в отказ сервера
+            // «Можно управлять только своими субпользователями» — выглядело как поломка.
+            const isMe = u.id === sessionUser?.id
+            const locked = u.id === 'usr_admin' || isMe // встроенного главного админа и себя не трогаем
             return (
               <Card key={u.id} className="flex flex-wrap items-center gap-3 p-3">
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-2">
                     <span className="truncate text-sm font-medium text-fg">{u.name}</span>
                     {isAdmin && <Badge tone="iris">Админ</Badge>}
+                    {isMe && !isAdmin && <Badge tone="spark">Вы</Badge>}
                     {!u.active && <Badge tone="rose">Отключён</Badge>}
                   </div>
                   <div className="truncate text-xs text-white/50">{u.email}</div>
@@ -266,7 +272,9 @@ export function UsersPage() {
 
                 <div className="flex items-center gap-2">
                   {locked ? (
-                    <span className="flex items-center gap-1.5 rounded-lg bg-iris-500/10 px-3 py-2 text-xs text-iris-200"><ShieldCheck size={14} /> Полный доступ</span>
+                    <span className="flex items-center gap-1.5 rounded-lg bg-iris-500/10 px-3 py-2 text-xs text-iris-200">
+                      <ShieldCheck size={14} /> {isMe && !isAdmin ? 'Вы · владелец пространства' : 'Полный доступ'}
+                    </span>
                   ) : (
                     <div className="flex flex-col items-end gap-1">
                       <RolePicker roles={roles} value={roleIds} onChange={(ids) => void assignRoles(u, ids)} />
