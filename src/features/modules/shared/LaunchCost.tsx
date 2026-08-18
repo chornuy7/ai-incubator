@@ -64,7 +64,8 @@ export function LaunchCost({ moduleKey, actions, accounts, delaySec, compact }: 
   const pricing = usePricing()
 
   const n = Math.max(0, Math.round(actions) || 0)
-  const price = pricing?.actions?.[moduleKey] ?? 0
+  // MR-149: показываем ЕДИНУЮ цену действия (база + текст по максимуму). Фолбэк на базу.
+  const price = pricing?.actionsFull?.[moduleKey] ?? pricing?.actions?.[moduleKey] ?? 0
   // Время НЕ зависит от прайса — оно считается из действий, аккаунтов и задержек. Раньше
   // общий ранний выход прятал и его тоже, пока не ответит `/api/pricing`.
   const hasCost = !!pricing && !!price && !!n
@@ -92,38 +93,32 @@ export function LaunchCost({ moduleKey, actions, accounts, delaySec, compact }: 
     ].filter(Boolean).join('\n')
     : ''
 
-  // Округляем до ТЫСЯЧНЫХ — как сервер: до сотых прогноз расходился с фактом
-  // (3 строки парсера: обещали 0.02, списывается 0.015).
+  // Округляем до ТЫСЯЧНЫХ — как сервер: до сотых прогноз расходился с фактом.
   const r3 = (x: number) => Math.round(x * 1000) / 1000
-  const actionsCost = r3(price * n)
-  const avgTokens = pricing?.avgTokens?.[moduleKey] ?? 0
-  const tokens = avgTokens * n
-  const tokensCost = r3((tokens / 1000) * (pricing?.coinsPer1kTokens ?? 0))
-  const total = r3(actionsCost + tokensCost)
+  // MR-149 (созвон 12.08): оплата за отправку и за генерацию текста объединена в ОДНУ
+  // фикс-цену за действие, посчитанную «как за максимум символов» (лимит Telegram 4096 /
+  // 1024 с картинкой) и уже заложенную в action_price из админки. Отдельного расчёта
+  // токенов на витрине больше нет — цена действия фиксированная и предсказуемая.
+  const total = r3(price * n)
   const fmt = fmtCoins
+  // Текст в цене есть только у ИИ-модулей — у просмотров/реакций/парсеров его нет (MR-149).
+  const hasText = (pricing?.maxTextTokens?.[moduleKey] ?? 0) > 0
 
   // Компактный вид для нижней панели: цена и время — чипами, детали — в подсказке.
   if (compact) {
-    // В панели запуска — только ИТОГ и время, крупными плашками под стать кнопкам справа.
-    // Разбивку «= действия + ИИ» и попап с математикой убрали (правка заказчика 13.08):
-    // оператору перед запуском нужны две цифры — сколько спишется и сколько ждать, а
-    // из чего складывается цена (и что часть уходит на ИИ) — не его забота.
-    // Расчёт списания — тоже в подсказку: на плашке одна цифра, при наведении видно,
-    // из чего она сложилась. Про ИИ отдельной строкой не пишем — только общий итог.
     const costHint = [
-      `${n} ${plural(n, 'действие', 'действия', 'действий')} × ${price} ⚡ = ${fmt(actionsCost)} ⚡`,
-      avgTokens > 0 ? `+ текст ≈ ${fmt(tokensCost)} ⚡ (спишется по факту)` : '',
-      `итого ${avgTokens ? '≈ ' : ''}${fmt(total)} ⚡`,
-    ].filter(Boolean).join('\n')
+      `${n} ${plural(n, 'действие', 'действия', 'действий')} × ${price} ⚡ = ${fmt(total)} ⚡`,
+      hasText
+        ? 'Цена за действие фиксированная: текст оплачен по максимуму символов (4096 / 1024 с картинкой), сверх неё за токены не списывается.'
+        : 'Цена за действие фиксированная.',
+    ].join('\n')
 
     return (
       <>
-        {/* Цена ждёт прайс, время — нет: показываем каждую плашку, как только она готова. */}
         {hasCost && (
         <CostTip hint={costHint} className="h-10 items-center gap-1.5 rounded-xl border border-amber-500/30 bg-amber-500/10 px-3.5 text-sm font-bold text-amber-300">
-          {/* Иконка уже есть — символ ⚡ в тексте давал две молнии подряд. */}
           <Zap size={16} fill="currentColor" />
-          {avgTokens ? '≈' : ''}{fmt(total)}
+          {fmt(total)}
         </CostTip>
         )}
         {timeAvg && (
@@ -141,22 +136,14 @@ export function LaunchCost({ moduleKey, actions, accounts, delaySec, compact }: 
   return (
     <div className="mb-4 flex flex-wrap items-center gap-x-2 gap-y-1 rounded-2xl border border-amber-500/25 bg-amber-500/8 px-4 py-2.5 text-sm">
       <Zap size={15} className="text-amber-400" fill="currentColor" />
-      <span className="font-semibold text-fg">
-        Спишется {avgTokens ? '≈ ' : ''}{fmt(total)} ⚡
-      </span>
+      <span className="font-semibold text-fg">Спишется {fmt(total)} ⚡</span>
       <span className="text-muted">
-        — {n} {plural(n, 'действие', 'действия', 'действий')} × {price} ⚡ = {fmt(actionsCost)} ⚡
-        {avgTokens > 0 && <> · текст ИИ ≈ {Math.round(tokens).toLocaleString('ru-RU')} ток. ÷ 1000 × {pricing?.coinsPer1kTokens ?? 0} ⚡ = {fmt(tokensCost)} ⚡</>}
+        — {n} {plural(n, 'действие', 'действия', 'действий')} × {price} ⚡{hasText ? ' (текст по максимуму символов уже в цене)' : ''}
       </span>
       {timeAvg && (
         <CostTip hint={timeHint} className="ml-auto items-center gap-1 text-sm font-semibold text-emerald-300">
           <Clock size={14} /> ≈ {timeAvg}
         </CostTip>
-      )}
-      {avgTokens === 0 && (
-        <span className="w-full text-xs text-muted">
-          Расход ИИ добавится по факту — пока нет истории этого модуля, чтобы оценить.
-        </span>
       )}
     </div>
   )
@@ -197,15 +184,20 @@ export function ActionPriceCalc({ moduleKey }: { moduleKey: string }) {
   // Тот же кэш прайса, что и у LaunchCost: два компонента на одной странице больше не
   // шлют два запроса, а при повторном открытии модуля цена рисуется сразу.
   const pricing = usePricing()
-  const price = pricing?.actions?.[moduleKey] ?? 0
+  // MR-149: показываем ЕДИНУЮ цену действия (база + текст по максимуму). Фолбэк на базу.
+  const price = pricing?.actionsFull?.[moduleKey] ?? pricing?.actions?.[moduleKey] ?? 0
   if (!pricing || !price) return null
+  // «Действие = до N символов» имеет смысл только там, где действие ГЕНЕРИТ ИИ-текст
+  // (комментинг/чаттинг/диалоги/мейлинг). У просмотров/реакций/парсеров текста нет —
+  // строку про символы там не показываем (MR-149).
+  const hasText = (pricing?.maxTextTokens?.[moduleKey] ?? 0) > 0
   return (
     <div className="flex flex-wrap items-center gap-x-4 gap-y-1 rounded-2xl border border-amber-500/20 bg-amber-500/[.05] px-4 py-2.5 text-sm">
       <span className="flex items-center gap-1.5 font-bold text-amber-300">
         <Zap size={15} fill="currentColor" /> {fmtCoins(price)} ⚡
         <span className="font-normal text-white/60">за действие</span>
       </span>
-      <span className="text-white/50">1 действие = до 5000 символов (1024 с картинкой)</span>
+      {hasText && <span className="text-white/50">1 действие = до 4096 символов (1024 с картинкой)</span>}
     </div>
   )
 }

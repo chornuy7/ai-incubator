@@ -19,7 +19,7 @@ import { isHidden } from '@/shared/config/routes'
 // §3.1 (MR-114): рассылка приведена к общей структуре модулей — те же переиспользуемые
 // блоки (SectionCard + нижняя LaunchPanel со степпером), что и в LiveModule/парсерах.
 import { SectionCard, LaunchPanel, LaunchSteps, markCurrentStep, TaskStartedModal, ProtectionBlock, BlacklistEditor } from '@/features/modules/shared'
-import { LaunchCost } from '@/features/modules/shared/LaunchCost'
+import { LaunchCost, ActionPriceCalc } from '@/features/modules/shared/LaunchCost'
 import { useModuleTask } from '@/features/modules/shared/useModuleTask'
 import { PresetBar } from '@/features/modules/shared/PresetBar'
 import { SavePresetModal } from '@/features/modules/shared/SavePresetModal'
@@ -269,6 +269,9 @@ function MailingInner() {
         {/* ТЗ 06.08 §10: выбор шаблона — вверху, до всех настроек (TPL-001). */}
         <PresetBar presets={presets} onApply={applyPreset} onSave={handleSave}
           onEdit={editPreset} onDelete={deletePreset} disabled={running} />
+
+        {/* MR-149: мини-калькулятор цены действия — в шапке, перед «Выбором аккаунтов». */}
+        <ActionPriceCalc moduleKey="mailing" />
 
         {/* 1. Аккаунты — единый полноширинный выбор, как во всех модулях. */}
         <div id="sec-accounts" className="scroll-mt-24">

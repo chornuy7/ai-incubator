@@ -6,11 +6,13 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { chargeActions, chargeCollected, refundShrunk } from '../lib/actionBilling.js'
 
-/** Кошелёк-заглушка: в минус не уходит, как настоящий. */
-function wallet(start) {
+/** Кошелёк-заглушка: в минус не уходит, как настоящий. coinsPer1k — курс токен→монета
+ *  для расчёта макс-текста в цене действия (MR-149); 0 = только фикс-цена действия. */
+function wallet(start, coinsPer1k = 0) {
   let coins = start
   return {
     coins: () => coins,
+    coinsPer1k,
     // Тысячные, как в настоящем кошельке: до сотых ставка 0.005 удваивалась.
     changeCoins: async (delta) => { coins = Math.max(0, Math.round((coins + delta) * 1000) / 1000) },
     getBalance: async () => ({ coins }),
@@ -26,6 +28,27 @@ test('списывает по прайсу модуля и не трогает �
   assert.equal(w.coins(), 9.8)
   assert.equal(task.pauseRequested, undefined, 'задача не должна вставать при живом балансе')
   assert.equal(store.logs.length, 0)
+})
+
+test('MR-149: цена действия ИИ-модуля включает текст «по максимуму» (по курсу coinsPer1k)', async () => {
+  const w = wallet(10, 1) // курс 1 монета за 1000 токенов
+  const task = { moduleKey: 'neuro-commenting', userId: 'u1' }
+  // full = 0.05 (действие) + 1024/1000 × 1 (макс-текст 4096 симв ≈ 1024 токена) = 1.074
+  await chargeActions(task, storeMock(), 1, w)
+  assert.equal(w.coins(), 8.926, '10 − 1.074 = списана единая цена действие+текст')
+})
+
+test('MR-149: у не-ИИ модуля (парсер) текст в цену не добавляется', async () => {
+  const w = wallet(10, 1)
+  await chargeActions({ moduleKey: 'parsing', userId: 'u1' }, storeMock(), 2, w) // 2 × 0.005, без текста
+  assert.equal(w.coins(), 9.99)
+})
+
+test('MR-149: база «за действие» берётся из админки (actionMap), а не из кода', async () => {
+  const w = wallet(10, 1)
+  const deps = { ...w, actionMap: { 'neuro-commenting': 0.1 } } // админ поднял цену действия
+  await chargeActions({ moduleKey: 'neuro-commenting', userId: 'u1' }, storeMock(), 1, deps)
+  assert.equal(w.coins(), 8.876, '10 − (0.1 админ + 1.024 макс-текст) = учтена цена из админки')
 })
 
 test('на нуле ставит задачу на ПАУЗУ (не стоп) и пишет причину в логи', async () => {
