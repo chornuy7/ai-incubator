@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { Link } from 'react-router-dom'
 import { Zap, Eye, EyeOff, ArrowRight, LogOut, ShieldAlert } from 'lucide-react'
 import { useApp } from '@/mocks/store'
-import { useSession } from '@/features/auth/session'
+import { useSession, useAdminGate } from '@/features/auth/session'
 import { loginUser } from '@/api/usersApi'
 import { ADMIN_BYPASS_ID } from '@/shared/config/rbac'
 import { AdminStatsPage } from '@/pages/AdminStatsPage'
@@ -24,14 +24,20 @@ function isAdminUser(u: { roleId?: string; roleIds?: string[] } | null | undefin
 
 export function AdminEntry() {
   const sessionUser = useSession((s) => s.user)
-  if (sessionUser?.isAdmin) return <AdminShell />
+  // MR-142 (баг 2): админка — ОТДЕЛЬНЫЙ вход. Панельная сессия сама по себе админку не
+  // открывает: нужен и админ (isAdmin), и явно поднятый гейт (вход через форму ниже).
+  const unlocked = useAdminGate((s) => s.unlocked)
+  if (sessionUser?.isAdmin && unlocked) return <AdminShell />
   return <AdminLogin />
 }
 
 /** Полноэкранная админка со своей шапкой — без сайдбара панели. */
 function AdminShell() {
   const sessionUser = useSession((s) => s.user)
-  const logout = useSession((s) => s.logout)
+  const lockAdmin = useAdminGate((s) => s.lock)
+  // MR-142 (баг 2): «Выйти из админки» запирает ТОЛЬКО админ-гейт — панельная сессия
+  // остаётся. Это две разные авторизации: выход из админки ≠ выход из панели.
+  const exitAdmin = () => lockAdmin()
 
   return (
     <div className="min-h-screen bg-bg text-fg">
@@ -47,7 +53,7 @@ function AdminShell() {
             <div className="truncate text-[11px] leading-tight text-muted">{sessionUser?.email}</div>
           </div>
           <Link to="/panel" className="btn-ghost ml-auto h-9 px-3 text-sm">В панель</Link>
-          <button onClick={logout} className="btn-ghost h-9 px-3 text-sm" title="Выйти из админки">
+          <button onClick={exitAdmin} className="btn-ghost h-9 px-3 text-sm" title="Выйти из админки (панель остаётся)">
             <LogOut size={15} /> Выйти
           </button>
         </div>
@@ -69,6 +75,7 @@ function AdminLogin() {
   const pushToast = useApp((s) => s.pushToast)
   const signIn = useSession((s) => s.login)
   const logout = useSession((s) => s.logout)
+  const unlockAdmin = useAdminGate((s) => s.unlock)
   const [email, setEmail] = useState('')
   const [pass, setPass] = useState('')
   const [show, setShow] = useState(false)
@@ -89,8 +96,11 @@ function AdminLogin() {
         return
       }
       signIn(user, role && role.permissions ? { id: role.id, name: role.name, permissions: role.permissions } : null)
+      unlockAdmin() // MR-142 (баг 2): поднимаем отдельный админ-гейт — только этот вход открывает /admin
       setUserState('with-data')
-      pushToast({ type: 'success', title: `Админ-панель · ${user.name}` })
+      // MR-142 (баг 1): жёсткая перезагрузка = чистая память, без данных прошлой сессии.
+      // Гейт и сессия уже в localStorage, после boot откроется AdminShell.
+      try { window.location.assign('/admin') } catch { pushToast({ type: 'success', title: `Админ-панель · ${user.name}` }) }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Проверьте e-mail и пароль')
     } finally {
