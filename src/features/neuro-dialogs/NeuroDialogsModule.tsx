@@ -379,6 +379,7 @@ export function NeuroDialogsModule() {
           canStart={canStart}
           steps={!running ? <LaunchSteps steps={markCurrentStep([
             { label: 'Аккаунты', done: accountIds.length > 0, anchor: 'sec-accounts' },
+            { label: 'Защита', done: true, optional: true, anchor: 'sec-protect' },
             { label: 'Настройки', done: true, optional: true, anchor: 'sec-settings' },
             { label: 'Запуск', done: false, anchor: 'sec-run' },
           ])} /> : null}
