@@ -29,9 +29,11 @@ test('без периода → бессрочно (null)', async () => {
   assert.equal((await B.getBalance('u2')).expiresAt, null)
 })
 
-test('годовая подписка пространства → около 360 дней, наследуется без личной', async () => {
-  await B.setModules('all', undefined, { months: 12 })
-  const b = await B.getBalance('u3') // у u3 нет личной подписки — берёт пространство
+test('годовая подписка → около 360 дней', async () => {
+  // Решение 18.08: набор пространства больше не наследуется теми, у кого нет своей
+  // записи (иначе он раздавался каждой новой регистрации). Срок считаем на личной.
+  await B.setUserModules('all', 'u3', { months: 12 })
+  const b = await B.getBalance('u3')
   assert.equal(b.modules, 'all')
   const days = (b.expiresAt - Date.now()) / D
   assert.ok(days > 340 && days < 375, `около 360 дней, получили ${days}`)

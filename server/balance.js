@@ -180,9 +180,15 @@ export async function getBalance(userId) {
     ])
     const personal = subRes.data
     const ws = wsRes.data
+    // Общий набор `workspace` — набор НАШЕГО пространства, а не подарок каждому.
+    //
+    // Правка 18.08. Раньше он был fallback'ом для любого, у кого нет своей записи, и
+    // человек, только что зарегистрировавшийся с лендинга, получал 14 модулей бесплатно
+    // (на проде так жили 56 из 65 юзеров). Теперь fallback работает только для
+    // безсессионного дев-режима; у самостоятельного владельца без покупки набор ПУСТ.
     const modules = personal?.modules !== undefined && personal?.modules !== null
       ? personal.modules
-      : (ws?.modules ?? DEFAULT_MODULES)
+      : (sk === DEFAULT_USER ? (ws?.modules ?? DEFAULT_MODULES) : [])
     const expiresAt = (personal ? personal.expires_at : ws?.expires_at) ? ms(personal ? personal.expires_at : ws.expires_at) : null
     const planId = DEFAULT_STATE.planId
     return {
@@ -217,10 +223,13 @@ export async function getBalance(userId) {
     // Клиент, выбравший «парсер + комментинг за 20», видит свои два модуля, а
     // сотрудник без личной покупки работает внутри купленного владельцем. Срок
     // подписки (expiresAt) берём из того же источника, что и набор.
+    // Общий набор пространства — только для безсессионного дев-режима (см. выше).
     modules: subRec?.modules !== undefined
       ? subRec.modules
-      : ((all && all[SUBSCRIPTION_KEY]?.modules) ?? DEFAULT_MODULES),
-    expiresAt: (subRec?.modules !== undefined ? subRec?.expiresAt : (all && all[SUBSCRIPTION_KEY]?.expiresAt)) ?? null,
+      : (sk === DEFAULT_USER ? ((all && all[SUBSCRIPTION_KEY]?.modules) ?? DEFAULT_MODULES) : []),
+    expiresAt: (subRec?.modules !== undefined
+      ? subRec?.expiresAt
+      : (sk === DEFAULT_USER ? (all && all[SUBSCRIPTION_KEY]?.expiresAt) : null)) ?? null,
     coins: normCoins(walletRec?.coins ?? DEFAULT_STATE.coins),
     usd: normUsd(walletRec?.usd ?? 0),
     updatedAt: Number(walletRec?.updatedAt) || 0,
