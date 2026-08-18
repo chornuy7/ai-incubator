@@ -41,6 +41,7 @@ export function AutopostingPage() {
   // §5.4/MR-157: гейт — в тонкой обёртке (planModules грузится асинхронно; гейт перед
   // остальными хуками ронял React «Rendered fewer hooks»). Тело — в AutopostingInner.
   const planModules = usePlan((st) => st.modules)
+  if (planModules === null) return null // набор ещё не загружен — не мигаем витриной покупки
   if (!planHasModule(planModules, 'autoposting')) return <ModuleNotPaid title="Автопостинг" moduleKey="autoposting" />
   return <AutopostingInner />
 }

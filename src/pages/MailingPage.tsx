@@ -30,6 +30,7 @@ export function MailingPage() {
   // держать гейт перед остальными хуками страницы, при переключении число хуков менялось
   // и React падал («Rendered fewer hooks»). Тело — в MailingInner (монтируется, когда оплачено).
   const planModules = usePlan((st) => st.modules)
+  if (planModules === null) return null // набор ещё не загружен — не мигаем витриной покупки
   if (!planHasModule(planModules, 'mailing')) return <ModuleNotPaid title="Мейлинг" moduleKey="mailing" />
   return <MailingInner />
 }

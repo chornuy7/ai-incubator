@@ -68,6 +68,9 @@ export function ModuleRunner() {
   if (!cfg || !route) return <Navigate to="/panel" replace />
 
   // Гейт подписки (§5.4): модуль не оплачен — не открываем даже админу.
+  // Набор ещё не загружен — не показываем ни модуль, ни «не оплачено»: иначе первый
+  // вход без кэша мигал бы витриной покупки на честно оплаченном модуле.
+  if (planModules === null) return <div className="space-y-4"><Skeleton className="h-40 rounded-2xl" /><Skeleton className="h-64 rounded-2xl" /></div>
   if (!planHasModule(planModules, moduleKey)) return <ModuleNotPaid title={cfg.title} moduleKey={moduleKey} />
 
   // RBAC-гейт (§8.1): не-админ без доступа к модулю — прямой заход по URL запрещён.
