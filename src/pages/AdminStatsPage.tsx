@@ -125,36 +125,68 @@ export function AdminStatsPage() {
   // §5.2 (MR-33): busyRef — идёт ли «видимая» (не фоновая) загрузка; автообновление
   // пропускает тик, пока она идёт, чтобы фон не перебивал ручную загрузку/смену периода.
   const busyRef = useRef(false)
-  const load = async ({ force = false, silent = false }: { force?: boolean; silent?: boolean } = {}) => {
+  // MR-151: какие датасеты нужны каждой вкладке. Автообновление грузит ТОЛЬКО их, а не все
+  // 10 эндпоинтов (раньше каждый тик тянул всю админку — «balance/task history/всю инфу»).
+  // Ключи — короткие поля StatsSnap. Вкладки-справочники (Цены/Аккаунты/Роли/Тикеты/Парсер/
+  // API) грузят своё сами — для них список пуст, фон их не трогает.
+  const TAB_DATASETS: Record<number, Array<keyof StatsSnap>> = {
+    0: ['o'], 1: ['a'], 2: ['d'], 3: ['u'], 4: ['pur'], 5: ['econ'],
+    7: ['p', 'h'], 8: ['c'], 9: ['r', 'u'], 10: ['h', 'a', 'd'],
+  }
+  const load = async ({ force = false, silent = false, only }: { force?: boolean; silent?: boolean; only?: Array<keyof StatsSnap> } = {}) => {
     loadCtl.current?.abort()
     const ctl = new AbortController()
     loadCtl.current = ctl
     const { signal } = ctl
-    // Свежий кэш периода → мгновенно, без запроса (MR-32). Фоновое автообновление (silent)
-    // всегда идёт с force, поэтому кэш ему не мешает тянуть свежие данные.
+    // Частичная загрузка (only) — для автообновления одной вкладки. Пустой список = вкладке
+    // нечего тянуть (справочник) — молча выходим, не дёргая сервер.
+    if (only && only.length === 0) { if (!silent) setLoading(false); return }
+    // Свежий кэш периода → мгновенно, без запроса (MR-32). Кэшем пользуется только ПОЛНАЯ
+    // загрузка (смена периода): частичная всегда идёт за свежими данными вкладки.
     const cached = cacheRef.current.get(periodIdx)
-    if (!force && cached && Date.now() - cached.ts < CACHE_TTL) { applySnap(cached.snap); setLoading(false); return }
+    if (!force && !only && cached && Date.now() - cached.ts < CACHE_TTL) { applySnap(cached.snap); setLoading(false); return }
     // Фоновое обновление не трогает спиннер и не чистит область — данные меняются на месте,
     // без мигания; видимую загрузку показываем только при смене периода/«Обновить».
-    if (!silent) {
+    if (!silent && !only) {
       busyRef.current = true
       setLoading(true)
       // Чистим period-зависимые данные (Сейчас/Мониторинг — состояние «сейчас», не период — не трогаем).
       setOverview(null); setReport(null); setUsers(null); setProblems(null); setCrm(null); setDaily(null); setPurchases(null); setEconomy(null)
     }
+    // MR-151: по одному датасету — свой запрос и свой сеттер. Полная загрузка = все ключи
+    // (цифры разных вкладок на один момент времени + кэш); частичная (автообновление) = только
+    // нужные вкладке, то есть ~1-3 запроса вместо 10.
+    const FETCHERS: Record<keyof StatsSnap, () => Promise<unknown>> = {
+      o: () => fetchAdminOverview(since, signal),
+      r: () => fetchClientReport(since, undefined, signal),
+      u: () => fetchUsersReport(since, signal),
+      p: () => fetchProblems(since, signal),
+      c: () => fetchCrmOverview(since, signal),
+      a: () => fetchActiveNow(signal),
+      d: () => fetchDailySpend(PERIODS[periodIdx].days || 90, signal),
+      pur: () => fetchPurchases(since, signal),
+      h: () => fetchAccountsHealth(signal),
+      econ: () => fetchEconomy(since, signal),
+    }
+    const SETTERS: Record<keyof StatsSnap, (v: never) => void> = {
+      o: setOverview as never, r: setReport as never, u: setUsers as never, p: setProblems as never, c: setCrm as never,
+      a: setActive as never, d: setDaily as never, pur: setPurchases as never, h: setHealth as never, econ: setEconomy as never,
+    }
+    const keys: Array<keyof StatsSnap> = only && only.length ? only : ['o', 'r', 'u', 'p', 'c', 'a', 'd', 'pur', 'h', 'econ']
     try {
-      // Грузим всё одним заходом: цифры на разных вкладках должны быть на один момент
-      // времени, иначе «в панели 82 задачи, а по людям 80» читается как ошибка счёта.
-      const [o, r, u, p, c, a, d, pur, h, econ] = await Promise.all([
-        fetchAdminOverview(since, signal), fetchClientReport(since, undefined, signal),
-        fetchUsersReport(since, signal), fetchProblems(since, signal), fetchCrmOverview(since, signal),
-        fetchActiveNow(signal), fetchDailySpend(PERIODS[periodIdx].days || 90, signal), fetchPurchases(since, signal),
-        fetchAccountsHealth(signal), fetchEconomy(since, signal),
-      ])
+      const values = await Promise.all(keys.map((k) => FETCHERS[k]()))
       if (signal.aborted) return // перебит новым периодом — результат не применяем
-      const snap: StatsSnap = { o, r, u, p, c, a, d, pur, h, econ }
-      cacheRef.current.set(periodIdx, { snap, ts: Date.now() }) // кэшируем загруженный период
-      applySnap(snap)
+      keys.forEach((k, i) => (SETTERS[k] as (v: unknown) => void)(values[i]))
+      setDenied(false)
+      // Кэш держим как снимок периода: полная загрузка пишет его целиком, частичная —
+      // патчит затронутые поля, чтобы возврат на период не показал устаревшее.
+      if (!only) {
+        const snap = { o: values[0], r: values[1], u: values[2], p: values[3], c: values[4], a: values[5], d: values[6], pur: values[7], h: values[8], econ: values[9] } as StatsSnap
+        cacheRef.current.set(periodIdx, { snap, ts: Date.now() })
+      } else {
+        const prev = cacheRef.current.get(periodIdx)
+        if (prev) { keys.forEach((k, i) => { (prev.snap as Record<string, unknown>)[k] = values[i] }); prev.ts = Date.now() }
+      }
     } catch (e) {
       if (signal.aborted || (e instanceof DOMException && e.name === 'AbortError')) return // отмена — не ошибка
       // 403 — не ошибка сборки, а честный отказ: показываем это отдельно, иначе
@@ -163,8 +195,9 @@ export function AdminStatsPage() {
       if (/администратор/i.test(msg)) setDenied(true)
       else pushToast({ type: 'error', title: 'Не удалось загрузить статистику', desc: msg })
     } finally {
-      // loading/busy снимает только текущий видимый загрузчик; фоновый (silent) их не трогал.
-      if (loadCtl.current === ctl && !silent) { busyRef.current = false; setLoading(false) }
+      // loading/busy снимает только полная видимая загрузка; фоновая (silent) и частичная
+      // (only) их не поднимали — и снимать нечего.
+      if (loadCtl.current === ctl && !silent && !only) { busyRef.current = false; setLoading(false) }
     }
   }
   useEffect(() => { void load() }, [since]) // eslint-disable-line react-hooks/exhaustive-deps
@@ -227,10 +260,12 @@ export function AdminStatsPage() {
         if (refreshingRef.current) return 0
         refreshingRef.current = true
         setRefreshing(true)
-        // На «Тикетах» тянем переписку (её зарегистрировала сама вкладка), иначе — статистику.
+        // На «Тикетах» тянем переписку (её зарегистрировала сама вкладка), иначе — статистику
+        // ТОЛЬКО текущей вкладки (MR-151): не все 10 эндпоинтов, а 1-3 нужных. Нет датасетов
+        // (справочник) — тик пропускается (эти вкладки и так в NO_AUTOREFRESH_TABS).
         const pull = tabRef.current === TICKETS_TAB && ticketsReloadRef.current
           ? ticketsReloadRef.current()
-          : loadRef.current({ force: true, silent: true })
+          : loadRef.current({ force: true, silent: true, only: TAB_DATASETS[tabRef.current] || [] })
         void pull.finally(() => {
           refreshingRef.current = false
           setRefreshing(false)
