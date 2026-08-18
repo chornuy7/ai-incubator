@@ -20,3 +20,28 @@ test('freeAccess приводится к булеву (!!)', () => {
   assert.equal(normalizeRole({ name: 'x', permissions: { freeAccess: 1 } }).permissions.freeAccess, true)
   assert.equal(normalizeRole({ name: 'x', permissions: { freeAccess: 0 } }).permissions.freeAccess, false)
 })
+
+/**
+ * Владелец без роли (обычная самостоятельная регистрация) должен видеть то, что купил.
+ *
+ * Баг 18.08: сервер отдавал таким `permissions: null` со смыслом «не ограничен», а
+ * клиентский `can(null, …)` читает null как «прав нет». Человек оплачивал модули,
+ * на странице подписок горело «оплачен», а в меню не было ничего.
+ */
+test('роль-less владелец получает явные права, а не null', async () => {
+  const { unrestrictedPermissions } = await import('../roles.js')
+  const { listModuleKeys } = await import('../modules/registry.js')
+  const keys = listModuleKeys()
+  const p = unrestrictedPermissions(keys)
+
+  for (const k of keys) assert.equal(p.modules[k], 'allow', `модуль ${k} должен быть открыт владельцу`)
+  assert.equal(p.sections['/panel/tasks'], 'allow', 'разделы панели тоже открыты')
+  assert.equal(p.resources.allTasks, 'allow', 'свои задачи владелец видит все')
+})
+
+test('суб без роли прав НЕ получает — доступ выдаёт владелец', async () => {
+  const { mergePermissions } = await import('../roles.js')
+  const empty = mergePermissions([])
+  assert.deepEqual(empty.modules, {}, 'сотруднику без роли модули не открываются')
+  assert.equal(empty.resources.allTasks, 'deny')
+})

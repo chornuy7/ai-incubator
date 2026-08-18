@@ -1,7 +1,7 @@
 /** CRUD + аутентификация операторов (§8.1). Монтируется в /api/users. */
 import { Router } from 'express'
 import { listUsers, getUser, createUser, updateUser, deleteUser, authenticate, authenticateSupabase, verifyPassword, publicUser, isBlockedByOwner, listSubs } from './users.js'
-import { rolesForUser, mergePermissions, userRoleIds, hasAdminRole, ADMIN_ROLE_ID } from './roles.js'
+import { rolesForUser, mergePermissions, unrestrictedPermissions, userRoleIds, hasAdminRole, ADMIN_ROLE_ID } from './roles.js'
 import { capModules, applyDirectGrants } from './subAccess.js'
 import { getBalance } from './balance.js'
 import { requesterContext } from './lib/accessGuard.js'
@@ -21,7 +21,17 @@ function sanitizeRoleIds(roleIds) {
  * freeAccess-роль (тест/модератор) — доступ в обход подписки, её не режем.
  */
 async function effectivePermissions(user, roles, isAdmin) {
-  let permissions = isAdmin || roles.length === 0 ? null : mergePermissions(roles)
+  // `null` = «правами не ограничен», и так это понимает сервер. Но клиентский `can()`
+  // читает null как «прав нет» и закрывает всё — из-за этого владелец без роли (обычная
+  // самостоятельная регистрация) видел пустое меню, хотя модули оплачены. Админу null
+  // безопасен: у него отдельный обход (isAdmin), а вот роль-less ВЛАДЕЛЬЦУ выдаём явные
+  // права. Суб без роли остаётся без прав — сотруднику доступ выдаёт владелец.
+  const { listModuleKeys } = await import('./modules/registry.js')
+  let permissions = isAdmin
+    ? null
+    : roles.length === 0
+      ? (user.parentId ? mergePermissions([]) : unrestrictedPermissions(listModuleKeys()))
+      : mergePermissions(roles)
   const freeAccess = roles.some((r) => r?.permissions?.freeAccess)
   if (permissions && user.parentId && !freeAccess) {
     const bal = await getBalance(user.id).catch(() => null)
