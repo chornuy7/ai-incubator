@@ -84,7 +84,7 @@ export default {
         path: '/api/modules/mailing/tasks',
         fills: ['message', 'aiPerRecipient', 'promptIndex', 'promptOverrides', 'mediaUrls'],
       },
-      params: ['message', 'aiPerRecipient', 'promptIndex', 'promptOverrides', 'mediaUrls'],
+      params: ['message', 'aiPerRecipient', 'promptIndex', 'promptOverrides', 'mediaUrls', 'typeWeights'],
     },
     {
       id: 'limits',
@@ -218,6 +218,23 @@ export default {
       ],
       seeAlso: ['message', 'promptIndex', 'goalId'],
       storedAs: 'task.settings.aiPerRecipient',
+    },
+    {
+      name: 'typeWeights',
+      block: 'message',
+      title: 'Распределение типов, %',
+      type: 'array',
+      items: 'number',
+      default: [],
+      purpose: 'Смешивать типы сообщений в заданной пропорции, чтобы аккаунты не писали в одном тоне.',
+      constraints: [
+        'индекс элемента соответствует promptIndex',
+        'если хотя бы один вес > 0, promptIndex НЕ используется — тип выбирается взвешенным жребием на каждое действие',
+        'веса нормируются автоматически, сумма 100 не обязательна',
+      ],
+      examples: [[50, 0, 0, 30, 20, 0]],
+      seeAlso: ['promptIndex'],
+      storedAs: 'task.settings.typeWeights',
     },
     {
       name: 'promptIndex',

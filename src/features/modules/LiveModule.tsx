@@ -254,7 +254,9 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
     // воркер читает именно reactMode, и дескриптор MCP описывает его.
     ...(cfg.reactionSettings ? { reactMode: g(0), lastPostsCount } : {}),
     ...(moduleKey === 'neuro-commenting' ? { postWindow, stopWords: stopWordsText.split(/[\n;]+/).map((w) => w.trim()).filter(Boolean), analyzeImages } : {}),
-    ...(moduleKey === 'neuro-commenting' && weightSum > 0 ? { typeWeights } : {}),
+    // Распределение уходит в задачу у любого модуля с промптами — воркеры выбирают тип
+    // взвешенным броском на каждое действие (см. pickPrompt в workers.js).
+    ...((cfg.messagePrompts?.length ?? 0) > 0 && weightSum > 0 ? { typeWeights } : {}),
     ...(cfg.lookingLayout ? {
       lookMode: cfg.lookModeOptions?.[lookModeIdx]?.value ?? 'stories',
       lookPostsCount,
@@ -606,10 +608,13 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
           {/* Объём задачи: режим работы, сколько сделает аккаунт, минимум слов. Раньше это
             жило внутри «Таймингов» вместе с задержками — то есть «сколько» и «как быстро»
             стояли в одной куче (правка 19.08). */}
-        {showBlock('templates') && moduleKey === 'neuro-commenting' && !running && (cfg.messagePrompts?.length ?? 0) > 0 && (
+        {/* Распределение типов — везде, где есть карточки промптов (правка 19.08).
+            Раньше блок жил только у нейрокомментинга, хотя набор промптов такой же у
+            чаттинга, диалогов и мейлинга — там молча работал один и тот же тип. */}
+        {showBlock('templates') && !running && (cfg.messagePrompts?.length ?? 0) > 0 && (
             <div className="mb-3 rounded-2xl border border-line bg-elevated/40 p-3">
               <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
-                <span className="text-sm font-semibold text-fg">Распределение типов комментариев</span>
+                <span className="text-sm font-semibold text-fg">Распределение типов</span>
                 <div className="flex items-center gap-2">
                   <span className={`rounded-md px-2 py-0.5 text-xs font-bold ${weightSum === 100 ? 'bg-spark-500/15 text-spark-300' : weightSum > 100 ? 'bg-rose-500/15 text-rose-300' : 'bg-amber-500/15 text-amber-300'}`}>
                     сумма {weightSum}%

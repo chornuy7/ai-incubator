@@ -102,7 +102,7 @@ export default {
         + 'Поверх добавляются глобальный системный промпт, контекст цели с базой знаний и контекст агента. '
         + 'Последние 50 отправленных текстов запоминаются, чтобы разные аккаунты не написали одно и то же.',
       api: { method: 'POST', path: '/api/modules/neuro-chatting/tasks', fills: ['promptIndex', 'promptText', 'promptOverrides'] },
-      params: ['promptIndex', 'promptText', 'promptOverrides'],
+      params: ['promptIndex', 'promptText', 'promptOverrides', 'typeWeights'],
     },
     {
       id: 'protection',
@@ -270,6 +270,23 @@ export default {
       purpose: 'Нижняя граница цели на один аккаунт.',
       constraints: ['должен быть ≤ maxPerAccount', 'работает только когда maxPerAccount > 0'],
       storedAs: 'task.settings.minPerAccount',
+    },
+    {
+      name: 'typeWeights',
+      block: 'prompts',
+      title: 'Распределение типов, %',
+      type: 'array',
+      items: 'number',
+      default: [],
+      purpose: 'Смешивать типы сообщений в заданной пропорции, чтобы аккаунты не писали в одном тоне.',
+      constraints: [
+        'индекс элемента соответствует promptIndex',
+        'если хотя бы один вес > 0, promptIndex НЕ используется — тип выбирается взвешенным жребием на каждое действие',
+        'веса нормируются автоматически, сумма 100 не обязательна',
+      ],
+      examples: [[50, 0, 0, 30, 20, 0]],
+      seeAlso: ['promptIndex'],
+      storedAs: 'task.settings.typeWeights',
     },
     {
       name: 'promptIndex',
