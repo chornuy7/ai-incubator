@@ -100,6 +100,11 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
   const [lastPostsCount, setLastPostsCount] = useState(3)
   // Брать ли ОДИН случайный пост из подходящих (иначе — все подходящие за заход).
   const [pickOne, setPickOne] = useState(true)
+  // Есть ли у модуля СВОИ параметры в карточке «Параметры и лимиты». У прогрева,
+  // масслукинга и прочих их нет: темп задаёт «Уровень прогрева» / тайминги, и после
+  // переноса карточки наверх (19.08) она оказалась пустой — выглядело как «пропала».
+  // Там, где параметров нет, карточкой оформляется панель запуска внизу, как было.
+  const hasParamsCard = moduleKey === 'neuro-commenting'
   const [srcTab, setSrcTab] = useState(0)
   const [input, setInput] = useState('')
   const [targets, setTargets] = useState<string[]>([])
@@ -486,7 +491,7 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
           обрабатывать, какие из них брать и лимиты прогона — продолжение разговора
           про цели. Раньше карточка стояла в самом низу, под защитой и промптами, и
           до неё добирались, уже настроив всё остальное.  */}
-      {showBlock('run') && (
+      {showBlock('run') && hasParamsCard && (
       <div id="sec-run" className="scroll-mt-24">
       <SectionCard icon={<Play size={18} />} title={running ? 'Выполнение' : 'Параметры и лимиты'} badge={running ? 'LIVE' : undefined}>
         {limitWarn && !running && (
@@ -873,86 +878,106 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
           себе; привязка к кампании/цели приходит из настроек кампании при запуске
           через неё (buildCampaignPlan прокидывает campaignId и goalId в settings).
           Состояние campaignId/goalId оставлено: оно всё ещё уходит в задачу. */}
-      {showBlock('run') && (
-        <LaunchPanel
-          running={running}
-          starting={starting}
-          canStart={canStart}
-          onStart={handleStart}
-          onStop={stop}
-          onSave={handleSave}
-          primaryLabel={cfg.primaryAction ?? 'Начать'}
-          cost={<LaunchCost compact moduleKey={moduleKey} actions={maxActions} accounts={selected.size} delaySec={(() => { const m = PRESET_MUL[delayPreset] ?? 1; const d = delays.action ?? delays.comment; return d ? [Math.round(d[0] * m), Math.round(d[1] * m)] as [number, number] : d })()} />}
-          stats={launchStats}
-          task={task}
-          warn={warn}
-          // Кнопка серая — прямо в панели говорим, ЧТО именно осталось заполнить,
-          // а не только баннером выше по странице (правка заказчика).
-          blockedBy={!running && !canStart
-            ? (goalExpired ? ['дедлайн цели истёк — продлите или уберите цель']
-              : typesOver100 ? [`сумма типов ${weightSum}% > 100 — уменьшите`]
-                : missingRequired)
-            : []}
-          // §11 (MR-55): шаги запуска — компактной строкой ПОД кнопкой запуска (а не
-          // большим блоком вверху страницы): всё видно сразу, без прокрутки.
-          steps={!running ? <LaunchSteps steps={launchSteps} /> : null}
-          presets={presets}
-          onApplyPreset={applyPreset}
-          extras={(
-            <>
-              {/* §6: автоматизация прямо в модуле — запуск по времени, одно-/многоразово.
-                  Идёт в extras (перед плавающим баром), иначе рендерился бы под баром внизу экрана. */}
-              {!running && (
-                <div className="mt-3 rounded-xl border border-line bg-elevated/30">
-                  <button type="button" onClick={() => setSchedOpen((v) => !v)}
-                    className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm font-semibold text-muted hover:text-fg">
-                    <Clock size={15} className="text-iris-300" />
-                    Запуск по расписанию
-                    <span className="text-xs font-normal text-faint">— создать правило, не запуская сейчас</span>
-                    <span className="ml-auto text-xs text-faint">{schedOpen ? 'скрыть ▲' : 'настроить ▾'}</span>
-                  </button>
-                  {schedOpen && (
-                    <div className="space-y-3 border-t border-line px-3 pb-3 pt-3">
-                      <Segmented options={['Однократно', 'Ежедневно', 'Каждые N минут']} value={schedMode} onChange={setSchedMode} size="sm" />
-                      {schedMode === 0 && (
-                        <div>
-                          <div className="mb-1 text-xs text-white/50">Дата и время запуска</div>
-                          <input type="datetime-local" className="input h-9" value={schedAt} onChange={(e) => setSchedAt(e.target.value)} />
-                        </div>
-                      )}
-                      {schedMode === 1 && (
-                        <div>
-                          <div className="mb-1 text-xs text-white/50">Время ежедневного запуска</div>
-                          <input type="time" className="input h-9 w-32" value={schedTime} onChange={(e) => setSchedTime(e.target.value)} />
-                        </div>
-                      )}
-                      {schedMode === 2 && (
-                        <div>
-                          <div className="mb-1 text-xs text-white/50">Интервал (минуты)</div>
-                          <input type="number" min={1} className="input h-9 w-32" value={schedEvery} onChange={(e) => setSchedEvery(Math.max(1, Number(e.target.value) || 1))} />
-                        </div>
-                      )}
-                      <p className="text-[11px] text-white/40">
-                        Правило заберёт текущие настройки модуля{campaignId ? ' и кампанию' : ''}. Управление — в разделе «Автоматизация».
-                      </p>
-                      <button type="button" onClick={() => void createSchedule()} disabled={schedSaving || !canStart}
-                        className="btn-ghost h-9 text-sm disabled:opacity-40">
-                        <Clock size={14} /> {schedSaving ? 'Создание…' : 'Создать правило'}
-                      </button>
-                    </div>
-                  )}
+      {showBlock('run') && (() => {
+        // Панель запуска одна на все модули. Разница только в оформлении: там, где
+        // карточка «Параметры и лимиты» уже показана выше (нейрокомментинг), панель
+        // идёт голой; где своих параметров нет (прогрев, масслукинг и др.) — она
+        // оформляется той же карточкой, как было до переноса 19.08.
+        const panel = (
+          <LaunchPanel
+            running={running}
+            starting={starting}
+            canStart={canStart}
+            onStart={handleStart}
+            onStop={stop}
+            onSave={handleSave}
+            primaryLabel={cfg.primaryAction ?? 'Начать'}
+            cost={<LaunchCost compact moduleKey={moduleKey} actions={maxActions} accounts={selected.size} delaySec={(() => { const m = PRESET_MUL[delayPreset] ?? 1; const d = delays.action ?? delays.comment; return d ? [Math.round(d[0] * m), Math.round(d[1] * m)] as [number, number] : d })()} />}
+            stats={launchStats}
+            task={task}
+            warn={warn}
+            // Кнопка серая — прямо в панели говорим, ЧТО именно осталось заполнить,
+            // а не только баннером выше по странице (правка заказчика).
+            blockedBy={!running && !canStart
+              ? (goalExpired ? ['дедлайн цели истёк — продлите или уберите цель']
+                : typesOver100 ? [`сумма типов ${weightSum}% > 100 — уменьшите`]
+                  : missingRequired)
+              : []}
+            // §11 (MR-55): шаги запуска — компактной строкой ПОД кнопкой запуска (а не
+            // большим блоком вверху страницы): всё видно сразу, без прокрутки.
+            steps={!running ? <LaunchSteps steps={launchSteps} /> : null}
+            presets={presets}
+            onApplyPreset={applyPreset}
+            extras={(
+              <>
+                {/* §6: автоматизация прямо в модуле — запуск по времени, одно-/многоразово.
+                    Идёт в extras (перед плавающим баром), иначе рендерился бы под баром внизу экрана. */}
+                {!running && (
+                  <div className="mt-3 rounded-xl border border-line bg-elevated/30">
+                    <button type="button" onClick={() => setSchedOpen((v) => !v)}
+                      className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm font-semibold text-muted hover:text-fg">
+                      <Clock size={15} className="text-iris-300" />
+                      Запуск по расписанию
+                      <span className="text-xs font-normal text-faint">— создать правило, не запуская сейчас</span>
+                      <span className="ml-auto text-xs text-faint">{schedOpen ? 'скрыть ▲' : 'настроить ▾'}</span>
+                    </button>
+                    {schedOpen && (
+                      <div className="space-y-3 border-t border-line px-3 pb-3 pt-3">
+                        <Segmented options={['Однократно', 'Ежедневно', 'Каждые N минут']} value={schedMode} onChange={setSchedMode} size="sm" />
+                        {schedMode === 0 && (
+                          <div>
+                            <div className="mb-1 text-xs text-white/50">Дата и время запуска</div>
+                            <input type="datetime-local" className="input h-9" value={schedAt} onChange={(e) => setSchedAt(e.target.value)} />
+                          </div>
+                        )}
+                        {schedMode === 1 && (
+                          <div>
+                            <div className="mb-1 text-xs text-white/50">Время ежедневного запуска</div>
+                            <input type="time" className="input h-9 w-32" value={schedTime} onChange={(e) => setSchedTime(e.target.value)} />
+                          </div>
+                        )}
+                        {schedMode === 2 && (
+                          <div>
+                            <div className="mb-1 text-xs text-white/50">Интервал (минуты)</div>
+                            <input type="number" min={1} className="input h-9 w-32" value={schedEvery} onChange={(e) => setSchedEvery(Math.max(1, Number(e.target.value) || 1))} />
+                          </div>
+                        )}
+                        <p className="text-[11px] text-white/40">
+                          Правило заберёт текущие настройки модуля{campaignId ? ' и кампанию' : ''}. Управление — в разделе «Автоматизация».
+                        </p>
+                        <button type="button" onClick={() => void createSchedule()} disabled={schedSaving || !canStart}
+                          className="btn-ghost h-9 text-sm disabled:opacity-40">
+                          <Clock size={14} /> {schedSaving ? 'Создание…' : 'Создать правило'}
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                )}
+  
+                <div className="mt-4 flex flex-wrap items-center gap-3">
+                  <a href={`/panel/tasks?module=${moduleKey}${task ? `&task=${task.id}` : ''}`} className="ml-auto inline-flex items-center gap-1 text-xs font-semibold text-spark-300 hover:underline" title="Открыть Дашборд задач, отфильтрованный по этому модулю">
+                    <Terminal size={13} /> Логи выполнения — в Дашборде задач <ArrowUpRight size={13} />
+                  </a>
                 </div>
-              )}
-
-              <div className="mt-4 flex flex-wrap items-center gap-3">
-                <a href={`/panel/tasks?module=${moduleKey}${task ? `&task=${task.id}` : ''}`} className="ml-auto inline-flex items-center gap-1 text-xs font-semibold text-spark-300 hover:underline" title="Открыть Дашборд задач, отфильтрованный по этому модулю">
-                  <Terminal size={13} /> Логи выполнения — в Дашборде задач <ArrowUpRight size={13} />
-                </a>
-              </div>
-            </>
+              </>
+            )}
+          />
+        )
+        if (hasParamsCard) return panel
+        return (
+          <div id="sec-run" className="scroll-mt-24">
+          <SectionCard icon={<Play size={18} />} title={running ? 'Выполнение' : 'Параметры и лимиты'} badge={running ? 'LIVE' : undefined}>
+          {limitWarn && !running && (
+            <div className="mb-3 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-300">⚠ {limitWarn}</div>
           )}
-        />
-      )}
+          <p className="mb-3 text-sm text-muted">{cfg.warmingLayout
+            ? 'Темп и паузы задаёт «Уровень прогрева» — секция выше.'
+            : 'Лимиты и задержки настраиваются в секции «Тайминги и задержки» выше.'}</p>
+            {panel}
+          </SectionCard>
+          </div>
+        )
+      })()}
 
     </div>
   )
