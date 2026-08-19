@@ -344,7 +344,7 @@ function Inner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: string }) {
           перед вступлением), поэтому общий TimingSection не подходит — но карточка
           и заголовок те же, что везде.  */}
       {cfg.aiProtection && (
-        <ProtectionTimings enabled={aiProtect} onEnabled={setAiProtect} level={protLevel} onLevel={setProtLevel}>
+        <ProtectionTimings>
           {!fastWork && (
             <div className="mt-4 border-t border-line pt-4">
               <div className="mb-3 flex items-center gap-2 text-sm font-semibold text-fg">

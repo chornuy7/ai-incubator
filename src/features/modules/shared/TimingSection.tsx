@@ -372,15 +372,10 @@ export function TimingSection(props: TimingSectionProps) {
   if (bare) {
     // Подзаголовок нужен только там, где блок про ТЕМП. В «Параметрах и лимитах»
     // рисуется объём задачи, и «Тайминги и задержки» над ним просто врали (правка 19.08).
-    if (part === 'limits') return <div className="mt-3">{body}</div>
-    return (
-      <div className="mt-4 border-t border-line pt-4">
-        <div className="mb-3 flex items-center gap-2 text-sm font-semibold text-fg">
-          <Timer size={16} className="text-spark-300" /> Тайминги и задержки
-        </div>
-        {body}
-      </div>
-    )
+    // Подзаголовка нет: карточка уже называется «Защита и тайминги», а в «Параметрах и
+    // лимитах» этот блок про объём — в обоих случаях надпись только повторяла заголовок
+    // или врала (правка 19.08).
+    return <div className={part === 'limits' ? 'mt-3' : ''}>{body}</div>
   }
   return <SectionCard icon={<Timer size={18} />} title="Тайминги и задержки">{body}</SectionCard>
 }

@@ -70,9 +70,10 @@ function AutopostingInner() {
   const [schedInterval, setSchedInterval] = useState(1440)
   const [name, setName] = useState('')
   const [editingId, setEditingId] = useState<string | null>(null)
-  // Защита аккаунтов и пресет темпа — как во всех модулях (правка 19.08).
-  const [aiProtect, setAiProtect] = useState(true)
-  const [protLevel, setProtLevel] = useState(1)
+  // Защита включена всегда (выключатель убран с экрана 19.08), уровень — базовый:
+  // темп теперь задаётся пресетом задержек, а не вторым рядом карточек.
+  const aiProtect = true
+  const protLevel = 1
   const [delayPreset, setDelayPreset] = useState(1)
 
   const [rules, setRules] = useState<AutomationRule[]>([])
@@ -307,10 +308,6 @@ function AutopostingInner() {
             Раньше у автопостинга защиты в интерфейсе не было вовсе, а паузы жили внутри
             «Публикации и темпа» — четвёртый по счёту способ настроить одно и то же. */}
         <ProtectionTimings
-          enabled={aiProtect}
-          onEnabled={setAiProtect}
-          level={protLevel}
-          onLevel={setProtLevel}
           timing={{
             delays: postingDelays,
             onDelays: (updater) => {

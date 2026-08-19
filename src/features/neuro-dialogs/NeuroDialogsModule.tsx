@@ -217,10 +217,6 @@ export function NeuroDialogsModule() {
       <div id="sec-protect" className="scroll-mt-24">
         {/* Один блок на все модули (правка 19.08): защита и задержки — одно решение. */}
         <ProtectionTimings
-          enabled={aiProtect}
-          onEnabled={setAiProtect}
-          level={protLevel}
-          onLevel={setProtLevel}
           timing={{
             totalLabel: 'Ответов за запуск',
             total: { min: minActions, max: maxActions, onMin: setMinActions, onMax: setMaxActions },

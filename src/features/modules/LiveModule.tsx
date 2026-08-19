@@ -692,12 +692,36 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
         {/* Тот же компонент, что в мейлинге, автопостинге, нейродиалогах и парсерах:
             один вид и один порядок полей во всех модулях (правка 19.08). */}
         <ProtectionTimings
-          enabled={aiProtect}
-          onEnabled={setAiProtect}
-          level={protLevel}
-          onLevel={setProtLevel}
           badge={targets.length ? `${targets.length} целей` : undefined}
         >
+          {/* Пресеты темпа и «Расширенные настройки» — первым делом в блоке. */}
+          {!isParser && !isGgr && !cfg.warmingLayout && (
+          <TimingSection
+            bare
+            part="delays"
+            workModeOptions={cfg.toggleGroups?.[1]?.options}
+            workMode={g(1)}
+            onWorkMode={(v) => setTg(1, v)}
+            workModeLabel={cfg.toggleGroups?.[1]?.label}
+            durationMinutes={durationMinutes}
+            onDuration={setDurationMinutes}
+            showDurationAlways={!!cfg.reactionSettings}
+            durationPeriodHint={`Период работы: ${durationPeriodMin}–${durationMinutes} мин`}
+            totalLabel={cfg.reactionSettings?.max.label ?? cfg.workModeFields?.maxLabel ?? 'Всего действий'}
+            computedTotal={{ value: maxActions, accounts: accCount }}
+            perAccount={{ min: minPerAcc, max: maxPerAcc, onMin: setMinPerAcc, onMax: setMaxPerAcc }}
+            minWords={cfg.workModeFields?.minWords ? { value: minWords, onChange: setMinWords } : null}
+            delays={delays}
+            onDelays={(updater) => setDelays(updater)}
+            showComment={!!cfg.richLayout && !cfg.reactionSettings && moduleKey === 'neuro-commenting'}
+            showAction={!(cfg.richLayout && !cfg.reactionSettings && moduleKey === 'neuro-commenting')}
+            showJoin
+            labels={{ action: cfg.reactionSettings ? 'Задержка между реакциями' : 'Задержка действия', join: 'Задержка вступления' }}
+            delayPresets={cfg.delayPresets ?? ['Агрессивный', 'Сбалансированный', 'Консервативный']}
+            delayPreset={delayPreset}
+            onDelayPreset={setDelayPreset}
+          />
+          )}
 
           {/* MR-134: галочка вкл/выкл уведомлений о статусе ЭТОЙ задачи (ошибка/пауза) в колокольчике. */}
           <label className="mt-3 flex cursor-pointer items-start gap-2 rounded-xl border border-line/60 bg-elevated/40 px-3 py-2.5">
@@ -803,35 +827,6 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
             <p className="text-sm text-muted">{cfg.warmingLayout
               ? 'Темп и паузы задаёт «Уровень прогрева» — отдельная секция ниже.'
               : 'Лимиты и задержки — ниже в этом же блоке.'}</p>
-          )}
-          {/* Тайминги — часть той же настройки безопасности: уровень защиты умножает
-              задержки, а FloodWait ведёт в карантин. До 19.08 это были две карточки,
-              и одно и то же приходилось настраивать в двух местах.  */}
-          {!isParser && !isGgr && !cfg.warmingLayout && (
-          <TimingSection
-            bare
-            workModeOptions={cfg.toggleGroups?.[1]?.options}
-            workMode={g(1)}
-            onWorkMode={(v) => setTg(1, v)}
-            workModeLabel={cfg.toggleGroups?.[1]?.label}
-            durationMinutes={durationMinutes}
-            onDuration={setDurationMinutes}
-            showDurationAlways={!!cfg.reactionSettings}
-            durationPeriodHint={`Период работы: ${durationPeriodMin}–${durationMinutes} мин`}
-            totalLabel={cfg.reactionSettings?.max.label ?? cfg.workModeFields?.maxLabel ?? 'Всего действий'}
-            computedTotal={{ value: maxActions, accounts: accCount }}
-            perAccount={{ min: minPerAcc, max: maxPerAcc, onMin: setMinPerAcc, onMax: setMaxPerAcc }}
-            minWords={cfg.workModeFields?.minWords ? { value: minWords, onChange: setMinWords } : null}
-            delays={delays}
-            onDelays={(updater) => setDelays(updater)}
-            showComment={!!cfg.richLayout && !cfg.reactionSettings && moduleKey === 'neuro-commenting'}
-            showAction={!(cfg.richLayout && !cfg.reactionSettings && moduleKey === 'neuro-commenting')}
-            showJoin
-            labels={{ action: cfg.reactionSettings ? 'Задержка между реакциями' : 'Задержка действия', join: 'Задержка вступления' }}
-            delayPresets={cfg.delayPresets ?? ['Агрессивный', 'Сбалансированный', 'Консервативный']}
-            delayPreset={delayPreset}
-            onDelayPreset={setDelayPreset}
-          />
           )}
         </ProtectionTimings>
         </div>

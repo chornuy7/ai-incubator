@@ -513,7 +513,7 @@ function ChannelParserInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: 
           У парсера свои поля пауз (между запросами и между каналами), поэтому общий
           TimingSection тут не подходит — но карточка и заголовок те же, что везде. */}
       {cfg.aiProtection && (
-        <ProtectionTimings enabled={aiProtect} onEnabled={setAiProtect} level={protLevel} onLevel={setProtLevel}>
+        <ProtectionTimings>
           {!fastWork && (
             <div className="mt-4 border-t border-line pt-4">
               <div className="mb-3 flex items-center gap-2 text-sm font-semibold text-fg">

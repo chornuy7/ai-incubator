@@ -49,7 +49,6 @@ function MailingInner() {
   const [delayMin, setDelayMin] = useState(90)
   const [delayMax, setDelayMax] = useState(300)
   const [protLevel, setProtLevel] = useState(0) // §11: паритет с masslooking/warming — уровень защиты
-  const [aiProtect, setAiProtect] = useState(true) // тумблер «Защита аккаунтов» (как в стандартных модулях)
   const [delayPreset, setDelayPreset] = useState(1) // множитель задержек (Мин/Реком/Макс)
   const [goals, setGoals] = useState<Goal[]>([])
   const [goalId, setGoalId] = useState('')
@@ -394,10 +393,6 @@ function MailingInner() {
               Свои поля мейлинга (лимит на аккаунт, паузы, порог trust) идут внутрь той же
               карточки, а пресет темпа рисует общий TimingSection. */}
           <ProtectionTimings
-            enabled={aiProtect}
-            onEnabled={setAiProtect}
-            level={protLevel}
-            onLevel={setProtLevel}
             timing={{
               // У мейлинга своя пара «от/до» вместо общей структуры задержек — переводим
               // её в общий вид, чтобы блок выглядел и вёл себя как у остальных модулей.
