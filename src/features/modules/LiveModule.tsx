@@ -481,6 +481,118 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
         </SectionCard>
       )}
 
+      {/* «Параметры и лимиты» — сразу под целями (правка 19.08). Сколько постов
+          обрабатывать, какие из них брать и лимиты прогона — продолжение разговора
+          про цели. Раньше карточка стояла в самом низу, под защитой и промптами, и
+          до неё добирались, уже настроив всё остальное.  */}
+      {showBlock('run') && (
+      <div id="sec-run" className="scroll-mt-24">
+      <SectionCard icon={<Play size={18} />} title={running ? 'Выполнение' : 'Параметры и лимиты'} badge={running ? 'LIVE' : undefined}>
+        {limitWarn && !running && (
+          <div className="mb-3 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-300">⚠ {limitWarn}</div>
+        )}
+        {showBlock('settings') && moduleKey === 'neuro-commenting' && !running && (
+          <div className="mb-3">
+            {/* Один вопрос — один блок: ЧТО комментировать и из скольких последних постов. */}
+            <ToggleGroup label="Что комментировать" options={cfg.toggleGroups?.[0].options ?? []} value={g(0)} onChange={(v) => setTg(0, v)} />
+            {g(0) === 2 && (
+              <div className="mt-2 space-y-1">
+                <textarea value={keywords} onChange={(e) => setKeywords(e.target.value)} rows={2} className="input resize-none text-sm" placeholder="Ключевые слова через ; или с новой строки — крипта; p2p обмен" />
+                <p className="text-xs text-white/40">Ищем совпадения среди последних постов (число ниже), а не по всей истории канала.</p>
+              </div>
+            )}
+            {g(0) !== 0 && (
+              <label className="mt-2 flex cursor-pointer items-start gap-2 text-xs text-white/60">
+                <input type="checkbox" checked={pickOne} onChange={(e) => setPickOne(e.target.checked)} className="mt-0.5 h-4 w-4 rounded border-line accent-spark-500" />
+                <span>Брать один случайный из подходящих <span className="text-white/30">(снимите — прокомментирует все подходящие за заход)</span></span>
+              </label>
+            )}
+            <div className="mt-3" />
+            <NumberField label="Сколько последних постов обрабатывать" value={postWindow} onChange={(n) => setPostWindow(Math.max(1, Math.min(50, n)))} min={1} max={50} suffix="1–50" />
+            <div className="mt-1 text-xs text-white/40">
+              {g(0) === 0
+                ? 'Читаются для контекста, комментируется только самый свежий из них.'
+                : 'Сколько последних постов обрабатывать, не всю историю'}
+            </div>
+            <div className="mt-3 mb-1 text-xs text-white/50">Стоп-слова <span className="text-white/30">(пропускать посты с этими словами; несколько — через точку с запятой «;»)</span></div>
+            <input value={stopWordsText} onChange={(e) => setStopWordsText(e.target.value)} className="input h-9" placeholder="политика; скам; крипта…" />
+            {/* §3.2 (UI-006): «Семантический фильтр к цели» / «Релевантность поста к цели» удалены по ТЗ 06.08. */}
+            {/* §10.5: анализ картинок в посте — vision опишет фото, коммент будет по сути
+                изображения, а не по «[медиа]». Расход дороже: наценка «картинка ×N» из админки. */}
+            <label className="mt-2 flex items-center gap-2 text-xs text-white/60">
+              <input type="checkbox" checked={analyzeImages} onChange={(e) => setAnalyzeImages(e.target.checked)} className="h-4 w-4 rounded border-line accent-spark-500" />
+              Анализировать картинки в посте <span className="text-white/30">(vision опишет фото; расход ×N за изображение, нужен OPENAI_API_KEY)</span>
+            </label>
+          </div>
+        )}
+        {showBlock('templates') && moduleKey === 'neuro-commenting' && !running && (cfg.messagePrompts?.length ?? 0) > 0 && (
+          <div className="mb-3 rounded-2xl border border-line bg-elevated/40 p-3">
+            <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+              <span className="text-sm font-semibold text-fg">Распределение типов комментариев</span>
+              <div className="flex items-center gap-2">
+                <span className={`rounded-md px-2 py-0.5 text-xs font-bold ${weightSum === 100 ? 'bg-spark-500/15 text-spark-300' : weightSum > 100 ? 'bg-rose-500/15 text-rose-300' : 'bg-amber-500/15 text-amber-300'}`}>
+                  сумма {weightSum}%
+                </span>
+                {weightSum !== 100 && (
+                  <button type="button" onClick={() => balanceTypeWeights()} className="rounded-md border border-line px-2 py-0.5 text-[11px] font-semibold text-spark-300 hover:bg-elevated">поровну</button>
+                )}
+              </div>
+            </div>
+            <div className="grid gap-2 sm:grid-cols-2">
+              {(cfg.messagePrompts ?? []).map((label, i) => {
+                const val = typeWeights[i] ?? 0
+                const share = weightSum > 0 ? Math.round((val / weightSum) * 100) : 0
+                const locked = !!lockedWeights[i]
+                const count = cfg.messagePrompts?.length ?? 0
+                return (
+                  <div key={i} className="rounded-xl border border-line bg-surface/40 p-2">
+                    <div className="mb-1.5 flex items-center gap-2">
+                      <span className="min-w-0 flex-1 truncate text-xs font-medium text-fg">{label}</span>
+                      {/* §13 (MR-61): замок закрепляет значение — при изменении других оно не
+                          трогается; редактировать закреплённое можно, сняв замок. */}
+                      <button type="button" onClick={() => toggleWeightLock(i)}
+                        title={locked ? 'Открепить значение' : 'Закрепить: не менять при перераспределении'}
+                        className={cn('grid h-7 w-7 shrink-0 place-items-center rounded-md border', locked ? 'border-spark-500/50 bg-spark-500/10 text-spark-300' : 'border-line text-white/40 hover:text-white/70')}>
+                        {locked ? <Lock size={13} /> : <LockOpen size={13} />}
+                      </button>
+                      {/* §13 (MR-60/61): ввод незакреплённого значения авто-перераспределяет
+                          остаток между другими незакреплёнными; сумма всегда ≤ 100%. */}
+                      <div className="flex shrink-0 items-center gap-1">
+                        <input
+                          type="number" min={0} max={100} inputMode="numeric" disabled={locked}
+                          className="input h-7 w-16 text-center text-sm [appearance:textfield] disabled:opacity-50 [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+                          value={val}
+                          // Клик по полю выделяет значение целиком: иначе ввод дописывался
+                          // к нулю и получалось «012», «055» вместо «12», «55».
+                          onFocus={(e) => e.currentTarget.select()}
+                          onChange={(e) => {
+                            // Срезаем ведущие нули — «07» это 7, а не 07.
+                            const n = Number(e.target.value.replace(/^0+(?=\d)/, '')) || 0
+                            setTypeWeights((w) => {
+                              const base = w.length === count ? w : equalize(count)
+                              // §13 (уточнение): сохраняем залоченные И ранее введённые (touched) поля;
+                              // остаток делят только НЕтронутые незалоченные.
+                              const pinned = base.map((_, j) => j !== i && (!!lockedWeights[j] || !!touchedWeights[j]))
+                              return redistribute(base, i, n, pinned)
+                            })
+                            // §13: это поле теперь «тронуто» — при следующих правках его не перезапишем.
+                            setTouchedWeights((t) => { const nt = [...t]; nt[i] = true; return nt })
+                          }} />
+                        <span className="text-[11px] text-white/40">%</span>
+                      </div>
+                    </div>
+                    <div className="h-1.5 overflow-hidden rounded-full bg-line"><div className={cn('h-full rounded-full transition-all', locked ? 'bg-spark-400' : 'bg-spark-500')} style={{ width: `${share}%` }} /></div>
+                  </div>
+                )
+              })}
+            </div>
+            <p className="mt-2 text-[11px] text-white/40">Ввод значения авто-раскидывает остаток по незакреплённым (§13). Замок — закрепить долю. «Поровну» — поделить незакреплённые одинаково.</p>
+          </div>
+        )}
+      </SectionCard>
+      </div>
+      )}
+
       {/* Правка 14.08: для ПРОГРЕВА блок «Защита» не показываем — он дублировал «Уровень
           прогрева» (уровень уже задаёт безопасный темп и множитель пауз). Базовая защита
           (FloodWait→пауза→карантин) работает на бэкенде и без UI-блока. QA §8, вариант а. */}
@@ -686,117 +798,73 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
         </div>
       )}
 
-      {/* Заголовок не «Запуск»: так он дублировал последний шаг мастера. Здесь лежат
-          параметры и лимиты прогона, сама кнопка — в нижней панели. */}
+
+      {/* §7: блок «История сообщений» убран. Результаты остаются только для парсера/проверки (GGR) —
+          там это фактический вывод задачи. Логи выполнения — в Дашборде задач (ссылка выше). */}
+      {(isParser || isGgr) && (showBlock('results') || showBlock('logs')) && (
+        <SectionCard icon={<MessageCircle size={18} />} title="Результаты" badge={String(results.length)}>
+          {results.length > 0 ? (
+            <div className="max-h-80 overflow-y-auto">
+              <table className="w-full text-sm">
+                <thead><tr className="border-b border-line text-left text-xs text-muted"><th className="py-2">Имя</th><th>Детали</th><th>Статус</th></tr></thead>
+                <tbody>
+                  {results.map((r, i) => (
+                    <tr key={i} className="border-b border-line/50">
+                      <td className="py-2 font-medium text-fg">{String(r.name ?? r.title ?? r.username ?? '—')}</td>
+                      <td className="text-muted">{String(r.username ? `@${r.username}` : r.score ?? r.members ?? r.id ?? '')}</td>
+                      <td><Badge tone={r.status === 'valid' ? 'spark' : 'muted'}>{String(r.status ?? r.kind ?? 'ok')}</Badge></td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : (
+            <EmptyState icon={<Eye size={22} />} title="Пока пусто" desc={`Действий: ${progressDone}. Запустите проверку.`} />
+          )}
+        </SectionCard>
+      )}
+
+      {!(['run', 'settings', 'targets', 'templates', 'results', 'logs'] as const).some(showBlock) && (
+        <div className="rounded-2xl border border-line bg-elevated/40 p-6 text-center text-sm text-muted">
+          Роли выдан доступ к модулю, но не выдан ни один блок. Обратитесь к администратору, чтобы он открыл нужные блоки в «Роли и доступы».
+        </div>
+      )}
+
+      {/* §7: «Выполнение» — статус текущей задачи + прыжок в Дашборд по этому модулю.
+          Раньше панель была `sticky bottom-0 z-30` и висела ПОВЕРХ плавающей панели
+          запуска (LaunchPanel/FloatingBar, тот же z-30): две панели дублировали статус,
+          а нижняя накрывала кнопку «Начать» — оператор видел зелёный обрезок и не мог
+          нажать. Обычный блок в потоке: панель запуска и так ходит за человеком,
+          дублировать её прилипанием незачем. */}
       {showBlock('run') && (
-      <div id="sec-run" className="scroll-mt-24">
-      <SectionCard icon={<Play size={18} />} title={running ? 'Выполнение' : 'Параметры и лимиты'} badge={running ? 'LIVE' : undefined}>
-        {limitWarn && !running && (
-          <div className="mb-3 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-300">⚠ {limitWarn}</div>
-        )}
-        {showBlock('settings') && moduleKey === 'neuro-commenting' && !running && (
-          <div className="mb-3">
-            {/* Один вопрос — один блок: ЧТО комментировать и из скольких последних постов. */}
-            <ToggleGroup label="Что комментировать" options={cfg.toggleGroups?.[0].options ?? []} value={g(0)} onChange={(v) => setTg(0, v)} />
-            {g(0) === 2 && (
-              <div className="mt-2 space-y-1">
-                <textarea value={keywords} onChange={(e) => setKeywords(e.target.value)} rows={2} className="input resize-none text-sm" placeholder="Ключевые слова через ; или с новой строки — крипта; p2p обмен" />
-                <p className="text-xs text-white/40">Ищем совпадения среди последних постов (число ниже), а не по всей истории канала.</p>
-              </div>
-            )}
-            {g(0) !== 0 && (
-              <label className="mt-2 flex cursor-pointer items-start gap-2 text-xs text-white/60">
-                <input type="checkbox" checked={pickOne} onChange={(e) => setPickOne(e.target.checked)} className="mt-0.5 h-4 w-4 rounded border-line accent-spark-500" />
-                <span>Брать один случайный из подходящих <span className="text-white/30">(снимите — прокомментирует все подходящие за заход)</span></span>
-              </label>
-            )}
-            <div className="mt-3" />
-            <NumberField label="Сколько последних постов обрабатывать" value={postWindow} onChange={(n) => setPostWindow(Math.max(1, Math.min(50, n)))} min={1} max={50} suffix="1–50" />
-            <div className="mt-1 text-xs text-white/40">
-              {g(0) === 0
-                ? 'Читаются для контекста, комментируется только самый свежий из них.'
-                : 'Сколько последних постов обрабатывать, не всю историю'}
-            </div>
-            <div className="mt-3 mb-1 text-xs text-white/50">Стоп-слова <span className="text-white/30">(пропускать посты с этими словами; несколько — через точку с запятой «;»)</span></div>
-            <input value={stopWordsText} onChange={(e) => setStopWordsText(e.target.value)} className="input h-9" placeholder="политика; скам; крипта…" />
-            {/* §3.2 (UI-006): «Семантический фильтр к цели» / «Релевантность поста к цели» удалены по ТЗ 06.08. */}
-            {/* §10.5: анализ картинок в посте — vision опишет фото, коммент будет по сути
-                изображения, а не по «[медиа]». Расход дороже: наценка «картинка ×N» из админки. */}
-            <label className="mt-2 flex items-center gap-2 text-xs text-white/60">
-              <input type="checkbox" checked={analyzeImages} onChange={(e) => setAnalyzeImages(e.target.checked)} className="h-4 w-4 rounded border-line accent-spark-500" />
-              Анализировать картинки в посте <span className="text-white/30">(vision опишет фото; расход ×N за изображение, нужен OPENAI_API_KEY)</span>
-            </label>
-          </div>
-        )}
-        {showBlock('templates') && moduleKey === 'neuro-commenting' && !running && (cfg.messagePrompts?.length ?? 0) > 0 && (
-          <div className="mb-3 rounded-2xl border border-line bg-elevated/40 p-3">
-            <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
-              <span className="text-sm font-semibold text-fg">Распределение типов комментариев</span>
-              <div className="flex items-center gap-2">
-                <span className={`rounded-md px-2 py-0.5 text-xs font-bold ${weightSum === 100 ? 'bg-spark-500/15 text-spark-300' : weightSum > 100 ? 'bg-rose-500/15 text-rose-300' : 'bg-amber-500/15 text-amber-300'}`}>
-                  сумма {weightSum}%
-                </span>
-                {weightSum !== 100 && (
-                  <button type="button" onClick={() => balanceTypeWeights()} className="rounded-md border border-line px-2 py-0.5 text-[11px] font-semibold text-spark-300 hover:bg-elevated">поровну</button>
-                )}
-              </div>
-            </div>
-            <div className="grid gap-2 sm:grid-cols-2">
-              {(cfg.messagePrompts ?? []).map((label, i) => {
-                const val = typeWeights[i] ?? 0
-                const share = weightSum > 0 ? Math.round((val / weightSum) * 100) : 0
-                const locked = !!lockedWeights[i]
-                const count = cfg.messagePrompts?.length ?? 0
-                return (
-                  <div key={i} className="rounded-xl border border-line bg-surface/40 p-2">
-                    <div className="mb-1.5 flex items-center gap-2">
-                      <span className="min-w-0 flex-1 truncate text-xs font-medium text-fg">{label}</span>
-                      {/* §13 (MR-61): замок закрепляет значение — при изменении других оно не
-                          трогается; редактировать закреплённое можно, сняв замок. */}
-                      <button type="button" onClick={() => toggleWeightLock(i)}
-                        title={locked ? 'Открепить значение' : 'Закрепить: не менять при перераспределении'}
-                        className={cn('grid h-7 w-7 shrink-0 place-items-center rounded-md border', locked ? 'border-spark-500/50 bg-spark-500/10 text-spark-300' : 'border-line text-white/40 hover:text-white/70')}>
-                        {locked ? <Lock size={13} /> : <LockOpen size={13} />}
-                      </button>
-                      {/* §13 (MR-60/61): ввод незакреплённого значения авто-перераспределяет
-                          остаток между другими незакреплёнными; сумма всегда ≤ 100%. */}
-                      <div className="flex shrink-0 items-center gap-1">
-                        <input
-                          type="number" min={0} max={100} inputMode="numeric" disabled={locked}
-                          className="input h-7 w-16 text-center text-sm [appearance:textfield] disabled:opacity-50 [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
-                          value={val}
-                          // Клик по полю выделяет значение целиком: иначе ввод дописывался
-                          // к нулю и получалось «012», «055» вместо «12», «55».
-                          onFocus={(e) => e.currentTarget.select()}
-                          onChange={(e) => {
-                            // Срезаем ведущие нули — «07» это 7, а не 07.
-                            const n = Number(e.target.value.replace(/^0+(?=\d)/, '')) || 0
-                            setTypeWeights((w) => {
-                              const base = w.length === count ? w : equalize(count)
-                              // §13 (уточнение): сохраняем залоченные И ранее введённые (touched) поля;
-                              // остаток делят только НЕтронутые незалоченные.
-                              const pinned = base.map((_, j) => j !== i && (!!lockedWeights[j] || !!touchedWeights[j]))
-                              return redistribute(base, i, n, pinned)
-                            })
-                            // §13: это поле теперь «тронуто» — при следующих правках его не перезапишем.
-                            setTouchedWeights((t) => { const nt = [...t]; nt[i] = true; return nt })
-                          }} />
-                        <span className="text-[11px] text-white/40">%</span>
-                      </div>
-                    </div>
-                    <div className="h-1.5 overflow-hidden rounded-full bg-line"><div className={cn('h-full rounded-full transition-all', locked ? 'bg-spark-400' : 'bg-spark-500')} style={{ width: `${share}%` }} /></div>
-                  </div>
-                )
-              })}
-            </div>
-            <p className="mt-2 text-[11px] text-white/40">Ввод значения авто-раскидывает остаток по незакреплённым (§13). Замок — закрепить долю. «Поровну» — поделить незакреплённые одинаково.</p>
-          </div>
-        )}
-        {/* §10 (MR-49): выбор кампании и цели убран из модулей — эти разделы скрыты
-            из меню, и держать их выбор здесь было некуда. Задача запускается сама по
-            себе; привязка к кампании/цели приходит из настроек кампании при запуске
-            через неё (buildCampaignPlan прокидывает campaignId и goalId в settings).
-            Состояние campaignId/goalId оставлено: оно всё ещё уходит в задачу. */}
+        <div className="mt-3 -mx-0.5 flex flex-wrap items-center gap-x-3 gap-y-1 rounded-xl border border-line bg-surface/60 px-4 py-2.5">
+          <span className={`h-2.5 w-2.5 shrink-0 rounded-full ${running ? 'animate-pulse bg-spark-400' : task?.status === 'done' ? 'bg-spark-500' : 'bg-faint'}`} />
+          <span className="text-sm font-semibold text-fg">
+            {running
+              ? `Выполняется · ${progressDone}${task?.progress?.total ? ` / ${task.progress.total}` : ''}`
+              : task?.status === 'done' ? 'Завершено' : 'Готов к запуску'}
+          </span>
+          {selected.size > 0 && <span className="text-xs text-muted">· {selected.size} акк.</span>}
+          {/* Что мешает запуску — теперь в нижней панели рядом с кнопкой; здесь это
+              дублировало то же сообщение вторым текстом. */}
+          <a
+            href={`/panel/tasks?module=${moduleKey}${task ? `&task=${task.id}` : ''}`}
+            className="ml-auto inline-flex items-center gap-1 text-xs font-semibold text-spark-300 hover:underline"
+            title="Открыть задачи этого модуля в Дашборде"
+          >
+            <Terminal size={13} /> Задачи модуля в Дашборде <ArrowUpRight size={13} />
+          </a>
+        </div>
+      )}
+      {/* Плавающая панель запуска — ПОСЛЕДНИЙ элемент страницы: её заглушка
+          резервирует место внизу, и бар «отрывается» ко дну экрана. Подними её
+          выше — заглушка встанет в середину, а бар задвоится.  */}
+      {/* §10 (MR-49): выбор кампании и цели убран из модулей — эти разделы скрыты
+          из меню, и держать их выбор здесь было некуда. Задача запускается сама по
+          себе; привязка к кампании/цели приходит из настроек кампании при запуске
+          через неё (buildCampaignPlan прокидывает campaignId и goalId в settings).
+          Состояние campaignId/goalId оставлено: оно всё ещё уходит в задачу. */}
+      {showBlock('run') && (
         <LaunchPanel
           running={running}
           starting={starting}
@@ -875,67 +943,8 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
             </>
           )}
         />
-      </SectionCard>
-      </div>
       )}
 
-      {/* §7: блок «История сообщений» убран. Результаты остаются только для парсера/проверки (GGR) —
-          там это фактический вывод задачи. Логи выполнения — в Дашборде задач (ссылка выше). */}
-      {(isParser || isGgr) && (showBlock('results') || showBlock('logs')) && (
-        <SectionCard icon={<MessageCircle size={18} />} title="Результаты" badge={String(results.length)}>
-          {results.length > 0 ? (
-            <div className="max-h-80 overflow-y-auto">
-              <table className="w-full text-sm">
-                <thead><tr className="border-b border-line text-left text-xs text-muted"><th className="py-2">Имя</th><th>Детали</th><th>Статус</th></tr></thead>
-                <tbody>
-                  {results.map((r, i) => (
-                    <tr key={i} className="border-b border-line/50">
-                      <td className="py-2 font-medium text-fg">{String(r.name ?? r.title ?? r.username ?? '—')}</td>
-                      <td className="text-muted">{String(r.username ? `@${r.username}` : r.score ?? r.members ?? r.id ?? '')}</td>
-                      <td><Badge tone={r.status === 'valid' ? 'spark' : 'muted'}>{String(r.status ?? r.kind ?? 'ok')}</Badge></td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          ) : (
-            <EmptyState icon={<Eye size={22} />} title="Пока пусто" desc={`Действий: ${progressDone}. Запустите проверку.`} />
-          )}
-        </SectionCard>
-      )}
-
-      {!(['run', 'settings', 'targets', 'templates', 'results', 'logs'] as const).some(showBlock) && (
-        <div className="rounded-2xl border border-line bg-elevated/40 p-6 text-center text-sm text-muted">
-          Роли выдан доступ к модулю, но не выдан ни один блок. Обратитесь к администратору, чтобы он открыл нужные блоки в «Роли и доступы».
-        </div>
-      )}
-
-      {/* §7: «Выполнение» — статус текущей задачи + прыжок в Дашборд по этому модулю.
-          Раньше панель была `sticky bottom-0 z-30` и висела ПОВЕРХ плавающей панели
-          запуска (LaunchPanel/FloatingBar, тот же z-30): две панели дублировали статус,
-          а нижняя накрывала кнопку «Начать» — оператор видел зелёный обрезок и не мог
-          нажать. Обычный блок в потоке: панель запуска и так ходит за человеком,
-          дублировать её прилипанием незачем. */}
-      {showBlock('run') && (
-        <div className="mt-3 -mx-0.5 flex flex-wrap items-center gap-x-3 gap-y-1 rounded-xl border border-line bg-surface/60 px-4 py-2.5">
-          <span className={`h-2.5 w-2.5 shrink-0 rounded-full ${running ? 'animate-pulse bg-spark-400' : task?.status === 'done' ? 'bg-spark-500' : 'bg-faint'}`} />
-          <span className="text-sm font-semibold text-fg">
-            {running
-              ? `Выполняется · ${progressDone}${task?.progress?.total ? ` / ${task.progress.total}` : ''}`
-              : task?.status === 'done' ? 'Завершено' : 'Готов к запуску'}
-          </span>
-          {selected.size > 0 && <span className="text-xs text-muted">· {selected.size} акк.</span>}
-          {/* Что мешает запуску — теперь в нижней панели рядом с кнопкой; здесь это
-              дублировало то же сообщение вторым текстом. */}
-          <a
-            href={`/panel/tasks?module=${moduleKey}${task ? `&task=${task.id}` : ''}`}
-            className="ml-auto inline-flex items-center gap-1 text-xs font-semibold text-spark-300 hover:underline"
-            title="Открыть задачи этого модуля в Дашборде"
-          >
-            <Terminal size={13} /> Задачи модуля в Дашборде <ArrowUpRight size={13} />
-          </a>
-        </div>
-      )}
     </div>
   )
 }
