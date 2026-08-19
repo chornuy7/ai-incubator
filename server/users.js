@@ -124,7 +124,34 @@ function profileToUser(p, emailMap, legacyByUuid) {
 }
 
 /** @returns {Promise<object[]>} операторы: из profiles (+e-mail из auth) или из файла. */
+// Перф (созвон 17.08 «тёмная сторона луны»): listUsers на ГОРЯЧЕМ пути — accessGate на
+// КАЖДЫЙ /api-запрос зовёт getUser → listUsers, а тот в supabase-режиме тянет ВСЕ профили
+// + карту auth-e-mail. Без кэша это два тяжёлых запроса на каждый вызов API (заказчик
+// показал флуд `profile profile user user`). Короткий TTL-кэш: повторные вызовы в окне
+// берут готовый список; любая мутация юзеров сбрасывает кэш сразу (invalidateUsersCache),
+// поэтому смена active/роли видна без задержки там, где меняем сами.
+let _usersCache = null // { data, ts }
+let _usersInflight = null
+const USERS_CACHE_TTL = 8000
+/** Сбросить кэш списка пользователей — звать после любой мутации (create/update/delete/active). */
+export function invalidateUsersCache() { _usersCache = null; _usersInflight = null }
+
 export async function listUsers() {
+  // Кэшируем только в supabase-режиме: именно там listUsers = два тяжёлых запроса (все
+  // профили + auth-e-mail) на горячем пути. Файловый режим (дев/тесты) читает локальный JSON
+  // быстро, а один общий кэш на процесс мешал бы изоляции тестов (у каждого свой файл).
+  if (!sb()) return loadUsers()
+  // Свежий кэш → мгновенно, без запроса. Параллельные вызовы делят один inflight-запрос,
+  // чтобы «холодный» момент не породил десяток одинаковых загрузок разом.
+  if (_usersCache && Date.now() - _usersCache.ts < USERS_CACHE_TTL) return _usersCache.data
+  if (_usersInflight) return _usersInflight
+  _usersInflight = loadUsers()
+    .then((data) => { _usersCache = { data, ts: Date.now() }; _usersInflight = null; return data })
+    .catch((e) => { _usersInflight = null; throw e })
+  return _usersInflight
+}
+
+async function loadUsers() {
   const db = sb()
   if (db) {
     const [{ data: profs }, emailMap] = await Promise.all([
@@ -305,6 +332,7 @@ export async function createUser(input = {}) {
     const tokenLimit = input.tokenLimit == null ? null : Math.max(0, Number(input.tokenLimit) || 0)
     await db.from('profiles').update({ legacy_id: legacyId, name, active: input.active !== false, role_ids: roleIds, parent_id: parentUuid, balance_mode: balanceMode, token_limit: tokenLimit, updated_at: new Date().toISOString() }).eq('id', authId)
     // §11.3 этап 4/4: dual-write в `users` снят — источник истины profiles + auth.users.
+    invalidateUsersCache()
     return { id: legacyId, email, name, roleId, roleIds, active: input.active !== false, parentId, accountIds: [], accountGroupIds: [], balanceMode, tokenLimit, createdAt: now, updatedAt: now }
   }
 
@@ -313,6 +341,7 @@ export async function createUser(input = {}) {
   const user = { id: `usr_${crypto.randomUUID().slice(0, 8)}`, email, name, roleId, roleIds, active: input.active !== false, parentId, accountIds: normIds(input.accountIds) || [], accountGroupIds: normIds(input.accountGroupIds) || [], balanceMode: normBalanceMode(input.balanceMode), tokenLimit: input.tokenLimit == null ? null : Math.max(0, Number(input.tokenLimit) || 0), passwordHash: hashPassword(input.password), createdAt: now, updatedAt: now }
   users.push(user)
   await writeJson(USERS_FILE(), users)
+  invalidateUsersCache()
   return user
 }
 
@@ -360,6 +389,7 @@ export async function updateUser(id, patch = {}) {
     }
     // §11.3 этап 4/4: dual-write в `users` снят — профиль в profiles, пароль в auth.users.
     next.updatedAt = Date.now()
+    invalidateUsersCache()
     return next
   }
 
@@ -395,6 +425,7 @@ export async function updateUser(id, patch = {}) {
   }
   users[i].updatedAt = Date.now()
   await writeJson(USERS_FILE(), users)
+  invalidateUsersCache()
   return users[i]
 }
 
@@ -408,6 +439,7 @@ export async function deleteUser(id) {
     await db.auth.admin.deleteUser(prof.id).catch(() => {})
     await db.from('profiles').delete().eq('id', prof.id).then(() => {}, () => {}) // на случай, если auth-удаление не каскаднуло
     // §11.3 этап 4/4: dual-write в `users` снят.
+    invalidateUsersCache()
     return true
   }
   const users = await listUsers()
@@ -415,6 +447,7 @@ export async function deleteUser(id) {
   if (next.length === users.length) return false
   for (const u of next) if (u.parentId === id) u.parentId = null
   await writeJson(USERS_FILE(), next)
+  invalidateUsersCache()
   return true
 }
 
