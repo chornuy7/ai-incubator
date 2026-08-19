@@ -179,9 +179,9 @@ test('inputSchema: валидная JSON Schema с ограничениями, �
   assert.equal(schema.properties.delays.properties.floodQuarantine.minimum, 1)
   assert.deepEqual(schema.properties.delays.properties.comment.default, [30, 120])
 
-  // Расшифровка значений должна попасть в описание — MCP-клиент показывает именно его.
-  assert.match(schema.properties.commentMode.description, /По ключевым словам/)
-  assert.match(schema.properties.probability.description, /Ограничения:/)
+  // The enum meaning must be exposed in the description text shown by the MCP client.
+  assert.match(schema.properties.commentMode.description, /By keywords/i)
+  assert.match(schema.properties.probability.description, /Restrictions:/i)
 })
 
 test('describeModule отдаёт всё, что просил заказчик, одним ответом', () => {

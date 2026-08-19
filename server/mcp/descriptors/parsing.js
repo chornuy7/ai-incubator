@@ -3,7 +3,7 @@ import { buildChannelParserDescriptor } from './_parserChannels.js'
 
 export default buildChannelParserDescriptor({
   key: 'parsing',
-  title: 'Парсинг каналов',
-  what: 'каналы',
-  whatMany: 'каналы',
+  title: 'Channel parsing',
+  what: 'channels',
+  whatMany: 'channels',
 })

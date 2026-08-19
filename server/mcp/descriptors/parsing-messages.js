@@ -3,23 +3,23 @@ import { buildParticipantsParserDescriptor } from './_parserParticipants.js'
 
 export default buildParticipantsParserDescriptor({
   key: 'parsing-messages',
-  title: 'Парсер по сообщениям',
-  tags: ['сообщения', 'messages', 'активные', 'намерение'],
-  summary: 'Находит людей по тому, ЧТО они писали в группах: собирает авторов сообщений с нужными словами.',
+  title: 'Parser by messages',
+  tags: ['messages', 'messages', 'active', 'intention'],
+  summary: 'Finds people by WHAT they wrote in groups: collects the authors of messages with the right words.',
   does: [
-    'читает сообщения источника на заданную глубину по числу и по дням',
-    'отбирает авторов сообщений, содержащих ключевые слова',
-    'отбрасывает слишком короткие реплики вроде «+» и «спасибо»',
-    'по желанию сохраняет сам текст, по которому человек попал в список',
+    'reads source messages to a specified depth by number and day',
+    'selects authors of messages containing keywords',
+    'discards too short remarks like “+” and “thank you”',
+    'optionally saves the text itself that put the person on the list',
   ],
   examples: [
     {
-      title: 'Люди с намерением купить',
-      when: 'нужны не все участники, а те, кто прямо писал о потребности',
+      title: 'People with intent to buy',
+      when: 'Not all participants are needed, but those who directly wrote about the need',
       input: {
         accountIds: ['acc_1'],
         channels: ['@some_chat'],
-        keywords: ['куплю', 'ищу', 'посоветуйте'],
+        keywords: ["I'll buy", 'looking for', 'please advise'],
         limits: { messages: 5000, days: 30, minCommentLen: 15 },
         filters: { skipBots: true, onlyUsername: true, keepText: true },
         resultLimit: 300,

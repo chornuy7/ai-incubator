@@ -11,8 +11,8 @@
  */
 
 const TYPE_NAMES = {
-  string: 'строка', integer: 'целое число', number: 'число',
-  boolean: 'да/нет', array: 'список', object: 'объект',
+  string: 'line', integer: 'integer', number: 'number',
+  boolean: 'Not really', array: 'list', object: 'object',
 }
 
 function typeOf(value) {
@@ -35,34 +35,34 @@ function typeMatches(expected, value) {
  */
 function checkValue(schema, value, path, out) {
   if (!typeMatches(schema.type, value)) {
-    out.push({ path, message: `ожидается ${TYPE_NAMES[schema.type] || schema.type}, получено ${TYPE_NAMES[typeOf(value)] || typeOf(value)}` })
+    out.push({ path, message: `expected${TYPE_NAMES[schema.type] || schema.type}, received${TYPE_NAMES[typeOf(value)] || typeOf(value)}` })
     return
   }
 
   if (schema.enum && !schema.enum.includes(value)) {
-    out.push({ path, message: `недопустимое значение ${JSON.stringify(value)}; разрешены: ${schema.enum.join(', ')}` })
+    out.push({ path, message: `invalid value${JSON.stringify(value)}; allowed:${schema.enum.join(', ')}` })
   }
   if (schema.minimum !== undefined && value < schema.minimum) {
-    out.push({ path, message: `значение ${value} меньше минимума ${schema.minimum}` })
+    out.push({ path, message: `meaning${value}less than minimum${schema.minimum}` })
   }
   if (schema.maximum !== undefined && value > schema.maximum) {
-    out.push({ path, message: `значение ${value} больше максимума ${schema.maximum}` })
+    out.push({ path, message: `meaning${value}more than maximum${schema.maximum}` })
   }
   if (schema.pattern && !new RegExp(schema.pattern).test(String(value))) {
-    out.push({ path, message: `значение не соответствует формату ${schema.pattern}` })
+    out.push({ path, message: `value does not match format${schema.pattern}` })
   }
 
   if (schema.type === 'array') {
     if (schema.minItems !== undefined && value.length < schema.minItems) {
-      out.push({ path, message: `нужно минимум ${schema.minItems} элем., получено ${value.length}` })
+      out.push({ path, message: `minimum required${schema.minItems}el., received${value.length}` })
     }
     if (schema.maxItems !== undefined && value.length > schema.maxItems) {
-      out.push({ path, message: `допустимо максимум ${schema.maxItems} элем., получено ${value.length}` })
+      out.push({ path, message: `maximum allowed${schema.maxItems}el., received${value.length}` })
     }
     if (schema.items?.type) {
       value.forEach((item, i) => {
         if (!typeMatches(schema.items.type, item)) {
-          out.push({ path: `${path}[${i}]`, message: `элемент должен быть ${TYPE_NAMES[schema.items.type] || schema.items.type}` })
+          out.push({ path: `${path}[${i}]`, message: `the element must be${TYPE_NAMES[schema.items.type] || schema.items.type}` })
         }
       })
     }
@@ -72,7 +72,7 @@ function checkValue(schema, value, path, out) {
     for (const [key, child] of Object.entries(value)) {
       if (!schema.properties[key]) {
         if (schema.additionalProperties === false) {
-          out.push({ path: `${path}.${key}`, message: 'неизвестное поле' })
+          out.push({ path: `${path}.${key}`, message: 'unknown field' })
         }
         continue
       }
@@ -88,7 +88,7 @@ function checkValue(schema, value, path, out) {
 export function validateAgainstSchema(schema, settings) {
   const out = []
   const value = settings && typeof settings === 'object' && !Array.isArray(settings) ? settings : {}
-  if (value !== settings) return [{ path: '', message: 'настройки должны быть объектом' }]
+  if (value !== settings) return [{ path: '', message: 'settings must be an object' }]
 
   // Пустое обязательное поле сообщаем ОДИН раз. Иначе на `accountIds: []` прилетало
   // сразу два сообщения — «обязательное не заполнено» и «нужно минимум 1 элемент», —
@@ -97,7 +97,7 @@ export function validateAgainstSchema(schema, settings) {
   for (const name of schema.required || []) {
     const v = value[name]
     const empty = v === undefined || v === null || v === '' || (Array.isArray(v) && v.length === 0)
-    if (empty) { missing.add(name); out.push({ path: name, message: 'обязательное поле не заполнено' }) }
+    if (empty) { missing.add(name); out.push({ path: name, message: 'required field is not filled in' }) }
   }
 
   for (const [key, v] of Object.entries(value)) {
@@ -106,7 +106,7 @@ export function validateAgainstSchema(schema, settings) {
     if (!prop) {
       // Незнакомое поле — почти всегда признак того, что оркестратор работает по
       // устаревшей схеме. Промолчать здесь = «задача создалась, но делает не то».
-      if (schema.additionalProperties === false) out.push({ path: key, message: 'неизвестное поле — проверьте актуальную схему модуля' })
+      if (schema.additionalProperties === false) out.push({ path: key, message: 'unknown field - check the current module diagram' })
       continue
     }
     if (v === undefined || v === null) continue
@@ -133,21 +133,21 @@ export function validateDescriptorRules(desc, settings = {}) {
     expected === '*' ? isSet(val(field)) : val(field) === expected
   ))
   const condText = (cond) => Object.entries(cond)
-    .map(([f, e]) => (e === '*' ? `задан ${f}` : `${f} = ${e}`))
-    .join(' и ')
+    .map(([f, e]) => (e === '*' ? `given ${f}` : `${f} = ${e}`))
+    .join(' and ')
 
   for (const p of desc.params || []) {
     if (p.requiredWhen && conditionHolds(p.requiredWhen) && !isSet(val(p.name))) {
-      errors.push({ path: p.name, message: `обязательно, когда ${condText(p.requiredWhen)}` })
+      errors.push({ path: p.name, message: `required when ${condText(p.requiredWhen)}` })
     }
     // Поле задано, но условие его применения не выполнено — молча проигнорировать нельзя:
     // оператор (или «мозги») уверен, что настройка работает, а она нет.
     if (p.effectiveWhen && isSet(val(p.name)) && !conditionHolds(p.effectiveWhen)) {
-      warnings.push({ path: p.name, message: `не будет применено: работает только когда ${condText(p.effectiveWhen)}` })
+      warnings.push({ path: p.name, message: `will not be applied: only works when ${condText(p.effectiveWhen)}` })
     }
     for (const other of p.supersededBy || []) {
       if (isSet(val(p.name)) && isSet(val(other))) {
-        warnings.push({ path: p.name, message: `перекрывается полем ${other} — приоритет у него` })
+        warnings.push({ path: p.name, message: `overlapped by field ${other}; it has priority` })
       }
     }
   }

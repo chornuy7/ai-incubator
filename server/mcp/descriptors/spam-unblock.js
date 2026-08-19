@@ -12,46 +12,46 @@
 export default {
   key: 'spam-unblock',
   version: 1,
-  title: 'Снятие спамблока',
+  title: 'Removing spamblock',
   platform: 'telegram',
-  tags: ['спамблок', 'spamblock', 'разблокировка', 'восстановление', 'spambot'],
+  tags: ['spamblock', 'spamblock', 'unlocking', 'recovery', 'spambot'],
 
   whoAmI: {
-    summary: 'Обращается к @SpamBot от имени заблокированных аккаунтов и просит снять ограничения.',
+    summary: 'Contacts @SpamBot on behalf of blocked accounts and asks to remove restrictions.',
     does: [
-      'по очереди пишет в @SpamBot с каждого выбранного аккаунта',
-      'разбирает ответ бота и определяет, сняты ли ограничения',
-      'считает, скольким аккаунтам спамблок сняли',
-      'выдерживает случайные паузы между аккаунтами',
+      'writes to @SpamBot in turn from each selected account',
+      "parses the bot's response and determines whether restrictions have been lifted",
+      'counts how many accounts the spam block was removed',
+      'withstands random pauses between accounts',
     ],
     doesNot: [
-      'не гарантирует снятие: решение принимает Telegram, а не мы',
-      'не выполняет никаких других действий в Telegram',
-      'не работает по целям — каналов и групп у модуля нет',
+      'does not guarantee withdrawal: the decision is made by Telegram, not us',
+      'does not perform any other actions in Telegram',
+      'does not work for purposes - the module does not have channels or groups',
     ],
-    requires: ['аккаунты с живой сессией, попавшие под ограничения'],
+    requires: ['accounts with a live session that are subject to restrictions'],
     risks:
-      'Низкий. Но повторять слишком часто бессмысленно: если бот отказал, спамблок снимается '
-      + 'по времени, и повторные обращения этого не ускоряют.',
-    costModel: 'Служебная задача. Токены ИИ не расходуются.',
+      'Short. But repeating it too often is pointless: if the bot refuses, the spam block is removed'
+      + 'in time, and repeated requests do not speed this up.',
+    costModel: 'Service task. AI tokens are not consumed.',
   },
 
   blocks: [
     {
       id: 'accounts',
-      title: 'Выберите аккаунты',
-      purpose: 'Какие аккаунты пытаемся разблокировать.',
-      howItWorks: 'Аккаунты обрабатываются строго по очереди, по одному — залп в @SpamBot смысла не имеет.',
+      title: 'Select accounts',
+      purpose: 'Which accounts are we trying to unblock?',
+      howItWorks: 'Accounts are processed strictly one at a time, one at a time - a salvo in @SpamBot makes no sense.',
       api: { method: 'POST', path: '/api/modules/spam-unblock/tasks', fills: ['accountIds'] },
       params: ['accountIds'],
     },
     {
       id: 'timings',
-      title: 'Паузы между аккаунтами',
-      purpose: 'Через сколько браться за следующий аккаунт.',
+      title: 'Pauses between accounts',
+      purpose: 'How long before I take on the next account?',
       howItWorks:
-        'Пауза выбирается случайно из диапазона: ровный интервал между обращениями к одному и '
-        + 'тому же боту с разных аккаунтов читается как ферма.',
+        'The pause is selected randomly from the range: an even interval between calls to one and'
+        + 'to the same bot from different accounts it reads like a farm.',
       api: { method: 'POST', path: '/api/modules/spam-unblock/tasks', fills: ['delayMin', 'delayMax'] },
       params: ['delayMin', 'delayMax'],
     },
@@ -61,28 +61,28 @@ export default {
     {
       name: 'accountIds',
       block: 'accounts',
-      title: 'Аккаунты',
+      title: 'Accounts',
       type: 'array',
       items: 'string',
       required: true,
       minItems: 1,
-      purpose: 'ID аккаунтов, для которых запрашивается снятие ограничений.',
-      constraints: ['обрабатываются по очереди, по одному'],
+      purpose: 'IDs of the accounts for which the removal of restrictions is requested.',
+      constraints: ['processed one at a time, one at a time'],
       examples: [['acc_1'], ['acc_1', 'acc_2', 'acc_3']],
       storedAs: 'task.settings.accountIds',
     },
     {
       name: 'delayMin',
       block: 'timings',
-      title: 'Мин. пауза',
+      title: 'Min. pause',
       type: 'number',
       default: 30,
       min: 5,
-      unit: 'с',
-      purpose: 'Нижняя граница паузы между аккаунтами.',
+      unit: 'With',
+      purpose: 'The lower limit of the pause between accounts.',
       constraints: [
-        'значение ниже 5 секунд поднимается до 5',
-        'у этого модуля СВОИ поля пауз — общей структуры delays здесь нет',
+        'value below 5 seconds rises to 5',
+        'this module has its own pause fields - there is no general delays structure here',
       ],
       examples: [30, 60],
       seeAlso: ['delayMax'],
@@ -91,13 +91,13 @@ export default {
     {
       name: 'delayMax',
       block: 'timings',
-      title: 'Макс. пауза',
+      title: 'Max. pause',
       type: 'number',
       default: 120,
       min: 5,
-      unit: 'с',
-      purpose: 'Верхняя граница паузы между аккаунтами.',
-      constraints: ['если меньше delayMin, поднимается до него — задача не упадёт, но разброса не будет'],
+      unit: 'With',
+      purpose: 'The upper limit of the pause between accounts.',
+      constraints: ['if it is less than delayMin, it rises to it - the task will not fall, but there will be no scatter'],
       examples: [120, 300],
       seeAlso: ['delayMin'],
       storedAs: 'task.settings.delayMax',
@@ -108,8 +108,8 @@ export default {
 
   examples: [
     {
-      title: 'Разблокировать несколько аккаунтов',
-      when: 'после жёсткой кампании часть аккаунтов ушла в спамблок',
+      title: 'Unblock multiple accounts',
+      when: 'after a tough campaign, some accounts went to spamblock',
       input: { accountIds: ['acc_1', 'acc_2', 'acc_3'], delayMin: 60, delayMax: 300 },
     },
   ],
