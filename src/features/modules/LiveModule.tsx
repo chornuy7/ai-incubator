@@ -206,10 +206,11 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
     //   0 «Только последний»   → любые посты (2) + оставить самый свежий (0)
     //   1 «Последние N»        → любые посты (2) + без доп. отсева (2); N — это postWindow
     //   2 «По ключевым словам» → фильтр по словам (1) в тех же N постах (2)
+    //   3 «Только новые»       → любые посты (2) + мониторинг (4): планка на канал
     commentMode: cfg.toggleGroups ? (g(0) === 2 ? 1 : 2) : g(0),
     pickOne,
     workMode: g(1),
-    postFilter: cfg.toggleGroups ? [0, 2, 2][g(0)] ?? 0 : g(2),
+    postFilter: cfg.toggleGroups ? [0, 2, 2, 4][g(0)] ?? 0 : g(2),
     probability,
     maxActions,
     maxComments: maxActions,
@@ -342,7 +343,7 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
     if (s.pickOne !== undefined) setPickOne(s.pickOne)
     // Обратная раскладка: в шаблоне лежат значения воркера, в форме — один индекс.
     if (cfg.toggleGroups && (s.commentMode !== undefined || s.postFilter !== undefined)) {
-      const pos = s.commentMode === 1 ? 2 : (s.postFilter === 0 ? 0 : 1)
+      const pos = s.commentMode === 1 ? 2 : (s.postFilter === 4 ? 3 : s.postFilter === 0 ? 0 : 1)
       setToggles((t) => ({ ...t, 0: pos }))
       if (s.commentMode === 0) setPickOne(true)
     }
@@ -507,13 +508,21 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
                 <span>Брать один случайный из подходящих <span className="text-white/30">(снимите — прокомментирует все подходящие за заход)</span></span>
               </label>
             )}
-            <div className="mt-3" />
-            <NumberField label="Сколько последних постов обрабатывать" value={postWindow} onChange={(n) => setPostWindow(Math.max(1, Math.min(50, n)))} min={1} max={50} suffix="1–50" />
-            <div className="mt-1 text-xs text-white/40">
-              {g(0) === 0
-                ? 'Читаются для контекста, комментируется только самый свежий из них.'
-                : 'Сколько последних постов обрабатывать, не всю историю'}
-            </div>
+            {g(0) === 3 && (
+              <p className="mt-2 text-xs text-white/40">
+                Первый заход в канал только запоминает последний пост и ничего не пишет —
+                дальше комментируются посты, вышедшие после этого момента.
+              </p>
+            )}
+            {/* Поле нужно только там, где глубина вообще имеет значение: при «только
+                последний» и в мониторинге берётся ровно один пост (правка 19.08). */}
+            {(g(0) === 1 || g(0) === 2) && (
+              <>
+                <div className="mt-3" />
+                <NumberField label="Сколько последних постов обрабатывать" value={postWindow} onChange={(n) => setPostWindow(Math.max(1, Math.min(50, n)))} min={1} max={50} suffix="1–50" />
+                <div className="mt-1 text-xs text-white/40">Сколько последних постов обрабатывать, не всю историю</div>
+              </>
+            )}
             <div className="mt-3 mb-1 text-xs text-white/50">Стоп-слова <span className="text-white/30">(пропускать посты с этими словами; несколько — через точку с запятой «;»)</span></div>
             <input value={stopWordsText} onChange={(e) => setStopWordsText(e.target.value)} className="input h-9" placeholder="политика; скам; крипта…" />
             {/* §3.2 (UI-006): «Семантический фильтр к цели» / «Релевантность поста к цели» удалены по ТЗ 06.08. */}

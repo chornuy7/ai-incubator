@@ -399,6 +399,11 @@ export async function runNeuroCommenting(task, store) {
 
   const mul = delayMultiplier(s.protectionLevel ?? 1, s.delayPreset ?? 1)
   const prob = effectiveProbability(s.probability ?? 30, !!s.aiProtection, s.protectionLevel ?? 1)
+  // «Мониторинг новых» (postFilter = 4): верхняя планка постов на канал. Первый заход
+  // её ставит и НЕ комментирует — иначе «только новые» означало бы комментарий к посту,
+  // который вышел до запуска задачи. Живёт в памяти: после рестарта планка встаёт
+  // заново, посты из времени простоя новыми не считаются (как в массовых реакциях).
+  const seenTop = new Map()
   const chs = targets(s)
   let idx = 0
   // idleLap считает подряд пропущенные аккаунты. Полный круг пропусков = никто не может работать
@@ -498,9 +503,22 @@ export async function runNeuroCommenting(task, store) {
         if (membership.status === 'joined') await incAction(accountId, 'joins') // §6: суточный лимит вступлений
 
         // §3.5: окно постов — обрабатываем только последние N, не всю историю канала.
-        const posts = await fetchPosts(client, channel, Math.min(50, Math.max(1, Number(s.postWindow) || 20)))
+        const fetched = await fetchPosts(client, channel, Math.min(50, Math.max(1, Number(s.postWindow) || 20)))
+        // Мониторинг: оставляем только то, что вышло ПОСЛЕ первого захода в этот канал.
+        let posts = fetched
+        if (Number(s.postFilter) === 4 && fetched.length) {
+          const top = Math.max(...fetched.map((p) => p.id))
+          if (!seenTop.has(ch)) {
+            seenTop.set(ch, top)
+            await store.appendLog(task, 'info', `Мониторинг @${ch}: ждём новые посты (последний #${top})`, meta.name)
+            posts = []
+          } else {
+            posts = fetched.filter((p) => p.id > seenTop.get(ch))
+            if (!posts.length) await store.appendLog(task, 'info', `Новых постов нет: @${ch}`, meta.name)
+          }
+        }
         if (!posts.length) {
-          await store.appendLog(task, 'warning', 'В канале нет постов для комментирования', meta.name)
+          if (!fetched.length) await store.appendLog(task, 'warning', 'В канале нет постов для комментирования', meta.name)
         } else {
           const candidates = pickCommentCandidates(posts, s)
           if (!candidates.length) {

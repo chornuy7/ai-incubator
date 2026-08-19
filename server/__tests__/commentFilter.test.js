@@ -61,3 +61,35 @@ test('старые задачи (commentMode 0) продолжают брать 
   const out = pickCommentCandidates(posts(10, 9, 8), { postFilter: 2, commentMode: 0 })
   assert.equal(out.length, 1, 'совместимость: pickOne не задан, случайность вшита в commentMode 0')
 })
+
+/**
+ * «Только новые (мониторинг)» — planка на канал (правка 19.08).
+ *
+ * Режим есть у массовых реакций, а у комментинга его не было: «Только последний пост»
+ * комментировал самый свежий пост НЕЗАВИСИМО от того, вышел он до запуска задачи или
+ * после. Отбор самих кандидатов при этом не меняется — планку применяет воркер до
+ * вызова фильтра, здесь фиксируем именно это правило.
+ */
+function afterBaseline(posts, seenTop) {
+  return seenTop === undefined ? [] : posts.filter((p) => p.id > seenTop)
+}
+
+test('мониторинг: первый заход в канал ничего не комментирует', () => {
+  assert.deepEqual(afterBaseline(posts(10, 9), undefined), [], 'планка ставится, комментария нет')
+})
+
+test('мониторинг: берём только посты выше планки', () => {
+  const out = afterBaseline(posts(12, 11, 10), 10)
+  assert.deepEqual(out.map((p) => p.id), [12, 11])
+  assert.deepEqual(afterBaseline(posts(10, 9), 10), [], 'новых нет — и комментировать нечего')
+})
+
+test('мониторинг + отбор по содержанию работают вместе', () => {
+  const list = [
+    { id: 12, message: 'пост про крипту' },
+    { id: 11, message: 'пост без темы' },
+  ]
+  const fresh = afterBaseline(list, 10)
+  const out = pickCommentCandidates(fresh, { postFilter: 2, commentMode: 1, keywords: ['крипт'], pickOne: false })
+  assert.deepEqual(out.map((p) => p.id), [12])
+})
