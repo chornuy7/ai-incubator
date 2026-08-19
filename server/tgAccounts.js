@@ -67,6 +67,10 @@ function toAccountDto(accountId, meta, me, sessionOk) {
     // оператор видит «спамблок» и не знает, ждать ему или списывать аккаунт.
     statusUntil: typeof meta.statusUntil === 'number' ? meta.statusUntil : null,
     statusReason: meta.statusReason || '',
+    // MR: последняя явная проверка живости (дата + результат). null — ни разу не проверяли
+    // через ?verify — тогда карточка честно показывает «не проверялся».
+    lastCheckedAt: typeof meta.lastCheckedAt === 'number' ? meta.lastCheckedAt : null,
+    lastCheckOk: typeof meta.lastCheckOk === 'boolean' ? meta.lastCheckOk : null,
     createdAt: meta.createdAt || Date.now(),
     busyIn: (() => {
       const lock = getAccountLock(accountId)
@@ -131,10 +135,18 @@ export async function tgListAccounts(opts = {}) {
           username: me.username,
           phone: me.phone,
           userId: me.id?.toString?.(),
+          // MR: фиксируем факт и результат явной проверки живости — иначе оператор
+          // не видит, когда аккаунт последний раз проверялся и чем закончилось.
+          lastCheckedAt: Date.now(),
+          lastCheckOk: true,
           ...(meta.status === 'reauth' ? { status: 'active' } : {}),
         })
       } catch {
         sessionOk = false
+        // Результат проверки сохраняем и при провале (сессия/прокси не ответили) —
+        // статус НЕ форсим в reauth (провал может быть транзиентным, прокси/сеть):
+        // это отдельная сознательная проверка, а не приговор аккаунту.
+        meta = await setAccountMeta(accountId, { lastCheckedAt: Date.now(), lastCheckOk: false })
       }
     }
 

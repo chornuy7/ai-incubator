@@ -304,8 +304,15 @@ async function profileByLegacy(db, legacyId) {
 /** @param {{ email, name, roleId, password, active, parentId }} input */
 export async function createUser(input = {}) {
   const email = normEmail(input.email)
+  // Валидация ДУБЛИРУЕТ фронт намеренно: /register — публичный неаутентифицированный
+  // endpoint, а форму легко обойти (curl/бот). Раньше сервер принимал «e-mail» вроде
+  // 'мусор' и пароль в мегабайт — первое плодило мёртвые профили, второе роняло scrypt.
   if (!email) throw new Error('Укажите e-mail')
-  if (!input.password || String(input.password).length < 6) throw new Error('Пароль минимум 6 символов')
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw new Error('Некорректный e-mail')
+  const pwd = String(input.password ?? '')
+  if (pwd.length < 6) throw new Error('Пароль минимум 6 символов')
+  if (pwd.length > 200) throw new Error('Пароль слишком длинный (максимум 200 символов)')
+  if (String(input.name ?? '').trim().length > 120) throw new Error('Имя слишком длинное (максимум 120 символов)')
   if (await findByEmail(email)) throw new Error('Пользователь с таким e-mail уже есть')
 
   const hasExplicitRoles = Array.isArray(input.roleIds) || input.roleId != null

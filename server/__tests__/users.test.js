@@ -44,6 +44,10 @@ test('CRUD + authenticate на изолированном файле, сид т�
   assert.equal(created.email, 'new@mail.ru') // нормализация e-mail
   await assert.rejects(() => u.createUser({ email: 'new@mail.ru', password: 'secret1' }), /уже есть/i)
   await assert.rejects(() => u.createUser({ email: 'x@y.z', password: '123' }), /минимум 6/i)
+  // Серверная валидация (не только фронт): формат e-mail, потолок пароля и имени.
+  await assert.rejects(() => u.createUser({ email: 'мусор', password: 'secret1' }), /Некорректный e-mail/i)
+  await assert.rejects(() => u.createUser({ email: 'a@b.co', password: 'x'.repeat(201) }), /слишком длинный/i)
+  await assert.rejects(() => u.createUser({ email: 'a@b.co', password: 'secret1', name: 'я'.repeat(121) }), /Имя слишком длинное/i)
 
   const upd = await u.updateUser(created.id, { active: false })
   assert.equal(upd.active, false)
