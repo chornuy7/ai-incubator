@@ -155,21 +155,49 @@ export async function getOverrides() {
   return raw && typeof raw === 'object' ? raw : {}
 }
 
+// MR-149 (созвон 19.08): базовые цены модулей берём ИЗ БД (таблица module_prices), а не из
+// код-констант. module_prices — проекция, её пишет typesSync; здесь только читаем. Кэш: базовые
+// цены меняются редко (typesSync/сид), а effectivePrices — на горячем пути биллинга, лишний
+// запрос на каждое списание не нужен. Файловый режим (дев/тесты) — пусто, базой остаётся код.
+let _basePricesCache = null // { data: {key:{month,action}}, ts }
+const BASE_PRICES_TTL = 60_000
+export function invalidateBasePrices() { _basePricesCache = null }
+async function dbBasePrices() {
+  const db = sb()
+  if (!db) return {}
+  if (_basePricesCache && Date.now() - _basePricesCache.ts < BASE_PRICES_TTL) return _basePricesCache.data
+  try {
+    const { data } = await db.from('module_prices').select('month_price, action_price, modules(key)')
+    const map = {}
+    for (const r of data || []) {
+      const key = r.modules?.key
+      if (key) map[key] = { month: Number(r.month_price), action: Number(r.action_price) }
+    }
+    _basePricesCache = { data: map, ts: Date.now() }
+    return map
+  } catch { return _basePricesCache?.data || {} }
+}
+
 /**
- * Эффективные цены = коды-дефолты, перекрытые переопределениями из стора.
+ * Эффективные цены = БАЗА ИЗ БД (module_prices), перекрытая переопределениями админки
+ * (price_overrides). Код-константы остаются только фолбэком, если модуля нет в БД.
  * Отдаёт и «плоские» карты для расчёта (`monthMap`/`actionMap`), и человекочитаемый
  * список модулей для админки/витрины.
  */
 export async function effectivePrices() {
   const ov = await getOverrides()
   const ovMod = ov.modules || {}
+  const base = await dbBasePrices() // {key:{month,action}} из БД (пусто в файловом режиме)
 
   const monthMap = {}
   const actionMap = {}
   const giftMap = {} // §3 (MR-21): подарочные токены на модуль
   const modules = Object.keys(MODULE_MONTH_PRICE).map((key) => {
-    const month = ovMod[key]?.month ?? MODULE_MONTH_PRICE[key]
-    const action = ovMod[key]?.action ?? (ACTION_PRICE[key] ?? 0)
+    // База — из БД (module_prices), код-константа — только фолбэк. Сверху — правки админки.
+    const baseMonth = base[key]?.month ?? MODULE_MONTH_PRICE[key]
+    const baseAction = base[key]?.action ?? (ACTION_PRICE[key] ?? 0)
+    const month = ovMod[key]?.month ?? baseMonth
+    const action = ovMod[key]?.action ?? baseAction
     const gift = ovMod[key]?.gift ?? 0
     monthMap[key] = month
     actionMap[key] = action

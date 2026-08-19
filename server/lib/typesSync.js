@@ -172,6 +172,9 @@ export async function syncModuleLinks() {
       const { error } = await db.from('module_prices').upsert(priceRows, { onConflict: 'module_id' })
       if (error) throw new Error(`module_prices: ${error.message}`)
       report.prices = priceRows.length
+      // MR-149: базовые цены изменились в БД — сбросить кэш effectivePrices, чтобы новые
+      // значения из module_prices применились сразу, а не через TTL.
+      try { const { invalidateBasePrices } = await import('../priceStore.js'); invalidateBasePrices() } catch { /* ignore */ }
     }
 
     // ── Подписки ─────────────────────────────────────────────────────────────
