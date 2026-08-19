@@ -1,5 +1,6 @@
 import { useEffect } from 'react'
 import { useSession, markActivity, ACTIVITY_KEY } from './session'
+import { isAdminZone } from './zone'
 
 /**
  * MR-141 (созвон 12.08): локальный сторож сессии. Всё делает НА КЛИЕНТЕ, без запросов в
@@ -47,6 +48,9 @@ export function SessionGuard() {
   useEffect(() => {
     if (!user) return
     const check = () => {
+      // На вкладке /admin панельный сторож молчит: там своя (админ) сессия, и панельный
+      // тайм-аут/протухший токен не должны выкидывать человека из админки.
+      if (isAdminZone()) return
       const now = Date.now()
       // (2) «Кука умерла»: подписанный токен (прод) просрочен — читаем его `exp` ЛОКАЛЬНО,
       // без запроса на сервер. Обновление прав (refresh) токен не трогает, так что здесь
@@ -65,11 +69,14 @@ export function SessionGuard() {
     return () => window.clearInterval(id)
   }, [user, logout])
 
-  // (2b) Кросс-табный выход: вышли/очистили сессию или токен в ДРУГОЙ вкладке — событие
-  // `storage` прилетает сюда, выкидываем и здесь. Работает одинаково в панели и в админке.
+  // (2b) Кросс-табный выход ПАНЕЛИ: вышли/очистили панельную сессию или токен в ДРУГОЙ
+  // вкладке — событие `storage` прилетает сюда, выходим и здесь. ВАЖНО: реагируем только на
+  // ПАНЕЛЬНЫЕ ключи и только если сами НЕ на /admin — иначе выход из панели в соседней
+  // вкладке дёргал бы logout (с редиректом на «/») на вкладке админки, выбрасывая из неё.
   useEffect(() => {
     if (!user) return
     const onStorage = (e: StorageEvent) => {
+      if (isAdminZone()) return
       if ((e.key === LS_SESSION || e.key === LS_TOKEN) && e.newValue === null) logout()
     }
     window.addEventListener('storage', onStorage)
