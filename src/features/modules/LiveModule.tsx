@@ -84,7 +84,12 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
   const showBlock = (bk: string) => !sessionUser || sessionUser.isAdmin || can(sessionUser.permissions, false, 'block', `${moduleKey}:${bk}`)
 
   const [selected, setSelected] = useState<Set<string>>(new Set())
-  const [toggles, setToggles] = useState<Record<number, number>>({})
+  // «Мониторинг новых» стоит первым в списке (так просил владелец), но умолчанием
+  // остаётся «Только последний пост»: мониторинг по своей природе молчит, пока в канале
+  // не выйдет новый пост, и как поведение по умолчанию читался бы как «не работает».
+  const [toggles, setToggles] = useState<Record<number, number>>(
+    moduleKey === 'neuro-commenting' ? { 0: 1 } : {},
+  )
   const [aiProtect, setAiProtect] = useState(true)
   const [protLevel, setProtLevel] = useState(1)
   const [notifyStatus, setNotifyStatus] = useState(true) // MR-134: уведомлять о статусе этой задачи
@@ -104,7 +109,6 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
   // масслукинга и прочих их нет: темп задаёт «Уровень прогрева» / тайминги, и после
   // переноса карточки наверх (19.08) она оказалась пустой — выглядело как «пропала».
   // Там, где параметров нет, карточкой оформляется панель запуска внизу, как было.
-  const hasParamsCard = moduleKey === 'neuro-commenting'
   const [srcTab, setSrcTab] = useState(0)
   const [input, setInput] = useState('')
   const [targets, setTargets] = useState<string[]>([])
@@ -175,6 +179,12 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
   )
   const isParser = cfg.parserLayout || cfg.participantsLayout
   const isGgr = cfg.ggrLayout
+  // Есть ли ЧТО показать в карточке «Параметры и лимиты»: у нейрокомментинга это выбор
+  // постов и стоп-слова, у остальных боевых модулей — объём задачи (режим работы, сколько
+  // сделает аккаунт). У прогрева и парсеров ни того, ни другого: там карточка оформляет
+  // панель запуска, как было до переноса 19.08.
+  const hasLimits = !isParser && !isGgr && !cfg.warmingLayout && (cfg.aiProtection || cfg.richLayout || cfg.lookingLayout)
+  const hasParamsCard = moduleKey === 'neuro-commenting' || hasLimits
 
   const maybeSaveToFolder = (list: string[]) => {
     // (5) Предложить сохранить добавленный список в папку через красивый модал.
@@ -208,14 +218,14 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
     channels: targets,
     keywords: keywords.split(/[\n;]+/).map((k) => k.trim()).filter(Boolean),
     // Один выбор в форме раскладывается в два поля воркера:
-    //   0 «Только последний»   → любые посты (2) + оставить самый свежий (0)
-    //   1 «Последние N»        → любые посты (2) + без доп. отсева (2); N — это postWindow
-    //   2 «По ключевым словам» → фильтр по словам (1) в тех же N постах (2)
-    //   3 «Только новые»       → любые посты (2) + мониторинг (4): планка на канал
-    commentMode: cfg.toggleGroups ? (g(0) === 2 ? 1 : 2) : g(0),
+    //   0 «Мониторинг новых»   → любые посты (2) + мониторинг (4): планка на канал
+    //   1 «Только последний»   → любые посты (2) + оставить самый свежий (0)
+    //   2 «Последние N»        → любые посты (2) + без доп. отсева (2); N — это postWindow
+    //   3 «По ключевым словам» → фильтр по словам (1) в тех же N постах (2)
+    commentMode: cfg.toggleGroups ? (g(0) === 3 ? 1 : 2) : g(0),
     pickOne,
     workMode: g(1),
-    postFilter: cfg.toggleGroups ? [0, 2, 2, 4][g(0)] ?? 0 : g(2),
+    postFilter: cfg.toggleGroups ? [4, 0, 2, 2][g(0)] ?? 4 : g(2),
     probability,
     maxActions,
     maxComments: maxActions,
@@ -348,7 +358,7 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
     if (s.pickOne !== undefined) setPickOne(s.pickOne)
     // Обратная раскладка: в шаблоне лежат значения воркера, в форме — один индекс.
     if (cfg.toggleGroups && (s.commentMode !== undefined || s.postFilter !== undefined)) {
-      const pos = s.commentMode === 1 ? 2 : (s.postFilter === 4 ? 3 : s.postFilter === 0 ? 0 : 1)
+      const pos = s.commentMode === 1 ? 3 : (s.postFilter === 4 ? 0 : s.postFilter === 0 ? 1 : 2)
       setToggles((t) => ({ ...t, 0: pos }))
       if (s.commentMode === 0) setPickOne(true)
     }
@@ -501,19 +511,19 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
           <div className="mb-3">
             {/* Один вопрос — один блок: ЧТО комментировать и из скольких последних постов. */}
             <ToggleGroup label="Что комментировать" options={cfg.toggleGroups?.[0].options ?? []} value={g(0)} onChange={(v) => setTg(0, v)} />
-            {g(0) === 2 && (
+            {g(0) === 3 && (
               <div className="mt-2 space-y-1">
                 <textarea value={keywords} onChange={(e) => setKeywords(e.target.value)} rows={2} className="input resize-none text-sm" placeholder="Ключевые слова через ; или с новой строки — крипта; p2p обмен" />
                 <p className="text-xs text-white/40">Ищем совпадения среди последних постов (число ниже), а не по всей истории канала.</p>
               </div>
             )}
-            {g(0) !== 0 && (
+            {g(0) !== 1 && (
               <label className="mt-2 flex cursor-pointer items-start gap-2 text-xs text-white/60">
                 <input type="checkbox" checked={pickOne} onChange={(e) => setPickOne(e.target.checked)} className="mt-0.5 h-4 w-4 rounded border-line accent-spark-500" />
                 <span>Брать один случайный из подходящих <span className="text-white/30">(снимите — прокомментирует все подходящие за заход)</span></span>
               </label>
             )}
-            {g(0) === 3 && (
+            {g(0) === 0 && (
               <p className="mt-2 text-xs text-white/40">
                 Первый заход в канал только запоминает последний пост и ничего не пишет —
                 дальше комментируются посты, вышедшие после этого момента.
@@ -521,7 +531,7 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
             )}
             {/* Поле нужно только там, где глубина вообще имеет значение: при «только
                 последний» и в мониторинге берётся ровно один пост (правка 19.08). */}
-            {(g(0) === 1 || g(0) === 2) && (
+            {(g(0) === 2 || g(0) === 3) && (
               <>
                 <div className="mt-3" />
                 <NumberField label="Сколько последних постов обрабатывать" value={postWindow} onChange={(n) => setPostWindow(Math.max(1, Math.min(50, n)))} min={1} max={50} suffix="1–50" />
@@ -539,69 +549,37 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
             </label>
           </div>
         )}
-        {showBlock('templates') && moduleKey === 'neuro-commenting' && !running && (cfg.messagePrompts?.length ?? 0) > 0 && (
+        {/* Вероятность — это «сколько из подходящих реально прокомментируем», то есть
+            объём, а не темп: место ей в лимитах, рядом с «сколько сделает аккаунт»
+            (правка 19.08). */}
+        {(cfg.probabilitySlider || cfg.reactionSettings) && !running && (
           <div className="mb-3 rounded-2xl border border-line bg-elevated/40 p-3">
-            <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
-              <span className="text-sm font-semibold text-fg">Распределение типов комментариев</span>
-              <div className="flex items-center gap-2">
-                <span className={`rounded-md px-2 py-0.5 text-xs font-bold ${weightSum === 100 ? 'bg-spark-500/15 text-spark-300' : weightSum > 100 ? 'bg-rose-500/15 text-rose-300' : 'bg-amber-500/15 text-amber-300'}`}>
-                  сумма {weightSum}%
-                </span>
-                {weightSum !== 100 && (
-                  <button type="button" onClick={() => balanceTypeWeights()} className="rounded-md border border-line px-2 py-0.5 text-[11px] font-semibold text-spark-300 hover:bg-elevated">поровну</button>
-                )}
-              </div>
+            <div className="mb-1 flex justify-between text-sm text-muted">
+              <span>{cfg.probabilitySlider?.label ?? cfg.reactionSettings?.probability.label ?? 'Вероятность'}</span>
+              <span className="text-spark-300">{probability}%</span>
             </div>
-            <div className="grid gap-2 sm:grid-cols-2">
-              {(cfg.messagePrompts ?? []).map((label, i) => {
-                const val = typeWeights[i] ?? 0
-                const share = weightSum > 0 ? Math.round((val / weightSum) * 100) : 0
-                const locked = !!lockedWeights[i]
-                const count = cfg.messagePrompts?.length ?? 0
-                return (
-                  <div key={i} className="rounded-xl border border-line bg-surface/40 p-2">
-                    <div className="mb-1.5 flex items-center gap-2">
-                      <span className="min-w-0 flex-1 truncate text-xs font-medium text-fg">{label}</span>
-                      {/* §13 (MR-61): замок закрепляет значение — при изменении других оно не
-                          трогается; редактировать закреплённое можно, сняв замок. */}
-                      <button type="button" onClick={() => toggleWeightLock(i)}
-                        title={locked ? 'Открепить значение' : 'Закрепить: не менять при перераспределении'}
-                        className={cn('grid h-7 w-7 shrink-0 place-items-center rounded-md border', locked ? 'border-spark-500/50 bg-spark-500/10 text-spark-300' : 'border-line text-white/40 hover:text-white/70')}>
-                        {locked ? <Lock size={13} /> : <LockOpen size={13} />}
-                      </button>
-                      {/* §13 (MR-60/61): ввод незакреплённого значения авто-перераспределяет
-                          остаток между другими незакреплёнными; сумма всегда ≤ 100%. */}
-                      <div className="flex shrink-0 items-center gap-1">
-                        <input
-                          type="number" min={0} max={100} inputMode="numeric" disabled={locked}
-                          className="input h-7 w-16 text-center text-sm [appearance:textfield] disabled:opacity-50 [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
-                          value={val}
-                          // Клик по полю выделяет значение целиком: иначе ввод дописывался
-                          // к нулю и получалось «012», «055» вместо «12», «55».
-                          onFocus={(e) => e.currentTarget.select()}
-                          onChange={(e) => {
-                            // Срезаем ведущие нули — «07» это 7, а не 07.
-                            const n = Number(e.target.value.replace(/^0+(?=\d)/, '')) || 0
-                            setTypeWeights((w) => {
-                              const base = w.length === count ? w : equalize(count)
-                              // §13 (уточнение): сохраняем залоченные И ранее введённые (touched) поля;
-                              // остаток делят только НЕтронутые незалоченные.
-                              const pinned = base.map((_, j) => j !== i && (!!lockedWeights[j] || !!touchedWeights[j]))
-                              return redistribute(base, i, n, pinned)
-                            })
-                            // §13: это поле теперь «тронуто» — при следующих правках его не перезапишем.
-                            setTouchedWeights((t) => { const nt = [...t]; nt[i] = true; return nt })
-                          }} />
-                        <span className="text-[11px] text-white/40">%</span>
-                      </div>
-                    </div>
-                    <div className="h-1.5 overflow-hidden rounded-full bg-line"><div className={cn('h-full rounded-full transition-all', locked ? 'bg-spark-400' : 'bg-spark-500')} style={{ width: `${share}%` }} /></div>
-                  </div>
-                )
-              })}
-            </div>
-            <p className="mt-2 text-[11px] text-white/40">Ввод значения авто-раскидывает остаток по незакреплённым (§13). Замок — закрепить долю. «Поровну» — поделить незакреплённые одинаково.</p>
+            <input type="range" min={0} max={100} value={probability} onChange={(e) => setProbability(Number(e.target.value))} className="w-full accent-spark-500" />
           </div>
+        )}
+        {hasLimits && (
+          <TimingSection
+            bare
+            part="limits"
+            workModeOptions={cfg.toggleGroups?.[1]?.options}
+            workMode={g(1)}
+            onWorkMode={(v) => setTg(1, v)}
+            workModeLabel={cfg.toggleGroups?.[1]?.label}
+            durationMinutes={durationMinutes}
+            onDuration={setDurationMinutes}
+            showDurationAlways={!!cfg.reactionSettings}
+            durationPeriodHint={`Период работы: ${durationPeriodMin}–${durationMinutes} мин`}
+            totalLabel={cfg.reactionSettings?.max.label ?? cfg.workModeFields?.maxLabel ?? 'Всего действий'}
+            computedTotal={{ value: maxActions, accounts: accCount }}
+            perAccount={{ min: minPerAcc, max: maxPerAcc, onMin: setMinPerAcc, onMax: setMaxPerAcc }}
+            minWords={cfg.workModeFields?.minWords ? { value: minWords, onChange: setMinWords } : null}
+            delays={delays}
+            onDelays={(updater) => setDelays(updater)}
+          />
         )}
       </SectionCard>
       </div>
@@ -622,6 +600,76 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
             onActiveChange={setActivePrompt}
             onBodiesChange={setPromptBodies}
           />
+            {/* Распределение типов — часть промптов, а не лимитов (правка 19.08):
+                проценты делятся между теми самыми карточками промптов, что выше.
+                В «Параметрах и лимитах» блок стоял вдали от того, чем управляет. */}
+          {/* Объём задачи: режим работы, сколько сделает аккаунт, минимум слов. Раньше это
+            жило внутри «Таймингов» вместе с задержками — то есть «сколько» и «как быстро»
+            стояли в одной куче (правка 19.08). */}
+        {showBlock('templates') && moduleKey === 'neuro-commenting' && !running && (cfg.messagePrompts?.length ?? 0) > 0 && (
+            <div className="mb-3 rounded-2xl border border-line bg-elevated/40 p-3">
+              <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+                <span className="text-sm font-semibold text-fg">Распределение типов комментариев</span>
+                <div className="flex items-center gap-2">
+                  <span className={`rounded-md px-2 py-0.5 text-xs font-bold ${weightSum === 100 ? 'bg-spark-500/15 text-spark-300' : weightSum > 100 ? 'bg-rose-500/15 text-rose-300' : 'bg-amber-500/15 text-amber-300'}`}>
+                    сумма {weightSum}%
+                  </span>
+                  {weightSum !== 100 && (
+                    <button type="button" onClick={() => balanceTypeWeights()} className="rounded-md border border-line px-2 py-0.5 text-[11px] font-semibold text-spark-300 hover:bg-elevated">поровну</button>
+                  )}
+                </div>
+              </div>
+              <div className="grid gap-2 sm:grid-cols-2">
+                {(cfg.messagePrompts ?? []).map((label, i) => {
+                  const val = typeWeights[i] ?? 0
+                  const share = weightSum > 0 ? Math.round((val / weightSum) * 100) : 0
+                  const locked = !!lockedWeights[i]
+                  const count = cfg.messagePrompts?.length ?? 0
+                  return (
+                    <div key={i} className="rounded-xl border border-line bg-surface/40 p-2">
+                      <div className="mb-1.5 flex items-center gap-2">
+                        <span className="min-w-0 flex-1 truncate text-xs font-medium text-fg">{label}</span>
+                        {/* §13 (MR-61): замок закрепляет значение — при изменении других оно не
+                            трогается; редактировать закреплённое можно, сняв замок. */}
+                        <button type="button" onClick={() => toggleWeightLock(i)}
+                          title={locked ? 'Открепить значение' : 'Закрепить: не менять при перераспределении'}
+                          className={cn('grid h-7 w-7 shrink-0 place-items-center rounded-md border', locked ? 'border-spark-500/50 bg-spark-500/10 text-spark-300' : 'border-line text-white/40 hover:text-white/70')}>
+                          {locked ? <Lock size={13} /> : <LockOpen size={13} />}
+                        </button>
+                        {/* §13 (MR-60/61): ввод незакреплённого значения авто-перераспределяет
+                            остаток между другими незакреплёнными; сумма всегда ≤ 100%. */}
+                        <div className="flex shrink-0 items-center gap-1">
+                          <input
+                            type="number" min={0} max={100} inputMode="numeric" disabled={locked}
+                            className="input h-7 w-16 text-center text-sm [appearance:textfield] disabled:opacity-50 [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+                            value={val}
+                            // Клик по полю выделяет значение целиком: иначе ввод дописывался
+                            // к нулю и получалось «012», «055» вместо «12», «55».
+                            onFocus={(e) => e.currentTarget.select()}
+                            onChange={(e) => {
+                              // Срезаем ведущие нули — «07» это 7, а не 07.
+                              const n = Number(e.target.value.replace(/^0+(?=\d)/, '')) || 0
+                              setTypeWeights((w) => {
+                                const base = w.length === count ? w : equalize(count)
+                                // §13 (уточнение): сохраняем залоченные И ранее введённые (touched) поля;
+                                // остаток делят только НЕтронутые незалоченные.
+                                const pinned = base.map((_, j) => j !== i && (!!lockedWeights[j] || !!touchedWeights[j]))
+                                return redistribute(base, i, n, pinned)
+                              })
+                              // §13: это поле теперь «тронуто» — при следующих правках его не перезапишем.
+                              setTouchedWeights((t) => { const nt = [...t]; nt[i] = true; return nt })
+                            }} />
+                          <span className="text-[11px] text-white/40">%</span>
+                        </div>
+                      </div>
+                      <div className="h-1.5 overflow-hidden rounded-full bg-line"><div className={cn('h-full rounded-full transition-all', locked ? 'bg-spark-400' : 'bg-spark-500')} style={{ width: `${share}%` }} /></div>
+                    </div>
+                  )
+                })}
+              </div>
+              <p className="mt-2 text-[11px] text-white/40">Ввод значения авто-раскидывает остаток по незакреплённым (§13). Замок — закрепить долю. «Поровну» — поделить незакреплённые одинаково.</p>
+            </div>
+          )}
           </div>
         </SectionCard>
       )}
@@ -677,10 +725,8 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
                   <p className="text-xs text-muted">Аккаунты разбирают N последних постов канала; один аккаунт — одна реакция на пост.</p>
                 </div>
               )}
-              <div>
-                <div className="mb-1 flex justify-between text-sm text-muted"><span>{cfg.reactionSettings.probability.label}</span><span className="text-spark-300">{probability}%</span></div>
-                <input type="range" min={0} max={100} value={probability} onChange={(e) => setProbability(Number(e.target.value))} className="w-full accent-spark-500" />
-              </div>
+              {/* Ползунок вероятности переехал в «Параметры и лимиты» — он про объём
+                  («сколько из подходящих реально сделаем»), а не про защиту. */}
             </div>
           ) : cfg.toggleGroups ? (
             <div className="rounded-2xl border border-line bg-elevated/40 p-4 space-y-4">
@@ -691,11 +737,6 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
               {moduleKey !== 'neuro-commenting' && (
                 <ToggleGroup label={cfg.toggleGroups[0].label} options={cfg.toggleGroups[0].options} value={g(0)} onChange={(v) => setTg(0, v)} />
               )}
-              {/* Вероятность — про то, комментировать ли уже выбранный пост. */}
-              <div>
-                <div className="mb-1 flex justify-between text-sm text-muted"><span>{cfg.probabilitySlider?.label ?? 'Вероятность'}</span><span className="text-spark-300">{probability}%</span></div>
-                <input type="range" min={0} max={100} value={probability} onChange={(e) => setProbability(Number(e.target.value))} className="w-full accent-spark-500" />
-              </div>
             </div>
           ) : isParser ? (
             <div className="space-y-3">
