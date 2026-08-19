@@ -212,8 +212,15 @@ export async function reconcileLocks() {
 /**
  * Согласование на старте API. Воркеры живут только в памяти процесса, поэтому
  * после перезапуска ни один «running/queued» таск на диске уже не выполняется.
- * Такие задачи помечаем как stopped (устаревшие) и НЕ восстанавливаем блокировки —
- * иначе аккаунт остался бы «в работе» навсегда без единого воркера.
+ *
+ * Раньше такие задачи помечались `stopped` — то есть любой деплой убивал всю активную
+ * работу, и оператор поднимал каждую задачу руками. На тысяче пользователей это авария
+ * при каждой выкатке. Теперь они переводятся в ПАУЗУ с пометкой `resumeOnBoot`, а
+ * `resumeMarkedTasks()` поднимает их сразу после согласования: прогресс, actionKeys и
+ * курсоры и так лежат на диске, локи перезахватываются штатным «Возобновить».
+ *
+ * Блокировки здесь по-прежнему НЕ восстанавливаем: их возьмёт заново сам resume, а до
+ * него аккаунт не должен числиться «в работе» без единого воркера.
  * @returns {Promise<{ flipped: string[] }>}
  */
 export async function reconcileStaleTasksOnBoot() {
@@ -223,11 +230,15 @@ export async function reconcileStaleTasksOnBoot() {
   const flipped = []
 
   const flipStale = async (full, store) => {
-    full.status = 'stopped'
-    full.stopRequested = true
-    full.staleStoppedAt = Date.now()
+    // Пауза, а не стоп: паузу умеет отменять `resumeModuleTask`, и она не считается
+    // решением человека — значит задачу законно поднять автоматически.
+    full.status = 'paused'
+    full.pauseRequested = true
+    full.stopRequested = false
+    full.resumeOnBoot = true
+    full.interruptedAt = Date.now()
     if (typeof store.appendLog === 'function') {
-      await store.appendLog(full, 'warning', 'Задача остановлена: перезапуск API (воркер не пережил рестарт)')
+      await store.appendLog(full, 'warning', 'Прервана перезапуском сервиса — будет восстановлена автоматически')
     } else {
       await store.saveTask(full)
     }

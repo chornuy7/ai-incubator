@@ -157,7 +157,12 @@ export async function handleFlood(task, accountId, store, err, settings, account
  */
 export async function applyBanPolicy(task, accountId, store, err, accountName) {
   const msg = `${/** @type {any} */ (err)?.errorMessage || /** @type {any} */ (err)?.message || ''}`
-  const isBan = /USER_BANNED|USER_DEACTIVATED|BANNED|AUTH_KEY|ACCOUNT_.*BAN/i.test(msg)
+  // USER_BANNED_IN_CHANNEL — запрет писать в КОНКРЕТНОМ чате: аккаунта это не касается,
+  // он жив и работает везде остальном. Раньше он попадал под общее правило бана, и при
+  // политике «карантин» один строгий чат выводил здоровый аккаунт из работы целиком —
+  // на парке в сотни профилей так выкашивается половина пула из-за пары чатов.
+  const bannedHere = /USER_BANNED_IN_CHANNEL/i.test(msg)
+  const isBan = !bannedHere && /USER_BANNED|USER_DEACTIVATED|BANNED|AUTH_KEY|ACCOUNT_.*BAN/i.test(msg)
   const isSpam = /SPAM|PEER_FLOOD/i.test(msg)
   if (!isBan && !isSpam) return false
   const safety = getAiSafetySync()

@@ -87,3 +87,26 @@ test('pickJoinDelay: когда пауза и так большая — не т�
   const d = pickJoinDelay(300, 600, 1)
   assert.ok(d >= 300 && d <= 600, `ожидали 300–600, получили ${d}`)
 })
+
+test('бан В ЧАТЕ не равен бану аккаунта — ни в тексте, ни в политике', async () => {
+  // 18.08: в логах задачи стояло «Аккаунт забанен», и мы решили, что профиль сожжён.
+  // Проверка живьём показала обратное: аккаунт входит, читает канал, ограничений
+  // Telegram нет — ему просто запрещено писать в одном конкретном чате.
+  const { mapTelegramError } = await import('../lib/protection.js')
+
+  const inChannel = mapTelegramError({ errorMessage: 'USER_BANNED_IN_CHANNEL' })
+  assert.match(inChannel, /в этом чате/i)
+  assert.doesNotMatch(inChannel, /^Аккаунт заблокирован/, 'нельзя списывать живой аккаунт')
+
+  const account = mapTelegramError({ errorMessage: 'USER_DEACTIVATED' })
+  assert.match(account, /Аккаунт заблокирован/)
+})
+
+test('политика бана не наказывает аккаунт за запрет в одном чате', async () => {
+  // Цена ошибки: при политике «карантин» один строгий чат выводил бы здоровый аккаунт
+  // из работы целиком. На парке в сотни профилей так выкашивается половина пула.
+  const src = await import('node:fs/promises')
+  const code = await src.readFile(new URL('../lib/accountRunner.js', import.meta.url), 'utf8')
+  const line = code.split('\n').find((l) => l.includes('const isBan ='))
+  assert.match(line, /!bannedHere/, 'запрет в чате обязан быть исключён из правила бана')
+})

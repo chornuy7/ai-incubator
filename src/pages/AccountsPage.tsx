@@ -940,6 +940,7 @@ export function AccountsPage() {
       <FatigueModal
         open={fatigueOpen || !!fatigueOne}
         ids={fatigueOne ? [fatigueOne] : [...selected]}
+        activity={activity}
         onClose={() => { setFatigueOpen(false); setFatigueOne(null) }}
         onDone={(map, msg) => { setActivityMap(map); setFatigueOpen(false); setFatigueOne(null); if (!fatigueOne) setSelected(new Set()); pushToast({ type: 'success', title: msg }) }}
         onError={(e) => pushToast({ type: 'error', title: 'Не применилось', desc: e })}
@@ -1335,9 +1336,23 @@ function AccountsTable(props: {
                             </Tip>
                           )
                         }
+                        // «Устал» и «устаёт» — разные состояния, и раньше оба назывались
+                        // «устаёт»: аккаунт, который УЖЕ не берут в работу, выглядел как
+                        // тот, что вот-вот устанет. Плюс срок возврата — «устал» без него
+                        // отвечает лишь на половину вопроса (правка 18.08).
+                        if (act.threshold > 0 && act.fatigue >= act.threshold) {
+                          const left = act.freeAt ? Math.ceil((act.freeAt - Date.now()) / 60000) : 0
+                          return (
+                            <Tip text={`Усталость ${act.fatigue} из ${act.threshold} — в работу не берётся ни одним модулем${left > 0 ? `, вернётся через ${fmtLeft(left)}` : ''}.`}>
+                              <span className="rounded-md bg-rose-500/15 px-1.5 py-0.5 text-[10px] font-bold text-rose-300">
+                                устал {act.fatigue}/{act.threshold}{left > 0 ? ` · ${fmtLeft(left)}` : ''}
+                              </span>
+                            </Tip>
+                          )
+                        }
                         if (act.threshold > 0 && act.fatigue / act.threshold >= 0.7) {
                           return (
-                            <Tip text={`Усталость ${act.fatigue} из ${act.threshold} — скоро уйдёт на отдых во всех модулях.`}>
+                            <Tip text={`Усталость ${act.fatigue} из ${act.threshold} — скоро уйдёт на перерыв во всех модулях.`}>
                               <span className="rounded-md bg-amber-500/15 px-1.5 py-0.5 text-[10px] font-bold text-amber-300">устаёт {act.fatigue}/{act.threshold}</span>
                             </Tip>
                           )
@@ -1370,6 +1385,19 @@ function AccountsTable(props: {
                         <button type="button" onClick={() => props.onReauth(a)} className="text-xs font-semibold text-violet-300 hover:text-violet-200">
                           Войти снова →
                         </button>
+                      )}
+                      {/* MR: последняя явная проверка живости — дата + результат.
+                          Без неё оператор не знает, актуален ли статус или это осадок с импорта. */}
+                      {typeof a.lastCheckedAt === 'number' && (
+                        <Tip
+                          className="items-center gap-1 text-[10px] text-white/35"
+                          text={`Последняя проверка живости: ${new Date(a.lastCheckedAt).toLocaleString('ru-RU')} — ${a.lastCheckOk === false ? 'аккаунт не ответил (сессия/прокси)' : 'аккаунт на связи'}.`}
+                        >
+                          <span className={a.lastCheckOk === false ? 'text-rose-300/70' : 'text-spark-300/70'}>
+                            {a.lastCheckOk === false ? '✗' : '✓'}
+                          </span>
+                          проверен {checkAgo(a.lastCheckedAt)}
+                        </Tip>
                       )}
                     </div>
                   </td>
@@ -1454,6 +1482,17 @@ function AccountsTable(props: {
                     <Pause size={11} /> Пауза вручную · не в модуле
                   </Tip>
                 ) : null}
+                {typeof a.lastCheckedAt === 'number' && (
+                  <Tip
+                    className="mt-1 items-center gap-1 text-[10px] text-white/35"
+                    text={`Последняя проверка живости: ${new Date(a.lastCheckedAt).toLocaleString('ru-RU')} — ${a.lastCheckOk === false ? 'аккаунт не ответил (сессия/прокси)' : 'аккаунт на связи'}.`}
+                  >
+                    <span className={a.lastCheckOk === false ? 'text-rose-300/70' : 'text-spark-300/70'}>
+                      {a.lastCheckOk === false ? '✗' : '✓'}
+                    </span>
+                    проверен {checkAgo(a.lastCheckedAt)}
+                  </Tip>
+                )}
                 </div>
               </div>
             </button>
@@ -1671,9 +1710,29 @@ function UnblockModal({ open, ids, onClose, onFinished, pushToast }: {
  * разово «сейчас», сбросить усталость — вернуть в строй раньше срока. Смешивать их
  * в одной кнопке значило бы, что оператор не понимает, что именно применил.
  */
-function FatigueModal({ open, ids, onClose, onDone, onError }: {
+/** Сколько прошло с момента последней проверки живости — компактно. */
+function checkAgo(ts: number): string {
+  const min = Math.floor((Date.now() - ts) / 60000)
+  if (min < 1) return 'только что'
+  if (min < 60) return `${min} мин назад`
+  const h = Math.floor(min / 60)
+  if (h < 24) return `${h} ч назад`
+  return `${Math.floor(h / 24)} д назад`
+}
+
+/** Остаток до возврата в строй: минуты человеческим текстом. */
+function fmtLeft(minutes: number): string {
+  if (minutes < 60) return `${minutes} мин`
+  const h = Math.floor(minutes / 60)
+  const m = minutes % 60
+  return m ? `${h} ч ${m} мин` : `${h} ч`
+}
+
+function FatigueModal({ open, ids, activity, onClose, onDone, onError }: {
   open: boolean
   ids: string[]
+  /** Текущие профили аккаунтов — форма обязана показывать сохранённое, а не умолчания. */
+  activity: ActivityMap
   onClose: () => void
   onDone: (map: ActivityMap, message: string) => void
   onError: (e: string) => void
@@ -1681,6 +1740,27 @@ function FatigueModal({ open, ids, onClose, onDone, onError }: {
   const [threshold, setThreshold] = useState(15)
   const [restMinutes, setRestMinutes] = useState(45)
   const [recoveryPerHour, setRecoveryPerHour] = useState(5)
+  /** Значения выбранных аккаунтов различаются — предупреждаем, что «Применить» их сравняет. */
+  const [mixed, setMixed] = useState(false)
+
+  // Подставляем сохранённые значения при КАЖДОМ открытии (правка 18.08). Раньше поля
+  // всегда стартовали с 15/45/5, и это читалось как «настройки слетели после деплоя»;
+  // хуже того — повторное «Применить» записывало умолчания поверх заданного.
+  useEffect(() => {
+    if (!open) return
+    const rows = ids.map((id) => activity[id]).filter(Boolean)
+    if (!rows.length) { setMixed(false); return }
+    const pick = (get: (a: typeof rows[number]) => number | undefined, fallback: number) => {
+      const vals = rows.map(get).filter((v): v is number => typeof v === 'number')
+      if (!vals.length) return { value: fallback, same: true }
+      return { value: vals[0], same: vals.every((v) => v === vals[0]) }
+    }
+    const th = pick((a) => a.threshold, 15)
+    const rest = pick((a) => a.restMinutes, 45)
+    const rec = pick((a) => a.recoveryPerHour, 5)
+    setThreshold(th.value); setRestMinutes(rest.value); setRecoveryPerHour(rec.value)
+    setMixed(!(th.same && rest.same && rec.same))
+  }, [open, ids, activity])
   const [restNow, setRestNow] = useState(60)
   const [busy, setBusy] = useState(false)
   const [schedule, setSchedule] = useState<SchedulePercent>(() => ({ ...DAY_PRESETS.day.hours }))
@@ -1709,16 +1789,35 @@ function FatigueModal({ open, ids, onClose, onDone, onError }: {
       <p className="mb-3 text-xs text-white/45">
         Усталость общая для ВСЕХ модулей: аккаунт, отработавший смену в комментинге,
         не уйдёт тут же лить реакции — он отдыхает, как живой человек.
+        {ids.length === 1 ? ' Показаны настройки этого аккаунта.' : ' Значения можно задать каждому аккаунту свои — выберите один и откройте это окно из его меню.'}
+      </p>
+      {mixed && (
+        <p className="mb-3 rounded-xl border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-200">
+          У выбранных аккаунтов значения различаются — показано значение первого.
+          «Применить» задаст одинаковые всем выбранным.
+        </p>
+      )}
+
+      {/* Три поля описывают один цикл. Раньше «отдых» и «восстановление» читались как
+          одно и то же — подписи объясняют, чем они отличаются, на числах из формы. */}
+      <label className="label">1. Порог усталости <span className="text-white/30">— сколько действий подряд</span></label>
+      <NumberField value={threshold} onChange={setThreshold} min={1} max={500} className="input h-10 w-full" />
+      <p className="mt-1 text-[11px] text-white/40">
+        Каждое действие в любом модуле — плюс единица. Набрал {threshold} — уходит на перерыв.
       </p>
 
-      <label className="label">Порог усталости <span className="text-white/30">— действий до отдыха</span></label>
-      <NumberField value={threshold} onChange={setThreshold} min={1} max={500} className="input h-10 w-full" />
-
-      <label className="label mt-3">Отдых после переутомления, минут</label>
+      <label className="label mt-3">2. Перерыв после порога, минут <span className="text-white/30">— пауза целиком</span></label>
       <NumberField value={restMinutes} onChange={setRestMinutes} min={1} max={1440} className="input h-10 w-full" />
+      <p className="mt-1 text-[11px] text-white/40">
+        {restMinutes} мин аккаунт не берут НИ В ОДИН модуль. После перерыва счётчик обнуляется и он снова в строю.
+      </p>
 
-      <label className="label mt-3">Восстановление <span className="text-white/30">— единиц усталости за час</span></label>
+      <label className="label mt-3">3. Восстановление <span className="text-white/30">— за час простоя</span></label>
       <NumberField value={recoveryPerHour} onChange={setRecoveryPerHour} min={1} max={100} className="input h-10 w-full" />
+      <p className="mt-1 text-[11px] text-white/40">
+        Работает, пока до порога НЕ дошли: за час без действий счётчик падает на {recoveryPerHour}.
+        Это «отдышался между делом», а не перерыв из пункта 2.
+      </p>
 
       <button
         disabled={busy || !ids.length}
@@ -1811,6 +1910,23 @@ function FatigueModal({ open, ids, onClose, onDone, onError }: {
         >
           Сбросить усталость и вернуть в строй
         </button>
+
+        {/* Текущее состояние выбранного аккаунта — внизу окна, где его и ищут: сколько
+            накоплено и когда вернётся в строй сам, без «сбросить». */}
+        {ids.length === 1 && activity[ids[0]] && (() => {
+          const a = activity[ids[0]]
+          const left = a.freeAt ? Math.ceil((a.freeAt - Date.now()) / 60000) : 0
+          return (
+            <p className="mt-3 rounded-xl border border-line bg-elevated/40 px-3 py-2 text-xs text-white/60">
+              Сейчас: усталость <b className="text-fg">{a.fatigue} из {a.threshold}</b>
+              {a.resting
+                ? <> · на перерыве, вернётся через <b className="text-fg">{fmtLeft(left)}</b></>
+                : left > 0
+                  ? <> · в работу не берётся, вернётся через <b className="text-fg">{fmtLeft(left)}</b></>
+                  : <> · <span className="text-spark-300">готов к работе</span></>}
+            </p>
+          )
+        })()}
       </div>
     </Modal>
   )

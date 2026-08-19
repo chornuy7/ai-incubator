@@ -132,9 +132,43 @@ export function currentFatigue(state = {}, profile = DEFAULT_FATIGUE, now = Date
   const base = Math.max(0, Number(state.fatigue) || 0)
   const last = Number(state.lastActionAt) || 0
   if (!base || !last) return base
+  // Обязательный отдых ОТБЫТ — усталость обнулена (правка 18.08). Иначе два параметра
+  // спорили друг с другом: человек ставил «отдых 3 минуты», но при восстановлении 1/час
+  // аккаунт после этих трёх минут оставался «устал 1 из 1» ещё почти час. Отдых для того
+  // и назначается, чтобы после него вернуться в строй; постепенное восстановление
+  // работает в обычных перерывах, когда до порога не дошли.
+  const rested = Number(state.restUntil) || 0
+  if (rested && now >= rested && last <= rested) return 0
   const hours = Math.max(0, (now - last) / HOUR_MS)
   const rec = Math.max(0, Number(profile.recoveryPerHour ?? DEFAULT_FATIGUE.recoveryPerHour))
-  return Math.max(0, Math.round((base - hours * rec) * 100) / 100)
+  // Усталость — ЦЕЛОЕ число действий, а не дробь (правка 18.08). Дробные остатки
+  // восстановления давали «0.8 из 1»: аккаунт формально не дотягивал до порога и уходил
+  // делать ещё одно действие, хотя по счёту действие уже было сделано. Округляем ВВЕРХ:
+  // начатое действие считается сделанным, пока час восстановления не пройден целиком.
+  return Math.max(0, Math.ceil(base - hours * rec))
+}
+
+/**
+ * Когда аккаунт снова сможет работать. 0 — может прямо сейчас.
+ *
+ * Две причины простоя дают разное время. Назначен обязательный перерыв — ждём его конца.
+ * Перерыва нет, но счётчик выше порога (так бывает, когда порог ПОНИЗИЛИ уже после
+ * работы: было «2 из 15», стало «2 из 1») — ждём, пока восстановление опустит его под
+ * порог. Без этого числа карточка говорила «устал», но не говорила, до каких пор.
+ */
+export function freeAt(state = {}, profile = DEFAULT_FATIGUE, now = Date.now()) {
+  const p = { ...DEFAULT_FATIGUE, ...(profile || {}) }
+  const rest = Number(state.restUntil) || 0
+  if (rest > now) return rest
+  const f = currentFatigue(state, p, now)
+  if (f < p.threshold) return 0
+  const rec = Math.max(1, Number(p.recoveryPerHour) || 1)
+  const last = Number(state.lastActionAt) || now
+  const base = Math.max(0, Number(state.fatigue) || 0)
+  // Счётчик целый (округление вверх), поэтому «ниже порога» наступает, когда сырое
+  // значение опустится до threshold - 1.
+  const hoursNeeded = (base - (p.threshold - 1)) / rec
+  return Math.max(now, last + hoursNeeded * HOUR_MS)
 }
 
 /**
@@ -162,7 +196,7 @@ export function fatigueGate(state = {}, profile = DEFAULT_FATIGUE, now = Date.no
  */
 export function applyAction(state = {}, profile = DEFAULT_FATIGUE, now = Date.now()) {
   const p = { ...DEFAULT_FATIGUE, ...(profile || {}) }
-  const f = Math.round((currentFatigue(state, p, now) + 1) * 100) / 100
+  const f = currentFatigue(state, p, now) + 1
   const patch = {
     fatigue: f,
     lastActionAt: now,
@@ -179,12 +213,24 @@ export function applyAction(state = {}, profile = DEFAULT_FATIGUE, now = Date.no
  * аккаунт: попал в вероятность — работаем, нет — идём к следующему.
  * @param {Record<number,number>} schedule @param {number} [now] @param {() => number} [rnd]
  */
+/** Через сколько повторить бросок кубика по распорядку, если не повезло. */
+export const ROLL_RETRY_MS = 60 * 1000
+
 export function scheduleGate(schedule = DEFAULT_SCHEDULE, now = Date.now(), rnd = Math.random) {
   const hour = new Date(now).getHours()
   const table = schedule && typeof schedule === 'object' ? schedule : DEFAULT_SCHEDULE
   const p = Number(table[hour] ?? DEFAULT_SCHEDULE[hour] ?? 0)
-  if (p <= 0) return { ok: false, reason: `по распорядку в ${hour}:00 аккаунт не активен`, chance: 0 }
-  if (rnd() > p) return { ok: false, reason: `не попал в вероятность ${Math.round(p * 100)}% для ${hour}:00`, chance: p }
+  // `until` — когда есть смысл пробовать снова. Для распорядка это следующий час:
+  // раньше воркер получал только «нельзя» и завершал задачу, хотя ждать было минуту.
+  const nextHour = new Date(now)
+  nextHour.setMinutes(0, 0, 0)
+  nextHour.setHours(nextHour.getHours() + 1)
+  // Час закрыт полностью — раньше следующего часа смысла пробовать нет.
+  if (p <= 0) return { ok: false, reason: `по распорядку в ${hour}:00 аккаунт не активен`, chance: 0, until: nextHour.getTime() }
+  // А вот НЕ ПОПАЛ В ВЕРОЯТНОСТЬ — это бросок кубика, и следующий бросок может выпасть
+  // удачно через минуту. Ждать до конца часа тут неверно: при шансе 67% задача честно
+  // сообщала «ждём 28 мин», хотя достаточно попробовать снова (правка 19.08).
+  if (rnd() > p) return { ok: false, reason: `не попал в вероятность ${Math.round(p * 100)}% для ${hour}:00`, chance: p, until: now + ROLL_RETRY_MS }
   return { ok: true, chance: p }
 }
 

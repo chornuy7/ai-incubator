@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import {
-  Play, Sparkles, Hash, Settings2, Clock, Users, MessageSquareText,
+  Play, Sparkles, Hash, Clock, Users, MessageSquareText,
   Heart, Eye, Shield, MessageCircle, Database, Trophy, Link2, Plus, Terminal, ArrowUpRight, Lock, LockOpen, Flame,
 } from 'lucide-react'
 import { MODULES, isCombatModule, combatConfirmText, type ModuleConfig } from '@/shared/config/modules'
@@ -17,14 +17,15 @@ import { AccountPicker } from '@/features/account-picker/AccountPicker'
 import { useModuleTask } from './shared/useModuleTask'
 import {
   SectionCard, NumberField,
-  ProtectionBlock, TargetsEditor, LaunchPanel, PromptCards, loadPromptBodies, AiGenerationNotice,
+  ProtectionTimings, TargetsEditor, LaunchPanel, PromptCards, loadPromptBodies, AiGenerationNotice,
   FolderPicker, BlacklistEditor, GlobalPromptEditor, TimingSection, SaveToFolderModal, TaskStartedModal, SavePresetModal,
   LaunchSteps, markCurrentStep, type LaunchStep,
 } from './shared'
 import type { ModuleTaskSettings } from '@/api/modulesApi'
 import { confirmDialog } from '@/shared/lib/dialog'
-import { LaunchCost, ActionPriceCalc } from './shared/LaunchCost'
+import { LaunchCost } from './shared/LaunchCost'
 import { PRESET_MUL } from './shared/TimingSection'
+import { PresetBar } from './shared/PresetBar'
 
 const DEFAULT_DELAYS = {
   comment: [30, 120] as [number, number],
@@ -83,7 +84,12 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
   const showBlock = (bk: string) => !sessionUser || sessionUser.isAdmin || can(sessionUser.permissions, false, 'block', `${moduleKey}:${bk}`)
 
   const [selected, setSelected] = useState<Set<string>>(new Set())
-  const [toggles, setToggles] = useState<Record<number, number>>({})
+  // «Мониторинг новых» стоит первым в списке (так просил владелец), но умолчанием
+  // остаётся «Только последний пост»: мониторинг по своей природе молчит, пока в канале
+  // не выйдет новый пост, и как поведение по умолчанию читался бы как «не работает».
+  const [toggles, setToggles] = useState<Record<number, number>>(
+    moduleKey === 'neuro-commenting' ? { 0: 1 } : {},
+  )
   const [aiProtect, setAiProtect] = useState(true)
   const [protLevel, setProtLevel] = useState(1)
   const [notifyStatus, setNotifyStatus] = useState(true) // MR-134: уведомлять о статусе этой задачи
@@ -94,6 +100,15 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
   const [minPerAcc, setMinPerAcc] = useState(0)
   const [minWords, setMinWords] = useState(0)
   const [durationMinutes, setDurationMinutes] = useState(cfg.reactionSettings?.duration.value ?? 60)
+  // Сколько последних постов канала рассматриваем: массовые реакции («Существующие
+  // посты») и нейрокомментинг («Последние N»).
+  const [lastPostsCount, setLastPostsCount] = useState(3)
+  // Брать ли ОДИН случайный пост из подходящих (иначе — все подходящие за заход).
+  const [pickOne, setPickOne] = useState(true)
+  // Есть ли у модуля СВОИ параметры в карточке «Параметры и лимиты». У прогрева,
+  // масслукинга и прочих их нет: темп задаёт «Уровень прогрева» / тайминги, и после
+  // переноса карточки наверх (19.08) она оказалась пустой — выглядело как «пропала».
+  // Там, где параметров нет, карточкой оформляется панель запуска внизу, как было.
   const [srcTab, setSrcTab] = useState(0)
   const [input, setInput] = useState('')
   const [targets, setTargets] = useState<string[]>([])
@@ -164,6 +179,12 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
   )
   const isParser = cfg.parserLayout || cfg.participantsLayout
   const isGgr = cfg.ggrLayout
+  // Есть ли ЧТО показать в карточке «Параметры и лимиты»: у нейрокомментинга это выбор
+  // постов и стоп-слова, у остальных боевых модулей — объём задачи (режим работы, сколько
+  // сделает аккаунт). У прогрева и парсеров ни того, ни другого: там карточка оформляет
+  // панель запуска, как было до переноса 19.08.
+  const hasLimits = !isParser && !isGgr && !cfg.warmingLayout && (cfg.aiProtection || cfg.richLayout || cfg.lookingLayout)
+  const hasParamsCard = moduleKey === 'neuro-commenting' || hasLimits
 
   const maybeSaveToFolder = (list: string[]) => {
     // (5) Предложить сохранить добавленный список в папку через красивый модал.
@@ -196,9 +217,15 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
     targets,
     channels: targets,
     keywords: keywords.split(/[\n;]+/).map((k) => k.trim()).filter(Boolean),
-    commentMode: g(0),
+    // Один выбор в форме раскладывается в два поля воркера:
+    //   0 «Мониторинг новых»   → любые посты (2) + мониторинг (4): планка на канал
+    //   1 «Только последний»   → любые посты (2) + оставить самый свежий (0)
+    //   2 «Последние N»        → любые посты (2) + без доп. отсева (2); N — это postWindow
+    //   3 «По ключевым словам» → фильтр по словам (1) в тех же N постах (2)
+    commentMode: cfg.toggleGroups ? (g(0) === 3 ? 1 : 2) : g(0),
+    pickOne,
     workMode: g(1),
-    postFilter: g(2),
+    postFilter: cfg.toggleGroups ? [4, 0, 2, 2][g(0)] ?? 4 : g(2),
     probability,
     maxActions,
     maxComments: maxActions,
@@ -223,8 +250,13 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
     ...(campaignId ? { campaignId } : {}),
     ...((campaignId ? campaigns.find((c) => c.id === campaignId)?.goalId : goalId) ? { goalId: (campaignId ? campaigns.find((c) => c.id === campaignId)?.goalId : goalId) as string } : {}),
     ...(cfg.warmingLayout ? { warmLevel } : {}),
+    // Массовые реакции: режим и глубина. Отдельным полем, а не общим commentMode —
+    // воркер читает именно reactMode, и дескриптор MCP описывает его.
+    ...(cfg.reactionSettings ? { reactMode: g(0), lastPostsCount } : {}),
     ...(moduleKey === 'neuro-commenting' ? { postWindow, stopWords: stopWordsText.split(/[\n;]+/).map((w) => w.trim()).filter(Boolean), analyzeImages } : {}),
-    ...(moduleKey === 'neuro-commenting' && weightSum > 0 ? { typeWeights } : {}),
+    // Распределение уходит в задачу у любого модуля с промптами — воркеры выбирают тип
+    // взвешенным броском на каждое действие (см. pickPrompt в workers.js).
+    ...((cfg.messagePrompts?.length ?? 0) > 0 && weightSum > 0 ? { typeWeights } : {}),
     ...(cfg.lookingLayout ? {
       lookMode: cfg.lookModeOptions?.[lookModeIdx]?.value ?? 'stories',
       lookPostsCount,
@@ -323,6 +355,15 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
     if (s.minPerAccount !== undefined) setMinPerAcc(s.minPerAccount)
     if (s.minWords !== undefined) setMinWords(s.minWords)
     if (s.durationMinutes !== undefined) setDurationMinutes(s.durationMinutes)
+    if (s.reactMode !== undefined) setToggles((t) => ({ ...t, 0: s.reactMode as number }))
+    if (s.lastPostsCount !== undefined) setLastPostsCount(s.lastPostsCount)
+    if (s.pickOne !== undefined) setPickOne(s.pickOne)
+    // Обратная раскладка: в шаблоне лежат значения воркера, в форме — один индекс.
+    if (cfg.toggleGroups && (s.commentMode !== undefined || s.postFilter !== undefined)) {
+      const pos = s.commentMode === 1 ? 3 : (s.postFilter === 4 ? 0 : s.postFilter === 0 ? 1 : 2)
+      setToggles((t) => ({ ...t, 0: pos }))
+      if (s.commentMode === 0) setPickOne(true)
+    }
     if (Array.isArray(s.keywords)) setKeywords(s.keywords.join(', '))
     if (s.promptIndex !== undefined) setActivePrompt(s.promptIndex)
     if (Array.isArray(s.promptOverrides)) setPromptBodies(s.promptOverrides)
@@ -387,10 +428,12 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
   return (
     <div className="space-y-4">
       <TaskStartedModal task={justStarted} moduleTitle={cfg.title} onClose={dismissJustStarted} />
+      {/* ТЗ 06.08 §10: выбор шаблона — вверху, до всех настроек (TPL-001). */}
+      <PresetBar presets={presets} onApply={applyPreset} onSave={handleSave}
+        onEdit={editPreset} onDelete={deletePreset} disabled={running} />
       <SaveToFolderModal open={folderSave !== null} onClose={() => setFolderSave(null)} targets={folderSave ?? []} />
       <SavePresetModal open={presetModalOpen} onClose={() => setPresetModalOpen(false)} onSave={(name, color, owner) => savePreset(name, buildSettings(), color, owner)} />
-      {/* MR-149: калькулятор цены за действие — в шапке модуля, перед «Выбором аккаунтов». */}
-      {showBlock('run') && <ActionPriceCalc moduleKey={moduleKey} />}
+      {/* MR-149: калькулятор цены за действие теперь в ModuleRunner (для всех модулей). */}
       {cfg.accountPicker && showBlock('run') && (
         <div id="sec-accounts" className="scroll-mt-24">
           <AccountPicker selected={selected} onChange={setSelected} actions={cfg.accountActions} withFilters={!!cfg.accountFilters} selectedTitle={cfg.selectedTitle ?? 'Выбрано'} />
@@ -456,13 +499,234 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
         </SectionCard>
       )}
 
+      {/* «Параметры и лимиты» — сразу под целями (правка 19.08). Сколько постов
+          обрабатывать, какие из них брать и лимиты прогона — продолжение разговора
+          про цели. Раньше карточка стояла в самом низу, под защитой и промптами, и
+          до неё добирались, уже настроив всё остальное.  */}
+      {showBlock('run') && hasParamsCard && (
+      <div id="sec-run" className="scroll-mt-24">
+      <SectionCard icon={<Play size={18} />} title="Параметры и лимиты">
+        {limitWarn && !running && (
+          <div className="mb-3 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-300">⚠ {limitWarn}</div>
+        )}
+        {showBlock('settings') && moduleKey === 'neuro-commenting' && !running && (
+          <div className="mb-3">
+            {/* Один вопрос — один блок: ЧТО комментировать и из скольких последних постов. */}
+            <ToggleGroup label="Что комментировать" options={cfg.toggleGroups?.[0].options ?? []} value={g(0)} onChange={(v) => setTg(0, v)} />
+            {g(0) === 3 && (
+              <div className="mt-2 space-y-1">
+                <textarea value={keywords} onChange={(e) => setKeywords(e.target.value)} rows={2} className="input resize-none text-sm" placeholder="Ключевые слова через ; или с новой строки — крипта; p2p обмен" />
+                <p className="text-xs text-white/40">Ищем совпадения среди последних постов (число ниже), а не по всей истории канала.</p>
+              </div>
+            )}
+            {g(0) !== 1 && (
+              <label className="mt-2 flex cursor-pointer items-start gap-2 text-xs text-white/60">
+                <input type="checkbox" checked={pickOne} onChange={(e) => setPickOne(e.target.checked)} className="mt-0.5 h-4 w-4 rounded border-line accent-spark-500" />
+                <span>Брать один случайный из подходящих <span className="text-white/30">(снимите — прокомментирует все подходящие за заход)</span></span>
+              </label>
+            )}
+            {g(0) === 0 && (
+              <p className="mt-2 text-xs text-white/40">
+                Первый заход в канал только запоминает последний пост и ничего не пишет —
+                дальше комментируются посты, вышедшие после этого момента.
+              </p>
+            )}
+            {/* Поле нужно только там, где глубина вообще имеет значение: при «только
+                последний» и в мониторинге берётся ровно один пост (правка 19.08). */}
+            {(g(0) === 2 || g(0) === 3) && (
+              <>
+                <div className="mt-3" />
+                <NumberField label="Сколько последних постов обрабатывать" value={postWindow} onChange={(n) => setPostWindow(Math.max(1, Math.min(50, n)))} min={1} max={50} suffix="1–50" />
+                <div className="mt-1 text-xs text-white/40">Сколько последних постов обрабатывать, не всю историю</div>
+              </>
+            )}
+            <div className="mt-3 mb-1 text-xs text-white/50">Стоп-слова <span className="text-white/30">(пропускать посты с этими словами; несколько — через точку с запятой «;»)</span></div>
+            <input value={stopWordsText} onChange={(e) => setStopWordsText(e.target.value)} className="input h-9" placeholder="политика; скам; крипта…" />
+            {/* §3.2 (UI-006): «Семантический фильтр к цели» / «Релевантность поста к цели» удалены по ТЗ 06.08. */}
+            {/* §10.5: анализ картинок в посте — vision опишет фото, коммент будет по сути
+                изображения, а не по «[медиа]». Расход дороже: наценка «картинка ×N» из админки. */}
+            <label className="mt-2 flex items-center gap-2 text-xs text-white/60">
+              <input type="checkbox" checked={analyzeImages} onChange={(e) => setAnalyzeImages(e.target.checked)} className="h-4 w-4 rounded border-line accent-spark-500" />
+              Анализировать картинки в посте <span className="text-white/30">(vision опишет фото; расход ×N за изображение, нужен OPENAI_API_KEY)</span>
+            </label>
+          </div>
+        )}
+        {/* Вероятность — это «сколько из подходящих реально прокомментируем», то есть
+            объём, а не темп: место ей в лимитах, рядом с «сколько сделает аккаунт»
+            (правка 19.08). */}
+        {(cfg.probabilitySlider || cfg.reactionSettings) && !running && (
+          <div className="mb-3 rounded-2xl border border-line bg-elevated/40 p-3">
+            <div className="mb-1 flex justify-between text-sm text-muted">
+              <span>{cfg.probabilitySlider?.label ?? cfg.reactionSettings?.probability.label ?? 'Вероятность'}</span>
+              <span className="text-spark-300">{probability}%</span>
+            </div>
+            <input type="range" min={0} max={100} value={probability} onChange={(e) => setProbability(Number(e.target.value))} className="w-full accent-spark-500" />
+          </div>
+        )}
+        {hasLimits && (
+          <TimingSection
+            bare
+            part="limits"
+            workModeOptions={cfg.toggleGroups?.[1]?.options}
+            workMode={g(1)}
+            onWorkMode={(v) => setTg(1, v)}
+            workModeLabel={cfg.toggleGroups?.[1]?.label}
+            durationMinutes={durationMinutes}
+            onDuration={setDurationMinutes}
+            showDurationAlways={!!cfg.reactionSettings}
+            durationPeriodHint={`Период работы: ${durationPeriodMin}–${durationMinutes} мин`}
+            totalLabel={cfg.reactionSettings?.max.label ?? cfg.workModeFields?.maxLabel ?? 'Всего действий'}
+            computedTotal={{ value: maxActions, accounts: accCount }}
+            perAccount={{ min: minPerAcc, max: maxPerAcc, onMin: setMinPerAcc, onMax: setMaxPerAcc }}
+            minWords={cfg.workModeFields?.minWords ? { value: minWords, onChange: setMinWords } : null}
+            delays={delays}
+            onDelays={(updater) => setDelays(updater)}
+          />
+        )}
+      </SectionCard>
+      </div>
+      )}
+
+      {/* Промпты — ВЫШЕ защиты и таймингов (правка 19.08): сначала «что напишет»,
+          потом «насколько осторожно». Порядок читается как разговор: кому пишем →
+          что пишем → как аккуратно. */}
+      {showBlock('templates') && cfg.messagePrompts && (
+        <SectionCard icon={<Sparkles size={18} />} title="AI / промпты">
+          <div className="space-y-3">
+            <AiGenerationNotice />
+            <GlobalPromptEditor />
+            <PromptCards
+            moduleKey={moduleKey}
+            labels={cfg.messagePrompts}
+            activeIndex={activePrompt}
+            onActiveChange={setActivePrompt}
+            onBodiesChange={setPromptBodies}
+          />
+            {/* Распределение типов — часть промптов, а не лимитов (правка 19.08):
+                проценты делятся между теми самыми карточками промптов, что выше.
+                В «Параметрах и лимитах» блок стоял вдали от того, чем управляет. */}
+          {/* Объём задачи: режим работы, сколько сделает аккаунт, минимум слов. Раньше это
+            жило внутри «Таймингов» вместе с задержками — то есть «сколько» и «как быстро»
+            стояли в одной куче (правка 19.08). */}
+        {/* Распределение типов — везде, где есть карточки промптов (правка 19.08).
+            Раньше блок жил только у нейрокомментинга, хотя набор промптов такой же у
+            чаттинга, диалогов и мейлинга — там молча работал один и тот же тип. */}
+        {showBlock('templates') && !running && (cfg.messagePrompts?.length ?? 0) > 0 && (
+            <div className="mb-3 rounded-2xl border border-line bg-elevated/40 p-3">
+              <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+                <span className="text-sm font-semibold text-fg">Распределение типов</span>
+                <div className="flex items-center gap-2">
+                  <span className={`rounded-md px-2 py-0.5 text-xs font-bold ${weightSum === 100 ? 'bg-spark-500/15 text-spark-300' : weightSum > 100 ? 'bg-rose-500/15 text-rose-300' : 'bg-amber-500/15 text-amber-300'}`}>
+                    сумма {weightSum}%
+                  </span>
+                  {weightSum !== 100 && (
+                    <button type="button" onClick={() => balanceTypeWeights()} className="rounded-md border border-line px-2 py-0.5 text-[11px] font-semibold text-spark-300 hover:bg-elevated">поровну</button>
+                  )}
+                </div>
+              </div>
+              <div className="grid gap-2 sm:grid-cols-2">
+                {(cfg.messagePrompts ?? []).map((label, i) => {
+                  const val = typeWeights[i] ?? 0
+                  const share = weightSum > 0 ? Math.round((val / weightSum) * 100) : 0
+                  const locked = !!lockedWeights[i]
+                  const count = cfg.messagePrompts?.length ?? 0
+                  return (
+                    <div key={i} className="rounded-xl border border-line bg-surface/40 p-2">
+                      <div className="mb-1.5 flex items-center gap-2">
+                        <span className="min-w-0 flex-1 truncate text-xs font-medium text-fg">{label}</span>
+                        {/* §13 (MR-61): замок закрепляет значение — при изменении других оно не
+                            трогается; редактировать закреплённое можно, сняв замок. */}
+                        <button type="button" onClick={() => toggleWeightLock(i)}
+                          title={locked ? 'Открепить значение' : 'Закрепить: не менять при перераспределении'}
+                          className={cn('grid h-7 w-7 shrink-0 place-items-center rounded-md border', locked ? 'border-spark-500/50 bg-spark-500/10 text-spark-300' : 'border-line text-white/40 hover:text-white/70')}>
+                          {locked ? <Lock size={13} /> : <LockOpen size={13} />}
+                        </button>
+                        {/* §13 (MR-60/61): ввод незакреплённого значения авто-перераспределяет
+                            остаток между другими незакреплёнными; сумма всегда ≤ 100%. */}
+                        <div className="flex shrink-0 items-center gap-1">
+                          <input
+                            type="number" min={0} max={100} inputMode="numeric" disabled={locked}
+                            className="input h-7 w-16 text-center text-sm [appearance:textfield] disabled:opacity-50 [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+                            value={val}
+                            // Клик по полю выделяет значение целиком: иначе ввод дописывался
+                            // к нулю и получалось «012», «055» вместо «12», «55».
+                            onFocus={(e) => e.currentTarget.select()}
+                            onChange={(e) => {
+                              // Срезаем ведущие нули — «07» это 7, а не 07.
+                              const n = Number(e.target.value.replace(/^0+(?=\d)/, '')) || 0
+                              setTypeWeights((w) => {
+                                const base = w.length === count ? w : equalize(count)
+                                // §13 (уточнение): сохраняем залоченные И ранее введённые (touched) поля;
+                                // остаток делят только НЕтронутые незалоченные.
+                                const pinned = base.map((_, j) => j !== i && (!!lockedWeights[j] || !!touchedWeights[j]))
+                                return redistribute(base, i, n, pinned)
+                              })
+                              // §13: это поле теперь «тронуто» — при следующих правках его не перезапишем.
+                              setTouchedWeights((t) => { const nt = [...t]; nt[i] = true; return nt })
+                            }} />
+                          <span className="text-[11px] text-white/40">%</span>
+                        </div>
+                      </div>
+                      <div className="h-1.5 overflow-hidden rounded-full bg-line"><div className={cn('h-full rounded-full transition-all', locked ? 'bg-spark-400' : 'bg-spark-500')} style={{ width: `${share}%` }} /></div>
+                    </div>
+                  )
+                })}
+              </div>
+              <p className="mt-2 text-[11px] text-white/40">Ввод значения авто-раскидывает остаток по незакреплённым (§13). Замок — закрепить долю. «Поровну» — поделить незакреплённые одинаково.</p>
+            </div>
+          )}
+          </div>
+        </SectionCard>
+      )}
+
+      {showBlock('templates') && cfg.reactionPalette && (
+        <SectionCard icon={<Heart size={18} />} title="Эмодзи">
+          <div className="flex flex-wrap gap-2">
+            {cfg.reactionPalette.map((e) => (
+              <button key={e} type="button" onClick={() => { const n = new Set(palette); n.has(e) ? n.delete(e) : n.add(e); setPalette(n) }} className={`grid h-11 w-11 place-items-center rounded-xl border text-xl ${palette.has(e) ? 'border-spark-500/50 bg-spark-500/12' : 'border-line bg-elevated'}`}>{e}</button>
+            ))}
+          </div>
+        </SectionCard>
+      )}
+
       {/* Правка 14.08: для ПРОГРЕВА блок «Защита» не показываем — он дублировал «Уровень
           прогрева» (уровень уже задаёт безопасный темп и множитель пауз). Базовая защита
           (FloodWait→пауза→карантин) работает на бэкенде и без UI-блока. QA §8, вариант а. */}
       {showBlock('settings') && !cfg.warmingLayout && (cfg.aiProtection || cfg.richLayout || cfg.lookingLayout || isGgr) && (
         <div id="sec-settings" className="scroll-mt-24">
-        <SectionCard icon={<Settings2 size={18} />} title={cfg.settingsTitle ?? 'Защита'} badge={targets.length ? `${targets.length} целей` : undefined}>
-          {cfg.aiProtection && <ProtectionBlock enabled={aiProtect} onEnabled={setAiProtect} level={protLevel} onLevel={setProtLevel} />}
+        {/* Тот же компонент, что в мейлинге, автопостинге, нейродиалогах и парсерах:
+            один вид и один порядок полей во всех модулях (правка 19.08). */}
+        <ProtectionTimings
+          badge={targets.length ? `${targets.length} целей` : undefined}
+        >
+          {/* Пресеты темпа и «Расширенные настройки» — первым делом в блоке. */}
+          {!isParser && !isGgr && !cfg.warmingLayout && (
+          <TimingSection
+            bare
+            part="delays"
+            workModeOptions={cfg.toggleGroups?.[1]?.options}
+            workMode={g(1)}
+            onWorkMode={(v) => setTg(1, v)}
+            workModeLabel={cfg.toggleGroups?.[1]?.label}
+            durationMinutes={durationMinutes}
+            onDuration={setDurationMinutes}
+            showDurationAlways={!!cfg.reactionSettings}
+            durationPeriodHint={`Период работы: ${durationPeriodMin}–${durationMinutes} мин`}
+            totalLabel={cfg.reactionSettings?.max.label ?? cfg.workModeFields?.maxLabel ?? 'Всего действий'}
+            computedTotal={{ value: maxActions, accounts: accCount }}
+            perAccount={{ min: minPerAcc, max: maxPerAcc, onMin: setMinPerAcc, onMax: setMaxPerAcc }}
+            minWords={cfg.workModeFields?.minWords ? { value: minWords, onChange: setMinWords } : null}
+            delays={delays}
+            onDelays={(updater) => setDelays(updater)}
+            showComment={!!cfg.richLayout && !cfg.reactionSettings && moduleKey === 'neuro-commenting'}
+            showAction={!(cfg.richLayout && !cfg.reactionSettings && moduleKey === 'neuro-commenting')}
+            showJoin
+            labels={{ action: cfg.reactionSettings ? 'Задержка между реакциями' : 'Задержка действия', join: 'Задержка вступления' }}
+            delayPresets={cfg.delayPresets ?? ['Агрессивный', 'Сбалансированный', 'Консервативный']}
+            delayPreset={delayPreset}
+            onDelayPreset={setDelayPreset}
+          />
+          )}
 
           {/* MR-134: галочка вкл/выкл уведомлений о статусе ЭТОЙ задачи (ошибка/пауза) в колокольчике. */}
           <label className="mt-3 flex cursor-pointer items-start gap-2 rounded-xl border border-line/60 bg-elevated/40 px-3 py-2.5">
@@ -479,20 +743,26 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
           {cfg.reactionSettings ? (
             <div className="space-y-4 rounded-2xl border border-line bg-elevated/40 p-4">
               <ToggleGroup label="Режим" options={cfg.reactionSettings.modes} value={g(0)} onChange={(v) => setTg(0, v)} />
-              <div>
-                <div className="mb-1 flex justify-between text-sm text-muted"><span>{cfg.reactionSettings.probability.label}</span><span className="text-spark-300">{probability}%</span></div>
-                <input type="range" min={0} max={100} value={probability} onChange={(e) => setProbability(Number(e.target.value))} className="w-full accent-spark-500" />
-              </div>
+              {g(0) === 0 ? (
+                <p className="text-xs text-muted">
+                  Реакции только на посты, вышедшие <b className="text-fg">после старта задачи</b>. Первый заход в канал
+                  запоминает последний пост и ничего не ставит — дальше реагируем на каждый новый.
+                </p>
+              ) : (
+                <div className="space-y-1">
+                  <NumberField label="Сколько последних постов" value={lastPostsCount} onChange={setLastPostsCount} min={1} max={20} />
+                  <p className="text-xs text-muted">Аккаунты разбирают N последних постов канала; один аккаунт — одна реакция на пост.</p>
+                </div>
+              )}
+              {/* Ползунок вероятности переехал в «Параметры и лимиты» — он про объём
+                  («сколько из подходящих реально сделаем»), а не про защиту. */}
             </div>
-          ) : cfg.toggleGroups ? (
+          ) : cfg.toggleGroups && moduleKey !== 'neuro-commenting' ? (
+            /* Отбор постов у нейрокомментинга живёт в «Параметрах и лимитах» — вплотную к
+               полю «сколько последних постов». Здесь для него не остаётся ничего, и рамка
+               рисовалась пустой полосой (правка 19.08). У остальных модулей группа тут. */
             <div className="rounded-2xl border border-line bg-elevated/40 p-4 space-y-4">
               <ToggleGroup label={cfg.toggleGroups[0].label} options={cfg.toggleGroups[0].options} value={g(0)} onChange={(v) => setTg(0, v)} />
-              {g(0) === 1 && <textarea value={keywords} onChange={(e) => setKeywords(e.target.value)} rows={2} className="input resize-none text-sm" placeholder="Ключевые слова через ; или с новой строки — крипта; p2p обмен" />}
-              <div>
-                <div className="mb-1 flex justify-between text-sm text-muted"><span>{cfg.probabilitySlider?.label ?? 'Вероятность'}</span><span className="text-spark-300">{probability}%</span></div>
-                <input type="range" min={0} max={100} value={probability} onChange={(e) => setProbability(Number(e.target.value))} className="w-full accent-spark-500" />
-              </div>
-              {cfg.toggleGroups[2] && <ToggleGroup label={cfg.toggleGroups[2].label} options={cfg.toggleGroups[2].options} value={g(2)} onChange={(v) => setTg(2, v)} />}
             </div>
           ) : isParser ? (
             <div className="space-y-3">
@@ -558,68 +828,13 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
           ) : (
             <p className="text-sm text-muted">{cfg.warmingLayout
               ? 'Темп и паузы задаёт «Уровень прогрева» — отдельная секция ниже.'
-              : 'Лимиты и задержки настраиваются в секции «Тайминги и задержки» ниже.'}</p>
+              : 'Лимиты и задержки — ниже в этом же блоке.'}</p>
           )}
-        </SectionCard>
+        </ProtectionTimings>
         </div>
       )}
 
-      {/* §3.1 (UI-002): промпты / уникальные параметры модуля — ПОСЛЕ блока «Настройки» (Защита + настройки модуля). */}
-      {showBlock('templates') && cfg.messagePrompts && (
-        <SectionCard icon={<Sparkles size={18} />} title="AI / промпты">
-          <div className="space-y-3">
-            <AiGenerationNotice />
-            <GlobalPromptEditor />
-            <PromptCards
-            moduleKey={moduleKey}
-            labels={cfg.messagePrompts}
-            activeIndex={activePrompt}
-            onActiveChange={setActivePrompt}
-            onBodiesChange={setPromptBodies}
-          />
-          </div>
-        </SectionCard>
-      )}
 
-      {showBlock('templates') && cfg.reactionPalette && (
-        <SectionCard icon={<Heart size={18} />} title="Эмодзи">
-          <div className="flex flex-wrap gap-2">
-            {cfg.reactionPalette.map((e) => (
-              <button key={e} type="button" onClick={() => { const n = new Set(palette); n.has(e) ? n.delete(e) : n.add(e); setPalette(n) }} className={`grid h-11 w-11 place-items-center rounded-xl border text-xl ${palette.has(e) ? 'border-spark-500/50 bg-spark-500/12' : 'border-line bg-elevated'}`}>{e}</button>
-            ))}
-          </div>
-        </SectionCard>
-      )}
-
-      {/* §3.1 (MR-100): «Тайминги и задержки» — ПЕРЕД нижней панелью запуска (§4: тайминги до запуска).
-          Блоки «Группы»/«Посты» перенесены ВЫШЕ — сразу после аккаунтов (порядок блоков = степпер). */}
-      {/* Правка 14.08: для ПРОГРЕВА «Тайминги и задержки» не показываем — темп/паузы задаёт
-          «Уровень прогрева», отдельные тайминги дублировали и путали (QA §8, вариант а). */}
-      {showBlock('settings') && !isParser && !isGgr && !cfg.warmingLayout && (cfg.aiProtection || cfg.richLayout || cfg.lookingLayout) && (
-        <TimingSection
-          workModeOptions={cfg.toggleGroups?.[1]?.options}
-          workMode={g(1)}
-          onWorkMode={(v) => setTg(1, v)}
-          workModeLabel={cfg.toggleGroups?.[1]?.label}
-          durationMinutes={durationMinutes}
-          onDuration={setDurationMinutes}
-          showDurationAlways={!!cfg.reactionSettings}
-          durationPeriodHint={`Период работы: ${durationPeriodMin}–${durationMinutes} мин`}
-          totalLabel={cfg.reactionSettings?.max.label ?? cfg.workModeFields?.maxLabel ?? 'Всего действий'}
-          computedTotal={{ value: maxActions, accounts: accCount }}
-          perAccount={{ min: minPerAcc, max: maxPerAcc, onMin: setMinPerAcc, onMax: setMaxPerAcc }}
-          minWords={cfg.workModeFields?.minWords ? { value: minWords, onChange: setMinWords } : null}
-          delays={delays}
-          onDelays={(updater) => setDelays(updater)}
-          showComment={!!cfg.richLayout && !cfg.reactionSettings && moduleKey === 'neuro-commenting'}
-          showAction={!(cfg.richLayout && !cfg.reactionSettings && moduleKey === 'neuro-commenting')}
-          showJoin
-          labels={{ action: cfg.reactionSettings ? 'Задержка между реакциями' : 'Задержка действия', join: 'Задержка вступления' }}
-          delayPresets={cfg.delayPresets ?? ['Агрессивный', 'Сбалансированный', 'Консервативный']}
-          delayPreset={delayPreset}
-          onDelayPreset={setDelayPreset}
-        />
-      )}
 
       {/* §3.5: «Уровень прогрева» — ОТДЕЛЬНЫЙ блок (как «Тайминги и задержки»), а не
           строчка внутри «Параметры и лимиты»: это главный выбор прогрева, ему нужен свой
@@ -645,180 +860,6 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
         </div>
       )}
 
-      {/* Заголовок не «Запуск»: так он дублировал последний шаг мастера. Здесь лежат
-          параметры и лимиты прогона, сама кнопка — в нижней панели. */}
-      {showBlock('run') && (
-      <div id="sec-run" className="scroll-mt-24">
-      <SectionCard icon={<Play size={18} />} title={running ? 'Выполнение' : 'Параметры и лимиты'} badge={running ? 'LIVE' : undefined}>
-        {limitWarn && !running && (
-          <div className="mb-3 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-300">⚠ {limitWarn}</div>
-        )}
-        {showBlock('settings') && moduleKey === 'neuro-commenting' && !running && (
-          <div className="mb-3">
-            <NumberField label="Сколько последних постов обрабатывать" value={postWindow} onChange={(n) => setPostWindow(Math.max(1, Math.min(50, n)))} min={1} max={50} suffix="1–50" />
-            <div className="mt-1 text-xs text-white/40">Сколько последних постов обрабатывать, не всю историю</div>
-            <div className="mt-3 mb-1 text-xs text-white/50">Стоп-слова <span className="text-white/30">(пропускать посты с этими словами; несколько — через точку с запятой «;»)</span></div>
-            <input value={stopWordsText} onChange={(e) => setStopWordsText(e.target.value)} className="input h-9" placeholder="политика; скам; крипта…" />
-            {/* §3.2 (UI-006): «Семантический фильтр к цели» / «Релевантность поста к цели» удалены по ТЗ 06.08. */}
-            {/* §10.5: анализ картинок в посте — vision опишет фото, коммент будет по сути
-                изображения, а не по «[медиа]». Расход дороже: наценка «картинка ×N» из админки. */}
-            <label className="mt-2 flex items-center gap-2 text-xs text-white/60">
-              <input type="checkbox" checked={analyzeImages} onChange={(e) => setAnalyzeImages(e.target.checked)} className="h-4 w-4 rounded border-line accent-spark-500" />
-              Анализировать картинки в посте <span className="text-white/30">(vision опишет фото; расход ×N за изображение, нужен OPENAI_API_KEY)</span>
-            </label>
-          </div>
-        )}
-        {showBlock('templates') && moduleKey === 'neuro-commenting' && !running && (cfg.messagePrompts?.length ?? 0) > 0 && (
-          <div className="mb-3 rounded-2xl border border-line bg-elevated/40 p-3">
-            <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
-              <span className="text-sm font-semibold text-fg">Распределение типов комментариев</span>
-              <div className="flex items-center gap-2">
-                <span className={`rounded-md px-2 py-0.5 text-xs font-bold ${weightSum === 100 ? 'bg-spark-500/15 text-spark-300' : weightSum > 100 ? 'bg-rose-500/15 text-rose-300' : 'bg-amber-500/15 text-amber-300'}`}>
-                  сумма {weightSum}%
-                </span>
-                {weightSum !== 100 && (
-                  <button type="button" onClick={() => balanceTypeWeights()} className="rounded-md border border-line px-2 py-0.5 text-[11px] font-semibold text-spark-300 hover:bg-elevated">поровну</button>
-                )}
-              </div>
-            </div>
-            <div className="grid gap-2 sm:grid-cols-2">
-              {(cfg.messagePrompts ?? []).map((label, i) => {
-                const val = typeWeights[i] ?? 0
-                const share = weightSum > 0 ? Math.round((val / weightSum) * 100) : 0
-                const locked = !!lockedWeights[i]
-                const count = cfg.messagePrompts?.length ?? 0
-                return (
-                  <div key={i} className="rounded-xl border border-line bg-surface/40 p-2">
-                    <div className="mb-1.5 flex items-center gap-2">
-                      <span className="min-w-0 flex-1 truncate text-xs font-medium text-fg">{label}</span>
-                      {/* §13 (MR-61): замок закрепляет значение — при изменении других оно не
-                          трогается; редактировать закреплённое можно, сняв замок. */}
-                      <button type="button" onClick={() => toggleWeightLock(i)}
-                        title={locked ? 'Открепить значение' : 'Закрепить: не менять при перераспределении'}
-                        className={cn('grid h-7 w-7 shrink-0 place-items-center rounded-md border', locked ? 'border-spark-500/50 bg-spark-500/10 text-spark-300' : 'border-line text-white/40 hover:text-white/70')}>
-                        {locked ? <Lock size={13} /> : <LockOpen size={13} />}
-                      </button>
-                      {/* §13 (MR-60/61): ввод незакреплённого значения авто-перераспределяет
-                          остаток между другими незакреплёнными; сумма всегда ≤ 100%. */}
-                      <div className="flex shrink-0 items-center gap-1">
-                        <input
-                          type="number" min={0} max={100} inputMode="numeric" disabled={locked}
-                          className="input h-7 w-16 text-center text-sm [appearance:textfield] disabled:opacity-50 [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
-                          value={val}
-                          // Клик по полю выделяет значение целиком: иначе ввод дописывался
-                          // к нулю и получалось «012», «055» вместо «12», «55».
-                          onFocus={(e) => e.currentTarget.select()}
-                          onChange={(e) => {
-                            // Срезаем ведущие нули — «07» это 7, а не 07.
-                            const n = Number(e.target.value.replace(/^0+(?=\d)/, '')) || 0
-                            setTypeWeights((w) => {
-                              const base = w.length === count ? w : equalize(count)
-                              // §13 (уточнение): сохраняем залоченные И ранее введённые (touched) поля;
-                              // остаток делят только НЕтронутые незалоченные.
-                              const pinned = base.map((_, j) => j !== i && (!!lockedWeights[j] || !!touchedWeights[j]))
-                              return redistribute(base, i, n, pinned)
-                            })
-                            // §13: это поле теперь «тронуто» — при следующих правках его не перезапишем.
-                            setTouchedWeights((t) => { const nt = [...t]; nt[i] = true; return nt })
-                          }} />
-                        <span className="text-[11px] text-white/40">%</span>
-                      </div>
-                    </div>
-                    <div className="h-1.5 overflow-hidden rounded-full bg-line"><div className={cn('h-full rounded-full transition-all', locked ? 'bg-spark-400' : 'bg-spark-500')} style={{ width: `${share}%` }} /></div>
-                  </div>
-                )
-              })}
-            </div>
-            <p className="mt-2 text-[11px] text-white/40">Ввод значения авто-раскидывает остаток по незакреплённым (§13). Замок — закрепить долю. «Поровну» — поделить незакреплённые одинаково.</p>
-          </div>
-        )}
-        {/* §10 (MR-49): выбор кампании и цели убран из модулей — эти разделы скрыты
-            из меню, и держать их выбор здесь было некуда. Задача запускается сама по
-            себе; привязка к кампании/цели приходит из настроек кампании при запуске
-            через неё (buildCampaignPlan прокидывает campaignId и goalId в settings).
-            Состояние campaignId/goalId оставлено: оно всё ещё уходит в задачу. */}
-        <LaunchPanel
-          running={running}
-          starting={starting}
-          canStart={canStart}
-          onStart={handleStart}
-          onStop={stop}
-          onSave={handleSave}
-          primaryLabel={cfg.primaryAction ?? 'Начать'}
-          cost={<LaunchCost compact moduleKey={moduleKey} actions={maxActions} accounts={selected.size} delaySec={(() => { const m = PRESET_MUL[delayPreset] ?? 1; const d = delays.action ?? delays.comment; return d ? [Math.round(d[0] * m), Math.round(d[1] * m)] as [number, number] : d })()} />}
-          stats={launchStats}
-          task={task}
-          warn={warn}
-          // Кнопка серая — прямо в панели говорим, ЧТО именно осталось заполнить,
-          // а не только баннером выше по странице (правка заказчика).
-          blockedBy={!running && !canStart
-            ? (goalExpired ? ['дедлайн цели истёк — продлите или уберите цель']
-              : typesOver100 ? [`сумма типов ${weightSum}% > 100 — уменьшите`]
-                : missingRequired)
-            : []}
-          // §11 (MR-55): шаги запуска — компактной строкой ПОД кнопкой запуска (а не
-          // большим блоком вверху страницы): всё видно сразу, без прокрутки.
-          steps={!running ? <LaunchSteps steps={launchSteps} /> : null}
-          presets={presets}
-          onApplyPreset={applyPreset}
-          onDeletePreset={deletePreset} onEditPreset={editPreset}
-          extras={(
-            <>
-              {/* §6: автоматизация прямо в модуле — запуск по времени, одно-/многоразово.
-                  Идёт в extras (перед плавающим баром), иначе рендерился бы под баром внизу экрана. */}
-              {!running && (
-                <div className="mt-3 rounded-xl border border-line bg-elevated/30">
-                  <button type="button" onClick={() => setSchedOpen((v) => !v)}
-                    className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm font-semibold text-muted hover:text-fg">
-                    <Clock size={15} className="text-iris-300" />
-                    Запуск по расписанию
-                    <span className="text-xs font-normal text-faint">— создать правило, не запуская сейчас</span>
-                    <span className="ml-auto text-xs text-faint">{schedOpen ? 'скрыть ▲' : 'настроить ▾'}</span>
-                  </button>
-                  {schedOpen && (
-                    <div className="space-y-3 border-t border-line px-3 pb-3 pt-3">
-                      <Segmented options={['Однократно', 'Ежедневно', 'Каждые N минут']} value={schedMode} onChange={setSchedMode} size="sm" />
-                      {schedMode === 0 && (
-                        <div>
-                          <div className="mb-1 text-xs text-white/50">Дата и время запуска</div>
-                          <input type="datetime-local" className="input h-9" value={schedAt} onChange={(e) => setSchedAt(e.target.value)} />
-                        </div>
-                      )}
-                      {schedMode === 1 && (
-                        <div>
-                          <div className="mb-1 text-xs text-white/50">Время ежедневного запуска</div>
-                          <input type="time" className="input h-9 w-32" value={schedTime} onChange={(e) => setSchedTime(e.target.value)} />
-                        </div>
-                      )}
-                      {schedMode === 2 && (
-                        <div>
-                          <div className="mb-1 text-xs text-white/50">Интервал (минуты)</div>
-                          <input type="number" min={1} className="input h-9 w-32" value={schedEvery} onChange={(e) => setSchedEvery(Math.max(1, Number(e.target.value) || 1))} />
-                        </div>
-                      )}
-                      <p className="text-[11px] text-white/40">
-                        Правило заберёт текущие настройки модуля{campaignId ? ' и кампанию' : ''}. Управление — в разделе «Автоматизация».
-                      </p>
-                      <button type="button" onClick={() => void createSchedule()} disabled={schedSaving || !canStart}
-                        className="btn-ghost h-9 text-sm disabled:opacity-40">
-                        <Clock size={14} /> {schedSaving ? 'Создание…' : 'Создать правило'}
-                      </button>
-                    </div>
-                  )}
-                </div>
-              )}
-
-              <div className="mt-4 flex flex-wrap items-center gap-3">
-                <a href={`/panel/tasks?module=${moduleKey}${task ? `&task=${task.id}` : ''}`} className="ml-auto inline-flex items-center gap-1 text-xs font-semibold text-spark-300 hover:underline" title="Открыть Дашборд задач, отфильтрованный по этому модулю">
-                  <Terminal size={13} /> Логи выполнения — в Дашборде задач <ArrowUpRight size={13} />
-                </a>
-              </div>
-            </>
-          )}
-        />
-      </SectionCard>
-      </div>
-      )}
 
       {/* §7: блок «История сообщений» убран. Результаты остаются только для парсера/проверки (GGR) —
           там это фактический вывод задачи. Логи выполнения — в Дашборде задач (ссылка выше). */}
@@ -851,32 +892,120 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
         </div>
       )}
 
-      {/* §7: «Выполнение» — статус текущей задачи + прыжок в Дашборд по этому модулю.
-          Раньше панель была `sticky bottom-0 z-30` и висела ПОВЕРХ плавающей панели
-          запуска (LaunchPanel/FloatingBar, тот же z-30): две панели дублировали статус,
-          а нижняя накрывала кнопку «Начать» — оператор видел зелёный обрезок и не мог
-          нажать. Обычный блок в потоке: панель запуска и так ходит за человеком,
-          дублировать её прилипанием незачем. */}
-      {showBlock('run') && (
-        <div className="mt-3 -mx-0.5 flex flex-wrap items-center gap-x-3 gap-y-1 rounded-xl border border-line bg-surface/60 px-4 py-2.5">
-          <span className={`h-2.5 w-2.5 shrink-0 rounded-full ${running ? 'animate-pulse bg-spark-400' : task?.status === 'done' ? 'bg-spark-500' : 'bg-faint'}`} />
-          <span className="text-sm font-semibold text-fg">
-            {running
-              ? `Выполняется · ${progressDone}${task?.progress?.total ? ` / ${task.progress.total}` : ''}`
-              : task?.status === 'done' ? 'Завершено' : 'Готов к запуску'}
-          </span>
-          {selected.size > 0 && <span className="text-xs text-muted">· {selected.size} акк.</span>}
-          {/* Что мешает запуску — теперь в нижней панели рядом с кнопкой; здесь это
-              дублировало то же сообщение вторым текстом. */}
-          <a
-            href={`/panel/tasks?module=${moduleKey}${task ? `&task=${task.id}` : ''}`}
-            className="ml-auto inline-flex items-center gap-1 text-xs font-semibold text-spark-300 hover:underline"
-            title="Открыть задачи этого модуля в Дашборде"
-          >
-            <Terminal size={13} /> Задачи модуля в Дашборде <ArrowUpRight size={13} />
-          </a>
-        </div>
-      )}
+      {/* Статус задачи со страницы модуля УБРАН (правка 19.08). Модуль — это форма
+          запуска: настроил и нажал. Всё, что происходит после запуска — прогресс,
+          «Завершено», логи, стоп и пауза — живёт в Дашборде задач, и держать вторую
+          витрину статуса значило показывать одно и то же в двух местах и чинить
+          рассинхрон между ними. Ссылка на задачи модуля осталась в панели запуска. */}
+      {/* Плавающая панель запуска — ПОСЛЕДНИЙ элемент страницы: её заглушка
+          резервирует место внизу, и бар «отрывается» ко дну экрана. Подними её
+          выше — заглушка встанет в середину, а бар задвоится.  */}
+      {/* §10 (MR-49): выбор кампании и цели убран из модулей — эти разделы скрыты
+          из меню, и держать их выбор здесь было некуда. Задача запускается сама по
+          себе; привязка к кампании/цели приходит из настроек кампании при запуске
+          через неё (buildCampaignPlan прокидывает campaignId и goalId в settings).
+          Состояние campaignId/goalId оставлено: оно всё ещё уходит в задачу. */}
+      {showBlock('run') && (() => {
+        // Панель запуска одна на все модули. Разница только в оформлении: там, где
+        // карточка «Параметры и лимиты» уже показана выше (нейрокомментинг), панель
+        // идёт голой; где своих параметров нет (прогрев, масслукинг и др.) — она
+        // оформляется той же карточкой, как было до переноса 19.08.
+        const panel = (
+          <LaunchPanel
+            running={running}
+            starting={starting}
+            canStart={canStart}
+            onStart={handleStart}
+            onStop={stop}
+            onSave={handleSave}
+            primaryLabel={cfg.primaryAction ?? 'Начать'}
+            cost={<LaunchCost compact moduleKey={moduleKey} actions={maxActions} accounts={selected.size} delaySec={(() => { const m = PRESET_MUL[delayPreset] ?? 1; const d = delays.action ?? delays.comment; return d ? [Math.round(d[0] * m), Math.round(d[1] * m)] as [number, number] : d })()} />}
+            stats={launchStats}
+            task={task}
+            warn={warn}
+            // Кнопка серая — прямо в панели говорим, ЧТО именно осталось заполнить,
+            // а не только баннером выше по странице (правка заказчика).
+            blockedBy={!running && !canStart
+              ? (goalExpired ? ['дедлайн цели истёк — продлите или уберите цель']
+                : typesOver100 ? [`сумма типов ${weightSum}% > 100 — уменьшите`]
+                  : missingRequired)
+              : []}
+            // §11 (MR-55): шаги запуска — компактной строкой ПОД кнопкой запуска (а не
+            // большим блоком вверху страницы): всё видно сразу, без прокрутки.
+            steps={!running ? <LaunchSteps steps={launchSteps} /> : null}
+            presets={presets}
+            onApplyPreset={applyPreset}
+            extras={(
+              <>
+                {/* §6: автоматизация прямо в модуле — запуск по времени, одно-/многоразово.
+                    Идёт в extras (перед плавающим баром), иначе рендерился бы под баром внизу экрана. */}
+                {!running && (
+                  <div className="mt-3 rounded-xl border border-line bg-elevated/30">
+                    <button type="button" onClick={() => setSchedOpen((v) => !v)}
+                      className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm font-semibold text-muted hover:text-fg">
+                      <Clock size={15} className="text-iris-300" />
+                      Запуск по расписанию
+                      <span className="text-xs font-normal text-faint">— создать правило, не запуская сейчас</span>
+                      <span className="ml-auto text-xs text-faint">{schedOpen ? 'скрыть ▲' : 'настроить ▾'}</span>
+                    </button>
+                    {schedOpen && (
+                      <div className="space-y-3 border-t border-line px-3 pb-3 pt-3">
+                        <Segmented options={['Однократно', 'Ежедневно', 'Каждые N минут']} value={schedMode} onChange={setSchedMode} size="sm" />
+                        {schedMode === 0 && (
+                          <div>
+                            <div className="mb-1 text-xs text-white/50">Дата и время запуска</div>
+                            <input type="datetime-local" className="input h-9" value={schedAt} onChange={(e) => setSchedAt(e.target.value)} />
+                          </div>
+                        )}
+                        {schedMode === 1 && (
+                          <div>
+                            <div className="mb-1 text-xs text-white/50">Время ежедневного запуска</div>
+                            <input type="time" className="input h-9 w-32" value={schedTime} onChange={(e) => setSchedTime(e.target.value)} />
+                          </div>
+                        )}
+                        {schedMode === 2 && (
+                          <div>
+                            <div className="mb-1 text-xs text-white/50">Интервал (минуты)</div>
+                            <input type="number" min={1} className="input h-9 w-32" value={schedEvery} onChange={(e) => setSchedEvery(Math.max(1, Number(e.target.value) || 1))} />
+                          </div>
+                        )}
+                        <p className="text-[11px] text-white/40">
+                          Правило заберёт текущие настройки модуля{campaignId ? ' и кампанию' : ''}. Управление — в разделе «Автоматизация».
+                        </p>
+                        <button type="button" onClick={() => void createSchedule()} disabled={schedSaving || !canStart}
+                          className="btn-ghost h-9 text-sm disabled:opacity-40">
+                          <Clock size={14} /> {schedSaving ? 'Создание…' : 'Создать правило'}
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                )}
+  
+                <div className="mt-4 flex flex-wrap items-center gap-3">
+                  <a href={`/panel/tasks?module=${moduleKey}${task ? `&task=${task.id}` : ''}`} className="ml-auto inline-flex items-center gap-1 text-xs font-semibold text-spark-300 hover:underline" title="Открыть Дашборд задач, отфильтрованный по этому модулю">
+                    <Terminal size={13} /> Логи выполнения — в Дашборде задач <ArrowUpRight size={13} />
+                  </a>
+                </div>
+              </>
+            )}
+          />
+        )
+        if (hasParamsCard) return panel
+        return (
+          <div id="sec-run" className="scroll-mt-24">
+          <SectionCard icon={<Play size={18} />} title="Параметры и лимиты">
+          {limitWarn && !running && (
+            <div className="mb-3 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-300">⚠ {limitWarn}</div>
+          )}
+          <p className="mb-3 text-sm text-muted">{cfg.warmingLayout
+            ? 'Темп и паузы задаёт «Уровень прогрева» — секция выше.'
+            : 'Лимиты и задержки — в блоке «Защита и тайминги» выше.'}</p>
+            {panel}
+          </SectionCard>
+          </div>
+        )
+      })()}
+
     </div>
   )
 }

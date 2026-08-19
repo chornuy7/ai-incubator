@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
-import { ListChecks, RefreshCw, Square, RotateCw, Target, Activity, Gauge, Pause, Play, Loader2, ArrowLeft, Download, AlertTriangle } from 'lucide-react'
+import { ListChecks, RefreshCw, Square, RotateCw, Target, Activity, Gauge, Pause, Play, Loader2, ArrowLeft, Download, AlertTriangle, Clock } from 'lucide-react'
 import { useApp } from '@/mocks/store'
 import { PageHeader, Card, EmptyState, Badge, Select } from '@/shared/ui'
 import { HelpButton } from '@/features/neuro-commenting/moduleUi'
@@ -21,6 +21,7 @@ import { canControlModule } from '@/shared/lib/access'
 import { downloadXls } from '@/shared/lib/exportXls'
 import { useTabParam } from '@/shared/lib/useTabParam'
 import { AccountPicker } from '@/features/account-picker/AccountPicker'
+import { PRESET_MUL } from '@/features/modules/shared/TimingSection'
 
 const STATUS: Record<string, { label: string; tone: 'spark' | 'iris' | 'amber' | 'rose' | 'muted' }> = {
   running: { label: 'Выполняется', tone: 'spark' },
@@ -50,6 +51,65 @@ function pct(t: ModuleTask) {
   return total > 0 ? Math.min(100, Math.round((done / total) * 100)) : 0
 }
 const isActive = (t: ModuleTask) => t.status === 'running' || t.status === 'queued'
+
+// MR-109 (ТЗ 06.08, TASK-001): ETA — сколько ещё бежать РАБОТАЮЩЕЙ задаче.
+//
+// Считаем НЕ по факту (прошедшее время / сделано): задачу могли создать вчера, поставить
+// на паузу и возобновить сегодня — тогда «прошедшее время» это сутки простоя, а не работы,
+// и ETA получался бы абсурдным («≈ 24 ч» на прогрев из двух действий). Считаем по ТЕМПУ
+// самого модуля — так же, как оценка времени в панели ДО запуска (§10.1), она стабильна и
+// не зависит от пауз воркера:
+//  - прогрев меряется днями: уровень задаёт «действий/день на аккаунт» (см. ниже);
+//  - остальные модули — «остаток действий × средняя задержка между действиями».
+// Остаток делится между аккаунтами: они работают параллельно. Показываем только у running
+// и только когда есть чем считать; иначе null (не врём «0 с»).
+
+// Прогрев: уровень → действий/день на аккаунт. ДОЛЖНО совпадать с сервером
+// (server/lib/workerLoop.js warmingPace: 0→40, 1→20, 2→10).
+const WARM_ACTIONS_PER_DAY = [40, 20, 10]
+// Дефолтная задержка между действиями, сек — та же, что в LiveModule DEFAULT_DELAYS.action.
+// Нужна как запасной темп для СТАРЫХ задач, у которых в settings задержки не сохранены
+// (тогда без фолбэка ETA не считался вовсе). У свежих задач задержки свои — берутся они.
+const DEFAULT_ACTION_DELAY: [number, number] = [30, 120]
+
+// Статусы, для которых ETA имеет смысл: работа ещё не завершена. У running — время до
+// конца, у queued/paused/stopped — прогноз «при запуске». done/error — считать нечего.
+const ETA_STATUSES = new Set(['running', 'queued', 'paused', 'stopped'])
+function taskEtaMs(t: ModuleTask): number | null {
+  if (!ETA_STATUSES.has(t.status)) return null
+  const done = t.progress?.done ?? t.progress?.actionsDone ?? 0
+  const total = t.progress?.total ?? 0
+  if (total <= done) return null
+  const s = t.settings || {}
+  const accounts = Math.max(1, (s.accountIds || []).length)
+  const perAccRemaining = Math.ceil((total - done) / accounts)
+  // Прогрев: темп задаётся уровнем в действиях/день, а не задержкой между действиями.
+  if (t.moduleKey === 'warming') {
+    const perDay = WARM_ACTIONS_PER_DAY[s.warmLevel ?? 1] ?? 20
+    return perDay > 0 ? Math.round((perAccRemaining / perDay) * 86400 * 1000) : null
+  }
+  // Остальные модули: остаток × средняя задержка (та же формула, что в панели до запуска).
+  // Нет сохранённых задержек (старая задача) — берём дефолтный темп модуля, чтобы ETA
+  // всё же показать примерным, а не прятать его совсем.
+  const d = s.delays?.action ?? s.delays?.comment ?? DEFAULT_ACTION_DELAY
+  const mul = PRESET_MUL[s.delayPreset ?? 1] ?? 1
+  const avgDelaySec = ((d[0] + d[1]) / 2) * mul
+  return avgDelaySec > 0 ? Math.round(perAccRemaining * avgDelaySec * 1000) : null
+}
+
+/** Секунды → человекочитаемо: «45 с», «12 мин», «6 ч 20 мин», «5 дн 4 ч» (как в панели запуска). */
+function fmtDur(sec: number): string {
+  const s = Math.max(0, Math.round(sec))
+  if (s < 60) return `${s} с`
+  const m = Math.round(s / 60)
+  if (m < 60) return `${m} мин`
+  const h = Math.floor(m / 60)
+  const rm = m % 60
+  if (h < 24) return rm ? `${h} ч ${rm} мин` : `${h} ч`
+  const dd = Math.floor(h / 24)
+  const rh = h % 24
+  return rh ? `${dd} дн ${rh} ч` : `${dd} дн`
+}
 
 /** Проблемные аккаунты задачи: сколько, из скольких и ЧТО именно не так у каждого. */
 type TaskProblem = { bad: number; total: number; items: { name: string; reason: string }[] }
@@ -588,21 +648,27 @@ export function TasksPage() {
               </div>
               <div className="h-1.5 overflow-hidden rounded bg-white/10"><div className="h-full rounded bg-iris-500 transition-all" style={{ width: `${g.prog}%` }} /></div>
               <div className="mt-1 text-[11px] text-white/40">Прогресс к цели: {g.prog}%</div>
-              <div className="mt-2 flex flex-wrap items-start gap-1.5">
-                {g.tasks.map((t) => <div key={`${t.moduleKey}:${t.id}`} className="min-w-0 basis-full sm:grow sm:basis-[calc(50%-0.1875rem)]"><TaskCard t={t} goalName={null} busy={busy} busyAction={busyAction} pendingAction={pending[t.id]?.action} onOpen={openTask} onStop={doStop} onRestart={doRestart} onPause={doPause} onResume={doResume} canControl={canControl(t)} problem={taskProblems(t)} compact /></div>)}
+              {/* Тот же приём внутри цели: строки + равная высота, порядок слева направо. */}
+              <div className="mt-2 grid items-stretch gap-1.5 sm:grid-cols-2">
+                {g.tasks.map((t) => <div key={`${t.moduleKey}:${t.id}`} className="min-w-0"><TaskCard t={t} goalName={null} busy={busy} busyAction={busyAction} pendingAction={pending[t.id]?.action} onOpen={openTask} onStop={doStop} onRestart={doRestart} onPause={doPause} onResume={doResume} canControl={canControl(t)} problem={taskProblems(t)} compact /></div>)}
               </div>
             </Card>
           ))}
         </div>
         )
       ) : (
-        // Правка 14.08: карточки раскладываются flex'ом, а не гридом. Грид держит все
-        // карточки строки одной высоты и одного шага, и когда одна из них пустая
-        // (остановленная задача без прогресса), соседняя визуально «поднимается» — правая
-        // читается как стоящая ПЕРЕД левой, хотя порядок обратный. Flex с `items-start`
-        // даёт каждой карточке свою высоту. На сортировку не влияет.
-        <div className="flex flex-wrap items-start gap-2">
-          {filtered.map((t) => <div key={`${t.moduleKey}:${t.id}`} className="min-w-0 basis-full lg:grow lg:basis-[calc(50%-0.25rem)]"><TaskCard t={t} goalName={goalName(t.goalId)} busy={busy} busyAction={busyAction} pendingAction={pending[t.id]?.action} onOpen={openTask} onStop={doStop} onRestart={doRestart} onPause={doPause} onResume={doResume} canControl={canControl(t)} selected={selected.has(t.id)} onToggleSelect={toggleSel} problem={taskProblems(t)} /></div>)}
+        // Раскладка: СТРОКИ, порядок слева направо (правка 18.08, вторая итерация).
+        //
+        // Колонки укладывали карточки без дыр, но ломали чтение: правая колонка
+        // начинается с СЕРЕДИНЫ списка, и отсортированный по статусу дашборд выглядит
+        // перемешанным. Порядок здесь важнее плотности — по нему ищут задачу.
+        //
+        // Дыры убраны иначе: карточки в строке тянутся до общей высоты (`items-stretch`
+        // у грида + `h-full` у карточки). Пустое место оказывается ВНУТРИ карточки, под
+        // её фоном, а не провалом между блоками — визуально это ровная сетка, а не
+        // рваная кладка.
+        <div className="grid items-stretch gap-2 lg:grid-cols-2">
+          {filtered.map((t) => <div key={`${t.moduleKey}:${t.id}`} className="min-w-0"><TaskCard t={t} goalName={goalName(t.goalId)} busy={busy} busyAction={busyAction} pendingAction={pending[t.id]?.action} onOpen={openTask} onStop={doStop} onRestart={doRestart} onPause={doPause} onResume={doResume} canControl={canControl(t)} selected={selected.has(t.id)} onToggleSelect={toggleSel} problem={taskProblems(t)} /></div>)}
         </div>
       )}
     </div>
@@ -681,7 +747,7 @@ function TaskCard({ t, goalName, busy, busyAction, pendingAction, onOpen, onStop
   const running = isActive(t) || !!pendingAction
   const ringColor = pendingAction ? STATUS_COLOR.stopped : (STATUS_COLOR[t.status] || '#94a3b8')
   return (
-    <Card className={compact ? 'bg-elevated/40 p-2.5' : 'p-3'}>
+    <Card className={cn('flex h-full flex-col', compact ? 'bg-elevated/40 p-2.5' : 'p-3')}>
       <div className="flex items-center gap-3">
       {onToggleSelect && (
         <input
@@ -708,6 +774,12 @@ function TaskCard({ t, goalName, busy, busyAction, pendingAction, onOpen, onStop
               а «сколько стоила вот эта задача» — первый вопрос при разборе счёта. */}
           {!!t.spentCoins && <span className="tabular-nums text-amber-300/80" title="Потрачено монет на эту задачу">⚡ {fmtCoins(t.spentCoins)}</span>}
           <span>{new Date(t.createdAt).toLocaleString('ru-RU', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}</span>
+          {/* MR-109: ETA — прогноз оставшегося времени. У работающей задачи (зелёным) —
+              время до конца; у остановленной/на паузе (приглушённо, «при запуске») — сколько
+              займёт, если её запустить/возобновить. Не показываем у готовых и с ошибкой. */}
+          {(() => { const e = taskEtaMs(t); if (e == null) return null; const run = t.status === 'running'; return (
+            <span className={cn('inline-flex items-center gap-1 tabular-nums', run ? 'text-emerald-300/80' : 'text-white/35')} title={run ? 'Прогноз времени до завершения — по текущему темпу' : 'Сколько ещё займёт задача, если её запустить/возобновить'}><Clock size={11} /> ≈ {fmtDur(e / 1000)}{run ? '' : ' при запуске'}</span>
+          ) })()}
         </div>
       </div>
       </button>
@@ -719,7 +791,7 @@ function TaskCard({ t, goalName, busy, busyAction, pendingAction, onOpen, onStop
       {t.status === 'error' && (
         <div className="mt-2.5 rounded-xl border border-rose-500/25 bg-rose-500/[.07] p-3">
           <div className="mb-1 flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wide text-rose-300"><AlertTriangle size={12} /> Ошибка задачи</div>
-          <div className="max-h-24 overflow-y-auto whitespace-pre-wrap break-words text-xs leading-relaxed text-rose-200/90">{t.lastError || 'Задача завершилась с ошибкой — подробности в логах задачи.'}</div>
+          <div className="max-h-24 overflow-y-auto whitespace-pre-wrap break-words text-xs leading-relaxed text-rose-200/90">{t.fatalError || t.lastError || 'Задача завершилась с ошибкой — подробности в логах задачи.'}</div>
         </div>
       )}
       {/* MR-146: warning-система — если аккаунты задачи отвалились, показываем второй блок
@@ -1025,6 +1097,11 @@ export function TaskDetailPage() {
             {/* MR-147: «Модуль» и «Потрачено» перенесены сюда, к прогрессу. */}
             <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-sm text-white/60">
               <span>{t.progress?.done ?? t.progress?.actionsDone ?? 0} / {t.progress?.total ?? 0} действий</span>
+              {/* MR-109: ETA — у работающей задачи время до конца (зелёным), у остановленной/
+                  на паузе прогноз «при запуске» (приглушённо). */}
+              {(() => { const e = taskEtaMs(t); if (e == null) return null; const run = t.status === 'running'; return (
+                <span className={cn('inline-flex items-center gap-1 tabular-nums', run ? 'text-emerald-300/80' : 'text-white/40')} title={run ? 'Прогноз времени до завершения — по текущему темпу' : 'Сколько ещё займёт задача, если её запустить/возобновить'}><Clock size={13} /> ≈ {fmtDur(e / 1000)}{run ? '' : ' при запуске'}</span>
+              ) })()}
               {/* Голая цифра «⚡ 0.00» ни о чём не говорила — подписываем, что это расход
                   ИМЕННО этой задачи (из общего баланса он не читается). */}
               <span className="inline-flex items-baseline gap-1 tabular-nums text-amber-300/80" title={t.tokenCoins ? `${fmtCoins(t.spentCoins || 0)} ⚡ за действия + ${fmtCoins(t.tokenCoins)} ⚡ за ИИ` : undefined}>

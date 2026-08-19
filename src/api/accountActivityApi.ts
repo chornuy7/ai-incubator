@@ -3,7 +3,14 @@ import { apiGet, apiPost } from './client'
 /** §4 (D1/D3): состояние усталости одного аккаунта — общее для всех модулей. */
 export interface AccountActivity {
   fatigue: number
+  /** Порог усталости — действий до отдыха. */
   threshold: number
+  /** Отдых после переутомления, минут. */
+  restMinutes: number
+  /** Восстановление — единиц усталости за час. */
+  recoveryPerHour: number
+  /** Когда снова сможет работать (мс). 0 — может прямо сейчас. */
+  freeAt: number
   restUntil: number
   actionsTotal: number
   resting: boolean

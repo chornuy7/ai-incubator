@@ -82,6 +82,10 @@ importRouter.post('/run', async (req, res) => {
   try {
     const items = Array.isArray(req.body?.items) ? req.body.items : []
     if (!items.length) return res.status(400).json({ ok: false, error: 'Нечего импортировать' })
+    // Импортируем В ПРОСТРАНСТВО: аккаунт достаётся владельцу, даже если файлы залил суб.
+    const me = req.header('x-user-id')
+    const { resolveSubscriptionOwner } = await import('./users.js')
+    const ownerId = me ? await resolveSubscriptionOwner(me) : ''
     const { proxyMode = 'pool', proxyIds = [], singleProxy = '', manualProxies = [], validate = true, passcode = '', root = '' } = req.body ?? {}
 
     // На проде импорт с диска сервера запрещён (см. localFsAllowed): единственный
@@ -126,7 +130,7 @@ importRouter.post('/run', async (req, res) => {
       // Дубли прокси разрешены, «нехватки» больше нет; риск без прокси показан в UI.
       const proxy = assigned[i]
       try {
-        const r = await importOne(it, { proxy, validate, passcode })
+        const r = await importOne(it, { proxy, validate, passcode, ownerId })
         results.push({ name: it.name, proxy: proxy || null, ...r })
       } catch (e) {
         results.push({ name: it.name, ok: false, reason: e instanceof Error ? e.message : 'ошибка импорта' })

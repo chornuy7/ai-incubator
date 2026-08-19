@@ -70,7 +70,7 @@ test('запрос без пользователя не забирает мон�
  */
 test('открыты только оплаченные модули', async () => {
   const B = await fresh()
-  await B.setModules(['neuro-chatting', 'mailing'], 'usr_x')
+  await B.setUserModules(['neuro-chatting', 'mailing'], 'usr_x')
   const { modules } = await B.getBalance('usr_x')
   assert.deepEqual(modules, ['neuro-chatting', 'mailing'])
   assert.equal(B.modulesAllow(modules, 'neuro-chatting'), true)
@@ -78,11 +78,27 @@ test('открыты только оплаченные модули', async () =
   assert.equal(B.modulesAllow(modules, 'neuro-commenting'), false, 'за него не платили')
 })
 
-test('пока набор не выбран — открыто всё: выкатка не должна запирать текущих клиентов', async () => {
+/**
+ * Решение 18.08 (отменяет прежнее «пока набор не выбран — открыто всё»).
+ *
+ * Прежнее правило берегло клиентов при выкатке, когда пространство было одно — наше.
+ * С самостоятельными регистрациями оно стало раздачей: КАЖДЫЙ, у кого нет своей записи,
+ * получал общий набор пространства. На проде так жили 56 из 65 аккаунтов, и новый
+ * зарегистрированный видел все 14 модулей, не заплатив ничего.
+ */
+test('нет своей подписки — нет модулей: набор пространства не раздаётся всем подряд', async () => {
   const B = await fresh()
+  await B.setModules(['mailing', 'warming'], 'usr_owner') // общий набор пространства
   const { modules } = await B.getBalance('usr_new')
-  assert.equal(modules, 'all')
-  assert.equal(B.modulesAllow(modules, 'mailing'), true)
+  assert.deepEqual(modules, [], 'чужой человек не получает наш набор просто фактом регистрации')
+  assert.equal(B.modulesAllow(modules, 'mailing'), false)
+})
+
+test('дев без сессии по-прежнему работает с общим набором', async () => {
+  const B = await fresh()
+  await B.setModules('all', undefined, {})
+  const { modules } = await B.getBalance() // нет userId — локальный запуск/демо
+  assert.equal(modules, 'all', 'иначе дев-режим остался бы без модулей')
 })
 
 /**
@@ -90,24 +106,23 @@ test('пока набор не выбран — открыто всё: выка�
  * пер-юзерно, у сотрудника не было своей записи, он получал 'all' и запускал все
  * 14 модулей при двух оплаченных.
  */
-test('подписка общая на пространство, а монеты — личные', async () => {
+test('модули берутся из своей подписки, а монеты — свои у каждого', async () => {
   const B = await fresh()
-  await B.setModules(['mailing'], 'usr_owner')
+  await B.setUserModules(['mailing'], 'usr_owner')
   await B.changeCoins(10, 'пополнение', 'usr_owner')
 
   assert.deepEqual((await B.getBalance('usr_owner')).modules, ['mailing'])
-  assert.deepEqual((await B.getBalance('usr_worker')).modules, ['mailing'], 'сотрудник работает внутри купленного владельцем')
-  assert.equal((await B.getBalance('usr_worker')).coins, 0, 'а монеты у него свои')
   assert.equal((await B.getBalance('usr_owner')).coins, 10)
-
-  // Смена набора владельцем видна сотруднику сразу — запись одна.
-  await B.setModules(['neuro-chatting'], 'usr_owner')
-  assert.deepEqual((await B.getBalance('usr_worker')).modules, ['neuro-chatting'])
+  // Посторонний (не суб этого владельца) не получает ни его модулей, ни его монет.
+  // Наследование набора СУБОМ от владельца проверяется в subUsers.test.js — там есть
+  // настоящая связь parentId, а здесь у id нет профиля вовсе.
+  assert.deepEqual((await B.getBalance('usr_worker')).modules, [])
+  assert.equal((await B.getBalance('usr_worker')).coins, 0)
 })
 
 test('дубли в выборе схлопываются', async () => {
   const B = await fresh()
-  await B.setModules(['mailing', 'mailing', 'warming'], 'usr_c')
+  await B.setUserModules(['mailing', 'mailing', 'warming'], 'usr_c')
   assert.deepEqual((await B.getBalance('usr_c')).modules, ['mailing', 'warming'])
 })
 
@@ -137,17 +152,17 @@ test('totalCoins: сумма по всем пользователям, служ�
  */
 test('свой набор перекрывает общий, соседи не задеты', async () => {
   const B = await fresh()
-  await B.setModules(['mailing'], 'usr_owner') // общий набор пространства
-  await B.setUserModules(['neuro-chatting'], 'usr_client') // клиент купил своё
+  await B.setUserModules(['mailing'], 'usr_owner')
+  await B.setUserModules(['neuro-chatting'], 'usr_client')
 
   assert.deepEqual((await B.getBalance('usr_client')).modules, ['neuro-chatting'], 'клиент видит купленное лично')
-  assert.deepEqual((await B.getBalance('usr_worker')).modules, ['mailing'], 'без личной покупки — общий набор')
   assert.deepEqual((await B.getBalance('usr_owner')).modules, ['mailing'], 'владелец не задет чужой покупкой')
+  assert.deepEqual((await B.getBalance('usr_worker')).modules, [], 'третий не получает ни того, ни другого')
 
-  // Смена общего набора не трогает личный.
-  await B.setModules(['warming'], 'usr_owner')
+  // Смена своего набора соседей не трогает.
+  await B.setUserModules(['warming'], 'usr_owner')
   assert.deepEqual((await B.getBalance('usr_client')).modules, ['neuro-chatting'])
-  assert.deepEqual((await B.getBalance('usr_worker')).modules, ['warming'])
+  assert.deepEqual((await B.getBalance('usr_owner')).modules, ['warming'])
 })
 
 /**

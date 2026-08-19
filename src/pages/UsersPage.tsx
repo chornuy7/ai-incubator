@@ -144,13 +144,17 @@ export function UsersPage() {
   const [open, setOpen] = useState(false)
   const [form, setForm] = useState<{ email: string; name: string; password: string; roleIds: string[]; balanceMode: 'shared' | 'individual'; tokenLimit: string }>({ email: '', name: '', password: '', roleIds: ['role_moderator'], balanceMode: 'shared', tokenLimit: '' })
   const [saving, setSaving] = useState(false)
+  // Правка 18.08: страница «Пользователи» — про СВОЮ команду. Раньше админу сюда
+  // валился весь список платформы (65 юзеров, из них 59 чужих регистраций).
+  // Управление всеми осталось, но включается явно и только у админа.
+  const [scopeAll, setScopeAll] = useState(false)
 
   async function load() {
     setLoading(true)
     try {
       // §5.4 (MR-37): группы и аккаунты пула — чтобы владелец мог выдавать их субам.
       const [us, rs, wt, gr, accs] = await Promise.all([
-        fetchUsers(), fetchRoles(), fetchWorktime().catch(() => ({})),
+        fetchUsers(scopeAll ? 'all' : 'mine'), fetchRoles(), fetchWorktime().catch(() => ({})),
         fetchAccountGroups().then((r) => r.groups).catch(() => []),
         fetchAccounts().catch(() => []),
       ])
@@ -158,7 +162,7 @@ export function UsersPage() {
     } catch (e) { setErr(e instanceof Error ? e.message : 'Ошибка загрузки') }
     finally { setLoading(false) }
   }
-  useEffect(() => { void load() }, [])
+  useEffect(() => { void load() }, [scopeAll])
 
   // §5.4 (MR-37): владелец раздаёт субам СВОИ группы (созданные им) + «общие» без владельца.
   const myGroups = useMemo(
@@ -205,11 +209,24 @@ export function UsersPage() {
     <div>
       <PageHeader
         title="Пользователи"
-        subtitle="Операторы панели и их роли. Главный админ назначает роль и включает/отключает доступ."
+        subtitle={scopeAll
+          ? 'Все пользователи платформы — режим администратора.'
+          : 'Ваша команда: субпользователи и их роли. Роль назначает и доступ включает владелец пространства.'}
         icon={<Users2 size={22} />}
         badge={users.length ? `${users.length}` : undefined}
         actions={
           <div className="flex items-center gap-2">
+            {sessionUser?.isAdmin && (
+              <button
+                type="button"
+                onClick={() => setScopeAll((v) => !v)}
+                title={scopeAll ? 'Показывать только свою команду' : 'Показать всех пользователей платформы (доступно администратору)'}
+                className={cn('h-10 rounded-xl border px-3 text-sm font-medium transition-colors',
+                  scopeAll ? 'border-iris-500/50 bg-iris-500/15 text-iris-200' : 'border-line text-white/60 hover:text-white')}
+              >
+                {scopeAll ? 'Вся платформа' : 'Только моя команда'}
+              </button>
+            )}
             <HelpButton topic="rbac-roles" className="h-10 w-10" />
             <button onClick={() => setOpen(true)} className="btn-primary h-10"><Plus size={16} /> Новый пользователь</button>
           </div>
@@ -227,13 +244,19 @@ export function UsersPage() {
           {users.map((u) => {
             const roleIds = u.roleIds?.length ? u.roleIds : (u.roleId ? [u.roleId] : [])
             const isAdmin = roleIds.includes(ADMIN_BYPASS_ID)
-            const locked = u.id === 'usr_admin' // встроенного главного админа не трогаем
+            // Своя карточка — не объект управления (правка 18.08): роли ограничивают
+            // СОТРУДНИКА, а владелец и так работает без ограничений. Раньше здесь стояли
+            // кликабельные чипы, и попытка выдать роль себе упиралась в отказ сервера
+            // «Можно управлять только своими субпользователями» — выглядело как поломка.
+            const isMe = u.id === sessionUser?.id
+            const locked = u.id === 'usr_admin' || isMe // встроенного главного админа и себя не трогаем
             return (
               <Card key={u.id} className="flex flex-wrap items-center gap-3 p-3">
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-2">
                     <span className="truncate text-sm font-medium text-fg">{u.name}</span>
                     {isAdmin && <Badge tone="iris">Админ</Badge>}
+                    {isMe && !isAdmin && <Badge tone="spark">Вы</Badge>}
                     {!u.active && <Badge tone="rose">Отключён</Badge>}
                   </div>
                   <div className="truncate text-xs text-white/50">{u.email}</div>
@@ -249,7 +272,9 @@ export function UsersPage() {
 
                 <div className="flex items-center gap-2">
                   {locked ? (
-                    <span className="flex items-center gap-1.5 rounded-lg bg-iris-500/10 px-3 py-2 text-xs text-iris-200"><ShieldCheck size={14} /> Полный доступ</span>
+                    <span className="flex items-center gap-1.5 rounded-lg bg-iris-500/10 px-3 py-2 text-xs text-iris-200">
+                      <ShieldCheck size={14} /> {isMe && !isAdmin ? 'Вы · владелец пространства' : 'Полный доступ'}
+                    </span>
                   ) : (
                     <div className="flex flex-col items-end gap-1">
                       <RolePicker roles={roles} value={roleIds} onChange={(ids) => void assignRoles(u, ids)} />

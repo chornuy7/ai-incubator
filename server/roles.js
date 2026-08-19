@@ -448,6 +448,37 @@ function mergeItem(map, key, value) {
   map[key] = value
 }
 
+/**
+ * Полные права «без ограничений ролью» — для того, у кого роли нет вовсе.
+ *
+ * Правка 18.08. `null` в правах на сервере означал «не ограничен», а на клиенте
+ * `can(null, …)` возвращает false — то есть ровно противоположное. Из-за расхождения
+ * человек, зарегистрировавшийся сам и оплативший модули, не видел в меню НИЧЕГО:
+ * подписка есть, «оплачен» стоит, а слева пусто (прогон 18.08, аккаунт Test Purchases).
+ *
+ * Отдаём явный объект: все модули и разделы разрешены. Что именно окажется в меню,
+ * дальше решает ПОДПИСКА — неоплаченные модули отсекаются отдельной осью.
+ * Субпользователям это не выдаётся: сотрудник без роли прав не получает.
+ */
+export function unrestrictedPermissions(moduleKeys = []) {
+  const modules = {}
+  for (const k of moduleKeys) modules[k] = ALLOW
+  // Блоки именуются «модуль:блок» (`neuro-chatting:run`), а не просто «run»: право
+  // выдаётся на блок КОНКРЕТНОГО модуля. Плоские ключи, выданные здесь поначалу, не
+  // совпадали ни с чем — владелец видел «доступ к модулю есть, но не выдан ни один
+  // блок» на пустой странице (прогон 18.08).
+  const blocks = {}
+  for (const m of moduleKeys) for (const b of BLOCKS) blocks[`${m}:${b.key}`] = ALLOW
+  const sections = {}
+  for (const s of SECTIONS) sections[s.key] = ALLOW
+  return {
+    modules,
+    blocks,
+    sections,
+    resources: { accounts: {}, accountGroups: {}, folders: {}, channels: {}, folderChannels: {}, timers: ALLOW, searchTemplates: ALLOW, allTasks: ALLOW },
+  }
+}
+
 export function mergePermissions(roles = []) {
   const resources = { accounts: {}, accountGroups: {}, folders: {}, channels: {}, folderChannels: {}, timers: DENY, searchTemplates: DENY, allTasks: DENY }
   const merged = { modules: {}, blocks: {}, sections: {}, resources }

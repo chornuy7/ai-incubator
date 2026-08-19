@@ -50,6 +50,10 @@ export interface TgAccount {
   statusUntil?: number | null
   /** Почему статус выставлен — показывается подсказкой в менеджере. */
   statusReason?: string
+  /** MR: когда аккаунт последний раз явно проверяли на живость (?verify). null — ни разу. */
+  lastCheckedAt?: number | null
+  /** MR: результат последней явной проверки — true жив, false не ответил, null не проверяли. */
+  lastCheckOk?: boolean | null
   /** Аккаунт занят задачей другого (или этого) модуля. taskStatus — running/paused/… */
   busyIn?: { moduleKey: string; taskId: string; moduleLabel: string; taskStatus?: string }
 }

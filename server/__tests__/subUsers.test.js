@@ -155,3 +155,72 @@ test('requesterContext: нет заголовка → дев/полный дос
 
   delete process.env.USERS_FILE
 })
+
+/**
+ * Область видимости списка пользователей (правка 18.08).
+ *
+ * Баг: на странице «Пользователи» рабочей панели админу отдавался ВЕСЬ список
+ * платформы — 65 человек, из которых 59 чужих самостоятельных регистраций. Своё
+ * рабочее пространство и управление платформой оказались на одном экране.
+ *
+ * Правило теперь одно для всех: по умолчанию видно себя и своих субов. Полный список —
+ * только по явному запросу `scope=all` и только админу.
+ */
+function visibleUsers(users, ctx, scope) {
+  const wantAll = String(scope || '') === 'all' && (ctx.noSession || ctx.isAdmin)
+  return wantAll ? users : users.filter((u) => u.parentId === ctx.id)
+}
+
+test('список пользователей: по умолчанию даже админ видит только своих', () => {
+  const users = [
+    { id: 'usr_admin' },
+    { id: 'usr_sub', parentId: 'usr_admin' },
+    { id: 'usr_stranger' },
+    { id: 'usr_stranger_sub', parentId: 'usr_stranger' },
+  ]
+  const asAdmin = visibleUsers(users, { id: 'usr_admin', isAdmin: true })
+  assert.deepEqual(asAdmin.map((u) => u.id), ['usr_sub'],
+    'только свои сотрудники: ни чужих регистраций, ни собственной карточки')
+})
+
+test('список пользователей: scope=all открывает платформу — но только админу', () => {
+  const users = [{ id: 'usr_admin' }, { id: 'usr_stranger' }]
+  assert.equal(visibleUsers(users, { id: 'usr_admin', isAdmin: true }, 'all').length, 2,
+    'админ не должен терять управление платформой — оно стало явным')
+  assert.deepEqual(
+    visibleUsers(users, { id: 'usr_stranger', isAdmin: false }, 'all').map((u) => u.id),
+    [],
+    'обычный владелец не открывает чужих подбором параметра в адресе',
+  )
+})
+
+/**
+ * MR-28: «суб получает доступ только к оплаченным владельцем модулям».
+ * Проверка из карточки: выдать субу модуль вне пула владельца — недоступен.
+ *
+ * Баг 18.08: суб без ЛИЧНОЙ подписки проваливался на общий набор `workspace`, а не на
+ * набор владельца. На проде это означало 14 модулей у суба против 3 оплаченных
+ * владельцем — включая тот, что был выдан ему ролью, но никем не куплен.
+ */
+test('набор модулей суба берётся у владельца, а не из общего набора пространства', async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'sub-modules-'))
+  process.env.USERS_FILE = path.join(dir, 'users.json')
+  process.env.BALANCE_FILE = path.join(dir, 'balance.json')
+
+  const { createUser } = await import('../users.js')
+  const { setUserModules, setModules, getBalance } = await import('../balance.js')
+
+  const owner = await createUser({ email: 'own2@x.y', password: 'secret1', name: 'Владелец', roleIds: [] })
+  const sub = await createUser({ email: 'sub2@x.y', password: 'secret1', name: 'Суб', parentId: owner.id, roleIds: [] })
+
+  // Пространство «оплатило» много, владелец лично — только два модуля.
+  await setModules(['mailing', 'warming', 'neuro-commenting', 'parsing'], undefined, {})
+  await setUserModules(['warming', 'parsing'], owner.id, {})
+
+  const balSub = await getBalance(sub.id)
+  assert.deepEqual([...balSub.modules].sort(), ['parsing', 'warming'],
+    'суб не должен получать модули, которых владелец не покупал')
+
+  const balOwner = await getBalance(owner.id)
+  assert.deepEqual([...balOwner.modules].sort(), ['parsing', 'warming'], 'у владельца — его собственный набор')
+})

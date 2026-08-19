@@ -1,28 +1,22 @@
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import {
-  Sparkles, Search, MessagesSquare, Mail, Users,
-  RefreshCw, Loader2, ChevronDown, ExternalLink,
-  Check, Image as ImageIcon,
+  Sparkles, MessagesSquare, Mail, Users,
+  ChevronDown, Check, Image as ImageIcon,
 } from 'lucide-react'
 import { MODULES } from '@/shared/config/modules'
 import { isHidden } from '@/shared/config/routes'
 import { useApp } from '@/mocks/store'
-import { Avatar, Badge, Switch, Select, Segmented } from '@/shared/ui'
+import { Badge, Switch, Select, Segmented } from '@/shared/ui'
 import { AccountPicker } from '@/features/account-picker/AccountPicker'
 import { fetchGoals, type Goal } from '@/api/goalsApi'
 import { fetchPricing } from '@/api/balanceApi'
-import { upsertLead } from '@/api/leadsApi'
 import { cn } from '@/shared/lib/utils'
-import { promptDialog } from '@/shared/lib/dialog'
-import {
-  fetchInbox,
-  fetchMessages,
-  sendDialogMessage,
-  markDialogRead,
-  type InboxDialog,
-  type DialogMessage,
-} from '@/api/neuroDialogsApi'
+// Из API диалогов модулю нужен только СПИСОК: он показывает сводку «сколько диалогов и
+// непрочитанных», а читают и отвечают руками на «Обзоре аккаунта».
+import { fetchInbox, type InboxDialog } from '@/api/neuroDialogsApi'
 import { useModuleTask } from '@/features/modules/shared/useModuleTask'
+import { PresetBar } from '@/features/modules/shared/PresetBar'
+import { SavePresetModal } from '@/features/modules/shared/SavePresetModal'
 import {
   SectionCard,
   HelpButton,
@@ -32,15 +26,12 @@ import {
   markCurrentStep,
   PromptCards,
   loadPromptBodies,
-  ProtectionBlock,
+  ProtectionTimings,
   AiGenerationNotice,
-  TimingSection,
   TaskStartedModal,
   type DelaysShape,
 } from '@/features/modules/shared'
 import type { ModuleTaskSettings } from '@/api/modulesApi'
-import { ConversationBubble } from '@/features/conversation/ConversationBubble'
-import { ReplyBox } from '@/features/conversation/ReplyBox'
 
 const cfg = MODULES['neuro-dialogs']!
 
@@ -49,56 +40,8 @@ const GOAL_ID_KEY = 'neuro-dialogs:goalId'
 const SCOPE_KEY = 'neuro-dialogs:replyAll'
 const IMG_KEY = 'neuro-dialogs:analyzeImages' // §10.5
 
-function peerRef(d: Pick<InboxDialog, 'peerId' | 'accessHash' | 'username'>) {
-  return { peerId: d.peerId, accessHash: d.accessHash, username: d.username || undefined }
-}
 
-function avatarColor(name: string) {
-  const palette = ['#7145ff', '#06b6d4', '#0ec464', '#f59e0b', '#ec4899', '#229ED9']
-  let h = 0
-  for (let i = 0; i < name.length; i++) h = (h + name.charCodeAt(i) * 17) % palette.length
-  return palette[h]
-}
 
-const DialogRow = memo(function DialogRow({
-  d,
-  active,
-  onClick,
-}: {
-  d: InboxDialog
-  active: boolean
-  onClick: () => void
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      style={{ contentVisibility: 'auto', containIntrinsicSize: '0 72px' }}
-      className={cn(
-        'flex w-full items-center gap-3 border-b border-line/50 p-3 text-left transition-colors hover:bg-elevated',
-        active && 'bg-iris-500/10',
-        d.error && 'opacity-60',
-      )}
-    >
-      <Avatar name={d.name} color={avatarColor(d.name)} size={42} />
-      <div className="min-w-0 flex-1">
-        <div className="flex items-center justify-between gap-2">
-          <span className="truncate text-sm font-bold text-fg">{d.name}</span>
-          <span className="shrink-0 text-[11px] text-faint">{d.time}</span>
-        </div>
-        <div className="truncate text-xs text-muted">{d.last || '—'}</div>
-        <div className="truncate text-[11px] text-iris-300/80">
-          {d.accountName}{d.username ? ` · @${d.username}` : ''}
-        </div>
-      </div>
-      {d.unread > 0 && (
-        <span className="grid h-5 min-w-[20px] shrink-0 place-items-center rounded-full bg-rose-500 px-1 text-[11px] font-bold text-white">
-          {d.unread > 99 ? '99+' : d.unread}
-        </span>
-      )}
-    </button>
-  )
-})
 
 
 export function NeuroDialogsModule() {
@@ -141,32 +84,10 @@ export function NeuroDialogsModule() {
     floodQuarantine: 3,
   })
 
-  const [search, setSearch] = useState('')
   const [dialogs, setDialogs] = useState<InboxDialog[]>([])
-  const [inboxLoading, setInboxLoading] = useState(false)
-  const [activeKey, setActiveKey] = useState<string | null>(null)
-  const [messages, setMessages] = useState<DialogMessage[]>([])
-  const [msgsLoading, setMsgsLoading] = useState(false)
-  const [reply, setReply] = useState('')
-  const [sending, setSending] = useState(false)
 
-  const msgCache = useRef<Map<string, DialogMessage[]>>(new Map())
-  const scrollRef = useRef<HTMLDivElement>(null)
   const accountIds = useMemo(() => [...selected], [selected])
 
-  const activeDialog = useMemo(
-    () => dialogs.find((d) => d.key === activeKey) ?? null,
-    [dialogs, activeKey],
-  )
-
-  const filtered = useMemo(() => {
-    const q = search.trim().toLowerCase()
-    if (!q) return dialogs
-    return dialogs.filter(
-      (d) =>
-        `${d.name} ${d.last} ${d.username} ${d.accountName}`.toLowerCase().includes(q),
-    )
-  }, [dialogs, search])
 
   const totalUnread = useMemo(() => dialogs.reduce((s, d) => s + (d.unread || 0), 0), [dialogs])
 
@@ -222,13 +143,11 @@ export function NeuroDialogsModule() {
     pushToast({ type: 'success', title: 'Шаблон применён' })
   }, [pushToast])
 
-  const loadInbox = useCallback(async (silent = false) => {
+  const loadInbox = useCallback(async () => {
     if (!accountIds.length) {
       setDialogs([])
-      msgCache.current.clear()
       return
     }
-    if (!silent) setInboxLoading(true)
     try {
       const res = await fetchInbox(accountIds, 120)
       setDialogs(res.dialogs.filter((d) => !d.error))
@@ -238,84 +157,10 @@ export function NeuroDialogsModule() {
         title: 'Не удалось загрузить диалоги',
         desc: err instanceof Error ? err.message : 'Ошибка',
       })
-    } finally {
-      if (!silent) setInboxLoading(false)
     }
   }, [accountIds, pushToast])
 
-  const openDialog = useCallback(async (d: InboxDialog) => {
-    if (d.error || !d.peerId) return
-    setActiveKey(d.key)
-    setDialogs((list) => list.map((x) => (x.key === d.key ? { ...x, unread: 0 } : x)))
 
-    // Кэш показываем СРАЗУ (чтобы не мигало пустотой), но обязательно идём за свежими.
-    // Раньше при наличии кэша стоял `return` и переписка не перезапрашивалась НИКОГДА:
-    // кэш чистился только при смене набора аккаунтов, кнопка обновления освежала лишь
-    // список слева. В итоге слева появлялось «📷 Фото 18:07», а справа висела старая
-    // лента — оператор не видел входящих, хотя бэкенд их отдавал (прогон 21–22.07,
-    // тест 4.6). Приходилось перезагружать всю страницу и заново выбирать аккаунт.
-    const cached = msgCache.current.get(d.key)
-    if (cached) {
-      setMessages(cached)
-      requestAnimationFrame(() => scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight }))
-    }
-
-    if (!cached) setMsgsLoading(true)
-    try {
-      const res = await fetchMessages(d.accountId, peerRef(d), 80)
-      msgCache.current.set(d.key, res.messages)
-      setMessages(res.messages)
-      void markDialogRead(d.accountId, peerRef(d)).catch(() => {})
-      requestAnimationFrame(() => scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight }))
-    } catch (err) {
-      pushToast({
-        type: 'error',
-        title: 'Ошибка загрузки переписки',
-        desc: err instanceof Error ? err.message : 'Ошибка',
-      })
-      setMessages([])
-    } finally {
-      setMsgsLoading(false)
-    }
-  }, [pushToast])
-
-  const send = useCallback(async () => {
-    if (!reply.trim() || !activeDialog?.peerId) return
-    const text = reply.trim()
-    setSending(true)
-    setReply('')
-    try {
-      const res = await sendDialogMessage(activeDialog.accountId, peerRef(activeDialog), text)
-      setMessages((prev) => {
-        const next = [...prev, res.message]
-        msgCache.current.set(activeDialog.key, next)
-        return next
-      })
-      setDialogs((list) =>
-        list.map((d) => (d.key === activeDialog.key ? { ...d, last: text, time: 'сейчас' } : d)),
-      )
-      // §9: авто-попадание лида в CRM — раз мы ведём диалог под целью, фиксируем контакт.
-      // Статус только вперёд (не откатит уже прогретого/горячего). Fire-and-forget.
-      if (goalId) {
-        void upsertLead({
-          peer: activeDialog.username || String(activeDialog.peerId),
-          goalId,
-          accountId: activeDialog.accountId,
-          status: 'contacted',
-        }).catch(() => {})
-      }
-      requestAnimationFrame(() => scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight }))
-    } catch (err) {
-      setReply(text)
-      pushToast({
-        type: 'error',
-        title: 'Не отправлено',
-        desc: err instanceof Error ? err.message : 'Ошибка',
-      })
-    } finally {
-      setSending(false)
-    }
-  }, [reply, activeDialog, pushToast, goalId])
 
   useEffect(() => {
     void loadInbox()
@@ -323,15 +168,24 @@ export function NeuroDialogsModule() {
 
   useEffect(() => {
     if (!accountIds.length) return
-    const t = setInterval(() => void loadInbox(true), 25_000)
+    const t = setInterval(() => void loadInbox(), 25_000)
     return () => clearInterval(t)
   }, [accountIds.length, loadInbox])
 
   const canStart = accountIds.length > 0
 
+  // §10: сохранение через модалку (имя + цвет + владелец), как в остальных модулях.
+  const [presetModalOpen, setPresetModalOpen] = useState(false)
+  const handleSavePreset = () => setPresetModalOpen(true)
+
   return (
     <div className="space-y-4">
       <TaskStartedModal task={justStarted} moduleTitle={cfg.title} onClose={dismissJustStarted} />
+      <SavePresetModal open={presetModalOpen} onClose={() => setPresetModalOpen(false)}
+        onSave={(name, color, owner) => savePreset(name, buildSettings(), color, owner)} />
+      {/* ТЗ 06.08 §10: выбор шаблона — вверху, до всех настроек (TPL-001). */}
+      <PresetBar presets={presets} onApply={applyPreset} onSave={handleSavePreset}
+        onEdit={editPreset} onDelete={deletePreset} disabled={running} />
       <div id="sec-accounts" className="scroll-mt-24">
         <AccountPicker
           selected={selected}
@@ -339,6 +193,44 @@ export function NeuroDialogsModule() {
           actions={cfg.accountActions}
           withFilters={!!cfg.accountFilters}
           selectedTitle={cfg.selectedTitle ?? 'Выбрано'}
+        />
+      </div>
+
+      {/* Промпты — выше защиты и таймингов, как во всех модулях (правка 19.08). */}
+      {cfg.messagePrompts && (
+        <SectionCard icon={<Sparkles size={18} />} title="AI / промпты">
+          <div className="space-y-3">
+            <AiGenerationNotice />
+            <PromptCards
+              moduleKey="neuro-dialogs"
+              labels={cfg.messagePrompts}
+              activeIndex={activePrompt}
+              onActiveChange={setActivePrompt}
+              onBodiesChange={setPromptBodies}
+            />
+          </div>
+        </SectionCard>
+      )}
+
+      {/* §3 (MR-113 · 17.08): «Защита аккаунтов» — ОТДЕЛЬНЫМ блоком, как во всех модулях
+          (раньше была вложена внутрь «ИИ авто-ответы» — расходилось с единой структурой). */}
+      <div id="sec-protect" className="scroll-mt-24">
+        {/* Один блок на все модули (правка 19.08): защита и задержки — одно решение. */}
+        <ProtectionTimings
+          timing={{
+            totalLabel: 'Ответов за запуск',
+            total: { min: minActions, max: maxActions, onMin: setMinActions, onMax: setMaxActions },
+            perAccount: { min: minPerAcc, max: maxPerAcc, onMin: setMinPerAcc, onMax: setMaxPerAcc },
+            delays,
+            onDelays: (updater) => setDelays(updater),
+            showComment: false,
+            showAction: true,
+            showJoin: false,
+            labels: { action: 'Задержка между ответами' },
+            delayPresets: ['Агрессивный', 'Сбалансированный', 'Консервативный'],
+            delayPreset,
+            onDelayPreset: setDelayPreset,
+          }}
         />
       </div>
 
@@ -360,8 +252,6 @@ export function NeuroDialogsModule() {
         </div>
         {aiOpen && (
           <div className="space-y-4 border-t border-line p-4">
-            {/* §3 (MR-113): «Защита аккаунтов» — первой в настройках ИИ-ответов. */}
-            <ProtectionBlock enabled={aiProtect} onEnabled={setAiProtect} level={protLevel} onLevel={setProtLevel} />
             <Switch
               checked={aiEnabled}
               onChange={setAiEnabled}
@@ -435,7 +325,7 @@ export function NeuroDialogsModule() {
               Авто-режим (кнопка «Начать») отвечает {replyAll
                 ? <b className="text-fg">всем, кто написал последним</b>
                 : <b className="text-fg">только на непрочитанные входящие ЛС</b>} выбранных аккаунтов — сам первым никому не пишет.
-              Без ключа OpenAI ответы будут шаблонными и цель диалога учтена не будет. <b className="text-fg">Переписки</b> ниже — ручной инбокс: читайте и отвечайте руками.
+              Без ключа OpenAI ответы будут шаблонными и цель диалога учтена не будет. Переписки читайте и отвечайте вручную в <b className="text-fg">«Обзоре аккаунта»</b>.
             </p>
             {replyAll && (
               <p className="rounded-xl border border-amber-500/30 bg-amber-500/8 px-3 py-2 text-xs leading-relaxed text-amber-200/90">
@@ -447,22 +337,6 @@ export function NeuroDialogsModule() {
           </div>
         )}
       </div>
-
-      {/* §3 (MR-113 · ND-001): AI / промпты — ОТДЕЛЬНЫМ блоком, отдельно от настроек ИИ-ответов. */}
-      {cfg.messagePrompts && (
-        <SectionCard icon={<Sparkles size={18} />} title="AI / промпты">
-          <div className="space-y-3">
-            <AiGenerationNotice />
-            <PromptCards
-              moduleKey="neuro-dialogs"
-              labels={cfg.messagePrompts}
-              activeIndex={activePrompt}
-              onActiveChange={setActivePrompt}
-              onBodiesChange={setPromptBodies}
-            />
-          </div>
-        </SectionCard>
-      )}
 
       {/* §9: сколько сообщений ведём с ОДНИМ лидом — переключатель режима. */}
       <SectionCard icon={<MessagesSquare size={18} />} title="Переписка с одним лидом" id="sec-settings">
@@ -492,134 +366,17 @@ export function NeuroDialogsModule() {
         </div>
       </SectionCard>
 
-      <TimingSection
-        totalLabel="Ответов за запуск"
-        total={{ min: minActions, max: maxActions, onMin: setMinActions, onMax: setMaxActions }}
-        perAccount={{ min: minPerAcc, max: maxPerAcc, onMin: setMinPerAcc, onMax: setMaxPerAcc }}
-        delays={delays}
-        onDelays={(updater) => setDelays(updater)}
-        showComment={false}
-        showAction
-        showJoin={false}
-        labels={{ action: 'Задержка между ответами' }}
-        delayPresets={['Агрессивный', 'Сбалансированный', 'Консервативный']}
-        delayPreset={delayPreset}
-        onDelayPreset={setDelayPreset}
-      />
-
       <p className="rounded-xl border border-line bg-elevated/60 px-3 py-2 text-xs leading-relaxed text-muted">
         «Ответов за запуск» и «На аккаунт» — это диапазон: воркер берёт случайное число между «от» и «до» (для маскировки под живого человека).
         Если поставить «от» = 0, задача может случайно завершиться после первого же ответа. По умолчанию «от» = «до», то есть лимит фиксированный.
       </p>
 
-      <div id="nd-dialogs-anchor" className="scroll-mt-4" />
-        <div className="card grid min-h-[520px] gap-0 overflow-hidden p-0 lg:grid-cols-[minmax(280px,340px)_1fr]">
-          <div className="flex flex-col border-b border-line lg:border-b-0 lg:border-r">
-            <div className="flex items-center gap-2 border-b border-line p-3">
-              <div className="relative min-w-0 flex-1">
-                <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted" />
-                <input
-                  value={search}
-                  onChange={(e) => setSearch(e.target.value)}
-                  className="input h-9 w-full pl-9 text-sm"
-                  placeholder="Поиск диалогов…"
-                />
-              </div>
-              <button
-                type="button"
-                onClick={() => void loadInbox()}
-                disabled={inboxLoading || !accountIds.length}
-                className="btn-icon h-9 w-9 shrink-0"
-                title="Обновить"
-              >
-                {inboxLoading ? <Loader2 size={16} className="animate-spin" /> : <RefreshCw size={15} />}
-              </button>
-              <HelpButton topic="НейроДиалоги" className="h-9 w-9" />
-            </div>
-
-            <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain lg:max-h-[calc(100vh-280px)]">
-              {!accountIds.length ? (
-                <p className="p-6 text-center text-sm text-muted">Выберите аккаунты — загрузим все ЛС</p>
-              ) : inboxLoading && !dialogs.length ? (
-                <div className="flex items-center justify-center gap-2 p-8 text-sm text-muted">
-                  <Loader2 size={18} className="animate-spin text-iris-400" /> Загрузка диалогов…
-                </div>
-              ) : filtered.length === 0 ? (
-                <p className="p-6 text-center text-sm text-muted">Диалоги не найдены</p>
-              ) : (
-                filtered.map((d) => (
-                  <DialogRow
-                    key={d.key}
-                    d={d}
-                    active={activeKey === d.key}
-                    onClick={() => void openDialog(d)}
-                  />
-                ))
-              )}
-            </div>
-          </div>
-
-          <div className="flex min-h-[420px] flex-col">
-            {activeDialog ? (
-              <>
-                <div className="flex items-center gap-3 border-b border-line p-3">
-                  <Avatar name={activeDialog.name} color={avatarColor(activeDialog.name)} size={38} />
-                  <div className="min-w-0 flex-1">
-                    <div className="truncate text-sm font-bold text-fg">{activeDialog.name}</div>
-                    <div className="truncate text-xs text-muted">
-                      через {activeDialog.accountName}
-                      {activeDialog.username ? ` · @${activeDialog.username}` : ''}
-                    </div>
-                  </div>
-                  {activeDialog.username && (
-                    <a
-                      href={`https://t.me/${activeDialog.username}`}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="btn-icon h-9 w-9 shrink-0"
-                      title="Открыть в Telegram"
-                    >
-                      <ExternalLink size={15} />
-                    </a>
-                  )}
-                </div>
-
-                <div
-                  ref={scrollRef}
-                  className="flex-1 space-y-2 overflow-y-auto overscroll-contain bg-[rgb(var(--bg))] p-4"
-                >
-                  {msgsLoading ? (
-                    <div className="flex h-full items-center justify-center gap-2 text-sm text-muted">
-                      <Loader2 size={18} className="animate-spin" /> Загрузка сообщений…
-                    </div>
-                  ) : (
-                    messages.map((m) => <ConversationBubble key={m.id} m={m} dialog={activeDialog} />)
-                  )}
-                </div>
-
-                <div className="border-t border-line p-3">
-                  {/* §9.3: общий компонент — та же панель форматирования и то же
-                      поле, что в «Обзоре аккаунта». Раньше это были две копии. */}
-                  <ReplyBox value={reply} onChange={setReply} onSend={() => void send()} sending={sending} />
-                </div>
-              </>
-            ) : (
-              <div className="flex flex-1 flex-col items-center justify-center gap-3 p-8 text-center">
-                <div className="grid h-20 w-20 place-items-center rounded-full border border-line bg-elevated text-iris-400">
-                  <MessagesSquare size={34} />
-                </div>
-                <div>
-                  <div className="font-display text-base font-bold text-fg">Выберите диалог</div>
-                  <div className="mt-1 max-w-xs text-sm text-muted">
-                    {accountIds.length
-                      ? 'Слева все ЛС выбранных аккаунтов. Клик — мгновенное открытие переписки.'
-                      : 'Сначала выберите аккаунты в панели выше'}
-                  </div>
-                </div>
-              </div>
-            )}
-          </div>
-        </div>
+      {/*
+        Просмотр ЛС убран из НейроДиалогов (правка 18.08). Это была вторая копия
+        «Обзора аккаунта» (/panel/inbox): тот же список диалогов и то же поле ответа.
+        Модуль настраивает АВТООТВЕТЫ — читать и отвечать руками нужно на своём экране,
+        а держать одно и то же в двух местах значит чинить каждую правку дважды.
+      */}
 
       {/* Запуск — плавающая нижняя панель ПОСЛЕ списка диалогов, чтобы фиксированный бар их не перекрывал
           (без обёртки-карточки: панель уходит в нижний бар, карточка осталась бы пустой). */}
@@ -630,16 +387,14 @@ export function NeuroDialogsModule() {
           canStart={canStart}
           steps={!running ? <LaunchSteps steps={markCurrentStep([
             { label: 'Аккаунты', done: accountIds.length > 0, anchor: 'sec-accounts' },
+            { label: 'Защита', done: true, optional: true, anchor: 'sec-protect' },
             { label: 'Настройки', done: true, optional: true, anchor: 'sec-settings' },
             { label: 'Запуск', done: false, anchor: 'sec-run' },
           ])} /> : null}
           blockedBy={!running && !canStart ? ['выберите аккаунты'] : []}
           onStart={() => { void start(buildSettings(), `${cfg.title} · ${selected.size} акк.`) }}
           onStop={stop}
-          onSave={async () => {
-            const name = await promptDialog({ title: 'Сохранить шаблон', message: 'Название шаблона настроек', placeholder: 'Напр. Тёплый диалог' })
-            if (name) void savePreset(name, buildSettings())
-          }}
+          onSave={handleSavePreset}
           primaryLabel={cfg.primaryAction ?? 'Начать'}
           stats={[
             { icon: <MessagesSquare size={18} />, color: '#06b6d4', label: 'Диалогов', value: String(dialogs.length) },
@@ -651,7 +406,6 @@ export function NeuroDialogsModule() {
           warn={!canStart ? 'Выберите хотя бы один аккаунт' : undefined}
           presets={presets}
           onApplyPreset={applyPreset}
-          onDeletePreset={deletePreset} onEditPreset={editPreset}
         />
       </div>
     </div>

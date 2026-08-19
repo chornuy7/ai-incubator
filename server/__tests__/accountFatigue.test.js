@@ -4,10 +4,13 @@
  */
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
+import fs from 'node:fs/promises'
+import os from 'node:os'
+import path from 'node:path'
 
 import {
-  DEFAULT_FATIGUE, DEFAULT_SCHEDULE, currentFatigue, fatigueGate,
-  applyAction, scheduleGate, normalizeFatigueProfile,
+  DEFAULT_FATIGUE, DEFAULT_SCHEDULE, currentFatigue, fatigueGate, freeAt,
+  applyAction, scheduleGate, normalizeFatigueProfile, ROLL_RETRY_MS,
   normalizeSchedule, scheduleToPercent, scheduleForAccount,
 } from '../lib/accountFatigue.js'
 
@@ -160,4 +163,183 @@ test('§4.4: сдвиг не превращает рабочий день в м�
     const day = [10, 11, 12, 13, 14, 15, 16].map((h) => s[h])
     assert.ok(Math.max(...day) >= 0.5, `${id}: днём максимум ${Math.max(...day)} — аккаунт почти мёртв`)
   }
+})
+
+/**
+ * Профиль усталости должен ДОЕЗЖАТЬ до формы (правка 18.08).
+ *
+ * Список активности отдавал только `threshold`, поэтому окно «Усталость и отдых»
+ * рисовало умолчания 15/45/5 при каждом открытии. Пользователь читал это как «настройки
+ * слетели после деплоя», а повторное «Применить» действительно затирало заданное.
+ */
+test('listActivity отдаёт весь профиль, а не один порог', async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'fatigue-list-'))
+  process.env.ACCOUNT_ACTIVITY_FILE = path.join(dir, 'activity.json')
+  const A = await import(`../accountActivity.js?fatigue-list=${Date.now()}`)
+
+  await A.setActivityProfile(['acc_1'], { profile: { threshold: 40, restMinutes: 120, recoveryPerHour: 9 } })
+  const map = await A.listActivity()
+
+  assert.equal(map.acc_1.threshold, 40)
+  assert.equal(map.acc_1.restMinutes, 120, 'без этого поля форма покажет умолчание вместо заданного')
+  assert.equal(map.acc_1.recoveryPerHour, 9)
+})
+
+test('профили аккаунтов независимы: свой порог у каждого', async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'fatigue-each-'))
+  process.env.ACCOUNT_ACTIVITY_FILE = path.join(dir, 'activity.json')
+  const A = await import(`../accountActivity.js?fatigue-each=${Date.now()}`)
+
+  await A.setActivityProfile(['acc_a'], { profile: { threshold: 5, restMinutes: 30, recoveryPerHour: 2 } })
+  await A.setActivityProfile(['acc_b'], { profile: { threshold: 50, restMinutes: 300, recoveryPerHour: 20 } })
+  const map = await A.listActivity()
+
+  assert.equal(map.acc_a.threshold, 5)
+  assert.equal(map.acc_b.threshold, 50, 'настройка одного аккаунта не должна перетирать соседний')
+  assert.equal(map.acc_a.restMinutes, 30)
+  assert.equal(map.acc_b.restMinutes, 300)
+})
+
+/**
+ * Усталость — ЦЕЛОЕ число действий (правка 18.08).
+ *
+ * В интерфейсе висело «2.53/1» и «0.8/1»: восстановление размазывалось непрерывно, и
+ * аккаунт с 0.8 формально не дотягивал до порога 1 — уходил делать ещё одно действие,
+ * хотя одно уже сделал. Счёт должен быть человеческим: сделал действие — единица.
+ */
+test('усталость целая: дробных остатков восстановления не остаётся', () => {
+  const H = 3600000
+  const now = 1_000_000_000
+  const profile = { threshold: 1, restMinutes: 45, recoveryPerHour: 5 }
+
+  // Прошло ~2 минуты после действия: раньше выходило 0.8, теперь — единица.
+  const soon = currentFatigue({ fatigue: 1, lastActionAt: now - 0.04 * H }, profile, now)
+  assert.equal(soon, 1)
+  assert.equal(Number.isInteger(soon), true, 'в интерфейсе не должно быть «0.8 из 1»')
+
+  // Час восстановления прошёл целиком — счётчик обнулился.
+  assert.equal(currentFatigue({ fatigue: 1, lastActionAt: now - 0.5 * H }, profile, now), 0)
+})
+
+test('порог 1: после одного действия аккаунт уходит на отдых, а не делает второе', () => {
+  const now = 1_000_000_000
+  const profile = { threshold: 1, restMinutes: 45, recoveryPerHour: 5 }
+
+  const patch = applyAction({}, profile, now)
+  assert.equal(patch.fatigue, 1)
+  assert.ok(patch.restUntil > now, 'достигнут порог — назначен обязательный отдых')
+
+  const gate = fatigueGate({ ...patch }, profile, now + 60_000)
+  assert.equal(gate.ok, false, 'второе действие подряд при пороге 1 недопустимо')
+})
+
+test('усталость целая и при больших порогах', () => {
+  const H = 3600000
+  const now = 1_000_000_000
+  const profile = { threshold: 15, restMinutes: 45, recoveryPerHour: 5 }
+  for (const hoursAgo of [0.1, 0.37, 1.2, 2.9]) {
+    const f = currentFatigue({ fatigue: 12, lastActionAt: now - hoursAgo * H }, profile, now)
+    assert.equal(Number.isInteger(f), true, `дробь при ${hoursAgo} ч: ${f}`)
+  }
+})
+
+/**
+ * Отдых и восстановление — РАЗНЫЕ вещи, но раньше они спорили (правка 18.08).
+ *
+ * Оператор ставил «порог 1, отдых 3 минуты, восстановление 1/час» и ожидал: одно
+ * действие → три минуты паузы → снова в строй. На деле после трёх минут аккаунт
+ * оставался «устал 1 из 1» ещё почти час: обязательный отдых счётчик не обнулял, а
+ * восстановление 1/час съедало единицу только за час.
+ */
+test('отбытый обязательный отдых обнуляет усталость', () => {
+  const M = 60000
+  const now = 1_000_000_000
+  const profile = { threshold: 1, restMinutes: 3, recoveryPerHour: 1 }
+
+  const state = applyAction({}, profile, now)
+  assert.equal(fatigueGate(state, profile, now + 1 * M).ok, false, 'внутри отдыха работать нельзя')
+  assert.equal(fatigueGate(state, profile, now + 4 * M).ok, true, 'отдых отбыт — аккаунт снова в строю')
+  assert.equal(currentFatigue(state, profile, now + 4 * M), 0, 'счётчик обнулён отдыхом, а не ждёт час восстановления')
+})
+
+test('восстановление работает в обычных перерывах, когда до порога не дошли', () => {
+  const H = 3600000
+  const now = 1_000_000_000
+  const profile = { threshold: 15, restMinutes: 45, recoveryPerHour: 5 }
+  // Пять действий, отдых не назначался (порог не достигнут) — тает по 5 единиц в час.
+  const state = { fatigue: 5, lastActionAt: now - 1 * H }
+  assert.equal(currentFatigue(state, profile, now), 0)
+  assert.equal(currentFatigue({ fatigue: 12, lastActionAt: now - 1 * H }, profile, now), 7)
+})
+
+test('после отдыха новое действие снова копит усталость', () => {
+  const M = 60000
+  const now = 1_000_000_000
+  const profile = { threshold: 2, restMinutes: 3, recoveryPerHour: 1 }
+
+  let state = applyAction({}, profile, now)                      // 1
+  state = { ...state, ...applyAction(state, profile, now + M) }  // 2 → отдых
+  assert.ok(state.restUntil > now + M)
+
+  const afterRest = now + 10 * M
+  assert.equal(currentFatigue(state, profile, afterRest), 0)
+  const again = applyAction(state, profile, afterRest)
+  assert.equal(again.fatigue, 1, 'счёт начинается заново, а не продолжает старый')
+})
+
+/**
+ * Срок возврата в строй (правка 18.08): карточка писала «устал», но не говорила, до
+ * каких пор — и оператор шёл сбрасывать усталость руками, хотя ждать оставалось минуты.
+ */
+test('freeAt: во время перерыва — его конец', () => {
+  const M = 60000
+  const now = 1_000_000_000
+  const profile = { threshold: 1, restMinutes: 3, recoveryPerHour: 1 }
+  const state = applyAction({}, profile, now)
+  assert.equal(freeAt(state, profile, now + M), state.restUntil)
+})
+
+test('freeAt: порог понизили после работы — ждём восстановления', () => {
+  const H = 3600000
+  const now = 1_000_000_000
+  // Было «3 из 15», порог сменили на 1: перерыв не назначался, но работать нельзя.
+  const state = { fatigue: 3, lastActionAt: now, restUntil: 0 }
+  const profile = { threshold: 1, restMinutes: 45, recoveryPerHour: 1 }
+  // Нужно опустить 3 → 0 при 1 в час: три часа.
+  assert.equal(Math.round((freeAt(state, profile, now) - now) / H), 3)
+})
+
+test('freeAt: аккаунт в строю — ноль', () => {
+  const now = 1_000_000_000
+  assert.equal(freeAt({ fatigue: 0 }, DEFAULT_FATIGUE, now), 0)
+  assert.equal(freeAt({ fatigue: 3, lastActionAt: now }, DEFAULT_FATIGUE, now), 0, 'порог 15 — три действия не помеха')
+})
+
+/**
+ * Пропуск по распорядку: два РАЗНЫХ случая (правка 19.08).
+ *
+ * Прогон 19.08 показал в логах подряд: «Пропуск: не попал в вероятность 67% для 11:00» и
+ * следом «Все аккаунты заняты отдыхом — ждём 28 мин». Оба сообщения врали: аккаунт не
+ * отдыхал, а не повезло с броском кубика — и ждать до конца часа ради 67% бессмысленно,
+ * следующий бросок может выпасть удачно через минуту.
+ */
+test('час закрыт (0%) — ждём до следующего часа', () => {
+  const now = new Date('2026-08-19T11:20:00').getTime()
+  const g = scheduleGate({ 11: 0 }, now, () => 0.5)
+  assert.equal(g.ok, false)
+  const left = Math.round((g.until - now) / 60000)
+  assert.equal(left, 40, 'до 12:00 остаётся 40 минут')
+})
+
+test('не повезло с броском — пробуем снова через минуту, а не через полчаса', () => {
+  const now = new Date('2026-08-19T11:20:00').getTime()
+  const g = scheduleGate({ 11: 0.67 }, now, () => 0.99)
+  assert.equal(g.ok, false)
+  assert.match(g.reason, /не попал в вероятность/)
+  assert.equal(g.until - now, ROLL_RETRY_MS, 'ожидание — короткий повтор, а не остаток часа')
+})
+
+test('попал в вероятность — работаем', () => {
+  const g = scheduleGate({ 11: 0.67 }, new Date('2026-08-19T11:20:00').getTime(), () => 0.1)
+  assert.equal(g.ok, true)
 })

@@ -1,7 +1,7 @@
 /** CRUD + аутентификация операторов (§8.1). Монтируется в /api/users. */
 import { Router } from 'express'
-import { listUsers, getUser, createUser, updateUser, deleteUser, authenticate, authenticateSupabase, verifyPassword, publicUser, isBlockedByOwner, listSubs } from './users.js'
-import { rolesForUser, mergePermissions, userRoleIds, hasAdminRole, ADMIN_ROLE_ID } from './roles.js'
+import { listUsers, getUser, createUser, updateUser, deleteUser, authenticate, authenticateSupabase, verifyPassword, publicUser, isBlockedByOwner } from './users.js'
+import { rolesForUser, mergePermissions, unrestrictedPermissions, userRoleIds, hasAdminRole, ADMIN_ROLE_ID } from './roles.js'
 import { capModules, applyDirectGrants } from './subAccess.js'
 import { getBalance } from './balance.js'
 import { requesterContext } from './lib/accessGuard.js'
@@ -21,7 +21,17 @@ function sanitizeRoleIds(roleIds) {
  * freeAccess-роль (тест/модератор) — доступ в обход подписки, её не режем.
  */
 async function effectivePermissions(user, roles, isAdmin) {
-  let permissions = isAdmin || roles.length === 0 ? null : mergePermissions(roles)
+  // `null` = «правами не ограничен», и так это понимает сервер. Но клиентский `can()`
+  // читает null как «прав нет» и закрывает всё — из-за этого владелец без роли (обычная
+  // самостоятельная регистрация) видел пустое меню, хотя модули оплачены. Админу null
+  // безопасен: у него отдельный обход (isAdmin), а вот роль-less ВЛАДЕЛЬЦУ выдаём явные
+  // права. Суб без роли остаётся без прав — сотруднику доступ выдаёт владелец.
+  const { listModuleKeys } = await import('./modules/registry.js')
+  let permissions = isAdmin
+    ? null
+    : roles.length === 0
+      ? (user.parentId ? mergePermissions([]) : unrestrictedPermissions(listModuleKeys()))
+      : mergePermissions(roles)
   const freeAccess = roles.some((r) => r?.permissions?.freeAccess)
   if (permissions && user.parentId && !freeAccess) {
     const bal = await getBalance(user.id).catch(() => null)
@@ -38,9 +48,18 @@ async function sessionPayload(user) {
   const roles = await rolesForUser(user)
   const isAdmin = hasAdminRole(ids)
   const permissions = await effectivePermissions(user, roles, isAdmin)
-  const role = { id: user.roleId || '', name: roles.map((r) => r.name).join(' + '), permissions }
-  const isOwner = !isAdmin && (await listSubs(user.id)).length > 0 // §4.1 (MR-29): доступ к «Команде»
-  return { user, role, roles, isOwner, token: signSession(user.id) }
+  // Верхнеуровневый пользователь без роли — ВЛАДЕЛЕЦ своего пространства, а не «роль не
+  // задана» (правка 18.08). Полный доступ внутри своего кабинета у него уже есть, не
+  // хватало только имени: интерфейс показывал «Роль: Роль не задана» человеку, который
+  // только что зарегистрировался и купил модуль. Платформенным админом он при этом НЕ
+  // становится — sudo остаётся за ADMIN_ROLE_ID.
+  const isSub = !!user.parentId
+  const name = roles.length ? roles.map((r) => r.name).join(' + ') : (isAdmin ? 'Администратор' : (isSub ? '' : 'Владелец'))
+  const role = { id: user.roleId || '', name, permissions }
+  // §4.1 (MR-29): «Команда» — любому владельцу пространства, а не только тому, у кого
+  // субы УЖЕ есть: иначе первого суба некому было создать.
+  const isOwner = !isAdmin && !isSub
+  return { user, role, roles, isOwner, isSub, token: signSession(user.id) }
 }
 
 export const usersRouter = Router()
@@ -54,8 +73,19 @@ usersRouter.get('/', async (req, res) => {
     const ctx = await requesterContext(req)
     if (ctx.blocked) return res.status(403).json({ ok: false, error: 'Пользователь отключён' })
     const users = await listUsers()
-    // §4.1 (MR-29): владелец видит только своих субпользователей (+ себя); админ/дев — всех.
-    const visible = (ctx.noSession || ctx.isAdmin) ? users : users.filter((u) => u.parentId === ctx.id || u.id === ctx.id)
+    // §4.1 (MR-29): владелец видит только своих субпользователей (+ себя).
+    //
+    // Правка 18.08: под это правило попал и АДМИН. Раньше ему отдавался весь список
+    // платформы — 65 юзеров, из них 59 чужих самостоятельных регистраций — прямо на
+    // странице «Команда» в рабочей панели. Своё рабочее пространство и управление
+    // платформой смешивались в одном экране.
+    //
+    // Возможность управлять всеми не отобрана, она стала явной: `?scope=all` (только
+    // админу) — переключатель в интерфейсе. По умолчанию любой видит только своих.
+    const wantAll = String(req.query.scope || '') === 'all' && (ctx.noSession || ctx.isAdmin)
+    // Себя в списке команды нет (правка 18.08): страница про сотрудников, а собственная
+    // карточка только мешала — ролями себя не ограничивают, а клик по ним упирался в отказ.
+    const visible = wantAll ? users : users.filter((u) => u.parentId === ctx.id)
     res.json({ ok: true, users: visible.map(publicUser) })
   } catch (err) { fail(res, err, 500) }
 })
@@ -135,14 +165,10 @@ usersRouter.get('/me', async (req, res) => {
     if (!user || !user.active) return res.status(401).json({ ok: false, error: 'Пользователь отключён' })
     // §4.1 (MR-28): отключили владельца — суб теряет доступ, не дожидаясь перелогина.
     if (await isBlockedByOwner(user)) return res.status(403).json({ ok: false, error: 'Рабочее пространство владельца отключено' })
-    const ids = userRoleIds(user)
-    const roles = await rolesForUser(user)
-    const isAdmin = hasAdminRole(ids)
-    const permissions = await effectivePermissions(user, roles, isAdmin)
-    const role = { id: user.roleId || '', name: roles.map((r) => r.name).join(' + '), permissions }
-    // §4.1 (MR-29): владелец = у кого есть субпользователи → ему открыта «Команда».
-    const isOwner = !isAdmin && (await listSubs(user.id)).length > 0
-    res.json({ ok: true, user: publicUser(user), role, roles, isOwner })
+    // Та же сборка, что и при входе: расхождение «вошёл с одними правами, обновил
+    // страницу — с другими» ловится тяжелее всего.
+    const { role, roles, isOwner, isSub } = await sessionPayload(user)
+    res.json({ ok: true, user: publicUser(user), role, roles, isOwner, isSub })
   } catch (err) { fail(res, err, 500) }
 })
 

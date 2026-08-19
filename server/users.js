@@ -124,7 +124,34 @@ function profileToUser(p, emailMap, legacyByUuid) {
 }
 
 /** @returns {Promise<object[]>} операторы: из profiles (+e-mail из auth) или из файла. */
+// Перф (созвон 17.08 «тёмная сторона луны»): listUsers на ГОРЯЧЕМ пути — accessGate на
+// КАЖДЫЙ /api-запрос зовёт getUser → listUsers, а тот в supabase-режиме тянет ВСЕ профили
+// + карту auth-e-mail. Без кэша это два тяжёлых запроса на каждый вызов API (заказчик
+// показал флуд `profile profile user user`). Короткий TTL-кэш: повторные вызовы в окне
+// берут готовый список; любая мутация юзеров сбрасывает кэш сразу (invalidateUsersCache),
+// поэтому смена active/роли видна без задержки там, где меняем сами.
+let _usersCache = null // { data, ts }
+let _usersInflight = null
+const USERS_CACHE_TTL = 8000
+/** Сбросить кэш списка пользователей — звать после любой мутации (create/update/delete/active). */
+export function invalidateUsersCache() { _usersCache = null; _usersInflight = null }
+
 export async function listUsers() {
+  // Кэшируем только в supabase-режиме: именно там listUsers = два тяжёлых запроса (все
+  // профили + auth-e-mail) на горячем пути. Файловый режим (дев/тесты) читает локальный JSON
+  // быстро, а один общий кэш на процесс мешал бы изоляции тестов (у каждого свой файл).
+  if (!sb()) return loadUsers()
+  // Свежий кэш → мгновенно, без запроса. Параллельные вызовы делят один inflight-запрос,
+  // чтобы «холодный» момент не породил десяток одинаковых загрузок разом.
+  if (_usersCache && Date.now() - _usersCache.ts < USERS_CACHE_TTL) return _usersCache.data
+  if (_usersInflight) return _usersInflight
+  _usersInflight = loadUsers()
+    .then((data) => { _usersCache = { data, ts: Date.now() }; _usersInflight = null; return data })
+    .catch((e) => { _usersInflight = null; throw e })
+  return _usersInflight
+}
+
+async function loadUsers() {
   const db = sb()
   if (db) {
     const [{ data: profs }, emailMap] = await Promise.all([
@@ -198,6 +225,43 @@ export async function resolveWalletOwner(userId) {
   return cur ? cur.id : id
 }
 
+/**
+ * §4.1 (MR-28): чья ПОДПИСКА определяет набор модулей пользователя.
+ *
+ * Модули покупает рабочее пространство, а не сотрудник, поэтому здесь идём вверх до
+ * самого владельца ВСЕГДА — в отличие от кошелька, где `individual` обрывает подъём:
+ * суб может тратить свои монеты, но купить себе модуль вне пула владельца не может.
+ *
+ * Без этого суб без личной подписки проваливался на общий набор `workspace` — то есть
+ * получал модули, которых владелец не покупал (прогон 18.08: владельцу оплачены три
+ * модуля, субу открывался нейрокомментинг из чужого набора).
+ * @param {string} userId @returns {Promise<string>} id владельца подписки (или сам userId)
+ */
+export async function resolveSubscriptionOwner(userId) {
+  const id = String(userId || '')
+  if (!id || id === '__default') return id
+  let byId = new Map()
+  const db = sb()
+  if (db) {
+    const { data } = await db.from('profiles').select('id, legacy_id, parent_id')
+    const rows = (data || []).filter((p) => p.legacy_id)
+    const legacyByUuid = new Map(rows.map((p) => [p.id, p.legacy_id]))
+    byId = new Map(rows.map((p) => [p.legacy_id, { id: p.legacy_id, parentId: p.parent_id ? (legacyByUuid.get(p.parent_id) || null) : null }]))
+  } else {
+    const users = await readJson(USERS_FILE(), [])
+    byId = new Map((Array.isArray(users) ? users : []).map((u) => [u.id, { id: u.id, parentId: u.parentId || null }]))
+  }
+  let cur = byId.get(id)
+  const seen = new Set()
+  while (cur && cur.parentId && !seen.has(cur.id)) {
+    seen.add(cur.id)
+    const parent = byId.get(cur.parentId)
+    if (!parent) break
+    cur = parent
+  }
+  return cur ? cur.id : id
+}
+
 /** §4.2 (MR-30): нормализовать режим баланса. */
 function normBalanceMode(v) {
   return v === 'individual' ? 'individual' : 'shared'
@@ -240,8 +304,15 @@ async function profileByLegacy(db, legacyId) {
 /** @param {{ email, name, roleId, password, active, parentId }} input */
 export async function createUser(input = {}) {
   const email = normEmail(input.email)
+  // Валидация ДУБЛИРУЕТ фронт намеренно: /register — публичный неаутентифицированный
+  // endpoint, а форму легко обойти (curl/бот). Раньше сервер принимал «e-mail» вроде
+  // 'мусор' и пароль в мегабайт — первое плодило мёртвые профили, второе роняло scrypt.
   if (!email) throw new Error('Укажите e-mail')
-  if (!input.password || String(input.password).length < 6) throw new Error('Пароль минимум 6 символов')
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) throw new Error('Некорректный e-mail')
+  const pwd = String(input.password ?? '')
+  if (pwd.length < 6) throw new Error('Пароль минимум 6 символов')
+  if (pwd.length > 200) throw new Error('Пароль слишком длинный (максимум 200 символов)')
+  if (String(input.name ?? '').trim().length > 120) throw new Error('Имя слишком длинное (максимум 120 символов)')
   if (await findByEmail(email)) throw new Error('Пользователь с таким e-mail уже есть')
 
   const hasExplicitRoles = Array.isArray(input.roleIds) || input.roleId != null
@@ -268,6 +339,7 @@ export async function createUser(input = {}) {
     const tokenLimit = input.tokenLimit == null ? null : Math.max(0, Number(input.tokenLimit) || 0)
     await db.from('profiles').update({ legacy_id: legacyId, name, active: input.active !== false, role_ids: roleIds, parent_id: parentUuid, balance_mode: balanceMode, token_limit: tokenLimit, updated_at: new Date().toISOString() }).eq('id', authId)
     // §11.3 этап 4/4: dual-write в `users` снят — источник истины profiles + auth.users.
+    invalidateUsersCache()
     return { id: legacyId, email, name, roleId, roleIds, active: input.active !== false, parentId, accountIds: [], accountGroupIds: [], balanceMode, tokenLimit, createdAt: now, updatedAt: now }
   }
 
@@ -276,6 +348,7 @@ export async function createUser(input = {}) {
   const user = { id: `usr_${crypto.randomUUID().slice(0, 8)}`, email, name, roleId, roleIds, active: input.active !== false, parentId, accountIds: normIds(input.accountIds) || [], accountGroupIds: normIds(input.accountGroupIds) || [], balanceMode: normBalanceMode(input.balanceMode), tokenLimit: input.tokenLimit == null ? null : Math.max(0, Number(input.tokenLimit) || 0), passwordHash: hashPassword(input.password), createdAt: now, updatedAt: now }
   users.push(user)
   await writeJson(USERS_FILE(), users)
+  invalidateUsersCache()
   return user
 }
 
@@ -323,6 +396,7 @@ export async function updateUser(id, patch = {}) {
     }
     // §11.3 этап 4/4: dual-write в `users` снят — профиль в profiles, пароль в auth.users.
     next.updatedAt = Date.now()
+    invalidateUsersCache()
     return next
   }
 
@@ -358,6 +432,7 @@ export async function updateUser(id, patch = {}) {
   }
   users[i].updatedAt = Date.now()
   await writeJson(USERS_FILE(), users)
+  invalidateUsersCache()
   return users[i]
 }
 
@@ -371,6 +446,7 @@ export async function deleteUser(id) {
     await db.auth.admin.deleteUser(prof.id).catch(() => {})
     await db.from('profiles').delete().eq('id', prof.id).then(() => {}, () => {}) // на случай, если auth-удаление не каскаднуло
     // §11.3 этап 4/4: dual-write в `users` снят.
+    invalidateUsersCache()
     return true
   }
   const users = await listUsers()
@@ -378,6 +454,7 @@ export async function deleteUser(id) {
   if (next.length === users.length) return false
   for (const u of next) if (u.parentId === id) u.parentId = null
   await writeJson(USERS_FILE(), next)
+  invalidateUsersCache()
   return true
 }
 

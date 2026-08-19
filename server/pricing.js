@@ -52,6 +52,41 @@ export function actionPrice(moduleKey) {
 }
 
 /**
+ * MR-149 (созвон 12.08 + 17.08): оплата за отправку и за генерацию текста — ОДНА цена
+ * за действие, посчитанная «как за МАКСИМУМ символов», а не по факту токенов.
+ *
+ * Лимит Telegram: 4096 символов (текст) / 1024 (текст + картинка). ~4 символа на токен.
+ * Стоимость текста считаем в коде из этого максимума и админского курса `coinsPer1kTokens`
+ * (его заказчик и так правит в админке) — чтобы НЕ поднимать цену каждого модуля вручную,
+ * и чтобы за текст всегда списывалось предсказуемо (как за макс), а не по факту.
+ */
+export const MAX_TEXT_CHARS = 4096
+export const CHARS_PER_TOKEN = 4
+export const MAX_TEXT_TOKENS = Math.ceil(MAX_TEXT_CHARS / CHARS_PER_TOKEN) // 1024
+/** Модули, где действие генерит ИИ-текст (к цене прибавляется макс-текст). */
+export const AI_TEXT_MODULES = new Set(['neuro-commenting', 'neuro-chatting', 'neuro-dialogs', 'mailing'])
+
+/** Сколько токенов «по максимуму» закладываем в цену действия. Не-ИИ модуль — 0. */
+export function maxTextTokens(moduleKey) {
+  return AI_TEXT_MODULES.has(moduleKey) ? MAX_TEXT_TOKENS : 0
+}
+
+/** Стоимость макс-текста за одно действие (монет), по админскому курсу. */
+export function maxTextCoins(moduleKey, coinsPer1kTokens = 0) {
+  return Math.round((maxTextTokens(moduleKey) / 1000) * (Number(coinsPer1kTokens) || 0) * 1000) / 1000
+}
+
+/**
+ * ЕДИНАЯ цена одного действия: цена «за действие» (её задаёт админ) + текст по максимуму
+ * символов (считаем в коде). `base` — цена из админки (eff.actionMap); без неё берём код-цену.
+ * MR-149: админ выставляет ТОЛЬКО «за действие», всё остальное код добавляет сам.
+ */
+export function fullActionPrice(moduleKey, coinsPer1kTokens = 0, base) {
+  const b = base != null ? Number(base) || 0 : actionPrice(moduleKey)
+  return Math.round((b + maxTextCoins(moduleKey, coinsPer1kTokens)) * 1000) / 1000
+}
+
+/**
  * §5.4: ПОДПИСКА НА МОДУЛЬ — сколько стоит держать модуль открытым, в месяц.
  *
  * Заказчик (23.07): «людина хоче нейрочатінг + мейлінг — вибирає собі модулі які
@@ -163,6 +198,25 @@ export function periodCost(monthlySum, months = 1, annualDiscount = ANNUAL_DISCO
   // а не константа: иначе поле «скидка за год» в админке было бы мёртвым.
   const discount = m >= 12 ? (Number(annualDiscount) || 0) : 0
   return Math.round(Number(monthlySum) * m * (1 - discount) * 100) / 100
+}
+
+/**
+ * За что списать при смене подписки (§11.4, правка 18.08).
+ *
+ * Платим ТОЛЬКО за добавленное: пользователь, который убрал лишний модуль или просто
+ * пересохранил набор, второй раз платить не должен. До этого покупка вообще не спрашивала
+ * денег — с нулём на счету открывался любой набор.
+ *
+ * @param {string[]|'all'} had что уже оплачено
+ * @param {string[]} wanted что хочет получить
+ * @returns {{ added: string[], monthly: number }} добавленные модули и их цена за месяц
+ */
+export function addedCost(had, wanted, customBundles = [], priceMap = MODULE_MONTH_PRICE) {
+  if (had === 'all') return { added: [], monthly: 0 }
+  const owned = new Set(Array.isArray(had) ? had : [])
+  const added = [...new Set((Array.isArray(wanted) ? wanted : []).filter((k) => !owned.has(k)))]
+  if (!added.length) return { added: [], monthly: 0 }
+  return { added, monthly: subscriptionCost(added, customBundles, priceMap).sum }
 }
 
 export function subscriptionCost(moduleKeys = [], customBundles = [], priceMap = MODULE_MONTH_PRICE, giftMap = {}) {

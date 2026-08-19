@@ -21,6 +21,14 @@ interface UiStore {
   noSubscription: string
   setNoSubscription: (v: string) => void
 
+  /**
+   * MR-153: доступ отключён администратором (ACCESS_DISABLED, 403 из accessGate).
+   * Пусто = не заблокирован. Держим текст причины: показываем поп-ап с blur поверх всей
+   * панели — заблокированному оставляем только «Мой аккаунт» и «Поддержку».
+   */
+  accessBlocked: string
+  setAccessBlocked: (v: string) => void
+
   helpOpen: boolean
   helpTopic: string
   setHelpOpen: (v: boolean) => void
@@ -38,6 +46,9 @@ export const useUi = create<UiStore>((set) => ({
 
   noSubscription: '',
   setNoSubscription: (v) => set({ noSubscription: v }),
+
+  accessBlocked: '',
+  setAccessBlocked: (v) => set({ accessBlocked: v }),
 
   helpOpen: false,
   helpTopic: '',

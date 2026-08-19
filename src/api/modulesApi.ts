@@ -81,6 +81,12 @@ export interface ModuleTaskSettings {
   // ── Масслукинг: что смотреть и сколько последних постов ──
   lookMode?: 'stories' | 'posts' | 'both'
   lookPostsCount?: number
+  /** Массовые реакции: 0 — мониторинг новых постов, 1 — N последних постов. */
+  reactMode?: number
+  /** Сколько последних постов канала рассматривать (реакции и нейрокомментинг). */
+  lastPostsCount?: number
+  /** Брать один случайный пост из подходящих (иначе — все подходящие за заход). */
+  pickOne?: boolean
   delays?: {
     comment?: [number, number]
     action?: [number, number]
@@ -120,6 +126,8 @@ export interface ModuleTask {
   /** MR-134: счётчик ошибок в логах задачи + текст последней — для уведомлений «идёт с ошибками». */
   errors?: number
   lastError?: string
+  /** Причина, по которой задача УПАЛА (не просто последняя строка с ошибкой). */
+  fatalError?: string
   /** MR-134: пауза именно из-за нулевого баланса (её чинит пополнение), а не рукой. */
   pausedByCoins?: boolean
   /** MR-134: сумма FloodWait по аккаунтам задачи — «упираемся в лимиты Telegram». */

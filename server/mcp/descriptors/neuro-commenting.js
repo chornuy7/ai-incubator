@@ -77,10 +77,19 @@ export default {
       title: 'Modes',
       purpose: 'How a post is selected for commenting and whether the task is limited by quantity or time.',
       howItWorks:
+<<<<<<< HEAD
         'The comment mode decides how many posts from the window become candidates. Post filter'
         + 'additionally cuts off based on novelty. The operating mode determines the condition for completing the task.',
-      api: { method: 'POST', path: '/api/modules/neuro-commenting/tasks', fills: ['commentMode', 'workMode', 'postFilter'] },
-      params: ['commentMode', 'workMode', 'postFilter'],
+      api: { method: 'POST', path: '/api/modules/neuro-commenting/tasks', fills: ['commentMode', 'workMode', 'postFilter', 'lastPostsCount', 'pickOne'] },
+      params: ['commentMode', 'workMode', 'postFilter', 'lastPostsCount', 'pickOne'],
+=======
+        'Три независимых вопроса. commentMode — ЧТО подходит по содержанию (любые посты или '
+        + 'по ключевым словам). postFilter (+ lastPostsCount) — СКОЛЬКО последних постов ленты '
+        + 'вообще рассматриваем. pickOne — брать один случайный из подходящих или все. '
+        + 'workMode определяет условие завершения задачи.',
+      api: { method: 'POST', path: '/api/modules/neuro-commenting/tasks', fills: ['commentMode', 'workMode', 'postFilter', 'lastPostsCount', 'pickOne'] },
+      params: ['commentMode', 'workMode', 'postFilter', 'lastPostsCount', 'pickOne'],
+>>>>>>> 3fe7f2be7da93f42dba50a2abf6f3394eff66168
     },
     {
       id: 'filters',
@@ -213,16 +222,33 @@ export default {
     {
       name: 'commentMode',
       block: 'modes',
+<<<<<<< HEAD
       title: 'Comment mode',
+=======
+      title: 'Отбор постов по содержанию',
+>>>>>>> 3fe7f2be7da93f42dba50a2abf6f3394eff66168
       type: 'integer',
-      default: 0,
+      default: 2,
       enum: [
+<<<<<<< HEAD
         { value: 0, label: 'Random', means: 'One random post is taken from the filtered candidates.' },
         { value: 1, label: 'By keywords', means: 'Only posts containing at least one word from the keywords remain.' },
         { value: 2, label: 'All posts', means: 'All window candidates that pass the filters are commented on.' },
       ],
       purpose: 'The rule by which candidates for comment are selected from the post window.',
       seeAlso: ['keywords', 'postWindow'],
+=======
+        { value: 0, label: 'Случайный (устаревшее)', means: 'Старая запись: фильтра по содержанию нет + берётся один случайный пост. Равносильно commentMode = 2 с pickOne = true; интерфейс так больше не пишет, воркер понимает.' },
+        { value: 1, label: 'По ключевым словам', means: 'Остаются только посты, содержащие хотя бы одно слово из keywords.' },
+        { value: 2, label: 'Любые посты', means: 'Фильтра по содержанию нет — подходят все посты окна.' },
+      ],
+      purpose: 'ЧТО считается подходящим постом. Сколько из подходящих взять — отдельное поле pickOne.',
+      constraints: [
+        'до 18.08 поле отвечало сразу на два вопроса (что подходит И сколько брать), '
+        + 'из-за чего «Случайный» и «По ключевым словам» выглядели взаимоисключающими',
+      ],
+      seeAlso: ['keywords', 'postWindow', 'pickOne'],
+>>>>>>> 3fe7f2be7da93f42dba50a2abf6f3394eff66168
       storedAs: 'task.settings.commentMode',
     },
     {
@@ -243,6 +269,7 @@ export default {
     {
       name: 'postFilter',
       block: 'modes',
+<<<<<<< HEAD
       title: 'What posts to comment on',
       type: 'integer',
       default: 0,
@@ -252,7 +279,57 @@ export default {
         { value: 2, label: 'All posts', means: 'The novelty filter is not applied.' },
       ],
       purpose: 'Additional screening of candidates based on the newness of the post.',
+=======
+      title: 'Глубина: какие посты брать',
+      type: 'integer',
+      default: 0,
+      enum: [
+        { value: 0, label: 'Только последний', means: 'Остаётся только самый свежий пост окна.' },
+        { value: 1, label: 'Все, кроме последнего (устаревшее)', means: 'Остаются все посты окна, КРОМЕ самого свежего. Из интерфейса убрано, старые задачи работают.' },
+        { value: 2, label: 'Все доступные', means: 'Глубина не ограничивается — рассматривается всё окно.' },
+        { value: 3, label: 'Последние N', means: 'Рассматриваются lastPostsCount самых свежих постов ленты.' },
+        { value: 4, label: 'Только новые (мониторинг)', means: 'Первый заход в канал ТОЛЬКО запоминает последний пост; дальше комментируются посты, вышедшие после этого момента. Планка живёт в памяти процесса — после рестарта встаёт заново.' },
+      ],
+      purpose: 'СКОЛЬКО последних постов канала вообще рассматривается.',
+      seeAlso: ['lastPostsCount'],
+>>>>>>> 3fe7f2be7da93f42dba50a2abf6f3394eff66168
       storedAs: 'task.settings.postFilter',
+    },
+    {
+      name: 'lastPostsCount',
+      block: 'modes',
+      title: 'Сколько последних постов',
+      type: 'integer',
+      min: 1,
+      max: 50,
+      default: 3,
+      purpose: 'Глубина ленты для postFilter = 3 (устаревший путь).',
+      constraints: [
+        'интерфейс это поле БОЛЬШЕ НЕ ШЛЁТ: «последние N постов» — это postWindow, '
+        + 'иначе в форме было бы два поля про одно и то же (правка 18.08). Воркер значение понимает',
+        'работает только при postFilter = 3',
+        'значения вне 1–50 обрезаются до границ; 0 и мусор дают 3',
+        'N отсчитывается по ЛЕНТЕ канала, а не по прошедшим фильтры: иначе жёсткие ключевые слова увели бы «последние 3» вглубь истории',
+      ],
+      examples: [3, 5, 10],
+      effectiveWhen: { field: 'postFilter', equals: 3 },
+      seeAlso: ['postFilter'],
+      storedAs: 'task.settings.lastPostsCount',
+    },
+    {
+      name: 'pickOne',
+      block: 'modes',
+      title: 'Один случайный из подходящих',
+      type: 'boolean',
+      default: true,
+      purpose: 'СКОЛЬКО постов из подходящих комментировать за заход: один случайный или все.',
+      constraints: [
+        'если поле не задано, воркер смотрит на устаревший commentMode = 0 (там случайность была вшита)',
+        'выключено — комментируются ВСЕ подходящие посты за заход, лимиты задачи при этом действуют',
+      ],
+      examples: [true, false],
+      seeAlso: ['commentMode'],
+      storedAs: 'task.settings.pickOne',
     },
 
     // ── filters ───────────────────────────────────────────────────────────────

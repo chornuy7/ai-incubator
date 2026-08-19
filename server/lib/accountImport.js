@@ -171,6 +171,9 @@ export async function importOne(item, opts = {}) {
 
   const name = [me?.firstName, me?.lastName].filter(Boolean).join(' ') || item.name || 'Аккаунт'
   await setAccountMeta(accountId, {
+    // Чей это аккаунт (правка 18.08). Без владельца он не покажется никому, кроме
+    // админа: список аккаунтов теперь режется по пространству.
+    ...(opts.ownerId ? { ownerId: String(opts.ownerId) } : {}),
     proxy: proxy || '—',
     country: countryFromPhone(phone),
     status: 'active',

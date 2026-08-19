@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useLocation } from 'react-router-dom'
 import { Mail, Send, AlertTriangle, ShieldAlert, Users, Target, MessageSquareText, Shield } from 'lucide-react'
-import { PageHeader, Card, Select, Segmented } from '@/shared/ui'
+import { PageHeader, Card, Select } from '@/shared/ui'
 import { DedupeButton } from '@/shared/ui/DedupeButton'
 import type { MailingPrefill } from '@/features/mailing/TaskAudiencePanel'
 import { useApp, activeAccounts } from '@/mocks/store'
@@ -12,15 +12,18 @@ import { fetchGoals, type Goal } from '@/api/goalsApi'
 import { startModuleTask, type ModuleTaskSettings } from '@/api/modulesApi'
 import { fetchSettings, saveSettings } from '@/api/settingsApi'
 import { fetchLeads } from '@/api/leadsApi'
-import { confirmDialog, promptDialog } from '@/shared/lib/dialog'
+import { confirmDialog } from '@/shared/lib/dialog'
 import { usePlan, planHasModule } from '@/features/billing/plan'
 import { ModuleNotPaid } from '@/features/billing/ModuleNotPaid'
 import { isHidden } from '@/shared/config/routes'
 // §3.1 (MR-114): рассылка приведена к общей структуре модулей — те же переиспользуемые
 // блоки (SectionCard + нижняя LaunchPanel со степпером), что и в LiveModule/парсерах.
-import { SectionCard, LaunchPanel, LaunchSteps, markCurrentStep, TaskStartedModal, ProtectionBlock } from '@/features/modules/shared'
-import { LaunchCost } from '@/features/modules/shared/LaunchCost'
+import { SectionCard, LaunchPanel, LaunchSteps, markCurrentStep, TaskStartedModal, ProtectionTimings, BlacklistEditor } from '@/features/modules/shared'
+import type { DelaysShape } from '@/features/modules/shared/TimingSection'
+import { LaunchCost, ActionPriceCalc } from '@/features/modules/shared/LaunchCost'
 import { useModuleTask } from '@/features/modules/shared/useModuleTask'
+import { PresetBar } from '@/features/modules/shared/PresetBar'
+import { SavePresetModal } from '@/features/modules/shared/SavePresetModal'
 
 export function MailingPage() {
   // §5.4: модуль живёт не под /panel/modules/*, поэтому гейт подписки — здесь же.
@@ -28,6 +31,7 @@ export function MailingPage() {
   // держать гейт перед остальными хуками страницы, при переключении число хуков менялось
   // и React падал («Rendered fewer hooks»). Тело — в MailingInner (монтируется, когда оплачено).
   const planModules = usePlan((st) => st.modules)
+  if (planModules === null) return null // набор ещё не загружен — не мигаем витриной покупки
   if (!planHasModule(planModules, 'mailing')) return <ModuleNotPaid title="Мейлинг" moduleKey="mailing" />
   return <MailingInner />
 }
@@ -45,7 +49,6 @@ function MailingInner() {
   const [delayMin, setDelayMin] = useState(90)
   const [delayMax, setDelayMax] = useState(300)
   const [protLevel, setProtLevel] = useState(0) // §11: паритет с masslooking/warming — уровень защиты
-  const [aiProtect, setAiProtect] = useState(true) // тумблер «Защита аккаунтов» (как в стандартных модулях)
   const [delayPreset, setDelayPreset] = useState(1) // множитель задержек (Мин/Реком/Макс)
   const [goals, setGoals] = useState<Goal[]>([])
   const [goalId, setGoalId] = useState('')
@@ -181,10 +184,9 @@ function MailingInner() {
     } finally { setSavingTrust(false) }
   }
 
-  const handleSave = async () => {
-    const name = await promptDialog({ title: 'Сохранить шаблон', message: 'Название шаблона настроек рассылки', placeholder: 'Напр. Прогрев по номерам' })
-    if (name) void savePreset(name, buildSettings())
-  }
+  // §10: сохранение через модалку (имя + цвет + владелец), как в остальных модулях.
+  const [presetModalOpen, setPresetModalOpen] = useState(false)
+  const handleSave = () => setPresetModalOpen(true)
 
   // Восстановить настройки из шаблона (выбор аккаунтов и получателей не трогаем).
   const applyPreset = (s: ModuleTaskSettings) => {
@@ -247,6 +249,15 @@ function MailingInner() {
     ...(blockedByTrust ? ['аккаунты ниже порога trust'] : []),
   ] : []
 
+  // Мейлинг хранит паузы парой чисел; общий блок таймингов ждёт полную структуру.
+  const mailingDelays: DelaysShape = {
+    comment: [delayMin, delayMax],
+    action: [delayMin, delayMax],
+    join: [delayMin, delayMax],
+    floodWait: 120,
+    floodQuarantine: 3,
+  }
+
   return (
     <div>
       <PageHeader
@@ -263,6 +274,14 @@ function MailingInner() {
 
       <div className="space-y-4">
         <TaskStartedModal task={justStarted} moduleTitle="Мейлинг" onClose={dismissJustStarted} />
+        <SavePresetModal open={presetModalOpen} onClose={() => setPresetModalOpen(false)}
+          onSave={(name, color, owner) => savePreset(name, buildSettings(), color, owner)} />
+        {/* ТЗ 06.08 §10: выбор шаблона — вверху, до всех настроек (TPL-001). */}
+        <PresetBar presets={presets} onApply={applyPreset} onSave={handleSave}
+          onEdit={editPreset} onDelete={deletePreset} disabled={running} />
+
+        {/* MR-149: мини-калькулятор цены действия — в шапке, перед «Выбором аккаунтов». */}
+        <ActionPriceCalc moduleKey="mailing" />
 
         {/* 1. Аккаунты — единый полноширинный выбор, как во всех модулях. */}
         <div id="sec-accounts" className="scroll-mt-24">
@@ -285,97 +304,19 @@ function MailingInner() {
               <DedupeButton value={numbersText} onChange={setNumbersText} mode="auto" className="btn-soft ml-auto h-7 px-2 text-xs disabled:opacity-40" />
             </div>
             <textarea className="input min-h-[110px] font-mono text-sm" value={numbersText} onChange={(e) => setNumbersText(e.target.value)} placeholder={'+380671234567\n@username\nhttps://t.me/username'} />
+            {/* ЧС живёт ВНУТРИ блока получателей — как в остальных модулях он лежит
+                внутри блока целей. Отдельной карточкой он читался как самостоятельный
+                раздел, хотя это фильтр к списку выше. */}
+            <div className="mt-3">
+              <BlacklistEditor title="Чёрный список получателей" compact />
+            </div>
           </SectionCard>
         </div>
 
         {/* 3. Защита — 3-м блоком, после «Получателей» (правка 10.08, MR-136). */}
         <div id="sec-settings" className="scroll-mt-24">
-          <SectionCard icon={<Shield size={18} />} title="Защита">
-            {/* MR-114: блок «Защита» — как во всех модулях (карточки ProtectionBlock), а не мелкий сегмент. */}
-            <ProtectionBlock enabled={aiProtect} onEnabled={setAiProtect} level={protLevel} onLevel={setProtLevel} />
-            {/* Шаблон задержек — множитель пауз (аналог пресета темпа в «Таймингах» стандартных модулей). */}
-            <div className="mb-3">
-              <div className="mb-1 text-xs text-white/50">Шаблон задержек <span className="text-white/30">(множитель пауз)</span></div>
-              <Segmented options={['Мин', 'Реком.', 'Макс']} value={delayPreset} onChange={setDelayPreset} size="sm" />
-            </div>
-            <div className="grid grid-cols-3 gap-3">
-              <label className="text-xs text-white/50">Лимит на аккаунт
-                <input type="number" min={1} value={maxPerAccount} onChange={(e) => setMaxPerAccount(Math.max(1, Number(e.target.value) || 1))} className="input mt-1 h-9" />
-              </label>
-              <label className="text-xs text-white/50">Задержка от (с)
-                <input type="number" min={1} value={delayMin} onChange={(e) => setDelayMin(Math.max(1, Number(e.target.value) || 1))} className="input mt-1 h-9" />
-              </label>
-              <label className="text-xs text-white/50">до (с)
-                <input type="number" min={delayMin} value={delayMax} onChange={(e) => setDelayMax(Math.max(delayMin, Number(e.target.value) || delayMin))} className="input mt-1 h-9" />
-              </label>
-            </div>
-            {!canWrite && (
-              <div className="mt-3 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-200">
-                Рассылку создаёт только администратор (единый отправитель). У вас нет прав на отправку.
-              </div>
-            )}
-
-            {/* §6: порог trust. Админу — предупреждение и право запустить всё равно,
-                остальным — запрет. Сам порог правится тут же, но только админом. */}
-            {minTrust != null && belowTrust.length > 0 && (
-              <div className={`mt-3 rounded-lg border px-3 py-2 text-xs ${isAdmin ? 'border-amber-500/30 bg-amber-500/10 text-amber-200' : 'border-rose-500/30 bg-rose-500/10 text-rose-200'}`}>
-                <div className="flex items-start gap-2">
-                  <ShieldAlert size={14} className="mt-0.5 shrink-0" />
-                  <div>
-                    <b>{belowTrust.length}</b> из выбранных аккаунтов ниже порога trust <b>{minTrust}</b>:{' '}
-                    {belowTrust.slice(0, 4).map((a) => `${a.name} (${a.trustScore ?? 0})`).join(', ')}{belowTrust.length > 4 ? '…' : ''}
-                    <div className="mt-1 opacity-80">
-                      {isAdmin
-                        ? 'Низкий trust — выше риск спамблока. Запустить можно, но подтвердите: это попадёт в лог задачи.'
-                        : 'Запуск заблокирован. Снять ограничение или изменить порог может только администратор.'}
-                    </div>
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {isAdmin && minTrust != null && (
-              <div className="mt-3 flex items-center gap-2 rounded-lg border border-line bg-elevated/40 px-3 py-2">
-                <span className="text-xs text-white/50">Порог trust для рассылки</span>
-                <input
-                  type="number" min={0} max={100}
-                  className="input h-8 w-20 text-xs"
-                  value={trustDraft}
-                  onChange={(e) => setTrustDraft(e.target.value)}
-                />
-                <button
-                  onClick={() => void applyTrust()}
-                  disabled={savingTrust || trustDraft === String(minTrust)}
-                  className="btn-ghost h-8 px-3 text-xs disabled:opacity-40"
-                >
-                  {savingTrust ? 'Сохраняю…' : 'Сохранить'}
-                </button>
-                <span className="text-xs text-white/30">действует для всех ролей</span>
-              </div>
-            )}
-            {pickedHot.length > 0 && (
-              <div className="mt-3 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-200">
-                <div className="flex items-start gap-2">
-                  <ShieldAlert size={14} className="mt-0.5 shrink-0" />
-                  <div className="flex-1">
-                    <b>{pickedHot.length}</b> из выбранных ведут горячий лид — у них диалог в разгаре,
-                    забирать их в рассылку нельзя:{' '}
-                    {pickedHot.slice(0, 5).map((id) => accounts.find((a) => a.id === id)?.name || id.slice(-6)).join(', ')}
-                    {pickedHot.length > 5 ? ' и др.' : ''}
-                    <button
-                      onClick={() => setSelected((prev) => new Set([...prev].filter((id) => !hotAccounts.includes(id))))}
-                      className="btn-soft ml-2 h-7 px-2 text-xs"
-                    >
-                      Исключить их
-                    </button>
-                  </div>
-                </div>
-              </div>
-            )}
-          </SectionCard>
-        </div>
-
-        {/* 4. Сообщение и цель. */}
+        {/* Текст сообщения — выше защиты и таймингов, как во всех модулях: сначала
+            «что напишем», потом «насколько осторожно» (правка 19.08). */}
         <div id="sec-message" className="scroll-mt-24">
           <SectionCard icon={<MessageSquareText size={18} />} title="Сообщение" required={needOwnText}>
             {goalId && (
@@ -448,6 +389,100 @@ function MailingInner() {
           </SectionCard>
         </div>
 
+          {/* Один блок на все модули (правка 19.08): защита и задержки — одно решение.
+              Свои поля мейлинга (лимит на аккаунт, паузы, порог trust) идут внутрь той же
+              карточки, а пресет темпа рисует общий TimingSection. */}
+          <ProtectionTimings
+            timing={{
+              // У мейлинга своя пара «от/до» вместо общей структуры задержек — переводим
+              // её в общий вид, чтобы блок выглядел и вёл себя как у остальных модулей.
+              delays: mailingDelays,
+              onDelays: (updater) => {
+                const next = typeof updater === 'function' ? updater(mailingDelays) : updater
+                const a = next.action
+                if (a) { setDelayMin(Math.max(1, a[0])); setDelayMax(Math.max(a[0], a[1])) }
+              },
+              showAction: true,
+              showComment: false,
+              showJoin: false,
+              labels: { action: 'Задержка между сообщениями' },
+              delayPresets: ['Агрессивный', 'Сбалансированный', 'Консервативный'],
+              delayPreset,
+              onDelayPreset: setDelayPreset,
+              perAccount: { min: maxPerAccount, max: maxPerAccount, onMin: setMaxPerAccount, onMax: setMaxPerAccount },
+            }}
+          >
+            <div className="grid grid-cols-3 gap-3">
+              <label className="text-xs text-white/50">Лимит на аккаунт
+                <input type="number" min={1} value={maxPerAccount} onChange={(e) => setMaxPerAccount(Math.max(1, Number(e.target.value) || 1))} className="input mt-1 h-9" />
+              </label>
+            </div>
+            {!canWrite && (
+              <div className="mt-3 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-200">
+                Рассылку создаёт только администратор (единый отправитель). У вас нет прав на отправку.
+              </div>
+            )}
+
+            {/* §6: порог trust. Админу — предупреждение и право запустить всё равно,
+                остальным — запрет. Сам порог правится тут же, но только админом. */}
+            {minTrust != null && belowTrust.length > 0 && (
+              <div className={`mt-3 rounded-lg border px-3 py-2 text-xs ${isAdmin ? 'border-amber-500/30 bg-amber-500/10 text-amber-200' : 'border-rose-500/30 bg-rose-500/10 text-rose-200'}`}>
+                <div className="flex items-start gap-2">
+                  <ShieldAlert size={14} className="mt-0.5 shrink-0" />
+                  <div>
+                    <b>{belowTrust.length}</b> из выбранных аккаунтов ниже порога trust <b>{minTrust}</b>:{' '}
+                    {belowTrust.slice(0, 4).map((a) => `${a.name} (${a.trustScore ?? 0})`).join(', ')}{belowTrust.length > 4 ? '…' : ''}
+                    <div className="mt-1 opacity-80">
+                      {isAdmin
+                        ? 'Низкий trust — выше риск спамблока. Запустить можно, но подтвердите: это попадёт в лог задачи.'
+                        : 'Запуск заблокирован. Снять ограничение или изменить порог может только администратор.'}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {isAdmin && minTrust != null && (
+              <div className="mt-3 flex items-center gap-2 rounded-lg border border-line bg-elevated/40 px-3 py-2">
+                <span className="text-xs text-white/50">Порог trust для рассылки</span>
+                <input
+                  type="number" min={0} max={100}
+                  className="input h-8 w-20 text-xs"
+                  value={trustDraft}
+                  onChange={(e) => setTrustDraft(e.target.value)}
+                />
+                <button
+                  onClick={() => void applyTrust()}
+                  disabled={savingTrust || trustDraft === String(minTrust)}
+                  className="btn-ghost h-8 px-3 text-xs disabled:opacity-40"
+                >
+                  {savingTrust ? 'Сохраняю…' : 'Сохранить'}
+                </button>
+                <span className="text-xs text-white/30">действует для всех ролей</span>
+              </div>
+            )}
+            {pickedHot.length > 0 && (
+              <div className="mt-3 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-200">
+                <div className="flex items-start gap-2">
+                  <ShieldAlert size={14} className="mt-0.5 shrink-0" />
+                  <div className="flex-1">
+                    <b>{pickedHot.length}</b> из выбранных ведут горячий лид — у них диалог в разгаре,
+                    забирать их в рассылку нельзя:{' '}
+                    {pickedHot.slice(0, 5).map((id) => accounts.find((a) => a.id === id)?.name || id.slice(-6)).join(', ')}
+                    {pickedHot.length > 5 ? ' и др.' : ''}
+                    <button
+                      onClick={() => setSelected((prev) => new Set([...prev].filter((id) => !hotAccounts.includes(id))))}
+                      className="btn-soft ml-2 h-7 px-2 text-xs"
+                    >
+                      Исключить их
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
+          </ProtectionTimings>
+        </div>
+
         {/* 5. Запуск — плавающая нижняя панель со степпером (без обёртки-карточки:
             панель уходит в фиксированный бар внизу, карточка осталась бы пустой). */}
         <div id="sec-run" className="scroll-mt-24">
@@ -472,7 +507,6 @@ function MailingInner() {
               task={task}
               presets={presets}
               onApplyPreset={applyPreset}
-              onDeletePreset={deletePreset} onEditPreset={editPreset}
             />
         </div>
       </div>

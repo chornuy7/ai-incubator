@@ -1,5 +1,6 @@
 import { apiGet, apiPost, apiPut, apiDelete } from './client'
 import type { Role } from './rolesApi'
+import { tokenKey } from '@/features/auth/zone'
 
 export interface User {
   id: string
@@ -17,15 +18,20 @@ export interface User {
   updatedAt: number
 }
 
-export async function fetchUsers(): Promise<User[]> {
-  const data = await apiGet<{ users: User[] }>('/api/users')
+/**
+ * По умолчанию — только свои субпользователи (+ сам). `scope: 'all'` даёт список всей
+ * платформы и работает лишь у админа: обычному владельцу сервер всё равно вернёт своих.
+ */
+export async function fetchUsers(scope?: 'mine' | 'all'): Promise<User[]> {
+  const data = await apiGet<{ users: User[] }>(`/api/users${scope === 'all' ? '?scope=all' : ''}`)
   return data.users
 }
 
-/** Токен сессии храним отдельным ключом — его шлёт `authHeaders` в `Authorization`. */
-const TOKEN_KEY = 'ai-incubator:token'
+// Токен сессии храним отдельным ключом — его шлёт `authHeaders` в `Authorization`.
+// Ключ ЗАВИСИТ ОТ ЗОНЫ (панель/админка): вход на /admin кладёт админ-токен, вход в панель —
+// панельный, чтобы зоны были независимы (созвон 19.08). tokenKey() выбирает по текущему URL.
 function saveToken(token?: string) {
-  try { if (token) localStorage.setItem(TOKEN_KEY, token); else localStorage.removeItem(TOKEN_KEY) } catch { /* quota */ }
+  try { if (token) localStorage.setItem(tokenKey(), token); else localStorage.removeItem(tokenKey()) } catch { /* quota */ }
 }
 export function clearToken() { saveToken(undefined) }
 

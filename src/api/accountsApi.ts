@@ -126,3 +126,39 @@ export async function fetchAccountWork(accountId: string, since?: number): Promi
   const r = await apiGet<{ ok: boolean; work: AccountWork }>(`/api/accounts/${accountId}/work${q}`)
   return r.work
 }
+
+/** LOG-002/003: одно действие аккаунта из журнала (docs/CONTRACT-action-log). */
+export type AccountActionType = 'post' | 'comment' | 'reaction' | 'chat' | 'dialog' | 'dm' | 'join' | 'action'
+export interface AccountAction {
+  id: string
+  ts: string
+  type: AccountActionType
+  status: string
+  accountId: string
+  accountName: string
+  target: string
+  targetTitle: string
+  objectRef: { postId?: number; url?: string; replyToId?: number | null }
+  value: { text?: string; emoji?: string; kind?: string }
+  moduleKey: string
+  taskId: string
+  launchId: string
+  goalId: string
+  audience: { repliesCount?: number; reactionsCount?: number; reactions?: Record<string, number>; replies?: unknown[] }
+}
+
+/** История действий аккаунта (MR-122). Фильтры: тип, группа/канал, период. */
+export async function fetchAccountActions(
+  accountId: string,
+  filter?: { type?: string; target?: string; since?: number; until?: number; limit?: number },
+): Promise<AccountAction[]> {
+  const p = new URLSearchParams()
+  if (filter?.type) p.set('type', filter.type)
+  if (filter?.target) p.set('target', filter.target)
+  if (filter?.since) p.set('since', String(filter.since))
+  if (filter?.until) p.set('until', String(filter.until))
+  if (filter?.limit) p.set('limit', String(filter.limit))
+  const qs = p.toString() ? `?${p.toString()}` : ''
+  const r = await apiGet<{ ok: boolean; actions: AccountAction[] }>(`/api/accounts/${accountId}/actions${qs}`)
+  return r.actions || []
+}

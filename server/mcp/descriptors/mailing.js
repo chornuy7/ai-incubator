@@ -23,6 +23,7 @@ export default {
     summary: 'Sends the first personal messages to a list of phone numbers and usernames on behalf of managed accounts.',
     does: [
       'parses the list of targets into phones and usernames',
+      'filters out recipients from the blacklist by both username and phone number, regardless of the number format',
       'resolves the number to the Telegram account (numbers that are not in Telegram are skipped)',
       'sends a text: template, first message from the target or AI generated for each recipient',
       'can attach media or links to post',
@@ -66,8 +67,8 @@ export default {
         'The list is broken down into telephone numbers and usernames. The phone resolves to the Telegram account via'
         + 'import contact; if there is no number in Telegram, the target is skipped. The progress of the task is considered'
         + 'depending on the length of the list: as many goals as there are as many actions.',
-      api: { method: 'POST', path: '/api/modules/mailing/tasks', fills: [] },
-      params: [],
+      api: { method: 'POST', path: '/api/modules/mailing/tasks', fills: ['targets'] },
+      params: ['targets'],
     },
     {
       id: 'message',
@@ -82,7 +83,7 @@ export default {
         path: '/api/modules/mailing/tasks',
         fills: ['message', 'promptIndex', 'promptOverrides'],
       },
-      params: ['message', 'promptIndex', 'promptOverrides'],
+      params: ['message', 'aiPerRecipient', 'promptIndex', 'promptOverrides', 'mediaUrls', 'typeWeights'],
     },
     {
       id: 'limits',
@@ -140,6 +141,23 @@ export default {
       ],
       examples: ['Hello! I saw your profile - I have a quick question, is it convenient?'],
       storedAs: 'task.settings.message (server accepts promptText)',
+    },
+    {
+      name: 'typeWeights',
+      block: 'message',
+      title: 'Распределение типов, %',
+      type: 'array',
+      items: 'number',
+      default: [],
+      purpose: 'Смешивать типы сообщений в заданной пропорции, чтобы аккаунты не писали в одном тоне.',
+      constraints: [
+        'индекс элемента соответствует promptIndex',
+        'если хотя бы один вес > 0, promptIndex НЕ используется — тип выбирается взвешенным жребием на каждое действие',
+        'веса нормируются автоматически, сумма 100 не обязательна',
+      ],
+      examples: [[50, 0, 0, 30, 20, 0]],
+      seeAlso: ['promptIndex'],
+      storedAs: 'task.settings.typeWeights',
     },
     {
       name: 'promptIndex',

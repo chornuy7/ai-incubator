@@ -60,3 +60,43 @@ test('прогресс: без заданного лимита знаменат�
   const back = await store.loadTask(limited.id)
   assert.equal(back.progress.total, 10, 'заданный лимит по-прежнему уточняет знаменатель')
 })
+
+test('фатальная ошибка переживает перезагрузку задачи и даёт статус «ошибка»', async () => {
+  // Живой прогон 18.08: ключ OpenAI отклонён, в лог легло «Задача остановлена —
+  // комментарии без ИИ не публикуем», после чего работа ПРОДОЛЖИЛАСЬ, а итог
+  // показался как «Готово · 0/2». Причина: воркер в конце круга перечитывает задачу
+  // с диска, и невсохранённый stopRequested терялся.
+  const { statusAfterRun, failTask, finishNote } = await import('../modules/workers.js')
+
+  const store = createTaskStore('fatal_test', 'ft')
+  const task = store.createTask({ accountIds: ['a'] }, {})
+  await store.saveTask(task)
+
+  await failTask(task, store, 'ИИ недоступен: ключ отклонён (401)')
+
+  // 1. Флаг лежит на диске — перечитывание его не теряет.
+  const reloaded = await store.loadTask(task.id)
+  assert.equal(reloaded.stopRequested, true, 'цикл обязан остановиться после перезагрузки')
+  assert.match(reloaded.fatalError, /ключ отклонён/)
+
+  // 2. Статус — ошибка, а не «готово» и не «остановлено».
+  assert.equal(statusAfterRun(reloaded), 'error')
+
+  // 3. Побочная запись лога не стирает пометку об ошибке.
+  await store.appendLog(reloaded, 'info', 'что-то ещё')
+  const after = await store.loadTask(task.id)
+  assert.equal(statusAfterRun(after), 'error', 'запись лога не должна «чинить» упавшую задачу')
+
+  // 4. Итоговая строка называет причину, а не рапортует «Завершено».
+  after.status = 'error'
+  assert.match(finishNote(after), /с ошибкой/)
+})
+
+test('statusAfterRun: обычные исходы не задеты', async () => {
+  const { statusAfterRun } = await import('../modules/workers.js')
+  assert.equal(statusAfterRun({}), 'done')
+  assert.equal(statusAfterRun({ stopRequested: true }), 'stopped')
+  assert.equal(statusAfterRun({ pauseRequested: true }), 'paused')
+  // Пауза и стоп вместе с фатальной ошибкой — всё равно ошибка: она старше.
+  assert.equal(statusAfterRun({ pauseRequested: true, fatalError: 'x' }), 'error')
+})

@@ -265,6 +265,7 @@ async function finalizeAuth(authId, p) {
   const account = userPayload(me, accountId, p.phone, p.proxy)
 
   await setAccountMeta(accountId, {
+    ...(p.ownerId ? { ownerId: String(p.ownerId) } : {}),
     proxy: p.proxy || '—',
     country: countryFromPhone(account.phone),
     status: 'active',

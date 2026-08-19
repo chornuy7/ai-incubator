@@ -31,10 +31,30 @@ export function moduleAccessGuard(keyFrom) {
         return res.status(403).json({ ok: false, error: 'Пользователь отключён' })
       }
       if (hasAdminRole(userRoleIds(user))) return next() // админ среди ролей — bypass
+
+      // Две оси, обе обязательны: РОЛЬ (что разрешил владелец) и ПОДПИСКА (что оплачено).
+      // До 18.08 сервер смотрел только роль — и владелец без роли (обычная регистрация)
+      // получал 403 на СВОИ оплаченные модули, хотя меню их показывало.
       const roles = await rolesForUser(user)
-      if (roles.some((role) => can(role, 'module', key))) return next() // union: доступ даёт любая роль
-      const names = roles.map((r) => r.name).join(', ') || '—'
-      return res.status(403).json({ ok: false, error: `Нет доступа к модулю (роли «${names}»)` })
+      const roleFree = roles.length === 0 && !user.parentId // владелец ролью не ограничен
+      if (!roleFree && !roles.some((role) => can(role, 'module', key))) {
+        const names = roles.map((r) => r.name).join(', ') || '—'
+        return res.status(403).json({ ok: false, error: `Нет доступа к модулю (роли «${names}»)` })
+      }
+
+      // Подписка: `'all'` — без ограничений, список — строго по нему. Пустой набор с
+      // 18.08 означает «не куплено ничего», и раньше он гейт не проходил, а обходил:
+      // свежая регистрация запускала любой модуль. Витрина по-прежнему показывает
+      // модули как промо — смотреть можно, работать нельзя.
+      const { getBalance } = await import('../balance.js')
+      const { modules } = await getBalance(userId)
+      if (Array.isArray(modules) && !modules.includes(key)) {
+        return res.status(403).json({
+          ok: false,
+          error: modules.length ? 'Модуль не входит в вашу подписку' : 'Модуль не оплачен — оформите подписку',
+        })
+      }
+      return next()
     } catch {
       return next() // guard не должен ронять запрос
     }

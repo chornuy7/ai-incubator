@@ -28,7 +28,9 @@ const LEVELS = [
   },
 ]
 
-function InfoTip({ text, className }: { text: string; className?: string }) {
+/** Подсказка-«?» рядом с подписью. Экспортируется: тем же видом её рисует общий
+ *  ряд пресетов в «Защите и таймингах» (правка 19.08). */
+export function InfoTip({ text, className }: { text: string; className?: string }) {
   return (
     <span className={cn('group/tip relative inline-flex shrink-0 align-middle', className)}>
       <HelpCircle
@@ -47,8 +49,17 @@ function InfoTip({ text, className }: { text: string; className?: string }) {
   )
 }
 
-export function ProtectionBlock({ enabled, onEnabled, level, onLevel }: {
+export function ProtectionBlock({ enabled, onEnabled, level, onLevel, showLevels = true, children }: {
   enabled: boolean; onEnabled: (v: boolean) => void; level: number; onLevel: (n: number) => void
+  /** Рисовать ли собственный ряд из трёх уровней. */
+  showLevels?: boolean
+  /**
+   * Что показать вместо трёх уровней. «Защита и тайминги» передаёт сюда общий ряд из
+   * четырёх пресетов (правка 19.08): раньше он стоял отдельной полосой под зелёной
+   * карточкой, и выбор темпа читался как настройка, не связанная с защитой — хотя это
+   * ровно она и есть.
+   */
+  children?: React.ReactNode
 }) {
   // HELP-001 (§8): «Как работает защита» больше не раскрывается инлайн-дублем —
   // и знак вопроса, и текстовая ссылка открывают одну статью Help Center в боковой панели.
@@ -72,7 +83,11 @@ export function ProtectionBlock({ enabled, onEnabled, level, onLevel }: {
         </div>
         <Switch checked={enabled} onChange={onEnabled} />
       </div>
-      {enabled && (
+      {/* Содержимое (общий ряд пресетов) — на месте трёх уровней, внутри той же карточки. */}
+      {enabled && children && (
+        <div className="mt-4 border-t border-spark-500/20 pt-4">{children}</div>
+      )}
+      {enabled && showLevels && (
         <div className="mt-4 grid gap-2 border-t border-spark-500/20 pt-4 sm:grid-cols-3">
           {LEVELS.map((lvl, i) => {
             const Icon = lvl.icon
@@ -121,4 +136,3 @@ export function ProtectionBlock({ enabled, onEnabled, level, onLevel }: {
   )
 }
 
-export { InfoTip }

@@ -7,7 +7,7 @@ import { AccountPicker } from '@/features/account-picker/AccountPicker'
 import { MessageComposer } from '@/features/composer/MessageComposer'
 import { useSession } from '@/features/auth/session'
 import { type ModuleTaskSettings } from '@/api/modulesApi'
-import { confirmDialog, promptDialog } from '@/shared/lib/dialog'
+import { confirmDialog } from '@/shared/lib/dialog'
 import {
   fetchAutomationRules, createAutomationRule, updateAutomationRule, deleteAutomationRule, runAutomationRuleNow,
   type AutomationRule, type AutomationSchedule,
@@ -17,9 +17,12 @@ import { ModuleNotPaid } from '@/features/billing/ModuleNotPaid'
 // §3.1 (MR-115): автопостинг приведён к общей структуре модулей — те же переиспользуемые
 // блоки (SectionCard + нижняя LaunchPanel со степпером), что и в LiveModule/парсерах.
 // Публикации сохраняются как правила автоматизации (moduleKey='autoposting') и переживают рестарт.
-import { SectionCard, LaunchPanel, LaunchSteps, markCurrentStep, TaskStartedModal } from '@/features/modules/shared'
-import { LaunchCost } from '@/features/modules/shared/LaunchCost'
+import { SectionCard, LaunchPanel, LaunchSteps, markCurrentStep, TaskStartedModal, BlacklistEditor, ProtectionTimings } from '@/features/modules/shared'
+import type { DelaysShape } from '@/features/modules/shared/TimingSection'
+import { LaunchCost, ActionPriceCalc } from '@/features/modules/shared/LaunchCost'
 import { useModuleTask } from '@/features/modules/shared/useModuleTask'
+import { PresetBar } from '@/features/modules/shared/PresetBar'
+import { SavePresetModal } from '@/features/modules/shared/SavePresetModal'
 
 /** Локальная дата-время в формат `datetime-local` (без сдвига в UTC, как делает toISOString). */
 function toLocalInput(ts: number): string {
@@ -39,6 +42,7 @@ export function AutopostingPage() {
   // §5.4/MR-157: гейт — в тонкой обёртке (planModules грузится асинхронно; гейт перед
   // остальными хуками ронял React «Rendered fewer hooks»). Тело — в AutopostingInner.
   const planModules = usePlan((st) => st.modules)
+  if (planModules === null) return null // набор ещё не загружен — не мигаем витриной покупки
   if (!planHasModule(planModules, 'autoposting')) return <ModuleNotPaid title="Автопостинг" moduleKey="autoposting" />
   return <AutopostingInner />
 }
@@ -66,6 +70,11 @@ function AutopostingInner() {
   const [schedInterval, setSchedInterval] = useState(1440)
   const [name, setName] = useState('')
   const [editingId, setEditingId] = useState<string | null>(null)
+  // Защита включена всегда (выключатель убран с экрана 19.08), уровень — базовый:
+  // темп теперь задаётся пресетом задержек, а не вторым рядом карточек.
+  const aiProtect = true
+  const protLevel = 1
+  const [delayPreset, setDelayPreset] = useState(1)
 
   const [rules, setRules] = useState<AutomationRule[]>([])
   const [loadingRules, setLoadingRules] = useState(true)
@@ -106,11 +115,25 @@ function AutopostingInner() {
     return { type: 'interval', intervalMinutes: schedInterval }
   }
 
+  // Автопостинг хранит паузы парой чисел; общий блок ждёт полную структуру.
+  const postingDelays: DelaysShape = {
+    comment: [delayMin, delayMax],
+    action: [delayMin, delayMax],
+    join: [delayMin, delayMax],
+    floodWait: 120,
+    floodQuarantine: 3,
+  }
+
   const settings = (): ModuleTaskSettings => ({
     accountIds: [...selected],
     targets: channels,
     promptText: text.trim(),
     delays: { action: [delayMin, delayMax] as [number, number] },
+    // Защита и темп теперь задаются в интерфейсе, а не берутся умолчаниями: воркер
+    // читал эти поля и раньше (см. дескриптор), просто задать их было негде.
+    aiProtection: aiProtect,
+    protectionLevel: protLevel,
+    delayPreset,
     ...(media.length ? { mediaUrls: media } : {}),
   })
 
@@ -168,10 +191,9 @@ function AutopostingInner() {
     }
   }
 
-  const handleSave = async () => {
-    const n = await promptDialog({ title: 'Сохранить шаблон', message: 'Название шаблона настроек поста', placeholder: 'Напр. Анонс' })
-    if (n) void savePreset(n, settings())
-  }
+  // §10: сохранение через модалку (имя + цвет + владелец), как в остальных модулях.
+  const [presetModalOpen, setPresetModalOpen] = useState(false)
+  const handleSave = () => setPresetModalOpen(true)
 
   // Восстановить настройки из шаблона (аккаунты не трогаем).
   const applyPreset = (s: ModuleTaskSettings) => {
@@ -248,6 +270,14 @@ function AutopostingInner() {
 
       <div className="space-y-4">
         <TaskStartedModal task={justStarted} moduleTitle="Автопостинг" onClose={dismissJustStarted} />
+        <SavePresetModal open={presetModalOpen} onClose={() => setPresetModalOpen(false)}
+          onSave={(name, color, owner) => savePreset(name, settings(), color, owner)} />
+        {/* ТЗ 06.08 §10: выбор шаблона — вверху, до всех настроек (TPL-001). */}
+        <PresetBar presets={presets} onApply={applyPreset} onSave={handleSave}
+          onEdit={editPreset} onDelete={deletePreset} disabled={running} />
+
+        {/* MR-149: мини-калькулятор цены действия — в шапке, перед «Выбором аккаунтов». */}
+        <ActionPriceCalc moduleKey="autoposting" />
 
         {/* 1. Аккаунты — единый полноширинный выбор, как во всех модулях. */}
         <div id="sec-accounts" className="scroll-mt-24">
@@ -259,6 +289,11 @@ function AutopostingInner() {
           <SectionCard icon={<Target size={18} />} title="Каналы/группы" badge={String(channels.length)} required>
             <div className="mb-1 text-xs text-white/50">Свои каналы/группы, где аккаунт — админ с правом публикации</div>
             <textarea className="input min-h-[80px] font-mono text-sm" value={channelsText} onChange={(e) => setChannelsText(e.target.value)} placeholder={'@my_channel\nhttps://t.me/my_group'} />
+            {/* ЧС внутри блока целей — единообразно с остальными модулями. На сервере
+                он тут работал и раньше (через общий `targets()`), не хватало блока. */}
+            <div className="mt-3">
+              <BlacklistEditor title="Чёрный список каналов" compact />
+            </div>
           </SectionCard>
         </div>
 
@@ -269,9 +304,30 @@ function AutopostingInner() {
           </SectionCard>
         </div>
 
+        {/* Один блок на все модули (правка 19.08): защита и задержки — одно решение.
+            Раньше у автопостинга защиты в интерфейсе не было вовсе, а паузы жили внутри
+            «Публикации и темпа» — четвёртый по счёту способ настроить одно и то же. */}
+        <ProtectionTimings
+          timing={{
+            delays: postingDelays,
+            onDelays: (updater) => {
+              const next = typeof updater === 'function' ? updater(postingDelays) : updater
+              const a = next.action
+              if (a) { setDelayMin(Math.max(1, a[0])); setDelayMax(Math.max(a[0], a[1])) }
+            },
+            showAction: true,
+            showComment: false,
+            showJoin: false,
+            labels: { action: 'Задержка между публикациями' },
+            delayPresets: ['Агрессивный', 'Сбалансированный', 'Консервативный'],
+            delayPreset,
+            onDelayPreset: setDelayPreset,
+          }}
+        />
+
         {/* 4. Публикация и темп — необязательный шаг («Сейчас» ничего не требует). */}
         <div id="sec-settings" className="scroll-mt-24">
-          <SectionCard icon={<CalendarClock size={18} />} title="Публикация и темп" badge={mode === 'now' ? 'Сейчас' : 'Расписание'}>
+          <SectionCard icon={<CalendarClock size={18} />} title="Публикация" badge={mode === 'now' ? 'Сейчас' : 'Расписание'}>
             <div className="mb-3 flex gap-1 rounded-xl bg-elevated p-1">
               <button onClick={() => setMode('now')} className={seg(mode === 'now')}>Сейчас</button>
               <button onClick={() => setMode('schedule')} className={seg(mode === 'schedule')}>По расписанию</button>
@@ -314,16 +370,8 @@ function AutopostingInner() {
               </div>
             )}
 
-            <div className="mb-2 text-sm font-semibold text-fg">Темп</div>
-            <div className="grid grid-cols-2 gap-3">
-              <label className="text-xs text-white/50">Задержка от (с)
-                <NumberField value={delayMin} onChange={setDelayMin} min={1} />
-              </label>
-              {/* Клемп по blur, а не на каждый keystroke: иначе «до» с минимумом из соседнего поля не набирается (10.1-b). */}
-              <label className="text-xs text-white/50">до (с)
-                <NumberField value={delayMax} onChange={setDelayMax} min={delayMin} />
-              </label>
-            </div>
+            {/* Темп уехал в общий блок «Защита и тайминги» — держать паузы в двух местах
+                значит рано или поздно задать их по-разному (правка 19.08). */}
             {!canWrite && (
               <div className="mt-3 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-200">
                 Публикацию создаёт только администратор (единый отправитель). У вас нет прав на отправку.
@@ -402,7 +450,6 @@ function AutopostingInner() {
             task={task}
             presets={presets}
             onApplyPreset={applyPreset}
-            onDeletePreset={deletePreset} onEditPreset={editPreset}
           />
         </div>
       </div>

@@ -1,5 +1,8 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
+import fs from 'node:fs/promises'
+import os from 'node:os'
+import path from 'node:path'
 import { moduleAccessGuard, moduleKeyFromModulesPath } from '../lib/accessGuard.js'
 
 test('moduleKeyFromModulesPath: первый сегмент, tasks → null', () => {
@@ -118,4 +121,56 @@ test('moduleAccessGuard: отключённый пользователь пол�
   assert.equal(status, 403)
 
   await fs.rm(dir, { recursive: true, force: true })
+})
+
+/**
+ * Гейт модулей: роль И подписка (правка 18.08).
+ *
+ * Было: сервер смотрел только роль. Владелец без роли получал 403 на СВОИ оплаченные
+ * модули, а неоплаченный модуль открывался по прямой ссылке любому, у кого роль его
+ * разрешает. Обе оси теперь обязательны.
+ */
+test('владелец без роли работает со своими оплаченными модулями', async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'guard-owner-'))
+  process.env.USERS_FILE = path.join(dir, 'users.json')
+  process.env.BALANCE_FILE = path.join(dir, 'balance.json')
+  const { createUser } = await import('../users.js')
+  const { setUserModules } = await import('../balance.js')
+  const { moduleAccessGuard } = await import('../lib/accessGuard.js')
+
+  const owner = await createUser({ email: 'guard.own@x.y', password: 'secret1', name: 'Владелец', roleIds: [] })
+  await setUserModules(['warming'], owner.id, {})
+
+  const guard = moduleAccessGuard(() => 'warming')
+  let passed = false
+  await guard({ header: () => owner.id }, { status: () => ({ json: () => {} }) }, () => { passed = true })
+  assert.ok(passed, 'оплаченный модуль владельцу без роли открыт')
+
+  const guardUnpaid = moduleAccessGuard(() => 'mailing')
+  let denied = null
+  await guardUnpaid(
+    { header: () => owner.id },
+    { status: (code) => ({ json: (body) => { denied = { code, body } } }) },
+    () => { denied = 'passed' },
+  )
+  assert.equal(denied?.code, 403, 'неоплаченный модуль закрыт даже владельцу')
+  assert.match(denied?.body?.error || '', /подписк/i, 'причина отказа — подписка, а не роль')
+})
+
+test('ничего не куплено — модули не запускаются (промо только смотрит)', async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'guard-empty-'))
+  process.env.USERS_FILE = path.join(dir, 'users.json')
+  process.env.BALANCE_FILE = path.join(dir, 'balance.json')
+  const { createUser } = await import('../users.js')
+  const { moduleAccessGuard } = await import('../lib/accessGuard.js')
+
+  const fresh = await createUser({ email: 'guard.fresh@x.y', password: 'secret1', name: 'Новичок', roleIds: [] })
+  let denied = null
+  await moduleAccessGuard(() => 'neuro-chatting')(
+    { header: () => fresh.id },
+    { status: (code) => ({ json: (body) => { denied = { code, body } } }) },
+    () => { denied = 'passed' },
+  )
+  assert.equal(denied?.code, 403, 'свежая регистрация без покупки не запускает модули')
+  assert.match(denied?.body?.error || '', /не оплачен/i)
 })

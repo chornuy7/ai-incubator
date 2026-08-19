@@ -120,7 +120,7 @@ export default {
         path: '/api/modules/neuro-dialogs/tasks',
         fills: ['dialogGoal', 'promptIndex', 'promptText', 'promptOverrides', 'analyzeImages'],
       },
-      params: ['dialogGoal', 'promptIndex', 'promptText', 'promptOverrides', 'analyzeImages'],
+      params: ['dialogGoal', 'promptIndex', 'promptText', 'promptOverrides', 'analyzeImages', 'typeWeights'],
     },
     {
       id: 'performance',
@@ -346,6 +346,23 @@ export default {
       examples: ['Gently lead you to sign up for a free consultation, give a link only after obvious interest.'],
       seeAlso: ['goalId'],
       storedAs: 'task.settings.dialogGoal',
+    },
+    {
+      name: 'typeWeights',
+      block: 'prompts',
+      title: 'Распределение типов, %',
+      type: 'array',
+      items: 'number',
+      default: [],
+      purpose: 'Смешивать типы сообщений в заданной пропорции, чтобы аккаунты не писали в одном тоне.',
+      constraints: [
+        'индекс элемента соответствует promptIndex',
+        'если хотя бы один вес > 0, promptIndex НЕ используется — тип выбирается взвешенным жребием на каждое действие',
+        'веса нормируются автоматически, сумма 100 не обязательна',
+      ],
+      examples: [[50, 0, 0, 30, 20, 0]],
+      seeAlso: ['promptIndex'],
+      storedAs: 'task.settings.typeWeights',
     },
     {
       name: 'promptIndex',

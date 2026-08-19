@@ -2,8 +2,8 @@ import { useState } from 'react'
 import { Link } from 'react-router-dom'
 import { Zap, Eye, EyeOff, ArrowRight, LogOut, ShieldAlert } from 'lucide-react'
 import { useApp } from '@/mocks/store'
-import { useSession } from '@/features/auth/session'
-import { loginUser } from '@/api/usersApi'
+import { useAdminSession } from '@/features/auth/session'
+import { loginUser, clearToken } from '@/api/usersApi'
 import { ADMIN_BYPASS_ID } from '@/shared/config/rbac'
 import { AdminStatsPage } from '@/pages/AdminStatsPage'
 import { Toasts } from '@/widgets/Toasts'
@@ -23,15 +23,20 @@ function isAdminUser(u: { roleId?: string; roleIds?: string[] } | null | undefin
 }
 
 export function AdminEntry() {
-  const sessionUser = useSession((s) => s.user)
-  if (sessionUser?.isAdmin) return <AdminShell />
+  // Админка — ОТДЕЛЬНАЯ сессия (созвон 19.08), не «гейт поверх панели». Залогинен в
+  // админке ⟺ есть админ-сессия своей зоны. Панельный вход админку НЕ открывает.
+  const adminUser = useAdminSession((s) => s.user)
+  if (adminUser?.isAdmin) return <AdminShell />
   return <AdminLogin />
 }
 
 /** Полноэкранная админка со своей шапкой — без сайдбара панели. */
 function AdminShell() {
-  const sessionUser = useSession((s) => s.user)
-  const logout = useSession((s) => s.logout)
+  const adminUser = useAdminSession((s) => s.user)
+  const logoutAdmin = useAdminSession((s) => s.logout)
+  // «Выйти из админки» завершает ТОЛЬКО админ-сессию (свой токен) — панель не трогает.
+  // Это две независимые авторизации: выход из админки ≠ выход из панели, и наоборот.
+  const exitAdmin = () => logoutAdmin()
 
   return (
     <div className="min-h-screen bg-bg text-fg">
@@ -44,10 +49,10 @@ function AdminShell() {
           </div>
           <div className="min-w-0">
             <div className="font-display text-sm font-bold leading-tight">Murmex · Админ-панель</div>
-            <div className="truncate text-[11px] leading-tight text-muted">{sessionUser?.email}</div>
+            <div className="truncate text-[11px] leading-tight text-muted">{adminUser?.email}</div>
           </div>
           <Link to="/panel" className="btn-ghost ml-auto h-9 px-3 text-sm">В панель</Link>
-          <button onClick={logout} className="btn-ghost h-9 px-3 text-sm" title="Выйти из админки">
+          <button onClick={exitAdmin} className="btn-ghost h-9 px-3 text-sm" title="Выйти из админки (панель остаётся)">
             <LogOut size={15} /> Выйти
           </button>
         </div>
@@ -67,8 +72,7 @@ function AdminShell() {
 function AdminLogin() {
   const setUserState = useApp((s) => s.setUserState)
   const pushToast = useApp((s) => s.pushToast)
-  const signIn = useSession((s) => s.login)
-  const logout = useSession((s) => s.logout)
+  const signIn = useAdminSession((s) => s.login)
   const [email, setEmail] = useState('')
   const [pass, setPass] = useState('')
   const [show, setShow] = useState(false)
@@ -82,15 +86,20 @@ function AdminLogin() {
     try {
       const { user, role } = await loginUser(email.trim(), pass)
       if (!isAdminUser(user)) {
-        // Не админ — доступ закрыт: сессию не поднимаем, чтобы обычный оператор не
-        // остался «наполовину вошедшим» в закрытый ему раздел.
-        logout()
+        // Не админ — доступ закрыт: админ-сессию не поднимаем, а только что сохранённый
+        // админ-токен убираем (чтобы оператор не остался «наполовину вошедшим»). Без
+        // редиректа — показываем ошибку на месте.
+        clearToken()
         setError('Доступ только для администратора.')
         return
       }
+      // Отдельная админ-сессия: свой токен (loginUser уже сохранил его в admin-token, т.к.
+      // мы на /admin) + своя запись сессии. Панель этим входом НЕ трогается.
       signIn(user, role && role.permissions ? { id: role.id, name: role.name, permissions: role.permissions } : null)
       setUserState('with-data')
-      pushToast({ type: 'success', title: `Админ-панель · ${user.name}` })
+      // MR-142 (баг 1): жёсткая перезагрузка = чистая память, без данных прошлой сессии.
+      // Гейт и сессия уже в localStorage, после boot откроется AdminShell.
+      try { window.location.assign('/admin') } catch { pushToast({ type: 'success', title: `Админ-панель · ${user.name}` }) }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Проверьте e-mail и пароль')
     } finally {

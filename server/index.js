@@ -71,7 +71,19 @@ app.get('/api/tg/accounts', async (req, res) => {
   try {
     // ?verify=1 — сходить в Telegram за каждым аккаунтом. Долго (подключение на аккаунт),
     // поэтому только по явному запросу: обычный список отдаётся из meta мгновенно.
-    const accounts = await tgListAccounts({ verify: req.query.verify === '1' || req.query.verify === 'true' })
+    // Аккаунты — имущество ПРОСТРАНСТВА. Сотрудник видит аккаунты своего владельца
+    // (дальше их ещё режет роль), посторонний — только свои. Админ и дев без сессии —
+    // все: у первого это работа, у второго нет пространства вовсе.
+    const me = req.header('x-user-id')
+    let ownerId = null
+    if (me && !(await isAdminRequest(req))) {
+      const { resolveSubscriptionOwner } = await import('./users.js')
+      ownerId = await resolveSubscriptionOwner(me)
+    }
+    const accounts = await tgListAccounts({
+      verify: req.query.verify === '1' || req.query.verify === 'true',
+      ...(ownerId ? { ownerId } : {}),
+    })
     res.json({ ok: true, accounts })
   } catch (err) {
     res.status(500).json({ ok: false, error: err instanceof Error ? err.message : 'Ошибка' })
@@ -455,6 +467,29 @@ app.get('/api/accounts/:accountId/work', async (req, res) => {
   } catch (err) { res.status(500).json({ ok: false, error: err instanceof Error ? err.message : 'Ошибка' }) }
 })
 
+/**
+ * LOG-003 (MR-122): история действий одного аккаунта — все посты/комменты/реакции/чаты/
+ * вступления, что он совершил. Фильтры: тип действия, группа/канал, период. Ссылки на
+ * объекты формируются на фронте из objectRef. Читаем из журнала действий (LOG-002).
+ */
+app.get('/api/accounts/:accountId/actions', async (req, res) => {
+  try {
+    const id = String(req.params.accountId || '')
+    const { canSeeAccount } = await import('./lib/accessGuard.js')
+    if (!(await canSeeAccount(req, id))) return res.status(403).json({ ok: false, error: 'Нет доступа к этому аккаунту' })
+    const { readActions } = await import('./actionLog.js')
+    const actions = await readActions({
+      accountId: id,
+      type: req.query.type ? String(req.query.type) : undefined,
+      target: req.query.target ? String(req.query.target) : undefined,
+      since: req.query.since ? Number(req.query.since) : undefined,
+      until: req.query.until ? Number(req.query.until) : undefined,
+      limit: req.query.limit ? Math.min(2000, Number(req.query.limit)) : 500,
+    })
+    res.json({ ok: true, actions })
+  } catch (err) { res.status(500).json({ ok: false, error: err instanceof Error ? err.message : 'Ошибка' }) }
+})
+
 /** §5.3: где сейчас болит — ошибки задач, баны, работа вставшая из-за денег. */
 app.get('/api/admin/problems', async (req, res) => {
   try {
@@ -496,8 +531,8 @@ app.post('/api/bundles', async (req, res) => {
   try {
     if (!(await isAdminRequest(req))) return res.status(403).json({ ok: false, error: 'Собирать наборы может только владелец' })
     const { createBundle } = await import('./bundles.js')
-    // §11.3: кто собрал набор.
-    const bundle = await createBundle({ ...(req.body || {}), userId: req.header('x-user-id') || '' })
+    // Кто собрал набор — в audit_log ниже (initiator). Наборы глобальные, owner-колонки у них нет.
+    const bundle = await createBundle(req.body || {})
     await appendAudit({
       action: 'bundle.create', module: 'billing', initiator: req.header('x-user-id') || 'system',
       reason: `Набор «${bundle.name}»: ${bundle.modules.length} модулей за ${bundle.price}`,
@@ -1059,7 +1094,7 @@ app.post('/api/accounts/activity', async (req, res) => {
  */
 app.get('/api/pricing', async (_req, res) => {
   try {
-    const { CURRENCY } = await import('./pricing.js')
+    const { CURRENCY, maxTextTokens, fullActionPrice } = await import('./pricing.js')
     const { effectivePrices } = await import('./priceStore.js')
     const { tokenSummary } = await import('./tokenLedger.js')
     // Цены действий и пакеты — эффективные (код + правки админки).
@@ -1072,12 +1107,21 @@ app.get('/api/pricing', async (_req, res) => {
       const sum = await tokenSummary({ module: key }).catch(() => null)
       avgTokens[key] = sum?.calls ? Math.round(sum.tokens / sum.calls) : 0
     }
+    // MR-149: ЕДИНАЯ цена действия = фикс-действие + текст «по максимуму символов»
+    // (по курсу coinsPer1kTokens). Витрина показывает эту цену, за токены сверх не списываем.
+    const maxTokensMap = {}
+    const actionsFull = {}
+    for (const key of Object.keys(eff.actionMap)) {
+      maxTokensMap[key] = maxTextTokens(key)
+      // База «за действие» — из админки (eff.actionMap), текст код добавляет сам.
+      actionsFull[key] = fullActionPrice(key, eff.coinsPer1kTokens, eff.actionMap[key])
+    }
     const items = eff.modules
       .filter((m) => m.action > 0)
       .map((m) => ({ key: m.key, title: m.title, price: m.action, avgTokens: avgTokens[m.key] || 0 }))
       .sort((a, b) => b.price - a.price || a.title.localeCompare(b.title, 'ru'))
     res.json({
-      ok: true, items, actions: eff.actionMap, avgTokens,
+      ok: true, items, actions: eff.actionMap, actionsFull, maxTextTokens: maxTokensMap, avgTokens,
       coinsPer1kTokens: eff.coinsPer1kTokens, packs: eff.coinPacks, currency: CURRENCY,
       tokenUsd: eff.tokenUsd, tokenUsdAuto: eff.tokenUsdAuto, tokenUsdComputed: eff.tokenUsdComputed, tokenUsdModel: eff.tokenUsdModel,
       imageMultiplier: eff.imageMultiplier,
@@ -1151,6 +1195,16 @@ app.post('/api/subscription', async (req, res) => {
     if (req.body?.userId && !admin) {
       return res.status(403).json({ ok: false, error: 'Чужую подписку меняет только владелец' })
     }
+    // Подписку оформляет ВЛАДЕЛЕЦ пространства. Суб платить не может: деньги общие,
+    // а набор модулей всё равно читается у владельца (MR-28) — его покупка просто
+    // сожгла бы средства впустую (правка 18.08).
+    if (me && !req.body?.userId) {
+      const { getUser } = await import('./users.js')
+      const meUser = await getUser(me).catch(() => null)
+      if (meUser?.parentId) {
+        return res.status(403).json({ ok: false, error: 'Подписку оформляет владелец пространства' })
+      }
+    }
     const wanted = req.body?.modules
     const list = wanted === 'all' ? 'all' : (Array.isArray(wanted) ? wanted : [])
     const target = req.body?.userId || me
@@ -1158,7 +1212,6 @@ app.post('/api/subscription', async (req, res) => {
     // Админ без явного userId правит ОБЩИЙ набор; всё остальное — личная покупка.
     const personal = !(admin && !req.body?.userId)
     const months = Number(req.body?.months) || 0
-    const balance = personal ? await setUserModules(list, target, { months }) : await setModules(list, target, { months })
     const { subscriptionCost: subCost, periodCost } = await import('./pricing.js')
     const { effectivePrices } = await import('./priceStore.js')
     const bundlesList = await (await import('./bundles.js')).listBundles()
@@ -1166,12 +1219,37 @@ app.post('/api/subscription', async (req, res) => {
     const monthly = list === 'all' ? null : subCost(list, bundlesList, effPrices.monthMap)
     // paid — то, что реально заряжено за период (год со скидкой), НЕ месячная цена.
     const paid = monthly ? periodCost(monthly.sum, months || 1, effPrices.annualDiscount) : null
+
+    // §11.4 (правка 18.08): подписка ОПЛАЧИВАЕТСЯ. До этого набор применялся сразу и
+    // денег не спрашивал — с нулём на счету можно было открыть себе что угодно.
+    //
+    // Считаем только ДОБАВЛЕННЫЕ модули: смена набора и отключение лишнего не должны
+    // списывать повторно за то, что уже оплачено. Админ, раздающий доступ, не платит —
+    // это провижининг, а не покупка.
+    const { getBalance, changeUsd } = await import('./balance.js')
+    let charged = 0
+    if (personal && !admin && Array.isArray(list)) {
+      const before = await getBalance(target)
+      const { addedCost } = await import('./pricing.js')
+      const { added, monthly: addMonthly } = addedCost(before.modules, list, bundlesList, effPrices.monthMap)
+      if (added.length) {
+        charged = periodCost(addMonthly, months || 1, effPrices.annualDiscount)
+        if ((Number(before.usd) || 0) + 1e-9 < charged) {
+          return res.status(402).json({
+            ok: false,
+            error: `Недостаточно средств: нужно $${charged.toFixed(2)}, на счету $${(Number(before.usd) || 0).toFixed(2)}. Пополните баланс.`,
+          })
+        }
+        await changeUsd(-charged, `Подписка: ${added.length} модул. на ${months || 1} мес.`, target)
+      }
+    }
+    const balance = personal ? await setUserModules(list, target, { months }) : await setModules(list, target, { months })
     await appendAudit({
       action: 'subscription.set',
       module: 'billing',
       initiator: req.header('x-user-id') || 'system',
       reason: `Подписка${(admin && !req.body?.userId) ? ' пространства' : ` (${target || 'свой'})`}: ${list === 'all' ? 'все модули' : `${list.length} модулей`}`,
-      meta: { modules: list, months: months || 1, cost: monthly, paid },
+      meta: { modules: list, months: months || 1, cost: monthly, paid, charged },
     }).catch(() => {})
     resyncModuleLinks() // §11.3: подписка изменилась — обновить проекцию связей
     res.json({ ok: true, balance })
@@ -1321,7 +1399,20 @@ try { setMaxConcurrent((await getSettings()).maxParallelTasks) } catch { /* де
 
 const { flipped, cleared } = await reconcileStaleTasksOnBoot()
 if (flipped.length) {
-  console.log(`Reconcile: ${flipped.length} устаревших задач помечены stopped, блокировки не восстановлены`)
+  console.log(`Reconcile: ${flipped.length} задач прервано рестартом — помечены на восстановление`)
+}
+
+// Деплой не должен убивать работу пользователей: задачи, прерванные перезапуском,
+// поднимаются сами и продолжают с места остановки. Запуск идёт через тот же
+// `resumeModuleTask`, что и кнопка «Возобновить», поэтому действуют все проверки,
+// а лимит параллельности ставит лишние задачи в очередь вместо залпа по Telegram.
+try {
+  const { resumeMarkedTasks } = await import('./lib/taskRecovery.js')
+  const { resumed, skipped } = await resumeMarkedTasks()
+  if (resumed.length) console.log(`Восстановлено после перезапуска: ${resumed.length} задач`)
+  if (skipped.length) console.log(`Не восстановлено: ${skipped.length} (причины — в логах задач)`)
+} catch (err) {
+  console.error('Восстановление задач не выполнено:', err instanceof Error ? err.message : err)
 }
 if (cleared?.length) {
   console.log(`Reconcile: ${cleared.length} аккаунтов сняты с зависшего статуса «в работе»`)
@@ -1431,3 +1522,47 @@ server.on('error', (err) => {
   console.error('[fatal] сервер не поднялся:', err?.stack || err)
   process.exit(1)
 })
+
+/**
+ * Корректное завершение по сигналу деплоя.
+ *
+ * systemd при рестарте шлёт SIGTERM и ждёт. Раньше мы просто умирали посреди действия:
+ * задача оставалась в статусе «выполняется», а на старте её помечали остановленной —
+ * то есть каждая выкатка обрывала работу всем пользователям. Теперь активные задачи
+ * помечаются как прерванные рестартом и просят воркеры выйти по паузе, дописав текущее
+ * действие. На старте они поднимаются сами.
+ *
+ * Тайм-аут нужен обязательно: если воркер завис на сетевом вызове, systemd через свой
+ * TimeoutStopSec убьёт процесс жёстко, и пометки не окажется на диске. Лучше выйти
+ * самим, сохранив то, что успели.
+ */
+let shuttingDown = false
+const GRACEFUL_EXIT_MS = Number(process.env.SHUTDOWN_GRACE_MS) || 15_000
+
+async function shutdown(signal) {
+  if (shuttingDown) return
+  shuttingDown = true
+  console.log(`[shutdown] ${signal}: помечаем активные задачи на восстановление…`)
+
+  const hardExit = setTimeout(() => {
+    console.warn('[shutdown] не уложились в отведённое время — выходим принудительно')
+    process.exit(0)
+  }, GRACEFUL_EXIT_MS)
+  hardExit.unref?.()
+
+  try {
+    const { markRunningTasksForResume } = await import('./lib/taskRecovery.js')
+    const marked = await markRunningTasksForResume()
+    console.log(`[shutdown] помечено задач: ${marked.length} — продолжатся после старта`)
+  } catch (err) {
+    console.error('[shutdown] пометить задачи не удалось:', err instanceof Error ? err.message : err)
+  }
+
+  clearTimeout(hardExit)
+  // Новые соединения не принимаем; активные HTTP-запросы короткие и завершатся сами.
+  server.close(() => process.exit(0))
+  setTimeout(() => process.exit(0), 2000).unref?.()
+}
+
+process.on('SIGTERM', () => void shutdown('SIGTERM'))
+process.on('SIGINT', () => void shutdown('SIGINT'))

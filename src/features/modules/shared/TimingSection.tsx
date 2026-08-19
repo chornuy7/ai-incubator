@@ -16,6 +16,23 @@ export interface DelaysShape {
 interface MinMaxCtl { min: number; max: number; onMin: (n: number) => void; onMax: (n: number) => void }
 
 export interface TimingSectionProps {
+  /**
+   * Рисовать БЕЗ своей карточки — блок встраивается в «Защиту» (правка 19.08).
+   * Защита и тайминги — одно решение: уровень защиты умножает задержки, а FloodWait
+   * ведёт в карантин. Держать их в двух карточках значило заставлять человека
+   * настраивать одно и то же в двух местах.
+   */
+  bare?: boolean
+  /**
+   * Что рисуем. Лимиты («Режим работы», «сколько сделает 1 аккаунт», «мин. слов»)
+   * относятся к ОБЪЁМУ задачи и живут в «Параметрах и лимитах»; задержки — к темпу и
+   * живут в «Защите и таймингах». До 19.08 обе половины стояли в одной карточке.
+   */
+  part?: 'all' | 'limits' | 'delays'
+  /** Ряд пресетов рисует родитель (общий с защитой) — здесь его прятать. */
+  hidePresets?: boolean
+  /** Готовый множитель задержек. Передан — используем его вместо PRESET_MUL. */
+  mulOverride?: number
   /** Переключатель режима работы (например ['По количеству','По времени']). */
   workModeOptions?: string[]
   workMode?: number
@@ -81,6 +98,7 @@ const PRESET_META = [
  */
 export function TimingSection(props: TimingSectionProps) {
   const {
+    bare, part = 'all', hidePresets, mulOverride,
     workModeOptions, workMode = 0, onWorkMode, workModeLabel = 'Режим работы',
     durationMinutes = 60, onDuration, showDurationAlways, durationPeriodHint,
     totalLabel = 'Действия', total, computedTotal, perAccount, minWords,
@@ -98,7 +116,7 @@ export function TimingSection(props: TimingSectionProps) {
   // MR-136 (доработка MR-103): «Custom» — 4-й пресет (индекс 3). На сервере
   // PRESET_MUL[3] ?? 1 → ×1, поэтому Custom = задержки берутся как есть, без масштабирования.
   const CUSTOM = 3
-  const mul = PRESET_MUL[delayPreset] ?? 1
+  const mul = mulOverride ?? (PRESET_MUL[delayPreset] ?? 1)
   // Правка 14.08: значения Мин/Рекомендуемые/Макс — ЗАФИКСИРОВАНЫ. Пока выбран пресет темпа
   // (не Custom), все поля «Расширенных» заблокированы: раньше правка на пресете молча
   // перекидывала в Custom, из-за чего казалось, что пресеты «не держат» значения. Теперь
@@ -178,10 +196,10 @@ export function TimingSection(props: TimingSectionProps) {
     if (which === 'min') perAccount?.onMin(v); else perAccount?.onMax(v)
   }
 
-  return (
-    <SectionCard icon={<Timer size={18} />} title="Тайминги и задержки">
+  const body = (
+    <>
       {/* Пресет темпа — карточками, как «Защита аккаунтов». + «Custom» для ручных значений. */}
-      {hasPresets && (
+      {hasPresets && !hidePresets && (
         <>
         <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
           {[...delayPresets!, 'Custom'].map((label, i) => {
@@ -267,7 +285,8 @@ export function TimingSection(props: TimingSectionProps) {
               Значения пресета «{delayPresets![delayPreset]}». Измените любое поле — переключится на «Custom».
             </div>
           )}
-          {/* Режим работы + лимиты */}
+          {/* Режим работы + лимиты — ОБЪЁМ задачи. В «Параметрах и лимитах». */}
+          {part !== 'delays' && (
           <div className="grid gap-4 lg:grid-cols-2">
             <div className="space-y-4 rounded-2xl border border-line bg-elevated/40 p-4">
               {workModeOptions && onWorkMode && (
@@ -307,8 +326,10 @@ export function TimingSection(props: TimingSectionProps) {
               )}
             </div>
           </div>
+          )}
 
-          {/* Задержки */}
+          {/* Задержки — ТЕМП. В «Защите и таймингах». */}
+          {part !== 'limits' && (
           <div className="rounded-2xl border border-line bg-elevated/40 p-4">
             <div className="mb-2 text-sm font-bold text-fg">Задержки</div>
             <div className="space-y-3">
@@ -343,8 +364,18 @@ export function TimingSection(props: TimingSectionProps) {
               <SingleDelayField label="FloodWait до карантина" value={delays.floodQuarantine} onChange={(n) => editDelays((d) => ({ ...d, floodQuarantine: n }))} />
             </div>
           </div>
+          )}
         </div>
       )}
-    </SectionCard>
+    </>
   )
+  if (bare) {
+    // Подзаголовок нужен только там, где блок про ТЕМП. В «Параметрах и лимитах»
+    // рисуется объём задачи, и «Тайминги и задержки» над ним просто врали (правка 19.08).
+    // Подзаголовка нет: карточка уже называется «Защита и тайминги», а в «Параметрах и
+    // лимитах» этот блок про объём — в обоих случаях надпись только повторяла заголовок
+    // или врала (правка 19.08).
+    return <div className={part === 'limits' ? 'mt-3' : ''}>{body}</div>
+  }
+  return <SectionCard icon={<Timer size={18} />} title="Тайминги и задержки">{body}</SectionCard>
 }

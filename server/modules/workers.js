@@ -66,7 +66,7 @@ export async function breakableDelay(ms, store, task) {
 import { getAccountMeta, setAccountMeta } from '../accountsMeta.js'
 import { releaseTaskLocks, markTaskLive, markTaskDone, assertAccountAvailable } from '../lib/accountLocks.js'
 import { loadSessionString, createClient } from '../tgAuth.js'
-import { pickCommentCandidates, trackIdlePass, warmingPace, pickWeightedKey } from '../lib/workerLoop.js'
+import { pickCommentCandidates, trackIdlePass, warmingPace, pickWeightedKey, idleWaitPlan } from '../lib/workerLoop.js'
 import { limitReached, incAction } from '../lib/dailyActions.js'
 import { cleanMailingNumbers, classifyMailingTargets, pickMailingAccount } from '../lib/mailing.js'
 import { listLeads, sortDialogsByLeadPriority, upsertLead, updateLead } from '../leads.js'
@@ -80,6 +80,7 @@ import { followUpDecision, followUpPrompt, followUpStatus } from '../lib/followU
 import { buildAgentContext, getAgent } from '../agents.js'
 import { recordTokens } from '../tokenLedger.js'
 import { recordMessage } from '../messages.js'
+import { recordAction } from '../actionLog.js'
 import { describeIncomingImage, messageHasPhoto } from '../lib/visionDescribe.js'
 import { effectivePrices } from '../priceStore.js'
 import { canWorkNow, noteAction } from '../accountActivity.js'
@@ -103,7 +104,8 @@ async function goalExpired(settings) {
     return !!goal && isGoalExpired(goal)
   } catch { return false } // сбой чтения цели не должен останавливать работу
 }
-import { filterBlacklisted, isBlacklistedSync } from '../targetBlacklist.js'
+import { filterBlacklisted, isBlacklistedSync, isBlacklistedMailingTarget } from '../targetBlacklist.js'
+import { pickReactionPost, normalizeLastPostsCount } from '../lib/reactionPick.js'
 
 /** @type {Map<string, Promise<void>>} */
 const running = new Map()
@@ -288,7 +290,39 @@ export async function pauseWorker(taskId, store) {
 
 /** Итоговый статус воркера: пауза важнее стопа, стоп важнее «готово». @param {object} task */
 export function statusAfterRun(task) {
+  // Фатальная ошибка старше флагов остановки. Задача, упавшая из-за мёртвого ключа ИИ,
+  // не «остановлена оператором» и тем более не «готова»: в дашборде это ОШИБКА.
+  // Живой прогон 18.08: ключ OpenAI отклонён, задача доработала до конца и показала
+  // «Готово · 0/2» — по такому статусу человек считает, что всё в порядке.
+  if (task.fatalError) return 'error'
   return task.pauseRequested ? 'paused' : task.stopRequested ? 'stopped' : 'done'
+}
+
+/** Итоговая строка лога — по фактическому статусу, а не всегда «Завершено». */
+export function finishNote(task, doneText = 'Завершено') {
+  if (task.status === 'error') return `Задача завершилась с ошибкой: ${task.fatalError || 'см. записи выше'}`
+  if (task.status === 'paused') return 'Пауза'
+  if (task.status === 'stopped') return 'Остановлено'
+  return doneText
+}
+
+/**
+ * Свалить задачу с фатальной ошибкой: залогировать, пометить и СРАЗУ сохранить.
+ *
+ * Сохранение здесь обязательно. Воркер в конце круга перечитывает задачу с диска
+ * (`task = await store.loadTask(...)`), и невсохранённый `stopRequested` при этом
+ * терялся: цикл продолжался как ни в чём не бывало. Именно так после сообщения
+ * «Задача остановлена — комментарии без ИИ не публикуем» в логах появлялся ещё один
+ * «Пропуск по вероятности» (прогон 18.08).
+ *
+ * @param {object} task @param {object} store @param {string} reason @param {string} [accountName]
+ */
+export async function failTask(task, store, reason, accountName) {
+  await store.appendLog(task, 'error', reason, accountName)
+  task.fatalError = reason
+  task.stopRequested = true
+  task.status = 'error'
+  await store.saveTask(task)
 }
 
 async function finalizeAccounts(accountIds, taskId, paused = false) {
@@ -325,6 +359,25 @@ async function bumpProgress(task, store) {
 
 /** @param {object} task @param {object} store */
 /** §3.5: взвешенный выбор индекса типа комментария по распределению (сумма ≈ 100%). */
+/**
+ * Какой промпт взять на это действие и с каким системным текстом.
+ *
+ * Если задано распределение типов (`typeWeights`) — тип выбирается взвешенным броском на
+ * КАЖДОЕ действие, иначе берётся один выбранный `promptIndex`. До 19.08 так умел только
+ * нейрокомментинг: чаттинг, диалоги и мейлинг молча брали один и тот же тип, хотя набор
+ * промптов у них такой же. Отсюда «шесть типов в интерфейсе, один тон в переписке».
+ * @param {object} s настройки задачи
+ * @param {string} [extra] контекст цели/агента, который добавляется к системному тексту
+ */
+function pickPrompt(s, weights, extra = '') {
+  const useDist = Array.isArray(weights) && weights.some((w) => Number(w) > 0)
+  const index = useDist ? weightedPickIndex(weights) : (s.promptIndex ?? 0)
+  const sys = useDist
+    ? resolveSystemPrompt({ ...s, promptIndex: index, promptText: '' })
+    : resolveSystemPrompt(s)
+  return { index, sys: sys + extra }
+}
+
 function weightedPickIndex(weights) {
   const total = weights.reduce((a, b) => a + (Number(b) || 0), 0)
   if (total <= 0) return 0
@@ -365,6 +418,11 @@ export async function runNeuroCommenting(task, store) {
 
   const mul = delayMultiplier(s.protectionLevel ?? 1, s.delayPreset ?? 1)
   const prob = effectiveProbability(s.probability ?? 30, !!s.aiProtection, s.protectionLevel ?? 1)
+  // «Мониторинг новых» (postFilter = 4): верхняя планка постов на канал. Первый заход
+  // её ставит и НЕ комментирует — иначе «только новые» означало бы комментарий к посту,
+  // который вышел до запуска задачи. Живёт в памяти: после рестарта планка встаёт
+  // заново, посты из времени простоя новыми не считаются (как в массовых реакциях).
+  const seenTop = new Map()
   const chs = targets(s)
   let idx = 0
   // idleLap считает подряд пропущенные аккаунты. Полный круг пропусков = никто не может работать
@@ -374,6 +432,8 @@ export async function runNeuroCommenting(task, store) {
   // Почему круг оказался пустым: без этого задача завершалась словами «исчерпали
   // лимиты» даже когда всех отсеял распорядок — и ноль действий читался как поломка.
   let lastSkip = ''
+  // Ближайшее время, когда хоть один аккаунт снова сможет работать (0 — неизвестно).
+  let idleUntil = 0
   const accountIds = s.accountIds || []
 
   try {
@@ -385,6 +445,25 @@ export async function runNeuroCommenting(task, store) {
         break
       }
       if (idleLap >= accountIds.length) {
+        // Круг пустой: все аккаунты отпали. Причина бывает временной (отдых, распорядок)
+        // и окончательной (лимиты, статус). Во временном случае ЖДЁМ ближайшее окно, а не
+        // завершаем задачу: прогон 18.08 отдал 1 действие из 2, потому что аккаунту
+        // оставалось отдыхать две минуты. Потолок ожидания — IDLE_WAIT_CAP_MS.
+        const plan = idleWaitPlan(idleUntil)
+        if (plan.wait) {
+          // Причину берём из последнего пропуска: «отдых» — лишь одна из них, бывает
+          // ещё распорядок и бросок кубика. Текст «заняты отдыхом» при пропуске по
+          // вероятности прямо противоречил соседней строке лога (правка 19.08).
+          await store.appendLog(task, 'info', lastSkip
+            ? `Сейчас работать некому (${lastSkip}) — ждём ${plan.minutes} мин и продолжаем`
+            : `Все аккаунты заняты — ждём ${plan.minutes} мин и продолжаем`)
+          if (await breakableDelay(plan.ms, store, task)) break
+          task = (await store.loadTask(task.id)) || task
+          idleLap = 0
+          idleUntil = 0
+          lastSkip = ''
+          continue
+        }
         // Почему круг оказался пустым. Без этой оговорки задача завершалась словами
         // «исчерпали лимиты» даже когда всех до одного отсеял распорядок — и оператор
         // читал нулевой результат как поломку продукта (живой прогон 23.07).
@@ -407,7 +486,14 @@ export async function runNeuroCommenting(task, store) {
       // сюда уже не попадёт: раньше каждая задача считала с нуля и освободившийся
       // аккаунт тут же уходил лить реакции.
       const human = await canWorkNow(accountId)
-      if (!human.ok) { idleLap += 1; lastSkip = human.reason; await store.appendLog(task, 'info', `Пропуск: ${human.reason}`, meta.name); continue }
+      if (!human.ok) {
+        idleLap += 1
+        lastSkip = human.reason
+        // Берём САМОЕ РАННЕЕ окно по кругу: ждать надо до первого освободившегося.
+        if (human.until) idleUntil = idleUntil ? Math.min(idleUntil, human.until) : human.until
+        await store.appendLog(task, 'info', `Пропуск: ${human.reason}`, meta.name)
+        continue
+      }
       if (await limitReached(accountId, 'comments')) { idleLap += 1; lastSkip = 'суточный лимит'; await store.appendLog(task, 'info', 'Суточный лимит комментариев достигнут (§6)', meta.name); continue }
       idleLap = 0
       lastSkip = ''
@@ -441,9 +527,22 @@ export async function runNeuroCommenting(task, store) {
         if (membership.status === 'joined') await incAction(accountId, 'joins') // §6: суточный лимит вступлений
 
         // §3.5: окно постов — обрабатываем только последние N, не всю историю канала.
-        const posts = await fetchPosts(client, channel, Math.min(50, Math.max(1, Number(s.postWindow) || 20)))
+        const fetched = await fetchPosts(client, channel, Math.min(50, Math.max(1, Number(s.postWindow) || 20)))
+        // Мониторинг: оставляем только то, что вышло ПОСЛЕ первого захода в этот канал.
+        let posts = fetched
+        if (Number(s.postFilter) === 4 && fetched.length) {
+          const top = Math.max(...fetched.map((p) => p.id))
+          if (!seenTop.has(ch)) {
+            seenTop.set(ch, top)
+            await store.appendLog(task, 'info', `Мониторинг @${ch}: ждём новые посты (последний #${top})`, meta.name)
+            posts = []
+          } else {
+            posts = fetched.filter((p) => p.id > seenTop.get(ch))
+            if (!posts.length) await store.appendLog(task, 'info', `Новых постов нет: @${ch}`, meta.name)
+          }
+        }
         if (!posts.length) {
-          await store.appendLog(task, 'warning', 'В канале нет постов для комментирования', meta.name)
+          if (!fetched.length) await store.appendLog(task, 'warning', 'В канале нет постов для комментирования', meta.name)
         } else {
           const candidates = pickCommentCandidates(posts, s)
           if (!candidates.length) {
@@ -472,9 +571,7 @@ export async function runNeuroCommenting(task, store) {
               }
             }
             // §3.5: если задано распределение типов — на каждый коммент выбираем тип по весу.
-            const useDist = Array.isArray(s.typeWeights) && s.typeWeights.some((w) => Number(w) > 0)
-            const typeIdx = useDist ? weightedPickIndex(s.typeWeights) : (s.promptIndex ?? 0)
-            const sysPrompt = useDist ? resolveSystemPrompt({ ...s, promptIndex: typeIdx, promptText: '' }) : resolveSystemPrompt(s)
+            const { index: typeIdx, sys: sysPrompt } = pickPrompt(s, s.typeWeights)
             task.usedTexts = task.usedTexts || []
             // §10.5: если включён анализ изображений и в посте есть фото — описываем
             // картинку и добавляем к тексту поста, чтобы коммент был по сути изображения,
@@ -499,8 +596,7 @@ export async function runNeuroCommenting(task, store) {
             // Ключ мёртв: продолжать — значит лить шаблонные отписки от живых аккаунтов
             // в реальные каналы (прогон 21.07). Останавливаем всю задачу, а не аккаунт.
             if (mode === 'fatal') {
-              await store.appendLog(task, 'error', `ИИ недоступен: ${reason}. Задача остановлена — комментарии без ИИ не публикуем.`, meta.name)
-              task.stopRequested = true
+              await failTask(task, store, `ИИ недоступен: ${reason}. Задача остановлена — комментарии без ИИ не публикуем.`, meta.name)
               break
             }
             if (mode !== 'openai') {
@@ -528,6 +624,8 @@ export async function runNeuroCommenting(task, store) {
                 comment: text,
                 status: 'sent',
               }, 'commentHistory')
+              // LOG-002: единый журнал действий (docs/CONTRACT-action-log). Best-effort.
+              void recordAction({ type: 'comment', accountId, accountName: meta.name, target: ch, targetTitle: ch, objectRef: { postId: post.id, url: `https://t.me/${String(ch).replace(/^@/, '')}/${post.id}` }, value: { text }, moduleKey: task.moduleKey, taskId: task.id, goalId: task.goalId, initiator: task.initiator })
               // Запоминаем отправленное, чтобы следующий аккаунт не написал то же слово в слово.
               task.usedTexts.push(text)
               if (task.usedTexts.length > 50) task.usedTexts.shift()
@@ -559,7 +657,7 @@ export async function runNeuroCommenting(task, store) {
       if (await breakableDelay(pickDelay(5, 15, mul) * 1000, store, task)) break
     }
     task.status = statusAfterRun(task)
-    await store.appendLog(task, 'info', task.status === 'done' ? 'Завершено' : 'Остановлено')
+    await store.appendLog(task, task.status === 'error' ? 'error' : 'info', finishNote(task))
   } catch (err) {
     task.status = 'error'
     await store.appendLog(task, 'error', err instanceof Error ? err.message : 'Ошибка')
@@ -592,6 +690,8 @@ export async function runNeuroChatting(task, store) {
   // Почему круг оказался пустым: без этого задача завершалась словами «исчерпали
   // лимиты» даже когда всех отсеял распорядок — и ноль действий читался как поломка.
   let lastSkip = ''
+  // Ближайшее время, когда хоть один аккаунт снова сможет работать (0 — неизвестно).
+  let idleUntil = 0
   const accountIds = s.accountIds || []
 
   try {
@@ -603,6 +703,23 @@ export async function runNeuroChatting(task, store) {
         break
       }
       if (idleLap >= accountIds.length) {
+        // Временная причина (отдых/распорядок) — ждём ближайшее окно, а не завершаем
+        // задачу на полпути (см. развёрнутый комментарий у первого такого блока).
+        const plan = idleWaitPlan(idleUntil)
+        if (plan.wait) {
+          // Причину берём из последнего пропуска: «отдых» — лишь одна из них, бывает
+          // ещё распорядок и бросок кубика. Текст «заняты отдыхом» при пропуске по
+          // вероятности прямо противоречил соседней строке лога (правка 19.08).
+          await store.appendLog(task, 'info', lastSkip
+            ? `Сейчас работать некому (${lastSkip}) — ждём ${plan.minutes} мин и продолжаем`
+            : `Все аккаунты заняты — ждём ${plan.minutes} мин и продолжаем`)
+          if (await breakableDelay(plan.ms, store, task)) break
+          task = (await store.loadTask(task.id)) || task
+          idleLap = 0
+          idleUntil = 0
+          lastSkip = ''
+          continue
+        }
         await store.appendLog(task, 'info', lastSkip
           ? `Ни один аккаунт не может работать сейчас (${lastSkip}) — завершаем`
           : 'Все аккаунты исчерпали лимиты на эту задачу — завершаем')
@@ -615,7 +732,14 @@ export async function runNeuroChatting(task, store) {
       // Иначе «сквозной отдых» дырявый: аккаунт, отработавший смену тут, копил усталость,
       // но никто её не проверял — и он же уходил лить реакции в соседнем модуле.
       const human = await canWorkNow(accountId)
-      if (!human.ok) { idleLap += 1; lastSkip = human.reason; await store.appendLog(task, 'info', `Пропуск: ${human.reason}`, meta.name); continue }
+      if (!human.ok) {
+        idleLap += 1
+        lastSkip = human.reason
+        // Берём САМОЕ РАННЕЕ окно по кругу: ждать надо до первого освободившегося.
+        if (human.until) idleUntil = idleUntil ? Math.min(idleUntil, human.until) : human.until
+        await store.appendLog(task, 'info', `Пропуск: ${human.reason}`, meta.name)
+        continue
+      }
       if (await limitReached(accountId, 'comments')) { idleLap += 1; lastSkip = 'суточный лимит'; await store.appendLog(task, 'info', 'Суточный лимит сообщений достигнут (§6)', meta.name); continue }
       idleLap = 0
       lastSkip = ''
@@ -652,12 +776,12 @@ export async function runNeuroChatting(task, store) {
         }
         if (await breakableDelay(pickDelay(s.delays?.action?.[0] ?? 42, s.delays?.action?.[1] ?? 78, mul) * 1000, store, task)) { await disconnectAccount(client, accountId); break }
         task.usedTexts = task.usedTexts || []
-        const { text: reply, mode, reason, usage } = await generateComment(msg.message || '', s.promptIndex ?? 0, resolveSystemPrompt(s) + goalCtx + agentCtx, { avoid: task.usedTexts, variantSeed: accountId })
+        const chatPrompt = pickPrompt(s, s.typeWeights, goalCtx + agentCtx)
+        const { text: reply, mode, reason, usage } = await generateComment(msg.message || '', chatPrompt.index, chatPrompt.sys, { avoid: task.usedTexts, variantSeed: accountId })
         if (usage?.tokens) await recordTokens({ ...usage, module: task.moduleKey, accountId, taskId: task.id, campaignId: s.campaignId, userId: task.userId })
         if (mode === 'fatal') {
-          await store.appendLog(task, 'error', `ИИ недоступен: ${reason}. Задача остановлена — писать в чаты без ИИ не будем.`, meta.name)
           await disconnectAccount(client, accountId)
-          task.stopRequested = true
+          await failTask(task, store, `ИИ недоступен: ${reason}. Задача остановлена — писать в чаты без ИИ не будем.`, meta.name)
           break
         }
         if (mode !== 'openai') {
@@ -677,6 +801,8 @@ export async function runNeuroChatting(task, store) {
         await bumpProgress(task, store)
         await noteAction(accountId) // §4.3: усталость общая для всех модулей
         await store.appendHistory(task, { id: `${task.id}_${Date.now()}`, ts: new Date().toISOString(), accountName: meta.name, target: g, text: reply, status: 'sent' })
+        // LOG-002: единый журнал действий. Best-effort.
+        void recordAction({ type: 'chat', accountId, accountName: meta.name, target: g, targetTitle: g, objectRef: { url: `https://t.me/${String(g).replace(/^@/, '')}` }, value: { text: reply }, moduleKey: task.moduleKey, taskId: task.id, goalId: task.goalId, initiator: task.initiator })
         task.usedTexts.push(reply)
         if (task.usedTexts.length > 50) task.usedTexts.shift()
         await store.appendLog(task, 'success', `Ответ в @${g}`, meta.name)
@@ -698,7 +824,7 @@ export async function runNeuroChatting(task, store) {
       if (await breakableDelay(pickDelay(5, 15, mul) * 1000, store, task)) break
     }
     task.status = statusAfterRun(task)
-    await store.appendLog(task, 'info', 'Завершено')
+    await store.appendLog(task, task.status === 'error' ? 'error' : 'info', finishNote(task))
   } catch (err) {
     task.status = 'error'
     await store.appendLog(task, 'error', err instanceof Error ? err.message : 'Ошибка')
@@ -719,11 +845,25 @@ export async function runMassReact(task, store) {
   const tgs = targets(s)
   // feature 10: исключаем посты из ЧС по username канала
   const fixedPosts = parseTelegramPostLinks(s.postUrls).filter((p) => !p.username || !isBlacklistedSync(p.username))
+  // Режим реакций (18.08). Раньше переключатель в UI никуда не доезжал: воркер всегда брал
+  // ПОСЛЕДНИЙ пост канала, поэтому «Мониторинг» и «Существующие сообщения» делали одно и то же.
+  //   0 — мониторинг новых: реагируем только на посты, вышедшие ПОСЛЕ старта задачи;
+  //   1 — существующие: реагируем на N последних постов.
+  const reactMode = Number(s.reactMode) === 1 ? 1 : 0
+  const lastPostsCount = normalizeLastPostsCount(s.lastPostsCount)
+  // Планка «что уже было» на канал, общая для всех аккаунтов задачи: первый зашедший аккаунт
+  // её ставит и не реагирует, дальше реагируем на всё, что вышло выше планки. Живёт в памяти —
+  // после рестарта планка встаёт заново, посты из времени простоя новыми не считаются.
+  const seenTop = new Map()
+  // Один аккаунт не ставит вторую реакцию на тот же пост; разные аккаунты — ставят (в этом смысл модуля).
+  const reacted = new Set()
   let idx = 0
   let idleLap = 0
   // Почему круг оказался пустым: без этого задача завершалась словами «исчерпали
   // лимиты» даже когда всех отсеял распорядок — и ноль действий читался как поломка.
   let lastSkip = ''
+  // Ближайшее время, когда хоть один аккаунт снова сможет работать (0 — неизвестно).
+  let idleUntil = 0
   const accountIds = s.accountIds || []
 
   try {
@@ -735,6 +875,23 @@ export async function runMassReact(task, store) {
         break
       }
       if (idleLap >= accountIds.length) {
+        // Временная причина (отдых/распорядок) — ждём ближайшее окно, а не завершаем
+        // задачу на полпути (см. развёрнутый комментарий у первого такого блока).
+        const plan = idleWaitPlan(idleUntil)
+        if (plan.wait) {
+          // Причину берём из последнего пропуска: «отдых» — лишь одна из них, бывает
+          // ещё распорядок и бросок кубика. Текст «заняты отдыхом» при пропуске по
+          // вероятности прямо противоречил соседней строке лога (правка 19.08).
+          await store.appendLog(task, 'info', lastSkip
+            ? `Сейчас работать некому (${lastSkip}) — ждём ${plan.minutes} мин и продолжаем`
+            : `Все аккаунты заняты — ждём ${plan.minutes} мин и продолжаем`)
+          if (await breakableDelay(plan.ms, store, task)) break
+          task = (await store.loadTask(task.id)) || task
+          idleLap = 0
+          idleUntil = 0
+          lastSkip = ''
+          continue
+        }
         await store.appendLog(task, 'info', lastSkip
           ? `Ни один аккаунт не может работать сейчас (${lastSkip}) — завершаем`
           : 'Все аккаунты исчерпали лимиты на эту задачу — завершаем')
@@ -746,7 +903,14 @@ export async function runMassReact(task, store) {
       // §4.1–§4.2: реакции — самый «дешёвый» модуль, и именно им добивали уставшие
       // аккаунты. Проверка та же, что в комментинге: усталость общая.
       const human = await canWorkNow(accountId)
-      if (!human.ok) { idleLap += 1; lastSkip = human.reason; await store.appendLog(task, 'info', `Пропуск: ${human.reason}`, meta.name); continue }
+      if (!human.ok) {
+        idleLap += 1
+        lastSkip = human.reason
+        // Берём САМОЕ РАННЕЕ окно по кругу: ждать надо до первого освободившегося.
+        if (human.until) idleUntil = idleUntil ? Math.min(idleUntil, human.until) : human.until
+        await store.appendLog(task, 'info', `Пропуск: ${human.reason}`, meta.name)
+        continue
+      }
       if (await limitReached(accountId, 'reactions')) { idleLap += 1; lastSkip = 'суточный лимит'; await store.appendLog(task, 'info', 'Суточный лимит реакций достигнут (§6)', meta.name); continue }
       idleLap = 0
       lastSkip = ''
@@ -758,6 +922,9 @@ export async function runMassReact(task, store) {
         let peer
         let postId
         let targetLabel
+        // Помечаем пост как «этот аккаунт отработал» только ПОСЛЕ успешной реакции: иначе
+        // пост, пропущенный по вероятности, для аккаунта потерян навсегда.
+        let reactKey = ''
 
         if (fixedPosts.length) {
           const pt = fixedPosts[Math.floor(Math.random() * fixedPosts.length)]
@@ -783,15 +950,33 @@ export async function runMassReact(task, store) {
           }
           peer = membership.peer
           if (membership.status === 'joined') await incAction(accountId, 'joins') // §6: суточный лимит вступлений
-          const posts = await fetchPosts(client, peer, 10)
-          const post = posts[0]
-          if (!post || Math.random() * 100 > prob) {
+          const posts = await fetchPosts(client, peer, reactMode === 1 ? lastPostsCount : 20)
+          const pick = pickReactionPost(posts, {
+            mode: reactMode,
+            lastPostsCount,
+            seenTop: seenTop.get(t),
+            reacted: (id) => reacted.has(`${accountId}|${t}|${id}`),
+          })
+          if (pick.action === 'baseline') {
+            seenTop.set(t, pick.topId)
+            await store.appendLog(task, 'info', `Мониторинг ${targetLabel}: ждём новые посты (последний #${pick.topId})`, meta.name)
             await disconnectAccount(client, accountId)
             continue
           }
-          postId = post.id
+          if (pick.action === 'skip') {
+            const why = pick.reason === 'no-posts' ? 'постов нет'
+              : pick.reason === 'no-new' ? 'новых постов нет'
+                : 'все последние посты уже отработаны этим аккаунтом'
+            await store.appendLog(task, 'info', `${targetLabel}: ${why}`, meta.name)
+            await disconnectAccount(client, accountId)
+            continue
+          }
+          postId = pick.post.id
+          reactKey = `${accountId}|${t}|${pick.post.id}`
         }
 
+        // Вероятность применяется ОДИН раз. Раньше в ветке групп она проверялась дважды,
+        // и «50%» на деле давали 25% — реакций выходило вдвое меньше обещанного.
         if (Math.random() * 100 > prob) {
           await disconnectAccount(client, accountId)
           continue
@@ -799,12 +984,15 @@ export async function runMassReact(task, store) {
 
         const emoji = emojis[Math.floor(Math.random() * emojis.length)]
         await sendReaction(client, peer, postId, emoji)
+        if (reactKey) reacted.add(reactKey)
         task.accountStats[accountId] = task.accountStats[accountId] || { actions: 0, floodWaits: 0 }
         task.accountStats[accountId].actions += 1
         await incAction(accountId, 'reactions') // §6: суточный лимит реакций
         await bumpProgress(task, store)
         await noteAction(accountId) // §4.3: усталость общая для всех модулей
         await store.appendHistory(task, { id: `${task.id}_${Date.now()}`, ts: new Date().toISOString(), accountName: meta.name, target: targetLabel, emoji, postId, status: 'sent' })
+        // LOG-002: единый журнал действий. Best-effort.
+        void recordAction({ type: 'reaction', accountId, accountName: meta.name, target: targetLabel, targetTitle: targetLabel, objectRef: { postId, url: `https://t.me/${String(targetLabel).replace(/^@/, '')}/${postId}` }, value: { emoji }, moduleKey: task.moduleKey, taskId: task.id, goalId: task.goalId, initiator: task.initiator })
         await store.appendLog(task, 'success', `Реакция ${emoji} ${targetLabel} · пост #${postId}`, meta.name)
         await disconnectAccount(client, accountId)
       } catch (err) {
@@ -817,7 +1005,7 @@ export async function runMassReact(task, store) {
       if (await breakableDelay(pickDelay(5, 15, mul) * 1000, store, task)) break
     }
     task.status = statusAfterRun(task)
-    await store.appendLog(task, 'info', 'Завершено')
+    await store.appendLog(task, task.status === 'error' ? 'error' : 'info', finishNote(task))
   } catch (err) {
     task.status = 'error'
     await store.appendLog(task, 'error', err instanceof Error ? err.message : 'Ошибка')
@@ -839,6 +1027,8 @@ export async function runMassLooking(task, store) {
   // Почему круг оказался пустым: без этого задача завершалась словами «исчерпали
   // лимиты» даже когда всех отсеял распорядок — и ноль действий читался как поломка.
   let lastSkip = ''
+  // Ближайшее время, когда хоть один аккаунт снова сможет работать (0 — неизвестно).
+  let idleUntil = 0
   const accountIds = s.accountIds || []
   const lookMode = ['stories', 'posts', 'both'].includes(s.lookMode) ? s.lookMode : 'stories'
   const postsCount = Math.min(Math.max(Math.trunc(Number(s.lookPostsCount) || 0) || 3, 1), 50)
@@ -852,6 +1042,23 @@ export async function runMassLooking(task, store) {
         break
       }
       if (idleLap >= accountIds.length) {
+        // Временная причина (отдых/распорядок) — ждём ближайшее окно, а не завершаем
+        // задачу на полпути (см. развёрнутый комментарий у первого такого блока).
+        const plan = idleWaitPlan(idleUntil)
+        if (plan.wait) {
+          // Причину берём из последнего пропуска: «отдых» — лишь одна из них, бывает
+          // ещё распорядок и бросок кубика. Текст «заняты отдыхом» при пропуске по
+          // вероятности прямо противоречил соседней строке лога (правка 19.08).
+          await store.appendLog(task, 'info', lastSkip
+            ? `Сейчас работать некому (${lastSkip}) — ждём ${plan.minutes} мин и продолжаем`
+            : `Все аккаунты заняты — ждём ${plan.minutes} мин и продолжаем`)
+          if (await breakableDelay(plan.ms, store, task)) break
+          task = (await store.loadTask(task.id)) || task
+          idleLap = 0
+          idleUntil = 0
+          lastSkip = ''
+          continue
+        }
         await store.appendLog(task, 'info', lastSkip
           ? `Ни один аккаунт не может работать сейчас (${lastSkip}) — завершаем`
           : 'Все аккаунты исчерпали лимиты на эту задачу — завершаем')
@@ -862,7 +1069,14 @@ export async function runMassLooking(task, store) {
       if (!isAccountRunnable(meta.status || 'active') || perAccountLimitReached(s, accountId, task)) { idleLap += 1; lastSkip = 'статус или лимит на аккаунт'; continue }
       // §4.1–§4.2: просмотры тоже расходуют аккаунт — усталость и распорядок общие.
       const human = await canWorkNow(accountId)
-      if (!human.ok) { idleLap += 1; lastSkip = human.reason; await store.appendLog(task, 'info', `Пропуск: ${human.reason}`, meta.name); continue }
+      if (!human.ok) {
+        idleLap += 1
+        lastSkip = human.reason
+        // Берём САМОЕ РАННЕЕ окно по кругу: ждать надо до первого освободившегося.
+        if (human.until) idleUntil = idleUntil ? Math.min(idleUntil, human.until) : human.until
+        await store.appendLog(task, 'info', `Пропуск: ${human.reason}`, meta.name)
+        continue
+      }
       idleLap = 0
       lastSkip = ''
       let client
@@ -913,7 +1127,7 @@ export async function runMassLooking(task, store) {
       if (await breakableDelay(pickDelay(10, 30, mul) * 1000, store, task)) break
     }
     task.status = statusAfterRun(task)
-    await store.appendLog(task, 'info', 'Завершено')
+    await store.appendLog(task, task.status === 'error' ? 'error' : 'info', finishNote(task))
   } catch (err) {
     task.status = 'error'
     await store.appendLog(task, 'error', err instanceof Error ? err.message : 'Ошибка')
@@ -958,6 +1172,8 @@ export async function runWarming(task, store) {
         break
       }
       if (idleLap >= accountIds.length) {
+        // Прогрев усталость не спрашивает (у него собственный темп), поэтому ждать
+        // нечего — все аккаунты либо в неподходящем статусе, либо исключены по ошибкам.
         await store.appendLog(task, 'info', 'Нет доступных аккаунтов для прогрева — завершаем')
         break
       }
@@ -1039,7 +1255,7 @@ export async function runWarming(task, store) {
       if (await breakableDelay(pickDelay(30, 90, mul) * 1000, store, task)) break
     }
     task.status = statusAfterRun(task)
-    await store.appendLog(task, 'info', 'Прогрев завершён')
+    await store.appendLog(task, task.status === 'error' ? 'error' : 'info', finishNote(task, 'Прогрев завершён'))
   } catch (err) {
     task.status = 'error'
     await store.appendLog(task, 'error', err instanceof Error ? err.message : 'Ошибка')
@@ -1352,7 +1568,9 @@ export async function runNeuroDialogs(task, store) {
           // самое повторно это верный способ получить блокировку.
           const sysPrompt = dialogSystemPrompt(s, goal, goalObj, effStatus, stageForStatus(goalObj?.stages, effStatus))
             + (isFollowUp ? followUpPrompt(fuOwner, rawStatus, decision.left) : '')
-          const gen = await generateComment(prompt, s.promptIndex ?? 0, sysPrompt, accountId)
+          // Тип промпта — по распределению (если задано), как в остальных модулях.
+          const dlgPrompt = pickPrompt(s, s.typeWeights)
+          const gen = await generateComment(prompt, dlgPrompt.index, sysPrompt, accountId)
           if (gen?.usage?.tokens) await recordTokens({ ...gen.usage, module: task.moduleKey, accountId, taskId: task.id, campaignId: s.campaignId, userId: task.userId })
           const mode = gen.mode
           // Диалог подаётся модели стенограммой «Я: … / Собеседник: …», и она регулярно
@@ -1409,6 +1627,8 @@ export async function runNeuroDialogs(task, store) {
           await bumpProgress(task, store)
         await noteAction(accountId) // §4.3: усталость общая для всех модулей
           await store.appendHistory(task, { id: `${task.id}_${Date.now()}`, ts: new Date().toISOString(), accountName: meta.name, target: d.name, text: reply, status: 'sent' })
+          // LOG-002: единый журнал действий (ответ в личном диалоге). Best-effort.
+          void recordAction({ type: 'dialog', accountId, accountName: meta.name, target: d.name, targetTitle: d.name, value: { text: reply }, moduleKey: task.moduleKey, taskId: task.id, goalId: task.goalId, initiator: task.initiator })
           const inPreview = incoming ? incoming.slice(0, 60) : '[без текста]'
           await store.appendLog(task, 'success', `Ответ в ЛС «${d.name}» → «${reply.slice(0, 60)}» (на: «${inPreview}»)`, meta.name)
 
@@ -2213,7 +2433,13 @@ export async function runMailing(task, store) {
   const accountIds = Array.isArray(s.accountIds) ? s.accountIds : []
   // §8.4: цель рассылки — номер ИЛИ юзернейм. Раньше принимались только номера,
   // а юзернеймы молча превращались в чужие номера (из строки вырезались цифры).
-  const mailTargets = classifyMailingTargets(s.targets)
+  // Чёрный список действует и на рассылку. Раньше он применялся только к каналам и
+  // группам (через `targets()`), а получатели мейлинга шли мимо — то есть человеку,
+  // которого явно занесли в ЧС, спокойно уходило личное сообщение. Это худшее место
+  // для такой дыры: в ЛС «больше не пишите» означает жалобу, а не просто отписку.
+  const allMailTargets = classifyMailingTargets(s.targets)
+  const mailTargets = allMailTargets.filter((t) => !isBlacklistedMailingTarget(t.kind, t.value))
+  const blacklisted = allMailTargets.length - mailTargets.length
   const phonesCount = mailTargets.filter((t) => t.kind === 'phone').length
   const handlesCount = mailTargets.length - phonesCount
   const message = String(s.promptText || s.message || '').trim()
@@ -2223,6 +2449,9 @@ export async function runMailing(task, store) {
   task.accountStats = task.accountStats || {}
   await store.saveTask(task)
   await store.appendLog(task, 'info', `Мейлинг: ${mailTargets.length} целей (номеров ${phonesCount}, юзернеймов ${handlesCount}) на ${accountIds.length} аккаунт(ов)`)
+  // Сколько отсеял ЧС — отдельной строкой: молчаливое сокращение списка выглядит
+  // как потеря получателей, и оператор идёт искать несуществующий баг.
+  if (blacklisted) await store.appendLog(task, 'info', `Чёрный список: исключено получателей — ${blacklisted}`)
 
   if (!mailTargets.length) { await store.appendLog(task, 'warning', 'Нет корректных целей для рассылки'); task.status = 'done'; await store.saveTask(task); return }
   if (!accountIds.length) { await store.appendLog(task, 'warning', 'Не выбраны аккаунты'); task.status = 'done'; await store.saveTask(task); return }
@@ -2385,7 +2614,8 @@ export async function runMailing(task, store) {
             (message || opener) ? `Опирайся на этот текст как на образец смысла и тона:
 «${message || opener}»` : '',
           ].filter(Boolean).join(' ')
-          const gen = await generateComment(openerTask, s.promptIndex ?? 0, resolveSystemPrompt(s) + goalCtx + agentCtx, account)
+          const mailPrompt = pickPrompt(s, s.typeWeights, goalCtx + agentCtx)
+          const gen = await generateComment(openerTask, mailPrompt.index, mailPrompt.sys, account)
           if (gen?.usage?.tokens) await recordTokens({ ...gen.usage, module: task.moduleKey, accountId: account, taskId: task.id, campaignId: s.campaignId, userId: task.userId })
           // Чистим так же, как в диалогах: модель повторяет ярлыки промпта и оставляет
           // заготовки. С заглушкой лучше отправить текст из цели, чем «[тут вставь ссылку]».

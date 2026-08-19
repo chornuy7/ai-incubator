@@ -36,6 +36,11 @@ function toAccountDto(accountId, meta, me, sessionOk) {
   let status = meta.status || 'active'
   if (!sessionOk) status = 'reauth'
   else if (sessionOk && status === 'reauth') status = 'active'
+  // Спамблок хранится ОТДЕЛЬНЫМ полем (результат проверки @SpamBot, accountStats), и в
+  // карточке он виден, а в списке/счётчике «Спамблок» — нет: аккаунт светился «Активные».
+  // Отражаем блокировку как статус, если базовый статус рабочий — тогда строка, KPI-счётчик
+  // и действие «Снять спамблок» его видят. Снимется сам, когда проверка вернёт 'clean'.
+  if (meta.spamblock === 'blocked' && ['active', 'working', 'warming', 'pause'].includes(status)) status = 'spamblock'
 
   return {
     id: accountId,
@@ -62,6 +67,10 @@ function toAccountDto(accountId, meta, me, sessionOk) {
     // оператор видит «спамблок» и не знает, ждать ему или списывать аккаунт.
     statusUntil: typeof meta.statusUntil === 'number' ? meta.statusUntil : null,
     statusReason: meta.statusReason || '',
+    // MR: последняя явная проверка живости (дата + результат). null — ни разу не проверяли
+    // через ?verify — тогда карточка честно показывает «не проверялся».
+    lastCheckedAt: typeof meta.lastCheckedAt === 'number' ? meta.lastCheckedAt : null,
+    lastCheckOk: typeof meta.lastCheckOk === 'boolean' ? meta.lastCheckOk : null,
     createdAt: meta.createdAt || Date.now(),
     busyIn: (() => {
       const lock = getAccountLock(accountId)
@@ -80,14 +89,33 @@ function toAccountDto(accountId, meta, me, sessionOk) {
  * список отдаётся мгновенно, а проверку живости запускают отдельно и осознанно.
  * @param {{ verify?: boolean }} [opts]
  */
+/**
+ * Кому принадлежит аккаунт (правка 18.08).
+ *
+ * Поля владельца у аккаунтов не было вовсе — продукт начинался как одно пространство,
+ * наше. С самостоятельными регистрациями это стало утечкой: `/api/tg/accounts` отдавал
+ * ВСЕ аккаунты платформы любому вошедшему, вместе с телефонами.
+ *
+ * Аккаунты, заведённые до этой правки, владельца не имеют — они наши, поэтому видны
+ * только админу. Новые получают `ownerId` при заведении.
+ */
+function accountBelongsTo(meta, ownerId) {
+  const owner = String(meta?.ownerId || '')
+  return owner ? owner === String(ownerId || '') : false
+}
+
 export async function tgListAccounts(opts = {}) {
   const verify = opts.verify === true
+  // Без ownerId (админ, дев без сессии, внутренние вызовы) фильтра нет — иначе воркеры
+  // и админ-панель перестали бы видеть аккаунты, с которыми работают.
+  const ownerId = opts.ownerId ? String(opts.ownerId) : null
   const ids = await listSessionIds()
   const accounts = []
   const trustAll = await getAllTrustCache()
 
   for (const accountId of ids) {
     let meta = await getAccountMeta(accountId)
+    if (ownerId && !accountBelongsTo(meta, ownerId)) continue
     const sessionStr = await loadSessionString(accountId)
     if (!sessionStr) continue
 
@@ -107,10 +135,18 @@ export async function tgListAccounts(opts = {}) {
           username: me.username,
           phone: me.phone,
           userId: me.id?.toString?.(),
+          // MR: фиксируем факт и результат явной проверки живости — иначе оператор
+          // не видит, когда аккаунт последний раз проверялся и чем закончилось.
+          lastCheckedAt: Date.now(),
+          lastCheckOk: true,
           ...(meta.status === 'reauth' ? { status: 'active' } : {}),
         })
       } catch {
         sessionOk = false
+        // Результат проверки сохраняем и при провале (сессия/прокси не ответили) —
+        // статус НЕ форсим в reauth (провал может быть транзиентным, прокси/сеть):
+        // это отдельная сознательная проверка, а не приговор аккаунту.
+        meta = await setAccountMeta(accountId, { lastCheckedAt: Date.now(), lastCheckOk: false })
       }
     }
 

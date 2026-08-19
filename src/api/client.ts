@@ -1,4 +1,5 @@
 import { useUi } from '@/shared/lib/uiStore'
+import { currentToken, currentUid } from '@/features/auth/zone'
 
 /**
  * Ошибка API вместе с телом ответа.
@@ -59,6 +60,13 @@ export async function parseJson<T>(res: Response): Promise<T> {
       const msg = (data as { error?: string }).error || 'Модуль не оплачен.'
       useUi.getState().setNoSubscription(msg)
     }
+    // MR-153: доступ отключён администратором (accessGate вернул 403 ACCESS_DISABLED на
+    // любой не-whitelisted запрос). Поднимаем поп-ап-блок с blur из одного места — иначе
+    // панель просто сыпала бы 403 по всем виджетам, а человек не понимал бы, что закрыт.
+    if ((data as { code?: string })?.code === 'ACCESS_DISABLED') {
+      const msg = (data as { error?: string }).error || 'Доступ отключён.'
+      useUi.getState().setAccessBlocked(msg)
+    }
     throw new ApiError(
       (data as { error?: string }).error || `HTTP ${res.status}`,
       res.status,
@@ -79,12 +87,10 @@ export async function parseJson<T>(res: Response): Promise<T> {
 export function authHeaders(base?: Record<string, string>): Record<string, string> {
   const headers: Record<string, string> = { ...(base ?? {}) }
   try {
-    const raw = localStorage.getItem('ai-incubator:session')
-    if (raw) {
-      const u = JSON.parse(raw) as { id?: string }
-      if (u?.id) headers['X-User-Id'] = u.id
-    }
-    const token = localStorage.getItem('ai-incubator:token')
+    // Токен и id берём ПО ЗОНЕ (панель/админка) — у каждой свой (созвон 19.08).
+    const uid = currentUid()
+    if (uid) headers['X-User-Id'] = uid
+    const token = currentToken()
     if (token) headers['Authorization'] = `Bearer ${token}`
   } catch { /* ignore */ }
   return headers

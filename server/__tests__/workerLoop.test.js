@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { warmingPace, trackIdlePass, pickWeightedKey, inActiveWindow } from '../lib/workerLoop.js'
+import { warmingPace, trackIdlePass, pickWeightedKey, inActiveWindow, idleWaitPlan, IDLE_WAIT_CAP_MS } from '../lib/workerLoop.js'
 
 test('warmingPace.weights: пропорция действий 40/20/20/10/10', () => {
   const w = warmingPace(1).weights
@@ -46,4 +46,35 @@ test('trackIdlePass: сброс при прогрессе, стоп после m
   assert.equal(task.idlePasses, 0)
   for (let i = 0; i < 4; i++) assert.equal(trackIdlePass(task, false), false)
   assert.equal(trackIdlePass(task, false), true) // 5-й пустой → стоп
+})
+
+/**
+ * Ожидание вместо преждевременного финиша (правка 18.08).
+ *
+ * Живой прогон нейрокомментинга: задача сделала 1 действие из 2 и завершилась строкой
+ * «отдыхает после нагрузки (ещё 2 мин)». Ждать две минуты честнее, чем отдавать половину.
+ * Но ждать до утра из-за ночного распорядка — нет: тогда лучше закончить и сказать когда.
+ */
+test('idleWaitPlan: короткий отдых пережидаем', () => {
+  const now = 1_000_000
+  const plan = idleWaitPlan(now + 2 * 60000, now)
+  assert.equal(plan.wait, true)
+  assert.equal(plan.minutes, 2)
+})
+
+test('idleWaitPlan: длинное окно не ждём — завершаем задачу честно', () => {
+  const now = 1_000_000
+  assert.deepEqual(idleWaitPlan(now + 3 * 3600_000, now), { wait: false }, 'три часа ожидания — это зависшая задача')
+})
+
+test('idleWaitPlan: причина без времени освобождения (лимиты) ожидания не даёт', () => {
+  const now = 1_000_000
+  assert.deepEqual(idleWaitPlan(0, now), { wait: false })
+  assert.deepEqual(idleWaitPlan(now - 5000, now), { wait: false }, 'время уже прошло — ждать нечего')
+})
+
+test('idleWaitPlan: ровно на границе потолка ещё ждём', () => {
+  const now = 1_000_000
+  assert.equal(idleWaitPlan(now + IDLE_WAIT_CAP_MS, now).wait, true)
+  assert.equal(idleWaitPlan(now + IDLE_WAIT_CAP_MS + 1, now).wait, false)
 })
