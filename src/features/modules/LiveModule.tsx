@@ -95,8 +95,11 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
   const [minPerAcc, setMinPerAcc] = useState(0)
   const [minWords, setMinWords] = useState(0)
   const [durationMinutes, setDurationMinutes] = useState(cfg.reactionSettings?.duration.value ?? 60)
-  // Массовые реакции, режим «Существующие посты»: сколько последних постов канала брать.
+  // Сколько последних постов канала рассматриваем: массовые реакции («Существующие
+  // посты») и нейрокомментинг («Последние N»).
   const [lastPostsCount, setLastPostsCount] = useState(3)
+  // Брать ли ОДИН случайный пост из подходящих (иначе — все подходящие за заход).
+  const [pickOne, setPickOne] = useState(true)
   const [srcTab, setSrcTab] = useState(0)
   const [input, setInput] = useState('')
   const [targets, setTargets] = useState<string[]>([])
@@ -199,9 +202,14 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
     targets,
     channels: targets,
     keywords: keywords.split(/[\n;]+/).map((k) => k.trim()).filter(Boolean),
-    commentMode: g(0),
+    // Отбор по СОДЕРЖАНИЮ: 1 — по ключевым словам, 2 — любые посты. Значение 0 («случайный»)
+    // больше не отправляем: случайность вынесена в отдельный флаг pickOne (правка 18.08),
+    // но воркер продолжает понимать старые задачи с commentMode 0.
+    commentMode: cfg.toggleGroups ? (g(0) === 1 ? 1 : 2) : g(0),
+    pickOne,
     workMode: g(1),
-    postFilter: g(2),
+    // ГЛУБИНА: 0 — только последний, 3 — последние N, 2 — все доступные.
+    postFilter: cfg.toggleGroups ? [0, 3, 2][g(2)] ?? 0 : g(2),
     probability,
     maxActions,
     maxComments: maxActions,
@@ -331,6 +339,16 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
     if (s.durationMinutes !== undefined) setDurationMinutes(s.durationMinutes)
     if (s.reactMode !== undefined) setToggles((t) => ({ ...t, 0: s.reactMode as number }))
     if (s.lastPostsCount !== undefined) setLastPostsCount(s.lastPostsCount)
+    if (s.pickOne !== undefined) setPickOne(s.pickOne)
+    // Обратная раскладка: в шаблоне лежат значения воркера, в форме — позиции тумблеров.
+    if (cfg.toggleGroups && s.commentMode !== undefined) {
+      setToggles((t) => ({ ...t, 0: s.commentMode === 1 ? 1 : 0 }))
+      if (s.commentMode === 0) setPickOne(true)
+    }
+    if (cfg.toggleGroups && s.postFilter !== undefined) {
+      const pos = { 0: 0, 3: 1, 2: 2 }[s.postFilter as 0 | 2 | 3]
+      if (pos !== undefined) setToggles((t) => ({ ...t, 2: pos }))
+    }
     if (Array.isArray(s.keywords)) setKeywords(s.keywords.join(', '))
     if (s.promptIndex !== undefined) setActivePrompt(s.promptIndex)
     if (Array.isArray(s.promptOverrides)) setPromptBodies(s.promptOverrides)
@@ -513,7 +531,25 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
                 <div className="mb-1 flex justify-between text-sm text-muted"><span>{cfg.probabilitySlider?.label ?? 'Вероятность'}</span><span className="text-spark-300">{probability}%</span></div>
                 <input type="range" min={0} max={100} value={probability} onChange={(e) => setProbability(Number(e.target.value))} className="w-full accent-spark-500" />
               </div>
-              {cfg.toggleGroups[2] && <ToggleGroup label={cfg.toggleGroups[2].label} options={cfg.toggleGroups[2].options} value={g(2)} onChange={(v) => setTg(2, v)} />}
+              {cfg.toggleGroups[2] && (
+                <div className="space-y-2">
+                  <ToggleGroup label={cfg.toggleGroups[2].label} options={cfg.toggleGroups[2].options} value={g(2)} onChange={(v) => setTg(2, v)} />
+                  {/* «Последние N» — глубина ленты, которую вообще рассматриваем. */}
+                  {g(2) === 1 && (
+                    <NumberField label="Сколько последних постов" value={lastPostsCount} onChange={setLastPostsCount} min={1} max={50} />
+                  )}
+                  <label className="flex cursor-pointer items-start gap-2 rounded-xl border border-line/60 bg-elevated/40 px-3 py-2">
+                    <input type="checkbox" checked={pickOne} onChange={(e) => setPickOne(e.target.checked)} className="mt-0.5 h-4 w-4 accent-spark-500" />
+                    <span>
+                      <span className="text-xs font-semibold text-fg">Брать один случайный из подходящих</span>
+                      <span className="mt-0.5 block text-[11px] text-white/45">
+                        Снимите — прокомментирует ВСЕ подходящие посты за заход. Это отдельный вопрос от того,
+                        какие посты подходят: раньше «случайный» стоял в одном ряду с «по ключевым словам».
+                      </span>
+                    </span>
+                  </label>
+                </div>
+              )}
             </div>
           ) : isParser ? (
             <div className="space-y-3">

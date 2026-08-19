@@ -91,6 +91,9 @@ export function pickCommentCandidates(posts, settings) {
   if (settings.stopWords?.length) {
     candidates = candidates.filter((p) => !postContainsAny(textOf(p), settings.stopWords))
   }
+  // ГЛУБИНА: сколько постов канала вообще рассматриваем.
+  //   0 — только последний · 1 — все, кроме последнего (устаревшее, из UI убрано)
+  //   2 — все, что отдал Telegram · 3 — последние N (lastPostsCount)
   const postFilter = settings.postFilter ?? 0
   if (postFilter === 0 && candidates.length) {
     const newest = Math.max(...candidates.map((p) => p.id))
@@ -98,8 +101,19 @@ export function pickCommentCandidates(posts, settings) {
   } else if (postFilter === 1 && candidates.length) {
     const newest = Math.max(...posts.map((x) => x.id))
     candidates = candidates.filter((p) => p.id !== newest)
+  } else if (postFilter === 3 && candidates.length) {
+    // «Последние N»: N считаем по ленте канала, а не по прошедшим фильтр — иначе при
+    // жёстких ключевых словах «последние 3» уехали бы вглубь истории.
+    const depth = Math.min(50, Math.max(1, Math.trunc(Number(settings.lastPostsCount) || 0) || 3))
+    const allowed = new Set([...posts].sort((a, b) => b.id - a.id).slice(0, depth).map((p) => p.id))
+    candidates = candidates.filter((p) => allowed.has(p.id))
   }
-  if (settings.commentMode === 0 && candidates.length > 1) {
+  // Один случайный из подходящих. Раньше это было СЛИТО с отбором по содержанию
+  // (`commentMode: 0` = «Случайный»), из-за чего «случайный» и «по ключевым словам»
+  // выглядели взаимоисключающими, хотя это разные вопросы: ЧТО подходит и СКОЛЬКО брать.
+  // Старые задачи (commentMode 0) продолжают работать по-прежнему.
+  const pickOne = settings.pickOne ?? (settings.commentMode === 0)
+  if (pickOne && candidates.length > 1) {
     candidates = [candidates[Math.floor(Math.random() * candidates.length)]]
   }
   return candidates

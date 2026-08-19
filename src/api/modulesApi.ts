@@ -83,8 +83,10 @@ export interface ModuleTaskSettings {
   lookPostsCount?: number
   /** Массовые реакции: 0 — мониторинг новых постов, 1 — N последних постов. */
   reactMode?: number
-  /** Массовые реакции, режим «Существующие посты»: сколько последних постов брать. */
+  /** Сколько последних постов канала рассматривать (реакции и нейрокомментинг). */
   lastPostsCount?: number
+  /** Брать один случайный пост из подходящих (иначе — все подходящие за заход). */
+  pickOne?: boolean
   delays?: {
     comment?: [number, number]
     action?: [number, number]
