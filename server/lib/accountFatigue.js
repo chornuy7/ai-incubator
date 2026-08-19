@@ -226,11 +226,14 @@ export function scheduleGate(schedule = DEFAULT_SCHEDULE, now = Date.now(), rnd 
   nextHour.setMinutes(0, 0, 0)
   nextHour.setHours(nextHour.getHours() + 1)
   // Час закрыт полностью — раньше следующего часа смысла пробовать нет.
-  if (p <= 0) return { ok: false, reason: `по распорядку в ${hour}:00 аккаунт не активен`, chance: 0, until: nextHour.getTime() }
+  if (p <= 0) return { ok: false, reason: `распорядок дня: в ${hour}:00 аккаунт не работает`, chance: 0, until: nextHour.getTime() }
   // А вот НЕ ПОПАЛ В ВЕРОЯТНОСТЬ — это бросок кубика, и следующий бросок может выпасть
   // удачно через минуту. Ждать до конца часа тут неверно: при шансе 67% задача честно
   // сообщала «ждём 28 мин», хотя достаточно попробовать снова (правка 19.08).
-  if (rnd() > p) return { ok: false, reason: `не попал в вероятность ${Math.round(p * 100)}% для ${hour}:00`, chance: p, until: now + ROLL_RETRY_MS }
+  // Формулировка важна: это шанс РАСПОРЯДКА ДНЯ (когда аккаунт активен), а не «вероятность
+  // действия» из настроек модуля. Прежний текст «не попал в вероятность 76%» читался как
+  // «система подменила мои 100%» — прогон 19.08.
+  if (rnd() > p) return { ok: false, reason: `распорядок дня: в ${hour}:00 аккаунт активен на ${Math.round(p * 100)}%, сейчас не выпало`, chance: p, until: now + ROLL_RETRY_MS }
   return { ok: true, chance: p }
 }
 

@@ -25,6 +25,12 @@ import type { ModuleTaskSettings } from '@/api/modulesApi'
 import { confirmDialog } from '@/shared/lib/dialog'
 import { LaunchCost } from './shared/LaunchCost'
 import { PRESET_MUL } from './shared/TimingSection'
+/**
+ * Потолок вероятности по уровню защиты — зеркало effectiveProbability из
+ * server/lib/protection.js. Значение выше выставить можно, но сервер его срежет,
+ * поэтому форма обязана сказать об этом ДО запуска.
+ */
+const PROTECTION_CAP = [25, 45, 100]
 import { PresetBar } from './shared/PresetBar'
 
 const DEFAULT_DELAYS = {
@@ -561,6 +567,17 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
               <span className="text-spark-300">{probability}%</span>
             </div>
             <input type="range" min={0} max={100} value={probability} onChange={(e) => setProbability(Number(e.target.value))} className="w-full accent-spark-500" />
+            {/* Защита режет вероятность сверху (server/lib/protection.js#effectiveProbability):
+                консервативный — не выше 25%, сбалансированный — не выше 45%. Раньше об этом
+                не говорилось нигде: оператор ставил 100%, а в логах видел пропуски и считал,
+                что настройка не работает (прогон 19.08). */}
+            {aiProtect && probability > PROTECTION_CAP[protLevel] && (
+              <p className="mt-1.5 text-[11px] text-amber-300">
+                Защита ограничивает: фактически будет <b>{PROTECTION_CAP[protLevel]}%</b> —
+                {protLevel === 0 ? ' консервативный' : ' сбалансированный'} режим не даёт действовать чаще.
+                Выберите «Агрессивный», чтобы работало заданное значение.
+              </p>
+            )}
           </div>
         )}
         {hasLimits && (

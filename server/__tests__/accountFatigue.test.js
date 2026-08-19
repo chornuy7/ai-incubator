@@ -335,7 +335,7 @@ test('не повезло с броском — пробуем снова чер
   const now = new Date('2026-08-19T11:20:00').getTime()
   const g = scheduleGate({ 11: 0.67 }, now, () => 0.99)
   assert.equal(g.ok, false)
-  assert.match(g.reason, /не попал в вероятность/)
+  assert.match(g.reason, /распорядок дня/, 'в тексте должно быть видно, что это распорядок, а не «вероятность» из настроек модуля')
   assert.equal(g.until - now, ROLL_RETRY_MS, 'ожидание — короткий повтор, а не остаток часа')
 })
 
