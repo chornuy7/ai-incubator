@@ -202,14 +202,15 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
     targets,
     channels: targets,
     keywords: keywords.split(/[\n;]+/).map((k) => k.trim()).filter(Boolean),
-    // Отбор по СОДЕРЖАНИЮ: 1 — по ключевым словам, 2 — любые посты. Значение 0 («случайный»)
-    // больше не отправляем: случайность вынесена в отдельный флаг pickOne (правка 18.08),
-    // но воркер продолжает понимать старые задачи с commentMode 0.
-    commentMode: cfg.toggleGroups ? (g(0) === 1 ? 1 : 2) : g(0),
+    // Один выбор в форме раскладывается в два поля воркера:
+    //   0 «Только последний»   → любые посты (2) + глубина «последний» (0)
+    //   1 «Последние N»        → любые посты (2) + глубина N (3) + lastPostsCount
+    //   2 «Все доступные»      → любые посты (2) + без ограничения глубины (2)
+    //   3 «По ключевым словам» → фильтр по словам (1) по всей доступной ленте (2)
+    commentMode: cfg.toggleGroups ? (g(0) === 3 ? 1 : 2) : g(0),
     pickOne,
     workMode: g(1),
-    // ГЛУБИНА: 0 — только последний, 3 — последние N, 2 — все доступные.
-    postFilter: cfg.toggleGroups ? [0, 3, 2][g(2)] ?? 0 : g(2),
+    postFilter: cfg.toggleGroups ? [0, 3, 2, 2][g(0)] ?? 0 : g(2),
     probability,
     maxActions,
     maxComments: maxActions,
@@ -340,14 +341,11 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
     if (s.reactMode !== undefined) setToggles((t) => ({ ...t, 0: s.reactMode as number }))
     if (s.lastPostsCount !== undefined) setLastPostsCount(s.lastPostsCount)
     if (s.pickOne !== undefined) setPickOne(s.pickOne)
-    // Обратная раскладка: в шаблоне лежат значения воркера, в форме — позиции тумблеров.
-    if (cfg.toggleGroups && s.commentMode !== undefined) {
-      setToggles((t) => ({ ...t, 0: s.commentMode === 1 ? 1 : 0 }))
+    // Обратная раскладка: в шаблоне лежат значения воркера, в форме — один индекс.
+    if (cfg.toggleGroups && (s.commentMode !== undefined || s.postFilter !== undefined)) {
+      const pos = s.commentMode === 1 ? 3 : ({ 0: 0, 3: 1, 2: 2 }[s.postFilter as 0 | 2 | 3] ?? 0)
+      setToggles((t) => ({ ...t, 0: pos }))
       if (s.commentMode === 0) setPickOne(true)
-    }
-    if (cfg.toggleGroups && s.postFilter !== undefined) {
-      const pos = { 0: 0, 3: 1, 2: 2 }[s.postFilter as 0 | 2 | 3]
-      if (pos !== undefined) setToggles((t) => ({ ...t, 2: pos }))
     }
     if (Array.isArray(s.keywords)) setKeywords(s.keywords.join(', '))
     if (s.promptIndex !== undefined) setActivePrompt(s.promptIndex)
@@ -525,18 +523,22 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
             </div>
           ) : cfg.toggleGroups ? (
             <div className="rounded-2xl border border-line bg-elevated/40 p-4 space-y-4">
+              {/* ОДИН список: варианты взаимоисключающие, поэтому и выбор один. */}
               <ToggleGroup label={cfg.toggleGroups[0].label} options={cfg.toggleGroups[0].options} value={g(0)} onChange={(v) => setTg(0, v)} />
-              {g(0) === 1 && <textarea value={keywords} onChange={(e) => setKeywords(e.target.value)} rows={2} className="input resize-none text-sm" placeholder="Ключевые слова через ; или с новой строки — крипта; p2p обмен" />}
-              {cfg.toggleGroups[2] && (
+              {g(0) === 1 && (
+                <NumberField label="Сколько последних постов" value={lastPostsCount} onChange={setLastPostsCount} min={1} max={50} />
+              )}
+              {g(0) === 3 && (
+                <div className="space-y-1">
+                  <textarea value={keywords} onChange={(e) => setKeywords(e.target.value)} rows={2} className="input resize-none text-sm" placeholder="Ключевые слова через ; или с новой строки — крипта; p2p обмен" />
+                  <p className="text-xs text-muted">Ищем совпадения по всем доступным постам канала, а не только в последнем.</p>
+                </div>
+              )}
+              {/* Галочка нужна только там, где подходящих постов может быть несколько:
+                  при «Только последний» кандидат один, и выбирать не из чего.
+                  Условие по модулю — у нейрочаттинга свой набор тумблеров. */}
+              {moduleKey === 'neuro-commenting' && g(0) !== 0 && (
                 <div className="space-y-2">
-                  {/* Второй ряд того же вопроса «что комментировать» — про глубину ленты.
-                      Своего заголовка нет: два заголовка подряд читались как две разные
-                      настройки, хотя это одно решение (правка 18.08). */}
-                  <ToggleGroup label={cfg.toggleGroups[2].label} options={cfg.toggleGroups[2].options} value={g(2)} onChange={(v) => setTg(2, v)} />
-                  {/* «Последние N» — глубина ленты, которую вообще рассматриваем. */}
-                  {g(2) === 1 && (
-                    <NumberField label="Сколько последних постов" value={lastPostsCount} onChange={setLastPostsCount} min={1} max={50} />
-                  )}
                   <label className="flex cursor-pointer items-start gap-2 rounded-xl border border-line/60 bg-elevated/40 px-3 py-2">
                     <input type="checkbox" checked={pickOne} onChange={(e) => setPickOne(e.target.checked)} className="mt-0.5 h-4 w-4 accent-spark-500" />
                     <span>
