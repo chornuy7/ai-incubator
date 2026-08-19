@@ -57,16 +57,19 @@ export async function createBundle(input = {}) {
     hint: String(input.hint || '').trim(),
     modules,
     price,
-    // §11.3: кто собрал набор (нормализация выше владельца не знает).
-    userId: String(input.userId || '').trim() || undefined,
     createdAt: Date.now(),
   }
   const db = sb()
   if (db) {
-    // §11.3: «кто собрал набор» — та же привязка к юзеру, что и у остальных данных.
-    // Через insertWithOwner: до применения миграции колонки нет, и вставка не должна падать.
-    const { insertWithOwner } = await import('./lib/ownerColumn.js')
-    await insertWithOwner(db, 'bundles', { id: bundle.id, name: bundle.name, hint: bundle.hint, modules: bundle.modules, price: bundle.price, user_id: bundle.userId || null, created_at: new Date(bundle.createdAt).toISOString() })
+    // Наборы ГЛОБАЛЬНЫЕ: их собирает админ, видят все (listBundles не фильтрует по владельцу,
+    // rowToBundle владельца не читает). Поэтому owner-колонки тут нет — она была мёртвой
+    // (писалась, но нигде не использовалась). Кто создал набор — фиксирует audit_log
+    // (bundle.create, initiator). Колонка user_id удалена миграцией 2026-08-19-bundles-drop-user-id.sql.
+    const { error } = await db.from('bundles').insert({
+      id: bundle.id, name: bundle.name, hint: bundle.hint, modules: bundle.modules,
+      price: bundle.price, created_at: new Date(bundle.createdAt).toISOString(),
+    })
+    if (error) throw new Error(error.message)
     return bundle
   }
   // mutateJson, а не read+write: он сериализует запись в файл (очередь _fileChains).
