@@ -3,18 +3,18 @@ import { buildParticipantsParserDescriptor } from './_parserParticipants.js'
 
 export default buildParticipantsParserDescriptor({
   key: 'parsing-comments',
-  title: 'Парсер комментариев',
-  tags: ['комментарии', 'comments', 'вовлечённые'],
-  summary: 'Собирает людей, комментирующих посты каналов, — самую вовлечённую часть аудитории.',
+  title: 'Comment parser',
+  tags: ['comments', 'comments', 'involved'],
+  summary: 'Gathers people who comment on channel posts—the most involved part of the audience.',
   does: [
-    'проходит по последним постам канала на заданную глубину',
-    'читает комментарии под каждым постом и собирает их авторов',
-    'фильтрует по ключевым словам и длине комментария',
+    'passes along the last posts of the channel to a given depth',
+    'reads comments under each post and collects their authors',
+    'filters by keywords and comment length',
   ],
   examples: [
     {
-      title: 'Вовлечённая аудитория канала',
-      when: 'нужны не подписчики, а те, кто реально пишет под постами',
+      title: 'Engaged channel audience',
+      when: 'We don’t need subscribers, but those who actually write under posts',
       input: {
         accountIds: ['acc_1'],
         channels: ['@some_channel'],

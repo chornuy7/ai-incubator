@@ -3,7 +3,7 @@ import { buildChannelParserDescriptor } from './_parserChannels.js'
 
 export default buildChannelParserDescriptor({
   key: 'parsing-groups',
-  title: 'Парсер групп',
-  what: 'группы',
-  whatMany: 'группы',
+  title: 'Group parser',
+  what: 'groups',
+  whatMany: 'groups',
 })

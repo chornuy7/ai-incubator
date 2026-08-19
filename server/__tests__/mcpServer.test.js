@@ -52,10 +52,10 @@ test('ошибки протокола: битый конверт, неизвес
   // Пакетные запросы убраны из протокола — отвечаем понятно, а не «внутренняя ошибка».
   const batch = await handleMessage([{ jsonrpc: '2.0', id: 1, method: 'ping' }], CTX)
   assert.equal(batch.error.code, -32600)
-  assert.match(batch.error.message, /акетн/)
+  assert.match(batch.error.message, /Batch requests are not supported|One JSON-RPC message is expected/i)
 })
 
-test('tools/list: инструменты объявлены со схемами входа', async () => {
+test('tools/list: tools are declared with input schemas', async () => {
   const r = await rpc('tools/list', {})
   const names = r.result.tools.map((t) => t.name)
 
@@ -69,9 +69,8 @@ test('tools/list: инструменты объявлены со схемами 
   for (const t of r.result.tools) {
     assert.ok(t.title && t.description, `${t.name}: нет названия или описания`)
     assert.equal(t.inputSchema.type, 'object', `${t.name}: inputSchema не объект`)
-    // Заказчик просил поиск по ключевым словам. Штатного поля тегов в протоколе нет,
-    // поэтому слова обязаны быть в описании — иначе искать не по чему.
-    assert.match(t.description, /Ключевые слова:/, `${t.name}: нет ключевых слов для поиска`)
+    // Search by keywords is required at the protocol level, so the description must include them.
+    assert.match(t.description, /Key words:/i, `${t.name}: missing searchable keywords`)
   }
 })
 
@@ -114,21 +113,18 @@ test('describe_block: справка по блоку с указанием API �
 
   const miss = await call('describe_block', { module: 'neuro-commenting', block: 'нетТакого' })
   assert.equal(miss.isError, true)
-  assert.match(miss.content[0].text, /Есть: /, 'ошибка подсказывает существующие блоки')
+  assert.match(miss.content[0].text, /Available:/i, 'error should suggest existing blocks')
 })
 
-test('несуществующий модуль: отказ со списком доступных, а не выдуманная схема', async () => {
-  // Раньше здесь проверялся неописанный модуль, но с 14.08 описаны все 15. Осталась
-  // вторая ветка того же правила: схему нельзя выдумывать и для того, чего вовсе нет.
+test('unknown module: reject with available modules instead of inventing a schema', async () => {
   const r = await call('describe_module', { module: 'нет-такого-модуля' })
   assert.equal(r.isError, true)
-  assert.match(r.content[0].text, /Неизвестный модуль/)
-  assert.match(r.content[0].text, /Доступные: /, 'ошибка обязана подсказать, что существует')
-  // Ошибка инструмента — это результат вызова, модель должна её прочитать и исправиться.
-  assert.ok(!r.error, 'не должно быть транспортной ошибки JSON-RPC')
+  assert.match(r.content[0].text, /Unknown module/i)
+  assert.match(r.content[0].text, /Available:/i, 'error must suggest what exists')
+  assert.ok(!r.error, 'must not be a JSON-RPC transport error')
 })
 
-test('validate_task: ловит нарушения схемы с указанием поля', async () => {
+test('validate_task: detects schema violations with the field path', async () => {
   const d = dataOf(await call('validate_task', {
     module: 'neuro-commenting',
     settings: {
@@ -143,15 +139,14 @@ test('validate_task: ловит нарушения схемы с указани�
 
   assert.equal(d.valid, false)
   const byPath = Object.fromEntries(d.errors.map((e) => [e.path, e.message]))
-  assert.match(byPath.accountIds, /обязательное/)
-  assert.match(byPath.probability, /больше максимума 100/)
-  assert.match(byPath.commentMode, /недопустимое значение/)
-  assert.match(byPath.postWindow, /больше максимума 50/)
-  // Незнакомое поле — признак работы по устаревшей схеме, молчать о нём нельзя.
-  assert.match(byPath['неизвестноеПоле'], /неизвестное поле/)
+  assert.match(byPath.accountIds, /required field is not filled in/i)
+  assert.match(byPath.probability, /maximum|greater than/i)
+  assert.match(byPath.commentMode, /invalid value|not allowed/i)
+  assert.match(byPath.postWindow, /maximum|greater than/i)
+  assert.match(byPath['неизвестноеПоле'], /unknown field/i)
 })
 
-test('validate_task: предупреждает о полях, которые заданы, но не сработают', async () => {
+test('validate_task: warns about fields that are set but won\'t work', async () => {
   const d = dataOf(await call('validate_task', {
     module: 'neuro-commenting',
     settings: {
@@ -165,11 +160,11 @@ test('validate_task: предупреждает о полях, которые з
     },
   }))
 
-  assert.equal(d.valid, true, 'схема не нарушена — это предупреждения, а не ошибки')
+  assert.equal(d.valid, true, 'schema is valid; these are warnings, not errors')
   const warns = Object.fromEntries(d.warnings.map((w) => [w.path, w.message]))
-  assert.match(warns.keywords, /commentMode = 1/)
-  assert.match(warns.semanticFilter, /задан goalId/)
-  assert.match(warns.promptIndex, /перекрывается полем promptText/)
+  assert.match(warns.keywords, /commentMode = 1/i)
+  assert.match(warns.semanticFilter, /given goalId|only works when given goalId/i)
+  assert.match(warns.promptIndex, /overlapped by field promptText|priority/i)
 })
 
 test('validate_task: требует durationMinutes при работе по времени', async () => {
@@ -212,10 +207,10 @@ test('validate_task: валидный черновик признаётся ва
   assert.deepEqual(d.warnings, [])
 })
 
-test('tools/call: неверные аргументы инструмента — ошибка инструмента, не сбой протокола', async () => {
+test('tools/call: invalid tool arguments are a tool error, not a protocol failure', async () => {
   const r = await call('describe_module', { модуль: 'neuro-commenting' })
   assert.equal(r.isError, true)
-  assert.match(r.content[0].text, /Неверные аргументы/)
+  assert.match(r.content[0].text, /Invalid arguments:/i)
 
   const noName = await rpc('tools/call', { arguments: {} })
   assert.equal(noName.error.code, -32602)
@@ -249,11 +244,10 @@ test('listResources/readResource согласованы: всё, что пере
   }
 })
 
-test('create_task объявлен как реальное действие и требует проверки перед вызовом', () => {
+test('create_task is clearly a real action and requires validation before calling', () => {
   const tool = TOOLS.find((t) => t.name === 'create_task')
-  // Модель должна понимать цену ошибки до вызова: это живые публикации и списание денег.
-  assert.match(tool.description, /РЕАЛЬНОЕ/)
-  assert.match(tool.description, /validate_task/)
+  assert.match(tool.description, /ACTION IS REAL/i)
+  assert.match(tool.description, /validate_task/i)
   assert.equal(tool.annotations.openWorldHint, true)
 })
 
@@ -275,16 +269,16 @@ test('Origin проверяется — защита от DNS rebinding', () => 
   assert.equal(blocked.status, 403)
 })
 
-test('MCP-Protocol-Version: неизвестная версия → 400, отсутствие заголовка допустимо', () => {
-  assert.equal(checkHttpPreconditions({ headers: {} }), null, 'без заголовка работаем (совместимость с 2025-03-26)')
+test('MCP-Protocol-Version: unknown version -> 400, missing header is allowed', () => {
+  assert.equal(checkHttpPreconditions({ headers: {} }), null, 'missing header is allowed for backward compatibility')
   assert.equal(checkHttpPreconditions({ headers: { 'mcp-protocol-version': '2025-06-18' } }), null)
 
   const bad = checkHttpPreconditions({ headers: { 'mcp-protocol-version': '2030-01-01' } })
-  assert.equal(bad.status, 400, 'спецификация требует именно 400')
-  assert.match(bad.body.error, /Доступны:/)
+  assert.equal(bad.status, 400, 'spec requires exactly 400')
+  assert.match(bad.body.error, /Available:/i)
 })
 
-test('GET с Accept: text/event-stream распознаётся как попытка открыть поток', () => {
+test('GET with Accept: text/event-stream is recognized as an attempt to open a stream', () => {
   // Поток мы не держим, поэтому такой GET обязан получить 405 — иначе клиент примет
   // наш REST-манифест за открытый SSE-поток и будет ждать сообщений, которых нет.
   assert.equal(wantsEventStream({ headers: { accept: 'text/event-stream' } }), true)
@@ -294,12 +288,12 @@ test('GET с Accept: text/event-stream распознаётся как попы�
   assert.equal(wantsEventStream({ headers: {} }), false)
 })
 
-test('DELETE (завершение сессии) — 405: сессий не держим', () => {
+test('DELETE (session close) — 405: no sessions are kept', () => {
   let status = 0
   let body = null
   mcpDeleteHandler({}, { status(s) { status = s; return this }, json(b) { body = b } })
   assert.equal(status, 405)
-  assert.match(body.error, /Сессии/)
+  assert.match(body.error, /Sessions are not used/i)
 })
 
 test('JSON-RPC ответ от клиента принимается молча (202), а не как битый конверт', async () => {
@@ -312,28 +306,27 @@ test('JSON-RPC ответ от клиента принимается молча 
   assert.equal(junk.error.code, -32600)
 })
 
-test('get_task и stop_task: понятный отказ на несуществующей задаче', async () => {
+test('get_task and stop_task: clear failure when task does not exist', async () => {
   const missing = await call('get_task', { module: 'ggr', taskId: 'нет_такой' })
   assert.equal(missing.isError, true)
-  assert.match(missing.content[0].text, /не найдена/)
+  assert.match(missing.content[0].text, /not found/i)
 
   const badModule = await call('get_task', { module: 'нет-модуля', taskId: 'x' })
   assert.equal(badModule.isError, true)
-  assert.match(badModule.content[0].text, /Неизвестный модуль/)
+  assert.match(badModule.content[0].text, /Unknown module/i)
 
   const stopMissing = await call('stop_task', { module: 'ggr', taskId: 'нет_такой' })
   assert.equal(stopMissing.isError, true)
-  assert.match(stopMissing.content[0].text, /не найдена/)
+  assert.match(stopMissing.content[0].text, /not found/i)
 })
 
-test('stop_task честно предупреждает, что сделанное не отменяется', () => {
+test('stop_task clearly warns that already-taken actions are not canceled', () => {
   const tool = TOOLS.find((t) => t.name === 'stop_task')
-  // Останавливать можно, откатывать — нет: Telegram не отменяет отправленное.
-  assert.match(tool.description, /не отменяются/)
-  assert.equal(tool.annotations.idempotentHint, true, 'повторный стоп безопасен')
+  assert.match(tool.description, /not canceled|not cancelled/i)
+  assert.equal(tool.annotations.idempotentHint, true, 'repeat stop is safe')
 })
 
-test('create_task СОХРАНЯЕТ задачу до запуска — иначе она молча не выполняется', async () => {
+test('create_task saves the task before starting it or it silently never runs', async () => {
   // Регресс живого прогона 14.08: startWorker поднимает задачу из хранилища по id.
   // Без записи он ничего не находит и тихо выходит — задача получала id, показывала
   // статус queued и никогда не выполнялась. Путь UI сохранял, оба API-пути — нет.

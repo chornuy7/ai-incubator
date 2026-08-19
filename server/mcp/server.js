@@ -18,7 +18,7 @@ import { describeModule, listDescriptorKeys, getDescriptor } from './descriptors
 /** Версии протокола, с которыми умеем разговаривать. Первая — предпочитаемая. */
 export const SUPPORTED_PROTOCOL_VERSIONS = ['2025-06-18', '2025-03-26', '2024-11-05']
 
-export const SERVER_INFO = { name: 'murmex', title: 'Murmex — управление Telegram-аккаунтами', version: '1.0.0' }
+export const SERVER_INFO = { name: 'murmex', title: 'Murmex - Telegram account management', version: '1.0.0' }
 
 const ERR = { PARSE: -32700, INVALID_REQUEST: -32600, METHOD_NOT_FOUND: -32601, INVALID_PARAMS: -32602, INTERNAL: -32603 }
 
@@ -33,7 +33,7 @@ export function listResources() {
     out.push({
       uri: `murmex://module/${key}`,
       name: `module-${key}`,
-      title: `${desc.title} — полное описание`,
+      title: `${desc.title}- full description`,
       description: desc.whoAmI.summary,
       mimeType: 'application/json',
     })
@@ -75,7 +75,7 @@ export function readResource(uri) {
  */
 export async function handleMessage(message, ctx) {
   if (!message || typeof message !== 'object' || Array.isArray(message)) {
-    return failure(null, ERR.INVALID_REQUEST, 'Ожидается одно JSON-RPC сообщение. Пакетные запросы протоколом не поддерживаются.')
+    return failure(null, ERR.INVALID_REQUEST, 'One JSON-RPC message is expected. Batch requests are not supported by the protocol.')
   }
   // Клиент прислал ОТВЕТ на наш запрос (есть result/error, нет method). Своих запросов
   // к клиенту мы не делаем, но по спецификации такой вход принимается молча — 202.
@@ -83,7 +83,7 @@ export async function handleMessage(message, ctx) {
     return null
   }
   if (message.jsonrpc !== '2.0' || typeof message.method !== 'string') {
-    return failure(message.id, ERR.INVALID_REQUEST, 'Неверный конверт JSON-RPC: нужны jsonrpc: "2.0" и method')
+    return failure(message.id, ERR.INVALID_REQUEST, 'Invalid JSON-RPC envelope: jsonrpc: "2.0" and method needed')
   }
 
   const { id, method, params = {} } = message
@@ -102,10 +102,10 @@ export async function handleMessage(message, ctx) {
           capabilities: { tools: { listChanged: false }, resources: { listChanged: false, subscribe: false } },
           serverInfo: SERVER_INFO,
           instructions:
-            'Порядок работы: list_modules → describe_module (полная схема параметров и ограничений) → '
-            + 'validate_task (проверка черновика без запуска) → estimate_task (цена и время) → create_task, '
-            + 'а дальше get_task для наблюдения и stop_task, если надо прервать. '
-            + 'Схема есть не у всех модулей: у неописанных described = false, полагаться на их список полей нельзя.',
+            'Work order: list_modules → describe_module (complete scheme of parameters and restrictions) →'
+            + 'validate_task (checking a draft without running it) → estimate_task (price and time) → create_task,'
+            + 'and then get_task for monitoring and stop_task if you need to interrupt.'
+            + 'Not all modules have a schema: undescribed ones have described = false, and you cannot rely on their list of fields.',
         })
       }
 
@@ -122,7 +122,7 @@ export async function handleMessage(message, ctx) {
 
       case 'tools/call': {
         const name = params.name
-        if (!name) return failure(id, ERR.INVALID_PARAMS, 'Не указано имя инструмента (params.name)')
+        if (!name) return failure(id, ERR.INVALID_PARAMS, 'Tool name not specified (params.name)')
         try {
           const data = await callTool(name, params.arguments || {}, ctx)
           return result(id, {
@@ -146,7 +146,7 @@ export async function handleMessage(message, ctx) {
       case 'resources/read': {
         const uri = params.uri
         const contents = uri ? readResource(uri) : null
-        if (!contents) return failure(id, ERR.INVALID_PARAMS, `Ресурс не найден: ${uri}`)
+        if (!contents) return failure(id, ERR.INVALID_PARAMS, `Resource not found:${uri}`)
         return result(id, { contents: [contents] })
       }
 
@@ -155,10 +155,10 @@ export async function handleMessage(message, ctx) {
 
       default:
         if (isNotification) return null
-        return failure(id, ERR.METHOD_NOT_FOUND, `Метод «${method}» не поддерживается`)
+        return failure(id, ERR.METHOD_NOT_FOUND, `Method "${method}" is not supported`)
     }
   } catch (err) {
-    return failure(id, ERR.INTERNAL, err instanceof Error ? err.message : 'Внутренняя ошибка')
+    return failure(id, ERR.INTERNAL, err instanceof Error ? err.message : 'Internal error')
   }
 }
 
@@ -181,7 +181,7 @@ export function originAllowed(origin) {
  */
 export function checkHttpPreconditions(req) {
   if (!originAllowed(req.headers?.origin)) {
-    return { status: 403, body: { error: 'Origin не разрешён' } }
+    return { status: 403, body: { error: 'Origin not allowed' } }
   }
   // Спецификация: клиент обязан слать MCP-Protocol-Version на всех запросах после
   // initialize; при неизвестной версии сервер ОБЯЗАН ответить 400. Если заголовка нет —
@@ -190,7 +190,7 @@ export function checkHttpPreconditions(req) {
   if (asked && !SUPPORTED_PROTOCOL_VERSIONS.includes(String(asked))) {
     return {
       status: 400,
-      body: { error: `Версия протокола ${asked} не поддерживается. Доступны: ${SUPPORTED_PROTOCOL_VERSIONS.join(', ')}` },
+      body: { error: `Protocol version ${asked} is not supported. Available: ${SUPPORTED_PROTOCOL_VERSIONS.join(', ')}` },
     }
   }
   return null
@@ -223,5 +223,5 @@ export function wantsEventStream(req) {
 
 /** DELETE — завершение сессии. Сессий мы не держим, спецификация разрешает 405. */
 export function mcpDeleteHandler(_req, res) {
-  res.status(405).json({ error: 'Сессии не используются — завершать нечего' })
+  res.status(405).json({ error: 'Sessions are not used; there is nothing to end' })
 }

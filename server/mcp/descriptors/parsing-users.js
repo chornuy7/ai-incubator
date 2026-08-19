@@ -3,21 +3,21 @@ import { buildParticipantsParserDescriptor } from './_parserParticipants.js'
 
 export default buildParticipantsParserDescriptor({
   key: 'parsing-users',
-  title: 'Парсер пользователей',
-  tags: ['участники', 'members', 'пересечение аудиторий'],
-  summary: 'Собирает участников групп и каналов в базу с фильтрами по типу аккаунта.',
+  title: 'User parser',
+  tags: ['participants', 'members', 'intersection of audiences'],
+  summary: 'Collects group and channel members into a database with filters by account type.',
   does: [
-    'вступает в источник, если аккаунт ещё не состоит в нём',
-    'выгружает список участников и фильтрует его по заданным признакам',
-    'умеет пересечение аудиторий: оставить только тех, кто состоит сразу в нескольких источниках',
-    'убирает дубли между источниками',
+    'joins the source if the account is not already a member of it',
+    'uploads a list of participants and filters it according to specified criteria',
+    'knows how to cross audiences: leave only those who are members of several sources at once',
+    'removes duplicates between sources',
   ],
   // Пересечение аудиторий реализовано ТОЛЬКО у этого парсера (`kind === 'parsing-users'`).
   supportsIntersection: true,
   examples: [
     {
-      title: 'Живая аудитория одной группы',
-      when: 'нужен список тех, кому можно написать',
+      title: 'Live audience of one group',
+      when: 'I need a list of people to write to',
       input: {
         accountIds: ['acc_1'],
         channels: ['@some_chat'],
@@ -28,8 +28,8 @@ export default buildParticipantsParserDescriptor({
       },
     },
     {
-      title: 'Ядро аудитории по пересечению',
-      when: 'нужны те, кто сидит сразу в нескольких тематических чатах — это самая тёплая аудитория',
+      title: 'Core audience by intersection',
+      when: 'We need those who sit in several thematic chats at once - this is the warmest audience',
       input: {
         accountIds: ['acc_1', 'acc_2'],
         channels: ['@chat_one', '@chat_two', '@chat_three'],

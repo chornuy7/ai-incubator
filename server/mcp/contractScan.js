@@ -61,7 +61,7 @@ const VIA_TASK = /task\s*\??\.\s*settings\s*\??\.\s*([A-Za-z_$][\w$]*)/g
 // читается как обращение к полю `settings.js`, и в схему требуется несуществующее поле.
 const STRING_LITERAL = /'(?:[^'\\\n]|\\.)*'|"(?:[^"\\\n]|\\.)*"|`(?:[^`\\]|\\.)*`/g
 
-/** Имена ключей настроек, встреченные в куске кода. */
+/** Names of settings keys found in a piece of code. */
 export function scanSettingsKeys(code) {
   const clean = code.replace(STRING_LITERAL, "''")
   const out = new Set()
@@ -74,9 +74,9 @@ export function scanSettingsKeys(code) {
 }
 
 /**
- * Пройти по `contract.sources` дескриптора и собрать все читаемые ключи.
- * @param {object} desc дескриптор модуля
- * @param {string} rootDir корень репозитория
+ * Walk through the `contract.sources` descriptor and collect all readable keys.
+ * @param {object} desc module descriptor
+ * @param {string} rootDir repository root
  * @returns {Promise<{keys: Set<string>, missingSymbols: string[]}>}
  */
 export async function scanDescriptorSources(desc, rootDir) {
@@ -84,7 +84,7 @@ export async function scanDescriptorSources(desc, rootDir) {
   const missingSymbols = []
   for (const src of desc.contract?.sources || []) {
     const abs = path.join(rootDir, src.file)
-    const code = await readFile(abs, 'utf8')
+    const code = await readFile(abs,'utf8')
     for (const symbol of src.symbols) {
       const body = extractFunctionBody(code, symbol)
       // Функцию переименовали или удалили — источник правды указывает в пустоту.

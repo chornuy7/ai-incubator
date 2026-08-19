@@ -102,9 +102,9 @@ function paramToSchema(p) {
   if (p.enum?.length) {
     descParts.push(p.enum.map((e) => `${e.value} — ${e.label}: ${e.means}`).join(' · '))
   }
-  if (p.constraints?.length) descParts.push(`Ограничения: ${p.constraints.join('; ')}.`)
-  if (p.unit) descParts.push(`Единица измерения: ${p.unit}.`)
-  if (p.seeAlso?.length) descParts.push(`Связано: ${p.seeAlso.join(', ')}.`)
+  if (p.constraints?.length) descParts.push(`Restrictions:${p.constraints.join('; ')}.`)
+  if (p.unit) descParts.push(`Unit:${p.unit}.`)
+  if (p.seeAlso?.length) descParts.push(`Related:${p.seeAlso.join(', ')}.`)
   schema.description = descParts.filter(Boolean).join(' ')
 
   if (p.enum?.length) schema.enum = p.enum.map((e) => e.value)

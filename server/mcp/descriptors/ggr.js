@@ -18,35 +18,35 @@ export default {
   version: 1,
   title: 'AI Rating',
   platform: 'telegram',
-  tags: ['рейтинг', 'rating', 'проверка аккаунтов', 'здоровье', 'trust', 'диагностика'],
+  tags: ['rating', 'rating', 'account verification', 'health', 'trust', 'diagnostics'],
 
   whoAmI: {
-    summary: 'Проверяет управляемые аккаунты и выставляет каждому оценку качества по состоянию профиля и сессии.',
+    summary: 'Checks managed accounts and assigns each a quality rating based on profile and session status.',
     does: [
-      'подключается к каждому аккаунту и проверяет, жива ли сессия',
-      'начисляет баллы за заполненность профиля — юзернейм, телефон',
-      'помечает аккаунты, требующие переавторизации',
-      'не меняет статус наказанных аккаунтов: карантин, спамблок и бан остаются как есть',
+      'connects to each account and checks if the session is alive',
+      'awards points for profile completeness - username, phone number',
+      'flags accounts that require reauthorization',
+      'does not change the status of punished accounts: quarantine, spamblock and ban remain as is',
     ],
     doesNot: [
-      'не выполняет никаких действий в Telegram: не пишет, не подписывается, не смотрит',
-      'не работает по целям — каналов и групп у модуля нет',
-      'не трогает аккаунты, занятые другой задачей: параллельный вход той же сессией роняет обе '
-      + 'задачи и выглядит для Telegram как угон сессии',
+      'does not perform any actions in Telegram: does not write, does not subscribe, does not watch',
+      'does not work for purposes - the module does not have channels or groups',
+      'does not affect accounts busy with another task: parallel login with the same session drops both'
+      + 'tasks and looks like session hijacking to Telegram',
     ],
-    requires: ['аккаунты с сохранённой сессией; прокси желателен, но проверка сработает и без него'],
-    risks: 'Минимальный: только вход и чтение собственного профиля. Полезно прогонять перед боевыми задачами.',
-    costModel: 'Служебная проверка. Токены ИИ не расходуются.',
+    requires: ['accounts with saved session; a proxy is desirable, but the check will work without it'],
+    risks: 'Minimum: only login and read your own profile. Useful to run before combat missions.',
+    costModel: 'Service check. AI tokens are not consumed.',
   },
 
   blocks: [
     {
       id: 'accounts',
-      title: 'Выберите аккаунты',
-      purpose: 'Какие аккаунты проверяем.',
+      title: 'Select accounts',
+      purpose: 'What accounts do we check?',
       howItWorks:
-        'Аккаунты проверяются по очереди. Занятые другой задачей пропускаются с предупреждением: '
-        + 'параллельный вход той же сессией роняет обе задачи и выглядит для Telegram как угон.',
+        'Accounts are verified one by one. Those busy with another task are skipped with a warning:'
+        + 'Parallel login with the same session drops both tasks and looks like hijacking for Telegram.',
       api: { method: 'POST', path: '/api/modules/ggr/tasks', fills: ['accountIds'] },
       params: ['accountIds'],
     },
@@ -56,16 +56,16 @@ export default {
     {
       name: 'accountIds',
       block: 'accounts',
-      title: 'Аккаунты',
+      title: 'Accounts',
       type: 'array',
       items: 'string',
       required: true,
       minItems: 1,
-      purpose: 'ID аккаунтов для проверки.',
+      purpose: 'Account IDs for verification.',
       constraints: [
-        'пустой список запуск НЕ пройдёт: «Выберите хотя бы один аккаунт». В воркере есть '
-        + 'ветка «пусто → взять все», но до неё дело не доходит — проверка запуска срабатывает раньше',
-        'занятые другой задачей аккаунты пропускаются с предупреждением',
+        'an empty list will NOT launch: “Select at least one account.” The worker has'
+        + 'branch “empty → take all”, but it doesn’t reach it - the launch check is triggered earlier',
+        'accounts busy with another task are skipped with a warning',
       ],
       examples: [['acc_1'], ['acc_1', 'acc_2']],
       storedAs: 'task.settings.accountIds',
@@ -76,13 +76,13 @@ export default {
 
   examples: [
     {
-      title: 'Проверить весь парк',
-      when: 'перед большой кампанией надо понять, какие аккаунты вообще живы',
+      title: 'Check out the entire park',
+      when: 'before a big campaign, you need to understand which accounts are even alive',
       input: { accountIds: ['acc_1', 'acc_2', 'acc_3'] },
     },
     {
-      title: 'Проверить конкретные аккаунты',
-      when: 'подозрение, что часть сессий отвалилась',
+      title: 'Check specific accounts',
+      when: 'I suspect that some of the sessions have fallen off',
       input: { accountIds: ['acc_1'] },
     },
   ],
