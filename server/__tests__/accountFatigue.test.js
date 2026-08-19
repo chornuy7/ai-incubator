@@ -36,11 +36,18 @@ test('§4.1: отдых СКВОЗНОЙ — обязательная пауза
   assert.match(g.reason, /отдыхает/)
 })
 
-test('§4.1: усталость восстанавливается со временем', () => {
+/**
+ * Правка 19.08 (по решению владельца): «восстановление за час» из модели убрано.
+ * Оно спорило с отдыхом — оператор ставил «отдых 15 минут», а счётчик держался, пока не
+ * пройдёт час восстановления. Теперь усталость снимает ТОЛЬКО отдых.
+ */
+test('§4.1: усталость снимается отдыхом, а не сама по себе со временем', () => {
   const now = Date.now()
-  const st = { fatigue: 10, lastActionAt: now - 2 * HOUR }
-  assert.equal(currentFatigue(st, DEFAULT_FATIGUE, now), 0, '2 часа × 5 ед./час = 10')
-  assert.equal(currentFatigue({ fatigue: 10, lastActionAt: now - HOUR }, DEFAULT_FATIGUE, now), 5)
+  // Два часа без действий, но отдых не назначался — счётчик на месте.
+  assert.equal(currentFatigue({ fatigue: 10, lastActionAt: now - 2 * HOUR }, DEFAULT_FATIGUE, now), 10)
+  // Отдых отбыт — вышел свежим.
+  const rested = { fatigue: 10, lastActionAt: now - 2 * HOUR, restUntil: now - HOUR }
+  assert.equal(currentFatigue(rested, DEFAULT_FATIGUE, now), 0)
 })
 
 test('§4.2: ночью 2–4 не пишем — это палит ботов', () => {
@@ -177,12 +184,11 @@ test('listActivity отдаёт весь профиль, а не один пор
   process.env.ACCOUNT_ACTIVITY_FILE = path.join(dir, 'activity.json')
   const A = await import(`../accountActivity.js?fatigue-list=${Date.now()}`)
 
-  await A.setActivityProfile(['acc_1'], { profile: { threshold: 40, restMinutes: 120, recoveryPerHour: 9 } })
+  await A.setActivityProfile(['acc_1'], { profile: { threshold: 40, restMinutes: 120 } })
   const map = await A.listActivity()
 
   assert.equal(map.acc_1.threshold, 40)
   assert.equal(map.acc_1.restMinutes, 120, 'без этого поля форма покажет умолчание вместо заданного')
-  assert.equal(map.acc_1.recoveryPerHour, 9)
 })
 
 test('профили аккаунтов независимы: свой порог у каждого', async () => {
@@ -207,18 +213,17 @@ test('профили аккаунтов независимы: свой поро�
  * аккаунт с 0.8 формально не дотягивал до порога 1 — уходил делать ещё одно действие,
  * хотя одно уже сделал. Счёт должен быть человеческим: сделал действие — единица.
  */
-test('усталость целая: дробных остатков восстановления не остаётся', () => {
+test('усталость целая и не выше порога', () => {
   const H = 3600000
   const now = 1_000_000_000
-  const profile = { threshold: 1, restMinutes: 45, recoveryPerHour: 5 }
+  const profile = { threshold: 1, restMinutes: 45 }
 
-  // Прошло ~2 минуты после действия: раньше выходило 0.8, теперь — единица.
   const soon = currentFatigue({ fatigue: 1, lastActionAt: now - 0.04 * H }, profile, now)
   assert.equal(soon, 1)
   assert.equal(Number.isInteger(soon), true, 'в интерфейсе не должно быть «0.8 из 1»')
 
-  // Час восстановления прошёл целиком — счётчик обнулился.
-  assert.equal(currentFatigue({ fatigue: 1, lastActionAt: now - 0.5 * H }, profile, now), 0)
+  // Старые записи с раздутым счётчиком показываются по потолку: «3 из 1» — бессмыслица.
+  assert.equal(currentFatigue({ fatigue: 3, lastActionAt: now }, profile, now), 1)
 })
 
 test('порог 1: после одного действия аккаунт уходит на отдых, а не делает второе', () => {
@@ -262,14 +267,14 @@ test('отбытый обязательный отдых обнуляет уст
   assert.equal(currentFatigue(state, profile, now + 4 * M), 0, 'счётчик обнулён отдыхом, а не ждёт час восстановления')
 })
 
-test('восстановление работает в обычных перерывах, когда до порога не дошли', () => {
+test('без отдыха счётчик не тает: накопленное держится до порога', () => {
   const H = 3600000
   const now = 1_000_000_000
-  const profile = { threshold: 15, restMinutes: 45, recoveryPerHour: 5 }
-  // Пять действий, отдых не назначался (порог не достигнут) — тает по 5 единиц в час.
-  const state = { fatigue: 5, lastActionAt: now - 1 * H }
-  assert.equal(currentFatigue(state, profile, now), 0)
-  assert.equal(currentFatigue({ fatigue: 12, lastActionAt: now - 1 * H }, profile, now), 7)
+  const profile = { threshold: 15, restMinutes: 45 }
+  // Час простоя без назначенного отдыха — счётчик как был. Так задумано: «отдохнул»
+  // означает отбытый перерыв, а не просто паузу в работе.
+  assert.equal(currentFatigue({ fatigue: 5, lastActionAt: now - 1 * H }, profile, now), 5)
+  assert.equal(currentFatigue({ fatigue: 12, lastActionAt: now - 3 * H }, profile, now), 12)
 })
 
 test('после отдыха новое действие снова копит усталость', () => {
@@ -299,14 +304,13 @@ test('freeAt: во время перерыва — его конец', () => {
   assert.equal(freeAt(state, profile, now + M), state.restUntil)
 })
 
-test('freeAt: порог понизили после работы — ждём восстановления', () => {
-  const H = 3600000
+test('freeAt: порог понизили после работы — ждём один отдых', () => {
+  const M = 60000
   const now = 1_000_000_000
   // Было «3 из 15», порог сменили на 1: перерыв не назначался, но работать нельзя.
   const state = { fatigue: 3, lastActionAt: now, restUntil: 0 }
-  const profile = { threshold: 1, restMinutes: 45, recoveryPerHour: 1 }
-  // Нужно опустить 3 → 0 при 1 в час: три часа.
-  assert.equal(Math.round((freeAt(state, profile, now) - now) / H), 3)
+  const profile = { threshold: 1, restMinutes: 20 }
+  assert.equal(Math.round((freeAt(state, profile, now) - now) / M), 20, 'отдых по профилю, а не отдельная арифметика')
 })
 
 test('freeAt: аккаунт в строю — ноль', () => {

@@ -7,8 +7,10 @@ export interface AccountActivity {
   threshold: number
   /** Отдых после переутомления, минут. */
   restMinutes: number
-  /** Восстановление — единиц усталости за час. */
-  recoveryPerHour: number
+  /**
+   * Отдых И ЕСТЬ восстановление (правка 19.08): отдельного «восстановления за час»
+   * больше нет — два поля описывали одно и то же и спорили числами.
+   */
   /** Когда снова сможет работать (мс). 0 — может прямо сейчас. */
   freeAt: number
   restUntil: number
@@ -36,7 +38,7 @@ export async function fetchActivity(): Promise<ActivityMap> {
  */
 export async function setActivity(patch: {
   accountIds: string[]
-  profile?: { threshold?: number; recoveryPerHour?: number; restMinutes?: number }
+  profile?: { threshold?: number; restMinutes?: number }
   /** Часы в процентах (0–100). Сервер приводит к своему виду сам. */
   schedule?: SchedulePercent
   /** Раздать каждому свой сдвиг вокруг заданной кривой (по умолчанию да). */

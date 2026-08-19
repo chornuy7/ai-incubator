@@ -9,6 +9,7 @@ import { fetchAllTasks, fetchModuleTask, stopModuleTask, restartModuleTask, paus
 import { fetchGoals, type Goal } from '@/api/goalsApi'
 import { fetchCampaigns, type Campaign } from '@/api/campaignsApi'
 import { fetchAccounts } from '@/api/accountsApi'
+import { fetchActivity, type ActivityMap } from '@/api/accountActivityApi'
 import { fetchConcurrency, saveSettings, type ConcurrencyState } from '@/api/settingsApi'
 import type { TgAccount } from '@/shared/types'
 import { cn, coins as fmtCoins } from '@/shared/lib/utils'
@@ -75,7 +76,14 @@ const DEFAULT_ACTION_DELAY: [number, number] = [30, 120]
 // Статусы, для которых ETA имеет смысл: работа ещё не завершена. У running — время до
 // конца, у queued/paused/stopped — прогноз «при запуске». done/error — считать нечего.
 const ETA_STATUSES = new Set(['running', 'queued', 'paused', 'stopped'])
-function taskEtaMs(t: ModuleTask): number | null {
+/**
+ * Усталость аккаунтов задачи: через сколько действий уходят на отдых, насколько долго и
+ * когда вернутся те, кто отдыхает прямо сейчас. Считается по РЕАЛЬНЫМ профилям аккаунтов
+ * (правка 19.08) — до этого ETA обещал «≈ 1 мин» задаче, которой предстояло два часа
+ * пережидать отдых, и число выглядело издевательством.
+ */
+export interface FatigueHint { threshold: number; restMs: number; restingUntil: number }
+function taskEtaMs(t: ModuleTask, fatigue?: FatigueHint | null): number | null {
   if (!ETA_STATUSES.has(t.status)) return null
   const done = t.progress?.done ?? t.progress?.actionsDone ?? 0
   const total = t.progress?.total ?? 0
@@ -94,7 +102,18 @@ function taskEtaMs(t: ModuleTask): number | null {
   const d = s.delays?.action ?? s.delays?.comment ?? DEFAULT_ACTION_DELAY
   const mul = PRESET_MUL[s.delayPreset ?? 1] ?? 1
   const avgDelaySec = ((d[0] + d[1]) / 2) * mul
-  return avgDelaySec > 0 ? Math.round(perAccRemaining * avgDelaySec * 1000) : null
+  if (avgDelaySec <= 0) return null
+  let ms = Math.round(perAccRemaining * avgDelaySec * 1000)
+
+  // Отдых аккаунтов — часть времени задачи, а не помеха ему. Сколько раз аккаунт успеет
+  // упереться в порог на оставшихся действиях, столько отдыхов и добавляем; плюс тот,
+  // что идёт прямо сейчас.
+  if (fatigue && fatigue.threshold > 0 && fatigue.restMs > 0) {
+    const rests = Math.floor(perAccRemaining / fatigue.threshold)
+    ms += rests * fatigue.restMs
+    if (fatigue.restingUntil > Date.now()) ms += fatigue.restingUntil - Date.now()
+  }
+  return ms
 }
 
 /** Секунды → человекочитаемо: «45 с», «12 мин», «6 ч 20 мин», «5 дн 4 ч» (как в панели запуска). */
@@ -249,6 +268,25 @@ export function TasksPage() {
     const id = setInterval(loadAcc, 60000)
     return () => clearInterval(id)
   }, [])
+  // Усталость аккаунтов — для честного ETA: задача, которой предстоит два часа отдыха,
+  // не должна обещать «≈ 1 мин» (правка 19.08).
+  const [activity, setActivity] = useState<ActivityMap>({})
+  useEffect(() => {
+    const loadAct = () => void fetchActivity().then(setActivity).catch(() => {})
+    loadAct()
+    const id = setInterval(loadAct, 60000)
+    return () => clearInterval(id)
+  }, [])
+  /** Профиль усталости задачи: берём самый «тяжёлый» среди её аккаунтов. */
+  const fatigueOf = useMemo(() => (t: ModuleTask): FatigueHint | null => {
+    const rows = (t.settings?.accountIds || []).map((id) => activity[id]).filter((a) => a?.threshold)
+    if (!rows.length) return null
+    // Берём самый «тяжёлый» отдых по задаче и самый поздний возврат: ETA не должен быть
+    // оптимистичнее реальности, иначе он снова обманет.
+    const worst = rows.reduce((acc, a) => (Number(a.restMinutes) || 0) > (Number(acc.restMinutes) || 0) ? a : acc, rows[0])
+    const restingUntil = rows.reduce((mx, a) => (a.resting && a.restUntil > mx ? a.restUntil : mx), 0)
+    return { threshold: worst.threshold, restMs: Math.max(0, Number(worst.restMinutes) || 0) * 60000, restingUntil }
+  }, [activity])
   // MR-146: на каждую задачу — сколько её аккаунтов «отвалилось» (нет прокси/не отвечает/нерабочий статус).
   const acctById = useMemo(() => new Map(accounts.map((a) => [a.id, a])), [accounts])
   const taskProblems = useMemo(() => {
@@ -650,7 +688,7 @@ export function TasksPage() {
               <div className="mt-1 text-[11px] text-white/40">Прогресс к цели: {g.prog}%</div>
               {/* Тот же приём внутри цели: строки + равная высота, порядок слева направо. */}
               <div className="mt-2 grid items-stretch gap-1.5 sm:grid-cols-2">
-                {g.tasks.map((t) => <div key={`${t.moduleKey}:${t.id}`} className="min-w-0"><TaskCard t={t} goalName={null} busy={busy} busyAction={busyAction} pendingAction={pending[t.id]?.action} onOpen={openTask} onStop={doStop} onRestart={doRestart} onPause={doPause} onResume={doResume} canControl={canControl(t)} problem={taskProblems(t)} compact /></div>)}
+                {g.tasks.map((t) => <div key={`${t.moduleKey}:${t.id}`} className="min-w-0"><TaskCard t={t} goalName={null} busy={busy} busyAction={busyAction} pendingAction={pending[t.id]?.action} onOpen={openTask} onStop={doStop} onRestart={doRestart} onPause={doPause} onResume={doResume} canControl={canControl(t)} problem={taskProblems(t)} fatigue={fatigueOf(t)} compact /></div>)}
               </div>
             </Card>
           ))}
@@ -668,7 +706,7 @@ export function TasksPage() {
         // её фоном, а не провалом между блоками — визуально это ровная сетка, а не
         // рваная кладка.
         <div className="grid items-stretch gap-2 lg:grid-cols-2">
-          {filtered.map((t) => <div key={`${t.moduleKey}:${t.id}`} className="min-w-0"><TaskCard t={t} goalName={goalName(t.goalId)} busy={busy} busyAction={busyAction} pendingAction={pending[t.id]?.action} onOpen={openTask} onStop={doStop} onRestart={doRestart} onPause={doPause} onResume={doResume} canControl={canControl(t)} selected={selected.has(t.id)} onToggleSelect={toggleSel} problem={taskProblems(t)} /></div>)}
+          {filtered.map((t) => <div key={`${t.moduleKey}:${t.id}`} className="min-w-0"><TaskCard t={t} goalName={goalName(t.goalId)} busy={busy} busyAction={busyAction} pendingAction={pending[t.id]?.action} onOpen={openTask} onStop={doStop} onRestart={doRestart} onPause={doPause} onResume={doResume} canControl={canControl(t)} selected={selected.has(t.id)} onToggleSelect={toggleSel} problem={taskProblems(t)} fatigue={fatigueOf(t)} /></div>)}
         </div>
       )}
     </div>
@@ -729,7 +767,7 @@ function CardControls({ t, busy, busyAction, pendingAction, onStop, onRestart, o
   )
 }
 
-function TaskCard({ t, goalName, busy, busyAction, pendingAction, onOpen, onStop, onRestart, onPause, onResume, canControl = true, compact, selected, onToggleSelect, problem }: {
+function TaskCard({ t, goalName, busy, busyAction, pendingAction, onOpen, onStop, onRestart, onPause, onResume, canControl = true, compact, selected, onToggleSelect, problem, fatigue }: {
   t: ModuleTask; goalName: string | null; busy: string | null; busyAction: 'start' | 'pause' | 'stop' | null
   pendingAction?: 'pause' | 'stop'
   onOpen: (t: ModuleTask) => void
@@ -737,6 +775,7 @@ function TaskCard({ t, goalName, busy, busyAction, pendingAction, onOpen, onStop
   onPause: (t: ModuleTask) => void; onResume: (t: ModuleTask) => void; canControl?: boolean; compact?: boolean
   selected?: boolean; onToggleSelect?: (id: string) => void
   problem?: TaskProblem // MR-146: сколько аккаунтов задачи «отвалилось» и почему
+  fatigue?: FatigueHint | null // профиль усталости её аккаунтов — для честного ETA
 }) {
   // Оптимистичный статус: пока воркер реально не встал, показываем «Останавливается…» —
   // честнее, чем застывшее «Выполняется», и сразу видно, что кнопка сработала.
@@ -777,7 +816,7 @@ function TaskCard({ t, goalName, busy, busyAction, pendingAction, onOpen, onStop
           {/* MR-109: ETA — прогноз оставшегося времени. У работающей задачи (зелёным) —
               время до конца; у остановленной/на паузе (приглушённо, «при запуске») — сколько
               займёт, если её запустить/возобновить. Не показываем у готовых и с ошибкой. */}
-          {(() => { const e = taskEtaMs(t); if (e == null) return null; const run = t.status === 'running'; return (
+          {(() => { const e = taskEtaMs(t, fatigue); if (e == null) return null; const run = t.status === 'running'; return (
             <span className={cn('inline-flex items-center gap-1 tabular-nums', run ? 'text-emerald-300/80' : 'text-white/35')} title={run ? 'Прогноз времени до завершения — по текущему темпу' : 'Сколько ещё займёт задача, если её запустить/возобновить'}><Clock size={11} /> ≈ {fmtDur(e / 1000)}{run ? '' : ' при запуске'}</span>
           ) })()}
         </div>

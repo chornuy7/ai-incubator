@@ -454,9 +454,12 @@ export async function runNeuroCommenting(task, store) {
           // Причину берём из последнего пропуска: «отдых» — лишь одна из них, бывает
           // ещё распорядок и бросок кубика. Текст «заняты отдыхом» при пропуске по
           // вероятности прямо противоречил соседней строке лога (правка 19.08).
+          // Во сколько вернётся ближайший аккаунт — это первое, что спрашивают, глядя
+          // на «ждём N мин» (правка 19.08). Задача при этом остаётся в работе.
+          const backAt = new Date(idleUntil).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })
           await store.appendLog(task, 'info', lastSkip
-            ? `Сейчас работать некому (${lastSkip}) — ждём ${plan.minutes} мин и продолжаем`
-            : `Все аккаунты заняты — ждём ${plan.minutes} мин и продолжаем`)
+            ? `Ждём ${plan.minutes} мин — аккаунт вернётся в ${backAt} (${lastSkip}). Задача продолжает работу`
+            : `Ждём ${plan.minutes} мин — ближайший аккаунт освободится в ${backAt}. Задача продолжает работу`)
           if (await breakableDelay(plan.ms, store, task)) break
           task = (await store.loadTask(task.id)) || task
           idleLap = 0
@@ -715,9 +718,12 @@ export async function runNeuroChatting(task, store) {
           // Причину берём из последнего пропуска: «отдых» — лишь одна из них, бывает
           // ещё распорядок и бросок кубика. Текст «заняты отдыхом» при пропуске по
           // вероятности прямо противоречил соседней строке лога (правка 19.08).
+          // Во сколько вернётся ближайший аккаунт — это первое, что спрашивают, глядя
+          // на «ждём N мин» (правка 19.08). Задача при этом остаётся в работе.
+          const backAt = new Date(idleUntil).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })
           await store.appendLog(task, 'info', lastSkip
-            ? `Сейчас работать некому (${lastSkip}) — ждём ${plan.minutes} мин и продолжаем`
-            : `Все аккаунты заняты — ждём ${plan.minutes} мин и продолжаем`)
+            ? `Ждём ${plan.minutes} мин — аккаунт вернётся в ${backAt} (${lastSkip}). Задача продолжает работу`
+            : `Ждём ${plan.minutes} мин — ближайший аккаунт освободится в ${backAt}. Задача продолжает работу`)
           if (await breakableDelay(plan.ms, store, task)) break
           task = (await store.loadTask(task.id)) || task
           idleLap = 0
@@ -892,9 +898,12 @@ export async function runMassReact(task, store) {
           // Причину берём из последнего пропуска: «отдых» — лишь одна из них, бывает
           // ещё распорядок и бросок кубика. Текст «заняты отдыхом» при пропуске по
           // вероятности прямо противоречил соседней строке лога (правка 19.08).
+          // Во сколько вернётся ближайший аккаунт — это первое, что спрашивают, глядя
+          // на «ждём N мин» (правка 19.08). Задача при этом остаётся в работе.
+          const backAt = new Date(idleUntil).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })
           await store.appendLog(task, 'info', lastSkip
-            ? `Сейчас работать некому (${lastSkip}) — ждём ${plan.minutes} мин и продолжаем`
-            : `Все аккаунты заняты — ждём ${plan.minutes} мин и продолжаем`)
+            ? `Ждём ${plan.minutes} мин — аккаунт вернётся в ${backAt} (${lastSkip}). Задача продолжает работу`
+            : `Ждём ${plan.minutes} мин — ближайший аккаунт освободится в ${backAt}. Задача продолжает работу`)
           if (await breakableDelay(plan.ms, store, task)) break
           task = (await store.loadTask(task.id)) || task
           idleLap = 0
@@ -1064,9 +1073,12 @@ export async function runMassLooking(task, store) {
           // Причину берём из последнего пропуска: «отдых» — лишь одна из них, бывает
           // ещё распорядок и бросок кубика. Текст «заняты отдыхом» при пропуске по
           // вероятности прямо противоречил соседней строке лога (правка 19.08).
+          // Во сколько вернётся ближайший аккаунт — это первое, что спрашивают, глядя
+          // на «ждём N мин» (правка 19.08). Задача при этом остаётся в работе.
+          const backAt = new Date(idleUntil).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })
           await store.appendLog(task, 'info', lastSkip
-            ? `Сейчас работать некому (${lastSkip}) — ждём ${plan.minutes} мин и продолжаем`
-            : `Все аккаунты заняты — ждём ${plan.minutes} мин и продолжаем`)
+            ? `Ждём ${plan.minutes} мин — аккаунт вернётся в ${backAt} (${lastSkip}). Задача продолжает работу`
+            : `Ждём ${plan.minutes} мин — ближайший аккаунт освободится в ${backAt}. Задача продолжает работу`)
           if (await breakableDelay(plan.ms, store, task)) break
           task = (await store.loadTask(task.id)) || task
           idleLap = 0

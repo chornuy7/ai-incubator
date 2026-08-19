@@ -88,7 +88,7 @@ export async function listActivity() {
       // действительно затирало заданное (правка 18.08).
       threshold: profile.threshold,
       restMinutes: profile.restMinutes,
-      recoveryPerHour: profile.recoveryPerHour,
+      // «Восстановление за час» убрано из модели 19.08: отдых и есть восстановление.
       restUntil: Number(s.restUntil) || 0,
       actionsTotal: Number(s.actionsTotal) || 0,
       resting: (Number(s.restUntil) || 0) > now,
