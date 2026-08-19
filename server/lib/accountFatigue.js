@@ -213,6 +213,9 @@ export function applyAction(state = {}, profile = DEFAULT_FATIGUE, now = Date.no
  * аккаунт: попал в вероятность — работаем, нет — идём к следующему.
  * @param {Record<number,number>} schedule @param {number} [now] @param {() => number} [rnd]
  */
+/** Через сколько повторить бросок кубика по распорядку, если не повезло. */
+export const ROLL_RETRY_MS = 60 * 1000
+
 export function scheduleGate(schedule = DEFAULT_SCHEDULE, now = Date.now(), rnd = Math.random) {
   const hour = new Date(now).getHours()
   const table = schedule && typeof schedule === 'object' ? schedule : DEFAULT_SCHEDULE
@@ -222,9 +225,12 @@ export function scheduleGate(schedule = DEFAULT_SCHEDULE, now = Date.now(), rnd 
   const nextHour = new Date(now)
   nextHour.setMinutes(0, 0, 0)
   nextHour.setHours(nextHour.getHours() + 1)
-  const until = nextHour.getTime()
-  if (p <= 0) return { ok: false, reason: `по распорядку в ${hour}:00 аккаунт не активен`, chance: 0, until }
-  if (rnd() > p) return { ok: false, reason: `не попал в вероятность ${Math.round(p * 100)}% для ${hour}:00`, chance: p, until }
+  // Час закрыт полностью — раньше следующего часа смысла пробовать нет.
+  if (p <= 0) return { ok: false, reason: `по распорядку в ${hour}:00 аккаунт не активен`, chance: 0, until: nextHour.getTime() }
+  // А вот НЕ ПОПАЛ В ВЕРОЯТНОСТЬ — это бросок кубика, и следующий бросок может выпасть
+  // удачно через минуту. Ждать до конца часа тут неверно: при шансе 67% задача честно
+  // сообщала «ждём 28 мин», хотя достаточно попробовать снова (правка 19.08).
+  if (rnd() > p) return { ok: false, reason: `не попал в вероятность ${Math.round(p * 100)}% для ${hour}:00`, chance: p, until: now + ROLL_RETRY_MS }
   return { ok: true, chance: p }
 }
 

@@ -10,7 +10,7 @@ import path from 'node:path'
 
 import {
   DEFAULT_FATIGUE, DEFAULT_SCHEDULE, currentFatigue, fatigueGate, freeAt,
-  applyAction, scheduleGate, normalizeFatigueProfile,
+  applyAction, scheduleGate, normalizeFatigueProfile, ROLL_RETRY_MS,
   normalizeSchedule, scheduleToPercent, scheduleForAccount,
 } from '../lib/accountFatigue.js'
 
@@ -313,4 +313,33 @@ test('freeAt: аккаунт в строю — ноль', () => {
   const now = 1_000_000_000
   assert.equal(freeAt({ fatigue: 0 }, DEFAULT_FATIGUE, now), 0)
   assert.equal(freeAt({ fatigue: 3, lastActionAt: now }, DEFAULT_FATIGUE, now), 0, 'порог 15 — три действия не помеха')
+})
+
+/**
+ * Пропуск по распорядку: два РАЗНЫХ случая (правка 19.08).
+ *
+ * Прогон 19.08 показал в логах подряд: «Пропуск: не попал в вероятность 67% для 11:00» и
+ * следом «Все аккаунты заняты отдыхом — ждём 28 мин». Оба сообщения врали: аккаунт не
+ * отдыхал, а не повезло с броском кубика — и ждать до конца часа ради 67% бессмысленно,
+ * следующий бросок может выпасть удачно через минуту.
+ */
+test('час закрыт (0%) — ждём до следующего часа', () => {
+  const now = new Date('2026-08-19T11:20:00').getTime()
+  const g = scheduleGate({ 11: 0 }, now, () => 0.5)
+  assert.equal(g.ok, false)
+  const left = Math.round((g.until - now) / 60000)
+  assert.equal(left, 40, 'до 12:00 остаётся 40 минут')
+})
+
+test('не повезло с броском — пробуем снова через минуту, а не через полчаса', () => {
+  const now = new Date('2026-08-19T11:20:00').getTime()
+  const g = scheduleGate({ 11: 0.67 }, now, () => 0.99)
+  assert.equal(g.ok, false)
+  assert.match(g.reason, /не попал в вероятность/)
+  assert.equal(g.until - now, ROLL_RETRY_MS, 'ожидание — короткий повтор, а не остаток часа')
+})
+
+test('попал в вероятность — работаем', () => {
+  const g = scheduleGate({ 11: 0.67 }, new Date('2026-08-19T11:20:00').getTime(), () => 0.1)
+  assert.equal(g.ok, true)
 })

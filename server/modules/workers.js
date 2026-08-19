@@ -432,7 +432,12 @@ export async function runNeuroCommenting(task, store) {
         // оставалось отдыхать две минуты. Потолок ожидания — IDLE_WAIT_CAP_MS.
         const plan = idleWaitPlan(idleUntil)
         if (plan.wait) {
-          await store.appendLog(task, 'info', `Все аккаунты заняты отдыхом — ждём ${plan.minutes} мин и продолжаем${lastSkip ? ` (${lastSkip})` : ''}`)
+          // Причину берём из последнего пропуска: «отдых» — лишь одна из них, бывает
+          // ещё распорядок и бросок кубика. Текст «заняты отдыхом» при пропуске по
+          // вероятности прямо противоречил соседней строке лога (правка 19.08).
+          await store.appendLog(task, 'info', lastSkip
+            ? `Сейчас работать некому (${lastSkip}) — ждём ${plan.minutes} мин и продолжаем`
+            : `Все аккаунты заняты — ждём ${plan.minutes} мин и продолжаем`)
           if (await breakableDelay(plan.ms, store, task)) break
           task = (await store.loadTask(task.id)) || task
           idleLap = 0
@@ -685,7 +690,12 @@ export async function runNeuroChatting(task, store) {
         // задачу на полпути (см. развёрнутый комментарий у первого такого блока).
         const plan = idleWaitPlan(idleUntil)
         if (plan.wait) {
-          await store.appendLog(task, 'info', `Все аккаунты заняты отдыхом — ждём ${plan.minutes} мин и продолжаем${lastSkip ? ` (${lastSkip})` : ''}`)
+          // Причину берём из последнего пропуска: «отдых» — лишь одна из них, бывает
+          // ещё распорядок и бросок кубика. Текст «заняты отдыхом» при пропуске по
+          // вероятности прямо противоречил соседней строке лога (правка 19.08).
+          await store.appendLog(task, 'info', lastSkip
+            ? `Сейчас работать некому (${lastSkip}) — ждём ${plan.minutes} мин и продолжаем`
+            : `Все аккаунты заняты — ждём ${plan.minutes} мин и продолжаем`)
           if (await breakableDelay(plan.ms, store, task)) break
           task = (await store.loadTask(task.id)) || task
           idleLap = 0
@@ -851,7 +861,12 @@ export async function runMassReact(task, store) {
         // задачу на полпути (см. развёрнутый комментарий у первого такого блока).
         const plan = idleWaitPlan(idleUntil)
         if (plan.wait) {
-          await store.appendLog(task, 'info', `Все аккаунты заняты отдыхом — ждём ${plan.minutes} мин и продолжаем${lastSkip ? ` (${lastSkip})` : ''}`)
+          // Причину берём из последнего пропуска: «отдых» — лишь одна из них, бывает
+          // ещё распорядок и бросок кубика. Текст «заняты отдыхом» при пропуске по
+          // вероятности прямо противоречил соседней строке лога (правка 19.08).
+          await store.appendLog(task, 'info', lastSkip
+            ? `Сейчас работать некому (${lastSkip}) — ждём ${plan.minutes} мин и продолжаем`
+            : `Все аккаунты заняты — ждём ${plan.minutes} мин и продолжаем`)
           if (await breakableDelay(plan.ms, store, task)) break
           task = (await store.loadTask(task.id)) || task
           idleLap = 0
@@ -1013,7 +1028,12 @@ export async function runMassLooking(task, store) {
         // задачу на полпути (см. развёрнутый комментарий у первого такого блока).
         const plan = idleWaitPlan(idleUntil)
         if (plan.wait) {
-          await store.appendLog(task, 'info', `Все аккаунты заняты отдыхом — ждём ${plan.minutes} мин и продолжаем${lastSkip ? ` (${lastSkip})` : ''}`)
+          // Причину берём из последнего пропуска: «отдых» — лишь одна из них, бывает
+          // ещё распорядок и бросок кубика. Текст «заняты отдыхом» при пропуске по
+          // вероятности прямо противоречил соседней строке лога (правка 19.08).
+          await store.appendLog(task, 'info', lastSkip
+            ? `Сейчас работать некому (${lastSkip}) — ждём ${plan.minutes} мин и продолжаем`
+            : `Все аккаунты заняты — ждём ${plan.minutes} мин и продолжаем`)
           if (await breakableDelay(plan.ms, store, task)) break
           task = (await store.loadTask(task.id)) || task
           idleLap = 0
