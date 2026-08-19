@@ -43,5 +43,22 @@ export function resolvePerAccountTarget(settings, accountId, task) {
   const max = settings.maxPerAccount || 0
   if (!max) return 0
   const min = settings.minPerAccount || 0
-  return seededTarget(min, max, `${task?.id || ''}:${accountId}`)
+  const seeded = seededTarget(min, max, `${task?.id || ''}:${accountId}`)
+
+  // Цель на аккаунт не должна делать НЕДОСТИЖИМОЙ общую цель задачи (правка 19.08).
+  //
+  // Прогон 19.08: «всего 2, на аккаунт 0–2», один аккаунт. Жребий дал ему 1, аккаунт
+  // сделал один комментарий и упёрся в свой лимит — задача завершилась со статусом
+  // «Готово» и прогрессом 1/2. Формально верно, по сути — задача не сделала того, что
+  // сама же обещала: два разных случайных числа противоречили друг другу.
+  //
+  // Поэтому поднимаем цель аккаунта минимум до его доли общей цели, но НЕ выше заданного
+  // максимума: максимум — прямое указание оператора, его перебивать нельзя. Если доля
+  // всё равно выше максимума (аккаунтов слишком мало), задача честно завершится, а
+  // воркер напишет, почему цель недостижима.
+  const accounts = Array.isArray(settings.accountIds) && settings.accountIds.length
+    ? settings.accountIds.length
+    : 1
+  const share = Math.ceil(resolveTotalTarget(settings, task) / accounts)
+  return Math.min(max, Math.max(seeded, share))
 }
