@@ -1386,6 +1386,19 @@ function AccountsTable(props: {
                           Войти снова →
                         </button>
                       )}
+                      {/* MR: последняя явная проверка живости — дата + результат.
+                          Без неё оператор не знает, актуален ли статус или это осадок с импорта. */}
+                      {typeof a.lastCheckedAt === 'number' && (
+                        <Tip
+                          className="items-center gap-1 text-[10px] text-white/35"
+                          text={`Последняя проверка живости: ${new Date(a.lastCheckedAt).toLocaleString('ru-RU')} — ${a.lastCheckOk === false ? 'аккаунт не ответил (сессия/прокси)' : 'аккаунт на связи'}.`}
+                        >
+                          <span className={a.lastCheckOk === false ? 'text-rose-300/70' : 'text-spark-300/70'}>
+                            {a.lastCheckOk === false ? '✗' : '✓'}
+                          </span>
+                          проверен {checkAgo(a.lastCheckedAt)}
+                        </Tip>
+                      )}
                     </div>
                   </td>
                 )}
@@ -1469,6 +1482,17 @@ function AccountsTable(props: {
                     <Pause size={11} /> Пауза вручную · не в модуле
                   </Tip>
                 ) : null}
+                {typeof a.lastCheckedAt === 'number' && (
+                  <Tip
+                    className="mt-1 items-center gap-1 text-[10px] text-white/35"
+                    text={`Последняя проверка живости: ${new Date(a.lastCheckedAt).toLocaleString('ru-RU')} — ${a.lastCheckOk === false ? 'аккаунт не ответил (сессия/прокси)' : 'аккаунт на связи'}.`}
+                  >
+                    <span className={a.lastCheckOk === false ? 'text-rose-300/70' : 'text-spark-300/70'}>
+                      {a.lastCheckOk === false ? '✗' : '✓'}
+                    </span>
+                    проверен {checkAgo(a.lastCheckedAt)}
+                  </Tip>
+                )}
                 </div>
               </div>
             </button>
@@ -1686,6 +1710,16 @@ function UnblockModal({ open, ids, onClose, onFinished, pushToast }: {
  * разово «сейчас», сбросить усталость — вернуть в строй раньше срока. Смешивать их
  * в одной кнопке значило бы, что оператор не понимает, что именно применил.
  */
+/** Сколько прошло с момента последней проверки живости — компактно. */
+function checkAgo(ts: number): string {
+  const min = Math.floor((Date.now() - ts) / 60000)
+  if (min < 1) return 'только что'
+  if (min < 60) return `${min} мин назад`
+  const h = Math.floor(min / 60)
+  if (h < 24) return `${h} ч назад`
+  return `${Math.floor(h / 24)} д назад`
+}
+
 /** Остаток до возврата в строй: минуты человеческим текстом. */
 function fmtLeft(minutes: number): string {
   if (minutes < 60) return `${minutes} мин`
