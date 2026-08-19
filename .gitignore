@@ -11,3 +11,6 @@ dist-ssr
 server/data/
 /AI-Incubator-report-2026-07-26.docx
 backups/
+
+# Одноразовые debug/скрин-скрипты (Claude), не коммитим
+scripts/_*.mjs
