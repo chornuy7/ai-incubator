@@ -11,7 +11,7 @@ import path from 'path'
 const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'ledger-'))
 process.env.TOKEN_LEDGER_FILE = path.join(dir, 'ledger.jsonl')
 process.env.BALANCE_FILE = path.join(dir, 'balance.json')
-// Изолируем прайс: recordTokens теперь читает админский курс coinsPer1kTokens из priceStore.
+// Изолируем прайс-файл. recordTokens больше НЕ читает админский курс — coins по внутренней константе (MR-149).
 process.env.PRICES_FILE = path.join(dir, 'prices.json')
 
 const { recordTokens, readLedger, tokenSummary, tokensToCoins } = await import('../tokenLedger.js')
@@ -83,13 +83,11 @@ test('§10.1: точность до тысячных — 5 токенов не �
   assert.equal(r.coins, 0.005, '5 токенов = 0.005 монеты (а не 0.01 и не 0)')
 })
 
-test('§10.1: АДМИНСКИЙ курс токен→монета влияет на списание (не только на витрину)', async () => {
-  await setOverrides({ coinsPer1kTokens: 5 }) // админ поднял курс в 5 раз
+test('MR-149 (19.08): ledger coins по внутренней константе (админский курс убран), картинка ×N применяется', async () => {
   const r = await recordTokens({ tokens: 1000, module: 'm', taskId: 'rate' })
-  assert.equal(r.coins, 5, '1000 токенов при курсе 5 = 5 монет (курс из БД применён)')
+  assert.equal(r.coins, 1, '1000 токенов = 1 монета (внутренний ledger-курс 1000/1)')
   const withMult = await recordTokens({ tokens: 1000, module: 'm', taskId: 'rate', coinMultiplier: 4 })
-  assert.equal(withMult.coins, 20, 'курс ×5 и картинка ×4 перемножаются: 5×4=20')
-  await setOverrides({ coinsPer1kTokens: 1 }) // вернуть, чтобы не влиять на другие тесты в файле
+  assert.equal(withMult.coins, 4, 'картинка ×4 применяется: 1×4=4 (админского курса больше нет)')
 })
 
 test.after(async () => {

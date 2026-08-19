@@ -696,9 +696,6 @@ export function AppHeader() {
                 </div>
               ))}
             </div>
-            <div className="mt-2 text-xs text-muted">
-              Плюс расход ИИ по факту: {pricing.coinsPer1kTokens} ⚡ за 1000 токенов.
-            </div>
           </div>
         )}
       </Modal>

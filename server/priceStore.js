@@ -27,7 +27,6 @@ function rowToOverrides(row) {
   const o = {}
   if (row.modules && Object.keys(row.modules).length) o.modules = row.modules
   if (row.annual_discount != null) o.annualDiscount = Number(row.annual_discount)
-  if (row.coins_per_1k_tokens != null) o.coinsPer1kTokens = Number(row.coins_per_1k_tokens)
   if (row.token_usd != null) o.tokenUsd = Number(row.token_usd)
   if (row.image_multiplier != null) o.imageMultiplier = Number(row.image_multiplier)
   if (Array.isArray(row.coin_packs)) o.coinPacks = row.coin_packs
@@ -75,7 +74,6 @@ function overridesToRow(ov) {
     id: 'default',
     modules: ov.modules || {},
     annual_discount: ov.annualDiscount ?? null,
-    coins_per_1k_tokens: ov.coinsPer1kTokens ?? null,
     token_usd: ov.tokenUsd ?? null,
     image_multiplier: ov.imageMultiplier ?? null,
     coin_packs: ov.coinPacks ?? null,
@@ -114,7 +112,7 @@ function mergeOverrides(cur, patch) {
     }
     cur.modules = mods
   }
-  for (const field of ['annualDiscount', 'coinsPer1kTokens', 'tokenUsd', 'imageMultiplier']) {
+  for (const field of ['annualDiscount', 'tokenUsd', 'imageMultiplier']) {
     if (field in patch) {
       const n = clean(patch[field])
       if (n === undefined) delete cur[field]
@@ -137,7 +135,6 @@ function mergeOverrides(cur, patch) {
 import {
   MODULE_MONTH_PRICE, ACTION_PRICE, COIN_PACKS, ANNUAL_DISCOUNT,
 } from './pricing.js'
-import { COINS_PER_1K_TOKENS } from './tokenLedger.js'
 import { moduleTitle } from './lib/moduleTitles.js'
 
 const PRICES_FILE = () => process.env.PRICES_FILE || dataPath('prices.json')
@@ -234,7 +231,6 @@ export async function effectivePrices() {
       { unit: 'month', count: 1, discount: 0 },
       { unit: 'year', count: 1, discount: typeof ov.annualDiscount === 'number' ? ov.annualDiscount : ANNUAL_DISCOUNT },
     ],
-    coinsPer1kTokens: typeof ov.coinsPer1kTokens === 'number' ? ov.coinsPer1kTokens : COINS_PER_1K_TOKENS,
     tokenUsd,
     tokenUsdAuto: !tokenUsdManual, // true = рассчитано из модели, false = задано вручную
     tokenUsdComputed: autoTokenUsd, // ВСЕГДА цена из модели (даже при ручном override) — для подсказки «авто»
@@ -259,7 +255,7 @@ export async function coinUsdRate() {
  * Записать переопределения. Пишем ТОЛЬКО отличие от дефолта: цена, равная коду,
  * удаляется из стора — тогда изменение дефолта в будущем не будет молча перекрыто
  * «застывшим» значением, и «изменено» в админке отражает реальность.
- * @param {object} patch { modules?: {key:{month?,action?}}, coinPacks?, annualDiscount?, coinsPer1kTokens?, tokenUsd?, imageMultiplier? }
+ * @param {object} patch { modules?: {key:{month?,action?}}, coinPacks?, annualDiscount?, tokenUsd?, imageMultiplier? }
  */
 export async function setOverrides(patch = {}) {
   const db = sb()

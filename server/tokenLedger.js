@@ -26,9 +26,9 @@ const ledgerRowFromDb = (r) => ({
 const LEDGER_FILE = () => process.env.TOKEN_LEDGER_FILE || dataPath('token-ledger.jsonl')
 
 /**
- * Курс пересчёта в монеты по умолчанию (1000 токенов = 1 монета) — fallback, если
- * админский курс недоступен. Реальный курс `coinsPer1kTokens` заказчик правит в админке
- * (priceStore), и он ДОЛЖЕН влиять на списание (пивот 27.07: «цены из БД, не из кода»).
+ * Внутренняя ledger-константа: 1000 токенов = 1 монета — ТОЛЬКО для справочного `coins`
+ * в журнале расхода ИИ (отчёт клиенту). На БИЛЛИНГ не влияет (токены не списываются, MR-149).
+ * Раньше это был «курс coinsPer1kTokens» из админки — убран как выдуманное значение (созвон 19.08).
  */
 export const COINS_PER_1K_TOKENS = 1
 
@@ -59,10 +59,10 @@ export async function recordTokens(entry = {}) {
   const tokens = Math.max(0, Number(entry.tokens) || 0)
   if (!tokens) return null
   const mult = Math.max(1, Number(entry.coinMultiplier) || 1)
-  // §10.1/пивот: списываем по АДМИНСКОМУ курсу токен→монета (priceStore), а не по код-константе.
-  // Best-effort: нет прайса — падаем на дефолт, генерацию не роняем.
-  let per1k = COINS_PER_1K_TOKENS
-  try { const { effectivePrices } = await import('./priceStore.js'); const r = (await effectivePrices()).coinsPer1kTokens; if (Number(r) > 0) per1k = Number(r) } catch { /* дефолт */ }
+  // MR-149 (созвон 19.08): «курс токен→монета» из админки (coinsPer1kTokens) убран как
+  // выдуманное значение — токены НЕ списываются (журнал справочный). `coins` считаем по
+  // внутренней ledger-константе только для отчёта о расходе ИИ, не для биллинга.
+  const per1k = COINS_PER_1K_TOKENS
   const row = {
     ts: Date.now(),
     module: String(entry.module || ''),

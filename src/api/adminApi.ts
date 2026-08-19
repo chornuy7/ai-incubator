@@ -334,7 +334,6 @@ export interface EffectivePrices {
   giftMap: Record<string, number>
   coinPacks: { coins: number; price: number; best?: boolean }[]
   annualDiscount: number
-  coinsPer1kTokens: number
   /** §10.1: себестоимость токена ($). Считается из модели, если админ не переопределил. */
   tokenUsd: number | null
   /** true — цена рассчитана автоматически из модели; false — задана вручную. */
@@ -358,7 +357,6 @@ export async function fetchPrices(): Promise<EffectivePrices> {
 export interface PricePatch {
   modules?: Record<string, { month?: number | string; action?: number | string; gift?: number | string }>
   annualDiscount?: number | string
-  coinsPer1kTokens?: number | string
   tokenUsd?: number | string
   imageMultiplier?: number | string
   coinPacks?: { coins: number; price: number; best?: boolean }[]

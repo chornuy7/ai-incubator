@@ -60,7 +60,7 @@ async function capabilities() {
       summary: desc?.whoAmI?.summary || null,
       tags: desc?.tags || [],
       describe: desc ? `/api/v1/modules/${key}/describe` : null,
-      pricing: { subscriptionPerMonth: p.month, perAction: p.action, currency: eff.currency || '$', coinsPer1kTokens: eff.coinsPer1kTokens },
+      pricing: { subscriptionPerMonth: p.month, perAction: p.action, currency: eff.currency || '$' },
       run: {
         method: 'POST',
         path: `/api/v1/modules/${key}/run`,

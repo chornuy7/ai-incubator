@@ -1116,7 +1116,7 @@ app.get('/api/pricing', async (_req, res) => {
       .sort((a, b) => b.price - a.price || a.title.localeCompare(b.title, 'ru'))
     res.json({
       ok: true, items, actions: eff.actionMap, actionsFull, avgTokens,
-      coinsPer1kTokens: eff.coinsPer1kTokens, packs: eff.coinPacks, currency: CURRENCY,
+      packs: eff.coinPacks, currency: CURRENCY,
       tokenUsd: eff.tokenUsd, tokenUsdAuto: eff.tokenUsdAuto, tokenUsdComputed: eff.tokenUsdComputed, tokenUsdModel: eff.tokenUsdModel,
       imageMultiplier: eff.imageMultiplier,
     })

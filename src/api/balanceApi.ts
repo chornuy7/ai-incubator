@@ -49,7 +49,6 @@ export interface Pricing {
   /** MR-149: макс-токены текста, заложенные в цену действия. >0 = модуль генерит ИИ-текст. */
   /** Средний расход токенов на действие по своей истории. 0 = считать не на чем. */
   avgTokens: Record<string, number>
-  coinsPer1kTokens: number
   /** Пакеты пополнения — цена самой монеты. С сервера, не копией в вебе. */
   packs?: { coins: number; price: number; best?: boolean }[]
   currency?: string
@@ -62,7 +61,7 @@ export async function fetchPricing(): Promise<Pricing> {
   // игнорируя цены с сервера (и правки монет из админки).
   return {
     items: r.items || [], actions: r.actions || {}, actionsFull: r.actionsFull || {}, avgTokens: r.avgTokens || {},
-    coinsPer1kTokens: r.coinsPer1kTokens ?? 1, packs: r.packs, currency: r.currency,
+    packs: r.packs, currency: r.currency,
     imageMultiplier: r.imageMultiplier,
   }
 }
