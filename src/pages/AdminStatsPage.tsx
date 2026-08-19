@@ -734,17 +734,42 @@ function UsersTab({ report, onReload }: { report: UsersReport | null; onReload: 
     const n = new Set(prev); n.has(ownerId) ? n.delete(ownerId) : n.add(ownerId); return n
   })
 
+  /**
+   * Дерево: владелец → его субы → субы субов, на любую глубину.
+   *
+   * Правка 19.08. Раньше строился один уровень, а всех остальных сваливало в конец
+   * списка строкой «Субы, чьего владельца нет в выборке». На проде туда попадали субы
+   * второго уровня («Суб-суб под Суб») и субы владельцев, отфильтрованных поиском, —
+   * и выглядело это так, будто они принадлежат ПОСЛЕДНЕМУ владельцу в таблице.
+   */
   const clustered = useMemo(() => {
-    const out: typeof shown = []
-    for (const r of shown) {
-      if (r.parentId) continue // субы выводим под своим владельцем
-      out.push(r)
-      if (openSubs.has(r.userId)) out.push(...(subsByOwner.get(r.userId) || []))
+    const byId = new Map(shown.map((r) => [r.userId, r]))
+    const childrenOf = (id: string) => (subsByOwner.get(id) || []).filter((c) => byId.has(c.userId) || !needle)
+    const out: { row: typeof shown[number]; depth: number }[] = []
+    const push = (r: typeof shown[number], depth: number, seen: Set<string>) => {
+      if (seen.has(r.userId)) return // защита от кольца parentId → сам на себя
+      seen.add(r.userId)
+      out.push({ row: r, depth })
+      if (!openSubs.has(r.userId)) return
+      for (const c of childrenOf(r.userId)) push(c, depth + 1, seen)
     }
-    // Субы, чьего владельца нет в выборке (например, отфильтрован поиском) — в конец.
-    for (const r of shown) if (r.parentId && !out.some((x) => x.userId === r.userId)) out.push(r)
+    const seen = new Set<string>()
+    // Корни: те, у кого владельца нет ВООБЩЕ или он не попал в выборку — иначе такой
+    // суб не показался бы нигде.
+    for (const r of shown) {
+      if (r.parentId && byId.has(r.parentId)) continue
+      push(r, 0, seen)
+    }
     return out
-  }, [shown, openSubs, subsByOwner])
+  }, [shown, openSubs, subsByOwner, needle])
+
+  // §4: пагинация. На проде в списке уже за сотню строк, и без страниц таблица
+  // превращается в бесконечную ленту, где не найти ни начала, ни конца.
+  const [perPage, setPerPage] = useState(25)
+  const [page, setPage] = useState(1)
+  const pages = Math.max(1, Math.ceil(clustered.length / perPage))
+  const pageSafe = Math.min(page, pages)
+  const visible = clustered.slice((pageSafe - 1) * perPage, pageSafe * perPage)
 
 
 
@@ -831,7 +856,7 @@ function UsersTab({ report, onReload }: { report: UsersReport | null; onReload: 
             </tr>
           </thead>
           <tbody>
-            {clustered.map((r) => {
+            {visible.map(({ row: r, depth }) => {
               // Строки без реального пользователя (удалённые, задачи без владельца)
               // отключать нечего — кнопки у них нет, но из счёта они не исчезают.
               const real = !!r.userId && !r.email.startsWith('без владельца') && !r.email.startsWith('удалённый')
@@ -839,10 +864,12 @@ function UsersTab({ report, onReload }: { report: UsersReport | null; onReload: 
               return [
                 <tr
                   key={r.userId}
-                  className={cn('cursor-pointer border-b border-line/50 hover:bg-white/[.02]', r.parentId && 'bg-iris-500/[.03]')}
+                  className={cn('cursor-pointer border-b border-line/50 hover:bg-white/[.02]', depth > 0 && 'bg-iris-500/[.03]')}
                   onClick={() => openUser(r)}
                 >
-                  <td className={cn('py-2 pr-3', r.parentId && 'pl-6')}>
+                  {/* Отступ по ГЛУБИНЕ: суб второго уровня виден как вложенный в суба,
+                      а не как ещё один «просто суб» (правка 19.08). */}
+                  <td className="py-2 pr-3" style={depth ? { paddingLeft: 12 + depth * 16 } : undefined}>
                     <div className="flex items-center gap-1.5">
                       <ChevronDown size={13} className={cn('text-muted transition-transform', isOpen && 'rotate-180')} />
                       {/* Имя — то, чем человека называют. Почта под ним: она нужна,
@@ -1131,6 +1158,41 @@ function UsersTab({ report, onReload }: { report: UsersReport | null; onReload: 
             </tr>
           </tbody>
         </table>
+      </div>
+
+      {/* Пагинация: список на проде уже за сотню строк (правка 19.08). Страница считается
+          по СТРОКАМ дерева — раскрытые субы занимают место наравне с владельцами, иначе
+          «25 на странице» означало бы то 25 строк, то 200. */}
+      <div className="mt-3 flex flex-wrap items-center gap-3 border-t border-line pt-3 text-sm">
+        <span className="text-muted">
+          Показано {clustered.length ? (pageSafe - 1) * perPage + 1 : 0}–{Math.min(pageSafe * perPage, clustered.length)} из {clustered.length}
+        </span>
+        <select
+          value={perPage}
+          onChange={(e) => { setPerPage(Number(e.target.value)); setPage(1) }}
+          className="input h-8 w-28 text-xs"
+        >
+          {[25, 50, 100, 200].map((n) => <option key={n} value={n}>{n} / стр.</option>)}
+        </select>
+        <div className="ml-auto flex items-center gap-2">
+          <button
+            type="button"
+            disabled={pageSafe <= 1}
+            onClick={() => setPage((p) => Math.max(1, p - 1))}
+            className="btn-ghost h-8 px-3 text-xs disabled:opacity-40"
+          >
+            Назад
+          </button>
+          <span className="text-xs text-muted">{pageSafe} / {pages}</span>
+          <button
+            type="button"
+            disabled={pageSafe >= pages}
+            onClick={() => setPage((p) => Math.min(pages, p + 1))}
+            className="btn-ghost h-8 px-3 text-xs disabled:opacity-40"
+          >
+            Вперёд
+          </button>
+        </div>
       </div>
     </Card>
 
