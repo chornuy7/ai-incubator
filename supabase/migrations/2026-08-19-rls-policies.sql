@@ -21,8 +21,21 @@
 -- Идемпотентно: DROP POLICY IF EXISTS + пропуск отсутствующих таблиц (to_regclass).
 -- Как применить: Supabase → SQL Editor → выполнить файл.
 
+-- 0) Хелпер: активен ли профиль текущего пользователя. SECURITY DEFINER → его запрос к
+--    profiles ОБХОДИТ RLS. Без этого политика на самой profiles рекурсировала бы (42P17):
+--    проверка доступа к profiles снова дёргала бы политику profiles.
+create or replace function public.is_active_profile()
+returns boolean
+language sql
+security definer
+stable
+set search_path = public
+as $$
+  select exists (select 1 from public.profiles where id = auth.uid() and active = true);
+$$;
+
 -- 1) Таблицы, к которым обращается АВТОРИЗОВАННЫЙ пользователь панели → политика
---    «только активный профиль».
+--    «только активный профиль» (через хелпер, без рекурсии).
 do $$
 declare
   t text;
@@ -45,8 +58,7 @@ begin
     execute format('drop policy if exists %I on public.%I', pol, t);
     execute format(
       'create policy %I on public.%I for all to authenticated '
-      'using (exists (select 1 from public.profiles p where p.id = auth.uid() and p.active = true)) '
-      'with check (exists (select 1 from public.profiles p where p.id = auth.uid() and p.active = true))',
+      'using (public.is_active_profile()) with check (public.is_active_profile())',
       pol, t
     );
   end loop;
