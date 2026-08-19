@@ -9,7 +9,7 @@ import { activeAccounts, useApp } from '@/mocks/store'
 import { Switch, Select, Badge, EmptyState, Modal } from '@/shared/ui'
 import { AccountPicker } from '@/features/account-picker/AccountPicker'
 import { useModuleTask } from './shared/useModuleTask'
-import { SectionCard, NumberField, ProtectionBlock, LaunchPanel, LaunchSteps, markCurrentStep, TaskStartedModal, SchedulePanel } from './shared'
+import { SectionCard, NumberField, ProtectionTimings, LaunchPanel, LaunchSteps, markCurrentStep, TaskStartedModal, SchedulePanel } from './shared'
 import { PresetBar } from './shared/PresetBar'
 import { SavePresetModal } from './shared/SavePresetModal'
 import { cn } from '@/shared/lib/utils'
@@ -217,8 +217,6 @@ function Inner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: string }) {
       </div>
 
       <SectionCard id="sec-settings" icon={<Settings2 size={18} />} title="Настройки парсинга" badge={targetList.length ? `${targetList.length} групп` : undefined}>
-        {cfg.aiProtection && <ProtectionBlock enabled={aiProtect} onEnabled={setAiProtect} level={protLevel} onLevel={setProtLevel} />}
-
         <div className="grid gap-4 lg:grid-cols-2">
           {/* Левая колонка: источник + ключевые слова + лимиты */}
           <div className="space-y-4">
@@ -338,28 +336,42 @@ function Inner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: string }) {
               <ToggleRow icon={<Users size={15} />} label="Только пересечение групп" desc="Оставить только пользователей, состоящих во ВСЕХ указанных группах (уникальная фича)" checked={intersection} onChange={setIntersection} />
             )}
 
-            {!fastWork && (
-              <div className="rounded-2xl border border-line bg-elevated/40 p-3">
-                <div className="mb-2 flex items-center gap-1.5 text-sm font-semibold text-fg"><Timer size={14} className="text-spark-400" /> Настройки задержек</div>
-                <div className="space-y-2">
-                  <DelayRow label={P.delays[0]?.label ?? 'Задержка между чатами'} value={delayChat} onChange={setDelayChat} />
-                  <DelayRow label={P.delays[1]?.label ?? 'Задержка между пользователями'} value={delayItem} onChange={setDelayItem} step={0.5} />
-                  <DelayRow label="Пауза перед вступлением, от" value={joinMin} onChange={setJoinMin} step={5} />
-                  <DelayRow label="Пауза перед вступлением, до" value={joinMax} onChange={setJoinMax} step={5} />
-                </div>
-                <div className="mt-2 rounded-xl border border-amber-500/25 bg-amber-500/5 p-2 text-[11px] leading-relaxed text-amber-200">
-                  Чтобы прочитать участников чужого чата, аккаунт должен туда <b>вступить</b> — это самое
-                  рискованное действие: серия быстрых вступлений даёт FloodWait и спам-фильтр. Пауза берётся
-                  случайной из диапазона и ждётся <b>только если реально надо вступать</b>: где аккаунт уже
-                  состоит, он читает сразу.
-                </div>
-              </div>
-            )}
           </div>
         </div>
       </SectionCard>
+      {/* Один блок на все модули (правка 19.08): защита и задержки — одно решение.
+          У парсера участников свои поля пауз (между чатами, между пользователями,
+          перед вступлением), поэтому общий TimingSection не подходит — но карточка
+          и заголовок те же, что везде.  */}
+      {cfg.aiProtection && (
+        <ProtectionTimings enabled={aiProtect} onEnabled={setAiProtect} level={protLevel} onLevel={setProtLevel}>
+          {!fastWork && (
+            <div className="mt-4 border-t border-line pt-4">
+              <div className="mb-3 flex items-center gap-2 text-sm font-semibold text-fg">
+                <Timer size={16} className="text-spark-300" /> Тайминги и задержки
+              </div>
+                <div className="rounded-2xl border border-line bg-elevated/40 p-3">
+                  <div className="mb-2 flex items-center gap-1.5 text-sm font-semibold text-fg"><Timer size={14} className="text-spark-400" /> Настройки задержек</div>
+                  <div className="space-y-2">
+                    <DelayRow label={P.delays[0]?.label ?? 'Задержка между чатами'} value={delayChat} onChange={setDelayChat} />
+                    <DelayRow label={P.delays[1]?.label ?? 'Задержка между пользователями'} value={delayItem} onChange={setDelayItem} step={0.5} />
+                    <DelayRow label="Пауза перед вступлением, от" value={joinMin} onChange={setJoinMin} step={5} />
+                    <DelayRow label="Пауза перед вступлением, до" value={joinMax} onChange={setJoinMax} step={5} />
+                  </div>
+                  <div className="mt-2 rounded-xl border border-amber-500/25 bg-amber-500/5 p-2 text-[11px] leading-relaxed text-amber-200">
+                    Чтобы прочитать участников чужого чата, аккаунт должен туда <b>вступить</b> — это самое
+                    рискованное действие: серия быстрых вступлений даёт FloodWait и спам-фильтр. Пауза берётся
+                    случайной из диапазона и ждётся <b>только если реально надо вступать</b>: где аккаунт уже
+                    состоит, он читает сразу.
+                  </div>
+                </div>
+            </div>
+          )}
+        </ProtectionTimings>
+      )}
 
-      <SectionCard id="sec-run" icon={<Play size={18} />} title={running ? 'Выполнение' : 'Логи и параметры'} badge={running ? 'LIVE' : undefined}>
+
+      <SectionCard id="sec-run" icon={<Play size={18} />} title="Параметры и лимиты">
         <LaunchPanel running={running} starting={starting} canStart={canStart} onStart={handleStart} onStop={stop} onSave={handleSave}
           primaryLabel={cfg.primaryAction ?? 'Начать'} stats={launchStats} task={task} warn={warn}
           steps={!running ? <LaunchSteps steps={markCurrentStep([

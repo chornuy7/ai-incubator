@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import {
-  Play, Sparkles, Hash, Settings2, Clock, Users, MessageSquareText,
+  Play, Sparkles, Hash, Clock, Users, MessageSquareText,
   Heart, Eye, Shield, MessageCircle, Database, Trophy, Link2, Plus, Terminal, ArrowUpRight, Lock, LockOpen, Flame,
 } from 'lucide-react'
 import { MODULES, isCombatModule, combatConfirmText, type ModuleConfig } from '@/shared/config/modules'
@@ -17,7 +17,7 @@ import { AccountPicker } from '@/features/account-picker/AccountPicker'
 import { useModuleTask } from './shared/useModuleTask'
 import {
   SectionCard, NumberField,
-  ProtectionBlock, TargetsEditor, LaunchPanel, PromptCards, loadPromptBodies, AiGenerationNotice,
+  ProtectionTimings, TargetsEditor, LaunchPanel, PromptCards, loadPromptBodies, AiGenerationNotice,
   FolderPicker, BlacklistEditor, GlobalPromptEditor, TimingSection, SaveToFolderModal, TaskStartedModal, SavePresetModal,
   LaunchSteps, markCurrentStep, type LaunchStep,
 } from './shared'
@@ -493,7 +493,7 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
           до неё добирались, уже настроив всё остальное.  */}
       {showBlock('run') && hasParamsCard && (
       <div id="sec-run" className="scroll-mt-24">
-      <SectionCard icon={<Play size={18} />} title={running ? 'Выполнение' : 'Параметры и лимиты'} badge={running ? 'LIVE' : undefined}>
+      <SectionCard icon={<Play size={18} />} title="Параметры и лимиты">
         {limitWarn && !running && (
           <div className="mb-3 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-300">⚠ {limitWarn}</div>
         )}
@@ -612,8 +612,15 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
           (FloodWait→пауза→карантин) работает на бэкенде и без UI-блока. QA §8, вариант а. */}
       {showBlock('settings') && !cfg.warmingLayout && (cfg.aiProtection || cfg.richLayout || cfg.lookingLayout || isGgr) && (
         <div id="sec-settings" className="scroll-mt-24">
-        <SectionCard icon={<Settings2 size={18} />} title={cfg.settingsTitle ?? 'Защита'} badge={targets.length ? `${targets.length} целей` : undefined}>
-          {cfg.aiProtection && <ProtectionBlock enabled={aiProtect} onEnabled={setAiProtect} level={protLevel} onLevel={setProtLevel} />}
+        {/* Тот же компонент, что в мейлинге, автопостинге, нейродиалогах и парсерах:
+            один вид и один порядок полей во всех модулях (правка 19.08). */}
+        <ProtectionTimings
+          enabled={aiProtect}
+          onEnabled={setAiProtect}
+          level={protLevel}
+          onLevel={setProtLevel}
+          badge={targets.length ? `${targets.length} целей` : undefined}
+        >
 
           {/* MR-134: галочка вкл/выкл уведомлений о статусе ЭТОЙ задачи (ошибка/пауза) в колокольчике. */}
           <label className="mt-3 flex cursor-pointer items-start gap-2 rounded-xl border border-line/60 bg-elevated/40 px-3 py-2.5">
@@ -725,9 +732,38 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
           ) : (
             <p className="text-sm text-muted">{cfg.warmingLayout
               ? 'Темп и паузы задаёт «Уровень прогрева» — отдельная секция ниже.'
-              : 'Лимиты и задержки настраиваются в секции «Тайминги и задержки» ниже.'}</p>
+              : 'Лимиты и задержки — ниже в этом же блоке.'}</p>
           )}
-        </SectionCard>
+          {/* Тайминги — часть той же настройки безопасности: уровень защиты умножает
+              задержки, а FloodWait ведёт в карантин. До 19.08 это были две карточки,
+              и одно и то же приходилось настраивать в двух местах.  */}
+          {!isParser && !isGgr && !cfg.warmingLayout && (
+          <TimingSection
+            bare
+            workModeOptions={cfg.toggleGroups?.[1]?.options}
+            workMode={g(1)}
+            onWorkMode={(v) => setTg(1, v)}
+            workModeLabel={cfg.toggleGroups?.[1]?.label}
+            durationMinutes={durationMinutes}
+            onDuration={setDurationMinutes}
+            showDurationAlways={!!cfg.reactionSettings}
+            durationPeriodHint={`Период работы: ${durationPeriodMin}–${durationMinutes} мин`}
+            totalLabel={cfg.reactionSettings?.max.label ?? cfg.workModeFields?.maxLabel ?? 'Всего действий'}
+            computedTotal={{ value: maxActions, accounts: accCount }}
+            perAccount={{ min: minPerAcc, max: maxPerAcc, onMin: setMinPerAcc, onMax: setMaxPerAcc }}
+            minWords={cfg.workModeFields?.minWords ? { value: minWords, onChange: setMinWords } : null}
+            delays={delays}
+            onDelays={(updater) => setDelays(updater)}
+            showComment={!!cfg.richLayout && !cfg.reactionSettings && moduleKey === 'neuro-commenting'}
+            showAction={!(cfg.richLayout && !cfg.reactionSettings && moduleKey === 'neuro-commenting')}
+            showJoin
+            labels={{ action: cfg.reactionSettings ? 'Задержка между реакциями' : 'Задержка действия', join: 'Задержка вступления' }}
+            delayPresets={cfg.delayPresets ?? ['Агрессивный', 'Сбалансированный', 'Консервативный']}
+            delayPreset={delayPreset}
+            onDelayPreset={setDelayPreset}
+          />
+          )}
+        </ProtectionTimings>
         </div>
       )}
 
@@ -758,35 +794,6 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
         </SectionCard>
       )}
 
-      {/* §3.1 (MR-100): «Тайминги и задержки» — ПЕРЕД нижней панелью запуска (§4: тайминги до запуска).
-          Блоки «Группы»/«Посты» перенесены ВЫШЕ — сразу после аккаунтов (порядок блоков = степпер). */}
-      {/* Правка 14.08: для ПРОГРЕВА «Тайминги и задержки» не показываем — темп/паузы задаёт
-          «Уровень прогрева», отдельные тайминги дублировали и путали (QA §8, вариант а). */}
-      {showBlock('settings') && !isParser && !isGgr && !cfg.warmingLayout && (cfg.aiProtection || cfg.richLayout || cfg.lookingLayout) && (
-        <TimingSection
-          workModeOptions={cfg.toggleGroups?.[1]?.options}
-          workMode={g(1)}
-          onWorkMode={(v) => setTg(1, v)}
-          workModeLabel={cfg.toggleGroups?.[1]?.label}
-          durationMinutes={durationMinutes}
-          onDuration={setDurationMinutes}
-          showDurationAlways={!!cfg.reactionSettings}
-          durationPeriodHint={`Период работы: ${durationPeriodMin}–${durationMinutes} мин`}
-          totalLabel={cfg.reactionSettings?.max.label ?? cfg.workModeFields?.maxLabel ?? 'Всего действий'}
-          computedTotal={{ value: maxActions, accounts: accCount }}
-          perAccount={{ min: minPerAcc, max: maxPerAcc, onMin: setMinPerAcc, onMax: setMaxPerAcc }}
-          minWords={cfg.workModeFields?.minWords ? { value: minWords, onChange: setMinWords } : null}
-          delays={delays}
-          onDelays={(updater) => setDelays(updater)}
-          showComment={!!cfg.richLayout && !cfg.reactionSettings && moduleKey === 'neuro-commenting'}
-          showAction={!(cfg.richLayout && !cfg.reactionSettings && moduleKey === 'neuro-commenting')}
-          showJoin
-          labels={{ action: cfg.reactionSettings ? 'Задержка между реакциями' : 'Задержка действия', join: 'Задержка вступления' }}
-          delayPresets={cfg.delayPresets ?? ['Агрессивный', 'Сбалансированный', 'Консервативный']}
-          delayPreset={delayPreset}
-          onDelayPreset={setDelayPreset}
-        />
-      )}
 
       {/* §3.5: «Уровень прогрева» — ОТДЕЛЬНЫЙ блок (как «Тайминги и задержки»), а не
           строчка внутри «Параметры и лимиты»: это главный выбор прогрева, ему нужен свой
@@ -844,32 +851,11 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
         </div>
       )}
 
-      {/* §7: «Выполнение» — статус текущей задачи + прыжок в Дашборд по этому модулю.
-          Раньше панель была `sticky bottom-0 z-30` и висела ПОВЕРХ плавающей панели
-          запуска (LaunchPanel/FloatingBar, тот же z-30): две панели дублировали статус,
-          а нижняя накрывала кнопку «Начать» — оператор видел зелёный обрезок и не мог
-          нажать. Обычный блок в потоке: панель запуска и так ходит за человеком,
-          дублировать её прилипанием незачем. */}
-      {showBlock('run') && (
-        <div className="mt-3 -mx-0.5 flex flex-wrap items-center gap-x-3 gap-y-1 rounded-xl border border-line bg-surface/60 px-4 py-2.5">
-          <span className={`h-2.5 w-2.5 shrink-0 rounded-full ${running ? 'animate-pulse bg-spark-400' : task?.status === 'done' ? 'bg-spark-500' : 'bg-faint'}`} />
-          <span className="text-sm font-semibold text-fg">
-            {running
-              ? `Выполняется · ${progressDone}${task?.progress?.total ? ` / ${task.progress.total}` : ''}`
-              : task?.status === 'done' ? 'Завершено' : 'Готов к запуску'}
-          </span>
-          {selected.size > 0 && <span className="text-xs text-muted">· {selected.size} акк.</span>}
-          {/* Что мешает запуску — теперь в нижней панели рядом с кнопкой; здесь это
-              дублировало то же сообщение вторым текстом. */}
-          <a
-            href={`/panel/tasks?module=${moduleKey}${task ? `&task=${task.id}` : ''}`}
-            className="ml-auto inline-flex items-center gap-1 text-xs font-semibold text-spark-300 hover:underline"
-            title="Открыть задачи этого модуля в Дашборде"
-          >
-            <Terminal size={13} /> Задачи модуля в Дашборде <ArrowUpRight size={13} />
-          </a>
-        </div>
-      )}
+      {/* Статус задачи со страницы модуля УБРАН (правка 19.08). Модуль — это форма
+          запуска: настроил и нажал. Всё, что происходит после запуска — прогресс,
+          «Завершено», логи, стоп и пауза — живёт в Дашборде задач, и держать вторую
+          витрину статуса значило показывать одно и то же в двух местах и чинить
+          рассинхрон между ними. Ссылка на задачи модуля осталась в панели запуска. */}
       {/* Плавающая панель запуска — ПОСЛЕДНИЙ элемент страницы: её заглушка
           резервирует место внизу, и бар «отрывается» ко дну экрана. Подними её
           выше — заглушка встанет в середину, а бар задвоится.  */}
@@ -966,13 +952,13 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
         if (hasParamsCard) return panel
         return (
           <div id="sec-run" className="scroll-mt-24">
-          <SectionCard icon={<Play size={18} />} title={running ? 'Выполнение' : 'Параметры и лимиты'} badge={running ? 'LIVE' : undefined}>
+          <SectionCard icon={<Play size={18} />} title="Параметры и лимиты">
           {limitWarn && !running && (
             <div className="mb-3 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-300">⚠ {limitWarn}</div>
           )}
           <p className="mb-3 text-sm text-muted">{cfg.warmingLayout
             ? 'Темп и паузы задаёт «Уровень прогрева» — секция выше.'
-            : 'Лимиты и задержки настраиваются в секции «Тайминги и задержки» выше.'}</p>
+            : 'Лимиты и задержки — в блоке «Защита и тайминги» выше.'}</p>
             {panel}
           </SectionCard>
           </div>

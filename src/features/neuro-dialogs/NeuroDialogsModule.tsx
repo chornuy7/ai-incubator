@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import {
   Sparkles, MessagesSquare, Mail, Users,
-  ChevronDown, Check, Image as ImageIcon, Settings2,
+  ChevronDown, Check, Image as ImageIcon,
 } from 'lucide-react'
 import { MODULES } from '@/shared/config/modules'
 import { isHidden } from '@/shared/config/routes'
@@ -26,9 +26,8 @@ import {
   markCurrentStep,
   PromptCards,
   loadPromptBodies,
-  ProtectionBlock,
+  ProtectionTimings,
   AiGenerationNotice,
-  TimingSection,
   TaskStartedModal,
   type DelaysShape,
 } from '@/features/modules/shared'
@@ -200,9 +199,27 @@ export function NeuroDialogsModule() {
       {/* §3 (MR-113 · 17.08): «Защита аккаунтов» — ОТДЕЛЬНЫМ блоком, как во всех модулях
           (раньше была вложена внутрь «ИИ авто-ответы» — расходилось с единой структурой). */}
       <div id="sec-protect" className="scroll-mt-24">
-        <SectionCard icon={<Settings2 size={18} />} title="Защита">
-          <ProtectionBlock enabled={aiProtect} onEnabled={setAiProtect} level={protLevel} onLevel={setProtLevel} />
-        </SectionCard>
+        {/* Один блок на все модули (правка 19.08): защита и задержки — одно решение. */}
+        <ProtectionTimings
+          enabled={aiProtect}
+          onEnabled={setAiProtect}
+          level={protLevel}
+          onLevel={setProtLevel}
+          timing={{
+            totalLabel: 'Ответов за запуск',
+            total: { min: minActions, max: maxActions, onMin: setMinActions, onMax: setMaxActions },
+            perAccount: { min: minPerAcc, max: maxPerAcc, onMin: setMinPerAcc, onMax: setMaxPerAcc },
+            delays,
+            onDelays: (updater) => setDelays(updater),
+            showComment: false,
+            showAction: true,
+            showJoin: false,
+            labels: { action: 'Задержка между ответами' },
+            delayPresets: ['Агрессивный', 'Сбалансированный', 'Консервативный'],
+            delayPreset,
+            onDelayPreset: setDelayPreset,
+          }}
+        />
       </div>
 
       <div className="card p-0">
@@ -352,21 +369,6 @@ export function NeuroDialogsModule() {
           </p>
         </div>
       </SectionCard>
-
-      <TimingSection
-        totalLabel="Ответов за запуск"
-        total={{ min: minActions, max: maxActions, onMin: setMinActions, onMax: setMaxActions }}
-        perAccount={{ min: minPerAcc, max: maxPerAcc, onMin: setMinPerAcc, onMax: setMaxPerAcc }}
-        delays={delays}
-        onDelays={(updater) => setDelays(updater)}
-        showComment={false}
-        showAction
-        showJoin={false}
-        labels={{ action: 'Задержка между ответами' }}
-        delayPresets={['Агрессивный', 'Сбалансированный', 'Консервативный']}
-        delayPreset={delayPreset}
-        onDelayPreset={setDelayPreset}
-      />
 
       <p className="rounded-xl border border-line bg-elevated/60 px-3 py-2 text-xs leading-relaxed text-muted">
         «Ответов за запуск» и «На аккаунт» — это диапазон: воркер берёт случайное число между «от» и «до» (для маскировки под живого человека).

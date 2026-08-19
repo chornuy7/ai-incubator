@@ -9,7 +9,7 @@ import { activeAccounts, useApp } from '@/mocks/store'
 import { Segmented, Switch, Badge, Select, EmptyState } from '@/shared/ui'
 import { AccountPicker } from '@/features/account-picker/AccountPicker'
 import { useModuleTask } from './shared/useModuleTask'
-import { SectionCard, NumberField, ProtectionBlock, DelayFields, LaunchPanel, LaunchSteps, markCurrentStep, TaskStartedModal, SchedulePanel } from './shared'
+import { SectionCard, NumberField, ProtectionTimings, DelayFields, LaunchPanel, LaunchSteps, markCurrentStep, TaskStartedModal, SchedulePanel } from './shared'
 import { PresetBar } from './shared/PresetBar'
 import { SavePresetModal } from './shared/SavePresetModal'
 import { cn } from '@/shared/lib/utils'
@@ -360,7 +360,6 @@ function ChannelParserInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: 
 
       {/* Настройки поиска */}
       <SectionCard id="sec-settings" icon={<Settings2 size={18} />} title="Настройки поиска" badge={`${keywords.length} ключевых слов`}>
-        {cfg.aiProtection && <ProtectionBlock enabled={aiProtect} onEnabled={setAiProtect} level={protLevel} onLevel={setProtLevel} />}
 
         <div className="mb-4">
           <Segmented options={cfg.methodTabs?.slice(0, 2) ?? ['Поиск по ключевым словам', 'Похожие каналы']} value={method} onChange={setMethod} />
@@ -510,16 +509,25 @@ function ChannelParserInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: 
         </div>
       </SectionCard>
 
-      {/* Задержки */}
-      {!fastWork && (
-        <SectionCard icon={<Timer size={18} />} title="Настройки задержек">
-          <DelayFields label="Задержка между запросами" from={reqDelay[0]} to={reqDelay[1]} onFrom={(n) => setReqDelay([n, reqDelay[1]])} onTo={(n) => setReqDelay([reqDelay[0], n])} unit="с" />
-          <DelayFields label="Задержка между каналами" from={chDelay[0]} to={chDelay[1]} onFrom={(n) => setChDelay([n, chDelay[1]])} onTo={(n) => setChDelay([chDelay[0], n])} unit="с" />
-        </SectionCard>
+      {/* Один блок на все модули (правка 19.08): защита и задержки — одно решение.
+          У парсера свои поля пауз (между запросами и между каналами), поэтому общий
+          TimingSection тут не подходит — но карточка и заголовок те же, что везде. */}
+      {cfg.aiProtection && (
+        <ProtectionTimings enabled={aiProtect} onEnabled={setAiProtect} level={protLevel} onLevel={setProtLevel}>
+          {!fastWork && (
+            <div className="mt-4 border-t border-line pt-4">
+              <div className="mb-3 flex items-center gap-2 text-sm font-semibold text-fg">
+                <Timer size={16} className="text-spark-300" /> Тайминги и задержки
+              </div>
+              <DelayFields label="Задержка между запросами" from={reqDelay[0]} to={reqDelay[1]} onFrom={(n) => setReqDelay([n, reqDelay[1]])} onTo={(n) => setReqDelay([reqDelay[0], n])} unit="с" />
+              <DelayFields label="Задержка между каналами" from={chDelay[0]} to={chDelay[1]} onFrom={(n) => setChDelay([n, chDelay[1]])} onTo={(n) => setChDelay([chDelay[0], n])} unit="с" />
+            </div>
+          )}
+        </ProtectionTimings>
       )}
 
       {/* Запуск & Логи */}
-      <SectionCard id="sec-run" icon={<Play size={18} />} title={running ? 'Выполнение' : 'Логи и параметры'} badge={running ? 'LIVE' : undefined}>
+      <SectionCard id="sec-run" icon={<Play size={18} />} title="Параметры и лимиты">
         <LaunchPanel
           running={running}
           starting={starting}

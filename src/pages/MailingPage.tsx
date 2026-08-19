@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useLocation } from 'react-router-dom'
 import { Mail, Send, AlertTriangle, ShieldAlert, Users, Target, MessageSquareText, Shield } from 'lucide-react'
-import { PageHeader, Card, Select, Segmented } from '@/shared/ui'
+import { PageHeader, Card, Select } from '@/shared/ui'
 import { DedupeButton } from '@/shared/ui/DedupeButton'
 import type { MailingPrefill } from '@/features/mailing/TaskAudiencePanel'
 import { useApp, activeAccounts } from '@/mocks/store'
@@ -18,7 +18,8 @@ import { ModuleNotPaid } from '@/features/billing/ModuleNotPaid'
 import { isHidden } from '@/shared/config/routes'
 // §3.1 (MR-114): рассылка приведена к общей структуре модулей — те же переиспользуемые
 // блоки (SectionCard + нижняя LaunchPanel со степпером), что и в LiveModule/парсерах.
-import { SectionCard, LaunchPanel, LaunchSteps, markCurrentStep, TaskStartedModal, ProtectionBlock, BlacklistEditor } from '@/features/modules/shared'
+import { SectionCard, LaunchPanel, LaunchSteps, markCurrentStep, TaskStartedModal, ProtectionTimings, BlacklistEditor } from '@/features/modules/shared'
+import type { DelaysShape } from '@/features/modules/shared/TimingSection'
 import { LaunchCost, ActionPriceCalc } from '@/features/modules/shared/LaunchCost'
 import { useModuleTask } from '@/features/modules/shared/useModuleTask'
 import { PresetBar } from '@/features/modules/shared/PresetBar'
@@ -249,6 +250,15 @@ function MailingInner() {
     ...(blockedByTrust ? ['аккаунты ниже порога trust'] : []),
   ] : []
 
+  // Мейлинг хранит паузы парой чисел; общий блок таймингов ждёт полную структуру.
+  const mailingDelays: DelaysShape = {
+    comment: [delayMin, delayMax],
+    action: [delayMin, delayMax],
+    join: [delayMin, delayMax],
+    floodWait: 120,
+    floodQuarantine: 3,
+  }
+
   return (
     <div>
       <PageHeader
@@ -306,23 +316,36 @@ function MailingInner() {
 
         {/* 3. Защита — 3-м блоком, после «Получателей» (правка 10.08, MR-136). */}
         <div id="sec-settings" className="scroll-mt-24">
-          <SectionCard icon={<Shield size={18} />} title="Защита">
-            {/* MR-114: блок «Защита» — как во всех модулях (карточки ProtectionBlock), а не мелкий сегмент. */}
-            <ProtectionBlock enabled={aiProtect} onEnabled={setAiProtect} level={protLevel} onLevel={setProtLevel} />
-            {/* Шаблон задержек — множитель пауз (аналог пресета темпа в «Таймингах» стандартных модулей). */}
-            <div className="mb-3">
-              <div className="mb-1 text-xs text-white/50">Шаблон задержек <span className="text-white/30">(множитель пауз)</span></div>
-              <Segmented options={['Мин', 'Реком.', 'Макс']} value={delayPreset} onChange={setDelayPreset} size="sm" />
-            </div>
+          {/* Один блок на все модули (правка 19.08): защита и задержки — одно решение.
+              Свои поля мейлинга (лимит на аккаунт, паузы, порог trust) идут внутрь той же
+              карточки, а пресет темпа рисует общий TimingSection. */}
+          <ProtectionTimings
+            enabled={aiProtect}
+            onEnabled={setAiProtect}
+            level={protLevel}
+            onLevel={setProtLevel}
+            timing={{
+              // У мейлинга своя пара «от/до» вместо общей структуры задержек — переводим
+              // её в общий вид, чтобы блок выглядел и вёл себя как у остальных модулей.
+              delays: mailingDelays,
+              onDelays: (updater) => {
+                const next = typeof updater === 'function' ? updater(mailingDelays) : updater
+                const a = next.action
+                if (a) { setDelayMin(Math.max(1, a[0])); setDelayMax(Math.max(a[0], a[1])) }
+              },
+              showAction: true,
+              showComment: false,
+              showJoin: false,
+              labels: { action: 'Задержка между сообщениями' },
+              delayPresets: ['Агрессивный', 'Сбалансированный', 'Консервативный'],
+              delayPreset,
+              onDelayPreset: setDelayPreset,
+              perAccount: { min: maxPerAccount, max: maxPerAccount, onMin: setMaxPerAccount, onMax: setMaxPerAccount },
+            }}
+          >
             <div className="grid grid-cols-3 gap-3">
               <label className="text-xs text-white/50">Лимит на аккаунт
                 <input type="number" min={1} value={maxPerAccount} onChange={(e) => setMaxPerAccount(Math.max(1, Number(e.target.value) || 1))} className="input mt-1 h-9" />
-              </label>
-              <label className="text-xs text-white/50">Задержка от (с)
-                <input type="number" min={1} value={delayMin} onChange={(e) => setDelayMin(Math.max(1, Number(e.target.value) || 1))} className="input mt-1 h-9" />
-              </label>
-              <label className="text-xs text-white/50">до (с)
-                <input type="number" min={delayMin} value={delayMax} onChange={(e) => setDelayMax(Math.max(delayMin, Number(e.target.value) || delayMin))} className="input mt-1 h-9" />
               </label>
             </div>
             {!canWrite && (
@@ -388,7 +411,7 @@ function MailingInner() {
                 </div>
               </div>
             )}
-          </SectionCard>
+          </ProtectionTimings>
         </div>
 
         {/* 4. Сообщение и цель. */}

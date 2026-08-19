@@ -16,6 +16,13 @@ export interface DelaysShape {
 interface MinMaxCtl { min: number; max: number; onMin: (n: number) => void; onMax: (n: number) => void }
 
 export interface TimingSectionProps {
+  /**
+   * Рисовать БЕЗ своей карточки — блок встраивается в «Защиту» (правка 19.08).
+   * Защита и тайминги — одно решение: уровень защиты умножает задержки, а FloodWait
+   * ведёт в карантин. Держать их в двух карточках значило заставлять человека
+   * настраивать одно и то же в двух местах.
+   */
+  bare?: boolean
   /** Переключатель режима работы (например ['По количеству','По времени']). */
   workModeOptions?: string[]
   workMode?: number
@@ -81,6 +88,7 @@ const PRESET_META = [
  */
 export function TimingSection(props: TimingSectionProps) {
   const {
+    bare,
     workModeOptions, workMode = 0, onWorkMode, workModeLabel = 'Режим работы',
     durationMinutes = 60, onDuration, showDurationAlways, durationPeriodHint,
     totalLabel = 'Действия', total, computedTotal, perAccount, minWords,
@@ -178,8 +186,8 @@ export function TimingSection(props: TimingSectionProps) {
     if (which === 'min') perAccount?.onMin(v); else perAccount?.onMax(v)
   }
 
-  return (
-    <SectionCard icon={<Timer size={18} />} title="Тайминги и задержки">
+  const body = (
+    <>
       {/* Пресет темпа — карточками, как «Защита аккаунтов». + «Custom» для ручных значений. */}
       {hasPresets && (
         <>
@@ -345,6 +353,17 @@ export function TimingSection(props: TimingSectionProps) {
           </div>
         </div>
       )}
-    </SectionCard>
+    </>
   )
+  if (bare) {
+    return (
+      <div className="mt-4 border-t border-line pt-4">
+        <div className="mb-3 flex items-center gap-2 text-sm font-semibold text-fg">
+          <Timer size={16} className="text-spark-300" /> Тайминги и задержки
+        </div>
+        {body}
+      </div>
+    )
+  }
+  return <SectionCard icon={<Timer size={18} />} title="Тайминги и задержки">{body}</SectionCard>
 }
