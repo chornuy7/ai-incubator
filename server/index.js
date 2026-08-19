@@ -531,8 +531,8 @@ app.post('/api/bundles', async (req, res) => {
   try {
     if (!(await isAdminRequest(req))) return res.status(403).json({ ok: false, error: 'Собирать наборы может только владелец' })
     const { createBundle } = await import('./bundles.js')
-    // §11.3: кто собрал набор.
-    const bundle = await createBundle({ ...(req.body || {}), userId: req.header('x-user-id') || '' })
+    // Кто собрал набор — в audit_log ниже (initiator). Наборы глобальные, owner-колонки у них нет.
+    const bundle = await createBundle(req.body || {})
     await appendAudit({
       action: 'bundle.create', module: 'billing', initiator: req.header('x-user-id') || 'system',
       reason: `Набор «${bundle.name}»: ${bundle.modules.length} модулей за ${bundle.price}`,
