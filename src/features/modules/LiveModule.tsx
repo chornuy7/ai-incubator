@@ -752,15 +752,12 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
               {/* Ползунок вероятности переехал в «Параметры и лимиты» — он про объём
                   («сколько из подходящих реально сделаем»), а не про защиту. */}
             </div>
-          ) : cfg.toggleGroups ? (
+          ) : cfg.toggleGroups && moduleKey !== 'neuro-commenting' ? (
+            /* Отбор постов у нейрокомментинга живёт в «Параметрах и лимитах» — вплотную к
+               полю «сколько последних постов». Здесь для него не остаётся ничего, и рамка
+               рисовалась пустой полосой (правка 19.08). У остальных модулей группа тут. */
             <div className="rounded-2xl border border-line bg-elevated/40 p-4 space-y-4">
-              {/* Отбор постов («Что комментировать») переехал в «Параметры и лимиты» —
-                  вплотную к полю «сколько последних постов», от которого он зависит.
-                  Две половины одной настройки стояли в разных карточках и повторяли
-                  друг друга (правка 18.08). У остальных модулей группа рисуется здесь. */}
-              {moduleKey !== 'neuro-commenting' && (
-                <ToggleGroup label={cfg.toggleGroups[0].label} options={cfg.toggleGroups[0].options} value={g(0)} onChange={(v) => setTg(0, v)} />
-              )}
+              <ToggleGroup label={cfg.toggleGroups[0].label} options={cfg.toggleGroups[0].options} value={g(0)} onChange={(v) => setTg(0, v)} />
             </div>
           ) : isParser ? (
             <div className="space-y-3">
