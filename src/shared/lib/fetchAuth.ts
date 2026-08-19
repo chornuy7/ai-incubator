@@ -1,3 +1,5 @@
+import { currentToken, currentUid } from '@/features/auth/zone'
+
 /**
  * Глобальная auth-обёртка над fetch.
  *
@@ -26,13 +28,9 @@ export function installFetchAuth() {
 
   window.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
     if (!isApi(input)) return orig(input, init)
-    let token = ''
-    let uid = ''
-    try {
-      token = localStorage.getItem('ai-incubator:token') || ''
-      const raw = localStorage.getItem('ai-incubator:session')
-      if (raw) uid = (JSON.parse(raw) as { id?: string })?.id || ''
-    } catch { /* ignore */ }
+    // Токен и id — ПО ЗОНЕ (панель/админка): у каждой свой (созвон 19.08).
+    const token = currentToken()
+    const uid = currentUid()
     if (!token && !uid) return orig(input, init)
 
     const headers = new Headers(init?.headers || (input instanceof Request ? input.headers : undefined))

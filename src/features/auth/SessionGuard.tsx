@@ -1,5 +1,5 @@
 import { useEffect } from 'react'
-import { useSession, useAdminGate, markActivity, ACTIVITY_KEY } from './session'
+import { useSession, markActivity, ACTIVITY_KEY } from './session'
 
 /**
  * MR-141 (созвон 12.08): локальный сторож сессии. Всё делает НА КЛИЕНТЕ, без запросов в
@@ -10,10 +10,10 @@ import { useSession, useAdminGate, markActivity, ACTIVITY_KEY } from './session'
  *     фоновым запросам (иначе 5-секундный поллинг задач держал бы сессию вечно).
  *  2. Живость сессии: каждые ~15 c проверяем, что сессия ещё в localStorage (вышли в
  *     другой вкладке / очистили — «кука умерла») и что подписанный токен не просрочен
- *     (его `exp` читается локально из самого токена, без обращения к серверу). Работает
- *     одинаково и в панели, и в админке.
- *  3. Смена аккаунта на не-админский → запираем админ-гейт (выкидываем из админки).
+ *     (его `exp` читается локально из самого токена, без обращения к серверу).
  *
+ * Сторож ПАНЕЛЬНЫЙ: монтируется в авторизованной ветке панели и работает с панельной
+ * сессией/токеном. Админка — отдельная сессия (useAdminSession) и здесь не участвует.
  * Компонент невидимый — только эффекты. Монтируется один раз в корне приложения.
  */
 const IDLE_MS = 2.5 * 60 * 60 * 1000 // «2–3 ч без активности» — берём середину
@@ -32,7 +32,6 @@ function tokenExpired(token: string, now: number): boolean {
 export function SessionGuard() {
   const user = useSession((s) => s.user)
   const logout = useSession((s) => s.logout)
-  const lockAdmin = useAdminGate((s) => s.lock)
 
   // (1) Отмечаем активность на реальных жестах пользователя.
   useEffect(() => {
@@ -77,10 +76,8 @@ export function SessionGuard() {
     return () => window.removeEventListener('storage', onStorage)
   }, [user, logout])
 
-  // (3) Сменили аккаунт на не-админский → запираем админ-гейт (из админки выкидывает).
-  useEffect(() => {
-    if (user && !user.isAdmin) lockAdmin()
-  }, [user, lockAdmin])
+  // Админка теперь ОТДЕЛЬНАЯ сессия (см. useAdminSession) — панельный сторож её не трогает.
+  // Прежний пункт «сменили аккаунт панели на не-админский → запереть админку» больше не нужен.
 
   return null
 }

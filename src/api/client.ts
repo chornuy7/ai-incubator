@@ -1,4 +1,5 @@
 import { useUi } from '@/shared/lib/uiStore'
+import { currentToken, currentUid } from '@/features/auth/zone'
 
 /**
  * Ошибка API вместе с телом ответа.
@@ -86,12 +87,10 @@ export async function parseJson<T>(res: Response): Promise<T> {
 export function authHeaders(base?: Record<string, string>): Record<string, string> {
   const headers: Record<string, string> = { ...(base ?? {}) }
   try {
-    const raw = localStorage.getItem('ai-incubator:session')
-    if (raw) {
-      const u = JSON.parse(raw) as { id?: string }
-      if (u?.id) headers['X-User-Id'] = u.id
-    }
-    const token = localStorage.getItem('ai-incubator:token')
+    // Токен и id берём ПО ЗОНЕ (панель/админка) — у каждой свой (созвон 19.08).
+    const uid = currentUid()
+    if (uid) headers['X-User-Id'] = uid
+    const token = currentToken()
     if (token) headers['Authorization'] = `Bearer ${token}`
   } catch { /* ignore */ }
   return headers

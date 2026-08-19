@@ -2,8 +2,8 @@ import { useState } from 'react'
 import { Link } from 'react-router-dom'
 import { Zap, Eye, EyeOff, ArrowRight, LogOut, ShieldAlert } from 'lucide-react'
 import { useApp } from '@/mocks/store'
-import { useSession, useAdminGate } from '@/features/auth/session'
-import { loginUser } from '@/api/usersApi'
+import { useAdminSession } from '@/features/auth/session'
+import { loginUser, clearToken } from '@/api/usersApi'
 import { ADMIN_BYPASS_ID } from '@/shared/config/rbac'
 import { AdminStatsPage } from '@/pages/AdminStatsPage'
 import { Toasts } from '@/widgets/Toasts'
@@ -23,21 +23,20 @@ function isAdminUser(u: { roleId?: string; roleIds?: string[] } | null | undefin
 }
 
 export function AdminEntry() {
-  const sessionUser = useSession((s) => s.user)
-  // MR-142 (баг 2): админка — ОТДЕЛЬНЫЙ вход. Панельная сессия сама по себе админку не
-  // открывает: нужен и админ (isAdmin), и явно поднятый гейт (вход через форму ниже).
-  const unlocked = useAdminGate((s) => s.unlocked)
-  if (sessionUser?.isAdmin && unlocked) return <AdminShell />
+  // Админка — ОТДЕЛЬНАЯ сессия (созвон 19.08), не «гейт поверх панели». Залогинен в
+  // админке ⟺ есть админ-сессия своей зоны. Панельный вход админку НЕ открывает.
+  const adminUser = useAdminSession((s) => s.user)
+  if (adminUser?.isAdmin) return <AdminShell />
   return <AdminLogin />
 }
 
 /** Полноэкранная админка со своей шапкой — без сайдбара панели. */
 function AdminShell() {
-  const sessionUser = useSession((s) => s.user)
-  const lockAdmin = useAdminGate((s) => s.lock)
-  // MR-142 (баг 2): «Выйти из админки» запирает ТОЛЬКО админ-гейт — панельная сессия
-  // остаётся. Это две разные авторизации: выход из админки ≠ выход из панели.
-  const exitAdmin = () => lockAdmin()
+  const adminUser = useAdminSession((s) => s.user)
+  const logoutAdmin = useAdminSession((s) => s.logout)
+  // «Выйти из админки» завершает ТОЛЬКО админ-сессию (свой токен) — панель не трогает.
+  // Это две независимые авторизации: выход из админки ≠ выход из панели, и наоборот.
+  const exitAdmin = () => logoutAdmin()
 
   return (
     <div className="min-h-screen bg-bg text-fg">
@@ -50,7 +49,7 @@ function AdminShell() {
           </div>
           <div className="min-w-0">
             <div className="font-display text-sm font-bold leading-tight">Murmex · Админ-панель</div>
-            <div className="truncate text-[11px] leading-tight text-muted">{sessionUser?.email}</div>
+            <div className="truncate text-[11px] leading-tight text-muted">{adminUser?.email}</div>
           </div>
           <Link to="/panel" className="btn-ghost ml-auto h-9 px-3 text-sm">В панель</Link>
           <button onClick={exitAdmin} className="btn-ghost h-9 px-3 text-sm" title="Выйти из админки (панель остаётся)">
@@ -73,9 +72,7 @@ function AdminShell() {
 function AdminLogin() {
   const setUserState = useApp((s) => s.setUserState)
   const pushToast = useApp((s) => s.pushToast)
-  const signIn = useSession((s) => s.login)
-  const logout = useSession((s) => s.logout)
-  const unlockAdmin = useAdminGate((s) => s.unlock)
+  const signIn = useAdminSession((s) => s.login)
   const [email, setEmail] = useState('')
   const [pass, setPass] = useState('')
   const [show, setShow] = useState(false)
@@ -89,14 +86,16 @@ function AdminLogin() {
     try {
       const { user, role } = await loginUser(email.trim(), pass)
       if (!isAdminUser(user)) {
-        // Не админ — доступ закрыт: сессию не поднимаем, чтобы обычный оператор не
-        // остался «наполовину вошедшим» в закрытый ему раздел.
-        logout()
+        // Не админ — доступ закрыт: админ-сессию не поднимаем, а только что сохранённый
+        // админ-токен убираем (чтобы оператор не остался «наполовину вошедшим»). Без
+        // редиректа — показываем ошибку на месте.
+        clearToken()
         setError('Доступ только для администратора.')
         return
       }
+      // Отдельная админ-сессия: свой токен (loginUser уже сохранил его в admin-token, т.к.
+      // мы на /admin) + своя запись сессии. Панель этим входом НЕ трогается.
       signIn(user, role && role.permissions ? { id: role.id, name: role.name, permissions: role.permissions } : null)
-      unlockAdmin() // MR-142 (баг 2): поднимаем отдельный админ-гейт — только этот вход открывает /admin
       setUserState('with-data')
       // MR-142 (баг 1): жёсткая перезагрузка = чистая память, без данных прошлой сессии.
       // Гейт и сессия уже в localStorage, после boot откроется AdminShell.
