@@ -1,3 +1,4 @@
+import { useEffect } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { Lock, LifeBuoy, User, LogOut } from 'lucide-react'
 import { useUi } from '@/shared/lib/uiStore'
@@ -16,9 +17,26 @@ const ALLOWED_PATHS = ['/panel/support', '/panel/user/profile']
 
 export function BlockedOverlay() {
   const blocked = useUi((s) => s.accessBlocked)
+  const setBlocked = useUi((s) => s.setAccessBlocked)
   const loc = useLocation()
   const navigate = useNavigate()
   const logout = useSession((s) => s.logout)
+
+  // Пока заблокированы — раз в 10 c тихо проверяем /me (он в whitelist): вернул админ доступ
+  // → снимаем блок и перезагружаемся с чистого состояния. Без пробника блок висел бы до
+  // ручного обновления страницы (accessBlocked сам не снимается). Один запрос в 10 c —
+  // не флуд (остальные поллеры при блоке гасит fetchAuth).
+  useEffect(() => {
+    if (!blocked) return
+    const probe = async () => {
+      try {
+        const r = await fetch('/api/users/me')
+        if (r.ok) { setBlocked(''); window.location.reload() }
+      } catch { /* сеть — ждём следующей попытки */ }
+    }
+    const id = window.setInterval(probe, 10_000)
+    return () => window.clearInterval(id)
+  }, [blocked, setBlocked])
 
   if (!blocked) return null
   // На разрешённых страницах не мешаем — там человек и должен что-то сделать.
