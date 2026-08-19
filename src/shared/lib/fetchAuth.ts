@@ -1,3 +1,32 @@
+import { currentToken, currentUid } from '@/features/auth/zone'
+import { useUi } from '@/shared/lib/uiStore'
+
+// MR-153 (флуд): когда доступ отключён (accessBlocked), фоновые поллеры (баланс, задачи,
+// тикеты, статистика…) продолжают лупить /api — сервер на каждый отвечает 403, и это
+// десятки запросов в секунду = лишняя нагрузка. Гасим их ЛОКАЛЬНО синтетическим 403 без
+// сетевого запроса. Пропускаем только whitelist — те же пути, что и accessGate.js на сервере
+// (свой профиль/подписка/поддержка/me): их отключённому человеку МОЖНО, и через /me панель
+// узнаёт, что доступ вернули.
+const ALLOWED_WHEN_DISABLED = [
+  /^\/api\/health/, /^\/api\/session/, /^\/api\/users\/(login|logout|register|me)/,
+  /^\/api\/me/, /^\/api\/profile/, /^\/api\/subscription/, /^\/api\/billing/,
+  /^\/api\/pricing/, /^\/api\/tickets/,
+]
+function pathOf(input: RequestInfo | URL): string {
+  try {
+    const raw = typeof input === 'string' ? input : input instanceof URL ? input.href : (input as Request).url
+    return new URL(raw, window.location.origin).pathname
+  } catch { return '' }
+}
+function shortCircuitBlocked(input: RequestInfo | URL): Response | null {
+  const msg = useUi.getState().accessBlocked
+  if (!msg) return null
+  const p = pathOf(input)
+  if (ALLOWED_WHEN_DISABLED.some((re) => re.test(p))) return null
+  return new Response(JSON.stringify({ ok: false, code: 'ACCESS_DISABLED', error: msg }),
+    { status: 403, headers: { 'Content-Type': 'application/json' } })
+}
+
 /**
  * Глобальная auth-обёртка над fetch.
  *
@@ -26,13 +55,12 @@ export function installFetchAuth() {
 
   window.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
     if (!isApi(input)) return orig(input, init)
-    let token = ''
-    let uid = ''
-    try {
-      token = localStorage.getItem('ai-incubator:token') || ''
-      const raw = localStorage.getItem('ai-incubator:session')
-      if (raw) uid = (JSON.parse(raw) as { id?: string })?.id || ''
-    } catch { /* ignore */ }
+    // MR-153: доступ отключён → не-whitelist запросы гасим локально (без сети), не грузим сервер.
+    const sc = shortCircuitBlocked(input)
+    if (sc) return Promise.resolve(sc)
+    // Токен и id — ПО ЗОНЕ (панель/админка): у каждой свой (созвон 19.08).
+    const token = currentToken()
+    const uid = currentUid()
     if (!token && !uid) return orig(input, init)
 
     const headers = new Headers(init?.headers || (input instanceof Request ? input.headers : undefined))

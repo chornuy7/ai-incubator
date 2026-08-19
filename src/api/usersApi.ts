@@ -1,5 +1,6 @@
 import { apiGet, apiPost, apiPut, apiDelete } from './client'
 import type { Role } from './rolesApi'
+import { tokenKey } from '@/features/auth/zone'
 
 export interface User {
   id: string
@@ -26,10 +27,11 @@ export async function fetchUsers(scope?: 'mine' | 'all'): Promise<User[]> {
   return data.users
 }
 
-/** Токен сессии храним отдельным ключом — его шлёт `authHeaders` в `Authorization`. */
-const TOKEN_KEY = 'ai-incubator:token'
+// Токен сессии храним отдельным ключом — его шлёт `authHeaders` в `Authorization`.
+// Ключ ЗАВИСИТ ОТ ЗОНЫ (панель/админка): вход на /admin кладёт админ-токен, вход в панель —
+// панельный, чтобы зоны были независимы (созвон 19.08). tokenKey() выбирает по текущему URL.
 function saveToken(token?: string) {
-  try { if (token) localStorage.setItem(TOKEN_KEY, token); else localStorage.removeItem(TOKEN_KEY) } catch { /* quota */ }
+  try { if (token) localStorage.setItem(tokenKey(), token); else localStorage.removeItem(tokenKey()) } catch { /* quota */ }
 }
 export function clearToken() { saveToken(undefined) }
 
