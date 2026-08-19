@@ -316,6 +316,80 @@ function MailingInner() {
 
         {/* 3. Защита — 3-м блоком, после «Получателей» (правка 10.08, MR-136). */}
         <div id="sec-settings" className="scroll-mt-24">
+        {/* Текст сообщения — выше защиты и таймингов, как во всех модулях: сначала
+            «что напишем», потом «насколько осторожно» (правка 19.08). */}
+        <div id="sec-message" className="scroll-mt-24">
+          <SectionCard icon={<MessageSquareText size={18} />} title="Сообщение" required={needOwnText}>
+            {goalId && (
+              <label className="mb-2 flex cursor-pointer items-start gap-2">
+                <input type="checkbox" checked={ownText} onChange={(e) => setOwnText(e.target.checked)} className="mt-0.5 h-4 w-4 accent-spark" />
+                <span>
+                  <span className="text-xs font-semibold text-fg">Свой текст сообщения</span>
+                  <span className="mt-0.5 block text-[11px] text-white/45">
+                    По умолчанию берётся из цели («Первое сообщение» в её описании). Включите, только если
+                    для этой рассылки нужен другой текст.
+                  </span>
+                </span>
+              </label>
+            )}
+            {needOwnText
+              ? <MessageComposer value={message} onChange={setMessage} media={media} onMedia={setMedia} minHeight={90} />
+              : <div className="rounded-xl border border-line bg-elevated/40 p-3 text-xs text-white/45">
+                  Текст возьмётся из цели «{goals.find((g) => g.id === goalId)?.name || ''}» — «Первое сообщение» в её описании.
+                  {openerCount > 1
+                    ? <span className="ml-1 text-spark-300">Вариантов: {openerCount} — чередуются между получателями.</span>
+                    : <span className="ml-1 text-amber-300">
+                        Вариант один: все получат одинаковый текст. Добавьте в описание цели блок
+                        «Альтернативное первое сообщение:» — одинаковая рассылка ловит спамблок быстрее.
+                      </span>}
+                </div>}
+            {/* §10 (MR-49): цели/кампании скрыты глобально — селектор цели прячем вместе с ними.
+                Когда раздел «Цели» вернут (снимут hidden), выбор цели и нейрочатинг под целью появятся снова. */}
+            {!isHidden('/panel/goals') && goals.length > 0 && (
+              <div className="mt-2">
+                <div className="mb-1 text-xs text-white/50">Цель (опционально — генерация к цели)</div>
+                <Select value={goalId} onChange={setGoalId} options={[{ value: '', label: 'Без цели' }, ...goals.map((g) => ({ value: g.id, label: g.name }))]} />
+                {goalId && (
+                  <label className="mt-2 flex items-center gap-2 text-xs text-white/60">
+                    <input type="checkbox" checked={aiPerRecipient} onChange={(e) => setAiPerRecipient(e.target.checked)} className="h-4 w-4 rounded border-line accent-spark-500" />
+                    ИИ-генерация текста к цели (вместо шаблона)
+                  </label>
+                )}
+                {/* §9: цель ведёт весь процесс — отправили и слушаем ответы под ней же. */}
+                {goalId && (
+                  <div className="mt-2 rounded-xl border border-spark-500/25 bg-spark-500/5 p-2.5">
+                    <label className="flex cursor-pointer items-start gap-2">
+                      <input type="checkbox" checked={withChat} onChange={(e) => setWithChat(e.target.checked)} className="mt-0.5 h-4 w-4 accent-spark" />
+                      <span>
+                        <span className="text-xs font-semibold text-spark-200">Включить нейрочатинг под этой целью</span>
+                        <span className="mt-0.5 block text-[11px] leading-relaxed text-white/50">
+                          Всё берётся из цели: текст первого сообщения, этапы, ссылка и целевое действие —
+                          настраивать отдельно ничего не нужно. Рассылка приводит людей, чатинг ловит ответы
+                          и ведёт их по этапам цели, статусы в CRM едут сами. Запустится второй задачей на тех же аккаунтах.
+                        </span>
+                      </span>
+                    </label>
+                    {withChat && (
+                      <div className="mt-2 flex items-center gap-2">
+                        <span className="text-[11px] text-white/50">Потоков</span>
+                        <input
+                          type="number" min={1} max={20}
+                          className="input h-8 w-16 text-xs"
+                          value={chatThreads}
+                          onChange={(e) => setChatThreads(Math.max(1, Math.min(20, Number(e.target.value) || 1)))}
+                        />
+                        <span className="text-[11px] text-white/35">
+                          аккаунты делятся между потоками — и рассылка, и ответы идут одновременно; 1 — по очереди
+                        </span>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
+          </SectionCard>
+        </div>
+
           {/* Один блок на все модули (правка 19.08): защита и задержки — одно решение.
               Свои поля мейлинга (лимит на аккаунт, паузы, порог trust) идут внутрь той же
               карточки, а пресет темпа рисует общий TimingSection. */}
@@ -412,79 +486,6 @@ function MailingInner() {
               </div>
             )}
           </ProtectionTimings>
-        </div>
-
-        {/* 4. Сообщение и цель. */}
-        <div id="sec-message" className="scroll-mt-24">
-          <SectionCard icon={<MessageSquareText size={18} />} title="Сообщение" required={needOwnText}>
-            {goalId && (
-              <label className="mb-2 flex cursor-pointer items-start gap-2">
-                <input type="checkbox" checked={ownText} onChange={(e) => setOwnText(e.target.checked)} className="mt-0.5 h-4 w-4 accent-spark" />
-                <span>
-                  <span className="text-xs font-semibold text-fg">Свой текст сообщения</span>
-                  <span className="mt-0.5 block text-[11px] text-white/45">
-                    По умолчанию берётся из цели («Первое сообщение» в её описании). Включите, только если
-                    для этой рассылки нужен другой текст.
-                  </span>
-                </span>
-              </label>
-            )}
-            {needOwnText
-              ? <MessageComposer value={message} onChange={setMessage} media={media} onMedia={setMedia} minHeight={90} />
-              : <div className="rounded-xl border border-line bg-elevated/40 p-3 text-xs text-white/45">
-                  Текст возьмётся из цели «{goals.find((g) => g.id === goalId)?.name || ''}» — «Первое сообщение» в её описании.
-                  {openerCount > 1
-                    ? <span className="ml-1 text-spark-300">Вариантов: {openerCount} — чередуются между получателями.</span>
-                    : <span className="ml-1 text-amber-300">
-                        Вариант один: все получат одинаковый текст. Добавьте в описание цели блок
-                        «Альтернативное первое сообщение:» — одинаковая рассылка ловит спамблок быстрее.
-                      </span>}
-                </div>}
-            {/* §10 (MR-49): цели/кампании скрыты глобально — селектор цели прячем вместе с ними.
-                Когда раздел «Цели» вернут (снимут hidden), выбор цели и нейрочатинг под целью появятся снова. */}
-            {!isHidden('/panel/goals') && goals.length > 0 && (
-              <div className="mt-2">
-                <div className="mb-1 text-xs text-white/50">Цель (опционально — генерация к цели)</div>
-                <Select value={goalId} onChange={setGoalId} options={[{ value: '', label: 'Без цели' }, ...goals.map((g) => ({ value: g.id, label: g.name }))]} />
-                {goalId && (
-                  <label className="mt-2 flex items-center gap-2 text-xs text-white/60">
-                    <input type="checkbox" checked={aiPerRecipient} onChange={(e) => setAiPerRecipient(e.target.checked)} className="h-4 w-4 rounded border-line accent-spark-500" />
-                    ИИ-генерация текста к цели (вместо шаблона)
-                  </label>
-                )}
-                {/* §9: цель ведёт весь процесс — отправили и слушаем ответы под ней же. */}
-                {goalId && (
-                  <div className="mt-2 rounded-xl border border-spark-500/25 bg-spark-500/5 p-2.5">
-                    <label className="flex cursor-pointer items-start gap-2">
-                      <input type="checkbox" checked={withChat} onChange={(e) => setWithChat(e.target.checked)} className="mt-0.5 h-4 w-4 accent-spark" />
-                      <span>
-                        <span className="text-xs font-semibold text-spark-200">Включить нейрочатинг под этой целью</span>
-                        <span className="mt-0.5 block text-[11px] leading-relaxed text-white/50">
-                          Всё берётся из цели: текст первого сообщения, этапы, ссылка и целевое действие —
-                          настраивать отдельно ничего не нужно. Рассылка приводит людей, чатинг ловит ответы
-                          и ведёт их по этапам цели, статусы в CRM едут сами. Запустится второй задачей на тех же аккаунтах.
-                        </span>
-                      </span>
-                    </label>
-                    {withChat && (
-                      <div className="mt-2 flex items-center gap-2">
-                        <span className="text-[11px] text-white/50">Потоков</span>
-                        <input
-                          type="number" min={1} max={20}
-                          className="input h-8 w-16 text-xs"
-                          value={chatThreads}
-                          onChange={(e) => setChatThreads(Math.max(1, Math.min(20, Number(e.target.value) || 1)))}
-                        />
-                        <span className="text-[11px] text-white/35">
-                          аккаунты делятся между потоками — и рассылка, и ответы идут одновременно; 1 — по очереди
-                        </span>
-                      </div>
-                    )}
-                  </div>
-                )}
-              </div>
-            )}
-          </SectionCard>
         </div>
 
         {/* 5. Запуск — плавающая нижняя панель со степпером (без обёртки-карточки:

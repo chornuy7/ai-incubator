@@ -607,6 +607,35 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
       </div>
       )}
 
+      {/* Промпты — ВЫШЕ защиты и таймингов (правка 19.08): сначала «что напишет»,
+          потом «насколько осторожно». Порядок читается как разговор: кому пишем →
+          что пишем → как аккуратно. */}
+      {showBlock('templates') && cfg.messagePrompts && (
+        <SectionCard icon={<Sparkles size={18} />} title="AI / промпты">
+          <div className="space-y-3">
+            <AiGenerationNotice />
+            <GlobalPromptEditor />
+            <PromptCards
+            moduleKey={moduleKey}
+            labels={cfg.messagePrompts}
+            activeIndex={activePrompt}
+            onActiveChange={setActivePrompt}
+            onBodiesChange={setPromptBodies}
+          />
+          </div>
+        </SectionCard>
+      )}
+
+      {showBlock('templates') && cfg.reactionPalette && (
+        <SectionCard icon={<Heart size={18} />} title="Эмодзи">
+          <div className="flex flex-wrap gap-2">
+            {cfg.reactionPalette.map((e) => (
+              <button key={e} type="button" onClick={() => { const n = new Set(palette); n.has(e) ? n.delete(e) : n.add(e); setPalette(n) }} className={`grid h-11 w-11 place-items-center rounded-xl border text-xl ${palette.has(e) ? 'border-spark-500/50 bg-spark-500/12' : 'border-line bg-elevated'}`}>{e}</button>
+            ))}
+          </div>
+        </SectionCard>
+      )}
+
       {/* Правка 14.08: для ПРОГРЕВА блок «Защита» не показываем — он дублировал «Уровень
           прогрева» (уровень уже задаёт безопасный темп и множитель пауз). Базовая защита
           (FloodWait→пауза→карантин) работает на бэкенде и без UI-блока. QA §8, вариант а. */}
@@ -767,32 +796,6 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
         </div>
       )}
 
-      {/* §3.1 (UI-002): промпты / уникальные параметры модуля — ПОСЛЕ блока «Настройки» (Защита + настройки модуля). */}
-      {showBlock('templates') && cfg.messagePrompts && (
-        <SectionCard icon={<Sparkles size={18} />} title="AI / промпты">
-          <div className="space-y-3">
-            <AiGenerationNotice />
-            <GlobalPromptEditor />
-            <PromptCards
-            moduleKey={moduleKey}
-            labels={cfg.messagePrompts}
-            activeIndex={activePrompt}
-            onActiveChange={setActivePrompt}
-            onBodiesChange={setPromptBodies}
-          />
-          </div>
-        </SectionCard>
-      )}
-
-      {showBlock('templates') && cfg.reactionPalette && (
-        <SectionCard icon={<Heart size={18} />} title="Эмодзи">
-          <div className="flex flex-wrap gap-2">
-            {cfg.reactionPalette.map((e) => (
-              <button key={e} type="button" onClick={() => { const n = new Set(palette); n.has(e) ? n.delete(e) : n.add(e); setPalette(n) }} className={`grid h-11 w-11 place-items-center rounded-xl border text-xl ${palette.has(e) ? 'border-spark-500/50 bg-spark-500/12' : 'border-line bg-elevated'}`}>{e}</button>
-            ))}
-          </div>
-        </SectionCard>
-      )}
 
 
       {/* §3.5: «Уровень прогрева» — ОТДЕЛЬНЫЙ блок (как «Тайминги и задержки»), а не
