@@ -41,9 +41,10 @@ begin
     end if;
     pol := t || ': active profiles only';
     execute format('alter table public.%I enable row level security', t);
-    execute format('drop policy if exists %L on public.%I', pol, t);
+    -- Имя политики — ИДЕНТИФИКАТОR (%I, двойные кавычки), а не строковый литерал (%L).
+    execute format('drop policy if exists %I on public.%I', pol, t);
     execute format(
-      'create policy %L on public.%I for all to authenticated '
+      'create policy %I on public.%I for all to authenticated '
       'using (exists (select 1 from public.profiles p where p.id = auth.uid() and p.active = true)) '
       'with check (exists (select 1 from public.profiles p where p.id = auth.uid() and p.active = true))',
       pol, t
