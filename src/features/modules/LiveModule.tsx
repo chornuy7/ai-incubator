@@ -529,6 +529,9 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
               {g(0) === 1 && <textarea value={keywords} onChange={(e) => setKeywords(e.target.value)} rows={2} className="input resize-none text-sm" placeholder="Ключевые слова через ; или с новой строки — крипта; p2p обмен" />}
               {cfg.toggleGroups[2] && (
                 <div className="space-y-2">
+                  {/* Второй ряд того же вопроса «что комментировать» — про глубину ленты.
+                      Своего заголовка нет: два заголовка подряд читались как две разные
+                      настройки, хотя это одно решение (правка 18.08). */}
                   <ToggleGroup label={cfg.toggleGroups[2].label} options={cfg.toggleGroups[2].options} value={g(2)} onChange={(v) => setTg(2, v)} />
                   {/* «Последние N» — глубина ленты, которую вообще рассматриваем. */}
                   {g(2) === 1 && (

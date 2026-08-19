@@ -83,7 +83,9 @@ export function ToggleGroup({
 }) {
   return (
     <div>
-      <span className="label">{label}</span>
+      {/* Пустая подпись — легальный случай: группа идёт вторым рядом под общим
+          заголовком. Раньше рисовался пустой `label` и съедал вертикальный отступ. */}
+      {label ? <span className="label">{label}</span> : null}
       <div className="flex flex-wrap gap-2">
         {options.map((o, i) => (
           <button
