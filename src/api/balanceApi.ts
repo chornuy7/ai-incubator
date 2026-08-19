@@ -47,7 +47,6 @@ export interface Pricing {
   /** MR-149: ЕДИНАЯ цена действия = база + текст «по максимуму символов». Витрина берёт её. */
   actionsFull?: Record<string, number>
   /** MR-149: макс-токены текста, заложенные в цену действия. >0 = модуль генерит ИИ-текст. */
-  maxTextTokens?: Record<string, number>
   /** Средний расход токенов на действие по своей истории. 0 = считать не на чем. */
   avgTokens: Record<string, number>
   coinsPer1kTokens: number
@@ -62,7 +61,7 @@ export async function fetchPricing(): Promise<Pricing> {
   // Пробрасываем packs/currency — без них шапка всегда рисовала запасные пакеты,
   // игнорируя цены с сервера (и правки монет из админки).
   return {
-    items: r.items || [], actions: r.actions || {}, actionsFull: r.actionsFull || {}, maxTextTokens: r.maxTextTokens || {}, avgTokens: r.avgTokens || {},
+    items: r.items || [], actions: r.actions || {}, actionsFull: r.actionsFull || {}, avgTokens: r.avgTokens || {},
     coinsPer1kTokens: r.coinsPer1kTokens ?? 1, packs: r.packs, currency: r.currency,
     imageMultiplier: r.imageMultiplier,
   }

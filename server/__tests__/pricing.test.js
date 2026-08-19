@@ -5,8 +5,12 @@
  */
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { ACTION_PRICE, actionPrice, estimateCost, subscriptionCost, addedCost, modulePrice, MODULE_MONTH_PRICE, SETUPS } from '../pricing.js'
+import { ACTION_PRICE, actionPrice, subscriptionCost, addedCost, modulePrice, MODULE_MONTH_PRICE, SETUPS } from '../pricing.js'
 import { MODULE_DEFS } from '../modules/registry.js'
+
+// MR-149 (созвон 19.08): цена запуска = базовая цена × N (до тысячных). estimateCost удалён
+// как неиспользуемый; формулу проверяем напрямую по actionPrice.
+const cost = (m, n) => Math.round(actionPrice(m) * Math.max(0, Number(n) || 0) * 1000) / 1000
 
 // Сервисные (не кампанийные, не тарифицируемые) модули — цены у них нет намеренно.
 const FREE_SERVICE_MODULES = new Set(['spam-unblock'])
@@ -25,11 +29,11 @@ test('неизвестный модуль стоит 0 — новый не до�
 })
 
 test('оценка запуска: цена × количество, до сотых', () => {
-  assert.equal(estimateCost('neuro-commenting', 100), 5)
-  assert.equal(estimateCost('mass-react', 250), 2.5)
-  assert.equal(estimateCost('parsing-groups', 1000), 5)
-  assert.equal(estimateCost('neuro-commenting', 0), 0)
-  assert.equal(estimateCost('neuro-commenting', -5), 0, 'отрицательное количество не возвращает деньги')
+  assert.equal(cost('neuro-commenting', 100), 5)
+  assert.equal(cost('mass-react', 250), 2.5)
+  assert.equal(cost('parsing-groups', 1000), 5)
+  assert.equal(cost('neuro-commenting', 0), 0)
+  assert.equal(cost('neuro-commenting', -5), 0, 'отрицательное количество не возвращает деньги')
 })
 
 test('сбор данных дешевле боевого действия — иначе парсинг никто не запустит', () => {
@@ -42,9 +46,9 @@ test('сбор данных дешевле боевого действия — �
  * парсера списали 0.10 вместо 0.05 — округление до сотых удваивало ставку 0.005.
  */
 test('мелкие цены не округляются вверх', () => {
-  assert.equal(estimateCost('parsing-groups', 1), 0.005, 'одна строка не должна стоить копейку')
-  assert.equal(estimateCost('parsing-groups', 10), 0.05)
-  assert.equal(estimateCost('parsing-groups', 3), 0.015)
+  assert.equal(cost('parsing-groups', 1), 0.005, 'одна строка не должна стоить копейку')
+  assert.equal(cost('parsing-groups', 10), 0.05)
+  assert.equal(cost('parsing-groups', 3), 0.015)
 })
 
 

@@ -51,40 +51,9 @@ export function actionPrice(moduleKey) {
   return ACTION_PRICE[moduleKey] ?? 0
 }
 
-/**
- * MR-149 (созвон 12.08 + 17.08): оплата за отправку и за генерацию текста — ОДНА цена
- * за действие, посчитанная «как за МАКСИМУМ символов», а не по факту токенов.
- *
- * Лимит Telegram: 4096 символов (текст) / 1024 (текст + картинка). ~4 символа на токен.
- * Стоимость текста считаем в коде из этого максимума и админского курса `coinsPer1kTokens`
- * (его заказчик и так правит в админке) — чтобы НЕ поднимать цену каждого модуля вручную,
- * и чтобы за текст всегда списывалось предсказуемо (как за макс), а не по факту.
- */
-export const MAX_TEXT_CHARS = 4096
-export const CHARS_PER_TOKEN = 4
-export const MAX_TEXT_TOKENS = Math.ceil(MAX_TEXT_CHARS / CHARS_PER_TOKEN) // 1024
-/** Модули, где действие генерит ИИ-текст (к цене прибавляется макс-текст). */
-export const AI_TEXT_MODULES = new Set(['neuro-commenting', 'neuro-chatting', 'neuro-dialogs', 'mailing'])
-
-/** Сколько токенов «по максимуму» закладываем в цену действия. Не-ИИ модуль — 0. */
-export function maxTextTokens(moduleKey) {
-  return AI_TEXT_MODULES.has(moduleKey) ? MAX_TEXT_TOKENS : 0
-}
-
-/** Стоимость макс-текста за одно действие (монет), по админскому курсу. */
-export function maxTextCoins(moduleKey, coinsPer1kTokens = 0) {
-  return Math.round((maxTextTokens(moduleKey) / 1000) * (Number(coinsPer1kTokens) || 0) * 1000) / 1000
-}
-
-/**
- * ЕДИНАЯ цена одного действия: цена «за действие» (её задаёт админ) + текст по максимуму
- * символов (считаем в коде). `base` — цена из админки (eff.actionMap); без неё берём код-цену.
- * MR-149: админ выставляет ТОЛЬКО «за действие», всё остальное код добавляет сам.
- */
-export function fullActionPrice(moduleKey, coinsPer1kTokens = 0, base) {
-  const b = base != null ? Number(base) || 0 : actionPrice(moduleKey)
-  return Math.round((b + maxTextCoins(moduleKey, coinsPer1kTokens)) * 1000) / 1000
-}
+// MR-149 (созвон 19.08): расчёт «текст по максимуму символов» (MAX_TEXT_*, maxTextTokens,
+// maxTextCoins, fullActionPrice) УДАЛЁН. Цена действия = базовая цена из БД, она уже включает
+// текст, картинку, маржу и все расходы. Никаких надстроек за символы/токены поверх базы.
 
 /**
  * §5.4: ПОДПИСКА НА МОДУЛЬ — сколько стоит держать модуль открытым, в месяц.
@@ -249,13 +218,3 @@ export function subscriptionCost(moduleKeys = [], customBundles = [], priceMap =
   return { sum: best.sum, full, setup: best.setup, discount: best.discount, giftTokens }
 }
 
-/**
- * Во сколько обойдётся запуск: цена действия × сколько действий планируется.
- * Используется тестами прайса как эталон формулы; интерфейс («Спишется ≈ N ⚡»)
- * считает по ней же, но с ценами, полученными с сервера.
- * @param {string} moduleKey @param {number} actions
- */
-export function estimateCost(moduleKey, actions = 0) {
-  const n = Math.max(0, Number(actions) || 0)
-  return Math.round(actionPrice(moduleKey) * n * 1000) / 1000
-}

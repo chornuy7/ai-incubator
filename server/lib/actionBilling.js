@@ -6,28 +6,26 @@
  * Вторая — это деньги: правило «на нуле задача встаёт» должно быть покрыто тестом,
  * а не проверяться запуском реальных действий в Telegram.
  */
-import { fullActionPrice } from '../pricing.js'
-
 /**
- * Эффективные цены для расчёта единой цены действия (MR-149): админский курс токен→монета
- * и цена «за действие» из админки (eff.actionMap). `deps.coinsPer1k`/`deps.actionMap` —
- * подмена для тестов; иначе берём из priceStore.
- * @returns {Promise<{per1k:number, actionMap:Object|null}>}
+ * Цена «за действие» — берётся ТОЛЬКО из БД (eff.actionMap, источник — админка/price_overrides).
+ * `deps.actionMap` — подмена для тестов; иначе из priceStore.
+ * @returns {Promise<{actionMap:Object|null}>}
  */
 async function resolvePricing(deps = {}) {
-  if (deps.coinsPer1k != null || deps.actionMap != null) {
-    return { per1k: Number(deps.coinsPer1k) || 0, actionMap: deps.actionMap || null }
-  }
+  if (deps.actionMap != null) return { actionMap: deps.actionMap || null }
   try {
     const { effectivePrices } = await import('../priceStore.js')
     const e = await effectivePrices()
-    return { per1k: Number(e.coinsPer1kTokens) || 0, actionMap: e.actionMap || null }
-  } catch { return { per1k: 0, actionMap: null } }
+    return { actionMap: e.actionMap || null }
+  } catch { return { actionMap: null } }
 }
-/** Единая цена действия по эффективным ценам (админ-база + макс-текст). */
-function priceFor(moduleKey, { per1k, actionMap }) {
-  const base = actionMap && actionMap[moduleKey] != null ? actionMap[moduleKey] : undefined
-  return fullActionPrice(moduleKey, per1k, base)
+/**
+ * MR-149 (созвон 19.08): цена действия = БАЗОВАЯ цена из БД. Точка. Без надстройки за текст
+ * (расчёт «база + текст по максимуму» удалён — база уже включает текст, картинку, маржу).
+ * Неизвестный модуль — 0 (не списываем по чужой ставке).
+ */
+function priceFor(moduleKey, { actionMap }) {
+  return actionMap && actionMap[moduleKey] != null ? (Number(actionMap[moduleKey]) || 0) : 0
 }
 
 /**
@@ -51,8 +49,8 @@ function priceFor(moduleKey, { per1k, actionMap }) {
 export async function chargeActions(task, store, actions = 1, deps = {}) {
   try {
     const n = Math.max(0, Number(actions) || 0)
-    // MR-149: цена действия ЕДИНАЯ = фикс-действие + текст «по максимуму символов»,
-    // по админскому курсу coinsPer1kTokens (токены сверх не списываются — tokenLedger журнал).
+    // MR-149 (созвон 19.08): цена действия = базовая цена из БД × N. Текст/картинка уже в
+    // базе — отдельно не считаем (токены ИИ тоже не списываются, tokenLedger — только журнал).
     const pricing = await resolvePricing(deps)
     // До тысячных: цена строки парсера — 0.005, и округление до сотых удваивало её.
     const cost = Math.round(priceFor(task?.moduleKey, pricing) * n * 1000) / 1000

@@ -30,12 +30,12 @@ test('списывает по прайсу модуля и не трогает �
   assert.equal(store.logs.length, 0)
 })
 
-test('MR-149: цена действия ИИ-модуля включает текст «по максимуму» (по курсу coinsPer1k)', async () => {
-  const w = wallet(10, 1) // курс 1 монета за 1000 токенов
+test('MR-149 (19.08): цена действия = базовая цена из БД, БЕЗ надстройки за текст', async () => {
+  const w = wallet(10)
   const task = { moduleKey: 'neuro-commenting', userId: 'u1' }
-  // full = 0.05 (действие) + 1024/1000 × 1 (макс-текст 4096 симв ≈ 1024 токена) = 1.074
+  // база neuro-commenting = 0.05; расчёт «текст по максимуму» удалён — база уже включает всё.
   await chargeActions(task, storeMock(), 1, w)
-  assert.equal(w.coins(), 8.926, '10 − 1.074 = списана единая цена действие+текст')
+  assert.equal(w.coins(), 9.95, '10 − 0.05 = списана только базовая цена действия')
 })
 
 test('MR-149: у не-ИИ модуля (парсер) текст в цену не добавляется', async () => {
@@ -44,11 +44,11 @@ test('MR-149: у не-ИИ модуля (парсер) текст в цену н
   assert.equal(w.coins(), 9.99)
 })
 
-test('MR-149: база «за действие» берётся из админки (actionMap), а не из кода', async () => {
-  const w = wallet(10, 1)
-  const deps = { ...w, actionMap: { 'neuro-commenting': 0.1 } } // админ поднял цену действия
+test('MR-149 (19.08): база «за действие» берётся из БД (actionMap), а не из кода', async () => {
+  const w = wallet(10)
+  const deps = { ...w, actionMap: { 'neuro-commenting': 0.1 } } // цена из БД поднята до 0.1
   await chargeActions({ moduleKey: 'neuro-commenting', userId: 'u1' }, storeMock(), 1, deps)
-  assert.equal(w.coins(), 8.876, '10 − (0.1 админ + 1.024 макс-текст) = учтена цена из админки')
+  assert.equal(w.coins(), 9.9, '10 − 0.1 = списана цена из БД, без надстройки за текст')
 })
 
 test('на нуле ставит задачу на ПАУЗУ (не стоп) и пишет причину в логи', async () => {

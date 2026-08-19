@@ -1094,10 +1094,10 @@ app.post('/api/accounts/activity', async (req, res) => {
  */
 app.get('/api/pricing', async (_req, res) => {
   try {
-    const { CURRENCY, maxTextTokens, fullActionPrice } = await import('./pricing.js')
+    const { CURRENCY } = await import('./pricing.js')
     const { effectivePrices } = await import('./priceStore.js')
     const { tokenSummary } = await import('./tokenLedger.js')
-    // Цены действий и пакеты — эффективные (код + правки админки).
+    // Цены действий и пакеты — эффективные (из БД, правки админки).
     const eff = await effectivePrices()
     // Средний расход токенов на действие — из СВОЕЙ истории, а не из константы:
     // длина промпта и ответа у каждого клиента своя, и чужое среднее врало бы.
@@ -1107,21 +1107,15 @@ app.get('/api/pricing', async (_req, res) => {
       const sum = await tokenSummary({ module: key }).catch(() => null)
       avgTokens[key] = sum?.calls ? Math.round(sum.tokens / sum.calls) : 0
     }
-    // MR-149: ЕДИНАЯ цена действия = фикс-действие + текст «по максимуму символов»
-    // (по курсу coinsPer1kTokens). Витрина показывает эту цену, за токены сверх не списываем.
-    const maxTokensMap = {}
-    const actionsFull = {}
-    for (const key of Object.keys(eff.actionMap)) {
-      maxTokensMap[key] = maxTextTokens(key)
-      // База «за действие» — из админки (eff.actionMap), текст код добавляет сам.
-      actionsFull[key] = fullActionPrice(key, eff.coinsPer1kTokens, eff.actionMap[key])
-    }
+    // MR-149 (созвон 19.08): цена действия = БАЗОВАЯ цена из БД. Без надстройки за текст.
+    // actionsFull оставлен для совместимости фронта, но равен базовой цене (= actions).
+    const actionsFull = { ...eff.actionMap }
     const items = eff.modules
       .filter((m) => m.action > 0)
       .map((m) => ({ key: m.key, title: m.title, price: m.action, avgTokens: avgTokens[m.key] || 0 }))
       .sort((a, b) => b.price - a.price || a.title.localeCompare(b.title, 'ru'))
     res.json({
-      ok: true, items, actions: eff.actionMap, actionsFull, maxTextTokens: maxTokensMap, avgTokens,
+      ok: true, items, actions: eff.actionMap, actionsFull, avgTokens,
       coinsPer1kTokens: eff.coinsPer1kTokens, packs: eff.coinPacks, currency: CURRENCY,
       tokenUsd: eff.tokenUsd, tokenUsdAuto: eff.tokenUsdAuto, tokenUsdComputed: eff.tokenUsdComputed, tokenUsdModel: eff.tokenUsdModel,
       imageMultiplier: eff.imageMultiplier,
