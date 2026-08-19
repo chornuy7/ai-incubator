@@ -527,10 +527,6 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
             <div className="rounded-2xl border border-line bg-elevated/40 p-4 space-y-4">
               <ToggleGroup label={cfg.toggleGroups[0].label} options={cfg.toggleGroups[0].options} value={g(0)} onChange={(v) => setTg(0, v)} />
               {g(0) === 1 && <textarea value={keywords} onChange={(e) => setKeywords(e.target.value)} rows={2} className="input resize-none text-sm" placeholder="Ключевые слова через ; или с новой строки — крипта; p2p обмен" />}
-              <div>
-                <div className="mb-1 flex justify-between text-sm text-muted"><span>{cfg.probabilitySlider?.label ?? 'Вероятность'}</span><span className="text-spark-300">{probability}%</span></div>
-                <input type="range" min={0} max={100} value={probability} onChange={(e) => setProbability(Number(e.target.value))} className="w-full accent-spark-500" />
-              </div>
               {cfg.toggleGroups[2] && (
                 <div className="space-y-2">
                   <ToggleGroup label={cfg.toggleGroups[2].label} options={cfg.toggleGroups[2].options} value={g(2)} onChange={(v) => setTg(2, v)} />
@@ -543,13 +539,18 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
                     <span>
                       <span className="text-xs font-semibold text-fg">Брать один случайный из подходящих</span>
                       <span className="mt-0.5 block text-[11px] text-white/45">
-                        Снимите — прокомментирует ВСЕ подходящие посты за заход. Это отдельный вопрос от того,
-                        какие посты подходят: раньше «случайный» стоял в одном ряду с «по ключевым словам».
+                        Снимите — прокомментирует ВСЕ подходящие посты за заход.
                       </span>
                     </span>
                   </label>
                 </div>
               )}
+              {/* Вероятность — не про ВЫБОР поста, а про то, комментировать ли выбранный.
+                  Стояла между двумя группами отбора и разрывала их (правка 18.08). */}
+              <div>
+                <div className="mb-1 flex justify-between text-sm text-muted"><span>{cfg.probabilitySlider?.label ?? 'Вероятность'}</span><span className="text-spark-300">{probability}%</span></div>
+                <input type="range" min={0} max={100} value={probability} onChange={(e) => setProbability(Number(e.target.value))} className="w-full accent-spark-500" />
+              </div>
             </div>
           ) : isParser ? (
             <div className="space-y-3">
