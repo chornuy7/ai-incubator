@@ -203,14 +203,13 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
     channels: targets,
     keywords: keywords.split(/[\n;]+/).map((k) => k.trim()).filter(Boolean),
     // Один выбор в форме раскладывается в два поля воркера:
-    //   0 «Только последний»   → любые посты (2) + глубина «последний» (0)
-    //   1 «Последние N»        → любые посты (2) + глубина N (3) + lastPostsCount
-    //   2 «Все доступные»      → любые посты (2) + без ограничения глубины (2)
-    //   3 «По ключевым словам» → фильтр по словам (1) по всей доступной ленте (2)
-    commentMode: cfg.toggleGroups ? (g(0) === 3 ? 1 : 2) : g(0),
+    //   0 «Только последний»   → любые посты (2) + оставить самый свежий (0)
+    //   1 «Последние N»        → любые посты (2) + без доп. отсева (2); N — это postWindow
+    //   2 «По ключевым словам» → фильтр по словам (1) в тех же N постах (2)
+    commentMode: cfg.toggleGroups ? (g(0) === 2 ? 1 : 2) : g(0),
     pickOne,
     workMode: g(1),
-    postFilter: cfg.toggleGroups ? [0, 3, 2, 2][g(0)] ?? 0 : g(2),
+    postFilter: cfg.toggleGroups ? [0, 2, 2][g(0)] ?? 0 : g(2),
     probability,
     maxActions,
     maxComments: maxActions,
@@ -343,7 +342,7 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
     if (s.pickOne !== undefined) setPickOne(s.pickOne)
     // Обратная раскладка: в шаблоне лежат значения воркера, в форме — один индекс.
     if (cfg.toggleGroups && (s.commentMode !== undefined || s.postFilter !== undefined)) {
-      const pos = s.commentMode === 1 ? 3 : ({ 0: 0, 3: 1, 2: 2 }[s.postFilter as 0 | 2 | 3] ?? 0)
+      const pos = s.commentMode === 1 ? 2 : (s.postFilter === 0 ? 0 : 1)
       setToggles((t) => ({ ...t, 0: pos }))
       if (s.commentMode === 0) setPickOne(true)
     }
@@ -523,35 +522,14 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
             </div>
           ) : cfg.toggleGroups ? (
             <div className="rounded-2xl border border-line bg-elevated/40 p-4 space-y-4">
-              {/* ОДИН список: варианты взаимоисключающие, поэтому и выбор один. */}
-              <ToggleGroup label={cfg.toggleGroups[0].label} options={cfg.toggleGroups[0].options} value={g(0)} onChange={(v) => setTg(0, v)} />
-              {g(0) === 1 && (
-                <NumberField label="Сколько последних постов" value={lastPostsCount} onChange={setLastPostsCount} min={1} max={50} />
+              {/* Отбор постов («Что комментировать») переехал в «Параметры и лимиты» —
+                  вплотную к полю «сколько последних постов», от которого он зависит.
+                  Две половины одной настройки стояли в разных карточках и повторяли
+                  друг друга (правка 18.08). У остальных модулей группа рисуется здесь. */}
+              {moduleKey !== 'neuro-commenting' && (
+                <ToggleGroup label={cfg.toggleGroups[0].label} options={cfg.toggleGroups[0].options} value={g(0)} onChange={(v) => setTg(0, v)} />
               )}
-              {g(0) === 3 && (
-                <div className="space-y-1">
-                  <textarea value={keywords} onChange={(e) => setKeywords(e.target.value)} rows={2} className="input resize-none text-sm" placeholder="Ключевые слова через ; или с новой строки — крипта; p2p обмен" />
-                  <p className="text-xs text-muted">Ищем совпадения по всем доступным постам канала, а не только в последнем.</p>
-                </div>
-              )}
-              {/* Галочка нужна только там, где подходящих постов может быть несколько:
-                  при «Только последний» кандидат один, и выбирать не из чего.
-                  Условие по модулю — у нейрочаттинга свой набор тумблеров. */}
-              {moduleKey === 'neuro-commenting' && g(0) !== 0 && (
-                <div className="space-y-2">
-                  <label className="flex cursor-pointer items-start gap-2 rounded-xl border border-line/60 bg-elevated/40 px-3 py-2">
-                    <input type="checkbox" checked={pickOne} onChange={(e) => setPickOne(e.target.checked)} className="mt-0.5 h-4 w-4 accent-spark-500" />
-                    <span>
-                      <span className="text-xs font-semibold text-fg">Брать один случайный из подходящих</span>
-                      <span className="mt-0.5 block text-[11px] text-white/45">
-                        Снимите — прокомментирует ВСЕ подходящие посты за заход.
-                      </span>
-                    </span>
-                  </label>
-                </div>
-              )}
-              {/* Вероятность — не про ВЫБОР поста, а про то, комментировать ли выбранный.
-                  Стояла между двумя группами отбора и разрывала их (правка 18.08). */}
+              {/* Вероятность — про то, комментировать ли уже выбранный пост. */}
               <div>
                 <div className="mb-1 flex justify-between text-sm text-muted"><span>{cfg.probabilitySlider?.label ?? 'Вероятность'}</span><span className="text-spark-300">{probability}%</span></div>
                 <input type="range" min={0} max={100} value={probability} onChange={(e) => setProbability(Number(e.target.value))} className="w-full accent-spark-500" />
@@ -718,8 +696,27 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
         )}
         {showBlock('settings') && moduleKey === 'neuro-commenting' && !running && (
           <div className="mb-3">
+            {/* Один вопрос — один блок: ЧТО комментировать и из скольких последних постов. */}
+            <ToggleGroup label="Что комментировать" options={cfg.toggleGroups?.[0].options ?? []} value={g(0)} onChange={(v) => setTg(0, v)} />
+            {g(0) === 2 && (
+              <div className="mt-2 space-y-1">
+                <textarea value={keywords} onChange={(e) => setKeywords(e.target.value)} rows={2} className="input resize-none text-sm" placeholder="Ключевые слова через ; или с новой строки — крипта; p2p обмен" />
+                <p className="text-xs text-white/40">Ищем совпадения среди последних постов (число ниже), а не по всей истории канала.</p>
+              </div>
+            )}
+            {g(0) !== 0 && (
+              <label className="mt-2 flex cursor-pointer items-start gap-2 text-xs text-white/60">
+                <input type="checkbox" checked={pickOne} onChange={(e) => setPickOne(e.target.checked)} className="mt-0.5 h-4 w-4 rounded border-line accent-spark-500" />
+                <span>Брать один случайный из подходящих <span className="text-white/30">(снимите — прокомментирует все подходящие за заход)</span></span>
+              </label>
+            )}
+            <div className="mt-3" />
             <NumberField label="Сколько последних постов обрабатывать" value={postWindow} onChange={(n) => setPostWindow(Math.max(1, Math.min(50, n)))} min={1} max={50} suffix="1–50" />
-            <div className="mt-1 text-xs text-white/40">Сколько последних постов обрабатывать, не всю историю</div>
+            <div className="mt-1 text-xs text-white/40">
+              {g(0) === 0
+                ? 'Читаются для контекста, комментируется только самый свежий из них.'
+                : 'Сколько последних постов обрабатывать, не всю историю'}
+            </div>
             <div className="mt-3 mb-1 text-xs text-white/50">Стоп-слова <span className="text-white/30">(пропускать посты с этими словами; несколько — через точку с запятой «;»)</span></div>
             <input value={stopWordsText} onChange={(e) => setStopWordsText(e.target.value)} className="input h-9" placeholder="политика; скам; крипта…" />
             {/* §3.2 (UI-006): «Семантический фильтр к цели» / «Релевантность поста к цели» удалены по ТЗ 06.08. */}
