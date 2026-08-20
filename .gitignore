@@ -14,3 +14,7 @@ backups/
 
 # Одноразовые debug/скрин-скрипты (Claude), не коммитим
 scripts/_*.mjs
+
+# Локальные настройки Claude Code и утилиты с сервисными ключами (см. шапку файла)
+.claude/settings.local.json
+scripts/set-supabase-pass.mjs
