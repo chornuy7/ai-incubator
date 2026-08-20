@@ -37,7 +37,11 @@ export async function listSetups() {
   if (!db) return SETUPS // код-фолбек: дев/тесты
   if (_cache && Date.now() - _cache.ts < TTL) return _cache.data
   try {
-    const { data: rows } = await db.from('setups').select('*').order('sort', { ascending: true })
+    const { data: rows, error } = await db.from('setups').select('*').order('sort', { ascending: true })
+    // supabase-js НЕ бросает на отсутствующую таблицу/ошибку — возвращает { error }. Без этой
+    // проверки до применения миграции витрина осталась бы без сетапов, а списание — без скидок
+    // (клиента зарядили бы полную цену). Поэтому при ошибке — код-дефолт SETUPS.
+    if (error) return SETUPS
     const { data: mods } = await db.from('setup_modules').select('setup_id, module_key')
     const byId = {}
     for (const m of mods || []) (byId[m.setup_id] ||= []).push(m.module_key)
