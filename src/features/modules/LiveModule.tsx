@@ -269,9 +269,15 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
   }), [selected, targets, postUrls, toggles, probability, maxActions, minActions, maxPerAcc, minPerAcc, minWords, durationMinutes, aiProtect, protLevel, notifyStatus, activePrompt, promptBodies, delayPreset, palette, delays, keywords, isGgr, accounts, cfg, lookModeIdx, lookPostsCount, goalId, campaignId, campaigns, warmLevel, postWindow, stopWordsText, analyzeImages, moduleKey, typeWeights, weightSum])
 
   const hasPostTargets = postUrls.length > 0
+  // Многомодульность (20.08): аккаунт МОЖНО брать, пока он работает в другом модуле —
+  // мешает только вторая задача ТОГО ЖЕ модуля (она дублировала бы работу).
   const busySelectedCount = useMemo(
-    () => [...selected].filter((id) => accounts.some((a) => a.id === id && a.busyIn)).length,
-    [selected, accounts],
+    () => [...selected].filter((id) => accounts.some((a) => {
+      if (a.id !== id || !a.busyIn) return false
+      const mods = a.busyIn.modules ?? [{ moduleKey: a.busyIn.moduleKey }]
+      return mods.some((m) => m.moduleKey === moduleKey)
+    })).length,
+    [selected, accounts, moduleKey],
   )
   // #5: сумма процентов типов не должна превышать 100 — иначе запуск блокируется.
   const typesOver100 = moduleKey === 'neuro-commenting' && weightSum > 100
@@ -292,7 +298,7 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
     const m: string[] = []
     if (isGgr) { if (!selected.size) m.push('выберите аккаунты для проверки'); return m }
     if (!selected.size) m.push('выберите аккаунты')
-    else if (busySelectedCount) m.push(`освободите ${busySelectedCount} занятых аккаунта`)
+    else if (busySelectedCount) m.push(`${busySelectedCount} аккаунт(а) уже работают в этом же модуле — остановите ту задачу или выберите другие`)
     if (needsTargets && !targets.length && !hasPostTargets) m.push('добавьте цель — группу или ссылку на пост')
     return m
   }, [isGgr, selected, busySelectedCount, needsTargets, targets, hasPostTargets])

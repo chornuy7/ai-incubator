@@ -85,6 +85,7 @@ import { describeIncomingImage, messageHasPhoto } from '../lib/visionDescribe.js
 import { effectivePrices } from '../priceStore.js'
 import { canWorkNow, noteAction } from '../accountActivity.js'
 import { humanPace } from '../lib/antiCluster.js'
+import { beginAccountWork, endAccountWork } from '../lib/accountBusy.js'
 import { getGoal, isGoalExpired } from '../goals.js'
 
 /**
@@ -503,6 +504,17 @@ export async function runNeuroCommenting(task, store) {
         continue
       }
       if (await limitReached(accountId, 'comments')) { idleLap += 1; lastSkip = 'суточный лимит'; await store.appendLog(task, 'info', 'Суточный лимит комментариев достигнут (§6)', meta.name); continue }
+      // Многомодульность (20.08): аккаунт может работать в нескольких модулях, но не
+      // двумя действиями одновременно — занятый другим модулем пропускаем, как при
+      // усталости; сюда же пауза при переключении модулей.
+      const busyGate = beginAccountWork(accountId, task.moduleKey, task.id)
+      if (!busyGate.ok) {
+        idleLap += 1
+        lastSkip = busyGate.reason
+        if (busyGate.until) idleUntil = idleUntil ? Math.min(idleUntil, busyGate.until) : busyGate.until
+        await store.appendLog(task, 'info', `Пропуск: ${busyGate.reason}`, meta.name)
+        continue
+      }
       idleLap = 0
       lastSkip = ''
 
@@ -648,6 +660,7 @@ export async function runNeuroCommenting(task, store) {
         await disconnectAccount(client, accountId)
       } catch (err) {
         if (client) await disconnectAccount(client, accountId)
+        else endAccountWork(accountId, task.id) // подключение сорвалось — слот занятости не держим
         if (!(await handleFlood(task, accountId, store, err, s, meta.name))) {
           await store.appendLog(task, 'error', mapTelegramError(err), meta.name)
         }
@@ -757,6 +770,17 @@ export async function runNeuroChatting(task, store) {
         continue
       }
       if (await limitReached(accountId, 'comments')) { idleLap += 1; lastSkip = 'суточный лимит'; await store.appendLog(task, 'info', 'Суточный лимит сообщений достигнут (§6)', meta.name); continue }
+      // Многомодульность (20.08): аккаунт может работать в нескольких модулях, но не
+      // двумя действиями одновременно — занятый другим модулем пропускаем, как при
+      // усталости; сюда же пауза при переключении модулей.
+      const busyGate = beginAccountWork(accountId, task.moduleKey, task.id)
+      if (!busyGate.ok) {
+        idleLap += 1
+        lastSkip = busyGate.reason
+        if (busyGate.until) idleUntil = idleUntil ? Math.min(idleUntil, busyGate.until) : busyGate.until
+        await store.appendLog(task, 'info', `Пропуск: ${busyGate.reason}`, meta.name)
+        continue
+      }
       idleLap = 0
       lastSkip = ''
       let client
@@ -826,6 +850,7 @@ export async function runNeuroChatting(task, store) {
         await disconnectAccount(client, accountId)
       } catch (err) {
         if (client) await disconnectAccount(client, accountId)
+        else endAccountWork(accountId, task.id) // подключение сорвалось — слот занятости не держим
         if (!(await handleFlood(task, accountId, store, err, s, meta.name))) {
           await store.appendLog(task, 'error', mapTelegramError(err), meta.name)
         }
@@ -936,6 +961,17 @@ export async function runMassReact(task, store) {
         continue
       }
       if (await limitReached(accountId, 'reactions')) { idleLap += 1; lastSkip = 'суточный лимит'; await store.appendLog(task, 'info', 'Суточный лимит реакций достигнут (§6)', meta.name); continue }
+      // Многомодульность (20.08): аккаунт может работать в нескольких модулях, но не
+      // двумя действиями одновременно — занятый другим модулем пропускаем, как при
+      // усталости; сюда же пауза при переключении модулей.
+      const busyGate = beginAccountWork(accountId, task.moduleKey, task.id)
+      if (!busyGate.ok) {
+        idleLap += 1
+        lastSkip = busyGate.reason
+        if (busyGate.until) idleUntil = idleUntil ? Math.min(idleUntil, busyGate.until) : busyGate.until
+        await store.appendLog(task, 'info', `Пропуск: ${busyGate.reason}`, meta.name)
+        continue
+      }
       idleLap = 0
       lastSkip = ''
       let client
@@ -1021,6 +1057,7 @@ export async function runMassReact(task, store) {
         await disconnectAccount(client, accountId)
       } catch (err) {
         if (client) await disconnectAccount(client, accountId)
+        else endAccountWork(accountId, task.id) // подключение сорвалось — слот занятости не держим
         if (!(await handleFlood(task, accountId, store, err, s, meta.name))) {
           await store.appendLog(task, 'error', mapTelegramError(err), meta.name)
         }
@@ -1109,6 +1146,17 @@ export async function runMassLooking(task, store) {
         await store.appendLog(task, 'info', `Пропуск: ${human.reason}`, meta.name)
         continue
       }
+      // Многомодульность (20.08): аккаунт может работать в нескольких модулях, но не
+      // двумя действиями одновременно — занятый другим модулем пропускаем, как при
+      // усталости; сюда же пауза при переключении модулей.
+      const busyGate = beginAccountWork(accountId, task.moduleKey, task.id)
+      if (!busyGate.ok) {
+        idleLap += 1
+        lastSkip = busyGate.reason
+        if (busyGate.until) idleUntil = idleUntil ? Math.min(idleUntil, busyGate.until) : busyGate.until
+        await store.appendLog(task, 'info', `Пропуск: ${busyGate.reason}`, meta.name)
+        continue
+      }
       idleLap = 0
       lastSkip = ''
       let client
@@ -1151,6 +1199,7 @@ export async function runMassLooking(task, store) {
         await disconnectAccount(client, accountId)
       } catch (err) {
         if (client) await disconnectAccount(client, accountId)
+        else endAccountWork(accountId, task.id) // подключение сорвалось — слот занятости не держим
         if (!(await handleFlood(task, accountId, store, err, s, meta.name))) {
           await store.appendLog(task, 'error', mapTelegramError(err), meta.name)
         }
@@ -1215,6 +1264,14 @@ export async function runWarming(task, store) {
       // Аккаунт уже исключён из прогона (см. счётчик ошибок ниже) — не долбимся в него
       // снова. Когда исключены все, сработает проверка idleLap выше и задача завершится.
       if (burned.has(accountId)) { idleLap += 1; continue }
+      // Многомодульность (20.08): прогрев не смотрит усталость, но «два действия в одну
+      // секунду» не делает и он — занятый другим модулем аккаунт пропускаем.
+      const busyGate = beginAccountWork(accountId, task.moduleKey, task.id)
+      if (!busyGate.ok) {
+        idleLap += 1
+        await store.appendLog(task, 'info', `Пропуск: ${busyGate.reason}`, meta.name)
+        continue
+      }
       idleLap = 0
       let client
       try {
@@ -1270,6 +1327,7 @@ export async function runWarming(task, store) {
         await disconnectAccount(client, accountId)
       } catch (err) {
         if (client) await disconnectAccount(client, accountId)
+        else endAccountWork(accountId, task.id) // подключение сорвалось — слот занятости не держим
         if (!(await handleFlood(task, accountId, store, err, s, meta.name))) {
           await store.appendLog(task, 'warning', mapTelegramError(err), meta.name)
         }
@@ -1722,6 +1780,7 @@ export async function runNeuroDialogs(task, store) {
         await disconnectAccount(client, accountId)
       } catch (err) {
         if (client) await disconnectAccount(client, accountId)
+        else endAccountWork(accountId, task.id) // подключение сорвалось — слот занятости не держим
         if (!(await handleFlood(task, accountId, store, err, s, meta.name))) {
           await store.appendLog(task, 'error', mapTelegramError(err), meta.name)
         }
@@ -2023,6 +2082,7 @@ export async function runChannelParser(task, store, kind) {
         await disconnectAccount(client, accountId)
       } catch (err) {
         if (client) await disconnectAccount(client, accountId)
+        else endAccountWork(accountId, task.id) // подключение сорвалось — слот занятости не держим
         if (!(await handleFlood(task, accountId, store, err, s, meta.name))) {
           await store.appendLog(task, 'error', `«${q}»: ${mapTelegramError(err)}`, meta.name)
         }
@@ -2346,6 +2406,7 @@ export async function runParticipantsParser(task, store, kind) {
         await disconnectAccount(client, accountId)
       } catch (err) {
         if (client) await disconnectAccount(client, accountId)
+        else endAccountWork(accountId, task.id) // подключение сорвалось — слот занятости не держим
         const flooded = await handleFlood(task, accountId, store, err, s, meta.name)
         if (!flooded) {
           await store.appendLog(task, 'error', `${src}: ${mapTelegramError(err)}`, meta.name)
@@ -2702,6 +2763,7 @@ export async function runMailing(task, store) {
         await disconnectAccount(client, account)
       } catch (err) {
         if (client) await disconnectAccount(client, account)
+        else endAccountWork(account, task.id) // подключение сорвалось — слот занятости не держим
         const reason = mapTelegramError(err)
         if (!(await handleFlood(task, account, store, err, s, meta.name))) {
           await store.appendLog(task, 'error', reason, meta.name)
@@ -2804,6 +2866,7 @@ export async function runAutoPosting(task, store) {
         if (await breakableDelay(pickDelay(s.delays?.action?.[0] ?? 60, s.delays?.action?.[1] ?? 180, mul) * 1000, store, task)) break
       } catch (err) {
         if (client) await disconnectAccount(client, accountId)
+        else endAccountWork(accountId, task.id) // подключение сорвалось — слот занятости не держим
         if (!(await handleFlood(task, accountId, store, err, s, meta.name))) {
           await store.appendLog(task, 'error', `${ch}: ${postErrorHint(err)}`, meta.name)
         }

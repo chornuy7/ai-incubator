@@ -55,7 +55,11 @@ export interface TgAccount {
   /** MR: результат последней явной проверки — true жив, false не ответил, null не проверяли. */
   lastCheckOk?: boolean | null
   /** Аккаунт занят задачей другого (или этого) модуля. taskStatus — running/paused/… */
-  busyIn?: { moduleKey: string; taskId: string; moduleLabel: string; taskStatus?: string }
+  busyIn?: {
+    moduleKey: string; taskId: string; moduleLabel: string; taskStatus?: string
+    /** Многомодульность (20.08): все модули, где аккаунт занят (busyIn — первый из них). */
+    modules?: { moduleKey: string; moduleLabel: string }[]
+  }
 }
 
 export type TaskStatus = 'running' | 'paused' | 'done' | 'error' | 'queued'

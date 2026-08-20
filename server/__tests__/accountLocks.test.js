@@ -5,24 +5,36 @@ import {
   forceReleaseAccount, assertAccountAvailable, markTaskLive, markTaskDone, isTaskLive,
 } from '../lib/accountLocks.js'
 
-test('tryAcquireLocks: захват свободных + конфликт с чужой задачей', () => {
+test('tryAcquireLocks: многомодульность — конфликт только внутри одного модуля (20.08)', () => {
   const acc = ['lk_a1', 'lk_a2']
   assert.equal(tryAcquireLocks(acc, 'mass-react', 'task_1'), null) // свободны → ок
   assert.equal(getAccountLock('lk_a1').taskId, 'task_1')
-  // другая задача на те же аккаунты → строка-ошибка
-  const err = tryAcquireLocks(['lk_a1'], 'warming', 'task_2')
-  assert.ok(typeof err === 'string' && /заняты/i.test(err))
-  // та же задача повторно → ок (идемпотентно)
+  // ДРУГОЙ модуль на те же аккаунты → разрешено: аккаунт работает в нескольких модулях.
+  assert.equal(tryAcquireLocks(['lk_a1'], 'warming', 'task_2'), null)
+  assert.equal(getAccountLock('lk_a1').holders.length, 2)
+  assert.deepEqual(getAccountLock('lk_a1').alsoLabels, ['Прогрев'])
+  // ТОТ ЖЕ модуль другой задачей → конфликт: два mass-react дублировали бы работу.
+  const err = tryAcquireLocks(['lk_a1'], 'mass-react', 'task_3')
+  assert.ok(typeof err === 'string' && /в этом же модуле/i.test(err))
+  // та же задача повторно → ок (идемпотентно), держателей не плодит
   assert.equal(tryAcquireLocks(['lk_a1'], 'mass-react', 'task_1'), null)
+  assert.equal(getAccountLock('lk_a1').holders.length, 2)
   releaseTaskLocks('task_1')
+  // после ухода первой задачи аккаунт остаётся у второй (warming)
+  assert.equal(getAccountLock('lk_a1').moduleKey, 'warming')
+  releaseTaskLocks('task_2')
+  assert.equal(getAccountLock('lk_a1'), null)
 })
 
-test('tryAcquireLocks: force перехватывает чужой лок', () => {
+test('tryAcquireLocks: force перехватывает слот того же модуля, чужие модули не трогает', () => {
   tryAcquireLocks(['lk_b1'], 'mass-react', 'task_A')
-  assert.equal(getAccountLock('lk_b1').taskId, 'task_A')
-  assert.equal(tryAcquireLocks(['lk_b1'], 'warming', 'task_B', { force: true }), null)
-  assert.equal(getAccountLock('lk_b1').taskId, 'task_B') // перехвачен
-  releaseTaskLocks('task_B')
+  tryAcquireLocks(['lk_b1'], 'warming', 'task_W')
+  assert.equal(tryAcquireLocks(['lk_b1'], 'mass-react', 'task_B', { force: true }), null)
+  const lock = getAccountLock('lk_b1')
+  const reactHolders = lock.holders.filter((h) => h.moduleKey === 'mass-react')
+  assert.deepEqual(reactHolders.map((h) => h.taskId), ['task_B']) // перехвачен
+  assert.ok(lock.holders.some((h) => h.taskId === 'task_W'), 'прогрев не пострадал')
+  releaseTaskLocks('task_B'); releaseTaskLocks('task_W')
   assert.equal(getAccountLock('lk_b1'), null)
 })
 
@@ -36,12 +48,14 @@ test('releaseTaskLocks / forceReleaseAccount', () => {
   assert.equal(getAccountLock('lk_c2'), null)
 })
 
-test('assertAccountAvailable: свой/чужой/свободный', () => {
+test('assertAccountAvailable: любой из держателей проходит, посторонняя задача — нет', () => {
   tryAcquireLocks(['lk_d1'], 'mailing', 'task_D')
+  tryAcquireLocks(['lk_d1'], 'neuro-commenting', 'task_E')
   assert.doesNotThrow(() => assertAccountAvailable('lk_free', 'task_X')) // нет лока
-  assert.doesNotThrow(() => assertAccountAvailable('lk_d1', 'task_D')) // свой лок
+  assert.doesNotThrow(() => assertAccountAvailable('lk_d1', 'task_D')) // первый держатель
+  assert.doesNotThrow(() => assertAccountAvailable('lk_d1', 'task_E')) // второй держатель
   assert.throws(() => assertAccountAvailable('lk_d1', 'task_OTHER'), /ACCOUNT_BUSY/)
-  releaseTaskLocks('task_D')
+  releaseTaskLocks('task_D'); releaseTaskLocks('task_E')
 })
 
 test('живой реестр задач: markTaskLive/Done/isTaskLive', () => {

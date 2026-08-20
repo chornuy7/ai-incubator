@@ -74,7 +74,13 @@ function toAccountDto(accountId, meta, me, sessionOk) {
     createdAt: meta.createdAt || Date.now(),
     busyIn: (() => {
       const lock = getAccountLock(accountId)
-      return lock ? { moduleKey: lock.moduleKey, taskId: lock.taskId, moduleLabel: lock.moduleLabel } : undefined
+      if (!lock) return undefined
+      // Многомодульность (20.08): аккаунт может числиться в нескольких модулях — отдаём
+      // все, чтобы форма запуска блокировала только совпадение по СВОЕМУ модулю.
+      return {
+        moduleKey: lock.moduleKey, taskId: lock.taskId, moduleLabel: lock.moduleLabel,
+        modules: lock.holders.map((h) => ({ moduleKey: h.moduleKey, moduleLabel: h.moduleLabel })),
+      }
     })(),
   }
 }
