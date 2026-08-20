@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { ShieldCheck, Plus, Trash2, ChevronRight, ChevronDown, Save, Lock } from 'lucide-react'
-import { PageHeader, Card, EmptyState, Badge } from '@/shared/ui'
+import { PageHeader, Card, EmptyState, Badge, Switch } from '@/shared/ui'
+import { cn } from '@/shared/lib/utils'
 import { confirmDialog } from '@/shared/lib/dialog'
 import {
   fetchRoles, fetchRbacCatalog, createRole, updateRole, deleteRole, emptyPermissions,
@@ -22,19 +23,29 @@ import { WARMING_MODULES } from '@/shared/lib/massAction'
  * было практически невозможно (прогон 21–22.07, тест 7.4). Повторный клик по
  * отмеченному варианту теперь снимает его и возвращает «не задано».
  */
+/**
+ * MR-36: ОДИН переключатель вместо двух галочек («Доступ» + «Убрать»).
+ *
+ * Две галочки описывали три состояния — allow / deny / «не задано», — но на поведение
+ * влияет только `allow`: `can()` даёт доступ ТОЛЬКО при явном ALLOW, а роли пользователя
+ * объединяются через `some()`. То есть «убрать» и «не задано» работают одинаково (нет
+ * доступа) и `deny` не перебивает `allow` из другой роли. Значит состояний реально два,
+ * и тумблер их выражает честно: включён = доступ есть, выключен = нет.
+ *
+ * Право, которое админ ещё не трогал, помечаем «не задано» — чтобы было видно, что
+ * значение унаследовано по умолчанию, а не выставлено руками.
+ */
 function PermToggle({ value, onChange, disabled }: { value?: Perm; onChange: (p?: Perm) => void; disabled?: boolean }) {
-  const pick = (p: Perm) => onChange(value === p ? undefined : p)
+  const on = value === 'allow'
   return (
-    <div className="flex shrink-0 items-center gap-3">
-      <label className={`flex items-center gap-1.5 text-xs ${disabled ? 'opacity-40' : 'cursor-pointer'}`}>
-        <input type="checkbox" className="accent-spark-500" checked={value === 'allow'} disabled={disabled} onChange={() => pick('allow')} />
-        <span className={value === 'allow' ? 'text-spark-300' : 'text-white/50'}>Доступ</span>
-      </label>
-      <label className={`flex items-center gap-1.5 text-xs ${disabled ? 'opacity-40' : 'cursor-pointer'}`}>
-        <input type="checkbox" className="accent-rose-500" checked={value === 'deny'} disabled={disabled} onChange={() => pick('deny')} />
-        <span className={value === 'deny' ? 'text-rose-300' : 'text-white/50'}>Убрать</span>
-      </label>
-      {value === undefined && <span className="text-[11px] text-white/30" title="Право не задано: доступ решают другие роли и групповые правила">не задано</span>}
+    <div className="flex shrink-0 items-center gap-2">
+      {value === undefined && (
+        <span className="text-[11px] text-white/30" title="Право не задано: доступ решают другие роли и групповые правила">не задано</span>
+      )}
+      <span className={cn('text-xs', on ? 'text-spark-300' : 'text-white/40')}>{on ? 'Доступ' : 'Нет'}</span>
+      <span className={disabled ? 'pointer-events-none opacity-40' : ''}>
+        <Switch checked={on} onChange={(v) => onChange(v ? 'allow' : 'deny')} />
+      </span>
     </div>
   )
 }
@@ -124,6 +135,52 @@ export function RolesPage() {
   const setModule = (key: string, p: Perm) => { setPerms((s) => ({ ...s, modules: { ...s.modules, [key]: p } })); mark() }
   const setBlock = (key: string, p: Perm) => { setPerms((s) => ({ ...s, blocks: { ...s.blocks, [key]: p } })); mark() }
   const setSection = (key: string, p: Perm) => { setPerms((s) => ({ ...s, sections: { ...s.sections, [key]: p } })); mark() }
+
+  // MR-36: массовые переключатели. Роль на 14 модулей × 6 блоков = 84 клика, чтобы «выключить
+  // всё» или «снять запуск везде». Ниже — три вида разом: все модули, все блоки одного модуля,
+  // один блок во ВСЕХ модулях (типовой сценарий «смотреть можно, запускать нельзя»).
+  const allModuleKeys = () => (catalog?.modules || []).map((m) => m.key)
+  const allBlockKeys = () => (catalog?.blocks || []).map((b) => b.key)
+  /** Все модули разом (и их блоки — иначе «выключил модуль, а блоки остались allow»). */
+  const setAllModules = (p: Perm) => {
+    setPerms((s) => {
+      const modules = { ...s.modules }
+      const blocks = { ...s.blocks }
+      for (const k of allModuleKeys()) {
+        modules[k] = p
+        for (const b of allBlockKeys()) blocks[`${k}:${b}`] = p
+      }
+      return { ...s, modules, blocks }
+    })
+    mark()
+  }
+  /** Все блоки одного модуля. */
+  const setModuleBlocks = (moduleKey: string, p: Perm) => {
+    setPerms((s) => {
+      const blocks = { ...s.blocks }
+      for (const b of allBlockKeys()) blocks[`${moduleKey}:${b}`] = p
+      return { ...s, blocks }
+    })
+    mark()
+  }
+  /** Один блок во всех модулях: «запуск запрещён везде», «логи видны везде». */
+  const setBlockEverywhere = (blockKey: string, p: Perm) => {
+    setPerms((s) => {
+      const blocks = { ...s.blocks }
+      for (const k of allModuleKeys()) blocks[`${k}:${blockKey}`] = p
+      return { ...s, blocks }
+    })
+    mark()
+  }
+  /** Все разделы панели разом. */
+  const setAllSections = (p: Perm) => {
+    setPerms((s) => {
+      const sections = { ...s.sections }
+      for (const sec of (catalog?.sections || [])) sections[sec.key] = p
+      return { ...s, sections }
+    })
+    mark()
+  }
   /** Записать поэлементное право; undefined — снять его (вернуть «не задано»). */
   const putPerm = (map: Record<string, Perm>, id: string, p?: Perm) => {
     const next = { ...map }
@@ -250,7 +307,33 @@ export function RolesPage() {
 
                   {/* Модули + блоки */}
                   <section>
-                    <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-white/40">Модули и блоки</h3>
+                    <div className="mb-2 flex flex-wrap items-center gap-2">
+                      <h3 className="text-xs font-semibold uppercase tracking-wide text-white/40">Модули и блоки</h3>
+                      {/* MR-36: выключить/включить всё разом — вместо 84 кликов по модулям и блокам. */}
+                      <div className="ml-auto flex items-center gap-1.5">
+                        <button type="button" onClick={() => setAllModules('allow')}
+                          className="rounded-lg border border-line px-2 py-1 text-[11px] text-muted hover:border-spark-500/40 hover:text-spark-200">
+                          Включить всё
+                        </button>
+                        <button type="button" onClick={() => setAllModules('deny')}
+                          className="rounded-lg border border-line px-2 py-1 text-[11px] text-muted hover:border-rose-500/40 hover:text-rose-300">
+                          Выключить всё
+                        </button>
+                      </div>
+                    </div>
+                    {/* Один блок во ВСЕХ модулях: типовой сценарий «смотреть можно, запускать нельзя». */}
+                    <div className="mb-2 flex flex-wrap items-center gap-1.5 rounded-lg border border-line bg-elevated/40 px-2 py-1.5">
+                      <span className="text-[11px] text-white/35">Блок во всех модулях:</span>
+                      {(catalog?.blocks || []).map((b) => (
+                        <span key={b.key} className="inline-flex items-center gap-0.5">
+                          <span className="text-[11px] text-muted">{b.label}</span>
+                          <button type="button" title={`Разрешить «${b.label}» во всех модулях`} onClick={() => setBlockEverywhere(b.key, 'allow')}
+                            className="rounded border border-line px-1 text-[10px] text-muted hover:border-spark-500/40 hover:text-spark-200">вкл</button>
+                          <button type="button" title={`Запретить «${b.label}» во всех модулях`} onClick={() => setBlockEverywhere(b.key, 'deny')}
+                            className="rounded border border-line px-1 text-[10px] text-muted hover:border-rose-500/40 hover:text-rose-300">выкл</button>
+                        </span>
+                      ))}
+                    </div>
                     <div className="flex flex-col gap-1.5">
                       {catalog.modules.map((m) => {
                         const open = expanded.has(m.key)
@@ -275,6 +358,14 @@ export function RolesPage() {
                             </div>
                             {open && (
                               <div className="mt-1 flex flex-col gap-1">
+                                {/* Все блоки этого модуля разом. */}
+                                <div className="flex items-center gap-1.5 pl-6 text-[11px] text-white/35">
+                                  <span>Все блоки модуля:</span>
+                                  <button type="button" onClick={() => setModuleBlocks(m.key, 'allow')}
+                                    className="rounded border border-line px-1.5 text-[10px] text-muted hover:border-spark-500/40 hover:text-spark-200">вкл</button>
+                                  <button type="button" onClick={() => setModuleBlocks(m.key, 'deny')}
+                                    className="rounded border border-line px-1.5 text-[10px] text-muted hover:border-rose-500/40 hover:text-rose-300">выкл</button>
+                                </div>
                                 {catalog.blocks.map((b) => (
                                   <PermRow key={b.key} indent label={b.label} value={bPerm(`${m.key}:${b.key}`)} onChange={(p) => setBlock(`${m.key}:${b.key}`, p ?? 'deny')} />
                                 ))}
@@ -289,7 +380,15 @@ export function RolesPage() {
                   {/* Разделы панели (§8.1: доступ выдаётся не только на модули) */}
                   {catalog.sections?.length ? (
                     <section>
-                      <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-white/40">Разделы панели</h3>
+                      <div className="mb-2 flex flex-wrap items-center gap-2">
+                        <h3 className="text-xs font-semibold uppercase tracking-wide text-white/40">Разделы панели</h3>
+                        <div className="ml-auto flex items-center gap-1.5">
+                          <button type="button" onClick={() => setAllSections('allow')}
+                            className="rounded-lg border border-line px-2 py-1 text-[11px] text-muted hover:border-spark-500/40 hover:text-spark-200">Включить все</button>
+                          <button type="button" onClick={() => setAllSections('deny')}
+                            className="rounded-lg border border-line px-2 py-1 text-[11px] text-muted hover:border-rose-500/40 hover:text-rose-300">Выключить все</button>
+                        </div>
+                      </div>
                       <div className="mb-2 text-[11px] text-white/35">«Мой аккаунт» и «Поддержка» доступны всем всегда. «Роли и доступы» / «Пользователи» — только админу.</div>
                       <div className="flex flex-col gap-1">
                         {catalog.sections.map((sec) => (

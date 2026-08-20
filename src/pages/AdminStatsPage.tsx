@@ -694,7 +694,19 @@ function UsersTab({ report, onReload }: { report: UsersReport | null; onReload: 
     if (i >= 0) cur.splice(i, 1); else cur.push(key)
     return { ...d, [userId]: cur }
   })
-  const setUserAll = (userId: string, all: boolean) => setModDraft((d) => ({ ...d, [userId]: all ? 'all' : [] }))
+  /**
+   * MR-36: уровень доступа тремя состояниями вместо двух («выключить всё» раньше приходилось
+   * собирать вручную, снимая каждый модуль). Переход «Все модули → Выбранные» подставляет все
+   * ключи: админ отключает лишнее, а не начинает с пустого списка.
+   */
+  const setUserLevel = (userId: string, level: 'all' | 'some' | 'none') => setModDraft((d) => {
+    if (level === 'all') return { ...d, [userId]: 'all' }
+    if (level === 'none') return { ...d, [userId]: [] }
+    const cur = d[userId]
+    return { ...d, [userId]: cur === 'all' ? catalog.map((c) => c.key) : (cur as string[] || []) }
+  })
+  /** Массовые действия внутри «Выбранных»: отметить все модули / снять все. */
+  const setUserMods = (userId: string, keys: string[]) => setModDraft((d) => ({ ...d, [userId]: keys }))
   const saveUserAccess = async (userId: string, email: string) => {
     setBusy(userId)
     try {
@@ -984,13 +996,25 @@ function UsersTab({ report, onReload }: { report: UsersReport | null; onReload: 
                             {/* §5.3 (MR-36): один понятный переключатель уровня доступа вместо
                                 двух галочек — «Все модули» или «Выбранные» (ниже отмечаем какие). */}
                             <div className="ml-auto">
-                              <Segmented size="sm" options={['Все модули', 'Выбранные']}
-                                value={modDraft[r.userId] === 'all' ? 0 : 1}
-                                onChange={(i) => setUserAll(r.userId, i === 0)} />
+                              {/* MR-36: третий уровень «Нет доступа» — выключить всё одним кликом.
+                                  Раньше это собиралось вручную: снять каждый модуль по одному. */}
+                              <Segmented size="sm" options={['Все модули', 'Выбранные', 'Нет доступа']}
+                                value={modDraft[r.userId] === 'all' ? 0 : (modDraft[r.userId] as string[] || []).length ? 1 : 2}
+                                onChange={(i) => setUserLevel(r.userId, i === 0 ? 'all' : i === 1 ? 'some' : 'none')} />
                             </div>
                           </div>
                           {modDraft[r.userId] !== 'all' && (
-                            <div className="flex flex-wrap gap-1.5">
+                            <div className="flex flex-wrap items-center gap-1.5">
+                              {/* Массовые действия: отметить все / снять все — не кликать 14 чипов. */}
+                              <button onClick={() => setUserMods(r.userId, catalog.map((c) => c.key))}
+                                className="rounded-lg border border-line px-2 py-1 text-[11px] text-muted hover:border-spark-500/40 hover:text-spark-200">
+                                Отметить все
+                              </button>
+                              <button onClick={() => setUserMods(r.userId, [])}
+                                className="rounded-lg border border-line px-2 py-1 text-[11px] text-muted hover:border-rose-500/40 hover:text-rose-300">
+                                Снять все
+                              </button>
+                              <span className="mx-1 h-4 w-px bg-line" />
                               {catalog.map((c) => {
                                 const on = (modDraft[r.userId] as string[] || []).includes(c.key)
                                 return (
