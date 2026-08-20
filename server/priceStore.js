@@ -149,12 +149,23 @@ const PRICES_FILE = () => process.env.PRICES_FILE || dataPath('prices.json')
 
 const round2 = (v) => Math.round((Number(v) || 0) * 100) / 100
 
-/** Сырые переопределения из файла (или пусто). @returns {Promise<object>} */
+// Кэш переопределений (price_overrides): effectivePrices/coinUsdRate зовут getOverrides по многу
+// раз за запрос (17 точек вызова effectivePrices + coinUsdRate внутри) — без кэша это столько же
+// запросов к price_overrides. Правки цен инвалидируют кэш (setOverrides), так что edits применяются
+// сразу. Кэшируем ТОЛЬКО в режиме БД: в файловом (тесты) стор мутируют, кэш бы завис.
+let _overridesCache = null // { data, ts }
+const OVERRIDES_TTL = 60_000
+export function invalidateOverrides() { _overridesCache = null }
+
+/** Сырые переопределения из БД/файла (или пусто). @returns {Promise<object>} */
 export async function getOverrides() {
   const db = sb()
   if (db) {
+    if (_overridesCache && Date.now() - _overridesCache.ts < OVERRIDES_TTL) return _overridesCache.data
     const { data } = await db.from('price_overrides').select('*').eq('id', 'default').maybeSingle()
-    return rowToOverrides(data)
+    const o = rowToOverrides(data)
+    _overridesCache = { data: o, ts: Date.now() }
+    return o
   }
   const raw = await readJson(PRICES_FILE(), {})
   return raw && typeof raw === 'object' ? raw : {}
@@ -308,6 +319,7 @@ export async function setOverrides(patch = {}) {
     } else if (error) {
       throw new Error(error.message)
     }
+    invalidateOverrides() // правка записана — сбросить кэш, чтобы effectivePrices отдал свежее сразу
     return effectivePrices()
   }
   await mutateJson(PRICES_FILE(), (raw) => mergeOverrides(raw && typeof raw === 'object' ? raw : {}, patch), {})

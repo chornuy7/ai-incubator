@@ -33,7 +33,6 @@ const WORKSPACE = '__workspace__'
  * сконфигурирован; иначе null → работает файловый путь (и все тесты на файлах).
  */
 function sb() { return supabaseEnabled() ? getSupabase() : null }
-const iso = (ms) => (ms ? new Date(Number(ms)).toISOString() : null)
 const ms = (t) => (t ? new Date(t).getTime() : 0)
 
 // Путь берём функцией, а не константой: константа фиксируется в момент импорта модуля,
@@ -90,17 +89,6 @@ export async function setModules(modules, userId, opts = {}) {
   // MR-173: точный набор пространства — через реляционную модель (строка на модуль).
   await usubSet(WORKSPACE, modules, { months: Number(opts?.months) || 0 })
   return getBalance(userId)
-}
-
-/**
- * Срок подписки: покупка на N месяцев → дата окончания. Демо без периода — null
- * («бессрочно», пока не подключён провайдер). 30 дней в месяце — витринное допущение.
- * @param {{months?:number}} opts
- */
-const DAY = 24 * 60 * 60 * 1000
-function subExpiry(opts = {}) {
-  const months = Number(opts?.months) || 0
-  return months > 0 ? Date.now() + Math.round(months * 30 * DAY) : null
 }
 
 /**
