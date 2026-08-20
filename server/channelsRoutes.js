@@ -10,8 +10,14 @@ function fail(res, err, code = 400) {
   res.status(code).json({ ok: false, error: err instanceof Error ? err.message : 'Ошибка' })
 }
 
-channelsRouter.get('/', async (_req, res) => {
-  try { res.json({ ok: true, channels: await listChannels() }) } catch (err) { fail(res, err, 500) }
+// Аудит 20.08: база каналов отдавалась целиком любому — клиент видел, какие ниши парсили
+// другие. База остаётся ОБЩЕЙ (дедуп, одна статистика на канал), но клиент видит только то,
+// что нашли ЕГО прогоны парсинга — см. channelsForRequest.
+channelsRouter.get('/', async (req, res) => {
+  try {
+    const { channelsForRequest } = await import('./lib/accessGuard.js')
+    res.json({ ok: true, channels: await channelsForRequest(req, await listChannels()) })
+  } catch (err) { fail(res, err, 500) }
 })
 
 channelsRouter.post('/', async (req, res) => {

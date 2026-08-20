@@ -152,6 +152,55 @@ export async function ownedForRequest(req, rows = [], ownerOf = (r) => r?.userId
 }
 
 /**
+ * Каналы, доступные автору запроса.
+ *
+ * Модель (уточнил заказчик 20.08): база каналов — НАША, общая. У клиента своей базы нет:
+ * он парсит, найденное ложится в общую базу (дедуп по каналу — один ряд на канал, статистика
+ * обновляется один раз), и оттуда мы отдаём ему результат. Поэтому владельца у РЯДА нет и
+ * дублей на клиента мы не плодим — иначе планировщик статистики дёргал бы Telegram по одному
+ * каналу N раз (лишний риск для аккаунтов).
+ *
+ * Видимость считаем по ПРОГОНАМ: воркер парсера пишет источник `parse:<taskId>`
+ * (workers.js), а у задачи есть владелец. Клиент видит каналы, которые нашли ЕГО прогоны.
+ * Если он парсит уже известный канал — upsert добавит его `parse:<taskId>` в sources, и канал
+ * станет виден ему с ОБНОВЛЁННЫМИ данными (ровно то поведение, что описал заказчик).
+ *
+ * Кэш карты «задача → владелец» на 30с: собирается из сторов парсер-модулей, а /api/channels
+ * дёргают часто.
+ */
+let _taskOwnerCache = null // { map: Map<taskId, userId>, ts }
+const TASK_OWNER_TTL = 30_000
+async function parseTaskOwners() {
+  if (_taskOwnerCache && Date.now() - _taskOwnerCache.ts < TASK_OWNER_TTL) return _taskOwnerCache.map
+  const map = new Map()
+  try {
+    const { listModuleKeys, getModuleStore } = await import('../modules/registry.js')
+    for (const key of listModuleKeys()) {
+      if (!/^parsing/.test(key)) continue // источники пишет только парсер
+      const store = getModuleStore(key)
+      if (!store) continue
+      try {
+        for (const t of await store.listTasks()) if (t?.id) map.set(t.id, t.userId || '')
+      } catch { /* модуль недоступен — пропускаем */ }
+    }
+  } catch { /* нет реестра — отдадим пустую карту (клиент увидит 0, админ — всё) */ }
+  _taskOwnerCache = { map, ts: Date.now() }
+  return map
+}
+
+export async function channelsForRequest(req, channels = []) {
+  const scope = await ownerScopeForRequest(req)
+  if (scope.blocked) return []
+  if (scope.all) return channels // админ и дев-режим видят всю базу
+  const owners = await parseTaskOwners()
+  const mine = new Set([scope.ownerId, req.header('x-user-id') || ''].filter(Boolean))
+  return channels.filter((c) => (c?.sources || []).some((s) => {
+    const taskId = String(s || '').replace(/^parse:/, '')
+    return mine.has(owners.get(taskId) || '')
+  }))
+}
+
+/**
  * §8.1: папки целей, доступные автору запроса, с урезанными списками каналов.
  *
  * Раньше фильтрация жила ТОЛЬКО во фронте (`visibleFolders`/`allowedTargets` в
