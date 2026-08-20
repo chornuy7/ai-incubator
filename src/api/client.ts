@@ -96,9 +96,34 @@ export function authHeaders(base?: Record<string, string>): Record<string, strin
   return headers
 }
 
+// MR-151 (созвон 12.08): при входе в панель десятки компонентов (шапка, виджеты баланса,
+// сайдбар) независимо тянут ОДНИ И ТЕ ЖЕ GET-ы — замер показал /api/balance 16× за вход.
+// Коалесинг: если такой же GET уже в полёте, отдаём тот же промис, а не шлём второй запрос.
+// Ключ включает uid — чтобы ответ одного пользователя не утёк другому (смена зоны/аккаунта).
+// Отменяемые запросы (signal) НЕ коалесим: у них своя семантика отмены (смена периода в админке),
+// делить один fetch между владельцами разных AbortController нельзя.
+const inflightGet = new Map<string, Promise<unknown>>()
+
 export async function apiGet<T>(path: string, opts?: { signal?: AbortSignal }): Promise<T> {
-  const res = await fetch(path, { headers: authHeaders(), signal: opts?.signal })
-  return parseJson<T>(res)
+  if (opts?.signal) {
+    const res = await fetch(path, { headers: authHeaders(), signal: opts.signal })
+    return parseJson<T>(res)
+  }
+  let uid = ''
+  try { uid = currentUid() || '' } catch { /* ignore */ }
+  const key = `${uid}|${path}`
+  const existing = inflightGet.get(key)
+  if (existing) return existing as Promise<T>
+  const promise = (async () => {
+    try {
+      const res = await fetch(path, { headers: authHeaders() })
+      return await parseJson<T>(res)
+    } finally {
+      inflightGet.delete(key)
+    }
+  })()
+  inflightGet.set(key, promise)
+  return promise as Promise<T>
 }
 
 export async function apiPost<T>(path: string, body?: unknown): Promise<T> {
