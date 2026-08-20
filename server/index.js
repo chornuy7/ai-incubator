@@ -1147,28 +1147,20 @@ app.get('/api/pricing', async (_req, res) => {
   try {
     const { CURRENCY } = await import('./pricing.js')
     const { effectivePrices } = await import('./priceStore.js')
-    const { readLedger } = await import('./tokenLedger.js')
     // Цены действий и пакеты — эффективные (из БД, правки админки).
     const eff = await effectivePrices()
-    // Средний расход токенов на действие — из истории. ОДИН запрос последних записей
-    // журнала + агрегация в памяти (не 14 тяжёлых tokenSummary по 100k строк на каждый
-    // модуль — это горячий путь витрины). Нет истории — 0.
-    const recent = await readLedger({ limit: 5000 }).catch(() => [])
-    const acc = {}
-    for (const r of recent) { const m = r.module; if (!m) continue; (acc[m] ||= { t: 0, n: 0 }); acc[m].t += r.tokens; acc[m].n += 1 }
-    const avgTokens = {}
-    for (const key of Object.keys(eff.actionMap)) avgTokens[key] = acc[key]?.n ? Math.round(acc[key].t / acc[key].n) : 0
-    // MR-149 (созвон 19.08): цена действия = БАЗОВАЯ цена из БД. Без надстройки за текст.
+    // MR-149 (созвон 19.08): клиенту отдаём ТОЛЬКО конечные цены. СЕБЕСТОИМОСТЬ и данные, из
+    // которых её можно вывести (tokenUsd, средний расход токенов avgTokens), — НЕ отдаём: «сколько
+    // МЫ берём, юзер видеть не должен». Себест/маржа остаётся только в админском /api/admin/prices.
     // actionsFull оставлен для совместимости фронта, но равен базовой цене (= actions).
     const actionsFull = { ...eff.actionMap }
     const items = eff.modules
       .filter((m) => m.action > 0)
-      .map((m) => ({ key: m.key, title: m.title, price: m.action, avgTokens: avgTokens[m.key] || 0 }))
+      .map((m) => ({ key: m.key, title: m.title, price: m.action }))
       .sort((a, b) => b.price - a.price || a.title.localeCompare(b.title, 'ru'))
     res.json({
-      ok: true, items, actions: eff.actionMap, actionsFull, avgTokens,
+      ok: true, items, actions: eff.actionMap, actionsFull,
       packs: eff.coinPacks, currency: CURRENCY,
-      tokenUsd: eff.tokenUsd, tokenUsdAuto: eff.tokenUsdAuto, tokenUsdComputed: eff.tokenUsdComputed, tokenUsdModel: eff.tokenUsdModel,
       imageMultiplier: eff.imageMultiplier,
     })
   } catch (err) { res.status(500).json({ ok: false, error: err instanceof Error ? err.message : 'Ошибка' }) }

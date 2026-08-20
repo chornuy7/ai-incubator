@@ -38,17 +38,16 @@ export async function changeBalance(patch: { amount?: number; usd?: number; plan
   return data.balance
 }
 
-/** Прайс с сервера: цена действия по модулям + курс токенов. Витрина не должна расходиться с тем, что спишется. */
-export interface PriceItem { key: string; title: string; price: number; avgTokens: number }
+/** Прайс с сервера: КОНЕЧНАЯ цена действия по модулям. Витрина не должна расходиться с тем, что спишется. */
+export interface PriceItem { key: string; title: string; price: number }
 export interface Pricing {
   items: PriceItem[]
-  /** Базовая цена действия (без текста) — для админки. */
+  /** Цена действия по модулям. */
   actions: Record<string, number>
-  /** MR-149: ЕДИНАЯ цена действия = база + текст «по максимуму символов». Витрина берёт её. */
+  /** MR-149: единая цена действия (= базовая, из БД). Витрина берёт её. */
   actionsFull?: Record<string, number>
-  /** MR-149: макс-токены текста, заложенные в цену действия. >0 = модуль генерит ИИ-текст. */
-  /** Средний расход токенов на действие по своей истории. 0 = считать не на чем. */
-  avgTokens: Record<string, number>
+  // MR-149: себестоимость и данные для её вывода (tokenUsd, avgTokens) клиенту НЕ отдаются —
+  // они только в админском /api/admin/prices. Клиент видит лишь конечную цену.
   /** Пакеты пополнения — цена самой монеты. С сервера, не копией в вебе. */
   packs?: { coins: number; price: number; best?: boolean }[]
   currency?: string
@@ -60,7 +59,7 @@ export async function fetchPricing(): Promise<Pricing> {
   // Пробрасываем packs/currency — без них шапка всегда рисовала запасные пакеты,
   // игнорируя цены с сервера (и правки монет из админки).
   return {
-    items: r.items || [], actions: r.actions || {}, actionsFull: r.actionsFull || {}, avgTokens: r.avgTokens || {},
+    items: r.items || [], actions: r.actions || {}, actionsFull: r.actionsFull || {},
     packs: r.packs, currency: r.currency,
     imageMultiplier: r.imageMultiplier,
   }
