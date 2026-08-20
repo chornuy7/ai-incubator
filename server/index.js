@@ -598,11 +598,16 @@ app.delete('/api/admin/setups/:id', async (req, res) => {
 })
 
 /**
- * §10.4: цены — из БД, не из кода. Читать эффективные цены может любой (витрине
- * они и так видны), МЕНЯТЬ — только владелец: это выручка пространства.
+ * §10.4: цены — из БД, не из кода.
+ *
+ * ЧИТАТЬ — ТОЛЬКО ВЛАДЕЛЕЦ. Раньше чтение было открыто («витрине цены и так видны»), но
+ * с MR-149/MR-22 ответ содержит СЕБЕСТОИМОСТЬ и данные для её вывода (avgTokens, coinUsd,
+ * tokenUsd) — «сколько МЫ берём, юзер видеть не должен» (созвон 19.08). Любой залогиненный
+ * клиент мог прочитать нашу маржу прямым запросом. Конечные цены витрине отдаёт /api/pricing.
  */
 app.get('/api/admin/prices', async (req, res) => {
   try {
+    if (!(await isAdminRequest(req))) return res.status(403).json({ ok: false, error: 'Цены и себестоимость видит только владелец' })
     const { effectivePrices, coinUsdRate } = await import('./priceStore.js')
     const { readLedger } = await import('./tokenLedger.js')
     const prices = await effectivePrices()
