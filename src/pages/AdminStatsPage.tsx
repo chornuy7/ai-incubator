@@ -2683,7 +2683,7 @@ function PricesTab() {
                 <th className="pb-2 pr-3 font-medium">Модуль</th>
                 <th className="pb-2 pr-3 text-right font-medium">Доступ, $/мес</th>
                 <th className="pb-2 pr-3 text-right font-medium">Действие, ⚡</th>
-                <th className="pb-2 pr-3 text-right font-medium">Токенов/мес</th>
+                <th className="pb-2 pr-3 text-right font-medium" title="Наши ⚡ (валюта клиента), которые модуль выдаёт по подписке в месяц. Это НЕ токены модели OpenAI.">⚡ в месяц</th>
                 <th className="pb-2 text-right font-medium">Подарок, ⚡</th>
               </tr>
             </thead>
@@ -2790,7 +2790,7 @@ function PricesTab() {
               className="input mt-1 h-9 w-full tabular-nums" inputMode="numeric" placeholder="20" />
           </label>
           <label className="block">
-            <span className="text-xs text-muted">Цена токена, $ за 1 токен</span>
+            <span className="text-xs text-muted">Цена токена МОДЕЛИ (OpenAI), $ за 1 токен</span>
             <input value={extra.tokenUsd} onChange={(e) => setExtra((x) => ({ ...x, tokenUsd: cleanPrice(e.target.value, 1) }))}
               className="input mt-1 h-9 w-full tabular-nums" inputMode="decimal"
               placeholder={prices.tokenUsdComputed != null ? `авто: ${fmtUsd(prices.tokenUsdComputed)}` : 'авто'} />
@@ -2807,7 +2807,7 @@ function PricesTab() {
           </label>
         </div>
         <p className="mt-3 text-[11px] text-muted">
-          Цена токена — <b className="text-fg">себестоимость у OpenAI</b>, платформа считает её сама из прайса текущей модели
+          Токен модели ≠ наш ⚡. <b className="text-fg">Наш ⚡</b> — валюта клиента (её он покупает и тратит за действия). <b className="text-fg">Токен модели</b> — то, что мы платим OpenAI за генерацию; связи между ними нет, это разные единицы. Цена токена модели — <b className="text-fg">себестоимость у OpenAI</b>, платформа считает её сама из прайса текущей модели
           (обновляется при смене модели). Заполните поле только чтобы переопределить вручную; пусто = авто-расчёт.
           Множитель картинки (×N) — наценка на анализ изображения поверх токенов.
         </p>

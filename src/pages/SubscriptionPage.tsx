@@ -194,7 +194,7 @@ export function SubscriptionPage() {
               а подарок — ОТДЕЛЬНОЙ жёлтой строкой ниже, чтобы не смешивать месячную выдачу с бонусом. */}
           {cost.monthlyTokens > 0 && (
             <div className="mt-1 flex items-center gap-1 text-xs text-muted">
-              <Zap size={12} /> {cost.monthlyTokens.toLocaleString('ru-RU')} ⚡ токенов в месяц
+              <Zap size={12} /> {cost.monthlyTokens.toLocaleString('ru-RU')} ⚡ в месяц
             </div>
           )}
           {cost.giftTokens > 0 && (
