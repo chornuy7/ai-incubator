@@ -2706,25 +2706,32 @@ function PricesTab() {
                         onChange={(e) => setDraft((d) => ({ ...d, [m.key]: { ...d[m.key], action: cleanPrice(e.target.value, 1000) } }))}
                         className="input h-8 w-24 text-right tabular-nums" />
                     </span>
-                    {/* MR-149 (созвон 19.08): себестоимость действия + маржа — «видеть, сколько тратим
-                        и сколько зарабатываем». Себест ⚡ = ср. расход токенов × цена токена $ ÷ курс монеты.
-                        Пользователю это не показывается — только владельцу здесь. */}
+                    {/* MR-149: сколько МЫ платим за действие и сколько берём с клиента — в ДОЛЛАРАХ.
+                        Правка 20.08: раньше писали «маржа 99%», и это вводило в заблуждение — считается
+                        только расход на ИИ-токены, а аккаунты, прокси, трафик и риск банов сюда не входят.
+                        Поэтому подпись честная: «ИИ» и «наценка к ИИ», а не «маржа» (её так не посчитать).
+                        Клиенту это не отдаётся — только владельцу здесь. */}
                     {(() => {
                       const avg = prices.avgTokens?.[m.key] ?? 0
                       const tUsd = prices.tokenUsd ?? prices.tokenUsdComputed ?? 0
                       const coinUsd = prices.coinUsd ?? 0
                       const action = Number(draft[m.key]?.action ?? m.action ?? 0)
                       if (!avg || !tUsd || !coinUsd) {
-                        return <div className="mt-0.5 pr-1 text-[10px] text-faint">себест.: нет данных о расходе</div>
+                        return <div className="mt-0.5 pr-1 text-[10px] text-faint">расход ИИ: нет данных (модуль ещё не запускали)</div>
                       }
-                      const costCoins = (tUsd * avg) / coinUsd
-                      // Себест обычно крошечная (доли монеты) — показываем с точностью, чтобы не было «0.00».
-                      const costStr = costCoins >= 0.01 ? fmtCoins(costCoins) : costCoins < 0.0001 ? '<0.0001' : costCoins.toFixed(4)
-                      const margin = action > 0 ? Math.round((1 - costCoins / action) * 100) : null
-                      const cls = margin == null ? 'text-muted' : margin >= 50 ? 'text-emerald-300/80' : margin >= 0 ? 'text-amber-300/80' : 'text-rose-300/80'
+                      const aiUsd = tUsd * avg                 // что платим за ИИ на одно действие
+                      const priceUsd = action * coinUsd        // что платит клиент за это действие
+                      // Во сколько раз цена выше расхода на ИИ. Проценты («99%») выглядели как готовая
+                      // прибыль; кратность честнее показывает запас на остальные расходы.
+                      const ratio = aiUsd > 0 ? priceUsd / aiUsd : null
+                      const cls = ratio == null ? 'text-muted' : ratio >= 2 ? 'text-emerald-300/80' : ratio >= 1 ? 'text-amber-300/80' : 'text-rose-300/80'
                       return (
-                        <div className={cn('mt-0.5 pr-1 text-[10px] tabular-nums', cls)} title={`Ср. расход ${avg} токенов × $${tUsd} ÷ курс $${fmtUsd(coinUsd)}/⚡`}>
-                          себест. ≈ {costStr} ⚡{margin != null && <> · маржа {margin}%</>}
+                        <div className={cn('mt-0.5 pr-1 text-[10px] tabular-nums', cls)}
+                          title={`Расход на ИИ: ${avg} токенов × $${tUsd} = $${aiUsd.toFixed(7)}
+Цена клиенту: ${action} ⚡ × $${fmtUsd(coinUsd)} = $${priceUsd.toFixed(5)}
+В расход НЕ входят аккаунты, прокси, трафик и риск банов — реальную маржу так не посчитать.`}>
+                          ИИ ≈ ${aiUsd < 0.000001 ? aiUsd.toExponential(1) : aiUsd.toFixed(6)} · цена ${priceUsd.toFixed(4)}
+                          {ratio != null && <> · ×{ratio >= 100 ? Math.round(ratio) : ratio.toFixed(1)} к ИИ</>}
                         </div>
                       )
                     })()}

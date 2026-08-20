@@ -83,7 +83,16 @@ function overridesToRow(ov) {
 }
 
 /** Чистая логика мерджа patch в текущие overrides — общая для файла и БД. */
-function mergeOverrides(cur, patch) {
+/**
+ * @param {object} cur текущие переопределения
+ * @param {object} patch правка из админки
+ * @param {Record<string,{month?:number,action?:number,tokens?:number}>} [base] БАЗА ИЗ БД
+ *   (module_prices). Сравнивать «отличается ли от дефолта» надо именно с ней: typesSync
+ *   проецирует эффективные цены обратно в module_prices, поэтому база — это и есть
+ *   сохранённая цена. Раньше сравнивали с код-константой, и админ, введя число, равное
+ *   константе, молча терял правку: override удалялся, а в силе оставалась база из БД.
+ */
+function mergeOverrides(cur, patch, base = {}) {
   const clean = (v) => (v === '' || v === null || v === undefined ? undefined : Number(v))
   cur = { ...(cur || {}) }
   if (patch.modules) {
@@ -93,12 +102,13 @@ function mergeOverrides(cur, patch) {
       const entry = { ...(mods[key] || {}) }
       if ('month' in val) {
         const m = clean(val.month)
-        if (m === undefined || m === MODULE_MONTH_PRICE[key]) delete entry.month
+        const defMonth = base[key]?.month ?? MODULE_MONTH_PRICE[key]
+        if (m === undefined || m === defMonth) delete entry.month
         else if (Number.isFinite(m) && m >= 0) entry.month = round2(m)
       }
       if ('action' in val) {
         const a = clean(val.action)
-        const def = ACTION_PRICE[key] ?? 0
+        const def = base[key]?.action ?? (ACTION_PRICE[key] ?? 0)
         if (a === undefined || a === def) delete entry.action
         else if (Number.isFinite(a) && a >= 0) entry.action = a
       }
@@ -113,7 +123,8 @@ function mergeOverrides(cur, patch) {
       // дефолта в будущем не была молча перекрыта застывшим значением (та же логика, что у цен).
       if ('monthlyTokens' in val) {
         const t = clean(val.monthlyTokens)
-        if (t === undefined || t === MODULE_TOKENS_DEFAULT) delete entry.monthlyTokens
+        const defTokens = base[key]?.tokens ?? MODULE_TOKENS_DEFAULT
+        if (t === undefined || t === defTokens) delete entry.monthlyTokens
         else if (Number.isFinite(t) && t >= 0) entry.monthlyTokens = Math.round(t)
       }
       if (Object.keys(entry).length) mods[key] = entry; else delete mods[key]
@@ -306,7 +317,7 @@ export async function setOverrides(patch = {}) {
   const db = sb()
   if (db) {
     const cur = await getOverrides()
-    const next = mergeOverrides(cur, patch)
+    const next = mergeOverrides(cur, patch, await dbBasePrices())
     const row = overridesToRow(next)
     const { error } = await db.from('price_overrides').upsert(row, { onConflict: 'id' })
     // §11.2: колонка periods добавляется миграцией (supabase/migrations/…-price-periods.sql).
