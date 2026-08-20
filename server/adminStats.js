@@ -352,7 +352,10 @@ export async function dailySpend(opts = {}) {
   }
 
   const rows = [...acc.values()].sort((a, b) => a.day.localeCompare(b.day))
-  for (const r of rows) r.coins = round3(r.tokenCoins + r.actionCoins)
+  // MR-149 (созвон 19.08): за токены НЕ списываем — платит фикс-цена действия. Раньше в
+  // «списано» добавлялись tokenCoins (выдуманный курс «1000 токенов модели = 1 наш ⚡»), и
+  // отчёт показывал клиенту больше, чем реально ушло с баланса. Считаем только действия.
+  for (const r of rows) r.coins = round3(r.actionCoins)
   return { days, rows }
 }
 
@@ -434,8 +437,10 @@ export async function accountReport(accountId, opts = {}) {
     actions: Math.round(actions),
     spent,
     tokens,
-    tokenCoins,
-    totalCoins: round3(spent + tokenCoins),
+    tokenCoins, // справочно: во что обошлись бы токены по внутреннему курсу (НЕ списывалось)
+    // MR-149: списано ровно то, что ушло с баланса за действия. Токены — расход у OpenAI,
+    // он в цену действия уже заложен, второй раз клиенту не предъявляем.
+    totalCoins: round3(spent),
     errors: Math.round(errors),
     lastUsed,
     leads: { total: leads.length, active: leadsActive, target: leadsTarget },
