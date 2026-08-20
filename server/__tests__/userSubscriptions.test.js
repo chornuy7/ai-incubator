@@ -58,7 +58,7 @@ test('MR-150: dueForCredit ловит подписки в день оплаты,
   assert.deepEqual([...mine1.modules].sort(), ['mailing', 'warming'])
 
   const month = `${new Date(now).getUTCFullYear()}-${String(new Date(now).getUTCMonth() + 1).padStart(2, '0')}`
-  await markCredited('u4', mine1.ids, month)
+  await markCredited('u4', mine1.modules, month)
   const due2 = await dueForCredit(now)
   assert.ok(!due2.find((x) => x.userId === 'u4'), 'этот месяц уже начислен — второй раз не берём')
 })

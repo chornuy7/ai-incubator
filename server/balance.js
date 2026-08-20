@@ -20,6 +20,12 @@
 import { dataPath, readJson, mutateJson } from './lib/jsonStore.js'
 import { getSupabase, supabaseEnabled } from './lib/supabase.js'
 import { resolveWalletOwner, resolveSubscriptionOwner } from './users.js'
+// MR-173: подписки (набор модулей + сроки) живут в user_subscriptions (реляционно), не в
+// JSON-поле. balance.js — только фасад: читает/пишет набор через эту модель.
+import { readModules as usubRead, setModules as usubSet } from './userSubscriptions.js'
+
+/** Ключ общего набора пространства в user_subscriptions (раньше строка subscriptions id='workspace'). */
+const WORKSPACE = '__workspace__'
 
 /**
  * §10.2: когда DATA_BACKEND=supabase, баланс/подписки/журнал живут в БД, а не в
@@ -81,22 +87,8 @@ export function modulesAllow(modules, moduleKey) {
  * @param {string[]|'all'} modules @param {string} [userId] чей баланс вернуть в ответе
  */
 export async function setModules(modules, userId, opts = {}) {
-  const list = modules === 'all' ? 'all' : [...new Set((modules || []).map(String).filter(Boolean))]
-  const expiresAt = subExpiry(opts)
-  const db = sb()
-  if (db) {
-    await db.from('subscriptions').upsert(
-      { id: 'workspace', scope: 'workspace', user_id: null, modules: list, expires_at: iso(expiresAt), updated_at: new Date().toISOString() },
-      { onConflict: 'id' },
-    )
-    return getBalance(userId)
-  }
-  await mutateJson(BALANCE_FILE(), (all) => {
-    const next = { ...(all || {}) }
-    delete next.coins; delete next.planId; delete next.updatedAt
-    next[SUBSCRIPTION_KEY] = { modules: list, expiresAt, updatedAt: Date.now() }
-    return next
-  })
+  // MR-173: точный набор пространства — через реляционную модель (строка на модуль).
+  await usubSet(WORKSPACE, modules, { months: Number(opts?.months) || 0 })
   return getBalance(userId)
 }
 
@@ -119,23 +111,8 @@ function subExpiry(opts = {}) {
  */
 export async function setUserModules(modules, userId, opts = {}) {
   if (!userId) throw new Error('Личная подписка требует пользователя')
-  const list = modules === 'all' ? 'all' : [...new Set((modules || []).map(String).filter(Boolean))]
-  const expiresAt = subExpiry(opts)
-  const k = key(userId)
-  const db = sb()
-  if (db) {
-    await db.from('subscriptions').upsert(
-      { id: k, scope: 'user', user_id: k, modules: list, expires_at: iso(expiresAt), updated_at: new Date().toISOString() },
-      { onConflict: 'id' },
-    )
-    return getBalance(userId)
-  }
-  await mutateJson(BALANCE_FILE(), (all) => {
-    const next = { ...(all || {}) }
-    delete next.coins; delete next.planId; delete next.updatedAt
-    next[k] = { ...(next[k] || {}), modules: list, expiresAt, updatedAt: Date.now() }
-    return next
-  })
+  // MR-173: личный набор клиента — через модель. Срок у оставленных модулей не сбрасывается.
+  await usubSet(key(userId), modules, { months: Number(opts?.months) || 0 })
   return getBalance(userId)
 }
 
@@ -163,75 +140,46 @@ const normCoins = (v) => Math.max(0, Math.round((Number(v) || 0) * COIN_PRECISIO
 
 /** @returns {Promise<{planId:string, plan:{name:string,accountLimit:number}, coins:number, updatedAt:number}>} */
 export async function getBalance(userId) {
+  const ownKey = key(userId)
+  // §4.2 (MR-30): деньги/токены — из кошелька владельца при общем балансе.
+  const wk = key(await resolveWalletOwner(userId))
+  // §4.1 (MR-28): набор модулей суба — это набор ВЛАДЕЛЬЦА (его ключ), а не самого суба.
+  const sk = key(await resolveSubscriptionOwner(userId))
+
+  // MR-173: набор модулей + сроки — из user_subscriptions (реляционно). Модель сама решает
+  // бэкенд (БД/файл). Свой набор (sk) перекрывает общий на пространство.
+  const sub = await usubRead(sk)
+  let modules = sub.modules
+  let expiresAt = sub.expiresAt
+  const noSub = modules !== 'all' && modules.length === 0
+  // Правка 18.08: общий набор пространства (или DEFAULT_MODULES) — fallback ТОЛЬКО для
+  // безсессионного дев-режима (sk===DEFAULT_USER). У владельца без покупки набор ПУСТ,
+  // иначе зарегистрировавшийся с лендинга получал бы все модули бесплатно.
+  if (noSub && sk === DEFAULT_USER) {
+    const ws = await usubRead(WORKSPACE)
+    if (ws.modules === 'all' || ws.modules.length) { modules = ws.modules; expiresAt = ws.expiresAt }
+    else { modules = DEFAULT_MODULES; expiresAt = null }
+  }
+
   const db = sb()
   if (db) {
-    const k = key(userId)
-    // §4.2 (MR-30): монеты/деньги — из кошелька владельца при общем балансе; подписка
-    // (модули) остаётся по своему ключу.
-    const wk = key(await resolveWalletOwner(userId))
-    // §4.1 (MR-28): набор модулей суба — это набор ВЛАДЕЛЬЦА. Раньше здесь стоял свой
-    // ключ, и суб без личной подписки проваливался на общий `workspace` — получая
-    // модули, которых владелец не покупал.
-    const sk = key(await resolveSubscriptionOwner(userId))
-    const [coinRes, subRes, wsRes] = await Promise.all([
-      db.from('coin_balance').select('coins, usd, updated_at').eq('user_id', wk).maybeSingle(),
-      db.from('subscriptions').select('modules, expires_at').eq('id', sk).maybeSingle(),
-      db.from('subscriptions').select('modules, expires_at').eq('id', 'workspace').maybeSingle(),
-    ])
-    const personal = subRes.data
-    const ws = wsRes.data
-    // Общий набор `workspace` — набор НАШЕГО пространства, а не подарок каждому.
-    //
-    // Правка 18.08. Раньше он был fallback'ом для любого, у кого нет своей записи, и
-    // человек, только что зарегистрировавшийся с лендинга, получал 14 модулей бесплатно
-    // (на проде так жили 56 из 65 юзеров). Теперь fallback работает только для
-    // безсессионного дев-режима; у самостоятельного владельца без покупки набор ПУСТ.
-    const modules = personal?.modules !== undefined && personal?.modules !== null
-      ? personal.modules
-      : (sk === DEFAULT_USER ? (ws?.modules ?? DEFAULT_MODULES) : [])
-    const expiresAt = (personal ? personal.expires_at : ws?.expires_at) ? ms(personal ? personal.expires_at : ws.expires_at) : null
-    const planId = DEFAULT_STATE.planId
+    const { data } = await db.from('coin_balance').select('coins, usd, updated_at').eq('user_id', wk).maybeSingle()
     return {
-      planId,
-      plan: PLANS[planId],
-      modules,
-      expiresAt,
+      planId: DEFAULT_STATE.planId, plan: PLANS[DEFAULT_STATE.planId], modules, expiresAt,
       // §11.4: два независимых остатка — деньги ($) и токены (coins).
-      coins: normCoins(coinRes.data?.coins ?? 0),
-      usd: normUsd(coinRes.data?.usd ?? 0),
-      updatedAt: ms(coinRes.data?.updated_at),
+      coins: normCoins(data?.coins ?? 0), usd: normUsd(data?.usd ?? 0), updatedAt: ms(data?.updated_at),
     }
   }
   const all = await readJson(BALANCE_FILE(), {})
   // Старый формат — один кошелёк в корне файла. Читаем его как баланс `__default`,
   // чтобы уже начисленные монеты не пропали при переходе на пер-юзерное хранение.
   const legacy = typeof all?.coins === 'number' ? { coins: all.coins, planId: all.planId } : null
-  const saved = (all && all[key(userId)]) || (key(userId) === DEFAULT_USER ? legacy : null) || {}
+  const saved = (all && all[ownKey]) || (ownKey === DEFAULT_USER ? legacy : null) || {}
   const planId = PLANS[saved?.planId] ? saved.planId : DEFAULT_STATE.planId
-  // §4.2 (MR-30): монеты/деньги — из кошелька владельца при общем балансе; модули/подписку
-  // берём по своему ключу (saved). Ключи нормализуем через key() (undefined → __default).
-  const ownKey = key(userId)
-  const wk = key(await resolveWalletOwner(userId))
-  // §4.1 (MR-28): подписку читаем у владельца пространства, а не у самого суба.
-  const sk = key(await resolveSubscriptionOwner(userId))
-  const subRec = sk === ownKey ? saved : ((all && all[sk]) || {})
   const walletRec = wk === ownKey ? saved : ((all && all[wk]) || (wk === DEFAULT_USER ? legacy : null) || {})
   return {
-    planId,
-    plan: PLANS[planId],
-    // Набор модулей: СВОЙ (клиент купил лично) перекрывает общий на пространство.
-    // Клиент, выбравший «парсер + комментинг за 20», видит свои два модуля, а
-    // сотрудник без личной покупки работает внутри купленного владельцем. Срок
-    // подписки (expiresAt) берём из того же источника, что и набор.
-    // Общий набор пространства — только для безсессионного дев-режима (см. выше).
-    modules: subRec?.modules !== undefined
-      ? subRec.modules
-      : (sk === DEFAULT_USER ? ((all && all[SUBSCRIPTION_KEY]?.modules) ?? DEFAULT_MODULES) : []),
-    expiresAt: (subRec?.modules !== undefined
-      ? subRec?.expiresAt
-      : (sk === DEFAULT_USER ? (all && all[SUBSCRIPTION_KEY]?.expiresAt) : null)) ?? null,
-    coins: normCoins(walletRec?.coins ?? DEFAULT_STATE.coins),
-    usd: normUsd(walletRec?.usd ?? 0),
+    planId, plan: PLANS[planId], modules, expiresAt,
+    coins: normCoins(walletRec?.coins ?? DEFAULT_STATE.coins), usd: normUsd(walletRec?.usd ?? 0),
     updatedAt: Number(walletRec?.updatedAt) || 0,
   }
 }

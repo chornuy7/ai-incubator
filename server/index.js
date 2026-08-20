@@ -1280,10 +1280,12 @@ app.post('/api/subscription', async (req, res) => {
     // это провижининг, а не покупка.
     const { getBalance, changeUsd } = await import('./balance.js')
     let charged = 0
+    let addedModules = [] // MR-150: за какие модули начислить месячные токены (только реально добавленные)
     if (personal && !admin && Array.isArray(list)) {
       const before = await getBalance(target)
       const { addedCost } = await import('./pricing.js')
       const { added, monthly: addMonthly } = addedCost(before.modules, list, bundlesList, effPrices.monthMap, setupsList)
+      addedModules = added
       if (added.length) {
         charged = periodCost(addMonthly, months || 1, effPrices.annualDiscount)
         if ((Number(before.usd) || 0) + 1e-9 < charged) {
@@ -1296,12 +1298,26 @@ app.post('/api/subscription', async (req, res) => {
       }
     }
     const balance = personal ? await setUserModules(list, target, { months }) : await setModules(list, target, { months })
+
+    // MR-150 (Шаг 2): начислить МЕСЯЧНЫЕ токены за докупленные модули — первый месяц сразу, в
+    // день оплаты. billing_day модель проставила при setModules; помечаем этот месяц начисленным,
+    // чтобы ежедневный крон не начислил повторно. Дальнейшие месяцы (в тот же день) начисляет крон.
+    let creditedTokens = 0
+    if (addedModules.length) {
+      creditedTokens = addedModules.reduce((s, k) => s + (Number(effPrices.tokensMap?.[k]) || 0), 0)
+      if (creditedTokens > 0) {
+        const { changeCoins } = await import('./balance.js')
+        const { markCredited, creditMonth } = await import('./userSubscriptions.js')
+        await changeCoins(creditedTokens, `Токены подписки: ${addedModules.length} модул. (первый месяц)`, target)
+        await markCredited(target, addedModules, creditMonth()).catch(() => {})
+      }
+    }
     await appendAudit({
       action: 'subscription.set',
       module: 'billing',
       initiator: req.header('x-user-id') || 'system',
       reason: `Подписка${(admin && !req.body?.userId) ? ' пространства' : ` (${target || 'свой'})`}: ${list === 'all' ? 'все модули' : `${list.length} модулей`}`,
-      meta: { modules: list, months: months || 1, cost: monthly, paid, charged },
+      meta: { modules: list, months: months || 1, cost: monthly, paid, charged, creditedTokens },
     }).catch(() => {})
     resyncModuleLinks() // §11.3: подписка изменилась — обновить проекцию связей
     res.json({ ok: true, balance })
@@ -1504,6 +1520,21 @@ try {
   setInterval(runProxy, 30 * 60 * 1000)
 } catch (err) {
   console.warn('[proxy] scheduler init failed:', err)
+}
+
+// MR-150 (Шаг 2): ежемесячное начисление токенов подписок. Проверяем «сегодня день оплаты?»
+// при старте и каждые 6 часов — начисление идемпотентно (markCredited по месяцу), повтор
+// в тот же день ничего не удваивает. Ежедневного тика достаточно: начисление привязано к
+// дню месяца, а не к точному времени.
+try {
+  const { creditDueTokens } = await import('./tokenCredit.js')
+  const runCredit = () => creditDueTokens()
+    .then((r) => r.users && console.log(`[tokens] месячное начисление: ${r.users} польз., ${r.coins} ⚡`))
+    .catch((e) => console.warn('[tokens] credit failed:', e?.message || e))
+  void runCredit()
+  setInterval(runCredit, 6 * 60 * 60 * 1000)
+} catch (err) {
+  console.warn('[tokens] credit scheduler init failed:', err)
 }
 
 // Авто-обновление статистики каналов (§3.9, решение 14.07: день / час-если-бот-в-группе).

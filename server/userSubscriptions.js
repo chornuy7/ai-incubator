@@ -18,11 +18,18 @@
  * Файловый бэкенд (дев/тесты) — тот же интерфейс: data/user-subscriptions.json,
  * { userId: [ {module, expiresAt, billingDay, lastCreditMonth} ] }.
  */
+import path from 'path'
 import { dataPath, readJson, mutateJson } from './lib/jsonStore.js'
 import { getSupabase, supabaseEnabled } from './lib/supabase.js'
 
 function sb() { return supabaseEnabled() ? getSupabase() : null }
-const FILE = () => process.env.USER_SUBS_FILE || dataPath('user-subscriptions.json')
+// Путь: свой env, иначе — РЯДОМ с BALANCE_FILE (тесты изолируют его во временной папке, и
+// подписки должны изолироваться вместе с балансом, а не писаться в общий data/), иначе data/.
+const FILE = () => {
+  if (process.env.USER_SUBS_FILE) return process.env.USER_SUBS_FILE
+  if (process.env.BALANCE_FILE) return path.join(path.dirname(process.env.BALANCE_FILE), 'user-subscriptions.json')
+  return dataPath('user-subscriptions.json')
+}
 
 /** Ключ «все модули» — одна строка вместо перечисления. */
 export const ALL_MODULES = '*'
@@ -157,51 +164,62 @@ export async function addModules(userId, modules, opts = {}) {
  * совпал с текущим и этот месяц ещё не начислен, подписка не истекла. Возвращаем по
  * пользователям, чтобы начислить сумму monthlyTokens активных модулей.
  * @param {number} nowMs
- * @returns {Promise<Array<{ userId:string, modules:string[], ids:Array<number|string> }>>}
+ * @returns {Promise<Array<{ userId:string, modules:string[] }>>}
  */
 export async function dueForCredit(nowMs = Date.now()) {
   const d = new Date(nowMs)
   const today = d.getUTCDate()
-  const month = `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}`
+  const month = creditMonth(nowMs)
   const isDue = (r) => r.billingDay === today && r.lastCreditMonth !== month && (r.expiresAt == null || r.expiresAt > nowMs) && r.module !== ALL_MODULES
   const db = sb()
   const byUser = new Map()
   if (db) {
     const { data } = await db.from('user_subscriptions')
-      .select('id, user_id, module_key, expires_at, billing_day, last_credit_month')
+      .select('user_id, module_key, expires_at, billing_day, last_credit_month')
       .eq('billing_day', today).neq('last_credit_month', month)
     for (const r of data || []) {
-      const row = { id: r.id, module: r.module_key, expiresAt: ms(r.expires_at), billingDay: r.billing_day, lastCreditMonth: r.last_credit_month }
+      const row = { module: r.module_key, expiresAt: ms(r.expires_at), billingDay: r.billing_day, lastCreditMonth: r.last_credit_month }
       if (!isDue(row)) continue
-      const u = byUser.get(r.user_id) || { userId: r.user_id, modules: [], ids: [] }
-      u.modules.push(r.module_key); u.ids.push(r.id); byUser.set(r.user_id, u)
+      const u = byUser.get(r.user_id) || { userId: r.user_id, modules: [] }
+      u.modules.push(r.module_key); byUser.set(r.user_id, u)
     }
   } else {
     const all = await readJson(FILE(), {})
     for (const [uid, rows] of Object.entries(all || {})) {
       for (const r of (Array.isArray(rows) ? rows : [])) {
         if (!isDue(r)) continue
-        const u = byUser.get(uid) || { userId: uid, modules: [], ids: [] }
-        u.modules.push(r.module); u.ids.push(r.module); byUser.set(uid, u) // в файле id = module
+        const u = byUser.get(uid) || { userId: uid, modules: [] }
+        u.modules.push(r.module); byUser.set(uid, u)
       }
     }
   }
   return [...byUser.values()]
 }
 
-/** Пометить строки как начисленные за месяц (идемпотентность крона). */
-export async function markCredited(userId, moduleKeysOrIds, month) {
+/** Строка `'YYYY-MM'` (UTC) — формат last_credit_month. Единый источник для крона и оплаты. */
+export function creditMonth(nowMs = Date.now()) {
+  const d = new Date(nowMs)
+  return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}`
+}
+
+/**
+ * Пометить модули пользователя начисленными за месяц (идемпотентность). По module_key —
+ * (user_id, module_key) уникальны, одинаково работает в БД и файле.
+ */
+export async function markCredited(userId, moduleKeys, month) {
   const uid = norm(userId)
+  const keys = (moduleKeys || []).filter(Boolean)
+  if (!keys.length) return
   const db = sb()
   if (db) {
     await db.from('user_subscriptions').update({ last_credit_month: month, updated_at: new Date().toISOString() })
-      .eq('user_id', uid).in('id', moduleKeysOrIds)
+      .eq('user_id', uid).in('module_key', keys)
     return
   }
   await mutateJson(FILE(), (all) => {
     const next = { ...(all || {}) }
     const rows = Array.isArray(next[uid]) ? next[uid] : []
-    const set = new Set(moduleKeysOrIds)
+    const set = new Set(keys)
     next[uid] = rows.map((r) => (set.has(r.module) ? { ...r, lastCreditMonth: month } : r))
     return next
   }, {})
