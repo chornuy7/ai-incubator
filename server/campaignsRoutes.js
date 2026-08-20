@@ -82,8 +82,12 @@ campaignsRouter.post('/launch', async (req, res) => {
 // ── Расписание кампаний (§3.9): запланировать + вкл/выкл + повтор ──
 function fail(res, err, code = 400) { res.status(code).json({ ok: false, error: err instanceof Error ? err.message : 'Ошибка' }) }
 
-campaignsRouter.get('/schedules', async (_req, res) => {
-  try { res.json({ ok: true, schedules: await listSchedules() }) } catch (e) { fail(res, e, 500) }
+// Аудит 20.08: расписания кампаний отдавались все всем (владелец у них уже пишется).
+campaignsRouter.get('/schedules', async (req, res) => {
+  try {
+    const { ownedForRequest } = await import('./lib/accessGuard.js')
+    res.json({ ok: true, schedules: await ownedForRequest(req, await listSchedules()) })
+  } catch (e) { fail(res, e, 500) }
 })
 campaignsRouter.post('/schedules', async (req, res) => {
   try {

@@ -8,9 +8,11 @@ function fail(res, err, code = 400) {
   res.status(code).json({ ok: false, error: err instanceof Error ? err.message : 'Ошибка' })
 }
 
-agentsRouter.get('/', async (_req, res) => {
+// Аудит 20.08: агенты отдавались все всем — фильтруем по владельцу пространства.
+agentsRouter.get('/', async (req, res) => {
   try {
-    res.json({ ok: true, agents: await listAgents() })
+    const { ownedForRequest } = await import('./lib/accessGuard.js')
+    res.json({ ok: true, agents: await ownedForRequest(req, await listAgents()) })
   } catch (err) { fail(res, err, 500) }
 })
 
