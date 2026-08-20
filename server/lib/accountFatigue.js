@@ -14,19 +14,23 @@
  * Человек после 10–20 комментариев устаёт — отсюда порог по умолчанию.
  */
 
+const HOUR_MS = 3600000
+
 /**
- * Профиль усталости по умолчанию (§4.5).
- *
- * Правка 19.08: параметра «восстановление за час» больше нет. Он спорил с отдыхом:
- * оператор ставил «отдых 15 минут», а счётчик всё равно держался, пока не пройдёт час
- * восстановления — то есть два поля описывали одно и то же разными числами. Теперь
- * модель human-readable: набрал порог → отдыхаешь заданное время → выходишь свежим.
+ * Профиль усталости по умолчанию (§4.5). ТРИ раздельных параметра — так в ТЗ 19.08 §4
+ * («порог = действий, отдых отдельно, восстановление отдельно»), владелец подтвердил
+ * 20.08. Чтобы поля не «спорили числами» (грабли 18.08), роли разведены жёстко:
+ *   - отдых — обязательный перерыв ПОСЛЕ порога; отбыл — счётчик обнулён, точка;
+ *   - восстановление — таяние счётчика в ОБЫЧНЫХ перерывах, когда до порога не дошли.
+ * После отбытого отдыха восстановление ничего не «довосстанавливает» — нечего.
  */
 export const DEFAULT_FATIGUE = {
-  /** Сколько действий подряд аккаунт выдерживает, прежде чем уйти на отдых. */
+  /** Порог действий: сколько подряд аккаунт выдерживает, прежде чем уйти на отдых. */
   threshold: 15,
-  /** Отдых после порога, минут. Он же и восстановление: после него счётчик обнулён. */
+  /** Отдых после порога, минут (в форме — часы и минуты). После него счётчик обнулён. */
   restMinutes: 45,
+  /** Восстановление: на сколько единиц счётчик тает за час БЕЗ действий (до порога). */
+  recoveryPerHour: 5,
 }
 
 /**
@@ -128,8 +132,8 @@ export function scheduleForAccount(accountId, base = DEFAULT_SCHEDULE) {
 
 /**
  * Текущая усталость с учётом восстановления. Чистая функция.
- * @param {{fatigue?:number, lastActionAt?:number}} state
- * @param {{threshold?:number, restMinutes?:number}} profile
+ * @param {{fatigue?:number, lastActionAt?:number, restUntil?:number}} state
+ * @param {{threshold?:number, restMinutes?:number, recoveryPerHour?:number}} profile
  * @param {number} [now]
  */
 export function currentFatigue(state = {}, profile = DEFAULT_FATIGUE, now = Date.now()) {
@@ -139,11 +143,17 @@ export function currentFatigue(state = {}, profile = DEFAULT_FATIGUE, now = Date
   const base = Math.min(Math.max(0, Number(state.fatigue) || 0), Math.max(1, p.threshold))
   const last = Number(state.lastActionAt) || 0
   if (!base || !last) return base
-  // Отдых отбыт — аккаунт вышел свежим: это и есть «восстановился» (правка 19.08).
-  // Постепенного «сгорания по часам» больше нет: оно спорило с отдыхом и давало дроби.
+  // Обязательный отдых ОТБЫТ — усталость обнулена: отдых для того и назначается,
+  // чтобы после него вернуться в строй (правка 18.08, подтверждено 20.08).
   const rested = Number(state.restUntil) || 0
   if (rested && now >= rested && last <= rested) return 0
-  return base
+  // Восстановление (ТЗ 19.08 §4, отдельный параметр): в обычных перерывах, когда до
+  // порога не дошли, счётчик тает recoveryPerHour единиц за час простоя. Счётчик —
+  // ЦЕЛОЕ число действий: округляем ВВЕРХ, чтобы не было «0.8 из 1» и начатое
+  // действие считалось сделанным, пока час восстановления не пройден целиком.
+  const hours = Math.max(0, (now - last) / HOUR_MS)
+  const rec = Math.max(0, Number(p.recoveryPerHour) || 0)
+  return Math.max(0, Math.ceil(base - hours * rec))
 }
 
 /**
@@ -160,9 +170,16 @@ export function freeAt(state = {}, profile = DEFAULT_FATIGUE, now = Date.now()) 
   if (rest > now) return rest
   const f = currentFatigue(state, p, now)
   if (f < p.threshold) return 0
-  // Счётчик на пороге, а отдых не назначен (например, порог понизили руками) — значит
-  // отдыхать ему ровно столько, сколько задано профилем.
-  return now + Math.max(1, Number(p.restMinutes) || DEFAULT_FATIGUE.restMinutes) * 60000
+  // Перерыв не назначен, но счётчик на пороге (порог ПОНИЗИЛИ после работы):
+  // ждём, пока восстановление опустит его под порог. Счётчик целый (округление
+  // вверх), поэтому «ниже порога» наступает, когда сырое значение дойдёт до
+  // threshold - 1. Восстановление выключено (0) — остаётся только один отдых.
+  const rec = Math.max(0, Number(p.recoveryPerHour) || 0)
+  if (rec <= 0) return now + p.restMinutes * 60000
+  const last = Number(state.lastActionAt) || now
+  const base = Math.min(Math.max(0, Number(state.fatigue) || 0), Math.max(1, p.threshold))
+  const hoursNeeded = (base - (p.threshold - 1)) / rec
+  return Math.max(now, last + hoursNeeded * HOUR_MS)
 }
 
 /**
@@ -241,5 +258,6 @@ export function normalizeFatigueProfile(input = {}) {
   return {
     threshold: n(input.threshold, DEFAULT_FATIGUE.threshold, 1, 500),
     restMinutes: n(input.restMinutes, DEFAULT_FATIGUE.restMinutes, 1, 24 * 60),
+    recoveryPerHour: n(input.recoveryPerHour, DEFAULT_FATIGUE.recoveryPerHour, 0, 100),
   }
 }

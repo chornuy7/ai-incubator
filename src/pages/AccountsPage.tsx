@@ -1739,6 +1739,7 @@ function FatigueModal({ open, ids, activity, onClose, onDone, onError }: {
 }) {
   const [threshold, setThreshold] = useState(15)
   const [restMinutes, setRestMinutes] = useState(45)
+  const [recoveryPerHour, setRecoveryPerHour] = useState(5)
   // Отдых задаётся часами и минутами: «45» в одном поле читается как угодно, а смены
   // бывают и по несколько часов (правка 19.08). Внутрь уходит одно число — минуты.
   const restH = Math.floor(restMinutes / 60)
@@ -1761,8 +1762,9 @@ function FatigueModal({ open, ids, activity, onClose, onDone, onError }: {
     }
     const th = pick((a) => a.threshold, 15)
     const rest = pick((a) => a.restMinutes, 45)
-    setThreshold(th.value); setRestMinutes(rest.value)
-    setMixed(!(th.same && rest.same))
+    const rec = pick((a) => a.recoveryPerHour, 5)
+    setThreshold(th.value); setRestMinutes(rest.value); setRecoveryPerHour(rec.value)
+    setMixed(!(th.same && rest.same && rec.same))
   }, [open, ids, activity])
   const [restNow, setRestNow] = useState(60)
   const [busy, setBusy] = useState(false)
@@ -1809,7 +1811,7 @@ function FatigueModal({ open, ids, activity, onClose, onDone, onError }: {
         Каждое действие в любом модуле — плюс единица. Набрал {threshold} — уходит на перерыв.
       </p>
 
-      <label className="label mt-3">2. Отдых после порога <span className="text-white/30">— он же восстановление</span></label>
+      <label className="label mt-3">2. Отдых после порога <span className="text-white/30">— обязательный перерыв</span></label>
       <div className="flex items-center gap-2">
         <div className="flex-1">
           <NumberField value={restH} onChange={(h) => setRest(h, restM)} min={0} max={24} className="input h-10 w-full" />
@@ -1822,12 +1824,19 @@ function FatigueModal({ open, ids, activity, onClose, onDone, onError }: {
       </div>
       <p className="mt-1 text-[11px] text-white/40">
         {restH ? `${restH} ч ` : ''}{restM} мин аккаунт не берут НИ В ОДИН модуль. После отдыха счётчик
-        обнуляется и он снова в строю — отдельного «восстановления за час» больше нет, отдых и есть восстановление.
+        обнуляется и он снова в строю.
+      </p>
+
+      <label className="label mt-3">3. Восстановление <span className="text-white/30">— единиц за час простоя</span></label>
+      <NumberField value={recoveryPerHour} onChange={setRecoveryPerHour} min={0} max={100} className="input h-10 w-full" />
+      <p className="mt-1 text-[11px] text-white/40">
+        Работает, пока до порога НЕ дошли: час без действий — счётчик тает на {recoveryPerHour}.
+        Это «отдышался между делом», а не перерыв из пункта 2. 0 — выключено, снимает усталость только отдых.
       </p>
 
       <button
         disabled={busy || !ids.length}
-        onClick={() => void run({ accountIds: ids, profile: { threshold, restMinutes } }, 'Профиль задан')}
+        onClick={() => void run({ accountIds: ids, profile: { threshold, restMinutes, recoveryPerHour } }, 'Профиль задан')}
         className="btn-primary mt-3 h-10 w-full disabled:opacity-40"
       >
         Применить профиль ко всем выбранным
