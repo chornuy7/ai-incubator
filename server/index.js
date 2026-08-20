@@ -563,8 +563,18 @@ app.delete('/api/bundles/:id', async (req, res) => {
  */
 app.get('/api/admin/prices', async (req, res) => {
   try {
-    const { effectivePrices } = await import('./priceStore.js')
-    res.json({ ok: true, prices: await effectivePrices() })
+    const { effectivePrices, coinUsdRate } = await import('./priceStore.js')
+    const { tokenSummary } = await import('./tokenLedger.js')
+    const prices = await effectivePrices()
+    // MR-149 (созвон 19.08): в админке показываем СЕБЕСТОИМОСТЬ действия рядом с ценой (видеть
+    // маржу). Себестоимость ⚡ = средний расход токенов (из истории) × цена токена ($) ÷ курс монеты.
+    const avgTokens = {}
+    for (const key of Object.keys(prices.actionMap || {})) {
+      const sum = await tokenSummary({ module: key }).catch(() => null)
+      avgTokens[key] = sum?.calls ? Math.round(sum.tokens / sum.calls) : 0
+    }
+    const coinUsd = await coinUsdRate().catch(() => 0)
+    res.json({ ok: true, prices: { ...prices, avgTokens, coinUsd } })
   } catch (err) { res.status(500).json({ ok: false, error: err instanceof Error ? err.message : 'Ошибка' }) }
 })
 

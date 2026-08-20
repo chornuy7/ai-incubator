@@ -2674,6 +2674,28 @@ function PricesTab() {
                         onChange={(e) => setDraft((d) => ({ ...d, [m.key]: { ...d[m.key], action: cleanPrice(e.target.value, 1000) } }))}
                         className="input h-8 w-24 text-right tabular-nums" />
                     </span>
+                    {/* MR-149 (созвон 19.08): себестоимость действия + маржа — «видеть, сколько тратим
+                        и сколько зарабатываем». Себест ⚡ = ср. расход токенов × цена токена $ ÷ курс монеты.
+                        Пользователю это не показывается — только владельцу здесь. */}
+                    {(() => {
+                      const avg = prices.avgTokens?.[m.key] ?? 0
+                      const tUsd = prices.tokenUsd ?? prices.tokenUsdComputed ?? 0
+                      const coinUsd = prices.coinUsd ?? 0
+                      const action = Number(draft[m.key]?.action ?? m.action ?? 0)
+                      if (!avg || !tUsd || !coinUsd) {
+                        return <div className="mt-0.5 pr-1 text-[10px] text-faint">себест.: нет данных о расходе</div>
+                      }
+                      const costCoins = (tUsd * avg) / coinUsd
+                      // Себест обычно крошечная (доли монеты) — показываем с точностью, чтобы не было «0.00».
+                      const costStr = costCoins >= 0.01 ? fmtCoins(costCoins) : costCoins < 0.0001 ? '<0.0001' : costCoins.toFixed(4)
+                      const margin = action > 0 ? Math.round((1 - costCoins / action) * 100) : null
+                      const cls = margin == null ? 'text-muted' : margin >= 50 ? 'text-emerald-300/80' : margin >= 0 ? 'text-amber-300/80' : 'text-rose-300/80'
+                      return (
+                        <div className={cn('mt-0.5 pr-1 text-[10px] tabular-nums', cls)} title={`Ср. расход ${avg} токенов × $${tUsd} ÷ курс $${fmtUsd(coinUsd)}/⚡`}>
+                          себест. ≈ {costStr} ⚡{margin != null && <> · маржа {margin}%</>}
+                        </div>
+                      )
+                    })()}
                   </td>
                   {/* §3 (MR-21): подарочные токены на модуль — суммируются при выборе набора. */}
                   <td className="py-1.5 text-right">
