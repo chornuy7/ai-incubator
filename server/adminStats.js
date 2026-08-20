@@ -218,9 +218,14 @@ export async function economyReport(opts = {}) {
   // ── Расходы ($): фактический расход токенов × себестоимость ───────────────
   const tok = await tokenSummary({ since }).catch(() => ({ tokens: 0, byModule: {} }))
   const tokensSpent = Number(tok.tokens) || 0
-  const aiCost = round3(tokensSpent * tokenUsd)
+  // MR-149 (созвон 19.08): НЕ round3 — расход на ИИ измеряется тысячными долями цента
+  // ($0.000257 за ~1000 токенов), и округление до тысячных превращало его в 0.000, из-за
+  // чего «Расходы (себестоимость ИИ)» показывали $0.00 при реально сожжённых токенах
+  // («тут не должно быть округления до сотых, значение находится глубже»).
+  const roundCost = (v) => Math.round((Number(v) || 0) * 1e8) / 1e8
+  const aiCost = roundCost(tokensSpent * tokenUsd)
   const byModule = Object.entries(tok.byModule || {})
-    .map(([key, tokens]) => ({ key, title: moduleTitle(key), tokens: Number(tokens) || 0, costUsd: round3((Number(tokens) || 0) * tokenUsd) }))
+    .map(([key, tokens]) => ({ key, title: moduleTitle(key), tokens: Number(tokens) || 0, costUsd: roundCost((Number(tokens) || 0) * tokenUsd) }))
     .sort((a, b) => b.costUsd - a.costUsd)
   const expenseTotal = aiCost // себестоимость ИИ; инфраструктура сервера — в разрезе ниже
 
