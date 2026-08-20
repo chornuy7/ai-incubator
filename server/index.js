@@ -558,6 +558,46 @@ app.delete('/api/bundles/:id', async (req, res) => {
 })
 
 /**
+ * MR-149 (созвон 19.08): готовые сетапы (скидочные наборы) — из БД, правятся из админки.
+ * Читать может любой (витрина их и так показывает), менять — только владелец.
+ */
+app.get('/api/admin/setups', async (req, res) => {
+  try {
+    if (!(await isAdminRequest(req))) return res.status(403).json({ ok: false, error: 'Доступно только администратору' })
+    const { listSetups } = await import('./setups.js')
+    res.json({ ok: true, setups: await listSetups() })
+  } catch (err) { res.status(500).json({ ok: false, error: err instanceof Error ? err.message : 'Ошибка' }) }
+})
+
+app.post('/api/admin/setups', async (req, res) => {
+  try {
+    if (!(await isAdminRequest(req))) return res.status(403).json({ ok: false, error: 'Менять сетапы может только владелец' })
+    const { upsertSetup } = await import('./setups.js')
+    const setup = await upsertSetup(req.body || {})
+    await appendAudit({
+      action: 'setup.upsert', module: 'billing', initiator: req.header('x-user-id') || 'system',
+      reason: `Сетап «${setup.name}»: ${setup.allModules ? 'все модули' : `${setup.modules.length} модулей`}, скидка ${Math.round(setup.discount * 100)}%`,
+      meta: setup,
+    }).catch(() => {})
+    res.json({ ok: true, setup })
+  } catch (err) { res.status(400).json({ ok: false, error: err instanceof Error ? err.message : 'Ошибка' }) }
+})
+
+app.delete('/api/admin/setups/:id', async (req, res) => {
+  try {
+    if (!(await isAdminRequest(req))) return res.status(403).json({ ok: false, error: 'Удалять сетапы может только владелец' })
+    const { deleteSetup } = await import('./setups.js')
+    const gone = await deleteSetup(req.params.id)
+    if (!gone) return res.status(404).json({ ok: false, error: 'Сетап не найден' })
+    await appendAudit({
+      action: 'setup.delete', module: 'billing', initiator: req.header('x-user-id') || 'system',
+      reason: `Удалён сетап ${req.params.id}`,
+    }).catch(() => {})
+    res.json({ ok: true })
+  } catch (err) { res.status(500).json({ ok: false, error: err instanceof Error ? err.message : 'Ошибка' }) }
+})
+
+/**
  * §10.4: цены — из БД, не из кода. Читать эффективные цены может любой (витрине
  * они и так видны), МЕНЯТЬ — только владелец: это выручка пространства.
  */
@@ -1140,12 +1180,16 @@ app.get('/api/pricing', async (_req, res) => {
  */
 app.get('/api/subscription', async (req, res) => {
   try {
-    const { SETUPS, CURRENCY, subscriptionCost } = await import('./pricing.js')
+    const { CURRENCY, subscriptionCost } = await import('./pricing.js')
     const { getBalance } = await import('./balance.js')
     const { listBundles } = await import('./bundles.js')
+    const { listSetups } = await import('./setups.js')
     const { effectivePrices } = await import('./priceStore.js')
     const { modules } = await getBalance(req.header('x-user-id'))
     const bundles = await listBundles()
+    // MR-149: готовые сетапы — из БД (server/setups.js), не из кода. Витрина и списание
+    // берут ОДИН источник, иначе скидка на экране разойдётся со списанной.
+    const dbSetups = await listSetups()
     // Цены — эффективные (код + переопределения из админки), а не константа: правка
     // цены в админке должна тут же менять витрину.
     const eff = await effectivePrices()
@@ -1154,9 +1198,9 @@ app.get('/api/subscription', async (req, res) => {
       .map((m) => ({ key: m.key, title: m.title, price: m.month, gift: m.gift || 0, action: m.action || 0 })) // §3: подарочные токены (MR-21) + цена действия (MR-22)
       .sort((a, b) => b.price - a.price || a.title.localeCompare(b.title, 'ru'))
     const setups = [
-      ...SETUPS.map((s) => ({ ...s, cost: subscriptionCost(s.modules, bundles, priceMap, eff.giftMap) })),
+      ...dbSetups.map((s) => ({ ...s, cost: subscriptionCost(s.modules, bundles, priceMap, eff.giftMap, dbSetups) })),
       ...bundles.map((b) => {
-        const cost = subscriptionCost(b.modules, bundles, priceMap, eff.giftMap)
+        const cost = subscriptionCost(b.modules, bundles, priceMap, eff.giftMap, dbSetups)
         return {
           id: b.id, name: b.name, hint: b.hint, modules: b.modules,
           custom: true, price: b.price,
@@ -1177,9 +1221,10 @@ app.post('/api/subscription/quote', async (req, res) => {
   try {
     const { subscriptionCost } = await import('./pricing.js')
     const { listBundles } = await import('./bundles.js')
+    const { listSetups } = await import('./setups.js')
     const { effectivePrices } = await import('./priceStore.js')
     const eff = await effectivePrices()
-    res.json({ ok: true, ...subscriptionCost(req.body?.modules || [], await listBundles(), eff.monthMap, eff.giftMap) })
+    res.json({ ok: true, ...subscriptionCost(req.body?.modules || [], await listBundles(), eff.monthMap, eff.giftMap, await listSetups()) })
   } catch (err) { res.status(500).json({ ok: false, error: err instanceof Error ? err.message : 'Ошибка' }) }
 })
 
@@ -1219,9 +1264,11 @@ app.post('/api/subscription', async (req, res) => {
     const months = Number(req.body?.months) || 0
     const { subscriptionCost: subCost, periodCost } = await import('./pricing.js')
     const { effectivePrices } = await import('./priceStore.js')
+    const { listSetups } = await import('./setups.js')
     const bundlesList = await (await import('./bundles.js')).listBundles()
+    const setupsList = await listSetups() // MR-149: сетапы из БД — списание считает ту же скидку, что витрина
     const effPrices = await effectivePrices()
-    const monthly = list === 'all' ? null : subCost(list, bundlesList, effPrices.monthMap)
+    const monthly = list === 'all' ? null : subCost(list, bundlesList, effPrices.monthMap, effPrices.giftMap, setupsList)
     // paid — то, что реально заряжено за период (год со скидкой), НЕ месячная цена.
     const paid = monthly ? periodCost(monthly.sum, months || 1, effPrices.annualDiscount) : null
 
@@ -1236,7 +1283,7 @@ app.post('/api/subscription', async (req, res) => {
     if (personal && !admin && Array.isArray(list)) {
       const before = await getBalance(target)
       const { addedCost } = await import('./pricing.js')
-      const { added, monthly: addMonthly } = addedCost(before.modules, list, bundlesList, effPrices.monthMap)
+      const { added, monthly: addMonthly } = addedCost(before.modules, list, bundlesList, effPrices.monthMap, setupsList)
       if (added.length) {
         charged = periodCost(addMonthly, months || 1, effPrices.annualDiscount)
         if ((Number(before.usd) || 0) + 1e-9 < charged) {

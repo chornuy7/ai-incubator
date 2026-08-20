@@ -180,15 +180,18 @@ export function periodCost(monthlySum, months = 1, annualDiscount = ANNUAL_DISCO
  * @param {string[]} wanted что хочет получить
  * @returns {{ added: string[], monthly: number }} добавленные модули и их цена за месяц
  */
-export function addedCost(had, wanted, customBundles = [], priceMap = MODULE_MONTH_PRICE) {
+export function addedCost(had, wanted, customBundles = [], priceMap = MODULE_MONTH_PRICE, setups = SETUPS) {
   if (had === 'all') return { added: [], monthly: 0 }
   const owned = new Set(Array.isArray(had) ? had : [])
   const added = [...new Set((Array.isArray(wanted) ? wanted : []).filter((k) => !owned.has(k)))]
   if (!added.length) return { added: [], monthly: 0 }
-  return { added, monthly: subscriptionCost(added, customBundles, priceMap).sum }
+  return { added, monthly: subscriptionCost(added, customBundles, priceMap, {}, setups).sum }
 }
 
-export function subscriptionCost(moduleKeys = [], customBundles = [], priceMap = MODULE_MONTH_PRICE, giftMap = {}) {
+// setups — готовые сетапы. По умолчанию код-константа SETUPS (дев/тесты); на проде
+// сюда передают набор из БД (server/setups.js), чтобы витрина и списание считали одну
+// скидку. Разъезд источников = клиенту показали одну цену, а списали другую.
+export function subscriptionCost(moduleKeys = [], customBundles = [], priceMap = MODULE_MONTH_PRICE, giftMap = {}, setups = SETUPS) {
   const keys = [...new Set(moduleKeys.filter((k) => MODULE_MONTH_PRICE[k] !== undefined))]
   // §3 (MR-21): подарочные токены суммируются по выбранным модулям.
   const giftTokens = keys.reduce((acc, k) => acc + (Number(giftMap[k]) || 0), 0)
@@ -196,7 +199,7 @@ export function subscriptionCost(moduleKeys = [], customBundles = [], priceMap =
   // Скидку даёт сетап, ВСЕ модули которого выбраны: иначе «почти сетап» получал бы
   // цену сетапа, и поштучная покупка была бы бессмысленной.
   let best = { setup: null, discount: 0, sum: full }
-  for (const s of SETUPS) {
+  for (const s of (setups || SETUPS)) {
     if (!s.modules.every((m) => keys.includes(m))) continue
     const sum = Math.round(full * (1 - s.discount) * 100) / 100
     if (sum < best.sum) best = { setup: s.id, discount: s.discount, sum }

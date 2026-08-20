@@ -24,6 +24,7 @@ import { fmt, fmtDate, cleanPrice, fmtUsd, usdEq, MetricTile } from '@/pages/adm
 import { MonitoringTab, AccountsHealthBlocks } from '@/pages/admin/MonitoringTab'
 import { AccountsTab } from '@/pages/admin/AccountsTab'
 import { BundlesEditor } from '@/pages/admin/BundlesEditor'
+import { SetupsEditor } from '@/pages/admin/SetupsEditor'
 import { useTabParam } from '@/shared/lib/useTabParam'
 import { LeadConversationModal } from '@/features/leads/LeadConversationModal'
 
@@ -2819,6 +2820,9 @@ function PricesTab() {
 
       {/* §10.4/§10.6: готовые наборы (что продаём) — собираются и правятся из админки. */}
       <BundlesEditor modules={prices.modules} currency="$" />
+
+      {/* MR-149 (19.08): готовые сетапы (скидочные наборы) — скидка правится из админки, не из кода. */}
+      <SetupsEditor modules={prices.modules} />
 
       <div className="sticky bottom-4 flex items-center gap-3 rounded-2xl border border-line bg-surface/95 px-4 py-3 backdrop-blur-xl">
         <span className="text-xs text-muted">Изменения применяются сразу к витрине, кабинету и счёту клиенту.</span>
