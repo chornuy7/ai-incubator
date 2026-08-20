@@ -166,7 +166,7 @@ export async function syncModuleLinks() {
     for (const m of eff.modules || []) {
       const mid = modId.get(m.key)
       if (!mid) continue
-      priceRows.push({ module_id: mid, month_price: m.month ?? 0, action_price: m.action ?? 0, updated_at: new Date().toISOString() })
+      priceRows.push({ module_id: mid, month_price: m.month ?? 0, action_price: m.action ?? 0, month_tokens: m.monthlyTokens ?? 100, updated_at: new Date().toISOString() })
     }
     if (priceRows.length) {
       const { error } = await db.from('module_prices').upsert(priceRows, { onConflict: 'module_id' })

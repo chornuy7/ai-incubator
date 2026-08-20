@@ -172,11 +172,13 @@ async function dbBasePrices() {
   if (!db) return {}
   if (_basePricesCache && Date.now() - _basePricesCache.ts < BASE_PRICES_TTL) return _basePricesCache.data
   try {
-    const { data } = await db.from('module_prices').select('month_price, action_price, modules(key)')
+    const { data } = await db.from('module_prices').select('month_price, action_price, month_tokens, modules(key)')
     const map = {}
     for (const r of data || []) {
       const key = r.modules?.key
-      if (key) map[key] = { month: Number(r.month_price), action: Number(r.action_price) }
+      // month_tokens — колонка добавляется миграцией 2026-08-20-strict-prices.sql; до её применения
+      // r.month_tokens undefined → tokens берётся из кода (файловый режим/переходный период).
+      if (key) map[key] = { month: Number(r.month_price), action: Number(r.action_price), tokens: r.month_tokens == null ? null : Number(r.month_tokens) }
     }
     _basePricesCache = { data: map, ts: Date.now() }
     return map
@@ -194,19 +196,26 @@ export async function effectivePrices() {
   const ovMod = ov.modules || {}
   const base = await dbBasePrices() // {key:{month,action}} из БД (пусто в файловом режиме)
 
+  // Строго БД-only (созвон 19.08): в режиме БД цены берутся ТОЛЬКО из БД, код не читается.
+  // Код-константы (MODULE_MONTH_PRICE/ACTION_PRICE/MODULE_TOKENS_DEFAULT) — лишь для файлового
+  // режима (dev/тесты, где БД вообще нет). Нет строки в БД → предупреждаем и 0, а не цена из кода.
+  const dbOn = supabaseEnabled()
   const monthMap = {}
   const actionMap = {}
   const giftMap = {} // §3 (MR-21): подарочные токены на модуль
   const tokensMap = {} // MR-150: месячная выдача токенов на модуль
   const modules = Object.keys(MODULE_MONTH_PRICE).map((key) => {
-    // База — из БД (module_prices), код-константа — только фолбэк. Сверху — правки админки.
-    const baseMonth = base[key]?.month ?? MODULE_MONTH_PRICE[key]
-    const baseAction = base[key]?.action ?? (ACTION_PRICE[key] ?? 0)
-    const month = ovMod[key]?.month ?? baseMonth
-    const action = ovMod[key]?.action ?? baseAction
+    const baseMonth = dbOn ? base[key]?.month : MODULE_MONTH_PRICE[key]
+    const baseAction = dbOn ? base[key]?.action : (ACTION_PRICE[key] ?? 0)
+    const baseTokens = dbOn ? base[key]?.tokens : MODULE_TOKENS_DEFAULT
+    if (dbOn && (baseMonth == null || baseAction == null)) {
+      console.warn(`[prices] ${key}: нет цены в module_prices (БД). Модуль без цены — запустите sync-types.`)
+    }
+    // Сверху — правки админки (price_overrides). Отсутствие в БД → 0 (не код).
+    const month = ovMod[key]?.month ?? baseMonth ?? 0
+    const action = ovMod[key]?.action ?? baseAction ?? 0
     const gift = ovMod[key]?.gift ?? 0
-    // MR-150: месячная выдача токенов — дефолт MODULE_TOKENS_DEFAULT (100), правка админки сверху.
-    const monthlyTokens = ovMod[key]?.monthlyTokens ?? MODULE_TOKENS_DEFAULT
+    const monthlyTokens = ovMod[key]?.monthlyTokens ?? baseTokens ?? 0
     monthMap[key] = month
     actionMap[key] = action
     giftMap[key] = gift
@@ -231,25 +240,36 @@ export async function effectivePrices() {
   const autoTokenUsd = tokenUsdForModel()
   const tokenUsd = tokenUsdManual ? ov.tokenUsd : autoTokenUsd
 
+  // Строго БД-only и для экономики уровня пространства: в режиме БД значение берётся из
+  // price_overrides (сидировано миграцией), код — только в файловом режиме.
+  const coinPacks = dbOn
+    ? (Array.isArray(ov.coinPacks) ? ov.coinPacks : [])
+    : (Array.isArray(ov.coinPacks) && ov.coinPacks.length ? ov.coinPacks : COIN_PACKS)
+  const annualDiscount = dbOn
+    ? (typeof ov.annualDiscount === 'number' ? ov.annualDiscount : 0)
+    : (typeof ov.annualDiscount === 'number' ? ov.annualDiscount : ANNUAL_DISCOUNT)
+  const imageMultiplier = dbOn
+    ? (typeof ov.imageMultiplier === 'number' ? ov.imageMultiplier : 1) // нет в БД → без наценки (×1), не из кода
+    : (typeof ov.imageMultiplier === 'number' ? ov.imageMultiplier : 4)
+
   return {
     modules,
     monthMap,
     actionMap,
     giftMap,
     tokensMap,
-    coinPacks: Array.isArray(ov.coinPacks) && ov.coinPacks.length ? ov.coinPacks : COIN_PACKS,
-    annualDiscount: typeof ov.annualDiscount === 'number' ? ov.annualDiscount : ANNUAL_DISCOUNT,
-    // §11.2: список периодов. Пока админ его не задал — прежнее поведение (месяц + год
-    // со скидкой annualDiscount), чтобы витрина не изменилась сама по себе.
+    coinPacks,
+    annualDiscount,
+    // §11.2: список периодов. Пока админ его не задал — месяц + год со скидкой annualDiscount.
     periods: normalizePeriods(ov.periods) || [
       { unit: 'month', count: 1, discount: 0 },
-      { unit: 'year', count: 1, discount: typeof ov.annualDiscount === 'number' ? ov.annualDiscount : ANNUAL_DISCOUNT },
+      { unit: 'year', count: 1, discount: annualDiscount },
     ],
     tokenUsd,
     tokenUsdAuto: !tokenUsdManual, // true = рассчитано из модели, false = задано вручную
     tokenUsdComputed: autoTokenUsd, // ВСЕГДА цена из модели (даже при ручном override) — для подсказки «авто»
     tokenUsdModel: currentModel(), // из какой модели считается себестоимость
-    imageMultiplier: typeof ov.imageMultiplier === 'number' ? ov.imageMultiplier : 4,
+    imageMultiplier,
   }
 }
 
