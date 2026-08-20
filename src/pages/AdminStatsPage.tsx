@@ -68,6 +68,12 @@ const TICKETS_TAB = 13
 // «Тикеты» (13) СЮДА НЕ ВХОДЯТ: это живая переписка, её надо тянуть автоматически.
 const NO_AUTOREFRESH_TABS = new Set([6, 12, 14, 15])
 
+// MR-151: вкладки, которые грузят СВОИ данные сами (не из period-датасетов админки): Цены (6),
+// Аккаунты (11), Роли (12), Тикеты (13), Парсер (14), API (15). Их нельзя прятать за общей
+// плашкой «Загрузка данных за период» — иначе, зайдя сразу в «Цены», оператор ждал бы полную
+// загрузку 10 датасетов статистики, которая ему тут не нужна (баг: «заход = ~20 запросов»).
+const SELF_FETCHING_TABS = new Set([6, 11, 12, 13, 14, 15])
+
 const STATUS_RU: Record<string, string> = {
   active: 'Активные', working: 'В работе', warming: 'Прогрев', pause: 'На паузе',
   floodwait: 'FloodWait', quarantine: 'Карантин', spamblock: 'Спамблок',
@@ -389,7 +395,7 @@ export function AdminStatsPage() {
         )}
       </div>
 
-      {loading && !overview ? (
+      {loading && !overview && !SELF_FETCHING_TABS.has(tab) ? (
         <Card className="flex items-center gap-2 p-6 text-sm text-muted">
           <RefreshCw size={15} className="animate-spin" /> Загрузка данных за период «{PERIODS[periodIdx].label}»…
         </Card>
