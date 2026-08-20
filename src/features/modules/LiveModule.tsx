@@ -90,11 +90,10 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
   const showBlock = (bk: string) => !sessionUser || sessionUser.isAdmin || can(sessionUser.permissions, false, 'block', `${moduleKey}:${bk}`)
 
   const [selected, setSelected] = useState<Set<string>>(new Set())
-  // «Мониторинг новых» стоит первым в списке (так просил владелец), но умолчанием
-  // остаётся «Только последний пост»: мониторинг по своей природе молчит, пока в канале
-  // не выйдет новый пост, и как поведение по умолчанию читался бы как «не работает».
+  // «Мониторинг новых» стоит первым в списке и выбран по умолчанию (так просил
+  // владелец) — бот следит за каналом и комментирует каждый новый пост.
   const [toggles, setToggles] = useState<Record<number, number>>(
-    moduleKey === 'neuro-commenting' ? { 0: 1 } : {},
+    moduleKey === 'neuro-commenting' ? { 0: 0 } : {},
   )
   const [aiProtect, setAiProtect] = useState(true)
   const [protLevel, setProtLevel] = useState(1)
