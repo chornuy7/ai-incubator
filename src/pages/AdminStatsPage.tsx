@@ -2580,7 +2580,7 @@ function DailyTab({ daily }: { daily: DailySpend | null }) {
 function PricesTab() {
   const pushToast = useApp((s) => s.pushToast)
   const [prices, setPrices] = useState<EffectivePrices | null>(null)
-  const [draft, setDraft] = useState<Record<string, { month: string; action: string; gift: string }>>({})
+  const [draft, setDraft] = useState<Record<string, { month: string; action: string; gift: string; monthlyTokens: string }>>({})
   const [extra, setExtra] = useState({ annualDiscount: '', tokenUsd: '', imageMultiplier: '' })
   // §11.2: периоды подписки — редактируемый список (единица + количество + скидка),
   // а не «месяц/год» в коде. discount держим строкой в ПРОЦЕНТАХ, как в поле годовой.
@@ -2590,8 +2590,8 @@ function PricesTab() {
   const load = async () => {
     const p = await fetchPrices()
     setPrices(p)
-    const d: Record<string, { month: string; action: string; gift: string }> = {}
-    for (const m of p.modules) d[m.key] = { month: String(m.month), action: String(m.action), gift: String(m.gift || 0) }
+    const d: Record<string, { month: string; action: string; gift: string; monthlyTokens: string }> = {}
+    for (const m of p.modules) d[m.key] = { month: String(m.month), action: String(m.action), gift: String(m.gift || 0), monthlyTokens: String(m.monthlyTokens ?? 100) }
     setDraft(d)
     setExtra({
       annualDiscount: String(Math.round(p.annualDiscount * 100)),
@@ -2607,7 +2607,7 @@ function PricesTab() {
   if (!prices) return <Card className="p-6 text-sm text-muted">Загрузка…</Card>
 
   const dirty =
-    prices.modules.some((m) => draft[m.key] && (draft[m.key].month !== String(m.month) || draft[m.key].action !== String(m.action) || draft[m.key].gift !== String(m.gift || 0))) ||
+    prices.modules.some((m) => draft[m.key] && (draft[m.key].month !== String(m.month) || draft[m.key].action !== String(m.action) || draft[m.key].gift !== String(m.gift || 0) || draft[m.key].monthlyTokens !== String(m.monthlyTokens ?? 100))) ||
     extra.annualDiscount !== String(Math.round(prices.annualDiscount * 100)) ||
     extra.tokenUsd !== (prices.tokenUsdAuto ? '' : (prices.tokenUsd == null ? '' : String(prices.tokenUsd))) ||
     extra.imageMultiplier !== String(prices.imageMultiplier) ||
@@ -2618,10 +2618,10 @@ function PricesTab() {
   const save = async () => {
     setSaving(true)
     try {
-      const modules: Record<string, { month?: string; action?: string; gift?: string }> = {}
+      const modules: Record<string, { month?: string; action?: string; gift?: string; monthlyTokens?: string }> = {}
       for (const m of prices.modules) {
         const d = draft[m.key]
-        if (d) modules[m.key] = { month: d.month, action: d.action, gift: d.gift }
+        if (d) modules[m.key] = { month: d.month, action: d.action, gift: d.gift, monthlyTokens: d.monthlyTokens }
       }
       const patch: PricePatch = { modules }
       // Пустое поле = вернуть заводскую скидку: шлём '' (бэкенд удалит override), а не 0 —
@@ -2659,6 +2659,7 @@ function PricesTab() {
                 <th className="pb-2 pr-3 font-medium">Модуль</th>
                 <th className="pb-2 pr-3 text-right font-medium">Доступ, $/мес</th>
                 <th className="pb-2 pr-3 text-right font-medium">Действие, ⚡</th>
+                <th className="pb-2 pr-3 text-right font-medium">Токенов/мес</th>
                 <th className="pb-2 text-right font-medium">Подарок, ⚡</th>
               </tr>
             </thead>
@@ -2703,6 +2704,15 @@ function PricesTab() {
                         </div>
                       )
                     })()}
+                  </td>
+                  {/* MR-150 (созвон 12.08): месячная выдача токенов на модуль (дефолт 100), правится тут. */}
+                  <td className="py-1.5 pr-3 text-right">
+                    <span className="inline-flex items-center gap-1.5">
+                      {m.overridden.monthlyTokens && <span className="rounded bg-amber-500/15 px-1 text-[9px] font-bold text-amber-300">изм.</span>}
+                      <input value={draft[m.key]?.monthlyTokens ?? ''} inputMode="numeric"
+                        onChange={(e) => setDraft((d) => ({ ...d, [m.key]: { ...d[m.key], monthlyTokens: e.target.value.replace(/[^\d]/g, '') } }))}
+                        className="input h-8 w-20 text-right tabular-nums" placeholder="100" />
+                    </span>
                   </td>
                   {/* §3 (MR-21): подарочные токены на модуль — суммируются при выборе набора. */}
                   <td className="py-1.5 text-right">

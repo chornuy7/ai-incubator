@@ -46,9 +46,11 @@ export function SubscriptionPage() {
   // Считаем на клиенте ТОЛЬКО для мгновенной реакции на клик; при сохранении
   // сумму пересчитывает сервер, и она — окончательная.
   const cost = useMemo(() => {
-    if (!data) return { sum: 0, full: 0, setup: null as string | null, discount: 0, giftTokens: 0 }
+    if (!data) return { sum: 0, full: 0, setup: null as string | null, discount: 0, giftTokens: 0, monthlyTokens: 0 }
     // §3 (MR-21): подарочные токены суммируются по выбранным модулям.
     const giftTokens = data.items.filter((i) => picked.has(i.key)).reduce((a, i) => a + (i.gift || 0), 0)
+    // MR-150: месячная выдача токенов — сумма по выбранным модулям (напр. 14 × 100 = 1400/мес).
+    const monthlyTokens = data.items.filter((i) => picked.has(i.key)).reduce((a, i) => a + (i.monthlyTokens || 0), 0)
     const full = data.items.filter((i) => picked.has(i.key)).reduce((a, i) => a + i.price, 0)
     let best = { setup: null as string | null, discount: 0, sum: full }
     for (const s of data.setups) {
@@ -66,7 +68,7 @@ export function SubscriptionPage() {
         if (sum < best.sum) best = { setup: s.id, discount: s.discount, sum }
       }
     }
-    return { sum: Math.ceil(best.sum), full: Math.ceil(full), setup: best.setup, discount: best.discount, giftTokens }
+    return { sum: Math.ceil(best.sum), full: Math.ceil(full), setup: best.setup, discount: best.discount, giftTokens, monthlyTokens }
   }, [data, picked])
 
   const toggle = (key: string) => setPicked((prev) => {
@@ -188,9 +190,15 @@ export function SubscriptionPage() {
             {period === 'year' && <span className="rounded-md bg-spark-500/15 px-1.5 py-0.5 text-[10px] font-bold text-spark-300">−{Math.round(annualDiscount * 100)}%</span>}
             {period === 'month' && cost.discount > 0 && <span className="text-sm text-muted line-through">{cost.full} {cur}</span>}
           </div>
-          {/* MR-150: подарочные токены — отдельной жёлтой строкой, а не в общей серой. */}
+          {/* MR-150: общее число токенов в месяц по подписке (сумма выдачи выбранных модулей),
+              а подарок — ОТДЕЛЬНОЙ жёлтой строкой ниже, чтобы не смешивать месячную выдачу с бонусом. */}
+          {cost.monthlyTokens > 0 && (
+            <div className="mt-1 flex items-center gap-1 text-xs text-muted">
+              <Zap size={12} /> {cost.monthlyTokens.toLocaleString('ru-RU')} ⚡ токенов в месяц
+            </div>
+          )}
           {cost.giftTokens > 0 && (
-            <div className="mt-1 flex items-center gap-1 text-xs font-semibold text-amber-300">
+            <div className="mt-0.5 flex items-center gap-1 text-xs font-semibold text-amber-300">
               <Zap size={12} fill="currentColor" /> +{cost.giftTokens.toLocaleString('ru-RU')} ⚡ токенов в подарок
             </div>
           )}

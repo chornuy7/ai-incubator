@@ -108,6 +108,14 @@ function mergeOverrides(cur, patch) {
         if (g === undefined || g === 0) delete entry.gift
         else if (Number.isFinite(g) && g >= 0) entry.gift = Math.round(g)
       }
+      // MR-150 (созвон 12.08): месячная выдача токенов на модуль — дефолт 100 (MODULE_TOKENS_DEFAULT),
+      // настраивается в админке. Храним ТОЛЬКО отличие от дефолта: равное 100 удаляем, чтобы смена
+      // дефолта в будущем не была молча перекрыта застывшим значением (та же логика, что у цен).
+      if ('monthlyTokens' in val) {
+        const t = clean(val.monthlyTokens)
+        if (t === undefined || t === MODULE_TOKENS_DEFAULT) delete entry.monthlyTokens
+        else if (Number.isFinite(t) && t >= 0) entry.monthlyTokens = Math.round(t)
+      }
       if (Object.keys(entry).length) mods[key] = entry; else delete mods[key]
     }
     cur.modules = mods
@@ -133,7 +141,7 @@ function mergeOverrides(cur, patch) {
   return cur
 }
 import {
-  MODULE_MONTH_PRICE, ACTION_PRICE, COIN_PACKS, ANNUAL_DISCOUNT,
+  MODULE_MONTH_PRICE, ACTION_PRICE, COIN_PACKS, ANNUAL_DISCOUNT, MODULE_TOKENS_DEFAULT,
 } from './pricing.js'
 import { moduleTitle } from './lib/moduleTitles.js'
 
@@ -189,6 +197,7 @@ export async function effectivePrices() {
   const monthMap = {}
   const actionMap = {}
   const giftMap = {} // §3 (MR-21): подарочные токены на модуль
+  const tokensMap = {} // MR-150: месячная выдача токенов на модуль
   const modules = Object.keys(MODULE_MONTH_PRICE).map((key) => {
     // База — из БД (module_prices), код-константа — только фолбэк. Сверху — правки админки.
     const baseMonth = base[key]?.month ?? MODULE_MONTH_PRICE[key]
@@ -196,17 +205,21 @@ export async function effectivePrices() {
     const month = ovMod[key]?.month ?? baseMonth
     const action = ovMod[key]?.action ?? baseAction
     const gift = ovMod[key]?.gift ?? 0
+    // MR-150: месячная выдача токенов — дефолт MODULE_TOKENS_DEFAULT (100), правка админки сверху.
+    const monthlyTokens = ovMod[key]?.monthlyTokens ?? MODULE_TOKENS_DEFAULT
     monthMap[key] = month
     actionMap[key] = action
     giftMap[key] = gift
+    tokensMap[key] = monthlyTokens
     return {
       key,
       title: moduleTitle(key),
       month: round2(month),
       action: Number(action),
       gift: Number(gift),
+      monthlyTokens: Number(monthlyTokens),
       // Помечаем, что переопределено — админке показать «изменено», а не «дефолт».
-      overridden: { month: ovMod[key]?.month !== undefined, action: ovMod[key]?.action !== undefined, gift: ovMod[key]?.gift !== undefined },
+      overridden: { month: ovMod[key]?.month !== undefined, action: ovMod[key]?.action !== undefined, gift: ovMod[key]?.gift !== undefined, monthlyTokens: ovMod[key]?.monthlyTokens !== undefined },
     }
   })
 
@@ -223,6 +236,7 @@ export async function effectivePrices() {
     monthMap,
     actionMap,
     giftMap,
+    tokensMap,
     coinPacks: Array.isArray(ov.coinPacks) && ov.coinPacks.length ? ov.coinPacks : COIN_PACKS,
     annualDiscount: typeof ov.annualDiscount === 'number' ? ov.annualDiscount : ANNUAL_DISCOUNT,
     // §11.2: список периодов. Пока админ его не задал — прежнее поведение (месяц + год
