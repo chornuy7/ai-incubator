@@ -564,15 +564,16 @@ app.delete('/api/bundles/:id', async (req, res) => {
 app.get('/api/admin/prices', async (req, res) => {
   try {
     const { effectivePrices, coinUsdRate } = await import('./priceStore.js')
-    const { tokenSummary } = await import('./tokenLedger.js')
+    const { readLedger } = await import('./tokenLedger.js')
     const prices = await effectivePrices()
     // MR-149 (созвон 19.08): в админке показываем СЕБЕСТОИМОСТЬ действия рядом с ценой (видеть
-    // маржу). Себестоимость ⚡ = средний расход токенов (из истории) × цена токена ($) ÷ курс монеты.
+    // маржу). Себестоимость ⚡ = средний расход токенов × цена токена ($) ÷ курс монеты.
+    // ОДИН запрос последних записей журнала + агрегация в памяти (не 14 тяжёлых tokenSummary).
+    const recent = await readLedger({ limit: 5000 }).catch(() => [])
+    const acc = {}
+    for (const r of recent) { const m = r.module; if (!m) continue; (acc[m] ||= { t: 0, n: 0 }); acc[m].t += r.tokens; acc[m].n += 1 }
     const avgTokens = {}
-    for (const key of Object.keys(prices.actionMap || {})) {
-      const sum = await tokenSummary({ module: key }).catch(() => null)
-      avgTokens[key] = sum?.calls ? Math.round(sum.tokens / sum.calls) : 0
-    }
+    for (const key of Object.keys(prices.actionMap || {})) avgTokens[key] = acc[key]?.n ? Math.round(acc[key].t / acc[key].n) : 0
     const coinUsd = await coinUsdRate().catch(() => 0)
     res.json({ ok: true, prices: { ...prices, avgTokens, coinUsd } })
   } catch (err) { res.status(500).json({ ok: false, error: err instanceof Error ? err.message : 'Ошибка' }) }
