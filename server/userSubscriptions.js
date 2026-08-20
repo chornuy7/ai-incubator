@@ -174,9 +174,12 @@ export async function dueForCredit(nowMs = Date.now()) {
   const db = sb()
   const byUser = new Map()
   if (db) {
+    // last_credit_month IS NULL (ни разу не начисляли) — тоже «ещё не начислен этот месяц».
+    // Важно: SQL .neq('last_credit_month', month) НЕ включает NULL (NULL != 'X' → NULL, не TRUE),
+    // поэтому свежую подписку крон бы пропускал. Явно ловим null ИЛИ не-этот-месяц.
     const { data } = await db.from('user_subscriptions')
       .select('user_id, module_key, expires_at, billing_day, last_credit_month')
-      .eq('billing_day', today).neq('last_credit_month', month)
+      .eq('billing_day', today).or(`last_credit_month.is.null,last_credit_month.neq.${month}`)
     for (const r of data || []) {
       const row = { module: r.module_key, expiresAt: ms(r.expires_at), billingDay: r.billing_day, lastCreditMonth: r.last_credit_month }
       if (!isDue(row)) continue
