@@ -68,25 +68,104 @@ export const DEFAULT_MODULES = 'all'
 const SUBSCRIPTION_KEY = '__subscription'
 
 /**
- * Открыт ли модуль этому набору. Набор — либо `'all'`, либо список ключей.
- * @param {string[]|'all'|undefined} modules @param {string} moduleKey
+ * Истёк ли срок подписки. `null`/`undefined`/`0` — БЕССРОЧНО (так живёт дефолтный
+ * воркспейс и демо без периода), и закрывать такую подписку нельзя.
+ *
+ * Баг 19.08 (§2): срок хранился (`expiresAt`, `expires_at`), но не проверялся нигде —
+ * оплаченный на месяц модуль работал вечно. Дата — единственный источник правды о том,
+ * действует ли подписка; отдельного флага «активна» намеренно не заводим, иначе
+ * появился бы второй источник, который надо кем-то гасить по расписанию.
+ * @param {number|null|undefined} expiresAt
  */
-export function modulesAllow(modules, moduleKey) {
+export function subscriptionExpired(expiresAt) {
+  const t = Number(expiresAt) || 0
+  return t > 0 && t <= Date.now()
+}
+
+/**
+ * Сколько дней назад истекла подписка — для текста отказа («истекла 3 дня назад»).
+ * Меньше суток — 0, отказ говорит «сегодня».
+ * @param {number|null|undefined} expiresAt
+ */
+export function daysSinceExpiry(expiresAt) {
+  const t = Number(expiresAt) || 0
+  if (!t) return 0
+  return Math.max(0, Math.floor((Date.now() - t) / DAY))
+}
+
+/**
+ * Открыт ли модуль этому набору. Набор — либо `'all'`, либо список ключей.
+ *
+ * Третий аргумент — срок подписки. Он необязателен СОЗНАТЕЛЬНО: вопрос «куплен ли
+ * модуль» и вопрос «действует ли оплата» разные, и есть места (витрина, подсчёт
+ * докупки), где нужен только первый. Все гейты доступа обязаны передавать срок —
+ * без него подписка бессрочна.
+ * @param {string[]|'all'|undefined} modules @param {string} moduleKey
+ * @param {number|null} [expiresAt] срок подписки; null/не передан — бессрочно
+ */
+export function modulesAllow(modules, moduleKey, expiresAt) {
+  if (subscriptionExpired(expiresAt)) return false
   if (modules === 'all' || modules == null) return true
   return Array.isArray(modules) && modules.includes(moduleKey)
 }
 
 /**
+ * Как применить переданный набор к уже сохранённому (баг 19.08 §2).
+ *
+ * `'replace'` — набор становится ровно тем, что передали. Так админ ВЫДАЁТ доступы:
+ * он говорит «у этого человека вот эти модули», и снять лишнее должно быть можно.
+ *
+ * `'merge'` — ДОКУПКА: к оплаченному добавляется новое. Клиентскому списку доверять
+ * нельзя: кабинет присылал полный набор, и кнопка «Готовый набор» затирала им ранее
+ * оплаченные модули — деньги списаны, доступ пропал. Теперь объединяет сервер.
+ * @param {string[]|'all'|undefined} prev @param {string[]|'all'} list @param {'merge'|'replace'} mode
+ */
+function applyModules(prev, list, mode) {
+  if (mode !== 'merge') return list
+  if (prev === 'all' || list === 'all') return 'all'
+  const cur = Array.isArray(prev) ? prev : []
+  return [...new Set([...cur.map(String), ...(Array.isArray(list) ? list : [])])]
+}
+
+/**
+ * Срок при докупке. Правило: докупка не укорачивает уже оплаченное.
+ *  - записи ещё нет → новый срок как есть (это первая покупка);
+ *  - было бессрочно → остаётся бессрочно;
+ *  - период не указан (months=0) → старый срок не трогаем, иначе докупка молча
+ *    сделала бы месячную подписку вечной;
+ *  - иначе берём ДАЛЬНЮЮ дату: оплаченный год не должен схлопнуться до месяца
+ *    из-за докупки одного модуля.
+ */
+function mergeExpiry(prevExpiry, nextExpiry, hadRecord) {
+  if (!hadRecord) return nextExpiry
+  if (prevExpiry == null) return null
+  if (nextExpiry == null) return prevExpiry
+  return Math.max(prevExpiry, nextExpiry)
+}
+
+/** Нормализованный режим записи набора. Умолчание — 'replace' (явная выдача). */
+const modeOf = (opts) => (opts?.mode === 'merge' ? 'merge' : 'replace')
+
+/**
  * Записать ОБЩИЙ набор пространства — то, что покупает владелец для всех.
  * @param {string[]|'all'} modules @param {string} [userId] чей баланс вернуть в ответе
+ * @param {{months?:number, mode?:'merge'|'replace'}} [opts]
  */
 export async function setModules(modules, userId, opts = {}) {
   const list = modules === 'all' ? 'all' : [...new Set((modules || []).map(String).filter(Boolean))]
   const expiresAt = subExpiry(opts)
+  const mode = modeOf(opts)
   const db = sb()
   if (db) {
+    const prev = mode === 'merge'
+      ? (await db.from('subscriptions').select('modules, expires_at').eq('id', 'workspace').maybeSingle()).data
+      : null
+    const finalList = applyModules(prev?.modules, list, mode)
+    const finalExpiry = mode === 'merge'
+      ? mergeExpiry(prev?.expires_at ? ms(prev.expires_at) : null, expiresAt, !!prev)
+      : expiresAt
     await db.from('subscriptions').upsert(
-      { id: 'workspace', scope: 'workspace', user_id: null, modules: list, expires_at: iso(expiresAt), updated_at: new Date().toISOString() },
+      { id: 'workspace', scope: 'workspace', user_id: null, modules: finalList, expires_at: iso(finalExpiry), updated_at: new Date().toISOString() },
       { onConflict: 'id' },
     )
     return getBalance(userId)
@@ -94,7 +173,13 @@ export async function setModules(modules, userId, opts = {}) {
   await mutateJson(BALANCE_FILE(), (all) => {
     const next = { ...(all || {}) }
     delete next.coins; delete next.planId; delete next.updatedAt
-    next[SUBSCRIPTION_KEY] = { modules: list, expiresAt, updatedAt: Date.now() }
+    const prev = next[SUBSCRIPTION_KEY]
+    const hadRecord = !!prev && prev.modules !== undefined
+    next[SUBSCRIPTION_KEY] = {
+      modules: applyModules(prev?.modules, list, mode),
+      expiresAt: mode === 'merge' ? mergeExpiry(prev?.expiresAt ?? null, expiresAt, hadRecord) : expiresAt,
+      updatedAt: Date.now(),
+    }
     return next
   })
   return getBalance(userId)
@@ -116,16 +201,25 @@ function subExpiry(opts = {}) {
  * Клиент заходит в «Мои модули», выбирает пакет — и видит ровно его; остальные
  * пользователи пространства не задеты.
  * @param {string[]|'all'} modules @param {string} userId
+ * @param {{months?:number, mode?:'merge'|'replace'}} [opts] `merge` — докупка (§2, баг 19.08)
  */
 export async function setUserModules(modules, userId, opts = {}) {
   if (!userId) throw new Error('Личная подписка требует пользователя')
   const list = modules === 'all' ? 'all' : [...new Set((modules || []).map(String).filter(Boolean))]
   const expiresAt = subExpiry(opts)
+  const mode = modeOf(opts)
   const k = key(userId)
   const db = sb()
   if (db) {
+    const prev = mode === 'merge'
+      ? (await db.from('subscriptions').select('modules, expires_at').eq('id', k).maybeSingle()).data
+      : null
+    const finalList = applyModules(prev?.modules, list, mode)
+    const finalExpiry = mode === 'merge'
+      ? mergeExpiry(prev?.expires_at ? ms(prev.expires_at) : null, expiresAt, !!prev)
+      : expiresAt
     await db.from('subscriptions').upsert(
-      { id: k, scope: 'user', user_id: k, modules: list, expires_at: iso(expiresAt), updated_at: new Date().toISOString() },
+      { id: k, scope: 'user', user_id: k, modules: finalList, expires_at: iso(finalExpiry), updated_at: new Date().toISOString() },
       { onConflict: 'id' },
     )
     return getBalance(userId)
@@ -133,7 +227,17 @@ export async function setUserModules(modules, userId, opts = {}) {
   await mutateJson(BALANCE_FILE(), (all) => {
     const next = { ...(all || {}) }
     delete next.coins; delete next.planId; delete next.updatedAt
-    next[k] = { ...(next[k] || {}), modules: list, expiresAt, updatedAt: Date.now() }
+    const prev = next[k]
+    // Докупку мерджим по СВОЕЙ записи, а не по тому, что вернул бы getBalance:
+    // там набор может быть унаследован от владельца пространства, и слив чужого
+    // набора в личную запись выдал бы модули, за которые этот человек не платил.
+    const hadRecord = !!prev && prev.modules !== undefined
+    next[k] = {
+      ...(prev || {}),
+      modules: applyModules(prev?.modules, list, mode),
+      expiresAt: mode === 'merge' ? mergeExpiry(prev?.expiresAt ?? null, expiresAt, hadRecord) : expiresAt,
+      updatedAt: Date.now(),
+    }
     return next
   })
   return getBalance(userId)

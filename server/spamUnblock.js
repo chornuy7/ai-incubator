@@ -12,6 +12,7 @@ import { loadSessionString, createClient } from './tgAuth.js'
 import { accountFingerprint } from './lib/deviceFingerprint.js'
 import { getAccountMeta, setAccountStatus, setAccountMeta } from './accountsMeta.js'
 import { appealSpamblock } from './lib/spamAppeal.js'
+import { waitAccountWork, endAccountWork } from './lib/accountBusy.js'
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 
@@ -20,15 +21,32 @@ const LABEL = {
   appealed: 'жалоба подана — ждём модерацию',
   blocked: 'ограничение осталось',
   unknown: 'статус неясен',
+  busy: 'аккаунт занят другим модулем — пропущен',
   error: 'ошибка подключения',
 }
 
-/** Снять спамблок с одного аккаунта: подключиться, апеллировать, при успехе — в строй. */
-async function appealOne(accountId) {
+/**
+ * Снять спамблок с одного аккаунта: подключиться, апеллировать, при успехе — в строй.
+ *
+ * Слот занятости берём сам, а не через connectAccount: модуль по определению работает со
+ * СПАМБЛОКНУТЫМИ аккаунтами, и статус-гейт connectAccount (isAccountRunnable) не пустил бы
+ * сюда ни одного. Но вторую сессию тем же ключом, пока аккаунтом работает другой модуль,
+ * открывать нельзя — за это и отвечает реестр занятости.
+ * @param {string} accountId @param {string} [taskId] @param {() => boolean} [shouldStop]
+ */
+async function appealOne(accountId, taskId, shouldStop) {
   const meta = await getAccountMeta(accountId).catch(() => ({}))
   const name = meta?.name || accountId.slice(-6)
   const sessionStr = await loadSessionString(accountId).catch(() => '')
   if (!sessionStr) return { name, state: 'error', text: 'нет сессии', appealed: false }
+  if (taskId) {
+    try {
+      // Апелляция не срочная — можно подождать, пока аккаунт закончит текущее действие.
+      await waitAccountWork(accountId, 'spam-unblock', taskId, { timeoutMs: 60 * 1000, shouldStop })
+    } catch (e) {
+      return { name, state: 'busy', text: e instanceof Error ? e.message : '', appealed: false }
+    }
+  }
   let client
   try {
     client = await createClient(sessionStr, meta.proxy, accountFingerprint(accountId, meta))
@@ -43,6 +61,8 @@ async function appealOne(accountId) {
   } catch (e) {
     try { if (client) await client.disconnect() } catch { /* ignore */ }
     return { name, state: 'error', text: e instanceof Error ? e.message : 'ошибка', appealed: false }
+  } finally {
+    if (taskId) endAccountWork(accountId, taskId)
   }
 }
 
@@ -51,6 +71,9 @@ async function appealOne(accountId) {
  * @param {object} task @param {object} store
  */
 export async function runSpamUnblock(task, store) {
+  // Живой объект задачи: «Стоп»/«Пауза» ставят флаг прямо на нём (signalLiveTask), а `task`
+  // ниже переприсваивается перечитанной с диска копией и эту связь теряет.
+  const liveTask = task
   const s = task.settings || {}
   const ids = Array.isArray(s.accountIds) ? s.accountIds : []
   const delayMin = Math.max(5, Math.round(Number(s.delayMin) || 30))
@@ -69,8 +92,10 @@ export async function runSpamUnblock(task, store) {
       break
     }
 
-    const r = await appealOne(ids[i])
-    const level = r.state === 'clean' ? 'success' : r.state === 'error' ? 'error' : 'info'
+    // shouldStop читает флаг с ПЕРЕЧИТАННОЙ задачи (см. выше по циклу): без него «Стоп»
+    // ждал бы освобождения аккаунта до конца таймаута на каждом профиле.
+    const r = await appealOne(ids[i], task.id, () => !!(liveTask.stopRequested || liveTask.pauseRequested || task.stopRequested || task.pauseRequested))
+    const level = r.state === 'clean' ? 'success' : r.state === 'error' ? 'error' : r.state === 'busy' ? 'warning' : 'info'
     await store.appendLog(task, level, `@SpamBot: ${LABEL[r.state] || r.state}${r.text ? ` — ${r.text}` : ''}`, r.name)
 
     task = (await store.loadTask(task.id)) || task

@@ -37,6 +37,7 @@ import {
   reconcileLocks,
   forceReleaseAccount,
 } from './lib/accountLocks.js'
+import { getAllAccountBusy, reconcileBusy } from './lib/accountBusy.js'
 import { buildAccountStats, listAccountChannels, listAccountChannelMessages, listAccountFolders, leaveAccountChannel } from './accountStats.js'
 import { dailySummary, dailySummaryAll } from './lib/dailyActions.js'
 import { rpsMiddleware, systemMetrics } from './lib/systemMetrics.js'
@@ -184,7 +185,11 @@ app.get('/api/tg/accounts/busy', async (_req, res) => {
   try {
     await reconcileLocks()
   } catch { /* ignore */ }
-  res.json({ ok: true, busy: await getAllAccountLocksDetailed() })
+  // То же самое для реестра занятости ДЕЙСТВИЕМ и его выдача наружу: слот мёртвой задачи
+  // выключает аккаунт из всех модулей, а оператор его до сих пор не видел — «занят» в UI
+  // означало только блокировку задачей.
+  try { reconcileBusy() } catch { /* ignore */ }
+  res.json({ ok: true, busy: await getAllAccountLocksDetailed(), working: getAllAccountBusy() })
 })
 
 app.get('/api/tg/accounts/daily-all', async (_req, res) => {
@@ -262,7 +267,13 @@ app.post('/api/tg/accounts/:accountId/release', async (req, res) => {
   const { WARMING_MODULES, canStopWarming } = await import('./lib/safetyLimits.js')
   const { getAccountLock } = await import('./lib/accountLocks.js')
   const info = getAccountLock(req.params.accountId)
-  if (info && WARMING_MODULES.has(info.moduleKey) && !canStopWarming(await isAdminRequest(req))) {
+  // Многомодульность (20.08): держателей у аккаунта несколько, а `info.moduleKey` —
+  // только ПЕРВЫЙ из них. У пары [мейлинг, прогрев] гейт видел мейлинг и пропускал
+  // обычного оператора, после чего forceReleaseAccount сносил запись целиком — вместе с
+  // прогревом, который §12 запрещает снимать не-админу. Смотрим ВСЕХ держателей.
+  const holders = info?.holders?.length ? info.holders : (info ? [info] : [])
+  const warming = holders.find((h) => WARMING_MODULES.has(h.moduleKey))
+  if (warming && !canStopWarming(await isAdminRequest(req))) {
     return res.status(403).json({
       ok: false,
       error: 'Останавливать прогрев может только супер-админ: это недели работы аккаунтов, откатить нельзя.',
@@ -1243,7 +1254,16 @@ app.post('/api/subscription', async (req, res) => {
         await changeUsd(-charged, `Подписка: ${added.length} модул. на ${months || 1} мес.`, target)
       }
     }
-    const balance = personal ? await setUserModules(list, target, { months }) : await setModules(list, target, { months })
+    // Баг 19.08 (§2): покупка модуля ЗАТИРАЛА набор. Клиент присылал полный список,
+    // и «Готовый набор» в кабинете выкидывал из него ранее оплаченное — деньги списаны,
+    // доступ пропал. Клиентская покупка теперь ДОКУПКА (merge): сервер сам объединяет
+    // с тем, что уже оплачено, и полному списку от клиента больше не доверяет.
+    // Админ — наоборот, ЗАМЕНЯЕТ набор целиком: он выдаёт доступы явно, и снять
+    // лишнее должно быть можно (это провижининг, а не продажа).
+    const mode = admin ? 'replace' : 'merge'
+    const balance = personal
+      ? await setUserModules(list, target, { months, mode })
+      : await setModules(list, target, { months, mode })
     await appendAudit({
       action: 'subscription.set',
       module: 'billing',
@@ -1433,7 +1453,11 @@ await startScheduler().catch((err) => console.warn('[automation] scheduler init 
 try {
   const { refreshAllTrustCache } = await import('./accountStats.js')
   const runTrust = () => refreshAllTrustCache().then((r) => { if (r.updated) console.log(`[trust] обновлён кэш trust: ${r.updated} акк.${r.returned ? ` · авто-возврат из прогрева: ${r.returned}` : ''}`) }).catch((e) => console.warn('[trust] refresh failed:', e?.message || e))
-  await runTrust()
+  // БЕЗ await — по той же причине, что и проверка прокси ниже: пересчёт trust идёт по
+  // ВСЕМ аккаунтам и на файловом сторе занимает больше 20 секунд. С `await` он стоял
+  // ПЕРЕД app.listen: API не слушал порт, фронт получал ECONNREFUSED на каждый запрос,
+  // а в логе было тихо — снаружи это выглядело как «бэкенд не запустился» (20.08).
+  void runTrust()
   setInterval(runTrust, 10 * 60 * 1000)
 } catch (err) {
   console.warn('[trust] scheduler init failed:', err)

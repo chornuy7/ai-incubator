@@ -269,13 +269,17 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
   }), [selected, targets, postUrls, toggles, probability, maxActions, minActions, maxPerAcc, minPerAcc, minWords, durationMinutes, aiProtect, protLevel, notifyStatus, activePrompt, promptBodies, delayPreset, palette, delays, keywords, isGgr, accounts, cfg, lookModeIdx, lookPostsCount, goalId, campaignId, campaigns, warmLevel, postWindow, stopWordsText, analyzeImages, moduleKey, typeWeights, weightSum])
 
   const hasPostTargets = postUrls.length > 0
-  // Многомодульность (20.08): аккаунт МОЖНО брать, пока он работает в другом модуле —
-  // мешает только вторая задача ТОГО ЖЕ модуля (она дублировала бы работу).
+  // Многомодульность (20.08): аккаунт МОЖНО брать, пока он работает в другом модуле.
+  // Мешают ровно два случая, и оба — зеркало серверного правила (accountLocks.js):
+  //   1) вторая задача ТОГО ЖЕ модуля — она дублировала бы работу;
+  //   2) прогрев в любую сторону — греющийся профиль ещё не боец, а бойца нельзя греть.
+  // Без второго пункта форма пускала выбор, а сервер отказывал уже на «Запустить» —
+  // оператор узнавал о запрете в последний момент и не понимал, чей аккаунт виноват.
   const busySelectedCount = useMemo(
     () => [...selected].filter((id) => accounts.some((a) => {
       if (a.id !== id || !a.busyIn) return false
       const mods = a.busyIn.modules ?? [{ moduleKey: a.busyIn.moduleKey }]
-      return mods.some((m) => m.moduleKey === moduleKey)
+      return mods.some((m) => m.moduleKey === moduleKey || m.moduleKey === 'warming' || moduleKey === 'warming')
     })).length,
     [selected, accounts, moduleKey],
   )
@@ -298,7 +302,9 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
     const m: string[] = []
     if (isGgr) { if (!selected.size) m.push('выберите аккаунты для проверки'); return m }
     if (!selected.size) m.push('выберите аккаунты')
-    else if (busySelectedCount) m.push(`${busySelectedCount} аккаунт(а) уже работают в этом же модуле — остановите ту задачу или выберите другие`)
+    else if (busySelectedCount) m.push(moduleKey === 'warming'
+      ? `${busySelectedCount} аккаунт(а) заняты работой — прогрев берёт только свободные профили`
+      : `${busySelectedCount} аккаунт(а) заняты несовместимой задачей (тот же модуль или прогрев) — остановите её или выберите другие`)
     if (needsTargets && !targets.length && !hasPostTargets) m.push('добавьте цель — группу или ссылку на пост')
     return m
   }, [isGgr, selected, busySelectedCount, needsTargets, targets, hasPostTargets])

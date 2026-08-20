@@ -14,7 +14,7 @@
  * Реестр живёт в памяти процесса, как и остальные локи: после рестарта задачи всё
  * равно переподнимаются заново.
  */
-import { moduleLabel } from './accountLocks.js'
+import { moduleLabel, isTaskLive } from './accountLocks.js'
 
 /** @type {Map<string, { moduleKey: string, taskId: string, since: number }>} */
 const busy = new Map()
@@ -31,7 +31,44 @@ const SWITCH_COOL_MS = [1000, 5000]
  * его окончания неизвестен (действие может тянуться из-за задержек модуля). */
 export const BUSY_RETRY_MS = 15 * 1000
 
+/**
+ * Через сколько слот МЁРТВОЙ задачи считается протухшим (самолечение, аналог
+ * reconcileLocks). Живую задачу (isTaskLive) не трогаем вообще, сколько бы она слот ни
+ * держала: нейродиалоги держат аккаунт весь проход по диалогам, парсер — всю цель, и
+ * отнимать у них аккаунт по часам — это ровно та беда, что была у принудительного
+ * захвата. Срок нужен только на гонку «слот взят / задача ещё не помечена живой».
+ */
+export const BUSY_STALE_MS = 5 * 60 * 1000
+
 const rndCool = () => SWITCH_COOL_MS[0] + Math.floor(Math.random() * (SWITCH_COOL_MS[1] - SWITCH_COOL_MS[0] + 1))
+
+/**
+ * Отказ в слоте: отдельный тип ошибки, чтобы вызывающий отличал «аккаунт занят» от
+ * сетевого сбоя. `code` — для кода, `message` — для лога оператора.
+ */
+export class AccountBusyError extends Error {
+  /** @param {'ACCOUNT_BUSY'|'ABORTED_BY_STOP'} code @param {string} message */
+  constructor(code, message) {
+    super(message)
+    this.name = 'AccountBusyError'
+    this.code = code
+  }
+}
+
+/**
+ * Снять слот, чей владелец заведомо мёртв: задачи нет в реестре живых воркеров и слот
+ * висит дольше BUSY_STALE_MS. Без этого любой пропущенный endAccountWork (падение
+ * промиса, выход мимо disconnectAccount) выключал аккаунт из ВСЕХ модулей до рестарта
+ * процесса — лечилось только перезапуском, оператор этого даже не видел.
+ * @returns {boolean} сняли ли слот
+ */
+function dropIfStale(accountId, cur, now) {
+  if (!cur || isTaskLive(cur.taskId) || now - cur.since < BUSY_STALE_MS) return false
+  busy.delete(accountId)
+  // `last` не пишем: когда мёртвая задача реально закончила действие — неизвестно,
+  // а лишняя пауза переключения тормозила бы уже ни в чём не виноватый модуль.
+  return true
+}
 
 /**
  * Попробовать занять аккаунт действием. Не блокирует: занято — вернёт причину и когда
@@ -41,7 +78,9 @@ const rndCool = () => SWITCH_COOL_MS[0] + Math.floor(Math.random() * (SWITCH_COO
  * @returns {{ok: true} | {ok: false, reason: string, until: number}}
  */
 export function beginAccountWork(accountId, moduleKey, taskId, now = Date.now()) {
-  const cur = busy.get(accountId)
+  let cur = busy.get(accountId)
+  // Прежде чем отказать — проверяем, жив ли вообще держатель (см. dropIfStale).
+  if (cur && cur.taskId !== taskId && dropIfStale(accountId, cur, now)) cur = undefined
   if (cur && cur.taskId !== taskId) {
     return {
       ok: false,
@@ -73,11 +112,24 @@ export function endAccountWork(accountId, taskId, now = Date.now()) {
 }
 
 /**
- * Дождаться свободного слота (для потоковых модулей — мейлинг, диалоги, — где пропуск
- * невозможен: собеседник ждёт ответа). Возвращает, сколько миллисекунд прождали.
- * По таймауту занимает слот принудительно — лучше редкое наложение, чем зависший диалог.
+ * Дождаться свободного слота (для потоковых модулей — мейлинг, диалоги, — где карусельного
+ * «пропустить и взять следующий аккаунт» нет). Успех — сколько миллисекунд прождали.
+ *
+ * Раньше по таймауту слот ОТБИРАЛСЯ у прежнего владельца. Отбирался молча и вхолостую:
+ * тот продолжал работать со своим живым клиентом (его endAccountWork потом становился
+ * no-op для чужого владельца), и мейлинг слал ЛС ровно в тот момент, когда нейродиалоги
+ * отвечали тем же аккаунтом, — то есть физика «одно действие за раз» отваливалась именно
+ * там, где обещала. А держат слот подолгу штатно: диалоги — весь проход, парсер — всю цель.
+ *
+ * Теперь — честный отказ: бросаем AccountBusyError, вызывающий переходит к следующей
+ * цели/аккаунту. Бросок, а не код возврата, потому что единственный боевой вызывающий
+ * (connectAccount) результат не смотрит: вернув «не смог», мы пустили бы его подключаться
+ * БЕЗ слота — то самое наложение, которое чиним. Успешный путь по-прежнему отдаёт число.
+ *
  * @param {string} accountId @param {string} moduleKey @param {string} taskId
- * @param {{timeoutMs?: number, sleep?: (ms:number)=>Promise<void>}} [opts]
+ * @param {{timeoutMs?: number, sleep?: (ms:number)=>Promise<void>, shouldStop?: () => boolean}} [opts]
+ * @returns {Promise<number>} миллисекунды ожидания
+ * @throws {AccountBusyError} слот так и не освободился / задачу остановили
  */
 export async function waitAccountWork(accountId, moduleKey, taskId, opts = {}) {
   const timeout = opts.timeoutMs ?? 2 * 60 * 1000
@@ -86,9 +138,13 @@ export async function waitAccountWork(accountId, moduleKey, taskId, opts = {}) {
   for (;;) {
     const gate = beginAccountWork(accountId, moduleKey, taskId)
     if (gate.ok) return Date.now() - started
+    // «Стоп» не должен подвисать на каждом аккаунте до конца таймаута: без этой проверки
+    // остановка задачи на 20 аккаунтах растягивалась на десятки минут ожидания впустую.
+    if (opts.shouldStop?.()) {
+      throw new AccountBusyError('ABORTED_BY_STOP', 'ABORTED_BY_STOP: ожидание свободного аккаунта прервано остановкой задачи')
+    }
     if (Date.now() - started >= timeout) {
-      busy.set(accountId, { moduleKey, taskId, since: Date.now() })
-      return Date.now() - started
+      throw new AccountBusyError('ACCOUNT_BUSY', `Аккаунт ${gate.reason} — ход пропущен`)
     }
     await doSleep(Math.min(500, Math.max(50, gate.until - Date.now())))
   }
@@ -108,4 +164,26 @@ export function releaseTaskBusy(taskId, now = Date.now()) {
 export function getAccountBusy(accountId) {
   const cur = busy.get(accountId)
   return cur ? { ...cur, moduleLabel: moduleLabel(cur.moduleKey) } : null
+}
+
+/** Все занятые аккаунты — для экрана занятости: залипший слот должно быть ВИДНО. */
+export function getAllAccountBusy() {
+  /** @type {Record<string, { moduleKey: string, taskId: string, since: number, moduleLabel: string }>} */
+  const out = {}
+  for (const id of busy.keys()) out[id] = /** @type {any} */ (getAccountBusy(id))
+  return out
+}
+
+/**
+ * Самолечение реестра занятости — как reconcileLocks у блокировок. Зовётся с экрана
+ * занятости: слоты мёртвых задач снимаются, не дожидаясь следующей попытки взять аккаунт.
+ * @returns {{ accountId: string, taskId: string, moduleKey: string }[]} снятые слоты
+ */
+export function reconcileBusy(now = Date.now()) {
+  /** @type {{ accountId: string, taskId: string, moduleKey: string }[]} */
+  const dropped = []
+  for (const [accountId, cur] of [...busy]) {
+    if (dropIfStale(accountId, cur, now)) dropped.push({ accountId, taskId: cur.taskId, moduleKey: cur.moduleKey })
+  }
+  return dropped
 }

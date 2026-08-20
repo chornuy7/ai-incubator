@@ -203,6 +203,85 @@ test('§11.4: не хватает денег — ни списания, ни н�
   await assert.rejects(() => B.buyTokens({ usd: -10, userId: 'usr_p' }), /больше нуля/)
 })
 
+/**
+ * Баг 19.08 (§2): ПОКУПКА МОДУЛЯ ЗАТИРАЛА НАБОР.
+ *
+ * `setUserModules` писала `modules = list` целиком и доверяла полному списку от клиента.
+ * Кабинет делал пред-мердж сам, но кнопка «Готовый набор» подставляла ровно модули
+ * набора — и ранее оплаченные исчезали: деньги списаны, доступа нет. Объединять обязан
+ * сервер. При этом ЗАМЕНА набора должна остаться: админка выдаёт доступы явно и должна
+ * уметь снимать лишнее — поэтому режим передаётся параметром, а не угадывается.
+ */
+test('докупка (merge): ранее оплаченные модули остаются', async () => {
+  const B = await fresh()
+  await B.setUserModules(['mailing'], 'usr_m1', { months: 1, mode: 'merge' })
+  // Клиент прислал «Готовый набор» без mailing — сервер не имеет права его потерять.
+  await B.setUserModules(['parsing', 'neuro-commenting'], 'usr_m1', { months: 1, mode: 'merge' })
+  assert.deepEqual(
+    (await B.getBalance('usr_m1')).modules,
+    ['mailing', 'parsing', 'neuro-commenting'],
+    'оплаченный mailing остался, новые добавились',
+  )
+})
+
+test('замена (replace): выдача доступов админом снимает лишнее', async () => {
+  const B = await fresh()
+  await B.setUserModules(['mailing', 'parsing'], 'usr_m2', {})
+  await B.setUserModules(['parsing'], 'usr_m2', { mode: 'replace' })
+  assert.deepEqual((await B.getBalance('usr_m2')).modules, ['parsing'], 'админ должен уметь снять модуль')
+  // Умолчание — тоже замена: смысл старых вызовов (админка, тесты) не меняется.
+  await B.setUserModules(['warming'], 'usr_m2')
+  assert.deepEqual((await B.getBalance('usr_m2')).modules, ['warming'])
+})
+
+test('докупка «всего» и докупка к «всему» не ломают набор', async () => {
+  const B = await fresh()
+  await B.setUserModules(['mailing'], 'usr_m6', { mode: 'merge' })
+  await B.setUserModules('all', 'usr_m6', { mode: 'merge' })
+  assert.equal((await B.getBalance('usr_m6')).modules, 'all')
+  await B.setUserModules(['warming'], 'usr_m6', { mode: 'merge' })
+  assert.equal((await B.getBalance('usr_m6')).modules, 'all', 'у кого всё — докупать нечего')
+})
+
+test('докупка не укорачивает уже оплаченный срок', async () => {
+  const B = await fresh()
+  await B.setUserModules(['mailing'], 'usr_m3', { months: 12, mode: 'merge' })
+  const year = (await B.getBalance('usr_m3')).expiresAt
+  await B.setUserModules(['warming'], 'usr_m3', { months: 1, mode: 'merge' })
+  const after = await B.getBalance('usr_m3')
+  assert.deepEqual(after.modules, ['mailing', 'warming'])
+  assert.equal(after.expiresAt, year, 'оплаченный год не схлопывается до месяца из-за докупки')
+})
+
+test('докупка без периода не делает срочную подписку вечной', async () => {
+  const B = await fresh()
+  await B.setUserModules(['mailing'], 'usr_m4', { months: 1, mode: 'merge' })
+  const till = (await B.getBalance('usr_m4')).expiresAt
+  assert.ok(till > Date.now())
+  await B.setUserModules(['warming'], 'usr_m4', { mode: 'merge' })
+  assert.equal((await B.getBalance('usr_m4')).expiresAt, till, 'срок остался прежним, а не null')
+})
+
+/**
+ * Баг 19.08 (§3): оплаченный модуль можно было снять и «оплатить» повторно. Денег это
+ * не стоило (`addedCost` считает только добавленное), но модуль при этом снимался молча
+ * и без возврата. Серверная половина защиты — здесь; чекбокс заблокирован в кабинете.
+ */
+test('повторная оплата уже купленного: ноль к списанию и никаких дублей', async () => {
+  const B = await fresh()
+  const { addedCost } = await import('../pricing.js')
+  await B.setUserModules(['mailing'], 'usr_m5', { months: 1, mode: 'merge' })
+
+  const had = (await B.getBalance('usr_m5')).modules
+  assert.deepEqual(addedCost(had, ['mailing']), { added: [], monthly: 0 }, 'за оплаченное второй раз не берём')
+
+  await B.setUserModules(['mailing'], 'usr_m5', { months: 1, mode: 'merge' })
+  assert.deepEqual((await B.getBalance('usr_m5')).modules, ['mailing'], 'дубль в наборе не появляется')
+  // Пустой список в режиме докупки — не способ «обнулить» подписку.
+  await B.setUserModules([], 'usr_m5', { mode: 'merge' })
+  assert.deepEqual((await B.getBalance('usr_m5')).modules, ['mailing'], 'докупкой набор не снимают')
+})
+
 test('§11.4: кошельки не пересекаются между юзерами', async () => {
   const B = await fresh()
   await B.changeUsd(50, 'пополнение', 'usr_x')

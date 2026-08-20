@@ -34,8 +34,13 @@ export async function abortTaskClients(taskId) {
   return clients.length
 }
 
-/** @param {string} accountId @param {string} [taskId] */
-export async function connectAccount(accountId, taskId) {
+/**
+ * @param {string} accountId @param {string} [taskId]
+ * @param {{ shouldStop?: () => boolean }} [opts] `shouldStop` прерывает ожидание слота
+ *   занятости: без него «Стоп» простаивал до двух минут на каждом аккаунте, ожидая
+ *   чужое действие, которое всё равно уже никому не нужно.
+ */
+export async function connectAccount(accountId, taskId, opts = {}) {
   assertAccountAvailable(accountId, taskId)
   const meta = await getAccountMeta(accountId)
   if (!isAccountRunnable(meta.status || 'active')) {
@@ -48,7 +53,7 @@ export async function connectAccount(accountId, taskId) {
   // берёт следующий). Повторный вход той же задачи — мгновенный.
   if (taskId) {
     const holder = getAccountLock(accountId)?.holders?.find((h) => h.taskId === taskId)
-    await waitAccountWork(accountId, holder?.moduleKey || 'action', taskId, { timeoutMs: 2 * 60 * 1000 })
+    await waitAccountWork(accountId, holder?.moduleKey || 'action', taskId, { timeoutMs: 2 * 60 * 1000, shouldStop: opts.shouldStop })
   }
   const sessionStr = await loadSessionString(accountId)
   if (!sessionStr) {

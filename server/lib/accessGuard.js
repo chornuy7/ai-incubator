@@ -46,12 +46,21 @@ export function moduleAccessGuard(keyFrom) {
       // 18.08 означает «не куплено ничего», и раньше он гейт не проходил, а обходил:
       // свежая регистрация запускала любой модуль. Витрина по-прежнему показывает
       // модули как промо — смотреть можно, работать нельзя.
-      const { getBalance } = await import('../balance.js')
-      const { modules } = await getBalance(userId)
-      if (Array.isArray(modules) && !modules.includes(key)) {
+      //
+      // Баг 19.08 (§2): к набору добавился СРОК. Раньше здесь стоял голый
+      // `modules.includes(key)`, и оплаченный на месяц модуль работал вечно —
+      // дата окончания хранилась и ни на что не влияла. Проверку ведём через
+      // `modulesAllow`, чтобы правило доступа было одно на весь бэкенд.
+      const { getBalance, modulesAllow, subscriptionExpired } = await import('../balance.js')
+      const { modules, expiresAt } = await getBalance(userId)
+      if (!modulesAllow(modules, key, expiresAt ?? null)) {
+        const expired = subscriptionExpired(expiresAt) && modulesAllow(modules, key)
         return res.status(403).json({
           ok: false,
-          error: modules.length ? 'Модуль не входит в вашу подписку' : 'Модуль не оплачен — оформите подписку',
+          expired,
+          error: expired
+            ? 'Подписка истекла — продлите её, чтобы продолжить'
+            : (Array.isArray(modules) && modules.length ? 'Модуль не входит в вашу подписку' : 'Модуль не оплачен — оформите подписку'),
         })
       }
       return next()

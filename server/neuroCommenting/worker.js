@@ -19,6 +19,7 @@ import {
 } from './protection.js'
 import { appendLog, appendCommentHistory, saveTask } from './taskStore.js'
 import { releaseTaskLocks, assertAccountAvailable, markTaskLive, markTaskDone } from '../lib/accountLocks.js'
+import { beginAccountWork, endAccountWork, releaseTaskBusy } from '../lib/accountBusy.js'
 import { resolveDurationPeriodMinutes } from '../lib/workModeDuration.js'
 import { resolveTotalTarget, resolvePerAccountTarget } from '../lib/targets.js'
 import { applyBanPolicy } from '../lib/accountRunner.js'
@@ -39,6 +40,9 @@ export function startTaskWorker(task) {
       // Страховка: снять блокировки и сбросить working-статусы на любом терминальном пути,
       // включая ранние return (нет аккаунтов/каналов) и падение процесса воркера.
       releaseTaskLocks(task.id)
+      // Слот занятости — той же страховкой: пропущенный endAccountWork выключает аккаунт
+      // из ВСЕХ модулей, а не только из этого.
+      releaseTaskBusy(task.id)
       try {
         for (const accountId of task.settings?.accountIds || []) {
           const meta = await getAccountMeta(accountId)
@@ -140,6 +144,17 @@ async function runTask(task) {
       if (!sessionStr) {
         await appendLog(task, 'error', 'Нет сессии — нужна реавторизация', meta.name || accountId)
         await setAccountMeta(accountId, { status: 'reauth' })
+        continue
+      }
+
+      // Многомодульность (20.08): аккаунт может числиться и в мейлинге, и здесь, но два
+      // действия в одну секунду не делает. Легаси-воркер ходил в сессию мимо реестра
+      // занятости — то есть открывал ВТОРУЮ сессию тем же ключом, пока аккаунтом работал
+      // другой модуль. Занятый пропускаем и берём следующий по кругу, как при усталости.
+      const busyGate = beginAccountWork(accountId, 'neuro-commenting', task.id)
+      if (!busyGate.ok) {
+        await appendLog(task, 'info', `Пропуск: ${busyGate.reason}`, meta.name || accountId)
+        await sleep(800)
         continue
       }
 
@@ -296,6 +311,10 @@ async function runTask(task) {
         const banned = await getAccountMeta(accountId)
         if (banned.status === 'working') await setAccountMeta(accountId, { status: 'active' })
         await saveTask(task)
+      } finally {
+        // Один выход на все пути (в т.ч. break из середины круга): иначе слот остаётся за
+        // мёртвой задачей и аккаунт выпадает из всех модулей.
+        endAccountWork(accountId, task.id)
       }
 
       if (task.stopRequested) break
@@ -323,6 +342,7 @@ async function runTask(task) {
   await saveTask(task)
 
   releaseTaskLocks(task.id)
+  releaseTaskBusy(task.id)
   for (const accountId of accountIds) {
     const meta = await getAccountMeta(accountId)
     if (meta.status === 'working') await setAccountMeta(accountId, { status: 'active' })

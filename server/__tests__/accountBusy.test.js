@@ -55,7 +55,7 @@ test('чужой endAccountWork слот не снимает, releaseTaskBusy п
   assert.equal(getAccountBusy('bz_d'), null)
 })
 
-test('waitAccountWork: ждёт освобождения, по таймауту берёт принудительно', async () => {
+test('waitAccountWork: ждёт освобождения, по таймауту — отказ, а не отъём слота', async () => {
   beginAccountWork('bz_e', 'mailing', 't1')
   let released = false
   // Освобождаем слот через ~30 мс параллельно с ожиданием.
@@ -66,9 +66,27 @@ test('waitAccountWork: ждёт освобождения, по таймауту 
   assert.equal(getAccountBusy('bz_e').taskId, 't2')
   endAccountWork('bz_e', 't2')
 
-  // Таймаут: слот занят и не освобождается — берём принудительно, диалог не виснет.
+  // Таймаут: слот занят и не освобождается. Раньше он отбирался силой — прежний владелец
+  // при этом продолжал работать своим живым клиентом, и оба модуля действовали одним
+  // аккаунтом одновременно. Теперь — отказ: вызывающий берёт следующую цель/аккаунт.
   beginAccountWork('bz_f', 'mailing', 't1')
-  await waitAccountWork('bz_f', 'neuro-dialogs', 't3', { timeoutMs: 60 })
-  assert.equal(getAccountBusy('bz_f').taskId, 't3')
-  releaseTaskBusy('t1'); releaseTaskBusy('t3')
+  await assert.rejects(
+    () => waitAccountWork('bz_f', 'neuro-dialogs', 't3', { timeoutMs: 60 }),
+    (err) => err.code === 'ACCOUNT_BUSY',
+  )
+  assert.equal(getAccountBusy('bz_f').taskId, 't1', 'слот остался у прежнего владельца')
+  releaseTaskBusy('t1')
+})
+
+test('waitAccountWork: «Стоп» прерывает ожидание сразу, а не через таймаут', async () => {
+  beginAccountWork('bz_g', 'mailing', 't1')
+  let stop = false
+  setTimeout(() => { stop = true }, 30)
+  const started = Date.now()
+  await assert.rejects(
+    () => waitAccountWork('bz_g', 'neuro-dialogs', 't2', { timeoutMs: 60_000, shouldStop: () => stop }),
+    (err) => err.code === 'ABORTED_BY_STOP',
+  )
+  assert.ok(Date.now() - started < 5000, 'стоп не должен ждать конца таймаута')
+  releaseTaskBusy('t1')
 })

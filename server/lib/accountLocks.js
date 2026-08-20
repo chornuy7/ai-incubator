@@ -79,37 +79,52 @@ export async function getAllAccountLocksDetailed() {
 }
 
 /**
- * Захват аккаунтов задачей. Конфликт ТОЛЬКО с задачей того же модуля: два мейлинга на
- * одном аккаунте дублировали бы работу, а мейлинг + комментинг — разрешённая
- * многомодульность (решение владельца 20.08; раньше делить могла лишь пара
- * мейлинг+диалоги под одной целью — правило обобщено на все модули).
+ * Прогрев — ЕДИНСТВЕННОЕ исключение из многомодульности (§3.3 ТЗ).
+ *
+ * Пока профиль греется, он по определению ещё не готов к бою: смысл прогрева в том,
+ * чтобы Telegram увидел человеческую историю до первого холодного сообщения. Поэтому
+ * прогрев не делит аккаунт ни с кем — ни он к работающему, ни работа к нему.
+ * До 20.08 это держал общий лок «один аккаунт = одна задача»; когда его смягчили,
+ * запрет пришлось выразить явно, иначе «Мейлинг + Прогрев на тех же 20 аккаунтах»
+ * проходил без единого возражения.
+ */
+const EXCLUSIVE_MODULES = new Set(['warming'])
+const conflicts = (a, b) => a === b || EXCLUSIVE_MODULES.has(a) || EXCLUSIVE_MODULES.has(b)
+
+/**
+ * Захват аккаунтов задачей. Конфликт с задачей ТОГО ЖЕ модуля (два мейлинга на одном
+ * аккаунте дублировали бы работу) и с прогревом в любую сторону; мейлинг + комментинг —
+ * разрешённая многомодульность (решение владельца 20.08).
  * @param {string[]} accountIds @param {string} moduleKey @param {string} taskId
  * @param {{ force?: boolean, goalId?: string }} [opts]
  */
 export function tryAcquireLocks(accountIds, moduleKey, taskId, opts = {}) {
   const label = moduleLabel(moduleKey)
   /** @type {{ accountId: string, moduleLabel: string }[]} */
-  const conflicts = []
+  const clashes = []
 
   for (const accountId of accountIds || []) {
     const existing = locks.get(accountId)
     if (!existing) continue
-    const clash = existing.holders.find((h) => h.taskId !== taskId && h.moduleKey === moduleKey)
-    if (clash) conflicts.push({ accountId, moduleLabel: clash.moduleLabel })
+    const clash = existing.holders.find((h) => h.taskId !== taskId && conflicts(moduleKey, h.moduleKey))
+    if (clash) clashes.push({ accountId, moduleLabel: clash.moduleLabel })
   }
 
-  if (conflicts.length && !opts.force) {
-    const names = conflicts.map((c) => `${c.accountId.slice(-6)} → ${c.moduleLabel}`).join(', ')
-    return `Аккаунты уже работают в этом же модуле другой задачей: ${names}. Остановите её или выберите другие профили.`
+  if (clashes.length && !opts.force) {
+    const names = clashes.map((c) => `${c.accountId.slice(-6)} → ${c.moduleLabel}`).join(', ')
+    const warm = moduleKey === 'warming'
+      ? 'Прогрев не делит аккаунт с другими модулями: профиль греется, пока не готов к работе.'
+      : 'Аккаунты уже заняты несовместимой задачей.'
+    return `${warm} ${names}. Остановите её или выберите другие профили.`
   }
 
   for (const accountId of accountIds || []) {
     const holder = { moduleKey, taskId, moduleLabel: label, goalId: opts.goalId || null, since: Date.now() }
     const prev = locks.get(accountId)
     if (!prev) { locks.set(accountId, packHolders([holder])); continue }
-    // force перехватывает слот чужой задачи ТОГО ЖЕ модуля; держателей других модулей
-    // не трогаем — их работа с этим аккаунтом продолжается.
-    let holders = prev.holders.filter((h) => !(h.moduleKey === moduleKey && h.taskId !== taskId))
+    // force перехватывает слоты НЕСОВМЕСТИМЫХ задач (тот же модуль либо прогрев);
+    // держателей совместимых модулей не трогаем — их работа продолжается.
+    let holders = prev.holders.filter((h) => !(conflicts(moduleKey, h.moduleKey) && h.taskId !== taskId))
     if (!holders.some((h) => h.taskId === taskId && h.moduleKey === moduleKey)) holders = [...holders, holder]
     locks.set(accountId, packHolders(holders))
   }
@@ -125,12 +140,26 @@ export function releaseTaskLocks(taskId) {
   }
 }
 
-/** Принудительно снять блокировку с конкретного аккаунта (ручной разблок стухшего лока). @param {string} accountId */
-export function forceReleaseAccount(accountId) {
+/**
+ * Принудительно снять блокировку (ручной разблок стухшего лока).
+ *
+ * С многомодульностью держателей может быть несколько, поэтому снимать «всю запись»
+ * опасно: оператор жал «Освободить» из-за зависшего мейлинга, а заодно сносил прогрев,
+ * который трогать нельзя (§12, аудит 20.08). Без `moduleKey` поведение прежнее — снять
+ * всё, — но вызывающие с гейтом прав обязаны указывать, кого именно освобождают.
+ * @param {string} accountId @param {{ moduleKey?: string, taskId?: string }} [opts]
+ */
+export function forceReleaseAccount(accountId, opts = {}) {
   const lock = locks.get(accountId)
   if (!lock) return null
-  locks.delete(accountId)
-  return lock
+  const { moduleKey, taskId } = opts
+  if (!moduleKey && !taskId) { locks.delete(accountId); return lock }
+  const hit = lock.holders.filter((h) => (!moduleKey || h.moduleKey === moduleKey) && (!taskId || h.taskId === taskId))
+  if (!hit.length) return null
+  const rest = lock.holders.filter((h) => !hit.includes(h))
+  if (rest.length) locks.set(accountId, packHolders(rest))
+  else locks.delete(accountId)
+  return hit[0]
 }
 
 /** @param {string} accountId @param {string} [taskId] */
