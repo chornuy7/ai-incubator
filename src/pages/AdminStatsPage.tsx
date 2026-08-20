@@ -1767,8 +1767,20 @@ function EconRow({ label, value, hint, tone }: { label: string; value: string; h
 function EconomyTab({ economy }: { economy: Economy | null }) {
   if (!economy) return <Card className="p-6 text-sm text-muted">Загрузка…</Card>
   const e = economy
-  // Деньги — суммы в $ с двумя знаками (для крошечной себестоимости токена берём fmtUsd).
-  const money = (n: number) => `$${(Math.round((Number(n) || 0) * 100) / 100).toLocaleString('ru-RU', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+  // Деньги — суммы в $. MR-149 (созвон 19.08): жёсткие два знака ПРЯТАЛИ себестоимость —
+  // расход на ИИ измеряется тысячными долями цента, и «$0.000258» показывалось как «$0.00»
+  // («здесь округление хуй пойми какое, тут не должно быть округления до сотых»). Поэтому
+  // для сумм меньше цента показываем столько знаков, сколько нужно, чтобы число было видно.
+  const money = (n: number) => {
+    const v = Number(n) || 0
+    const abs = Math.abs(v)
+    if (abs > 0 && abs < 0.01) {
+      // Первая значащая цифра может быть глубоко — считаем нужную точность по порядку числа.
+      const digits = Math.min(8, Math.max(3, Math.ceil(-Math.log10(abs)) + 2))
+      return `$${v.toFixed(digits)}`
+    }
+    return `$${v.toLocaleString('ru-RU', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+  }
   const marginOk = e.margin >= 0
 
   return (
@@ -1779,8 +1791,8 @@ function EconomyTab({ economy }: { economy: Economy | null }) {
           sub={`подписки ${money(e.income.plans)} · токены ${money(e.income.tokens)} · пополнения ${money(e.income.balanceTopups)}`} />
         <MetricTile label="Расходы (себестоимость ИИ)" value={money(e.expenses.total)} tone="text-amber-300"
           sub={`${fmt(e.expenses.tokensSpent)} токенов по факту`} />
-        <MetricTile label="Маржа" value={money(e.margin)} tone={marginOk ? 'text-spark-300' : 'text-red-400'}
-          sub={`${e.marginPct}% от дохода`} />
+        <MetricTile label="Маржа (доход − ИИ)" value={money(e.margin)} tone={marginOk ? 'text-spark-300' : 'text-red-400'}
+          sub={`${e.marginPct}% от дохода · аккаунты, прокси и трафик сюда не входят`} />
       </div>
 
       {/* Доходы — разбивка */}

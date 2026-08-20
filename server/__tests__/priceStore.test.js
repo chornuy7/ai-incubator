@@ -74,16 +74,23 @@ test('§10.1: tokenUsd считается сам из модели, картин
 })
 
 test('§10.1: себестоимость токена — смешанная ставка input/output модели', async () => {
+  // MR-149: долю input теперь берём ПО ФАКТУ из журнала расхода, а не из константы 0.75.
+  // Для проверки самой формулы журнал изолируем в пустой файл — тогда доля = заданная (0.75).
+  const prevLedger = process.env.TOKEN_LEDGER_FILE
+  process.env.TOKEN_LEDGER_FILE = path.join(os.tmpdir(), `ledger-empty-${process.pid}-${Math.random().toString(36).slice(2)}.jsonl`)
   const { tokenUsdForModel } = await import('../lib/modelPricing.js')
   // gpt-4o-mini: input $0.15/1M, output $0.60/1M, доля input 0.75 →
   // (0.15*0.75 + 0.60*0.25)/1e6 = 0.2625/1e6 = 0.0000002625
-  assert.equal(tokenUsdForModel('gpt-4o-mini'), 0.0000002625)
+  // MR-149: функция стала async — прайс моделей и доля input лежат в БД (в файловом режиме
+  // берутся код-константы, поэтому числа те же).
+  assert.equal(await tokenUsdForModel('gpt-4o-mini'), 0.0000002625)
   // Датированное имя модели матчится на базовый прайс.
-  assert.equal(tokenUsdForModel('gpt-4o-mini-2024-07-18'), 0.0000002625)
+  assert.equal(await tokenUsdForModel('gpt-4o-mini-2024-07-18'), 0.0000002625)
   // gpt-4o дороже мини.
-  assert.ok(tokenUsdForModel('gpt-4o') > tokenUsdForModel('gpt-4o-mini'))
+  assert.ok(await tokenUsdForModel('gpt-4o') > await tokenUsdForModel('gpt-4o-mini'))
   // Незнакомая модель — null (админка попросит задать вручную).
-  assert.equal(tokenUsdForModel('unknown-model-x'), null)
+  assert.equal(await tokenUsdForModel('unknown-model-x'), null)
+  if (prevLedger === undefined) delete process.env.TOKEN_LEDGER_FILE; else process.env.TOKEN_LEDGER_FILE = prevLedger
 })
 
 test('годовая скидка редактируется и effectivePrices её отдаёт', async () => {

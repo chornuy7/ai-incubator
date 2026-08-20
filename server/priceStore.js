@@ -259,7 +259,7 @@ export async function effectivePrices() {
   // Флаги auto/model нужны админке, чтобы показать «рассчитано из gpt-4o-mini» и дать
   // переопределить, а не гадать, откуда цифра.
   const tokenUsdManual = typeof ov.tokenUsd === 'number'
-  const autoTokenUsd = tokenUsdForModel()
+  const autoTokenUsd = await tokenUsdForModel()
   const tokenUsd = tokenUsdManual ? ov.tokenUsd : autoTokenUsd
 
   // Строго БД-only и для экономики уровня пространства: в режиме БД значение берётся из
