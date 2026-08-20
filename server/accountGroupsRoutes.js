@@ -24,9 +24,11 @@ async function guardOwnGroup(req, res) {
   return true
 }
 
-accountGroupsRouter.get('/', async (_req, res) => {
+// Аудит 20.08: группы аккаунтов отдавались все всем — фильтруем по владельцу пространства.
+accountGroupsRouter.get('/', async (req, res) => {
   try {
-    const groups = await listGroups()
+    const { ownedForRequest } = await import('./lib/accessGuard.js')
+    const groups = await ownedForRequest(req, await listGroups())
     res.json({ ok: true, groups, byAccount: groupsByAccount(groups) })
   } catch (e) { fail(res, e, 500) }
 })

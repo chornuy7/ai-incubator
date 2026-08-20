@@ -91,6 +91,10 @@ export async function createProxy(input) {
   const proxy = {
     id: `px_${crypto.randomUUID().slice(0, 8)}`,
     ...clean,
+    // Аудит 20.08: прокси — ресурс клиента (логин/пароль!), а каталог отдавался всем.
+    // Пишем владельца пространства, чтобы на чтении отдавать только своё. normalizeProxy
+    // владельца не знает, поэтому ставим его здесь, после clean.
+    ownerId: String(input?.ownerId || '').trim() || undefined,
     lastCheckAt: null,
     createdAt: Date.now(),
     updatedAt: Date.now(),

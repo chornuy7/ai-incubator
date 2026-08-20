@@ -12,11 +12,16 @@ function fail(res, err, code = 400) {
   res.status(code).json({ ok: false, error: err instanceof Error ? err.message : 'Ошибка' })
 }
 
-proxiesRouter.get('/', async (_req, res) => {
+// Аудит 20.08 (инспектор): каталог отдавался ЛЮБОМУ залогиненному вместе с логинами и
+// паролями прокси («password»:«…»). Теперь — только свои (админ видит все); записи без
+// владельца — легаси, их видит только админ.
+proxiesRouter.get('/', async (req, res) => {
   try {
     // Дубли разрешены: к каждому прокси добавляем счётчик `usedBy` — на скольких
     // аккаунтах он висит (раньше это считалось нарушением, теперь — норма §6-обновл.).
-    const [proxies, meta] = await Promise.all([listProxies(), loadAllMeta()])
+    const { ownedForRequest } = await import('./lib/accessGuard.js')
+    const [allProxies, meta] = await Promise.all([listProxies(), loadAllMeta()])
+    const proxies = await ownedForRequest(req, allProxies, (p) => p?.ownerId)
     // usedBy считаем только по РЕАЛЬНЫМ аккаунтам: с сессией и не в корзине. Иначе «сиротские»
     // meta (импорт без сессии, демо-сиды) раздували «занят N» — прокси числился занятым
     // аккаунтами, которых нет в менеджере (там показываются только аккаунты с сессией).
@@ -127,11 +132,16 @@ proxiesRouter.post('/import', async (req, res) => {
       : fresh.map((p) => ({ ...p, status: 'unknown', country: '', geo: null, geoSource: null }))
 
     const labels = assignLabels(probed, { template, tag, existingLabels: existing.map((p) => p.label) })
+    // Импортированные прокси тоже принадлежат тому, кто их залил (иначе после импорта
+    // клиент не увидел бы собственный список — владельца проставляем как при создании).
+    const { ownerScopeForRequest } = await import('./lib/accessGuard.js')
+    const importScope = await ownerScopeForRequest(req)
     const created = []
     for (let i = 0; i < probed.length; i++) {
       const p = probed[i]
       try {
         created.push(await createProxy({
+          ownerId: importScope.ownerId || undefined,
           label: labels[i], kind, scheme: p.scheme, host: p.host, port: p.port,
           username: p.username, password: p.password, country: p.country, status: p.status,
           geoSource: p.geoSource || null, // §9.10: гео реального IP vs шлюза (тест 9.4)
@@ -168,9 +178,27 @@ proxiesRouter.get('/:id', async (req, res) => {
   } catch (err) { fail(res, err, 500) }
 })
 
+/**
+ * Аудит 20.08: править/удалять можно ТОЛЬКО свой прокси (иначе чужие креды менялись бы
+ * прямым запросом по id). Админ — может всё; легаси-записи без владельца — только админ.
+ * @returns {Promise<boolean>} true = можно трогать
+ */
+async function canTouchProxy(req, id) {
+  const { ownerScopeForRequest } = await import('./lib/accessGuard.js')
+  const scope = await ownerScopeForRequest(req)
+  if (scope.blocked) return false
+  if (scope.all) return true
+  const p = await getProxy(id)
+  return !!p && String(p.ownerId || '') === String(scope.ownerId)
+}
+
 proxiesRouter.post('/', async (req, res) => {
   try {
-    const proxy = await createProxy(req.body ?? {})
+    const { ownerScopeForRequest } = await import('./lib/accessGuard.js')
+    const scope = await ownerScopeForRequest(req)
+    if (scope.blocked) return res.status(403).json({ ok: false, error: 'Нет доступа' })
+    // Владелец пространства — хозяин записи: свои прокси клиент видит и правит, чужие нет.
+    const proxy = await createProxy({ ...(req.body ?? {}), ownerId: scope.ownerId || undefined })
     await appendAudit({ action: 'proxy.create', module: 'proxy', initiator: 'operator', reason: `Добавлен прокси ${proxy.host}:${proxy.port}`, meta: { proxyId: proxy.id, kind: proxy.kind } })
     res.json({ ok: true, proxy })
   } catch (err) { fail(res, err) }
@@ -178,6 +206,7 @@ proxiesRouter.post('/', async (req, res) => {
 
 proxiesRouter.put('/:id', async (req, res) => {
   try {
+    if (!(await canTouchProxy(req, req.params.id))) return res.status(403).json({ ok: false, error: 'Это не ваш прокси' })
     const proxy = await updateProxy(req.params.id, req.body ?? {})
     if (!proxy) return res.status(404).json({ ok: false, error: 'Прокси не найден' })
     res.json({ ok: true, proxy })
@@ -187,7 +216,11 @@ proxiesRouter.put('/:id', async (req, res) => {
 // MR-170 (14.08): пакетное удаление за один проход (POST — тело DELETE местами режется прокси).
 proxiesRouter.post('/delete-batch', async (req, res) => {
   try {
-    const ids = Array.isArray(req.body?.ids) ? req.body.ids : []
+    const wanted = Array.isArray(req.body?.ids) ? req.body.ids : []
+    // Удаляем только те, что реально свои — чужие id в списке молча игнорируем.
+    const allowed = []
+    for (const id of wanted) if (await canTouchProxy(req, id)) allowed.push(id)
+    const ids = allowed
     const removed = await deleteProxies(ids)
     await appendAudit({ action: 'proxy.delete', module: 'proxy', initiator: 'operator', reason: `Удалено прокси: ${removed}`, meta: { ids, removed } })
     res.json({ ok: true, removed })
@@ -196,6 +229,7 @@ proxiesRouter.post('/delete-batch', async (req, res) => {
 
 proxiesRouter.delete('/:id', async (req, res) => {
   try {
+    if (!(await canTouchProxy(req, req.params.id))) return res.status(403).json({ ok: false, error: 'Это не ваш прокси' })
     const ok = await deleteProxy(req.params.id)
     if (!ok) return res.status(404).json({ ok: false, error: 'Прокси не найден' })
     await appendAudit({ action: 'proxy.delete', module: 'proxy', initiator: 'operator', reason: 'Удалён прокси', meta: { proxyId: req.params.id } })

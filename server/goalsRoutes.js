@@ -10,9 +10,13 @@ function fail(res, err, code = 400) {
   res.status(code).json({ ok: false, error: err instanceof Error ? err.message : 'Ошибка' })
 }
 
-goalsRouter.get('/', async (_req, res) => {
+// Аудит 20.08: роут отдавал ВСЕ цели всем — чужая стратегия/промпты были видны любому
+// зарегистрировавшемуся. Владелец у цели уже пишется (ownerColumn), фильтруем на чтении.
+goalsRouter.get('/', async (req, res) => {
   try {
-    res.json({ ok: true, goals: await listGoals() })
+    const { ownedForRequest } = await import('./lib/accessGuard.js')
+    const goals = await ownedForRequest(req, await listGoals())
+    res.json({ ok: true, goals })
   } catch (err) { fail(res, err, 500) }
 })
 

@@ -108,6 +108,50 @@ export async function requesterContext(req) {
 }
 
 /**
+ * Владелец-скоуп запроса: «чьи записи мне видно».
+ *
+ * Аудит 20.08 (инспектор): целый класс роутов объявлен как `async (_req, res)` — то есть
+ * НЕ смотрит, кто спрашивает, и отдаёт данные всего пространства. Цели, кампании, группы
+ * аккаунтов уже пишут владельца (lib/ownerColumn.js), но на ЧТЕНИИ фильтра не было: любой
+ * из зарегистрировавшихся клиентов видел чужие цели/кампании прямым запросом. Требование
+ * созвона — клиент видит только своё.
+ *
+ * Правило (то же, что у аккаунтов): считаем по ВЛАДЕЛЬЦУ ПРОСТРАНСТВА — суб видит то же,
+ * что владелец (§4.1), админ и дев-режим (без сессии) видят всё.
+ *
+ * @returns {Promise<{ all:boolean, ownerId:string, blocked:boolean }>}
+ */
+export async function ownerScopeForRequest(req) {
+  const ctx = await requesterContext(req)
+  if (ctx.blocked) return { all: false, ownerId: '', blocked: true }
+  if (ctx.noSession || ctx.isAdmin) return { all: true, ownerId: ctx.id, blocked: false }
+  let ownerId = ctx.id
+  try {
+    const { resolveSubscriptionOwner } = await import('../users.js')
+    ownerId = (await resolveSubscriptionOwner(ctx.id)) || ctx.id
+  } catch { /* нет резолвера — остаёмся на себе */ }
+  return { all: false, ownerId, blocked: false }
+}
+
+/**
+ * Отфильтровать записи по владельцу для автора запроса.
+ *
+ * Записи БЕЗ владельца (легаси, заведены до владельческой модели) видит только админ —
+ * отдавать их «всем» значило бы сохранить ту самую дыру, а привязать их к случайному
+ * клиенту нельзя: мы не знаем, чьи они.
+ *
+ * @param {import('express').Request} req
+ * @param {Array<object>} rows
+ * @param {(row:object)=>string} ownerOf как достать владельца из записи
+ */
+export async function ownedForRequest(req, rows = [], ownerOf = (r) => r?.userId || r?.user_id || '') {
+  const scope = await ownerScopeForRequest(req)
+  if (scope.blocked) return []
+  if (scope.all) return rows
+  return rows.filter((r) => String(ownerOf(r) || '') === String(scope.ownerId))
+}
+
+/**
  * §8.1: папки целей, доступные автору запроса, с урезанными списками каналов.
  *
  * Раньше фильтрация жила ТОЛЬКО во фронте (`visibleFolders`/`allowedTargets` в

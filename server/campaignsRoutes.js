@@ -115,7 +115,9 @@ campaignsRouter.delete('/schedules/:id', async (req, res) => {
 campaignsRouter.get('/', async (req, res) => {
   try {
     const { goalId, status, moduleKey } = req.query
-    const campaigns = await listCampaigns({ goalId, status, moduleKey })
+    // Аудит 20.08: кампании отдавались все всем. Владелец пишется (ownerColumn) — фильтруем.
+    const { ownedForRequest } = await import('./lib/accessGuard.js')
+    const campaigns = await ownedForRequest(req, await listCampaigns({ goalId, status, moduleKey }))
     res.json({ ok: true, campaigns, pinned: pinnedAccountMap(campaigns) })
   } catch (e) { fail(res, e) }
 })
