@@ -1107,17 +1107,17 @@ app.get('/api/pricing', async (_req, res) => {
   try {
     const { CURRENCY } = await import('./pricing.js')
     const { effectivePrices } = await import('./priceStore.js')
-    const { tokenSummary } = await import('./tokenLedger.js')
+    const { readLedger } = await import('./tokenLedger.js')
     // Цены действий и пакеты — эффективные (из БД, правки админки).
     const eff = await effectivePrices()
-    // Средний расход токенов на действие — из СВОЕЙ истории, а не из константы:
-    // длина промпта и ответа у каждого клиента своя, и чужое среднее врало бы.
-    // Нет истории — 0, и интерфейс честно скажет «пока не на чем считать».
+    // Средний расход токенов на действие — из истории. ОДИН запрос последних записей
+    // журнала + агрегация в памяти (не 14 тяжёлых tokenSummary по 100k строк на каждый
+    // модуль — это горячий путь витрины). Нет истории — 0.
+    const recent = await readLedger({ limit: 5000 }).catch(() => [])
+    const acc = {}
+    for (const r of recent) { const m = r.module; if (!m) continue; (acc[m] ||= { t: 0, n: 0 }); acc[m].t += r.tokens; acc[m].n += 1 }
     const avgTokens = {}
-    for (const key of Object.keys(eff.actionMap)) {
-      const sum = await tokenSummary({ module: key }).catch(() => null)
-      avgTokens[key] = sum?.calls ? Math.round(sum.tokens / sum.calls) : 0
-    }
+    for (const key of Object.keys(eff.actionMap)) avgTokens[key] = acc[key]?.n ? Math.round(acc[key].t / acc[key].n) : 0
     // MR-149 (созвон 19.08): цена действия = БАЗОВАЯ цена из БД. Без надстройки за текст.
     // actionsFull оставлен для совместимости фронта, но равен базовой цене (= actions).
     const actionsFull = { ...eff.actionMap }
