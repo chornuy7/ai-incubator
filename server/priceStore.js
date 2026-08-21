@@ -168,11 +168,17 @@ let _overridesCache = null // { data, ts }
 const OVERRIDES_TTL = 60_000
 export function invalidateOverrides() { _overridesCache = null }
 
-/** Сырые переопределения из БД/файла (или пусто). @returns {Promise<object>} */
-export async function getOverrides() {
+/**
+ * Сырые переопределения из БД/файла (или пусто).
+ * @param {{fresh?: boolean}} [opts] fresh=true — мимо кэша, ОБЯЗАТЕЛЬНО при записи: setOverrides
+ *   мержит патч в текущее значение и переписывает строку целиком, поэтому читать устаревшую
+ *   копию нельзя — правки, сделанные в другом процессе/инстансе за время TTL, были бы затёрты
+ *   (так пропали подарочные токены: сохранение цены записало старый снимок без них).
+ */
+export async function getOverrides(opts = {}) {
   const db = sb()
   if (db) {
-    if (_overridesCache && Date.now() - _overridesCache.ts < OVERRIDES_TTL) return _overridesCache.data
+    if (!opts.fresh && _overridesCache && Date.now() - _overridesCache.ts < OVERRIDES_TTL) return _overridesCache.data
     const { data } = await db.from('price_overrides').select('*').eq('id', 'default').maybeSingle()
     const o = rowToOverrides(data)
     _overridesCache = { data: o, ts: Date.now() }
@@ -316,7 +322,7 @@ export async function coinUsdRate() {
 export async function setOverrides(patch = {}) {
   const db = sb()
   if (db) {
-    const cur = await getOverrides()
+    const cur = await getOverrides({ fresh: true }) // мимо кэша: пишем поверх АКТУАЛЬНОГО
     const next = mergeOverrides(cur, patch, await dbBasePrices())
     const row = overridesToRow(next)
     const { error } = await db.from('price_overrides').upsert(row, { onConflict: 'id' })

@@ -2680,10 +2680,20 @@ function PricesTab() {
   const save = async () => {
     setSaving(true)
     try {
+      // Правка 21.08: шлём ТОЛЬКО изменённые поля. Раньше уходили все 14 модулей со всеми
+      // полями, и любое поле, которое в черновике оказалось пустым или устаревшим, молча
+      // перетирало базу — так пропали подарочные токены (в аудите видно: ушло gift:0).
+      // Патч частичный: чего не прислали — того и не трогаем.
       const modules: Record<string, { month?: string; action?: string; gift?: string; monthlyTokens?: string }> = {}
       for (const m of prices.modules) {
         const d = draft[m.key]
-        if (d) modules[m.key] = { month: d.month, action: d.action, gift: d.gift, monthlyTokens: d.monthlyTokens }
+        if (!d) continue
+        const changed: { month?: string; action?: string; gift?: string; monthlyTokens?: string } = {}
+        if (d.month !== String(m.month)) changed.month = d.month
+        if (d.action !== String(m.action)) changed.action = d.action
+        if (d.gift !== String(m.gift || 0)) changed.gift = d.gift
+        if (d.monthlyTokens !== String(m.monthlyTokens ?? 100)) changed.monthlyTokens = d.monthlyTokens
+        if (Object.keys(changed).length) modules[m.key] = changed
       }
       const patch: PricePatch = { modules }
       // Пустое поле = вернуть заводскую скидку: шлём '' (бэкенд удалит override), а не 0 —
