@@ -15,6 +15,7 @@
  * равно переподнимаются заново.
  */
 import { moduleLabel, isTaskLive } from './accountLocks.js'
+import { switchPause, fmtDelay } from './humanDelays.js'
 
 /** @type {Map<string, { moduleKey: string, taskId: string, since: number }>} */
 const busy = new Map()
@@ -23,9 +24,12 @@ const busy = new Map()
  * @type {Map<string, { moduleKey: string, at: number, coolMs: number }>} */
 const last = new Map()
 
-/** Пауза при переключении модулей: случайная, чтобы не было машинного ритма.
- * Ориентиры владельца — «коммент→ЛС ≈ 3 с, ЛС→реакция ≈ 0.5 с». */
-const SWITCH_COOL_MS = [1000, 5000]
+/*
+ * Пауза при переключении модулей берётся из lib/humanDelays.js — там она с источником
+ * и разбросом. Прежние 1–5 секунд были поставлены на глаз и человеку не соответствуют:
+ * закончить комментировать и переключиться на переписку за секунду нельзя, в замерах
+ * это порядка 25 секунд. Диапазон и происхождение — в humanDelays.
+ */
 
 /** Сколько предложить подождать, когда аккаунт занят чужим действием, а срок
  * его окончания неизвестен (действие может тянуться из-за задержек модуля). */
@@ -40,7 +44,26 @@ export const BUSY_RETRY_MS = 15 * 1000
  */
 export const BUSY_STALE_MS = 5 * 60 * 1000
 
-const rndCool = () => SWITCH_COOL_MS[0] + Math.floor(Math.random() * (SWITCH_COOL_MS[1] - SWITCH_COOL_MS[0] + 1))
+const rndCool = () => switchPause()
+
+/**
+ * Какая пауза переключения назначена аккаунту сейчас: модуль, из которого он вышел,
+ * сколько ждать и до какого времени. Нужна карточке аккаунта — владелец 21.08:
+ * «я должен видеть у аккаунта в информации, какая задержка между модулями применена».
+ * `null` — аккаунт ничего не переключал или пауза уже вышла.
+ * @param {string} accountId
+ */
+export function getSwitchPause(accountId, now = Date.now()) {
+  const prev = last.get(accountId)
+  if (!prev || now >= prev.at + prev.coolMs) return null
+  return {
+    fromModule: prev.moduleKey,
+    fromLabel: moduleLabel(prev.moduleKey),
+    coolMs: prev.coolMs,
+    until: prev.at + prev.coolMs,
+    leftMs: prev.at + prev.coolMs - now,
+  }
+}
 
 /**
  * Отказ в слоте: отдельный тип ошибки, чтобы вызывающий отличал «аккаунт занят» от
@@ -90,9 +113,12 @@ export function beginAccountWork(accountId, moduleKey, taskId, now = Date.now())
   }
   const prev = last.get(accountId)
   if (!cur && prev && prev.moduleKey !== moduleKey && now < prev.at + prev.coolMs) {
+    const left = prev.at + prev.coolMs - now
     return {
       ok: false,
-      reason: `пауза при переключении модулей: ${moduleLabel(prev.moduleKey)} → ${moduleLabel(moduleKey)}`,
+      // В причине — И сколько назначено, И сколько осталось: без первого числа пауза
+      // выглядит взявшейся ниоткуда, без второго непонятно, когда пробовать снова.
+      reason: `пауза при переключении модулей ${moduleLabel(prev.moduleKey)} → ${moduleLabel(moduleKey)}: назначено ${fmtDelay(prev.coolMs)}, осталось ${fmtDelay(left)}`,
       until: prev.at + prev.coolMs,
     }
   }

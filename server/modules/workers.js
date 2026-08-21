@@ -120,7 +120,7 @@ import { recordAction } from '../actionLog.js'
 import { describeIncomingImage, messageHasPhoto } from '../lib/visionDescribe.js'
 import { effectivePrices } from '../priceStore.js'
 import { canWorkNow, noteAction } from '../accountActivity.js'
-import { humanPace } from '../lib/antiCluster.js'
+import { typingPlan, describeTyping, fmtDelay } from '../lib/humanDelays.js'
 import { beginAccountWork, endAccountWork, releaseTaskBusy } from '../lib/accountBusy.js'
 // Гейт статуса ЗАВИСИТ ОТ МОДУЛЯ: пока аккаунт греется, боевые модули его не берут, а
 // прогрев — берёт. Раньше эту границу держал общий лок «один аккаунт = одна задача»;
@@ -519,10 +519,14 @@ export async function runNeuroCommenting(task, store) {
           // вероятности прямо противоречил соседней строке лога (правка 19.08).
           // Во сколько вернётся ближайший аккаунт — это первое, что спрашивают, глядя
           // на «ждём N мин» (правка 19.08). Задача при этом остаётся в работе.
-          const backAt = new Date(idleUntil).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })
-          await store.appendLog(task, 'info', lastSkip
-            ? `Ждём ${plan.minutes} мин — аккаунт вернётся в ${backAt} (${lastSkip}). Задача продолжает работу`
-            : `Ждём ${plan.minutes} мин — ближайший аккаунт освободится в ${backAt}. Задача продолжает работу`)
+          const backAt = new Date(idleUntil).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+          // Секунды, а не «1 мин»: почти все задержки здесь секундные (переключение
+          // модулей, повтор броска), и округление вверх превращало 7 секунд в минуту.
+          // Ждём РОВНО до окна — к следующей попытке аккаунт уже готов, а не «попробуем
+          // ещё раз и посмотрим». Пауза идёт в общий счёт ожидания задачи.
+          await noteWait(task, store, plan.ms, lastSkip
+            ? `ждём аккаунт до ${backAt} (${lastSkip})`
+            : `ждём ближайший свободный аккаунт до ${backAt}`)
           if (await breakableDelay(plan.ms, store, task)) break
           task = (await store.loadTask(task.id)) || task
           idleLap = 0
@@ -564,6 +568,12 @@ export async function runNeuroCommenting(task, store) {
         if (human.until) idleUntil = idleUntil ? Math.min(idleUntil, human.until) : human.until
         await store.appendLog(task, 'info', `Пропуск: ${human.reason}`, meta.name)
         continue
+      }
+      // Удачный бросок тоже показываем: в логе были одни неудачи, и по нему нельзя было
+      // понять, как вообще считается шанс (MR-175). Молчим только в часы со 100%: там
+      // броска фактически нет, и строка была бы шумом на каждом действии.
+      if (typeof human.chance === 'number' && human.chance < 1 && human.reason) {
+        await store.appendLog(task, 'info', human.reason, meta.name)
       }
       if (await limitReached(accountId, 'comments')) { idleLap += 1; lastSkip = 'суточный лимит'; await store.appendLog(task, 'info', 'Суточный лимит комментариев достигнут (§6)', meta.name); continue }
       // Многомодульность (20.08): аккаунт может работать в нескольких модулях, но не
@@ -797,10 +807,14 @@ export async function runNeuroChatting(task, store) {
           // вероятности прямо противоречил соседней строке лога (правка 19.08).
           // Во сколько вернётся ближайший аккаунт — это первое, что спрашивают, глядя
           // на «ждём N мин» (правка 19.08). Задача при этом остаётся в работе.
-          const backAt = new Date(idleUntil).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })
-          await store.appendLog(task, 'info', lastSkip
-            ? `Ждём ${plan.minutes} мин — аккаунт вернётся в ${backAt} (${lastSkip}). Задача продолжает работу`
-            : `Ждём ${plan.minutes} мин — ближайший аккаунт освободится в ${backAt}. Задача продолжает работу`)
+          const backAt = new Date(idleUntil).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+          // Секунды, а не «1 мин»: почти все задержки здесь секундные (переключение
+          // модулей, повтор броска), и округление вверх превращало 7 секунд в минуту.
+          // Ждём РОВНО до окна — к следующей попытке аккаунт уже готов, а не «попробуем
+          // ещё раз и посмотрим». Пауза идёт в общий счёт ожидания задачи.
+          await noteWait(task, store, plan.ms, lastSkip
+            ? `ждём аккаунт до ${backAt} (${lastSkip})`
+            : `ждём ближайший свободный аккаунт до ${backAt}`)
           if (await breakableDelay(plan.ms, store, task)) break
           task = (await store.loadTask(task.id)) || task
           idleLap = 0
@@ -832,6 +846,12 @@ export async function runNeuroChatting(task, store) {
         if (human.until) idleUntil = idleUntil ? Math.min(idleUntil, human.until) : human.until
         await store.appendLog(task, 'info', `Пропуск: ${human.reason}`, meta.name)
         continue
+      }
+      // Удачный бросок тоже показываем: в логе были одни неудачи, и по нему нельзя было
+      // понять, как вообще считается шанс (MR-175). Молчим только в часы со 100%: там
+      // броска фактически нет, и строка была бы шумом на каждом действии.
+      if (typeof human.chance === 'number' && human.chance < 1 && human.reason) {
+        await store.appendLog(task, 'info', human.reason, meta.name)
       }
       if (await limitReached(accountId, 'comments')) { idleLap += 1; lastSkip = 'суточный лимит'; await store.appendLog(task, 'info', 'Суточный лимит сообщений достигнут (§6)', meta.name); continue }
       // Многомодульность (20.08): аккаунт может работать в нескольких модулях, но не
@@ -896,8 +916,11 @@ export async function runNeuroChatting(task, store) {
         // §4.4 (D4): человеческий темп — пауза «на чтение» и время «на набор».
         // Мгновенный ответ и «100 слов за полсекунды» — то, по чему Telegram узнаёт бота
         // и банит волной похожие аккаунты.
-        const pace = humanPace(reply, (msg.message || '').length)
-        await noteWait(task, store, pace.totalMs, `прочитать и набрать ответ (${Math.round(pace.readMs / 1000)} с + ${Math.round(pace.typeMs / 1000)} с)`, meta.name)
+        // Скорость набора у каждого сообщения СВОЯ (26–44 слова в минуту): одинаковый
+        // темп у полусотни аккаунтов — сам по себе признак фермы. Числа пишем в лог:
+        // «пауза 14 с» без объяснения читается как зависшая задача (просьба владельца 21.08).
+        const pace = typingPlan(reply, (msg.message || '').length)
+        await noteWait(task, store, pace.totalMs, `читает ${fmtDelay(pace.readMs)}, набирает ${describeTyping(pace)}`, meta.name)
         await sleep(pace.totalMs)
         await client.sendMessage(peer, { message: reply, replyTo: msg.id })
         // §11.1: переписка в группах — тоже под контролем владельца.
@@ -993,10 +1016,14 @@ export async function runMassReact(task, store) {
           // вероятности прямо противоречил соседней строке лога (правка 19.08).
           // Во сколько вернётся ближайший аккаунт — это первое, что спрашивают, глядя
           // на «ждём N мин» (правка 19.08). Задача при этом остаётся в работе.
-          const backAt = new Date(idleUntil).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })
-          await store.appendLog(task, 'info', lastSkip
-            ? `Ждём ${plan.minutes} мин — аккаунт вернётся в ${backAt} (${lastSkip}). Задача продолжает работу`
-            : `Ждём ${plan.minutes} мин — ближайший аккаунт освободится в ${backAt}. Задача продолжает работу`)
+          const backAt = new Date(idleUntil).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+          // Секунды, а не «1 мин»: почти все задержки здесь секундные (переключение
+          // модулей, повтор броска), и округление вверх превращало 7 секунд в минуту.
+          // Ждём РОВНО до окна — к следующей попытке аккаунт уже готов, а не «попробуем
+          // ещё раз и посмотрим». Пауза идёт в общий счёт ожидания задачи.
+          await noteWait(task, store, plan.ms, lastSkip
+            ? `ждём аккаунт до ${backAt} (${lastSkip})`
+            : `ждём ближайший свободный аккаунт до ${backAt}`)
           if (await breakableDelay(plan.ms, store, task)) break
           task = (await store.loadTask(task.id)) || task
           idleLap = 0
@@ -1027,6 +1054,12 @@ export async function runMassReact(task, store) {
         if (human.until) idleUntil = idleUntil ? Math.min(idleUntil, human.until) : human.until
         await store.appendLog(task, 'info', `Пропуск: ${human.reason}`, meta.name)
         continue
+      }
+      // Удачный бросок тоже показываем: в логе были одни неудачи, и по нему нельзя было
+      // понять, как вообще считается шанс (MR-175). Молчим только в часы со 100%: там
+      // броска фактически нет, и строка была бы шумом на каждом действии.
+      if (typeof human.chance === 'number' && human.chance < 1 && human.reason) {
+        await store.appendLog(task, 'info', human.reason, meta.name)
       }
       if (await limitReached(accountId, 'reactions')) { idleLap += 1; lastSkip = 'суточный лимит'; await store.appendLog(task, 'info', 'Суточный лимит реакций достигнут (§6)', meta.name); continue }
       // Многомодульность (20.08): аккаунт может работать в нескольких модулях, но не
@@ -1182,10 +1215,14 @@ export async function runMassLooking(task, store) {
           // вероятности прямо противоречил соседней строке лога (правка 19.08).
           // Во сколько вернётся ближайший аккаунт — это первое, что спрашивают, глядя
           // на «ждём N мин» (правка 19.08). Задача при этом остаётся в работе.
-          const backAt = new Date(idleUntil).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })
-          await store.appendLog(task, 'info', lastSkip
-            ? `Ждём ${plan.minutes} мин — аккаунт вернётся в ${backAt} (${lastSkip}). Задача продолжает работу`
-            : `Ждём ${plan.minutes} мин — ближайший аккаунт освободится в ${backAt}. Задача продолжает работу`)
+          const backAt = new Date(idleUntil).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+          // Секунды, а не «1 мин»: почти все задержки здесь секундные (переключение
+          // модулей, повтор броска), и округление вверх превращало 7 секунд в минуту.
+          // Ждём РОВНО до окна — к следующей попытке аккаунт уже готов, а не «попробуем
+          // ещё раз и посмотрим». Пауза идёт в общий счёт ожидания задачи.
+          await noteWait(task, store, plan.ms, lastSkip
+            ? `ждём аккаунт до ${backAt} (${lastSkip})`
+            : `ждём ближайший свободный аккаунт до ${backAt}`)
           if (await breakableDelay(plan.ms, store, task)) break
           task = (await store.loadTask(task.id)) || task
           idleLap = 0
@@ -1215,6 +1252,12 @@ export async function runMassLooking(task, store) {
         if (human.until) idleUntil = idleUntil ? Math.min(idleUntil, human.until) : human.until
         await store.appendLog(task, 'info', `Пропуск: ${human.reason}`, meta.name)
         continue
+      }
+      // Удачный бросок тоже показываем: в логе были одни неудачи, и по нему нельзя было
+      // понять, как вообще считается шанс (MR-175). Молчим только в часы со 100%: там
+      // броска фактически нет, и строка была бы шумом на каждом действии.
+      if (typeof human.chance === 'number' && human.chance < 1 && human.reason) {
+        await store.appendLog(task, 'info', human.reason, meta.name)
       }
       // Многомодульность (20.08): аккаунт может работать в нескольких модулях, но не
       // двумя действиями одновременно — занятый другим модулем пропускаем, как при
@@ -1782,8 +1825,8 @@ export async function runNeuroDialogs(task, store) {
           await sleep(dlgWait)
           // §4.4: читаем и печатаем как человек. Это десятки секунд на длинном ответе —
           // без строки в логе выглядело как зависшая задача.
-          const dlgPace = humanPace(reply, incoming.length)
-          await noteWait(task, store, dlgPace.totalMs, `прочитать и набрать ответ (${Math.round(dlgPace.readMs / 1000)} с + ${Math.round(dlgPace.typeMs / 1000)} с)`, meta.name)
+          const dlgPace = typingPlan(reply, incoming.length)
+          await noteWait(task, store, dlgPace.totalMs, `читает ${fmtDelay(dlgPace.readMs)}, набирает ${describeTyping(dlgPace)}`, meta.name)
           await sleep(dlgPace.totalMs)
           await client.sendMessage(d.entity, { message: reply })
           // §11.1: сохраняем ОБЕ реплики — входящую и наш ответ. Владелец отвечает за то,

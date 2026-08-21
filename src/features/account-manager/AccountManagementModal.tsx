@@ -1,10 +1,7 @@
 import { useEffect, useState, useCallback } from 'react'
 import { WorkTab } from './WorkTab'
 import { HistoryTab } from './HistoryTab'
-import {
-  User, Globe, BarChart3, Calendar, Zap, HeartPulse, Hash, History,
-  Copy, Check, ShieldCheck, ShieldAlert, ShieldQuestion, Loader2, RefreshCw, Unlock, AlertCircle, Server, LogOut, MessageSquare,
-} from 'lucide-react'
+import { User, Globe, BarChart3, Calendar, Zap, HeartPulse, Hash, History, Copy, Check, ShieldCheck, ShieldAlert, ShieldQuestion, Loader2, RefreshCw, Unlock, AlertCircle, Server, LogOut, MessageSquare, Clock } from 'lucide-react'
 import { Modal, Avatar, Segmented } from '@/shared/ui'
 import { cn } from '@/shared/lib/utils'
 import { useApp } from '@/mocks/store'
@@ -201,6 +198,10 @@ export function HeroBanner({ account, stats, actions }: {
   const warmingDays = stats?.status.warmingDays
   const active = stats?.status.warmingActive
   const busy = stats?.busyIn
+  // Пауза при переходе между модулями: она случайная у каждого перехода, и без строки
+  // в карточке «почему профиль стоит» читалось только по логу задачи — если знать, в
+  // какой именно задаче искать (просьба владельца 21.08).
+  const switchPause = stats?.switchPause
   const health = stats?.health
   const trust = stats?.trust
   return (
@@ -263,6 +264,20 @@ export function HeroBanner({ account, stats, actions }: {
             <ShieldAlert size={13} /> {account.risk.level === 'high' ? 'Зона риска' : 'Повышенный риск'}
           </div>
           {account.risk.factors.map((f, i) => <div key={i} className="opacity-90">• {f.text}</div>)}
+        </div>
+      )}
+
+      {switchPause && (
+        <div className="mt-4 flex items-start gap-2 rounded-xl border border-iris-300/30 bg-iris-500/15 px-3 py-2.5 text-xs leading-relaxed text-iris-50">
+          <Clock size={13} className="mt-0.5 shrink-0" />
+          <div>
+            <div className="font-bold">Перерыв между модулями</div>
+            <div className="opacity-90">{switchPause.text}</div>
+            <div className="opacity-70">
+              Человек не переключается с одного занятия на другое мгновенно: пауза случайная,
+              10–45 секунд. Пока она идёт, аккаунт не берут другие модули — свой продолжает работать.
+            </div>
+          </div>
         </div>
       )}
 

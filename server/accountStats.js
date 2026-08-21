@@ -4,6 +4,8 @@ import { loadSessionString, createClient } from './tgAuth.js'
 import { parseProxy } from './proxy.js'
 import { probeProxyProtocol, markProxyStatusByUrl, findProxyByUrl } from './proxies.js'
 import { getAccountLock } from './lib/accountLocks.js'
+import { getSwitchPause } from './lib/accountBusy.js'
+import { fmtDelay } from './lib/humanDelays.js'
 import { accountTrust } from './lib/trustScore.js'
 import { setTrustCache } from './lib/trustCache.js'
 import { countryFromPhone } from './accountsMeta.js'
@@ -294,6 +296,14 @@ export async function buildAccountStats(accountId, opts = {}) {
   const sessionStr = await loadSessionString(accountId)
   const lock = getAccountLock(accountId)
   const busyIn = lock ? { moduleKey: lock.moduleKey, taskId: lock.taskId, moduleLabel: lock.moduleLabel } : null
+  /*
+   * Пауза при переключении между модулями — в карточку аккаунта (владелец 21.08:
+   * «я должен видеть у аккаунта в информации, какая задержка между модулями применена»).
+   * Она случайная у каждого перехода, и без этой строки «почему профиль стоит» можно
+   * было понять только по логу задачи — если знать, в какой именно задаче искать.
+   */
+  const sw = getSwitchPause(accountId)
+  const switchPause = sw ? { ...sw, text: `Перерыв после «${sw.fromLabel}»: ${fmtDelay(sw.coolMs)}, осталось ${fmtDelay(sw.leftMs)}` } : null
 
   const proxy = describeProxy(meta.proxy)
   const activity = await collectActivity(accountId, meta.name || '', 40)
@@ -476,6 +486,7 @@ export async function buildAccountStats(accountId, opts = {}) {
   return {
     live,
     busyIn,
+    switchPause,
     profile: {
       id: me?.id?.toString?.() ?? meta.userId ?? null,
       firstName: firstName || null,

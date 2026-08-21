@@ -175,6 +175,11 @@ export interface ParseResult {
 export interface AccountStats {
   live: boolean
   busyIn: { moduleKey: string; taskId: string; moduleLabel: string } | null
+  /**
+   * Пауза при переходе аккаунта между модулями: из какого модуля вышел, сколько
+   * назначено и сколько осталось. `null` — паузы сейчас нет.
+   */
+  switchPause: { fromModule: string; fromLabel: string; coolMs: number; until: number; leftMs: number; text: string } | null
   profile: {
     id: string | null
     firstName: string | null

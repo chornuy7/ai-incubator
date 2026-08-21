@@ -25,6 +25,8 @@ test('занятый действием аккаунт не берётся др�
   assert.equal(getAccountBusy('bz_a'), null)
 })
 
+const { SWITCH_MS } = await import('../lib/humanDelays.js')
+
 test('пауза при переключении модулей: тот же модуль сразу, другой — ждёт', () => {
   const now = 2_000_000
   beginAccountWork('bz_b', 'neuro-commenting', 't1', now)
@@ -38,8 +40,10 @@ test('пауза при переключении модулей: тот же м�
   const denied = beginAccountWork('bz_b', 'mass-react', 't2', now + 300)
   assert.equal(denied.ok, false)
   assert.match(denied.reason, /переключени/)
-  // Пауза случайная 1–5 с — но через 6 с точно открыто.
-  assert.equal(beginAccountWork('bz_b', 'mass-react', 't2', now + 6300).ok, true)
+  // Пауза случайная, но не дольше верхней границы из humanDelays (SWITCH_MS.max):
+  // за ней окно точно открыто. Раньше здесь стояло «6 с» — от прежних 1–5 с, взятых
+  // на глаз; теперь диапазон человеческий (resumption lag ≈ 25 с), см. humanDelays.js.
+  assert.equal(beginAccountWork('bz_b', 'mass-react', 't2', now + SWITCH_MS.max + 1000).ok, true)
   endAccountWork('bz_b', 't2', now + 7000)
 })
 

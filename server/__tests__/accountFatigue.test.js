@@ -11,7 +11,7 @@ import path from 'node:path'
 import {
   DEFAULT_FATIGUE, DEFAULT_SCHEDULE, currentFatigue, fatigueGate, freeAt,
   applyAction, scheduleGate, normalizeFatigueProfile, ROLL_RETRY_MS,
-  normalizeSchedule, scheduleToPercent, scheduleForAccount, scheduleHour,
+  normalizeSchedule, scheduleToPercent, scheduleForAccount, scheduleHour, rollRetryMs,
 } from '../lib/accountFatigue.js'
 
 const HOUR = 60 * 60 * 1000
@@ -359,12 +359,31 @@ test('час закрыт (0%) — ждём до следующего часа',
   assert.equal(left, 40, 'до 12:00 остаётся 40 минут')
 })
 
-test('не повезло с броском — пробуем снова через минуту, а не через полчаса', () => {
+test('не повезло с броском — короткий повтор, а не остаток часа', () => {
   const now = at(11, 20)
   const g = scheduleGate({ 11: 0.67 }, now, () => 0.99)
   assert.equal(g.ok, false)
   assert.match(g.reason, /распорядок дня/, 'в тексте должно быть видно, что это распорядок, а не «вероятность» из настроек модуля')
-  assert.equal(g.until - now, ROLL_RETRY_MS, 'ожидание — короткий повтор, а не остаток часа')
+  const wait = g.until - now
+  assert.ok(wait > 0 && wait < 40 * 60000, 'ждём повтор, а не остаток часа (до 12:00 тут 40 мин)')
+})
+
+/**
+ * Срок повтора считается от ШАНСА ЧАСА (просьба владельца 21.08: «выставить такую
+ * задержку, чтобы при повторном дёргании он уже был активным»). Фиксированная минута
+ * была одинаковой и для 89%, и для 5%: в первом случае аккаунт зря стоял минуту, во
+ * втором воркер молотил вхолостую 12 раз в час.
+ */
+test('повтор броска зависит от шанса часа', () => {
+  const now = at(11, 0)
+  const часто = rollRetryMs(0.89, now)
+  const редко = rollRetryMs(0.1, now)
+  assert.ok(часто < 15000, `при 89% ждать почти нечего, получили ${часто} мс`)
+  assert.ok(редко > часто * 10, 'при 10% ждать заметно дольше')
+  // Дальше конца часа ждать бессмысленно: там уже другой шанс.
+  assert.ok(rollRetryMs(0.01, at(11, 50)) <= 10 * 60000 + 1, 'не дольше остатка часа')
+  // И не крутимся вхолостую при почти стопроцентном шансе.
+  assert.ok(rollRetryMs(1, now) >= 5000, 'минимум пять секунд между попытками')
 })
 
 test('попал в вероятность — работаем', () => {
