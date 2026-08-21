@@ -1545,6 +1545,8 @@ export async function runNeuroDialogs(task, store) {
   // Модуль-ответчик работает долго (ждёт входящие ЛС), поэтому при суточном лимите
   // не завершаемся, а тихо простаиваем — лог о достижении лимита пишем один раз на аккаунт.
   const dmCapLogged = new Set()
+  /** Об отдыхе аккаунта сообщаем один раз, а не каждый круг — иначе лог заливает. */
+  const restLogged = new Set()
   /** Кому уже сказали, что он работает только на приём (спамблок). */
   const replyOnlyLogged = new Set()
   // Последнее входящее сообщение, на которое уже ответили: не отвечаем дважды на одно и то же,
@@ -1615,6 +1617,22 @@ export async function runNeuroDialogs(task, store) {
         }
         continue
       }
+      // §4.1–§4.3: усталость и распорядок. Диалоги их КОПИЛИ (noteAction ниже), но не
+      // спрашивали — аккаунт отвечал круглосуточно и сверх порога, хотя усталость общая
+      // для всех модулей (аудит 20.08). Уставший пропускаем: собеседник не теряется,
+      // ответ придёт следующим кругом, когда аккаунт вернётся, — так же, как человек,
+      // который отошёл от телефона.
+      const humanDlg = await canWorkNow(accountId)
+      if (!humanDlg.ok) {
+        skips += 1
+        if (!restLogged.has(accountId)) {
+          restLogged.add(accountId)
+          await store.appendLog(task, 'info', `Пропуск: ${humanDlg.reason}`, meta.name)
+        }
+        continue
+      }
+      restLogged.delete(accountId) // вернулся в строй — о следующем отдыхе сообщим заново
+
       skips = 0
       dmCapLogged.delete(accountId) // снова активен (лимит сброшен новым днём) — разрешаем лог заново
       let client
@@ -2733,6 +2751,38 @@ export async function runMailing(task, store) {
         }
       }
       if (!myAccounts.length) { await store.appendLog(task, 'warning', 'В потоке не осталось рабочих аккаунтов — завершаем'); break }
+
+      // §4.1–§4.3: усталость и распорядок. Рассылка их КОПИЛА (noteAction ниже), но не
+      // спрашивала — аккаунт, отработавший смену, продолжал слать холодные ЛС сверх
+      // порога, а это самый спамблокоопасный модуль (аудит 20.08). Уставший аккаунт
+      // пропускаем на этот круг: цель не теряется, её возьмёт другой аккаунт, а этот
+      // вернётся после отдыха.
+      const restingNow = []
+      for (const cand of [...myAccounts]) {
+        const gate = await canWorkNow(cand)
+        if (!gate.ok) {
+          restingNow.push(cand)
+          myAccounts.splice(myAccounts.indexOf(cand), 1)
+          const cm = await getAccountMeta(cand)
+          await store.appendLog(task, 'info', `Пропуск: ${gate.reason}`, cm.name || cand)
+        }
+      }
+      if (!myAccounts.length) {
+        // Отдыхают ВСЕ — ждать до ближайшего возврата, как это делают карусельные модули.
+        // Завершать нельзя: рассылка на тысячу контактов идёт часами и переживёт отдых.
+        let backAt = 0
+        for (const id of restingNow) {
+          const g = await canWorkNow(id)
+          if (g.ok) { backAt = Date.now(); break }          // уже освободился, пока перебирали
+          if (g.until) backAt = backAt ? Math.min(backAt, g.until) : g.until
+        }
+        const plan = idleWaitPlan(backAt)
+        if (!plan.wait) { await store.appendLog(task, 'warning', 'Все аккаунты потока недоступны — завершаем'); break }
+        await noteWait(task, store, plan.ms, `все аккаунты отдыхают, вернутся в ${new Date(backAt).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })}`)
+        if (await breakableDelay(plan.ms, store, task)) break
+        myAccounts.push(...restingNow)
+        continue
+      }
 
       // Выбрать аккаунт round-robin, у которого не исчерпан суточный лимит ЛС и maxPerAccount.
       // dm-лимит асинхронный — предвычисляем множество «исчерпавших» для чистого выбора.

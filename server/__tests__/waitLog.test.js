@@ -49,3 +49,30 @@ test('итоговая строка показывает суммарное ож
   assert.equal(finishNote({ status: 'done', progress: {} }), 'Завершено')
   assert.equal(finishNote({ status: 'paused' }), 'Пауза')
 })
+
+/**
+ * Регресс-защита (аудит 20.08): усталость КОПИЛИ семь модулей, а спрашивали четыре.
+ * Мейлинг и нейродиалоги копили и не спрашивали — аккаунт, отработавший смену, продолжал
+ * слать холодные ЛС и отвечать круглосуточно. Прогрев сознательно вне правила: у него
+ * собственный темп, и греться уставшему профилю не вредно.
+ */
+test('каждый модуль, который копит усталость, обязан её и спрашивать', async () => {
+  const fs = await import('node:fs')
+  const src = fs.readFileSync(new URL('../modules/workers.js', import.meta.url), 'utf8')
+  const bodies = src.split(/export async function (run[A-Za-z]+)/)
+
+  const accrues = []
+  const checks = []
+  for (let i = 1; i < bodies.length; i += 2) {
+    const name = bodies[i]
+    const body = bodies[i + 1] || ''
+    if (body.includes('noteAction(')) accrues.push(name)
+    if (body.includes('canWorkNow(')) checks.push(name)
+  }
+
+  assert.ok(accrues.includes('runMailing') && checks.includes('runMailing'), 'мейлинг: копит и спрашивает')
+  assert.ok(accrues.includes('runNeuroDialogs') && checks.includes('runNeuroDialogs'), 'диалоги: копят и спрашивают')
+
+  const silent = accrues.filter((n) => !checks.includes(n) && n !== 'runWarming')
+  assert.deepEqual(silent, [], `эти модули копят усталость, но не проверяют её: ${silent.join(', ')}`)
+})
