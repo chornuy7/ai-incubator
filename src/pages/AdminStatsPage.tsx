@@ -1,7 +1,7 @@
 import { coins as fmtCoins, cn } from '@/shared/lib/utils'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { BarChart3, Users, ListChecks, Coins, Download, RefreshCw, AlertTriangle, Contact, Power, ChevronDown, Activity, Plus, Radar, Search, ShoppingCart, Loader2, Check, Trash2, ScrollText, Send, MessageSquare, LifeBuoy, ArrowLeft } from 'lucide-react'
-import { PageHeader, Card, Segmented, EmptyState, Select, Badge } from '@/shared/ui'
+import { PageHeader, Card, Segmented, EmptyState, Select, Badge, Tip } from '@/shared/ui'
 import { useApp } from '@/mocks/store'
 import {
   fetchAdminOverview, fetchClientReport, fetchUsersReport, fetchProblems, fetchCrmOverview,
@@ -140,7 +140,7 @@ export function AdminStatsPage() {
     0: ['o'], 1: ['a'], 2: ['d'], 3: ['u'], 4: ['pur'], 5: ['econ'],
     7: ['p', 'h'], 8: ['c'], 9: ['r', 'u'], 10: ['h', 'a', 'd'],
   }
-  const load = async ({ force = false, silent = false, only }: { force?: boolean; silent?: boolean; only?: Array<keyof StatsSnap> } = {}) => {
+  const load = async ({ force = false, silent = false, only, visible = false }: { force?: boolean; silent?: boolean; only?: Array<keyof StatsSnap>; visible?: boolean } = {}) => {
     loadCtl.current?.abort()
     const ctl = new AbortController()
     loadCtl.current = ctl
@@ -148,6 +148,9 @@ export function AdminStatsPage() {
     // Частичная загрузка (only) — для автообновления одной вкладки. Пустой список = вкладке
     // нечего тянуть (справочник) — молча выходим, не дёргая сервер.
     if (only && only.length === 0) { if (!silent) setLoading(false); return }
+    // visible: частичная загрузка, которую ЖДЁТ пользователь (открыл вкладку впервые) —
+    // показываем спиннер, иначе экран выглядит пустым, будто данных нет.
+    if (only && visible && !silent) { busyRef.current = true; setLoading(true) }
     // Свежий кэш периода → мгновенно, без запроса (MR-32). Кэшем пользуется только ПОЛНАЯ
     // загрузка (смена периода): частичная всегда идёт за свежими данными вкладки.
     const cached = cacheRef.current.get(periodIdx)
@@ -184,6 +187,11 @@ export function AdminStatsPage() {
       const values = await Promise.all(keys.map((k) => FETCHERS[k]()))
       if (signal.aborted) return // перебит новым периодом — результат не применяем
       keys.forEach((k, i) => (SETTERS[k] as (v: unknown) => void)(values[i]))
+      // MR-151: помечаем, что эти датасеты для этого периода уже есть — вкладка,
+      // на которую переключились позже, не станет грузить их заново.
+      const done = loadedRef.current.get(periodIdx) || new Set<string>()
+      keys.forEach((k) => done.add(k))
+      loadedRef.current.set(periodIdx, done)
       setDenied(false)
       // Кэш держим как снимок периода: полная загрузка пишет его целиком, частичная —
       // патчит затронутые поля, чтобы возврат на период не показал устаревшее.
@@ -204,10 +212,26 @@ export function AdminStatsPage() {
     } finally {
       // loading/busy снимает только полная видимая загрузка; фоновая (silent) и частичная
       // (only) их не поднимали — и снимать нечего.
-      if (loadCtl.current === ctl && !silent && !only) { busyRef.current = false; setLoading(false) }
+      if (loadCtl.current === ctl && !silent && (!only || visible)) { busyRef.current = false; setLoading(false) }
     }
   }
-  useEffect(() => { void load() }, [since]) // eslint-disable-line react-hooks/exhaustive-deps
+  // MR-151 (созвон 19.08): «переключаешься на вкладку — должна подгружаться только она».
+  // Раньше вход в админку тянул ВСЕ 10 датасетов сразу (отсюда десятки запросов и
+  // «Загрузка данных за период» на пустом экране), хотя видна одна вкладка. Теперь грузим
+  // только то, что нужно текущей вкладке, и добираем остальное при переключении.
+  const loadedRef = useRef<Map<number, Set<string>>>(new Map())
+  const ensureTab = (tabIdx: number, opts: { force?: boolean } = {}) => {
+    const need = TAB_DATASETS[tabIdx] || []
+    if (!need.length) return // вкладка-справочник грузит своё сама
+    const have = loadedRef.current.get(periodIdx) || new Set<string>()
+    const missing = opts.force ? need : need.filter((k) => !have.has(k))
+    if (!missing.length) return
+    void load({ only: missing, visible: true, force: opts.force })
+  }
+  // Смена периода — данные старого периода больше не в силе: чистим отметки и грузим
+  // заново то, что нужно ОТКРЫТОЙ вкладке (а не всё сразу).
+  useEffect(() => { loadedRef.current.delete(periodIdx); ensureTab(tab) }, [since]) // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { ensureTab(tab) }, [tab]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Интервал автообновления стабилен (deps [autoRefresh]), но обязан звать АКТУАЛЬНУЮ
   // load (текущий период) и знать ТЕКУЩУЮ вкладку. Иначе фон тянул данные периода по
@@ -389,13 +413,15 @@ export function AdminStatsPage() {
             своё сами (Цены/Аккаунты/Роли/Тикеты/Парсер/API), кнопку не показываем — у них
             свой контрол обновления. */}
         {(TAB_DATASETS[tab]?.length ?? 0) > 0 && (
-          <button onClick={() => void load({ force: true, only: TAB_DATASETS[tab] })} className="btn-ghost ml-auto h-9" disabled={loading} title="Обновить данные этой вкладки">
+          <button onClick={() => ensureTab(tab, { force: true })} className="btn-ghost ml-auto h-9" disabled={loading} title="Обновить данные этой вкладки">
             <RefreshCw size={15} className={loading ? 'animate-spin' : ''} /> Обновить
           </button>
         )}
       </div>
 
-      {loading && !overview && !SELF_FETCHING_TABS.has(tab) ? (
+      {/* MR-151: ждём данные ИМЕННО этой вкладки. Раньше ждали overview, а его теперь может
+          не быть вовсе — грузим только то, что нужно открытой вкладке. */}
+      {loading && !SELF_FETCHING_TABS.has(tab) && !(TAB_DATASETS[tab] || []).every((k) => (loadedRef.current.get(periodIdx) || new Set()).has(k)) ? (
         <Card className="flex items-center gap-2 p-6 text-sm text-muted">
           <RefreshCw size={15} className="animate-spin" /> Загрузка данных за период «{PERIODS[periodIdx].label}»…
         </Card>
@@ -967,7 +993,7 @@ function UsersTab({ report, onReload }: { report: UsersReport | null; onReload: 
                       ? (r.subscription.all
                           ? <span className="text-xs text-muted" title="Набор не выбран — открыто всё">Все модули</span>
                           : r.subscription.count
-                            ? <span className="cursor-help text-xs text-fg" title={r.subscription.titles.join(', ')}>{r.subscription.count} мод.</span>
+                            ? <Tip className="cursor-help text-xs text-fg" text={r.subscription.titles.join(', ')}>{r.subscription.count} мод.</Tip>
                             : <span className="text-xs text-muted">нет</span>)
                       : <span className="text-xs text-muted">—</span>}
                   </td>
@@ -1288,7 +1314,7 @@ function UserDialogsBlock({ state }: { state: UserDialogs | 'loading' | undefine
                 по аккаунту
               </span>
             )}
-            {!!d.note && <span className="min-w-0 flex-1 truncate text-muted" title={d.note}>{d.note}</span>}
+            {!!d.note && <Tip className="min-w-0 flex-1 truncate text-muted" text={d.note}>{d.note}</Tip>}
             <span className="ml-auto shrink-0 tabular-nums text-faint">
               {d.at ? new Date(d.at).toLocaleDateString('ru-RU') : '—'}
             </span>
@@ -1385,7 +1411,7 @@ function UserActivityLog({ state }: { state: UserActivity | 'loading' | undefine
               )}
               {!!e.module && <span className="text-[10px] text-muted">{e.module}</span>}
               {!!e.ip && <span className="rounded bg-white/8 px-1 font-mono text-[10px] text-muted">{e.ip}</span>}
-              {!!e.reason && <span className="min-w-0 flex-1 truncate text-muted" title={e.reason}>{e.reason}</span>}
+              {!!e.reason && <Tip className="min-w-0 flex-1 truncate text-muted" text={e.reason}>{e.reason}</Tip>}
             </div>
           ))}
         </div>
@@ -2154,7 +2180,7 @@ function FailedTaskRow({ t }: { t: FailedTask }) {
         <span className="font-medium text-fg">{t.title}</span>
         <span className="rounded-md bg-red-500/12 px-1.5 py-0.5 text-[11px] font-bold text-red-300">{t.errors} ош.</span>
         <span className="text-xs text-muted">{t.id}</span>
-        {!!t.lastError && <span className="w-full text-xs text-muted sm:w-auto sm:flex-1 sm:truncate" title={t.lastError}>{t.lastError}</span>}
+        {!!t.lastError && <Tip className="w-full text-xs text-muted sm:w-auto sm:flex-1 sm:truncate" text={t.lastError}>{t.lastError}</Tip>}
       </button>
       {open && (
         <div className="ml-5 mt-1.5 rounded-lg border border-line/50 bg-elevated/40 p-2">
@@ -2737,14 +2763,18 @@ function PricesTab() {
                       // прибыль; кратность честнее показывает запас на остальные расходы.
                       const ratio = aiUsd > 0 ? priceUsd / aiUsd : null
                       const cls = ratio == null ? 'text-muted' : ratio >= 2 ? 'text-emerald-300/80' : ratio >= 1 ? 'text-amber-300/80' : 'text-rose-300/80'
+                      const ratioStr = ratio == null ? '' : ratio >= 100 ? String(Math.round(ratio)) : ratio.toFixed(1)
                       return (
-                        <div className={cn('mt-0.5 pr-1 text-[10px] tabular-nums', cls)}
-                          title={`Расход на ИИ: ${avg} токенов × $${tUsd} = $${aiUsd.toFixed(7)}
-Цена клиенту: ${action} ⚡ × $${fmtUsd(coinUsd)} = $${priceUsd.toFixed(5)}
-В расход НЕ входят аккаунты, прокси, трафик и риск банов — реальную маржу так не посчитать.`}>
-                          ИИ ≈ ${aiUsd < 0.000001 ? aiUsd.toExponential(1) : aiUsd.toFixed(6)} · цена ${priceUsd.toFixed(4)}
-                          {ratio != null && <> · ×{ratio >= 100 ? Math.round(ratio) : ratio.toFixed(1)} к ИИ</>}
-                        </div>
+                        <Tip className={cn('mt-0.5 pr-1 text-[10px] tabular-nums', cls)}
+                          text={[
+                            `Платим OpenAI за одно действие: $${aiUsd.toFixed(7)}`,
+                            `  (в среднем ${avg} токенов модели на действие)`,
+                            `Берём с клиента за это же действие: $${priceUsd.toFixed(4)}`,
+                            `  (${action} ⚡ по курсу $${fmtUsd(coinUsd)} за ⚡)`,
+                            ratio == null ? '' : `Цена в ${ratioStr} раз выше расхода на ИИ — этот запас покрывает аккаунты, прокси, трафик, риск банов и нашу маржу.`,
+                          ].filter(Boolean).join(String.fromCharCode(10))}>
+                          <span>платим ${aiUsd < 0.000001 ? aiUsd.toExponential(1) : aiUsd.toFixed(6)} · берём ${priceUsd.toFixed(4)}{ratio != null && <> · ×{ratioStr}</>}</span>
+                        </Tip>
                       )
                     })()}
                   </td>

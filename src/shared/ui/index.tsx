@@ -216,6 +216,25 @@ export function useTooltip<T extends HTMLElement = HTMLElement>(text?: string) {
   return { ref, onMouseEnter, onMouseLeave, node }
 }
 
+/**
+ * Обёртка-подсказка: тёмная всплывашка вместо нативного `title` (широкая жёлтая плашка
+ * браузера выглядит чужеродно и режет длинный текст). Построена на useTooltip, поэтому
+ * рендерится порталом и не обрезается контейнерами overflow-*.
+ *
+ * Правка 20.08: заказчик просил, чтобы подсказки ВЕЗДЕ выглядели одинаково — как в
+ * менеджере аккаунтов. Поэтому компонент общий, а не локальный в одной странице.
+ */
+export function Tip({ text, children, className }: { text?: string; children: ReactNode; className?: string }) {
+  const t = useTooltip<HTMLSpanElement>(text)
+  if (!text) return <>{children}</>
+  return (
+    <span ref={t.ref} onMouseEnter={t.onMouseEnter} onMouseLeave={t.onMouseLeave} className={cn('inline-flex', className)}>
+      {children}
+      {t.node}
+    </span>
+  )
+}
+
 export function StatusBadge({ status, until, reason }: { status: AccountStatus; until?: number | null; reason?: string }) {
   const m = STATUS_META[status]
   const left = until && until > Date.now() ? formatLeft(until - Date.now()) : ''
