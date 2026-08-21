@@ -206,16 +206,30 @@ function ModuleAccessPicker({ catalog, value, onChange }: {
  * Шаблон НЕОБЯЗАТЕЛЕН: если их нет, вместо селекта стоит ссылка на соседнюю вкладку, но
  * доступ прекрасно выставляется тумблерами и пользователь создаётся без всякого шаблона.
  */
-function ApplyTemplate({ roles, catalog, applied, hint, onApply, className }: {
+function ApplyTemplate({ roles, catalog, picked, hint, onPick, className }: {
   roles: Role[]
   catalog: AccessCatalog
-  /** Имя последнего применённого шаблона — подтверждение, что подстановка произошла. */
-  applied: string
+  /** Выбранный шаблон — его имя видно в поле, пока набор не тронули. '' = не выбран. */
+  picked: string
   /** Что делать дальше: в форме создания — «доправить ниже», в карточке — «сохранить». */
   hint: string
-  onApply: (draft: AccessDraft, roleName: string) => void
+  /** Выбрали шаблон или сняли выбор (null) — тогда набор возвращается к исходному. */
+  onPick: (draft: AccessDraft | null, roleName: string) => void
   className?: string
 }) {
+  const [open, setOpen] = useState(false)
+
+  // Закрытие по клику мимо и по Escape: список рисуем сами, а значит и поведение,
+  // которое браузер давал нативному <select>, теперь наше.
+  useEffect(() => {
+    if (!open) return
+    const close = () => setOpen(false)
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setOpen(false) }
+    document.addEventListener('mousedown', close)
+    document.addEventListener('keydown', onKey)
+    return () => { document.removeEventListener('mousedown', close); document.removeEventListener('keydown', onKey) }
+  }, [open])
+
   if (!roles.length) {
     return (
       <div className={cn('text-[11px] text-white/40', className)}>
@@ -225,26 +239,64 @@ function ApplyTemplate({ roles, catalog, applied, hint, onApply, className }: {
       </div>
     )
   }
+
+  const disabled = !catalog.modules.length
+  const choose = (r: Role | null) => {
+    setOpen(false)
+    onPick(r ? accessFromRole(r, catalog.modules, catalog.blocks) : null, r ? r.name : '')
+  }
+
   return (
     <div className={cn('flex flex-wrap items-center gap-2', className)}>
-      <select
-        // Значение всегда пустое: это не «выбранная роль» (её больше не существует как связи),
-        // а разовое действие — поэтому после применения список возвращается к заголовку и
-        // тот же шаблон можно применить ещё раз, если тумблеры увели не туда.
-        value=""
-        onChange={(e) => {
-          const r = roles.find((x) => x.id === e.target.value)
-          if (r) onApply(accessFromRole(r, catalog.modules, catalog.blocks), r.name)
-        }}
-        disabled={!catalog.modules.length}
-        className="input h-8 min-w-[170px] text-xs disabled:opacity-40"
-        aria-label="Применить шаблон доступа"
-      >
-        <option value="">Применить шаблон…</option>
-        {roles.map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}
-      </select>
-      {applied
-        ? <span className="text-[11px] text-spark-300">применён шаблон «{applied}» — {hint}</span>
+      {/* Свой список вместо нативного <select>: тот рисуется средствами системы — белое
+          меню с синей подсветкой посреди тёмной панели, — и не показывал выбранное,
+          потому что значение сбрасывалось после применения (правка 21.08). */}
+      <div className="relative" onMouseDown={(e) => e.stopPropagation()}>
+        <button
+          type="button"
+          disabled={disabled}
+          onClick={() => setOpen((v) => !v)}
+          aria-haspopup="listbox"
+          aria-expanded={open}
+          className={cn(
+            'flex h-8 min-w-[190px] items-center justify-between gap-2 rounded-xl border px-3 text-xs transition-colors',
+            disabled && 'cursor-not-allowed opacity-40',
+            picked ? 'border-spark-500/50 bg-spark-500/10 text-spark-200' : 'border-line bg-elevated text-white/70 hover:border-spark-500/40',
+          )}
+        >
+          <span className="truncate">{picked || 'Выбрать шаблон'}</span>
+          <ChevronDown size={13} className={cn('shrink-0 transition-transform', open && 'rotate-180')} />
+        </button>
+        {open && (
+          <div role="listbox" className="absolute left-0 top-full z-30 mt-1 max-h-56 min-w-full overflow-y-auto rounded-xl border border-line bg-elevated p-1 shadow-xl">
+            {/* Первым — снятие выбора: вернуться к тому, что было до подстановки. */}
+            <button
+              type="button" role="option" aria-selected={!picked}
+              onClick={() => choose(null)}
+              className={cn('flex w-full items-center justify-between gap-2 rounded-lg px-2.5 py-1.5 text-left text-xs transition-colors',
+                picked ? 'text-white/45 hover:bg-white/5 hover:text-white/70' : 'bg-white/5 text-white/70')}
+            >
+              Выбрать шаблон
+            </button>
+            {roles.map((r) => {
+              const on = picked === r.name
+              return (
+                <button
+                  key={r.id} type="button" role="option" aria-selected={on}
+                  onClick={() => choose(r)}
+                  className={cn('flex w-full items-center justify-between gap-2 rounded-lg px-2.5 py-1.5 text-left text-xs transition-colors',
+                    on ? 'bg-spark-500/15 text-spark-200' : 'text-white/75 hover:bg-white/5')}
+                >
+                  <span className="truncate">{r.name}</span>
+                  {on && <Check size={13} className="shrink-0" />}
+                </button>
+              )
+            })}
+          </div>
+        )}
+      </div>
+      {picked
+        ? <span className="text-[11px] text-spark-300">набор из «{picked}» подставлен — {hint}</span>
         : <span className="text-[11px] text-white/35">заполнит тумблеры готовым набором</span>}
     </div>
   )
@@ -258,6 +310,12 @@ function SubModuleAccessEditor({ sub, templates }: { sub: User; templates: Role[
   const [open, setOpen] = useState(false)
   const [catalog, setCatalog] = useState<AccessCatalog | null>(null)
   const [draft, setDraft] = useState<AccessDraft>(EMPTY_ACCESS)
+  /**
+   * Доступ, лежащий на сервере. Нужен, чтобы снятие шаблона возвращало карточку ровно
+   * туда, где она была до подстановки: «выбрал не тот шаблон» не должно значить «теперь
+   * угадывай, что тут стояло». Пока черновик равен этому снимку, сохранять нечего.
+   */
+  const [base, setBase] = useState<AccessDraft>(EMPTY_ACCESS)
   const [loading, setLoading] = useState(false)
   const [saving, setSaving] = useState(false)
   const [dirty, setDirty] = useState(false)
@@ -273,7 +331,12 @@ function SubModuleAccessEditor({ sub, templates }: { sub: User; templates: Role[
     let alive = true
     setLoading(true); setErr('')
     fetchUserAccess(sub.id)
-      .then((a) => { if (!alive) return; setCatalog(a.catalog); setDraft({ modules: a.modules, blocks: a.blocks }) })
+      .then((a) => {
+        if (!alive) return
+        setCatalog(a.catalog)
+        setDraft({ modules: a.modules, blocks: a.blocks })
+        setBase({ modules: a.modules, blocks: a.blocks })
+      })
       .catch((e) => { if (alive) setErr(e instanceof Error ? e.message : 'Не удалось загрузить доступ') })
       .finally(() => { if (alive) setLoading(false) })
     return () => { alive = false }
@@ -283,7 +346,7 @@ function SubModuleAccessEditor({ sub, templates }: { sub: User; templates: Role[
 
   const save = async () => {
     setSaving(true); setErr(''); setSaved(false)
-    try { await saveUserAccess(sub.id, draft); setDirty(false); setSaved(true) }
+    try { await saveUserAccess(sub.id, draft); setBase(draft); setDirty(false); setSaved(true) }
     catch (e) { setErr(e instanceof Error ? e.message : 'Ошибка') }
     finally { setSaving(false) }
   }
@@ -308,9 +371,16 @@ function SubModuleAccessEditor({ sub, templates }: { sub: User; templates: Role[
                   рядом. Иначе выбор в списке молча менял бы права живому сотруднику, а
                   посмотреть, что именно подставилось, было бы уже поздно. */}
               <ApplyTemplate
-                roles={templates} catalog={catalog} applied={applied}
+                roles={templates} catalog={catalog} picked={applied}
                 hint="проверьте тумблеры и сохраните"
-                onApply={(next, roleName) => { setDraft(next); setApplied(roleName); setDirty(true); setSaved(false) }}
+                onPick={(next, roleName) => {
+                  // Сняли выбор — возвращаем сохранённое и гасим «Сохранить»: подстановки
+                  // не было, менять нечего.
+                  setDraft(next ?? base)
+                  setApplied(roleName)
+                  setDirty(!!next)
+                  setSaved(false)
+                }}
                 className="mr-auto"
               />
               {saved && !dirty && <span className="text-[11px] text-spark-300">Сохранено</span>}
@@ -599,9 +669,11 @@ function UsersTab() {
           <div>
             <label className="label">Доступ к модулям <span className="font-normal text-white/40">(из вашей подписки)</span></label>
             <ApplyTemplate
-              roles={templates} catalog={catalog} applied={appliedTpl}
+              roles={templates} catalog={catalog} picked={appliedTpl}
               hint="можно доправить ниже"
-              onApply={(draft, roleName) => { setNewAccess(draft); setAppliedTpl(roleName) }}
+              // В форме создания «до подстановки» — это пустой набор: сотрудника ещё нет,
+              // сохранённому доступу взяться неоткуда.
+              onPick={(next, roleName) => { setNewAccess(next ?? EMPTY_ACCESS); setAppliedTpl(roleName) }}
               className="mb-2"
             />
             <div className="max-h-64 overflow-y-auto pr-1">
