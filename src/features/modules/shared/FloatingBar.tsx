@@ -17,9 +17,16 @@ export function FloatingBar({ children, className }: { children: ReactNode; clas
   const [barH, setBarH] = useState(0)
 
   useLayoutEffect(() => {
-    // Главная колонка — родитель <main> (сайдбар ей сестра, поэтому её левый край
-    // ровно там, где кончается меню).
-    const col = () => document.querySelector('main')?.parentElement ?? null
+    // Главная колонка — сестра сайдбара, помечена data-main-column: её левый край ровно
+    // там, где кончается меню, а правый — у края экрана.
+    //
+    // Раньше мерили родителя <main>, но им стала обёртка с капом 1400px (её завели, когда
+    // чинили растягивание страницы) — и панель сжалась заодно с контентом: на экране 1907
+    // она шла 382…1782 вместо 245…1907. Кап для контента и «панель на всю ширину» (MR-56)
+    // — разные требования. Запасной путь оставлен на случай, если разметку перестроят.
+    const col = () => document.querySelector('[data-main-column]')
+      ?? document.querySelector('main')?.parentElement
+      ?? null
     const measure = () => {
       const c = col()
       if (c) {
