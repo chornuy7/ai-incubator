@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
-import { Check, Package, Sparkles, Loader2, Lock, CalendarClock, AlertTriangle } from 'lucide-react'
+import { Check, Package, Sparkles, Loader2, Lock, CalendarClock, AlertTriangle, ExternalLink } from 'lucide-react'
 import { PageHeader, Card } from '@/shared/ui'
 import { useApp } from '@/mocks/store'
 import { usePlan } from '@/features/billing/plan'
@@ -118,7 +118,14 @@ export function SubscriptionPage() {
       // Меню должно перестроиться сразу, а не после перезагрузки. Заодно приезжает
       // новый срок: plan.load перечитывает общий баланс, а «оплачено до …» — из него.
       await loadPlan()
-      pushToast({ type: 'success', title: 'Подписка обновлена', desc: `Открыто модулей: ${keys.length} · на ${period === 'year' ? 'год' : 'месяц'}` })
+      // «Подписка обновлена» — про нашу внутреннюю сущность, а человек только что
+      // КУПИЛ модули: говорим о том, что он сделал, а не о том, что мы записали.
+      const n = added.length
+      pushToast({
+        type: 'success',
+        title: n ? (n === 1 ? 'Модуль добавлен в подписку' : 'Модули добавлены в подписку') : 'Подписка продлена',
+        desc: `${n ? `Добавлено: ${n} · в` : 'В'}сего в подписке: ${keys.length} · на ${period === 'year' ? 'год' : 'месяц'}`,
+      })
       const fresh = await fetchSubscription()
       setData(fresh)
     } catch (e) {
@@ -226,18 +233,22 @@ export function SubscriptionPage() {
             const on = picked.has(m.key)
             const paid = mineSet.has(m.key)
             return (
-              <button
+              <div
                 key={m.key}
+                className={cn(
+                  'flex items-center justify-between gap-3 rounded-xl border px-3.5 py-3 text-left transition-colors',
+                  on ? 'border-spark-500/45 bg-spark-500/8' : 'border-line bg-elevated hover:border-spark-500/25',
+                  paid && 'opacity-80',
+                )}
+              >
+              <button
+                type="button"
                 onClick={() => toggle(m.key)}
                 disabled={paid}
                 title={paid
                   ? `Модуль оплачен${!expKnown ? '' : exp.perpetual ? ' бессрочно' : exp.expired ? ` до ${exp.date} — оплата закончилась` : ` до ${exp.date}`} — снять его в кабинете нельзя`
                   : undefined}
-                className={cn(
-                  'flex items-center justify-between gap-3 rounded-xl border px-3.5 py-3 text-left transition-colors',
-                  on ? 'border-spark-500/45 bg-spark-500/8' : 'border-line bg-elevated hover:border-spark-500/25',
-                  paid && 'cursor-default opacity-80 hover:border-spark-500/45',
-                )}
+                className={cn('flex min-w-0 flex-1 items-center justify-between gap-3 text-left', paid && 'cursor-default')}
               >
                 <span className="flex min-w-0 flex-1 items-center gap-2.5">
                   <span className={cn('grid h-5 w-5 shrink-0 place-items-center rounded-md border', on ? 'border-spark-500 bg-spark-500 text-[#04150c]' : 'border-line')}>
@@ -275,6 +286,24 @@ export function SubscriptionPage() {
                 {/* §11.2 (31.07): в кабинете цена — только текстом. Правка цен — в админ-панели. */}
                 <span className="shrink-0 font-semibold tabular-nums text-fg">{m.price} {cur}</span>
               </button>
+                {/*
+                  «Подробнее о модуле» — на страницу модуля лендинга, в НОВОЙ вкладке
+                  (просьба владельца 21.08). Человек читает описание, не потеряв набранную
+                  корзину: возврат по крестику вкладки, а не «назад» с перезагрузкой выбора.
+                  Отдельные парсеры своей страницы не имеют — у них одна общая, «Парсинг».
+                  Ссылка вынесена ИЗ кнопки выбора: ссылка внутри кнопки — невалидная
+                  разметка, и клик по ней заодно переключал бы галочку.
+                */}
+                <a
+                  href={`/module/${m.key.startsWith('parsing') ? 'parsing' : m.key}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  title="Подробнее о модуле — откроется в новой вкладке"
+                  className="ml-1 flex shrink-0 items-center gap-1 rounded-lg border border-line px-2 py-1.5 text-[11px] font-medium text-muted transition-colors hover:border-spark-500/40 hover:text-spark-300"
+                >
+                  Подробнее <ExternalLink size={11} className="shrink-0" />
+                </a>
+              </div>
             )
           })}
         </div>
