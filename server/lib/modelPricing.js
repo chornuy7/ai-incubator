@@ -46,12 +46,21 @@ async function fromDb() {
     const db = getSupabase()
     const [{ data: rows }, { data: ov }] = await Promise.all([
       db.from('model_prices').select('model, input_per_1m, output_per_1m'),
-      db.from('price_overrides').select('input_share').eq('id', 'default').maybeSingle(),
+      db.from('price_overrides').select('input_share, max_input_chars, max_output_chars, chars_per_token').eq('id', 'default').maybeSingle(),
     ])
     if (!rows) return _dbCache
     const prices = {}
     for (const r of rows) prices[String(r.model).toLowerCase()] = { input: Number(r.input_per_1m) || 0, output: Number(r.output_per_1m) || 0 }
-    _dbCache = { prices, share: ov?.input_share == null ? null : Number(ov.input_share), ts: Date.now() }
+    _dbCache = {
+      prices,
+      share: ov?.input_share == null ? null : Number(ov.input_share),
+      limits: {
+        inChars: Number(ov?.max_input_chars) || 0,
+        outChars: Number(ov?.max_output_chars) || 0,
+        charsPerToken: Number(ov?.chars_per_token) || 0,
+      },
+      ts: Date.now(),
+    }
     return _dbCache
   } catch { return _dbCache }
 }
@@ -109,4 +118,31 @@ export async function tokenUsdForModel(model = process.env.OPENAI_MODEL || DEFAU
 /** Имя модели, по которой сейчас считается себестоимость (для показа в админке). */
 export function currentModel() {
   return process.env.OPENAI_MODEL || DEFAULT_MODEL
+}
+
+
+/**
+ * MR-149: МАКСИМАЛЬНАЯ стоимость одного ИИ-действия у поставщика.
+ *
+ * Логика заказчика: ИИ читает пост (максимум N символов) и генерирует ответ (максимум M
+ * символов) — это худший случай, от него и ставим цену. Считаем ЧЕСТНО по двум ставкам:
+ * вход по input-цене, ответ по output-цене (output обычно вчетверо дороже), а не по
+ * смешанной ставке, как фактический расход.
+ *
+ * Лимиты и «символов на токен» берём из БД (price_overrides), в коде их не держим.
+ * @returns {Promise<{usd:number, inTokens:number, outTokens:number, inChars:number, outChars:number, charsPerToken:number}|null>}
+ */
+export async function maxActionCost(model = process.env.OPENAI_MODEL || DEFAULT_MODEL) {
+  const db = await fromDb()
+  const p = (db && priceOfIn(db.prices, model)) || priceOf(model)
+  const lim = db?.limits
+  if (!p || !lim || !lim.charsPerToken || (!lim.inChars && !lim.outChars)) return null
+  const inTokens = Math.ceil(lim.inChars / lim.charsPerToken)
+  const outTokens = Math.ceil(lim.outChars / lim.charsPerToken)
+  const usd = (inTokens * p.input + outTokens * p.output) / 1_000_000
+  return {
+    usd: Math.round(usd * 1e10) / 1e10,
+    inTokens, outTokens,
+    inChars: lim.inChars, outChars: lim.outChars, charsPerToken: lim.charsPerToken,
+  }
 }

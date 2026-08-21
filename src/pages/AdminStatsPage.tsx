@@ -2755,7 +2755,15 @@ function PricesTab() {
                       const coinUsd = prices.coinUsd ?? 0
                       const action = Number(draft[m.key]?.action ?? m.action ?? 0)
                       if (!avg || !tUsd || !coinUsd) {
-                        return <div className="mt-0.5 pr-1 text-[10px] text-faint">наши затраты: нет данных (модуль ещё не запускали)</div>
+                        const mx = prices.maxCost?.usd || 0
+                        const pu = action * coinUsd
+                        return (
+                          <div className="mt-0.5 pr-1 text-[10px] text-faint">
+                            {mx > 0 && coinUsd > 0
+                              ? <>макс ИИ ${mx.toFixed(6)} · цена ${pu.toFixed(4)} · наши затраты: нет данных (не запускали)</>
+                              : <>наши затраты: нет данных (модуль ещё не запускали)</>}
+                          </div>
+                        )
                       }
                       const aiUsd = tUsd * avg                 // что платим за ИИ на одно действие
                       const priceUsd = action * coinUsd        // что платит клиент за это действие
@@ -2764,12 +2772,21 @@ function PricesTab() {
                       const ratio = aiUsd > 0 ? priceUsd / aiUsd : null
                       const cls = ratio == null ? 'text-muted' : ratio >= 2 ? 'text-emerald-300/80' : ratio >= 1 ? 'text-amber-300/80' : 'text-rose-300/80'
                       const ratioStr = ratio == null ? '' : ratio >= 100 ? String(Math.round(ratio)) : ratio.toFixed(1)
+                      // MR-149: МАКСИМУМ — худший случай расхода на ИИ (прочитать пост по
+                      // максимуму + сгенерировать ответ по максимуму). Именно его должна
+                      // покрывать цена; факт показываем рядом — по максимуму работают не все.
+                      const maxUsd = prices.maxCost?.usd || 0
+                      const overMax = maxUsd > 0 ? priceUsd / maxUsd : null
                       return (
                         // Tip — инлайновая обёртка, поэтому строку держим в блоке: иначе она
                         // встаёт СПРАВА от поля цены вместо строки под ним.
                         <div className={cn('mt-0.5 pr-1 text-[10px] tabular-nums', cls)}>
                         <Tip
                           text={[
+                            maxUsd ? `МАКСИМУМ (худший случай): $${maxUsd.toFixed(7)} за действие` : '',
+                            maxUsd ? `  (прочитать ${prices.maxCost?.inChars} симв. + сгенерировать ${prices.maxCost?.outChars} симв.)` : '',
+                            maxUsd ? `  От него и ставим цену — она должна его покрывать с запасом.` : '',
+                            '',
                             `НАШИ ЗАТРАТЫ на ИИ — по факту: $${aiUsd.toFixed(7)} за действие`,
                             `  (фактический средний расход: ${avg} токенов модели)`,
                             `Цена клиенту: $${priceUsd.toFixed(4)} (${action} ⚡ по курсу $${fmtUsd(coinUsd)} за ⚡)`,
@@ -2779,7 +2796,11 @@ function PricesTab() {
                             'фактический расход, чтобы видеть, сколько мы тратим на самом деле.',
                             ratio == null ? '' : `Сейчас цена в ${ratioStr} раз выше фактических затрат — этот запас покрывает максимум расхода, аккаунты, прокси, трафик, риск банов и маржу.`,
                           ].filter(Boolean).join(String.fromCharCode(10))}>
-                          <span>наши затраты ${aiUsd < 0.000001 ? aiUsd.toExponential(1) : aiUsd.toFixed(6)} · цена ${priceUsd.toFixed(4)}{ratio != null && <> · ×{ratioStr}</>}</span>
+                          <span>
+                            {maxUsd > 0 && <>макс ${maxUsd.toFixed(6)} · </>}
+                            наши затраты ${aiUsd < 0.000001 ? aiUsd.toExponential(1) : aiUsd.toFixed(6)} · цена ${priceUsd.toFixed(4)}
+                            {overMax != null && <> · ×{overMax >= 100 ? Math.round(overMax) : overMax.toFixed(1)} к максимуму</>}
+                          </span>
                         </Tip>
                         </div>
                       )

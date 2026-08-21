@@ -620,7 +620,11 @@ app.get('/api/admin/prices', async (req, res) => {
     const avgTokens = {}
     for (const key of Object.keys(prices.actionMap || {})) avgTokens[key] = acc[key]?.n ? Math.round(acc[key].t / acc[key].n) : 0
     const coinUsd = await coinUsdRate().catch(() => 0)
-    res.json({ ok: true, prices: { ...prices, avgTokens, coinUsd } })
+    // MR-149: МАКСИМАЛЬНАЯ стоимость ИИ-действия (читает пост по максимуму + генерирует
+    // ответ по максимуму) — владельцу нужно видеть худший случай, от него ставится цена.
+    const { maxActionCost } = await import('./lib/modelPricing.js')
+    const maxCost = await maxActionCost().catch(() => null)
+    res.json({ ok: true, prices: { ...prices, avgTokens, coinUsd, maxCost } })
   } catch (err) { res.status(500).json({ ok: false, error: err instanceof Error ? err.message : 'Ошибка' }) }
 })
 
