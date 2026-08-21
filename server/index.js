@@ -1363,6 +1363,17 @@ app.post('/api/subscription', async (req, res) => {
         const { changeCoins } = await import('./balance.js')
         await changeCoins(creditedTokens, `Токены подписки: ${addedModules.length} модул. (первый месяц)`, target)
       }
+      // День оплаты — по нему крон начисляет следующие месяцы (год = 12 начислений в то же
+      // число). Этот месяц сразу помечаем начисленным, чтобы крон не задвоил.
+      try {
+        const { markCredited, creditMonth } = await import('./tokenCredit.js')
+        const { supabaseEnabled, getSupabase } = await import('./lib/supabase.js')
+        if (supabaseEnabled()) {
+          const subId = personal ? String(target || '__default') : 'workspace'
+          await getSupabase().from('subscriptions').update({ billing_day: new Date().getUTCDate() }).eq('id', subId)
+          await markCredited(subId, creditMonth())
+        }
+      } catch { /* начисление уже прошло — отметка не критична */ }
     }
     await appendAudit({
       action: 'subscription.set',
