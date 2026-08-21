@@ -248,6 +248,14 @@ export function subscriptionCost(moduleKeys = [], customBundles = [], priceMap =
       best = { setup: b.id, discount: full ? Math.round((1 - price / full) * 1000) / 1000 : 0, sum: price }
     }
   }
-  return { sum: best.sum, full, setup: best.setup, discount: best.discount, giftTokens }
+  // Цена подписки — ЦЕЛОЕ число (созвон 12.08): «должно быть округление до целых, без
+  // вот этих .8, .3». Правило заказчик задал двумя примерами: 120.25 округляется ВНИЗ,
+  // 60.8 — вверх, до 61. То есть по значению, а не всегда вверх.
+  //
+  // Округляем здесь, на сервере: витрина эту сумму только показывает. Раньше она
+  // округляла сама и всегда вверх — «Всё включено» рисовалось как 121 $, а списывалось
+  // 120.25: на экране одно, с баланса другое.
+  const whole = (v) => Math.round(Number(v) || 0)
+  return { sum: whole(best.sum), full: whole(full), setup: best.setup, discount: best.discount, giftTokens }
 }
 

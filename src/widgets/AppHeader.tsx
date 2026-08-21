@@ -30,12 +30,6 @@ import { LANGUAGES, moduleTitle } from '@/shared/config/modules'
  * живут в server/pricing.js: курс монеты определяет реальную выручку с действия,
  * и копия в вебе неизбежно разъедется с прайсом и счётом.
  */
-const FALLBACK_PACKS = [
-  { coins: 50, price: 4.99 },
-  { coins: 200, price: 17.99, best: true },
-  { coins: 500, price: 39.99 },
-]
-
 // Уведомления (12.08): всегда показываем ДАТУ и время («14 авг, 13:46»), чтобы было
 // видно, за какой день событие (раньше был только час — вчерашнее путалось с сегодняшним).
 function fmtNotifTs(ts: number): string {
@@ -657,7 +651,7 @@ export function AppHeader() {
             return (
               <>
                 <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-                  {(pricing?.packs?.length ? pricing.packs : FALLBACK_PACKS).map((p) => {
+                  {(pricing?.packs || []).map((p) => {
                     const cantAfford = usdBal != null && usdBal < p.price
                     return (
                       <button
@@ -677,6 +671,14 @@ export function AppHeader() {
                     )
                   })}
                 </div>
+                {/* Цен в коде быть не должно (созвон 19.08 — заказчик показал именно это
+                    окно): пакеты приходят из БД, правятся в админке. Запасных значений
+                    здесь нет — иначе человек купил бы по цене, которой нет в прайсе. */}
+                {!pricing?.packs?.length && (
+                  <div className="rounded-lg border border-amber-500/25 bg-amber-500/8 px-3 py-2 text-xs text-amber-200">
+                    Пакеты токенов не настроены — задайте их в админке, раздел «Цены».
+                  </div>
+                )}
                 {usdBal != null && usdBal <= 0 && (
                   <div className="mt-2.5 rounded-lg border border-amber-500/25 bg-amber-500/8 px-3 py-2 text-xs text-amber-200">
                     На счёте {curSym}0.00 — сначала пополните счёт, тогда можно купить токены.

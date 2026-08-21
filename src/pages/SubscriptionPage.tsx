@@ -85,11 +85,13 @@ export function SubscriptionPage() {
         }
       } else if (s.modules.length > 0 && s.modules.every((m) => sel.has(m))) {
         // MR-150: цены округляем ВВЕРХ до целых (CEIL) — «дробные $ путают».
-        const sum = Math.ceil(full * (1 - s.discount))
+        const sum = Math.round(full * (1 - s.discount))
         if (sum < best.sum) best = { setup: s.id, discount: s.discount, sum }
       }
     }
-    return { sum: Math.ceil(best.sum), full: Math.ceil(full), setup: best.setup, discount: best.discount, giftTokens, monthlyTokens }
+    // Округление — как на сервере (созвон 12.08: 120.25 → 120, 60.8 → 61), иначе
+    // витрина обещает не ту цену, которую спишет сервер.
+    return { sum: Math.round(best.sum), full: Math.round(full), setup: best.setup, discount: best.discount, giftTokens, monthlyTokens }
   }, [data])
 
   const cost = useMemo(() => priceOf(picked), [priceOf, picked])
@@ -190,8 +192,8 @@ export function SubscriptionPage() {
               </div>
               <div className="mt-1 text-xs leading-relaxed text-muted">{s.hint}</div>
               <div className="mt-2 flex items-baseline gap-2">
-                <span className="font-display text-xl font-bold text-fg">{Math.ceil(s.cost.sum)} {cur}</span>
-                {s.cost.sum < s.cost.full && <span className="text-xs text-muted line-through">{Math.ceil(s.cost.full)} {cur}</span>}
+                <span className="font-display text-xl font-bold text-fg">{Math.round(s.cost.sum)} {cur}</span>
+                {s.cost.sum < s.cost.full && <span className="text-xs text-muted line-through">{Math.round(s.cost.full)} {cur}</span>}
                 {s.discount > 0 && (
                   <span className="rounded-md bg-spark-500/15 px-1.5 py-0.5 text-[10px] font-bold text-spark-300">−{Math.round(s.discount * 100)}%</span>
                 )}
@@ -267,7 +269,7 @@ export function SubscriptionPage() {
                 только за добавленные модули, и цена всего набора обещала бы списание,
                 которого не будет. Год — со скидкой annualDiscount от 12 месяцев;
                 скидка приходит с сервера (правится в админке). MR-150: CEIL до целых. */}
-            <span className="font-display text-2xl font-bold text-fg">{period === 'year' ? Math.ceil(due.sum * 12 * (1 - annualDiscount)) : due.sum} {cur}</span>
+            <span className="font-display text-2xl font-bold text-fg">{period === 'year' ? Math.round(due.sum * 12 * (1 - annualDiscount)) : due.sum} {cur}</span>
             <span className="text-sm text-muted">{added.length ? 'к оплате' : 'ничего не добавлено'}</span>
             {added.length > 0 && period === 'year' && <span className="rounded-md bg-spark-500/15 px-1.5 py-0.5 text-[10px] font-bold text-spark-300">−{Math.round(annualDiscount * 100)}%</span>}
             {added.length > 0 && period === 'month' && due.discount > 0 && <span className="text-sm text-muted line-through">{due.full} {cur}</span>}

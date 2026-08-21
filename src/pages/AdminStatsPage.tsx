@@ -2647,6 +2647,10 @@ function PricesTab() {
   // §11.2: периоды подписки — редактируемый список (единица + количество + скидка),
   // а не «месяц/год» в коде. discount держим строкой в ПРОЦЕНТАХ, как в поле годовой.
   const [periods, setPeriods] = useState<{ unit: string; count: number; discount: string }[]>([])
+  // Созвон 12.08 [03:24:43]: «купить токены за доллары — вынести это в админку, именно
+  // цены, чтобы здесь сами настраивали». До этого пакеты правились только в БД, а в
+  // шапке панели лежал запасной набор цен прямо в коде.
+  const [packs, setPacks] = useState<{ coins: string; price: string; best: boolean }[]>([])
   const [saving, setSaving] = useState(false)
 
   const load = async () => {
@@ -2663,6 +2667,7 @@ function PricesTab() {
       imageMultiplier: String(p.imageMultiplier),
     })
     setPeriods((p.periods || []).map((x) => ({ unit: x.unit, count: x.count, discount: String(Math.round(x.discount * 100)) })))
+    setPacks((p.coinPacks || []).map((x) => ({ coins: String(x.coins), price: String(x.price), best: !!x.best })))
   }
   useEffect(() => { void load().catch(() => {}) }, [])
 
@@ -2675,7 +2680,9 @@ function PricesTab() {
     extra.imageMultiplier !== String(prices.imageMultiplier) ||
     // §11.2: список периодов сравниваем целиком — состав и порядок тоже правка.
     JSON.stringify(periods.map((p) => ({ u: p.unit, c: p.count, d: p.discount }))) !==
-      JSON.stringify((prices.periods || []).map((p) => ({ u: p.unit, c: p.count, d: String(Math.round(p.discount * 100)) })))
+      JSON.stringify((prices.periods || []).map((p) => ({ u: p.unit, c: p.count, d: String(Math.round(p.discount * 100)) }))) ||
+    JSON.stringify(packs.map((p) => ({ c: p.coins, p: p.price, b: p.best }))) !==
+      JSON.stringify((prices.coinPacks || []).map((p) => ({ c: String(p.coins), p: String(p.price), b: !!p.best })))
 
   const save = async () => {
     setSaving(true)
@@ -2708,6 +2715,11 @@ function PricesTab() {
         count: p.count,
         discount: Math.max(0, Math.min(90, Number(p.discount) || 0)) / 100,
       }))
+      // Пакеты токенов: пустые/нулевые строки не сохраняем — такой пакет всё равно
+      // нельзя купить, а на витрине он выглядел бы бесплатным.
+      patch.coinPacks = packs
+        .map((p) => ({ coins: Math.max(0, Math.round(Number(p.coins) || 0)), price: Math.max(0, Number(p.price) || 0), best: p.best }))
+        .filter((p) => p.coins > 0 && p.price > 0)
       const fresh = await savePrices(patch)
       setPrices(fresh)
       pushToast({ type: 'success', title: 'Цены сохранены', desc: 'Сразу на витрине, в кабинете и в счёте' })
@@ -2952,6 +2964,62 @@ function PricesTab() {
           className="btn-ghost mt-3 h-9 rounded-xl border border-line px-3 text-sm"
         >
           + Добавить период
+        </button>
+      </Card>
+
+      {/* Созвон 12.08: цены на покупку токенов за $ правятся здесь, а не в коде.
+          Раньше в шапке панели лежал запасной набор цен — заказчик показал именно это
+          окно и сказал, что цен в файлах быть не должно. */}
+      <Card className="p-4">
+        <div className="mb-1 text-xs font-bold uppercase tracking-wide text-muted">Пакеты токенов (покупка за $)</div>
+        <p className="mb-3 text-[11px] text-muted">
+          Это окно «Купить токены» в шапке панели. Пусто — пакеты клиенту не показываются.
+          «Выгодно» — метка на одном пакете; цена за ⚡ считается сама, чтобы выгода была
+          посчитанной, а не заявленной.
+        </p>
+        <div className="space-y-2">
+          {packs.map((p, i) => {
+            const per = Number(p.price) > 0 && Number(p.coins) > 0 ? Number(p.price) / Number(p.coins) : null
+            return (
+              <div key={i} className="flex flex-wrap items-center gap-2">
+                <label className="flex items-center gap-1.5">
+                  <input
+                    value={p.coins}
+                    onChange={(e) => setPacks((l) => l.map((x, k) => (k === i ? { ...x, coins: cleanPrice(e.target.value, 1000000) } : x)))}
+                    className="input h-9 w-24 text-sm tabular-nums" inputMode="numeric" placeholder="200" />
+                  <span className="text-xs text-muted">⚡</span>
+                </label>
+                <span className="text-xs text-faint">за</span>
+                <label className="flex items-center gap-1.5">
+                  <input
+                    value={p.price}
+                    onChange={(e) => setPacks((l) => l.map((x, k) => (k === i ? { ...x, price: cleanPrice(e.target.value, 100000) } : x)))}
+                    className="input h-9 w-24 text-sm tabular-nums" inputMode="decimal" placeholder="17.99" />
+                  <span className="text-xs text-muted">$</span>
+                </label>
+                <label className="flex items-center gap-1.5 text-xs text-muted">
+                  <input type="checkbox" checked={p.best}
+                    onChange={(e) => setPacks((l) => l.map((x, k) => ({ ...x, best: k === i ? e.target.checked : false })))} />
+                  выгодно
+                </label>
+                {per != null && <span className="text-[10px] text-faint tabular-nums">{per.toFixed(3)} $ / ⚡</span>}
+                <button
+                  onClick={() => setPacks((l) => l.filter((_, k) => k !== i))}
+                  title="Убрать пакет"
+                  className="grid h-9 w-9 place-items-center rounded-xl border border-line text-muted transition-colors hover:border-red-500/40 hover:text-red-300"
+                >
+                  <Trash2 size={14} />
+                </button>
+              </div>
+            )
+          })}
+          {!packs.length && <div className="text-xs text-muted">Пакетов нет — в шапке панели купить токены нельзя.</div>}
+        </div>
+        <button
+          onClick={() => setPacks((l) => [...l, { coins: '100', price: '10', best: false }])}
+          className="btn-ghost mt-3 h-9 rounded-xl border border-line px-3 text-sm"
+        >
+          + Добавить пакет
         </button>
       </Card>
 
