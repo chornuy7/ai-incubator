@@ -1860,7 +1860,7 @@ function FatigueModal({ open, ids, activity, onClose, onDone, onError }: {
       {/* §4.2: распорядок дня. Правится массово и в процентах — на живом прогоне 23.07
           старая шкала (3% днём) заставляла модуль завершаться с нулём действий. */}
       <div className="mt-4 border-t border-line pt-3">
-        <label className="label">Распорядок дня <span className="text-white/30">— шанс привлечения по часам, %</span></label>
+        <label className="label">Распорядок дня <span className="text-white/30">— шанс привлечения по часам, % · время киевское</span></label>
         <div className="mb-2 flex flex-wrap gap-1.5">
           {Object.entries(DAY_PRESETS).map(([key, p]) => (
             <button

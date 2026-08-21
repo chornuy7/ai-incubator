@@ -11,7 +11,7 @@ import path from 'node:path'
 import {
   DEFAULT_FATIGUE, DEFAULT_SCHEDULE, currentFatigue, fatigueGate, freeAt,
   applyAction, scheduleGate, normalizeFatigueProfile, ROLL_RETRY_MS,
-  normalizeSchedule, scheduleToPercent, scheduleForAccount,
+  normalizeSchedule, scheduleToPercent, scheduleForAccount, scheduleHour,
 } from '../lib/accountFatigue.js'
 
 const HOUR = 60 * 60 * 1000
@@ -385,4 +385,32 @@ test('старые профили с «единиц в час» читаются
   assert.equal(recoveryEveryMs({ recoveryPerHour: 1 }), 60 * 60_000)
   // Выключенное восстановление должно остаться выключенным, а не подхватить умолчание.
   assert.equal(recoveryEveryMs({ recoveryPerHour: 0 }), 0)
+})
+
+/**
+ * Прогон 19.08: в распорядке стояло 87% на 11:00, а в логе задачи — «не выпало 76%».
+ * Причина не в вероятности, а в ЧАСЕ: распорядок задаёт человек в своём времени
+ * (киевском), а сервер брал свой локальный час — на проде UTC, на три часа позади.
+ * В 11:00 по Киеву читалась ячейка 8:00.
+ */
+test('распорядок читается по киевскому часу, а не по часу сервера', () => {
+  // 09:30 UTC = 12:30 по Киеву летом. Ячейки специально разные, чтобы подмена была видна.
+  const at = Date.parse('2026-08-19T09:30:00Z')
+  const schedule = { ...DEFAULT_SCHEDULE, 9: 0.1, 12: 0.9 }
+
+  assert.equal(scheduleHour(at, 'Europe/Kyiv'), 12, 'берём киевский час')
+  assert.equal(scheduleHour(at, 'UTC'), 9, 'в UTC это была бы другая ячейка')
+
+  const g = scheduleGate(schedule, at, () => 0.5)
+  assert.equal(g.chance, 0.9, 'шанс из ячейки 12:00, а не из 9:00')
+  assert.ok(g.ok, '0.5 попадает в 90%')
+})
+
+test('шанс распорядка не инвертирован: 87% пропускают почти всегда', () => {
+  // Заказчик подозревал обратный порядок («89% не согласна»). Проверяем прямо:
+  // бросок 0.5 при шансе 87% должен ПРОЙТИ, а 0.95 — нет.
+  const at = Date.parse('2026-08-19T09:30:00Z')
+  const schedule = { ...DEFAULT_SCHEDULE, 12: 0.87 }
+  assert.ok(scheduleGate(schedule, at, () => 0.5).ok, '0.5 < 0.87 — работаем')
+  assert.ok(!scheduleGate(schedule, at, () => 0.95).ok, '0.95 > 0.87 — пропуск')
 })

@@ -264,8 +264,29 @@ export function applyAction(state = {}, profile = DEFAULT_FATIGUE, now = Date.no
 /** Через сколько повторить бросок кубика по распорядку, если не повезло. */
 export const ROLL_RETRY_MS = 60 * 1000
 
+/**
+ * Час распорядка — КИЕВСКИЙ, а не локальный час сервера.
+ *
+ * Распорядок задаёт человек: «в 11:00 аккаунт активен на 87%» — это его время, время
+ * оператора. Сервер же брал `new Date().getHours()`, то есть свой часовой пояс; на проде
+ * это UTC, на три часа позади. В 11:00 по Киеву бралась вероятность из ячейки 8:00 —
+ * прогон 19.08 это и показал: в расписании стояло 87%, а в логе «не выпало 76%».
+ *
+ * Пояс тот же, что и во всём интерфейсе (правка 06.08: хранение UTC, показ Europe/Kyiv).
+ */
+export const SCHEDULE_TZ = process.env.SCHEDULE_TZ || 'Europe/Kyiv'
+
+export function scheduleHour(ms = Date.now(), tz = SCHEDULE_TZ) {
+  try {
+    const h = new Intl.DateTimeFormat('en-GB', { timeZone: tz, hour: '2-digit', hour12: false }).format(new Date(ms))
+    return Number(h) % 24 // полночь в некоторых локалях приходит как «24»
+  } catch {
+    return new Date(ms).getHours() // неизвестный пояс — не падаем, работаем как раньше
+  }
+}
+
 export function scheduleGate(schedule = DEFAULT_SCHEDULE, now = Date.now(), rnd = Math.random) {
-  const hour = new Date(now).getHours()
+  const hour = scheduleHour(now)
   const table = schedule && typeof schedule === 'object' ? schedule : DEFAULT_SCHEDULE
   const p = Number(table[hour] ?? DEFAULT_SCHEDULE[hour] ?? 0)
   // `until` — когда есть смысл пробовать снова. Для распорядка это следующий час:
