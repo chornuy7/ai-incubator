@@ -393,8 +393,18 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
       if (i >= 0) setLookModeIdx(i)
     }
     if (s.lookPostsCount !== undefined) setLookPostsCount(s.lookPostsCount)
+    // Эти семь полей шаблон СОХРАНЯЛ, но не восстанавливал — отсюда и жалоба «сохранил
+    // шаблон, а настройки слетают»: применённый шаблон молча оставлял значения текущей
+    // формы, и оператор получал не то, что сохранял (ТЗ 19.08 §3).
+    if (s.notifyOnStatus !== undefined) setNotifyStatus(s.notifyOnStatus)
+    if (Array.isArray(s.postUrls)) setPostUrls(s.postUrls)
+    if (s.warmLevel !== undefined) setWarmLevel(s.warmLevel)
+    if (s.postWindow !== undefined) setPostWindow(s.postWindow)
+    if (Array.isArray(s.stopWords)) setStopWordsText(s.stopWords.join(', '))
+    if (s.analyzeImages !== undefined) setAnalyzeImages(s.analyzeImages)
+    if (s.typeWeights) setTypeWeights(s.typeWeights)
     pushToast({ type: 'success', title: 'Шаблон применён' })
-  }, [cfg.lookModeOptions, pushToast])
+  }, [cfg.lookModeOptions, cfg.toggleGroups, pushToast])
 
   const results = task?.results ?? []
   const progressDone = task?.progress.actionsDone ?? task?.progress.commentsSent ?? 0
