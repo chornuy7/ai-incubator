@@ -745,15 +745,25 @@ function UsersTab({ report, onReload }: { report: UsersReport | null; onReload: 
     } finally { setBusy(null) }
   }
 
-  if (!report) return <Card className="p-6 text-sm text-muted">Загрузка…</Card>
-  if (!report.rows.length) return <EmptyState icon={<Users size={22} />} title="Пользователей нет" />
+  /*
+   * Ранние выходы «Загрузка…» и «Пользователей нет» стояли ЗДЕСЬ — до половины хуков
+   * ниже (openSubs, пагинация, два useMemo). Пока данные были, всё работало; но стоило
+   * админу нажать «Отключить»/«Включить», как `onReload()` на миг отдавал `report = null`,
+   * render уходил в ранний выход и вызывал МЕНЬШЕ хуков, чем в прошлый раз. React на это
+   * отвечает «Rendered fewer hooks than expected» и сносит всё поддерево — админ видел
+   * чёрный экран, хотя сама операция проходила (правка 21.08 по жалобе владельца).
+   *
+   * Правило простое: хуки — безусловно и всегда одним и тем же числом, а «нет данных»
+   * решается в разметке ниже. Поэтому здесь работаем с безопасным пустым списком.
+   */
+  const rows = report?.rows ?? []
 
   // §4 (MR-27): ищем по имени, почте И по ID — у каждого юзера уникальный id, и иногда
   // человека адресуют именно по нему (в логах, в поддержке).
   const needle = q.trim().toLowerCase()
   const shown = needle
-    ? report.rows.filter((r) => `${r.name} ${r.email} ${r.userId}`.toLowerCase().includes(needle))
-    : report.rows
+    ? rows.filter((r) => `${r.name} ${r.email} ${r.userId}`.toLowerCase().includes(needle))
+    : rows
 
   // §10.4: кластеризация — суб-юзеры СПРЯТАНЫ ВНУТРЬ владельца и раскрываются по клику.
   // Показывать их всегда нельзя: на 10 владельцах по 100 субов список превращается в
@@ -761,10 +771,10 @@ function UsersTab({ report, onReload }: { report: UsersReport | null; onReload: 
   // у каждого — счётчик «N суб-юзеров»; поиск раскрывает совпавшие кластеры сам.
   /** Суб-юзеры по владельцу — считаем по ВСЕМ строкам, а не по отфильтрованным. */
   const subsByOwner = useMemo(() => {
-    const m = new Map<string, typeof report.rows>()
-    for (const r of report.rows) if (r.parentId) { const a = m.get(r.parentId) || []; a.push(r); m.set(r.parentId, a) }
+    const m = new Map<string, typeof rows>()
+    for (const r of rows) if (r.parentId) { const a = m.get(r.parentId) || []; a.push(r); m.set(r.parentId, a) }
     return m
-  }, [report.rows])
+  }, [rows])
 
   /**
    * Владельцы, а под раскрытым — его субы ОБЫЧНЫМИ строками таблицы.
@@ -868,6 +878,11 @@ function UsersTab({ report, onReload }: { report: UsersReport | null; onReload: 
 
   // §4.1/§5.3 (MR-29): назначение ролей и подчинения субов ПЕРЕЕХАЛО в панель владельца
   // («Команда»). В админке эти действия убраны — остался только просмотр (см. карточку).
+
+  // «Нет данных» решаем ЗДЕСЬ — после всех хуков. Раньше эти два выхода стояли в
+  // середине списка хуков и роняли вкладку при каждом обновлении (см. комментарий выше).
+  if (!report) return <Card className="p-6 text-sm text-muted">Загрузка…</Card>
+  if (!rows.length) return <EmptyState icon={<Users size={22} />} title="Пользователей нет" />
 
   return (
     <>
