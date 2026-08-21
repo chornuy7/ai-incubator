@@ -2,7 +2,7 @@ import type { LucideIcon } from 'lucide-react'
 import {
   LayoutGrid, BarChart3, LifeBuoy, MessageSquareText, Bot, Sparkles, Eye,
   Flame, MessagesSquare, Trophy, Radar, Users, Search, MessageCircle,
-  Hash, History, UserCog, CalendarClock, Target, ListChecks, Contact, TrendingUp, Rocket, Radio, ScrollText, Inbox, Users2, Network, Mail, Megaphone, Package, GraduationCap } from 'lucide-react'
+  Hash, History, UserCog, CalendarClock, Target, ListChecks, Contact, TrendingUp, Rocket, Radio, ScrollText, Inbox, Users2, Network, Mail, Megaphone, Package, GraduationCap, ShieldCheck } from 'lucide-react'
 
 export interface RouteDef {
   path: string
@@ -62,14 +62,15 @@ export const ROUTES: RouteDef[] = [
 
   { path: '/panel/user/profile', label: 'Мой аккаунт', icon: UserCog, group: 'account' },
   { path: '/panel/user/subscription', label: 'Подписки', icon: Package, group: 'account' }, // MR-157: было «Мои модули»
-  // §10.4 (созвон): управление ролями — ТОЛЬКО из sudo-админки (вкладка «Роли»),
-  // из кабинета убрали. Сам маршрут /panel/roles остаётся доступным по прямой ссылке.
-  //
-  // Утром 21.08 пункт вернули владельцу — это оказалось неверным прочтением решения.
-  // Уточнение владельца от 21.08: отдельной страницы ролей у него быть НЕ должно, доступ
-  // субу настраивается В КАРТОЧКЕ пользователя («Пользователи» → «Доступ к модулям»), где
-  // список модулей ограничен его подпиской. Пункт снова убран из меню, страница осталась
-  // админу платформы (см. canAccessPath → ADMIN_ONLY_PATHS).
+  // §10.4 (созвон) отдавал управление ролями ТОЛЬКО sudo-админке, и пункт из кабинета убрали.
+  // Уточнение владельца от 21.08 это отменяет, но роль там означает другое: «роль это просто
+  // как шаблон и все настроек которые уже были выбраны». То есть страница нужна владельцу не
+  // чтобы РАЗДАВАТЬ роли, а чтобы держать ЗАГОТОВКИ доступа: собрал набор модулей и блоков
+  // один раз — и применяешь его новым сотрудникам в «Пользователях» одним кликом. Живой связи
+  // «роль → доступ суба» нет: значения копируются в его личные тумблеры.
+  // Субу пункт по-прежнему закрыт (см. canAccessPath → OWNER_ROLES_PATH): своей команды у
+  // него нет, применять шаблон не к кому.
+  { path: '/panel/roles', label: 'Роли и доступы', icon: ShieldCheck, group: 'account' },
   { path: '/panel/users', label: 'Пользователи', icon: Users2, group: 'account' },
 ]
 

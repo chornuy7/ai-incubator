@@ -30,6 +30,13 @@ export interface Role {
   name: string
   builtin?: boolean
   isTemplate?: boolean
+  /**
+   * Персональная роль-контейнер конкретного суба (её заводит PUT /api/users/:id/access).
+   * В списке шаблонов таким не место: человек их не создавал и применять «Доступ · Иван»
+   * к другому сотруднику бессмысленно. Владельцу сервер их и не отдаёт — фильтр нужен
+   * админу платформы, который видит все роли разом.
+   */
+  personalFor?: string
   permissions: RolePermissions
   createdAt: number
   updatedAt: number
@@ -79,4 +86,38 @@ export async function deleteRole(id: string): Promise<void> {
 /** Пустые права (всё deny) — для новой роли. */
 export function emptyPermissions(): RolePermissions {
   return { freeAccess: false, modules: {}, blocks: {}, sections: {}, resources: { accounts: {}, accountGroups: {}, folders: {}, channels: {}, folderChannels: {}, timers: 'deny', searchTemplates: 'deny', allTasks: 'deny' } }
+}
+
+/**
+ * Роль → значения тумблеров «Доступ к модулям» в карточке пользователя.
+ *
+ * Уточнение владельца 21.08: «роль это просто как шаблон и все настроек которые уже были
+ * выбраны». Поэтому здесь именно КОПИЯ, а не ссылка: применённый шаблон дальше не участвует
+ * в жизни доступа — владелец правит тумблеры руками, и роль его правку уже не перебьёт.
+ *
+ * Результат покрывает ВЕСЬ каталог (не только то, что было в роли): выставляем каждому
+ * модулю явное значение, иначе применение второго шаблона поверх первого оставляло бы
+ * включённым то, чего во втором нет, — «применил „Наблюдатель“, а нейрочатинг всё ещё горит».
+ *
+ * Модули роли, которых в каталоге нет, игнорируются молча: каталог уже урезан подпиской,
+ * а шаблон мог быть собран, когда модуль был оплачен. Выдать его сейчас всё равно нельзя —
+ * сервер откажет на сохранении.
+ */
+export function accessFromRole(
+  role: Role, modules: { key: string }[], blocks: { key: string }[],
+): { modules: Record<string, Perm>; blocks: Record<string, Perm> } {
+  const src = role.permissions
+  const outMods: Record<string, Perm> = {}
+  const outBlocks: Record<string, Perm> = {}
+  for (const m of modules) {
+    const on = src?.modules?.[m.key] === 'allow'
+    outMods[m.key] = on ? 'allow' : 'deny'
+    for (const b of blocks) {
+      const bk = `${m.key}:${b.key}`
+      // Блок включён только внутри включённого модуля: у выключенного он не значит ничего,
+      // а сервер такие пары всё равно выбрасывает при сохранении.
+      outBlocks[bk] = on && src?.blocks?.[bk] === 'allow' ? 'allow' : 'deny'
+    }
+  }
+  return { modules: outMods, blocks: outBlocks }
 }

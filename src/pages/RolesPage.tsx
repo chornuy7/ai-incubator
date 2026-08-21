@@ -66,9 +66,16 @@ function PermRow({ label, indent, value, onChange, disabled }: { label: string; 
 }
 
 export function RolesPage() {
-  // Владелец пространства правит роли СВОЕЙ команды (решение 21.08), админ платформы —
-  // все. Отсюда разница в подписях: владельцу каталог модулей приходит урезанным по его
-  // подписке, и молчать об этом нельзя — иначе пропавший модуль читается как поломка.
+  /**
+   * Для владельца это редактор ШАБЛОНОВ доступа, для админа платформы — прежний редактор
+   * ролей. Разница не косметическая: уточнение владельца 21.08 — «роль это просто как шаблон
+   * и все настроек которые уже были выбраны». Роль ничего не выдаёт сама по себе; её набор
+   * КОПИРУЕТСЯ в личные тумблеры сотрудника на странице «Пользователи» и дальше не участвует.
+   * Отсюда и разные подписи: говорить владельцу «роль решает, что видит суб» теперь неправда.
+   *
+   * Каталог модулей приходит владельцу урезанным по его подписке — молчать об этом нельзя,
+   * иначе пропавший модуль читается как поломка.
+   */
   const sessionUser = useSession((s) => s.user)
   const isPlatformAdmin = !!sessionUser?.isAdmin
   // Переход из «Пользователей»: ?role=<id> сразу открывает роль, которую там назначили,
@@ -140,9 +147,10 @@ export function RolesPage() {
     try {
       // Номер ищем свободный, а не по длине списка: после удалений длина повторяется и
       // так появились «Новая роль 5» в двух экземплярах.
+      const base = isPlatformAdmin ? 'Новая роль' : 'Новый шаблон'
       let n = roles.length + 1
-      while (nameTaken(`Новая роль ${n}`)) n += 1
-      const r = await createRole({ name: `Новая роль ${n}`, permissions: emptyPermissions() })
+      while (nameTaken(`${base} ${n}`)) n += 1
+      const r = await createRole({ name: `${base} ${n}`, permissions: emptyPermissions() })
       setRoles((prev) => [...prev, r])
       selectRole(r)
     } catch (e) { setErr(e instanceof Error ? e.message : 'Ошибка') }
@@ -150,7 +158,13 @@ export function RolesPage() {
 
   async function removeRole(r: Role) {
     if (r.builtin) return
-    if (!(await confirmDialog({ title: 'Удалить роль?', message: `«${r.name}» будет удалена безвозвратно. Пользователи с этой ролью потеряют её доступы.`, confirmLabel: 'Удалить', tone: 'danger' }))) return
+    // Владельцу пугать нечем: его роль — заготовка, её значения давно скопированы в личные
+    // настройки сотрудников и удаление шаблона их не трогает. У админа платформы роли
+    // по-прежнему живые (в т.ч. персональные роли субов), там предупреждение остаётся.
+    const message = isPlatformAdmin
+      ? `«${r.name}» будет удалена безвозвратно. Пользователи с этой ролью потеряют её доступы.`
+      : `Шаблон «${r.name}» будет удалён безвозвратно. На уже выданные доступы это не влияет — они скопированы в настройки сотрудников.`
+    if (!(await confirmDialog({ title: isPlatformAdmin ? 'Удалить роль?' : 'Удалить шаблон?', message, confirmLabel: 'Удалить', tone: 'danger' }))) return
     try {
       await deleteRole(r.id)
       const next = roles.filter((x) => x.id !== r.id)
@@ -266,13 +280,15 @@ export function RolesPage() {
         title="Роли и доступы"
         subtitle={isPlatformAdmin
           ? 'Роли и доступ к модулям, блокам и ресурсам. Снятый доступ выделен.'
-          : 'Роль решает, что видит ваш субпользователь. Выдать можно только модули из вашей подписки. Снятый доступ выделен.'}
+          : 'Шаблон — заготовка доступа: собрали набор модулей один раз и применяете его сотрудникам в «Пользователях». Дальше доступ каждого правится отдельно. Выдать можно только оплаченное.'}
         icon={<ShieldCheck size={22} />}
         badge={roles.length ? `${roles.length}` : undefined}
         actions={
           <div className="flex items-center gap-2">
             <HelpButton topic="rbac-roles" className="h-10 w-10" />
-            <button onClick={() => void addRole()} className="btn-primary h-10"><Plus size={16} /> Новая роль</button>
+            <button onClick={() => void addRole()} className="btn-primary h-10">
+              <Plus size={16} /> {isPlatformAdmin ? 'Новая роль' : 'Создать шаблон'}
+            </button>
           </div>
         }
       />
@@ -282,7 +298,25 @@ export function RolesPage() {
       {loading ? (
         <Card className="p-6 text-sm text-white/50">Загрузка…</Card>
       ) : roles.length === 0 ? (
-        <EmptyState title="Ролей пока нет" desc="Создайте первую роль и раздайте ей доступы." />
+        /*
+         * Пустой список у владельца — норма, а не сбой: сервер отдаёт ему ТОЛЬКО им же
+         * созданные роли (уточнение 21.08 «показывать только созданные роли»), а раньше
+         * список начинался с чужих системных «Оператор»/«Sales». Поэтому здесь не голое
+         * «ролей нет», а объяснение, зачем шаблон вообще нужен: без него доступ каждому
+         * новому сотруднику выставляется тумблерами заново.
+         */
+        <EmptyState
+          icon={<ShieldCheck size={26} />}
+          title={isPlatformAdmin ? 'Ролей пока нет' : 'У вас пока нет шаблонов доступа'}
+          desc={isPlatformAdmin
+            ? 'Создайте первую роль и раздайте ей доступы.'
+            : 'Шаблон нужен, чтобы выдавать новым сотрудникам одинаковый набор модулей одним кликом, а не собирать его тумблерами каждый раз.'}
+          action={
+            <button onClick={() => void addRole()} className="btn-primary h-10">
+              <Plus size={16} /> {isPlatformAdmin ? 'Создать роль' : 'Создать шаблон'}
+            </button>
+          }
+        />
       ) : (
         <div className="grid gap-4 lg:grid-cols-[280px_1fr]">
           {/* Список ролей */}
@@ -297,7 +331,10 @@ export function RolesPage() {
                   <span className="block truncate text-sm font-medium text-fg">{r.name}</span>
                   <span className="mt-1 flex flex-wrap gap-1">
                     {r.builtin && <Badge tone="iris">Встроенная</Badge>}
-                    {r.isTemplate && <Badge tone="amber">Шаблон</Badge>}
+                    {/* Метку «Шаблон» показываем только админу платформы: у владельца ВСЕ
+                        роли в списке — заготовки (уточнение 21.08), и badge на части из них
+                        обещал бы разницу, которой больше нет. */}
+                    {isPlatformAdmin && r.isTemplate && <Badge tone="amber">Шаблон</Badge>}
                     {/* Одинаковые имена в списке = невозможно выбрать нужную роль в «Пользователях». */}
                     {dupNames.has(nameKey(r.name)) && <Badge tone="rose">имя-дубль</Badge>}
                   </span>
@@ -319,10 +356,15 @@ export function RolesPage() {
                   className={`h-10 flex-1 rounded-lg border bg-elevated px-3 text-sm text-fg outline-none ${nameErr ? 'border-rose-500/50' : 'border-line focus:border-spark-500/50'}`}
                   placeholder="Название роли"
                 />
-                <label className="flex items-center gap-2 text-sm text-white/70">
-                  <input type="checkbox" className="accent-amber-500" checked={isTemplate} onChange={(e) => { setIsTemplate(e.target.checked); mark() }} />
-                  Шаблон
-                </label>
+                {/* Флажок «Шаблон» — про системные заготовки платформы, и владельцу он
+                    бессмыслен: его роли и так шаблоны, других он не создаёт. Значение при
+                    сохранении уходит нетронутым (оно взято из самой роли). */}
+                {isPlatformAdmin && (
+                  <label className="flex items-center gap-2 text-sm text-white/70">
+                    <input type="checkbox" className="accent-amber-500" checked={isTemplate} onChange={(e) => { setIsTemplate(e.target.checked); mark() }} />
+                    Шаблон
+                  </label>
+                )}
                 <button onClick={() => void save()} disabled={!dirty || saving || !!nameErr} className="btn-primary h-10 disabled:opacity-40">
                   <Save size={15} /> {saving ? 'Сохранение…' : 'Сохранить'}
                 </button>
@@ -380,13 +422,20 @@ export function RolesPage() {
                         </span>
                       ))}
                     </div>
-                    {!isPlatformAdmin && catalog.modules.length > 0 && (
+                    {!isPlatformAdmin && (catalog.modules.length > 0 ? (
                       <div className="mb-2 flex flex-wrap items-center gap-1.5 text-[11px] text-white/40">
                         <Package size={12} className="shrink-0" />
                         Показаны модули из вашей подписки — выдать роли можно только то, что оплачено.
                         <Link to="/panel/user/subscription" className="font-semibold text-spark-300 hover:text-spark-200">Подписки</Link>
                       </div>
-                    )}
+                    ) : (
+                      // Пустая подписка даёт пустой каталог, и без объяснения раздел выглядит
+                      // сломанным: заголовок «Модули и блоки» есть, а под ним ничего.
+                      <div className="mb-2 rounded-lg border border-line bg-elevated/40 px-3 py-2.5 text-xs text-white/50">
+                        В вашей подписке нет активных модулей — собирать шаблон пока не из чего.{' '}
+                        <Link to="/panel/user/subscription" className="font-semibold text-spark-300 hover:text-spark-200">Открыть «Подписки»</Link>
+                      </div>
+                    ))}
                     <div className="flex flex-col gap-1.5">
                       {catalog.modules.map((m) => {
                         const open = expanded.has(m.key)
@@ -442,7 +491,7 @@ export function RolesPage() {
                             className="rounded-lg border border-line px-2 py-1 text-[11px] text-muted hover:border-rose-500/40 hover:text-rose-300">Выключить все</button>
                         </div>
                       </div>
-                      <div className="mb-2 text-[11px] text-white/35">«Мой аккаунт» и «Поддержка» доступны всем всегда. «Роли и доступы» / «Пользователи» — только админу.</div>
+                      <div className="mb-2 text-[11px] text-white/35">«Мой аккаунт» и «Поддержка» доступны всем всегда. «Роли и доступы» / «Пользователи» — только владельцу пространства и админу платформы: субпользователю их не выдать ни шаблоном, ни вручную.</div>
                       <div className="flex flex-col gap-1">
                         {catalog.sections.map((sec) => (
                           <PermRow key={sec.key} label={sec.label} value={sPerm(sec.key)} onChange={(p) => setSection(sec.key, p ?? 'deny')} />

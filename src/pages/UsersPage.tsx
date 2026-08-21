@@ -7,7 +7,7 @@ import {
   fetchUsers, createUser, updateUser, deleteUser, fetchWorktime, fetchUserAccess, saveUserAccess,
   type User, type WorkSummary,
 } from '@/api/usersApi'
-import { fetchRoles, fetchRbacCatalog, type Role, type Perm, type CatalogModule, type CatalogBlock } from '@/api/rolesApi'
+import { fetchRoles, fetchRbacCatalog, accessFromRole, type Role, type Perm, type CatalogModule, type CatalogBlock } from '@/api/rolesApi'
 import { fetchAccountGroups, type AccountGroup } from '@/api/accountGroupsApi'
 import { fetchAccounts } from '@/api/accountsApi'
 import type { TgAccount } from '@/shared/types'
@@ -15,34 +15,6 @@ import { useSession } from '@/features/auth/session'
 import { ADMIN_BYPASS_ID } from '@/shared/config/rbac'
 import { HelpButton } from '@/features/neuro-commenting/moduleUi'
 import { cn } from '@/shared/lib/utils'
-
-/** Мультивыбор ролей: клик по чипу добавляет/убирает роль. Права ролей суммируются (union). */
-/**
- * Роль — ОДНА, выбирается дропдауном (ТЗ 19.08 §2).
- *
- * Раньше здесь был мультивыбор чипами: у пользователя могло оказаться три роли, права
- * суммировались, и по карточке было не понять, что человеку в итоге доступно, — заказчик
- * назвал это «кашей». Хранение осталось массивом (`roleIds`), потому что на сервере права
- * считаются объединением; здесь просто больше нельзя набрать в него больше одной роли.
- * Старые записи с несколькими ролями не ломаем: показываем первую и предупреждаем.
- */
-function RolePicker({ roles, value, onChange }: { roles: Role[]; value: string[]; onChange: (ids: string[]) => void }) {
-  const current = value[0] || ''
-  return (
-    <select
-      value={current}
-      onChange={(e) => onChange(e.target.value ? [e.target.value] : [])}
-      className={cn(
-        'input h-9 min-w-[180px] text-xs',
-        current === ADMIN_BYPASS_ID && 'border-iris-500/50 text-iris-200',
-      )}
-      aria-label="Роль пользователя"
-    >
-      <option value="">Без роли — доступа нет</option>
-      {roles.map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}
-    </select>
-  )
-}
 
 /**
  * §5.4 (MR-37): владелец выдаёт субу аккаунты из своего пула — отдельно ГРУППЫ и отдельно
@@ -220,10 +192,65 @@ function ModuleAccessPicker({ catalog, value, onChange }: {
 }
 
 /**
+ * «Применить шаблон» — единственная роль шаблона в жизни пользователя (уточнение владельца
+ * 21.08: «роль это просто как шаблон и все настроек которые уже были выбраны»).
+ *
+ * Выбор шаблона КОПИРУЕТ его модули и блоки в тумблеры и на этом заканчивается: постоянной
+ * связи «роль → доступ» нет. Именно её убрали днём 21.08 — она давала неразрешимое: владелец
+ * гасит модуль тумблером, а роль возвращает его обратно, и выключатель выглядит сломанным.
+ *
+ * Шаблон НЕОБЯЗАТЕЛЕН: если их нет, вместо селекта стоит ссылка на «Роли и доступы», но
+ * доступ прекрасно выставляется тумблерами и пользователь создаётся без всякого шаблона.
+ */
+function ApplyTemplate({ roles, catalog, applied, hint, onApply, className }: {
+  roles: Role[]
+  catalog: AccessCatalog
+  /** Имя последнего применённого шаблона — подтверждение, что подстановка произошла. */
+  applied: string
+  /** Что делать дальше: в форме создания — «доправить ниже», в карточке — «сохранить». */
+  hint: string
+  onApply: (draft: AccessDraft, roleName: string) => void
+  className?: string
+}) {
+  if (!roles.length) {
+    return (
+      <div className={cn('text-[11px] text-white/40', className)}>
+        Шаблонов пока нет — выставьте доступ тумблерами или{' '}
+        <Link to="/panel/roles" className="font-semibold text-spark-300 hover:text-spark-200">создайте шаблон</Link>,
+        чтобы в следующий раз выдать тот же набор одним кликом.
+      </div>
+    )
+  }
+  return (
+    <div className={cn('flex flex-wrap items-center gap-2', className)}>
+      <select
+        // Значение всегда пустое: это не «выбранная роль» (её больше не существует как связи),
+        // а разовое действие — поэтому после применения список возвращается к заголовку и
+        // тот же шаблон можно применить ещё раз, если тумблеры увели не туда.
+        value=""
+        onChange={(e) => {
+          const r = roles.find((x) => x.id === e.target.value)
+          if (r) onApply(accessFromRole(r, catalog.modules, catalog.blocks), r.name)
+        }}
+        disabled={!catalog.modules.length}
+        className="input h-8 min-w-[170px] text-xs disabled:opacity-40"
+        aria-label="Применить шаблон доступа"
+      >
+        <option value="">Применить шаблон…</option>
+        {roles.map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}
+      </select>
+      {applied
+        ? <span className="text-[11px] text-spark-300">применён шаблон «{applied}» — {hint}</span>
+        : <span className="text-[11px] text-white/35">заполнит тумблеры готовым набором</span>}
+    </div>
+  )
+}
+
+/**
  * «Доступ к модулям» в карточке существующего суба — пара к «Доступу к аккаунтам» выше:
  * аккаунты отвечают на «с чем работать», модули — на «что вообще видно».
  */
-function SubModuleAccessEditor({ sub }: { sub: User }) {
+function SubModuleAccessEditor({ sub, templates }: { sub: User; templates: Role[] }) {
   const [open, setOpen] = useState(false)
   const [catalog, setCatalog] = useState<AccessCatalog | null>(null)
   const [draft, setDraft] = useState<AccessDraft>(EMPTY_ACCESS)
@@ -231,6 +258,7 @@ function SubModuleAccessEditor({ sub }: { sub: User }) {
   const [saving, setSaving] = useState(false)
   const [dirty, setDirty] = useState(false)
   const [saved, setSaved] = useState(false)
+  const [applied, setApplied] = useState('')
   const [err, setErr] = useState('')
 
   // Грузим по РАСКРЫТИЮ, а не вместе со списком: у владельца бывает несколько десятков субов,
@@ -271,8 +299,17 @@ function SubModuleAccessEditor({ sub }: { sub: User }) {
           ) : null}
           {err && <div className="text-xs text-rose-300">{err}</div>}
           {catalog?.modules.length ? (
-            <div className="flex items-center justify-end gap-2">
-              {saved && !dirty && <span className="mr-auto text-[11px] text-spark-300">Сохранено</span>}
+            <div className="flex flex-wrap items-center justify-end gap-2">
+              {/* Шаблон только ПОДСТАВЛЯЕТ значения — сохраняет по-прежнему владелец кнопкой
+                  рядом. Иначе выбор в списке молча менял бы права живому сотруднику, а
+                  посмотреть, что именно подставилось, было бы уже поздно. */}
+              <ApplyTemplate
+                roles={templates} catalog={catalog} applied={applied}
+                hint="проверьте тумблеры и сохраните"
+                onApply={(next, roleName) => { setDraft(next); setApplied(roleName); setDirty(true); setSaved(false) }}
+                className="mr-auto"
+              />
+              {saved && !dirty && <span className="text-[11px] text-spark-300">Сохранено</span>}
               <button onClick={() => void save()} disabled={saving || !dirty} className="btn-primary h-8 text-xs disabled:opacity-40">
                 {saving ? 'Сохранение…' : 'Сохранить доступ'}
               </button>
@@ -303,10 +340,16 @@ export function UsersPage() {
   const [loading, setLoading] = useState(true)
   const [err, setErr] = useState('')
   const [open, setOpen] = useState(false)
-  const [form, setForm] = useState<{ email: string; name: string; password: string; roleIds: string[]; balanceMode: 'shared' | 'individual'; tokenLimit: string }>({ email: '', name: '', password: '', roleIds: ['role_moderator'], balanceMode: 'shared', tokenLimit: '' })
+  // Роли в форме больше нет: новый суб создаётся БЕЗ ролей, а его доступ приходит вторым
+  // запросом (PUT .../access), который заводит ему персональную роль. Раньше здесь по
+  // умолчанию стоял системный «role_moderator» — он выдавал модули, которых владелец не
+  // выбирал, и после уточнения 21.08 («роль — шаблон») превратился бы в тихую раздачу прав.
+  const [form, setForm] = useState<{ email: string; name: string; password: string; roleIds: string[]; balanceMode: 'shared' | 'individual'; tokenLimit: string }>({ email: '', name: '', password: '', roleIds: [], balanceMode: 'shared', tokenLimit: '' })
   // Доступ будущего суба: id появится только после создания, поэтому выбор копится в форме,
   // а PUT /api/users/:id/access уходит сразу следом (см. submit).
   const [newAccess, setNewAccess] = useState<AccessDraft>(EMPTY_ACCESS)
+  /** Имя шаблона, применённого в форме создания, — только подпись, в запрос не уходит. */
+  const [appliedTpl, setAppliedTpl] = useState('')
   // Каталог для формы создания берём из RBAC-каталога — он тоже урезан подпиской владельца.
   // У /api/users/:id/access каталог тот же, но его нельзя спросить без id пользователя.
   const [catalog, setCatalog] = useState<AccessCatalog>({ modules: [], blocks: [] })
@@ -341,6 +384,17 @@ export function UsersPage() {
     [groups, sessionUser],
   )
 
+  /**
+   * Шаблоны доступа для кнопки «Применить шаблон». Владельцу сервер и так отдаёт только его
+   * созданные роли, но админ платформы видит ВСЕ — включая персональные роли субов
+   * («Доступ · Иван») и админ-роль. Первое к чужому сотруднику применять бессмысленно,
+   * второе раздало бы полный доступ одним кликом по выпадающему списку.
+   */
+  const templates = useMemo(
+    () => roles.filter((r) => !r.personalFor && r.id !== ADMIN_BYPASS_ID),
+    [roles],
+  )
+
   async function toggleActive(u: User) {
     try {
       const upd = await updateUser(u.id, { active: !u.active })
@@ -355,8 +409,9 @@ export function UsersPage() {
     } catch (e) { setErr(e instanceof Error ? e.message : 'Ошибка') }
   }
   function resetForm() {
-    setForm({ email: '', name: '', password: '', roleIds: ['role_moderator'], balanceMode: 'shared', tokenLimit: '' })
+    setForm({ email: '', name: '', password: '', roleIds: [], balanceMode: 'shared', tokenLimit: '' })
     setNewAccess(EMPTY_ACCESS)
+    setAppliedTpl('')
   }
 
   async function submit() {
@@ -462,8 +517,9 @@ export function UsersPage() {
                         неразрешимое: владелец гасит модуль тумблером ниже, а роль «Тимлид»
                         его возвращает — выключатель выглядит сломанным. Плюс назначение роли
                         перезаписывало бы `roleIds`, стирая персональный доступ целиком.
-                        Владельцу нужны доступы, а не «ролевые игры»: всё управление — в блоке
-                        «Доступ к модулям» ниже. Роли остаются инструментом админа платформы.
+                        Роль осталась в интерфейсе, но уже как ЗАГОТОВКА: «Применить шаблон» в
+                        блоке «Доступ к модулям» ниже подставляет её значения в тумблеры и на
+                        этом отпускает — дальше доступ живёт сам по себе.
                       */}
                       <span className="text-[11px] text-white/35">
                         {isAdmin
@@ -491,7 +547,7 @@ export function UsersPage() {
                 )}
                 {/* Уточнение владельца 21.08: что субу ПОКАЗЫВАТЬ — тоже решается здесь, рядом
                     с выдачей аккаунтов, а не на отдельной странице ролей. */}
-                {!locked && !isAdmin && <SubModuleAccessEditor sub={u} />}
+                {!locked && !isAdmin && <SubModuleAccessEditor sub={u} templates={templates} />}
               </Card>
             )
           })}
@@ -512,14 +568,18 @@ export function UsersPage() {
             <label className="label">Пароль (мин. 6 символов)</label>
             <input value={form.password} onChange={(e) => setForm((f) => ({ ...f, password: e.target.value }))} className="input" placeholder="••••••••" />
           </div>
-          <div>
-            <label className="label">Роль <span className="font-normal text-white/40">(одна — она и определяет доступ)</span></label>
-            <RolePicker roles={roles} value={form.roleIds} onChange={(ids) => setForm((f) => ({ ...f, roleIds: ids }))} />
-          </div>
           {/* Уточнение владельца 21.08: набор модулей выбирается ПРИ СОЗДАНИИ, а не потом
-              отдельным заходом — иначе первый вход суба показывает ему пустую панель. */}
+              отдельным заходом — иначе первый вход суба показывает ему пустую панель.
+              Дропдаун роли отсюда убран: роль стала шаблоном, а не назначением, поэтому её
+              место — кнопка «Применить шаблон» ниже, которая заполняет эти же тумблеры. */}
           <div>
             <label className="label">Доступ к модулям <span className="font-normal text-white/40">(из вашей подписки)</span></label>
+            <ApplyTemplate
+              roles={templates} catalog={catalog} applied={appliedTpl}
+              hint="можно доправить ниже"
+              onApply={(draft, roleName) => { setNewAccess(draft); setAppliedTpl(roleName) }}
+              className="mb-2"
+            />
             <div className="max-h-64 overflow-y-auto pr-1">
               <ModuleAccessPicker catalog={catalog} value={newAccess} onChange={setNewAccess} />
             </div>
