@@ -186,12 +186,21 @@ export function RolesPage({ embedded }: {
       const [rs, cat] = await Promise.all([fetchRoles(), fetchRbacCatalog()])
       setRoles(rs)
       setCatalog(cat)
-      if (!selId && rs.length) {
-        const first = rs.find((r) => r.id === wantRoleId) || rs[0]
+      /*
+       * Сама собой роль больше не открывается (просьба владельца 21.08: «это окно по
+       * умолчанию скрыто, и там просто показывать выберите шаблон»). Редактор — это
+       * полтора экрана тумблеров, и раскрытый на первом попавшемся шаблоне он читался
+       * как «вы сейчас правите вот это», хотя человек просто зашёл посмотреть список.
+       *
+       * Исключение — переход по ссылке `?role=<id>`: там роль названа явно, и не открыть
+       * её значило бы не выполнить просьбу ссылки.
+       */
+      const want = wantRoleId ? rs.find((r) => r.id === wantRoleId) : null
+      if (!selId && want) {
         // Роль из ?role= может лежать на второй-третьей странице списка — открываем сразу ту,
         // иначе выбранная роль редактируется, а в списке её не видно.
-        setRolePage(Math.floor(rs.indexOf(first) / PAGE_SIZE) + 1)
-        selectRole(first)
+        setRolePage(Math.floor(rs.indexOf(want) / PAGE_SIZE) + 1)
+        selectRole(want)
       }
     } catch (e) {
       setErr(e instanceof Error ? e.message : 'Ошибка загрузки')
@@ -261,7 +270,8 @@ export function RolesPage({ embedded }: {
       await deleteRole(r.id)
       const next = roles.filter((x) => x.id !== r.id)
       setRoles(next)
-      if (selId === r.id) { setSelId(''); if (next[0]) selectRole(next[0]) }
+      // Соседнюю роль не открываем: удаление — не повод начать править другую.
+      if (selId === r.id) setSelId('')
     } catch (e) { setErr(e instanceof Error ? e.message : 'Ошибка') }
   }
 
@@ -493,7 +503,16 @@ export function RolesPage({ embedded }: {
             <Pager page={rolePageSafe} total={roles.length} onPage={setRolePage} label={isPlatformAdmin ? 'ролей' : 'шаблонов'} />
           </div>
 
-          {/* Редактор выбранной роли */}
+          {/* Редактор выбранной роли. Не выбрана — вместо полутора экранов тумблеров
+              стоит приглашение: список слева и есть то, ради чего сюда заходят. */}
+          {!selected && (
+            <Card className="flex min-h-[160px] items-center justify-center p-6 text-center">
+              <div className="text-sm text-white/45">
+                <ShieldCheck size={22} className="mx-auto mb-2 text-white/25" />
+                {isPlatformAdmin ? 'Выберите роль слева, чтобы настроить доступ.' : 'Выберите шаблон слева, чтобы посмотреть или изменить набор.'}
+              </div>
+            </Card>
+          )}
           {selected && (
             <Card className="p-4">
               <div className={`flex flex-wrap items-center gap-3 ${nameErr ? 'mb-1' : 'mb-4'}`}>
