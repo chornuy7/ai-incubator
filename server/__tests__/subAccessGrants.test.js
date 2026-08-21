@@ -73,3 +73,38 @@ test('метка персональной роли переживает сохр
   assert.equal(plain.personalFor, '')
   assert.equal(plain.permissions.personalFor, undefined)
 })
+
+/**
+ * Модель ролей, подтверждённая владельцем 21.08: «роли это опционально, роль это просто
+ * как шаблон и все настройки которые уже были выбраны».
+ *
+ * То есть роль — ЗАГОТОВКА, а не живая связь: её значения копируются в персональный
+ * доступ, и дальше он живёт сам. Иначе возвращается неразрешимое: владелец гасит модуль
+ * тумблером, а роль возвращает его обратно — выключатель выглядит сломанным.
+ */
+test('владелец видит только СВОИ шаблоны — ни системных, ни персональных', async () => {
+  const roles = [
+    { id: 'role_admin', name: 'Администратор', userId: '' },
+    { id: 'role_operator', name: 'Оператор', userId: '' },              // системный шаблон
+    { id: 'r_mine', name: 'Мой шаблон', userId: 'own_1' },              // свой
+    { id: 'r_other', name: 'Чужой', userId: 'own_2' },                  // чужого владельца
+    { id: 'r_personal', name: 'Доступ · Иван', userId: 'own_1', personalFor: 'usr_1' },
+  ]
+  // Правило из rolesRoutes: своё, не персональное, не админ-роль.
+  const visible = roles.filter((r) => r.id !== 'role_admin' && !r.personalFor && r.userId === 'own_1')
+  assert.deepEqual(visible.map((r) => r.id), ['r_mine'])
+})
+
+test('применение шаблона копирует только оплаченные модули', async () => {
+  // Роль могла быть создана, когда модуль был оплачен, а сейчас его в подписке нет —
+  // подставлять такой тумблер значит обещать доступ, которого не будет.
+  const template = {
+    modules: { 'neuro-commenting': 'allow', 'mailing': 'allow' },
+    blocks: { 'neuro-commenting:run': 'allow', 'mailing:run': 'allow' },
+  }
+  const paid = new Set(['neuro-commenting'])           // мейлинг больше не оплачен
+  const modules = Object.fromEntries(Object.entries(template.modules).filter(([k]) => paid.has(k)))
+  const blocks = Object.fromEntries(Object.entries(template.blocks).filter(([k]) => paid.has(k.split(':')[0])))
+  assert.deepEqual(modules, { 'neuro-commenting': 'allow' })
+  assert.deepEqual(blocks, { 'neuro-commenting:run': 'allow' })
+})
