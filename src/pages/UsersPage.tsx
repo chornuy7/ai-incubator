@@ -1,10 +1,13 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { Users2, Plus, Trash2, ShieldCheck, Check, Users, Wifi, ChevronDown, Search, SlidersHorizontal } from 'lucide-react'
-import { PageHeader, Card, EmptyState, Badge, Modal } from '@/shared/ui'
+import { Users2, Plus, Trash2, ShieldCheck, Check, Users, Wifi, ChevronDown, ChevronRight, Search, Package } from 'lucide-react'
+import { PageHeader, Card, EmptyState, Badge, Modal, Switch } from '@/shared/ui'
 import { confirmDialog } from '@/shared/lib/dialog'
-import { fetchUsers, createUser, updateUser, deleteUser, fetchWorktime, type User, type WorkSummary } from '@/api/usersApi'
-import { fetchRoles, type Role } from '@/api/rolesApi'
+import {
+  fetchUsers, createUser, updateUser, deleteUser, fetchWorktime, fetchUserAccess, saveUserAccess,
+  type User, type WorkSummary,
+} from '@/api/usersApi'
+import { fetchRoles, fetchRbacCatalog, type Role, type Perm, type CatalogModule, type CatalogBlock } from '@/api/rolesApi'
 import { fetchAccountGroups, type AccountGroup } from '@/api/accountGroupsApi'
 import { fetchAccounts } from '@/api/accountsApi'
 import type { TgAccount } from '@/shared/types'
@@ -124,6 +127,163 @@ function SubAccessEditor({ sub, groups, accounts, onSaved }: { sub: User; groups
   )
 }
 
+/** Что владелец правит субу: модули и блоки внутри них. Ключ блока — `${moduleKey}:${blockKey}`. */
+type AccessDraft = { modules: Record<string, Perm>; blocks: Record<string, Perm> }
+type AccessCatalog = { modules: CatalogModule[]; blocks: CatalogBlock[] }
+
+const EMPTY_ACCESS: AccessDraft = { modules: {}, blocks: {} }
+/** Выбрано ли хоть что-то — чтобы не слать пустой PUT после создания пользователя. */
+const hasAccessChoice = (a: AccessDraft) => Object.keys(a.modules).length > 0 || Object.keys(a.blocks).length > 0
+
+/**
+ * Уточнение владельца от 21.08: доступ субпользователя настраивается ЗДЕСЬ, в его карточке,
+ * а не отдельной страницей «Роли и доступы». Владелец мыслит не ролями, а людьми: «вот этому
+ * показать нейрокомментинг, а вот этому — нет». Персональную роль под суба заводит сервер сам
+ * (PUT /api/users/:id/access), владельцу она не показывается.
+ *
+ * Список модулей приходит из каталога, УЖЕ урезанного подпиской владельца, — фильтровать его
+ * ещё раз на клиенте нельзя: пропавший оплаченный модуль читается как поломка, а не как запрет.
+ */
+function ModuleAccessPicker({ catalog, value, onChange }: {
+  catalog: AccessCatalog; value: AccessDraft; onChange: (next: AccessDraft) => void
+}) {
+  const [expanded, setExpanded] = useState<Set<string>>(new Set())
+  const modOn = (k: string) => value.modules[k] === 'allow'
+  const blockOn = (k: string) => value.blocks[k] === 'allow'
+
+  /**
+   * Переключение модуля тянет за собой ВСЕ его блоки. Иначе включённый модуль открывается
+   * субу с закрытыми кнопками внутри (запуск, настройки, логи) — человек видит раздел, но
+   * ничего в нём не может, и это выглядит поломкой, а не настройкой. Точечно блоки правятся
+   * ниже, после раскрытия модуля.
+   */
+  const toggleModule = (key: string) => {
+    const next: Perm = modOn(key) ? 'deny' : 'allow'
+    const blocks = { ...value.blocks }
+    catalog.blocks.forEach((b) => { blocks[`${key}:${b.key}`] = next })
+    onChange({ modules: { ...value.modules, [key]: next }, blocks })
+  }
+  const toggleBlock = (key: string) =>
+    onChange({ ...value, blocks: { ...value.blocks, [key]: blockOn(key) ? 'deny' : 'allow' } })
+  const toggleExpand = (key: string) =>
+    setExpanded((s) => { const n = new Set(s); if (n.has(key)) n.delete(key); else n.add(key); return n })
+
+  // Пустая подписка — не пустой список: без объяснения владелец решает, что раздел сломан.
+  if (!catalog.modules.length) {
+    return (
+      <div className="rounded-lg border border-line bg-elevated/40 px-3 py-2.5 text-xs text-white/50">
+        В вашей подписке нет модулей — выдавать субпользователю пока нечего.{' '}
+        <Link to="/panel/user/subscription" className="font-semibold text-spark-300 hover:text-spark-200">Открыть «Подписки»</Link>
+      </div>
+    )
+  }
+
+  return (
+    <div className="flex flex-col gap-1">
+      <div className="flex items-center gap-1.5 text-[11px] text-white/40">
+        <Package size={12} className="shrink-0" />
+        Показаны модули из вашей подписки — выдать можно только оплаченное.
+      </div>
+      {catalog.modules.map((m) => {
+        const open = expanded.has(m.key)
+        const on = modOn(m.key)
+        const allowedBlocks = catalog.blocks.filter((b) => blockOn(`${m.key}:${b.key}`)).length
+        return (
+          <div key={m.key}>
+            <div className={cn('flex items-center justify-between gap-3 rounded-lg px-2.5 py-1.5', on ? 'bg-spark-500/8' : 'bg-elevated')}>
+              <button type="button" onClick={() => toggleExpand(m.key)} className="flex min-w-0 items-center gap-1.5 text-left text-sm text-fg">
+                {open ? <ChevronDown size={14} className="shrink-0 text-white/40" /> : <ChevronRight size={14} className="shrink-0 text-white/40" />}
+                <span className="truncate">{m.label}</span>
+                {on && <span className="shrink-0 text-[11px] text-white/35">блоков: {allowedBlocks}/{catalog.blocks.length}</span>}
+              </button>
+              <Switch checked={on} onChange={() => toggleModule(m.key)} />
+            </div>
+            {open && (
+              <div className="mt-1 flex flex-col gap-1 pl-6">
+                {!on && <div className="text-[11px] text-white/35">Модуль выключен — блоки ни на что не влияют, пока не включите его.</div>}
+                {catalog.blocks.map((b) => {
+                  const bk = `${m.key}:${b.key}`
+                  return (
+                    <div key={bk} className="flex items-center justify-between gap-3 rounded-lg bg-elevated px-2.5 py-1.5">
+                      <span className="truncate text-xs text-white/75">{b.label}</span>
+                      <Switch checked={blockOn(bk)} onChange={() => toggleBlock(bk)} />
+                    </div>
+                  )
+                })}
+              </div>
+            )}
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
+/**
+ * «Доступ к модулям» в карточке существующего суба — пара к «Доступу к аккаунтам» выше:
+ * аккаунты отвечают на «с чем работать», модули — на «что вообще видно».
+ */
+function SubModuleAccessEditor({ sub }: { sub: User }) {
+  const [open, setOpen] = useState(false)
+  const [catalog, setCatalog] = useState<AccessCatalog | null>(null)
+  const [draft, setDraft] = useState<AccessDraft>(EMPTY_ACCESS)
+  const [loading, setLoading] = useState(false)
+  const [saving, setSaving] = useState(false)
+  const [dirty, setDirty] = useState(false)
+  const [saved, setSaved] = useState(false)
+  const [err, setErr] = useState('')
+
+  // Грузим по РАСКРЫТИЮ, а не вместе со списком: у владельца бывает несколько десятков субов,
+  // и запрос доступа на каждого превратил бы открытие страницы в десятки запросов ради данных,
+  // в которые чаще всего не заглядывают.
+  useEffect(() => {
+    if (!open || catalog) return
+    let alive = true
+    setLoading(true); setErr('')
+    fetchUserAccess(sub.id)
+      .then((a) => { if (!alive) return; setCatalog(a.catalog); setDraft({ modules: a.modules, blocks: a.blocks }) })
+      .catch((e) => { if (alive) setErr(e instanceof Error ? e.message : 'Не удалось загрузить доступ') })
+      .finally(() => { if (alive) setLoading(false) })
+    return () => { alive = false }
+  }, [open, catalog, sub.id])
+
+  const allowedCount = useMemo(() => Object.values(draft.modules).filter((p) => p === 'allow').length, [draft])
+
+  const save = async () => {
+    setSaving(true); setErr(''); setSaved(false)
+    try { await saveUserAccess(sub.id, draft); setDirty(false); setSaved(true) }
+    catch (e) { setErr(e instanceof Error ? e.message : 'Ошибка') }
+    finally { setSaving(false) }
+  }
+
+  return (
+    <div className="w-full">
+      <button onClick={() => setOpen(!open)} className="flex items-center gap-1.5 text-xs text-white/55 hover:text-white/85">
+        <ChevronDown size={13} className={cn('transition-transform', open && 'rotate-180')} />
+        Доступ к модулям{catalog ? `: ${allowedCount} из ${catalog.modules.length}` : ''}
+      </button>
+      {open && (
+        <div className="mt-2 space-y-3 rounded-xl border border-line bg-elevated/40 p-3">
+          {loading ? (
+            <div className="text-xs text-white/40">Загрузка доступа…</div>
+          ) : catalog ? (
+            <ModuleAccessPicker catalog={catalog} value={draft} onChange={(v) => { setDraft(v); setDirty(true); setSaved(false) }} />
+          ) : null}
+          {err && <div className="text-xs text-rose-300">{err}</div>}
+          {catalog?.modules.length ? (
+            <div className="flex items-center justify-end gap-2">
+              {saved && !dirty && <span className="mr-auto text-[11px] text-spark-300">Сохранено</span>}
+              <button onClick={() => void save()} disabled={saving || !dirty} className="btn-primary h-8 text-xs disabled:opacity-40">
+                {saving ? 'Сохранение…' : 'Сохранить доступ'}
+              </button>
+            </div>
+          ) : null}
+        </div>
+      )}
+    </div>
+  )
+}
+
 /** мс → «2ч 15м» / «12м». */
 function fmtDur(ms: number): string {
   const min = Math.floor(ms / 60000)
@@ -144,6 +304,12 @@ export function UsersPage() {
   const [err, setErr] = useState('')
   const [open, setOpen] = useState(false)
   const [form, setForm] = useState<{ email: string; name: string; password: string; roleIds: string[]; balanceMode: 'shared' | 'individual'; tokenLimit: string }>({ email: '', name: '', password: '', roleIds: ['role_moderator'], balanceMode: 'shared', tokenLimit: '' })
+  // Доступ будущего суба: id появится только после создания, поэтому выбор копится в форме,
+  // а PUT /api/users/:id/access уходит сразу следом (см. submit).
+  const [newAccess, setNewAccess] = useState<AccessDraft>(EMPTY_ACCESS)
+  // Каталог для формы создания берём из RBAC-каталога — он тоже урезан подпиской владельца.
+  // У /api/users/:id/access каталог тот же, но его нельзя спросить без id пользователя.
+  const [catalog, setCatalog] = useState<AccessCatalog>({ modules: [], blocks: [] })
   const [saving, setSaving] = useState(false)
   // Правка 18.08: страница «Пользователи» — про СВОЮ команду. Раньше админу сюда
   // валился весь список платформы (65 юзеров, из них 59 чужих регистраций).
@@ -154,12 +320,16 @@ export function UsersPage() {
     setLoading(true)
     try {
       // §5.4 (MR-37): группы и аккаунты пула — чтобы владелец мог выдавать их субам.
-      const [us, rs, wt, gr, accs] = await Promise.all([
+      const [us, rs, wt, gr, accs, cat] = await Promise.all([
         fetchUsers(scopeAll ? 'all' : 'mine'), fetchRoles(), fetchWorktime().catch(() => ({})),
         fetchAccountGroups().then((r) => r.groups).catch(() => []),
         fetchAccounts().catch(() => []),
+        // Каталог не должен ронять страницу: без него форма создания просто скажет, что
+        // модулей в подписке нет, а список пользователей останется рабочим.
+        fetchRbacCatalog().catch(() => null),
       ])
       setUsers(us); setRoles(rs); setWorktime(wt); setGroups(gr); setAccounts(accs.filter((a) => !a.inTrash))
+      if (cat) setCatalog({ modules: cat.modules, blocks: cat.blocks })
     } catch (e) { setErr(e instanceof Error ? e.message : 'Ошибка загрузки') }
     finally { setLoading(false) }
   }
@@ -171,12 +341,6 @@ export function UsersPage() {
     [groups, sessionUser],
   )
 
-  async function assignRoles(u: User, roleIds: string[]) {
-    try {
-      const upd = await updateUser(u.id, { roleIds })
-      setUsers((prev) => prev.map((x) => (x.id === u.id ? upd : x)))
-    } catch (e) { setErr(e instanceof Error ? e.message : 'Ошибка') }
-  }
   async function toggleActive(u: User) {
     try {
       const upd = await updateUser(u.id, { active: !u.active })
@@ -190,20 +354,34 @@ export function UsersPage() {
       setUsers((prev) => prev.filter((x) => x.id !== u.id))
     } catch (e) { setErr(e instanceof Error ? e.message : 'Ошибка') }
   }
+  function resetForm() {
+    setForm({ email: '', name: '', password: '', roleIds: ['role_moderator'], balanceMode: 'shared', tokenLimit: '' })
+    setNewAccess(EMPTY_ACCESS)
+  }
+
   async function submit() {
     setSaving(true); setErr('')
+    let created: User
     try {
-      const u = await createUser({
+      created = await createUser({
         email: form.email, name: form.name, password: form.password, roleIds: form.roleIds,
         // §4.2 (MR-30): режим баланса и лимит токенов для индивидуального.
         balanceMode: form.balanceMode,
         tokenLimit: form.balanceMode === 'individual' && form.tokenLimit ? Number(form.tokenLimit) : null,
       })
-      setUsers((prev) => [...prev, u])
-      setOpen(false)
-      setForm({ email: '', name: '', password: '', roleIds: ['role_moderator'], balanceMode: 'shared', tokenLimit: '' })
-    } catch (e) { setErr(e instanceof Error ? e.message : 'Ошибка') }
-    finally { setSaving(false) }
+    } catch (e) { setErr(e instanceof Error ? e.message : 'Ошибка'); setSaving(false); return }
+    setUsers((prev) => [...prev, created])
+    // Доступ пишем ВТОРЫМ запросом: раньше создания у суба нет id, а привязывать модули не к
+    // кому. Падение этого шага не откатывает создание — поэтому о нём говорим прямо, иначе
+    // владелец увидит суба без модулей и решит, что переключатели просто не сработали.
+    try {
+      if (hasAccessChoice(newAccess)) await saveUserAccess(created.id, newAccess)
+    } catch (e) {
+      setErr(`Пользователь создан, но доступ к модулям не сохранился (${e instanceof Error ? e.message : 'ошибка'}). Настройте его в карточке пользователя.`)
+    }
+    setOpen(false)
+    resetForm()
+    setSaving(false)
   }
 
   return (
@@ -278,33 +456,23 @@ export function UsersPage() {
                     </span>
                   ) : (
                     <div className="flex flex-col items-end gap-1">
-                      <div className="flex items-center gap-1.5">
-                        <RolePicker roles={roles} value={roleIds} onChange={(ids) => void assignRoles(u, ids)} />
-                        {/* Дропдаун роль НАЗНАЧАЕТ, но не показывает, что она даёт. Владелец
-                            ставил суба «Тимлидом» и не понимал, где включить ему нейрочатинг
-                            (решение 21.08: доступ к своим модулям раздаёт владелец). Ссылка
-                            открывает редактор ИМЕННО этой роли; без роли — общий список.
-                            Админ-роль сюда не ведём: её права не редактируются. */}
-                        {!isAdmin && (
-                          <Link
-                            to={roleIds[0] ? `/panel/roles?role=${encodeURIComponent(roleIds[0])}` : '/panel/roles'}
-                            title={roleIds[0]
-                              ? 'Открыть права этой роли: модули из вашей подписки, разделы, ресурсы'
-                              : 'Открыть «Роли и доступы» — создать роль и раздать ей модули'}
-                            className="btn-ghost h-9 shrink-0 gap-1.5 px-2.5 text-xs"
-                          >
-                            <SlidersHorizontal size={13} /> Настроить права роли
-                          </Link>
-                        )}
-                      </div>
-                      <span className={cn('text-[11px]', roleIds.length > 1 ? 'text-amber-300/80' : 'text-white/35')}>
+                      {/*
+                        Дропдаун роли отсюда убран (уточнение владельца 21.08). Роль и
+                        персональный доступ СУММИРУЮТСЯ на сервере, поэтому вместе они дают
+                        неразрешимое: владелец гасит модуль тумблером ниже, а роль «Тимлид»
+                        его возвращает — выключатель выглядит сломанным. Плюс назначение роли
+                        перезаписывало бы `roleIds`, стирая персональный доступ целиком.
+                        Владельцу нужны доступы, а не «ролевые игры»: всё управление — в блоке
+                        «Доступ к модулям» ниже. Роли остаются инструментом админа платформы.
+                      */}
+                      <span className="text-[11px] text-white/35">
                         {isAdmin
                           ? 'Полный доступ (админ-роль)'
                           : roleIds.length > 1
-                            // Наследие мультивыбора: пока роль не переназначили, права
+                            // Наследие мультивыбора: пока доступ не пересохранён, права
                             // считаются по ВСЕМ старым ролям — молчать об этом нельзя.
-                            ? `Осталось ${roleIds.length} роли от прежних настроек — выберите одну`
-                            : roleIds.length === 0 ? 'Нет роли — нет доступа' : ''}
+                            ? `${roleIds.length} роли от прежних настроек — сохраните доступ ниже, он их заменит`
+                            : 'Доступ настраивается ниже'}
                       </span>
                     </div>
                   )}
@@ -321,6 +489,9 @@ export function UsersPage() {
                   <SubAccessEditor sub={u} groups={myGroups} accounts={accounts}
                     onSaved={(upd) => setUsers((prev) => prev.map((x) => (x.id === upd.id ? upd : x)))} />
                 )}
+                {/* Уточнение владельца 21.08: что субу ПОКАЗЫВАТЬ — тоже решается здесь, рядом
+                    с выдачей аккаунтов, а не на отдельной странице ролей. */}
+                {!locked && !isAdmin && <SubModuleAccessEditor sub={u} />}
               </Card>
             )
           })}
@@ -344,6 +515,14 @@ export function UsersPage() {
           <div>
             <label className="label">Роль <span className="font-normal text-white/40">(одна — она и определяет доступ)</span></label>
             <RolePicker roles={roles} value={form.roleIds} onChange={(ids) => setForm((f) => ({ ...f, roleIds: ids }))} />
+          </div>
+          {/* Уточнение владельца 21.08: набор модулей выбирается ПРИ СОЗДАНИИ, а не потом
+              отдельным заходом — иначе первый вход суба показывает ему пустую панель. */}
+          <div>
+            <label className="label">Доступ к модулям <span className="font-normal text-white/40">(из вашей подписки)</span></label>
+            <div className="max-h-64 overflow-y-auto pr-1">
+              <ModuleAccessPicker catalog={catalog} value={newAccess} onChange={setNewAccess} />
+            </div>
           </div>
           {/* §4.2 (MR-30): баланс суба — общий с владельцем или индивидуальный лимит токенов. */}
           <div>

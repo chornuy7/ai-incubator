@@ -1,5 +1,5 @@
 import { apiGet, apiPost, apiPut, apiDelete } from './client'
-import type { Role } from './rolesApi'
+import type { Role, Perm, CatalogModule, CatalogBlock } from './rolesApi'
 import { tokenKey } from '@/features/auth/zone'
 
 export interface User {
@@ -87,6 +87,36 @@ export async function changeMyPassword(currentPassword: string, newPassword: str
 export async function logoutUser(userId: string): Promise<void> {
   clearToken() // токен недействителен для нас — убираем локально в любом случае
   try { await apiPost('/api/users/logout', { userId }) } catch { /* best-effort */ }
+}
+
+/**
+ * Доступ СУБПОЛЬЗОВАТЕЛЯ к модулям и блокам (уточнение владельца 21.08).
+ *
+ * Живёт на пользователе, а не на отдельной странице ролей: владелец думает не «какие у меня
+ * роли», а «что видит вот этот человек». Физически сервер всё равно держит персональную роль
+ * суба — просто заводит и правит её сам по PUT, а владелец её не видит.
+ *
+ * `catalog.modules` УЖЕ отфильтрован подпиской владельца — фильтровать повторно нельзя:
+ * иначе оплаченный модуль пропадёт из списка и это прочтётся как поломка.
+ * Ключ блока — `${moduleKey}:${blockKey}`, как в ролях (см. RolePermissions.blocks).
+ */
+export interface UserAccess {
+  modules: Record<string, Perm>
+  blocks: Record<string, Perm>
+  catalog: { modules: CatalogModule[]; blocks: CatalogBlock[] }
+}
+
+export async function fetchUserAccess(id: string): Promise<UserAccess> {
+  const r = await apiGet<{ ok: boolean } & UserAccess>(`/api/users/${id}/access`)
+  return { modules: r.modules || {}, blocks: r.blocks || {}, catalog: { modules: r.catalog?.modules || [], blocks: r.catalog?.blocks || [] } }
+}
+
+/**
+ * Сохранить доступ суба. Сервер сам проверяет, что модуль оплачен подпиской владельца, —
+ * клиентский список ему не указ (прямой запрос обошёл бы форму).
+ */
+export async function saveUserAccess(id: string, patch: { modules: Record<string, Perm>; blocks: Record<string, Perm> }): Promise<void> {
+  await apiPut(`/api/users/${id}/access`, patch)
 }
 
 export interface WorkSummary { todayMs: number; weekMs: number; open: boolean; since: number | null }

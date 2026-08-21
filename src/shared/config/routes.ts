@@ -2,7 +2,7 @@ import type { LucideIcon } from 'lucide-react'
 import {
   LayoutGrid, BarChart3, LifeBuoy, MessageSquareText, Bot, Sparkles, Eye,
   Flame, MessagesSquare, Trophy, Radar, Users, Search, MessageCircle,
-  Hash, History, UserCog, CalendarClock, Target, ListChecks, Contact, TrendingUp, Rocket, Radio, ScrollText, Inbox, Users2, Network, Mail, Megaphone, Package, GraduationCap, ShieldCheck } from 'lucide-react'
+  Hash, History, UserCog, CalendarClock, Target, ListChecks, Contact, TrendingUp, Rocket, Radio, ScrollText, Inbox, Users2, Network, Mail, Megaphone, Package, GraduationCap } from 'lucide-react'
 
 export interface RouteDef {
   path: string
@@ -62,13 +62,14 @@ export const ROUTES: RouteDef[] = [
 
   { path: '/panel/user/profile', label: 'Мой аккаунт', icon: UserCog, group: 'account' },
   { path: '/panel/user/subscription', label: 'Подписки', icon: Package, group: 'account' }, // MR-157: было «Мои модули»
-  // §10.4 (созвон) требовал управлять ролями ТОЛЬКО из sudo-админки, и пункт из кабинета
-  // убрали — тогда роли раздавал один платформенный админ. Решение владельца от 21.08 это
-  // отменяет: «есть активный модуль нейрочатинг — он может редактировать у суба права на
-  // этот модуль», то есть владелец пространства раздаёт доступы своей команде сам. Пункт
-  // вернулся в меню, но виден владельцу и админу платформы; субпользователю он закрыт
-  // (см. canAccessPath → OWNER_ROLES_PATH) — своих субов у него нет и раздавать нечего.
-  { path: '/panel/roles', label: 'Роли и доступы', icon: ShieldCheck, group: 'account' },
+  // §10.4 (созвон): управление ролями — ТОЛЬКО из sudo-админки (вкладка «Роли»),
+  // из кабинета убрали. Сам маршрут /panel/roles остаётся доступным по прямой ссылке.
+  //
+  // Утром 21.08 пункт вернули владельцу — это оказалось неверным прочтением решения.
+  // Уточнение владельца от 21.08: отдельной страницы ролей у него быть НЕ должно, доступ
+  // субу настраивается В КАРТОЧКЕ пользователя («Пользователи» → «Доступ к модулям»), где
+  // список модулей ограничен его подпиской. Пункт снова убран из меню, страница осталась
+  // админу платформы (см. canAccessPath → ADMIN_ONLY_PATHS).
   { path: '/panel/users', label: 'Пользователи', icon: Users2, group: 'account' },
 ]
 
