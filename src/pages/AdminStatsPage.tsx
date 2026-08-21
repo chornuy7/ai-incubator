@@ -2755,7 +2755,7 @@ function PricesTab() {
                       const coinUsd = prices.coinUsd ?? 0
                       const action = Number(draft[m.key]?.action ?? m.action ?? 0)
                       if (!avg || !tUsd || !coinUsd) {
-                        return <div className="mt-0.5 pr-1 text-[10px] text-faint">расход ИИ: нет данных (модуль ещё не запускали)</div>
+                        return <div className="mt-0.5 pr-1 text-[10px] text-faint">наши затраты: нет данных (модуль ещё не запускали)</div>
                       }
                       const aiUsd = tUsd * avg                 // что платим за ИИ на одно действие
                       const priceUsd = action * coinUsd        // что платит клиент за это действие
@@ -2770,13 +2770,16 @@ function PricesTab() {
                         <div className={cn('mt-0.5 pr-1 text-[10px] tabular-nums', cls)}>
                         <Tip
                           text={[
-                            `Платим OpenAI за одно действие: $${aiUsd.toFixed(7)}`,
-                            `  (в среднем ${avg} токенов модели на действие)`,
-                            `Берём с клиента за это же действие: $${priceUsd.toFixed(4)}`,
-                            `  (${action} ⚡ по курсу $${fmtUsd(coinUsd)} за ⚡)`,
-                            ratio == null ? '' : `Цена в ${ratioStr} раз выше расхода на ИИ — этот запас покрывает аккаунты, прокси, трафик, риск банов и нашу маржу.`,
+                            `НАШИ ЗАТРАТЫ на ИИ — по факту: $${aiUsd.toFixed(7)} за действие`,
+                            `  (фактический средний расход: ${avg} токенов модели)`,
+                            `Цена клиенту: $${priceUsd.toFixed(4)} (${action} ⚡ по курсу $${fmtUsd(coinUsd)} за ⚡)`,
+                            '',
+                            'Важно: цена НЕ считается от этих затрат. Цена ставится от МАКСИМУМА,',
+                            'который клиент может сжечь за одно действие, — здесь показан только',
+                            'фактический расход, чтобы видеть, сколько мы тратим на самом деле.',
+                            ratio == null ? '' : `Сейчас цена в ${ratioStr} раз выше фактических затрат — этот запас покрывает максимум расхода, аккаунты, прокси, трафик, риск банов и маржу.`,
                           ].filter(Boolean).join(String.fromCharCode(10))}>
-                          <span>платим ${aiUsd < 0.000001 ? aiUsd.toExponential(1) : aiUsd.toFixed(6)} · берём ${priceUsd.toFixed(4)}{ratio != null && <> · ×{ratioStr}</>}</span>
+                          <span>наши затраты ${aiUsd < 0.000001 ? aiUsd.toExponential(1) : aiUsd.toFixed(6)} · цена ${priceUsd.toFixed(4)}{ratio != null && <> · ×{ratioStr}</>}</span>
                         </Tip>
                         </div>
                       )
