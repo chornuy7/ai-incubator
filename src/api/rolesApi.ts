@@ -103,6 +103,31 @@ export function emptyPermissions(): RolePermissions {
  * а шаблон мог быть собран, когда модуль был оплачен. Выдать его сейчас всё равно нельзя —
  * сервер откажет на сохранении.
  */
+/**
+ * Сигнал «список шаблонов изменился».
+ *
+ * Список шаблонов живёт в ДВУХ местах одного экрана: в выпадающем списке карточки
+ * сотрудника и в разделе шаблонов ниже. Каждый держит своё состояние, поэтому удалённый
+ * шаблон продолжал предлагаться в выпадающем списке до перезагрузки страницы — и его
+ * можно было применить, получив ошибку от сервера на ровном месте.
+ *
+ * Поднимать состояние наверх нельзя без переделки: страница шаблонов открывается ещё и
+ * сама по себе (sudo-админка). Поэтому маленький сигнал: кто меняет — зовёт
+ * `notifyRolesChanged`, кто показывает — подписывается через `onRolesChanged`.
+ */
+const rolesListeners = new Set<() => void>()
+
+/** Сообщить всем спискам, что шаблоны изменились (создали, переименовали, удалили). */
+export function notifyRolesChanged(): void {
+  for (const cb of rolesListeners) cb()
+}
+
+/** Подписаться на изменения. Возвращает функцию отписки — для useEffect. */
+export function onRolesChanged(cb: () => void): () => void {
+  rolesListeners.add(cb)
+  return () => { rolesListeners.delete(cb) }
+}
+
 export function accessFromRole(
   role: Role, modules: { key: string }[], blocks: { key: string }[],
 ): { modules: Record<string, Perm>; blocks: Record<string, Perm> } {

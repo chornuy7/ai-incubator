@@ -7,7 +7,7 @@ import {
   fetchUsers, createUser, updateUser, deleteUser, fetchWorktime, fetchUserAccess, saveUserAccess,
   type User, type WorkSummary,
 } from '@/api/usersApi'
-import { fetchRoles, fetchRbacCatalog, accessFromRole, type Role, type Perm, type CatalogModule, type CatalogBlock } from '@/api/rolesApi'
+import { fetchRoles, fetchRbacCatalog, accessFromRole, onRolesChanged, type Role, type Perm, type CatalogModule, type CatalogBlock } from '@/api/rolesApi'
 import { RolesPage, Pager, PAGE_SIZE } from '@/pages/RolesPage'
 import { fetchAccountGroups, type AccountGroup } from '@/api/accountGroupsApi'
 import { fetchAccounts } from '@/api/accountsApi'
@@ -475,6 +475,10 @@ function UsersTab() {
     () => roles.filter((r) => !r.personalFor && r.id !== ADMIN_BYPASS_ID),
     [roles],
   )
+
+  // Шаблоны правят в разделе ниже, на этом же экране. Перечитываем список по сигналу
+  // оттуда: иначе удалённый шаблон остаётся в выпадающем списке до перезагрузки.
+  useEffect(() => onRolesChanged(() => { void fetchRoles().then(setRoles).catch(() => {}) }), [])
 
   async function toggleActive(u: User) {
     try {

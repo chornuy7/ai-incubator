@@ -5,7 +5,7 @@ import { PageHeader, Card, EmptyState, Badge, Switch } from '@/shared/ui'
 import { cn } from '@/shared/lib/utils'
 import { confirmDialog } from '@/shared/lib/dialog'
 import {
-  fetchRoles, fetchRbacCatalog, createRole, updateRole, deleteRole, emptyPermissions,
+  fetchRoles, fetchRbacCatalog, createRole, updateRole, deleteRole, emptyPermissions, notifyRolesChanged,
   type Role, type RbacCatalog, type RolePermissions, type Perm,
 } from '@/api/rolesApi'
 import { ADMIN_BYPASS_ID } from '@/shared/config/rbac'
@@ -250,6 +250,9 @@ export function RolesPage({ embedded }: {
       while (nameTaken(`${base} ${n}`)) n += 1
       const r = await createRole({ name: `${base} ${n}`, permissions: emptyPermissions() })
       setRoles((prev) => [...prev, r])
+      // Тот же список показан в карточках сотрудников выше — иначе новый шаблон
+      // появится там только после перезагрузки страницы.
+      notifyRolesChanged()
       // Новый шаблон дописывается в конец — перелистываем на последнюю страницу, иначе
       // кнопка «Создать» открывает редактор, а в списке ничего не появляется.
       setRolePage(Math.ceil((roles.length + 1) / PAGE_SIZE))
@@ -270,6 +273,9 @@ export function RolesPage({ embedded }: {
       await deleteRole(r.id)
       const next = roles.filter((x) => x.id !== r.id)
       setRoles(next)
+      // Удалённый шаблон продолжал предлагаться в выпадающем списке карточки сотрудника
+      // до перезагрузки — и его можно было применить, получив ошибку на ровном месте.
+      notifyRolesChanged()
       // Соседнюю роль не открываем: удаление — не повод начать править другую.
       if (selId === r.id) setSelId('')
     } catch (e) { setErr(e instanceof Error ? e.message : 'Ошибка') }
@@ -282,6 +288,8 @@ export function RolesPage({ embedded }: {
     try {
       const updated = await updateRole(selected.id, { name: name.trim(), isTemplate, permissions: perms })
       setRoles((prev) => prev.map((r) => (r.id === updated.id ? updated : r)))
+      // Переименованный шаблон должен так же называться и в списке выбора выше.
+      notifyRolesChanged()
       setDirty(false)
     } catch (e) { setErr(e instanceof Error ? e.message : 'Ошибка сохранения') }
     finally { setSaving(false) }
@@ -543,21 +551,15 @@ export function RolesPage({ embedded }: {
                 </div>
               ) : catalog ? (
                 <div className="flex flex-col gap-5">
-                  {/* Роль «без оплаты»: доступ к модулям даёт роль в обход подписки (тест/модер). */}
-                  <section className="rounded-lg border border-iris-500/25 bg-iris-500/[.06] p-3">
-                    <label className="flex cursor-pointer items-start gap-3">
-                      <input
-                        type="checkbox"
-                        checked={!!perms.freeAccess}
-                        onChange={(e) => { setPerms((s) => ({ ...s, freeAccess: e.target.checked })); mark() }}
-                        className="mt-0.5 h-4 w-4 rounded border-line accent-spark-500"
-                      />
-                      <span className="min-w-0">
-                        <span className="block text-sm font-semibold text-fg">Тестовый доступ — без оплаты</span>
-                        <span className="block text-xs text-muted">Роль видит и запускает разрешённые ей модули в обход подписки. Для тестеров и модераторов, которым не нужно платить (монеты за действия всё равно расходуются).</span>
-                      </span>
-                    </label>
-                  </section>
+                  {/*
+                    Флажок «Тестовый доступ — без оплаты» убран с экрана (просьба владельца
+                    21.08). В шаблоне он был вреден: шаблон лишь КОПИРУЕТ набор модулей
+                    сотруднику, а «в обход подписки» — это про оплату, и в списке заготовок
+                    читалось как «выдать бесплатно», хотя выдать можно только оплаченное.
+                    Сама возможность на сервере цела (`permissions.freeAccess`) и у ролей,
+                    где она уже стоит, продолжает работать: сохранение её не сбрасывает,
+                    потому что `perms` приходит из самой роли и уходит обратно как есть.
+                  */}
 
                   {/* Модули + блоки */}
                   <section>
