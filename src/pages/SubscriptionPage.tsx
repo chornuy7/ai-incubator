@@ -318,71 +318,73 @@ export function SubscriptionPage() {
           области, прижата ко дну, и она сама резервирует под себя место, чтобы низ
           страницы не прятался. */}
       <FloatingBar>
-        {/* Одна строка: слева что и почём, по центру период, справа кнопка —
-            как в панели запуска модулей. */}
-        <div className="flex w-full flex-wrap items-center gap-3">
-          <div className="min-w-0">
-            <div className="text-xs text-muted">
-              В подписке модулей: <b className="text-fg">{keys.length}</b>
-              {added.length > 0 && <> · добавлено <b className="text-fg">{added.length}</b></>}
-              {due.setup && <> · набор «{data.setups.find((s) => s.id === due.setup)?.name}» — скидка {Math.round(due.discount * 100)}%</>}
-            </div>
-            <div className="flex items-baseline gap-2">
-              {/* Показываем СУММУ К ОПЛАТЕ, а не цену всего набора: сервер списывает
-                  только за добавленные модули, и цена всего набора обещала бы списание,
-                  которого не будет. Год — со скидкой annualDiscount от 12 месяцев;
-                  скидка приходит с сервера (правится в админке). MR-150: CEIL до целых. */}
-              <span className="font-display text-2xl font-bold text-fg">{period === 'year' ? Math.round(due.sum * 12 * (1 - annualDiscount)) : due.sum} {cur}</span>
-              <span className="text-sm text-muted">{added.length ? 'к оплате' : 'ничего не добавлено'}</span>
+        {/* Раскладка та же, что у панели запуска модулей: слева сводка, по центру
+            переключатель периода (растягивается), справа кнопка у правого края.
+            Без этого содержимое липло к краям, а между ними зияла дыра. */}
+        <div className="flex w-full flex-wrap items-center justify-between gap-x-6 gap-y-2">
+          {/* Слева — чипами в ОДНУ строку, как цена и время в панели запуска модулей.
+              Раньше это были четыре строки друг под другом, и панель вырастала вдвое выше
+              (109 px против 61 у панели запуска). Требование MR-150 сохранено: месячные
+              токены и подарок остаются ОТДЕЛЬНО, подарок жёлтым — просто отдельными
+              чипами, а не отдельными строками. */}
+          <div className="flex shrink-0 flex-wrap items-center gap-2">
+            <span
+              className="flex h-10 items-center gap-1.5 rounded-xl border border-line bg-elevated px-3.5 text-sm font-bold text-fg"
+              title={`В подписке модулей: ${keys.length}${added.length ? ` · добавлено ${added.length}` : ''}${due.setup ? ` · набор «${data.setups.find((x) => x.id === due.setup)?.name}» — скидка ${Math.round(due.discount * 100)}%` : ''}`}
+            >
+              {period === 'year' ? Math.round(due.sum * 12 * (1 - annualDiscount)) : due.sum} {cur}
+              <span className="font-semibold text-muted">{added.length ? 'к оплате' : 'ничего не добавлено'}</span>
               {added.length > 0 && period === 'year' && <span className="rounded-md bg-spark-500/15 px-1.5 py-0.5 text-[10px] font-bold text-spark-300">−{Math.round(annualDiscount * 100)}%</span>}
-              {added.length > 0 && period === 'month' && due.discount > 0 && <span className="text-sm text-muted line-through">{due.full} {cur}</span>}
-            </div>
-            {/* MR-150: сколько ⚡ приходит КАЖДЫЙ месяц по подписке. Считаем по ВСЕЙ подписке
-                (оплаченные + добавленные), а не по добавленным: заказчик просил видеть общее
-                число (пример с созвона — 14 модулей = 1400 ⚡/мес). Иначе у того, у кого всё
-                оплачено, строка пропадала: оплаченные модули не входят в «добавленные». */}
+              {added.length > 0 && period === 'month' && due.discount > 0 && <span className="text-xs font-semibold text-muted line-through">{due.full} {cur}</span>}
+            </span>
+
+            {/* MR-150: сколько ⚡ приходит КАЖДЫЙ месяц по ВСЕЙ подписке (оплаченные +
+                добавленные). По одним «добавленным» строка пропадала у того, у кого всё
+                оплачено. */}
             {cost.monthlyTokens > 0 && (
-              // Значок ⚡ здесь ТОЛЬКО текстовый: иконка Zap рядом давала вторую молнию
-              // в одной строке. На плитках модулей ровно так же — одним символом.
-              <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-muted">
-                <span>
-                  <b className="text-fg">{cost.monthlyTokens.toLocaleString('ru-RU')}</b> ⚡ токенов в месяц по подписке
-                </span>
-                {added.length > 0 && due.monthlyTokens > 0 && (
-                  <span className="text-spark-300">+{due.monthlyTokens.toLocaleString('ru-RU')} ⚡ за добавленные</span>
-                )}
-              </div>
+              <span
+                className="flex h-10 items-center gap-1.5 rounded-xl border border-spark-500/30 bg-spark-500/10 px-3.5 text-sm font-bold text-spark-300"
+                title={`${cost.monthlyTokens.toLocaleString('ru-RU')} ⚡ токенов в месяц по подписке${added.length && due.monthlyTokens ? ` · +${due.monthlyTokens.toLocaleString('ru-RU')} ⚡ за добавленные` : ''}`}
+              >
+                {cost.monthlyTokens.toLocaleString('ru-RU')} ⚡<span className="font-semibold text-spark-300/70">в месяц</span>
+                {added.length > 0 && due.monthlyTokens > 0 && <span className="text-xs">+{due.monthlyTokens.toLocaleString('ru-RU')}</span>}
+              </span>
             )}
-            {/* MR-150: подарочные токены — отдельной жёлтой строкой, а не в общей серой.
-                Считаем по ВСЕЙ подписке, как и месячные: по добавленным строка пропадала
-                у того, у кого всё оплачено, — а подарок он получил и должен его видеть.
-                Когда модули добавляют, рядом отдельно показываем подарок за них. */}
+
+            {/* MR-150: подарок — ОТДЕЛЬНО и жёлтым, как и просили. */}
             {cost.giftTokens > 0 && (
-              <div className="mt-1 flex flex-wrap items-center gap-x-2 text-xs font-semibold text-amber-300">
-                <span>+{cost.giftTokens.toLocaleString('ru-RU')} ⚡ токенов в подарок</span>
-                {added.length > 0 && due.giftTokens > 0 && (
-                  <span className="text-amber-200/80">из них +{due.giftTokens.toLocaleString('ru-RU')} ⚡ за добавленные</span>
-                )}
-              </div>
+              <span
+                className="flex h-10 items-center gap-1.5 rounded-xl border border-amber-500/30 bg-amber-500/10 px-3.5 text-sm font-bold text-amber-300"
+                title={`+${cost.giftTokens.toLocaleString('ru-RU')} ⚡ токенов в подарок${added.length && due.giftTokens ? ` · из них +${due.giftTokens.toLocaleString('ru-RU')} ⚡ за добавленные` : ''}`}
+              >
+                +{cost.giftTokens.toLocaleString('ru-RU')} ⚡<span className="font-semibold text-amber-300/70">в подарок</span>
+              </span>
             )}
           </div>
-          {/* Период подписки: на месяц или на год — определяет срок действия (expiresAt). */}
-          <div className="flex rounded-xl border border-line bg-elevated p-0.5 text-sm">
-            {(['month', 'year'] as const).map((p) => (
-              <button key={p} onClick={() => setPeriod(p)} className={cn('h-9 rounded-lg px-3 font-semibold transition-colors', period === p ? 'bg-spark-500/15 text-spark-300' : 'text-muted hover:text-fg')}>
-                {p === 'month' ? 'Месяц' : 'Год'}{p === 'year' && <span className="ml-1 text-[10px] text-spark-400">−{Math.round(annualDiscount * 100)}%</span>}
-              </button>
-            ))}
+
+          {/* Центр: переключатель периода. Растягивается на всё свободное место, сам
+              переключатель по центру — как дорожная карта в панели запуска. */}
+          <div className="flex min-w-0 flex-1 basis-40 justify-center">
+            <div className="flex rounded-xl border border-line bg-elevated p-0.5 text-sm">
+              {(['month', 'year'] as const).map((p) => (
+                <button key={p} onClick={() => setPeriod(p)} className={cn('h-9 rounded-lg px-3 font-semibold transition-colors', period === p ? 'bg-spark-500/15 text-spark-300' : 'text-muted hover:text-fg')}>
+                  {p === 'month' ? 'Месяц' : 'Год'}{p === 'year' && <span className="ml-1 text-[10px] text-spark-400">−{Math.round(annualDiscount * 100)}%</span>}
+                </button>
+              ))}
+            </div>
           </div>
-          <button
-            onClick={() => void save()}
-            disabled={saving || !changed}
-            className="btn-primary ml-auto h-11 min-w-[190px] disabled:opacity-40"
-            title={changed ? 'Спишется с баланса $ за добавленные модули' : 'Новых модулей не выбрано'}
-          >
-            {saving ? <Loader2 size={16} className="animate-spin" /> : <Check size={16} />}
-            {`Оплатить на ${period === 'year' ? 'год' : 'месяц'}`}
+          {/* Право: кнопка у правого края — прижимает justify-between, ml-auto не нужен. */}
+          <div className="flex shrink-0 items-center justify-end">
+            <button
+              onClick={() => void save()}
+              disabled={saving || !changed}
+              className="btn-primary h-11 min-w-[190px] disabled:opacity-40"
+              title={changed ? 'Спишется с баланса $ за добавленные модули' : 'Новых модулей не выбрано'}
+            >
+              {saving ? <Loader2 size={16} className="animate-spin" /> : <Check size={16} />}
+              {`Оплатить на ${period === 'year' ? 'год' : 'месяц'}`}
             </button>
+          </div>
         </div>
       </FloatingBar>
 
