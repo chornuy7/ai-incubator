@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Rocket, Check, Clock, Power, Trash2, CalendarClock, Plus, Pencil, ArrowLeft, Lock, LockOpen, Zap, Target as TargetIcon } from 'lucide-react'
 import { activeAccounts, trashedAccounts, useApp } from '@/mocks/store'
-import { PageHeader, Card, Select, Badge, EmptyState } from '@/shared/ui'
+import { PageHeader, Card, Select, Badge, EmptyState, Tip} from '@/shared/ui'
 import { HelpButton } from '@/features/neuro-commenting/moduleUi'
 import { moduleTitle } from '@/shared/config/modules'
 import { fetchGoals, type Goal } from '@/api/goalsApi'
@@ -589,9 +589,9 @@ export function CampaignPage() {
                 <span className="font-semibold text-white">{c.name}</span>
                 <span className="text-xs text-white/50">{moduleTitle(c.moduleKey)}</span>
                 {c.goalId && <span className="text-xs text-iris-300"><TargetIcon size={11} className="mb-0.5 inline" /> {goalNameOf(c.goalId)}</span>}
-                <span className="inline-flex items-center gap-1 text-xs text-white/50" title={c.pinned ? 'Аккаунты закреплены — вышли из общего пула' : 'Аккаунты используются без лока'}>
+                <Tip className="inline-flex items-center gap-1 text-xs text-white/50" text={c.pinned ? 'Аккаунты закреплены — вышли из общего пула' : 'Аккаунты используются без лока'}>
                   {c.pinned ? <Lock size={11} className="text-amber-300" /> : <LockOpen size={11} />} {realCount(c.accountIds)} акк.
-                </span>
+                </Tip>
                 <div className="ml-auto flex gap-1">
                   <button onClick={() => void launchSaved(c)} className="btn-primary h-8 px-3 text-xs" aria-label="Запустить кампанию"><Rocket size={13} /> Запустить</button>
                   <button onClick={() => openEditCampaign(c)} className="btn-icon h-8 w-8" aria-label="Изменить"><Pencil size={14} /></button>

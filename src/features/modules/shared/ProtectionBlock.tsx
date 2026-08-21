@@ -1,5 +1,5 @@
 import { Shield, Settings2, Bolt, HelpCircle } from 'lucide-react'
-import { Switch } from '@/shared/ui'
+import { Switch, Tip} from '@/shared/ui'
 import { HelpButton } from '@/features/neuro-commenting/moduleUi'
 import { useUi } from '@/shared/lib/uiStore'
 import { cn } from '@/shared/lib/utils'
@@ -101,15 +101,15 @@ export function ProtectionBlock({ enabled, onEnabled, level, onLevel, showLevels
                   i === level ? 'border-spark-500/60 bg-spark-500/10' : 'border-line bg-elevated hover:border-spark-500/30',
                 )}
               >
-                <span
+                <Tip
                   className={cn(
                     'grid h-8 w-8 shrink-0 place-items-center rounded-lg',
                     i === level ? 'bg-spark-500/20 text-spark-300' : 'text-muted',
                   )}
-                  title={lvl.label}
+                  text={lvl.label}
                 >
                   <Icon size={16} />
-                </span>
+                </Tip>
                 <div className="min-w-0 flex-1">
                   {/* §8: маленькие подсказки у отдельных режимов оставляем. */}
                   <div className="flex items-center gap-1.5">

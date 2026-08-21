@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { MessageSquare, Smile, MessagesSquare, MessageCircle, Send, UserPlus, FileText, ExternalLink, Activity, ListChecks } from 'lucide-react'
 import { fetchAccountActions, type AccountAction, type AccountActionType } from '@/api/accountsApi'
-import { Select } from '@/shared/ui'
+import { Select, Tip} from '@/shared/ui'
 import { cn } from '@/shared/lib/utils'
 
 /**
@@ -113,7 +113,7 @@ function ActionRow({ a }: { a: AccountAction }) {
           {a.objectRef?.postId ? <span className="font-mono text-[11px] text-muted">пост #{a.objectRef.postId}</span> : null}
           {a.status && a.status !== 'sent' && <span className="text-[11px] text-amber-300">{a.status}</span>}
         </div>
-        {body && <div className="mt-0.5 truncate text-xs text-white/60" title={body}>{body}</div>}
+        {body && <Tip className="mt-0.5 truncate text-xs text-white/60" text={body}>{body}</Tip>}
         <div className="mt-0.5 flex flex-wrap items-center gap-x-2 text-[11px] text-muted">
           <span>{new Date(a.ts).toLocaleString('ru-RU', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}</span>
           {a.moduleKey && <span>· {a.moduleKey}</span>}

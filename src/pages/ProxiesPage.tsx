@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { Network, Plus, Trash2, Pencil, Link2, Check, Circle, Zap, Loader2, MapPin, Upload } from 'lucide-react'
-import { PageHeader, Card, EmptyState, Badge, Select, Modal } from '@/shared/ui'
+import { PageHeader, Card, EmptyState, Badge, Select, Modal, Tip} from '@/shared/ui'
 import { HelpButton } from '@/features/neuro-commenting/moduleUi'
 import {
   fetchProxies, createProxy, updateProxy, deleteProxy, deleteProxies, toProxyUrl, checkProxy, checkAllProxies,
@@ -282,15 +282,15 @@ export function ProxiesPage() {
                     {p.country && (
                       // Гео по шлюзу — это страна дата-центра, а не выхода: у мобильных
                       // прокси они разные, и раздавать такой прокси «по стране» опасно.
-                      <span className="text-sm" title={p.geoSource === 'gateway' ? 'Страна определена по адресу сервера — приблизительно' : p.geoSource === 'exit' ? 'Страна реального выходного IP' : ''}>
+                      <Tip className="text-sm" text={p.geoSource === 'gateway' ? 'Страна определена по адресу сервера — приблизительно' : p.geoSource === 'exit' ? 'Страна реального выходного IP' : undefined}>
                         {FLAGS[p.country] || p.country.toUpperCase()}
                         {p.geoSource === 'gateway' && <span className="ml-0.5 text-[10px] text-amber-300">≈</span>}
-                      </span>
+                      </Tip>
                     )}
                     {/* Сколько аккаунтов сидит на прокси, показано справа («аккаунтов: N») —
                         второй такой же бейдж здесь только дублировал бы его.
                         Причина «нерабочести» — в подсказке: в списке она была бы шумом. */}
-                    <span title={sm.hint}><Badge tone={sm.tone}>{sm.label}</Badge></span>
+                    <Tip text={sm.hint}><Badge tone={sm.tone}>{sm.label}</Badge></Tip>
                   </div>
                   <div className="mt-0.5 truncate font-mono text-xs text-white/50">{p.scheme}://{p.username ? `${p.username}@` : ''}{p.host}:{p.port}</div>
                   {geoMap[p.id] && (
@@ -395,7 +395,7 @@ function ProxyDetailModal({ proxy, accountsCount, onClose, onUpdated }: {
         <div className="grid grid-cols-2 gap-2">
           {/* В деталях причину пишем текстом — сюда приходят именно разбираться. */}
           <ProxyInfo label="Статус">
-            <span title={sm.hint}><Badge tone={sm.tone}>{sm.label}</Badge></span>
+            <Tip text={sm.hint}><Badge tone={sm.tone}>{sm.label}</Badge></Tip>
             {p.status !== 'ok' && p.status !== 'unknown' && (
               <div className="mt-1 text-[11px] leading-snug text-muted">
                 {p.reason === 'no_telegram' ? 'Интернет открывается, но соединение с серверами Telegram не проходит — замените прокси.'

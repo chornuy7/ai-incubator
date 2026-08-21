@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { ListChecks, RefreshCw, Square, RotateCw, Target, Activity, Gauge, Pause, Play, Loader2, ArrowLeft, Download, AlertTriangle, Clock } from 'lucide-react'
 import { useApp } from '@/mocks/store'
-import { PageHeader, Card, EmptyState, Badge, Select } from '@/shared/ui'
+import { PageHeader, Card, EmptyState, Badge, Select, Tip} from '@/shared/ui'
 import { HelpButton } from '@/features/neuro-commenting/moduleUi'
 import { MODULES, isCombatModule, combatConfirmText } from '@/shared/config/modules'
 import { fetchAllTasks, fetchModuleTask, stopModuleTask, restartModuleTask, pauseModuleTask, resumeModuleTask, updateModuleTaskSettings, type ModuleTask } from '@/api/modulesApi'
@@ -817,7 +817,7 @@ function TaskCard({ t, goalName, busy, busyAction, pendingAction, onOpen, onStop
               время до конца; у остановленной/на паузе (приглушённо, «при запуске») — сколько
               займёт, если её запустить/возобновить. Не показываем у готовых и с ошибкой. */}
           {(() => { const e = taskEtaMs(t, fatigue); if (e == null) return null; const run = t.status === 'running'; return (
-            <span className={cn('inline-flex items-center gap-1 tabular-nums', run ? 'text-emerald-300/80' : 'text-white/35')} title={run ? 'Прогноз времени до завершения — по текущему темпу' : 'Сколько ещё займёт задача, если её запустить/возобновить'}><Clock size={11} /> ≈ {fmtDur(e / 1000)}{run ? '' : ' при запуске'}</span>
+            <Tip className={cn('inline-flex items-center gap-1 tabular-nums', run ? 'text-emerald-300/80' : 'text-white/35')} text={run ? 'Прогноз времени до завершения — по текущему темпу' : 'Сколько ещё займёт задача, если её запустить/возобновить'}><Clock size={11} /> ≈ {fmtDur(e / 1000)}{run ? '' : ' при запуске'}</Tip>
           ) })()}
         </div>
       </div>
@@ -1139,14 +1139,14 @@ export function TaskDetailPage() {
               {/* MR-109: ETA — у работающей задачи время до конца (зелёным), у остановленной/
                   на паузе прогноз «при запуске» (приглушённо). */}
               {(() => { const e = taskEtaMs(t); if (e == null) return null; const run = t.status === 'running'; return (
-                <span className={cn('inline-flex items-center gap-1 tabular-nums', run ? 'text-emerald-300/80' : 'text-white/40')} title={run ? 'Прогноз времени до завершения — по текущему темпу' : 'Сколько ещё займёт задача, если её запустить/возобновить'}><Clock size={13} /> ≈ {fmtDur(e / 1000)}{run ? '' : ' при запуске'}</span>
+                <Tip className={cn('inline-flex items-center gap-1 tabular-nums', run ? 'text-emerald-300/80' : 'text-white/40')} text={run ? 'Прогноз времени до завершения — по текущему темпу' : 'Сколько ещё займёт задача, если её запустить/возобновить'}><Clock size={13} /> ≈ {fmtDur(e / 1000)}{run ? '' : ' при запуске'}</Tip>
               ) })()}
               {/* Голая цифра «⚡ 0.00» ни о чём не говорила — подписываем, что это расход
                   ИМЕННО этой задачи (из общего баланса он не читается). */}
-              <span className="inline-flex items-baseline gap-1 tabular-nums text-amber-300/80" title={t.tokenCoins ? `${fmtCoins(t.spentCoins || 0)} ⚡ за действия + ${fmtCoins(t.tokenCoins)} ⚡ за ИИ` : undefined}>
+              <Tip className="items-baseline gap-1 tabular-nums text-amber-300/80" text={t.tokenCoins ? `${fmtCoins(t.spentCoins || 0)} ⚡ за действия + ${fmtCoins(t.tokenCoins)} ⚡ за ИИ` : undefined}>
                 <span className="text-[11px] text-white/40">потрачено</span>
                 ⚡ {fmtCoins((t.spentCoins || 0) + (t.tokenCoins || 0))}{t.tokens ? ` · ${t.tokens.toLocaleString('ru-RU')} токенов` : ''}
-              </span>
+              </Tip>
             </div>
           </div>
           {/* Управление — только тем, у кого есть доступ к модулю задачи. */}

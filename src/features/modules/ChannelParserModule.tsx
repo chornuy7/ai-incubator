@@ -6,7 +6,7 @@ import {
 } from 'lucide-react'
 import { MODULES, LANGUAGES, type ModuleConfig } from '@/shared/config/modules'
 import { activeAccounts, useApp } from '@/mocks/store'
-import { Segmented, Switch, Badge, Select, EmptyState } from '@/shared/ui'
+import { Segmented, Switch, Badge, Select, EmptyState, Tip} from '@/shared/ui'
 import { AccountPicker } from '@/features/account-picker/AccountPicker'
 import { useModuleTask } from './shared/useModuleTask'
 import { SectionCard, NumberField, ProtectionTimings, DelayFields, LaunchPanel, LaunchSteps, markCurrentStep, TaskStartedModal, SchedulePanel } from './shared'
@@ -637,7 +637,7 @@ function ChannelParserInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: 
                     <div className="flex items-center gap-2 text-xs text-muted">
                       {r.username && <span className="text-iris-300/80">@{r.username}</span>}
                       <span className="inline-flex items-center gap-1"><Users size={11} /> {fmtMembers(r.members ?? 0)}</span>
-                      {(() => { const s = qualityScore(r.members ?? 0, r.hasComments); return <span title={qualityExplain(r.members ?? 0, r.hasComments)} className="cursor-help"><Badge tone={qualityTone(s)}>★ {s}/10</Badge></span> })()}
+                      {(() => { const s = qualityScore(r.members ?? 0, r.hasComments); return <Tip text={qualityExplain(r.members ?? 0, r.hasComments)} className="cursor-help"><Badge tone={qualityTone(s)}>★ {s}/10</Badge></Tip> })()}
                     </div>
                   </div>
                   {r.link && (

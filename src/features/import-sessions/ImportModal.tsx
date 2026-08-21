@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState, type DragEvent as ReactDragEvent } from 'react'
 import { UploadCloud, Folder, FolderOpen, ChevronRight, Loader2, Search, Check, AlertTriangle, HardDrive, Users, KeyRound, Network } from 'lucide-react'
 import { useRef } from 'react'
-import { Modal, Select, Badge } from '@/shared/ui'
+import { Modal, Select, Badge, Tip} from '@/shared/ui'
 import { cn } from '@/shared/lib/utils'
 import { browseDirs, scanFolder, runImport, proxyCapacity, pairPreview, uploadFolder, cleanupUpload, importCapabilities, collectDroppedEntries, type ScannedAccount, type ProxyMode, type ImportResultRow, type PairPoolItem } from '@/api/accountImportApi'
 import { fetchProxies, importProxies, toProxyUrl, isUsableProxy, type Proxy } from '@/api/proxiesApi'
@@ -611,7 +611,7 @@ export function ImportModal({ open, onClose, onImported }: { open: boolean; onCl
               return chosen.map((it, i) => (
                 <div key={key(it)} className="flex items-center gap-2 border-b border-line/60 px-3 py-2 text-sm last:border-0">
                   <span className="w-6 shrink-0 text-right text-xs tabular-nums text-white/30">{i + 1}</span>
-                  <span className="w-40 shrink-0 truncate font-semibold text-white" title={it.name}>{it.name}</span>
+                  <Tip className="w-40 shrink-0 truncate font-semibold text-white" text={it.name}>{it.name}</Tip>
                   {it.phone && <span className="w-32 shrink-0 font-mono text-xs text-white/40">{it.phone}</span>}
                   <Select
                     value={pairs[i] || ''}

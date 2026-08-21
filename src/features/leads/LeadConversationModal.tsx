@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { MessageSquare, RefreshCw, AlertTriangle, Bot, User } from 'lucide-react'
-import { Modal, Badge } from '@/shared/ui'
+import { Modal, Badge, Tip} from '@/shared/ui'
 import { fetchLeadConversation, fetchConversationByPeer, type Lead, type LeadConversation } from '@/api/leadsApi'
 import { cn } from '@/shared/lib/utils'
 
@@ -61,9 +61,9 @@ export function LeadConversationModal({ source, onClose }: { source: Conversatio
           {/* Источник лида: из какой задачи-прогона он пришёл — важно менеджеру,
               который реагирует на горячего (полный id задачи — в подсказке). */}
           {data?.lead?.taskId && (
-            <span className="rounded-md bg-white/5 px-1.5 py-0.5 text-[11px] text-white/50" title={`Задача-источник: ${data.lead.taskId}`}>
+            <Tip className="rounded-md bg-white/5 px-1.5 py-0.5 text-[11px] text-white/50" text={`Задача-источник: ${data.lead.taskId}`}>
               задача: {data.lead.taskId.slice(-6)}
-            </span>
+            </Tip>
           )}
           {data?.busyIn && (
             <Badge tone="amber" >

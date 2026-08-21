@@ -379,12 +379,12 @@ export function AdminStatsPage() {
                 ) : (
                   <span className="inline-flex items-center gap-1">
                     {refreshing && <Loader2 size={11} className="animate-spin text-spark-300" />}
-                    <span
+                    <Tip
                       className="inline-flex min-w-[34px] justify-center rounded-md bg-white/6 px-1.5 py-0.5 font-mono tabular-nums text-fg/70"
-                      title={refreshing ? 'Идёт обновление…' : 'Секунд до следующего обновления'}
+                      text={refreshing ? 'Идёт обновление…' : 'Секунд до следующего обновления'}
                     >
                       {secLeft}с
-                    </span>
+                    </Tip>
                   </span>
                 )
               )}
