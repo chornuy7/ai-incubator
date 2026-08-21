@@ -1,7 +1,7 @@
 /** §12: роуты групп (папок) аккаунтов. Монтируется в /api/account-groups. */
 import { Router } from 'express'
 import { listGroups, getGroup, createGroup, updateGroup, deleteGroup, groupsByAccount } from './accountGroups.js'
-import { requesterContext } from './lib/accessGuard.js'
+import { requesterContext, ownedForRequest, ownsRecord } from './lib/accessGuard.js'
 
 export const accountGroupsRouter = Router()
 
@@ -27,7 +27,6 @@ async function guardOwnGroup(req, res) {
 // Аудит 20.08: группы аккаунтов отдавались все всем — фильтруем по владельцу пространства.
 accountGroupsRouter.get('/', async (req, res) => {
   try {
-    const { ownedForRequest } = await import('./lib/accessGuard.js')
     const groups = await ownedForRequest(req, await listGroups())
     res.json({ ok: true, groups, byAccount: groupsByAccount(groups) })
   } catch (e) { fail(res, e, 500) }
@@ -37,10 +36,14 @@ accountGroupsRouter.post('/', async (req, res) => {
   try { res.json({ ok: true, group: await createGroup({ ...(req.body ?? {}), userId: req.header('x-user-id') || '' }) }) } catch (e) { fail(res, e) }
 })
 
+// Аудит 21.08: правку групп закрыли ещё в MR-37, а чтение по id осталось открытым —
+// и отдавало СОСТАВ чужой группы, то есть id чужих Telegram-аккаунтов. Список групп
+// уже фильтруется по владельцу, точечное чтение приводим к тому же правилу.
 accountGroupsRouter.get('/:id', async (req, res) => {
   try {
     const group = await getGroup(req.params.id)
     if (!group) return res.status(404).json({ ok: false, error: 'Группа не найдена' })
+    if (!(await ownsRecord(req, group))) return res.status(403).json({ ok: false, error: 'Это не ваша группа' })
     res.json({ ok: true, group })
   } catch (e) { fail(res, e, 500) }
 })

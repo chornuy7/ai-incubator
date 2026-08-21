@@ -39,6 +39,10 @@ export async function createLink(input = {}) {
   const link = {
     id: `lnk_${crypto.randomUUID().slice(0, 8)}`,
     code: newCode(),
+    // Чья ссылка. Аудит 21.08: владельца не было, и `GET /api/links` отдавал все
+    // отслеживаемые ссылки платформы — то есть куда каждый клиент ведёт людей и
+    // сколько переходов собрал. Это его воронка целиком, на виду у конкурента.
+    userId: input.userId ? String(input.userId) : null,
     url,
     title: String(input.title || '').trim(),
     goalId: input.goalId ? String(input.goalId) : null,

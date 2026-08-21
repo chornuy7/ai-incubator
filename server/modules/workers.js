@@ -1825,7 +1825,9 @@ export async function runNeuroDialogs(task, store) {
           // ИЛИ цель (раньше — только при цели, и кампания без цели не набирала CRM).
           if (s.goalId || s.campaignId) {
             try {
-              const { created } = await upsertLead({ goalId: s.goalId, campaignId: s.campaignId, taskId: task.id, accountId, peer: peerKey, status: 'contacted' })
+              // Владелец лида — хозяин задачи: без него лид ложится «ничьим» и попадает
+              // в общую кучу, откуда его видит вся платформа (аудит 21.08).
+              const { created } = await upsertLead({ userId: task.userId, goalId: s.goalId, campaignId: s.campaignId, taskId: task.id, accountId, peer: peerKey, status: 'contacted' })
               if (created) await store.appendLog(task, 'info', `Новый лид в CRM: ${peerKey}`, meta.name)
             } catch (e) {
               // CRM не должна ронять переписку — диалог важнее записи о нём.
@@ -1860,7 +1862,7 @@ export async function runNeuroDialogs(task, store) {
                     `Дожим «${peerKey}»: ${cur.status} → ${next} (${verdict.reason})`, meta.name)
                 }
               } else if (shouldAdvance(cur?.status || 'cold', verdict.status)) {
-                await upsertLead({ peer: peerKey, goalId: s.goalId, campaignId: s.campaignId, taskId: task.id, accountId, status: verdict.status })
+                await upsertLead({ userId: task.userId, peer: peerKey, goalId: s.goalId, campaignId: s.campaignId, taskId: task.id, accountId, status: verdict.status })
                 await store.appendLog(
                   task,
                   verdict.status === 'hot' || verdict.status === 'target' ? 'success' : 'info',
@@ -2912,6 +2914,7 @@ export async function runMailing(task, store) {
         if (s.goalId || s.campaignId) {
           try {
             await upsertLead({
+              userId: task.userId,
               peer: user.username ? `@${user.username}` : label,
               goalId: s.goalId,
               campaignId: s.campaignId,

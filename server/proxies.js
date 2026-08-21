@@ -386,8 +386,16 @@ export async function probeProxyExitGeo(proxy = {}, timeoutMs = 9000) {
  * Обновляет и гео тоже: раньше кнопка трогала только статус, поэтому после починки
  * схемы страна оставалась старой и неверной, а `note` противоречил `country` (баг 5).
  */
-export async function checkAllProxies(timeoutMs = 9000) {
-  const all = await listProxies()
+/**
+ * Проверить живость прокси.
+ * @param {string[]|null} [onlyIds] какие проверять. Роут передаёт сюда прокси автора
+ * запроса: без этого один клиент прогонял и видел вердикт по всем прокси платформы —
+ * то есть узнавал, сколько их у соседа и какие живые. `null` — плановая проверка, все.
+ * @param {number} [timeoutMs]
+ */
+export async function checkAllProxies(onlyIds = null, timeoutMs = 9000) {
+  const allow = onlyIds ? new Set(onlyIds.map(String)) : null
+  const all = (await listProxies()).filter((p) => !allow || allow.has(String(p.id)))
   const results = []
   // Пачками: проба теперь ходит наружу через каждый прокси (секунды), и полсотни
   // подряд — это минуты. Но и все разом открывать нельзя: сотня сокетов на ровном месте.

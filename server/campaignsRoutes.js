@@ -13,6 +13,7 @@ import { assertNoHotLeadConflict } from './leads.js'
 import { appendAudit } from './lib/auditLog.js'
 import { listSchedules, createSchedule, updateSchedule, deleteSchedule } from './campaignSchedules.js'
 import { listCampaigns, getCampaign, createCampaign, updateCampaign, deleteCampaign, pinnedAccountMap, conflictingAccounts } from './campaigns.js'
+import { ownedForRequest, ownsRecord } from './lib/accessGuard.js'
 
 export const campaignsRouter = Router()
 
@@ -85,10 +86,32 @@ function fail(res, err, code = 400) { res.status(code).json({ ok: false, error: 
 // Аудит 20.08: расписания кампаний отдавались все всем (владелец у них уже пишется).
 campaignsRouter.get('/schedules', async (req, res) => {
   try {
-    const { ownedForRequest } = await import('./lib/accessGuard.js')
     res.json({ ok: true, schedules: await ownedForRequest(req, await listSchedules()) })
   } catch (e) { fail(res, e, 500) }
 })
+
+/**
+ * Расписание под id и право на него.
+ *
+ * Аудит 21.08: список расписаний фильтруется по владельцу, а правка и удаление по id —
+ * нет. Запись расписания несёт `body` целого запуска (модули, пул аккаунтов, цель), так
+ * что чужой мог сдвинуть время старта, выключить запланированную кампанию или снести её
+ * совсем — и владелец узнал бы об этом, только когда запуск не состоялся.
+ * @returns {Promise<{sched: object|null, allowed: boolean}>}
+ */
+async function scheduleAccess(req, id) {
+  const sched = (await listSchedules()).find((s) => s.id === id) || null
+  if (!sched) return { sched: null, allowed: false }
+  return { sched, allowed: await ownsRecord(req, sched) }
+}
+
+/** Единый отказ по расписанию: нет — 404, чужое — 403. */
+function denySchedule(res, sched) {
+  return sched
+    ? res.status(403).json({ ok: false, error: 'Это не ваше расписание' })
+    : res.status(404).json({ ok: false, error: 'Расписание не найдено' })
+}
+
 campaignsRouter.post('/schedules', async (req, res) => {
   try {
     const sched = await createSchedule({ ...(req.body ?? {}), userId: req.header('x-user-id') || '' })
@@ -100,13 +123,17 @@ campaignsRouter.post('/schedules', async (req, res) => {
 })
 campaignsRouter.put('/schedules/:id', async (req, res) => {
   try {
-    const sched = await updateSchedule(req.params.id, req.body ?? {})
-    if (!sched) return res.status(404).json({ ok: false, error: 'Расписание не найдено' })
-    res.json({ ok: true, schedule: sched })
+    const { sched, allowed } = await scheduleAccess(req, req.params.id)
+    if (!allowed) return denySchedule(res, sched)
+    const updated = await updateSchedule(req.params.id, req.body ?? {})
+    if (!updated) return res.status(404).json({ ok: false, error: 'Расписание не найдено' })
+    res.json({ ok: true, schedule: updated })
   } catch (e) { fail(res, e) }
 })
 campaignsRouter.delete('/schedules/:id', async (req, res) => {
   try {
+    const { sched, allowed } = await scheduleAccess(req, req.params.id)
+    if (!allowed) return denySchedule(res, sched)
     const ok = await deleteSchedule(req.params.id)
     if (!ok) return res.status(404).json({ ok: false, error: 'Расписание не найдено' })
     res.json({ ok: true })
@@ -120,7 +147,6 @@ campaignsRouter.get('/', async (req, res) => {
   try {
     const { goalId, status, moduleKey } = req.query
     // Аудит 20.08: кампании отдавались все всем. Владелец пишется (ownerColumn) — фильтруем.
-    const { ownedForRequest } = await import('./lib/accessGuard.js')
     const campaigns = await ownedForRequest(req, await listCampaigns({ goalId, status, moduleKey }))
     res.json({ ok: true, campaigns, pinned: pinnedAccountMap(campaigns) })
   } catch (e) { fail(res, e) }
@@ -146,16 +172,40 @@ campaignsRouter.post('/', async (req, res) => {
   } catch (e) { fail(res, e) }
 })
 
+/**
+ * Кампания под id и право на неё.
+ *
+ * Аудит 21.08: точечные роуты кампании владельца не спрашивали. Кампания — это цель,
+ * набор модулей и ЗАКРЕПЛЁННЫЕ за ней аккаунты, поэтому чужой по одному id читал чужой
+ * план работ, а правкой мог перевесить кампанию на свою цель, переставить пул аккаунтов
+ * или удалить её (а удаление снимает закрепление аккаунтов — они уходят в общий пул).
+ * @returns {Promise<{campaign: object|null, allowed: boolean}>}
+ */
+async function campaignAccess(req, id) {
+  const campaign = await getCampaign(id)
+  if (!campaign) return { campaign: null, allowed: false }
+  return { campaign, allowed: await ownsRecord(req, campaign) }
+}
+
+/** Единый отказ по кампании: нет — 404, чужая — 403. */
+function denyCampaign(res, campaign) {
+  return campaign
+    ? res.status(403).json({ ok: false, error: 'Это не ваша кампания' })
+    : res.status(404).json({ ok: false, error: 'Кампания не найдена' })
+}
+
 campaignsRouter.get('/:id', async (req, res) => {
   try {
-    const campaign = await getCampaign(req.params.id)
-    if (!campaign) return res.status(404).json({ ok: false, error: 'Кампания не найдена' })
+    const { campaign, allowed } = await campaignAccess(req, req.params.id)
+    if (!allowed) return denyCampaign(res, campaign)
     res.json({ ok: true, campaign })
   } catch (e) { fail(res, e) }
 })
 
 campaignsRouter.put('/:id', async (req, res) => {
   try {
+    const { campaign: existing, allowed } = await campaignAccess(req, req.params.id)
+    if (!allowed) return denyCampaign(res, existing)
     const body = req.body ?? {}
     if (body.accountIds && body.pinned !== false) {
       const err = await assertAccountsFree(body.accountIds, req.params.id)
@@ -169,6 +219,8 @@ campaignsRouter.put('/:id', async (req, res) => {
 
 campaignsRouter.delete('/:id', async (req, res) => {
   try {
+    const { campaign, allowed } = await campaignAccess(req, req.params.id)
+    if (!allowed) return denyCampaign(res, campaign)
     const ok = await deleteCampaign(req.params.id)
     if (!ok) return res.status(404).json({ ok: false, error: 'Кампания не найдена' })
     res.json({ ok: true }) // удаление кампании освобождает её аккаунты (лок жил в самой кампании)

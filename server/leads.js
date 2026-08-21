@@ -46,6 +46,14 @@ export function mapLeadStatus(s) {
 export function normalizeLead(input = {}) {
   const status = mapLeadStatus(input.status)
   return {
+    /*
+     * Владелец лида. Аудит 21.08: в файловом хранилище его не было ВООБЩЕ — колонка
+     * `user_id` в базе есть с §11.3, но нормализация её не переносила, а значит на
+     * запись владелец не доезжал никогда. Из-за этого вся CRM платформы отдавалась
+     * любому вошедшему: контакт человека, статус, заметки, ответственный аккаунт.
+     * Отфильтровать «своё» было буквально нечем.
+     */
+    userId: input.userId ? String(input.userId) : null,
     goalId: input.goalId ? String(input.goalId) : null,
     // Кампания, которая привела лида и ведёт его по воронке (24.07): статусы в CRM
     // проставляет она, поэтому лид должен помнить свою кампанию — для отчёта и фильтра.
@@ -65,13 +73,14 @@ export function normalizeLead(input = {}) {
   }
 }
 
-/** @param {{ goalId?: string, status?: string, accountId?: string }} [filter] */
+/** @param {{ goalId?: string, status?: string, accountId?: string, userId?: string }} [filter] */
 export async function listLeads(filter = {}) {
   const db = sbL()
   const all = db
     ? ((await db.from('leads').select('*').order('created_at', { ascending: false })).data || []).map(rowToLead)
     : await readJson(LEADS_FILE, [])
   return all.filter((l) =>
+    (!filter.userId || String(l.userId || '') === String(filter.userId)) &&
     (!filter.goalId || l.goalId === filter.goalId) &&
     (!filter.campaignId || l.campaignId === filter.campaignId) &&
     (!filter.taskId || l.taskId === filter.taskId) &&
@@ -194,7 +203,25 @@ const normPeer = (x) => String(x ?? '').trim().toLowerCase().replace(/^@/, '')
  * прогоны) откатываемся на цель, а совсем без обоих — на самого человека (peer).
  * @param {{campaignId?:string|null, goalId?:string|null}} l
  */
+/** Воронка, которой принадлежит лид: кампания главнее цели. */
 const leadScope = (l) => (l.campaignId ? `c:${l.campaignId}` : (l.goalId ? `g:${l.goalId}` : ''))
+
+/**
+ * Один ли это лид: та же воронка И тот же владелец.
+ *
+ * Владелец в сравнении нужен, потому что без цели и кампании область пустая — и лид
+ * клиента A по контакту @vasya схлопывался бы с лидом клиента B по тому же контакту:
+ * один видел бы в своей CRM движения чужой воронки.
+ *
+ * Пустой владелец у СОХРАНЁННОГО лида считаем совпадением и заполняем при обновлении:
+ * на боевом сервере лиды копились, когда владельца не писали вовсе, и строгое сравнение
+ * завело бы каждому из них дубль вместо продвижения по воронке.
+ *
+ * @param {object} stored лежащий в хранилище @param {object} fresh пришедший
+ */
+const sameLead = (stored, fresh) =>
+  leadScope(stored) === leadScope(fresh) &&
+  (!stored.userId || String(stored.userId) === String(fresh.userId || ''))
 
 /** Терминальные статусы — их не откатываем при авто-обновлении (§9). */
 const TERMINAL_LEAD_STATUSES = new Set(['target', 'closed'])
@@ -223,13 +250,15 @@ export async function upsertLead(input) {
   // и обычный read-modify-write терял бы часть лидов (последняя запись затирала файл).
   let result = { lead: null, created: false }
   await mutateJson(LEADS_FILE, (all) => {
-    const i = all.findIndex((l) => normPeer(l.peer) === key && leadScope(l) === leadScope(clean))
+    const i = all.findIndex((l) => normPeer(l.peer) === key && sameLead(l, clean))
     if (i === -1) {
       const lead = { id: `lead_${crypto.randomUUID().slice(0, 8)}`, ...clean, isHot: clean.status === 'hot', createdAt: Date.now(), updatedAt: Date.now() }
       all.unshift(lead)
       result = { lead, created: true }
       return all
     }
+    // Досталось «ничьим» из прежних прогонов — закрепляем за тем, чья задача его ведёт.
+    if (!all[i].userId && clean.userId) all[i].userId = clean.userId
     const advanced = advanceLeadStatus(all[i].status, clean.status)
     all[i].status = advanced
     all[i].isHot = advanced === 'hot'
@@ -303,8 +332,10 @@ export async function assertActiveDialogLimit(accountIds, moduleKey, limit) {
 }
 
 /** Сводка по статусам (аналитика §3.6). @param {string} [goalId] */
-export async function leadStats(goalId) {
-  const leads = await listLeads(goalId ? { goalId } : {})
+export async function leadStats(goalId, userId) {
+  // Воронка — это деньги клиента: сколько написали, сколько ответили, сколько закрыли.
+  // Без фильтра по владельцу `/stats` показывал воронку ВСЕЙ платформы.
+  const leads = await listLeads({ ...(goalId ? { goalId } : {}), ...(userId ? { userId } : {}) })
   const by = Object.fromEntries(LEAD_STATUSES.map((s) => [s, 0]))
   for (const l of leads) by[l.status] = (by[l.status] || 0) + 1
   return { total: leads.length, byStatus: by }

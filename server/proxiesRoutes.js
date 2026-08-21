@@ -35,17 +35,27 @@ proxiesRouter.get('/', async (req, res) => {
   } catch (err) { fail(res, err, 500) }
 })
 
-// §6: прокси, назначенные >1 аккаунту (нарушение «1 прокси = 1 аккаунт»). До GET /:id.
-proxiesRouter.get('/shared', async (_req, res) => {
+// §6: прокси, назначенные >1 аккаунту. До GET /:id.
+proxiesRouter.get('/shared', async (req, res) => {
   try {
-    res.json({ ok: true, shared: sharedProxies(await loadAllMeta()) })
+    // Считаем только по своим аккаунтам: сводка строится из метаданных всех аккаунтов
+    // платформы и показывала, какие прокси и к скольким чужим профилям привязаны.
+    const { canSeeAccount } = await import('./lib/accessGuard.js')
+    const all = await loadAllMeta()
+    const mine = {}
+    for (const [id, m] of Object.entries(all)) if (await canSeeAccount(req, id)) mine[id] = m
+    res.json({ ok: true, shared: sharedProxies(mine) })
   } catch (err) { fail(res, err, 500) }
 })
 
 // §6: авто-проверка живости — все / один.
-proxiesRouter.post('/check-all', async (_req, res) => {
+proxiesRouter.post('/check-all', async (req, res) => {
   try {
-    const results = await checkAllProxies()
+    // Проверка гоняет КАЖДЫЙ прокси и возвращает вердикт: без фильтра это была разведка
+    // по чужой инфраструктуре (сколько прокси у соседа и какие из них живые).
+    const { ownedForRequest } = await import('./lib/accessGuard.js')
+    const mine = await ownedForRequest(req, await listProxies(), (x) => x?.ownerId)
+    const results = await checkAllProxies(mine.map((x) => x.id))
     await appendAudit({ action: 'proxy.check', module: 'proxy', initiator: 'operator', reason: `Проверка живости: ${results.length} прокси`, meta: { alive: results.filter((r) => r.status === 'ok').length } })
     res.json({ ok: true, results })
   } catch (err) { fail(res, err, 500) }
@@ -172,6 +182,10 @@ proxiesRouter.post('/import', async (req, res) => {
 
 proxiesRouter.get('/:id', async (req, res) => {
   try {
+    // Единственный роут прокси, оставшийся без проверки после аудита 20.08 — а отдаёт он
+    // ЛОГИН И ПАРОЛЬ: чужой прокси можно было прочитать по id и пользоваться им дальше
+    // уже мимо платформы (за счёт владельца).
+    if (!(await canTouchProxy(req, req.params.id))) return res.status(403).json({ ok: false, error: 'Это не ваш прокси' })
     const proxy = await getProxy(req.params.id)
     if (!proxy) return res.status(404).json({ ok: false, error: 'Прокси не найден' })
     res.json({ ok: true, proxy })

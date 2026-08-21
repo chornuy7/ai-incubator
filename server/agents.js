@@ -90,6 +90,12 @@ export async function createAgent(input) {
   const agent = {
     id: `agent_${crypto.randomUUID().slice(0, 8)}`,
     ...clean,
+    // §11.3: владелец записи — как у целей и кампаний (lib/ownerColumn.js). Раньше агент
+    // сохранялся ничьим, и это ломало обе стороны разом: список `GET /api/agents`
+    // фильтруется по владельцу и возвращал создателю ПУСТО (своих персон не видно),
+    // а точечное чтение по id отдавало чужие промпты кому угодно. normalizeAgent поля
+    // владельца не знает — он чистит саму персону, поэтому проставляем явно из входа.
+    userId: String(input?.userId || '').trim() || undefined,
     createdAt: Date.now(),
     updatedAt: Date.now(),
   }

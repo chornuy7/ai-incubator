@@ -81,8 +81,16 @@ async function outsideSubscription(ctx, permissions) {
 
 rolesRouter.get('/:id', async (req, res) => {
   try {
+    // §4.1: чтение роли по id владельца не спрашивало, хотя список, POST, PUT и DELETE
+    // это делают. Роль отдаётся целиком вместе с `permissions.resources.accounts` — то
+    // есть с id чужих Telegram-аккаунтов, а заодно показывает, кому что выдано в чужом
+    // пространстве. Правило здесь то же, что у правки: своя роль или sudo.
+    const ctx = await requesterContext(req)
     const role = await getRole(req.params.id)
     if (!role) return res.status(404).json({ ok: false, error: 'Роль не найдена' })
+    if (!ctx.noSession && !ctx.isAdmin && role.userId !== ctx.id) {
+      return res.status(403).json({ ok: false, error: 'Можно смотреть только свои роли' })
+    }
     res.json({ ok: true, role })
   } catch (err) { fail(res, err, 500) }
 })

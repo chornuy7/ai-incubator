@@ -235,9 +235,19 @@ export async function tgDeleteAccount(accountId) {
   await deleteAccountMeta(accountId)
 }
 
-export async function tgEmptyTrash() {
+/**
+ * Очистить корзину — удалить помеченные аккаунты безвозвратно.
+ *
+ * @param {string[]|null} [only] какие именно чистить. Роут передаёт сюда аккаунты
+ * автора запроса: без этого один клиент удалял корзину ВСЕЙ платформы, а удаление
+ * аккаунта откатить нечем. `null` (внутренние вызовы, админ) — чистит всё.
+ */
+export async function tgEmptyTrash(only = null) {
   const allMeta = await loadAllMeta()
-  const trashed = Object.entries(allMeta).filter(([, m]) => m.inTrash).map(([id]) => id)
+  const allow = only ? new Set(only.map(String)) : null
+  const trashed = Object.entries(allMeta)
+    .filter(([id, m]) => m.inTrash && (!allow || allow.has(String(id))))
+    .map(([id]) => id)
   for (const id of trashed) await tgDeleteAccount(id)
   return trashed.length
 }

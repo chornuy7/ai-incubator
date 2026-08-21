@@ -170,6 +170,29 @@ export async function ownedForRequest(req, rows = [], ownerOf = (r) => r?.userId
 }
 
 /**
+ * Моя ли это запись — точечная проверка для роутов `/:id`.
+ *
+ * Аудит 21.08: списки закрыли `ownedForRequest`, а точечные роуты остались открытыми —
+ * список чужих целей не отдаётся, но `GET /api/goals/<чужой id>` отдаёт саму цель со
+ * стратегией и метрикой. Фильтр на списке без проверки на карточке защищает только от
+ * случайного взгляда, а не от того, кто откроет devtools.
+ *
+ * Записи БЕЗ владельца (легаси) доступны только админу — по той же причине, что и в
+ * `ownedForRequest`: угадать задним числом, чьи они, нельзя.
+ *
+ * @param {import('express').Request} req
+ * @param {object|null} row запись из хранилища (null = не найдена)
+ * @param {(row:object)=>string} ownerOf как достать владельца из записи
+ * @returns {Promise<boolean>} true = можно читать и править
+ */
+export async function ownsRecord(req, row, ownerOf = (r) => r?.userId || r?.user_id || '') {
+  const scope = await ownerScopeForRequest(req)
+  if (scope.blocked) return false
+  if (scope.all) return true
+  return !!row && String(ownerOf(row) || '') === String(scope.ownerId)
+}
+
+/**
  * Каналы, доступные автору запроса.
  *
  * Модель (уточнил заказчик 20.08): база каналов — НАША, общая. У клиента своей базы нет:
@@ -280,6 +303,19 @@ export async function foldersForRequest(req, folders = []) {
  * Нужен там, где отдаём данные ПО аккаунту, а не список: список фильтрует фронт
  * через `filterAccountsByAccess`, но точечный запрос по id так не прикрыть —
  * без этой проверки чужой профиль отдавал бы задачи, деньги и лиды.
+ *
+ * Проверок ДВЕ, и они про разное:
+ *   1) чьё это пространство — `meta.ownerId` (аккаунт принадлежит клиенту);
+ *   2) что разрешает роль внутри пространства — какие аккаунты видит сотрудник.
+ *
+ * Аудит 21.08: здесь была только вторая. А роль по умолчанию у владельца открывает
+ * «все аккаунты» — имелось в виду «все МОИ», но проверка понимала это буквально и
+ * пропускала к чужим. То есть точечный запрос обходил владельческий фильтр, которым
+ * закрыт список: `/api/tg/accounts` чужого не показывал, а карточка по id — отдавала.
+ *
+ * Аккаунты без владельца (заведены до владельческой модели — они наши) доступны только
+ * админу: так же, как в `tgListAccounts`.
+ *
  * @param {import('express').Request} req @param {string} accountId
  */
 export async function canSeeAccount(req, accountId) {
@@ -293,6 +329,23 @@ export async function canSeeAccount(req, accountId) {
   }
   if (!user || !user.active) return false
   if (hasAdminRole(userRoleIds(user))) return true
+
+  // 1) Пространство. Сотрудник работает в пространстве своего владельца (§4.1).
+  let spaceOwner = userId
+  try {
+    const { resolveSubscriptionOwner } = await import('../users.js')
+    spaceOwner = (await resolveSubscriptionOwner(userId)) || userId
+  } catch { /* нет резолвера — считаем пространством себя */ }
+  let accountOwner = ''
+  try {
+    const { getAccountMeta } = await import('../accountsMeta.js')
+    accountOwner = String((await getAccountMeta(accountId))?.ownerId || '')
+  } catch {
+    return false // fail-closed: не прочитали, чей аккаунт — не отдаём
+  }
+  if (!accountOwner || accountOwner !== String(spaceOwner)) return false
+
+  // 2) Роль внутри пространства.
   const roles = await rolesForUser(user)
   const hasGrants = (user.accountIds?.length || user.accountGroupIds?.length)
   if (!roles.length && !hasGrants) return false

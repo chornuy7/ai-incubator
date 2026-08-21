@@ -68,6 +68,59 @@ app.get('/api/health', (_req, res) => {
   })
 })
 
+/*
+ * Заслон на всё, что идёт «по аккаунту» (аудит 21.08).
+ *
+ * Список аккаунтов давно режется владельцем, а роуты с `:accountId` в адресе — нет.
+ * Получалось так: чужой аккаунт не показан, но известен его id — и открыты телефон и
+ * username (`/stats`), тексты сообщений канала (`/channel-messages`), состав каналов,
+ * папки. На запись — того хуже: `PATCH` менял чужому аккаунту статус и проект, `DELETE`
+ * удалял его, `/channels/:id/leave` выводил чужой профиль из канала, `/status` ставил
+ * на паузу чужую работу. Id при этом даже не надо было угадывать: `/busy` отдавал локи
+ * всей платформы вместе с идентификаторами.
+ *
+ * Проверку вешаем ОДНИМ middleware, а не в каждом хендлере: их полтора десятка, и
+ * ровно так — по одному, по мере написания — дыра и появилась. Здесь же её нельзя
+ * забыть в новом роуте.
+ *
+ * `/api/tg/accounts/<слово>` без владельца — это не аккаунт, а коллекция (busy,
+ * daily-all, empty-trash): они разбираются со своими правами сами, ниже.
+ */
+const ACCOUNT_COLLECTIONS = new Set(['busy', 'daily-all', 'empty-trash'])
+const guardAccountParam = async (req, res, next) => {
+  const id = String(req.params.accountId || '')
+  if (ACCOUNT_COLLECTIONS.has(id)) return next()
+  try {
+    const { canSeeAccount } = await import('./lib/accessGuard.js')
+    if (await canSeeAccount(req, id)) return next()
+  } catch { /* не смогли проверить — отказываем */ }
+  res.status(403).json({ ok: false, error: 'Нет доступа к этому аккаунту' })
+}
+app.use('/api/tg/accounts/:accountId', guardAccountParam)
+app.use('/api/tg/session/:accountId', guardAccountParam)
+
+/**
+ * Оставить в карте `accountId → данные` только свои аккаунты.
+ *
+ * Сводки по всем аккаунтам (`/busy`, `/daily-all`, активность) отдавали карту целиком —
+ * и это был не только показ чужих счётчиков, но и справочник чужих id для всего
+ * остального: имея id, можно было дёргать роуты по аккаунту.
+ */
+async function mineOnly(req, map) {
+  const { canSeeAccount } = await import('./lib/accessGuard.js')
+  const out = {}
+  for (const [id, v] of Object.entries(map || {})) if (await canSeeAccount(req, id)) out[id] = v
+  return out
+}
+
+/** Отсеять из списка id чужие аккаунты — для массовых операций по выбору оператора. */
+async function mineIds(req, ids = []) {
+  const { canSeeAccount } = await import('./lib/accessGuard.js')
+  const out = []
+  for (const id of ids) if (await canSeeAccount(req, id)) out.push(id)
+  return out
+}
+
 app.get('/api/tg/accounts', async (req, res) => {
   try {
     // ?verify=1 — сходить в Telegram за каждым аккаунтом. Долго (подключение на аккаунт),
@@ -132,9 +185,16 @@ app.delete('/api/tg/accounts/:accountId', async (req, res) => {
   }
 })
 
-app.post('/api/tg/accounts/empty-trash', async (_req, res) => {
+app.post('/api/tg/accounts/empty-trash', async (req, res) => {
   try {
-    const count = await tgEmptyTrash()
+    // «Очистить корзину» чистила корзину ВСЕЙ платформы: один клиент безвозвратно
+    // удалял аккаунты других. Чистим только те, что человеку и так видны.
+    // Список берём из метаданных, а не через tgListAccounts: тот пропускает аккаунты
+    // без файла сессии, а в корзине как раз лежат и такие — они бы там и остались.
+    const { loadAllMeta } = await import('./accountsMeta.js')
+    const trashed = Object.entries(await loadAllMeta()).filter(([, m]) => m?.inTrash).map(([id]) => id)
+    const mine = await mineIds(req, trashed)
+    const count = await tgEmptyTrash(mine)
     res.json({ ok: true, count })
   } catch (err) {
     res.status(400).json({ ok: false, error: err instanceof Error ? err.message : 'Ошибка' })
@@ -180,7 +240,7 @@ app.get('/api/tg/session/:accountId', async (req, res) => {
   }
 })
 
-app.get('/api/tg/accounts/busy', async (_req, res) => {
+app.get('/api/tg/accounts/busy', async (req, res) => {
   // Самолечение: снять блокировки, чьи задачи уже не выполняются на диске / в процессе.
   try {
     await reconcileLocks()
@@ -189,12 +249,16 @@ app.get('/api/tg/accounts/busy', async (_req, res) => {
   // выключает аккаунт из всех модулей, а оператор его до сих пор не видел — «занят» в UI
   // означало только блокировку задачей.
   try { reconcileBusy() } catch { /* ignore */ }
-  res.json({ ok: true, busy: await getAllAccountLocksDetailed(), working: getAllAccountBusy() })
+  res.json({
+    ok: true,
+    busy: await mineOnly(req, await getAllAccountLocksDetailed()),
+    working: await mineOnly(req, getAllAccountBusy()),
+  })
 })
 
-app.get('/api/tg/accounts/daily-all', async (_req, res) => {
+app.get('/api/tg/accounts/daily-all', async (req, res) => {
   try {
-    res.json({ ok: true, daily: await dailySummaryAll() })
+    res.json({ ok: true, daily: await mineOnly(req, await dailySummaryAll()) })
   } catch (err) {
     res.status(500).json({ ok: false, error: err instanceof Error ? err.message : 'Ошибка' })
   }
@@ -414,7 +478,8 @@ app.get('/r/:code', async (req, res) => {
 app.get('/api/links', async (req, res) => {
   try {
     const { listLinks, goalHits } = await import('./linkTracker.js')
-    const links = await listLinks()
+    const { ownedForRequest } = await import('./lib/accessGuard.js')
+    const links = await ownedForRequest(req, await listLinks())
     const goalId = req.query.goalId ? String(req.query.goalId) : null
     res.json({
       ok: true,
@@ -426,7 +491,10 @@ app.get('/api/links', async (req, res) => {
 app.post('/api/links', async (req, res) => {
   try {
     const { createLink } = await import('./linkTracker.js')
-    const link = await createLink(req.body ?? {})
+    const { ownerScopeForRequest } = await import('./lib/accessGuard.js')
+    const scope = await ownerScopeForRequest(req)
+    if (scope.blocked) return res.status(403).json({ ok: false, error: 'Нет доступа' })
+    const link = await createLink({ ...(req.body ?? {}), userId: scope.ownerId || undefined })
     await appendAudit({
       action: 'link.create', module: 'links', initiator: req.header('x-user-id') || 'operator',
       reason: `Создана отслеживаемая ссылка на ${link.url}`, scope: { goalId: link.goalId },
@@ -436,7 +504,11 @@ app.post('/api/links', async (req, res) => {
 })
 app.delete('/api/links/:id', async (req, res) => {
   try {
-    const { deleteLink } = await import('./linkTracker.js')
+    const { deleteLink, listLinks } = await import('./linkTracker.js')
+    const { ownsRecord } = await import('./lib/accessGuard.js')
+    const link = (await listLinks()).find((l) => l.id === req.params.id)
+    if (!link) return res.status(404).json({ ok: false, error: 'Ссылка не найдена' })
+    if (!(await ownsRecord(req, link))) return res.status(403).json({ ok: false, error: 'Это не ваша ссылка' })
     const ok = await deleteLink(req.params.id)
     if (!ok) return res.status(404).json({ ok: false, error: 'Ссылка не найдена' })
     res.json({ ok: true })
@@ -1106,10 +1178,10 @@ app.get('/api/admin/report', async (req, res) => {
 // §4 (D1/D2): усталость и распорядок аккаунтов. Читают все — список аккаунтов
 // показывает, кто отдыхает. Массовое задание профиля — прямой запрос владельца:
 // «чтобы можно было массово всем задавать усталость и отдых от модулей».
-app.get('/api/accounts/activity', async (_req, res) => {
+app.get('/api/accounts/activity', async (req, res) => {
   try {
     const { listActivity } = await import('./accountActivity.js')
-    res.json({ ok: true, activity: await listActivity() })
+    res.json({ ok: true, activity: await mineOnly(req, await listActivity()) })
   } catch (err) { res.status(500).json({ ok: false, error: err instanceof Error ? err.message : 'Ошибка' }) }
 })
 // Снятие спамблока через @SpamBot — заводит НАСТОЯЩУЮ фоновую задачу (модуль spam-unblock),
@@ -1118,7 +1190,10 @@ app.post('/api/accounts/unblock', async (req, res) => {
   try {
     const { accountIds, delayMin, delayMax } = req.body ?? {}
     if (!Array.isArray(accountIds) || !accountIds.length) return res.status(400).json({ ok: false, error: 'Выберите аккаунты' })
-    const ids = [...new Set(accountIds.map((x) => String(x || '').trim()).filter(Boolean))]
+    // Заводит настоящую задачу к @SpamBot: по чужим аккаунтам это чужие деньги и чужая
+    // репутация в глазах Telegram, поэтому список сначала сверяем с доступом.
+    const ids = await mineIds(req, [...new Set(accountIds.map((x) => String(x || '').trim()).filter(Boolean))])
+    if (!ids.length) return res.status(403).json({ ok: false, error: 'Нет доступа к выбранным аккаунтам' })
     const { getModuleStore, getWorker } = await import('./modules/registry.js')
     const { startWorker } = await import('./modules/workers.js')
     const store = getModuleStore('spam-unblock')
@@ -1137,10 +1212,16 @@ app.post('/api/accounts/unblock', async (req, res) => {
 app.post('/api/accounts/activity', async (req, res) => {
   try {
     const { setActivityProfile, restAccounts } = await import('./accountActivity.js')
-    const { accountIds, profile, schedule, spread, reset, restMinutes } = req.body ?? {}
-    if (!Array.isArray(accountIds) || !accountIds.length) {
+    const { profile, schedule, spread, reset, restMinutes } = req.body ?? {}
+    const wanted = req.body?.accountIds
+    if (!Array.isArray(wanted) || !wanted.length) {
       return res.status(400).json({ ok: false, error: 'Выберите аккаунты' })
     }
+    // Список аккаунтов приходил из тела запроса и применялся как есть: чужие профили
+    // отправлялись «на отдых» или им переписывался распорядок — работа клиента вставала,
+    // причём тихо, без единой ошибки в его логах.
+    const accountIds = await mineIds(req, wanted)
+    if (!accountIds.length) return res.status(403).json({ ok: false, error: 'Нет доступа к выбранным аккаунтам' })
     const n = restMinutes !== undefined
       ? await restAccounts(accountIds, restMinutes)
       : await setActivityProfile(accountIds, { profile, schedule, spread, reset })
@@ -1154,7 +1235,7 @@ app.post('/api/accounts/activity', async (req, res) => {
       scope: { accounts: accountIds },
     }).catch(() => {})
     const { listActivity } = await import('./accountActivity.js')
-    res.json({ ok: true, applied: n, activity: await listActivity() })
+    res.json({ ok: true, applied: n, activity: await mineOnly(req, await listActivity()) })
   } catch (err) { res.status(400).json({ ok: false, error: err instanceof Error ? err.message : 'Ошибка' }) }
 })
 
@@ -1496,10 +1577,17 @@ app.get('/api/audit', async (req, res) => {
     // (сотрудников), а не всё рабочее пространство. Админ/дев — все записи, как раньше.
     const { requesterContext } = await import('./lib/accessGuard.js')
     const ctx = await requesterContext(req)
-    if (ctx.noSession || ctx.isAdmin || !ctx.user) {
+    // `!ctx.user` в этом условии открывал ВЕСЬ журнал платформы заблокированному
+    // пользователю (у него `user === null`). Практически это закрыто общим замком
+    // `accessGate`, но полагаться на порядок middleware в проверке прав нельзя:
+    // журнал — это чужие действия, аккаунты и причины блокировок.
+    if (ctx.noSession || ctx.isAdmin) {
       const entries = await readAudit({ limit: wantLimit, action, initiator, account })
       return res.json({ ok: true, entries })
     }
+    // Нет самого пользователя (заблокирован, удалён) — журнала нет: раньше такой запрос
+    // проваливался в ветку выше и получал всё.
+    if (!ctx.user) return res.status(403).json({ ok: false, error: 'Нет доступа к журналу' })
     const { listSubs } = await import('./users.js')
     const subs = await listSubs(ctx.id)
     const allowed = new Set()
