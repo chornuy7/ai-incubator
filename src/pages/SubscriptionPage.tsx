@@ -272,7 +272,23 @@ export function SubscriptionPage() {
             {added.length > 0 && period === 'year' && <span className="rounded-md bg-spark-500/15 px-1.5 py-0.5 text-[10px] font-bold text-spark-300">−{Math.round(annualDiscount * 100)}%</span>}
             {added.length > 0 && period === 'month' && due.discount > 0 && <span className="text-sm text-muted line-through">{due.full} {cur}</span>}
           </div>
-          {/* MR-150: подарочные токены — отдельной жёлтой строкой, а не в общей серой. */}
+          {/* MR-150: сколько ⚡ приходит КАЖДЫЙ месяц по подписке. Считаем по ВСЕЙ подписке
+              (оплаченные + добавленные), а не по добавленным: заказчик просил видеть общее
+              число (пример с созвона — 14 модулей = 1400 ⚡/мес). Иначе у того, у кого всё
+              оплачено, строка пропадала: оплаченные модули не входят в «добавленные». */}
+          {cost.monthlyTokens > 0 && (
+            <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-muted">
+              <span className="flex items-center gap-1">
+                <Zap size={12} className="text-spark-300" />
+                <b className="text-fg">{cost.monthlyTokens.toLocaleString('ru-RU')}</b> ⚡ токенов в месяц по подписке
+              </span>
+              {added.length > 0 && due.monthlyTokens > 0 && (
+                <span className="text-spark-300">+{due.monthlyTokens.toLocaleString('ru-RU')} ⚡ за добавленные</span>
+              )}
+            </div>
+          )}
+          {/* MR-150: подарочные токены — отдельной жёлтой строкой, а не в общей серой.
+              Подарок разовый, при покупке, поэтому считается по добавленным модулям. */}
           {due.giftTokens > 0 && (
             <div className="mt-1 flex items-center gap-1 text-xs font-semibold text-amber-300">
               <Zap size={12} fill="currentColor" /> +{due.giftTokens.toLocaleString('ru-RU')} ⚡ токенов в подарок

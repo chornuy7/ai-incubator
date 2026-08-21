@@ -305,10 +305,18 @@ export async function getBalance(userId) {
     // человек, только что зарегистрировавшийся с лендинга, получал 14 модулей бесплатно
     // (на проде так жили 56 из 65 юзеров). Теперь fallback работает только для
     // безсессионного дев-режима; у самостоятельного владельца без покупки набор ПУСТ.
-    const modules = personal?.modules !== undefined && personal?.modules !== null
+    const usePersonal = personal?.modules !== undefined && personal?.modules !== null
+    const modules = usePersonal
       ? personal.modules
       : (sk === DEFAULT_USER ? (ws?.modules ?? DEFAULT_MODULES) : [])
-    const expiresAt = (personal ? personal.expires_at : ws?.expires_at) ? ms(personal ? personal.expires_at : ws.expires_at) : null
+    // Срок берём из ТОГО ЖЕ источника, что и набор. Правка 18.08 закрыла наследование
+    // модулей от `workspace`, но дату оставила падать на него безусловно — и человек
+    // без своей подписки «наследовал» чужой срок. Последствия на проде: первая покупка
+    // уходила в ветку ДОКУПКИ (срок-то «активен») — списывалось только за остаток чужих
+    // дней ($24 вместо $30 за месяц), а своей даты окончания у клиента так и не
+    // появлялось, потому что докупка дату не двигает.
+    const subSrc = usePersonal ? personal : (sk === DEFAULT_USER ? ws : null)
+    const expiresAt = subSrc?.expires_at ? ms(subSrc.expires_at) : null
     const planId = DEFAULT_STATE.planId
     return {
       planId,

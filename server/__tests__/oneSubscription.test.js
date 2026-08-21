@@ -64,3 +64,31 @@ test('докупка не двигает дату подписки, продле
   await setUserModules(['mailing', 'parsing'], 'u1', { mode: 'merge', expiresAt: renewed })
   assert.equal((await getBalance('u1')).expiresAt, renewed)
 })
+
+/**
+ * Баг 21.08 (поймал живой прогон, не юнит-тест): клиент без своей подписки получал
+ * ЧУЖУЮ дату окончания — общего набора пространства. Набор при этом честно приходил
+ * пустым: правка 18.08 закрыла наследование модулей, а срок оставила падать на
+ * `workspace` безусловно.
+ *
+ * Цена ошибки: первая покупка клиента попадала в ветку ДОКУПКИ (срок-то «активен») —
+ * списывалось за остаток чужих дней вместо месяца ($24 вместо $30), и своей даты
+ * окончания у клиента не появлялось вовсе, потому что докупка дату не двигает.
+ *
+ * Инвариант: набор и срок приходят из ОДНОГО источника. Нет своей подписки — нет и даты.
+ */
+test('без своей подписки нет и срока: чужая дата не наследуется', async () => {
+  const os = await import('os'); const path = await import('path'); const fs = await import('fs/promises')
+  process.env.BALANCE_FILE = path.join(os.tmpdir(), `sub-${process.pid}-${Math.random().toString(36).slice(2)}.json`)
+  await fs.rm(process.env.BALANCE_FILE, { force: true })
+  const B = await import('../balance.js')
+
+  await B.setUserModules(['mailing'], 'usr_paid', { expiresAt: Date.now() + 24 * DAY })
+
+  const paid = await B.getBalance('usr_paid')
+  assert.ok(paid.expiresAt, 'у оплатившего срок есть')
+
+  const fresh = await B.getBalance('usr_no_subscription')
+  assert.deepEqual(fresh.modules, [], 'набор пуст')
+  assert.equal(fresh.expiresAt, null, 'и срока нет — иначе первая покупка уйдёт в докупку')
+})
