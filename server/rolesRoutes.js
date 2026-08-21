@@ -50,7 +50,9 @@ rolesRouter.get('/catalog', async (req, res) => {
       const b = await getBalance(ctx.id)
       // Истёкшая подписка — пустой каталог: раздавать доступ к остановленным модулям
       // бессмысленно, а молча показать их — обещать работу, которой не будет.
-      limit = { modules: subscriptionExpired(b.expiresAt) ? [] : b.modules }
+      // ownerId включает фильтр РЕСУРСОВ: аккаунты, группы, папки и каналы — только свои.
+      // Без него каталог отдавал всю платформу (утечка, найденная владельцем 21.08).
+      limit = { modules: subscriptionExpired(b.expiresAt) ? [] : b.modules, ownerId: ctx.id }
     }
     res.json({ ok: true, catalog: await buildCatalog(limit) })
   } catch (err) { fail(res, err, 500) }

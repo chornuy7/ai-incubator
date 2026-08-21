@@ -407,16 +407,35 @@ export async function buildCatalog(limit = null) {
     .filter(([key]) => !allow || allow === 'all' || (Array.isArray(allow) && allow.includes(key)))
     .map(([key, label]) => ({ key, label }))
   const [folders, channels, meta, groups] = await Promise.all([listFolders(), listChannels(), loadAllMeta(), listGroups()])
+
+  /*
+   * Утечка, найденная владельцем 21.08: каталог показывал РЕСУРСЫ ВСЕЙ ПЛАТФОРМЫ —
+   * чужие Telegram-аккаунты по именам, чужие папки и каналы. Я ограничил подпиской
+   * только модули, а ресурсы оставил как были, и на живом стенде клиент увидел
+   * тринадцать чужих профилей: и сам факт их существования, и как людей зовут.
+   *
+   * Владелец видит только СВОЁ (ownerId / userId записи). Записи без владельца —
+   * заведённые до появления скоупа — остаются видны лишь админу платформы: угадать
+   * задним числом, чьи они, нельзя, а показывать всем «на всякий случай» — это и есть
+   * та самая утечка.
+   */
+  const owner = limit?.ownerId ? String(limit.ownerId) : null
+  const mine = (rec) => {
+    if (!owner) return true                                   // админ/дев — полный список
+    const o = String(rec?.ownerId || rec?.userId || '')
+    return o ? o === owner : false
+  }
+
   // Аккаунты для выдачи доступа (лёгкий список из метаданных — без подключения к Telegram).
   const accountItems = Object.entries(meta)
-    .filter(([, m]) => m && !m.inTrash)
+    .filter(([, m]) => m && !m.inTrash && mine(m))
     .map(([id, m]) => ({ id, label: m.name || (m.username ? '@' + m.username : id) }))
   const resources = [
     { type: 'accounts', label: 'Аккаунты (кто виден роли)', perItem: true, items: accountItems },
     // §12: доступ сразу на группу — удобнее, чем отмечать аккаунты по одному.
-    { type: 'accountGroups', label: 'Группы аккаунтов (доступ на всю группу)', perItem: true, items: groups.map((g) => ({ id: g.id, label: `${g.name} · ${(g.accountIds || []).length} акк.` })) },
-    { type: 'folders', label: 'Папки целей', perItem: true, items: folders.map((f) => ({ id: f.id, label: f.name || f.id, channels: f.targets || [] })) },
-    { type: 'channels', label: 'Целевые каналы', perItem: true, items: channels.map((c) => ({ id: c.id, label: c.title || (c.username ? '@' + c.username : c.id) })) },
+    { type: 'accountGroups', label: 'Группы аккаунтов (доступ на всю группу)', perItem: true, items: groups.filter(mine).map((g) => ({ id: g.id, label: `${g.name} · ${(g.accountIds || []).length} акк.` })) },
+    { type: 'folders', label: 'Папки целей', perItem: true, items: folders.filter(mine).map((f) => ({ id: f.id, label: f.name || f.id, channels: f.targets || [] })) },
+    { type: 'channels', label: 'Целевые каналы', perItem: true, items: channels.filter(mine).map((c) => ({ id: c.id, label: c.title || (c.username ? '@' + c.username : c.id) })) },
     { type: 'timers', label: 'Таймеры / планировщик', perItem: false },
     { type: 'searchTemplates', label: 'Шаблоны поиска', perItem: false },
     { type: 'allTasks', label: 'Чужие задачи (видеть и управлять всеми в Дашборде)', perItem: false },
