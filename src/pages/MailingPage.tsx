@@ -32,7 +32,8 @@ export function MailingPage() {
   // и React падал («Rendered fewer hooks»). Тело — в MailingInner (монтируется, когда оплачено).
   const planModules = usePlan((st) => st.modules)
   if (planModules === null) return null // набор ещё не загружен — не мигаем витриной покупки
-  if (!planHasModule(planModules, 'mailing')) return <ModuleNotPaid title="Мейлинг" moduleKey="mailing" />
+  // Срок учитываем здесь же: прямой адрес не должен обходить истёкшую подписку.
+  if (!planHasModule(planModules, 'mailing', usePlan.getState().expiresAt)) return <ModuleNotPaid title="Мейлинг" moduleKey="mailing" />
   return <MailingInner />
 }
 

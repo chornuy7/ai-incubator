@@ -8,9 +8,10 @@ import { useApp, activeAccounts, isBrokenAccount } from '@/mocks/store'
 import { fetchAllTasks, type ModuleTask } from '@/api/modulesApi'
 import { fetchTickets, type ApiTicket } from '@/api/ticketsApi'
 import { fetchAwaitingReplies, type AwaitingReply } from '@/api/neuroDialogsApi'
-import { fetchBalance, fetchPricing, buyTokens, fetchWalletHistory, type Balance, type Pricing, type WalletEntry } from '@/api/balanceApi'
+import { fetchPricing, buyTokens, fetchWalletHistory, type Pricing, type WalletEntry } from '@/api/balanceApi'
 import { useSession } from '@/features/auth/session'
 import { usePlan } from '@/features/billing/plan'
+import { useBalance, setBalance } from '@/features/billing/balanceStore'
 import { CRITICAL } from '@/features/billing/LowBalanceBar'
 
 /**
@@ -46,15 +47,13 @@ export function AppHeader() {
   const data = useApp((s) => s.data)
   // B2 (§5.1): план и монеты — с сервера, а не константа из моков. Раньше в шапке
   // всегда висели «Базовая» и 80.00 независимо от того, что происходило в системе.
-  // Обновляем периодически: списания за действия (C2) идут в фоне, и цифра должна
+  // Обновляется фоном: списания за действия (C2) идут в фоне, и цифра должна
   // меняться без перезагрузки страницы.
-  const [balance, setBalance] = useState<Balance | null>(null)
-  useEffect(() => {
-    const load = () => { void fetchBalance().then(setBalance).catch(() => {}) }
-    load()
-    const t = setInterval(load, 30000)
-    return () => clearInterval(t)
-  }, [])
+  //
+  // MR-151: свой поллер отсюда убран. Шапка, лента низкого баланса и стор подписки
+  // тянули ОДИН И ТОТ ЖЕ `/api/balance` каждые 30 c каждый — теперь все сидят на
+  // общем источнике с дедупликацией (см. balanceStore). Период тот же.
+  const balance = useBalance()
   // Прайс — с сервера: копия в вебе рано или поздно разошлась бы с тем, что списывается.
   const [pricing, setPricing] = useState<Pricing | null>(null)
   useEffect(() => { void fetchPricing().then(setPricing).catch(() => {}) }, [])
@@ -208,12 +207,14 @@ export function AppHeader() {
   // применяться в текущей сессии, а не «после перезахода» — про перезаход человеку
   // никто не скажет, а отзыв доступа, ждущий перелогина, это уже дыра.
   const refreshSession = useSession((s) => s.refresh)
-  // Подписку тянем тем же тиком: оплатили модуль — он появляется в меню сам,
-  // как и выданное админом право.
+  // Подписка обновляется сама: набор модулей и срок приезжают в том же `/api/balance`,
+  // который тикает общий balanceStore, и plan подписан на него (MR-151). Раньше здесь
+  // стоял ВТОРОЙ таймер на 30 c, дублировавший запрос баланса тик в тик. Первый вызов
+  // оставляем: роли с freeAccess открывают меню без сервера, и ждать тика незачем.
   const loadPlan = usePlan((s) => s.load)
   useEffect(() => {
     void refreshSession(); void loadPlan()
-    const t = setInterval(() => { void refreshSession(); void loadPlan() }, 30000)
+    const t = setInterval(() => { void refreshSession() }, 30000)
     return () => clearInterval(t)
   }, [refreshSession, loadPlan])
   const coinsOpen = useUi((s) => s.coinsOpen)
@@ -259,6 +260,8 @@ export function AppHeader() {
     setBuying(price)
     try {
       const r = await buyTokens(price)
+      // Свежий баланс пришёл в ответе — кладём его в общий источник, чтобы чип,
+      // лента и подписка обновились разом и без лишнего запроса.
       setBalance(r.balance)
       pushToast({ type: 'success', title: `Куплено ${fmtCoins(r.tokens)} ⚡`, desc: `Списано ${curSym}${r.spentUsd.toFixed(2)}` })
     } catch (e) {

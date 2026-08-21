@@ -1,9 +1,11 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
-import { Check, Package, Sparkles, Loader2, Zap, Lock } from 'lucide-react'
+import { Check, Package, Sparkles, Loader2, Zap, Lock, CalendarClock, AlertTriangle } from 'lucide-react'
 import { PageHeader, Card } from '@/shared/ui'
 import { useApp } from '@/mocks/store'
 import { usePlan } from '@/features/billing/plan'
+import { useBalance } from '@/features/billing/balanceStore'
+import { expiryInfo, daysLeftPhrase } from '@/features/billing/expiry'
 import { fetchSubscription, saveSubscription, type Subscription } from '@/api/balanceApi'
 import { cn } from '@/shared/lib/utils'
 import { WalletHistory } from '@/pages/ProfilePage'
@@ -28,6 +30,15 @@ export function SubscriptionPage() {
   const [picked, setPicked] = useState<Set<string>>(new Set())
   const [saving, setSaving] = useState(false)
   const [period, setPeriod] = useState<'month' | 'year'>('month')
+  // §5 (21.08): «оплачено до …». Срок лежит в балансе (`expiresAt`) — /api/subscription
+  // отдаёт только СОСТАВ набора (`mine`), а без даты кабинет молчал о том, сколько
+  // подписка ещё живёт, и человек узнавал об окончании по отказу задачи.
+  const balance = useBalance()
+  const exp = expiryInfo(balance?.expiresAt)
+  // Пока баланс не приехал, срок НЕИЗВЕСТЕН — а `expiryInfo(undefined)` честно
+  // отвечает «бессрочно». Показать это до ответа значит мигнуть человеку «платить
+  // больше не надо», поэтому подписи со сроком ждут ответа.
+  const expKnown = !!balance
 
   // Модуль, пришедший с лендинга (?apply=<key>) — предвыбираем его поверх текущего набора.
   const [params] = useSearchParams()
@@ -100,7 +111,9 @@ export function SubscriptionPage() {
     setSaving(true)
     try {
       await saveSubscription(keys, period === 'year' ? 12 : 1)
-      await loadPlan() // меню должно перестроиться сразу, а не после перезагрузки
+      // Меню должно перестроиться сразу, а не после перезагрузки. Заодно приезжает
+      // новый срок: plan.load перечитывает общий баланс, а «оплачено до …» — из него.
+      await loadPlan()
       pushToast({ type: 'success', title: 'Подписка обновлена', desc: `Открыто модулей: ${keys.length} · на ${period === 'year' ? 'год' : 'месяц'}` })
       const fresh = await fetchSubscription()
       setData(fresh)
@@ -123,6 +136,39 @@ export function SubscriptionPage() {
         title="Подписки"
         subtitle="Выберите модули, которыми пользуетесь. Платите только за них — сумма пересчитывается сразу."
       />
+
+      {/* §5 (21.08): срок подписки на виду. Раньше кабинет показывал только состав
+          набора, и «до какого числа оплачено» человек не мог узнать нигде, кроме
+          профиля. Три состояния: истекла (красное), кончается на неделе (жёлтое,
+          с призывом продлить), обычное. Бессрочная так и подписана словом — пустая
+          строка читалась бы как «данных нет». */}
+      {expKnown && mineSet.size > 0 && (
+        <Card className={cn(
+          'flex flex-wrap items-center gap-x-3 gap-y-1 p-4',
+          exp.expired ? 'border-red-500/40' : exp.soon ? 'border-amber-500/40' : '',
+        )}>
+          {exp.expired || exp.soon
+            ? <AlertTriangle size={16} className={exp.expired ? 'text-red-300' : 'text-amber-300'} />
+            : <CalendarClock size={16} className="text-muted" />}
+          <span className={cn(
+            'font-semibold',
+            exp.expired ? 'text-red-300' : exp.soon ? 'text-amber-300' : 'text-fg',
+          )}>
+            {exp.perpetual
+              ? 'Подписка бессрочная'
+              : exp.expired
+                ? `Подписка истекла ${exp.date}`
+                : `Оплачено до ${exp.date}`}
+          </span>
+          <span className="text-sm text-muted">
+            {exp.perpetual
+              ? '· срок не ограничен — продлевать не нужно'
+              : exp.expired
+                ? '· модули не запускаются, пока подписку не продлят'
+                : `· осталось ${daysLeftPhrase(exp.daysLeft)}${exp.soon ? ' — продлите, чтобы модули не остановились' : ''}`}
+          </span>
+        </Card>
+      )}
 
       <Card>
         <div className="mb-3 text-xs font-bold uppercase tracking-wide text-muted">Готовые наборы</div>
@@ -165,7 +211,9 @@ export function SubscriptionPage() {
                 key={m.key}
                 onClick={() => toggle(m.key)}
                 disabled={paid}
-                title={paid ? 'Модуль уже оплачен и действует до конца периода — снять его в кабинете нельзя' : undefined}
+                title={paid
+                  ? `Модуль оплачен${!expKnown ? '' : exp.perpetual ? ' бессрочно' : exp.expired ? ` до ${exp.date} — оплата закончилась` : ` до ${exp.date}`} — снять его в кабинете нельзя`
+                  : undefined}
                 className={cn(
                   'flex items-center justify-between gap-3 rounded-xl border px-3.5 py-3 text-left transition-colors',
                   on ? 'border-spark-500/45 bg-spark-500/8' : 'border-line bg-elevated hover:border-spark-500/25',
@@ -183,8 +231,14 @@ export function SubscriptionPage() {
                     </span>
                     {/* §3.2 (MR-22): калькулятор — сколько действий даёт 100 ⚡ для этого модуля. */}
                     <span className="block text-[11px] text-muted">
+                      {/* §5 (21.08): у оплаченной плитки была общая фраза «до конца
+                          оплаченного периода» — конца никто не знал. Пишем дату. */}
                       {paid
-                        ? 'Уже в подписке — действует до конца оплаченного периода'
+                        ? !expKnown
+                          ? 'Уже в подписке'
+                          : exp.perpetual
+                            ? 'Уже в подписке — бессрочно'
+                            : exp.expired ? `Оплата закончилась ${exp.date} — продлите` : `Оплачен до ${exp.date}`
                         : m.action && m.action > 0 ? `≈ ${Math.round(100 / m.action).toLocaleString('ru-RU')} действий за 100 ⚡` : 'действия бесплатны'}
                       {!paid && m.gift ? <span className="text-spark-300"> · +{m.gift} ⚡ в подарок</span> : null}
                     </span>

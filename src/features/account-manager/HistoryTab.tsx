@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState } from 'react'
-import { MessageSquare, Smile, MessagesSquare, MessageCircle, Send, UserPlus, FileText, ExternalLink, Activity, ListChecks } from 'lucide-react'
+import { MessageSquare, Smile, MessagesSquare, MessageCircle, Send, UserPlus, FileText, Link2, Activity, ListChecks, ShieldCheck } from 'lucide-react'
 import { fetchAccountActions, type AccountAction, type AccountActionType } from '@/api/accountsApi'
 import { Select } from '@/shared/ui'
+import { useApp } from '@/mocks/store'
 import { cn } from '@/shared/lib/utils'
 
 /**
@@ -24,6 +25,31 @@ const TYPE_META: Record<AccountActionType, { label: string; icon: React.ReactNod
   dm:       { label: 'Рассылка',    icon: <Send size={13} />,           tone: 'text-emerald-300' },
   join:     { label: 'Вступление',  icon: <UserPlus size={13} />,       tone: 'text-iris-300' },
   action:   { label: 'Действие',    icon: <Activity size={13} />,       tone: 'text-muted' },
+}
+
+/**
+ * Под-типы внутри `action` (ТЗ 19.08 §5). Проверка спамблока — не действие бота в
+ * Telegram-группе, у неё нет своего `type` в контракте журнала, поэтому сервер помечает
+ * её `value.kind` (контракт §2 — «доп. под-тип, если нужен»). Здесь под-тип получает
+ * своё имя и иконку, иначе в ленте было бы безликое «Действие».
+ */
+const KIND_META: Record<string, { label: string; icon: React.ReactNode; tone: string }> = {
+  spamcheck: { label: 'Проверка спамблока', icon: <ShieldCheck size={13} />, tone: 'text-sky-300' },
+}
+
+/** Ключ строки для фильтра и подписи: под-тип, если он есть, иначе тип действия. */
+function rowKind(a: AccountAction): string {
+  return a.value?.kind && KIND_META[a.value.kind] ? a.value.kind : a.type
+}
+
+/** Подпись/иконка строки: сначала под-тип, потом тип, потом заглушка. */
+function rowMeta(a: AccountAction) {
+  return KIND_META[rowKind(a)] || TYPE_META[a.type] || TYPE_META.action
+}
+
+/** Человекочитаемое имя типа/под-типа для выпадашки фильтра. */
+function kindLabel(k: string): string {
+  return KIND_META[k]?.label || TYPE_META[k as AccountActionType]?.label || k
 }
 
 const PERIODS: { value: string; label: string; ms: number }[] = [
@@ -51,13 +77,15 @@ export function HistoryTab({ accountId }: { accountId: string }) {
 
   // Список групп/каналов для фильтра — из того, что реально есть в истории.
   const targets = useMemo(() => [...new Set((actions || []).map((a) => a.target).filter(Boolean))].sort(), [actions])
-  const types = useMemo(() => [...new Set((actions || []).map((a) => a.type))], [actions])
+  // Фильтруем по под-типу, а не по сырому type: иначе «Проверка спамблока» пряталась бы
+  // внутри общего «Действие» вместе со всем прочим служебным.
+  const types = useMemo(() => [...new Set((actions || []).map(rowKind))], [actions])
 
   const filtered = useMemo(() => {
     const period = PERIODS.find((p) => p.value === fPeriod)
     const from = period && period.ms ? Date.now() - period.ms : 0
     return (actions || []).filter((a) =>
-      (!fType || a.type === fType) &&
+      (!fType || rowKind(a) === fType) &&
       (!fTarget || a.target === fTarget) &&
       (!from || (Date.parse(a.ts) || 0) >= from),
     )
@@ -71,7 +99,7 @@ export function HistoryTab({ accountId }: { accountId: string }) {
       {/* Фильтры: тип · группа/канал · период (MR-122). */}
       <div className="flex flex-wrap items-center gap-2">
         <Select value={fType} onChange={setFType} className="w-44"
-          options={[{ value: '', label: 'Все типы' }, ...types.map((t) => ({ value: t, label: TYPE_META[t]?.label || t }))]} />
+          options={[{ value: '', label: 'Все типы' }, ...types.map((t) => ({ value: t, label: kindLabel(t) }))]} />
         <Select value={fTarget} onChange={setFTarget} className="w-52"
           options={[{ value: '', label: 'Все группы/каналы' }, ...targets.map((t) => ({ value: t, label: t }))]} />
         <Select value={fPeriod} onChange={setFPeriod} className="w-36"
@@ -98,11 +126,25 @@ export function HistoryTab({ accountId }: { accountId: string }) {
   )
 }
 
+/** Статус действия по-русски: в ленте светился сырой `failed` из журнала. */
+const STATUS_LABEL: Record<string, string> = {
+  failed: 'не удалось',
+  pending: 'в процессе',
+}
+
 function ActionRow({ a }: { a: AccountAction }) {
-  const m = TYPE_META[a.type] || TYPE_META.action
+  const m = rowMeta(a)
   const url = a.objectRef?.url
+  const pushToast = useApp((s) => s.pushToast)
   // Что показать как «содержимое»: текст (коммент/чат/диалог) или эмодзи (реакция).
   const body = a.value?.emoji || a.value?.text || ''
+  // ТЗ 19.08 §5: строка истории больше НЕ уводит наружу сырой ссылкой (заказчик: ссылка
+  // «инкубатор тест» ведёт в тестовую группу и мозолит глаза). Ссылку на объект отдаём
+  // по кнопке в буфер — тем же жестом, что и в «Каналах». Свой вьювер объекта — позже.
+  const copyLink = () => {
+    void navigator.clipboard?.writeText(String(url))
+    pushToast({ type: 'success', title: 'Ссылка скопирована', desc: a.target || undefined })
+  }
   return (
     <div className="flex items-start gap-3 rounded-xl border border-line bg-elevated/40 px-3 py-2">
       <span className={cn('mt-0.5 grid h-7 w-7 shrink-0 place-items-center rounded-lg bg-elevated', m.tone)}>{m.icon}</span>
@@ -111,7 +153,7 @@ function ActionRow({ a }: { a: AccountAction }) {
           <span className={cn('text-xs font-bold', m.tone)}>{m.label}</span>
           {a.target && <span className="truncate text-sm font-medium text-fg">{a.target}</span>}
           {a.objectRef?.postId ? <span className="font-mono text-[11px] text-muted">пост #{a.objectRef.postId}</span> : null}
-          {a.status && a.status !== 'sent' && <span className="text-[11px] text-amber-300">{a.status}</span>}
+          {a.status && a.status !== 'sent' && <span className="text-[11px] text-amber-300">{STATUS_LABEL[a.status] || a.status}</span>}
         </div>
         {body && <div className="mt-0.5 truncate text-xs text-white/60" title={body}>{body}</div>}
         <div className="mt-0.5 flex flex-wrap items-center gap-x-2 text-[11px] text-muted">
@@ -123,9 +165,9 @@ function ActionRow({ a }: { a: AccountAction }) {
         </div>
       </div>
       {url && (
-        <a href={url} target="_blank" rel="noreferrer" className="btn-icon mt-0.5 h-7 w-7 shrink-0 text-muted hover:text-spark-300" title="Открыть объект в Telegram">
-          <ExternalLink size={14} />
-        </a>
+        <button type="button" onClick={copyLink} className="btn-icon mt-0.5 h-7 w-7 shrink-0 text-muted hover:text-spark-300" title="Скопировать ссылку на объект">
+          <Link2 size={14} />
+        </button>
       )}
     </div>
   )

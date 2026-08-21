@@ -2510,7 +2510,16 @@ export async function runParticipantsParser(task, store, kind) {
           // Аккаунт получил FloodWait. Пробовать им дальше — значит удлинять наказание:
           // Telegram считает попытки, а не успехи. В асинхронном режиме у аккаунта свой
           // набор целей, поэтому останавливаем именно его поток, остальные идут дальше.
-          await store.appendLog(task, 'warning', `${meta.name}: FloodWait — поток остановлен, оставшиеся цели этого аккаунта пропущены`, meta.name)
+          // Недоделанные цели этого аккаунта НЕ теряем: складываем в общую очередь,
+          // её доберут живые потоки, закончив своё. Раньше они пропадали безвозвратно —
+          // при пяти аккаунтах один FloodWait уносил пятую часть парсинга (аудит 20.08).
+          const left = slice.slice(slice.indexOf(src) + 1)
+          if (left.length) orphanTargets.push(...left)
+          await store.appendLog(
+            task, 'warning',
+            `${meta.name}: FloodWait — поток остановлен${left.length ? `, ${left.length} цел(ей) вернули в очередь` : ''}`,
+            meta.name,
+          )
           break
         }
       }
@@ -2524,6 +2533,10 @@ export async function runParticipantsParser(task, store, kind) {
       if (!task.stopRequested) await sleep(delayChatMs || pickDelay(3, 6, mul) * 1000)
     }
     }
+
+    // Цели, осиротевшие из-за FloodWait чужого потока. Живой поток забирает их себе,
+    // когда разберётся со своими: parallel-режим иначе просто терял эту часть работы.
+    const orphanTargets = []
 
     if (parallelAccounts && accountIds.length > 1) {
       // Цели по кругу между аккаунтами, чтобы нагрузка легла ровно.
@@ -2544,6 +2557,14 @@ export async function runParticipantsParser(task, store, kind) {
           if (await interruptibleSleep(lag, makeStopCheck(store, task.id))) return
         }
         await runSlice(slices[idx], id)
+        // Свои цели кончились — подбираем чужие, брошенные из-за FloodWait.
+        while (orphanTargets.length) {
+          const fresh = await store.loadTask(task.id).catch(() => null)
+          if (fresh?.stopRequested || fresh?.pauseRequested) break
+          const take = orphanTargets.splice(0, orphanTargets.length)
+          await store.appendLog(task, 'info', `Аккаунт ${idx + 1} добирает ${take.length} цел(ей) из брошенных`)
+          await runSlice(take, id)
+        }
       }))
     } else {
       await runSlice(tgs, null)

@@ -97,11 +97,22 @@ export function Layout() {
         {/* §10.1: лента низкого баланса — в самом верху, над шапкой, без крестика. */}
         <LowBalanceBar />
         <AppHeader />
-        {/* MR-129: карточка аккаунта — на всю ширину (без капа 1400px), остальное — как раньше. */}
-        <main className={`w-full flex-1 px-4 py-6 sm:px-6 lg:px-8 ${location.pathname.startsWith('/panel/accounts/') ? '' : 'mx-auto max-w-[1400px]'}`}>
-          {isNoSub && <PaywallBanner />}
-          {routeAllowed ? <Outlet /> : <AccessDenied />}
-        </main>
+        {/* ТЗ 19.08 §5 — регрессия ширины. Кап 1400px тут был на ВСЕХ страницах, пока MR-129
+            не снял его для роута карточки аккаунта («карточка на всю ширину»): страница
+            стала растягиваться по экрану и разъезжаться с шапкой, у которой кап остался
+            (AppHeader: max-w-[1400px]). Возвращаем единую колонку-блок для всех роутов —
+            как в дашборде задач.
+
+            Колонку держит отдельная обёртка, а не сам <main>: нижняя панель запуска
+            (FloatingBar) меряет РОДИТЕЛЯ <main> и раньше вставала край в край экрана —
+            теперь она идёт ровно по блоку. Высота не тронута: flex-1 по всей цепочке,
+            панель по-прежнему прижата ко дну рабочей области. */}
+        <div className="mx-auto flex w-full min-w-0 max-w-[1400px] flex-1 flex-col">
+          <main className="w-full flex-1 px-4 py-6 sm:px-6 lg:px-8">
+            {isNoSub && <PaywallBanner />}
+            {routeAllowed ? <Outlet /> : <AccessDenied />}
+          </main>
+        </div>
       </div>
 
       {/* Help Center — сайдбар в потоке: сужает страницу, а не оверлеит (§3.1). */}
