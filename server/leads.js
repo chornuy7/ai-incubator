@@ -107,6 +107,39 @@ export async function createLead(input) {
   return lead
 }
 
+/**
+ * Закрепить лида за клиентом — только для разовой атрибуции старых записей
+ * (`server/scripts/backfillOwners.mjs`).
+ *
+ * Отдельно от `updateLead` намеренно: обычная правка владельца НЕ меняет, иначе чужого
+ * лида можно было бы переписать на себя обычным PUT. И только если владельца ещё нет:
+ * переатрибуция существующего — это уже передача данных между клиентами, такое решается
+ * не скриптом.
+ *
+ * @param {string} id @param {string} userId @returns {Promise<boolean>} true = закрепили
+ */
+export async function assignLeadOwner(id, userId) {
+  if (!userId) return false
+  const db = sbL()
+  if (db) {
+    const { data } = await db.from('leads').select('*').eq('id', id).maybeSingle()
+    if (!data) return false
+    const lead = rowToLead(data)
+    if (lead.userId) return false
+    await updateWithOwner(db, 'leads', leadToRow({ ...lead, userId }), 'id', id)
+    return true
+  }
+  let ok = false
+  await mutateJson(LEADS_FILE, (all) => {
+    const i = all.findIndex((l) => l.id === id)
+    if (i === -1 || all[i].userId) return all
+    all[i].userId = String(userId)
+    ok = true
+    return all
+  }, [])
+  return ok
+}
+
 /** @param {string} id @param {object} patch */
 function applyLeadPatch(target, patch) {
   const FIELDS = ['goalId', 'campaignId', 'taskId', 'accountId', 'peer', 'status', 'result', 'note', 'followUps']

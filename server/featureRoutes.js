@@ -7,7 +7,7 @@ import { loadAllMeta, getAccountMeta } from './accountsMeta.js'
 import { loadSessionString, createClient } from './tgAuth.js'
 import { sleep } from './lib/protection.js'
 import { accountFingerprint } from './lib/deviceFingerprint.js'
-import { foldersForRequest, isAdminRequest } from './lib/accessGuard.js'
+import { foldersForRequest, isAdminRequest, ownedForRequest, ownerScopeForRequest, ownsRecord, canSeeAccount } from './lib/accessGuard.js'
 import { appendAudit } from './lib/auditLog.js'
 
 export const featureRouter = Router()
@@ -22,8 +22,17 @@ featureRouter.get('/ai-settings', async (_req, res) => {
   } catch (err) { fail(res, err, 500) }
 })
 
+/**
+ * Системный промпт — ОДИН на всю платформу, а роут записи не смотрел, кто пишет:
+ * любой из зарегистрировавшихся клиентов переписывал промпт, по которому говорит ИИ
+ * во ВСЕХ чужих кабинетах, и соседи об этом не узнавали. Читать общий промпт можно
+ * всем (по нему работают их же задачи), менять — только администратору платформы.
+ */
 featureRouter.post('/ai-settings', async (req, res) => {
   try {
+    if (!(await isAdminRequest(req))) {
+      return res.status(403).json({ ok: false, error: 'Это общая настройка платформы — менять её может только администратор' })
+    }
     const patch = req.body ?? {}
     res.json({ ok: true, settings: await setAiSettings(patch) })
   } catch (err) { fail(res, err) }
@@ -36,8 +45,13 @@ featureRouter.get('/ai-safety', async (_req, res) => {
   } catch (err) { fail(res, err, 500) }
 })
 
+// Лимиты ИИ-безопасности общие: ослабив их у себя, клиент ослаблял защиту на чужих
+// аккаунтах — а платит за спамблок их владелец.
 featureRouter.post('/ai-safety', async (req, res) => {
   try {
+    if (!(await isAdminRequest(req))) {
+      return res.status(403).json({ ok: false, error: 'Это общая настройка платформы — менять её может только администратор' })
+    }
     res.json({ ok: true, settings: await setAiSafety(req.body ?? {}) })
   } catch (err) { fail(res, err) }
 })
@@ -49,8 +63,14 @@ featureRouter.get('/target-blacklist', async (_req, res) => {
   } catch (err) { fail(res, err, 500) }
 })
 
+// Чёрный список целей тоже один на платформу. Через `entries` его можно было заменить
+// целиком — то есть одним запросом снять чужие запреты и пустить рассылку туда, куда
+// сосед её осознанно закрыл.
 featureRouter.post('/target-blacklist', async (req, res) => {
   try {
+    if (!(await isAdminRequest(req))) {
+      return res.status(403).json({ ok: false, error: 'Чёрный список общий для платформы — менять его может только администратор' })
+    }
     const body = req.body ?? {}
     if (Array.isArray(body.entries)) {
       return res.json({ ok: true, entries: await setBlacklist(body.entries) })
@@ -64,6 +84,9 @@ featureRouter.post('/target-blacklist', async (req, res) => {
 
 featureRouter.delete('/target-blacklist', async (req, res) => {
   try {
+    if (!(await isAdminRequest(req))) {
+      return res.status(403).json({ ok: false, error: 'Чёрный список общий для платформы — менять его может только администратор' })
+    }
     const entry = req.body?.entry ?? req.query?.entry
     if (!entry) return res.status(400).json({ ok: false, error: 'Укажите entry' })
     res.json({ ok: true, entries: await removeFromBlacklist(String(entry)) })
@@ -71,33 +94,50 @@ featureRouter.delete('/target-blacklist', async (req, res) => {
 })
 
 // ── (5) Папки списков целей ─────────────────────────────────────────────
-// §8.1: отдаём только разрешённые роли папки и только разрешённые каналы внутри них.
-// До этого стоял `_req` — запрос не читался вовсе, и списки каналов всех ролей уходили
-// любому, кто дёрнет URL (прогон 21–22.07, тест 11.7).
+// Две независимые оси, и до 21.08 работала только вторая:
+//   1) ВЛАДЕЛЕЦ пространства — `ownedForRequest`: чужая папка не наша, точка. Этой оси
+//      не было вовсе (у папки не хранился владелец), а роль обычного клиента раздела
+//      `folders` не содержит и потому не режет ничего — базы каналов всех клиентов
+//      платформы уходили каждому, кто дёрнет URL;
+//   2) РОЛЬ внутри своего пространства — `foldersForRequest` (§8.1, прогон 21–22.07,
+//      тест 11.7): сотруднику владелец может сузить список папок и каналов в них.
 featureRouter.get('/target-folders', async (req, res) => {
   try {
-    res.json({ ok: true, folders: await foldersForRequest(req, await listFolders()) })
+    const mine = await ownedForRequest(req, await listFolders())
+    res.json({ ok: true, folders: await foldersForRequest(req, mine) })
   } catch (err) { fail(res, err, 500) }
 })
 
 featureRouter.post('/target-folders', async (req, res) => {
   try {
+    const scope = await ownerScopeForRequest(req)
+    if (scope.blocked) return res.status(403).json({ ok: false, error: 'Нет доступа' })
     const { name, targets } = req.body ?? {}
     if (!name?.trim()) return res.status(400).json({ ok: false, error: 'Укажите название папки' })
-    res.json({ ok: true, folder: await createFolder(name, targets) })
+    // Хозяин записи — владелец пространства (как у прокси и целей): суб создаёт папку
+    // владельцу, а не себе, иначе она пропадёт из виду при смене сотрудника.
+    res.json({ ok: true, folder: await createFolder(name, targets, scope.ownerId) })
   } catch (err) { fail(res, err) }
 })
 
 featureRouter.put('/target-folders/:id', async (req, res) => {
   try {
     const patch = req.body ?? {}
+    const all = await listFolders()
+    const target = all.find((f) => f.id === req.params.id)
+    // Владелец проверяется ПЕРВЫМ и для любой правки: id папки не секрет (он в ссылках и
+    // в ответах соседних роутов), а дозапись целей в чужую папку — это подмена базы,
+    // по которой сосед завтра запустит рассылку своими аккаунтами.
+    if (!(await ownsRecord(req, target))) {
+      return res.status(403).json({ ok: false, error: 'Это не ваша папка' })
+    }
     // §8.1: переименование — управление папкой, только админ. Дозапись целей
     // («Сохранить в папку») доступна всем, у кого папка вообще видна.
     if (typeof patch.name === 'string' && !(await isAdminRequest(req))) {
       return res.status(403).json({ ok: false, error: 'Переименовать папку может только администратор' })
     }
     if (patch.targets !== undefined) {
-      const visible = await foldersForRequest(req, await listFolders())
+      const visible = await foldersForRequest(req, all)
       if (!visible.some((f) => f.id === req.params.id)) {
         return res.status(403).json({ ok: false, error: 'Нет доступа к этой папке' })
       }
@@ -147,16 +187,33 @@ featureRouter.post('/target-folders/:id/validate', async (req, res) => {
     const folders = await listFolders()
     const folder = folders.find((f) => f.id === req.params.id)
     if (!folder) return res.status(404).json({ ok: false, error: 'Папка не найдена' })
+    // Валидация переписывает содержимое папки (мёртвые цели удаляются) — на чужой папке
+    // это чистая порча данных, поэтому владельца спрашиваем до всякой работы.
+    if (!(await ownsRecord(req, folder))) {
+      return res.status(403).json({ ok: false, error: 'Это не ваша папка' })
+    }
     const targets = folder.targets || []
     if (!targets.length) return res.json({ ok: true, checked: 0, kept: 0, removed: 0, folder })
 
-    // Выбираем аккаунт: из тела запроса или первый валидный из панели.
+    // Аккаунт для проверки — только СВОЙ. Раньше сюда брался «первый валидный из панели»,
+    // то есть проверка сотнями getEntity шла с ЧУЖОГО Telegram-аккаунта: риск флуда и
+    // спамблока доставался его владельцу, а результат — автору запроса.
     let accountId = req.body?.accountId
-    if (!accountId) {
+    if (accountId) {
+      if (!(await canSeeAccount(req, accountId))) {
+        return res.status(403).json({ ok: false, error: 'Этот аккаунт вам недоступен' })
+      }
+    } else {
       const meta = await loadAllMeta()
-      accountId = Object.keys(meta).find((id) => !meta[id].inTrash && (meta[id].status === 'active' || !meta[id].status))
+      for (const id of Object.keys(meta)) {
+        const m = meta[id]
+        if (m.inTrash || (m.status && m.status !== 'active')) continue
+        if (!(await canSeeAccount(req, id))) continue
+        accountId = id
+        break
+      }
     }
-    if (!accountId) return res.status(400).json({ ok: false, error: 'Нет доступного аккаунта для проверки' })
+    if (!accountId) return res.status(400).json({ ok: false, error: 'Нет доступного вам аккаунта для проверки' })
 
     const meta = await getAccountMeta(accountId)
     const sessionStr = await loadSessionString(accountId)

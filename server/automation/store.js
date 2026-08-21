@@ -19,6 +19,7 @@ function newId() {
  * @typedef {Object} AutomationRule
  * @property {string} id
  * @property {string} name
+ * @property {string} userId  // владелец пространства, см. createRule
  * @property {boolean} enabled
  * @property {string} moduleKey
  * @property {string[]} accountIds
@@ -80,13 +81,27 @@ function sanitizeSchedule(schedule) {
   }
 }
 
-/** @param {Partial<AutomationRule>} input */
+/**
+ * Владелец правила (`userId`).
+ *
+ * У правила автоматизации владельца не было вообще, а список отдавался целиком — то есть
+ * наружу уходили состав чужих аккаунтов, привязка к кампании и расписание, а кнопка
+ * «Запустить сейчас» позволяла сжечь чужие аккаунты и чужие деньги по чужому правилу.
+ *
+ * Правила, заведённые до этого поля, остаются без владельца — их видит только админ
+ * (`ownedForRequest`); привязать их задним числом к какому-то клиенту нельзя.
+ * ВАЖНО: планировщик (scheduler.js) читает стор напрямую и владельца не смотрит —
+ * старые правила продолжают отрабатывать по расписанию как раньше.
+ *
+ * @param {Partial<AutomationRule>} input
+ */
 export async function createRule(input) {
   const rules = await listRules()
   const now = Date.now()
   const rule = /** @type {AutomationRule} */ ({
     id: newId(),
     name: String(input?.name || '').trim() || 'Правило автоматизации',
+    userId: String(input?.userId || '').trim() || '',
     enabled: input?.enabled !== false,
     moduleKey: String(input?.moduleKey || ''),
     campaignId: input?.campaignId ? String(input.campaignId) : null, // §6: правило крепится к кампании

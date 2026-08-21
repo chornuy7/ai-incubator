@@ -47,13 +47,26 @@ async function saveFolders(folders) {
   await writeJson(FILE, { folders, updatedAt: Date.now() })
 }
 
-/** @param {string} name @param {string[]} targets */
-export async function createFolder(name, targets) {
+/**
+ * Владелец папки (`userId`).
+ *
+ * До 21.08 у папки владельца не было вообще, а `GET /api/target-folders` резал список
+ * только ролью — и обычная роль клиента раздела `folders` не содержит, то есть не режет
+ * ничего. На практике это значило, что база каналов (кого именно клиент собрался
+ * обрабатывать — его ниша и его наработка) уходила любому другому клиенту платформы.
+ *
+ * Папки, заведённые ДО этого поля, остаются без владельца: угадать задним числом, чьи
+ * они, нельзя. По общему правилу (`ownedForRequest`) их видит только админ.
+ *
+ * @param {string} name @param {string[]} targets @param {string} [userId] владелец пространства
+ */
+export async function createFolder(name, targets, userId) {
   const folders = await listFolders()
   const folder = {
     id: newId(),
     name: String(name || '').trim() || 'Без названия',
     targets: normalizeTargets(targets),
+    userId: String(userId || '').trim() || undefined,
     createdAt: Date.now(),
     updatedAt: Date.now(),
   }

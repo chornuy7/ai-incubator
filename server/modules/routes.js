@@ -9,7 +9,7 @@ import { getGoal, isGoalExpired } from '../goals.js'
 import { WARMING_MODULES, canStopWarming } from '../lib/safetyLimits.js'
 import { splitAudience } from '../lib/mailingAudience.js'
 import { canEditTask, pickEditableSettings } from '../lib/taskEdit.js'
-import { isAdminRequest, tasksForRequest, canTouchTask } from '../lib/accessGuard.js'
+import { isAdminRequest, tasksForRequest, canTouchTask, ownedForRequest, ownerScopeForRequest } from '../lib/accessGuard.js'
 
 export const modulesRouter = Router()
 
@@ -507,11 +507,20 @@ modulesRouter.post('/:moduleKey/tasks/:id/restart', async (req, res) => {
   }
 })
 
+/**
+ * Пресеты модуля — это сохранённые `settings`: промпты, цель, список аккаунтов, тексты
+ * рассылки. Файл пресетов один на модуль, владельца у записи не было, и клиент читал
+ * заготовки соседа целиком (а `DELETE` ниже — сносил их).
+ *
+ * Пресеты, сохранённые до этого поля, остаются без владельца — их видит только админ
+ * (общее правило `ownedForRequest`). Поле `owner` рядом — это НЕ владелец, а свободная
+ * подпись «чей пресет» из §7, её вводит человек, доступ по ней считать нельзя.
+ */
 modulesRouter.get('/:moduleKey/presets', async (req, res) => {
   try {
     const store = getModuleStore(req.params.moduleKey)
     if (!store) return res.status(404).json({ ok: false, error: 'Модуль не найден' })
-    const presets = await store.loadPresets()
+    const presets = await ownedForRequest(req, await store.loadPresets())
     res.json({ ok: true, presets })
   } catch (err) {
     res.status(500).json({ ok: false, error: err instanceof Error ? err.message : 'Ошибка' })
@@ -522,22 +531,29 @@ modulesRouter.post('/:moduleKey/presets', async (req, res) => {
   try {
     const store = getModuleStore(req.params.moduleKey)
     if (!store) return res.status(404).json({ ok: false, error: 'Модуль не найден' })
+    const scope = await ownerScopeForRequest(req)
+    if (scope.blocked) return res.status(403).json({ ok: false, error: 'Нет доступа' })
     const { name, settings, color, owner } = req.body ?? {}
     if (!name?.trim()) return res.status(400).json({ ok: false, error: 'Укажите название' })
-    const presets = await store.loadPresets()
-    // Тот же name перезаписывает пресет, а не плодит дубли.
-    const filtered = presets.filter((p) => p.name !== name.trim())
-    // §7: цветовая метка + владелец персонального пресета (нормализуем к строке ≤40).
+    const all = await store.loadPresets()
+    const mine = await ownedForRequest(req, all)
+    const foreign = all.filter((p) => !mine.includes(p))
+    // Дедуп по имени и потолок в 20 штук считаем ВНУТРИ своих пресетов: файл общий, и
+    // раньше клиент, сохранив «Прогрев», затирал одноимённую заготовку соседа, а после
+    // двадцатой — выдавливал чужие из файла совсем.
+    const filtered = mine.filter((p) => p.name !== name.trim())
+    // §7: цветовая метка + подпись «чей пресет» (свободный текст, ≤40) + владелец записи.
     const preset = {
       id: `pr_${Date.now()}`,
       name: name.trim(),
       settings,
+      userId: scope.ownerId || undefined,
       createdAt: Date.now(),
       ...(typeof color === 'string' && color ? { color: color.slice(0, 20) } : {}),
       ...(typeof owner === 'string' && owner.trim() ? { owner: owner.trim().slice(0, 40) } : {}),
     }
     filtered.unshift(preset)
-    await store.savePresets(filtered.slice(0, 20))
+    await store.savePresets([...filtered.slice(0, 20), ...foreign])
     res.json({ ok: true, preset })
   } catch (err) {
     res.status(400).json({ ok: false, error: err instanceof Error ? err.message : 'Ошибка' })
@@ -548,10 +564,16 @@ modulesRouter.delete('/:moduleKey/presets/:id', async (req, res) => {
   try {
     const store = getModuleStore(req.params.moduleKey)
     if (!store) return res.status(404).json({ ok: false, error: 'Модуль не найден' })
-    const presets = await store.loadPresets()
-    const next = presets.filter((p) => p.id !== req.params.id)
+    const all = await store.loadPresets()
+    const mine = await ownedForRequest(req, all)
+    const victim = all.find((p) => p.id === req.params.id)
+    if (!victim) return res.status(404).json({ ok: false, error: 'Пресет не найден' })
+    if (!mine.includes(victim)) return res.status(403).json({ ok: false, error: 'Это не ваш пресет' })
+    const next = all.filter((p) => p.id !== req.params.id)
     await store.savePresets(next)
-    res.json({ ok: true, presets: next.map(({ settings, ...meta }) => meta) })
+    // В ответ — только свои: раньше DELETE возвращал общий список и работал как ещё одно
+    // чтение чужих заготовок.
+    res.json({ ok: true, presets: next.filter((p) => mine.includes(p)).map(({ settings, ...meta }) => meta) })
   } catch (err) {
     res.status(400).json({ ok: false, error: err instanceof Error ? err.message : 'Ошибка' })
   }

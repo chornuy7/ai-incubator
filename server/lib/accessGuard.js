@@ -268,8 +268,16 @@ export async function foldersForRequest(req, folders = []) {
   }
   if (!user || !user.active) return []
   if (hasAdminRole(userRoleIds(user))) return folders
+  // Две оси, и обе нужны: у папки теперь есть владелец (targetFolders.js), и чужие
+  // отсекаются ДО ролевой фильтрации — роль клиента раздела `folders` обычно не
+  // содержит, а «права не заданы» значит «не ограничиваем», то есть роль сама по себе
+  // от чужих баз каналов не защищает.
+  folders = await ownedForRequest(req, folders)
+  // Роли нет — значит и ограничивать нечем: после владельческого фильтра здесь лежат
+  // только свои папки. Раньше пустая роль означала «ничего не видно», и это было
+  // единственной защитой; теперь защита в строке выше, а роль лишь сужает.
   const roles = await rolesForUser(user)
-  if (!roles.length) return []
+  if (!roles.length) return folders
   const out = []
   for (const f of folders) {
     const targets = f.targets || []
@@ -345,7 +353,11 @@ export async function canSeeAccount(req, accountId) {
   }
   if (!accountOwner || accountOwner !== String(spaceOwner)) return false
 
-  // 2) Роль внутри пространства.
+  // 2) Роль внутри пространства. Владельца она не ограничивает: роль — это способ
+  // ВЫДАТЬ часть своего сотруднику, а не урезать себя (та же логика, что в
+  // `effectivePermissions`). Иначе клиент, зарегистрировавшийся сам и не заводивший
+  // ролей, не попал бы к собственным аккаунтам — на них ведь тоже стоит этот гейт.
+  if (String(userId) === String(spaceOwner)) return true
   const roles = await rolesForUser(user)
   const hasGrants = (user.accountIds?.length || user.accountGroupIds?.length)
   if (!roles.length && !hasGrants) return false

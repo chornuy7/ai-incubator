@@ -208,24 +208,48 @@ apiV1Router.get('/mcp', async (req, res) => {
 apiV1Router.post('/mcp', mcpPostHandler)
 apiV1Router.delete('/mcp', mcpDeleteHandler)
 
-/** §10.3(1): цели. */
-apiV1Router.get('/goals', async (_req, res) => {
-  try { const { listGoals } = await import('./goals.js'); res.json({ ok: true, goals: await listGoals() }) }
-  catch (err) { res.status(500).json({ ok: false, error: msg(err) }) }
+/**
+ * §10.3(1): цели и кампании.
+ *
+ * Обещание выше («ключ делает ровно то, что можно самому пользователю») эти четыре
+ * роута не выполняли: списки были объявлены как `(_req, res)` и отдавали цели и
+ * кампании ВСЕЙ платформы — чужие стратегии, метрики и состав кампаний уходили по
+ * одному ключу. Создание же не проставляло владельца, и запись получалась «ничьей»:
+ * в кабинете её потом не видел никто, кроме админа.
+ *
+ * Владельца берём из ключа (`req.apiKey.ownerId`), а не из тела: иначе внешний
+ * оркестратор мог бы записать цель на чужого пользователя. Системный env-ключ владельца
+ * не имеет — он служебный, ему по-прежнему видно всё (x-user-id не подставляется,
+ * `ownedForRequest` отдаёт полный список).
+ */
+apiV1Router.get('/goals', async (req, res) => {
+  try {
+    const { listGoals } = await import('./goals.js')
+    const { ownedForRequest } = await import('./lib/accessGuard.js')
+    res.json({ ok: true, goals: await ownedForRequest(req, await listGoals()) })
+  } catch (err) { res.status(500).json({ ok: false, error: msg(err) }) }
 })
 apiV1Router.post('/goals', async (req, res) => {
-  try { const { createGoal } = await import('./goals.js'); res.json({ ok: true, goal: await createGoal(req.body || {}) }) }
-  catch (err) { res.status(400).json({ ok: false, error: msg(err) }) }
+  try {
+    const { createGoal } = await import('./goals.js')
+    const goal = await createGoal({ ...(req.body || {}), userId: req.apiKey?.ownerId || undefined })
+    res.json({ ok: true, goal })
+  } catch (err) { res.status(400).json({ ok: false, error: msg(err) }) }
 })
 
-/** §10.3(1): кампании. */
-apiV1Router.get('/campaigns', async (_req, res) => {
-  try { const { listCampaigns } = await import('./campaigns.js'); res.json({ ok: true, campaigns: await listCampaigns() }) }
-  catch (err) { res.status(500).json({ ok: false, error: msg(err) }) }
+apiV1Router.get('/campaigns', async (req, res) => {
+  try {
+    const { listCampaigns } = await import('./campaigns.js')
+    const { ownedForRequest } = await import('./lib/accessGuard.js')
+    res.json({ ok: true, campaigns: await ownedForRequest(req, await listCampaigns()) })
+  } catch (err) { res.status(500).json({ ok: false, error: msg(err) }) }
 })
 apiV1Router.post('/campaigns', async (req, res) => {
-  try { const { createCampaign } = await import('./campaigns.js'); res.json({ ok: true, campaign: await createCampaign(req.body || {}) }) }
-  catch (err) { res.status(400).json({ ok: false, error: msg(err) }) }
+  try {
+    const { createCampaign } = await import('./campaigns.js')
+    const campaign = await createCampaign({ ...(req.body || {}), userId: req.apiKey?.ownerId || undefined })
+    res.json({ ok: true, campaign })
+  } catch (err) { res.status(400).json({ ok: false, error: msg(err) }) }
 })
 
 /** §10.3 + §10.1: estimate стоимости и времени ДО запуска. */

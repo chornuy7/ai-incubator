@@ -217,11 +217,23 @@ usersRouter.post('/logout', async (req, res) => {
   } catch (err) { fail(res, err, 500) }
 })
 
-/** Сводка рабочего времени по всем пользователям (§8.1). */
-usersRouter.get('/worktime', async (_req, res) => {
+/**
+ * Сводка рабочего времени (§8.1) — только по СВОИМ людям.
+ *
+ * Роут был объявлен как `(_req, res)` и отдавал часы всех пользователей платформы: по
+ * ним читается и состав чужой команды (id тех, кто вообще есть), и когда сосед работает.
+ * Правило то же, что у `GET /api/users`: владелец видит своих субов, админ и дев-режим —
+ * всех. Себя оставляем в выдаче: собственные часы человек видеть вправе.
+ */
+usersRouter.get('/worktime', async (req, res) => {
   try {
+    const ctx = await requesterContext(req)
+    if (ctx.blocked) return res.status(403).json({ ok: false, error: 'Пользователь отключён' })
     const users = await listUsers()
-    res.json({ ok: true, worktime: await summariesFor(users.map((u) => u.id)) })
+    const visible = (ctx.noSession || ctx.isAdmin)
+      ? users
+      : users.filter((u) => u.parentId === ctx.id || u.id === ctx.id)
+    res.json({ ok: true, worktime: await summariesFor(visible.map((u) => u.id)) })
   } catch (err) { fail(res, err, 500) }
 })
 
