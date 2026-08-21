@@ -99,6 +99,16 @@ export function SubscriptionPage() {
   /** Что реально спишется: сервер заряжает только ДОБАВЛЕННЫЕ модули (`addedCost`). */
   const added = useMemo(() => keys.filter((k) => !mineSet.has(k)), [keys, mineSet])
   const due = useMemo(() => priceOf(new Set(added)), [priceOf, added])
+  /*
+   * Цена докупки — РАЗНИЦА: сколько подписка стала стоить в месяц минус сколько стоила.
+   * Так же считает сервер (`addedCost`), и иначе витрина обещала бы не ту цену, которую
+   * спишет: скидка набора при докупке пропадала, и клиент, добравший пятый модуль
+   * «Аутрича», платил за него полную цену, хотя именно ею набор и закрывал.
+   * Токены (месячные и подарочные) остаются ПО ДОБАВЛЕННЫМ — их начисляют за них.
+   */
+  const paidNow = useMemo(() => priceOf(mineSet), [priceOf, mineSet])
+  const dueSum = Math.max(0, cost.sum - paidNow.sum)
+  const dueFull = Math.max(0, cost.full - paidNow.full)
 
   const toggle = (key: string) => {
     if (mineSet.has(key)) return // оплаченный модуль зафиксирован до конца периода
@@ -330,12 +340,14 @@ export function SubscriptionPage() {
           <div className="flex shrink-0 flex-wrap items-center gap-2">
             <span
               className="flex h-10 items-center gap-1.5 rounded-xl border border-line bg-elevated px-3.5 text-sm font-bold text-fg"
-              title={`В подписке модулей: ${keys.length}${added.length ? ` · добавлено ${added.length}` : ''}${due.setup ? ` · набор «${data.setups.find((x) => x.id === due.setup)?.name}» — скидка ${Math.round(due.discount * 100)}%` : ''}`}
+              // Скидку в подсказке берём от ИТОГОВОГО набора, а не от добавленного куска:
+              // именно итоговый набор её и даёт.
+              title={`В подписке модулей: ${keys.length}${added.length ? ` · добавлено ${added.length}` : ''}${cost.setup ? ` · набор «${data.setups.find((x) => x.id === cost.setup)?.name}» — скидка ${Math.round(cost.discount * 100)}%` : ''}`}
             >
-              {period === 'year' ? Math.round(due.sum * 12 * (1 - annualDiscount)) : due.sum} {cur}
+              {period === 'year' ? Math.round(dueSum * 12 * (1 - annualDiscount)) : dueSum} {cur}
               <span className="font-semibold text-muted">{added.length ? 'к оплате' : 'ничего не добавлено'}</span>
               {added.length > 0 && period === 'year' && <span className="rounded-md bg-spark-500/15 px-1.5 py-0.5 text-[10px] font-bold text-spark-300">−{Math.round(annualDiscount * 100)}%</span>}
-              {added.length > 0 && period === 'month' && due.discount > 0 && <span className="text-xs font-semibold text-muted line-through">{due.full} {cur}</span>}
+              {added.length > 0 && period === 'month' && dueFull > dueSum && <span className="text-xs font-semibold text-muted line-through">{dueFull} {cur}</span>}
             </span>
 
             {/* MR-150: сколько ⚡ приходит КАЖДЫЙ месяц по ВСЕЙ подписке (оплаченные +

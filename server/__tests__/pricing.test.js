@@ -174,3 +174,41 @@ test('addedCost: пустой стартовый набор — платим з�
   assert.deepEqual(added.sort(), ['mailing', 'warming'])
   assert.equal(monthly, subscriptionCost(['mailing', 'warming']).sum)
 })
+
+/**
+ * Докупка в действующую подписку: цена = насколько подписка стала дороже, а не цена
+ * добавленного модуля отдельно (вопрос владельца 21.08: «если у меня куплена подписка,
+ * то как на модуль другой купленный будет распространяться?»).
+ *
+ * Пока считали добавленное отдельно, скидка набора при докупке пропадала: клиент,
+ * купивший часть «Аутрича» и добравший недостающий модуль, платил за него полную цену —
+ * хотя именно этой покупкой набор и закрывал. Штраф за то, что покупал не всё сразу.
+ */
+test('докупка закрывает набор — считаем по разнице, скидка набора работает', () => {
+  const outreach = SETUPS.find((s) => s.id === 'setup-outreach')
+  const had = outreach.modules.slice(0, -1)      // почти весь набор
+  const last = outreach.modules[outreach.modules.length - 1]
+
+  const before = subscriptionCost(had).sum
+  const after = subscriptionCost(outreach.modules).sum
+  const { added, monthly } = addedCost(had, [...had, last])
+
+  assert.deepEqual(added, [last])
+  assert.equal(monthly, Math.max(0, Math.round((after - before) * 100) / 100),
+    'платим ровно разницу «стало минус было»')
+  assert.ok(after < before + modulePrice(last),
+    'набор целиком дешевле, чемчасти по отдельности — иначе тест ничего не проверяет')
+  assert.ok(monthly < modulePrice(last),
+    `скидка набора должна доставаться и докупке: ${monthly} против полной ${modulePrice(last)}`)
+})
+
+test('обычная докупка вне набора стоит свою цену', () => {
+  const { monthly } = addedCost(['mailing'], ['mailing', 'warming'])
+  assert.equal(monthly, modulePrice('warming'), 'без набора скидываться нечему')
+})
+
+test('снятие модуля денег не возвращает и в минус не уводит', () => {
+  const { added, monthly } = addedCost(['mailing', 'warming'], ['mailing'])
+  assert.deepEqual(added, [], 'ничего не добавили')
+  assert.equal(monthly, 0)
+})

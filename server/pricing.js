@@ -193,7 +193,24 @@ export function addedCost(had, wanted, customBundles = [], priceMap = MODULE_MON
   const owned = new Set(Array.isArray(had) ? had : [])
   const added = [...new Set((Array.isArray(wanted) ? wanted : []).filter((k) => !owned.has(k)))]
   if (!added.length) return { added: [], monthly: 0 }
-  return { added, monthly: subscriptionCost(added, customBundles, priceMap, {}, setups).sum }
+  /*
+   * Цена докупки = цена ИТОГОВОГО набора минус цена уже оплаченного, а не цена
+   * добавленных модулей отдельно (вопрос владельца 21.08: «если у меня куплена
+   * подписка, то как на модуль другой купленный будет распространяться?»).
+   *
+   * Раньше считали только добавленное само по себе — и скидка набора при докупке
+   * пропадала: клиент, купивший четыре модуля «Аутрича» со скидкой 20% и добравший
+   * пятый, платил за него ПОЛНУЮ цену, хотя именно этой покупкой он набор и закрывал.
+   * Получался штраф за то, что покупал не всё сразу, а объяснить его нечем.
+   *
+   * Разница отвечает на вопрос честно: сколько подписка стала стоить в месяц после
+   * добавления. Ниже нуля не опускаем — если новый набор дешевле старого (набор дал
+   * скидку больше, чем цена модуля), денег не возвращаем, но и не берём.
+   */
+  const before = subscriptionCost([...owned], customBundles, priceMap, {}, setups).sum
+  const after = subscriptionCost([...owned, ...added], customBundles, priceMap, {}, setups).sum
+  const monthly = Math.max(0, Math.round((after - before) * 100) / 100)
+  return { added, monthly }
 }
 
 /** Расчётная длина месяца в подписке — та же, что у `subExpiry` (30 дней). */
