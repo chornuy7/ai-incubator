@@ -100,7 +100,8 @@ export default function App() {
             Именно redirect, а не второй маршрут той же страницы, — чтобы у раздела был
             один адрес: иначе пункт меню (он сверяется с /panel/users) на /panel/roles
             не подсвечивался бы, и человек не понимал, где находится. */}
-        <Route path="/panel/roles" element={<Navigate to="/panel/users?tab=roles" replace />} />
+        {/* Раздел один: шаблоны доступа живут на той же странице, ниже списка людей. */}
+        <Route path="/panel/roles" element={<Navigate to="/panel/users" replace />} />
         <Route path="/panel/users" element={<UsersAndRolesPage />} />
         <Route path="/panel/proxies" element={<ProxiesPage />} />
         <Route path="/panel/mailing" element={<MailingPage />} />

@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useState, type ReactNode } from 'react'
-import { Link, useSearchParams } from 'react-router-dom'
+import { useEffect, useMemo, useState } from 'react'
+import { Link } from 'react-router-dom'
 import { Users2, Plus, Trash2, ShieldCheck, Check, Users, Wifi, ChevronDown, ChevronRight, Search, Package } from 'lucide-react'
 import { PageHeader, Card, EmptyState, Badge, Modal, Switch } from '@/shared/ui'
 import { confirmDialog } from '@/shared/lib/dialog'
@@ -17,11 +17,8 @@ import { ADMIN_BYPASS_ID } from '@/shared/config/rbac'
 import { HelpButton } from '@/features/neuro-commenting/moduleUi'
 import { cn } from '@/shared/lib/utils'
 
-/**
- * Вкладка шаблонов внутри объединённого раздела. Вкладка живёт в АДРЕСЕ, а не только в
- * состоянии: ссылка «создайте шаблон» и кнопка «назад» должны попадать туда, куда обещают.
- */
-const ROLES_TAB_HREF = '/panel/users?tab=roles'
+/** Якорь раздела шаблонов — он на этой же странице, ниже списка людей. */
+const TEMPLATES_ANCHOR = '#templates'
 
 /**
  * §5.4 (MR-37): владелец выдаёт субу аккаунты из своего пула — отдельно ГРУППЫ и отдельно
@@ -223,7 +220,7 @@ function ApplyTemplate({ roles, catalog, applied, hint, onApply, className }: {
     return (
       <div className={cn('text-[11px] text-white/40', className)}>
         Шаблонов пока нет — выставьте доступ тумблерами или{' '}
-        <Link to={ROLES_TAB_HREF} className="font-semibold text-spark-300 hover:text-spark-200">создайте шаблон</Link>,
+        <a href={TEMPLATES_ANCHOR} className="font-semibold text-spark-300 hover:text-spark-200">создайте шаблон</a>,
         чтобы в следующий раз выдать тот же набор одним кликом.
       </div>
     )
@@ -337,8 +334,8 @@ function fmtDur(ms: number): string {
   return h ? `${h}ч ${m}м` : `${m}м`
 }
 
-/** Вкладка «Пользователи» объединённого раздела (полосу вкладок рисует UsersAndRolesPage). */
-function UsersTab({ tabs }: { tabs?: ReactNode }) {
+/** Верхняя половина раздела: список сотрудников и их доступы. */
+function UsersTab() {
   const sessionUser = useSession((s) => s.user)
   const [users, setUsers] = useState<User[]>([])
   const [roles, setRoles] = useState<Role[]>([])
@@ -491,8 +488,6 @@ function UsersTab({ tabs }: { tabs?: ReactNode }) {
         }
       />
 
-      {tabs}
-
       {err && <Card className="mb-3 border-rose-500/30 p-3 text-sm text-rose-300">{err}</Card>}
 
       {loading ? (
@@ -643,66 +638,22 @@ function UsersTab({ tabs }: { tabs?: ReactNode }) {
   )
 }
 
-/** Вкладки объединённого раздела. Значение живёт в query-параметре `?tab=`. */
-type TeamTab = 'users' | 'roles'
-
 /**
- * Полоса вкладок. Рисуется здесь, а внутрь вкладки уезжает пропом `tabs`, чтобы стоять
- * ПОД шапкой страницы: у каждой вкладки своя шапка со своими кнопками («Новый пользователь»
- * / «Создать шаблон»), и вкладки над заголовком читались бы как навигация всей панели.
- */
-function TeamTabs({ tab, onTab, rolesLabel }: { tab: TeamTab; onTab: (t: TeamTab) => void; rolesLabel: string }) {
-  const items: { key: TeamTab; label: string; icon: typeof Users2 }[] = [
-    { key: 'users', label: 'Пользователи', icon: Users2 },
-    { key: 'roles', label: rolesLabel, icon: ShieldCheck },
-  ]
-  return (
-    <div className="mb-4 flex w-fit items-center gap-1 rounded-xl border border-line bg-elevated/60 p-1">
-      {items.map((it) => {
-        const on = it.key === tab
-        const Icon = it.icon
-        return (
-          <button
-            key={it.key}
-            type="button"
-            onClick={() => onTab(it.key)}
-            aria-current={on ? 'page' : undefined}
-            className={cn('flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm font-medium transition-colors',
-              on ? 'bg-spark-500/12 text-spark-300' : 'text-muted hover:bg-white/5 hover:text-fg')}
-          >
-            <Icon size={15} className="shrink-0" />
-            {it.label}
-          </button>
-        )
-      })}
-    </div>
-  )
-}
-
-/**
- * «Пользователи» и «Роли и доступы» — один раздел с двумя вкладками (просьба владельца
- * 21.08: «давай объединим… а внутри там просто 2 будет пагинация по пользователям и
- * пагинация по ролям»). Это не только экономия строки в меню: шаблон доступа собирают и
- * применяют в одном сценарии, а два соседних пункта заставляли ходить туда-сюда.
+ * «Пользователи и роли» — ОДИН экран (просьба владельца 21.08: «объединим… а внутри там
+ * просто 2 будет пагинация по пользователям и пагинация по ролям»).
  *
- * Вкладка хранится в АДРЕСЕ (`?tab=roles`), а не в состоянии компонента: ссылка на вкладку
- * шаблонов должна открывать именно её, а «назад» — возвращать на предыдущую вкладку, а не
- * выбрасывать из раздела. Старый путь /panel/roles ведёт сюда же (см. App.tsx).
+ * Сначала я сделал две вкладки — и это было не то, о чём просили: вкладка прячет половину
+ * раздела, а сценарий тут сквозной — собрать шаблон и тут же применить его сотруднику.
+ * Поэтому обе половины стоят друг под другом, у каждой свой список и своя пагинация.
+ *
+ * Старый путь /panel/roles ведёт сюда же (см. App.tsx), а sudo-админка по-прежнему
+ * открывает RolesPage отдельной страницей — там это настоящие роли платформы.
  */
 export function UsersAndRolesPage() {
-  const [params, setParams] = useSearchParams()
-  const isPlatformAdmin = !!useSession((s) => s.user?.isAdmin)
-  const tab: TeamTab = params.get('tab') === 'roles' ? 'roles' : 'users'
-  const go = (next: TeamTab) => {
-    const p = new URLSearchParams(params)
-    if (next === 'roles') p.set('tab', 'roles')
-    // Вкладка по умолчанию — без параметра в адресе (чистый /panel/users). `role=<id>`
-    // адресует конкретный шаблон и на вкладке пользователей значит ровно ничего.
-    else { p.delete('tab'); p.delete('role') }
-    setParams(p)
-  }
-  // Владельцу роль — заготовка, админу платформы — настоящая роль. Подпись вкладки
-  // повторяет заголовок соответствующей страницы, чтобы переход не выглядел прыжком.
-  const tabs = <TeamTabs tab={tab} onTab={go} rolesLabel={isPlatformAdmin ? 'Роли и доступы' : 'Шаблоны доступа'} />
-  return tab === 'roles' ? <RolesPage tabs={tabs} /> : <UsersTab tabs={tabs} />
+  return (
+    <div>
+      <UsersTab />
+      <RolesPage embedded />
+    </div>
+  )
 }

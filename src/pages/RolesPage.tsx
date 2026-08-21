@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type ReactNode } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import { ShieldCheck, Plus, Trash2, ChevronRight, ChevronDown, Save, Lock, Package } from 'lucide-react'
 import { PageHeader, Card, EmptyState, Badge, Switch } from '@/shared/ui'
@@ -135,13 +135,16 @@ function PermRow({ label, indent, value, onChange, disabled }: { label: string; 
   )
 }
 
-export function RolesPage({ tabs }: {
+export function RolesPage({ embedded }: {
   /**
-   * Полоса вкладок раздела «Пользователи и роли» — её рисует UsersAndRolesPage и передаёт
-   * сюда, чтобы вкладки стояли под шапкой страницы, а не над ней. Пропа нет — страница
-   * работает как раньше сама по себе: так её открывает sudo-админка (AdminStatsPage).
+   * Раздел внутри страницы «Пользователи и роли», а не самостоятельная страница.
+   * Тогда вместо шапки страницы рисуется заголовок раздела: двух шапок на одном экране
+   * быть не должно — вторая читается как «я провалился в другой раздел».
+   *
+   * Без пропа страница работает как раньше сама по себе — так её открывает sudo-админка
+   * (AdminStatsPage).
    */
-  tabs?: ReactNode
+  embedded?: boolean
 } = {}) {
   /**
    * Для владельца это редактор ШАБЛОНОВ доступа, для админа платформы — прежний редактор
@@ -369,29 +372,49 @@ export function RolesPage({ tabs }: {
   const rolePageSafe = Math.min(rolePage, rolePages)
   const shownRoles = roles.slice((rolePageSafe - 1) * PAGE_SIZE, rolePageSafe * PAGE_SIZE)
 
+  const title = isPlatformAdmin ? 'Роли и доступы' : 'Шаблоны доступа'
+  const subtitle = isPlatformAdmin
+    ? 'Роли и доступ к модулям, блокам и ресурсам. Снятый доступ выделен.'
+    : 'Шаблон — заготовка доступа: собрали набор модулей один раз и применяете его сотруднику в его карточке выше. Дальше доступ каждого правится отдельно. Выдать можно только оплаченное.'
+  const addLabel = isPlatformAdmin ? 'Новая роль' : 'Создать шаблон'
+
   return (
-    <div>
-      <PageHeader
-        // Владельцу это вкладка «Шаблоны доступа» — заголовок повторяет её имя, чтобы
-        // переход по вкладке не выглядел уходом в другой раздел. Админу платформы страница
-        // по-прежнему открывается отдельно (sudo-админка) и остаётся «Ролями и доступами».
-        title={isPlatformAdmin ? 'Роли и доступы' : 'Шаблоны доступа'}
-        subtitle={isPlatformAdmin
-          ? 'Роли и доступ к модулям, блокам и ресурсам. Снятый доступ выделен.'
-          : 'Шаблон — заготовка доступа: собрали набор модулей один раз и применяете его сотрудникам на соседней вкладке «Пользователи». Дальше доступ каждого правится отдельно. Выдать можно только оплаченное.'}
-        icon={<ShieldCheck size={22} />}
-        badge={roles.length ? `${roles.length}` : undefined}
-        actions={
+    <div id="templates">
+      {embedded ? (
+        // Заголовок РАЗДЕЛА: то же содержание, что в шапке страницы, но тише по весу и с
+        // чертой сверху — граница нужна, иначе шаблоны читаются как продолжение списка людей.
+        <div className="mt-8 flex flex-wrap items-start justify-between gap-3 border-t border-line pt-6">
+          <div className="min-w-0">
+            <div className="flex items-center gap-2">
+              <ShieldCheck size={18} className="shrink-0 text-spark-300" />
+              <h2 className="text-lg font-semibold">{title}</h2>
+              {roles.length ? <Badge>{roles.length}</Badge> : null}
+            </div>
+            <p className="mt-1 max-w-3xl text-sm text-muted">{subtitle}</p>
+          </div>
           <div className="flex items-center gap-2">
-            <HelpButton topic="rbac-roles" className="h-10 w-10" />
-            <button onClick={() => void addRole()} className="btn-primary h-10">
-              <Plus size={16} /> {isPlatformAdmin ? 'Новая роль' : 'Создать шаблон'}
+            <HelpButton topic="rbac-roles" className="h-9 w-9" />
+            <button onClick={() => void addRole()} className="btn-primary h-9 text-sm">
+              <Plus size={15} /> {addLabel}
             </button>
           </div>
-        }
-      />
-
-      {tabs}
+        </div>
+      ) : (
+        <PageHeader
+          title={title}
+          subtitle={subtitle}
+          icon={<ShieldCheck size={22} />}
+          badge={roles.length ? `${roles.length}` : undefined}
+          actions={
+            <div className="flex items-center gap-2">
+              <HelpButton topic="rbac-roles" className="h-10 w-10" />
+              <button onClick={() => void addRole()} className="btn-primary h-10">
+                <Plus size={16} /> {addLabel}
+              </button>
+            </div>
+          }
+        />
+      )}
 
       {err && <Card className="mb-3 border-rose-500/30 p-3 text-sm text-rose-300">{err}</Card>}
 
