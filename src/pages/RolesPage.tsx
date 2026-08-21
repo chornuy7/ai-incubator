@@ -372,6 +372,15 @@ export function RolesPage({ embedded }: {
   const rolePageSafe = Math.min(rolePage, rolePages)
   const shownRoles = roles.slice((rolePageSafe - 1) * PAGE_SIZE, rolePageSafe * PAGE_SIZE)
 
+  /*
+   * Встроенный раздел свёрнут (просьба владельца 21.08: «нужно по умолчанию скрыто»).
+   * Шаблон — вещь редкая: собрал набор один раз и месяцами им пользуешься, а список
+   * с редактором прав занимал экран под списком людей, ради которого сюда и заходят.
+   * Отдельная страница (sudo-админка) остаётся раскрытой: там это и есть содержимое.
+   */
+  const [openSection, setOpenSection] = useState(!embedded)
+  const shown = !embedded || openSection
+
   const title = isPlatformAdmin ? 'Роли и доступы' : 'Шаблоны доступа'
   const subtitle = isPlatformAdmin
     ? 'Роли и доступ к модулям, блокам и ресурсам. Снятый доступ выделен.'
@@ -384,20 +393,32 @@ export function RolesPage({ embedded }: {
         // Заголовок РАЗДЕЛА: то же содержание, что в шапке страницы, но тише по весу и с
         // чертой сверху — граница нужна, иначе шаблоны читаются как продолжение списка людей.
         <div className="mt-8 flex flex-wrap items-start justify-between gap-3 border-t border-line pt-6">
-          <div className="min-w-0">
+          <button
+            type="button"
+            onClick={() => setOpenSection((v) => !v)}
+            aria-expanded={openSection}
+            className="min-w-0 text-left"
+          >
             <div className="flex items-center gap-2">
+              <ChevronDown size={16} className={cn('shrink-0 text-white/40 transition-transform', !openSection && '-rotate-90')} />
               <ShieldCheck size={18} className="shrink-0 text-spark-300" />
               <h2 className="text-lg font-semibold">{title}</h2>
               {roles.length ? <Badge>{roles.length}</Badge> : null}
             </div>
-            <p className="mt-1 max-w-3xl text-sm text-muted">{subtitle}</p>
-          </div>
-          <div className="flex items-center gap-2">
-            <HelpButton topic="rbac-roles" className="h-9 w-9" />
-            <button onClick={() => void addRole()} className="btn-primary h-9 text-sm">
-              <Plus size={15} /> {addLabel}
-            </button>
-          </div>
+            {/* Свёрнутый раздел объясняет себя одной строкой: полное описание под
+                заголовком читать некому, пока список не открыт. */}
+            <p className="mt-1 max-w-3xl text-sm text-muted">
+              {openSection ? subtitle : 'Заготовки доступа для новых сотрудников — открыть.'}
+            </p>
+          </button>
+          {openSection && (
+            <div className="flex items-center gap-2">
+              <HelpButton topic="rbac-roles" className="h-9 w-9" />
+              <button onClick={() => void addRole()} className="btn-primary h-9 text-sm">
+                <Plus size={15} /> {addLabel}
+              </button>
+            </div>
+          )}
         </div>
       ) : (
         <PageHeader
@@ -416,9 +437,9 @@ export function RolesPage({ embedded }: {
         />
       )}
 
-      {err && <Card className="mb-3 border-rose-500/30 p-3 text-sm text-rose-300">{err}</Card>}
+      {shown && err && <Card className="mb-3 border-rose-500/30 p-3 text-sm text-rose-300">{err}</Card>}
 
-      {loading ? (
+      {!shown ? null : loading ? (
         <Card className="p-6 text-sm text-white/50">Загрузка…</Card>
       ) : roles.length === 0 ? (
         /*
