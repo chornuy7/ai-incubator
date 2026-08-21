@@ -50,7 +50,20 @@ export function AppHeader() {
   const balance = useBalance()
   // Прайс — с сервера: копия в вебе рано или поздно разошлась бы с тем, что списывается.
   const [pricing, setPricing] = useState<Pricing | null>(null)
-  useEffect(() => { void fetchPricing().then(setPricing).catch(() => {}) }, [])
+  useEffect(() => {
+    const load = () => { void fetchPricing().then(setPricing).catch(() => {}) }
+    load()
+    // Правка 22.08: прайс читался один раз за загрузку страницы. Владелец правил цену
+    // пакета в админке, переключался на панель — и в окне «Купить токены» висела старая,
+    // пока не перезагрузишь. Перечитываем при возвращении на вкладку.
+    const onFocus = () => { if (!document.hidden) load() }
+    window.addEventListener('focus', onFocus)
+    document.addEventListener('visibilitychange', onFocus)
+    return () => {
+      window.removeEventListener('focus', onFocus)
+      document.removeEventListener('visibilitychange', onFocus)
+    }
+  }, [])
   // §6.3 (NOTIFY-001): колокольчик — сколько аккаунтов «отвалилось» (мёртвый прокси / нерабочий статус).
   const [notifOpen, setNotifOpen] = useState(false)
   // Закрытие колокольчика кликом ВНЕ него: прозрачный backdrop не срабатывал, т.к.

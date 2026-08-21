@@ -199,6 +199,21 @@ export function SubscriptionPage() {
                 )}
               </div>
               <div className="mt-1 text-[11px] text-muted">{s.modules.length} модулей</div>
+              {/* Что набор даёт в токенах: сумма месячной выдачи его модулей и подарок.
+                  Заказчик просил видеть это рядом с ценой, а не только в итоге внизу. */}
+              {(() => {
+                const tok = data.items.filter((i) => s.modules.includes(i.key))
+                const mo = tok.reduce((a, i) => a + (i.monthlyTokens || 0), 0)
+                const gift = tok.reduce((a, i) => a + (i.gift || 0), 0)
+                if (!mo && !gift) return null
+                return (
+                  <div className="mt-0.5 text-[11px]">
+                    {mo ? <span className="text-fg/70">{mo.toLocaleString('ru-RU')} ⚡ в месяц</span> : null}
+                    {mo && gift ? <span className="text-faint"> · </span> : null}
+                    {gift ? <span className="text-amber-300">+{gift.toLocaleString('ru-RU')} ⚡ в подарок</span> : null}
+                  </div>
+                )
+              })()}
             </button>
           ))}
         </div>
@@ -244,8 +259,17 @@ export function SubscriptionPage() {
                             ? 'Уже в подписке — бессрочно'
                             : exp.expired ? `Оплата закончилась ${exp.date} — продлите` : `Оплачен до ${exp.date}`
                         : m.action && m.action > 0 ? `≈ ${Math.round(100 / m.action).toLocaleString('ru-RU')} действий за 100 ⚡` : 'действия бесплатны'}
-                      {!paid && m.gift ? <span className="text-spark-300"> · +{m.gift} ⚡ в подарок</span> : null}
                     </span>
+                    {/* Сколько ⚡ даёт САМ модуль: месячная выдача и разовый подарок.
+                        Показываем и у оплаченных: у кого всё куплено, иначе не видно
+                        вообще ничего — а это ровно то, что человек получает за деньги. */}
+                    {(m.monthlyTokens || m.gift) ? (
+                      <span className="block text-[11px]">
+                        {m.monthlyTokens ? <span className="text-fg/70">{m.monthlyTokens} ⚡ в месяц</span> : null}
+                        {m.monthlyTokens && m.gift ? <span className="text-faint"> · </span> : null}
+                        {m.gift ? <span className="text-amber-300">+{m.gift} ⚡ в подарок</span> : null}
+                      </span>
+                    ) : null}
                   </span>
                 </span>
                 {/* §11.2 (31.07): в кабинете цена — только текстом. Правка цен — в админ-панели. */}
