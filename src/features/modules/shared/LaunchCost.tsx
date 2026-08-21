@@ -22,16 +22,32 @@ function CostTip({ hint, className, children }: { hint: string; className: strin
  * `inflight` нужен, чтобы два модуля, смонтированные разом, не слали два запроса.
  */
 let pricingCache: Pricing | null = null
+let pricingAt = 0
 let inflight: Promise<Pricing> | null = null
+
+/*
+ * Кэш держим НЕ на всю сессию (правка 22.08). Раньше он жил до перезагрузки страницы:
+ * владелец правил цену в админке, открывал панель — и видел старую, пока не перезагрузит.
+ * Теперь у кэша срок, и он сбрасывается при возвращении на вкладку: смена цены в соседней
+ * вкладке админки подхватывается сразу, а не «когда-нибудь».
+ */
+const PRICING_TTL = 60_000
+
+if (typeof window !== 'undefined') {
+  const drop = () => { pricingCache = null; inflight = null }
+  window.addEventListener('focus', drop)
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) drop() })
+}
 
 function usePricing(): Pricing | null {
   const [pricing, setPricing] = useState<Pricing | null>(pricingCache)
   useEffect(() => {
-    if (pricingCache) return // уже знаем — рисуем сразу, без сети
     let alive = true
+    const fresh = pricingCache && Date.now() - pricingAt < PRICING_TTL
+    if (fresh) { setPricing(pricingCache); return } // уже знаем — рисуем сразу, без сети
     inflight = inflight || fetchPricing()
     void inflight
-      .then((p) => { pricingCache = p; if (alive) setPricing(p) })
+      .then((p) => { pricingCache = p; pricingAt = Date.now(); inflight = null; if (alive) setPricing(p) })
       .catch(() => { inflight = null }) // дать шанс повторить на следующем открытии
     return () => { alive = false }
   }, [])

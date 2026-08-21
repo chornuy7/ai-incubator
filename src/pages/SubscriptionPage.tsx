@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
-import { Check, Package, Sparkles, Loader2, Zap, Lock, CalendarClock, AlertTriangle } from 'lucide-react'
+import { Check, Package, Sparkles, Loader2, Lock, CalendarClock, AlertTriangle } from 'lucide-react'
 import { PageHeader, Card } from '@/shared/ui'
 import { useApp } from '@/mocks/store'
 import { usePlan } from '@/features/billing/plan'
@@ -199,6 +199,21 @@ export function SubscriptionPage() {
                 )}
               </div>
               <div className="mt-1 text-[11px] text-muted">{s.modules.length} модулей</div>
+              {/* Что набор даёт в токенах: сумма месячной выдачи его модулей и подарок.
+                  Заказчик просил видеть это рядом с ценой, а не только в итоге внизу. */}
+              {(() => {
+                const tok = data.items.filter((i) => s.modules.includes(i.key))
+                const mo = tok.reduce((a, i) => a + (i.monthlyTokens || 0), 0)
+                const gift = tok.reduce((a, i) => a + (i.gift || 0), 0)
+                if (!mo && !gift) return null
+                return (
+                  <div className="mt-0.5 text-[11px]">
+                    {mo ? <span className="text-fg/70">{mo.toLocaleString('ru-RU')} ⚡ в месяц</span> : null}
+                    {mo && gift ? <span className="text-faint"> · </span> : null}
+                    {gift ? <span className="text-amber-300">+{gift.toLocaleString('ru-RU')} ⚡ в подарок</span> : null}
+                  </div>
+                )
+              })()}
             </button>
           ))}
         </div>
@@ -244,8 +259,17 @@ export function SubscriptionPage() {
                             ? 'Уже в подписке — бессрочно'
                             : exp.expired ? `Оплата закончилась ${exp.date} — продлите` : `Оплачен до ${exp.date}`
                         : m.action && m.action > 0 ? `≈ ${Math.round(100 / m.action).toLocaleString('ru-RU')} действий за 100 ⚡` : 'действия бесплатны'}
-                      {!paid && m.gift ? <span className="text-spark-300"> · +{m.gift} ⚡ в подарок</span> : null}
                     </span>
+                    {/* Сколько ⚡ даёт САМ модуль: месячная выдача и разовый подарок.
+                        Показываем и у оплаченных: у кого всё куплено, иначе не видно
+                        вообще ничего — а это ровно то, что человек получает за деньги. */}
+                    {(m.monthlyTokens || m.gift) ? (
+                      <span className="block text-[11px]">
+                        {m.monthlyTokens ? <span className="text-fg/70">{m.monthlyTokens} ⚡ в месяц</span> : null}
+                        {m.monthlyTokens && m.gift ? <span className="text-faint"> · </span> : null}
+                        {m.gift ? <span className="text-amber-300">+{m.gift} ⚡ в подарок</span> : null}
+                      </span>
+                    ) : null}
                   </span>
                 </span>
                 {/* §11.2 (31.07): в кабинете цена — только текстом. Правка цен — в админ-панели. */}
@@ -279,9 +303,10 @@ export function SubscriptionPage() {
               число (пример с созвона — 14 модулей = 1400 ⚡/мес). Иначе у того, у кого всё
               оплачено, строка пропадала: оплаченные модули не входят в «добавленные». */}
           {cost.monthlyTokens > 0 && (
+            // Значок ⚡ здесь ТОЛЬКО текстовый: иконка Zap рядом давала вторую молнию
+            // в одной строке. На плитках модулей ровно так же — одним символом.
             <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-muted">
-              <span className="flex items-center gap-1">
-                <Zap size={12} className="text-spark-300" />
+              <span>
                 <b className="text-fg">{cost.monthlyTokens.toLocaleString('ru-RU')}</b> ⚡ токенов в месяц по подписке
               </span>
               {added.length > 0 && due.monthlyTokens > 0 && (
@@ -290,10 +315,15 @@ export function SubscriptionPage() {
             </div>
           )}
           {/* MR-150: подарочные токены — отдельной жёлтой строкой, а не в общей серой.
-              Подарок разовый, при покупке, поэтому считается по добавленным модулям. */}
-          {due.giftTokens > 0 && (
-            <div className="mt-1 flex items-center gap-1 text-xs font-semibold text-amber-300">
-              <Zap size={12} fill="currentColor" /> +{due.giftTokens.toLocaleString('ru-RU')} ⚡ токенов в подарок
+              Считаем по ВСЕЙ подписке, как и месячные: по добавленным строка пропадала
+              у того, у кого всё оплачено, — а подарок он получил и должен его видеть.
+              Когда модули добавляют, рядом отдельно показываем подарок за них. */}
+          {cost.giftTokens > 0 && (
+            <div className="mt-1 flex flex-wrap items-center gap-x-2 text-xs font-semibold text-amber-300">
+              <span>+{cost.giftTokens.toLocaleString('ru-RU')} ⚡ токенов в подарок</span>
+              {added.length > 0 && due.giftTokens > 0 && (
+                <span className="text-amber-200/80">из них +{due.giftTokens.toLocaleString('ru-RU')} ⚡ за добавленные</span>
+              )}
             </div>
           )}
         </div>
