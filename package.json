@@ -2,6 +2,9 @@
   "name": "ai-incubator-mock",
   "private": true,
   "version": "1.0.0",
+  "engines": {
+    "node": ">=22.5"
+  },
   "type": "module",
   "description": "AI Incubator — панель управления Telegram-аккаунтами с реальной MTProto-авторизацией.",
   "scripts": {
