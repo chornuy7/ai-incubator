@@ -27,16 +27,23 @@ const APPLY = process.argv.includes('--apply')
 const log = (...a) => console.log(...a)
 
 /** Карты «id сущности → владелец», собранные из всего, где владелец уже проставлен. */
-const owners = { goal: new Map(), campaign: new Map(), task: new Map() }
+const owners = { goal: new Map(), campaign: new Map(), task: new Map(), account: new Map() }
 
 /** Владелец записи: поддерживаем оба имени поля, как в ownedForRequest. */
 const ownerOf = (r) => String(r?.userId || r?.user_id || r?.ownerId || '') || ''
 
-/** Кому принадлежит лид: сначала задача (точнее всего), потом кампания, потом цель. */
+/**
+ * Кому принадлежит лид. Порядок — по убыванию точности:
+ * задача (её владелец известен наверняка) → кампания → цель → аккаунт, которым с этим
+ * человеком говорили. Последнее слабее прочего лишь формально: аккаунт мог сменить
+ * хозяина, но на практике это самый плотно заполненный признак — `accountId` есть почти
+ * у каждого лида, а у аккаунта владелец проставляется при заведении.
+ */
 const leadOwner = (l) =>
   (l.taskId && owners.task.get(l.taskId)) ||
   (l.campaignId && owners.campaign.get(l.campaignId)) ||
-  (l.goalId && owners.goal.get(l.goalId)) || ''
+  (l.goalId && owners.goal.get(l.goalId)) ||
+  (l.accountId && owners.account.get(l.accountId)) || ''
 
 /** Записи, для которых владельца вывести не удалось: их разбирает человек. */
 const orphans = []
@@ -54,6 +61,17 @@ async function collectFromEntities() {
     if (c.goalId && !owners.goal.has(c.goalId)) owners.goal.set(c.goalId, who)
   }
   log(`Целей с владельцем: ${owners.goal.size}, кампаний: ${owners.campaign.size}`)
+}
+
+/** Аккаунты: у них владелец лежит прямо в метаданных (`meta.ownerId`). */
+async function collectFromAccounts() {
+  const { loadAllMeta } = await import('../accountsMeta.js')
+  const meta = await loadAllMeta()
+  for (const [id, m] of Object.entries(meta)) {
+    const who = String(m?.ownerId || '')
+    if (who) owners.account.set(id, who)
+  }
+  log(`Аккаунтов с владельцем: ${owners.account.size} из ${Object.keys(meta).length}`)
 }
 
 async function collectFromTasks() {
@@ -120,7 +138,10 @@ async function backfillRules() {
   const todo = all.filter((r) => !ownerOf(r))
   let done = 0
   for (const r of todo) {
-    const who = (r.campaignId && owners.campaign.get(r.campaignId)) || ''
+    // У правила есть и кампания, и список аккаунтов — годится любое: аккаунты правила
+    // принадлежат тому, кто его завёл (чужие туда положить было нельзя даже раньше).
+    const byAccount = (r.accountIds || []).map((id) => owners.account.get(id)).find(Boolean) || ''
+    const who = (r.campaignId && owners.campaign.get(r.campaignId)) || byAccount
     if (!who) {
       // Это опаснее прочего: расписание продолжает тратить аккаунты и деньги, а
       // остановить его владелец не может — правило для него невидимо.
@@ -162,6 +183,7 @@ async function reportFolders() {
 
 log(APPLY ? '── ПРИМЕНЯЮ изменения ──' : '── Только показываю (запустите с --apply, чтобы записать) ──')
 await collectFromEntities()
+await collectFromAccounts()
 await collectFromTasks()
 collectFromAudit()
 await backfillLeads()
