@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
-import { ListChecks, RefreshCw, Square, RotateCw, Target, Activity, Gauge, Pause, Play, Loader2, ArrowLeft, Download, AlertTriangle, Clock } from 'lucide-react'
+import { ListChecks, RefreshCw, Square, RotateCw, Target, Activity, Gauge, Pause, Play, Loader2, ArrowLeft, Download, AlertTriangle, Clock, Hourglass } from 'lucide-react'
 import { useApp } from '@/mocks/store'
 import { PageHeader, Card, EmptyState, Badge, Select } from '@/shared/ui'
 import { HelpButton } from '@/features/neuro-commenting/moduleUi'
@@ -1141,6 +1141,14 @@ export function TaskDetailPage() {
               {(() => { const e = taskEtaMs(t); if (e == null) return null; const run = t.status === 'running'; return (
                 <span className={cn('inline-flex items-center gap-1 tabular-nums', run ? 'text-emerald-300/80' : 'text-white/40')} title={run ? 'Прогноз времени до завершения — по текущему темпу' : 'Сколько ещё займёт задача, если её запустить/возобновить'}><Clock size={13} /> ≈ {fmtDur(e / 1000)}{run ? '' : ' при запуске'}</span>
               ) })()}
+              {/* Фактическое ожидание: сумма всех пауз задачи. Рядом с прогнозом, но тише —
+                  прогноз отвечает «сколько ещё», а это «сколько уже простояли». Без этой
+                  цифры «5 действий за час» выглядело как поломка (правка 20.08). */}
+              {!!t.progress?.waitMs && (
+                <span className="inline-flex items-center gap-1 tabular-nums text-white/35" title="Фактическое время в паузах: задержки между действиями, чтение и набор, ожидание отдыха аккаунтов">
+                  <Hourglass size={12} /> в паузах {fmtDur(t.progress.waitMs / 1000)}
+                </span>
+              )}
               {/* Голая цифра «⚡ 0.00» ни о чём не говорила — подписываем, что это расход
                   ИМЕННО этой задачи (из общего баланса он не читается). */}
               <span className="inline-flex items-baseline gap-1 tabular-nums text-amber-300/80" title={t.tokenCoins ? `${fmtCoins(t.spentCoins || 0)} ⚡ за действия + ${fmtCoins(t.tokenCoins)} ⚡ за ИИ` : undefined}>

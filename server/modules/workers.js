@@ -52,6 +52,36 @@ function makeStopCheck(store, taskId) {
   return async () => { try { const t = await store.loadTask(taskId); return !!(t?.stopRequested || t?.pauseRequested) } catch { return false } }
 }
 
+/** Длительность по-человечески: «47 с», «3 мин», «1 ч 12 мин». */
+export function fmtWait(ms) {
+  const sec = Math.round(ms / 1000)
+  if (sec < 90) return `${sec} с`
+  const min = Math.round(sec / 60)
+  if (min < 90) return `${min} мин`
+  return `${Math.floor(min / 60)} ч ${min % 60} мин`
+}
+
+/**
+ * Учесть и показать паузу (правка 20.08 по просьбе владельца: «все задержки выводим в
+ * лог и суммируем»).
+ *
+ * До этого в логе были видны только три вида ожиданий — вступление в канал, простой из-за
+ * усталости и разбег стартов парсера. Основные паузы между действиями (десятки секунд, а
+ * на консервативном пресете и минуты) не оставляли следа: со стороны задача выглядела
+ * зависшей, и объяснить оператору, почему за час сделано пять комментариев, было нечем.
+ *
+ * Сумма копится в `task.progress.waitMs` — по ней видно, сколько задача реально ПРОСТОЯЛА,
+ * в отличие от прогнозного ETA в дашборде.
+ * @param {object} task @param {object} store @param {number} ms @param {string} reason
+ * @param {string} [accountName]
+ */
+export async function noteWait(task, store, ms, reason, accountName) {
+  if (!(ms > 0)) return
+  task.progress = task.progress || {}
+  task.progress.waitMs = (Number(task.progress.waitMs) || 0) + ms
+  await store.appendLog(task, 'info', `Пауза ${fmtWait(ms)} — ${reason}`, accountName)
+}
+
 /**
  * MR-130: прерываемая пауза МЕЖДУ действиями. Раньше основные задержки были обычным
  * `sleep(...)` — при высоком уровне защиты это десятки секунд/минуты, и «Стоп» всё это
@@ -320,12 +350,18 @@ export function statusAfterRun(task) {
   return task.pauseRequested ? 'paused' : task.stopRequested ? 'stopped' : 'done'
 }
 
-/** Итоговая строка лога — по фактическому статусу, а не всегда «Завершено». */
+/**
+ * Итоговая строка лога — по фактическому статусу, а не всегда «Завершено».
+ * К ней добавляется суммарное ожидание: «сколько заняла задача» без «сколько из этого
+ * она простояла» читается как медленная работа, хотя паузы и есть её работа.
+ */
 export function finishNote(task, doneText = 'Завершено') {
-  if (task.status === 'error') return `Задача завершилась с ошибкой: ${task.fatalError || 'см. записи выше'}`
-  if (task.status === 'paused') return 'Пауза'
-  if (task.status === 'stopped') return 'Остановлено'
-  return doneText
+  const waited = Number(task.progress?.waitMs) || 0
+  const tail = waited > 0 ? ` · в паузах ${fmtWait(waited)}` : ''
+  if (task.status === 'error') return `Задача завершилась с ошибкой: ${task.fatalError || 'см. записи выше'}${tail}`
+  if (task.status === 'paused') return `Пауза${tail}`
+  if (task.status === 'stopped') return `Остановлено${tail}`
+  return `${doneText}${tail}`
 }
 
 /**
@@ -605,7 +641,9 @@ export async function runNeuroCommenting(task, store) {
               continue
             }
 
-            if (await interruptibleSleep(pickDelay(s.delays?.comment?.[0] ?? 30, s.delays?.comment?.[1] ?? 120, mul) * 1000, makeStopCheck(store, task.id))) break // #6
+            const waitMs = pickDelay(s.delays?.comment?.[0] ?? 30, s.delays?.comment?.[1] ?? 120, mul) * 1000
+            await noteWait(task, store, waitMs, 'задержка перед комментарием', meta.name)
+            if (await interruptibleSleep(waitMs, makeStopCheck(store, task.id))) break // #6
             const postText = (post.message || '').trim() || (post.media ? '[медиа]' : '')
             // §3.5 семантика: пропускаем посты, семантически далёкие от цели кампании.
             if (goalVec) {
@@ -840,7 +878,9 @@ export async function runNeuroChatting(task, store) {
           if (trackIdlePass(task, false)) break
           continue
         }
-        if (await breakableDelay(pickDelay(s.delays?.action?.[0] ?? 42, s.delays?.action?.[1] ?? 78, mul) * 1000, store, task)) { await disconnectAccount(client, accountId); break }
+        const chatWait = pickDelay(s.delays?.action?.[0] ?? 42, s.delays?.action?.[1] ?? 78, mul) * 1000
+        await noteWait(task, store, chatWait, 'задержка между сообщениями', meta.name)
+        if (await breakableDelay(chatWait, store, task)) { await disconnectAccount(client, accountId); break }
         task.usedTexts = task.usedTexts || []
         const chatPrompt = pickPrompt(s, s.typeWeights, goalCtx + agentCtx)
         const { text: reply, mode, reason, usage } = await generateComment(msg.message || '', chatPrompt.index, chatPrompt.sys, { avoid: task.usedTexts, variantSeed: accountId })
@@ -856,7 +896,9 @@ export async function runNeuroChatting(task, store) {
         // §4.4 (D4): человеческий темп — пауза «на чтение» и время «на набор».
         // Мгновенный ответ и «100 слов за полсекунды» — то, по чему Telegram узнаёт бота
         // и банит волной похожие аккаунты.
-        await sleep(humanPace(reply, (msg.message || '').length).totalMs)
+        const pace = humanPace(reply, (msg.message || '').length)
+        await noteWait(task, store, pace.totalMs, `прочитать и набрать ответ (${Math.round(pace.readMs / 1000)} с + ${Math.round(pace.typeMs / 1000)} с)`, meta.name)
+        await sleep(pace.totalMs)
         await client.sendMessage(peer, { message: reply, replyTo: msg.id })
         // §11.1: переписка в группах — тоже под контролем владельца.
         void recordMessage({ accountId, peer: String(peer?.username || peer?.id || ''), direction: 'in', text: msg.message || '', userId: task.userId, moduleKey: task.moduleKey, taskId: task.id, campaignId: s.campaignId })
@@ -1003,7 +1045,9 @@ export async function runMassReact(task, store) {
       let client
       try {
         ;({ client } = await connectAccount(accountId, task.id, { shouldStop: stopFlag(task) }))
-        if (await breakableDelay(pickDelay(s.delays?.action?.[0] ?? 30, s.delays?.action?.[1] ?? 120, mul) * 1000, store, task)) { await disconnectAccount(client, accountId); break }
+        const reactWait = pickDelay(s.delays?.action?.[0] ?? 30, s.delays?.action?.[1] ?? 120, mul) * 1000
+        await noteWait(task, store, reactWait, 'задержка перед реакцией', meta.name)
+        if (await breakableDelay(reactWait, store, task)) { await disconnectAccount(client, accountId); break }
 
         let peer
         let postId
@@ -1189,7 +1233,9 @@ export async function runMassLooking(task, store) {
       try {
         ;({ client } = await connectAccount(accountId, task.id, { shouldStop: stopFlag(task) }))
         const t = tgs[Math.floor(Math.random() * tgs.length)]
-        if (await breakableDelay(pickDelay(s.delays?.action?.[0] ?? 20, s.delays?.action?.[1] ?? 60, mul) * 1000, store, task)) { await disconnectAccount(client, accountId); break }
+        const lookWait = pickDelay(s.delays?.action?.[0] ?? 20, s.delays?.action?.[1] ?? 60, mul) * 1000
+        await noteWait(task, store, lookWait, 'задержка перед просмотром', meta.name)
+        if (await breakableDelay(lookWait, store, task)) { await disconnectAccount(client, accountId); break }
         const membership = await joinTargetOrSkip(
           client, t,
           (level, message, acc) => store.appendLog(task, level, message, acc),
@@ -1713,8 +1759,14 @@ export async function runNeuroDialogs(task, store) {
             await store.appendLog(task, 'warning', `«${peerKey}»: ответ не отправлен — ИИ оставил заготовку вместо текста`, meta.name)
             continue
           }
-          await sleep(pickDelay(s.delays?.action?.[0] ?? 5, s.delays?.action?.[1] ?? 30, mul) * 1000)
-          await sleep(humanPace(reply, incoming.length).totalMs) // §4.4: читаем и печатаем как человек
+          const dlgWait = pickDelay(s.delays?.action?.[0] ?? 5, s.delays?.action?.[1] ?? 30, mul) * 1000
+          await noteWait(task, store, dlgWait, 'задержка перед ответом в ЛС', meta.name)
+          await sleep(dlgWait)
+          // §4.4: читаем и печатаем как человек. Это десятки секунд на длинном ответе —
+          // без строки в логе выглядело как зависшая задача.
+          const dlgPace = humanPace(reply, incoming.length)
+          await noteWait(task, store, dlgPace.totalMs, `прочитать и набрать ответ (${Math.round(dlgPace.readMs / 1000)} с + ${Math.round(dlgPace.typeMs / 1000)} с)`, meta.name)
+          await sleep(dlgPace.totalMs)
           await client.sendMessage(d.entity, { message: reply })
           // §11.1: сохраняем ОБЕ реплики — входящую и наш ответ. Владелец отвечает за то,
           // что пишут его аккаунтами, поэтому переписка хранится целиком. Best-effort.
@@ -2756,7 +2808,9 @@ export async function runMailing(task, store) {
           else if (cleaned) await store.appendLog(task, 'warning', `${label}: ИИ оставил заготовку — отправляем текст из цели`, meta.name)
         }
         // 3) Пауза «по-человечески» и отправка (#6: прерываемая — стоп не шлёт лишнее ЛС).
-        if (await interruptibleSleep(pickDelay(dm[0], dm[1], mul) * 1000, makeStopCheck(store, task.id))) { await disconnectAccount(client, account); break }
+        const dmWait = pickDelay(dm[0], dm[1], mul) * 1000
+        await noteWait(task, store, dmWait, 'задержка перед отправкой ЛС', meta.name)
+        if (await interruptibleSleep(dmWait, makeStopCheck(store, task.id))) { await disconnectAccount(client, account); break }
         await sendComposedMessage(client, user, text, s.mediaUrls) // §11: текст + медиа/ссылки
         // §11.1: исходящее ЛС — под контролем владельца (рассылка чужим людям
         // рискованнее всего, поэтому её текст видеть важнее прочего).
@@ -2902,7 +2956,9 @@ export async function runAutoPosting(task, store) {
         await store.appendLog(task, 'success', `Пост в ${ch}`, meta.name)
         await store.saveTask(task)
         await disconnectAccount(client, accountId)
-        if (await breakableDelay(pickDelay(s.delays?.action?.[0] ?? 60, s.delays?.action?.[1] ?? 180, mul) * 1000, store, task)) break
+        const postWait = pickDelay(s.delays?.action?.[0] ?? 60, s.delays?.action?.[1] ?? 180, mul) * 1000
+        await noteWait(task, store, postWait, 'задержка между публикациями', meta.name)
+        if (await breakableDelay(postWait, store, task)) break
       } catch (err) {
         if (client) await disconnectAccount(client, accountId)
         else endAccountWork(accountId, task.id) // подключение сорвалось — слот занятости не держим
