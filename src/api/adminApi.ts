@@ -170,6 +170,8 @@ export interface Economy {
     plans: number; plansCount: number
     balanceTopups: number; balanceCount: number
     tokens: number; tokensCoins: number; tokensCount: number; coinUsd: number
+    // §3.2: выданные токены (подарок/месячные/вручную) — показываем, но НЕ доход.
+    grantedCoins?: number; grantedCount?: number; grantedUsd?: number
   }
   expenses: {
     total: number

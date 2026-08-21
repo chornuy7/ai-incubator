@@ -70,7 +70,7 @@ export async function creditDueTokens(nowMs = Date.now()) {
   for (const { id, userId, modules } of due) {
     const tokens = modules.reduce((s, k) => s + (Number(tokensMap?.[k]) || 0), 0)
     if (tokens > 0) {
-      await changeCoins(tokens, `Токены подписки (месяц): ${modules.length} модул.`, userId)
+      await changeCoins(tokens, `Токены подписки (месяц): ${modules.length} модул.`, userId, 'grant')
       users += 1
       coins += tokens
     }

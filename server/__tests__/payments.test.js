@@ -21,9 +21,12 @@ process.env.AUDIT_LOG_FILE = tmp('jsonl')
 
 await fs.rm(process.env.PAYMENTS_DB, { force: true })
 await fs.writeFile(process.env.WALLET_LOG_FILE, [
-  { ts: NOW - 40 * D, userId: 'u1', amount: 100, reason: 'пополнение' },
-  { ts: NOW - 5 * D, userId: 'u1', amount: 50, reason: 'пополнение' },
-  { ts: NOW - 5 * D, userId: 'u2', amount: 10, reason: 'x' },
+  // §3.2: покупка токенов за деньги — доход. У старых строк kind нет: их разбирают
+  // по тексту причины, поэтому одну намеренно оставляем без kind.
+  { ts: NOW - 40 * D, userId: 'u1', amount: 100, reason: 'Куплено за $10.00' },
+  // Выданные токены (подарок/месячная выдача/ручное начисление) — НЕ доход.
+  { ts: NOW - 5 * D, userId: 'u1', amount: 50, reason: 'Токены подписки: 2 модул. (первый месяц)', kind: 'grant' },
+  { ts: NOW - 5 * D, userId: 'u2', amount: 10, reason: 'пополнение' },
   { ts: NOW - 1 * D, userId: 'u1', amount: -7, reason: 'списание за ИИ' }, // не покупка
 ].map((r) => JSON.stringify(r)).join('\n') + '\n', 'utf8')
 await fs.writeFile(process.env.AUDIT_LOG_FILE, [
@@ -38,11 +41,14 @@ await syncPayments()
 test('индекс: положительные пополнения (⚡) + покупки планов ($), списания не идут', () => {
   const { total, rows } = queryPayments({})
   assert.equal(total, 4, '3 пополнения + 1 план (списание и набор «все» отброшены)')
-  assert.equal(rows.filter((r) => r.kind === 'coins').length + rows.filter((r) => r.kind === 'plan').length, rows.length)
+  // Начисления ⚡ теперь разделены: купленные ('coins') и выданные ('grant') — §3.2.
+  const kinds = new Set(rows.map((r) => r.kind))
+  assert.deepEqual([...kinds].sort(), ['coins', 'grant', 'plan'], 'три типа: куплено, выдано, план')
 })
 
 test('фильтр по типу', () => {
-  assert.equal(queryPayments({ kind: 'coins' }).total, 3)
+  assert.equal(queryPayments({ kind: 'coins' }).total, 1, 'куплено за деньги — одно')
+  assert.equal(queryPayments({ kind: 'grant' }).total, 2, 'выдано — два (подписка и ручное)')
   assert.equal(queryPayments({ kind: 'plan' }).total, 1)
 })
 
@@ -63,10 +69,16 @@ test('пагинация: total полный, страница урезана', 
   assert.equal(p2.rows.length, 2)
 })
 
-test('итоги сходятся: монеты и планы считаются отдельно', () => {
+test('§3.2: купленные токены — доход, выданные — нет', () => {
+  // «Подарочные токены из подписки не учитывать как отдельный доход: доходом является
+  // покупка плана. Покупку дополнительных токенов учитывать как отдельную денежную
+  // операцию.» Раньше сюда попадало ЛЮБОЕ начисление, и подписка считалась дважды:
+  // как оплата плана и как выданные по ней токены.
   const s = paymentsSummary({})
-  assert.equal(s.coinsTotal, 160, '100 + 50 + 10')
-  assert.equal(s.coinsCount, 3)
+  assert.equal(s.coinsTotal, 100, 'только «Куплено за $…»')
+  assert.equal(s.coinsCount, 1)
+  assert.equal(s.grantTotal, 60, 'подарок 50 + ручное 10 — отдельно от дохода')
+  assert.equal(s.grantCount, 2)
   assert.equal(s.planTotal, 35)
   assert.equal(s.planCount, 1)
 })

@@ -1826,12 +1826,21 @@ function EconomyTab({ economy }: { economy: Economy | null }) {
         <div className="mb-3 text-xs font-bold uppercase tracking-wide text-muted">Доходы за период</div>
         <div className="space-y-2 text-sm">
           <EconRow label="Подписки (планы)" value={money(e.income.plans)} hint={`${fmt(e.income.plansCount)} оплат`} />
-          <EconRow label="Продажа токенов" value={money(e.income.tokens)} hint={`${fmt(e.income.tokensCoins)} ⚡ · курс $${fmtUsd(e.income.coinUsd)}/⚡ · ${fmt(e.income.tokensCount)} пополнений`} />
+          <EconRow label="Продажа токенов" value={money(e.income.tokens)} hint={`${fmt(e.income.tokensCoins)} ⚡ куплено · курс $${fmtUsd(e.income.coinUsd)}/⚡ · ${fmt(e.income.tokensCount)} покупок`} />
           <EconRow label="Пополнения баланса" value={money(e.income.balanceTopups)} hint={`${fmt(e.income.balanceCount)} операций`} />
           <div className="flex items-center justify-between border-t border-line pt-2">
             <span className="font-semibold text-fg">Итого приток</span>
             <span className="font-semibold tabular-nums text-spark-300">{money(e.income.total)}</span>
           </div>
+          {/* §3.2: выданные токены — НЕ доход. Показываем ПОД итогом и не прибавляем:
+              подписка уже посчитана как оплата плана, и токены по ней — то же самое
+              деньги во второй раз. */}
+          {(e.income.grantedCoins ?? 0) > 0 && (
+            <div className="flex items-center justify-between text-[11px] text-muted">
+              <span>Выдано токенов (подарок, месячные, вручную) — не доход</span>
+              <span className="tabular-nums">{fmt(e.income.grantedCoins ?? 0)} ⚡ · ≈{money(e.income.grantedUsd ?? 0)}</span>
+            </div>
+          )}
         </div>
         <p className="mt-2 text-[11px] leading-relaxed text-muted">
           В демо (без платёжного провайдера) пополнения начисляет админ, и «пополнение баланса» может пересекаться
