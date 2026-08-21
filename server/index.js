@@ -1416,9 +1416,20 @@ app.post('/api/subscription', async (req, res) => {
             error: `Недостаточно средств: нужно $${charged.toFixed(2)}, на счету $${(Number(before.usd) || 0).toFixed(2)}. Пополните баланс.`,
           })
         }
+        /*
+         * В журнале пишем, ЧТО куплено, а не только сколько штук. «Докупка 1 модул.»
+         * не отвечает на единственный вопрос, ради которого в историю и заходят: за
+         * что списали деньги (вопрос владельца 21.08). Длинный набор сворачиваем —
+         * строка истории должна читаться, а не переноситься на три ряда.
+         */
+        const { moduleLabel } = await import('./lib/accountLocks.js')
+        const names = (keys) => {
+          const labels = keys.map((k) => moduleLabel(k))
+          return labels.length > 3 ? `${labels.slice(0, 3).join(', ')} и ещё ${labels.length - 3}` : labels.join(', ')
+        }
         const what = added.length && activeUntil > now
-          ? `докупка ${added.length} модул. до конца подписки`
-          : `подписка на ${months || 1} мес.`
+          ? `докупка до конца подписки — ${names(added)}`
+          : `на ${months || 1} мес. — ${list === 'all' ? 'все модули' : names(list)}`
         await changeUsd(-charged, `Подписка: ${what}`, target)
       }
     }
@@ -1442,7 +1453,11 @@ app.post('/api/subscription', async (req, res) => {
       creditedTokens = addedModules.reduce((sum, k) => sum + (Number(effPrices.tokensMap?.[k]) || 0), 0)
       if (creditedTokens > 0) {
         const { changeCoins } = await import('./balance.js')
-        await changeCoins(creditedTokens, `Токены подписки: ${addedModules.length} модул. (первый месяц)`, target, 'grant')
+        // Здесь тоже имена: «за что дали 300 токенов» — тот же вопрос, что и про деньги.
+        const { moduleLabel: label } = await import('./lib/accountLocks.js')
+        const list3 = addedModules.map((k) => label(k))
+        const shown = list3.length > 3 ? `${list3.slice(0, 3).join(', ')} и ещё ${list3.length - 3}` : list3.join(', ')
+        await changeCoins(creditedTokens, `Токены подписки (первый месяц): ${shown}`, target, 'grant')
       }
       // День оплаты — по нему крон начисляет следующие месяцы (год = 12 начислений в то же
       // число). Этот месяц сразу помечаем начисленным, чтобы крон не задвоил.

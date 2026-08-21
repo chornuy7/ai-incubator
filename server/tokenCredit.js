@@ -85,7 +85,11 @@ export async function creditDueTokens(nowMs = Date.now()) {
   for (const { id, userId, modules } of due) {
     const tokens = modules.reduce((s, k) => s + (Number(tokensMap?.[k]) || 0), 0)
     if (tokens > 0) {
-      await changeCoins(tokens, `Токены подписки (месяц): ${modules.length} модул.`, userId, 'grant')
+      // Имена модулей, а не «3 модул.»: в истории должно быть видно, за что начислено.
+      const { moduleLabel } = await import('./lib/accountLocks.js')
+      const names = modules.map((k) => moduleLabel(k))
+      const shown = names.length > 3 ? `${names.slice(0, 3).join(', ')} и ещё ${names.length - 3}` : names.join(', ')
+      await changeCoins(tokens, `Токены подписки (месяц): ${shown}`, userId, 'grant')
       users += 1
       coins += tokens
     }
