@@ -1810,13 +1810,13 @@ function FatigueModal({ open, ids, activity, onClose, onDone, onError }: {
 
       {/* Три поля описывают один цикл. Раньше «отдых» и «восстановление» читались как
           одно и то же — подписи объясняют, чем они отличаются, на числах из формы. */}
-      <label className="label">1. Порог усталости <span className="text-white/30">— сколько действий подряд</span></label>
+      <label className="label">1. Порог действия <span className="text-white/30">— сколько действий подряд</span></label>
       <NumberField value={threshold} onChange={setThreshold} min={1} max={500} className="input h-10 w-full" />
       <p className="mt-1 text-[11px] text-white/40">
         Каждое действие в любом модуле — плюс единица. Набрал {threshold} — уходит на перерыв.
       </p>
 
-      <label className="label mt-3">2. Отдых после порога <span className="text-white/30">— обязательный перерыв</span></label>
+      <label className="label mt-3">2. Отдых после действия <span className="text-white/30">— обязательный перерыв</span></label>
       <div className="flex items-center gap-2">
         <div className="flex-1">
           <NumberField value={restH} onChange={(h) => setRest(h, restM)} min={0} max={24} className="input h-10 w-full" />
