@@ -547,7 +547,12 @@ export async function usdByUser() {
  * а отрицательный баланс сделал бы это правило непроверяемым.
  * @param {number} amount @param {string} [reason]
  */
-export async function changeCoins(amount, reason = '', userId) {
+/**
+ * @param {'purchase'|'grant'} [kind] чем является начисление: покупкой за деньги или
+ * выдачей (подарок, месячные токены подписки, ручное начисление админом). Влияет на
+ * ОТЧЁТЫ, а не на баланс: §3.2 — доходом является покупка плана, а не выданные токены.
+ */
+export async function changeCoins(amount, reason = '', userId, kind) {
   const delta = Math.round((Number(amount) || 0) * COIN_PRECISION) / COIN_PRECISION
   const k = key(await resolveWalletOwner(userId)) // §4.2 (MR-30): общий баланс → кошелёк владельца
   let result = null
@@ -559,7 +564,7 @@ export async function changeCoins(amount, reason = '', userId) {
     const before = normCoins(cur?.coins ?? 0)
     const after = normCoins(before + delta)
     await db.from('coin_balance').upsert({ user_id: k, coins: after, updated_at: new Date().toISOString() }, { onConflict: 'user_id' })
-    result = { before, after, applied: Math.round((after - before) * COIN_PRECISION) / COIN_PRECISION, reason, userId: k }
+    result = { before, after, applied: Math.round((after - before) * COIN_PRECISION) / COIN_PRECISION, reason, userId: k, kind }
     if (result.applied) await appendWalletEntry(result).catch(() => {})
     return result
   }
@@ -567,7 +572,7 @@ export async function changeCoins(amount, reason = '', userId) {
     const cur = (all && all[k]) || (k === DEFAULT_USER && typeof all?.coins === 'number' ? { coins: all.coins, planId: all.planId } : {})
     const before = normCoins(cur?.coins ?? DEFAULT_STATE.coins)
     const after = normCoins(before + delta)
-    result = { before, after, applied: Math.round((after - before) * COIN_PRECISION) / COIN_PRECISION, reason, userId: k }
+    result = { before, after, applied: Math.round((after - before) * COIN_PRECISION) / COIN_PRECISION, reason, userId: k, kind }
     const next = { ...(all || {}) }
     delete next.coins; delete next.planId; delete next.updatedAt // чистим старый корневой формат
     next[k] = { ...cur, coins: after, updatedAt: Date.now() }
@@ -599,8 +604,18 @@ async function appendWalletEntry(entry) {
       before_val: entry.before, after_val: entry.after, reason: String(entry.reason || ''),
     }
     const currency = entry.currency === 'usd' ? 'usd' : 'coins'
-    const { error } = await db.from('wallet_log').insert({ ...base, currency })
-    if (error && /currency/i.test(error.message)) await db.from('wallet_log').insert(base)
+    // §3.2 (MR-22): чем начисление ЯВЛЯЕТСЯ — покупкой или выдачей. Подарочные и
+    // месячные токены подписки доходом не считаются («доходом является покупка плана»),
+    // поэтому природу операции фиксируем в момент записи, а не угадываем по тексту
+    // причины. Колонка добавляется миграцией 2026-08-22-wallet-kind.sql.
+    const kind = entry.kind || null
+    const { error } = await db.from('wallet_log').insert({ ...base, currency, kind })
+    if (error && /kind/i.test(error.message)) {
+      const { error: e2 } = await db.from('wallet_log').insert({ ...base, currency })
+      if (e2 && /currency/i.test(e2.message)) await db.from('wallet_log').insert(base)
+    } else if (error && /currency/i.test(error.message)) {
+      await db.from('wallet_log').insert(base)
+    }
     return
   }
   const fs = await import('node:fs/promises')
@@ -751,7 +766,7 @@ export async function buyTokens({ usd, userId } = {}) {
   const tokens = Math.round((spend / rate) * COIN_PRECISION) / COIN_PRECISION
   await changeUsd(-spend, `Покупка токенов: ${tokens} ⚡`, userId)
   try {
-    await changeCoins(tokens, `Куплено за $${spend.toFixed(2)}`, userId)
+    await changeCoins(tokens, `Куплено за $${spend.toFixed(2)}`, userId, 'purchase')
   } catch (e) {
     // Деньги уже списаны — возвращаем их, иначе клиент теряет средства молча.
     await changeUsd(spend, 'Возврат: не удалось начислить токены', userId).catch(() => {})

@@ -79,8 +79,20 @@ async function doSync() {
         // Пополнение баланса ДЕНЬГАМИ ($).
         upsert.run(`u:${ts}:${uid}:${amount}`, ts, uid, 'usd', null, round3(amount), '$', null, 'paid', String(r.reason || ''))
       } else {
-        // Пополнение токенов (⚡).
-        upsert.run(`w:${ts}:${uid}:${amount}`, ts, uid, 'coins', round3(amount), null, '⚡', null, 'paid', String(r.reason || ''))
+        /*
+         * §3.2 (MR-22): «подарочные токены из подписки не учитывать как отдельный
+         * доход — доходом является покупка плана; покупку дополнительных токенов
+         * учитывать как отдельную денежную операцию».
+         *
+         * Раньше в доход шло ЛЮБОЕ начисление ⚡: и купленные токены, и подарок за
+         * подписку, и месячная выдача, и ручное начисление админом. Подписка за $20
+         * попадала в доход дважды — как оплата плана и как выданные ⚡ по курсу.
+         *
+         * kind проставляется при записи (balance.js). У старых строк его нет — их
+         * разбираем по тексту причины: покупка токенов пишется как «Куплено за $…».
+         */
+        const bought = r.kind ? r.kind === 'purchase' : /^Куплено за \$/.test(String(r.reason || ''))
+        upsert.run(`w:${ts}:${uid}:${amount}`, ts, uid, bought ? 'coins' : 'grant', round3(amount), null, '⚡', null, 'paid', String(r.reason || ''))
       }
     }
     // Покупки планов ($): события подписки с ценой (набор «все»/пустой — не покупка).
@@ -113,7 +125,7 @@ export function queryPayments(opts = {}) {
   if (from) { cond.push('ts >= ?'); args.push(Number(from)) }
   if (to) { cond.push('ts <= ?'); args.push(Number(to)) }
   if (userId) { cond.push('user_id = ?'); args.push(String(userId)) }
-  if (kind === 'coins' || kind === 'plan' || kind === 'usd') { cond.push('kind = ?'); args.push(kind) }
+  if (kind === 'coins' || kind === 'plan' || kind === 'usd' || kind === 'grant') { cond.push('kind = ?'); args.push(kind) }
   if (q) { cond.push('(user_id LIKE ? OR reason LIKE ?)'); args.push(`%${q}%`, `%${q}%`) }
   const w = cond.length ? 'WHERE ' + cond.join(' AND ') : ''
   const total = d.prepare(`SELECT COUNT(*) c FROM payments ${w}`).get(...args).c
@@ -132,10 +144,19 @@ export function paymentsSummary(opts = {}) {
   if (from) { base.push('ts >= ?'); args.push(Number(from)) }
   if (to) { base.push('ts <= ?'); args.push(Number(to)) }
   const wCoins = 'WHERE ' + [...base, "kind = 'coins'"].join(' AND ')
+  // Выданные токены (подарок, месячная выдача, ручное начисление) — НЕ доход, но видеть
+  // их надо: сколько мы раздали, тоже часть картины.
+  const wGrant = 'WHERE ' + [...base, "kind = 'grant'"].join(' AND ')
   const wPlans = 'WHERE ' + [...base, "kind = 'plan'"].join(' AND ')
   const wUsd = 'WHERE ' + [...base, "kind = 'usd'"].join(' AND ')
   const coins = d.prepare(`SELECT COALESCE(SUM(coins),0) s, COUNT(*) c FROM payments ${wCoins}`).get(...args)
   const plans = d.prepare(`SELECT COALESCE(SUM(amount_fiat),0) s, COUNT(*) c FROM payments ${wPlans}`).get(...args)
   const usd = d.prepare(`SELECT COALESCE(SUM(amount_fiat),0) s, COUNT(*) c FROM payments ${wUsd}`).get(...args)
-  return { coinsTotal: round3(coins.s), coinsCount: coins.c, planTotal: round3(plans.s), planCount: plans.c, usdTotal: round3(usd.s), usdCount: usd.c }
+  const grant = d.prepare(`SELECT COALESCE(SUM(coins),0) s, COUNT(*) c FROM payments ${wGrant}`).get(...args)
+  return {
+    coinsTotal: round3(coins.s), coinsCount: coins.c,
+    grantTotal: round3(grant.s), grantCount: grant.c,
+    planTotal: round3(plans.s), planCount: plans.c,
+    usdTotal: round3(usd.s), usdCount: usd.c,
+  }
 }

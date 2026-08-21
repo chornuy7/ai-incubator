@@ -1442,7 +1442,7 @@ app.post('/api/subscription', async (req, res) => {
       creditedTokens = addedModules.reduce((sum, k) => sum + (Number(effPrices.tokensMap?.[k]) || 0), 0)
       if (creditedTokens > 0) {
         const { changeCoins } = await import('./balance.js')
-        await changeCoins(creditedTokens, `Токены подписки: ${addedModules.length} модул. (первый месяц)`, target)
+        await changeCoins(creditedTokens, `Токены подписки: ${addedModules.length} модул. (первый месяц)`, target, 'grant')
       }
       // День оплаты — по нему крон начисляет следующие месяцы (год = 12 начислений в то же
       // число). Этот месяц сразу помечаем начисленным, чтобы крон не задвоил.

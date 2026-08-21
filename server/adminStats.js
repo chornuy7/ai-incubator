@@ -212,7 +212,12 @@ export async function economyReport(opts = {}) {
   // ── Доходы ($) ───────────────────────────────────────────────────────────
   const planIncome = round3(pay.planTotal)              // подписки
   const balanceTopups = round3(pay.usdTotal)            // пополнения баланса деньгами
-  const tokenIncome = round3(pay.coinsTotal * coinUsd)  // проданные токены ⚡ → $ по курсу
+  // §3.2 (MR-22): доход — только КУПЛЕННЫЕ токены. Подарок за подписку, месячная выдача
+  // и ручное начисление админом доходом не являются: «доходом является покупка плана».
+  // Раньше подписка за $20 попадала в доход дважды — как оплата плана и как выданные
+  // 200 ⚡ по курсу.
+  const tokenIncome = round3(pay.coinsTotal * coinUsd)  // купленные токены ⚡ → $ по курсу
+  const grantedCoins = round3(pay.grantTotal || 0)      // выдано ⚡ (не доход)
   const incomeTotal = round3(planIncome + balanceTopups + tokenIncome)
 
   // ── Расходы ($): фактический расход токенов × себестоимость ───────────────
@@ -250,6 +255,8 @@ export async function economyReport(opts = {}) {
       plans: planIncome, plansCount: pay.planCount,
       balanceTopups, balanceCount: pay.usdCount,
       tokens: tokenIncome, tokensCoins: round3(pay.coinsTotal), tokensCount: pay.coinsCount, coinUsd,
+      // Показываем отдельно и НЕ прибавляем к доходу — см. §3.2.
+      grantedCoins, grantedCount: pay.grantCount || 0, grantedUsd: round3(grantedCoins * coinUsd),
     },
     expenses: {
       total: expenseTotal,
