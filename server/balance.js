@@ -136,11 +136,22 @@ function applyModules(prev, list, mode) {
  *  - иначе берём ДАЛЬНЮЮ дату: оплаченный год не должен схлопнуться до месяца
  *    из-за докупки одного модуля.
  */
-function mergeExpiry(prevExpiry, nextExpiry, hadRecord) {
+/**
+ * Какую дату окончания записать при ДОКУПКЕ (mode = 'merge').
+ *
+ * Подписка одна и с одной датой (решение владельца 21.08). Докупка модуля внутрь
+ * действующей подписки дату НЕ двигает: иначе добавление парсера за $8 продлевало бы
+ * весь набор за $121 — ровно это и происходило, пока здесь стоял `Math.max`.
+ *
+ * `explicit` — дата ПРОДЛЕНИЯ, посчитанная вызывающим от конца текущей подписки. Она
+ * сильнее всего остального: продление за тем и приходит, чтобы дату сдвинуть.
+ */
+function mergeExpiry(prevExpiry, nextExpiry, hadRecord, explicit = null) {
+  if (explicit) return explicit
   if (!hadRecord) return nextExpiry
   if (prevExpiry == null) return null
   if (nextExpiry == null) return prevExpiry
-  return Math.max(prevExpiry, nextExpiry)
+  return prevExpiry
 }
 
 /** Нормализованный режим записи набора. Умолчание — 'replace' (явная выдача). */
@@ -162,7 +173,7 @@ export async function setModules(modules, userId, opts = {}) {
       : null
     const finalList = applyModules(prev?.modules, list, mode)
     const finalExpiry = mode === 'merge'
-      ? mergeExpiry(prev?.expires_at ? ms(prev.expires_at) : null, expiresAt, !!prev)
+      ? mergeExpiry(prev?.expires_at ? ms(prev.expires_at) : null, expiresAt, !!prev, Number(opts?.expiresAt) || null)
       : expiresAt
     await db.from('subscriptions').upsert(
       { id: 'workspace', scope: 'workspace', user_id: null, modules: finalList, expires_at: iso(finalExpiry), updated_at: new Date().toISOString() },
@@ -177,7 +188,7 @@ export async function setModules(modules, userId, opts = {}) {
     const hadRecord = !!prev && prev.modules !== undefined
     next[SUBSCRIPTION_KEY] = {
       modules: applyModules(prev?.modules, list, mode),
-      expiresAt: mode === 'merge' ? mergeExpiry(prev?.expiresAt ?? null, expiresAt, hadRecord) : expiresAt,
+      expiresAt: mode === 'merge' ? mergeExpiry(prev?.expiresAt ?? null, expiresAt, hadRecord, Number(opts?.expiresAt) || null) : expiresAt,
       updatedAt: Date.now(),
     }
     return next
@@ -192,6 +203,10 @@ export async function setModules(modules, userId, opts = {}) {
  */
 const DAY = 24 * 60 * 60 * 1000
 function subExpiry(opts = {}) {
+  // Явная дата от вызывающего важнее месяцев: продление считается от КОНЦА действующей
+  // подписки (см. /api/subscription), иначе продливший заранее терял оплаченный остаток.
+  const explicit = Number(opts?.expiresAt) || 0
+  if (explicit > 0) return explicit
   const months = Number(opts?.months) || 0
   return months > 0 ? Date.now() + Math.round(months * 30 * DAY) : null
 }
@@ -216,7 +231,7 @@ export async function setUserModules(modules, userId, opts = {}) {
       : null
     const finalList = applyModules(prev?.modules, list, mode)
     const finalExpiry = mode === 'merge'
-      ? mergeExpiry(prev?.expires_at ? ms(prev.expires_at) : null, expiresAt, !!prev)
+      ? mergeExpiry(prev?.expires_at ? ms(prev.expires_at) : null, expiresAt, !!prev, Number(opts?.expiresAt) || null)
       : expiresAt
     await db.from('subscriptions').upsert(
       { id: k, scope: 'user', user_id: k, modules: finalList, expires_at: iso(finalExpiry), updated_at: new Date().toISOString() },
@@ -235,7 +250,7 @@ export async function setUserModules(modules, userId, opts = {}) {
     next[k] = {
       ...(prev || {}),
       modules: applyModules(prev?.modules, list, mode),
-      expiresAt: mode === 'merge' ? mergeExpiry(prev?.expiresAt ?? null, expiresAt, hadRecord) : expiresAt,
+      expiresAt: mode === 'merge' ? mergeExpiry(prev?.expiresAt ?? null, expiresAt, hadRecord, Number(opts?.expiresAt) || null) : expiresAt,
       updatedAt: Date.now(),
     }
     return next

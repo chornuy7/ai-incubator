@@ -1237,21 +1237,52 @@ app.post('/api/subscription', async (req, res) => {
     // Считаем только ДОБАВЛЕННЫЕ модули: смена набора и отключение лишнего не должны
     // списывать повторно за то, что уже оплачено. Админ, раздающий доступ, не платит —
     // это провижининг, а не покупка.
-    const { getBalance, changeUsd } = await import('./balance.js')
+    const { getBalance, changeUsd, subscriptionExpired } = await import('./balance.js')
     let charged = 0
+    let extendTo = null // не null — продление: новая дата окончания для всей подписки
     if (personal && !admin && Array.isArray(list)) {
       const before = await getBalance(target)
-      const { addedCost } = await import('./pricing.js')
+      const { addedCost, prorataCost, subscriptionCost: fullCost } = await import('./pricing.js')
       const { added, monthly: addMonthly } = addedCost(before.modules, list, bundlesList, effPrices.monthMap)
-      if (added.length) {
-        charged = periodCost(addMonthly, months || 1, effPrices.annualDiscount)
+      const now = Date.now()
+      const activeUntil = before.expiresAt && !subscriptionExpired(before.expiresAt) ? Number(before.expiresAt) : 0
+
+      /*
+       * Подписка ОДНА и с одной датой (решение владельца 21.08: «делаем 1 подписку и туда
+       * докупаем уже модули»). Отсюда две разные операции, которые раньше были одной:
+       *
+       *  ДОКУПКА в действующую подписку — модуль работает до её конца, поэтому и платим
+       *  только за оставшиеся дни, а дату не двигаем. До этой правки докупка шла по
+       *  полной месячной цене И продлевала весь набор: добавил парсер за $8 — продлил
+       *  подписку за $121. Дыра в деньгах ровно на стоимость остального набора.
+       *
+       *  ПРОДЛЕНИЕ (набор не менялся либо подписка истекла) — платим за ВЕСЬ набор и
+       *  двигаем дату. Раньше здесь списывался ноль: `addedCost` не видел добавленного и
+       *  честно возвращал 0, а срок всё равно продлевался — подписку можно было
+       *  обновлять бесплатно, просто нажимая «Оплатить» с тем же набором.
+       */
+      if (added.length && activeUntil > now) {
+        charged = prorataCost(addMonthly, activeUntil - now)
+      } else {
+        const keep = list === 'all' ? [] : list
+        const sum = list === 'all' ? 0 : fullCost(keep, bundlesList, effPrices.monthMap).sum
+        charged = periodCost(sum, months || 1, effPrices.annualDiscount)
+        // Продление считаем от КОНЦА действующей подписки, а не от «сегодня»: иначе
+        // человек, продливший заранее, терял оплаченный остаток.
+        extendTo = Math.max(now, activeUntil) + Math.round((months || 1) * 30 * 24 * 60 * 60 * 1000)
+      }
+
+      if (charged > 0) {
         if ((Number(before.usd) || 0) + 1e-9 < charged) {
           return res.status(402).json({
             ok: false,
             error: `Недостаточно средств: нужно $${charged.toFixed(2)}, на счету $${(Number(before.usd) || 0).toFixed(2)}. Пополните баланс.`,
           })
         }
-        await changeUsd(-charged, `Подписка: ${added.length} модул. на ${months || 1} мес.`, target)
+        const what = added.length && activeUntil > now
+          ? `докупка ${added.length} модул. до конца подписки`
+          : `подписка на ${months || 1} мес.`
+        await changeUsd(-charged, `Подписка: ${what}`, target)
       }
     }
     // Баг 19.08 (§2): покупка модуля ЗАТИРАЛА набор. Клиент присылал полный список,
@@ -1261,9 +1292,11 @@ app.post('/api/subscription', async (req, res) => {
     // Админ — наоборот, ЗАМЕНЯЕТ набор целиком: он выдаёт доступы явно, и снять
     // лишнее должно быть можно (это провижининг, а не продажа).
     const mode = admin ? 'replace' : 'merge'
+    // `extendTo` — явная новая дата окончания (продление). Для докупки она null, и
+    // mergeExpiry оставляет прежнюю: подписка одна, её срок двигает только продление.
     const balance = personal
-      ? await setUserModules(list, target, { months, mode })
-      : await setModules(list, target, { months, mode })
+      ? await setUserModules(list, target, { months, mode, expiresAt: extendTo })
+      : await setModules(list, target, { months, mode, expiresAt: extendTo })
     await appendAudit({
       action: 'subscription.set',
       module: 'billing',
