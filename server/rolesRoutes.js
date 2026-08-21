@@ -24,11 +24,44 @@ rolesRouter.get('/', async (req, res) => {
 })
 
 /** Каталог грантов (модули/блоки/ресурсы) — до :id, иначе перехватит /:id. */
-rolesRouter.get('/catalog', async (_req, res) => {
+rolesRouter.get('/catalog', async (req, res) => {
   try {
-    res.json({ ok: true, catalog: await buildCatalog() })
+    // Владельцу показываем ТОЛЬКО оплаченные им модули (решение 21.08), админу и деву —
+    // весь список. Иначе владелец «выдавал» бы роли на чужие модули: роль сохранялась,
+    // а запуск всё равно падал на подписке — доступ, которого нет.
+    const ctx = await requesterContext(req)
+    let limit = null
+    if (!ctx.noSession && !ctx.isAdmin) {
+      const { getBalance, subscriptionExpired } = await import('./balance.js')
+      const b = await getBalance(ctx.id)
+      // Истёкшая подписка — пустой каталог: раздавать доступ к остановленным модулям
+      // бессмысленно, а молча показать их — обещать работу, которой не будет.
+      limit = { modules: subscriptionExpired(b.expiresAt) ? [] : b.modules }
+    }
+    res.json({ ok: true, catalog: await buildCatalog(limit) })
   } catch (err) { fail(res, err, 500) }
 })
+
+/**
+ * Не дать роли выдать модуль вне подписки того, кто её правит.
+ *
+ * Каталог уже показывает только своё, но форму можно обойти (прямой запрос), а цена
+ * ошибки — «доступ выдан» на бумаге и отказ при запуске. Правило то же, что в гейте:
+ * есть в наборе и срок не вышел.
+ * @returns {Promise<string|null>} текст ошибки или null
+ */
+async function outsideSubscription(ctx, permissions) {
+  if (ctx.noSession || ctx.isAdmin) return null
+  const wanted = Object.entries(permissions?.modules || {})
+    .filter(([, v]) => v === 'allow')
+    .map(([k]) => k)
+  if (!wanted.length) return null
+  const { getBalance, modulesAllow } = await import('./balance.js')
+  const b = await getBalance(ctx.id)
+  const outside = wanted.filter((k) => !modulesAllow(b.modules, k, b.expiresAt ?? null))
+  if (!outside.length) return null
+  return `Нельзя выдать доступ к тому, что не оплачено: ${outside.join(', ')}. Добавьте модуль в свою подписку.`
+}
 
 rolesRouter.get('/:id', async (req, res) => {
   try {
@@ -53,6 +86,9 @@ function resyncTypes() {
 
 rolesRouter.post('/', async (req, res) => {
   try {
+    const ctx = await requesterContext(req)
+    const denied = await outsideSubscription(ctx, req.body?.permissions)
+    if (denied) return res.status(403).json({ ok: false, error: denied })
     // §11.3: кто создал роль (личность из подписанной сессии).
     const role = await createRole({ ...(req.body ?? {}), userId: req.header('x-user-id') || '' })
     await appendAudit({ action: 'role.create', module: 'rbac', initiator: req.header('x-user-id') || 'operator', reason: `Создана роль «${role.name}»`, meta: { roleId: role.id } })
@@ -69,6 +105,8 @@ rolesRouter.put('/:id', async (req, res) => {
       const target = await getRole(req.params.id)
       if (!target || target.userId !== ctx.id) return res.status(403).json({ ok: false, error: 'Можно менять только свои роли' })
     }
+    const denied = await outsideSubscription(ctx, req.body?.permissions)
+    if (denied) return res.status(403).json({ ok: false, error: denied })
     const role = await updateRole(req.params.id, req.body ?? {})
     if (!role) return res.status(404).json({ ok: false, error: 'Роль не найдена' })
     await appendAudit({ action: 'role.update', module: 'rbac', initiator: req.header('x-user-id') || 'operator', reason: `Изменена роль «${role.name}»`, meta: { roleId: role.id } })
