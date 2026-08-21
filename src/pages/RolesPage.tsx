@@ -410,7 +410,15 @@ export function RolesPage({ embedded }: {
       {embedded ? (
         // Заголовок РАЗДЕЛА: то же содержание, что в шапке страницы, но тише по весу и с
         // чертой сверху — граница нужна, иначе шаблоны читаются как продолжение списка людей.
-        <div className="mt-8 flex flex-wrap items-start justify-between gap-3 border-t border-line pt-6">
+        /*
+         * Нижний отступ. Без него абзац-описание прилипал к карточке списка и читался
+         * как подпись к первому шаблону, а не как объяснение раздела.
+         *
+         * Чуть больше, чем у шапки страницы (28px против 20px): раздел лежит ВНУТРИ
+         * страницы, под чертой, и ему нужно больше воздуха, чтобы не сливаться со
+         * списком людей выше.
+         */
+        <div className="mb-7 mt-8 flex flex-wrap items-start justify-between gap-3 border-t border-line pt-6">
           <button
             type="button"
             onClick={() => setOpenSection((v) => !v)}
