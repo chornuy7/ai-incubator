@@ -29,8 +29,19 @@ export const DEFAULT_FATIGUE = {
   threshold: 15,
   /** Отдых после порога, минут (в форме — часы и минуты). После него счётчик обнулён. */
   restMinutes: 45,
-  /** Восстановление: на сколько единиц счётчик тает за час БЕЗ действий (до порога). */
-  recoveryPerHour: 5,
+  /**
+   * Восстановление: за какое ВРЕМЯ ПРОСТОЯ уходит одна единица усталости (мс).
+   *
+   * Раньше это была скорость «единиц в час» — целое число, и потому вопрос владельца
+   * 21.08 «почему только за час, почему нет минут» был по делу: «одна единица за 20
+   * минут» такой шкалой не выражается совсем, а «одна за полтора часа» тем более.
+   * Период же выражает и то, и другое, и читается ближе к тому, как о нём думают:
+   * «сколько нужно постоять, чтобы отдохнуть на единицу».
+   *
+   * Умолчание 12 минут = прежние 5 единиц в час, поэтому у существующих аккаунтов
+   * поведение не меняется.
+   */
+  recoveryEveryMs: 12 * 60 * 1000,
 }
 
 /**
@@ -131,6 +142,28 @@ export function scheduleForAccount(accountId, base = DEFAULT_SCHEDULE) {
 
 
 /**
+ * Период восстановления из профиля, в мс. 0 — восстановление выключено.
+ *
+ * Понимает и старое поле `recoveryPerHour` (единиц в час): профили аккаунтов уже лежат
+ * в базе с ним, и переписывать их миграцией ради смены единиц измерения — лишний риск
+ * там, где хватает пересчёта на чтении.
+ * @param {{recoveryEveryMs?:number, recoveryPerHour?:number}} profile
+ */
+export function recoveryEveryMs(profile = {}) {
+  // Старое поле проверяем ПЕРВЫМ и только если оно задано явно: профиль обычно приходит
+  // слитым с умолчаниями (`{...DEFAULT_FATIGUE, ...profile}`), и новое поле из умолчаний
+  // иначе перебивало бы явно выставленное «восстановление выключено».
+  if (profile.recoveryPerHour !== undefined && profile.recoveryPerHour !== null) {
+    const perHour = Number(profile.recoveryPerHour)
+    if (!Number.isFinite(perHour) || perHour <= 0) return 0
+    return Math.round(HOUR_MS / perHour)
+  }
+  const explicit = Number(profile.recoveryEveryMs)
+  if (Number.isFinite(explicit) && explicit >= 0) return Math.max(0, Math.round(explicit))
+  return DEFAULT_FATIGUE.recoveryEveryMs
+}
+
+/**
  * Текущая усталость с учётом восстановления. Чистая функция.
  * @param {{fatigue?:number, lastActionAt?:number, restUntil?:number}} state
  * @param {{threshold?:number, restMinutes?:number, recoveryPerHour?:number}} profile
@@ -151,9 +184,10 @@ export function currentFatigue(state = {}, profile = DEFAULT_FATIGUE, now = Date
   // порога не дошли, счётчик тает recoveryPerHour единиц за час простоя. Счётчик —
   // ЦЕЛОЕ число действий: округляем ВВЕРХ, чтобы не было «0.8 из 1» и начатое
   // действие считалось сделанным, пока час восстановления не пройден целиком.
-  const hours = Math.max(0, (now - last) / HOUR_MS)
-  const rec = Math.max(0, Number(p.recoveryPerHour) || 0)
-  return Math.max(0, Math.ceil(base - hours * rec))
+  const every = recoveryEveryMs(p)
+  if (!every) return base                       // восстановление выключено
+  const recovered = Math.max(0, (now - last) / every)
+  return Math.max(0, Math.ceil(base - recovered))
 }
 
 /**
@@ -174,12 +208,14 @@ export function freeAt(state = {}, profile = DEFAULT_FATIGUE, now = Date.now()) 
   // ждём, пока восстановление опустит его под порог. Счётчик целый (округление
   // вверх), поэтому «ниже порога» наступает, когда сырое значение дойдёт до
   // threshold - 1. Восстановление выключено (0) — остаётся только один отдых.
-  const rec = Math.max(0, Number(p.recoveryPerHour) || 0)
-  if (rec <= 0) return now + p.restMinutes * 60000
+  const every = recoveryEveryMs(p)
+  if (!every) return now + p.restMinutes * 60000
   const last = Number(state.lastActionAt) || now
   const base = Math.min(Math.max(0, Number(state.fatigue) || 0), Math.max(1, p.threshold))
-  const hoursNeeded = (base - (p.threshold - 1)) / rec
-  return Math.max(now, last + hoursNeeded * HOUR_MS)
+  // Счётчик целый (округление вверх), поэтому «ниже порога» наступает, когда стает
+  // ровно одна единица сверх threshold - 1.
+  const needed = base - (p.threshold - 1)
+  return Math.max(now, last + needed * every)
 }
 
 /**
@@ -258,6 +294,8 @@ export function normalizeFatigueProfile(input = {}) {
   return {
     threshold: n(input.threshold, DEFAULT_FATIGUE.threshold, 1, 500),
     restMinutes: n(input.restMinutes, DEFAULT_FATIGUE.restMinutes, 1, 24 * 60),
-    recoveryPerHour: n(input.recoveryPerHour, DEFAULT_FATIGUE.recoveryPerHour, 0, 100),
+    // Период восстановления: от «сразу» (0 — выключено) до суток на единицу. Форма шлёт
+    // часы и минуты, старые записи — единицы в час; recoveryEveryMs сводит оба вида.
+    recoveryEveryMs: Math.min(24 * 60 * 60 * 1000, Math.max(0, recoveryEveryMs(input))),
   }
 }

@@ -13,7 +13,7 @@
 import { dataPath, readJson, mutateJson } from './lib/jsonStore.js'
 import { mapStore } from './lib/tableStore.js'
 import {
-  DEFAULT_FATIGUE, DEFAULT_SCHEDULE, applyAction, fatigueGate, scheduleGate, freeAt,
+  DEFAULT_FATIGUE, DEFAULT_SCHEDULE, applyAction, fatigueGate, scheduleGate, freeAt, recoveryEveryMs,
   currentFatigue, normalizeFatigueProfile, normalizeSchedule, scheduleForAccount,
 } from './lib/accountFatigue.js'
 
@@ -89,7 +89,9 @@ export async function listActivity() {
       threshold: profile.threshold,
       restMinutes: profile.restMinutes,
       // Третий параметр вернулся 20.08 (ТЗ 19.08 §4: «восстановление отдельно»).
-      recoveryPerHour: profile.recoveryPerHour,
+      // Период восстановления (мс на единицу). Старое `recoveryPerHour` больше не отдаём:
+      // «единиц в час» не выражало ни «единицу за 20 минут», ни «за полтора часа».
+      recoveryEveryMs: recoveryEveryMs(profile),
       restUntil: Number(s.restUntil) || 0,
       actionsTotal: Number(s.actionsTotal) || 0,
       resting: (Number(s.restUntil) || 0) > now,

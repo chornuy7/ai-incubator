@@ -354,3 +354,35 @@ test('попал в вероятность — работаем', () => {
   const g = scheduleGate({ 11: 0.67 }, new Date('2026-08-19T11:20:00').getTime(), () => 0.1)
   assert.equal(g.ok, true)
 })
+
+/**
+ * Вопрос владельца 21.08: «восстановление почему только за час, почему нету в минутах?»
+ * Скорость «единиц в час» целым числом не выражала ни «единицу за 20 минут», ни «за
+ * полтора часа», поэтому параметр стал ПЕРИОДОМ на одну единицу.
+ */
+test('восстановление задаётся периодом — минуты и часы одинаково выразимы', async () => {
+  const { recoveryEveryMs, currentFatigue } = await import('../lib/accountFatigue.js')
+  const MIN = 60_000
+
+  // Двадцать минут на единицу — прежней шкалой это было 3 ед./час, но «полторы» бы уже не вышло.
+  assert.equal(recoveryEveryMs({ recoveryEveryMs: 20 * MIN }), 20 * MIN)
+  // Полтора часа на единицу — по-старому 0.67 ед./час, целым числом невыразимо совсем.
+  assert.equal(recoveryEveryMs({ recoveryEveryMs: 90 * MIN }), 90 * MIN)
+
+  const now = 1_700_000_000_000
+  const every20 = { threshold: 15, restMinutes: 45, recoveryEveryMs: 20 * MIN }
+  // Час простоя при 20 минутах на единицу — минус три.
+  assert.equal(currentFatigue({ fatigue: 10, lastActionAt: now - 60 * MIN }, every20, now), 7)
+  // Девятнадцать минут — ещё ничего не стаяло: счётчик целый, дробей не показываем.
+  assert.equal(currentFatigue({ fatigue: 10, lastActionAt: now - 19 * MIN }, every20, now), 10)
+})
+
+test('старые профили с «единиц в час» читаются как прежде', async () => {
+  const { recoveryEveryMs } = await import('../lib/accountFatigue.js')
+  // Профили аккаунтов лежат в базе со старым полем — переписывать их миграцией ради
+  // смены единиц измерения незачем, пересчёта на чтении достаточно.
+  assert.equal(recoveryEveryMs({ recoveryPerHour: 5 }), 12 * 60_000, '5 ед./час = 12 мин на единицу')
+  assert.equal(recoveryEveryMs({ recoveryPerHour: 1 }), 60 * 60_000)
+  // Выключенное восстановление должно остаться выключенным, а не подхватить умолчание.
+  assert.equal(recoveryEveryMs({ recoveryPerHour: 0 }), 0)
+})

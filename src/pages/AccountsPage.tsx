@@ -1739,7 +1739,12 @@ function FatigueModal({ open, ids, activity, onClose, onDone, onError }: {
 }) {
   const [threshold, setThreshold] = useState(15)
   const [restMinutes, setRestMinutes] = useState(45)
-  const [recoveryPerHour, setRecoveryPerHour] = useState(5)
+  // Восстановление задаётся ПЕРИОДОМ на одну единицу: «единиц в час» не позволяло
+  // выразить ни «единицу за 20 минут», ни «за полтора часа» (вопрос владельца 21.08).
+  const [recoveryMs, setRecoveryMs] = useState(12 * 60 * 1000)
+  const recH = Math.floor(recoveryMs / 3600000)
+  const recM = Math.round((recoveryMs % 3600000) / 60000)
+  const setRec = (h: number, m: number) => setRecoveryMs(Math.max(0, Math.min(24 * 60, h * 60 + m)) * 60000)
   // Отдых задаётся часами и минутами: «45» в одном поле читается как угодно, а смены
   // бывают и по несколько часов (правка 19.08). Внутрь уходит одно число — минуты.
   const restH = Math.floor(restMinutes / 60)
@@ -1762,8 +1767,8 @@ function FatigueModal({ open, ids, activity, onClose, onDone, onError }: {
     }
     const th = pick((a) => a.threshold, 15)
     const rest = pick((a) => a.restMinutes, 45)
-    const rec = pick((a) => a.recoveryPerHour, 5)
-    setThreshold(th.value); setRestMinutes(rest.value); setRecoveryPerHour(rec.value)
+    const rec = pick((a) => a.recoveryEveryMs, 12 * 60 * 1000)
+    setThreshold(th.value); setRestMinutes(rest.value); setRecoveryMs(rec.value)
     setMixed(!(th.same && rest.same && rec.same))
   }, [open, ids, activity])
   const [restNow, setRestNow] = useState(60)
@@ -1827,16 +1832,26 @@ function FatigueModal({ open, ids, activity, onClose, onDone, onError }: {
         обнуляется и он снова в строю.
       </p>
 
-      <label className="label mt-3">3. Восстановление <span className="text-white/30">— единиц за час простоя</span></label>
-      <NumberField value={recoveryPerHour} onChange={setRecoveryPerHour} min={0} max={100} className="input h-10 w-full" />
+      <label className="label mt-3">3. Восстановление <span className="text-white/30">— за сколько простоя уходит одна единица</span></label>
+      <div className="flex items-center gap-2">
+        <div className="flex-1">
+          <NumberField value={recH} onChange={(h) => setRec(h, recM)} min={0} max={24} className="input h-10 w-full" />
+          <div className="mt-1 text-center text-[11px] text-white/35">часов</div>
+        </div>
+        <div className="flex-1">
+          <NumberField value={recM} onChange={(m) => setRec(recH, m)} min={0} max={59} className="input h-10 w-full" />
+          <div className="mt-1 text-center text-[11px] text-white/35">минут</div>
+        </div>
+      </div>
       <p className="mt-1 text-[11px] text-white/40">
-        Работает, пока до порога НЕ дошли: час без действий — счётчик тает на {recoveryPerHour}.
-        Это «отдышался между делом», а не перерыв из пункта 2. 0 — выключено, снимает усталость только отдых.
+        {recoveryMs > 0
+          ? `Работает, пока до порога НЕ дошли: каждые ${recH ? `${recH} ч ` : ''}${recM} мин без действий счётчик тает на единицу — за час это ${(3600000 / recoveryMs).toFixed(1).replace('.0', '')}. Это «отдышался между делом», а не перерыв из пункта 2.`
+          : 'Выключено: усталость снимает только отдых из пункта 2.'}
       </p>
 
       <button
         disabled={busy || !ids.length}
-        onClick={() => void run({ accountIds: ids, profile: { threshold, restMinutes, recoveryPerHour } }, 'Профиль задан')}
+        onClick={() => void run({ accountIds: ids, profile: { threshold, restMinutes, recoveryEveryMs: recoveryMs } }, 'Профиль задан')}
         className="btn-primary mt-3 h-10 w-full disabled:opacity-40"
       >
         Применить профиль ко всем выбранным

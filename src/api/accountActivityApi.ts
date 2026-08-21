@@ -12,7 +12,12 @@ export interface AccountActivity {
    * возвращён 20.08). Работает в обычных перерывах, пока порог не достигнут; отбытый
    * отдых по-прежнему обнуляет счётчик целиком.
    */
-  recoveryPerHour: number
+  /**
+   * Восстановление: за какое время простоя уходит одна единица усталости (мс).
+   * Раньше была скорость «единиц в час» — целым числом не выражались ни «единица за
+   * 20 минут», ни «за полтора часа» (вопрос владельца 21.08).
+   */
+  recoveryEveryMs: number
   /** Когда снова сможет работать (мс). 0 — может прямо сейчас. */
   freeAt: number
   restUntil: number
@@ -40,7 +45,7 @@ export async function fetchActivity(): Promise<ActivityMap> {
  */
 export async function setActivity(patch: {
   accountIds: string[]
-  profile?: { threshold?: number; restMinutes?: number; recoveryPerHour?: number }
+  profile?: { threshold?: number; restMinutes?: number; recoveryEveryMs?: number }
   /** Часы в процентах (0–100). Сервер приводит к своему виду сам. */
   schedule?: SchedulePercent
   /** Раздать каждому свой сдвиг вокруг заданной кривой (по умолчанию да). */
