@@ -119,6 +119,14 @@ export function normalizeRole(input = {}) {
     // роль показывалась ВСЕМ владельцам как системный шаблон (`!r.userId`). Отсюда же
     // общий список из десятков чужих «Новая роль 5/6» на экране у каждого (21.08).
     userId: String(input.userId ?? '').trim(),
+    /*
+     * Персональная роль субпользователя (уточнение владельца 21.08). Доступ суба
+     * настраивается в ЕГО карточке, а не на странице ролей: владелец щёлкает модули из
+     * своей подписки, а под капотом это пишется в роль, потому что гейт доступа умеет
+     * только роли. Такие роли невидимы в списке — иначе у владельца с десятком
+     * сотрудников список превратился бы в свалку «Доступ · Иван», «Доступ · Пётр».
+     */
+    personalFor: String(input.personalFor ?? '').trim(),
     permissions: {
       // Роль «без оплаты» (тест/модератор): доступ к модулям в обход подписки.
       freeAccess: !!p.freeAccess,
@@ -331,6 +339,7 @@ export async function updateRole(id, patch = {}) {
     isTemplate: clean.isTemplate,
     // Владельца сохраняем: правка роли не должна делать её ничьей (см. normalizeRole).
     userId: clean.userId || roles[i].userId || '',
+    personalFor: clean.personalFor || roles[i].personalFor || '',
     // Права админа неизменяемы (bypass); у остальных — обновляем.
     ...(roles[i].id === ADMIN_ROLE_ID ? {} : { permissions: clean.permissions }),
     updatedAt: Date.now(),

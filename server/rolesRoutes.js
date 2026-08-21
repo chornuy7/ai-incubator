@@ -16,9 +16,13 @@ rolesRouter.get('/', async (req, res) => {
     const roles = await listRoles()
     // §4.1/§5.3 (MR-29): владелец видит системные роли-шаблоны (без user_id) + СВОИ созданные;
     // админ-роль ему не показываем (эскалация), админ/дев — все роли.
+    // Персональные роли субпользователей (personalFor) в списке НЕ показываем: их заводит
+    // карточка пользователя, а не человек, и у владельца с десятком сотрудников список
+    // превратился бы в свалку «Доступ · Иван», «Доступ · Пётр» (уточнение владельца 21.08).
+    // Админу платформы показываем всё — ему нужно видеть реальную картину прав.
     const visible = (ctx.noSession || ctx.isAdmin)
       ? roles
-      : roles.filter((r) => r.id !== ADMIN_ROLE_ID && (!r.userId || r.userId === ctx.id))
+      : roles.filter((r) => r.id !== ADMIN_ROLE_ID && !r.personalFor && (!r.userId || r.userId === ctx.id))
     res.json({ ok: true, roles: visible })
   } catch (err) { fail(res, err, 500) }
 })

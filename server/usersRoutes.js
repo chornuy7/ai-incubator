@@ -2,6 +2,9 @@
 import { Router } from 'express'
 import { listUsers, getUser, createUser, updateUser, deleteUser, authenticate, authenticateSupabase, verifyPassword, publicUser, isBlockedByOwner } from './users.js'
 import { rolesForUser, mergePermissions, unrestrictedPermissions, userRoleIds, hasAdminRole, ADMIN_ROLE_ID } from './roles.js'
+import { BLOCKS, listRoles, createRole, updateRole, ALLOW, DENY } from './roles.js'
+import { MODULE_LABELS } from './lib/accountLocks.js'
+import { modulesAllow } from './balance.js'
 import { capModules, applyDirectGrants } from './subAccess.js'
 import { getBalance } from './balance.js'
 import { requesterContext } from './lib/accessGuard.js'
@@ -235,6 +238,109 @@ usersRouter.post('/', async (req, res) => {
     const user = await createUser(body)
     await appendAudit({ action: 'user.create', module: 'rbac', initiator: ctx.id || 'operator', reason: `Создан пользователь ${user.email}`, meta: { userId: user.id, roleId: user.roleId, parentId: user.parentId } })
     res.json({ ok: true, user: publicUser(user) })
+  } catch (err) { fail(res, err) }
+})
+
+/**
+ * Доступ субпользователя к модулям и блокам — в ЕГО карточке (уточнение владельца 21.08:
+ * «при создании пользователя он настраивает, какой модуль показывать, какой нет, но
+ * только из тех, какие подписки у него куплены, и дальше уже блоки»).
+ *
+ * Под капотом это по-прежнему роль — гейт доступа (`accessGuard`) умеет только роли, —
+ * но владельцу про роли знать не нужно: у каждого суба заводится СВОЯ, невидимая в
+ * интерфейсе. Отдельная страница «Роли и доступы» остаётся админской.
+ *
+ * @param {object} owner @param {object} sub
+ * @returns {Promise<object|null>} персональная роль суба или null
+ */
+async function personalRole(sub) {
+  const ids = userRoleIds(sub)
+  const all = await listRoles()
+  return all.find((r) => ids.includes(r.id) && r.personalFor === sub.id) || null
+}
+
+/** Кто может настраивать доступ этого суба: админ платформы или ЕГО владелец. */
+async function accessGate(req, res) {
+  const ctx = await requesterContext(req)
+  if (ctx.blocked) { res.status(403).json({ ok: false, error: 'Нет прав' }); return null }
+  const target = await getUser(req.params.id)
+  if (!target) { res.status(404).json({ ok: false, error: 'Пользователь не найден' }); return null }
+  if (!ctx.noSession && !ctx.isAdmin && target.parentId !== ctx.id) {
+    res.status(403).json({ ok: false, error: 'Можно управлять только своими субпользователями' })
+    return null
+  }
+  return { ctx, target }
+}
+
+/** Модули, которые владелец вправе раздавать: строго его оплаченная подписка. */
+async function ownerModules(ctx, target) {
+  if (ctx.noSession || ctx.isAdmin) return Object.keys(MODULE_LABELS)
+  const b = await getBalance(target.parentId || ctx.id)
+  return Object.keys(MODULE_LABELS).filter((k) => modulesAllow(b.modules, k, b.expiresAt ?? null))
+}
+
+usersRouter.get('/:id/access', async (req, res) => {
+  try {
+    const g = await accessGate(req, res)
+    if (!g) return
+    const role = await personalRole(g.target)
+    const keys = await ownerModules(g.ctx, g.target)
+    res.json({
+      ok: true,
+      modules: role?.permissions?.modules || {},
+      blocks: role?.permissions?.blocks || {},
+      catalog: {
+        modules: keys.map((k) => ({ key: k, label: MODULE_LABELS[k] || k })),
+        blocks: BLOCKS,
+      },
+    })
+  } catch (err) { fail(res, err) }
+})
+
+usersRouter.put('/:id/access', async (req, res) => {
+  try {
+    const g = await accessGate(req, res)
+    if (!g) return
+    const allowed = new Set(await ownerModules(g.ctx, g.target))
+    const wantMods = req.body?.modules || {}
+    // Выдать можно только оплаченное. Форма и так показывает лишь свои модули, но прямой
+    // запрос её обходит, а цена ошибки — «доступ выдан» на бумаге и отказ при запуске.
+    const outside = Object.entries(wantMods).filter(([k, v]) => v === ALLOW && !allowed.has(k)).map(([k]) => k)
+    if (outside.length) {
+      return res.status(403).json({ ok: false, error: `Нельзя выдать то, что не оплачено: ${outside.join(', ')}` })
+    }
+    const modules = {}
+    for (const k of allowed) modules[k] = wantMods[k] === ALLOW ? ALLOW : DENY
+    // Блоки держим только у разрешённых модулей: у скрытого модуля они не значат ничего,
+    // а в хранилище копились бы мусором после каждой правки подписки.
+    const blocks = {}
+    for (const [k, v] of Object.entries(req.body?.blocks || {})) {
+      const [mod] = String(k).split(':')
+      if (modules[mod] === ALLOW) blocks[k] = v === ALLOW ? ALLOW : DENY
+    }
+
+    const existing = await personalRole(g.target)
+    const permissions = { ...(existing?.permissions || {}), modules, blocks }
+    let role = existing
+    if (role) {
+      role = await updateRole(role.id, { permissions })
+    } else {
+      role = await createRole({
+        name: `Доступ · ${g.target.name || g.target.email}`,
+        userId: g.target.parentId || g.ctx.id,
+        personalFor: g.target.id,
+        permissions,
+      })
+      // Персональная роль ЗАМЕНЯЕТ прежние: две роли суммировались бы, и выключенный
+      // владельцем модуль остался бы открыт через старую роль — «выключил, а работает».
+      await updateUser(g.target.id, { roleIds: [role.id], roleId: role.id })
+    }
+    await appendAudit({
+      action: 'user.access', module: 'rbac', initiator: g.ctx.id || 'operator',
+      reason: `Доступ ${g.target.email}: ${Object.values(modules).filter((v) => v === ALLOW).length} модул.`,
+      meta: { userId: g.target.id, roleId: role?.id },
+    })
+    res.json({ ok: true })
   } catch (err) { fail(res, err) }
 })
 

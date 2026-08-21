@@ -38,6 +38,15 @@ export function moduleAccessGuard(keyFrom) {
       const roles = await rolesForUser(user)
       const roleFree = roles.length === 0 && !user.parentId // владелец ролью не ограничен
       if (!roleFree && !roles.some((role) => can(role, 'module', key))) {
+        // Субпользователю про роли знать нечего: доступ ему настраивает владелец в его
+        // карточке, и «роль „Доступ · Иван“» в отказе — это протёкшая наружу внутренняя
+        // кухня (уточнение владельца 21.08). Ему нужен ответ на вопрос «что делать»,
+        // а не название механизма. Для обычных ролей имя оставляем: там оно объясняет,
+        // почему доступа нет, и админу помогает.
+        const personal = roles.some((r) => r.personalFor)
+        if (personal || user.parentId) {
+          return res.status(403).json({ ok: false, error: 'Модуль не открыт для вас — попросите владельца включить его в вашем доступе' })
+        }
         const names = roles.map((r) => r.name).join(', ') || '—'
         return res.status(403).json({ ok: false, error: `Нет доступа к модулю (роли «${names}»)` })
       }
