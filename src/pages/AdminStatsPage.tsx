@@ -2765,7 +2765,10 @@ function PricesTab() {
                       const cls = ratio == null ? 'text-muted' : ratio >= 2 ? 'text-emerald-300/80' : ratio >= 1 ? 'text-amber-300/80' : 'text-rose-300/80'
                       const ratioStr = ratio == null ? '' : ratio >= 100 ? String(Math.round(ratio)) : ratio.toFixed(1)
                       return (
-                        <Tip className={cn('mt-0.5 pr-1 text-[10px] tabular-nums', cls)}
+                        // Tip — инлайновая обёртка, поэтому строку держим в блоке: иначе она
+                        // встаёт СПРАВА от поля цены вместо строки под ним.
+                        <div className={cn('mt-0.5 pr-1 text-[10px] tabular-nums', cls)}>
+                        <Tip
                           text={[
                             `Платим OpenAI за одно действие: $${aiUsd.toFixed(7)}`,
                             `  (в среднем ${avg} токенов модели на действие)`,
@@ -2775,6 +2778,7 @@ function PricesTab() {
                           ].filter(Boolean).join(String.fromCharCode(10))}>
                           <span>платим ${aiUsd < 0.000001 ? aiUsd.toExponential(1) : aiUsd.toFixed(6)} · берём ${priceUsd.toFixed(4)}{ratio != null && <> · ×{ratioStr}</>}</span>
                         </Tip>
+                        </div>
                       )
                     })()}
                   </td>
