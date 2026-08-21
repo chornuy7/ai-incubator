@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import { ShieldCheck, Plus, Trash2, ChevronRight, ChevronDown, Save, Lock, Package } from 'lucide-react'
 import { PageHeader, Card, EmptyState, Badge, Switch } from '@/shared/ui'
@@ -15,6 +15,76 @@ import { WARMING_MODULES } from '@/shared/lib/massAction'
 
 /** Ключ имени роли для сравнения: регистр и лишние пробелы дублем считаться не должны. */
 const nameKey = (n: string) => n.trim().toLowerCase()
+
+/**
+ * По сколько записей показывать в списках раздела «Пользователи и роли» (просьба владельца
+ * 21.08: «максимум по 5 показываем и пагинацию»).
+ */
+export const PAGE_SIZE = 5
+
+/**
+ * Какие номера страниц рисовать. При десятках страниц полный ряд кнопок шире самого списка,
+ * поэтому далёкие страницы сворачиваются в «…», а края и соседи текущей остаются кликабельными.
+ */
+function pageList(page: number, pages: number): (number | '…')[] {
+  if (pages <= 7) return Array.from({ length: pages }, (_, i) => i + 1)
+  const nums = [...new Set([1, page - 1, page, page + 1, pages])]
+    .filter((n) => n >= 1 && n <= pages)
+    .sort((a, b) => a - b)
+  const out: (number | '…')[] = []
+  nums.forEach((n, i) => {
+    if (i && n - nums[i - 1] > 1) out.push('…')
+    out.push(n)
+  })
+  return out
+}
+
+/**
+ * Переключатель страниц для обеих вкладок раздела.
+ *
+ * Живёт здесь, а не в UsersPage: «Пользователи» импортируют эту страницу как вкладку, и
+ * обратный импорт замкнул бы модули в цикл.
+ *
+ * При одной странице не рисуется вовсе (условие владельца): ряд кнопок под списком из трёх
+ * человек ничего не переключает и только отвлекает.
+ */
+export function Pager({ page, total, onPage, label }: {
+  page: number
+  /** Размер ОТФИЛЬТРОВАННОГО списка — пагинация всегда считается по тому, что видно. */
+  total: number
+  onPage: (p: number) => void
+  /** Родительный падеж для подписи: «пользователей», «шаблонов». */
+  label: string
+}) {
+  const pages = Math.max(1, Math.ceil(total / PAGE_SIZE))
+  if (pages <= 1) return null
+  const from = (page - 1) * PAGE_SIZE + 1
+  const to = Math.min(page * PAGE_SIZE, total)
+  const step = 'rounded-lg border border-line px-2 py-1 text-[11px] text-muted transition-colors hover:border-spark-500/40 hover:text-spark-200 disabled:cursor-default disabled:opacity-30 disabled:hover:border-line disabled:hover:text-muted'
+  return (
+    <nav className="mt-3 flex flex-wrap items-center gap-1.5" aria-label="Страницы списка">
+      <span className="mr-auto text-[11px] text-white/35">{from}–{to} из {total} {label}</span>
+      <button type="button" onClick={() => onPage(page - 1)} disabled={page <= 1} className={step} aria-label="Предыдущая страница">←</button>
+      {pageList(page, pages).map((p, i) => (
+        p === '…'
+          ? <span key={`gap${i}`} className="px-1 text-[11px] text-white/25">…</span>
+          : (
+            <button
+              key={p}
+              type="button"
+              onClick={() => onPage(p)}
+              aria-current={p === page ? 'page' : undefined}
+              className={cn('rounded-lg border px-2 py-1 text-[11px] transition-colors',
+                p === page ? 'border-spark-500/50 bg-spark-500/10 text-spark-200' : 'border-line text-muted hover:border-spark-500/40 hover:text-spark-200')}
+            >
+              {p}
+            </button>
+          )
+      ))}
+      <button type="button" onClick={() => onPage(page + 1)} disabled={page >= pages} className={step} aria-label="Следующая страница">→</button>
+    </nav>
+  )
+}
 
 /** Пара чекбоксов «дать доступ / убрать доступ» (§8.1). */
 /**
@@ -65,7 +135,14 @@ function PermRow({ label, indent, value, onChange, disabled }: { label: string; 
   )
 }
 
-export function RolesPage() {
+export function RolesPage({ tabs }: {
+  /**
+   * Полоса вкладок раздела «Пользователи и роли» — её рисует UsersAndRolesPage и передаёт
+   * сюда, чтобы вкладки стояли под шапкой страницы, а не над ней. Пропа нет — страница
+   * работает как раньше сама по себе: так её открывает sudo-админка (AdminStatsPage).
+   */
+  tabs?: ReactNode
+} = {}) {
   /**
    * Для владельца это редактор ШАБЛОНОВ доступа, для админа платформы — прежний редактор
    * ролей. Разница не косметическая: уточнение владельца 21.08 — «роль это просто как шаблон
@@ -93,6 +170,9 @@ export function RolesPage() {
   const [saving, setSaving] = useState(false)
   const [err, setErr] = useState('')
   const [loading, setLoading] = useState(true)
+  /** Страница списка ролей (по PAGE_SIZE штук). Ставится явно там, где выбор уезжает
+      на другую страницу: открытие раздела по ?role= и создание нового шаблона. */
+  const [rolePage, setRolePage] = useState(1)
 
   const selected = useMemo(() => roles.find((r) => r.id === selId) || null, [roles, selId])
   const isAdminRole = selected?.builtin && selected.id === ADMIN_BYPASS_ID
@@ -103,7 +183,13 @@ export function RolesPage() {
       const [rs, cat] = await Promise.all([fetchRoles(), fetchRbacCatalog()])
       setRoles(rs)
       setCatalog(cat)
-      if (!selId && rs.length) selectRole(rs.find((r) => r.id === wantRoleId) || rs[0])
+      if (!selId && rs.length) {
+        const first = rs.find((r) => r.id === wantRoleId) || rs[0]
+        // Роль из ?role= может лежать на второй-третьей странице списка — открываем сразу ту,
+        // иначе выбранная роль редактируется, а в списке её не видно.
+        setRolePage(Math.floor(rs.indexOf(first) / PAGE_SIZE) + 1)
+        selectRole(first)
+      }
     } catch (e) {
       setErr(e instanceof Error ? e.message : 'Ошибка загрузки')
     } finally {
@@ -152,6 +238,9 @@ export function RolesPage() {
       while (nameTaken(`${base} ${n}`)) n += 1
       const r = await createRole({ name: `${base} ${n}`, permissions: emptyPermissions() })
       setRoles((prev) => [...prev, r])
+      // Новый шаблон дописывается в конец — перелистываем на последнюю страницу, иначе
+      // кнопка «Создать» открывает редактор, а в списке ничего не появляется.
+      setRolePage(Math.ceil((roles.length + 1) / PAGE_SIZE))
       selectRole(r)
     } catch (e) { setErr(e instanceof Error ? e.message : 'Ошибка') }
   }
@@ -274,13 +363,22 @@ export function RolesPage() {
 
   const toggleExpand = (key: string) => setExpanded((s) => { const n = new Set(s); n.has(key) ? n.delete(key) : n.add(key); return n })
 
+  // Страница списка. Считаем «безопасную» на лету: после удаления последнего шаблона на
+  // третьей странице сама страница исчезает, и запомненный номер показал бы пустоту.
+  const rolePages = Math.max(1, Math.ceil(roles.length / PAGE_SIZE))
+  const rolePageSafe = Math.min(rolePage, rolePages)
+  const shownRoles = roles.slice((rolePageSafe - 1) * PAGE_SIZE, rolePageSafe * PAGE_SIZE)
+
   return (
     <div>
       <PageHeader
-        title="Роли и доступы"
+        // Владельцу это вкладка «Шаблоны доступа» — заголовок повторяет её имя, чтобы
+        // переход по вкладке не выглядел уходом в другой раздел. Админу платформы страница
+        // по-прежнему открывается отдельно (sudo-админка) и остаётся «Ролями и доступами».
+        title={isPlatformAdmin ? 'Роли и доступы' : 'Шаблоны доступа'}
         subtitle={isPlatformAdmin
           ? 'Роли и доступ к модулям, блокам и ресурсам. Снятый доступ выделен.'
-          : 'Шаблон — заготовка доступа: собрали набор модулей один раз и применяете его сотрудникам в «Пользователях». Дальше доступ каждого правится отдельно. Выдать можно только оплаченное.'}
+          : 'Шаблон — заготовка доступа: собрали набор модулей один раз и применяете его сотрудникам на соседней вкладке «Пользователи». Дальше доступ каждого правится отдельно. Выдать можно только оплаченное.'}
         icon={<ShieldCheck size={22} />}
         badge={roles.length ? `${roles.length}` : undefined}
         actions={
@@ -292,6 +390,8 @@ export function RolesPage() {
           </div>
         }
       />
+
+      {tabs}
 
       {err && <Card className="mb-3 border-rose-500/30 p-3 text-sm text-rose-300">{err}</Card>}
 
@@ -319,9 +419,10 @@ export function RolesPage() {
         />
       ) : (
         <div className="grid gap-4 lg:grid-cols-[280px_1fr]">
-          {/* Список ролей */}
-          <div className="flex flex-col gap-2">
-            {roles.map((r) => (
+          {/* Список ролей — по PAGE_SIZE на страницу */}
+          <div>
+            <div className="flex flex-col gap-2">
+            {shownRoles.map((r) => (
               <button
                 key={r.id}
                 onClick={() => selectRole(r)}
@@ -335,7 +436,7 @@ export function RolesPage() {
                         роли в списке — заготовки (уточнение 21.08), и badge на части из них
                         обещал бы разницу, которой больше нет. */}
                     {isPlatformAdmin && r.isTemplate && <Badge tone="amber">Шаблон</Badge>}
-                    {/* Одинаковые имена в списке = невозможно выбрать нужную роль в «Пользователях». */}
+                    {/* Одинаковые имена в списке = невозможно выбрать нужную роль на вкладке «Пользователи». */}
                     {dupNames.has(nameKey(r.name)) && <Badge tone="rose">имя-дубль</Badge>}
                   </span>
                 </span>
@@ -344,6 +445,8 @@ export function RolesPage() {
                 )}
               </button>
             ))}
+            </div>
+            <Pager page={rolePageSafe} total={roles.length} onPage={setRolePage} label={isPlatformAdmin ? 'ролей' : 'шаблонов'} />
           </div>
 
           {/* Редактор выбранной роли */}
@@ -369,7 +472,7 @@ export function RolesPage() {
                   <Save size={15} /> {saving ? 'Сохранение…' : 'Сохранить'}
                 </button>
               </div>
-              {nameErr && <div className="mb-4 text-[11px] text-rose-300">{nameErr} — по имени роль выбирают в «Пользователях».</div>}
+              {nameErr && <div className="mb-4 text-[11px] text-rose-300">{nameErr} — по имени шаблон выбирают на вкладке «Пользователи».</div>}
 
               {isAdminRole ? (
                 <div className="flex items-center gap-2 rounded-lg bg-iris-500/10 px-4 py-6 text-sm text-iris-200">

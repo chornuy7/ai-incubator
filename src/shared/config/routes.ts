@@ -2,7 +2,7 @@ import type { LucideIcon } from 'lucide-react'
 import {
   LayoutGrid, BarChart3, LifeBuoy, MessageSquareText, Bot, Sparkles, Eye,
   Flame, MessagesSquare, Trophy, Radar, Users, Search, MessageCircle,
-  Hash, History, UserCog, CalendarClock, Target, ListChecks, Contact, TrendingUp, Rocket, Radio, ScrollText, Inbox, Users2, Network, Mail, Megaphone, Package, GraduationCap, ShieldCheck } from 'lucide-react'
+  Hash, History, UserCog, CalendarClock, Target, ListChecks, Contact, TrendingUp, Rocket, Radio, ScrollText, Inbox, Users2, Network, Mail, Megaphone, Package, GraduationCap } from 'lucide-react'
 
 export interface RouteDef {
   path: string
@@ -66,12 +66,16 @@ export const ROUTES: RouteDef[] = [
   // Уточнение владельца от 21.08 это отменяет, но роль там означает другое: «роль это просто
   // как шаблон и все настроек которые уже были выбраны». То есть страница нужна владельцу не
   // чтобы РАЗДАВАТЬ роли, а чтобы держать ЗАГОТОВКИ доступа: собрал набор модулей и блоков
-  // один раз — и применяешь его новым сотрудникам в «Пользователях» одним кликом. Живой связи
-  // «роль → доступ суба» нет: значения копируются в его личные тумблеры.
-  // Субу пункт по-прежнему закрыт (см. canAccessPath → OWNER_ROLES_PATH): своей команды у
-  // него нет, применять шаблон не к кому.
-  { path: '/panel/roles', label: 'Роли и доступы', icon: ShieldCheck, group: 'account' },
-  { path: '/panel/users', label: 'Пользователи', icon: Users2, group: 'account' },
+  // один раз — и применяешь его новым сотрудникам одним кликом. Живой связи «роль → доступ
+  // суба» нет: значения копируются в его личные тумблеры.
+  //
+  // 21.08 (просьба владельца «давай объединим»): «Пользователи» и «Роли и доступы» — ОДИН
+  // пункт с двумя вкладками внутри. Шаблон собирают и применяют в одном сценарии, а два
+  // соседних пункта заставляли ходить туда-сюда. Вкладка шаблонов — /panel/users?tab=roles;
+  // старый /panel/roles остался рабочим и ведёт туда же (App.tsx), поэтому сохранённые
+  // ссылки и подсказки внутри панели не ломаются.
+  // Субу пункт по-прежнему закрыт (см. canAccessPath): своей команды у него нет.
+  { path: '/panel/users', label: 'Пользователи и роли', icon: Users2, group: 'account' },
 ]
 
 /**

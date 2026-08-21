@@ -24,8 +24,7 @@ import { CampaignPage } from '@/pages/CampaignPage'
 import { ChannelsPage } from '@/pages/ChannelsPage'
 import { LogsPage } from '@/pages/LogsPage'
 import { InboxPage } from '@/pages/InboxPage'
-import { RolesPage } from '@/pages/RolesPage'
-import { UsersPage } from '@/pages/UsersPage'
+import { UsersAndRolesPage } from '@/pages/UsersPage'
 import { ProxiesPage } from '@/pages/ProxiesPage'
 import { MailingPage } from '@/pages/MailingPage'
 import { AutopostingPage } from '@/pages/AutopostingPage'
@@ -95,8 +94,14 @@ export default function App() {
         <Route path="/panel/user/profile" element={<ProfilePage />} />
         <Route path="/panel/learning" element={<LearningPage />} />
         <Route path="/panel/user/subscription" element={<SubscriptionPage />} />
-        <Route path="/panel/roles" element={<RolesPage />} />
-        <Route path="/panel/users" element={<UsersPage />} />
+        {/* «Пользователи» и «Роли и доступы» слиты в один раздел с вкладками (просьба
+            владельца 21.08). Старый путь оставлен рабочим и ведёт на вкладку шаблонов:
+            на /panel/roles ссылаются сохранённые закладки и подсказки внутри панели.
+            Именно redirect, а не второй маршрут той же страницы, — чтобы у раздела был
+            один адрес: иначе пункт меню (он сверяется с /panel/users) на /panel/roles
+            не подсвечивался бы, и человек не понимал, где находится. */}
+        <Route path="/panel/roles" element={<Navigate to="/panel/users?tab=roles" replace />} />
+        <Route path="/panel/users" element={<UsersAndRolesPage />} />
         <Route path="/panel/proxies" element={<ProxiesPage />} />
         <Route path="/panel/mailing" element={<MailingPage />} />
         <Route path="/panel/autoposting" element={<AutopostingPage />} />

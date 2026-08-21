@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useState } from 'react'
-import { Link } from 'react-router-dom'
+import { useEffect, useMemo, useState, type ReactNode } from 'react'
+import { Link, useSearchParams } from 'react-router-dom'
 import { Users2, Plus, Trash2, ShieldCheck, Check, Users, Wifi, ChevronDown, ChevronRight, Search, Package } from 'lucide-react'
 import { PageHeader, Card, EmptyState, Badge, Modal, Switch } from '@/shared/ui'
 import { confirmDialog } from '@/shared/lib/dialog'
@@ -8,6 +8,7 @@ import {
   type User, type WorkSummary,
 } from '@/api/usersApi'
 import { fetchRoles, fetchRbacCatalog, accessFromRole, type Role, type Perm, type CatalogModule, type CatalogBlock } from '@/api/rolesApi'
+import { RolesPage, Pager, PAGE_SIZE } from '@/pages/RolesPage'
 import { fetchAccountGroups, type AccountGroup } from '@/api/accountGroupsApi'
 import { fetchAccounts } from '@/api/accountsApi'
 import type { TgAccount } from '@/shared/types'
@@ -15,6 +16,12 @@ import { useSession } from '@/features/auth/session'
 import { ADMIN_BYPASS_ID } from '@/shared/config/rbac'
 import { HelpButton } from '@/features/neuro-commenting/moduleUi'
 import { cn } from '@/shared/lib/utils'
+
+/**
+ * Вкладка шаблонов внутри объединённого раздела. Вкладка живёт в АДРЕСЕ, а не только в
+ * состоянии: ссылка «создайте шаблон» и кнопка «назад» должны попадать туда, куда обещают.
+ */
+const ROLES_TAB_HREF = '/panel/users?tab=roles'
 
 /**
  * §5.4 (MR-37): владелец выдаёт субу аккаунты из своего пула — отдельно ГРУППЫ и отдельно
@@ -199,7 +206,7 @@ function ModuleAccessPicker({ catalog, value, onChange }: {
  * связи «роль → доступ» нет. Именно её убрали днём 21.08 — она давала неразрешимое: владелец
  * гасит модуль тумблером, а роль возвращает его обратно, и выключатель выглядит сломанным.
  *
- * Шаблон НЕОБЯЗАТЕЛЕН: если их нет, вместо селекта стоит ссылка на «Роли и доступы», но
+ * Шаблон НЕОБЯЗАТЕЛЕН: если их нет, вместо селекта стоит ссылка на соседнюю вкладку, но
  * доступ прекрасно выставляется тумблерами и пользователь создаётся без всякого шаблона.
  */
 function ApplyTemplate({ roles, catalog, applied, hint, onApply, className }: {
@@ -216,7 +223,7 @@ function ApplyTemplate({ roles, catalog, applied, hint, onApply, className }: {
     return (
       <div className={cn('text-[11px] text-white/40', className)}>
         Шаблонов пока нет — выставьте доступ тумблерами или{' '}
-        <Link to="/panel/roles" className="font-semibold text-spark-300 hover:text-spark-200">создайте шаблон</Link>,
+        <Link to={ROLES_TAB_HREF} className="font-semibold text-spark-300 hover:text-spark-200">создайте шаблон</Link>,
         чтобы в следующий раз выдать тот же набор одним кликом.
       </div>
     )
@@ -330,7 +337,8 @@ function fmtDur(ms: number): string {
   return h ? `${h}ч ${m}м` : `${m}м`
 }
 
-export function UsersPage() {
+/** Вкладка «Пользователи» объединённого раздела (полосу вкладок рисует UsersAndRolesPage). */
+function UsersTab({ tabs }: { tabs?: ReactNode }) {
   const sessionUser = useSession((s) => s.user)
   const [users, setUsers] = useState<User[]>([])
   const [roles, setRoles] = useState<Role[]>([])
@@ -358,6 +366,12 @@ export function UsersPage() {
   // валился весь список платформы (65 юзеров, из них 59 чужих регистраций).
   // Управление всеми осталось, но включается явно и только у админа.
   const [scopeAll, setScopeAll] = useState(false)
+  /** Страница списка (по PAGE_SIZE человек). */
+  const [page, setPage] = useState(1)
+  // Смена области («моя команда» ↔ «вся платформа») — это смена ФИЛЬТРА: остаться на
+  // седьмой странице после переключения значит открыть раздел где-то посередине чужого
+  // списка. Возвращаемся в начало.
+  useEffect(() => { setPage(1) }, [scopeAll])
 
   async function load() {
     setLoading(true)
@@ -426,6 +440,10 @@ export function UsersPage() {
       })
     } catch (e) { setErr(e instanceof Error ? e.message : 'Ошибка'); setSaving(false); return }
     setUsers((prev) => [...prev, created])
+    // Новый сотрудник дописывается в конец списка — перелистываем на последнюю страницу.
+    // Иначе создание заканчивается закрытой модалкой и внешне ничем: карточка появилась,
+    // но на другой странице, и владелец жмёт «Создать» второй раз.
+    setPage(Math.ceil((users.length + 1) / PAGE_SIZE))
     // Доступ пишем ВТОРЫМ запросом: раньше создания у суба нет id, а привязывать модули не к
     // кому. Падение этого шага не откатывает создание — поэтому о нём говорим прямо, иначе
     // владелец увидит суба без модулей и решит, что переключатели просто не сработали.
@@ -438,6 +456,12 @@ export function UsersPage() {
     resetForm()
     setSaving(false)
   }
+
+  // «Безопасная» страница считается на лету: удалили последнего на третьей странице —
+  // страницы больше нет, и запомненный номер показал бы пустой список.
+  const pages = Math.max(1, Math.ceil(users.length / PAGE_SIZE))
+  const pageSafe = Math.min(page, pages)
+  const shownUsers = users.slice((pageSafe - 1) * PAGE_SIZE, pageSafe * PAGE_SIZE)
 
   return (
     <div>
@@ -467,6 +491,8 @@ export function UsersPage() {
         }
       />
 
+      {tabs}
+
       {err && <Card className="mb-3 border-rose-500/30 p-3 text-sm text-rose-300">{err}</Card>}
 
       {loading ? (
@@ -474,8 +500,9 @@ export function UsersPage() {
       ) : users.length === 0 ? (
         <EmptyState title="Пользователей нет" desc="Создайте первого оператора и назначьте роль." />
       ) : (
-        <div className="flex flex-col gap-2">
-          {users.map((u) => {
+        <div>
+          <div className="flex flex-col gap-2">
+          {shownUsers.map((u) => {
             const roleIds = u.roleIds?.length ? u.roleIds : (u.roleId ? [u.roleId] : [])
             const isAdmin = roleIds.includes(ADMIN_BYPASS_ID)
             // Своя карточка — не объект управления (правка 18.08): роли ограничивают
@@ -551,6 +578,8 @@ export function UsersPage() {
               </Card>
             )
           })}
+          </div>
+          <Pager page={pageSafe} total={users.length} onPage={setPage} label="пользователей" />
         </div>
       )}
 
@@ -612,4 +641,68 @@ export function UsersPage() {
       </Modal>
     </div>
   )
+}
+
+/** Вкладки объединённого раздела. Значение живёт в query-параметре `?tab=`. */
+type TeamTab = 'users' | 'roles'
+
+/**
+ * Полоса вкладок. Рисуется здесь, а внутрь вкладки уезжает пропом `tabs`, чтобы стоять
+ * ПОД шапкой страницы: у каждой вкладки своя шапка со своими кнопками («Новый пользователь»
+ * / «Создать шаблон»), и вкладки над заголовком читались бы как навигация всей панели.
+ */
+function TeamTabs({ tab, onTab, rolesLabel }: { tab: TeamTab; onTab: (t: TeamTab) => void; rolesLabel: string }) {
+  const items: { key: TeamTab; label: string; icon: typeof Users2 }[] = [
+    { key: 'users', label: 'Пользователи', icon: Users2 },
+    { key: 'roles', label: rolesLabel, icon: ShieldCheck },
+  ]
+  return (
+    <div className="mb-4 flex w-fit items-center gap-1 rounded-xl border border-line bg-elevated/60 p-1">
+      {items.map((it) => {
+        const on = it.key === tab
+        const Icon = it.icon
+        return (
+          <button
+            key={it.key}
+            type="button"
+            onClick={() => onTab(it.key)}
+            aria-current={on ? 'page' : undefined}
+            className={cn('flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm font-medium transition-colors',
+              on ? 'bg-spark-500/12 text-spark-300' : 'text-muted hover:bg-white/5 hover:text-fg')}
+          >
+            <Icon size={15} className="shrink-0" />
+            {it.label}
+          </button>
+        )
+      })}
+    </div>
+  )
+}
+
+/**
+ * «Пользователи» и «Роли и доступы» — один раздел с двумя вкладками (просьба владельца
+ * 21.08: «давай объединим… а внутри там просто 2 будет пагинация по пользователям и
+ * пагинация по ролям»). Это не только экономия строки в меню: шаблон доступа собирают и
+ * применяют в одном сценарии, а два соседних пункта заставляли ходить туда-сюда.
+ *
+ * Вкладка хранится в АДРЕСЕ (`?tab=roles`), а не в состоянии компонента: ссылка на вкладку
+ * шаблонов должна открывать именно её, а «назад» — возвращать на предыдущую вкладку, а не
+ * выбрасывать из раздела. Старый путь /panel/roles ведёт сюда же (см. App.tsx).
+ */
+export function UsersAndRolesPage() {
+  const [params, setParams] = useSearchParams()
+  const isPlatformAdmin = !!useSession((s) => s.user?.isAdmin)
+  const tab: TeamTab = params.get('tab') === 'roles' ? 'roles' : 'users'
+  const go = (next: TeamTab) => {
+    const p = new URLSearchParams(params)
+    if (next === 'roles') p.set('tab', 'roles')
+    // Вкладка по умолчанию — без параметра в адресе (чистый /panel/users). `role=<id>`
+    // адресует конкретный шаблон и на вкладке пользователей значит ровно ничего.
+    else { p.delete('tab'); p.delete('role') }
+    setParams(p)
+  }
+  // Владельцу роль — заготовка, админу платформы — настоящая роль. Подпись вкладки
+  // повторяет заголовок соответствующей страницы, чтобы переход не выглядел прыжком.
+  const tabs = <TeamTabs tab={tab} onTab={go} rolesLabel={isPlatformAdmin ? 'Роли и доступы' : 'Шаблоны доступа'} />
+  return tab === 'roles' ? <RolesPage tabs={tabs} /> : <UsersTab tabs={tabs} />
 }
