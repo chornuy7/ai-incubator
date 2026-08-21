@@ -7,7 +7,7 @@ import { ROUTES, GROUP_LABELS, type RouteDef } from '@/shared/config/routes'
 import { useApp } from '@/mocks/store'
 import { useSession } from '@/features/auth/session'
 import { canAccessPath, anyModuleKeyFromPath } from '@/shared/lib/access'
-import { usePlan, planHasModule } from '@/features/billing/plan'
+import { usePlan, planHasModule, planExpired } from '@/features/billing/plan'
 import { cn } from '@/shared/lib/utils'
 
 const GROUP_ORDER: RouteDef['group'][] = ['main', 'modules', 'parsing', 'account']
@@ -47,6 +47,11 @@ export function AppSidebar({ mobile = false }: { mobile?: boolean }) {
   const setUserState = useApp((s) => s.setUserState)
   const location = useLocation()
   const planModules = usePlan((s) => s.modules)
+  // §5 (21.08): срок подписки. Меню знало только СОСТАВ набора, поэтому после
+  // истечения модуль оставался на месте — человек тыкал и получал 403 с сервера.
+  // `null` — бессрочно, такие пункты не трогаем (см. planExpired).
+  const planExpiresAt = usePlan((s) => s.expiresAt)
+  const subExpired = planExpired(planExpiresAt)
   // §10 (MR-50): сворачиваемые группы меню — чтобы одновременно видимых пунктов было меньше.
   // Свёрнутые группы храним в localStorage; группа с активной страницей всегда открыта.
   const NAV_LS = 'ai-incubator:nav-collapsed'
@@ -96,6 +101,10 @@ export function AppSidebar({ mobile = false }: { mobile?: boolean }) {
     || (Array.isArray(planModules) && planModules.some((k) => k === 'parsing' || k.startsWith('parsing-')))
   const allowed = (r: RouteDef) => {
     const mk = anyModuleKeyFromPath(r.path)
+    // Срок здесь НЕ передаём сознательно: просроченный модуль из меню не убираем.
+    // Убрать — значит на глазах стереть половину панели у человека, который вчера
+    // всем этим пользовался: он решит, что доступ отняли или всё сломалось. Пункт
+    // остаётся, но помечен «истекла» и ведёт сразу на продление (см. ниже).
     if (mk && !planHasModule(planModules, mk)) return false
     if (PARSING_HELPER_PATHS.has(r.path) && !hasAnyParser) return false
     if (!sessionUser) return true
@@ -169,22 +178,41 @@ export function AppSidebar({ mobile = false }: { mobile?: boolean }) {
                   const active = r.path === location.pathname
                     || (r.path !== '/panel' && location.pathname.startsWith(r.path + '/'))
                   const Icon = r.icon
+                  // §5 (21.08): подписка кончилась — модуль купленный, но нерабочий.
+                  // Ведём такой пункт не в модуль (там ждёт 403 и модалка «не оплачено»),
+                  // а прямо на продление именно его: клик по меню не должен заканчиваться
+                  // ошибкой. Модуля без ключа (обычные страницы) это не касается.
+                  const mk = subExpired ? anyModuleKeyFromPath(r.path) : null
+                  const lapsed = !!mk
+                  // Продлевает ВЛАДЕЛЕЦ: у суба страницы подписки нет (OWNER_ONLY_PATHS),
+                  // и вести его туда значит менять один тупик на другой. Ему метка
+                  // «истекла» просто объясняет, почему модуль молчит.
+                  const renewHref = lapsed && !sessionUser?.isSub ? `/panel/user/subscription?apply=${mk}` : null
                   return (
                     <NavLink
                       key={r.path}
-                      to={r.path}
+                      to={renewHref || r.path}
+                      title={lapsed
+                        ? renewHref
+                          ? 'Подписка истекла — модуль не запустится. Открыть продление'
+                          : 'Подписка истекла — модуль не запустится. Продлить может владелец пространства'
+                        : undefined}
                       onClick={() => { if (mobile) setMobileNav(false); setTip(null) }}
-                      onMouseEnter={(e) => { if (collapsed) { const rc = e.currentTarget.getBoundingClientRect(); setTip({ label: r.label, top: rc.top + rc.height / 2, left: rc.right + 10 }) } }}
+                      onMouseEnter={(e) => { if (collapsed) { const rc = e.currentTarget.getBoundingClientRect(); setTip({ label: lapsed ? `${r.label} · подписка истекла` : r.label, top: rc.top + rc.height / 2, left: rc.right + 10 }) } }}
                       onMouseLeave={() => setTip(null)}
                       className={cn(
                         'group relative flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium transition-all',
                         collapsed && 'justify-center',
                         active
                           ? 'bg-spark-500/12 text-spark-300'
-                          // MR-137: `muted` — «серый», второстепенный пункт: приглушён, но кликабелен.
-                          : r.muted
-                            ? 'text-faint opacity-60 hover:bg-elevated hover:text-muted hover:opacity-100'
-                            : 'text-muted hover:bg-elevated hover:text-fg',
+                          // Просроченный — приглушён и подписан «истекла»: пункт на месте
+                          // (панель не «исчезает» у человека), но видно, что он не работает.
+                          : lapsed
+                            ? 'text-faint opacity-70 hover:bg-elevated hover:text-amber-300 hover:opacity-100'
+                            // MR-137: `muted` — «серый», второстепенный пункт: приглушён, но кликабелен.
+                            : r.muted
+                              ? 'text-faint opacity-60 hover:bg-elevated hover:text-muted hover:opacity-100'
+                              : 'text-muted hover:bg-elevated hover:text-fg',
                       )}
                     >
                       {active && <span className="absolute left-0 h-5 w-1 rounded-r-full bg-spark-gradient" />}
@@ -195,10 +223,16 @@ export function AppSidebar({ mobile = false }: { mobile?: boolean }) {
                           ? <span className="absolute right-1.5 top-1.5 h-2.5 w-2.5 rounded-full bg-rose-500 ring-2 ring-surface" />
                           : null
                       )}
+                      {/* В свёрнутом меню подписи не помещаются — метка «истекла» становится точкой. */}
+                      {lapsed && collapsed && <span className="absolute right-1.5 top-1.5 h-2.5 w-2.5 rounded-full bg-amber-400 ring-2 ring-surface" />}
                       {!collapsed && <span className="truncate">{r.label}</span>}
                       {!collapsed && r.path === '/panel/support' && supportUnread > 0 ? (
                         <span className="ml-auto grid min-w-[20px] place-items-center rounded-full bg-rose-500 px-1.5 py-0.5 text-[10px] font-bold text-white">
                           {supportUnread}
+                        </span>
+                      ) : !collapsed && lapsed ? (
+                        <span className="ml-auto shrink-0 rounded bg-amber-500/15 px-1.5 py-0.5 text-[10px] font-bold text-amber-300">
+                          истекла
                         </span>
                       ) : !collapsed && r.badge && (
                         <span className="ml-auto rounded bg-iris-500/15 px-1.5 py-0.5 text-[10px] font-bold text-iris-300">

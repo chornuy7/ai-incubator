@@ -105,6 +105,12 @@ export interface ModuleTaskProgress {
   total: number
   actionsDone?: number
   commentsSent?: number
+  /**
+   * Сколько задача ФАКТИЧЕСКИ простояла в паузах (мс). В отличие от ETA — это не прогноз,
+   * а накопленная сумма: задержки между действиями, «чтение и набор», ожидание отдыха.
+   * Нужна, чтобы «за час пять комментариев» объяснялось цифрой, а не догадками (20.08).
+   */
+  waitMs?: number
 }
 
 export interface ModuleTask {

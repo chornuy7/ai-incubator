@@ -1,7 +1,28 @@
-/** Глобальные блокировки аккаунтов — один аккаунт = одна задача на всех модулях. */
+/**
+ * Глобальные блокировки аккаунтов.
+ *
+ * С 20.08 (решение владельца) правило смягчено: «один аккаунт = одна задача» →
+ * «один аккаунт = один модуль КАЖДОГО типа». Аккаунт может одновременно числиться в
+ * мейлинге, комментинге и реакциях, но не в двух мейлингах сразу — иначе они дублировали
+ * бы работу. Физическую одновременность (два действия в одну секунду) исключает
+ * отдельный реестр занятости — accountBusy.js: там же пауза при переключении модулей.
+ * Карантин и прочие нерабочие статусы отсекаются на исполнении (isAccountRunnable +
+ * canWorkNow) — карантинный аккаунт ни один модуль не возьмёт.
+ */
 
-/** @type {Map<string, { moduleKey: string, taskId: string, moduleLabel: string, since: number }>} */
+/**
+ * Значение — ПЕРВЫЙ держатель (обратная совместимость с UI) + полный список держателей
+ * в `holders` (первый элемент дублирует верхний уровень).
+ * @typedef {{ moduleKey: string, taskId: string, moduleLabel: string, goalId?: string|null, since: number }} Holder
+ * @type {Map<string, Holder & { holders: Holder[], alsoLabels: string[] }>}
+ */
 const locks = new Map()
+
+/** Пересобрать значение лока из списка держателей (первый — «лицо» для UI). */
+function packHolders(holders) {
+  const [head, ...rest] = holders
+  return { ...head, holders, alsoLabels: rest.map((h) => h.moduleLabel) }
+}
 
 /**
  * Реестр задач, у которых прямо сейчас крутится воркер в этом процессе.
@@ -58,53 +79,54 @@ export async function getAllAccountLocksDetailed() {
 }
 
 /**
- * §9: пары модулей, которым РАЗРЕШЕНО делить аккаунты — но только под ОДНОЙ целью.
+ * Прогрев — ЕДИНСТВЕННОЕ исключение из многомодульности (§3.3 ТЗ).
  *
- * Мейлинг приводит людей, чатинг отвечает тем, кто откликнулся. Это один процесс,
- * разнесённый на два модуля: рассылка на тысячу контактов идёт часами, и всё это
- * время ответы копились бы без реакции. Общий лок здесь не про конфликт, а про то,
- * что аккаунт делает две части одной работы.
- *
- * Условие «одна цель» обязательно: без него чатинг из чужой кампании увёл бы
- * аккаунт посреди рассылки и заговорил бы с людьми не о том.
+ * Пока профиль греется, он по определению ещё не готов к бою: смысл прогрева в том,
+ * чтобы Telegram увидел человеческую историю до первого холодного сообщения. Поэтому
+ * прогрев не делит аккаунт ни с кем — ни он к работающему, ни работа к нему.
+ * До 20.08 это держал общий лок «один аккаунт = одна задача»; когда его смягчили,
+ * запрет пришлось выразить явно, иначе «Мейлинг + Прогрев на тех же 20 аккаунтах»
+ * проходил без единого возражения.
  */
-const SHARED_PAIRS = [['mailing', 'neuro-dialogs']]
-const canShare = (a, b) => SHARED_PAIRS.some((p) => p.includes(a) && p.includes(b) && a !== b)
+const EXCLUSIVE_MODULES = new Set(['warming'])
+const conflicts = (a, b) => a === b || EXCLUSIVE_MODULES.has(a) || EXCLUSIVE_MODULES.has(b)
 
 /**
+ * Захват аккаунтов задачей. Конфликт с задачей ТОГО ЖЕ модуля (два мейлинга на одном
+ * аккаунте дублировали бы работу) и с прогревом в любую сторону; мейлинг + комментинг —
+ * разрешённая многомодульность (решение владельца 20.08).
  * @param {string[]} accountIds @param {string} moduleKey @param {string} taskId
  * @param {{ force?: boolean, goalId?: string }} [opts]
  */
 export function tryAcquireLocks(accountIds, moduleKey, taskId, opts = {}) {
   const label = moduleLabel(moduleKey)
-  /** @type {{ accountId: string, moduleKey: string, taskId: string, moduleLabel: string }[]} */
-  const conflicts = []
+  /** @type {{ accountId: string, moduleLabel: string }[]} */
+  const clashes = []
 
   for (const accountId of accountIds || []) {
     const existing = locks.get(accountId)
-    if (existing && existing.taskId !== taskId) {
-      // Исключение: парный модуль под той же целью — работают вместе, не мешая.
-      const sameGoal = opts.goalId && existing.goalId && String(opts.goalId) === String(existing.goalId)
-      if (sameGoal && canShare(moduleKey, existing.moduleKey)) continue
-      conflicts.push({ accountId, ...existing })
-    }
+    if (!existing) continue
+    const clash = existing.holders.find((h) => h.taskId !== taskId && conflicts(moduleKey, h.moduleKey))
+    if (clash) clashes.push({ accountId, moduleLabel: clash.moduleLabel })
   }
 
-  if (conflicts.length && !opts.force) {
-    const names = conflicts.map((c) => `${c.accountId.slice(-6)} → ${c.moduleLabel}`).join(', ')
-    return `Аккаунты заняты другой задачей: ${names}. Остановите её или выберите другие профили.`
+  if (clashes.length && !opts.force) {
+    const names = clashes.map((c) => `${c.accountId.slice(-6)} → ${c.moduleLabel}`).join(', ')
+    const warm = moduleKey === 'warming'
+      ? 'Прогрев не делит аккаунт с другими модулями: профиль греется, пока не готов к работе.'
+      : 'Аккаунты уже заняты несовместимой задачей.'
+    return `${warm} ${names}. Остановите её или выберите другие профили.`
   }
 
   for (const accountId of accountIds || []) {
-    // Лок не перетираем, если аккаунт уже держит парный модуль: иначе «Стоп» одной
-    // задачи снял бы блокировку у второй, и аккаунт стал бы «свободным» посреди работы.
+    const holder = { moduleKey, taskId, moduleLabel: label, goalId: opts.goalId || null, since: Date.now() }
     const prev = locks.get(accountId)
-    if (prev && prev.taskId !== taskId && canShare(moduleKey, prev.moduleKey)) {
-      const shared = prev.shared || [prev.taskId]
-      locks.set(accountId, { ...prev, shared: [...new Set([...shared, taskId])] })
-      continue
-    }
-    locks.set(accountId, { moduleKey, taskId, moduleLabel: label, goalId: opts.goalId || null, since: Date.now() })
+    if (!prev) { locks.set(accountId, packHolders([holder])); continue }
+    // force перехватывает слоты НЕСОВМЕСТИМЫХ задач (тот же модуль либо прогрев);
+    // держателей совместимых модулей не трогаем — их работа продолжается.
+    let holders = prev.holders.filter((h) => !(conflicts(moduleKey, h.moduleKey) && h.taskId !== taskId))
+    if (!holders.some((h) => h.taskId === taskId && h.moduleKey === moduleKey)) holders = [...holders, holder]
+    locks.set(accountId, packHolders(holders))
   }
   return null
 }
@@ -112,36 +134,41 @@ export function tryAcquireLocks(accountIds, moduleKey, taskId, opts = {}) {
 /** @param {string} taskId */
 export function releaseTaskLocks(taskId) {
   for (const [accountId, lock] of locks) {
-    const shared = Array.isArray(lock.shared) ? lock.shared.filter((t) => t !== taskId) : []
-    if (lock.taskId === taskId) {
-      // Лок держала парная задача (мейлинг+чатинг под одной целью) — она ещё работает,
-      // поэтому аккаунт не освобождаем, а передаём ей: иначе он стал бы «свободным»
-      // посреди диалога, и его увела бы другая задача.
-      if (shared.length) locks.set(accountId, { ...lock, taskId: shared[0], shared: shared.slice(1) })
-      else locks.delete(accountId)
-    } else if (shared.length !== (lock.shared || []).length) {
-      locks.set(accountId, { ...lock, shared })
-    }
+    const holders = lock.holders.filter((h) => h.taskId !== taskId)
+    if (!holders.length) locks.delete(accountId)
+    else if (holders.length !== lock.holders.length) locks.set(accountId, packHolders(holders))
   }
 }
 
-/** Принудительно снять блокировку с конкретного аккаунта (ручной разблок стухшего лока). @param {string} accountId */
-export function forceReleaseAccount(accountId) {
+/**
+ * Принудительно снять блокировку (ручной разблок стухшего лока).
+ *
+ * С многомодульностью держателей может быть несколько, поэтому снимать «всю запись»
+ * опасно: оператор жал «Освободить» из-за зависшего мейлинга, а заодно сносил прогрев,
+ * который трогать нельзя (§12, аудит 20.08). Без `moduleKey` поведение прежнее — снять
+ * всё, — но вызывающие с гейтом прав обязаны указывать, кого именно освобождают.
+ * @param {string} accountId @param {{ moduleKey?: string, taskId?: string }} [opts]
+ */
+export function forceReleaseAccount(accountId, opts = {}) {
   const lock = locks.get(accountId)
   if (!lock) return null
-  locks.delete(accountId)
-  return lock
+  const { moduleKey, taskId } = opts
+  if (!moduleKey && !taskId) { locks.delete(accountId); return lock }
+  const hit = lock.holders.filter((h) => (!moduleKey || h.moduleKey === moduleKey) && (!taskId || h.taskId === taskId))
+  if (!hit.length) return null
+  const rest = lock.holders.filter((h) => !hit.includes(h))
+  if (rest.length) locks.set(accountId, packHolders(rest))
+  else locks.delete(accountId)
+  return hit[0]
 }
 
 /** @param {string} accountId @param {string} [taskId] */
 export function assertAccountAvailable(accountId, taskId) {
   const lock = locks.get(accountId)
   if (!lock) return
-  if (taskId && lock.taskId === taskId) return
-  // Аккаунт делят парные модули под одной целью (мейлинг + чатинг): при захвате лока
-  // вторая задача попала в `shared`. Без этой проверки она получала ACCOUNT_BUSY на
-  // каждом подключении — задача создавалась, но не могла сделать ни одного действия.
-  if (taskId && Array.isArray(lock.shared) && lock.shared.includes(taskId)) return
+  // Многомодульность (20.08): задаче достаточно быть ЛЮБЫМ из держателей — остальные
+  // модули работают с этим же аккаунтом параллельно, это разрешено.
+  if (taskId && lock.holders.some((h) => h.taskId === taskId)) return
   throw new Error(`ACCOUNT_BUSY:${lock.moduleLabel}`)
 }
 
@@ -199,12 +226,18 @@ export async function reconcileLocks() {
   /** @type {{ accountId: string, taskId: string, moduleKey: string }[]} */
   const dropped = []
   for (const [accountId, lock] of [...locks]) {
-    if (isTaskLive(lock.taskId)) continue
-    const status = await findTaskStatus(lock.taskId)
-    // paused — задача жива и держит аккаунты зарезервированными (возобновится с ними же).
-    if (status === 'running' || status === 'queued' || status === 'paused') continue
-    locks.delete(accountId)
-    dropped.push({ accountId, taskId: lock.taskId, moduleKey: lock.moduleKey })
+    // Многомодульность: проверяем КАЖДОГО держателя — стухнуть может и второй,
+    // пока первый честно работает.
+    const alive = []
+    for (const h of lock.holders) {
+      if (isTaskLive(h.taskId)) { alive.push(h); continue }
+      const status = await findTaskStatus(h.taskId)
+      // paused — задача жива и держит аккаунты зарезервированными (возобновится с ними же).
+      if (status === 'running' || status === 'queued' || status === 'paused') { alive.push(h); continue }
+      dropped.push({ accountId, taskId: h.taskId, moduleKey: h.moduleKey })
+    }
+    if (!alive.length) locks.delete(accountId)
+    else if (alive.length !== lock.holders.length) locks.set(accountId, packHolders(alive))
   }
   return dropped
 }

@@ -43,7 +43,8 @@ export function AutopostingPage() {
   // остальными хуками ронял React «Rendered fewer hooks»). Тело — в AutopostingInner.
   const planModules = usePlan((st) => st.modules)
   if (planModules === null) return null // набор ещё не загружен — не мигаем витриной покупки
-  if (!planHasModule(planModules, 'autoposting')) return <ModuleNotPaid title="Автопостинг" moduleKey="autoposting" />
+  // Срок учитываем здесь же: прямой адрес не должен обходить истёкшую подписку.
+  if (!planHasModule(planModules, 'autoposting', usePlan.getState().expiresAt)) return <ModuleNotPaid title="Автопостинг" moduleKey="autoposting" />
   return <AutopostingInner />
 }
 

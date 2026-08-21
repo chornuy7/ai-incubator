@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Users2, Plus, Trash2, ShieldCheck, Check, Users, Wifi, ChevronDown, Search } from 'lucide-react'
+import { Link } from 'react-router-dom'
+import { Users2, Plus, Trash2, ShieldCheck, Check, Users, Wifi, ChevronDown, Search, SlidersHorizontal } from 'lucide-react'
 import { PageHeader, Card, EmptyState, Badge, Modal } from '@/shared/ui'
 import { confirmDialog } from '@/shared/lib/dialog'
 import { fetchUsers, createUser, updateUser, deleteUser, fetchWorktime, type User, type WorkSummary } from '@/api/usersApi'
@@ -13,30 +14,30 @@ import { HelpButton } from '@/features/neuro-commenting/moduleUi'
 import { cn } from '@/shared/lib/utils'
 
 /** Мультивыбор ролей: клик по чипу добавляет/убирает роль. Права ролей суммируются (union). */
+/**
+ * Роль — ОДНА, выбирается дропдауном (ТЗ 19.08 §2).
+ *
+ * Раньше здесь был мультивыбор чипами: у пользователя могло оказаться три роли, права
+ * суммировались, и по карточке было не понять, что человеку в итоге доступно, — заказчик
+ * назвал это «кашей». Хранение осталось массивом (`roleIds`), потому что на сервере права
+ * считаются объединением; здесь просто больше нельзя набрать в него больше одной роли.
+ * Старые записи с несколькими ролями не ломаем: показываем первую и предупреждаем.
+ */
 function RolePicker({ roles, value, onChange }: { roles: Role[]; value: string[]; onChange: (ids: string[]) => void }) {
-  const toggle = (id: string) => onChange(value.includes(id) ? value.filter((x) => x !== id) : [...value, id])
+  const current = value[0] || ''
   return (
-    <div className="flex flex-wrap gap-1.5">
-      {roles.map((r) => {
-        const on = value.includes(r.id)
-        const admin = r.id === ADMIN_BYPASS_ID
-        return (
-          <button
-            key={r.id}
-            type="button"
-            onClick={() => toggle(r.id)}
-            className={cn(
-              'inline-flex items-center gap-1 rounded-lg border px-2.5 py-1 text-xs font-medium transition-colors',
-              on
-                ? admin ? 'border-iris-500/50 bg-iris-500/15 text-iris-200' : 'border-spark-500/50 bg-spark-500/15 text-spark-200'
-                : 'border-line text-white/45 hover:text-white/80',
-            )}
-          >
-            {on && <Check size={12} />}{r.name}
-          </button>
-        )
-      })}
-    </div>
+    <select
+      value={current}
+      onChange={(e) => onChange(e.target.value ? [e.target.value] : [])}
+      className={cn(
+        'input h-9 min-w-[180px] text-xs',
+        current === ADMIN_BYPASS_ID && 'border-iris-500/50 text-iris-200',
+      )}
+      aria-label="Роль пользователя"
+    >
+      <option value="">Без роли — доступа нет</option>
+      {roles.map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}
+    </select>
   )
 }
 
@@ -277,9 +278,33 @@ export function UsersPage() {
                     </span>
                   ) : (
                     <div className="flex flex-col items-end gap-1">
-                      <RolePicker roles={roles} value={roleIds} onChange={(ids) => void assignRoles(u, ids)} />
-                      <span className="text-[11px] text-white/35">
-                        {isAdmin ? 'Полный доступ (админ-роль)' : roleIds.length > 1 ? `${roleIds.length} роли — права суммируются` : roleIds.length === 0 ? 'Нет ролей — нет доступа' : ''}
+                      <div className="flex items-center gap-1.5">
+                        <RolePicker roles={roles} value={roleIds} onChange={(ids) => void assignRoles(u, ids)} />
+                        {/* Дропдаун роль НАЗНАЧАЕТ, но не показывает, что она даёт. Владелец
+                            ставил суба «Тимлидом» и не понимал, где включить ему нейрочатинг
+                            (решение 21.08: доступ к своим модулям раздаёт владелец). Ссылка
+                            открывает редактор ИМЕННО этой роли; без роли — общий список.
+                            Админ-роль сюда не ведём: её права не редактируются. */}
+                        {!isAdmin && (
+                          <Link
+                            to={roleIds[0] ? `/panel/roles?role=${encodeURIComponent(roleIds[0])}` : '/panel/roles'}
+                            title={roleIds[0]
+                              ? 'Открыть права этой роли: модули из вашей подписки, разделы, ресурсы'
+                              : 'Открыть «Роли и доступы» — создать роль и раздать ей модули'}
+                            className="btn-ghost h-9 shrink-0 gap-1.5 px-2.5 text-xs"
+                          >
+                            <SlidersHorizontal size={13} /> Настроить права роли
+                          </Link>
+                        )}
+                      </div>
+                      <span className={cn('text-[11px]', roleIds.length > 1 ? 'text-amber-300/80' : 'text-white/35')}>
+                        {isAdmin
+                          ? 'Полный доступ (админ-роль)'
+                          : roleIds.length > 1
+                            // Наследие мультивыбора: пока роль не переназначили, права
+                            // считаются по ВСЕМ старым ролям — молчать об этом нельзя.
+                            ? `Осталось ${roleIds.length} роли от прежних настроек — выберите одну`
+                            : roleIds.length === 0 ? 'Нет роли — нет доступа' : ''}
                       </span>
                     </div>
                   )}
@@ -317,7 +342,7 @@ export function UsersPage() {
             <input value={form.password} onChange={(e) => setForm((f) => ({ ...f, password: e.target.value }))} className="input" placeholder="••••••••" />
           </div>
           <div>
-            <label className="label">Роли <span className="font-normal text-white/40">(можно несколько — права суммируются)</span></label>
+            <label className="label">Роль <span className="font-normal text-white/40">(одна — она и определяет доступ)</span></label>
             <RolePicker roles={roles} value={form.roleIds} onChange={(ids) => setForm((f) => ({ ...f, roleIds: ids }))} />
           </div>
           {/* §4.2 (MR-30): баланс суба — общий с владельцем или индивидуальный лимит токенов. */}

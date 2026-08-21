@@ -20,12 +20,6 @@
 import { dataPath, readJson, mutateJson } from './lib/jsonStore.js'
 import { getSupabase, supabaseEnabled } from './lib/supabase.js'
 import { resolveWalletOwner, resolveSubscriptionOwner } from './users.js'
-// MR-173: подписки (набор модулей + сроки) живут в user_subscriptions (реляционно), не в
-// JSON-поле. balance.js — только фасад: читает/пишет набор через эту модель.
-import { readModules as usubRead, setModules as usubSet } from './userSubscriptions.js'
-
-/** Ключ общего набора пространства в user_subscriptions (раньше строка subscriptions id='workspace'). */
-const WORKSPACE = '__workspace__'
 
 /**
  * §10.2: когда DATA_BACKEND=supabase, баланс/подписки/журнал живут в БД, а не в
@@ -33,6 +27,7 @@ const WORKSPACE = '__workspace__'
  * сконфигурирован; иначе null → работает файловый путь (и все тесты на файлах).
  */
 function sb() { return supabaseEnabled() ? getSupabase() : null }
+const iso = (ms) => (ms ? new Date(Number(ms)).toISOString() : null)
 const ms = (t) => (t ? new Date(t).getTime() : 0)
 
 // Путь берём функцией, а не константой: константа фиксируется в момент импорта модуля,
@@ -73,22 +68,147 @@ export const DEFAULT_MODULES = 'all'
 const SUBSCRIPTION_KEY = '__subscription'
 
 /**
- * Открыт ли модуль этому набору. Набор — либо `'all'`, либо список ключей.
- * @param {string[]|'all'|undefined} modules @param {string} moduleKey
+ * Истёк ли срок подписки. `null`/`undefined`/`0` — БЕССРОЧНО (так живёт дефолтный
+ * воркспейс и демо без периода), и закрывать такую подписку нельзя.
+ *
+ * Баг 19.08 (§2): срок хранился (`expiresAt`, `expires_at`), но не проверялся нигде —
+ * оплаченный на месяц модуль работал вечно. Дата — единственный источник правды о том,
+ * действует ли подписка; отдельного флага «активна» намеренно не заводим, иначе
+ * появился бы второй источник, который надо кем-то гасить по расписанию.
+ * @param {number|null|undefined} expiresAt
  */
-export function modulesAllow(modules, moduleKey) {
+export function subscriptionExpired(expiresAt) {
+  const t = Number(expiresAt) || 0
+  return t > 0 && t <= Date.now()
+}
+
+/**
+ * Сколько дней назад истекла подписка — для текста отказа («истекла 3 дня назад»).
+ * Меньше суток — 0, отказ говорит «сегодня».
+ * @param {number|null|undefined} expiresAt
+ */
+export function daysSinceExpiry(expiresAt) {
+  const t = Number(expiresAt) || 0
+  if (!t) return 0
+  return Math.max(0, Math.floor((Date.now() - t) / DAY))
+}
+
+/**
+ * Открыт ли модуль этому набору. Набор — либо `'all'`, либо список ключей.
+ *
+ * Третий аргумент — срок подписки. Он необязателен СОЗНАТЕЛЬНО: вопрос «куплен ли
+ * модуль» и вопрос «действует ли оплата» разные, и есть места (витрина, подсчёт
+ * докупки), где нужен только первый. Все гейты доступа обязаны передавать срок —
+ * без него подписка бессрочна.
+ * @param {string[]|'all'|undefined} modules @param {string} moduleKey
+ * @param {number|null} [expiresAt] срок подписки; null/не передан — бессрочно
+ */
+export function modulesAllow(modules, moduleKey, expiresAt) {
+  if (subscriptionExpired(expiresAt)) return false
   if (modules === 'all' || modules == null) return true
   return Array.isArray(modules) && modules.includes(moduleKey)
 }
 
 /**
+ * Как применить переданный набор к уже сохранённому (баг 19.08 §2).
+ *
+ * `'replace'` — набор становится ровно тем, что передали. Так админ ВЫДАЁТ доступы:
+ * он говорит «у этого человека вот эти модули», и снять лишнее должно быть можно.
+ *
+ * `'merge'` — ДОКУПКА: к оплаченному добавляется новое. Клиентскому списку доверять
+ * нельзя: кабинет присылал полный набор, и кнопка «Готовый набор» затирала им ранее
+ * оплаченные модули — деньги списаны, доступ пропал. Теперь объединяет сервер.
+ * @param {string[]|'all'|undefined} prev @param {string[]|'all'} list @param {'merge'|'replace'} mode
+ */
+function applyModules(prev, list, mode) {
+  if (mode !== 'merge') return list
+  if (prev === 'all' || list === 'all') return 'all'
+  const cur = Array.isArray(prev) ? prev : []
+  return [...new Set([...cur.map(String), ...(Array.isArray(list) ? list : [])])]
+}
+
+/**
+ * Срок при докупке. Правило: докупка не укорачивает уже оплаченное.
+ *  - записи ещё нет → новый срок как есть (это первая покупка);
+ *  - было бессрочно → остаётся бессрочно;
+ *  - период не указан (months=0) → старый срок не трогаем, иначе докупка молча
+ *    сделала бы месячную подписку вечной;
+ *  - иначе берём ДАЛЬНЮЮ дату: оплаченный год не должен схлопнуться до месяца
+ *    из-за докупки одного модуля.
+ */
+/**
+ * Какую дату окончания записать при ДОКУПКЕ (mode = 'merge').
+ *
+ * Подписка одна и с одной датой (решение владельца 21.08). Докупка модуля внутрь
+ * действующей подписки дату НЕ двигает: иначе добавление парсера за $8 продлевало бы
+ * весь набор за $121 — ровно это и происходило, пока здесь стоял `Math.max`.
+ *
+ * `explicit` — дата ПРОДЛЕНИЯ, посчитанная вызывающим от конца текущей подписки. Она
+ * сильнее всего остального: продление за тем и приходит, чтобы дату сдвинуть.
+ */
+function mergeExpiry(prevExpiry, nextExpiry, hadRecord, explicit = null) {
+  if (explicit) return explicit
+  if (!hadRecord) return nextExpiry
+  if (prevExpiry == null) return null
+  if (nextExpiry == null) return prevExpiry
+  return prevExpiry
+}
+
+/** Нормализованный режим записи набора. Умолчание — 'replace' (явная выдача). */
+const modeOf = (opts) => (opts?.mode === 'merge' ? 'merge' : 'replace')
+
+/**
  * Записать ОБЩИЙ набор пространства — то, что покупает владелец для всех.
  * @param {string[]|'all'} modules @param {string} [userId] чей баланс вернуть в ответе
+ * @param {{months?:number, mode?:'merge'|'replace'}} [opts]
  */
 export async function setModules(modules, userId, opts = {}) {
-  // MR-173: точный набор пространства — через реляционную модель (строка на модуль).
-  await usubSet(WORKSPACE, modules, { months: Number(opts?.months) || 0 })
+  const list = modules === 'all' ? 'all' : [...new Set((modules || []).map(String).filter(Boolean))]
+  const expiresAt = subExpiry(opts)
+  const mode = modeOf(opts)
+  const db = sb()
+  if (db) {
+    const prev = mode === 'merge'
+      ? (await db.from('subscriptions').select('modules, expires_at').eq('id', 'workspace').maybeSingle()).data
+      : null
+    const finalList = applyModules(prev?.modules, list, mode)
+    const finalExpiry = mode === 'merge'
+      ? mergeExpiry(prev?.expires_at ? ms(prev.expires_at) : null, expiresAt, !!prev, Number(opts?.expiresAt) || null)
+      : expiresAt
+    await db.from('subscriptions').upsert(
+      { id: 'workspace', scope: 'workspace', user_id: null, modules: finalList, expires_at: iso(finalExpiry), updated_at: new Date().toISOString() },
+      { onConflict: 'id' },
+    )
+    return getBalance(userId)
+  }
+  await mutateJson(BALANCE_FILE(), (all) => {
+    const next = { ...(all || {}) }
+    delete next.coins; delete next.planId; delete next.updatedAt
+    const prev = next[SUBSCRIPTION_KEY]
+    const hadRecord = !!prev && prev.modules !== undefined
+    next[SUBSCRIPTION_KEY] = {
+      modules: applyModules(prev?.modules, list, mode),
+      expiresAt: mode === 'merge' ? mergeExpiry(prev?.expiresAt ?? null, expiresAt, hadRecord, Number(opts?.expiresAt) || null) : expiresAt,
+      updatedAt: Date.now(),
+    }
+    return next
+  })
   return getBalance(userId)
+}
+
+/**
+ * Срок подписки: покупка на N месяцев → дата окончания. Демо без периода — null
+ * («бессрочно», пока не подключён провайдер). 30 дней в месяце — витринное допущение.
+ * @param {{months?:number}} opts
+ */
+const DAY = 24 * 60 * 60 * 1000
+function subExpiry(opts = {}) {
+  // Явная дата от вызывающего важнее месяцев: продление считается от КОНЦА действующей
+  // подписки (см. /api/subscription), иначе продливший заранее терял оплаченный остаток.
+  const explicit = Number(opts?.expiresAt) || 0
+  if (explicit > 0) return explicit
+  const months = Number(opts?.months) || 0
+  return months > 0 ? Date.now() + Math.round(months * 30 * DAY) : null
 }
 
 /**
@@ -96,11 +216,45 @@ export async function setModules(modules, userId, opts = {}) {
  * Клиент заходит в «Мои модули», выбирает пакет — и видит ровно его; остальные
  * пользователи пространства не задеты.
  * @param {string[]|'all'} modules @param {string} userId
+ * @param {{months?:number, mode?:'merge'|'replace'}} [opts] `merge` — докупка (§2, баг 19.08)
  */
 export async function setUserModules(modules, userId, opts = {}) {
   if (!userId) throw new Error('Личная подписка требует пользователя')
-  // MR-173: личный набор клиента — через модель. Срок у оставленных модулей не сбрасывается.
-  await usubSet(key(userId), modules, { months: Number(opts?.months) || 0 })
+  const list = modules === 'all' ? 'all' : [...new Set((modules || []).map(String).filter(Boolean))]
+  const expiresAt = subExpiry(opts)
+  const mode = modeOf(opts)
+  const k = key(userId)
+  const db = sb()
+  if (db) {
+    const prev = mode === 'merge'
+      ? (await db.from('subscriptions').select('modules, expires_at').eq('id', k).maybeSingle()).data
+      : null
+    const finalList = applyModules(prev?.modules, list, mode)
+    const finalExpiry = mode === 'merge'
+      ? mergeExpiry(prev?.expires_at ? ms(prev.expires_at) : null, expiresAt, !!prev, Number(opts?.expiresAt) || null)
+      : expiresAt
+    await db.from('subscriptions').upsert(
+      { id: k, scope: 'user', user_id: k, modules: finalList, expires_at: iso(finalExpiry), updated_at: new Date().toISOString() },
+      { onConflict: 'id' },
+    )
+    return getBalance(userId)
+  }
+  await mutateJson(BALANCE_FILE(), (all) => {
+    const next = { ...(all || {}) }
+    delete next.coins; delete next.planId; delete next.updatedAt
+    const prev = next[k]
+    // Докупку мерджим по СВОЕЙ записи, а не по тому, что вернул бы getBalance:
+    // там набор может быть унаследован от владельца пространства, и слив чужого
+    // набора в личную запись выдал бы модули, за которые этот человек не платил.
+    const hadRecord = !!prev && prev.modules !== undefined
+    next[k] = {
+      ...(prev || {}),
+      modules: applyModules(prev?.modules, list, mode),
+      expiresAt: mode === 'merge' ? mergeExpiry(prev?.expiresAt ?? null, expiresAt, hadRecord, Number(opts?.expiresAt) || null) : expiresAt,
+      updatedAt: Date.now(),
+    }
+    return next
+  })
   return getBalance(userId)
 }
 
@@ -128,46 +282,75 @@ const normCoins = (v) => Math.max(0, Math.round((Number(v) || 0) * COIN_PRECISIO
 
 /** @returns {Promise<{planId:string, plan:{name:string,accountLimit:number}, coins:number, updatedAt:number}>} */
 export async function getBalance(userId) {
-  const ownKey = key(userId)
-  // §4.2 (MR-30): деньги/токены — из кошелька владельца при общем балансе.
-  const wk = key(await resolveWalletOwner(userId))
-  // §4.1 (MR-28): набор модулей суба — это набор ВЛАДЕЛЬЦА (его ключ), а не самого суба.
-  const sk = key(await resolveSubscriptionOwner(userId))
-
-  // MR-173: набор модулей + сроки — из user_subscriptions (реляционно). Модель сама решает
-  // бэкенд (БД/файл). Свой набор (sk) перекрывает общий на пространство.
-  const sub = await usubRead(sk)
-  let modules = sub.modules
-  let expiresAt = sub.expiresAt
-  const noSub = modules !== 'all' && modules.length === 0
-  // Правка 18.08: общий набор пространства (или DEFAULT_MODULES) — fallback ТОЛЬКО для
-  // безсессионного дев-режима (sk===DEFAULT_USER). У владельца без покупки набор ПУСТ,
-  // иначе зарегистрировавшийся с лендинга получал бы все модули бесплатно.
-  if (noSub && sk === DEFAULT_USER) {
-    const ws = await usubRead(WORKSPACE)
-    if (ws.modules === 'all' || ws.modules.length) { modules = ws.modules; expiresAt = ws.expiresAt }
-    else { modules = DEFAULT_MODULES; expiresAt = null }
-  }
-
   const db = sb()
   if (db) {
-    const { data } = await db.from('coin_balance').select('coins, usd, updated_at').eq('user_id', wk).maybeSingle()
+    const k = key(userId)
+    // §4.2 (MR-30): монеты/деньги — из кошелька владельца при общем балансе; подписка
+    // (модули) остаётся по своему ключу.
+    const wk = key(await resolveWalletOwner(userId))
+    // §4.1 (MR-28): набор модулей суба — это набор ВЛАДЕЛЬЦА. Раньше здесь стоял свой
+    // ключ, и суб без личной подписки проваливался на общий `workspace` — получая
+    // модули, которых владелец не покупал.
+    const sk = key(await resolveSubscriptionOwner(userId))
+    const [coinRes, subRes, wsRes] = await Promise.all([
+      db.from('coin_balance').select('coins, usd, updated_at').eq('user_id', wk).maybeSingle(),
+      db.from('subscriptions').select('modules, expires_at').eq('id', sk).maybeSingle(),
+      db.from('subscriptions').select('modules, expires_at').eq('id', 'workspace').maybeSingle(),
+    ])
+    const personal = subRes.data
+    const ws = wsRes.data
+    // Общий набор `workspace` — набор НАШЕГО пространства, а не подарок каждому.
+    //
+    // Правка 18.08. Раньше он был fallback'ом для любого, у кого нет своей записи, и
+    // человек, только что зарегистрировавшийся с лендинга, получал 14 модулей бесплатно
+    // (на проде так жили 56 из 65 юзеров). Теперь fallback работает только для
+    // безсессионного дев-режима; у самостоятельного владельца без покупки набор ПУСТ.
+    const modules = personal?.modules !== undefined && personal?.modules !== null
+      ? personal.modules
+      : (sk === DEFAULT_USER ? (ws?.modules ?? DEFAULT_MODULES) : [])
+    const expiresAt = (personal ? personal.expires_at : ws?.expires_at) ? ms(personal ? personal.expires_at : ws.expires_at) : null
+    const planId = DEFAULT_STATE.planId
     return {
-      planId: DEFAULT_STATE.planId, plan: PLANS[DEFAULT_STATE.planId], modules, expiresAt,
+      planId,
+      plan: PLANS[planId],
+      modules,
+      expiresAt,
       // §11.4: два независимых остатка — деньги ($) и токены (coins).
-      coins: normCoins(data?.coins ?? 0), usd: normUsd(data?.usd ?? 0), updatedAt: ms(data?.updated_at),
+      coins: normCoins(coinRes.data?.coins ?? 0),
+      usd: normUsd(coinRes.data?.usd ?? 0),
+      updatedAt: ms(coinRes.data?.updated_at),
     }
   }
   const all = await readJson(BALANCE_FILE(), {})
   // Старый формат — один кошелёк в корне файла. Читаем его как баланс `__default`,
   // чтобы уже начисленные монеты не пропали при переходе на пер-юзерное хранение.
   const legacy = typeof all?.coins === 'number' ? { coins: all.coins, planId: all.planId } : null
-  const saved = (all && all[ownKey]) || (ownKey === DEFAULT_USER ? legacy : null) || {}
+  const saved = (all && all[key(userId)]) || (key(userId) === DEFAULT_USER ? legacy : null) || {}
   const planId = PLANS[saved?.planId] ? saved.planId : DEFAULT_STATE.planId
+  // §4.2 (MR-30): монеты/деньги — из кошелька владельца при общем балансе; модули/подписку
+  // берём по своему ключу (saved). Ключи нормализуем через key() (undefined → __default).
+  const ownKey = key(userId)
+  const wk = key(await resolveWalletOwner(userId))
+  // §4.1 (MR-28): подписку читаем у владельца пространства, а не у самого суба.
+  const sk = key(await resolveSubscriptionOwner(userId))
+  const subRec = sk === ownKey ? saved : ((all && all[sk]) || {})
   const walletRec = wk === ownKey ? saved : ((all && all[wk]) || (wk === DEFAULT_USER ? legacy : null) || {})
   return {
-    planId, plan: PLANS[planId], modules, expiresAt,
-    coins: normCoins(walletRec?.coins ?? DEFAULT_STATE.coins), usd: normUsd(walletRec?.usd ?? 0),
+    planId,
+    plan: PLANS[planId],
+    // Набор модулей: СВОЙ (клиент купил лично) перекрывает общий на пространство.
+    // Клиент, выбравший «парсер + комментинг за 20», видит свои два модуля, а
+    // сотрудник без личной покупки работает внутри купленного владельцем. Срок
+    // подписки (expiresAt) берём из того же источника, что и набор.
+    // Общий набор пространства — только для безсессионного дев-режима (см. выше).
+    modules: subRec?.modules !== undefined
+      ? subRec.modules
+      : (sk === DEFAULT_USER ? ((all && all[SUBSCRIPTION_KEY]?.modules) ?? DEFAULT_MODULES) : []),
+    expiresAt: (subRec?.modules !== undefined
+      ? subRec?.expiresAt
+      : (sk === DEFAULT_USER ? (all && all[SUBSCRIPTION_KEY]?.expiresAt) : null)) ?? null,
+    coins: normCoins(walletRec?.coins ?? DEFAULT_STATE.coins),
+    usd: normUsd(walletRec?.usd ?? 0),
     updatedAt: Number(walletRec?.updatedAt) || 0,
   }
 }

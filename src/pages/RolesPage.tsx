@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
-import { ShieldCheck, Plus, Trash2, ChevronRight, ChevronDown, Save, Lock } from 'lucide-react'
+import { Link, useSearchParams } from 'react-router-dom'
+import { ShieldCheck, Plus, Trash2, ChevronRight, ChevronDown, Save, Lock, Package } from 'lucide-react'
 import { PageHeader, Card, EmptyState, Badge, Switch } from '@/shared/ui'
 import { cn } from '@/shared/lib/utils'
 import { confirmDialog } from '@/shared/lib/dialog'
@@ -8,8 +9,12 @@ import {
   type Role, type RbacCatalog, type RolePermissions, type Perm,
 } from '@/api/rolesApi'
 import { ADMIN_BYPASS_ID } from '@/shared/config/rbac'
+import { useSession } from '@/features/auth/session'
 import { HelpButton } from '@/features/neuro-commenting/moduleUi'
 import { WARMING_MODULES } from '@/shared/lib/massAction'
+
+/** Ключ имени роли для сравнения: регистр и лишние пробелы дублем считаться не должны. */
+const nameKey = (n: string) => n.trim().toLowerCase()
 
 /** Пара чекбоксов «дать доступ / убрать доступ» (§8.1). */
 /**
@@ -61,6 +66,15 @@ function PermRow({ label, indent, value, onChange, disabled }: { label: string; 
 }
 
 export function RolesPage() {
+  // Владелец пространства правит роли СВОЕЙ команды (решение 21.08), админ платформы —
+  // все. Отсюда разница в подписях: владельцу каталог модулей приходит урезанным по его
+  // подписке, и молчать об этом нельзя — иначе пропавший модуль читается как поломка.
+  const sessionUser = useSession((s) => s.user)
+  const isPlatformAdmin = !!sessionUser?.isAdmin
+  // Переход из «Пользователей»: ?role=<id> сразу открывает роль, которую там назначили,
+  // чтобы владелец не искал её глазами в списке (у него их бывает несколько десятков).
+  const [searchParams] = useSearchParams()
+  const wantRoleId = searchParams.get('role') || ''
   const [roles, setRoles] = useState<Role[]>([])
   const [catalog, setCatalog] = useState<RbacCatalog | null>(null)
   const [selId, setSelId] = useState<string>('')
@@ -82,7 +96,7 @@ export function RolesPage() {
       const [rs, cat] = await Promise.all([fetchRoles(), fetchRbacCatalog()])
       setRoles(rs)
       setCatalog(cat)
-      if (!selId && rs.length) selectRole(rs[0])
+      if (!selId && rs.length) selectRole(rs.find((r) => r.id === wantRoleId) || rs[0])
     } catch (e) {
       setErr(e instanceof Error ? e.message : 'Ошибка загрузки')
     } finally {
@@ -100,9 +114,35 @@ export function RolesPage() {
     setErr('')
   }
 
+  /**
+   * Занято ли имя другой ролью.
+   *
+   * У владельца в списке накопились «Тимлид», «Уволенный» и «Без чужих задач» по три раза
+   * (прогон 21.08): в дропдауне «Пользователей» такие роли не отличить друг от друга, и
+   * человеку назначают не ту. Поэтому повтор имени теперь не сохраняется.
+   */
+  const nameTaken = (n: string, exceptId?: string) =>
+    roles.some((r) => r.id !== exceptId && nameKey(r.name) === nameKey(n))
+
+  /** Имена, встречающиеся больше одного раза — помечаем в списке, чтобы мусор было видно. */
+  const dupNames = useMemo(() => {
+    const count = new Map<string, number>()
+    roles.forEach((r) => count.set(nameKey(r.name), (count.get(nameKey(r.name)) ?? 0) + 1))
+    return new Set([...count].filter(([, c]) => c > 1).map(([k]) => k))
+  }, [roles])
+
+  /** Ошибка имени текущей роли — показываем сразу под полем, а не после отказа сохранения. */
+  const nameErr = !name.trim()
+    ? 'Название не может быть пустым'
+    : nameTaken(name, selId) ? 'Роль с таким именем уже есть' : ''
+
   async function addRole() {
     try {
-      const r = await createRole({ name: `Новая роль ${roles.length}`, permissions: emptyPermissions() })
+      // Номер ищем свободный, а не по длине списка: после удалений длина повторяется и
+      // так появились «Новая роль 5» в двух экземплярах.
+      let n = roles.length + 1
+      while (nameTaken(`Новая роль ${n}`)) n += 1
+      const r = await createRole({ name: `Новая роль ${n}`, permissions: emptyPermissions() })
       setRoles((prev) => [...prev, r])
       selectRole(r)
     } catch (e) { setErr(e instanceof Error ? e.message : 'Ошибка') }
@@ -121,6 +161,7 @@ export function RolesPage() {
 
   async function save() {
     if (!selected) return
+    if (nameErr) { setErr(`${nameErr}. Дайте роли имя, по которому её узнают в списке пользователей.`); return }
     setSaving(true); setErr('')
     try {
       const updated = await updateRole(selected.id, { name: name.trim(), isTemplate, permissions: perms })
@@ -223,7 +264,9 @@ export function RolesPage() {
     <div>
       <PageHeader
         title="Роли и доступы"
-        subtitle="Главный админ создаёт роли и раздаёт доступ к модулям, блокам и ресурсам. Снятый доступ выделен."
+        subtitle={isPlatformAdmin
+          ? 'Роли и доступ к модулям, блокам и ресурсам. Снятый доступ выделен.'
+          : 'Роль решает, что видит ваш субпользователь. Выдать можно только модули из вашей подписки. Снятый доступ выделен.'}
         icon={<ShieldCheck size={22} />}
         badge={roles.length ? `${roles.length}` : undefined}
         actions={
@@ -255,6 +298,8 @@ export function RolesPage() {
                   <span className="mt-1 flex flex-wrap gap-1">
                     {r.builtin && <Badge tone="iris">Встроенная</Badge>}
                     {r.isTemplate && <Badge tone="amber">Шаблон</Badge>}
+                    {/* Одинаковые имена в списке = невозможно выбрать нужную роль в «Пользователях». */}
+                    {dupNames.has(nameKey(r.name)) && <Badge tone="rose">имя-дубль</Badge>}
                   </span>
                 </span>
                 {!r.builtin && (
@@ -267,21 +312,22 @@ export function RolesPage() {
           {/* Редактор выбранной роли */}
           {selected && (
             <Card className="p-4">
-              <div className="mb-4 flex flex-wrap items-center gap-3">
+              <div className={`flex flex-wrap items-center gap-3 ${nameErr ? 'mb-1' : 'mb-4'}`}>
                 <input
                   value={name}
                   onChange={(e) => { setName(e.target.value); mark() }}
-                  className="h-10 flex-1 rounded-lg border border-line bg-elevated px-3 text-sm text-fg outline-none focus:border-spark-500/50"
+                  className={`h-10 flex-1 rounded-lg border bg-elevated px-3 text-sm text-fg outline-none ${nameErr ? 'border-rose-500/50' : 'border-line focus:border-spark-500/50'}`}
                   placeholder="Название роли"
                 />
                 <label className="flex items-center gap-2 text-sm text-white/70">
                   <input type="checkbox" className="accent-amber-500" checked={isTemplate} onChange={(e) => { setIsTemplate(e.target.checked); mark() }} />
                   Шаблон
                 </label>
-                <button onClick={() => void save()} disabled={!dirty || saving} className="btn-primary h-10 disabled:opacity-40">
+                <button onClick={() => void save()} disabled={!dirty || saving || !!nameErr} className="btn-primary h-10 disabled:opacity-40">
                   <Save size={15} /> {saving ? 'Сохранение…' : 'Сохранить'}
                 </button>
               </div>
+              {nameErr && <div className="mb-4 text-[11px] text-rose-300">{nameErr} — по имени роль выбирают в «Пользователях».</div>}
 
               {isAdminRole ? (
                 <div className="flex items-center gap-2 rounded-lg bg-iris-500/10 px-4 py-6 text-sm text-iris-200">
@@ -334,6 +380,13 @@ export function RolesPage() {
                         </span>
                       ))}
                     </div>
+                    {!isPlatformAdmin && catalog.modules.length > 0 && (
+                      <div className="mb-2 flex flex-wrap items-center gap-1.5 text-[11px] text-white/40">
+                        <Package size={12} className="shrink-0" />
+                        Показаны модули из вашей подписки — выдать роли можно только то, что оплачено.
+                        <Link to="/panel/user/subscription" className="font-semibold text-spark-300 hover:text-spark-200">Подписки</Link>
+                      </div>
+                    )}
                     <div className="flex flex-col gap-1.5">
                       {catalog.modules.map((m) => {
                         const open = expanded.has(m.key)

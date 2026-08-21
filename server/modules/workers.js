@@ -32,7 +32,6 @@ import {
   pickDelay,
   pickJoinDelay,
   effectiveProbability,
-  isAccountRunnable,
   canReplyWithStatus,
   isAccountReplyOnly,
   postMeetsMinWords,
@@ -41,9 +40,46 @@ import {
   interruptibleSleep,
 } from '../lib/protection.js'
 
+/**
+ * Синхронный флаг «пора остановиться» — для ожиданий, где async-проверка не годится
+ * (ожидание слота занятости внутри connectAccount). Читает живой объект задачи: именно
+ * на нём stopWorker/pauseWorker ставят флаг, не дожидаясь записи на диск.
+ */
+const stopFlag = (task) => () => !!(task?.stopRequested || task?.pauseRequested)
+
 /** #6: колбэк «пора остановиться?» — читает stop/pause с диска (свежий флаг). */
 function makeStopCheck(store, taskId) {
   return async () => { try { const t = await store.loadTask(taskId); return !!(t?.stopRequested || t?.pauseRequested) } catch { return false } }
+}
+
+/** Длительность по-человечески: «47 с», «3 мин», «1 ч 12 мин». */
+export function fmtWait(ms) {
+  const sec = Math.round(ms / 1000)
+  if (sec < 90) return `${sec} с`
+  const min = Math.round(sec / 60)
+  if (min < 90) return `${min} мин`
+  return `${Math.floor(min / 60)} ч ${min % 60} мин`
+}
+
+/**
+ * Учесть и показать паузу (правка 20.08 по просьбе владельца: «все задержки выводим в
+ * лог и суммируем»).
+ *
+ * До этого в логе были видны только три вида ожиданий — вступление в канал, простой из-за
+ * усталости и разбег стартов парсера. Основные паузы между действиями (десятки секунд, а
+ * на консервативном пресете и минуты) не оставляли следа: со стороны задача выглядела
+ * зависшей, и объяснить оператору, почему за час сделано пять комментариев, было нечем.
+ *
+ * Сумма копится в `task.progress.waitMs` — по ней видно, сколько задача реально ПРОСТОЯЛА,
+ * в отличие от прогнозного ETA в дашборде.
+ * @param {object} task @param {object} store @param {number} ms @param {string} reason
+ * @param {string} [accountName]
+ */
+export async function noteWait(task, store, ms, reason, accountName) {
+  if (!(ms > 0)) return
+  task.progress = task.progress || {}
+  task.progress.waitMs = (Number(task.progress.waitMs) || 0) + ms
+  await store.appendLog(task, 'info', `Пауза ${fmtWait(ms)} — ${reason}`, accountName)
 }
 
 /**
@@ -85,6 +121,12 @@ import { describeIncomingImage, messageHasPhoto } from '../lib/visionDescribe.js
 import { effectivePrices } from '../priceStore.js'
 import { canWorkNow, noteAction } from '../accountActivity.js'
 import { humanPace } from '../lib/antiCluster.js'
+import { beginAccountWork, endAccountWork, releaseTaskBusy } from '../lib/accountBusy.js'
+// Гейт статуса ЗАВИСИТ ОТ МОДУЛЯ: пока аккаунт греется, боевые модули его не берут, а
+// прогрев — берёт. Раньше эту границу держал общий лок «один аккаунт = одна задача»;
+// многомодульность (20.08) его сняла, и `isAccountRunnable` (в его SKIP_STATUSES нет
+// `warming`) начал пускать греющийся профиль в мейлинг — прямой путь к спамблоку.
+import { canModuleUseAccount } from '../lib/accountStatus.js'
 import { getGoal, isGoalExpired } from '../goals.js'
 
 /**
@@ -206,7 +248,17 @@ function launchWorker(taskId, store, runner) {
     } finally {
       // Страховка: любой терминальный путь воркера (в т.ч. ранний return,
       // исключение до finalizeAccounts) обязан снять блокировки и сбросить статусы.
-      await finalizeAccounts(task.settings?.accountIds || [], taskId)
+      //
+      // Флаг паузы обязателен: без него эта страховка ОТМЕНЯЛА решение воркера. Воркер
+      // на выходе честно звал finalizeAccounts(..., pauseRequested) и локи держал, а
+      // строкой ниже они снимались снова — уже без флага. В итоге ветка «пауза
+      // резервирует аккаунты» была мертва: поставили мейлинг на паузу, коллега занял те
+      // же аккаунты вторым мейлингом, «Возобновить» падало с «аккаунты заняты» (аудит 20.08).
+      // Диск и живой объект проверяем ОБА: паузу могли выставить и снаружи (в задаче на
+      // диске), и на живом объекте через signalLiveTask — раннер его переприсваивает.
+      const fresh = await store.loadTask(taskId).catch(() => null)
+      const paused = !!(fresh?.pauseRequested || fresh?.status === 'paused' || task.pauseRequested)
+      await finalizeAccounts(task.settings?.accountIds || [], taskId, paused)
     }
   })().finally(() => {
     running.delete(taskId)
@@ -298,12 +350,18 @@ export function statusAfterRun(task) {
   return task.pauseRequested ? 'paused' : task.stopRequested ? 'stopped' : 'done'
 }
 
-/** Итоговая строка лога — по фактическому статусу, а не всегда «Завершено». */
+/**
+ * Итоговая строка лога — по фактическому статусу, а не всегда «Завершено».
+ * К ней добавляется суммарное ожидание: «сколько заняла задача» без «сколько из этого
+ * она простояла» читается как медленная работа, хотя паузы и есть её работа.
+ */
 export function finishNote(task, doneText = 'Завершено') {
-  if (task.status === 'error') return `Задача завершилась с ошибкой: ${task.fatalError || 'см. записи выше'}`
-  if (task.status === 'paused') return 'Пауза'
-  if (task.status === 'stopped') return 'Остановлено'
-  return doneText
+  const waited = Number(task.progress?.waitMs) || 0
+  const tail = waited > 0 ? ` · в паузах ${fmtWait(waited)}` : ''
+  if (task.status === 'error') return `Задача завершилась с ошибкой: ${task.fatalError || 'см. записи выше'}${tail}`
+  if (task.status === 'paused') return `Пауза${tail}`
+  if (task.status === 'stopped') return `Остановлено${tail}`
+  return `${doneText}${tail}`
 }
 
 /**
@@ -329,6 +387,11 @@ async function finalizeAccounts(accountIds, taskId, paused = false) {
   // На паузе аккаунты остаются зарезервированными за задачей (лок держим) и переходят в статус
   // «pause» — чтобы в менеджере было видно, в каком модуле аккаунт на паузе. На стопе/финише — освобождаем.
   if (taskId && !paused) releaseTaskLocks(taskId)
+  // Слот занятости снимаем ВСЕГДА, даже на паузе: лок — это «аккаунт закреплён за задачей»,
+  // а занятость — «прямо сейчас идёт действие». Пауза действие прекращает, и держать слот
+  // не за чем. Без этой строки любой выход мимо disconnectAccount (падение промиса, стоп
+  // посреди задержки) выключал аккаунт из ВСЕХ модулей до перезапуска процесса — аудит 20.08.
+  if (taskId) releaseTaskBusy(taskId)
   for (const id of accountIds) {
     const meta = await getAccountMeta(id)
     if (meta.status === 'working') await setAccountMeta(id, { status: paused ? 'pause' : 'active' })
@@ -482,7 +545,7 @@ export async function runNeuroCommenting(task, store) {
       }
       const accountId = accountIds[idx++ % accountIds.length]
       const meta = await getAccountMeta(accountId)
-      if (!isAccountRunnable(meta.status || 'active')) {
+      if (!canModuleUseAccount(task.moduleKey, meta.status || 'active')) {
         idleLap += 1
         lastSkip = `статус ${meta.status}`
         await store.appendLog(task, 'warning', `Пропуск: ${meta.status}`, meta.name)
@@ -503,13 +566,24 @@ export async function runNeuroCommenting(task, store) {
         continue
       }
       if (await limitReached(accountId, 'comments')) { idleLap += 1; lastSkip = 'суточный лимит'; await store.appendLog(task, 'info', 'Суточный лимит комментариев достигнут (§6)', meta.name); continue }
+      // Многомодульность (20.08): аккаунт может работать в нескольких модулях, но не
+      // двумя действиями одновременно — занятый другим модулем пропускаем, как при
+      // усталости; сюда же пауза при переключении модулей.
+      const busyGate = beginAccountWork(accountId, task.moduleKey, task.id)
+      if (!busyGate.ok) {
+        idleLap += 1
+        lastSkip = busyGate.reason
+        if (busyGate.until) idleUntil = idleUntil ? Math.min(idleUntil, busyGate.until) : busyGate.until
+        await store.appendLog(task, 'info', `Пропуск: ${busyGate.reason}`, meta.name)
+        continue
+      }
       idleLap = 0
       lastSkip = ''
 
       let client
       let progressed = false
       try {
-        ;({ client } = await connectAccount(accountId, task.id))
+        ;({ client } = await connectAccount(accountId, task.id, { shouldStop: stopFlag(task) }))
         const ch = chs[Math.floor(Math.random() * chs.length)]
         const joinDelay = pickJoinDelay(s.delays?.join?.[0] ?? 84, s.delays?.join?.[1] ?? 156, mul)
         const membership = await prepareTarget(
@@ -567,7 +641,9 @@ export async function runNeuroCommenting(task, store) {
               continue
             }
 
-            if (await interruptibleSleep(pickDelay(s.delays?.comment?.[0] ?? 30, s.delays?.comment?.[1] ?? 120, mul) * 1000, makeStopCheck(store, task.id))) break // #6
+            const waitMs = pickDelay(s.delays?.comment?.[0] ?? 30, s.delays?.comment?.[1] ?? 120, mul) * 1000
+            await noteWait(task, store, waitMs, 'задержка перед комментарием', meta.name)
+            if (await interruptibleSleep(waitMs, makeStopCheck(store, task.id))) break // #6
             const postText = (post.message || '').trim() || (post.media ? '[медиа]' : '')
             // §3.5 семантика: пропускаем посты, семантически далёкие от цели кампании.
             if (goalVec) {
@@ -648,6 +724,7 @@ export async function runNeuroCommenting(task, store) {
         await disconnectAccount(client, accountId)
       } catch (err) {
         if (client) await disconnectAccount(client, accountId)
+        else endAccountWork(accountId, task.id) // подключение сорвалось — слот занятости не держим
         if (!(await handleFlood(task, accountId, store, err, s, meta.name))) {
           await store.appendLog(task, 'error', mapTelegramError(err), meta.name)
         }
@@ -743,7 +820,7 @@ export async function runNeuroChatting(task, store) {
       }
       const accountId = accountIds[idx++ % accountIds.length]
       const meta = await getAccountMeta(accountId)
-      if (!isAccountRunnable(meta.status || 'active') || perAccountLimitReached(s, accountId, task)) { idleLap += 1; lastSkip = 'статус или лимит на аккаунт'; continue }
+      if (!canModuleUseAccount(task.moduleKey, meta.status || 'active') || perAccountLimitReached(s, accountId, task)) { idleLap += 1; lastSkip = 'статус или лимит на аккаунт'; continue }
       // §4.1–§4.2: усталость и распорядок — во ВСЕХ модулях, а не только в комментинге.
       // Иначе «сквозной отдых» дырявый: аккаунт, отработавший смену тут, копил усталость,
       // но никто её не проверял — и он же уходил лить реакции в соседнем модуле.
@@ -757,12 +834,23 @@ export async function runNeuroChatting(task, store) {
         continue
       }
       if (await limitReached(accountId, 'comments')) { idleLap += 1; lastSkip = 'суточный лимит'; await store.appendLog(task, 'info', 'Суточный лимит сообщений достигнут (§6)', meta.name); continue }
+      // Многомодульность (20.08): аккаунт может работать в нескольких модулях, но не
+      // двумя действиями одновременно — занятый другим модулем пропускаем, как при
+      // усталости; сюда же пауза при переключении модулей.
+      const busyGate = beginAccountWork(accountId, task.moduleKey, task.id)
+      if (!busyGate.ok) {
+        idleLap += 1
+        lastSkip = busyGate.reason
+        if (busyGate.until) idleUntil = idleUntil ? Math.min(idleUntil, busyGate.until) : busyGate.until
+        await store.appendLog(task, 'info', `Пропуск: ${busyGate.reason}`, meta.name)
+        continue
+      }
       idleLap = 0
       lastSkip = ''
       let client
       let progressed = false
       try {
-        ;({ client } = await connectAccount(accountId, task.id))
+        ;({ client } = await connectAccount(accountId, task.id, { shouldStop: stopFlag(task) }))
         const g = groups[Math.floor(Math.random() * groups.length)]
         const joinDelay = pickJoinDelay(s.delays?.join?.[0] ?? 50, s.delays?.join?.[1] ?? 120, mul)
         const membership = await prepareTarget(
@@ -790,7 +878,9 @@ export async function runNeuroChatting(task, store) {
           if (trackIdlePass(task, false)) break
           continue
         }
-        if (await breakableDelay(pickDelay(s.delays?.action?.[0] ?? 42, s.delays?.action?.[1] ?? 78, mul) * 1000, store, task)) { await disconnectAccount(client, accountId); break }
+        const chatWait = pickDelay(s.delays?.action?.[0] ?? 42, s.delays?.action?.[1] ?? 78, mul) * 1000
+        await noteWait(task, store, chatWait, 'задержка между сообщениями', meta.name)
+        if (await breakableDelay(chatWait, store, task)) { await disconnectAccount(client, accountId); break }
         task.usedTexts = task.usedTexts || []
         const chatPrompt = pickPrompt(s, s.typeWeights, goalCtx + agentCtx)
         const { text: reply, mode, reason, usage } = await generateComment(msg.message || '', chatPrompt.index, chatPrompt.sys, { avoid: task.usedTexts, variantSeed: accountId })
@@ -806,7 +896,9 @@ export async function runNeuroChatting(task, store) {
         // §4.4 (D4): человеческий темп — пауза «на чтение» и время «на набор».
         // Мгновенный ответ и «100 слов за полсекунды» — то, по чему Telegram узнаёт бота
         // и банит волной похожие аккаунты.
-        await sleep(humanPace(reply, (msg.message || '').length).totalMs)
+        const pace = humanPace(reply, (msg.message || '').length)
+        await noteWait(task, store, pace.totalMs, `прочитать и набрать ответ (${Math.round(pace.readMs / 1000)} с + ${Math.round(pace.typeMs / 1000)} с)`, meta.name)
+        await sleep(pace.totalMs)
         await client.sendMessage(peer, { message: reply, replyTo: msg.id })
         // §11.1: переписка в группах — тоже под контролем владельца.
         void recordMessage({ accountId, peer: String(peer?.username || peer?.id || ''), direction: 'in', text: msg.message || '', userId: task.userId, moduleKey: task.moduleKey, taskId: task.id, campaignId: s.campaignId })
@@ -826,6 +918,7 @@ export async function runNeuroChatting(task, store) {
         await disconnectAccount(client, accountId)
       } catch (err) {
         if (client) await disconnectAccount(client, accountId)
+        else endAccountWork(accountId, task.id) // подключение сорвалось — слот занятости не держим
         if (!(await handleFlood(task, accountId, store, err, s, meta.name))) {
           await store.appendLog(task, 'error', mapTelegramError(err), meta.name)
         }
@@ -923,7 +1016,7 @@ export async function runMassReact(task, store) {
       }
       const accountId = accountIds[idx++ % accountIds.length]
       const meta = await getAccountMeta(accountId)
-      if (!isAccountRunnable(meta.status || 'active') || perAccountLimitReached(s, accountId, task)) { idleLap += 1; lastSkip = 'статус или лимит на аккаунт'; continue }
+      if (!canModuleUseAccount(task.moduleKey, meta.status || 'active') || perAccountLimitReached(s, accountId, task)) { idleLap += 1; lastSkip = 'статус или лимит на аккаунт'; continue }
       // §4.1–§4.2: реакции — самый «дешёвый» модуль, и именно им добивали уставшие
       // аккаунты. Проверка та же, что в комментинге: усталость общая.
       const human = await canWorkNow(accountId)
@@ -936,12 +1029,25 @@ export async function runMassReact(task, store) {
         continue
       }
       if (await limitReached(accountId, 'reactions')) { idleLap += 1; lastSkip = 'суточный лимит'; await store.appendLog(task, 'info', 'Суточный лимит реакций достигнут (§6)', meta.name); continue }
+      // Многомодульность (20.08): аккаунт может работать в нескольких модулях, но не
+      // двумя действиями одновременно — занятый другим модулем пропускаем, как при
+      // усталости; сюда же пауза при переключении модулей.
+      const busyGate = beginAccountWork(accountId, task.moduleKey, task.id)
+      if (!busyGate.ok) {
+        idleLap += 1
+        lastSkip = busyGate.reason
+        if (busyGate.until) idleUntil = idleUntil ? Math.min(idleUntil, busyGate.until) : busyGate.until
+        await store.appendLog(task, 'info', `Пропуск: ${busyGate.reason}`, meta.name)
+        continue
+      }
       idleLap = 0
       lastSkip = ''
       let client
       try {
-        ;({ client } = await connectAccount(accountId, task.id))
-        if (await breakableDelay(pickDelay(s.delays?.action?.[0] ?? 30, s.delays?.action?.[1] ?? 120, mul) * 1000, store, task)) { await disconnectAccount(client, accountId); break }
+        ;({ client } = await connectAccount(accountId, task.id, { shouldStop: stopFlag(task) }))
+        const reactWait = pickDelay(s.delays?.action?.[0] ?? 30, s.delays?.action?.[1] ?? 120, mul) * 1000
+        await noteWait(task, store, reactWait, 'задержка перед реакцией', meta.name)
+        if (await breakableDelay(reactWait, store, task)) { await disconnectAccount(client, accountId); break }
 
         let peer
         let postId
@@ -1021,6 +1127,7 @@ export async function runMassReact(task, store) {
         await disconnectAccount(client, accountId)
       } catch (err) {
         if (client) await disconnectAccount(client, accountId)
+        else endAccountWork(accountId, task.id) // подключение сорвалось — слот занятости не держим
         if (!(await handleFlood(task, accountId, store, err, s, meta.name))) {
           await store.appendLog(task, 'error', mapTelegramError(err), meta.name)
         }
@@ -1098,7 +1205,7 @@ export async function runMassLooking(task, store) {
       }
       const accountId = accountIds[idx++ % accountIds.length]
       const meta = await getAccountMeta(accountId)
-      if (!isAccountRunnable(meta.status || 'active') || perAccountLimitReached(s, accountId, task)) { idleLap += 1; lastSkip = 'статус или лимит на аккаунт'; continue }
+      if (!canModuleUseAccount(task.moduleKey, meta.status || 'active') || perAccountLimitReached(s, accountId, task)) { idleLap += 1; lastSkip = 'статус или лимит на аккаунт'; continue }
       // §4.1–§4.2: просмотры тоже расходуют аккаунт — усталость и распорядок общие.
       const human = await canWorkNow(accountId)
       if (!human.ok) {
@@ -1109,13 +1216,26 @@ export async function runMassLooking(task, store) {
         await store.appendLog(task, 'info', `Пропуск: ${human.reason}`, meta.name)
         continue
       }
+      // Многомодульность (20.08): аккаунт может работать в нескольких модулях, но не
+      // двумя действиями одновременно — занятый другим модулем пропускаем, как при
+      // усталости; сюда же пауза при переключении модулей.
+      const busyGate = beginAccountWork(accountId, task.moduleKey, task.id)
+      if (!busyGate.ok) {
+        idleLap += 1
+        lastSkip = busyGate.reason
+        if (busyGate.until) idleUntil = idleUntil ? Math.min(idleUntil, busyGate.until) : busyGate.until
+        await store.appendLog(task, 'info', `Пропуск: ${busyGate.reason}`, meta.name)
+        continue
+      }
       idleLap = 0
       lastSkip = ''
       let client
       try {
-        ;({ client } = await connectAccount(accountId, task.id))
+        ;({ client } = await connectAccount(accountId, task.id, { shouldStop: stopFlag(task) }))
         const t = tgs[Math.floor(Math.random() * tgs.length)]
-        if (await breakableDelay(pickDelay(s.delays?.action?.[0] ?? 20, s.delays?.action?.[1] ?? 60, mul) * 1000, store, task)) { await disconnectAccount(client, accountId); break }
+        const lookWait = pickDelay(s.delays?.action?.[0] ?? 20, s.delays?.action?.[1] ?? 60, mul) * 1000
+        await noteWait(task, store, lookWait, 'задержка перед просмотром', meta.name)
+        if (await breakableDelay(lookWait, store, task)) { await disconnectAccount(client, accountId); break }
         const membership = await joinTargetOrSkip(
           client, t,
           (level, message, acc) => store.appendLog(task, level, message, acc),
@@ -1151,6 +1271,7 @@ export async function runMassLooking(task, store) {
         await disconnectAccount(client, accountId)
       } catch (err) {
         if (client) await disconnectAccount(client, accountId)
+        else endAccountWork(accountId, task.id) // подключение сорвалось — слот занятости не держим
         if (!(await handleFlood(task, accountId, store, err, s, meta.name))) {
           await store.appendLog(task, 'error', mapTelegramError(err), meta.name)
         }
@@ -1211,14 +1332,22 @@ export async function runWarming(task, store) {
       }
       const accountId = accountIds[idx++ % accountIds.length]
       const meta = await getAccountMeta(accountId)
-      if (!isAccountRunnable(meta.status || 'active')) { idleLap += 1; continue }
+      if (!canModuleUseAccount(task.moduleKey, meta.status || 'active')) { idleLap += 1; continue }
       // Аккаунт уже исключён из прогона (см. счётчик ошибок ниже) — не долбимся в него
       // снова. Когда исключены все, сработает проверка idleLap выше и задача завершится.
       if (burned.has(accountId)) { idleLap += 1; continue }
+      // Многомодульность (20.08): прогрев не смотрит усталость, но «два действия в одну
+      // секунду» не делает и он — занятый другим модулем аккаунт пропускаем.
+      const busyGate = beginAccountWork(accountId, task.moduleKey, task.id)
+      if (!busyGate.ok) {
+        idleLap += 1
+        await store.appendLog(task, 'info', `Пропуск: ${busyGate.reason}`, meta.name)
+        continue
+      }
       idleLap = 0
       let client
       try {
-        ;({ client } = await connectAccount(accountId, task.id))
+        ;({ client } = await connectAccount(accountId, task.id, { shouldStop: stopFlag(task) }))
         // §8.2: тип действия выбирается по пропорции уровня (view/react/read/join/ping).
         // Реальные реакции/вступления выполняются под суточными лимитами §6 (при достижении
         // потолка действие деградирует в безопасный просмотр). Бизнес-логика — Help Center «Политика прогрева».
@@ -1270,6 +1399,7 @@ export async function runWarming(task, store) {
         await disconnectAccount(client, accountId)
       } catch (err) {
         if (client) await disconnectAccount(client, accountId)
+        else endAccountWork(accountId, task.id) // подключение сорвалось — слот занятости не держим
         if (!(await handleFlood(task, accountId, store, err, s, meta.name))) {
           await store.appendLog(task, 'warning', mapTelegramError(err), meta.name)
         }
@@ -1415,6 +1545,8 @@ export async function runNeuroDialogs(task, store) {
   // Модуль-ответчик работает долго (ждёт входящие ЛС), поэтому при суточном лимите
   // не завершаемся, а тихо простаиваем — лог о достижении лимита пишем один раз на аккаунт.
   const dmCapLogged = new Set()
+  /** Об отдыхе аккаунта сообщаем один раз, а не каждый круг — иначе лог заливает. */
+  const restLogged = new Set()
   /** Кому уже сказали, что он работает только на приём (спамблок). */
   const replyOnlyLogged = new Set()
   // Последнее входящее сообщение, на которое уже ответили: не отвечаем дважды на одно и то же,
@@ -1485,11 +1617,27 @@ export async function runNeuroDialogs(task, store) {
         }
         continue
       }
+      // §4.1–§4.3: усталость и распорядок. Диалоги их КОПИЛИ (noteAction ниже), но не
+      // спрашивали — аккаунт отвечал круглосуточно и сверх порога, хотя усталость общая
+      // для всех модулей (аудит 20.08). Уставший пропускаем: собеседник не теряется,
+      // ответ придёт следующим кругом, когда аккаунт вернётся, — так же, как человек,
+      // который отошёл от телефона.
+      const humanDlg = await canWorkNow(accountId)
+      if (!humanDlg.ok) {
+        skips += 1
+        if (!restLogged.has(accountId)) {
+          restLogged.add(accountId)
+          await store.appendLog(task, 'info', `Пропуск: ${humanDlg.reason}`, meta.name)
+        }
+        continue
+      }
+      restLogged.delete(accountId) // вернулся в строй — о следующем отдыхе сообщим заново
+
       skips = 0
       dmCapLogged.delete(accountId) // снова активен (лимит сброшен новым днём) — разрешаем лог заново
       let client
       try {
-        ;({ client } = await connectAccount(accountId, task.id))
+        ;({ client } = await connectAccount(accountId, task.id, { shouldStop: stopFlag(task) }))
         const dialogs = await fetchDialogs(client, 20)
         // Авто-режим отвечает только на личные диалоги (ЛС) с людьми — каналы, группы и боты пропускаются.
         const personal = dialogs.filter((d) => d.entity?.className === 'User' && !d.entity?.bot)
@@ -1629,8 +1777,14 @@ export async function runNeuroDialogs(task, store) {
             await store.appendLog(task, 'warning', `«${peerKey}»: ответ не отправлен — ИИ оставил заготовку вместо текста`, meta.name)
             continue
           }
-          await sleep(pickDelay(s.delays?.action?.[0] ?? 5, s.delays?.action?.[1] ?? 30, mul) * 1000)
-          await sleep(humanPace(reply, incoming.length).totalMs) // §4.4: читаем и печатаем как человек
+          const dlgWait = pickDelay(s.delays?.action?.[0] ?? 5, s.delays?.action?.[1] ?? 30, mul) * 1000
+          await noteWait(task, store, dlgWait, 'задержка перед ответом в ЛС', meta.name)
+          await sleep(dlgWait)
+          // §4.4: читаем и печатаем как человек. Это десятки секунд на длинном ответе —
+          // без строки в логе выглядело как зависшая задача.
+          const dlgPace = humanPace(reply, incoming.length)
+          await noteWait(task, store, dlgPace.totalMs, `прочитать и набрать ответ (${Math.round(dlgPace.readMs / 1000)} с + ${Math.round(dlgPace.typeMs / 1000)} с)`, meta.name)
+          await sleep(dlgPace.totalMs)
           await client.sendMessage(d.entity, { message: reply })
           // §11.1: сохраняем ОБЕ реплики — входящую и наш ответ. Владелец отвечает за то,
           // что пишут его аккаунтами, поэтому переписка хранится целиком. Best-effort.
@@ -1722,6 +1876,7 @@ export async function runNeuroDialogs(task, store) {
         await disconnectAccount(client, accountId)
       } catch (err) {
         if (client) await disconnectAccount(client, accountId)
+        else endAccountWork(accountId, task.id) // подключение сорвалось — слот занятости не держим
         if (!(await handleFlood(task, accountId, store, err, s, meta.name))) {
           await store.appendLog(task, 'error', mapTelegramError(err), meta.name)
         }
@@ -1925,7 +2080,7 @@ export async function runChannelParser(task, store, kind) {
     for (let i = 0; i < accountIds.length; i++) {
       const id = accountIds[accIdx++ % accountIds.length]
       const meta = await getAccountMeta(id)
-      if (isAccountRunnable(meta.status || 'active')) return id
+      if (canModuleUseAccount(task.moduleKey, meta.status || 'active')) return id
     }
     return null
   }
@@ -1968,7 +2123,7 @@ export async function runChannelParser(task, store, kind) {
       const meta = await getAccountMeta(accountId)
       let client
       try {
-        ;({ client } = await connectAccount(accountId, task.id))
+        ;({ client } = await connectAccount(accountId, task.id, { shouldStop: stopFlag(task) }))
         const found = await searchPublicDetailed(client, q, 50)
         let added = 0
         for (const c of found) {
@@ -2023,6 +2178,7 @@ export async function runChannelParser(task, store, kind) {
         await disconnectAccount(client, accountId)
       } catch (err) {
         if (client) await disconnectAccount(client, accountId)
+        else endAccountWork(accountId, task.id) // подключение сорвалось — слот занятости не держим
         if (!(await handleFlood(task, accountId, store, err, s, meta.name))) {
           await store.appendLog(task, 'error', `«${q}»: ${mapTelegramError(err)}`, meta.name)
         }
@@ -2156,7 +2312,7 @@ export async function runParticipantsParser(task, store, kind) {
     for (let i = 0; i < accountIds.length; i++) {
       const id = accountIds[accIdx++ % accountIds.length]
       const meta = await getAccountMeta(id)
-      if (isAccountRunnable(meta.status || 'active')) return id
+      if (canModuleUseAccount(task.moduleKey, meta.status || 'active')) return id
     }
     return null
   }
@@ -2178,7 +2334,7 @@ export async function runParticipantsParser(task, store, kind) {
       const meta = await getAccountMeta(accountId)
       let client
       try {
-        ;({ client } = await connectAccount(accountId, task.id))
+        ;({ client } = await connectAccount(accountId, task.id, { shouldStop: stopFlag(task) }))
         // Вступление — крайняя мера. У публичных групп и каналов участники и сообщения
         // часто читаются БЕЗ вступления: сначала пробуем просто разрешить цель и работать
         // с ней. Если Telegram откажет — тогда вступаем, с паузой.
@@ -2346,6 +2502,7 @@ export async function runParticipantsParser(task, store, kind) {
         await disconnectAccount(client, accountId)
       } catch (err) {
         if (client) await disconnectAccount(client, accountId)
+        else endAccountWork(accountId, task.id) // подключение сорвалось — слот занятости не держим
         const flooded = await handleFlood(task, accountId, store, err, s, meta.name)
         if (!flooded) {
           await store.appendLog(task, 'error', `${src}: ${mapTelegramError(err)}`, meta.name)
@@ -2353,7 +2510,16 @@ export async function runParticipantsParser(task, store, kind) {
           // Аккаунт получил FloodWait. Пробовать им дальше — значит удлинять наказание:
           // Telegram считает попытки, а не успехи. В асинхронном режиме у аккаунта свой
           // набор целей, поэтому останавливаем именно его поток, остальные идут дальше.
-          await store.appendLog(task, 'warning', `${meta.name}: FloodWait — поток остановлен, оставшиеся цели этого аккаунта пропущены`, meta.name)
+          // Недоделанные цели этого аккаунта НЕ теряем: складываем в общую очередь,
+          // её доберут живые потоки, закончив своё. Раньше они пропадали безвозвратно —
+          // при пяти аккаунтах один FloodWait уносил пятую часть парсинга (аудит 20.08).
+          const left = slice.slice(slice.indexOf(src) + 1)
+          if (left.length) orphanTargets.push(...left)
+          await store.appendLog(
+            task, 'warning',
+            `${meta.name}: FloodWait — поток остановлен${left.length ? `, ${left.length} цел(ей) вернули в очередь` : ''}`,
+            meta.name,
+          )
           break
         }
       }
@@ -2367,6 +2533,10 @@ export async function runParticipantsParser(task, store, kind) {
       if (!task.stopRequested) await sleep(delayChatMs || pickDelay(3, 6, mul) * 1000)
     }
     }
+
+    // Цели, осиротевшие из-за FloodWait чужого потока. Живой поток забирает их себе,
+    // когда разберётся со своими: parallel-режим иначе просто терял эту часть работы.
+    const orphanTargets = []
 
     if (parallelAccounts && accountIds.length > 1) {
       // Цели по кругу между аккаунтами, чтобы нагрузка легла ровно.
@@ -2387,6 +2557,14 @@ export async function runParticipantsParser(task, store, kind) {
           if (await interruptibleSleep(lag, makeStopCheck(store, task.id))) return
         }
         await runSlice(slices[idx], id)
+        // Свои цели кончились — подбираем чужие, брошенные из-за FloodWait.
+        while (orphanTargets.length) {
+          const fresh = await store.loadTask(task.id).catch(() => null)
+          if (fresh?.stopRequested || fresh?.pauseRequested) break
+          const take = orphanTargets.splice(0, orphanTargets.length)
+          await store.appendLog(task, 'info', `Аккаунт ${idx + 1} добирает ${take.length} цел(ей) из брошенных`)
+          await runSlice(take, id)
+        }
       }))
     } else {
       await runSlice(tgs, null)
@@ -2544,7 +2722,7 @@ export async function runMailing(task, store) {
   const lowTrust = []
   for (const id of accountIds) {
     const meta = await getAccountMeta(id)
-    if (!isAccountRunnable(meta.status || 'active')) { await store.appendLog(task, 'warning', `Пропуск: статус ${meta.status}`, meta.name); continue }
+    if (!canModuleUseAccount(task.moduleKey, meta.status || 'active')) { await store.appendLog(task, 'warning', `Пропуск: статус ${meta.status}`, meta.name); continue }
     let trust = 0
     try { trust = (await buildAccountStats(id)).trust?.score ?? 0 } catch { trust = 0 }
     if (trust < minTrust) {
@@ -2582,6 +2760,51 @@ export async function runMailing(task, store) {
       task = (await store.loadTask(task.id)) || task
       if (task.stopRequested || task.pauseRequested || totalLimitReached(s, task)) break
 
+      // Статус проверяем НА КАЖДОМ КРУГЕ, а не один раз на старте: аккаунт уходит в
+      // карантин посреди рассылки (handleFlood), и старый код продолжал его выбирать —
+      // connectAccount падал с ACCOUNT_SKIP, цель помечалась неудачной и БОЛЬШЕ НЕ
+      // повторялась. Один карантинный из пяти съедал пятую часть базы (аудит 20.08).
+      for (const cand of [...myAccounts]) {
+        const cm = await getAccountMeta(cand)
+        if (!canModuleUseAccount(task.moduleKey, cm.status || 'active')) {
+          myAccounts.splice(myAccounts.indexOf(cand), 1)
+          await store.appendLog(task, 'warning', `${cm.name || cand}: статус ${cm.status} — выведен из рассылки (осталось ${myAccounts.length})`)
+        }
+      }
+      if (!myAccounts.length) { await store.appendLog(task, 'warning', 'В потоке не осталось рабочих аккаунтов — завершаем'); break }
+
+      // §4.1–§4.3: усталость и распорядок. Рассылка их КОПИЛА (noteAction ниже), но не
+      // спрашивала — аккаунт, отработавший смену, продолжал слать холодные ЛС сверх
+      // порога, а это самый спамблокоопасный модуль (аудит 20.08). Уставший аккаунт
+      // пропускаем на этот круг: цель не теряется, её возьмёт другой аккаунт, а этот
+      // вернётся после отдыха.
+      const restingNow = []
+      for (const cand of [...myAccounts]) {
+        const gate = await canWorkNow(cand)
+        if (!gate.ok) {
+          restingNow.push(cand)
+          myAccounts.splice(myAccounts.indexOf(cand), 1)
+          const cm = await getAccountMeta(cand)
+          await store.appendLog(task, 'info', `Пропуск: ${gate.reason}`, cm.name || cand)
+        }
+      }
+      if (!myAccounts.length) {
+        // Отдыхают ВСЕ — ждать до ближайшего возврата, как это делают карусельные модули.
+        // Завершать нельзя: рассылка на тысячу контактов идёт часами и переживёт отдых.
+        let backAt = 0
+        for (const id of restingNow) {
+          const g = await canWorkNow(id)
+          if (g.ok) { backAt = Date.now(); break }          // уже освободился, пока перебирали
+          if (g.until) backAt = backAt ? Math.min(backAt, g.until) : g.until
+        }
+        const plan = idleWaitPlan(backAt)
+        if (!plan.wait) { await store.appendLog(task, 'warning', 'Все аккаунты потока недоступны — завершаем'); break }
+        await noteWait(task, store, plan.ms, `все аккаунты отдыхают, вернутся в ${new Date(backAt).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })}`)
+        if (await breakableDelay(plan.ms, store, task)) break
+        myAccounts.push(...restingNow)
+        continue
+      }
+
       // Выбрать аккаунт round-robin, у которого не исчерпан суточный лимит ЛС и maxPerAccount.
       // dm-лимит асинхронный — предвычисляем множество «исчерпавших» для чистого выбора.
       const dmReached = new Set()
@@ -2594,7 +2817,7 @@ export async function runMailing(task, store) {
       const meta = await getAccountMeta(account)
       let client
       try {
-        ;({ client } = await connectAccount(account, task.id))
+        ;({ client } = await connectAccount(account, task.id, { shouldStop: stopFlag(task) }))
         // 1) Резолв цели → пользователь Telegram. Номер импортируем в контакты,
         // юзернейм разрешаем напрямую — ImportContacts для него бессмыслен.
         let user = null
@@ -2656,7 +2879,9 @@ export async function runMailing(task, store) {
           else if (cleaned) await store.appendLog(task, 'warning', `${label}: ИИ оставил заготовку — отправляем текст из цели`, meta.name)
         }
         // 3) Пауза «по-человечески» и отправка (#6: прерываемая — стоп не шлёт лишнее ЛС).
-        if (await interruptibleSleep(pickDelay(dm[0], dm[1], mul) * 1000, makeStopCheck(store, task.id))) { await disconnectAccount(client, account); break }
+        const dmWait = pickDelay(dm[0], dm[1], mul) * 1000
+        await noteWait(task, store, dmWait, 'задержка перед отправкой ЛС', meta.name)
+        if (await interruptibleSleep(dmWait, makeStopCheck(store, task.id))) { await disconnectAccount(client, account); break }
         await sendComposedMessage(client, user, text, s.mediaUrls) // §11: текст + медиа/ссылки
         // §11.1: исходящее ЛС — под контролем владельца (рассылка чужим людям
         // рискованнее всего, поэтому её текст видеть важнее прочего).
@@ -2702,6 +2927,7 @@ export async function runMailing(task, store) {
         await disconnectAccount(client, account)
       } catch (err) {
         if (client) await disconnectAccount(client, account)
+        else endAccountWork(account, task.id) // подключение сорвалось — слот занятости не держим
         const reason = mapTelegramError(err)
         if (!(await handleFlood(task, account, store, err, s, meta.name))) {
           await store.appendLog(task, 'error', reason, meta.name)
@@ -2787,12 +3013,27 @@ export async function runAutoPosting(task, store) {
   try {
     for (const ch of channels) {
       if (task.stopRequested || task.pauseRequested) break
-      const accountId = accountIds[accIdx++ % accountIds.length]
-      const meta = await getAccountMeta(accountId)
-      if (!isAccountRunnable(meta.status || 'active')) { await store.appendLog(task, 'warning', `Пропуск: ${meta.status}`, meta.name); continue }
+      // Канал закрепляем не за первым попавшимся аккаунтом, а за первым ПРИГОДНЫМ:
+      // раньше недоступный аккаунт уносил с собой сам канал (`continue` шёл по каналам,
+      // а не по аккаунтам) — пост не публиковался и никому не передавался, задача
+      // заканчивалась с «0 из N» и ошибкой (аудит 20.08).
+      let accountId = null
+      let meta = null
+      for (let tried = 0; tried < accountIds.length; tried++) {
+        const cand = accountIds[accIdx++ % accountIds.length]
+        const cm = await getAccountMeta(cand)
+        if (!canModuleUseAccount(task.moduleKey, cm.status || 'active')) {
+          await store.appendLog(task, 'info', `Пропуск: статус ${cm.status}`, cm.name || cand)
+          continue
+        }
+        accountId = cand
+        meta = cm
+        break
+      }
+      if (!accountId) { await store.appendLog(task, 'warning', `${ch}: нет доступных аккаунтов для публикации`); continue }
       let client
       try {
-        ;({ client } = await connectAccount(accountId, task.id))
+        ;({ client } = await connectAccount(accountId, task.id, { shouldStop: stopFlag(task) }))
         const entity = await resolvePeer(client, ch)
         await sendComposedMessage(client, entity, text, s.mediaUrls) // §11: текст + медиа/ссылки
         task.history = task.history || []
@@ -2801,9 +3042,12 @@ export async function runAutoPosting(task, store) {
         await store.appendLog(task, 'success', `Пост в ${ch}`, meta.name)
         await store.saveTask(task)
         await disconnectAccount(client, accountId)
-        if (await breakableDelay(pickDelay(s.delays?.action?.[0] ?? 60, s.delays?.action?.[1] ?? 180, mul) * 1000, store, task)) break
+        const postWait = pickDelay(s.delays?.action?.[0] ?? 60, s.delays?.action?.[1] ?? 180, mul) * 1000
+        await noteWait(task, store, postWait, 'задержка между публикациями', meta.name)
+        if (await breakableDelay(postWait, store, task)) break
       } catch (err) {
         if (client) await disconnectAccount(client, accountId)
+        else endAccountWork(accountId, task.id) // подключение сорвалось — слот занятости не держим
         if (!(await handleFlood(task, accountId, store, err, s, meta.name))) {
           await store.appendLog(task, 'error', `${ch}: ${postErrorHint(err)}`, meta.name)
         }

@@ -45,3 +45,58 @@ test('личная подписка перекрывает пространст�
   const days = (b.expiresAt - Date.now()) / D
   assert.ok(days < 35, `личный месячный срок, а не годовой пространства (${days})`)
 })
+
+/**
+ * Баг 19.08 (§2): СРОК ХРАНИЛСЯ, НО НИЧЕГО НЕ ЗАКРЫВАЛ.
+ *
+ * `modulesAllow` смотрела только на состав набора, поэтому оплаченный на месяц модуль
+ * работал вечно: дата окончания писалась в balance.json и в `subscriptions.expires_at`
+ * и не читалась ни одним гейтом. Проверяем ровно то поведение, которого не было.
+ */
+/** Отмотать срок подписки в прошлое: купить «на минус месяц» через API нельзя. */
+async function expireSub(userId, daysAgo) {
+  const raw = JSON.parse(await fs.readFile(process.env.BALANCE_FILE, 'utf8'))
+  raw[userId].expiresAt = Date.now() - daysAgo * D - 1000
+  await fs.writeFile(process.env.BALANCE_FILE, JSON.stringify(raw), 'utf8')
+}
+
+test('истёкшая подписка закрывает доступ, хотя модуль остался в наборе', async () => {
+  await B.setUserModules(['mailing'], 'u_exp', { months: 1 })
+  await expireSub('u_exp', 3)
+
+  const b = await B.getBalance('u_exp')
+  assert.deepEqual(b.modules, ['mailing'], 'состав набора не трогаем — истёк срок, а не покупка')
+  assert.equal(B.subscriptionExpired(b.expiresAt), true)
+  assert.equal(B.daysSinceExpiry(b.expiresAt), 3, 'сколько дней назад истекла — для текста отказа')
+  assert.equal(B.modulesAllow(b.modules, 'mailing', b.expiresAt), false, 'просрочка не пускает')
+  // Без срока вопрос другой — «куплен ли модуль вообще»; так считает витрина и докупка.
+  assert.equal(B.modulesAllow(b.modules, 'mailing'), true)
+  assert.equal(B.modulesAllow(b.modules, 'warming', b.expiresAt), false, 'непокупленный закрыт и так')
+})
+
+test('срок ещё не наступил — доступ открыт', async () => {
+  await B.setUserModules(['warming'], 'u_live', { months: 1 })
+  const b = await B.getBalance('u_live')
+  assert.equal(B.subscriptionExpired(b.expiresAt), false)
+  assert.equal(B.modulesAllow(b.modules, 'warming', b.expiresAt), true)
+})
+
+test('бессрочная подписка (expiresAt=null) не закрывается никогда', async () => {
+  await B.setUserModules(['ggr'], 'u_forever')
+  const b = await B.getBalance('u_forever')
+  assert.equal(b.expiresAt, null)
+  assert.equal(B.subscriptionExpired(null), false)
+  assert.equal(B.subscriptionExpired(undefined), false)
+  assert.equal(B.subscriptionExpired(0), false)
+  assert.equal(B.modulesAllow(b.modules, 'ggr', b.expiresAt), true)
+})
+
+test('дефолтный воркспейс без срока остаётся открытым (фон воркеров не ломаем)', async () => {
+  // Списания воркеров идут под кошельком `__default`, у которого своей подписки нет:
+  // набор наследуется от пространства, а срок — null. Закрыться он не должен.
+  await B.setModules('all', undefined, {})
+  const b = await B.getBalance()
+  assert.equal(b.modules, 'all')
+  assert.equal(b.expiresAt, null, 'бессрочно — иначе фон однажды встал бы целиком')
+  assert.equal(B.modulesAllow(b.modules, 'warming', b.expiresAt), true)
+})

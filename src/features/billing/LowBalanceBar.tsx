@@ -1,6 +1,5 @@
-import { useEffect, useState } from 'react'
 import { AlertTriangle } from 'lucide-react'
-import { fetchBalance, type Balance } from '@/api/balanceApi'
+import { useBalance } from '@/features/billing/balanceStore'
 import { useUi } from '@/shared/lib/uiStore'
 import { coins as fmtCoins } from '@/shared/lib/utils'
 
@@ -21,16 +20,11 @@ export const LOW = 5 // ⚡ — мало
 export const CRITICAL = 0.5 // ⚡ — почти ноль
 
 export function LowBalanceBar() {
-  const [balance, setBalance] = useState<Balance | null>(null)
+  // MR-151: тот же источник, что у шапки. Раньше лента заводила СВОЙ поллер на 30 c —
+  // получался второй запрос `/api/balance` тик в тик с шапкой, а из-за разного порядка
+  // ответов чип и лента успевали показывать разные суммы. Теперь цифра одна на всех.
+  const balance = useBalance()
   const setCoinsOpen = useUi((s) => s.setCoinsOpen)
-
-  useEffect(() => {
-    const load = () => { void fetchBalance().then(setBalance).catch(() => {}) }
-    load()
-    // Тот же тик, что у шапки: баланс меняется от списаний, лента не должна отставать.
-    const t = setInterval(load, 30000)
-    return () => clearInterval(t)
-  }, [])
 
   const coins = balance?.coins
   if (coins === undefined || coins > LOW) return null

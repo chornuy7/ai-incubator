@@ -269,9 +269,19 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
   }), [selected, targets, postUrls, toggles, probability, maxActions, minActions, maxPerAcc, minPerAcc, minWords, durationMinutes, aiProtect, protLevel, notifyStatus, activePrompt, promptBodies, delayPreset, palette, delays, keywords, isGgr, accounts, cfg, lookModeIdx, lookPostsCount, goalId, campaignId, campaigns, warmLevel, postWindow, stopWordsText, analyzeImages, moduleKey, typeWeights, weightSum])
 
   const hasPostTargets = postUrls.length > 0
+  // Многомодульность (20.08): аккаунт МОЖНО брать, пока он работает в другом модуле.
+  // Мешают ровно два случая, и оба — зеркало серверного правила (accountLocks.js):
+  //   1) вторая задача ТОГО ЖЕ модуля — она дублировала бы работу;
+  //   2) прогрев в любую сторону — греющийся профиль ещё не боец, а бойца нельзя греть.
+  // Без второго пункта форма пускала выбор, а сервер отказывал уже на «Запустить» —
+  // оператор узнавал о запрете в последний момент и не понимал, чей аккаунт виноват.
   const busySelectedCount = useMemo(
-    () => [...selected].filter((id) => accounts.some((a) => a.id === id && a.busyIn)).length,
-    [selected, accounts],
+    () => [...selected].filter((id) => accounts.some((a) => {
+      if (a.id !== id || !a.busyIn) return false
+      const mods = a.busyIn.modules ?? [{ moduleKey: a.busyIn.moduleKey }]
+      return mods.some((m) => m.moduleKey === moduleKey || m.moduleKey === 'warming' || moduleKey === 'warming')
+    })).length,
+    [selected, accounts, moduleKey],
   )
   // #5: сумма процентов типов не должна превышать 100 — иначе запуск блокируется.
   const typesOver100 = moduleKey === 'neuro-commenting' && weightSum > 100
@@ -292,7 +302,9 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
     const m: string[] = []
     if (isGgr) { if (!selected.size) m.push('выберите аккаунты для проверки'); return m }
     if (!selected.size) m.push('выберите аккаунты')
-    else if (busySelectedCount) m.push(`освободите ${busySelectedCount} занятых аккаунта`)
+    else if (busySelectedCount) m.push(moduleKey === 'warming'
+      ? `${busySelectedCount} аккаунт(а) заняты работой — прогрев берёт только свободные профили`
+      : `${busySelectedCount} аккаунт(а) заняты несовместимой задачей (тот же модуль или прогрев) — остановите её или выберите другие`)
     if (needsTargets && !targets.length && !hasPostTargets) m.push('добавьте цель — группу или ссылку на пост')
     return m
   }, [isGgr, selected, busySelectedCount, needsTargets, targets, hasPostTargets])
@@ -381,8 +393,18 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
       if (i >= 0) setLookModeIdx(i)
     }
     if (s.lookPostsCount !== undefined) setLookPostsCount(s.lookPostsCount)
+    // Эти семь полей шаблон СОХРАНЯЛ, но не восстанавливал — отсюда и жалоба «сохранил
+    // шаблон, а настройки слетают»: применённый шаблон молча оставлял значения текущей
+    // формы, и оператор получал не то, что сохранял (ТЗ 19.08 §3).
+    if (s.notifyOnStatus !== undefined) setNotifyStatus(s.notifyOnStatus)
+    if (Array.isArray(s.postUrls)) setPostUrls(s.postUrls)
+    if (s.warmLevel !== undefined) setWarmLevel(s.warmLevel)
+    if (s.postWindow !== undefined) setPostWindow(s.postWindow)
+    if (Array.isArray(s.stopWords)) setStopWordsText(s.stopWords.join(', '))
+    if (s.analyzeImages !== undefined) setAnalyzeImages(s.analyzeImages)
+    if (s.typeWeights) setTypeWeights(s.typeWeights)
     pushToast({ type: 'success', title: 'Шаблон применён' })
-  }, [cfg.lookModeOptions, pushToast])
+  }, [cfg.lookModeOptions, cfg.toggleGroups, pushToast])
 
   const results = task?.results ?? []
   const progressDone = task?.progress.actionsDone ?? task?.progress.commentsSent ?? 0

@@ -113,6 +113,12 @@ export function normalizeRole(input = {}) {
   return {
     name: String(input.name ?? '').trim(),
     isTemplate: !!input.isTemplate,
+    // Владелец роли. Терялся здесь: роут исправно клал `userId`, а нормализация его не
+    // переносила — роль сохранялась «ничьей». Последствия обидные: владелец мог создать
+    // роль, но не отредактировать её (PUT требует `target.userId === ctx.id`), а сама
+    // роль показывалась ВСЕМ владельцам как системный шаблон (`!r.userId`). Отсюда же
+    // общий список из десятков чужих «Новая роль 5/6» на экране у каждого (21.08).
+    userId: String(input.userId ?? '').trim(),
     permissions: {
       // Роль «без оплаты» (тест/модератор): доступ к модулям в обход подписки.
       freeAccess: !!p.freeAccess,
@@ -267,10 +273,27 @@ export async function getRole(id) {
 }
 
 /** Создать роль. @param {object} input @throws при пустом имени */
+/**
+ * Имя роли уже занято у ЭТОГО владельца? Сравниваем без регистра и лишних пробелов.
+ *
+ * Запрет клиентский существовал, но прямой запрос его обходил — а мусор копится быстро:
+ * у владельца накопились 44 роли, среди них по три «Тимлид» и «Уволенный», отличить
+ * которые невозможно (21.08). Чужие роли не мешают: у каждого владельца свой список.
+ * @param {object[]} roles @param {string} name @param {string} userId @param {string} [skipId]
+ */
+function nameTaken(roles, name, userId, skipId = '') {
+  const norm = (v) => String(v || '').trim().toLowerCase()
+  const target = norm(name)
+  return roles.some((r) => r.id !== skipId && norm(r.userId) === norm(userId) && norm(r.name) === target)
+}
+
 export async function createRole(input) {
   const clean = normalizeRole(input)
   if (!clean.name) throw new Error('Укажите название роли')
   const roles = await listRoles()
+  if (nameTaken(roles, clean.name, clean.userId)) {
+    throw new Error(`Роль «${clean.name}» уже есть — выберите другое название`)
+  }
   const role = {
     id: `role_${crypto.randomUUID().slice(0, 8)}`,
     builtin: false,
@@ -299,10 +322,15 @@ export async function updateRole(id, patch = {}) {
   if (i === -1) return null
   const clean = normalizeRole({ ...roles[i], ...patch })
   if (!clean.name) throw new Error('Название роли не может быть пустым')
+  if (nameTaken(roles, clean.name, clean.userId || roles[i].userId, id)) {
+    throw new Error(`Роль «${clean.name}» уже есть — выберите другое название`)
+  }
   roles[i] = {
     ...roles[i],
     name: clean.name,
     isTemplate: clean.isTemplate,
+    // Владельца сохраняем: правка роли не должна делать её ничьей (см. normalizeRole).
+    userId: clean.userId || roles[i].userId || '',
     // Права админа неизменяемы (bypass); у остальных — обновляем.
     ...(roles[i].id === ADMIN_ROLE_ID ? {} : { permissions: clean.permissions }),
     updatedAt: Date.now(),
@@ -337,8 +365,19 @@ export async function deleteRole(id) {
  * Каталог того, что можно раздавать: модули × блоки + ресурсы (с реальными элементами).
  * Фронт рендерит матрицу прав из этого каталога.
  */
-export async function buildCatalog() {
-  const modules = Object.entries(MODULE_LABELS).map(([key, label]) => ({ key, label }))
+/**
+ * @param {{ modules?: string[]|'all'|null }} [limit] чем ограничить каталог модулей.
+ *   Владелец пространства раздаёт роли своим субам (решение владельца 21.08: «если у
+ *   овнера 5 купленных модулей, он может скрыть видимость у суба»), и показывать ему
+ *   все 14 модулей платформы — значит предлагать выдать то, за что не заплачено:
+ *   роль сохранится, а `accessGuard` всё равно упрётся в подписку. Пусть выбор с самого
+ *   начала совпадает с тем, что реально может работать. Админ платформы видит всё.
+ */
+export async function buildCatalog(limit = null) {
+  const allow = limit?.modules
+  const modules = Object.entries(MODULE_LABELS)
+    .filter(([key]) => !allow || allow === 'all' || (Array.isArray(allow) && allow.includes(key)))
+    .map(([key, label]) => ({ key, label }))
   const [folders, channels, meta, groups] = await Promise.all([listFolders(), listChannels(), loadAllMeta(), listGroups()])
   // Аккаунты для выдачи доступа (лёгкий список из метаданных — без подключения к Telegram).
   const accountItems = Object.entries(meta)

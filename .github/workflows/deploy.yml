@@ -1,28 +1,43 @@
-# Автодеплой: push в ветку → сборка на раннере → выкат на сервер по SSH.
-# Сервер НЕ нуждается в доступе к приватному репо — всё собирается здесь и rsync-ится.
+# Автодеплой: push в main → проверки → выкат на сервер по SSH.
 #
-# ЧТО НУЖНО ОДИН РАЗ (Settings → Secrets and variables → Actions):
-#   DEPLOY_SSH_KEY  — приватный ключ (ed25519), чей ПУБЛИЧНЫЙ добавлен в ~/.ssh/authorized_keys на сервере
+# Сервер НЕ ходит в git: код собирается на раннере и уезжает rsync-ом. На проде
+# /opt/ai-incubator — обычный каталог, а не репозиторий (поэтому и ручной выкат
+# `deploy/deploy-archive.sh` возит архив, а не делает `git pull`).
+#
+# ЧТО НУЖНО НАСТРОИТЬ ОДИН РАЗ — Settings → Secrets and variables → Actions:
+#   DEPLOY_SSH_KEY  — ПРИВАТНЫЙ ключ (ed25519), его публичная половина лежит на сервере
+#                     в ~/.ssh/authorized_keys
 #   DEPLOY_HOST     — 45.142.142.216
 #   DEPLOY_USER     — root
-# Сгенерировать пару:  ssh-keygen -t ed25519 -f deploy_key -N ""
-#   → deploy_key      кладём в секрет DEPLOY_SSH_KEY
-#   → deploy_key.pub  добавляем на сервер:  cat >> ~/.ssh/authorized_keys
+#
+# Пара ключей делается так (на своей машине, приватный никуда не коммитить):
+#   ssh-keygen -t ed25519 -f deploy_key -N ""
+#   cat deploy_key.pub | ssh root@45.142.142.216 'cat >> ~/.ssh/authorized_keys'
+#   содержимое deploy_key целиком (вместе со строками BEGIN/END) → секрет DEPLOY_SSH_KEY
+#
+# Пока секретов нет, workflow честно падает на шаге проверки — молча «выкатывать в
+# никуда» он не станет.
 
 name: deploy
 
 on:
   push:
-    branches: [feat/a-phase1-status-machine]
-  workflow_dispatch: {}   # можно запускать вручную из вкладки Actions
+    branches: [main]
+  workflow_dispatch: {}   # ручной запуск из вкладки Actions
 
+# Два выката одновременно раскатали бы прод в разнобой, поэтому очередь.
+# cancel-in-progress: false принципиально — отменённый на середине rsync оставит
+# сервер с половиной файлов. Пусть лучше подождёт своей очереди.
 concurrency:
   group: deploy-server
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    # Прод не место для проверки гипотез: без зелёных типов, тестов и сборки
+    # деплой не начинается. Раньше этот workflow катил ЛЮБОЙ push — CI бежал
+    # отдельно и на выкат не влиял, так что сломанный коммит уезжал на сервер.
     steps:
       - uses: actions/checkout@v4
 
@@ -31,32 +46,112 @@ jobs:
           node-version: 20
           cache: npm
 
-      - name: Install & build
+      - name: Проверка секретов
+        env:
+          KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          HOST: ${{ secrets.DEPLOY_HOST }}
+          USER: ${{ secrets.DEPLOY_USER }}
         run: |
-          npm ci
-          npm run build
+          missing=""
+          [ -n "$KEY" ]  || missing="$missing DEPLOY_SSH_KEY"
+          [ -n "$HOST" ] || missing="$missing DEPLOY_HOST"
+          [ -n "$USER" ] || missing="$missing DEPLOY_USER"
+          if [ -n "$missing" ]; then
+            echo "::error::Не заданы секреты:$missing — см. шапку .github/workflows/deploy.yml"
+            exit 1
+          fi
 
-      - name: SSH ключ
+      - name: Установка зависимостей
+        run: npm ci
+
+      - name: Типы (tsc)
+        run: npm run lint
+
+      - name: Тесты
+        run: npm test
+
+      - name: Сборка
+        run: npm run build
+
+      - name: SSH-ключ
+        env:
+          KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          HOST: ${{ secrets.DEPLOY_HOST }}
         run: |
-          mkdir -p ~/.ssh
-          echo "${{ secrets.DEPLOY_SSH_KEY }}" > ~/.ssh/id_ed25519
+          mkdir -p ~/.ssh && chmod 700 ~/.ssh
+          printf '%s\n' "$KEY" > ~/.ssh/id_ed25519
           chmod 600 ~/.ssh/id_ed25519
-          ssh-keyscan -H "${{ secrets.DEPLOY_HOST }}" >> ~/.ssh/known_hosts 2>/dev/null
+          ssh-keyscan -H "$HOST" >> ~/.ssh/known_hosts 2>/dev/null
 
-      # Код + собранный dist на сервер. server/data (живые сессии) и .env НЕ трогаем.
+      # Данные (сессии Telegram, аккаунты, цели, кампании) живут в server/data и
+      # переживают выкат. Бэкап всё равно делаем: ручной скрипт делает его с 14.08,
+      # и автодеплою нельзя быть менее осторожным, чем человеку.
+      - name: Бэкап данных на сервере
+        env:
+          HOST: ${{ secrets.DEPLOY_HOST }}
+          USER: ${{ secrets.DEPLOY_USER }}
+        run: |
+          ssh "$USER@$HOST" '
+            set -e
+            TS=$(date +%Y%m%d-%H%M%S)
+            if [ -d /opt/ai-incubator/server/data ]; then
+              B="/var/backups/ai-incubator/data-$TS"
+              mkdir -p "$B" && cp -r /opt/ai-incubator/server/data/. "$B"/ 2>/dev/null || true
+              echo "→ Бэкап данных: $B"
+              # Держим последние 20 копий: за месяц ежедневных выкатов диск не заметит,
+              # а откатиться будет к чему.
+              ls -1dt /var/backups/ai-incubator/data-* 2>/dev/null | tail -n +21 | xargs -r rm -rf
+            fi
+          '
+
+      # --delete убирает с сервера файлы, удалённые из репозитория: без этого мёртвый
+      # импорт ломал сборку (выкат 14.08 — ApiKeysPanel тянул давно удалённый экспорт).
+      # server/data и .env исключены: это состояние и секреты прода, они не наши.
       - name: Выкат (rsync)
+        env:
+          HOST: ${{ secrets.DEPLOY_HOST }}
+          USER: ${{ secrets.DEPLOY_USER }}
         run: |
           rsync -az --delete \
-            --exclude node_modules --exclude .git --exclude server/data --exclude .env \
-            ./ "${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}:/opt/ai-incubator/"
+            --exclude node_modules \
+            --exclude .git \
+            --exclude server/data \
+            --exclude .env \
+            ./ "$USER@$HOST:/opt/ai-incubator/"
 
-      - name: Зависимости + рестарт
+      - name: Зависимости и перезапуск
+        env:
+          HOST: ${{ secrets.DEPLOY_HOST }}
+          USER: ${{ secrets.DEPLOY_USER }}
+          SHA: ${{ github.sha }}
         run: |
-          ssh "${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}" '
+          ssh "$USER@$HOST" "
             set -e
             cd /opt/ai-incubator
             npm ci --omit=dev --no-audit --no-fund
+            echo '$SHA' > .deployed-sha
             systemctl restart ai-incubator
-            sleep 2
-            curl -fsS http://127.0.0.1:3001/api/health && echo " ✅ deployed"
+          "
+
+      # Старт занимает около десяти секунд: поднимаются планировщики, пересчитывается
+      # кэш trust. Прежний `sleep 2` бил в закрытую дверь и объявлял выкат удачным,
+      # ничего не проверив. Ждём до 40 секунд и только потом решаем.
+      - name: Проверка здоровья
+        env:
+          HOST: ${{ secrets.DEPLOY_HOST }}
+          USER: ${{ secrets.DEPLOY_USER }}
+        run: |
+          ssh "$USER@$HOST" '
+            for i in $(seq 1 40); do
+              if curl -fsS http://127.0.0.1:3001/api/health >/dev/null 2>&1; then
+                curl -fsS http://127.0.0.1:3001/api/health
+                echo ""
+                echo "✅ Выкат завершён"
+                exit 0
+              fi
+              sleep 1
+            done
+            echo "::error::API не ответил за 40 секунд после рестарта"
+            journalctl -u ai-incubator -n 40 --no-pager || true
+            exit 1
           '

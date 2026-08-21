@@ -1,6 +1,7 @@
 import { createTaskStore } from '../lib/taskStore.js'
 import { WORKERS, startWorker, stopWorker, pauseWorker } from './workers.js'
 import { tryAcquireLocks, releaseTaskLocks } from '../lib/accountLocks.js'
+import { releaseTaskBusy } from '../lib/accountBusy.js'
 import { preflightAndLog } from '../lib/preflight.js'
 import { resolveTotalTarget } from '../lib/targets.js'
 import { getGoal, isGoalExpired } from '../goals.js'
@@ -170,6 +171,7 @@ async function gateOnPreflight(task, store) {
   await store.appendLog(task, 'error', `Запуск отменён: ни один аккаунт не готов. ${why}`)
   await store.saveTask(task, { control: true })
   try { releaseTaskLocks(task.id) } catch { /* локов могло не быть */ }
+  try { releaseTaskBusy(task.id) } catch { /* слотов могло не быть */ }
   return false
 }
 

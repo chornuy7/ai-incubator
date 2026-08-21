@@ -9,8 +9,18 @@ import { setTrustCache } from './lib/trustCache.js'
 import { countryFromPhone } from './accountsMeta.js'
 import { Api } from 'telegram/tl/index.js'
 import { accountFingerprint } from './lib/deviceFingerprint.js'
+import { recordAction } from './actionLog.js'
 
 const DAY = 24 * 60 * 60 * 1000
+/**
+ * Человекочитаемый итог проверки спамблока — он же попадает в ленту истории аккаунта
+ * (ТЗ 19.08 §5). Держим здесь, чтобы формулировка совпадала с тостом в карточке.
+ */
+const SPAMCHECK_TEXT = {
+  clean: 'Спамблока нет — @SpamBot ограничений не показал',
+  blocked: 'Спамблок есть — аккаунт ограничен @SpamBot',
+  unknown: 'Результат неизвестен — @SpamBot не ответил',
+}
 /** Сколько ждём ответ Telegram в карточке аккаунта, прежде чем признать проверку сорванной. */
 const STATS_BUDGET_MS = Math.max(4000, Number(process.env.TG_STATS_TIMEOUT_MS) || 8000)
 /**
@@ -364,6 +374,24 @@ export async function buildAccountStats(accountId, opts = {}) {
         if (sb.state === 'clean' || sb.state === 'blocked') {
           try { await setAccountMeta(accountId, { spamblock: sb.state, spamblockAt: Date.now(), spamblockText: sb.text || '' }) } catch { /* non-fatal */ }
         }
+        // ТЗ 19.08 §5: до сих пор от проверки оставалась только дата в карточке
+        // («Проверено: …»), а в ЛЕНТЕ истории события не было — оператор не видел, когда
+        // и с каким результатом аккаунт проверяли. Пишем в тот же журнал действий, что и
+        // воркеры (recordAction), под-тип — через value.kind (§3 контракта: словарь type
+        // расширяемый, а под-тип живёт в value.kind), новых форматов не заводим.
+        void recordAction({
+          type: 'action',
+          // Проверка не «отправка»: определённый вердикт = sent, молчание @SpamBot = failed.
+          status: sb.state === 'unknown' ? 'failed' : 'sent',
+          accountId,
+          accountName: meta.name || '',
+          target: '@SpamBot',
+          targetTitle: 'SpamBot',
+          value: { kind: 'spamcheck', text: SPAMCHECK_TEXT[sb.state] || SPAMCHECK_TEXT.unknown },
+          // Проверку запускает человек из карточки аккаунта — задачи/модуля за ней нет.
+          initiator: 'operator',
+          meta: { spamblock: sb.state, spamblockText: sb.text || '' },
+        })
       }
       await client.disconnect()
     } catch (err) {

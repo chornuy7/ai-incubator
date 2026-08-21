@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Zap } from 'lucide-react'
 import { Modal } from '@/shared/ui'
-import { fetchBalance } from '@/api/balanceApi'
+import { refreshBalance } from '@/features/billing/balanceStore'
 import { useSession } from '@/features/auth/session'
 import { useUi } from '@/shared/lib/uiStore'
 import { coins as fmtCoins } from '@/shared/lib/utils'
@@ -34,10 +34,13 @@ export function LowBalanceLoginModal() {
     // Уже сказали «не показывать» (админ) — не дёргаем даже баланс.
     if (isAdmin && localStorage.getItem(HIDE) === '1') return
     if (sessionStorage.getItem(SEEN) === '1') return
-    void fetchBalance().then((b) => {
+    // MR-151: общий источник — модалка открывается на входе одновременно с шапкой,
+    // и раньше это был отдельный запрос за той же цифрой (дедупликация в balanceStore).
+    void refreshBalance().then((b) => {
+      if (!b) return
       setCoins(b.coins)
       if (b.coins <= LOW) setOpen(true)
-    }).catch(() => {})
+    })
   }, [isAdmin])
 
   const close = () => {

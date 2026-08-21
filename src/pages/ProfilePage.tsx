@@ -3,7 +3,9 @@ import { Link } from 'react-router-dom'
 import {
   UserCog, Shield, Bell, Handshake, Cable, Save, Copy, History as HistoryIcon, Package, CalendarClock, AlertTriangle, Trash2 } from 'lucide-react'
 import { useApp } from '@/mocks/store'
-import { fetchBalance, fetchWalletHistory, type Balance, type WalletEntry } from '@/api/balanceApi'
+import { fetchWalletHistory, type Balance, type WalletEntry } from '@/api/balanceApi'
+import { useBalance } from '@/features/billing/balanceStore'
+import { expiryInfo, daysLeftPhrase } from '@/features/billing/expiry'
 import { deleteUser, changeMyPassword } from '@/api/usersApi'
 import { useSession } from '@/features/auth/session'
 import { PageHeader, Card, Switch, Badge, Modal } from '@/shared/ui'
@@ -34,14 +36,9 @@ export function ProfilePage() {
   const data = useApp((s) => s.data)
   // Тариф, лимит и баланс — с сервера, а не из моков: раньше на странице профиля
   // висели те же нарисованные «Базовая» и 80.00, что и в шапке, и пополнение
-  // сверить было не с чем.
-  const [balance, setBalance] = useState<Balance | null>(null)
-  useEffect(() => {
-    const load = () => { void fetchBalance().then(setBalance).catch(() => {}) }
-    load()
-    const t = setInterval(load, 30000)
-    return () => clearInterval(t)
-  }, [])
+  // сверить было не с чем. MR-151: источник общий с шапкой (см. balanceStore) —
+  // свой поллер тут был третьим запросом того же `/api/balance`.
+  const balance = useBalance()
   const updateUser = useApp((s) => s.updateUser)
   const toggleNotification = useApp((s) => s.toggleNotification)
   const pushToast = useApp((s) => s.pushToast)
@@ -457,16 +454,14 @@ export function WalletHistory() {
 
 /**
  * План и подписка: какой тариф/набор подключён и до какого числа. Срок берётся с
- * сервера (expiresAt); нет срока — «бессрочно (демо)», пока не подключён провайдер.
+ * сервера (expiresAt); нет срока — «бессрочно» (демо и дефолтное пространство).
  */
 function SubscriptionCard({ balance }: { balance: Balance | null }) {
   const modules = balance?.modules
   const sub = modules === 'all' || modules == null ? 'Все модули' : `${modules.length} ${modules.length === 1 ? 'модуль' : 'модулей'}`
-  const exp = balance?.expiresAt || 0
-  const now = Date.now()
-  const active = !exp || exp > now
-  const fmtDate = (ts: number) => new Date(ts).toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit', year: 'numeric' })
-  const daysLeft = exp ? Math.max(0, Math.ceil((exp - now) / (24 * 60 * 60 * 1000))) : 0
+  // §5 (21.08): дата — словами («до 19 сентября 2026»). «19.09.2026» оператор читает
+  // как ребус, а спутать день с месяцем в цифрах — вопрос одного взгляда.
+  const exp = expiryInfo(balance?.expiresAt)
   return (
     <Card className="mb-4 p-4">
       <div className="flex flex-wrap items-center gap-x-8 gap-y-3">
@@ -482,12 +477,24 @@ function SubscriptionCard({ balance }: { balance: Balance | null }) {
           <div className="font-semibold text-fg">{sub}</div>
         </div>
         <div>
-          <div className="text-[11px] uppercase tracking-wide text-muted">Срок</div>
-          <div className={cn('flex items-center gap-1.5 font-semibold', active ? 'text-fg' : 'text-red-300')}>
-            <CalendarClock size={14} className="text-muted" />
-            {exp ? (active ? `активна до ${fmtDate(exp)}` : `истекла ${fmtDate(exp)}`) : 'бессрочно (демо)'}
+          <div className="text-[11px] uppercase tracking-wide text-muted">Оплачено</div>
+          <div className={cn(
+            'flex items-center gap-1.5 font-semibold',
+            exp.expired ? 'text-red-300' : exp.soon ? 'text-amber-300' : 'text-fg',
+          )}>
+            {exp.soon && !exp.expired ? <AlertTriangle size={14} /> : <CalendarClock size={14} className="text-muted" />}
+            {exp.perpetual ? 'бессрочно' : exp.expired ? `истекла ${exp.date}` : `до ${exp.date}`}
           </div>
-          {!!exp && active && <div className="text-[11px] text-muted">осталось {daysLeft} дн.</div>}
+          {/* Меньше недели — предупреждаем: когда срок выйдет, модули просто перестанут
+              запускаться, и лучше узнать об этом заранее, а не по отказу задачи. */}
+          {!exp.perpetual && !exp.expired && (
+            <div className={cn('text-[11px]', exp.soon ? 'text-amber-300' : 'text-muted')}>
+              {exp.soon
+                ? `осталось ${daysLeftPhrase(exp.daysLeft)} — продлите подписку`
+                : `осталось ${daysLeftPhrase(exp.daysLeft)}`}
+            </div>
+          )}
+          {exp.expired && <div className="text-[11px] text-red-300">модули не запускаются — продлите подписку</div>}
         </div>
         {/* Правка 14.08: «Подписки» и «Изменить тариф» вели в одно место (/panel/user/subscription) —
             убрали дубль, оставили одну кнопку с названием целевой страницы «Подписки». */}

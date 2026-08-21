@@ -37,6 +37,7 @@ import {
   reconcileLocks,
   forceReleaseAccount,
 } from './lib/accountLocks.js'
+import { getAllAccountBusy, reconcileBusy } from './lib/accountBusy.js'
 import { buildAccountStats, listAccountChannels, listAccountChannelMessages, listAccountFolders, leaveAccountChannel } from './accountStats.js'
 import { dailySummary, dailySummaryAll } from './lib/dailyActions.js'
 import { rpsMiddleware, systemMetrics } from './lib/systemMetrics.js'
@@ -184,7 +185,11 @@ app.get('/api/tg/accounts/busy', async (_req, res) => {
   try {
     await reconcileLocks()
   } catch { /* ignore */ }
-  res.json({ ok: true, busy: await getAllAccountLocksDetailed() })
+  // То же самое для реестра занятости ДЕЙСТВИЕМ и его выдача наружу: слот мёртвой задачи
+  // выключает аккаунт из всех модулей, а оператор его до сих пор не видел — «занят» в UI
+  // означало только блокировку задачей.
+  try { reconcileBusy() } catch { /* ignore */ }
+  res.json({ ok: true, busy: await getAllAccountLocksDetailed(), working: getAllAccountBusy() })
 })
 
 app.get('/api/tg/accounts/daily-all', async (_req, res) => {
@@ -262,7 +267,13 @@ app.post('/api/tg/accounts/:accountId/release', async (req, res) => {
   const { WARMING_MODULES, canStopWarming } = await import('./lib/safetyLimits.js')
   const { getAccountLock } = await import('./lib/accountLocks.js')
   const info = getAccountLock(req.params.accountId)
-  if (info && WARMING_MODULES.has(info.moduleKey) && !canStopWarming(await isAdminRequest(req))) {
+  // Многомодульность (20.08): держателей у аккаунта несколько, а `info.moduleKey` —
+  // только ПЕРВЫЙ из них. У пары [мейлинг, прогрев] гейт видел мейлинг и пропускал
+  // обычного оператора, после чего forceReleaseAccount сносил запись целиком — вместе с
+  // прогревом, который §12 запрещает снимать не-админу. Смотрим ВСЕХ держателей.
+  const holders = info?.holders?.length ? info.holders : (info ? [info] : [])
+  const warming = holders.find((h) => WARMING_MODULES.has(h.moduleKey))
+  if (warming && !canStopWarming(await isAdminRequest(req))) {
     return res.status(403).json({
       ok: false,
       error: 'Останавливать прогрев может только супер-админ: это недели работы аккаунтов, откатить нельзя.',
@@ -1279,38 +1290,78 @@ app.post('/api/subscription', async (req, res) => {
     // Считаем только ДОБАВЛЕННЫЕ модули: смена набора и отключение лишнего не должны
     // списывать повторно за то, что уже оплачено. Админ, раздающий доступ, не платит —
     // это провижининг, а не покупка.
-    const { getBalance, changeUsd } = await import('./balance.js')
+    const { getBalance, changeUsd, subscriptionExpired } = await import('./balance.js')
     let charged = 0
-    let addedModules = [] // MR-150: за какие модули начислить месячные токены (только реально добавленные)
+    let addedModules = [] // MR-150: за какие модули начислить месячные токены
+    let extendTo = null // не null — продление: новая дата окончания для всей подписки
     if (personal && !admin && Array.isArray(list)) {
       const before = await getBalance(target)
-      const { addedCost } = await import('./pricing.js')
+      const { addedCost, prorataCost, subscriptionCost: fullCost } = await import('./pricing.js')
+      // MR-149: сетапы берём из БД — иначе скидка на витрине и в списании разъедутся.
       const { added, monthly: addMonthly } = addedCost(before.modules, list, bundlesList, effPrices.monthMap, setupsList)
       addedModules = added
-      if (added.length) {
-        charged = periodCost(addMonthly, months || 1, effPrices.annualDiscount)
+      const now = Date.now()
+      const activeUntil = before.expiresAt && !subscriptionExpired(before.expiresAt) ? Number(before.expiresAt) : 0
+
+      /*
+       * Подписка ОДНА и с одной датой (решение владельца 21.08: «делаем 1 подписку и туда
+       * докупаем уже модули»). Отсюда две разные операции, которые раньше были одной:
+       *
+       *  ДОКУПКА в действующую подписку — модуль работает до её конца, поэтому и платим
+       *  только за оставшиеся дни, а дату не двигаем. До этой правки докупка шла по
+       *  полной месячной цене И продлевала весь набор: добавил парсер за $8 — продлил
+       *  подписку за $121. Дыра в деньгах ровно на стоимость остального набора.
+       *
+       *  ПРОДЛЕНИЕ (набор не менялся либо подписка истекла) — платим за ВЕСЬ набор и
+       *  двигаем дату. Раньше здесь списывался ноль: `addedCost` не видел добавленного и
+       *  честно возвращал 0, а срок всё равно продлевался — подписку можно было
+       *  обновлять бесплатно, просто нажимая «Оплатить» с тем же набором.
+       */
+      if (added.length && activeUntil > now) {
+        charged = prorataCost(addMonthly, activeUntil - now)
+      } else {
+        const keep = list === 'all' ? [] : list
+        const sum = list === 'all' ? 0 : fullCost(keep, bundlesList, effPrices.monthMap).sum
+        charged = periodCost(sum, months || 1, effPrices.annualDiscount)
+        // Продление считаем от КОНЦА действующей подписки, а не от «сегодня»: иначе
+        // человек, продливший заранее, терял оплаченный остаток.
+        extendTo = Math.max(now, activeUntil) + Math.round((months || 1) * 30 * 24 * 60 * 60 * 1000)
+      }
+
+      if (charged > 0) {
         if ((Number(before.usd) || 0) + 1e-9 < charged) {
           return res.status(402).json({
             ok: false,
             error: `Недостаточно средств: нужно $${charged.toFixed(2)}, на счету $${(Number(before.usd) || 0).toFixed(2)}. Пополните баланс.`,
           })
         }
-        await changeUsd(-charged, `Подписка: ${added.length} модул. на ${months || 1} мес.`, target)
+        const what = added.length && activeUntil > now
+          ? `докупка ${added.length} модул. до конца подписки`
+          : `подписка на ${months || 1} мес.`
+        await changeUsd(-charged, `Подписка: ${what}`, target)
       }
     }
-    const balance = personal ? await setUserModules(list, target, { months }) : await setModules(list, target, { months })
+    // Баг 19.08 (§2): покупка модуля ЗАТИРАЛА набор. Клиент присылал полный список,
+    // и «Готовый набор» в кабинете выкидывал из него ранее оплаченное — деньги списаны,
+    // доступ пропал. Клиентская покупка теперь ДОКУПКА (merge): сервер сам объединяет
+    // с тем, что уже оплачено, и полному списку от клиента больше не доверяет.
+    // Админ — наоборот, ЗАМЕНЯЕТ набор целиком: он выдаёт доступы явно, и снять
+    // лишнее должно быть можно (это провижининг, а не продажа).
+    const mode = admin ? 'replace' : 'merge'
+    // `extendTo` — явная новая дата окончания (продление). Для докупки она null, и
+    // mergeExpiry оставляет прежнюю: подписка одна, её срок двигает только продление.
+    const balance = personal
+      ? await setUserModules(list, target, { months, mode, expiresAt: extendTo })
+      : await setModules(list, target, { months, mode, expiresAt: extendTo })
 
-    // MR-150 (Шаг 2): начислить МЕСЯЧНЫЕ токены за докупленные модули — первый месяц сразу, в
-    // день оплаты. billing_day модель проставила при setModules; помечаем этот месяц начисленным,
-    // чтобы ежедневный крон не начислил повторно. Дальнейшие месяцы (в тот же день) начисляет крон.
+    // MR-150 (Шаг 2): месячные токены за ДОКУПЛЕННЫЕ модули — начисляем сразу, в день
+    // оплаты. Дальнейшие месяцы добирает ежедневный крон (tokenCredit.js).
     let creditedTokens = 0
     if (addedModules.length) {
-      creditedTokens = addedModules.reduce((s, k) => s + (Number(effPrices.tokensMap?.[k]) || 0), 0)
+      creditedTokens = addedModules.reduce((sum, k) => sum + (Number(effPrices.tokensMap?.[k]) || 0), 0)
       if (creditedTokens > 0) {
         const { changeCoins } = await import('./balance.js')
-        const { markCredited, creditMonth } = await import('./userSubscriptions.js')
         await changeCoins(creditedTokens, `Токены подписки: ${addedModules.length} модул. (первый месяц)`, target)
-        await markCredited(target, addedModules, creditMonth()).catch(() => {})
       }
     }
     await appendAudit({
@@ -1502,7 +1553,11 @@ await startScheduler().catch((err) => console.warn('[automation] scheduler init 
 try {
   const { refreshAllTrustCache } = await import('./accountStats.js')
   const runTrust = () => refreshAllTrustCache().then((r) => { if (r.updated) console.log(`[trust] обновлён кэш trust: ${r.updated} акк.${r.returned ? ` · авто-возврат из прогрева: ${r.returned}` : ''}`) }).catch((e) => console.warn('[trust] refresh failed:', e?.message || e))
-  await runTrust()
+  // БЕЗ await — по той же причине, что и проверка прокси ниже: пересчёт trust идёт по
+  // ВСЕМ аккаунтам и на файловом сторе занимает больше 20 секунд. С `await` он стоял
+  // ПЕРЕД app.listen: API не слушал порт, фронт получал ECONNREFUSED на каждый запрос,
+  // а в логе было тихо — снаружи это выглядело как «бэкенд не запустился» (20.08).
+  void runTrust()
   setInterval(runTrust, 10 * 60 * 1000)
 } catch (err) {
   console.warn('[trust] scheduler init failed:', err)

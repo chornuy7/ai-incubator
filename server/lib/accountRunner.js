@@ -1,7 +1,8 @@
 import { loadSessionString, createClient } from '../tgAuth.js'
 import { getAccountMeta, setAccountMeta, setAccountStatus } from '../accountsMeta.js'
 import { isAccountRunnable, extractFloodSeconds, sleep } from './protection.js'
-import { assertAccountAvailable } from './accountLocks.js'
+import { assertAccountAvailable, getAccountLock } from './accountLocks.js'
+import { waitAccountWork, endAccountWork } from './accountBusy.js'
 import { resolveDurationPeriodMinutes } from './workModeDuration.js'
 import { getAiSafetySync } from '../aiSafety.js'
 import { resolvePerAccountTarget, resolveTotalTarget } from './targets.js'
@@ -33,12 +34,26 @@ export async function abortTaskClients(taskId) {
   return clients.length
 }
 
-/** @param {string} accountId @param {string} [taskId] */
-export async function connectAccount(accountId, taskId) {
+/**
+ * @param {string} accountId @param {string} [taskId]
+ * @param {{ shouldStop?: () => boolean }} [opts] `shouldStop` прерывает ожидание слота
+ *   занятости: без него «Стоп» простаивал до двух минут на каждом аккаунте, ожидая
+ *   чужое действие, которое всё равно уже никому не нужно.
+ */
+export async function connectAccount(accountId, taskId, opts = {}) {
   assertAccountAvailable(accountId, taskId)
   const meta = await getAccountMeta(accountId)
   if (!isAccountRunnable(meta.status || 'active')) {
     throw new Error(`ACCOUNT_SKIP:${meta.status}`)
+  }
+  // Физическая невозможность (20.08): аккаунт работает в нескольких модулях, но два
+  // действия в одну секунду не делает. Окно занятости = подключение→отключение: пока
+  // одна задача держит аккаунт подключённым, вторая ждёт здесь (карусельные модули до
+  // этой строки не доходят — их гейт beginAccountWork пропускает занятый аккаунт и
+  // берёт следующий). Повторный вход той же задачи — мгновенный.
+  if (taskId) {
+    const holder = getAccountLock(accountId)?.holders?.find((h) => h.taskId === taskId)
+    await waitAccountWork(accountId, holder?.moduleKey || 'action', taskId, { timeoutMs: 2 * 60 * 1000, shouldStop: opts.shouldStop })
   }
   const sessionStr = await loadSessionString(accountId)
   if (!sessionStr) {
@@ -84,6 +99,8 @@ export async function disconnectAccount(client, accountId) {
   // Снимаем из реестра задачи (если был зарегистрирован при connectAccount).
   const taskId = client?.__taskId
   if (taskId) { const set = taskClients.get(taskId); if (set) { set.delete(client); if (!set.size) taskClients.delete(taskId) } }
+  // Аккаунт свободен для других модулей + фиксируем момент для паузы переключения.
+  if (taskId) endAccountWork(accountId, taskId)
   try {
     await client.disconnect()
   } catch {

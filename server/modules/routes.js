@@ -79,17 +79,49 @@ async function userHasFreeAccess(userId) {
   } catch { return false }
 }
 
+/** «3 дня» / «1 день» / «5 дней» — для текста об истёкшей подписке. */
+function daysWord(n) {
+  const m10 = n % 10; const m100 = n % 100
+  if (m10 === 1 && m100 !== 11) return 'день'
+  if (m10 >= 2 && m10 <= 4 && (m100 < 12 || m100 > 14)) return 'дня'
+  return 'дней'
+}
+
 async function notInPlanPayload(req, moduleKey) {
+  const userId = req.header('x-user-id')
   // Роль без оплаты обходит подписку — но не роль и не монеты (это отдельные оси).
-  if (await userHasFreeAccess(req.header('x-user-id'))) return null
-  const { getBalance, modulesAllow } = await import('../balance.js')
-  const { modules } = await getBalance(req.header('x-user-id'))
-  if (modulesAllow(modules, moduleKey)) return null
+  if (await userHasFreeAccess(userId)) return null
+  const { getBalance, modulesAllow, subscriptionExpired, daysSinceExpiry } = await import('../balance.js')
+  const { modules, expiresAt } = await getBalance(userId)
+  // Баг 19.08 (§2): срок подписки ДОЛЖЕН закрывать доступ — до этого он только хранился.
+  // Без сессии (дев, фоновые вызовы воркеров под кошельком `__default`) срок не
+  // применяем: там набор общий и «купленный на месяц» воркспейс однажды остановил бы
+  // фон целиком. `expiresAt = null` — бессрочно, тоже не закрываем.
+  const expiry = userId ? (expiresAt ?? null) : null
+  if (modulesAllow(modules, moduleKey, expiry)) return null
   const { moduleTitle } = await import('../lib/moduleTitles.js')
+  const title = moduleTitle(moduleKey)
+  // Два РАЗНЫХ отказа. «Не оплачен» — модуля нет в наборе, его надо добавить.
+  // «Истекла» — модуль куплен, но срок вышел: человеку надо продлить, а не выбирать
+  // заново. Одинаковый текст отправлял бы клиента не туда, поэтому отдаём и флаг
+  // `expired` с датой — интерфейс может показать продление, а не витрину.
+  if (subscriptionExpired(expiry) && modulesAllow(modules, moduleKey)) {
+    const days = daysSinceExpiry(expiry)
+    const when = days > 0 ? `${days} ${daysWord(days)} назад` : 'сегодня'
+    return {
+      ok: false,
+      error: `Подписка истекла ${when} — модуль «${title}» приостановлен. Продлите подписку в разделе «Мои модули».`,
+      needSubscription: true,
+      expired: true,
+      expiresAt: expiry,
+      moduleKey,
+    }
+  }
   return {
     ok: false,
-    error: `Модуль «${moduleTitle(moduleKey)}» не оплачен. Добавьте его в подписку в разделе «Мои модули».`,
+    error: `Модуль «${title}» не оплачен. Добавьте его в подписку в разделе «Мои модули».`,
     needSubscription: true,
+    expired: false,
     moduleKey,
   }
 }
