@@ -3,6 +3,8 @@ import { buildParticipantsParserDescriptor } from './_parserParticipants.js'
 
 export default buildParticipantsParserDescriptor({
   key: 'parsing-messages',
+  // ИИ не участвует: генерации нет, токены модели не тратятся (см. costModel).
+  usesAi: false,
   title: 'Parser by messages',
   tags: ['messages', 'messages', 'active', 'intention'],
   summary: 'Finds people by WHAT they wrote in groups: collects the authors of messages with the right words.',

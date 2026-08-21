@@ -14,6 +14,8 @@
 export default {
   key: 'neuro-chatting',
   version: 1,
+  // Генерирует текст через ИИ — на этих модулях расход на ИИ реален.
+  usesAi: true,
   title: 'Neurochatting',
   platform: 'telegram',
   tags: ['chats', 'groups', 'chats', 'groups', 'II', 'ai', 'dialogue', 'communication'],

@@ -2785,6 +2785,16 @@ function PricesTab() {
                       const tUsd = prices.tokenUsd ?? prices.tokenUsdComputed ?? 0
                       const coinUsd = prices.coinUsd ?? 0
                       const action = Number(draft[m.key]?.action ?? m.action ?? 0)
+                      // Модуль без ИИ — расхода на модель нет ни максимального, ни
+                      // фактического. Проверяем ДО остальных веток, чтобы случайная запись
+                      // в журнал расхода не нарисовала ему «наши затраты» из ниоткуда.
+                      if (!m.usesAi) {
+                        return (
+                          <div className="mt-0.5 pr-1 text-[10px] text-faint">
+                            цена ${(action * coinUsd).toFixed(4)} · ИИ не используется — расхода на модель нет
+                          </div>
+                        )
+                      }
                       if (!avg || !tUsd || !coinUsd) {
                         const mx = prices.maxCost?.max || prices.maxCost?.usd || 0
                         const pu = action * coinUsd

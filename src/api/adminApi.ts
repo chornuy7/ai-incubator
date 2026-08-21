@@ -327,7 +327,12 @@ export async function fetchPayments(opts: PaymentsQuery = {}): Promise<PaymentsR
 }
 
 /** §10.4: цены из БД — эффективные значения + пометка «изменено». */
-export interface PriceModule { key: string; title: string; month: number; action: number; gift: number; monthlyTokens: number; overridden: { month: boolean; action: boolean; gift: boolean; monthlyTokens: boolean } }
+export interface PriceModule {
+  key: string; title: string; month: number; action: number; gift: number; monthlyTokens: number
+  /** Ходит ли модуль в ИИ — из MCP-дескриптора. У кого false, расхода на модель нет вовсе. */
+  usesAi?: boolean
+  overridden: { month: boolean; action: boolean; gift: boolean; monthlyTokens: boolean }
+}
 export interface EffectivePrices {
   modules: PriceModule[]
   monthMap: Record<string, number>

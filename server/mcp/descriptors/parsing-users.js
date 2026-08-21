@@ -3,6 +3,8 @@ import { buildParticipantsParserDescriptor } from './_parserParticipants.js'
 
 export default buildParticipantsParserDescriptor({
   key: 'parsing-users',
+  // ИИ не участвует: генерации нет, токены модели не тратятся (см. costModel).
+  usesAi: false,
   title: 'User parser',
   tags: ['participants', 'members', 'intersection of audiences'],
   summary: 'Collects group and channel members into a database with filters by account type.',

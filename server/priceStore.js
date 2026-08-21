@@ -155,6 +155,15 @@ import {
   MODULE_MONTH_PRICE, ACTION_PRICE, COIN_PACKS, ANNUAL_DISCOUNT, MODULE_TOKENS_DEFAULT,
 } from './pricing.js'
 import { moduleTitle } from './lib/moduleTitles.js'
+import { DESCRIPTORS } from './mcp/descriptors/index.js'
+
+/**
+ * Модули, которые реально ходят в ИИ. Источник — MCP-дескрипторы (единственный источник
+ * правды о модуле): у каждого проставлен `usesAi`, а рядом в `costModel` написано словами,
+ * тратятся ли токены модели. Список в коде здесь заводить нельзя — он разъедется с
+ * модулями, как уже разъезжались цены.
+ */
+const USES_AI = new Set(Object.values(DESCRIPTORS).filter((d) => d?.usesAi).map((d) => d.key))
 
 const PRICES_FILE = () => process.env.PRICES_FILE || dataPath('prices.json')
 
@@ -255,6 +264,10 @@ export async function effectivePrices() {
       action: Number(action),
       gift: Number(gift),
       monthlyTokens: Number(monthlyTokens),
+      // Ходит ли модуль в ИИ. Берём из MCP-дескриптора — он единственный источник правды
+      // о модуле. Нужно админке: показывать «максимум расхода на ИИ» там, где ИИ вообще
+      // не участвует (реакции, прогрев, парсеры), — значит рисовать цифру, которой нет.
+      usesAi: USES_AI.has(key),
       // Помечаем, что переопределено — админке показать «изменено», а не «дефолт».
       overridden: { month: ovMod[key]?.month !== undefined, action: ovMod[key]?.action !== undefined, gift: ovMod[key]?.gift !== undefined, monthlyTokens: ovMod[key]?.monthlyTokens !== undefined },
     }

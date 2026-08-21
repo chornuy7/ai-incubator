@@ -12,6 +12,8 @@
 export default {
   key: 'mass-looking',
   version: 1,
+  // ИИ не участвует: генерации нет, токены модели не тратятся (см. costModel).
+  usesAi: false,
   title: 'Masslooking',
   platform: 'telegram',
   tags: ['views', 'views', 'stories', 'stories', 'masslooking', 'coverage'],

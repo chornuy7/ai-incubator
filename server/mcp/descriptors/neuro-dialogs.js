@@ -15,6 +15,8 @@
 export default {
   key: 'neuro-dialogs',
   version: 1,
+  // Генерирует текст через ИИ — на этих модулях расход на ИИ реален.
+  usesAi: true,
   title: 'Neurodialogues',
   platform: 'telegram',
   tags: ['PM', 'personal messages', 'dm', 'dialogues', 'dialogs', 'crm', 'leads', 'leads', 'II', 'ai'],

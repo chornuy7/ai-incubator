@@ -3,6 +3,8 @@ import { buildParticipantsParserDescriptor } from './_parserParticipants.js'
 
 export default buildParticipantsParserDescriptor({
   key: 'parsing-comments',
+  // ИИ не участвует: генерации нет, токены модели не тратятся (см. costModel).
+  usesAi: false,
   title: 'Comment parser',
   tags: ['comments', 'comments', 'involved'],
   summary: 'Gathers people who comment on channel posts—the most involved part of the audience.',

@@ -16,6 +16,8 @@
 export default {
   key: 'neuro-commenting',
   version: 1,
+  // Генерирует текст через ИИ — на этих модулях расход на ИИ реален.
+  usesAi: true,
   title: 'Neurocommenting',
   platform: 'telegram',
   // Штатного поля тегов в протоколе MCP нет — кладём в `_meta.tags` и дублируем

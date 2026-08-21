@@ -15,6 +15,8 @@
 export default {
   key: 'mailing',
   version: 1,
+  // Генерирует текст через ИИ — на этих модулях расход на ИИ реален.
+  usesAi: true,
   title: 'Мейлинг',
   platform: 'telegram',
   tags: ['рассылка', 'mailing', 'лс', 'dm', 'номера', 'phones', 'холодные', 'cold outreach'],
