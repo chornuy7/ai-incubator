@@ -318,10 +318,11 @@ export function SubscriptionPage() {
           области, прижата ко дну, и она сама резервирует под себя место, чтобы низ
           страницы не прятался. */}
       <FloatingBar>
-        {/* Одна строка: слева что и почём, по центру период, справа кнопка —
-            как в панели запуска модулей. */}
-        <div className="flex w-full flex-wrap items-center gap-3">
-          <div className="min-w-0">
+        {/* Раскладка та же, что у панели запуска модулей: слева сводка, по центру
+            переключатель периода (растягивается), справа кнопка у правого края.
+            Без этого содержимое липло к краям, а между ними зияла дыра. */}
+        <div className="flex w-full flex-wrap items-center justify-between gap-x-6 gap-y-2">
+          <div className="min-w-0 shrink-0">
             <div className="text-xs text-muted">
               В подписке модулей: <b className="text-fg">{keys.length}</b>
               {added.length > 0 && <> · добавлено <b className="text-fg">{added.length}</b></>}
@@ -367,22 +368,29 @@ export function SubscriptionPage() {
             )}
           </div>
           {/* Период подписки: на месяц или на год — определяет срок действия (expiresAt). */}
-          <div className="flex rounded-xl border border-line bg-elevated p-0.5 text-sm">
-            {(['month', 'year'] as const).map((p) => (
-              <button key={p} onClick={() => setPeriod(p)} className={cn('h-9 rounded-lg px-3 font-semibold transition-colors', period === p ? 'bg-spark-500/15 text-spark-300' : 'text-muted hover:text-fg')}>
-                {p === 'month' ? 'Месяц' : 'Год'}{p === 'year' && <span className="ml-1 text-[10px] text-spark-400">−{Math.round(annualDiscount * 100)}%</span>}
-              </button>
-            ))}
+          {/* Центр: переключатель периода. Растягивается на всё свободное место, сам
+              переключатель по центру — как дорожная карта в панели запуска. */}
+          <div className="flex min-w-0 flex-1 basis-40 justify-center">
+            <div className="flex rounded-xl border border-line bg-elevated p-0.5 text-sm">
+              {(['month', 'year'] as const).map((p) => (
+                <button key={p} onClick={() => setPeriod(p)} className={cn('h-9 rounded-lg px-3 font-semibold transition-colors', period === p ? 'bg-spark-500/15 text-spark-300' : 'text-muted hover:text-fg')}>
+                  {p === 'month' ? 'Месяц' : 'Год'}{p === 'year' && <span className="ml-1 text-[10px] text-spark-400">−{Math.round(annualDiscount * 100)}%</span>}
+                </button>
+              ))}
+            </div>
           </div>
-          <button
-            onClick={() => void save()}
-            disabled={saving || !changed}
-            className="btn-primary ml-auto h-11 min-w-[190px] disabled:opacity-40"
-            title={changed ? 'Спишется с баланса $ за добавленные модули' : 'Новых модулей не выбрано'}
-          >
-            {saving ? <Loader2 size={16} className="animate-spin" /> : <Check size={16} />}
-            {`Оплатить на ${period === 'year' ? 'год' : 'месяц'}`}
+          {/* Право: кнопка у правого края — прижимает justify-between, ml-auto не нужен. */}
+          <div className="flex shrink-0 items-center justify-end">
+            <button
+              onClick={() => void save()}
+              disabled={saving || !changed}
+              className="btn-primary h-11 min-w-[190px] disabled:opacity-40"
+              title={changed ? 'Спишется с баланса $ за добавленные модули' : 'Новых модулей не выбрано'}
+            >
+              {saving ? <Loader2 size={16} className="animate-spin" /> : <Check size={16} />}
+              {`Оплатить на ${period === 'year' ? 'год' : 'месяц'}`}
             </button>
+          </div>
         </div>
       </FloatingBar>
 
