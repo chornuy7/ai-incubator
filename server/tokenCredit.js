@@ -34,15 +34,30 @@ export async function dueForCredit(nowMs = Date.now()) {
   const today = new Date(nowMs).getUTCDate()
   const month = creditMonth(nowMs)
   const { data } = await db.from('subscriptions')
-    .select('id, user_id, modules, expires_at, billing_day, last_credit_month')
+    .select('id, user_id, expires_at, billing_day, last_credit_month')
     .eq('billing_day', today)
+  const due = (data || []).filter((r) => {
+    if (r.last_credit_month === month) return false
+    if (SKIP.has(r.id) || SKIP.has(r.user_id || '')) return false
+    if (r.expires_at && new Date(r.expires_at).getTime() <= nowMs) return false // истекла
+    return true
+  })
+  if (!due.length) return []
+  // Состав — из строк user_subscriptions: JSON-колонки `subscriptions.modules` больше нет.
+  // Одним запросом на всех, а не по подписке на каждую: их может быть много.
+  const { data: rows } = await db.from('user_subscriptions')
+    .select('user_id, module_key')
+    .in('user_id', due.map((r) => r.id))
+  const byUser = new Map()
+  for (const r of rows || []) {
+    if (r.module_key === '*') continue // «все модули» — админский провижининг, не оплата
+    if (!byUser.has(r.user_id)) byUser.set(r.user_id, [])
+    byUser.get(r.user_id).push(r.module_key)
+  }
   const out = []
-  for (const r of data || []) {
-    if (r.last_credit_month === month) continue
-    if (SKIP.has(r.id) || SKIP.has(r.user_id || '')) continue
-    if (r.expires_at && new Date(r.expires_at).getTime() <= nowMs) continue // подписка истекла
-    const modules = Array.isArray(r.modules) ? r.modules : []
-    if (!modules.length) continue // 'all' (строкой) — провижининг, не оплата
+  for (const r of due) {
+    const modules = byUser.get(r.id) || []
+    if (!modules.length) continue
     out.push({ id: r.id, userId: r.user_id || r.id, modules })
   }
   return out

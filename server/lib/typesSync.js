@@ -178,8 +178,17 @@ export async function syncModuleLinks() {
     }
 
     // ── Подписки ─────────────────────────────────────────────────────────────
-    const { data: subs } = await db.from('subscriptions').select('id, modules')
-    for (const s of subs || []) report.subscriptions += await relink('subscription_modules', 'subscription_id', s.id, keysOf(s.modules))
+    // Состав подписок живёт строками в user_subscriptions (JSON-колонки больше нет),
+    // поэтому проекцию строим из них. Метку «*» («все модули») не тащим: это признак
+    // админского доступа, а не перечень модулей.
+    const { data: subRows } = await db.from('user_subscriptions').select('user_id, module_key')
+    const bySub = new Map()
+    for (const r of subRows || []) {
+      if (r.module_key === '*') continue
+      if (!bySub.has(r.user_id)) bySub.set(r.user_id, [])
+      bySub.get(r.user_id).push(r.module_key)
+    }
+    for (const [id, keys] of bySub) report.subscriptions += await relink('subscription_modules', 'subscription_id', id, keysOf(keys))
 
     // ── Наборы ───────────────────────────────────────────────────────────────
     const { data: bundles } = await db.from('bundles').select('id, modules')
