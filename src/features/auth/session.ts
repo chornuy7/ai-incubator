@@ -8,7 +8,17 @@ import { PANEL_SESSION_KEY, PANEL_TOKEN_KEY, ADMIN_SESSION_KEY, ADMIN_TOKEN_KEY 
 // бездействию (без запросов в БД). Обновляется на реальных действиях (SessionGuard) и
 // сбрасывается в «сейчас» при входе, чтобы свежая сессия не вылетела по старой метке.
 export const ACTIVITY_KEY = 'ai-incubator:activity'
-export function markActivity(now = Date.now()) { try { localStorage.setItem(ACTIVITY_KEY, String(now)) } catch { /* ignore */ } }
+/**
+ * Правка 20.08: у админки СВОЯ метка активности. Раньше метка была одна на обе зоны, а
+ * сторож бездействия работал только в панели — админ-сессия не истекала вообще, и человек,
+ * ушедший на несколько часов, возвращался в открытую админку.
+ */
+export const ADMIN_ACTIVITY_KEY = 'ai-incubator:admin-activity'
+/** Ключ активности ТЕКУЩЕЙ зоны (панель/админка). */
+export function activityKey(): string {
+  try { return typeof window !== 'undefined' && window.location.pathname.startsWith('/admin') ? ADMIN_ACTIVITY_KEY : ACTIVITY_KEY } catch { return ACTIVITY_KEY }
+}
+export function markActivity(now = Date.now()) { try { localStorage.setItem(activityKey(), String(now)) } catch { /* ignore */ } }
 
 export interface SessionUser {
   id: string
@@ -59,7 +69,7 @@ function toSessionUser(
  * не трогает админку и наоборот. `trackActivity` — только панель ведёт метку бездействия
  * (MR-141); `redirectTo` — куда уходим после выхода из этой зоны.
  */
-function createSessionStore(opts: { sessionKey: string; tokenKey: string; redirectTo: string; trackActivity: boolean }) {
+function createSessionStore(opts: { sessionKey: string; tokenKey: string; redirectTo: string; trackActivity: boolean; activityKey?: string }) {
   const persist = (user: SessionUser | null) => {
     try {
       if (user) localStorage.setItem(opts.sessionKey, JSON.stringify(user))
@@ -77,7 +87,8 @@ function createSessionStore(opts: { sessionKey: string; tokenKey: string; redire
     login: (user, role, isOwner = false) => {
       const su = toSessionUser(user, role, isOwner)
       persist(su)
-      if (opts.trackActivity) markActivity() // MR-141: свежая сессия → отсчёт бездействия с нуля
+      // MR-141: свежая сессия → отсчёт бездействия с нуля (ключ — своей зоны).
+      if (opts.trackActivity) { try { localStorage.setItem(opts.activityKey || ACTIVITY_KEY, String(Date.now())) } catch { /* ignore */ } }
       set({ user: su })
     },
     refresh: async () => {
@@ -95,7 +106,7 @@ function createSessionStore(opts: { sessionKey: string; tokenKey: string; redire
       if (uid) void logoutUser(uid) // clock-out рабочего времени (§8.1)
       persist(null)
       try { localStorage.removeItem(opts.tokenKey) } catch { /* ignore */ } // токен ТОЛЬКО этой зоны
-      if (opts.trackActivity) { try { localStorage.removeItem(ACTIVITY_KEY) } catch { /* ignore */ } }
+      if (opts.trackActivity) { try { localStorage.removeItem(opts.activityKey || ACTIVITY_KEY) } catch { /* ignore */ } }
       set({ user: null })
       // Жёсткая перезагрузка = чистая память приложения (MR-142 баг 1: без данных прошлой
       // сессии в кэшах). Уходим на вход СВОЕЙ зоны, чужую не трогаем.
@@ -106,7 +117,7 @@ function createSessionStore(opts: { sessionKey: string; tokenKey: string; redire
 
 /** Сессия ПАНЕЛИ. Ключи и поведение — как было; API стора неизменен для всех потребителей. */
 export const useSession = createSessionStore({
-  sessionKey: PANEL_SESSION_KEY, tokenKey: PANEL_TOKEN_KEY, redirectTo: '/', trackActivity: true,
+  sessionKey: PANEL_SESSION_KEY, tokenKey: PANEL_TOKEN_KEY, redirectTo: '/', trackActivity: true, activityKey: ACTIVITY_KEY,
 })
 
 /**
@@ -116,5 +127,8 @@ export const useSession = createSessionStore({
  * выкидывал и из админки.
  */
 export const useAdminSession = createSessionStore({
-  sessionKey: ADMIN_SESSION_KEY, tokenKey: ADMIN_TOKEN_KEY, redirectTo: '/admin', trackActivity: false,
+  // Правка 20.08: админка тоже ведёт метку бездействия — со своим ключом, чтобы активность
+  // в панели не держала админ-сессию живой (и наоборот). Раньше trackActivity был false, и
+  // админ-сессия не истекала вообще.
+  sessionKey: ADMIN_SESSION_KEY, tokenKey: ADMIN_TOKEN_KEY, redirectTo: '/admin', trackActivity: true, activityKey: ADMIN_ACTIVITY_KEY,
 })

@@ -1,6 +1,6 @@
 import { useEffect } from 'react'
-import { useSession, markActivity, ACTIVITY_KEY } from './session'
-import { isAdminZone } from './zone'
+import { useSession, useAdminSession, markActivity, ACTIVITY_KEY, ADMIN_ACTIVITY_KEY } from './session'
+import { isAdminZone, PANEL_TOKEN_KEY, ADMIN_TOKEN_KEY, PANEL_SESSION_KEY, ADMIN_SESSION_KEY } from './zone'
 
 /**
  * MR-141 (созвон 12.08): локальный сторож сессии. Всё делает НА КЛИЕНТЕ, без запросов в
@@ -19,8 +19,12 @@ import { isAdminZone } from './zone'
  */
 const IDLE_MS = 2.5 * 60 * 60 * 1000 // «2–3 ч без активности» — берём середину
 const CHECK_MS = 15_000 // локальная проверка каждые ~15 c (как просил заказчик)
-const LS_SESSION = 'ai-incubator:session'
-const LS_TOKEN = 'ai-incubator:token'
+// Правка 20.08: сторож работает в ОБЕИХ зонах. Раньше он молчал на /admin
+// (`if (isAdminZone()) return`), поэтому админ-сессия не истекала никогда: человек уходил
+// на несколько часов и возвращался в открытую админку. Теперь ключи выбираются по зоне.
+const zoneKeys = () => (isAdminZone()
+  ? { session: ADMIN_SESSION_KEY, token: ADMIN_TOKEN_KEY, activity: ADMIN_ACTIVITY_KEY }
+  : { session: PANEL_SESSION_KEY, token: PANEL_TOKEN_KEY, activity: ACTIVITY_KEY })
 
 /** Срок годности подписанного токена `base64url(uid).exp.hmac` — читаем `exp` локально. */
 function tokenExpired(token: string, now: number): boolean {
@@ -31,13 +35,19 @@ function tokenExpired(token: string, now: number): boolean {
 }
 
 export function SessionGuard() {
-  const user = useSession((s) => s.user)
-  const logout = useSession((s) => s.logout)
+  // Сторож обслуживает ТЕКУЩУЮ зону: в /admin — админ-сессию, иначе панельную.
+  const admin = isAdminZone()
+  const panelUser = useSession((s) => s.user)
+  const adminUser = useAdminSession((s) => s.user)
+  const panelLogout = useSession((s) => s.logout)
+  const adminLogout = useAdminSession((s) => s.logout)
+  const user = admin ? adminUser : panelUser
+  const logout = admin ? adminLogout : panelLogout
 
   // (1) Отмечаем активность на реальных жестах пользователя.
   useEffect(() => {
     if (!user) return
-    if (!localStorage.getItem(ACTIVITY_KEY)) markActivity() // первый визит без метки
+    if (!localStorage.getItem(zoneKeys().activity)) markActivity() // первый визит без метки
     const mark = () => markActivity()
     const events: (keyof WindowEventMap)[] = ['mousedown', 'keydown', 'touchstart', 'scroll']
     events.forEach((e) => window.addEventListener(e, mark, { passive: true }))
@@ -48,20 +58,18 @@ export function SessionGuard() {
   useEffect(() => {
     if (!user) return
     const check = () => {
-      // На вкладке /admin панельный сторож молчит: там своя (админ) сессия, и панельный
-      // тайм-аут/протухший токен не должны выкидывать человека из админки.
-      if (isAdminZone()) return
+      const k = zoneKeys()
       const now = Date.now()
       // (2) «Кука умерла»: подписанный токен (прод) просрочен — читаем его `exp` ЛОКАЛЬНО,
       // без запроса на сервер. Обновление прав (refresh) токен не трогает, так что здесь
       // он надёжный признак живости, в отличие от записи сессии.
       try {
-        const token = localStorage.getItem(LS_TOKEN)
+        const token = localStorage.getItem(k.token)
         if (token && tokenExpired(token, now)) { logout(); return }
       } catch { /* ignore */ }
       // (1) Тайм-аут по бездействию — без запросов в БД, только по локальной метке.
       let last = 0
-      try { last = Number(localStorage.getItem(ACTIVITY_KEY)) || 0 } catch { /* ignore */ }
+      try { last = Number(localStorage.getItem(k.activity)) || 0 } catch { /* ignore */ }
       if (last && now - last > IDLE_MS) { logout(); return }
     }
     check()
@@ -76,8 +84,8 @@ export function SessionGuard() {
   useEffect(() => {
     if (!user) return
     const onStorage = (e: StorageEvent) => {
-      if (isAdminZone()) return
-      if ((e.key === LS_SESSION || e.key === LS_TOKEN) && e.newValue === null) logout()
+      const k = zoneKeys()
+      if ((e.key === k.session || e.key === k.token) && e.newValue === null) logout()
     }
     window.addEventListener('storage', onStorage)
     return () => window.removeEventListener('storage', onStorage)
