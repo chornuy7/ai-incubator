@@ -10,9 +10,25 @@ import { dataPath, readJson, writeJson } from './lib/jsonStore.js'
 import { getSupabase, supabaseEnabled } from './lib/supabase.js'
 
 function sbRoles() { return supabaseEnabled() ? getSupabase() : null }
-const rowToRole = (r) => ({ id: r.id, name: r.name, permissions: r.permissions || {}, builtin: !!r.builtin, userId: r.user_id || undefined })
+/*
+ * `personalFor` (чей персональный доступ) ездит ВНУТРИ `permissions`, а не отдельной
+ * колонкой. Колонки в таблице `roles` нет, а заводить её миграцией — значит получить
+ * сборку, которая на проде до применения миграции молча теряет метку: роль сохранится
+ * «ничьей», при следующем сохранении доступа найдена не будет и создастся заново — у
+ * суба размножатся роли, а выданный доступ пропадёт. `permissions` же jsonb, он
+ * сохраняется целиком и на файлах, и в БД, поэтому метка доезжает всегда.
+ * Наверху объекта поле остаётся для удобства чтения.
+ */
+const personalOf = (perm) => String(perm?.personalFor || '')
+const rowToRole = (r) => ({
+  id: r.id, name: r.name, permissions: r.permissions || {}, builtin: !!r.builtin,
+  userId: r.user_id || undefined, personalFor: personalOf(r.permissions),
+})
 // §11.3: user_id — кто создал роль (до применения миграции колонки нет, см. ownerColumn).
-const roleToRow = (r) => ({ id: r.id, name: r.name, permissions: r.permissions || {}, builtin: !!r.builtin, user_id: r.userId || null })
+const roleToRow = (r) => ({
+  id: r.id, name: r.name, builtin: !!r.builtin, user_id: r.userId || null,
+  permissions: { ...(r.permissions || {}), ...(r.personalFor ? { personalFor: r.personalFor } : {}) },
+})
 import { MODULE_LABELS } from './lib/accountLocks.js'
 import { listFolders } from './targetFolders.js'
 import { listChannels } from './channels.js'
@@ -126,8 +142,11 @@ export function normalizeRole(input = {}) {
      * только роли. Такие роли невидимы в списке — иначе у владельца с десятком
      * сотрудников список превратился бы в свалку «Доступ · Иван», «Доступ · Пётр».
      */
-    personalFor: String(input.personalFor ?? '').trim(),
+    personalFor: String(input.personalFor ?? p.personalFor ?? '').trim(),
     permissions: {
+      // Метка персональной роли едет внутри прав: см. комментарий у roleToRow — колонки
+      // под неё нет, а jsonb сохраняется целиком в любом бэкенде.
+      ...(String(input.personalFor ?? p.personalFor ?? '').trim() ? { personalFor: String(input.personalFor ?? p.personalFor).trim() } : {}),
       // Роль «без оплаты» (тест/модератор): доступ к модулям в обход подписки.
       freeAccess: !!p.freeAccess,
       modules: normPermMap(p.modules),

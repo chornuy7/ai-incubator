@@ -49,3 +49,27 @@ test('блоки живут только у разрешённых модуле�
   }
   assert.deepEqual(kept, { 'neuro-commenting:run': 'allow', 'neuro-commenting:logs': 'deny' })
 })
+
+/**
+ * Прод-специфичный баг (21.08): `roleToRow` не переносил `personalFor` в БД. На файлах
+ * всё работало, а на Supabase роль сохранялась «ничьей» — при следующем сохранении
+ * доступа она не находилась и создавалась заново: у суба размножались роли, а выданный
+ * доступ пропадал. Метка теперь едет внутри `permissions` (jsonb сохраняется целиком).
+ */
+test('метка персональной роли переживает сохранение в любом хранилище', async () => {
+  const { normalizeRole } = await import('../roles.js')
+
+  // Из явного поля метка попадает и в права — там её увидит и БД, и файл.
+  const fromField = normalizeRole({ name: 'Доступ · Иван', personalFor: 'usr_1' })
+  assert.equal(fromField.personalFor, 'usr_1')
+  assert.equal(fromField.permissions.personalFor, 'usr_1')
+
+  // Обратный путь: роль пришла из БД, где метка лежит только внутри прав.
+  const fromDb = normalizeRole({ name: 'Доступ · Иван', permissions: { personalFor: 'usr_1' } })
+  assert.equal(fromDb.personalFor, 'usr_1', 'иначе роль считается ничьей и дублируется')
+
+  // Обычная роль метки не получает — её не должно быть ни наверху, ни в правах.
+  const plain = normalizeRole({ name: 'Оператор' })
+  assert.equal(plain.personalFor, '')
+  assert.equal(plain.permissions.personalFor, undefined)
+})
