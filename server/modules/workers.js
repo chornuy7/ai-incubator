@@ -2992,9 +2992,24 @@ export async function runAutoPosting(task, store) {
   try {
     for (const ch of channels) {
       if (task.stopRequested || task.pauseRequested) break
-      const accountId = accountIds[accIdx++ % accountIds.length]
-      const meta = await getAccountMeta(accountId)
-      if (!canModuleUseAccount(task.moduleKey, meta.status || 'active')) { await store.appendLog(task, 'warning', `Пропуск: ${meta.status}`, meta.name); continue }
+      // Канал закрепляем не за первым попавшимся аккаунтом, а за первым ПРИГОДНЫМ:
+      // раньше недоступный аккаунт уносил с собой сам канал (`continue` шёл по каналам,
+      // а не по аккаунтам) — пост не публиковался и никому не передавался, задача
+      // заканчивалась с «0 из N» и ошибкой (аудит 20.08).
+      let accountId = null
+      let meta = null
+      for (let tried = 0; tried < accountIds.length; tried++) {
+        const cand = accountIds[accIdx++ % accountIds.length]
+        const cm = await getAccountMeta(cand)
+        if (!canModuleUseAccount(task.moduleKey, cm.status || 'active')) {
+          await store.appendLog(task, 'info', `Пропуск: статус ${cm.status}`, cm.name || cand)
+          continue
+        }
+        accountId = cand
+        meta = cm
+        break
+      }
+      if (!accountId) { await store.appendLog(task, 'warning', `${ch}: нет доступных аккаунтов для публикации`); continue }
       let client
       try {
         ;({ client } = await connectAccount(accountId, task.id, { shouldStop: stopFlag(task) }))
