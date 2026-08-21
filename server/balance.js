@@ -646,13 +646,27 @@ async function appendWalletEntry(entry) {
  */
 export async function walletHistory(filter = {}) {
   const limitN = Math.min(1000, Math.max(1, Number(filter.limit) || 100))
+  /*
+   * История читается по ТОМУ ЖЕ кошельку, что и баланс.
+   *
+   * Записи в журнал идут под владельцем кошелька (`changeCoins`/`changeUsd` зовут
+   * `resolveWalletOwner`), а история фильтровалась по СВОЕМУ id. Для сотрудника с общим
+   * балансом это значило: в шапке деньги владельца, они на глазах тратятся, а в «Истории
+   * операций» пусто — «купил подписки, тратил деньги, выдал баланс, нету ничего»
+   * (владелец, 21.08). Своего кошелька у такого сотрудника нет, поэтому и истории у него
+   * своей быть не может — она общая, как и деньги.
+   *
+   * У сотрудника с ЛИЧНЫМ балансом resolveWalletOwner вернёт его самого — он увидит
+   * только свои операции, как и раньше.
+   */
+  const owner = filter.userId ? await resolveWalletOwner(filter.userId) : null
   const db = sb()
   if (db) {
     // §11.4: тянем и currency. Колонка появляется миграцией 2026-07-31 — если её ещё
     // нет, PostgREST вернёт ошибку на весь select, поэтому при промахе повторяем без неё.
     const build = (cols) => {
       let q = db.from('wallet_log').select(cols).order('ts', { ascending: false }).limit(limitN)
-      if (filter.userId) q = q.eq('user_id', key(filter.userId))
+      if (owner) q = q.eq('user_id', key(owner))
       if (filter.since) q = q.gte('ts', new Date(Number(filter.since)).toISOString())
       return q
     }
@@ -670,7 +684,7 @@ export async function walletHistory(filter = {}) {
   try { raw = await fs.readFile(WALLET_LOG(), 'utf8') } catch { return [] }
   const limit = Math.min(1000, Math.max(1, Number(filter.limit) || 100))
   const since = Number(filter.since) || 0
-  const wanted = filter.userId ? key(filter.userId) : null
+  const wanted = owner ? key(owner) : null
 
   const rows = []
   for (const line of raw.split('\n')) {

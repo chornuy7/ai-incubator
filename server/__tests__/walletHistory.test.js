@@ -63,3 +63,40 @@ test('пустой журнал — пустой список, а не паде�
   assert.deepEqual(await B.walletHistory({ userId: 'usr_нет' }), [])
   await fs.rm(dir, { recursive: true, force: true })
 })
+
+/**
+ * Сотрудник с ОБЩИМ балансом (§4.2, MR-30): деньги у него не свои, а владельца.
+ *
+ * Записи в журнал идут под владельцем кошелька (`changeCoins` зовёт resolveWalletOwner),
+ * а история раньше фильтровалась по своему id. Получалось расхождение, которое владелец
+ * и увидел 21.08: в шапке деньги владельца, они на глазах тратятся, а в «Истории
+ * операций» пусто — «купил подписки, тратил деньги, выдал баланс, нету ничего».
+ * Баланс и история обязаны описывать ОДИН кошелёк.
+ */
+test('сотрудник с общим балансом видит историю того кошелька, что и в шапке', async () => {
+  const dir = path.join(os.tmpdir(), `wallet-shared-${process.pid}-${Math.random().toString(36).slice(2)}`)
+  await fs.mkdir(dir, { recursive: true })
+  process.env.BALANCE_FILE = path.join(dir, 'balance.json')
+  process.env.WALLET_LOG_FILE = path.join(dir, 'wallet-log.jsonl')
+  process.env.USERS_FILE = path.join(dir, 'users.json')
+
+  const users = await import('../users.js?w=' + Math.random())
+  const B = await import('../balance.js?w=' + Math.random())
+
+  const owner = await users.createUser({ email: `own-${Date.now()}@t.io`, name: 'Владелец', password: 'x12345' })
+  const sub = await users.createUser({ email: `sub-${Date.now()}@t.io`, name: 'Сотрудник', password: 'x12345', parentId: owner.id })
+
+  await B.changeUsd(100, 'Пополнение из админ-панели', owner.id)
+  await B.changeCoins(20, 'Начисление монет', owner.id)
+  await B.changeCoins(-3, 'mailing: 60 действ.', sub.id) // тратит СОТРУДНИК, кошелёк общий
+
+  const seen = await B.walletHistory({ userId: sub.id })
+  assert.equal(seen.length, 3, 'сотруднику видны все операции общего кошелька')
+  assert.equal(seen[0].reason, 'mailing: 60 действ.', 'его собственное списание — сверху')
+  assert.equal(seen[2].reason, 'Пополнение из админ-панели', 'и пополнение, сделанное владельцу')
+
+  const balance = await B.getBalance(sub.id)
+  assert.equal(balance.usd, 100, 'и баланс тот же самый — это один кошелёк')
+
+  await fs.rm(dir, { recursive: true, force: true })
+})
