@@ -2777,7 +2777,7 @@ function PricesTab() {
                       const coinUsd = prices.coinUsd ?? 0
                       const action = Number(draft[m.key]?.action ?? m.action ?? 0)
                       if (!avg || !tUsd || !coinUsd) {
-                        const mx = prices.maxCost?.usd || 0
+                        const mx = prices.maxCost?.max || prices.maxCost?.usd || 0
                         const pu = action * coinUsd
                         return (
                           <div className="mt-0.5 pr-1 text-[10px] text-faint">
@@ -2797,7 +2797,12 @@ function PricesTab() {
                       // MR-149: МАКСИМУМ — худший случай расхода на ИИ (прочитать пост по
                       // максимуму + сгенерировать ответ по максимуму). Именно его должна
                       // покрывать цена; факт показываем рядом — по максимуму работают не все.
-                      const maxUsd = prices.maxCost?.usd || 0
+                      // Худший случай — С разбором картинки, если модуль её разбирает:
+                      // vision идёт ОТДЕЛЬНЫМ вызовом СВЕРХ генерации (созвон 12.08:
+                      // «максимальная цена… включая написание текста плюс картинки»).
+                      const maxUsd = prices.maxCost?.max || prices.maxCost?.usd || 0
+                      const maxText = prices.maxCost?.usd || 0
+                      const visionUsd = prices.maxCost?.visionUsd || 0
                       const overMax = maxUsd > 0 ? priceUsd / maxUsd : null
                       return (
                         // Tip — инлайновая обёртка, поэтому строку держим в блоке: иначе она
@@ -2807,6 +2812,7 @@ function PricesTab() {
                           text={[
                             maxUsd ? `МАКСИМУМ (худший случай): $${maxUsd.toFixed(7)} за действие` : '',
                             maxUsd ? `  (прочитать ${prices.maxCost?.inChars} симв. + сгенерировать ${prices.maxCost?.outChars} симв.)` : '',
+                            visionUsd > 0 ? `  текст без картинки: $${maxText.toFixed(7)} · разбор картинки: +$${visionUsd.toFixed(7)} (отдельный vision-вызов сверх генерации)` : '',
                             maxUsd ? `  От него и ставим цену — она должна его покрывать с запасом.` : '',
                             '',
                             `НАШИ ЗАТРАТЫ на ИИ — по факту: $${aiUsd.toFixed(7)} за действие`,

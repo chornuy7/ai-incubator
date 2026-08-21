@@ -348,7 +348,7 @@ export interface EffectivePrices {
   /** MR-149: средний расход токенов ИИ на действие (из истории) — для показа себестоимости. */
   avgTokens?: Record<string, number>
   /** MR-149: максимальная стоимость одного ИИ-действия у поставщика (худший случай). */
-  maxCost?: { usd: number; inTokens: number; outTokens: number; inChars: number; outChars: number; charsPerToken: number } | null
+  maxCost?: { usd: number; withImage?: number; max?: number; visionUsd?: number; inTokens: number; outTokens: number; visionIn?: number; visionOut?: number; inChars: number; outChars: number; charsPerToken: number } | null
   /** MR-149: курс «монета → $» (из пакетов монет) — для перевода себестоимости в ⚡. */
   coinUsd?: number
 }

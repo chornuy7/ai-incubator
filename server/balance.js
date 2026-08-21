@@ -193,9 +193,10 @@ export function rowsToModules(rows = []) {
 
 /** Прочитать состав строками. `null` — строк нет (читаем старое поле, переходный период). */
 async function readModuleRows(db, id) {
-  const { data, error } = await db.from('user_subscriptions').select('module_key, expires_at').eq('user_id', id)
+  const { data, error } = await db.from('user_subscriptions').select('module_key, expires_at, updated_at').eq('user_id', id)
   if (error || !data || !data.length) return null
-  return rowsToModules(data)
+  const touchedAt = data.reduce((acc, r) => Math.max(acc, r?.updated_at ? ms(r.updated_at) : 0), 0)
+  return { ...rowsToModules(data), touchedAt }
 }
 
 /** Записать ИТОГОВЫЙ состав строками: недостающие добавить, лишние убрать, дату — всем. */
@@ -361,19 +362,31 @@ export async function getBalance(userId) {
     const sk = key(await resolveSubscriptionOwner(userId))
     const [coinRes, subRes, wsRes, subRows, wsRows] = await Promise.all([
       db.from('coin_balance').select('coins, usd, updated_at').eq('user_id', wk).maybeSingle(),
-      db.from('subscriptions').select('modules, expires_at').eq('id', sk).maybeSingle(),
-      db.from('subscriptions').select('modules, expires_at').eq('id', 'workspace').maybeSingle(),
+      db.from('subscriptions').select('modules, expires_at, updated_at').eq('id', sk).maybeSingle(),
+      db.from('subscriptions').select('modules, expires_at, updated_at').eq('id', 'workspace').maybeSingle(),
       readModuleRows(db, sk).catch(() => null),
       readModuleRows(db, 'workspace').catch(() => null),
     ])
     // Состав берём из СТРОК; старая JSON-колонка — запасной путь на время переноса
     // (у кого строк ещё нет). Приводим к той же форме, что и колонка: 'all' | string[].
-    const personal = subRows
-      ? { modules: subRows.modules, expires_at: subRows.expiresAt ? iso(subRows.expiresAt) : null }
-      : subRes.data
-    const ws = wsRows
-      ? { modules: wsRows.modules, expires_at: wsRows.expiresAt ? iso(wsRows.expiresAt) : null }
-      : wsRes.data
+    /*
+     * Пока идёт перенос, состав живёт в двух местах: строки (новое) и JSON-колонка
+     * (старое, пишем её тоже ради отката). Обычно строки свежее — их пишет тот же код.
+     *
+     * Но во время выката на сервере какое-то время работает СТАРАЯ сборка: она обновляет
+     * только колонку. Покупка, сделанная в это окно, в строки не попадёт, и новая сборка
+     * прочитала бы устаревший состав — человек лишился бы только что оплаченного модуля.
+     *
+     * Поэтому сравниваем, что записано позже. Колонка новее строк — значит её обновил
+     * старый код, и верить надо ей; ближайшая запись состава сама починит строки.
+     */
+    const pick = (rows, row) => {
+      if (!rows) return row
+      if (row?.updated_at && ms(row.updated_at) > (rows.touchedAt || 0)) return row
+      return { modules: rows.modules, expires_at: rows.expiresAt ? iso(rows.expiresAt) : null }
+    }
+    const personal = pick(subRows, subRes.data)
+    const ws = pick(wsRows, wsRes.data)
     // Общий набор `workspace` — набор НАШЕГО пространства, а не подарок каждому.
     //
     // Правка 18.08. Раньше он был fallback'ом для любого, у кого нет своей записи, и

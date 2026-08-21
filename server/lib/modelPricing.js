@@ -44,9 +44,19 @@ async function fromDb() {
   if (_dbCache && Date.now() - _dbCache.ts < DB_TTL) return _dbCache
   try {
     const db = getSupabase()
+    const BASE = 'input_share, max_input_chars, max_output_chars, chars_per_token'
+    const VISION = 'vision_input_tokens, vision_output_tokens'
+    const overrides = async () => {
+      // Колонки vision появляются миграцией 2026-08-22-max-cost-image.sql. Пока её не
+      // накатили — читаем без них, иначе весь блок цен молча уходил бы в null и в
+      // админке пропадала бы строка максимума.
+      const first = await db.from('price_overrides').select(`${BASE}, ${VISION}`).eq('id', 'default').maybeSingle()
+      if (!first.error) return first
+      return db.from('price_overrides').select(BASE).eq('id', 'default').maybeSingle()
+    }
     const [{ data: rows }, { data: ov }] = await Promise.all([
       db.from('model_prices').select('model, input_per_1m, output_per_1m'),
-      db.from('price_overrides').select('input_share, max_input_chars, max_output_chars, chars_per_token').eq('id', 'default').maybeSingle(),
+      overrides(),
     ])
     if (!rows) return _dbCache
     const prices = {}
@@ -58,6 +68,10 @@ async function fromDb() {
         inChars: Number(ov?.max_input_chars) || 0,
         outChars: Number(ov?.max_output_chars) || 0,
         charsPerToken: Number(ov?.chars_per_token) || 0,
+        // Отдельный vision-вызов: картинку шлём detail:'low' (фиксированные 85 токенов
+        // у OpenAI) + промпт; ответ ограничен max_tokens. Тоже из БД, не из кода.
+        visionIn: Number(ov?.vision_input_tokens) || 0,
+        visionOut: Number(ov?.vision_output_tokens) || 0,
       },
       ts: Date.now(),
     }
@@ -139,10 +153,27 @@ export async function maxActionCost(model = process.env.OPENAI_MODEL || DEFAULT_
   if (!p || !lim || !lim.charsPerToken || (!lim.inChars && !lim.outChars)) return null
   const inTokens = Math.ceil(lim.inChars / lim.charsPerToken)
   const outTokens = Math.ceil(lim.outChars / lim.charsPerToken)
-  const usd = (inTokens * p.input + outTokens * p.output) / 1_000_000
+  const round = (v) => Math.round(v * 1e10) / 1e10
+  const usd = round((inTokens * p.input + outTokens * p.output) / 1_000_000)
+
+  /*
+   * Созвон 12.08: «цена за действие должна высчитываться с МАКСИМАЛЬНОЙ цены за одно
+   * действие… включая написание текста плюс картинки».
+   *
+   * Когда модуль разбирает изображение, к генерации добавляется ОТДЕЛЬНЫЙ vision-вызов —
+   * он идёт СВЕРХ обычного, а не вместо него. Считая только текст, мы занижали максимум,
+   * то есть занижали и цену, которая от него ставится.
+   */
+  const visionUsd = round((lim.visionIn * p.input + lim.visionOut * p.output) / 1_000_000)
+  const withImage = round(usd + visionUsd)
+
   return {
-    usd: Math.round(usd * 1e10) / 1e10,
+    usd,                                  // максимум без картинки: прочитать пост + сгенерировать ответ
+    withImage,                            // он же плюс разбор изображения
+    max: withImage > usd ? withImage : usd, // худший случай — от него ставится цена
+    visionUsd,
     inTokens, outTokens,
+    visionIn: lim.visionIn, visionOut: lim.visionOut,
     inChars: lim.inChars, outChars: lim.outChars, charsPerToken: lim.charsPerToken,
   }
 }
