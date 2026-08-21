@@ -273,10 +273,27 @@ export async function getRole(id) {
 }
 
 /** Создать роль. @param {object} input @throws при пустом имени */
+/**
+ * Имя роли уже занято у ЭТОГО владельца? Сравниваем без регистра и лишних пробелов.
+ *
+ * Запрет клиентский существовал, но прямой запрос его обходил — а мусор копится быстро:
+ * у владельца накопились 44 роли, среди них по три «Тимлид» и «Уволенный», отличить
+ * которые невозможно (21.08). Чужие роли не мешают: у каждого владельца свой список.
+ * @param {object[]} roles @param {string} name @param {string} userId @param {string} [skipId]
+ */
+function nameTaken(roles, name, userId, skipId = '') {
+  const norm = (v) => String(v || '').trim().toLowerCase()
+  const target = norm(name)
+  return roles.some((r) => r.id !== skipId && norm(r.userId) === norm(userId) && norm(r.name) === target)
+}
+
 export async function createRole(input) {
   const clean = normalizeRole(input)
   if (!clean.name) throw new Error('Укажите название роли')
   const roles = await listRoles()
+  if (nameTaken(roles, clean.name, clean.userId)) {
+    throw new Error(`Роль «${clean.name}» уже есть — выберите другое название`)
+  }
   const role = {
     id: `role_${crypto.randomUUID().slice(0, 8)}`,
     builtin: false,
@@ -305,6 +322,9 @@ export async function updateRole(id, patch = {}) {
   if (i === -1) return null
   const clean = normalizeRole({ ...roles[i], ...patch })
   if (!clean.name) throw new Error('Название роли не может быть пустым')
+  if (nameTaken(roles, clean.name, clean.userId || roles[i].userId, id)) {
+    throw new Error(`Роль «${clean.name}» уже есть — выберите другое название`)
+  }
   roles[i] = {
     ...roles[i],
     name: clean.name,

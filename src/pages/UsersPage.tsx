@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Users2, Plus, Trash2, ShieldCheck, Check, Users, Wifi, ChevronDown, Search } from 'lucide-react'
+import { Link } from 'react-router-dom'
+import { Users2, Plus, Trash2, ShieldCheck, Check, Users, Wifi, ChevronDown, Search, SlidersHorizontal } from 'lucide-react'
 import { PageHeader, Card, EmptyState, Badge, Modal } from '@/shared/ui'
 import { confirmDialog } from '@/shared/lib/dialog'
 import { fetchUsers, createUser, updateUser, deleteUser, fetchWorktime, type User, type WorkSummary } from '@/api/usersApi'
@@ -277,7 +278,25 @@ export function UsersPage() {
                     </span>
                   ) : (
                     <div className="flex flex-col items-end gap-1">
-                      <RolePicker roles={roles} value={roleIds} onChange={(ids) => void assignRoles(u, ids)} />
+                      <div className="flex items-center gap-1.5">
+                        <RolePicker roles={roles} value={roleIds} onChange={(ids) => void assignRoles(u, ids)} />
+                        {/* Дропдаун роль НАЗНАЧАЕТ, но не показывает, что она даёт. Владелец
+                            ставил суба «Тимлидом» и не понимал, где включить ему нейрочатинг
+                            (решение 21.08: доступ к своим модулям раздаёт владелец). Ссылка
+                            открывает редактор ИМЕННО этой роли; без роли — общий список.
+                            Админ-роль сюда не ведём: её права не редактируются. */}
+                        {!isAdmin && (
+                          <Link
+                            to={roleIds[0] ? `/panel/roles?role=${encodeURIComponent(roleIds[0])}` : '/panel/roles'}
+                            title={roleIds[0]
+                              ? 'Открыть права этой роли: модули из вашей подписки, разделы, ресурсы'
+                              : 'Открыть «Роли и доступы» — создать роль и раздать ей модули'}
+                            className="btn-ghost h-9 shrink-0 gap-1.5 px-2.5 text-xs"
+                          >
+                            <SlidersHorizontal size={13} /> Настроить права роли
+                          </Link>
+                        )}
+                      </div>
                       <span className={cn('text-[11px]', roleIds.length > 1 ? 'text-amber-300/80' : 'text-white/35')}>
                         {isAdmin
                           ? 'Полный доступ (админ-роль)'

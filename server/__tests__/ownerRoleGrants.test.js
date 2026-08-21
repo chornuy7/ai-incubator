@@ -45,3 +45,30 @@ test('роль запоминает владельца и не теряет ег
   // patch поверх существующей роли, поэтому владелец доезжает из неё.
   assert.equal(normalizeRole({ ...{ name: 'Моя', userId: 'usr_1' }, ...{ name: 'Моя 2' } }).userId, 'usr_1')
 })
+
+/**
+ * Мусор в списке ролей (21.08): у владельца накопились 44 роли, среди них по три
+ * «Тимлид» и «Уволенный» — отличить их друг от друга невозможно. Клиентский запрет
+ * дублей обходится прямым запросом, поэтому правило живёт и на сервере.
+ */
+test('роль с занятым именем не создаётся, чужие имена не мешают', async () => {
+  const os = await import('node:os')
+  const path = await import('node:path')
+  const fs = await import('node:fs')
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'roles-'))
+  process.env.ROLES_FILE = path.join(dir, 'roles.json')
+  const { createRole, updateRole } = await import('../roles.js')
+
+  const first = await createRole({ name: 'Тимлид', userId: 'own_1' })
+  // Регистр и пробелы не спасают: «  тимлид » — та же роль для человека.
+  await assert.rejects(() => createRole({ name: '  тимлид ', userId: 'own_1' }), /уже есть/)
+  // У другого владельца свой список — совпадение имени ему не мешает.
+  const other = await createRole({ name: 'Тимлид', userId: 'own_2' })
+  assert.ok(other.id !== first.id)
+
+  // Переименование в занятое имя — тоже отказ, а своё имя за собой оставить можно.
+  const second = await createRole({ name: 'Оператор', userId: 'own_1' })
+  await assert.rejects(() => updateRole(second.id, { name: 'Тимлид' }), /уже есть/)
+  const same = await updateRole(second.id, { name: 'Оператор' })
+  assert.equal(same.name, 'Оператор')
+})
