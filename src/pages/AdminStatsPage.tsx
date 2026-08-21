@@ -2851,6 +2851,24 @@ function PricesTab() {
                         onChange={(e) => setDraft((d) => ({ ...d, [m.key]: { ...d[m.key], monthlyTokens: e.target.value.replace(/[^\d]/g, '') } }))}
                         className="input h-8 w-20 text-right tabular-nums" placeholder="100" />
                     </span>
+                    {/* §3.2: «показывать количество действий, доступных за ВЫДАННЫЕ токены».
+                        Месячная выдача — это тоже выданные токены, и именно их клиент
+                        получает каждый месяц, поэтому считаем ей то же самое, что и
+                        подарку: на сколько действий хватит и во сколько обходится нам. */}
+                    {(() => {
+                      const t = Number(draft[m.key]?.monthlyTokens ?? m.monthlyTokens ?? 0)
+                      if (!t) return null
+                      const a = Number(draft[m.key]?.action ?? m.action ?? 0)
+                      const tUsd = Number(extra.tokenUsd) || prices.tokenUsd || prices.tokenUsdComputed || 0
+                      const costUsd = t * tUsd
+                      return (
+                        <div className="mt-0.5 pr-1 text-[10px] text-muted">
+                          {a ? <>≈ {Math.floor(t / a).toLocaleString('ru-RU')} действий</> : null}
+                          {a && costUsd > 0 ? ' · ' : ''}
+                          {costUsd > 0 ? <>себест. ${fmtUsd(costUsd)}</> : null}
+                        </div>
+                      )
+                    })()}
                   </td>
                   {/* §3 (MR-21): подарочные токены на модуль — суммируются при выборе набора. */}
                   <td className="py-1.5 text-right">
