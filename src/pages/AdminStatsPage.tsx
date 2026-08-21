@@ -9,7 +9,7 @@ import {
   fetchEconomy, type Economy,
 
   type AdminOverview, type ClientReport, type UsersReport, type Problems, type CrmOverview,
-  type ActiveNow, type ActiveTask, type DailySpend, type Purchases, type PaymentsResult, type UserRow, type AccountsHealth, fetchPrices, savePrices, type EffectivePrices, type PricePatch,
+  type ActiveNow, type ActiveTask, type PriceModule, type DailySpend, type Purchases, type PaymentsResult, type UserRow, type AccountsHealth, fetchPrices, savePrices, type EffectivePrices, type PricePatch,
   fetchTaskLogs, type FailedTask, type TaskLogs } from '@/api/adminApi'
 import { updateUser } from '@/api/usersApi'
 import { fetchTickets, fetchTicket, replyTicket, setTicketStatus, fetchTicketsUnread, type ApiTicket, type TicketStatus } from '@/api/ticketsApi'
@@ -2693,6 +2693,36 @@ function PricesTab() {
     JSON.stringify(packs.map((p) => ({ c: p.coins, p: p.price, b: p.best }))) !==
       JSON.stringify((prices.coinPacks || []).map((p) => ({ c: String(p.coins), p: String(p.price), b: !!p.best })))
 
+  /**
+   * Что стоят ВЫДАННЫЕ токены (§3.2): на сколько действий их хватит и во сколько эти
+   * действия обойдутся НАМ.
+   *
+   * Здесь была ошибка в единицах — та самая, о которой шла речь на созвоне 19.08: «наш
+   * токен и токен внутри модели — абсолютно разные вещи, никак между собой не связаны».
+   * Себестоимость считалась как «наши ⚡ × цена токена МОДЕЛИ», хотя это разные валюты:
+   * курс нашего ⚡ и цена токена OpenAI различаются в триста тысяч раз. Подарок в 200 ⚡
+   * выглядел как $0.00005, хотя на деле это 4 000 действий, и по максимуму они сжигают
+   * ИИ на $3.44 — занижение в 66 000 раз.
+   *
+   * Считаем честно: токены → действия (по цене действия этого модуля) → расход на ИИ по
+   * максимуму. У модулей без ИИ расхода на модель нет вовсе — так и пишем.
+   */
+  const issuedHint = (tokens: number, m: PriceModule) => {
+    if (!tokens) return null
+    const a = Number(draft[m.key]?.action ?? m.action ?? 0)
+    if (!a) return <div className="mt-0.5 pr-1 text-[10px] text-muted">действия бесплатны</div>
+    const acts = Math.floor(tokens / a)
+    const maxUsd = prices.maxCost?.max || prices.maxCost?.usd || 0
+    return (
+      <div className="mt-0.5 pr-1 text-[10px] text-muted">
+        ≈ {acts.toLocaleString('ru-RU')} действий
+        {m.usesAi
+          ? (maxUsd > 0 ? <> · до ${fmtUsd(acts * maxUsd)} на ИИ</> : null)
+          : <> · ИИ не тратится</>}
+      </div>
+    )
+  }
+
   const save = async () => {
     setSaving(true)
     try {
@@ -2865,20 +2895,7 @@ function PricesTab() {
                         Месячная выдача — это тоже выданные токены, и именно их клиент
                         получает каждый месяц, поэтому считаем ей то же самое, что и
                         подарку: на сколько действий хватит и во сколько обходится нам. */}
-                    {(() => {
-                      const t = Number(draft[m.key]?.monthlyTokens ?? m.monthlyTokens ?? 0)
-                      if (!t) return null
-                      const a = Number(draft[m.key]?.action ?? m.action ?? 0)
-                      const tUsd = Number(extra.tokenUsd) || prices.tokenUsd || prices.tokenUsdComputed || 0
-                      const costUsd = t * tUsd
-                      return (
-                        <div className="mt-0.5 pr-1 text-[10px] text-muted">
-                          {a ? <>≈ {Math.floor(t / a).toLocaleString('ru-RU')} действий</> : null}
-                          {a && costUsd > 0 ? ' · ' : ''}
-                          {costUsd > 0 ? <>себест. ${fmtUsd(costUsd)}</> : null}
-                        </div>
-                      )
-                    })()}
+                    {issuedHint(Number(draft[m.key]?.monthlyTokens ?? m.monthlyTokens ?? 0), m)}
                   </td>
                   {/* §3 (MR-21): подарочные токены на модуль — суммируются при выборе набора. */}
                   <td className="py-1.5 text-right">
@@ -2891,21 +2908,7 @@ function PricesTab() {
                     {/* MR-22 (§3.2): рядом с подарком — его СЕБЕСТОИМОСТЬ в деньгах и число доступных
                         действий. Себест. $ = токены × цена токена; действий = подарок ÷ цена действия.
                         Считаем по текущему черновику — обновляется прямо при вводе подарка/цены. */}
-                    {(() => {
-                      const g = Number(draft[m.key]?.gift ?? m.gift ?? 0)
-                      if (!g) return null
-                      const a = Number(draft[m.key]?.action ?? m.action ?? 0)
-                      // Цена токена: приоритет черновику «Общие настройки», иначе сохранённая/авто.
-                      const tUsd = Number(extra.tokenUsd) || prices.tokenUsd || prices.tokenUsdComputed || 0
-                      const costUsd = g * tUsd
-                      return (
-                        <div className="mt-0.5 pr-1 text-[10px] text-muted">
-                          {a ? <>≈ {Math.floor(g / a).toLocaleString('ru-RU')} действий</> : null}
-                          {a && costUsd > 0 ? ' · ' : ''}
-                          {costUsd > 0 ? <>себест. ${fmtUsd(costUsd)}</> : null}
-                        </div>
-                      )
-                    })()}
+                    {issuedHint(Number(draft[m.key]?.gift ?? m.gift ?? 0), m)}
                   </td>
                 </tr>
               ))}
