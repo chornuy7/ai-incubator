@@ -13,6 +13,8 @@
 export default {
   key: 'autoposting',
   version: 1,
+  // ИИ не участвует: генерации нет, токены модели не тратятся (см. costModel).
+  usesAi: false,
   title: 'Autoposting',
   platform: 'telegram',
   tags: ['posting', 'autoposting', 'publication', 'your channels', 'content'],

@@ -16,6 +16,8 @@
 export default {
   key: 'ggr',
   version: 1,
+  // ИИ не участвует: генерации нет, токены модели не тратятся (см. costModel).
+  usesAi: false,
   title: 'AI Rating',
   platform: 'telegram',
   tags: ['rating', 'rating', 'account verification', 'health', 'trust', 'diagnostics'],

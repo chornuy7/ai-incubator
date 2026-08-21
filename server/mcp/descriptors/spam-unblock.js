@@ -11,6 +11,8 @@
 /** @type {import('./index.js').ModuleDescriptor} */
 export default {
   key: 'spam-unblock',
+  // ИИ не участвует: генерации нет, токены модели не тратятся (см. costModel).
+  usesAi: false,
   version: 1,
   title: 'Removing spamblock',
   platform: 'telegram',

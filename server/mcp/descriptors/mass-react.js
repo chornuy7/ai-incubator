@@ -13,6 +13,8 @@
 export default {
   key: 'mass-react',
   version: 1,
+  // ИИ не участвует: генерации нет, токены модели не тратятся (см. costModel).
+  usesAi: false,
   title: 'Mass reactions',
   platform: 'telegram',
   tags: ['reactions', 'reactions', 'emoji', 'emoji', 'involvement', 'engagement'],
