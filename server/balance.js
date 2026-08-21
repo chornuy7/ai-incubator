@@ -158,6 +158,52 @@ function mergeExpiry(prevExpiry, nextExpiry, hadRecord, explicit = null) {
 const modeOf = (opts) => (opts?.mode === 'merge' ? 'merge' : 'replace')
 
 /**
+ * Состав подписки хранится СТРОКАМИ в `user_subscriptions` (созвон 19.08: «никакого
+ * джейсона в базе данных»; JSON-массив в subscriptions.modules заказчик назвал
+ * «огромной дыркой»). Здесь — чтение и запись этих строк.
+ *
+ * Переносим только ХРАНЕНИЕ, поведение остаётся прежним:
+ *  - дата ОДНА на всю подписку: во всех строках пользователя она одинаковая, потому что
+ *    пишем её всем разом. Строка на модуль — способ хранения, а не помодульный срок;
+ *  - читаем ПОЛНЫЙ состав, включая истёкший: иначе просрочка выглядит как «ничего не
+ *    куплено» и продлевать в кабинете нечего;
+ *  - объединение набора остаётся выше по коду (applyModules) — сюда приходит уже
+ *    итоговый список.
+ */
+const ALL_ROW = '*' // строка-метка «все модули»: админский провижининг ('all'), включая будущие
+
+/** Прочитать состав строками. `null` — строк нет (читаем старое поле, переходный период). */
+async function readModuleRows(db, id) {
+  const { data, error } = await db.from('user_subscriptions').select('module_key, expires_at').eq('user_id', id)
+  if (error || !data || !data.length) return null
+  // Дата одна на всю подписку; берём максимум — на случай, если строки разъехались.
+  const due = data.reduce((acc, r) => {
+    const t = r.expires_at ? ms(r.expires_at) : null
+    return t && (!acc || t > acc) ? t : acc
+  }, null)
+  if (data.some((r) => r.module_key === ALL_ROW)) return { modules: 'all', expiresAt: due }
+  return { modules: data.map((r) => r.module_key).filter((k) => k !== ALL_ROW), expiresAt: due }
+}
+
+/** Записать ИТОГОВЫЙ состав строками: недостающие добавить, лишние убрать, дату — всем. */
+async function writeModuleRows(db, id, list, expiresAt) {
+  const want = list === 'all' ? [ALL_ROW] : [...new Set((list || []).map(String).filter(Boolean))]
+  const nowIso = new Date().toISOString()
+  const expIso = iso(expiresAt)
+  const { data: have } = await db.from('user_subscriptions').select('module_key').eq('user_id', id)
+  const gone = (have || []).map((r) => r.module_key).filter((k) => !want.includes(k))
+  if (want.length) {
+    // Дату обновляем у ВСЕХ строк: продление двигает срок всей подписке, докупка
+    // приходит с той же (неизменной) датой — поэтому остальным модулям она не сдвинется.
+    await db.from('user_subscriptions').upsert(
+      want.map((module_key) => ({ user_id: id, module_key, expires_at: expIso, updated_at: nowIso })),
+      { onConflict: 'user_id,module_key' },
+    )
+  }
+  if (gone.length) await db.from('user_subscriptions').delete().eq('user_id', id).in('module_key', gone)
+}
+
+/**
  * Записать ОБЩИЙ набор пространства — то, что покупает владелец для всех.
  * @param {string[]|'all'} modules @param {string} [userId] чей баланс вернуть в ответе
  * @param {{months?:number, mode?:'merge'|'replace'}} [opts]
@@ -179,6 +225,11 @@ export async function setModules(modules, userId, opts = {}) {
       { id: 'workspace', scope: 'workspace', user_id: null, modules: finalList, expires_at: iso(finalExpiry), updated_at: new Date().toISOString() },
       { onConflict: 'id' },
     )
+    // Состав — строками. Старую колонку пока пишем тоже: живые деньги, и откат должен
+    // быть возможен без потери данных. Читаем уже из строк (см. getBalance).
+    await writeModuleRows(db, 'workspace', finalList, finalExpiry).catch((e) => {
+      console.warn('[subscriptions] строки состава не записаны:', e?.message)
+    })
     return getBalance(userId)
   }
   await mutateJson(BALANCE_FILE(), (all) => {
@@ -237,6 +288,9 @@ export async function setUserModules(modules, userId, opts = {}) {
       { id: k, scope: 'user', user_id: k, modules: finalList, expires_at: iso(finalExpiry), updated_at: new Date().toISOString() },
       { onConflict: 'id' },
     )
+    await writeModuleRows(db, k, finalList, finalExpiry).catch((e) => {
+      console.warn('[subscriptions] строки состава не записаны:', e?.message)
+    })
     return getBalance(userId)
   }
   await mutateJson(BALANCE_FILE(), (all) => {
@@ -292,13 +346,21 @@ export async function getBalance(userId) {
     // ключ, и суб без личной подписки проваливался на общий `workspace` — получая
     // модули, которых владелец не покупал.
     const sk = key(await resolveSubscriptionOwner(userId))
-    const [coinRes, subRes, wsRes] = await Promise.all([
+    const [coinRes, subRes, wsRes, subRows, wsRows] = await Promise.all([
       db.from('coin_balance').select('coins, usd, updated_at').eq('user_id', wk).maybeSingle(),
       db.from('subscriptions').select('modules, expires_at').eq('id', sk).maybeSingle(),
       db.from('subscriptions').select('modules, expires_at').eq('id', 'workspace').maybeSingle(),
+      readModuleRows(db, sk).catch(() => null),
+      readModuleRows(db, 'workspace').catch(() => null),
     ])
-    const personal = subRes.data
-    const ws = wsRes.data
+    // Состав берём из СТРОК; старая JSON-колонка — запасной путь на время переноса
+    // (у кого строк ещё нет). Приводим к той же форме, что и колонка: 'all' | string[].
+    const personal = subRows
+      ? { modules: subRows.modules, expires_at: subRows.expiresAt ? iso(subRows.expiresAt) : null }
+      : subRes.data
+    const ws = wsRows
+      ? { modules: wsRows.modules, expires_at: wsRows.expiresAt ? iso(wsRows.expiresAt) : null }
+      : wsRes.data
     // Общий набор `workspace` — набор НАШЕГО пространства, а не подарок каждому.
     //
     // Правка 18.08. Раньше он был fallback'ом для любого, у кого нет своей записи, и

@@ -71,7 +71,10 @@ test('полный сетап — скидка применяется', () => {
   assert.equal(c.setup, 'setup-outreach')
   assert.equal(c.discount, outreach.discount)
   assert.ok(c.sum < c.full, 'со скидкой дешевле поштучного')
-  assert.equal(c.sum, Math.round(c.full * (1 - outreach.discount) * 100) / 100)
+  // Цена подписки — целая (созвон 12.08: «без вот этих .8, .3»), округление по
+  // значению: 64.8 → 65. Округляет сервер, витрина только показывает.
+  assert.equal(c.sum, Math.round(c.full * (1 - outreach.discount)))
+  assert.equal(c.sum, Math.round(c.sum), 'сумма подписки — целое число')
 })
 
 test('неполный сетап скидки НЕ даёт', () => {

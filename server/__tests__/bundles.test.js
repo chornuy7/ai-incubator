@@ -64,11 +64,11 @@ test('встроенные сетапы и наборы админа конку�
   const outreach = ['parsing-users', 'parsing-groups', 'mailing', 'neuro-dialogs', 'neuro-chatting']
   const cheap = [{ id: 'bun_z', name: 'Демпинг', modules: outreach, price: 50 }]
   const c = subscriptionCost(outreach, cheap)
-  assert.equal(c.sum, 50, 'набор админа за 50 дешевле сетапа за 64.8')
+  assert.equal(c.sum, 50, 'набор админа за 50 дешевле сетапа за 65')
   assert.equal(c.setup, 'bun_z')
 
   const pricey = [{ id: 'bun_w', name: 'Дороже сетапа', modules: outreach, price: 70 }]
   const c2 = subscriptionCost(outreach, pricey)
-  assert.equal(c2.sum, 64.8, 'сетап со скидкой дешевле — клиент получает его')
+  assert.equal(c2.sum, 65, 'сетап со скидкой дешевле — клиент получает его (64.8 → целые 65)')
   assert.equal(c2.setup, 'setup-outreach')
 })
