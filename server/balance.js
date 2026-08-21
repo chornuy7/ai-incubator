@@ -172,17 +172,30 @@ const modeOf = (opts) => (opts?.mode === 'merge' ? 'merge' : 'replace')
  */
 const ALL_ROW = '*' // строка-метка «все модули»: админский провижининг ('all'), включая будущие
 
+/**
+ * Строки → состав подписки. Вынесено отдельно и без базы, потому что здесь три правила,
+ * которые уже терялись при слияниях: метка «все модули», ОДНА дата на подписку и полный
+ * состав вместе с истёкшим.
+ * @param {{module_key:string, expires_at:string|number|null}[]} rows
+ * @returns {{modules:'all'|string[], expiresAt:number|null}}
+ */
+export function rowsToModules(rows = []) {
+  // Дата одна на всю подписку; берём максимум — на случай, если строки разъехались.
+  const expiresAt = rows.reduce((acc, r) => {
+    const t = r?.expires_at ? ms(r.expires_at) : null
+    return t && (!acc || t > acc) ? t : acc
+  }, null)
+  // Истёкшие строки НЕ отбрасываем: просрочка должна выглядеть как «истекла, продлите»,
+  // а не «ничего не куплено» — иначе в кабинете нечего продлевать.
+  if (rows.some((r) => r?.module_key === ALL_ROW)) return { modules: 'all', expiresAt }
+  return { modules: rows.map((r) => r?.module_key).filter((k) => k && k !== ALL_ROW), expiresAt }
+}
+
 /** Прочитать состав строками. `null` — строк нет (читаем старое поле, переходный период). */
 async function readModuleRows(db, id) {
   const { data, error } = await db.from('user_subscriptions').select('module_key, expires_at').eq('user_id', id)
   if (error || !data || !data.length) return null
-  // Дата одна на всю подписку; берём максимум — на случай, если строки разъехались.
-  const due = data.reduce((acc, r) => {
-    const t = r.expires_at ? ms(r.expires_at) : null
-    return t && (!acc || t > acc) ? t : acc
-  }, null)
-  if (data.some((r) => r.module_key === ALL_ROW)) return { modules: 'all', expiresAt: due }
-  return { modules: data.map((r) => r.module_key).filter((k) => k !== ALL_ROW), expiresAt: due }
+  return rowsToModules(data)
 }
 
 /** Записать ИТОГОВЫЙ состав строками: недостающие добавить, лишние убрать, дату — всем. */
