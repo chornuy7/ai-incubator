@@ -228,15 +228,21 @@ export async function setModules(modules, userId, opts = {}) {
   const mode = modeOf(opts)
   const db = sb()
   if (db) {
-    const prev = mode === 'merge'
-      ? (await db.from('subscriptions').select('modules, expires_at').eq('id', 'workspace').maybeSingle()).data
+    // Предыдущий состав — из СТРОК, а не из JSON-колонки: объединение набора (контракт,
+    // п.2) должно опираться на то же хранилище, из которого потом читают. Срок берём со
+    // строк, а если их нет — с самой подписки: там он и живёт вместе с днём начисления.
+    const prevRows = mode === 'merge' ? await readModuleRows(db, 'workspace').catch(() => null) : null
+    const prevSub = mode === 'merge'
+      ? (await db.from('subscriptions').select('expires_at').eq('id', 'workspace').maybeSingle()).data
       : null
-    const finalList = applyModules(prev?.modules, list, mode)
+    const prevExpiry = prevRows?.expiresAt ?? (prevSub?.expires_at ? ms(prevSub.expires_at) : null)
+    const finalList = applyModules(prevRows?.modules, list, mode)
     const finalExpiry = mode === 'merge'
-      ? mergeExpiry(prev?.expires_at ? ms(prev.expires_at) : null, expiresAt, !!prev, Number(opts?.expiresAt) || null)
+      ? mergeExpiry(prevExpiry, expiresAt, !!(prevRows || prevSub), Number(opts?.expiresAt) || null)
       : expiresAt
     await db.from('subscriptions').upsert(
-      { id: 'workspace', scope: 'workspace', user_id: null, modules: finalList, expires_at: iso(finalExpiry), updated_at: new Date().toISOString() },
+      // `modules` не пишем: состав хранится строками в user_subscriptions.
+      { id: 'workspace', scope: 'workspace', user_id: null, expires_at: iso(finalExpiry), updated_at: new Date().toISOString() },
       { onConflict: 'id' },
     )
     // Состав — строками. Старую колонку пока пишем тоже: живые деньги, и откат должен
@@ -291,15 +297,21 @@ export async function setUserModules(modules, userId, opts = {}) {
   const k = key(userId)
   const db = sb()
   if (db) {
-    const prev = mode === 'merge'
-      ? (await db.from('subscriptions').select('modules, expires_at').eq('id', k).maybeSingle()).data
+    // Предыдущий состав — из СТРОК, а не из JSON-колонки: объединение набора (контракт,
+    // п.2) должно опираться на то же хранилище, из которого потом читают. Срок берём со
+    // строк, а если их нет — с самой подписки: там он и живёт вместе с днём начисления.
+    const prevRows = mode === 'merge' ? await readModuleRows(db, k).catch(() => null) : null
+    const prevSub = mode === 'merge'
+      ? (await db.from('subscriptions').select('expires_at').eq('id', k).maybeSingle()).data
       : null
-    const finalList = applyModules(prev?.modules, list, mode)
+    const prevExpiry = prevRows?.expiresAt ?? (prevSub?.expires_at ? ms(prevSub.expires_at) : null)
+    const finalList = applyModules(prevRows?.modules, list, mode)
     const finalExpiry = mode === 'merge'
-      ? mergeExpiry(prev?.expires_at ? ms(prev.expires_at) : null, expiresAt, !!prev, Number(opts?.expiresAt) || null)
+      ? mergeExpiry(prevExpiry, expiresAt, !!(prevRows || prevSub), Number(opts?.expiresAt) || null)
       : expiresAt
     await db.from('subscriptions').upsert(
-      { id: k, scope: 'user', user_id: k, modules: finalList, expires_at: iso(finalExpiry), updated_at: new Date().toISOString() },
+      // `modules` не пишем: состав хранится строками в user_subscriptions.
+      { id: k, scope: 'user', user_id: k, expires_at: iso(finalExpiry), updated_at: new Date().toISOString() },
       { onConflict: 'id' },
     )
     await writeModuleRows(db, k, finalList, finalExpiry).catch((e) => {
@@ -362,31 +374,25 @@ export async function getBalance(userId) {
     const sk = key(await resolveSubscriptionOwner(userId))
     const [coinRes, subRes, wsRes, subRows, wsRows] = await Promise.all([
       db.from('coin_balance').select('coins, usd, updated_at').eq('user_id', wk).maybeSingle(),
-      db.from('subscriptions').select('modules, expires_at, updated_at').eq('id', sk).maybeSingle(),
-      db.from('subscriptions').select('modules, expires_at, updated_at').eq('id', 'workspace').maybeSingle(),
+      // `modules` из этой таблицы больше НЕ читаем — состав живёт строками.
+      db.from('subscriptions').select('expires_at').eq('id', sk).maybeSingle(),
+      db.from('subscriptions').select('expires_at').eq('id', 'workspace').maybeSingle(),
       readModuleRows(db, sk).catch(() => null),
       readModuleRows(db, 'workspace').catch(() => null),
     ])
-    // Состав берём из СТРОК; старая JSON-колонка — запасной путь на время переноса
-    // (у кого строк ещё нет). Приводим к той же форме, что и колонка: 'all' | string[].
     /*
-     * Пока идёт перенос, состав живёт в двух местах: строки (новое) и JSON-колонка
-     * (старое, пишем её тоже ради отката). Обычно строки свежее — их пишет тот же код.
+     * Состав подписки — ТОЛЬКО строки `user_subscriptions` (созвон 19.08: «никакого
+     * джейсона в базе данных»). Переходный период закончился: строки есть у всех
+     * подписок, JSON-колонка `subscriptions.modules` больше не пишется и не читается.
      *
-     * Но во время выката на сервере какое-то время работает СТАРАЯ сборка: она обновляет
-     * только колонку. Покупка, сделанная в это окно, в строки не попадёт, и новая сборка
-     * прочитала бы устаревший состав — человек лишился бы только что оплаченного модуля.
-     *
-     * Поэтому сравниваем, что записано позже. Колонка новее строк — значит её обновил
-     * старый код, и верить надо ей; ближайшая запись состава сама починит строки.
+     * Срок берём с самой подписки, если строк нет вовсе: она хранит дату, день начисления
+     * и отметку месяца — это свойства подписки, а не модуля.
      */
-    const pick = (rows, row) => {
-      if (!rows) return row
-      if (row?.updated_at && ms(row.updated_at) > (rows.touchedAt || 0)) return row
-      return { modules: rows.modules, expires_at: rows.expiresAt ? iso(rows.expiresAt) : null }
-    }
-    const personal = pick(subRows, subRes.data)
-    const ws = pick(wsRows, wsRes.data)
+    const shape = (rows, row) => (rows
+      ? { modules: rows.modules, expires_at: rows.expiresAt ? iso(rows.expiresAt) : (row?.expires_at ?? null) }
+      : (row ? { modules: undefined, expires_at: row.expires_at } : null))
+    const personal = shape(subRows, subRes.data)
+    const ws = shape(wsRows, wsRes.data)
     // Общий набор `workspace` — набор НАШЕГО пространства, а не подарок каждому.
     //
     // Правка 18.08. Раньше он был fallback'ом для любого, у кого нет своей записи, и
