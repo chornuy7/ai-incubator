@@ -714,6 +714,16 @@ export async function runNeuroCommenting(task, store) {
               await store.appendLog(task, 'warning', hint, meta.name)
             }
             try {
+              /*
+               * Набор комментария — как у человека (просьба владельца 21.08 про скорость
+               * печати). Раньше пауза перед комментарием бралась только из настроек модуля
+               * и не зависела от текста: аккаунт «печатал» две строки и абзац одинаково
+               * быстро. У ответов в чатах и диалогах это давно считается по длине — здесь
+               * не считалось, хотя комментарий человек тоже набирает руками.
+               */
+              const набор = typingPlan(text, (post.message || '').length)
+              await noteWait(task, store, набор.totalMs, `читает пост ${fmtDelay(набор.readMs)}, набирает ${describeTyping(набор)}`, meta.name)
+              if (await interruptibleSleep(набор.totalMs, makeStopCheck(store, task.id))) break
               await sendChannelComment(client, channel, post.id, text)
               task.actionKeys.push(key)
               // §10.5: коммент ушёл — теперь биллим расход vision (описание картинки поста).
