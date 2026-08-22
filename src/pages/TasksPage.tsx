@@ -1114,7 +1114,13 @@ export function TaskDetailPage() {
   const p = pct(t)
   const s = t.settings || {}
   const logs = (t.logs || []).slice(0, 300)
-  const results = (t.results || t.commentHistory || []) as Record<string, unknown>[]
+  /*
+   * `||` здесь не работал: пустой массив в JS — ИСТИНА, поэтому `t.results = []`
+   * перекрывал `commentHistory`, и у нейрокомментинга результаты всегда выходили
+   * пустыми. Комментарий было видно только в логе и только обрезанным — отсюда
+   * «не вижу комменты» (вопрос владельца 22.08). Берём первый НЕПУСТОЙ источник.
+   */
+  const results = ((t.results?.length ? t.results : t.commentHistory) || []) as Record<string, unknown>[]
   const resPages = Math.max(1, Math.ceil(results.length / RES_PER_PAGE))
 
   return (
@@ -1315,6 +1321,47 @@ export function TaskDetailPage() {
                   </tbody>
                 </table>
               ) : (
+                /*
+                 * Правка 22.08 (вопрос владельца: «не вижу комменты в нейрокомментинге»).
+                 * Таблица была одна на всё — с заголовками парсера: «Имя · Юзернейм ·
+                 * Откуда · Тип». Комментарий при этом попадал в колонку «Откуда», канал
+                 * и номер поста не показывались вовсе, и найти на экране то, что аккаунт
+                 * реально написал, было нельзя.
+                 *
+                 * Отправленное СООБЩЕНИЕ (комментарий, ответ, ЛС) — это другой результат,
+                 * чем строка парсера, и колонки у него свои.
+                 */
+                results.some((r) => r.comment || r.text) ? (
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="border-b border-line text-left text-xs text-muted">
+                        <th className="py-1.5 w-40">Аккаунт</th>
+                        <th className="w-44">Куда</th>
+                        <th>Что написал</th>
+                        <th className="w-24 text-right">Статус</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {results.slice((resPage - 1) * RES_PER_PAGE, resPage * RES_PER_PAGE).map((r, i) => {
+                        const канал = String(r.channel ?? r.target ?? r.peer ?? '')
+                        const пост = r.postId ? `· пост #${String(r.postId)}` : ''
+                        const текст = String(r.comment ?? r.text ?? '')
+                        return (
+                          <tr key={i} className="border-b border-line/50 align-top">
+                            <td className="py-1.5 font-medium text-fg">{String(r.accountName ?? r.name ?? '—')}</td>
+                            <td className="text-xs text-muted">
+                              {канал ? <span className="font-mono">{канал.startsWith('@') ? канал : `@${канал}`}</span> : <span className="text-white/25">—</span>}
+                              {пост ? <span className="ml-1 text-white/35">{пост}</span> : null}
+                            </td>
+                            {/* Сам текст — главное на этом экране, поэтому он не обрезается в одну строку. */}
+                            <td className="py-1.5 pr-3 text-xs leading-relaxed text-white/75">{текст || <span className="text-white/25">—</span>}</td>
+                            <td className="text-right"><span className="text-xs text-white/40">{String(r.status ?? '')}</span></td>
+                          </tr>
+                        )
+                      })}
+                    </tbody>
+                  </table>
+                ) : (
                 <table className="w-full text-sm">
                   <thead>
                     <tr className="border-b border-line text-left text-xs text-muted">
@@ -1340,6 +1387,7 @@ export function TaskDetailPage() {
                     ))}
                   </tbody>
                 </table>
+                )
               )}
             </div>
             {/* Пагинация — как в парсере: 200 первых строк «на глаз» скрывали остальное. */}
