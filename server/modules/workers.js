@@ -2881,7 +2881,22 @@ export async function runMailing(task, store) {
     // Расфазировка: без неё потоки быстро выравниваются и шлют синхронно —
     // это и есть кластер, который видно со стороны.
     if (threadNo > 0) await sleep(Math.round(pickDelay(5, 20, mul) * 1000 * (0.4 + Math.random() * 1.2)))
-    for (const tgt of myTargets) {
+    /*
+     * Очередь, а не фиксированный список: цель, потерянную ПО ВИНЕ АККАУНТА (спамблок,
+     * флуд, обрыв), возвращаем в конец и отдаём другому аккаунту потока.
+     *
+     * Прогон 22.08: аккаунт словил спамблок ровно на отправке — и единственная цель
+     * пропала, хотя в потоке было ещё два свободных аккаунта. Задача закрылась словами
+     * «отправлено 0», человек в базе остался ненаписанным. В коде ниже про это прямо
+     * сказано: «такие цели брать МОЖНО: причина в аккаунте, не в них» — но относилось это
+     * только к СЛЕДУЮЩЕЙ рассылке, а внутри текущей цель терялась.
+     *
+     * Повтор ровно один: если и второй аккаунт не смог, дело, скорее всего, в самой цели.
+     */
+    const очередь = [...myTargets]
+    const повторено = new Set()
+    while (очередь.length) {
+      const tgt = очередь.shift()
       const phone = tgt.kind === 'phone' ? tgt.value : ''
       const label = tgt.kind === 'phone' ? `+${tgt.value}` : `@${tgt.value}`
       task = (await store.loadTask(task.id)) || task
@@ -3073,8 +3088,17 @@ export async function runMailing(task, store) {
         if (client) await disconnectAccount(client, account)
         else endAccountWork(account, task.id) // подключение сорвалось — слот занятости не держим
         const reason = mapTelegramError(err)
-        if (!(await handleFlood(task, account, store, err, s, meta.name))) {
+        const виноватАккаунт = await handleFlood(task, account, store, err, s, meta.name)
+        if (!виноватАккаунт) {
           await store.appendLog(task, 'error', reason, meta.name)
+        }
+        // Аккаунт выбыл (спамблок/флуд/бан), а цель ни при чём — отдаём её другому.
+        const ключЦели = `${tgt.kind}:${tgt.value}`
+        if (виноватАккаунт && myAccounts.length > 1 && !повторено.has(ключЦели)) {
+          повторено.add(ключЦели)
+          очередь.push(tgt)
+          await store.appendLog(task, 'info', `${label}: аккаунт выбыл — цель вернулась в очередь, напишет другой`, meta.name)
+          continue
         }
         // Ошибка по конкретному человеку — тоже часть ответа «кому не написали».
         // Такие цели в следующую рассылку брать МОЖНО: причина в аккаунте, не в них.
