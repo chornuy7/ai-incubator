@@ -15,6 +15,7 @@ import {
   markStoriesRead,
   viewRecentPosts,
   joinDiscussionGroupIfNeeded,
+  diagnoseWriteBan,
   mapTelegramError,
 } from '../lib/gramHelpers.js'
 import { joinTargetOrSkip, joinChannelDiscussion, prepareTarget } from '../lib/joinTarget.js'
@@ -25,6 +26,7 @@ import {
   perAccountLimitReached,
   totalLimitReached,
   abortTaskClients,
+  applySpamblockPolicy,
 } from '../lib/accountRunner.js'
 import { accountFingerprint } from '../lib/deviceFingerprint.js'
 import {
@@ -598,6 +600,32 @@ export async function runNeuroCommenting(task, store) {
       try {
         ;({ client } = await connectAccount(accountId, task.id, { shouldStop: stopFlag(task) }))
         const ch = chs[Math.floor(Math.random() * chs.length)]
+
+        /*
+         * Кубик модуля бросаем ДО вступления.
+         *
+         * Порядок был обратный, и получалось ровно то, на что жаловался владелец 22.08:
+         * «аккаунты работают, но не пишут». В логе это выглядело так — аккаунт ждал
+         * полторы минуты, вступал в канал, вступал в группу обсуждения, и только потом
+         * бросал кубик и уходил ни с чем. При вероятности 30% (значение по умолчанию)
+         * так сгорало семь вступлений из десяти — а вступление Telegram считает жёстче
+         * любого другого действия и именно за него отправляет во FloodWait.
+         *
+         * Бросок один на круг: если он прошёл, первый пост его и использует (иначе
+         * вероятность возводилась бы в квадрат — 30% превращались бы в 9%).
+         */
+        let бросокКруга = Math.random() * 100
+        if (!task.readyTargets.includes(`${accountId}:${String(ch).replace(/^@/, '').trim()}`) && бросокКруга > prob) {
+          await store.appendLog(task, 'info', `Пропуск: вероятность модуля ${Math.round(prob)}% (с учётом защиты), выпало ${Math.round(бросокКруга)} — мимо, в канал не вступаю впустую`, meta.name)
+          await disconnectAccount(client, accountId)
+          if (trackIdlePass(task, false)) {
+            await store.appendLog(task, 'error', 'Остановка: комментарий не отправлен после нескольких попыток')
+            break
+          }
+          await store.saveTask(task)
+          continue
+        }
+
         const joinDelay = pickJoinDelay(s.delays?.join?.[0] ?? 84, s.delays?.join?.[1] ?? 156, mul)
         const membership = await prepareTarget(
           client,
@@ -659,7 +687,10 @@ export async function runNeuroCommenting(task, store) {
             const key = `${accountId}:${ch}:${post.id}`
             if (task.actionKeys.includes(key)) continue
 
-            const бросокК = Math.random() * 100
+            // Первый пост круга использует бросок, сделанный перед вступлением, — второй
+            // раз кубик на него не бросаем (см. комментарий выше про 30% → 9%).
+            const бросокК = бросокКруга ?? Math.random() * 100
+            бросокКруга = null
             if (бросокК > prob) {
               await store.appendLog(task, 'info', `Пропуск: вероятность модуля ${Math.round(prob)}% (с учётом защиты), выпало ${Math.round(бросокК)} — мимо`, meta.name)
               continue
@@ -751,7 +782,21 @@ export async function runNeuroCommenting(task, store) {
               progressed = true
               break
             } catch (commentErr) {
-              await store.appendLog(task, 'error', mapTelegramError(commentErr), meta.name)
+              // «Не пишет, хотя вступил» (жалоба владельца 22.08). Ошибку запрета больше не
+              // пересказываем догадкой — спрашиваем у Telegram, кто виноват: чат или аккаунт.
+              // Если аккаунт — дальше крутить его по кругам бессмысленно и вредно: каждый
+              // круг это лишнее вступление здоровым аккаунтом не станет.
+              const запрет = /USER_BANNED_IN_CHANNEL|CHAT_WRITE_FORBIDDEN/i.test(`${commentErr?.errorMessage || commentErr?.message || ''}`)
+              if (запрет) {
+                const диагноз = await diagnoseWriteBan(client, commentErr.writePeer || channel)
+                await store.appendLog(task, 'error', диагноз.text, meta.name)
+                if (диагноз.scope === 'account') {
+                  await applySpamblockPolicy(task, accountId, store, meta.name)
+                  break
+                }
+              } else {
+                await store.appendLog(task, 'error', mapTelegramError(commentErr), meta.name)
+              }
             }
           }
         }

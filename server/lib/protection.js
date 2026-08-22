@@ -119,10 +119,12 @@ export function mapTelegramError(err) {
   const msg = `${/** @type {{ errorMessage?: string, message?: string }} */ (err).errorMessage || /** @type {{ message?: string }} */ (err).message || ''}`
   if (msg.includes('PEER_NOT_FOUND')) return 'Контакт не найден — обновите список диалогов'
   if (msg.includes('NO_DISCUSSION') || msg.includes('MSG_ID_INVALID')) return 'Нет обсуждения у поста или комментарии недоступны'
-  // Telegram различает две совершенно разные вещи, а мы обе называли «Аккаунт забанен»:
-  // из-за этого живой аккаунт, которому просто запретили писать в одном чате, выглядел
-  // сожжённым. Проверено 18.08: аккаунт с такой ошибкой спокойно входит и читает канал.
-  if (msg.includes('USER_BANNED_IN_CHANNEL')) return 'Аккаунту запрещено писать в этом чате/канале (не бан аккаунта)'
+  // Этот код НЕ значит «аккаунт забанен» — аккаунт с ним спокойно входит и читает канал
+  // (проверено 18.08). Но и «запрет в этом чате» тоже не значит: 22.08 живой прогон показал
+  // тот же код на открытой всем группе у аккаунта без личных ограничений — @SpamBot на нём
+  // отвечал «account is limited». Причин две, и лечатся они по-разному, поэтому здесь —
+  // честная развилка; кто именно виноват, выясняет `diagnoseWriteBan` правами участника.
+  if (msg.includes('USER_BANNED_IN_CHANNEL')) return 'Telegram не пропустил сообщение: спамблок аккаунта либо запрет писать в этом чате'
   if (msg.includes('USER_BANNED') || msg.includes('USER_DEACTIVATED')) return 'Аккаунт заблокирован Telegram'
   if (msg.includes('CHANNEL_PRIVATE')) return 'Приватный канал/группа'
   if (msg.includes('FLOOD')) return 'FloodWait'

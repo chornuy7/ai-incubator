@@ -204,17 +204,74 @@ export async function fetchPosts(client, channel, limit = 15) {
 
 /** @param {import('telegram').TelegramClient} client @param {import('@types/telegram').Entity} channel @param {number} postId @param {string} text */
 export async function sendChannelComment(client, channel, postId, text) {
-  await joinDiscussionGroupIfNeeded(client, channel)
+  const linked = await joinDiscussionGroupIfNeeded(client, channel)
   try {
     await client.sendMessage(channel, { message: text, commentTo: postId })
     return
-  } catch { /* fallback */ }
+  } catch (first) {
+    // Запрет на отправку падает одинаково в оба способа (проверено 22.08 живым прогоном:
+    // и `commentTo`, и прямая отправка в обсуждение дали USER_BANNED_IN_CHANNEL). Второй
+    // заход ничего не изменит — только лишний RPC с уже проблемного аккаунта.
+    if (/USER_BANNED_IN_CHANNEL|CHAT_WRITE_FORBIDDEN/i.test(`${first?.errorMessage || first?.message || ''}`)) {
+      // Кому именно писали — нужно вызывающему, чтобы отличить запрет чата от спамблока.
+      first.writePeer = linked?.peer || null
+      throw first
+    }
+  }
   const discussion = await client.invoke(new Api.messages.GetDiscussionMessage({ peer: channel, msgId: postId }))
   const msg = discussion.messages?.[0]
   if (!msg) throw new Error('NO_DISCUSSION')
-  const peer = discussion.chats?.[0] || msg.peerId
+  // Берём чат, В КОТОРОМ лежит сообщение обсуждения, а не первый попавшийся из ответа:
+  // Telegram возвращает здесь и группу, и сам канал, и порядок ничем не закреплён.
+  const want = `${msg.peerId?.channelId ?? msg.peerId?.chatId ?? ''}`
+  const peer = (discussion.chats || []).find((c) => `${c.id}` === want)
+    || (discussion.chats || []).find((c) => !c.broadcast)
+    || msg.peerId
   if (peer) await joinPeerIfNeeded(client, peer)
-  await client.sendMessage(peer, { message: text, replyTo: msg.id })
+  try {
+    await client.sendMessage(peer, { message: text, replyTo: msg.id })
+  } catch (e) {
+    e.writePeer = peer
+    throw e
+  }
+}
+
+/**
+ * Кто виноват в запрете на отправку — АККАУНТ или ЧАТ.
+ *
+ * До 22.08 мы отвечали на этот вопрос догадкой: USER_BANNED_IN_CHANNEL расшифровывали как
+ * «запрет в конкретном чате, аккаунт жив». Живая проверка показала обратное — группа была
+ * открыта на запись всем (в defaultBannedRights нет sendMessages), аккаунт числился в ней
+ * обычным участником без личных ограничений, и всё равно получал этот код; @SpamBot на том
+ * же аккаунте отвечал «account is limited». То есть Telegram шлёт этот код и при СПАМБЛОКЕ
+ * аккаунта. Разница принципиальная: в одном случае надо менять чат, в другом — снимать
+ * спамблок, и пока мы путали их, оператор чинил не то.
+ *
+ * Отличаем правами участника, без обращения к боту: если чат ограничил именно нас — это
+ * видно в ChannelParticipantBanned/bannedRights; если ограничений нет, а писать нельзя —
+ * ограничение на стороне аккаунта.
+ *
+ * @returns {Promise<{scope:'account'|'chat'|'unknown', text:string}>}
+ */
+export async function diagnoseWriteBan(client, peer) {
+  if (!peer) return { scope: 'unknown', text: 'Telegram запретил отправку — причину определить не удалось' }
+  try {
+    const res = await client.invoke(new Api.channels.GetParticipant({ channel: peer, participant: 'me' }))
+    const part = res.participant
+    if (part?.className === 'ChannelParticipantBanned' || part?.bannedRights?.sendMessages === true) {
+      return { scope: 'chat', text: 'Запрет от админов чата: этому аккаунту здесь писать нельзя (аккаунт цел)' }
+    }
+    const chat = res.chats?.find((c) => !c.broadcast)
+    if (chat?.defaultBannedRights?.sendMessages === true) {
+      return { scope: 'chat', text: 'В этом чате запрещено писать всем участникам — комментарии закрыты' }
+    }
+  } catch {
+    return { scope: 'unknown', text: 'Telegram запретил отправку — права участника прочитать не удалось' }
+  }
+  return {
+    scope: 'account',
+    text: 'Спамблок аккаунта: чат открыт на запись и личных ограничений в нём нет — значит, ограничение на стороне аккаунта. Лечится модулем «Снятие спамблока»',
+  }
 }
 
 /** @param {import('telegram').TelegramClient} client @param {import('@types/telegram').Entity} peer @param {number} msgId @param {string} emoji */

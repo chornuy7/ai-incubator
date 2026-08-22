@@ -168,6 +168,35 @@ export async function handleFlood(task, accountId, store, err, settings, account
 }
 
 /**
+ * Вывести аккаунт из работы по спамблоку — одинаково, откуда бы мы про него ни узнали.
+ *
+ * Раньше эта ветка жила внутри `applyBanPolicy` и срабатывала только на текст ошибки со
+ * словом SPAM. Но Telegram сообщает о спамблоке и кодом USER_BANNED_IN_CHANNEL при попытке
+ * написать в группу (см. `diagnoseWriteBan`) — такой аккаунт молча продолжал ходить по
+ * кругам и жечь вступления. Вынесли отдельно, чтобы воркер мог позвать политику напрямую,
+ * когда причину установил сам.
+ *
+ * @param {object} task @param {string} accountId @param {object} store @param {string} [accountName]
+ */
+export async function applySpamblockPolicy(task, accountId, store, accountName) {
+  const safety = getAiSafetySync()
+  if (safety.onSpamblock === 'quarantine') {
+    await setStatus(accountId, 'quarantine', { code: 'SPAM', reason: 'Спамблок → карантин аккаунта', task })
+    await store.appendLog(task, 'error', 'Спамблок → карантин аккаунта', accountName)
+    await store.saveTask(task)
+    return true
+  }
+  // Со сроком: без него аккаунт залипал в spamblock навсегда и не возвращался в работу
+  // сам. Telegram точную длительность не сообщает — берём сутки, это типичный срок
+  // первого спамблока; `reconcileExpiredStatuses` вернёт аккаунт в active по истечении.
+  const until = Date.now() + (safety.spamblockHours ?? 24) * 3600 * 1000
+  await setStatus(accountId, 'spamblock', { code: 'SPAM', reason: 'Спамблок — аккаунт помечен и пропускается', until, task })
+  await store.appendLog(task, 'warning', `Спамблок — аккаунт выведен до ${new Date(until).toLocaleString('ru-RU')}`, accountName)
+  await store.saveTask(task)
+  return true
+}
+
+/**
  * Политики на бан/спамблок из ИИ-безопасности (feature 11).
  * Дефолт onBan='continue' сохраняет прежнее поведение (просто лог ошибки в воркере).
  * @param {object} task @param {string} accountId @param {object} store @param {unknown} err @param {string} [accountName]
@@ -184,22 +213,7 @@ export async function applyBanPolicy(task, accountId, store, err, accountName) {
   if (!isBan && !isSpam) return false
   const safety = getAiSafetySync()
 
-  if (isSpam) {
-    if (safety.onSpamblock === 'quarantine') {
-      await setStatus(accountId, 'quarantine', { code: 'SPAM', reason: 'Спамблок → карантин аккаунта', task })
-      await store.appendLog(task, 'error', 'Спамблок → карантин аккаунта', accountName)
-      await store.saveTask(task)
-      return true
-    }
-    // Со сроком: без него аккаунт залипал в spamblock навсегда и не возвращался в работу
-    // сам. Telegram точную длительность не сообщает — берём сутки, это типичный срок
-    // первого спамблока; `reconcileExpiredStatuses` вернёт аккаунт в active по истечении.
-    const until = Date.now() + (safety.spamblockHours ?? 24) * 3600 * 1000
-    await setStatus(accountId, 'spamblock', { code: 'SPAM', reason: 'Спамблок — аккаунт помечен и пропускается', until, task })
-    await store.appendLog(task, 'warning', `Спамблок — аккаунт выведен до ${new Date(until).toLocaleString('ru-RU')}`, accountName)
-    await store.saveTask(task)
-    return true
-  }
+  if (isSpam) return applySpamblockPolicy(task, accountId, store, accountName)
 
   switch (safety.onBan) {
     case 'quarantine':
