@@ -11,11 +11,40 @@ import { filterAccountsByAccess } from '@/shared/lib/access'
 import { fetchAccountGroups, type AccountGroup } from '@/api/accountGroupsApi'
 import { cn } from '@/shared/lib/utils'
 import { ROLES } from '@/shared/config/modules'
+import { WARMING_MODULES } from '@/shared/lib/massAction'
 import { countryOptionsFrom, matchesGeo, FLAGS } from '@/shared/config/geo'
 import type { TgAccount } from '@/shared/types'
 
-/** Аккаунт «в работе»: заблокирован задачей (lock) или в статусе working — выбирать нельзя. */
-const isBusy = (a: TgAccount) => !!a.busyIn || a.status === 'working'
+/**
+ * Занят ли аккаунт ДЛЯ ЭТОГО модуля.
+ *
+ * Правка 22.08 (прогон на живых аккаунтах). Раньше здесь стояло «занят любой
+ * блокировкой» — и многомодульность, которой посвящён отдельный пункт ТЗ, через
+ * интерфейс была недоступна: аккаунт, комментирующий в одном модуле, второй модуль
+ * показывал в «Недоступны». Сервер при этом многомодульность РАЗРЕШАЕТ и специально
+ * отдаёт фронту список модулей-держателей (`server/tgAccounts.js`, комментарий «чтобы
+ * форма блокировала только совпадение по СВОЕМУ модулю») — форма этим не пользовалась.
+ *
+ * Запрещаем ровно два случая:
+ *   • аккаунт уже занят ЭТИМ же модулем — две задачи одного модуля на один профиль
+ *     не имеют смысла и дерутся за один слот;
+ *   • среди держателей есть ПРОГРЕВ — он исключающий (§3.3 ТЗ): пока профиль греется,
+ *     он ничем другим не занимается.
+ *
+ * Без `moduleKey` (общие экраны — автоматизация, кампания) ведём себя как раньше:
+ * там «для какого модуля» неизвестно, и осторожность важнее.
+ */
+const holdersOf = (a: TgAccount) => a.busyIn?.modules?.length
+  ? a.busyIn.modules.map((m) => m.moduleKey)
+  : (a.busyIn ? [a.busyIn.moduleKey] : [])
+
+const isBusy = (a: TgAccount, moduleKey?: string) => {
+  if (a.status === 'working' && !a.busyIn) return true // занят без известного держателя
+  const holders = holdersOf(a)
+  if (!holders.length) return false
+  if (!moduleKey) return true
+  return holders.includes(moduleKey) || holders.some((k) => WARMING_MODULES.has(k))
+}
 // §3.2/§5.1: непрогретые/нерабочие статусы нельзя назначать в работу.
 const NON_RUNNABLE = new Set(['warming', 'pause', 'floodwait', 'quarantine', 'spamblock', 'reauth', 'invalid', 'frozen'])
 const STATUS_RU: Record<string, string> = {
@@ -23,12 +52,19 @@ const STATUS_RU: Record<string, string> = {
   spamblock: 'спамблок', reauth: 'нужна авторизация', invalid: 'невалидный', frozen: 'заморожен',
 }
 const statusBlocks = (a: TgAccount) => NON_RUNNABLE.has(a.status)
-const isUnavailable = (a: TgAccount) => isBusy(a) || statusBlocks(a)
+const isUnavailable = (a: TgAccount, moduleKey?: string) => isBusy(a, moduleKey) || statusBlocks(a)
 /** Реальная причина недоступности для бейджа/тултипа (не общее «ЗАНЯТ»). */
-const isWorking = (a: TgAccount) => !!a.busyIn || a.status === 'working'
+const isWorking = (a: TgAccount, moduleKey?: string) => isBusy(a, moduleKey)
 // MR-132: конкретная причина, а не общее «недоступен» — человек должен понимать, что именно.
-const unavailLabel = (a: TgAccount) => {
-  if (isWorking(a)) return 'В работе'
+const unavailLabel = (a: TgAccount, moduleKey?: string) => {
+  // Занят ЭТИМ же модулем или прогревом — называем модуль: «В работе» ничего не объясняет,
+  // когда рядом стоят аккаунты, занятые другим модулем и при этом доступные.
+  if (isWorking(a, moduleKey)) {
+    const label = a.busyIn?.modules?.length
+      ? a.busyIn.modules.map((m) => m.moduleLabel).join(', ')
+      : a.busyIn?.moduleLabel
+    return label ? `занят: ${label}` : 'В работе'
+  }
   if (a.noProxy) return 'нет прокси'
   if (a.proxyOk === false) return 'прокси не отвечает'
   return STATUS_RU[a.status] || 'недоступен'
@@ -37,12 +73,18 @@ const unavailLabel = (a: TgAccount) => {
 /** Двухпанельный выбор аккаунтов: Доступные | Выбрано. */
 export function AccountPicker({
   selected, onChange, actions = ['Добавить все', 'Удалить все'], withFilters = true,
-  selectedTitle = 'Выбрано',
+  selectedTitle = 'Выбрано', moduleKey,
 }: {
   selected: Set<string>
   onChange: (next: Set<string>) => void
   actions?: string[]
   withFilters?: boolean
+  /**
+   * Для какого модуля выбираем. Нужен для многомодульности: аккаунт, занятый ДРУГИМ
+   * модулем, для этого — свободен. Без ключа (кампания, автоматизация) считаем занятым
+   * любого держателя, как раньше.
+   */
+  moduleKey?: string
   selectedTitle?: string
 }) {
   const data = useApp((s) => s.data)
@@ -94,8 +136,8 @@ export function AccountPicker({
     [accounts, selected, country, role],
   )
 
-  const busyAvailable = useMemo(() => available.filter(isUnavailable), [available])
-  const freeAvailable = useMemo(() => available.filter((a) => !isUnavailable(a)), [available])
+  const busyAvailable = useMemo(() => available.filter((a) => isUnavailable(a, moduleKey)), [available, moduleKey])
+  const freeAvailable = useMemo(() => available.filter((a) => !isUnavailable(a, moduleKey)), [available, moduleKey])
 
   // Сколько аккаунтов скрыто именно фильтром «Рабочие прокси» (прямое подключение, без прокси).
   const hiddenByProxy = useMemo(() => {
@@ -127,8 +169,16 @@ export function AccountPicker({
   const removeAll = () => onChange(new Set())
   const add = (id: string) => {
     const acc = accounts.find((a) => a.id === id)
-    if (acc && isBusy(acc)) {
-      pushToast({ type: 'error', title: 'Аккаунт занят', desc: acc.busyIn ? `Сейчас в модуле «${acc.busyIn.moduleLabel}». Параллельный запуск запрещён.` : 'Аккаунт в работе — выбрать нельзя.' })
+    if (acc && isBusy(acc, moduleKey)) {
+      const holders = acc.busyIn?.modules?.length ? acc.busyIn.modules.map((m) => m.moduleLabel).join(', ') : acc.busyIn?.moduleLabel
+      const прогрев = holdersOf(acc).some((k) => WARMING_MODULES.has(k))
+      pushToast({
+        type: 'error',
+        title: 'Аккаунт занят',
+        desc: прогрев
+          ? 'Идёт прогрев — пока он не закончится, аккаунт не берут другие модули.'
+          : holders ? `Уже работает в «${holders}» этим же модулем — вторая задача на тот же профиль не запускается.` : 'Аккаунт в работе — выбрать нельзя.',
+      })
       return
     }
     if (acc && statusBlocks(acc)) {
@@ -200,13 +250,13 @@ export function AccountPicker({
                   {/* MR-101 (UI-003): плоский список без заголовков-стран (страна видна флажком в строке;
                       фильтр по стране остаётся в dropdown «Все страны»). */}
                   {freeAvailable.map((a) => (
-                    <AccountRow key={a.id} account={a} liteMode={liteMode} onAdd={() => add(a.id)} />
+                    <AccountRow key={a.id} account={a} liteMode={liteMode} moduleKey={moduleKey} onAdd={() => add(a.id)} />
                   ))}
                   {busyAvailable.length > 0 && (
                     <div className="mt-2 border-t border-line pt-2">
                       <div className="px-2 py-1 text-xs font-bold text-rose-300">Недоступны · {busyAvailable.length}</div>
                       {busyAvailable.map((a) => (
-                        <AccountRow key={a.id} account={a} liteMode={liteMode} busy disabled />
+                        <AccountRow key={a.id} account={a} liteMode={liteMode} moduleKey={moduleKey} busy disabled />
                       ))}
                     </div>
                   )}
@@ -225,7 +275,7 @@ export function AccountPicker({
                 {showBroken && (
                   <div className="max-h-64 overflow-y-auto px-2 pb-2">
                     {brokenList.map((a) => (
-                      <AccountRow key={a.id} account={a} liteMode={liteMode} busy disabled onFixProxy={hasProxyIssue(a) ? () => fixProxy(a.id) : undefined} />
+                      <AccountRow key={a.id} account={a} liteMode={liteMode} moduleKey={moduleKey} busy disabled onFixProxy={hasProxyIssue(a) ? () => fixProxy(a.id) : undefined} />
                     ))}
                   </div>
                 )}
@@ -297,8 +347,10 @@ function MiniBadge({ children, tone, outline }: { children: React.ReactNode; ton
   return <span className={cn('inline-flex items-center gap-0.5 rounded border px-1 py-0.5 text-[9px] font-bold uppercase', tones[tone])}>{children}</span>
 }
 
-function AccountRow({ account: a, liteMode, onAdd, busy, disabled, onFixProxy }: {
+function AccountRow({ account: a, liteMode, onAdd, busy, disabled, onFixProxy, moduleKey }: {
   account: TgAccount; liteMode: boolean; onAdd?: () => void; busy?: boolean; disabled?: boolean; onFixProxy?: () => void
+  /** Для какого модуля выбираем — от этого зависит, считается ли аккаунт занятым. */
+  moduleKey?: string
 }) {
   return (
     <div
@@ -307,7 +359,7 @@ function AccountRow({ account: a, liteMode, onAdd, busy, disabled, onFixProxy }:
       onClick={onFixProxy}
       title={onFixProxy
         ? 'Нет рабочего прокси — открыть Менеджер → Прокси и назначить'
-        : disabled ? (a.busyIn ? `В работе: ${a.busyIn.moduleLabel} — выбрать нельзя` : `${unavailLabel(a)} — назначить в работу нельзя`) : undefined}
+        : disabled ? `${unavailLabel(a, moduleKey)} — выбрать нельзя` : undefined}
       className={cn('group flex items-center gap-2.5 rounded-xl px-2 py-2',
         onFixProxy ? 'cursor-pointer hover:bg-iris-500/10' : disabled ? 'cursor-not-allowed select-none opacity-60' : 'hover:bg-elevated')}
     >
@@ -330,7 +382,7 @@ function AccountRow({ account: a, liteMode, onAdd, busy, disabled, onFixProxy }:
       {!liteMode && (
         <div className="flex shrink-0 items-center gap-1">
           {busy ? (
-            <MiniBadge tone="rose">{isWorking(a) ? <><Loader2 size={9} className="animate-spin" /> В работе</> : unavailLabel(a)}</MiniBadge>
+            <MiniBadge tone="rose">{isWorking(a, moduleKey) ? <><Loader2 size={9} className="animate-spin" /> {unavailLabel(a, moduleKey)}</> : unavailLabel(a, moduleKey)}</MiniBadge>
           ) : (
             <MiniBadge tone="spark"><span className="h-1.5 w-1.5 rounded-full bg-current" /> Активные</MiniBadge>
           )}

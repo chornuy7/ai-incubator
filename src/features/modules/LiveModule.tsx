@@ -463,7 +463,7 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
       {/* MR-149: калькулятор цены за действие теперь в ModuleRunner (для всех модулей). */}
       {cfg.accountPicker && showBlock('run') && (
         <div id="sec-accounts" className="scroll-mt-24">
-          <AccountPicker selected={selected} onChange={setSelected} actions={cfg.accountActions} withFilters={!!cfg.accountFilters} selectedTitle={cfg.selectedTitle ?? 'Выбрано'} />
+          <AccountPicker moduleKey={moduleKey} selected={selected} onChange={setSelected} actions={cfg.accountActions} withFilters={!!cfg.accountFilters} selectedTitle={cfg.selectedTitle ?? 'Выбрано'} />
         </div>
       )}
 

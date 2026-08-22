@@ -329,7 +329,7 @@ function ChannelParserInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: 
         onEdit={editPreset} onDelete={deletePreset} disabled={running} />
       {/* Выбор аккаунтов */}
       <div id="sec-accounts" className="scroll-mt-24">
-        <AccountPicker selected={selected} onChange={setSelected} actions={cfg.accountActions} withFilters={!!cfg.accountFilters} selectedTitle={cfg.selectedTitle ?? 'Выбрано для парсинга'} />
+        <AccountPicker moduleKey={moduleKey} selected={selected} onChange={setSelected} actions={cfg.accountActions} withFilters={!!cfg.accountFilters} selectedTitle={cfg.selectedTitle ?? 'Выбрано для парсинга'} />
       </div>
 
       {/* Шаблоны */}

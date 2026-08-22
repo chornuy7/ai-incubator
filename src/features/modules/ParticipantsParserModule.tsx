@@ -213,7 +213,7 @@ function Inner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: string }) {
       <PresetBar presets={presets} onApply={applyPreset} onSave={handleSave}
         onEdit={editPreset} onDelete={deletePreset} disabled={running} />
       <div id="sec-accounts" className="scroll-mt-24">
-        <AccountPicker selected={selected} onChange={setSelected} actions={cfg.accountActions} withFilters={!!cfg.accountFilters} selectedTitle={cfg.selectedTitle ?? 'Выбрано для парсинга'} />
+        <AccountPicker moduleKey={moduleKey} selected={selected} onChange={setSelected} actions={cfg.accountActions} withFilters={!!cfg.accountFilters} selectedTitle={cfg.selectedTitle ?? 'Выбрано для парсинга'} />
       </div>
 
       <SectionCard id="sec-settings" icon={<Settings2 size={18} />} title="Настройки парсинга" badge={targetList.length ? `${targetList.length} групп` : undefined}>
