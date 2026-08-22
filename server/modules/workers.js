@@ -646,8 +646,9 @@ export async function runNeuroCommenting(task, store) {
             const key = `${accountId}:${ch}:${post.id}`
             if (task.actionKeys.includes(key)) continue
 
-            if (Math.random() * 100 > prob) {
-              await store.appendLog(task, 'info', `Пропуск по вероятности (${prob}%)`, meta.name)
+            const бросокК = Math.random() * 100
+            if (бросокК > prob) {
+              await store.appendLog(task, 'info', `Пропуск: вероятность модуля ${Math.round(prob)}% (с учётом защиты), выпало ${Math.round(бросокК)} — мимо`, meta.name)
               continue
             }
 
@@ -749,7 +750,13 @@ export async function runNeuroCommenting(task, store) {
       task.readyTargets = task.readyTargets || []
       task.actionKeys = task.actionKeys || []
       await store.saveTask(task)
-      if (await breakableDelay(pickDelay(5, 15, mul) * 1000, store, task)) break
+      // Пауза между кругами была НЕВИДИМОЙ: в логе шли действия подряд, а между ними
+      // молча стояли секунды. На вопрос «работают ли задержки» ответить было нечем —
+      // ровно это и всплыло на прогоне 22.08. Теперь пауза называет себя и попадает
+      // в общий счёт ожидания задачи.
+      const пауза752 = pickDelay(5, 15, mul) * 1000
+      await noteWait(task, store, пауза752, 'пауза между действиями')
+      if (await breakableDelay(пауза752, store, task)) break
     }
     task.status = statusAfterRun(task)
     await store.appendLog(task, task.status === 'error' ? 'error' : 'info', finishNote(task))
@@ -892,8 +899,11 @@ export async function runNeuroChatting(task, store) {
         if (membership.status === 'joined') await incAction(accountId, 'joins') // §6: суточный лимит вступлений
         const msgs = await fetchPosts(client, peer, 15)
         const msg = msgs[Math.floor(Math.random() * msgs.length)]
-        if (!msg || Math.random() * 100 > prob) {
-          await store.appendLog(task, 'info', msg ? `Пропуск по вероятности (${prob}%)` : 'Нет сообщений в чате', meta.name)
+        const бросокЧ = Math.random() * 100
+        if (!msg || бросокЧ > prob) {
+          await store.appendLog(task, 'info', msg
+            ? `Пропуск: вероятность модуля ${Math.round(prob)}% (с учётом защиты), выпало ${Math.round(бросокЧ)} — мимо`
+            : 'Нет сообщений в чате', meta.name)
           await disconnectAccount(client, accountId)
           if (trackIdlePass(task, false)) break
           continue
@@ -953,7 +963,9 @@ export async function runNeuroChatting(task, store) {
       task = (await store.loadTask(task.id)) || task
       task.readyTargets = task.readyTargets || []
       await store.saveTask(task)
-      if (await breakableDelay(pickDelay(5, 15, mul) * 1000, store, task)) break
+      const пауза956 = pickDelay(5, 15, mul) * 1000
+      await noteWait(task, store, пауза956, 'пауза между действиями')
+      if (await breakableDelay(пауза956, store, task)) break
     }
     task.status = statusAfterRun(task)
     await store.appendLog(task, task.status === 'error' ? 'error' : 'info', finishNote(task))
@@ -1140,7 +1152,15 @@ export async function runMassReact(task, store) {
 
         // Вероятность применяется ОДИН раз. Раньше в ветке групп она проверялась дважды,
         // и «50%» на деле давали 25% — реакций выходило вдвое меньше обещанного.
-        if (Math.random() * 100 > prob) {
+        //
+        // Пропуск по вероятности РАНЬШЕ НЕ ПИСАЛСЯ вовсе: действие не происходило, а в
+        // логе оставалась дыра — оператор видел «вступил» и сразу «завершено» (прогон
+        // 22.08). Пишем и число, и бросок, и откуда взялась цифра: `prob` — это заданная
+        // вероятность, уже умноженная на множитель защиты, и расхождение с настройкой
+        // («поставил 50, вижу 73») само по себе рождало вопросы.
+        const бросок = Math.random() * 100
+        if (бросок > prob) {
+          await store.appendLog(task, 'info', `Пропуск: вероятность модуля ${Math.round(prob)}% (с учётом защиты), выпало ${Math.round(бросок)} — мимо`, meta.name)
           await disconnectAccount(client, accountId)
           continue
         }
@@ -1166,7 +1186,9 @@ export async function runMassReact(task, store) {
         }
       }
       task = (await store.loadTask(task.id)) || task
-      if (await breakableDelay(pickDelay(5, 15, mul) * 1000, store, task)) break
+      const паузаР = pickDelay(5, 15, mul) * 1000
+      await noteWait(task, store, паузаР, 'пауза между действиями')
+      if (await breakableDelay(паузаР, store, task)) break
     }
     task.status = statusAfterRun(task)
     await store.appendLog(task, task.status === 'error' ? 'error' : 'info', finishNote(task))
@@ -1320,7 +1342,9 @@ export async function runMassLooking(task, store) {
         }
       }
       task = (await store.loadTask(task.id)) || task
-      if (await breakableDelay(pickDelay(10, 30, mul) * 1000, store, task)) break
+      const паузаЛ = pickDelay(10, 30, mul) * 1000
+      await noteWait(task, store, паузаЛ, 'пауза между действиями')
+      if (await breakableDelay(паузаЛ, store, task)) break
     }
     task.status = statusAfterRun(task)
     await store.appendLog(task, task.status === 'error' ? 'error' : 'info', finishNote(task))
@@ -1457,7 +1481,9 @@ export async function runWarming(task, store) {
         }
       }
       task = (await store.loadTask(task.id)) || task
-      if (await breakableDelay(pickDelay(30, 90, mul) * 1000, store, task)) break
+      const паузаП = pickDelay(30, 90, mul) * 1000
+      await noteWait(task, store, паузаП, 'пауза между действиями')
+      if (await breakableDelay(паузаП, store, task)) break
     }
     task.status = statusAfterRun(task)
     await store.appendLog(task, task.status === 'error' ? 'error' : 'info', finishNote(task, 'Прогрев завершён'))
