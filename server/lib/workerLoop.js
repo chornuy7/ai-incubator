@@ -1,3 +1,5 @@
+import { scheduleHour } from './accountFatigue.js'
+
 /**
  * План прогрева по уровню (§8.2). 0 = Быстрый (2 дня, интенсивнее), 1 = Нормальный (3–7),
  * 2 = Стандартный (7–14, мягче/естественнее). Чистая функция.
@@ -33,6 +35,34 @@ export function pickWeightedKey(weights, r = Math.random()) {
 /** Попадает ли час в дневное окно активности прогрева (§8.2, ночью пауза). @param {number} hour @param {number} [startH] @param {number} [endH] */
 export function inActiveWindow(hour, startH = 9, endH = 23) {
   return hour >= startH && hour < endH
+}
+
+/**
+ * Длина дневного окна активности в мс — 9:00–23:00, четырнадцать часов.
+ *
+ * По ней считается темп прогрева: обещанные «10 действий в день» — это 10 действий за
+ * ЭТО окно, а не за 13 минут подряд (правка 22.08 после замера на живых аккаунтах).
+ */
+export const WARM_WINDOW_MS = 14 * 60 * 60 * 1000
+
+/**
+ * Сколько миллисекунд до ближайшего наступления заданного часа ПО КИЕВСКОМУ времени.
+ * Нужен ночной паузе прогрева: «возобновим в 9:00» должно значить девять утра у
+ * клиента, а не на сервере.
+ * @param {number} hour @param {number} [now]
+ */
+export function msUntilHour(hour, now = Date.now()) {
+  const HOUR = 60 * 60 * 1000
+  for (let i = 1; i <= 24; i += 1) {
+    const ts = now + i * HOUR
+    if (scheduleHour(ts) === hour) {
+      // Попали в нужный час — доводим до его начала, чтобы не стартовать в 9:59.
+      const d = new Date(ts)
+      d.setMinutes(0, 0, 0)
+      return Math.max(HOUR, d.getTime() - now)
+    }
+  }
+  return 8 * HOUR // не смогли посчитать — спим до утра ориентировочно
 }
 
 /** @param {object} task @param {boolean} progressed @param {number} [maxIdle] */

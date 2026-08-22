@@ -85,3 +85,32 @@ test('idleWaitPlan: ровно на границе потолка ещё ждё�
   assert.equal(idleWaitPlan(now + IDLE_WAIT_CAP_MS, now).wait, true)
   assert.equal(idleWaitPlan(now + IDLE_WAIT_CAP_MS + 1, now).wait, false)
 })
+
+/**
+ * Темп прогрева должен держать обещание уровня (правка 22.08 после замера на живых
+ * аккаунтах). «Стандартный» обещает ~10 действий в день, а на деле делал два действия
+ * за две минуты: дневная норма отрабатывалась за четверть часа, и «7–14 дней» не значили
+ * ничего. Интервал считается от дневного окна активности, а не от паузы между действиями.
+ */
+test('§8.2 темп прогрева: дневная норма растянута на окно активности', async () => {
+  const { WARM_WINDOW_MS, warmingPace, inActiveWindow, msUntilHour } = await import('../lib/workerLoop.js')
+
+  assert.equal(WARM_WINDOW_MS, 14 * 60 * 60 * 1000, 'окно 9:00–23:00 — четырнадцать часов')
+
+  for (const level of [0, 1, 2]) {
+    const pace = warmingPace(level)
+    const шаг = WARM_WINDOW_MS / pace.actionsPerDay
+    assert.ok(шаг >= 20 * 60 * 1000, `уровень «${pace.label}»: шаг ${Math.round(шаг / 60000)} мин — слишком часто для ${pace.actionsPerDay} действий в день`)
+    assert.ok(шаг <= 3 * 60 * 60 * 1000, `уровень «${pace.label}»: шаг ${Math.round(шаг / 60000)} мин — норма не уместится в сутки`)
+  }
+
+  // Ночью прогрев спит: активность в 4 утра — сама по себе примета фермы.
+  assert.equal(inActiveWindow(4), false)
+  assert.equal(inActiveWindow(9), true)
+  assert.equal(inActiveWindow(22), true)
+  assert.equal(inActiveWindow(23), false)
+
+  // Ночная пауза ведёт к утру, а не к «через минуту».
+  const доУтра = msUntilHour(9)
+  assert.ok(доУтра >= 60 * 60 * 1000 && доУтра <= 24 * 60 * 60 * 1000, `до 9:00 получилось ${Math.round(доУтра / 60000)} мин`)
+})

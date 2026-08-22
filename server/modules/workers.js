@@ -102,7 +102,10 @@ export async function breakableDelay(ms, store, task) {
 import { getAccountMeta, setAccountMeta } from '../accountsMeta.js'
 import { releaseTaskLocks, markTaskLive, markTaskDone, assertAccountAvailable } from '../lib/accountLocks.js'
 import { loadSessionString, createClient } from '../tgAuth.js'
-import { pickCommentCandidates, trackIdlePass, warmingPace, pickWeightedKey, idleWaitPlan } from '../lib/workerLoop.js'
+import {
+  pickCommentCandidates, trackIdlePass, warmingPace, pickWeightedKey, idleWaitPlan, WARM_WINDOW_MS, msUntilHour, inActiveWindow,
+} from '../lib/workerLoop.js'
+import { scheduleHour } from '../lib/accountFatigue.js'
 import { limitReached, incAction } from '../lib/dailyActions.js'
 import { cleanMailingNumbers, classifyMailingTargets, pickMailingAccount } from '../lib/mailing.js'
 import { listLeads, sortDialogsByLeadPriority, upsertLead, updateLead } from '../leads.js'
@@ -1396,7 +1399,8 @@ export async function runWarming(task, store) {
   // 3 уровня прогрева (§8.2, названия заказчика): длиннее уровень — медленнее/естественнее темп.
   const pace = warmingPace(s.warmLevel ?? 1)
   const mul = delayMultiplier(s.protectionLevel ?? 1, s.delayPreset ?? 1) * pace.mul
-  await store.appendLog(task, 'info', `Прогрев запущен · уровень: ${pace.label} · ~${pace.actionsPerDay} действий/день на аккаунт`)
+  const шаг = Math.round(WARM_WINDOW_MS / Math.max(1, pace.actionsPerDay) / 60000)
+  await store.appendLog(task, 'info', `Прогрев запущен · уровень: ${pace.label} · ~${pace.actionsPerDay} действий/день на аккаунт (примерно раз в ${шаг} мин, ночью — пауза)`)
   const accountIds = s.accountIds || []
   // §3.3: на время прогрева аккаунт получает статус «warming» — он входит в NON_RUNNABLE,
   // поэтому боевые модули его не возьмут. Раньше этот статус не выставлял НИКТО: он был
@@ -1512,9 +1516,30 @@ export async function runWarming(task, store) {
         }
       }
       task = (await store.loadTask(task.id)) || task
-      const паузаП = pickDelay(30, 90, mul) * 1000
-      await noteWait(task, store, паузаП, 'пауза между действиями')
+      /*
+       * ТЕМП ПРОГРЕВА ДЕРЖИТ ОБЕЩАНИЕ (правка 22.08, прогон на живых аккаунтах).
+       *
+       * Уровень обещает «~10 действий в день», а интерфейс тут же считал: «10 действий ×
+       * ~75 с ≈ 13 мин». Замер это подтвердил: два действия за две минуты. То есть дневная
+       * норма отрабатывалась за четверть часа, а «7–14 дней» не значили ничего — аккаунт
+       * получал суточную активность залпом, ровно как бот.
+       *
+       * Считаем интервал от обещания: дневная норма растягивается на окно активности
+       * (9:00–23:00 — ночью человек спит, §8.2). Разброс ±35%, иначе действия идут по
+       * метроному. Нижняя граница — прежняя пауза между действиями: быстрее не нужно.
+       */
+      const шагПоНорме = Math.round((WARM_WINDOW_MS / Math.max(1, pace.actionsPerDay)) * (0.65 + Math.random() * 0.7))
+      const паузаП = Math.max(pickDelay(30, 90, mul) * 1000, шагПоНорме)
+      await noteWait(task, store, паузаП, `темп прогрева: ~${pace.actionsPerDay} действий/день`)
       if (await breakableDelay(паузаП, store, task)) break
+
+      // Ночью прогрев спит: активность в 4 утра — сама по себе примета фермы.
+      const час = scheduleHour(Date.now())
+      if (!inActiveWindow(час)) {
+        const доУтра = msUntilHour(9)
+        await noteWait(task, store, доУтра, `ночная пауза прогрева: возобновим в 9:00 (сейчас ${час}:00)`)
+        if (await breakableDelay(доУтра, store, task)) break
+      }
     }
     task.status = statusAfterRun(task)
     await store.appendLog(task, task.status === 'error' ? 'error' : 'info', finishNote(task, 'Прогрев завершён'))
