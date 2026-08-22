@@ -5,7 +5,7 @@
  */
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { classifyOpenAiError, generateComment } from '../neuroCommenting/commentGenerator.js'
+import { classifyOpenAiError, generateComment, cleanCommentText } from '../neuroCommenting/commentGenerator.js'
 
 test('classifyOpenAiError: кончились деньги — фатально, «слишком часто» — нет', () => {
   const quota = classifyOpenAiError(429, '{"error":{"code":"insufficient_quota","message":"You exceeded your current quota"}}')
@@ -83,4 +83,24 @@ test('avoid: уже отправленный текст не повторяет�
     assert.ok(!used.includes(text), `повтор на шаге ${i}: «${text}»`)
     used.push(text)
   }
+})
+
+/**
+ * Живой прогон 22.08: в канал ушло «Комментарий: Сообщение содержит лишь тестовый текст…».
+ * Модель повторяет заголовок промпта, а по такому префиксу комментарий машинный за версту.
+ */
+test('служебный ярлык модели снимается, живой текст не трогаем', () => {
+  assert.equal(cleanCommentText('Комментарий: Сообщение содержит лишь тестовый текст.'), 'Сообщение содержит лишь тестовый текст.')
+  assert.equal(cleanCommentText('Comment: nice'), 'nice')
+  assert.equal(cleanCommentText('Я: привет'), 'привет')
+  // Кавычки вокруг всего ответа — тот же почерк.
+  assert.equal(cleanCommentText('"Интересно, спасибо!"'), 'Интересно, спасибо!')
+  // Ярлык и кавычки вперемешку — разбирается слоями, висячей кавычки не остаётся.
+  assert.equal(cleanCommentText('Комментарий: "Ответ: вложенный"'), 'вложенный')
+})
+
+test('слово «комментарий» в живой фразе — не ярлык, режем только префикс с двоеточием', () => {
+  assert.equal(cleanCommentText('Комментарии тут закрыты'), 'Комментарии тут закрыты')
+  assert.equal(cleanCommentText('Ответ автору: спасибо'), 'Ответ автору: спасибо')
+  assert.equal(cleanCommentText('Обычный текст без ярлыка'), 'Обычный текст без ярлыка')
 })

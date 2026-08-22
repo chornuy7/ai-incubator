@@ -55,6 +55,33 @@ export function classifyOpenAiError(status, body = '') {
  *   тексты в задаче; `variantSeed` — чтобы шаблон отличался у разных аккаунтов.
  * @returns {Promise<{ text:string|null, mode:'openai'|'template_no_key'|'template_api_error'|'fatal', reason?:string }>}
  */
+/**
+ * Снять служебный ярлык, который модель приписывает перед самим текстом.
+ *
+ * Живой прогон 22.08: в канал ушло «Комментарий: Сообщение содержит лишь тестовый текст…».
+ * Так человек не пишет — по одному этому префиксу видно, что комментарий машинный, а
+ * промпт («Напиши короткий комментарий к посту») модель охотно повторяет заголовком.
+ * Чистим слоями, как в диалогах (`cleanDialogReply`): модель повторяет то ярлык, то
+ * кавычки, то оба сразу.
+ */
+export function cleanCommentText(raw) {
+  let s = String(raw ?? '').trim()
+  for (let i = 0; i < 3; i += 1) {
+    const before = s
+    // Текст, целиком обёрнутый в кавычки, — тоже почерк модели, а не человека. Снимаем
+    // ВНУТРИ цикла: ярлык и кавычки приходят вперемешку («Комментарий: "Ответ: …"»), и
+    // при разборе одним проходом оставалась висячая кавычка на конце.
+    const m = s.match(/^[«"']([\s\S]+)[»"']$/)
+    if (m && !/[«"']/.test(m[1])) s = m[1].trim()
+    // «Комментарий:», «Коммент —», Comment:, «Ответ:», «Мой комментарий:»
+    s = s.replace(/^\s*(мой\s+|краткий\s+|короткий\s+)?(комментарий|коммент|отклик|отзыв|ответ|comment|reply)\s*[:—–-]\s*/i, '')
+    // Ярлык роли, как в диалогах.
+    s = s.replace(/^\s*(я|assistant|me)\s*[:—–-]\s*/i, '')
+    if (s === before) break
+  }
+  return s.trim()
+}
+
 export async function generateComment(postText, promptIndex = 0, systemPrompt, opts = {}) {
   const o = typeof opts === 'string' ? { variantSeed: opts } : (opts || {})
   const snippet = (postText || '').slice(0, 500)
@@ -84,7 +111,9 @@ export async function generateComment(postText, promptIndex = 0, systemPrompt, o
         })
         if (res.ok) {
           const data = await res.json()
-          const text = data?.choices?.[0]?.message?.content?.trim()
+          // Чистим ДО проверки длины и до сравнения с уже отправленным: иначе один и
+          // тот же текст с ярлыком и без него считался бы двумя разными.
+          const text = cleanCommentText(data?.choices?.[0]?.message?.content)
           if (text && text.length >= 3 && text.length <= 400) {
             if (avoid.has(normalizeText(text)) && attempt === 0) continue // повтор — просим другой
             // C1 (§5.1): расход токенов возвращаем наружу — воркер запишет его в журнал
