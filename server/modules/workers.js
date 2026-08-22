@@ -120,7 +120,7 @@ import { recordAction } from '../actionLog.js'
 import { describeIncomingImage, messageHasPhoto } from '../lib/visionDescribe.js'
 import { effectivePrices } from '../priceStore.js'
 import { canWorkNow, noteAction } from '../accountActivity.js'
-import { typingPlan, describeTyping, fmtDelay } from '../lib/humanDelays.js'
+import { typingPlan, describeTyping, fmtDelay, monitorPoll } from '../lib/humanDelays.js'
 import { beginAccountWork, endAccountWork, releaseTaskBusy } from '../lib/accountBusy.js'
 // Гейт статуса ЗАВИСИТ ОТ МОДУЛЯ: пока аккаунт греется, боевые модули его не берут, а
 // прогрев — берёт. Раньше эту границу держал общий лок «один аккаунт = одна задача»;
@@ -626,11 +626,21 @@ export async function runNeuroCommenting(task, store) {
           const top = Math.max(...fetched.map((p) => p.id))
           if (!seenTop.has(ch)) {
             seenTop.set(ch, top)
-            await store.appendLog(task, 'info', `Мониторинг @${ch}: ждём новые посты (последний #${top})`, meta.name)
+            const через = monitorPoll()
+            idleLap += 1
+            lastSkip = 'мониторинг: ждём новый пост'
+            idleUntil = idleUntil ? Math.min(idleUntil, Date.now() + через) : Date.now() + через
+            await store.appendLog(task, 'info', `Мониторинг @${ch}: запомнил последний пост #${top}, жду новых — проверю через ${fmtDelay(через)}`, meta.name)
             posts = []
           } else {
             posts = fetched.filter((p) => p.id > seenTop.get(ch))
-            if (!posts.length) await store.appendLog(task, 'info', `Новых постов нет: @${ch}`, meta.name)
+            if (!posts.length) {
+              const через = monitorPoll()
+              idleLap += 1
+              lastSkip = 'мониторинг: новых постов нет'
+              idleUntil = idleUntil ? Math.min(idleUntil, Date.now() + через) : Date.now() + через
+              await store.appendLog(task, 'info', `Новых постов нет: @${ch} — проверю через ${fmtDelay(через)}`, meta.name)
+            }
           }
         }
         if (!posts.length) {
@@ -1132,9 +1142,21 @@ export async function runMassReact(task, store) {
             seenTop: seenTop.get(t),
             reacted: (id) => reacted.has(`${accountId}|${t}|${id}`),
           })
+          /*
+           * Мониторинг — это ОЖИДАНИЕ, а не простой (уточнение владельца 22.08: «если
+           * ждёт новые — это не сломан, просто новых постов нет»). Но перечитывать канал
+           * каждые 5–15 секунд незачем: посты выходят раз в часы, а мы за это время
+           * делаем сотни запросов с каждого аккаунта — прямой путь к FloodWait.
+           * Ставим следующую проверку через 5–30 минут (срок случайный) и говорим об
+           * этом в логе, чтобы «ноль действий за час» не читалось как поломка.
+           */
           if (pick.action === 'baseline') {
             seenTop.set(t, pick.topId)
-            await store.appendLog(task, 'info', `Мониторинг ${targetLabel}: ждём новые посты (последний #${pick.topId})`, meta.name)
+            const через = monitorPoll()
+            idleLap += 1
+            lastSkip = 'мониторинг: ждём новый пост'
+            idleUntil = idleUntil ? Math.min(idleUntil, Date.now() + через) : Date.now() + через
+            await store.appendLog(task, 'info', `Мониторинг ${targetLabel}: запомнил последний пост #${pick.topId}, жду новых — проверю через ${fmtDelay(через)}`, meta.name)
             await disconnectAccount(client, accountId)
             continue
           }
@@ -1142,7 +1164,16 @@ export async function runMassReact(task, store) {
             const why = pick.reason === 'no-posts' ? 'постов нет'
               : pick.reason === 'no-new' ? 'новых постов нет'
                 : 'все последние посты уже отработаны этим аккаунтом'
-            await store.appendLog(task, 'info', `${targetLabel}: ${why}`, meta.name)
+            // «Новых постов нет» — то же ожидание: следующая проверка тоже через 5–30 мин.
+            if (pick.reason === 'no-new' || pick.reason === 'no-posts') {
+              const через = monitorPoll()
+              idleLap += 1
+              lastSkip = `мониторинг: ${why}`
+              idleUntil = idleUntil ? Math.min(idleUntil, Date.now() + через) : Date.now() + через
+              await store.appendLog(task, 'info', `${targetLabel}: ${why} — проверю через ${fmtDelay(через)}`, meta.name)
+            } else {
+              await store.appendLog(task, 'info', `${targetLabel}: ${why}`, meta.name)
+            }
             await disconnectAccount(client, accountId)
             continue
           }

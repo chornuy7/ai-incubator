@@ -71,3 +71,19 @@ test('подписи для логов читаются человеком', () 
   assert.match(line, /4 сл\./)
   assert.match(line, /сл\/мин/)
 })
+
+/**
+ * Мониторинг новых постов — это ОЖИДАНИЕ, а не простой (уточнение владельца 22.08:
+ * «если ждёт новые — это не сломан, просто новых постов нет»). Но перечитывать канал
+ * каждые 5–15 секунд нельзя: посты выходят раз в часы, а сотни лишних запросов с
+ * каждого аккаунта — прямая дорога к FloodWait. Владелец задал вилку: 5–30 минут.
+ */
+test('мониторинг проверяет канал раз в 5–30 минут, срок случайный', async () => {
+  const { MONITOR_POLL_MS, monitorPoll } = await import('../lib/humanDelays.js')
+  assert.equal(MONITOR_POLL_MS.min, 5 * 60 * 1000, 'нижняя граница — 5 минут')
+  assert.equal(MONITOR_POLL_MS.max, 30 * 60 * 1000, 'верхняя — 30 минут')
+  assert.equal(monitorPoll(() => 0), MONITOR_POLL_MS.min)
+  assert.equal(monitorPoll(() => 1), MONITOR_POLL_MS.max)
+  const mid = monitorPoll(() => 0.5)
+  assert.ok(mid > MONITOR_POLL_MS.min && mid < MONITOR_POLL_MS.max, 'срок случайный внутри вилки')
+})
