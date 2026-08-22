@@ -54,6 +54,22 @@ export async function loadAllMeta() {
   }
 }
 
+/**
+ * Подпись аккаунта для логов и таблиц результатов.
+ *
+ * Прогон 22.08: 48 аккаунтов из 98 импортированы без имени, и лог задачи на семи
+ * аккаунтах выглядел как семь строк «—» — кто вступил, кто написал, кого выкинуло,
+ * понять нельзя. Имя не всегда есть, но телефон или id есть всегда: безымянных строк
+ * в логе быть не должно.
+ */
+export function accountLabel(meta, accountId) {
+  const m = meta || {}
+  if (m.name && String(m.name).trim()) return String(m.name).trim()
+  if (m.username && String(m.username).trim()) return `@${String(m.username).trim().replace(/^@/, '')}`
+  if (m.phone && String(m.phone).trim()) return String(m.phone).trim()
+  return `#${String(accountId || '').slice(-6)}`
+}
+
 export async function getAccountMeta(accountId) {
   const all = await loadAllMeta()
   return { ...DEFAULT_META, ...(all[accountId] || {}) }

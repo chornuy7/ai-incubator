@@ -57,3 +57,19 @@ test.after(async () => {
   await fs.rm(dir, { recursive: true, force: true })
   delete process.env.ACCOUNTS_META_FILE
 })
+
+/**
+ * Прогон 22.08: 48 аккаунтов из 98 импортированы без имени, и лог задачи на семи
+ * аккаунтах выглядел как семь строк «—». Кто вступил, кто написал, кого выкинуло —
+ * не разобрать; на парке в полсотни профилей такой лог бесполезен.
+ */
+test('подпись аккаунта: имя → username → телефон → id, безымянных строк не бывает', async () => {
+  const { accountLabel } = await import('../accountsMeta.js')
+  assert.equal(accountLabel({ name: 'Настя Barry', phone: '+1410' }, 'acc_1'), 'Настя Barry')
+  assert.equal(accountLabel({ username: 'PowerGrabGo' }, 'acc_1'), '@PowerGrabGo')
+  assert.equal(accountLabel({ username: '@PowerGrabGo' }, 'acc_1'), '@PowerGrabGo', 'собачка не удваивается')
+  assert.equal(accountLabel({ phone: '+14104310531' }, 'acc_1'), '+14104310531')
+  assert.equal(accountLabel({}, 'acc_04c3aa2c40a1'), '#2c40a1')
+  assert.equal(accountLabel({ name: '   ' }, 'acc_04c3aa2c40a1'), '#2c40a1', 'пробелы — не имя')
+  assert.ok(accountLabel(null, 'acc_1'))
+})

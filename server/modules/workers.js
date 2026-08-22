@@ -101,7 +101,7 @@ export async function breakableDelay(ms, store, task) {
   }
   return true
 }
-import { getAccountMeta, setAccountMeta } from '../accountsMeta.js'
+import { getAccountMeta, setAccountMeta, accountLabel } from '../accountsMeta.js'
 import { releaseTaskLocks, markTaskLive, markTaskDone, assertAccountAvailable } from '../lib/accountLocks.js'
 import { loadSessionString, createClient } from '../tgAuth.js'
 import {
@@ -398,9 +398,20 @@ async function finalizeAccounts(accountIds, taskId, paused = false) {
   // посреди задержки) выключал аккаунт из ВСЕХ модулей до перезапуска процесса — аудит 20.08.
   if (taskId) releaseTaskBusy(taskId)
   for (const id of accountIds) {
-    const meta = await getAccountMeta(id)
+    const meta = await accountMeta(id)
     if (meta.status === 'working') await setAccountMeta(id, { status: paused ? 'pause' : 'active' })
   }
+}
+
+/**
+ * Мета аккаунта с гарантированной подписью: половина пула импортирована без имени,
+ * и лог выходил безымянным (прогон 22.08). Логи ниже читают `meta.name` в 140+ местах —
+ * подставляем запасную подпись один раз здесь, в хранилище её не пишем.
+ */
+async function accountMeta(id) {
+  const meta = await getAccountMeta(id)
+  meta.name = accountLabel(meta, id)
+  return meta
 }
 
 function targets(settings) {
@@ -553,7 +564,7 @@ export async function runNeuroCommenting(task, store) {
         break
       }
       const accountId = accountIds[idx++ % accountIds.length]
-      const meta = await getAccountMeta(accountId)
+      const meta = await accountMeta(accountId)
       if (!canModuleUseAccount(task.moduleKey, meta.status || 'active')) {
         idleLap += 1
         lastSkip = `статус ${meta.status}`
@@ -908,7 +919,7 @@ export async function runNeuroChatting(task, store) {
         break
       }
       const accountId = accountIds[idx++ % accountIds.length]
-      const meta = await getAccountMeta(accountId)
+      const meta = await accountMeta(accountId)
       if (!canModuleUseAccount(task.moduleKey, meta.status || 'active') || perAccountLimitReached(s, accountId, task)) { idleLap += 1; lastSkip = 'статус или лимит на аккаунт'; continue }
       // §4.1–§4.2: усталость и распорядок — во ВСЕХ модулях, а не только в комментинге.
       // Иначе «сквозной отдых» дырявый: аккаунт, отработавший смену тут, копил усталость,
@@ -1122,7 +1133,7 @@ export async function runMassReact(task, store) {
         break
       }
       const accountId = accountIds[idx++ % accountIds.length]
-      const meta = await getAccountMeta(accountId)
+      const meta = await accountMeta(accountId)
       if (!canModuleUseAccount(task.moduleKey, meta.status || 'active') || perAccountLimitReached(s, accountId, task)) { idleLap += 1; lastSkip = 'статус или лимит на аккаунт'; continue }
       // §4.1–§4.2: реакции — самый «дешёвый» модуль, и именно им добивали уставшие
       // аккаунты. Проверка та же, что в комментинге: усталость общая.
@@ -1352,7 +1363,7 @@ export async function runMassLooking(task, store) {
         break
       }
       const accountId = accountIds[idx++ % accountIds.length]
-      const meta = await getAccountMeta(accountId)
+      const meta = await accountMeta(accountId)
       if (!canModuleUseAccount(task.moduleKey, meta.status || 'active') || perAccountLimitReached(s, accountId, task)) { idleLap += 1; lastSkip = 'статус или лимит на аккаунт'; continue }
       // §4.1–§4.2: просмотры тоже расходуют аккаунт — усталость и распорядок общие.
       const human = await canWorkNow(accountId)
@@ -1463,7 +1474,7 @@ export async function runWarming(task, store) {
   // только на локе задачи — то есть исчезала в ту же секунду, когда прогрев заканчивался
   // (прогон 21–22.07, тест 12.5).
   for (const id of accountIds) {
-    const meta = await getAccountMeta(id)
+    const meta = await accountMeta(id)
     if (meta.status === 'active') await setAccountMeta(id, { status: 'warming' })
   }
   let idx = 0
@@ -1488,7 +1499,7 @@ export async function runWarming(task, store) {
         break
       }
       const accountId = accountIds[idx++ % accountIds.length]
-      const meta = await getAccountMeta(accountId)
+      const meta = await accountMeta(accountId)
       if (!canModuleUseAccount(task.moduleKey, meta.status || 'active')) { idleLap += 1; continue }
       // Аккаунт уже исключён из прогона (см. счётчик ошибок ниже) — не долбимся в него
       // снова. Когда исключены все, сработает проверка idleLap выше и задача завершится.
@@ -1608,7 +1619,7 @@ export async function runWarming(task, store) {
   // боевых модулей. На паузе не трогаем: задачу ещё продолжат.
   if (!task.pauseRequested) {
     for (const id of accountIds) {
-      const meta = await getAccountMeta(id)
+      const meta = await accountMeta(id)
       if (meta.status === 'warming') await setAccountMeta(id, { status: 'active', statusBefore: null })
     }
   }
@@ -1759,7 +1770,7 @@ export async function runNeuroDialogs(task, store) {
         continue
       }
       const accountId = myAccounts[idx++ % myAccounts.length]
-      const meta = await getAccountMeta(accountId)
+      const meta = await accountMeta(accountId)
       // Спамблок запрещает писать ПЕРВЫМ, но не мешает ответить тому, кто написал сам.
       // Нейродиалоги только отвечают — значит такой аккаунт здесь полноценно работает.
       // Выбрасывать его означало бы бросить живых собеседников на полуслове.
@@ -2125,7 +2136,7 @@ export async function runGgr(task, store) {
   try {
     for (const accountId of allIds) {
       if (task.stopRequested || task.pauseRequested) break
-      const meta = await getAccountMeta(accountId)
+      const meta = await accountMeta(accountId)
 
       // Аккаунт, занятый другой задачей, не трогаем: параллельный коннект той же сессией
       // роняет обе задачи и может выглядеть для Telegram как угон сессии.
@@ -2261,7 +2272,7 @@ export async function runChannelParser(task, store, kind) {
   async function nextAccountId() {
     for (let i = 0; i < accountIds.length; i++) {
       const id = accountIds[accIdx++ % accountIds.length]
-      const meta = await getAccountMeta(id)
+      const meta = await accountMeta(id)
       if (canModuleUseAccount(task.moduleKey, meta.status || 'active')) return id
     }
     return null
@@ -2302,7 +2313,7 @@ export async function runChannelParser(task, store, kind) {
         await store.appendLog(task, 'warning', 'Нет доступных аккаунтов (все в карантине/невалидны)')
         break
       }
-      const meta = await getAccountMeta(accountId)
+      const meta = await accountMeta(accountId)
       let client
       try {
         ;({ client } = await connectAccount(accountId, task.id, { shouldStop: stopFlag(task) }))
@@ -2493,7 +2504,7 @@ export async function runParticipantsParser(task, store, kind) {
   const nextAccountId = async () => {
     for (let i = 0; i < accountIds.length; i++) {
       const id = accountIds[accIdx++ % accountIds.length]
-      const meta = await getAccountMeta(id)
+      const meta = await accountMeta(id)
       if (canModuleUseAccount(task.moduleKey, meta.status || 'active')) return id
     }
     return null
@@ -2513,7 +2524,7 @@ export async function runParticipantsParser(task, store, kind) {
       if (task.stopRequested) break
       const accountId = pinnedId || await nextAccountId()
       if (!accountId) { await store.appendLog(task, 'warning', 'Нет доступных аккаунтов'); break }
-      const meta = await getAccountMeta(accountId)
+      const meta = await accountMeta(accountId)
       let client
       try {
         ;({ client } = await connectAccount(accountId, task.id, { shouldStop: stopFlag(task) }))
@@ -2903,7 +2914,7 @@ export async function runMailing(task, store) {
   const usable = []
   const lowTrust = []
   for (const id of accountIds) {
-    const meta = await getAccountMeta(id)
+    const meta = await accountMeta(id)
     if (!canModuleUseAccount(task.moduleKey, meta.status || 'active')) { await store.appendLog(task, 'warning', `Пропуск: статус ${meta.status}`, meta.name); continue }
     let trust = 0
     try { trust = (await buildAccountStats(id)).trust?.score ?? 0 } catch { trust = 0 }
@@ -2962,7 +2973,7 @@ export async function runMailing(task, store) {
       // connectAccount падал с ACCOUNT_SKIP, цель помечалась неудачной и БОЛЬШЕ НЕ
       // повторялась. Один карантинный из пяти съедал пятую часть базы (аудит 20.08).
       for (const cand of [...myAccounts]) {
-        const cm = await getAccountMeta(cand)
+        const cm = await accountMeta(cand)
         if (!canModuleUseAccount(task.moduleKey, cm.status || 'active')) {
           myAccounts.splice(myAccounts.indexOf(cand), 1)
           await store.appendLog(task, 'warning', `${cm.name || cand}: статус ${cm.status} — выведен из рассылки (осталось ${myAccounts.length})`)
@@ -2981,7 +2992,7 @@ export async function runMailing(task, store) {
         if (!gate.ok) {
           restingNow.push(cand)
           myAccounts.splice(myAccounts.indexOf(cand), 1)
-          const cm = await getAccountMeta(cand)
+          const cm = await accountMeta(cand)
           await store.appendLog(task, 'info', `Пропуск: ${gate.reason}`, cm.name || cand)
         }
       }
@@ -3027,7 +3038,7 @@ export async function runMailing(task, store) {
       idx = picked.idx
       if (!account) { await store.appendLog(task, 'info', 'Все аккаунты исчерпали суточный лимит ЛС (§6) — завершаем'); break }
 
-      const meta = await getAccountMeta(account)
+      const meta = await accountMeta(account)
       let client
       try {
         ;({ client } = await connectAccount(account, task.id, { shouldStop: stopFlag(task) }))
@@ -3244,7 +3255,7 @@ export async function runAutoPosting(task, store) {
       let meta = null
       for (let tried = 0; tried < accountIds.length; tried++) {
         const cand = accountIds[accIdx++ % accountIds.length]
-        const cm = await getAccountMeta(cand)
+        const cm = await accountMeta(cand)
         if (!canModuleUseAccount(task.moduleKey, cm.status || 'active')) {
           await store.appendLog(task, 'info', `Пропуск: статус ${cm.status}`, cm.name || cand)
           continue
