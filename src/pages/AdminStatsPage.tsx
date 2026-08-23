@@ -1,6 +1,6 @@
 import { coins as fmtCoins, cn } from '@/shared/lib/utils'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { BarChart3, Users, ListChecks, Coins, Download, RefreshCw, AlertTriangle, Contact, Power, ChevronDown, Activity, Plus, Radar, Search, ShoppingCart, Loader2, Check, Trash2, ScrollText, Send, MessageSquare, LifeBuoy, ArrowLeft } from 'lucide-react'
+import { BarChart3, Users, ListChecks, Coins, Download, RefreshCw, AlertTriangle, Contact, Power, ChevronDown, Activity, Plus, Radar, Search, ShoppingCart, Loader2, Check, Trash2, ScrollText, Send, MessageSquare, LifeBuoy, ArrowLeft, LogIn} from 'lucide-react'
 import { PageHeader, Card, Segmented, EmptyState, Select, Badge, Tip } from '@/shared/ui'
 import { useApp } from '@/mocks/store'
 import {
@@ -11,7 +11,8 @@ import {
   type AdminOverview, type ClientReport, type UsersReport, type Problems, type CrmOverview,
   type ActiveNow, type ActiveTask, type PriceModule, type DailySpend, type Purchases, type PaymentsResult, type UserRow, type AccountsHealth, fetchPrices, savePrices, type EffectivePrices, type PricePatch,
   fetchTaskLogs, type FailedTask, type TaskLogs } from '@/api/adminApi'
-import { updateUser } from '@/api/usersApi'
+import { updateUser, impersonate } from '@/api/usersApi'
+import { PANEL_TOKEN_KEY, PANEL_SESSION_KEY, IMPERSONATE_KEY } from '@/features/auth/zone'
 import { fetchTickets, fetchTicket, replyTicket, setTicketStatus, fetchTicketsUnread, type ApiTicket, type TicketStatus } from '@/api/ticketsApi'
 import { TicketChat, shortId } from '@/features/support/TicketChat'
 import { fetchTgstatSession, uploadTgstatSession, verifyTgstatSession, clearTgstatSession, type TgstatSession } from '@/api/tgstatApi'
@@ -865,6 +866,31 @@ function UsersTab({ report, onReload }: { report: UsersReport | null; onReload: 
     } finally { setBusy(null) }
   }
 
+  /**
+   * §5.3 (MR-36): «зайти под аккаунтом клиента и проверить доступы».
+   *
+   * Кладём панельную сессию клиента и переходим в панель. Админ-сессия при этом цела:
+   * у зон разные ключи, и возврат по кнопке в баннере снова открывает админку под собой.
+   * Новую вкладку не открываем — всплывающие окна блокируются браузером, и кнопка молча
+   * не срабатывала бы.
+   */
+  const enterAs = async (userId: string, email: string) => {
+    setBusy(userId)
+    try {
+      const { user, role, isOwner, token } = await impersonate(userId)
+      localStorage.setItem(PANEL_TOKEN_KEY, token)
+      localStorage.setItem(PANEL_SESSION_KEY, JSON.stringify({
+        id: user.id, email: user.email, name: user.name, roleId: user.roleId,
+        role: role?.name || '', permissions: role?.permissions ?? null, isOwner, isSub: !!user.parentId,
+      }))
+      // Метка для баннера в панели: человек должен видеть, что смотрит чужой кабинет.
+      localStorage.setItem(IMPERSONATE_KEY, email || userId)
+      window.location.assign('/panel')
+    } catch (e) {
+      pushToast({ type: 'error', title: 'Не удалось войти под клиентом', desc: e instanceof Error ? e.message : '' })
+    } finally { setBusy(null) }
+  }
+
   const toggle = async (userId: string, active: boolean) => {
     setBusy(userId)
     try {
@@ -1024,6 +1050,18 @@ function UsersTab({ report, onReload }: { report: UsersReport | null; onReload: 
                         <Power size={12} /> {r.active ? 'Отключить' : 'Включить'}
                       </button>
                     ) : <span className="text-xs text-muted">—</span>}
+                    {/* §5.3 (MR-36): посмотреть панель глазами клиента — проверить, что
+                        ему видно и что разрешено, не спрашивая пароль. */}
+                    {real && (
+                      <button
+                        onClick={(e) => { e.stopPropagation(); void enterAs(r.userId, r.email) }}
+                        disabled={busy === r.userId}
+                        className="ml-1.5 inline-flex h-7 items-center gap-1 rounded-lg border border-line px-2 text-xs font-semibold text-muted hover:border-iris-500/40 hover:text-iris-300 disabled:opacity-40"
+                        title="Открыть панель под этим клиентом (в новой вкладке)"
+                      >
+                        <LogIn size={12} /> Войти под клиентом
+                      </button>
+                    )}
                   </td>
                 </tr>,
                 isOpen ? (

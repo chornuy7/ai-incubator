@@ -94,6 +94,42 @@ usersRouter.get('/', async (req, res) => {
 })
 
 /** Логин: публичный юзер + роль (гейт UI) + подписанный токен сессии. */
+/**
+ * §5.3 (MR-36): «зайти под аккаунтом клиента и проверить доступы».
+ *
+ * Владелец платформы открывает панель ГЛАЗАМИ клиента — иначе проверить, что человеку
+ * видно и что разрешено, можно только с его паролем. Выдаём обычную панельную сессию
+ * этого пользователя: интерфейс не знает про «особый режим» и показывает ровно то же,
+ * что увидел бы сам клиент.
+ *
+ * Ограничения намеренные:
+ *  - только платформенный админ (не владелец пространства): это чужой кабинет;
+ *  - под другим админом входить нельзя — иначе один админ тихо получает права другого;
+ *  - каждый вход пишется в аудит: под кого, кто и когда. Смотреть чужой кабинет —
+ *    нормально, делать это незаметно — нет.
+ */
+usersRouter.post('/impersonate', async (req, res) => {
+  try {
+    const { isAdminRequest } = await import('./lib/accessGuard.js')
+    if (!(await isAdminRequest(req))) return fail(res, new Error('Доступно только администратору'), 403)
+    const targetId = String(req.body?.userId || '')
+    if (!targetId) return fail(res, new Error('Не указан пользователь'), 400)
+    const target = await getUser(targetId).catch(() => null)
+    if (!target) return fail(res, new Error('Пользователь не найден'), 404)
+    if (hasAdminRole(userRoleIds(target))) return fail(res, new Error('Под другим администратором входить нельзя'), 403)
+
+    const payload = await sessionPayload(target)
+    const { appendAudit } = await import('./lib/auditLog.js')
+    await appendAudit({
+      action: 'user.impersonate',
+      initiator: req.header('x-user-id') || '',
+      targetId,
+      reason: `Вход под пользователем ${target.email || targetId}`,
+    }).catch(() => {})
+    res.json({ ok: true, ...payload, user: publicUser(target) })
+  } catch (err) { fail(res, err) }
+})
+
 usersRouter.post('/login', async (req, res) => {
   try {
     const { email, password } = req.body ?? {}

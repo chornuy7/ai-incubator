@@ -125,3 +125,13 @@ export async function fetchWorktime(): Promise<Record<string, WorkSummary>> {
   const data = await apiGet<{ worktime: Record<string, WorkSummary> }>('/api/users/worktime')
   return data.worktime
 }
+
+/**
+ * §5.3 (MR-36): открыть панель ГЛАЗАМИ клиента, чтобы проверить его доступы.
+ * Возвращает обычную панельную сессию этого пользователя — интерфейс покажет ровно то,
+ * что видит он сам. Каждый такой вход пишется в аудит на сервере.
+ */
+export async function impersonate(userId: string): Promise<{ user: User; role: Role | null; isOwner: boolean; token: string }> {
+  const r = await apiPost<{ user: User; role: Role | null; isOwner: boolean; token: string }>('/api/users/impersonate', { userId })
+  return { user: r.user, role: r.role ?? null, isOwner: !!r.isOwner, token: r.token }
+}
