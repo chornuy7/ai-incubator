@@ -958,6 +958,18 @@ export async function runNeuroChatting(task, store) {
       try {
         ;({ client } = await connectAccount(accountId, task.id, { shouldStop: stopFlag(task) }))
         const g = groups[Math.floor(Math.random() * groups.length)]
+
+        // Кубик ДО вступления — та же правка, что в нейрокомментинге (жалоба владельца
+        // 22.08 «вступают, но не пишут»): вступление это самое лимитируемое действие,
+        // тратить его на круг, который заведомо ничего не сделает, нельзя.
+        const бросокЧ = Math.random() * 100
+        if (бросокЧ > prob) {
+          await store.appendLog(task, 'info', `Пропуск: вероятность модуля ${Math.round(prob)}% (с учётом защиты), выпало ${Math.round(бросокЧ)} — мимо, в чат не вступаю впустую`, meta.name)
+          await disconnectAccount(client, accountId)
+          if (trackIdlePass(task, false)) break
+          continue
+        }
+
         const joinDelay = pickJoinDelay(s.delays?.join?.[0] ?? 50, s.delays?.join?.[1] ?? 120, mul)
         const membership = await prepareTarget(
           client,
@@ -978,11 +990,8 @@ export async function runNeuroChatting(task, store) {
         if (membership.status === 'joined') await incAction(accountId, 'joins') // §6: суточный лимит вступлений
         const msgs = await fetchPosts(client, peer, 15)
         const msg = msgs[Math.floor(Math.random() * msgs.length)]
-        const бросокЧ = Math.random() * 100
-        if (!msg || бросокЧ > prob) {
-          await store.appendLog(task, 'info', msg
-            ? `Пропуск: вероятность модуля ${Math.round(prob)}% (с учётом защиты), выпало ${Math.round(бросокЧ)} — мимо`
-            : 'Нет сообщений в чате', meta.name)
+        if (!msg) {
+          await store.appendLog(task, 'info', 'Нет сообщений в чате', meta.name)
           await disconnectAccount(client, accountId)
           if (trackIdlePass(task, false)) break
           continue
@@ -1179,6 +1188,8 @@ export async function runMassReact(task, store) {
         // Помечаем пост как «этот аккаунт отработал» только ПОСЛЕ успешной реакции: иначе
         // пост, пропущенный по вероятности, для аккаунта потерян навсегда.
         let reactKey = ''
+        // Один бросок на круг: и для ветки «пост по ссылке», и для ветки «канал».
+        const бросокКруга = Math.random() * 100
 
         if (fixedPosts.length) {
           const pt = fixedPosts[Math.floor(Math.random() * fixedPosts.length)]
@@ -1193,6 +1204,13 @@ export async function runMassReact(task, store) {
           }
           const t = tgs[Math.floor(Math.random() * tgs.length)]
           targetLabel = `@${t}`
+          // Кубик ДО вступления (см. нейрокомментинг): семь вступлений из десяти при
+          // вероятности 30% уходили в пустоту — аккаунт вступал и тут же уходил.
+          if (бросокКруга > prob) {
+            await store.appendLog(task, 'info', `Пропуск: вероятность модуля ${Math.round(prob)}% (с учётом защиты), выпало ${Math.round(бросокКруга)} — мимо, в канал не вступаю впустую`, meta.name)
+            await disconnectAccount(client, accountId)
+            continue
+          }
           const membership = await joinTargetOrSkip(
             client, t,
             (level, message, acc) => store.appendLog(task, level, message, acc),
@@ -1258,9 +1276,10 @@ export async function runMassReact(task, store) {
         // 22.08). Пишем и число, и бросок, и откуда взялась цифра: `prob` — это заданная
         // вероятность, уже умноженная на множитель защиты, и расхождение с настройкой
         // («поставил 50, вижу 73») само по себе рождало вопросы.
-        const бросок = Math.random() * 100
-        if (бросок > prob) {
-          await store.appendLog(task, 'info', `Пропуск: вероятность модуля ${Math.round(prob)}% (с учётом защиты), выпало ${Math.round(бросок)} — мимо`, meta.name)
+        // Бросок сделан ДО вступления (выше); здесь он лишь применяется к ветке
+        // «реакция на конкретный пост по ссылке», где вступать никуда не нужно.
+        if (бросокКруга > prob) {
+          await store.appendLog(task, 'info', `Пропуск: вероятность модуля ${Math.round(prob)}% (с учётом защиты), выпало ${Math.round(бросокКруга)} — мимо`, meta.name)
           await disconnectAccount(client, accountId)
           continue
         }
