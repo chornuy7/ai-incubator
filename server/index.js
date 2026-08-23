@@ -610,6 +610,19 @@ app.get('/api/admin/task-logs', async (req, res) => {
  * §5.4: наборы, которые админ собирает под клиента («парсер + комментинг за 20 $»).
  * Только владелец: это цены, по которым пространство продаёт.
  */
+/*
+ * Читать наборы админа отдельно (MR-151, созвон 19.08: «нажимаешь на Цены — должен
+ * только прайс подгружаться»). Редактор наборов брал их из /api/subscription — то есть
+ * тянул ВСЮ витрину (модули, сетапы, чужую подписку, периоды) ради одного списка.
+ */
+app.get('/api/bundles', async (req, res) => {
+  try {
+    if (!(await isAdminRequest(req))) return res.status(403).json({ ok: false, error: 'Доступно только администратору' })
+    const { listBundles } = await import('./bundles.js')
+    res.json({ ok: true, bundles: await listBundles() })
+  } catch (err) { res.status(500).json({ ok: false, error: err instanceof Error ? err.message : 'Ошибка' }) }
+})
+
 app.post('/api/bundles', async (req, res) => {
   try {
     if (!(await isAdminRequest(req))) return res.status(403).json({ ok: false, error: 'Собирать наборы может только владелец' })

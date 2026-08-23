@@ -145,6 +145,12 @@ export async function fetchWalletHistory(limit = 50, userId?: string): Promise<W
 }
 
 /** §5.4: набор под клиента — админ выбирает модули и называет цену. */
+/** Наборы админа списком — без всей витрины (MR-151). */
+export async function fetchBundles(): Promise<SubSetup[]> {
+  const r = await apiGet<{ ok: boolean; bundles: SubSetup[] }>('/api/bundles')
+  return (r.bundles || []).map((b) => ({ ...b, custom: true }))
+}
+
 export async function createBundle(input: { name: string; hint?: string; modules: string[]; price: number }): Promise<void> {
   await apiPost('/api/bundles', input)
 }
