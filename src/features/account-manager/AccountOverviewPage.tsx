@@ -67,12 +67,19 @@ export function AccountOverviewPage() {
   const [spamChecking, setSpamChecking] = useState(false)
   const [releasing, setReleasing] = useState(false)
 
-  const load = useCallback(async (opts?: { spam?: boolean; force?: boolean }): Promise<AccountStats | null> => {
+  /**
+   * `quiet` — не зажигать крутилку «Обновить».
+   *
+   * Данные тянет одна и та же загрузка, но кнопок в шапке несколько, и у каждой своя
+   * крутилка. Без этого флага клик по «Проверить спамблок» крутил ЗАОДНО и «Обновить»:
+   * оператор видел два занятых действия там, где нажимал одно.
+   */
+  const load = useCallback(async (opts?: { spam?: boolean; force?: boolean; quiet?: boolean }): Promise<AccountStats | null> => {
     if (!account) return null
-    setLoading(true)
+    if (!opts?.quiet) setLoading(true)
     try { const s = await fetchAccountStats(account.id, opts); setStats(s); return s }
     catch (e) { pushToast({ type: 'error', title: 'Не удалось получить данные аккаунта', desc: e instanceof Error ? e.message : undefined }); return null }
-    finally { setLoading(false) }
+    finally { if (!opts?.quiet) setLoading(false) }
   }, [account, pushToast])
 
   useEffect(() => {
@@ -94,7 +101,7 @@ export function AccountOverviewPage() {
   const runSpamCheck = async () => {
     setSpamChecking(true)
     try {
-      const s = await load({ spam: true })
+      const s = await load({ spam: true, quiet: true })
       if (!s) return // ошибка сети уже показана в load()
       // MR-129: не рапортуем «проверено», если живой проверки не было (мёртвый прокси/сессия).
       if (!s.status.sessionOk) {
@@ -115,7 +122,7 @@ export function AccountOverviewPage() {
       const r = await releaseAccountLock(account.id)
       pushToast({ type: 'success', title: r.released ? 'Блокировка снята' : 'Блокировок не было' })
       await loadAccountBusy()
-      await load()
+      await load({ quiet: true })
     } catch (e) {
       pushToast({ type: 'error', title: 'Не удалось снять блокировку', desc: e instanceof Error ? e.message : undefined })
     } finally { setReleasing(false) }
