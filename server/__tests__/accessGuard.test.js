@@ -174,3 +174,44 @@ test('ничего не куплено — модули не запускают�
   assert.equal(denied?.code, 403, 'свежая регистрация без покупки не запускает модули')
   assert.match(denied?.body?.error || '', /не оплачен/i)
 })
+
+/**
+ * Жалоба владельца 24.08: «новый тикет не удаётся создать, если аккаунт заблокирован».
+ *
+ * Замок доступа (lib/accessGate.js) намеренно пропускает `/api/tickets` — с комментарием
+ * «написать в поддержку („почему меня закрыли“)». А обработчики тикетов проверяли общий
+ * флаг `blocked` и резали: замок пропускал, ручка отказывала. Разводим два разных случая
+ * — «такого пользователя нет» и «доступ отключён администратором»: во втором человек
+ * должен доходить до поддержки, но прав при этом не иметь никаких.
+ */
+test('отключённый доступ ≠ неизвестный пользователь: до поддержки человек доходит', async () => {
+  const os = await import('os')
+  const path = await import('path')
+  const fs = await import('fs/promises')
+  const dir = path.join(os.tmpdir(), `ctx-blocked-${process.pid}-${Math.random().toString(36).slice(2)}`)
+  await fs.mkdir(dir, { recursive: true })
+  process.env.DATA_DIR = dir
+  process.env.ROLES_FILE = path.join(dir, 'roles.json')
+  process.env.USERS_FILE = path.join(dir, 'users.json')
+
+  const { createUser, updateUser } = await import('../users.js')
+  const { createRole, ADMIN_ROLE_ID } = await import('../roles.js')
+  const { requesterContext } = await import('../lib/accessGuard.js')
+  await createRole({ name: 'Клиент', permissions: {} })
+
+  const boss = await createUser({ email: `boss${Date.now()}@t.io`, password: 'x12345', roleIds: [ADMIN_ROLE_ID] })
+  await updateUser(boss.id, { active: false })
+
+  const ctx = await requesterContext(mockReq({ 'x-user-id': boss.id }, '/'))
+  assert.equal(ctx.blocked, true, 'доступ отключён — всё остальное по-прежнему закрыто')
+  assert.equal(ctx.inactive, true, 'но это ИМЕННО отключённый, а не «нет такого»')
+  assert.ok(ctx.user, 'поддержке нужны его имя и почта, иначе обращение будет от «—»')
+  // Отключённый не может быть ни админом, ни поддержкой, какие бы роли на нём ни висели.
+  assert.equal(ctx.isAdmin, false, 'админские права у отключённого админа должны сняться')
+  assert.equal(ctx.isSupport, false, 'иначе отключённый читал бы чужие тикеты')
+
+  // А вот незнакомого id по-прежнему не пускаем никуда, включая поддержку.
+  const stranger = await requesterContext(mockReq({ 'x-user-id': 'usr_нет_такого' }, '/'))
+  assert.equal(stranger.blocked, true)
+  assert.ok(!stranger.inactive, 'неизвестный не должен получать доступ к поддержке')
+})
