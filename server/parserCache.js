@@ -43,6 +43,17 @@ function db() {
     results    TEXT NOT NULL
   )`)
   d.exec('CREATE INDEX IF NOT EXISTS idx_parser_cache_updated ON parser_cache(updated_at)')
+  // Колонки слежения добавляем по одной и молча: файл мог быть создан прошлой версией,
+  // а `CREATE TABLE IF NOT EXISTS` его не тронет. SQLite не умеет `ADD COLUMN IF NOT
+  // EXISTS`, поэтому ловим ошибку «duplicate column» и идём дальше.
+  for (const col of [
+    'owner_id TEXT', 'settings TEXT', 'watch INTEGER NOT NULL DEFAULT 0',
+    'period_h INTEGER NOT NULL DEFAULT 24', 'next_run_at INTEGER', 'last_run_at INTEGER',
+    'last_new INTEGER NOT NULL DEFAULT 0', 'last_gone INTEGER NOT NULL DEFAULT 0',
+    'last_error TEXT', 'fail_count INTEGER NOT NULL DEFAULT 0',
+  ]) {
+    try { d.exec(`ALTER TABLE parser_cache ADD COLUMN ${col}`) } catch { /* колонка уже есть */ }
+  }
   _db = d
   return _db
 }
@@ -93,6 +104,21 @@ export function parserSignature(kind, s = {}) {
   return JSON.stringify(sig)
 }
 
+/**
+ * Что из настроек стоит запомнить, чтобы через сутки перезапустить ТОТ ЖЕ запрос.
+ *
+ * Только описание отбора. Аккаунты, задержки, защита и прочая обвязка запуска к составу
+ * результата отношения не имеют: при перепроверке их подставит сам планировщик по
+ * текущему состоянию парка, а не по слепку месячной давности.
+ */
+function watchableSettings(s = {}) {
+  const out = {}
+  for (const k of ['keywords', 'endings', 'targets', 'searchMode', 'minMembers', 'maxMembers', 'commentFilter', 'intersect', 'intersectionMode', 'intersectionMin', 'filters', 'limits', 'limit', 'maxActions']) {
+    if (s[k] !== undefined && s[k] !== null && s[k] !== '') out[k] = s[k]
+  }
+  return out
+}
+
 /** Ключ строки: sha256 сигнатуры (сырой JSON слишком длинный для индекса Postgres). */
 const sigKey = (sig) => createHash('sha256').update(sig).digest('hex')
 
@@ -110,7 +136,7 @@ const describable = (s) => norm(s?.keywords).length > 0 || norm(s?.targets).leng
  * свежий проход обновляет дату и состав).
  * @returns {Promise<string|undefined>} сигнатуру, под которой сохранили (или undefined)
  */
-export async function saveParserResults(kind, settings, results) {
+export async function saveParserResults(kind, settings, results, ownerId = null) {
   if (!describable(settings)) return
   const list = Array.isArray(results) ? results : []
   const sig = parserSignature(kind, settings)
@@ -120,16 +146,30 @@ export async function saveParserResults(kind, settings, results) {
     keywords: label(settings),
     updated_at: Date.now(),
     count: list.length,
+    // Сам запрос — чтобы перепроверка могла его перезапустить: от sha256 обратной
+    // дороги нет. Храним ТОЛЬКО то, что описывает отбор: аккаунты, задержки и прочая
+    // обвязка запуска к составу результата отношения не имеют и в ключ не входят.
+    settings: watchableSettings(settings),
+    owner_id: ownerId ? String(ownerId) : null,
   }
   const base = sb()
   if (base) {
+    // upsert перечисляет ТОЛЬКО свои поля: не указанные колонки (watch, period_h,
+    // next_run_at и прочее слежение) при конфликте остаются как были.
     const { error } = await base.from('parser_cache').upsert({ ...row, results: list }, { onConflict: 'sig' })
     if (!error) return sig
     if (!isMissingTable(error)) throw new Error(error.message)
     console.warn('[parserCache] таблица parser_cache не найдена — миграция 2026-08-24 не накатана, пишу в локальный SQLite')
   }
-  db().prepare('INSERT OR REPLACE INTO parser_cache(sig,kind,keywords,updated_at,count,results) VALUES(?,?,?,?,?,?)')
-    .run(row.sig, row.kind, row.keywords, row.updated_at, row.count, JSON.stringify(list))
+  // INSERT OR REPLACE затёр бы настройки слежения (watch/period_h/next_run_at), поэтому
+  // сначала пробуем обновить существующую строку, и только если её нет — вставляем.
+  const d = db()
+  const upd = d.prepare('UPDATE parser_cache SET kind=?,keywords=?,updated_at=?,count=?,results=?,settings=?,owner_id=COALESCE(?,owner_id) WHERE sig=?')
+    .run(row.kind, row.keywords, row.updated_at, row.count, JSON.stringify(list), JSON.stringify(row.settings), row.owner_id, row.sig)
+  if (!upd.changes) {
+    d.prepare('INSERT INTO parser_cache(sig,kind,keywords,updated_at,count,results,settings,owner_id) VALUES(?,?,?,?,?,?,?,?)')
+      .run(row.sig, row.kind, row.keywords, row.updated_at, row.count, JSON.stringify(list), JSON.stringify(row.settings), row.owner_id)
+  }
   return sig
 }
 
@@ -158,6 +198,164 @@ export async function lookupParserResults(kind, settings) {
   let results = []
   try { results = JSON.parse(row.results) } catch { results = [] }
   return { updatedAt: Number(row.updated_at), count: Number(row.count), results }
+}
+
+/*
+ * ─────────────────────────────────────────────────────────────────────────────
+ * СЛЕЖЕНИЕ ЗА ЗАПРОСОМ (просьба владельца 24.08).
+ *
+ * «Перепроверять актуальность и искать новые каналы по тем же ключевым словам, раз в
+ * сутки; ошибки видно в админке». Механика: у сохранённого запроса поднимается флаг
+ * `watch`, планировщик раз в N часов перезапускает ТОТ ЖЕ парс обычной задачей модуля
+ * (значит работают лимиты, списание, логи и блокировки аккаунтов), а результат
+ * сравнивается с прошлым — сколько появилось нового и сколько пропало.
+ *
+ * Слежение ВЫКЛЮЧЕНО по умолчанию: перепроверка тратит аккаунты и монеты владельца,
+ * включать её за человека молча нельзя.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+
+/** Сколько неудач подряд терпим, прежде чем снять слежение и оставить ошибку в админке. */
+export const WATCH_MAX_FAILS = 3
+
+/** Устойчивая личность записи: по ней считаем «новое» и «пропало». */
+function identityOf(row) {
+  const r = row || {}
+  return String(r.username || r.link || r.id || r.title || '').toLowerCase().replace(/^@/, '')
+}
+
+/**
+ * Что изменилось между прошлым и новым проходом.
+ * @returns {{added:string[], gone:string[]}}
+ */
+export function diffResults(prev = [], next = []) {
+  const a = new Set((prev || []).map(identityOf).filter(Boolean))
+  const b = new Set((next || []).map(identityOf).filter(Boolean))
+  return {
+    added: [...b].filter((x) => !a.has(x)),
+    gone: [...a].filter((x) => !b.has(x)),
+  }
+}
+
+/** Включить/выключить слежение за уже сохранённым запросом. */
+export async function setWatch(kind, settings, { watch = true, periodH = 24, ownerId = null } = {}) {
+  const key = sigKey(parserSignature(kind, settings))
+  const period = Math.min(24 * 30, Math.max(1, Number(periodH) || 24))
+  const patch = {
+    watch: !!watch,
+    period_h: period,
+    // Включили — первый заход через период, а не сию секунду: результат только что собран.
+    next_run_at: watch ? Date.now() + period * 3600_000 : null,
+    last_error: null,
+    fail_count: 0,
+  }
+  if (ownerId) patch.owner_id = String(ownerId)
+  const base = sb()
+  if (base) {
+    const { error } = await base.from('parser_cache').update(patch).eq('sig', key)
+    if (!error) return true
+    if (!isMissingTable(error)) throw new Error(error.message)
+  }
+  const d = db()
+  const r = d.prepare('UPDATE parser_cache SET watch=?,period_h=?,next_run_at=?,last_error=NULL,fail_count=0,owner_id=COALESCE(?,owner_id) WHERE sig=?')
+    .run(patch.watch ? 1 : 0, period, patch.next_run_at, ownerId ? String(ownerId) : null, key)
+  return r.changes > 0
+}
+
+/** Строки, которым пора на перепроверку. */
+export async function dueWatches(now = Date.now(), limit = 20) {
+  const base = sb()
+  if (base) {
+    const { data, error } = await base.from('parser_cache')
+      .select('sig, kind, keywords, settings, owner_id, results, period_h, next_run_at, fail_count')
+      .eq('watch', true).lte('next_run_at', now).order('next_run_at', { ascending: true }).limit(limit)
+    if (!error) return (data || []).map(fromRow)
+    if (!isMissingTable(error)) throw new Error(error.message)
+  }
+  const rows = db().prepare('SELECT sig,kind,keywords,settings,owner_id,results,period_h,next_run_at,fail_count FROM parser_cache WHERE watch=1 AND next_run_at IS NOT NULL AND next_run_at <= ? ORDER BY next_run_at LIMIT ?').all(now, limit)
+  return rows.map(fromRow)
+}
+
+/** Строка БД → удобный объект (JSON-поля в файловой ветке лежат текстом). */
+function fromRow(r) {
+  const parse = (v, def) => {
+    if (v === null || v === undefined) return def
+    if (typeof v !== 'string') return v
+    try { return JSON.parse(v) } catch { return def }
+  }
+  return {
+    sig: r.sig,
+    kind: r.kind,
+    label: r.keywords,
+    settings: parse(r.settings, {}),
+    ownerId: r.owner_id || null,
+    results: parse(r.results, []),
+    periodH: Number(r.period_h) || 24,
+    nextRunAt: Number(r.next_run_at) || 0,
+    lastRunAt: Number(r.last_run_at) || 0,
+    lastNew: Number(r.last_new) || 0,
+    lastGone: Number(r.last_gone) || 0,
+    lastError: r.last_error || null,
+    failCount: Number(r.fail_count) || 0,
+    watch: !!r.watch,
+    count: Number(r.count) || 0,
+    updatedAt: Number(r.updated_at) || 0,
+  }
+}
+
+/**
+ * Записать итог перепроверки.
+ *
+ * При ошибке слежение НЕ снимаем сразу: сеть моргнула, аккаунт словил FloodWait — это
+ * не повод бросать запрос. Но и бесконечно долбиться в сломанное нельзя: после
+ * WATCH_MAX_FAILS неудач подряд слежение выключается, а причина остаётся в `last_error` —
+ * её и показывает админка.
+ */
+export async function markWatchRun(sig, { added = 0, gone = 0, error = null, failCount = 0, periodH = 24 } = {}) {
+  const now = Date.now()
+  const fails = error ? Number(failCount) + 1 : 0
+  const stop = fails >= WATCH_MAX_FAILS
+  const patch = {
+    last_run_at: now,
+    last_new: Number(added) || 0,
+    last_gone: Number(gone) || 0,
+    last_error: error ? String(error).slice(0, 500) : null,
+    fail_count: fails,
+    watch: !stop,
+    next_run_at: stop ? null : now + (Math.max(1, Number(periodH) || 24)) * 3600_000,
+  }
+  const base = sb()
+  if (base) {
+    const { error: e } = await base.from('parser_cache').update(patch).eq('sig', sig)
+    if (!e) return stop
+    if (!isMissingTable(e)) throw new Error(e.message)
+  }
+  db().prepare('UPDATE parser_cache SET last_run_at=?,last_new=?,last_gone=?,last_error=?,fail_count=?,watch=?,next_run_at=? WHERE sig=?')
+    .run(patch.last_run_at, patch.last_new, patch.last_gone, patch.last_error, patch.fail_count, patch.watch ? 1 : 0, patch.next_run_at, sig)
+  return stop
+}
+
+/**
+ * Список отслеживаемых запросов — для витрины и для админки.
+ * @param {{ownerId?:string, onlyErrors?:boolean, limit?:number}} opts
+ */
+export async function listWatches(opts = {}) {
+  const { ownerId = '', onlyErrors = false, limit = 200 } = opts
+  const base = sb()
+  if (base) {
+    let sel = base.from('parser_cache').select('sig,kind,keywords,settings,owner_id,period_h,next_run_at,last_run_at,last_new,last_gone,last_error,fail_count,watch,count,updated_at')
+    if (ownerId) sel = sel.eq('owner_id', String(ownerId))
+    sel = onlyErrors ? sel.not('last_error', 'is', null) : sel.eq('watch', true)
+    const { data, error } = await sel.order('updated_at', { ascending: false }).limit(limit)
+    if (!error) return (data || []).map(fromRow)
+    if (!isMissingTable(error)) throw new Error(error.message)
+  }
+  const cond = []
+  const args = []
+  if (ownerId) { cond.push('owner_id = ?'); args.push(String(ownerId)) }
+  cond.push(onlyErrors ? 'last_error IS NOT NULL' : 'watch = 1')
+  const rows = db().prepare(`SELECT sig,kind,keywords,settings,owner_id,period_h,next_run_at,last_run_at,last_new,last_gone,last_error,fail_count,watch,count,updated_at FROM parser_cache WHERE ${cond.join(' AND ')} ORDER BY updated_at DESC LIMIT ?`).all(...args, limit)
+  return rows.map(fromRow)
 }
 
 /** Для тестов/обслуживания: закрыть и сбросить соединение (следующий вызов пересоздаст). */

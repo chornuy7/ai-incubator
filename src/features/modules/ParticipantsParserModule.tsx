@@ -9,7 +9,7 @@ import { activeAccounts, useApp } from '@/mocks/store'
 import { Switch, Select, Badge, EmptyState, Modal } from '@/shared/ui'
 import { AccountPicker } from '@/features/account-picker/AccountPicker'
 import { useModuleTask } from './shared/useModuleTask'
-import { lookupParserCache, type ParserCacheHit } from '@/api/modulesApi'
+import { lookupParserCache, setParserWatch, type ParserCacheHit } from '@/api/modulesApi'
 import { SectionCard, NumberField, ProtectionTimings, LaunchPanel, LaunchSteps, markCurrentStep, TaskStartedModal, SchedulePanel, usePresetCarry } from './shared'
 import { PresetBar } from './shared/PresetBar'
 import { SavePresetModal } from './shared/SavePresetModal'
@@ -203,6 +203,27 @@ function Inner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: string }) {
     }, 500)
     return () => { cancelled = true; clearTimeout(t) }
   }, [moduleKey, running, targetList, filters, limits])
+
+
+  /*
+   * Слежение за запросом (просьба владельца 24.08): раз в сутки перезапускать тот же
+   * парс, искать новые каналы и отмечать пропавшие. Выключено по умолчанию и включается
+   * тут же, рядом с сохранённым результатом: перепроверка — это реальный проход по
+   * аккаунтам и списание монет, включать её за человека молча нельзя.
+   */
+  const [watching, setWatching] = useState(false)
+  const [watchBusy, setWatchBusy] = useState(false)
+  useEffect(() => { setWatching(false) }, [cacheHit?.updatedAt])
+  const toggleWatch = async (on: boolean) => {
+    setWatchBusy(true)
+    try {
+      await setParserWatch(moduleKey, { targets: targetList, filters, limits }, on, 24)
+      setWatching(on)
+      pushToast({ type: 'success', title: on ? 'Слежу за запросом' : 'Слежение выключено', desc: on ? 'Раз в сутки перепроверю и найду новое' : undefined })
+    } catch (e) {
+      pushToast({ type: 'error', title: 'Не вышло', desc: e instanceof Error ? e.message : 'Ошибка' })
+    } finally { setWatchBusy(false) }
+  }
 
   const fmtCacheDate = (ts: number) => new Date(ts).toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' })
 
@@ -456,6 +477,10 @@ function Inner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: string }) {
                 <>В базе есть сохранённый результат под эти источники: <b className="text-fg">{cacheHit.count}</b> · собрано {fmtCacheDate(cacheHit.updatedAt)}</>
               )}
             </span>
+            <label className="flex shrink-0 cursor-pointer items-center gap-2 text-xs text-muted" title="Раз в сутки перезапущу этот же поиск, найду новое и отмечу пропавшее. Тратит аккаунты и монеты — как обычный запуск.">
+              <input type="checkbox" className="accent-spark-500" checked={watching} disabled={watchBusy} onChange={(e) => void toggleWatch(e.target.checked)} />
+              Обновлять раз в сутки
+            </label>
             {usingCache ? (
               <button type="button" onClick={() => setUsingCache(false)} className="btn-ghost h-8 shrink-0 text-xs">Скрыть из базы</button>
             ) : (

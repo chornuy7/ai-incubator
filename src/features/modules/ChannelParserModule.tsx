@@ -16,7 +16,7 @@ import { cn } from '@/shared/lib/utils'
 import { downloadXls } from '@/shared/lib/exportXls'
 import { SaveToFolderModal } from './shared/FolderPicker'
 import { LaunchCost } from './shared/LaunchCost'
-import { fetchModuleTasks, fetchModuleTask, lookupParserCache, type ModuleTaskSettings, type ParserCacheHit } from '@/api/modulesApi'
+import { fetchModuleTasks, fetchModuleTask, lookupParserCache, setParserWatch, type ModuleTaskSettings, type ParserCacheHit } from '@/api/modulesApi'
 
 /** Собирает username ранее спарсенных каналов/групп из истории модуля (для дедупа между запусками). */
 async function gatherAlreadyParsed(moduleKey: string): Promise<string[]> {
@@ -177,6 +177,27 @@ function ChannelParserInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: 
     }, 500)
     return () => { cancelled = true; clearTimeout(t) }
   }, [moduleKey, running, keywords, endings, minMembers, maxMembers, commentFilter, intersect, method])
+
+
+  /*
+   * Слежение за запросом (просьба владельца 24.08): раз в сутки перезапускать тот же
+   * парс, искать новые каналы и отмечать пропавшие. Выключено по умолчанию и включается
+   * тут же, рядом с сохранённым результатом: перепроверка — это реальный проход по
+   * аккаунтам и списание монет, включать её за человека молча нельзя.
+   */
+  const [watching, setWatching] = useState(false)
+  const [watchBusy, setWatchBusy] = useState(false)
+  useEffect(() => { setWatching(false) }, [cacheHit?.updatedAt])
+  const toggleWatch = async (on: boolean) => {
+    setWatchBusy(true)
+    try {
+      await setParserWatch(moduleKey, { keywords, endings, minMembers: minMembers === '' ? 0 : minMembers, maxMembers: maxMembers === '' ? 0 : maxMembers, commentFilter, intersect: intersect && method === 0 }, on, 24)
+      setWatching(on)
+      pushToast({ type: 'success', title: on ? 'Слежу за запросом' : 'Слежение выключено', desc: on ? 'Раз в сутки перепроверю и найду новое' : undefined })
+    } catch (e) {
+      pushToast({ type: 'error', title: 'Не вышло', desc: e instanceof Error ? e.message : 'Ошибка' })
+    } finally { setWatchBusy(false) }
+  }
 
   const fmtCacheDate = (ts: number) => new Date(ts).toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' })
 
@@ -607,6 +628,10 @@ function ChannelParserInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: 
                 <>В базе есть сохранённый результат под этот запрос: <b className="text-fg">{cacheHit.count}</b> {isGroups ? 'групп' : 'каналов'} · обновлено {fmtCacheDate(cacheHit.updatedAt)}</>
               )}
             </span>
+            <label className="flex shrink-0 cursor-pointer items-center gap-2 text-xs text-muted" title="Раз в сутки перезапущу этот же поиск, найду новое и отмечу пропавшее. Тратит аккаунты и монеты — как обычный запуск.">
+              <input type="checkbox" className="accent-spark-500" checked={watching} disabled={watchBusy} onChange={(e) => void toggleWatch(e.target.checked)} />
+              Обновлять раз в сутки
+            </label>
             {usingCache ? (
               <button type="button" onClick={() => setUsingCache(false)} className="btn-ghost h-8 shrink-0 text-xs">Скрыть из базы</button>
             ) : (

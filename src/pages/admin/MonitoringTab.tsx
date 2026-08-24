@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState } from 'react'
-import { AlertTriangle, Activity, Cpu, MemoryStick } from 'lucide-react'
+import { AlertTriangle, Activity, Cpu, MemoryStick, Database } from 'lucide-react'
 import { Card, EmptyState } from '@/shared/ui'
 import { cn } from '@/shared/lib/utils'
 import type { AccountsHealth, ActiveNow, DailySpend, SystemMetrics } from '@/api/adminApi'
 import { fetchSystemMetrics } from '@/api/adminApi'
+import { fetchParserWatches, type ParserWatch } from '@/api/modulesApi'
 import { fmt, MetricTile } from './adminShared'
 
 /**
@@ -116,6 +117,67 @@ export function AccountsHealthBlocks({ health }: { health: AccountsHealth | null
  * по каждому проблемному. Всегда виден (в отличие от «Проблем», которые прячутся,
  * когда тихо): владелец должен видеть парк аккаунтов и почему кто-то выпал.
  */
+/**
+ * Сломанные перепроверки парсинга (просьба владельца 24.08: «выводились ошибки в
+ * админке на случай чего»).
+ *
+ * Слежение за запросом раз в сутки перезапускает парс. Если оно падает — владелец
+ * платформы должен узнать об этом здесь, а не от клиента, у которого «почему-то ничего
+ * не обновляется». Три неудачи подряд снимают слежение, но причина остаётся видна.
+ *
+ * Свои хуки и свой запрос: в MonitoringTab есть ранние return'ы, и хуки после них
+ * ломают порядок вызовов (тот самый чёрный экран админки).
+ */
+function ParserWatchErrors() {
+  const [rows, setRows] = useState<ParserWatch[]>([])
+  const [loaded, setLoaded] = useState(false)
+  useEffect(() => {
+    let alive = true
+    void fetchParserWatches(true)
+      .then((w) => { if (alive) { setRows(w); setLoaded(true) } })
+      .catch(() => { if (alive) setLoaded(true) })
+    return () => { alive = false }
+  }, [])
+
+  // Ошибок нет — блок не показываем вовсе: пустая карточка «всё хорошо» только шумит.
+  if (!loaded || !rows.length) return null
+
+  const when = (ts: number) => (ts ? new Date(ts).toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : '—')
+  return (
+    <div>
+      <div className="mb-1 mt-1 flex items-center gap-1.5 text-xs font-bold uppercase tracking-wide text-amber-300">
+        <Database size={13} /> Перепроверка парсинга — ошибки ({rows.length})
+      </div>
+      <Card className="overflow-hidden p-0">
+        <div className="overflow-x-auto">
+          <table className="w-full min-w-[640px] text-left text-sm">
+            <thead className="bg-elevated/60 text-xs uppercase tracking-wide text-muted">
+              <tr>
+                <th className="px-4 py-2">Запрос</th>
+                <th className="px-4 py-2">Модуль</th>
+                <th className="px-4 py-2">Когда</th>
+                <th className="px-4 py-2">Что случилось</th>
+                <th className="px-4 py-2">Слежение</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((w) => (
+                <tr key={w.sig} className="border-t border-line/60">
+                  <td className="px-4 py-2 font-medium text-fg">{w.label || '—'}</td>
+                  <td className="px-4 py-2 text-muted">{w.kind}</td>
+                  <td className="px-4 py-2 text-muted">{when(w.lastRunAt)}</td>
+                  <td className="px-4 py-2 text-amber-300">{w.lastError}</td>
+                  <td className="px-4 py-2 text-muted">{w.watch ? `ещё пробуем (${w.failCount ?? 0})` : 'снято'}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </Card>
+    </div>
+  )
+}
+
 export function MonitoringTab({ health, active, daily }: { health: AccountsHealth | null; active: ActiveNow | null; daily: DailySpend | null }) {
   if (!health) return <Card className="p-6 text-sm text-muted">Загрузка…</Card>
   if (!health.total) return <EmptyState icon={<AlertTriangle size={22} />} title="Аккаунтов нет" desc="Добавьте аккаунты в менеджере профилей." />
@@ -133,6 +195,7 @@ export function MonitoringTab({ health, active, daily }: { health: AccountsHealt
     <div className="space-y-3">
       {/* §10.9: живой пульс сервера — RPS и CPU/память. */}
       <SystemLoad />
+      <ParserWatchErrors />
 
       {/* §10.9: нагрузка «сейчас» — задачи в работе, занятые аккаунты, поток действий. */}
       <div className="grid gap-3 sm:grid-cols-4">

@@ -288,3 +288,32 @@ export async function lookupParserCache(kind: string, settings: Partial<ModuleTa
   const r = await apiPost<{ ok: boolean; cache: ParserCacheHit | null }>(`/api/parser/cache/lookup`, { kind, settings })
   return r.cache
 }
+
+/**
+ * Слежение за запросом (просьба владельца 24.08): раз в N часов перезапускать тот же
+ * парс, искать новые каналы и отмечать пропавшие. Владельца сервер проставляет сам —
+ * перепроверка тратит его аккаунты и его монеты.
+ */
+export interface ParserWatch {
+  sig: string
+  kind: string
+  label: string
+  ownerId: string | null
+  periodH: number
+  nextRunAt: number
+  lastRunAt: number
+  lastNew: number
+  lastGone: number
+  lastError: string | null
+  failCount: number
+  watch: boolean
+  count: number
+  updatedAt: number
+}
+export async function setParserWatch(kind: string, settings: Partial<ModuleTaskSettings>, watch: boolean, periodH = 24): Promise<void> {
+  await apiPost(`/api/parser/cache/watch`, { kind, settings, watch, periodH })
+}
+export async function fetchParserWatches(onlyErrors = false): Promise<ParserWatch[]> {
+  const r = await apiGet<{ ok: boolean; watches: ParserWatch[] }>(`/api/parser/watches${onlyErrors ? '?errors=1' : ''}`)
+  return r.watches ?? []
+}

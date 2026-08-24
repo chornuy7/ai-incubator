@@ -989,6 +989,49 @@ app.post('/api/parser/cache/lookup', async (req, res) => {
   } catch (err) { res.status(500).json({ ok: false, error: err instanceof Error ? err.message : 'Ошибка' }) }
 })
 
+/**
+ * Следить за запросом парсинга: раз в N часов перезапускать его, искать новые каналы и
+ * отмечать пропавшие (просьба владельца 24.08).
+ *
+ * Владелец записи проставляется по запросу, а не приходит с фронта: перепроверка тратит
+ * ЕГО аккаунты и ЕГО монеты, и назначать это кому-то другому нельзя.
+ */
+app.post('/api/parser/cache/watch', async (req, res) => {
+  try {
+    const { kind, settings, watch = true, periodH = 24 } = req.body || {}
+    if (!kind || !settings) return res.status(400).json({ ok: false, error: 'Нужны kind и settings' })
+    const scope = await ownerScopeForRequest(req)
+    if (scope.blocked) return res.status(403).json({ ok: false, error: 'Доступ отключён' })
+    const { setWatch } = await import('./parserCache.js')
+    const ok = await setWatch(String(kind), settings, { watch: !!watch, periodH: Number(periodH) || 24, ownerId: scope.ownerId })
+    if (!ok) return res.status(404).json({ ok: false, error: 'Сохранённого результата под этот запрос нет — сначала запустите парсинг' })
+    res.json({ ok: true })
+  } catch (err) { res.status(500).json({ ok: false, error: err instanceof Error ? err.message : 'Ошибка' }) }
+})
+
+/** Свои отслеживаемые запросы (админу платформы — все). */
+app.get('/api/parser/watches', async (req, res) => {
+  try {
+    const scope = await ownerScopeForRequest(req)
+    if (scope.blocked) return res.status(403).json({ ok: false, error: 'Доступ отключён' })
+    const { listWatches } = await import('./parserCache.js')
+    const onlyErrors = String(req.query.errors || '') === '1'
+    res.json({ ok: true, watches: await listWatches({ ownerId: scope.all ? '' : scope.ownerId, onlyErrors }) })
+  } catch (err) { res.status(500).json({ ok: false, error: err instanceof Error ? err.message : 'Ошибка' }) }
+})
+
+/**
+ * Админка: сломанные перепроверки. Отдельная ручка, а не фильтр к предыдущей, потому
+ * что владельцу платформы нужны ЧУЖИЕ ошибки — иначе он о них не узнает.
+ */
+app.get('/api/admin/parser/errors', async (req, res) => {
+  try {
+    if (!(await isAdminRequest(req))) return res.status(403).json({ ok: false, error: 'Доступ только владельцу' })
+    const { listWatches } = await import('./parserCache.js')
+    res.json({ ok: true, watches: await listWatches({ onlyErrors: true }) })
+  } catch (err) { res.status(500).json({ ok: false, error: err instanceof Error ? err.message : 'Ошибка' }) }
+})
+
 // ── §8 (MR-44): тикеты поддержки — свои у клиента, все у админа (интеграция с админкой) ──
 const ticketErr = (res, err) => res.status(500).json({ ok: false, error: err instanceof Error ? err.message : 'Ошибка' })
 
@@ -1726,6 +1769,16 @@ try {
   startChannelStatsScheduler()
 } catch (err) {
   console.warn('[stats] scheduler init failed:', err)
+}
+
+// Перепроверка сохранённых запросов парсинга (просьба владельца 24.08): раз в полчаса
+// смотрим, каким запросам пора, и перезапускаем их обычной задачей модуля. «Пора или
+// нет» решает сама строка запроса по своему периоду — тик лишь заглядывает.
+try {
+  const { startParserRefreshScheduler } = await import('./parserRefresh.js')
+  startParserRefreshScheduler()
+} catch (err) {
+  console.warn('[parser] refresh scheduler init failed:', err)
 }
 
 // Планировщик кампаний по расписанию (§3.9): каждую минуту запускает «созревшие».
