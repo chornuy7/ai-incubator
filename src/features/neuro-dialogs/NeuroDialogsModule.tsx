@@ -29,6 +29,7 @@ import {
   ProtectionTimings,
   AiGenerationNotice,
   TaskStartedModal,
+  usePresetCarry,
   type DelaysShape,
 } from '@/features/modules/shared'
 import type { ModuleTaskSettings } from '@/api/modulesApi'
@@ -99,7 +100,10 @@ export function NeuroDialogsModule() {
   useEffect(() => { void fetchPricing().then((p) => setImageMult(p.imageMultiplier ?? null)).catch(() => {}) }, [])
   useEffect(() => { void fetchGoals().then(setGoals).catch(() => {}) }, [])
 
+  const { carry, remember } = usePresetCarry()
+
   const buildSettings = useCallback((): ModuleTaskSettings => ({
+    ...carry(), // параметры шаблона, которым нет ручки в форме (threads/typeWeights у MCP-задач)
     accountIds,
     aiProtection: aiProtect,
     protectionLevel: protLevel,
@@ -120,9 +124,10 @@ export function NeuroDialogsModule() {
     replyLimitMode,
     maxRepliesPerLead: replyLimitMode === 'count' ? maxRepliesPerLead : 0,
     ...(goalId ? { goalId } : {}), // §9: привязка диалога к цели кампании (наследует KB/этапы, лиды к цели)
-  }), [accountIds, aiProtect, protLevel, activePrompt, promptBodies, maxActions, minActions, maxPerAcc, minPerAcc, delayPreset, delays, aiEnabled, replyAll, dialogGoal, analyzeImages, goalId, replyLimitMode, maxRepliesPerLead])
+  }), [carry, accountIds, aiProtect, protLevel, activePrompt, promptBodies, maxActions, minActions, maxPerAcc, minPerAcc, delayPreset, delays, aiEnabled, replyAll, dialogGoal, analyzeImages, goalId, replyLimitMode, maxRepliesPerLead])
 
   const applyPreset = useCallback((s: ModuleTaskSettings) => {
+    remember(s)
     if (s.aiProtection !== undefined) setAiProtect(s.aiProtection)
     if (s.protectionLevel !== undefined) setProtLevel(s.protectionLevel)
     if (s.promptIndex !== undefined) setActivePrompt(s.promptIndex)
@@ -141,7 +146,7 @@ export function NeuroDialogsModule() {
     if (s.replyLimitMode === 'count' || s.replyLimitMode === 'untilTarget') setReplyLimitMode(s.replyLimitMode)
     if (typeof s.maxRepliesPerLead === 'number' && s.maxRepliesPerLead > 0) setMaxRepliesPerLead(s.maxRepliesPerLead)
     pushToast({ type: 'success', title: 'Шаблон применён' })
-  }, [pushToast])
+  }, [pushToast, remember])
 
   const loadInbox = useCallback(async () => {
     if (!accountIds.length) {

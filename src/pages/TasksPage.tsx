@@ -22,7 +22,7 @@ import { canControlModule } from '@/shared/lib/access'
 import { downloadXls } from '@/shared/lib/exportXls'
 import { useTabParam } from '@/shared/lib/useTabParam'
 import { AccountPicker } from '@/features/account-picker/AccountPicker'
-import { PRESET_MUL } from '@/features/modules/shared/TimingSection'
+import { delayMultiplier, useGlobalPace } from '@/shared/lib/pace'
 
 const STATUS: Record<string, { label: string; tone: 'spark' | 'iris' | 'amber' | 'rose' | 'muted' }> = {
   running: { label: 'Выполняется', tone: 'spark' },
@@ -83,7 +83,7 @@ const ETA_STATUSES = new Set(['running', 'queued', 'paused', 'stopped'])
  * пережидать отдых, и число выглядело издевательством.
  */
 export interface FatigueHint { threshold: number; restMs: number; restingUntil: number }
-function taskEtaMs(t: ModuleTask, fatigue?: FatigueHint | null): number | null {
+function taskEtaMs(t: ModuleTask, fatigue?: FatigueHint | null, globalPace = 1): number | null {
   if (!ETA_STATUSES.has(t.status)) return null
   const done = t.progress?.done ?? t.progress?.actionsDone ?? 0
   const total = t.progress?.total ?? 0
@@ -100,7 +100,9 @@ function taskEtaMs(t: ModuleTask, fatigue?: FatigueHint | null): number | null {
   // Нет сохранённых задержек (старая задача) — берём дефолтный темп модуля, чтобы ETA
   // всё же показать примерным, а не прятать его совсем.
   const d = s.delays?.action ?? s.delays?.comment ?? DEFAULT_ACTION_DELAY
-  const mul = PRESET_MUL[s.delayPreset ?? 1] ?? 1
+  // Тот же множитель, что применит воркер: уровень защиты × пресет темпа × глобальный
+  // (ИИ-безопасность). Считать только по пресету — врать (см. shared/lib/pace.ts).
+  const mul = delayMultiplier(s.protectionLevel ?? 1, s.delayPreset ?? 1, globalPace)
   const avgDelaySec = ((d[0] + d[1]) / 2) * mul
   if (avgDelaySec <= 0) return null
   let ms = Math.round(perAccRemaining * avgDelaySec * 1000)
@@ -114,6 +116,33 @@ function taskEtaMs(t: ModuleTask, fatigue?: FatigueHint | null): number | null {
     if (fatigue.restingUntil > Date.now()) ms += fatigue.restingUntil - Date.now()
   }
   return ms
+}
+
+/**
+ * Профиль усталости задачи — для честного ETA: задача, которой предстоит два часа отдыха,
+ * не должна обещать «≈ 1 мин» (правка 19.08).
+ *
+ * Хук общий для списка и карточки задачи умышленно: пока каждый считал сам, список
+ * показывал ETA с учётом отдыха, а открытая карточка — без него, и одна задача давала
+ * два разных числа (созвон 19.08: «ETA в карточке считается по-херовому»).
+ */
+function useFatigueOf() {
+  const [activity, setActivity] = useState<ActivityMap>({})
+  useEffect(() => {
+    const loadAct = () => void fetchActivity().then(setActivity).catch(() => {})
+    loadAct()
+    const id = setInterval(loadAct, 60000)
+    return () => clearInterval(id)
+  }, [])
+  return useMemo(() => (t: ModuleTask): FatigueHint | null => {
+    const rows = (t.settings?.accountIds || []).map((id) => activity[id]).filter((a) => a?.threshold)
+    if (!rows.length) return null
+    // Берём самый «тяжёлый» отдых по задаче и самый поздний возврат: ETA не должен быть
+    // оптимистичнее реальности, иначе он снова обманет.
+    const worst = rows.reduce((acc, a) => (Number(a.restMinutes) || 0) > (Number(acc.restMinutes) || 0) ? a : acc, rows[0])
+    const restingUntil = rows.reduce((mx, a) => (a.resting && a.restUntil > mx ? a.restUntil : mx), 0)
+    return { threshold: worst.threshold, restMs: Math.max(0, Number(worst.restMinutes) || 0) * 60000, restingUntil }
+  }, [activity])
 }
 
 /** Секунды → человекочитаемо: «45 с», «12 мин», «6 ч 20 мин», «5 дн 4 ч» (как в панели запуска). */
@@ -268,25 +297,7 @@ export function TasksPage() {
     const id = setInterval(loadAcc, 60000)
     return () => clearInterval(id)
   }, [])
-  // Усталость аккаунтов — для честного ETA: задача, которой предстоит два часа отдыха,
-  // не должна обещать «≈ 1 мин» (правка 19.08).
-  const [activity, setActivity] = useState<ActivityMap>({})
-  useEffect(() => {
-    const loadAct = () => void fetchActivity().then(setActivity).catch(() => {})
-    loadAct()
-    const id = setInterval(loadAct, 60000)
-    return () => clearInterval(id)
-  }, [])
-  /** Профиль усталости задачи: берём самый «тяжёлый» среди её аккаунтов. */
-  const fatigueOf = useMemo(() => (t: ModuleTask): FatigueHint | null => {
-    const rows = (t.settings?.accountIds || []).map((id) => activity[id]).filter((a) => a?.threshold)
-    if (!rows.length) return null
-    // Берём самый «тяжёлый» отдых по задаче и самый поздний возврат: ETA не должен быть
-    // оптимистичнее реальности, иначе он снова обманет.
-    const worst = rows.reduce((acc, a) => (Number(a.restMinutes) || 0) > (Number(acc.restMinutes) || 0) ? a : acc, rows[0])
-    const restingUntil = rows.reduce((mx, a) => (a.resting && a.restUntil > mx ? a.restUntil : mx), 0)
-    return { threshold: worst.threshold, restMs: Math.max(0, Number(worst.restMinutes) || 0) * 60000, restingUntil }
-  }, [activity])
+  const fatigueOf = useFatigueOf()
   // MR-146: на каждую задачу — сколько её аккаунтов «отвалилось» (нет прокси/не отвечает/нерабочий статус).
   const acctById = useMemo(() => new Map(accounts.map((a) => [a.id, a])), [accounts])
   const taskProblems = useMemo(() => {
@@ -777,6 +788,7 @@ function TaskCard({ t, goalName, busy, busyAction, pendingAction, onOpen, onStop
   problem?: TaskProblem // MR-146: сколько аккаунтов задачи «отвалилось» и почему
   fatigue?: FatigueHint | null // профиль усталости её аккаунтов — для честного ETA
 }) {
+  const globalPace = useGlobalPace()
   // Оптимистичный статус: пока воркер реально не встал, показываем «Останавливается…» —
   // честнее, чем застывшее «Выполняется», и сразу видно, что кнопка сработала.
   const st = pendingAction
@@ -816,7 +828,7 @@ function TaskCard({ t, goalName, busy, busyAction, pendingAction, onOpen, onStop
           {/* MR-109: ETA — прогноз оставшегося времени. У работающей задачи (зелёным) —
               время до конца; у остановленной/на паузе (приглушённо, «при запуске») — сколько
               займёт, если её запустить/возобновить. Не показываем у готовых и с ошибкой. */}
-          {(() => { const e = taskEtaMs(t, fatigue); if (e == null) return null; const run = t.status === 'running'; return (
+          {(() => { const e = taskEtaMs(t, fatigue, globalPace); if (e == null) return null; const run = t.status === 'running'; return (
             <Tip className={cn('inline-flex items-center gap-1 tabular-nums', run ? 'text-emerald-300/80' : 'text-white/35')} text={run ? 'Прогноз времени до завершения — по текущему темпу' : 'Сколько ещё займёт задача, если её запустить/возобновить'}><Clock size={11} /> ≈ {fmtDur(e / 1000)}{run ? '' : ' при запуске'}</Tip>
           ) })()}
         </div>
@@ -964,6 +976,9 @@ const LOG_COLOR: Record<string, string> = { error: 'text-rose-300', warning: 'te
  * Кнопка «Назад», заголовок = модуль + номер, полные логи + результаты + управление.
  */
 export function TaskDetailPage() {
+  // ETA считаем ровно как в списке — тем же профилем усталости и тем же темпом.
+  const fatigueOf = useFatigueOf()
+  const globalPace = useGlobalPace()
   const { id = '' } = useParams()
   const me = useSession((s) => s.user)
   const [sp] = useSearchParams()
@@ -1144,7 +1159,7 @@ export function TaskDetailPage() {
               <span>{t.progress?.done ?? t.progress?.actionsDone ?? 0} / {t.progress?.total ?? 0} действий</span>
               {/* MR-109: ETA — у работающей задачи время до конца (зелёным), у остановленной/
                   на паузе прогноз «при запуске» (приглушённо). */}
-              {(() => { const e = taskEtaMs(t); if (e == null) return null; const run = t.status === 'running'; return (
+              {(() => { const e = taskEtaMs(t, fatigueOf(t), globalPace); if (e == null) return null; const run = t.status === 'running'; return (
                 <Tip className={cn('inline-flex items-center gap-1 tabular-nums', run ? 'text-emerald-300/80' : 'text-white/40')} text={run ? 'Прогноз времени до завершения — по текущему темпу' : 'Сколько ещё займёт задача, если её запустить/возобновить'}><Clock size={13} /> ≈ {fmtDur(e / 1000)}{run ? '' : ' при запуске'}</Tip>
               ) })()}
               {/* Фактическое ожидание: сумма всех пауз задачи. Рядом с прогнозом, но тише —

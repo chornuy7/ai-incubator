@@ -35,20 +35,25 @@ interface UiStore {
   setHelpTopic: (v: string) => void
 }
 
-export const useUi = create<UiStore>((set) => ({
+export const useUi = create<UiStore>((set, get) => ({
   tasksOpen: false,
   coinsOpen: false,
   setTasksOpen: (v) => set({ tasksOpen: v }),
   setCoinsOpen: (v) => set({ coinsOpen: v }),
 
+  // Пока доступ закрыт админом, окна про деньги молчат: советовать «пополните баланс»
+  // человеку, которому выключили доступ, — врать о причине. Ровно это и просили убрать
+  // на созвоне 19.08, только там речь шла про текст, а здесь окно наезжало сверху.
   noCoins: '',
-  setNoCoins: (v) => set({ noCoins: v }),
+  setNoCoins: (v) => set({ noCoins: get().accessBlocked ? '' : v }),
 
   noSubscription: '',
-  setNoSubscription: (v) => set({ noSubscription: v }),
+  setNoSubscription: (v) => set({ noSubscription: get().accessBlocked ? '' : v }),
 
   accessBlocked: '',
-  setAccessBlocked: (v) => set({ accessBlocked: v }),
+  // Блок пришёл — гасим всё, что успело всплыть до него: на экране должна остаться одна
+  // причина, а не стопка окон.
+  setAccessBlocked: (v) => set(v ? { accessBlocked: v, noCoins: '', noSubscription: '' } : { accessBlocked: '' }),
 
   helpOpen: false,
   helpTopic: '',

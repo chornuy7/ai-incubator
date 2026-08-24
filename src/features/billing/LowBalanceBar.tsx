@@ -35,9 +35,12 @@ export function LowBalanceBar() {
   // ответов чип и лента успевали показывать разные суммы. Теперь цифра одна на всех.
   const balance = useBalance()
   const setCoinsOpen = useUi((s) => s.setCoinsOpen)
+  const blocked = useUi((s) => s.accessBlocked)
   const isAdmin = !!useSession((s) => s.user?.isAdmin)
   const navigate = useNavigate()
 
+  // Доступ закрыт админом — полоса про деньги ни к чему: причина другая (см. поп-ап блока).
+  if (blocked) return null
   if (!balance) return null
   // Админу платформы лента не адресована: подписки у него нет по определению, и
   // «купите подписку» в админ-панели — просто мусор на экране.

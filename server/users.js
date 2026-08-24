@@ -484,16 +484,47 @@ export async function authenticate(email, password) {
  * иначе по e-mail. @returns публичный оператор или null.
  */
 export async function authenticateSupabase(email, password) {
+  return (await authSupabaseResult(email, password)).user
+}
+
+/**
+ * Тот же вход, но с ПРИЧИНОЙ отказа.
+ *
+ * Созвон 17.08: отключённому пользователю на вход отвечали «неверный e-mail или пароль».
+ * Пароль при этом был верный — человек шёл его восстанавливать и упирался в стену, вместо
+ * того чтобы написать администратору. Правду сказать безопасно: сообщение показывается
+ * только ПОСЛЕ верного пароля, так что чужой аккаунт им не нащупать.
+ *
+ * @returns {Promise<{ user: object | null, reason: 'bad' | 'disabled' | null }>}
+ */
+export async function authSupabaseResult(email, password) {
   const authUser = await verifyAuthPassword(email, password)
-  if (!authUser) return null
+  if (!authUser) return { user: null, reason: 'bad' }
   const db = sb()
+  let prof = null
   let user = null
   if (db) {
-    const { data: prof } = await db.from('profiles').select('legacy_id, active').eq('id', authUser.id).maybeSingle()
-    if (prof && prof.active === false) return null
-    if (prof?.legacy_id) user = await getUser(prof.legacy_id)
+    const r = await db.from('profiles').select('legacy_id, active').eq('id', authUser.id).maybeSingle()
+    prof = r.data
+    if (prof?.legacy_id && prof.active !== false) user = await getUser(prof.legacy_id)
   }
-  if (!user) user = await findByEmail(email)
-  if (!user || !user.active) return null
-  return publicUser(user)
+  if (!user && prof?.active !== false) user = await findByEmail(email)
+  const reason = accessReason(prof, user)
+  return reason ? { user: null, reason } : { user: publicUser(user), reason: null }
+}
+
+/**
+ * Почему вход не состоялся, когда пароль ВЕРНЫЙ: 'disabled' | 'bad' | null (можно входить).
+ *
+ * Отдельной функцией, потому что живой путь достижим только с настроенным Supabase Auth,
+ * а решение здесь простое и его надо сторожить: спутать «выключен» с «неверный пароль»
+ * значит отправить человека восстанавливать рабочий пароль (созвон 17.08).
+ *
+ * @param {{ active?: boolean } | null} prof запись profiles @param {{ active?: boolean } | null} user оператор
+ */
+export function accessReason(prof, user) {
+  if (prof && prof.active === false) return 'disabled'
+  if (!user) return 'bad'
+  if (user.active === false) return 'disabled'
+  return null
 }

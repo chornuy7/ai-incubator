@@ -37,6 +37,14 @@ const SERVICE_AI_TITLES = {
 const DAY_MS = 24 * 60 * 60 * 1000
 
 /**
+ * Граница периода из запроса. Нельзя писать `Number(opts.since) || дефолт`: ноль —
+ * это «с самого начала», но он falsy, и такой отчёт молча превращался в «последние 30
+ * дней». Тихо, без ошибки: клиентский отчёт за всё время показывал только последний
+ * месяц (расхождение поймал контрольный тест — разрез по людям 0.34, по модулям 0.19).
+ */
+const bound = (v, fallback) => (Number.isFinite(Number(v)) ? Number(v) : fallback)
+
+/**
  * Модуль → род активности для личной статистики. Комментинг даёт комментарии,
  * масс-реакции — реакции, чат/диалоги — сообщения и т. д. Это честный маппинг на
  * реальные действия задач: раньше «Моя статистика» рисовала эти же цифры моком.
@@ -110,7 +118,7 @@ export async function accountsHealth() {
 }
 
 export async function adminOverview(opts = {}) {
-  const since = Number(opts.since) || Date.now() - 30 * DAY_MS
+  const since = bound(opts.since, Date.now() - 30 * DAY_MS)
 
   // ── аккаунты ───────────────────────────────────────────────────────────
   const meta = await loadAllMeta().catch(() => ({}))
@@ -196,8 +204,8 @@ export async function adminOverview(opts = {}) {
  * по строкам, чтобы это было видно.
  */
 export async function economyReport(opts = {}) {
-  const since = Number(opts.since) || Date.now() - 30 * DAY_MS
-  const until = Number(opts.until) || Date.now()
+  const since = bound(opts.since, Date.now() - 30 * DAY_MS)
+  const until = bound(opts.until, Date.now())
 
   const [{ syncPayments, paymentsSummary }, { effectivePrices, coinUsdRate }] = await Promise.all([
     import('./payments.js'),
@@ -977,8 +985,8 @@ export async function purchasesReport(opts = {}) {
  * @param {{since?:number, until?:number, userId?:string}} [opts]
  */
 export async function clientReport(opts = {}) {
-  const since = Number(opts.since) || Date.now() - 30 * DAY_MS
-  const until = Number(opts.until) || Date.now()
+  const since = bound(opts.since, Date.now() - 30 * DAY_MS)
+  const until = bound(opts.until, Date.now())
   // Отчёт по КОНКРЕТНОМУ клиенту (клиентов может быть больше одного): считаем только
   // его задачи и его расход ИИ. Пусто — общий отчёт по всему проекту.
   const userId = opts.userId ? String(opts.userId) : ''

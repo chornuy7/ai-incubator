@@ -18,7 +18,7 @@ import { ModuleNotPaid } from '@/features/billing/ModuleNotPaid'
 import { isHidden } from '@/shared/config/routes'
 // §3.1 (MR-114): рассылка приведена к общей структуре модулей — те же переиспользуемые
 // блоки (SectionCard + нижняя LaunchPanel со степпером), что и в LiveModule/парсерах.
-import { SectionCard, LaunchPanel, LaunchSteps, markCurrentStep, TaskStartedModal, ProtectionTimings, BlacklistEditor } from '@/features/modules/shared'
+import { SectionCard, LaunchPanel, LaunchSteps, markCurrentStep, TaskStartedModal, ProtectionTimings, BlacklistEditor, usePresetCarry } from '@/features/modules/shared'
 import type { DelaysShape } from '@/features/modules/shared/TimingSection'
 import { LaunchCost, ActionPriceCalc } from '@/features/modules/shared/LaunchCost'
 import { useModuleTask } from '@/features/modules/shared/useModuleTask'
@@ -38,6 +38,7 @@ export function MailingPage() {
 }
 
 function MailingInner() {
+  const { carry, remember } = usePresetCarry()
   const pushToast = useApp((s) => s.pushToast)
   const [selected, setSelected] = useState<Set<string>>(new Set())
   // §9.11: список, переданный кнопкой «В новую рассылку» из деталей прошлой задачи —
@@ -158,6 +159,7 @@ function MailingInner() {
 
   // Настройки задачи — единый билдер: и для запуска, и для сохранения шаблона.
   const buildSettings = (): ModuleTaskSettings => ({
+    ...carry(), // параметры шаблона, которым нет ручки в форме (напр. typeWeights у MCP-задач)
     accountIds: [...selected],
     targets: numbers,
     threads: chatThreads,
@@ -191,6 +193,7 @@ function MailingInner() {
 
   // Восстановить настройки из шаблона (выбор аккаунтов и получателей не трогаем).
   const applyPreset = (s: ModuleTaskSettings) => {
+    remember(s)
     if (typeof s.maxPerAccount === 'number') setMaxPerAccount(s.maxPerAccount)
     if (typeof s.protectionLevel === 'number') setProtLevel(s.protectionLevel)
     if (typeof s.delayPreset === 'number') setDelayPreset(s.delayPreset)
@@ -198,6 +201,8 @@ function MailingInner() {
     if (typeof s.threads === 'number') setChatThreads(s.threads)
     if (s.promptText) { setMessage(s.promptText); setOwnText(true) }
     if (s.goalId) setGoalId(s.goalId)
+    if (typeof s.aiPerRecipient === 'boolean') setAiPerRecipient(s.aiPerRecipient)
+    if (Array.isArray(s.mediaUrls)) setMedia(s.mediaUrls)
   }
 
   async function launch() {

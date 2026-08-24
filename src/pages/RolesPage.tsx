@@ -306,6 +306,15 @@ export function RolesPage({ embedded }: {
   // один блок во ВСЕХ модулях (типовой сценарий «смотреть можно, запускать нельзя»).
   const allModuleKeys = () => (catalog?.modules || []).map((m) => m.key)
   const allBlockKeys = () => (catalog?.blocks || []).map((b) => b.key)
+  /**
+   * Открыты ли ВСЕ модули — состояние для общего переключателя (правка 24.08).
+   * Частично открытая роль считается «не всё»: переключатель показывает не «что сделает
+   * клик», а как есть сейчас, поэтому у половины включённых модулей он выключен.
+   */
+  const allModulesOn = useMemo(() => {
+    const keys = (catalog?.modules || []).map((m) => m.key)
+    return keys.length > 0 && keys.every((k) => perms.modules?.[k] === 'allow')
+  }, [catalog, perms.modules])
   /** Все модули разом (и их блоки — иначе «выключил модуль, а блоки остались allow»). */
   const setAllModules = (p: Perm) => {
     setPerms((s) => {
@@ -573,16 +582,13 @@ export function RolesPage({ embedded }: {
                   <section>
                     <div className="mb-2 flex flex-wrap items-center gap-2">
                       <h3 className="text-xs font-semibold uppercase tracking-wide text-white/40">Модули и блоки</h3>
-                      {/* MR-36: выключить/включить всё разом — вместо 84 кликов по модулям и блокам. */}
-                      <div className="ml-auto flex items-center gap-1.5">
-                        <button type="button" onClick={() => setAllModules('allow')}
-                          className="rounded-lg border border-line px-2 py-1 text-[11px] text-muted hover:border-spark-500/40 hover:text-spark-200">
-                          Включить всё
-                        </button>
-                        <button type="button" onClick={() => setAllModules('deny')}
-                          className="rounded-lg border border-line px-2 py-1 text-[11px] text-muted hover:border-rose-500/40 hover:text-rose-300">
-                          Выключить всё
-                        </button>
+                      {/* MR-36: включить/выключить всё разом — вместо 84 кликов по модулям и блокам.
+                          Правка 24.08: один переключатель вместо пары кнопок «Включить всё» /
+                          «Выключить всё» — тот же язык, что у самих модулей ниже. */}
+                      <div className="ml-auto flex items-center gap-2">
+                        <span className="text-[11px] text-muted">Все модули и блоки</span>
+                        <span className={cn('text-xs', allModulesOn ? 'text-spark-300' : 'text-white/40')}>{allModulesOn ? 'Доступ' : 'Нет'}</span>
+                        <Switch checked={allModulesOn} onChange={(v) => setAllModules(v ? 'allow' : 'deny')} />
                       </div>
                     </div>
                     {/* Один блок во ВСЕХ модулях: типовой сценарий «смотреть можно, запускать нельзя». */}

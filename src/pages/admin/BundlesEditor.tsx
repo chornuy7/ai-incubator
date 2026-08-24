@@ -3,7 +3,7 @@ import { Trash2, Loader2, Plus } from 'lucide-react'
 import { Card } from '@/shared/ui'
 import { cn } from '@/shared/lib/utils'
 import { useApp } from '@/mocks/store'
-import { fetchSubscription, createBundle, deleteBundle, type SubSetup } from '@/api/balanceApi'
+import { fetchBundles, createBundle, deleteBundle, type SubSetup } from '@/api/balanceApi'
 import type { PriceModule } from '@/api/adminApi'
 import { cleanPrice } from './adminShared'
 
@@ -23,8 +23,9 @@ export function BundlesEditor({ modules, currency }: { modules: PriceModule[]; c
 
   const load = async () => {
     try {
-      const sub = await fetchSubscription()
-      setBundles(sub.setups.filter((s) => s.custom))
+      // Свои наборы отдельным запросом: раньше тянули всю витрину ради этого списка,
+      // и вкладка «Цены» грузила /api/subscription (MR-151, созвон 19.08).
+      setBundles(await fetchBundles())
     } catch { /* витрина недоступна — просто пусто */ }
   }
   useEffect(() => { void load() }, [])

@@ -160,14 +160,16 @@ export interface ModuleConfig {
     formatHint?: string
     historyBtn?: string
     keywords?: { label: string; hint: string }
-    limits?: { label: string; value: number; hint: string }[]
+    // min/max — те же границы, что названы в hint. Держим их данными, а не только текстом:
+    // поле обязано не пускать значение вне диапазона, а не сообщать о нём словами.
+    limits?: { label: string; value: number; hint: string; min?: number; max?: number }[]
     baseFilters: { label: string; on?: boolean }[]
     profileFilters: { label: string; premium?: boolean; admin?: boolean }[]
     activityFilter?: boolean
     extraOptions?: { label: string; on?: boolean }[]
     activeStories?: boolean
     delays: { label: string; value: number }[]
-    unit: { title: string; count: number; limitLabel: string; limitValue: number }
+    unit: { title: string; count: number; limitLabel: string; limitValue: number; limitMin?: number; limitMax?: number }
     resultCount: number
   }
   delays?: { label: string; from: number; to?: number; unit?: string }[]
@@ -550,7 +552,7 @@ export const MODULES: Record<string, ModuleConfig> = {
       profileFilters: [{ label: 'Только с username' }, { label: 'Только с фото' }, { label: 'Только Premium', premium: true }, { label: 'Собирать только админов', admin: true }],
       activeStories: true,
       delays: [{ label: 'Задержка между чатами', value: 5 }, { label: 'Задержка между пользователями', value: 0.5 }],
-      unit: { title: 'Группы', count: 93, limitLabel: 'Лимит участников', limitValue: 1000 },
+      unit: { title: 'Группы', count: 93, limitLabel: 'Лимит участников', limitValue: 1000, limitMin: 1, limitMax: 100000 },
       resultCount: 5,
     },
   },
@@ -575,13 +577,13 @@ export const MODULES: Record<string, ModuleConfig> = {
       formatHint: 'Форматы: @username, t.me/group, t.me/+hash, -1001234567890',
       historyBtn: 'Из истории групп',
       keywords: { label: 'Ключевые слова', hint: 'Несколько слов — через точку с запятой «;». Сообщения, содержащие хотя бы одно из них, будут найдены' },
-      limits: [{ label: 'Лимит сообщений', value: 1000, hint: 'Максимальное количество сообщений для анализа в каждом чате (1-50000)' }, { label: 'Фильтр по дням', value: 30, hint: 'Искать сообщения за последние N дней (1-365)' }],
+      limits: [{ label: 'Лимит сообщений', value: 1000, hint: 'Максимальное количество сообщений для анализа в каждом чате (1-50000)', min: 1, max: 50000 }, { label: 'Фильтр по дням', value: 30, hint: 'Искать сообщения за последние N дней (1-365)', min: 1, max: 365 }],
       baseFilters: [{ label: 'Пропустить ботов', on: true }, { label: 'Пропустить удаленных', on: true }, { label: 'Пропустить заблокированных/scam' }],
       profileFilters: [{ label: 'Только с username' }, { label: 'Только с фото' }, { label: 'Только Premium', premium: true }],
       activityFilter: true,
       extraOptions: [{ label: 'Включить ответы', on: true }, { label: 'Включить пересланные сообщения' }],
       delays: [{ label: 'Задержка между чатами', value: 5 }, { label: 'Задержка между сообщениями', value: 0.5 }],
-      unit: { title: 'Чаты', count: 21, limitLabel: 'Лимит сообщений', limitValue: 1000 },
+      unit: { title: 'Чаты', count: 21, limitLabel: 'Лимит сообщений', limitValue: 1000, limitMin: 1, limitMax: 50000 },
       resultCount: 1,
     },
   },
@@ -606,12 +608,12 @@ export const MODULES: Record<string, ModuleConfig> = {
       formatHint: 'Форматы: @channel, t.me/channel, t.me/+hash, -1001234567890',
       historyBtn: 'Из истории каналов',
       keywords: { label: 'Ключевые слова', hint: 'Несколько слов — через точку с запятой «;». Если не указано, парсятся все комментарии' },
-      limits: [{ label: 'Лимит постов', value: 50, hint: 'Количество последних постов для анализа в каждом канале (1-500)' }, { label: 'Комментариев на пост', value: 100, hint: 'Максимальное количество комментариев для чтения под каждым постом (1-1000)' }, { label: 'Минимальная длина комментария', value: 10, hint: 'Игнорировать короткие комментарии (символов)' }],
+      limits: [{ label: 'Лимит постов', value: 50, hint: 'Количество последних постов для анализа в каждом канале (1-500)', min: 1, max: 500 }, { label: 'Комментариев на пост', value: 100, hint: 'Максимальное количество комментариев для чтения под каждым постом (1-1000)', min: 1, max: 1000 }, { label: 'Минимальная длина комментария', value: 10, hint: 'Игнорировать короткие комментарии (символов)', min: 0, max: 4096 }],
       baseFilters: [{ label: 'Пропустить ботов', on: true }, { label: 'Пропустить удаленных', on: true }, { label: 'Пропустить заблокированных/scam' }, { label: 'Сохранять текст комментария' }],
       profileFilters: [{ label: 'Только с username' }, { label: 'Только с фото' }, { label: 'Только Premium', premium: true }],
       activityFilter: true,
       delays: [{ label: 'Задержка между каналами', value: 5 }, { label: 'Задержка между постами', value: 1 }],
-      unit: { title: 'Каналы', count: 21, limitLabel: 'Лимит постов', limitValue: 50 },
+      unit: { title: 'Каналы', count: 21, limitLabel: 'Лимит постов', limitValue: 50, limitMin: 1, limitMax: 500 },
       resultCount: 289,
     },
   },

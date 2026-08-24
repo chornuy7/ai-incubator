@@ -3,6 +3,7 @@ import { useLocation, useNavigate } from 'react-router-dom'
 import { Lock, LifeBuoy, User, LogOut } from 'lucide-react'
 import { useUi } from '@/shared/lib/uiStore'
 import { useSession } from '@/features/auth/session'
+import { fetchMe } from '@/api/usersApi'
 
 /**
  * MR-153 (созвон 12.08): отключённому пользователю панель РЕАЛЬНО закрыта.
@@ -21,6 +22,7 @@ export function BlockedOverlay() {
   const loc = useLocation()
   const navigate = useNavigate()
   const logout = useSession((s) => s.logout)
+  const user = useSession((s) => s.user)
 
   // Пока заблокированы — раз в 10 c тихо проверяем /me (он в whitelist): вернул админ доступ
   // → снимаем блок и перезагружаемся с чистого состояния. Без пробника блок висел бы до
@@ -29,14 +31,32 @@ export function BlockedOverlay() {
   useEffect(() => {
     if (!blocked) return
     const probe = async () => {
+      // Через общий клиент: тот же путь, что и у остальной панели (заголовки, разбор кода
+      // ответа), — чтобы проверка доступа не жила по своим правилам.
       try {
-        const r = await fetch('/api/users/me')
-        if (r.ok) { setBlocked(''); window.location.reload() }
-      } catch { /* сеть — ждём следующей попытки */ }
+        await fetchMe()
+        setBlocked('')
+        window.location.reload()
+      } catch { /* всё ещё закрыт или сеть — ждём следующей попытки */ }
     }
     const id = window.setInterval(probe, 10_000)
     return () => window.clearInterval(id)
   }, [blocked, setBlocked])
+
+  // Обратная сторона того же присмотра: пока НЕ заблокированы, раз в 10 с спрашиваем /me.
+  // Админ снимает доступ в любой момент, а панель узнавала об этом только на следующем
+  // запросе — человек мог сидеть на открытой странице и спокойно работать (правка 24.08).
+  // /me отвечает отдельным кодом ACCESS_DISABLED, по нему поп-ап поднимается сам (client.ts).
+  useEffect(() => {
+    if (blocked || !user) return
+    const probe = () => {
+      // Вкладка скрыта — не дёргаем сервер: вернётся человек, вернётся и проверка.
+      if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return
+      void fetchMe().catch(() => { /* код разберёт client.ts, сеть — подождём следующей попытки */ })
+    }
+    const id = window.setInterval(probe, 10_000)
+    return () => window.clearInterval(id)
+  }, [blocked, user])
 
   if (!blocked) return null
   // На разрешённых страницах не мешаем — там человек и должен что-то сделать.
@@ -57,8 +77,10 @@ export function BlockedOverlay() {
             куда идти. Про подписку — ни слова, её здесь нет. */}
         <div className="mt-4 font-display text-xl font-bold text-fg">Доступ закрыт</div>
         <p className="mt-2 text-sm text-muted">
-          {blocked || 'Доступ к платформе отключён администратором.'} Напишите в поддержку — там
-          скажут причину и что нужно, чтобы вернуть доступ.
+          {/* Точку ставим сами: причина приходит с сервера и знаков препинания не несёт —
+              без этого две фразы слипались в одну («администратором Напишите»). */}
+          {(blocked || 'Доступ к платформе отключён администратором').replace(/[.!?]?$/, '.')} Напишите
+          в поддержку — там скажут причину и что нужно, чтобы вернуть доступ.
         </p>
         <div className="mt-6 flex flex-col gap-2">
           <button onClick={() => navigate('/panel/support')} className="btn-primary inline-flex h-11 items-center justify-center gap-2">

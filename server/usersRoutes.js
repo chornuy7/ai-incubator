@@ -1,6 +1,6 @@
 /** CRUD + аутентификация операторов (§8.1). Монтируется в /api/users. */
 import { Router } from 'express'
-import { listUsers, getUser, createUser, updateUser, deleteUser, authenticate, authenticateSupabase, verifyPassword, publicUser, isBlockedByOwner } from './users.js'
+import { listUsers, getUser, createUser, updateUser, deleteUser, authenticate, authenticateSupabase, authSupabaseResult, verifyPassword, publicUser, isBlockedByOwner } from './users.js'
 import { rolesForUser, mergePermissions, unrestrictedPermissions, userRoleIds, hasAdminRole, ADMIN_ROLE_ID } from './roles.js'
 import { BLOCKS, listRoles, createRole, updateRole, ALLOW, DENY } from './roles.js'
 import { MODULE_LABELS } from './lib/accountLocks.js'
@@ -94,6 +94,42 @@ usersRouter.get('/', async (req, res) => {
 })
 
 /** Логин: публичный юзер + роль (гейт UI) + подписанный токен сессии. */
+/**
+ * §5.3 (MR-36): «зайти под аккаунтом клиента и проверить доступы».
+ *
+ * Владелец платформы открывает панель ГЛАЗАМИ клиента — иначе проверить, что человеку
+ * видно и что разрешено, можно только с его паролем. Выдаём обычную панельную сессию
+ * этого пользователя: интерфейс не знает про «особый режим» и показывает ровно то же,
+ * что увидел бы сам клиент.
+ *
+ * Ограничения намеренные:
+ *  - только платформенный админ (не владелец пространства): это чужой кабинет;
+ *  - под другим админом входить нельзя — иначе один админ тихо получает права другого;
+ *  - каждый вход пишется в аудит: под кого, кто и когда. Смотреть чужой кабинет —
+ *    нормально, делать это незаметно — нет.
+ */
+usersRouter.post('/impersonate', async (req, res) => {
+  try {
+    const { isAdminRequest } = await import('./lib/accessGuard.js')
+    if (!(await isAdminRequest(req))) return fail(res, new Error('Доступно только администратору'), 403)
+    const targetId = String(req.body?.userId || '')
+    if (!targetId) return fail(res, new Error('Не указан пользователь'), 400)
+    const target = await getUser(targetId).catch(() => null)
+    if (!target) return fail(res, new Error('Пользователь не найден'), 404)
+    if (hasAdminRole(userRoleIds(target))) return fail(res, new Error('Под другим администратором входить нельзя'), 403)
+
+    const payload = await sessionPayload(target)
+    const { appendAudit } = await import('./lib/auditLog.js')
+    await appendAudit({
+      action: 'user.impersonate',
+      initiator: req.header('x-user-id') || '',
+      targetId,
+      reason: `Вход под пользователем ${target.email || targetId}`,
+    }).catch(() => {})
+    res.json({ ok: true, ...payload, user: publicUser(target) })
+  } catch (err) { fail(res, err) }
+})
+
 usersRouter.post('/login', async (req, res) => {
   try {
     const { email, password } = req.body ?? {}
@@ -106,10 +142,23 @@ usersRouter.post('/login', async (req, res) => {
     // не может войти, выставить env AUTH_ALLOW_LEGACY=1 и перезапустить — вернёт fallback на
     // legacy без отката кода (таблица users живёт как точка отката до этапа drop).
     let via = 'supabase'
-    let user = await authenticateSupabase(email, password)
-    if (!user && process.env.AUTH_ALLOW_LEGACY) { user = await authenticate(email, password); via = 'legacy' }
+    const attempt = await authSupabaseResult(email, password)
+    let user = attempt.user
+    let reason = attempt.reason
+    if (!user && process.env.AUTH_ALLOW_LEGACY) {
+      user = await authenticate(email, password)
+      if (user) { via = 'legacy'; reason = null }
+    }
     if (!user) {
-      await appendAudit({ action: 'user.login.fail', module: 'auth', initiator: 'system', reason: `Неудачный вход: ${String(email || '').slice(0, 60)}`, meta: { ip } })
+      await appendAudit({ action: 'user.login.fail', module: 'auth', initiator: 'system', reason: `Неудачный вход: ${String(email || '').slice(0, 60)}`, meta: { ip, why: reason } })
+      // Созвон 17.08: отключённому нельзя отвечать «неверный пароль» — пароль-то верный.
+      // Человек должен понять, что дело в доступе, и пойти к администратору, а не крутить
+      // восстановление пароля по кругу.
+      // Код ACCESS_DISABLED здесь НЕ шлём намеренно: фронт поднимает по нему поп-ап-блок
+      // поверх панели (MR-153), а тут человек ещё снаружи — ему нужен текст в форме входа.
+      if (reason === 'disabled') {
+        return res.status(403).json({ ok: false, error: 'Доступ отключён администратором. Обратитесь к администратору или в поддержку.' })
+      }
       return res.status(401).json({ ok: false, error: 'Неверный e-mail или пароль' })
     }
     // §4.1 (MR-28): зависимые статусы — если владелец отключён, суб внутрь не входит.
@@ -165,9 +214,13 @@ usersRouter.get('/me', async (req, res) => {
     const userId = req.header('x-user-id')
     if (!userId) return res.status(401).json({ ok: false, error: 'Нет сессии' })
     const user = await getUser(userId)
-    if (!user || !user.active) return res.status(401).json({ ok: false, error: 'Пользователь отключён' })
+    if (!user) return res.status(401).json({ ok: false, error: 'Нет сессии' })
+    // Правка 24.08: отключённый доступ отвечает ОТДЕЛЬНЫМ кодом, а не «нет сессии». По нему
+    // панель поднимает свой поп-ап сразу, как только админ снял доступ, — раньше человек
+    // сидел на открытой странице и узнавал об этом лишь на следующем запросе.
+    if (!user.active) return res.status(403).json({ ok: false, code: 'ACCESS_DISABLED', error: 'Доступ отключён администратором' })
     // §4.1 (MR-28): отключили владельца — суб теряет доступ, не дожидаясь перелогина.
-    if (await isBlockedByOwner(user)) return res.status(403).json({ ok: false, error: 'Рабочее пространство владельца отключено' })
+    if (await isBlockedByOwner(user)) return res.status(403).json({ ok: false, code: 'ACCESS_DISABLED', error: 'Рабочее пространство владельца отключено' })
     // Та же сборка, что и при входе: расхождение «вошёл с одними правами, обновил
     // страницу — с другими» ловится тяжелее всего.
     const { role, roles, isOwner, isSub } = await sessionPayload(user)

@@ -10,7 +10,7 @@ import { Switch, Select, Badge, EmptyState, Modal } from '@/shared/ui'
 import { AccountPicker } from '@/features/account-picker/AccountPicker'
 import { useModuleTask } from './shared/useModuleTask'
 import { lookupParserCache, type ParserCacheHit } from '@/api/modulesApi'
-import { SectionCard, NumberField, ProtectionTimings, LaunchPanel, LaunchSteps, markCurrentStep, TaskStartedModal, SchedulePanel } from './shared'
+import { SectionCard, NumberField, ProtectionTimings, LaunchPanel, LaunchSteps, markCurrentStep, TaskStartedModal, SchedulePanel, usePresetCarry } from './shared'
 import { PresetBar } from './shared/PresetBar'
 import { SavePresetModal } from './shared/SavePresetModal'
 import { cn } from '@/shared/lib/utils'
@@ -111,7 +111,10 @@ function Inner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: string }) {
   const setF = (k: string, v: boolean) => setFilters((s) => ({ ...s, [k]: v }))
   const setL = (k: string, v: number) => setLimits((s) => ({ ...s, [k]: v }))
 
+  const { carry, remember } = usePresetCarry()
+
   const buildSettings = useCallback((): ModuleTaskSettings => ({
+    ...carry(), // параметры шаблона, которым нет ручки в форме (напр. delayPreset у MCP-задач)
     accountIds: [...selected],
     targets: targetList,
     keywords: keywordList,
@@ -121,11 +124,15 @@ function Inner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: string }) {
     limits,
     activeStories,
     intersectionMode: moduleKey === 'parsing-users' ? intersection : false,
+    // Асинхронный режим собирается ЗДЕСЬ, а не подмешивается на запуске: шаблон
+    // сохраняется из buildSettings, и подмешанное поле в него не попадало — тумблер
+    // «слетал» при каждом применении шаблона (созвон 19.08).
+    parallelAccounts: parallel,
     delayChat: fastWork ? 0 : delayChat,
     delayItem: fastWork ? 0 : delayItem,
     delays: { join: [fastWork ? 0 : joinMin, fastWork ? 0 : joinMax] as [number, number] },
     limit: limits.participants ?? limits.messages ?? limits.posts ?? 1000,
-  }), [selected, targetList, keywordList, aiProtect, protLevel, filters, limits, activeStories, intersection, fastWork, delayChat, delayItem, joinMin, joinMax, moduleKey])
+  }), [carry, selected, targetList, keywordList, aiProtect, protLevel, filters, limits, activeStories, intersection, parallel, fastWork, delayChat, delayItem, joinMin, joinMax, moduleKey])
 
   const busySelectedCount = useMemo(() => [...selected].filter((id) => accounts.some((a) => a.id === id && a.busyIn)).length, [selected, accounts])
   const canStart = selected.size > 0 && busySelectedCount === 0 && targetList.length > 0
@@ -149,7 +156,7 @@ function Inner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: string }) {
 
   const handleStart = () => {
     setCleared(false)
-    void start({ ...buildSettings(), parallelAccounts: parallel }, `${cfg.title} · ${selected.size} акк.`)
+    void start(buildSettings(), `${cfg.title} · ${selected.size} акк.`)
   }
 
   // §10: сохранение через модалку (имя + цвет + владелец), как в остальных модулях.
@@ -158,6 +165,7 @@ function Inner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: string }) {
 
   // Цели (targetList) не восстанавливаем — они ситуативны; переносим фильтры, лимиты и задержки.
   const applyPreset = useCallback((s: ModuleTaskSettings) => {
+    remember(s)
     if (s.aiProtection !== undefined) setAiProtect(s.aiProtection)
     if (s.protectionLevel !== undefined) setProtLevel(s.protectionLevel)
     if (Array.isArray(s.keywords)) setKeywords(s.keywords.join(', '))
@@ -167,8 +175,14 @@ function Inner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: string }) {
     if (s.delayChat !== undefined) setDelayChat(s.delayChat)
     if (s.delayItem !== undefined) setDelayItem(s.delayItem)
     if (s.delays?.join) { setJoinMin(s.delays.join[0]); setJoinMax(s.delays.join[1]) }
+    // «Быстрая работа» — не отдельная настройка, а нулевые задержки: в шаблоне от неё
+    // остаются только нули. Поэтому и восстанавливаем её по ним. Иначе тумблер оставался
+    // выключенным при нулевых задержках — то самое «настройка слетела» (созвон 19.08).
+    if (s.delayChat !== undefined && s.delayItem !== undefined) setFastWork(s.delayChat === 0 && s.delayItem === 0)
+    if (s.intersectionMode !== undefined) setIntersection(!!s.intersectionMode)
+    if (s.parallelAccounts !== undefined) setParallel(!!s.parallelAccounts)
     pushToast({ type: 'success', title: 'Шаблон применён' })
-  }, [pushToast])
+  }, [pushToast, remember])
 
   /*
    * §6 (MR-38): кэш результатов. До 24.08 он был только у парсера каналов, и повторный
@@ -299,13 +313,13 @@ function Inner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: string }) {
 
             {(P.limits ?? []).map((l) => (
               <div key={l.label} className="rounded-2xl border border-line bg-elevated/40 p-3">
-                <NumberField label={l.label} value={limits[lkey(l.label)] ?? l.value} onChange={(v) => setL(lkey(l.label), v)} />
+                <NumberField label={l.label} value={limits[lkey(l.label)] ?? l.value} onChange={(v) => setL(lkey(l.label), v)} min={l.min ?? 1} max={l.max} />
                 {l.hint && <p className="mt-1 text-[11px] text-muted">{l.hint}</p>}
               </div>
             ))}
             {!P.limits && P.unit && (
               <div className="rounded-2xl border border-line bg-elevated/40 p-3">
-                <NumberField label={P.unit.limitLabel} value={limits[lkey(P.unit.limitLabel)] ?? P.unit.limitValue} onChange={(v) => setL(lkey(P.unit.limitLabel), v)} />
+                <NumberField label={P.unit.limitLabel} value={limits[lkey(P.unit.limitLabel)] ?? P.unit.limitValue} onChange={(v) => setL(lkey(P.unit.limitLabel), v)} min={P.unit.limitMin ?? 1} max={P.unit.limitMax} />
                 <p className="mt-1 text-[11px] text-muted">Максимум пользователей для парсинга из каждой группы (1–100000)</p>
               </div>
             )}

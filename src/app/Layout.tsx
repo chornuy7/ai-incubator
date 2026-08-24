@@ -10,6 +10,7 @@ import { HelpCenterDrawer } from '@/widgets/HelpCenterDrawer'
 import { SupportWidget } from '@/widgets/SupportWidget'
 import { PaywallBanner } from '@/features/paywall/Paywall'
 import { LowBalanceBar } from '@/features/billing/LowBalanceBar'
+import { ImpersonationBar } from '@/features/auth/ImpersonationBar'
 import { LowBalanceLoginModal } from '@/features/billing/LowBalanceLoginModal'
 import { useApp } from '@/mocks/store'
 import { useSession } from '@/features/auth/session'
@@ -98,6 +99,8 @@ export function Layout() {
           капом 1400px: контент ограничиваем, панель — нет. */}
       <div data-main-column className="flex min-w-0 flex-1 flex-col">
         {/* §10.1: лента низкого баланса — в самом верху, над шапкой, без крестика. */}
+        {/* §5.3 (MR-36): видно, что кабинет чужой, и есть выход обратно в админку. */}
+        <ImpersonationBar />
         <LowBalanceBar />
         <AppHeader />
         {/* ТЗ 19.08 §5 — регрессия ширины. Кап 1400px тут был на ВСЕХ страницах, пока MR-129

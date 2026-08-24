@@ -13,6 +13,8 @@
 export const PANEL_TOKEN_KEY = 'ai-incubator:token'
 export const ADMIN_TOKEN_KEY = 'ai-incubator:admin-token'
 export const PANEL_SESSION_KEY = 'ai-incubator:session'
+/** §5.3 (MR-36): под кем сейчас открыта панель из админки — для баннера возврата. */
+export const IMPERSONATE_KEY = 'ai-incubator:impersonating'
 export const ADMIN_SESSION_KEY = 'ai-incubator:admin-session'
 
 /** Мы сейчас в админ-зоне? Определяем по URL: /admin и вложенные. */

@@ -1,6 +1,6 @@
 import { coins as fmtCoins, cn } from '@/shared/lib/utils'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { BarChart3, Users, ListChecks, Coins, Download, RefreshCw, AlertTriangle, Contact, Power, ChevronDown, Activity, Plus, Radar, Search, ShoppingCart, Loader2, Check, Trash2, ScrollText, Send, MessageSquare, LifeBuoy, ArrowLeft } from 'lucide-react'
+import { BarChart3, Users, ListChecks, Coins, Download, RefreshCw, AlertTriangle, Contact, Power, ChevronDown, Activity, Plus, Radar, Search, ShoppingCart, Loader2, Check, Trash2, ScrollText, Send, MessageSquare, LifeBuoy, ArrowLeft, LogIn} from 'lucide-react'
 import { PageHeader, Card, Segmented, EmptyState, Select, Badge, Tip } from '@/shared/ui'
 import { useApp } from '@/mocks/store'
 import {
@@ -11,7 +11,8 @@ import {
   type AdminOverview, type ClientReport, type UsersReport, type Problems, type CrmOverview,
   type ActiveNow, type ActiveTask, type PriceModule, type DailySpend, type Purchases, type PaymentsResult, type UserRow, type AccountsHealth, fetchPrices, savePrices, type EffectivePrices, type PricePatch,
   fetchTaskLogs, type FailedTask, type TaskLogs } from '@/api/adminApi'
-import { updateUser } from '@/api/usersApi'
+import { updateUser, impersonate } from '@/api/usersApi'
+import { PANEL_TOKEN_KEY, PANEL_SESSION_KEY, IMPERSONATE_KEY } from '@/features/auth/zone'
 import { fetchTickets, fetchTicket, replyTicket, setTicketStatus, fetchTicketsUnread, type ApiTicket, type TicketStatus } from '@/api/ticketsApi'
 import { TicketChat, shortId } from '@/features/support/TicketChat'
 import { fetchTgstatSession, uploadTgstatSession, verifyTgstatSession, clearTgstatSession, type TgstatSession } from '@/api/tgstatApi'
@@ -125,6 +126,15 @@ export function AdminStatsPage() {
   type StatsSnap = { o: AdminOverview; r: ClientReport; u: UsersReport; p: Problems; c: CrmOverview; a: ActiveNow; d: DailySpend; pur: Purchases; h: AccountsHealth; econ: Economy }
   const CACHE_TTL = 60_000
   const cacheRef = useRef<Map<number, { snap: StatsSnap; ts: number }>>(new Map())
+  /**
+   * Тик перезагрузки для вкладок, которые грузят своё сами (Цены/Аккаунты/Роли/Тикеты/
+   * Парсер/API). У них нет датасетов периода, поэтому «Обновить» им нечего было дёргать —
+   * кнопку и вовсе прятали, и обновить такую вкладку можно было только перезагрузкой
+   * страницы. Тик меняет ключ содержимого, вкладка монтируется заново и тянет своё.
+   */
+  const [reloadTick, setReloadTick] = useState(0)
+  /** Датасеты, запрос за которыми уже в пути — чтобы не отправить второй такой же. */
+  const inflightRef = useRef<Map<number, Set<string>>>(new Map())
   const applySnap = (s: StatsSnap) => {
     setOverview(s.o); setReport(s.r); setUsers(s.u); setProblems(s.p); setCrm(s.c)
     setActive(s.a); setDaily(s.d); setPurchases(s.pur); setHealth(s.h); setEconomy(s.econ); setDenied(false)
@@ -183,6 +193,9 @@ export function AdminStatsPage() {
       a: setActive as never, d: setDaily as never, pur: setPurchases as never, h: setHealth as never, econ: setEconomy as never,
     }
     const keys: Array<keyof StatsSnap> = only && only.length ? only : ['o', 'r', 'u', 'p', 'c', 'a', 'd', 'pur', 'h', 'econ']
+    const flying = inflightRef.current.get(periodIdx) || new Set<string>()
+    keys.forEach((k) => flying.add(k))
+    inflightRef.current.set(periodIdx, flying)
     try {
       const values = await Promise.all(keys.map((k) => FETCHERS[k]()))
       if (signal.aborted) return // перебит новым периодом — результат не применяем
@@ -210,6 +223,7 @@ export function AdminStatsPage() {
       if (/администратор/i.test(msg)) setDenied(true)
       else pushToast({ type: 'error', title: 'Не удалось загрузить статистику', desc: msg })
     } finally {
+      keys.forEach((k) => flying.delete(k))
       // loading/busy снимает только полная видимая загрузка; фоновая (silent) и частичная
       // (only) их не поднимали — и снимать нечего.
       if (loadCtl.current === ctl && !silent && (!only || visible)) { busyRef.current = false; setLoading(false) }
@@ -224,12 +238,18 @@ export function AdminStatsPage() {
     const need = TAB_DATASETS[tabIdx] || []
     if (!need.length) return // вкладка-справочник грузит своё сама
     const have = loadedRef.current.get(periodIdx) || new Set<string>()
-    const missing = opts.force ? need : need.filter((k) => !have.has(k))
+    // Созвон 19.08: «роли, подписки — по два раза вызывает одно и то же». Отметка `loaded`
+    // ставится ПОСЛЕ ответа, поэтому два входа подряд (эффекты периода и вкладки срабатывают
+    // на монтировании оба) успевали уйти на сервер до неё. Считаем «уже едет» тоже занятым.
+    const flying = inflightRef.current.get(periodIdx) || new Set<string>()
+    const missing = opts.force ? need : need.filter((k) => !have.has(k) && !flying.has(k))
     if (!missing.length) return
     void load({ only: missing, visible: true, force: opts.force })
   }
   // Смена периода — данные старого периода больше не в силе: чистим отметки и грузим
   // заново то, что нужно ОТКРЫТОЙ вкладке (а не всё сразу).
+  // Отметки «уже едет» здесь НЕ чистим: их снимает сам запрос, когда закончится или будет
+  // отменён. Стереть их тут значило снова открыть дорогу дублю — ровно ему и открывало.
   useEffect(() => { loadedRef.current.delete(periodIdx); ensureTab(tab) }, [since]) // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => { ensureTab(tab) }, [tab]) // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -409,14 +429,15 @@ export function AdminStatsPage() {
           <Segmented options={PERIODS.map((p) => p.label)} value={periodIdx} onChange={setPeriodIdx} size="sm" disabled={loading} />
         )}
         {/* MR-151: «Обновить» — здесь, рядом с периодом, и обновляет ТОЛЬКО текущую
-            вкладку (её датасеты), а не всю админку. На справочных вкладках, что грузят
-            своё сами (Цены/Аккаунты/Роли/Тикеты/Парсер/API), кнопку не показываем — у них
-            свой контрол обновления. */}
-        {(TAB_DATASETS[tab]?.length ?? 0) > 0 && (
-          <button onClick={() => ensureTab(tab, { force: true })} className="btn-ghost ml-auto h-9" disabled={loading} title="Обновить данные этой вкладки">
-            <RefreshCw size={15} className={loading ? 'animate-spin' : ''} /> Обновить
-          </button>
-        )}
+            вкладку, а не всю админку. Вкладкам периода дёргаем их датасеты; вкладкам,
+            что грузят своё сами, — тик перезагрузки. Раньше на вторых кнопки не было
+            вовсе, и обновить, скажем, «Цены» можно было только перезагрузкой страницы. */}
+        <button
+          onClick={() => ((TAB_DATASETS[tab]?.length ?? 0) > 0 ? ensureTab(tab, { force: true }) : setReloadTick((n) => n + 1))}
+          className="btn-ghost ml-auto h-9" disabled={loading} title="Обновить данные этой вкладки"
+        >
+          <RefreshCw size={15} className={loading ? 'animate-spin' : ''} /> Обновить
+        </button>
       </div>
 
       {/* MR-151: ждём данные ИМЕННО этой вкладки. Раньше ждали overview, а его теперь может
@@ -439,7 +460,9 @@ export function AdminStatsPage() {
         /* §3.3 (MR-23): экономика — доходы, расходы, маржа, разрез по серверам. */
         <EconomyTab economy={economy} />
       ) : tab === 6 ? (
-        <PricesTab />
+        // key с тиком: «Обновить» на самозагружающейся вкладке перемонтирует её, и она
+        // перечитает своё с сервера — своего контрола обновления у неё нет.
+        <PricesTab key={reloadTick} />
       ) : tab === 7 ? (
         <ProblemsTab p={problems} health={health} />
       ) : tab === 8 ? (
@@ -450,18 +473,18 @@ export function AdminStatsPage() {
         <MonitoringTab health={health} active={active} daily={daily} />
       ) : tab === 11 ? (
         /* §10.10: управление аккаунтами из sudo-админки — список всех + пауза/запуск/стоп. */
-        <AccountsTab />
+        <AccountsTab key={reloadTick} />
       ) : tab === 12 ? (
         /* §10.4: управление ролями доступа — из sudo-админки (создание/права/блоки). */
-        <RolesPage />
+        <RolesPage key={reloadTick} />
       ) : tab === 13 ? (
         /* §8 (MR-44): тикеты поддержки — поддержка видит все, отвечает, двигает статус. */
-        <AdminTicketsTab autoRefresh={autoRefresh} registerReload={registerTicketsReload} />
+        <AdminTicketsTab key={reloadTick} autoRefresh={autoRefresh} registerReload={registerTicketsReload} />
       ) : tab === 14 ? (
         /* §6 (MR-40b): сессия каталог-парсера (cookies) — управление из админки. */
-        <AdminParserSessionTab />
+        <AdminParserSessionTab key={reloadTick} />
       ) : (
-        <ApiDocsTab />
+        <ApiDocsTab key={reloadTick} />
       )}
     </div>
   )
@@ -865,6 +888,31 @@ function UsersTab({ report, onReload }: { report: UsersReport | null; onReload: 
     } finally { setBusy(null) }
   }
 
+  /**
+   * §5.3 (MR-36): «зайти под аккаунтом клиента и проверить доступы».
+   *
+   * Кладём панельную сессию клиента и переходим в панель. Админ-сессия при этом цела:
+   * у зон разные ключи, и возврат по кнопке в баннере снова открывает админку под собой.
+   * Новую вкладку не открываем — всплывающие окна блокируются браузером, и кнопка молча
+   * не срабатывала бы.
+   */
+  const enterAs = async (userId: string, email: string) => {
+    setBusy(userId)
+    try {
+      const { user, role, isOwner, token } = await impersonate(userId)
+      localStorage.setItem(PANEL_TOKEN_KEY, token)
+      localStorage.setItem(PANEL_SESSION_KEY, JSON.stringify({
+        id: user.id, email: user.email, name: user.name, roleId: user.roleId,
+        role: role?.name || '', permissions: role?.permissions ?? null, isOwner, isSub: !!user.parentId,
+      }))
+      // Метка для баннера в панели: человек должен видеть, что смотрит чужой кабинет.
+      localStorage.setItem(IMPERSONATE_KEY, email || userId)
+      window.location.assign('/panel')
+    } catch (e) {
+      pushToast({ type: 'error', title: 'Не удалось войти под клиентом', desc: e instanceof Error ? e.message : '' })
+    } finally { setBusy(null) }
+  }
+
   const toggle = async (userId: string, active: boolean) => {
     setBusy(userId)
     try {
@@ -1024,6 +1072,18 @@ function UsersTab({ report, onReload }: { report: UsersReport | null; onReload: 
                         <Power size={12} /> {r.active ? 'Отключить' : 'Включить'}
                       </button>
                     ) : <span className="text-xs text-muted">—</span>}
+                    {/* §5.3 (MR-36): посмотреть панель глазами клиента — проверить, что
+                        ему видно и что разрешено, не спрашивая пароль. */}
+                    {real && (
+                      <button
+                        onClick={(e) => { e.stopPropagation(); void enterAs(r.userId, r.email) }}
+                        disabled={busy === r.userId}
+                        className="ml-1.5 inline-flex h-7 items-center gap-1 rounded-lg border border-line px-2 text-xs font-semibold text-muted hover:border-iris-500/40 hover:text-iris-300 disabled:opacity-40"
+                        title="Открыть панель под этим клиентом (в новой вкладке)"
+                      >
+                        <LogIn size={12} /> Войти под клиентом
+                      </button>
+                    )}
                   </td>
                 </tr>,
                 isOpen ? (

@@ -9,7 +9,7 @@ import { activeAccounts, useApp } from '@/mocks/store'
 import { Segmented, Switch, Badge, Select, EmptyState, Tip} from '@/shared/ui'
 import { AccountPicker } from '@/features/account-picker/AccountPicker'
 import { useModuleTask } from './shared/useModuleTask'
-import { SectionCard, NumberField, ProtectionTimings, DelayFields, LaunchPanel, LaunchSteps, markCurrentStep, TaskStartedModal, SchedulePanel } from './shared'
+import { SectionCard, NumberField, ProtectionTimings, DelayFields, LaunchPanel, LaunchSteps, markCurrentStep, TaskStartedModal, SchedulePanel, usePresetCarry } from './shared'
 import { PresetBar } from './shared/PresetBar'
 import { SavePresetModal } from './shared/SavePresetModal'
 import { cn } from '@/shared/lib/utils'
@@ -80,6 +80,14 @@ function qualityExplain(members = 0, hasComments = false): string {
   return `Подписчиков ${tierLabel} → база ${base}/10${bonus ? '; открытые комментарии +1' : ''} = ${total}/10`
 }
 /** Общая формула для легенды. */
+/**
+ * Потолок для диапазона участников. У Telegram самые крупные каналы — десятки миллионов,
+ * так что 100 млн с запасом; смысл цифры не в точности, а в том, чтобы в поле нельзя было
+ * вписать 1e31 и отправить это в задачу как настоящий фильтр.
+ */
+const MEMBERS_CAP = 100_000_000
+const clampMembers = (v: string) => Math.min(MEMBERS_CAP, Math.max(0, Math.round(Number(v) || 0)))
+
 const QUALITY_FORMULA = 'Рейтинг ★/10 = база по числу подписчиков (100k+ → 10, 50k+ → 9, … <50 → 2) + 1 за открытые комментарии.'
 
 export function ChannelParserModule({ moduleKey }: { moduleKey: string }) {
@@ -191,7 +199,10 @@ function ChannelParserInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: 
     pushToast({ type: 'success', title: 'Шаблон применён', desc: `+${chips.length} ключевых слов` })
   }
 
+  const { carry, remember } = usePresetCarry()
+
   const buildSettings = useCallback((): ModuleTaskSettings => ({
+    ...carry(), // параметры шаблона, которым нет ручки в форме (напр. delayPreset у MCP-задач)
     accountIds: [...selected],
     keywords,
     endings,
@@ -213,7 +224,7 @@ function ChannelParserInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: 
       floodWait: 120,
       floodQuarantine: 3,
     },
-  }), [selected, keywords, endings, method, aiProtect, protLevel, limit, activity, commentFilter, minComments, minMembers, maxMembers, langDetect, intersect, fastWork, reqDelay, chDelay])
+  }), [carry, selected, keywords, endings, method, aiProtect, protLevel, limit, activity, commentFilter, minComments, minMembers, maxMembers, langDetect, intersect, fastWork, reqDelay, chDelay])
 
   const busySelectedCount = useMemo(
     () => [...selected].filter((id) => accounts.some((a) => a.id === id && a.busyIn)).length,
@@ -240,6 +251,7 @@ function ChannelParserInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: 
   const handleSave = () => setPresetModalOpen(true)
 
   const applyPreset = useCallback((s: ModuleTaskSettings) => {
+    remember(s)
     if (Array.isArray(s.keywords)) setKeywords(s.keywords)
     if (s.searchMode !== undefined) setMethod(s.searchMode)
     if (Array.isArray(s.endings) && s.endings.length) { setEndMode(0); setManualEndings(s.endings) }
@@ -255,8 +267,13 @@ function ChannelParserInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: 
     if (s.langDetection !== undefined) setLangDetect(s.langDetection)
     if (s.delays?.request) setReqDelay(s.delays.request)
     if (s.delays?.channel) setChDelay(s.delays.channel)
+    if (s.intersect !== undefined) setIntersect(s.intersect)
+    // См. парсер участников: «Быстрая работа» узнаётся по нулевым задержкам, своего
+    // поля в шаблоне у неё нет.
+    const req = s.delays?.request, ch = s.delays?.channel
+    if (req && ch) setFastWork(req[0] === 0 && req[1] === 0 && ch[0] === 0 && ch[1] === 0)
     pushToast({ type: 'success', title: 'Шаблон применён' })
-  }, [pushToast])
+  }, [pushToast, remember])
 
   // §6 (MR-38): показываем либо результат живой задачи, либо сохранённый из базы (когда
   // пользователь нажал «Показать из базы» под совпавший запрос).
@@ -464,7 +481,9 @@ function ChannelParserInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: 
             )}
 
             <div className="rounded-2xl border border-line bg-elevated/40 p-3">
-              <NumberField label="Лимит результатов" value={limit} onChange={setLimit} step={10} />
+              {/* Верхняя граница нужна не ради красоты: без неё в поле влезает число
+                  вроде 1e31, и оно уезжает в задачу как настоящий лимит. */}
+              <NumberField label="Лимит результатов" value={limit} onChange={setLimit} step={10} max={100000} />
               <div className="mt-1.5 text-xs text-white/40">0 = без лимита (все результаты)</div>
             </div>
 
@@ -478,7 +497,7 @@ function ChannelParserInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: 
                 <div className="mb-2 flex items-center gap-1.5 text-sm font-semibold text-fg"><MessageCircle size={14} className="text-spark-400" /> Фильтр комментариев</div>
                 <Segmented size="sm" options={['Любые', 'Только открытые', 'Только закрытые']} value={commentFilter} onChange={setCommentFilter} />
                 <div className="mt-3">
-                  <NumberField label="Мин. комментариев на пост" value={minComments} onChange={setMinComments} />
+                  <NumberField label="Мин. комментариев на пост" value={minComments} onChange={setMinComments} max={10000} />
                 </div>
               </div>
             )}
@@ -487,10 +506,10 @@ function ChannelParserInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: 
               <div className="mb-2 flex items-center gap-1.5 text-sm font-semibold text-fg"><Users size={14} className="text-spark-400" /> Диапазон участников</div>
               <div className="grid grid-cols-2 gap-2">
                 <label className="text-xs text-muted">Минимум
-                  <input type="number" value={minMembers} onChange={(e) => setMinMembers(e.target.value === '' ? '' : Math.max(0, Number(e.target.value)))} className="input mt-1 h-9 text-sm" />
+                  <input type="number" min={0} max={MEMBERS_CAP} value={minMembers} onChange={(e) => setMinMembers(e.target.value === '' ? '' : clampMembers(e.target.value))} className="input mt-1 h-9 text-sm" />
                 </label>
                 <label className="text-xs text-muted">Максимум
-                  <input type="number" value={maxMembers} onChange={(e) => setMaxMembers(e.target.value === '' ? '' : Math.max(0, Number(e.target.value)))} className="input mt-1 h-9 text-sm" />
+                  <input type="number" min={0} max={MEMBERS_CAP} value={maxMembers} onChange={(e) => setMaxMembers(e.target.value === '' ? '' : clampMembers(e.target.value))} className="input mt-1 h-9 text-sm" />
                 </label>
               </div>
             </div>
