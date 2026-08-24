@@ -23,6 +23,11 @@ const SPAMCHECK_TEXT = {
   blocked: 'Спамблок есть — аккаунт ограничен @SpamBot',
   unknown: 'Результат неизвестен — @SpamBot не ответил',
 }
+/**
+ * Сколько ждём ответ @SpamBot после `/start`. Значение боевое; переменная нужна тестам,
+ * чтобы не спать по 2.5 секунды на каждый разбираемый ответ.
+ */
+const SPAMCHECK_WAIT_MS = Number(process.env.SPAMCHECK_WAIT_MS) || 2500
 /** Сколько ждём ответ Telegram в карточке аккаунта, прежде чем признать проверку сорванной. */
 const STATS_BUDGET_MS = Math.max(4000, Number(process.env.TG_STATS_TIMEOUT_MS) || 8000)
 /**
@@ -117,7 +122,7 @@ export async function checkSpamblock(client) {
   try {
     const bot = await client.getEntity('SpamBot')
     await client.sendMessage(bot, { message: '/start' })
-    await sleep(2500)
+    await sleep(SPAMCHECK_WAIT_MS)
     const msgs = await client.getMessages(bot, { limit: 1 })
     const text = msgs?.[0]?.message || ''
     if (/no limits|not limited|free as a bird|good news|ограничени\w* (сняты|нет)|свобод/i.test(text)) {
@@ -129,6 +134,34 @@ export async function checkSpamblock(client) {
     return { state: 'unknown', text: text.slice(0, 300) }
   } catch {
     return { state: 'unknown', text: '' }
+  }
+}
+
+/**
+ * Запись о проверке спамблока для журнала действий (ТЗ 19.08 §5).
+ *
+ * Отдельной функцией, а не строкой внутри `buildAccountStats`: там она достижима только
+ * живым коннектом к Telegram, а проверить надо именно её — что «молчание бота» не
+ * превращается в успешную проверку, а под-тип доезжает до ленты истории.
+ *
+ * @param {string} accountId @param {string} accountName
+ * @param {{ state: 'clean' | 'blocked' | 'unknown', text?: string }} sb
+ */
+export function spamcheckAction(accountId, accountName, sb) {
+  return {
+    type: 'action',
+    // Проверка не «отправка»: определённый вердикт = sent, молчание @SpamBot = failed.
+    status: sb.state === 'unknown' ? 'failed' : 'sent',
+    accountId,
+    accountName: accountName || '',
+    target: '@SpamBot',
+    targetTitle: 'SpamBot',
+    // Под-тип живёт в value.kind (§3 контракта: словарь type расширяемый) — новых
+    // форматов журнала не заводим, лента и фильтр читают именно его.
+    value: { kind: 'spamcheck', text: SPAMCHECK_TEXT[sb.state] || SPAMCHECK_TEXT.unknown },
+    // Проверку запускает человек из карточки аккаунта — задачи/модуля за ней нет.
+    initiator: 'operator',
+    meta: { spamblock: sb.state, spamblockText: sb.text || '' },
   }
 }
 
@@ -389,19 +422,7 @@ export async function buildAccountStats(accountId, opts = {}) {
         // и с каким результатом аккаунт проверяли. Пишем в тот же журнал действий, что и
         // воркеры (recordAction), под-тип — через value.kind (§3 контракта: словарь type
         // расширяемый, а под-тип живёт в value.kind), новых форматов не заводим.
-        void recordAction({
-          type: 'action',
-          // Проверка не «отправка»: определённый вердикт = sent, молчание @SpamBot = failed.
-          status: sb.state === 'unknown' ? 'failed' : 'sent',
-          accountId,
-          accountName: meta.name || '',
-          target: '@SpamBot',
-          targetTitle: 'SpamBot',
-          value: { kind: 'spamcheck', text: SPAMCHECK_TEXT[sb.state] || SPAMCHECK_TEXT.unknown },
-          // Проверку запускает человек из карточки аккаунта — задачи/модуля за ней нет.
-          initiator: 'operator',
-          meta: { spamblock: sb.state, spamblockText: sb.text || '' },
-        })
+        void recordAction(spamcheckAction(accountId, meta.name, sb))
       }
       await client.disconnect()
     } catch (err) {
