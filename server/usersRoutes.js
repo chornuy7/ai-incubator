@@ -1,6 +1,6 @@
 /** CRUD + аутентификация операторов (§8.1). Монтируется в /api/users. */
 import { Router } from 'express'
-import { listUsers, getUser, createUser, updateUser, deleteUser, authenticate, authenticateSupabase, verifyPassword, publicUser, isBlockedByOwner } from './users.js'
+import { listUsers, getUser, createUser, updateUser, deleteUser, authenticate, authenticateSupabase, authSupabaseResult, verifyPassword, publicUser, isBlockedByOwner } from './users.js'
 import { rolesForUser, mergePermissions, unrestrictedPermissions, userRoleIds, hasAdminRole, ADMIN_ROLE_ID } from './roles.js'
 import { BLOCKS, listRoles, createRole, updateRole, ALLOW, DENY } from './roles.js'
 import { MODULE_LABELS } from './lib/accountLocks.js'
@@ -142,10 +142,23 @@ usersRouter.post('/login', async (req, res) => {
     // не может войти, выставить env AUTH_ALLOW_LEGACY=1 и перезапустить — вернёт fallback на
     // legacy без отката кода (таблица users живёт как точка отката до этапа drop).
     let via = 'supabase'
-    let user = await authenticateSupabase(email, password)
-    if (!user && process.env.AUTH_ALLOW_LEGACY) { user = await authenticate(email, password); via = 'legacy' }
+    const attempt = await authSupabaseResult(email, password)
+    let user = attempt.user
+    let reason = attempt.reason
+    if (!user && process.env.AUTH_ALLOW_LEGACY) {
+      user = await authenticate(email, password)
+      if (user) { via = 'legacy'; reason = null }
+    }
     if (!user) {
-      await appendAudit({ action: 'user.login.fail', module: 'auth', initiator: 'system', reason: `Неудачный вход: ${String(email || '').slice(0, 60)}`, meta: { ip } })
+      await appendAudit({ action: 'user.login.fail', module: 'auth', initiator: 'system', reason: `Неудачный вход: ${String(email || '').slice(0, 60)}`, meta: { ip, why: reason } })
+      // Созвон 17.08: отключённому нельзя отвечать «неверный пароль» — пароль-то верный.
+      // Человек должен понять, что дело в доступе, и пойти к администратору, а не крутить
+      // восстановление пароля по кругу.
+      // Код ACCESS_DISABLED здесь НЕ шлём намеренно: фронт поднимает по нему поп-ап-блок
+      // поверх панели (MR-153), а тут человек ещё снаружи — ему нужен текст в форме входа.
+      if (reason === 'disabled') {
+        return res.status(403).json({ ok: false, error: 'Доступ отключён администратором. Обратитесь к администратору или в поддержку.' })
+      }
       return res.status(401).json({ ok: false, error: 'Неверный e-mail или пароль' })
     }
     // §4.1 (MR-28): зависимые статусы — если владелец отключён, суб внутрь не входит.
