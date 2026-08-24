@@ -2438,7 +2438,7 @@ export async function runChannelParser(task, store, kind) {
     if (task.status === 'done') {
       // Динамический импорт (как payments.js): parserCache тянет node:sqlite, и если он
       // в этой среде недоступен — падает только кэш (в catch), а не загрузка воркеров.
-      try { const { saveParserResults } = await import('../parserCache.js'); saveParserResults(kind, s, task.results) } catch { /* кэш необязателен — молча */ }
+      try { const { saveParserResults } = await import('../parserCache.js'); await saveParserResults(kind, s, task.results) } catch { /* кэш необязателен — молча */ }
     }
     await store.appendLog(task, 'info', `Готово · найдено ${task.results.length} ${unitLabel}`)
   } catch (err) {
@@ -2796,6 +2796,13 @@ export async function runParticipantsParser(task, store, kind) {
     task.progress.actionsDone = processed
     task.progress.done = processed
     task.status = statusAfterRun(task)
+    // §6 (MR-38): собранная аудитория — в кэш под сигнатуру запроса (источники + фильтры
+    // + лимиты сбора). Раньше кэшировался только поиск каналов, и повторный парс той же
+    // группы каждый раз заново гонял аккаунты. Только на 'done': пауза и стоп дают
+    // частичный сбор, выдавать его за готовый результат нельзя.
+    if (task.status === 'done') {
+      try { const { saveParserResults } = await import('../parserCache.js'); await saveParserResults(kind, s, task.results) } catch { /* кэш необязателен — молча */ }
+    }
     await store.appendLog(task, 'info', `Готово · обработано ${processed}/${tgs.length} групп · найдено ${task.results.length} пользователей`)
   } catch (err) {
     task.status = 'error'

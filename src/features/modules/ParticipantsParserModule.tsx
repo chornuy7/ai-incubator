@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import {
   Play, Users, Settings2, Filter, UserCircle2, Eye, Timer, Zap, Database, Search,
   Copy, Hash, Download, Trash2, ExternalLink, History, MessageCircle, Star, Check, Activity,
@@ -9,6 +9,7 @@ import { activeAccounts, useApp } from '@/mocks/store'
 import { Switch, Select, Badge, EmptyState, Modal } from '@/shared/ui'
 import { AccountPicker } from '@/features/account-picker/AccountPicker'
 import { useModuleTask } from './shared/useModuleTask'
+import { lookupParserCache, type ParserCacheHit } from '@/api/modulesApi'
 import { SectionCard, NumberField, ProtectionTimings, LaunchPanel, LaunchSteps, markCurrentStep, TaskStartedModal, SchedulePanel } from './shared'
 import { PresetBar } from './shared/PresetBar'
 import { SavePresetModal } from './shared/SavePresetModal'
@@ -169,7 +170,29 @@ function Inner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: string }) {
     pushToast({ type: 'success', title: 'Шаблон применён' })
   }, [pushToast])
 
-  const raw = (cleared ? [] : (task?.results ?? [])) as UserResult[]
+  /*
+   * §6 (MR-38): кэш результатов. До 24.08 он был только у парсера каналов, и повторный
+   * парс той же группы каждый раз заново гонял аккаунты. Запрос здесь описывается не
+   * словами, а источниками — сигнатуру на сервере строим по ним плюс фильтры и лимиты
+   * сбора (с лимитом 20 и 1000 состав разный, подменять одно другим нельзя).
+   */
+  const [cacheHit, setCacheHit] = useState<ParserCacheHit | null>(null)
+  const [usingCache, setUsingCache] = useState(false)
+  useEffect(() => {
+    if (running || targetList.length === 0) { setCacheHit(null); setUsingCache(false); return }
+    let cancelled = false
+    // Дебаунс — источники набирают руками, дёргать сервер на каждый символ незачем.
+    const t = setTimeout(() => {
+      void lookupParserCache(moduleKey, { targets: targetList, filters, limits })
+        .then((hit) => { if (!cancelled) setCacheHit(hit) })
+        .catch(() => {})
+    }, 500)
+    return () => { cancelled = true; clearTimeout(t) }
+  }, [moduleKey, running, targetList, filters, limits])
+
+  const fmtCacheDate = (ts: number) => new Date(ts).toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' })
+
+  const raw = (cleared ? [] : (usingCache && cacheHit ? (cacheHit.results as UserResult[]) : (task?.results ?? []))) as UserResult[]
   const results = useMemo(() => {
     let r = raw
     if (resQuery) { const q = resQuery.toLowerCase(); r = r.filter((x) => `${x.name} ${x.username}`.toLowerCase().includes(q)) }
@@ -404,6 +427,28 @@ function Inner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: string }) {
       </div>
 
       <SectionCard icon={<Database size={18} />} title={cfg.resultsTitle ?? 'Результаты парсинга'} badge={String(raw.length)}>
+        {/* §6 (MR-38): под этот же набор источников результат уже собран — отдаём его
+            сразу, с датой, не гоняя аккаунты. Свежий проход рядом, кнопкой «Запустить». */}
+        {cacheHit && !running && (
+          <div className={cn(
+            'mb-4 flex flex-wrap items-center gap-3 rounded-2xl border px-4 py-3 text-sm',
+            usingCache ? 'border-iris-500/40 bg-iris-500/10' : 'border-spark-500/30 bg-spark-500/8',
+          )}>
+            <Database size={16} className={usingCache ? 'text-iris-300' : 'text-spark-400'} />
+            <span className="min-w-0 flex-1">
+              {usingCache ? (
+                <>Показано <b className="text-fg">из базы</b> · {cacheHit.count} · собрано {fmtCacheDate(cacheHit.updatedAt)}</>
+              ) : (
+                <>В базе есть сохранённый результат под эти источники: <b className="text-fg">{cacheHit.count}</b> · собрано {fmtCacheDate(cacheHit.updatedAt)}</>
+              )}
+            </span>
+            {usingCache ? (
+              <button type="button" onClick={() => setUsingCache(false)} className="btn-ghost h-8 shrink-0 text-xs">Скрыть из базы</button>
+            ) : (
+              <button type="button" onClick={() => { setUsingCache(true); setCleared(false) }} className="btn-soft h-8 shrink-0 text-xs"><Database size={14} /> Показать из базы</button>
+            )}
+          </div>
+        )}
         <div className="mb-4 flex flex-wrap items-center gap-2">
           <div className="relative min-w-[160px] flex-1">
             <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted" />

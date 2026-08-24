@@ -38,43 +38,43 @@ await fs.writeFile(process.env.AUDIT_LOG_FILE, [
 const { syncPayments, queryPayments, paymentsSummary } = await import('../payments.js')
 await syncPayments()
 
-test('индекс: положительные пополнения (⚡) + покупки планов ($), списания не идут', () => {
-  const { total, rows } = queryPayments({})
+test('индекс: положительные пополнения (⚡) + покупки планов ($), списания не идут', async () => {
+  const { total, rows } = await queryPayments({})
   assert.equal(total, 4, '3 пополнения + 1 план (списание и набор «все» отброшены)')
   // Начисления ⚡ теперь разделены: купленные ('coins') и выданные ('grant') — §3.2.
   const kinds = new Set(rows.map((r) => r.kind))
   assert.deepEqual([...kinds].sort(), ['coins', 'grant', 'plan'], 'три типа: куплено, выдано, план')
 })
 
-test('фильтр по типу', () => {
-  assert.equal(queryPayments({ kind: 'coins' }).total, 1, 'куплено за деньги — одно')
-  assert.equal(queryPayments({ kind: 'grant' }).total, 2, 'выдано — два (подписка и ручное)')
-  assert.equal(queryPayments({ kind: 'plan' }).total, 1)
+test('фильтр по типу', async () => {
+  assert.equal((await queryPayments({ kind: 'coins' })).total, 1, 'куплено за деньги — одно')
+  assert.equal((await queryPayments({ kind: 'grant' })).total, 2, 'выдано — два (подписка и ручное)')
+  assert.equal((await queryPayments({ kind: 'plan' })).total, 1)
 })
 
-test('диапазон дат «месяц назад»: старое пополнение выпадает', () => {
-  const { total } = queryPayments({ from: NOW - 6 * D, to: NOW })
+test('диапазон дат «месяц назад»: старое пополнение выпадает', async () => {
+  const { total } = await queryPayments({ from: NOW - 6 * D, to: NOW })
   assert.equal(total, 3, 'u1 50 + u2 10 + план 35; u1 100 (40 дней) вне окна')
 })
 
-test('поиск по пользователю', () => {
-  assert.equal(queryPayments({ q: 'u2' }).total, 1)
+test('поиск по пользователю', async () => {
+  assert.equal((await queryPayments({ q: 'u2' })).total, 1)
 })
 
-test('пагинация: total полный, страница урезана', () => {
-  const p = queryPayments({ limit: 2, offset: 0 })
+test('пагинация: total полный, страница урезана', async () => {
+  const p = await queryPayments({ limit: 2, offset: 0 })
   assert.equal(p.total, 4)
   assert.equal(p.rows.length, 2)
-  const p2 = queryPayments({ limit: 2, offset: 2 })
+  const p2 = await queryPayments({ limit: 2, offset: 2 })
   assert.equal(p2.rows.length, 2)
 })
 
-test('§3.2: купленные токены — доход, выданные — нет', () => {
+test('§3.2: купленные токены — доход, выданные — нет', async () => {
   // «Подарочные токены из подписки не учитывать как отдельный доход: доходом является
   // покупка плана. Покупку дополнительных токенов учитывать как отдельную денежную
   // операцию.» Раньше сюда попадало ЛЮБОЕ начисление, и подписка считалась дважды:
   // как оплата плана и как выданные по ней токены.
-  const s = paymentsSummary({})
+  const s = await paymentsSummary({})
   assert.equal(s.coinsTotal, 100, 'только «Куплено за $…»')
   assert.equal(s.coinsCount, 1)
   assert.equal(s.grantTotal, 60, 'подарок 50 + ручное 10 — отдельно от дохода')
@@ -85,5 +85,5 @@ test('§3.2: купленные токены — доход, выданные �
 
 test('повторный sync идемпотентен — дублей нет', async () => {
   await syncPayments()
-  assert.equal(queryPayments({}).total, 4, 'пересборка не задваивает строки')
+  assert.equal((await queryPayments({})).total, 4, 'пересборка не задваивает строки')
 })

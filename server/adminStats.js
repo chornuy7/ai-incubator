@@ -204,7 +204,7 @@ export async function economyReport(opts = {}) {
     import('./priceStore.js'),
   ])
   await syncPayments()
-  const pay = paymentsSummary({ from: since, to: until })
+  const pay = await paymentsSummary({ from: since, to: until })
   const eff = await effectivePrices()
   const tokenUsd = Number(eff.tokenUsd) || 0
   const coinUsd = await coinUsdRate().catch(() => 0)

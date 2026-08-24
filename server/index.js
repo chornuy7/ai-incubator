@@ -972,7 +972,7 @@ app.post('/api/parser/cache/lookup', async (req, res) => {
     const { kind, settings } = req.body || {}
     if (!kind || !settings) return res.status(400).json({ ok: false, error: 'Нужны kind и settings' })
     const { lookupParserResults } = await import('./parserCache.js')
-    res.json({ ok: true, cache: lookupParserResults(String(kind), settings) })
+    res.json({ ok: true, cache: await lookupParserResults(String(kind), settings) })
   } catch (err) { res.status(500).json({ ok: false, error: err instanceof Error ? err.message : 'Ошибка' }) }
 })
 
@@ -1129,8 +1129,8 @@ app.get('/api/admin/payments', async (req, res) => {
       limit: q.limit ? Number(q.limit) : 50,
       offset: q.offset ? Number(q.offset) : 0,
     }
-    const { total, rows } = queryPayments(opts)
-    const summary = paymentsSummary({ from: opts.from, to: opts.to })
+    const { total, rows } = await queryPayments(opts)
+    const summary = await paymentsSummary({ from: opts.from, to: opts.to })
     const { listUsers } = await import('./users.js')
     const users = await listUsers().catch(() => [])
     const nameOf = new Map(users.map((u) => [u.id, u.name || u.email || u.id]))
