@@ -25,7 +25,7 @@
 import { DatabaseSync } from 'node:sqlite'
 import { dataPath } from './lib/jsonStore.js'
 import { readAudit } from './lib/auditLog.js'
-import { supabaseEnabled, getSupabase } from './lib/supabase.js'
+import { supabaseEnabled, getSupabase, isMissingTable } from './lib/supabase.js'
 import { walletHistory } from './balance.js'
 
 const DB_FILE = () => process.env.PAYMENTS_DB || dataPath('payments.db')
@@ -82,11 +82,15 @@ async function doSync() {
      * append-only: строки не исчезают, только добавляются, поэтому осиротевшим тут
      * взяться неоткуда. Пачками — у запроса есть предел размера.
      */
-    for (let i = 0; i < rows.length; i += 500) {
+    let ok = true
+    for (let i = 0; i < rows.length && ok; i += 500) {
       const { error } = await base.from('payments').upsert(rows.slice(i, i + 500), { onConflict: 'id' })
-      if (error) throw new Error(error.message)
+      if (!error) continue
+      if (!isMissingTable(error)) throw new Error(error.message)
+      console.warn('[payments] таблица payments не найдена — миграция 2026-08-24 не накатана, собираю витрину в локальный SQLite')
+      ok = false
     }
-    return
+    if (ok) return
   }
   const d = db()
   const upsert = d.prepare(
@@ -174,8 +178,8 @@ export async function queryPayments(opts = {}) {
     if (kind === 'coins' || kind === 'plan' || kind === 'usd' || kind === 'grant') sel = sel.eq('kind', kind)
     if (q) sel = sel.or(`user_id.ilike.%${q}%,reason.ilike.%${q}%`)
     const { data, count, error } = await sel.order('ts', { ascending: false }).range(off0, off0 + lim0 - 1)
-    if (error) throw new Error(error.message)
-    return { total: Number(count) || 0, rows: data || [] }
+    if (!error) return { total: Number(count) || 0, rows: data || [] }
+    if (!isMissingTable(error)) throw new Error(error.message)
   }
   const d = db()
   const cond = []
@@ -206,19 +210,21 @@ export async function paymentsSummary(opts = {}) {
     if (from) sel = sel.gte('ts', Number(from))
     if (to) sel = sel.lte('ts', Number(to))
     const { data, error } = await sel.limit(100000)
-    if (error) throw new Error(error.message)
-    const acc = { coins: [0, 0], grant: [0, 0], plan: [0, 0], usd: [0, 0] }
-    for (const r of data || []) {
-      const cell = acc[r.kind]
-      if (!cell) continue
-      cell[0] += Number(r.kind === 'coins' || r.kind === 'grant' ? r.coins : r.amount_fiat) || 0
-      cell[1] += 1
-    }
-    return {
-      coinsTotal: round3(acc.coins[0]), coinsCount: acc.coins[1],
-      grantTotal: round3(acc.grant[0]), grantCount: acc.grant[1],
-      planTotal: round3(acc.plan[0]), planCount: acc.plan[1],
-      usdTotal: round3(acc.usd[0]), usdCount: acc.usd[1],
+    if (error && !isMissingTable(error)) throw new Error(error.message)
+    if (!error) {
+      const acc = { coins: [0, 0], grant: [0, 0], plan: [0, 0], usd: [0, 0] }
+      for (const r of data || []) {
+        const cell = acc[r.kind]
+        if (!cell) continue
+        cell[0] += Number(r.kind === 'coins' || r.kind === 'grant' ? r.coins : r.amount_fiat) || 0
+        cell[1] += 1
+      }
+      return {
+        coinsTotal: round3(acc.coins[0]), coinsCount: acc.coins[1],
+        grantTotal: round3(acc.grant[0]), grantCount: acc.grant[1],
+        planTotal: round3(acc.plan[0]), planCount: acc.plan[1],
+        usdTotal: round3(acc.usd[0]), usdCount: acc.usd[1],
+      }
     }
   }
   const d = db()

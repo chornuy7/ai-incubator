@@ -88,3 +88,19 @@ test('источники не ломают сигнатуру парсера к�
   assert.equal(a, b)
   assert.match(a, /^\{"kind":"parsing","keywords":\["крипто"\]/)
 })
+
+/**
+ * Порядок выката: код уезжает пушем, миграции накатываются руками через SQL Editor.
+ * В окне между этим витрины должны отработать на файлах, а не уронить страницу — но
+ * ТОЛЬКО на «нет таблицы». Настоящую ошибку тихо глотать нельзя, иначе фолбэк спрячет беду.
+ */
+test('«таблицы нет» отличается от настоящей ошибки', async () => {
+  const { isMissingTable } = await import('../lib/supabase.js')
+  assert.equal(isMissingTable({ code: '42P01', message: 'relation "parser_cache" does not exist' }), true)
+  assert.equal(isMissingTable({ message: "Could not find the table 'public.payments' in the schema cache" }), true)
+  // а это уже настоящие беды — их надо поднимать наверх
+  assert.equal(isMissingTable({ code: '23505', message: 'duplicate key value violates unique constraint' }), false)
+  assert.equal(isMissingTable({ code: '42501', message: 'permission denied for table payments' }), false)
+  assert.equal(isMissingTable({ message: 'fetch failed' }), false)
+  assert.equal(isMissingTable(null), false)
+})

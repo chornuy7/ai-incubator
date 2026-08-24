@@ -52,3 +52,19 @@ export async function verifyAuthPassword(email, password) {
   } catch { return null }
   finally { try { await c.auth.signOut() } catch { /* нет сессии — не важно */ } }
 }
+
+/**
+ * Ответ Postgres «такой таблицы нет» — значит миграцию ещё не накатили.
+ *
+ * Код уезжает на прод пушем, а миграции применяются руками через SQL Editor: между
+ * этими моментами всегда есть окно. Витрины (кэш парсинга, база оплат) в этом окне
+ * должны отработать на файловом хранилище, а не уронить страницу. Отличать «нет
+ * таблицы» от настоящей ошибки обязательно: иначе тихий фолбэк спрячет реальную беду.
+ *
+ * `42P01` — код undefined_table у Postgres; PostgREST дополнительно отвечает
+ * «Could not find the table … in the schema cache», когда таблицы нет в кэше схемы.
+ */
+export function isMissingTable(error) {
+  if (!error) return false
+  return /42P01|does not exist|schema cache/i.test(`${error.code || ''} ${error.message || ''}`)
+}

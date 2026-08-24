@@ -23,7 +23,7 @@
 import { createHash } from 'node:crypto'
 import { DatabaseSync } from 'node:sqlite'
 import { dataPath } from './lib/jsonStore.js'
-import { supabaseEnabled, getSupabase } from './lib/supabase.js'
+import { supabaseEnabled, getSupabase, isMissingTable } from './lib/supabase.js'
 
 const DB_FILE = () => process.env.PARSER_CACHE_DB || dataPath('parser-cache.db')
 
@@ -124,8 +124,9 @@ export async function saveParserResults(kind, settings, results) {
   const base = sb()
   if (base) {
     const { error } = await base.from('parser_cache').upsert({ ...row, results: list }, { onConflict: 'sig' })
-    if (error) throw new Error(error.message)
-    return sig
+    if (!error) return sig
+    if (!isMissingTable(error)) throw new Error(error.message)
+    console.warn('[parserCache] таблица parser_cache не найдена — миграция 2026-08-24 не накатана, пишу в локальный SQLite')
   }
   db().prepare('INSERT OR REPLACE INTO parser_cache(sig,kind,keywords,updated_at,count,results) VALUES(?,?,?,?,?,?)')
     .run(row.sig, row.kind, row.keywords, row.updated_at, row.count, JSON.stringify(list))
@@ -142,11 +143,14 @@ export async function lookupParserResults(kind, settings) {
   const base = sb()
   if (base) {
     const { data, error } = await base.from('parser_cache').select('updated_at, count, results').eq('sig', key).maybeSingle()
-    if (error || !data) return null
-    return {
-      updatedAt: Number(data.updated_at),
-      count: Number(data.count),
-      results: Array.isArray(data.results) ? data.results : [],
+    // Таблицы нет — миграция не накатана: смотрим в локальный SQLite, а не отвечаем «кэша нет».
+    if (!error || !isMissingTable(error)) {
+      if (error || !data) return null
+      return {
+        updatedAt: Number(data.updated_at),
+        count: Number(data.count),
+        results: Array.isArray(data.results) ? data.results : [],
+      }
     }
   }
   const row = db().prepare('SELECT updated_at, count, results FROM parser_cache WHERE sig = ?').get(key)
