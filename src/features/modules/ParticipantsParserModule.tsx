@@ -286,13 +286,13 @@ function Inner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: string }) {
 
             {(P.limits ?? []).map((l) => (
               <div key={l.label} className="rounded-2xl border border-line bg-elevated/40 p-3">
-                <NumberField label={l.label} value={limits[lkey(l.label)] ?? l.value} onChange={(v) => setL(lkey(l.label), v)} />
+                <NumberField label={l.label} value={limits[lkey(l.label)] ?? l.value} onChange={(v) => setL(lkey(l.label), v)} min={l.min ?? 1} max={l.max} />
                 {l.hint && <p className="mt-1 text-[11px] text-muted">{l.hint}</p>}
               </div>
             ))}
             {!P.limits && P.unit && (
               <div className="rounded-2xl border border-line bg-elevated/40 p-3">
-                <NumberField label={P.unit.limitLabel} value={limits[lkey(P.unit.limitLabel)] ?? P.unit.limitValue} onChange={(v) => setL(lkey(P.unit.limitLabel), v)} />
+                <NumberField label={P.unit.limitLabel} value={limits[lkey(P.unit.limitLabel)] ?? P.unit.limitValue} onChange={(v) => setL(lkey(P.unit.limitLabel), v)} min={P.unit.limitMin ?? 1} max={P.unit.limitMax} />
                 <p className="mt-1 text-[11px] text-muted">Максимум пользователей для парсинга из каждой группы (1–100000)</p>
               </div>
             )}

@@ -80,6 +80,14 @@ function qualityExplain(members = 0, hasComments = false): string {
   return `Подписчиков ${tierLabel} → база ${base}/10${bonus ? '; открытые комментарии +1' : ''} = ${total}/10`
 }
 /** Общая формула для легенды. */
+/**
+ * Потолок для диапазона участников. У Telegram самые крупные каналы — десятки миллионов,
+ * так что 100 млн с запасом; смысл цифры не в точности, а в том, чтобы в поле нельзя было
+ * вписать 1e31 и отправить это в задачу как настоящий фильтр.
+ */
+const MEMBERS_CAP = 100_000_000
+const clampMembers = (v: string) => Math.min(MEMBERS_CAP, Math.max(0, Math.round(Number(v) || 0)))
+
 const QUALITY_FORMULA = 'Рейтинг ★/10 = база по числу подписчиков (100k+ → 10, 50k+ → 9, … <50 → 2) + 1 за открытые комментарии.'
 
 export function ChannelParserModule({ moduleKey }: { moduleKey: string }) {
@@ -469,7 +477,9 @@ function ChannelParserInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: 
             )}
 
             <div className="rounded-2xl border border-line bg-elevated/40 p-3">
-              <NumberField label="Лимит результатов" value={limit} onChange={setLimit} step={10} />
+              {/* Верхняя граница нужна не ради красоты: без неё в поле влезает число
+                  вроде 1e31, и оно уезжает в задачу как настоящий лимит. */}
+              <NumberField label="Лимит результатов" value={limit} onChange={setLimit} step={10} max={100000} />
               <div className="mt-1.5 text-xs text-white/40">0 = без лимита (все результаты)</div>
             </div>
 
@@ -483,7 +493,7 @@ function ChannelParserInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: 
                 <div className="mb-2 flex items-center gap-1.5 text-sm font-semibold text-fg"><MessageCircle size={14} className="text-spark-400" /> Фильтр комментариев</div>
                 <Segmented size="sm" options={['Любые', 'Только открытые', 'Только закрытые']} value={commentFilter} onChange={setCommentFilter} />
                 <div className="mt-3">
-                  <NumberField label="Мин. комментариев на пост" value={minComments} onChange={setMinComments} />
+                  <NumberField label="Мин. комментариев на пост" value={minComments} onChange={setMinComments} max={10000} />
                 </div>
               </div>
             )}
@@ -492,10 +502,10 @@ function ChannelParserInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: 
               <div className="mb-2 flex items-center gap-1.5 text-sm font-semibold text-fg"><Users size={14} className="text-spark-400" /> Диапазон участников</div>
               <div className="grid grid-cols-2 gap-2">
                 <label className="text-xs text-muted">Минимум
-                  <input type="number" value={minMembers} onChange={(e) => setMinMembers(e.target.value === '' ? '' : Math.max(0, Number(e.target.value)))} className="input mt-1 h-9 text-sm" />
+                  <input type="number" min={0} max={MEMBERS_CAP} value={minMembers} onChange={(e) => setMinMembers(e.target.value === '' ? '' : clampMembers(e.target.value))} className="input mt-1 h-9 text-sm" />
                 </label>
                 <label className="text-xs text-muted">Максимум
-                  <input type="number" value={maxMembers} onChange={(e) => setMaxMembers(e.target.value === '' ? '' : Math.max(0, Number(e.target.value)))} className="input mt-1 h-9 text-sm" />
+                  <input type="number" min={0} max={MEMBERS_CAP} value={maxMembers} onChange={(e) => setMaxMembers(e.target.value === '' ? '' : clampMembers(e.target.value))} className="input mt-1 h-9 text-sm" />
                 </label>
               </div>
             </div>
