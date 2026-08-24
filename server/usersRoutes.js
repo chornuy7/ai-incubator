@@ -214,9 +214,13 @@ usersRouter.get('/me', async (req, res) => {
     const userId = req.header('x-user-id')
     if (!userId) return res.status(401).json({ ok: false, error: 'Нет сессии' })
     const user = await getUser(userId)
-    if (!user || !user.active) return res.status(401).json({ ok: false, error: 'Пользователь отключён' })
+    if (!user) return res.status(401).json({ ok: false, error: 'Нет сессии' })
+    // Правка 24.08: отключённый доступ отвечает ОТДЕЛЬНЫМ кодом, а не «нет сессии». По нему
+    // панель поднимает свой поп-ап сразу, как только админ снял доступ, — раньше человек
+    // сидел на открытой странице и узнавал об этом лишь на следующем запросе.
+    if (!user.active) return res.status(403).json({ ok: false, code: 'ACCESS_DISABLED', error: 'Доступ отключён администратором' })
     // §4.1 (MR-28): отключили владельца — суб теряет доступ, не дожидаясь перелогина.
-    if (await isBlockedByOwner(user)) return res.status(403).json({ ok: false, error: 'Рабочее пространство владельца отключено' })
+    if (await isBlockedByOwner(user)) return res.status(403).json({ ok: false, code: 'ACCESS_DISABLED', error: 'Рабочее пространство владельца отключено' })
     // Та же сборка, что и при входе: расхождение «вошёл с одними правами, обновил
     // страницу — с другими» ловится тяжелее всего.
     const { role, roles, isOwner, isSub } = await sessionPayload(user)

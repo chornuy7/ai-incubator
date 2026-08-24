@@ -26,6 +26,7 @@ export function LowBalanceLoginModal() {
   const user = useSession((s) => s.user)
   const isAdmin = !!user?.isAdmin
   const setCoinsOpen = useUi((s) => s.setCoinsOpen)
+  const blocked = useUi((s) => s.accessBlocked)
   const [coins, setCoins] = useState<number | null>(null)
   const [open, setOpen] = useState(false)
   const [dontShow, setDontShow] = useState(false)
@@ -49,6 +50,10 @@ export function LowBalanceLoginModal() {
     setOpen(false)
   }
 
+  // Доступ закрыт админом — про деньги молчим. Иначе поверх «Доступ закрыт» вставало
+  // «Пополните баланс», и человек шёл платить, хотя платить не за что: ему выключили
+  // доступ вручную (та же жалоба, что и в правке 21.08 про «продлите подписку»).
+  if (blocked) return null
   if (!open || coins === null) return null
 
   // Ноль — это не «заканчивается», а «закончился»: боевые модули уже стоят. Разводим
