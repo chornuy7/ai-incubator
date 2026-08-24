@@ -453,7 +453,13 @@ export function AdminStatsPage() {
       ) : tab === 2 ? (
         <DailyTab daily={daily} />
       ) : tab === 3 ? (
-        <UsersTab report={users} onReload={load} />
+        <UsersTab
+          report={users}
+          onReload={load}
+          onPatchUser={(userId, patch) => setUsers((prev) => (prev
+            ? { ...prev, rows: prev.rows.map((r) => (r.userId === userId ? { ...r, ...patch } : r)) }
+            : prev))}
+        />
       ) : tab === 4 ? (
         <PurchasesTab p={purchases} />
       ) : tab === 5 ? (
@@ -682,7 +688,7 @@ function ReportTab({ report, onExport, users, since }: { report: ClientReport | 
  * Строка раскрывается в разрез по модулям: «потратил 5 000 токенов» без «на что»
  * не отвечает ни на один реальный вопрос.
  */
-function UsersTab({ report, onReload }: { report: UsersReport | null; onReload: () => void }) {
+function UsersTab({ report, onReload, onPatchUser }: { report: UsersReport | null; onReload: () => void; onPatchUser: (userId: string, patch: Partial<UserRow>) => void }) {
   const pushToast = useApp((s) => s.pushToast)
   const [open, setOpen] = useState<string | null>(null)
   const [busy, setBusy] = useState<string | null>(null)
@@ -918,8 +924,20 @@ function UsersTab({ report, onReload }: { report: UsersReport | null; onReload: 
     try {
       await updateUser(userId, { active: !active })
       pushToast({ type: 'success', title: !active ? 'Пользователь включён' : 'Пользователь отключён' })
-      onReload()
+      /*
+       * Меняем ОДНУ ячейку, а не перезагружаем всю админку.
+       *
+       * Раньше здесь стоял onReload(), а он тянет заново все десять наборов данных
+       * (обзор, отчёт, юзеры, проблемы, CRM, «сейчас», расход, покупки, здоровье,
+       * экономика) и перед этим обнуляет их — таблица на секунду сменялась на
+       * «Загрузка…» при каждом нажатии «Включить»/«Отключить» (жалоба владельца 24.08).
+       * Сервер уже подтвердил операцию, и кроме флага `active` у этой строки ничего не
+       * поменялось: правим её на месте. Ошибка ниже — единственный случай, когда стоит
+       * сходить за настоящим состоянием, потому что наше предположение не подтвердилось.
+       */
+      onPatchUser(userId, { active: !active })
     } catch (e) {
+      onReload()
       pushToast({ type: 'error', title: 'Не удалось изменить', desc: e instanceof Error ? e.message : '' })
     } finally { setBusy(null) }
   }
