@@ -19,12 +19,13 @@ import {
   SectionCard, NumberField,
   ProtectionTimings, TargetsEditor, LaunchPanel, PromptCards, loadPromptBodies, AiGenerationNotice,
   FolderPicker, BlacklistEditor, GlobalPromptEditor, TimingSection, SaveToFolderModal, TaskStartedModal, SavePresetModal,
-  LaunchSteps, markCurrentStep, type LaunchStep,
+  LaunchSteps, markCurrentStep, usePresetCarry, type LaunchStep,
 } from './shared'
 import type { ModuleTaskSettings } from '@/api/modulesApi'
 import { confirmDialog } from '@/shared/lib/dialog'
 import { LaunchCost } from './shared/LaunchCost'
 import { PRESET_MUL } from './shared/TimingSection'
+import { useGlobalPace } from '@/shared/lib/pace'
 /**
  * Потолок вероятности по уровню защиты — зеркало effectiveProbability из
  * server/lib/protection.js. Значение выше выставить можно, но сервер его срежет,
@@ -217,7 +218,13 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
     maybeSaveToFolder(next)
   }
 
+  const { carry, remember } = usePresetCarry()
+  // Глобальный множитель темпа (ИИ-безопасность) — чтобы оценка стоимости/времени
+  // считалась по той же шкале, что и реальный прогон.
+  const globalPace = useGlobalPace()
+
   const buildSettings = useCallback((): ModuleTaskSettings => ({
+    ...carry(), // параметры шаблона, которым нет ручки в форме (напр. threads у MCP-задач)
     accountIds: [...selected],
     targets,
     channels: targets,
@@ -266,7 +273,7 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
       lookMode: cfg.lookModeOptions?.[lookModeIdx]?.value ?? 'stories',
       lookPostsCount,
     } : {}),
-  }), [selected, targets, postUrls, toggles, probability, maxActions, minActions, maxPerAcc, minPerAcc, minWords, durationMinutes, aiProtect, protLevel, notifyStatus, activePrompt, promptBodies, delayPreset, palette, delays, keywords, isGgr, accounts, cfg, lookModeIdx, lookPostsCount, goalId, campaignId, campaigns, warmLevel, postWindow, stopWordsText, analyzeImages, moduleKey, typeWeights, weightSum])
+  }), [carry, selected, targets, postUrls, toggles, probability, maxActions, minActions, maxPerAcc, minPerAcc, minWords, durationMinutes, aiProtect, protLevel, notifyStatus, activePrompt, promptBodies, delayPreset, palette, delays, keywords, isGgr, accounts, cfg, lookModeIdx, lookPostsCount, goalId, campaignId, campaigns, warmLevel, postWindow, stopWordsText, analyzeImages, moduleKey, typeWeights, weightSum])
 
   const hasPostTargets = postUrls.length > 0
   // Многомодульность (20.08): аккаунт МОЖНО брать, пока он работает в другом модуле.
@@ -362,6 +369,7 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
 
   // Восстанавливает настройки из шаблона в форму (аккаунты не трогаем — они ситуативны).
   const applyPreset = useCallback((s: ModuleTaskSettings) => {
+    remember(s)
     setToggles({ 0: s.commentMode ?? 0, 1: s.workMode ?? 0, 2: s.postFilter ?? 0 })
     if (s.aiProtection !== undefined) setAiProtect(s.aiProtection)
     if (s.protectionLevel !== undefined) setProtLevel(s.protectionLevel)
@@ -404,7 +412,7 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
     if (s.analyzeImages !== undefined) setAnalyzeImages(s.analyzeImages)
     if (s.typeWeights) setTypeWeights(s.typeWeights)
     pushToast({ type: 'success', title: 'Шаблон применён' })
-  }, [cfg.lookModeOptions, cfg.toggleGroups, pushToast])
+  }, [cfg.lookModeOptions, cfg.toggleGroups, pushToast, remember])
 
   const results = task?.results ?? []
   const progressDone = task?.progress.actionsDone ?? task?.progress.commentsSent ?? 0
@@ -974,7 +982,7 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
             onStop={stop}
             onSave={handleSave}
             primaryLabel={cfg.primaryAction ?? 'Начать'}
-            cost={<LaunchCost compact moduleKey={moduleKey} actions={maxActions} accounts={selected.size} delaySec={(() => { const m = PRESET_MUL[delayPreset] ?? 1; const d = delays.action ?? delays.comment; return d ? [Math.round(d[0] * m), Math.round(d[1] * m)] as [number, number] : d })()} />}
+            cost={<LaunchCost compact moduleKey={moduleKey} actions={maxActions} accounts={selected.size} delaySec={(() => { const m = (PRESET_MUL[delayPreset] ?? 1) * globalPace; const d = delays.action ?? delays.comment; return d ? [Math.round(d[0] * m), Math.round(d[1] * m)] as [number, number] : d })()} />}
             stats={launchStats}
             task={task}
             warn={warn}

@@ -9,7 +9,7 @@ import { activeAccounts, useApp } from '@/mocks/store'
 import { Segmented, Switch, Badge, Select, EmptyState, Tip} from '@/shared/ui'
 import { AccountPicker } from '@/features/account-picker/AccountPicker'
 import { useModuleTask } from './shared/useModuleTask'
-import { SectionCard, NumberField, ProtectionTimings, DelayFields, LaunchPanel, LaunchSteps, markCurrentStep, TaskStartedModal, SchedulePanel } from './shared'
+import { SectionCard, NumberField, ProtectionTimings, DelayFields, LaunchPanel, LaunchSteps, markCurrentStep, TaskStartedModal, SchedulePanel, usePresetCarry } from './shared'
 import { PresetBar } from './shared/PresetBar'
 import { SavePresetModal } from './shared/SavePresetModal'
 import { cn } from '@/shared/lib/utils'
@@ -191,7 +191,10 @@ function ChannelParserInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: 
     pushToast({ type: 'success', title: 'Шаблон применён', desc: `+${chips.length} ключевых слов` })
   }
 
+  const { carry, remember } = usePresetCarry()
+
   const buildSettings = useCallback((): ModuleTaskSettings => ({
+    ...carry(), // параметры шаблона, которым нет ручки в форме (напр. delayPreset у MCP-задач)
     accountIds: [...selected],
     keywords,
     endings,
@@ -213,7 +216,7 @@ function ChannelParserInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: 
       floodWait: 120,
       floodQuarantine: 3,
     },
-  }), [selected, keywords, endings, method, aiProtect, protLevel, limit, activity, commentFilter, minComments, minMembers, maxMembers, langDetect, intersect, fastWork, reqDelay, chDelay])
+  }), [carry, selected, keywords, endings, method, aiProtect, protLevel, limit, activity, commentFilter, minComments, minMembers, maxMembers, langDetect, intersect, fastWork, reqDelay, chDelay])
 
   const busySelectedCount = useMemo(
     () => [...selected].filter((id) => accounts.some((a) => a.id === id && a.busyIn)).length,
@@ -240,6 +243,7 @@ function ChannelParserInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: 
   const handleSave = () => setPresetModalOpen(true)
 
   const applyPreset = useCallback((s: ModuleTaskSettings) => {
+    remember(s)
     if (Array.isArray(s.keywords)) setKeywords(s.keywords)
     if (s.searchMode !== undefined) setMethod(s.searchMode)
     if (Array.isArray(s.endings) && s.endings.length) { setEndMode(0); setManualEndings(s.endings) }
@@ -255,8 +259,9 @@ function ChannelParserInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: 
     if (s.langDetection !== undefined) setLangDetect(s.langDetection)
     if (s.delays?.request) setReqDelay(s.delays.request)
     if (s.delays?.channel) setChDelay(s.delays.channel)
+    if (s.intersect !== undefined) setIntersect(s.intersect)
     pushToast({ type: 'success', title: 'Шаблон применён' })
-  }, [pushToast])
+  }, [pushToast, remember])
 
   // §6 (MR-38): показываем либо результат живой задачи, либо сохранённый из базы (когда
   // пользователь нажал «Показать из базы» под совпавший запрос).

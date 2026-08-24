@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { PRESET_MUL, useGlobalPace } from '@/shared/lib/pace'
 import { Timer, Bolt, Settings2, Shield, ChevronRight, SlidersHorizontal } from 'lucide-react'
 import { ToggleGroup } from '@/shared/ui'
 import { cn } from '@/shared/lib/utils'
@@ -71,9 +72,10 @@ export interface TimingSectionProps {
 // §3.2 (MR-103): пресет темпа выбирается карточками — единый визуальный язык с «Защитой»
 // (Консервативный/Сбалансированный/Агрессивный). Описания по индексу: 0 — минимальные
 // задержки (быстрее), 1 — рекомендуемо, 2 — максимальные задержки (безопаснее).
-// Множители пресета темпа — ДОЛЖНЫ совпадать с сервером (server/lib/protection.js PRESET_MUL).
-// Экспортируем, чтобы чип «полное время» внизу панели считался с тем же масштабом.
-export const PRESET_MUL = [0.6, 1, 1.8, 1]
+// Множители темпа живут в shared/lib/pace.ts — там же, откуда их берёт ETA в дашборде,
+// и там же они сверяются с сервером (server/__tests__/paceContract.test.js). Реэкспорт —
+// чтобы модули, считающие «полное время», брали ту же шкалу.
+export { PRESET_MUL } from '@/shared/lib/pace'
 
 const PRESET_META = [
   {
@@ -116,7 +118,10 @@ export function TimingSection(props: TimingSectionProps) {
   // MR-136 (доработка MR-103): «Custom» — 4-й пресет (индекс 3). На сервере
   // PRESET_MUL[3] ?? 1 → ×1, поэтому Custom = задержки берутся как есть, без масштабирования.
   const CUSTOM = 3
-  const mul = mulOverride ?? (PRESET_MUL[delayPreset] ?? 1)
+  // Глобальный множитель ИИ-безопасности воркер применяет ко ВСЕМ задержкам — значит,
+  // и обещанное здесь время обязано его учитывать, иначе панель врёт (созвон 19.08).
+  const globalPace = useGlobalPace()
+  const mul = (mulOverride ?? (PRESET_MUL[delayPreset] ?? 1)) * globalPace
   // Правка 14.08: значения Мин/Рекомендуемые/Макс — ЗАФИКСИРОВАНЫ. Пока выбран пресет темпа
   // (не Custom), все поля «Расширенных» заблокированы: раньше правка на пресете молча
   // перекидывала в Custom, из-за чего казалось, что пресеты «не держат» значения. Теперь

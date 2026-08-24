@@ -17,7 +17,7 @@ import { ModuleNotPaid } from '@/features/billing/ModuleNotPaid'
 // §3.1 (MR-115): автопостинг приведён к общей структуре модулей — те же переиспользуемые
 // блоки (SectionCard + нижняя LaunchPanel со степпером), что и в LiveModule/парсерах.
 // Публикации сохраняются как правила автоматизации (moduleKey='autoposting') и переживают рестарт.
-import { SectionCard, LaunchPanel, LaunchSteps, markCurrentStep, TaskStartedModal, BlacklistEditor, ProtectionTimings } from '@/features/modules/shared'
+import { SectionCard, LaunchPanel, LaunchSteps, markCurrentStep, TaskStartedModal, BlacklistEditor, ProtectionTimings, usePresetCarry } from '@/features/modules/shared'
 import type { DelaysShape } from '@/features/modules/shared/TimingSection'
 import { LaunchCost, ActionPriceCalc } from '@/features/modules/shared/LaunchCost'
 import { useModuleTask } from '@/features/modules/shared/useModuleTask'
@@ -49,6 +49,7 @@ export function AutopostingPage() {
 }
 
 function AutopostingInner() {
+  const { carry, remember } = usePresetCarry()
   const nav = useNavigate()
   const pushToast = useApp((s) => s.pushToast)
   const [selected, setSelected] = useState<Set<string>>(new Set())
@@ -126,6 +127,7 @@ function AutopostingInner() {
   }
 
   const settings = (): ModuleTaskSettings => ({
+    ...carry(), // параметры шаблона, которым нет ручки в форме
     accountIds: [...selected],
     targets: channels,
     promptText: text.trim(),
@@ -198,10 +200,12 @@ function AutopostingInner() {
 
   // Восстановить настройки из шаблона (аккаунты не трогаем).
   const applyPreset = (s: ModuleTaskSettings) => {
+    remember(s)
     if (Array.isArray(s.targets)) setChannelsText(s.targets.join('\n'))
     if (typeof s.promptText === 'string') setText(s.promptText)
     if (Array.isArray(s.mediaUrls)) setMedia(s.mediaUrls)
     if (s.delays?.action) { setDelayMin(s.delays.action[0]); setDelayMax(s.delays.action[1]) }
+    if (typeof s.delayPreset === 'number') setDelayPreset(s.delayPreset)
   }
 
   async function launch() {
