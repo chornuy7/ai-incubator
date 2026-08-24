@@ -26,6 +26,7 @@ import { MonitoringTab, AccountsHealthBlocks } from '@/pages/admin/MonitoringTab
 import { AccountsTab } from '@/pages/admin/AccountsTab'
 import { BundlesEditor } from '@/pages/admin/BundlesEditor'
 import { SetupsEditor } from '@/pages/admin/SetupsEditor'
+import { useAdminSession } from '@/features/auth/session'
 import { useTabParam } from '@/shared/lib/useTabParam'
 import { LeadConversationModal } from '@/features/leads/LeadConversationModal'
 
@@ -689,6 +690,10 @@ function ReportTab({ report, onExport, users, since }: { report: ClientReport | 
  * не отвечает ни на один реальный вопрос.
  */
 function UsersTab({ report, onReload, onPatchUser }: { report: UsersReport | null; onReload: () => void; onPatchUser: (userId: string, patch: Partial<UserRow>) => void }) {
+  // Кто сейчас в админке: свою строку отключать нельзя — админка и панель это ОДИН
+  // пользователь с разными сессиями, и `active:false` на себе закрывает обе зоны разом.
+  // Сервер это запрещает (usersRoutes), здесь просто не даём нажать и объясняем почему.
+  const meId = useAdminSession((st) => st.user?.id) || ''
   const pushToast = useApp((s) => s.pushToast)
   const [open, setOpen] = useState<string | null>(null)
   const [busy, setBusy] = useState<string | null>(null)
@@ -1082,10 +1087,12 @@ function UsersTab({ report, onReload, onPatchUser }: { report: UsersReport | nul
                     {real ? (
                       <button
                         onClick={(e) => { e.stopPropagation(); void toggle(r.userId, r.active) }}
-                        disabled={busy === r.userId}
+                        disabled={busy === r.userId || (r.active && r.userId === meId)}
                         className={cn('inline-flex h-7 items-center gap-1 rounded-lg border px-2 text-xs font-semibold disabled:opacity-40',
                           r.active ? 'border-line text-muted hover:border-red-500/40 hover:text-red-300' : 'border-spark-500/40 text-spark-300')}
-                        title={r.active ? 'Отключить доступ' : 'Включить доступ'}
+                        title={r.active && r.userId === meId
+                          ? 'Себя отключить нельзя — потеряете доступ и в панель, и в админку'
+                          : (r.active ? 'Отключить доступ' : 'Включить доступ')}
                       >
                         <Power size={12} /> {r.active ? 'Отключить' : 'Включить'}
                       </button>
