@@ -268,6 +268,10 @@ function ChannelParserInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: 
     if (s.delays?.request) setReqDelay(s.delays.request)
     if (s.delays?.channel) setChDelay(s.delays.channel)
     if (s.intersect !== undefined) setIntersect(s.intersect)
+    // См. парсер участников: «Быстрая работа» узнаётся по нулевым задержкам, своего
+    // поля в шаблоне у неё нет.
+    const req = s.delays?.request, ch = s.delays?.channel
+    if (req && ch) setFastWork(req[0] === 0 && req[1] === 0 && ch[0] === 0 && ch[1] === 0)
     pushToast({ type: 'success', title: 'Шаблон применён' })
   }, [pushToast, remember])
 

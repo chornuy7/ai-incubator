@@ -174,6 +174,10 @@ function Inner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: string }) {
     if (s.delayChat !== undefined) setDelayChat(s.delayChat)
     if (s.delayItem !== undefined) setDelayItem(s.delayItem)
     if (s.delays?.join) { setJoinMin(s.delays.join[0]); setJoinMax(s.delays.join[1]) }
+    // «Быстрая работа» — не отдельная настройка, а нулевые задержки: в шаблоне от неё
+    // остаются только нули. Поэтому и восстанавливаем её по ним. Иначе тумблер оставался
+    // выключенным при нулевых задержках — то самое «настройка слетела» (созвон 19.08).
+    if (s.delayChat !== undefined && s.delayItem !== undefined) setFastWork(s.delayChat === 0 && s.delayItem === 0)
     if (s.intersectionMode !== undefined) setIntersection(!!s.intersectionMode)
     if (s.parallelAccounts !== undefined) setParallel(!!s.parallelAccounts)
     pushToast({ type: 'success', title: 'Шаблон применён' })
