@@ -18,3 +18,8 @@ scripts/_*.mjs
 # Локальные настройки Claude Code и утилиты с сервисными ключами (см. шапку файла)
 .claude/settings.local.json
 scripts/set-supabase-pass.mjs
+
+# Локальный выбор API-сервера (боевой/локальный). У каждого свой — в репозиторий
+# не коммитим: случайный "useLiveApi": true увёл бы чужой дев на боевой сервер.
+# Образец — api.config.example.json, без файла всё работает на локальном бэкенде.
+api.config.json

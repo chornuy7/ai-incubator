@@ -13,6 +13,8 @@ import { fetchActivity, type ActivityMap } from '@/api/accountActivityApi'
 import { fetchConcurrency, saveSettings, type ConcurrencyState } from '@/api/settingsApi'
 import type { TgAccount } from '@/shared/types'
 import { cn, coins as fmtCoins } from '@/shared/lib/utils'
+import { packTwoColumns, type Placement } from '@/shared/lib/twoColumnPack'
+import { useMediaQuery } from '@/shared/lib/hooks'
 import { confirmDialog, promptDialog } from '@/shared/lib/dialog'
 import { TaskAudiencePanel } from '@/features/mailing/TaskAudiencePanel'
 import { launchWithSkip } from '@/features/modules/shared/launchWithSkip'
@@ -291,11 +293,25 @@ export function TasksPage() {
     return () => clearInterval(id)
   }, [])
   // MR-146: аккаунты — отдельным редким циклом.
+  //
+  // Правка 24.08: ПЕРВУЮ отрисовку ждём вместе с задачами. Блок «аккаунты недоступны»
+  // считается по аккаунтам, а грузились они своим запросом — список успевал показаться
+  // раньше, и через секунду предупреждения всплывали поверх уже прочитанных карточек,
+  // попутно перекладывая сетку (карточка из обычной становится двойной). Ошибка — часть
+  // карточки, а не догоняющее уведомление, поэтому показываем всё разом.
+  //
+  // Ждать почти не приходится: оба запроса уходят одновременно, так что задержка — это
+  // не сумма, а РАЗНИЦА между ними. Дальше цикл идёт сам по себе и список уже не гасит:
+  // acctLoaded взводится один раз.
+  const [acctLoaded, setAcctLoaded] = useState(false)
   useEffect(() => {
-    const loadAcc = () => void fetchAccounts().then(setAccounts).catch(() => {})
+    const loadAcc = () => void fetchAccounts().then(setAccounts).catch(() => {}).finally(() => setAcctLoaded(true))
     loadAcc()
+    // Страховка: если /api/accounts подвис, дашборд всё равно откроем — задачи важнее
+    // предупреждений, а те доедут следующим циклом.
+    const guard = setTimeout(() => setAcctLoaded(true), 3000)
     const id = setInterval(loadAcc, 60000)
-    return () => clearInterval(id)
+    return () => { clearTimeout(guard); clearInterval(id) }
   }, [])
   const fatigueOf = useFatigueOf()
   // MR-146: на каждую задачу — сколько её аккаунтов «отвалилось» (нет прокси/не отвечает/нерабочий статус).
@@ -428,12 +444,54 @@ export function TasksPage() {
     (!fStatus || t.status === fStatus),
   // MR-147: сортировка по статусу (выполняется→очередь→пауза→стоп→ошибка→готово),
   // внутри статуса — свежие сверху.
-  ).sort((a, b) => statusRank(a) - statusRank(b) || (b.updatedAt || 0) - (a.updatedAt || 0)),
+  //
+  // Правка 24.08: «свежие» считаем по createdAt, а не по updatedAt. Карточка показывает
+  // ИМЕННО дату создания, а сортировка шла по дате последнего изменения — и группа
+  // выглядела неотсортированной: задача от 11 августа стояла выше, чем от 19-го, потому
+  // что её позже трогали (пауза, стоп, дописанный прогресс). Сортировка обязана совпадать
+  // с той датой, которую человек видит на карточке. updatedAt оставлен вторым ключом —
+  // развести задачи, созданные в одну секунду.
+  ).sort((a, b) => statusRank(a) - statusRank(b)
+    || (b.createdAt || 0) - (a.createdAt || 0)
+    || (b.updatedAt || 0) - (a.updatedAt || 0)),
   [tasks, fGoal, fModule, fStatus])
+
+  // ── Раскладка дашборда (правка 24.08) ───────────────────────────────────────
+  // Карточка бывает двух высот: обычная (x1) и двойная (x2 = две x1 + зазор) —
+  // когда под шапкой раскрывается блок ошибки задачи или блок «аккаунты
+  // недоступны». В обычном гриде такая пара ломает сетку: строка тянется по
+  // высокой карточке, и вертикальные отступы между блоками получаются разной
+  // величины. Поэтому раскладываем сами: см. packTwoColumns.
+  const cardSize = (t: ModuleTask) => (t.status === 'error' || taskProblems(t).bad > 0 ? 2 : 1)
+  // Ниже брейкпоинта колонка одна — паковать нечего, идёт плоский список по порядку.
+  const twoCols = useMediaQuery('(min-width: 1024px)') // lg — раскладка «Список»
+  const twoColsSm = useMediaQuery('(min-width: 640px)') // sm — раскладка внутри цели
+  // Группы по статусу в порядке STATUS_RANK, внутри группы — порядок filtered
+  // (свежие сверху), разложенный по двум колонкам почти равной высоты.
+  const boards = useMemo(() => {
+    const byStatus = new Map<string, ModuleTask[]>()
+    for (const t of filtered) {
+      const list = byStatus.get(t.status)
+      if (list) list.push(t)
+      else byStatus.set(t.status, [t])
+    }
+    return [...byStatus.entries()]
+      .sort((a, b) => (STATUS_RANK[a[0]] ?? 9) - (STATUS_RANK[b[0]] ?? 9))
+      .map(([status, list]) => ({ status, cells: packTwoColumns(list.map((t) => ({ item: t, size: cardSize(t) }))) }))
+  }, [filtered, taskProblems])
 
   // Нет доступа к модулю — нет и кнопок. Показывать управление, которое ответит
   // отказом, значит предлагать действие и тут же его отбирать.
   const canControl = (t: ModuleTask) => !me || canControlModule(me.permissions, me.isAdmin, t.moduleKey)
+
+  // Карточка задачи. `cell` — координаты от пакера; на узком экране их не ставим:
+  // там колонка одна и карточки идут подряд в порядке сортировки.
+  const listTaskCard = (t: ModuleTask, cell?: Placement<ModuleTask>) => (
+    <TaskCard key={`${t.moduleKey}:${t.id}`} t={t} goalName={goalName(t.goalId)} busy={busy} busyAction={busyAction} pendingAction={pending[t.id]?.action} onOpen={openTask} onStop={doStop} onRestart={doRestart} onPause={doPause} onResume={doResume} canControl={canControl(t)} selected={selected.has(t.id)} onToggleSelect={toggleSel} problem={taskProblems(t)} fatigue={fatigueOf(t)} cell={cell} />
+  )
+  const goalTaskCard = (t: ModuleTask, cell?: Placement<ModuleTask>) => (
+    <TaskCard key={`${t.moduleKey}:${t.id}`} t={t} goalName={null} busy={busy} busyAction={busyAction} pendingAction={pending[t.id]?.action} onOpen={openTask} onStop={doStop} onRestart={doRestart} onPause={doPause} onResume={doResume} canControl={canControl(t)} problem={taskProblems(t)} fatigue={fatigueOf(t)} cell={cell} compact />
+  )
 
   const selectedTasks = useMemo(() => filtered.filter((t) => selected.has(t.id) && canControl(t)), [filtered, selected, me])
   const allSelected = filtered.length > 0 && filtered.every((t) => selected.has(t.id))
@@ -538,9 +596,11 @@ export function TasksPage() {
         active: ts.filter(isActive).length,
         modules: [...new Set(ts.map((t) => t.moduleKey))],
         prog: total > 0 ? Math.min(100, Math.round((done / total) * 100)) : 0,
+        // Тот же пакер, что и в «Списке»: внутри цели карточки тоже бывают x1 и x2.
+        cells: packTwoColumns(ts.map((t) => ({ item: t, size: cardSize(t) }))),
       }
     }).sort((a, b) => b.active - a.active || b.tasks.length - a.tasks.length)
-  }, [filtered, goalName, goalSel])
+  }, [filtered, goalName, goalSel, taskProblems])
 
   // MR-144: владелец/админ меняет лимит параллельных задач прямо с дашборда.
   const canEditLimit = !me || me.isAdmin || me.isOwner
@@ -676,7 +736,9 @@ export function TasksPage() {
         </div>
       )}
 
-      {loading ? (
+      {/* Ждём и задачи, и аккаунты: иначе предупреждения об аккаунтах приходят
+          вторым эшелоном и перекладывают уже показанную сетку (см. acctLoaded). */}
+      {loading || !acctLoaded ? (
         <Card className="p-6 text-sm text-white/50">Загрузка…</Card>
       ) : filtered.length === 0 ? (
         <EmptyState icon={<ListChecks size={26} />} title="Задач нет" desc="Запустите модуль или измените фильтры — задачи появятся здесь." />
@@ -697,27 +759,47 @@ export function TasksPage() {
               </div>
               <div className="h-1.5 overflow-hidden rounded bg-white/10"><div className="h-full rounded bg-iris-500 transition-all" style={{ width: `${g.prog}%` }} /></div>
               <div className="mt-1 text-[11px] text-white/40">Прогресс к цели: {g.prog}%</div>
-              {/* Тот же приём внутри цели: строки + равная высота, порядок слева направо. */}
-              <div className="mt-2 grid items-stretch gap-1.5 sm:grid-cols-2">
-                {g.tasks.map((t) => <div key={`${t.moduleKey}:${t.id}`} className="min-w-0"><TaskCard t={t} goalName={null} busy={busy} busyAction={busyAction} pendingAction={pending[t.id]?.action} onOpen={openTask} onStop={doStop} onRestart={doRestart} onPause={doPause} onResume={doResume} canControl={canControl(t)} problem={taskProblems(t)} fatigue={fatigueOf(t)} compact /></div>)}
+              {/* Тот же пакер, что и в «Списке» — две колонки почти равной высоты. */}
+              <div className="mt-2 grid gap-1.5 sm:grid-cols-2 sm:[grid-auto-rows:1fr]">
+                {g.cells.map((c) => goalTaskCard(c.item, twoColsSm ? c : undefined))}
               </div>
             </Card>
           ))}
         </div>
         )
       ) : (
-        // Раскладка: СТРОКИ, порядок слева направо (правка 18.08, вторая итерация).
+        // Раскладка: ГРУППЫ ПО СТАТУСУ, внутри группы — две колонки почти равной
+        // высоты (правка 24.08, третья итерация).
         //
-        // Колонки укладывали карточки без дыр, но ломали чтение: правая колонка
-        // начинается с СЕРЕДИНЫ списка, и отсортированный по статусу дашборд выглядит
-        // перемешанным. Порядок здесь важнее плотности — по нему ищут задачу.
+        // Прошлая версия («строки» + `items-stretch` + `h-full`) прятала дыру внутрь
+        // карточки: пустое место оказывалось под её фоном. Но раздувалась при этом
+        // каждая карточка, оказавшаяся в строке с двойной, — и насколько, зависело от
+        // случайного соседа. Теперь высоту карточек не трогаем, а сами кладём их в ту
+        // колонку, которая короче (packTwoColumns): дыр нет, отступ между блоками
+        // всегда один и тот же, порядок чтения сохранён.
         //
-        // Дыры убраны иначе: карточки в строке тянутся до общей высоты (`items-stretch`
-        // у грида + `h-full` у карточки). Пустое место оказывается ВНУТРИ карточки, под
-        // её фоном, а не провалом между блоками — визуально это ровная сетка, а не
-        // рваная кладка.
-        <div className="grid items-stretch gap-2 lg:grid-cols-2">
-          {filtered.map((t) => <div key={`${t.moduleKey}:${t.id}`} className="min-w-0"><TaskCard t={t} goalName={goalName(t.goalId)} busy={busy} busyAction={busyAction} pendingAction={pending[t.id]?.action} onOpen={openTask} onStop={doStop} onRestart={doRestart} onPause={doPause} onResume={doResume} canControl={canControl(t)} selected={selected.has(t.id)} onToggleSelect={toggleSel} problem={taskProblems(t)} fatigue={fatigueOf(t)} /></div>)}
+        // Группы разделены увеличенным отступом: дашборд читается блоками
+        // «выполняется / в очереди / на паузе / …», а не сплошной лентой.
+        //
+        // `grid-auto-rows:1fr` — вторая половина приёма: браузер делает ВСЕ строки
+        // одинаковыми (по самой высокой карточке), поэтому карточка со `span 2`
+        // получает ровно две строки плюс зазор. Отсюда и берётся равенство
+        // «x2 = две x1 + отступ», на котором держится вся раскладка.
+        <div className="flex flex-col gap-6">
+          {boards.map((b) => (
+            <section key={b.status}>
+              {/* Заголовок группы: статус и сколько задач под ним. Точка — того же
+                  цвета, что кольцо прогресса у карточек этого статуса. */}
+              <div className="mb-2 flex items-center gap-2">
+                <span className="h-2 w-2 shrink-0 rounded-full" style={{ background: STATUS_COLOR[b.status] || '#94a3b8' }} />
+                <span className="text-sm font-semibold text-white/75">{STATUS[b.status]?.label || b.status}</span>
+                <span className="text-sm tabular-nums text-white/35">({b.cells.length})</span>
+              </div>
+              <div className="grid gap-2 lg:grid-cols-2 lg:[grid-auto-rows:1fr]">
+                {b.cells.map((c) => listTaskCard(c.item, twoCols ? c : undefined))}
+              </div>
+            </section>
+          ))}
         </div>
       )}
     </div>
@@ -778,7 +860,7 @@ function CardControls({ t, busy, busyAction, pendingAction, onStop, onRestart, o
   )
 }
 
-function TaskCard({ t, goalName, busy, busyAction, pendingAction, onOpen, onStop, onRestart, onPause, onResume, canControl = true, compact, selected, onToggleSelect, problem, fatigue }: {
+function TaskCard({ t, goalName, busy, busyAction, pendingAction, onOpen, onStop, onRestart, onPause, onResume, canControl = true, compact, selected, onToggleSelect, problem, fatigue, cell }: {
   t: ModuleTask; goalName: string | null; busy: string | null; busyAction: 'start' | 'pause' | 'stop' | null
   pendingAction?: 'pause' | 'stop'
   onOpen: (t: ModuleTask) => void
@@ -787,6 +869,7 @@ function TaskCard({ t, goalName, busy, busyAction, pendingAction, onOpen, onStop
   selected?: boolean; onToggleSelect?: (id: string) => void
   problem?: TaskProblem // MR-146: сколько аккаунтов задачи «отвалилось» и почему
   fatigue?: FatigueHint | null // профиль усталости её аккаунтов — для честного ETA
+  cell?: Placement<ModuleTask> // место в сетке от пакера; нет — обычный поток
 }) {
   const globalPace = useGlobalPace()
   // Оптимистичный статус: пока воркер реально не встал, показываем «Останавливается…» —
@@ -798,6 +881,10 @@ function TaskCard({ t, goalName, busy, busyAction, pendingAction, onOpen, onStop
   const running = isActive(t) || !!pendingAction
   const ringColor = pendingAction ? STATUS_COLOR.stopped : (STATUS_COLOR[t.status] || '#94a3b8')
   return (
+    // Обёртка — ячейка сетки: держит координаты от пакера и `min-w-0`, без которого
+    // длинные имена не обрезаются, а распирают колонку. Карточка внутри тянется на
+    // всю высоту ячейки (`h-full`): двойная занимает ровно две строки плюс зазор.
+    <div className="min-w-0" style={cell ? { gridColumn: cell.col, gridRow: `${cell.row} / span ${cell.span}` } : undefined}>
     <Card className={cn('flex h-full flex-col', compact ? 'bg-elevated/40 p-2.5' : 'p-3')}>
       <div className="flex items-center gap-3">
       {onToggleSelect && (
@@ -840,7 +927,7 @@ function TaskCard({ t, goalName, busy, busyAction, pendingAction, onOpen, onStop
           отдана под описание ошибки со скроллом, чтобы разбирать провал прямо здесь, а не
           открывать каждую задачу и лазить в логи. */}
       {t.status === 'error' && (
-        <div className="mt-2.5 rounded-xl border border-rose-500/25 bg-rose-500/[.07] p-3">
+        <div className="mt-2.5 flex-1 rounded-xl border border-rose-500/25 bg-rose-500/[.07] p-3">
           <div className="mb-1 flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wide text-rose-300"><AlertTriangle size={12} /> Ошибка задачи</div>
           <div className="max-h-24 overflow-y-auto whitespace-pre-wrap break-words text-xs leading-relaxed text-rose-200/90">{t.fatalError || t.lastError || 'Задача завершилась с ошибкой — подробности в логах задачи.'}</div>
         </div>
@@ -870,7 +957,7 @@ function TaskCard({ t, goalName, busy, busyAction, pendingAction, onOpen, onStop
           byReason.set(it.reason, list)
         }
         return (
-          <div className={cn('mt-2.5 rounded-xl border p-2.5', hard ? 'border-rose-500/25 bg-rose-500/[.07]' : 'border-amber-500/25 bg-amber-500/[.07]')}>
+          <div className={cn('mt-2.5 flex-1 rounded-xl border p-2.5', hard ? 'border-rose-500/25 bg-rose-500/[.07]' : 'border-amber-500/25 bg-amber-500/[.07]')}>
             <div className={cn('flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wide', hard ? 'text-rose-300' : 'text-amber-300')}>
               <AlertTriangle size={12} /> {head}
             </div>
@@ -889,6 +976,7 @@ function TaskCard({ t, goalName, busy, busyAction, pendingAction, onOpen, onStop
         )
       })()}
     </Card>
+    </div>
   )
 }
 
