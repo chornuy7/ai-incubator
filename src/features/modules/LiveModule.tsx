@@ -31,6 +31,19 @@ import { useGlobalPace, delayMultiplier, taskSeconds, perAccountShare } from '@/
  * поэтому форма обязана сказать об этом ДО запуска.
  */
 const PROTECTION_CAP = [25, 45, 100]
+
+/**
+ * Подписи уровней защиты. Названия НАМЕРЕННО не совпадают с пресетами задержек
+ * («Агрессивный/Сбалансированный/Консервативный»): два ряда одинаковых слов с разным
+ * смыслом в одной форме и породили жалобу 25.08 — оператор жал «Агрессивный» у темпа и
+ * ждал, что снимется потолок вероятности. Числа в подписи убирают двусмысленность.
+ * Множители задержек — LEVEL_MUL из shared/lib/pace.ts, они же на сервере.
+ */
+const PROTECTION_LEVELS = [
+  { name: 'Осторожный', cap: 'до 25%', hint: 'Потолок вероятности 25%, задержки ×1.8 — для новых и дорогих аккаунтов' },
+  { name: 'Сбалансированный', cap: 'до 45%', hint: 'Потолок вероятности 45%, базовые задержки — повседневный режим' },
+  { name: 'Без потолка', cap: '100%', hint: 'Вероятность работает как задана, задержки ×0.75 — быстрее, но выше риск FloodWait и ограничений' },
+]
 import { PresetBar } from './shared/PresetBar'
 
 const DEFAULT_DELAYS = {
@@ -613,16 +626,43 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
             </div>
             <input type="range" min={0} max={100} value={probability} onChange={(e) => setProbability(Number(e.target.value))} className="w-full accent-spark-500" />
             {/* Защита режет вероятность сверху (server/lib/protection.js#effectiveProbability):
-                консервативный — не выше 25%, сбалансированный — не выше 45%. Раньше об этом
+                осторожный — не выше 25%, сбалансированный — не выше 45%. Раньше об этом
                 не говорилось нигде: оператор ставил 100%, а в логах видел пропуски и считал,
                 что настройка не работает (прогон 19.08). */}
             {aiProtect && probability > PROTECTION_CAP[protLevel] && (
               <p className="mt-1.5 text-[11px] text-amber-300">
-                Защита ограничивает: фактически будет <b>{PROTECTION_CAP[protLevel]}%</b> —
-                {protLevel === 0 ? ' консервативный' : ' сбалансированный'} режим не даёт действовать чаще.
-                Выберите «Агрессивный», чтобы работало заданное значение.
+                Защита ограничивает: фактически будет <b>{PROTECTION_CAP[protLevel]}%</b>.
+                Снять потолок — уровнем защиты ниже.
               </p>
             )}
+            {/*
+              Уровень защиты — НАСТОЯЩИЙ переключатель, а не подсказка.
+              До 25.08 его в форме не было вовсе: `protectionLevel` был зашит единицей и
+              менялся только применением шаблона. При этом надпись выше советовала «выберите
+              Агрессивный», и оператор выбирал одноимённый пресет ЗАДЕРЖЕК — он про другое,
+              потолок вероятности от него не двигался, и плашка не исчезала (жалоба
+              владельца 25.08). Поэтому здесь названия с числами: два ряда карточек с
+              одинаковыми словами и разным смыслом — и есть причина той путаницы.
+            */}
+            <div className="mt-2.5">
+              <div className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-muted">Уровень защиты</div>
+              <div className="flex flex-wrap gap-1.5">
+                {PROTECTION_LEVELS.map((lv, i) => (
+                  <button
+                    key={lv.name}
+                    type="button"
+                    onClick={() => setProtLevel(i)}
+                    title={lv.hint}
+                    className={cn('rounded-lg border px-2.5 py-1.5 text-[11px] font-semibold transition-colors',
+                      protLevel === i
+                        ? 'border-spark-500/50 bg-spark-500/12 text-spark-200'
+                        : 'border-line text-muted hover:border-spark-500/30 hover:text-fg')}
+                  >
+                    {lv.name} <span className="font-normal text-faint">· {lv.cap}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
           </div>
         )}
         {hasLimits && (
