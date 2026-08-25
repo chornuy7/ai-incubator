@@ -226,9 +226,12 @@ export function SubscriptionPage() {
                 if (!mo && !gift) return null
                 return (
                   <div className="mt-0.5 text-[11px]">
+                    {/* MR-189: подарок — РАЗОВЫЙ, и это должно быть написано. «200 ⚡ в месяц ·
+                        +200 ⚡ в подарок» читалось как удвоение месячной выдачи (созвон 24.08:
+                        «странно звучит 200 вместе с 200… и так понятно, что 200 в месяц»). */}
                     {mo ? <span className="text-fg/70">{mo.toLocaleString('ru-RU')} ⚡ в месяц</span> : null}
                     {mo && gift ? <span className="text-faint"> · </span> : null}
-                    {gift ? <span className="text-amber-300">+{gift.toLocaleString('ru-RU')} ⚡ в подарок</span> : null}
+                    {gift ? <span className="text-amber-300">разово при покупке +{gift.toLocaleString('ru-RU')} ⚡</span> : null}
                   </div>
                 )
               })()}
@@ -289,7 +292,7 @@ export function SubscriptionPage() {
                       <span className="block text-[11px]">
                         {m.monthlyTokens ? <span className="text-fg/70">{m.monthlyTokens} ⚡ в месяц</span> : null}
                         {m.monthlyTokens && m.gift ? <span className="text-faint"> · </span> : null}
-                        {m.gift ? <span className="text-amber-300">+{m.gift} ⚡ в подарок</span> : null}
+                        {m.gift ? <span className="text-amber-300">разово +{m.gift} ⚡</span> : null}
                       </span>
                     ) : null}
                   </span>
@@ -367,9 +370,9 @@ export function SubscriptionPage() {
             {cost.giftTokens > 0 && (
               <span
                 className="flex h-10 items-center gap-1.5 rounded-xl border border-amber-500/30 bg-amber-500/10 px-3.5 text-sm font-bold text-amber-300"
-                title={`+${cost.giftTokens.toLocaleString('ru-RU')} ⚡ токенов в подарок${added.length && due.giftTokens ? ` · из них +${due.giftTokens.toLocaleString('ru-RU')} ⚡ за добавленные` : ''}`}
+                title={`+${cost.giftTokens.toLocaleString('ru-RU')} ⚡ подарочных — начисляются ОДИН раз при покупке модуля, не каждый месяц${added.length && due.giftTokens ? ` · из них +${due.giftTokens.toLocaleString('ru-RU')} ⚡ за добавленные` : ''}`}
               >
-                +{cost.giftTokens.toLocaleString('ru-RU')} ⚡<span className="font-semibold text-amber-300/70">в подарок</span>
+                +{cost.giftTokens.toLocaleString('ru-RU')} ⚡<span className="font-semibold text-amber-300/70">разово при покупке</span>
               </span>
             )}
           </div>

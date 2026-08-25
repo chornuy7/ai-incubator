@@ -53,3 +53,38 @@ test('Custom не масштабирует — введённые вручную
     assert.equal(v, 45, 'ручное значение обязано доехать до воркера нетронутым')
   }
 })
+
+test('время задачи считается ОДНОЙ формулой — верх и низ панели не могут разойтись', async () => {
+  // Созвон 24.08: вверху «25 мин», внизу «13 мин» для одного и того же запуска.
+  const web = await read('src/shared/lib/pace.ts')
+  assert.match(web, /export function taskSeconds/, 'общий расчёт времени на месте')
+  for (const f of ['src/features/modules/shared/TimingSection.tsx', 'src/features/modules/shared/LaunchCost.tsx']) {
+    const src = await read(f)
+    assert.match(src, /taskSeconds/, `${f}: время считается общей формулой, а не своей`)
+  }
+})
+
+test('доля аккаунта на фронте считается так же, как её делит воркер', async () => {
+  // Тест гоняет node, а pace.ts — TypeScript, импортировать его отсюда нельзя. Поэтому
+  // сверяем сами формулы: обе обязаны делить общую цель на число аккаунтов вверх.
+  const web = await read('src/shared/lib/pace.ts')
+  const srv = await read('server/lib/targets.js')
+  assert.match(web, /Math\.ceil\(total \/ acc\)/, 'фронт: доля = ceil(общая / аккаунты)')
+  assert.match(srv, /Math\.ceil\(resolveTotalTarget\(settings, task\) \/ accounts\)/, 'воркер: доля = ceil(общая / аккаунты)')
+  // И общее время — это цепочка ОДНОГО аккаунта: доля × средняя пауза.
+  assert.match(web, /Math\.ceil\(total \/ acc\) \* delay/, 'время = доля аккаунта × пауза')
+})
+
+test('все места, где показывается время задачи, зовут общую формулу', async () => {
+  // Созвон 24.08: «главное, чтобы всюду показывалось верное время». Мест три:
+  // блок «Защита и тайминги», нижняя панель запуска и ETA в дашборде задач.
+  for (const f of [
+    'src/features/modules/shared/TimingSection.tsx',
+    'src/features/modules/shared/LaunchCost.tsx',
+    'src/pages/TasksPage.tsx',
+    'src/features/modules/LiveModule.tsx',
+  ]) {
+    const src = await read(f)
+    assert.match(src, /taskSeconds|perAccountShare/, `${f}: время считается общей формулой`)
+  }
+})

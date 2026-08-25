@@ -11,8 +11,8 @@ export {
 
 export { persistActiveTaskId, readActiveTaskId, pickTaskIdToRestore, mapTaskStatus } from './activeTaskStorage'
 export { AiGenerationNotice } from './AiGenerationNotice'
-export { PromptCards, usePromptBodies } from './PromptCards'
-export { DEFAULT_PROMPT_BODIES, loadPromptBodies, savePromptBodies } from './promptDefaults'
+export { PromptCards } from './PromptCards'
+export { DEFAULT_PROMPT_BODIES, defaultBodies, usePromptStore } from './promptDefaults'
 export { ProtectionBlock } from './ProtectionBlock'
 export { ProtectionTimings } from './ProtectionTimings'
 export { TargetsEditor } from './TargetsEditor'

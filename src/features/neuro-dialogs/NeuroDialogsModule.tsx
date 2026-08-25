@@ -25,7 +25,7 @@ import {
   LaunchSteps,
   markCurrentStep,
   PromptCards,
-  loadPromptBodies,
+  usePromptStore,
   ProtectionTimings,
   AiGenerationNotice,
   TaskStartedModal,
@@ -61,9 +61,8 @@ export function NeuroDialogsModule() {
   const [aiProtect, setAiProtect] = useState(true)
   const [protLevel, setProtLevel] = useState(1)
   const [activePrompt, setActivePrompt] = useState(0)
-  const [promptBodies, setPromptBodies] = useState(() =>
-    loadPromptBodies('neuro-dialogs', cfg.messagePrompts ?? []),
-  )
+  // MR-185: промпты из базы, по владельцу (см. LiveModule).
+  const { bodies: promptBodies, save: savePrompts, replace: replacePrompts } = usePromptStore('neuro-dialogs', cfg.messagePrompts ?? [])
   // Лимиты для ЛС. Важно: общий лимит и лимит на аккаунт — это ДИАПАЗОН [min, max],
   // из которого воркер берёт случайное число (антидетект). Для авто-ответчика min по умолчанию
   // равен max, иначе цель могла бы выпасть в 0–1 и задача завершалась бы после первого ответа.
@@ -131,7 +130,7 @@ export function NeuroDialogsModule() {
     if (s.aiProtection !== undefined) setAiProtect(s.aiProtection)
     if (s.protectionLevel !== undefined) setProtLevel(s.protectionLevel)
     if (s.promptIndex !== undefined) setActivePrompt(s.promptIndex)
-    if (Array.isArray(s.promptOverrides)) setPromptBodies(s.promptOverrides)
+    if (Array.isArray(s.promptOverrides)) replacePrompts(s.promptOverrides)
     if (s.maxActions !== undefined) setMaxActions(s.maxActions)
     if (s.minActions !== undefined) setMinActions(s.minActions)
     if (s.maxPerAccount !== undefined) setMaxPerAcc(s.maxPerAccount)
@@ -146,7 +145,7 @@ export function NeuroDialogsModule() {
     if (s.replyLimitMode === 'count' || s.replyLimitMode === 'untilTarget') setReplyLimitMode(s.replyLimitMode)
     if (typeof s.maxRepliesPerLead === 'number' && s.maxRepliesPerLead > 0) setMaxRepliesPerLead(s.maxRepliesPerLead)
     pushToast({ type: 'success', title: 'Шаблон применён' })
-  }, [pushToast, remember])
+  }, [pushToast, remember, replacePrompts])
 
   const loadInbox = useCallback(async () => {
     if (!accountIds.length) {
@@ -207,11 +206,11 @@ export function NeuroDialogsModule() {
           <div className="space-y-3">
             <AiGenerationNotice />
             <PromptCards
-              moduleKey="neuro-dialogs"
               labels={cfg.messagePrompts}
               activeIndex={activePrompt}
               onActiveChange={setActivePrompt}
-              onBodiesChange={setPromptBodies}
+              bodies={promptBodies}
+              onSave={savePrompts}
             />
           </div>
         </SectionCard>

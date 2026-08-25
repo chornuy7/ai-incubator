@@ -1520,14 +1520,39 @@ app.post('/api/subscription', async (req, res) => {
     // оплаты. Дальнейшие месяцы добирает ежедневный крон (tokenCredit.js).
     let creditedTokens = 0
     if (addedModules.length) {
+      // Начисление одно на два блока ниже (месячные токены и подарок). Раньше `changeCoins`
+      // объявлялся ВНУТРИ `if (creditedTokens > 0)`, а подарок вызывал его снаружи — за
+      // пределами области видимости. Падало ReferenceError прямо в пустой catch, поэтому
+      // подарок молча не начислялся ни разу: тесты модуля были зелёными, а живая покупка
+      // подарка не давала.
+      const { changeCoins } = await import('./balance.js')
       creditedTokens = addedModules.reduce((sum, k) => sum + (Number(effPrices.tokensMap?.[k]) || 0), 0)
       if (creditedTokens > 0) {
-        const { changeCoins } = await import('./balance.js')
         // Здесь тоже имена: «за что дали 300 токенов» — тот же вопрос, что и про деньги.
         const { moduleLabel: label } = await import('./lib/accountLocks.js')
         const list3 = addedModules.map((k) => label(k))
         const shown = list3.length > 3 ? `${list3.slice(0, 3).join(', ')} и ещё ${list3.length - 3}` : list3.join(', ')
         await changeCoins(creditedTokens, `Токены подписки (первый месяц): ${shown}`, target, 'grant')
+      }
+      // MR-189: ПОДАРОЧНЫЕ ⚡ — единоразово за модуль. До этой правки они считались в
+      // стоимости набора и показывались на витрине («+200 ⚡ в подарок»), но ни одна точка
+      // начисления их не выдавала: человеку обещали и не давали. Журнал выдачи отдельный,
+      // чтобы вернуть модуль в подписку и получить подарок второй раз было нельзя.
+      try {
+        const { pendingGift, markGifted } = await import('./userGifts.js')
+        const gift = await pendingGift(target, addedModules, effPrices.giftMap || {})
+        if (gift.coins > 0) {
+          const { moduleLabel: label2 } = await import('./lib/accountLocks.js')
+          const names = gift.modules.map((k) => label2(k))
+          const shownGift = names.length > 3 ? `${names.slice(0, 3).join(', ')} и ещё ${names.length - 3}` : names.join(', ')
+          await changeCoins(gift.coins, `Подарочные токены (разово): ${shownGift}`, target, 'grant')
+          await markGifted(target, gift.modules, effPrices.giftMap || {})
+        }
+      } catch (err) {
+        // Молчать нельзя: пустой catch и спрятал ReferenceError выше — подарок не
+        // начислялся, а в логах не было ни строчки. Подписка оплачена в любом случае,
+        // но повод разобраться должен быть виден.
+        console.error('[gift] подарочные ⚡ не начислены:', err instanceof Error ? err.message : err)
       }
       // День оплаты — по нему крон начисляет следующие месяцы (год = 12 начислений в то же
       // число). Этот месяц сразу помечаем начисленным, чтобы крон не задвоил.

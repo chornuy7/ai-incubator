@@ -17,15 +17,14 @@ import { AccountPicker } from '@/features/account-picker/AccountPicker'
 import { useModuleTask } from './shared/useModuleTask'
 import {
   SectionCard, NumberField,
-  ProtectionTimings, TargetsEditor, LaunchPanel, PromptCards, loadPromptBodies, AiGenerationNotice,
+  ProtectionTimings, TargetsEditor, LaunchPanel, PromptCards, usePromptStore, AiGenerationNotice,
   FolderPicker, BlacklistEditor, GlobalPromptEditor, TimingSection, SaveToFolderModal, TaskStartedModal, SavePresetModal,
   LaunchSteps, markCurrentStep, usePresetCarry, type LaunchStep,
 } from './shared'
 import type { ModuleTaskSettings } from '@/api/modulesApi'
 import { confirmDialog } from '@/shared/lib/dialog'
 import { LaunchCost } from './shared/LaunchCost'
-import { PRESET_MUL } from './shared/TimingSection'
-import { useGlobalPace } from '@/shared/lib/pace'
+import { useGlobalPace, delayMultiplier, taskSeconds, perAccountShare } from '@/shared/lib/pace'
 /**
  * Потолок вероятности по уровню защиты — зеркало effectiveProbability из
  * server/lib/protection.js. Значение выше выставить можно, но сервер его срежет,
@@ -122,7 +121,9 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
   const [postUrls, setPostUrls] = useState<string[]>([])
   const [keywords, setKeywords] = useState((cfg.defaultKeywords || []).join(', '))
   const [activePrompt, setActivePrompt] = useState(0)
-  const [promptBodies, setPromptBodies] = useState(() => loadPromptBodies(moduleKey, cfg.messagePrompts ?? []))
+  // MR-185: тексты промптов — из базы, по владельцу. Своей копии у карточек больше нет,
+  // поэтому применённый шаблон её и не перекрывает (это же чинит MR-176).
+  const { bodies: promptBodies, save: savePrompts, replace: replacePrompts } = usePromptStore(moduleKey, cfg.messagePrompts ?? [])
   const [delayPreset, setDelayPreset] = useState(1)
   const [delays, setDelays] = useState(DEFAULT_DELAYS)
   const [goalId] = useState('')
@@ -391,7 +392,7 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
     }
     if (Array.isArray(s.keywords)) setKeywords(s.keywords.join(', '))
     if (s.promptIndex !== undefined) setActivePrompt(s.promptIndex)
-    if (Array.isArray(s.promptOverrides)) setPromptBodies(s.promptOverrides)
+    if (Array.isArray(s.promptOverrides)) replacePrompts(s.promptOverrides)
     if (s.delayPreset !== undefined) setDelayPreset(s.delayPreset)
     if (s.delays) setDelays((d) => ({ ...d, ...s.delays }))
     if (Array.isArray(s.emojis)) setPalette(new Set(s.emojis))
@@ -412,7 +413,7 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
     if (s.analyzeImages !== undefined) setAnalyzeImages(s.analyzeImages)
     if (s.typeWeights) setTypeWeights(s.typeWeights)
     pushToast({ type: 'success', title: 'Шаблон применён' })
-  }, [cfg.lookModeOptions, cfg.toggleGroups, pushToast, remember])
+  }, [cfg.lookModeOptions, cfg.toggleGroups, pushToast, remember, replacePrompts])
 
   const results = task?.results ?? []
   const progressDone = task?.progress.actionsDone ?? task?.progress.commentsSent ?? 0
@@ -431,16 +432,21 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
       { icon: <Hash size={18} />, color: '#06b6d4', label: cfg.sourceTabs?.label ?? 'Группы', value: String(targets.length + postUrls.length), warn: needsTargets && !targets.length && !hasPostTargets },
       {
         icon: <Clock size={18} />, color: '#0ec464', label: '≈ время',
+        // Правка 24.08: та же формула и тот же множитель темпа, что в «Защите и таймингах»
+        // и в нижней панели. Раньше здесь брались БАЗОВЫЕ задержки, без пересчёта по
+        // пресету и глобальному множителю — плашка обещала время короче реального.
         value: (() => {
           const accCount = Math.max(1, selected.size || accounts.length)
-          const perAcc = Math.ceil((maxActions || 0) / accCount)
-          if (!perAcc) return '—'
-          return `${fmtDur(delays.action[0] * perAcc)}–${fmtDur(delays.action[1] * perAcc)}`
+          const mul = delayMultiplier(protLevel, delayPreset, globalPace)
+          if (!perAccountShare(maxActions || 0, accCount)) return '—'
+          const from = taskSeconds(maxActions || 0, accCount, delays.action[0] * mul)
+          const to = taskSeconds(maxActions || 0, accCount, delays.action[1] * mul)
+          return `${fmtDur(from)}–${fmtDur(to)}`
         })(),
       },
       { icon: cfg.reactionSettings ? <Heart size={18} /> : <MessageSquareText size={18} />, color: '#f59e0b', label: `Лимит ${limitNoun(moduleKey, cfg)}`, value: String(maxActions) },
     ]
-  }, [selected, targets, postUrls, hasPostTargets, delays, maxActions, cfg, isGgr, accounts, results, task, needsTargets])
+  }, [selected, targets, postUrls, hasPostTargets, delays, maxActions, cfg, isGgr, accounts, results, task, needsTargets, protLevel, delayPreset, globalPace])
 
   // §11 (MR-55): пошаговый roadmap перед запуском — что сделано и что осталось.
   // `anchor` — «связка» с блоком на странице: клик по шагу прокручивает к нему.
@@ -652,11 +658,11 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
             <AiGenerationNotice />
             <GlobalPromptEditor />
             <PromptCards
-            moduleKey={moduleKey}
             labels={cfg.messagePrompts}
             activeIndex={activePrompt}
             onActiveChange={setActivePrompt}
-            onBodiesChange={setPromptBodies}
+            bodies={promptBodies}
+            onSave={savePrompts}
           />
             {/* Распределение типов — часть промптов, а не лимитов (правка 19.08):
                 проценты делятся между теми самыми карточками промптов, что выше.
@@ -982,7 +988,7 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
             onStop={stop}
             onSave={handleSave}
             primaryLabel={cfg.primaryAction ?? 'Начать'}
-            cost={<LaunchCost compact moduleKey={moduleKey} actions={maxActions} accounts={selected.size} delaySec={(() => { const m = (PRESET_MUL[delayPreset] ?? 1) * globalPace; const d = delays.action ?? delays.comment; return d ? [Math.round(d[0] * m), Math.round(d[1] * m)] as [number, number] : d })()} />}
+            cost={<LaunchCost compact moduleKey={moduleKey} actions={maxActions} accounts={selected.size} delaySec={(() => { const m = delayMultiplier(protLevel, delayPreset, globalPace); const d = delays.action ?? delays.comment; return d ? [Math.round(d[0] * m), Math.round(d[1] * m)] as [number, number] : d })()} />}
             stats={launchStats}
             task={task}
             warn={warn}
