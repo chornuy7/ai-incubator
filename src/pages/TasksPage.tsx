@@ -24,7 +24,7 @@ import { canControlModule } from '@/shared/lib/access'
 import { downloadXls } from '@/shared/lib/exportXls'
 import { useTabParam } from '@/shared/lib/useTabParam'
 import { AccountPicker } from '@/features/account-picker/AccountPicker'
-import { delayMultiplier, useGlobalPace } from '@/shared/lib/pace'
+import { delayMultiplier, useGlobalPace, perAccountShare } from '@/shared/lib/pace'
 
 const STATUS: Record<string, { label: string; tone: 'spark' | 'iris' | 'amber' | 'rose' | 'muted' }> = {
   running: { label: 'Выполняется', tone: 'spark' },
@@ -92,7 +92,9 @@ function taskEtaMs(t: ModuleTask, fatigue?: FatigueHint | null, globalPace = 1):
   if (total <= done) return null
   const s = t.settings || {}
   const accounts = Math.max(1, (s.accountIds || []).length)
-  const perAccRemaining = Math.ceil((total - done) / accounts)
+  // Та же доля, что делит воркер и что показывает панель запуска (shared/lib/pace.ts):
+  // ETA и обещанное до запуска время обязаны сходиться.
+  const perAccRemaining = perAccountShare(total - done, accounts)
   // Прогрев: темп задаётся уровнем в действиях/день, а не задержкой между действиями.
   if (t.moduleKey === 'warming') {
     const perDay = WARM_ACTIONS_PER_DAY[s.warmLevel ?? 1] ?? 20

@@ -24,8 +24,7 @@ import {
 import type { ModuleTaskSettings } from '@/api/modulesApi'
 import { confirmDialog } from '@/shared/lib/dialog'
 import { LaunchCost } from './shared/LaunchCost'
-import { PRESET_MUL } from './shared/TimingSection'
-import { useGlobalPace } from '@/shared/lib/pace'
+import { useGlobalPace, delayMultiplier, taskSeconds, perAccountShare } from '@/shared/lib/pace'
 /**
  * Потолок вероятности по уровню защиты — зеркало effectiveProbability из
  * server/lib/protection.js. Значение выше выставить можно, но сервер его срежет,
@@ -433,16 +432,21 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
       { icon: <Hash size={18} />, color: '#06b6d4', label: cfg.sourceTabs?.label ?? 'Группы', value: String(targets.length + postUrls.length), warn: needsTargets && !targets.length && !hasPostTargets },
       {
         icon: <Clock size={18} />, color: '#0ec464', label: '≈ время',
+        // Правка 24.08: та же формула и тот же множитель темпа, что в «Защите и таймингах»
+        // и в нижней панели. Раньше здесь брались БАЗОВЫЕ задержки, без пересчёта по
+        // пресету и глобальному множителю — плашка обещала время короче реального.
         value: (() => {
           const accCount = Math.max(1, selected.size || accounts.length)
-          const perAcc = Math.ceil((maxActions || 0) / accCount)
-          if (!perAcc) return '—'
-          return `${fmtDur(delays.action[0] * perAcc)}–${fmtDur(delays.action[1] * perAcc)}`
+          const mul = delayMultiplier(protLevel, delayPreset, globalPace)
+          if (!perAccountShare(maxActions || 0, accCount)) return '—'
+          const from = taskSeconds(maxActions || 0, accCount, delays.action[0] * mul)
+          const to = taskSeconds(maxActions || 0, accCount, delays.action[1] * mul)
+          return `${fmtDur(from)}–${fmtDur(to)}`
         })(),
       },
       { icon: cfg.reactionSettings ? <Heart size={18} /> : <MessageSquareText size={18} />, color: '#f59e0b', label: `Лимит ${limitNoun(moduleKey, cfg)}`, value: String(maxActions) },
     ]
-  }, [selected, targets, postUrls, hasPostTargets, delays, maxActions, cfg, isGgr, accounts, results, task, needsTargets])
+  }, [selected, targets, postUrls, hasPostTargets, delays, maxActions, cfg, isGgr, accounts, results, task, needsTargets, protLevel, delayPreset, globalPace])
 
   // §11 (MR-55): пошаговый roadmap перед запуском — что сделано и что осталось.
   // `anchor` — «связка» с блоком на странице: клик по шагу прокручивает к нему.
@@ -984,7 +988,7 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
             onStop={stop}
             onSave={handleSave}
             primaryLabel={cfg.primaryAction ?? 'Начать'}
-            cost={<LaunchCost compact moduleKey={moduleKey} actions={maxActions} accounts={selected.size} delaySec={(() => { const m = (PRESET_MUL[delayPreset] ?? 1) * globalPace; const d = delays.action ?? delays.comment; return d ? [Math.round(d[0] * m), Math.round(d[1] * m)] as [number, number] : d })()} />}
+            cost={<LaunchCost compact moduleKey={moduleKey} actions={maxActions} accounts={selected.size} delaySec={(() => { const m = delayMultiplier(protLevel, delayPreset, globalPace); const d = delays.action ?? delays.comment; return d ? [Math.round(d[0] * m), Math.round(d[1] * m)] as [number, number] : d })()} />}
             stats={launchStats}
             task={task}
             warn={warn}

@@ -74,3 +74,17 @@ test('доля аккаунта на фронте считается так же
   // И общее время — это цепочка ОДНОГО аккаунта: доля × средняя пауза.
   assert.match(web, /Math\.ceil\(total \/ acc\) \* delay/, 'время = доля аккаунта × пауза')
 })
+
+test('все места, где показывается время задачи, зовут общую формулу', async () => {
+  // Созвон 24.08: «главное, чтобы всюду показывалось верное время». Мест три:
+  // блок «Защита и тайминги», нижняя панель запуска и ETA в дашборде задач.
+  for (const f of [
+    'src/features/modules/shared/TimingSection.tsx',
+    'src/features/modules/shared/LaunchCost.tsx',
+    'src/pages/TasksPage.tsx',
+    'src/features/modules/LiveModule.tsx',
+  ]) {
+    const src = await read(f)
+    assert.match(src, /taskSeconds|perAccountShare/, `${f}: время считается общей формулой`)
+  }
+})
