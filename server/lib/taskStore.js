@@ -5,7 +5,10 @@ import { resolveTotalTarget } from './targets.js'
 import { fileURLToPath } from 'url'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
-const DATA_ROOT = path.join(__dirname, '..', 'data', 'modules')
+// Тот же корень, что у остальных хранилищ (jsonStore.DATA_DIR): переопределяется через
+// DATA_DIR, и тесты пишут задачи к себе во временный каталог, а не в боевой server/data.
+// Раньше путь был зашит намертво — и `npm test` засорял дашборд задачами с `acc_test_1`.
+const DATA_ROOT = path.join(process.env.DATA_DIR || path.join(__dirname, '..', 'data'), 'modules')
 
 /** @param {string} moduleKey @param {string} idPrefix */
 export function createTaskStore(moduleKey, idPrefix) {

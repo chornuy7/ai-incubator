@@ -4,8 +4,16 @@ import { fileURLToPath } from 'url'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
-/** Корневая папка для всех общих JSON-хранилищ фич (папки целей, ИИ-настройки, ЧС и т.д.). */
-export const DATA_DIR = path.join(__dirname, '..', 'data')
+/**
+ * Корневая папка для всех общих JSON-хранилищ фич (папки целей, ИИ-настройки, ЧС и т.д.).
+ *
+ * Переопределяется через DATA_DIR — этим пользуются тесты. Раньше путь был зашит намертво,
+ * и `npm test` писал задачи прямо в БОЕВОЙ `server/data`: в дашборде копились задачи с
+ * `acc_test_1`, рядом лежали папки-призраки вроде `ggr_progress_test`, и при разборе
+ * реальных логов это сбивало (замечено владельцем 24.08). Значение читается один раз при
+ * импорте — значит выставлять переменную нужно ДО первого импорта, в прелоаде тестов.
+ */
+export const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, '..', 'data')
 
 /** @param {string} relPath относительный путь внутри server/data */
 export function dataPath(relPath) {
