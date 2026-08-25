@@ -48,16 +48,18 @@ export function PresetBar({ presets = [], onApply, onSave, onEdit, onDelete, dis
           {presets.map((p) => (
             <span
               key={p.id}
-              className="group inline-flex items-center gap-1.5 rounded-xl border border-line bg-surface py-1.5 pl-2.5 pr-1.5 text-sm font-medium text-fg transition-colors hover:border-spark-500/40"
+              className="group inline-flex items-center gap-1.5 rounded-xl border border-line bg-surface py-1.5 pl-2.5 pr-1.5 text-sm font-medium text-fg transition-colors hover:border-spark-500/40 has-[button:active]:border-spark-500/70 has-[button:active]:bg-spark-500/10"
               style={{ borderLeft: `3px solid ${presetHex(p.color)}` }}
             >
               <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ background: presetHex(p.color) }} />
+              {/* Правка 24.08: нажатие должно быть ВИДНО. Настройки подставляются мгновенно, и
+                  без отклика человек не понимал, сработал ли клик, и жал по второму разу. */}
               <button
                 type="button"
                 onClick={() => onApply?.(p.settings)}
                 disabled={disabled}
                 title="Применить шаблон к настройкам"
-                className="max-w-[180px] truncate text-left disabled:opacity-50"
+                className="max-w-[180px] truncate text-left transition-transform active:scale-95 disabled:opacity-50"
               >
                 {p.name}
               </button>
