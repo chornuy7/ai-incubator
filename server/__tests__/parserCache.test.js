@@ -195,3 +195,34 @@ test('повторный парс не сбрасывает слежение', a
   assert.ok(still, 'слежение слетело при обычном сохранении результата')
   assert.equal(still.count, 2)
 })
+
+/**
+ * TGStat — отдельный вид запроса: ходит куками каталога, а не аккаунтами, и описывается
+ * фильтрами (категория, регион, порог подписчиков), а не словами. В кэш он попадать
+ * должен наравне с остальными, а за таким запросом ещё и следить дёшево: перепроверка
+ * не занимает профили и не списывает монеты.
+ */
+test('TGStat: запрос описывается фильтрами и кэшируется', async () => {
+  const s = { filters: { category: 'crypto', region: 'russia', minSubscribers: 1000 }, maxPages: 3 }
+  await saveParserResults('tgstat', s, [{ username: 'a' }, { username: 'b' }], 'u1')
+  const hit = await lookupParserResults('tgstat', { filters: { minSubscribers: 1000, region: 'russia', category: 'crypto' }, maxPages: 3 })
+  assert.ok(hit, 'порядок ключей фильтра не должен менять ключ')
+  assert.equal(hit.count, 2)
+})
+
+test('TGStat: другая категория или другая глубина — другой запрос', async () => {
+  const base = { filters: { category: 'crypto' }, maxPages: 3 }
+  await saveParserResults('tgstat', base, [{ username: 'a' }], 'u1')
+  assert.equal(await lookupParserResults('tgstat', { filters: { category: 'news' }, maxPages: 3 }), null)
+  assert.equal(await lookupParserResults('tgstat', { filters: { category: 'crypto' }, maxPages: 10 }), null, 'глубина меняет состав')
+})
+
+test('TGStat без фильтров не кэшируем — описывать нечего', async () => {
+  assert.equal(await saveParserResults('tgstat', { filters: {} }, [{ username: 'z' }]), undefined)
+})
+
+test('kind tgstat не ломает сигнатуры остальных парсеров', () => {
+  const a = parserSignature('parsing', { keywords: ['крипто'] })
+  const b = parserSignature('parsing', { keywords: ['крипто'], filters: { category: 'crypto' } })
+  assert.equal(a, b, 'фильтры TGStat не должны влезать в ключ обычного парсера')
+})

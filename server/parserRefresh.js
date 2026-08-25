@@ -71,6 +71,29 @@ export async function parserRefreshTick({ perTick = PER_TICK, waitMs = WAIT_MS }
   for (const w of due) {
     const common = { failCount: w.failCount, periodH: w.periodH }
     try {
+      /*
+       * TGStat перезапускаем НАПРЯМУЮ, а не задачей модуля: он ходит куками каталога,
+       * а не аккаунтами. Значит перепроверка здесь не занимает профили и не списывает
+       * монеты — а если куки протухли, это и будет ошибкой запроса, которую увидит
+       * админка. Ровно тот случай, ради которого и заводился `last_error`.
+       */
+      if (w.kind === 'tgstat') {
+        const [{ searchTgstatChannels }, { getSessionDto, loadSessionRaw }] = await Promise.all([
+          import('./tgstat/parser.js'),
+          import('./tgstat/store.js'),
+        ])
+        const session = await getSessionDto()
+        if (!session.has_session) throw new Error('TGStat не подключён — загрузите cookies')
+        const chats = await searchTgstatChannels(w.settings.filters || {}, await loadSessionRaw(), Math.max(1, Number(w.settings.maxPages) || 3))
+        const { saveParserResults } = await import('./parserCache.js')
+        await saveParserResults('tgstat', w.settings, chats, w.ownerId)
+        const d = diffResults(w.results, chats)
+        await markWatchRun(w.sig, { ...common, added: d.added.length, gone: d.gone.length, failCount: 0 })
+        out.checked += 1
+        out.added += d.added.length
+        out.gone += d.gone.length
+        continue
+      }
       const accountIds = await pickAccounts(w.ownerId)
       if (!accountIds.length) {
         // Не ошибка кода, а состояние парка — но владелец должен это видеть, иначе

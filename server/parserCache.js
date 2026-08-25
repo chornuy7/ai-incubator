@@ -94,6 +94,17 @@ export function parserSignature(kind, s = {}) {
     comments: Number(s.commentFilter) || 0,
     intersect: !!s.intersect,
   }
+  /*
+   * TGStat — отдельный вид запроса: он ходит не аккаунтами, а куками каталога, и
+   * описывается ФИЛЬТРАМИ (категория, регион, порог подписчиков), а не словами и не
+   * источниками. Поля добавляются в конец и только для него — сигнатуры остальных
+   * парсеров от этого не меняются.
+   */
+  if (String(kind || '') === 'tgstat') {
+    sig.tgstat = stable(s.filters)
+    sig.pages = Number(s.maxPages) || 0
+    return JSON.stringify(sig)
+  }
   const sources = norm(s.targets)
   if (sources.length) {
     sig.targets = sources
@@ -113,7 +124,7 @@ export function parserSignature(kind, s = {}) {
  */
 function watchableSettings(s = {}) {
   const out = {}
-  for (const k of ['keywords', 'endings', 'targets', 'searchMode', 'minMembers', 'maxMembers', 'commentFilter', 'intersect', 'intersectionMode', 'intersectionMin', 'filters', 'limits', 'limit', 'maxActions']) {
+  for (const k of ['keywords', 'endings', 'targets', 'filters', 'maxPages', 'searchMode', 'minMembers', 'maxMembers', 'commentFilter', 'intersect', 'intersectionMode', 'intersectionMin', 'filters', 'limits', 'limit', 'maxActions']) {
     if (s[k] !== undefined && s[k] !== null && s[k] !== '') out[k] = s[k]
   }
   return out
@@ -123,13 +134,19 @@ function watchableSettings(s = {}) {
 const sigKey = (sig) => createHash('sha256').update(sig).digest('hex')
 
 /** Что показать человеку в колонке `keywords`: слова, а если их нет — источники. */
-function label(settings) {
+function label(kind, settings) {
+  if (String(kind || '') === 'tgstat') {
+    const f = stable(settings?.filters)
+    return Object.entries(f).map(([k, v]) => `${k}: ${v}`).join(', ').slice(0, 500) || 'каталог TGStat'
+  }
   const kw = norm(settings?.keywords)
   return (kw.length ? kw : norm(settings?.targets)).join(', ').slice(0, 500)
 }
 
-/** Есть ли вообще чем описать запрос: без слов и без источников кэшировать нечего. */
-const describable = (s) => norm(s?.keywords).length > 0 || norm(s?.targets).length > 0
+/** Есть ли вообще чем описать запрос: без слов, источников и фильтров кэшировать нечего. */
+const describable = (kind, s) => String(kind || '') === 'tgstat'
+  ? Object.keys(stable(s?.filters)).length > 0
+  : norm(s?.keywords).length > 0 || norm(s?.targets).length > 0
 
 /**
  * Сохранить результат парсинга в кэш (перезаписывает прежний для той же сигнатуры —
@@ -137,13 +154,13 @@ const describable = (s) => norm(s?.keywords).length > 0 || norm(s?.targets).leng
  * @returns {Promise<string|undefined>} сигнатуру, под которой сохранили (или undefined)
  */
 export async function saveParserResults(kind, settings, results, ownerId = null) {
-  if (!describable(settings)) return
+  if (!describable(kind, settings)) return
   const list = Array.isArray(results) ? results : []
   const sig = parserSignature(kind, settings)
   const row = {
     sig: sigKey(sig),
     kind: String(kind || ''),
-    keywords: label(settings),
+    keywords: label(kind, settings),
     updated_at: Date.now(),
     count: list.length,
     // Сам запрос — чтобы перепроверка могла его перезапустить: от sha256 обратной
@@ -178,7 +195,7 @@ export async function saveParserResults(kind, settings, results, ownerId = null)
  * @returns {Promise<{updatedAt:number,count:number,results:object[]}|null>} null — совпадения не было
  */
 export async function lookupParserResults(kind, settings) {
-  if (!describable(settings)) return null
+  if (!describable(kind, settings)) return null
   const key = sigKey(parserSignature(kind, settings))
   const base = sb()
   if (base) {

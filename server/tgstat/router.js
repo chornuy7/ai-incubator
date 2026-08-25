@@ -63,7 +63,23 @@ tgstatRouter.post('/search', async (req, res) => {
     const session = await getSessionDto()
     if (!session.has_session) return fail(res, 400, 'Сначала подключите TGStat (загрузите cookies).')
     const state = await loadSessionRaw()
-    const chats = await searchTgstatChannels(filters || {}, state, Math.max(1, Math.min(20, Number(maxPages) || 3)))
+    const pages = Math.max(1, Math.min(20, Number(maxPages) || 3))
+    const chats = await searchTgstatChannels(filters || {}, state, pages)
+    /*
+     * Результат — в тот же кэш, что и у остальных парсеров (§6/MR-38): повтор того же
+     * поиска отдаётся из базы с датой, и за таким запросом можно СЛЕДИТЬ — раз в сутки
+     * перепроверять и искать новые каналы. Для TGStat это дёшево вдвойне: он ходит
+     * куками каталога, а не аккаунтами, значит не тратит ни профили, ни монеты.
+     * Best-effort: кэш не должен ломать сам поиск.
+     */
+    try {
+      const [{ saveParserResults }, { ownerScopeForRequest }] = await Promise.all([
+        import('../parserCache.js'),
+        import('../lib/accessGuard.js'),
+      ])
+      const scope = await ownerScopeForRequest(req).catch(() => null)
+      await saveParserResults('tgstat', { filters: filters || {}, maxPages: pages }, chats, scope?.ownerId || null)
+    } catch { /* кэш необязателен */ }
     ok(res, { chats })
   } catch (e) {
     fail(res, 400, e?.message || 'Ошибка поиска TGStat')
