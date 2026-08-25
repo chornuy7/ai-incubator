@@ -2746,7 +2746,7 @@ function DailyTab({ daily }: { daily: DailySpend | null }) {
  * Требование созвона 27.07: «внутри самого кода этого вообще быть не должно».
  * Две цены на модуль — ДОСТУП (подписка $/мес) и ИСПОЛЬЗОВАНИЕ (⚡ за действие),
  * плюс годовая скидка, курс токена и множитель за картинку. Меняешь тут — сразу на
- * витрине, в кабинете и в счёте. «изм.» помечает, где цена отличается от заводской.
+ * витрине, в кабинете и в счёте.
  */
 function PricesTab() {
   const pushToast = useApp((s) => s.pushToast)
@@ -2823,6 +2823,49 @@ function PricesTab() {
     )
   }
 
+  /**
+   * MR-187: во сколько нам обходится ОДИН наш ⚡ — чтобы было видно, можно ли двигать цену.
+   *
+   * Созвон 24.08: «мне здесь нужно тоже реальную цену понять», «надо понимать, сколько за
+   * сколько мы 50 токенов условно покупаем и за сколько мы их продаём». И отдельно: «есть
+   * ещё расходы, как прокси, аккаунты — это сюда не учитывается, здесь просто математика,
+   * сколько токен сам по себе стоит».
+   *
+   * Считаем той же логикой, что и цену действия: за один ⚡ клиент покупает `1 / цена
+   * действия` действий модуля, каждое действие может сжечь до `maxCost` на ИИ. Берём САМЫЙ
+   * дорогой ИИ-модуль — это и есть худший случай, который цена обязана покрывать.
+   */
+  /**
+   * MR-188: скидка в ДЕНЬГАХ, а не только процентом.
+   *
+   * Созвон 24.08: «там 10% — 10% это прекрасно, но я не понимаю, сколько это в деньгах.
+   * То есть у меня вот есть периоды — то же самое». Считаем от «всё включено»: сумма
+   * месячных цен всех модулей — это верхняя планка, по ней скидка нагляднее всего.
+   */
+  const monthlyAll = prices.modules.reduce((sum, m) => sum + Number(draft[m.key]?.month ?? m.month ?? 0), 0)
+  const periodMoney = (unit: string, count: number, discountPct: number) => {
+    const months = unit === 'year' ? count * 12 : unit === 'week' ? count / 4 : count
+    const full = monthlyAll * months
+    if (!full) return null
+    const off = full * (Math.max(0, Math.min(90, discountPct)) / 100)
+    return { full, off, pay: full - off, months }
+  }
+
+  const coinCost = (() => {
+    const maxUsd = prices.maxCost?.max || prices.maxCost?.usd || 0
+    if (!maxUsd) return null
+    let worst = 0
+    let worstKey = ''
+    for (const m of prices.modules) {
+      if (!m.usesAi) continue
+      const action = Number(draft[m.key]?.action ?? m.action ?? 0)
+      if (!action) continue
+      const perCoin = maxUsd / action // $ на ИИ, если весь ⚡ потратить в этом модуле
+      if (perCoin > worst) { worst = perCoin; worstKey = m.title || m.key }
+    }
+    return worst > 0 ? { usd: worst, module: worstKey } : null
+  })()
+
   const save = async () => {
     setSaving(true)
     try {
@@ -2873,7 +2916,7 @@ function PricesTab() {
       <Card className="p-4">
         <p className="mb-3 text-xs text-muted">
           Две цены на модуль: <b className="text-fg">Доступ</b> — подписка в $/мес, <b className="text-fg">Действие</b> — сколько ⚡
-          списывается за одно действие. «изм.» — цена отличается от заводской; верните её обратно, и метка снимется.
+          списывается за одно действие.
         </p>
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
@@ -2892,7 +2935,7 @@ function PricesTab() {
                   <td className="py-1.5 pr-3 text-fg">{m.title}</td>
                   <td className="py-1.5 pr-3 text-right">
                     <span className="inline-flex items-center gap-1.5">
-                      {m.overridden.month && <span className="rounded bg-amber-500/15 px-1 text-[9px] font-bold text-amber-300">изм.</span>}
+                      
                       <input value={draft[m.key]?.month ?? ''} inputMode="decimal"
                         onChange={(e) => setDraft((d) => ({ ...d, [m.key]: { ...d[m.key], month: cleanPrice(e.target.value, 100000) } }))}
                         className="input h-8 w-24 text-right tabular-nums" />
@@ -2900,7 +2943,7 @@ function PricesTab() {
                   </td>
                   <td className="py-1.5 pr-3 text-right">
                     <span className="inline-flex items-center gap-1.5">
-                      {m.overridden.action && <span className="rounded bg-amber-500/15 px-1 text-[9px] font-bold text-amber-300">изм.</span>}
+                      
                       <input value={draft[m.key]?.action ?? ''} inputMode="decimal"
                         onChange={(e) => setDraft((d) => ({ ...d, [m.key]: { ...d[m.key], action: cleanPrice(e.target.value, 1000) } }))}
                         className="input h-8 w-24 text-right tabular-nums" />
@@ -2986,7 +3029,7 @@ function PricesTab() {
                   {/* MR-150 (созвон 12.08): месячная выдача токенов на модуль (дефолт 100), правится тут. */}
                   <td className="py-1.5 pr-3 text-right">
                     <span className="inline-flex items-center gap-1.5">
-                      {m.overridden.monthlyTokens && <span className="rounded bg-amber-500/15 px-1 text-[9px] font-bold text-amber-300">изм.</span>}
+                      
                       <input value={draft[m.key]?.monthlyTokens ?? ''} inputMode="numeric"
                         onChange={(e) => setDraft((d) => ({ ...d, [m.key]: { ...d[m.key], monthlyTokens: e.target.value.replace(/[^\d]/g, '') } }))}
                         className="input h-8 w-20 text-right tabular-nums" placeholder="100" />
@@ -3000,7 +3043,7 @@ function PricesTab() {
                   {/* §3 (MR-21): подарочные токены на модуль — суммируются при выборе набора. */}
                   <td className="py-1.5 text-right">
                     <span className="inline-flex items-center gap-1.5">
-                      {m.overridden.gift && <span className="rounded bg-amber-500/15 px-1 text-[9px] font-bold text-amber-300">изм.</span>}
+                      
                       <input value={draft[m.key]?.gift ?? ''} inputMode="numeric"
                         onChange={(e) => setDraft((d) => ({ ...d, [m.key]: { ...d[m.key], gift: e.target.value.replace(/[^\d]/g, '') } }))}
                         className="input h-8 w-24 text-right tabular-nums" placeholder="0" />
@@ -3093,6 +3136,27 @@ function PricesTab() {
                     className="input h-9 w-16 text-sm tabular-nums" inputMode="numeric" placeholder="0" />
                   <span className="text-xs text-muted">%</span>
                 </label>
+                {/* MR-188: сколько это в деньгах. Процент сам по себе не отвечает на вопрос
+                    «сколько человек платит и сколько экономит». */}
+                {(() => {
+                  const m = periodMoney(p.unit, p.count, Number(p.discount) || 0)
+                  if (!m) return <span className="text-[10px] text-faint">цены модулей не заданы</span>
+                  return (
+                    <Tip
+                      className="text-[10px] tabular-nums"
+                      text={[
+                        `Считаем по «всё включено» — сумме месячных цен всех модулей.`,
+                        `Без скидки за ${m.months % 1 ? m.months.toFixed(2) : m.months} мес.: $${m.full.toFixed(2)}`,
+                        m.off > 0 ? `Скидка ${p.discount}%: −$${m.off.toFixed(2)}` : 'Скидки нет',
+                        `К оплате: $${m.pay.toFixed(2)}`,
+                      ].join(String.fromCharCode(10))}>
+                      <span className="text-faint">
+                        ${m.full.toFixed(0)} → <span className="text-emerald-300/80">${m.pay.toFixed(0)}</span>
+                        {m.off > 0 && <> · экономия ${m.off.toFixed(0)}</>}
+                      </span>
+                    </Tip>
+                  )
+                })()}
                 <button
                   onClick={() => setPeriods((list) => list.filter((_, k) => k !== i))}
                   title="Убрать период"
@@ -3148,7 +3212,33 @@ function PricesTab() {
                     onChange={(e) => setPacks((l) => l.map((x, k) => ({ ...x, best: k === i ? e.target.checked : false })))} />
                   выгодно
                 </label>
-                {per != null && <span className="text-[10px] text-faint tabular-nums">{per.toFixed(3)} $ / ⚡</span>}
+                {/* MR-187: рядом с ценой продажи — во сколько ⚡ обходится НАМ и какой запас.
+                    Без этого по одной цене продажи не понять, можно ли её двигать. */}
+                {per != null && (
+                  <Tip
+                    className="text-[10px] tabular-nums"
+                    text={coinCost
+                      ? [
+                        `ПРОДАЁМ: $${per.toFixed(4)} за один ⚡ (${p.coins} ⚡ за $${p.price})`,
+                        `НАМ ОБХОДИТСЯ: до $${coinCost.usd.toFixed(4)} за ⚡ — худший случай,`,
+                        `  если весь ⚡ потратить в самом дорогом ИИ-модуле («${coinCost.module}»).`,
+                        '',
+                        'Это чистая математика по токенам: только расход на ИИ. Аккаунты, прокси,',
+                        'трафик и риск банов сюда НЕ входят — их покрывает запас сверху.',
+                        '',
+                        per > coinCost.usd
+                          ? `Запас: цена продажи в ${(per / coinCost.usd).toFixed(1)} раза выше худшего расхода.`
+                          : 'ВНИМАНИЕ: цена продажи НИЖЕ худшего расхода на ИИ — пакет может уйти в минус.',
+                      ].join(String.fromCharCode(10))
+                      : 'Себестоимость ⚡ пока не посчитать: нет цены модели или цен действий.'}>
+                    <span className={cn(coinCost && per <= coinCost.usd ? 'text-rose-300' : 'text-faint')}>
+                      {per.toFixed(3)} $ / ⚡
+                      {coinCost
+                        ? <> · нам до ${coinCost.usd.toFixed(3)} · ×{(per / coinCost.usd).toFixed(1)}</>
+                        : <> · себестоимость: нет данных</>}
+                    </span>
+                  </Tip>
+                )}
                 <button
                   onClick={() => setPacks((l) => l.filter((_, k) => k !== i))}
                   title="Убрать пакет"

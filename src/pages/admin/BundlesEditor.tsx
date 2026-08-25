@@ -66,6 +66,18 @@ export function BundlesEditor({ modules, currency }: { modules: PriceModule[]; c
               <span className="font-medium text-fg">{b.name}</span>
               <span className="font-semibold tabular-nums text-spark-300">{currency}{b.price ?? b.cost.sum}</span>
               <span className="text-xs text-muted">· {b.modules.length} мод.</span>
+              {/* MR-188: сколько те же модули стоили бы по отдельности и сколько человек
+                  экономит. Одна цена набора не отвечает на вопрос «а выгодно ли». */}
+              {(() => {
+                const apart = b.modules.reduce((sum, k) => sum + Number(modules.find((m) => m.key === k)?.month || 0), 0)
+                const pay = Number(b.price ?? b.cost.sum) || 0
+                if (!apart || !pay || apart <= pay) return null
+                return (
+                  <span className="text-xs tabular-nums text-faint">
+                    по отдельности {currency}{apart} · экономия <span className="text-emerald-300/80">{currency}{(apart - pay).toFixed(0)}</span>
+                  </span>
+                )
+              })()}
               <span className="min-w-0 flex-1 truncate text-xs text-faint">{b.modules.map((k) => modules.find((m) => m.key === k)?.title || k).join(', ')}</span>
               <button onClick={() => void remove(b.id, b.name)} disabled={busy}
                 className="shrink-0 rounded-md border border-line px-2 py-0.5 text-xs text-muted hover:border-red-500/40 hover:text-red-300 disabled:opacity-40">

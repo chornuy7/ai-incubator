@@ -1529,6 +1529,21 @@ app.post('/api/subscription', async (req, res) => {
         const shown = list3.length > 3 ? `${list3.slice(0, 3).join(', ')} и ещё ${list3.length - 3}` : list3.join(', ')
         await changeCoins(creditedTokens, `Токены подписки (первый месяц): ${shown}`, target, 'grant')
       }
+      // MR-189: ПОДАРОЧНЫЕ ⚡ — единоразово за модуль. До этой правки они считались в
+      // стоимости набора и показывались на витрине («+200 ⚡ в подарок»), но ни одна точка
+      // начисления их не выдавала: человеку обещали и не давали. Журнал выдачи отдельный,
+      // чтобы вернуть модуль в подписку и получить подарок второй раз было нельзя.
+      try {
+        const { pendingGift, markGifted } = await import('./userGifts.js')
+        const gift = await pendingGift(target, addedModules, effPrices.giftMap || {})
+        if (gift.coins > 0) {
+          const { moduleLabel: label2 } = await import('./lib/accountLocks.js')
+          const names = gift.modules.map((k) => label2(k))
+          const shownGift = names.length > 3 ? `${names.slice(0, 3).join(', ')} и ещё ${names.length - 3}` : names.join(', ')
+          await changeCoins(gift.coins, `Подарочные токены (разово): ${shownGift}`, target, 'grant')
+          await markGifted(target, gift.modules, effPrices.giftMap || {})
+        }
+      } catch { /* подарок не выдался — подписка всё равно оплачена, разберёмся по логам */ }
       // День оплаты — по нему крон начисляет следующие месяцы (год = 12 начислений в то же
       // число). Этот месяц сразу помечаем начисленным, чтобы крон не задвоил.
       try {
