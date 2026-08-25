@@ -104,3 +104,29 @@ test('слово «комментарий» в живой фразе — не я
   assert.equal(cleanCommentText('Ответ автору: спасибо'), 'Ответ автору: спасибо')
   assert.equal(cleanCommentText('Обычный текст без ярлыка'), 'Обычный текст без ярлыка')
 })
+
+/**
+ * Живой прогон 24.08: на пост из двух слов ИИ выдал «Сообщение содержит лишь тестовый
+ * текст… Рекомендуется предоставить более детальную информацию» — это отзыв рецензента
+ * о посте, а не комментарий читателя. Правило-страховка живёт в коде, а не в тексте
+ * промпта: промпты редактирует оператор, и при каждой правке оно бы терялось.
+ */
+test('к любому промпту добавляется правило «не рецензировать пост»', async () => {
+  const key = process.env.OPENAI_API_KEY
+  process.env.OPENAI_API_KEY = 'sk-test'
+  const orig = globalThis.fetch
+  let sentSystem = ''
+  globalThis.fetch = async (_url, init) => {
+    sentSystem = JSON.parse(init.body).messages.find((m) => m.role === 'system').content
+    return { ok: true, json: async () => ({ choices: [{ message: { content: 'Классно!' } }], usage: {} }) }
+  }
+  try {
+    await generateComment('текст поста', 0, 'Мой собственный промпт')
+    assert.match(sentSystem, /Мой собственный промпт/, 'промпт оператора должен остаться')
+    assert.match(sentSystem, /не оценивай его качество/i, 'страховка должна добавляться поверх')
+    assert.match(sentSystem, /Комментарий:/, 'и запрет на служебные заголовки')
+  } finally {
+    globalThis.fetch = orig
+    if (key === undefined) delete process.env.OPENAI_API_KEY; else process.env.OPENAI_API_KEY = key
+  }
+})

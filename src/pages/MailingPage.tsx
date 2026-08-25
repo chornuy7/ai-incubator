@@ -18,7 +18,7 @@ import { ModuleNotPaid } from '@/features/billing/ModuleNotPaid'
 import { isHidden } from '@/shared/config/routes'
 // §3.1 (MR-114): рассылка приведена к общей структуре модулей — те же переиспользуемые
 // блоки (SectionCard + нижняя LaunchPanel со степпером), что и в LiveModule/парсерах.
-import { SectionCard, LaunchPanel, LaunchSteps, markCurrentStep, TaskStartedModal, ProtectionTimings, BlacklistEditor, usePresetCarry } from '@/features/modules/shared'
+import { SectionCard, LaunchPanel, LaunchSteps, markCurrentStep, TaskStartedModal, ProtectionTimings, BlacklistEditor, usePresetCarry, ProtectionLevelPicker } from '@/features/modules/shared'
 import type { DelaysShape } from '@/features/modules/shared/TimingSection'
 import { LaunchCost, ActionPriceCalc } from '@/features/modules/shared/LaunchCost'
 import { useModuleTask } from '@/features/modules/shared/useModuleTask'
@@ -398,6 +398,19 @@ function MailingInner() {
           {/* Один блок на все модули (правка 19.08): защита и задержки — одно решение.
               Свои поля мейлинга (лимит на аккаунт, паузы, порог trust) идут внутрь той же
               карточки, а пресет темпа рисует общий TimingSection. */}
+          {/*
+            Уровень защиты у мейлинга был зашит нулём — самым осторожным (задержки ×1.8) —
+            и менялся только шаблоном. Осторожность тут не случайна: ЛС незнакомым это
+            самое репортоопасное действие в платформе, и по умолчанию она остаётся. Но
+            выбор теперь видимый: раньше оператор просто не знал, что этот рычаг есть.
+          */}
+          <div className="mb-3">
+            <ProtectionLevelPicker
+              value={protLevel}
+              onChange={setProtLevel}
+              note="Для рассылки в ЛС по умолчанию выбран самый осторожный уровень: незнакомые получатели чаще всего и приводят к спамблоку."
+            />
+          </div>
           <ProtectionTimings
             timing={{
               // У мейлинга своя пара «от/до» вместо общей структуры задержек — переводим

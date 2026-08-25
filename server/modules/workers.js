@@ -713,6 +713,18 @@ export async function runNeuroCommenting(task, store) {
             await noteWait(task, store, waitMs, 'задержка перед комментарием', meta.name)
             if (await interruptibleSleep(waitMs, makeStopCheck(store, task.id))) break // #6
             const postText = (post.message || '').trim() || (post.media ? '[медиа]' : '')
+            /*
+             * Пост, в котором нечего комментировать, пропускаем.
+             *
+             * Раньше пустой пост уходил в генерацию как «(пусто)», и ИИ отвечал рецензией
+             * на сам пост («содержит лишь тестовый текст, рекомендуется предоставить более
+             * детальную информацию») — так читатель не пишет никогда. Ни текста, ни медиа
+             * значит комментировать буквально нечего: берём следующий пост.
+             */
+            if (!postText) {
+              await store.appendLog(task, 'info', 'Пропуск поста: ни текста, ни вложений — комментировать нечего', meta.name)
+              continue
+            }
             // §3.5 семантика: пропускаем посты, семантически далёкие от цели кампании.
             if (goalVec) {
               const pv = await embedText(postText, task.userId)

@@ -31,6 +31,7 @@ import {
   TaskStartedModal,
   usePresetCarry,
   type DelaysShape,
+  ProtectionLevelPicker,
 } from '@/features/modules/shared'
 import type { ModuleTaskSettings } from '@/api/modulesApi'
 
@@ -331,6 +332,18 @@ export function NeuroDialogsModule() {
                 : <b className="text-fg">только на непрочитанные входящие ЛС</b>} выбранных аккаунтов — сам первым никому не пишет.
               Без ключа OpenAI ответы будут шаблонными и цель диалога учтена не будет. Переписки читайте и отвечайте вручную в <b className="text-fg">«Обзоре аккаунта»</b>.
             </p>
+            {/*
+              Уровень защиты был зашит единицей и менялся только шаблоном, хотя от него
+              зависит и сколько диалогов аккаунт берёт за заход (2/4/6), и множитель
+              задержек. Теперь это видимый выбор — как в остальных модулях (25.08).
+            */}
+            <div className="mt-3">
+              <ProtectionLevelPicker
+                value={protLevel}
+                onChange={setProtLevel}
+                note={`Аккаунт отвечает не более чем в ${[2, 4, 6][protLevel]} диалогах за заход.`}
+              />
+            </div>
             {replyAll && (
               <p className="rounded-xl border border-amber-500/30 bg-amber-500/8 px-3 py-2 text-xs leading-relaxed text-amber-200/90">
                 Разбор накопившихся ЛС — самый рискованный режим: пачка ответов подряд с одного номера ловит PEER_FLOOD и репорты.
