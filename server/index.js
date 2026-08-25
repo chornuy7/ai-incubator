@@ -1061,12 +1061,15 @@ function ticketSide(req, ctx) {
   return wantSupport && ctx.isSupport ? 'support' : 'user'
 }
 
+/** Сколько открытых обращений разрешено человеку с отключённым доступом. */
+const OPEN_TICKETS_WHEN_DISABLED = 3
+
 /** Список тикетов: ?scope=all — все (только поддержка), иначе свои. С «от кого» и непрочитанным. */
 app.get('/api/tickets', async (req, res) => {
   try {
     const { requesterContext } = await import('./lib/accessGuard.js')
     const ctx = await requesterContext(req)
-    if (ctx.blocked) return res.status(403).json({ ok: false, error: 'Нет доступа' })
+    if (ctx.blocked && !ctx.inactive) return res.status(403).json({ ok: false, error: 'Нет доступа' })
     const { listTickets, unreadFor } = await import('./tickets.js')
     const side = ticketSide(req, ctx)
     const rows = await listTickets({ userId: ctx.id, all: side === 'support' })
@@ -1080,7 +1083,7 @@ app.get('/api/tickets/unread-count', async (req, res) => {
   try {
     const { requesterContext } = await import('./lib/accessGuard.js')
     const ctx = await requesterContext(req)
-    if (ctx.blocked) return res.json({ ok: true, count: 0 })
+    if (ctx.blocked && !ctx.inactive) return res.json({ ok: true, count: 0 })
     const { listTickets, unreadFor } = await import('./tickets.js')
     const side = ticketSide(req, ctx)
     const rows = await listTickets({ userId: ctx.id, all: side === 'support' })
@@ -1093,8 +1096,19 @@ app.post('/api/tickets', async (req, res) => {
   try {
     const { requesterContext } = await import('./lib/accessGuard.js')
     const ctx = await requesterContext(req)
-    if (ctx.blocked) return res.status(403).json({ ok: false, error: 'Нет доступа' })
-    const { createTicket } = await import('./tickets.js')
+    if (ctx.blocked && !ctx.inactive) return res.status(403).json({ ok: false, error: 'Нет доступа' })
+    const { createTicket, listTickets } = await import('./tickets.js')
+    /*
+     * Отключённому обращения открыты (иначе он не спросит, за что его закрыли), но без
+     * ограничений это готовый канал для флуда: платить он больше не может, терять ему
+     * нечего. Даём столько же, сколько нужно живому человеку по делу, — не больше.
+     */
+    if (ctx.inactive) {
+      const open = (await listTickets({ userId: ctx.id })).filter((t) => t.status === 'open').length
+      if (open >= OPEN_TICKETS_WHEN_DISABLED) {
+        return res.status(429).json({ ok: false, error: `У вас уже ${open} открытых обращения — дождитесь ответа поддержки, новое создать нельзя.` })
+      }
+    }
     const { subject, category, body } = req.body || {}
     res.json({ ok: true, ticket: await createTicket({ userId: ctx.id, author: ticketAuthor(ctx), subject, category, body }) })
   } catch (err) { res.status(400).json({ ok: false, error: err instanceof Error ? err.message : 'Ошибка' }) }
@@ -1105,7 +1119,7 @@ app.get('/api/tickets/:id', async (req, res) => {
   try {
     const { requesterContext } = await import('./lib/accessGuard.js')
     const ctx = await requesterContext(req)
-    if (ctx.blocked) return res.status(403).json({ ok: false, error: 'Нет доступа' })
+    if (ctx.blocked && !ctx.inactive) return res.status(403).json({ ok: false, error: 'Нет доступа' })
     const { getTicket, markRead, unreadFor } = await import('./tickets.js')
     const t = await getTicket(String(req.params.id))
     if (!t) return res.status(404).json({ ok: false, error: 'Тикет не найден' })
@@ -1122,7 +1136,7 @@ app.post('/api/tickets/:id/reply', async (req, res) => {
   try {
     const { requesterContext } = await import('./lib/accessGuard.js')
     const ctx = await requesterContext(req)
-    if (ctx.blocked) return res.status(403).json({ ok: false, error: 'Нет доступа' })
+    if (ctx.blocked && !ctx.inactive) return res.status(403).json({ ok: false, error: 'Нет доступа' })
     const { getTicket, addMessage } = await import('./tickets.js')
     const t = await getTicket(String(req.params.id))
     if (!t) return res.status(404).json({ ok: false, error: 'Тикет не найден' })
@@ -1144,7 +1158,7 @@ app.post('/api/tickets/:id/read', async (req, res) => {
   try {
     const { requesterContext } = await import('./lib/accessGuard.js')
     const ctx = await requesterContext(req)
-    if (ctx.blocked) return res.status(403).json({ ok: false, error: 'Нет доступа' })
+    if (ctx.blocked && !ctx.inactive) return res.status(403).json({ ok: false, error: 'Нет доступа' })
     const { getTicket, markRead } = await import('./tickets.js')
     const t = await getTicket(String(req.params.id))
     if (!t) return res.status(404).json({ ok: false, error: 'Тикет не найден' })

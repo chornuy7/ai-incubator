@@ -114,7 +114,19 @@ export async function requesterContext(req) {
   if (!id) return { id: '', user: null, isAdmin: true, noSession: true, isSupport: true, blocked: false }
   try {
     const user = await getUser(id)
-    if (!user || !user.active) return { id, user: null, isAdmin: false, noSession: false, isSupport: false, blocked: true }
+    if (!user) return { id, user: null, isAdmin: false, noSession: false, isSupport: false, blocked: true }
+    /*
+     * «Пользователя нет» и «доступ отключён» — РАЗНЫЕ вещи, а флаг был один.
+     *
+     * Замок доступа (lib/accessGate.js) намеренно пропускает `/api/tickets`: отключённый
+     * человек должен иметь возможность спросить, за что его закрыли. Но сами обработчики
+     * тикетов проверяли `blocked` и отвечали «Нет доступа» — то есть замок пропускал, а
+     * ручка резала (жалоба владельца 24.08: «новый тикет не удаётся создать, если аккаунт
+     * заблокирован»). Отдаём отдельный признак `inactive` и самого пользователя: поддержке
+     * нужно его имя и почта, а правами он по-прежнему не обладает — ни админом, ни
+     * поддержкой отключённый быть не может.
+     */
+    if (!user.active) return { id, user, isAdmin: false, noSession: false, isSupport: false, blocked: true, inactive: true }
     const isAdmin = hasAdminRole(userRoleIds(user))
     // isSupport: админ, дев-режим (см. выше) или роль с правом «Поддержка» — видит все
     // тикеты и отвечает как поддержка.

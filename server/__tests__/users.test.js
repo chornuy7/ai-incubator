@@ -110,3 +110,27 @@ test('регистрация: явный пустой roleIds → БЕЗ дос�
 
   delete process.env.USERS_FILE
 })
+
+/**
+ * Владелец 24.08 отключил сам себя и потерял админку.
+ *
+ * Админка и панель — это РАЗНЫЕ сессии, но ОДИН пользователь: «админ» это роль на его
+ * записи, отдельной админской базы нет. Поэтому `active:false` на себе закрывает обе
+ * зоны сразу, и вернуть доступ из интерфейса уже нечем — только SQL в базе.
+ */
+test('отключённый профиль закрывает и панель, и админку — админ перестаёт быть админом', async () => {
+  const { createUser, updateUser } = await import('../users.js')
+  const { ADMIN_ROLE_ID } = await import('../roles.js')
+  const { requesterContext } = await import('../lib/accessGuard.js')
+  const mockReq = (id) => ({ header: (h) => (h.toLowerCase() === 'x-user-id' ? id : undefined), path: '/' })
+
+  const boss = await createUser({ email: `self${Date.now()}@t.io`, password: 'x12345', roleIds: [ADMIN_ROLE_ID] })
+  const before = await requesterContext(mockReq(boss.id))
+  assert.equal(before.isAdmin, true, 'до отключения это админ')
+
+  await updateUser(boss.id, { active: false })
+  const after = await requesterContext(mockReq(boss.id))
+  assert.equal(after.blocked, true)
+  assert.equal(after.isAdmin, false, 'роль админа не спасает — профиль выключен')
+  assert.equal(after.isSupport, false)
+})

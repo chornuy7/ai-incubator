@@ -26,6 +26,7 @@ import { MonitoringTab, AccountsHealthBlocks } from '@/pages/admin/MonitoringTab
 import { AccountsTab } from '@/pages/admin/AccountsTab'
 import { BundlesEditor } from '@/pages/admin/BundlesEditor'
 import { SetupsEditor } from '@/pages/admin/SetupsEditor'
+import { useAdminSession } from '@/features/auth/session'
 import { useTabParam } from '@/shared/lib/useTabParam'
 import { LeadConversationModal } from '@/features/leads/LeadConversationModal'
 
@@ -453,7 +454,13 @@ export function AdminStatsPage() {
       ) : tab === 2 ? (
         <DailyTab daily={daily} />
       ) : tab === 3 ? (
-        <UsersTab report={users} onReload={load} />
+        <UsersTab
+          report={users}
+          onReload={load}
+          onPatchUser={(userId, patch) => setUsers((prev) => (prev
+            ? { ...prev, rows: prev.rows.map((r) => (r.userId === userId ? { ...r, ...patch } : r)) }
+            : prev))}
+        />
       ) : tab === 4 ? (
         <PurchasesTab p={purchases} />
       ) : tab === 5 ? (
@@ -682,7 +689,11 @@ function ReportTab({ report, onExport, users, since }: { report: ClientReport | 
  * Строка раскрывается в разрез по модулям: «потратил 5 000 токенов» без «на что»
  * не отвечает ни на один реальный вопрос.
  */
-function UsersTab({ report, onReload }: { report: UsersReport | null; onReload: () => void }) {
+function UsersTab({ report, onReload, onPatchUser }: { report: UsersReport | null; onReload: () => void; onPatchUser: (userId: string, patch: Partial<UserRow>) => void }) {
+  // Кто сейчас в админке: свою строку отключать нельзя — админка и панель это ОДИН
+  // пользователь с разными сессиями, и `active:false` на себе закрывает обе зоны разом.
+  // Сервер это запрещает (usersRoutes), здесь просто не даём нажать и объясняем почему.
+  const meId = useAdminSession((st) => st.user?.id) || ''
   const pushToast = useApp((s) => s.pushToast)
   const [open, setOpen] = useState<string | null>(null)
   const [busy, setBusy] = useState<string | null>(null)
@@ -918,8 +929,20 @@ function UsersTab({ report, onReload }: { report: UsersReport | null; onReload: 
     try {
       await updateUser(userId, { active: !active })
       pushToast({ type: 'success', title: !active ? 'Пользователь включён' : 'Пользователь отключён' })
-      onReload()
+      /*
+       * Меняем ОДНУ ячейку, а не перезагружаем всю админку.
+       *
+       * Раньше здесь стоял onReload(), а он тянет заново все десять наборов данных
+       * (обзор, отчёт, юзеры, проблемы, CRM, «сейчас», расход, покупки, здоровье,
+       * экономика) и перед этим обнуляет их — таблица на секунду сменялась на
+       * «Загрузка…» при каждом нажатии «Включить»/«Отключить» (жалоба владельца 24.08).
+       * Сервер уже подтвердил операцию, и кроме флага `active` у этой строки ничего не
+       * поменялось: правим её на месте. Ошибка ниже — единственный случай, когда стоит
+       * сходить за настоящим состоянием, потому что наше предположение не подтвердилось.
+       */
+      onPatchUser(userId, { active: !active })
     } catch (e) {
+      onReload()
       pushToast({ type: 'error', title: 'Не удалось изменить', desc: e instanceof Error ? e.message : '' })
     } finally { setBusy(null) }
   }
@@ -1064,10 +1087,12 @@ function UsersTab({ report, onReload }: { report: UsersReport | null; onReload: 
                     {real ? (
                       <button
                         onClick={(e) => { e.stopPropagation(); void toggle(r.userId, r.active) }}
-                        disabled={busy === r.userId}
+                        disabled={busy === r.userId || (r.active && r.userId === meId)}
                         className={cn('inline-flex h-7 items-center gap-1 rounded-lg border px-2 text-xs font-semibold disabled:opacity-40',
                           r.active ? 'border-line text-muted hover:border-red-500/40 hover:text-red-300' : 'border-spark-500/40 text-spark-300')}
-                        title={r.active ? 'Отключить доступ' : 'Включить доступ'}
+                        title={r.active && r.userId === meId
+                          ? 'Себя отключить нельзя — потеряете доступ и в панель, и в админку'
+                          : (r.active ? 'Отключить доступ' : 'Включить доступ')}
                       >
                         <Power size={12} /> {r.active ? 'Отключить' : 'Включить'}
                       </button>
