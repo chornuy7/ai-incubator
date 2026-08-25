@@ -137,7 +137,21 @@ export function AccountPicker({
   )
 
   const busyAvailable = useMemo(() => available.filter((a) => isUnavailable(a, moduleKey)), [available, moduleKey])
-  const freeAvailable = useMemo(() => available.filter((a) => !isUnavailable(a, moduleKey)), [available, moduleKey])
+  /*
+   * Сверху — те, кого можно взять ПРЯМО СЕЙЧАС и ни от кого не отрывая; ниже — те, кто
+   * уже трудится в другом модуле (просьба владельца 24.08).
+   *
+   * Взять их можно: аккаунт работает в нескольких модулях сразу (решение 20.08), поэтому
+   * в «Недоступны» они не попадают. Но выбирать в первую очередь надо не их — иначе
+   * оператор набирает задачу из самых загруженных профилей, а простаивающие так и стоят.
+   * Сортировка устойчивая: внутри каждой группы порядок остаётся прежним.
+   */
+  const freeAvailable = useMemo(() => {
+    const list = available.filter((a) => !isUnavailable(a, moduleKey))
+    return [...list].sort((x, y) => Number(holdersOf(x).length > 0) - Number(holdersOf(y).length > 0))
+  }, [available, moduleKey])
+  /** Сколько из верхней группы уже заняты в других модулях — для подписи-разделителя. */
+  const busyElsewhere = useMemo(() => freeAvailable.filter((a) => holdersOf(a).length > 0).length, [freeAvailable])
 
   // Сколько аккаунтов скрыто именно фильтром «Рабочие прокси» (прямое подключение, без прокси).
   const hiddenByProxy = useMemo(() => {
@@ -249,9 +263,22 @@ export function AccountPicker({
                 <>
                   {/* MR-101 (UI-003): плоский список без заголовков-стран (страна видна флажком в строке;
                       фильтр по стране остаётся в dropdown «Все страны»). */}
-                  {freeAvailable.map((a) => (
-                    <AccountRow key={a.id} account={a} liteMode={liteMode} moduleKey={moduleKey} onAdd={() => add(a.id)} />
-                  ))}
+                  {freeAvailable.map((a, i) => {
+                    // Тонкая черта там, где кончаются простаивающие и начинаются занятые
+                    // в других модулях: без неё порядок выглядит случайным.
+                    const first = busyElsewhere > 0 && i === freeAvailable.length - busyElsewhere
+                    return (
+                      <div key={a.id}>
+                        {first && (
+                          <div className="mt-2 border-t border-line px-2 pb-1 pt-2 text-xs font-semibold text-muted">
+                            Заняты в других модулях · {busyElsewhere}
+                            <span className="ml-1 font-normal text-faint">— взять можно, аккаунт работает в нескольких модулях</span>
+                          </div>
+                        )}
+                        <AccountRow account={a} liteMode={liteMode} moduleKey={moduleKey} onAdd={() => add(a.id)} />
+                      </div>
+                    )
+                  })}
                   {busyAvailable.length > 0 && (
                     <div className="mt-2 border-t border-line pt-2">
                       <div className="px-2 py-1 text-xs font-bold text-rose-300">Недоступны · {busyAvailable.length}</div>
