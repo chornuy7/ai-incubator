@@ -773,7 +773,21 @@ function UsersTab({ report, onReload, onPatchUser }: { report: UsersReport | nul
       const mods = modDraft[userId]
       await saveUserModules(userId, mods === 'all' ? 'all' : (mods || []))
       pushToast({ type: 'success', title: 'Доступ обновлён', desc: email })
-      onReload()
+      /*
+       * Правим строку, а не перезагружаем всю админку — та же причина, что у кнопки
+       * «Включить/Отключить»: onReload() тянет заново все десять наборов данных и
+       * перед этим обнуляет их, отчего таблица мигает «Загрузка…» на каждое сохранение.
+       * Сервер подтвердил, и мы точно знаем новый состав: собираем колонку сами.
+       */
+      const keys = mods === 'all' ? [] : (mods || [])
+      onPatchUser(userId, {
+        subscription: {
+          all: mods === 'all',
+          count: keys.length,
+          titles: keys.map((k) => catalog.find((c) => c.key === k)?.title || k),
+          keys,
+        },
+      })
     } catch (e) {
       pushToast({ type: 'error', title: 'Не удалось сохранить доступ', desc: e instanceof Error ? e.message : '' })
     } finally { setBusy(null) }
