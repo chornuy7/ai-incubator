@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Zap, Clock } from 'lucide-react'
+import { perAccountShare, taskSeconds } from '@/shared/lib/pace'
 import { fetchPricing, type Pricing } from '@/api/balanceApi'
 import { cn, coins as fmtCoins } from '@/shared/lib/utils'
 
@@ -94,12 +95,14 @@ export function LaunchCost({ moduleKey, actions, accounts, delaySec, compact }: 
   // Аккаунты ещё не выбраны — считаем время как для ОДНОГО (худший случай: всё делает
   // один профиль). Раньше время в этом случае просто не показывалось, и после того как
   // из панели убрали чип «≈ ВРЕМЯ», его не стало видно вовсе (замечание 13.08).
-  const perAcc = Math.ceil(n / acc)
+  // Та же формула, что в блоке «Защита и тайминги» (shared/lib/pace.ts): раньше два
+  // места считали по-разному и показывали 13 и 25 минут для одного запуска.
+  const perAcc = perAccountShare(n, acc)
   // ОДНО число вместо «5 мин–20 мин» (правка 13.08): диапазон читался как «программа
   // сама не знает». Берём среднюю задержку — это и есть ожидаемое время; разброс и вся
   // арифметика уходят в подсказку при наведении.
   const avgDelay = delaySec ? (delaySec[0] + delaySec[1]) / 2 : 0
-  const timeAvg = perAcc && avgDelay ? fmtDur(perAcc * avgDelay) : null
+  const timeAvg = perAcc && avgDelay ? fmtDur(taskSeconds(n, acc, avgDelay)) : null
   const timeHint = timeAvg
     ? [
       `${n} ${plural(n, 'действие', 'действия', 'действий')} ÷ ${acc} ${plural(acc, 'аккаунт', 'аккаунта', 'аккаунтов')} = ${perAcc} на каждый`,

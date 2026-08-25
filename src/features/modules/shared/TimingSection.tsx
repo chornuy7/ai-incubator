@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { PRESET_MUL, useGlobalPace } from '@/shared/lib/pace'
+import { PRESET_MUL, useGlobalPace, taskSeconds } from '@/shared/lib/pace'
 import { Timer, Bolt, Settings2, Shield, ChevronRight, SlidersHorizontal } from 'lucide-react'
 import { ToggleGroup } from '@/shared/ui'
 import { cn } from '@/shared/lib/utils'
@@ -141,10 +141,14 @@ export function TimingSection(props: TimingSectionProps) {
     const h = Math.floor(m / 60), r = m % 60
     return r ? `${h} ч ${r} мин` : `${h} ч`
   }
-  const actsPerAcc = computedTotal?.value ?? perAccount?.max ?? 0
+  // Правка 24.08: считаем ОДНОЙ формулой с нижней панелью запуска — раньше здесь стояло
+  // «25 мин», а внизу «13 мин» для того же запуска. Общее число действий принимали за
+  // «сколько сделает один аккаунт», хотя воркер делит его между аккаунтами.
+  const totalActions = computedTotal?.value ?? perAccount?.max ?? 0
+  const accountsCount = computedTotal?.accounts ?? 1
   const primaryDelay = (showAction && delays.action) ? delays.action : (showComment && delays.comment) ? delays.comment : (delays.action || delays.comment || null)
   const avgDelaySec = primaryDelay ? ((primaryDelay[0] + primaryDelay[1]) / 2) * mul : 0
-  const fullTime = fmtDur(actsPerAcc * avgDelaySec)
+  const fullTime = fmtDur(taskSeconds(totalActions, accountsCount, avgDelaySec))
   // MR-136: поля задержек показывают ЭФФЕКТИВНОЕ значение (базовое × множитель пресета) —
   // чтобы выбор Мин/Макс сразу менял видимые числа. При ручном правке уходим в Custom (×1),
   // и введённое (уже масштабированное) значение становится базовым — эффект сохраняется.
@@ -259,7 +263,7 @@ export function TimingSection(props: TimingSectionProps) {
             Если посчитать не из чего (нет действий/задержки) — падаем на эффективные задержки. */}
         <div className="mt-2 text-[11px] text-muted">
           {fullTime
-            ? <>Полное время: ≈ {fullTime} <span className="text-faint">(на 1 аккаунт{delayPreset === CUSTOM ? '' : `, пресет «${delayPresets![delayPreset]}»`})</span></>
+            ? <>Полное время: ≈ {fullTime} <span className="text-faint">({accountsCount > 1 ? `${accountsCount} аккаунта работают параллельно` : 'один аккаунт'}{delayPreset === CUSTOM ? '' : `, пресет «${delayPresets![delayPreset]}»`})</span></>
             : delayPreset === CUSTOM
               ? <>Задержки — ручные (заданы в «Расширенных настройках»).</>
               : <>Эффективные задержки: {[showAction && delays.action && `действие ${eff(delays.action)}`, showComment && delays.comment && `комментарий ${eff(delays.comment)}`, showJoin && delays.join && `вступление ${eff(delays.join)}`].filter(Boolean).join(' · ') || '—'}</>}

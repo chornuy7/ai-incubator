@@ -42,3 +42,34 @@ export function useGlobalPace(): number {
   useEffect(() => { let alive = true; void loadGlobalPace().then((m) => { if (alive) setMul(m) }); return () => { alive = false } }, [])
   return mul
 }
+
+/**
+ * Сколько времени займёт задача — ОДИН расчёт на всю панель.
+ *
+ * Созвон 24.08: в блоке «Защита и тайминги» стояло «25 мин», в нижней панели запуска —
+ * «13 мин» для одного и того же запуска. Считали в двух местах и по-разному: сверху
+ * общее число действий принимали за «сколько сделает один аккаунт», снизу делили его
+ * между аккаунтами. Теперь формула одна, и разойтись им негде.
+ *
+ * Как считает воркер (server/lib/targets.js): `maxActions` — это ОБЩАЯ цель задачи, а
+ * каждому аккаунту достаётся его доля, `ceil(общая / аккаунты)`. Аккаунты работают
+ * параллельно, поэтому время задачи — это время цепочки ОДНОГО аккаунта.
+ *
+ * @param actions общая цель задачи по действиям
+ * @param accounts сколько аккаунтов выбрано (0 = считаем как для одного)
+ * @param avgDelaySec средняя пауза между действиями, УЖЕ умноженная на множитель темпа
+ */
+export function taskSeconds(actions: number, accounts: number, avgDelaySec: number): number {
+  const total = Math.max(0, Math.round(Number(actions) || 0))
+  const acc = Math.max(1, Math.round(Number(accounts) || 0))
+  const delay = Math.max(0, Number(avgDelaySec) || 0)
+  if (!total || !delay) return 0
+  return Math.ceil(total / acc) * delay
+}
+
+/** Сколько действий достанется одному аккаунту — та же доля, что считает воркер. */
+export function perAccountShare(actions: number, accounts: number): number {
+  const total = Math.max(0, Math.round(Number(actions) || 0))
+  const acc = Math.max(1, Math.round(Number(accounts) || 0))
+  return total ? Math.ceil(total / acc) : 0
+}
