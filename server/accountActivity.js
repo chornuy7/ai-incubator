@@ -135,11 +135,39 @@ export async function noteAction(accountId, now = Date.now()) {
  * Можно ли брать аккаунт в работу прямо сейчас — усталость И распорядок.
  * @returns {Promise<{ok:boolean, reason?:string}>}
  */
+/*
+ * Неудачный бросок распорядка ПОМНИМ до назначенного срока.
+ *
+ * Жалоба владельца 25.08: «следующая попытка не трекается — он сразу три раза запустил,
+ * пока не выпало положительно». Так и было: бросок был без памяти, и на каждом круге
+ * (а круг это секунды) аккаунт получал новый шанс. Строка «следующая попытка через 45 с»
+ * оказывалась пустым обещанием, но хуже другое — сам распорядок терял смысл: профиль,
+ * активный на 44%, при десятке бросков подряд выходил на работу почти всегда.
+ *
+ * Держим в памяти процесса, а не в хранилище: срок короткий (десятки секунд), а все
+ * воркеры живут в одном процессе — распорядок «сквозь модули» этим и обеспечивается.
+ * После перезапуска бэкенда бросок будет новый, и это нормально: перезапуск и так
+ * начинает смену заново.
+ */
+const scheduleHold = new Map() // accountId → { until, reason, chance }
+
+/** Для тестов и обслуживания: забыть отложенные броски. */
+export function clearScheduleHolds() { scheduleHold.clear() }
+
 export async function canWorkNow(accountId, now = Date.now(), rnd = Math.random) {
   const s = await getActivity(accountId)
   const f = fatigueGate(s, s.profile, now)
   if (!f.ok) return f
-  return scheduleGate(s.schedule, now, rnd)
+  const held = scheduleHold.get(accountId)
+  if (held && now < held.until) {
+    // `cached` — чтобы воркер не писал одну и ту же строку на каждом круге: причина
+    // уже названа, и повторять её раз в десять секунд для полусотни аккаунтов незачем.
+    return { ok: false, reason: held.reason, chance: held.chance, until: held.until, cached: true }
+  }
+  const g = scheduleGate(s.schedule, now, rnd)
+  if (!g.ok && g.until) scheduleHold.set(accountId, { until: g.until, reason: g.reason, chance: g.chance })
+  else if (g.ok) scheduleHold.delete(accountId)
+  return g
 }
 
 /**

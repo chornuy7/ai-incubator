@@ -450,3 +450,44 @@ test('шанс распорядка не инвертирован: 87% проп�
   assert.ok(scheduleGate(schedule, at, () => 0.5).ok, '0.5 < 0.87 — работаем')
   assert.ok(!scheduleGate(schedule, at, () => 0.95).ok, '0.95 > 0.87 — пропуск')
 })
+
+/**
+ * Жалоба владельца 25.08: «следующая попытка не трекается — он сразу три раза запустил,
+ * пока не выпало положительно».
+ *
+ * Бросок распорядка был без памяти: на каждом круге (а круг это секунды) аккаунт получал
+ * новый шанс. Строка «следующая попытка через 45 с» оказывалась пустым обещанием, но
+ * хуже другое — распорядок терял смысл: профиль, активный на 44%, при десятке бросков
+ * подряд выходил на работу почти всегда.
+ */
+test('неудачный бросок распорядка держится до срока, а не бросается заново', async (t) => {
+  const os = await import('os')
+  const path = await import('path')
+  const dir = path.join(os.tmpdir(), `act-hold-${process.pid}-${Math.random().toString(36).slice(2)}`)
+  await (await import('fs/promises')).mkdir(dir, { recursive: true })
+  process.env.ACCOUNT_ACTIVITY_FILE = path.join(dir, 'activity.json')
+
+  const { canWorkNow, setActivityProfile, clearScheduleHolds } = await import('../accountActivity.js')
+  t.after(() => clearScheduleHolds())
+  clearScheduleHolds()
+
+  // Аккаунт активен на 50% в любой час — чтобы бросок точно решал.
+  const hours = Array.from({ length: 24 }, () => 50)
+  await setActivityProfile(['acc_hold'], { schedule: { hours }, spread: false })
+
+  const t0 = Date.now()
+  // Первый бросок делаем заведомо неудачным.
+  const miss = await canWorkNow('acc_hold', t0, () => 0.99)
+  assert.equal(miss.ok, false, 'бросок 99 против 50% должен пролететь мимо')
+  assert.ok(miss.until > t0, 'должен назвать срок следующей попытки')
+
+  // Дальше на этом же круге кубик бросать НЕЛЬЗЯ, даже если он выпал бы удачно.
+  const again = await canWorkNow('acc_hold', t0 + 1000, () => 0.01)
+  assert.equal(again.ok, false, 'до срока аккаунт не должен получать новый шанс')
+  assert.equal(again.until, miss.until, 'срок не переезжает от повторных обращений')
+  assert.equal(again.cached, true, 'повтор помечен — воркер не пишет ту же строку в лог')
+
+  // А когда срок вышел — бросок снова настоящий.
+  const after = await canWorkNow('acc_hold', miss.until + 1, () => 0.01)
+  assert.equal(after.ok, true, 'после срока удачный бросок должен проходить')
+})

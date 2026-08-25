@@ -582,7 +582,9 @@ export async function runNeuroCommenting(task, store) {
         lastSkip = human.reason
         // Берём САМОЕ РАННЕЕ окно по кругу: ждать надо до первого освободившегося.
         if (human.until) idleUntil = idleUntil ? Math.min(idleUntil, human.until) : human.until
-        await store.appendLog(task, 'info', `Пропуск: ${human.reason}`, meta.name)
+        // `cached` — тот же отложенный бросок, причину уже написали: не повторяем её
+        // на каждом круге (правка 25.08, иначе полсотни аккаунтов зальют лог одним и тем же).
+        if (!human.cached) await store.appendLog(task, 'info', `Пропуск: ${human.reason}`, meta.name)
         continue
       }
       // Удачный бросок тоже показываем: в логе были одни неудачи, и по нему нельзя было
@@ -930,7 +932,9 @@ export async function runNeuroChatting(task, store) {
         lastSkip = human.reason
         // Берём САМОЕ РАННЕЕ окно по кругу: ждать надо до первого освободившегося.
         if (human.until) idleUntil = idleUntil ? Math.min(idleUntil, human.until) : human.until
-        await store.appendLog(task, 'info', `Пропуск: ${human.reason}`, meta.name)
+        // `cached` — тот же отложенный бросок, причину уже написали: не повторяем её
+        // на каждом круге (правка 25.08, иначе полсотни аккаунтов зальют лог одним и тем же).
+        if (!human.cached) await store.appendLog(task, 'info', `Пропуск: ${human.reason}`, meta.name)
         continue
       }
       // Удачный бросок тоже показываем: в логе были одни неудачи, и по нему нельзя было
@@ -1152,7 +1156,9 @@ export async function runMassReact(task, store) {
         lastSkip = human.reason
         // Берём САМОЕ РАННЕЕ окно по кругу: ждать надо до первого освободившегося.
         if (human.until) idleUntil = idleUntil ? Math.min(idleUntil, human.until) : human.until
-        await store.appendLog(task, 'info', `Пропуск: ${human.reason}`, meta.name)
+        // `cached` — тот же отложенный бросок, причину уже написали: не повторяем её
+        // на каждом круге (правка 25.08, иначе полсотни аккаунтов зальют лог одним и тем же).
+        if (!human.cached) await store.appendLog(task, 'info', `Пропуск: ${human.reason}`, meta.name)
         continue
       }
       // Удачный бросок тоже показываем: в логе были одни неудачи, и по нему нельзя было
@@ -1391,7 +1397,9 @@ export async function runMassLooking(task, store) {
         lastSkip = human.reason
         // Берём САМОЕ РАННЕЕ окно по кругу: ждать надо до первого освободившегося.
         if (human.until) idleUntil = idleUntil ? Math.min(idleUntil, human.until) : human.until
-        await store.appendLog(task, 'info', `Пропуск: ${human.reason}`, meta.name)
+        // `cached` — тот же отложенный бросок, причину уже написали: не повторяем её
+        // на каждом круге (правка 25.08, иначе полсотни аккаунтов зальют лог одним и тем же).
+        if (!human.cached) await store.appendLog(task, 'info', `Пропуск: ${human.reason}`, meta.name)
         continue
       }
       // Удачный бросок тоже показываем: в логе были одни неудачи, и по нему нельзя было
