@@ -101,3 +101,25 @@ export async function validateFolder(id: string): Promise<ValidateResult> {
   const data = await apiPost<ValidateResult>(`/api/target-folders/${id}/validate`)
   return data
 }
+
+// ── MR-185: тексты промптов модулей — из базы, по владельцу ─────────────
+//
+// Раньше лежали в памяти браузера без имени владельца: правка одного человека
+// доставалась всем, кто заходит с этого компьютера, а со своего второго устройства он
+// своих правок не видел. Теперь владелец берётся из сессии на сервере.
+
+/** Изменённые промпты текущего пользователя: номер карточки → текст. Заводские не приходят. */
+export async function fetchUserPrompts(moduleKey: string): Promise<Record<number, string>> {
+  const data = await apiGet<{ prompts: Record<string, string> }>(`/api/prompts?moduleKey=${encodeURIComponent(moduleKey)}`)
+  const out: Record<number, string> = {}
+  for (const [k, v] of Object.entries(data.prompts || {})) out[Number(k)] = String(v)
+  return out
+}
+
+/**
+ * Сохранить набор карточек модуля. Шлём ПОЛНЫЙ список и заводские тексты рядом: сервер
+ * сам отличит изменённое от возвращённого к заводскому и не станет хранить копии дефолтов.
+ */
+export async function saveUserPrompts(moduleKey: string, bodies: string[], defaults: string[]): Promise<void> {
+  await apiPut('/api/prompts', { moduleKey, bodies, defaults })
+}

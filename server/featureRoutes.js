@@ -1,5 +1,6 @@
 import { Router } from 'express'
 import { getAiSettings, setAiSettings } from './aiSettings.js'
+import { getUserPrompts, saveUserPrompts } from './userPrompts.js'
 import { getAiSafety, setAiSafety } from './aiSafety.js'
 import { getBlacklist, setBlacklist, addToBlacklist, removeFromBlacklist } from './targetBlacklist.js'
 import { listFolders, createFolder, updateFolder, deleteFolder } from './targetFolders.js'
@@ -14,6 +15,33 @@ export const featureRouter = Router()
 
 const fail = (res, err, code = 400) =>
   res.status(code).json({ ok: false, error: err instanceof Error ? err.message : 'Ошибка' })
+
+// ── MR-185: тексты промптов модулей — по владельцу ─────────────────────
+//
+// Владелец берётся ИЗ СЕССИИ, а не из параметров запроса: иначе чужие промпты читались
+// бы подстановкой чужого id. До этой ручки тексты лежали в памяти браузера без имени
+// владельца — правка одного человека доставалась всем, кто заходит с того же компьютера.
+featureRouter.get('/prompts', async (req, res) => {
+  try {
+    const userId = req.header('x-user-id') || ''
+    if (!userId) return fail(res, new Error('Нет сессии'), 401)
+    const moduleKey = String(req.query.moduleKey || '')
+    if (!moduleKey) return fail(res, new Error('Не указан модуль'))
+    res.json({ ok: true, prompts: await getUserPrompts(userId, moduleKey) })
+  } catch (err) { fail(res, err, 500) }
+})
+
+featureRouter.put('/prompts', async (req, res) => {
+  try {
+    const userId = req.header('x-user-id') || ''
+    if (!userId) return fail(res, new Error('Нет сессии'), 401)
+    const { moduleKey, bodies, defaults } = req.body ?? {}
+    if (!moduleKey) return fail(res, new Error('Не указан модуль'))
+    if (!Array.isArray(bodies)) return fail(res, new Error('Нет текстов промптов'))
+    const saved = await saveUserPrompts(userId, String(moduleKey), bodies, Array.isArray(defaults) ? defaults : [])
+    res.json({ ok: true, prompts: saved })
+  } catch (err) { fail(res, err, 500) }
+})
 
 // ── (6) Глобальный системный промпт ────────────────────────────────────
 featureRouter.get('/ai-settings', async (_req, res) => {

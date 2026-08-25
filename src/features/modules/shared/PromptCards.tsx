@@ -2,19 +2,29 @@ import { useEffect, useState } from 'react'
 import { Star, Sparkles, Check, RotateCcw, Pencil } from 'lucide-react'
 import { cn } from '@/shared/lib/utils'
 import { Modal } from '@/shared/ui'
-import { DEFAULT_PROMPT_BODIES, loadPromptBodies, savePromptBodies } from './promptDefaults'
+import { DEFAULT_PROMPT_BODIES } from './promptDefaults'
 import { fetchAiSettings } from '@/api/featuresApi'
 
 interface PromptCardsProps {
-  moduleKey: string
   labels: string[]
   activeIndex: number
   onActiveChange: (index: number) => void
-  onBodiesChange?: (bodies: string[]) => void
+  /** Тексты карточек — приходят сверху, из единственного места хранения. */
+  bodies: string[]
+  /** Сохранить набор целиком (уедет в базу под текущего пользователя). */
+  onSave: (bodies: string[]) => void | Promise<void>
 }
 
-export function PromptCards({ moduleKey, labels, activeIndex, onActiveChange, onBodiesChange }: PromptCardsProps) {
-  const [bodies, setBodies] = useState(() => loadPromptBodies(moduleKey, labels))
+/**
+ * MR-185: карточки промптов — ТОЛЬКО отображение и редактор. Своей копии текстов у них
+ * больше нет.
+ *
+ * Раньше компонент подгружал тексты сам (из памяти браузера) и отдавал их наверх. Из-за
+ * этой второй копии применение шаблона не возвращало промпт: шаблон выставлял текст, а
+ * карточки тут же перекрывали его своим локальным (MR-176). Теперь набор приходит
+ * сверху, из единственного места хранения.
+ */
+export function PromptCards({ labels, activeIndex, onActiveChange, bodies, onSave }: PromptCardsProps) {
   const [modalIndex, setModalIndex] = useState<number | null>(null)
   const [draft, setDraft] = useState('')
   // §9 (PROMPT-001): «Активный промпт» показывает ПОЛНЫЙ итоговый текст — глобальный
@@ -27,14 +37,6 @@ export function PromptCards({ moduleKey, labels, activeIndex, onActiveChange, on
     window.addEventListener('ai-settings-changed', load)
     return () => window.removeEventListener('ai-settings-changed', load)
   }, [])
-
-  useEffect(() => {
-    setBodies(loadPromptBodies(moduleKey, labels))
-  }, [moduleKey, labels.length])
-
-  useEffect(() => {
-    onBodiesChange?.(bodies)
-  }, [bodies, onBodiesChange])
 
   const isCustom = (i: number) =>
     (bodies[i] ?? '') !== (DEFAULT_PROMPT_BODIES[i] ?? DEFAULT_PROMPT_BODIES[0])
@@ -52,8 +54,7 @@ export function PromptCards({ moduleKey, labels, activeIndex, onActiveChange, on
     if (modalIndex === null) return
     const next = [...bodies]
     next[modalIndex] = draft.trim() || DEFAULT_PROMPT_BODIES[modalIndex] || DEFAULT_PROMPT_BODIES[0]
-    setBodies(next)
-    savePromptBodies(moduleKey, next)
+    void onSave(next)
     closeModal()
   }
 
@@ -174,7 +175,4 @@ export function PromptCards({ moduleKey, labels, activeIndex, onActiveChange, on
   )
 }
 
-export function usePromptBodies(moduleKey: string, labels: string[]) {
-  const [bodies, setBodies] = useState(() => loadPromptBodies(moduleKey, labels))
-  return { bodies, setBodies }
-}
+

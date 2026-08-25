@@ -17,7 +17,7 @@ import { AccountPicker } from '@/features/account-picker/AccountPicker'
 import { useModuleTask } from './shared/useModuleTask'
 import {
   SectionCard, NumberField,
-  ProtectionTimings, TargetsEditor, LaunchPanel, PromptCards, loadPromptBodies, AiGenerationNotice,
+  ProtectionTimings, TargetsEditor, LaunchPanel, PromptCards, usePromptStore, AiGenerationNotice,
   FolderPicker, BlacklistEditor, GlobalPromptEditor, TimingSection, SaveToFolderModal, TaskStartedModal, SavePresetModal,
   LaunchSteps, markCurrentStep, usePresetCarry, type LaunchStep,
 } from './shared'
@@ -122,7 +122,9 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
   const [postUrls, setPostUrls] = useState<string[]>([])
   const [keywords, setKeywords] = useState((cfg.defaultKeywords || []).join(', '))
   const [activePrompt, setActivePrompt] = useState(0)
-  const [promptBodies, setPromptBodies] = useState(() => loadPromptBodies(moduleKey, cfg.messagePrompts ?? []))
+  // MR-185: тексты промптов — из базы, по владельцу. Своей копии у карточек больше нет,
+  // поэтому применённый шаблон её и не перекрывает (это же чинит MR-176).
+  const { bodies: promptBodies, save: savePrompts, replace: replacePrompts } = usePromptStore(moduleKey, cfg.messagePrompts ?? [])
   const [delayPreset, setDelayPreset] = useState(1)
   const [delays, setDelays] = useState(DEFAULT_DELAYS)
   const [goalId] = useState('')
@@ -391,7 +393,7 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
     }
     if (Array.isArray(s.keywords)) setKeywords(s.keywords.join(', '))
     if (s.promptIndex !== undefined) setActivePrompt(s.promptIndex)
-    if (Array.isArray(s.promptOverrides)) setPromptBodies(s.promptOverrides)
+    if (Array.isArray(s.promptOverrides)) replacePrompts(s.promptOverrides)
     if (s.delayPreset !== undefined) setDelayPreset(s.delayPreset)
     if (s.delays) setDelays((d) => ({ ...d, ...s.delays }))
     if (Array.isArray(s.emojis)) setPalette(new Set(s.emojis))
@@ -412,7 +414,7 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
     if (s.analyzeImages !== undefined) setAnalyzeImages(s.analyzeImages)
     if (s.typeWeights) setTypeWeights(s.typeWeights)
     pushToast({ type: 'success', title: 'Шаблон применён' })
-  }, [cfg.lookModeOptions, cfg.toggleGroups, pushToast, remember])
+  }, [cfg.lookModeOptions, cfg.toggleGroups, pushToast, remember, replacePrompts])
 
   const results = task?.results ?? []
   const progressDone = task?.progress.actionsDone ?? task?.progress.commentsSent ?? 0
@@ -652,11 +654,11 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
             <AiGenerationNotice />
             <GlobalPromptEditor />
             <PromptCards
-            moduleKey={moduleKey}
             labels={cfg.messagePrompts}
             activeIndex={activePrompt}
             onActiveChange={setActivePrompt}
-            onBodiesChange={setPromptBodies}
+            bodies={promptBodies}
+            onSave={savePrompts}
           />
             {/* Распределение типов — часть промптов, а не лимитов (правка 19.08):
                 проценты делятся между теми самыми карточками промптов, что выше.
