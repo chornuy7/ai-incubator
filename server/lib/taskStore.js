@@ -198,7 +198,8 @@ export function createTaskStore(moduleKey, idPrefix) {
     }
   }
 
-  async function loadPresets() {
+  /** Чтение/запись файла — фолбэк для локального запуска и тестов (без DATA_BACKEND). */
+  async function readPresetsFile() {
     try {
       const raw = await fs.readFile(presetsFile, 'utf8')
       return JSON.parse(raw)
@@ -206,11 +207,30 @@ export function createTaskStore(moduleKey, idPrefix) {
       return []
     }
   }
+  async function writePresetsFile(presets) {
+    await ensureDirs()
+    await fs.writeFile(presetsFile, JSON.stringify(presets, null, 2), 'utf8')
+  }
+
+  /*
+   * Переноса файловых шаблонов в базу здесь НЕТ намеренно.
+   *
+   * Сначала он был автоматическим — при первом чтении модуля. Но локальные копии
+   * разработчиков ходят в ту же боевую базу, а файлы у всех разные: чья копия прочитала
+   * первой, того шаблоны и уехали бы в прод, а настоящие серверные — уже нет (таблица
+   * непустая, перенос считается сделанным). Это лотерея с чужими данными.
+   *
+   * Перенос делается осознанно и на сервере: `node server/scripts/presets-to-db.mjs`.
+   */
+  async function loadPresets() {
+    const { loadModulePresets } = await import('../modulePresets.js')
+    return loadModulePresets(moduleKey, readPresetsFile)
+  }
 
   /** @param {object[]} presets */
   async function savePresets(presets) {
-    await ensureDirs()
-    await fs.writeFile(presetsFile, JSON.stringify(presets, null, 2), 'utf8')
+    const { saveModulePresets } = await import('../modulePresets.js')
+    return saveModulePresets(moduleKey, presets, writePresetsFile)
   }
 
   /** @param {object} task */
