@@ -626,10 +626,22 @@ function ChannelParserInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: 
 
             {cfg.commentFilter && (
               <div className="rounded-2xl border border-line bg-elevated/40 p-3">
-                <div className="mb-2 flex items-center gap-1.5 text-sm font-semibold text-fg"><MessageCircle size={14} className="text-spark-400" /> Фильтр комментариев</div>
+                {/*
+                  Название не объясняет ни смысла, ни цены (вопрос владельца 26.08: «что за
+                  фильтр комментариев и для чего он нужен?»). Два разных фильтра: первый —
+                  можно ли писать вообще, он бесплатный; второй требует скачать посты
+                  каждого кандидата и потому заметно замедляет сбор. Об этом и подсказки.
+                */}
+                <div className="mb-2 flex items-center gap-1.5 text-sm font-semibold text-fg">
+                  <MessageCircle size={14} className="text-spark-400" /> Фильтр комментариев
+                  <Tip text="Можно ли писать под постами. Открытыми считаются группы (пишут все) и каналы с привязанным чатом обсуждения. Нужен прежде всего для нейрокомментинга: в канал с закрытыми комментариями аккаунт зайдёт и не сможет написать ни слова. «Только закрытые» — для обратной задачи: собрать аудиторию или следить за каналом, не комментируя.">
+                    <HelpCircle size={13} className="cursor-help text-white/35" />
+                  </Tip>
+                </div>
                 <Segmented size="sm" options={['Любые', 'Только открытые', 'Только закрытые']} value={commentFilter} onChange={setCommentFilter} />
                 <div className="mt-3">
-                  <NumberField label="Мин. комментариев на пост" value={minComments} onChange={setMinComments} max={10000} />
+                  <NumberField label="Мин. комментариев на пост" value={minComments} onChange={setMinComments} max={10000}
+                    hint="Среднее число откликов по последним 20 постам. Отсекает каналы, где комментарии включены, но под постами пусто — писать туда некому. 0 — выключено. Внимание: ради этого парсер скачивает посты каждого найденного канала, поэтому сбор идёт заметно дольше." />
                 </div>
               </div>
             )}
