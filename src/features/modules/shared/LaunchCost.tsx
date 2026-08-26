@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Zap, Clock } from 'lucide-react'
-import { perAccountShare, taskSeconds } from '@/shared/lib/pace'
+import { perAccountShare, taskSeconds, joinSeconds } from '@/shared/lib/pace'
 import { fetchPricing, type Pricing } from '@/api/balanceApi'
 import { cn, coins as fmtCoins } from '@/shared/lib/utils'
 
@@ -65,13 +65,17 @@ function usePricing(): Pricing | null {
  *    потому что длина промпта и ответа заранее неизвестна.
  * Если истории ещё нет — честно говорим, что считать не на чем, вместо выдуманного числа.
  */
-export function LaunchCost({ moduleKey, actions, accounts, delaySec, compact }: {
+export function LaunchCost({ moduleKey, actions, accounts, delaySec, joinSec, targets, compact }: {
   moduleKey: string
   actions: number
   /** Сколько аккаунтов делят работу — для оценки времени (§10.1). */
   accounts?: number
   /** Диапазон задержки между действиями, секунды [min, max] — для времени. */
   delaySec?: [number, number]
+  /** Диапазон задержки ВСТУПЛЕНИЯ, секунды [min, max] — воркер её реально спит. */
+  joinSec?: [number, number]
+  /** Сколько целей выбрано — во столько предстоит вступить (потолок: доля действий). */
+  targets?: number
   /**
    * Компактно — строкой-чипом для нижней панели запуска: там место дорогое, а
    * подробности (сколько действий × цена, сколько токенов) уезжают в подсказку.
@@ -102,12 +106,23 @@ export function LaunchCost({ moduleKey, actions, accounts, delaySec, compact }: 
   // сама не знает». Берём среднюю задержку — это и есть ожидаемое время; разброс и вся
   // арифметика уходят в подсказку при наведении.
   const avgDelay = delaySec ? (delaySec[0] + delaySec[1]) / 2 : 0
-  const timeAvg = perAcc && avgDelay ? fmtDur(taskSeconds(n, acc, avgDelay)) : null
+  // Время вступлений: воркер спит эту паузу один раз на пару «аккаунт + цель»
+  // (server/lib/joinTarget.js). До 26.08 её не считали вовсе — владелец справедливо
+  // заметил, что правка «Задержки вступления» не двигает таймер.
+  const avgJoin = joinSec ? (joinSec[0] + joinSec[1]) / 2 : 0
+  const joinsPerAcc = Math.min(Math.max(0, Math.round(targets || 0)), perAcc)
+  const joinTotal = joinSeconds(targets || 0, perAcc, avgJoin)
+  const actionsTotal = taskSeconds(n, acc, avgDelay)
+  const timeAvg = perAcc && (avgDelay || joinTotal) ? fmtDur(actionsTotal + joinTotal) : null
   const timeHint = timeAvg
     ? [
       `${n} ${plural(n, 'действие', 'действия', 'действий')} ÷ ${acc} ${plural(acc, 'аккаунт', 'аккаунта', 'аккаунтов')} = ${perAcc} на каждый`,
-      `${perAcc} × ~${Math.round(avgDelay)} с между действиями ≈ ${timeAvg}`,
+      `${perAcc} × ~${Math.round(avgDelay)} с между действиями ≈ ${fmtDur(actionsTotal)}`,
       delaySec ? `разброс задержки ${delaySec[0]}–${delaySec[1]} с: от ${fmtDur(perAcc * delaySec[0])} до ${fmtDur(perAcc * delaySec[1])}` : '',
+      joinTotal
+        ? `+ вступления: ${joinsPerAcc} ${plural(joinsPerAcc, 'цель', 'цели', 'целей')} × ~${Math.round(avgJoin)} с ≈ ${fmtDur(joinTotal)}`
+        : '',
+      joinTotal ? 'вступление платится один раз на аккаунт и цель — тот, кто уже в канале, его не ждёт' : '',
       accounts ? '' : 'аккаунты не выбраны — считаем как для одного',
     ].filter(Boolean).join('\n')
     : ''

@@ -73,3 +73,30 @@ export function perAccountShare(actions: number, accounts: number): number {
   const acc = Math.max(1, Math.round(Number(accounts) || 0))
   return total ? Math.ceil(total / acc) : 0
 }
+
+/**
+ * Сколько времени уйдёт на ВСТУПЛЕНИЯ в цели — у одного аккаунта.
+ *
+ * Замечание владельца 26.08: «задержка вступления ни на что не влияет — таймер меняется
+ * только от задержки комментария». Так и было: время считалось по одним действиям, хотя
+ * воркер реально спит эту паузу (server/lib/joinTarget.js — `Задержка перед вступлением`),
+ * и при 281–600 с она весит больше самих комментариев.
+ *
+ * Считаем как воркер: пауза берётся ОДИН раз на пару «аккаунт + цель» и только если
+ * аккаунт ещё не состоит в канале. Больше вступлений, чем у него действий, аккаунт не
+ * сделает (цель на круге выбирается случайно), поэтому потолок — min(целей, доля действий).
+ *
+ * Уже вступившие аккаунты не платят эту паузу вовсе, а знать об этом заранее панель не
+ * может — поэтому это ВЕРХНЯЯ оценка, «первый заход», и подписью так и говорим.
+ *
+ * @param targets сколько целей (каналов/групп) выбрано
+ * @param actionsPerAccount доля действий одного аккаунта (perAccountShare)
+ * @param avgJoinSec средняя пауза вступления, УЖЕ умноженная на множитель темпа
+ */
+export function joinSeconds(targets: number, actionsPerAccount: number, avgJoinSec: number): number {
+  const t = Math.max(0, Math.round(Number(targets) || 0))
+  const perAcc = Math.max(0, Math.round(Number(actionsPerAccount) || 0))
+  const delay = Math.max(0, Number(avgJoinSec) || 0)
+  if (!t || !perAcc || !delay) return 0
+  return Math.min(t, perAcc) * delay
+}

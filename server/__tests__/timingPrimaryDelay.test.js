@@ -51,6 +51,36 @@ test('плашка «≈ время» в сводке модуля тоже сч
   for (const c of calls) assert.ok(/primaryDelay/.test(c), `taskSeconds обязан брать primaryDelay: ${c}`)
 })
 
+/*
+ * Замечание владельца 26.08: «задержка вступления ни на что не влияет — таймер меняется
+ * только от задержки комментария». Воркер эту паузу реально спит (server/lib/joinTarget.js),
+ * один раз на пару «аккаунт + цель», и при 281–600 с она весит больше самих комментариев.
+ * Значит все три места времени обязаны её учитывать.
+ */
+test('вступления входят во время: все три места зовут joinSeconds', async () => {
+  const timing = await fs.readFile(new URL('../../src/features/modules/shared/TimingSection.tsx', import.meta.url), 'utf8')
+  const launch = await fs.readFile(new URL('../../src/features/modules/shared/LaunchCost.tsx', import.meta.url), 'utf8')
+  assert.ok(/joinSeconds\(/.test(code), 'плашка «≈ время» в LiveModule учитывает вступления')
+  assert.ok(/joinSeconds\(/.test(timing), 'блок «Защита и тайминги» учитывает вступления')
+  assert.ok(/joinSeconds\(/.test(launch), 'нижний чип запуска учитывает вступления')
+})
+
+test('joinSeconds берёт min(целей, доли действий) — больше вступлений аккаунт не сделает', async () => {
+  const pace = await fs.readFile(new URL('../../src/shared/lib/pace.ts', import.meta.url), 'utf8')
+  const at = pace.indexOf('export function joinSeconds')
+  assert.ok(at > 0, 'joinSeconds объявлена в общей формуле, а не скопирована по местам')
+  const body = pace.slice(at, pace.indexOf('\n}', at))
+  assert.ok(/Math\.min\(/.test(body), 'потолок — min(целей, доли действий)')
+  assert.ok(/perAcc/.test(body) && /delay/.test(body), 'считает по доле аккаунта и паузе вступления')
+})
+
+test('LaunchCost принимает joinSec и targets — иначе нижний чип снова ослепнет', async () => {
+  const launch = await fs.readFile(new URL('../../src/features/modules/shared/LaunchCost.tsx', import.meta.url), 'utf8')
+  assert.ok(/joinSec\?:/.test(launch), 'проп joinSec объявлен')
+  assert.ok(/targets\?:/.test(launch), 'проп targets объявлен')
+  assert.ok(/joinSec=\{/.test(code) && /targets=\{/.test(code), 'LiveModule их реально передаёт')
+})
+
 test('блок «Защита и тайминги» получает showComment=commentPrimary — тот же признак', () => {
   assert.ok(/showComment=\{commentPrimary\}/.test(code), 'верхний блок и время делят один признак')
   assert.ok(/showAction=\{!commentPrimary\}/.test(code), 'action-поле показывается, когда модуль не comment-овый')
