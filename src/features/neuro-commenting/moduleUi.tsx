@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { cn } from '@/shared/lib/utils'
-import { Switch } from '@/shared/ui'
+import { Switch, Tip } from '@/shared/ui'
 import { HelpCircle } from 'lucide-react'
 import { useUi } from '@/shared/lib/uiStore'
 
@@ -107,9 +107,11 @@ export function SectionCard({ icon, title, badge, right, required, children, id 
   )
 }
 
-export function NumberField({ label, value, onChange, suffix, min = 0, max, step = 1 }: {
+export function NumberField({ label, value, onChange, suffix, min = 0, max, step = 1, hint }: {
   label: string; value: number; onChange: (n: number) => void; suffix?: string
   min?: number; max?: number; step?: number
+  /** Пояснение к полю: значок «?» у подписи, текст — по наведению. */
+  hint?: string
 }) {
   // Черновик строки позволяет свободно печатать; коммитим с валидацией на blur/Enter.
   const [draft, setDraft] = useState(String(value))
@@ -122,7 +124,10 @@ export function NumberField({ label, value, onChange, suffix, min = 0, max, step
   return (
     <div>
       <div className="mb-1 flex items-center justify-between">
-        <span className="text-sm text-muted">{label}</span>
+        <span className="flex items-center gap-1.5 text-sm text-muted">
+          {label}
+          {hint && <Tip text={hint}><HelpCircle size={13} className="cursor-help text-white/35" /></Tip>}
+        </span>
         {suffix && <span className="rounded bg-elevated px-1.5 text-xs font-bold text-spark-300">{suffix}</span>}
       </div>
       <div className="flex items-center gap-2">

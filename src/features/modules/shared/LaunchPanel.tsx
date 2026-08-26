@@ -2,9 +2,10 @@ import { Play, AlertTriangle, Loader2, ArrowUpRight } from 'lucide-react'
 import type { ModuleTask, ModulePreset, ModuleTaskSettings } from '@/api/modulesApi'
 import { FloatingBar } from './FloatingBar'
 import { PresetMenu } from './PresetBar'
+import { cn } from '@/shared/lib/utils'
 
 export function LaunchPanel({
-  running, starting, canStart, onStart, onSave, primaryLabel, warn, cost,
+  running, starting, canStart, onStart, onSave, primaryLabel, warn, cost, stats,
   presets, onApplyPreset, extras, steps, blockedBy = [],
 }: {
   running: boolean; starting: boolean; canStart: boolean
@@ -14,8 +15,7 @@ export function LaunchPanel({
   steps?: React.ReactNode
   /** Что мешает запуску: показываем рядом с серой кнопкой, чтобы не гадать. */
   blockedBy?: string[]
-  /** Сводка модуля. Панель её БОЛЬШЕ НЕ РИСУЕТ (правка 13.08) — оставлено, чтобы не
-   *  переписывать вызовы во всех модулях; данные для неё они и так считают для себя. */
+  /** Сводка модуля: рисуется В ПОТОКЕ над панелью (кнопки живут в плавающем баре). */
   stats?: { icon: React.ReactNode; color: string; label: string; value: string; warn?: boolean }[]
   task: ModuleTask | null
   warn?: string
@@ -33,6 +33,28 @@ export function LaunchPanel({
 }) {
   return (
     <>
+      {/*
+        Сводка запуска (правка 26.08). 13.08 её убрали из панели — панель уехала в
+        плавающий бар внизу, и рисовать там широкие плитки было негде. Но модули
+        продолжали её СЧИТАТЬ и передавать, а карточка «Параметры и лимиты», где она
+        жила, осталась пустой коробкой с заголовком: у мейлинга и автопостинга обёртку
+        просто сняли, а у парсеров, живых модулей и нейродиалогов — нет.
+        Возвращаем сюда, в поток: карточка снова про то, что обещает названием, а числа,
+        которые и так считаются, видно перед запуском.
+      */}
+      {stats && stats.length > 0 && (
+        <div className="mb-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
+          {stats.map((st) => (
+            <div key={st.label} className="flex items-center gap-2.5 rounded-xl border border-line bg-elevated/40 px-3 py-2.5">
+              <span className="shrink-0" style={{ color: st.warn ? '#f43f5e' : st.color }}>{st.icon}</span>
+              <span className="min-w-0">
+                <span className="block truncate text-[11px] uppercase tracking-wide text-white/40">{st.label}</span>
+                <span className={cn('block text-sm font-bold', st.warn ? 'text-rose-300' : 'text-fg')}>{st.value}</span>
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
       {extras}
       {/* Плавающий бар — ПОСЛЕДНИЙ элемент: его заглушка резервирует место в самом низу
           карточки, ничего не рендерится ниже, и бар чисто «отрывается» ко дну экрана. */}
