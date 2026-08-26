@@ -94,6 +94,25 @@ export async function createClient(sessionString, proxyRaw, fingerprint) {
   const apiId = Number(fp.apiId) || API_ID
   const apiHash = fp.apiHash || API_HASH
   const client = new TelegramClient(new StringSession(sessionString), apiId, apiHash, opts)
+  /*
+   * Ошибки фонового пинга — с контекстом, а не простынёй из стека (правка 26.08).
+   *
+   * gram держит пинг-цикл (PingDelayDisconnect) на каждом подключённом клиенте и при
+   * неудаче печатает в консоль голый `Error: TIMEOUT` со стеком из updates.js — без
+   * аккаунта, без прокси, без единого слова о причине. В логах сервера этих строк
+   * набирались десятки подряд, и настоящие ошибки в них тонули.
+   *
+   * Молча глушить нельзя: неотвеченный пинг — это реальный сигнал, что прокси перестал
+   * пропускать трафик. Поэтому ошибку перехватываем, пишем ОДНОЙ строкой с прокси и
+   * причиной, а дубль из библиотеки убираем понижением её уровня логирования.
+   */
+  const proxyLabel = proxy?.ip ? `${proxy.ip}:${proxy.port}` : 'без прокси'
+  client.onError = async (err) => {
+    const msg = err instanceof Error ? err.message : String(err)
+    console.warn(`[tg] фоновый пинг не прошёл · ${proxyLabel} · ${msg}`)
+  }
+  // Уровень можно вернуть на время разбора: GRAM_LOG=info покажет всё, что печатает gram.
+  try { client.setLogLevel(process.env.GRAM_LOG || 'none') } catch { /* старая версия gram — переживём дубль */ }
   await connectWithTimeout(client)
   wrapInvoke(client)
   return client
