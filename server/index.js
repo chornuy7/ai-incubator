@@ -21,7 +21,7 @@ import { campaignsRouter } from './campaignsRoutes.js'
 import { channelsRouter } from './channelsRoutes.js'
 import { rolesRouter } from './rolesRoutes.js'
 import { usersRouter } from './usersRoutes.js'
-import { moduleAccessGuard, moduleKeyFromModulesPath, isAdminRequest } from './lib/accessGuard.js'
+import { moduleAccessGuard, moduleKeyFromModulesPath, isAdminRequest, ownerScopeForRequest } from './lib/accessGuard.js'
 import { proxiesRouter } from './proxiesRoutes.js'
 import { importRouter } from './importRoutes.js'
 import { getSettings, updateSettings } from './settings.js'
@@ -491,7 +491,6 @@ app.get('/api/links', async (req, res) => {
 app.post('/api/links', async (req, res) => {
   try {
     const { createLink } = await import('./linkTracker.js')
-    const { ownerScopeForRequest } = await import('./lib/accessGuard.js')
     const scope = await ownerScopeForRequest(req)
     if (scope.blocked) return res.status(403).json({ ok: false, error: 'Нет доступа' })
     const link = await createLink({ ...(req.body ?? {}), userId: scope.ownerId || undefined })
@@ -1070,6 +1069,43 @@ app.post('/api/parser/cache/take', async (req, res) => {
       await changeCoins(-cost, `${kind}: ${hit.count} строк из базы`, scope.ownerId)
     }
     res.json({ ok: true, charged: cost, cache: hit })
+  } catch (err) { res.status(500).json({ ok: false, error: err instanceof Error ? err.message : 'Ошибка' }) }
+})
+
+/**
+ * Подсказать ключевые слова по тем, что уже набраны (просьба владельца 26.08).
+ *
+ * `mode`: 'intent' — только наши шаблоны (без сети и без токенов), 'ai' — только
+ * модель, 'both' — оба источника. Наши шаблоны отдаются всегда, даже когда ИИ
+ * отвалился: пустой блок с ошибкой полезнее не делает, а рабочие варианты есть.
+ */
+app.post('/api/parser/keywords/suggest', async (req, res) => {
+  try {
+    const { keywords, mode = 'both' } = req.body || {}
+    const list = (Array.isArray(keywords) ? keywords : []).map((w) => String(w || '').trim()).filter(Boolean)
+    if (!list.length) return res.status(400).json({ ok: false, error: 'Сначала добавьте хотя бы одно ключевое слово' })
+    const scope = await ownerScopeForRequest(req)
+    if (scope.blocked) return res.status(403).json({ ok: false, error: 'Доступ отключён' })
+
+    const { intentVariants, aiVariants } = await import('./keywordSuggest.js')
+    const items = []
+    if (mode !== 'ai') items.push(...intentVariants(list))
+
+    let aiMode = 'skipped'
+    let reason = ''
+    if (mode !== 'intent') {
+      const ai = await aiVariants(list)
+      aiMode = ai.mode
+      reason = ai.reason || ''
+      // Дубли между источниками: «looking for massage» модель могла выдать сама.
+      const have = new Set(items.map((i) => i.w.toLowerCase()))
+      for (const it of ai.items) if (!have.has(it.w.toLowerCase())) { have.add(it.w.toLowerCase()); items.push(it) }
+      if (ai.usage?.tokens) {
+        const { recordTokens } = await import('./tokenLedger.js')
+        await recordTokens({ module: 'channel-parser', userId: scope.ownerId, ...ai.usage })
+      }
+    }
+    res.json({ ok: true, items, aiMode, reason })
   } catch (err) { res.status(500).json({ ok: false, error: err instanceof Error ? err.message : 'Ошибка' }) }
 })
 

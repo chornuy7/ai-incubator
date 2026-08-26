@@ -16,7 +16,7 @@ import { cn } from '@/shared/lib/utils'
 import { downloadXls } from '@/shared/lib/exportXls'
 import { SaveToFolderModal } from './shared/FolderPicker'
 import { LaunchCost } from './shared/LaunchCost'
-import { fetchModuleTasks, fetchModuleTask, lookupParserCache, setParserWatch, type ModuleTaskSettings, type ParserCacheHit } from '@/api/modulesApi'
+import { fetchModuleTasks, fetchModuleTask, lookupParserCache, setParserWatch, suggestKeywords, type ModuleTaskSettings, type ParserCacheHit, type KeywordSuggestion } from '@/api/modulesApi'
 
 /** Собирает username ранее спарсенных каналов/групп из истории модуля (для дедупа между запусками). */
 async function gatherAlreadyParsed(moduleKey: string): Promise<string[]> {
@@ -116,7 +116,26 @@ function ChannelParserInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: 
   const [method, setMethod] = useState(0) // 0 keywords, 1 similar
   const [keywords, setKeywords] = useState<string[]>(cfg.defaultKeywords ?? [])
   const [kwInput, setKwInput] = useState('')
-  const aiKeywords = cfg.aiKeywords ?? []
+  // Подсказка строится от того, что человек набрал, а не берётся из конфига витрины.
+  const [suggests, setSuggests] = useState<KeywordSuggestion[]>([])
+  const [suggestBusy, setSuggestBusy] = useState<'' | 'intent' | 'ai'>('')
+  const [suggestErr, setSuggestErr] = useState('')
+  const runSuggest = useCallback(async (mode: 'intent' | 'ai') => {
+    setSuggestBusy(mode); setSuggestErr('')
+    try {
+      const r = await suggestKeywords(keywords, mode)
+      // Уже показанные варианты не затираем: человек мог нажать обе кнопки подряд.
+      setSuggests((prev) => {
+        const have = new Set([...prev.map((p) => p.w.toLowerCase()), ...keywords.map((k) => k.toLowerCase())])
+        return [...prev, ...r.items.filter((i) => !have.has(i.w.toLowerCase()))]
+      })
+      // Молчать про выключенный ИИ нельзя: пусто и пусто — выглядит как поломка.
+      if (mode === 'ai' && r.aiMode !== 'openai') setSuggestErr(r.reason || 'ИИ не ответил — остаются наши шаблоны')
+      else if (!r.items.length) setSuggestErr('Новых вариантов нет — всё уже в списке')
+    } catch (e) {
+      setSuggestErr(e instanceof Error ? e.message : 'Не удалось получить подсказку')
+    } finally { setSuggestBusy('') }
+  }, [keywords])
 
   // ── окончания ──
   const [endMode, setEndMode] = useState(1) // 0 вручную, 1 авто
@@ -476,20 +495,54 @@ function ChannelParserInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: 
               )}
             </div>
 
-            {aiKeywords.length > 0 && (
-              <div className="rounded-2xl border border-iris-500/25 bg-iris-500/8 p-3">
-                <div className="mb-2 flex items-center gap-2 text-xs font-bold text-iris-300"><Sparkles size={14} /> ИИ-предложенные ключевые слова</div>
-                <div className="flex flex-wrap gap-2">
-                  {aiKeywords.map((a) => (
-                    <button key={a.w} type="button" disabled={keywords.includes(a.w)} onClick={() => setKeywords((k) => [...new Set([...k, a.w])])}
-                      className="inline-flex items-center gap-1.5 rounded-lg border border-line bg-elevated px-2 py-1 text-xs text-fg hover:border-iris-500/40 disabled:opacity-40">
-                      {a.w} <span className="rounded bg-amber-500/20 px-1 text-[10px] font-bold text-amber-300">{a.p}%</span>
-                      <Plus size={12} className="text-iris-300" />
-                    </button>
-                  ))}
+            {/*
+              Подсказка ключевых слов (просьба владельца 26.08: «можно это сделать,
+              чтобы предложка реально работала?»). Раньше здесь был зашитый в конфиг
+              список из шести слов, который не зависел от введённого, с выдуманными
+              процентами рядом. Теперь два источника:
+                • «Наши варианты» — шаблоны намерения, мгновенно и без токенов;
+                • «Подобрать ИИ» — синонимы и переводы от модели.
+              ИИ дёргаем по кнопке, а не на каждое нажатие клавиши: это сетевой запрос
+              и расход токенов, и делать его молча за спиной владельца неправильно.
+            */}
+            <div className="rounded-2xl border border-iris-500/25 bg-iris-500/8 p-3">
+              <div className="mb-2 flex flex-wrap items-center gap-2">
+                <div className="flex items-center gap-2 text-xs font-bold text-iris-300"><Sparkles size={14} /> Подсказать ключевые слова</div>
+                <div className="ml-auto flex gap-2">
+                  <button type="button" onClick={() => runSuggest('intent')} disabled={!keywords.length || suggestBusy !== ''}
+                    className="btn-soft h-7 px-2 text-[11px]">Наши варианты</button>
+                  <button type="button" onClick={() => runSuggest('ai')} disabled={!keywords.length || suggestBusy !== ''}
+                    className="btn-soft h-7 px-2 text-[11px]">{suggestBusy === 'ai' ? 'Думаю…' : 'Подобрать ИИ'}</button>
                 </div>
               </div>
-            )}
+
+              {!keywords.length && <div className="text-[11px] text-muted">Добавьте хотя бы одно слово — подсказка строится от вашего списка.</div>}
+              {suggestErr && <div className="text-[11px] text-amber-300">{suggestErr}</div>}
+
+              {suggests.length > 0 && (
+                <>
+                  <div className="flex flex-wrap gap-2">
+                    {suggests.map((a) => (
+                      <button key={a.w} type="button" title={`${a.why}${a.from ? ` · от «${a.from}»` : ''}`}
+                        disabled={keywords.includes(a.w)}
+                        onClick={() => { setKeywords((k) => [...new Set([...k, a.w])]); setSuggests((s) => s.filter((x) => x.w !== a.w)) }}
+                        className="inline-flex items-center gap-1.5 rounded-lg border border-line bg-elevated px-2 py-1 text-xs text-fg hover:border-iris-500/40 disabled:opacity-40">
+                        {a.w}
+                        <span className={cn('rounded px-1 text-[10px] font-bold', a.src === 'ai' ? 'bg-iris-500/20 text-iris-300' : 'bg-emerald-500/20 text-emerald-300')}>
+                          {a.src === 'ai' ? 'ИИ' : 'намерение'}
+                        </span>
+                        <Plus size={12} className="text-iris-300" />
+                      </button>
+                    ))}
+                  </div>
+                  <div className="mt-2 flex items-center gap-3">
+                    <button type="button" onClick={() => { setKeywords((k) => [...new Set([...k, ...suggests.map((s) => s.w)])]); setSuggests([]) }}
+                      className="btn-primary h-7 px-3 text-[11px]"><Plus size={12} /> Добавить все ({suggests.length})</button>
+                    <button type="button" onClick={() => setSuggests([])} className="text-[11px] text-muted hover:text-fg">Скрыть</button>
+                  </div>
+                </>
+              )}
+            </div>
 
             <div className="rounded-2xl border border-line bg-elevated/40 p-3">
               <div className="mb-2 flex items-center justify-between">

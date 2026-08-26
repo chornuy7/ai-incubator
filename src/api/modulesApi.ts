@@ -292,6 +292,22 @@ export async function lookupParserCache(kind: string, settings: Partial<ModuleTa
 }
 
 /**
+ * Подсказка ключевых слов по уже набранным (просьба владельца 26.08).
+ * `src` — откуда вариант: 'intent' — наш шаблон намерения (бесплатно, без сети),
+ * 'ai' — модель. Процента «релевантности» тут нет намеренно: измерить его нечем.
+ */
+export interface KeywordSuggestion {
+  w: string
+  from: string
+  src: 'intent' | 'ai'
+  why: string
+}
+export async function suggestKeywords(keywords: string[], mode: 'intent' | 'ai' | 'both' = 'both'): Promise<{ items: KeywordSuggestion[]; aiMode: string; reason: string }> {
+  const r = await apiPost<{ ok: boolean; items: KeywordSuggestion[]; aiMode: string; reason: string }>(`/api/parser/keywords/suggest`, { keywords, mode })
+  return { items: r.items || [], aiMode: r.aiMode || '', reason: r.reason || '' }
+}
+
+/**
  * Слежение за запросом (просьба владельца 24.08): раз в N часов перезапускать тот же
  * парс, искать новые каналы и отмечать пропавшие. Владельца сервер проставляет сам —
  * перепроверка тратит его аккаунты и его монеты.

@@ -821,7 +821,7 @@ function ParsingModule({ cfg }: { cfg: ModuleConfig }) {
   const pushToast = useApp((s) => s.pushToast)
   const guardNet = useApp((s) => s.guardNet)
 
-  const AI_SUGGEST = cfg.aiKeywords ?? AI_KW
+  const AI_SUGGEST = AI_KW
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [tmplOpen, setTmplOpen] = useState(!cfg.templatesCollapsed)
   const [tmplSearch, setTmplSearch] = useState('')

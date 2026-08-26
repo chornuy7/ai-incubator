@@ -147,7 +147,6 @@ export interface ModuleConfig {
   commentFilter?: boolean
   resultsTitle?: string
   defaultKeywords?: string[]
-  aiKeywords?: { w: string; p: number }[]
   endLangDefault?: string
   defaultMinMembers?: number
   defaultLimit?: number | '∞'
@@ -484,7 +483,6 @@ export const MODULES: Record<string, ModuleConfig> = {
     resultsTitle: 'Результаты поиска',
     commentFilter: true,
     defaultKeywords: ['массаж', 'СТО', 'нужен разработчик', 'создать бота', 'massage', 'need developer'],
-    aiKeywords: [{ w: 'car service', p: 88 }, { w: 'auto repair', p: 85 }, { w: 'hire developer', p: 87 }, { w: 'create bot', p: 82 }, { w: 'wellness', p: 79 }, { w: 'spa massage', p: 84 }],
     endLangDefault: 'en',
     defaultLimit: '∞',
     defaultActivity: 1,
@@ -516,7 +514,6 @@ export const MODULES: Record<string, ModuleConfig> = {
     resultsTitle: 'Результаты парсинга',
     commentFilter: false,
     defaultKeywords: ['машина', 'сто', 'жк', 'барбер', 'фуд корт'],
-    aiKeywords: [{ w: 'car', p: 95 }, { w: 'hundred', p: 80 }, { w: 'residential complex', p: 88 }, { w: 'barber', p: 92 }, { w: 'food court', p: 86 }],
     endLangDefault: 'ru',
     defaultLimit: 100,
     defaultActivity: 0,
