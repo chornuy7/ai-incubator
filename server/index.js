@@ -1010,6 +1010,35 @@ app.post('/api/parser/cache/watch', async (req, res) => {
 })
 
 /**
+ * Настройки фоновых задач: читает и правит только владелец платформы.
+ *
+ * Отдаём вместе с описанием полей (CRON_FIELDS) — админка рисует форму по нему, и
+ * правило «что можно вводить» живёт в одном месте, а не продублировано в вёрстке.
+ */
+app.get('/api/admin/cron', async (req, res) => {
+  try {
+    if (!(await isAdminRequest(req))) return res.status(403).json({ ok: false, error: 'Доступ только владельцу' })
+    const { getCronSettings, CRON_FIELDS } = await import('./cronSettings.js')
+    res.json({ ok: true, fields: CRON_FIELDS, values: await getCronSettings() })
+  } catch (err) { res.status(500).json({ ok: false, error: err instanceof Error ? err.message : 'Ошибка' }) }
+})
+
+app.post('/api/admin/cron', async (req, res) => {
+  try {
+    if (!(await isAdminRequest(req))) return res.status(403).json({ ok: false, error: 'Доступ только владельцу' })
+    const { setCronSettings } = await import('./cronSettings.js')
+    const values = await setCronSettings(req.body || {})
+    /*
+     * Интервалы, которые читаются на КАЖДОМ тике (ревизия базы, проверка парка),
+     * подхватываются сразу. Остальные заданы при создании таймера и применятся после
+     * перезапуска сервиса — говорим об этом прямо, а не делаем вид, что всё уже
+     * действует.
+     */
+    res.json({ ok: true, values, note: 'Часть интервалов применится после перезапуска сервиса' })
+  } catch (err) { res.status(400).json({ ok: false, error: err instanceof Error ? err.message : 'Ошибка' }) }
+})
+
+/**
  * Взять готовый результат из базы — с оплатой.
  *
  * Решение владельца 26.08: выдача из базы стоит КАК ОБЫЧНЫЙ СБОР. Поэтому смотреть, что
@@ -1805,6 +1834,16 @@ try {
 await startScheduler().catch((err) => console.warn('[automation] scheduler init failed:', err))
 
 // §3.3: держим кэш trust свежим (без сети) — чтобы assignment-gate и список были актуальны.
+// Настройки фоновых задач — из админки (просьба владельца 26.08). Грузим ДО планировщиков:
+// они читают интервалы отсюда, и без загрузки взяли бы значения по умолчанию.
+let cron = {}
+try {
+  const { loadCronSettings } = await import('./cronSettings.js')
+  cron = await loadCronSettings()
+} catch (err) {
+  console.warn('[cron] настройки не загрузились, идут значения по умолчанию:', err?.message || err)
+}
+
 try {
   const { refreshAllTrustCache } = await import('./accountStats.js')
   const runTrust = () => refreshAllTrustCache().then((r) => { if (r.updated) console.log(`[trust] обновлён кэш trust: ${r.updated} акк.${r.returned ? ` · авто-возврат из прогрева: ${r.returned}` : ''}`) }).catch((e) => console.warn('[trust] refresh failed:', e?.message || e))
@@ -1813,7 +1852,7 @@ try {
   // ПЕРЕД app.listen: API не слушал порт, фронт получал ECONNREFUSED на каждый запрос,
   // а в логе было тихо — снаружи это выглядело как «бэкенд не запустился» (20.08).
   void runTrust()
-  setInterval(runTrust, 10 * 60 * 1000)
+  setInterval(runTrust, (cron.trustTickMin ?? 10) * 60 * 1000)
 } catch (err) {
   console.warn('[trust] scheduler init failed:', err)
 }
@@ -1828,7 +1867,7 @@ try {
   // Раньше это был мгновенный TCP-пинг, и ожидание ничего не стоило; теперь оно
   // задерживало app.listen, то есть API не отвечал, пока не опросятся все прокси.
   void runProxy()
-  setInterval(runProxy, 30 * 60 * 1000)
+  setInterval(runProxy, (cron.proxyTickMin ?? 30) * 60 * 1000)
 } catch (err) {
   console.warn('[proxy] scheduler init failed:', err)
 }
@@ -1843,7 +1882,7 @@ try {
     .then((r) => r.users && console.log(`[tokens] месячное начисление: ${r.users} польз., ${r.coins} ⚡`))
     .catch((e) => console.warn('[tokens] credit failed:', e?.message || e))
   void runCredit()
-  setInterval(runCredit, 6 * 60 * 60 * 1000)
+  setInterval(runCredit, (cron.creditTickH ?? 6) * 60 * 60 * 1000)
 } catch (err) {
   console.warn('[tokens] credit scheduler init failed:', err)
 }
@@ -1851,7 +1890,7 @@ try {
 // Авто-обновление статистики каналов (§3.9, решение 14.07: день / час-если-бот-в-группе).
 try {
   const { startChannelStatsScheduler } = await import('./channelStats.js')
-  startChannelStatsScheduler()
+  startChannelStatsScheduler((cron.statsTickMin ?? 15) * 60 * 1000)
 } catch (err) {
   console.warn('[stats] scheduler init failed:', err)
 }
@@ -1883,7 +1922,7 @@ try {
   const tick = () => campaignScheduleTick(runCampaign).then((fired) => {
     if (fired.length) console.log(`[campaigns] запущено по расписанию: ${fired.length}`)
   }).catch((err) => console.warn('[campaigns] schedule tick failed:', err))
-  setInterval(tick, 60 * 1000)
+  setInterval(tick, (cron.campaignTickMin ?? 1) * 60 * 1000)
   console.log('[campaigns] планировщик расписаний включён')
 } catch (err) {
   console.warn('[campaigns] schedule scheduler init failed:', err)

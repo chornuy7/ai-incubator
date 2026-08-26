@@ -26,6 +26,7 @@ import { getAccountMeta, setAccountMeta, setAccountStatus } from './accountsMeta
 import { loadSessionString, createClient } from './tgAuth.js'
 import { accountFingerprint } from './lib/deviceFingerprint.js'
 import { getAccountLock } from './lib/accountLocks.js'
+import { getCronSync } from './cronSettings.js'
 
 /** Как часто перепроверять один аккаунт. */
 export const HEALTH_EVERY_MS = 12 * 60 * 60 * 1000
@@ -64,7 +65,7 @@ async function dueAccounts(all, now, max) {
     const meta = await getAccountMeta(a.id)
     if (SKIP_STATUSES.has(meta.status || 'active')) continue
     if (getAccountLock(a.id)?.holders?.length) continue // занят задачей — не лезем второй сессией
-    if (Number(meta.healthCheckedAt || 0) + HEALTH_EVERY_MS > now) continue
+    if (Number(meta.healthCheckedAt || 0) + (getCronSync().healthEveryH ?? 12) * 3600_000 > now) continue
     out.push({ id: a.id, meta })
   }
   return out
@@ -74,7 +75,9 @@ async function dueAccounts(all, now, max) {
  * Один проход проверки.
  * @returns {Promise<{checked:number, broken:number, skipped:number}>}
  */
-export async function accountHealthTick({ perTick = PER_TICK, now = Date.now() } = {}) {
+export async function accountHealthTick(opts = {}) {
+  const perTick = opts.perTick ?? getCronSync().healthPerTick ?? PER_TICK
+  const now = opts.now ?? Date.now()
   const out = { checked: 0, broken: 0, skipped: 0 }
   let all = []
   try {
@@ -119,7 +122,7 @@ export async function accountHealthTick({ perTick = PER_TICK, now = Date.now() }
 
 let timer = null
 /** Запустить фоновую проверку парка. Тик частый, «пора или нет» решает сам аккаунт. */
-export function startAccountHealthScheduler(intervalMs = 60 * 60 * 1000) {
+export function startAccountHealthScheduler(intervalMs = (getCronSync().healthTickMin ?? 60) * 60_000) {
   if (timer) clearInterval(timer)
   const run = () => accountHealthTick()
     .then((r) => { if (r.checked || r.broken) console.log(`[health] проверено ${r.checked}, выведено ${r.broken}${r.skipped ? `, пропущено по сети ${r.skipped}` : ''}`) })

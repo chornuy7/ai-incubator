@@ -1,9 +1,9 @@
 import { useEffect, useRef, useState } from 'react'
-import { AlertTriangle, Activity, Cpu, MemoryStick, Database } from 'lucide-react'
+import { AlertTriangle, Activity, Cpu, MemoryStick, Database, Timer } from 'lucide-react'
 import { Card, EmptyState } from '@/shared/ui'
 import { cn } from '@/shared/lib/utils'
 import type { AccountsHealth, ActiveNow, DailySpend, SystemMetrics } from '@/api/adminApi'
-import { fetchSystemMetrics } from '@/api/adminApi'
+import { fetchSystemMetrics, fetchCron, saveCron, type CronField } from '@/api/adminApi'
 import { fetchParserWatches, type ParserWatch } from '@/api/modulesApi'
 import { fmt, MetricTile } from './adminShared'
 
@@ -178,6 +178,85 @@ function ParserWatchErrors() {
   )
 }
 
+/**
+ * Настройки фоновых задач (просьба владельца 26.08: «в админку вынести все настройки по
+ * кроне»).
+ *
+ * До этого интервалы были константами в шести файлах: чтобы изменить, как часто идёт
+ * ревизия базы или проверка парка, приходилось править код и выкатываться. И, что важнее,
+ * посмотреть, ЧТО вообще крутится в фоне, было негде.
+ *
+ * Поля рисуются по описанию с сервера — там же, где применяются границы. Дублировать
+ * «от 1 до 720» в вёрстке значит завести второй источник правды, который однажды разойдётся.
+ *
+ * Свои хуки и свой запрос: в MonitoringTab есть ранние return'ы, и хуки после них ломают
+ * порядок вызовов.
+ */
+function CronSettings() {
+  const [fields, setFields] = useState<CronField[]>([])
+  const [values, setValues] = useState<Record<string, number>>({})
+  const [busy, setBusy] = useState(false)
+  const [note, setNote] = useState('')
+  const [err, setErr] = useState('')
+
+  useEffect(() => {
+    let alive = true
+    void fetchCron()
+      .then((r) => { if (alive) { setFields(r.fields); setValues(r.values) } })
+      .catch((e) => { if (alive) setErr(e instanceof Error ? e.message : 'не загрузилось') })
+    return () => { alive = false }
+  }, [])
+
+  if (err) return <Card className="p-4 text-sm text-amber-300">Настройки фоновых задач недоступны: {err}</Card>
+  if (!fields.length) return null
+
+  const save = async () => {
+    setBusy(true); setNote('')
+    try {
+      const r = await saveCron(values)
+      setValues(r.values)
+      setNote(r.note || 'Сохранено')
+    } catch (e) {
+      setNote(e instanceof Error ? e.message : 'Не сохранилось')
+    } finally { setBusy(false) }
+  }
+
+  return (
+    <div>
+      <div className="mb-1 mt-1 flex items-center gap-1.5 text-xs font-bold uppercase tracking-wide text-muted">
+        <Timer size={13} /> Фоновые задачи
+      </div>
+      <Card className="p-4">
+        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+          {fields.map((f) => (
+            <label key={f.key} className="block" title={f.hint || ''}>
+              <span className="mb-1 block text-[11px] leading-snug text-muted">{f.label}</span>
+              <span className="flex items-center gap-2">
+                <input
+                  type="number"
+                  min={f.min}
+                  max={f.max}
+                  value={values[f.key] ?? f.def}
+                  onChange={(e) => setValues((v) => ({ ...v, [f.key]: Number(e.target.value) }))}
+                  className="h-8 w-24 rounded-lg border border-line bg-elevated/60 px-2 text-sm text-fg"
+                />
+                <span className="text-[11px] text-faint">{f.unit}</span>
+              </span>
+              {f.hint && <span className="mt-1 block text-[10px] leading-snug text-white/35">{f.hint}</span>}
+            </label>
+          ))}
+        </div>
+        <div className="mt-4 flex items-center gap-3">
+          <button type="button" onClick={() => void save()} disabled={busy} className="btn-soft h-8 text-xs disabled:opacity-40">
+            {busy ? 'Сохраняю…' : 'Сохранить'}
+          </button>
+          {note && <span className="text-[11px] text-muted">{note}</span>}
+        </div>
+      </Card>
+    </div>
+  )
+}
+
 export function MonitoringTab({ health, active, daily }: { health: AccountsHealth | null; active: ActiveNow | null; daily: DailySpend | null }) {
   if (!health) return <Card className="p-6 text-sm text-muted">Загрузка…</Card>
   if (!health.total) return <EmptyState icon={<AlertTriangle size={22} />} title="Аккаунтов нет" desc="Добавьте аккаунты в менеджере профилей." />
@@ -196,6 +275,7 @@ export function MonitoringTab({ health, active, daily }: { health: AccountsHealt
       {/* §10.9: живой пульс сервера — RPS и CPU/память. */}
       <SystemLoad />
       <ParserWatchErrors />
+      <CronSettings />
 
       {/* §10.9: нагрузка «сейчас» — задачи в работе, занятые аккаунты, поток действий. */}
       <div className="grid gap-3 sm:grid-cols-4">

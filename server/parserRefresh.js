@@ -22,6 +22,7 @@
  */
 import { dueWatches, markWatchRun, diffResults } from './parserCache.js'
 import { startModuleTask, launchTask, getModuleStore } from './modules/registry.js'
+import { getCronSync } from './cronSettings.js'
 
 /**
  * Сколько запросов обновляем ОДНОВРЕМЕННО (решение владельца 26.08: «максимум до 3 в
@@ -33,7 +34,13 @@ import { startModuleTask, launchTask, getModuleStore } from './modules/registry.
 const PER_TICK = 3
 /** Случайная пауза между стартами обновлений, мс. */
 const STAGGER_MS = { min: 20_000, max: 90_000 }
-const jitter = () => STAGGER_MS.min + Math.round(Math.random() * (STAGGER_MS.max - STAGGER_MS.min))
+/** Пауза берётся из настроек админки на каждом тике — правка применяется без выката. */
+function jitter() {
+  const c = getCronSync()
+  const lo = Math.min(c.parserStaggerMinSec, c.parserStaggerMaxSec) * 1000
+  const hi = Math.max(c.parserStaggerMinSec, c.parserStaggerMaxSec) * 1000
+  return lo + Math.round(Math.random() * (hi - lo))
+}
 /** Сколько ждём завершения одной задачи. Парс группы на тысячи участников идёт долго. */
 const WAIT_MS = 40 * 60 * 1000
 /** Сколько аккаунтов даём одному обновлению. */
@@ -56,7 +63,7 @@ async function pickAccounts() {
   const { isAccountRunnable } = await import('./lib/protection.js')
   const all = await tgListAccounts({ includeTrash: false })
   const pool = all.filter((a) => a.service === true && isAccountRunnable(a.status || 'active'))
-  return pool.slice(0, ACCOUNTS_PER_RUN).map((a) => a.id)
+  return pool.slice(0, getCronSync().parserAccounts ?? ACCOUNTS_PER_RUN).map((a) => a.id)
 }
 
 /** Дождаться конца задачи. Пауза — тоже конец: дальше сама она не поедет. */
@@ -81,7 +88,10 @@ function whyFailed(task) {
  * Один проход планировщика.
  * @returns {Promise<{checked:number, added:number, gone:number, failed:number}>}
  */
-export async function parserRefreshTick({ perTick = PER_TICK, waitMs = WAIT_MS } = {}) {
+export async function parserRefreshTick(opts = {}) {
+  const c = getCronSync()
+  const perTick = opts.perTick ?? c.parserParallel ?? PER_TICK
+  const waitMs = opts.waitMs ?? (c.parserWaitMin ?? 40) * 60_000
   const out = { checked: 0, added: 0, gone: 0, failed: 0 }
   let due = []
   try { due = await dueWatches(Date.now(), perTick) } catch { return out }
@@ -152,7 +162,7 @@ async function refreshOne(w, out) {
 
 let timer = null
 /** Запустить крон перепроверки. Тик частый, а «пора или нет» решает сама строка запроса. */
-export function startParserRefreshScheduler(intervalMs = 30 * 60 * 1000) {
+export function startParserRefreshScheduler(intervalMs = (getCronSync().parserTickMin ?? 30) * 60_000) {
   if (timer) clearInterval(timer)
   const run = () => parserRefreshTick()
     .then((r) => { if (r.checked || r.failed) console.log(`[parser] перепроверено запросов: ${r.checked} (новых ${r.added}, пропало ${r.gone})${r.failed ? `, с ошибкой ${r.failed}` : ''}`) })

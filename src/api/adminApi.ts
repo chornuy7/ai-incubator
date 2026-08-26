@@ -1,4 +1,4 @@
-import { apiGet, apiPatch, apiDelete } from './client'
+import { apiGet, apiPost, apiPatch, apiDelete } from './client'
 
 /** §5.3 (E1): свод для админ-панели. */
 export interface AdminOverview {
@@ -395,4 +395,26 @@ export async function revokeApiKey(id: string): Promise<void> {
 /** Задан ли сервисный ключ «мозгов» в окружении сервера (значение не отдаётся). */
 export async function serviceKeyStatus(): Promise<{ configured: boolean }> {
   return apiGet('/api/admin/api-keys/service')
+}
+
+/**
+ * Настройки фоновых задач (крон) — просьба владельца 26.08 вынести их из кода в админку.
+ * Поля приходят с сервера вместе со значениями: форма рисуется по описанию, и правило
+ * «что можно вводить» живёт в одном месте — на сервере, где оно и применяется.
+ */
+export interface CronField {
+  key: string
+  label: string
+  unit: string
+  def: number
+  min: number
+  max: number
+  hint?: string
+}
+export async function fetchCron(): Promise<{ fields: CronField[]; values: Record<string, number> }> {
+  const r = await apiGet<{ ok: boolean; fields: CronField[]; values: Record<string, number> }>('/api/admin/cron')
+  return { fields: r.fields ?? [], values: r.values ?? {} }
+}
+export async function saveCron(patch: Record<string, number>): Promise<{ values: Record<string, number>; note?: string }> {
+  return apiPost<{ ok: boolean; values: Record<string, number>; note?: string }>('/api/admin/cron', patch)
 }
