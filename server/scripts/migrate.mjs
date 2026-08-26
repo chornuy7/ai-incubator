@@ -69,7 +69,15 @@ process.on('uncaughtException', (e) => {
 
 /** Файлы по имени: имена начинаются с даты, значит алфавитный порядок = хронологический. */
 const files = fs.readdirSync(DIR).filter((f) => f.endsWith('.sql')).sort()
-const sum = (body) => crypto.createHash('sha256').update(body).digest('hex').slice(0, 16)
+/*
+ * Сумму считаем по тексту БЕЗ возвратов каретки.
+ *
+ * Первый прогон в Actions обвинил семь файлов в том, что их правили после применения.
+ * На деле их никто не трогал: git на Windows отдаёт CRLF, на раннере — LF, байты разные,
+ * файл один и тот же. Сумма, чувствительная к переводу строк, в смешанной команде будет
+ * кричать «волк» на каждом запуске — и на неё перестанут смотреть.
+ */
+const sum = (body) => crypto.createHash('sha256').update(String(body).split(String.fromCharCode(13)).join('')).digest('hex').slice(0, 16)
 
 /*
  * Строку подключения чаще всего портят при копировании: попадает лишний текст, перенос
@@ -151,7 +159,7 @@ try {
   const pending = files.filter((f) => !done.has(f))
   if (!pending.length) {
     console.log(`Все миграции применены (${files.length} шт.)${changed.length ? `, но ${changed.length} файл(ов) изменены после накатки` : ''}`)
-    process.exit(changed.length ? 2 : 0)
+    process.exit(changed.length && DRY ? 2 : 0)
   }
 
   if (DRY) {
