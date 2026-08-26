@@ -133,6 +133,13 @@ function ChannelParserInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: 
   const [activity, setActivity] = useState(cfg.defaultActivity ?? 0)
   const [commentFilter, setCommentFilter] = useState(0)
   const [minComments, setMinComments] = useState(0)
+  /*
+   * Асинхронный режим: аккаунты идут одновременно (просьба владельца 26.08 — «если это
+   * быстрее и ускорит работу, то да, и указать об этом при выборе аккаунтов»).
+   * Раньше запросы шли строго по одному, и сотня запросов занимала одинаковое время
+   * хоть на двух аккаунтах, хоть на пятидесяти.
+   */
+  const [parallel, setParallel] = useState(false)
   const [minMembers, setMinMembers] = useState<number | ''>(cfg.defaultMinMembers ?? 100)
   const [maxMembers, setMaxMembers] = useState<number | ''>(100000)
   const [langDetect, setLangDetect] = useState(false)
@@ -245,6 +252,7 @@ function ChannelParserInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: 
     // Теперь эти три реально применяются на сервере (26.08): активность и минимум
     // комментариев считаются по постам канала, балл — наш собственный.
     minRating,
+    parallelAccounts: parallel,
     minMembers: minMembers === '' ? 0 : minMembers,
     maxMembers: maxMembers === '' ? 0 : maxMembers,
     langDetection: langDetect,
@@ -255,7 +263,7 @@ function ChannelParserInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: 
       floodWait: 120,
       floodQuarantine: 3,
     },
-  }), [carry, selected, keywords, endings, method, aiProtect, protLevel, limit, activity, commentFilter, minComments, minRating, minMembers, maxMembers, langDetect, intersect, fastWork, reqDelay, chDelay])
+  }), [carry, selected, keywords, endings, method, aiProtect, protLevel, limit, activity, commentFilter, minComments, minRating, parallel, minMembers, maxMembers, langDetect, intersect, fastWork, reqDelay, chDelay])
 
   const busySelectedCount = useMemo(
     () => [...selected].filter((id) => accounts.some((a) => a.id === id && a.busyIn)).length,
@@ -294,6 +302,7 @@ function ChannelParserInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: 
     // Балл тоже часть отбора, а не украшение — шаблон обязан его восстанавливать,
     // иначе применённый шаблон соберёт не то, что собирал раньше.
     if (s.minRating !== undefined) setMinRating(Number(s.minRating) || 1)
+    if (s.parallelAccounts !== undefined) setParallel(!!s.parallelAccounts)
     if (s.commentFilter !== undefined) setCommentFilter(s.commentFilter)
     if (s.minComments !== undefined) setMinComments(s.minComments)
     if (s.minMembers !== undefined) setMinMembers(s.minMembers)
@@ -387,6 +396,27 @@ function ChannelParserInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: 
       {/* Выбор аккаунтов */}
       <div id="sec-accounts" className="scroll-mt-24">
         <AccountPicker moduleKey={moduleKey} selected={selected} onChange={setSelected} actions={cfg.accountActions} withFilters={!!cfg.accountFilters} selectedTitle={cfg.selectedTitle ?? 'Выбрано для парсинга'} />
+        {/*
+          Объяснение стоит ЗДЕСЬ, у выбора аккаунтов, а не в настройках: вопрос «даст ли
+          больше аккаунтов ускорение» возникает именно в момент выбора, и ответ на него
+          зависит от этого тумблера.
+        */}
+        <label className={cn('mt-2 flex cursor-pointer items-start gap-2.5 rounded-2xl border px-3 py-2.5 transition-colors',
+          parallel ? 'border-spark-500/40 bg-spark-500/8' : 'border-line bg-elevated/40')}>
+          <input type="checkbox" className="mt-0.5 h-4 w-4 accent-spark-500" checked={parallel} disabled={running}
+            onChange={(e) => setParallel(e.target.checked)} />
+          <span className="min-w-0">
+            <span className="block text-xs font-semibold text-fg">Асинхронный режим — аккаунты ищут одновременно</span>
+            <span className="mt-0.5 block text-[11px] leading-snug text-white/45">
+              {selected.size > 1
+                ? `${queryCount} запросов разойдутся между ${selected.size} аккаунтами: каждый берёт следующий свободный, поэтому медленный не задерживает остальных. Стартуют вразнобой. Примерно в ${selected.size} раза быстрее.`
+                : 'Нужно минимум 2 аккаунта. Без него запросы идут строго по одному, и время сбора не зависит от того, сколько аккаунтов выбрано.'}
+            </span>
+            <span className="mt-1 block text-[11px] leading-snug text-white/35">
+              Даже без него больше аккаунтов — это меньше запросов на каждый: FloodWait прилетает именно за частоту с одного профиля.
+            </span>
+          </span>
+        </label>
       </div>
 
       {/* Шаблоны */}
