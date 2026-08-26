@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { Bookmark, Pencil, Plus, X } from 'lucide-react'
 import type { ModulePreset, ModuleTaskSettings } from '@/api/modulesApi'
 import { presetHex } from './SavePresetModal'
+import { cn } from '@/shared/lib/utils'
 
 /**
  * Шаблоны настроек модуля (ТЗ 06.08 §10, TPL-001).
@@ -46,36 +47,54 @@ export function PresetBar({ presets = [], onApply, onSave, onEdit, onDelete, dis
         </span>
         <div className="flex min-w-0 flex-wrap items-center gap-2">
           {presets.map((p) => (
+            /*
+             * Правка 26.08: кликабельна ВСЯ плашка, а не только название.
+             * Раньше нажатие ловил один <button> с текстом — попасть надо было точно в
+             * буквы: мимо по цветной точке, по подписи владельца или просто по отступу
+             * клик не срабатывал, и человек считал, что шаблон не применяется.
+             *
+             * Карандаш и крестик остаются отдельными кнопками и гасят всплытие: иначе
+             * «переименовать» или «удалить» заодно подставляли бы настройки.
+             * Плашка — не <button>, потому что кнопка внутри кнопки — невалидная разметка;
+             * поэтому role/tabIndex и обработка Enter и пробела руками.
+             */
             <span
               key={p.id}
-              className="group inline-flex items-center gap-1.5 rounded-xl border border-line bg-surface py-1.5 pl-2.5 pr-1.5 text-sm font-medium text-fg transition-colors hover:border-spark-500/40 has-[button:active]:border-spark-500/70 has-[button:active]:bg-spark-500/10"
+              role="button"
+              tabIndex={disabled ? -1 : 0}
+              aria-label={`Применить шаблон «${p.name}»`}
+              title="Применить шаблон к настройкам"
+              onClick={() => { if (!disabled) onApply?.(p.settings) }}
+              onKeyDown={(e) => {
+                if (disabled || (e.key !== 'Enter' && e.key !== ' ')) return
+                e.preventDefault()
+                onApply?.(p.settings)
+              }}
+              className={cn(
+                'group inline-flex items-center gap-1.5 rounded-xl border border-line bg-surface py-1.5 pl-2.5 pr-1.5 text-sm font-medium text-fg transition-all',
+                // Нажатие должно быть ВИДНО: настройки подставляются мгновенно, и без
+                // отклика человек не понимал, сработал ли клик, и жал по второму разу.
+                disabled
+                  ? 'cursor-default opacity-50'
+                  : 'cursor-pointer hover:border-spark-500/40 active:scale-95 active:border-spark-500/70 active:bg-spark-500/10',
+              )}
               style={{ borderLeft: `3px solid ${presetHex(p.color)}` }}
             >
               <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ background: presetHex(p.color) }} />
-              {/* Правка 24.08: нажатие должно быть ВИДНО. Настройки подставляются мгновенно, и
-                  без отклика человек не понимал, сработал ли клик, и жал по второму разу. */}
-              <button
-                type="button"
-                onClick={() => onApply?.(p.settings)}
-                disabled={disabled}
-                title="Применить шаблон к настройкам"
-                className="max-w-[180px] truncate text-left transition-transform active:scale-95 disabled:opacity-50"
-              >
-                {p.name}
-              </button>
+              <span className="max-w-[180px] truncate text-left">{p.name}</span>
               {p.owner && (
                 <span className="shrink-0 rounded-md bg-elevated px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-muted" title="Владелец шаблона">
                   {p.owner}
                 </span>
               )}
               {onEdit && (
-                <button type="button" onClick={() => onEdit(p)} title="Переименовать шаблон"
+                <button type="button" onClick={(e) => { e.stopPropagation(); onEdit(p) }} title="Переименовать шаблон"
                   className="grid h-5 w-5 shrink-0 place-items-center rounded-lg text-faint hover:bg-spark-500/12 hover:text-spark-300">
                   <Pencil size={12} />
                 </button>
               )}
               {onDelete && (
-                <button type="button" onClick={() => onDelete(p.id)} title="Удалить шаблон"
+                <button type="button" onClick={(e) => { e.stopPropagation(); onDelete(p.id) }} title="Удалить шаблон"
                   className="grid h-5 w-5 shrink-0 place-items-center rounded-lg text-faint hover:bg-rose-500/12 hover:text-rose-300">
                   <X size={13} />
                 </button>
@@ -87,7 +106,9 @@ export function PresetBar({ presets = [], onApply, onSave, onEdit, onDelete, dis
           <Plus size={14} /> Создать новый шаблон
         </button>
       </div>
-      <p className="mt-1.5 text-xs text-muted">Клик по названию — подставить сохранённые настройки. Выбор аккаунтов не меняется.</p>
+      {/* Правка 26.08: аккаунты шаблон теперь и восстанавливает, а не только сохраняет —
+          подпись обязана говорить правду, иначе она сама сбивает с толку. */}
+      <p className="mt-1.5 text-xs text-muted">Клик по шаблону — подставить сохранённые настройки вместе с выбором аккаунтов. Недоступных в подстановку не берём.</p>
     </div>
   )
 }

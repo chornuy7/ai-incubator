@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   Play, Sparkles, Hash, Clock, Users, MessageSquareText,
   Heart, Eye, Shield, MessageCircle, Database, Trophy, Link2, Plus, Terminal, ArrowUpRight, Lock, LockOpen, Flame,
@@ -79,6 +79,10 @@ export function LiveModule({ moduleKey }: { moduleKey: string }) {
 
 function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: string }) {
   const accounts = activeAccounts(useApp((s) => s.data))
+  // Список аккаунтов читаем через ref: applyPreset — стабильный колбэк, и включать в его
+  // зависимости меняющийся массив значило бы пересоздавать его на каждое обновление парка.
+  const accountsRef = useRef(accounts)
+  accountsRef.current = accounts
   const { task, running, starting, start, stop, savePreset, deletePreset, editPreset, presets, pushToast, justStarted, dismissJustStarted } = useModuleTask(moduleKey)
 
   // R6: гейтинг блоков внутри модуля по правам роли. Демо/админ — всё видно.
@@ -426,6 +430,31 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
     if (Array.isArray(s.stopWords)) setStopWordsText(s.stopWords.join(', '))
     if (s.analyzeImages !== undefined) setAnalyzeImages(s.analyzeImages)
     if (s.typeWeights) setTypeWeights(s.typeWeights)
+
+    /*
+     * Аккаунты шаблон СОХРАНЯЛ, но не восстанавливал (вопрос владельца 26.08).
+     * Подпись честно предупреждала «выбор аккаунтов не меняется», но пользы в этом не
+     * было: человек сохранял набор целиком, а получал его без исполнителей.
+     *
+     * Восстанавливаем только те, что доступны ЗДЕСЬ И СЕЙЧАС. Шаблон переживает удаление
+     * аккаунта, переезд в корзину и передачу другому человеку — подставлять id вслепую
+     * значило бы отдать в запуск то, чего у человека нет, а суб получил бы чужие профили
+     * из шаблона владельца. Чего не хватает — говорим вслух, а не молчим.
+     */
+    if (Array.isArray(s.accountIds)) {
+      const have = new Set(accountsRef.current.map((a: { id: string }) => a.id))
+      const restored = s.accountIds.filter((id) => have.has(id))
+      const missing = s.accountIds.length - restored.length
+      setSelected(new Set(restored))
+      pushToast({
+        type: 'success',
+        title: 'Шаблон применён',
+        desc: missing
+          ? `Аккаунтов из шаблона: ${restored.length} из ${s.accountIds.length}. Остальные недоступны — удалены, в корзине или не выданы вам.`
+          : restored.length ? `Аккаунтов подставлено: ${restored.length}` : undefined,
+      })
+      return
+    }
     pushToast({ type: 'success', title: 'Шаблон применён' })
   }, [cfg.lookModeOptions, cfg.toggleGroups, pushToast, remember, replacePrompts])
 
