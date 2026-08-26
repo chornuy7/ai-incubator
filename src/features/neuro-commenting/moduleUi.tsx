@@ -192,8 +192,17 @@ export function LaunchStat({ icon, color, label, value, warn }: {
   )
 }
 
-export function DelayFields({ label, from, to, onFrom, onTo, unit }: {
-  label: string; from: number; to: number; onFrom: (n: number) => void; onTo: (n: number) => void; unit?: string
+/**
+ * Потолок паузы между действиями — час.
+ *
+ * Замечание владельца 26.08: в поля влезало сколько угодно (5670 с — полтора часа между
+ * комментариями). Задача с такой паузой не «осторожная», а сломанная: один аккаунт сделает
+ * пару действий за смену. Верх ограничиваем, низ уже связан парой «от/до».
+ */
+const MAX_DELAY_SEC = 3600
+
+export function DelayFields({ label, from, to, onFrom, onTo, unit, max = MAX_DELAY_SEC }: {
+  label: string; from: number; to: number; onFrom: (n: number) => void; onTo: (n: number) => void; unit?: string; max?: number
 }) {
   const u = unit ? ` ${unit}` : ''
   return (
@@ -201,9 +210,9 @@ export function DelayFields({ label, from, to, onFrom, onTo, unit }: {
       <span className="text-sm font-medium text-fg">{label}</span>
       <div className="flex items-center gap-2">
         {/* #9: «от» не больше «до», «до» не меньше «от» — макс/мин связаны */}
-        <Stepper value={from} onChange={onFrom} suffix={u} max={to} />
+        <Stepper value={from} onChange={onFrom} suffix={u} max={Math.min(to, max)} />
         <span className="text-muted">до</span>
-        <Stepper value={to} onChange={onTo} suffix={u} min={from} />
+        <Stepper value={to} onChange={onTo} suffix={u} min={from} max={max} />
       </div>
     </div>
   )
@@ -242,13 +251,16 @@ function Stepper({ value, onChange, suffix, min = 0, max }: {
   )
 }
 
-export function SingleDelayField({ label, value, onChange, unit }: {
-  label: string; value: number; onChange: (n: number) => void; unit?: string
+export function SingleDelayField({ label, value, onChange, unit, min = 0, max = MAX_DELAY_SEC, hint }: {
+  label: string; value: number; onChange: (n: number) => void; unit?: string; min?: number; max?: number; hint?: string
 }) {
   return (
     <div className="flex flex-wrap items-center justify-between gap-2 border-b border-line/60 pb-3 last:border-0 last:pb-0">
-      <span className="text-sm font-medium text-fg">{label}</span>
-      <Stepper value={value} onChange={onChange} suffix={unit ? ` ${unit}` : ''} />
+      <span className="text-sm font-medium text-fg">
+        {label}
+        {hint && <span className="mt-0.5 block text-[11px] font-normal text-faint">{hint}</span>}
+      </span>
+      <Stepper value={value} onChange={onChange} suffix={unit ? ` ${unit}` : ''} min={min} max={max} />
     </div>
   )
 }

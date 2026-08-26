@@ -276,6 +276,11 @@ export function TimingSection(props: TimingSectionProps) {
                   от задержки вступления (замечание владельца 26.08). */}
               {joinTime > 0 && (
                 <span className="text-faint"> · действия {fmtDur(actionsTime)} + вступления {fmtDur(joinTime)} (первый заход)</span>
+              )}
+              {/* Целей нет — вступать некуда, и правка «Задержки вступления» ничего не
+                  двигает. Молчать об этом нельзя: поле выглядит сломанным (замечание 26.08). */}
+              {joinTime === 0 && avgJoinSec > 0 && !targetsCount && (
+                <span className="text-faint"> · вступления посчитаем, когда добавите цель</span>
               )}</>
             : delayPreset === CUSTOM
               ? <>Задержки — ручные (заданы в «Расширенных настройках»).</>
@@ -382,8 +387,31 @@ export function TimingSection(props: TimingSectionProps) {
                   unit="с"
                 />
               )}
-              <SingleDelayField label="FloodWait задержка (сек)" value={delays.floodWait} onChange={(n) => editDelays((d) => ({ ...d, floodWait: n }))} unit="с" />
-              <SingleDelayField label="FloodWait до карантина" value={delays.floodQuarantine} onChange={(n) => editDelays((d) => ({ ...d, floodQuarantine: n }))} />
+              {/* Обе настройки — аварийная ветка: срабатывают, только когда Telegram
+                  притормозил аккаунт. Поэтому в обещанное время они НЕ входят, но на
+                  реальный прогон влияют (server/lib/accountRunner.js#handleFlood).
+                  Подпись об этом говорит прямо — иначе поля выглядят мёртвыми. */}
+              <SingleDelayField
+                label="FloodWait задержка (сек)"
+                hint="Сколько ждать сверх срока, который назвал Telegram. Срабатывает только при FloodWait — в расчёт времени задачи не входит."
+                value={delays.floodWait}
+                onChange={(n) => editDelays((d) => ({ ...d, floodWait: n }))}
+                unit="с"
+              />
+              {/*
+                Это СЧЁТЧИК срабатываний, а не секунды. Потолка не было — можно было
+                вписать 5000 и тем самым выключить карантин совсем (замечание владельца
+                26.08). Ноль тоже нельзя: `floodWaits >= 0` отправил бы в карантин с
+                первого же FloodWait.
+              */}
+              <SingleDelayField
+                label="FloodWait до карантина"
+                hint="Сколько FloodWait подряд аккаунт переживёт, прежде чем уйдёт в карантин. Это счётчик, не секунды."
+                value={delays.floodQuarantine}
+                onChange={(n) => editDelays((d) => ({ ...d, floodQuarantine: n }))}
+                min={1}
+                max={10}
+              />
             </div>
           </div>
           )}
