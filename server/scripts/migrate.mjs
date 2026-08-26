@@ -50,8 +50,16 @@ if (!url) {
  * этом прямо, чтобы человек не искал причину в пароле.
  */
 process.on('uncaughtException', (e) => {
-  if (['ECONNREFUSED', 'ENOTFOUND', 'ETIMEDOUT', 'EAI_AGAIN'].includes(e?.code)) {
+  if (['ECONNREFUSED', 'ENOTFOUND', 'ETIMEDOUT', 'EAI_AGAIN', 'ENETUNREACH'].includes(e?.code)) {
     console.error(`Не удалось подключиться к базе (${e.code}, ${e.address || ''}:${e.port || 5432}).`)
+    // Ловушка Supabase: Direct connection живёт ТОЛЬКО в IPv6. Там, где IPv6 нет
+    // (GitHub-раннеры — как раз такой случай), нужен Session pooler по IPv4.
+    if (String(e.address || '').includes(':')) {
+      console.error('Адрес IPv6, а сеть его не умеет — обычное дело для CI-раннеров.')
+      console.error('Возьмите строку Session pooler (Supabase → Connect → Direct → Session pooler):')
+      console.error('  postgresql://postgres.<ref>:ПАРОЛЬ@aws-0-<регион>.pooler.supabase.com:5432/postgres')
+      process.exit(1)
+    }
     console.error('Порт 5432 должен быть открыт наружу. Если сеть пропускает только 80/443 —')
     console.error('возьмите строку Session pooler вместо Direct или запустите команду там, где доступ есть.')
     process.exit(1)
