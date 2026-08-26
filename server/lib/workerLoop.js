@@ -12,9 +12,11 @@ export function warmingPace(level) {
   // просмотр постов 40% · реакции 20% · чтение/ЛС 20% · вступления 10% · подписки/ping 10%.
   const weights = { view: 40, react: 20, read: 20, join: 10, ping: 10 }
   const plans = [
-    { level: 0, label: 'Быстрый (2 дня)', mul: 0.8, actionsPerDay: 40, weights },
-    { level: 1, label: 'Нормальный (3–7 дней)', mul: 1.3, actionsPerDay: 20, weights },
-    { level: 2, label: 'Стандартный (7–14 дней)', mul: 2.0, actionsPerDay: 10, weights },
+    // Названия — про ТЕМП, а не про срок: «(2 дня)» читалось как длительность запуска
+    // и расходилось с ETA задачи (вопрос владельца 26.08). Срок задаёт лимит действий.
+    { level: 0, label: 'Быстрый (~40 действий/день)', mul: 0.8, actionsPerDay: 40, weights },
+    { level: 1, label: 'Нормальный (~20 в день)', mul: 1.3, actionsPerDay: 20, weights },
+    { level: 2, label: 'Бережный (~10 в день)', mul: 2.0, actionsPerDay: 10, weights },
   ]
   return plans[level] || plans[1]
 }
@@ -73,6 +75,22 @@ export function trackIdlePass(task, progressed, maxIdle = 5) {
   }
   task.idlePasses = (task.idlePasses || 0) + 1
   return task.idlePasses >= maxIdle
+}
+
+/**
+ * Задача сдалась после серии холостых кругов — пометить это ЧЕСТНО.
+ *
+ * Прогон 26.08: нейрокомментинг пять кругов подряд ничего не отправил (спамблок,
+ * вероятность, распорядок), написал «Остановка: комментарий не отправлен после
+ * нескольких попыток» — и следующей строкой «Завершено», а в дашборде встал зелёным
+ * «готово» на 9%. Провал выглядел успехом, потому что `statusAfterRun` смотрит только
+ * на fatalError/stopRequested, а холостой выход не ставил ни того, ни другого.
+ *
+ * @param {object} task @param {string} reason почему сдались — попадёт в итоговую строку
+ */
+export function markIdleStop(task, reason) {
+  task.stopRequested = true
+  task.idleStopReason = String(reason || '')
 }
 
 /**

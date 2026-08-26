@@ -105,7 +105,7 @@ import { getAccountMeta, setAccountMeta, accountLabel } from '../accountsMeta.js
 import { releaseTaskLocks, markTaskLive, markTaskDone, assertAccountAvailable } from '../lib/accountLocks.js'
 import { loadSessionString, createClient } from '../tgAuth.js'
 import {
-  pickCommentCandidates, trackIdlePass, warmingPace, pickWeightedKey, idleWaitPlan, WARM_WINDOW_MS, msUntilHour, inActiveWindow,
+  pickCommentCandidates, trackIdlePass, markIdleStop, warmingPace, pickWeightedKey, idleWaitPlan, WARM_WINDOW_MS, msUntilHour, inActiveWindow,
 } from '../lib/workerLoop.js'
 import { channelSignals, channelScore, isActive, detectLang } from '../lib/channelScore.js'
 import { scheduleHour } from '../lib/accountFatigue.js'
@@ -366,7 +366,9 @@ export function finishNote(task, doneText = 'Завершено') {
   const tail = waited > 0 ? ` · в паузах ${fmtWait(waited)}` : ''
   if (task.status === 'error') return `Задача завершилась с ошибкой: ${task.fatalError || 'см. записи выше'}${tail}`
   if (task.status === 'paused') return `Пауза${tail}`
-  if (task.status === 'stopped') return `Остановлено${tail}`
+  // Холостой выход — не «остановлено рукой»: называем причину, иначе провал читается
+  // как успех (прогон 26.08: «Завершено» на 9% после пяти пустых кругов).
+  if (task.status === 'stopped') return `Остановлено${task.idleStopReason ? `: ${task.idleStopReason}` : ''}${tail}`
   return `${doneText}${tail}`
 }
 
@@ -634,6 +636,7 @@ export async function runNeuroCommenting(task, store) {
           await disconnectAccount(client, accountId)
           if (trackIdlePass(task, false)) {
             await store.appendLog(task, 'error', 'Остановка: комментарий не отправлен после нескольких попыток')
+        markIdleStop(task, 'комментарий не отправлен после нескольких попыток')
             break
           }
           await store.saveTask(task)
@@ -655,6 +658,7 @@ export async function runNeuroCommenting(task, store) {
           await disconnectAccount(client, accountId)
           if (trackIdlePass(task, false)) {
             await store.appendLog(task, 'error', 'Остановка: не удалось вступить в канал')
+        markIdleStop(task, 'не удалось вступить в канал')
             break
           }
           await store.saveTask(task)
@@ -837,6 +841,7 @@ export async function runNeuroCommenting(task, store) {
 
       if (trackIdlePass(task, progressed)) {
         await store.appendLog(task, 'error', 'Остановка: комментарий не отправлен после нескольких попыток')
+        markIdleStop(task, 'комментарий не отправлен после нескольких попыток')
         break
       }
 
@@ -1063,6 +1068,7 @@ export async function runNeuroChatting(task, store) {
       }
       if (trackIdlePass(task, progressed)) {
         await store.appendLog(task, 'error', 'Остановка: нет прогресса после нескольких попыток')
+        markIdleStop(task, 'нет прогресса после нескольких попыток')
         break
       }
       task = (await store.loadTask(task.id)) || task
@@ -2601,7 +2607,17 @@ export async function runChannelParser(task, store, kind) {
       for (let i = baseChannels.length - 1; i >= 0; i--) {
         if (!keepSet.has((baseChannels[i].username || baseChannels[i].tgPeerId || '').toString().toLowerCase())) baseChannels.splice(i, 1)
       }
-      await store.appendLog(task, 'info', `AND-пересечение (${need} ключей): ${before} → ${task.results.length}`)
+      /*
+       * Прогон 26.08: 51 ключевое слово + пересечение = 146 строк → 0, и человек остался
+       * с пустой выдачей, ничего не понимая. Пересечение требует, чтобы ОДИН канал нашёлся
+       * по КАЖДОМУ слову, а это выполнимо только для очень близких синонимов. Раз уж
+       * поймали такой случай — говорим прямо, что делать, а не оставляем голое «146 → 0».
+       */
+      const wiped = before > 0 && task.results.length === 0
+      const совет = wiped && need > 3
+        ? ` — канал должен встретиться по КАЖДОМУ из ${need} слов, а это почти невозможно: снимите «Пересечение» или оставьте 2–3 близких слова`
+        : wiped ? ' — ни один канал не совпал со всеми словами; снимите «Пересечение», чтобы увидеть собранное' : ''
+      await store.appendLog(task, wiped ? 'warning' : 'info', `AND-пересечение (${need} ключей): ${before} → ${task.results.length}${совет}`)
     }
 
     task.progress.total = task.results.length

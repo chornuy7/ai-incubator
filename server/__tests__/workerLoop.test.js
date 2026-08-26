@@ -32,7 +32,10 @@ test('warmingPace: 3 уровня — длиннее уровень, медле�
   const std = warmingPace(2)
   assert.match(fast.label, /Быстрый/)
   assert.match(norm.label, /Нормальный/)
-  assert.match(std.label, /Стандартный/)
+  assert.match(std.label, /Бережный/)
+  // Название говорит про ТЕМП, а не про срок: «(2 дня)» читалось как длительность
+  // запуска и расходилось с ETA задачи (вопрос владельца 26.08).
+  for (const p of [fast, norm, std]) assert.match(p.label, /в день|действий\/день/)
   // темп: mul растёт (медленнее), действий/день падает
   assert.ok(fast.mul < norm.mul && norm.mul < std.mul)
   assert.ok(fast.actionsPerDay > norm.actionsPerDay && norm.actionsPerDay > std.actionsPerDay)
