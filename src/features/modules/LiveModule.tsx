@@ -24,7 +24,7 @@ import {
 import type { ModuleTaskSettings } from '@/api/modulesApi'
 import { confirmDialog } from '@/shared/lib/dialog'
 import { LaunchCost } from './shared/LaunchCost'
-import { useGlobalPace, delayMultiplier, taskSeconds, perAccountShare } from '@/shared/lib/pace'
+import { useGlobalPace, delayMultiplier, taskSeconds, perAccountShare, joinSeconds } from '@/shared/lib/pace'
 import { PresetBar } from './shared/PresetBar'
 
 const DEFAULT_DELAYS = {
@@ -439,9 +439,15 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
         value: (() => {
           const accCount = Math.max(1, selected.size || accounts.length)
           const mul = delayMultiplier(protLevel, delayPreset, globalPace)
-          if (!perAccountShare(maxActions || 0, accCount)) return '—'
-          const from = taskSeconds(maxActions || 0, accCount, primaryDelay[0] * mul)
-          const to = taskSeconds(maxActions || 0, accCount, primaryDelay[1] * mul)
+          const perAcc = perAccountShare(maxActions || 0, accCount)
+          if (!perAcc) return '—'
+          // Вступления входят во время и здесь: воркер спит эту паузу один раз
+          // на пару «аккаунт + цель» (замечание владельца 26.08).
+          const tgt = targets.length + postUrls.length
+          const jFrom = joinSeconds(tgt, perAcc, (delays.join?.[0] ?? 0) * mul)
+          const jTo = joinSeconds(tgt, perAcc, (delays.join?.[1] ?? 0) * mul)
+          const from = taskSeconds(maxActions || 0, accCount, primaryDelay[0] * mul) + jFrom
+          const to = taskSeconds(maxActions || 0, accCount, primaryDelay[1] * mul) + jTo
           return `${fmtDur(from)}–${fmtDur(to)}`
         })(),
       },
@@ -651,6 +657,7 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
             durationPeriodHint={`Период работы: ${durationPeriodMin}–${durationMinutes} мин`}
             totalLabel={cfg.reactionSettings?.max.label ?? cfg.workModeFields?.maxLabel ?? 'Всего действий'}
             computedTotal={{ value: maxActions, accounts: accCount }}
+            targetsCount={targets.length + postUrls.length}
             perAccount={{ min: minPerAcc, max: maxPerAcc, onMin: setMinPerAcc, onMax: setMaxPerAcc }}
             minWords={cfg.workModeFields?.minWords ? { value: minWords, onChange: setMinWords } : null}
             delays={delays}
@@ -788,6 +795,7 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
             durationPeriodHint={`Период работы: ${durationPeriodMin}–${durationMinutes} мин`}
             totalLabel={cfg.reactionSettings?.max.label ?? cfg.workModeFields?.maxLabel ?? 'Всего действий'}
             computedTotal={{ value: maxActions, accounts: accCount }}
+            targetsCount={targets.length + postUrls.length}
             perAccount={{ min: minPerAcc, max: maxPerAcc, onMin: setMinPerAcc, onMax: setMaxPerAcc }}
             minWords={cfg.workModeFields?.minWords ? { value: minWords, onChange: setMinWords } : null}
             delays={delays}
@@ -1000,7 +1008,10 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
             onStop={stop}
             onSave={handleSave}
             primaryLabel={cfg.primaryAction ?? 'Начать'}
-            cost={<LaunchCost compact moduleKey={moduleKey} actions={maxActions} accounts={selected.size} delaySec={(() => { const m = delayMultiplier(protLevel, delayPreset, globalPace); const d = primaryDelay; return d ? [Math.round(d[0] * m), Math.round(d[1] * m)] as [number, number] : d })()} />}
+            cost={<LaunchCost compact moduleKey={moduleKey} actions={maxActions} accounts={selected.size}
+              delaySec={(() => { const m = delayMultiplier(protLevel, delayPreset, globalPace); const d = primaryDelay; return d ? [Math.round(d[0] * m), Math.round(d[1] * m)] as [number, number] : d })()}
+              joinSec={(() => { const m = delayMultiplier(protLevel, delayPreset, globalPace); const d = delays.join; return d ? [Math.round(d[0] * m), Math.round(d[1] * m)] as [number, number] : undefined })()}
+              targets={targets.length + postUrls.length} />}
             stats={launchStats}
             task={task}
             warn={warn}

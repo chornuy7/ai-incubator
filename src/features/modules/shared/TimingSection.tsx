@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { PRESET_MUL, useGlobalPace, taskSeconds } from '@/shared/lib/pace'
+import { PRESET_MUL, useGlobalPace, taskSeconds, joinSeconds, perAccountShare } from '@/shared/lib/pace'
 import { Timer, Bolt, Settings2, Shield, ChevronRight, SlidersHorizontal } from 'lucide-react'
 import { ToggleGroup } from '@/shared/ui'
 import { cn } from '@/shared/lib/utils'
@@ -62,6 +62,8 @@ export interface TimingSectionProps {
   showComment?: boolean
   showAction?: boolean
   showJoin?: boolean
+  /** Сколько целей выбрано — вступление в каждую занимает время (§ задержка вступления). */
+  targetsCount?: number
   labels?: { comment?: string; action?: string; join?: string }
 
   delayPresets?: string[]
@@ -104,7 +106,7 @@ export function TimingSection(props: TimingSectionProps) {
     workModeOptions, workMode = 0, onWorkMode, workModeLabel = 'Режим работы',
     durationMinutes = 60, onDuration, showDurationAlways, durationPeriodHint,
     totalLabel = 'Действия', total, computedTotal, perAccount, minWords,
-    delays, onDelays, showComment, showAction = true, showJoin = true, labels = {},
+    delays, onDelays, showComment, showAction = true, showJoin = true, targetsCount, labels = {},
     delayPresets, delayPreset = 1, onDelayPreset,
   } = props
 
@@ -148,7 +150,13 @@ export function TimingSection(props: TimingSectionProps) {
   const accountsCount = computedTotal?.accounts ?? 1
   const primaryDelay = (showAction && delays.action) ? delays.action : (showComment && delays.comment) ? delays.comment : (delays.action || delays.comment || null)
   const avgDelaySec = primaryDelay ? ((primaryDelay[0] + primaryDelay[1]) / 2) * mul : 0
-  const fullTime = fmtDur(taskSeconds(totalActions, accountsCount, avgDelaySec))
+  // Замечание владельца 26.08: «задержка вступления ни на что не влияет». Воркер её реально
+  // спит (joinTarget.js), причём один раз на пару «аккаунт + цель», — значит она обязана
+  // входить во время. Это верхняя оценка «первого захода»: уже вступивший аккаунт не платит.
+  const avgJoinSec = (showJoin && delays.join) ? ((delays.join[0] + delays.join[1]) / 2) * mul : 0
+  const joinTime = joinSeconds(targetsCount ?? 0, perAccountShare(totalActions, accountsCount), avgJoinSec)
+  const actionsTime = taskSeconds(totalActions, accountsCount, avgDelaySec)
+  const fullTime = fmtDur(actionsTime + joinTime)
   // MR-136: поля задержек показывают ЭФФЕКТИВНОЕ значение (базовое × множитель пресета) —
   // чтобы выбор Мин/Макс сразу менял видимые числа. При ручном правке уходим в Custom (×1),
   // и введённое (уже масштабированное) значение становится базовым — эффект сохраняется.
@@ -263,7 +271,12 @@ export function TimingSection(props: TimingSectionProps) {
             Если посчитать не из чего (нет действий/задержки) — падаем на эффективные задержки. */}
         <div className="mt-2 text-[11px] text-muted">
           {fullTime
-            ? <>Полное время: ≈ {fullTime} <span className="text-faint">({accountsCount > 1 ? `${accountsCount} аккаунта работают параллельно` : 'один аккаунт'}{delayPreset === CUSTOM ? '' : `, пресет «${delayPresets![delayPreset]}»`})</span></>
+            ? <>Полное время: ≈ {fullTime} <span className="text-faint">({accountsCount > 1 ? `${accountsCount} аккаунта работают параллельно` : 'один аккаунт'}{delayPreset === CUSTOM ? '' : `, пресет «${delayPresets![delayPreset]}»`})</span>
+              {/* Из чего сложилось: без разбивки было непонятно, почему число не двигается
+                  от задержки вступления (замечание владельца 26.08). */}
+              {joinTime > 0 && (
+                <span className="text-faint"> · действия {fmtDur(actionsTime)} + вступления {fmtDur(joinTime)} (первый заход)</span>
+              )}</>
             : delayPreset === CUSTOM
               ? <>Задержки — ручные (заданы в «Расширенных настройках»).</>
               : <>Эффективные задержки: {[showAction && delays.action && `действие ${eff(delays.action)}`, showComment && delays.comment && `комментарий ${eff(delays.comment)}`, showJoin && delays.join && `вступление ${eff(delays.join)}`].filter(Boolean).join(' · ') || '—'}</>}
