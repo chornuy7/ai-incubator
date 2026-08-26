@@ -120,21 +120,41 @@ test('что появилось и что пропало — считаем по
   assert.deepEqual(d.gone, ['beta'])
 })
 
-test('слежение не включается само — только по явной просьбе', async () => {
-  const s = { keywords: ['watch-off'] }
+/**
+ * Решение владельца 26.08 ОТМЕНИЛО прежнее «слежение только по галочке»: обновлять надо
+ * все сохранённые запросы раз в 12 часов, иначе база стареет — обновляется лишь то, о чём
+ * вспомнили. Ревизию ведёт наш сервисный пул и за наш счёт, поэтому включать её за
+ * клиента теперь можно: его аккаунты и деньги она не трогает.
+ */
+test('каждый сохранённый запрос сам встаёт в очередь на ревизию', async () => {
+  const s = { keywords: ['watch-auto'] }
   await saveParserResults('parsing', s, [{ username: 'a' }], 'u1')
-  const due = await dueWatches(Date.now() + 100 * 24 * 3600_000, 50)
-  assert.equal(due.filter((w) => w.label === 'watch-off').length, 0, 'запрос попал в очередь, хотя слежение не просили')
+  // Сразу после сбора обновлять нечего…
+  assert.equal((await dueWatches(Date.now(), 50)).filter((w) => w.label === 'watch-auto').length, 0)
+  // …а через 12 часов запрос созревает сам, без единой галочки.
+  const due = await dueWatches(Date.now() + 13 * 3600_000, 50)
+  assert.equal(due.filter((w) => w.label === 'watch-auto').length, 1)
+})
+
+test('повторный сбор НЕ отодвигает назначенную ревизию', async () => {
+  const s = { keywords: ['watch-plan'] }
+  await saveParserResults('parsing', s, [{ username: 'a' }], 'u1')
+  const first = (await dueWatches(Date.now() + 13 * 3600_000, 50)).find((w) => w.label === 'watch-plan')
+  // Тот же запрос прогнали руками через час — срок ревизии должен остаться прежним,
+  // иначе часто запрашиваемый поиск не обновится никогда.
+  await saveParserResults('parsing', s, [{ username: 'a' }, { username: 'b' }], 'u1')
+  const again = (await dueWatches(Date.now() + 13 * 3600_000, 50)).find((w) => w.label === 'watch-plan')
+  assert.equal(again.nextRunAt, first.nextRunAt)
 })
 
 test('включённое слежение созревает к сроку, а не сразу', async () => {
   const s = { keywords: ['watch-on'] }
   await saveParserResults('parsing', s, [{ username: 'a' }, { username: 'b' }], 'u1')
-  assert.equal(await setWatch('parsing', s, { watch: true, periodH: 24, ownerId: 'u1' }), true)
+  assert.equal(await setWatch('parsing', s, { watch: true, periodH: 12, ownerId: 'u1' }), true)
   // Только что собрали — сейчас проверять нечего.
   assert.equal((await dueWatches(Date.now(), 50)).filter((w) => w.label === 'watch-on').length, 0)
-  // А через сутки — пора, и запрос приходит вместе с настройками и прошлым результатом.
-  const due = (await dueWatches(Date.now() + 25 * 3600_000, 50)).filter((w) => w.label === 'watch-on')
+  // А через срок — пора, и запрос приходит вместе с настройками и прошлым результатом.
+  const due = (await dueWatches(Date.now() + 13 * 3600_000, 50)).filter((w) => w.label === 'watch-on')
   assert.equal(due.length, 1)
   assert.deepEqual(due[0].settings.keywords, ['watch-on'], 'без настроек запрос нечем перезапустить')
   assert.equal(due[0].results.length, 2, 'нужен снимок ДО прохода, иначе не с чем сравнивать')
@@ -225,4 +245,36 @@ test('kind tgstat не ломает сигнатуры остальных пар
   const a = parserSignature('parsing', { keywords: ['крипто'] })
   const b = parserSignature('parsing', { keywords: ['крипто'], filters: { category: 'crypto' } })
   assert.equal(a, b, 'фильтры TGStat не должны влезать в ключ обычного парсера')
+})
+
+/**
+ * Деньги (решения владельца 26.08):
+ *   • фоновая ревизия — за наш счёт, с клиента не списывается ничего;
+ *   • выдача готового из базы — КАК ОБЫЧНЫЙ СБОР, по той же цене за строку.
+ * Оба правила про чужие деньги, поэтому проверяем их отдельно от механики кэша.
+ */
+test('фоновое обновление не списывает с клиента ничего', async () => {
+  const { chargeActions } = await import('../lib/actionBilling.js')
+  let списаний = 0
+  const deps = {
+    actionMap: { parsing: 0.005 },
+    changeCoins: async () => { списаний += 1; return { applied: -0.005 } },
+    getBalance: async () => ({ coins: 100 }),
+  }
+  const фон = { moduleKey: 'parsing', initiator: 'auto-refresh' }
+  assert.equal(await chargeActions(фон, null, 10, deps), null, 'ревизия не должна списывать')
+  assert.equal(списаний, 0)
+
+  // А запуск клиентом — списывает, как и раньше.
+  const руками = { moduleKey: 'parsing' }
+  assert.ok(await chargeActions(руками, null, 10, deps))
+  assert.equal(списаний, 1)
+})
+
+test('выдача из базы стоит столько же, сколько сбор тех же строк', async () => {
+  const { priceOfRows } = await import('../lib/actionBilling.js')
+  const deps = { actionMap: { parsing: 0.005 } }
+  assert.equal(await priceOfRows('parsing', 100, deps), 0.5)
+  assert.equal(await priceOfRows('parsing', 0, deps), 0, 'пустой результат бесплатен')
+  assert.equal(await priceOfRows('неизвестный-модуль', 100, deps), 0)
 })

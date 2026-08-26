@@ -1009,6 +1009,41 @@ app.post('/api/parser/cache/watch', async (req, res) => {
   } catch (err) { res.status(500).json({ ok: false, error: err instanceof Error ? err.message : 'Ошибка' }) }
 })
 
+/**
+ * Взять готовый результат из базы — с оплатой.
+ *
+ * Решение владельца 26.08: выдача из базы стоит КАК ОБЫЧНЫЙ СБОР. Поэтому смотреть, что
+ * в базе есть (`/cache/lookup`), бесплатно — иначе с человека брали бы деньги за каждый
+ * набранный символ в поиске; а вот ЗАБРАТЬ строки — платно, по той же цене за строку,
+ * что и живой проход.
+ *
+ * Списываем ДО выдачи: в отличие от живого сбора, тут действие мгновенное и откатывать
+ * нечего — либо человек заплатил и получил, либо не получил ничего.
+ */
+app.post('/api/parser/cache/take', async (req, res) => {
+  try {
+    const { kind, settings } = req.body || {}
+    if (!kind || !settings) return res.status(400).json({ ok: false, error: 'Нужны kind и settings' })
+    const scope = await ownerScopeForRequest(req)
+    if (scope.blocked) return res.status(403).json({ ok: false, error: 'Доступ отключён' })
+    const { lookupParserResults } = await import('./parserCache.js')
+    const hit = await lookupParserResults(String(kind), settings)
+    if (!hit) return res.status(404).json({ ok: false, error: 'В базе нет результата под этот запрос' })
+
+    const { priceOfRows } = await import('./lib/actionBilling.js')
+    const cost = await priceOfRows(String(kind), hit.count)
+    if (cost > 0) {
+      const { getBalance, changeCoins } = await import('./balance.js')
+      const { coins } = await getBalance(scope.ownerId)
+      if (coins < cost) {
+        return res.status(402).json({ ok: false, error: `Не хватает монет: нужно ${cost} ⚡, на счету ${coins} ⚡` })
+      }
+      await changeCoins(-cost, `${kind}: ${hit.count} строк из базы`, scope.ownerId)
+    }
+    res.json({ ok: true, charged: cost, cache: hit })
+  } catch (err) { res.status(500).json({ ok: false, error: err instanceof Error ? err.message : 'Ошибка' }) }
+})
+
 /** Свои отслеживаемые запросы (админу платформы — все). */
 app.get('/api/parser/watches', async (req, res) => {
   try {
