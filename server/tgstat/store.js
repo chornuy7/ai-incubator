@@ -188,6 +188,21 @@ export async function cancelImport(id) {
   return importDto(imp)
 }
 
+/**
+ * Дать импорту своё имя (правка 26.08, паритет с «Последними запросами» прямого парсера:
+ * «назвать можно было, переименовать тоже и удалить»). Пустое имя снимает название и
+ * возвращает подпись по категории — отдельной кнопки сброса не нужно.
+ */
+export async function renameImport(id, title) {
+  const imp = await loadImport(id)
+  if (!imp) return null
+  const name = String(title || '').trim().slice(0, 120)
+  if (name) imp.title = name
+  else delete imp.title
+  await saveImport(imp)
+  return importDto(imp)
+}
+
 export async function deleteImport(id) {
   try { await fs.unlink(importPath(id)) } catch { /* нет файла */ }
   return true
