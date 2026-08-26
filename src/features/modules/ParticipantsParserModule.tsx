@@ -123,9 +123,6 @@ function Inner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: string }) {
     limits,
     activeStories,
     intersectionMode: moduleKey === 'parsing-users' ? intersection : false,
-    // Асинхронный режим собирается ЗДЕСЬ, а не подмешивается на запуске: шаблон
-    // сохраняется из buildSettings, и подмешанное поле в него не попадало — тумблер
-    // «слетал» при каждом применении шаблона (созвон 19.08).
     delayChat: fastWork ? 0 : delayChat,
     delayItem: fastWork ? 0 : delayItem,
     delays: { join: [fastWork ? 0 : joinMin, fastWork ? 0 : joinMax] as [number, number] },

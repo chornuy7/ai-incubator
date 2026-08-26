@@ -152,12 +152,6 @@ function ChannelParserInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: 
   const [activity, setActivity] = useState(cfg.defaultActivity ?? 0)
   const [commentFilter, setCommentFilter] = useState(0)
   const [minComments, setMinComments] = useState(0)
-  /*
-   * Асинхронный режим: аккаунты идут одновременно (просьба владельца 26.08 — «если это
-   * быстрее и ускорит работу, то да, и указать об этом при выборе аккаунтов»).
-   * Раньше запросы шли строго по одному, и сотня запросов занимала одинаковое время
-   * хоть на двух аккаунтах, хоть на пятидесяти.
-   */
   const [minMembers, setMinMembers] = useState<number | ''>(cfg.defaultMinMembers ?? 100)
   const [maxMembers, setMaxMembers] = useState<number | ''>(100000)
   const [langDetect, setLangDetect] = useState(false)
