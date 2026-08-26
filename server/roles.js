@@ -69,8 +69,79 @@ export const BLOCKS = [
   { key: 'templates', label: 'ИИ: промпты и шаблоны' },
   { key: 'settings', label: 'Защита и тайминги' },
   { key: 'results', label: 'Результаты' },
-  { key: 'logs', label: 'Логи' },
 ]
+
+/*
+ * Блока «Логи» здесь БОЛЬШЕ НЕТ (правка владельца 26.08: «где у нас в мейлинге или в
+ * любом другом модуле логи и результаты? такого же нету»).
+ *
+ * Проверено по всем витринам: своей секции логов нет ни у одного модуля — логи задачи
+ * живут в Дашборде задач, у парсеров это прямо написано на экране («Логи по этой задаче —
+ * в Дашборде задач»). Тумблер открывал доступ к тому, чего не существует.
+ *
+ * Ключ `logs` в уже выданных правах остаётся лежать как есть: он ни на что не влияет, а
+ * чистить чужие записи ради косметики опаснее, чем оставить их.
+ */
+
+/**
+ * Какие блоки есть У КАЖДОГО модуля и как они называются НА ЕГО ЭКРАНЕ.
+ *
+ * Правка владельца 26.08: «модули и блоки поменялись, нужно, чтобы при выдаче ролям они
+ * назывались идентично тому, что есть, и убрать те, которых уже нет». Раньше список был
+ * ОДИН на все модули — шесть пунктов, одинаковых для парсера и для комментинга. Из-за
+ * этого выдавали «ИИ: промпты и шаблоны» парсеру, где промптов нет вовсе, и искали на
+ * экране «Целевые каналы» там, где написано «Настройки поиска».
+ *
+ * КЛЮЧИ НЕ МЕНЯЮТСЯ — по ним записаны уже выданные права; новых не заводим, иначе у
+ * сотрудников молча пропал бы доступ к разделам (пустой ключ = запрет). Меняются только
+ * СОСТАВ на модуль и ПОДПИСИ.
+ */
+export const MODULE_BLOCKS = {
+  // «Результаты» — только там, где секция результатов действительно есть на экране
+  // (парсеры и рейтинг). У остальных модулей результат смотрят в Дашборде задач, и
+  // тумблер обещал бы несуществующее.
+  'neuro-commenting': ['run', 'targets', 'templates', 'settings'],
+  'neuro-chatting': ['run', 'targets', 'templates', 'settings'],
+  'neuro-dialogs': ['run', 'templates', 'settings'],
+  'mass-react': ['run', 'targets', 'templates', 'settings'],
+  'mass-looking': ['run', 'targets', 'settings'],
+  warming: ['run', 'settings'],
+  mailing: ['run', 'targets', 'templates', 'settings'],
+  autoposting: ['run', 'targets', 'templates', 'settings'],
+  ggr: ['run', 'results'],
+  parsing: ['run', 'targets', 'settings', 'results'],
+  'parsing-groups': ['run', 'targets', 'settings', 'results'],
+  'parsing-users': ['run', 'targets', 'settings', 'results'],
+  'parsing-messages': ['run', 'targets', 'settings', 'results'],
+  'parsing-comments': ['run', 'targets', 'settings', 'results'],
+  'spam-unblock': ['run'],
+}
+
+/** Подписи, отличающиеся от общих: слово должно совпадать с тем, что видно на экране. */
+const BLOCK_LABEL_OVERRIDES = {
+  parsing: { targets: 'Настройки поиска', settings: 'Защита и тайминги' },
+  'parsing-groups': { targets: 'Настройки поиска' },
+  'parsing-users': { targets: 'Настройки парсинга (источники)', settings: 'Фильтры, защита и тайминги' },
+  'parsing-messages': { targets: 'Настройки парсинга (источники)', settings: 'Фильтры, защита и тайминги' },
+  'parsing-comments': { targets: 'Настройки парсинга (источники)', settings: 'Фильтры, защита и тайминги' },
+  mailing: { targets: 'Получатели и чёрный список', templates: 'Текст сообщения' },
+  'mass-react': { templates: 'Палитра реакций' },
+  'neuro-dialogs': { templates: 'ИИ: промпты и цель диалога' },
+  warming: { run: 'Аккаунты и уровень прогрева' },
+  ggr: { run: 'Аккаунты и запуск' },
+  autoposting: { targets: 'Каналы и чёрный список', templates: 'Текст поста и публикация' },
+}
+
+/**
+ * Блоки одного модуля с подписями — то, что рисует редактор ролей.
+ * Неизвестный модуль (новый, ещё не описанный) получает полный набор: лучше показать
+ * лишний тумблер, чем молча лишить владельца возможности что-то закрыть.
+ */
+export function blocksForModule(moduleKey) {
+  const keys = MODULE_BLOCKS[moduleKey] || BLOCKS.map((b) => b.key)
+  const over = BLOCK_LABEL_OVERRIDES[moduleKey] || {}
+  return keys.map((k) => ({ key: k, label: over[k] || (BLOCKS.find((b) => b.key === k)?.label ?? k) }))
+}
 
 /**
  * Разделы навигации, доступ к которым выдаётся ролью (§8.1 «доступ на всё, не только модули»).
@@ -201,9 +272,9 @@ const sectionMap = (val, keys = SECTIONS.map((s) => s.key)) => Object.fromEntrie
 function defaultRoles() {
   const now = Date.now()
   const mods = Object.keys(MODULE_LABELS)
-  const ALL_BLOCKS = BLOCKS.map((b) => b.key)                 // run/settings/targets/templates/results/logs
-  const VIEW = ['results', 'logs']                             // только просмотр
-  const OPS = ['run', 'settings', 'targets', 'results', 'logs'] // работа без редактирования шаблонов
+  const ALL_BLOCKS = BLOCKS.map((b) => b.key)                 // run/settings/targets/templates/results
+  const VIEW = ['results']                                     // только просмотр
+  const OPS = ['run', 'settings', 'targets', 'results']         // работа без редактирования промптов
   const OUTREACH = mods.filter((k) => ['neuro-chatting', 'neuro-dialogs', 'mailing'].includes(k))
   const ENGAGE = mods.filter((k) => ['neuro-commenting', 'neuro-chatting', 'neuro-dialogs', 'mass-react', 'mass-looking'].includes(k))
   const roleTpl = (id, name, permissions) => ({ id, name, builtin: false, isTemplate: true, permissions, createdAt: now, updatedAt: now })
@@ -456,7 +527,14 @@ export async function buildCatalog(limit = null) {
     { type: 'searchTemplates', label: 'Шаблоны поиска', perItem: false },
     { type: 'allTasks', label: 'Чужие задачи (видеть и управлять всеми в Дашборде)', perItem: false },
   ]
-  return { modules, blocks: BLOCKS, sections: SECTIONS, resources }
+  /*
+   * `blocks` (плоский список) остаётся для совместимости — по нему рисуется строка
+   * «блок во ВСЕХ модулях». А `blocksByModule` говорит, какие блоки есть у КАЖДОГО
+   * модуля и как они называются на его экране: у парсера нет промптов, у прогрева нет
+   * целей, и показывать эти тумблеры значит обещать несуществующее (правка 26.08).
+   */
+  const blocksByModule = Object.fromEntries(modules.map((m) => [m.key, blocksForModule(m.key)]))
+  return { modules, blocks: BLOCKS, blocksByModule, sections: SECTIONS, resources }
 }
 
 /**

@@ -55,6 +55,12 @@ export interface CatalogResource {
 export interface RbacCatalog {
   modules: CatalogModule[]
   blocks: CatalogBlock[]
+  /**
+   * Блоки КАЖДОГО модуля его же словами (правка 26.08). Плоский `blocks` остаётся для
+   * строки «блок во всех модулях», а рисовать под модулем нужно только то, что у него
+   * действительно есть: у парсера нет промптов, у прогрева нет целей.
+   */
+  blocksByModule?: Record<string, CatalogBlock[]>
   sections: CatalogSection[]
   resources: CatalogResource[]
 }

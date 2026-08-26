@@ -2,7 +2,7 @@
 import { Router } from 'express'
 import { listUsers, getUser, createUser, updateUser, deleteUser, authenticate, authenticateSupabase, authSupabaseResult, verifyPassword, publicUser, isBlockedByOwner } from './users.js'
 import { rolesForUser, mergePermissions, unrestrictedPermissions, userRoleIds, hasAdminRole, ADMIN_ROLE_ID } from './roles.js'
-import { BLOCKS, listRoles, createRole, updateRole, ALLOW, DENY } from './roles.js'
+import { BLOCKS, blocksForModule, listRoles, createRole, updateRole, ALLOW, DENY } from './roles.js'
 import { MODULE_LABELS } from './lib/accountLocks.js'
 import { modulesAllow } from './balance.js'
 import { capModules, applyDirectGrants } from './subAccess.js'
@@ -357,6 +357,9 @@ usersRouter.get('/:id/access', async (req, res) => {
       catalog: {
         modules: keys.map((k) => ({ key: k, label: MODULE_LABELS[k] || k })),
         blocks: BLOCKS,
+        // Блоки КАЖДОГО модуля его же словами (26.08): один общий список показывал
+        // парсеру «ИИ: промпты», которых у него нет, и прятал «Настройки поиска».
+        blocksByModule: Object.fromEntries(keys.map((k) => [k, blocksForModule(k)])),
       },
     })
   } catch (err) { fail(res, err) }

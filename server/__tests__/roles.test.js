@@ -247,3 +247,51 @@ test('mergePermissions переносит allTasks', () => {
   assert.equal(mergePermissions([plain, lead]).resources.allTasks, 'allow', 'union: даёт любая роль')
   assert.equal(mergePermissions([]).resources.allTasks, 'deny', 'по умолчанию — deny')
 })
+
+/**
+ * Блоки, выдаваемые ролям, должны совпадать с тем, что модуль реально показывает
+ * (правка владельца 26.08: «нужно, чтобы назывались идентично и убрать те, которых уже
+ * нет»). Раньше список был один на все модули — парсеру предлагали выдать «ИИ: промпты»,
+ * которых у него нет.
+ */
+test('у каждого модуля свой набор блоков, лишнего не предлагаем', async () => {
+  const { MODULE_BLOCKS, blocksForModule } = await import('../roles.js')
+  const { MODULE_DEFS } = await import('../modules/registry.js')
+
+  // Ни один модуль не должен остаться без описания — иначе он молча получит полный набор.
+  for (const key of Object.keys(MODULE_DEFS)) {
+    assert.ok(MODULE_BLOCKS[key], `модуль ${key} не описан в MODULE_BLOCKS`)
+  }
+  // У парсера нет ИИ-промптов, у прогрева нет целевых каналов.
+  assert.ok(!MODULE_BLOCKS['parsing-users'].includes('templates'))
+  assert.ok(!MODULE_BLOCKS.warming.includes('targets'))
+  assert.ok(!MODULE_BLOCKS['neuro-dialogs'].includes('targets'), 'диалоги отвечают на входящие')
+  /*
+   * «Логи» и «Результаты» — отдельная история (правка владельца 26.08: «где у нас в
+   * мейлинге или в любом другом модуле логи и результаты? такого же нету»).
+   * Своей секции логов нет НИ У ОДНОГО модуля — они в Дашборде задач. Результаты есть
+   * только у парсеров и рейтинга. Тумблеры на несуществующее убраны.
+   */
+  for (const [mod, keys] of Object.entries(MODULE_BLOCKS)) {
+    assert.ok(!keys.includes('logs'), `${mod}: блока «Логи» в модуле нет, они в Дашборде`)
+  }
+  assert.ok(!MODULE_BLOCKS.mailing.includes('results'), 'у мейлинга нет секции результатов')
+  assert.ok(!MODULE_BLOCKS['neuro-commenting'].includes('results'))
+  assert.ok(MODULE_BLOCKS.parsing.includes('results'), 'а у парсера есть')
+  assert.ok(MODULE_BLOCKS.ggr.includes('results'))
+})
+
+test('подписи блоков совпадают со словами на экране модуля', async () => {
+  const { blocksForModule } = await import('../roles.js')
+  const label = (mod, key) => blocksForModule(mod).find((b) => b.key === key)?.label
+
+  assert.equal(label('parsing', 'targets'), 'Настройки поиска')
+  assert.equal(label('parsing-users', 'targets'), 'Настройки парсинга (источники)')
+  assert.equal(label('mailing', 'targets'), 'Получатели и чёрный список')
+  assert.equal(label('mass-react', 'templates'), 'Палитра реакций')
+  // Общая подпись остаётся там, где переопределять нечего.
+  assert.equal(label('neuro-commenting', 'targets'), 'Целевые каналы и группы')
+  // Неописанный модуль получает полный набор, а не пустоту: лучше лишний тумблер,
+  // чем невозможность что-либо закрыть.
+  assert.equal(blocksForModule('новый-модуль-которого-нет').length, 5)
+})

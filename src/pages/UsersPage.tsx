@@ -233,8 +233,8 @@ function ApplyTemplate({ roles, catalog, picked, hint, onPick, className }: {
   if (!roles.length) {
     return (
       <div className={cn('text-[11px] text-white/40', className)}>
-        Шаблонов пока нет — выставьте доступ тумблерами или{' '}
-        <a href={TEMPLATES_ANCHOR} className="font-semibold text-spark-300 hover:text-spark-200">создайте шаблон</a>,
+        Ролей пока нет — выставьте доступ тумблерами или{' '}
+        <a href={TEMPLATES_ANCHOR} className="font-semibold text-spark-300 hover:text-spark-200">создайте роль</a>,
         чтобы в следующий раз выдать тот же набор одним кликом.
       </div>
     )
@@ -264,7 +264,7 @@ function ApplyTemplate({ roles, catalog, picked, hint, onPick, className }: {
             picked ? 'border-spark-500/50 bg-spark-500/10 text-spark-200' : 'border-line bg-elevated text-white/70 hover:border-spark-500/40',
           )}
         >
-          <span className="truncate">{picked || 'Выбрать шаблон'}</span>
+          <span className="truncate">{picked || 'Выбрать роль'}</span>
           <ChevronDown size={13} className={cn('shrink-0 transition-transform', open && 'rotate-180')} />
         </button>
         {open && (
@@ -276,7 +276,7 @@ function ApplyTemplate({ roles, catalog, picked, hint, onPick, className }: {
               className={cn('flex w-full items-center justify-between gap-2 rounded-lg px-2.5 py-1.5 text-left text-xs transition-colors',
                 picked ? 'text-white/45 hover:bg-white/5 hover:text-white/70' : 'bg-white/5 text-white/70')}
             >
-              Выбрать шаблон
+              Выбрать роль
             </button>
             {roles.map((r) => {
               const on = picked === r.name

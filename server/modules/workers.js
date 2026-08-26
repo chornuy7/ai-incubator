@@ -18,7 +18,7 @@ import {
   diagnoseWriteBan,
   mapTelegramError,
 } from '../lib/gramHelpers.js'
-import { joinTargetOrSkip, joinChannelDiscussion, prepareTarget } from '../lib/joinTarget.js'
+import { joinTargetOrSkip, joinChannelDiscussion, prepareTarget, joinWithDelay } from '../lib/joinTarget.js'
 import {
   connectAccount,
   disconnectAccount,
@@ -1229,10 +1229,15 @@ export async function runMassReact(task, store) {
             await disconnectAccount(client, accountId)
             continue
           }
-          const membership = await joinTargetOrSkip(
+          // Пауза перед вступлением — как у комментинга и чаттинга (просьба владельца 26.08):
+          // вступление Telegram считает жёстче прочих действий, и мгновенный заход сразу после
+          // подключения виден лучше любого другого признака. Ждём, только если реально вступаем.
+          const membership = await joinWithDelay(
             client, t,
             (level, message, acc) => store.appendLog(task, level, message, acc),
             meta.name,
+            pickJoinDelay(s.delays?.join?.[0] ?? 84, s.delays?.join?.[1] ?? 156, mul),
+            makeStopCheck(store, task.id),
           )
           if (!membership?.peer) {
             await disconnectAccount(client, accountId)
@@ -1440,10 +1445,15 @@ export async function runMassLooking(task, store) {
         const lookWait = pickDelay(s.delays?.action?.[0] ?? 20, s.delays?.action?.[1] ?? 60, mul) * 1000
         await noteWait(task, store, lookWait, 'задержка перед просмотром', meta.name)
         if (await breakableDelay(lookWait, store, task)) { await disconnectAccount(client, accountId); break }
-        const membership = await joinTargetOrSkip(
+        // Пауза перед вступлением — как у комментинга и чаттинга (просьба владельца 26.08):
+        // вступление Telegram считает жёстче прочих действий, и мгновенный заход сразу после
+        // подключения виден лучше любого другого признака. Ждём, только если реально вступаем.
+        const membership = await joinWithDelay(
           client, t,
           (level, message, acc) => store.appendLog(task, level, message, acc),
           meta.name,
+          pickJoinDelay(s.delays?.join?.[0] ?? 84, s.delays?.join?.[1] ?? 156, mul),
+          makeStopCheck(store, task.id),
         )
         if (!membership?.peer) {
           await disconnectAccount(client, accountId)
@@ -1583,7 +1593,11 @@ export async function runWarming(task, store) {
           const target = chats.find((c) => c.username)
           let joined = false
           if (target?.username) {
-            const m = await joinTargetOrSkip(client, target.username, (l, msg, a) => store.appendLog(task, l, msg, a), meta.name)
+            // Прогрев вступает в группы точно так же, как боевые модули, — значит и
+            // паузу держит такую же (26.08). Профиль, который «греется», заходя в чат
+            // мгновенно, греется в минус.
+            const m = await joinWithDelay(client, target.username, (l, msg, a) => store.appendLog(task, l, msg, a), meta.name,
+              pickJoinDelay(s.delays?.join?.[0] ?? 84, s.delays?.join?.[1] ?? 156, mul), makeStopCheck(store, task.id))
             if (m?.status === 'joined') { await incAction(accountId, 'joins'); joined = true }
             else if (m?.peer) joined = true // уже участник — тоже засчитываем заход
           }
@@ -1865,6 +1879,19 @@ export async function runNeuroDialogs(task, store) {
 
       skips = 0
       dmCapLogged.delete(accountId) // снова активен (лимит сброшен новым днём) — разрешаем лог заново
+      /*
+       * Занятость аккаунта — как во всех остальных модулях (просьба владельца 26.08:
+       * «занятость плюс переключение должно тоже у всех быть»).
+       *
+       * Дело не только в ритме: подключение ВТОРОЙ сессией к тому же аккаунту роняет
+       * обе стороны. Без этого гейта один профиль мог одновременно попасть в парсер и
+       * в рассылку — и падали обе задачи. Слот освобождается сам в disconnectAccount.
+       */
+      const busyGate = beginAccountWork(accountId, task.moduleKey, task.id)
+      if (!busyGate.ok) {
+        await store.appendLog(task, 'info', `Пропуск: ${busyGate.reason}`, undefined)
+        continue
+      }
       let client
       try {
         ;({ client } = await connectAccount(accountId, task.id, { shouldStop: stopFlag(task) }))
@@ -2353,6 +2380,19 @@ export async function runChannelParser(task, store, kind) {
         break
       }
       const meta = await accountMeta(accountId)
+      /*
+       * Занятость аккаунта — как во всех остальных модулях (просьба владельца 26.08:
+       * «занятость плюс переключение должно тоже у всех быть»).
+       *
+       * Дело не только в ритме: подключение ВТОРОЙ сессией к тому же аккаунту роняет
+       * обе стороны. Без этого гейта один профиль мог одновременно попасть в парсер и
+       * в рассылку — и падали обе задачи. Слот освобождается сам в disconnectAccount.
+       */
+      const busyGate = beginAccountWork(accountId, task.moduleKey, task.id)
+      if (!busyGate.ok) {
+        await store.appendLog(task, 'info', `Пропуск: ${busyGate.reason}`, meta.name)
+        continue
+      }
       let client
       try {
         ;({ client } = await connectAccount(accountId, task.id, { shouldStop: stopFlag(task) }))
@@ -2564,6 +2604,19 @@ export async function runParticipantsParser(task, store, kind) {
       const accountId = pinnedId || await nextAccountId()
       if (!accountId) { await store.appendLog(task, 'warning', 'Нет доступных аккаунтов'); break }
       const meta = await accountMeta(accountId)
+      /*
+       * Занятость аккаунта — как во всех остальных модулях (просьба владельца 26.08:
+       * «занятость плюс переключение должно тоже у всех быть»).
+       *
+       * Дело не только в ритме: подключение ВТОРОЙ сессией к тому же аккаунту роняет
+       * обе стороны. Без этого гейта один профиль мог одновременно попасть в парсер и
+       * в рассылку — и падали обе задачи. Слот освобождается сам в disconnectAccount.
+       */
+      const busyGate = beginAccountWork(accountId, task.moduleKey, task.id)
+      if (!busyGate.ok) {
+        await store.appendLog(task, 'info', `Пропуск: ${busyGate.reason}`, meta.name)
+        continue
+      }
       let client
       try {
         ;({ client } = await connectAccount(accountId, task.id, { shouldStop: stopFlag(task) }))
@@ -3085,6 +3138,19 @@ export async function runMailing(task, store) {
       if (!account) { await store.appendLog(task, 'info', 'Все аккаунты исчерпали суточный лимит ЛС (§6) — завершаем'); break }
 
       const meta = await accountMeta(account)
+      /*
+       * Занятость аккаунта — как во всех остальных модулях (просьба владельца 26.08:
+       * «занятость плюс переключение должно тоже у всех быть»).
+       *
+       * Дело не только в ритме: подключение ВТОРОЙ сессией к тому же аккаунту роняет
+       * обе стороны. Без этого гейта один профиль мог одновременно попасть в парсер и
+       * в рассылку — и падали обе задачи. Слот освобождается сам в disconnectAccount.
+       */
+      const busyGate = beginAccountWork(account, task.moduleKey, task.id)
+      if (!busyGate.ok) {
+        await store.appendLog(task, 'info', `Пропуск: ${busyGate.reason}`, meta.name)
+        continue
+      }
       let client
       try {
         ;({ client } = await connectAccount(account, task.id, { shouldStop: stopFlag(task) }))
@@ -3152,6 +3218,19 @@ export async function runMailing(task, store) {
         const dmWait = pickDelay(dm[0], dm[1], mul) * 1000
         await noteWait(task, store, dmWait, 'задержка перед отправкой ЛС', meta.name)
         if (await interruptibleSleep(dmWait, makeStopCheck(store, task.id))) { await disconnectAccount(client, account); break }
+        /*
+         * Набор текста — как у человека (просьба владельца 26.08: «мейлинг, задержка
+         * перед написанием сообщения тоже должна быть»).
+         *
+         * Пауза выше — это «собрался написать». А само сообщение до сих пор улетало
+         * мгновенно, хотя в комментариях и чатах мы давно считаем время набора по длине.
+         * Для холодного ЛС это самый заметный признак: незнакомый человек, отвечающий
+         * абзацем за ноль секунд, — не человек. Входящего тут нет, читать нечего:
+         * считаем только «подумать и набрать».
+         */
+        const наборЛС = typingPlan(text, 0)
+        await noteWait(task, store, наборЛС.typeMs, `набирает ${describeTyping(наборЛС)}`, meta.name)
+        if (await interruptibleSleep(наборЛС.typeMs, makeStopCheck(store, task.id))) { await disconnectAccount(client, account); break }
         await sendComposedMessage(client, user, text, s.mediaUrls) // §11: текст + медиа/ссылки
         // §11.1: исходящее ЛС — под контролем владельца (рассылка чужим людям
         // рискованнее всего, поэтому её текст видеть важнее прочего).
@@ -3311,6 +3390,19 @@ export async function runAutoPosting(task, store) {
         break
       }
       if (!accountId) { await store.appendLog(task, 'warning', `${ch}: нет доступных аккаунтов для публикации`); continue }
+      /*
+       * Занятость аккаунта — как во всех остальных модулях (просьба владельца 26.08:
+       * «занятость плюс переключение должно тоже у всех быть»).
+       *
+       * Дело не только в ритме: подключение ВТОРОЙ сессией к тому же аккаунту роняет
+       * обе стороны. Без этого гейта один профиль мог одновременно попасть в парсер и
+       * в рассылку — и падали обе задачи. Слот освобождается сам в disconnectAccount.
+       */
+      const busyGate = beginAccountWork(accountId, task.moduleKey, task.id)
+      if (!busyGate.ok) {
+        await store.appendLog(task, 'info', `Пропуск: ${busyGate.reason}`, meta.name)
+        continue
+      }
       let client
       try {
         ;({ client } = await connectAccount(accountId, task.id, { shouldStop: stopFlag(task) }))

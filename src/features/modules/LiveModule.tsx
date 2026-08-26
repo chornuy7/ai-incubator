@@ -5,8 +5,6 @@ import {
 } from 'lucide-react'
 import { MODULES, isCombatModule, combatConfirmText, type ModuleConfig } from '@/shared/config/modules'
 import { activeAccounts, useApp } from '@/mocks/store'
-import { useSession } from '@/features/auth/session'
-import { can } from '@/shared/lib/access'
 import { cn } from '@/shared/lib/utils'
 import { equalize, equalizeUnlocked, redistribute, percentSum } from '@/shared/lib/percentDistribution'
 import { ToggleGroup, Segmented, EmptyState, Badge } from '@/shared/ui'
@@ -19,7 +17,7 @@ import {
   SectionCard, NumberField,
   ProtectionTimings, TargetsEditor, LaunchPanel, PromptCards, usePromptStore, AiGenerationNotice,
   FolderPicker, BlacklistEditor, GlobalPromptEditor, TimingSection, SaveToFolderModal, TaskStartedModal, SavePresetModal,
-  LaunchSteps, markCurrentStep, usePresetCarry, ProtectionLevelPicker, PROTECTION_CAP, type LaunchStep,
+  LaunchSteps, markCurrentStep, usePresetCarry, ProtectionLevelPicker, PROTECTION_CAP, useBlockAccess, type LaunchStep,
 } from './shared'
 import type { ModuleTaskSettings } from '@/api/modulesApi'
 import { confirmDialog } from '@/shared/lib/dialog'
@@ -80,8 +78,9 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
   // R6: гейтинг блоков внутри модуля по правам роли. Демо/админ — всё видно.
   // run — запуск/аккаунты; settings — настройки/тайминги/защита; targets — цели/каналы;
   // templates — промпты/эмодзи; results/logs — просмотр результатов/логов.
-  const sessionUser = useSession((s) => s.user)
-  const showBlock = (bk: string) => !sessionUser || sessionUser.isAdmin || can(sessionUser.permissions, false, 'block', `${moduleKey}:${bk}`)
+  // Общий помощник на все модули (26.08): раньше проверка жила только здесь, и в
+  // парсерах выданные права на блоки не действовали вовсе.
+  const showBlock = useBlockAccess(moduleKey)
 
   const [selected, setSelected] = useState<Set<string>>(new Set())
   // «Мониторинг новых» стоит первым в списке и выбран по умолчанию (так просил
