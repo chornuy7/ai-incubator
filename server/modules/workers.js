@@ -107,6 +107,7 @@ import { loadSessionString, createClient } from '../tgAuth.js'
 import {
   pickCommentCandidates, trackIdlePass, warmingPace, pickWeightedKey, idleWaitPlan, WARM_WINDOW_MS, msUntilHour, inActiveWindow,
 } from '../lib/workerLoop.js'
+import { channelSignals, channelScore, isActive, detectLang } from '../lib/channelScore.js'
 import { scheduleHour } from '../lib/accountFatigue.js'
 import { limitReached, incAction } from '../lib/dailyActions.js'
 import { cleanMailingNumbers, classifyMailingTargets, pickMailingAccount } from '../lib/mailing.js'
@@ -2295,6 +2296,17 @@ export async function runChannelParser(task, store, kind) {
   const rawLimit = Number(s.resultLimit ?? s.limit ?? 0) || 0
   const limit = rawLimit > 0 ? rawLimit : Infinity
   const comments = Number(s.commentFilter ?? 0) || 0 // 0 любые / 1 открытые / 2 закрытые
+  /*
+   * Глубокий разбор канала: активность, отклик, язык и наш балл (правка владельца 26.08).
+   * Все четыре параметра до этого уходили на сервер и молча игнорировались — тумблеры на
+   * экране были, а в коде их никто не читал. Считаются они по ПОСТАМ, значит требуют
+   * лишнего запроса на каждый найденный канал: включаем только когда о них реально просят.
+   */
+  const activityFilter = Number(s.activityFilter ?? 0) || 0 // 0 любые / 1 активные / 2 неактивные
+  const minComments = Math.max(0, Number(s.minComments ?? 0) || 0)
+  const langDetection = !!s.langDetection
+  const minRating = Math.max(0, Number(s.minRating ?? 0) || 0)
+  const needPosts = activityFilter > 0 || minComments > 0 || langDetection || minRating > 1
   const reqFrom = s.delays?.request?.[0] ?? 2
   const reqTo = s.delays?.request?.[1] ?? reqFrom
   const chFrom = s.delays?.channel?.[0] ?? 1
@@ -2409,9 +2421,16 @@ export async function runChannelParser(task, store, kind) {
           if (!key) continue
           if (skipParsed.has(key)) continue
 
-          // фильтр комментариев: открытые = мегагруппа/есть обсуждение, закрытые = обычный канал
-          if (comments === 1 && c.isBroadcast && !c.isMegagroup) continue
-          if (comments === 2 && c.isMegagroup) continue
+          /*
+           * Фильтр комментариев считал ТИПОМ ЧАТА: «только открытые» отбрасывало любой
+           * broadcast, не являющийся мегагруппой. В парсере КАНАЛОВ это вырезало вообще
+           * всё — там в выдаче только broadcast, — и человек получал ноль результатов.
+           * Канал с привязанной группой обсуждения тоже отбрасывался, хотя комментарии
+           * у него открыты. Смотрим на реальное обсуждение (26.08).
+           */
+          const openComments = !!c.isMegagroup || !!c.hasLinkedChat
+          if (comments === 1 && !openComments) continue
+          if (comments === 2 && openComments) continue
 
           // §3.8 AND: отмечаем совпадение ключа — даже если канал уже добавлен другим ключом.
           if (andMode) { let set = hitsByKey.get(key); if (!set) { set = new Set(); hitsByKey.set(key, set) } set.add(kwIdx) }
@@ -2426,6 +2445,36 @@ export async function runChannelParser(task, store, kind) {
           if (minMembers && members < minMembers) continue
           if (maxMembers && members > maxMembers) continue
 
+          /*
+           * Разбор по постам — только если о нём просили (needPosts). Это лишний запрос
+           * на КАЖДЫЙ найденный канал: включённая активность или язык замедляют сбор в
+           * разы и повышают риск FloodWait, поэтому даром мы его не делаем.
+           *
+           * Пауза между такими запросами — из тех же настроек «задержка между каналами»,
+           * случайная в вилке мин–макс (просьба владельца 26.08: «задержки норм сделать
+           * мин и макс»), а не фиксированное число.
+           */
+          let signals = null
+          let lang = null
+          let score = null
+          if (needPosts) {
+            try {
+              const posts = await fetchPosts(client, c.entity, 20)
+              signals = channelSignals(posts)
+              if (langDetection) lang = detectLang(posts.map((x) => x.message || ''))
+              score = channelScore({ members, signals, hasComments: openComments })
+              await sleep(pickDelay(chFrom, chTo, mul) * 1000)
+            } catch {
+              // Канал не отдал посты (приватный, ограничен, сеть) — не выбрасываем его
+              // молча: фильтры ниже решат сами, а балл останется пустым.
+              signals = channelSignals([])
+            }
+            if (activityFilter === 1 && !isActive(signals)) continue
+            if (activityFilter === 2 && isActive(signals)) continue
+            if (minComments && (signals.avgComments || 0) < minComments) continue
+            if (minRating > 1 && (score ?? 0) < minRating) continue
+          }
+
           seen.add(key)
           task.results.push({
             id: c.id,
@@ -2434,7 +2483,13 @@ export async function runChannelParser(task, store, kind) {
             members,
             kind: resultKind,
             link: c.username ? `https://t.me/${c.username}` : '',
-            hasComments: !!c.isMegagroup,
+            hasComments: openComments,
+            // Живые сигналы канала — витрина показывает их вместо «рейтинга из подписчиков».
+            score,
+            lang,
+            lastPostAt: signals?.lastPostAt || 0,
+            postsPerWeek: signals?.postsPerWeek ?? null,
+            avgComments: signals?.avgComments ?? null,
           })
           // §3.8/§4: копим для общей базы — упсертим одним батчем в конце (без дублей).
           baseChannels.push({ title: c.title, username: c.username, subscribers: members, hasComments: !!c.isMegagroup, tgPeerId: c.id })

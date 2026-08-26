@@ -40,6 +40,8 @@ export interface ModuleTaskSettings {
   maxMembers?: number
   resultLimit?: number // 0 = без лимита
   activityFilter?: number // 0 любая / 1 активные / 2 неактивные
+  /** §3.8: минимальный балл канала. Считает сервер по живым сигналам — постам, свежести, отклику (26.08). */
+  minRating?: number
   commentFilter?: number // 0 любые / 1 открытые / 2 закрытые
   minComments?: number
   langDetection?: boolean

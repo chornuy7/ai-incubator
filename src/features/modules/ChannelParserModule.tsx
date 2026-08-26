@@ -46,6 +46,9 @@ const ENDINGS: Record<string, string[]> = {
 interface ParserResult {
   id?: string; title?: string; username?: string; members?: number
   kind?: string; link?: string; hasComments?: boolean
+  /** Живые сигналы канала — считает сервер по его постам (26.08). */
+  score?: number; lang?: string | null; lastPostAt?: number
+  postsPerWeek?: number | null; avgComments?: number | null
 }
 
 function fmtMembers(n: number) {
@@ -239,6 +242,9 @@ function ChannelParserInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: 
     activityFilter: activity,
     commentFilter,
     minComments,
+    // Теперь эти три реально применяются на сервере (26.08): активность и минимум
+    // комментариев считаются по постам канала, балл — наш собственный.
+    minRating,
     minMembers: minMembers === '' ? 0 : minMembers,
     maxMembers: maxMembers === '' ? 0 : maxMembers,
     langDetection: langDetect,
@@ -249,7 +255,7 @@ function ChannelParserInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: 
       floodWait: 120,
       floodQuarantine: 3,
     },
-  }), [carry, selected, keywords, endings, method, aiProtect, protLevel, limit, activity, commentFilter, minComments, minMembers, maxMembers, langDetect, intersect, fastWork, reqDelay, chDelay])
+  }), [carry, selected, keywords, endings, method, aiProtect, protLevel, limit, activity, commentFilter, minComments, minRating, minMembers, maxMembers, langDetect, intersect, fastWork, reqDelay, chDelay])
 
   const busySelectedCount = useMemo(
     () => [...selected].filter((id) => accounts.some((a) => a.id === id && a.busyIn)).length,
@@ -285,6 +291,9 @@ function ChannelParserInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: 
     const lim = s.resultLimit ?? s.limit
     if (lim !== undefined) setLimit(Number(lim) || 0)
     if (s.activityFilter !== undefined) setActivity(s.activityFilter)
+    // Балл тоже часть отбора, а не украшение — шаблон обязан его восстанавливать,
+    // иначе применённый шаблон соберёт не то, что собирал раньше.
+    if (s.minRating !== undefined) setMinRating(Number(s.minRating) || 1)
     if (s.commentFilter !== undefined) setCommentFilter(s.commentFilter)
     if (s.minComments !== undefined) setMinComments(s.minComments)
     if (s.minMembers !== undefined) setMinMembers(s.minMembers)
@@ -313,7 +322,13 @@ function ChannelParserInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: 
       r = r.filter((x) => `${x.title} ${x.username}`.toLowerCase().includes(q))
     }
     // Фильтр по рейтингу качества ★ (показывать только >= выбранного)
-    if (minRating > 1) r = r.filter((x) => qualityScore(x.members ?? 0, x.hasComments) >= minRating)
+    /*
+     * Балл считает СЕРВЕР по живым сигналам канала (посты, свежесть, отклик), и слабые
+     * строки он уже не присылает. Здесь оставлен запасной фильтр для результатов, собранных
+     * до этой правки: у них поля `score` нет, и раньше рейтинг считался из одних подписчиков —
+     * по нему нельзя было отличить живой канал от брошенного год назад.
+     */
+    if (minRating > 1) r = r.filter((x) => (x.score ?? qualityScore(x.members ?? 0, x.hasComments)) >= minRating)
     const [field, dir] = sortBy.split('-')
     r = [...r].sort((a, b) => {
       const m = field === 'members' ? (a.members ?? 0) - (b.members ?? 0) : String(a.title).localeCompare(String(b.title))
