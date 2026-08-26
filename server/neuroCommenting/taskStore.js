@@ -107,7 +107,14 @@ export function createTask(settings) {
   }
 }
 
-export async function loadPresets() {
+/*
+ * Шаблоны живут в общей базе (26.08). Файл остался фолбэком для локального запуска и
+ * тестов и точкой отката: раньше это было ЕДИНСТВЕННОЕ хранилище, и наборы шаблонов
+ * расходились между локальной копией и сервером.
+ */
+const PRESET_MODULE = 'neuro-commenting'
+
+async function readPresetsFile() {
   try {
     const raw = await fs.readFile(PRESETS_FILE, 'utf8')
     return JSON.parse(raw)
@@ -115,11 +122,22 @@ export async function loadPresets() {
     return []
   }
 }
+async function writePresetsFile(presets) {
+  await ensureDirs()
+  await fs.writeFile(PRESETS_FILE, JSON.stringify(presets, null, 2), 'utf8')
+}
+
+// Переноса файловых шаблонов здесь нет намеренно — он делается осознанно и на сервере
+// (`node server/scripts/presets-to-db.mjs`). Причина — в комментарии lib/taskStore.js.
+export async function loadPresets() {
+  const { loadModulePresets } = await import('../modulePresets.js')
+  return loadModulePresets(PRESET_MODULE, readPresetsFile)
+}
 
 /** @param {object[]} presets */
 export async function savePresets(presets) {
-  await ensureDirs()
-  await fs.writeFile(PRESETS_FILE, JSON.stringify(presets, null, 2), 'utf8')
+  const { saveModulePresets } = await import('../modulePresets.js')
+  return saveModulePresets(PRESET_MODULE, presets, writePresetsFile)
 }
 
 /** Public DTO for API */
