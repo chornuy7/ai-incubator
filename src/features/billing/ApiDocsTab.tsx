@@ -1,8 +1,8 @@
 import { useEffect, useState } from 'react'
-import { Copy, Terminal, KeyRound, BookOpen, ShieldCheck, ShieldAlert } from 'lucide-react'
+import { Copy, Terminal, KeyRound, BookOpen, ShieldCheck, ShieldAlert, Database } from 'lucide-react'
 import { Card } from '@/shared/ui'
 import { useApp } from '@/mocks/store'
-import { serviceKeyStatus } from '@/api/adminApi'
+import { serviceKeyStatus, presetsToDb } from '@/api/adminApi'
 
 /**
  * §10.3: вкладка «API» в админ-панели — документация «мозгам».
@@ -52,6 +52,7 @@ export function ApiDocsTab() {
 
   return (
     <div className="space-y-4">
+      <PresetsToDbCard />
       {/* 1. Где живёт ключ «мозгов» */}
       <Card className="p-5">
         <div className="flex items-center gap-2 text-sm font-bold text-fg"><KeyRound size={15} /> Сервисный ключ «мозгов»</div>
@@ -145,5 +146,72 @@ MURMEX_API_KEY_OWNER=usr_...`}</pre>
         </p>
       </Card>
     </div>
+  )
+}
+
+/**
+ * Разовый перенос шаблонов настроек из файлов сервера в общую базу.
+ *
+ * До 26.08 шаблоны хранились в файлах на сервере: локальная копия и прод показывали разные
+ * наборы, а второй инстанс развёл бы их окончательно. Теперь они в базе, но старые файлы
+ * надо перенести один раз. Прочитать их может ТОЛЬКО серверный процесс — ни из браузера,
+ * ни запросом к базе до них не добраться, поэтому кнопка здесь, а не «сделайте SQL».
+ *
+ * Сначала показывает, что перенесёт, и ничего не пишет. Перенос — вторым нажатием.
+ * Повторный запуск безопасен: модуль, где в базе уже есть шаблоны, пропускается.
+ */
+function PresetsToDbCard() {
+  const pushToast = useApp((s) => s.pushToast)
+  const [busy, setBusy] = useState(false)
+  const [report, setReport] = useState<Awaited<ReturnType<typeof presetsToDb>> | null>(null)
+
+  const run = async (apply: boolean) => {
+    setBusy(true)
+    try {
+      const r = await presetsToDb(apply)
+      setReport(r)
+      pushToast({
+        type: 'success',
+        title: apply ? 'Шаблоны перенесены' : 'Показ: ничего не записано',
+        desc: apply ? `Перенесено: ${r.moved}` : `Будет перенесено: ${r.moved}`,
+      })
+    } catch (e) {
+      pushToast({ type: 'error', title: 'Не получилось', desc: e instanceof Error ? e.message : '' })
+    } finally { setBusy(false) }
+  }
+
+  return (
+    <Card className="p-5">
+      <div className="flex items-center gap-2 text-sm font-bold text-fg"><Database size={15} /> Шаблоны настроек: перенос в базу</div>
+      <p className="mt-1 text-xs text-muted">
+        Разовое действие. Старые шаблоны лежат файлами на сервере — переносим их в общую базу,
+        чтобы они были одинаковыми везде. Файлы остаются на месте: если что-то пойдёт не так,
+        откатиться есть куда. Повторное нажатие ничего не испортит — модули, которые уже в базе, пропускаются.
+      </p>
+      <div className="mt-3 flex flex-wrap items-center gap-2">
+        <button type="button" disabled={busy} onClick={() => void run(false)} className="btn-ghost h-9 text-xs disabled:opacity-40">
+          Показать, что перенесётся
+        </button>
+        <button type="button" disabled={busy || !report || !report.moved} onClick={() => void run(true)} className="btn-primary h-9 text-xs disabled:opacity-40">
+          Перенести
+        </button>
+      </div>
+      {report && (
+        <div className="mt-3 space-y-1 rounded-xl border border-line bg-elevated/40 p-3 text-xs">
+          {report.items.length === 0 && <div className="text-muted">Переносить нечего — файлов с шаблонами нет.</div>}
+          {report.items.map((it) => (
+            <div key={it.moduleKey} className={it.error ? 'text-rose-300' : it.skipped ? 'text-faint' : 'text-fg'}>
+              <b>{it.moduleKey}</b>{' '}
+              {it.error
+                ? `— ошибка: ${it.error}`
+                : it.skipped
+                  ? `— пропущен, в базе уже ${it.count}`
+                  : `— ${report.apply ? 'перенесено' : 'будет перенесено'} ${it.count}${it.names.length ? `: ${it.names.join(', ')}` : ''}`}
+            </div>
+          ))}
+          <div className="pt-1 text-muted">Итого: {report.moved}</div>
+        </div>
+      )}
+    </Card>
   )
 }

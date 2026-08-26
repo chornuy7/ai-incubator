@@ -8,14 +8,15 @@
  * Владелец 27.08: правка под администратором остаётся у администратора, под тестовым
  * модератором — у тестового модератора; на чужие аккаунты не переходит.
  *
- * ПРО ЗАПАСНОЙ ТЕКСТ. Пока человек ничего не сохранял, подставляем прежний общий промпт.
- * Иначе в день выката у всех разом пропал бы уже настроенный текст — и задачи пошли бы с
- * пустым системным промптом, чего никто не просил. Первое сохранение заводит личную
- * строку, и с этого момента общий текст этого человека больше не касается.
+ * ПРО СТАНДАРТНЫЙ ТЕКСТ. Тот, кто своего промпта не задавал, не должен работать «без
+ * правил»: ему подставляется стандартный (`DEFAULT_SYSTEM_PROMPT` из aiSettings.js).
+ * Порядок такой: свой → переопределение из хранилища, если оно заведено → стандартный
+ * из кода. Первое сохранение заводит личную строку, и дальше общий текст этого человека
+ * уже не касается; очистил свой — снова стандартный.
  */
 import { getSupabase, supabaseEnabled } from './lib/supabase.js'
 import { dataPath, readJson, writeJson } from './lib/jsonStore.js'
-import { getGlobalSystemPromptSync, getAiSettings } from './aiSettings.js'
+import { getGlobalSystemPromptSync, getAiSettings, DEFAULT_SYSTEM_PROMPT } from './aiSettings.js'
 
 function sb() { return supabaseEnabled() ? getSupabase() : null }
 /** Путь вычисляем лениво: тесты подменяют его через env уже после импорта модуля. */
@@ -54,11 +55,10 @@ export async function getOwnGlobalPrompt(userId) {
 export async function getUserGlobalPrompt(userId) {
   const own = await getOwnGlobalPrompt(userId).catch(() => '')
   if (own.trim()) return own
-  // Общий текст читаем через кэш; если он ещё не прогрет — подтягиваем с диска/базы.
-  const fallback = getGlobalSystemPromptSync()
-  if (fallback) return fallback
-  const s = await getAiSettings().catch(() => null)
-  return clean(s?.globalSystemPrompt)
+  // Переопределение из хранилища (если заведено), иначе — стандартный текст из кода.
+  // Кэш может быть ещё не прогрет — тогда подтягиваем настройки с диска/базы.
+  const override = getGlobalSystemPromptSync() || clean((await getAiSettings().catch(() => null))?.globalSystemPrompt)
+  return override.trim() || DEFAULT_SYSTEM_PROMPT
 }
 
 /**
