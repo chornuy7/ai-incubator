@@ -2378,15 +2378,42 @@ export async function runChannelParser(task, store, kind) {
   }
 
   try {
-    for (let qi = startFrom; qi < queries.length; qi++) {
-      const { q, kwIdx } = queries[qi]
-      // В AND-режиме нельзя рано выходить по лимиту — нужно просканировать все ключи для пересечения.
-      if (task.stopRequested || task.pauseRequested || (!andMode && task.results.length >= limit)) break
-      // Курсор двигаем ДО обработки: если задачу поставят на паузу внутри запроса,
-      // при продолжении он не выполнится дважды.
-      task.cursor = qi + 1
+    /*
+     * АСИНХРОННЫЙ РЕЖИМ (просьба владельца 26.08: «если это быстрее — да»).
+     *
+     * Раньше запросы шли строго по одному: аккаунты чередовались, но не работали
+     * одновременно, и сотня поисковых запросов занимала одинаковое время хоть на двух
+     * аккаунтах, хоть на пятидесяти. Теперь каждый аккаунт берёт СЛЕДУЮЩИЙ свободный
+     * запрос из общей очереди — это лучше деления поровну: медленный аккаунт (или
+     * словивший FloodWait) просто возьмёт меньше, а работа не встанет ждать его долю.
+     *
+     * Очередь безопасна без блокировок: JavaScript однопоточный, инкремент индекса
+     * между await-ами не прерывается.
+     */
+    const параллельно = s.parallelAccounts === true && accountIds.length > 1
+    let следующий = startFrom
+    let курсор = startFrom
+    const готовые = new Set()
 
-      const accountId = await nextAccountId()
+    async function дорожка(закреплённыйАккаунт, номер) {
+      // Разбег стартов: одновременный залп с нескольких аккаунтов — это и есть то,
+      // что Telegram видит как ферму. Пауза случайная, а не кратная.
+      if (номер > 0) {
+        const лаг = Math.round(pickDelay(20, 90, mul) * 1000 * (0.5 + Math.random()))
+        await store.appendLog(task, 'info', `Аккаунт ${номер + 1}: старт через ${Math.round(лаг / 1000)}с`)
+        if (await interruptibleSleep(лаг, makeStopCheck(store, task.id))) return
+      }
+      for (;;) {
+      // В AND-режиме нельзя рано выходить по лимиту — нужно просканировать все ключи.
+      if (task.stopRequested || task.pauseRequested || (!andMode && task.results.length >= limit)) break
+      const qi = следующий++
+      if (qi >= queries.length) break
+      const { q, kwIdx } = queries[qi]
+      // Курсор — наименьший НЕзавершённый запрос. В асинхронном режиме запросы уходят
+      // вразнобой, и «qi + 1» соврал бы: при продолжении часть работы потерялась бы.
+      const отметитьГотовым = () => { готовые.add(qi); while (готовые.has(курсор)) курсор++; task.cursor = курсор }
+
+      const accountId = закреплённыйАккаунт || await nextAccountId()
       if (!accountId) {
         await store.appendLog(task, 'warning', 'Нет доступных аккаунтов (все в карантине/невалидны)')
         break
@@ -2516,6 +2543,15 @@ export async function runChannelParser(task, store, kind) {
       // хиты мы туда только что записали через syncHits, так что карта не отстаёт.
       for (const [k, v] of restoreHits(task.hitsByKey)) hitsByKey.set(k, v)
       await sleep(pickDelay(reqFrom, reqTo, mul) * 1000)
+      отметитьГотовым()
+      }
+    }
+
+    if (параллельно) {
+      await store.appendLog(task, 'info', `Асинхронный режим: ${accountIds.length} аккаунтов идут одновременно, старт вразнобой`)
+      await Promise.all(accountIds.map((id, i) => дорожка(id, i)))
+    } else {
+      await дорожка(null, 0)
     }
 
     // §3.8 AND-пересечение: оставляем только каналы, совпавшие со ВСЕМИ ключевыми
