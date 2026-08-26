@@ -120,6 +120,13 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
   const { bodies: promptBodies, save: savePrompts, replace: replacePrompts } = usePromptStore(moduleKey, cfg.messagePrompts ?? [])
   const [delayPreset, setDelayPreset] = useState(1)
   const [delays, setDelays] = useState(DEFAULT_DELAYS)
+  // MR-56: КАКУЮ задержку брать в расчёт времени. У нейрокомментинга поле называется
+  // «Задержка комментария» и правит delays.comment, а delays.action остаётся дефолтным.
+  // Раньше нижний чип и плашка «≈ время» всегда читали delays.action — поэтому при ручной
+  // правки задержки в Custom верхний блок пересчитывался (он берёт comment), а низ стоял
+  // на старом числе. Один источник на все места: тот же выбор, что у «Защиты и таймингов».
+  const commentPrimary = !!cfg.richLayout && !cfg.reactionSettings && moduleKey === 'neuro-commenting'
+  const primaryDelay = (commentPrimary ? delays.comment : delays.action) ?? delays.action ?? delays.comment
   const [goalId] = useState('')
   // §0: задача запускается ПОД КАМПАНИЕЙ; цель наследуется из кампании.
   // Пока кампаний нет — остаётся прямой выбор цели (мягкая миграция, ничего не ломаем).
@@ -433,8 +440,8 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
           const accCount = Math.max(1, selected.size || accounts.length)
           const mul = delayMultiplier(protLevel, delayPreset, globalPace)
           if (!perAccountShare(maxActions || 0, accCount)) return '—'
-          const from = taskSeconds(maxActions || 0, accCount, delays.action[0] * mul)
-          const to = taskSeconds(maxActions || 0, accCount, delays.action[1] * mul)
+          const from = taskSeconds(maxActions || 0, accCount, primaryDelay[0] * mul)
+          const to = taskSeconds(maxActions || 0, accCount, primaryDelay[1] * mul)
           return `${fmtDur(from)}–${fmtDur(to)}`
         })(),
       },
@@ -785,8 +792,8 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
             minWords={cfg.workModeFields?.minWords ? { value: minWords, onChange: setMinWords } : null}
             delays={delays}
             onDelays={(updater) => setDelays(updater)}
-            showComment={!!cfg.richLayout && !cfg.reactionSettings && moduleKey === 'neuro-commenting'}
-            showAction={!(cfg.richLayout && !cfg.reactionSettings && moduleKey === 'neuro-commenting')}
+            showComment={commentPrimary}
+            showAction={!commentPrimary}
             showJoin
             labels={{ action: cfg.reactionSettings ? 'Задержка между реакциями' : 'Задержка действия', join: 'Задержка вступления' }}
             delayPresets={cfg.delayPresets ?? ['Агрессивный', 'Сбалансированный', 'Консервативный']}
@@ -993,7 +1000,7 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
             onStop={stop}
             onSave={handleSave}
             primaryLabel={cfg.primaryAction ?? 'Начать'}
-            cost={<LaunchCost compact moduleKey={moduleKey} actions={maxActions} accounts={selected.size} delaySec={(() => { const m = delayMultiplier(protLevel, delayPreset, globalPace); const d = delays.action ?? delays.comment; return d ? [Math.round(d[0] * m), Math.round(d[1] * m)] as [number, number] : d })()} />}
+            cost={<LaunchCost compact moduleKey={moduleKey} actions={maxActions} accounts={selected.size} delaySec={(() => { const m = delayMultiplier(protLevel, delayPreset, globalPace); const d = primaryDelay; return d ? [Math.round(d[0] * m), Math.round(d[1] * m)] as [number, number] : d })()} />}
             stats={launchStats}
             task={task}
             warn={warn}
