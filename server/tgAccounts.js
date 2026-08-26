@@ -45,6 +45,10 @@ function toAccountDto(accountId, meta, me, sessionOk) {
   return {
     id: accountId,
     tgSessionId: accountId,
+    // Сервисный аккаунт платформы: им идёт ревизия общей базы каналов и он не продаётся
+    // клиентам (решение владельца 26.08). Отдаём в списке — по нему фильтрует и
+    // планировщик ревизии, и интерфейс «чем есть парсить».
+    service: meta.service === true,
     avatarColor: meta.avatarColor || avatarColor(accountId),
     name,
     phone: phone && !phone.startsWith('+') ? `+${phone}` : phone || '—',

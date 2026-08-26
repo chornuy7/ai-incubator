@@ -48,6 +48,14 @@ function priceFor(moduleKey, { actionMap }) {
  */
 export async function chargeActions(task, store, actions = 1, deps = {}) {
   try {
+    /*
+     * Фоновое обновление базы — за наш счёт (решение владельца 26.08).
+     *
+     * Клиент платит только тогда, когда ЗАПУСКАЕТ сам. Ревизия сохранённых запросов идёт
+     * нашим сервисным пулом и по нашей инициативе: списывать за неё с чьего-либо кошелька
+     * значит брать деньги за работу, которую человек не заказывал.
+     */
+    if (task?.initiator === 'auto-refresh') return null
     const n = Math.max(0, Number(actions) || 0)
     // MR-149 (созвон 19.08): цена действия = базовая цена из БД × N. Текст/картинка уже в
     // базе — отдельно не считаем (токены ИИ тоже не списываются, tokenLedger — только журнал).
@@ -120,4 +128,21 @@ export async function refundShrunk(task, store, deps = {}) {
   } catch {
     return null
   }
+}
+
+/**
+ * Сколько стоит отдать N строк из базы.
+ *
+ * Решение владельца 26.08: выдача готового результата стоит КАК ОБЫЧНЫЙ СБОР — цена одна,
+ * скорость бонус. Считаем тем же прайсом и той же формулой, что и живой проход, иначе
+ * «как обычный сбор» разъедется с обычным сбором при первой же правке цен.
+ *
+ * @param {string} moduleKey @param {number} rows
+ * @returns {Promise<number>} цена в монетах
+ */
+export async function priceOfRows(moduleKey, rows, deps = {}) {
+  const n = Math.max(0, Math.trunc(Number(rows) || 0))
+  if (!n) return 0
+  const pricing = await resolvePricing(deps)
+  return Math.round(priceFor(moduleKey, pricing) * n * 1000) / 1000
 }

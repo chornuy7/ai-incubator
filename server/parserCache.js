@@ -169,11 +169,24 @@ export async function saveParserResults(kind, settings, results, ownerId = null)
     settings: watchableSettings(settings),
     owner_id: ownerId ? String(ownerId) : null,
   }
+  /*
+   * Каждый сохранённый запрос сразу встаёт в очередь на ревизию (решение владельца
+   * 26.08: «обновлять все запросы раз в 12 часов»). Раньше слежение включали вручную —
+   * от этого база старела: обновлялось только то, о чём вспомнили.
+   *
+   * Срок ставим ТОЛЬКО при первой записи (в БД — через `onConflict`-поля ниже, в SQLite —
+   * веткой INSERT): свежий проход не должен отодвигать назначенную ревизию, иначе часто
+   * запрашиваемый поиск не обновится никогда.
+   */
+  const firstPlan = { watch: true, period_h: DEFAULT_PERIOD_H, next_run_at: Date.now() + DEFAULT_PERIOD_H * 3600_000 }
   const base = sb()
   if (base) {
     // upsert перечисляет ТОЛЬКО свои поля: не указанные колонки (watch, period_h,
     // next_run_at и прочее слежение) при конфликте остаются как были.
-    const { error } = await base.from('parser_cache').upsert({ ...row, results: list }, { onConflict: 'sig' })
+    // Есть строка — обновляем только состав и дату; нет — заводим вместе с планом ревизии.
+    const { data: exists } = await base.from('parser_cache').select('sig').eq('sig', row.sig).maybeSingle()
+    const payload = exists ? { ...row, results: list } : { ...row, results: list, ...firstPlan }
+    const { error } = await base.from('parser_cache').upsert(payload, { onConflict: 'sig' })
     if (!error) return sig
     if (!isMissingTable(error)) throw new Error(error.message)
     console.warn('[parserCache] таблица parser_cache не найдена — миграция 2026-08-24 не накатана, пишу в локальный SQLite')
@@ -184,8 +197,8 @@ export async function saveParserResults(kind, settings, results, ownerId = null)
   const upd = d.prepare('UPDATE parser_cache SET kind=?,keywords=?,updated_at=?,count=?,results=?,settings=?,owner_id=COALESCE(?,owner_id) WHERE sig=?')
     .run(row.kind, row.keywords, row.updated_at, row.count, JSON.stringify(list), JSON.stringify(row.settings), row.owner_id, row.sig)
   if (!upd.changes) {
-    d.prepare('INSERT INTO parser_cache(sig,kind,keywords,updated_at,count,results,settings,owner_id) VALUES(?,?,?,?,?,?,?,?)')
-      .run(row.sig, row.kind, row.keywords, row.updated_at, row.count, JSON.stringify(list), JSON.stringify(row.settings), row.owner_id)
+    d.prepare('INSERT INTO parser_cache(sig,kind,keywords,updated_at,count,results,settings,owner_id,watch,period_h,next_run_at) VALUES(?,?,?,?,?,?,?,?,1,?,?)')
+      .run(row.sig, row.kind, row.keywords, row.updated_at, row.count, JSON.stringify(list), JSON.stringify(row.settings), row.owner_id, firstPlan.period_h, firstPlan.next_run_at)
   }
   return sig
 }
@@ -235,6 +248,9 @@ export async function lookupParserResults(kind, settings) {
 /** Сколько неудач подряд терпим, прежде чем снять слежение и оставить ошибку в админке. */
 export const WATCH_MAX_FAILS = 3
 
+/** Как часто обновляем базу. Решение владельца 26.08: раз в 12 часов. */
+export const DEFAULT_PERIOD_H = 12
+
 /** Устойчивая личность записи: по ней считаем «новое» и «пропало». */
 function identityOf(row) {
   const r = row || {}
@@ -255,9 +271,9 @@ export function diffResults(prev = [], next = []) {
 }
 
 /** Включить/выключить слежение за уже сохранённым запросом. */
-export async function setWatch(kind, settings, { watch = true, periodH = 24, ownerId = null } = {}) {
+export async function setWatch(kind, settings, { watch = true, periodH = DEFAULT_PERIOD_H, ownerId = null } = {}) {
   const key = sigKey(parserSignature(kind, settings))
-  const period = Math.min(24 * 30, Math.max(1, Number(periodH) || 24))
+  const period = Math.min(24 * 30, Math.max(1, Number(periodH) || DEFAULT_PERIOD_H))
   const patch = {
     watch: !!watch,
     period_h: period,
@@ -307,7 +323,7 @@ function fromRow(r) {
     settings: parse(r.settings, {}),
     ownerId: r.owner_id || null,
     results: parse(r.results, []),
-    periodH: Number(r.period_h) || 24,
+    periodH: Number(r.period_h) || DEFAULT_PERIOD_H,
     nextRunAt: Number(r.next_run_at) || 0,
     lastRunAt: Number(r.last_run_at) || 0,
     lastNew: Number(r.last_new) || 0,
@@ -328,7 +344,7 @@ function fromRow(r) {
  * WATCH_MAX_FAILS неудач подряд слежение выключается, а причина остаётся в `last_error` —
  * её и показывает админка.
  */
-export async function markWatchRun(sig, { added = 0, gone = 0, error = null, failCount = 0, periodH = 24 } = {}) {
+export async function markWatchRun(sig, { added = 0, gone = 0, error = null, failCount = 0, periodH = DEFAULT_PERIOD_H } = {}) {
   const now = Date.now()
   const fails = error ? Number(failCount) + 1 : 0
   const stop = fails >= WATCH_MAX_FAILS
@@ -339,7 +355,7 @@ export async function markWatchRun(sig, { added = 0, gone = 0, error = null, fai
     last_error: error ? String(error).slice(0, 500) : null,
     fail_count: fails,
     watch: !stop,
-    next_run_at: stop ? null : now + (Math.max(1, Number(periodH) || 24)) * 3600_000,
+    next_run_at: stop ? null : now + (Math.max(1, Number(periodH) || DEFAULT_PERIOD_H)) * 3600_000,
   }
   const base = sb()
   if (base) {

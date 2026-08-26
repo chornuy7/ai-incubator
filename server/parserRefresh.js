@@ -23,23 +23,40 @@
 import { dueWatches, markWatchRun, diffResults } from './parserCache.js'
 import { startModuleTask, launchTask, getModuleStore } from './modules/registry.js'
 
-/** Сколько запросов обновляем за один тик — чтобы не выгрести весь парк аккаунтов. */
+/**
+ * Сколько запросов обновляем ОДНОВРЕМЕННО (решение владельца 26.08: «максимум до 3 в
+ * параллель, с рандомными задержками»).
+ *
+ * Это не про экономию, а про заметность: три сервисных аккаунта, разом начавшие
+ * одинаковый поиск, выглядят машиной. Между стартами — случайная пауза.
+ */
 const PER_TICK = 3
+/** Случайная пауза между стартами обновлений, мс. */
+const STAGGER_MS = { min: 20_000, max: 90_000 }
+const jitter = () => STAGGER_MS.min + Math.round(Math.random() * (STAGGER_MS.max - STAGGER_MS.min))
 /** Сколько ждём завершения одной задачи. Парс группы на тысячи участников идёт долго. */
 const WAIT_MS = 40 * 60 * 1000
 /** Сколько аккаунтов даём одному обновлению. */
 const ACCOUNTS_PER_RUN = 2
 
-/** Свободные пригодные аккаунты владельца запроса. */
-async function pickAccounts(ownerId) {
+/**
+ * Кем обновлять базу.
+ *
+ * Решение владельца 26.08: ревизию ведёт СЕРВИСНЫЙ ПУЛ платформы — наши аккаунты,
+ * которые клиентам не продаются. Причина простая: обновление идёт по нашей инициативе,
+ * значит и парк, и деньги наши. Аккаунты клиента в фоне не трогаем вовсе — он их купил
+ * под свои задачи, а не под обслуживание общей базы.
+ *
+ * Если сервисных нет — обновление не делаем и говорим об этом в ошибке запроса, а не
+ * подменяем их чужими: молча тратить аккаунты клиента было бы именно тем, чего решили
+ * не делать.
+ */
+async function pickAccounts() {
   const { tgListAccounts } = await import('./tgAccounts.js')
   const { isAccountRunnable } = await import('./lib/protection.js')
   const all = await tgListAccounts({ includeTrash: false })
-  const mine = all.filter((a) => {
-    if (ownerId && String(a.ownerId || '') !== String(ownerId)) return false
-    return isAccountRunnable(a.status || 'active')
-  })
-  return mine.slice(0, ACCOUNTS_PER_RUN).map((a) => a.id)
+  const pool = all.filter((a) => a.service === true && isAccountRunnable(a.status || 'active'))
+  return pool.slice(0, ACCOUNTS_PER_RUN).map((a) => a.id)
 }
 
 /** Дождаться конца задачи. Пауза — тоже конец: дальше сама она не поедет. */
@@ -68,59 +85,69 @@ export async function parserRefreshTick({ perTick = PER_TICK, waitMs = WAIT_MS }
   const out = { checked: 0, added: 0, gone: 0, failed: 0 }
   let due = []
   try { due = await dueWatches(Date.now(), perTick) } catch { return out }
-  for (const w of due) {
-    const common = { failCount: w.failCount, periodH: w.periodH }
-    try {
-      /*
-       * TGStat перезапускаем НАПРЯМУЮ, а не задачей модуля: он ходит куками каталога,
-       * а не аккаунтами. Значит перепроверка здесь не занимает профили и не списывает
-       * монеты — а если куки протухли, это и будет ошибкой запроса, которую увидит
-       * админка. Ровно тот случай, ради которого и заводился `last_error`.
-       */
-      if (w.kind === 'tgstat') {
-        const [{ searchTgstatChannels }, { getSessionDto, loadSessionRaw }] = await Promise.all([
-          import('./tgstat/parser.js'),
-          import('./tgstat/store.js'),
-        ])
-        const session = await getSessionDto()
-        if (!session.has_session) throw new Error('TGStat не подключён — загрузите cookies')
-        const chats = await searchTgstatChannels(w.settings.filters || {}, await loadSessionRaw(), Math.max(1, Number(w.settings.maxPages) || 3))
-        const { saveParserResults } = await import('./parserCache.js')
-        await saveParserResults('tgstat', w.settings, chats, w.ownerId)
-        const d = diffResults(w.results, chats)
-        await markWatchRun(w.sig, { ...common, added: d.added.length, gone: d.gone.length, failCount: 0 })
-        out.checked += 1
-        out.added += d.added.length
-        out.gone += d.gone.length
-        continue
-      }
-      const accountIds = await pickAccounts(w.ownerId)
-      if (!accountIds.length) {
-        // Не ошибка кода, а состояние парка — но владелец должен это видеть, иначе
-        // «слежение включено, а ничего не обновляется» выглядит поломкой.
-        await markWatchRun(w.sig, { ...common, error: 'Нет свободных аккаунтов для перепроверки' })
-        out.failed += 1
-        continue
-      }
-      const { store, task } = startModuleTask(w.kind, { ...w.settings, accountIds })
-      task.userId = w.ownerId || null
-      task.initiator = 'auto-refresh' // в логах и журнале видно, что запуск не ручной
-      task.name = `Авто-обновление: ${w.label}`
-      await store.saveTask(task)
-      await launchTask(w.kind, task, store)
-      const fin = await waitTask(store, task.id, waitMs)
-      if (!fin || fin.status !== 'done') throw new Error(fin ? whyFailed(fin) : 'перепроверка не уложилась в отведённое время')
-      const { added, gone } = diffResults(w.results, fin.results || [])
-      await markWatchRun(w.sig, { ...common, added: added.length, gone: gone.length, failCount: 0 })
-      out.checked += 1
-      out.added += added.length
-      out.gone += gone.length
-    } catch (err) {
-      await markWatchRun(w.sig, { ...common, error: err instanceof Error ? err.message : 'Ошибка перепроверки' }).catch(() => {})
-      out.failed += 1
-    }
-  }
+  /*
+   * Обрабатываем параллельно, но со случайным сдвигом старта: одновременный залп с трёх
+   * аккаунтов по одному и тому же каталогу — сигнатура фермы, ровно от которой мы
+   * защищаемся во всех остальных модулях.
+   */
+  await Promise.all(due.map((w, i) => new Promise((resolve) => {
+    setTimeout(() => { void refreshOne(w, out).then(resolve) }, i === 0 ? 0 : jitter() * i)
+  })))
   return out
+}
+
+/** Обновить ОДИН сохранённый запрос. Ошибку не роняем наверх — она пишется в строку запроса. */
+async function refreshOne(w, out) {
+  const common = { failCount: w.failCount, periodH: w.periodH }
+  try {
+    /*
+     * TGStat перезапускаем НАПРЯМУЮ, а не задачей модуля: он ходит куками каталога,
+     * а не аккаунтами. Значит перепроверка здесь не занимает профили и не списывает
+     * монеты — а если куки протухли, это и будет ошибкой запроса, которую увидит
+     * админка. Ровно тот случай, ради которого и заводился `last_error`.
+     */
+    if (w.kind === 'tgstat') {
+      const [{ searchTgstatChannels }, { getSessionDto, loadSessionRaw }] = await Promise.all([
+        import('./tgstat/parser.js'),
+        import('./tgstat/store.js'),
+      ])
+      const session = await getSessionDto()
+      if (!session.has_session) throw new Error('TGStat не подключён — загрузите cookies')
+      const chats = await searchTgstatChannels(w.settings.filters || {}, await loadSessionRaw(), Math.max(1, Number(w.settings.maxPages) || 3))
+      const { saveParserResults } = await import('./parserCache.js')
+      await saveParserResults('tgstat', w.settings, chats, w.ownerId)
+      const d = diffResults(w.results, chats)
+      await markWatchRun(w.sig, { ...common, added: d.added.length, gone: d.gone.length, failCount: 0 })
+      out.checked += 1
+      out.added += d.added.length
+      out.gone += d.gone.length
+      return
+    }
+    const accountIds = await pickAccounts()
+    if (!accountIds.length) {
+      // Не ошибка кода, а состояние парка — но владелец должен это видеть, иначе
+      // «слежение включено, а ничего не обновляется» выглядит поломкой.
+      await markWatchRun(w.sig, { ...common, error: 'Нет свободных сервисных аккаунтов для ревизии базы' })
+      out.failed += 1
+      return
+    }
+    const { store, task } = startModuleTask(w.kind, { ...w.settings, accountIds })
+    task.userId = w.ownerId || null
+    task.initiator = 'auto-refresh' // в логах и журнале видно, что запуск не ручной
+    task.name = `Авто-обновление: ${w.label}`
+    await store.saveTask(task)
+    await launchTask(w.kind, task, store)
+    const fin = await waitTask(store, task.id, waitMs)
+    if (!fin || fin.status !== 'done') throw new Error(fin ? whyFailed(fin) : 'перепроверка не уложилась в отведённое время')
+    const { added, gone } = diffResults(w.results, fin.results || [])
+    await markWatchRun(w.sig, { ...common, added: added.length, gone: gone.length, failCount: 0 })
+    out.checked += 1
+    out.added += added.length
+    out.gone += gone.length
+  } catch (err) {
+    await markWatchRun(w.sig, { ...common, error: err instanceof Error ? err.message : 'Ошибка перепроверки' }).catch(() => {})
+    out.failed += 1
+  }
 }
 
 let timer = null
