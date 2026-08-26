@@ -247,3 +247,40 @@ test('mergePermissions переносит allTasks', () => {
   assert.equal(mergePermissions([plain, lead]).resources.allTasks, 'allow', 'union: даёт любая роль')
   assert.equal(mergePermissions([]).resources.allTasks, 'deny', 'по умолчанию — deny')
 })
+
+/**
+ * Блоки, выдаваемые ролям, должны совпадать с тем, что модуль реально показывает
+ * (правка владельца 26.08: «нужно, чтобы назывались идентично и убрать те, которых уже
+ * нет»). Раньше список был один на все модули — парсеру предлагали выдать «ИИ: промпты»,
+ * которых у него нет.
+ */
+test('у каждого модуля свой набор блоков, лишнего не предлагаем', async () => {
+  const { MODULE_BLOCKS, blocksForModule } = await import('../roles.js')
+  const { MODULE_DEFS } = await import('../modules/registry.js')
+
+  // Ни один модуль не должен остаться без описания — иначе он молча получит полный набор.
+  for (const key of Object.keys(MODULE_DEFS)) {
+    assert.ok(MODULE_BLOCKS[key], `модуль ${key} не описан в MODULE_BLOCKS`)
+  }
+  // У парсера нет ИИ-промптов, у прогрева нет целевых каналов.
+  assert.ok(!MODULE_BLOCKS['parsing-users'].includes('templates'))
+  assert.ok(!MODULE_BLOCKS.warming.includes('targets'))
+  assert.ok(!MODULE_BLOCKS['neuro-dialogs'].includes('targets'), 'диалоги отвечают на входящие')
+  // А у комментинга — весь набор.
+  assert.equal(MODULE_BLOCKS['neuro-commenting'].length, 6)
+})
+
+test('подписи блоков совпадают со словами на экране модуля', async () => {
+  const { blocksForModule } = await import('../roles.js')
+  const label = (mod, key) => blocksForModule(mod).find((b) => b.key === key)?.label
+
+  assert.equal(label('parsing', 'targets'), 'Настройки поиска')
+  assert.equal(label('parsing-users', 'targets'), 'Настройки парсинга (источники)')
+  assert.equal(label('mailing', 'targets'), 'Получатели')
+  assert.equal(label('mass-react', 'templates'), 'Палитра реакций')
+  // Общая подпись остаётся там, где переопределять нечего.
+  assert.equal(label('neuro-commenting', 'targets'), 'Целевые каналы и группы')
+  // Неописанный модуль получает полный набор, а не пустоту: лучше лишний тумблер,
+  // чем невозможность что-либо закрыть.
+  assert.equal(blocksForModule('новый-модуль-которого-нет').length, 6)
+})

@@ -53,7 +53,7 @@ export function Pager({ page, total, onPage, label }: {
   /** Размер ОТФИЛЬТРОВАННОГО списка — пагинация всегда считается по тому, что видно. */
   total: number
   onPage: (p: number) => void
-  /** Родительный падеж для подписи: «пользователей», «шаблонов». */
+  /** Родительный падеж для подписи: «пользователей», «ролей». */
   label: string
 }) {
   const pages = Math.max(1, Math.ceil(total / PAGE_SIZE))
@@ -147,11 +147,12 @@ export function RolesPage({ embedded }: {
   embedded?: boolean
 } = {}) {
   /**
-   * Для владельца это редактор ШАБЛОНОВ доступа, для админа платформы — прежний редактор
-   * ролей. Разница не косметическая: уточнение владельца 21.08 — «роль это просто как шаблон
-   * и все настроек которые уже были выбраны». Роль ничего не выдаёт сама по себе; её набор
-   * КОПИРУЕТСЯ в личные тумблеры сотрудника на странице «Пользователи» и дальше не участвует.
-   * Отсюда и разные подписи: говорить владельцу «роль решает, что видит суб» теперь неправда.
+   * Слово везде одно — РОЛЬ (правка владельца 26.08: «создать роль и выбрать роль, но не
+   * шаблон»). Раньше владельцу писали «шаблон», а админу платформы «роль»: 21.08 было
+   * решено, что для владельца это именно шаблон настроек, потому что набор КОПИРУЕТСЯ в
+   * личные тумблеры сотрудника и дальше не участвует. Механика осталась прежней, но два
+   * названия одного и того же на соседних экранах читались как две разные сущности —
+   * поэтому от разных подписей отказались.
    *
    * Каталог модулей приходит владельцу урезанным по его подписке — молчать об этом нельзя,
    * иначе пропавший модуль читается как поломка.
@@ -245,7 +246,7 @@ export function RolesPage({ embedded }: {
     try {
       // Номер ищем свободный, а не по длине списка: после удалений длина повторяется и
       // так появились «Новая роль 5» в двух экземплярах.
-      const base = isPlatformAdmin ? 'Новая роль' : 'Новый шаблон'
+      const base = 'Новая роль'
       let n = roles.length + 1
       while (nameTaken(`${base} ${n}`)) n += 1
       const r = await createRole({ name: `${base} ${n}`, permissions: emptyPermissions() })
@@ -268,7 +269,7 @@ export function RolesPage({ embedded }: {
     const message = isPlatformAdmin
       ? `«${r.name}» будет удалена безвозвратно. Пользователи с этой ролью потеряют её доступы.`
       : `Шаблон «${r.name}» будет удалён безвозвратно. На уже выданные доступы это не влияет — они скопированы в настройки сотрудников.`
-    if (!(await confirmDialog({ title: isPlatformAdmin ? 'Удалить роль?' : 'Удалить шаблон?', message, confirmLabel: 'Удалить', tone: 'danger' }))) return
+    if (!(await confirmDialog({ title: 'Удалить роль?', message, confirmLabel: 'Удалить', tone: 'danger' }))) return
     try {
       await deleteRole(r.id)
       const next = roles.filter((x) => x.id !== r.id)
@@ -332,7 +333,9 @@ export function RolesPage({ embedded }: {
   const setModuleBlocks = (moduleKey: string, p: Perm) => {
     setPerms((s) => {
       const blocks = { ...s.blocks }
-      for (const b of allBlockKeys()) blocks[`${moduleKey}:${b}`] = p
+      // Только блоки ЭТОГО модуля: раньше «все блоки» проставляли и те, которых у него нет.
+      const keys = (catalog?.blocksByModule?.[moduleKey] ?? catalog?.blocks ?? []).map((b) => b.key)
+      for (const b of keys) blocks[`${moduleKey}:${b}`] = p
       return { ...s, blocks }
     })
     mark()
@@ -412,7 +415,7 @@ export function RolesPage({ embedded }: {
   const subtitle = isPlatformAdmin
     ? 'Роли и доступ к модулям, блокам и ресурсам. Снятый доступ выделен.'
     : 'Шаблон — заготовка доступа: собрали набор модулей один раз и применяете его сотруднику в его карточке выше. Дальше доступ каждого правится отдельно. Выдать можно только оплаченное.'
-  const addLabel = isPlatformAdmin ? 'Новая роль' : 'Создать шаблон'
+  const addLabel = 'Новая роль'
 
   return (
     <div id="templates">
@@ -486,13 +489,13 @@ export function RolesPage({ embedded }: {
          */
         <EmptyState
           icon={<ShieldCheck size={26} />}
-          title={isPlatformAdmin ? 'Ролей пока нет' : 'У вас пока нет шаблонов доступа'}
+          title={'Ролей пока нет'}
           desc={isPlatformAdmin
             ? 'Создайте первую роль и раздайте ей доступы.'
             : 'Шаблон нужен, чтобы выдавать новым сотрудникам одинаковый набор модулей одним кликом, а не собирать его тумблерами каждый раз.'}
           action={
             <button onClick={() => void addRole()} className="btn-primary h-10">
-              <Plus size={16} /> {isPlatformAdmin ? 'Создать роль' : 'Создать шаблон'}
+              <Plus size={16} /> {'Создать роль'}
             </button>
           }
         />
@@ -525,7 +528,7 @@ export function RolesPage({ embedded }: {
               </button>
             ))}
             </div>
-            <Pager page={rolePageSafe} total={roles.length} onPage={setRolePage} label={isPlatformAdmin ? 'ролей' : 'шаблонов'} />
+            <Pager page={rolePageSafe} total={roles.length} onPage={setRolePage} label={'ролей'} />
           </div>
 
           {/* Редактор выбранной роли. Не выбрана — вместо полутора экранов тумблеров
@@ -534,7 +537,7 @@ export function RolesPage({ embedded }: {
             <Card className="flex min-h-[160px] items-center justify-center p-6 text-center">
               <div className="text-sm text-white/45">
                 <ShieldCheck size={22} className="mx-auto mb-2 text-white/25" />
-                {isPlatformAdmin ? 'Выберите роль слева, чтобы настроить доступ.' : 'Выберите шаблон слева, чтобы посмотреть или изменить набор.'}
+                {'Выберите роль слева, чтобы настроить доступ.'}
               </div>
             </Card>
           )}
@@ -650,7 +653,9 @@ export function RolesPage({ embedded }: {
                                   <button type="button" onClick={() => setModuleBlocks(m.key, 'deny')}
                                     className="rounded border border-line px-1.5 text-[10px] text-muted hover:border-rose-500/40 hover:text-rose-300">выкл</button>
                                 </div>
-                                {catalog.blocks.map((b) => (
+                                {/* Блоки ИМЕННО этого модуля и его же словами (26.08): общий
+                                    список обещал парсеру промпты, которых у него нет. */}
+                                {(catalog.blocksByModule?.[m.key] ?? catalog.blocks).map((b) => (
                                   <PermRow key={b.key} indent label={b.label} value={bPerm(`${m.key}:${b.key}`)} onChange={(p) => setBlock(`${m.key}:${b.key}`, p ?? 'deny')} />
                                 ))}
                               </div>

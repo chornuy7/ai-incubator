@@ -10,7 +10,7 @@ import { Switch, Select, Badge, EmptyState, Modal } from '@/shared/ui'
 import { AccountPicker } from '@/features/account-picker/AccountPicker'
 import { useModuleTask } from './shared/useModuleTask'
 import { lookupParserCache, setParserWatch, type ParserCacheHit } from '@/api/modulesApi'
-import { SectionCard, NumberField, ProtectionTimings, LaunchPanel, LaunchSteps, markCurrentStep, TaskStartedModal, SchedulePanel, usePresetCarry } from './shared'
+import { SectionCard, NumberField, ProtectionTimings, LaunchPanel, LaunchSteps, markCurrentStep, TaskStartedModal, SchedulePanel, usePresetCarry, useBlockAccess } from './shared'
 import { PresetBar } from './shared/PresetBar'
 import { SavePresetModal } from './shared/SavePresetModal'
 import { cn } from '@/shared/lib/utils'
@@ -190,6 +190,10 @@ function Inner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: string }) {
    * словами, а источниками — сигнатуру на сервере строим по ним плюс фильтры и лимиты
    * сбора (с лимитом 20 и 1000 состав разный, подменять одно другим нельзя).
    */
+  // Права на блоки (26.08): до этой правки проверка жила только в LiveModule, и
+  // выданные парсеру блоки ни на что не влияли — тумблер щёлкали, экран не менялся.
+  const showBlock = useBlockAccess(moduleKey)
+
   const [cacheHit, setCacheHit] = useState<ParserCacheHit | null>(null)
   const [usingCache, setUsingCache] = useState(false)
   useEffect(() => {
@@ -274,6 +278,7 @@ function Inner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: string }) {
         <AccountPicker moduleKey={moduleKey} selected={selected} onChange={setSelected} actions={cfg.accountActions} withFilters={!!cfg.accountFilters} selectedTitle={cfg.selectedTitle ?? 'Выбрано для парсинга'} />
       </div>
 
+      {showBlock('targets') && (
       <SectionCard id="sec-settings" icon={<Settings2 size={18} />} title="Настройки парсинга" badge={targetList.length ? `${targetList.length} групп` : undefined}>
         <div className="grid gap-4 lg:grid-cols-2">
           {/* Левая колонка: источник + ключевые слова + лимиты */}
@@ -397,6 +402,7 @@ function Inner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: string }) {
           </div>
         </div>
       </SectionCard>
+      )}
       {/* Один блок на все модули (правка 19.08): защита и задержки — одно решение.
           У парсера участников свои поля пауз (между чатами, между пользователями,
           перед вступлением), поэтому общий TimingSection не подходит — но карточка
@@ -429,6 +435,7 @@ function Inner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: string }) {
       )}
 
 
+      {showBlock('run') && (
       <SectionCard id="sec-run" icon={<Play size={18} />} title="Параметры и лимиты">
         <LaunchPanel running={running} starting={starting} canStart={canStart} onStart={handleStart} onStop={stop} onSave={handleSave}
           primaryLabel={cfg.primaryAction ?? 'Начать'} stats={launchStats} task={task} warn={warn}
@@ -444,6 +451,7 @@ function Inner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: string }) {
           cost={<LaunchCost compact moduleKey={moduleKey} actions={P.unit ? (limits[lkey(P.unit.limitLabel)] || 0) : 0} />}
           presets={presets} onApplyPreset={applyPreset} />
       </SectionCard>
+      )}
 
       {/* §3.9: расписание и здесь — раньше блок был только в LiveModule (тест 6.13). */}
       <SchedulePanel

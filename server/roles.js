@@ -73,6 +73,67 @@ export const BLOCKS = [
 ]
 
 /**
+ * Какие блоки есть У КАЖДОГО модуля и как они называются НА ЕГО ЭКРАНЕ.
+ *
+ * Правка владельца 26.08: «модули и блоки поменялись, нужно, чтобы при выдаче ролям они
+ * назывались идентично тому, что есть, и убрать те, которых уже нет». Раньше список был
+ * ОДИН на все модули — шесть пунктов, одинаковых для парсера и для комментинга. Из-за
+ * этого выдавали «ИИ: промпты и шаблоны» парсеру, где промптов нет вовсе, и искали на
+ * экране «Целевые каналы» там, где написано «Настройки поиска».
+ *
+ * КЛЮЧИ НЕ МЕНЯЮТСЯ — по ним записаны уже выданные права; новых не заводим, иначе у
+ * сотрудников молча пропал бы доступ к разделам (пустой ключ = запрет). Меняются только
+ * СОСТАВ на модуль и ПОДПИСИ.
+ */
+export const MODULE_BLOCKS = {
+  'neuro-commenting': ['run', 'targets', 'templates', 'settings', 'results', 'logs'],
+  'neuro-chatting': ['run', 'targets', 'templates', 'settings', 'results', 'logs'],
+  // Диалоги отвечают на входящие — целевых каналов у них нет.
+  'neuro-dialogs': ['run', 'templates', 'settings', 'results', 'logs'],
+  'mass-react': ['run', 'targets', 'templates', 'settings', 'results', 'logs'],
+  // У масслукинга нет ни промптов, ни палитры — ИИ там не участвует.
+  'mass-looking': ['run', 'targets', 'settings', 'results', 'logs'],
+  // Прогрев работает сам по себе: ни целей, ни текстов не выбирают.
+  warming: ['run', 'settings', 'results', 'logs'],
+  mailing: ['run', 'targets', 'templates', 'settings', 'results', 'logs'],
+  autoposting: ['run', 'targets', 'templates', 'settings', 'results', 'logs'],
+  // Рейтинг только считает балл по своим же аккаунтам.
+  ggr: ['run', 'results', 'logs'],
+  parsing: ['run', 'targets', 'settings', 'results', 'logs'],
+  'parsing-groups': ['run', 'targets', 'settings', 'results', 'logs'],
+  'parsing-users': ['run', 'targets', 'settings', 'results', 'logs'],
+  'parsing-messages': ['run', 'targets', 'settings', 'results', 'logs'],
+  'parsing-comments': ['run', 'targets', 'settings', 'results', 'logs'],
+  'spam-unblock': ['run', 'results', 'logs'],
+}
+
+/** Подписи, отличающиеся от общих: слово должно совпадать с тем, что видно на экране. */
+const BLOCK_LABEL_OVERRIDES = {
+  parsing: { targets: 'Настройки поиска', settings: 'Защита и тайминги' },
+  'parsing-groups': { targets: 'Настройки поиска' },
+  'parsing-users': { targets: 'Настройки парсинга (источники)', settings: 'Фильтры, защита и тайминги' },
+  'parsing-messages': { targets: 'Настройки парсинга (источники)', settings: 'Фильтры, защита и тайминги' },
+  'parsing-comments': { targets: 'Настройки парсинга (источники)', settings: 'Фильтры, защита и тайминги' },
+  mailing: { targets: 'Получатели', templates: 'Текст сообщения' },
+  'mass-react': { templates: 'Палитра реакций' },
+  'neuro-dialogs': { templates: 'ИИ: промпты и цель диалога' },
+  warming: { run: 'Аккаунты и уровень прогрева' },
+  ggr: { run: 'Аккаунты и запуск' },
+  autoposting: { targets: 'Каналы для публикации', templates: 'Текст и медиа поста' },
+}
+
+/**
+ * Блоки одного модуля с подписями — то, что рисует редактор ролей.
+ * Неизвестный модуль (новый, ещё не описанный) получает полный набор: лучше показать
+ * лишний тумблер, чем молча лишить владельца возможности что-то закрыть.
+ */
+export function blocksForModule(moduleKey) {
+  const keys = MODULE_BLOCKS[moduleKey] || BLOCKS.map((b) => b.key)
+  const over = BLOCK_LABEL_OVERRIDES[moduleKey] || {}
+  return keys.map((k) => ({ key: k, label: over[k] || (BLOCKS.find((b) => b.key === k)?.label ?? k) }))
+}
+
+/**
  * Разделы навигации, доступ к которым выдаётся ролью (§8.1 «доступ на всё, не только модули»).
  * Ключ = путь роутинга. НЕ включает: админ-страницы (роли/пользователи — только админ) и
  * «всегда-доступный» минимум (Мой аккаунт, Поддержка). По умолчанию — deny (не показывать).
@@ -456,7 +517,14 @@ export async function buildCatalog(limit = null) {
     { type: 'searchTemplates', label: 'Шаблоны поиска', perItem: false },
     { type: 'allTasks', label: 'Чужие задачи (видеть и управлять всеми в Дашборде)', perItem: false },
   ]
-  return { modules, blocks: BLOCKS, sections: SECTIONS, resources }
+  /*
+   * `blocks` (плоский список) остаётся для совместимости — по нему рисуется строка
+   * «блок во ВСЕХ модулях». А `blocksByModule` говорит, какие блоки есть у КАЖДОГО
+   * модуля и как они называются на его экране: у парсера нет промптов, у прогрева нет
+   * целей, и показывать эти тумблеры значит обещать несуществующее (правка 26.08).
+   */
+  const blocksByModule = Object.fromEntries(modules.map((m) => [m.key, blocksForModule(m.key)]))
+  return { modules, blocks: BLOCKS, blocksByModule, sections: SECTIONS, resources }
 }
 
 /**
