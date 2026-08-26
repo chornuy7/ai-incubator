@@ -30,6 +30,8 @@ import pg from 'pg'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const DIR = path.join(__dirname, '..', '..', 'supabase', 'migrations')
+/** Что накатили руками до появления прогонятора — список в git, а не догадка. */
+const BASELINE_FILE = path.join(__dirname, '..', '..', 'supabase', 'baseline.txt')
 
 const args = new Set(process.argv.slice(2))
 const DRY = args.has('--dry')
@@ -78,25 +80,41 @@ try {
   for (const f of changed) console.warn(`⚠  ${f} — файл изменился после применения. В базе то, что накатили раньше.`)
 
   /*
-   * Заслон от «первого запуска на живой базе».
+   * Первый запуск на живой базе.
    *
    * Часть наших миграций не идемпотентна — среди них есть `drop`. Если прогонятор впервые
-   * попал на базу, которую наполняли руками, его таблица учёта пуста, и обычный запуск
-   * честно попытается применить ВСЁ с самого начала — то есть снесёт данные. Отличить
-   * такую базу от чистой просто: на чистой нет наших таблиц. Видим `profiles` при пустом
-   * учёте — останавливаемся и требуем `--baseline`.
+   * попал на базу, которую наполняли руками через SQL Editor, его учёт пуст, и обычный
+   * запуск честно попытался бы применить ВСЁ с самого начала — то есть снёс бы данные.
    *
-   * Это единственное место, где скрипт отказывается работать вместо того, чтобы сделать
-   * как просили. Цена ошибки тут — прод, а не потраченная минута.
+   * Что уже накатано руками, знает не догадка, а СПИСОК В РЕПОЗИТОРИИ (supabase/baseline.txt):
+   * он в git, его видно в ревью, и это не магия «база выглядит непустой — наверное, всё
+   * применено». Файлы из списка отмечаются как применённые без выполнения, всё остальное
+   * едет обычным порядком. Так деплою не нужен ручной шаг.
+   *
+   * Списка нет, а база уже наполнена — останавливаемся и требуем `--baseline` явно: это
+   * единственное место, где скрипт отказывается работать вместо того, чтобы сделать как
+   * просили. Цена ошибки тут — прод, а не потраченная минута.
    */
   if (!DRY && !BASELINE && done.size === 0) {
     const { rows: [{ exists }] } = await client.query(
       "select exists (select 1 from information_schema.tables where table_schema='public' and table_name='profiles') as exists")
     if (exists) {
-      console.error('База уже наполнена (есть таблица profiles), а учёт миграций пуст.')
-      console.error('Это первый запуск прогонятора на существующей базе — сначала отметьте накатанное:')
-      console.error('    node server/scripts/migrate.mjs --baseline')
-      process.exit(1)
+      const listed = fs.existsSync(BASELINE_FILE)
+        ? fs.readFileSync(BASELINE_FILE, 'utf8').split(String.fromCharCode(10)).map((l) => l.trim()).filter((l) => l && !l.startsWith('#'))
+        : []
+      const known = listed.filter((f) => files.includes(f))
+      if (!known.length) {
+        console.error('База уже наполнена (есть таблица profiles), а учёт миграций пуст.')
+        console.error('Первый запуск на существующей базе — отметьте накатанное явно:')
+        console.error('    node server/scripts/migrate.mjs --baseline')
+        process.exit(1)
+      }
+      for (const f of known) {
+        await client.query('insert into schema_migrations(name, checksum) values ($1,$2) on conflict (name) do nothing',
+          [f, sum(fs.readFileSync(path.join(DIR, f), 'utf8'))])
+        done.set(f, null)
+      }
+      console.log(`Учёт заведён по supabase/baseline.txt: ${known.length} миграц(ий) отмечено накатанными ранее (не выполнялись).`)
     }
   }
 
