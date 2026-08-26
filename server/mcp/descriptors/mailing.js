@@ -113,8 +113,8 @@ export default {
       title: 'Защита аккаунтов',
       purpose: 'Множитель задержек.',
       howItWorks: 'Уровень защиты умножает паузы между отправками. Вероятности у модуля нет — пишем всем из списка.',
-      api: { method: 'POST', path: '/api/modules/mailing/tasks', fills: ['protectionLevel'] },
-      params: ['protectionLevel'],
+      api: { method: 'POST', path: '/api/modules/mailing/tasks', fills: ['protectionLevel', 'probability'] },
+      params: ['protectionLevel', 'probability'],
     },
     {
       id: 'timings',
@@ -317,6 +317,22 @@ export default {
       ],
       examples: [1, 3],
       storedAs: 'task.settings.threads',
+    },
+    {
+      name: 'probability',
+      block: 'protection',
+      title: 'Вероятность отправки',
+      type: 'integer',
+      default: 100,
+      purpose: 'Какая доля получателей уходит НЕ по порядку списка и не от того аккаунта, что шёл следующим.',
+      constraints: [
+        'смысл иной, чем в комментинге и реакциях: промах не отменяет отправку, а откладывает её',
+        'не выпавший получатель уходит в конец очереди и достаётся другому аккаунту — из списка никто не теряется',
+        'бросок делается один раз на получателя: со второго захода пишем без него, иначе очередь крутилась бы вечно',
+        'уровень защиты режет сверху: осторожный — не выше 25%, сбалансированный — не выше 45%',
+      ],
+      seeAlso: ['protectionLevel'],
+      storedAs: 'task.settings.probability',
     },
     {
       name: 'protectionLevel',
