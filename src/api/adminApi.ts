@@ -418,18 +418,3 @@ export async function fetchCron(): Promise<{ fields: CronField[]; values: Record
 export async function saveCron(patch: Record<string, number>): Promise<{ values: Record<string, number>; note?: string }> {
   return apiPost<{ ok: boolean; values: Record<string, number>; note?: string }>('/api/admin/cron', patch)
 }
-
-/**
- * Разовый перенос шаблонов настроек из файлов сервера в общую базу.
- *
- * Файлы лежат на сервере, и прочитать их может только сам серверный процесс — ни из
- * браузера, ни запросом к базе до них не добраться. Поэтому перенос запускается ручкой,
- * а не «руками через SQL». Без `apply` — только показывает, что будет перенесено.
- */
-export async function presetsToDb(apply = false): Promise<{
-  apply: boolean
-  moved: number
-  items: Array<{ moduleKey: string; count: number; names: string[]; skipped?: boolean; error?: string }>
-}> {
-  return apiPost(`/api/admin/presets-to-db${apply ? '?apply=1' : ''}`, {})
-}

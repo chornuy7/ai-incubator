@@ -399,26 +399,6 @@ app.use('/api/agents', agentsRouter)
 app.use('/api/leads', leadsRouter)
 
 /** §10.3: управление API-ключами «мозгов» — только владелец. */
-/**
- * Разовый перенос шаблонов настроек из файлов сервера в общую базу.
- *
- * Тем же занимается `server/scripts/presets-to-db.mjs`, но у владельца нет SSH — а файлы
- * лежат на сервере, и прочитать их может только сам серверный процесс. Ни из браузера, ни
- * из GitHub Actions, ни запросом к базе до них не добраться, поэтому — ручка в админке.
- *
- * По умолчанию ПОКАЗЫВАЕТ, что будет перенесено, и ничего не пишет. Пишет только с
- * `?apply=1`. Идемпотентно: модуль, где в базе уже есть шаблоны, пропускается — повторный
- * вызов не воскресит удалённое и не наплодит дублей. Файлы не трогаются: точка отката.
- */
-app.post('/api/admin/presets-to-db', async (req, res) => {
-  try {
-    if (!(await isAdminRequest(req))) return res.status(403).json({ ok: false, error: 'Перенос шаблонов делает только владелец' })
-    const { migratePresetFilesToDb } = await import('./modulePresets.js')
-    const apply = String(req.query.apply || '') === '1'
-    res.json({ ok: true, apply, ...(await migratePresetFilesToDb({ apply })) })
-  } catch (err) { res.status(500).json({ ok: false, error: err instanceof Error ? err.message : 'Ошибка' }) }
-})
-
 app.get('/api/admin/api-keys', async (req, res) => {
   try {
     if (!(await isAdminRequest(req))) return res.status(403).json({ ok: false, error: 'Ключи видит только владелец' })
