@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Star, Sparkles, Check, RotateCcw, Pencil } from 'lucide-react'
+import { Sparkles, Check, RotateCcw, Pencil } from 'lucide-react'
 import { cn } from '@/shared/lib/utils'
 import { Modal } from '@/shared/ui'
 import { DEFAULT_PROMPT_BODIES } from './promptDefaults'
@@ -75,9 +75,12 @@ export function PromptCards({ labels, activeIndex, onActiveChange, bodies, onSav
               key={label}
               className={cn(
                 'relative rounded-xl border transition-all',
-                i === activeIndex
-                  ? 'border-spark-500/60 bg-spark-500/8 ring-1 ring-spark-500/30'
-                  : 'border-line bg-elevated',
+                // Выделения «активного» промпта здесь больше нет (просьба владельца 26.08).
+                // Какой тип применится, решает НЕ выбор карточки, а «Распределение типов»
+                // ниже: воркер кидает взвешенный жребий на каждое действие. Зелёная рамка
+                // со звездой обещали приоритет, которого нет, — теперь клик по карточке
+                // только показывает её текст в предпросмотре.
+                i === activeIndex ? 'border-white/20 bg-elevated' : 'border-line bg-elevated',
               )}
             >
               <button
@@ -88,10 +91,7 @@ export function PromptCards({ labels, activeIndex, onActiveChange, bodies, onSav
                   i === activeIndex ? 'text-fg' : 'text-muted hover:text-fg',
                 )}
               >
-                {i === activeIndex && (
-                  <Star size={12} className="absolute right-2 top-2 text-amber-400" fill="currentColor" />
-                )}
-                {isCustom(i) && i !== activeIndex && (
+                {isCustom(i) && (
                   <span className="absolute right-2 top-2 h-1.5 w-1.5 rounded-full bg-iris-400" title="Изменён" />
                 )}
                 {label}
@@ -111,7 +111,7 @@ export function PromptCards({ labels, activeIndex, onActiveChange, bodies, onSav
 
         <div className="rounded-xl border border-line bg-elevated/40 px-4 py-3">
           <div className="mb-1 flex items-center gap-2">
-            <span className="text-xs font-bold uppercase tracking-wide text-muted">Активный промпт</span>
+            <span className="text-xs font-bold uppercase tracking-wide text-muted">Предпросмотр промпта</span>
             {isCustom(activeIndex) && (
               <span className="rounded bg-iris-500/15 px-1.5 py-0.5 text-[10px] font-bold uppercase text-iris-300">
                 изменён
@@ -119,6 +119,10 @@ export function PromptCards({ labels, activeIndex, onActiveChange, bodies, onSav
             )}
           </div>
           <p className="text-sm font-semibold text-fg">{labels[activeIndex]}</p>
+          <p className="mt-0.5 text-[11px] text-white/35">
+            Это просто просмотр текста. Какой тип применится, решает «Распределение типов» ниже —
+            жребий по весам на каждое действие.
+          </p>
           {/* §9 (PROMPT-001): полный итоговый промпт — сперва глобальный системный (если задан), затем карточка. */}
           {globalPrompt && (
             <div className="mt-1.5 rounded-lg border border-iris-500/25 bg-iris-500/8 px-2.5 py-1.5">
