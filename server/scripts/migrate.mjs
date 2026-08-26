@@ -81,6 +81,10 @@ try {
   const u = new URL(url)
   if (!/^postgres(ql)?:$/.test(u.protocol)) throw new Error('ожидался postgresql://, а не ' + u.protocol + '//')
   if (!u.hostname.includes('.')) throw new Error('хост получился «' + u.hostname + '» — похоже, в значение попал лишний текст или перенос строки')
+  // Плейсхолдер из интерфейса Supabase — [YOUR-PASSWORD] — часто оставляют вместе со
+  // скобками: строка при этом выглядит правильной, а пароль неверный.
+  const pwd = decodeURIComponent(u.password)
+  if (pwd.includes(String.fromCharCode(91)) || pwd.includes(String.fromCharCode(93))) throw new Error('в пароле остались квадратные скобки — это плейсхолдер из интерфейса, уберите их')
   if (!u.password) throw new Error('в строке нет пароля — подставьте его вместо [YOUR-PASSWORD]')
 } catch (e) {
   console.error('SUPABASE_DB_URL не похож на строку подключения:', e.message)
