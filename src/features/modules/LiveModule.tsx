@@ -578,6 +578,35 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
         {limitWarn && !running && (
           <div className="mb-3 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-300">⚠ {limitWarn}</div>
         )}
+        {/*
+          Режим реакций (просьба владельца 26.08: «в массовых реакциях тоже перенести
+          режим в параметры и лимиты»). Раньше он стоял в «Защите и таймингах», под
+          галочкой уведомлений, — а это не защита: это ЧТО обрабатывать, ровно как
+          «Что комментировать» у нейрокомментинга ниже. Теперь оба вопроса в одном месте.
+        */}
+        {showBlock('settings') && cfg.reactionSettings && !running && (
+          <div className="mb-3 space-y-3">
+            <ToggleGroup label="Режим" options={cfg.reactionSettings.modes} value={g(0)} onChange={(v) => setTg(0, v)} />
+            {g(0) === 0 ? (
+              <p className="text-xs text-muted">
+                Реакции только на посты, вышедшие <b className="text-fg">после старта задачи</b>. Первый заход в канал
+                запоминает последний пост и ничего не ставит — дальше реагируем на каждый новый.
+                {/* Прогон 22.08: час в этом режиме может дать ноль реакций, и это норма —
+                    пост ещё не вышел. Без этой строки ноль читается как поломка. */}
+                <span className="mt-1 block text-white/50">
+                  Пока новых постов нет, задача ждёт и проверяет канал раз в 5–30 минут. Ноль реакций
+                  здесь — не ошибка: значит, в канале ещё ничего не выходило. Нужны реакции прямо
+                  сейчас — выберите «Существующие посты».
+                </span>
+              </p>
+            ) : (
+              <div className="space-y-1">
+                <NumberField label="Сколько последних постов" value={lastPostsCount} onChange={setLastPostsCount} min={1} max={20} />
+                <p className="text-xs text-muted">Аккаунты разбирают N последних постов канала; один аккаунт — одна реакция на пост.</p>
+              </div>
+            )}
+          </div>
+        )}
         {showBlock('settings') && moduleKey === 'neuro-commenting' && !running && (
           <div className="mb-3">
             {/* Один вопрос — один блок: ЧТО комментировать и из скольких последних постов. */}
@@ -843,31 +872,7 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
           {/* Правка 14.08: дубль «Уровень прогрева» здесь убран — он рендерился и в этом блоке,
               и отдельным блоком ниже. Оставлен один отдельный блок «Уровень прогрева». */}
 
-          {cfg.reactionSettings ? (
-            <div className="space-y-4 rounded-2xl border border-line bg-elevated/40 p-4">
-              <ToggleGroup label="Режим" options={cfg.reactionSettings.modes} value={g(0)} onChange={(v) => setTg(0, v)} />
-              {g(0) === 0 ? (
-                <p className="text-xs text-muted">
-                  Реакции только на посты, вышедшие <b className="text-fg">после старта задачи</b>. Первый заход в канал
-                  запоминает последний пост и ничего не ставит — дальше реагируем на каждый новый.
-                  {/* Прогон 22.08: час в этом режиме может дать ноль реакций, и это норма —
-                      пост ещё не вышел. Без этой строки ноль читается как поломка. */}
-                  <span className="mt-1 block text-white/50">
-                    Пока новых постов нет, задача ждёт и проверяет канал раз в 5–30 минут. Ноль реакций
-                    здесь — не ошибка: значит, в канале ещё ничего не выходило. Нужны реакции прямо
-                    сейчас — выберите «Существующие посты».
-                  </span>
-                </p>
-              ) : (
-                <div className="space-y-1">
-                  <NumberField label="Сколько последних постов" value={lastPostsCount} onChange={setLastPostsCount} min={1} max={20} />
-                  <p className="text-xs text-muted">Аккаунты разбирают N последних постов канала; один аккаунт — одна реакция на пост.</p>
-                </div>
-              )}
-              {/* Ползунок вероятности переехал в «Параметры и лимиты» — он про объём
-                  («сколько из подходящих реально сделаем»), а не про защиту. */}
-            </div>
-          ) : cfg.toggleGroups && moduleKey !== 'neuro-commenting' ? (
+          {cfg.reactionSettings ? null : cfg.toggleGroups && moduleKey !== 'neuro-commenting' ? (
             /* Отбор постов у нейрокомментинга живёт в «Параметрах и лимитах» — вплотную к
                полю «сколько последних постов». Здесь для него не остаётся ничего, и рамка
                рисовалась пустой полосой (правка 19.08). У остальных модулей группа тут. */
