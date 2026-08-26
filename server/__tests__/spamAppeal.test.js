@@ -185,3 +185,36 @@ test('капча в конце: доводим до неё и честно от�
   assert.equal(r.appealed, true, 'жалоба заполнена — просто не подтверждена человеком')
   assert.deepEqual(нажато, ['/start', 'This is a mistake', 'Yes', 'No! Never did that!'])
 })
+
+/**
+ * Та же капча, но КНОПКОЙ, а не текстом сообщения. Прежде такой шаг проваливался в
+ * 'stalled' («диалог не завершён»): regex по тексту кнопку не видел, а appealButton про
+ * капчу не знает. Кнопку «я не робот» жать нельзя — доводим до неё и отдаём человеку.
+ */
+test('капча кнопкой «я не робот»: не жмём её, отдаём человеку как captcha', async () => {
+  const нажато = []
+  const c = fakeClient([
+    { message: 'While the account is limited…', buttons: [{ text: 'This is a mistake' }] },
+    { message: 'Would you like to submit a complaint?', buttons: [{ text: 'Yes' }, { text: 'No' }] },
+    { message: 'One last step to submit your complaint:', buttons: [{ text: "I'm not a robot" }] },
+  ])
+  const send = c.sendMessage
+  c.sendMessage = async (peer, args) => { нажато.push(args.message); return send(peer, args) }
+  const r = await appealSpamblock(c, opts)
+  assert.equal(r.state, 'captcha', 'кнопочную капчу обязаны распознать')
+  assert.ok(!нажато.includes("I'm not a robot"), `кнопку «я не робот» жать нельзя: ${JSON.stringify(нажато)}`)
+  assert.deepEqual(нажато, ['/start', 'This is a mistake', 'Yes'])
+})
+
+test('капча кнопкой на русском («Пройти проверку») — тоже captcha, не жмём', async () => {
+  const нажато = []
+  const c = fakeClient([
+    { message: 'Аккаунт ограничен.', buttons: [{ text: 'Это ошибка' }] },
+    { message: 'Остался последний шаг:', buttons: [{ text: 'Пройти проверку' }] },
+  ])
+  const send = c.sendMessage
+  c.sendMessage = async (peer, args) => { нажато.push(args.message); return send(peer, args) }
+  const r = await appealSpamblock(c, opts)
+  assert.equal(r.state, 'captcha')
+  assert.ok(!нажато.includes('Пройти проверку'), `проверку жать нельзя: ${JSON.stringify(нажато)}`)
+})
