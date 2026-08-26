@@ -68,3 +68,16 @@ export function isMissingTable(error) {
   if (!error) return false
   return /42P01|does not exist|schema cache/i.test(`${error.code || ''} ${error.message || ''}`)
 }
+
+/**
+ * Нет ТАКОЙ КОЛОНКИ (42703). Отдельно от `isMissingTable`, потому что лечится иначе:
+ * таблицы нет — уходим в локальный SQLite, колонки нет — работаем без неё.
+ *
+ * Нужно из-за порядка выката: код уезжает на прод автодеплоем сразу после пуша, а
+ * миграции применяются отдельным запуском. В этом окне запрос со свежей колонкой
+ * падал бы целиком — вместо того чтобы отдать то же самое, только без неё.
+ */
+export function isMissingColumn(error) {
+  if (!error) return false
+  return /42703|column .* does not exist/i.test(`${error.code || ''} ${error.message || ''}`)
+}

@@ -292,6 +292,36 @@ export async function lookupParserCache(kind: string, settings: Partial<ModuleTa
 }
 
 /**
+ * «Последние запросы» парсера (просьба владельца 26.08): что уже искали, сколько
+ * нашлось и когда. Это тот же кэш результатов — отдельного хранилища под список нет.
+ * `name` — имя от человека, а если его не давали, автоподпись из слов запроса.
+ */
+export interface ParserQuery {
+  sig: string
+  kind: string
+  name: string
+  query: string
+  renamed: boolean
+  updatedAt: number
+  count: number
+  watch: boolean
+}
+export async function fetchParserQueries(kind: string, limit = 50): Promise<ParserQuery[]> {
+  const r = await apiGet<{ ok: boolean; queries: ParserQuery[] }>(`/api/parser/queries?kind=${encodeURIComponent(kind)}&limit=${limit}`)
+  return r.queries || []
+}
+export async function fetchParserQuery(sig: string): Promise<ParserQuery & { results: Record<string, unknown>[] }> {
+  const r = await apiGet<{ ok: boolean; query: ParserQuery & { results: Record<string, unknown>[] } }>(`/api/parser/queries/${sig}`)
+  return r.query
+}
+export async function renameParserQuery(sig: string, title: string): Promise<void> {
+  await apiPatch<{ ok: boolean }>(`/api/parser/queries/${sig}`, { title })
+}
+export async function deleteParserQuery(sig: string): Promise<void> {
+  await apiDelete<{ ok: boolean }>(`/api/parser/queries/${sig}`)
+}
+
+/**
  * Подсказка ключевых слов по уже набранным (просьба владельца 26.08).
  * `src` — откуда вариант: 'intent' — наш шаблон намерения (бесплатно, без сети),
  * 'ai' — модель. Процента «релевантности» тут нет намеренно: измерить его нечем.
