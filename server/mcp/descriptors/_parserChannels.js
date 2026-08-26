@@ -69,8 +69,8 @@ export function buildChannelParserDescriptor(cfg) {
         howItWorks:
           'Filters are applied to each result found during the search, except for intersection -'
           + 'it is considered AT THE END when all requests have been completed.',
-        api: { method: 'POST', path, fills: ['minMembers', 'maxMembers', 'commentFilter', 'alreadyParsed'] },
-        params: ['minMembers', 'maxMembers', 'commentFilter', 'alreadyParsed'],
+        api: { method: 'POST', path, fills: ['minMembers', 'maxMembers', 'commentFilter', 'alreadyParsed', 'activityFilter', 'minComments', 'minRating', 'langDetection'] },
+        params: ['minMembers', 'maxMembers', 'commentFilter', 'alreadyParsed', 'activityFilter', 'minComments', 'minRating', 'langDetection'],
       },
       {
         id: 'limits',
@@ -191,6 +191,57 @@ export function buildChannelParserDescriptor(cfg) {
         purpose: 'Selection if possible comment.',
         constraints: ['for neurocommenting the value 1 makes sense:without open comments the module will not work there'],
         storedAs: 'task.settings.commentFilter',
+      },
+      {
+        name: 'activityFilter',
+        block: 'filters',
+        title: 'Activity',
+        type: 'integer',
+        default: 0,
+        enum: [
+          { value: 0, label: 'Any', means: 'Activity is not taken into account.' },
+          { value: 1, label: 'Only active', means: 'Posted within the last 30 days.' },
+          { value: 2, label: 'Only inactive', means: 'No posts for 30+ days — abandoned channels.' },
+        ],
+        purpose: 'Separate live channels from abandoned ones.',
+        constraints: [
+          'requires reading the last posts of every found channel: the search becomes noticeably slower and riskier (FloodWait)',
+          'a channel that did not return posts (private, restricted) counts as inactive',
+        ],
+        storedAs: 'task.settings.activityFilter',
+      },
+      {
+        name: 'minComments',
+        block: 'filters',
+        title: 'Minimum comments per post',
+        type: 'integer',
+        default: 0,
+        purpose: 'Keep channels where the audience actually replies.',
+        constraints: ['0 = do not check', 'requires reading posts — same cost as activityFilter'],
+        storedAs: 'task.settings.minComments',
+      },
+      {
+        name: 'minRating',
+        block: 'filters',
+        title: 'Minimum score',
+        type: 'integer',
+        default: 0,
+        purpose: 'Our own 0-10 score: audience size, freshness, regularity and response.',
+        constraints: [
+          '0 or 1 = keep everything',
+          'computed on the server from real posts, not from subscriber count alone: an abandoned large channel scores below a small live one',
+        ],
+        storedAs: 'task.settings.minRating',
+      },
+      {
+        name: 'langDetection',
+        block: 'filters',
+        title: 'Detect language',
+        type: 'boolean',
+        default: false,
+        purpose: 'Mark each result with the language of its posts (ru/uk/en).',
+        constraints: ['does not filter anything — only labels the row', 'requires reading posts'],
+        storedAs: 'task.settings.langDetection',
       },
       {
         name: 'alreadyParsed',
