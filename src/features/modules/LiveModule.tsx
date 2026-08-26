@@ -480,6 +480,28 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
         onEdit={editPreset} onDelete={deletePreset} disabled={running} />
       <SaveToFolderModal open={folderSave !== null} onClose={() => setFolderSave(null)} targets={folderSave ?? []} />
       <SavePresetModal open={presetModalOpen} onClose={() => setPresetModalOpen(false)} onSave={(name, color, owner) => savePreset(name, buildSettings(), color, owner)} />
+      {/*
+        Роль закрыла ВСЕ блоки модуля — говорим об этом вслух.
+        Находка 26.08: у роли, где разрешён только блок «Результаты», страница
+        нейромодуля рендерилась пустой (сам блок результатов есть лишь у парсеров и GGR).
+        Человек видел заголовок и белое поле и решал, что модуль сломан. Пустой экран
+        обязан объяснять себя: доступ закрыт настройками роли, а не ошибкой.
+      */}
+      {!(isParser || isGgr
+        ? ['run', 'targets', 'settings', 'templates', 'results', 'logs']
+        // «Результаты» и «Логи» есть только у парсеров и GGR. Учитывать их в остальных
+        // модулях нельзя: роль с разрешённым `*:results` формально «что-то разрешает»,
+        // а на экране всё равно пусто — именно так и выглядела находка 26.08.
+        : ['run', 'targets', 'settings', 'templates']
+      ).some((k) => showBlock(k)) && (
+        <SectionCard icon={<Shield size={18} />} title="Нет доступа к блокам модуля">
+          <p className="text-sm text-muted">
+            Ваша роль закрывает все разделы этого модуля, поэтому настраивать и запускать его нельзя.
+            Права выдаёт администратор: «Пользователи и роли» → ваша роль → блоки модуля.
+          </p>
+        </SectionCard>
+      )}
+
       {/* MR-149: калькулятор цены за действие теперь в ModuleRunner (для всех модулей). */}
       {cfg.accountPicker && showBlock('run') && (
         <div id="sec-accounts" className="scroll-mt-24">
