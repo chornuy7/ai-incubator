@@ -28,6 +28,24 @@ const BLOCKED = /is limited|restricted|ограничен|заблокирова
  */
 const CAPTCHA = /verify you are a human|are you a human|not a robot|подтвердите,? что вы человек|не робот/i
 
+/**
+ * Проверку «я не робот» бот показывает не только текстом, но и КНОПКОЙ («I'm not a robot»,
+ * «Verify you're human», а иногда URL-кнопкой на страницу капчи). Такую кнопку жать
+ * НЕЛЬЗЯ — это ровно та проверка, которую заканчивает человек. Раньше кнопочная капча в
+ * regex по тексту не попадала: диалог упирался в неё, ни одна ветка не срабатывала, и
+ * модуль рапортовал «диалог не завершён» вместо «осталось нажать я не робот».
+ */
+const CAPTCHA_BTN = /not a robot|i'?m a human|verify.*human|human.*verify|я не робот|пройти проверку|подтверд\w+ что вы человек/i
+
+/** Есть ли среди кнопок сообщения проверка «я не робот». */
+function hasCaptchaButton(msg) {
+  const rows = msg?.replyMarkup?.rows || []
+  for (const row of rows) for (const b of (row.buttons || [])) {
+    if (b?.text && CAPTCHA_BTN.test(String(b.text))) return true
+  }
+  return false
+}
+
 /** Бот просит описать проблему словами. */
 const ASKS_TEXT = /describe|tell us|напиши|опиши|в двух словах|what happened|расскажи/i
 /** Жалоба принята. */
@@ -53,7 +71,8 @@ function appealButton(msg, text = '') {
   const rows = msg?.replyMarkup?.rows || []
   const all = []
   for (const row of rows) for (const b of (row.buttons || [])) {
-    if (b?.text && !NEVER_PRESS.test(String(b.text).trim())) all.push(b)
+    // Кнопку «я не робот» исключаем здесь же: её жать нельзя ни при каком совпадении.
+    if (b?.text && !NEVER_PRESS.test(String(b.text).trim()) && !CAPTCHA_BTN.test(String(b.text))) all.push(b)
   }
   if (!all.length) return null
   const priority = [
@@ -100,8 +119,9 @@ async function pressButton(client, bot, msg, btn) {
 /**
  * Прогнать апелляцию для ОДНОГО подключённого клиента.
  * @param {import('telegram').TelegramClient} client
- * @param {{ appealText?: string }} [opts]
- * @returns {Promise<{state:'clean'|'appealed'|'blocked'|'unknown', text:string, appealed:boolean}>}
+ * @param {{ appealText?: string, waitMs?: number }} [opts]
+ * @returns {Promise<{state:'clean'|'appealed'|'captcha'|'stalled'|'blocked'|'unknown', text:string, appealed:boolean}>}
+ *   captcha — диалог доведён до проверки «я не робот», её завершает человек.
  */
 export async function appealSpamblock(client, opts = {}) {
   const appealText = String(opts.appealText || 'Здравствуйте! Я обычный пользователь, пишу только знакомым и по делу. Прошу снять ограничение — рассылкой и спамом не занимаюсь.').slice(0, 500)
@@ -121,6 +141,12 @@ export async function appealSpamblock(client, opts = {}) {
     // (замерено живьём 22.08). На трёх шагах мы обрывались на середине. Шесть — с запасом,
     // но не бесконечность: защита от зацикливания остаётся.
     for (let step = 0; step < 6; step++) {
+      // Проверку «я не робот» ловим ДО выбора кнопки — хоть текстом, хоть кнопкой. Дальше
+      // идти нельзя и не нужно: это последний шаг для человека, а appealButton про капчу
+      // не знает и ушёл бы в 'stalled'.
+      if (CAPTCHA.test(text) || hasCaptchaButton(msg)) {
+        return { state: 'captcha', text: text.slice(0, 400), appealed }
+      }
       const btn = appealButton(msg, text)
       if (btn && msg?.id) {
         await pressButton(client, bot, msg, btn)
@@ -130,7 +156,7 @@ export async function appealSpamblock(client, opts = {}) {
         text = msg?.message || ''
         if (CLEAN.test(text)) return { state: 'clean', text: text.slice(0, 400), appealed: true }
         if (SUBMITTED.test(text)) return { state: 'appealed', text: text.slice(0, 400), appealed: true }
-        if (CAPTCHA.test(text)) return { state: 'captcha', text: text.slice(0, 400), appealed: true }
+        if (CAPTCHA.test(text) || hasCaptchaButton(msg)) return { state: 'captcha', text: text.slice(0, 400), appealed: true }
         continue
       }
       if (ASKS_TEXT.test(text)) {
@@ -141,13 +167,13 @@ export async function appealSpamblock(client, opts = {}) {
         text = msg?.message || ''
         if (CLEAN.test(text)) return { state: 'clean', text: text.slice(0, 400), appealed: true }
         if (SUBMITTED.test(text)) return { state: 'appealed', text: text.slice(0, 400), appealed: true }
-        if (CAPTCHA.test(text)) return { state: 'captcha', text: text.slice(0, 400), appealed: true }
+        if (CAPTCHA.test(text) || hasCaptchaButton(msg)) return { state: 'captcha', text: text.slice(0, 400), appealed: true }
         break
       }
       break // ни кнопки, ни просьбы описать — дальше нечего делать
     }
 
-    if (CAPTCHA.test(text)) return { state: 'captcha', text: text.slice(0, 400), appealed }
+    if (CAPTCHA.test(text) || hasCaptchaButton(msg)) return { state: 'captcha', text: text.slice(0, 400), appealed }
     if (CLEAN.test(text)) return { state: 'clean', text: text.slice(0, 400), appealed }
     // Мы что-то нажали, но подтверждения от бота не дождались: диалог оборвался на
     // полпути. Раньше здесь возвращалось 'appealed' — и оператор читал «жалоба подана»,
