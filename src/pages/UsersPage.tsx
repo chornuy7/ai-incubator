@@ -105,7 +105,7 @@ function SubAccessEditor({ sub, groups, accounts, onSaved }: { sub: User; groups
 
 /** Что владелец правит субу: модули и блоки внутри них. Ключ блока — `${moduleKey}:${blockKey}`. */
 type AccessDraft = { modules: Record<string, Perm>; blocks: Record<string, Perm> }
-type AccessCatalog = { modules: CatalogModule[]; blocks: CatalogBlock[] }
+type AccessCatalog = { modules: CatalogModule[]; blocks: CatalogBlock[]; blocksByModule?: Record<string, CatalogBlock[]> }
 
 const EMPTY_ACCESS: AccessDraft = { modules: {}, blocks: {} }
 /** Выбрано ли хоть что-то — чтобы не слать пустой PUT после создания пользователя. */
@@ -163,21 +163,29 @@ function ModuleAccessPicker({ catalog, value, onChange }: {
       {catalog.modules.map((m) => {
         const open = expanded.has(m.key)
         const on = modOn(m.key)
-        const allowedBlocks = catalog.blocks.filter((b) => blockOn(`${m.key}:${b.key}`)).length
+        /*
+         * Блоки КОНКРЕТНОГО модуля, а не общий список (правка 27.08). Сервер отдаёт
+         * blocksByModule с 26.08, и «Роли доступа» его уже используют, а карточка
+         * пользователя продолжала рисовать все пять подряд: у нейрокомментинга висел
+         * тумблер «Результаты», которого в модуле нет вовсе, и счётчик показывал «3/5»
+         * при четырёх реальных блоках.
+         */
+        const blocks = catalog.blocksByModule?.[m.key] ?? catalog.blocks
+        const allowedBlocks = blocks.filter((b) => blockOn(`${m.key}:${b.key}`)).length
         return (
           <div key={m.key}>
             <div className={cn('flex items-center justify-between gap-3 rounded-lg px-2.5 py-1.5', on ? 'bg-spark-500/8' : 'bg-elevated')}>
               <button type="button" onClick={() => toggleExpand(m.key)} className="flex min-w-0 items-center gap-1.5 text-left text-sm text-fg">
                 {open ? <ChevronDown size={14} className="shrink-0 text-white/40" /> : <ChevronRight size={14} className="shrink-0 text-white/40" />}
                 <span className="truncate">{m.label}</span>
-                {on && <span className="shrink-0 text-[11px] text-white/35">блоков: {allowedBlocks}/{catalog.blocks.length}</span>}
+                {on && <span className="shrink-0 text-[11px] text-white/35">блоков: {allowedBlocks}/{blocks.length}</span>}
               </button>
               <Switch checked={on} onChange={() => toggleModule(m.key)} />
             </div>
             {open && (
               <div className="mt-1 flex flex-col gap-1 pl-6">
                 {!on && <div className="text-[11px] text-white/35">Модуль выключен — блоки ни на что не влияют, пока не включите его.</div>}
-                {catalog.blocks.map((b) => {
+                {blocks.map((b) => {
                   const bk = `${m.key}:${b.key}`
                   return (
                     <div key={bk} className="flex items-center justify-between gap-3 rounded-lg bg-elevated px-2.5 py-1.5">

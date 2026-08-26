@@ -218,7 +218,13 @@ export async function tgPatchAccount(accountId, patch) {
   const sessionStr = await loadSessionString(accountId)
   if (!sessionStr) throw new Error('Аккаунт не найден')
 
-  const allowed = ['role', 'project', 'country', 'status', 'proxy', 'inTrash', 'note']
+  /*
+   * `service` — метка «этот аккаунт работает на ревизию базы» (правка 27.08). Ревизия
+   * парсера берёт ТОЛЬКО такие аккаунты (parserRefresh.pickAccounts), но проставить метку
+   * было негде ни в одном интерфейсе: пул всегда оставался пустым, и крон каждые 12 часов
+   * писал «нет свободных сервисных аккаунтов». Поле существовало, работать им было нельзя.
+   */
+  const allowed = ['role', 'project', 'country', 'status', 'proxy', 'inTrash', 'note', 'service']
   /** @type {Record<string, unknown>} */
   const clean = {}
   for (const k of allowed) {
