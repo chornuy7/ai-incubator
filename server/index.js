@@ -1831,7 +1831,22 @@ try {
   console.warn('[status] reconcileExpiredStatuses failed:', err)
 }
 
-await startScheduler().catch((err) => console.warn('[automation] scheduler init failed:', err))
+/*
+ * Выключатель фоновых задач: `SCHEDULERS=off`.
+ *
+ * Нужен, чтобы поднять ВТОРОЙ экземпляр (локальную копию для сверки с сервером) на той же
+ * боевой базе и не получить дубль всей фоновой работы: проверка парка ходит в реальные
+ * Telegram-аккаунты, ревизия парсера тратит монеты владельца, крон начисляет токены. Две
+ * копии, делающие это одновременно, — это не «лишний лог», а лишние действия с живыми
+ * аккаунтами и деньгами.
+ *
+ * По умолчанию ВКЛЮЧЕНО: прод и обычный `npm run dev` работают как раньше, выключается
+ * только явным `SCHEDULERS=off`.
+ */
+const SCHEDULERS_ON = String(process.env.SCHEDULERS || '').toLowerCase() !== 'off'
+if (!SCHEDULERS_ON) console.log('[cron] фоновые задачи ВЫКЛЮЧЕНЫ (SCHEDULERS=off) — этот экземпляр только отвечает на запросы')
+
+if (SCHEDULERS_ON) await startScheduler().catch((err) => console.warn('[automation] scheduler init failed:', err))
 
 // §3.3: держим кэш trust свежим (без сети) — чтобы assignment-gate и список были актуальны.
 // Настройки фоновых задач — из админки (просьба владельца 26.08). Грузим ДО планировщиков:
@@ -1844,7 +1859,7 @@ try {
   console.warn('[cron] настройки не загрузились, идут значения по умолчанию:', err?.message || err)
 }
 
-try {
+if (SCHEDULERS_ON) try {
   const { refreshAllTrustCache } = await import('./accountStats.js')
   const runTrust = () => refreshAllTrustCache().then((r) => { if (r.updated) console.log(`[trust] обновлён кэш trust: ${r.updated} акк.${r.returned ? ` · авто-возврат из прогрева: ${r.returned}` : ''}`) }).catch((e) => console.warn('[trust] refresh failed:', e?.message || e))
   // БЕЗ await — по той же причине, что и проверка прокси ниже: пересчёт trust идёт по
@@ -1858,7 +1873,7 @@ try {
 }
 
 // §6 (прокси): авто-проверка живости прокси при старте + каждые 30 мин.
-try {
+if (SCHEDULERS_ON) try {
   const { checkAllProxies } = await import('./proxies.js')
   const runProxy = () => checkAllProxies()
     .then((r) => r.length && console.log(`[proxy] проверено ${r.length}: рабочих ${r.filter((x) => x.status === 'ok').length}, не тот протокол ${r.filter((x) => x.status === 'bad').length}, мёртвых ${r.filter((x) => x.status === 'dead').length}`))
@@ -1876,7 +1891,7 @@ try {
 // при старте и каждые 6 часов — начисление идемпотентно (markCredited по месяцу), повтор
 // в тот же день ничего не удваивает. Ежедневного тика достаточно: начисление привязано к
 // дню месяца, а не к точному времени.
-try {
+if (SCHEDULERS_ON) try {
   const { creditDueTokens } = await import('./tokenCredit.js')
   const runCredit = () => creditDueTokens()
     .then((r) => r.users && console.log(`[tokens] месячное начисление: ${r.users} польз., ${r.coins} ⚡`))
@@ -1888,7 +1903,7 @@ try {
 }
 
 // Авто-обновление статистики каналов (§3.9, решение 14.07: день / час-если-бот-в-группе).
-try {
+if (SCHEDULERS_ON) try {
   const { startChannelStatsScheduler } = await import('./channelStats.js')
   startChannelStatsScheduler((cron.statsTickMin ?? 15) * 60 * 1000)
 } catch (err) {
@@ -1898,7 +1913,7 @@ try {
 // Р-19 (прогон 22.08): фоновая проверка парка. Аккаунт, удалённый Telegram, до этого
 // числился «активным», пока его не возьмут в работу — и оператор планировал прогон на
 // мёртвых профилях. Раз в час проверяем нескольких, кого давно не проверяли.
-try {
+if (SCHEDULERS_ON) try {
   const { startAccountHealthScheduler } = await import('./accountHealth.js')
   startAccountHealthScheduler()
 } catch (err) {
@@ -1908,7 +1923,7 @@ try {
 // Перепроверка сохранённых запросов парсинга (просьба владельца 24.08): раз в полчаса
 // смотрим, каким запросам пора, и перезапускаем их обычной задачей модуля. «Пора или
 // нет» решает сама строка запроса по своему периоду — тик лишь заглядывает.
-try {
+if (SCHEDULERS_ON) try {
   const { startParserRefreshScheduler } = await import('./parserRefresh.js')
   startParserRefreshScheduler()
 } catch (err) {
@@ -1916,7 +1931,7 @@ try {
 }
 
 // Планировщик кампаний по расписанию (§3.9): каждую минуту запускает «созревшие».
-try {
+if (SCHEDULERS_ON) try {
   const { campaignScheduleTick } = await import('./campaignSchedules.js')
   const { runCampaign } = await import('./campaignsRoutes.js')
   const tick = () => campaignScheduleTick(runCampaign).then((fired) => {
