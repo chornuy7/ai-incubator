@@ -138,6 +138,7 @@ function ChannelParserInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: 
   }, [keywords])
 
   // ── окончания ──
+  const [useEndings, setUseEndings] = useState(true)
   const [endMode, setEndMode] = useState(1) // 0 вручную, 1 авто
   const [endLang, setEndLang] = useState(cfg.endLangDefault ?? 'en')
   const [endCount, setEndCount] = useState(10)
@@ -178,10 +179,17 @@ function ChannelParserInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: 
   const [cacheHit, setCacheHit] = useState<ParserCacheHit | null>(null)
   const [usingCache, setUsingCache] = useState(false)
 
+  /*
+   * Окончания — необязательная надстройка (просьба владельца 26.08). Раньше их нельзя было
+   * выключить: 6 слов молча превращались в 66 запросов, а это шестьдесят шесть обращений к
+   * Telegram вместо шести — дольше и рискованнее по FloodWait. Когда нужен точный поиск по
+   * самим словам, расширение только мешает.
+   */
   const endings = useMemo(() => {
+    if (!useEndings) return []
     if (endMode === 0) return manualEndings
     return (ENDINGS[endLang] ?? ENDINGS.en).slice(0, endCount)
-  }, [endMode, manualEndings, endLang, endCount])
+  }, [useEndings, endMode, manualEndings, endLang, endCount])
 
   const queryCount = keywords.length + keywords.length * endings.length
 
@@ -303,7 +311,15 @@ function ChannelParserInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: 
     remember(s)
     if (Array.isArray(s.keywords)) setKeywords(s.keywords)
     if (s.searchMode !== undefined) setMethod(s.searchMode)
-    if (Array.isArray(s.endings) && s.endings.length) { setEndMode(0); setManualEndings(s.endings) }
+    /*
+     * Окончания в шаблоне лежат уже развёрнутым списком, поэтому «выключено» отличается от
+     * «включено» только его пустотой. Пустой список → тумблер снят: иначе шаблон, сохранённый
+     * без окончаний, применялся бы с ними и молча раздувал число запросов в одиннадцать раз.
+     */
+    if (Array.isArray(s.endings)) {
+      setUseEndings(s.endings.length > 0)
+      if (s.endings.length) { setEndMode(0); setManualEndings(s.endings) }
+    }
     if (s.aiProtection !== undefined) setAiProtect(s.aiProtection)
     if (s.protectionLevel !== undefined) setProtLevel(s.protectionLevel)
     const lim = s.resultLimit ?? s.limit
@@ -545,14 +561,23 @@ function ChannelParserInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: 
                   слову не выпадают.
                 */}
                 <span className="flex items-center gap-1.5 text-sm font-semibold text-fg">
-                  <Bookmark size={14} className="text-spark-400" /> Окончания
+                  <Bookmark size={14} className={useEndings ? 'text-spark-400' : 'text-faint'} /> Окончания
                   <Tip text="Слова, которые дописываются к каждому ключевому слову: «крипто» → «крипто chat», «крипто news», «крипто official». Так поиск находит каналы, которые по голому слову не выпадают. Больше окончаний — шире охват и дольше сбор.">
                     <HelpCircle size={13} className="cursor-help text-white/35" />
                   </Tip>
                 </span>
-                <Segmented size="sm" options={['Вручную', 'Авто']} value={endMode} onChange={setEndMode} />
+                <div className="flex items-center gap-2">
+                  {useEndings && <Segmented size="sm" options={['Вручную', 'Авто']} value={endMode} onChange={setEndMode} />}
+                  <Switch checked={useEndings} onChange={setUseEndings} />
+                </div>
               </div>
-              {endMode === 1 ? (
+              {!useEndings ? (
+                <div className="text-[11px] leading-relaxed text-muted">
+                  Ищем ровно по вашим словам: <b className="text-fg">{keywords.length}</b> {keywords.length === 1 ? 'запрос' : 'запросов'} вместо
+                  {' '}{keywords.length + keywords.length * 10} с окончаниями. Быстрее и точнее, но каналы, у которых в названии
+                  стоит «chat» или «news», могут не попасться.
+                </div>
+              ) : endMode === 1 ? (
                 <div className="space-y-3">
                   <Select value={endLang} onChange={setEndLang} options={LANGUAGES.map((l) => ({ value: l.code, label: `${l.flag} ${l.label}` }))} />
                   <div>
