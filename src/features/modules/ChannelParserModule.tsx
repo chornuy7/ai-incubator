@@ -448,7 +448,19 @@ function ChannelParserInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: 
 
             <div className="rounded-2xl border border-line bg-elevated/40 p-3">
               <div className="mb-2 flex items-center justify-between">
-                <span className="flex items-center gap-1.5 text-sm font-semibold text-fg"><Bookmark size={14} className="text-spark-400" /> Окончания</span>
+                {/*
+                  Что такое «окончания», по названию не догадаться (вопрос владельца 26.08:
+                  «что это за окончание, добавь наводку что это значит»). Это слова, которые
+                  дописываются к каждому ключевому: «крипто» → «крипто chat», «крипто news».
+                  Так один запрос превращается в десяток и находит каналы, которые по голому
+                  слову не выпадают.
+                */}
+                <span className="flex items-center gap-1.5 text-sm font-semibold text-fg">
+                  <Bookmark size={14} className="text-spark-400" /> Окончания
+                  <Tip text="Слова, которые дописываются к каждому ключевому слову: «крипто» → «крипто chat», «крипто news», «крипто official». Так поиск находит каналы, которые по голому слову не выпадают. Больше окончаний — шире охват и дольше сбор.">
+                    <HelpCircle size={13} className="cursor-help text-white/35" />
+                  </Tip>
+                </span>
                 <Segmented size="sm" options={['Вручную', 'Авто']} value={endMode} onChange={setEndMode} />
               </div>
               {endMode === 1 ? (
@@ -459,7 +471,11 @@ function ChannelParserInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: 
                     <input type="range" min={5} max={20} value={endCount} onChange={(e) => setEndCount(Number(e.target.value))} className="w-full accent-spark-500" />
                     <div className="flex justify-between text-[10px] text-faint"><span>Быстро (5)</span><span>Тщательно (20)</span></div>
                   </div>
-                  <div className="rounded-lg border border-line bg-surface px-2.5 py-1.5 text-[11px] text-muted">{endCount} окончаний × {keywords.length} слов = <b className="text-spark-300">{queryCount}</b> поисковых запросов</div>
+                  {/* Формула считалась «окончания × слова», но в запросы идут ещё и ГОЛЫЕ слова —
+                      поэтому 10 × 9 давало на экране 99, и подпись противоречила сама себе. */}
+                  <div className="rounded-lg border border-line bg-surface px-2.5 py-1.5 text-[11px] text-muted">
+                    {keywords.length} слов + {keywords.length} × {endCount} окончаний = <b className="text-spark-300">{queryCount}</b> поисковых запросов
+                  </div>
                 </div>
               ) : (
                 <div className="space-y-2">

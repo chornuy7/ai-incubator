@@ -61,7 +61,10 @@ export function FloatingBar({ children, className }: { children: ReactNode; clas
 
   return (
     <>
-      <div style={{ height: barH || undefined }} />
+      {/* Распорки здесь больше нет: место под панель резервирует страница целиком
+          (Layout, paddingBottom по --launch-bar-h). Внутренняя распорка вставала там, где
+          панель объявлена в разметке, — а объявлена она раньше последней секции, и низ
+          страницы всё равно уезжал под панель (26.08). */}
       <div
         ref={barRef}
         style={box ? { left: box.left, width: box.width } : undefined}
