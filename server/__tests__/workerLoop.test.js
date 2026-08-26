@@ -2,12 +2,18 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { warmingPace, trackIdlePass, pickWeightedKey, inActiveWindow, idleWaitPlan, IDLE_WAIT_CAP_MS } from '../lib/workerLoop.js'
 
-test('warmingPace.weights: пропорция действий 40/20/20/10/10', () => {
+test('warmingPace.weights: набор действий прогрева даёт в сумме 100', () => {
   const w = warmingPace(1).weights
-  assert.equal(w.view, 40)
-  assert.equal(w.react, 20)
-  assert.equal(w.read, 20)
-  assert.equal(w.join + w.ping, 20)
+  // Правка 26.08: раньше 70% «действий» были служебными вызовами API — поиск каналов
+  // под видом просмотра, чтение списка диалогов и getMe. Теперь просмотр открывает
+  // посты, а к набору добавлены отписка и заметка себе: аккаунт, который только
+  // вступает и никогда не выходит, ведёт себя не как человек.
+  assert.equal(Object.values(w).reduce((a, b) => a + b, 0), 100)
+  for (const kind of ['view', 'react', 'read', 'join', 'leave', 'note', 'ping']) {
+    assert.ok(w[kind] > 0, `нет действия «${kind}» в наборе прогрева`)
+  }
+  assert.ok(w.view >= w.react, 'смотреть аккаунт должен чаще, чем реагировать')
+  assert.ok(w.join > w.leave, 'отписок должно быть меньше, чем вступлений — иначе список каналов схлопнется')
 })
 
 test('pickWeightedKey: детерминизм по r + попадание в веса', () => {

@@ -1,7 +1,7 @@
 import { runSpamUnblock } from '../spamUnblock.js'
 import { generateComment, isAiGenerationEnabled, resolveSystemPrompt } from '../neuroCommenting/commentGenerator.js'
 import { buildGoalContext, stageForStatus, linksFromGoal, cleanDialogReply, hasPlaceholder } from '../lib/goalContext.js'
-import { upsertMany } from '../channels.js'
+import { upsertMany, listChannels } from '../channels.js'
 import {
   fetchPosts,
   sendChannelComment,
@@ -1513,6 +1513,30 @@ export async function runMassLooking(task, store) {
 }
 
 /** @param {object} task @param {object} store */
+/*
+ * Словари прогрева (правка 26.08). Держим рядом с воркером, а не в конфиге витрины:
+ * это поведение аккаунта, а не настройка задачи, — человеку тут выбирать нечего.
+ */
+
+/** Запасные темы поиска, когда своя база каналов пуста или жребий увёл в поиск. */
+const WARM_QUERIES = [
+  'новости', 'музыка', '技', 'крипта', 'спорт', 'кино', 'юмор', 'путешествия',
+  'работа', 'еда', 'книги', 'авто', 'дизайн', 'здоровье', 'финансы', 'игры',
+  'news', 'music', 'tech', 'crypto', 'sport', 'movies',
+].filter((q) => /[a-zа-яё]/i.test(q))
+
+/**
+ * Набор реакций шире прежней четвёрки: аккаунт, ставящий вечные 👍❤️🔥👏, узнаётся
+ * по этому следу так же легко, как по одинаковым паузам.
+ */
+const WARM_EMOJI = ['👍', '❤️', '🔥', '👏', '😁', '🤔', '🎉', '😍', '🙏', '💯', '⚡', '🤝']
+
+/** Заметки себе в «Избранное» — короткие и бессодержательные, как у живого человека. */
+const WARM_NOTES = [
+  'напомнить', 'посмотреть позже', 'идея', 'заметка', 'проверить', 'потом',
+  'не забыть', 'важное', 'на выходных', 'подумать',
+]
+
 export async function runWarming(task, store) {
   const s = task.settings
   task.startedAt = Date.now()
@@ -1576,28 +1600,54 @@ export async function runWarming(task, store) {
         // Реальные реакции/вступления выполняются под суточными лимитами §6 (при достижении
         // потолка действие деградирует в безопасный просмотр). Бизнес-логика — Help Center «Политика прогрева».
         const kind = pickWeightedKey(pace.weights)
-        const warmQuery = () => ['news', 'music', 'tech', 'crypto', 'sport', 'movies'][Math.floor(Math.random() * 6)]
+        /*
+         * Откуда прогрев берёт цели (правка 26.08). Раньше — только поиск по шести
+         * зашитым английским словам (news/music/tech/crypto/sport/movies): все аккаунты
+         * ходили по одному кругу чужих каналов, никак не связанных с тематикой клиента.
+         * Теперь в первую очередь берём СВОЮ базу каналов — ту, что наполняет парсер, —
+         * и только если она пуста или не повезло с жребием, идём в поиск.
+         */
+        const warmQuery = () => WARM_QUERIES[Math.floor(Math.random() * WARM_QUERIES.length)]
+        const fromBase = async () => {
+          try {
+            const all = await listChannels()
+            const usable = all.filter((c) => c.username)
+            if (!usable.length) return null
+            return String(usable[Math.floor(Math.random() * usable.length)].username).replace(/^@/, '')
+          } catch { return null }
+        }
+        /** Цель действия: 70% — своя база, иначе поиск. @returns {Promise<string|null>} */
+        const pickWarmTarget = async () => {
+          if (Math.random() < 0.7) {
+            const u = await fromBase()
+            if (u) return u
+          }
+          const chats = await searchPublic(client, warmQuery(), 8)
+          const withName = chats.filter((c) => c.username)
+          return withName.length ? String(withName[Math.floor(Math.random() * withName.length)].username).replace(/^@/, '') : null
+        }
         if (kind === 'react' && !(await limitReached(accountId, 'reactions'))) {
-          const chats = await searchPublic(client, warmQuery(), 6)
-          const target = chats[Math.floor(Math.random() * chats.length)]
+          const target = await pickWarmTarget()
           let reacted = false
           if (target) {
             try {
-              const posts = await fetchPosts(client, target, 5)
+              // Реакция не на самый свежий пост, а на случайный из последних: аккаунт,
+              // который всегда отмечает верхний пост, узнаётся по этому следу.
+              const posts = await fetchPosts(client, target, 10)
               const post = posts[Math.floor(Math.random() * posts.length)]
               if (post) {
-                const emoji = ['👍', '❤️', '🔥', '👏'][Math.floor(Math.random() * 4)]
+                const emoji = WARM_EMOJI[Math.floor(Math.random() * WARM_EMOJI.length)]
                 await sendReaction(client, target, post.id, emoji)
                 await incAction(accountId, 'reactions')
-                await store.appendLog(task, 'success', `Прогрев: реакция ${emoji} в «${target.title || target.username || 'канал'}»`, meta.name)
+                await store.appendLog(task, 'success', `Прогрев: реакция ${emoji} в @${target}`, meta.name)
                 reacted = true
               }
             } catch { /* канал без реакций/приватный — деградируем в просмотр */ }
           }
-          if (!reacted) await store.appendLog(task, 'info', 'Прогрев: просмотр каналов · react→view', meta.name)
+          if (!reacted) await store.appendLog(task, 'info', 'Прогрев: реакция не прошла — смотрю посты', meta.name)
         } else if (kind === 'join' && !(await limitReached(accountId, 'joins'))) {
-          const chats = await searchPublic(client, warmQuery(), 8)
-          const target = chats.find((c) => c.username)
+          const username = await pickWarmTarget()
+          const target = username ? { username } : null
           let joined = false
           if (target?.username) {
             // Прогрев вступает в группы точно так же, как боевые модули, — значит и
@@ -1605,19 +1655,65 @@ export async function runWarming(task, store) {
             // мгновенно, греется в минус.
             const m = await joinWithDelay(client, target.username, (l, msg, a) => store.appendLog(task, l, msg, a), meta.name,
               pickJoinDelay(s.delays?.join?.[0] ?? 84, s.delays?.join?.[1] ?? 156, mul), makeStopCheck(store, task.id))
-            if (m?.status === 'joined') { await incAction(accountId, 'joins'); joined = true }
+            if (m?.status === 'joined') {
+              await incAction(accountId, 'joins')
+              joined = true
+              // Список СВОИХ вступлений — источник для будущих отписок (см. kind === 'leave').
+              task.warmJoined = [...new Set([...(task.warmJoined || []), target.username])].slice(-30)
+            }
             else if (m?.peer) joined = true // уже участник — тоже засчитываем заход
           }
           if (!joined) { await client.getMe(); await store.appendLog(task, 'info', 'Прогрев: keepalive · join→ping', meta.name) }
+        } else if (kind === 'leave') {
+          /*
+           * Отписка. Профиль, который только вступает и никогда не выходит, выглядит
+           * роботом: у живого человека список каналов меняется в обе стороны. Уходим ТОЛЬКО
+           * оттуда, куда вступили сами в ЭТОЙ задаче: чужие подписки клиента трогать нельзя.
+           */
+          const mine = task.warmJoined || []
+          const victim = mine.length ? mine[Math.floor(Math.random() * mine.length)] : null
+          if (victim) {
+            try {
+              // Api подгружаем на месте — так же, как в остальных местах файла.
+              const { Api } = await import('telegram/tl/index.js')
+              await client.invoke(new Api.channels.LeaveChannel({ channel: await client.getEntity(victim) }))
+              task.warmJoined = mine.filter((u) => u !== victim)
+              await store.appendLog(task, 'info', `Прогрев: отписался от @${victim}`, meta.name)
+            } catch { await store.appendLog(task, 'info', 'Прогрев: отписка не прошла — читаю диалоги', meta.name) }
+          } else {
+            const ds = await fetchDialogs(client, 10)
+            await store.appendLog(task, 'info', `Прогрев: пока не от чего отписываться · чтение диалогов (${ds.length})`, meta.name)
+          }
+        } else if (kind === 'note') {
+          // Заметка себе в «Избранное». Владелец просил «своему же боту отписал»: писать
+          // другому нашему аккаунту рискованно (переписка ботов между собой — заметный
+          // след), а сохранённые сообщения есть у каждого живого пользователя.
+          try {
+            await client.sendMessage('me', { message: WARM_NOTES[Math.floor(Math.random() * WARM_NOTES.length)] })
+            await store.appendLog(task, 'info', 'Прогрев: заметка в «Избранное»', meta.name)
+          } catch { await store.appendLog(task, 'info', 'Прогрев: заметка не отправилась · keepalive', meta.name) }
         } else if (kind === 'read') {
-          const ds = await fetchDialogs(client, 10)
+          const ds = await fetchDialogs(client, 10 + Math.floor(Math.random() * 20))
           await store.appendLog(task, 'info', `Прогрев: чтение диалогов (${ds.length})`, meta.name)
         } else if (kind === 'ping') {
           await client.getMe()
           await store.appendLog(task, 'info', 'Прогрев: keepalive · ping', meta.name)
         } else {
-          const chats = await searchPublic(client, 'news', 5)
-          await store.appendLog(task, 'info', `Прогрев: просмотр каналов (${chats.length}) · ${kind}`, meta.name)
+          /*
+           * «Просмотр» раньше выполнял ПОИСК и ничего не открывал — для Telegram это
+           * запрос к серверу, а не поведение читателя. Теперь реально открываем канал
+           * и листаем случайное число последних постов.
+           */
+          const target = await pickWarmTarget()
+          if (target) {
+            const сколько = 2 + Math.floor(Math.random() * 6)
+            try {
+              const r = await viewRecentPosts(client, target, сколько)
+              await store.appendLog(task, 'info', `Прогрев: смотрю @${target} · ${r.viewed || сколько} постов`, meta.name)
+            } catch { await store.appendLog(task, 'info', `Прогрев: не открылся @${target}`, meta.name) }
+          } else {
+            await store.appendLog(task, 'info', 'Прогрев: нечего смотреть — база каналов пуста и поиск ничего не дал', meta.name)
+          }
         }
         task.accountStats[accountId] = task.accountStats[accountId] || { actions: 0, floodWaits: 0 }
         task.accountStats[accountId].actions += 1
