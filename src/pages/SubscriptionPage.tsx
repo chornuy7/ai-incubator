@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { Check, Package, Sparkles, Loader2, Lock, CalendarClock, AlertTriangle, ExternalLink } from 'lucide-react'
-import { PageHeader, Card } from '@/shared/ui'
+import { PageHeader, Card, Tip } from '@/shared/ui'
 import { FloatingBar } from '@/features/modules/shared/FloatingBar'
 import { useApp } from '@/mocks/store'
 import { usePlan } from '@/features/billing/plan'
@@ -255,14 +255,17 @@ export function SubscriptionPage() {
                   paid && 'opacity-80',
                 )}
               >
+              <Tip
+                className="min-w-0 flex-1"
+                text={paid
+                  ? `Модуль оплачен${!expKnown ? '' : exp.perpetual ? ' бессрочно' : exp.expired ? ` до ${exp.date} — оплата закончилась` : ` до ${exp.date}`} — снять его в кабинете нельзя`
+                  : undefined}
+              >
               <button
                 type="button"
                 onClick={() => toggle(m.key)}
                 disabled={paid}
-                title={paid
-                  ? `Модуль оплачен${!expKnown ? '' : exp.perpetual ? ' бессрочно' : exp.expired ? ` до ${exp.date} — оплата закончилась` : ` до ${exp.date}`} — снять его в кабинете нельзя`
-                  : undefined}
-                className={cn('flex min-w-0 flex-1 items-center justify-between gap-3 text-left', paid && 'cursor-default')}
+                className={cn('flex w-full min-w-0 items-center justify-between gap-3 text-left', paid && 'cursor-default')}
               >
                 <span className="flex min-w-0 flex-1 items-center gap-2.5">
                   <span className={cn('grid h-5 w-5 shrink-0 place-items-center rounded-md border', on ? 'border-spark-500 bg-spark-500 text-[#04150c]' : 'border-line')}>
@@ -300,6 +303,7 @@ export function SubscriptionPage() {
                 {/* §11.2 (31.07): в кабинете цена — только текстом. Правка цен — в админ-панели. */}
                 <span className="shrink-0 font-semibold tabular-nums text-fg">{m.price} {cur}</span>
               </button>
+              </Tip>
                 {/*
                   «Подробнее о модуле» — на страницу модуля лендинга, в НОВОЙ вкладке
                   (просьба владельца 21.08). Человек читает описание, не потеряв набранную
@@ -308,15 +312,16 @@ export function SubscriptionPage() {
                   Ссылка вынесена ИЗ кнопки выбора: ссылка внутри кнопки — невалидная
                   разметка, и клик по ней заодно переключал бы галочку.
                 */}
-                <a
-                  href={`/module/${m.key.startsWith('parsing') ? 'parsing' : m.key}`}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  title="Подробнее о модуле — откроется в новой вкладке"
-                  className="ml-1 flex shrink-0 items-center gap-1 rounded-lg border border-line px-2 py-1.5 text-[11px] font-medium text-muted transition-colors hover:border-spark-500/40 hover:text-spark-300"
-                >
-                  Подробнее <ExternalLink size={11} className="shrink-0" />
-                </a>
+                <Tip className="shrink-0" text="Подробнее о модуле — откроется в новой вкладке">
+                  <a
+                    href={`/module/${m.key.startsWith('parsing') ? 'parsing' : m.key}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="ml-1 flex shrink-0 items-center gap-1 rounded-lg border border-line px-2 py-1.5 text-[11px] font-medium text-muted transition-colors hover:border-spark-500/40 hover:text-spark-300"
+                  >
+                    Подробнее <ExternalLink size={11} className="shrink-0" />
+                  </a>
+                </Tip>
               </div>
             )
           })}
@@ -341,39 +346,41 @@ export function SubscriptionPage() {
               токены и подарок остаются ОТДЕЛЬНО, подарок жёлтым — просто отдельными
               чипами, а не отдельными строками. */}
           <div className="flex shrink-0 flex-wrap items-center gap-2">
-            <span
-              className="flex h-10 items-center gap-1.5 rounded-xl border border-line bg-elevated px-3.5 text-sm font-bold text-fg"
+            {/* Подсказка — общий <Tip> (тёмная всплывашка порталом), а не нативный `title`
+                браузера: заказчик просил единый вид подсказок везде (правка 20.08 + ревью
+                MR-188). */}
+            <Tip
               // Скидку в подсказке берём от ИТОГОВОГО набора, а не от добавленного куска:
               // именно итоговый набор её и даёт.
-              title={`В подписке модулей: ${keys.length}${added.length ? ` · добавлено ${added.length}` : ''}${cost.setup ? ` · набор «${data.setups.find((x) => x.id === cost.setup)?.name}» — скидка ${Math.round(cost.discount * 100)}%` : ''}`}
+              text={`В подписке модулей: ${keys.length}${added.length ? ` · добавлено ${added.length}` : ''}${cost.setup ? ` · набор «${data.setups.find((x) => x.id === cost.setup)?.name}» — скидка ${Math.round(cost.discount * 100)}%` : ''}`}
             >
-              {period === 'year' ? Math.round(dueSum * 12 * (1 - annualDiscount)) : dueSum} {cur}
-              <span className="font-semibold text-muted">{added.length ? 'к оплате' : 'ничего не добавлено'}</span>
-              {added.length > 0 && period === 'year' && <span className="rounded-md bg-spark-500/15 px-1.5 py-0.5 text-[10px] font-bold text-spark-300">−{Math.round(annualDiscount * 100)}%</span>}
-              {added.length > 0 && period === 'month' && dueFull > dueSum && <span className="text-xs font-semibold text-muted line-through">{dueFull} {cur}</span>}
-            </span>
+              <span className="flex h-10 items-center gap-1.5 rounded-xl border border-line bg-elevated px-3.5 text-sm font-bold text-fg">
+                {period === 'year' ? Math.round(dueSum * 12 * (1 - annualDiscount)) : dueSum} {cur}
+                <span className="font-semibold text-muted">{added.length ? 'к оплате' : 'ничего не добавлено'}</span>
+                {added.length > 0 && period === 'year' && <span className="rounded-md bg-spark-500/15 px-1.5 py-0.5 text-[10px] font-bold text-spark-300">−{Math.round(annualDiscount * 100)}%</span>}
+                {added.length > 0 && period === 'month' && dueFull > dueSum && <span className="text-xs font-semibold text-muted line-through">{dueFull} {cur}</span>}
+              </span>
+            </Tip>
 
             {/* MR-150: сколько ⚡ приходит КАЖДЫЙ месяц по ВСЕЙ подписке (оплаченные +
                 добавленные). По одним «добавленным» строка пропадала у того, у кого всё
                 оплачено. */}
             {cost.monthlyTokens > 0 && (
-              <span
-                className="flex h-10 items-center gap-1.5 rounded-xl border border-spark-500/30 bg-spark-500/10 px-3.5 text-sm font-bold text-spark-300"
-                title={`${cost.monthlyTokens.toLocaleString('ru-RU')} ⚡ токенов в месяц по подписке${added.length && due.monthlyTokens ? ` · +${due.monthlyTokens.toLocaleString('ru-RU')} ⚡ за добавленные` : ''}`}
-              >
-                {cost.monthlyTokens.toLocaleString('ru-RU')} ⚡<span className="font-semibold text-spark-300/70">в месяц</span>
-                {added.length > 0 && due.monthlyTokens > 0 && <span className="text-xs">+{due.monthlyTokens.toLocaleString('ru-RU')}</span>}
-              </span>
+              <Tip text={`${cost.monthlyTokens.toLocaleString('ru-RU')} ⚡ токенов в месяц по подписке${added.length && due.monthlyTokens ? ` · +${due.monthlyTokens.toLocaleString('ru-RU')} ⚡ за добавленные` : ''}`}>
+                <span className="flex h-10 items-center gap-1.5 rounded-xl border border-spark-500/30 bg-spark-500/10 px-3.5 text-sm font-bold text-spark-300">
+                  {cost.monthlyTokens.toLocaleString('ru-RU')} ⚡<span className="font-semibold text-spark-300/70">в месяц</span>
+                  {added.length > 0 && due.monthlyTokens > 0 && <span className="text-xs">+{due.monthlyTokens.toLocaleString('ru-RU')}</span>}
+                </span>
+              </Tip>
             )}
 
             {/* MR-150: подарок — ОТДЕЛЬНО и жёлтым, как и просили. */}
             {cost.giftTokens > 0 && (
-              <span
-                className="flex h-10 items-center gap-1.5 rounded-xl border border-amber-500/30 bg-amber-500/10 px-3.5 text-sm font-bold text-amber-300"
-                title={`+${cost.giftTokens.toLocaleString('ru-RU')} ⚡ подарочных — начисляются ОДИН раз при покупке модуля, не каждый месяц${added.length && due.giftTokens ? ` · из них +${due.giftTokens.toLocaleString('ru-RU')} ⚡ за добавленные` : ''}`}
-              >
-                +{cost.giftTokens.toLocaleString('ru-RU')} ⚡<span className="font-semibold text-amber-300/70">разово при покупке</span>
-              </span>
+              <Tip text={`+${cost.giftTokens.toLocaleString('ru-RU')} ⚡ подарочных — начисляются ОДИН раз при покупке модуля, не каждый месяц${added.length && due.giftTokens ? ` · из них +${due.giftTokens.toLocaleString('ru-RU')} ⚡ за добавленные` : ''}`}>
+                <span className="flex h-10 items-center gap-1.5 rounded-xl border border-amber-500/30 bg-amber-500/10 px-3.5 text-sm font-bold text-amber-300">
+                  +{cost.giftTokens.toLocaleString('ru-RU')} ⚡<span className="font-semibold text-amber-300/70">разово при покупке</span>
+                </span>
+              </Tip>
             )}
           </div>
 
@@ -390,15 +397,16 @@ export function SubscriptionPage() {
           </div>
           {/* Право: кнопка у правого края — прижимает justify-between, ml-auto не нужен. */}
           <div className="flex shrink-0 items-center justify-end">
-            <button
-              onClick={() => void save()}
-              disabled={saving || !changed}
-              className="btn-primary h-11 min-w-[190px] disabled:opacity-40"
-              title={changed ? 'Спишется с баланса $ за добавленные модули' : 'Новых модулей не выбрано'}
-            >
-              {saving ? <Loader2 size={16} className="animate-spin" /> : <Check size={16} />}
-              {`Оплатить на ${period === 'year' ? 'год' : 'месяц'}`}
-            </button>
+            <Tip text={changed ? 'Спишется с баланса $ за добавленные модули' : 'Новых модулей не выбрано'}>
+              <button
+                onClick={() => void save()}
+                disabled={saving || !changed}
+                className="btn-primary h-11 min-w-[190px] disabled:opacity-40"
+              >
+                {saving ? <Loader2 size={16} className="animate-spin" /> : <Check size={16} />}
+                {`Оплатить на ${period === 'year' ? 'год' : 'месяц'}`}
+              </button>
+            </Tip>
           </div>
         </div>
       </FloatingBar>
