@@ -1372,6 +1372,25 @@ export function TaskDetailPage() {
         {/* §9.11: кому написали и кто остался — только там, где это осмысленно (рассылка). */}
         {t.moduleKey === 'mailing' && <TaskAudiencePanel moduleKey={t.moduleKey} taskId={t.id} />}
 
+        {/*
+          Пустая выдача обязана себя объяснить (жалоба владельца 26.08: «в дашборде задач
+          нету списка этих каналов, ничего нету, не скачать»). Там задача собрала 146 строк,
+          а пересечение по 51 ключу вычеркнуло всё — но карточка просто ничего не рисовала,
+          и выглядело это как потерянные результаты. Достаём последнюю строку лога, которая
+          объясняет исход, и показываем её на месте таблицы.
+        */}
+        {results.length === 0 && ['done', 'stopped', 'error'].includes(t.status) && (() => {
+          const why = [...(t.logs || [])].reverse().find((l) => l.level === 'warning' || l.level === 'error')
+          return (
+            <div className="rounded-2xl border border-line bg-elevated/40 p-3 text-sm">
+              <div className="font-bold text-fg">Результатов нет — скачивать нечего</div>
+              <div className="mt-1 text-xs leading-relaxed text-muted">
+                {why ? <>Последнее, что записал модуль: «{why.message}»</> : 'Модуль не собрал ни одной строки — смотрите логи ниже.'}
+              </div>
+            </div>
+          )
+        })()}
+
         {results.length > 0 && (
           <div className="rounded-2xl border border-line bg-elevated/40 p-3">
             <div className="mb-2 flex items-center gap-2">
