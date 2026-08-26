@@ -43,26 +43,35 @@ featureRouter.put('/prompts', async (req, res) => {
   } catch (err) { fail(res, err, 500) }
 })
 
-// ── (6) Глобальный системный промпт ────────────────────────────────────
-featureRouter.get('/ai-settings', async (_req, res) => {
+/*
+ * ── (6) Глобальный системный промпт — ЛИЧНЫЙ у каждого ─────────────────
+ *
+ * Был один на всю платформу: админ дописал себе строку — она уехала всем, включая чужие
+ * кабинеты и все их запуски. Владелец 27.08: правка под администратором остаётся у
+ * администратора, под тестовым модератором — у него; на другие аккаунты не переходит.
+ *
+ * Владелец берётся ИЗ СЕССИИ, а не из параметров: иначе чужой промпт читался бы и
+ * переписывался подстановкой чужого id. Пока человек ничего не сохранял, отдаём прежний
+ * общий текст — иначе в день выката у всех разом пропал бы уже настроенный промпт.
+ */
+featureRouter.get('/ai-settings', async (req, res) => {
   try {
-    res.json({ ok: true, settings: await getAiSettings() })
+    const userId = req.header('x-user-id') || ''
+    if (!userId) return fail(res, new Error('Нет сессии'), 401)
+    const { getUserGlobalPrompt } = await import('./userAiSettings.js')
+    res.json({ ok: true, settings: { globalSystemPrompt: await getUserGlobalPrompt(userId) } })
   } catch (err) { fail(res, err, 500) }
 })
 
-/**
- * Системный промпт — ОДИН на всю платформу, а роут записи не смотрел, кто пишет:
- * любой из зарегистрировавшихся клиентов переписывал промпт, по которому говорит ИИ
- * во ВСЕХ чужих кабинетах, и соседи об этом не узнавали. Читать общий промпт можно
- * всем (по нему работают их же задачи), менять — только администратору платформы.
- */
 featureRouter.post('/ai-settings', async (req, res) => {
   try {
-    if (!(await isAdminRequest(req))) {
-      return res.status(403).json({ ok: false, error: 'Это общая настройка платформы — менять её может только администратор' })
-    }
+    const userId = req.header('x-user-id') || ''
+    if (!userId) return fail(res, new Error('Нет сессии'), 401)
     const patch = req.body ?? {}
-    res.json({ ok: true, settings: await setAiSettings(patch) })
+    if (typeof patch.globalSystemPrompt !== 'string') return fail(res, new Error('Нет текста промпта'))
+    const { setUserGlobalPrompt } = await import('./userAiSettings.js')
+    const saved = await setUserGlobalPrompt(userId, patch.globalSystemPrompt)
+    res.json({ ok: true, settings: { globalSystemPrompt: saved } })
   } catch (err) { fail(res, err) }
 })
 
