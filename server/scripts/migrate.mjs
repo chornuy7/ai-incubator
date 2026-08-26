@@ -50,7 +50,7 @@ if (!url) {
  * этом прямо, чтобы человек не искал причину в пароле.
  */
 process.on('uncaughtException', (e) => {
-  if (e?.code === 'ECONNREFUSED' || e?.code === 'ENOTFOUND' || e?.code === 'ETIMEDOUT') {
+  if (['ECONNREFUSED', 'ENOTFOUND', 'ETIMEDOUT', 'EAI_AGAIN'].includes(e?.code)) {
     console.error(`Не удалось подключиться к базе (${e.code}, ${e.address || ''}:${e.port || 5432}).`)
     console.error('Порт 5432 должен быть открыт наружу. Если сеть пропускает только 80/443 —')
     console.error('возьмите строку Session pooler вместо Direct или запустите команду там, где доступ есть.')
@@ -62,6 +62,24 @@ process.on('uncaughtException', (e) => {
 /** Файлы по имени: имена начинаются с даты, значит алфавитный порядок = хронологический. */
 const files = fs.readdirSync(DIR).filter((f) => f.endsWith('.sql')).sort()
 const sum = (body) => crypto.createHash('sha256').update(body).digest('hex').slice(0, 16)
+
+/*
+ * Строку подключения чаще всего портят при копировании: попадает лишний текст, перенос
+ * строки или кавычки. Драйвер в таком случае молча берёт огрызок и падает с
+ * «getaddrinfo EAI_AGAIN base» — по такой ошибке причину не найти. Проверяем форму сами
+ * и называем, что именно не так.
+ */
+try {
+  const u = new URL(url)
+  if (!/^postgres(ql)?:$/.test(u.protocol)) throw new Error('ожидался postgresql://, а не ' + u.protocol + '//')
+  if (!u.hostname.includes('.')) throw new Error('хост получился «' + u.hostname + '» — похоже, в значение попал лишний текст или перенос строки')
+  if (!u.password) throw new Error('в строке нет пароля — подставьте его вместо [YOUR-PASSWORD]')
+} catch (e) {
+  console.error('SUPABASE_DB_URL не похож на строку подключения:', e.message)
+  console.error('Ожидается ОДНОЙ строкой, без кавычек и пробелов:')
+  console.error('  postgresql://postgres:ПАРОЛЬ@db.<ref>.supabase.co:5432/postgres')
+  process.exit(1)
+}
 
 const client = new pg.Client({ connectionString: url, ssl: { rejectUnauthorized: false } })
 await client.connect()
