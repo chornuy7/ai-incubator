@@ -69,8 +69,19 @@ export const BLOCKS = [
   { key: 'templates', label: 'ИИ: промпты и шаблоны' },
   { key: 'settings', label: 'Защита и тайминги' },
   { key: 'results', label: 'Результаты' },
-  { key: 'logs', label: 'Логи' },
 ]
+
+/*
+ * Блока «Логи» здесь БОЛЬШЕ НЕТ (правка владельца 26.08: «где у нас в мейлинге или в
+ * любом другом модуле логи и результаты? такого же нету»).
+ *
+ * Проверено по всем витринам: своей секции логов нет ни у одного модуля — логи задачи
+ * живут в Дашборде задач, у парсеров это прямо написано на экране («Логи по этой задаче —
+ * в Дашборде задач»). Тумблер открывал доступ к тому, чего не существует.
+ *
+ * Ключ `logs` в уже выданных правах остаётся лежать как есть: он ни на что не влияет, а
+ * чистить чужие записи ради косметики опаснее, чем оставить их.
+ */
 
 /**
  * Какие блоки есть У КАЖДОГО модуля и как они называются НА ЕГО ЭКРАНЕ.
@@ -86,25 +97,24 @@ export const BLOCKS = [
  * СОСТАВ на модуль и ПОДПИСИ.
  */
 export const MODULE_BLOCKS = {
-  'neuro-commenting': ['run', 'targets', 'templates', 'settings', 'results', 'logs'],
-  'neuro-chatting': ['run', 'targets', 'templates', 'settings', 'results', 'logs'],
-  // Диалоги отвечают на входящие — целевых каналов у них нет.
-  'neuro-dialogs': ['run', 'templates', 'settings', 'results', 'logs'],
-  'mass-react': ['run', 'targets', 'templates', 'settings', 'results', 'logs'],
-  // У масслукинга нет ни промптов, ни палитры — ИИ там не участвует.
-  'mass-looking': ['run', 'targets', 'settings', 'results', 'logs'],
-  // Прогрев работает сам по себе: ни целей, ни текстов не выбирают.
-  warming: ['run', 'settings', 'results', 'logs'],
-  mailing: ['run', 'targets', 'templates', 'settings', 'results', 'logs'],
-  autoposting: ['run', 'targets', 'templates', 'settings', 'results', 'logs'],
-  // Рейтинг только считает балл по своим же аккаунтам.
-  ggr: ['run', 'results', 'logs'],
-  parsing: ['run', 'targets', 'settings', 'results', 'logs'],
-  'parsing-groups': ['run', 'targets', 'settings', 'results', 'logs'],
-  'parsing-users': ['run', 'targets', 'settings', 'results', 'logs'],
-  'parsing-messages': ['run', 'targets', 'settings', 'results', 'logs'],
-  'parsing-comments': ['run', 'targets', 'settings', 'results', 'logs'],
-  'spam-unblock': ['run', 'results', 'logs'],
+  // «Результаты» — только там, где секция результатов действительно есть на экране
+  // (парсеры и рейтинг). У остальных модулей результат смотрят в Дашборде задач, и
+  // тумблер обещал бы несуществующее.
+  'neuro-commenting': ['run', 'targets', 'templates', 'settings'],
+  'neuro-chatting': ['run', 'targets', 'templates', 'settings'],
+  'neuro-dialogs': ['run', 'templates', 'settings'],
+  'mass-react': ['run', 'targets', 'templates', 'settings'],
+  'mass-looking': ['run', 'targets', 'settings'],
+  warming: ['run', 'settings'],
+  mailing: ['run', 'targets', 'templates', 'settings'],
+  autoposting: ['run', 'targets', 'templates', 'settings'],
+  ggr: ['run', 'results'],
+  parsing: ['run', 'targets', 'settings', 'results'],
+  'parsing-groups': ['run', 'targets', 'settings', 'results'],
+  'parsing-users': ['run', 'targets', 'settings', 'results'],
+  'parsing-messages': ['run', 'targets', 'settings', 'results'],
+  'parsing-comments': ['run', 'targets', 'settings', 'results'],
+  'spam-unblock': ['run'],
 }
 
 /** Подписи, отличающиеся от общих: слово должно совпадать с тем, что видно на экране. */
@@ -114,12 +124,12 @@ const BLOCK_LABEL_OVERRIDES = {
   'parsing-users': { targets: 'Настройки парсинга (источники)', settings: 'Фильтры, защита и тайминги' },
   'parsing-messages': { targets: 'Настройки парсинга (источники)', settings: 'Фильтры, защита и тайминги' },
   'parsing-comments': { targets: 'Настройки парсинга (источники)', settings: 'Фильтры, защита и тайминги' },
-  mailing: { targets: 'Получатели', templates: 'Текст сообщения' },
+  mailing: { targets: 'Получатели и чёрный список', templates: 'Текст сообщения' },
   'mass-react': { templates: 'Палитра реакций' },
   'neuro-dialogs': { templates: 'ИИ: промпты и цель диалога' },
   warming: { run: 'Аккаунты и уровень прогрева' },
   ggr: { run: 'Аккаунты и запуск' },
-  autoposting: { targets: 'Каналы для публикации', templates: 'Текст и медиа поста' },
+  autoposting: { targets: 'Каналы и чёрный список', templates: 'Текст поста и публикация' },
 }
 
 /**
@@ -262,9 +272,9 @@ const sectionMap = (val, keys = SECTIONS.map((s) => s.key)) => Object.fromEntrie
 function defaultRoles() {
   const now = Date.now()
   const mods = Object.keys(MODULE_LABELS)
-  const ALL_BLOCKS = BLOCKS.map((b) => b.key)                 // run/settings/targets/templates/results/logs
-  const VIEW = ['results', 'logs']                             // только просмотр
-  const OPS = ['run', 'settings', 'targets', 'results', 'logs'] // работа без редактирования шаблонов
+  const ALL_BLOCKS = BLOCKS.map((b) => b.key)                 // run/settings/targets/templates/results
+  const VIEW = ['results']                                     // только просмотр
+  const OPS = ['run', 'settings', 'targets', 'results']         // работа без редактирования промптов
   const OUTREACH = mods.filter((k) => ['neuro-chatting', 'neuro-dialogs', 'mailing'].includes(k))
   const ENGAGE = mods.filter((k) => ['neuro-commenting', 'neuro-chatting', 'neuro-dialogs', 'mass-react', 'mass-looking'].includes(k))
   const roleTpl = (id, name, permissions) => ({ id, name, builtin: false, isTemplate: true, permissions, createdAt: now, updatedAt: now })
