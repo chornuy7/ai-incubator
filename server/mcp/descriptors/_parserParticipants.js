@@ -25,8 +25,8 @@ export function buildParticipantsParserDescriptor(cfg) {
       howItWorks:
         'By default, sources are processed one at a time by one account at a time..Parallel'
         + 'the mode speeds up work, but loads Telegram more - FloodWait arrives more often on it.',
-      api: { method: 'POST', path, fills: ['accountIds', 'parallelAccounts'] },
-      params: ['accountIds', 'parallelAccounts'],
+      api: { method: 'POST', path, fills: ['accountIds'] },
+      params: ['accountIds'],
     },
     {
       id: 'targets',
@@ -92,19 +92,6 @@ export function buildParticipantsParserDescriptor(cfg) {
       constraints: ['empty list → task ends with a warning'],
       examples: [['acc_1'], ['acc_1', 'acc_2']],
       storedAs: 'task.settings.accountIds',
-    },
-    {
-      name: 'parallelAccounts',
-      block: 'accounts',
-      title: 'Parallel to all accounts',
-      type: 'boolean',
-      default: false,
-      purpose: 'Process sources simultaneously by different accounts.',
-      constraints: [
-        'speeds up collection, but significantly increases the risk of FloodWait',
-        'It makes sense to include only when there are many sources and little time',
-      ],
-      storedAs: 'task.settings.parallelAccounts',
     },
     {
       name: 'channels',

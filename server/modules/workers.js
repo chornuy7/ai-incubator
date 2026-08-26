@@ -2390,7 +2390,10 @@ export async function runChannelParser(task, store, kind) {
      * Очередь безопасна без блокировок: JavaScript однопоточный, инкремент индекса
      * между await-ами не прерывается.
      */
-    const параллельно = s.parallelAccounts === true && accountIds.length > 1
+    // Асинхронность больше не переключается (решение владельца 26.08): режим работает
+    // всегда, когда аккаунтов больше одного, — иначе тумблер лишь давал возможность
+    // случайно выбрать медленный вариант. С одним аккаунтом делить нечего.
+    const параллельно = accountIds.length > 1
     let следующий = startFrom
     let курсор = startFrom
     const готовые = new Set()
@@ -2668,7 +2671,7 @@ export async function runParticipantsParser(task, store, kind) {
   const L = s.limits || {}
   const kw = (s.keywords || []).map((k) => String(k).toLowerCase().trim()).filter(Boolean)
   // §3.9: аккаунты идут ОДНОВРЕМЕННО внутри одной задачи, каждый по своим целям.
-  const parallelAccounts = s.parallelAccounts === true
+  const parallelAccounts = true // не настройка: аккаунты всегда идут одновременно (26.08)
   const delayChatMs = Math.max(0, Number(s.delayChat ?? 15)) * 1000
   const delayItemMs = Math.max(0, Number(s.delayItem ?? 0.5)) * 1000
   // Вступление — самое опасное действие: чтобы прочитать участников чужого чата,

@@ -77,8 +77,8 @@ export function buildChannelParserDescriptor(cfg) {
         title: 'Limits',
         purpose: 'How many results to collect?.',
         howItWorks: 'When the limit is reached, the search stops, even if there are still queries left..',
-        api: { method: 'POST', path, fills: ['resultLimit', 'parallelAccounts'] },
-        params: ['resultLimit', 'parallelAccounts'],
+        api: { method: 'POST', path, fills: ['resultLimit'] },
+        params: ['resultLimit'],
       },
       {
         id: 'timings',
@@ -232,20 +232,6 @@ export function buildChannelParserDescriptor(cfg) {
           'computed on the server from real posts, not from subscriber count alone: an abandoned large channel scores below a small live one',
         ],
         storedAs: 'task.settings.minRating',
-      },
-      {
-        name: 'parallelAccounts',
-        block: 'limits',
-        title: 'Async mode',
-        type: 'boolean',
-        default: false,
-        purpose: 'Run all selected accounts at the same time instead of one after another.',
-        constraints: [
-          'needs at least 2 accounts',
-          'each account takes the NEXT free query from a shared queue, so a slow one simply takes fewer',
-          'starts are staggered by a random pause: a simultaneous burst is exactly what looks like a farm',
-        ],
-        storedAs: 'task.settings.parallelAccounts',
       },
       {
         name: 'langDetection',

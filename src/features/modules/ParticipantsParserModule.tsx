@@ -94,7 +94,6 @@ function Inner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: string }) {
   // §3.9: асинхронный режим — группы делятся между аккаунтами, и каждый аккаунт работает
   // СВОЕЙ задачей. Задачи независимы: свой прогресс, свои логи, свой «Стоп»; падение
   // одной не трогает остальные. Последовательный режим оставлен как был.
-  const [parallel, setParallel] = useState(false)
 
   // результаты
   const [resQuery, setResQuery] = useState('')
@@ -127,12 +126,11 @@ function Inner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: string }) {
     // Асинхронный режим собирается ЗДЕСЬ, а не подмешивается на запуске: шаблон
     // сохраняется из buildSettings, и подмешанное поле в него не попадало — тумблер
     // «слетал» при каждом применении шаблона (созвон 19.08).
-    parallelAccounts: parallel,
     delayChat: fastWork ? 0 : delayChat,
     delayItem: fastWork ? 0 : delayItem,
     delays: { join: [fastWork ? 0 : joinMin, fastWork ? 0 : joinMax] as [number, number] },
     limit: limits.participants ?? limits.messages ?? limits.posts ?? 1000,
-  }), [carry, selected, targetList, keywordList, aiProtect, protLevel, filters, limits, activeStories, intersection, parallel, fastWork, delayChat, delayItem, joinMin, joinMax, moduleKey])
+  }), [carry, selected, targetList, keywordList, aiProtect, protLevel, filters, limits, activeStories, intersection, fastWork, delayChat, delayItem, joinMin, joinMax, moduleKey])
 
   const busySelectedCount = useMemo(() => [...selected].filter((id) => accounts.some((a) => a.id === id && a.busyIn)).length, [selected, accounts])
   const canStart = selected.size > 0 && busySelectedCount === 0 && targetList.length > 0
@@ -180,7 +178,6 @@ function Inner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: string }) {
     // выключенным при нулевых задержках — то самое «настройка слетела» (созвон 19.08).
     if (s.delayChat !== undefined && s.delayItem !== undefined) setFastWork(s.delayChat === 0 && s.delayItem === 0)
     if (s.intersectionMode !== undefined) setIntersection(!!s.intersectionMode)
-    if (s.parallelAccounts !== undefined) setParallel(!!s.parallelAccounts)
     pushToast({ type: 'success', title: 'Шаблон применён' })
   }, [pushToast, remember])
 
@@ -275,6 +272,22 @@ function Inner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: string }) {
       <PresetBar presets={presets} onApply={applyPreset} onSave={handleSave}
         onEdit={editPreset} onDelete={deletePreset} disabled={running} />
       <div id="sec-accounts" className="scroll-mt-24">
+        {/*
+          Аккаунты всегда работают одновременно — тумблера нет (решение владельца 26.08).
+          Подсказка стоит до выбора: вопрос «сколько отмечать» возникает именно здесь.
+        */}
+        <div className="mb-3 flex items-start gap-2.5 rounded-2xl border border-spark-500/30 bg-spark-500/8 px-4 py-3">
+          <Zap size={16} className="mt-0.5 shrink-0 text-spark-300" />
+          <div className="min-w-0 text-xs leading-relaxed text-white/60">
+            <span className="font-bold text-fg">Чем больше аккаунтов, тем быстрее парсинг.</span>{' '}
+            {selected.size > 1
+              ? `Источники разделятся между ${selected.size} аккаунтами: они пойдут одновременно и стартуют вразнобой.`
+              : 'Источники делятся между выбранными аккаунтами и обрабатываются одновременно.'}
+            <span className="mt-1 block text-white/35">
+              Это ещё и безопаснее: на каждый профиль приходится меньше запросов, а FloodWait прилетает именно за частоту с одного.
+            </span>
+          </div>
+        </div>
         <AccountPicker moduleKey={moduleKey} selected={selected} onChange={setSelected} actions={cfg.accountActions} withFilters={!!cfg.accountFilters} selectedTitle={cfg.selectedTitle ?? 'Выбрано для парсинга'} />
       </div>
 
@@ -354,18 +367,6 @@ function Inner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: string }) {
           {/* Правая колонка: быстрая работа + фильтры + доп + задержки */}
           <div className="space-y-3">
             <ToggleRow icon={<Zap size={15} />} label="Быстрая работа" desc="Без задержек между запросами" checked={fastWork} onChange={setFastWork} />
-            {/* §3.9: асинхронный режим. Не «быстрее любой ценой»: каждый аккаунт получает
-                свои цели и свою задачу, поэтому работают они одновременно, но каждый —
-                со своими задержками и лимитами. */}
-            <ToggleRow
-              icon={<Activity size={15} />}
-              label="Асинхронный режим"
-              desc={selected.size > 1
-                ? `Одна задача: цели разделятся между ${selected.size} аккаунтами, они пойдут одновременно и стартуют вразнобой`
-                : 'Нужно минимум 2 аккаунта — группы делятся между ними внутри одной задачи'}
-              checked={parallel}
-              onChange={setParallel}
-            />
 
             <div className="grid gap-3 sm:grid-cols-2">
               <FilterCard icon={<Filter size={14} />} title="Базовые фильтры">
