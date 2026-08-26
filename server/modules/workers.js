@@ -1876,6 +1876,32 @@ export async function runNeuroDialogs(task, store) {
   // Сколько ЛС один аккаунт отвечает за один заход, прежде чем уступить очередь следующему.
   // Пачка ответов подряд с одного номера — самый быстрый путь к PEER_FLOOD и репортам.
   const perPassCap = [2, 4, 6][s.protectionLevel ?? 1] ?? 4
+  /*
+   * Вероятность ответа (просьба владельца 26.08: «в нейродиалогах тоже»).
+   *
+   * Здесь промах безобиден и потому настоящий, а не отложенный, как в мейлинге: диалог
+   * никуда не девается — он остаётся в списке ждущих и попадёт в следующий круг. Смысл
+   * ровно тот же, что в комментинге: бот, отвечающий на ВСЁ подряд и мгновенно, узнаётся
+   * именно по стопроцентной явке.
+   *
+   * Защита включена всегда (тумблера «ИИ-защита» в витрине нет, есть уровень), поэтому
+   * потолок применяем безусловно — иначе подпись про «фактически будет N%» врала бы.
+   */
+  const шансОтвета = effectiveProbability(s.probability ?? 100, true, s.protectionLevel ?? 1)
+  /*
+   * Ноль — это выключенный в витрине тумблер «Отвечать на входящие автоматически». Раньше
+   * он слался сюда тем же полем и НИКАК не влиял: воркер probability не читал вовсе, и
+   * задача с выключенными авто-ответами всё равно отвечала. Теперь выключатель работает,
+   * а задача не крутится вхолостую, делая вид, что чем-то занята.
+   */
+  if (шансОтвета <= 0) {
+    await store.appendLog(task, 'warning', 'Авто-ответы выключены в настройках задачи — отвечать некому')
+    task.status = 'stopped'
+    task.idleStopReason = 'авто-ответы выключены в настройках'
+    await store.saveTask(task)
+    await finalizeAccounts(accountIds, task.id)
+    return
+  }
   // §9: сколько сообщений пишем одному лиду. 'untilTarget' — до целевого действия
   // (ограничивают только суточные лимиты и стоп-лист), 'count' — не больше N ответов.
   const replyLimitMode = s.replyLimitMode === 'count' ? 'count' : 'untilTarget'
@@ -2026,6 +2052,14 @@ export async function runNeuroDialogs(task, store) {
         for (const d of pending) {
           if (task.stopRequested || totalLimitReached(s, task) || perAccountLimitReached(s, accountId, task)) break
           if (await limitReached(accountId, 'dm')) { await store.appendLog(task, 'info', 'Суточный лимит ЛС достигнут (§6)', meta.name); break }
+
+          if (шансОтвета < 100) {
+            const бросок = Math.round(Math.random() * 100)
+            if (бросок > шансОтвета) {
+              await store.appendLog(task, 'info', `Пропуск диалога: вероятность ответа ${шансОтвета}%, выпало ${бросок} — вернёмся к нему на следующем круге`, meta.name)
+              continue
+            }
+          }
 
           // §9: сколько сообщений пишем ОДНОМУ лиду. Два режима:
           //  'count'       — не больше maxRepliesPerLead ответов;
