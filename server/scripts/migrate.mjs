@@ -19,6 +19,9 @@
  * Подключение — прямой Postgres (SUPABASE_DB_URL), потому что Data API не умеет DDL:
  * сервисный ключ ходит по таблицам, а `create table` через него не выполнить.
  */
+// Свой .env: скрипт запускают отдельно от сервера (`npm run migrate`), и без этого
+// SUPABASE_DB_URL из файла не подхватится.
+import 'dotenv/config'
 import fs from 'node:fs'
 import path from 'node:path'
 import crypto from 'node:crypto'
@@ -37,6 +40,22 @@ if (!url) {
   console.error('Нет SUPABASE_DB_URL. Supabase → Connect → Direct → Connection string, положить в .env.')
   process.exit(1)
 }
+
+/*
+ * Прогонятор ходит к Postgres напрямую, портом 5432. Это не HTTP: окружения, где наружу
+ * открыты только 80/443 (частый случай — CI-раннеры, контейнеры и песочницы), до базы не
+ * достучатся, и ошибка будет выглядеть как ECONNREFUSED на непонятный адрес. Говорим об
+ * этом прямо, чтобы человек не искал причину в пароле.
+ */
+process.on('uncaughtException', (e) => {
+  if (e?.code === 'ECONNREFUSED' || e?.code === 'ENOTFOUND' || e?.code === 'ETIMEDOUT') {
+    console.error(`Не удалось подключиться к базе (${e.code}, ${e.address || ''}:${e.port || 5432}).`)
+    console.error('Порт 5432 должен быть открыт наружу. Если сеть пропускает только 80/443 —')
+    console.error('возьмите строку Session pooler вместо Direct или запустите команду там, где доступ есть.')
+    process.exit(1)
+  }
+  throw e
+})
 
 /** Файлы по имени: имена начинаются с даты, значит алфавитный порядок = хронологический. */
 const files = fs.readdirSync(DIR).filter((f) => f.endsWith('.sql')).sort()
