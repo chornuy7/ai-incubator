@@ -176,6 +176,9 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
   const [schedSaving, setSchedSaving] = useState(false)
   const [lookModeIdx, setLookModeIdx] = useState(0)
   const [lookPostsCount, setLookPostsCount] = useState(cfg.lookPostsDefault ?? 3)
+  // «Самый новый» — не отдельный lookMode, а posts + 1 пост. Держим отдельным флагом,
+  // иначе выбор нельзя отличить от «Посты» с числом 1, набранным вручную.
+  const [newestOnly, setNewestOnly] = useState(false)
 
   const g = (i: number) => toggles[i] ?? 0
   const setTg = (i: number, v: number) => setToggles((t) => ({ ...t, [i]: v }))
@@ -186,6 +189,10 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
   )
   const isParser = cfg.parserLayout || cfg.participantsLayout
   const isGgr = cfg.ggrLayout
+  // «Режим работы» ищем по названию, а не по индексу: у нейрочатинга группа перед ним
+  // удалена (мёртвый «Режим реакции»), и жёсткая [1] нашла бы пустоту. Номер слота
+  // состояния при этом остаётся 1 — он к порядку в конфиге не привязан.
+  const workGroup = cfg.toggleGroups?.find((gr) => gr.label === 'Режим работы') ?? cfg.toggleGroups?.[1]
   // Есть ли ЧТО показать в карточке «Параметры и лимиты»: у нейрокомментинга это выбор
   // постов и стоп-слова, у остальных боевых модулей — объём задачи (режим работы, сколько
   // сделает аккаунт). У прогрева и парсеров ни того, ни другого: там карточка оформляет
@@ -402,6 +409,7 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
       if (i >= 0) setLookModeIdx(i)
     }
     if (s.lookPostsCount !== undefined) setLookPostsCount(s.lookPostsCount)
+    if (s.lookMode !== undefined) setNewestOnly(s.lookMode === 'posts' && s.lookPostsCount === 1)
     // Эти семь полей шаблон СОХРАНЯЛ, но не восстанавливал — отсюда и жалоба «сохранил
     // шаблон, а настройки слетают»: применённый шаблон молча оставлял значения текущей
     // формы, и оператор получал не то, что сохранял (ТЗ 19.08 §3).
@@ -584,6 +592,35 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
           галочкой уведомлений, — а это не защита: это ЧТО обрабатывать, ровно как
           «Что комментировать» у нейрокомментинга ниже. Теперь оба вопроса в одном месте.
         */}
+        {/*
+          «Что смотреть» переехало сюда из «Защиты и таймингов» (просьба владельца 26.08):
+          это объём работы, а не защита.
+          Кнопки-пресеты «Самый новый / Последние 3 / Последние 10» убраны — они дублировали
+          поле числа, и «Самый новый» (это просто 1) читался как отдельный режим. Теперь он
+          и стал режимом: четвёртым в ряду, справа от «Истории + посты», а числовое поле
+          осталось одно. На сервер «Самый новый» уходит как posts + 1 пост: отдельного
+          значения lookMode для него нет, и выдумывать его, чтобы сломать валидацию, незачем.
+        */}
+        {showBlock('settings') && cfg.lookingLayout && cfg.lookModeOptions && !running && (
+          <div className="mb-3 space-y-3">
+            <ToggleGroup
+              label={cfg.lookModeLabel ?? 'Что смотреть'}
+              options={[...cfg.lookModeOptions.map((o) => o.label), 'Самый новый']}
+              value={newestOnly ? cfg.lookModeOptions.length : lookModeIdx}
+              onChange={(v) => {
+                const newest = v === cfg.lookModeOptions!.length
+                setNewestOnly(newest)
+                if (newest) { setLookModeIdx(cfg.lookModeOptions!.findIndex((o) => o.value === 'posts')); setLookPostsCount(1) }
+                else setLookModeIdx(v)
+              }}
+            />
+            {!newestOnly && cfg.lookModeOptions[lookModeIdx]?.value !== 'stories' && (
+              <NumberField label={cfg.lookPostsLabel ?? 'Сколько последних постов смотреть'}
+                value={lookPostsCount} onChange={setLookPostsCount} min={1} max={50} suffix="1–50" />
+            )}
+            {newestOnly && <p className="text-xs text-muted">Смотрим только самый свежий пост канала — один на заход.</p>}
+          </div>
+        )}
         {showBlock('settings') && cfg.reactionSettings && !running && (
           <div className="mb-3 space-y-3">
             <ToggleGroup label="Режим" options={cfg.reactionSettings.modes} value={g(0)} onChange={(v) => setTg(0, v)} />
@@ -697,10 +734,10 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
           <TimingSection
             bare
             part="limits"
-            workModeOptions={cfg.toggleGroups?.[1]?.options}
+            workModeOptions={workGroup?.options}
             workMode={g(1)}
             onWorkMode={(v) => setTg(1, v)}
-            workModeLabel={cfg.toggleGroups?.[1]?.label}
+            workModeLabel={workGroup?.label}
             durationMinutes={durationMinutes}
             onDuration={setDurationMinutes}
             showDurationAlways={!!cfg.reactionSettings}
@@ -835,10 +872,10 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
           <TimingSection
             bare
             part="delays"
-            workModeOptions={cfg.toggleGroups?.[1]?.options}
+            workModeOptions={workGroup?.options}
             workMode={g(1)}
             onWorkMode={(v) => setTg(1, v)}
-            workModeLabel={cfg.toggleGroups?.[1]?.label}
+            workModeLabel={workGroup?.label}
             durationMinutes={durationMinutes}
             onDuration={setDurationMinutes}
             showDurationAlways={!!cfg.reactionSettings}
@@ -872,14 +909,13 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
           {/* Правка 14.08: дубль «Уровень прогрева» здесь убран — он рендерился и в этом блоке,
               и отдельным блоком ниже. Оставлен один отдельный блок «Уровень прогрева». */}
 
-          {cfg.reactionSettings ? null : cfg.toggleGroups && moduleKey !== 'neuro-commenting' ? (
-            /* Отбор постов у нейрокомментинга живёт в «Параметрах и лимитах» — вплотную к
-               полю «сколько последних постов». Здесь для него не остаётся ничего, и рамка
-               рисовалась пустой полосой (правка 19.08). У остальных модулей группа тут. */
-            <div className="rounded-2xl border border-line bg-elevated/40 p-4 space-y-4">
-              <ToggleGroup label={cfg.toggleGroups[0].label} options={cfg.toggleGroups[0].options} value={g(0)} onChange={(v) => setTg(0, v)} />
-            </div>
-          ) : isParser ? (
+          {/*
+            Здесь раньше рисовалась группа toggleGroups[0]. У нейрокомментинга отбор постов
+            уехал в «Параметры и лимиты» (19.08), у массовых реакций режим — туда же (26.08),
+            а у нейрочатинга «Режим реакции» удалён как несуществующий: воркер о нём не знал.
+            Осталось два случая — парсеры и модули с одной группой настроек.
+          */}
+          {isParser ? (
             <div className="space-y-3">
               <label className="label">Ключевые слова / источник</label>
               <textarea value={keywords} onChange={(e) => setKeywords(e.target.value)} rows={2} className="input resize-none text-sm" />
@@ -908,37 +944,6 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
                 Сетевые ошибки и таймауты не понижают балл, аккаунты в карантине и спамблоке проверка не «лечит».
                 Занятые другим модулем аккаунты пропускаются.
               </p>
-            </div>
-          ) : cfg.lookingLayout && cfg.lookModeOptions ? (
-            <div className="rounded-2xl border border-line bg-elevated/40 p-4 space-y-4">
-              <ToggleGroup
-                label={cfg.lookModeLabel ?? 'Что смотреть'}
-                options={cfg.lookModeOptions.map((o) => o.label)}
-                value={lookModeIdx}
-                onChange={setLookModeIdx}
-              />
-              {cfg.lookModeOptions[lookModeIdx]?.value !== 'stories' && (
-                <div className="space-y-2">
-                  <span className="label">{cfg.lookPostsLabel ?? 'Сколько последних постов смотреть'}</span>
-                  <div className="flex flex-wrap gap-2">
-                    {(cfg.lookPostsPresets ?? []).map((p) => (
-                      <button
-                        key={p.value}
-                        type="button"
-                        onClick={() => setLookPostsCount(p.value)}
-                        className={`rounded-xl border px-3.5 py-2 text-sm font-semibold transition-all ${
-                          lookPostsCount === p.value
-                            ? 'border-spark-500/50 bg-spark-500/12 text-spark-300'
-                            : 'border-line bg-elevated text-muted hover:border-spark-500/30 hover:text-fg'
-                        }`}
-                      >
-                        {p.label}
-                      </button>
-                    ))}
-                  </div>
-                  <NumberField label="Произвольное число постов" value={lookPostsCount} onChange={setLookPostsCount} min={1} max={50} suffix="1–50" />
-                </div>
-              )}
             </div>
           ) : (
             <p className="text-sm text-muted">{cfg.warmingLayout

@@ -128,7 +128,6 @@ export interface ModuleConfig {
   lookModeLabel?: string
   lookModeOptions?: { label: string; value: 'stories' | 'posts' | 'both' }[]
   lookPostsLabel?: string
-  lookPostsPresets?: { label: string; value: number }[]
   lookPostsDefault?: number
   // warming специфика
   warmingLayout?: boolean
@@ -283,8 +282,10 @@ export const MODULES: Record<string, ModuleConfig> = {
       { label: 'Сбалансированный', desc: 'Оптимальный баланс' },
       { label: 'Агрессивный', desc: 'Высокая скорость' },
     ],
+    // «Режим реакции» («По интервалу» / «На триггеры») удалён 26.08 как несуществующий:
+    // воркер runNeuroChatting не читает ни reactMode, ни commentMode, ни postFilter, и ни
+    // интервалов, ни триггеров в модуле нет вовсе — переключатель просто ничего не делал.
     toggleGroups: [
-      { label: 'Режим реакции', options: ['По интервалу', 'На триггеры'] },
       { label: 'Режим работы', options: ['По количеству', 'По времени'] },
     ],
     probabilitySlider: { label: 'Вероятность ответа', value: 30 },
@@ -406,11 +407,6 @@ export const MODULES: Record<string, ModuleConfig> = {
       { label: 'Истории + посты', value: 'both' },
     ],
     lookPostsLabel: 'Сколько последних постов смотреть',
-    lookPostsPresets: [
-      { label: 'Самый новый', value: 1 },
-      { label: 'Последние 3', value: 3 },
-      { label: 'Последние 10', value: 10 },
-    ],
     lookPostsDefault: 3,
     primaryAction: 'Начать',
     stopAction: 'Остановить',
