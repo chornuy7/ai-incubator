@@ -33,6 +33,7 @@ import {
   type DelaysShape,
   ProtectionLevelPicker,
 } from '@/features/modules/shared'
+import { PROTECTION_CAP } from '@/features/modules/shared/ProtectionLevelPicker'
 import type { ModuleTaskSettings } from '@/api/modulesApi'
 
 const cfg = MODULES['neuro-dialogs']!
@@ -61,6 +62,8 @@ export function NeuroDialogsModule() {
   const [goalId, setGoalId] = useState(() => localStorage.getItem(GOAL_ID_KEY) ?? '') // §9: цель кампании
   const [aiProtect, setAiProtect] = useState(true)
   const [protLevel, setProtLevel] = useState(1)
+  // §11: вероятность ответа — как в остальных модулях (просьба владельца 26.08).
+  const [probability, setProbability] = useState(100)
   const [activePrompt, setActivePrompt] = useState(0)
   // MR-185: промпты из базы, по владельцу (см. LiveModule).
   const { bodies: promptBodies, save: savePrompts, replace: replacePrompts } = usePromptStore('neuro-dialogs', cfg.messagePrompts ?? [])
@@ -116,7 +119,13 @@ export function NeuroDialogsModule() {
     minPerAccount: minPerAcc,
     delayPreset,
     delays,
-    probability: aiEnabled ? 100 : 0,
+    /*
+     * probability тут раньше подменял тумблер «Отвечать на входящие автоматически»:
+     * слался как 100/0, а воркер поле НЕ ЧИТАЛ — то есть выключатель ничего не выключал.
+     * Теперь это настоящая вероятность ответа с ползунка, а выключенный ИИ даёт ноль,
+     * который воркер понимает как «отвечать не надо» и честно закрывает задачу.
+     */
+    probability: aiEnabled ? probability : 0,
     replyScope: replyAll ? 'all' : 'unread',
     dialogGoal: dialogGoal.trim(),
     analyzeImages, // §10.5: описывать входящие фото vision-моделью
@@ -124,7 +133,7 @@ export function NeuroDialogsModule() {
     replyLimitMode,
     maxRepliesPerLead: replyLimitMode === 'count' ? maxRepliesPerLead : 0,
     ...(goalId ? { goalId } : {}), // §9: привязка диалога к цели кампании (наследует KB/этапы, лиды к цели)
-  }), [carry, accountIds, aiProtect, protLevel, activePrompt, promptBodies, maxActions, minActions, maxPerAcc, minPerAcc, delayPreset, delays, aiEnabled, replyAll, dialogGoal, analyzeImages, goalId, replyLimitMode, maxRepliesPerLead])
+  }), [carry, accountIds, aiProtect, protLevel, activePrompt, promptBodies, maxActions, minActions, maxPerAcc, minPerAcc, delayPreset, delays, aiEnabled, probability, replyAll, dialogGoal, analyzeImages, goalId, replyLimitMode, maxRepliesPerLead])
 
   const applyPreset = useCallback((s: ModuleTaskSettings) => {
     remember(s)
@@ -200,6 +209,81 @@ export function NeuroDialogsModule() {
           selectedTitle={cfg.selectedTitle ?? 'Выбрано'}
         />
       </div>
+
+      {/*
+        Структура блоков — как у остальных модулей (жалоба владельца 26.08: «там не та
+        структура блоков»). Лимиты переписки — это и есть «Параметры и лимиты», и стоять
+        они должны СРАЗУ после аккаунтов, до промптов и защиты, а не последним блоком:
+        во всех модулях порядок «кем работаем → сколько делаем → чем пишем → как бережём».
+      */}
+      <SectionCard icon={<MessagesSquare size={18} />} title="Параметры и лимиты" id="sec-settings">
+        {/*
+          Уровень защиты переехал сюда (просьба владельца 26.08). Он стоял в блоке
+          авто-ответов, хотя решает не «как отвечать», а СКОЛЬКО: от него зависит, сколько
+          диалогов аккаунт берёт за заход (2/4/6) и во сколько раз растянуты паузы. Это
+          объём работы — место ему в лимитах, рядом с остальными числами.
+        */}
+        <div className="mb-3">
+          <ProtectionLevelPicker
+            value={protLevel}
+            onChange={setProtLevel}
+            note={`Аккаунт отвечает не более чем в ${[2, 4, 6][protLevel]} диалогах за заход.`}
+          />
+        </div>
+
+        {/*
+          Вероятность ответа. Промах здесь настоящий, а не отложенный, как в мейлинге:
+          диалог никуда не девается — он останется в списке ждущих и попадёт в следующий
+          круг. Бот, отвечающий на всё подряд и мгновенно, узнаётся именно по стопроцентной явке.
+        */}
+        <div className="mb-3 rounded-2xl border border-line bg-elevated/40 p-3">
+          <div className="mb-1 flex justify-between text-sm text-muted">
+            <span>Вероятность ответа</span>
+            <span className="text-spark-300">{probability}%</span>
+          </div>
+          <input type="range" min={10} max={100} value={probability} onChange={(e) => setProbability(Number(e.target.value))} className="w-full accent-spark-500" />
+          <p className="mt-1.5 text-[11px] leading-relaxed text-white/45">
+            Доля диалогов, на которые аккаунт отвечает за один заход. Пропущенный диалог не теряется — он
+            остаётся ждать и попадёт в следующий круг.
+          </p>
+          {probability > PROTECTION_CAP[protLevel] && (
+            <p className="mt-1.5 text-[11px] text-amber-300">
+              Защита ограничивает: фактически будет <b>{PROTECTION_CAP[protLevel]}%</b>. Снять потолок — уровнем защиты ниже.
+            </p>
+          )}
+        </div>
+
+        <div className="mb-3 text-xs text-white/40">Сколько сообщений ведём с ОДНИМ лидом.</div>
+        <div className="flex flex-col gap-3">
+          <Segmented
+            options={['До целевого действия', 'Фиксировано']}
+            value={replyLimitMode === 'untilTarget' ? 0 : 1}
+            onChange={(i) => setReplyLimitMode(i === 0 ? 'untilTarget' : 'count')}
+          />
+          {replyLimitMode === 'untilTarget' ? (
+            <p className="rounded-xl border border-spark-500/25 bg-spark-500/8 px-3 py-2 text-xs leading-relaxed text-muted">
+              ИИ ведёт диалог, пока лид не выполнит целевое действие цели (статус «Целевое») —
+              или пока не откажется («Закрыт»). Останавливают только суточные лимиты и защита.
+            </p>
+          ) : (
+            <div className="flex flex-col gap-2">
+              <NumberField label="Максимум ответов одному лиду" value={maxRepliesPerLead} onChange={setMaxRepliesPerLead} min={1} max={50} suffix="1–50" />
+              <p className="rounded-xl border border-line bg-elevated/60 px-3 py-2 text-xs leading-relaxed text-muted">
+                После {maxRepliesPerLead} {maxRepliesPerLead === 1 ? 'ответа' : 'ответов'} диалог с этим человеком не продолжаем,
+                даже если он пишет снова. Полезно, чтобы не «переписываться вечно».
+              </p>
+            </div>
+          )}
+          <p className="text-xs text-white/40">
+            В обоих режимах отказ («не пиши мне») сразу закрывает лида — больше ему не пишем.
+          </p>
+        </div>
+      </SectionCard>
+
+      <p className="rounded-xl border border-line bg-elevated/60 px-3 py-2 text-xs leading-relaxed text-muted">
+        «Ответов за запуск» и «На аккаунт» — это диапазон: воркер берёт случайное число между «от» и «до» (для маскировки под живого человека).
+        Если поставить «от» = 0, задача может случайно завершиться после первого же ответа. По умолчанию «от» = «до», то есть лимит фиксированный.
+      </p>
 
       {/* Промпты — выше защиты и таймингов, как во всех модулях (правка 19.08). */}
       {cfg.messagePrompts && (
@@ -332,18 +416,6 @@ export function NeuroDialogsModule() {
                 : <b className="text-fg">только на непрочитанные входящие ЛС</b>} выбранных аккаунтов — сам первым никому не пишет.
               Без ключа OpenAI ответы будут шаблонными и цель диалога учтена не будет. Переписки читайте и отвечайте вручную в <b className="text-fg">«Обзоре аккаунта»</b>.
             </p>
-            {/*
-              Уровень защиты был зашит единицей и менялся только шаблоном, хотя от него
-              зависит и сколько диалогов аккаунт берёт за заход (2/4/6), и множитель
-              задержек. Теперь это видимый выбор — как в остальных модулях (25.08).
-            */}
-            <div className="mt-3">
-              <ProtectionLevelPicker
-                value={protLevel}
-                onChange={setProtLevel}
-                note={`Аккаунт отвечает не более чем в ${[2, 4, 6][protLevel]} диалогах за заход.`}
-              />
-            </div>
             {replyAll && (
               <p className="rounded-xl border border-amber-500/30 bg-amber-500/8 px-3 py-2 text-xs leading-relaxed text-amber-200/90">
                 Разбор накопившихся ЛС — самый рискованный режим: пачка ответов подряд с одного номера ловит PEER_FLOOD и репорты.
@@ -355,38 +427,6 @@ export function NeuroDialogsModule() {
         )}
       </div>
 
-      {/* §9: сколько сообщений ведём с ОДНИМ лидом — переключатель режима. */}
-      <SectionCard icon={<MessagesSquare size={18} />} title="Переписка с одним лидом" id="sec-settings">
-        <div className="flex flex-col gap-3">
-          <Segmented
-            options={['До целевого действия', 'Фиксировано']}
-            value={replyLimitMode === 'untilTarget' ? 0 : 1}
-            onChange={(i) => setReplyLimitMode(i === 0 ? 'untilTarget' : 'count')}
-          />
-          {replyLimitMode === 'untilTarget' ? (
-            <p className="rounded-xl border border-spark-500/25 bg-spark-500/8 px-3 py-2 text-xs leading-relaxed text-muted">
-              ИИ ведёт диалог, пока лид не выполнит целевое действие цели (статус «Целевое») —
-              или пока не откажется («Закрыт»). Останавливают только суточные лимиты и защита.
-            </p>
-          ) : (
-            <div className="flex flex-col gap-2">
-              <NumberField label="Максимум ответов одному лиду" value={maxRepliesPerLead} onChange={setMaxRepliesPerLead} min={1} max={50} suffix="1–50" />
-              <p className="rounded-xl border border-line bg-elevated/60 px-3 py-2 text-xs leading-relaxed text-muted">
-                После {maxRepliesPerLead} {maxRepliesPerLead === 1 ? 'ответа' : 'ответов'} диалог с этим человеком не продолжаем,
-                даже если он пишет снова. Полезно, чтобы не «переписываться вечно».
-              </p>
-            </div>
-          )}
-          <p className="text-xs text-white/40">
-            В обоих режимах отказ («не пиши мне») сразу закрывает лида — больше ему не пишем.
-          </p>
-        </div>
-      </SectionCard>
-
-      <p className="rounded-xl border border-line bg-elevated/60 px-3 py-2 text-xs leading-relaxed text-muted">
-        «Ответов за запуск» и «На аккаунт» — это диапазон: воркер берёт случайное число между «от» и «до» (для маскировки под живого человека).
-        Если поставить «от» = 0, задача может случайно завершиться после первого же ответа. По умолчанию «от» = «до», то есть лимит фиксированный.
-      </p>
 
       {/*
         Просмотр ЛС убран из НейроДиалогов (правка 18.08). Это была вторая копия

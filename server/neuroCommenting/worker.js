@@ -8,7 +8,7 @@ import {
   mapTelegramError,
 } from './gramHelpers.js'
 import { prepareTarget } from '../lib/joinTarget.js'
-import { pickCommentCandidates, trackIdlePass } from '../lib/workerLoop.js'
+import { pickCommentCandidates, trackIdlePass, markIdleStop } from '../lib/workerLoop.js'
 import {
   delayMultiplier,
   pickDelay,
@@ -190,6 +190,8 @@ async function runTask(task) {
           await setAccountMeta(accountId, { status: 'active' })
           if (trackIdlePass(task, false)) {
             await appendLog(task, 'error', 'Остановка: не удалось вступить в канал')
+            // Иначе задача закрывается как «done»: провал выглядел бы успехом (26.08).
+            markIdleStop(task, 'не удалось вступить в канал')
             break
           }
           await saveTask(task)

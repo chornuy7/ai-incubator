@@ -156,6 +156,14 @@ const describable = (kind, s) => String(kind || '') === 'tgstat'
 export async function saveParserResults(kind, settings, results, ownerId = null) {
   if (!describable(kind, settings)) return
   const list = Array.isArray(results) ? results : []
+  /*
+   * Пустой сбор в кэш не пишем (правка 26.08). Прогон владельца: пересечение по 51 ключу
+   * обнулило выдачу, ноль лёг в кэш — и витрина стала предлагать «в базе есть сохранённый
+   * результат: 0 каналов» вместо нового прохода, а «Последние запросы» забились пустышками.
+   * Ноль — это не результат, который стоит переиспользовать. Если строка уже была со
+   * старым составом, лучше оставить её: устаревшие данные полезнее пустых.
+   */
+  if (!list.length) return
   const sig = parserSignature(kind, settings)
   const row = {
     sig: sigKey(sig),

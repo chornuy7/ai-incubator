@@ -223,7 +223,6 @@ function Inner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: string }) {
     } finally { setWatchBusy(false) }
   }
 
-  const fmtCacheDate = (ts: number) => new Date(ts).toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' })
 
   const raw = (cleared ? [] : (usingCache && cacheHit ? (cacheHit.results as UserResult[]) : (task?.results ?? []))) as UserResult[]
   const results = useMemo(() => {
@@ -469,45 +468,28 @@ function Inner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: string }) {
 
       <SectionCard icon={<Database size={18} />} title={cfg.resultsTitle ?? 'Результаты парсинга'} badge={String(raw.length)}>
         {/*
-          «Последние запросы» (просьба владельца 26.08): всё, что уже искали, с найденными
-          каналами. Стоит в карточке результатов, а не отдельной секцией: это и есть
-          результаты — только прошлые. «Открыть» показывает их тем же способом, что и
-          «Показать из базы», — состав и дата сбора из кэша.
+          Прошлые запросы — свёрнутым списком (форма выбрана владельцем 26.08). Рядом
+          стояла плашка «в базе есть сохранённый результат» с той же датой и той же
+          кнопкой; она убрана, чтобы выбор «свежее или сохранённое» жил в одном месте.
         */}
-        <div className="mb-4">
-          <ParserQueries moduleKey={moduleKey} onOpen={(rows, q) => {
+        <ParserQueries
+          moduleKey={moduleKey}
+          unit="строк"
+          onOpen={(rows, q) => {
             setCacheHit({ updatedAt: q.updatedAt, count: rows.length, results: rows })
             setUsingCache(true)
             setCleared(false)
-          }} />
-        </div>
-
-        {/* §6 (MR-38): под этот же набор источников результат уже собран — отдаём его
-            сразу, с датой, не гоняя аккаунты. Свежий проход рядом, кнопкой «Запустить». */}
-        {cacheHit && !running && (
-          <div className={cn(
-            'mb-4 flex flex-wrap items-center gap-3 rounded-2xl border px-4 py-3 text-sm',
-            usingCache ? 'border-iris-500/40 bg-iris-500/10' : 'border-spark-500/30 bg-spark-500/8',
-          )}>
-            <Database size={16} className={usingCache ? 'text-iris-300' : 'text-spark-400'} />
-            <span className="min-w-0 flex-1">
-              {usingCache ? (
-                <>Показано <b className="text-fg">из базы</b> · {cacheHit.count} · собрано {fmtCacheDate(cacheHit.updatedAt)}</>
-              ) : (
-                <>В базе есть сохранённый результат под эти источники: <b className="text-fg">{cacheHit.count}</b> · собрано {fmtCacheDate(cacheHit.updatedAt)}</>
-              )}
-            </span>
-            <label className="flex shrink-0 cursor-pointer items-center gap-2 text-xs text-muted" title="Раз в сутки перезапущу этот же поиск, найду новое и отмечу пропавшее. Тратит аккаунты и монеты — как обычный запуск.">
+          }}
+          onHide={() => setUsingCache(false)}
+          extra={cacheHit && !running ? (
+            <label className="flex shrink-0 cursor-pointer items-center gap-2 text-xs text-muted"
+              title="Раз в сутки перезапущу этот же сбор, найду новое и отмечу пропавшее. Тратит аккаунты и монеты — как обычный запуск.">
               <input type="checkbox" className="accent-spark-500" checked={watching} disabled={watchBusy} onChange={(e) => void toggleWatch(e.target.checked)} />
               Обновлять раз в сутки
             </label>
-            {usingCache ? (
-              <button type="button" onClick={() => setUsingCache(false)} className="btn-ghost h-8 shrink-0 text-xs">Скрыть из базы</button>
-            ) : (
-              <button type="button" onClick={() => { setUsingCache(true); setCleared(false) }} className="btn-soft h-8 shrink-0 text-xs"><Database size={14} /> Показать из базы</button>
-            )}
-          </div>
-        )}
+          ) : null}
+        />
+
         <div className="mb-4 flex flex-wrap items-center gap-2">
           <div className="relative min-w-[160px] flex-1">
             <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted" />

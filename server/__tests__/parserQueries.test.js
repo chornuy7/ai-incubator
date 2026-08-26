@@ -97,3 +97,17 @@ test('удаление убирает и запрос, и результаты',
   assert.equal(await queryResults(q.sig), null)
   assert.equal(await deleteQuery(q.sig), false) // повторное удаление — не ошибка, просто нечего
 })
+
+test('пустой сбор не попадает в кэш и не забивает список запросов (26.08)', async () => {
+  // Прогон владельца: пересечение по 51 ключу обнулило выдачу, ноль лёг в кэш — и витрина
+  // стала предлагать «в базе есть сохранённый результат: 0 каналов» вместо нового прохода.
+  await saveParserResults('parsing', { keywords: ['t9-пусто'] }, [], 'usr-10')
+  assert.deepEqual(await listQueries({ kind: 'parsing', ownerId: 'usr-10' }), [])
+
+  // А уже сохранённый непустой результат пустой проход не затирает: устаревшие данные
+  // полезнее пустых.
+  await saveParserResults('parsing', { keywords: ['t9-было'] }, [chan('a'), chan('b')], 'usr-11')
+  await saveParserResults('parsing', { keywords: ['t9-было'] }, [], 'usr-11')
+  const [q] = await listQueries({ kind: 'parsing', ownerId: 'usr-11' })
+  assert.equal(q.count, 2)
+})

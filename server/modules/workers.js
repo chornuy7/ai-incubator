@@ -2,7 +2,7 @@ import { runSpamUnblock } from '../spamUnblock.js'
 import { generateComment, isAiGenerationEnabled, resolveSystemPrompt } from '../neuroCommenting/commentGenerator.js'
 import { getUserGlobalPrompt } from '../userAiSettings.js'
 import { buildGoalContext, stageForStatus, linksFromGoal, cleanDialogReply, hasPlaceholder } from '../lib/goalContext.js'
-import { upsertMany } from '../channels.js'
+import { upsertMany, listChannels } from '../channels.js'
 import {
   fetchPosts,
   sendChannelComment,
@@ -106,7 +106,7 @@ import { getAccountMeta, setAccountMeta, accountLabel } from '../accountsMeta.js
 import { releaseTaskLocks, markTaskLive, markTaskDone, assertAccountAvailable } from '../lib/accountLocks.js'
 import { loadSessionString, createClient } from '../tgAuth.js'
 import {
-  pickCommentCandidates, trackIdlePass, warmingPace, pickWeightedKey, idleWaitPlan, WARM_WINDOW_MS, msUntilHour, inActiveWindow,
+  pickCommentCandidates, trackIdlePass, markIdleStop, warmingPace, pickWeightedKey, idleWaitPlan, WARM_WINDOW_MS, msUntilHour, inActiveWindow,
 } from '../lib/workerLoop.js'
 import { channelSignals, channelScore, isActive, detectLang } from '../lib/channelScore.js'
 import { scheduleHour } from '../lib/accountFatigue.js'
@@ -367,7 +367,9 @@ export function finishNote(task, doneText = 'Завершено') {
   const tail = waited > 0 ? ` · в паузах ${fmtWait(waited)}` : ''
   if (task.status === 'error') return `Задача завершилась с ошибкой: ${task.fatalError || 'см. записи выше'}${tail}`
   if (task.status === 'paused') return `Пауза${tail}`
-  if (task.status === 'stopped') return `Остановлено${tail}`
+  // Холостой выход — не «остановлено рукой»: называем причину, иначе провал читается
+  // как успех (прогон 26.08: «Завершено» на 9% после пяти пустых кругов).
+  if (task.status === 'stopped') return `Остановлено${task.idleStopReason ? `: ${task.idleStopReason}` : ''}${tail}`
   return `${doneText}${tail}`
 }
 
@@ -638,6 +640,7 @@ export async function runNeuroCommenting(task, store) {
           await disconnectAccount(client, accountId)
           if (trackIdlePass(task, false)) {
             await store.appendLog(task, 'error', 'Остановка: комментарий не отправлен после нескольких попыток')
+        markIdleStop(task, 'комментарий не отправлен после нескольких попыток')
             break
           }
           await store.saveTask(task)
@@ -659,6 +662,7 @@ export async function runNeuroCommenting(task, store) {
           await disconnectAccount(client, accountId)
           if (trackIdlePass(task, false)) {
             await store.appendLog(task, 'error', 'Остановка: не удалось вступить в канал')
+        markIdleStop(task, 'не удалось вступить в канал')
             break
           }
           await store.saveTask(task)
@@ -841,6 +845,7 @@ export async function runNeuroCommenting(task, store) {
 
       if (trackIdlePass(task, progressed)) {
         await store.appendLog(task, 'error', 'Остановка: комментарий не отправлен после нескольких попыток')
+        markIdleStop(task, 'комментарий не отправлен после нескольких попыток')
         break
       }
 
@@ -1070,6 +1075,7 @@ export async function runNeuroChatting(task, store) {
       }
       if (trackIdlePass(task, progressed)) {
         await store.appendLog(task, 'error', 'Остановка: нет прогресса после нескольких попыток')
+        markIdleStop(task, 'нет прогресса после нескольких попыток')
         break
       }
       task = (await store.loadTask(task.id)) || task
@@ -1514,6 +1520,30 @@ export async function runMassLooking(task, store) {
 }
 
 /** @param {object} task @param {object} store */
+/*
+ * Словари прогрева (правка 26.08). Держим рядом с воркером, а не в конфиге витрины:
+ * это поведение аккаунта, а не настройка задачи, — человеку тут выбирать нечего.
+ */
+
+/** Запасные темы поиска, когда своя база каналов пуста или жребий увёл в поиск. */
+const WARM_QUERIES = [
+  'новости', 'музыка', '技', 'крипта', 'спорт', 'кино', 'юмор', 'путешествия',
+  'работа', 'еда', 'книги', 'авто', 'дизайн', 'здоровье', 'финансы', 'игры',
+  'news', 'music', 'tech', 'crypto', 'sport', 'movies',
+].filter((q) => /[a-zа-яё]/i.test(q))
+
+/**
+ * Набор реакций шире прежней четвёрки: аккаунт, ставящий вечные 👍❤️🔥👏, узнаётся
+ * по этому следу так же легко, как по одинаковым паузам.
+ */
+const WARM_EMOJI = ['👍', '❤️', '🔥', '👏', '😁', '🤔', '🎉', '😍', '🙏', '💯', '⚡', '🤝']
+
+/** Заметки себе в «Избранное» — короткие и бессодержательные, как у живого человека. */
+const WARM_NOTES = [
+  'напомнить', 'посмотреть позже', 'идея', 'заметка', 'проверить', 'потом',
+  'не забыть', 'важное', 'на выходных', 'подумать',
+]
+
 export async function runWarming(task, store) {
   const s = task.settings
   task.startedAt = Date.now()
@@ -1577,28 +1607,54 @@ export async function runWarming(task, store) {
         // Реальные реакции/вступления выполняются под суточными лимитами §6 (при достижении
         // потолка действие деградирует в безопасный просмотр). Бизнес-логика — Help Center «Политика прогрева».
         const kind = pickWeightedKey(pace.weights)
-        const warmQuery = () => ['news', 'music', 'tech', 'crypto', 'sport', 'movies'][Math.floor(Math.random() * 6)]
+        /*
+         * Откуда прогрев берёт цели (правка 26.08). Раньше — только поиск по шести
+         * зашитым английским словам (news/music/tech/crypto/sport/movies): все аккаунты
+         * ходили по одному кругу чужих каналов, никак не связанных с тематикой клиента.
+         * Теперь в первую очередь берём СВОЮ базу каналов — ту, что наполняет парсер, —
+         * и только если она пуста или не повезло с жребием, идём в поиск.
+         */
+        const warmQuery = () => WARM_QUERIES[Math.floor(Math.random() * WARM_QUERIES.length)]
+        const fromBase = async () => {
+          try {
+            const all = await listChannels()
+            const usable = all.filter((c) => c.username)
+            if (!usable.length) return null
+            return String(usable[Math.floor(Math.random() * usable.length)].username).replace(/^@/, '')
+          } catch { return null }
+        }
+        /** Цель действия: 70% — своя база, иначе поиск. @returns {Promise<string|null>} */
+        const pickWarmTarget = async () => {
+          if (Math.random() < 0.7) {
+            const u = await fromBase()
+            if (u) return u
+          }
+          const chats = await searchPublic(client, warmQuery(), 8)
+          const withName = chats.filter((c) => c.username)
+          return withName.length ? String(withName[Math.floor(Math.random() * withName.length)].username).replace(/^@/, '') : null
+        }
         if (kind === 'react' && !(await limitReached(accountId, 'reactions'))) {
-          const chats = await searchPublic(client, warmQuery(), 6)
-          const target = chats[Math.floor(Math.random() * chats.length)]
+          const target = await pickWarmTarget()
           let reacted = false
           if (target) {
             try {
-              const posts = await fetchPosts(client, target, 5)
+              // Реакция не на самый свежий пост, а на случайный из последних: аккаунт,
+              // который всегда отмечает верхний пост, узнаётся по этому следу.
+              const posts = await fetchPosts(client, target, 10)
               const post = posts[Math.floor(Math.random() * posts.length)]
               if (post) {
-                const emoji = ['👍', '❤️', '🔥', '👏'][Math.floor(Math.random() * 4)]
+                const emoji = WARM_EMOJI[Math.floor(Math.random() * WARM_EMOJI.length)]
                 await sendReaction(client, target, post.id, emoji)
                 await incAction(accountId, 'reactions')
-                await store.appendLog(task, 'success', `Прогрев: реакция ${emoji} в «${target.title || target.username || 'канал'}»`, meta.name)
+                await store.appendLog(task, 'success', `Прогрев: реакция ${emoji} в @${target}`, meta.name)
                 reacted = true
               }
             } catch { /* канал без реакций/приватный — деградируем в просмотр */ }
           }
-          if (!reacted) await store.appendLog(task, 'info', 'Прогрев: просмотр каналов · react→view', meta.name)
+          if (!reacted) await store.appendLog(task, 'info', 'Прогрев: реакция не прошла — смотрю посты', meta.name)
         } else if (kind === 'join' && !(await limitReached(accountId, 'joins'))) {
-          const chats = await searchPublic(client, warmQuery(), 8)
-          const target = chats.find((c) => c.username)
+          const username = await pickWarmTarget()
+          const target = username ? { username } : null
           let joined = false
           if (target?.username) {
             // Прогрев вступает в группы точно так же, как боевые модули, — значит и
@@ -1606,19 +1662,65 @@ export async function runWarming(task, store) {
             // мгновенно, греется в минус.
             const m = await joinWithDelay(client, target.username, (l, msg, a) => store.appendLog(task, l, msg, a), meta.name,
               pickJoinDelay(s.delays?.join?.[0] ?? 84, s.delays?.join?.[1] ?? 156, mul), makeStopCheck(store, task.id))
-            if (m?.status === 'joined') { await incAction(accountId, 'joins'); joined = true }
+            if (m?.status === 'joined') {
+              await incAction(accountId, 'joins')
+              joined = true
+              // Список СВОИХ вступлений — источник для будущих отписок (см. kind === 'leave').
+              task.warmJoined = [...new Set([...(task.warmJoined || []), target.username])].slice(-30)
+            }
             else if (m?.peer) joined = true // уже участник — тоже засчитываем заход
           }
           if (!joined) { await client.getMe(); await store.appendLog(task, 'info', 'Прогрев: keepalive · join→ping', meta.name) }
+        } else if (kind === 'leave') {
+          /*
+           * Отписка. Профиль, который только вступает и никогда не выходит, выглядит
+           * роботом: у живого человека список каналов меняется в обе стороны. Уходим ТОЛЬКО
+           * оттуда, куда вступили сами в ЭТОЙ задаче: чужие подписки клиента трогать нельзя.
+           */
+          const mine = task.warmJoined || []
+          const victim = mine.length ? mine[Math.floor(Math.random() * mine.length)] : null
+          if (victim) {
+            try {
+              // Api подгружаем на месте — так же, как в остальных местах файла.
+              const { Api } = await import('telegram/tl/index.js')
+              await client.invoke(new Api.channels.LeaveChannel({ channel: await client.getEntity(victim) }))
+              task.warmJoined = mine.filter((u) => u !== victim)
+              await store.appendLog(task, 'info', `Прогрев: отписался от @${victim}`, meta.name)
+            } catch { await store.appendLog(task, 'info', 'Прогрев: отписка не прошла — читаю диалоги', meta.name) }
+          } else {
+            const ds = await fetchDialogs(client, 10)
+            await store.appendLog(task, 'info', `Прогрев: пока не от чего отписываться · чтение диалогов (${ds.length})`, meta.name)
+          }
+        } else if (kind === 'note') {
+          // Заметка себе в «Избранное». Владелец просил «своему же боту отписал»: писать
+          // другому нашему аккаунту рискованно (переписка ботов между собой — заметный
+          // след), а сохранённые сообщения есть у каждого живого пользователя.
+          try {
+            await client.sendMessage('me', { message: WARM_NOTES[Math.floor(Math.random() * WARM_NOTES.length)] })
+            await store.appendLog(task, 'info', 'Прогрев: заметка в «Избранное»', meta.name)
+          } catch { await store.appendLog(task, 'info', 'Прогрев: заметка не отправилась · keepalive', meta.name) }
         } else if (kind === 'read') {
-          const ds = await fetchDialogs(client, 10)
+          const ds = await fetchDialogs(client, 10 + Math.floor(Math.random() * 20))
           await store.appendLog(task, 'info', `Прогрев: чтение диалогов (${ds.length})`, meta.name)
         } else if (kind === 'ping') {
           await client.getMe()
           await store.appendLog(task, 'info', 'Прогрев: keepalive · ping', meta.name)
         } else {
-          const chats = await searchPublic(client, 'news', 5)
-          await store.appendLog(task, 'info', `Прогрев: просмотр каналов (${chats.length}) · ${kind}`, meta.name)
+          /*
+           * «Просмотр» раньше выполнял ПОИСК и ничего не открывал — для Telegram это
+           * запрос к серверу, а не поведение читателя. Теперь реально открываем канал
+           * и листаем случайное число последних постов.
+           */
+          const target = await pickWarmTarget()
+          if (target) {
+            const сколько = 2 + Math.floor(Math.random() * 6)
+            try {
+              const r = await viewRecentPosts(client, target, сколько)
+              await store.appendLog(task, 'info', `Прогрев: смотрю @${target} · ${r.viewed || сколько} постов`, meta.name)
+            } catch { await store.appendLog(task, 'info', `Прогрев: не открылся @${target}`, meta.name) }
+          } else {
+            await store.appendLog(task, 'info', 'Прогрев: нечего смотреть — база каналов пуста и поиск ничего не дал', meta.name)
+          }
         }
         task.accountStats[accountId] = task.accountStats[accountId] || { actions: 0, floodWaits: 0 }
         task.accountStats[accountId].actions += 1
@@ -1784,6 +1886,32 @@ export async function runNeuroDialogs(task, store) {
   // Сколько ЛС один аккаунт отвечает за один заход, прежде чем уступить очередь следующему.
   // Пачка ответов подряд с одного номера — самый быстрый путь к PEER_FLOOD и репортам.
   const perPassCap = [2, 4, 6][s.protectionLevel ?? 1] ?? 4
+  /*
+   * Вероятность ответа (просьба владельца 26.08: «в нейродиалогах тоже»).
+   *
+   * Здесь промах безобиден и потому настоящий, а не отложенный, как в мейлинге: диалог
+   * никуда не девается — он остаётся в списке ждущих и попадёт в следующий круг. Смысл
+   * ровно тот же, что в комментинге: бот, отвечающий на ВСЁ подряд и мгновенно, узнаётся
+   * именно по стопроцентной явке.
+   *
+   * Защита включена всегда (тумблера «ИИ-защита» в витрине нет, есть уровень), поэтому
+   * потолок применяем безусловно — иначе подпись про «фактически будет N%» врала бы.
+   */
+  const шансОтвета = effectiveProbability(s.probability ?? 100, true, s.protectionLevel ?? 1)
+  /*
+   * Ноль — это выключенный в витрине тумблер «Отвечать на входящие автоматически». Раньше
+   * он слался сюда тем же полем и НИКАК не влиял: воркер probability не читал вовсе, и
+   * задача с выключенными авто-ответами всё равно отвечала. Теперь выключатель работает,
+   * а задача не крутится вхолостую, делая вид, что чем-то занята.
+   */
+  if (шансОтвета <= 0) {
+    await store.appendLog(task, 'warning', 'Авто-ответы выключены в настройках задачи — отвечать некому')
+    task.status = 'stopped'
+    task.idleStopReason = 'авто-ответы выключены в настройках'
+    await store.saveTask(task)
+    await finalizeAccounts(accountIds, task.id)
+    return
+  }
   // §9: сколько сообщений пишем одному лиду. 'untilTarget' — до целевого действия
   // (ограничивают только суточные лимиты и стоп-лист), 'count' — не больше N ответов.
   const replyLimitMode = s.replyLimitMode === 'count' ? 'count' : 'untilTarget'
@@ -1934,6 +2062,14 @@ export async function runNeuroDialogs(task, store) {
         for (const d of pending) {
           if (task.stopRequested || totalLimitReached(s, task) || perAccountLimitReached(s, accountId, task)) break
           if (await limitReached(accountId, 'dm')) { await store.appendLog(task, 'info', 'Суточный лимит ЛС достигнут (§6)', meta.name); break }
+
+          if (шансОтвета < 100) {
+            const бросок = Math.round(Math.random() * 100)
+            if (бросок > шансОтвета) {
+              await store.appendLog(task, 'info', `Пропуск диалога: вероятность ответа ${шансОтвета}%, выпало ${бросок} — вернёмся к нему на следующем круге`, meta.name)
+              continue
+            }
+          }
 
           // §9: сколько сообщений пишем ОДНОМУ лиду. Два режима:
           //  'count'       — не больше maxRepliesPerLead ответов;
@@ -2611,7 +2747,17 @@ export async function runChannelParser(task, store, kind) {
       for (let i = baseChannels.length - 1; i >= 0; i--) {
         if (!keepSet.has((baseChannels[i].username || baseChannels[i].tgPeerId || '').toString().toLowerCase())) baseChannels.splice(i, 1)
       }
-      await store.appendLog(task, 'info', `AND-пересечение (${need} ключей): ${before} → ${task.results.length}`)
+      /*
+       * Прогон 26.08: 51 ключевое слово + пересечение = 146 строк → 0, и человек остался
+       * с пустой выдачей, ничего не понимая. Пересечение требует, чтобы ОДИН канал нашёлся
+       * по КАЖДОМУ слову, а это выполнимо только для очень близких синонимов. Раз уж
+       * поймали такой случай — говорим прямо, что делать, а не оставляем голое «146 → 0».
+       */
+      const wiped = before > 0 && task.results.length === 0
+      const совет = wiped && need > 3
+        ? ` — канал должен встретиться по КАЖДОМУ из ${need} слов, а это почти невозможно: снимите «Пересечение» или оставьте 2–3 близких слова`
+        : wiped ? ' — ни один канал не совпал со всеми словами; снимите «Пересечение», чтобы увидеть собранное' : ''
+      await store.appendLog(task, wiped ? 'warning' : 'info', `AND-пересечение (${need} ключей): ${before} → ${task.results.length}${совет}`)
     }
 
     task.progress.total = task.results.length
@@ -3198,12 +3344,44 @@ export async function runMailing(task, store) {
      */
     const очередь = [...myTargets]
     const повторено = new Set()
+    /*
+     * Вероятность отправки (правка 26.08: «в мейлинге нету ползунка с вероятностью»).
+     *
+     * Здесь она работает НЕ так, как в комментинге и реакциях, и иначе нельзя. Там мимо
+     * прошедший пост просто не комментируется — постов много, потеря ничего не стоит.
+     * Здесь же список получателей человек вставил руками: молча выкинуть из него каждого
+     * второго значит потерять лида и не сказать об этом.
+     *
+     * Поэтому промах не отменяет отправку, а ОТКЛАДЫВАЕТ её: цель уходит в конец очереди
+     * и достаётся другому аккаунту потока (или этому же, но позже). Со второго захода
+     * пишем без броска — иначе очередь могла бы крутиться вечно. Наружу это выглядит как
+     * «идём по базе не по порядку и не одним аккаунтом» — ровно то, чем живой человек
+     * отличается от скрипта, который шпарит список сверху вниз.
+     */
+    // Защита здесь включена ВСЕГДА (в витрине мейлинга нет тумблера «ИИ-защита», есть
+    // только уровень), поэтому потолок применяем безусловно — иначе подпись «фактически
+    // будет 25%» под ползунком обещала бы то, чего не происходит. Уровень по умолчанию 0:
+    // рассылка в ЛС стартует с самого осторожного, как и написано в витрине.
+    const шансОтправки = effectiveProbability(s.probability ?? 100, true, s.protectionLevel ?? 0)
+    const отложенные = new Set()
     while (очередь.length) {
       const tgt = очередь.shift()
       const phone = tgt.kind === 'phone' ? tgt.value : ''
       const label = tgt.kind === 'phone' ? `+${tgt.value}` : `@${tgt.value}`
       task = (await store.loadTask(task.id)) || task
       if (task.stopRequested || task.pauseRequested || totalLimitReached(s, task)) break
+
+      // Бросок только на ПЕРВОМ заходе к этой цели и только если в очереди есть куда
+      // отложить: на последнем получателе откладывать некуда, и промах стал бы отказом.
+      if (шансОтправки < 100 && !отложенные.has(label) && очередь.length) {
+        const бросок = Math.round(Math.random() * 100)
+        if (бросок > шансОтправки) {
+          отложенные.add(label)
+          очередь.push(tgt)
+          await store.appendLog(task, 'info', `Отложил ${label}: вероятность отправки ${шансОтправки}%, выпало ${бросок} — вернётся позже, к другому аккаунту`)
+          continue
+        }
+      }
 
       // Статус проверяем НА КАЖДОМ КРУГЕ, а не один раз на старте: аккаунт уходит в
       // карантин посреди рассылки (handleFlood), и старый код продолжал его выбирать —

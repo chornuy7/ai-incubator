@@ -138,6 +138,7 @@ function ChannelParserInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: 
   }, [keywords])
 
   // ── окончания ──
+  const [useEndings, setUseEndings] = useState(true)
   const [endMode, setEndMode] = useState(1) // 0 вручную, 1 авто
   const [endLang, setEndLang] = useState(cfg.endLangDefault ?? 'en')
   const [endCount, setEndCount] = useState(10)
@@ -178,10 +179,17 @@ function ChannelParserInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: 
   const [cacheHit, setCacheHit] = useState<ParserCacheHit | null>(null)
   const [usingCache, setUsingCache] = useState(false)
 
+  /*
+   * Окончания — необязательная надстройка (просьба владельца 26.08). Раньше их нельзя было
+   * выключить: 6 слов молча превращались в 66 запросов, а это шестьдесят шесть обращений к
+   * Telegram вместо шести — дольше и рискованнее по FloodWait. Когда нужен точный поиск по
+   * самим словам, расширение только мешает.
+   */
   const endings = useMemo(() => {
+    if (!useEndings) return []
     if (endMode === 0) return manualEndings
     return (ENDINGS[endLang] ?? ENDINGS.en).slice(0, endCount)
-  }, [endMode, manualEndings, endLang, endCount])
+  }, [useEndings, endMode, manualEndings, endLang, endCount])
 
   const queryCount = keywords.length + keywords.length * endings.length
 
@@ -225,7 +233,6 @@ function ChannelParserInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: 
     } finally { setWatchBusy(false) }
   }
 
-  const fmtCacheDate = (ts: number) => new Date(ts).toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' })
 
   const addKeywords = () => {
     // MR-104: разделитель ключевых слов — точка с запятой (и перенос строки), чтобы сама фраза могла содержать запятую.
@@ -304,7 +311,15 @@ function ChannelParserInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: 
     remember(s)
     if (Array.isArray(s.keywords)) setKeywords(s.keywords)
     if (s.searchMode !== undefined) setMethod(s.searchMode)
-    if (Array.isArray(s.endings) && s.endings.length) { setEndMode(0); setManualEndings(s.endings) }
+    /*
+     * Окончания в шаблоне лежат уже развёрнутым списком, поэтому «выключено» отличается от
+     * «включено» только его пустотой. Пустой список → тумблер снят: иначе шаблон, сохранённый
+     * без окончаний, применялся бы с ними и молча раздувал число запросов в одиннадцать раз.
+     */
+    if (Array.isArray(s.endings)) {
+      setUseEndings(s.endings.length > 0)
+      if (s.endings.length) { setEndMode(0); setManualEndings(s.endings) }
+    }
     if (s.aiProtection !== undefined) setAiProtect(s.aiProtection)
     if (s.protectionLevel !== undefined) setProtLevel(s.protectionLevel)
     const lim = s.resultLimit ?? s.limit
@@ -546,14 +561,23 @@ function ChannelParserInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: 
                   слову не выпадают.
                 */}
                 <span className="flex items-center gap-1.5 text-sm font-semibold text-fg">
-                  <Bookmark size={14} className="text-spark-400" /> Окончания
+                  <Bookmark size={14} className={useEndings ? 'text-spark-400' : 'text-faint'} /> Окончания
                   <Tip text="Слова, которые дописываются к каждому ключевому слову: «крипто» → «крипто chat», «крипто news», «крипто official». Так поиск находит каналы, которые по голому слову не выпадают. Больше окончаний — шире охват и дольше сбор.">
                     <HelpCircle size={13} className="cursor-help text-white/35" />
                   </Tip>
                 </span>
-                <Segmented size="sm" options={['Вручную', 'Авто']} value={endMode} onChange={setEndMode} />
+                <div className="flex items-center gap-2">
+                  {useEndings && <Segmented size="sm" options={['Вручную', 'Авто']} value={endMode} onChange={setEndMode} />}
+                  <Switch checked={useEndings} onChange={setUseEndings} />
+                </div>
               </div>
-              {endMode === 1 ? (
+              {!useEndings ? (
+                <div className="text-[11px] leading-relaxed text-muted">
+                  Ищем ровно по вашим словам: <b className="text-fg">{keywords.length}</b> {keywords.length === 1 ? 'запрос' : 'запросов'} вместо
+                  {' '}{keywords.length + keywords.length * 10} с окончаниями. Быстрее и точнее, но каналы, у которых в названии
+                  стоит «chat» или «news», могут не попасться.
+                </div>
+              ) : endMode === 1 ? (
                 <div className="space-y-3">
                   <Select value={endLang} onChange={setEndLang} options={LANGUAGES.map((l) => ({ value: l.code, label: `${l.flag} ${l.label}` }))} />
                   <div>
@@ -606,9 +630,26 @@ function ChannelParserInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: 
                 когда пройдут все запросы. Пока идёт сбор, в результатах видно
                 промежуточное — и это читается как «фильтр не работает». */}
             {method === 0 && keywords.length > 1 && intersect && (
-              <div className="rounded-xl border border-amber-500/25 bg-amber-500/8 px-3 py-2 text-xs leading-relaxed text-amber-200/90">
-                Пересечение применится <b>в конце</b>, когда пройдут все запросы. По ходу работы
-                в результатах будет видно промежуточный сбор — часть строк уйдёт, и монеты за них вернутся.
+              <div className={cn('rounded-xl border px-3 py-2 text-xs leading-relaxed',
+                keywords.length > 3 ? 'border-rose-500/40 bg-rose-500/10 text-rose-200' : 'border-amber-500/25 bg-amber-500/8 text-amber-200/90')}>
+                {/*
+                  Прогон 26.08: 51 слово + пересечение дали 146 → 0, час работы впустую.
+                  Пересечение требует, чтобы ОДИН канал нашёлся по КАЖДОМУ слову — это
+                  выполнимо для 2–3 синонимов и практически невозможно для длинного списка,
+                  особенно если слова добавлены подсказкой. Говорим об этом ДО запуска.
+                */}
+                {keywords.length > 3 ? (
+                  <>
+                    <b>С {keywords.length} словами пересечение почти наверняка даст 0.</b> Канал должен найтись
+                    по КАЖДОМУ из них — так совпадают только близкие синонимы. Снимите галочку (тогда подойдёт
+                    совпадение с любым словом) или оставьте 2–3 слова.
+                  </>
+                ) : (
+                  <>
+                    Пересечение применится <b>в конце</b>, когда пройдут все запросы. По ходу работы
+                    в результатах будет видно промежуточный сбор — часть строк уйдёт, и монеты за них вернутся.
+                  </>
+                )}
               </div>
             )}
 
@@ -745,40 +786,29 @@ function ChannelParserInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: 
           результаты — только прошлые. «Открыть» показывает их тем же способом, что и
           «Показать из базы», — состав и дата сбора из кэша.
         */}
-        <div className="mb-4">
-          <ParserQueries moduleKey={moduleKey} onOpen={(rows, q) => {
+        <ParserQueries
+          moduleKey={moduleKey}
+          unit={isGroups ? 'групп' : 'каналов'}
+          onOpen={(rows, q) => {
             setCacheHit({ updatedAt: q.updatedAt, count: rows.length, results: rows })
             setUsingCache(true)
             setCleared(false)
-          }} />
-        </div>
-
-        {/* §6 (MR-38): по совпадающему запросу в базе уже есть сохранённый результат —
-            предлагаем отдать его сразу, с датой обновления, не гоняя аккаунты заново. */}
-        {cacheHit && !running && (
-          <div className={cn(
-            'mb-4 flex flex-wrap items-center gap-3 rounded-2xl border px-4 py-3 text-sm',
-            usingCache ? 'border-iris-500/40 bg-iris-500/10' : 'border-spark-500/30 bg-spark-500/8',
-          )}>
-            <Database size={16} className={usingCache ? 'text-iris-300' : 'text-spark-400'} />
-            <span className="min-w-0 flex-1">
-              {usingCache ? (
-                <>Показано <b className="text-fg">из базы</b> · {cacheHit.count} {isGroups ? 'групп' : 'каналов'} · сохранено {fmtCacheDate(cacheHit.updatedAt)}</>
-              ) : (
-                <>В базе есть сохранённый результат под этот запрос: <b className="text-fg">{cacheHit.count}</b> {isGroups ? 'групп' : 'каналов'} · обновлено {fmtCacheDate(cacheHit.updatedAt)}</>
-              )}
-            </span>
-            <label className="flex shrink-0 cursor-pointer items-center gap-2 text-xs text-muted" title="Раз в сутки перезапущу этот же поиск, найду новое и отмечу пропавшее. Тратит аккаунты и монеты — как обычный запуск.">
+          }}
+          onHide={() => setUsingCache(false)}
+          extra={cacheHit && !running ? (
+            <label className="flex shrink-0 cursor-pointer items-center gap-2 text-xs text-muted"
+              title="Раз в сутки перезапущу этот же поиск, найду новое и отмечу пропавшее. Тратит аккаунты и монеты — как обычный запуск.">
               <input type="checkbox" className="accent-spark-500" checked={watching} disabled={watchBusy} onChange={(e) => void toggleWatch(e.target.checked)} />
               Обновлять раз в сутки
             </label>
-            {usingCache ? (
-              <button type="button" onClick={() => setUsingCache(false)} className="btn-ghost h-8 shrink-0 text-xs">Скрыть из базы</button>
-            ) : (
-              <button type="button" onClick={() => { setUsingCache(true); setCleared(false) }} className="btn-soft h-8 shrink-0 text-xs"><Database size={14} /> Показать из базы</button>
-            )}
-          </div>
-        )}
+          ) : null}
+        />
+
+        {/*
+          Плашка «в базе есть сохранённый результат» убрана 26.08: она дублировала
+          выпадающий список выше — та же дата, тот же счётчик, та же кнопка показа.
+          Осталось одно место, где выбирают, что показывать: свежий прогон или сохранённое.
+        */}
         <div className="mb-4 flex flex-wrap items-center gap-2">
           <div className="relative min-w-[180px] flex-1">
             <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted" />

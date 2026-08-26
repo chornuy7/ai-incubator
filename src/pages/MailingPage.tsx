@@ -19,6 +19,7 @@ import { isHidden } from '@/shared/config/routes'
 // §3.1 (MR-114): рассылка приведена к общей структуре модулей — те же переиспользуемые
 // блоки (SectionCard + нижняя LaunchPanel со степпером), что и в LiveModule/парсерах.
 import { SectionCard, LaunchPanel, LaunchSteps, markCurrentStep, TaskStartedModal, ProtectionTimings, BlacklistEditor, usePresetCarry, ProtectionLevelPicker } from '@/features/modules/shared'
+import { PROTECTION_CAP } from '@/features/modules/shared/ProtectionLevelPicker'
 import type { DelaysShape } from '@/features/modules/shared/TimingSection'
 import { LaunchCost, ActionPriceCalc } from '@/features/modules/shared/LaunchCost'
 import { useModuleTask } from '@/features/modules/shared/useModuleTask'
@@ -51,6 +52,9 @@ function MailingInner() {
   const [delayMin, setDelayMin] = useState(90)
   const [delayMax, setDelayMax] = useState(300)
   const [protLevel, setProtLevel] = useState(0) // §11: паритет с masslooking/warming — уровень защиты
+  // §11: вероятность отправки — как в остальных модулях (просьба владельца 26.08).
+  // 100% = писать всем подряд по порядку списка.
+  const [probability, setProbability] = useState(100)
   const [delayPreset, setDelayPreset] = useState(1) // множитель задержек (Мин/Реком/Макс)
   const [goals, setGoals] = useState<Goal[]>([])
   const [goalId, setGoalId] = useState('')
@@ -167,6 +171,7 @@ function MailingInner() {
     maxPerAccount,
     delays: { dm: [delayMin, delayMax], action: [delayMin, delayMax] },
     protectionLevel: protLevel,
+    probability,
     delayPreset,
     ...(media.length ? { mediaUrls: media } : {}),
     aiPerRecipient: aiPerRecipient && !!goalId,
@@ -196,6 +201,7 @@ function MailingInner() {
     remember(s)
     if (typeof s.maxPerAccount === 'number') setMaxPerAccount(s.maxPerAccount)
     if (typeof s.protectionLevel === 'number') setProtLevel(s.protectionLevel)
+    if (typeof s.probability === 'number') setProbability(s.probability)
     if (typeof s.delayPreset === 'number') setDelayPreset(s.delayPreset)
     if (s.delays?.dm) { setDelayMin(s.delays.dm[0]); setDelayMax(s.delays.dm[1]) }
     if (typeof s.threads === 'number') setChatThreads(s.threads)
@@ -410,6 +416,31 @@ function MailingInner() {
               onChange={setProtLevel}
               note="Для рассылки в ЛС по умолчанию выбран самый осторожный уровень: незнакомые получатели чаще всего и приводят к спамблоку."
             />
+          </div>
+
+          {/*
+            Вероятность отправки. В комментинге и реакциях промах просто отменяет действие —
+            постов много. Здесь список получателей человек вставил руками, и молча выкинуть
+            из него каждого второго значило бы потерять лида. Поэтому промах ОТКЛАДЫВАЕТ:
+            получатель уходит в конец очереди и достаётся другому аккаунту. Об этом и пишем
+            прямо под ползунком, иначе цифра обещает не то, что делает.
+          */}
+          <div className="mb-3 rounded-2xl border border-line bg-elevated/40 p-3">
+            <div className="mb-1 flex justify-between text-sm text-muted">
+              <span>Вероятность отправки</span>
+              <span className="text-spark-300">{probability}%</span>
+            </div>
+            <input type="range" min={10} max={100} value={probability} onChange={(e) => setProbability(Number(e.target.value))} className="w-full accent-spark-500" />
+            <p className="mt-1.5 text-[11px] leading-relaxed text-white/45">
+              Никто из списка не теряется: не выпавший получатель уходит в конец очереди и достаётся другому
+              аккаунту или этому же, но позже. Так рассылка идёт не по порядку и не одним профилем — тем и
+              отличается от скрипта, который шпарит базу сверху вниз.
+            </p>
+            {probability > PROTECTION_CAP[protLevel] && (
+              <p className="mt-1.5 text-[11px] text-amber-300">
+                Защита ограничивает: фактически будет <b>{PROTECTION_CAP[protLevel]}%</b>. Снять потолок — уровнем защиты ниже.
+              </p>
+            )}
           </div>
           <ProtectionTimings
             timing={{
