@@ -1614,8 +1614,19 @@ app.post('/api/balance', async (req, res) => {
     const target = userId || req.header('x-user-id')
     let changed = null
     // §11.4: два кошелька. `amount` — токены (как раньше), `usd` — деньги.
-    if (amount !== undefined) changed = await changeCoins(amount, reason, target)
-    if (usd !== undefined) changed = await changeUsd(usd, reason, target)
+    /*
+     * Ручная выдача из админки — НЕ доход.
+     *
+     * Владелец 26.08: «$80 я выдавал через админку». В витрине оплат эти деньги лежали
+     * рядом с настоящими пополнениями и попадали в итог как выручка: для токенов различие
+     * «куплено / выдано» уже было (§3.2/MR-22), а для долларов — нет. То есть тестовая
+     * выдача, компенсация или подарок раздували цифру дохода.
+     *
+     * Помечаем `grant`: деньги на счёт зачисляются как прежде, но в отчёте стоят
+     * отдельной строкой, а не в выручке.
+     */
+    if (amount !== undefined) changed = await changeCoins(amount, reason, target, 'grant')
+    if (usd !== undefined) changed = await changeUsd(usd, reason, target, 'grant')
     if (planId !== undefined) await setPlan(planId, target)
     const balance = await getBalance(target)
     await appendAudit({

@@ -128,8 +128,20 @@ async function buildRows() {
     const ts = Number(r.ts) || 0
     const uid = r.userId || '—'
     if (r.currency === 'usd') {
-      // Пополнение баланса ДЕНЬГАМИ ($).
-      out.push({ id: `u:${ts}:${uid}:${amount}`, ts, user_id: uid, kind: 'usd', coins: null, amount_fiat: round3(amount), currency: '$', modules: null, status: 'paid', reason: String(r.reason || '') })
+      /*
+       * Пополнение ДЕНЬГАМИ ($) — но не всякое зачисление доллара есть выручка.
+       *
+       * Владелец 26.08: «$80 я выдавал через админку». Такие деньги лежали в витрине
+       * рядом с настоящими пополнениями и попадали в итог как доход. Для токенов различие
+       * «куплено / выдано» было с §3.2 (MR-22), для долларов — нет, и ручная выдача,
+       * компенсация или подарок раздували выручку.
+       *
+       * Пометку ставит тот, кто зачисляет (админская ручка шлёт 'grant'). У старых записей
+       * пометки нет — считаем их оплатой, как и вели себя все записи до этой правки:
+       * задним числом объявлять прошлые пополнения подарками мы не вправе.
+       */
+      const выдано = r.kind === 'grant'
+      out.push({ id: `u:${ts}:${uid}:${amount}`, ts, user_id: uid, kind: выдано ? 'usd_grant' : 'usd', coins: null, amount_fiat: round3(amount), currency: '$', modules: null, status: 'paid', reason: String(r.reason || '') })
       continue
     }
     /*
@@ -175,7 +187,7 @@ export async function queryPayments(opts = {}) {
     if (from) sel = sel.gte('ts', Number(from))
     if (to) sel = sel.lte('ts', Number(to))
     if (userId) sel = sel.eq('user_id', String(userId))
-    if (kind === 'coins' || kind === 'plan' || kind === 'usd' || kind === 'grant') sel = sel.eq('kind', kind)
+    if (['coins', 'plan', 'usd', 'grant', 'usd_grant'].includes(kind)) sel = sel.eq('kind', kind)
     if (q) sel = sel.or(`user_id.ilike.%${q}%,reason.ilike.%${q}%`)
     const { data, count, error } = await sel.order('ts', { ascending: false }).range(off0, off0 + lim0 - 1)
     if (!error) return { total: Number(count) || 0, rows: data || [] }
@@ -187,7 +199,7 @@ export async function queryPayments(opts = {}) {
   if (from) { cond.push('ts >= ?'); args.push(Number(from)) }
   if (to) { cond.push('ts <= ?'); args.push(Number(to)) }
   if (userId) { cond.push('user_id = ?'); args.push(String(userId)) }
-  if (kind === 'coins' || kind === 'plan' || kind === 'usd' || kind === 'grant') { cond.push('kind = ?'); args.push(kind) }
+  if (['coins', 'plan', 'usd', 'grant', 'usd_grant'].includes(kind)) { cond.push('kind = ?'); args.push(kind) }
   if (q) { cond.push('(user_id LIKE ? OR reason LIKE ?)'); args.push(`%${q}%`, `%${q}%`) }
   const w = cond.length ? 'WHERE ' + cond.join(' AND ') : ''
   const total = d.prepare(`SELECT COUNT(*) c FROM payments ${w}`).get(...args).c
@@ -212,7 +224,7 @@ export async function paymentsSummary(opts = {}) {
     const { data, error } = await sel.limit(100000)
     if (error && !isMissingTable(error)) throw new Error(error.message)
     if (!error) {
-      const acc = { coins: [0, 0], grant: [0, 0], plan: [0, 0], usd: [0, 0] }
+      const acc = { coins: [0, 0], grant: [0, 0], plan: [0, 0], usd: [0, 0], usd_grant: [0, 0] }
       for (const r of data || []) {
         const cell = acc[r.kind]
         if (!cell) continue
@@ -224,6 +236,7 @@ export async function paymentsSummary(opts = {}) {
         grantTotal: round3(acc.grant[0]), grantCount: acc.grant[1],
         planTotal: round3(acc.plan[0]), planCount: acc.plan[1],
         usdTotal: round3(acc.usd[0]), usdCount: acc.usd[1],
+        usdGrantTotal: round3(acc.usd_grant[0]), usdGrantCount: acc.usd_grant[1],
       }
     }
   }
@@ -238,14 +251,18 @@ export async function paymentsSummary(opts = {}) {
   const wGrant = 'WHERE ' + [...base, "kind = 'grant'"].join(' AND ')
   const wPlans = 'WHERE ' + [...base, "kind = 'plan'"].join(' AND ')
   const wUsd = 'WHERE ' + [...base, "kind = 'usd'"].join(' AND ')
+  // Выданные руками деньги — отдельно от выручки (см. buildRows).
+  const wUsdGrant = 'WHERE ' + [...base, "kind = 'usd_grant'"].join(' AND ')
   const coins = d.prepare(`SELECT COALESCE(SUM(coins),0) s, COUNT(*) c FROM payments ${wCoins}`).get(...args)
   const plans = d.prepare(`SELECT COALESCE(SUM(amount_fiat),0) s, COUNT(*) c FROM payments ${wPlans}`).get(...args)
   const usd = d.prepare(`SELECT COALESCE(SUM(amount_fiat),0) s, COUNT(*) c FROM payments ${wUsd}`).get(...args)
   const grant = d.prepare(`SELECT COALESCE(SUM(coins),0) s, COUNT(*) c FROM payments ${wGrant}`).get(...args)
+  const usdGrant = d.prepare(`SELECT COALESCE(SUM(amount_fiat),0) s, COUNT(*) c FROM payments ${wUsdGrant}`).get(...args)
   return {
     coinsTotal: round3(coins.s), coinsCount: coins.c,
     grantTotal: round3(grant.s), grantCount: grant.c,
     planTotal: round3(plans.s), planCount: plans.c,
     usdTotal: round3(usd.s), usdCount: usd.c,
+    usdGrantTotal: round3(usdGrant.s), usdGrantCount: usdGrant.c,
   }
 }

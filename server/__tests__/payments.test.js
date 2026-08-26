@@ -28,6 +28,8 @@ await fs.writeFile(process.env.WALLET_LOG_FILE, [
   { ts: NOW - 5 * D, userId: 'u1', amount: 50, reason: 'Токены подписки: 2 модул. (первый месяц)', kind: 'grant' },
   { ts: NOW - 5 * D, userId: 'u2', amount: 10, reason: 'пополнение' },
   { ts: NOW - 1 * D, userId: 'u1', amount: -7, reason: 'списание за ИИ' }, // не покупка
+  // Владелец 26.08: «$80 я выдавал через админку» — такие деньги НЕ выручка.
+  { ts: NOW - 2 * D, userId: 'u3', amount: 80, currency: 'usd', reason: 'Пополнение $ из админ-панели', kind: 'grant' },
 ].map((r) => JSON.stringify(r)).join('\n') + '\n', 'utf8')
 await fs.writeFile(process.env.AUDIT_LOG_FILE, [
   { ts: NOW - 3 * D, action: 'subscription.set', initiator: 'u1', reason: 'Подписка', meta: { modules: ['mailing', 'ggr'], cost: { sum: 35 } } },
@@ -40,10 +42,11 @@ await syncPayments()
 
 test('индекс: положительные пополнения (⚡) + покупки планов ($), списания не идут', async () => {
   const { total, rows } = await queryPayments({})
-  assert.equal(total, 4, '3 пополнения + 1 план (списание и набор «все» отброшены)')
-  // Начисления ⚡ теперь разделены: купленные ('coins') и выданные ('grant') — §3.2.
+  assert.equal(total, 5, '3 пополнения ⚡ + 1 план + 1 выдача $ (списание и набор «все» отброшены)')
+  // Начисления разделены по происхождению: куплено / выдано — и для ⚡ (§3.2/MR-22),
+  // и для долларов (26.08: ручная выдача из админки — не выручка).
   const kinds = new Set(rows.map((r) => r.kind))
-  assert.deepEqual([...kinds].sort(), ['coins', 'grant', 'plan'], 'три типа: куплено, выдано, план')
+  assert.deepEqual([...kinds].sort(), ['coins', 'grant', 'plan', 'usd_grant'], 'куплено, выдано ⚡, план, выдано $')
 })
 
 test('фильтр по типу', async () => {
@@ -54,7 +57,7 @@ test('фильтр по типу', async () => {
 
 test('диапазон дат «месяц назад»: старое пополнение выпадает', async () => {
   const { total } = await queryPayments({ from: NOW - 6 * D, to: NOW })
-  assert.equal(total, 3, 'u1 50 + u2 10 + план 35; u1 100 (40 дней) вне окна')
+  assert.equal(total, 4, 'u1 50 + u2 10 + план 35 + выдача $80; u1 100 (40 дней) вне окна')
 })
 
 test('поиск по пользователю', async () => {
@@ -63,7 +66,7 @@ test('поиск по пользователю', async () => {
 
 test('пагинация: total полный, страница урезана', async () => {
   const p = await queryPayments({ limit: 2, offset: 0 })
-  assert.equal(p.total, 4)
+  assert.equal(p.total, 5)
   assert.equal(p.rows.length, 2)
   const p2 = await queryPayments({ limit: 2, offset: 2 })
   assert.equal(p2.rows.length, 2)
@@ -85,5 +88,26 @@ test('§3.2: купленные токены — доход, выданные �
 
 test('повторный sync идемпотентен — дублей нет', async () => {
   await syncPayments()
-  assert.equal((await queryPayments({})).total, 4, 'пересборка не задваивает строки')
+  assert.equal((await queryPayments({})).total, 5, 'пересборка не задваивает строки')
+})
+
+/**
+ * §3.2 (MR-22) различал «куплено / выдано» только для токенов. Для долларов различия не
+ * было, и ручная выдача из админки попадала в выручку: владелец выдал $80 на тест — отчёт
+ * показал их как полученные деньги.
+ */
+test('выданные из админки доллары не считаются выручкой', async () => {
+  const s = await paymentsSummary({})
+  assert.equal(s.usdGrantTotal, 80, 'выдача должна быть видна отдельной строкой')
+  assert.equal(s.usdGrantCount, 1)
+  assert.ok(!String(s.usdTotal).includes('80'), 'и не должна попадать в доход')
+  // Строка при этом из витрины не пропадает — её видно с собственным типом.
+  const { total } = await queryPayments({ kind: 'usd_grant' })
+  assert.equal(total, 1)
+})
+
+test('пополнение БЕЗ пометки считается оплатой — задним числом подарками не объявляем', async () => {
+  const { rows } = await queryPayments({ kind: 'usd' })
+  // В фикстуре есть обычное пополнение долларами без kind — оно обязано остаться доходом.
+  assert.ok(rows.every((r) => r.kind === 'usd'))
 })
