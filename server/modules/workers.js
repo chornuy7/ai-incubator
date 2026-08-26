@@ -2396,11 +2396,18 @@ export async function runChannelParser(task, store, kind) {
     const готовые = new Set()
 
     async function дорожка(закреплённыйАккаунт, номер) {
+      /*
+       * В логе — ИМЯ аккаунта, а не «Аккаунт 2». Номер дорожки не говорит ничего: при
+       * разборе прогона непонятно, кто именно ждал и кто что нашёл (26.08).
+       */
+      const имяДорожки = закреплённыйАккаунт ? (await accountMeta(закреплённыйАккаунт)).name : null
+      let сделаноЗапросов = 0
+      let найденоДорожкой = 0
       // Разбег стартов: одновременный залп с нескольких аккаунтов — это и есть то,
       // что Telegram видит как ферму. Пауза случайная, а не кратная.
       if (номер > 0) {
         const лаг = Math.round(pickDelay(20, 90, mul) * 1000 * (0.5 + Math.random()))
-        await store.appendLog(task, 'info', `Аккаунт ${номер + 1}: старт через ${Math.round(лаг / 1000)}с`)
+        await store.appendLog(task, 'info', `Стартует через ${Math.round(лаг / 1000)}с — расходимся, чтобы не бить залпом`, имяДорожки)
         if (await interruptibleSleep(лаг, makeStopCheck(store, task.id))) return
       }
       for (;;) {
@@ -2436,17 +2443,23 @@ export async function runChannelParser(task, store, kind) {
       try {
         ;({ client } = await connectAccount(accountId, task.id, { shouldStop: stopFlag(task) }))
         const found = await searchPublicDetailed(client, q, 50)
+        /*
+         * Почему запрос дал мало: «+0 каналов» без причины — бесполезная строка. Считаем,
+         * что именно отсеяло, и пишем это в лог (просьба владельца 26.08: «чтобы текст
+         * соответствовал действиям, а не писал что-то ради текста»).
+         */
+        const отсев = { 'не тот тип чата': 0, 'уже спарсены': 0, 'комментарии': 0, 'по подписчикам': 0, 'неактивные': 0, 'мало откликов': 0, 'низкий балл': 0, 'дубли': 0 }
         let added = 0
         for (const c of found) {
           if (task.stopRequested || task.pauseRequested || (!andMode && task.results.length >= limit)) break
 
           // тип: канал vs группа
-          if (wantGroups) { if (c.isBroadcast && !c.isMegagroup) continue }
-          else if (!c.isBroadcast) continue
+          if (wantGroups) { if (c.isBroadcast && !c.isMegagroup) { отсев['не тот тип чата']++; continue } }
+          else if (!c.isBroadcast) { отсев['не тот тип чата']++; continue }
 
           const key = (c.username || c.id).toLowerCase()
           if (!key) continue
-          if (skipParsed.has(key)) continue
+          if (skipParsed.has(key)) { отсев['уже спарсены']++; continue }
 
           /*
            * Фильтр комментариев считал ТИПОМ ЧАТА: «только открытые» отбрасывало любой
@@ -2456,12 +2469,12 @@ export async function runChannelParser(task, store, kind) {
            * у него открыты. Смотрим на реальное обсуждение (26.08).
            */
           const openComments = !!c.isMegagroup || !!c.hasLinkedChat
-          if (comments === 1 && !openComments) continue
-          if (comments === 2 && openComments) continue
+          if (comments === 1 && !openComments) { отсев['комментарии']++; continue }
+          if (comments === 2 && openComments) { отсев['комментарии']++; continue }
 
           // §3.8 AND: отмечаем совпадение ключа — даже если канал уже добавлен другим ключом.
           if (andMode) { let set = hitsByKey.get(key); if (!set) { set = new Set(); hitsByKey.set(key, set) } set.add(kwIdx) }
-          if (seen.has(key)) continue
+          if (seen.has(key)) { отсев['дубли']++; continue }
 
           // число участников (обогащаем через GetFullChannel если поиск не отдал)
           let members = c.members
@@ -2469,8 +2482,8 @@ export async function runChannelParser(task, store, kind) {
             members = await getChannelMembersCount(client, c.entity)
             await sleep(pickDelay(chFrom, chTo, mul) * 1000)
           }
-          if (minMembers && members < minMembers) continue
-          if (maxMembers && members > maxMembers) continue
+          if (minMembers && members < minMembers) { отсев['по подписчикам']++; continue }
+          if (maxMembers && members > maxMembers) { отсев['по подписчикам']++; continue }
 
           /*
            * Разбор по постам — только если о нём просили (needPosts). Это лишний запрос
@@ -2496,10 +2509,10 @@ export async function runChannelParser(task, store, kind) {
               // молча: фильтры ниже решат сами, а балл останется пустым.
               signals = channelSignals([])
             }
-            if (activityFilter === 1 && !isActive(signals)) continue
-            if (activityFilter === 2 && isActive(signals)) continue
-            if (minComments && (signals.avgComments || 0) < minComments) continue
-            if (minRating > 1 && (score ?? 0) < minRating) continue
+            if (activityFilter === 1 && !isActive(signals)) { отсев['неактивные']++; continue }
+            if (activityFilter === 2 && isActive(signals)) { отсев['неактивные']++; continue }
+            if (minComments && (signals.avgComments || 0) < minComments) { отсев['мало откликов']++; continue }
+            if (minRating > 1 && (score ?? 0) < minRating) { отсев['низкий балл']++; continue }
           }
 
           seen.add(key)
@@ -2528,7 +2541,20 @@ export async function runChannelParser(task, store, kind) {
           syncHits()
           await store.saveTask(task)
         }
-        await store.appendLog(task, added ? 'success' : 'info', `«${q}» → +${added} ${unitLabel} (всего ${task.results.length})`, meta.name)
+        /*
+         * «всего» в строке аккаунта врало в асинхронном режиме: пока эта дорожка искала,
+         * соседняя добавляла своё, и получалось «+3 … всего 12» — арифметика на экране
+         * не сходилась. Теперь ясно сказано, что число общее по задаче, а не сумма этой
+         * строки, и рядом — почему отсеялось остальное.
+         */
+        const причины = Object.entries(отсев).filter(([, v]) => v > 0).map(([k, v]) => `${k}: ${v}`).join(', ')
+        await store.appendLog(task, added ? 'success' : 'info',
+          `«${q}» → +${added} ${unitLabel}` +
+          ` · найдено ${found.length}` +
+          (причины ? ` · отсеяно: ${причины}` : '') +
+          ` · в задаче ${task.results.length}`, meta.name)
+        сделаноЗапросов += 1
+        найденоДорожкой += added
         await disconnectAccount(client, accountId)
       } catch (err) {
         if (client) await disconnectAccount(client, accountId)
@@ -2544,6 +2570,11 @@ export async function runChannelParser(task, store, kind) {
       for (const [k, v] of restoreHits(task.hitsByKey)) hitsByKey.set(k, v)
       await sleep(pickDelay(reqFrom, reqTo, mul) * 1000)
       отметитьГотовым()
+      }
+      // Итог дорожки: без него в асинхронном прогоне не видно, кто сколько сделал —
+      // строки перемешаны, и понять вклад каждого аккаунта невозможно.
+      if (имяДорожки && сделаноЗапросов) {
+        await store.appendLog(task, 'info', `Закончил: ${сделаноЗапросов} запрос(ов), найдено ${найденоДорожкой}`, имяДорожки)
       }
     }
 
