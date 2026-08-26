@@ -77,6 +77,29 @@ try {
   const changed = files.filter((f) => done.has(f) && done.get(f) !== sum(fs.readFileSync(path.join(DIR, f), 'utf8')))
   for (const f of changed) console.warn(`⚠  ${f} — файл изменился после применения. В базе то, что накатили раньше.`)
 
+  /*
+   * Заслон от «первого запуска на живой базе».
+   *
+   * Часть наших миграций не идемпотентна — среди них есть `drop`. Если прогонятор впервые
+   * попал на базу, которую наполняли руками, его таблица учёта пуста, и обычный запуск
+   * честно попытается применить ВСЁ с самого начала — то есть снесёт данные. Отличить
+   * такую базу от чистой просто: на чистой нет наших таблиц. Видим `profiles` при пустом
+   * учёте — останавливаемся и требуем `--baseline`.
+   *
+   * Это единственное место, где скрипт отказывается работать вместо того, чтобы сделать
+   * как просили. Цена ошибки тут — прод, а не потраченная минута.
+   */
+  if (!DRY && !BASELINE && done.size === 0) {
+    const { rows: [{ exists }] } = await client.query(
+      "select exists (select 1 from information_schema.tables where table_schema='public' and table_name='profiles') as exists")
+    if (exists) {
+      console.error('База уже наполнена (есть таблица profiles), а учёт миграций пуст.')
+      console.error('Это первый запуск прогонятора на существующей базе — сначала отметьте накатанное:')
+      console.error('    node server/scripts/migrate.mjs --baseline')
+      process.exit(1)
+    }
+  }
+
   const pending = files.filter((f) => !done.has(f))
   if (!pending.length) {
     console.log(`Все миграции применены (${files.length} шт.)${changed.length ? `, но ${changed.length} файл(ов) изменены после накатки` : ''}`)
