@@ -731,7 +731,11 @@ export async function hasCoins(cost = 0, userId) {
  * @param {number} amount дельта в долларах (может быть отрицательной)
  * @param {string} reason за что — попадает в журнал кошелька
  */
-export async function changeUsd(amount, reason = '', userId) {
+/**
+ * @param {'purchase'|'grant'} [kind] откуда деньги: клиент заплатил или админ выдал руками.
+ * Без пометки считается оплатой — так вели себя все записи до 26.08.
+ */
+export async function changeUsd(amount, reason = '', userId, kind) {
   const delta = Math.round((Number(amount) || 0) * 100) / 100
   const k = key(await resolveWalletOwner(userId)) // §4.2 (MR-30): общий баланс → кошелёк владельца
   const db = sb()
@@ -744,7 +748,7 @@ export async function changeUsd(amount, reason = '', userId) {
     // Колонка появляется миграцией 2026-07-30-usd-wallet.sql. Пока её нет — честно
     // говорим об этом, а не делаем вид, что деньги зачислены.
     if (error) throw new Error(/usd/i.test(error.message) ? 'Денежный баланс недоступен: примените миграцию 2026-07-30-usd-wallet.sql' : error.message)
-    const result = { before, after, applied: Math.round((after - before) * 100) / 100, reason, userId: k, currency: 'usd' }
+    const result = { before, after, applied: Math.round((after - before) * 100) / 100, reason, userId: k, currency: 'usd', kind: kind || null }
     if (result.applied) await appendWalletEntry(result).catch(() => {})
     return result
   }
@@ -753,7 +757,7 @@ export async function changeUsd(amount, reason = '', userId) {
     const cur = (all && all[k]) || {}
     const before = normUsd(cur?.usd ?? 0)
     const after = normUsd(before + delta)
-    result = { before, after, applied: Math.round((after - before) * 100) / 100, reason, userId: k, currency: 'usd' }
+    result = { before, after, applied: Math.round((after - before) * 100) / 100, reason, userId: k, currency: 'usd', kind: kind || null }
     const next = { ...(all || {}) }
     next[k] = { ...cur, usd: after, updatedAt: Date.now() }
     return next

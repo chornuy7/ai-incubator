@@ -1,0 +1,56 @@
+# Миграции БД вручную из вкладки Actions.
+#
+# Зачем отдельный workflow, а не только шаг деплоя: первый запуск на существующей базе
+# требует `baseline` — отметить накатанное руками как применённое, ничего не выполняя.
+# Это разовое действие, и делать его должен человек осознанно, а не деплой мимоходом.
+#
+# Нужен секрет SUPABASE_DB_URL (Settings → Secrets and variables → Actions):
+# Supabase → Connect → Direct → Connection string, с подставленным паролем базы.
+#
+# Почему через раннер, а не с машины разработчика: прогонятор ходит к Postgres портом
+# 5432, а он открыт наружу не везде — на машине владельца весь DNS завёрнут на локальный
+# прокси, который пропускает только 80/443. У раннера сеть настоящая.
+
+name: migrate
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: 'Что сделать'
+        required: true
+        default: dry
+        type: choice
+        options: [dry, baseline, apply]
+
+concurrency:
+  group: migrate
+  cancel-in-progress: false
+
+jobs:
+  migrate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - name: Проверить, что секрет задан
+        env:
+          DB: ${{ secrets.SUPABASE_DB_URL }}
+        run: |
+          if [ -z "$DB" ]; then
+            echo "::error::Нет секрета SUPABASE_DB_URL. Settings → Secrets and variables → Actions."
+            exit 1
+          fi
+      - name: Миграции (${{ inputs.mode }})
+        env:
+          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+        run: |
+          case "${{ inputs.mode }}" in
+            dry)      node server/scripts/migrate.mjs --dry ;;
+            baseline) node server/scripts/migrate.mjs --baseline ;;
+            apply)    node server/scripts/migrate.mjs ;;
+          esac
