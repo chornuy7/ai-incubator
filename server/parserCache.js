@@ -23,7 +23,7 @@
 import { createHash } from 'node:crypto'
 import { DatabaseSync } from 'node:sqlite'
 import { dataPath } from './lib/jsonStore.js'
-import { supabaseEnabled, getSupabase, isMissingTable } from './lib/supabase.js'
+import { supabaseEnabled, getSupabase, isMissingTable, isMissingColumn } from './lib/supabase.js'
 
 const DB_FILE = () => process.env.PARSER_CACHE_DB || dataPath('parser-cache.db')
 
@@ -50,7 +50,7 @@ function db() {
     'owner_id TEXT', 'settings TEXT', 'watch INTEGER NOT NULL DEFAULT 0',
     'period_h INTEGER NOT NULL DEFAULT 24', 'next_run_at INTEGER', 'last_run_at INTEGER',
     'last_new INTEGER NOT NULL DEFAULT 0', 'last_gone INTEGER NOT NULL DEFAULT 0',
-    'last_error TEXT', 'fail_count INTEGER NOT NULL DEFAULT 0',
+    'last_error TEXT', 'fail_count INTEGER NOT NULL DEFAULT 0', 'title TEXT',
   ]) {
     try { d.exec(`ALTER TABLE parser_cache ADD COLUMN ${col}`) } catch { /* колонка уже есть */ }
   }
@@ -389,6 +389,129 @@ export async function listWatches(opts = {}) {
   cond.push(onlyErrors ? 'last_error IS NOT NULL' : 'watch = 1')
   const rows = db().prepare(`SELECT sig,kind,keywords,settings,owner_id,period_h,next_run_at,last_run_at,last_new,last_gone,last_error,fail_count,watch,count,updated_at FROM parser_cache WHERE ${cond.join(' AND ')} ORDER BY updated_at DESC LIMIT ?`).all(...args, limit)
   return rows.map(fromRow)
+}
+
+/**
+ * Последние запросы парсинга — то, что человек уже искал (просьба владельца 26.08:
+ * «везде в парсинге нужно сделать последние запросы, и там список всех найденных
+ * тгшек, назвать можно, переименовать и удалить»).
+ *
+ * Отдельного хранилища для этого не заводим: каждый прогон и так ложится в кэш со
+ * всеми результатами, датой и подписью запроса. Здесь только чтение той же таблицы
+ * в обратном порядке + человеческое имя поверх автоматической подписи.
+ *
+ * `title` — имя, которое дал человек; пусто — показываем `keywords` (слова запроса
+ * или источники). Так «назвать по умолчанию» не требует выдумывания: запрос уже
+ * описан тем, что в нём искали.
+ */
+export async function listQueries({ kind = '', ownerId = '', limit = 50 } = {}) {
+  const base = sb()
+  if (base) {
+    // Пробуем с `title`, а если колонки ещё нет (код уехал раньше миграции) — без неё:
+    // имена просто будут автоподписями, а список останется рабочим.
+    for (const cols of ['sig,kind,keywords,title,updated_at,count,watch,owner_id', 'sig,kind,keywords,updated_at,count,watch,owner_id']) {
+      let sel = base.from('parser_cache').select(cols)
+      if (kind) sel = sel.eq('kind', String(kind))
+      if (ownerId) sel = sel.eq('owner_id', String(ownerId))
+      const { data, error } = await sel.order('updated_at', { ascending: false }).limit(limit)
+      if (!error) return (data || []).map(queryRow)
+      if (isMissingColumn(error)) continue
+      if (!isMissingTable(error)) throw new Error(error.message)
+      break
+    }
+  }
+  const cols = 'sig,kind,keywords,title,updated_at,count,watch,owner_id'
+  const cond = []
+  const args = []
+  if (kind) { cond.push('kind = ?'); args.push(String(kind)) }
+  if (ownerId) { cond.push('owner_id = ?'); args.push(String(ownerId)) }
+  const where = cond.length ? `WHERE ${cond.join(' AND ')}` : ''
+  const rows = db().prepare(`SELECT ${cols} FROM parser_cache ${where} ORDER BY updated_at DESC LIMIT ?`).all(...args, limit)
+  return rows.map(queryRow)
+}
+
+/**
+ * Короткое имя из подписи запроса: три первых слова, остальное — «+N». Полсотни
+ * ключевых слов в строку списка не влезут, а обрезка по символам режет слово пополам.
+ */
+function shortName(keywords = '') {
+  const parts = String(keywords).split(',').map((x) => x.trim()).filter(Boolean)
+  if (!parts.length) return ''
+  const head = parts.slice(0, 3).join(', ')
+  return parts.length > 3 ? `${head} +${parts.length - 3}` : head
+}
+
+function queryRow(r) {
+  return {
+    sig: String(r.sig),
+    kind: String(r.kind || ''),
+    // Имя от человека главнее автоподписи, но автоподпись отдаём тоже: витрина
+    // показывает её как расшифровку «что на самом деле искали».
+    name: String(r.title || '').trim() || shortName(r.keywords) || 'Без названия',
+    query: String(r.keywords || ''),
+    renamed: !!r.title,
+    updatedAt: Number(r.updated_at) || 0,
+    count: Number(r.count) || 0,
+    watch: !!r.watch,
+    ownerId: r.owner_id ? String(r.owner_id) : '',
+  }
+}
+
+/** Результаты одного сохранённого запроса — по нему витрина показывает найденные каналы. */
+export async function queryResults(sig) {
+  const key = String(sig || '')
+  if (!key) return null
+  const base = sb()
+  if (base) {
+    for (const cols of ['sig,kind,keywords,title,updated_at,count,results,owner_id', 'sig,kind,keywords,updated_at,count,results,owner_id']) {
+      const { data, error } = await base.from('parser_cache').select(cols).eq('sig', key).maybeSingle()
+      if (!error) return data ? { ...queryRow(data), results: Array.isArray(data.results) ? data.results : [] } : null
+      if (isMissingColumn(error)) continue
+      if (!isMissingTable(error)) throw new Error(error.message)
+      break
+    }
+  }
+  const r = db().prepare('SELECT sig,kind,keywords,title,updated_at,count,results,owner_id FROM parser_cache WHERE sig = ?').get(key)
+  if (!r) return null
+  let list = []
+  try { list = JSON.parse(r.results || '[]') } catch { list = [] }
+  return { ...queryRow(r), results: Array.isArray(list) ? list : [] }
+}
+
+/**
+ * Переименовать запрос. Пустое имя снимает своё название и возвращает автоподпись —
+ * отдельной кнопки «сбросить» для этого не нужно.
+ */
+export async function renameQuery(sig, title) {
+  const key = String(sig || '')
+  const name = String(title || '').trim().slice(0, 120) || null
+  if (!key) return false
+  const base = sb()
+  if (base) {
+    const { data, error } = await base.from('parser_cache').update({ title: name }).eq('sig', key).select('sig')
+    if (!error) return (data || []).length > 0
+    // Колонки ещё нет — переименовать нельзя, но и падать незачем: скажем честно.
+    if (isMissingColumn(error)) throw new Error('Переименование появится после обновления базы — миграция ещё не применена')
+    if (!isMissingTable(error)) throw new Error(error.message)
+  }
+  return db().prepare('UPDATE parser_cache SET title = ? WHERE sig = ?').run(name, key).changes > 0
+}
+
+/**
+ * Удалить запрос вместе с результатами и слежением. Кэш общий на платформу, поэтому
+ * удаление — это ещё и «собрать заново при следующем запуске», а не только уборка
+ * в списке; вызывающая сторона обязана проверить владельца.
+ */
+export async function deleteQuery(sig) {
+  const key = String(sig || '')
+  if (!key) return false
+  const base = sb()
+  if (base) {
+    const { data, error } = await base.from('parser_cache').delete().eq('sig', key).select('sig')
+    if (!error) return (data || []).length > 0
+    if (!isMissingTable(error)) throw new Error(error.message)
+  }
+  return db().prepare('DELETE FROM parser_cache WHERE sig = ?').run(key).changes > 0
 }
 
 /** Для тестов/обслуживания: закрыть и сбросить соединение (следующий вызов пересоздаст). */

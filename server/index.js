@@ -1109,6 +1109,74 @@ app.post('/api/parser/keywords/suggest', async (req, res) => {
   } catch (err) { res.status(500).json({ ok: false, error: err instanceof Error ? err.message : 'Ошибка' }) }
 })
 
+/**
+ * «Последние запросы» парсера (просьба владельца 26.08). Свои — по владельцу,
+ * админу платформы — все. Отдельного хранилища нет: это тот же кэш результатов,
+ * прочитанный в обратном порядке.
+ */
+app.get('/api/parser/queries', async (req, res) => {
+  try {
+    const scope = await ownerScopeForRequest(req)
+    if (scope.blocked) return res.status(403).json({ ok: false, error: 'Доступ отключён' })
+    const { listQueries } = await import('./parserCache.js')
+    const queries = await listQueries({
+      kind: String(req.query.kind || ''),
+      ownerId: (await isAdminRequest(req)) ? '' : scope.ownerId,
+      limit: Math.min(200, Math.max(1, Number(req.query.limit) || 50)),
+    })
+    res.json({ ok: true, queries })
+  } catch (err) { res.status(500).json({ ok: false, error: err instanceof Error ? err.message : 'Ошибка' }) }
+})
+
+/** Результаты сохранённого запроса — открыть его в витрине, не парся заново. */
+app.get('/api/parser/queries/:sig', async (req, res) => {
+  try {
+    const scope = await ownerScopeForRequest(req)
+    if (scope.blocked) return res.status(403).json({ ok: false, error: 'Доступ отключён' })
+    const { queryResults } = await import('./parserCache.js')
+    const q = await queryResults(req.params.sig)
+    if (!q) return res.status(404).json({ ok: false, error: 'Запрос не найден' })
+    if (q.ownerId && q.ownerId !== scope.ownerId && !(await isAdminRequest(req))) {
+      return res.status(403).json({ ok: false, error: 'Это чужой запрос' })
+    }
+    res.json({ ok: true, query: q })
+  } catch (err) { res.status(500).json({ ok: false, error: err instanceof Error ? err.message : 'Ошибка' }) }
+})
+
+/**
+ * Переименовать / удалить сохранённый запрос. Владельца проверяем ЗДЕСЬ: кэш общий на
+ * платформу, и без проверки чужой запрос удалялся бы по одному знанию подписи.
+ */
+async function ownsQuery(req, sig) {
+  const scope = await ownerScopeForRequest(req)
+  if (scope.blocked) return { err: [403, 'Доступ отключён'] }
+  const { queryResults } = await import('./parserCache.js')
+  const q = await queryResults(sig)
+  if (!q) return { err: [404, 'Запрос не найден'] }
+  if (q.ownerId && q.ownerId !== scope.ownerId && !(await isAdminRequest(req))) return { err: [403, 'Это чужой запрос'] }
+  return { ok: true }
+}
+
+app.patch('/api/parser/queries/:sig', async (req, res) => {
+  try {
+    const gate = await ownsQuery(req, req.params.sig)
+    if (gate.err) return res.status(gate.err[0]).json({ ok: false, error: gate.err[1] })
+    const { renameQuery } = await import('./parserCache.js')
+    await renameQuery(req.params.sig, req.body?.title)
+    res.json({ ok: true })
+  } catch (err) { res.status(500).json({ ok: false, error: err instanceof Error ? err.message : 'Ошибка' }) }
+})
+
+app.delete('/api/parser/queries/:sig', async (req, res) => {
+  try {
+    const gate = await ownsQuery(req, req.params.sig)
+    if (gate.err) return res.status(gate.err[0]).json({ ok: false, error: gate.err[1] })
+    const { deleteQuery } = await import('./parserCache.js')
+    await deleteQuery(req.params.sig)
+    res.json({ ok: true })
+  } catch (err) { res.status(500).json({ ok: false, error: err instanceof Error ? err.message : 'Ошибка' }) }
+})
+
 /** Свои отслеживаемые запросы (админу платформы — все). */
 app.get('/api/parser/watches', async (req, res) => {
   try {

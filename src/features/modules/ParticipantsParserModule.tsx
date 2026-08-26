@@ -10,7 +10,7 @@ import { Switch, Select, Badge, EmptyState, Modal } from '@/shared/ui'
 import { AccountPicker } from '@/features/account-picker/AccountPicker'
 import { useModuleTask } from './shared/useModuleTask'
 import { lookupParserCache, setParserWatch, type ParserCacheHit } from '@/api/modulesApi'
-import { SectionCard, NumberField, ProtectionTimings, LaunchPanel, LaunchSteps, markCurrentStep, TaskStartedModal, SchedulePanel, usePresetCarry, useBlockAccess } from './shared'
+import { SectionCard, NumberField, ProtectionTimings, LaunchPanel, LaunchSteps, markCurrentStep, TaskStartedModal, SchedulePanel, usePresetCarry, useBlockAccess, ParserQueries } from './shared'
 import { PresetBar } from './shared/PresetBar'
 import { SavePresetModal } from './shared/SavePresetModal'
 import { cn } from '@/shared/lib/utils'
@@ -468,6 +468,20 @@ function Inner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: string }) {
       </div>
 
       <SectionCard icon={<Database size={18} />} title={cfg.resultsTitle ?? 'Результаты парсинга'} badge={String(raw.length)}>
+        {/*
+          «Последние запросы» (просьба владельца 26.08): всё, что уже искали, с найденными
+          каналами. Стоит в карточке результатов, а не отдельной секцией: это и есть
+          результаты — только прошлые. «Открыть» показывает их тем же способом, что и
+          «Показать из базы», — состав и дата сбора из кэша.
+        */}
+        <div className="mb-4">
+          <ParserQueries moduleKey={moduleKey} onOpen={(rows, q) => {
+            setCacheHit({ updatedAt: q.updatedAt, count: rows.length, results: rows })
+            setUsingCache(true)
+            setCleared(false)
+          }} />
+        </div>
+
         {/* §6 (MR-38): под этот же набор источников результат уже собран — отдаём его
             сразу, с датой, не гоняя аккаунты. Свежий проход рядом, кнопкой «Запустить». */}
         {cacheHit && !running && (
