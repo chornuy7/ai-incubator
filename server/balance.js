@@ -561,6 +561,15 @@ export async function usdByUser() {
 export async function changeCoins(amount, reason = '', userId, kind) {
   const delta = Math.round((Number(amount) || 0) * COIN_PRECISION) / COIN_PRECISION
   const k = key(await resolveWalletOwner(userId)) // §4.2 (MR-30): общий баланс → кошелёк владельца
+  /*
+   * КТО потратил — отдельно от того, ЧЕЙ кошелёк (правка 27.08).
+   *
+   * При общем балансе списание сотрудника уходит в кошелёк владельца, и в журнал до сих
+   * пор писался только владелец: исходный userId затирался строкой выше. Из-за этого на
+   * вопрос «кто сколько потратил» ответить было нечем — все операции выглядели как траты
+   * одного человека. Владелец 27.08: «овнер должен видеть, кто сколько потратил».
+   */
+  const actor = key(userId)
   let result = null
   const db = sb()
   if (db) {
@@ -570,7 +579,7 @@ export async function changeCoins(amount, reason = '', userId, kind) {
     const before = normCoins(cur?.coins ?? 0)
     const after = normCoins(before + delta)
     await db.from('coin_balance').upsert({ user_id: k, coins: after, updated_at: new Date().toISOString() }, { onConflict: 'user_id' })
-    result = { before, after, applied: Math.round((after - before) * COIN_PRECISION) / COIN_PRECISION, reason, userId: k, kind }
+    result = { before, after, applied: Math.round((after - before) * COIN_PRECISION) / COIN_PRECISION, reason, userId: k, actorId: actor, kind }
     if (result.applied) await appendWalletEntry(result).catch(() => {})
     return result
   }
@@ -578,7 +587,7 @@ export async function changeCoins(amount, reason = '', userId, kind) {
     const cur = (all && all[k]) || (k === DEFAULT_USER && typeof all?.coins === 'number' ? { coins: all.coins, planId: all.planId } : {})
     const before = normCoins(cur?.coins ?? DEFAULT_STATE.coins)
     const after = normCoins(before + delta)
-    result = { before, after, applied: Math.round((after - before) * COIN_PRECISION) / COIN_PRECISION, reason, userId: k, kind }
+    result = { before, after, applied: Math.round((after - before) * COIN_PRECISION) / COIN_PRECISION, reason, userId: k, actorId: actor, kind }
     const next = { ...(all || {}) }
     delete next.coins; delete next.planId; delete next.updatedAt // чистим старый корневой формат
     next[k] = { ...cur, coins: after, updatedAt: Date.now() }
@@ -609,15 +618,21 @@ async function appendWalletEntry(entry) {
       ts: new Date().toISOString(), user_id: entry.userId, amount: entry.applied,
       before_val: entry.before, after_val: entry.after, reason: String(entry.reason || ''),
     }
+    // actor_id появляется миграцией 2026-08-27-wallet-actor.sql. Пока её нет — пишем без
+    // него: потерять строку журнала из-за неприменённой миграции хуже, чем потерять поле.
+    const withActor = entry.actorId && entry.actorId !== entry.userId ? { ...base, actor_id: entry.actorId } : base
     const currency = entry.currency === 'usd' ? 'usd' : 'coins'
     // §3.2 (MR-22): чем начисление ЯВЛЯЕТСЯ — покупкой или выдачей. Подарочные и
     // месячные токены подписки доходом не считаются («доходом является покупка плана»),
     // поэтому природу операции фиксируем в момент записи, а не угадываем по тексту
     // причины. Колонка добавляется миграцией 2026-08-22-wallet-kind.sql.
     const kind = entry.kind || null
-    const { error } = await db.from('wallet_log').insert({ ...base, currency, kind })
-    if (error && /kind/i.test(error.message)) {
-      const { error: e2 } = await db.from('wallet_log').insert({ ...base, currency })
+    const { error } = await db.from('wallet_log').insert({ ...withActor, currency, kind })
+    if (error && /actor_id/i.test(error.message)) {
+      const { error: eA } = await db.from('wallet_log').insert({ ...base, currency, kind })
+      if (eA) await db.from('wallet_log').insert({ ...base, currency })
+    } else if (error && /kind/i.test(error.message)) {
+      const { error: e2 } = await db.from('wallet_log').insert({ ...withActor, currency })
       if (e2 && /currency/i.test(e2.message)) await db.from('wallet_log').insert(base)
     } else if (error && /currency/i.test(error.message)) {
       await db.from('wallet_log').insert(base)
@@ -631,6 +646,9 @@ async function appendWalletEntry(entry) {
   const row = {
     ts: Date.now(),
     userId: entry.userId,
+    // Кто именно потратил: при общем балансе это сотрудник, а userId выше — владелец
+    // кошелька. Пишем только когда отличается, чтобы не раздувать старый формат.
+    ...(entry.actorId && entry.actorId !== entry.userId ? { actorId: entry.actorId } : {}),
     amount: entry.applied,
     before: entry.before,
     after: entry.after,
@@ -670,10 +688,12 @@ export async function walletHistory(filter = {}) {
       if (filter.since) q = q.gte('ts', new Date(Number(filter.since)).toISOString())
       return q
     }
-    let { data, error } = await build('ts, user_id, amount, before_val, after_val, reason, currency')
+    let { data, error } = await build('ts, user_id, actor_id, amount, before_val, after_val, reason, currency')
+    // Колонки актора может ещё не быть (миграция 2026-08-27) — тогда читаем без неё.
+    if (error && /actor_id/i.test(error.message || '')) ({ data, error } = await build('ts, user_id, amount, before_val, after_val, reason, currency'))
     if (error && /currency/i.test(error.message || '')) ({ data } = await build('ts, user_id, amount, before_val, after_val, reason'))
     return (data || []).map((r) => ({
-      ts: ms(r.ts), userId: r.user_id, amount: Number(r.amount),
+      ts: ms(r.ts), userId: r.user_id, actorId: r.actor_id || r.user_id, amount: Number(r.amount),
       before: r.before_val == null ? null : Number(r.before_val),
       after: r.after_val == null ? null : Number(r.after_val), reason: r.reason || '',
       currency: r.currency === 'usd' ? 'usd' : 'coins',
@@ -697,6 +717,34 @@ export async function walletHistory(filter = {}) {
     } catch { /* битая строка не должна ронять весь журнал */ }
   }
   return rows.reverse().slice(0, limit)
+}
+
+/**
+ * Кто сколько потратил из кошелька (просьба владельца 27.08: «овнер должен видеть, кто
+ * сколько потратил»).
+ *
+ * Считаем только СПИСАНИЯ (amount < 0): начисления — это пополнение кошелька, а не расход
+ * сотрудника, и складывать их вместе значило бы показывать владельцу, что он «потратил»
+ * собственную выдачу. Запись без актора — трата самого владельца кошелька: так выглядят
+ * все операции до 27.08, и сваливать их на сотрудников нельзя.
+ *
+ * @param {{userId: string, since?: number, limit?: number}} filter
+ * @returns {Promise<{actorId: string, spent: number, ops: number}[]>} по убыванию расхода
+ */
+export async function spendByActor(filter = {}) {
+  const rows = await walletHistory({ userId: filter.userId, since: filter.since, limit: filter.limit || 1000 })
+  const byActor = new Map()
+  for (const r of rows) {
+    if (r.currency === 'usd') continue // доллары — отдельная валюта, в расход монет не мешаем
+    const amount = Number(r.amount) || 0
+    if (amount >= 0) continue
+    const who = String(r.actorId || r.userId || '')
+    const cur = byActor.get(who) || { actorId: who, spent: 0, ops: 0 }
+    cur.spent = Math.round((cur.spent + Math.abs(amount)) * COIN_PRECISION) / COIN_PRECISION
+    cur.ops += 1
+    byActor.set(who, cur)
+  }
+  return [...byActor.values()].sort((a, b) => b.spent - a.spent)
 }
 
 /** Сменить тариф. @param {string} planId */

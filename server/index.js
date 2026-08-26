@@ -1763,6 +1763,36 @@ app.get('/api/balance/history', async (req, res) => {
   } catch (err) { res.status(500).json({ ok: false, error: err instanceof Error ? err.message : 'Ошибка' }) }
 })
 
+/**
+ * Кто сколько потратил из кошелька (просьба владельца 27.08: «овнер должен видеть, кто
+ * сколько потратил»).
+ *
+ * Смотрит СВОЙ кошелёк: при общем балансе это кошелёк владельца, и в нём видны траты всех
+ * сотрудников. Сотруднику с общим балансом отдаём то же самое — он и так видит эти деньги
+ * в шапке, скрывать разбивку было бы странно; у сотрудника с личным кошельком в выдаче
+ * будет только он сам.
+ */
+app.get('/api/balance/spend-by-user', async (req, res) => {
+  try {
+    const me = req.header('x-user-id')
+    const target = req.query.userId ? String(req.query.userId) : me
+    if (req.query.userId && req.query.userId !== me && !(await isAdminRequest(req))) {
+      return res.status(403).json({ ok: false, error: 'Чужие траты доступны только администратору' })
+    }
+    const days = Math.min(365, Math.max(1, Number(req.query.days) || 30))
+    const [{ spendByActor }, { listUsers }] = await Promise.all([import('./balance.js'), import('./users.js')])
+    const rows = await spendByActor({ userId: target, since: Date.now() - days * 86400_000 })
+    // Имена, а не id: «usr_9248062d потратил 42 ⚡» ничего не сообщает.
+    const users = await listUsers().catch(() => [])
+    const nameById = new Map(users.map((u) => [u.id, u.name || u.email || u.id]))
+    res.json({
+      ok: true,
+      days,
+      rows: rows.map((r) => ({ ...r, name: nameById.get(r.actorId) || r.actorId, isOwner: r.actorId === target })),
+    })
+  } catch (err) { res.status(500).json({ ok: false, error: err instanceof Error ? err.message : 'Ошибка' }) }
+})
+
 // §5.1 (B2): баланс монет и тариф. Читают все — шапка показывает их на каждой странице.
 // Менять (пополнение/списание/смена тарифа) — только админ: это деньги, а не настройка.
 app.get('/api/balance', async (req, res) => {

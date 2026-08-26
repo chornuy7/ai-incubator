@@ -137,6 +137,16 @@ export async function saveUserModules(userId: string, modules: string[] | 'all')
 /** §5.1: операция по кошельку — «за что списали». */
 export interface WalletEntry { ts: number; userId: string; amount: number; before: number; after: number; reason: string }
 
+/**
+ * Кто сколько потратил из кошелька (27.08). При общем балансе владелец видит траты всех
+ * своих сотрудников; строка `isOwner` — его собственные списания.
+ */
+export interface SpendByUser { actorId: string; name: string; spent: number; ops: number; isOwner: boolean }
+export async function fetchSpendByUser(days = 30): Promise<{ days: number; rows: SpendByUser[] }> {
+  const r = await apiGet<{ ok: boolean; days: number; rows: SpendByUser[] }>(`/api/balance/spend-by-user?days=${days}`)
+  return { days: r.days, rows: r.rows || [] }
+}
+
 export async function fetchWalletHistory(limit = 50, userId?: string): Promise<WalletEntry[]> {
   const q = new URLSearchParams({ limit: String(limit) })
   if (userId) q.set('userId', userId)

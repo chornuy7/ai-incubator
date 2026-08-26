@@ -16,6 +16,7 @@ import { useSession } from '@/features/auth/session'
 import { ADMIN_BYPASS_ID } from '@/shared/config/rbac'
 import { HelpButton } from '@/features/neuro-commenting/moduleUi'
 import { cn } from '@/shared/lib/utils'
+import { fetchSpendByUser, type SpendByUser as SpendByUserRow } from '@/api/balanceApi'
 
 /** Якорь раздела шаблонов — он на этой же странице, ниже списка людей. */
 const TEMPLATES_ANCHOR = '#templates'
@@ -572,6 +573,8 @@ function UsersTab() {
 
       {err && <Card className="mb-3 border-rose-500/30 p-3 text-sm text-rose-300">{err}</Card>}
 
+      <SpendByUser />
+
       {loading ? (
         <Card className="p-6 text-sm text-white/50">Загрузка…</Card>
       ) : users.length === 0 ? (
@@ -733,6 +736,74 @@ function UsersTab() {
  * Старый путь /panel/roles ведёт сюда же (см. App.tsx), а sudo-админка по-прежнему
  * открывает RolesPage отдельной страницей — там это настоящие роли платформы.
  */
+/**
+ * Расход по сотрудникам (просьба владельца 27.08: «овнер должен видеть, кто сколько
+ * потратил»).
+ *
+ * При общем балансе списания сотрудников уходят в кошелёк владельца, и до 27.08 в журнал
+ * попадал только владелец — разложить расход было не из чего. Теперь пишется и тот, кто
+ * потратил, а здесь это видно суммой за период. Начисления в расход не считаем: выдача
+ * себе же — не трата.
+ */
+function SpendByUser() {
+  const [rows, setRows] = useState<SpendByUserRow[]>([])
+  const [days, setDays] = useState(30)
+  const [err, setErr] = useState('')
+
+  useEffect(() => {
+    let alive = true
+    void fetchSpendByUser(days)
+      .then((r) => { if (alive) { setRows(r.rows); setErr('') } })
+      .catch((e) => { if (alive) setErr(e instanceof Error ? e.message : 'не загрузилось') })
+    return () => { alive = false }
+  }, [days])
+
+  if (err) return null
+  const total = rows.reduce((sum, r) => sum + r.spent, 0)
+
+  return (
+    <Card className="mb-3 p-3">
+      <div className="mb-2 flex flex-wrap items-center gap-2">
+        <span className="text-sm font-bold text-fg">Кто сколько потратил</span>
+        <span className="text-[11px] text-white/40">монет за период · всего {Math.round(total * 100) / 100} ⚡</span>
+        <div className="ml-auto flex gap-1">
+          {[7, 30, 90].map((d) => (
+            <button
+              key={d}
+              type="button"
+              onClick={() => setDays(d)}
+              className={cn('h-7 rounded-lg px-2.5 text-[11px] font-semibold',
+                days === d ? 'bg-spark-500/20 text-spark-300' : 'border border-line text-muted hover:text-fg')}
+            >
+              {d} дн.
+            </button>
+          ))}
+        </div>
+      </div>
+      {!rows.length ? (
+        <div className="text-xs text-white/40">За этот период списаний не было.</div>
+      ) : (
+        <div className="space-y-1">
+          {rows.map((r) => (
+            <div key={r.actorId} className="flex items-center gap-3 rounded-lg bg-elevated px-2.5 py-1.5">
+              <span className="min-w-0 flex-1 truncate text-sm text-fg">
+                {r.name}
+                {r.isOwner && <span className="ml-2 text-[11px] text-white/35">вы</span>}
+              </span>
+              {/* Полоска доли: сравнивать числа в столбик глазами тяжелее, чем длины. */}
+              <span className="hidden h-1.5 w-28 overflow-hidden rounded-full bg-line sm:block">
+                <span className="block h-full rounded-full bg-spark-500" style={{ width: `${total ? (r.spent / total) * 100 : 0}%` }} />
+              </span>
+              <span className="w-24 shrink-0 text-right text-sm font-semibold tabular-nums text-fg">{Math.round(r.spent * 100) / 100} ⚡</span>
+              <span className="w-20 shrink-0 text-right text-[11px] tabular-nums text-white/35">{r.ops} оп.</span>
+            </div>
+          ))}
+        </div>
+      )}
+    </Card>
+  )
+}
+
 export function UsersAndRolesPage() {
   return (
     <div>
