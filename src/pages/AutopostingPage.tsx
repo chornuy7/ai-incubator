@@ -309,27 +309,6 @@ function AutopostingInner() {
           </SectionCard>
         </div>
 
-        {/* Один блок на все модули (правка 19.08): защита и задержки — одно решение.
-            Раньше у автопостинга защиты в интерфейсе не было вовсе, а паузы жили внутри
-            «Публикации и темпа» — четвёртый по счёту способ настроить одно и то же. */}
-        <ProtectionTimings
-          timing={{
-            delays: postingDelays,
-            onDelays: (updater) => {
-              const next = typeof updater === 'function' ? updater(postingDelays) : updater
-              const a = next.action
-              if (a) { setDelayMin(Math.max(1, a[0])); setDelayMax(Math.max(a[0], a[1])) }
-            },
-            showAction: true,
-            showComment: false,
-            showJoin: false,
-            labels: { action: 'Задержка между публикациями' },
-            delayPresets: ['Агрессивный', 'Сбалансированный', 'Консервативный'],
-            delayPreset,
-            onDelayPreset: setDelayPreset,
-          }}
-        />
-
         {/* 4. Публикация и темп — необязательный шаг («Сейчас» ничего не требует). */}
         <div id="sec-settings" className="scroll-mt-24">
           <SectionCard icon={<CalendarClock size={18} />} title="Публикация" badge={mode === 'now' ? 'Сейчас' : 'Расписание'}>
@@ -431,6 +410,31 @@ function AutopostingInner() {
           )}
         </SectionCard>
 
+        {/*
+          Защита и тайминги — предпоследним блоком, как во всех остальных модулях
+          (просьба владельца 26.08). Здесь она стояла четвёртой из шести и разрывала
+          разговор про содержание поста: «что публикуем» → защита → «когда публикуем».
+        */}
+        <div id="sec-protection" className="scroll-mt-24">
+          <ProtectionTimings
+            timing={{
+              delays: postingDelays,
+              onDelays: (updater) => {
+                const next = typeof updater === 'function' ? updater(postingDelays) : updater
+                const a = next.action
+                if (a) { setDelayMin(Math.max(1, a[0])); setDelayMax(Math.max(a[0], a[1])) }
+              },
+              showAction: true,
+              showComment: false,
+              showJoin: false,
+              labels: { action: 'Задержка между публикациями' },
+              delayPresets: ['Агрессивный', 'Сбалансированный', 'Консервативный'],
+              delayPreset,
+              onDelayPreset: setDelayPreset,
+            }}
+          />
+        </div>
+
         {/* 5. Запуск: сводка в потоке + кнопки в плавающем баре. Идёт ПОСЛЕ списка
             «Запланированные посты», чтобы фиксированный бар их не перекрывал. */}
         <div id="sec-run" className="scroll-mt-24">
@@ -447,6 +451,9 @@ function AutopostingInner() {
               { label: 'Каналы', done: channels.length > 0, anchor: 'sec-targets' },
               { label: 'Текст', done: text.trim().length > 0, anchor: 'sec-message' },
               { label: mode === 'now' ? 'Публикация' : 'Расписание', done: true, optional: true, anchor: 'sec-settings' },
+              // Шаг добавлен вместе с переносом блока (26.08): дорожная карта должна вести
+              // по странице сверху вниз, иначе «Защита» оказывается ниже «Запуска».
+              { label: 'Защита', done: true, optional: true, anchor: 'sec-protection' },
               { label: 'Запуск', done: false, anchor: 'sec-run' },
             ])} /> : null}
             blockedBy={blockedBy}

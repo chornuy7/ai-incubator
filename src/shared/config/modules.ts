@@ -420,6 +420,9 @@ export const MODULES: Record<string, ModuleConfig> = {
     accent: 'spark',
     warmingLayout: true,
     aiProtection: true,
+    // Сколько действий сделает прогрев. До 26.08 значение было невидимым (100 по
+    // умолчанию), хотя именно оно определяет, когда задача закончится и что показывает ETA.
+    workModeFields: { maxLabel: 'Действий прогрева', maxValue: 40, perAccount: true },
     selectedTitle: 'Выбрано для прогрева',
     accountPicker: true,
     accountActions: ['Добавить все', 'Удалить все'],

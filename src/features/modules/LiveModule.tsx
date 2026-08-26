@@ -207,7 +207,14 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
   // постов и стоп-слова, у остальных боевых модулей — объём задачи (режим работы, сколько
   // сделает аккаунт). У прогрева и парсеров ни того, ни другого: там карточка оформляет
   // панель запуска, как было до переноса 19.08.
-  const hasLimits = !isParser && !isGgr && !cfg.warmingLayout && (cfg.aiProtection || cfg.richLayout || cfg.lookingLayout)
+  /*
+   * Прогрев тоже получает «Параметры и лимиты» (жалоба владельца 26.08: «там даже
+   * параметров и лимитов нихуя не отображается»). Раньше он был исключён, потому что
+   * темп задаёт «Уровень прогрева». Но лимит действий у задачи ЕСТЬ — просто уходил
+   * невидимым значением по умолчанию, а из него считается и ETA («7 ч»), и когда
+   * задача закончится. Настройка, которая молча решает за человека, — хуже показанной.
+   */
+  const hasLimits = !isParser && !isGgr && (cfg.aiProtection || cfg.richLayout || cfg.lookingLayout)
   const hasParamsCard = moduleKey === 'neuro-commenting' || hasLimits
 
   const maybeSaveToFolder = (list: string[]) => {

@@ -201,6 +201,45 @@ export function NeuroDialogsModule() {
         />
       </div>
 
+      {/*
+        Структура блоков — как у остальных модулей (жалоба владельца 26.08: «там не та
+        структура блоков»). Лимиты переписки — это и есть «Параметры и лимиты», и стоять
+        они должны СРАЗУ после аккаунтов, до промптов и защиты, а не последним блоком:
+        во всех модулях порядок «кем работаем → сколько делаем → чем пишем → как бережём».
+      */}
+      <SectionCard icon={<MessagesSquare size={18} />} title="Параметры и лимиты" id="sec-settings">
+        <div className="mb-3 text-xs text-white/40">Сколько сообщений ведём с ОДНИМ лидом.</div>
+        <div className="flex flex-col gap-3">
+          <Segmented
+            options={['До целевого действия', 'Фиксировано']}
+            value={replyLimitMode === 'untilTarget' ? 0 : 1}
+            onChange={(i) => setReplyLimitMode(i === 0 ? 'untilTarget' : 'count')}
+          />
+          {replyLimitMode === 'untilTarget' ? (
+            <p className="rounded-xl border border-spark-500/25 bg-spark-500/8 px-3 py-2 text-xs leading-relaxed text-muted">
+              ИИ ведёт диалог, пока лид не выполнит целевое действие цели (статус «Целевое») —
+              или пока не откажется («Закрыт»). Останавливают только суточные лимиты и защита.
+            </p>
+          ) : (
+            <div className="flex flex-col gap-2">
+              <NumberField label="Максимум ответов одному лиду" value={maxRepliesPerLead} onChange={setMaxRepliesPerLead} min={1} max={50} suffix="1–50" />
+              <p className="rounded-xl border border-line bg-elevated/60 px-3 py-2 text-xs leading-relaxed text-muted">
+                После {maxRepliesPerLead} {maxRepliesPerLead === 1 ? 'ответа' : 'ответов'} диалог с этим человеком не продолжаем,
+                даже если он пишет снова. Полезно, чтобы не «переписываться вечно».
+              </p>
+            </div>
+          )}
+          <p className="text-xs text-white/40">
+            В обоих режимах отказ («не пиши мне») сразу закрывает лида — больше ему не пишем.
+          </p>
+        </div>
+      </SectionCard>
+
+      <p className="rounded-xl border border-line bg-elevated/60 px-3 py-2 text-xs leading-relaxed text-muted">
+        «Ответов за запуск» и «На аккаунт» — это диапазон: воркер берёт случайное число между «от» и «до» (для маскировки под живого человека).
+        Если поставить «от» = 0, задача может случайно завершиться после первого же ответа. По умолчанию «от» = «до», то есть лимит фиксированный.
+      </p>
+
       {/* Промпты — выше защиты и таймингов, как во всех модулях (правка 19.08). */}
       {cfg.messagePrompts && (
         <SectionCard icon={<Sparkles size={18} />} title="AI / промпты">
@@ -355,38 +394,6 @@ export function NeuroDialogsModule() {
         )}
       </div>
 
-      {/* §9: сколько сообщений ведём с ОДНИМ лидом — переключатель режима. */}
-      <SectionCard icon={<MessagesSquare size={18} />} title="Переписка с одним лидом" id="sec-settings">
-        <div className="flex flex-col gap-3">
-          <Segmented
-            options={['До целевого действия', 'Фиксировано']}
-            value={replyLimitMode === 'untilTarget' ? 0 : 1}
-            onChange={(i) => setReplyLimitMode(i === 0 ? 'untilTarget' : 'count')}
-          />
-          {replyLimitMode === 'untilTarget' ? (
-            <p className="rounded-xl border border-spark-500/25 bg-spark-500/8 px-3 py-2 text-xs leading-relaxed text-muted">
-              ИИ ведёт диалог, пока лид не выполнит целевое действие цели (статус «Целевое») —
-              или пока не откажется («Закрыт»). Останавливают только суточные лимиты и защита.
-            </p>
-          ) : (
-            <div className="flex flex-col gap-2">
-              <NumberField label="Максимум ответов одному лиду" value={maxRepliesPerLead} onChange={setMaxRepliesPerLead} min={1} max={50} suffix="1–50" />
-              <p className="rounded-xl border border-line bg-elevated/60 px-3 py-2 text-xs leading-relaxed text-muted">
-                После {maxRepliesPerLead} {maxRepliesPerLead === 1 ? 'ответа' : 'ответов'} диалог с этим человеком не продолжаем,
-                даже если он пишет снова. Полезно, чтобы не «переписываться вечно».
-              </p>
-            </div>
-          )}
-          <p className="text-xs text-white/40">
-            В обоих режимах отказ («не пиши мне») сразу закрывает лида — больше ему не пишем.
-          </p>
-        </div>
-      </SectionCard>
-
-      <p className="rounded-xl border border-line bg-elevated/60 px-3 py-2 text-xs leading-relaxed text-muted">
-        «Ответов за запуск» и «На аккаунт» — это диапазон: воркер берёт случайное число между «от» и «до» (для маскировки под живого человека).
-        Если поставить «от» = 0, задача может случайно завершиться после первого же ответа. По умолчанию «от» = «до», то есть лимит фиксированный.
-      </p>
 
       {/*
         Просмотр ЛС убран из НейроДиалогов (правка 18.08). Это была вторая копия
