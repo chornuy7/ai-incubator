@@ -72,6 +72,11 @@ async function runTask(task) {
   await saveTask(task)
   await appendLog(task, 'info', 'Задача запущена', undefined)
 
+  // MR-185: системный промпт берём У ВЛАДЕЛЬЦА ЗАДАЧИ. Раньше он был один на всю
+  // платформу, и правка одного человека уезжала в чужие запуски.
+  const { getUserGlobalPrompt } = await import('../userAiSettings.js')
+  const ownerPrompt = await getUserGlobalPrompt(task.userId).catch(() => '')
+
   const s = task.settings
   // §9: модуль обязан работать «к цели» — тон, ограничения, база знаний и целевое
   // действие живут в ней. Раньше этот воркер цель не читал вообще: комментарии шли
@@ -224,7 +229,7 @@ async function runTask(task) {
           const { text, mode, reason } = await generateComment(
             (post.message || '').trim() || (post.media ? '[медиа]' : ''),
             s.promptIndex ?? 0,
-            resolveSystemPrompt(s) + goalCtx,
+            resolveSystemPrompt(s, ownerPrompt) + goalCtx,
             { avoid: task.usedTexts },
           )
           // Мёртвый ключ — стоп всей задаче: шаблон от лица живых аккаунтов это спам-блок.

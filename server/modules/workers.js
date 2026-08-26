@@ -1,5 +1,6 @@
 import { runSpamUnblock } from '../spamUnblock.js'
 import { generateComment, isAiGenerationEnabled, resolveSystemPrompt } from '../neuroCommenting/commentGenerator.js'
+import { getUserGlobalPrompt } from '../userAiSettings.js'
 import { buildGoalContext, stageForStatus, linksFromGoal, cleanDialogReply, hasPlaceholder } from '../lib/goalContext.js'
 import { upsertMany } from '../channels.js'
 import {
@@ -449,7 +450,7 @@ async function bumpProgress(task, store) {
  * @param {object} s настройки задачи
  * @param {string} [extra] контекст цели/агента, который добавляется к системному тексту
  */
-function pickPrompt(s, weights, extra = '') {
+function pickPrompt(s, weights, extra = '', globalPrompt) {
   const useDist = Array.isArray(weights) && weights.some((w) => Number(w) > 0)
   const index = useDist ? weightedPickIndex(weights) : (s.promptIndex ?? 0)
   const sys = useDist
@@ -467,6 +468,9 @@ function weightedPickIndex(weights) {
 }
 
 export async function runNeuroCommenting(task, store) {
+  // MR-185: системный промпт берём У ВЛАДЕЛЬЦА ЗАДАЧИ. Раньше он был один на всю платформу,
+  // и правка одного человека уезжала в чужие запуски. Читаем один раз на прогон.
+  const ownerPrompt = await getUserGlobalPrompt(task.userId).catch(() => '')
   const s = task.settings
   task.startedAt = Date.now()
   task.status = 'running'
@@ -736,7 +740,7 @@ export async function runNeuroCommenting(task, store) {
               }
             }
             // §3.5: если задано распределение типов — на каждый коммент выбираем тип по весу.
-            const { index: typeIdx, sys: sysPrompt } = pickPrompt(s, s.typeWeights)
+            const { index: typeIdx, sys: sysPrompt } = pickPrompt(s, s.typeWeights, '', ownerPrompt)
             task.usedTexts = task.usedTexts || []
             // §10.5: если включён анализ изображений и в посте есть фото — описываем
             // картинку и добавляем к тексту поста, чтобы коммент был по сути изображения,
@@ -864,6 +868,9 @@ export async function runNeuroCommenting(task, store) {
 
 /** @param {object} task @param {object} store */
 export async function runNeuroChatting(task, store) {
+  // MR-185: системный промпт берём У ВЛАДЕЛЬЦА ЗАДАЧИ. Раньше он был один на всю платформу,
+  // и правка одного человека уезжала в чужие запуски. Читаем один раз на прогон.
+  const ownerPrompt = await getUserGlobalPrompt(task.userId).catch(() => '')
   const s = task.settings
   task.startedAt = Date.now()
   task.status = 'running'
@@ -1017,7 +1024,7 @@ export async function runNeuroChatting(task, store) {
         await noteWait(task, store, chatWait, 'задержка между сообщениями', meta.name)
         if (await breakableDelay(chatWait, store, task)) { await disconnectAccount(client, accountId); break }
         task.usedTexts = task.usedTexts || []
-        const chatPrompt = pickPrompt(s, s.typeWeights, goalCtx + agentCtx)
+        const chatPrompt = pickPrompt(s, s.typeWeights, goalCtx + agentCtx, ownerPrompt)
         const { text: reply, mode, reason, usage } = await generateComment(msg.message || '', chatPrompt.index, chatPrompt.sys, { avoid: task.usedTexts, variantSeed: accountId })
         if (usage?.tokens) await recordTokens({ ...usage, module: task.moduleKey, accountId, taskId: task.id, campaignId: s.campaignId, userId: task.userId })
         if (mode === 'fatal') {
@@ -1700,8 +1707,8 @@ const STAGE_HINT = {
   closed: 'Отказался. Извинись одним предложением и попрощайся.',
 }
 
-function dialogSystemPrompt(settings, goal, goalObj = null, leadStatus = null, stage = null) {
-  const base = resolveSystemPrompt(settings)
+function dialogSystemPrompt(settings, goal, goalObj = null, leadStatus = null, stage = null, globalPrompt) {
+  const base = resolveSystemPrompt(settings, globalPrompt)
   const rules = 'Ты ведёшь личную переписку в Telegram от лица владельца аккаунта. Если в переписке уже есть твоё сообщение — не здоровайся заново и не представляйся: продолжай разговор с того места, где он остановился. Отвечай на языке собеседника, коротко (1–3 предложения), живо и по-человечески. Никогда не сообщай, что ты ИИ или бот.'
   // §9: прощание — не отдельный механизм, а правило промта. ИИ видит историю переписки
   // и сам понимает, что цель достигнута; тогда благодарит и закрывает диалог, а не давит дальше.
@@ -1755,6 +1762,9 @@ function findLeadByPeer(leads, peer) {
 }
 
 export async function runNeuroDialogs(task, store) {
+  // MR-185: системный промпт берём У ВЛАДЕЛЬЦА ЗАДАЧИ. Раньше он был один на всю платформу,
+  // и правка одного человека уезжала в чужие запуски. Читаем один раз на прогон.
+  const ownerPrompt = await getUserGlobalPrompt(task.userId).catch(() => '')
   const s = task.settings
   task.startedAt = Date.now()
   task.status = 'running'
@@ -2004,10 +2014,10 @@ export async function runNeuroDialogs(task, store) {
           const effStatus = weWroteBefore && (rawStatus === 'cold') ? 'contacted' : rawStatus
           // В дожиме — свой тон: человек уже прошёл воронку, продавать ему то же
           // самое повторно это верный способ получить блокировку.
-          const sysPrompt = dialogSystemPrompt(s, goal, goalObj, effStatus, stageForStatus(goalObj?.stages, effStatus))
+          const sysPrompt = dialogSystemPrompt(s, goal, goalObj, effStatus, stageForStatus(goalObj?.stages, effStatus), ownerPrompt)
             + (isFollowUp ? followUpPrompt(fuOwner, rawStatus, decision.left) : '')
           // Тип промпта — по распределению (если задано), как в остальных модулях.
-          const dlgPrompt = pickPrompt(s, s.typeWeights)
+          const dlgPrompt = pickPrompt(s, s.typeWeights, '', ownerPrompt)
           const gen = await generateComment(prompt, dlgPrompt.index, sysPrompt, accountId)
           if (gen?.usage?.tokens) await recordTokens({ ...gen.usage, module: task.moduleKey, accountId, taskId: task.id, campaignId: s.campaignId, userId: task.userId })
           const mode = gen.mode
@@ -3056,6 +3066,9 @@ async function sendComposedMessage(client, peer, text, mediaUrls = []) {
 }
 
 export async function runMailing(task, store) {
+  // MR-185: системный промпт берём У ВЛАДЕЛЬЦА ЗАДАЧИ. Раньше он был один на всю платформу,
+  // и правка одного человека уезжала в чужие запуски. Читаем один раз на прогон.
+  const ownerPrompt = await getUserGlobalPrompt(task.userId).catch(() => '')
   const s = task.settings || {}
   const accountIds = Array.isArray(s.accountIds) ? s.accountIds : []
   // §8.4: цель рассылки — номер ИЛИ юзернейм. Раньше принимались только номера,
@@ -3330,7 +3343,7 @@ export async function runMailing(task, store) {
             (message || opener) ? `Опирайся на этот текст как на образец смысла и тона:
 «${message || opener}»` : '',
           ].filter(Boolean).join(' ')
-          const mailPrompt = pickPrompt(s, s.typeWeights, goalCtx + agentCtx)
+          const mailPrompt = pickPrompt(s, s.typeWeights, goalCtx + agentCtx, ownerPrompt)
           const gen = await generateComment(openerTask, mailPrompt.index, mailPrompt.sys, account)
           if (gen?.usage?.tokens) await recordTokens({ ...gen.usage, module: task.moduleKey, accountId: account, taskId: task.id, campaignId: s.campaignId, userId: task.userId })
           // Чистим так же, как в диалогах: модель повторяет ярлыки промпта и оставляет
