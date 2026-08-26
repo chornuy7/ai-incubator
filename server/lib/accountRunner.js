@@ -1,4 +1,5 @@
 import { loadSessionString, createClient } from '../tgAuth.js'
+import { logTime } from './accountFatigue.js'
 import { getAccountMeta, setAccountMeta, setAccountStatus } from '../accountsMeta.js'
 import { isAccountRunnable, extractFloodSeconds, sleep } from './protection.js'
 import { assertAccountAvailable, getAccountLock } from './accountLocks.js'
@@ -191,7 +192,7 @@ export async function applySpamblockPolicy(task, accountId, store, accountName) 
   // первого спамблока; `reconcileExpiredStatuses` вернёт аккаунт в active по истечении.
   const until = Date.now() + (safety.spamblockHours ?? 24) * 3600 * 1000
   await setStatus(accountId, 'spamblock', { code: 'SPAM', reason: 'Спамблок — аккаунт помечен и пропускается', until, task })
-  await store.appendLog(task, 'warning', `Спамблок — аккаунт выведен до ${new Date(until).toLocaleString('ru-RU')}`, accountName)
+  await store.appendLog(task, 'warning', `Спамблок — аккаунт выведен до ${logTime(until, true)}`, accountName)
   await store.saveTask(task)
   return true
 }

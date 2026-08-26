@@ -302,6 +302,24 @@ export function rollRetryMs(chance, now = Date.now()) {
  */
 export const SCHEDULE_TZ = process.env.SCHEDULE_TZ || 'Europe/Kyiv'
 
+/**
+ * Время для ЛОГА — в зоне распорядка, а не в зоне сервера (правка 27.08).
+ *
+ * Прод стоит в UTC, владелец в Киеве (+3), а дашборд рисует отметки логов браузером,
+ * то есть по-киевски. Из-за этого сервер писал внутрь строки своё время: в 00:18 в логе
+ * появлялось «все аккаунты отдыхают, вернутся в 21:19» — обещание вернуться в прошлое.
+ * Тот же перекос был у спамблока: «выведен до 21:11» вместо «до 00:11 следующего дня».
+ *
+ * Зона берётся та же, по которой считается распорядок: если аккаунт «работает до 22:00»
+ * по Киеву, то и «вернётся в 21:19» должно означать киевские 21:19.
+ */
+export function logTime(ms, withDate = false) {
+  const d = new Date(ms)
+  const opts = { timeZone: SCHEDULE_TZ, hour: '2-digit', minute: '2-digit' }
+  if (!withDate) return d.toLocaleTimeString('ru-RU', opts)
+  return d.toLocaleString('ru-RU', { ...opts, day: '2-digit', month: '2-digit', year: 'numeric' })
+}
+
 export function scheduleHour(ms = Date.now(), tz = SCHEDULE_TZ) {
   try {
     const h = new Intl.DateTimeFormat('en-GB', { timeZone: tz, hour: '2-digit', hour12: false }).format(new Date(ms))

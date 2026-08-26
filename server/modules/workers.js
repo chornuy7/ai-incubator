@@ -108,7 +108,7 @@ import {
   pickCommentCandidates, trackIdlePass, markIdleStop, warmingPace, pickWeightedKey, idleWaitPlan, WARM_WINDOW_MS, msUntilHour, inActiveWindow,
 } from '../lib/workerLoop.js'
 import { channelSignals, channelScore, isActive, detectLang } from '../lib/channelScore.js'
-import { scheduleHour } from '../lib/accountFatigue.js'
+import { scheduleHour, logTime } from '../lib/accountFatigue.js'
 import { limitReached, incAction } from '../lib/dailyActions.js'
 import { cleanMailingNumbers, classifyMailingTargets, pickMailingAccount } from '../lib/mailing.js'
 import { listLeads, sortDialogsByLeadPriority, upsertLead, updateLead } from '../leads.js'
@@ -538,7 +538,7 @@ export async function runNeuroCommenting(task, store) {
           // вероятности прямо противоречил соседней строке лога (правка 19.08).
           // Во сколько вернётся ближайший аккаунт — это первое, что спрашивают, глядя
           // на «ждём N мин» (правка 19.08). Задача при этом остаётся в работе.
-          const backAt = new Date(idleUntil).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+          const backAt = logTime(idleUntil)
           // Секунды, а не «1 мин»: почти все задержки здесь секундные (переключение
           // модулей, повтор броска), и округление вверх превращало 7 секунд в минуту.
           // Ждём РОВНО до окна — к следующей попытке аккаунт уже готов, а не «попробуем
@@ -913,7 +913,7 @@ export async function runNeuroChatting(task, store) {
           // вероятности прямо противоречил соседней строке лога (правка 19.08).
           // Во сколько вернётся ближайший аккаунт — это первое, что спрашивают, глядя
           // на «ждём N мин» (правка 19.08). Задача при этом остаётся в работе.
-          const backAt = new Date(idleUntil).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+          const backAt = logTime(idleUntil)
           // Секунды, а не «1 мин»: почти все задержки здесь секундные (переключение
           // модулей, повтор броска), и округление вверх превращало 7 секунд в минуту.
           // Ждём РОВНО до окна — к следующей попытке аккаунт уже готов, а не «попробуем
@@ -1139,7 +1139,7 @@ export async function runMassReact(task, store) {
           // вероятности прямо противоречил соседней строке лога (правка 19.08).
           // Во сколько вернётся ближайший аккаунт — это первое, что спрашивают, глядя
           // на «ждём N мин» (правка 19.08). Задача при этом остаётся в работе.
-          const backAt = new Date(idleUntil).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+          const backAt = logTime(idleUntil)
           // Секунды, а не «1 мин»: почти все задержки здесь секундные (переключение
           // модулей, повтор броска), и округление вверх превращало 7 секунд в минуту.
           // Ждём РОВНО до окна — к следующей попытке аккаунт уже готов, а не «попробуем
@@ -1386,7 +1386,7 @@ export async function runMassLooking(task, store) {
           // вероятности прямо противоречил соседней строке лога (правка 19.08).
           // Во сколько вернётся ближайший аккаунт — это первое, что спрашивают, глядя
           // на «ждём N мин» (правка 19.08). Задача при этом остаётся в работе.
-          const backAt = new Date(idleUntil).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+          const backAt = logTime(idleUntil)
           // Секунды, а не «1 мин»: почти все задержки здесь секундные (переключение
           // модулей, повтор броска), и округление вверх превращало 7 секунд в минуту.
           // Ждём РОВНО до окна — к следующей попытке аккаунт уже готов, а не «попробуем
@@ -3425,7 +3425,7 @@ export async function runMailing(task, store) {
         }
         const plan = idleWaitPlan(backAt)
         if (!plan.wait) { await store.appendLog(task, 'warning', 'Все аккаунты потока недоступны — завершаем'); break }
-        await noteWait(task, store, plan.ms, `все аккаунты отдыхают, вернутся в ${new Date(backAt).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })}`)
+        await noteWait(task, store, plan.ms, `все аккаунты отдыхают, вернутся в ${logTime(backAt)}`)
         if (await breakableDelay(plan.ms, store, task)) break
         myAccounts.push(...restingNow)
         continue
