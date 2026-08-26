@@ -2868,16 +2868,31 @@ function PricesTab() {
   const coinCost = (() => {
     const maxUsd = prices.maxCost?.max || prices.maxCost?.usd || 0
     if (!maxUsd) return null
+    // Стоимость модельного токена в $ — та же, по которой у действий считаются «наши затраты».
+    const tUsd = prices.tokenUsd ?? prices.tokenUsdComputed ?? 0
     let worst = 0
     let worstKey = ''
+    // ПО ФАКТУ: тот же расчёт, но реальный средний расход токенов вместо максимума
+    // (запрос заказчика по MR-187: «худший случай везде одинаковый — добавь ещё, сколько
+    // на данный момент нам обходится, как у действий»). Берём самый расходный по факту
+    // модуль — честная верхняя граница из реальных данных журнала.
+    let real = 0
+    let realKey = ''
     for (const m of prices.modules) {
       if (!m.usesAi) continue
       const action = Number(draft[m.key]?.action ?? m.action ?? 0)
       if (!action) continue
-      const perCoin = maxUsd / action // $ на ИИ, если весь ⚡ потратить в этом модуле
+      const perCoin = maxUsd / action // $ на ИИ по МАКСИМУМУ, если весь ⚡ потратить в этом модуле
       if (perCoin > worst) { worst = perCoin; worstKey = m.title || m.key }
+      const avg = prices.avgTokens?.[m.key] ?? 0
+      if (avg > 0 && tUsd > 0) {
+        const realPerCoin = (tUsd * avg) / action // $ на ИИ по ФАКТУ, если ⚡ потратить здесь
+        if (realPerCoin > real) { real = realPerCoin; realKey = m.title || m.key }
+      }
     }
-    return worst > 0 ? { usd: worst, module: worstKey } : null
+    return worst > 0
+      ? { usd: worst, module: worstKey, actual: real > 0 ? real : null, actualModule: realKey }
+      : null
   })()
 
   const save = async () => {
@@ -3237,6 +3252,13 @@ function PricesTab() {
                         `НАМ ОБХОДИТСЯ: до $${coinCost.usd.toFixed(4)} за ⚡ — худший случай,`,
                         `  если весь ⚡ потратить в самом дорогом ИИ-модуле («${coinCost.module}»).`,
                         '',
+                        coinCost.actual
+                          ? `СЕЙЧАС ПО ФАКТУ: ≈ $${coinCost.actual.toFixed(6)} за ⚡ — реальный средний расход`
+                          : 'СЕЙЧАС ПО ФАКТУ: нет данных — ИИ-модули ещё не запускали.',
+                        coinCost.actual
+                          ? `  (по журналу расхода; самый расходный по факту — «${coinCost.actualModule}»). Худший случай выше факта в ${(coinCost.usd / coinCost.actual).toFixed(1)} раза.`
+                          : '',
+                        '',
                         'Это чистая математика по токенам: только расход на ИИ. Аккаунты, прокси,',
                         'трафик и риск банов сюда НЕ входят — их покрывает запас сверху.',
                         '',
@@ -3248,7 +3270,7 @@ function PricesTab() {
                     <span className={cn(coinCost && per <= coinCost.usd ? 'text-rose-300' : 'text-faint')}>
                       {per.toFixed(3)} $ / ⚡
                       {coinCost
-                        ? <> · нам до ${coinCost.usd.toFixed(3)} · ×{(per / coinCost.usd).toFixed(1)}</>
+                        ? <> · нам до ${coinCost.usd.toFixed(3)}{coinCost.actual ? <> · факт ${coinCost.actual.toFixed(4)}</> : ''} · ×{(per / coinCost.usd).toFixed(1)}</>
                         : <> · себестоимость: нет данных</>}
                     </span>
                   </Tip>
