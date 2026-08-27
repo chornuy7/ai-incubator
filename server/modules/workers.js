@@ -841,7 +841,7 @@ export async function runNeuroCommenting(task, store) {
                 const диагноз = await diagnoseWriteBan(client, commentErr.writePeer || channel)
                 await store.appendLog(task, 'error', диагноз.text, meta.name)
                 if (диагноз.scope === 'account') {
-                  await applySpamblockPolicy(task, accountId, store, meta.name)
+                  await applySpamblockPolicy(task, accountId, store, meta.name, { until: диагноз.until })
                   break
                 }
               } else {

@@ -120,6 +120,14 @@ export async function joinDiscussionGroupIfNeeded(client, channel) {
         return null
       }
     }
+    /*
+     * Если по ссылке лежит КАНАЛ, значит мы уже стоим в группе обсуждения и вступать
+     * некуда (разбор 27.08). У группы `linkedChatId` указывает НА канал — обратная
+     * сторона той же связи. Раньше мы этого не различали и радостно вступали в канал,
+     * записывая в лог «Уже в группе обсуждения»; комментарий потом уходил в канал, куда
+     * обычный участник писать не может, и аккаунт получал за это спамблок ни за что.
+     */
+    if (linked?.broadcast) return null
     const r = await joinPeerIfNeeded(client, linked)
     return { peer: linked, ...r }
   } catch {
@@ -204,6 +212,22 @@ export async function fetchPosts(client, channel, limit = 15) {
 
 /** @param {import('telegram').TelegramClient} client @param {import('@types/telegram').Entity} channel @param {number} postId @param {string} text */
 export async function sendChannelComment(client, channel, postId, text) {
+  /*
+   * Цель может быть САМОЙ группой обсуждения, а не каналом (разбор 27.08: владелец дал
+   * @olfoIa — это «AI INCUBATOR Chat», группа, а не канал). Тогда комментарий — это
+   * обычный ответ на пост В ЭТОЙ ЖЕ группе: ни искать обсуждение, ни звать `commentTo`
+   * не нужно. Прежний путь уводил отправку в связанный канал и падал там с
+   * USER_BANNED_IN_CHANNEL — писать в канал обычный участник и не должен.
+   */
+  if (channel?.broadcast === false) {
+    try {
+      await client.sendMessage(channel, { message: text, replyTo: postId })
+      return
+    } catch (e) {
+      e.writePeer = channel
+      throw e
+    }
+  }
   const linked = await joinDiscussionGroupIfNeeded(client, channel)
   try {
     await client.sendMessage(channel, { message: text, commentTo: postId })
@@ -247,19 +271,43 @@ export async function sendChannelComment(client, channel, postId, text) {
  * аккаунта. Разница принципиальная: в одном случае надо менять чат, в другом — снимать
  * спамблок, и пока мы путали их, оператор чинил не то.
  *
- * Отличаем правами участника, без обращения к боту: если чат ограничил именно нас — это
- * видно в ChannelParticipantBanned/bannedRights; если ограничений нет, а писать нельзя —
- * ограничение на стороне аккаунта.
+ * Отличаем правами участника: если чат ограничил именно нас — это видно в
+ * ChannelParticipantBanned/bannedRights; если ограничений нет, а писать нельзя — похоже
+ * на ограничение аккаунта.
  *
- * @returns {Promise<{scope:'account'|'chat'|'unknown', text:string}>}
+ * «Похоже» — не приговор (правка 27.08). По одному только «прав не нашли» мы выводили
+ * аккаунт из работы на СУТКИ, а причин молчаливого запрета больше двух: чат может
+ * требовать премиум, подписку на канал, время в группе или держать заявочный режим.
+ * Поэтому вывод об АККАУНТЕ теперь подтверждаем у @SpamBot — это ответ самого Telegram,
+ * и он же называет срок. Говорит «чист» — виноват чат, аккаунт не трогаем.
+ *
+ * @returns {Promise<{scope:'account'|'chat'|'unknown', text:string, until?:number|null}>}
  */
-export async function diagnoseWriteBan(client, peer) {
+export async function diagnoseWriteBan(client, peer, opts = {}) {
   if (!peer) return { scope: 'unknown', text: 'Telegram запретил отправку — причину определить не удалось' }
   try {
     const res = await client.invoke(new Api.channels.GetParticipant({ channel: peer, participant: 'me' }))
     const part = res.participant
     if (part?.className === 'ChannelParticipantBanned' || part?.bannedRights?.sendMessages === true) {
       return { scope: 'chat', text: 'Запрет от админов чата: этому аккаунту здесь писать нельзя (аккаунт цел)' }
+    }
+    /*
+     * Писали в КАНАЛ, а не в чат (разбор 27.08). В канал обычный участник не пишет
+     * никогда — Telegram отвечает на это тем же USER_BANNED_IN_CHANNEL. Прав участника
+     * при этом нет никаких (`ChannelParticipantSelf` без bannedRights), а поиск чата ниже
+     * ничего не находит, потому что единственный чат в ответе — сам канал. Раньше отсюда
+     * следовал вывод «значит, спамблок аккаунта», и живой аккаунт выводился из работы на
+     * сутки за чужую ошибку в настройке цели.
+     */
+    const самЧат = res.chats?.find((c) => `${c.id}` === `${peer?.id ?? ''}`)
+    const каналЛи = самЧат?.broadcast ?? peer?.broadcast
+    const админ = part?.className === 'ChannelParticipantCreator' || !!part?.adminRights
+    if (каналЛи && !админ) {
+      return {
+        scope: 'chat',
+        text: 'Писали в КАНАЛ, а туда обычный участник и не может — комментарий должен уходить в группу обсуждения.'
+          + ' Аккаунт цел: проверьте, включены ли у канала комментарии, и укажите целью сам канал, а не его чат',
+      }
     }
     const chat = res.chats?.find((c) => !c.broadcast)
     if (chat?.defaultBannedRights?.sendMessages === true) {
@@ -268,9 +316,27 @@ export async function diagnoseWriteBan(client, peer) {
   } catch {
     return { scope: 'unknown', text: 'Telegram запретил отправку — права участника прочитать не удалось' }
   }
+  const { checkSpamblock } = await import('./spamAppeal.js')
+  const бот = await checkSpamblock(client, opts) // opts.waitMs — пауза на ответ бота (в тестах короткая)
+  if (бот.state === 'clean') {
+    return {
+      scope: 'chat',
+      text: 'Писать не даёт ЧАТ, а не спамблок: @SpamBot подтвердил, что ограничений на аккаунте нет.'
+        + ' Скорее всего чат требует премиум, подписку или время в группе. Аккаунт продолжает работать.',
+    }
+  }
+  if (бот.state === 'blocked') {
+    return {
+      scope: 'account',
+      until: бот.until || null,
+      text: `Спамблок аккаунта подтверждён @SpamBot${бот.until ? ` (до ${new Date(бот.until).toLocaleString('ru-RU')})` : ''}:`
+        + ` «${бот.text}». Лечится модулем «Снятие спамблока»`,
+    }
+  }
   return {
     scope: 'account',
-    text: 'Спамблок аккаунта: чат открыт на запись и личных ограничений в нём нет — значит, ограничение на стороне аккаунта. Лечится модулем «Снятие спамблока»',
+    text: 'Похоже на спамблок аккаунта: чат открыт на запись, личных ограничений в нём нет, а писать не даёт.'
+      + ' Подтвердить у @SpamBot не вышло — проверьте модулем «Снятие спамблока»',
   }
 }
 

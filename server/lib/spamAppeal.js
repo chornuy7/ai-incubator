@@ -185,3 +185,57 @@ export async function appealSpamblock(client, opts = {}) {
     return { state: 'unknown', text: e instanceof Error ? e.message : '', appealed: false }
   }
 }
+
+/**
+ * Срок ограничения из ответа @SpamBot.
+ *
+ * Бот называет дату словами и в разных форматах («until Aug 28, 2026, 12:35 UTC»,
+ * «до 28.08.2026»). Разбираем консервативно: берём только полную дату и только если она
+ * в будущем и не дальше года — иначе вернём null и вызывающий подставит свой срок.
+ * Промахнуться с датой хуже, чем её не знать: по ней аккаунт вернётся в работу.
+ */
+const MONTHS = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec']
+export function parseSpamUntil(text, now = Date.now()) {
+  const s = String(text || '')
+  let ts = null
+  const dotted = s.match(/(\d{1,2})\.(\d{1,2})\.(\d{4})(?:[,\s]+(\d{1,2}):(\d{2}))?/)
+  if (dotted) {
+    ts = Date.UTC(Number(dotted[3]), Number(dotted[2]) - 1, Number(dotted[1]), Number(dotted[4] || 0), Number(dotted[5] || 0))
+  } else {
+    const worded = s.match(/([A-Za-z]{3,9})\s+(\d{1,2}),?\s+(\d{4})(?:[,\s]+(?:at\s+)?(\d{1,2}):(\d{2}))?/)
+    if (worded) {
+      const mi = MONTHS.indexOf(worded[1].slice(0, 3).toLowerCase())
+      if (mi >= 0) ts = Date.UTC(Number(worded[3]), mi, Number(worded[2]), Number(worded[4] || 0), Number(worded[5] || 0))
+    }
+  }
+  if (!ts || Number.isNaN(ts)) return null
+  if (ts <= now || ts > now + 400 * 86400_000) return null
+  return ts
+}
+
+/**
+ * СПРОСИТЬ у @SpamBot, ограничен ли аккаунт. Только чтение: `/start` и разбор ответа —
+ * ни кнопок, ни жалоб (этим занимается `appealSpamblock` и только по команде оператора).
+ *
+ * Нужна там, где мы раньше ставили спамблок ДОГАДКОЙ. Вывод «чат открыт, личных
+ * ограничений нет — значит, дело в аккаунте» верен не всегда: чат может требовать
+ * подписку, премиум или время в группе, а платит за ошибку аккаунт — сутки простоя.
+ * @SpamBot отвечает от самого Telegram, и он же называет срок.
+ *
+ * @returns {Promise<{state:'clean'|'blocked'|'unknown', text:string, until:number|null}>}
+ */
+export async function checkSpamblock(client, opts = {}) {
+  const wait = Number.isFinite(opts.waitMs) ? opts.waitMs : 3000
+  try {
+    const bot = await client.getEntity('SpamBot')
+    await client.sendMessage(bot, { message: '/start' })
+    await sleep(wait)
+    const text = ((await client.getMessages(bot, { limit: 1 }))?.[0]?.message || '').trim()
+    if (!text) return { state: 'unknown', text: '', until: null }
+    if (CLEAN.test(text)) return { state: 'clean', text: text.slice(0, 300), until: null }
+    if (BLOCKED.test(text)) return { state: 'blocked', text: text.slice(0, 300), until: parseSpamUntil(text) }
+    return { state: 'unknown', text: text.slice(0, 300), until: null }
+  } catch (e) {
+    return { state: 'unknown', text: e instanceof Error ? e.message : '', until: null }
+  }
+}
