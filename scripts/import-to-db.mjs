@@ -220,6 +220,50 @@ const STORES = {
       }
     },
   },
+  links: {
+    title: 'счётчик переходов',
+    file: () => process.env.LINKS_FILE || dataPath('links.json'),
+    migration: '2026-08-27-link-tracker.sql',
+    tables: ['tracked_links', 'link_hits'],
+    // Переходы лежали в ЖУРНАЛЕ строк (jsonl), своего id у записи нет — собираем его из
+    // ссылки, времени и отпечатка, чтобы повторный запуск не задвоил клики.
+    readSource: async () => {
+      const links = await readJson(process.env.LINKS_FILE || dataPath('links.json'), [])
+      const raw = await fs.readFile(process.env.LINK_HITS_FILE || dataPath('link-hits.jsonl'), 'utf8').catch(() => '')
+      const hits = []
+      for (const line of raw.split('\n')) {
+        if (!line.trim()) continue
+        try { hits.push(JSON.parse(line)) } catch { /* битую строку журнала пропускаем */ }
+      }
+      return [{ links: Array.isArray(links) ? links : [], hits }]
+    },
+    rows: ([{ links, hits }]) => {
+      const codes = new Set(links.map((l) => l?.code).filter(Boolean))
+      return {
+        tracked_links: links.filter((l) => l && l.id && l.code).map((l) => ({
+          id: l.id,
+          code: l.code,
+          user_id: l.userId || null,
+          url: String(l.url || ''),
+          title: String(l.title || ''),
+          goal_id: l.goalId || null,
+          campaign_id: l.campaignId || null,
+          hits: Number(l.hits) || 0,
+          unique_hits: Number(l.uniqueHits) || 0,
+          created_at: Number(l.createdAt) || Date.now(),
+        })),
+        // Переход без своей ссылки база не примет (внешний ключ) — такие пропускаем,
+        // иначе перенос встанет целиком из-за одной осиротевшей строки журнала.
+        link_hits: hits.filter((h) => h && h.code && codes.has(h.code)).map((h) => ({
+          id: `${h.code}-${h.ts || 0}-${h.fp || ''}`,
+          code: h.code,
+          fp: String(h.fp || ''),
+          ref: String(h.ref || ''),
+          ts: Number(h.ts) || 0,
+        })),
+      }
+    },
+  },
 }
 
 /** Тип восстанавливаем по расширению: имя файла на диске — единственное, что о нём известно. */

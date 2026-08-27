@@ -62,6 +62,13 @@ const STORES = [
     tables: ['automation_rules', 'automation_rule_accounts'],
     notColumns: ['automation_rules', 'automation_rule_accounts', 'schema cache'],
   },
+  {
+    name: 'счётчик переходов',
+    sql: '2026-08-27-link-tracker.sql',
+    code: 'linkTracker.js',
+    tables: ['tracked_links', 'link_hits'],
+    notColumns: ['tracked_links', 'link_hits', 'schema cache'],
+  },
 ]
 
 const readSql = (f) => fs.readFile(new URL(`../../supabase/migrations/${f}`, import.meta.url), 'utf8')
@@ -227,4 +234,22 @@ test('автоматизация: массовой перезаписи прав
   // чтением и записью. Экспортирована была, но не вызывалась ниоткуда.
   const code = await readCode('automation/store.js')
   assert.ok(!/export async function replaceRules/.test(code), 'replaceRules не должна возвращаться')
+})
+
+test('счётчик переходов: уникальность ищется по индексу, а не чтением всего журнала', async () => {
+  // Была главная тормозная точка: на каждый клик читался ВЕСЬ файл переходов, и с
+  // ростом кликов чтение только росло. Индекс (code, fp) делает это одним запросом.
+  const sql = await readSql('2026-08-27-link-tracker.sql')
+  assert.ok(/create index if not exists link_hits_unique_idx on link_hits \(code, fp\)/.test(sql),
+    'нужен индекс (code, fp) — по нему проверяется «был ли уже такой посетитель»')
+  assert.ok(/code\s+text not null unique/.test(sql), 'код ссылки обязан быть уникальным: по нему находят редирект')
+})
+
+test('счётчик переходов: сырые адреса посетителей не хранятся', async () => {
+  const sql = await readSql('2026-08-27-link-tracker.sql')
+  const cols = columnsOf(sql, 'link_hits')
+  assert.ok(cols.has('fp'), 'переход опознаётся отпечатком')
+  assert.ok(!cols.has('ip') && !cols.has('user_agent'), 'ради счётчика адреса посетителей держать незачем')
+  const code = await readCode('linkTracker.js')
+  assert.ok(/createHash\('sha256'\)/.test(code), 'отпечаток обязан быть хешем')
 })
