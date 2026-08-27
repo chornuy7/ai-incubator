@@ -490,6 +490,15 @@ function UsersTab() {
   // оттуда: иначе удалённый шаблон остаётся в выпадающем списке до перезагрузки.
   useEffect(() => onRolesChanged(() => { void fetchRoles().then(setRoles).catch(() => {}) }), [])
 
+  /** Привязать осиротевшего сотрудника к текущему владельцу: наследование пойдёт сразу. */
+  async function attachToMe(u: User) {
+    if (!sessionUser?.id) return
+    try {
+      const upd = await updateUser(u.id, { parentId: sessionUser.id })
+      setUsers((prev) => prev.map((x) => (x.id === upd.id ? upd : x)))
+    } catch (e) { setErr(e instanceof Error ? e.message : 'Не удалось привязать') }
+  }
+
   async function toggleActive(u: User) {
     try {
       const upd = await updateUser(u.id, { active: !u.active })
@@ -609,6 +618,35 @@ function UsersTab() {
                     {!u.active && <Badge tone="rose">Отключён</Badge>}
                   </div>
                   <div className="truncate text-xs text-white/50">{u.email}</div>
+                  {/*
+                    Сотрудник без владельца (27.08). Наследование и баланса, и подписки идёт
+                    ВВЕРХ по parentId: нет владельца — нет ни денег, ни модулей, и человек
+                    видит «Баланс на нуле», хотя у владельца всё есть. Так рождались субы,
+                    созданные админом платформы: сервер подставлял владельца только тем, кто
+                    создаёт НЕ будучи админом. Создание починено, но записи остались — здесь
+                    их видно и можно привязать, а не пересоздавать.
+                  */}
+                  {!isAdmin && !u.parentId && (
+                    <div className="mt-1.5 flex flex-wrap items-center gap-2 rounded-lg border border-amber-500/40 bg-amber-500/10 px-2.5 py-1.5">
+                      <span className="text-[11px] leading-snug text-amber-200">
+                        Не привязан к владельцу — не наследует ни баланс, ни модули подписки. У него всё по нулям.
+                      </span>
+                      {/*
+                        Привязывать может только админ платформы. Владельцу это дало бы
+                        способ «усыновить» чужого пользователя и получить над ним контроль —
+                        а своих субов сервер и так заводит под ним автоматически.
+                      */}
+                      {sessionUser?.isAdmin && (
+                        <button
+                          type="button"
+                          onClick={() => void attachToMe(u)}
+                          className="ml-auto h-7 shrink-0 rounded-lg bg-amber-500/20 px-2.5 text-[11px] font-semibold text-amber-200 hover:bg-amber-500/30"
+                        >
+                          Привязать ко мне
+                        </button>
+                      )}
+                    </div>
+                  )}
                   {worktime[u.id] && (
                     <div className="mt-1 flex items-center gap-2 text-[11px] text-white/45">
                       {worktime[u.id].open && <span className="inline-flex items-center gap-1 text-spark-300"><span className="h-1.5 w-1.5 rounded-full bg-spark-400" /> в сети</span>}
