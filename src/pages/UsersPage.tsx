@@ -1,11 +1,12 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { Users2, Plus, Trash2, ShieldCheck, Check, Users, Wifi, ChevronDown, ChevronRight, Search, Package } from 'lucide-react'
 import { PageHeader, Card, EmptyState, Badge, Modal, Switch } from '@/shared/ui'
 import { confirmDialog } from '@/shared/lib/dialog'
 import {
   fetchUsers, createUser, updateUser, deleteUser, fetchWorktime, fetchUserAccess, saveUserAccess,
-  type User, type WorkSummary,
+  fetchSubWallets, transferToSub,
+  type User, type WorkSummary, type SubWallet,
 } from '@/api/usersApi'
 import { fetchRoles, fetchRbacCatalog, accessFromRole, onRolesChanged, type Role, type Perm, type CatalogModule, type CatalogBlock } from '@/api/rolesApi'
 import { RolesPage, Pager, PAGE_SIZE } from '@/pages/RolesPage'
@@ -428,7 +429,7 @@ function UsersTab() {
   // запросом (PUT .../access), который заводит ему персональную роль. Раньше здесь по
   // умолчанию стоял системный «role_moderator» — он выдавал модули, которых владелец не
   // выбирал, и после уточнения 21.08 («роль — шаблон») превратился бы в тихую раздачу прав.
-  const [form, setForm] = useState<{ email: string; name: string; password: string; roleIds: string[]; balanceMode: 'shared' | 'individual'; tokenLimit: string }>({ email: '', name: '', password: '', roleIds: [], balanceMode: 'shared', tokenLimit: '' })
+  const [form, setForm] = useState<{ email: string; name: string; password: string; roleIds: string[]; balanceMode: 'shared' | 'individual' }>({ email: '', name: '', password: '', roleIds: [], balanceMode: 'shared' })
   // Доступ будущего суба: id появится только после создания, поэтому выбор копится в форме,
   // а PUT /api/users/:id/access уходит сразу следом (см. submit).
   const [newAccess, setNewAccess] = useState<AccessDraft>(EMPTY_ACCESS)
@@ -503,7 +504,7 @@ function UsersTab() {
     } catch (e) { setErr(e instanceof Error ? e.message : 'Ошибка') }
   }
   function resetForm() {
-    setForm({ email: '', name: '', password: '', roleIds: [], balanceMode: 'shared', tokenLimit: '' })
+    setForm({ email: '', name: '', password: '', roleIds: [], balanceMode: 'shared' })
     setNewAccess(EMPTY_ACCESS)
     setAppliedTpl('')
   }
@@ -516,7 +517,6 @@ function UsersTab() {
         email: form.email, name: form.name, password: form.password, roleIds: form.roleIds,
         // §4.2 (MR-30): режим баланса и лимит токенов для индивидуального.
         balanceMode: form.balanceMode,
-        tokenLimit: form.balanceMode === 'individual' && form.tokenLimit ? Number(form.tokenLimit) : null,
       })
     } catch (e) { setErr(e instanceof Error ? e.message : 'Ошибка'); setSaving(false); return }
     setUsers((prev) => [...prev, created])
@@ -655,6 +655,10 @@ function UsersTab() {
                 {/* Уточнение владельца 21.08: что субу ПОКАЗЫВАТЬ — тоже решается здесь, рядом
                     с выдачей аккаунтов, а не на отдельной странице ролей. */}
                 {!locked && !isAdmin && <SubModuleAccessEditor sub={u} templates={templates} />}
+                {/* Кошелёк — рядом с доступами: это тоже «что сотруднику разрешено», только в монетах. */}
+                {!locked && !isAdmin && (
+                  <SubWalletEditor sub={u} onMode={(upd) => setUsers((prev) => prev.map((x) => (x.id === upd.id ? upd : x)))} />
+                )}
               </Card>
             )
           })}
@@ -708,10 +712,16 @@ function UsersTab() {
                 <span><span className="font-medium text-fg">Индивидуальный лимит токенов</span><span className="block text-xs text-white/45">Отдельный кошелёк суба с ограничением.</span></span>
               </label>
               {form.balanceMode === 'individual' && (
-                <div className="flex flex-wrap items-center gap-2 pl-2">
-                  <input type="number" min={0} value={form.tokenLimit} onChange={(e) => setForm((f) => ({ ...f, tokenLimit: e.target.value }))} placeholder="Лимит токенов" className="input h-9 w-40 text-sm" />
-                  <span className="text-xs text-white/50">{form.tokenLimit ? `≈ ${Math.floor(Number(form.tokenLimit) / 1000).toLocaleString('ru-RU')} действий (ориентировочно)` : 'укажите лимит токенов'}</span>
-                </div>
+                /*
+                  Поле «лимит токенов» отсюда убрано (27.08). Оно записывалось и НИГДЕ не
+                  проверялось: ни расход не ограничивало, ни монет не выдавало — сотрудник
+                  получал пустой кошелёк и не мог работать вовсе. Монеты теперь выдаются
+                  после создания, в карточке сотрудника, где видно и остаток.
+                */
+                <p className="pl-2 text-xs leading-relaxed text-white/50">
+                  Монеты выдадите после создания — в карточке сотрудника появится его кошелёк:
+                  сколько выдано, сколько потрачено и кнопки «Выдать» / «Забрать».
+                </p>
               )}
             </div>
           </div>
@@ -745,6 +755,107 @@ function UsersTab() {
  * потратил, а здесь это видно суммой за период. Начисления в расход не считаем: выдача
  * себе же — не трата.
  */
+/**
+ * Кошелёк сотрудника (решение владельца 27.08: «писать будем, сколько мы токенов ему
+ * выдали… чтобы можно было редактировать токены, выдать больше или убрать и изменить на
+ * общий баланс»).
+ *
+ * До этого режим «личный кошелёк» был ловушкой: сотрудник получал пустой кошелёк, поле
+ * «лимит токенов» из формы создания нигде не проверялось, пополнить кошелёк мог только
+ * админ из админки, а сменить режим было нельзя вовсе — ошибку при создании исправить
+ * нечем. Теперь видно, сколько выдано и сколько осталось, монеты ходят в обе стороны, и
+ * режим переключается обратно на общий.
+ */
+function SubWalletEditor({ sub, onMode }: { sub: User; onMode: (next: User) => void }) {
+  const [wallet, setWallet] = useState<SubWallet | null>(null)
+  const [amount, setAmount] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [note, setNote] = useState('')
+  const individual = sub.balanceMode === 'individual'
+
+  const load = useCallback(async () => {
+    if (!individual) return setWallet(null)
+    try { setWallet((await fetchSubWallets()).find((w) => w.userId === sub.id) ?? { userId: sub.id, coins: 0, granted: 0, spent: 0 }) }
+    catch { /* кошелёк не должен ломать карточку */ }
+  }, [individual, sub.id])
+  useEffect(() => { void load() }, [load])
+
+  const move = async (sign: 1 | -1) => {
+    const n = Number(amount)
+    if (!n || n <= 0) return setNote('Укажите сумму')
+    setBusy(true); setNote('')
+    try {
+      const r = await transferToSub(sub.id, sign * n)
+      setAmount('')
+      setNote(r.moved > 0 ? `Выдано ${r.moved} ⚡` : `Возвращено ${Math.abs(r.moved)} ⚡`)
+      await load()
+    } catch (e) { setNote(e instanceof Error ? e.message : 'Не вышло') }
+    finally { setBusy(false) }
+  }
+
+  const switchMode = async (next: 'shared' | 'individual') => {
+    setBusy(true); setNote('')
+    try {
+      const upd = await updateUser(sub.id, { balanceMode: next })
+      onMode(upd)
+      setNote(next === 'shared' ? 'Теперь тратит из вашего кошелька' : 'Личный кошелёк включён')
+    } catch (e) { setNote(e instanceof Error ? e.message : 'Не вышло') }
+    finally { setBusy(false) }
+  }
+
+  return (
+    <div className="mt-2 rounded-xl border border-line bg-elevated/40 p-3">
+      <div className="mb-2 flex flex-wrap items-center gap-2">
+        <span className="text-xs font-bold text-fg">Баланс сотрудника</span>
+        <div className="ml-auto flex gap-1">
+          <button type="button" disabled={busy} onClick={() => void switchMode('shared')}
+            className={cn('h-7 rounded-lg px-2.5 text-[11px] font-semibold disabled:opacity-40',
+              !individual ? 'bg-spark-500/20 text-spark-300' : 'border border-line text-muted hover:text-fg')}>
+            Общий с вами
+          </button>
+          <button type="button" disabled={busy} onClick={() => void switchMode('individual')}
+            className={cn('h-7 rounded-lg px-2.5 text-[11px] font-semibold disabled:opacity-40',
+              individual ? 'bg-spark-500/20 text-spark-300' : 'border border-line text-muted hover:text-fg')}>
+            Личный кошелёк
+          </button>
+        </div>
+      </div>
+
+      {!individual ? (
+        <p className="text-[11px] leading-relaxed text-white/45">
+          Тратит из вашего кошелька: отдельно выдавать монеты не нужно, а сколько он израсходовал — видно
+          в блоке «Кто сколько потратил» вверху страницы.
+        </p>
+      ) : (
+        <>
+          <div className="mb-2 flex flex-wrap items-center gap-4 text-xs">
+            <span className="text-white/45">Выдано: <b className="text-fg tabular-nums">{wallet?.granted ?? 0} ⚡</b></span>
+            <span className="text-white/45">Потрачено: <b className="text-fg tabular-nums">{wallet?.spent ?? 0} ⚡</b></span>
+            <span className="text-white/45">Остаток: <b className="text-spark-300 tabular-nums">{wallet?.coins ?? 0} ⚡</b></span>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <input
+              type="number"
+              min={0}
+              value={amount}
+              onChange={(e) => setAmount(e.target.value)}
+              placeholder="монет"
+              className="input h-8 w-28 text-sm"
+            />
+            <button type="button" disabled={busy} onClick={() => void move(1)} className="btn-soft h-8 px-3 text-xs disabled:opacity-40">Выдать</button>
+            <button type="button" disabled={busy} onClick={() => void move(-1)} className="btn-ghost h-8 px-3 text-xs disabled:opacity-40">Забрать</button>
+            {note && <span className="text-[11px] text-muted">{note}</span>}
+          </div>
+          <p className="mt-1.5 text-[11px] leading-relaxed text-white/35">
+            Монеты уходят с вашего баланса и приходят на его — и наоборот. Забрать больше, чем у него есть,
+            нельзя: вернётся остаток.
+          </p>
+        </>
+      )}
+    </div>
+  )
+}
+
 function SpendByUser() {
   const [rows, setRows] = useState<SpendByUserRow[]>([])
   const [days, setDays] = useState(30)
