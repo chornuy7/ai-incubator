@@ -140,6 +140,46 @@ const STORES = {
       })),
     }),
   },
+  folders: {
+    title: 'папки целей',
+    file: () => process.env.TARGET_FOLDERS_FILE || dataPath('target-folders.json'),
+    migration: '2026-08-27-target-folders.sql',
+    tables: ['target_folders', 'target_folder_targets'],
+    // У целей папки нет своего id — их опознаёт пара (папка, канал). Тот же ключ,
+    // что и первичный в базе, поэтому повторный запуск ничего не задвоит.
+    keys: { target_folder_targets: ['folder_id', 'username'] },
+    // Файл папок — объект { folders: [...] }, а не массив, как у остальных сторов.
+    readSource: async () => {
+      const data = await readJson(process.env.TARGET_FOLDERS_FILE || dataPath('target-folders.json'), { folders: [] })
+      return Array.isArray(data?.folders) ? data.folders : []
+    },
+    rows: (folders) => {
+      const clean = (t) => String(t || '').trim().replace(/^@/, '').toLowerCase()
+      const list = folders.filter((f) => f && f.id)
+      return {
+        target_folders: list.map((f) => ({
+          id: f.id,
+          user_id: f.userId || null,
+          name: String(f.name || 'Без названия'),
+          created_at: Number(f.createdAt) || Date.now(),
+          updated_at: Number(f.updatedAt) || Number(f.createdAt) || Date.now(),
+        })),
+        target_folder_targets: list.flatMap((f) => {
+          // Схлопываем регистр ЗДЕСЬ же: в старых папках лежат дубли, а база их
+          // просто отвергнет — и перенос встанет на первой такой папке.
+          const seen = new Set()
+          const out = []
+          for (const t of f.targets || []) {
+            const username = clean(t)
+            if (!username || seen.has(username)) continue
+            seen.add(username)
+            out.push({ folder_id: f.id, username, position: out.length })
+          }
+          return out
+        }),
+      }
+    },
+  },
 }
 
 /** Тип восстанавливаем по расширению: имя файла на диске — единственное, что о нём известно. */
@@ -176,7 +216,10 @@ for (const key of picked) {
   let total = 0
   let broken = false
   for (const table of store.tables) {
-    const { data, error } = await db.from(table).select('id')
+    // По какому набору колонок узнаём «эта строка уже перенесена». Обычно это id,
+    // но у таблиц-связок своего id нет — там опознаёт составной ключ.
+    const key = store.keys?.[table] || ['id']
+    const { data, error } = await db.from(table).select(key.join(','))
     if (error) {
       console.error(`Не удалось прочитать таблицу ${table}: ${error.message}`)
       console.error(`Скорее всего не применена миграция supabase/migrations/${store.migration}`)
@@ -184,8 +227,9 @@ for (const key of picked) {
       failed = true
       break
     }
-    const have = new Set((data || []).map((r) => r.id))
-    toWrite[table] = (planned[table] || []).filter((r) => !have.has(r.id))
+    const identity = (r) => key.map((k) => r[k]).join(' ')
+    const have = new Set((data || []).map(identity))
+    toWrite[table] = (planned[table] || []).filter((r) => !have.has(identity(r)))
     total += toWrite[table].length
     console.log(`  ${table}: в файле ${(planned[table] || []).length}, уже в базе ${have.size}, к переносу ${toWrite[table].length}`)
   }

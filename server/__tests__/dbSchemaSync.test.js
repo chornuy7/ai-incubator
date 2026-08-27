@@ -48,6 +48,13 @@ const STORES = [
     tables: ['kb_files'],
     notColumns: ['kb_files', 'schema cache'],
   },
+  {
+    name: 'папки целей',
+    sql: '2026-08-27-target-folders.sql',
+    code: 'targetFolders.js',
+    tables: ['target_folders', 'target_folder_targets'],
+    notColumns: ['target_folders', 'target_folder_targets', 'schema cache'],
+  },
 ]
 
 const readSql = (f) => fs.readFile(new URL(`../../supabase/migrations/${f}`, import.meta.url), 'utf8')
@@ -106,7 +113,9 @@ for (const store of STORES) {
       for (const [col, def] of columnsOf(sql, table)) {
         // Колонку с DEFAULT база заполнит сама; остальные обязана заполнить запись.
         if (!/not null/i.test(def) || /default/i.test(def)) continue
-        if (!new RegExp(`\\b${col}\\s*:`).test(code)) missing.push(`${table}.${col}`)
+        // `username: x`, но и сокращённая запись `{ folder_id, username, position }` —
+        // иначе тест ругается на код, который колонку как раз заполняет.
+        if (!new RegExp(`\\b${col}\\s*[:,}]`).test(code)) missing.push(`${table}.${col}`)
       }
     }
     assert.deepEqual(missing, [], [
@@ -170,4 +179,16 @@ test('база знаний: вид записи ограничен и в код
   const inCode = code.match(/\['text', 'file', 'image', 'link'\]/)
   assert.ok(inCode, 'список видов в normalizeKb не найден')
   assert.deepEqual(inSql, ['file', 'image', 'link', 'text'], 'база отвергнет вид, которого нет в её проверке')
+})
+
+test('папки целей: один канал нельзя завести в папку дважды', async () => {
+  // Дубли вида nuancesprog + NUANCESPROG приводили к тому, что кампания отрабатывала
+  // по каналу ДВАЖДЫ одним аккаунтом, а повторные действия в один чат читаются как
+  // сигнатура бота. Раньше это держалось только на normalizeTargets в коде.
+  const sql = await readSql('2026-08-27-target-folders.sql')
+  assert.ok(/primary key \(folder_id, username\)/.test(sql),
+    'ключ (папка, канал) обязан быть первичным — иначе дубль запишется')
+  assert.ok(!/jsonb/i.test(sql), 'цели папки — строки, а не список в одном поле')
+  const code = await readCode('targetFolders.js')
+  assert.ok(/toLowerCase\(\)/.test(code), 'перед записью цели приводятся к нижнему регистру')
 })
