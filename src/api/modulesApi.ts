@@ -61,8 +61,11 @@ export interface ModuleTaskSettings {
   threads?: number
   delayChat?: number
   delayItem?: number
-  // ── Прогрев: уровень (0=2д, 1=3–7д, 2=7–14д) ──
+  // ── Прогрев ──
+  /** Темп: 0 — ~40 действий в сутки, 1 — ~20, 2 — ~10. */
   warmLevel?: number
+  /** Сколько ДНЕЙ греем. Отсюда считается общее число действий (27.08). */
+  warmDays?: number
   // ── Нейрокомментинг: окно последних постов (§3.5) ──
   postWindow?: number
   semanticFilter?: boolean // §3.5: комментировать только по семантически близким к цели постам

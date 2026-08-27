@@ -84,6 +84,23 @@ export function startModuleTask(moduleKey, settings) {
   const err = validateSettings(moduleKey, settings)
   if (err) throw new Error(err)
 
+  /*
+   * Прогрев задаётся ДНЯМИ (вопрос владельца 27.08: «прогрев исполнился за пару часов,
+   * хотя минимальный прогрев у нас 2 дня»). Раньше цель бралась жребием из диапазона
+   * действий и при пустом минимуме могла выпасть крошечной.
+   *
+   * Разворачиваем срок в жёсткий лимит здесь, при создании задачи: дальше по коду цель
+   * считает общий `resolveTotalTarget`, и ему незачем знать про прогрев — иначе поле
+   * warmDays «читалось бы» во всех модулях сразу (это и поймал контракт-тест MCP).
+   */
+  if (moduleKey === 'warming' && settings.warmDays) {
+    const days = Math.max(1, Math.min(30, Number(settings.warmDays) || 2))
+    const perDay = [40, 20, 10][Number(settings.warmLevel) ?? 1] ?? 20
+    const total = Math.max(1, Math.round(days * perDay))
+    settings.maxActions = total
+    settings.minActions = total // без жребия: срок задан человеком, а не случаем
+  }
+
   if (moduleKey === 'mass-looking') {
     settings.lookMode = ['stories', 'posts', 'both'].includes(settings.lookMode) ? settings.lookMode : 'stories'
     if (settings.lookMode !== 'stories') {

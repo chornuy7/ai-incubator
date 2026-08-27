@@ -142,6 +142,9 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
   const [campaigns, setCampaigns] = useState<Campaign[]>([])
   const [campaignId] = useState('')
   const [warmLevel, setWarmLevel] = useState(1)
+  // Срок прогрева в днях (правка 27.08). Минимум двое суток — короче профиль не «зреет»,
+  // а просто получает пачку действий за вечер.
+  const [warmDays, setWarmDays] = useState(2)
   const [postWindow, setPostWindow] = useState(10) // §3.5: сколько последних постов обрабатывать
   const [stopWordsText, setStopWordsText] = useState('') // §3.5: пропускать посты с этими словами
   const [analyzeImages, setAnalyzeImages] = useState(false) // §10.5: анализ фото в посте vision-моделью
@@ -286,7 +289,7 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
     // §0: под кампанией цель наследуется от неё; без кампании — прямой выбор цели.
     ...(campaignId ? { campaignId } : {}),
     ...((campaignId ? campaigns.find((c) => c.id === campaignId)?.goalId : goalId) ? { goalId: (campaignId ? campaigns.find((c) => c.id === campaignId)?.goalId : goalId) as string } : {}),
-    ...(cfg.warmingLayout ? { warmLevel } : {}),
+    ...(cfg.warmingLayout ? { warmLevel, warmDays } : {}),
     // Массовые реакции: режим и глубина. Отдельным полем, а не общим commentMode —
     // воркер читает именно reactMode, и дескриптор MCP описывает его.
     ...(cfg.reactionSettings ? { reactMode: g(0), lastPostsCount } : {}),
@@ -298,7 +301,7 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
       lookMode: cfg.lookModeOptions?.[lookModeIdx]?.value ?? 'stories',
       lookPostsCount,
     } : {}),
-  }), [carry, selected, targets, postUrls, toggles, probability, maxActions, minActions, maxPerAcc, minPerAcc, minWords, durationMinutes, aiProtect, protLevel, notifyStatus, activePrompt, promptBodies, delayPreset, palette, delays, keywords, isGgr, accounts, cfg, lookModeIdx, lookPostsCount, goalId, campaignId, campaigns, warmLevel, postWindow, stopWordsText, analyzeImages, moduleKey, typeWeights, weightSum])
+  }), [carry, selected, targets, postUrls, toggles, probability, maxActions, minActions, maxPerAcc, minPerAcc, minWords, durationMinutes, aiProtect, protLevel, notifyStatus, activePrompt, promptBodies, delayPreset, palette, delays, keywords, isGgr, accounts, cfg, lookModeIdx, lookPostsCount, goalId, campaignId, campaigns, warmLevel, warmDays, postWindow, stopWordsText, analyzeImages, moduleKey, typeWeights, weightSum])
 
   const hasPostTargets = postUrls.length > 0
   // Многомодульность (20.08): аккаунт МОЖНО брать, пока он работает в другом модуле.
@@ -433,6 +436,7 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
     if (s.notifyOnStatus !== undefined) setNotifyStatus(s.notifyOnStatus)
     if (Array.isArray(s.postUrls)) setPostUrls(s.postUrls)
     if (s.warmLevel !== undefined) setWarmLevel(s.warmLevel)
+    if (s.warmDays !== undefined) setWarmDays(Number(s.warmDays) || 2)
     if (s.postWindow !== undefined) setPostWindow(s.postWindow)
     if (Array.isArray(s.stopWords)) setStopWordsText(s.stopWords.join(', '))
     if (s.analyzeImages !== undefined) setAnalyzeImages(s.analyzeImages)
@@ -1006,11 +1010,29 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
         <SectionCard icon={<Flame size={18} />} title="Уровень прогрева">
           <div className="mb-1.5 text-xs text-white/40">Реже действия = естественнее</div>
           <Segmented options={WARM_LEVELS} value={warmLevel} onChange={setWarmLevel} />
+
+          {/*
+            Срок прогрева (вопрос владельца 27.08: «прогрев исполнился за пару часов, хотя
+            минимальный прогрев у нас 2 дня, и сколько там действий вообще?»).
+            Раньше задача считала цель жребием из диапазона действий и могла закончиться
+            к обеду. Теперь человек задаёт СРОК, а число действий выводится из темпа —
+            и то, и другое видно тут же, без догадок.
+          */}
+          <div className="mt-3">
+            <div className="mb-1.5 flex items-center justify-between">
+              <span className="text-xs text-white/60">Сколько дней греем</span>
+              <span className="text-[11px] text-white/40">≈ {warmDays * [40, 20, 10][warmLevel]} действий на аккаунт за всё время</span>
+            </div>
+            <Segmented
+              options={['2 дня', '3 дня', '7 дней', '14 дней']}
+              value={[2, 3, 7, 14].indexOf(warmDays) === -1 ? 0 : [2, 3, 7, 14].indexOf(warmDays)}
+              onChange={(i) => setWarmDays([2, 3, 7, 14][i])}
+            />
+          </div>
           <div className="mt-3 rounded-lg border border-line/60 bg-elevated/40 px-3 py-2 text-[11px] text-white/50">
-            💡 <b className="text-white/70">Уровень</b> — это темп, а не срок запуска: он задаёт, сколько действий аккаунт делает в сутки
-            (~40 / 20 / 10) и насколько длинные паузы между ними. Сколько задача проработает, зависит от её лимита действий:
-            например 23 действия на бережном темпе растянутся почти на сутки, а на быстром — часов на семь.
-            Полный прогрев профиля — это несколько таких запусков подряд, а не один.
+            💡 <b className="text-white/70">Уровень</b> — темп: сколько действий аккаунт делает в сутки (~40 / 20 / 10) и насколько
+            длинные паузы между ними. <b className="text-white/70">Дни</b> — сколько задача проработает. Ночью прогрев спит,
+            днём действия расходятся по часам, поэтому за сутки выходит примерно заявленное число, а не всё подряд за вечер.
           </div>
           {/* Правка 14.08: блок «Защита» у прогрева убран (дублировал уровень) — галочку
               уведомлений перенесли сюда. */}

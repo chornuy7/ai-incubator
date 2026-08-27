@@ -33,3 +33,23 @@ test('resolveDurationPeriodMinutes: max меньше min → период схл
   assert.equal(r.max, 60)
   assert.ok(r.chosen >= 20 && r.chosen <= 60)
 })
+
+test('прогрев: срок в днях разворачивается в точную цель, без жребия (27.08)', async () => {
+  // Вопрос владельца: «прогрев исполнился за пару часов, хотя минимальный прогрев 2 дня».
+  // Цель бралась жребием из [min, max] и при пустом минимуме могла выпасть крошечной.
+  const { resolveTotalTarget } = await import('../lib/targets.js')
+
+  // Так это делает startModuleTask: срок × суточная норма уровня.
+  const план = (days, level) => {
+    const perDay = [40, 20, 10][level]
+    const total = days * perDay
+    return { maxActions: total, minActions: total, warmDays: days, warmLevel: level }
+  }
+
+  assert.equal(resolveTotalTarget(план(2, 0), { id: 'a' }), 80) // 2 дня быстрым темпом
+  assert.equal(resolveTotalTarget(план(2, 2), { id: 'a' }), 20) // 2 дня бережным
+  assert.equal(resolveTotalTarget(план(14, 1), { id: 'a' }), 280)
+
+  // Цель не зависит от id задачи: жребия здесь быть не должно.
+  assert.equal(resolveTotalTarget(план(7, 1), { id: 'x' }), resolveTotalTarget(план(7, 1), { id: 'y' }))
+})

@@ -1553,7 +1553,17 @@ export async function runWarming(task, store) {
   const pace = warmingPace(s.warmLevel ?? 1)
   const mul = delayMultiplier(s.protectionLevel ?? 1, s.delayPreset ?? 1) * pace.mul
   const шаг = Math.round(WARM_WINDOW_MS / Math.max(1, pace.actionsPerDay) / 60000)
-  await store.appendLog(task, 'info', `Прогрев запущен · уровень: ${pace.label} · ~${pace.actionsPerDay} действий/день на аккаунт (примерно раз в ${шаг} мин, ночью — пауза)`)
+  // Сколько всего и на сколько дней — в первой же строке лога. «Прогрев на 2 дня», молча
+  // закончившийся к обеду, был именно потому, что цель бралась жребием (правка 27.08).
+  const днейПрогрева = Math.max(1, Math.min(30, Number(s.warmDays) || 0))
+  const цельПрогрева = Number(s.maxActions) || 0
+  await store.appendLog(
+    task,
+    'info',
+    `Прогрев запущен · ${pace.label}`
+    + (s.warmDays ? ` · ${днейПрогрева} дн. × ~${pace.actionsPerDay} действий = ${цельПрогрева} всего` : ` · ~${pace.actionsPerDay} действий/день`)
+    + ` (примерно раз в ${шаг} мин на аккаунт, ночью — пауза)`,
+  )
   const accountIds = s.accountIds || []
   // §3.3: на время прогрева аккаунт получает статус «warming» — он входит в NON_RUNNABLE,
   // поэтому боевые модули его не возьмут. Раньше этот статус не выставлял НИКТО: он был
@@ -2491,6 +2501,67 @@ export async function runChannelParser(task, store, kind) {
     if (r?.id) seen.add(String(r.id))
   }
   const skipParsed = new Set((s.alreadyParsed || []).map((x) => String(x).toLowerCase()))
+
+  /*
+   * Сперва СВОЯ база, потом Telegram (вопрос владельца 27.08: «начал с теми же ключами —
+   * почему не получил все каналы по ключам, которые у нас уже есть в базе?»).
+   *
+   * До этого парсер в общую базу каналов только ПИСАЛ. Каждый новый запуск шёл в Telegram
+   * за всем подряд, включая то, что мы уже находили неделю назад: минуты ожидания, расход
+   * аккаунтов и риск FloodWait — ради строк, которые лежат у нас на диске.
+   *
+   * База отдаётся мгновенно и бесплатно по аккаунтам, дальше поиск идёт как обычно и
+   * добирает то, чего в ней нет: `seen` не даст задвоить. Фильтруем тем, что в базе есть —
+   * подписчиками и типом; активность и балл требуют постов и считаются только для живых
+   * находок, поэтому строки из базы через них не прогоняем и об этом честно пишем.
+   *
+   * При включённом «Не собирать уже спарсенные» база НЕ подмешивается: это ровно
+   * противоположное желание — человек просит показать только новое.
+   */
+  const kwLower = keywords.map((k) => k.toLowerCase())
+  if (!resuming && !skipParsed.size && kwLower.length) {
+    try {
+      const base = await listChannels()
+      const подходит = (c) => {
+        const hay = `${c.title || ''} ${c.username || ''}`.toLowerCase()
+        if (!kwLower.some((k) => hay.includes(k))) return false
+        const members = Number(c.subscribers) || 0
+        if (minMembers && members < minMembers) return false
+        if (maxMembers && members > maxMembers) return false
+        if (comments === 1 && !c.hasComments) return false
+        if (comments === 2 && c.hasComments) return false
+        return true
+      }
+      let добавлено = 0
+      for (const c of base) {
+        if (!c.username && !c.id) continue
+        const key = String(c.username || c.id).toLowerCase()
+        if (seen.has(key)) continue
+        if (!подходит(c)) continue
+        seen.add(key)
+        task.results.push({
+          id: c.id,
+          title: c.title || c.username || '',
+          username: c.username || '',
+          members: Number(c.subscribers) || 0,
+          hasComments: !!c.hasComments,
+          link: c.link || (c.username ? `https://t.me/${c.username}` : ''),
+          fromBase: true,
+        })
+        добавлено += 1
+      }
+      if (добавлено) {
+        await store.appendLog(
+          task,
+          'info',
+          `Из своей базы: +${добавлено} ${unitLabel} — собраны прошлыми запусками, повторно в Telegram за ними не ходим. `
+          + 'Фильтры активности и балла к ним не применялись: для этого нужны свежие посты.',
+        )
+        await store.saveTask(task)
+      }
+    } catch { /* база необязательна: не смогли прочитать — просто идём в Telegram */ }
+  }
+
   let accIdx = 0
 
   async function nextAccountId() {

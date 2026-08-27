@@ -57,8 +57,8 @@ export default {
       howItWorks:
         'Уровень задаёт и темп (множитель задержек), и суточную норму действий. Чем быстрее — '
         + 'the more actions per day and the more visible the account.',
-      api: { method: 'POST', path: '/api/modules/warming/tasks', fills: ['warmLevel'] },
-      params: ['warmLevel'],
+      api: { method: 'POST', path: '/api/modules/warming/tasks', fills: ['warmLevel', 'warmDays'] },
+      params: ['warmLevel', 'warmDays'],
     },
     {
       id: 'limits',
@@ -117,6 +117,21 @@ export default {
       constraints: ['empty list → refusal “Select at least one account”'],
       examples: [['acc_1'], ['acc_1', 'acc_2']],
       storedAs: 'task.settings.accountIds',
+    },
+    {
+      name: 'warmDays',
+      block: 'level',
+      title: 'Warm-up length in days',
+      type: 'integer',
+      default: 2,
+      constraints: [
+        'sets the TOTAL number of actions: days × per-day pace of the level',
+        'minimum 2 days: a shorter run is just a batch of actions in one evening, not warming up',
+        'expanded into maxActions/minActions when the task is created, so the target is exact, not rolled',
+      ],
+      purpose: 'How long the account keeps warming up, in days.',
+      seeAlso: ['warmLevel'],
+      storedAs: 'task.settings.warmDays',
     },
     {
       name: 'warmLevel',
