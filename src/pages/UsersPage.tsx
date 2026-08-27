@@ -5,8 +5,8 @@ import { PageHeader, Card, EmptyState, Badge, Modal, Switch } from '@/shared/ui'
 import { confirmDialog } from '@/shared/lib/dialog'
 import {
   fetchUsers, createUser, updateUser, deleteUser, fetchWorktime, fetchUserAccess, saveUserAccess,
-  fetchSubWallets, transferToSub, fetchSubLimits,
-  type User, type WorkSummary, type SubWallet, type SubLimit,
+  fetchSubLimits,
+  type User, type WorkSummary, type SubLimit,
 } from '@/api/usersApi'
 import { fetchRoles, fetchRbacCatalog, accessFromRole, onRolesChanged, type Role, type Perm, type CatalogModule, type CatalogBlock } from '@/api/rolesApi'
 import { RolesPage, Pager, PAGE_SIZE } from '@/pages/RolesPage'
@@ -17,7 +17,7 @@ import { useSession } from '@/features/auth/session'
 import { ADMIN_BYPASS_ID } from '@/shared/config/rbac'
 import { HelpButton } from '@/features/neuro-commenting/moduleUi'
 import { cn } from '@/shared/lib/utils'
-import { fetchSpendByUser, type SpendByUser as SpendByUserRow } from '@/api/balanceApi'
+import { fetchSpendByUser, fetchPricing, type SpendByUser as SpendByUserRow } from '@/api/balanceApi'
 
 /** Якорь раздела шаблонов — он на этой же странице, ниже списка людей. */
 const TEMPLATES_ANCHOR = '#templates'
@@ -745,31 +745,20 @@ function UsersTab() {
               <ModuleAccessPicker catalog={catalog} value={newAccess} onChange={setNewAccess} />
             </div>
           </div>
-          {/* §4.2 (MR-30): баланс суба — общий с владельцем или индивидуальный лимит токенов. */}
+          {/*
+            §4.2 (MR-30): баланс субпользователя. Выбора здесь больше НЕТ (правка 27.08:
+            «только общий баланс, у них нету своего кошелька»). Кошелёк один — владельца;
+            сотруднику задаётся лишь потолок расхода, и делается это после создания, в его
+            карточке, где рядом видно потраченное. Отдельный кошелёк порождал вторую кассу:
+            монеты застревали у сотрудника, а владелец не понимал, почему у него списалось
+            меньше, чем потрачено.
+          */}
           <div>
             <label className="label">Баланс субпользователя</label>
-            <div className="flex flex-col gap-1.5">
-              <label className="flex cursor-pointer items-start gap-2 rounded-lg border border-line p-2 text-sm">
-                <input type="radio" name="balmode" checked={form.balanceMode === 'shared'} onChange={() => setForm((f) => ({ ...f, balanceMode: 'shared' }))} className="mt-0.5 accent-spark-500" />
-                <span><span className="font-medium text-fg">Общий баланс владельца</span><span className="block text-xs text-white/45">Суб тратит из вашего кошелька (по умолчанию).</span></span>
-              </label>
-              <label className="flex cursor-pointer items-start gap-2 rounded-lg border border-line p-2 text-sm">
-                <input type="radio" name="balmode" checked={form.balanceMode === 'individual'} onChange={() => setForm((f) => ({ ...f, balanceMode: 'individual' }))} className="mt-0.5 accent-spark-500" />
-                <span><span className="font-medium text-fg">Индивидуальный лимит токенов</span><span className="block text-xs text-white/45">Отдельный кошелёк суба с ограничением.</span></span>
-              </label>
-              {form.balanceMode === 'individual' && (
-                /*
-                  Поле «лимит токенов» отсюда убрано (27.08). Оно записывалось и НИГДЕ не
-                  проверялось: ни расход не ограничивало, ни монет не выдавало — сотрудник
-                  получал пустой кошелёк и не мог работать вовсе. Монеты теперь выдаются
-                  после создания, в карточке сотрудника, где видно и остаток.
-                */
-                <p className="pl-2 text-xs leading-relaxed text-white/50">
-                  Монеты выдадите после создания — в карточке сотрудника появится его кошелёк:
-                  сколько выдано, сколько потрачено и кнопки «Выдать» / «Забрать».
-                </p>
-              )}
-            </div>
+            <p className="rounded-lg border border-line bg-elevated/40 p-2 text-xs leading-relaxed text-white/50">
+              Сотрудник тратит из <b className="text-white/75">вашего</b> кошелька — своего у него нет.
+              Потолок расхода зададите после создания, в его карточке.
+            </p>
           </div>
           <div className="mt-1 flex justify-end gap-2">
             <button onClick={() => setOpen(false)} className="btn-ghost h-10">Отмена</button>
@@ -813,26 +802,30 @@ function UsersTab() {
  * режим переключается обратно на общий.
  */
 function SubWalletEditor({ sub, onMode }: { sub: User; onMode: (next: User) => void }) {
-  const [wallet, setWallet] = useState<SubWallet | null>(null)
   const [limit, setLimit] = useState<SubLimit | null>(null)
   const [limitDraft, setLimitDraft] = useState('')
-  const [amount, setAmount] = useState('')
+  const [prices, setPrices] = useState<Record<string, number>>({})
   const [busy, setBusy] = useState(false)
   const [note, setNote] = useState('')
-  const individual = sub.balanceMode === 'individual'
+  /*
+   * Личный кошелёк остался ТОЛЬКО как наследство (правка 27.08). Заводить его больше
+   * нельзя, но у части сотрудников он включён с прошлых версий — им показываем возврат
+   * остатка одной кнопкой, иначе монеты застряли бы навсегда.
+   */
+  const legacyWallet = sub.balanceMode === 'individual'
 
   const load = useCallback(async () => {
     try {
-      if (individual) {
-        setWallet((await fetchSubWallets()).find((w) => w.userId === sub.id) ?? { userId: sub.id, coins: 0, granted: 0, spent: 0 })
-      } else {
-        setWallet(null)
-        const l = (await fetchSubLimits()).find((x) => x.userId === sub.id) ?? { userId: sub.id, limit: null, spent: 0, left: null }
-        setLimit(l)
-        setLimitDraft(l.limit == null ? '' : String(l.limit))
-      }
+      const l = (await fetchSubLimits()).find((x) => x.userId === sub.id) ?? { userId: sub.id, limit: null, spent: 0, left: null }
+      setLimit(l)
+      setLimitDraft(l.limit == null ? '' : String(l.limit))
     } catch { /* кошелёк не должен ломать карточку */ }
-  }, [individual, sub.id])
+  }, [sub.id])
+
+  // Цены берём с сервера, а не константами: иначе «сколько это действий» разойдётся
+  // с тем, что спишется на самом деле, как только цену поправят в админке.
+  useEffect(() => { void fetchPricing().then((r) => setPrices(r.actionsFull && Object.keys(r.actionsFull).length ? r.actionsFull : r.actions)).catch(() => {}) }, [])
+  useEffect(() => { if (!legacyWallet) void load() }, [load, legacyWallet])
 
   const saveLimit = async (next: number | null) => {
     setBusy(true); setNote('')
@@ -843,55 +836,50 @@ function SubWalletEditor({ sub, onMode }: { sub: User; onMode: (next: User) => v
     } catch (e) { setNote(e instanceof Error ? e.message : 'Не вышло') }
     finally { setBusy(false) }
   }
-  useEffect(() => { void load() }, [load])
 
-  const move = async (sign: 1 | -1) => {
-    const n = Number(amount)
-    if (!n || n <= 0) return setNote('Укажите сумму')
+  const toShared = async () => {
     setBusy(true); setNote('')
     try {
-      const r = await transferToSub(sub.id, sign * n)
-      setAmount('')
-      setNote(r.moved > 0 ? `Выдано ${r.moved} ⚡` : `Возвращено ${Math.abs(r.moved)} ⚡`)
+      const upd = await updateUser(sub.id, { balanceMode: 'shared' })
+      onMode(upd)
+      setNote('Остаток вернулся вам, сотрудник тратит из общего')
       await load()
     } catch (e) { setNote(e instanceof Error ? e.message : 'Не вышло') }
     finally { setBusy(false) }
   }
 
-  const switchMode = async (next: 'shared' | 'individual') => {
-    setBusy(true); setNote('')
-    try {
-      const upd = await updateUser(sub.id, { balanceMode: next })
-      onMode(upd)
-      setNote(next === 'shared' ? 'Теперь тратит из вашего кошелька' : 'Личный кошелёк включён')
-    } catch (e) { setNote(e instanceof Error ? e.message : 'Не вышло') }
-    finally { setBusy(false) }
-  }
+  /*
+   * Сколько это действий (просьба владельца 27.08: «должна быть математика, сколько это
+   * действий»). Голое «500 ⚡» ничего не говорит: цена действия отличается в десять раз
+   * между комментарием и строкой парсинга. Показываем три опорные ставки — по ним видно
+   * вилку, а не одно число, из которого потолок не оценить.
+   */
+  const цена = (k: string, запас: number) => prices[k] ?? запас
+  const действий = (limit?.limit ?? 0) > 0 ? [
+    { n: Math.floor((limit!.limit as number) / цена('neuro-commenting', 0.05)), what: 'комментариев или сообщений' },
+    { n: Math.floor((limit!.limit as number) / цена('mass-react', 0.01)), what: 'реакций, просмотров, действий прогрева' },
+    { n: Math.floor((limit!.limit as number) / цена('parsing', 0.005)), what: 'строк парсинга' },
+  ] : []
+  const нф = (n: number) => n.toLocaleString('ru-RU')
 
   return (
     <div className="mt-2 rounded-xl border border-line bg-elevated/40 p-3">
       <div className="mb-2 flex flex-wrap items-center gap-2">
-        <span className="text-xs font-bold text-fg">Баланс сотрудника</span>
-        <div className="ml-auto flex gap-1">
-          <button type="button" disabled={busy} onClick={() => void switchMode('shared')}
-            className={cn('h-7 rounded-lg px-2.5 text-[11px] font-semibold disabled:opacity-40',
-              !individual ? 'bg-spark-500/20 text-spark-300' : 'border border-line text-muted hover:text-fg')}>
-            Общий с вами
-          </button>
-          <button type="button" disabled={busy} onClick={() => void switchMode('individual')}
-            className={cn('h-7 rounded-lg px-2.5 text-[11px] font-semibold disabled:opacity-40',
-              individual ? 'bg-spark-500/20 text-spark-300' : 'border border-line text-muted hover:text-fg')}>
-            Личный кошелёк
-          </button>
-        </div>
+        <span className="text-xs font-bold text-fg">Лимит расхода сотрудника</span>
+        <span className="ml-auto text-[11px] text-white/35">кошелёк общий с вашим</span>
       </div>
 
-      {!individual ? (
-        /*
-          Общий кошелёк — основной режим (уточнение владельца 27.08: «он должен унаследовать
-          всё, что у владельца, просто лимит по токенам добавляется ограничение»). Денег
-          отдельно не выдаём: задаём потолок, сколько из общих сотруднику можно потратить.
-        */
+      {legacyWallet ? (
+        <>
+          <p className="mb-2 text-[11px] leading-relaxed text-amber-300/90">
+            У сотрудника включён отдельный кошелёк — так делали в старых версиях. Сейчас все работают
+            из вашего общего баланса: верните остаток, и сотруднику можно будет задать лимит.
+          </p>
+          <button type="button" disabled={busy} onClick={() => void toShared()}
+            className="btn-soft h-8 px-3 text-xs disabled:opacity-40">Вернуть остаток и перевести на общий</button>
+          {note && <span className="ml-2 text-[11px] text-muted">{note}</span>}
+        </>
+      ) : (
         <>
           <div className="mb-2 flex flex-wrap items-center gap-4 text-xs">
             <span className="text-white/45">Выдано: <b className="text-fg tabular-nums">{limit?.limit == null ? 'без ограничения' : `${limit.limit} ⚡`}</b></span>
@@ -906,7 +894,7 @@ function SubWalletEditor({ sub, onMode }: { sub: User; onMode: (next: User) => v
               min={0}
               value={limitDraft}
               onChange={(e) => setLimitDraft(e.target.value)}
-              placeholder="монет"
+              placeholder="токенов"
               className="input h-8 w-28 text-sm"
             />
             <button type="button" disabled={busy} onClick={() => void saveLimit(limitDraft === '' ? null : Number(limitDraft))}
@@ -915,35 +903,18 @@ function SubWalletEditor({ sub, onMode }: { sub: User; onMode: (next: User) => v
               className="btn-ghost h-8 px-3 text-xs disabled:opacity-40">Без ограничения</button>
             {note && <span className="text-[11px] text-muted">{note}</span>}
           </div>
+          {действий.length > 0 && (
+            <div className="mt-2 rounded-lg border border-spark-500/20 bg-spark-500/8 px-2.5 py-2 text-[11px] leading-relaxed text-white/60">
+              <b className="text-fg">{limit?.limit} ⚡ — это примерно:</b>
+              {действий.map((d) => (
+                <span key={d.what} className="block">· до <b className="tabular-nums text-white/80">{нф(d.n)}</b> {d.what}</span>
+              ))}
+            </div>
+          )}
           <p className="mt-1.5 text-[11px] leading-relaxed text-white/35">
-            Деньги общие с вашими — отдельно переводить нечего. Лимит накопительный: «выдано 500» значит
-            «всего 500». Когда израсходует, его задачи встанут на паузу с сохранением прогресса, а ваши
-            продолжат работать.
-          </p>
-        </>
-      ) : (
-        <>
-          <div className="mb-2 flex flex-wrap items-center gap-4 text-xs">
-            <span className="text-white/45">Выдано: <b className="text-fg tabular-nums">{wallet?.granted ?? 0} ⚡</b></span>
-            <span className="text-white/45">Потрачено: <b className="text-fg tabular-nums">{wallet?.spent ?? 0} ⚡</b></span>
-            <span className="text-white/45">Остаток: <b className="text-spark-300 tabular-nums">{wallet?.coins ?? 0} ⚡</b></span>
-          </div>
-          <div className="flex flex-wrap items-center gap-2">
-            <input
-              type="number"
-              min={0}
-              value={amount}
-              onChange={(e) => setAmount(e.target.value)}
-              placeholder="монет"
-              className="input h-8 w-28 text-sm"
-            />
-            <button type="button" disabled={busy} onClick={() => void move(1)} className="btn-soft h-8 px-3 text-xs disabled:opacity-40">Выдать</button>
-            <button type="button" disabled={busy} onClick={() => void move(-1)} className="btn-ghost h-8 px-3 text-xs disabled:opacity-40">Забрать</button>
-            {note && <span className="text-[11px] text-muted">{note}</span>}
-          </div>
-          <p className="mt-1.5 text-[11px] leading-relaxed text-white/35">
-            Монеты уходят с вашего баланса и приходят на его — и наоборот. Забрать больше, чем у него есть,
-            нельзя: вернётся остаток.
+            Токены общие с вашими — отдельно переводить нечего: сотрудник тратит из вашего кошелька, и
+            каждое его действие списывается и у вас. Лимит накопительный: «выдано 500» значит «всего 500».
+            Когда израсходует, его задачи встанут на паузу с сохранением прогресса, а ваши продолжат работать.
           </p>
         </>
       )}

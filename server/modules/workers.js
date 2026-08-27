@@ -116,7 +116,7 @@ import { cleanMailingNumbers, classifyMailingTargets, pickMailingAccount } from 
 import { listLeads, sortDialogsByLeadPriority, upsertLead, updateLead } from '../leads.js'
 import { classifyLeadReply, shouldAdvance } from '../lib/leadClassifier.js'
 import { chargeActions, chargeCollected, refundShrunk } from '../lib/actionBilling.js'
-import { serializeHits, restoreHits, keepIntersecting } from '../lib/parserIntersect.js'
+import { serializeHits, restoreHits, applyIntersection } from '../lib/parserIntersect.js'
 import { isSemanticEnabled, embedText, cosineSimilarity } from '../lib/semantic.js'
 import { parseTelegramPostLinks, resolvePostPeer } from '../lib/postLink.js'
 import { findChannelChat, isChannelPeer } from '../lib/channelChat.js'
@@ -2688,7 +2688,10 @@ export async function runChannelParser(task, store, kind) {
       task,
       'info',
       `Пересечение (AND) по ${keywords.length} ключам применится В КОНЦЕ, когда пройдут все запросы. `
-      + 'До этого в результатах видно промежуточный сбор — часть строк уйдёт, деньги за них вернутся.',
+      + 'До этого в результатах видно промежуточный сбор — часть строк уйдёт, деньги за них вернутся.'
+      + (keywords.length > 3
+        ? ` Слов много (${keywords.length}): канал должен подойти сразу под все — если под все не подойдёт ни один, пересечение не применим и отдадим собранное.`
+        : ''),
     )
   }
 
@@ -2911,22 +2914,32 @@ export async function runChannelParser(task, store, kind) {
     if (andMode && !task.stopRequested && !task.pauseRequested) {
       const need = keywords.length
       const before = task.results.length
-      task.results = keepIntersecting(task.results, hitsByKey, need, limit)
-      const keepSet = new Set(task.results.map((r) => (r.username || r.id).toLowerCase()))
-      for (let i = baseChannels.length - 1; i >= 0; i--) {
-        if (!keepSet.has((baseChannels[i].username || baseChannels[i].tgPeerId || '').toString().toLowerCase())) baseChannels.splice(i, 1)
-      }
+      const { results: пересечение, applied } = applyIntersection(task.results, hitsByKey, need, limit)
       /*
-       * Прогон 26.08: 51 ключевое слово + пересечение = 146 строк → 0, и человек остался
-       * с пустой выдачей, ничего не понимая. Пересечение требует, чтобы ОДИН канал нашёлся
-       * по КАЖДОМУ слову, а это выполнимо только для очень близких синонимов. Раз уж
-       * поймали такой случай — говорим прямо, что делать, а не оставляем голое «146 → 0».
+       * Пересечение, которое вычёркивает ВСЁ, не применяем (правка 27.08).
+       *
+       * Прогоны 26–27.08: шесть неблизких слов (массаж, СТО, нужен разработчик, создать
+       * бота, need developer, massage) + AND = «5 → 0», и человек остался с пустым экраном
+       * после десяти минут работы аккаунтов. Фильтр, срезающий сто процентов, — это почти
+       * всегда не находка, а неверная настройка: пересечение требует, чтобы ОДИН канал
+       * нашёлся по КАЖДОМУ слову, что выполнимо лишь для тесных синонимов.
+       *
+       * Показать собранное и объяснить полезнее, чем молча выбросить: данные уже оплачены
+       * и добыты, а сузить выдачу человек может сам, сняв галочку.
        */
-      const wiped = before > 0 && task.results.length === 0
-      const совет = wiped && need > 3
-        ? ` — канал должен встретиться по КАЖДОМУ из ${need} слов, а это почти невозможно: снимите «Пересечение» или оставьте 2–3 близких слова`
-        : wiped ? ' — ни один канал не совпал со всеми словами; снимите «Пересечение», чтобы увидеть собранное' : ''
-      await store.appendLog(task, wiped ? 'warning' : 'info', `AND-пересечение (${need} ключей): ${before} → ${task.results.length}${совет}`)
+      if (!applied) {
+        await store.appendLog(
+          task,
+          'warning',
+          `Пересечение (AND) не применено: ни один канал не совпал со ВСЕМИ ${need} словами`
+          + ` — оставили ${before} собранных. Канал должен встретиться по каждому слову сразу,`
+          + ` а это работает только для близких синонимов: для разных тем снимите «Пересечение»`
+          + ` или разнесите слова по отдельным запускам.`,
+        )
+      } else {
+        task.results = пересечение
+        await store.appendLog(task, 'info', `AND-пересечение (${need} ключей): ${before} → ${task.results.length}`)
+      }
     }
 
     task.progress.total = task.results.length
@@ -2940,7 +2953,16 @@ export async function runChannelParser(task, store, kind) {
     // Курсор нужен только между паузой и продолжением. На завершении/стопе сбрасываем,
     // иначе «Перезапуск» начал бы с конца очереди и не сделал бы ничего.
     if (task.status !== 'paused') { task.cursor = 0; delete task.hitsByKey }
-    // §3.8/§4: найденные каналы — в общую базу одним батчем (дедуп, без потери данных).
+    /*
+     * §3.8/§4: найденные каналы — в общую базу одним батчем (дедуп, без потери данных).
+     *
+     * В базу идёт ВСЁ найденное, независимо от фильтров выдачи (правка 27.08). Раньше
+     * отсюда вычёркивалось то, что не прошло AND-пересечение, и получался замкнутый круг:
+     * пересечение обнуляло результат → в базу не попадало ничего → база оставалась пустой
+     * → мгновенная выдача «из своей базы» не срабатывала никогда → каждый запуск заново
+     * гонял аккаунты по тем же словам. Пересечение — это фильтр ЭТОЙ задачи, а не приговор
+     * каналу: найденный канал реален и пригодится следующему запуску.
+     */
     try { const n = await upsertMany(baseChannels, `parse:${task.id}`); if (n) await store.appendLog(task, 'info', `В базу каналов: ${n}`) } catch { /* ignore */ }
     // §6 (MR-38): завершённый сбор — в кэш результатов под сигнатуру запроса, чтобы
     // повтор того же поиска отдавался из базы с датой, без нового прохода по аккаунтам.

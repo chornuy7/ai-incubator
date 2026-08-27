@@ -6,7 +6,7 @@
  */
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { serializeHits, restoreHits, keepIntersecting, channelKey } from '../lib/parserIntersect.js'
+import { serializeHits, restoreHits, keepIntersecting, applyIntersection, channelKey } from '../lib/parserIntersect.js'
 
 test('оставляет только каналы, совпавшие со ВСЕМИ ключами', () => {
   const results = [{ username: 'A' }, { username: 'B' }, { id: 'C' }]
@@ -57,4 +57,34 @@ test('channelKey: username важнее id, регистр не важен', () 
   assert.equal(channelKey({ username: 'MyChan', id: '999' }), 'mychan')
   assert.equal(channelKey({ id: 'ABC' }), 'abc')
   assert.equal(channelKey({}), '')
+})
+
+/*
+ * Пересечение, вычёркивающее ВСЁ, не применяется (правка 27.08). Прогон владельца:
+ * шесть неблизких слов + AND = «5 → 0», и после десяти минут работы аккаунтов экран
+ * оказался пуст. Данные уже собраны и оплачены — выбрасывать их из-за настройки нельзя.
+ */
+test('пересечение не применяется, если вычёркивает всё', () => {
+  const results = [{ username: 'a' }, { username: 'b' }, { username: 'c' }]
+  const hits = new Map([['a', new Set([0])], ['b', new Set([1])], ['c', new Set([2])]])
+
+  const r = applyIntersection(results, hits, 3)
+  assert.equal(r.applied, false, 'фильтр отменён')
+  assert.equal(r.results.length, 3, 'собранное осталось при человеке')
+  assert.equal(r.before, 3)
+})
+
+test('пересечение применяется, когда хоть что-то проходит', () => {
+  const results = [{ username: 'a' }, { username: 'b' }]
+  const hits = new Map([['a', new Set([0, 1])], ['b', new Set([1])]])
+
+  const r = applyIntersection(results, hits, 2)
+  assert.equal(r.applied, true)
+  assert.deepEqual(r.results.map((x) => x.username), ['a'], 'лишнее срезано, как и раньше')
+})
+
+test('пустой сбор — не повод отменять фильтр', () => {
+  const r = applyIntersection([], new Map(), 2)
+  assert.equal(r.applied, true, 'нечего спасать: отменять фильтр незачем')
+  assert.equal(r.results.length, 0)
 })

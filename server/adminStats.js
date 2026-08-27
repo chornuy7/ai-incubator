@@ -870,12 +870,15 @@ export async function myStats(userId, opts = {}) {
     .map(([key, v]) => ({ moduleKey: key, title: moduleTitle(key), ...v }))
     .sort((a, b) => b.actions - a.actions || b.tokens - a.tokens)
 
-  const { coins } = await getBalance(uid).catch(() => ({ coins: 0 }))
+  // §11.4: два остатка — токены и деньги. Витрина кошелька показывает оба: раньше
+  // отдавались только монеты, и «На счету» молчало о долларах, которыми платят подписку.
+  const { coins, usd } = await getBalance(uid).catch(() => ({ coins: 0, usd: 0 }))
   log.sort((a, b) => b.at - a.at)
 
   return {
     since,
     coins: round3(coins),
+    usd: Number(usd) || 0,
     totals: { tasks, actions, spent, tokens },
     activity,
     where,

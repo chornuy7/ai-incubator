@@ -14,6 +14,8 @@ export interface MyStats {
   since: number
   /** Монет на своём счету сейчас. */
   coins: number
+  /** §11.4: денежный остаток ($) — им платят за подписку и покупают токены. */
+  usd?: number
   totals: { tasks: number; actions: number; spent: number; tokens: number }
   activity: MyActivity
   where: MyWhere[]

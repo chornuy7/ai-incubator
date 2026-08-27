@@ -13,8 +13,24 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 process.env.DATA_DIR = mkdtempSync(join(tmpdir(), 'sub-wallet-'))
-const { createUser, updateUser } = await import('../users.js')
+const { createUser, updateUser, invalidateUsersCache } = await import('../users.js')
 const { getBalance, changeCoins, spendByActor } = await import('../balance.js')
+
+/*
+ * Личный кошелёк — НАСЛЕДСТВО (правка 27.08: «только общий баланс, у них нету своего
+ * кошелька»). Завести его больше нельзя ни созданием, ни правкой, поэтому для проверки
+ * возврата денег ставим режим прямо в хранилище — как он стоит у сотрудников, заведённых
+ * прошлыми версиями. Через API этот путь не воспроизвести, а покрытие ему нужно: пока
+ * такие записи есть на проде, возврат остатка обязан работать.
+ */
+async function makeLegacyIndividual(id) {
+  const fs = await import('node:fs/promises')
+  const file = join(process.env.DATA_DIR, 'users.json')
+  const users = JSON.parse(await fs.readFile(file, 'utf8'))
+  users[users.findIndex((u) => u.id === id)].balanceMode = 'individual'
+  await fs.writeFile(file, JSON.stringify(users), 'utf8')
+  invalidateUsersCache()
+}
 
 /** Перевод, как его делает роут: зеркальные операции по двум кошелькам. */
 async function transfer(fromId, toId, amount) {
@@ -27,7 +43,8 @@ const coins = async (id) => (await getBalance(id)).coins
 test('личный кошелёк: выдали, забрали, ничего не потерялось', async () => {
   const st = `${Date.now()}a`
   const owner = await createUser({ email: `o${st}@t.io`, password: 'secret123', name: 'Владелец' })
-  const sub = await createUser({ email: `s${st}@t.io`, password: 'secret123', name: 'Маша', parentId: owner.id, balanceMode: 'individual' })
+  const sub = await createUser({ email: `s${st}@t.io`, password: 'secret123', name: 'Маша', parentId: owner.id })
+  await makeLegacyIndividual(sub.id)
 
   await changeCoins(100, 'старт', owner.id, 'grant')
   assert.equal(await coins(owner.id), 100)
@@ -76,7 +93,8 @@ test('расход раскладывается по сотрудникам, н�
 test('переход на общий баланс: остаток личного кошелька возвращается владельцу', async () => {
   const st = `${Date.now()}d`
   const owner = await createUser({ email: `o${st}@t.io`, password: 'secret123', name: 'Владелец' })
-  const sub = await createUser({ email: `s${st}@t.io`, password: 'secret123', name: 'Оля', parentId: owner.id, balanceMode: 'individual' })
+  const sub = await createUser({ email: `s${st}@t.io`, password: 'secret123', name: 'Оля', parentId: owner.id })
+  await makeLegacyIndividual(sub.id)
 
   await changeCoins(100, 'старт', owner.id, 'grant')
   await transfer(owner.id, sub.id, 25)
@@ -141,4 +159,21 @@ test('исчерпанный лимит ставит задачу на пауз�
   assert.match(logs.join('\n'), /Лимит расхода исчерпан/)
   // Кошелёк владельца не тронут: сотрудник упёрся в лимит ДО списания.
   assert.equal(await coins(owner.id), 499)
+})
+
+test('личный кошелёк больше не заводится: и создание, и правка дают общий баланс', async () => {
+  // Правка 27.08: «только общий баланс, у них нету своего кошелька». Вторая касса
+  // порождала расхождение — монеты застревали у сотрудника, а владелец не понимал,
+  // почему у него списалось меньше, чем потрачено.
+  const st = `${Date.now()}e`
+  const owner = await createUser({ email: `o${st}@t.io`, password: 'secret123', name: 'Владелец' })
+  const sub = await createUser({ email: `s${st}@t.io`, password: 'secret123', name: 'Ваня', parentId: owner.id, balanceMode: 'individual' })
+  assert.equal(sub.balanceMode, 'shared', 'при создании личный кошелёк не включается')
+
+  const upd = await updateUser(sub.id, { balanceMode: 'individual' })
+  assert.equal(upd.balanceMode, 'shared', 'и правкой его обратно не вернуть')
+
+  await changeCoins(60, 'старт', owner.id, 'grant')
+  await changeCoins(-20, 'трата сотрудника', sub.id)
+  assert.equal(await coins(owner.id), 40, 'тратит из кошелька владельца')
 })

@@ -90,8 +90,15 @@ test('isBlockedByOwner + listSubs: блокировка владельца ка�
   delete process.env.USERS_FILE
 })
 
-// ── §4.2 (MR-30): общий / индивидуальный баланс суба ──
-test('shared суб тратит из кошелька владельца; individual — из своего', async () => {
+/*
+ * ── §4.2 (MR-30): баланс суба ──
+ *
+ * Индивидуальный кошелёк отменён (правка 27.08: «только общий баланс, у них нету своего
+ * кошелька»). Здесь проверяем и то, что общий работает, и то, что личный больше не
+ * включается — ни созданием, ни правкой. Наследственные записи и возврат остатка по ним
+ * проверяет subWallet.test.js.
+ */
+test('суб тратит из кошелька владельца; личный кошелёк не включается', async () => {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'subusers-bal-'))
   process.env.USERS_FILE = path.join(dir, 'users.json')
   process.env.BALANCE_FILE = path.join(dir, 'balance.json')
@@ -103,12 +110,12 @@ test('shared суб тратит из кошелька владельца; indiv
   const shared = await u.createUser({ email: 'shared@x.y', password: 'secret1', parentId: boss.id })
   const indiv = await u.createUser({ email: 'indiv@x.y', password: 'secret1', parentId: boss.id, balanceMode: 'individual', tokenLimit: 500 })
   assert.equal(shared.balanceMode, 'shared', 'по умолчанию общий баланс')
-  assert.equal(indiv.balanceMode, 'individual')
-  assert.equal(indiv.tokenLimit, 500)
+  assert.equal(indiv.balanceMode, 'shared', 'просьба о личном кошельке игнорируется')
+  assert.equal(indiv.tokenLimit, 500, 'лимит расхода при этом сохраняется — он и есть ограничение')
 
-  // resolveWalletOwner: shared → владелец, individual/владелец → сам.
+  // resolveWalletOwner: у сотрудника кошелёк владельца, у владельца — свой.
   assert.equal(await u.resolveWalletOwner(shared.id), boss.id)
-  assert.equal(await u.resolveWalletOwner(indiv.id), indiv.id)
+  assert.equal(await u.resolveWalletOwner(indiv.id), boss.id)
   assert.equal(await u.resolveWalletOwner(boss.id), boss.id)
 
   // Пополняем кошелёк владельца.
@@ -120,11 +127,11 @@ test('shared суб тратит из кошелька владельца; indiv
   assert.equal((await bal.getBalance(boss.id)).coins, 70, 'списание суба ушло из кошелька владельца')
   assert.equal((await bal.getBalance(shared.id)).coins, 70)
 
-  // Индивидуальный суб — свой кошелёк, владельца не трогает.
-  assert.equal((await bal.getBalance(indiv.id)).coins, 0, 'у individual свой (пустой) кошелёк')
-  await bal.changeCoins(40, 'own', indiv.id)
-  assert.equal((await bal.getBalance(indiv.id)).coins, 40)
-  assert.equal((await bal.getBalance(boss.id)).coins, 70, 'кошелёк владельца не тронут individual-субом')
+  // Второй сотрудник — тот же кошелёк: своего у него нет, и трата видна у владельца.
+  assert.equal((await bal.getBalance(indiv.id)).coins, 70, 'сотрудник видит кошелёк владельца')
+  await bal.changeCoins(-40, 'spend', indiv.id)
+  assert.equal((await bal.getBalance(boss.id)).coins, 30, 'списалось у владельца')
+  assert.equal((await bal.getBalance(shared.id)).coins, 30, 'и у второго сотрудника — деньги общие')
 
   delete process.env.USERS_FILE
   delete process.env.BALANCE_FILE

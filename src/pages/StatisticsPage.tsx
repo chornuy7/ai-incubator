@@ -121,7 +121,7 @@ function MyStatistics() {
           <Skeleton className="col-span-full h-72 rounded-2xl" />
         </div>
       ) : tab === 'wallet' ? (
-        <WalletTab coins={stats?.coins ?? 0} />
+        <WalletTab coins={stats?.coins ?? 0} usd={stats?.usd ?? 0} />
       ) : tab === 'log' ? (
         <LogTab log={stats?.log || []} />
       ) : !hasData ? (
@@ -290,7 +290,15 @@ function Field({ label, value, accent }: { label: string; value: string; accent?
 }
 
 /** Свой кошелёк: баланс и операции — за что списали и когда пополнили. */
-function WalletTab({ coins }: { coins: number }) {
+/*
+ * Значок валюты по строке журнала (правка 27.08). Раньше везде стояла молния, и «+100.00 ⚡
+ * Пополнение $ из админ-панели» читалось как выдача токенов, хотя это деньги. Деньги и
+ * токены — два разных остатка: за $ покупают подписку и сами токены, токенами платят за
+ * действия. Смешивать их значки нельзя, иначе журнал не сходится ни с одним счётчиком.
+ */
+const cur = (r: { currency?: 'usd' | 'coins' }) => (r.currency === 'usd' ? '$' : '⚡')
+
+function WalletTab({ coins, usd }: { coins: number; usd: number }) {
   const pushToast = useApp((s) => s.pushToast)
   const [rows, setRows] = useState<WalletEntry[] | null>(null)
   useEffect(() => {
@@ -301,10 +309,16 @@ function WalletTab({ coins }: { coins: number }) {
 
   return (
     <div className="space-y-4">
-      <Card className="p-4">
-        <div className="mb-1 flex items-center gap-2 text-xs text-muted"><Wallet size={14} /> На счету</div>
-        <div className="font-display text-3xl font-bold text-fg">{fmtCoins(coins)} <span className="text-lg text-muted">⚡</span></div>
-      </Card>
+      <div className="grid gap-3 sm:grid-cols-2">
+        <Card className="p-4">
+          <div className="mb-1 flex items-center gap-2 text-xs text-muted"><Wallet size={14} /> Токены — платим за действия</div>
+          <div className="font-display text-3xl font-bold text-fg">{fmtCoins(coins)} <span className="text-lg text-muted">⚡</span></div>
+        </Card>
+        <Card className="p-4">
+          <div className="mb-1 flex items-center gap-2 text-xs text-muted"><Wallet size={14} /> Деньги — платим за подписку и токены</div>
+          <div className="font-display text-3xl font-bold text-fg"><span className="text-lg text-muted">$</span> {usd.toFixed(2)}</div>
+        </Card>
+      </div>
 
       {rows === null ? (
         <Card className="p-6 text-sm text-muted">Загрузка…</Card>
@@ -320,10 +334,10 @@ function WalletTab({ coins }: { coins: number }) {
                 <div key={r.ts + '-' + i} className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5 border-b border-line/30 py-1.5 text-sm last:border-0">
                   <span className={cn('flex items-center gap-1 font-semibold tabular-nums', income ? 'text-spark-300' : 'text-amber-300')}>
                     {income ? <ArrowUpRight size={13} /> : <ArrowDownRight size={13} />}
-                    {income ? '+' : ''}{fmtCoins(r.amount)} ⚡
+                    {income ? '+' : ''}{fmtCoins(r.amount)} {cur(r)}
                   </span>
                   {!!r.reason && <span className="min-w-0 flex-1 truncate text-muted">{r.reason}</span>}
-                  <span className="text-xs tabular-nums text-faint">осталось {fmtCoins(r.after)} ⚡</span>
+                  <span className="text-xs tabular-nums text-faint">осталось {fmtCoins(r.after)} {cur(r)}</span>
                   <span className="ml-auto shrink-0 tabular-nums text-faint">
                     {r.ts ? new Date(r.ts).toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : '—'}
                   </span>

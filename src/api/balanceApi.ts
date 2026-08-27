@@ -135,7 +135,20 @@ export async function saveUserModules(userId: string, modules: string[] | 'all')
 }
 
 /** §5.1: операция по кошельку — «за что списали». */
-export interface WalletEntry { ts: number; userId: string; amount: number; before: number; after: number; reason: string }
+export interface WalletEntry {
+  ts: number
+  userId: string
+  amount: number
+  before: number
+  after: number
+  reason: string
+  /**
+   * §11.4: чем операция была — деньгами или токенами. Сервер это пишет с самого начала,
+   * а витрина поле не читала и рисовала ⚡ на всём подряд, включая «Пополнение $»
+   * (правка 27.08: «где доллары — доллары, где токены — токены значок»).
+   */
+  currency?: 'usd' | 'coins'
+}
 
 /**
  * Кто сколько потратил из кошелька (27.08). При общем балансе владелец видит траты всех

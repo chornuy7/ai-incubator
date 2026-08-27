@@ -1089,8 +1089,17 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
             же, что и воркер: суточная норма уровня × дни, шаг = окно / норму.
           */}
           <div className="mt-3 rounded-xl border border-spark-500/25 bg-spark-500/8 px-3 py-2.5 text-xs leading-relaxed text-white/70">
-            <b className="text-fg">На каждый аккаунт: {warmDays * [40, 20, 10][warmLevel]} действий</b> за {warmDays}{' '}
-            {warmDays === 1 ? 'день' : warmDays < 5 ? 'дня' : 'дней'} — примерно раз в{' '}
+            {/*
+              Умножение пишем ЦЕЛИКОМ (правка 27.08: «здесь пишет 40 действий в день, а
+              сбоку — за всё время»). Два числа «40» рядом — суточная норма быстрого уровня
+              и итог за два дня нормального — читались как одно и то же, и казалось, что
+              витрина противоречит сама себе. Формула снимает вопрос без пересчёта в уме.
+            */}
+            <b className="text-fg">
+              {[40, 20, 10][warmLevel]} действий в день × {warmDays}{' '}
+              {warmDays === 1 ? 'день' : warmDays < 5 ? 'дня' : 'дней'} = {warmDays * [40, 20, 10][warmLevel]} действий на аккаунт
+            </b>{' '}
+            за всё время. Внутри дня — примерно раз в{' '}
             {Math.round((warmHours * 60) / [40, 20, 10][warmLevel])} мин в течение {warmHours} активных часов, ночью пауза.
             {selected.size > 1 && <> Всего по задаче: {warmDays * [40, 20, 10][warmLevel] * selected.size} действий на {selected.size} аккаунтов.</>}
           </div>
