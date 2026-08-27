@@ -8,6 +8,7 @@ import { useBalance } from '@/features/billing/balanceStore'
 import { expiryInfo, daysLeftPhrase } from '@/features/billing/expiry'
 import { deleteUser, changeMyPassword } from '@/api/usersApi'
 import { useSession } from '@/features/auth/session'
+import { can } from '@/shared/lib/access'
 import { PageHeader, Card, Switch, Badge, Modal } from '@/shared/ui'
 import { cn, coins as fmtCoins } from '@/shared/lib/utils'
 import { useTabParam } from '@/shared/lib/useTabParam'
@@ -501,13 +502,41 @@ export function WalletHistoryButton() {
   )
 }
 
+/** «1 модуль · 2 модуля · 5 модулей» — иначе счётчик читается как ошибка перевода. */
+function plural(n: number) {
+  const ten = n % 100
+  if (ten >= 11 && ten <= 14) return 'модулей'
+  const one = n % 10
+  if (one === 1) return 'модуль'
+  if (one >= 2 && one <= 4) return 'модуля'
+  return 'модулей'
+}
+
 /**
  * План и подписка: какой тариф/набор подключён и до какого числа. Срок берётся с
  * сервера (expiresAt); нет срока — «бессрочно» (демо и дефолтное пространство).
  */
 function SubscriptionCard({ balance }: { balance: Balance | null }) {
+  const me = useSession((st) => st.user)
   const modules = balance?.modules
-  const sub = modules === 'all' || modules == null ? 'Все модули' : `${modules.length} ${modules.length === 1 ? 'модуль' : 'модулей'}`
+
+  /*
+   * Сотруднику показываем его СОБСТВЕННЫЙ набор (просьба владельца 27.08: «в подписках
+   * суб-пользователя показываем только количество доступных именно для него открытых»).
+   *
+   * Подписку сотрудник наследует от владельца целиком — оттуда и приходило «5 модулей».
+   * Но открыто ему может быть два: в меню он видит два, а карточка обещала пять. Считаем
+   * пересечение подписки владельца с тем, что ему реально разрешено, и подписываем, из
+   * скольких это выбрано, — иначе непонятно, урезали его или у владельца столько и есть.
+   */
+  const own = Array.isArray(modules) && me && !me.isAdmin
+    ? modules.filter((k) => can(me.permissions ?? null, false, 'module', k))
+    : null
+  const ограничен = !!own && !!modules && Array.isArray(modules) && own.length < modules.length
+
+  const sub = modules === 'all' || modules == null
+    ? 'Все модули'
+    : `${(own ?? modules).length} ${plural((own ?? modules).length)}`
   // §5 (21.08): дата — словами («до 19 сентября 2026»). «19.09.2026» оператор читает
   // как ребус, а спутать день с месяцем в цифрах — вопрос одного взгляда.
   const exp = expiryInfo(balance?.expiresAt)
@@ -524,6 +553,9 @@ function SubscriptionCard({ balance }: { balance: Balance | null }) {
         <div>
           <div className="text-[11px] uppercase tracking-wide text-muted">Подписка</div>
           <div className="font-semibold text-fg">{sub}</div>
+          {ограничен && (
+            <div className="text-[11px] text-muted">открыто вам · у владельца {Array.isArray(modules) ? modules.length : 0}</div>
+          )}
         </div>
         <div>
           <div className="text-[11px] uppercase tracking-wide text-muted">Оплачено</div>
