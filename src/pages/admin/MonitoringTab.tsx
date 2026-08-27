@@ -228,7 +228,13 @@ export function ServiceAccounts() {
     finally { setBusy('') }
   }
 
-  const live = accounts.filter((a) => !a.inTrash)
+  /*
+   * Только аккаунты ПЛАТФОРМЫ (правка 27.08: «не должно быть из общей базы чужих телеграм
+   * аккаунтов, только наши, которые мы законектим именно для админ-панели»). Раньше здесь
+   * лежал весь парк, и дежурным по ревизии можно было назначить рабочий профиль клиента —
+   * а фоновое обновление общей базы идёт по нашей инициативе и нашими руками.
+   */
+  const live = accounts.filter((a) => !a.inTrash && a.platform)
   const chosen = live.filter((a) => a.service)
   const needle = q.trim().toLowerCase()
   // Выбранные всегда сверху: их единицы среди сотни, иначе искать их в списке невозможно.
@@ -245,10 +251,17 @@ export function ServiceAccounts() {
       <Card className="p-4">
         <p className="mb-3 text-xs leading-relaxed text-muted">
           Ревизия раз в N часов перезапускает сохранённые запросы парсинга и ищет, что появилось или пропало.
-          Работает <b className="text-fg">только</b> с отмеченными здесь аккаунтами: так она не занимает боевые
-          профили, которые в это время зарабатывают. Пока не отмечен ни один — ревизия каждый раз пишет в лог,
-          что работать некем. Аккаунты берутся из общего менеджера, там же их и импортируют.
+          В списке — <b className="text-fg">только аккаунты платформы</b>: клиентские профили сюда не попадают
+          вовсе, обновление общей базы идёт по нашей инициативе и должно идти нашими руками. Отметка выбирает,
+          кто из них дежурит.
         </p>
+        {!live.length && (
+          <div className="mb-3 rounded-lg border border-amber-500/30 bg-amber-500/10 px-2.5 py-2 text-xs leading-relaxed text-amber-200/90">
+            Аккаунтов платформы пока нет — ревизия каждый раз пишет в лог, что работать некем.
+            Подключите их: <b>Менеджер аккаунтов → Импортировать</b>, галочка
+            «Аккаунты платформы (для админ-панели)». Они не попадут ни в чьё клиентское пространство.
+          </div>
+        )}
         {err && <div className="mb-2 text-xs text-amber-300">{err}</div>}
         <div className="mb-2 flex flex-wrap items-center gap-2">
           <input
@@ -257,7 +270,7 @@ export function ServiceAccounts() {
             placeholder="Поиск по имени, username, телефону…"
             className="h-8 flex-1 rounded-lg border border-line bg-elevated/60 px-2.5 text-sm text-fg"
           />
-          <span className="text-[11px] text-muted">Отмечено: <b className="text-fg">{chosen.length}</b> из {live.length}</span>
+          <span className="text-[11px] text-muted">Дежурят: <b className="text-fg">{chosen.length}</b> из {live.length} наших</span>
         </div>
         <div className="max-h-72 space-y-1 overflow-y-auto pr-1">
           {shown.map((a) => (

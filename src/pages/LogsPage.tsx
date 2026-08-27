@@ -81,8 +81,15 @@ export function LogsPage() {
     return mine ? 'вы' : null
   }
 
-  const load = async () => {
-    try { setEntries(await fetchAudit({ limit: 300 })) }
+  /*
+   * Даже администратор по умолчанию видит ТОЛЬКО свою команду (правка 27.08). Владелец
+   * платформы — ещё и обычный клиент: в своём журнале ему нужны свои задачи, а не входы
+   * чужих сотрудников вперемешку. Весь журнал открывается кнопкой — как список
+   * пользователей.
+   */
+  const [allSpace, setAllSpace] = useState(false)
+  const load = async (scopeAll = allSpace) => {
+    try { setEntries(await fetchAudit({ limit: 300, ...(scopeAll ? { scope: 'all' as const } : {}) })) }
     catch (err) { pushToast({ type: 'error', title: 'Не удалось загрузить логи', desc: err instanceof Error ? err.message : '' }) }
     finally { setLoading(false) }
   }
@@ -90,7 +97,7 @@ export function LogsPage() {
     void load()
     const id = setInterval(() => { void load() }, 8000)
     return () => clearInterval(id)
-  }, [])
+  }, [allSpace]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const actions = useMemo(() => [...new Set(entries.map((e) => e.action))], [entries])
   const initiators = useMemo(() => [...new Set(entries.map((e) => e.initiator).filter((x): x is string => !!x))], [entries])
@@ -146,12 +153,23 @@ export function LogsPage() {
     <div>
       <PageHeader
         title="Логи"
-        subtitle="Ваши действия и действия ваших сотрудников: смена статусов аккаунтов, старт/стоп задач, кампании — с инициатором и причиной. (Администратор видит журнал всего пространства.)"
+        subtitle={allSpace
+          ? 'Журнал ВСЕГО пространства: действия всех клиентов платформы. Режим администратора.'
+          : 'Ваши действия и действия ваших сотрудников: смена статусов аккаунтов, старт/стоп задач, кампании — с инициатором и причиной.'}
         icon={<ScrollText size={22} />}
         badge={entries.length ? `${entries.length}` : undefined}
         actions={
           <div className="flex items-center gap-2">
             <HelpButton topic="logs" className="h-10 w-10" />
+            {me?.isAdmin && (
+              <button
+                onClick={() => { setLoading(true); setAllSpace((v) => !v) }}
+                title={allSpace ? 'Вернуться к своим записям' : 'Показать журнал всего пространства (доступно администратору)'}
+                className={cn('h-10 rounded-xl px-3 text-xs font-semibold', allSpace ? 'bg-spark-500/20 text-spark-300' : 'btn-ghost')}
+              >
+                {allSpace ? 'Всё пространство' : 'Только моя команда'}
+              </button>
+            )}
             <button onClick={exportCsv} className="btn-ghost h-10"><Download size={16} /> CSV</button>
             <button onClick={() => void load()} className="btn-ghost h-10"><RefreshCw size={16} /> Обновить</button>
           </div>

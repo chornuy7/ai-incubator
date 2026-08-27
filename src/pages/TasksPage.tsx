@@ -22,6 +22,14 @@ import { massStopConfirmSteps, canStopWarming, containsWarming } from '@/shared/
 import { useSession } from '@/features/auth/session'
 import { canControlModule } from '@/shared/lib/access'
 import { downloadXls } from '@/shared/lib/exportXls'
+import { ParserResultsView, type ParserResult } from '@/features/modules/ParserResultsView'
+
+/**
+ * Парсеры КАНАЛОВ и ГРУПП: у них результат — канал (название, подписчики, рейтинг), и
+ * показываем его тем же видом, что и сам модуль. Парсеры участников, сообщений и
+ * комментариев сюда не входят: у них строка — человек, и колонки другие.
+ */
+const КАНАЛЬНЫЙ_ПАРСЕР = ['parsing', 'parsing-groups']
 import { useTabParam } from '@/shared/lib/useTabParam'
 import { AccountPicker } from '@/features/account-picker/AccountPicker'
 import { delayMultiplier, useGlobalPace, perAccountShare } from '@/shared/lib/pace'
@@ -1396,16 +1404,34 @@ export function TaskDetailPage() {
             <div className="mb-2 flex items-center gap-2">
               <span className="text-sm font-bold text-fg">Результаты ({results.length})</span>
               {/* §3.9: тот же экспорт, что в самом парсере — результаты задачи нужны
-                  так же часто, как «свежие» на экране модуля. */}
-              <button
-                type="button"
-                onClick={() => downloadXls(results, `${t.moduleKey}-${t.id}`)}
-                className="btn-soft ml-auto h-8 text-xs"
-              >
-                <Download size={13} /> Excel
-              </button>
+                  так же часто, как «свежие» на экране модуля. У парсеров каналов кнопка
+                  своя, внутри общего вида, — вторая здесь была бы дублем. */}
+              {!КАНАЛЬНЫЙ_ПАРСЕР.includes(t.moduleKey) && (
+                <button
+                  type="button"
+                  onClick={() => downloadXls(results, `${t.moduleKey}-${t.id}`)}
+                  className="btn-soft ml-auto h-8 text-xs"
+                >
+                  <Download size={13} /> Excel
+                </button>
+              )}
             </div>
-            <div className="max-h-72 overflow-y-auto">
+            {/*
+              Результаты парсера каналов показываем ТЕМ ЖЕ видом, что и в самом модуле
+              (правка 27.08: «формат результатов должен быть как и у парсера внутри, со
+              всеми функциями, которые были для скачек и показа»). Здесь была голая
+              таблица «Имя · Юзернейм · Откуда · Тип»: ни подписчиков, ни рейтинга, ни
+              ключа, по которому канал нашёлся, и из выгрузок — только Excel.
+            */}
+            {КАНАЛЬНЫЙ_ПАРСЕР.includes(t.moduleKey) && (
+              <ParserResultsView
+                results={results as ParserResult[]}
+                moduleKey={t.moduleKey}
+                resultLabel={t.moduleKey === 'parsing-groups' ? 'группа' : 'канал'}
+                isGroups={t.moduleKey === 'parsing-groups'}
+              />
+            )}
+            <div className={cn('max-h-72 overflow-y-auto', КАНАЛЬНЫЙ_ПАРСЕР.includes(t.moduleKey) && 'hidden')}>
               {/* §8: для AIR (проверка аккаунтов) — понятный рейтинг по каждому аккаунту, а не сырой лог. */}
               {t.moduleKey === 'ggr' ? (
                 <table className="w-full text-sm">
@@ -1515,7 +1541,7 @@ export function TaskDetailPage() {
               )}
             </div>
             {/* Пагинация — как в парсере: 200 первых строк «на глаз» скрывали остальное. */}
-            {t.moduleKey !== 'ggr' && resPages > 1 && (
+            {t.moduleKey !== 'ggr' && !КАНАЛЬНЫЙ_ПАРСЕР.includes(t.moduleKey) && resPages > 1 && (
               <div className="mt-2 flex items-center justify-center gap-2 text-xs">
                 <button onClick={() => setResPage((p) => Math.max(1, p - 1))} disabled={resPage === 1} className="btn-soft h-7 px-2 disabled:opacity-30">Назад</button>
                 <span className="text-muted">{resPage} / {resPages}</span>

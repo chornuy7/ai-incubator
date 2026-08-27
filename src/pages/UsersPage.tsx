@@ -17,7 +17,7 @@ import { useSession } from '@/features/auth/session'
 import { ADMIN_BYPASS_ID } from '@/shared/config/rbac'
 import { HelpButton } from '@/features/neuro-commenting/moduleUi'
 import { cn } from '@/shared/lib/utils'
-import { fetchSpendByUser, fetchPricing, type SpendByUser as SpendByUserRow } from '@/api/balanceApi'
+import { fetchSpendByUser, fetchPricing, fetchBalance, type SpendByUser as SpendByUserRow } from '@/api/balanceApi'
 
 /** Якорь раздела шаблонов — он на этой же странице, ниже списка людей. */
 const TEMPLATES_ANCHOR = '#templates'
@@ -805,6 +805,9 @@ function SubWalletEditor({ sub, onMode }: { sub: User; onMode: (next: User) => v
   const [limit, setLimit] = useState<SubLimit | null>(null)
   const [limitDraft, setLimitDraft] = useState('')
   const [prices, setPrices] = useState<Record<string, number>>({})
+  // Свой остаток — чтобы не рисовать «лимит 1000», когда на счету 400 (вопрос владельца
+  // 27.08: «как я выдал 1000 токенов, если у меня всего 400?»).
+  const [мойОстаток, setМойОстаток] = useState<number | null>(null)
   const [busy, setBusy] = useState(false)
   const [note, setNote] = useState('')
   /*
@@ -825,6 +828,7 @@ function SubWalletEditor({ sub, onMode }: { sub: User; onMode: (next: User) => v
   // Цены берём с сервера, а не константами: иначе «сколько это действий» разойдётся
   // с тем, что спишется на самом деле, как только цену поправят в админке.
   useEffect(() => { void fetchPricing().then((r) => setPrices(r.actionsFull && Object.keys(r.actionsFull).length ? r.actionsFull : r.actions)).catch(() => {}) }, [])
+  useEffect(() => { void fetchBalance().then((b) => setМойОстаток(Number(b.coins) || 0)).catch(() => {}) }, [])
   useEffect(() => { if (!legacyWallet) void load() }, [load, legacyWallet])
 
   const saveLimit = async (next: number | null) => {
@@ -882,7 +886,13 @@ function SubWalletEditor({ sub, onMode }: { sub: User; onMode: (next: User) => v
       ) : (
         <>
           <div className="mb-2 flex flex-wrap items-center gap-4 text-xs">
-            <span className="text-white/45">Выдано: <b className="text-fg tabular-nums">{limit?.limit == null ? 'без ограничения' : `${limit.limit} ⚡`}</b></span>
+            {/*
+              «Лимит», а не «Выдано» (правка 27.08). Слово «выдано» читалось как перевод
+              монет — отсюда и вопрос «как я выдал 1000, если у меня 400». Ничего никуда не
+              переводится: это потолок расхода из ОБЩЕГО кошелька, и он спокойно может
+              быть больше текущего остатка — просто сработает не он, а конец денег.
+            */}
+            <span className="text-white/45">Лимит: <b className="text-fg tabular-nums">{limit?.limit == null ? 'без ограничения' : `${limit.limit} ⚡`}</b></span>
             <span className="text-white/45">Потрачено: <b className="text-fg tabular-nums">{limit?.spent ?? 0} ⚡</b></span>
             {limit?.limit != null && (
               <span className="text-white/45">Осталось: <b className={cn('tabular-nums', (limit.left ?? 0) > 0 ? 'text-spark-300' : 'text-rose-300')}>{limit.left ?? 0} ⚡</b></span>
@@ -898,11 +908,18 @@ function SubWalletEditor({ sub, onMode }: { sub: User; onMode: (next: User) => v
               className="input h-8 w-28 text-sm"
             />
             <button type="button" disabled={busy} onClick={() => void saveLimit(limitDraft === '' ? null : Number(limitDraft))}
-              className="btn-soft h-8 px-3 text-xs disabled:opacity-40">Выдать</button>
+              className="btn-soft h-8 px-3 text-xs disabled:opacity-40">Задать лимит</button>
             <button type="button" disabled={busy} onClick={() => void saveLimit(null)}
               className="btn-ghost h-8 px-3 text-xs disabled:opacity-40">Без ограничения</button>
             {note && <span className="text-[11px] text-muted">{note}</span>}
           </div>
+          {limit?.limit != null && мойОстаток != null && limit.limit > мойОстаток && (
+            <div className="mt-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-2.5 py-2 text-[11px] leading-relaxed text-amber-200/90">
+              На счету сейчас <b className="tabular-nums">{мойОстаток} ⚡</b> — это меньше лимита.
+              Лимит не переводит токены, он только ограничивает: сотрудник упрётся в конец общих денег раньше,
+              чем в свой потолок.
+            </div>
+          )}
           {действий.length > 0 && (
             <div className="mt-2 rounded-lg border border-spark-500/20 bg-spark-500/8 px-2.5 py-2 text-[11px] leading-relaxed text-white/60">
               <b className="text-fg">{limit?.limit} ⚡ — это примерно:</b>
@@ -912,9 +929,10 @@ function SubWalletEditor({ sub, onMode }: { sub: User; onMode: (next: User) => v
             </div>
           )}
           <p className="mt-1.5 text-[11px] leading-relaxed text-white/35">
-            Токены общие с вашими — отдельно переводить нечего: сотрудник тратит из вашего кошелька, и
-            каждое его действие списывается и у вас. Лимит накопительный: «выдано 500» значит «всего 500».
-            Когда израсходует, его задачи встанут на паузу с сохранением прогресса, а ваши продолжат работать.
+            Токены общие с вашими — переводить нечего: сотрудник тратит из вашего кошелька, и каждое его
+            действие списывается у вас. Лимит — это потолок, а не перевод: он накопительный, «лимит 500»
+            значит «всего 500 за всё время». Когда упрётся, его задачи встанут на паузу с сохранением
+            прогресса, а ваши продолжат работать.
           </p>
         </>
       )}

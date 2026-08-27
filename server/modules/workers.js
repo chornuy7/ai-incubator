@@ -2611,6 +2611,7 @@ export async function runChannelParser(task, store, kind) {
           members: Number(c.subscribers) || 0,
           hasComments: !!c.hasComments,
           link: c.link || (c.username ? `https://t.me/${c.username}` : ''),
+          foundBy: попал.map(({ kw }) => kw).join(', '),
           fromBase: true,
         })
         // Отмечаем совпадения для AND-пересечения: иначе строка из базы вылетит в конце
@@ -2845,6 +2846,13 @@ export async function runChannelParser(task, store, kind) {
             kind: resultKind,
             link: c.username ? `https://t.me/${c.username}` : '',
             hasComments: openComments,
+            /*
+             * По какому ключу нашли (просьба владельца 27.08: «здесь нету, по какому ключу
+             * нашло»). При десятке слов в запросе строка «Фильмы Crypto ero» ничего не
+             * объясняет: непонятно, это находка по «массаж» или мусор по соседнему ключу, —
+             * а значит непонятно и какой ключ чистить.
+             */
+            foundBy: keywords[kwIdx] || q,
             // Живые сигналы канала — витрина показывает их вместо «рейтинга из подписчиков».
             score,
             lang,

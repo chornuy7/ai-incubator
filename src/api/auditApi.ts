@@ -13,7 +13,12 @@ export interface AuditEntry {
   meta?: Record<string, unknown>
 }
 
-export async function fetchAudit(filter: { action?: string; initiator?: string; limit?: number } = {}): Promise<AuditEntry[]> {
+/**
+ * `scope: 'all'` — весь журнал пространства (только администратору). По умолчанию сервер
+ * отдаёт свои записи и записи своих сотрудников даже админу: в своём журнале нужны свои
+ * задачи, а не входы чужих сотрудников вперемешку (правка 27.08).
+ */
+export async function fetchAudit(filter: { action?: string; initiator?: string; limit?: number; scope?: 'all' } = {}): Promise<AuditEntry[]> {
   const qs = new URLSearchParams(
     Object.entries(filter).filter(([, v]) => v != null && v !== '').map(([k, v]) => [k, String(v)]),
   ).toString()

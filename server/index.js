@@ -1900,9 +1900,17 @@ app.get('/api/audit', async (req, res) => {
     // пользователю (у него `user === null`). Практически это закрыто общим замком
     // `accessGate`, но полагаться на порядок middleware в проверке прав нельзя:
     // журнал — это чужие действия, аккаунты и причины блокировок.
-    if (ctx.noSession || ctx.isAdmin) {
+    /*
+     * Админ теперь тоже по умолчанию видит ТОЛЬКО свою команду (правка 27.08: «почему у
+     * меня до сих пор чужие логи видны»). Владелец платформы — ещё и обычный клиент: в
+     * своём журнале ему нужны свои задачи, а не входы чужих сотрудников вперемешку.
+     * Весь журнал пространства остаётся доступен, но по явному запросу `scope=all` —
+     * как список пользователей открывается кнопкой «показать всех».
+     */
+    const wantAll = String(req.query.scope || '') === 'all'
+    if (ctx.noSession || (ctx.isAdmin && wantAll)) {
       const entries = await readAudit({ limit: wantLimit, action, initiator, account })
-      return res.json({ ok: true, entries })
+      return res.json({ ok: true, entries, scope: 'all' })
     }
     // Нет самого пользователя (заблокирован, удалён) — журнала нет: раньше такой запрос
     // проваливался в ветку выше и получал всё.
@@ -1917,7 +1925,7 @@ app.get('/api/audit', async (req, res) => {
     // Читаем шире (без initiator-фильтра) и оставляем только свои/субовские записи.
     const pool = await readAudit({ limit: 10000, action, account })
     const entries = pool.filter((e) => allowed.has(String(e.initiator || '').toLowerCase())).slice(0, wantLimit)
-    res.json({ ok: true, entries })
+    res.json({ ok: true, entries, scope: 'mine' })
   } catch (err) {
     res.status(500).json({ ok: false, error: err instanceof Error ? err.message : 'Ошибка' })
   }

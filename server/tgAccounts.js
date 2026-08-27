@@ -49,6 +49,7 @@ function toAccountDto(accountId, meta, me, sessionOk) {
     // клиентам (решение владельца 26.08). Отдаём в списке — по нему фильтрует и
     // планировщик ревизии, и интерфейс «чем есть парсить».
     service: meta.service === true,
+    platform: meta.platform === true, // наш аккаунт, заведённый под админ-панель
     avatarColor: meta.avatarColor || avatarColor(accountId),
     name,
     phone: phone && !phone.startsWith('+') ? `+${phone}` : phone || '—',
