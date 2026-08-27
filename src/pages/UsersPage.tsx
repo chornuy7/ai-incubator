@@ -858,6 +858,15 @@ function SubWalletEditor({ sub, onMode }: { sub: User; onMode: (next: User) => v
   const [busy, setBusy] = useState(false)
   const [note, setNote] = useState('')
   /*
+   * Свёрнут по умолчанию (правка 27.08: «почему оно такое большое, почему не открывать
+   * внизу, как у нас работает доступ к модулям»). Раскрытый блок с полем, тремя кнопками,
+   * расчётом действий и двумя абзацами занимал полкарточки у КАЖДОГО сотрудника — список
+   * из пяти человек переставал помещаться на экран. Теперь это такая же строка-дропдаун,
+   * как «Доступ к аккаунтам» и «Доступ к модулям» выше: главное видно сразу, остальное —
+   * по клику.
+   */
+  const [open, setOpen] = useState(false)
+  /*
    * Личный кошелёк остался ТОЛЬКО как наследство (правка 27.08). Заводить его больше
    * нельзя, но у части сотрудников он включён с прошлых версий — им показываем возврат
    * остатка одной кнопкой, иначе монеты застряли бы навсегда.
@@ -874,7 +883,9 @@ function SubWalletEditor({ sub, onMode }: { sub: User; onMode: (next: User) => v
 
   // Цены берём с сервера, а не константами: иначе «сколько это действий» разойдётся
   // с тем, что спишется на самом деле, как только цену поправят в админке.
-  useEffect(() => { void fetchPricing().then((r) => setPrices(r.actionsFull && Object.keys(r.actionsFull).length ? r.actionsFull : r.actions)).catch(() => {}) }, [])
+  // Прайс нужен только раскрытой карточке (расчёт «сколько это действий»): свёрнутых на
+  // экране может быть десяток, и каждая тянула бы его зря.
+  useEffect(() => { if (open) void fetchPricing().then((r) => setPrices(r.actionsFull && Object.keys(r.actionsFull).length ? r.actionsFull : r.actions)).catch(() => {}) }, [open])
   useEffect(() => { void fetchBalance().then((b) => setМойОстаток(Number(b.coins) || 0)).catch(() => {}) }, [])
   useEffect(() => { if (!legacyWallet) void load() }, [load, legacyWallet])
 
@@ -921,8 +932,22 @@ function SubWalletEditor({ sub, onMode }: { sub: User; onMode: (next: User) => v
   ] : []
   const нф = (n: number) => n.toLocaleString('ru-RU')
 
+  // Сводка в свёрнутой строке: «сколько выдано и сколько осталось» — то, ради чего сюда
+  // и заходят. Разворачивать карточку, чтобы прочитать два числа, не нужно.
+  const сводка = legacyWallet
+    ? 'отдельный кошелёк — перевести на общий'
+    : limit?.limit == null
+      ? 'без ограничения'
+      : `${limit.limit} ⚡ · осталось ${limit.left ?? 0} ⚡`
+
   return (
-    <div className="mt-2 rounded-xl border border-line bg-elevated/40 p-3">
+    <div className="mt-1 w-full">
+      <button onClick={() => setOpen(!open)} className="flex items-center gap-1.5 text-xs text-white/55 hover:text-white/85">
+        <ChevronDown size={13} className={cn('transition-transform', open && 'rotate-180')} />
+        Лимит расхода: {сводка}
+      </button>
+      {!open ? null : (
+      <div className="mt-2 rounded-xl border border-line bg-elevated/40 p-3">
       <div className="mb-2 flex flex-wrap items-center gap-2">
         <span className="text-xs font-bold text-fg">Лимит расхода сотрудника</span>
         <span className="ml-auto text-[11px] text-white/35">кошелёк общий с вашим</span>
@@ -995,6 +1020,8 @@ function SubWalletEditor({ sub, onMode }: { sub: User; onMode: (next: User) => v
             прогресса, а ваши продолжат работать.
           </p>
         </>
+      )}
+      </div>
       )}
     </div>
   )
