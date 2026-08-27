@@ -579,9 +579,16 @@ function SubscriptionCard({ balance }: { balance: Balance | null }) {
         </div>
         {/* Правка 14.08: «Подписки» и «Изменить тариф» вели в одно место (/panel/user/subscription) —
             убрали дубль, оставили одну кнопку с названием целевой страницы «Подписки». */}
-        <div className="ml-auto flex items-center gap-2">
-          <Link to="/panel/user/subscription" className="btn-iris h-9 text-sm"><Package size={14} /> Подписки</Link>
-        </div>
+        {/*
+          Сотруднику кнопки нет (правка 27.08). Подписка — не его: сервер на покупку
+          отвечает «подписку оформляет владелец пространства», и кнопка вела на экран,
+          где сделать нельзя ничего.
+        */}
+        {!balance?.isSub && (
+          <div className="ml-auto flex items-center gap-2">
+            <Link to="/panel/user/subscription" className="btn-iris h-9 text-sm"><Package size={14} /> Подписки</Link>
+          </div>
+        )}
       </div>
     </Card>
   )

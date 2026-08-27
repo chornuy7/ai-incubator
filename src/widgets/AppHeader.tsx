@@ -567,12 +567,15 @@ export function AppHeader() {
         footer={(
           <>
             <button onClick={() => setNoSubscription('')} className="btn-ghost">Закрыть</button>
-            <button
-              onClick={() => { setNoSubscription(''); nav('/panel/user/subscription') }}
-              className="btn-primary inline-flex items-center gap-1.5"
-            >
-              <Package size={16} /> Подписки
-            </button>
+            {/* Сотруднику идти некуда: модуль открывает владелец (27.08). */}
+            {!balance?.isSub && (
+              <button
+                onClick={() => { setNoSubscription(''); nav('/panel/user/subscription') }}
+                className="btn-primary inline-flex items-center gap-1.5"
+              >
+                <Package size={16} /> Подписки
+              </button>
+            )}
           </>
         )}
       >
@@ -630,7 +633,15 @@ export function AppHeader() {
         <div className="mb-4 rounded-2xl border border-line bg-elevated/50 p-3">
           <div className="mb-2 flex items-center justify-between">
             <span className="text-xs font-bold uppercase tracking-wide text-muted">Подписки</span>
-            <button onClick={() => { setCoinsOpen(false); nav('/panel/user/subscription') }} className="text-xs text-spark-300 hover:text-spark-200">Изменить →</button>
+            {/*
+              Сотруднику «Изменить» не показываем (правка 27.08). Подписка — не его: он
+              работает в модулях, открытых владельцем, а покупка и отключение модулей
+              меняют пространство владельца и списывают его деньги. Кнопка вела на экран,
+              где сотрудник ничего не может (и не должен) сделать.
+            */}
+            {!balance?.isSub && (
+              <button onClick={() => { setCoinsOpen(false); nav('/panel/user/subscription') }} className="text-xs text-spark-300 hover:text-spark-200">Изменить →</button>
+            )}
           </div>
           {(() => {
             const mods = balance?.modules
