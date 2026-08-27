@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 import type {
-  AppData, UserState, Locale, Theme, AccountStatus, BackgroundTask, LogLevel, Proxy,
+  AppData, UserState, Locale, Theme, AccountStatus, BackgroundTask, LogLevel, Proxy, TgAccount,
 } from '@/shared/types'
 import { cloneSeed } from './seeds'
 import { uid } from '@/shared/lib/utils'
@@ -227,8 +227,15 @@ export const useApp = create<AppStore>((set, get) => {
     },
     setAccountProxy: async (id, proxy) => {
       if (!get().guardNet('смена прокси')) return
-      await patchAccount(id, { proxy })
-      await get().loadAccounts()
+      /*
+       * Обновляем ОДНУ карточку, а не весь парк (правка 27.08: «очень долго обновляется
+       * прокси, нажимаю сохранить и прям долго обновляет»). Сервер и так возвращает
+       * изменённый аккаунт — перезагружать ради него сотню остальных незачем.
+       */
+      const updated = await patchAccount(id, { proxy })
+      const acc = (updated as { account?: TgAccount })?.account
+      if (acc) mutate((st) => ({ data: { ...st.data, accounts: st.data.accounts.map((a) => (a.id === id ? acc : a)) } }))
+      else await get().loadAccounts() // старый ответ без тела — на всякий случай как раньше
     },
 
     addProxy: (p) =>

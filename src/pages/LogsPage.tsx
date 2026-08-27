@@ -7,6 +7,9 @@ import { useApp } from '@/mocks/store'
 import { PageHeader, Card, EmptyState, Select, Badge, Modal, Segmented } from '@/shared/ui'
 import { HelpButton } from '@/features/neuro-commenting/moduleUi'
 import { fetchAudit, type AuditEntry } from '@/api/auditApi'
+import { fetchUsers } from '@/api/usersApi'
+import { useSession } from '@/features/auth/session'
+import { cn } from '@/shared/lib/utils'
 
 type Tone = 'spark' | 'iris' | 'amber' | 'rose' | 'muted'
 
@@ -53,6 +56,31 @@ export function LogsPage() {
   const [mode, setMode] = useState(0) // 0 — список, 1 — потоки (2–3 колонки)
   const [streamActions, setStreamActions] = useState<string[]>([]) // до 3 действий-колонок
 
+  /*
+   * Чья это запись — видно прямо в строке (вопрос владельца 27.08: «почему я вижу все
+   * логи всех пользователей, а не только свои и своих субпользователей?»).
+   *
+   * Сервер журнал уже режет: владельцу отдаются только его записи и записи его
+   * сотрудников. Но в строке стоял голый e-mail или id — по нему не отличить своего
+   * сотрудника от постороннего, и любой незнакомый адрес читается как утечка. Подписываем
+   * «вы» и «сотрудник»; если вдруг появится кто-то ещё — это будет видно сразу, а не
+   * потеряется среди сотни строк.
+   */
+  const me = useSession((st) => st.user)
+  const [team, setTeam] = useState<{ id: string; email: string }[]>([])
+  useEffect(() => {
+    void fetchUsers().then((us) => setTeam(us.map((u) => ({ id: u.id, email: u.email })))).catch(() => {})
+  }, [])
+
+  const whoIs = (initiator?: string) => {
+    const v = String(initiator || '').toLowerCase()
+    if (!v) return null
+    if (v === String(me?.id || '').toLowerCase() || v === String(me?.email || '').toLowerCase()) return 'вы'
+    const mine = team.find((u) => u.id.toLowerCase() === v || (u.email || '').toLowerCase() === v)
+    if (mine && mine.id !== me?.id) return 'сотрудник'
+    return mine ? 'вы' : null
+  }
+
   const load = async () => {
     try { setEntries(await fetchAudit({ limit: 300 })) }
     catch (err) { pushToast({ type: 'error', title: 'Не удалось загрузить логи', desc: err instanceof Error ? err.message : '' }) }
@@ -92,7 +120,19 @@ export function LogsPage() {
           <span className="text-white/80">{e.reason || e.code || e.action}</span>
           <div className="ml-auto flex flex-wrap items-center gap-x-3 text-xs text-white/40">
             {e.module && e.module !== 'core' && <span>{e.module}</span>}
-            <span>кто: {e.initiator}</span>
+            <span>
+              кто: {e.initiator}
+              {(() => {
+                const кто = whoIs(e.initiator)
+                if (!кто) return null
+                return (
+                  <span className={cn('ml-1.5 rounded px-1.5 py-0.5 text-[10px] font-semibold',
+                    кто === 'вы' ? 'bg-spark-500/15 text-spark-300' : 'bg-iris-500/15 text-iris-300')}>
+                    {кто}
+                  </span>
+                )
+              })()}
+            </span>
             {e.account && <span>акк: {String(e.account).slice(-6)}</span>}
             {accs ? <span>{accs} акк.</span> : null}
             <span>{new Date(e.ts).toLocaleString()}</span>

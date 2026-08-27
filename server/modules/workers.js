@@ -106,7 +106,7 @@ import { getAccountMeta, setAccountMeta, accountLabel } from '../accountsMeta.js
 import { releaseTaskLocks, markTaskLive, markTaskDone, assertAccountAvailable } from '../lib/accountLocks.js'
 import { loadSessionString, createClient } from '../tgAuth.js'
 import {
-  pickCommentCandidates, trackIdlePass, markIdleStop, warmingPace, pickWeightedKey, idleWaitPlan, WARM_WINDOW_MS, msUntilHour, inActiveWindow,
+  pickCommentCandidates, trackIdlePass, markIdleStop, warmingPace, pickWeightedKey, idleWaitPlan, WARM_WINDOW_MS, warmWindowMs, msUntilHour, inActiveWindow,
 } from '../lib/workerLoop.js'
 import { channelSignals, channelScore, isActive, detectLang } from '../lib/channelScore.js'
 import { keywordRegex } from '../lib/keywordMatch.js'
@@ -1589,7 +1589,8 @@ export async function runWarming(task, store) {
   // 3 уровня прогрева (§8.2, названия заказчика): длиннее уровень — медленнее/естественнее темп.
   const pace = warmingPace(s.warmLevel ?? 1)
   const mul = delayMultiplier(s.protectionLevel ?? 1, s.delayPreset ?? 1) * pace.mul
-  const шаг = Math.round(WARM_WINDOW_MS / Math.max(1, pace.actionsPerDay) / 60000)
+  const окно = warmWindowMs(s.warmHours)
+  const шаг = Math.round(окно / Math.max(1, pace.actionsPerDay) / 60000)
   // Сколько всего и на сколько дней — в первой же строке лога. «Прогрев на 2 дня», молча
   // закончившийся к обеду, был именно потому, что цель бралась жребием (правка 27.08).
   const днейПрогрева = Math.max(1, Math.min(30, Number(s.warmDays) || 0))
@@ -1599,7 +1600,7 @@ export async function runWarming(task, store) {
     'info',
     `Прогрев запущен · ${pace.label}`
     + (s.warmDays ? ` · ${днейПрогрева} дн. × ~${pace.actionsPerDay} действий = ${цельПрогрева} всего` : ` · ~${pace.actionsPerDay} действий/день`)
-    + ` (примерно раз в ${шаг} мин на аккаунт, ночью — пауза)`,
+    + ` · окно ${Math.round(окно / 3600000)} ч в сутки, примерно раз в ${шаг} мин на аккаунт (ночью — пауза)`,
   )
   const accountIds = s.accountIds || []
   // §3.3: на время прогрева аккаунт получает статус «warming» — он входит в NON_RUNNABLE,
@@ -1804,9 +1805,9 @@ export async function runWarming(task, store) {
        * (9:00–23:00 — ночью человек спит, §8.2). Разброс ±35%, иначе действия идут по
        * метроному. Нижняя граница — прежняя пауза между действиями: быстрее не нужно.
        */
-      const шагПоНорме = Math.round((WARM_WINDOW_MS / Math.max(1, pace.actionsPerDay)) * (0.65 + Math.random() * 0.7))
+      const шагПоНорме = Math.round((окно / Math.max(1, pace.actionsPerDay)) * (0.65 + Math.random() * 0.7))
       const паузаП = Math.max(pickDelay(30, 90, mul) * 1000, шагПоНорме)
-      await noteWait(task, store, паузаП, `темп прогрева: ~${pace.actionsPerDay} действий/день`)
+      await noteWait(task, store, паузаП, `темп прогрева: ~${pace.actionsPerDay} действий за ${Math.round(окно / 3600000)} ч в сутки`)
       if (await breakableDelay(паузаП, store, task)) break
 
       // Ночью прогрев спит: активность в 4 утра — сама по себе примета фермы.

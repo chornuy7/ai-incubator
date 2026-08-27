@@ -158,6 +158,8 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
   // Срок прогрева в днях (правка 27.08). Минимум двое суток — короче профиль не «зреет»,
   // а просто получает пачку действий за вечер.
   const [warmDays, setWarmDays] = useState(2)
+  // Сколько часов в сутки аккаунт активен: в это окно и раскладываются его действия.
+  const [warmHours, setWarmHours] = useState(8)
   const [postWindow, setPostWindow] = useState(10) // §3.5: сколько последних постов обрабатывать
   const [stopWordsText, setStopWordsText] = useState('') // §3.5: пропускать посты с этими словами
   const [analyzeImages, setAnalyzeImages] = useState(false) // §10.5: анализ фото в посте vision-моделью
@@ -230,7 +232,14 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
    * невидимым значением по умолчанию, а из него считается и ETA («7 ч»), и когда
    * задача закончится. Настройка, которая молча решает за человека, — хуже показанной.
    */
-  const hasLimits = !isParser && !isGgr && (cfg.aiProtection || cfg.richLayout || cfg.lookingLayout)
+  /*
+   * У прогрева своей карточки лимитов НЕТ (правка 27.08: «здесь нестыковка, убрать
+   * параметры и лимиты»). Вчера я её включил, и получилось два источника правды: карточка
+   * показывала «всего 10, на аккаунт 0–10», а блок прогрева — «≈40 действий на аккаунт».
+   * Число действий у прогрева выводится из уровня и срока, руками его задавать нечего —
+   * поэтому всё живёт в одном блоке «Уровень прогрева».
+   */
+  const hasLimits = !isParser && !isGgr && !cfg.warmingLayout && (cfg.aiProtection || cfg.richLayout || cfg.lookingLayout)
   const hasParamsCard = moduleKey === 'neuro-commenting' || hasLimits
 
   const maybeSaveToFolder = (list: string[]) => {
@@ -303,7 +312,7 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
     // §0: под кампанией цель наследуется от неё; без кампании — прямой выбор цели.
     ...(campaignId ? { campaignId } : {}),
     ...((campaignId ? campaigns.find((c) => c.id === campaignId)?.goalId : goalId) ? { goalId: (campaignId ? campaigns.find((c) => c.id === campaignId)?.goalId : goalId) as string } : {}),
-    ...(cfg.warmingLayout ? { warmLevel, warmDays } : {}),
+    ...(cfg.warmingLayout ? { warmLevel, warmDays, warmHours } : {}),
     // Массовые реакции: режим и глубина. Отдельным полем, а не общим commentMode —
     // воркер читает именно reactMode, и дескриптор MCP описывает его.
     ...(cfg.reactionSettings ? { reactMode: g(0), lastPostsCount } : {}),
@@ -315,7 +324,7 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
       lookMode: cfg.lookModeOptions?.[lookModeIdx]?.value ?? 'stories',
       lookPostsCount,
     } : {}),
-  }), [carry, selected, targets, postUrls, toggles, probability, maxActions, minActions, maxPerAcc, minPerAcc, minWords, durationMinutes, aiProtect, protLevel, notifyStatus, activePrompt, promptBodies, delayPreset, palette, delays, keywords, isGgr, accounts, cfg, lookModeIdx, lookPostsCount, goalId, campaignId, campaigns, warmLevel, warmDays, postWindow, stopWordsText, analyzeImages, moduleKey, typeWeights, weightSum])
+  }), [carry, selected, targets, postUrls, toggles, probability, maxActions, minActions, maxPerAcc, minPerAcc, minWords, durationMinutes, aiProtect, protLevel, notifyStatus, activePrompt, promptBodies, delayPreset, palette, delays, keywords, isGgr, accounts, cfg, lookModeIdx, lookPostsCount, goalId, campaignId, campaigns, warmLevel, warmDays, warmHours, postWindow, stopWordsText, analyzeImages, moduleKey, typeWeights, weightSum])
 
   const hasPostTargets = postUrls.length > 0
   // Многомодульность (20.08): аккаунт МОЖНО брать, пока он работает в другом модуле.
@@ -451,6 +460,7 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
     if (Array.isArray(s.postUrls)) setPostUrls(s.postUrls)
     if (s.warmLevel !== undefined) setWarmLevel(s.warmLevel)
     if (s.warmDays !== undefined) setWarmDays(Number(s.warmDays) || 2)
+    if (s.warmHours !== undefined) setWarmHours(Number(s.warmHours) || 8)
     if (s.postWindow !== undefined) setPostWindow(s.postWindow)
     if (Array.isArray(s.stopWords)) setStopWordsText(s.stopWords.join(', '))
     if (s.analyzeImages !== undefined) setAnalyzeImages(s.analyzeImages)
@@ -493,6 +503,22 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
       { icon: <Shield size={18} />, color: '#0ec464', label: 'Валидных', value: String(results.filter((r) => r.status === 'valid').length) },
       { icon: <Clock size={18} />, color: '#f59e0b', label: 'Статус', value: task?.status ?? '—' },
     ]
+    /*
+     * У прогрева свои плитки (правка 27.08). Общие врали дважды: «Группы 0» — у прогрева
+     * целей нет вовсе, он сам ищет каналы; «Лимит действий 10» — остаток поля, которого
+     * в витрине больше нет, вместо честных «40 на аккаунт за 2 дня».
+     */
+    if (cfg.warmingLayout) {
+      const perDay = [40, 20, 10][warmLevel]
+      const perAcc = warmDays * perDay
+      const acc = Math.max(1, selected.size)
+      return [
+        { icon: <Users size={18} />, color: '#7145ff', label: 'Аккаунты', value: String(selected.size), warn: selected.size === 0 },
+        { icon: <Flame size={18} />, color: '#f59e0b', label: 'Действий на аккаунт', value: String(perAcc) },
+        { icon: <Clock size={18} />, color: '#0ec464', label: 'Займёт', value: `${warmDays} ${warmDays === 1 ? 'день' : warmDays < 5 ? 'дня' : 'дней'}` },
+        { icon: <Hash size={18} />, color: '#06b6d4', label: 'Всего действий', value: String(perAcc * acc) },
+      ]
+    }
     return [
       { icon: <Users size={18} />, color: '#7145ff', label: 'Аккаунты', value: String(selected.size), warn: selected.size === 0 },
       // §12 (MR-59): «цели» перед запуском — с учётом ссылок на посты (mass-react), а не
@@ -520,7 +546,7 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
       },
       { icon: cfg.reactionSettings ? <Heart size={18} /> : <MessageSquareText size={18} />, color: '#f59e0b', label: `Лимит ${limitNoun(moduleKey, cfg)}`, value: String(maxActions) },
     ]
-  }, [selected, targets, postUrls, hasPostTargets, delays, maxActions, cfg, isGgr, accounts, results, task, needsTargets, protLevel, delayPreset, globalPace])
+  }, [selected, targets, postUrls, hasPostTargets, delays, maxActions, cfg, isGgr, accounts, results, task, needsTargets, protLevel, delayPreset, globalPace, warmLevel, warmDays])
 
   // §11 (MR-55): пошаговый roadmap перед запуском — что сделано и что осталось.
   // `anchor` — «связка» с блоком на странице: клик по шагу прокручивает к нему.
@@ -1033,15 +1059,61 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
             и то, и другое видно тут же, без догадок.
           */}
           <div className="mt-3">
-            <div className="mb-1.5 flex items-center justify-between">
-              <span className="text-xs text-white/60">Сколько дней греем</span>
-              <span className="text-[11px] text-white/40">≈ {warmDays * [40, 20, 10][warmLevel]} действий на аккаунт за всё время</span>
-            </div>
+            <div className="mb-1.5 text-xs text-white/60">Сколько дней греем</div>
             <Segmented
               options={['2 дня', '3 дня', '7 дней', '14 дней']}
               value={[2, 3, 7, 14].indexOf(warmDays) === -1 ? 0 : [2, 3, 7, 14].indexOf(warmDays)}
               onChange={(i) => setWarmDays([2, 3, 7, 14][i])}
             />
+          </div>
+
+          {/*
+            Окно активности (просьба владельца 27.08: «добавить выбор — 6 часов прогрева
+            каждый день, 8 или 12; в них распределяются действия одного аккаунта»).
+            Окно решает не сколько действий, а насколько они растянуты: одни и те же
+            20 действий за 6 часов идут раз в 18 минут, за 12 — раз в 36. Узкое окно
+            похоже на человека, который заходит вечером, широкое — на того, кто весь
+            день в телефоне.
+          */}
+          <div className="mt-3">
+            <div className="mb-1.5 text-xs text-white/60">Сколько часов в сутки аккаунт активен</div>
+            <Segmented
+              options={['6 часов', '8 часов', '12 часов', '14 часов']}
+              value={[6, 8, 12, 14].indexOf(warmHours) === -1 ? 1 : [6, 8, 12, 14].indexOf(warmHours)}
+              onChange={(i) => setWarmHours([6, 8, 12, 14][i])}
+            />
+          </div>
+
+          {/*
+            Итог одной строкой — вместо карточки лимитов, где числа расходились. Считаем то
+            же, что и воркер: суточная норма уровня × дни, шаг = окно / норму.
+          */}
+          <div className="mt-3 rounded-xl border border-spark-500/25 bg-spark-500/8 px-3 py-2.5 text-xs leading-relaxed text-white/70">
+            <b className="text-fg">На каждый аккаунт: {warmDays * [40, 20, 10][warmLevel]} действий</b> за {warmDays}{' '}
+            {warmDays === 1 ? 'день' : warmDays < 5 ? 'дня' : 'дней'} — примерно раз в{' '}
+            {Math.round((warmHours * 60) / [40, 20, 10][warmLevel])} мин в течение {warmHours} активных часов, ночью пауза.
+            {selected.size > 1 && <> Всего по задаче: {warmDays * [40, 20, 10][warmLevel] * selected.size} действий на {selected.size} аккаунтов.</>}
+          </div>
+
+          {/*
+            Что именно делает прогрев. Раньше об этом не было сказано нигде: человек
+            запускал модуль и по логам угадывал, чем заняты его профили.
+          */}
+          <div className="mt-2 rounded-xl border border-line bg-elevated/40 px-3 py-2.5">
+            <div className="mb-1.5 text-xs font-semibold text-fg">Что аккаунт делает в это время</div>
+            <ul className="space-y-1 text-[11px] leading-snug text-white/55">
+              <li>· <b className="text-white/75">Смотрит каналы</b> — открывает и листает 2–7 последних постов (30%)</li>
+              <li>· <b className="text-white/75">Ставит реакции</b> — на случайный пост из последних десяти (20%)</li>
+              <li>· <b className="text-white/75">Читает диалоги</b> — заходит в список переписок (15%)</li>
+              <li>· <b className="text-white/75">Вступает в каналы</b> — с паузой перед входом, как человек (12%)</li>
+              <li>· <b className="text-white/75">Отписывается</b> — от того, куда вступил в этой же задаче (8%)</li>
+              <li>· <b className="text-white/75">Пишет себе в «Избранное»</b> — короткую заметку (5%)</li>
+              <li>· <b className="text-white/75">Просто заходит</b> — держит сессию живой (10%)</li>
+            </ul>
+            <div className="mt-1.5 text-[11px] leading-snug text-white/35">
+              Каналы берутся из вашей базы (той, что наполняет парсер), и только если она пуста — поиском по темам.
+              Так профиль греется на своей тематике, а не на случайном шуме.
+            </div>
           </div>
           <div className="mt-3 rounded-lg border border-line/60 bg-elevated/40 px-3 py-2 text-[11px] text-white/50">
             💡 <b className="text-white/70">Уровень</b> — темп: сколько действий аккаунт делает в сутки (~40 / 20 / 10) и насколько
@@ -1195,15 +1267,27 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
           />
         )
         if (hasParamsCard) return panel
+        /*
+         * У прогрева карточки «Параметры и лимиты» нет вовсе (правка 27.08). Здесь она
+         * была пустой обёрткой с фразой «темп задаёт секция выше» — то есть вторым
+         * заголовком про параметры, которых в ней нет. Всё, что можно настроить, живёт в
+         * блоке «Уровень прогрева»; сюда попадала только панель запуска.
+         */
+        if (cfg.warmingLayout) return (
+          <div id="sec-run" className="scroll-mt-24">
+            {limitWarn && !running && (
+              <div className="mb-3 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-300">⚠ {limitWarn}</div>
+            )}
+            {panel}
+          </div>
+        )
         return (
           <div id="sec-run" className="scroll-mt-24">
           <SectionCard icon={<Play size={18} />} title="Параметры и лимиты">
           {limitWarn && !running && (
             <div className="mb-3 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-300">⚠ {limitWarn}</div>
           )}
-          <p className="mb-3 text-sm text-muted">{cfg.warmingLayout
-            ? 'Темп и паузы задаёт «Уровень прогрева» — секция выше.'
-            : 'Лимиты и задержки — в блоке «Защита и тайминги» выше.'}</p>
+          <p className="mb-3 text-sm text-muted">Лимиты и задержки — в блоке «Защита и тайминги» выше.</p>
             {panel}
           </SectionCard>
           </div>

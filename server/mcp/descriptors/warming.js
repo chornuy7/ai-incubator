@@ -57,8 +57,8 @@ export default {
       howItWorks:
         'Уровень задаёт и темп (множитель задержек), и суточную норму действий. Чем быстрее — '
         + 'the more actions per day and the more visible the account.',
-      api: { method: 'POST', path: '/api/modules/warming/tasks', fills: ['warmLevel', 'warmDays'] },
-      params: ['warmLevel', 'warmDays'],
+      api: { method: 'POST', path: '/api/modules/warming/tasks', fills: ['warmLevel', 'warmDays', 'warmHours'] },
+      params: ['warmLevel', 'warmDays', 'warmHours'],
     },
     {
       id: 'limits',
@@ -117,6 +117,26 @@ export default {
       constraints: ['empty list → refusal “Select at least one account”'],
       examples: [['acc_1'], ['acc_1', 'acc_2']],
       storedAs: 'task.settings.accountIds',
+    },
+    {
+      name: 'warmHours',
+      block: 'level',
+      title: 'Active hours per day',
+      type: 'integer',
+      default: 8,
+      enum: [
+        { value: 6, label: '6 hours', means: 'Evening user: the same actions are packed tighter.' },
+        { value: 8, label: '8 hours', means: 'Default.' },
+        { value: 12, label: '12 hours', means: 'All-day user: actions are spread thin.' },
+        { value: 14, label: '14 hours', means: 'Full activity window 9:00–23:00.' },
+      ],
+      purpose: 'Window the daily action quota is spread over — not how many, but how far apart.',
+      constraints: [
+        'step between actions = window / actions per day, with a random spread of ±35%',
+        'night is always a pause: activity at 4am is a farm marker on its own',
+      ],
+      seeAlso: ['warmLevel', 'warmDays'],
+      storedAs: 'task.settings.warmHours',
     },
     {
       name: 'warmDays',

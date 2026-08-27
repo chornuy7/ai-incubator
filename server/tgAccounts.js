@@ -119,7 +119,16 @@ export async function tgListAccounts(opts = {}) {
   // Без ownerId (админ, дев без сессии, внутренние вызовы) фильтра нет — иначе воркеры
   // и админ-панель перестали бы видеть аккаунты, с которыми работают.
   const ownerId = opts.ownerId ? String(opts.ownerId) : null
-  const ids = await listSessionIds()
+  /*
+   * `only` — собрать ОДИН аккаунт (правка 27.08: «очень долго обновляется прокси»).
+   *
+   * Сохранение прокси пересобирало весь парк дважды: сначала tgPatchAccount строил список
+   * из девяноста восьми аккаунтов, чтобы вернуть одну изменённую строку, потом витрина
+   * перезагружала список целиком. Каждый аккаунт — это чтение метаданных и файла сессии,
+   * то есть двести лишних обращений на одно нажатие «Сохранить».
+   */
+  const only = opts.only ? String(opts.only) : null
+  const ids = (await listSessionIds()).filter((id) => !only || id === only)
   const accounts = []
   const trustAll = await getAllTrustCache()
 
@@ -231,8 +240,9 @@ export async function tgPatchAccount(accountId, patch) {
     if (patch[k] !== undefined) clean[k] = patch[k]
   }
   await setAccountMeta(accountId, clean)
-  const accounts = await tgListAccounts()
-  return accounts.find((a) => a.id === accountId)
+  // Только этот аккаунт: остальные девяносто семь к правке одной строки отношения не имеют.
+  const [account] = await tgListAccounts({ only: accountId })
+  return account
 }
 
 export async function tgDeleteAccount(accountId) {

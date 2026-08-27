@@ -96,9 +96,18 @@ export function startModuleTask(moduleKey, settings) {
   if (moduleKey === 'warming' && settings.warmDays) {
     const days = Math.max(1, Math.min(30, Number(settings.warmDays) || 2))
     const perDay = [40, 20, 10][Number(settings.warmLevel) ?? 1] ?? 20
-    const total = Math.max(1, Math.round(days * perDay))
-    settings.maxActions = total
-    settings.minActions = total // без жребия: срок задан человеком, а не случаем
+    /*
+     * Норма считается НА АККАУНТ (уточнение владельца 27.08: «это на 1 аккаунт
+     * действия»). Греется каждый профиль сам по себе: десять аккаунтов не делят между
+     * собой сорок действий, а делают по сорок каждый — иначе в парке из сотни на профиль
+     * пришлось бы меньше одного действия в день, и прогрев перестал бы быть прогревом.
+     */
+    const perAccount = Math.max(1, Math.round(days * perDay))
+    const accounts = Math.max(1, (settings.accountIds || []).length)
+    settings.maxPerAccount = perAccount
+    settings.minPerAccount = perAccount
+    settings.maxActions = perAccount * accounts
+    settings.minActions = settings.maxActions // без жребия: срок задан человеком, а не случаем
   }
 
   if (moduleKey === 'mass-looking') {
