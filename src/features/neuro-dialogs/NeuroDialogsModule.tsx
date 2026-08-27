@@ -71,7 +71,7 @@ export function NeuroDialogsModule() {
   const [probability, setProbability] = useState(100)
   const [activePrompt, setActivePrompt] = useState(0)
   // MR-185: промпты из базы, по владельцу (см. LiveModule).
-  const { bodies: promptBodies, save: savePrompts, replace: replacePrompts } = usePromptStore('neuro-dialogs', cfg.messagePrompts ?? [])
+  const { bodies: promptBodies, saveCard: savePromptCard, replace: replacePrompts } = usePromptStore('neuro-dialogs', cfg.messagePrompts ?? [])
   // Лимиты для ЛС. Важно: общий лимит и лимит на аккаунт — это ДИАПАЗОН [min, max],
   // из которого воркер берёт случайное число (антидетект). Для авто-ответчика min по умолчанию
   // равен max, иначе цель могла бы выпасть в 0–1 и задача завершалась бы после первого ответа.
@@ -295,7 +295,7 @@ export function NeuroDialogsModule() {
               activeIndex={activePrompt}
               onActiveChange={setActivePrompt}
               bodies={promptBodies}
-              onSave={savePrompts}
+              onSaveCard={savePromptCard}
             />
           </div>
         </SectionCard>

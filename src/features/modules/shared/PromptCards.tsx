@@ -12,7 +12,12 @@ interface PromptCardsProps {
   /** Тексты карточек — приходят сверху, из единственного места хранения. */
   bodies: string[]
   /** Сохранить набор целиком (уедет в базу под текущего пользователя). */
-  onSave: (bodies: string[]) => void | Promise<void>
+  /**
+   * Сохранить ОДНУ карточку. Раньше отдавали весь набор с экрана — и после применения
+   * чужого шаблона правка одной карточки уносила к человеку остальные пять чужих
+   * текстов поверх его собственных.
+   */
+  onSaveCard: (index: number, text: string) => void | Promise<void>
 }
 
 /**
@@ -24,7 +29,7 @@ interface PromptCardsProps {
  * карточки тут же перекрывали его своим локальным (MR-176). Теперь набор приходит
  * сверху, из единственного места хранения.
  */
-export function PromptCards({ labels, activeIndex, onActiveChange, bodies, onSave }: PromptCardsProps) {
+export function PromptCards({ labels, activeIndex, onActiveChange, bodies, onSaveCard }: PromptCardsProps) {
   const [modalIndex, setModalIndex] = useState<number | null>(null)
   const [draft, setDraft] = useState('')
   // §9 (PROMPT-001): «Активный промпт» показывает ПОЛНЫЙ итоговый текст — глобальный
@@ -52,9 +57,7 @@ export function PromptCards({ labels, activeIndex, onActiveChange, bodies, onSav
 
   const saveEdit = () => {
     if (modalIndex === null) return
-    const next = [...bodies]
-    next[modalIndex] = draft.trim() || DEFAULT_PROMPT_BODIES[modalIndex] || DEFAULT_PROMPT_BODIES[0]
-    void onSave(next)
+    void onSaveCard(modalIndex, draft)
     closeModal()
   }
 

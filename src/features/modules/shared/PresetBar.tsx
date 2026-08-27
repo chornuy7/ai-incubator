@@ -94,7 +94,15 @@ export function PresetBar({ presets = [], onApply, onSave, onEdit, onDelete, dis
                 </button>
               )}
               {onDelete && (
-                <button type="button" onClick={(e) => { e.stopPropagation(); onDelete(p.id) }} title="Удалить шаблон"
+                <button type="button" onClick={(e) => {
+                  e.stopPropagation()
+                  // Шаблоны — ОБЩИЙ набор рабочего пространства, а не личная папка:
+                  // удаляют не только у себя. Крестик стоит вплотную к самому шаблону,
+                  // и одного промаха хватало, чтобы чужая настройка исчезла у всех
+                  // без следа и без возможности вернуть.
+                  if (!window.confirm(`Удалить шаблон «${p.name}»? Он общий для рабочего пространства — пропадёт у всех, и собирать настройки придётся заново.`)) return
+                  onDelete(p.id)
+                }} title="Удалить шаблон"
                   className="grid h-5 w-5 shrink-0 place-items-center rounded-lg text-faint hover:bg-rose-500/12 hover:text-rose-300">
                   <X size={13} />
                 </button>
