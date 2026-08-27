@@ -177,3 +177,25 @@ test('личный кошелёк больше не заводится: и со�
   await changeCoins(-20, 'трата сотрудника', sub.id)
   assert.equal(await coins(owner.id), 40, 'тратит из кошелька владельца')
 })
+
+test('витрина сотрудника: денег нет, токены — в пределах потолка', async () => {
+  // Правка 27.08: «деньги у саб-пользователя не показываем, только доступные токены,
+  // чтобы он не мог их потратить». Проверяем саму арифметику доступного остатка —
+  // роут собирает ответ из этих же двух чисел.
+  const st = `${Date.now()}f`
+  const owner = await createUser({ email: `o${st}@t.io`, password: 'secret123', name: 'Владелец' })
+  const sub = await createUser({ email: `s${st}@t.io`, password: 'secret123', name: 'Гриша', parentId: owner.id, tokenLimit: 100 })
+
+  await changeCoins(1000, 'старт', owner.id, 'grant')
+  const { spendLimit } = await import('../balance.js')
+
+  let lim = await spendLimit(sub.id)
+  assert.equal(Math.min(await coins(sub.id), lim.left), 100, 'видит свой потолок, а не тысячу владельца')
+
+  await changeCoins(-40, 'работа сотрудника', sub.id)
+  lim = await spendLimit(sub.id)
+  assert.equal(Math.min(await coins(sub.id), lim.left), 60, 'остаток уменьшается на потраченное им')
+
+  // Владелец при этом видит свой настоящий остаток целиком.
+  assert.equal(await coins(owner.id), 960)
+})

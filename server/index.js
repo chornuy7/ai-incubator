@@ -1799,8 +1799,29 @@ app.get('/api/balance', async (req, res) => {
   try {
     // Свой баланс у каждого пользователя: ключ — X-User-Id. Без сессии (дев)
     // отдаётся общий кошелёк, как и раньше.
-    const { getBalance } = await import('./balance.js')
-    res.json({ ok: true, balance: await getBalance(req.header('x-user-id')) })
+    const { getBalance, spendLimit } = await import('./balance.js')
+    const me = req.header('x-user-id')
+    const balance = await getBalance(me)
+    /*
+     * Сотрудник ДЕНЕГ не видит (правка 27.08: «деньги у саб-пользователя не показываем,
+     * только доступные токены, чтобы он не мог их потратить»).
+     *
+     * Кошелёк общий с владельцем, и до этой правки сотруднику отдавался весь остаток
+     * владельца — включая доллары, которыми покупают подписку и токены. Ими он
+     * распоряжаться не должен, а видеть чужой денежный счёт ему незачем: его дело —
+     * сколько действий он ещё может сделать. Поэтому `usd` не отдаём вовсе, а токены
+     * показываем в пределах его потолка.
+     */
+    const lim = me ? await spendLimit(me).catch(() => ({ limit: null, spent: 0, left: Infinity })) : { limit: null }
+    if (lim.limit !== null) {
+      const left = Math.max(0, Math.min(Number(balance.coins) || 0, Number(lim.left) || 0))
+      return res.json({ ok: true, balance: { ...balance, coins: left, usd: undefined, spendLimit: lim.limit, spendLeft: left, isSub: true } })
+    }
+    // Сотрудник без потолка тратит наравне с владельцем — но деньги всё равно не его.
+    const { resolveWalletOwner } = await import('./users.js')
+    const owner = me ? await resolveWalletOwner(me).catch(() => me) : me
+    if (me && owner !== me) return res.json({ ok: true, balance: { ...balance, usd: undefined, isSub: true } })
+    res.json({ ok: true, balance })
   } catch (err) { res.status(500).json({ ok: false, error: err instanceof Error ? err.message : 'Ошибка' }) }
 })
 app.post('/api/balance', async (req, res) => {

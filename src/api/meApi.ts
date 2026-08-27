@@ -16,6 +16,10 @@ export interface MyStats {
   coins: number
   /** §11.4: денежный остаток ($) — им платят за подписку и покупают токены. */
   usd?: number
+  /** Сотрудник: денег не видит вовсе, токены — в пределах своего потолка (27.08). */
+  isSub?: boolean
+  spendLimit?: number | null
+  spendLeft?: number | null
   totals: { tasks: number; actions: number; spent: number; tokens: number }
   activity: MyActivity
   where: MyWhere[]

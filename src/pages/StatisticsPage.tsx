@@ -121,7 +121,7 @@ function MyStatistics() {
           <Skeleton className="col-span-full h-72 rounded-2xl" />
         </div>
       ) : tab === 'wallet' ? (
-        <WalletTab coins={stats?.coins ?? 0} usd={stats?.usd ?? 0} />
+        <WalletTab coins={stats?.coins ?? 0} usd={stats?.usd} isSub={!!stats?.isSub} limit={stats?.spendLimit ?? null} />
       ) : tab === 'log' ? (
         <LogTab log={stats?.log || []} />
       ) : !hasData ? (
@@ -298,7 +298,7 @@ function Field({ label, value, accent }: { label: string; value: string; accent?
  */
 const cur = (r: { currency?: 'usd' | 'coins' }) => (r.currency === 'usd' ? '$' : '⚡')
 
-function WalletTab({ coins, usd }: { coins: number; usd: number }) {
+function WalletTab({ coins, usd, isSub, limit }: { coins: number; usd?: number; isSub?: boolean; limit?: number | null }) {
   const pushToast = useApp((s) => s.pushToast)
   const [rows, setRows] = useState<WalletEntry[] | null>(null)
   useEffect(() => {
@@ -309,15 +309,32 @@ function WalletTab({ coins, usd }: { coins: number; usd: number }) {
 
   return (
     <div className="space-y-4">
-      <div className="grid gap-3 sm:grid-cols-2">
+      {/*
+        Сотруднику деньги не показываем вовсе (правка 27.08: «деньги у саб-пользователя не
+        показываем, только доступные токены, чтобы он не мог их потратить»). Доллары — это
+        кошелёк владельца, которым покупают подписку; сотруднику важно другое — сколько
+        действий у него ещё осталось.
+      */}
+      <div className={cn('grid gap-3', !isSub && 'sm:grid-cols-2')}>
         <Card className="p-4">
-          <div className="mb-1 flex items-center gap-2 text-xs text-muted"><Wallet size={14} /> Токены — платим за действия</div>
+          <div className="mb-1 flex items-center gap-2 text-xs text-muted">
+            <Wallet size={14} /> {isSub ? 'Доступно вам — токены на действия' : 'Токены — платим за действия'}
+          </div>
           <div className="font-display text-3xl font-bold text-fg">{fmtCoins(coins)} <span className="text-lg text-muted">⚡</span></div>
+          {isSub && (
+            <div className="mt-1 text-[11px] leading-relaxed text-white/40">
+              {limit == null
+                ? 'Отдельного потолка вам не задали — тратите из общего кошелька владельца.'
+                : `Ваш потолок расхода — ${limit} ⚡. Когда закончится, задачи встанут на паузу с сохранением прогресса.`}
+            </div>
+          )}
         </Card>
-        <Card className="p-4">
-          <div className="mb-1 flex items-center gap-2 text-xs text-muted"><Wallet size={14} /> Деньги — платим за подписку и токены</div>
-          <div className="font-display text-3xl font-bold text-fg"><span className="text-lg text-muted">$</span> {usd.toFixed(2)}</div>
-        </Card>
+        {!isSub && (
+          <Card className="p-4">
+            <div className="mb-1 flex items-center gap-2 text-xs text-muted"><Wallet size={14} /> Деньги — платим за подписку и токены</div>
+            <div className="font-display text-3xl font-bold text-fg"><span className="text-lg text-muted">$</span> {(usd ?? 0).toFixed(2)}</div>
+          </Card>
+        )}
       </div>
 
       {rows === null ? (
@@ -328,7 +345,7 @@ function WalletTab({ coins, usd }: { coins: number; usd: number }) {
         <Card className="p-4">
           <div className="mb-2 text-sm font-semibold text-fg">Операции по кошельку</div>
           <div className="space-y-1">
-            {rows.map((r, i) => {
+            {(isSub ? rows.filter((r) => r.currency !== 'usd') : rows).map((r, i) => {
               const income = r.amount >= 0
               return (
                 <div key={r.ts + '-' + i} className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5 border-b border-line/30 py-1.5 text-sm last:border-0">

@@ -592,22 +592,36 @@ export function AppHeader() {
         icon={<Wallet size={22} />}
         size="md"
       >
-        {/* §11.4: ДЕНЬГИ ($) — основное, крупно и первым; токены ⚡ — вторично.
-            Разделение со звонка: «баланс — это $, за них покупаем подписки и токены». */}
-        <div className="mb-4 grid grid-cols-1 gap-3 sm:grid-cols-2">
-          <div className="rounded-2xl border border-spark-500/40 bg-spark-500/8 px-4 py-3.5">
-            <div className="text-xs font-medium text-muted">Деньги на счету</div>
-            <div className="mt-0.5 flex items-center gap-1.5 font-display text-2xl font-bold text-spark-200">
-              {curSym}{(balance?.usd ?? 0).toFixed(2)}
+        {/*
+          §11.4: ДЕНЬГИ ($) — основное, крупно и первым; токены ⚡ — вторично.
+          Разделение со звонка: «баланс — это $, за них покупаем подписки и токены».
+
+          У СОТРУДНИКА денег нет вовсе (правка 27.08: «деньги у саб-пользователя не
+          показываем, только доступные токены, чтобы он не мог их потратить»). Доллары —
+          кошелёк владельца: ими покупают подписку и токены, и распоряжаться ими сотрудник
+          не должен. Сервер их такому пользователю уже не отдаёт (`balance.isSub`), здесь
+          убираем и сам блок вместе с покупкой — иначе осталась бы кнопка, тратящая чужое.
+        */}
+        <div className={'mb-4 grid grid-cols-1 gap-3' + (balance?.isSub ? '' : ' sm:grid-cols-2')}>
+          {!balance?.isSub && (
+            <div className="rounded-2xl border border-spark-500/40 bg-spark-500/8 px-4 py-3.5">
+              <div className="text-xs font-medium text-muted">Деньги на счету</div>
+              <div className="mt-0.5 flex items-center gap-1.5 font-display text-2xl font-bold text-spark-200">
+                {curSym}{(balance?.usd ?? 0).toFixed(2)}
+              </div>
+              <div className="mt-0.5 text-[11px] text-muted">за них — подписки и токены</div>
             </div>
-            <div className="mt-0.5 text-[11px] text-muted">за них — подписки и токены</div>
-          </div>
+          )}
           <div className="rounded-2xl border border-amber-500/30 bg-amber-500/10 px-4 py-3.5">
-            <div className="text-xs font-medium text-muted">Токены (топливо)</div>
+            <div className="text-xs font-medium text-muted">{balance?.isSub ? 'Доступно вам (токены)' : 'Токены (топливо)'}</div>
             <div className="mt-0.5 flex items-center gap-1.5 font-display text-2xl font-bold text-amber-300">
               <Zap size={20} fill="currentColor" /> {fmtCoins(balance?.coins ?? data.coins)}
             </div>
-            <div className="mt-0.5 text-[11px] text-muted">тратятся за каждое действие</div>
+            <div className="mt-0.5 text-[11px] text-muted">
+              {balance?.isSub
+                ? (balance?.spendLimit == null ? 'общий кошелёк владельца, потолка вам не задали' : `ваш потолок — ${balance.spendLimit} ⚡`)
+                : 'тратятся за каждое действие'}
+            </div>
           </div>
         </div>
 
@@ -632,8 +646,9 @@ export function AppHeader() {
           })()}
         </div>
 
-        {/* Пополнить $ — основная валюта. Оплата подключается (VIVA/Stripe), пока — честный статус. */}
-        <div className="mb-4 rounded-2xl border border-line bg-elevated/50 p-3">
+        {/* Пополнить $ — основная валюта. Оплата подключается (VIVA/Stripe), пока — честный статус.
+            Сотруднику пополнять нечего: счёт не его (27.08). */}
+        <div className={'mb-4 rounded-2xl border border-line bg-elevated/50 p-3' + (balance?.isSub ? ' hidden' : '')}>
           <div className="mb-2 text-xs font-bold uppercase tracking-wide text-muted">Пополнить счёт ({curSym})</div>
           <div className="grid grid-cols-4 gap-2">
             {TOPUP_USD.map((a) => (
@@ -663,8 +678,9 @@ export function AppHeader() {
           </div>
         </div>
 
-        {/* Обменять деньги на токены: списываем $ со счёта и начисляем ⚡ (buyTokens). */}
-        <div className="mb-4 rounded-2xl border border-line bg-elevated/50 p-3">
+        {/* Обменять деньги на токены: списываем $ со счёта и начисляем ⚡ (buyTokens).
+            Сотруднику не показываем — деньги не его (27.08). */}
+        <div className={'mb-4 rounded-2xl border border-line bg-elevated/50 p-3' + (balance?.isSub ? ' hidden' : '')}>
           <div className="mb-2 text-xs font-bold uppercase tracking-wide text-muted">Купить токены за {curSym} со счёта</div>
           {(() => {
             // §11.5: денег на счёте нет — покупать нечем; пакеты недоступны, а не «жмётся,

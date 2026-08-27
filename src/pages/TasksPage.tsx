@@ -1553,11 +1553,16 @@ export function TaskDetailPage() {
         )}
 
         <div className="rounded-2xl border border-line bg-elevated/40 p-3">
-          <div className="mb-2 flex items-center gap-2 text-sm font-bold text-fg">Логи ({(t.logs || []).length}){isActive(t) && <Loader2 size={13} className="animate-spin text-white/40" />}</div>
+          <div className="mb-2 flex items-center gap-2 text-sm font-bold text-fg">
+            Логи ({(t.logs || []).length}){isActive(t) && <Loader2 size={13} className="animate-spin text-white/40" />}
+            {/* Список длиннее окна — говорим об этом словами: полосу прокрутки на тёмной
+                панели легко не заметить, и логи кажутся обрезанными (правка 27.08). */}
+            {logs.length > 8 && <span className="ml-auto text-[11px] font-normal text-white/35">список прокручивается</span>}
+          </div>
           {logs.length === 0 ? (
             <div className="py-3 text-center text-xs text-white/40">Логов пока нет</div>
           ) : (
-            <div className="max-h-96 space-y-1 overflow-y-auto">
+            <div className="max-h-96 space-y-1 overflow-y-auto pr-2">
               {logs.map((l, i) => (
                 <div key={i} className="flex gap-2 text-xs">
                   <span className="shrink-0 text-white/30">{new Date(l.ts).toLocaleTimeString('ru-RU')}</span>

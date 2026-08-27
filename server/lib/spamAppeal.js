@@ -13,6 +13,12 @@ import { Api } from 'telegram/tl/index.js'
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 
+/**
+ * Ответ бота для лога. Обрыв на полуслове читается как поломка («…seu número salv»),
+ * поэтому режем явно и ставим многоточие (правка 27.08).
+ */
+const cut = (t, n = 400) => { const v = String(t || '').trim(); return v.length > n ? `${v.slice(0, n)}…` : v }
+
 /** Ограничений нет — аккаунт «чист». */
 const CLEAN = /no limits|not limited|free as a bird|good news|ограничени\w* (сняты|нет)|свобод|снял/i
 /** Аккаунт ограничен. */
@@ -133,7 +139,7 @@ export async function appealSpamblock(client, opts = {}) {
 
     let msg = (await client.getMessages(bot, { limit: 1 }))?.[0]
     let text = msg?.message || ''
-    if (CLEAN.test(text)) return { state: 'clean', text: text.slice(0, 400), appealed: false }
+    if (CLEAN.test(text)) return { state: 'clean', text: cut(text), appealed: false }
 
     let appealed = false
     // Диалог @SpamBot длиннее, чем казалось: «This is a mistake» → «Would you like to
@@ -145,7 +151,7 @@ export async function appealSpamblock(client, opts = {}) {
       // идти нельзя и не нужно: это последний шаг для человека, а appealButton про капчу
       // не знает и ушёл бы в 'stalled'.
       if (CAPTCHA.test(text) || hasCaptchaButton(msg)) {
-        return { state: 'captcha', text: text.slice(0, 400), appealed }
+        return { state: 'captcha', text: cut(text), appealed }
       }
       const btn = appealButton(msg, text)
       if (btn && msg?.id) {
@@ -154,9 +160,9 @@ export async function appealSpamblock(client, opts = {}) {
         await sleep(wait)
         msg = (await client.getMessages(bot, { limit: 1 }))?.[0]
         text = msg?.message || ''
-        if (CLEAN.test(text)) return { state: 'clean', text: text.slice(0, 400), appealed: true }
-        if (SUBMITTED.test(text)) return { state: 'appealed', text: text.slice(0, 400), appealed: true }
-        if (CAPTCHA.test(text) || hasCaptchaButton(msg)) return { state: 'captcha', text: text.slice(0, 400), appealed: true }
+        if (CLEAN.test(text)) return { state: 'clean', text: cut(text), appealed: true }
+        if (SUBMITTED.test(text)) return { state: 'appealed', text: cut(text), appealed: true }
+        if (CAPTCHA.test(text) || hasCaptchaButton(msg)) return { state: 'captcha', text: cut(text), appealed: true }
         continue
       }
       if (ASKS_TEXT.test(text)) {
@@ -165,22 +171,22 @@ export async function appealSpamblock(client, opts = {}) {
         await sleep(wait)
         msg = (await client.getMessages(bot, { limit: 1 }))?.[0]
         text = msg?.message || ''
-        if (CLEAN.test(text)) return { state: 'clean', text: text.slice(0, 400), appealed: true }
-        if (SUBMITTED.test(text)) return { state: 'appealed', text: text.slice(0, 400), appealed: true }
-        if (CAPTCHA.test(text) || hasCaptchaButton(msg)) return { state: 'captcha', text: text.slice(0, 400), appealed: true }
+        if (CLEAN.test(text)) return { state: 'clean', text: cut(text), appealed: true }
+        if (SUBMITTED.test(text)) return { state: 'appealed', text: cut(text), appealed: true }
+        if (CAPTCHA.test(text) || hasCaptchaButton(msg)) return { state: 'captcha', text: cut(text), appealed: true }
         break
       }
       break // ни кнопки, ни просьбы описать — дальше нечего делать
     }
 
-    if (CAPTCHA.test(text) || hasCaptchaButton(msg)) return { state: 'captcha', text: text.slice(0, 400), appealed }
-    if (CLEAN.test(text)) return { state: 'clean', text: text.slice(0, 400), appealed }
+    if (CAPTCHA.test(text) || hasCaptchaButton(msg)) return { state: 'captcha', text: cut(text), appealed }
+    if (CLEAN.test(text)) return { state: 'clean', text: cut(text), appealed }
     // Мы что-то нажали, но подтверждения от бота не дождались: диалог оборвался на
     // полпути. Раньше здесь возвращалось 'appealed' — и оператор читал «жалоба подана»,
     // хотя бот в этот момент ещё спрашивал «Would you like to submit a complaint?».
-    if (appealed) return { state: 'stalled', text: text.slice(0, 400), appealed: true }
-    if (BLOCKED.test(text)) return { state: 'blocked', text: text.slice(0, 400), appealed: false }
-    return { state: 'unknown', text: text.slice(0, 400), appealed }
+    if (appealed) return { state: 'stalled', text: cut(text), appealed: true }
+    if (BLOCKED.test(text)) return { state: 'blocked', text: cut(text), appealed: false }
+    return { state: 'unknown', text: cut(text), appealed }
   } catch (e) {
     return { state: 'unknown', text: e instanceof Error ? e.message : '', appealed: false }
   }

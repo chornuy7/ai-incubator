@@ -429,7 +429,7 @@ function UsersTab() {
   // запросом (PUT .../access), который заводит ему персональную роль. Раньше здесь по
   // умолчанию стоял системный «role_moderator» — он выдавал модули, которых владелец не
   // выбирал, и после уточнения 21.08 («роль — шаблон») превратился бы в тихую раздачу прав.
-  const [form, setForm] = useState<{ email: string; name: string; password: string; roleIds: string[]; balanceMode: 'shared' | 'individual' }>({ email: '', name: '', password: '', roleIds: [], balanceMode: 'shared' })
+  const [form, setForm] = useState<{ email: string; name: string; password: string; roleIds: string[]; balanceMode: 'shared' | 'individual'; tokenLimit: string }>({ email: '', name: '', password: '', roleIds: [], balanceMode: 'shared', tokenLimit: '' })
   // Доступ будущего суба: id появится только после создания, поэтому выбор копится в форме,
   // а PUT /api/users/:id/access уходит сразу следом (см. submit).
   const [newAccess, setNewAccess] = useState<AccessDraft>(EMPTY_ACCESS)
@@ -513,7 +513,7 @@ function UsersTab() {
     } catch (e) { setErr(e instanceof Error ? e.message : 'Ошибка') }
   }
   function resetForm() {
-    setForm({ email: '', name: '', password: '', roleIds: [], balanceMode: 'shared' })
+    setForm({ email: '', name: '', password: '', roleIds: [], balanceMode: 'shared', tokenLimit: '' })
     setNewAccess(EMPTY_ACCESS)
     setAppliedTpl('')
   }
@@ -526,6 +526,13 @@ function UsersTab() {
         email: form.email, name: form.name, password: form.password, roleIds: form.roleIds,
         // §4.2 (MR-30): режим баланса.
         balanceMode: form.balanceMode,
+        /*
+         * Потолок расхода задаётся СРАЗУ (правка 27.08: «почему при создании нет
+         * возможности выдать ему токены или использовать общий доступ?»). Поле отсюда
+         * убирали, когда лимит нигде не проверялся и был обманкой; теперь он работает —
+         * значит, и задавать его при создании можно. Пусто — без ограничения.
+         */
+        tokenLimit: form.tokenLimit === '' ? null : Math.max(0, Number(form.tokenLimit) || 0),
         /*
          * Владельца проставляем ЯВНО (правка 27.08). Сервер подставляет его сам только
          * тем, кто НЕ админ, — а у админа платформы этот путь пропускался, и сотрудник
@@ -754,10 +761,29 @@ function UsersTab() {
             меньше, чем потрачено.
           */}
           <div>
-            <label className="label">Баланс субпользователя</label>
-            <p className="rounded-lg border border-line bg-elevated/40 p-2 text-xs leading-relaxed text-white/50">
-              Сотрудник тратит из <b className="text-white/75">вашего</b> кошелька — своего у него нет.
-              Потолок расхода зададите после создания, в его карточке.
+            <label className="label">Лимит расхода (токены)</label>
+            <div className="flex flex-wrap items-center gap-2">
+              <input
+                type="number"
+                min={0}
+                value={form.tokenLimit}
+                onChange={(e) => setForm((f) => ({ ...f, tokenLimit: e.target.value }))}
+                placeholder="например 500"
+                className="input h-10 w-40 text-sm"
+              />
+              <button
+                type="button"
+                onClick={() => setForm((f) => ({ ...f, tokenLimit: '' }))}
+                className={cn('h-10 rounded-xl px-3 text-xs font-semibold',
+                  form.tokenLimit === '' ? 'bg-spark-500/20 text-spark-300' : 'border border-line text-muted hover:text-fg')}
+              >
+                Без ограничения
+              </button>
+            </div>
+            <p className="mt-1.5 text-xs leading-relaxed text-white/45">
+              Сотрудник тратит из <b className="text-white/70">вашего</b> кошелька — своего у него нет.
+              Лимит — потолок: сколько всего он может израсходовать. Пусто — без потолка, тратит наравне с вами.
+              Изменить и посмотреть расход можно в его карточке.
             </p>
           </div>
           <div className="mt-1 flex justify-end gap-2">

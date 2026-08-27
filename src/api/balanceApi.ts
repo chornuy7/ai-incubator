@@ -14,6 +14,13 @@ export interface Balance {
   coins: number
   /** §11.4: денежный баланс ($) — им платят за подписку и покупают токены. */
   usd?: number
+  /**
+   * Сотруднику деньги не показываем вовсе (27.08): `usd` не приходит, а `coins` урезаны
+   * его потолком расхода. `isSub` — признак, что перед нами такой урезанный вид.
+   */
+  isSub?: boolean
+  spendLimit?: number | null
+  spendLeft?: number | null
   updatedAt: number
   /** Срок подписки: timestamp окончания или null («бессрочно» / демо без периода). */
   expiresAt?: number | null
