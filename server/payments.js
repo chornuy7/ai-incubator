@@ -164,12 +164,40 @@ async function buildRows() {
   for (const e of audit) {
     const sum = Number(e.meta?.paid ?? e.meta?.cost?.sum) || 0
     if (sum <= 0) continue
-    const ts = Number(e.ts) || 0
+    // `readAudit` отдаёт время СТРОКОЙ ISO (см. rowToEntry), а `Number('2026-08-11T…')`
+    // это NaN. Стояло `Number(e.ts) || 0`, и от этого ломалось сразу две вещи: все
+    // покупки планов получали время 0 (в витрине 1970 год), а вместе с ним и
+    // ОДИНАКОВЫЙ id `p:0:<человек>`. У кого больше одной оплаченной подписки — а таких
+    // на боевой девять — в один upsert прилетали строки с одним ключом, и Postgres
+    // отвечал «ON CONFLICT DO UPDATE command cannot affect row a second time» (21000).
+    // Падала пересборка витрины целиком, а вместе с ней и вся админ-статистика.
+    const ts = Date.parse(e.ts) || Number(e.ts) || 0
     const uid = e.initiator && e.initiator !== 'system' ? e.initiator : '—'
     const mods = e.meta?.modules
-    out.push({ id: `p:${ts}:${uid}`, ts, user_id: uid, kind: 'plan', coins: null, amount_fiat: round3(sum), currency: '$', modules: mods === 'all' ? -1 : (Array.isArray(mods) ? mods.length : 0), status: 'paid', reason: String(e.reason || '') })
+    // Ключ — собственный id события аудита: две оплаты одного человека остаются двумя
+    // строками, даже если случились в одну миллисекунду. Время в ключ не годится:
+    // оно повторяется, а у события есть настоящий уникальный идентификатор.
+    const key = e.id != null ? String(e.id) : `${ts}:${uid}:${round3(sum)}`
+    out.push({ id: `p:${key}`, ts, user_id: uid, kind: 'plan', coins: null, amount_fiat: round3(sum), currency: '$', modules: mods === 'all' ? -1 : (Array.isArray(mods) ? mods.length : 0), status: 'paid', reason: String(e.reason || '') })
   }
-  return out
+  return dedupeById(out)
+}
+
+/**
+ * Страховка от одинаковых ключей В ОДНОЙ пачке.
+ *
+ * Postgres отвергает весь upsert, если в нём дважды встречается один ключ, — и падает
+ * не строка, а вся пересборка витрины. Причину выше мы починили, но источники живые:
+ * пусть лучше совпавшая строка молча схлопнется, чем админка перестанет открываться.
+ * Если такое случилось — говорим об этом в лог, чтобы не искать потом причину расхождения.
+ */
+function dedupeById(rows) {
+  const byId = new Map()
+  for (const r of rows) byId.set(r.id, r)
+  if (byId.size !== rows.length) {
+    console.warn(`[payments] в витрине совпали ключи: строк ${rows.length}, уникальных ${byId.size} — проверьте buildRows`)
+  }
+  return [...byId.values()]
 }
 
 /**
