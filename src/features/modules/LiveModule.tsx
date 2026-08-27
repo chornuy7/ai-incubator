@@ -139,7 +139,7 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
   const [activePrompt, setActivePrompt] = useState(0)
   // MR-185: тексты промптов — из базы, по владельцу. Своей копии у карточек больше нет,
   // поэтому применённый шаблон её и не перекрывает (это же чинит MR-176).
-  const { bodies: promptBodies, save: savePrompts, replace: replacePrompts } = usePromptStore(moduleKey, cfg.messagePrompts ?? [])
+  const { bodies: promptBodies, saveCard: savePromptCard, replace: replacePrompts } = usePromptStore(moduleKey, cfg.messagePrompts ?? [])
   const [delayPreset, setDelayPreset] = useState(1)
   const [delays, setDelays] = useState(DEFAULT_DELAYS)
   // MR-56: КАКУЮ задержку брать в расчёт времени. У нейрокомментинга поле называется
@@ -828,7 +828,7 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
             activeIndex={activePrompt}
             onActiveChange={setActivePrompt}
             bodies={promptBodies}
-            onSave={savePrompts}
+            onSaveCard={savePromptCard}
           />
             {/* Распределение типов — часть промптов, а не лимитов (правка 19.08):
                 проценты делятся между теми самыми карточками промптов, что выше.
