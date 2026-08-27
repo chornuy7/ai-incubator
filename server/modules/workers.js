@@ -597,9 +597,15 @@ export async function runNeuroCommenting(task, store) {
       // Удачный бросок тоже показываем: в логе были одни неудачи, и по нему нельзя было
       // понять, как вообще считается шанс (MR-175). Молчим только в часы со 100%: там
       // броска фактически нет, и строка была бы шумом на каждом действии.
-      if (typeof human.chance === 'number' && human.chance < 1 && human.reason) {
-        await store.appendLog(task, 'info', human.reason, meta.name)
-      }
+      /*
+       * Удачный бросок распорядка пишем ПОСЛЕ проверки занятости (правка 27.08).
+       *
+       * Раньше строка «распорядок дня: шанс 82%, выпало 64 — работаем» появлялась на
+       * каждом круге, даже когда аккаунт тут же пропускался как занятый соседним модулем:
+       * за один комментарий набегала полсотня строк «работаем», за которыми ничего не
+       * следовало. Теперь бросок откладываем и печатаем, только если дело дошло до дела.
+       */
+      const бросокРаспорядка = typeof human.chance === 'number' && human.chance < 1 && human.reason ? human.reason : ''
       if (await limitReached(accountId, 'comments')) { idleLap += 1; lastSkip = 'суточный лимит'; await store.appendLog(task, 'info', 'Суточный лимит комментариев достигнут (§6)', meta.name); continue }
       // Многомодульность (20.08): аккаунт может работать в нескольких модулях, но не
       // двумя действиями одновременно — занятый другим модулем пропускаем, как при
@@ -607,13 +613,22 @@ export async function runNeuroCommenting(task, store) {
       const busyGate = beginAccountWork(accountId, task.moduleKey, task.id)
       if (!busyGate.ok) {
         idleLap += 1
+        /*
+         * Одна и та же причина не повторяется в логе (правка 27.08). Аккаунт, занятый
+         * соседним модулем, проверяется раз в 15 секунд, и каждая проверка писала строку:
+         * за один комментарий набегало полсотни одинаковых «Пропуск: занят действием в
+         * модуле …», в которых тонуло всё остальное. Пишем при СМЕНЕ причины — а сам факт
+         * ожидания и так виден строкой «Пауза … — ждём аккаунт до …».
+         */
+        const повтор = lastSkip === busyGate.reason
         lastSkip = busyGate.reason
         if (busyGate.until) idleUntil = idleUntil ? Math.min(idleUntil, busyGate.until) : busyGate.until
-        await store.appendLog(task, 'info', `Пропуск: ${busyGate.reason}`, meta.name)
+        if (!повтор) await store.appendLog(task, 'info', `Пропуск: ${busyGate.reason}`, meta.name)
         continue
       }
       idleLap = 0
       lastSkip = ''
+      if (бросокРаспорядка) await store.appendLog(task, 'info', бросокРаспорядка, meta.name)
 
       let client
       let progressed = false
@@ -965,9 +980,15 @@ export async function runNeuroChatting(task, store) {
       // Удачный бросок тоже показываем: в логе были одни неудачи, и по нему нельзя было
       // понять, как вообще считается шанс (MR-175). Молчим только в часы со 100%: там
       // броска фактически нет, и строка была бы шумом на каждом действии.
-      if (typeof human.chance === 'number' && human.chance < 1 && human.reason) {
-        await store.appendLog(task, 'info', human.reason, meta.name)
-      }
+      /*
+       * Удачный бросок распорядка пишем ПОСЛЕ проверки занятости (правка 27.08).
+       *
+       * Раньше строка «распорядок дня: шанс 82%, выпало 64 — работаем» появлялась на
+       * каждом круге, даже когда аккаунт тут же пропускался как занятый соседним модулем:
+       * за один комментарий набегала полсотня строк «работаем», за которыми ничего не
+       * следовало. Теперь бросок откладываем и печатаем, только если дело дошло до дела.
+       */
+      const бросокРаспорядка = typeof human.chance === 'number' && human.chance < 1 && human.reason ? human.reason : ''
       if (await limitReached(accountId, 'comments')) { idleLap += 1; lastSkip = 'суточный лимит'; await store.appendLog(task, 'info', 'Суточный лимит сообщений достигнут (§6)', meta.name); continue }
       // Многомодульность (20.08): аккаунт может работать в нескольких модулях, но не
       // двумя действиями одновременно — занятый другим модулем пропускаем, как при
@@ -982,6 +1003,7 @@ export async function runNeuroChatting(task, store) {
       }
       idleLap = 0
       lastSkip = ''
+      if (бросокРаспорядка) await store.appendLog(task, 'info', бросокРаспорядка, meta.name)
       let client
       let progressed = false
       try {
@@ -1190,9 +1212,15 @@ export async function runMassReact(task, store) {
       // Удачный бросок тоже показываем: в логе были одни неудачи, и по нему нельзя было
       // понять, как вообще считается шанс (MR-175). Молчим только в часы со 100%: там
       // броска фактически нет, и строка была бы шумом на каждом действии.
-      if (typeof human.chance === 'number' && human.chance < 1 && human.reason) {
-        await store.appendLog(task, 'info', human.reason, meta.name)
-      }
+      /*
+       * Удачный бросок распорядка пишем ПОСЛЕ проверки занятости (правка 27.08).
+       *
+       * Раньше строка «распорядок дня: шанс 82%, выпало 64 — работаем» появлялась на
+       * каждом круге, даже когда аккаунт тут же пропускался как занятый соседним модулем:
+       * за один комментарий набегала полсотня строк «работаем», за которыми ничего не
+       * следовало. Теперь бросок откладываем и печатаем, только если дело дошло до дела.
+       */
+      const бросокРаспорядка = typeof human.chance === 'number' && human.chance < 1 && human.reason ? human.reason : ''
       if (await limitReached(accountId, 'reactions')) { idleLap += 1; lastSkip = 'суточный лимит'; await store.appendLog(task, 'info', 'Суточный лимит реакций достигнут (§6)', meta.name); continue }
       // Многомодульность (20.08): аккаунт может работать в нескольких модулях, но не
       // двумя действиями одновременно — занятый другим модулем пропускаем, как при
@@ -1207,6 +1235,7 @@ export async function runMassReact(task, store) {
       }
       idleLap = 0
       lastSkip = ''
+      if (бросокРаспорядка) await store.appendLog(task, 'info', бросокРаспорядка, meta.name)
       let client
       try {
         ;({ client } = await connectAccount(accountId, task.id, { shouldStop: stopFlag(task) }))
@@ -1436,9 +1465,15 @@ export async function runMassLooking(task, store) {
       // Удачный бросок тоже показываем: в логе были одни неудачи, и по нему нельзя было
       // понять, как вообще считается шанс (MR-175). Молчим только в часы со 100%: там
       // броска фактически нет, и строка была бы шумом на каждом действии.
-      if (typeof human.chance === 'number' && human.chance < 1 && human.reason) {
-        await store.appendLog(task, 'info', human.reason, meta.name)
-      }
+      /*
+       * Удачный бросок распорядка пишем ПОСЛЕ проверки занятости (правка 27.08).
+       *
+       * Раньше строка «распорядок дня: шанс 82%, выпало 64 — работаем» появлялась на
+       * каждом круге, даже когда аккаунт тут же пропускался как занятый соседним модулем:
+       * за один комментарий набегала полсотня строк «работаем», за которыми ничего не
+       * следовало. Теперь бросок откладываем и печатаем, только если дело дошло до дела.
+       */
+      const бросокРаспорядка = typeof human.chance === 'number' && human.chance < 1 && human.reason ? human.reason : ''
       // Многомодульность (20.08): аккаунт может работать в нескольких модулях, но не
       // двумя действиями одновременно — занятый другим модулем пропускаем, как при
       // усталости; сюда же пауза при переключении модулей.
@@ -1452,6 +1487,7 @@ export async function runMassLooking(task, store) {
       }
       idleLap = 0
       lastSkip = ''
+      if (бросокРаспорядка) await store.appendLog(task, 'info', бросокРаспорядка, meta.name)
       let client
       try {
         ;({ client } = await connectAccount(accountId, task.id, { shouldStop: stopFlag(task) }))

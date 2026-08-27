@@ -53,3 +53,19 @@ test('прогрев: срок в днях разворачивается в т�
   // Цель не зависит от id задачи: жребия здесь быть не должно.
   assert.equal(resolveTotalTarget(план(7, 1), { id: 'x' }), resolveTotalTarget(план(7, 1), { id: 'y' }))
 })
+
+test('без явного минимума цель равна максимуму — заданное число выполняется точно (27.08)', async () => {
+  // Владелец: «дал задачу сделать 2 комментария, в итоге сделал 1». Цель бралась жребием
+  // из [min, max], а минимум по умолчанию был нулём.
+  const { resolveTotalTarget } = await import('../lib/targets.js')
+
+  for (const id of ['t1', 't2', 't3', 't4', 't5']) {
+    assert.equal(resolveTotalTarget({ maxActions: 2 }, { id }), 2, 'просили 2 — делаем 2')
+  }
+  // Мейлинг и автопостинг общего числа не шлют вовсе: раньше это был жребий 0..100.
+  assert.equal(resolveTotalTarget({}, { id: 'x' }), 100)
+
+  // Диапазон работает, только когда минимум задан РУКАМИ.
+  const range = new Set(['a', 'b', 'c', 'd'].map((id) => resolveTotalTarget({ minActions: 1, maxActions: 4 }, { id })))
+  assert.ok(range.size > 1, 'явный диапазон по-прежнему даёт разные цели')
+})

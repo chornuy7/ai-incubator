@@ -103,6 +103,19 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
   const [notifyStatus, setNotifyStatus] = useState(true) // MR-134: уведомлять о статусе этой задачи
   const [probability, setProbability] = useState(cfg.probabilitySlider?.value ?? cfg.reactionSettings?.probability.value ?? 30)
   const [maxActions, setMaxActions] = useState(cfg.workModeFields?.maxValue ?? cfg.reactionSettings?.max.value ?? 100)
+  /*
+   * Минимум общего лимита равен максимуму (правка 27.08).
+   *
+   * Он был нулём, а воркер берёт цель ЖРЕБИЕМ из [min, max]: «сделай 2 комментария»
+   * превращалось в «сделай от 1 до 2», и задача честно останавливалась на одном. При
+   * сотне действий разброс незаметен, при двух — выглядит поломкой (владелец 27.08:
+   * «дал задачу сделать 2 комментария, в итоге сделал 1»).
+   *
+   * Разнообразие между аккаунтами даёт отдельный жребий «сколько сделает один аккаунт»
+   * (minPerAccount/maxPerAccount) — вот там он к месту: одинаковые числа у всех профилей
+   * и есть тот самый след фермы. А ОБЩЕЕ число человек назвал явно, и занижать его молча
+   * нельзя.
+   */
   const [minActions, setMinActions] = useState(0)
   const [maxPerAcc, setMaxPerAcc] = useState(10)
   const [minPerAcc, setMinPerAcc] = useState(0)
@@ -269,9 +282,10 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
     probability,
     maxActions,
     maxComments: maxActions,
+    // см. комментарий у minActions: общее число выполняется точно, без жребия.
     maxPerAccount: maxPerAcc,
-    minActions,
-    minComments: minActions,
+    minActions: minActions || maxActions,
+    minComments: minActions || maxActions,
     minPerAccount: minPerAcc,
     minWords,
     durationMinutes: g(1) === 1 ? durationMinutes : undefined,
