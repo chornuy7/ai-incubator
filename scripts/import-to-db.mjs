@@ -18,6 +18,8 @@
  * удаляется и не перезаписывается — файлы после переноса остаются как резервная копия.
  */
 import 'dotenv/config'
+import fs from 'node:fs/promises'
+import path from 'node:path'
 import { dataPath, readJson } from '../server/lib/jsonStore.js'
 import { getSupabase, supabaseEnabled } from '../server/lib/supabase.js'
 
@@ -85,6 +87,66 @@ const STORES = {
       })),
     }),
   },
+  knowledge: {
+    title: 'база знаний целей',
+    file: () => process.env.KB_FILE || dataPath('knowledge.json'),
+    migration: '2026-08-27-knowledge-base.sql',
+    tables: ['knowledge_base'],
+    rows: (items) => ({
+      knowledge_base: items.filter((k) => k && k.id && k.goalId).map((k) => ({
+        id: k.id,
+        goal_id: k.goalId,
+        kind: ['text', 'file', 'image', 'link'].includes(k.kind) ? k.kind : 'text',
+        title: String(k.title || ''),
+        content: String(k.content || ''),
+        file_ref: k.fileRef || null,
+        url: k.url || null,
+        scope: String(k.scope || 'all'),
+        version: Number(k.version) || 1,
+        created_at: Number(k.createdAt) || Date.now(),
+        updated_at: Number(k.updatedAt) || Number(k.createdAt) || Date.now(),
+      })),
+    }),
+  },
+  kbfiles: {
+    title: 'вложения базы знаний',
+    migration: '2026-08-27-knowledge-base.sql',
+    tables: ['kb_files'],
+    // Единственный стор, который читает не JSON, а КАТАЛОГ: файлы лежали на диске
+    // россыпью, и содержимое надо поднять в базу вместе с ними.
+    readSource: async () => {
+      const dir = process.env.KB_FILES_DIR || dataPath('kb-files')
+      const names = await fs.readdir(dir).catch(() => [])
+      const out = []
+      for (const name of names) {
+        if (!/^kbf_[a-z0-9]{8,}(\.[a-z0-9]{1,8})?$/i.test(name)) continue
+        const buffer = await fs.readFile(path.join(dir, name)).catch(() => null)
+        if (!buffer) continue
+        const stat = await fs.stat(path.join(dir, name)).catch(() => null)
+        out.push({ id: name, buffer, createdAt: stat ? Math.round(stat.mtimeMs) : Date.now() })
+      }
+      return out
+    },
+    rows: (files) => ({
+      kb_files: files.map((f) => ({
+        id: f.id,
+        name: f.id,
+        mime: MIME_BY_EXT[path.extname(f.id).toLowerCase()] || 'application/octet-stream',
+        size_bytes: f.buffer.length,
+        // bytea через REST ходит шестнадцатеричной строкой с префиксом \x — формат
+        // самого Postgres (bytea_output = hex), тот же, что и в server/kbFiles.js.
+        data: `\\x${f.buffer.toString('hex')}`,
+        created_at: f.createdAt,
+      })),
+    }),
+  },
+}
+
+/** Тип восстанавливаем по расширению: имя файла на диске — единственное, что о нём известно. */
+const MIME_BY_EXT = {
+  '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.webp': 'image/webp',
+  '.gif': 'image/gif', '.pdf': 'application/pdf', '.txt': 'text/plain',
+  '.csv': 'text/csv', '.md': 'text/markdown',
 }
 
 const picked = only.length ? only : Object.keys(STORES)
@@ -99,14 +161,14 @@ let failed = false
 for (const key of picked) {
   const store = STORES[key]
   console.log(`\n=== ${store.title} (${key}) ===`)
-  const file = store.file()
-  const content = await readJson(file, [])
-  if (!Array.isArray(content) || !content.length) {
-    console.log(`В ${file} записей нет — переносить нечего.`)
+  const source = store.readSource ? await store.readSource() : await readJson(store.file(), [])
+  const where = store.file ? store.file() : (process.env.KB_FILES_DIR || dataPath('kb-files'))
+  if (!Array.isArray(source) || !source.length) {
+    console.log(`В ${where} записей нет — переносить нечего.`)
     continue
   }
 
-  const planned = store.rows(content)
+  const planned = store.rows(source)
   // Дедуп СВОЙ у каждой таблицы, по её собственным id. «Раз обращение уже в базе,
   // значит и переписка тоже» — неверно: сбой ровно между двумя вставками оставил бы
   // обращения без единого сообщения, а пустая переписка выглядит как «клиент молчал».

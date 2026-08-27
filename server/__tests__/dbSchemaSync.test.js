@@ -34,6 +34,20 @@ const STORES = [
     tables: ['work_log'],
     notColumns: ['work_log', 'schema cache'],
   },
+  {
+    name: 'база знаний',
+    sql: '2026-08-27-knowledge-base.sql',
+    code: 'knowledgeBase.js',
+    tables: ['knowledge_base'],
+    notColumns: ['knowledge_base', 'schema cache'],
+  },
+  {
+    name: 'вложения базы знаний',
+    sql: '2026-08-27-knowledge-base.sql',
+    code: 'kbFiles.js',
+    tables: ['kb_files'],
+    notColumns: ['kb_files', 'schema cache'],
+  },
 ]
 
 const readSql = (f) => fs.readFile(new URL(`../../supabase/migrations/${f}`, import.meta.url), 'utf8')
@@ -135,4 +149,25 @@ test('учёт времени: открытая смена отличима от
   const cols = columnsOf(sql, 'work_log')
   assert.ok(cols.has('end_at'), 'нужна колонка окончания смены')
   assert.ok(!/not null/i.test(cols.get('end_at')), 'открытая смена — это end_at IS NULL, колонка обязана допускать NULL')
+})
+
+test('база знаний: вложения лежат в базе, а не на диске сервера', async () => {
+  // Суть переезда: файл на диске одного инстанса для второго не существует — запись
+  // базы знаний есть, ссылка есть, а вложение не открывается.
+  const sql = await readSql('2026-08-27-knowledge-base.sql')
+  const cols = columnsOf(sql, 'kb_files')
+  assert.ok(/bytea/i.test(cols.get('data') || ''), 'содержимое файла должно храниться колонкой bytea')
+  const code = await readCode('kbFiles.js')
+  assert.ok(/supabaseEnabled\(\)/.test(code), 'у стора вложений должна быть ветка базы, а не только диск')
+})
+
+test('база знаний: вид записи ограничен и в коде, и в базе', async () => {
+  const sql = await readSql('2026-08-27-knowledge-base.sql')
+  const chk = sql.match(/knowledge_base_kind_chk check \(kind in \(([^)]+)\)\)/)
+  assert.ok(chk, 'в миграции нет проверки вида записи')
+  const inSql = chk[1].split(',').map((s) => s.trim().replace(/'/g, '')).sort()
+  const code = await readCode('knowledgeBase.js')
+  const inCode = code.match(/\['text', 'file', 'image', 'link'\]/)
+  assert.ok(inCode, 'список видов в normalizeKb не найден')
+  assert.deepEqual(inSql, ['file', 'image', 'link', 'text'], 'база отвергнет вид, которого нет в её проверке')
 })
