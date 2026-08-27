@@ -5,8 +5,8 @@ import { PageHeader, Card, EmptyState, Badge, Modal, Switch } from '@/shared/ui'
 import { confirmDialog } from '@/shared/lib/dialog'
 import {
   fetchUsers, createUser, updateUser, deleteUser, fetchWorktime, fetchUserAccess, saveUserAccess,
-  fetchSubWallets, transferToSub,
-  type User, type WorkSummary, type SubWallet,
+  fetchSubWallets, transferToSub, fetchSubLimits,
+  type User, type WorkSummary, type SubWallet, type SubLimit,
 } from '@/api/usersApi'
 import { fetchRoles, fetchRbacCatalog, accessFromRole, onRolesChanged, type Role, type Perm, type CatalogModule, type CatalogBlock } from '@/api/rolesApi'
 import { RolesPage, Pager, PAGE_SIZE } from '@/pages/RolesPage'
@@ -515,8 +515,16 @@ function UsersTab() {
     try {
       created = await createUser({
         email: form.email, name: form.name, password: form.password, roleIds: form.roleIds,
-        // §4.2 (MR-30): режим баланса и лимит токенов для индивидуального.
+        // §4.2 (MR-30): режим баланса.
         balanceMode: form.balanceMode,
+        /*
+         * Владельца проставляем ЯВНО (правка 27.08). Сервер подставляет его сам только
+         * тем, кто НЕ админ, — а у админа платформы этот путь пропускался, и сотрудник
+         * рождался без родителя: ни подписки владельца, ни его баланса он не наследовал,
+         * и первым, что видел, был экран «Баланс закончился · 0.00 ⚡».
+         * Эта страница — «мои сотрудники», поэтому владелец здесь всегда я.
+         */
+        parentId: sessionUser?.id ?? undefined,
       })
     } catch (e) { setErr(e instanceof Error ? e.message : 'Ошибка'); setSaving(false); return }
     setUsers((prev) => [...prev, created])
@@ -768,16 +776,35 @@ function UsersTab() {
  */
 function SubWalletEditor({ sub, onMode }: { sub: User; onMode: (next: User) => void }) {
   const [wallet, setWallet] = useState<SubWallet | null>(null)
+  const [limit, setLimit] = useState<SubLimit | null>(null)
+  const [limitDraft, setLimitDraft] = useState('')
   const [amount, setAmount] = useState('')
   const [busy, setBusy] = useState(false)
   const [note, setNote] = useState('')
   const individual = sub.balanceMode === 'individual'
 
   const load = useCallback(async () => {
-    if (!individual) return setWallet(null)
-    try { setWallet((await fetchSubWallets()).find((w) => w.userId === sub.id) ?? { userId: sub.id, coins: 0, granted: 0, spent: 0 }) }
-    catch { /* кошелёк не должен ломать карточку */ }
+    try {
+      if (individual) {
+        setWallet((await fetchSubWallets()).find((w) => w.userId === sub.id) ?? { userId: sub.id, coins: 0, granted: 0, spent: 0 })
+      } else {
+        setWallet(null)
+        const l = (await fetchSubLimits()).find((x) => x.userId === sub.id) ?? { userId: sub.id, limit: null, spent: 0, left: null }
+        setLimit(l)
+        setLimitDraft(l.limit == null ? '' : String(l.limit))
+      }
+    } catch { /* кошелёк не должен ломать карточку */ }
   }, [individual, sub.id])
+
+  const saveLimit = async (next: number | null) => {
+    setBusy(true); setNote('')
+    try {
+      await updateUser(sub.id, { tokenLimit: next })
+      setNote(next == null ? 'Ограничение снято' : `Лимит: ${next} ⚡`)
+      await load()
+    } catch (e) { setNote(e instanceof Error ? e.message : 'Не вышло') }
+    finally { setBusy(false) }
+  }
   useEffect(() => { void load() }, [load])
 
   const move = async (sign: 1 | -1) => {
@@ -822,10 +849,40 @@ function SubWalletEditor({ sub, onMode }: { sub: User; onMode: (next: User) => v
       </div>
 
       {!individual ? (
-        <p className="text-[11px] leading-relaxed text-white/45">
-          Тратит из вашего кошелька: отдельно выдавать монеты не нужно, а сколько он израсходовал — видно
-          в блоке «Кто сколько потратил» вверху страницы.
-        </p>
+        /*
+          Общий кошелёк — основной режим (уточнение владельца 27.08: «он должен унаследовать
+          всё, что у владельца, просто лимит по токенам добавляется ограничение»). Денег
+          отдельно не выдаём: задаём потолок, сколько из общих сотруднику можно потратить.
+        */
+        <>
+          <div className="mb-2 flex flex-wrap items-center gap-4 text-xs">
+            <span className="text-white/45">Выдано: <b className="text-fg tabular-nums">{limit?.limit == null ? 'без ограничения' : `${limit.limit} ⚡`}</b></span>
+            <span className="text-white/45">Потрачено: <b className="text-fg tabular-nums">{limit?.spent ?? 0} ⚡</b></span>
+            {limit?.limit != null && (
+              <span className="text-white/45">Осталось: <b className={cn('tabular-nums', (limit.left ?? 0) > 0 ? 'text-spark-300' : 'text-rose-300')}>{limit.left ?? 0} ⚡</b></span>
+            )}
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <input
+              type="number"
+              min={0}
+              value={limitDraft}
+              onChange={(e) => setLimitDraft(e.target.value)}
+              placeholder="монет"
+              className="input h-8 w-28 text-sm"
+            />
+            <button type="button" disabled={busy} onClick={() => void saveLimit(limitDraft === '' ? null : Number(limitDraft))}
+              className="btn-soft h-8 px-3 text-xs disabled:opacity-40">Выдать</button>
+            <button type="button" disabled={busy} onClick={() => void saveLimit(null)}
+              className="btn-ghost h-8 px-3 text-xs disabled:opacity-40">Без ограничения</button>
+            {note && <span className="text-[11px] text-muted">{note}</span>}
+          </div>
+          <p className="mt-1.5 text-[11px] leading-relaxed text-white/35">
+            Деньги общие с вашими — отдельно переводить нечего. Лимит накопительный: «выдано 500» значит
+            «всего 500». Когда израсходует, его задачи встанут на паузу с сохранением прогресса, а ваши
+            продолжат работать.
+          </p>
+        </>
       ) : (
         <>
           <div className="mb-2 flex flex-wrap items-center gap-4 text-xs">

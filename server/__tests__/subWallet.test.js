@@ -89,3 +89,56 @@ test('переход на общий баланс: остаток личного
   const left = await coins(sub.id) // теперь это уже кошелёк владельца
   assert.equal(left, 75)
 })
+
+test('лимит расхода: сотрудник наследует кошелёк владельца, но тратит не больше выданного', async () => {
+  // Уточнение владельца 27.08: «он должен унаследовать всё, что у владельца, просто лимит
+  // по токенам, которые ему дали, добавляется ограничение».
+  const { spendLimit } = await import('../balance.js')
+  const st = `${Date.now()}e`
+  const owner = await createUser({ email: `o${st}@t.io`, password: 'secret123', name: 'Владелец' })
+  const sub = await createUser({ email: `s${st}@t.io`, password: 'secret123', name: 'Маша', parentId: owner.id })
+
+  await changeCoins(500, 'старт', owner.id, 'grant')
+  assert.equal(await coins(sub.id), 500) // кошелёк общий — наследует
+
+  // Без лимита ограничения нет вовсе.
+  assert.equal((await spendLimit(sub.id)).limit, null)
+
+  await updateUser(sub.id, { tokenLimit: 50 })
+  assert.deepEqual(await spendLimit(sub.id), { limit: 50, spent: 0, left: 50 })
+
+  await changeCoins(-20, 'парсинг', sub.id)
+  assert.deepEqual(await spendLimit(sub.id), { limit: 50, spent: 20, left: 30 })
+
+  // Деньги при этом ушли из кошелька ВЛАДЕЛЬЦА: лимит не отделяет средства, а ограничивает.
+  assert.equal(await coins(owner.id), 480)
+})
+
+test('лимит владельцу не ставится: ограничивать себя в своих деньгах нечем', async () => {
+  const { spendLimit } = await import('../balance.js')
+  const st = `${Date.now()}f`
+  const owner = await createUser({ email: `o${st}@t.io`, password: 'secret123', name: 'Владелец', tokenLimit: 10 })
+  assert.equal((await spendLimit(owner.id)).limit, null)
+})
+
+test('исчерпанный лимит ставит задачу на паузу, а не роняет её', async () => {
+  const { chargeActions } = await import('../lib/actionBilling.js')
+  const st = `${Date.now()}g`
+  const owner = await createUser({ email: `o${st}@t.io`, password: 'secret123', name: 'Владелец' })
+  const sub = await createUser({ email: `s${st}@t.io`, password: 'secret123', name: 'Паша', parentId: owner.id })
+
+  await changeCoins(500, 'старт', owner.id, 'grant')
+  await updateUser(sub.id, { tokenLimit: 1 })
+  await changeCoins(-1, 'уже потратил всё', sub.id)
+
+  const logs = []
+  const task = { id: 't1', moduleKey: 'parsing', userId: sub.id }
+  const store = { appendLog: async (_t, level, msg) => { logs.push(`${level}: ${msg}`) } }
+
+  const res = await chargeActions(task, store, 5)
+  assert.equal(res, null, 'списания не было')
+  assert.equal(task.pauseRequested, true, 'задача встала на паузу')
+  assert.match(logs.join('\n'), /Лимит расхода исчерпан/)
+  // Кошелёк владельца не тронут: сотрудник упёрся в лимит ДО списания.
+  assert.equal(await coins(owner.id), 499)
+})

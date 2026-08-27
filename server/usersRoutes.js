@@ -390,6 +390,31 @@ usersRouter.get('/:id/access', async (req, res) => {
  * Только для личных кошельков: у сотрудника с общим балансом своего кошелька нет, и
  * рисовать ему отдельные цифры значило бы показывать деньги владельца дважды.
  */
+/**
+ * Лимиты расхода сотрудников (27.08). Кошелёк у них общий с владельцем, поэтому «остаток»
+ * здесь — это остаток ЛИМИТА, а не отдельных денег: сколько ещё разрешено потратить.
+ */
+usersRouter.get('/limits', async (req, res) => {
+  try {
+    const ctx = await requesterContext(req)
+    if (ctx.blocked) return res.status(403).json({ ok: false, error: 'Нет прав' })
+    const all = await listUsers()
+    const mine = all.filter((u) => (ctx.isAdmin ? true : u.parentId === ctx.id) && u.parentId)
+    const { spendLimit } = await import('./balance.js')
+    const rows = []
+    for (const u of mine) {
+      const l = await spendLimit(u.id)
+      rows.push({
+        userId: u.id,
+        limit: l.limit,
+        spent: l.spent,
+        left: l.left === Infinity ? null : l.left,
+      })
+    }
+    res.json({ ok: true, rows })
+  } catch (err) { fail(res, err) }
+})
+
 usersRouter.get('/wallets', async (req, res) => {
   try {
     const ctx = await requesterContext(req)
@@ -527,11 +552,12 @@ usersRouter.put('/:id', async (req, res) => {
        * исправить. Именно в это упёрся владелец: суб с личным кошельком остался с нулём и
        * без возможности вернуть его на общий баланс.
        *
-       * tokenLimit в белый список НЕ добавлен намеренно: поле нигде не проверяется, лимитом
-       * не является и в интерфейсе больше не предлагается. Живёт только в старых записях.
+       * tokenLimit с 27.08 — НАСТОЯЩИЙ лимит расхода: сотрудник тратит из кошелька
+       * владельца, но не больше выданного (`spendLimit` в balance.js, проверка в
+       * chargeActions). Поэтому владельцу его править можно и нужно.
        */
-      const { name, active, roleIds, accountIds, accountGroupIds, balanceMode } = patch
-      patch = { name, active, roleIds: sanitizeRoleIds(roleIds), accountIds, accountGroupIds, balanceMode }
+      const { name, active, roleIds, accountIds, accountGroupIds, balanceMode, tokenLimit } = patch
+      patch = { name, active, roleIds: sanitizeRoleIds(roleIds), accountIds, accountGroupIds, balanceMode, tokenLimit }
     }
     // Что было ДО правки: нужно, чтобы поймать переход «личный кошелёк → общий баланс».
     const before = patch.balanceMode !== undefined ? await getUser(req.params.id) : null

@@ -64,6 +64,32 @@ export async function chargeActions(task, store, actions = 1, deps = {}) {
     const cost = Math.round(priceFor(task?.moduleKey, pricing) * n * 1000) / 1000
     if (cost <= 0) return null
     const balance = deps.changeCoins && deps.getBalance ? deps : await import('../balance.js')
+
+    /*
+     * Лимит расхода сотрудника (решение владельца 27.08). Кошелёк общий с владельцем —
+     * сотрудник наследует и деньги, и подписку, — но потратить он может не больше
+     * выданного. Проверяем ДО списания: узнать об исчерпанном лимите после того, как
+     * деньги владельца уже ушли, поздно.
+     *
+     * Ведёт себя как кончившийся баланс: задача встаёт на паузу с сохранением прогресса,
+     * а не падает с ошибкой. Владелец поднимает лимит — и она продолжается.
+     */
+    if (balance.spendLimit && task?.userId) {
+      const lim = await balance.spendLimit(task.userId).catch(() => null)
+      if (lim && lim.limit !== null && lim.left <= 0) {
+        if (!task.pauseRequested && !task.stopRequested) {
+          task.pauseRequested = true
+          await store?.appendLog?.(
+            task,
+            'info',
+            `Лимит расхода исчерпан: выдано ${lim.limit} ⚡, потрачено ${lim.spent} ⚡. `
+            + 'Задача на паузе, прогресс сохранён — попросите владельца увеличить лимит.',
+          )
+        }
+        return null
+      }
+    }
+
     const res = await balance.changeCoins(-cost, `${task.moduleKey}: ${n} действ.`, task.userId)
     // Считаем ФАКТИЧЕСКИ списанное, а не запрошенное: в минус кошелёк не уходит,
     // и при остатке 0.002 с ценой 0.005 спишется 0.002. Прибавляя полную цену, мы

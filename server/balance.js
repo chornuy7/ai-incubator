@@ -747,6 +747,37 @@ export async function spendByActor(filter = {}) {
   return [...byActor.values()].sort((a, b) => b.spent - a.spent)
 }
 
+/**
+ * Лимит расхода сотрудника (решение владельца 27.08: «он должен унаследовать всё, что у
+ * владельца, просто лимит по токенам, которые ему дали, добавляется ограничение»).
+ *
+ * Кошелёк один — владельца, и сотрудник наследует и его, и подписку. Лимит не отделяет
+ * деньги, а ограничивает, СКОЛЬКО из общего кошелька этот сотрудник вправе потратить.
+ * Потраченное считаем по журналу: с 27.08 в каждой операции записан её автор.
+ *
+ * Лимит накопительный, а не за период: «выдали 500» значит «всего 500». Поднять — это
+ * выдать ещё, опустить — забрать неизрасходованное. Так цифра в карточке отвечает на
+ * вопрос владельца «сколько я ему дал», а не «сколько он тратит в месяц».
+ *
+ * @param {string} userId @returns {Promise<{limit:number|null, spent:number, left:number}>}
+ *   limit === null — ограничения нет (сотрудник тратит наравне с владельцем).
+ */
+export async function spendLimit(userId) {
+  const id = String(userId || '')
+  if (!id) return { limit: null, spent: 0, left: Infinity }
+  const { getUser } = await import('./users.js')
+  const user = await getUser(id).catch(() => null)
+  const limit = user && user.tokenLimit != null ? Math.max(0, Number(user.tokenLimit) || 0) : null
+  if (limit === null) return { limit: null, spent: 0, left: Infinity }
+  // Владельцу кошелька лимит не ставим: ограничивать себя в своих же деньгах бессмысленно.
+  const walletOwner = await resolveWalletOwner(id)
+  if (walletOwner === id) return { limit: null, spent: 0, left: Infinity }
+  const rows = await spendByActor({ userId: walletOwner, limit: 1000 })
+  const mine = rows.find((r) => r.actorId === id)
+  const spent = mine ? mine.spent : 0
+  return { limit, spent, left: Math.round((limit - spent) * COIN_PRECISION) / COIN_PRECISION }
+}
+
 /** Сменить тариф. @param {string} planId */
 export async function setPlan(planId, userId) {
   if (!PLANS[planId]) throw new Error(`Неизвестный тариф: ${planId}`)
