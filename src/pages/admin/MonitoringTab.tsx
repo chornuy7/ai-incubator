@@ -207,7 +207,7 @@ function ParserWatchErrors() {
  * же поисковым запросам, что и клиентские задачи, и без своих аккаунтов отбирала бы их
  * у работы, ради которой платят.
  */
-function ServiceAccounts() {
+export function ServiceAccounts() {
   const [accounts, setAccounts] = useState<TgAccount[]>([])
   const [busy, setBusy] = useState('')
   const [err, setErr] = useState('')

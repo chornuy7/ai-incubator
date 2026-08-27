@@ -109,6 +109,7 @@ import {
   pickCommentCandidates, trackIdlePass, markIdleStop, warmingPace, pickWeightedKey, idleWaitPlan, WARM_WINDOW_MS, msUntilHour, inActiveWindow,
 } from '../lib/workerLoop.js'
 import { channelSignals, channelScore, isActive, detectLang } from '../lib/channelScore.js'
+import { keywordRegex } from '../lib/keywordMatch.js'
 import { scheduleHour, logTime } from '../lib/accountFatigue.js'
 import { limitReached, incAction } from '../lib/dailyActions.js'
 import { cleanMailingNumbers, classifyMailingTargets, pickMailingAccount } from '../lib/mailing.js'
@@ -2554,13 +2555,39 @@ export async function runChannelParser(task, store, kind) {
    * При включённом «Не собирать уже спарсенные» база НЕ подмешивается: это ровно
    * противоположное желание — человек просит показать только новое.
    */
-  const kwLower = keywords.map((k) => k.toLowerCase())
-  if (!resuming && !skipParsed.size && kwLower.length) {
+  /*
+   * Совпадение по СЛОВУ, а не по подстроке (правка 27.08).
+   *
+   * Первая версия искала `includes`, и ключ «СТО» находил «ре-СТО-раны»: в выдаче по
+   * массажу и разработчикам появился «Вкусный Чат — о еде, ресторанах». Для коротких
+   * ключей подстрока даёт мусор, поэтому сверяем по границам слова. Ключ из нескольких
+   * слов («нужен разработчик») ищем как фразу — целиком.
+   */
+  const kwRe = keywords.map((k) => ({ kw: k, re: keywordRegex(k) }))
+
+  /*
+   * Что уже искали раньше (просьба владельца 27.08: «сколько попаданий в ключ — столько
+   * моментально отдаём; если новый ключ — выдаём всё новое, но по новому ключу работаем
+   * дальше»).
+   *
+   * По ключу, который уже собирали, идти в Telegram незачем: всё, что он давал, лежит в
+   * общей базе каналов. Отдаём его находки сразу и снимаем ЕГО запросы из очереди —
+   * иначе прогон снова растягивается на десятки минут ради известного. Новый ключ
+   * работает как обычно, и в логе видно, что откуда взялось.
+   */
+  const отработанные = new Set()
+  if (!resuming && !skipParsed.size && keywords.length) {
+    try {
+      const { usedKeywords } = await import('../parserCache.js')
+      for (const k of await usedKeywords(kind, task.userId)) отработанные.add(k)
+    } catch { /* нет истории — считаем все ключи новыми */ }
+  }
+
+  const изБазы = new Map() // ключ → сколько строк отдали
+  if (!resuming && !skipParsed.size && kwRe.length) {
     try {
       const base = await listChannels()
-      const подходит = (c) => {
-        const hay = `${c.title || ''} ${c.username || ''}`.toLowerCase()
-        if (!kwLower.some((k) => hay.includes(k))) return false
+      const проходитФильтры = (c) => {
         const members = Number(c.subscribers) || 0
         if (minMembers && members < minMembers) return false
         if (maxMembers && members > maxMembers) return false
@@ -2568,12 +2595,13 @@ export async function runChannelParser(task, store, kind) {
         if (comments === 2 && c.hasComments) return false
         return true
       }
-      let добавлено = 0
       for (const c of base) {
         if (!c.username && !c.id) continue
         const key = String(c.username || c.id).toLowerCase()
         if (seen.has(key)) continue
-        if (!подходит(c)) continue
+        const hay = `${c.title || ''} ${c.username || ''}`
+        const попал = kwRe.filter(({ re }) => re.test(hay))
+        if (!попал.length || !проходитФильтры(c)) continue
         seen.add(key)
         task.results.push({
           id: c.id,
@@ -2584,18 +2612,22 @@ export async function runChannelParser(task, store, kind) {
           link: c.link || (c.username ? `https://t.me/${c.username}` : ''),
           fromBase: true,
         })
-        добавлено += 1
+        // Отмечаем совпадения для AND-пересечения: иначе строка из базы вылетит в конце
+        // как «не совпавшая ни с одним ключом», хотя совпала.
+        if (andMode) {
+          let set = hitsByKey.get(key)
+          if (!set) { set = new Set(); hitsByKey.set(key, set) }
+          for (const { kw } of попал) set.add(keywords.indexOf(kw))
+        }
+        for (const { kw } of попал) изБазы.set(kw, (изБазы.get(kw) || 0) + 1)
       }
-      if (добавлено) {
-        await store.appendLog(
-          task,
-          'info',
-          `Из своей базы: +${добавлено} ${unitLabel} — собраны прошлыми запусками, повторно в Telegram за ними не ходим. `
-          + 'Фильтры активности и балла к ним не применялись: для этого нужны свежие посты.',
-        )
+      if (изБазы.size) {
+        syncHits()
+        const строки = [...изБазы.entries()].map(([kw, n]) => `«${kw}» +${n}`).join(' · ')
+        await store.appendLog(task, 'info', `Из своей базы сразу: ${строки}. Эти каналы собраны прошлыми запусками — повторно в Telegram за ними не идём.`)
         await store.saveTask(task)
       }
-    } catch { /* база необязательна: не смогли прочитать — просто идём в Telegram */ }
+    } catch { /* база необязательна: не смогли прочитать — идём в Telegram за всем */ }
   }
 
   let accIdx = 0
@@ -2607,6 +2639,35 @@ export async function runChannelParser(task, store, kind) {
       if (canModuleUseAccount(task.moduleKey, meta.status || 'active')) return id
     }
     return null
+  }
+
+  /*
+   * Ключ, который уже отрабатывали И дал строки из базы, второй раз в Telegram не гоняем
+   * (решение владельца 27.08). Всё, что он находил, уже отдано выше — мгновенно и без
+   * аккаунтов. Новые ключи остаются в очереди и работают как обычно.
+   *
+   * Условие двойное намеренно: если ключ в истории есть, а база по нему сейчас пуста
+   * (каналы удалили, сузили фильтры), пропускать его нельзя — человек остался бы вообще
+   * без результата по этому слову.
+   */
+  if (!resuming && отработанные.size && изБазы.size) {
+    const пропустить = new Set()
+    keywords.forEach((kw, i) => {
+      if (отработанные.has(kw.toLowerCase()) && изБазы.get(kw)) пропустить.add(i)
+    })
+    if (пропустить.size) {
+      const было = queries.length
+      for (let i = queries.length - 1; i >= 0; i -= 1) {
+        if (пропустить.has(queries[i].kwIdx)) queries.splice(i, 1)
+      }
+      const снятые = [...пропустить].map((i) => `«${keywords[i]}»`).join(', ')
+      await store.appendLog(
+        task,
+        'info',
+        `Пропускаем ${было - queries.length} запрос(ов): ${снятые} — эти ключи уже отрабатывали, их каналы отданы из базы. `
+        + (queries.length ? `Остаётся ${queries.length} запрос(ов) по новым ключам.` : 'Новых ключей нет — работа закончена.'),
+      )
+    }
   }
 
   const startFrom = Math.min(Number(task.cursor) || 0, queries.length)
