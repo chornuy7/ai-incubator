@@ -417,6 +417,14 @@ function fmtDur(ms: number): string {
 /** Верхняя половина раздела: список сотрудников и их доступы. */
 function UsersTab() {
   const sessionUser = useSession((s) => s.user)
+  /*
+   * Свой остаток — ПОТОЛОК для лимита сотрудника (правка 27.08: «если у него общих
+   * токенов 400, то он больше 400 не должен иметь возможность вводить»). Обещать
+   * сотруднику тысячу, имея четыреста, нечем: он всё равно упрётся в конец общих денег,
+   * а число в карточке будет врать про запас, которого нет.
+   */
+  const [мойОстаток, setМойОстаток] = useState<number | null>(null)
+  useEffect(() => { void fetchBalance().then((b) => setМойОстаток(Math.floor(Number(b.coins) || 0))).catch(() => {}) }, [])
   const [users, setUsers] = useState<User[]>([])
   const [roles, setRoles] = useState<Role[]>([])
   const [worktime, setWorktime] = useState<Record<string, WorkSummary>>({})
@@ -766,9 +774,10 @@ function UsersTab() {
               <input
                 type="number"
                 min={0}
+                max={мойОстаток ?? undefined}
                 value={form.tokenLimit}
-                onChange={(e) => setForm((f) => ({ ...f, tokenLimit: e.target.value }))}
-                placeholder="например 500"
+                onChange={(e) => setForm((f) => ({ ...f, tokenLimit: capLimit(e.target.value, мойОстаток) }))}
+                placeholder={мойОстаток == null ? 'например 500' : `не больше ${мойОстаток}`}
                 className="input h-10 w-40 text-sm"
               />
               <button
@@ -783,7 +792,8 @@ function UsersTab() {
             <p className="mt-1.5 text-xs leading-relaxed text-white/45">
               Сотрудник тратит из <b className="text-white/70">вашего</b> кошелька — своего у него нет.
               Лимит — потолок: сколько всего он может израсходовать. Пусто — без потолка, тратит наравне с вами.
-              Изменить и посмотреть расход можно в его карточке.
+              {мойОстаток != null && <> Больше <b className="text-white/70">{мойОстаток} ⚡</b> задать нельзя — столько у вас на счету.</>}
+              {' '}Изменить и посмотреть расход можно в его карточке.
             </p>
           </div>
           <div className="mt-1 flex justify-end gap-2">
@@ -827,6 +837,17 @@ function UsersTab() {
  * нечем. Теперь видно, сколько выдано и сколько осталось, монеты ходят в обе стороны, и
  * режим переключается обратно на общий.
  */
+/**
+ * Потолок лимита — остаток владельца (правка 27.08: «больше 400 не должен иметь
+ * возможность вводить»). Обрезаем прямо при вводе, а не ругаемся после: число, которое
+ * нельзя выдать, не должно даже появляться в поле. Остаток ещё не пришёл — не мешаем.
+ */
+function capLimit(raw: string, max: number | null): string {
+  if (raw === '') return ''
+  const n = Math.max(0, Math.floor(Number(raw) || 0))
+  return String(max == null ? n : Math.min(n, max))
+}
+
 function SubWalletEditor({ sub, onMode }: { sub: User; onMode: (next: User) => void }) {
   const [limit, setLimit] = useState<SubLimit | null>(null)
   const [limitDraft, setLimitDraft] = useState('')
@@ -884,6 +905,14 @@ function SubWalletEditor({ sub, onMode }: { sub: User; onMode: (next: User) => v
    * между комментарием и строкой парсинга. Показываем три опорные ставки — по ним видно
    * вилку, а не одно число, из которого потолок не оценить.
    */
+  /*
+   * Потолок ввода = что осталось у владельца ПЛЮС уже потраченное этим сотрудником.
+   * Лимит накопительный («всего за всё время»), поэтому у потратившего 800 из 1000
+   * потолок не может быть просто остатком владельца — иначе новый лимит оказался бы
+   * ниже уже израсходованного, и мы бы задним числом «отобрали» сделанную работу.
+   */
+  const потолок = мойОстаток == null ? null : Math.floor(мойОстаток + (limit?.spent ?? 0))
+
   const цена = (k: string, запас: number) => prices[k] ?? запас
   const действий = (limit?.limit ?? 0) > 0 ? [
     { n: Math.floor((limit!.limit as number) / цена('neuro-commenting', 0.05)), what: 'комментариев или сообщений' },
@@ -928,9 +957,10 @@ function SubWalletEditor({ sub, onMode }: { sub: User; onMode: (next: User) => v
             <input
               type="number"
               min={0}
+              max={потолок ?? undefined}
               value={limitDraft}
-              onChange={(e) => setLimitDraft(e.target.value)}
-              placeholder="токенов"
+              onChange={(e) => setLimitDraft(capLimit(e.target.value, потолок))}
+              placeholder={потолок == null ? 'токенов' : `до ${потолок}`}
               className="input h-8 w-28 text-sm"
             />
             <button type="button" disabled={busy} onClick={() => void saveLimit(limitDraft === '' ? null : Number(limitDraft))}
@@ -939,11 +969,15 @@ function SubWalletEditor({ sub, onMode }: { sub: User; onMode: (next: User) => v
               className="btn-ghost h-8 px-3 text-xs disabled:opacity-40">Без ограничения</button>
             {note && <span className="text-[11px] text-muted">{note}</span>}
           </div>
-          {limit?.limit != null && мойОстаток != null && limit.limit > мойОстаток && (
-            <div className="mt-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-2.5 py-2 text-[11px] leading-relaxed text-amber-200/90">
-              На счету сейчас <b className="tabular-nums">{мойОстаток} ⚡</b> — это меньше лимита.
-              Лимит не переводит токены, он только ограничивает: сотрудник упрётся в конец общих денег раньше,
-              чем в свой потолок.
+          {/*
+            Строка про потолок: раньше здесь висело предупреждение «лимит больше баланса»,
+            но правильнее не давать ввести лишнее вовсе (27.08), чем ругаться после ввода.
+            Осталась подсказка, сколько задать можно.
+          */}
+          {потолок != null && (
+            <div className="mt-2 text-[11px] leading-relaxed text-white/35">
+              Больше <b className="text-white/60 tabular-nums">{потолок} ⚡</b> задать нельзя: на счету
+              {' '}{мойОстаток} ⚡{(limit?.spent ?? 0) > 0 && <> плюс {limit?.spent} ⚡, уже потраченные сотрудником</>}.
             </div>
           )}
           {действий.length > 0 && (

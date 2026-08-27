@@ -300,6 +300,19 @@ usersRouter.post('/', async (req, res) => {
       body.parentId = ctx.id
       body.roleIds = sanitizeRoleIds(body.roleIds)
     }
+    /*
+     * Лимит нового сотрудника не может быть больше того, что есть у владельца (правка
+     * 27.08). Тот же потолок, что и при правке: обещать тысячу, имея четыреста, нечем —
+     * сотрудник упрётся в конец общих денег, а число в карточке будет врать про запас.
+     */
+    if (body.tokenLimit != null && body.parentId) {
+      const { getBalance } = await import('./balance.js')
+      const { coins } = await getBalance(body.parentId).catch(() => ({ coins: 0 }))
+      const потолок = Math.floor(Number(coins) || 0)
+      if (Number(body.tokenLimit) > потолок) {
+        return res.status(400).json({ ok: false, error: `Больше ${потолок} ⚡ задать нельзя — столько есть на общем кошельке` })
+      }
+    }
     const user = await createUser(body)
     await appendAudit({ action: 'user.create', module: 'rbac', initiator: ctx.id || 'operator', reason: `Создан пользователь ${user.email}`, meta: { userId: user.id, roleId: user.roleId, parentId: user.parentId } })
     res.json({ ok: true, user: publicUser(user) })
@@ -559,8 +572,36 @@ usersRouter.put('/:id', async (req, res) => {
       const { name, active, roleIds, accountIds, accountGroupIds, balanceMode, tokenLimit } = patch
       patch = { name, active, roleIds: sanitizeRoleIds(roleIds), accountIds, accountGroupIds, balanceMode, tokenLimit }
     }
-    // Что было ДО правки: нужно, чтобы поймать переход «личный кошелёк → общий баланс».
-    const before = patch.balanceMode !== undefined ? await getUser(req.params.id) : null
+    // Что было ДО правки: нужно, чтобы поймать переход «личный кошелёк → общий баланс»
+    // и понять, ПОДНИМАЮТ ли лимит расхода.
+    const before = (patch.balanceMode !== undefined || patch.tokenLimit !== undefined) ? await getUser(req.params.id) : null
+
+    /*
+     * Лимит нельзя задать больше, чем есть у владельца (правка 27.08: «если у него общих
+     * токенов 400, то он больше 400 не должен иметь возможность вводить»). Витрина
+     * обрезает ввод, но полагаться на витрину в вопросах денег нельзя.
+     *
+     * Потолок — остаток владельца ПЛЮС уже потраченное этим сотрудником: лимит
+     * накопительный («всего за всё время»), и у потратившего 800 из 1000 потолок не может
+     * быть просто остатком — иначе новый лимит оказался бы ниже израсходованного.
+     *
+     * Проверяем только РОСТ: снижение и правка соседних полей (имя, доступы) проходят
+     * всегда, иначе после трат нельзя было бы даже переименовать сотрудника.
+     */
+    if (before && patch.tokenLimit != null && Number(patch.tokenLimit) > (before.tokenLimit ?? 0)) {
+      const target = before
+      if (target.parentId) {
+        const { getBalance, spendLimit } = await import('./balance.js')
+        const [{ coins }, лимит] = await Promise.all([
+          getBalance(target.parentId).catch(() => ({ coins: 0 })),
+          spendLimit(target.id).catch(() => ({ spent: 0 })),
+        ])
+        const потолок = Math.floor((Number(coins) || 0) + (Number(лимит.spent) || 0))
+        if (Number(patch.tokenLimit) > потолок) {
+          return res.status(400).json({ ok: false, error: `Больше ${потолок} ⚡ задать нельзя — столько есть на общем кошельке` })
+        }
+      }
+    }
     const user = await updateUser(req.params.id, patch)
     if (!user) return res.status(404).json({ ok: false, error: 'Пользователь не найден' })
 

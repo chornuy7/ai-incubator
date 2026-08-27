@@ -199,3 +199,29 @@ test('витрина сотрудника: денег нет, токены — �
   // Владелец при этом видит свой настоящий остаток целиком.
   assert.equal(await coins(owner.id), 960)
 })
+
+test('потолок лимита — остаток владельца плюс уже потраченное сотрудником', async () => {
+  /*
+   * Правка 27.08: «если у него общих токенов 400, то он больше 400 не должен иметь
+   * возможность вводить». Проверяем саму формулу потолка — её считают и витрина (обрезая
+   * ввод), и роут (отклоняя запрос). Уже потраченное входит в потолок: лимит
+   * накопительный, и у потратившего 800 из 1000 новый потолок не может быть просто
+   * остатком владельца — иначе лимит оказался бы ниже сделанной работы.
+   */
+  const st = `${Date.now()}g`
+  const owner = await createUser({ email: `o${st}@t.io`, password: 'secret123', name: 'Владелец' })
+  const sub = await createUser({ email: `s${st}@t.io`, password: 'secret123', name: 'Тимур', parentId: owner.id, tokenLimit: 1000 })
+
+  await changeCoins(1000, 'старт', owner.id, 'grant')
+  const { spendLimit } = await import('../balance.js')
+  const потолок = async () => Math.floor((await coins(owner.id)) + (await spendLimit(sub.id)).spent)
+
+  assert.equal(await потолок(), 1000, 'пока не тратили — сколько на счету')
+
+  await changeCoins(-800, 'работа', sub.id)
+  assert.equal(await coins(owner.id), 200, 'у владельца осталось 200')
+  assert.equal(await потолок(), 1000, 'потолок не упал ниже уже потраченных 800')
+
+  await changeCoins(-100, 'моя работа', owner.id)
+  assert.equal(await потолок(), 900, 'трата владельца потолок снижает')
+})
