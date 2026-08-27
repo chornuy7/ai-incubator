@@ -55,6 +55,13 @@ const STORES = [
     tables: ['target_folders', 'target_folder_targets'],
     notColumns: ['target_folders', 'target_folder_targets', 'schema cache'],
   },
+  {
+    name: 'автоматизация',
+    sql: '2026-08-27-automation.sql',
+    code: 'automation/store.js',
+    tables: ['automation_rules', 'automation_rule_accounts'],
+    notColumns: ['automation_rules', 'automation_rule_accounts', 'schema cache'],
+  },
 ]
 
 const readSql = (f) => fs.readFile(new URL(`../../supabase/migrations/${f}`, import.meta.url), 'utf8')
@@ -191,4 +198,33 @@ test('папки целей: один канал нельзя завести в 
   assert.ok(!/jsonb/i.test(sql), 'цели папки — строки, а не список в одном поле')
   const code = await readCode('targetFolders.js')
   assert.ok(/toLowerCase\(\)/.test(code), 'перед записью цели приводятся к нижнему регистру')
+})
+
+test('автоматизация: расписание разложено по колонкам, а не спрятано в JSON', async () => {
+  // Типов расписания три и полей у них по одному. Спрятать их в одно поле значило бы
+  // спрятать от базы и проверку типа, и поиск «чему пора запускаться».
+  const sql = await readSql('2026-08-27-automation.sql')
+  const cols = columnsOf(sql, 'automation_rules')
+  for (const c of ['schedule_type', 'schedule_at', 'schedule_interval_minutes', 'schedule_time']) {
+    assert.ok(cols.has(c), `нужна колонка ${c}`)
+  }
+  const chk = sql.match(/automation_rules_schedule_chk check \(schedule_type in \(([^)]+)\)\)/)
+  assert.ok(chk, 'тип расписания должен быть ограничен базой')
+  const inSql = chk[1].split(',').map((s) => s.trim().replace(/'/g, '')).sort()
+  assert.deepEqual(inSql, ['daily', 'interval', 'once'])
+  const code = await readCode('automation/store.js')
+  assert.ok(/\['once', 'interval', 'daily'\]/.test(code), 'список типов в sanitizeSchedule не найден')
+})
+
+test('автоматизация: один аккаунт нельзя записать в правило дважды', async () => {
+  // Дубль означал бы двойную норму действий по аккаунту — прямой путь к ограничениям.
+  const sql = await readSql('2026-08-27-automation.sql')
+  assert.ok(/primary key \(rule_id, account_id\)/.test(sql), 'ключ (правило, аккаунт) обязан быть первичным')
+})
+
+test('автоматизация: массовой перезаписи правил больше нет', async () => {
+  // В режиме базы она затёрла бы правила, заведённые на другом инстансе между
+  // чтением и записью. Экспортирована была, но не вызывалась ниоткуда.
+  const code = await readCode('automation/store.js')
+  assert.ok(!/export async function replaceRules/.test(code), 'replaceRules не должна возвращаться')
 })

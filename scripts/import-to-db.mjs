@@ -180,6 +180,46 @@ const STORES = {
       }
     },
   },
+  automation: {
+    title: 'правила автоматизации',
+    file: () => process.env.AUTOMATION_FILE || dataPath('automation/rules.json'),
+    migration: '2026-08-27-automation.sql',
+    tables: ['automation_rules', 'automation_rule_accounts'],
+    keys: { automation_rule_accounts: ['rule_id', 'account_id'] },
+    readSource: async () => {
+      const data = await readJson(process.env.AUTOMATION_FILE || dataPath('automation/rules.json'), { rules: [] })
+      return Array.isArray(data?.rules) ? data.rules : []
+    },
+    rows: (rules) => {
+      const list = rules.filter((r) => r && r.id)
+      return {
+        automation_rules: list.map((r) => ({
+          id: r.id,
+          user_id: r.userId || null,
+          name: String(r.name || 'Правило автоматизации'),
+          enabled: r.enabled !== false,
+          module_key: String(r.moduleKey || ''),
+          campaign_id: r.campaignId || null,
+          settings: r.settings && typeof r.settings === 'object' ? r.settings : {},
+          schedule_type: ['once', 'interval', 'daily'].includes(r.schedule?.type) ? r.schedule.type : 'interval',
+          schedule_at: r.schedule?.at ?? null,
+          schedule_interval_minutes: r.schedule?.intervalMinutes ?? null,
+          schedule_time: r.schedule?.time ?? null,
+          last_run: r.lastRun ?? null,
+          last_status: r.lastStatus ?? null,
+          last_task_id: r.lastTaskId ?? null,
+          next_run: r.nextRun ?? null,
+          created_at: Number(r.createdAt) || Date.now(),
+          updated_at: Number(r.updatedAt) || Number(r.createdAt) || Date.now(),
+        })),
+        automation_rule_accounts: list.flatMap((r) => {
+          // Дубли схлопываем здесь: база их отвергнет, и перенос встанет на первом правиле.
+          const unique = [...new Set((r.accountIds || []).map(String).filter(Boolean))]
+          return unique.map((account_id, position) => ({ rule_id: r.id, account_id, position }))
+        }),
+      }
+    },
+  },
 }
 
 /** Тип восстанавливаем по расширению: имя файла на диске — единственное, что о нём известно. */
