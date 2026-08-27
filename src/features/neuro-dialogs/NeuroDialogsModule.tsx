@@ -38,10 +38,15 @@ import type { ModuleTaskSettings } from '@/api/modulesApi'
 
 const cfg = MODULES['neuro-dialogs']!
 
-const GOAL_KEY = 'neuro-dialogs:goal'
-const GOAL_ID_KEY = 'neuro-dialogs:goalId'
-const SCOPE_KEY = 'neuro-dialogs:replyAll'
-const IMG_KEY = 'neuro-dialogs:analyzeImages' // §10.5
+/*
+ * MR-186: настройки модуля НЕ живут в браузере.
+ *
+ * Раньше «отвечать всем», цель диалога, разбор картинок и выбранная цель кампании
+ * запоминались в localStorage. На общем компьютере они доставались следующему человеку,
+ * а со своего второго устройства он их не видел вовсе. При этом все эти поля и так
+ * уходят в настройки задачи и восстанавливаются из шаблона — а шаблоны с 26.08 лежат
+ * в общей базе. Второе хранилище было лишним и мешало.
+ */
 
 
 
@@ -54,12 +59,12 @@ export function NeuroDialogsModule() {
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [aiOpen, setAiOpen] = useState(true)
   const [aiEnabled, setAiEnabled] = useState(true)
-  const [replyAll, setReplyAll] = useState(() => localStorage.getItem(SCOPE_KEY) === '1')
-  const [dialogGoal, setDialogGoal] = useState(() => localStorage.getItem(GOAL_KEY) ?? '')
-  const [analyzeImages, setAnalyzeImages] = useState(() => localStorage.getItem(IMG_KEY) === '1') // §10.5
+  const [replyAll, setReplyAll] = useState(false)
+  const [dialogGoal, setDialogGoal] = useState('')
+  const [analyzeImages, setAnalyzeImages] = useState(false) // §10.5
   const [imageMult, setImageMult] = useState<number | null>(null) // §10.5: наценка «картинка ×N» из админки
   const [goals, setGoals] = useState<Goal[]>([])
-  const [goalId, setGoalId] = useState(() => localStorage.getItem(GOAL_ID_KEY) ?? '') // §9: цель кампании
+  const [goalId, setGoalId] = useState('') // §9: цель кампании
   const [aiProtect, setAiProtect] = useState(true)
   const [protLevel, setProtLevel] = useState(1)
   // §11: вероятность ответа — как в остальных модулях (просьба владельца 26.08).
@@ -94,11 +99,6 @@ export function NeuroDialogsModule() {
 
 
   const totalUnread = useMemo(() => dialogs.reduce((s, d) => s + (d.unread || 0), 0), [dialogs])
-
-  useEffect(() => { localStorage.setItem(GOAL_KEY, dialogGoal) }, [dialogGoal])
-  useEffect(() => { localStorage.setItem(GOAL_ID_KEY, goalId) }, [goalId])
-  useEffect(() => { localStorage.setItem(SCOPE_KEY, replyAll ? '1' : '0') }, [replyAll])
-  useEffect(() => { localStorage.setItem(IMG_KEY, analyzeImages ? '1' : '0') }, [analyzeImages])
   // §10.5: подтягиваем актуальную наценку за изображение — показать «×N» у тумблера.
   useEffect(() => { void fetchPricing().then((p) => setImageMult(p.imageMultiplier ?? null)).catch(() => {}) }, [])
   useEffect(() => { void fetchGoals().then(setGoals).catch(() => {}) }, [])

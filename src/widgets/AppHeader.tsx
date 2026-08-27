@@ -38,6 +38,7 @@ function fmtNotifTs(ts: number): string {
 
 export function AppHeader() {
   const nav = useNavigate()
+  const sessionUser = useSession((s) => s.user)
   const data = useApp((s) => s.data)
   // B2 (§5.1): план и монеты — с сервера, а не константа из моков. Раньше в шапке
   // всегда висели «Базовая» и 80.00 независимо от того, что происходило в системе.
@@ -76,12 +77,21 @@ export function AppHeader() {
     return () => document.removeEventListener('mousedown', onDown)
   }, [notifOpen])
   const broken = activeAccounts(data).filter(isBrokenAccount)
-  // §6.3 (NOTIFY-001, доработка): уведомление можно закрыть вручную. Отклонённые id храним в
-  // localStorage; если аккаунт восстановится и снова отвалится — уведомит заново.
+  /*
+   * §6.3 (NOTIFY-001): уведомление можно закрыть вручную. Закрытые id помним в браузере —
+   * это личная мелочь вида «я это уже видел», ради неё ходить в базу незачем.
+   *
+   * MR-186 (аудит 27.08): но ключ был ОДИН на браузер. На общем компьютере закрытые
+   * уведомления одного человека прятались у следующего — тот не видел, что у него отвалился
+   * аккаунт. Теперь ключ именной: у каждого свои закрытые.
+   */
+  const notifKey = `ai-incubator:notif-dismissed:${sessionUser?.id || 'guest'}`
   const [dismissed, setDismissed] = useState<Set<string>>(() => {
-    try { return new Set(JSON.parse(localStorage.getItem('notif-dismissed') || '[]')) } catch { return new Set() }
+    try { return new Set(JSON.parse(localStorage.getItem(notifKey) || '[]')) } catch { return new Set() }
   })
-  useEffect(() => { localStorage.setItem('notif-dismissed', JSON.stringify([...dismissed])) }, [dismissed])
+  useEffect(() => {
+    try { localStorage.setItem(notifKey, JSON.stringify([...dismissed])) } catch { /* quota */ }
+  }, [notifKey, dismissed])
   const brokenKey = broken.map((a) => a.id).sort().join(',')
   useEffect(() => {
     // восстановившиеся аккаунты убираем из «отклонённых» — новое падение снова уведомит.
@@ -208,7 +218,6 @@ export function AppHeader() {
   const sidebarCollapsed = useApp((s) => s.sidebarCollapsed)
   const setUserState = useApp((s) => s.setUserState)
   const pushToast = useApp((s) => s.pushToast)
-  const sessionUser = useSession((s) => s.user)
   const logout = useSession((s) => s.logout)
   // Права перечитываем с сервера: выданный или отозванный админом доступ должен
   // применяться в текущей сессии, а не «после перезахода» — про перезаход человеку

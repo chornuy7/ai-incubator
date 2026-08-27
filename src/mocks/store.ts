@@ -16,15 +16,31 @@ export interface Toast {
 // v3: сброс старого демо-кэша (фейковые задачи/статистика/тикеты убраны из сидов).
 const LS_KEY = 'ai-incubator:v3'
 
+/**
+ * Что переживает перезагрузку страницы.
+ *
+ * MR-186 (аудит локальных хранилищ 27.08): раньше сюда клали ещё и `data` — тариф, монеты,
+ * задачи, тикеты, прокси, уведомления и ИМЯ С ПОЧТОЙ пользователя. Выход из аккаунта это
+ * не чистил (logout убирает только токен и сессию), поэтому на общем компьютере следующий
+ * человек при загрузке видел данные предыдущего, пока не придёт ответ сервера. Со своего
+ * второго устройства он их, наоборот, не видел вовсе — и решал, что данные пропали.
+ *
+ * Теперь в браузере живут ТОЛЬКО настройки отображения: язык, тема и режим демо-состояния.
+ * Всё остальное приходит с сервера при каждом заходе — это и есть общая база.
+ */
 interface Persisted {
   userState: UserState
   locale: Locale
   theme: Theme
   netErrors: boolean
-  data: AppData
 }
 
 interface AppStore extends Persisted {
+  /**
+   * Данные кабинета живут в ПАМЯТИ страницы и приходят с сервера при каждом заходе.
+   * В `Persisted` их намеренно нет: в браузере им не место (см. комментарий выше).
+   */
+  data: AppData
   sidebarCollapsed: boolean
   mobileNavOpen: boolean
   toasts: Toast[]
@@ -93,13 +109,11 @@ const initialState = boot?.userState ?? parseInitialState()
 
 export const useApp = create<AppStore>((set, get) => {
   const persist = () => {
-    const { userState, locale, theme, netErrors, data } = get()
-    const { accounts: _a, ...restData } = data
+    const { userState, locale, theme, netErrors } = get()
     try {
-      localStorage.setItem(LS_KEY, JSON.stringify({
-        userState, locale, theme, netErrors,
-        data: { ...restData, accounts: [] },
-      }))
+      // Данные кабинета (тариф, монеты, задачи, тикеты, прокси, имя и почта) в браузер НЕ
+      // кладём: выход их не чистил, и на общем компьютере они доставались следующему.
+      localStorage.setItem(LS_KEY, JSON.stringify({ userState, locale, theme, netErrors }))
     } catch {
       /* ignore quota */
     }
@@ -114,7 +128,7 @@ export const useApp = create<AppStore>((set, get) => {
     locale: boot?.locale ?? 'ru',
     theme: boot?.theme ?? 'dark',
     netErrors: boot?.netErrors ?? false,
-    data: boot?.data ? { ...boot.data, accounts: [] } : dataFor(initialState),
+    data: dataFor(initialState),
     sidebarCollapsed: false,
     mobileNavOpen: false,
     toasts: [],
