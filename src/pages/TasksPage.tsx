@@ -85,6 +85,12 @@ const DEFAULT_ACTION_DELAY: [number, number] = [30, 120]
 
 // Статусы, для которых ETA имеет смысл: работа ещё не завершена. У running — время до
 // конца, у queued/paused/stopped — прогноз «при запуске». done/error — считать нечего.
+/**
+ * Парсеры: единица работы — ЗАПРОС к Telegram по ключевому слову, а не собранная строка.
+ * Сколько каналов вернётся, заранее не знает никто, поэтому и прогресс, и оценка времени
+ * считаются по запросам (правка 27.08).
+ */
+const ПАРСЕРЫ = new Set(['parsing', 'parsing-groups', 'parsing-users', 'parsing-messages', 'parsing-comments'])
 const ETA_STATUSES = new Set(['running', 'queued', 'paused', 'stopped'])
 /**
  * Усталость аккаунтов задачи: через сколько действий уходят на отдых, насколько долго и
@@ -108,10 +114,14 @@ function taskEtaMs(t: ModuleTask, fatigue?: FatigueHint | null, globalPace = 1):
     const perDay = WARM_ACTIONS_PER_DAY[s.warmLevel ?? 1] ?? 20
     return perDay > 0 ? Math.round((perAccRemaining / perDay) * 86400 * 1000) : null
   }
-  // Остальные модули: остаток × средняя задержка (та же формула, что в панели до запуска).
-  // Нет сохранённых задержек (старая задача) — берём дефолтный темп модуля, чтобы ETA
-  // всё же показать примерным, а не прятать его совсем.
-  const d = s.delays?.action ?? s.delays?.comment ?? DEFAULT_ACTION_DELAY
+  /*
+   * Парсеры меряются ЗАПРОСАМИ, и задержка у них своя — между запросами к Telegram
+   * (`delays.request`), а не между «действиями» (правка 27.08). Раньше сюда попадал
+   * запасной темп 30–120 с, помноженный на остаток НЕНАЙДЕННЫХ строк, и прогон, которому
+   * оставалось полторы минуты, обещал «≈ 1 ч 34 мин».
+   */
+  const d = (ПАРСЕРЫ.has(t.moduleKey) ? s.delays?.request : null)
+    ?? s.delays?.action ?? s.delays?.comment ?? DEFAULT_ACTION_DELAY
   // Тот же множитель, что применит воркер: уровень защиты × пресет темпа × глобальный
   // (ИИ-безопасность). Считать только по пресету — врать (см. shared/lib/pace.ts).
   const mul = delayMultiplier(s.protectionLevel ?? 1, s.delayPreset ?? 1, globalPace)
@@ -1254,7 +1264,13 @@ export function TaskDetailPage() {
             </div>
             {/* MR-147: «Модуль» и «Потрачено» перенесены сюда, к прогрессу. */}
             <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-sm text-white/60">
-              <span>{t.progress?.done ?? t.progress?.actionsDone ?? 0} / {t.progress?.total ?? 0} действий</span>
+              {/* У парсера знаменатель — запросы, поэтому и слово другое: «5 из 36 действий»
+                  при семи найденных каналах читалось как недоделанная работа. */}
+              <span>
+                {t.progress?.done ?? t.progress?.actionsDone ?? 0} / {t.progress?.total ?? 0}{' '}
+                {ПАРСЕРЫ.has(t.moduleKey) ? 'запросов' : 'действий'}
+                {ПАРСЕРЫ.has(t.moduleKey) && (t.progress?.actionsDone ?? 0) > 0 && <> · найдено {t.progress?.actionsDone}</>}
+              </span>
               {/* MR-109: ETA — у работающей задачи время до конца (зелёным), у остановленной/
                   на паузе прогноз «при запуске» (приглушённо). */}
               {(() => { const e = taskEtaMs(t, fatigueOf(t), globalPace); if (e == null) return null; const run = t.status === 'running'; return (

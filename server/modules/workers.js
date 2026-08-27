@@ -2673,6 +2673,10 @@ export async function runChannelParser(task, store, kind) {
   }
 
   const startFrom = Math.min(Number(task.cursor) || 0, queries.length)
+  // Знаменатель прогресса — запросы (см. `отметитьГотовым`). Ставим его ДО старта, иначе
+  // до первого завершённого запроса витрина показывала долю от цели по строкам.
+  task.progress.total = Math.max(1, queries.length)
+  task.progress.done = Math.min(startFrom, queries.length)
   await store.appendLog(
     task,
     'info',
@@ -2740,7 +2744,21 @@ export async function runChannelParser(task, store, kind) {
       const { q, kwIdx } = queries[qi]
       // Курсор — наименьший НЕзавершённый запрос. В асинхронном режиме запросы уходят
       // вразнобой, и «qi + 1» соврал бы: при продолжении часть работы потерялась бы.
-      const отметитьГотовым = () => { готовые.add(qi); while (готовые.has(курсор)) курсор++; task.cursor = курсор }
+      /*
+       * Прогресс парсера меряется ЗАПРОСАМИ, а не строками (правка 27.08).
+       *
+       * Знаменателем стояла цель по строкам («7 / 36 действий» = 19%), хотя парсер
+       * заканчивается не на 36-й находке, а когда кончились ключевые слова: сколько
+       * каналов вернёт Telegram, заранее не знает никто. Из-за этого прогон, которому
+       * оставалось полторы минуты, показывал 19% и «≈ 1 ч 34 мин» — оценка считалась по
+       * ненайденным строкам, которых могло не быть вовсе. Строки остаются в
+       * `actionsDone` (по ним считаются деньги), а доля выполненного — по запросам.
+       */
+      const отметитьГотовым = () => {
+        готовые.add(qi); while (готовые.has(курсор)) курсор++; task.cursor = курсор
+        task.progress.done = готовые.size
+        task.progress.total = Math.max(queries.length, готовые.size)
+      }
 
       const accountId = закреплённыйАккаунт || await nextAccountId()
       if (!accountId) {
@@ -2863,10 +2881,10 @@ export async function runChannelParser(task, store, kind) {
           // §3.8/§4: копим для общей базы — упсертим одним батчем в конце (без дублей).
           baseChannels.push({ title: c.title, username: c.username, subscribers: members, hasComments: !!c.isMegagroup, tgPeerId: c.id })
           added += 1
+          // Строки — это ДЕНЬГИ (`actionsDone`), а не доля выполненного: долю двигают
+          // запросы, см. `отметитьГотовым`.
           task.progress.actionsDone = task.results.length
-          task.progress.done = task.results.length
           await chargeCollected(task, store)
-          task.progress.total = Math.max(task.results.length, task.progress.total || 0)
           syncHits()
           await store.saveTask(task)
         }
@@ -2950,9 +2968,10 @@ export async function runChannelParser(task, store, kind) {
       }
     }
 
-    task.progress.total = task.results.length
-    task.progress.done = task.results.length
     task.progress.actionsDone = task.results.length
+    // Запросы кончились — работа сделана целиком, сколько бы строк ни нашлось.
+    task.progress.total = Math.max(1, queries.length)
+    task.progress.done = task.progress.total
     // Хвост: то, что докопилось после последнего списания в цикле сбора,
     // и возврат за строки, которые срезали фильтры (AND-пересечение, чёрный список).
     await chargeCollected(task, store)
