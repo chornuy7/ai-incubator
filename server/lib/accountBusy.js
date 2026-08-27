@@ -14,7 +14,7 @@
  * Реестр живёт в памяти процесса, как и остальные локи: после рестарта задачи всё
  * равно переподнимаются заново.
  */
-import { moduleLabel, isTaskLive } from './accountLocks.js'
+import { moduleLabel, isTaskLive, taskStartedAt } from './accountLocks.js'
 import { switchPause, fmtDelay } from './humanDelays.js'
 
 /** @type {Map<string, { moduleKey: string, taskId: string, since: number }>} */
@@ -100,14 +100,96 @@ function dropIfStale(accountId, cur, now) {
  * @param {string} accountId @param {string} moduleKey @param {string} taskId
  * @returns {{ok: true} | {ok: false, reason: string, until: number}}
  */
+/**
+ * Очередь ожидания на аккаунт: accountId → Map(taskId → { since, moduleKey }).
+ *
+ * Зачем (просьба владельца 27.08: «первый запущенный имеет приоритет, второй ждёт или
+ * пропускает, если есть другие аккаунты»).
+ *
+ * Слот отдавался тому, кто первым СПРОСИЛ после освобождения. Два модуля на одном
+ * аккаунте опрашивают его каждые 15 секунд вразнобой, поэтому побеждал случайный: в
+ * прогоне 27.08 нейрокомментинг и массовые реакции полчаса перетягивали один профиль,
+ * а сделали одно действие на двоих.
+ *
+ * Теперь очередь помнит, КОГДА задача впервые попросила аккаунт, и пока в ней есть
+ * задача постарше, младшая ждёт. Это не вытеснение: начатое действие всегда доводится
+ * до конца — приоритет решает только, кто возьмёт аккаунт СЛЕДУЮЩИМ.
+ */
+const waiting = new Map()
+
+/**
+ * Сколько задача считается претендентом на аккаунт, не спрашивая его. Без этого срока
+ * задача, взявшая аккаунт один раз и ушедшая заниматься другими, держала бы очередь
+ * вечно; со сроком она просто выпадает из спора, как только перестала им пользоваться.
+ */
+const CLAIM_TTL_MS = 5 * 60_000
+
+/**
+ * Отметиться претендентом на аккаунт и узнать, есть ли задача СТАРШЕ.
+ *
+ * Старшинство — по моменту ЗАПУСКА задачи (`taskStartedAt`), а не по времени первого
+ * запроса: иначе та, что спокойно работала и в очередь не вставала, при первом же споре
+ * оказывалась «младшей».
+ *
+ * Претендентами считаются ВСЕ, кто просит аккаунт, включая нынешнего держателя. Ровно на
+ * этом первая версия и ошиблась: держатель, получив слот, выходил из очереди, переставал
+ * быть претендентом — и следующий круг младшая задача забирала аккаунт как «единственная
+ * в очереди».
+ */
+function queuePosition(accountId, taskId, moduleKey, now) {
+  let q = waiting.get(accountId)
+  if (!q) { q = new Map(); waiting.set(accountId, q) }
+  for (const [id, info] of q) {
+    // Выбывают мёртвые и те, кто давно не спрашивал: спор идёт только между живыми.
+    if (id !== taskId && (!isTaskLive(id) || now - info.lastAsk > CLAIM_TTL_MS)) q.delete(id)
+  }
+  const prev = q.get(taskId)
+  q.set(taskId, {
+    since: prev?.since ?? (taskStartedAt(taskId) || now),
+    moduleKey,
+    lastAsk: now,
+  })
+  const mine = q.get(taskId)
+  let older = null
+  for (const [id, info] of q) {
+    if (id === taskId) continue
+    if (info.since < mine.since && (!older || info.since < older.since)) older = { id, ...info }
+  }
+  return older
+}
+
+/** Выйти из спора — при завершении задачи (см. releaseTaskBusy). */
+function queueLeave(accountId, taskId) {
+  const q = waiting.get(accountId)
+  if (!q) return
+  q.delete(taskId)
+  if (!q.size) waiting.delete(accountId)
+}
+
 export function beginAccountWork(accountId, moduleKey, taskId, now = Date.now()) {
   let cur = busy.get(accountId)
   // Прежде чем отказать — проверяем, жив ли вообще держатель (см. dropIfStale).
   if (cur && cur.taskId !== taskId && dropIfStale(accountId, cur, now)) cur = undefined
   if (cur && cur.taskId !== taskId) {
+    // Занято — встаём в очередь, чтобы после освобождения слот достался по старшинству.
+    queuePosition(accountId, taskId, moduleKey, now)
     return {
       ok: false,
       reason: `занят действием в модуле «${moduleLabel(cur.moduleKey)}»`,
+      until: now + BUSY_RETRY_MS,
+    }
+  }
+
+  /*
+   * Свободен, но очередь может быть не наша. Задача, попросившая аккаунт раньше, забирает
+   * его первой: без этого выигрывал тот, чей 15-секундный опрос случайно попал в момент
+   * освобождения, и два модуля бесконечно перехватывали профиль друг у друга.
+   */
+  const older = queuePosition(accountId, taskId, moduleKey, now)
+  if (!cur && older) {
+    return {
+      ok: false,
+      reason: `аккаунт за модулем «${moduleLabel(older.moduleKey)}»: его задача запущена раньше и работает первой`,
       until: now + BUSY_RETRY_MS,
     }
   }
@@ -178,6 +260,11 @@ export async function waitAccountWork(accountId, moduleKey, taskId, opts = {}) {
 
 /** Страховка: снять все слоты задачи при её завершении (пути с break минуют finally). */
 export function releaseTaskBusy(taskId, now = Date.now()) {
+  // Иначе завершённая задача продолжала бы «стоять в очереди» и блокировать младшую.
+  for (const [accountId, q] of waiting) {
+    q.delete(taskId)
+    if (!q.size) waiting.delete(accountId)
+  }
   for (const [accountId, cur] of busy) {
     if (cur.taskId === taskId) {
       busy.delete(accountId)
