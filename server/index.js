@@ -2055,9 +2055,14 @@ if (SCHEDULERS_ON) try {
 // в тот же день ничего не удваивает. Ежедневного тика достаточно: начисление привязано к
 // дню месяца, а не к точному времени.
 if (SCHEDULERS_ON) try {
-  const { creditDueTokens } = await import('./tokenCredit.js')
+  const { creditDueTokens, creditPendingGifts } = await import('./tokenCredit.js')
   const runCredit = () => creditDueTokens()
     .then((r) => r.users && console.log(`[tokens] месячное начисление: ${r.users} польз., ${r.coins} ⚡`))
+    // Подарки сверяем тем же тиком (27.08): одной выдачи в момент оплаты мало — если она
+    // не сработала, второго шанса не было никогда, и обещанное на витрине «разово +200 ⚡»
+    // так и не доходило до кошелька. Сверка идемпотентна: журнал выдач не даёт повтора.
+    .then(() => creditPendingGifts())
+    .then((r) => r.users && console.log(`[tokens] подарочные: ${r.users} польз., ${r.coins} ⚡`))
     .catch((e) => console.warn('[tokens] credit failed:', e?.message || e))
   void runCredit()
   setInterval(runCredit, (cron.creditTickH ?? 6) * 60 * 60 * 1000)
