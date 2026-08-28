@@ -20,22 +20,22 @@ async function taskGoalExpired(settings) {
 /** @type {Record<string, ReturnType<typeof createTaskStore>>} */
 const stores = {}
 
-/** @type {Record<string, { idPrefix: string, requiresTargets?: boolean, targetLabel?: string, initProgress?: (s: object) => object }>} */
+/** @type {Record<string, { idPrefix: string, requiresTargets?: boolean, targetLabel?: string, targetLabelEn?: string, initProgress?: (s: object) => object }>} */
 export const MODULE_DEFS = {
-  mailing: { idPrefix: 'mail', requiresTargets: true, targetLabel: 'номер' },
-  autoposting: { idPrefix: 'ap', requiresTargets: true, targetLabel: 'канал' },
-  'neuro-commenting': { idPrefix: 'nc', requiresTargets: true, targetLabel: 'канал' },
-  'neuro-chatting': { idPrefix: 'nch', requiresTargets: true, targetLabel: 'группу' },
-  'mass-react': { idPrefix: 'mr', requiresTargets: true, targetLabel: 'цель' },
-  'mass-looking': { idPrefix: 'ml', requiresTargets: true, targetLabel: 'юзера/канал' },
+  mailing: { idPrefix: 'mail', requiresTargets: true, targetLabel: 'номер', targetLabelEn: 'phone number' },
+  autoposting: { idPrefix: 'ap', requiresTargets: true, targetLabel: 'канал', targetLabelEn: 'channel' },
+  'neuro-commenting': { idPrefix: 'nc', requiresTargets: true, targetLabel: 'канал', targetLabelEn: 'channel' },
+  'neuro-chatting': { idPrefix: 'nch', requiresTargets: true, targetLabel: 'группу', targetLabelEn: 'group' },
+  'mass-react': { idPrefix: 'mr', requiresTargets: true, targetLabel: 'цель', targetLabelEn: 'target' },
+  'mass-looking': { idPrefix: 'ml', requiresTargets: true, targetLabel: 'юзера/канал', targetLabelEn: 'user or channel' },
   warming: { idPrefix: 'wm', requiresTargets: false },
   'neuro-dialogs': { idPrefix: 'nd', requiresTargets: false },
   ggr: { idPrefix: 'ggr', requiresTargets: false },
   parsing: { idPrefix: 'pr', requiresTargets: false },
   'parsing-groups': { idPrefix: 'pg', requiresTargets: false },
-  'parsing-users': { idPrefix: 'pu', requiresTargets: true, targetLabel: 'группу' },
-  'parsing-messages': { idPrefix: 'pm', requiresTargets: true, targetLabel: 'канал' },
-  'parsing-comments': { idPrefix: 'pc', requiresTargets: true, targetLabel: 'канал' },
+  'parsing-users': { idPrefix: 'pu', requiresTargets: true, targetLabel: 'группу', targetLabelEn: 'group' },
+  'parsing-messages': { idPrefix: 'pm', requiresTargets: true, targetLabel: 'канал', targetLabelEn: 'channel' },
+  'parsing-comments': { idPrefix: 'pc', requiresTargets: true, targetLabel: 'канал', targetLabelEn: 'channel' },
   // Сервисная задача (не кампанийный модуль): снятие спамблока через @SpamBot.
   'spam-unblock': { idPrefix: 'sub', requiresTargets: false },
 }
@@ -51,38 +51,86 @@ export function getWorker(moduleKey) {
 }
 
 /** min<=max проверка для пары полей (feature 4). */
-function checkMinMax(settings, minKey, maxKey, label) {
+function checkMinMax(settings, minKey, maxKey, label, labelEn) {
   const min = Number(settings?.[minKey] ?? 0) || 0
   const max = Number(settings?.[maxKey] ?? 0) || 0
-  if (min && max && min > max) return `Минимум больше максимума: ${label}`
+  if (min && max && min > max) {
+    return {
+      code: 'minGreaterThanMax',
+      message: `Минимум больше максимума: ${label}`,
+      messageEn: `Minimum is greater than maximum: ${labelEn} (${minKey} = ${min}, ${maxKey} = ${max}).`,
+      params: { minKey, maxKey, min, max },
+    }
+  }
   return null
 }
 
-export function validateSettings(moduleKey, settings) {
+/**
+ * Проверка запуска, отдающая СТРУКТУРУ, а не строку.
+ *
+ * Зачем два вида одного текста. Эта функция обслуживает и русский интерфейс, и MCP, а по
+ * правилу раздела всё, что уезжает «мозгам», должно быть по-английски. Переводить
+ * сообщение на английский нельзя — его читает оператор в панели; оставить русским тоже
+ * нельзя — оно доезжало до оркестратора в `validate_task` как `code: 'launchRule'` и было
+ * единственной кириллицей во всём протоколе.
+ *
+ * Поэтому логика ОДНА, а рендеров два: `message` для панели, `messageEn` для MCP.
+ * Строковая обёртка `validateSettings` ниже сохранена — ей пользуется весь остальной код.
+ *
+ * @returns {{code: string, message: string, messageEn: string, params?: object}|null}
+ */
+export function validateSettingsDetailed(moduleKey, settings) {
   const def = MODULE_DEFS[moduleKey]
-  if (!def) return 'Неизвестный модуль'
-  if (!settings?.accountIds?.length) return 'Выберите хотя бы один аккаунт'
+  if (!def) {
+    return { code: 'unknownModule', message: 'Неизвестный модуль', messageEn: `Unknown module "${moduleKey}".` }
+  }
+  if (!settings?.accountIds?.length) {
+    return {
+      code: 'noAccounts',
+      message: 'Выберите хотя бы один аккаунт',
+      messageEn: 'Select at least one account: accountIds must not be empty.',
+    }
+  }
   const tgs = settings?.targets || settings?.channels || []
   if (def.requiresTargets && !tgs.length) {
     if (moduleKey === 'mass-react' && settings?.postUrls?.length) { /* посты вместо групп */ }
-    else return `Добавьте хотя бы одну ${def.targetLabel || 'цель'}`
+    else {
+      return {
+        code: 'noTargets',
+        message: `Добавьте хотя бы одну ${def.targetLabel || 'цель'}`,
+        messageEn: `Add at least one ${def.targetLabelEn || 'target'}: the module cannot run without targets.`,
+      }
+    }
   }
   // feature 4: min <= max для всех парных лимитов
   return (
-    checkMinMax(settings, 'minActions', 'maxActions', 'действия') ||
-    checkMinMax(settings, 'minComments', 'maxComments', 'комментарии') ||
-    checkMinMax(settings, 'minPerAccount', 'maxPerAccount', 'на аккаунт') ||
+    checkMinMax(settings, 'minActions', 'maxActions', 'действия', 'actions') ||
+    checkMinMax(settings, 'minComments', 'maxComments', 'комментарии', 'comments') ||
+    checkMinMax(settings, 'minPerAccount', 'maxPerAccount', 'на аккаунт', 'per account') ||
     null
   )
 }
 
-export function startModuleTask(moduleKey, settings) {
+/** Строковая форма для интерфейса и остального кода. Русская — её читает человек. */
+export function validateSettings(moduleKey, settings) {
+  return validateSettingsDetailed(moduleKey, settings)?.message ?? null
+}
+
+/**
+ * @param {string} moduleKey
+ * @param {object} settings
+ * @param {{lang?: 'ru'|'en'}} [opts] `lang: 'en'` — тексты отказов по-английски.
+ *   Нужен MCP: по правилу раздела всё, что уезжает «мозгам», пишется по-английски.
+ *   Умолчание русское и не менялось — его читает оператор в панели.
+ */
+export function startModuleTask(moduleKey, settings, opts = {}) {
+  const en = opts.lang === 'en'
   const store = getModuleStore(moduleKey)
   const worker = getWorker(moduleKey)
-  if (!store || !worker) throw new Error('Модуль не поддерживается')
+  if (!store || !worker) throw new Error(en ? `Module "${moduleKey}" is not supported.` : 'Модуль не поддерживается')
 
-  const err = validateSettings(moduleKey, settings)
-  if (err) throw new Error(err)
+  const err = validateSettingsDetailed(moduleKey, settings)
+  if (err) throw new Error(en ? err.messageEn : err.message)
 
   /*
    * Прогрев задаётся ДНЯМИ (вопрос владельца 27.08: «прогрев исполнился за пару часов,
@@ -139,7 +187,7 @@ export function startModuleTask(moduleKey, settings) {
     }
   } catch { /* не смогли уточнить — остаётся максимум, как было */ }
   // goalId нужен локам: мейлинг и чатинг под ОДНОЙ целью делят аккаунты (§9).
-  const lockErr = tryAcquireLocks(settings.accountIds, moduleKey, task.id, { goalId: settings.goalId })
+  const lockErr = tryAcquireLocks(settings.accountIds, moduleKey, task.id, { goalId: settings.goalId, lang: opts.lang })
   if (lockErr) throw new Error(lockErr)
   return { store, task, worker }
 }

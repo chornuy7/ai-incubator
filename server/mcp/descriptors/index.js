@@ -98,13 +98,26 @@ const JSON_TYPES = new Set(['string', 'integer', 'number', 'boolean', 'array', '
 function paramToSchema(p) {
   const schema = { type: JSON_TYPES.has(p.type) ? p.type : 'string' }
 
+  // Описание собирается в порядке «что это → какие значения бывают → чем ограничено →
+  // в чём измеряется → с чем связано». Модель читает его целиком одной строкой, поэтому
+  // разделители обязаны быть настоящими: без пробелов получалось «Restrictions:работает
+  // только при commentMode = 1.Unit:секунды» — формально данные есть, прочесть нельзя.
   const descParts = [p.purpose]
   if (p.enum?.length) {
-    descParts.push(p.enum.map((e) => `${e.value} — ${e.label}: ${e.means}`).join(' · '))
+    descParts.push(`Values: ${p.enum.map((e) => `${JSON.stringify(e.value)} — ${e.label}: ${e.means}`).join(' · ')}`)
   }
-  if (p.constraints?.length) descParts.push(`Restrictions:${p.constraints.join('; ')}.`)
-  if (p.unit) descParts.push(`Unit:${p.unit}.`)
-  if (p.seeAlso?.length) descParts.push(`Related:${p.seeAlso.join(', ')}.`)
+  if (p.constraints?.length) descParts.push(`Constraints: ${p.constraints.join('; ')}.`)
+  if (p.unit) descParts.push(`Unit: ${p.unit}.`)
+  if (p.requiredWhen) {
+    descParts.push(`Required when ${Object.entries(p.requiredWhen).map(([f, v]) => (v === '*' ? `${f} is set` : `${f} = ${JSON.stringify(v)}`)).join(' and ')}.`)
+  }
+  // Условие применимости обязано быть В САМОЙ СХЕМЕ, а не только в предупреждениях
+  // валидатора: иначе модель узнаёт о нём уже после того, как собрала задачу.
+  if (p.effectiveWhen) {
+    descParts.push(`Only takes effect when ${Object.entries(p.effectiveWhen).map(([f, v]) => (v === '*' ? `${f} is set` : `${f} = ${JSON.stringify(v)}`)).join(' and ')}; ignored otherwise.`)
+  }
+  if (p.supersededBy?.length) descParts.push(`Overridden by ${p.supersededBy.join(', ')}, which take priority.`)
+  if (p.seeAlso?.length) descParts.push(`See also: ${p.seeAlso.join(', ')}.`)
   schema.description = descParts.filter(Boolean).join(' ')
 
   if (p.enum?.length) schema.enum = p.enum.map((e) => e.value)
@@ -118,7 +131,14 @@ function paramToSchema(p) {
   if (p.type === 'array') schema.items = { type: JSON_TYPES.has(p.items) ? p.items : 'string' }
   if (p.type === 'object' && p.properties?.length) {
     schema.properties = {}
-    for (const child of p.properties) schema.properties[child.name] = paramToSchema(child)
+    const required = []
+    for (const child of p.properties) {
+      schema.properties[child.name] = paramToSchema(child)
+      if (child.required) required.push(child.name)
+    }
+    // Обязательные поля вложенного объекта раньше терялись: `delays: {}` считалось
+    // валидным и падало уже на запуске.
+    if (required.length) schema.required = required
     // Лишние ключи в объекте задержек — почти всегда опечатка, а не расширение.
     schema.additionalProperties = false
   }
@@ -134,7 +154,13 @@ export function buildInputSchema(desc) {
     if (p.required) required.push(p.name)
   }
   return {
+    // Диалект объявляем явно. Спецификация MCP считает 2020-12 умолчанием, но
+    // валидаторы на другой стороне бывают настроены иначе, и молчаливое умолчание —
+    // это лишний повод для расхождения там, где его можно снять одной строкой.
+    $schema: 'https://json-schema.org/draft/2020-12/schema',
     type: 'object',
+    title: `${desc.title} task settings`,
+    description: desc.whoAmI?.summary || undefined,
     properties,
     required,
     // Незнакомое поле — сигнал, что «мозги» работают по устаревшей схеме. Молча
@@ -167,6 +193,10 @@ export function describeModule(key) {
     version: desc.version,
     title: desc.title,
     platform: desc.platform || 'telegram',
+    // Тратит ли модуль токены модели. Поле появилось в дескрипторах, но наружу не
+    // выходило — «мозги» о нём не знали, хотя это прямой вход в оценку стоимости:
+    // у ИИ-модулей к цене действия добавляется расход на генерацию.
+    usesAi: desc.usesAi === true,
     tags: desc.tags || [],
     whoAmI: desc.whoAmI,
     blocks: buildBlocks(desc),
@@ -187,6 +217,7 @@ export function summarizeModule(key) {
     version: desc.version,
     summary: desc.whoAmI?.summary || '',
     tags: desc.tags || [],
+    usesAi: desc.usesAi === true,
     paramCount: (desc.params || []).length,
     described: true,
   }

@@ -6,7 +6,7 @@ export default buildParticipantsParserDescriptor({
   // ИИ не участвует: генерации нет, токены модели не тратятся (см. costModel).
   usesAi: false,
   title: 'Parser by messages',
-  tags: ['messages', 'messages', 'active', 'intention'],
+  tags: ['parsing', 'audience', 'messages', 'authors', 'activity', 'intent', 'lead list'],
   summary: 'Finds people by WHAT they wrote in groups: collects the authors of messages with the right words.',
   does: [
     'reads source messages to a specified depth by number and day',

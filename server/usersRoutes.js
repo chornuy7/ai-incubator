@@ -1,12 +1,14 @@
 /** CRUD + аутентификация операторов (§8.1). Монтируется в /api/users. */
 import { Router } from 'express'
 import { listUsers, getUser, createUser, updateUser, deleteUser, authenticate, authenticateSupabase, authSupabaseResult, verifyPassword, publicUser, isBlockedByOwner } from './users.js'
-import { rolesForUser, mergePermissions, unrestrictedPermissions, userRoleIds, hasAdminRole, ADMIN_ROLE_ID } from './roles.js'
+import { userRoleIds, hasAdminRole, ADMIN_ROLE_ID } from './roles.js'
 import { BLOCKS, blocksForModule, listRoles, createRole, updateRole, ALLOW, DENY } from './roles.js'
 import { MODULE_LABELS } from './lib/accountLocks.js'
 import { modulesAllow } from './balance.js'
-import { capModules, applyDirectGrants } from './subAccess.js'
 import { getBalance } from './balance.js'
+// Права владельца считает один helper (WIP MCP): он заменил ручную сборку из
+// rolesForUser/mergePermissions/capModules/applyDirectGrants — их тут больше нет.
+import { resolveUserAccess } from './lib/effectivePermissions.js'
 import { requesterContext } from './lib/accessGuard.js'
 import { appendAudit } from './lib/auditLog.js'
 import { clockIn, clockOut, summariesFor } from './workLog.js'
@@ -18,50 +20,19 @@ function sanitizeRoleIds(roleIds) {
   return (Array.isArray(roleIds) ? roleIds : []).filter((r) => r !== ADMIN_ROLE_ID)
 }
 
-/**
- * Эффективные права пользователя (union ролей) + §4.1 (MR-28) обрезка модулей суба до
- * оплаченных владельцем. Централизовано, чтобы вход и `/me` считали одинаково.
- * freeAccess-роль (тест/модератор) — доступ в обход подписки, её не режем.
- */
-async function effectivePermissions(user, roles, isAdmin) {
-  // `null` = «правами не ограничен», и так это понимает сервер. Но клиентский `can()`
-  // читает null как «прав нет» и закрывает всё — из-за этого владелец без роли (обычная
-  // самостоятельная регистрация) видел пустое меню, хотя модули оплачены. Админу null
-  // безопасен: у него отдельный обход (isAdmin), а вот роль-less ВЛАДЕЛЬЦУ выдаём явные
-  // права. Суб без роли остаётся без прав — сотруднику доступ выдаёт владелец.
-  const { listModuleKeys } = await import('./modules/registry.js')
-  let permissions = isAdmin
-    ? null
-    : roles.length === 0
-      ? (user.parentId ? mergePermissions([]) : unrestrictedPermissions(listModuleKeys()))
-      : mergePermissions(roles)
-  const freeAccess = roles.some((r) => r?.permissions?.freeAccess)
-  if (permissions && user.parentId && !freeAccess) {
-    const bal = await getBalance(user.id).catch(() => null)
-    permissions = capModules(permissions, bal?.modules)
-  }
-  // §5.4 (MR-37): прямые выдачи аккаунтов/групп субу — в эффективные права.
-  if (permissions) permissions = applyDirectGrants(permissions, user)
-  return permissions
-}
-
 /** Собрать ответ входа: публичный юзер + роль (для гейта UI) + подписанный токен. */
 async function sessionPayload(user) {
-  const ids = userRoleIds(user)
-  const roles = await rolesForUser(user)
-  const isAdmin = hasAdminRole(ids)
-  const permissions = await effectivePermissions(user, roles, isAdmin)
+  // Расчёт прав вынесен в `lib/effectivePermissions.js`: ту же самую карту читает слой
+  // capabilities, который рассказывает «мозгам», что им разрешено. Две реализации
+  // «что человеку можно» означали бы, что панель показывает одно, а API отвечает другое.
+  //
   // Верхнеуровневый пользователь без роли — ВЛАДЕЛЕЦ своего пространства, а не «роль не
-  // задана» (правка 18.08). Полный доступ внутри своего кабинета у него уже есть, не
-  // хватало только имени: интерфейс показывал «Роль: Роль не задана» человеку, который
-  // только что зарегистрировался и купил модуль. Платформенным админом он при этом НЕ
-  // становится — sudo остаётся за ADMIN_ROLE_ID.
-  const isSub = !!user.parentId
-  const name = roles.length ? roles.map((r) => r.name).join(' + ') : (isAdmin ? 'Администратор' : (isSub ? '' : 'Владелец'))
-  const role = { id: user.roleId || '', name, permissions }
+  // задана» (правка 18.08). Платформенным админом он при этом НЕ становится —
+  // sudo остаётся за ADMIN_ROLE_ID.
+  const { roles, isAdmin, isSub, isOwner, roleName, permissions } = await resolveUserAccess(user)
+  const role = { id: user.roleId || '', name: roleName, permissions }
   // §4.1 (MR-29): «Команда» — любому владельцу пространства, а не только тому, у кого
   // субы УЖЕ есть: иначе первого суба некому было создать.
-  const isOwner = !isAdmin && !isSub
   return { user, role, roles, isOwner, isSub, token: signSession(user.id) }
 }
 

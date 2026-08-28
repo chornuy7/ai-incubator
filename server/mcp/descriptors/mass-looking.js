@@ -16,7 +16,7 @@ export default {
   usesAi: false,
   title: 'Masslooking',
   platform: 'telegram',
-  tags: ['views', 'views', 'stories', 'stories', 'masslooking', 'coverage'],
+  tags: ['views', 'story views', 'stories', 'masslooking', 'reach', 'impressions'],
 
   whoAmI: {
     summary: 'Massively views stories and posts of selected users and channels on behalf of managed accounts.',
@@ -32,7 +32,7 @@ export default {
     ],
     requires: ['at least one account with a working proxy', 'at least one target'],
     risks:
-      'Low risk: Telegram views are almost unlimited. Main use case −'
+      'Low risk: Telegram views are almost unlimited. Main use case − '
       + 'gently attract the attention of the owner of the stories by being watched.',
     costModel: 'Charged per action according to the price list of the module. AI tokens are not consumed.',
   },
@@ -59,7 +59,7 @@ export default {
       title: 'What to watch',
       purpose: 'Stories, posts, or both.',
       howItWorks:
-        'Only users have stories and not everyone has them; posts are at the channels. The mode is worth choosing'
+        'Only users have stories and not everyone has them; posts are at the channels. The mode is worth choosing '
         + 'according to the type of goals, otherwise the task will idlely sort through goals without suitable content.',
       api: { method: 'POST', path: '/api/modules/mass-looking/tasks', fills: ['lookMode', 'lookPostsCount'] },
       params: ['lookMode', 'lookPostsCount'],
@@ -305,7 +305,7 @@ export default {
           minItems: 2,
           maxItems: 2,
           default: [30, 120],
-          unit: 'With',
+          unit: 's',
           purpose: 'Range [min, max] of pause between views.',
           constraints: ['the actual pause is random from the range × multipliers, but not less than 5 seconds'],
         },
@@ -315,7 +315,7 @@ export default {
           type: 'number',
           default: 120,
           min: 0,
-          unit: 'With',
+          unit: 's',
           purpose: 'How long to wait beyond the duration returned by Telegram.',
         },
         {

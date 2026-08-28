@@ -17,7 +17,7 @@ export default {
   usesAi: false,
   title: 'Mass reactions',
   platform: 'telegram',
-  tags: ['reactions', 'reactions', 'emoji', 'emoji', 'involvement', 'engagement'],
+  tags: ['reactions', 'emoji', 'likes', 'engagement', 'posts'],
 
   whoAmI: {
     summary: 'Places emoji reactions on posts in channels and groups on behalf of managed accounts.',
@@ -36,8 +36,8 @@ export default {
       'at least one of: list of channels/groups OR links to posts',
     ],
     risks:
-      'Reactions are the “cheapest” module, and they are the ones that most often finish off tired accounts.'
-      + 'Fatigue and routine are common to all modules, so the profile who has worked a shift'
+      'Reactions are the “cheapest” module, and they are the ones that most often finish off tired accounts. '
+      + 'Fatigue and routine are common to all modules, so the profile who has worked a shift '
       + 'anywhere else, it won’t get here.',
     costModel: 'Charged per action according to the price list of the module. AI tokens are not consumed - there is no generation.',
   },
@@ -48,7 +48,7 @@ export default {
       title: 'Select accounts',
       purpose: 'Which managed accounts put reactions.',
       howItWorks:
-        'Accounts are moving in a circle. Busy with another task is not displayed; problematic statuses,'
+        'Accounts are moving in a circle. Busy with another task is not displayed; problematic statuses, '
         + 'fatigue, routine and daily reaction limit are skipped and recorded in the log.',
       api: { method: 'POST', path: '/api/modules/mass-react/tasks', fills: ['accountIds'] },
       params: ['accountIds'],
@@ -58,8 +58,8 @@ export default {
       title: 'Goals',
       purpose: 'What to put reactions on - on channel posts or on specific posts via links.',
       howItWorks:
-        'If postUrls is specified, work is carried out ONLY on these links, and channels are ignored.'
-        + 'If postUrls is empty, the account enters a random channel from channels and reacts to the most'
+        'If postUrls is specified, work is carried out ONLY on these links, and channels are ignored. '
+        + 'If postUrls is empty, the account enters a random channel from channels and reacts to the most '
         + 'fresh post. Posts from channels on the blacklist are eliminated.',
       api: { method: 'POST', path: '/api/modules/mass-react/tasks', fills: ['channels', 'postUrls', 'reactMode', 'lastPostsCount'] },
       params: ['channels', 'postUrls', 'reactMode', 'lastPostsCount'],
@@ -69,8 +69,8 @@ export default {
       title: 'Reactions',
       purpose: 'What emoji are used and how often.',
       howItWorks:
-        'An emoji is selected randomly from a set for each action. Probability is applied twice:'
-        + 'when selecting a post in the channel and just before sending a reaction - the actual share of actions'
+        'An emoji is selected randomly from a set for each action. Probability is applied twice: '
+        + 'when selecting a post in the channel and just before sending a reaction - the actual share of actions '
         + 'turns out to be lower than specified.',
       api: { method: 'POST', path: '/api/modules/mass-react/tasks', fills: ['emojis', 'probability'] },
       params: ['emojis', 'probability'],
@@ -169,21 +169,21 @@ export default {
     {
       name: 'reactMode',
       block: 'targets',
-      title: 'Режим выбора поста',
+      title: 'Post selection mode',
       type: 'number',
       enum: [
-        { value: 0, label: 'Мониторинг новых', means: 'Реагирует только на посты, вышедшие после того, как аккаунт впервые зашёл в канал в рамках этой задачи.' },
-        { value: 1, label: 'Существующие посты', means: 'Реагирует на случайный пост из lastPostsCount последних.' },
+        { value: 0, label: 'Monitor new posts', means: 'Reacts only to posts published after the account first entered the channel within this task.' },
+        { value: 1, label: 'Existing posts', means: 'Reacts to a random post out of the last lastPostsCount ones.' },
       ],
       default: 0,
-      purpose: 'На какие посты канала ставить реакции — только на новые или на N последних.',
+      purpose: 'Which channel posts get reactions: only new ones, or the last N.',
       constraints: [
-        '0 — мониторинг: первый заход в канал ТОЛЬКО запоминает последний пост и реакцию не ставит; '
-        + 'дальше реагируем на посты, вышедшие после этого момента',
-        '1 — существующие: берётся случайный из lastPostsCount последних постов',
-        'планка «что уже было» живёт в памяти процесса: после рестарта она встаёт заново, '
-        + 'и посты из времени простоя новыми не считаются',
-        'игнорируется, когда задан postUrls',
+        '0 — monitoring: the first pass over a channel ONLY records the latest post and leaves no reaction; '
+        + 'afterwards it reacts to posts published after that moment',
+        '1 — existing: a random post is taken from the last lastPostsCount posts',
+        'the "already seen" watermark lives in process memory: after a restart it is set anew, '
+        + 'and posts published during the downtime do not count as new',
+        'ignored when postUrls is given',
       ],
       examples: [0, 1],
       seeAlso: ['lastPostsCount', 'postUrls'],
@@ -192,16 +192,16 @@ export default {
     {
       name: 'lastPostsCount',
       block: 'targets',
-      title: 'Сколько последних постов',
+      title: 'Number of recent posts',
       type: 'number',
       min: 1,
       max: 20,
       default: 3,
-      purpose: 'Глубина выборки в режиме «существующие посты».',
+      purpose: 'Sampling depth in the "existing posts" mode.',
       constraints: [
-        'работает только при reactMode = 1',
-        'значения вне 1–20 обрезаются до границ; 0 и мусор дают 3',
-        'один аккаунт ставит не больше одной реакции на один пост, разные аккаунты — ставят',
+        'only works when reactMode = 1',
+        'values outside 1-20 are clamped to the bounds; 0 and garbage fall back to 3',
+        'a single account leaves at most one reaction per post; different accounts each leave their own',
       ],
       examples: [2, 3, 5],
       effectiveWhen: { field: 'reactMode', equals: 1 },
@@ -268,7 +268,7 @@ export default {
       effectiveWhen: { workMode: 1 },
       purpose: 'How long does the task run in the “Timed” mode?',
       constraints: [
-        'is treated as MAXIMUM: the actual duration is a random number from [min, durationMinutes],'
+        'is treated as MAXIMUM: the actual duration is a random number from [min, durationMinutes], '
         + 'where min sets the protection level (60 / 45 / 30 minutes)',
       ],
       seeAlso: ['workMode', 'protectionLevel'],
@@ -386,7 +386,7 @@ export default {
           minItems: 2,
           maxItems: 2,
           default: [30, 120],
-          unit: 'With',
+          unit: 's',
           purpose: 'Pause range [min, max] before starting a reaction.',
           constraints: ['the actual pause is random from the range × multipliers, but not less than 5 seconds'],
         },
@@ -396,7 +396,7 @@ export default {
           type: 'number',
           default: 120,
           min: 0,
-          unit: 'With',
+          unit: 's',
           purpose: 'How long to wait beyond the duration returned by Telegram.',
         },
         {

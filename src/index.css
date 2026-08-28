@@ -107,6 +107,17 @@
   .btn-icon {
     @apply inline-flex h-9 w-9 items-center justify-center rounded-lg border border-line bg-elevated text-muted transition-colors hover:border-spark-500/40 hover:text-fg;
   }
+  /* Кнопка управления задачей (старт/пауза/стоп/перезапуск) на карточке и в шапке деталей.
+     Намеренно НЕ .btn-icon: у того в ховер зашиты зелёная рамка и белый текст, а
+     `.btn-icon:hover` (специфичность 0-2-0) перебивает утилиту тона `.text-amber-300`
+     (0-1-0). На наведении «Пауза» превращалась в белую иконку в ЗЕЛЁНОЙ рамке на янтарном
+     фоне — три цвета в кнопке 32×32; тот же ховер срабатывал и на выключенных кнопках,
+     обещая действие, которого нет. Здесь ховер-цветов нет вообще: тон (иконка + фон +
+     рамка) навешивается утилитами на месте, поэтому кнопка всегда одного оттенка.  */
+  .btn-ctl {
+    @apply inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-line bg-elevated
+      transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-white/25 disabled:cursor-not-allowed;
+  }
   /* Красный вариант icon-кнопки для необратимого удаления (корзина). */
   .btn-icon-danger {
     @apply inline-flex h-9 w-9 items-center justify-center rounded-lg border border-rose-500/40 bg-rose-500/10 text-rose-300 transition-colors hover:bg-rose-500/20 hover:text-rose-200;

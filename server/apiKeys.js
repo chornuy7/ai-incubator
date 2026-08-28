@@ -117,7 +117,23 @@ export async function verifyKey(raw) {
 export function requireApiKey() {
   return async (req, res, next) => {
     const key = await verifyKey(req.header('authorization'))
-    if (!key) return res.status(401).json({ ok: false, error: 'Нужен действующий API-ключ (Authorization: Bearer …)' })
+    if (!key) {
+      // MCP-клиент, получив 401, идёт читать `resource_metadata` из WWW-Authenticate
+      // (RFC 9728 / MCP § Authorization). Без заголовка он не понимает ни какой это
+      // ресурс, ни в чём ошибка: текст в теле написан для человека, не для клиента.
+      const { wwwAuthenticate } = await import('./mcp/wellKnown.js')
+      const provided = !!String(req.header('authorization') || '').trim()
+      res.set('WWW-Authenticate', wwwAuthenticate(req, {
+        error: provided ? 'invalid_token' : undefined,
+        description: provided ? 'The API key is unknown, revoked or malformed.' : 'An API key is required.',
+      }))
+      return res.status(401).json({
+        ok: false,
+        error: provided
+          ? 'API key is not valid or has been revoked (Authorization: Bearer …)'
+          : 'A valid API key is required (Authorization: Bearer …)',
+      })
+    }
     req.apiKey = key
     next()
   }

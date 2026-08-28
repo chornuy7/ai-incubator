@@ -17,23 +17,23 @@
 
 ## 1. Реестр модулей и покрытие
 
-| # | Ключ | Название | Дескриптор | Полей | Блоков | Версия |
-|---|---|---|---|---|---|---|
-| 1 | `neuro-commenting` | Нейрокомментинг | ☑ [код](../../server/mcp/descriptors/neuro-commenting.js) | **33** | 9 | v1 |
-| 2 | `neuro-chatting` | Нейрочаттинг | ☑ [код](../../server/mcp/descriptors/neuro-chatting.js) | **23** | 9 | v1 |
-| 3 | `neuro-dialogs` | Нейродиалоги | ☑ [код](../../server/mcp/descriptors/neuro-dialogs.js) | **25** | 10 | v1 |
-| 4 | `mailing` | Мейлинг | ☑ [код](../../server/mcp/descriptors/mailing.js) | **19** | 8 | v1 |
-| 5 | `mass-react` | Массовые реакции | ☑ [код](../../server/mcp/descriptors/mass-react.js) | **19** | 8 | v1 |
-| 6 | `mass-looking` | Масслукинг | ☑ [код](../../server/mcp/descriptors/mass-looking.js) | **17** | 8 | v1 |
-| 7 | `warming` | Прогрев | ☑ [код](../../server/mcp/descriptors/warming.js) | **12** | 7 | v1 |
-| 8 | `autoposting` | Автопостинг | ☑ [код](../../server/mcp/descriptors/autoposting.js) | **9** | 5 | v1 |
-| 9 | `parsing` | Парсинг каналов | ☑ [код](../../server/mcp/descriptors/parsing.js) | **13** | 5 | v1 |
-| 10 | `parsing-groups` | Парсер групп | ☑ [код](../../server/mcp/descriptors/parsing-groups.js) | **13** | 5 | v1 |
-| 11 | `parsing-users` | Парсер пользователей | ☑ [код](../../server/mcp/descriptors/parsing-users.js) | **27** | 6 | v1 |
-| 12 | `parsing-messages` | Парсер по сообщениям | ☑ [код](../../server/mcp/descriptors/parsing-messages.js) | **25** | 5 | v1 |
-| 13 | `parsing-comments` | Парсер комментариев | ☑ [код](../../server/mcp/descriptors/parsing-comments.js) | **25** | 5 | v1 |
-| 14 | `ggr` | AI Rating | ☑ [код](../../server/mcp/descriptors/ggr.js) | **1** | 1 | v1 |
-| 15 | `spam-unblock` | Снятие спамблока | ☑ [код](../../server/mcp/descriptors/spam-unblock.js) | **3** | 2 | v1 |
+| # | Ключ | Название | Дескриптор | Параметров | Полей всего | Блоков | Версия |
+|---|---|---|---|---|---|---|---|
+| 1 | `neuro-commenting` | Нейрокомментинг | ☑ [код](../../server/mcp/descriptors/neuro-commenting.js) | **32** | 39 | 9 | v1 |
+| 2 | `neuro-chatting` | Нейрочаттинг | ☑ [код](../../server/mcp/descriptors/neuro-chatting.js) | **21** | 28 | 9 | v1 |
+| 3 | `neuro-dialogs` | Нейродиалоги | ☑ [код](../../server/mcp/descriptors/neuro-dialogs.js) | **23** | 31 | 10 | v1 |
+| 4 | `mailing` | Мейлинг | ☑ [код](../../server/mcp/descriptors/mailing.js) | **18** | 23 | 8 | v1 |
+| 5 | `mass-react` | Массовые реакции | ☑ [код](../../server/mcp/descriptors/mass-react.js) | **19** | 25 | 8 | v1 |
+| 6 | `mass-looking` | Масслукинг | ☑ [код](../../server/mcp/descriptors/mass-looking.js) | **15** | 21 | 8 | v1 |
+| 7 | `warming` | Прогрев | ☑ [код](../../server/mcp/descriptors/warming.js) | **13** | 17 | 7 | v1 |
+| 8 | `autoposting` | Автопостинг | ☑ [код](../../server/mcp/descriptors/autoposting.js) | **7** | 12 | 5 | v1 |
+| 9 | `parsing` | Парсинг каналов | ☑ [код](../../server/mcp/descriptors/parsing.js) | **16** | 19 | 5 | v1 |
+| 10 | `parsing-groups` | Парсер групп | ☑ [код](../../server/mcp/descriptors/parsing-groups.js) | **16** | 19 | 5 | v1 |
+| 11 | `parsing-users` | Парсер пользователей | ☑ [код](../../server/mcp/descriptors/parsing-users.js) | **13** | 31 | 6 | v1 |
+| 12 | `parsing-messages` | Парсер по сообщениям | ☑ [код](../../server/mcp/descriptors/parsing-messages.js) | **11** | 29 | 5 | v1 |
+| 13 | `parsing-comments` | Парсер комментариев | ☑ [код](../../server/mcp/descriptors/parsing-comments.js) | **11** | 29 | 5 | v1 |
+| 14 | `ggr` | AI Rating | ☑ [код](../../server/mcp/descriptors/ggr.js) | **1** | 1 | 1 | v1 |
+| 15 | `spam-unblock` | Снятие спамблока | ☑ [код](../../server/mcp/descriptors/spam-unblock.js) | **3** | 3 | 2 | v1 |
 
 Источник списка: `MODULE_DEFS` в [server/modules/registry.js](../../server/modules/registry.js).
 
@@ -213,3 +213,9 @@
 | 14.08.2026 | парсеры (5 шт.) | v1 | Дескрипторы через две общие фабрики: воркеров два, ключей пять. Поля пересечения читаются общим воркером всегда, но применяются только у `parsing-users` — у остальных в схему не включены |
 | 14.08.2026 | `ggr`, `spam-unblock` | v1 | Служебные модули. У AI Rating пустой список аккаунтов = «проверить все» (единственный такой модуль); у снятия спамблока свои поля пауз `delayMin`/`delayMax` вместо общей структуры `delays` |
 | **14.08.2026** | **все 15** | — | **Покрытие полное. Contract-тест держит схему в соответствии с кодом по каждому модулю** |
+| 26.08.2026 | `mailing` | v1 | **Схема врала: 5 параметров при 16 читаемых воркером.** Источник `workers.js:runMailing` был затянут внутрь соседнего комментария, и contract-тест сканировал не тот файл. Источник восстановлен, добавлены `accountIds`, `targets`, `allowLowTrust`, `aiPerRecipient`, `mediaUrls`, `maxPerAccount`, `threads`, `protectionLevel`, `delayPreset`, `goalId`, `campaignId`, `agentId` + блок «Цель, кампания и агент» |
+| 26.08.2026 | все 15 | — | Качество текста схемы: 94 склейки строк без пробела, 6 пропусков пробела после точки, 33 непереведённые русские строки, дублирующиеся теги в 13 дескрипторах из 15. Всё исправлено, каждый класс дефекта закрыт тестом |
+| 26.08.2026 | — | — | Протокол подтянут до ревизии `2026-07-28`, сервер стал двухэрным. У всех инструментов появился `outputSchema`; `create_task` помечен `destructiveHint: true`. Подробности — [MCP-SPEC.md §8](./MCP-SPEC.md) |
+| 27.08.2026 | все 15 | — | **Правило: MCP только по-английски** ([CLAUDE.md](../../CLAUDE.md)). Мейлинг был наполовину переведён обратно на русский, ещё 9 строк остались непереведёнными в mass-react/warming, а `unit` у 25 полей стоял как `'With'` — машинный перевод русского «с» (секунды). Всё приведено к английскому; проверка расширена с params на ВЕСЬ клиентский срез |
+| 27.08.2026 | все 15 | — | `usesAi` был добавлен в дескрипторы, но наружу не выходил: ни `describeModule`, ни `summarizeModule` его не отдавали, а у пяти парсеров он терялся в фабрике и приезжал `undefined`. Проброшен и выведен в `describe_module`, `list_modules` и карточку модуля в `capabilities`; формат описан в [MCP-SPEC.md §1.1](./MCP-SPEC.md) |
+| 27.08.2026 | — | — | Из ответов убран `coinsPer1kTokens` — курс удалён из модели цен (созвон 19.08), и схема обещала «мозгам» несуществующую величину. У ИИ-модулей вместо него `tokenUsd`, `tokenUsdModel`, `imageMultiplier`; у остальных этих полей нет |

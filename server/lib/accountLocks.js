@@ -109,10 +109,23 @@ export function tryAcquireLocks(accountIds, moduleKey, taskId, opts = {}) {
     const existing = locks.get(accountId)
     if (!existing) continue
     const clash = existing.holders.find((h) => h.taskId !== taskId && conflicts(moduleKey, h.moduleKey))
-    if (clash) clashes.push({ accountId, moduleLabel: clash.moduleLabel })
+    if (clash) clashes.push({ accountId, moduleLabel: clash.moduleLabel, moduleKey: clash.moduleKey })
   }
 
   if (clashes.length && !opts.force) {
+    // `opts.lang === 'en'` просит английский текст. Нужен MCP: по правилу раздела всё,
+    // что уезжает «мозгам», пишется по-английски, а этот отказ — один из самых частых
+    // ответов на create_task. Умолчание русское и не менялось: его читает оператор.
+    //
+    // Модули в английской версии названы КЛЮЧАМИ, а не витринными подписями: ключ —
+    // ровно то, чем оркестратор оперирует во всех вызовах, а `MODULE_TITLES` русские.
+    if (opts.lang === 'en') {
+      const names = clashes.map((c) => `${c.accountId.slice(-6)} → ${c.moduleKey || c.moduleLabel}`).join(', ')
+      const warm = moduleKey === 'warming'
+        ? 'Warm-up does not share an account with other modules: the profile warms until it is ready for work.'
+        : 'These accounts are already held by an incompatible task.'
+      return `${warm} Busy: ${names}. Stop that task or pick different accounts.`
+    }
     const names = clashes.map((c) => `${c.accountId.slice(-6)} → ${c.moduleLabel}`).join(', ')
     const warm = moduleKey === 'warming'
       ? 'Прогрев не делит аккаунт с другими модулями: профиль греется, пока не готов к работе.'

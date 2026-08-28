@@ -16,7 +16,7 @@ export default {
   version: 1,
   title: 'Warming up',
   platform: 'telegram',
-  tags: ['warming up', 'warming', 'warming up', 'account preparation', 'trust'],
+  tags: ['warming', 'warm-up', 'account preparation', 'trust score', 'aging'],
 
   whoAmI: {
     summary: 'Simulates the live behavior of an account to increase its trust in Telegram before combat work.',
@@ -33,8 +33,8 @@ export default {
     ],
     requires: ['at least one account with a working proxy'],
     risks:
-      'The risk is lower than that of combat modules, but the actions are real: too aggressive level at the new'
-      + 'account has the opposite effect. Warming up COMPLETELY blocks the account for other modules -'
+      'The risk is lower than that of combat modules, but the actions are real: too aggressive level at the new '
+      + 'account has the opposite effect. Warming up COMPLETELY blocks the account for other modules - '
       + 'A profile occupied by warming up is not assigned to a combat mission.',
     costModel: 'Charged per action according to the price list of the module. AI tokens are not consumed.',
   },
@@ -45,7 +45,7 @@ export default {
       title: 'Select accounts',
       purpose: 'Which accounts are warming up?',
       howItWorks:
-        'Accounts are moving in a circle. During warm-up, the profile is not available to other modules -'
+        'Accounts are moving in a circle. During warm-up, the profile is not available to other modules - '
         + 'This is a priority lock, not a regular lock.',
       api: { method: 'POST', path: '/api/modules/warming/tasks', fills: ['accountIds'] },
       params: ['accountIds'],
@@ -55,7 +55,7 @@ export default {
       title: 'Warm-up level',
       purpose: 'How quickly and intensely do we heat?',
       howItWorks:
-        'Уровень задаёт и темп (множитель задержек), и суточную норму действий. Чем быстрее — '
+        'The level sets both the tempo (the delay multiplier) and the daily action quota. The faster it is, '
         + 'the more actions per day and the more visible the account.',
       api: { method: 'POST', path: '/api/modules/warming/tasks', fills: ['warmLevel', 'warmDays', 'warmHours'] },
       params: ['warmLevel', 'warmDays', 'warmHours'],
@@ -65,7 +65,7 @@ export default {
       title: 'Limits',
       purpose: 'How many actions to perform per task.',
       howItWorks:
-        'The actual target is a random number from [min, max], determined by the task ID.'
+        'The actual target is a random number from [min, max], determined by the task ID. '
         + 'On top of this is the daily level norm and the total daily account limit.',
       api: { method: 'POST', path: '/api/modules/warming/tasks', fills: ['maxActions', 'minActions'] },
       params: ['maxActions', 'minActions'],
@@ -235,7 +235,7 @@ export default {
       effectiveWhen: { workMode: 1 },
       purpose: 'How long does the task heat up accounts?',
       constraints: [
-        'is treated as MAXIMUM: the actual duration is a random number from [min, durationMinutes],'
+        'is treated as MAXIMUM: the actual duration is a random number from [min, durationMinutes], '
         + 'where min sets the protection level (60 / 45 / 30 minutes)',
         'outside the window 9:00–23:00 actions are not performed in any case',
       ],
@@ -272,7 +272,7 @@ export default {
         { value: 3, label: 'Custom', means: 'No scaling.' },
       ],
       purpose: 'Another delay multiplier.',
-      constraints: ['ВНИМАНИЕ: нумерация ОБРАТНА protectionLevel — здесь 0 самый быстрый'],
+      constraints: ['ATTENTION: the numbering is REVERSED relative to protectionLevel — here 0 is the fastest'],
       seeAlso: ['protectionLevel', 'warmLevel'],
       storedAs: 'task.settings.delayPreset',
     },
@@ -283,7 +283,7 @@ export default {
       type: 'object',
       purpose: 'Behavior during FloodWait.',
       constraints: [
-        'pauses between warm-up actions are set by level and multipliers, and not by this field -'
+        'pauses between warm-up actions are set by level and multipliers, and not by this field - '
         + 'here is only a reaction to Telegram restrictions',
       ],
       properties: [
@@ -293,7 +293,7 @@ export default {
           type: 'number',
           default: 120,
           min: 0,
-          unit: 'With',
+          unit: 's',
           purpose: 'How long to wait beyond the duration returned by Telegram.',
         },
         {
@@ -337,7 +337,7 @@ export default {
       title: 'Warm-up level',
       source: 'server/lib/workerLoop.js — warmingPace',
       values: [
-        { value: 0, label: 'Fast (2 days)', multiplier: 0.8, actionsPerDay: 40, means: 'Задержки ×0.8, 40 действий в день.', useWhen: 'I need an account urgently' },
+        { value: 0, label: 'Fast (2 days)', multiplier: 0.8, actionsPerDay: 40, means: 'Delays ×0.8, 40 actions per day.', useWhen: 'I need an account urgently' },
         { value: 1, label: 'Normal (3–7 days)', multiplier: 1.3, actionsPerDay: 20, means: 'Delays ×1.3, 20 actions per day.', useWhen: 'common case' },
         { value: 2, label: 'Standard (7–14 days)', multiplier: 2.0, actionsPerDay: 10, means: 'Delays ×2.0, 10 actions per day.', useWhen: 'Dear accounts, no hurry' },
       ],

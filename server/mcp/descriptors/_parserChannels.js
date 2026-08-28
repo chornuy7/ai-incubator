@@ -17,15 +17,19 @@ export function buildChannelParserDescriptor(cfg) {
   return {
     key: cfg.key,
     version: 1,
+    // Флаг протаскиваем из обёртки, а не задаём здесь: парсеры ИИ не используют, но
+    // решает это конкретный дескриптор. Без этой строки `cfg.usesAi` молча терялся —
+    // обёртки его передавали, фабрика не читала, и до «мозгов» доезжал undefined.
+    usesAi: cfg.usesAi === true,
     title: cfg.title,
     platform: 'telegram',
-    tags: ['parsing', 'parsing', 'search', 'search', cfg.what, 'channel database'],
+    tags: ['parsing', 'search', 'discovery', cfg.what, `${cfg.what} database`],
 
     whoAmI: {
-      summary: `Looking for${cfg.whatMany}in Telegram using keywords and collects them into a database with filters based on audience size.`,
+      summary: `Looking for ${cfg.whatMany} in Telegram using keywords and collects them into a database with filters based on audience size.`,
       does: [
         'builds search queries from keywords and endings',
-        `searches through requests from different accounts and collects those found${cfg.whatMany}`,
+        `searches through requests from different accounts and collects the ${cfg.whatMany} it finds`,
         'filters by the number of participants and the presence of comments',
         'removes duplicates and previously collected',
         'can intersect (AND):leave only what was found for ALL keywords',
@@ -33,7 +37,7 @@ export function buildChannelParserDescriptor(cfg) {
       ],
       doesNot: [
         'does not publish or write anything - this is pure data collection',
-        'does not gather participants:There are parsers for users, messages and comments for this',
+        'does not gather participants: There are parsers for users, messages and comments for this',
         'does not contact AI and does not spend tokens',
       ],
       requires: ['at least one account with a working proxy', 'at least one keyword'],
@@ -57,7 +61,7 @@ export function buildChannelParserDescriptor(cfg) {
         title: 'Search query',
         purpose: 'What words to search for.',
         howItWorks:
-          'A separate query is collected from each keyword and each ending.Keywords'
+          'A separate query is collected from each keyword and each ending. Keywords '
           + 'ten and ending with five is fifty requests, and they are executed sequentially.',
         api: { method: 'POST', path, fills: ['keywords', 'endings', 'intersect'] },
         params: ['keywords', 'endings', 'intersect'],
@@ -67,7 +71,7 @@ export function buildChannelParserDescriptor(cfg) {
         title: 'Result filters',
         purpose: 'What to keep from what you find.',
         howItWorks:
-          'Filters are applied to each result found during the search, except for intersection -'
+          'Filters are applied to each result found during the search, except for intersection - '
           + 'it is considered AT THE END when all requests have been completed.',
         api: { method: 'POST', path, fills: ['minMembers', 'maxMembers', 'commentFilter', 'alreadyParsed', 'activityFilter', 'minComments', 'minRating', 'langDetection'] },
         params: ['minMembers', 'maxMembers', 'commentFilter', 'alreadyParsed', 'activityFilter', 'minComments', 'minRating', 'langDetection'],
@@ -142,7 +146,7 @@ export function buildChannelParserDescriptor(cfg) {
         title: 'Intersection (AND)',
         type: 'boolean',
         default: false,
-        purpose: `Leave only those${cfg.whatMany}that were found for ALL keywords at once.`,
+        purpose: `Leave only the ${cfg.whatMany} that were found for ALL keywords at once.`,
         constraints: [
           'only works with two or more keywords',
           'applied AT THE END, when all requests have been completed:before this, the results show a union',
@@ -321,7 +325,7 @@ export function buildChannelParserDescriptor(cfg) {
             minItems: 2,
             maxItems: 2,
             default: [2, 2],
-            unit: 'With',
+            unit: 's',
             purpose: 'Range [min, max] pause between search queries.',
             constraints: ['if one number is given, the second is taken equal to it'],
           },
@@ -333,7 +337,7 @@ export function buildChannelParserDescriptor(cfg) {
             minItems: 2,
             maxItems: 2,
             default: [1, 1],
-            unit: 'With',
+            unit: 's',
             purpose: 'Range [min, max] of pause between processing of found results.',
           },
         ],
@@ -373,7 +377,7 @@ export function buildChannelParserDescriptor(cfg) {
       },
       {
         title: 'Narrow selection for neurocommenting',
-        when: `only needed${cfg.whatMany}with open comments and live audience`,
+        when: `only ${cfg.whatMany} with open comments and a live audience are wanted`,
         input: {
           accountIds: ['acc_1', 'acc_2'],
           keywords: ['crypt', 'trading'],

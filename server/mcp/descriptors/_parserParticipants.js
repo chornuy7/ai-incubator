@@ -23,7 +23,7 @@ export function buildParticipantsParserDescriptor(cfg) {
       title: 'Select accounts',
       purpose: 'Which accounts do we collect?.',
       howItWorks:
-        'By default, sources are processed one at a time by one account at a time..Parallel'
+        'By default, sources are processed one at a time by one account at a time..Parallel '
         + 'the mode speeds up work, but loads Telegram more - FloodWait arrives more often on it.',
       api: { method: 'POST', path, fills: ['accountIds'] },
       params: ['accountIds'],
@@ -33,7 +33,7 @@ export function buildParticipantsParserDescriptor(cfg) {
       title: 'Sources',
       purpose: 'Where do we gather people from?.',
       howItWorks:
-        'The account joins the source if it is not already a member of it.Separate pause before introduction'
+        'The account joins the source if it is not already a member of it. Separate pause before introduction '
         + 'and does not fall below 60 seconds - Telegram considers introductions more harsh than other actions.',
       api: { method: 'POST', path, fills: ['channels'] },
       params: ['channels'],
@@ -182,7 +182,7 @@ export function buildParticipantsParserDescriptor(cfg) {
       type: 'number',
       default: 15,
       min: 0,
-      unit: 'With',
+      unit: 's',
       purpose: 'How long to wait before moving on to the next source.',
       constraints: ['one number, not a range - unlike combat modules'],
       examples: [15, 60],
@@ -195,7 +195,7 @@ export function buildParticipantsParserDescriptor(cfg) {
       type: 'number',
       default: 0.5,
       min: 0,
-      unit: 'With',
+      unit: 's',
       purpose: 'How long to wait between processing individual people or messages.',
       constraints: ['Fractional values ​​are allowed', 'no need to reset:it is frequent calls that give FloodWait'],
       examples: [0.5, 2],
@@ -216,9 +216,9 @@ export function buildParticipantsParserDescriptor(cfg) {
           minItems: 2,
           maxItems: 2,
           default: [90, 240],
-          unit: 'With',
+          unit: 's',
           purpose: 'Range [min, max] of pause before joining a group or channel.',
-          constraints: ['hard floor 60 seconds:You can’t speed up intros with a preset'],
+          constraints: ['hard floor 60 seconds: You can’t speed up intros with a preset'],
         },
       ],
       storedAs: 'task.settings.delays',
@@ -269,7 +269,7 @@ export function buildParticipantsParserDescriptor(cfg) {
         purpose: 'Leave only those who are members of several sources at once.',
         constraints: [
           'only works with two or more sources',
-          'available ONLY from the user parser:For parsers, the field is ignored for messages and comments',
+          'available ONLY from the user parser: For parsers, the field is ignored for messages and comments',
         ],
         seeAlso: ['intersectionMin', 'channels'],
         storedAs: 'task.settings.intersectionMode',
@@ -297,9 +297,13 @@ export function buildParticipantsParserDescriptor(cfg) {
   return {
     key: cfg.key,
     version: 1,
+    // Флаг протаскиваем из обёртки, а не задаём здесь: парсеры ИИ не используют, но
+    // решает это конкретный дескриптор. Без этой строки `cfg.usesAi` молча терялся —
+    // обёртки его передавали, фабрика не читала, и до «мозгов» доезжал undefined.
+    usesAi: cfg.usesAi === true,
     title: cfg.title,
     platform: 'telegram',
-    tags: ['parsing', 'parsing', 'audience', 'People', 'base', ...cfg.tags],
+    tags: [...new Set(cfg.tags)],
 
     whoAmI: {
       summary: cfg.summary,
@@ -311,8 +315,8 @@ export function buildParticipantsParserDescriptor(cfg) {
       ],
       requires: ['at least one account with a working proxy', 'at least one source'],
       risks:
-        'Gathering participants is the operation in which FloodWait most often arrives:account enters'
-        + 'to sources and reads a lot.Pauses and parallelism affect risk the most.',
+        'Gathering participants is the operation in which FloodWait most often arrives:account enters '
+        + 'to sources and reads a lot. Pauses and parallelism affect risk the most.',
       costModel: 'Charged per action according to the price list of the module.AI tokens are not consumed.',
     },
 

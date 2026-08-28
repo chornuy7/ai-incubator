@@ -27,7 +27,11 @@ interface Endpoint {
 
 const ENDPOINTS: Endpoint[] = [
   { method: 'GET', path: '/me', title: 'От чьего имени работает ключ (владелец из MURMEX_API_KEY_OWNER, иначе — система)' },
-  { method: 'GET', path: '/capabilities', title: 'Что умеет каждый модуль (цели, цены, как запускать)' },
+  { method: 'GET', path: '/capabilities', title: 'Всё сразу: модули, подсистемы платформы и права владельца ключа' },
+  { method: 'GET', path: '/capabilities/modules', title: 'Только модули — цены, схема, права на блоки' },
+  { method: 'GET', path: '/capabilities/services', title: 'Только подсистемы — прокси, аккаунты, задачи, статистика и прочие' },
+  { method: 'GET', path: '/capabilities/user', title: 'Только пользователь — роли, что разрешено, баланс' },
+  { method: 'GET', path: '/capabilities/:kind/:id', title: 'Одна возможность: kind = modules | services | users («me» — владелец ключа)' },
   { method: 'GET', path: '/mcp', title: 'Те же возможности как MCP-манифест инструментов (для AI-оркестратора)' },
   { method: 'POST', path: '/goals', title: 'Создать цель (измеримый результат)', body: '{ "name": "200 переходов", "metric": { "kind": "clicks", "target": 200 } }' },
   { method: 'POST', path: '/campaigns', title: 'Создать кампанию под цель', body: '{ "name": "Крипто · этап 1", "modules": ["neuro-commenting"], "goalId": "goal_…" }' },

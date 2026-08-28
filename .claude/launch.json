@@ -39,6 +39,15 @@
         "--strictPort"
       ],
       "port": 5199
+    },
+    {
+      "name": "mcp-docs",
+      "runtimeExecutable": "node",
+      "runtimeArgs": [
+        "scripts/mcp-docs.mjs"
+      ],
+      "port": 3011,
+      "autoPort": true
     }
   ]
 }

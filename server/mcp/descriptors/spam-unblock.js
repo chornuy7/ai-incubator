@@ -16,7 +16,7 @@ export default {
   version: 1,
   title: 'Removing spamblock',
   platform: 'telegram',
-  tags: ['spamblock', 'spamblock', 'unlocking', 'recovery', 'spambot'],
+  tags: ['spamblock', 'unblock', 'appeal', 'recovery', 'spambot', 'restriction'],
 
   whoAmI: {
     summary: 'Contacts @SpamBot on behalf of blocked accounts and asks to remove restrictions.',
@@ -33,7 +33,7 @@ export default {
     ],
     requires: ['accounts with a live session that are subject to restrictions'],
     risks:
-      'Short. But repeating it too often is pointless: if the bot refuses, the spam block is removed'
+      'Short. But repeating it too often is pointless: if the bot refuses, the spam block is removed '
       + 'in time, and repeated requests do not speed this up.',
     costModel: 'Service task. AI tokens are not consumed.',
   },
@@ -52,7 +52,7 @@ export default {
       title: 'Pauses between accounts',
       purpose: 'How long before I take on the next account?',
       howItWorks:
-        'The pause is selected randomly from the range: an even interval between calls to one and'
+        'The pause is selected randomly from the range: an even interval between calls to one and '
         + 'to the same bot from different accounts it reads like a farm.',
       api: { method: 'POST', path: '/api/modules/spam-unblock/tasks', fills: ['delayMin', 'delayMax'] },
       params: ['delayMin', 'delayMax'],
@@ -80,7 +80,7 @@ export default {
       type: 'number',
       default: 30,
       min: 5,
-      unit: 'With',
+      unit: 's',
       purpose: 'The lower limit of the pause between accounts.',
       constraints: [
         'value below 5 seconds rises to 5',
@@ -97,7 +97,7 @@ export default {
       type: 'number',
       default: 120,
       min: 5,
-      unit: 'With',
+      unit: 's',
       purpose: 'The upper limit of the pause between accounts.',
       constraints: ['if it is less than delayMin, it rises to it - the task will not fall, but there will be no scatter'],
       examples: [120, 300],

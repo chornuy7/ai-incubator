@@ -6,7 +6,7 @@ export default buildParticipantsParserDescriptor({
   // ИИ не участвует: генерации нет, токены модели не тратятся (см. costModel).
   usesAi: false,
   title: 'User parser',
-  tags: ['participants', 'members', 'intersection of audiences'],
+  tags: ['parsing', 'audience', 'users', 'participants', 'members', 'audience intersection', 'lead list'],
   summary: 'Collects group and channel members into a database with filters by account type.',
   does: [
     'joins the source if the account is not already a member of it',

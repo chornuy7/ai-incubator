@@ -19,8 +19,19 @@ import { moduleTitle } from './lib/moduleTitles.js'
 import { describeModule, getDescriptor, listDescriptorKeys, summarizeModule } from './mcp/descriptors/index.js'
 import {
   mcpPostHandler, mcpDeleteHandler, wantsEventStream, checkHttpPreconditions,
-  SERVER_INFO, SUPPORTED_PROTOCOL_VERSIONS,
+  RESOURCE_TEMPLATES,
 } from './mcp/server.js'
+import {
+  SERVER_INFO, SUPPORTED_PROTOCOL_VERSIONS, MODERN_VERSIONS, LEGACY_VERSIONS, serverCapabilities,
+} from './mcp/protocol.js'
+import { TOOLS } from './mcp/tools.js'
+import { PROMPTS } from './mcp/prompts.js'
+import { MCP_RESOURCE_PATH } from './mcp/wellKnown.js'
+import { MCP_DOCS_PATH, docsEnabled } from './mcp/docs.js'
+import { listServiceKeys as SERVICE_KEYS_FN } from './mcp/capabilities.js'
+
+/** Ключи подсистем — для манифеста; сам список живёт в реестре возможностей. */
+const SERVICE_KEYS = SERVICE_KEYS_FN()
 
 export const apiV1Router = Router()
 
@@ -80,10 +91,112 @@ async function capabilities() {
   })
 }
 
-/** §10.3(2): что умеет каждый модуль. */
-apiV1Router.get('/capabilities', async (_req, res) => {
-  try { res.json({ ok: true, modules: await capabilities() }) }
-  catch (err) { res.status(500).json({ ok: false, error: msg(err) }) }
+/**
+ * §10.3(2): возможности платформы. Четыре среза, чтобы оркестратор спрашивал ровно то,
+ * что ему нужно, а не разбирал один большой ответ ради одного поля.
+ *
+ *   GET /capabilities                  — всё сразу: модули + сервисы + сам пользователь
+ *   GET /capabilities/modules          — только модули
+ *   GET /capabilities/services         — только подсистемы (прокси, аккаунты, задачи…)
+ *   GET /capabilities/users            — пользователи (чужие — только админу/сервису)
+ *   GET /capabilities/<kind>/<id>      — одна конкретная возможность любого вида
+ *
+ * Совместимость: корневой ответ по-прежнему содержит `modules` В ТОМ ЖЕ ВИДЕ, что и
+ * раньше (плюс новые поля). Им уже пользуются, ломать нельзя.
+ */
+apiV1Router.get('/capabilities', async (req, res) => {
+  try {
+    const { allCapabilities } = await import('./mcp/capabilities.js')
+    const all = await allCapabilities({ req })
+    // Прежняя форма модуля добавляется рядом с новой: старый потребитель читает
+    // `modules[].run.body` и `describe` как строку, новый — `access` и `pricing`.
+    // `run` и `describe` сливаем поимённо, а не целиком: наивный спред затирал
+    // legacy-`run.body` новым объектом и молча ломал совместимость.
+    const legacyByKey = new Map((await capabilities()).map((m) => [m.key, m]))
+    res.json({
+      ok: true,
+      ...all,
+      modules: all.modules.map((m) => {
+        const legacy = legacyByKey.get(m.key)
+        return {
+          ...legacy,
+          ...m,
+          describe: legacy?.describe ?? m.describe,
+          run: { ...(legacy?.run || {}), ...m.run },
+        }
+      }),
+    })
+  } catch (err) { res.status(500).json({ ok: false, error: msg(err) }) }
+})
+
+/** Только модули. */
+apiV1Router.get('/capabilities/modules', async (req, res) => {
+  try {
+    const { listModuleCapabilities } = await import('./mcp/capabilities.js')
+    const modules = await listModuleCapabilities({ req })
+    res.json({ ok: true, kind: 'module', total: modules.length, allowed: modules.filter((m) => m.access.allowed).length, modules })
+  } catch (err) { res.status(500).json({ ok: false, error: msg(err) }) }
+})
+
+/** Только подсистемы: прокси, менеджер аккаунтов, дашборд задач, статистика и прочие. */
+apiV1Router.get('/capabilities/services', async (req, res) => {
+  try {
+    const { listServiceCapabilities } = await import('./mcp/capabilities.js')
+    const services = await listServiceCapabilities({ req })
+    res.json({ ok: true, kind: 'service', total: services.length, allowed: services.filter((s) => s.access.allowed).length, services })
+  } catch (err) { res.status(500).json({ ok: false, error: msg(err) }) }
+})
+
+/** Только пользователь. Без id — тот, от чьего имени работает ключ. */
+apiV1Router.get('/capabilities/user', async (req, res) => {
+  try {
+    const { getUserCapability } = await import('./mcp/capabilities.js')
+    const r = await getUserCapability('me', { req })
+    if (r.error) return res.status(r.status).json({ ok: false, error: r.error })
+    res.json({ ok: true, kind: 'user', user: r.capability })
+  } catch (err) { res.status(500).json({ ok: false, error: msg(err) }) }
+})
+
+/** Список пользователей: чужих видит только админский или сервисный ключ. */
+apiV1Router.get('/capabilities/users', async (req, res) => {
+  try {
+    const { listUserCapabilities } = await import('./mcp/capabilities.js')
+    const users = await listUserCapabilities({ req })
+    res.json({ ok: true, kind: 'user', total: users.length, users })
+  } catch (err) { res.status(500).json({ ok: false, error: msg(err) }) }
+})
+
+/**
+ * Одна конкретная возможность. `kind` — `modules` / `services` / `users`;
+ * для пользователя `me` означает владельца ключа.
+ */
+apiV1Router.get('/capabilities/:kind/:id', async (req, res) => {
+  try {
+    const caps = await import('./mcp/capabilities.js')
+    const kind = caps.KIND_BY_PLURAL[req.params.kind]
+    if (!kind) {
+      return res.status(404).json({
+        ok: false,
+        error: `Unknown capability kind "${req.params.kind}". Available: ${Object.keys(caps.KIND_BY_PLURAL).join(', ')}.`,
+      })
+    }
+    const id = req.params.id
+
+    if (kind === 'user') {
+      const r = await caps.getUserCapability(id, { req })
+      if (r.error) return res.status(r.status).json({ ok: false, error: r.error })
+      return res.json({ ok: true, kind, capability: r.capability })
+    }
+
+    const capability = kind === 'module'
+      ? await caps.getModuleCapability(id, { req })
+      : await caps.getServiceCapability(id, { req })
+    if (!capability) {
+      const known = kind === 'module' ? listModuleKeys() : caps.listServiceKeys()
+      return res.status(404).json({ ok: false, error: `Unknown ${kind} "${id}". Available: ${known.join(', ')}.` })
+    }
+    res.json({ ok: true, kind, capability })
+  } catch (err) { res.status(500).json({ ok: false, error: msg(err) }) }
 })
 
 /**
@@ -132,70 +245,89 @@ apiV1Router.get('/modules', async (_req, res) => {
 })
 
 /**
- * MCP-манифест: те же возможности, оформленные как список инструментов. Внешний
- * оркестратор может брать отсюда tools, а вызывать — обычными POST ниже.
+ * Человекочитаемый срез MCP-эндпоинта: «что тут вообще есть», открывается curl'ом.
  *
- * Переходная форма: настоящий MCP-сервер (JSON-RPC 2.0 + Streamable HTTP) — этап 2
- * в docs/mcp/MCP-ROADMAP.md. Здесь важно другое: у модулей с дескриптором `input`
- * теперь настоящая JSON Schema с ограничениями, а не список строк-подсказок.
+ * ВАЖНО, ЧЕГО ЗДЕСЬ БОЛЬШЕ НЕТ. Раньше этот ответ строил СВОЙ список `tools`
+ * (`whoami`, `run_neuro_commenting`, `create_goal`…), которого не существует в
+ * MCP-сервере: настоящие инструменты называются иначе. Получилось два источника правды
+ * об одном и том же — ровно та болезнь, ради лечения которой заведён весь раздел.
+ * Модель, прочитавшая манифест, вызывала `run_neuro_commenting` и получала
+ * «Unknown tool».
+ *
+ * Теперь `tools` берётся из того же массива `TOOLS`, что отдаёт `tools/list`, а
+ * REST-маршруты живут отдельным полем `restEndpoints` и инструментами не притворяются.
  */
 apiV1Router.get('/mcp', async (req, res) => {
   try {
     // Клиент пришёл открывать SSE-поток. Мы его не держим — спецификация обязывает
     // ответить 405, иначе клиент примет наш JSON-манифест за открытый поток.
     if (wantsEventStream(req)) {
-      return res.status(405).json({ error: 'SSE-поток не поддерживается: сервер не инициирует сообщения. Используйте POST.' })
+      return res.status(405).json({
+        error: 'This endpoint does not serve an SSE stream: the server never initiates messages. '
+          + 'Use POST for JSON-RPC, or GET without Accept: text/event-stream for this manifest.',
+      })
     }
     const bad = checkHttpPreconditions(req)
     if (bad) return res.status(bad.status).json(bad.body)
 
     const caps = await capabilities()
-    const tools = [
-      { name: 'whoami', description: 'Пользователь продукта, от чьего имени работает ключ', method: 'GET', path: '/api/v1/me', input: {} },
-      { name: 'list_modules', description: 'Список модулей и признак, у каких описание полное. Ключевые слова: модули, capabilities, modules', method: 'GET', path: '/api/v1/modules', input: {} },
-      {
-        name: 'describe_module',
-        description: 'Полное описание модуля: все параметры, ограничения, блоки интерфейса, расшифровка пресетов, примеры запусков и JSON Schema входа. Ключевые слова: схема, параметры, ограничения, help, schema, params',
-        method: 'GET',
-        path: '/api/v1/modules/:key/describe',
-        input: { key: `string — один из: ${listDescriptorKeys().join(', ')}` },
-      },
-      { name: 'create_goal', description: 'Создать цель (измеримый результат)', method: 'POST', path: '/api/v1/goals', input: { name: 'string', metric: 'string?', target: 'number?', deadline: 'YYYY-MM-DD?' } },
-      { name: 'create_campaign', description: 'Создать кампанию под цель', method: 'POST', path: '/api/v1/campaigns', input: { name: 'string', modules: 'string[]', goalId: 'string?' } },
-      { name: 'estimate', description: 'Оценить стоимость и время до запуска', method: 'POST', path: '/api/v1/modules/:key/estimate', input: { actions: 'number', accounts: 'number?' } },
-      ...caps.map((c) => {
-        const module = describeModule(c.key)
-        return {
-          name: `run_${c.key.replace(/-/g, '_')}`,
-          description: module
-            ? `${module.whoAmI.summary} Ключевые слова: ${module.tags.join(', ')}.`
-            : `Запустить модуль «${c.title}» (схема не описана — список полей неполный)`,
-          method: 'POST',
-          path: c.run.path,
-          schema: c.schema,
-          // У описанных модулей — настоящая JSON Schema; у остальных прежние подсказки,
-          // но с честной пометкой `schema: 'partial'`, чтобы их не принимали за полные.
-          input: module ? module.inputSchema : c.run.body,
-          ...(module ? { _meta: { tags: module.tags, version: module.version, describe: c.describe } } : {}),
-        }
-      }),
-    ]
+    const { resourceUri, resourceMetadataUrl } = await import('./mcp/wellKnown.js')
     res.json({
       ok: true,
-      name: 'murmex',
-      version: '1',
-      // Совместимость: этим GET уже пользуются, ломать нельзя. Но настоящий вход —
-      // POST на этот же адрес, и клиент должен о нём узнать.
-      note: 'REST-срез для просмотра глазами. Полноценный MCP — JSON-RPC 2.0 на POST этого же адреса.',
+      name: SERVER_INFO.name,
+      serverInfo: SERVER_INFO,
+      note: 'Human-readable view. The protocol itself is JSON-RPC 2.0 over POST on this same URL.',
       mcp: {
-        endpoint: '/api/v1/mcp',
-        transport: 'streamable-http (JSON-RPC 2.0 через POST)',
+        endpoint: MCP_RESOURCE_PATH,
+        resource: resourceUri(req),
+        transport: 'streamable-http (JSON-RPC 2.0 over POST)',
         protocolVersions: SUPPORTED_PROTOCOL_VERSIONS,
-        serverInfo: SERVER_INFO,
-        auth: 'Authorization: Bearer <api-key>',
+        modernVersions: MODERN_VERSIONS,
+        legacyVersions: LEGACY_VERSIONS,
+        // Две эры на одном адресе: новые клиенты идут без рукопожатия и обязаны слать
+        // `_meta`, старые — через `initialize`. Клиенту важно знать, что доступны обе.
+        eras: {
+          modern: 'No handshake. Every request carries _meta["io.modelcontextprotocol/protocolVersion"] and clientCapabilities. Call server/discover first if you want the version list up front.',
+          legacy: 'Classic initialize + notifications/initialized handshake, for revisions 2025-11-25 and earlier.',
+        },
+        capabilities: serverCapabilities(),
+        auth: {
+          scheme: 'Authorization: Bearer <api-key>',
+          resourceMetadata: resourceMetadataUrl(req),
+        },
+        // Живая документация: та же информация, но глазами и с кнопкой «выполнить».
+        // Отдаём адрес прямо здесь — иначе о ней узнают из README, а README читают последним.
+        docs: docsEnabled() ? new URL(MCP_DOCS_PATH, resourceUri(req)).href : null,
       },
       coverage: { described: listDescriptorKeys().length, total: caps.length },
-      tools,
+      // Единственный список инструментов на весь сервер — тот же, что в tools/list.
+      tools: TOOLS.map((t) => ({
+        name: t.name,
+        title: t.title,
+        description: t.description,
+        inputSchema: t.inputSchema,
+        outputSchema: t.outputSchema,
+        annotations: t.annotations,
+      })),
+      prompts: PROMPTS,
+      resourceTemplates: RESOURCE_TEMPLATES,
+      // REST-маршруты — не инструменты MCP. Они существуют, ими пользуются, но вызывать
+      // их надо обычным HTTP, а не `tools/call`, и путать одно с другим нельзя.
+      restEndpoints: [
+        { method: 'GET', path: '/api/v1/me', description: 'Which product user this key acts as.' },
+        { method: 'GET', path: '/api/v1/modules', description: 'Modules with a flag showing whether the schema is complete.' },
+        { method: 'GET', path: '/api/v1/modules/:key/describe', description: `Full module description. Described modules: ${listDescriptorKeys().join(', ')}.` },
+        { method: 'GET', path: '/api/v1/capabilities', description: 'Everything at once: modules, platform services and the key owner, each with whether it is allowed.' },
+        { method: 'GET', path: '/api/v1/capabilities/modules', description: 'Campaign modules only, with pricing and per-block permissions.' },
+        { method: 'GET', path: '/api/v1/capabilities/services', description: `Platform subsystems only: ${SERVICE_KEYS.join(', ')}.` },
+        { method: 'GET', path: '/api/v1/capabilities/user', description: 'The key owner: roles, permissions, balance.' },
+        { method: 'GET', path: '/api/v1/capabilities/users', description: 'All users (admin or service key only; a scoped key sees itself).' },
+        { method: 'GET', path: '/api/v1/capabilities/:kind/:id', description: 'One capability. kind = modules | services | users; "me" means the key owner.' },
+        { method: 'POST', path: '/api/v1/modules/:key/estimate', description: 'Cost and time before launch.' },
+        { method: 'POST', path: '/api/v1/modules/:key/run', description: 'Start a module task over plain REST.' },
+        { method: 'GET,POST', path: '/api/v1/goals', description: 'List or create goals.' },
+        { method: 'GET,POST', path: '/api/v1/campaigns', description: 'List or create campaigns.' },
+      ],
     })
   } catch (err) { res.status(500).json({ ok: false, error: msg(err) }) }
 })
