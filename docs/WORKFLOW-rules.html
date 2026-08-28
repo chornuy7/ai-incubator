@@ -132,6 +132,12 @@ code{background:var(--surface-2);border:1px solid var(--line);border-radius:5px;
   position:relative;z-index:1;
 }
 .step[data-owner="claude"] .num{border-color:var(--todo);color:var(--todo)}
+/* Шаг, который делают вдвоём: половина кружка — Claude, половина — человек.
+   Цвет тут уже несёт смысл (кто делает шаг), поэтому и делится он честно. */
+.step[data-owner="both"] .num{
+  background:linear-gradient(100deg,var(--todo) 0 50%,var(--progress) 50% 100%);
+  border-color:transparent;color:#fff;
+}
 .step[data-owner="human"] .num{background:var(--progress);border-color:var(--progress);color:#fff}
 .step[data-gate="1"] .num{background:var(--done);border-color:var(--done);color:#fff}
 .step[data-gate="0"] .num{background:var(--stop);border-color:var(--stop);color:#fff}
@@ -171,8 +177,10 @@ code{background:var(--surface-2);border:1px solid var(--line);border-radius:5px;
 .says-row.no{background:var(--stop-soft)}
 .says-row.no .says-lab{color:var(--stop)}
 .says-row.no .says-ex{color:var(--stop)}
+.says.mini .says-row{grid-template-columns:96px 1fr;padding:8px 12px}
 @media (max-width:520px){
   .says-row{grid-template-columns:1fr}
+  .says.mini .says-row{grid-template-columns:1fr}
 }
 
 /* ── статусы доски ─────────────────────────────────────── */
@@ -243,9 +251,9 @@ footer{
     <div class="eyebrow">Myrmex · проект MR</div>
     <h1>Регламент задач</h1>
     <p class="standfirst">
-      Как задача проходит путь от постановки до <span class="m">main</span>. Девять шагов и два
-      условия, без которых наружу не уходит ничего: задача принята человеком
-      <span class="m">(Done)</span> <b>и</b> человек дал команду. Одного статуса мало.
+      Как задача проходит путь от постановки до <span class="m">main</span>. Девять шагов, из
+      которых два начинаются командой человека: «тестируй» (шаг 4) и «залей и смержи» (шаг 7).
+      Сам по себе статус на доске ничего не запускает.
     </p>
   </header>
 
@@ -263,7 +271,8 @@ footer{
 
   <section class="sec">
     <h2>Цепочка</h2>
-    <p>Шаги не пропускаются и не меняются местами. Цвет кружка — кто делает шаг.</p>
+    <p>Шаги не пропускаются и не меняются местами. Цвет кружка — кто делает шаг;
+      двухцветный означает, что шаг делают вдвоём.</p>
 
     <div class="chain">
 
@@ -293,19 +302,36 @@ footer{
         </div>
       </div>
 
-      <div class="step" data-owner="claude">
+      <div class="step" data-owner="both">
         <div class="num">3</div>
         <div class="body">
-          <div class="title-row"><b>Работа</b><span class="who claude">Claude</span><span class="m" style="color:var(--progress)">In Progress</span></div>
+          <div class="title-row"><b>Работа</b><span class="who claude">Claude</span><span class="who human">человек</span><span class="m" style="color:var(--progress)">In Progress</span></div>
+          <p class="why">Единственный шаг, который делают вдвоём. Claude пишет код, гоняет, читает
+            файлы; человек задаёт направление и правит его по ходу — уточняет формулировку,
+            отменяет подход, добавляет требование, отвечает на вопрос, который Claude решать
+            не вправе. Это не приём готового: правки приходят внутри работы, а не после неё.</p>
+          <p class="why">Поэтому <span class="m">In Progress</span> — состояние диалога, а не
+            «Claude ушёл делать». Задача висит в нём столько, сколько идёт разговор, и любая
+            реплика человека — часть шага, а не помеха ему.</p>
         </div>
       </div>
 
-      <div class="step" data-owner="claude">
+      <div class="step" data-owner="both">
         <div class="num">4</div>
         <div class="body">
-          <div class="title-row"><b>Тесты локально</b><span class="who claude">Claude</span><span class="m" style="color:var(--progress)">Ai Testing</span></div>
-          <p class="why"><span class="m">npm test</span> и <span class="m">npx tsc --noEmit</span> на этой машине.
-            Результат сообщается числом (<span class="m">1119/1119</span>), а не словом «прошло».</p>
+          <div class="title-row"><b>Тесты локально</b><span class="who human">команда человека</span><span class="who claude">Claude выполняет</span><span class="m" style="color:var(--progress)">Ai Testing</span></div>
+          <p class="why">Claude не переводит задачу в <span class="m">Ai Testing</span> сам. «Я дописал»
+            не означает «пора проверять»: человек может ещё добавлять требования или менять подход.
+            Тестирование начинается с его команды.</p>
+          <div class="says mini">
+            <div class="says-row">
+              <span class="says-lab">тесты</span>
+              <span class="says-ex"><q>тестируй</q> <q>запускай тесты</q> <q>прогоняй</q> <q>проверяй</q></span>
+            </div>
+          </div>
+          <p class="why">Дальше <span class="m">npm test</span> и <span class="m">npx tsc --noEmit</span>
+            на этой машине, статус <span class="m">Ai Testing</span>, результат числом
+            (<span class="m">1119/1119</span>), а не словом «прошло».</p>
         </div>
       </div>
 
@@ -400,6 +426,12 @@ footer{
     <div class="notes">
 
       <div class="note ask">
+        <div class="note-when">работа дописана, команды на тесты не было</div>
+        <p class="shout">РАБОТА ГОТОВА. ЗАПУСКАТЬ ТЕСТЫ И ПЕРЕВОДИТЬ В <span class="m">AI TESTING</span>?</p>
+        <p class="after">Статус не меняется, пока не прозвучит «тестируй».</p>
+      </div>
+
+      <div class="note ask">
         <div class="note-when">человек написал, задача в Done, команды в сообщении нет</div>
         <p class="shout">⚠️ ЗАДАЧА &lt;KEY&gt; В <span class="m">DONE</span>. РАЗРЕШАЕШЬ ЗАЛИВКУ И МЕРЖ <span class="m">feat/…</span> → <span class="m">MAIN</span>?</p>
         <p class="shout">НИ ЗАЛИВКА, НИ МЕРЖ НЕ БУДУТ ВЫПОЛНЕНЫ БЕЗ ЯВНОГО ПОДТВЕРЖДЕНИЯ.</p>
@@ -451,6 +483,7 @@ footer{
     <ul class="nevers">
       <li><span class="x">✕</span><span>Работы без подключённой Jira.</span></li>
       <li><span class="x">✕</span><span>Коммита в <span class="m">main</span>.</span></li>
+      <li><span class="x">✕</span><span>Перевода в <span class="m">Ai Testing</span> без команды — «дописал» не значит «проверяй».</span></li>
       <li><span class="x">✕</span><span>Перевода в <span class="m">Human Testing</span> без комментария.</span></li>
       <li><span class="x">✕</span><span>Заливки или мержа до <span class="m">Done</span> — даже если попросили.</span></li>
       <li><span class="x">✕</span><span>Заливки по одному лишь статусу <span class="m">Done</span>, без команды человека.</span></li>
