@@ -154,7 +154,6 @@ code{background:var(--surface-2);border:1px solid var(--line);border-radius:5px;
 }
 .who.claude{background:var(--todo-soft);color:var(--todo)}
 .who.human{background:var(--progress-soft);color:var(--progress)}
-.who.gate{background:var(--done-soft);color:var(--done)}
 .who.block{background:var(--stop-soft);color:var(--stop)}
 
 /* ── что именно должно прозвучать ──────────────────────── */
@@ -271,8 +270,9 @@ footer{
 
   <section class="sec">
     <h2>Цепочка</h2>
-    <p>Шаги не пропускаются и не меняются местами. Цвет кружка — кто делает шаг;
-      двухцветный означает, что шаг делают вдвоём.</p>
+    <p>Шаги не пропускаются и не меняются местами. Цвет кружка — кто делает шаг:
+      синий — Claude, жёлтый — человек, двухцветный — делают вдвоём. Красный только
+      у нулевого: без него не начинается ничего.</p>
 
     <div class="chain">
 
@@ -319,7 +319,7 @@ footer{
       <div class="step" data-owner="both">
         <div class="num">4</div>
         <div class="body">
-          <div class="title-row"><b>Тесты локально</b><span class="who human">команда человека</span><span class="who claude">Claude выполняет</span><span class="m" style="color:var(--progress)">Ai Testing</span></div>
+          <div class="title-row"><b>Тесты локально</b><span class="who human">команда человека</span><span class="who claude">Claude</span><span class="m" style="color:var(--progress)">Ai Testing</span></div>
           <p class="why">Claude не переводит задачу в <span class="m">Ai Testing</span> сам. «Я дописал»
             не означает «пора проверять»: человек может ещё добавлять требования или менять подход.
             Тестирование начинается с его команды.</p>
@@ -331,7 +331,7 @@ footer{
           </div>
           <p class="why">Дальше <span class="m">npm test</span> и <span class="m">npx tsc --noEmit</span>
             на этой машине, статус <span class="m">Ai Testing</span>, результат числом
-            (<span class="m">1119/1119</span>), а не словом «прошло».</p>
+            («столько-то из стольких-то»), а не словом «прошло».</p>
         </div>
       </div>
 
@@ -341,6 +341,9 @@ footer{
           <div class="title-row"><b>Сигнал «готово к проверке»</b><span class="who claude">Claude</span><span class="m" style="color:var(--progress)">Human Testing</span></div>
           <p class="why">Сначала комментарий с планом проверки, потом статус. Перевода без комментария
             не бывает: иначе задача повиснет готовой на вид и немой по содержанию.</p>
+          <p class="why">Отдельной команды тут не нужно — в отличие от шага 4. Этот перевод не
+            начинает новое действие, а сообщает результат уже начатого: прогон был запущен по
+            команде, зелёный итог и есть повод отдать задачу человеку.</p>
         </div>
       </div>
 
@@ -356,7 +359,7 @@ footer{
       <div class="step" data-owner="human">
         <div class="num">7</div>
         <div class="body">
-          <div class="title-row"><b>Команда на заливку и мерж</b><span class="who human">человек</span></div>
+          <div class="title-row"><b>Команда на заливку и мерж</b><span class="who human">команда человека</span></div>
           <p class="why">Статуса <span class="m">Done</span> мало, и <b>Claude не придёт спросить сам</b>:
             между ответами он не запущен и доску не сторожит. Инициатива целиком у человека —
             команда приходит вместе с его следующим сообщением. Если сообщение есть, а команды
@@ -382,10 +385,10 @@ footer{
         </div>
       </div>
 
-      <div class="step" data-owner="claude" data-gate="1">
+      <div class="step" data-owner="claude">
         <div class="num">8</div>
         <div class="body">
-          <div class="title-row"><b>Заливка и мерж</b><span class="who gate">Claude выполняет</span></div>
+          <div class="title-row"><b>Заливка и мерж</b><span class="who claude">Claude</span></div>
           <p class="why">Только теперь. Разрешение на заливку не является разрешением на мерж —
             это два отдельных вопроса и два отдельных ответа.</p>
         </div>
@@ -405,7 +408,7 @@ footer{
     </div>
 
     <div class="gate">
-      <h3><span class="m">Done</span> — единственный допуск</h3>
+      <h3><span class="m">Done</span> открывает, команда человека запускает</h3>
       <p>До него код живёт локально: ни <span class="m">git push</span>, ни деплой, ни мерж.
         Ни <span class="m">Ai Testing</span>, ни <span class="m">Human Testing</span> допуском не являются.
         Статусы до <span class="m">Done</span> ставит Claude — это отчёт о том, где работа.
@@ -447,7 +450,7 @@ footer{
       <div class="note deny">
         <div class="note-when">Jira недоступна</div>
         <p class="shout">⛔ СТОП: JIRA НЕ ПОДКЛЮЧЕНА — РАБОТА ЗАБЛОКИРОВАНА.</p>
-        <p class="shout">БЕЗ ДОСТУПА К СТАТУСАМ ГЕЙТЫ <span class="m">HUMAN TESTING</span> И <span class="m">DONE</span> НЕПРОВЕРЯЕМЫ.</p>
+        <p class="shout">БЕЗ ДОСТУПА К СТАТУСАМ ГЕЙТ <span class="m">DONE</span> НЕПРОВЕРЯЕМ — ЕГО НЕЧЕМ ПОДТВЕРДИТЬ.</p>
       </div>
 
       <div class="note">
@@ -464,7 +467,7 @@ footer{
     <p>Обязателен всегда. Пишется <b>до</b> смены статуса, а не после.</p>
     <ul class="nevers">
       <li><span class="x">·</span><span><b>Что сделано</b> — коротко, без пересказа коммитов.</span></li>
-      <li><span class="x">·</span><span><b>Результат проверки числом</b> — <span class="m">1119/1119</span>, <span class="m">tsc</span> чистый.</span></li>
+      <li><span class="x">·</span><span><b>Результат проверки числом</b> — сколько тестов прошло из скольких, <span class="m">tsc</span> чистый.</span></li>
       <li><span class="x">·</span><span><b>Что проверять руками</b> — то, чего машина не может.</span></li>
       <li><span class="x">·</span><span><b>Риски приёмки</b> — на что смотреть в первую очередь.</span></li>
       <li><span class="x">·</span><span><b>Что нужно для выката</b> — новые переменные окружения и шаги.</span></li>
@@ -485,6 +488,7 @@ footer{
       <li><span class="x">✕</span><span>Коммита в <span class="m">main</span>.</span></li>
       <li><span class="x">✕</span><span>Перевода в <span class="m">Ai Testing</span> без команды — «дописал» не значит «проверяй».</span></li>
       <li><span class="x">✕</span><span>Перевода в <span class="m">Human Testing</span> без комментария.</span></li>
+      <li><span class="x">✕</span><span>Перевода в <span class="m">Done</span> самим Claude — это решение человека.</span></li>
       <li><span class="x">✕</span><span>Заливки или мержа до <span class="m">Done</span> — даже если попросили.</span></li>
       <li><span class="x">✕</span><span>Заливки по одному лишь статусу <span class="m">Done</span>, без команды человека.</span></li>
       <li><span class="x">✕</span><span>Мержа по разрешению, которое было дано на заливку.</span></li>
