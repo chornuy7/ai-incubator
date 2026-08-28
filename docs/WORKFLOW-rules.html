@@ -133,30 +133,32 @@ code{background:var(--surface-2);border:1px solid var(--line);border-radius:5px;
   content:"";position:absolute;left:16.5px;top:32px;bottom:-2px;
   width:1px;background:var(--line-strong);
 }
+/* Кружок рисуется SVG, а не фоном под прозрачной рамкой: у половинчатых вариантов
+   фон подтекал под border и давал ореол, а наклонный градиент читался как дефект
+   отрисовки. Две дуги дают ровный вертикальный шов и предсказуемую обводку. */
 .num{
-  width:34px;height:34px;border-radius:50%;
+  width:34px;height:34px;
   display:grid;place-items:center;
-  font-family:var(--mono);font-size:13px;font-weight:600;
-  background:var(--surface);border:1px solid var(--line-strong);color:var(--muted);
   position:relative;z-index:1;
 }
-.step[data-owner="claude"] .num{border-color:var(--todo);color:var(--todo)}
-/* Шаг, который делают вдвоём: половина кружка — Claude, половина — человек.
-   Цвет тут уже несёт смысл (кто делает шаг), поэтому и делится он честно. */
-.step[data-owner="both"] .num{
-  background:linear-gradient(100deg,var(--todo) 0 50%,var(--human) 50% 100%);
-  border-color:transparent;color:#fff;
+.num > *{grid-area:1/1}
+.dot{width:34px;height:34px;display:block}
+.dot-bg{fill:var(--dot-bg,var(--surface))}
+.dot-l,.dot-r{fill:var(--dot-l,transparent)}
+.dot-r{fill:var(--dot-r,var(--dot-l,transparent))}
+.dot-ring{fill:none;stroke:var(--dot-ring,var(--line-strong));stroke-width:1}
+.dot-n{
+  font-family:var(--mono);font-size:13px;font-weight:600;
+  color:var(--dot-ink,var(--muted));line-height:1;
 }
-.step[data-owner="human"] .num{background:var(--human);border-color:var(--human);color:#fff}
-.step[data-gate="1"] .num{background:var(--done);border-color:var(--done);color:#fff}
-.step[data-gate="0"] .num{background:var(--stop);border-color:var(--stop);color:#fff}
-/* Блокирующий шаг, который выполняет человек: красная половина — «дальше нельзя»,
-   голубая — кто снимает блокировку. Специфичность выше, чем у правила выше, — оно и
-   должно проигрывать этому случаю. */
-.step[data-owner="human"][data-gate="0"] .num{
-  background:linear-gradient(100deg,var(--stop) 0 50%,var(--human) 50% 100%);
-  border-color:transparent;color:#fff;
-}
+.step[data-owner="claude"]{--dot-ring:var(--todo);--dot-ink:var(--todo)}
+/* Шаг, который делают вдвоём: половина кружка — Claude, половина — человек. */
+.step[data-owner="both"]{--dot-l:var(--todo);--dot-r:var(--human);--dot-ring:transparent;--dot-ink:#fff}
+.step[data-owner="human"]{--dot-l:var(--human);--dot-ring:transparent;--dot-ink:#fff}
+.step[data-gate="0"]{--dot-l:var(--stop);--dot-r:var(--stop);--dot-ring:transparent;--dot-ink:#fff}
+/* Блокирующий шаг, который выполняет человек: красное — «дальше нельзя», голубое —
+   кто снимает блокировку. Специфичность выше, чем у правила выше. */
+.step[data-owner="human"][data-gate="0"]{--dot-l:var(--stop);--dot-r:var(--human)}
 
 .body{display:flex;flex-direction:column;gap:5px;padding-top:4px;min-width:0}
 .title-row{display:flex;align-items:baseline;gap:9px;flex-wrap:wrap}
@@ -267,8 +269,8 @@ footer{
     <h1>Регламент задач</h1>
     <p class="standfirst">
       Договор между человеком и Claude о том, как ведётся задача. Он отвечает на один
-      вопрос: что Claude делает сам, а что — только по решению человека. Всё, что трудно
-      откатить, лежит по вторую сторону этой границы.
+      вопрос: что Claude делает сам, а что — только по команде человека. По команде —
+      всё, что потом трудно откатить: заливка, мерж, выкат на сервер.
     </p>
   </header>
 
@@ -295,7 +297,7 @@ footer{
     <div class="chain">
 
       <div class="step" data-owner="claude" data-gate="0">
-        <div class="num">0</div>
+        <div class="num"><svg class="dot" viewBox="0 0 34 34" aria-hidden="true" focusable="false"><circle class="dot-bg" cx="17" cy="17" r="16"/><path class="dot-l" d="M17 1 A16 16 0 0 0 17 33 Z"/><path class="dot-r" d="M17 1 A16 16 0 0 1 17 33 Z"/><circle class="dot-ring" cx="17" cy="17" r="16"/></svg><span class="dot-n">0</span></div>
         <div class="body">
           <div class="title-row"><b>Подключение к Jira</b><span class="who block">блокирует всё</span></div>
           <p class="why">Нет Jira — работа не начинается и не продолжается. Гейты держатся на статусах;
@@ -304,7 +306,7 @@ footer{
       </div>
 
       <div class="step" data-owner="human" data-gate="0">
-        <div class="num">1</div>
+        <div class="num"><svg class="dot" viewBox="0 0 34 34" aria-hidden="true" focusable="false"><circle class="dot-bg" cx="17" cy="17" r="16"/><path class="dot-l" d="M17 1 A16 16 0 0 0 17 33 Z"/><path class="dot-r" d="M17 1 A16 16 0 0 1 17 33 Z"/><circle class="dot-ring" cx="17" cy="17" r="16"/></svg><span class="dot-n">1</span></div>
         <div class="body">
           <div class="title-row"><b>Ссылка на задачу</b><span class="who human">человек</span><span class="who block">блокирует всё</span></div>
           <p class="why">Работы без задачи не бывает. Вся цепочка держится на её статусах —
@@ -318,7 +320,7 @@ footer{
       </div>
 
       <div class="step" data-owner="claude">
-        <div class="num">2</div>
+        <div class="num"><svg class="dot" viewBox="0 0 34 34" aria-hidden="true" focusable="false"><circle class="dot-bg" cx="17" cy="17" r="16"/><path class="dot-l" d="M17 1 A16 16 0 0 0 17 33 Z"/><path class="dot-r" d="M17 1 A16 16 0 0 1 17 33 Z"/><circle class="dot-ring" cx="17" cy="17" r="16"/></svg><span class="dot-n">2</span></div>
         <div class="body">
           <div class="title-row"><b><span class="m">npm run sync</span></b><span class="who claude">Claude</span></div>
           <p class="why">Первое действие в любой задаче. Отстал <span class="m">main</span> — предупредить и подтянуть;
@@ -327,7 +329,7 @@ footer{
       </div>
 
       <div class="step" data-owner="claude">
-        <div class="num">3</div>
+        <div class="num"><svg class="dot" viewBox="0 0 34 34" aria-hidden="true" focusable="false"><circle class="dot-bg" cx="17" cy="17" r="16"/><path class="dot-l" d="M17 1 A16 16 0 0 0 17 33 Z"/><path class="dot-r" d="M17 1 A16 16 0 0 1 17 33 Z"/><circle class="dot-ring" cx="17" cy="17" r="16"/></svg><span class="dot-n">3</span></div>
         <div class="body">
           <div class="title-row"><b>Своя ветка <span class="m">feat/&lt;lane&gt;-&lt;имя&gt;</span></b><span class="who claude">Claude</span></div>
           <p class="why">В <span class="m">main</span> не коммитим никогда — ни «мелочь», ни «только документацию».</p>
@@ -335,7 +337,7 @@ footer{
       </div>
 
       <div class="step" data-owner="both">
-        <div class="num">4</div>
+        <div class="num"><svg class="dot" viewBox="0 0 34 34" aria-hidden="true" focusable="false"><circle class="dot-bg" cx="17" cy="17" r="16"/><path class="dot-l" d="M17 1 A16 16 0 0 0 17 33 Z"/><path class="dot-r" d="M17 1 A16 16 0 0 1 17 33 Z"/><circle class="dot-ring" cx="17" cy="17" r="16"/></svg><span class="dot-n">4</span></div>
         <div class="body">
           <div class="title-row"><b>Работа</b><span class="who claude">Claude</span><span class="who human">человек</span><span class="m" style="color:var(--progress)">In Progress</span></div>
           <p class="why">Единственный шаг, который делают вдвоём. Claude пишет код, гоняет, читает
@@ -349,12 +351,13 @@ footer{
       </div>
 
       <div class="step" data-owner="both">
-        <div class="num">5</div>
+        <div class="num"><svg class="dot" viewBox="0 0 34 34" aria-hidden="true" focusable="false"><circle class="dot-bg" cx="17" cy="17" r="16"/><path class="dot-l" d="M17 1 A16 16 0 0 0 17 33 Z"/><path class="dot-r" d="M17 1 A16 16 0 0 1 17 33 Z"/><circle class="dot-ring" cx="17" cy="17" r="16"/></svg><span class="dot-n">5</span></div>
         <div class="body">
           <div class="title-row"><b>Тесты локально</b><span class="who human">команда человека</span><span class="who claude">Claude</span><span class="m" style="color:var(--progress)">Ai Testing</span></div>
-          <p class="why">Claude не переводит задачу в <span class="m">Ai Testing</span> сам. «Я дописал»
-            не означает «пора проверять»: человек может ещё добавлять требования или менять подход.
-            Тестирование начинается с его команды.</p>
+          <p class="why">Claude не переводит задачу в <span class="m">Ai Testing</span> сам и не объявляет
+            работу готовой — это вердикт человека. Claude сообщает, что сделал, и спрашивает,
+            считать ли работу законченной: требование ещё может измениться. Тестирование
+            начинается с команды.</p>
           <div class="says mini">
             <div class="says-row">
               <span class="says-lab">тесты</span>
@@ -368,7 +371,7 @@ footer{
       </div>
 
       <div class="step" data-owner="claude">
-        <div class="num">6</div>
+        <div class="num"><svg class="dot" viewBox="0 0 34 34" aria-hidden="true" focusable="false"><circle class="dot-bg" cx="17" cy="17" r="16"/><path class="dot-l" d="M17 1 A16 16 0 0 0 17 33 Z"/><path class="dot-r" d="M17 1 A16 16 0 0 1 17 33 Z"/><circle class="dot-ring" cx="17" cy="17" r="16"/></svg><span class="dot-n">6</span></div>
         <div class="body">
           <div class="title-row"><b>Сигнал «готово к проверке»</b><span class="who claude">Claude</span><span class="m" style="color:var(--progress)">Human Testing</span></div>
           <p class="why">Сначала комментарий с планом проверки, потом статус. Перевода без комментария
@@ -380,7 +383,7 @@ footer{
       </div>
 
       <div class="step" data-owner="human">
-        <div class="num">7</div>
+        <div class="num"><svg class="dot" viewBox="0 0 34 34" aria-hidden="true" focusable="false"><circle class="dot-bg" cx="17" cy="17" r="16"/><path class="dot-l" d="M17 1 A16 16 0 0 0 17 33 Z"/><path class="dot-r" d="M17 1 A16 16 0 0 1 17 33 Z"/><circle class="dot-ring" cx="17" cy="17" r="16"/></svg><span class="dot-n">7</span></div>
         <div class="body">
           <div class="title-row"><b>Приёмка</b><span class="who human">человек</span><span class="m" style="color:var(--done)">Done</span></div>
           <p class="why">Человек проверяет и переводит в <span class="m">Done</span> вручную.
@@ -389,7 +392,7 @@ footer{
       </div>
 
       <div class="step" data-owner="human">
-        <div class="num">8</div>
+        <div class="num"><svg class="dot" viewBox="0 0 34 34" aria-hidden="true" focusable="false"><circle class="dot-bg" cx="17" cy="17" r="16"/><path class="dot-l" d="M17 1 A16 16 0 0 0 17 33 Z"/><path class="dot-r" d="M17 1 A16 16 0 0 1 17 33 Z"/><circle class="dot-ring" cx="17" cy="17" r="16"/></svg><span class="dot-n">8</span></div>
         <div class="body">
           <div class="title-row"><b>Команда на заливку и мерж</b><span class="who human">команда человека</span></div>
           <p class="why">Статуса <span class="m">Done</span> мало, и <b>Claude не придёт спросить сам</b>:
@@ -418,7 +421,7 @@ footer{
       </div>
 
       <div class="step" data-owner="claude">
-        <div class="num">9</div>
+        <div class="num"><svg class="dot" viewBox="0 0 34 34" aria-hidden="true" focusable="false"><circle class="dot-bg" cx="17" cy="17" r="16"/><path class="dot-l" d="M17 1 A16 16 0 0 0 17 33 Z"/><path class="dot-r" d="M17 1 A16 16 0 0 1 17 33 Z"/><circle class="dot-ring" cx="17" cy="17" r="16"/></svg><span class="dot-n">9</span></div>
         <div class="body">
           <div class="title-row"><b>Заливка и мерж</b><span class="who claude">Claude</span></div>
           <p class="why">Только теперь. Разрешение на заливку не является разрешением на мерж —
@@ -471,9 +474,11 @@ footer{
     <div class="notes">
 
       <div class="note ask">
-        <div class="note-when">работа дописана, команды на тесты не было</div>
-        <p class="shout">РАБОТА ГОТОВА. ЗАПУСКАТЬ ТЕСТЫ И ПЕРЕВОДИТЬ В <span class="m">AI TESTING</span>?</p>
-        <p class="after">Статус не меняется, пока не прозвучит «тестируй».</p>
+        <div class="note-when">Claude сделал своё, команды на тесты не было</div>
+        <p class="shout">⚠️ Я СДЕЛАЛ, ЧТО ПРОСИЛИ. СЧИТАТЬ РАБОТУ ЗАКОНЧЕННОЙ И ЗАПУСКАТЬ ТЕСТЫ?</p>
+        <p class="after">Готовность определяете вы: возможно, требование ещё изменится.
+          Claude сообщает, что сделал, а не объявляет задачу готовой. Статус не меняется,
+          пока не прозвучит «тестируй».</p>
       </div>
 
       <div class="note ask">
