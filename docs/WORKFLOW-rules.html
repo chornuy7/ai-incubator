@@ -145,7 +145,13 @@ code{background:var(--surface-2);border:1px solid var(--line);border-radius:5px;
 .num > *{grid-area:1/1}
 .dot{width:34px;height:34px;display:block}
 .dot-bg{fill:var(--dot-fill,var(--surface))}
-.dot-r{fill:var(--dot-half,transparent)}
+/* Накладка повёрнута: строго вертикальная линия делит кружок как чертёж. Крутится
+   только она — сплошной круг под ней не меняется, поэтому одноцветные кружки поворот
+   вообще не замечают. */
+.dot-r{
+  fill:var(--dot-half,transparent);
+  transform:rotate(12deg);transform-box:view-box;transform-origin:17px 17px;
+}
 .dot-ring{fill:none;stroke:var(--dot-ring,var(--line-strong));stroke-width:1}
 .dot-n{
   font-family:var(--mono);font-size:13px;font-weight:600;
