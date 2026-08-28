@@ -8,9 +8,9 @@ import { computeCheck } from 'telegram/Password.js'
 import { SESSIONS_DIR, API_ID, API_HASH, PENDING_TTL_MS } from './config.js'
 import { parseProxy, clientOptions } from './proxy.js'
 import { tcpPing } from './proxies.js'
-import { setAccountMeta, countryFromPhone, avatarColor } from './accountsMeta.js'
+import { setAccountMeta, getAccountMeta, countryFromPhone, avatarColor } from './accountsMeta.js'
 
-/** @typedef {{ client: TelegramClient, phone: string, phoneCodeHash: string, proxy?: string, accountId?: string, timer: NodeJS.Timeout }} PendingAuth */
+/** @typedef {{ client: TelegramClient, phone: string, phoneCodeHash: string, proxy?: string, accountId?: string, ownerId?: string, timer: NodeJS.Timeout }} PendingAuth */
 
 /** @type {Map<string, PendingAuth>} */
 const pending = new Map()
@@ -203,7 +203,7 @@ function mapError(err) {
   return 'Ошибка Telegram API'
 }
 
-export async function tgSendCode({ phone, proxy, accountId }) {
+export async function tgSendCode({ phone, proxy, accountId, ownerId }) {
   const normalized = phone.replace(/\s/g, '')
   if (!/^\+\d{8,15}$/.test(normalized)) {
     throw new Error('Номер должен быть в формате +380XXXXXXXXX')
@@ -222,6 +222,7 @@ export async function tgSendCode({ phone, proxy, accountId }) {
     phoneCodeHash: sent.phoneCodeHash,
     proxy,
     accountId,
+    ownerId, // чьё это пространство — иначе новый аккаунт «ничей» и виден только админу
     timer,
   })
 
@@ -283,8 +284,16 @@ async function finalizeAuth(authId, p) {
 
   const account = userPayload(me, accountId, p.phone, p.proxy)
 
+  /*
+   * Владельца ставим только НОВОМУ аккаунту либо тому, у кого его ещё нет. При
+   * реавторизации чужого аккаунта (админ входит за клиента) переписывать владельца
+   * нельзя — аккаунт молча переехал бы в другое пространство.
+   */
+  const было = await getAccountMeta(accountId).catch(() => ({}))
+  const ставимВладельца = p.ownerId && !было?.ownerId
+
   await setAccountMeta(accountId, {
-    ...(p.ownerId ? { ownerId: String(p.ownerId) } : {}),
+    ...(ставимВладельца ? { ownerId: String(p.ownerId) } : {}),
     proxy: p.proxy || '—',
     country: countryFromPhone(account.phone),
     status: 'active',

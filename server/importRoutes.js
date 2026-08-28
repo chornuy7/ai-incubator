@@ -84,7 +84,12 @@ importRouter.post('/run', async (req, res) => {
     if (!items.length) return res.status(400).json({ ok: false, error: 'Нечего импортировать' })
     // Импортируем В ПРОСТРАНСТВО: аккаунт достаётся владельцу, даже если файлы залил суб.
     const me = req.header('x-user-id')
-    const { resolveSubscriptionOwner } = await import('./users.js')
+    const { resolveSubscriptionOwner, getUser } = await import('./users.js')
+    // Импорт — тоже пополнение парка: сотруднику нельзя (правка 27.08), см. /api/tg/send-code.
+    if (me) {
+      const u = await getUser(me).catch(() => null)
+      if (u?.parentId) return res.status(403).json({ ok: false, error: 'Аккаунты заводит владелец пространства — попросите выдать вам доступ' })
+    }
     let ownerId = me ? await resolveSubscriptionOwner(me) : ''
     /*
      * Импорт «для платформы» (правка 27.08): аккаунт заводится не клиенту, а нам — под

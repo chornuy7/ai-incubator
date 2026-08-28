@@ -204,7 +204,34 @@ app.post('/api/tg/accounts/empty-trash', async (req, res) => {
 app.post('/api/tg/send-code', async (req, res) => {
   try {
     const { phone, proxy, accountId } = req.body ?? {}
-    const result = await tgSendCode({ phone, proxy, accountId })
+    /*
+     * Владелец нового аккаунта (правка 27.08: «с новых аккаунтов не удаётся добавить
+     * аккаунты Telegram»).
+     *
+     * Вход по номеру НЕ проставлял владельца вовсе, а список аккаунтов режется по нему
+     * (`/api/tg/accounts` → resolveSubscriptionOwner). Получалось худшее из возможного:
+     * вход проходил, сессия сохранялась, аккаунт заводился — и тут же исчезал с экрана,
+     * потому что «ничей» виден только админу. Человек добавлял один и тот же номер по
+     * кругу. Импорт владельца ставил давно, вход — нет.
+     *
+     * Берём владельца из СЕССИИ, а не из тела запроса: иначе клиент мог бы записать
+     * аккаунт на чужое пространство.
+     */
+    const me = req.header('x-user-id')
+    const { resolveSubscriptionOwner, getUser } = await import('./users.js')
+    /*
+     * Сотрудник аккаунты не заводит (правка 27.08). Парк — имущество пространства: его
+     * пополняет владелец, сотруднику выдают доступ к уже заведённым. На витрине кнопок
+     * нет, но проверяем и здесь: на витрину в вопросах чужого имущества не полагаемся.
+     * Реавторизация УЖЕ выданного аккаунта (accountId задан) сотруднику остаётся — это
+     * его рабочий инструмент, а не новый аккаунт в парке.
+     */
+    if (me && !accountId) {
+      const u = await getUser(me).catch(() => null)
+      if (u?.parentId) return res.status(403).json({ ok: false, error: 'Аккаунты заводит владелец пространства — попросите выдать вам доступ' })
+    }
+    const ownerId = me ? await resolveSubscriptionOwner(me).catch(() => '') : ''
+    const result = await tgSendCode({ phone, proxy, accountId, ownerId })
     res.json(result)
   } catch (err) {
     res.status(400).json({ ok: false, error: err instanceof Error ? err.message : 'Ошибка' })
