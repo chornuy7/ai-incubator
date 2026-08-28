@@ -2056,7 +2056,18 @@ if (SCHEDULERS_ON) try {
 // дню месяца, а не к точному времени.
 if (SCHEDULERS_ON) try {
   const { creditDueTokens, creditPendingGifts } = await import('./tokenCredit.js')
-  const runCredit = () => creditDueTokens()
+  const { renewDueSubscriptions } = await import('./subscriptionBilling.js')
+  // Продление идёт ПЕРВЫМ (решение владельца 28.08): месячная подписка списывает деньги и
+  // сдвигает срок, и только после этого начисление токенов видит её как действующую.
+  // В обратном порядке подписка, у которой срок кончился сегодня, была бы отброшена как
+  // истёкшая — человек заплатил бы, а топливо получил только в следующем месяце.
+  const runCredit = () => renewDueSubscriptions()
+    .then((r) => {
+      if (r.renewed) console.log(`[подписки] продлено: ${r.renewed}, списано $${r.charged.toFixed(2)}, начислено ${r.tokens} ⚡`)
+      if (r.unpaid) console.warn(`[подписки] не хватило денег: ${r.unpaid} — доступ закрыт до пополнения`)
+    })
+    .catch((e) => console.warn('[подписки] продление не сработало:', e?.message || e))
+    .then(() => creditDueTokens())
     .then((r) => r.users && console.log(`[tokens] месячное начисление: ${r.users} польз., ${r.coins} ⚡`))
     // Подарки сверяем тем же тиком (27.08): одной выдачи в момент оплаты мало — если она
     // не сработала, второго шанса не было никогда, и обещанное на витрине «разово +200 ⚡»
