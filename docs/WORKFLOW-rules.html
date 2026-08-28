@@ -1,0 +1,470 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Регламент задач Myrmex</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;700&family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+
+<style>
+/* Палитра взята из самой доски MR: Jira красит категории статусов в blue-gray (To Do),
+   yellow (In Progress) и green (Done). Цвет тут не украшение — он означает то же, что на доске. */
+:root{
+  --bg:#EFF1F4;
+  --surface:#FFFFFF;
+  --surface-2:#F6F7F9;
+  --ink:#171A20;
+  --muted:#616978;
+  --line:#DCE0E6;
+  --line-strong:#C3C9D3;
+
+  --todo:#6E7B90;        /* blue-gray — задача ещё не в работе */
+  --progress:#A9750A;    /* yellow — в работе / на проверке */
+  --done:#1F7A4C;        /* green — принято */
+  --stop:#A8342A;        /* отказ, блокировка */
+
+  --progress-soft:#FBF2DC;
+  --done-soft:#E3F2E9;
+  --stop-soft:#FBE9E7;
+  --todo-soft:#E9ECF1;
+
+  --sans:"IBM Plex Sans",system-ui,-apple-system,Segoe UI,sans-serif;
+  --display:"Archivo",var(--sans);
+  --mono:"IBM Plex Mono",ui-monospace,SFMono-Regular,Menlo,monospace;
+}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]){
+    --bg:#111419;
+    --surface:#171B21;
+    --surface-2:#1D222A;
+    --ink:#E7EAEF;
+    --muted:#9AA3B2;
+    --line:#272D37;
+    --line-strong:#39414E;
+
+    --todo:#8E9BB0;
+    --progress:#D9A93E;
+    --done:#54B888;
+    --stop:#E8796C;
+
+    --progress-soft:#2A2213;
+    --done-soft:#12271C;
+    --stop-soft:#2B1815;
+    --todo-soft:#1E232C;
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#111419;
+  --surface:#171B21;
+  --surface-2:#1D222A;
+  --ink:#E7EAEF;
+  --muted:#9AA3B2;
+  --line:#272D37;
+  --line-strong:#39414E;
+
+  --todo:#8E9BB0;
+  --progress:#D9A93E;
+  --done:#54B888;
+  --stop:#E8796C;
+
+  --progress-soft:#2A2213;
+  --done-soft:#12271C;
+  --stop-soft:#2B1815;
+  --todo-soft:#1E232C;
+}
+
+*{box-sizing:border-box}
+body{
+  margin:0;
+  background:var(--bg);
+  color:var(--ink);
+  font-family:var(--sans);
+  font-size:16px;
+  line-height:1.6;
+  -webkit-font-smoothing:antialiased;
+}
+.wrap{max-width:860px;margin:0 auto;padding:56px 24px 120px;display:flex;flex-direction:column;gap:52px}
+@media (max-width:600px){.wrap{padding:36px 18px 80px;gap:40px}}
+
+/* ── шапка ─────────────────────────────────────────────── */
+.masthead{display:flex;flex-direction:column;gap:14px}
+.eyebrow{
+  font-family:var(--mono);font-size:11.5px;font-weight:500;
+  letter-spacing:.14em;text-transform:uppercase;color:var(--muted);
+}
+h1{
+  font-family:var(--display);font-weight:700;
+  font-size:clamp(30px,5.4vw,44px);line-height:1.05;letter-spacing:-.022em;
+  margin:0;text-wrap:balance;
+}
+.standfirst{margin:0;color:var(--muted);font-size:17px;max-width:60ch}
+
+h2{
+  font-family:var(--display);font-weight:700;
+  font-size:20px;letter-spacing:-.012em;margin:0 0 4px;text-wrap:balance;
+}
+.sec{display:flex;flex-direction:column;gap:16px}
+.sec > p{margin:0;color:var(--muted);max-width:66ch}
+p{margin:0 0 0}
+
+code,.m{font-family:var(--mono);font-size:.88em}
+code{background:var(--surface-2);border:1px solid var(--line);border-radius:5px;padding:.08em .34em}
+
+/* ── цепочка шагов ─────────────────────────────────────── */
+.chain{display:flex;flex-direction:column;gap:0}
+.step{
+  display:grid;grid-template-columns:34px 1fr;gap:0 16px;
+  position:relative;padding-bottom:18px;
+}
+.step:last-child{padding-bottom:0}
+/* линия-рельс между шагами */
+.step:not(:last-child)::before{
+  content:"";position:absolute;left:16.5px;top:32px;bottom:-2px;
+  width:1px;background:var(--line-strong);
+}
+.num{
+  width:34px;height:34px;border-radius:50%;
+  display:grid;place-items:center;
+  font-family:var(--mono);font-size:13px;font-weight:600;
+  background:var(--surface);border:1px solid var(--line-strong);color:var(--muted);
+  position:relative;z-index:1;
+}
+.step[data-owner="claude"] .num{border-color:var(--todo);color:var(--todo)}
+.step[data-owner="human"] .num{background:var(--progress);border-color:var(--progress);color:#fff}
+.step[data-gate="1"] .num{background:var(--done);border-color:var(--done);color:#fff}
+.step[data-gate="0"] .num{background:var(--stop);border-color:var(--stop);color:#fff}
+
+.body{display:flex;flex-direction:column;gap:5px;padding-top:4px;min-width:0}
+.title-row{display:flex;align-items:baseline;gap:9px;flex-wrap:wrap}
+.title-row b{font-weight:600;font-size:16.5px}
+.why{color:var(--muted);font-size:14.5px;max-width:62ch}
+
+.who{
+  font-family:var(--mono);font-size:10.5px;font-weight:600;
+  letter-spacing:.06em;text-transform:uppercase;
+  padding:2px 7px;border-radius:4px;white-space:nowrap;
+}
+.who.claude{background:var(--todo-soft);color:var(--todo)}
+.who.human{background:var(--progress-soft);color:var(--progress)}
+.who.gate{background:var(--done-soft);color:var(--done)}
+.who.block{background:var(--stop-soft);color:var(--stop)}
+
+/* ── что именно должно прозвучать ──────────────────────── */
+.says{
+  margin-top:10px;border:1px solid var(--line);border-radius:7px;
+  background:var(--surface);overflow:hidden;max-width:62ch;
+}
+.says-row{
+  display:grid;grid-template-columns:96px 1fr;gap:4px 12px;
+  padding:9px 12px;align-items:baseline;
+}
+.says-row + .says-row{border-top:1px solid var(--line)}
+.says-lab{
+  font-family:var(--mono);font-size:10.5px;font-weight:600;
+  letter-spacing:.05em;text-transform:uppercase;color:var(--muted);
+}
+.says-ex{font-family:var(--mono);font-size:13px;line-height:1.75;color:var(--ink)}
+.says-ex q{quotes:"«" "»";font-weight:500}
+.says-ex q + q{margin-left:2px}
+.says-row.no{background:var(--stop-soft)}
+.says-row.no .says-lab{color:var(--stop)}
+.says-row.no .says-ex{color:var(--stop)}
+@media (max-width:520px){
+  .says-row{grid-template-columns:1fr}
+}
+
+/* ── статусы доски ─────────────────────────────────────── */
+.statuses{
+  display:flex;flex-wrap:wrap;gap:8px;align-items:center;
+  font-family:var(--mono);font-size:12.5px;
+}
+.st{padding:4px 10px;border-radius:5px;border:1px solid var(--line);background:var(--surface)}
+.st.todo{color:var(--todo);border-color:color-mix(in srgb,var(--todo) 40%,transparent)}
+.st.prog{color:var(--progress);border-color:color-mix(in srgb,var(--progress) 45%,transparent)}
+.st.done{color:var(--done);border-color:color-mix(in srgb,var(--done) 45%,transparent);font-weight:600}
+.arrow{color:var(--muted);font-size:12px}
+
+/* ── врезки-гейты ──────────────────────────────────────── */
+.gate{
+  background:var(--surface);border:1px solid var(--line);
+  border-left:3px solid var(--done);border-radius:8px;padding:16px 18px;
+  display:flex;flex-direction:column;gap:7px;
+}
+.gate.stop{border-left-color:var(--stop)}
+.gate h3{
+  font-family:var(--display);font-weight:700;font-size:15px;margin:0;
+  letter-spacing:-.005em;
+}
+.gate p{color:var(--muted);font-size:14.5px;max-width:62ch}
+
+/* ── уведомления ───────────────────────────────────────── */
+.notes{display:flex;flex-direction:column;gap:14px}
+.note{
+  border-radius:8px;padding:14px 16px;
+  border:1px solid var(--line);background:var(--surface);
+  display:flex;flex-direction:column;gap:8px;
+}
+.note-when{
+  font-family:var(--mono);font-size:11px;font-weight:500;
+  letter-spacing:.07em;text-transform:uppercase;color:var(--muted);
+}
+.shout{
+  font-family:var(--sans);font-weight:600;font-size:14.5px;line-height:1.45;
+  margin:0;
+}
+.note.ask{background:var(--progress-soft);border-color:color-mix(in srgb,var(--progress) 35%,transparent)}
+.note.ask .shout{color:var(--progress)}
+.note.deny{background:var(--stop-soft);border-color:color-mix(in srgb,var(--stop) 32%,transparent)}
+.note.deny .shout{color:var(--stop)}
+.note .after{color:var(--muted);font-size:14px;margin:0}
+
+/* ── короткий список запретов ──────────────────────────── */
+.nevers{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:9px}
+.nevers li{
+  display:grid;grid-template-columns:16px 1fr;gap:11px;align-items:start;
+  font-size:15px;
+}
+.nevers .x{color:var(--stop);font-family:var(--mono);font-weight:600;line-height:1.55}
+.nevers span:last-child{max-width:62ch}
+
+footer{
+  border-top:1px solid var(--line);padding-top:18px;
+  color:var(--muted);font-size:13.5px;display:flex;flex-direction:column;gap:5px;
+}
+</style>
+</head>
+<body>
+
+<div class="wrap">
+
+  <header class="masthead">
+    <div class="eyebrow">Myrmex · проект MR</div>
+    <h1>Регламент задач</h1>
+    <p class="standfirst">
+      Как задача проходит путь от постановки до <span class="m">main</span>. Девять шагов и два
+      условия, без которых наружу не уходит ничего: задача принята человеком
+      <span class="m">(Done)</span> <b>и</b> человек дал команду. Одного статуса мало.
+    </p>
+  </header>
+
+  <section class="sec">
+    <h2>Статусы доски</h2>
+    <p>Это не выдуманные названия, а реальные состояния проекта MR. Правила ссылаются именно на них.</p>
+    <div class="statuses">
+      <span class="st todo">To&nbsp;Do</span><span class="arrow">→</span>
+      <span class="st prog">In&nbsp;Progress</span><span class="arrow">→</span>
+      <span class="st prog">Ai&nbsp;Testing</span><span class="arrow">→</span>
+      <span class="st prog">Human&nbsp;Testing</span><span class="arrow">→</span>
+      <span class="st done">Done</span>
+    </div>
+  </section>
+
+  <section class="sec">
+    <h2>Цепочка</h2>
+    <p>Шаги не пропускаются и не меняются местами. Цвет кружка — кто делает шаг.</p>
+
+    <div class="chain">
+
+      <div class="step" data-owner="claude" data-gate="0">
+        <div class="num">0</div>
+        <div class="body">
+          <div class="title-row"><b>Подключение к Jira</b><span class="who block">блокирует всё</span></div>
+          <p class="why">Нет Jira — работа не начинается и не продолжается. Гейты держатся на статусах;
+            без доступа к ним они превращаются в честное слово.</p>
+        </div>
+      </div>
+
+      <div class="step" data-owner="claude">
+        <div class="num">1</div>
+        <div class="body">
+          <div class="title-row"><b><span class="m">npm run sync</span></b><span class="who claude">Claude</span></div>
+          <p class="why">Первое действие в любой задаче. Отстал <span class="m">main</span> — предупредить и подтянуть;
+            актуален — просто сказать, что проверил.</p>
+        </div>
+      </div>
+
+      <div class="step" data-owner="claude">
+        <div class="num">2</div>
+        <div class="body">
+          <div class="title-row"><b>Своя ветка <span class="m">feat/&lt;lane&gt;-&lt;имя&gt;</span></b><span class="who claude">Claude</span></div>
+          <p class="why">В <span class="m">main</span> не коммитим никогда — ни «мелочь», ни «только документацию».</p>
+        </div>
+      </div>
+
+      <div class="step" data-owner="claude">
+        <div class="num">3</div>
+        <div class="body">
+          <div class="title-row"><b>Работа</b><span class="who claude">Claude</span><span class="m" style="color:var(--progress)">In Progress</span></div>
+        </div>
+      </div>
+
+      <div class="step" data-owner="claude">
+        <div class="num">4</div>
+        <div class="body">
+          <div class="title-row"><b>Тесты локально</b><span class="who claude">Claude</span><span class="m" style="color:var(--progress)">Ai Testing</span></div>
+          <p class="why"><span class="m">npm test</span> и <span class="m">npx tsc --noEmit</span> на этой машине.
+            Результат сообщается числом (<span class="m">1119/1119</span>), а не словом «прошло».</p>
+        </div>
+      </div>
+
+      <div class="step" data-owner="claude">
+        <div class="num">5</div>
+        <div class="body">
+          <div class="title-row"><b>Сигнал «готово к проверке»</b><span class="who claude">Claude</span><span class="m" style="color:var(--progress)">Human Testing</span></div>
+          <p class="why">Сначала комментарий с планом проверки, потом статус. Перевода без комментария
+            не бывает: иначе задача повиснет готовой на вид и немой по содержанию.</p>
+        </div>
+      </div>
+
+      <div class="step" data-owner="human">
+        <div class="num">6</div>
+        <div class="body">
+          <div class="title-row"><b>Приёмка</b><span class="who human">человек</span><span class="m" style="color:var(--done)">Done</span></div>
+          <p class="why">Человек проверяет и переводит в <span class="m">Done</span> вручную.
+            Это единственный допуск — и он про решение, а не про статус.</p>
+        </div>
+      </div>
+
+      <div class="step" data-owner="human">
+        <div class="num">7</div>
+        <div class="body">
+          <div class="title-row"><b>Команда на заливку и мерж</b><span class="who human">человек</span></div>
+          <p class="why">Статуса <span class="m">Done</span> мало, и <b>Claude не придёт спросить сам</b>:
+            между ответами он не запущен и доску не сторожит. Инициатива целиком у человека —
+            команда приходит вместе с его следующим сообщением. Если сообщение есть, а команды
+            в нём нет, Claude сверяет статус и спрашивает уже в ответ.</p>
+          <div class="says">
+            <div class="says-row">
+              <span class="says-lab">заливка</span>
+              <span class="says-ex"><q>залей</q> <q>запушь</q> <q>выкатывай</q> <q>деплой</q></span>
+            </div>
+            <div class="says-row">
+              <span class="says-lab">мерж</span>
+              <span class="says-ex"><q>мержи</q> <q>смержи в main</q> <q>вливай в main</q></span>
+            </div>
+            <div class="says-row">
+              <span class="says-lab">и то и то</span>
+              <span class="says-ex"><q>залей и смержи</q> <q>разрешаю заливку и мерж</q></span>
+            </div>
+            <div class="says-row no">
+              <span class="says-lab">не команда</span>
+              <span class="says-ex"><q>задача в done</q> <q>готово</q> <q>ок</q> · молчание · сам статус в Jira</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="step" data-owner="claude" data-gate="1">
+        <div class="num">8</div>
+        <div class="body">
+          <div class="title-row"><b>Заливка и мерж</b><span class="who gate">Claude выполняет</span></div>
+          <p class="why">Только теперь. Разрешение на заливку не является разрешением на мерж —
+            это два отдельных вопроса и два отдельных ответа.</p>
+        </div>
+      </div>
+
+    </div>
+  </section>
+
+  <section class="sec">
+    <h2>Два гейта</h2>
+
+    <div class="gate stop">
+      <h3>Jira не подключена — стоп на всём</h3>
+      <p>Можно только две вещи, и обе не работа над задачей: разбираться с самим подключением
+        и отвечать на вопросы по существующему коду. Всё, что пишет в файлы, коммитит, заливает
+        или мержит, — заблокировано.</p>
+    </div>
+
+    <div class="gate">
+      <h3><span class="m">Done</span> — единственный допуск</h3>
+      <p>До него код живёт локально: ни <span class="m">git push</span>, ни деплой, ни мерж.
+        Ни <span class="m">Ai Testing</span>, ни <span class="m">Human Testing</span> допуском не являются.
+        Статусы до <span class="m">Done</span> ставит Claude — это отчёт о том, где работа.
+        <span class="m">Done</span> ставит только человек — это решение о том, что работа принята.</p>
+      <p><b>Но и <span class="m">Done</span> сам по себе ничего не запускает</b> — и никого не будит.
+        Claude узнаёт о статусе не в момент перевода, а когда человек к нему обратится: между
+        ответами он не работает. Поэтому заливка и мерж начинаются с команды человека — отдельной
+        для каждого действия. Достаточно одного слова («залей», «мержи»), но оно должно быть
+        сказано: формулировка свободная, наличие — обязательное.</p>
+    </div>
+  </section>
+
+  <section class="sec">
+    <h2>Уведомления</h2>
+    <p>Все одинаковые: отдельный абзац, жирным, ключевая строка заглавными — чтобы нельзя было
+      пролистать взглядом.</p>
+
+    <div class="notes">
+
+      <div class="note ask">
+        <div class="note-when">человек написал, задача в Done, команды в сообщении нет</div>
+        <p class="shout">⚠️ ЗАДАЧА &lt;KEY&gt; В <span class="m">DONE</span>. РАЗРЕШАЕШЬ ЗАЛИВКУ И МЕРЖ <span class="m">feat/…</span> → <span class="m">MAIN</span>?</p>
+        <p class="shout">НИ ЗАЛИВКА, НИ МЕРЖ НЕ БУДУТ ВЫПОЛНЕНЫ БЕЗ ЯВНОГО ПОДТВЕРЖДЕНИЯ.</p>
+      </div>
+
+      <div class="note deny">
+        <div class="note-when">просят залить раньше времени</div>
+        <p class="shout">⛔ СТОП: ЗАЛИВКА ДО СТАТУСА <span class="m">DONE</span> НАРУШАЕТ WORKFLOW И НЕБЕЗОПАСНА.</p>
+        <p class="shout">ЗАДАЧА &lt;KEY&gt; В СТАТУСЕ <span class="m">HUMAN TESTING</span> — ЗАЛИВКА НЕ ВЫПОЛНЕНА.</p>
+        <p class="after">Что дальше: провести проверку, перевести задачу в <span class="m">Done</span> вручную, затем повторить запрос.</p>
+      </div>
+
+      <div class="note deny">
+        <div class="note-when">Jira недоступна</div>
+        <p class="shout">⛔ СТОП: JIRA НЕ ПОДКЛЮЧЕНА — РАБОТА ЗАБЛОКИРОВАНА.</p>
+        <p class="shout">БЕЗ ДОСТУПА К СТАТУСАМ ГЕЙТЫ <span class="m">HUMAN TESTING</span> И <span class="m">DONE</span> НЕПРОВЕРЯЕМЫ.</p>
+      </div>
+
+      <div class="note">
+        <div class="note-when">начало задачи, main отстал</div>
+        <p class="shout" style="color:var(--muted)">⚠️ MAIN НЕ ПОДТЯНУТ — РАБОТА ПОШЛА БЫ ПОВЕРХ УСТАРЕВШЕГО КОДА.</p>
+        <p class="after">Выполняю <span class="m">npm run sync</span> перед началом.</p>
+      </div>
+
+    </div>
+  </section>
+
+  <section class="sec">
+    <h2>Комментарий при переводе в <span class="m" style="font-size:.85em">Human Testing</span></h2>
+    <p>Обязателен всегда. Пишется <b>до</b> смены статуса, а не после.</p>
+    <ul class="nevers">
+      <li><span class="x">·</span><span><b>Что сделано</b> — коротко, без пересказа коммитов.</span></li>
+      <li><span class="x">·</span><span><b>Результат проверки числом</b> — <span class="m">1119/1119</span>, <span class="m">tsc</span> чистый.</span></li>
+      <li><span class="x">·</span><span><b>Что проверять руками</b> — то, чего машина не может.</span></li>
+      <li><span class="x">·</span><span><b>Риски приёмки</b> — на что смотреть в первую очередь.</span></li>
+      <li><span class="x">·</span><span><b>Что нужно для выката</b> — новые переменные окружения и шаги.</span></li>
+    </ul>
+    <div class="gate">
+      <h3>Задача трогала интерфейс — плюс четыре пункта</h3>
+      <p><b>Чем запустить</b> (точная команда и порт) · <b>куда идти</b> (адрес и путь кликов) ·
+        <b>что должно произойти</b> (по шагам) · <b>как выглядит регресс</b> (чтобы тестировщик
+        узнал дефект, а не гадал «так и было или нет»).</p>
+      <p>Без этого ревью уходит на поиск экрана, и до самой проверки человек не доходит.</p>
+    </div>
+  </section>
+
+  <section class="sec">
+    <h2>Чего не бывает</h2>
+    <ul class="nevers">
+      <li><span class="x">✕</span><span>Работы без подключённой Jira.</span></li>
+      <li><span class="x">✕</span><span>Коммита в <span class="m">main</span>.</span></li>
+      <li><span class="x">✕</span><span>Перевода в <span class="m">Human Testing</span> без комментария.</span></li>
+      <li><span class="x">✕</span><span>Заливки или мержа до <span class="m">Done</span> — даже если попросили.</span></li>
+      <li><span class="x">✕</span><span>Заливки по одному лишь статусу <span class="m">Done</span>, без команды человека.</span></li>
+      <li><span class="x">✕</span><span>Мержа по разрешению, которое было дано на заливку.</span></li>
+      <li><span class="x">✕</span><span>Статуса, взятого со слов: Claude читает его в Jira сам.</span></li>
+    </ul>
+  </section>
+
+  <footer>
+    <div>Источник правды — <span class="m">CLAUDE.md</span>, раздел «WORKFLOW». Здесь короткий пересказ.</div>
+    <div>Проект MR · Myrmex · 28.08.2026</div>
+  </footer>
+
+</div>
+
+</body>
+</html>
