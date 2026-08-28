@@ -150,6 +150,13 @@ code{background:var(--surface-2);border:1px solid var(--line);border-radius:5px;
 .step[data-owner="human"] .num{background:var(--human);border-color:var(--human);color:#fff}
 .step[data-gate="1"] .num{background:var(--done);border-color:var(--done);color:#fff}
 .step[data-gate="0"] .num{background:var(--stop);border-color:var(--stop);color:#fff}
+/* Блокирующий шаг, который выполняет человек: красная половина — «дальше нельзя»,
+   голубая — кто снимает блокировку. Специфичность выше, чем у правила выше, — оно и
+   должно проигрывать этому случаю. */
+.step[data-owner="human"][data-gate="0"] .num{
+  background:linear-gradient(100deg,var(--stop) 0 50%,var(--human) 50% 100%);
+  border-color:transparent;color:#fff;
+}
 
 .body{display:flex;flex-direction:column;gap:5px;padding-top:4px;min-width:0}
 .title-row{display:flex;align-items:baseline;gap:9px;flex-wrap:wrap}
@@ -280,9 +287,10 @@ footer{
   <section class="sec">
     <h2>Цепочка</h2>
     <p>Шаги не пропускаются и не меняются местами. Цвет кружка — кто делает шаг:
-      серый — Claude, голубой — человек, двухцветный — делают вдвоём. Красный один,
-      нулевой: без Jira не начинается ничего. Жёлтым и зелёным набраны статусы доски —
-      там цвет означает то же, что в Jira.</p>
+      серый — Claude, голубой — человек, двухцветный — делают вдвоём. Красный означает
+      «дальше нельзя»: нулевой шаг красный целиком, первый — наполовину, потому что
+      снимает блокировку человек. Жёлтым и зелёным набраны статусы доски — там цвет
+      означает то же, что в Jira.</p>
 
     <div class="chain">
 
@@ -295,7 +303,7 @@ footer{
         </div>
       </div>
 
-      <div class="step" data-owner="human">
+      <div class="step" data-owner="human" data-gate="0">
         <div class="num">1</div>
         <div class="body">
           <div class="title-row"><b>Ссылка на задачу</b><span class="who human">человек</span><span class="who block">блокирует всё</span></div>
