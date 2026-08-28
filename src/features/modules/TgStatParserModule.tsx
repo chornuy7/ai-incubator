@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
-  UploadCloud, ShieldCheck, KeyRound, RefreshCw, Plus, Search, Download, Trash2,
+  UploadCloud, ShieldCheck, KeyRound, RefreshCw, Plus, Search, Download, Trash2, Pencil,
   ExternalLink, StopCircle, CheckCircle2, XCircle, Clock, Loader2, Database, Cookie, AlertTriangle, FileSpreadsheet,
 } from 'lucide-react'
 import { useApp } from '@/mocks/store'
@@ -9,7 +9,7 @@ import { cn } from '@/shared/lib/utils'
 import { TgStatSearchPanel } from './TgStatSearchPanel'
 import {
   fetchTgstatOptions, fetchTgstatSession, uploadTgstatSession, verifyTgstatSession, clearTgstatSession,
-  fetchTgstatImports, createTgstatImport, fetchTgstatChats, cancelTgstatImport, deleteTgstatImport, tgstatExportUrl, tgstatExportXlsxUrl,
+  fetchTgstatImports, createTgstatImport, fetchTgstatChats, cancelTgstatImport, deleteTgstatImport, renameTgstatImport, tgstatExportUrl, tgstatExportXlsxUrl,
   type TgstatOptions, type TgstatSession, type TgstatImport, type TgstatChat, type TgstatImportStatus,
 } from '@/api/tgstatApi'
 
@@ -81,6 +81,10 @@ export function TgStatParserModule() {
   const ms = typeof minSubs === 'number' ? minSubs : 0
 
   const [openImport, setOpenImport] = useState<TgstatImport | null>(null)
+  // Своё имя импорта (26.08) — как у «Последних запросов» прямого парсера: категория
+  // «Криптовалюта» через месяц не отличает три выгрузки друг от друга.
+  const [renaming, setRenaming] = useState(0)
+  const [renameDraft, setRenameDraft] = useState('')
   const [chats, setChats] = useState<TgstatChat[]>([])
   const [chatsLoading, setChatsLoading] = useState(false)
   const [pasteOpen, setPasteOpen] = useState(false)
@@ -181,6 +185,16 @@ export function TgStatParserModule() {
     try { setChats(await fetchTgstatChats(imp.id)) } catch { pushToast({ type: 'error', title: 'Не удалось загрузить результаты' }) } finally { setChatsLoading(false) }
   }
   const handleCancel = async (id: number) => { try { const u = await cancelTgstatImport(id); setImports((p) => p.map((i) => (i.id === id ? u : i))); pushToast({ type: 'info', title: 'Импорт отменён' }) } catch { pushToast({ type: 'error', title: 'Не удалось отменить' }) } }
+  const saveRename = async (imp: TgstatImport) => {
+    const title = renameDraft.trim()
+    setRenaming(0)
+    if (title === (imp.title || '')) return
+    try {
+      const next = await renameTgstatImport(imp.id, title)
+      setImports((p) => p.map((i) => (i.id === imp.id ? next : i)))
+    } catch { pushToast({ type: 'error', title: 'Не удалось переименовать' }) }
+  }
+
   const handleDelete = async (id: number) => { try { await deleteTgstatImport(id); setImports((p) => p.filter((i) => i.id !== id)); if (openImport?.id === id) setOpenImport(null); pushToast({ type: 'success', title: 'Импорт удалён' }) } catch { pushToast({ type: 'error', title: 'Не удалось удалить' }) } }
 
   return (
@@ -331,10 +345,23 @@ export function TgStatParserModule() {
                   <div className="flex flex-wrap items-center gap-3">
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center gap-2">
-                        <span className="font-semibold text-fg">{catLabel.get(imp.category) ?? imp.category}</span>
+                        {renaming === imp.id ? (
+                          <input
+                            autoFocus
+                            value={renameDraft}
+                            onChange={(e) => setRenameDraft(e.target.value)}
+                            onBlur={() => void saveRename(imp)}
+                            onKeyDown={(e) => { if (e.key === 'Enter') void saveRename(imp); if (e.key === 'Escape') setRenaming(0) }}
+                            className="input h-7 max-w-[240px] text-sm"
+                            placeholder="Название импорта"
+                          />
+                        ) : (
+                          <span className="font-semibold text-fg">{imp.title || catLabel.get(imp.category) || imp.category}</span>
+                        )}
                         <Badge tone={m.tone}>{m.icon} {m.label}</Badge>
                       </div>
                       <div className="text-xs text-muted">
+                        {imp.title ? `${catLabel.get(imp.category) ?? imp.category} · ` : ''}
                         {regLabel.get(imp.region ?? '') ?? imp.region ?? 'Все регионы'} · {imp.pages_processed}/{imp.max_pages} стр.
                         {imp.min_subscribers > 0 && ` · ≥ ${fmtNum(imp.min_subscribers)} подп.`} · {fmtDate(imp.created_at)}
                       </div>
@@ -356,6 +383,8 @@ export function TgStatParserModule() {
                       {(imp.status === 'queued' || imp.status === 'running') && (
                         <button onClick={() => handleCancel(imp.id)} className="btn-icon h-9 w-9" title="Отменить"><StopCircle size={15} /></button>
                       )}
+                      <button onClick={() => { setRenaming(imp.id); setRenameDraft(imp.title || '') }}
+                        className="btn-icon h-9 w-9" title="Переименовать"><Pencil size={15} /></button>
                       {imp.status !== 'running' && imp.status !== 'queued' && (
                         <button onClick={() => handleDelete(imp.id)} className="btn-icon h-9 w-9 text-rose-300" title="Удалить"><Trash2 size={15} /></button>
                       )}

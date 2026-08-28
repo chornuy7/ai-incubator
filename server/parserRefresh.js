@@ -62,7 +62,13 @@ async function pickAccounts() {
   const { tgListAccounts } = await import('./tgAccounts.js')
   const { isAccountRunnable } = await import('./lib/protection.js')
   const all = await tgListAccounts({ includeTrash: false })
-  const pool = all.filter((a) => a.service === true && isAccountRunnable(a.status || 'active'))
+  /*
+   * Только аккаунты ПЛАТФОРМЫ (правка 27.08). Прежний фильтр смотрел на одну отметку
+   * «сервисный», а поставить её можно было любому аккаунту из общего парка — в том числе
+   * рабочему профилю клиента. Отметка осталась (ею выбирают, кто из наших дежурит), но
+   * теперь она действует только поверх признака «наш».
+   */
+  const pool = all.filter((a) => a.platform === true && a.service === true && isAccountRunnable(a.status || 'active'))
   return pool.slice(0, getCronSync().parserAccounts ?? ACCOUNTS_PER_RUN).map((a) => a.id)
 }
 

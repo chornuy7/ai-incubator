@@ -22,7 +22,9 @@ import { changeBalance, fetchSubscription, saveUserModules, fetchWalletHistory, 
 import { promptDialog, confirmDialog } from '@/shared/lib/dialog'
 import { ApiDocsTab } from '@/features/billing/ApiDocsTab'
 import { fmt, fmtDate, cleanPrice, fmtUsd, usdEq, MetricTile } from '@/pages/admin/adminShared'
-import { MonitoringTab, AccountsHealthBlocks } from '@/pages/admin/MonitoringTab'
+import { MonitoringTab, AccountsHealthBlocks, ServiceAccounts } from '@/pages/admin/MonitoringTab'
+import { fetchAccounts } from '@/api/accountsApi'
+import type { TgAccount } from '@/shared/types'
 import { AccountsTab } from '@/pages/admin/AccountsTab'
 import { BundlesEditor } from '@/pages/admin/BundlesEditor'
 import { SetupsEditor } from '@/pages/admin/SetupsEditor'
@@ -488,8 +490,17 @@ export function AdminStatsPage() {
         /* §8 (MR-44): тикеты поддержки — поддержка видит все, отвечает, двигает статус. */
         <AdminTicketsTab key={reloadTick} autoRefresh={autoRefresh} registerReload={registerTicketsReload} />
       ) : tab === 14 ? (
-        /* §6 (MR-40b): сессия каталог-парсера (cookies) — управление из админки. */
-        <AdminParserSessionTab key={reloadTick} />
+        /*
+         * Вкладка «Парсер» целиком: сессия каталога + аккаунты прямого парсера
+         * (вопрос владельца 27.08: «почему тут только сессия? а где для обычного
+         * парсера телеграм-аккаунты, импорт и какие в работе?»). Каталог ходит
+         * куками, прямой парсер — аккаунтами, и до сих пор в админке был виден
+         * только первый.
+         */
+        <div className="space-y-4">
+          <AdminParserSessionTab key={reloadTick} />
+          <ParserAccounts key={`pa-${reloadTick}`} />
+        </div>
       ) : (
         <ApiDocsTab key={reloadTick} />
       )}
@@ -1541,6 +1552,71 @@ function UserActivityLog({ state }: { state: UserActivity | 'loading' | undefine
  * стороны счёта — сколько человек занёс и сколько сжёг. Списания сюда не идут, это
  * не покупка; здесь только положительные операции — начисления и пополнения.
  */
+/**
+ * Аккаунты прямого парсера в админке (вопрос владельца 27.08: «где телеграм-аккаунты,
+ * импорт и какие в работе?»).
+ *
+ * Прямой парсер ходит НЕ куками, а обычными аккаунтами — теми же, что и боевые модули.
+ * В админке об этом не было ни слова: вкладка показывала только cookies каталога, и
+ * выходило, будто у парсера аккаунтов нет вовсе.
+ *
+ * Здесь три вещи, которых не хватало: сколько аккаунтов сейчас заняты парсингом, какие
+ * выделены под ревизию базы и где их импортировать. Импорт живёт в менеджере аккаунтов
+ * и остаётся там: дублировать загрузку сессий во второе место значит чинить её дважды.
+ */
+function ParserAccounts() {
+  const [active, setActive] = useState<ActiveNow | null>(null)
+  const [accounts, setAccounts] = useState<TgAccount[]>([])
+
+  useEffect(() => {
+    let alive = true
+    void fetchActiveNow().then((a) => { if (alive) setActive(a) }).catch(() => {})
+    void fetchAccounts().then((a) => { if (alive) setAccounts(a as unknown as TgAccount[]) }).catch(() => {})
+    return () => { alive = false }
+  }, [])
+
+  const PARSERS = ['parsing', 'parsing-groups', 'parsing-users', 'parsing-messages', 'parsing-comments']
+  const running = (active?.running ?? []).filter((t) => PARSERS.includes(t.moduleKey))
+  const занято = running.reduce((sum, t) => sum + (t.accounts || 0), 0)
+  const живые = accounts.filter((a) => !a.inTrash)
+  const годные = живые.filter((a) => (a.status || 'active') === 'active')
+
+  return (
+    <>
+      <div className="mb-1 mt-4 flex items-center gap-1.5 text-xs font-bold uppercase tracking-wide text-muted">
+        <Users size={13} /> Аккаунты прямого парсера
+      </div>
+      <Card className="p-4">
+        <p className="mb-3 text-xs leading-relaxed text-muted">
+          Поиск по ключевым словам идёт обычными Telegram-аккаунтами — теми же, что и боевые модули;
+          куки нужны только каталогу выше. Импорт и статусы — в <b className="text-fg">менеджере аккаунтов</b>,
+          он один на всю платформу: заводить вторую загрузку сессий здесь значило бы чинить её дважды.
+        </p>
+        <div className="grid gap-3 sm:grid-cols-3">
+          <MetricTile label="Всего аккаунтов" value={fmt(живые.length)} />
+          <MetricTile label="Готовы к парсингу" value={fmt(годные.length)} sub="статус «активные»" />
+          <MetricTile label="Заняты парсингом сейчас" value={fmt(занято)} sub={running.length ? `задач: ${running.length}` : 'парсеры не запущены'} />
+        </div>
+        {running.length > 0 && (
+          <div className="mt-3 space-y-1">
+            {running.map((t) => (
+              <div key={t.id} className="flex items-center gap-3 rounded-lg bg-elevated px-2.5 py-1.5 text-xs">
+                <span className="min-w-0 flex-1 truncate text-fg">{t.title || t.moduleKey}</span>
+                <span className="shrink-0 text-white/45">{t.accounts} акк.</span>
+                <span className="w-16 shrink-0 text-right tabular-nums text-white/45">{t.percent}%</span>
+              </div>
+            ))}
+          </div>
+        )}
+        <a href="/panel/accounts" className="btn-soft mt-3 inline-flex h-8 px-3 text-xs">Открыть менеджер аккаунтов</a>
+      </Card>
+      {/* Пул под ревизию базы — тот же компонент, что в «Мониторинге»: настройка одна,
+          а место, где её ищут, зависит от того, с чем человек сейчас работает. */}
+      <ServiceAccounts />
+    </>
+  )
+}
+
 /**
  * §6 (MR-40b): управление сессией каталог-парсера ИЗ АДМИНКИ. Раньше cookies-сессия
  * настраивалась только внутри модуля «Парсер по каталогу» (её мог трогать любой с

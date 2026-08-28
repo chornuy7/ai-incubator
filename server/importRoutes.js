@@ -84,8 +84,22 @@ importRouter.post('/run', async (req, res) => {
     if (!items.length) return res.status(400).json({ ok: false, error: 'Нечего импортировать' })
     // Импортируем В ПРОСТРАНСТВО: аккаунт достаётся владельцу, даже если файлы залил суб.
     const me = req.header('x-user-id')
-    const { resolveSubscriptionOwner } = await import('./users.js')
-    const ownerId = me ? await resolveSubscriptionOwner(me) : ''
+    const { resolveSubscriptionOwner, getUser } = await import('./users.js')
+    // Импорт — тоже пополнение парка: сотруднику нельзя (правка 27.08), см. /api/tg/send-code.
+    if (me) {
+      const u = await getUser(me).catch(() => null)
+      if (u?.parentId) return res.status(403).json({ ok: false, error: 'Аккаунты заводит владелец пространства — попросите выдать вам доступ' })
+    }
+    let ownerId = me ? await resolveSubscriptionOwner(me) : ''
+    /*
+     * Импорт «для платформы» (правка 27.08): аккаунт заводится не клиенту, а нам — под
+     * ревизию общей базы в админ-панели. Владельца не получает и в клиентских списках не
+     * появляется. Разрешено ТОЛЬКО администратору: иначе любой клиент мог бы вывести свои
+     * аккаунты из-под учёта пространства.
+     */
+    const { isAdminRequest } = await import('./lib/accessGuard.js')
+    const forPlatform = req.body?.forPlatform === true && await isAdminRequest(req)
+    if (forPlatform) ownerId = ''
     const { proxyMode = 'pool', proxyIds = [], singleProxy = '', manualProxies = [], validate = true, passcode = '', root = '' } = req.body ?? {}
 
     // На проде импорт с диска сервера запрещён (см. localFsAllowed): единственный
@@ -131,6 +145,8 @@ importRouter.post('/run', async (req, res) => {
       const proxy = assigned[i]
       try {
         const r = await importOne(it, { proxy, validate, passcode, ownerId })
+        // Отмечаем наш аккаунт сразу: дежурным по ревизии его назначат в админ-панели.
+        if (forPlatform && r?.ok && r.accountId) await setAccountMeta(r.accountId, { platform: true })
         results.push({ name: it.name, proxy: proxy || null, ...r })
       } catch (e) {
         results.push({ name: it.name, ok: false, reason: e instanceof Error ? e.message : 'ошибка импорта' })

@@ -49,6 +49,7 @@ function toAccountDto(accountId, meta, me, sessionOk) {
     // клиентам (решение владельца 26.08). Отдаём в списке — по нему фильтрует и
     // планировщик ревизии, и интерфейс «чем есть парсить».
     service: meta.service === true,
+    platform: meta.platform === true, // наш аккаунт, заведённый под админ-панель
     avatarColor: meta.avatarColor || avatarColor(accountId),
     name,
     phone: phone && !phone.startsWith('+') ? `+${phone}` : phone || '—',
@@ -119,7 +120,16 @@ export async function tgListAccounts(opts = {}) {
   // Без ownerId (админ, дев без сессии, внутренние вызовы) фильтра нет — иначе воркеры
   // и админ-панель перестали бы видеть аккаунты, с которыми работают.
   const ownerId = opts.ownerId ? String(opts.ownerId) : null
-  const ids = await listSessionIds()
+  /*
+   * `only` — собрать ОДИН аккаунт (правка 27.08: «очень долго обновляется прокси»).
+   *
+   * Сохранение прокси пересобирало весь парк дважды: сначала tgPatchAccount строил список
+   * из девяноста восьми аккаунтов, чтобы вернуть одну изменённую строку, потом витрина
+   * перезагружала список целиком. Каждый аккаунт — это чтение метаданных и файла сессии,
+   * то есть двести лишних обращений на одно нажатие «Сохранить».
+   */
+  const only = opts.only ? String(opts.only) : null
+  const ids = (await listSessionIds()).filter((id) => !only || id === only)
   const accounts = []
   const trustAll = await getAllTrustCache()
 
@@ -218,15 +228,22 @@ export async function tgPatchAccount(accountId, patch) {
   const sessionStr = await loadSessionString(accountId)
   if (!sessionStr) throw new Error('Аккаунт не найден')
 
-  const allowed = ['role', 'project', 'country', 'status', 'proxy', 'inTrash', 'note']
+  /*
+   * `service` — метка «этот аккаунт работает на ревизию базы» (правка 27.08). Ревизия
+   * парсера берёт ТОЛЬКО такие аккаунты (parserRefresh.pickAccounts), но проставить метку
+   * было негде ни в одном интерфейсе: пул всегда оставался пустым, и крон каждые 12 часов
+   * писал «нет свободных сервисных аккаунтов». Поле существовало, работать им было нельзя.
+   */
+  const allowed = ['role', 'project', 'country', 'status', 'proxy', 'inTrash', 'note', 'service']
   /** @type {Record<string, unknown>} */
   const clean = {}
   for (const k of allowed) {
     if (patch[k] !== undefined) clean[k] = patch[k]
   }
   await setAccountMeta(accountId, clean)
-  const accounts = await tgListAccounts()
-  return accounts.find((a) => a.id === accountId)
+  // Только этот аккаунт: остальные девяносто семь к правке одной строки отношения не имеют.
+  const [account] = await tgListAccounts({ only: accountId })
+  return account
 }
 
 export async function tgDeleteAccount(accountId) {

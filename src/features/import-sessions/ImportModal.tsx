@@ -5,6 +5,7 @@ import { Modal, Select, Badge, Tip} from '@/shared/ui'
 import { cn } from '@/shared/lib/utils'
 import { browseDirs, scanFolder, runImport, proxyCapacity, pairPreview, uploadFolder, cleanupUpload, importCapabilities, collectDroppedEntries, type ScannedAccount, type ProxyMode, type ImportResultRow, type PairPoolItem } from '@/api/accountImportApi'
 import { fetchProxies, importProxies, toProxyUrl, isUsableProxy, type Proxy } from '@/api/proxiesApi'
+import { useSession } from '@/features/auth/session'
 
 type Step = 'pick' | 'found' | 'proxy' | 'result'
 
@@ -46,6 +47,14 @@ export function ImportModal({ open, onClose, onImported }: { open: boolean; onCl
   const [pool, setPool] = useState<PairPoolItem[]>([])
   const [pairs, setPairs] = useState<(string | null)[]>([])
   const [validate, setValidate] = useState(true)
+  /*
+   * Импорт «для платформы» (правка 27.08: «только наши, которые мы законектим именно для
+   * админ-панели»). Такие аккаунты не достаются пространству клиента и только они могут
+   * дежурить по ревизии общей базы. Чекбокс виден администратору — сервер это же и
+   * перепроверяет, на витрину полагаться нельзя.
+   */
+  const [forPlatform, setForPlatform] = useState(false)
+  const isAdmin = useSession((st) => st.user?.isAdmin)
   const [busy, setBusy] = useState(false)
   const [elapsed, setElapsed] = useState(0) // секунды с начала импорта — для «сколько уже идёт»
   const [err, setErr] = useState('')
@@ -197,6 +206,7 @@ export function ImportModal({ open, onClose, onImported }: { open: boolean; onCl
       })
       const r = await runImport({
         items: withPasswords, proxyMode, singleProxy, validate, root,
+        ...(forPlatform ? { forPlatform: true } : {}),
         // В ручном режиме раскладка уже перед глазами оператора — шлём её как есть.
         manualProxies: proxyMode === 'manual' ? pairs : undefined,
       })
@@ -470,6 +480,20 @@ export function ImportModal({ open, onClose, onImported }: { open: boolean; onCl
               </div>
             )}
           </div>
+
+          {isAdmin && (
+            <label className="flex cursor-pointer items-start gap-2.5 rounded-xl border border-spark-500/25 bg-spark-500/8 p-3">
+              <input type="checkbox" checked={forPlatform} onChange={(e) => setForPlatform(e.target.checked)} className="mt-0.5 h-4 w-4 accent-spark" />
+              <span>
+                <span className="text-sm font-semibold">Аккаунты платформы (для админ-панели)</span>
+                <span className="mt-0.5 block text-xs text-white/45">
+                  Заводятся НЕ в ваше пространство, а платформе: в клиентских списках их не будет.
+                  Только такие аккаунты могут дежурить по ревизии общей базы — фоновое обновление
+                  идёт по нашей инициативе и должно идти нашими профилями, а не купленными клиентом.
+                </span>
+              </span>
+            </label>
+          )}
 
           <label className="flex cursor-pointer items-start gap-2.5 rounded-xl border border-line bg-elevated/40 p-3">
             <input type="checkbox" checked={validate} onChange={(e) => setValidate(e.target.checked)} className="mt-0.5 h-4 w-4 accent-spark" />

@@ -34,14 +34,26 @@ function staticNames(src) {
   return out
 }
 
-/** Имена из `const { a, b } = await import('…')` — видимы только в своей области. */
+/**
+ * Имена, полученные динамическим импортом, — видимы только в своей области.
+ *
+ * Две формы, обе живые в этом коде:
+ *   const { a } = await import('…')
+ *   const [{ a }, { b }] = await Promise.all([import('…'), import('…')])
+ * Вторую проверка сначала не знала и ругалась на корректный код (27.08) — а ложное
+ * срабатывание в такой ловушке хуже пропуска: её начинают обходить, а не читать.
+ */
 function dynamicNames(chunk) {
   const out = new Set()
-  for (const m of chunk.matchAll(/(?:const|let)\s*\{([^}]+)\}\s*=\s*await\s+import\(/g)) {
-    for (const n of m[1].split(',')) {
+  const add = (list) => {
+    for (const n of list.split(',')) {
       const name = n.trim().split(':').pop().trim()
       if (name) out.add(name)
     }
+  }
+  for (const m of chunk.matchAll(/(?:const|let)\s*\{([^}]+)\}\s*=\s*await\s+import\(/g)) add(m[1])
+  for (const m of chunk.matchAll(/(?:const|let)\s*\[([^\]]+)\]\s*=\s*await\s+Promise\.all\(\s*\[[^\]]*import\(/g)) {
+    for (const part of m[1].matchAll(/\{([^}]+)\}/g)) add(part[1])
   }
   return out
 }

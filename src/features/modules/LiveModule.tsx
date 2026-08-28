@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   Play, Sparkles, Hash, Clock, Users, MessageSquareText,
   Heart, Eye, Shield, MessageCircle, Database, Trophy, Link2, Plus, Terminal, ArrowUpRight, Lock, LockOpen, Flame,
@@ -36,7 +36,13 @@ const DEFAULT_DELAYS = {
 const DURATION_MIN_BY_PROTECTION_LEVEL = [60, 45, 30]
 
 // 3 уровня прогрева (решение 14.07): длительность и «естественность» темпа.
-const WARM_LEVELS = ['Быстрый · 2 дня', 'Нормальный · 3–7 дней', 'Стандартный · 7–14 дней']
+/*
+ * Уровень задаёт ТЕМП, а не срок задачи (вопрос владельца 26.08: «показывает 7 ч работы,
+ * но я выбрал прогрев 2 дня»). «2 дня» читалось как длительность запуска, хотя за ним
+ * стоит 40 действий в день; сколько задача идёт, определяет её лимит действий, и 23
+ * действия при шаге ~36 минут — это как раз около семи часов. Пишем темп прямо.
+ */
+const WARM_LEVELS = ['Быстрый · ~40 действий/день', 'Нормальный · ~20 в день', 'Бережный · ~10 в день']
 
 // §3.5: расчётное min/avg/max время вместо абстрактного «интервала».
 function fmtDur(sec: number): string {
@@ -73,6 +79,10 @@ export function LiveModule({ moduleKey }: { moduleKey: string }) {
 
 function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: string }) {
   const accounts = activeAccounts(useApp((s) => s.data))
+  // Список аккаунтов читаем через ref: applyPreset — стабильный колбэк, и включать в его
+  // зависимости меняющийся массив значило бы пересоздавать его на каждое обновление парка.
+  const accountsRef = useRef(accounts)
+  accountsRef.current = accounts
   const { task, running, starting, start, stop, savePreset, deletePreset, editPreset, presets, pushToast, justStarted, dismissJustStarted } = useModuleTask(moduleKey)
 
   // R6: гейтинг блоков внутри модуля по правам роли. Демо/админ — всё видно.
@@ -93,6 +103,19 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
   const [notifyStatus, setNotifyStatus] = useState(true) // MR-134: уведомлять о статусе этой задачи
   const [probability, setProbability] = useState(cfg.probabilitySlider?.value ?? cfg.reactionSettings?.probability.value ?? 30)
   const [maxActions, setMaxActions] = useState(cfg.workModeFields?.maxValue ?? cfg.reactionSettings?.max.value ?? 100)
+  /*
+   * Минимум общего лимита равен максимуму (правка 27.08).
+   *
+   * Он был нулём, а воркер берёт цель ЖРЕБИЕМ из [min, max]: «сделай 2 комментария»
+   * превращалось в «сделай от 1 до 2», и задача честно останавливалась на одном. При
+   * сотне действий разброс незаметен, при двух — выглядит поломкой (владелец 27.08:
+   * «дал задачу сделать 2 комментария, в итоге сделал 1»).
+   *
+   * Разнообразие между аккаунтами даёт отдельный жребий «сколько сделает один аккаунт»
+   * (minPerAccount/maxPerAccount) — вот там он к месту: одинаковые числа у всех профилей
+   * и есть тот самый след фермы. А ОБЩЕЕ число человек назвал явно, и занижать его молча
+   * нельзя.
+   */
   const [minActions, setMinActions] = useState(0)
   const [maxPerAcc, setMaxPerAcc] = useState(10)
   const [minPerAcc, setMinPerAcc] = useState(0)
@@ -116,7 +139,7 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
   const [activePrompt, setActivePrompt] = useState(0)
   // MR-185: тексты промптов — из базы, по владельцу. Своей копии у карточек больше нет,
   // поэтому применённый шаблон её и не перекрывает (это же чинит MR-176).
-  const { bodies: promptBodies, save: savePrompts, replace: replacePrompts } = usePromptStore(moduleKey, cfg.messagePrompts ?? [])
+  const { bodies: promptBodies, saveCard: savePromptCard, replace: replacePrompts } = usePromptStore(moduleKey, cfg.messagePrompts ?? [])
   const [delayPreset, setDelayPreset] = useState(1)
   const [delays, setDelays] = useState(DEFAULT_DELAYS)
   // MR-56: КАКУЮ задержку брать в расчёт времени. У нейрокомментинга поле называется
@@ -132,6 +155,11 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
   const [campaigns, setCampaigns] = useState<Campaign[]>([])
   const [campaignId] = useState('')
   const [warmLevel, setWarmLevel] = useState(1)
+  // Срок прогрева в днях (правка 27.08). Минимум двое суток — короче профиль не «зреет»,
+  // а просто получает пачку действий за вечер.
+  const [warmDays, setWarmDays] = useState(2)
+  // Сколько часов в сутки аккаунт активен: в это окно и раскладываются его действия.
+  const [warmHours, setWarmHours] = useState(8)
   const [postWindow, setPostWindow] = useState(10) // §3.5: сколько последних постов обрабатывать
   const [stopWordsText, setStopWordsText] = useState('') // §3.5: пропускать посты с этими словами
   const [analyzeImages, setAnalyzeImages] = useState(false) // §10.5: анализ фото в посте vision-моделью
@@ -197,6 +225,20 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
   // постов и стоп-слова, у остальных боевых модулей — объём задачи (режим работы, сколько
   // сделает аккаунт). У прогрева и парсеров ни того, ни другого: там карточка оформляет
   // панель запуска, как было до переноса 19.08.
+  /*
+   * Прогрев тоже получает «Параметры и лимиты» (жалоба владельца 26.08: «там даже
+   * параметров и лимитов нихуя не отображается»). Раньше он был исключён, потому что
+   * темп задаёт «Уровень прогрева». Но лимит действий у задачи ЕСТЬ — просто уходил
+   * невидимым значением по умолчанию, а из него считается и ETA («7 ч»), и когда
+   * задача закончится. Настройка, которая молча решает за человека, — хуже показанной.
+   */
+  /*
+   * У прогрева своей карточки лимитов НЕТ (правка 27.08: «здесь нестыковка, убрать
+   * параметры и лимиты»). Вчера я её включил, и получилось два источника правды: карточка
+   * показывала «всего 10, на аккаунт 0–10», а блок прогрева — «≈40 действий на аккаунт».
+   * Число действий у прогрева выводится из уровня и срока, руками его задавать нечего —
+   * поэтому всё живёт в одном блоке «Уровень прогрева».
+   */
   const hasLimits = !isParser && !isGgr && !cfg.warmingLayout && (cfg.aiProtection || cfg.richLayout || cfg.lookingLayout)
   const hasParamsCard = moduleKey === 'neuro-commenting' || hasLimits
 
@@ -249,9 +291,10 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
     probability,
     maxActions,
     maxComments: maxActions,
+    // см. комментарий у minActions: общее число выполняется точно, без жребия.
     maxPerAccount: maxPerAcc,
-    minActions,
-    minComments: minActions,
+    minActions: minActions || maxActions,
+    minComments: minActions || maxActions,
     minPerAccount: minPerAcc,
     minWords,
     durationMinutes: g(1) === 1 ? durationMinutes : undefined,
@@ -269,7 +312,7 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
     // §0: под кампанией цель наследуется от неё; без кампании — прямой выбор цели.
     ...(campaignId ? { campaignId } : {}),
     ...((campaignId ? campaigns.find((c) => c.id === campaignId)?.goalId : goalId) ? { goalId: (campaignId ? campaigns.find((c) => c.id === campaignId)?.goalId : goalId) as string } : {}),
-    ...(cfg.warmingLayout ? { warmLevel } : {}),
+    ...(cfg.warmingLayout ? { warmLevel, warmDays, warmHours } : {}),
     // Массовые реакции: режим и глубина. Отдельным полем, а не общим commentMode —
     // воркер читает именно reactMode, и дескриптор MCP описывает его.
     ...(cfg.reactionSettings ? { reactMode: g(0), lastPostsCount } : {}),
@@ -281,7 +324,7 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
       lookMode: cfg.lookModeOptions?.[lookModeIdx]?.value ?? 'stories',
       lookPostsCount,
     } : {}),
-  }), [carry, selected, targets, postUrls, toggles, probability, maxActions, minActions, maxPerAcc, minPerAcc, minWords, durationMinutes, aiProtect, protLevel, notifyStatus, activePrompt, promptBodies, delayPreset, palette, delays, keywords, isGgr, accounts, cfg, lookModeIdx, lookPostsCount, goalId, campaignId, campaigns, warmLevel, postWindow, stopWordsText, analyzeImages, moduleKey, typeWeights, weightSum])
+  }), [carry, selected, targets, postUrls, toggles, probability, maxActions, minActions, maxPerAcc, minPerAcc, minWords, durationMinutes, aiProtect, protLevel, notifyStatus, activePrompt, promptBodies, delayPreset, palette, delays, keywords, isGgr, accounts, cfg, lookModeIdx, lookPostsCount, goalId, campaignId, campaigns, warmLevel, warmDays, warmHours, postWindow, stopWordsText, analyzeImages, moduleKey, typeWeights, weightSum])
 
   const hasPostTargets = postUrls.length > 0
   // Многомодульность (20.08): аккаунт МОЖНО брать, пока он работает в другом модуле.
@@ -416,10 +459,37 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
     if (s.notifyOnStatus !== undefined) setNotifyStatus(s.notifyOnStatus)
     if (Array.isArray(s.postUrls)) setPostUrls(s.postUrls)
     if (s.warmLevel !== undefined) setWarmLevel(s.warmLevel)
+    if (s.warmDays !== undefined) setWarmDays(Number(s.warmDays) || 2)
+    if (s.warmHours !== undefined) setWarmHours(Number(s.warmHours) || 8)
     if (s.postWindow !== undefined) setPostWindow(s.postWindow)
     if (Array.isArray(s.stopWords)) setStopWordsText(s.stopWords.join(', '))
     if (s.analyzeImages !== undefined) setAnalyzeImages(s.analyzeImages)
     if (s.typeWeights) setTypeWeights(s.typeWeights)
+
+    /*
+     * Аккаунты шаблон СОХРАНЯЛ, но не восстанавливал (вопрос владельца 26.08).
+     * Подпись честно предупреждала «выбор аккаунтов не меняется», но пользы в этом не
+     * было: человек сохранял набор целиком, а получал его без исполнителей.
+     *
+     * Восстанавливаем только те, что доступны ЗДЕСЬ И СЕЙЧАС. Шаблон переживает удаление
+     * аккаунта, переезд в корзину и передачу другому человеку — подставлять id вслепую
+     * значило бы отдать в запуск то, чего у человека нет, а суб получил бы чужие профили
+     * из шаблона владельца. Чего не хватает — говорим вслух, а не молчим.
+     */
+    if (Array.isArray(s.accountIds)) {
+      const have = new Set(accountsRef.current.map((a: { id: string }) => a.id))
+      const restored = s.accountIds.filter((id) => have.has(id))
+      const missing = s.accountIds.length - restored.length
+      setSelected(new Set(restored))
+      pushToast({
+        type: 'success',
+        title: 'Шаблон применён',
+        desc: missing
+          ? `Аккаунтов из шаблона: ${restored.length} из ${s.accountIds.length}. Остальные недоступны — удалены, в корзине или не выданы вам.`
+          : restored.length ? `Аккаунтов подставлено: ${restored.length}` : undefined,
+      })
+      return
+    }
     pushToast({ type: 'success', title: 'Шаблон применён' })
   }, [cfg.lookModeOptions, cfg.toggleGroups, pushToast, remember, replacePrompts])
 
@@ -433,6 +503,22 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
       { icon: <Shield size={18} />, color: '#0ec464', label: 'Валидных', value: String(results.filter((r) => r.status === 'valid').length) },
       { icon: <Clock size={18} />, color: '#f59e0b', label: 'Статус', value: task?.status ?? '—' },
     ]
+    /*
+     * У прогрева свои плитки (правка 27.08). Общие врали дважды: «Группы 0» — у прогрева
+     * целей нет вовсе, он сам ищет каналы; «Лимит действий 10» — остаток поля, которого
+     * в витрине больше нет, вместо честных «40 на аккаунт за 2 дня».
+     */
+    if (cfg.warmingLayout) {
+      const perDay = [40, 20, 10][warmLevel]
+      const perAcc = warmDays * perDay
+      const acc = Math.max(1, selected.size)
+      return [
+        { icon: <Users size={18} />, color: '#7145ff', label: 'Аккаунты', value: String(selected.size), warn: selected.size === 0 },
+        { icon: <Flame size={18} />, color: '#f59e0b', label: 'Действий на аккаунт', value: String(perAcc) },
+        { icon: <Clock size={18} />, color: '#0ec464', label: 'Займёт', value: `${warmDays} ${warmDays === 1 ? 'день' : warmDays < 5 ? 'дня' : 'дней'}` },
+        { icon: <Hash size={18} />, color: '#06b6d4', label: 'Всего действий', value: String(perAcc * acc) },
+      ]
+    }
     return [
       { icon: <Users size={18} />, color: '#7145ff', label: 'Аккаунты', value: String(selected.size), warn: selected.size === 0 },
       // §12 (MR-59): «цели» перед запуском — с учётом ссылок на посты (mass-react), а не
@@ -460,7 +546,7 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
       },
       { icon: cfg.reactionSettings ? <Heart size={18} /> : <MessageSquareText size={18} />, color: '#f59e0b', label: `Лимит ${limitNoun(moduleKey, cfg)}`, value: String(maxActions) },
     ]
-  }, [selected, targets, postUrls, hasPostTargets, delays, maxActions, cfg, isGgr, accounts, results, task, needsTargets, protLevel, delayPreset, globalPace])
+  }, [selected, targets, postUrls, hasPostTargets, delays, maxActions, cfg, isGgr, accounts, results, task, needsTargets, protLevel, delayPreset, globalPace, warmLevel, warmDays])
 
   // §11 (MR-55): пошаговый roadmap перед запуском — что сделано и что осталось.
   // `anchor` — «связка» с блоком на странице: клик по шагу прокручивает к нему.
@@ -768,7 +854,7 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
             activeIndex={activePrompt}
             onActiveChange={setActivePrompt}
             bodies={promptBodies}
-            onSave={savePrompts}
+            onSaveCard={savePromptCard}
           />
             {/* Распределение типов — часть промптов, а не лимитов (правка 19.08):
                 проценты делятся между теми самыми карточками промптов, что выше.
@@ -962,10 +1048,86 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
       {cfg.warmingLayout && !running && (
         <div id="sec-warm" className="scroll-mt-24">
         <SectionCard icon={<Flame size={18} />} title="Уровень прогрева">
-          <div className="mb-1.5 text-xs text-white/40">Длиннее = естественнее</div>
+          <div className="mb-1.5 text-xs text-white/40">Реже действия = естественнее</div>
           <Segmented options={WARM_LEVELS} value={warmLevel} onChange={setWarmLevel} />
+
+          {/*
+            Срок прогрева (вопрос владельца 27.08: «прогрев исполнился за пару часов, хотя
+            минимальный прогрев у нас 2 дня, и сколько там действий вообще?»).
+            Раньше задача считала цель жребием из диапазона действий и могла закончиться
+            к обеду. Теперь человек задаёт СРОК, а число действий выводится из темпа —
+            и то, и другое видно тут же, без догадок.
+          */}
+          <div className="mt-3">
+            <div className="mb-1.5 text-xs text-white/60">Сколько дней греем</div>
+            <Segmented
+              options={['2 дня', '3 дня', '7 дней', '14 дней']}
+              value={[2, 3, 7, 14].indexOf(warmDays) === -1 ? 0 : [2, 3, 7, 14].indexOf(warmDays)}
+              onChange={(i) => setWarmDays([2, 3, 7, 14][i])}
+            />
+          </div>
+
+          {/*
+            Окно активности (просьба владельца 27.08: «добавить выбор — 6 часов прогрева
+            каждый день, 8 или 12; в них распределяются действия одного аккаунта»).
+            Окно решает не сколько действий, а насколько они растянуты: одни и те же
+            20 действий за 6 часов идут раз в 18 минут, за 12 — раз в 36. Узкое окно
+            похоже на человека, который заходит вечером, широкое — на того, кто весь
+            день в телефоне.
+          */}
+          <div className="mt-3">
+            <div className="mb-1.5 text-xs text-white/60">Сколько часов в сутки аккаунт активен</div>
+            <Segmented
+              options={['6 часов', '8 часов', '12 часов', '14 часов']}
+              value={[6, 8, 12, 14].indexOf(warmHours) === -1 ? 1 : [6, 8, 12, 14].indexOf(warmHours)}
+              onChange={(i) => setWarmHours([6, 8, 12, 14][i])}
+            />
+          </div>
+
+          {/*
+            Итог одной строкой — вместо карточки лимитов, где числа расходились. Считаем то
+            же, что и воркер: суточная норма уровня × дни, шаг = окно / норму.
+          */}
+          <div className="mt-3 rounded-xl border border-spark-500/25 bg-spark-500/8 px-3 py-2.5 text-xs leading-relaxed text-white/70">
+            {/*
+              Умножение пишем ЦЕЛИКОМ (правка 27.08: «здесь пишет 40 действий в день, а
+              сбоку — за всё время»). Два числа «40» рядом — суточная норма быстрого уровня
+              и итог за два дня нормального — читались как одно и то же, и казалось, что
+              витрина противоречит сама себе. Формула снимает вопрос без пересчёта в уме.
+            */}
+            <b className="text-fg">
+              {[40, 20, 10][warmLevel]} действий в день × {warmDays}{' '}
+              {warmDays === 1 ? 'день' : warmDays < 5 ? 'дня' : 'дней'} = {warmDays * [40, 20, 10][warmLevel]} действий на аккаунт
+            </b>{' '}
+            за всё время. Внутри дня — примерно раз в{' '}
+            {Math.round((warmHours * 60) / [40, 20, 10][warmLevel])} мин в течение {warmHours} активных часов, ночью пауза.
+            {selected.size > 1 && <> Всего по задаче: {warmDays * [40, 20, 10][warmLevel] * selected.size} действий на {selected.size} аккаунтов.</>}
+          </div>
+
+          {/*
+            Что именно делает прогрев. Раньше об этом не было сказано нигде: человек
+            запускал модуль и по логам угадывал, чем заняты его профили.
+          */}
+          <div className="mt-2 rounded-xl border border-line bg-elevated/40 px-3 py-2.5">
+            <div className="mb-1.5 text-xs font-semibold text-fg">Что аккаунт делает в это время</div>
+            <ul className="space-y-1 text-[11px] leading-snug text-white/55">
+              <li>· <b className="text-white/75">Смотрит каналы</b> — открывает и листает 2–7 последних постов (30%)</li>
+              <li>· <b className="text-white/75">Ставит реакции</b> — на случайный пост из последних десяти (20%)</li>
+              <li>· <b className="text-white/75">Читает диалоги</b> — заходит в список переписок (15%)</li>
+              <li>· <b className="text-white/75">Вступает в каналы</b> — с паузой перед входом, как человек (12%)</li>
+              <li>· <b className="text-white/75">Отписывается</b> — от того, куда вступил в этой же задаче (8%)</li>
+              <li>· <b className="text-white/75">Пишет себе в «Избранное»</b> — короткую заметку (5%)</li>
+              <li>· <b className="text-white/75">Просто заходит</b> — держит сессию живой (10%)</li>
+            </ul>
+            <div className="mt-1.5 text-[11px] leading-snug text-white/35">
+              Каналы берутся из вашей базы (той, что наполняет парсер), и только если она пуста — поиском по темам.
+              Так профиль греется на своей тематике, а не на случайном шуме.
+            </div>
+          </div>
           <div className="mt-3 rounded-lg border border-line/60 bg-elevated/40 px-3 py-2 text-[11px] text-white/50">
-            💡 <b className="text-white/70">Уровень</b> задаёт темп (~40 / 20 / 10 действий в день) и множитель пауз. Для старта достаточно выбрать уровень — базовая защита от блокировок работает автоматически.
+            💡 <b className="text-white/70">Уровень</b> — темп: сколько действий аккаунт делает в сутки (~40 / 20 / 10) и насколько
+            длинные паузы между ними. <b className="text-white/70">Дни</b> — сколько задача проработает. Ночью прогрев спит,
+            днём действия расходятся по часам, поэтому за сутки выходит примерно заявленное число, а не всё подряд за вечер.
           </div>
           {/* Правка 14.08: блок «Защита» у прогрева убран (дублировал уровень) — галочку
               уведомлений перенесли сюда. */}
@@ -1114,15 +1276,27 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
           />
         )
         if (hasParamsCard) return panel
+        /*
+         * У прогрева карточки «Параметры и лимиты» нет вовсе (правка 27.08). Здесь она
+         * была пустой обёрткой с фразой «темп задаёт секция выше» — то есть вторым
+         * заголовком про параметры, которых в ней нет. Всё, что можно настроить, живёт в
+         * блоке «Уровень прогрева»; сюда попадала только панель запуска.
+         */
+        if (cfg.warmingLayout) return (
+          <div id="sec-run" className="scroll-mt-24">
+            {limitWarn && !running && (
+              <div className="mb-3 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-300">⚠ {limitWarn}</div>
+            )}
+            {panel}
+          </div>
+        )
         return (
           <div id="sec-run" className="scroll-mt-24">
           <SectionCard icon={<Play size={18} />} title="Параметры и лимиты">
           {limitWarn && !running && (
             <div className="mb-3 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-300">⚠ {limitWarn}</div>
           )}
-          <p className="mb-3 text-sm text-muted">{cfg.warmingLayout
-            ? 'Темп и паузы задаёт «Уровень прогрева» — секция выше.'
-            : 'Лимиты и задержки — в блоке «Защита и тайминги» выше.'}</p>
+          <p className="mb-3 text-sm text-muted">Лимиты и задержки — в блоке «Защита и тайминги» выше.</p>
             {panel}
           </SectionCard>
           </div>

@@ -7,6 +7,7 @@ import { Select, Badge, EmptyState } from '@/shared/ui'
 import { cn } from '@/shared/lib/utils'
 import { downloadXls } from '@/shared/lib/exportXls'
 import { SaveToFolderModal } from './shared/FolderPicker'
+import { ParserQueries } from './shared'
 import {
   fetchTgstatOptions, fetchTgstatSession, searchTgstatChannels,
   type TgstatOptions, type TgstatSession, type TgstatChat, type TgstatSearchFilters,
@@ -171,6 +172,19 @@ export function TgStatSearchPanel() {
           {!ready && <p className="text-center text-xs text-amber-300">Сначала подключите каталог (вкладка «Парсер по каталогу» → загрузить cookies).</p>}
         </div>
       </div>
+
+      {/*
+        Прошлые поиски по каталогу (26.08). Результаты сюда и так писались в общий кэш
+        парсеров под kind='tgstat' — их даже перепроверяет 12-часовая ревизия, потому что
+        каталог ходит куками и не тратит ни аккаунты, ни монеты. Но показать их было негде:
+        кэш заполнялся и обновлялся вслепую. Теперь тот же дропдаун, что у прямого парсера.
+      */}
+      <ParserQueries
+        moduleKey="tgstat"
+        unit="каналов"
+        onOpen={(rows) => setResults(rows as unknown as TgstatChat[])}
+        onHide={() => setResults([])}
+      />
 
       {/* Результаты */}
       <div className="rounded-2xl border border-amber-500/30 bg-surface shadow-card">

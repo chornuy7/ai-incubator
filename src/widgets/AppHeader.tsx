@@ -38,6 +38,7 @@ function fmtNotifTs(ts: number): string {
 
 export function AppHeader() {
   const nav = useNavigate()
+  const sessionUser = useSession((s) => s.user)
   const data = useApp((s) => s.data)
   // B2 (§5.1): план и монеты — с сервера, а не константа из моков. Раньше в шапке
   // всегда висели «Базовая» и 80.00 независимо от того, что происходило в системе.
@@ -76,12 +77,21 @@ export function AppHeader() {
     return () => document.removeEventListener('mousedown', onDown)
   }, [notifOpen])
   const broken = activeAccounts(data).filter(isBrokenAccount)
-  // §6.3 (NOTIFY-001, доработка): уведомление можно закрыть вручную. Отклонённые id храним в
-  // localStorage; если аккаунт восстановится и снова отвалится — уведомит заново.
+  /*
+   * §6.3 (NOTIFY-001): уведомление можно закрыть вручную. Закрытые id помним в браузере —
+   * это личная мелочь вида «я это уже видел», ради неё ходить в базу незачем.
+   *
+   * MR-186 (аудит 27.08): но ключ был ОДИН на браузер. На общем компьютере закрытые
+   * уведомления одного человека прятались у следующего — тот не видел, что у него отвалился
+   * аккаунт. Теперь ключ именной: у каждого свои закрытые.
+   */
+  const notifKey = `ai-incubator:notif-dismissed:${sessionUser?.id || 'guest'}`
   const [dismissed, setDismissed] = useState<Set<string>>(() => {
-    try { return new Set(JSON.parse(localStorage.getItem('notif-dismissed') || '[]')) } catch { return new Set() }
+    try { return new Set(JSON.parse(localStorage.getItem(notifKey) || '[]')) } catch { return new Set() }
   })
-  useEffect(() => { localStorage.setItem('notif-dismissed', JSON.stringify([...dismissed])) }, [dismissed])
+  useEffect(() => {
+    try { localStorage.setItem(notifKey, JSON.stringify([...dismissed])) } catch { /* quota */ }
+  }, [notifKey, dismissed])
   const brokenKey = broken.map((a) => a.id).sort().join(',')
   useEffect(() => {
     // восстановившиеся аккаунты убираем из «отклонённых» — новое падение снова уведомит.
@@ -208,7 +218,6 @@ export function AppHeader() {
   const sidebarCollapsed = useApp((s) => s.sidebarCollapsed)
   const setUserState = useApp((s) => s.setUserState)
   const pushToast = useApp((s) => s.pushToast)
-  const sessionUser = useSession((s) => s.user)
   const logout = useSession((s) => s.logout)
   // Права перечитываем с сервера: выданный или отозванный админом доступ должен
   // применяться в текущей сессии, а не «после перезахода» — про перезаход человеку
@@ -558,12 +567,15 @@ export function AppHeader() {
         footer={(
           <>
             <button onClick={() => setNoSubscription('')} className="btn-ghost">Закрыть</button>
-            <button
-              onClick={() => { setNoSubscription(''); nav('/panel/user/subscription') }}
-              className="btn-primary inline-flex items-center gap-1.5"
-            >
-              <Package size={16} /> Подписки
-            </button>
+            {/* Сотруднику идти некуда: модуль открывает владелец (27.08). */}
+            {!balance?.isSub && (
+              <button
+                onClick={() => { setNoSubscription(''); nav('/panel/user/subscription') }}
+                className="btn-primary inline-flex items-center gap-1.5"
+              >
+                <Package size={16} /> Подписки
+              </button>
+            )}
           </>
         )}
       >
@@ -583,22 +595,36 @@ export function AppHeader() {
         icon={<Wallet size={22} />}
         size="md"
       >
-        {/* §11.4: ДЕНЬГИ ($) — основное, крупно и первым; токены ⚡ — вторично.
-            Разделение со звонка: «баланс — это $, за них покупаем подписки и токены». */}
-        <div className="mb-4 grid grid-cols-1 gap-3 sm:grid-cols-2">
-          <div className="rounded-2xl border border-spark-500/40 bg-spark-500/8 px-4 py-3.5">
-            <div className="text-xs font-medium text-muted">Деньги на счету</div>
-            <div className="mt-0.5 flex items-center gap-1.5 font-display text-2xl font-bold text-spark-200">
-              {curSym}{(balance?.usd ?? 0).toFixed(2)}
+        {/*
+          §11.4: ДЕНЬГИ ($) — основное, крупно и первым; токены ⚡ — вторично.
+          Разделение со звонка: «баланс — это $, за них покупаем подписки и токены».
+
+          У СОТРУДНИКА денег нет вовсе (правка 27.08: «деньги у саб-пользователя не
+          показываем, только доступные токены, чтобы он не мог их потратить»). Доллары —
+          кошелёк владельца: ими покупают подписку и токены, и распоряжаться ими сотрудник
+          не должен. Сервер их такому пользователю уже не отдаёт (`balance.isSub`), здесь
+          убираем и сам блок вместе с покупкой — иначе осталась бы кнопка, тратящая чужое.
+        */}
+        <div className={'mb-4 grid grid-cols-1 gap-3' + (balance?.isSub ? '' : ' sm:grid-cols-2')}>
+          {!balance?.isSub && (
+            <div className="rounded-2xl border border-spark-500/40 bg-spark-500/8 px-4 py-3.5">
+              <div className="text-xs font-medium text-muted">Деньги на счету</div>
+              <div className="mt-0.5 flex items-center gap-1.5 font-display text-2xl font-bold text-spark-200">
+                {curSym}{(balance?.usd ?? 0).toFixed(2)}
+              </div>
+              <div className="mt-0.5 text-[11px] text-muted">за них — подписки и токены</div>
             </div>
-            <div className="mt-0.5 text-[11px] text-muted">за них — подписки и токены</div>
-          </div>
+          )}
           <div className="rounded-2xl border border-amber-500/30 bg-amber-500/10 px-4 py-3.5">
-            <div className="text-xs font-medium text-muted">Токены (топливо)</div>
+            <div className="text-xs font-medium text-muted">{balance?.isSub ? 'Доступно вам (токены)' : 'Токены (топливо)'}</div>
             <div className="mt-0.5 flex items-center gap-1.5 font-display text-2xl font-bold text-amber-300">
               <Zap size={20} fill="currentColor" /> {fmtCoins(balance?.coins ?? data.coins)}
             </div>
-            <div className="mt-0.5 text-[11px] text-muted">тратятся за каждое действие</div>
+            <div className="mt-0.5 text-[11px] text-muted">
+              {balance?.isSub
+                ? (balance?.spendLimit == null ? 'общий кошелёк владельца, потолка вам не задали' : `ваш потолок — ${balance.spendLimit} ⚡`)
+                : 'тратятся за каждое действие'}
+            </div>
           </div>
         </div>
 
@@ -607,7 +633,15 @@ export function AppHeader() {
         <div className="mb-4 rounded-2xl border border-line bg-elevated/50 p-3">
           <div className="mb-2 flex items-center justify-between">
             <span className="text-xs font-bold uppercase tracking-wide text-muted">Подписки</span>
-            <button onClick={() => { setCoinsOpen(false); nav('/panel/user/subscription') }} className="text-xs text-spark-300 hover:text-spark-200">Изменить →</button>
+            {/*
+              Сотруднику «Изменить» не показываем (правка 27.08). Подписка — не его: он
+              работает в модулях, открытых владельцем, а покупка и отключение модулей
+              меняют пространство владельца и списывают его деньги. Кнопка вела на экран,
+              где сотрудник ничего не может (и не должен) сделать.
+            */}
+            {!balance?.isSub && (
+              <button onClick={() => { setCoinsOpen(false); nav('/panel/user/subscription') }} className="text-xs text-spark-300 hover:text-spark-200">Изменить →</button>
+            )}
           </div>
           {(() => {
             const mods = balance?.modules
@@ -623,8 +657,9 @@ export function AppHeader() {
           })()}
         </div>
 
-        {/* Пополнить $ — основная валюта. Оплата подключается (VIVA/Stripe), пока — честный статус. */}
-        <div className="mb-4 rounded-2xl border border-line bg-elevated/50 p-3">
+        {/* Пополнить $ — основная валюта. Оплата подключается (VIVA/Stripe), пока — честный статус.
+            Сотруднику пополнять нечего: счёт не его (27.08). */}
+        <div className={'mb-4 rounded-2xl border border-line bg-elevated/50 p-3' + (balance?.isSub ? ' hidden' : '')}>
           <div className="mb-2 text-xs font-bold uppercase tracking-wide text-muted">Пополнить счёт ({curSym})</div>
           <div className="grid grid-cols-4 gap-2">
             {TOPUP_USD.map((a) => (
@@ -654,8 +689,9 @@ export function AppHeader() {
           </div>
         </div>
 
-        {/* Обменять деньги на токены: списываем $ со счёта и начисляем ⚡ (buyTokens). */}
-        <div className="mb-4 rounded-2xl border border-line bg-elevated/50 p-3">
+        {/* Обменять деньги на токены: списываем $ со счёта и начисляем ⚡ (buyTokens).
+            Сотруднику не показываем — деньги не его (27.08). */}
+        <div className={'mb-4 rounded-2xl border border-line bg-elevated/50 p-3' + (balance?.isSub ? ' hidden' : '')}>
           <div className="mb-2 text-xs font-bold uppercase tracking-wide text-muted">Купить токены за {curSym} со счёта</div>
           {(() => {
             // §11.5: денег на счёте нет — покупать нечем; пакеты недоступны, а не «жмётся,
@@ -678,8 +714,20 @@ export function AppHeader() {
                         <Zap size={22} className="text-amber-400" fill="currentColor" />
                         <span className="font-display text-xl font-bold text-fg">{p.coins}</span>
                         <span className="text-sm font-semibold text-muted">{p.price} {curSym}</span>
-                        {/* Цена монеты в пакете: «выгодно» должно быть посчитано, а не заявлено. */}
-                        <span className="text-[10px] text-faint">{(p.price / p.coins).toFixed(3)} {curSym} / ⚡</span>
+                        {/*
+                          Цена одного токена в пакете скрыта по просьбе владельца (созвон 27.08).
+                          Считалась честно — «там абсолютно всё справедливо написано», — но
+                          позволяла сравнить пакеты между собой и увидеть, где выгода меньше:
+                          6.99/50 = 0.140, а 21.99/200 = 0.110. Дословно: «а то мы тогда будем
+                          проёбываться... мы просто показываем, а что там человек купит — это уже
+                          его дело».
+
+                          Расчёт оставлен закомментированным, а не вырезан: владелец просил именно
+                          «не удалить, а закомментировать» — цифра справедливая и ещё понадобится.
+                          В админке (раздел цен) себестоимость и цена за токен остаются на месте.
+
+                          <span className="text-[10px] text-faint">{(p.price / p.coins).toFixed(3)} {curSym} / ⚡</span>
+                        */}
                       </button>
                     )
                   })}

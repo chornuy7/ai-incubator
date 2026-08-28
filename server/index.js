@@ -224,7 +224,34 @@ app.post('/api/tg/accounts/empty-trash', async (req, res) => {
 app.post('/api/tg/send-code', async (req, res) => {
   try {
     const { phone, proxy, accountId } = req.body ?? {}
-    const result = await tgSendCode({ phone, proxy, accountId })
+    /*
+     * Владелец нового аккаунта (правка 27.08: «с новых аккаунтов не удаётся добавить
+     * аккаунты Telegram»).
+     *
+     * Вход по номеру НЕ проставлял владельца вовсе, а список аккаунтов режется по нему
+     * (`/api/tg/accounts` → resolveSubscriptionOwner). Получалось худшее из возможного:
+     * вход проходил, сессия сохранялась, аккаунт заводился — и тут же исчезал с экрана,
+     * потому что «ничей» виден только админу. Человек добавлял один и тот же номер по
+     * кругу. Импорт владельца ставил давно, вход — нет.
+     *
+     * Берём владельца из СЕССИИ, а не из тела запроса: иначе клиент мог бы записать
+     * аккаунт на чужое пространство.
+     */
+    const me = req.header('x-user-id')
+    const { resolveSubscriptionOwner, getUser } = await import('./users.js')
+    /*
+     * Сотрудник аккаунты не заводит (правка 27.08). Парк — имущество пространства: его
+     * пополняет владелец, сотруднику выдают доступ к уже заведённым. На витрине кнопок
+     * нет, но проверяем и здесь: на витрину в вопросах чужого имущества не полагаемся.
+     * Реавторизация УЖЕ выданного аккаунта (accountId задан) сотруднику остаётся — это
+     * его рабочий инструмент, а не новый аккаунт в парке.
+     */
+    if (me && !accountId) {
+      const u = await getUser(me).catch(() => null)
+      if (u?.parentId) return res.status(403).json({ ok: false, error: 'Аккаунты заводит владелец пространства — попросите выдать вам доступ' })
+    }
+    const ownerId = me ? await resolveSubscriptionOwner(me).catch(() => '') : ''
+    const result = await tgSendCode({ phone, proxy, accountId, ownerId })
     res.json(result)
   } catch (err) {
     res.status(400).json({ ok: false, error: err instanceof Error ? err.message : 'Ошибка' })
@@ -1783,14 +1810,65 @@ app.get('/api/balance/history', async (req, res) => {
   } catch (err) { res.status(500).json({ ok: false, error: err instanceof Error ? err.message : 'Ошибка' }) }
 })
 
+/**
+ * Кто сколько потратил из кошелька (просьба владельца 27.08: «овнер должен видеть, кто
+ * сколько потратил»).
+ *
+ * Смотрит СВОЙ кошелёк: при общем балансе это кошелёк владельца, и в нём видны траты всех
+ * сотрудников. Сотруднику с общим балансом отдаём то же самое — он и так видит эти деньги
+ * в шапке, скрывать разбивку было бы странно; у сотрудника с личным кошельком в выдаче
+ * будет только он сам.
+ */
+app.get('/api/balance/spend-by-user', async (req, res) => {
+  try {
+    const me = req.header('x-user-id')
+    const target = req.query.userId ? String(req.query.userId) : me
+    if (req.query.userId && req.query.userId !== me && !(await isAdminRequest(req))) {
+      return res.status(403).json({ ok: false, error: 'Чужие траты доступны только администратору' })
+    }
+    const days = Math.min(365, Math.max(1, Number(req.query.days) || 30))
+    const [{ spendByActor }, { listUsers }] = await Promise.all([import('./balance.js'), import('./users.js')])
+    const rows = await spendByActor({ userId: target, since: Date.now() - days * 86400_000 })
+    // Имена, а не id: «usr_9248062d потратил 42 ⚡» ничего не сообщает.
+    const users = await listUsers().catch(() => [])
+    const nameById = new Map(users.map((u) => [u.id, u.name || u.email || u.id]))
+    res.json({
+      ok: true,
+      days,
+      rows: rows.map((r) => ({ ...r, name: nameById.get(r.actorId) || r.actorId, isOwner: r.actorId === target })),
+    })
+  } catch (err) { res.status(500).json({ ok: false, error: err instanceof Error ? err.message : 'Ошибка' }) }
+})
+
 // §5.1 (B2): баланс монет и тариф. Читают все — шапка показывает их на каждой странице.
 // Менять (пополнение/списание/смена тарифа) — только админ: это деньги, а не настройка.
 app.get('/api/balance', async (req, res) => {
   try {
     // Свой баланс у каждого пользователя: ключ — X-User-Id. Без сессии (дев)
     // отдаётся общий кошелёк, как и раньше.
-    const { getBalance } = await import('./balance.js')
-    res.json({ ok: true, balance: await getBalance(req.header('x-user-id')) })
+    const { getBalance, spendLimit } = await import('./balance.js')
+    const me = req.header('x-user-id')
+    const balance = await getBalance(me)
+    /*
+     * Сотрудник ДЕНЕГ не видит (правка 27.08: «деньги у саб-пользователя не показываем,
+     * только доступные токены, чтобы он не мог их потратить»).
+     *
+     * Кошелёк общий с владельцем, и до этой правки сотруднику отдавался весь остаток
+     * владельца — включая доллары, которыми покупают подписку и токены. Ими он
+     * распоряжаться не должен, а видеть чужой денежный счёт ему незачем: его дело —
+     * сколько действий он ещё может сделать. Поэтому `usd` не отдаём вовсе, а токены
+     * показываем в пределах его потолка.
+     */
+    const lim = me ? await spendLimit(me).catch(() => ({ limit: null, spent: 0, left: Infinity })) : { limit: null }
+    if (lim.limit !== null) {
+      const left = Math.max(0, Math.min(Number(balance.coins) || 0, Number(lim.left) || 0))
+      return res.json({ ok: true, balance: { ...balance, coins: left, usd: undefined, spendLimit: lim.limit, spendLeft: left, isSub: true } })
+    }
+    // Сотрудник без потолка тратит наравне с владельцем — но деньги всё равно не его.
+    const { resolveWalletOwner } = await import('./users.js')
+    const owner = me ? await resolveWalletOwner(me).catch(() => me) : me
+    if (me && owner !== me) return res.json({ ok: true, balance: { ...balance, usd: undefined, isSub: true } })
+    res.json({ ok: true, balance })
   } catch (err) { res.status(500).json({ ok: false, error: err instanceof Error ? err.message : 'Ошибка' }) }
 })
 app.post('/api/balance', async (req, res) => {
@@ -1890,9 +1968,17 @@ app.get('/api/audit', async (req, res) => {
     // пользователю (у него `user === null`). Практически это закрыто общим замком
     // `accessGate`, но полагаться на порядок middleware в проверке прав нельзя:
     // журнал — это чужие действия, аккаунты и причины блокировок.
-    if (ctx.noSession || ctx.isAdmin) {
+    /*
+     * Админ теперь тоже по умолчанию видит ТОЛЬКО свою команду (правка 27.08: «почему у
+     * меня до сих пор чужие логи видны»). Владелец платформы — ещё и обычный клиент: в
+     * своём журнале ему нужны свои задачи, а не входы чужих сотрудников вперемешку.
+     * Весь журнал пространства остаётся доступен, но по явному запросу `scope=all` —
+     * как список пользователей открывается кнопкой «показать всех».
+     */
+    const wantAll = String(req.query.scope || '') === 'all'
+    if (ctx.noSession || (ctx.isAdmin && wantAll)) {
       const entries = await readAudit({ limit: wantLimit, action, initiator, account })
-      return res.json({ ok: true, entries })
+      return res.json({ ok: true, entries, scope: 'all' })
     }
     // Нет самого пользователя (заблокирован, удалён) — журнала нет: раньше такой запрос
     // проваливался в ветку выше и получал всё.
@@ -1907,7 +1993,7 @@ app.get('/api/audit', async (req, res) => {
     // Читаем шире (без initiator-фильтра) и оставляем только свои/субовские записи.
     const pool = await readAudit({ limit: 10000, action, account })
     const entries = pool.filter((e) => allowed.has(String(e.initiator || '').toLowerCase())).slice(0, wantLimit)
-    res.json({ ok: true, entries })
+    res.json({ ok: true, entries, scope: 'mine' })
   } catch (err) {
     res.status(500).json({ ok: false, error: err instanceof Error ? err.message : 'Ошибка' })
   }
@@ -2016,9 +2102,25 @@ if (SCHEDULERS_ON) try {
 // в тот же день ничего не удваивает. Ежедневного тика достаточно: начисление привязано к
 // дню месяца, а не к точному времени.
 if (SCHEDULERS_ON) try {
-  const { creditDueTokens } = await import('./tokenCredit.js')
-  const runCredit = () => creditDueTokens()
+  const { creditDueTokens, creditPendingGifts } = await import('./tokenCredit.js')
+  const { renewDueSubscriptions } = await import('./subscriptionBilling.js')
+  // Продление идёт ПЕРВЫМ (решение владельца 28.08): месячная подписка списывает деньги и
+  // сдвигает срок, и только после этого начисление токенов видит её как действующую.
+  // В обратном порядке подписка, у которой срок кончился сегодня, была бы отброшена как
+  // истёкшая — человек заплатил бы, а топливо получил только в следующем месяце.
+  const runCredit = () => renewDueSubscriptions()
+    .then((r) => {
+      if (r.renewed) console.log(`[подписки] продлено: ${r.renewed}, списано $${r.charged.toFixed(2)}, начислено ${r.tokens} ⚡`)
+      if (r.unpaid) console.warn(`[подписки] не хватило денег: ${r.unpaid} — доступ закрыт до пополнения`)
+    })
+    .catch((e) => console.warn('[подписки] продление не сработало:', e?.message || e))
+    .then(() => creditDueTokens())
     .then((r) => r.users && console.log(`[tokens] месячное начисление: ${r.users} польз., ${r.coins} ⚡`))
+    // Подарки сверяем тем же тиком (27.08): одной выдачи в момент оплаты мало — если она
+    // не сработала, второго шанса не было никогда, и обещанное на витрине «разово +200 ⚡»
+    // так и не доходило до кошелька. Сверка идемпотентна: журнал выдач не даёт повтора.
+    .then(() => creditPendingGifts())
+    .then((r) => r.users && console.log(`[tokens] подарочные: ${r.users} польз., ${r.coins} ⚡`))
     .catch((e) => console.warn('[tokens] credit failed:', e?.message || e))
   void runCredit()
   setInterval(runCredit, (cron.creditTickH ?? 6) * 60 * 60 * 1000)

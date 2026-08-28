@@ -3,7 +3,7 @@ import express from 'express'
 import { catalogOptions } from './constants.js'
 import {
   getSessionDto, saveSession, clearSession, verifySession, loadSessionRaw,
-  createImport, listImports, getImportDto, getChats, cancelImport, deleteImport, loadImport,
+  createImport, listImports, getImportDto, getChats, cancelImport, deleteImport, loadImport, renameImport,
 } from './store.js'
 import { parseTgstatChats, searchTgstatChannels } from './parser.js'
 import { ownedForRequest, ownerScopeForRequest, ownsRecord } from '../lib/accessGuard.js'
@@ -147,6 +147,15 @@ tgstatRouter.get('/imports/:id/chats', async (req, res) => {
 tgstatRouter.post('/imports/:id/cancel', async (req, res) => {
   if (!(await ownImport(req, Number(req.params.id)))) return notYours(res)
   const imp = await cancelImport(Number(req.params.id))
+  if (!imp) return fail(res, 404, 'Импорт не найден')
+  ok(res, { import: imp })
+})
+
+tgstatRouter.patch('/imports/:id', async (req, res) => {
+  // Своё имя импорта — как у «Последних запросов» прямого парсера (26.08). Владельца
+  // проверяем той же дверью, что и удаление: id тут подряд идущие числа.
+  if (!(await ownImport(req, Number(req.params.id)))) return notYours(res)
+  const imp = await renameImport(Number(req.params.id), req.body?.title)
   if (!imp) return fail(res, 404, 'Импорт не найден')
   ok(res, { import: imp })
 })

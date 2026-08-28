@@ -2,6 +2,15 @@
   "version": "0.0.1",
   "configurations": [
     {
+      "name": "ai-incubator-safe",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": [
+        "run",
+        "dev:safe"
+      ],
+      "port": 5173
+    },
+    {
       "name": "ai-incubator",
       "runtimeExecutable": "npm",
       "runtimeArgs": [

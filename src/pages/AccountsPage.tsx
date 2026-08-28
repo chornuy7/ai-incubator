@@ -620,14 +620,24 @@ export function AccountsPage() {
           <>
             <HelpButton topic="accounts-manager" className="h-10 w-10" />
             <AiSafetyModal />
-            <button onClick={() => setImportOpen(true)} className="btn-ghost h-10"><UploadCloud size={16} /> <span className="hidden sm:inline">Импортировать</span></button>
-            <button onClick={() => setProxyPoolOpen(true)} className="btn-ghost h-10"><Server size={16} /> <span className="hidden sm:inline">Пул прокси</span></button>
-            <button
-              onClick={() => (isNoSub ? pushToast({ type: 'error', title: 'Лимит тарифа', desc: 'Оформите подписку для добавления аккаунтов.' }) : openAdd())}
-              className="btn-primary h-10"
-            >
-              <Plus size={16} /> Добавить аккаунт
-            </button>
+            {/*
+              Сотрудник аккаунты НЕ заводит (правка 27.08: «у саб-пользователя не должно
+              быть кнопки добавить аккаунты, ему только могут выдать аккаунты»). Парк —
+              имущество пространства: его пополняет владелец, а сотруднику выдают доступ к
+              уже заведённым. Кнопки вели туда, где он мог завести аккаунт в чужой парк.
+            */}
+            {!sessionUser?.isSub && (
+              <>
+                <button onClick={() => setImportOpen(true)} className="btn-ghost h-10"><UploadCloud size={16} /> <span className="hidden sm:inline">Импортировать</span></button>
+                <button onClick={() => setProxyPoolOpen(true)} className="btn-ghost h-10"><Server size={16} /> <span className="hidden sm:inline">Пул прокси</span></button>
+                <button
+                  onClick={() => (isNoSub ? pushToast({ type: 'error', title: 'Лимит тарифа', desc: 'Оформите подписку для добавления аккаунтов.' }) : openAdd())}
+                  className="btn-primary h-10"
+                >
+                  <Plus size={16} /> Добавить аккаунт
+                </button>
+              </>
+            )}
           </>
         }
       />
@@ -859,8 +869,15 @@ export function AccountsPage() {
           <EmptyState
             icon={<Users size={26} />}
             title={tab === 'trash' ? 'Корзина пуста' : query || roleFilter !== 'Все роли' || statusFilter !== 'all' ? 'Ничего не найдено' : 'Пока нет аккаунтов'}
-            desc={tab === 'trash' ? 'Удалённые аккаунты появятся здесь.' : query ? 'Измените параметры поиска или фильтры.' : 'Добавьте аккаунт по номеру или импортируйте сессии.'}
-            action={tab === 'accounts' && !query && statusFilter === 'all' ? (
+            desc={tab === 'trash'
+              ? 'Удалённые аккаунты появятся здесь.'
+              : query
+                ? 'Измените параметры поиска или фильтры.'
+                : sessionUser?.isSub
+                  // Сотруднику подсказка другая: заводить аккаунты не его дело, ему их выдают.
+                  ? 'Аккаунты выдаёт владелец пространства — попросите открыть доступ.'
+                  : 'Добавьте аккаунт по номеру или импортируйте сессии.'}
+            action={tab === 'accounts' && !query && statusFilter === 'all' && !sessionUser?.isSub ? (
               <div className="flex gap-2">
                 <button onClick={() => setImportOpen(true)} className="btn-ghost h-10"><UploadCloud size={16} /> Импорт</button>
                 <button onClick={openAdd} className="btn-primary h-10"><Plus size={16} /> Добавить аккаунт</button>

@@ -21,11 +21,11 @@
 |---|---|---|---|---|---|---|---|
 | 1 | `neuro-commenting` | Нейрокомментинг | ☑ [код](../../server/mcp/descriptors/neuro-commenting.js) | **32** | 39 | 9 | v1 |
 | 2 | `neuro-chatting` | Нейрочаттинг | ☑ [код](../../server/mcp/descriptors/neuro-chatting.js) | **21** | 28 | 9 | v1 |
-| 3 | `neuro-dialogs` | Нейродиалоги | ☑ [код](../../server/mcp/descriptors/neuro-dialogs.js) | **22** | 30 | 10 | v1 |
-| 4 | `mailing` | Мейлинг | ☑ [код](../../server/mcp/descriptors/mailing.js) | **17** | 22 | 8 | v1 |
+| 3 | `neuro-dialogs` | Нейродиалоги | ☑ [код](../../server/mcp/descriptors/neuro-dialogs.js) | **23** | 31 | 10 | v1 |
+| 4 | `mailing` | Мейлинг | ☑ [код](../../server/mcp/descriptors/mailing.js) | **18** | 23 | 8 | v1 |
 | 5 | `mass-react` | Массовые реакции | ☑ [код](../../server/mcp/descriptors/mass-react.js) | **19** | 25 | 8 | v1 |
 | 6 | `mass-looking` | Масслукинг | ☑ [код](../../server/mcp/descriptors/mass-looking.js) | **15** | 21 | 8 | v1 |
-| 7 | `warming` | Прогрев | ☑ [код](../../server/mcp/descriptors/warming.js) | **11** | 15 | 7 | v1 |
+| 7 | `warming` | Прогрев | ☑ [код](../../server/mcp/descriptors/warming.js) | **13** | 17 | 7 | v1 |
 | 8 | `autoposting` | Автопостинг | ☑ [код](../../server/mcp/descriptors/autoposting.js) | **7** | 12 | 5 | v1 |
 | 9 | `parsing` | Парсинг каналов | ☑ [код](../../server/mcp/descriptors/parsing.js) | **16** | 19 | 5 | v1 |
 | 10 | `parsing-groups` | Парсер групп | ☑ [код](../../server/mcp/descriptors/parsing-groups.js) | **16** | 19 | 5 | v1 |

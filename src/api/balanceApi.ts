@@ -14,6 +14,13 @@ export interface Balance {
   coins: number
   /** §11.4: денежный баланс ($) — им платят за подписку и покупают токены. */
   usd?: number
+  /**
+   * Сотруднику деньги не показываем вовсе (27.08): `usd` не приходит, а `coins` урезаны
+   * его потолком расхода. `isSub` — признак, что перед нами такой урезанный вид.
+   */
+  isSub?: boolean
+  spendLimit?: number | null
+  spendLeft?: number | null
   updatedAt: number
   /** Срок подписки: timestamp окончания или null («бессрочно» / демо без периода). */
   expiresAt?: number | null
@@ -135,7 +142,30 @@ export async function saveUserModules(userId: string, modules: string[] | 'all')
 }
 
 /** §5.1: операция по кошельку — «за что списали». */
-export interface WalletEntry { ts: number; userId: string; amount: number; before: number; after: number; reason: string }
+export interface WalletEntry {
+  ts: number
+  userId: string
+  amount: number
+  before: number
+  after: number
+  reason: string
+  /**
+   * §11.4: чем операция была — деньгами или токенами. Сервер это пишет с самого начала,
+   * а витрина поле не читала и рисовала ⚡ на всём подряд, включая «Пополнение $»
+   * (правка 27.08: «где доллары — доллары, где токены — токены значок»).
+   */
+  currency?: 'usd' | 'coins'
+}
+
+/**
+ * Кто сколько потратил из кошелька (27.08). При общем балансе владелец видит траты всех
+ * своих сотрудников; строка `isOwner` — его собственные списания.
+ */
+export interface SpendByUser { actorId: string; name: string; spent: number; ops: number; isOwner: boolean }
+export async function fetchSpendByUser(days = 30): Promise<{ days: number; rows: SpendByUser[] }> {
+  const r = await apiGet<{ ok: boolean; days: number; rows: SpendByUser[] }>(`/api/balance/spend-by-user?days=${days}`)
+  return { days: r.days, rows: r.rows || [] }
+}
 
 export async function fetchWalletHistory(limit = 50, userId?: string): Promise<WalletEntry[]> {
   const q = new URLSearchParams({ limit: String(limit) })

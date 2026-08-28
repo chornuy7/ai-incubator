@@ -1,7 +1,8 @@
 import { runSpamUnblock } from '../spamUnblock.js'
 import { generateComment, isAiGenerationEnabled, resolveSystemPrompt } from '../neuroCommenting/commentGenerator.js'
+import { getUserGlobalPrompt } from '../userAiSettings.js'
 import { buildGoalContext, stageForStatus, linksFromGoal, cleanDialogReply, hasPlaceholder } from '../lib/goalContext.js'
-import { upsertMany } from '../channels.js'
+import { upsertMany, listChannels } from '../channels.js'
 import {
   fetchPosts,
   sendChannelComment,
@@ -105,16 +106,17 @@ import { getAccountMeta, setAccountMeta, accountLabel } from '../accountsMeta.js
 import { releaseTaskLocks, markTaskLive, markTaskDone, assertAccountAvailable } from '../lib/accountLocks.js'
 import { loadSessionString, createClient } from '../tgAuth.js'
 import {
-  pickCommentCandidates, trackIdlePass, warmingPace, pickWeightedKey, idleWaitPlan, WARM_WINDOW_MS, msUntilHour, inActiveWindow,
+  pickCommentCandidates, trackIdlePass, markIdleStop, warmingPace, pickWeightedKey, idleWaitPlan, WARM_WINDOW_MS, warmWindowMs, msUntilHour, inActiveWindow,
 } from '../lib/workerLoop.js'
 import { channelSignals, channelScore, isActive, detectLang } from '../lib/channelScore.js'
-import { scheduleHour } from '../lib/accountFatigue.js'
+import { keywordRegex } from '../lib/keywordMatch.js'
+import { scheduleHour, logTime } from '../lib/accountFatigue.js'
 import { limitReached, incAction } from '../lib/dailyActions.js'
 import { cleanMailingNumbers, classifyMailingTargets, pickMailingAccount } from '../lib/mailing.js'
 import { listLeads, sortDialogsByLeadPriority, upsertLead, updateLead } from '../leads.js'
 import { classifyLeadReply, shouldAdvance } from '../lib/leadClassifier.js'
 import { chargeActions, chargeCollected, refundShrunk } from '../lib/actionBilling.js'
-import { serializeHits, restoreHits, keepIntersecting } from '../lib/parserIntersect.js'
+import { serializeHits, restoreHits, applyIntersection } from '../lib/parserIntersect.js'
 import { isSemanticEnabled, embedText, cosineSimilarity } from '../lib/semantic.js'
 import { parseTelegramPostLinks, resolvePostPeer } from '../lib/postLink.js'
 import { findChannelChat, isChannelPeer } from '../lib/channelChat.js'
@@ -366,7 +368,9 @@ export function finishNote(task, doneText = 'Завершено') {
   const tail = waited > 0 ? ` · в паузах ${fmtWait(waited)}` : ''
   if (task.status === 'error') return `Задача завершилась с ошибкой: ${task.fatalError || 'см. записи выше'}${tail}`
   if (task.status === 'paused') return `Пауза${tail}`
-  if (task.status === 'stopped') return `Остановлено${tail}`
+  // Холостой выход — не «остановлено рукой»: называем причину, иначе провал читается
+  // как успех (прогон 26.08: «Завершено» на 9% после пяти пустых кругов).
+  if (task.status === 'stopped') return `Остановлено${task.idleStopReason ? `: ${task.idleStopReason}` : ''}${tail}`
   return `${doneText}${tail}`
 }
 
@@ -449,7 +453,7 @@ async function bumpProgress(task, store) {
  * @param {object} s настройки задачи
  * @param {string} [extra] контекст цели/агента, который добавляется к системному тексту
  */
-function pickPrompt(s, weights, extra = '') {
+function pickPrompt(s, weights, extra = '', globalPrompt) {
   const useDist = Array.isArray(weights) && weights.some((w) => Number(w) > 0)
   const index = useDist ? weightedPickIndex(weights) : (s.promptIndex ?? 0)
   const sys = useDist
@@ -467,6 +471,9 @@ function weightedPickIndex(weights) {
 }
 
 export async function runNeuroCommenting(task, store) {
+  // MR-185: системный промпт берём У ВЛАДЕЛЬЦА ЗАДАЧИ. Раньше он был один на всю платформу,
+  // и правка одного человека уезжала в чужие запуски. Читаем один раз на прогон.
+  const ownerPrompt = await getUserGlobalPrompt(task.userId).catch(() => '')
   const s = task.settings
   task.startedAt = Date.now()
   task.status = 'running'
@@ -536,7 +543,7 @@ export async function runNeuroCommenting(task, store) {
           // вероятности прямо противоречил соседней строке лога (правка 19.08).
           // Во сколько вернётся ближайший аккаунт — это первое, что спрашивают, глядя
           // на «ждём N мин» (правка 19.08). Задача при этом остаётся в работе.
-          const backAt = new Date(idleUntil).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+          const backAt = logTime(idleUntil)
           // Секунды, а не «1 мин»: почти все задержки здесь секундные (переключение
           // модулей, повтор броска), и округление вверх превращало 7 секунд в минуту.
           // Ждём РОВНО до окна — к следующей попытке аккаунт уже готов, а не «попробуем
@@ -591,9 +598,15 @@ export async function runNeuroCommenting(task, store) {
       // Удачный бросок тоже показываем: в логе были одни неудачи, и по нему нельзя было
       // понять, как вообще считается шанс (MR-175). Молчим только в часы со 100%: там
       // броска фактически нет, и строка была бы шумом на каждом действии.
-      if (typeof human.chance === 'number' && human.chance < 1 && human.reason) {
-        await store.appendLog(task, 'info', human.reason, meta.name)
-      }
+      /*
+       * Удачный бросок распорядка пишем ПОСЛЕ проверки занятости (правка 27.08).
+       *
+       * Раньше строка «распорядок дня: шанс 82%, выпало 64 — работаем» появлялась на
+       * каждом круге, даже когда аккаунт тут же пропускался как занятый соседним модулем:
+       * за один комментарий набегала полсотня строк «работаем», за которыми ничего не
+       * следовало. Теперь бросок откладываем и печатаем, только если дело дошло до дела.
+       */
+      const бросокРаспорядка = typeof human.chance === 'number' && human.chance < 1 && human.reason ? human.reason : ''
       if (await limitReached(accountId, 'comments')) { idleLap += 1; lastSkip = 'суточный лимит'; await store.appendLog(task, 'info', 'Суточный лимит комментариев достигнут (§6)', meta.name); continue }
       // Многомодульность (20.08): аккаунт может работать в нескольких модулях, но не
       // двумя действиями одновременно — занятый другим модулем пропускаем, как при
@@ -601,13 +614,22 @@ export async function runNeuroCommenting(task, store) {
       const busyGate = beginAccountWork(accountId, task.moduleKey, task.id)
       if (!busyGate.ok) {
         idleLap += 1
+        /*
+         * Одна и та же причина не повторяется в логе (правка 27.08). Аккаунт, занятый
+         * соседним модулем, проверяется раз в 15 секунд, и каждая проверка писала строку:
+         * за один комментарий набегало полсотни одинаковых «Пропуск: занят действием в
+         * модуле …», в которых тонуло всё остальное. Пишем при СМЕНЕ причины — а сам факт
+         * ожидания и так виден строкой «Пауза … — ждём аккаунт до …».
+         */
+        const повтор = lastSkip === busyGate.reason
         lastSkip = busyGate.reason
         if (busyGate.until) idleUntil = idleUntil ? Math.min(idleUntil, busyGate.until) : busyGate.until
-        await store.appendLog(task, 'info', `Пропуск: ${busyGate.reason}`, meta.name)
+        if (!повтор) await store.appendLog(task, 'info', `Пропуск: ${busyGate.reason}`, meta.name)
         continue
       }
       idleLap = 0
       lastSkip = ''
+      if (бросокРаспорядка) await store.appendLog(task, 'info', бросокРаспорядка, meta.name)
 
       let client
       let progressed = false
@@ -634,6 +656,7 @@ export async function runNeuroCommenting(task, store) {
           await disconnectAccount(client, accountId)
           if (trackIdlePass(task, false)) {
             await store.appendLog(task, 'error', 'Остановка: комментарий не отправлен после нескольких попыток')
+        markIdleStop(task, 'комментарий не отправлен после нескольких попыток')
             break
           }
           await store.saveTask(task)
@@ -655,6 +678,7 @@ export async function runNeuroCommenting(task, store) {
           await disconnectAccount(client, accountId)
           if (trackIdlePass(task, false)) {
             await store.appendLog(task, 'error', 'Остановка: не удалось вступить в канал')
+        markIdleStop(task, 'не удалось вступить в канал')
             break
           }
           await store.saveTask(task)
@@ -736,7 +760,7 @@ export async function runNeuroCommenting(task, store) {
               }
             }
             // §3.5: если задано распределение типов — на каждый коммент выбираем тип по весу.
-            const { index: typeIdx, sys: sysPrompt } = pickPrompt(s, s.typeWeights)
+            const { index: typeIdx, sys: sysPrompt } = pickPrompt(s, s.typeWeights, '', ownerPrompt)
             task.usedTexts = task.usedTexts || []
             // §10.5: если включён анализ изображений и в посте есть фото — описываем
             // картинку и добавляем к тексту поста, чтобы коммент был по сути изображения,
@@ -817,7 +841,7 @@ export async function runNeuroCommenting(task, store) {
                 const диагноз = await diagnoseWriteBan(client, commentErr.writePeer || channel)
                 await store.appendLog(task, 'error', диагноз.text, meta.name)
                 if (диагноз.scope === 'account') {
-                  await applySpamblockPolicy(task, accountId, store, meta.name)
+                  await applySpamblockPolicy(task, accountId, store, meta.name, { until: диагноз.until })
                   break
                 }
               } else {
@@ -837,6 +861,7 @@ export async function runNeuroCommenting(task, store) {
 
       if (trackIdlePass(task, progressed)) {
         await store.appendLog(task, 'error', 'Остановка: комментарий не отправлен после нескольких попыток')
+        markIdleStop(task, 'комментарий не отправлен после нескольких попыток')
         break
       }
 
@@ -864,6 +889,9 @@ export async function runNeuroCommenting(task, store) {
 
 /** @param {object} task @param {object} store */
 export async function runNeuroChatting(task, store) {
+  // MR-185: системный промпт берём У ВЛАДЕЛЬЦА ЗАДАЧИ. Раньше он был один на всю платформу,
+  // и правка одного человека уезжала в чужие запуски. Читаем один раз на прогон.
+  const ownerPrompt = await getUserGlobalPrompt(task.userId).catch(() => '')
   const s = task.settings
   task.startedAt = Date.now()
   task.status = 'running'
@@ -908,7 +936,7 @@ export async function runNeuroChatting(task, store) {
           // вероятности прямо противоречил соседней строке лога (правка 19.08).
           // Во сколько вернётся ближайший аккаунт — это первое, что спрашивают, глядя
           // на «ждём N мин» (правка 19.08). Задача при этом остаётся в работе.
-          const backAt = new Date(idleUntil).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+          const backAt = logTime(idleUntil)
           // Секунды, а не «1 мин»: почти все задержки здесь секундные (переключение
           // модулей, повтор броска), и округление вверх превращало 7 секунд в минуту.
           // Ждём РОВНО до окна — к следующей попытке аккаунт уже готов, а не «попробуем
@@ -953,9 +981,15 @@ export async function runNeuroChatting(task, store) {
       // Удачный бросок тоже показываем: в логе были одни неудачи, и по нему нельзя было
       // понять, как вообще считается шанс (MR-175). Молчим только в часы со 100%: там
       // броска фактически нет, и строка была бы шумом на каждом действии.
-      if (typeof human.chance === 'number' && human.chance < 1 && human.reason) {
-        await store.appendLog(task, 'info', human.reason, meta.name)
-      }
+      /*
+       * Удачный бросок распорядка пишем ПОСЛЕ проверки занятости (правка 27.08).
+       *
+       * Раньше строка «распорядок дня: шанс 82%, выпало 64 — работаем» появлялась на
+       * каждом круге, даже когда аккаунт тут же пропускался как занятый соседним модулем:
+       * за один комментарий набегала полсотня строк «работаем», за которыми ничего не
+       * следовало. Теперь бросок откладываем и печатаем, только если дело дошло до дела.
+       */
+      const бросокРаспорядка = typeof human.chance === 'number' && human.chance < 1 && human.reason ? human.reason : ''
       if (await limitReached(accountId, 'comments')) { idleLap += 1; lastSkip = 'суточный лимит'; await store.appendLog(task, 'info', 'Суточный лимит сообщений достигнут (§6)', meta.name); continue }
       // Многомодульность (20.08): аккаунт может работать в нескольких модулях, но не
       // двумя действиями одновременно — занятый другим модулем пропускаем, как при
@@ -970,6 +1004,7 @@ export async function runNeuroChatting(task, store) {
       }
       idleLap = 0
       lastSkip = ''
+      if (бросокРаспорядка) await store.appendLog(task, 'info', бросокРаспорядка, meta.name)
       let client
       let progressed = false
       try {
@@ -1017,7 +1052,7 @@ export async function runNeuroChatting(task, store) {
         await noteWait(task, store, chatWait, 'задержка между сообщениями', meta.name)
         if (await breakableDelay(chatWait, store, task)) { await disconnectAccount(client, accountId); break }
         task.usedTexts = task.usedTexts || []
-        const chatPrompt = pickPrompt(s, s.typeWeights, goalCtx + agentCtx)
+        const chatPrompt = pickPrompt(s, s.typeWeights, goalCtx + agentCtx, ownerPrompt)
         const { text: reply, mode, reason, usage } = await generateComment(msg.message || '', chatPrompt.index, chatPrompt.sys, { avoid: task.usedTexts, variantSeed: accountId })
         if (usage?.tokens) await recordTokens({ ...usage, module: task.moduleKey, accountId, taskId: task.id, campaignId: s.campaignId, userId: task.userId })
         if (mode === 'fatal') {
@@ -1063,6 +1098,7 @@ export async function runNeuroChatting(task, store) {
       }
       if (trackIdlePass(task, progressed)) {
         await store.appendLog(task, 'error', 'Остановка: нет прогресса после нескольких попыток')
+        markIdleStop(task, 'нет прогресса после нескольких попыток')
         break
       }
       task = (await store.loadTask(task.id)) || task
@@ -1133,7 +1169,7 @@ export async function runMassReact(task, store) {
           // вероятности прямо противоречил соседней строке лога (правка 19.08).
           // Во сколько вернётся ближайший аккаунт — это первое, что спрашивают, глядя
           // на «ждём N мин» (правка 19.08). Задача при этом остаётся в работе.
-          const backAt = new Date(idleUntil).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+          const backAt = logTime(idleUntil)
           // Секунды, а не «1 мин»: почти все задержки здесь секундные (переключение
           // модулей, повтор броска), и округление вверх превращало 7 секунд в минуту.
           // Ждём РОВНО до окна — к следующей попытке аккаунт уже готов, а не «попробуем
@@ -1177,9 +1213,15 @@ export async function runMassReact(task, store) {
       // Удачный бросок тоже показываем: в логе были одни неудачи, и по нему нельзя было
       // понять, как вообще считается шанс (MR-175). Молчим только в часы со 100%: там
       // броска фактически нет, и строка была бы шумом на каждом действии.
-      if (typeof human.chance === 'number' && human.chance < 1 && human.reason) {
-        await store.appendLog(task, 'info', human.reason, meta.name)
-      }
+      /*
+       * Удачный бросок распорядка пишем ПОСЛЕ проверки занятости (правка 27.08).
+       *
+       * Раньше строка «распорядок дня: шанс 82%, выпало 64 — работаем» появлялась на
+       * каждом круге, даже когда аккаунт тут же пропускался как занятый соседним модулем:
+       * за один комментарий набегала полсотня строк «работаем», за которыми ничего не
+       * следовало. Теперь бросок откладываем и печатаем, только если дело дошло до дела.
+       */
+      const бросокРаспорядка = typeof human.chance === 'number' && human.chance < 1 && human.reason ? human.reason : ''
       if (await limitReached(accountId, 'reactions')) { idleLap += 1; lastSkip = 'суточный лимит'; await store.appendLog(task, 'info', 'Суточный лимит реакций достигнут (§6)', meta.name); continue }
       // Многомодульность (20.08): аккаунт может работать в нескольких модулях, но не
       // двумя действиями одновременно — занятый другим модулем пропускаем, как при
@@ -1194,6 +1236,7 @@ export async function runMassReact(task, store) {
       }
       idleLap = 0
       lastSkip = ''
+      if (бросокРаспорядка) await store.appendLog(task, 'info', бросокРаспорядка, meta.name)
       let client
       try {
         ;({ client } = await connectAccount(accountId, task.id, { shouldStop: stopFlag(task) }))
@@ -1380,7 +1423,7 @@ export async function runMassLooking(task, store) {
           // вероятности прямо противоречил соседней строке лога (правка 19.08).
           // Во сколько вернётся ближайший аккаунт — это первое, что спрашивают, глядя
           // на «ждём N мин» (правка 19.08). Задача при этом остаётся в работе.
-          const backAt = new Date(idleUntil).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+          const backAt = logTime(idleUntil)
           // Секунды, а не «1 мин»: почти все задержки здесь секундные (переключение
           // модулей, повтор броска), и округление вверх превращало 7 секунд в минуту.
           // Ждём РОВНО до окна — к следующей попытке аккаунт уже готов, а не «попробуем
@@ -1423,9 +1466,15 @@ export async function runMassLooking(task, store) {
       // Удачный бросок тоже показываем: в логе были одни неудачи, и по нему нельзя было
       // понять, как вообще считается шанс (MR-175). Молчим только в часы со 100%: там
       // броска фактически нет, и строка была бы шумом на каждом действии.
-      if (typeof human.chance === 'number' && human.chance < 1 && human.reason) {
-        await store.appendLog(task, 'info', human.reason, meta.name)
-      }
+      /*
+       * Удачный бросок распорядка пишем ПОСЛЕ проверки занятости (правка 27.08).
+       *
+       * Раньше строка «распорядок дня: шанс 82%, выпало 64 — работаем» появлялась на
+       * каждом круге, даже когда аккаунт тут же пропускался как занятый соседним модулем:
+       * за один комментарий набегала полсотня строк «работаем», за которыми ничего не
+       * следовало. Теперь бросок откладываем и печатаем, только если дело дошло до дела.
+       */
+      const бросокРаспорядка = typeof human.chance === 'number' && human.chance < 1 && human.reason ? human.reason : ''
       // Многомодульность (20.08): аккаунт может работать в нескольких модулях, но не
       // двумя действиями одновременно — занятый другим модулем пропускаем, как при
       // усталости; сюда же пауза при переключении модулей.
@@ -1439,6 +1488,7 @@ export async function runMassLooking(task, store) {
       }
       idleLap = 0
       lastSkip = ''
+      if (бросокРаспорядка) await store.appendLog(task, 'info', бросокРаспорядка, meta.name)
       let client
       try {
         ;({ client } = await connectAccount(accountId, task.id, { shouldStop: stopFlag(task) }))
@@ -1507,6 +1557,30 @@ export async function runMassLooking(task, store) {
 }
 
 /** @param {object} task @param {object} store */
+/*
+ * Словари прогрева (правка 26.08). Держим рядом с воркером, а не в конфиге витрины:
+ * это поведение аккаунта, а не настройка задачи, — человеку тут выбирать нечего.
+ */
+
+/** Запасные темы поиска, когда своя база каналов пуста или жребий увёл в поиск. */
+const WARM_QUERIES = [
+  'новости', 'музыка', '技', 'крипта', 'спорт', 'кино', 'юмор', 'путешествия',
+  'работа', 'еда', 'книги', 'авто', 'дизайн', 'здоровье', 'финансы', 'игры',
+  'news', 'music', 'tech', 'crypto', 'sport', 'movies',
+].filter((q) => /[a-zа-яё]/i.test(q))
+
+/**
+ * Набор реакций шире прежней четвёрки: аккаунт, ставящий вечные 👍❤️🔥👏, узнаётся
+ * по этому следу так же легко, как по одинаковым паузам.
+ */
+const WARM_EMOJI = ['👍', '❤️', '🔥', '👏', '😁', '🤔', '🎉', '😍', '🙏', '💯', '⚡', '🤝']
+
+/** Заметки себе в «Избранное» — короткие и бессодержательные, как у живого человека. */
+const WARM_NOTES = [
+  'напомнить', 'посмотреть позже', 'идея', 'заметка', 'проверить', 'потом',
+  'не забыть', 'важное', 'на выходных', 'подумать',
+]
+
 export async function runWarming(task, store) {
   const s = task.settings
   task.startedAt = Date.now()
@@ -1515,8 +1589,19 @@ export async function runWarming(task, store) {
   // 3 уровня прогрева (§8.2, названия заказчика): длиннее уровень — медленнее/естественнее темп.
   const pace = warmingPace(s.warmLevel ?? 1)
   const mul = delayMultiplier(s.protectionLevel ?? 1, s.delayPreset ?? 1) * pace.mul
-  const шаг = Math.round(WARM_WINDOW_MS / Math.max(1, pace.actionsPerDay) / 60000)
-  await store.appendLog(task, 'info', `Прогрев запущен · уровень: ${pace.label} · ~${pace.actionsPerDay} действий/день на аккаунт (примерно раз в ${шаг} мин, ночью — пауза)`)
+  const окно = warmWindowMs(s.warmHours)
+  const шаг = Math.round(окно / Math.max(1, pace.actionsPerDay) / 60000)
+  // Сколько всего и на сколько дней — в первой же строке лога. «Прогрев на 2 дня», молча
+  // закончившийся к обеду, был именно потому, что цель бралась жребием (правка 27.08).
+  const днейПрогрева = Math.max(1, Math.min(30, Number(s.warmDays) || 0))
+  const цельПрогрева = Number(s.maxActions) || 0
+  await store.appendLog(
+    task,
+    'info',
+    `Прогрев запущен · ${pace.label}`
+    + (s.warmDays ? ` · ${днейПрогрева} дн. × ~${pace.actionsPerDay} действий = ${цельПрогрева} всего` : ` · ~${pace.actionsPerDay} действий/день`)
+    + ` · окно ${Math.round(окно / 3600000)} ч в сутки, примерно раз в ${шаг} мин на аккаунт (ночью — пауза)`,
+  )
   const accountIds = s.accountIds || []
   // §3.3: на время прогрева аккаунт получает статус «warming» — он входит в NON_RUNNABLE,
   // поэтому боевые модули его не возьмут. Раньше этот статус не выставлял НИКТО: он был
@@ -1570,28 +1655,54 @@ export async function runWarming(task, store) {
         // Реальные реакции/вступления выполняются под суточными лимитами §6 (при достижении
         // потолка действие деградирует в безопасный просмотр). Бизнес-логика — Help Center «Политика прогрева».
         const kind = pickWeightedKey(pace.weights)
-        const warmQuery = () => ['news', 'music', 'tech', 'crypto', 'sport', 'movies'][Math.floor(Math.random() * 6)]
+        /*
+         * Откуда прогрев берёт цели (правка 26.08). Раньше — только поиск по шести
+         * зашитым английским словам (news/music/tech/crypto/sport/movies): все аккаунты
+         * ходили по одному кругу чужих каналов, никак не связанных с тематикой клиента.
+         * Теперь в первую очередь берём СВОЮ базу каналов — ту, что наполняет парсер, —
+         * и только если она пуста или не повезло с жребием, идём в поиск.
+         */
+        const warmQuery = () => WARM_QUERIES[Math.floor(Math.random() * WARM_QUERIES.length)]
+        const fromBase = async () => {
+          try {
+            const all = await listChannels()
+            const usable = all.filter((c) => c.username)
+            if (!usable.length) return null
+            return String(usable[Math.floor(Math.random() * usable.length)].username).replace(/^@/, '')
+          } catch { return null }
+        }
+        /** Цель действия: 70% — своя база, иначе поиск. @returns {Promise<string|null>} */
+        const pickWarmTarget = async () => {
+          if (Math.random() < 0.7) {
+            const u = await fromBase()
+            if (u) return u
+          }
+          const chats = await searchPublic(client, warmQuery(), 8)
+          const withName = chats.filter((c) => c.username)
+          return withName.length ? String(withName[Math.floor(Math.random() * withName.length)].username).replace(/^@/, '') : null
+        }
         if (kind === 'react' && !(await limitReached(accountId, 'reactions'))) {
-          const chats = await searchPublic(client, warmQuery(), 6)
-          const target = chats[Math.floor(Math.random() * chats.length)]
+          const target = await pickWarmTarget()
           let reacted = false
           if (target) {
             try {
-              const posts = await fetchPosts(client, target, 5)
+              // Реакция не на самый свежий пост, а на случайный из последних: аккаунт,
+              // который всегда отмечает верхний пост, узнаётся по этому следу.
+              const posts = await fetchPosts(client, target, 10)
               const post = posts[Math.floor(Math.random() * posts.length)]
               if (post) {
-                const emoji = ['👍', '❤️', '🔥', '👏'][Math.floor(Math.random() * 4)]
+                const emoji = WARM_EMOJI[Math.floor(Math.random() * WARM_EMOJI.length)]
                 await sendReaction(client, target, post.id, emoji)
                 await incAction(accountId, 'reactions')
-                await store.appendLog(task, 'success', `Прогрев: реакция ${emoji} в «${target.title || target.username || 'канал'}»`, meta.name)
+                await store.appendLog(task, 'success', `Прогрев: реакция ${emoji} в @${target}`, meta.name)
                 reacted = true
               }
             } catch { /* канал без реакций/приватный — деградируем в просмотр */ }
           }
-          if (!reacted) await store.appendLog(task, 'info', 'Прогрев: просмотр каналов · react→view', meta.name)
+          if (!reacted) await store.appendLog(task, 'info', 'Прогрев: реакция не прошла — смотрю посты', meta.name)
         } else if (kind === 'join' && !(await limitReached(accountId, 'joins'))) {
-          const chats = await searchPublic(client, warmQuery(), 8)
-          const target = chats.find((c) => c.username)
+          const username = await pickWarmTarget()
+          const target = username ? { username } : null
           let joined = false
           if (target?.username) {
             // Прогрев вступает в группы точно так же, как боевые модули, — значит и
@@ -1599,19 +1710,65 @@ export async function runWarming(task, store) {
             // мгновенно, греется в минус.
             const m = await joinWithDelay(client, target.username, (l, msg, a) => store.appendLog(task, l, msg, a), meta.name,
               pickJoinDelay(s.delays?.join?.[0] ?? 84, s.delays?.join?.[1] ?? 156, mul), makeStopCheck(store, task.id))
-            if (m?.status === 'joined') { await incAction(accountId, 'joins'); joined = true }
+            if (m?.status === 'joined') {
+              await incAction(accountId, 'joins')
+              joined = true
+              // Список СВОИХ вступлений — источник для будущих отписок (см. kind === 'leave').
+              task.warmJoined = [...new Set([...(task.warmJoined || []), target.username])].slice(-30)
+            }
             else if (m?.peer) joined = true // уже участник — тоже засчитываем заход
           }
           if (!joined) { await client.getMe(); await store.appendLog(task, 'info', 'Прогрев: keepalive · join→ping', meta.name) }
+        } else if (kind === 'leave') {
+          /*
+           * Отписка. Профиль, который только вступает и никогда не выходит, выглядит
+           * роботом: у живого человека список каналов меняется в обе стороны. Уходим ТОЛЬКО
+           * оттуда, куда вступили сами в ЭТОЙ задаче: чужие подписки клиента трогать нельзя.
+           */
+          const mine = task.warmJoined || []
+          const victim = mine.length ? mine[Math.floor(Math.random() * mine.length)] : null
+          if (victim) {
+            try {
+              // Api подгружаем на месте — так же, как в остальных местах файла.
+              const { Api } = await import('telegram/tl/index.js')
+              await client.invoke(new Api.channels.LeaveChannel({ channel: await client.getEntity(victim) }))
+              task.warmJoined = mine.filter((u) => u !== victim)
+              await store.appendLog(task, 'info', `Прогрев: отписался от @${victim}`, meta.name)
+            } catch { await store.appendLog(task, 'info', 'Прогрев: отписка не прошла — читаю диалоги', meta.name) }
+          } else {
+            const ds = await fetchDialogs(client, 10)
+            await store.appendLog(task, 'info', `Прогрев: пока не от чего отписываться · чтение диалогов (${ds.length})`, meta.name)
+          }
+        } else if (kind === 'note') {
+          // Заметка себе в «Избранное». Владелец просил «своему же боту отписал»: писать
+          // другому нашему аккаунту рискованно (переписка ботов между собой — заметный
+          // след), а сохранённые сообщения есть у каждого живого пользователя.
+          try {
+            await client.sendMessage('me', { message: WARM_NOTES[Math.floor(Math.random() * WARM_NOTES.length)] })
+            await store.appendLog(task, 'info', 'Прогрев: заметка в «Избранное»', meta.name)
+          } catch { await store.appendLog(task, 'info', 'Прогрев: заметка не отправилась · keepalive', meta.name) }
         } else if (kind === 'read') {
-          const ds = await fetchDialogs(client, 10)
+          const ds = await fetchDialogs(client, 10 + Math.floor(Math.random() * 20))
           await store.appendLog(task, 'info', `Прогрев: чтение диалогов (${ds.length})`, meta.name)
         } else if (kind === 'ping') {
           await client.getMe()
           await store.appendLog(task, 'info', 'Прогрев: keepalive · ping', meta.name)
         } else {
-          const chats = await searchPublic(client, 'news', 5)
-          await store.appendLog(task, 'info', `Прогрев: просмотр каналов (${chats.length}) · ${kind}`, meta.name)
+          /*
+           * «Просмотр» раньше выполнял ПОИСК и ничего не открывал — для Telegram это
+           * запрос к серверу, а не поведение читателя. Теперь реально открываем канал
+           * и листаем случайное число последних постов.
+           */
+          const target = await pickWarmTarget()
+          if (target) {
+            const сколько = 2 + Math.floor(Math.random() * 6)
+            try {
+              const r = await viewRecentPosts(client, target, сколько)
+              await store.appendLog(task, 'info', `Прогрев: смотрю @${target} · ${r.viewed || сколько} постов`, meta.name)
+            } catch { await store.appendLog(task, 'info', `Прогрев: не открылся @${target}`, meta.name) }
+          } else {
+            await store.appendLog(task, 'info', 'Прогрев: нечего смотреть — база каналов пуста и поиск ничего не дал', meta.name)
+          }
         }
         task.accountStats[accountId] = task.accountStats[accountId] || { actions: 0, floodWaits: 0 }
         task.accountStats[accountId].actions += 1
@@ -1648,9 +1805,9 @@ export async function runWarming(task, store) {
        * (9:00–23:00 — ночью человек спит, §8.2). Разброс ±35%, иначе действия идут по
        * метроному. Нижняя граница — прежняя пауза между действиями: быстрее не нужно.
        */
-      const шагПоНорме = Math.round((WARM_WINDOW_MS / Math.max(1, pace.actionsPerDay)) * (0.65 + Math.random() * 0.7))
+      const шагПоНорме = Math.round((окно / Math.max(1, pace.actionsPerDay)) * (0.65 + Math.random() * 0.7))
       const паузаП = Math.max(pickDelay(30, 90, mul) * 1000, шагПоНорме)
-      await noteWait(task, store, паузаП, `темп прогрева: ~${pace.actionsPerDay} действий/день`)
+      await noteWait(task, store, паузаП, `темп прогрева: ~${pace.actionsPerDay} действий за ${Math.round(окно / 3600000)} ч в сутки`)
       if (await breakableDelay(паузаП, store, task)) break
 
       // Ночью прогрев спит: активность в 4 утра — сама по себе примета фермы.
@@ -1700,8 +1857,8 @@ const STAGE_HINT = {
   closed: 'Отказался. Извинись одним предложением и попрощайся.',
 }
 
-function dialogSystemPrompt(settings, goal, goalObj = null, leadStatus = null, stage = null) {
-  const base = resolveSystemPrompt(settings)
+function dialogSystemPrompt(settings, goal, goalObj = null, leadStatus = null, stage = null, globalPrompt) {
+  const base = resolveSystemPrompt(settings, globalPrompt)
   const rules = 'Ты ведёшь личную переписку в Telegram от лица владельца аккаунта. Если в переписке уже есть твоё сообщение — не здоровайся заново и не представляйся: продолжай разговор с того места, где он остановился. Отвечай на языке собеседника, коротко (1–3 предложения), живо и по-человечески. Никогда не сообщай, что ты ИИ или бот.'
   // §9: прощание — не отдельный механизм, а правило промта. ИИ видит историю переписки
   // и сам понимает, что цель достигнута; тогда благодарит и закрывает диалог, а не давит дальше.
@@ -1755,6 +1912,9 @@ function findLeadByPeer(leads, peer) {
 }
 
 export async function runNeuroDialogs(task, store) {
+  // MR-185: системный промпт берём У ВЛАДЕЛЬЦА ЗАДАЧИ. Раньше он был один на всю платформу,
+  // и правка одного человека уезжала в чужие запуски. Читаем один раз на прогон.
+  const ownerPrompt = await getUserGlobalPrompt(task.userId).catch(() => '')
   const s = task.settings
   task.startedAt = Date.now()
   task.status = 'running'
@@ -1774,6 +1934,32 @@ export async function runNeuroDialogs(task, store) {
   // Сколько ЛС один аккаунт отвечает за один заход, прежде чем уступить очередь следующему.
   // Пачка ответов подряд с одного номера — самый быстрый путь к PEER_FLOOD и репортам.
   const perPassCap = [2, 4, 6][s.protectionLevel ?? 1] ?? 4
+  /*
+   * Вероятность ответа (просьба владельца 26.08: «в нейродиалогах тоже»).
+   *
+   * Здесь промах безобиден и потому настоящий, а не отложенный, как в мейлинге: диалог
+   * никуда не девается — он остаётся в списке ждущих и попадёт в следующий круг. Смысл
+   * ровно тот же, что в комментинге: бот, отвечающий на ВСЁ подряд и мгновенно, узнаётся
+   * именно по стопроцентной явке.
+   *
+   * Защита включена всегда (тумблера «ИИ-защита» в витрине нет, есть уровень), поэтому
+   * потолок применяем безусловно — иначе подпись про «фактически будет N%» врала бы.
+   */
+  const шансОтвета = effectiveProbability(s.probability ?? 100, true, s.protectionLevel ?? 1)
+  /*
+   * Ноль — это выключенный в витрине тумблер «Отвечать на входящие автоматически». Раньше
+   * он слался сюда тем же полем и НИКАК не влиял: воркер probability не читал вовсе, и
+   * задача с выключенными авто-ответами всё равно отвечала. Теперь выключатель работает,
+   * а задача не крутится вхолостую, делая вид, что чем-то занята.
+   */
+  if (шансОтвета <= 0) {
+    await store.appendLog(task, 'warning', 'Авто-ответы выключены в настройках задачи — отвечать некому')
+    task.status = 'stopped'
+    task.idleStopReason = 'авто-ответы выключены в настройках'
+    await store.saveTask(task)
+    await finalizeAccounts(accountIds, task.id)
+    return
+  }
   // §9: сколько сообщений пишем одному лиду. 'untilTarget' — до целевого действия
   // (ограничивают только суточные лимиты и стоп-лист), 'count' — не больше N ответов.
   const replyLimitMode = s.replyLimitMode === 'count' ? 'count' : 'untilTarget'
@@ -1925,6 +2111,14 @@ export async function runNeuroDialogs(task, store) {
           if (task.stopRequested || totalLimitReached(s, task) || perAccountLimitReached(s, accountId, task)) break
           if (await limitReached(accountId, 'dm')) { await store.appendLog(task, 'info', 'Суточный лимит ЛС достигнут (§6)', meta.name); break }
 
+          if (шансОтвета < 100) {
+            const бросок = Math.round(Math.random() * 100)
+            if (бросок > шансОтвета) {
+              await store.appendLog(task, 'info', `Пропуск диалога: вероятность ответа ${шансОтвета}%, выпало ${бросок} — вернёмся к нему на следующем круге`, meta.name)
+              continue
+            }
+          }
+
           // §9: сколько сообщений пишем ОДНОМУ лиду. Два режима:
           //  'count'       — не больше maxRepliesPerLead ответов;
           //  'untilTarget' — пишем, пока лид не выполнит целевое действие (или не откажется).
@@ -2004,10 +2198,10 @@ export async function runNeuroDialogs(task, store) {
           const effStatus = weWroteBefore && (rawStatus === 'cold') ? 'contacted' : rawStatus
           // В дожиме — свой тон: человек уже прошёл воронку, продавать ему то же
           // самое повторно это верный способ получить блокировку.
-          const sysPrompt = dialogSystemPrompt(s, goal, goalObj, effStatus, stageForStatus(goalObj?.stages, effStatus))
+          const sysPrompt = dialogSystemPrompt(s, goal, goalObj, effStatus, stageForStatus(goalObj?.stages, effStatus), ownerPrompt)
             + (isFollowUp ? followUpPrompt(fuOwner, rawStatus, decision.left) : '')
           // Тип промпта — по распределению (если задано), как в остальных модулях.
-          const dlgPrompt = pickPrompt(s, s.typeWeights)
+          const dlgPrompt = pickPrompt(s, s.typeWeights, '', ownerPrompt)
           const gen = await generateComment(prompt, dlgPrompt.index, sysPrompt, accountId)
           if (gen?.usage?.tokens) await recordTokens({ ...gen.usage, module: task.moduleKey, accountId, taskId: task.id, campaignId: s.campaignId, userId: task.userId })
           const mode = gen.mode
@@ -2345,6 +2539,99 @@ export async function runChannelParser(task, store, kind) {
     if (r?.id) seen.add(String(r.id))
   }
   const skipParsed = new Set((s.alreadyParsed || []).map((x) => String(x).toLowerCase()))
+
+  /*
+   * Сперва СВОЯ база, потом Telegram (вопрос владельца 27.08: «начал с теми же ключами —
+   * почему не получил все каналы по ключам, которые у нас уже есть в базе?»).
+   *
+   * До этого парсер в общую базу каналов только ПИСАЛ. Каждый новый запуск шёл в Telegram
+   * за всем подряд, включая то, что мы уже находили неделю назад: минуты ожидания, расход
+   * аккаунтов и риск FloodWait — ради строк, которые лежат у нас на диске.
+   *
+   * База отдаётся мгновенно и бесплатно по аккаунтам, дальше поиск идёт как обычно и
+   * добирает то, чего в ней нет: `seen` не даст задвоить. Фильтруем тем, что в базе есть —
+   * подписчиками и типом; активность и балл требуют постов и считаются только для живых
+   * находок, поэтому строки из базы через них не прогоняем и об этом честно пишем.
+   *
+   * При включённом «Не собирать уже спарсенные» база НЕ подмешивается: это ровно
+   * противоположное желание — человек просит показать только новое.
+   */
+  /*
+   * Совпадение по СЛОВУ, а не по подстроке (правка 27.08).
+   *
+   * Первая версия искала `includes`, и ключ «СТО» находил «ре-СТО-раны»: в выдаче по
+   * массажу и разработчикам появился «Вкусный Чат — о еде, ресторанах». Для коротких
+   * ключей подстрока даёт мусор, поэтому сверяем по границам слова. Ключ из нескольких
+   * слов («нужен разработчик») ищем как фразу — целиком.
+   */
+  const kwRe = keywords.map((k) => ({ kw: k, re: keywordRegex(k) }))
+
+  /*
+   * Что уже искали раньше (просьба владельца 27.08: «сколько попаданий в ключ — столько
+   * моментально отдаём; если новый ключ — выдаём всё новое, но по новому ключу работаем
+   * дальше»).
+   *
+   * По ключу, который уже собирали, идти в Telegram незачем: всё, что он давал, лежит в
+   * общей базе каналов. Отдаём его находки сразу и снимаем ЕГО запросы из очереди —
+   * иначе прогон снова растягивается на десятки минут ради известного. Новый ключ
+   * работает как обычно, и в логе видно, что откуда взялось.
+   */
+  const отработанные = new Set()
+  if (!resuming && !skipParsed.size && keywords.length) {
+    try {
+      const { usedKeywords } = await import('../parserCache.js')
+      for (const k of await usedKeywords(kind, task.userId)) отработанные.add(k)
+    } catch { /* нет истории — считаем все ключи новыми */ }
+  }
+
+  const изБазы = new Map() // ключ → сколько строк отдали
+  if (!resuming && !skipParsed.size && kwRe.length) {
+    try {
+      const base = await listChannels()
+      const проходитФильтры = (c) => {
+        const members = Number(c.subscribers) || 0
+        if (minMembers && members < minMembers) return false
+        if (maxMembers && members > maxMembers) return false
+        if (comments === 1 && !c.hasComments) return false
+        if (comments === 2 && c.hasComments) return false
+        return true
+      }
+      for (const c of base) {
+        if (!c.username && !c.id) continue
+        const key = String(c.username || c.id).toLowerCase()
+        if (seen.has(key)) continue
+        const hay = `${c.title || ''} ${c.username || ''}`
+        const попал = kwRe.filter(({ re }) => re.test(hay))
+        if (!попал.length || !проходитФильтры(c)) continue
+        seen.add(key)
+        task.results.push({
+          id: c.id,
+          title: c.title || c.username || '',
+          username: c.username || '',
+          members: Number(c.subscribers) || 0,
+          hasComments: !!c.hasComments,
+          link: c.link || (c.username ? `https://t.me/${c.username}` : ''),
+          foundBy: попал.map(({ kw }) => kw).join(', '),
+          fromBase: true,
+        })
+        // Отмечаем совпадения для AND-пересечения: иначе строка из базы вылетит в конце
+        // как «не совпавшая ни с одним ключом», хотя совпала.
+        if (andMode) {
+          let set = hitsByKey.get(key)
+          if (!set) { set = new Set(); hitsByKey.set(key, set) }
+          for (const { kw } of попал) set.add(keywords.indexOf(kw))
+        }
+        for (const { kw } of попал) изБазы.set(kw, (изБазы.get(kw) || 0) + 1)
+      }
+      if (изБазы.size) {
+        syncHits()
+        const строки = [...изБазы.entries()].map(([kw, n]) => `«${kw}» +${n}`).join(' · ')
+        await store.appendLog(task, 'info', `Из своей базы сразу: ${строки}. Эти каналы собраны прошлыми запусками — повторно в Telegram за ними не идём.`)
+        await store.saveTask(task)
+      }
+    } catch { /* база необязательна: не смогли прочитать — идём в Telegram за всем */ }
+  }
+
   let accIdx = 0
 
   async function nextAccountId() {
@@ -2356,7 +2643,40 @@ export async function runChannelParser(task, store, kind) {
     return null
   }
 
+  /*
+   * Ключ, который уже отрабатывали И дал строки из базы, второй раз в Telegram не гоняем
+   * (решение владельца 27.08). Всё, что он находил, уже отдано выше — мгновенно и без
+   * аккаунтов. Новые ключи остаются в очереди и работают как обычно.
+   *
+   * Условие двойное намеренно: если ключ в истории есть, а база по нему сейчас пуста
+   * (каналы удалили, сузили фильтры), пропускать его нельзя — человек остался бы вообще
+   * без результата по этому слову.
+   */
+  if (!resuming && отработанные.size && изБазы.size) {
+    const пропустить = new Set()
+    keywords.forEach((kw, i) => {
+      if (отработанные.has(kw.toLowerCase()) && изБазы.get(kw)) пропустить.add(i)
+    })
+    if (пропустить.size) {
+      const было = queries.length
+      for (let i = queries.length - 1; i >= 0; i -= 1) {
+        if (пропустить.has(queries[i].kwIdx)) queries.splice(i, 1)
+      }
+      const снятые = [...пропустить].map((i) => `«${keywords[i]}»`).join(', ')
+      await store.appendLog(
+        task,
+        'info',
+        `Пропускаем ${было - queries.length} запрос(ов): ${снятые} — эти ключи уже отрабатывали, их каналы отданы из базы. `
+        + (queries.length ? `Остаётся ${queries.length} запрос(ов) по новым ключам.` : 'Новых ключей нет — работа закончена.'),
+      )
+    }
+  }
+
   const startFrom = Math.min(Number(task.cursor) || 0, queries.length)
+  // Знаменатель прогресса — запросы (см. `отметитьГотовым`). Ставим его ДО старта, иначе
+  // до первого завершённого запроса витрина показывала долю от цели по строкам.
+  task.progress.total = Math.max(1, queries.length)
+  task.progress.done = Math.min(startFrom, queries.length)
   await store.appendLog(
     task,
     'info',
@@ -2373,7 +2693,10 @@ export async function runChannelParser(task, store, kind) {
       task,
       'info',
       `Пересечение (AND) по ${keywords.length} ключам применится В КОНЦЕ, когда пройдут все запросы. `
-      + 'До этого в результатах видно промежуточный сбор — часть строк уйдёт, деньги за них вернутся.',
+      + 'До этого в результатах видно промежуточный сбор — часть строк уйдёт, деньги за них вернутся.'
+      + (keywords.length > 3
+        ? ` Слов много (${keywords.length}): канал должен подойти сразу под все — если под все не подойдёт ни один, пересечение не применим и отдадим собранное.`
+        : ''),
     )
   }
 
@@ -2421,7 +2744,21 @@ export async function runChannelParser(task, store, kind) {
       const { q, kwIdx } = queries[qi]
       // Курсор — наименьший НЕзавершённый запрос. В асинхронном режиме запросы уходят
       // вразнобой, и «qi + 1» соврал бы: при продолжении часть работы потерялась бы.
-      const отметитьГотовым = () => { готовые.add(qi); while (готовые.has(курсор)) курсор++; task.cursor = курсор }
+      /*
+       * Прогресс парсера меряется ЗАПРОСАМИ, а не строками (правка 27.08).
+       *
+       * Знаменателем стояла цель по строкам («7 / 36 действий» = 19%), хотя парсер
+       * заканчивается не на 36-й находке, а когда кончились ключевые слова: сколько
+       * каналов вернёт Telegram, заранее не знает никто. Из-за этого прогон, которому
+       * оставалось полторы минуты, показывал 19% и «≈ 1 ч 34 мин» — оценка считалась по
+       * ненайденным строкам, которых могло не быть вовсе. Строки остаются в
+       * `actionsDone` (по ним считаются деньги), а доля выполненного — по запросам.
+       */
+      const отметитьГотовым = () => {
+        готовые.add(qi); while (готовые.has(курсор)) курсор++; task.cursor = курсор
+        task.progress.done = готовые.size
+        task.progress.total = Math.max(queries.length, готовые.size)
+      }
 
       const accountId = закреплённыйАккаунт || await nextAccountId()
       if (!accountId) {
@@ -2527,6 +2864,13 @@ export async function runChannelParser(task, store, kind) {
             kind: resultKind,
             link: c.username ? `https://t.me/${c.username}` : '',
             hasComments: openComments,
+            /*
+             * По какому ключу нашли (просьба владельца 27.08: «здесь нету, по какому ключу
+             * нашло»). При десятке слов в запросе строка «Фильмы Crypto ero» ничего не
+             * объясняет: непонятно, это находка по «массаж» или мусор по соседнему ключу, —
+             * а значит непонятно и какой ключ чистить.
+             */
+            foundBy: keywords[kwIdx] || q,
             // Живые сигналы канала — витрина показывает их вместо «рейтинга из подписчиков».
             score,
             lang,
@@ -2537,10 +2881,10 @@ export async function runChannelParser(task, store, kind) {
           // §3.8/§4: копим для общей базы — упсертим одним батчем в конце (без дублей).
           baseChannels.push({ title: c.title, username: c.username, subscribers: members, hasComments: !!c.isMegagroup, tgPeerId: c.id })
           added += 1
+          // Строки — это ДЕНЬГИ (`actionsDone`), а не доля выполненного: долю двигают
+          // запросы, см. `отметитьГотовым`.
           task.progress.actionsDone = task.results.length
-          task.progress.done = task.results.length
           await chargeCollected(task, store)
-          task.progress.total = Math.max(task.results.length, task.progress.total || 0)
           syncHits()
           await store.saveTask(task)
         }
@@ -2596,17 +2940,38 @@ export async function runChannelParser(task, store, kind) {
     if (andMode && !task.stopRequested && !task.pauseRequested) {
       const need = keywords.length
       const before = task.results.length
-      task.results = keepIntersecting(task.results, hitsByKey, need, limit)
-      const keepSet = new Set(task.results.map((r) => (r.username || r.id).toLowerCase()))
-      for (let i = baseChannels.length - 1; i >= 0; i--) {
-        if (!keepSet.has((baseChannels[i].username || baseChannels[i].tgPeerId || '').toString().toLowerCase())) baseChannels.splice(i, 1)
+      const { results: пересечение, applied } = applyIntersection(task.results, hitsByKey, need, limit)
+      /*
+       * Пересечение, которое вычёркивает ВСЁ, не применяем (правка 27.08).
+       *
+       * Прогоны 26–27.08: шесть неблизких слов (массаж, СТО, нужен разработчик, создать
+       * бота, need developer, massage) + AND = «5 → 0», и человек остался с пустым экраном
+       * после десяти минут работы аккаунтов. Фильтр, срезающий сто процентов, — это почти
+       * всегда не находка, а неверная настройка: пересечение требует, чтобы ОДИН канал
+       * нашёлся по КАЖДОМУ слову, что выполнимо лишь для тесных синонимов.
+       *
+       * Показать собранное и объяснить полезнее, чем молча выбросить: данные уже оплачены
+       * и добыты, а сузить выдачу человек может сам, сняв галочку.
+       */
+      if (!applied) {
+        await store.appendLog(
+          task,
+          'warning',
+          `Пересечение (AND) не применено: ни один канал не совпал со ВСЕМИ ${need} словами`
+          + ` — оставили ${before} собранных. Канал должен встретиться по каждому слову сразу,`
+          + ` а это работает только для близких синонимов: для разных тем снимите «Пересечение»`
+          + ` или разнесите слова по отдельным запускам.`,
+        )
+      } else {
+        task.results = пересечение
+        await store.appendLog(task, 'info', `AND-пересечение (${need} ключей): ${before} → ${task.results.length}`)
       }
-      await store.appendLog(task, 'info', `AND-пересечение (${need} ключей): ${before} → ${task.results.length}`)
     }
 
-    task.progress.total = task.results.length
-    task.progress.done = task.results.length
     task.progress.actionsDone = task.results.length
+    // Запросы кончились — работа сделана целиком, сколько бы строк ни нашлось.
+    task.progress.total = Math.max(1, queries.length)
+    task.progress.done = task.progress.total
     // Хвост: то, что докопилось после последнего списания в цикле сбора,
     // и возврат за строки, которые срезали фильтры (AND-пересечение, чёрный список).
     await chargeCollected(task, store)
@@ -2615,7 +2980,16 @@ export async function runChannelParser(task, store, kind) {
     // Курсор нужен только между паузой и продолжением. На завершении/стопе сбрасываем,
     // иначе «Перезапуск» начал бы с конца очереди и не сделал бы ничего.
     if (task.status !== 'paused') { task.cursor = 0; delete task.hitsByKey }
-    // §3.8/§4: найденные каналы — в общую базу одним батчем (дедуп, без потери данных).
+    /*
+     * §3.8/§4: найденные каналы — в общую базу одним батчем (дедуп, без потери данных).
+     *
+     * В базу идёт ВСЁ найденное, независимо от фильтров выдачи (правка 27.08). Раньше
+     * отсюда вычёркивалось то, что не прошло AND-пересечение, и получался замкнутый круг:
+     * пересечение обнуляло результат → в базу не попадало ничего → база оставалась пустой
+     * → мгновенная выдача «из своей базы» не срабатывала никогда → каждый запуск заново
+     * гонял аккаунты по тем же словам. Пересечение — это фильтр ЭТОЙ задачи, а не приговор
+     * каналу: найденный канал реален и пригодится следующему запуску.
+     */
     try { const n = await upsertMany(baseChannels, `parse:${task.id}`); if (n) await store.appendLog(task, 'info', `В базу каналов: ${n}`) } catch { /* ignore */ }
     // §6 (MR-38): завершённый сбор — в кэш результатов под сигнатуру запроса, чтобы
     // повтор того же поиска отдавался из базы с датой, без нового прохода по аккаунтам.
@@ -3056,6 +3430,9 @@ async function sendComposedMessage(client, peer, text, mediaUrls = []) {
 }
 
 export async function runMailing(task, store) {
+  // MR-185: системный промпт берём У ВЛАДЕЛЬЦА ЗАДАЧИ. Раньше он был один на всю платформу,
+  // и правка одного человека уезжала в чужие запуски. Читаем один раз на прогон.
+  const ownerPrompt = await getUserGlobalPrompt(task.userId).catch(() => '')
   const s = task.settings || {}
   const accountIds = Array.isArray(s.accountIds) ? s.accountIds : []
   // §8.4: цель рассылки — номер ИЛИ юзернейм. Раньше принимались только номера,
@@ -3185,12 +3562,44 @@ export async function runMailing(task, store) {
      */
     const очередь = [...myTargets]
     const повторено = new Set()
+    /*
+     * Вероятность отправки (правка 26.08: «в мейлинге нету ползунка с вероятностью»).
+     *
+     * Здесь она работает НЕ так, как в комментинге и реакциях, и иначе нельзя. Там мимо
+     * прошедший пост просто не комментируется — постов много, потеря ничего не стоит.
+     * Здесь же список получателей человек вставил руками: молча выкинуть из него каждого
+     * второго значит потерять лида и не сказать об этом.
+     *
+     * Поэтому промах не отменяет отправку, а ОТКЛАДЫВАЕТ её: цель уходит в конец очереди
+     * и достаётся другому аккаунту потока (или этому же, но позже). Со второго захода
+     * пишем без броска — иначе очередь могла бы крутиться вечно. Наружу это выглядит как
+     * «идём по базе не по порядку и не одним аккаунтом» — ровно то, чем живой человек
+     * отличается от скрипта, который шпарит список сверху вниз.
+     */
+    // Защита здесь включена ВСЕГДА (в витрине мейлинга нет тумблера «ИИ-защита», есть
+    // только уровень), поэтому потолок применяем безусловно — иначе подпись «фактически
+    // будет 25%» под ползунком обещала бы то, чего не происходит. Уровень по умолчанию 0:
+    // рассылка в ЛС стартует с самого осторожного, как и написано в витрине.
+    const шансОтправки = effectiveProbability(s.probability ?? 100, true, s.protectionLevel ?? 0)
+    const отложенные = new Set()
     while (очередь.length) {
       const tgt = очередь.shift()
       const phone = tgt.kind === 'phone' ? tgt.value : ''
       const label = tgt.kind === 'phone' ? `+${tgt.value}` : `@${tgt.value}`
       task = (await store.loadTask(task.id)) || task
       if (task.stopRequested || task.pauseRequested || totalLimitReached(s, task)) break
+
+      // Бросок только на ПЕРВОМ заходе к этой цели и только если в очереди есть куда
+      // отложить: на последнем получателе откладывать некуда, и промах стал бы отказом.
+      if (шансОтправки < 100 && !отложенные.has(label) && очередь.length) {
+        const бросок = Math.round(Math.random() * 100)
+        if (бросок > шансОтправки) {
+          отложенные.add(label)
+          очередь.push(tgt)
+          await store.appendLog(task, 'info', `Отложил ${label}: вероятность отправки ${шансОтправки}%, выпало ${бросок} — вернётся позже, к другому аккаунту`)
+          continue
+        }
+      }
 
       // Статус проверяем НА КАЖДОМ КРУГЕ, а не один раз на старте: аккаунт уходит в
       // карантин посреди рассылки (handleFlood), и старый код продолжал его выбирать —
@@ -3247,7 +3656,7 @@ export async function runMailing(task, store) {
         }
         const plan = idleWaitPlan(backAt)
         if (!plan.wait) { await store.appendLog(task, 'warning', 'Все аккаунты потока недоступны — завершаем'); break }
-        await noteWait(task, store, plan.ms, `все аккаунты отдыхают, вернутся в ${new Date(backAt).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })}`)
+        await noteWait(task, store, plan.ms, `все аккаунты отдыхают, вернутся в ${logTime(backAt)}`)
         if (await breakableDelay(plan.ms, store, task)) break
         myAccounts.push(...restingNow)
         continue
@@ -3330,7 +3739,7 @@ export async function runMailing(task, store) {
             (message || opener) ? `Опирайся на этот текст как на образец смысла и тона:
 «${message || opener}»` : '',
           ].filter(Boolean).join(' ')
-          const mailPrompt = pickPrompt(s, s.typeWeights, goalCtx + agentCtx)
+          const mailPrompt = pickPrompt(s, s.typeWeights, goalCtx + agentCtx, ownerPrompt)
           const gen = await generateComment(openerTask, mailPrompt.index, mailPrompt.sys, account)
           if (gen?.usage?.tokens) await recordTokens({ ...gen.usage, module: task.moduleKey, accountId: account, taskId: task.id, campaignId: s.campaignId, userId: task.userId })
           // Чистим так же, как в диалогах: модель повторяет ярлыки промпта и оставляет

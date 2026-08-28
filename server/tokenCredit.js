@@ -98,3 +98,62 @@ export async function creditDueTokens(nowMs = Date.now()) {
   }
   return { users, coins }
 }
+
+/**
+ * Сверка ПОДАРОЧНЫХ ⚡ по активным подпискам.
+ *
+ * Разбор 27.08: у владельца на витрине обещано «500 ⚡ в месяц + 311 ⚡ разово», а на счету
+ * 400. Подарки не были начислены НИ ОДНОМУ человеку на платформе — таблица `user_gifts`
+ * пустая: выдачу добавили (MR-189) уже после того, как люди купили модули, и разово
+ * начисляемое так и осталось обещанием на экране.
+ *
+ * Одной точки выдачи мало: она срабатывает в момент оплаты, и если в этот момент что-то
+ * пошло не так (кода ещё нет, миграция не накатана, запрос упал) — второго шанса не было
+ * никогда. Поэтому сверяем ежедневно: `pendingGift` сам считает, что человеку ещё не
+ * выдавали, а `markGifted` пишет факт выдачи — повторно тот же модуль не оплатится.
+ *
+ * Начисляем только по ДЕЙСТВУЮЩЕЙ подписке: подарок идёт за купленный модуль, а не за
+ * когда-то бывший.
+ *
+ * @returns {Promise<{ users:number, coins:number }>}
+ */
+export async function creditPendingGifts(nowMs = Date.now()) {
+  if (!supabaseEnabled()) return { users: 0, coins: 0 }
+  const db = getSupabase()
+  const { giftMap } = await effectivePrices()
+  if (!giftMap || !Object.values(giftMap).some((v) => Number(v) > 0)) return { users: 0, coins: 0 }
+
+  const { data: subs } = await db.from('subscriptions').select('id, user_id, expires_at')
+  const живые = (subs || []).filter((r) => {
+    if (SKIP.has(r.id) || SKIP.has(r.user_id || '')) return false
+    return !r.expires_at || new Date(r.expires_at).getTime() > nowMs
+  })
+  if (!живые.length) return { users: 0, coins: 0 }
+
+  const { data: rows } = await db.from('user_subscriptions').select('user_id, module_key').in('user_id', живые.map((r) => r.id))
+  const byUser = new Map()
+  for (const r of rows || []) {
+    if (r.module_key === '*') continue // «все модули» — админский провижининг, не покупка
+    if (!byUser.has(r.user_id)) byUser.set(r.user_id, [])
+    byUser.get(r.user_id).push(r.module_key)
+  }
+
+  const { pendingGift, markGifted } = await import('./userGifts.js')
+  const { moduleLabel } = await import('./lib/accountLocks.js')
+  let users = 0
+  let coins = 0
+  for (const { id, user_id: uid } of живые) {
+    const modules = byUser.get(id) || []
+    if (!modules.length) continue
+    const owner = uid || id
+    const gift = await pendingGift(owner, modules, giftMap).catch(() => ({ coins: 0, modules: [] }))
+    if (gift.coins <= 0) continue
+    const names = gift.modules.map((k) => moduleLabel(k))
+    const shown = names.length > 3 ? `${names.slice(0, 3).join(', ')} и ещё ${names.length - 3}` : names.join(', ')
+    await changeCoins(gift.coins, `Подарочные токены (разово): ${shown}`, owner, 'grant')
+    await markGifted(owner, gift.modules, giftMap)
+    users += 1
+    coins += gift.coins
+  }
+  return { users, coins }
+}

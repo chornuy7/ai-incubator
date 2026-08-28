@@ -420,6 +420,9 @@ export const MODULES: Record<string, ModuleConfig> = {
     accent: 'spark',
     warmingLayout: true,
     aiProtection: true,
+    // Числа действий у прогрева больше нет: срок задаётся ДНЯМИ, а сколько это действий,
+    // считает темп уровня (правка 27.08). Свободное число ломало смысл: жребий из [min,max]
+    // мог дать единицы, и «двухдневный прогрев» заканчивался к обеду.
     selectedTitle: 'Выбрано для прогрева',
     accountPicker: true,
     accountActions: ['Добавить все', 'Удалить все'],

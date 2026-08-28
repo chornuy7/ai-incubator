@@ -142,9 +142,9 @@ export default {
       purpose: 'Delay multiplier and how many LAN accounts are responsible for one visit.',
       howItWorks:
         'For this module, the level of protection is determined not only by speed: it determines the size of the packet of responses '
-        + 'per call (2 / 4 / 6). The module has no probability - it responds to everyone who wrote.',
-      api: { method: 'POST', path: '/api/modules/neuro-dialogs/tasks', fills: ['protectionLevel'] },
-      params: ['protectionLevel'],
+        + 'per call (2 / 4 / 6). Since 26.08 the module also has a reply probability, and the level caps it from above.',
+      api: { method: 'POST', path: '/api/modules/neuro-dialogs/tasks', fills: ['protectionLevel', 'probability'] },
+      params: ['protectionLevel', 'probability'],
     },
     {
       id: 'timings',
@@ -436,6 +436,21 @@ export default {
       ],
       examples: [1, 3],
       storedAs: 'task.settings.threads',
+    },
+    {
+      name: 'probability',
+      block: 'protection',
+      title: 'Reply probability',
+      type: 'integer',
+      default: 100,
+      purpose: 'Share of waiting dialogs the account actually answers in one pass.',
+      constraints: [
+        'a skipped dialog is NOT lost: it stays waiting and comes back on the next pass',
+        '0 means the "answer incoming automatically" switch is off — the worker stops the task instead of idling',
+        'protection level caps it: conservative 25%, balanced 45%',
+      ],
+      seeAlso: ['protectionLevel'],
+      storedAs: 'task.settings.probability',
     },
     {
       name: 'protectionLevel',

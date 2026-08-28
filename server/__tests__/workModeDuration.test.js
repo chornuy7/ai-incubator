@@ -33,3 +33,39 @@ test('resolveDurationPeriodMinutes: max меньше min → период схл
   assert.equal(r.max, 60)
   assert.ok(r.chosen >= 20 && r.chosen <= 60)
 })
+
+test('прогрев: срок в днях разворачивается в точную цель, без жребия (27.08)', async () => {
+  // Вопрос владельца: «прогрев исполнился за пару часов, хотя минимальный прогрев 2 дня».
+  // Цель бралась жребием из [min, max] и при пустом минимуме могла выпасть крошечной.
+  const { resolveTotalTarget } = await import('../lib/targets.js')
+
+  // Так это делает startModuleTask: срок × суточная норма уровня.
+  const план = (days, level) => {
+    const perDay = [40, 20, 10][level]
+    const total = days * perDay
+    return { maxActions: total, minActions: total, warmDays: days, warmLevel: level }
+  }
+
+  assert.equal(resolveTotalTarget(план(2, 0), { id: 'a' }), 80) // 2 дня быстрым темпом
+  assert.equal(resolveTotalTarget(план(2, 2), { id: 'a' }), 20) // 2 дня бережным
+  assert.equal(resolveTotalTarget(план(14, 1), { id: 'a' }), 280)
+
+  // Цель не зависит от id задачи: жребия здесь быть не должно.
+  assert.equal(resolveTotalTarget(план(7, 1), { id: 'x' }), resolveTotalTarget(план(7, 1), { id: 'y' }))
+})
+
+test('без явного минимума цель равна максимуму — заданное число выполняется точно (27.08)', async () => {
+  // Владелец: «дал задачу сделать 2 комментария, в итоге сделал 1». Цель бралась жребием
+  // из [min, max], а минимум по умолчанию был нулём.
+  const { resolveTotalTarget } = await import('../lib/targets.js')
+
+  for (const id of ['t1', 't2', 't3', 't4', 't5']) {
+    assert.equal(resolveTotalTarget({ maxActions: 2 }, { id }), 2, 'просили 2 — делаем 2')
+  }
+  // Мейлинг и автопостинг общего числа не шлют вовсе: раньше это был жребий 0..100.
+  assert.equal(resolveTotalTarget({}, { id: 'x' }), 100)
+
+  // Диапазон работает, только когда минимум задан РУКАМИ.
+  const range = new Set(['a', 'b', 'c', 'd'].map((id) => resolveTotalTarget({ minActions: 1, maxActions: 4 }, { id })))
+  assert.ok(range.size > 1, 'явный диапазон по-прежнему даёт разные цели')
+})

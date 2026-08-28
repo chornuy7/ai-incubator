@@ -22,6 +22,32 @@ export interface User {
  * По умолчанию — только свои субпользователи (+ сам). `scope: 'all'` даёт список всей
  * платформы и работает лишь у админа: обычному владельцу сервер всё равно вернёт своих.
  */
+/**
+ * Лимиты расхода сотрудников (27.08). Кошелёк у них ОБЩИЙ с владельцем — они наследуют
+ * и деньги, и подписку, — а лимит ограничивает, сколько из общего кошелька им можно
+ * потратить. `limit === null` — ограничения нет.
+ */
+export interface SubLimit { userId: string; limit: number | null; spent: number; left: number | null }
+export async function fetchSubLimits(): Promise<SubLimit[]> {
+  const r = await apiGet<{ ok: boolean; rows: SubLimit[] }>('/api/users/limits')
+  return r.rows || []
+}
+
+/**
+ * Кошельки сотрудников с ЛИЧНЫМ балансом (27.08): остаток, сколько выдано и сколько из
+ * выданного уже потрачено. У сотрудников на общем балансе своего кошелька нет.
+ */
+export interface SubWallet { userId: string; coins: number; granted: number; spent: number }
+export async function fetchSubWallets(): Promise<SubWallet[]> {
+  const r = await apiGet<{ ok: boolean; rows: SubWallet[] }>('/api/users/wallets')
+  return r.rows || []
+}
+
+/** Перевод монет владелец → сотрудник (плюс) или обратно (минус). */
+export async function transferToSub(userId: string, amount: number) {
+  return apiPost<{ ok: boolean; moved: number; owner: number; sub: number }>(`/api/users/${userId}/wallet`, { amount })
+}
+
 export async function fetchUsers(scope?: 'mine' | 'all'): Promise<User[]> {
   const data = await apiGet<{ users: User[] }>(`/api/users${scope === 'all' ? '?scope=all' : ''}`)
   return data.users

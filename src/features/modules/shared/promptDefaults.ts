@@ -49,6 +49,12 @@ export function usePromptStore(moduleKey: string, labels: string[]) {
   const [loaded, setLoaded] = useState(false)
   const defaultsRef = useRef(defaults)
   defaultsRef.current = defaults
+  /**
+   * Что РЕАЛЬНО лежит у этого человека (заводские плюс его правки), в отличие от того,
+   * что сейчас на экране. После применения чужого шаблона это расходится: на экране
+   * тексты шаблона, а личные промпты человека остаются его собственными.
+   */
+  const storedRef = useRef<string[]>(defaults)
 
   useEffect(() => {
     let alive = true
@@ -67,25 +73,41 @@ export function usePromptStore(moduleKey: string, labels: string[]) {
         if (legacy && !Object.keys(changed).length) {
           await saveUserPrompts(moduleKey, legacy, base).catch(() => {})
           dropLegacy(moduleKey)
-          if (alive) { setBodies(legacy); setLoaded(true) }
+          if (alive) { storedRef.current = legacy; setBodies(legacy); setLoaded(true) }
           return
         }
         if (legacy) dropLegacy(moduleKey) // в базе уже есть свои — старая копия только мешает
-        if (alive) { setBodies(next); setLoaded(true) }
+        if (alive) { storedRef.current = next; setBodies(next); setLoaded(true) }
       } catch {
         // Сеть или ещё не накатанная миграция — показываем заводские, но НЕ считаем
         // набор загруженным: сохранять поверх чужих правок нельзя.
-        if (alive) setBodies(base)
+        if (alive) { storedRef.current = base; setBodies(base) }
       }
     })()
     return () => { alive = false }
   }, [moduleKey, labels.length]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  /** Записать набор целиком. Сервер сам отличит изменённое от возвращённого к заводскому. */
-  const save = useCallback(async (next: string[]) => {
-    setBodies(next)
+  /**
+   * Записать ОДНУ карточку — ту, которую человек только что отредактировал.
+   *
+   * Раньше сохранялся весь набор с экрана, и это тихо крало чужую работу: применил
+   * шаблон администратора, поправил в нём одну карточку, нажал «сохранить» — и
+   * остальные ПЯТЬ текстов администратора уезжали к тебе как твои собственные, поверх
+   * твоих. Человек правил одну карточку и не догадывался, что потерял пять своих.
+   *
+   * Поэтому остальные карточки берём не с экрана, а из того, что реально сохранено за
+   * человеком (`storedRef`): «сохранить» в карточке значит «сделать ЭТОТ текст моим»,
+   * и ничего больше.
+   */
+  const saveCard = useCallback(async (index: number, text: string) => {
+    const body = text.trim() || defaultsRef.current[index] || DEFAULT_PROMPT_BODIES[0]
+    const payload = defaultsRef.current.map((d, i) => (i === index ? body : (storedRef.current[i] ?? d)))
+    storedRef.current = payload
+    // На экране меняем ТОЛЬКО эту карточку: остальные там могут быть из шаблона,
+    // и подменять их сохранёнными значило бы молча отменить применённый шаблон.
+    setBodies((prev) => prev.map((b, i) => (i === index ? body : b)))
     if (!loaded) return
-    await saveUserPrompts(moduleKey, next, defaultsRef.current).catch(() => {})
+    await saveUserPrompts(moduleKey, payload, defaultsRef.current).catch(() => {})
   }, [moduleKey, loaded])
 
   /**
@@ -94,5 +116,5 @@ export function usePromptStore(moduleKey: string, labels: string[]) {
    */
   const replace = useCallback((next: string[]) => setBodies(next), [])
 
-  return { bodies, save, replace, loaded }
+  return { bodies, saveCard, replace, loaded }
 }

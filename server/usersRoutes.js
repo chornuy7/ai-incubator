@@ -271,6 +271,19 @@ usersRouter.post('/', async (req, res) => {
       body.parentId = ctx.id
       body.roleIds = sanitizeRoleIds(body.roleIds)
     }
+    /*
+     * Лимит нового сотрудника не может быть больше того, что есть у владельца (правка
+     * 27.08). Тот же потолок, что и при правке: обещать тысячу, имея четыреста, нечем —
+     * сотрудник упрётся в конец общих денег, а число в карточке будет врать про запас.
+     */
+    if (body.tokenLimit != null && body.parentId) {
+      const { getBalance } = await import('./balance.js')
+      const { coins } = await getBalance(body.parentId).catch(() => ({ coins: 0 }))
+      const потолок = Math.floor(Number(coins) || 0)
+      if (Number(body.tokenLimit) > потолок) {
+        return res.status(400).json({ ok: false, error: `Больше ${потолок} ⚡ задать нельзя — столько есть на общем кошельке` })
+      }
+    }
     const user = await createUser(body)
     await appendAudit({ action: 'user.create', module: 'rbac', initiator: ctx.id || 'operator', reason: `Создан пользователь ${user.email}`, meta: { userId: user.id, roleId: user.roleId, parentId: user.parentId } })
     res.json({ ok: true, user: publicUser(user) })
@@ -333,6 +346,115 @@ usersRouter.get('/:id/access', async (req, res) => {
         blocksByModule: Object.fromEntries(keys.map((k) => [k, blocksForModule(k)])),
       },
     })
+  } catch (err) { fail(res, err) }
+})
+
+/**
+ * Перевод монет между кошельком владельца и личным кошельком суба (решение владельца
+ * 27.08: «чтобы можно было редактировать токены, выдать там больше или убрать»).
+ *
+ * Нужен только для режима «личный кошелёк»: при общем балансе переводить нечего — деньги
+ * и так одни на двоих. Раньше пополнить кошелёк суба мог ТОЛЬКО админ из админки, поэтому
+ * владелец, выбравший личный режим, получал сотрудника с нулём и без единого способа это
+ * исправить.
+ *
+ * Положительная сумма — выдать субу, отрицательная — забрать обратно. Обе операции
+ * зеркальные: сколько ушло с одного кошелька, столько пришло на другой, и обе видны в
+ * журнале с указанием, кто их сделал.
+ */
+/**
+ * Кошельки субпользователей: остаток и сколько им выдано (решение владельца 27.08:
+ * «может писать будем, сколько мы токенов ему выдали»).
+ *
+ * «Выдано» считаем по журналу: сумма положительных операций на кошельке сотрудника. Это
+ * честнее, чем показывать когда-то введённый «лимит», — тот был числом из формы, которое
+ * ни на что не влияло. Остаток и выданное вместе отвечают на вопрос «сколько он уже
+ * потратил из того, что получил».
+ *
+ * Только для личных кошельков: у сотрудника с общим балансом своего кошелька нет, и
+ * рисовать ему отдельные цифры значило бы показывать деньги владельца дважды.
+ */
+/**
+ * Лимиты расхода сотрудников (27.08). Кошелёк у них общий с владельцем, поэтому «остаток»
+ * здесь — это остаток ЛИМИТА, а не отдельных денег: сколько ещё разрешено потратить.
+ */
+usersRouter.get('/limits', async (req, res) => {
+  try {
+    const ctx = await requesterContext(req)
+    if (ctx.blocked) return res.status(403).json({ ok: false, error: 'Нет прав' })
+    const all = await listUsers()
+    const mine = all.filter((u) => (ctx.isAdmin ? true : u.parentId === ctx.id) && u.parentId)
+    const { spendLimit } = await import('./balance.js')
+    const rows = []
+    for (const u of mine) {
+      const l = await spendLimit(u.id)
+      rows.push({
+        userId: u.id,
+        limit: l.limit,
+        spent: l.spent,
+        left: l.left === Infinity ? null : l.left,
+      })
+    }
+    res.json({ ok: true, rows })
+  } catch (err) { fail(res, err) }
+})
+
+usersRouter.get('/wallets', async (req, res) => {
+  try {
+    const ctx = await requesterContext(req)
+    if (ctx.blocked) return res.status(403).json({ ok: false, error: 'Нет прав' })
+    const all = await listUsers()
+    const mine = all.filter((u) => (ctx.isAdmin ? true : u.parentId === ctx.id) && u.balanceMode === 'individual')
+    const [{ getBalance, walletHistory }] = await Promise.all([import('./balance.js')])
+    const rows = []
+    for (const u of mine) {
+      const { coins } = await getBalance(u.id)
+      const log = await walletHistory({ userId: u.id, limit: 1000 })
+      const granted = log
+        .filter((r) => r.currency !== 'usd' && Number(r.amount) > 0)
+        .reduce((sum, r) => Math.round((sum + Number(r.amount)) * 1000) / 1000, 0)
+      rows.push({ userId: u.id, coins, granted, spent: Math.round((granted - coins) * 1000) / 1000 })
+    }
+    res.json({ ok: true, rows })
+  } catch (err) { fail(res, err) }
+})
+
+usersRouter.post('/:id/wallet', async (req, res) => {
+  try {
+    const ctx = await requesterContext(req)
+    if (ctx.blocked) return res.status(403).json({ ok: false, error: 'Нет прав' })
+    const target = await getUser(req.params.id)
+    if (!target) return res.status(404).json({ ok: false, error: 'Пользователь не найден' })
+    // Свой суб — или админ. Чужому кошельку тут делать нечего.
+    if (!ctx.isAdmin && target.parentId !== ctx.id) {
+      return res.status(403).json({ ok: false, error: 'Можно управлять только своими субпользователями' })
+    }
+    if (target.balanceMode !== 'individual') {
+      return res.status(400).json({ ok: false, error: 'У сотрудника общий баланс с вами — переводить нечего. Переключите его на личный кошелёк.' })
+    }
+    const amount = Math.round((Number(req.body?.amount) || 0) * 1000) / 1000
+    if (!amount) return res.status(400).json({ ok: false, error: 'Укажите сумму' })
+
+    const { getBalance, changeCoins } = await import('./balance.js')
+    const from = ctx.id
+    // Забираем больше, чем у него есть, — не уводим в минус: остаток по факту.
+    const subNow = (await getBalance(target.id)).coins
+    const ownerNow = (await getBalance(from)).coins
+    const move = amount > 0 ? Math.min(amount, ownerNow) : -Math.min(Math.abs(amount), subNow)
+    if (!move) {
+      return res.status(400).json({ ok: false, error: amount > 0 ? 'На вашем балансе недостаточно монет' : 'У сотрудника нечего забирать' })
+    }
+
+    const who = target.name || target.email || target.id
+    await changeCoins(-move, move > 0 ? `Выдал сотруднику ${who}` : `Забрал у сотрудника ${who}`, from, 'grant')
+    await changeCoins(move, move > 0 ? 'Выдано владельцем' : 'Возврат владельцу', target.id, 'grant')
+
+    await appendAudit({
+      action: 'wallet.transfer', module: 'balance', initiator: ctx.id || 'operator',
+      reason: `${move > 0 ? 'Выдача' : 'Возврат'} ${Math.abs(move)} ⚡: ${who}`,
+      meta: { from, to: target.id, amount: move },
+    })
+    res.json({ ok: true, moved: move, owner: (await getBalance(from)).coins, sub: (await getBalance(target.id)).coins })
   } catch (err) { fail(res, err) }
 })
 
@@ -408,11 +530,77 @@ usersRouter.put('/:id', async (req, res) => {
     if (!ctx.noSession && !ctx.isAdmin) {
       const target = await getUser(req.params.id)
       if (!target || target.parentId !== ctx.id) return res.status(403).json({ ok: false, error: 'Можно управлять только своими субпользователями' })
-      const { name, active, roleIds, accountIds, accountGroupIds } = patch
-      patch = { name, active, roleIds: sanitizeRoleIds(roleIds), accountIds, accountGroupIds }
+      /*
+       * balanceMode владелец менять МОЖЕТ (правка 27.08): он же выбирает его при создании
+       * суба, и запрет на правку потом означал только одно — ошибку при создании нельзя
+       * исправить. Именно в это упёрся владелец: суб с личным кошельком остался с нулём и
+       * без возможности вернуть его на общий баланс.
+       *
+       * tokenLimit с 27.08 — НАСТОЯЩИЙ лимит расхода: сотрудник тратит из кошелька
+       * владельца, но не больше выданного (`spendLimit` в balance.js, проверка в
+       * chargeActions). Поэтому владельцу его править можно и нужно.
+       */
+      const { name, active, roleIds, accountIds, accountGroupIds, balanceMode, tokenLimit } = patch
+      patch = { name, active, roleIds: sanitizeRoleIds(roleIds), accountIds, accountGroupIds, balanceMode, tokenLimit }
+    }
+    // Что было ДО правки: нужно, чтобы поймать переход «личный кошелёк → общий баланс»
+    // и понять, ПОДНИМАЮТ ли лимит расхода.
+    const before = (patch.balanceMode !== undefined || patch.tokenLimit !== undefined) ? await getUser(req.params.id) : null
+
+    /*
+     * Лимит нельзя задать больше, чем есть у владельца (правка 27.08: «если у него общих
+     * токенов 400, то он больше 400 не должен иметь возможность вводить»). Витрина
+     * обрезает ввод, но полагаться на витрину в вопросах денег нельзя.
+     *
+     * Потолок — остаток владельца ПЛЮС уже потраченное этим сотрудником: лимит
+     * накопительный («всего за всё время»), и у потратившего 800 из 1000 потолок не может
+     * быть просто остатком — иначе новый лимит оказался бы ниже израсходованного.
+     *
+     * Проверяем только РОСТ: снижение и правка соседних полей (имя, доступы) проходят
+     * всегда, иначе после трат нельзя было бы даже переименовать сотрудника.
+     */
+    if (before && patch.tokenLimit != null && Number(patch.tokenLimit) > (before.tokenLimit ?? 0)) {
+      const target = before
+      if (target.parentId) {
+        const { getBalance, spendLimit } = await import('./balance.js')
+        const [{ coins }, лимит] = await Promise.all([
+          getBalance(target.parentId).catch(() => ({ coins: 0 })),
+          spendLimit(target.id).catch(() => ({ spent: 0 })),
+        ])
+        const потолок = Math.floor((Number(coins) || 0) + (Number(лимит.spent) || 0))
+        if (Number(patch.tokenLimit) > потолок) {
+          return res.status(400).json({ ok: false, error: `Больше ${потолок} ⚡ задать нельзя — столько есть на общем кошельке` })
+        }
+      }
     }
     const user = await updateUser(req.params.id, patch)
     if (!user) return res.status(404).json({ ok: false, error: 'Пользователь не найден' })
+
+    /*
+     * Возврат остатка при переходе на общий баланс (27.08).
+     *
+     * Личный кошелёк сотрудника после переключения перестаёт использоваться: тратит он уже
+     * из кошелька владельца. Оставшиеся на нём монеты не пропадают в базе, но пропадают из
+     * ВИДУ — их больше нигде не показать и никак не достать. Поэтому переводим остаток
+     * обратно владельцу и пишем это в журнал, а не оставляем деньги в невидимом кармане.
+     */
+    if (before?.balanceMode === 'individual' && user.balanceMode === 'shared' && user.parentId) {
+      try {
+        const { getBalance, changeCoins } = await import('./balance.js')
+        const left = (await getBalance(user.id)).coins
+        if (left > 0) {
+          const who = user.name || user.email || user.id
+          await changeCoins(-left, 'Возврат при переходе на общий баланс', user.id, 'grant')
+          await changeCoins(left, `Возврат остатка от ${who}`, user.parentId, 'grant')
+          await appendAudit({
+            action: 'wallet.transfer', module: 'balance', initiator: ctx.id || 'operator',
+            reason: `Остаток ${left} ⚡ вернулся владельцу: ${who} переведён на общий баланс`,
+            meta: { from: user.id, to: user.parentId, amount: left },
+          })
+        }
+      } catch { /* смена режима не должна падать из-за кошелька */ }
+    }
+
     await appendAudit({ action: 'user.update', module: 'rbac', initiator: ctx.id || 'operator', reason: `Изменён пользователь ${user.email}`, meta: { userId: user.id, roleId: user.roleId } })
     res.json({ ok: true, user: publicUser(user) })
   } catch (err) { fail(res, err) }

@@ -1,10 +1,12 @@
-import { useEffect, useRef, useState } from 'react'
-import { AlertTriangle, Activity, Cpu, MemoryStick, Database, Timer } from 'lucide-react'
+import { useCallback, useEffect, useRef, useState } from 'react'
+import { AlertTriangle, Activity, Cpu, MemoryStick, Database, Timer, Users } from 'lucide-react'
 import { Card, EmptyState } from '@/shared/ui'
 import { cn } from '@/shared/lib/utils'
 import type { AccountsHealth, ActiveNow, DailySpend, SystemMetrics } from '@/api/adminApi'
 import { fetchSystemMetrics, fetchCron, saveCron, type CronField } from '@/api/adminApi'
 import { fetchParserWatches, type ParserWatch } from '@/api/modulesApi'
+import { fetchAccounts, patchAccount } from '@/api/accountsApi'
+import type { TgAccount } from '@/shared/types'
 import { fmt, MetricTile } from './adminShared'
 
 /**
@@ -192,6 +194,110 @@ function ParserWatchErrors() {
  * Свои хуки и свой запрос: в MonitoringTab есть ранние return'ы, и хуки после них ломают
  * порядок вызовов.
  */
+/**
+ * Аккаунты для ревизии базы (просьба владельца 27.08: «там есть возможность добавить
+ * аккаунты, с которых будет проводиться ревизия?»).
+ *
+ * Возможности не было. Крон ревизии берёт ТОЛЬКО аккаунты с меткой `service`
+ * (parserRefresh.pickAccounts), но проставить её было негде ни в одном интерфейсе — пул
+ * всегда оставался пустым, и каждые 12 часов в лог падало «нет свободных сервисных
+ * аккаунтов для ревизии базы». Поле в данных было, работать им было нельзя.
+ *
+ * Отдельный пул нужен затем, чтобы ревизия не занимала боевые профили: она ходит по тем
+ * же поисковым запросам, что и клиентские задачи, и без своих аккаунтов отбирала бы их
+ * у работы, ради которой платят.
+ */
+export function ServiceAccounts() {
+  const [accounts, setAccounts] = useState<TgAccount[]>([])
+  const [busy, setBusy] = useState('')
+  const [err, setErr] = useState('')
+  const [q, setQ] = useState('')
+
+  const load = useCallback(async () => {
+    try { setAccounts(await fetchAccounts() as unknown as TgAccount[]) }
+    catch (e) { setErr(e instanceof Error ? e.message : 'не загрузилось') }
+  }, [])
+  useEffect(() => { void load() }, [load])
+
+  const toggle = async (a: TgAccount) => {
+    setBusy(a.id)
+    try {
+      await patchAccount(a.id, { service: !a.service })
+      setAccounts((prev) => prev.map((x) => (x.id === a.id ? { ...x, service: !a.service } : x)))
+    } catch (e) { setErr(e instanceof Error ? e.message : 'не сохранилось') }
+    finally { setBusy('') }
+  }
+
+  /*
+   * Только аккаунты ПЛАТФОРМЫ (правка 27.08: «не должно быть из общей базы чужих телеграм
+   * аккаунтов, только наши, которые мы законектим именно для админ-панели»). Раньше здесь
+   * лежал весь парк, и дежурным по ревизии можно было назначить рабочий профиль клиента —
+   * а фоновое обновление общей базы идёт по нашей инициативе и нашими руками.
+   */
+  const live = accounts.filter((a) => !a.inTrash && a.platform)
+  const chosen = live.filter((a) => a.service)
+  const needle = q.trim().toLowerCase()
+  // Выбранные всегда сверху: их единицы среди сотни, иначе искать их в списке невозможно.
+  const shown = [...live]
+    .filter((a) => !needle || `${a.name || ''} ${a.username || ''} ${a.phone || ''} ${a.id}`.toLowerCase().includes(needle))
+    .sort((x, y) => Number(!!y.service) - Number(!!x.service))
+    .slice(0, 60)
+
+  return (
+    <div className="mt-4">
+      <div className="mb-1 flex items-center gap-1.5 text-xs font-bold uppercase tracking-wide text-muted">
+        <Users size={13} /> Аккаунты для ревизии базы
+      </div>
+      <Card className="p-4">
+        <p className="mb-3 text-xs leading-relaxed text-muted">
+          Ревизия раз в N часов перезапускает сохранённые запросы парсинга и ищет, что появилось или пропало.
+          В списке — <b className="text-fg">только аккаунты платформы</b>: клиентские профили сюда не попадают
+          вовсе, обновление общей базы идёт по нашей инициативе и должно идти нашими руками. Отметка выбирает,
+          кто из них дежурит.
+        </p>
+        {!live.length && (
+          <div className="mb-3 rounded-lg border border-amber-500/30 bg-amber-500/10 px-2.5 py-2 text-xs leading-relaxed text-amber-200/90">
+            Аккаунтов платформы пока нет — ревизия каждый раз пишет в лог, что работать некем.
+            Подключите их: <b>Менеджер аккаунтов → Импортировать</b>, галочка
+            «Аккаунты платформы (для админ-панели)». Они не попадут ни в чьё клиентское пространство.
+          </div>
+        )}
+        {err && <div className="mb-2 text-xs text-amber-300">{err}</div>}
+        <div className="mb-2 flex flex-wrap items-center gap-2">
+          <input
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+            placeholder="Поиск по имени, username, телефону…"
+            className="h-8 flex-1 rounded-lg border border-line bg-elevated/60 px-2.5 text-sm text-fg"
+          />
+          <span className="text-[11px] text-muted">Дежурят: <b className="text-fg">{chosen.length}</b> из {live.length} наших</span>
+        </div>
+        <div className="max-h-72 space-y-1 overflow-y-auto pr-1">
+          {shown.map((a) => (
+            <div key={a.id} className={cn('flex items-center justify-between gap-3 rounded-lg px-2.5 py-1.5',
+              a.service ? 'bg-spark-500/8' : 'bg-elevated')}>
+              <span className="min-w-0 truncate text-sm text-fg">
+                {a.name || a.id}
+                <span className="ml-2 text-[11px] text-white/40">{a.username ? `@${a.username}` : a.phone || ''} · {a.status}</span>
+              </span>
+              <button
+                type="button"
+                onClick={() => void toggle(a)}
+                disabled={busy === a.id}
+                className={cn('h-7 shrink-0 rounded-lg px-2.5 text-[11px] font-semibold disabled:opacity-40',
+                  a.service ? 'bg-spark-500/20 text-spark-300' : 'border border-line text-muted hover:text-fg')}
+              >
+                {a.service ? 'В ревизии' : 'Добавить'}
+              </button>
+            </div>
+          ))}
+          {!shown.length && <div className="py-4 text-center text-xs text-muted">Ничего не нашлось</div>}
+        </div>
+      </Card>
+    </div>
+  )
+}
+
 function CronSettings() {
   const [fields, setFields] = useState<CronField[]>([])
   const [values, setValues] = useState<Record<string, number>>({})
@@ -253,6 +359,7 @@ function CronSettings() {
           {note && <span className="text-[11px] text-muted">{note}</span>}
         </div>
       </Card>
+      <ServiceAccounts />
     </div>
   )
 }

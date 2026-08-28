@@ -1,11 +1,12 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { Users2, Plus, Trash2, ShieldCheck, Check, Users, Wifi, ChevronDown, ChevronRight, Search, Package } from 'lucide-react'
 import { PageHeader, Card, EmptyState, Badge, Modal, Switch } from '@/shared/ui'
 import { confirmDialog } from '@/shared/lib/dialog'
 import {
   fetchUsers, createUser, updateUser, deleteUser, fetchWorktime, fetchUserAccess, saveUserAccess,
-  type User, type WorkSummary,
+  fetchSubLimits,
+  type User, type WorkSummary, type SubLimit,
 } from '@/api/usersApi'
 import { fetchRoles, fetchRbacCatalog, accessFromRole, onRolesChanged, type Role, type Perm, type CatalogModule, type CatalogBlock } from '@/api/rolesApi'
 import { RolesPage, Pager, PAGE_SIZE } from '@/pages/RolesPage'
@@ -16,6 +17,7 @@ import { useSession } from '@/features/auth/session'
 import { ADMIN_BYPASS_ID } from '@/shared/config/rbac'
 import { HelpButton } from '@/features/neuro-commenting/moduleUi'
 import { cn } from '@/shared/lib/utils'
+import { fetchSpendByUser, fetchPricing, fetchBalance, type SpendByUser as SpendByUserRow } from '@/api/balanceApi'
 
 /** Якорь раздела шаблонов — он на этой же странице, ниже списка людей. */
 const TEMPLATES_ANCHOR = '#templates'
@@ -105,7 +107,7 @@ function SubAccessEditor({ sub, groups, accounts, onSaved }: { sub: User; groups
 
 /** Что владелец правит субу: модули и блоки внутри них. Ключ блока — `${moduleKey}:${blockKey}`. */
 type AccessDraft = { modules: Record<string, Perm>; blocks: Record<string, Perm> }
-type AccessCatalog = { modules: CatalogModule[]; blocks: CatalogBlock[] }
+type AccessCatalog = { modules: CatalogModule[]; blocks: CatalogBlock[]; blocksByModule?: Record<string, CatalogBlock[]> }
 
 const EMPTY_ACCESS: AccessDraft = { modules: {}, blocks: {} }
 /** Выбрано ли хоть что-то — чтобы не слать пустой PUT после создания пользователя. */
@@ -163,21 +165,29 @@ function ModuleAccessPicker({ catalog, value, onChange }: {
       {catalog.modules.map((m) => {
         const open = expanded.has(m.key)
         const on = modOn(m.key)
-        const allowedBlocks = catalog.blocks.filter((b) => blockOn(`${m.key}:${b.key}`)).length
+        /*
+         * Блоки КОНКРЕТНОГО модуля, а не общий список (правка 27.08). Сервер отдаёт
+         * blocksByModule с 26.08, и «Роли доступа» его уже используют, а карточка
+         * пользователя продолжала рисовать все пять подряд: у нейрокомментинга висел
+         * тумблер «Результаты», которого в модуле нет вовсе, и счётчик показывал «3/5»
+         * при четырёх реальных блоках.
+         */
+        const blocks = catalog.blocksByModule?.[m.key] ?? catalog.blocks
+        const allowedBlocks = blocks.filter((b) => blockOn(`${m.key}:${b.key}`)).length
         return (
           <div key={m.key}>
             <div className={cn('flex items-center justify-between gap-3 rounded-lg px-2.5 py-1.5', on ? 'bg-spark-500/8' : 'bg-elevated')}>
               <button type="button" onClick={() => toggleExpand(m.key)} className="flex min-w-0 items-center gap-1.5 text-left text-sm text-fg">
                 {open ? <ChevronDown size={14} className="shrink-0 text-white/40" /> : <ChevronRight size={14} className="shrink-0 text-white/40" />}
                 <span className="truncate">{m.label}</span>
-                {on && <span className="shrink-0 text-[11px] text-white/35">блоков: {allowedBlocks}/{catalog.blocks.length}</span>}
+                {on && <span className="shrink-0 text-[11px] text-white/35">блоков: {allowedBlocks}/{blocks.length}</span>}
               </button>
               <Switch checked={on} onChange={() => toggleModule(m.key)} />
             </div>
             {open && (
               <div className="mt-1 flex flex-col gap-1 pl-6">
                 {!on && <div className="text-[11px] text-white/35">Модуль выключен — блоки ни на что не влияют, пока не включите его.</div>}
-                {catalog.blocks.map((b) => {
+                {blocks.map((b) => {
                   const bk = `${m.key}:${b.key}`
                   return (
                     <div key={bk} className="flex items-center justify-between gap-3 rounded-lg bg-elevated px-2.5 py-1.5">
@@ -407,6 +417,14 @@ function fmtDur(ms: number): string {
 /** Верхняя половина раздела: список сотрудников и их доступы. */
 function UsersTab() {
   const sessionUser = useSession((s) => s.user)
+  /*
+   * Свой остаток — ПОТОЛОК для лимита сотрудника (правка 27.08: «если у него общих
+   * токенов 400, то он больше 400 не должен иметь возможность вводить»). Обещать
+   * сотруднику тысячу, имея четыреста, нечем: он всё равно упрётся в конец общих денег,
+   * а число в карточке будет врать про запас, которого нет.
+   */
+  const [мойОстаток, setМойОстаток] = useState<number | null>(null)
+  useEffect(() => { void fetchBalance().then((b) => setМойОстаток(Math.floor(Number(b.coins) || 0))).catch(() => {}) }, [])
   const [users, setUsers] = useState<User[]>([])
   const [roles, setRoles] = useState<Role[]>([])
   const [worktime, setWorktime] = useState<Record<string, WorkSummary>>({})
@@ -480,6 +498,15 @@ function UsersTab() {
   // оттуда: иначе удалённый шаблон остаётся в выпадающем списке до перезагрузки.
   useEffect(() => onRolesChanged(() => { void fetchRoles().then(setRoles).catch(() => {}) }), [])
 
+  /** Привязать осиротевшего сотрудника к текущему владельцу: наследование пойдёт сразу. */
+  async function attachToMe(u: User) {
+    if (!sessionUser?.id) return
+    try {
+      const upd = await updateUser(u.id, { parentId: sessionUser.id })
+      setUsers((prev) => prev.map((x) => (x.id === upd.id ? upd : x)))
+    } catch (e) { setErr(e instanceof Error ? e.message : 'Не удалось привязать') }
+  }
+
   async function toggleActive(u: User) {
     try {
       const upd = await updateUser(u.id, { active: !u.active })
@@ -505,9 +532,23 @@ function UsersTab() {
     try {
       created = await createUser({
         email: form.email, name: form.name, password: form.password, roleIds: form.roleIds,
-        // §4.2 (MR-30): режим баланса и лимит токенов для индивидуального.
+        // §4.2 (MR-30): режим баланса.
         balanceMode: form.balanceMode,
-        tokenLimit: form.balanceMode === 'individual' && form.tokenLimit ? Number(form.tokenLimit) : null,
+        /*
+         * Потолок расхода задаётся СРАЗУ (правка 27.08: «почему при создании нет
+         * возможности выдать ему токены или использовать общий доступ?»). Поле отсюда
+         * убирали, когда лимит нигде не проверялся и был обманкой; теперь он работает —
+         * значит, и задавать его при создании можно. Пусто — без ограничения.
+         */
+        tokenLimit: form.tokenLimit === '' ? null : Math.max(0, Number(form.tokenLimit) || 0),
+        /*
+         * Владельца проставляем ЯВНО (правка 27.08). Сервер подставляет его сам только
+         * тем, кто НЕ админ, — а у админа платформы этот путь пропускался, и сотрудник
+         * рождался без родителя: ни подписки владельца, ни его баланса он не наследовал,
+         * и первым, что видел, был экран «Баланс закончился · 0.00 ⚡».
+         * Эта страница — «мои сотрудники», поэтому владелец здесь всегда я.
+         */
+        parentId: sessionUser?.id ?? undefined,
       })
     } catch (e) { setErr(e instanceof Error ? e.message : 'Ошибка'); setSaving(false); return }
     setUsers((prev) => [...prev, created])
@@ -564,6 +605,8 @@ function UsersTab() {
 
       {err && <Card className="mb-3 border-rose-500/30 p-3 text-sm text-rose-300">{err}</Card>}
 
+      <SpendByUser />
+
       {loading ? (
         <Card className="p-6 text-sm text-white/50">Загрузка…</Card>
       ) : users.length === 0 ? (
@@ -590,6 +633,35 @@ function UsersTab() {
                     {!u.active && <Badge tone="rose">Отключён</Badge>}
                   </div>
                   <div className="truncate text-xs text-white/50">{u.email}</div>
+                  {/*
+                    Сотрудник без владельца (27.08). Наследование и баланса, и подписки идёт
+                    ВВЕРХ по parentId: нет владельца — нет ни денег, ни модулей, и человек
+                    видит «Баланс на нуле», хотя у владельца всё есть. Так рождались субы,
+                    созданные админом платформы: сервер подставлял владельца только тем, кто
+                    создаёт НЕ будучи админом. Создание починено, но записи остались — здесь
+                    их видно и можно привязать, а не пересоздавать.
+                  */}
+                  {!isAdmin && !u.parentId && (
+                    <div className="mt-1.5 flex flex-wrap items-center gap-2 rounded-lg border border-amber-500/40 bg-amber-500/10 px-2.5 py-1.5">
+                      <span className="text-[11px] leading-snug text-amber-200">
+                        Не привязан к владельцу — не наследует ни баланс, ни модули подписки. У него всё по нулям.
+                      </span>
+                      {/*
+                        Привязывать может только админ платформы. Владельцу это дало бы
+                        способ «усыновить» чужого пользователя и получить над ним контроль —
+                        а своих субов сервер и так заводит под ним автоматически.
+                      */}
+                      {sessionUser?.isAdmin && (
+                        <button
+                          type="button"
+                          onClick={() => void attachToMe(u)}
+                          className="ml-auto h-7 shrink-0 rounded-lg bg-amber-500/20 px-2.5 text-[11px] font-semibold text-amber-200 hover:bg-amber-500/30"
+                        >
+                          Привязать ко мне
+                        </button>
+                      )}
+                    </div>
+                  )}
                   {worktime[u.id] && (
                     <div className="mt-1 flex items-center gap-2 text-[11px] text-white/45">
                       {worktime[u.id].open && <span className="inline-flex items-center gap-1 text-spark-300"><span className="h-1.5 w-1.5 rounded-full bg-spark-400" /> в сети</span>}
@@ -644,6 +716,10 @@ function UsersTab() {
                 {/* Уточнение владельца 21.08: что субу ПОКАЗЫВАТЬ — тоже решается здесь, рядом
                     с выдачей аккаунтов, а не на отдельной странице ролей. */}
                 {!locked && !isAdmin && <SubModuleAccessEditor sub={u} templates={templates} />}
+                {/* Кошелёк — рядом с доступами: это тоже «что сотруднику разрешено», только в монетах. */}
+                {!locked && !isAdmin && (
+                  <SubWalletEditor sub={u} onMode={(upd) => setUsers((prev) => prev.map((x) => (x.id === upd.id ? upd : x)))} />
+                )}
               </Card>
             )
           })}
@@ -684,25 +760,41 @@ function UsersTab() {
               <ModuleAccessPicker catalog={catalog} value={newAccess} onChange={setNewAccess} />
             </div>
           </div>
-          {/* §4.2 (MR-30): баланс суба — общий с владельцем или индивидуальный лимит токенов. */}
+          {/*
+            §4.2 (MR-30): баланс субпользователя. Выбора здесь больше НЕТ (правка 27.08:
+            «только общий баланс, у них нету своего кошелька»). Кошелёк один — владельца;
+            сотруднику задаётся лишь потолок расхода, и делается это после создания, в его
+            карточке, где рядом видно потраченное. Отдельный кошелёк порождал вторую кассу:
+            монеты застревали у сотрудника, а владелец не понимал, почему у него списалось
+            меньше, чем потрачено.
+          */}
           <div>
-            <label className="label">Баланс субпользователя</label>
-            <div className="flex flex-col gap-1.5">
-              <label className="flex cursor-pointer items-start gap-2 rounded-lg border border-line p-2 text-sm">
-                <input type="radio" name="balmode" checked={form.balanceMode === 'shared'} onChange={() => setForm((f) => ({ ...f, balanceMode: 'shared' }))} className="mt-0.5 accent-spark-500" />
-                <span><span className="font-medium text-fg">Общий баланс владельца</span><span className="block text-xs text-white/45">Суб тратит из вашего кошелька (по умолчанию).</span></span>
-              </label>
-              <label className="flex cursor-pointer items-start gap-2 rounded-lg border border-line p-2 text-sm">
-                <input type="radio" name="balmode" checked={form.balanceMode === 'individual'} onChange={() => setForm((f) => ({ ...f, balanceMode: 'individual' }))} className="mt-0.5 accent-spark-500" />
-                <span><span className="font-medium text-fg">Индивидуальный лимит токенов</span><span className="block text-xs text-white/45">Отдельный кошелёк суба с ограничением.</span></span>
-              </label>
-              {form.balanceMode === 'individual' && (
-                <div className="flex flex-wrap items-center gap-2 pl-2">
-                  <input type="number" min={0} value={form.tokenLimit} onChange={(e) => setForm((f) => ({ ...f, tokenLimit: e.target.value }))} placeholder="Лимит токенов" className="input h-9 w-40 text-sm" />
-                  <span className="text-xs text-white/50">{form.tokenLimit ? `≈ ${Math.floor(Number(form.tokenLimit) / 1000).toLocaleString('ru-RU')} действий (ориентировочно)` : 'укажите лимит токенов'}</span>
-                </div>
-              )}
+            <label className="label">Лимит расхода (токены)</label>
+            <div className="flex flex-wrap items-center gap-2">
+              <input
+                type="number"
+                min={0}
+                max={мойОстаток ?? undefined}
+                value={form.tokenLimit}
+                onChange={(e) => setForm((f) => ({ ...f, tokenLimit: capLimit(e.target.value, мойОстаток) }))}
+                placeholder={мойОстаток == null ? 'например 500' : `не больше ${мойОстаток}`}
+                className="input h-10 w-40 text-sm"
+              />
+              <button
+                type="button"
+                onClick={() => setForm((f) => ({ ...f, tokenLimit: '' }))}
+                className={cn('h-10 rounded-xl px-3 text-xs font-semibold',
+                  form.tokenLimit === '' ? 'bg-spark-500/20 text-spark-300' : 'border border-line text-muted hover:text-fg')}
+              >
+                Без ограничения
+              </button>
             </div>
+            <p className="mt-1.5 text-xs leading-relaxed text-white/45">
+              Сотрудник тратит из <b className="text-white/70">вашего</b> кошелька — своего у него нет.
+              Лимит — потолок: сколько всего он может израсходовать. Пусто — без потолка, тратит наравне с вами.
+              {мойОстаток != null && <> Больше <b className="text-white/70">{мойОстаток} ⚡</b> задать нельзя — столько у вас на счету.</>}
+              {' '}Изменить и посмотреть расход можно в его карточке.
+            </p>
           </div>
           <div className="mt-1 flex justify-end gap-2">
             <button onClick={() => setOpen(false)} className="btn-ghost h-10">Отмена</button>
@@ -725,6 +817,275 @@ function UsersTab() {
  * Старый путь /panel/roles ведёт сюда же (см. App.tsx), а sudo-админка по-прежнему
  * открывает RolesPage отдельной страницей — там это настоящие роли платформы.
  */
+/**
+ * Расход по сотрудникам (просьба владельца 27.08: «овнер должен видеть, кто сколько
+ * потратил»).
+ *
+ * При общем балансе списания сотрудников уходят в кошелёк владельца, и до 27.08 в журнал
+ * попадал только владелец — разложить расход было не из чего. Теперь пишется и тот, кто
+ * потратил, а здесь это видно суммой за период. Начисления в расход не считаем: выдача
+ * себе же — не трата.
+ */
+/**
+ * Кошелёк сотрудника (решение владельца 27.08: «писать будем, сколько мы токенов ему
+ * выдали… чтобы можно было редактировать токены, выдать больше или убрать и изменить на
+ * общий баланс»).
+ *
+ * До этого режим «личный кошелёк» был ловушкой: сотрудник получал пустой кошелёк, поле
+ * «лимит токенов» из формы создания нигде не проверялось, пополнить кошелёк мог только
+ * админ из админки, а сменить режим было нельзя вовсе — ошибку при создании исправить
+ * нечем. Теперь видно, сколько выдано и сколько осталось, монеты ходят в обе стороны, и
+ * режим переключается обратно на общий.
+ */
+/**
+ * Потолок лимита — остаток владельца (правка 27.08: «больше 400 не должен иметь
+ * возможность вводить»). Обрезаем прямо при вводе, а не ругаемся после: число, которое
+ * нельзя выдать, не должно даже появляться в поле. Остаток ещё не пришёл — не мешаем.
+ */
+function capLimit(raw: string, max: number | null): string {
+  if (raw === '') return ''
+  const n = Math.max(0, Math.floor(Number(raw) || 0))
+  return String(max == null ? n : Math.min(n, max))
+}
+
+function SubWalletEditor({ sub, onMode }: { sub: User; onMode: (next: User) => void }) {
+  const [limit, setLimit] = useState<SubLimit | null>(null)
+  const [limitDraft, setLimitDraft] = useState('')
+  const [prices, setPrices] = useState<Record<string, number>>({})
+  // Свой остаток — чтобы не рисовать «лимит 1000», когда на счету 400 (вопрос владельца
+  // 27.08: «как я выдал 1000 токенов, если у меня всего 400?»).
+  const [мойОстаток, setМойОстаток] = useState<number | null>(null)
+  const [busy, setBusy] = useState(false)
+  const [note, setNote] = useState('')
+  /*
+   * Свёрнут по умолчанию (правка 27.08: «почему оно такое большое, почему не открывать
+   * внизу, как у нас работает доступ к модулям»). Раскрытый блок с полем, тремя кнопками,
+   * расчётом действий и двумя абзацами занимал полкарточки у КАЖДОГО сотрудника — список
+   * из пяти человек переставал помещаться на экран. Теперь это такая же строка-дропдаун,
+   * как «Доступ к аккаунтам» и «Доступ к модулям» выше: главное видно сразу, остальное —
+   * по клику.
+   */
+  const [open, setOpen] = useState(false)
+  /*
+   * Личный кошелёк остался ТОЛЬКО как наследство (правка 27.08). Заводить его больше
+   * нельзя, но у части сотрудников он включён с прошлых версий — им показываем возврат
+   * остатка одной кнопкой, иначе монеты застряли бы навсегда.
+   */
+  const legacyWallet = sub.balanceMode === 'individual'
+
+  const load = useCallback(async () => {
+    try {
+      const l = (await fetchSubLimits()).find((x) => x.userId === sub.id) ?? { userId: sub.id, limit: null, spent: 0, left: null }
+      setLimit(l)
+      setLimitDraft(l.limit == null ? '' : String(l.limit))
+    } catch { /* кошелёк не должен ломать карточку */ }
+  }, [sub.id])
+
+  // Цены берём с сервера, а не константами: иначе «сколько это действий» разойдётся
+  // с тем, что спишется на самом деле, как только цену поправят в админке.
+  // Прайс нужен только раскрытой карточке (расчёт «сколько это действий»): свёрнутых на
+  // экране может быть десяток, и каждая тянула бы его зря.
+  useEffect(() => { if (open) void fetchPricing().then((r) => setPrices(r.actionsFull && Object.keys(r.actionsFull).length ? r.actionsFull : r.actions)).catch(() => {}) }, [open])
+  useEffect(() => { void fetchBalance().then((b) => setМойОстаток(Number(b.coins) || 0)).catch(() => {}) }, [])
+  useEffect(() => { if (!legacyWallet) void load() }, [load, legacyWallet])
+
+  const saveLimit = async (next: number | null) => {
+    setBusy(true); setNote('')
+    try {
+      await updateUser(sub.id, { tokenLimit: next })
+      setNote(next == null ? 'Ограничение снято' : `Лимит: ${next} ⚡`)
+      await load()
+    } catch (e) { setNote(e instanceof Error ? e.message : 'Не вышло') }
+    finally { setBusy(false) }
+  }
+
+  const toShared = async () => {
+    setBusy(true); setNote('')
+    try {
+      const upd = await updateUser(sub.id, { balanceMode: 'shared' })
+      onMode(upd)
+      setNote('Остаток вернулся вам, сотрудник тратит из общего')
+      await load()
+    } catch (e) { setNote(e instanceof Error ? e.message : 'Не вышло') }
+    finally { setBusy(false) }
+  }
+
+  /*
+   * Сколько это действий (просьба владельца 27.08: «должна быть математика, сколько это
+   * действий»). Голое «500 ⚡» ничего не говорит: цена действия отличается в десять раз
+   * между комментарием и строкой парсинга. Показываем три опорные ставки — по ним видно
+   * вилку, а не одно число, из которого потолок не оценить.
+   */
+  /*
+   * Потолок ввода = что осталось у владельца ПЛЮС уже потраченное этим сотрудником.
+   * Лимит накопительный («всего за всё время»), поэтому у потратившего 800 из 1000
+   * потолок не может быть просто остатком владельца — иначе новый лимит оказался бы
+   * ниже уже израсходованного, и мы бы задним числом «отобрали» сделанную работу.
+   */
+  const потолок = мойОстаток == null ? null : Math.floor(мойОстаток + (limit?.spent ?? 0))
+
+  const цена = (k: string, запас: number) => prices[k] ?? запас
+  const действий = (limit?.limit ?? 0) > 0 ? [
+    { n: Math.floor((limit!.limit as number) / цена('neuro-commenting', 0.05)), what: 'комментариев или сообщений' },
+    { n: Math.floor((limit!.limit as number) / цена('mass-react', 0.01)), what: 'реакций, просмотров, действий прогрева' },
+    { n: Math.floor((limit!.limit as number) / цена('parsing', 0.005)), what: 'строк парсинга' },
+  ] : []
+  const нф = (n: number) => n.toLocaleString('ru-RU')
+
+  // Сводка в свёрнутой строке: «сколько выдано и сколько осталось» — то, ради чего сюда
+  // и заходят. Разворачивать карточку, чтобы прочитать два числа, не нужно.
+  const сводка = legacyWallet
+    ? 'отдельный кошелёк — перевести на общий'
+    : limit?.limit == null
+      ? 'без ограничения'
+      : `${limit.limit} ⚡ · осталось ${limit.left ?? 0} ⚡`
+
+  return (
+    <div className="mt-1 w-full">
+      <button onClick={() => setOpen(!open)} className="flex items-center gap-1.5 text-xs text-white/55 hover:text-white/85">
+        <ChevronDown size={13} className={cn('transition-transform', open && 'rotate-180')} />
+        Лимит расхода: {сводка}
+      </button>
+      {!open ? null : (
+      <div className="mt-2 rounded-xl border border-line bg-elevated/40 p-3">
+      <div className="mb-2 flex flex-wrap items-center gap-2">
+        <span className="text-xs font-bold text-fg">Лимит расхода сотрудника</span>
+        <span className="ml-auto text-[11px] text-white/35">кошелёк общий с вашим</span>
+      </div>
+
+      {legacyWallet ? (
+        <>
+          <p className="mb-2 text-[11px] leading-relaxed text-amber-300/90">
+            У сотрудника включён отдельный кошелёк — так делали в старых версиях. Сейчас все работают
+            из вашего общего баланса: верните остаток, и сотруднику можно будет задать лимит.
+          </p>
+          <button type="button" disabled={busy} onClick={() => void toShared()}
+            className="btn-soft h-8 px-3 text-xs disabled:opacity-40">Вернуть остаток и перевести на общий</button>
+          {note && <span className="ml-2 text-[11px] text-muted">{note}</span>}
+        </>
+      ) : (
+        <>
+          <div className="mb-2 flex flex-wrap items-center gap-4 text-xs">
+            {/*
+              «Лимит», а не «Выдано» (правка 27.08). Слово «выдано» читалось как перевод
+              монет — отсюда и вопрос «как я выдал 1000, если у меня 400». Ничего никуда не
+              переводится: это потолок расхода из ОБЩЕГО кошелька, и он спокойно может
+              быть больше текущего остатка — просто сработает не он, а конец денег.
+            */}
+            <span className="text-white/45">Лимит: <b className="text-fg tabular-nums">{limit?.limit == null ? 'без ограничения' : `${limit.limit} ⚡`}</b></span>
+            <span className="text-white/45">Потрачено: <b className="text-fg tabular-nums">{limit?.spent ?? 0} ⚡</b></span>
+            {limit?.limit != null && (
+              <span className="text-white/45">Осталось: <b className={cn('tabular-nums', (limit.left ?? 0) > 0 ? 'text-spark-300' : 'text-rose-300')}>{limit.left ?? 0} ⚡</b></span>
+            )}
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <input
+              type="number"
+              min={0}
+              max={потолок ?? undefined}
+              value={limitDraft}
+              onChange={(e) => setLimitDraft(capLimit(e.target.value, потолок))}
+              placeholder={потолок == null ? 'токенов' : `до ${потолок}`}
+              className="input h-8 w-28 text-sm"
+            />
+            <button type="button" disabled={busy} onClick={() => void saveLimit(limitDraft === '' ? null : Number(limitDraft))}
+              className="btn-soft h-8 px-3 text-xs disabled:opacity-40">Задать лимит</button>
+            <button type="button" disabled={busy} onClick={() => void saveLimit(null)}
+              className="btn-ghost h-8 px-3 text-xs disabled:opacity-40">Без ограничения</button>
+            {note && <span className="text-[11px] text-muted">{note}</span>}
+          </div>
+          {/*
+            Строка про потолок: раньше здесь висело предупреждение «лимит больше баланса»,
+            но правильнее не давать ввести лишнее вовсе (27.08), чем ругаться после ввода.
+            Осталась подсказка, сколько задать можно.
+          */}
+          {потолок != null && (
+            <div className="mt-2 text-[11px] leading-relaxed text-white/35">
+              Больше <b className="text-white/60 tabular-nums">{потолок} ⚡</b> задать нельзя: на счету
+              {' '}{мойОстаток} ⚡{(limit?.spent ?? 0) > 0 && <> плюс {limit?.spent} ⚡, уже потраченные сотрудником</>}.
+            </div>
+          )}
+          {действий.length > 0 && (
+            <div className="mt-2 rounded-lg border border-spark-500/20 bg-spark-500/8 px-2.5 py-2 text-[11px] leading-relaxed text-white/60">
+              <b className="text-fg">{limit?.limit} ⚡ — это примерно:</b>
+              {действий.map((d) => (
+                <span key={d.what} className="block">· до <b className="tabular-nums text-white/80">{нф(d.n)}</b> {d.what}</span>
+              ))}
+            </div>
+          )}
+          <p className="mt-1.5 text-[11px] leading-relaxed text-white/35">
+            Токены общие с вашими — переводить нечего: сотрудник тратит из вашего кошелька, и каждое его
+            действие списывается у вас. Лимит — это потолок, а не перевод: он накопительный, «лимит 500»
+            значит «всего 500 за всё время». Когда упрётся, его задачи встанут на паузу с сохранением
+            прогресса, а ваши продолжат работать.
+          </p>
+        </>
+      )}
+      </div>
+      )}
+    </div>
+  )
+}
+
+function SpendByUser() {
+  const [rows, setRows] = useState<SpendByUserRow[]>([])
+  const [days, setDays] = useState(30)
+  const [err, setErr] = useState('')
+
+  useEffect(() => {
+    let alive = true
+    void fetchSpendByUser(days)
+      .then((r) => { if (alive) { setRows(r.rows); setErr('') } })
+      .catch((e) => { if (alive) setErr(e instanceof Error ? e.message : 'не загрузилось') })
+    return () => { alive = false }
+  }, [days])
+
+  if (err) return null
+  const total = rows.reduce((sum, r) => sum + r.spent, 0)
+
+  return (
+    <Card className="mb-3 p-3">
+      <div className="mb-2 flex flex-wrap items-center gap-2">
+        <span className="text-sm font-bold text-fg">Кто сколько потратил</span>
+        <span className="text-[11px] text-white/40">монет за период · всего {Math.round(total * 100) / 100} ⚡</span>
+        <div className="ml-auto flex gap-1">
+          {[7, 30, 90].map((d) => (
+            <button
+              key={d}
+              type="button"
+              onClick={() => setDays(d)}
+              className={cn('h-7 rounded-lg px-2.5 text-[11px] font-semibold',
+                days === d ? 'bg-spark-500/20 text-spark-300' : 'border border-line text-muted hover:text-fg')}
+            >
+              {d} дн.
+            </button>
+          ))}
+        </div>
+      </div>
+      {!rows.length ? (
+        <div className="text-xs text-white/40">За этот период списаний не было.</div>
+      ) : (
+        <div className="space-y-1">
+          {rows.map((r) => (
+            <div key={r.actorId} className="flex items-center gap-3 rounded-lg bg-elevated px-2.5 py-1.5">
+              <span className="min-w-0 flex-1 truncate text-sm text-fg">
+                {r.name}
+                {r.isOwner && <span className="ml-2 text-[11px] text-white/35">вы</span>}
+              </span>
+              {/* Полоска доли: сравнивать числа в столбик глазами тяжелее, чем длины. */}
+              <span className="hidden h-1.5 w-28 overflow-hidden rounded-full bg-line sm:block">
+                <span className="block h-full rounded-full bg-spark-500" style={{ width: `${total ? (r.spent / total) * 100 : 0}%` }} />
+              </span>
+              <span className="w-24 shrink-0 text-right text-sm font-semibold tabular-nums text-fg">{Math.round(r.spent * 100) / 100} ⚡</span>
+              <span className="w-20 shrink-0 text-right text-[11px] tabular-nums text-white/35">{r.ops} оп.</span>
+            </div>
+          ))}
+        </div>
+      )}
+    </Card>
+  )
+}
+
 export function UsersAndRolesPage() {
   return (
     <div>

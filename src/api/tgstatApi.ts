@@ -1,4 +1,4 @@
-import { apiGet, apiPost, apiDelete } from './client'
+import { apiGet, apiPost, apiDelete, apiPatch } from './client'
 
 export type TgstatImportStatus = 'queued' | 'running' | 'completed' | 'failed' | 'cancelled'
 
@@ -22,6 +22,8 @@ export interface TgstatSession {
 
 export interface TgstatImport {
   id: number
+  /** Имя, которое дал человек; пусто — показываем категорию (26.08). */
+  title?: string
   category: string
   region: string | null
   max_pages: number
@@ -80,6 +82,10 @@ export async function fetchTgstatChats(id: number, minSubscribers = 0) {
 }
 export async function cancelTgstatImport(id: number) {
   return (await apiPost<{ import: TgstatImport }>(`${base}/imports/${id}/cancel`)).import
+}
+/** Своё имя импорта (26.08). Пустая строка снимает название и возвращает подпись по категории. */
+export async function renameTgstatImport(id: number, title: string) {
+  return (await apiPatch<{ import: TgstatImport }>(`${base}/imports/${id}`, { title })).import
 }
 export async function deleteTgstatImport(id: number) {
   return apiDelete(`${base}/imports/${id}`)

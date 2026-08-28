@@ -1,4 +1,5 @@
 import { loadSessionString, createClient } from '../tgAuth.js'
+import { logTime } from './accountFatigue.js'
 import { getAccountMeta, setAccountMeta, setAccountStatus } from '../accountsMeta.js'
 import { isAccountRunnable, extractFloodSeconds, sleep } from './protection.js'
 import { assertAccountAvailable, getAccountLock } from './accountLocks.js'
@@ -178,7 +179,7 @@ export async function handleFlood(task, accountId, store, err, settings, account
  *
  * @param {object} task @param {string} accountId @param {object} store @param {string} [accountName]
  */
-export async function applySpamblockPolicy(task, accountId, store, accountName) {
+export async function applySpamblockPolicy(task, accountId, store, accountName, opts = {}) {
   const safety = getAiSafetySync()
   if (safety.onSpamblock === 'quarantine') {
     await setStatus(accountId, 'quarantine', { code: 'SPAM', reason: 'Спамблок → карантин аккаунта', task })
@@ -186,12 +187,20 @@ export async function applySpamblockPolicy(task, accountId, store, accountName) 
     await store.saveTask(task)
     return true
   }
-  // Со сроком: без него аккаунт залипал в spamblock навсегда и не возвращался в работу
-  // сам. Telegram точную длительность не сообщает — берём сутки, это типичный срок
-  // первого спамблока; `reconcileExpiredStatuses` вернёт аккаунт в active по истечении.
-  const until = Date.now() + (safety.spamblockHours ?? 24) * 3600 * 1000
+  /*
+   * Со сроком: без него аккаунт залипал в spamblock навсегда и не возвращался в работу
+   * сам. `reconcileExpiredStatuses` вернёт его в active по истечении.
+   *
+   * Срок берём НАСТОЯЩИЙ, если его назвал @SpamBot (правка 27.08): раньше мы всегда
+   * ставили сутки «по типичному сроку», и аккаунт с часовым ограничением простаивал день,
+   * а с недельным — выходил в работу рано и получал спамблок снова.
+   */
+  const until = Number(opts.until) > Date.now()
+    ? Number(opts.until)
+    : Date.now() + (safety.spamblockHours ?? 24) * 3600 * 1000
   await setStatus(accountId, 'spamblock', { code: 'SPAM', reason: 'Спамблок — аккаунт помечен и пропускается', until, task })
-  await store.appendLog(task, 'warning', `Спамблок — аккаунт выведен до ${new Date(until).toLocaleString('ru-RU')}`, accountName)
+  const откуда = Number(opts.until) > Date.now() ? ' (срок назвал @SpamBot)' : ''
+  await store.appendLog(task, 'warning', `Спамблок — аккаунт выведен до ${logTime(until, true)}${откуда}`, accountName)
   await store.saveTask(task)
   return true
 }

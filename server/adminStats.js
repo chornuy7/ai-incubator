@@ -870,12 +870,28 @@ export async function myStats(userId, opts = {}) {
     .map(([key, v]) => ({ moduleKey: key, title: moduleTitle(key), ...v }))
     .sort((a, b) => b.actions - a.actions || b.tokens - a.tokens)
 
-  const { coins } = await getBalance(uid).catch(() => ({ coins: 0 }))
+  // §11.4: два остатка — токены и деньги. Витрина кошелька показывает оба: раньше
+  // отдавались только монеты, и «На счету» молчало о долларах, которыми платят подписку.
+  const { coins, usd } = await getBalance(uid).catch(() => ({ coins: 0, usd: 0 }))
+  /*
+   * Сотруднику денег не показываем и токены режем его потолком (правка 27.08) — ровно
+   * так же, как в /api/balance. Иначе «Статистика → Кошелёк» оставалась дырой: там
+   * сотрудник видел и доллары владельца, и весь его остаток.
+   */
+  const { spendLimit } = await import('./balance.js')
+  const { resolveWalletOwner } = await import('./users.js')
+  const [лимит, владелец] = await Promise.all([
+    spendLimit(uid).catch(() => ({ limit: null, left: Infinity })),
+    resolveWalletOwner(uid).catch(() => uid),
+  ])
+  const сотрудник = String(владелец) !== String(uid)
+  const монеты = лимит.limit !== null ? Math.max(0, Math.min(Number(coins) || 0, Number(лимит.left) || 0)) : Number(coins) || 0
   log.sort((a, b) => b.at - a.at)
 
   return {
     since,
-    coins: round3(coins),
+    coins: round3(монеты),
+    ...(сотрудник ? { isSub: true, spendLimit: лимит.limit, spendLeft: лимит.limit === null ? null : монеты } : { usd: Number(usd) || 0 }),
     totals: { tasks, actions, spent, tokens },
     activity,
     where,

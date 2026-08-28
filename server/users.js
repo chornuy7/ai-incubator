@@ -263,8 +263,15 @@ export async function resolveSubscriptionOwner(userId) {
 }
 
 /** §4.2 (MR-30): нормализовать режим баланса. */
-function normBalanceMode(v) {
-  return v === 'individual' ? 'individual' : 'shared'
+function normBalanceMode(v, current = 'shared') {
+  /*
+   * Новых личных кошельков не заводим (правка 27.08: «только общий баланс, у них нету
+   * своего кошелька»). `individual` проходит ТОЛЬКО если он уже стоял: у части сотрудников
+   * он включён с прошлых версий, и запрет на запись мешал бы им вернуть остаток владельцу —
+   * переход в 'shared' как раз и делает возврат. Обратной дороги нет.
+   */
+  if (v === 'individual') return current === 'individual' ? 'individual' : 'shared'
+  return 'shared'
 }
 
 /**
@@ -335,7 +342,7 @@ export async function createUser(input = {}) {
     const legacyId = prof?.legacy_id || `usr_${authId.replace(/-/g, '').slice(0, 12)}`
     let parentUuid = null
     if (parentId) { const pp = await profileByLegacy(db, parentId); parentUuid = pp?.id || null }
-    const balanceMode = normBalanceMode(input.balanceMode) // §4.2 (MR-30)
+    const balanceMode = normBalanceMode(input.balanceMode) // §4.2 (MR-30) — новых личных кошельков нет
     const tokenLimit = input.tokenLimit == null ? null : Math.max(0, Number(input.tokenLimit) || 0)
     await db.from('profiles').update({ legacy_id: legacyId, name, active: input.active !== false, role_ids: roleIds, parent_id: parentUuid, balance_mode: balanceMode, token_limit: tokenLimit, updated_at: new Date().toISOString() }).eq('id', authId)
     // §11.3 этап 4/4: dual-write в `users` снят — источник истины profiles + auth.users.
@@ -383,7 +390,7 @@ export async function updateUser(id, patch = {}) {
     }
     if (patch.accountIds !== undefined) next.accountIds = normIds(patch.accountIds) || [] // §5.4 (MR-37)
     if (patch.accountGroupIds !== undefined) next.accountGroupIds = normIds(patch.accountGroupIds) || []
-    if (patch.balanceMode !== undefined) next.balanceMode = normBalanceMode(patch.balanceMode) // §4.2 (MR-30)
+    if (patch.balanceMode !== undefined) next.balanceMode = normBalanceMode(patch.balanceMode, next.balanceMode) // §4.2 (MR-30)
     if (patch.tokenLimit !== undefined) next.tokenLimit = patch.tokenLimit == null ? null : Math.max(0, Number(patch.tokenLimit) || 0)
     // profiles — источник правды: роли/имя/активность/parent (uuid) + выдачи + режим баланса.
     let parentUuid = null
@@ -424,7 +431,7 @@ export async function updateUser(id, patch = {}) {
   }
   if (patch.accountIds !== undefined) users[i].accountIds = normIds(patch.accountIds) || [] // §5.4 (MR-37)
   if (patch.accountGroupIds !== undefined) users[i].accountGroupIds = normIds(patch.accountGroupIds) || []
-  if (patch.balanceMode !== undefined) users[i].balanceMode = normBalanceMode(patch.balanceMode) // §4.2 (MR-30)
+  if (patch.balanceMode !== undefined) users[i].balanceMode = normBalanceMode(patch.balanceMode, users[i].balanceMode) // §4.2 (MR-30)
   if (patch.tokenLimit !== undefined) users[i].tokenLimit = patch.tokenLimit == null ? null : Math.max(0, Number(patch.tokenLimit) || 0)
   if (patch.password) {
     if (String(patch.password).length < 6) throw new Error('Пароль минимум 6 символов')

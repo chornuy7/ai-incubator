@@ -23,6 +23,14 @@ import { massStopConfirmSteps, canStopWarming, containsWarming } from '@/shared/
 import { useSession } from '@/features/auth/session'
 import { canControlModule } from '@/shared/lib/access'
 import { downloadXls } from '@/shared/lib/exportXls'
+import { ParserResultsView, type ParserResult } from '@/features/modules/ParserResultsView'
+
+/**
+ * Парсеры КАНАЛОВ и ГРУПП: у них результат — канал (название, подписчики, рейтинг), и
+ * показываем его тем же видом, что и сам модуль. Парсеры участников, сообщений и
+ * комментариев сюда не входят: у них строка — человек, и колонки другие.
+ */
+const КАНАЛЬНЫЙ_ПАРСЕР = ['parsing', 'parsing-groups']
 import { useTabParam } from '@/shared/lib/useTabParam'
 import { AccountPicker } from '@/features/account-picker/AccountPicker'
 import { delayMultiplier, useGlobalPace, perAccountShare } from '@/shared/lib/pace'
@@ -107,6 +115,12 @@ const DEFAULT_ACTION_DELAY: [number, number] = [30, 120]
 
 // Статусы, для которых ETA имеет смысл: работа ещё не завершена. У running — время до
 // конца, у queued/paused/stopped — прогноз «при запуске». done/error — считать нечего.
+/**
+ * Парсеры: единица работы — ЗАПРОС к Telegram по ключевому слову, а не собранная строка.
+ * Сколько каналов вернётся, заранее не знает никто, поэтому и прогресс, и оценка времени
+ * считаются по запросам (правка 27.08).
+ */
+const ПАРСЕРЫ = new Set(['parsing', 'parsing-groups', 'parsing-users', 'parsing-messages', 'parsing-comments'])
 const ETA_STATUSES = new Set(['running', 'queued', 'paused', 'stopped'])
 /**
  * Усталость аккаунтов задачи: через сколько действий уходят на отдых, насколько долго и
@@ -130,10 +144,14 @@ function taskEtaMs(t: ModuleTask, fatigue?: FatigueHint | null, globalPace = 1):
     const perDay = WARM_ACTIONS_PER_DAY[s.warmLevel ?? 1] ?? 20
     return perDay > 0 ? Math.round((perAccRemaining / perDay) * 86400 * 1000) : null
   }
-  // Остальные модули: остаток × средняя задержка (та же формула, что в панели до запуска).
-  // Нет сохранённых задержек (старая задача) — берём дефолтный темп модуля, чтобы ETA
-  // всё же показать примерным, а не прятать его совсем.
-  const d = s.delays?.action ?? s.delays?.comment ?? DEFAULT_ACTION_DELAY
+  /*
+   * Парсеры меряются ЗАПРОСАМИ, и задержка у них своя — между запросами к Telegram
+   * (`delays.request`), а не между «действиями» (правка 27.08). Раньше сюда попадал
+   * запасной темп 30–120 с, помноженный на остаток НЕНАЙДЕННЫХ строк, и прогон, которому
+   * оставалось полторы минуты, обещал «≈ 1 ч 34 мин».
+   */
+  const d = (ПАРСЕРЫ.has(t.moduleKey) ? s.delays?.request : null)
+    ?? s.delays?.action ?? s.delays?.comment ?? DEFAULT_ACTION_DELAY
   // Тот же множитель, что применит воркер: уровень защиты × пресет темпа × глобальный
   // (ИИ-безопасность). Считать только по пресету — врать (см. shared/lib/pace.ts).
   const mul = delayMultiplier(s.protectionLevel ?? 1, s.delayPreset ?? 1, globalPace)
@@ -1301,7 +1319,13 @@ export function TaskDetailPage() {
             </div>
             {/* MR-147: «Модуль» и «Потрачено» перенесены сюда, к прогрессу. */}
             <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-sm text-white/60">
-              <span>{t.progress?.done ?? t.progress?.actionsDone ?? 0} / {t.progress?.total ?? 0} действий</span>
+              {/* У парсера знаменатель — запросы, поэтому и слово другое: «5 из 36 действий»
+                  при семи найденных каналах читалось как недоделанная работа. */}
+              <span>
+                {t.progress?.done ?? t.progress?.actionsDone ?? 0} / {t.progress?.total ?? 0}{' '}
+                {ПАРСЕРЫ.has(t.moduleKey) ? 'запросов' : 'действий'}
+                {ПАРСЕРЫ.has(t.moduleKey) && (t.progress?.actionsDone ?? 0) > 0 && <> · найдено {t.progress?.actionsDone}</>}
+              </span>
               {/* MR-109: ETA — у работающей задачи время до конца (зелёным), у остановленной/
                   на паузе прогноз «при запуске» (приглушённо). */}
               {(() => { const e = taskEtaMs(t, fatigueOf(t), globalPace); if (e == null) return null; const run = t.status === 'running'; return (
@@ -1427,21 +1451,58 @@ export function TaskDetailPage() {
         {/* §9.11: кому написали и кто остался — только там, где это осмысленно (рассылка). */}
         {t.moduleKey === 'mailing' && <TaskAudiencePanel moduleKey={t.moduleKey} taskId={t.id} />}
 
+        {/*
+          Пустая выдача обязана себя объяснить (жалоба владельца 26.08: «в дашборде задач
+          нету списка этих каналов, ничего нету, не скачать»). Там задача собрала 146 строк,
+          а пересечение по 51 ключу вычеркнуло всё — но карточка просто ничего не рисовала,
+          и выглядело это как потерянные результаты. Достаём последнюю строку лога, которая
+          объясняет исход, и показываем её на месте таблицы.
+        */}
+        {results.length === 0 && ['done', 'stopped', 'error'].includes(t.status) && (() => {
+          const why = [...(t.logs || [])].reverse().find((l) => l.level === 'warning' || l.level === 'error')
+          return (
+            <div className="rounded-2xl border border-line bg-elevated/40 p-3 text-sm">
+              <div className="font-bold text-fg">Результатов нет — скачивать нечего</div>
+              <div className="mt-1 text-xs leading-relaxed text-muted">
+                {why ? <>Последнее, что записал модуль: «{why.message}»</> : 'Модуль не собрал ни одной строки — смотрите логи ниже.'}
+              </div>
+            </div>
+          )
+        })()}
+
         {results.length > 0 && (
           <div className="rounded-2xl border border-line bg-elevated/40 p-3">
             <div className="mb-2 flex items-center gap-2">
               <span className="text-sm font-bold text-fg">Результаты ({results.length})</span>
               {/* §3.9: тот же экспорт, что в самом парсере — результаты задачи нужны
-                  так же часто, как «свежие» на экране модуля. */}
-              <button
-                type="button"
-                onClick={() => downloadXls(results, `${t.moduleKey}-${t.id}`)}
-                className="btn-soft ml-auto h-8 text-xs"
-              >
-                <Download size={13} /> Excel
-              </button>
+                  так же часто, как «свежие» на экране модуля. У парсеров каналов кнопка
+                  своя, внутри общего вида, — вторая здесь была бы дублем. */}
+              {!КАНАЛЬНЫЙ_ПАРСЕР.includes(t.moduleKey) && (
+                <button
+                  type="button"
+                  onClick={() => downloadXls(results, `${t.moduleKey}-${t.id}`)}
+                  className="btn-soft ml-auto h-8 text-xs"
+                >
+                  <Download size={13} /> Excel
+                </button>
+              )}
             </div>
-            <div className="max-h-72 overflow-y-auto">
+            {/*
+              Результаты парсера каналов показываем ТЕМ ЖЕ видом, что и в самом модуле
+              (правка 27.08: «формат результатов должен быть как и у парсера внутри, со
+              всеми функциями, которые были для скачек и показа»). Здесь была голая
+              таблица «Имя · Юзернейм · Откуда · Тип»: ни подписчиков, ни рейтинга, ни
+              ключа, по которому канал нашёлся, и из выгрузок — только Excel.
+            */}
+            {КАНАЛЬНЫЙ_ПАРСЕР.includes(t.moduleKey) && (
+              <ParserResultsView
+                results={results as ParserResult[]}
+                moduleKey={t.moduleKey}
+                resultLabel={t.moduleKey === 'parsing-groups' ? 'группа' : 'канал'}
+                isGroups={t.moduleKey === 'parsing-groups'}
+              />
+            )}
+            <div className={cn('max-h-72 overflow-y-auto', КАНАЛЬНЫЙ_ПАРСЕР.includes(t.moduleKey) && 'hidden')}>
               {/* §8: для AIR (проверка аккаунтов) — понятный рейтинг по каждому аккаунту, а не сырой лог. */}
               {t.moduleKey === 'ggr' ? (
                 <table className="w-full text-sm">
@@ -1551,7 +1612,7 @@ export function TaskDetailPage() {
               )}
             </div>
             {/* Пагинация — как в парсере: 200 первых строк «на глаз» скрывали остальное. */}
-            {t.moduleKey !== 'ggr' && resPages > 1 && (
+            {t.moduleKey !== 'ggr' && !КАНАЛЬНЫЙ_ПАРСЕР.includes(t.moduleKey) && resPages > 1 && (
               <div className="mt-2 flex items-center justify-center gap-2 text-xs">
                 <button onClick={() => setResPage((p) => Math.max(1, p - 1))} disabled={resPage === 1} className="btn-soft h-7 px-2 disabled:opacity-30">Назад</button>
                 <span className="text-muted">{resPage} / {resPages}</span>
@@ -1563,11 +1624,16 @@ export function TaskDetailPage() {
         )}
 
         <div className="rounded-2xl border border-line bg-elevated/40 p-3">
-          <div className="mb-2 flex items-center gap-2 text-sm font-bold text-fg">Логи ({(t.logs || []).length}){isActive(t) && <Loader2 size={13} className="animate-spin text-white/40" />}</div>
+          <div className="mb-2 flex items-center gap-2 text-sm font-bold text-fg">
+            Логи ({(t.logs || []).length}){isActive(t) && <Loader2 size={13} className="animate-spin text-white/40" />}
+            {/* Список длиннее окна — говорим об этом словами: полосу прокрутки на тёмной
+                панели легко не заметить, и логи кажутся обрезанными (правка 27.08). */}
+            {logs.length > 8 && <span className="ml-auto text-[11px] font-normal text-white/35">список прокручивается</span>}
+          </div>
           {logs.length === 0 ? (
             <div className="py-3 text-center text-xs text-white/40">Логов пока нет</div>
           ) : (
-            <div className="max-h-96 space-y-1 overflow-y-auto">
+            <div className="max-h-96 space-y-1 overflow-y-auto pr-2">
               {logs.map((l, i) => (
                 <div key={i} className="flex gap-2 text-xs">
                   <span className="shrink-0 text-white/30">{new Date(l.ts).toLocaleTimeString('ru-RU')}</span>

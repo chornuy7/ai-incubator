@@ -185,15 +185,22 @@ function seedHash(s) {
 }
 
 /** Смёржить глобальный системный промпт (feature 6) с промптом карточки. @param {string} cardPrompt */
-function mergeGlobalPrompt(cardPrompt) {
-  const global = getGlobalSystemPromptSync().trim()
+function mergeGlobalPrompt(cardPrompt, globalPrompt) {
+  // Промпт владельца задачи, если его передали. Иначе — прежний общий (совместимость с
+  // вызовами, где хозяина нет: превью, тесты, старые точки).
+  const global = String(globalPrompt ?? getGlobalSystemPromptSync()).trim()
   if (!global) return cardPrompt
   if (!cardPrompt) return global
   return `${global}\n\n${cardPrompt}`
 }
 
-/** @param {Record<string, unknown>} settings */
-export function resolveSystemPrompt(settings) {
+/**
+ * @param {Record<string, unknown>} settings
+ * @param {string} [globalPrompt] системный промпт ВЛАДЕЛЬЦА задачи (MR-185).
+ *   До 27.08 промпт был один на всю платформу и подмешивался отсюда напрямую — правка
+ *   одного человека доезжала до чужих запусков. Теперь его приносит воркер, зная `task.userId`.
+ */
+export function resolveSystemPrompt(settings, globalPrompt) {
   const idx = settings?.promptIndex ?? 0
   let card
   if (typeof settings?.promptText === 'string' && settings.promptText.trim()) {
@@ -206,7 +213,7 @@ export function resolveSystemPrompt(settings) {
       card = PROMPTS[idx] || PROMPTS[0]
     }
   }
-  return mergeGlobalPrompt(card)
+  return mergeGlobalPrompt(card, globalPrompt)
 }
 
 /**

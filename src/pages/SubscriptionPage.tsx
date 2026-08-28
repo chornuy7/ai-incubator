@@ -9,7 +9,7 @@ import { useBalance } from '@/features/billing/balanceStore'
 import { expiryInfo, daysLeftPhrase } from '@/features/billing/expiry'
 import { fetchSubscription, saveSubscription, type Subscription } from '@/api/balanceApi'
 import { cn } from '@/shared/lib/utils'
-import { WalletHistory } from '@/pages/ProfilePage'
+import { WalletHistoryButton } from '@/pages/ProfilePage'
 
 /**
  * §5.4: кабинет подписки — клиент СОБИРАЕТ набор модулей сам.
@@ -157,6 +157,9 @@ export function SubscriptionPage() {
         icon={<Package size={20} />}
         title="Подписки"
         subtitle="Выберите модули, которыми пользуетесь. Платите только за них — сумма пересчитывается сразу."
+        // MR-157: история операций — кнопкой в шапке, а не блоком внизу страницы: там её
+        // перекрывала нижняя панель оплаты, и до неё приходилось листать весь список модулей.
+        actions={<WalletHistoryButton />}
       />
 
       {/* §5 (21.08): срок подписки на виду. Раньше кабинет показывал только состав
@@ -420,8 +423,6 @@ export function SubscriptionPage() {
         что и оплачено, и разрешено ему администратором.
       </p>
 
-      {/* MR-158: «История операций» перенесена сюда из профиля — это раздел про деньги/подписку. */}
-      <WalletHistory />
     </div>
   )
 }

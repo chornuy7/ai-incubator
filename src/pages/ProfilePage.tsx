@@ -8,6 +8,7 @@ import { useBalance } from '@/features/billing/balanceStore'
 import { expiryInfo, daysLeftPhrase } from '@/features/billing/expiry'
 import { deleteUser, changeMyPassword } from '@/api/usersApi'
 import { useSession } from '@/features/auth/session'
+import { can } from '@/shared/lib/access'
 import { PageHeader, Card, Switch, Badge, Modal } from '@/shared/ui'
 import { cn, coins as fmtCoins } from '@/shared/lib/utils'
 import { useTabParam } from '@/shared/lib/useTabParam'
@@ -403,20 +404,60 @@ export function ProfilePage() {
 
 
 /**
- * История операций по кошельку: когда, за что, сколько и что осталось.
+ * Строки истории кошелька — общая разметка для карточки в профиле и модалки в подписках.
  *
- * Показываем «до → после» рядом с суммой: одна цифра «−0.15» не даёт понять, было
- * это списание с 80 или последние монеты. Свои операции видит каждый, чужие — только
- * админ (проверяется на сервере).
+ * Показываем «до → после» рядом с суммой: одна цифра «−0.15» не даёт понять, было это
+ * списание с 80 или последние монеты.
+ *
+ * Правка 24.08: сумма и остаток были одинаково мелкими и серыми — понять, пришло или ушло,
+ * можно было только вчитавшись в знак. Теперь плюс зелёный, минус красный, у суммы стоит
+ * знак валюты, а «до → после» набрано крупнее подписи.
+ */
+function WalletRows({ rows }: { rows: WalletEntry[] | null }) {
+  if (!rows) return <div className="text-sm text-muted">Загрузка…</div>
+  if (!rows.length) return <div className="text-sm text-muted">Операций пока не было.</div>
+  return (
+    <div className="space-y-1">
+      {rows.map((r, i) => {
+        const plus = r.amount > 0
+        // Доллары приходят отдельной валютой; всё остальное — монеты платформы.
+        const money = (r as WalletEntry & { currency?: string }).currency === 'usd'
+        const unit = money ? '$' : '⚡'
+        return (
+          <div key={r.ts + '-' + i} className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-line/40 py-2 last:border-0">
+            <span className={cn('flex w-28 shrink-0 items-center gap-1 text-base font-bold tabular-nums', plus ? 'text-emerald-300' : 'text-rose-300')}>
+              {plus ? '+' : '−'}{fmtCoins(Math.abs(r.amount))}
+              <span className="text-xs font-semibold opacity-70">{unit}</span>
+            </span>
+            <span className="min-w-0 flex-1 truncate text-sm text-fg">{r.reason || 'без описания'}</span>
+            <span className="shrink-0 text-sm font-semibold tabular-nums text-muted">
+              {fmtCoins(r.before)} <span className="text-faint">→</span> <span className={plus ? 'text-emerald-300' : 'text-rose-300'}>{fmtCoins(r.after)}</span>
+            </span>
+            <span className="w-full shrink-0 text-xs text-faint sm:w-auto">{new Date(r.ts).toLocaleString('ru-RU')}</span>
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
+/** Загрузка истории по требованию — общий хук для карточки и модалки. */
+function useWalletHistory(active: boolean) {
+  const [rows, setRows] = useState<WalletEntry[] | null>(null)
+  useEffect(() => {
+    if (!active || rows) return
+    void fetchWalletHistory(50).then(setRows).catch(() => setRows([]))
+  }, [active, rows])
+  return rows
+}
+
+/**
+ * История операций по кошельку: когда, за что, сколько и что осталось.
+ * Свои операции видит каждый, чужие — только админ (проверяется на сервере).
  */
 export function WalletHistory() {
-  const [rows, setRows] = useState<WalletEntry[] | null>(null)
   const [open, setOpen] = useState(false)
-
-  useEffect(() => {
-    if (!open || rows) return
-    void fetchWalletHistory(50).then(setRows).catch(() => setRows([]))
-  }, [open, rows])
+  const rows = useWalletHistory(open)
 
   return (
     <div className="rounded-2xl border border-line bg-elevated p-4">
@@ -425,31 +466,50 @@ export function WalletHistory() {
         <span className="text-sm font-semibold text-fg">История операций</span>
         <span className="ml-auto text-xs text-muted">{open ? 'свернуть' : 'показать'}</span>
       </button>
-
-      {open && (
-        <div className="mt-3">
-          {!rows ? (
-            <div className="text-sm text-muted">Загрузка…</div>
-          ) : !rows.length ? (
-            <div className="text-sm text-muted">Операций пока не было.</div>
-          ) : (
-            <div className="space-y-1">
-              {rows.map((r, i) => (
-                <div key={r.ts + '-' + i} className="flex flex-wrap items-baseline gap-x-3 gap-y-0.5 border-b border-line/40 py-1.5 text-sm last:border-0">
-                  <span className={cn('w-20 shrink-0 font-semibold tabular-nums', r.amount > 0 ? 'text-spark-300' : 'text-amber-300')}>
-                    {r.amount > 0 ? '+' : ''}{fmtCoins(r.amount)}
-                  </span>
-                  <span className="min-w-0 flex-1 truncate text-muted">{r.reason || 'без описания'}</span>
-                  <span className="shrink-0 text-xs tabular-nums text-faint">{fmtCoins(r.before)} → {fmtCoins(r.after)}</span>
-                  <span className="shrink-0 text-xs text-faint">{new Date(r.ts).toLocaleString('ru-RU')}</span>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-      )}
+      {open && <div className="mt-3"><WalletRows rows={rows} /></div>}
     </div>
   )
+}
+
+/**
+ * История операций КНОПКОЙ — для страницы подписок.
+ *
+ * Раскрывающийся блок стоял внизу страницы и его перекрывала нижняя панель запуска
+ * (замечание владельца 24.08 и повторно 27.08): развернёшь — а список уезжает под неё.
+ * Кнопка живёт в шапке справа, как «О модуле» в модулях, и открывает модалку — её
+ * ничем не перекроешь, и до истории не нужно листать всю страницу.
+ */
+export function WalletHistoryButton() {
+  const [open, setOpen] = useState(false)
+  const rows = useWalletHistory(open)
+
+  return (
+    <>
+      <button type="button" onClick={() => setOpen(true)} className="btn-ghost h-9 shrink-0 text-xs" title="Когда, за что и сколько списывалось">
+        <HistoryIcon size={14} /> История операций
+      </button>
+      <Modal
+        open={open}
+        onClose={() => setOpen(false)}
+        title="История операций"
+        subtitle="Когда, за что, сколько и что осталось на счету"
+        icon={<HistoryIcon size={22} />}
+        size="lg"
+      >
+        <div className="max-h-[60vh] overflow-y-auto pr-1"><WalletRows rows={rows} /></div>
+      </Modal>
+    </>
+  )
+}
+
+/** «1 модуль · 2 модуля · 5 модулей» — иначе счётчик читается как ошибка перевода. */
+function plural(n: number) {
+  const ten = n % 100
+  if (ten >= 11 && ten <= 14) return 'модулей'
+  const one = n % 10
+  if (one === 1) return 'модуль'
+  if (one >= 2 && one <= 4) return 'модуля'
+  return 'модулей'
 }
 
 /**
@@ -457,8 +517,26 @@ export function WalletHistory() {
  * сервера (expiresAt); нет срока — «бессрочно» (демо и дефолтное пространство).
  */
 function SubscriptionCard({ balance }: { balance: Balance | null }) {
+  const me = useSession((st) => st.user)
   const modules = balance?.modules
-  const sub = modules === 'all' || modules == null ? 'Все модули' : `${modules.length} ${modules.length === 1 ? 'модуль' : 'модулей'}`
+
+  /*
+   * Сотруднику показываем его СОБСТВЕННЫЙ набор (просьба владельца 27.08: «в подписках
+   * суб-пользователя показываем только количество доступных именно для него открытых»).
+   *
+   * Подписку сотрудник наследует от владельца целиком — оттуда и приходило «5 модулей».
+   * Но открыто ему может быть два: в меню он видит два, а карточка обещала пять. Считаем
+   * пересечение подписки владельца с тем, что ему реально разрешено, и подписываем, из
+   * скольких это выбрано, — иначе непонятно, урезали его или у владельца столько и есть.
+   */
+  const own = Array.isArray(modules) && me && !me.isAdmin
+    ? modules.filter((k) => can(me.permissions ?? null, false, 'module', k))
+    : null
+  const ограничен = !!own && !!modules && Array.isArray(modules) && own.length < modules.length
+
+  const sub = modules === 'all' || modules == null
+    ? 'Все модули'
+    : `${(own ?? modules).length} ${plural((own ?? modules).length)}`
   // §5 (21.08): дата — словами («до 19 сентября 2026»). «19.09.2026» оператор читает
   // как ребус, а спутать день с месяцем в цифрах — вопрос одного взгляда.
   const exp = expiryInfo(balance?.expiresAt)
@@ -475,6 +553,9 @@ function SubscriptionCard({ balance }: { balance: Balance | null }) {
         <div>
           <div className="text-[11px] uppercase tracking-wide text-muted">Подписка</div>
           <div className="font-semibold text-fg">{sub}</div>
+          {ограничен && (
+            <div className="text-[11px] text-muted">открыто вам · у владельца {Array.isArray(modules) ? modules.length : 0}</div>
+          )}
         </div>
         <div>
           <div className="text-[11px] uppercase tracking-wide text-muted">Оплачено</div>
@@ -498,9 +579,16 @@ function SubscriptionCard({ balance }: { balance: Balance | null }) {
         </div>
         {/* Правка 14.08: «Подписки» и «Изменить тариф» вели в одно место (/panel/user/subscription) —
             убрали дубль, оставили одну кнопку с названием целевой страницы «Подписки». */}
-        <div className="ml-auto flex items-center gap-2">
-          <Link to="/panel/user/subscription" className="btn-iris h-9 text-sm"><Package size={14} /> Подписки</Link>
-        </div>
+        {/*
+          Сотруднику кнопки нет (правка 27.08). Подписка — не его: сервер на покупку
+          отвечает «подписку оформляет владелец пространства», и кнопка вела на экран,
+          где сделать нельзя ничего.
+        */}
+        {!balance?.isSub && (
+          <div className="ml-auto flex items-center gap-2">
+            <Link to="/panel/user/subscription" className="btn-iris h-9 text-sm"><Package size={14} /> Подписки</Link>
+          </div>
+        )}
       </div>
     </Card>
   )

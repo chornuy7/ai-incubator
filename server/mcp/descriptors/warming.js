@@ -57,8 +57,8 @@ export default {
       howItWorks:
         'The level sets both the tempo (the delay multiplier) and the daily action quota. The faster it is, '
         + 'the more actions per day and the more visible the account.',
-      api: { method: 'POST', path: '/api/modules/warming/tasks', fills: ['warmLevel'] },
-      params: ['warmLevel'],
+      api: { method: 'POST', path: '/api/modules/warming/tasks', fills: ['warmLevel', 'warmDays', 'warmHours'] },
+      params: ['warmLevel', 'warmDays', 'warmHours'],
     },
     {
       id: 'limits',
@@ -117,6 +117,41 @@ export default {
       constraints: ['empty list → refusal “Select at least one account”'],
       examples: [['acc_1'], ['acc_1', 'acc_2']],
       storedAs: 'task.settings.accountIds',
+    },
+    {
+      name: 'warmHours',
+      block: 'level',
+      title: 'Active hours per day',
+      type: 'integer',
+      default: 8,
+      enum: [
+        { value: 6, label: '6 hours', means: 'Evening user: the same actions are packed tighter.' },
+        { value: 8, label: '8 hours', means: 'Default.' },
+        { value: 12, label: '12 hours', means: 'All-day user: actions are spread thin.' },
+        { value: 14, label: '14 hours', means: 'Full activity window 9:00–23:00.' },
+      ],
+      purpose: 'Window the daily action quota is spread over — not how many, but how far apart.',
+      constraints: [
+        'step between actions = window / actions per day, with a random spread of ±35%',
+        'night is always a pause: activity at 4am is a farm marker on its own',
+      ],
+      seeAlso: ['warmLevel', 'warmDays'],
+      storedAs: 'task.settings.warmHours',
+    },
+    {
+      name: 'warmDays',
+      block: 'level',
+      title: 'Warm-up length in days',
+      type: 'integer',
+      default: 2,
+      constraints: [
+        'sets the TOTAL number of actions: days × per-day pace of the level',
+        'minimum 2 days: a shorter run is just a batch of actions in one evening, not warming up',
+        'expanded into maxActions/minActions when the task is created, so the target is exact, not rolled',
+      ],
+      purpose: 'How long the account keeps warming up, in days.',
+      seeAlso: ['warmLevel'],
+      storedAs: 'task.settings.warmDays',
     },
     {
       name: 'warmLevel',

@@ -110,10 +110,14 @@ export default {
     {
       id: 'protection',
       title: 'Account protection',
-      purpose: 'Delay multiplier.',
-      howItWorks: 'The protection level increases the pauses between sendings. The module has no probability - we write to everyone on the list.',
-      api: { method: 'POST', path: '/api/modules/mailing/tasks', fills: ['protectionLevel'] },
-      params: ['protectionLevel'],
+      purpose: 'Delay multiplier and the ceiling on send probability.',
+      howItWorks:
+        'The protection level multiplies the pauses between sends and caps the probability from above '
+        + '(conservative no higher than 25%, balanced no higher than 45%). Probability here does not cancel '
+        + 'a send: a recipient who loses the roll moves to the end of the queue and goes to another account, '
+        + 'so nobody drops off the list.',
+      api: { method: 'POST', path: '/api/modules/mailing/tasks', fills: ['protectionLevel', 'probability'] },
+      params: ['protectionLevel', 'probability'],
     },
     {
       id: 'binding',
@@ -379,6 +383,22 @@ export default {
       examples: [1, 3],
       seeAlso: ['accountIds'],
       storedAs: 'task.settings.threads',
+    },
+    {
+      name: 'probability',
+      block: 'protection',
+      title: 'Send probability',
+      type: 'integer',
+      default: 100,
+      purpose: 'What share of recipients is written to out of list order, and not by the account that was next in line.',
+      constraints: [
+        'the meaning differs from commenting and reactions: a miss does not cancel the send, it defers it',
+        'a recipient who loses the roll moves to the end of the queue and goes to another account — nobody drops off the list',
+        'the roll happens once per recipient: on the second pass the send goes through unconditionally, otherwise the queue would spin forever',
+        'the protection level caps it from above: conservative no higher than 25%, balanced no higher than 45%',
+      ],
+      seeAlso: ['protectionLevel'],
+      storedAs: 'task.settings.probability',
     },
     {
       name: 'protectionLevel',

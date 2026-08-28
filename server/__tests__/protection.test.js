@@ -110,3 +110,17 @@ test('политика бана не наказывает аккаунт за з
   const line = code.split('\n').find((l) => l.includes('const isBan ='))
   assert.match(line, /!bannedHere/, 'запрет в чате обязан быть исключён из правила бана')
 })
+
+test('коды реакций объясняют себя: реакции для админов, запрещённая эмодзи (26.08)', async () => {
+  // Прогон массовых реакций 26.08: в логах стоял сырой «CHAT_ADMIN_REQUIRED» — ни что
+  // случилось, ни что делать. А USER_BANNED_IN_CHANNEL говорил про «сообщение», хотя
+  // модуль реакций ничего не пишет.
+  const { mapTelegramError } = await import('../lib/protection.js')
+
+  assert.match(mapTelegramError({ errorMessage: 'CHAT_ADMIN_REQUIRED' }), /только админам/i)
+  assert.match(mapTelegramError({ errorMessage: 'REACTION_INVALID' }), /эмодзи/i)
+
+  const banned = mapTelegramError({ errorMessage: 'USER_BANNED_IN_CHANNEL' })
+  assert.doesNotMatch(banned, /сообщени/i, 'на реакцию прилетает тот же код — слово «сообщение» вводит в заблуждение')
+  assert.match(banned, /спамблок/i)
+})

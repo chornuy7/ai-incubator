@@ -7,6 +7,9 @@ import { useApp } from '@/mocks/store'
 import { PageHeader, Card, EmptyState, Select, Badge, Modal, Segmented } from '@/shared/ui'
 import { HelpButton } from '@/features/neuro-commenting/moduleUi'
 import { fetchAudit, type AuditEntry } from '@/api/auditApi'
+import { fetchUsers } from '@/api/usersApi'
+import { useSession } from '@/features/auth/session'
+import { cn } from '@/shared/lib/utils'
 
 type Tone = 'spark' | 'iris' | 'amber' | 'rose' | 'muted'
 
@@ -53,8 +56,40 @@ export function LogsPage() {
   const [mode, setMode] = useState(0) // 0 — список, 1 — потоки (2–3 колонки)
   const [streamActions, setStreamActions] = useState<string[]>([]) // до 3 действий-колонок
 
-  const load = async () => {
-    try { setEntries(await fetchAudit({ limit: 300 })) }
+  /*
+   * Чья это запись — видно прямо в строке (вопрос владельца 27.08: «почему я вижу все
+   * логи всех пользователей, а не только свои и своих субпользователей?»).
+   *
+   * Сервер журнал уже режет: владельцу отдаются только его записи и записи его
+   * сотрудников. Но в строке стоял голый e-mail или id — по нему не отличить своего
+   * сотрудника от постороннего, и любой незнакомый адрес читается как утечка. Подписываем
+   * «вы» и «сотрудник»; если вдруг появится кто-то ещё — это будет видно сразу, а не
+   * потеряется среди сотни строк.
+   */
+  const me = useSession((st) => st.user)
+  const [team, setTeam] = useState<{ id: string; email: string }[]>([])
+  useEffect(() => {
+    void fetchUsers().then((us) => setTeam(us.map((u) => ({ id: u.id, email: u.email })))).catch(() => {})
+  }, [])
+
+  const whoIs = (initiator?: string) => {
+    const v = String(initiator || '').toLowerCase()
+    if (!v) return null
+    if (v === String(me?.id || '').toLowerCase() || v === String(me?.email || '').toLowerCase()) return 'вы'
+    const mine = team.find((u) => u.id.toLowerCase() === v || (u.email || '').toLowerCase() === v)
+    if (mine && mine.id !== me?.id) return 'сотрудник'
+    return mine ? 'вы' : null
+  }
+
+  /*
+   * Даже администратор по умолчанию видит ТОЛЬКО свою команду (правка 27.08). Владелец
+   * платформы — ещё и обычный клиент: в своём журнале ему нужны свои задачи, а не входы
+   * чужих сотрудников вперемешку. Весь журнал открывается кнопкой — как список
+   * пользователей.
+   */
+  const [allSpace, setAllSpace] = useState(false)
+  const load = async (scopeAll = allSpace) => {
+    try { setEntries(await fetchAudit({ limit: 300, ...(scopeAll ? { scope: 'all' as const } : {}) })) }
     catch (err) { pushToast({ type: 'error', title: 'Не удалось загрузить логи', desc: err instanceof Error ? err.message : '' }) }
     finally { setLoading(false) }
   }
@@ -62,7 +97,7 @@ export function LogsPage() {
     void load()
     const id = setInterval(() => { void load() }, 8000)
     return () => clearInterval(id)
-  }, [])
+  }, [allSpace]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const actions = useMemo(() => [...new Set(entries.map((e) => e.action))], [entries])
   const initiators = useMemo(() => [...new Set(entries.map((e) => e.initiator).filter((x): x is string => !!x))], [entries])
@@ -92,7 +127,19 @@ export function LogsPage() {
           <span className="text-white/80">{e.reason || e.code || e.action}</span>
           <div className="ml-auto flex flex-wrap items-center gap-x-3 text-xs text-white/40">
             {e.module && e.module !== 'core' && <span>{e.module}</span>}
-            <span>кто: {e.initiator}</span>
+            <span>
+              кто: {e.initiator}
+              {(() => {
+                const кто = whoIs(e.initiator)
+                if (!кто) return null
+                return (
+                  <span className={cn('ml-1.5 rounded px-1.5 py-0.5 text-[10px] font-semibold',
+                    кто === 'вы' ? 'bg-spark-500/15 text-spark-300' : 'bg-iris-500/15 text-iris-300')}>
+                    {кто}
+                  </span>
+                )
+              })()}
+            </span>
             {e.account && <span>акк: {String(e.account).slice(-6)}</span>}
             {accs ? <span>{accs} акк.</span> : null}
             <span>{new Date(e.ts).toLocaleString()}</span>
@@ -106,12 +153,23 @@ export function LogsPage() {
     <div>
       <PageHeader
         title="Логи"
-        subtitle="Ваши действия и действия ваших сотрудников: смена статусов аккаунтов, старт/стоп задач, кампании — с инициатором и причиной. (Администратор видит журнал всего пространства.)"
+        subtitle={allSpace
+          ? 'Журнал ВСЕГО пространства: действия всех клиентов платформы. Режим администратора.'
+          : 'Ваши действия и действия ваших сотрудников: смена статусов аккаунтов, старт/стоп задач, кампании — с инициатором и причиной.'}
         icon={<ScrollText size={22} />}
         badge={entries.length ? `${entries.length}` : undefined}
         actions={
           <div className="flex items-center gap-2">
             <HelpButton topic="logs" className="h-10 w-10" />
+            {me?.isAdmin && (
+              <button
+                onClick={() => { setLoading(true); setAllSpace((v) => !v) }}
+                title={allSpace ? 'Вернуться к своим записям' : 'Показать журнал всего пространства (доступно администратору)'}
+                className={cn('h-10 rounded-xl px-3 text-xs font-semibold', allSpace ? 'bg-spark-500/20 text-spark-300' : 'btn-ghost')}
+              >
+                {allSpace ? 'Всё пространство' : 'Только моя команда'}
+              </button>
+            )}
             <button onClick={exportCsv} className="btn-ghost h-10"><Download size={16} /> CSV</button>
             <button onClick={() => void load()} className="btn-ghost h-10"><RefreshCw size={16} /> Обновить</button>
           </div>

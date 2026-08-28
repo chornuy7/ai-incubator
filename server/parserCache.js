@@ -156,6 +156,14 @@ const describable = (kind, s) => String(kind || '') === 'tgstat'
 export async function saveParserResults(kind, settings, results, ownerId = null) {
   if (!describable(kind, settings)) return
   const list = Array.isArray(results) ? results : []
+  /*
+   * Пустой сбор в кэш не пишем (правка 26.08). Прогон владельца: пересечение по 51 ключу
+   * обнулило выдачу, ноль лёг в кэш — и витрина стала предлагать «в базе есть сохранённый
+   * результат: 0 каналов» вместо нового прохода, а «Последние запросы» забились пустышками.
+   * Ноль — это не результат, который стоит переиспользовать. Если строка уже была со
+   * старым составом, лучше оставить её: устаревшие данные полезнее пустых.
+   */
+  if (!list.length) return
   const sig = parserSignature(kind, settings)
   const row = {
     sig: sigKey(sig),
@@ -455,6 +463,36 @@ function queryRow(r) {
     watch: !!r.watch,
     ownerId: r.owner_id ? String(r.owner_id) : '',
   }
+}
+
+/**
+ * Ключевые слова, по которым этот модуль уже собирал (решение владельца 27.08: «если все
+ * ключи использовались — моментально отдаём из базы; новый ключ — работаем дальше»).
+ *
+ * Берём из сохранённых запросов: там лежит тот самый набор слов, с которым прогон уже
+ * ходил в Telegram. Всё, что он тогда нашёл, лежит в общей базе каналов — идти за этим
+ * второй раз значит тратить минуты и аккаунты ради известного.
+ *
+ * @param {string} kind модуль @param {string} [ownerId] чьи запросы (пусто — все)
+ * @returns {Promise<Set<string>>} слова в нижнем регистре
+ */
+export async function usedKeywords(kind, ownerId = '') {
+  const out = new Set()
+  /*
+   * Берём свои записи И «ничейные». Ничейные — это прогоны до появления владельцев и
+   * ревизия базы: они платформенные, как и сама база каналов, из которой мы отдаём
+   * результат. Чужие клиентские запросы при этом не учитываем: история поиска соседа —
+   * не повод молча не искать для нас.
+   */
+  const all = await listQueries({ kind, limit: 200 }).catch(() => [])
+  const rows = all.filter((r) => !r.ownerId || !ownerId || r.ownerId === ownerId)
+  for (const r of rows) {
+    for (const part of String(r.query || '').split(',')) {
+      const w = part.trim().toLowerCase()
+      if (w) out.add(w)
+    }
+  }
+  return out
 }
 
 /** Результаты одного сохранённого запроса — по нему витрина показывает найденные каналы. */

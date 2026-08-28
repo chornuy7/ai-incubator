@@ -30,6 +30,8 @@ function packHolders(holders) {
  * @type {Set<string>}
  */
 const liveTasks = new Set()
+/** taskId → когда задача пошла в работу: старшинство при споре за общий аккаунт (27.08). */
+const taskStarted = new Map()
 
 export const MODULE_LABELS = {
   mailing: 'Мейлинг',
@@ -187,14 +189,28 @@ export function assertAccountAvailable(accountId, taskId) {
 
 // ── Живой реестр воркеров ──────────────────────────────────────────────
 
-/** @param {string} taskId */
+/**
+ * @param {string} taskId
+ *
+ * Помимо факта «жива», запоминаем МОМЕНТ запуска: по нему решается приоритет на общий
+ * аккаунт (27.08). Первой запущенной задаче он достаётся раньше, чем той, что пришла
+ * следом, — иначе побеждает случайный, чей опрос совпал с освобождением слота.
+ */
 export function markTaskLive(taskId) {
-  if (taskId) liveTasks.add(taskId)
+  if (!taskId) return
+  liveTasks.add(taskId)
+  if (!taskStarted.has(taskId)) taskStarted.set(taskId, Date.now())
+}
+
+/** Когда задача пошла в работу (мс). 0 — неизвестно: считаем самой молодой. */
+export function taskStartedAt(taskId) {
+  return taskStarted.get(taskId) || 0
 }
 
 /** @param {string} taskId */
 export function markTaskDone(taskId) {
   liveTasks.delete(taskId)
+  taskStarted.delete(taskId)
 }
 
 /** @param {string} taskId */

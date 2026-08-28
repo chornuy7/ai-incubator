@@ -66,3 +66,74 @@ test('комментарий уходит в группу обсуждения, 
   assert.equal(отправлено[0].peer.id, группа.id, 'ушло в канал вместо обсуждения')
   assert.equal(отправлено[0].opts.replyTo, 14)
 })
+
+/*
+ * Вывод «спамблок аккаунта» перестал быть догадкой (правка 27.08). Раньше «прав не нашли»
+ * автоматически означало вину аккаунта — и он выводился из работы на сутки. Причин
+ * молчаливого запрета больше двух: премиум, подписка, время в группе, заявочный режим.
+ * Теперь спрашиваем @SpamBot — ответ самого Telegram.
+ */
+const открытыйЧат = [{ id: 1, broadcast: false, defaultBannedRights: { changeInfo: true } }]
+const сБотом = (ответБота) => ({
+  invoke: async () => ({ participant: { className: 'ChannelParticipantSelf' }, chats: открытыйЧат }),
+  getEntity: async () => ({ id: 42 }),
+  sendMessage: async () => {},
+  getMessages: async () => [{ message: ответБота }],
+})
+
+test('@SpamBot говорит «чист» — виноват чат, аккаунт не выводим', async () => {
+  const c = сБотом('Good news, no limits are currently applied to your account.')
+  const d = await diagnoseWriteBan(c, { id: 1 }, { waitMs: 0 })
+  assert.equal(d.scope, 'chat', 'аккаунт остаётся в работе')
+  assert.match(d.text, /@SpamBot/)
+})
+
+test('@SpamBot подтверждает ограничение — берём и срок из его ответа', async () => {
+  const год = new Date().getUTCFullYear() + 1
+  const c = сБотом(`I'm afraid your account is limited until Aug 28, ${год}, 12:35 UTC.`)
+  const d = await diagnoseWriteBan(c, { id: 1 }, { waitMs: 0 })
+  assert.equal(d.scope, 'account')
+  assert.ok(d.until > Date.now(), 'срок настоящий, а не «сутки по типичному»')
+  assert.match(d.text, /Снятие спамблока/)
+})
+
+test('бот не ответил — говорим «похоже», а не «спамблок подтверждён»', async () => {
+  const c = сБотом('')
+  const d = await diagnoseWriteBan(c, { id: 1 }, { waitMs: 0 })
+  assert.equal(d.scope, 'account', 'осторожность: считаем виноватым аккаунт')
+  assert.match(d.text, /Похоже/, 'но не выдаём догадку за подтверждение')
+  assert.ok(!d.until, 'срока нет — вызывающий подставит свой')
+})
+
+/*
+ * Живой разбор 27.08. Владелец дал целью @olfoIa — это «AI INCUBATOR Chat», то есть
+ * ГРУППА обсуждения, а не канал. Комментарий уходил в связанный КАНАЛ (4340130293), где
+ * обычный участник писать не может, Telegram отвечал USER_BANNED_IN_CHANNEL, а диагноз
+ * называл это спамблоком аккаунта: единственный чат в ответе — сам канал, и поиск
+ * «чата без broadcast» не находил ничего. Аккаунт «Олечка Bullock» вышел из работы на
+ * сутки, задача завершилась, ни одного комментария написано не было.
+ */
+test('писали в канал — виноват не аккаунт, а выбор цели', async () => {
+  const канал = { id: 4340130293, broadcast: true }
+  const c = {
+    invoke: async () => ({ participant: { className: 'ChannelParticipantSelf' }, chats: [канал] }),
+  }
+  const d = await diagnoseWriteBan(c, канал, { waitMs: 0 })
+  assert.equal(d.scope, 'chat', 'аккаунт остаётся в работе')
+  assert.match(d.text, /КАНАЛ/)
+  assert.match(d.text, /группу обсуждения/)
+})
+
+test('цель — сама группа обсуждения: комментарий уходит в неё, а не в канал', async () => {
+  const группа = { id: 3988403901, broadcast: false }
+  const отправлено = []
+  const client = {
+    sendMessage: async (peer, opts) => { отправлено.push({ peer, opts }) },
+    invoke: async () => { throw new Error('вступать некуда — мы уже в группе') },
+  }
+  await sendChannelComment(client, группа, 555, 'привет')
+  assert.equal(отправлено.length, 1)
+  assert.equal(отправлено[0].peer, группа, 'пишем в группу, а не в связанный канал')
+  assert.equal(отправлено[0].opts.replyTo, 555, 'ответом на пост — это и есть комментарий')
+  assert.ok(!('commentTo' in отправлено[0].opts), 'commentTo для группы не нужен')
+})
