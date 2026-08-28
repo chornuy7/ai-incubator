@@ -103,6 +103,14 @@ export async function renewDueSubscriptions(nowMs = Date.now()) {
   const { monthMap, tokensMap } = await effectivePrices()
   const { getBalance, changeUsd, changeCoins } = await import('./balance.js')
   const { moduleLabel } = await import('./lib/accountLocks.js')
+  // Цену продления считаем ТЕМ ЖЕ кодом, что и цену покупки: subscriptionCost знает про
+  // скидку сетапа, про наборы, собранные админом, и про округление до целых. Простая
+  // сумма по прайсу этого не знает — и человек, купивший «Парсер + Комментинг» за $20,
+  // на продлении получил бы счёт по полному прайсу. Он не менял состав, значит и цена
+  // меняться не должна: скидка здесь — свойство НАБОРА, а не разовая акция.
+  const { subscriptionCost } = await import('./pricing.js')
+  const bundles = await (await import('./bundles.js')).listBundles().catch(() => [])
+  const setups = await (await import('./setups.js')).listSetups().catch(() => [])
   const month = creditMonth(nowMs)
 
   let renewed = 0
@@ -111,7 +119,7 @@ export async function renewDueSubscriptions(nowMs = Date.now()) {
   let unpaid = 0
 
   for (const sub of due) {
-    const cost = sub.modules.reduce((s, k) => s + (Number(monthMap?.[k]) || 0), 0)
+    const cost = subscriptionCost(sub.modules, bundles, monthMap, {}, setups).sum
     const names = sub.modules.map((k) => moduleLabel(k))
     const shown = names.length > 3 ? `${names.slice(0, 3).join(', ')} и ещё ${names.length - 3}` : names.join(', ')
 
