@@ -4,6 +4,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import {
   DESCRIPTORS, listDescriptorKeys, describeModule, buildInputSchema, descriptorTopLevelNames,
+  descriptorFieldNames,
 } from '../mcp/descriptors/index.js'
 import { extractFunctionBody, scanSettingsKeys, scanDescriptorSources } from '../mcp/contractScan.js'
 import { delayMultiplier, effectiveProbability } from '../lib/protection.js'
@@ -117,6 +118,28 @@ test('значения: enum расшифрованы, границы не пр�
   }
 })
 
+test('usesAi объявлен явно у каждого модуля и доезжает до клиента', () => {
+  // Поле не косметическое: по нему `priceStore.js` решает, начислять ли модулю месячный
+  // пакет токенов, а «мозги» — добавлять ли расход на генерацию к цене действия.
+  //
+  // Ловим ровно два дефекта, которые уже случились. Первый: у пяти парсеров значение было
+  // `undefined` — обёртки его передавали, фабрика не читала. `undefined` здесь опаснее
+  // `false`: «не знаю» неотличимо от «нет». Второй: поле было в дескрипторе, но ни
+  // `describeModule`, ни `summarizeModule` его не отдавали, то есть наружу оно не выходило
+  // вовсе — тот самый рассинхрон схемы и реальности, ради которого заведён весь раздел.
+  for (const key of listDescriptorKeys()) {
+    const raw = DESCRIPTORS[key].usesAi
+    assert.equal(typeof raw, 'boolean', `${key}: usesAi обязан быть объявлен явно (сейчас ${raw})`)
+    assert.equal(describeModule(key).usesAi, raw, `${key}: describeModule не отдаёт usesAi`)
+  }
+
+  // Сверяем с реальностью, а не с самим собой: генерацию делает тот, кто зовёт
+  // resolveSystemPrompt из общего генератора. Список ИИ-модулей мал и меняется редко —
+  // если он изменится, тест обязан это заметить.
+  const ai = listDescriptorKeys().filter((k) => DESCRIPTORS[k].usesAi)
+  assert.deepEqual(ai.sort(), ['mailing', 'neuro-chatting', 'neuro-commenting', 'neuro-dialogs'])
+})
+
 test('whoAmI заполнен полностью — модуль сам объясняет, что он делает и чего не делает', () => {
   for (const key of listDescriptorKeys()) {
     const w = DESCRIPTORS[key].whoAmI
@@ -181,7 +204,142 @@ test('inputSchema: валидная JSON Schema с ограничениями, �
 
   // The enum meaning must be exposed in the description text shown by the MCP client.
   assert.match(schema.properties.commentMode.description, /By keywords/i)
-  assert.match(schema.properties.probability.description, /Restrictions:/i)
+  assert.match(schema.properties.probability.description, /Constraints: /)
+  // Диалект объявляем явно: молчаливое умолчание — лишний повод для расхождения
+  // с валидатором на той стороне.
+  assert.equal(schema.$schema, 'https://json-schema.org/draft/2020-12/schema')
+})
+
+// ────────────────────────────────────────────────────────────────────────────────
+// КАЧЕСТВО ТЕКСТА. Дескриптор читает не человек, а модель, и текст здесь — не
+// оформление, а данные. После машинного перевода файлов раздела в схеме осело 94 склейки
+// без пробела («FloodWait →account quarantine», «in progress' + 'task.»), шесть пропусков
+// пробела после точки и дублирующиеся теги в 13 дескрипторах из 15: пары синонимов
+// «комментарии/comments» перевелись в одно слово дважды. Проверяем машинно — глазами
+// такое не ловится, а модель по такому тексту делает выводы.
+// ────────────────────────────────────────────────────────────────────────────────
+
+/** Собрать ВСЕ строки дескриптора, включая вложенные. */
+function allStrings(node, out = []) {
+  if (typeof node === 'string') out.push(node)
+  else if (Array.isArray(node)) for (const v of node) allStrings(v, out)
+  else if (node && typeof node === 'object') for (const v of Object.values(node)) allStrings(v, out)
+  return out
+}
+
+test('тексты: нет склеек без пробела — их оставил машинный перевод', () => {
+  // Буква, затем точка/запятая, затем сразу заглавная: «reads a lot.Pauses».
+  const GLUED = /[a-zа-яё0-9][.,;][A-ZА-ЯЁ][a-zа-яё]/
+  // Строчная буква вплотную к заглавной: «progresstask» так не поймать, а вот
+  // «actionAnalysis» — да; camelCase-имена полей исключаем по словарю ниже.
+  for (const key of listDescriptorKeys()) {
+    for (const s of allStrings(DESCRIPTORS[key])) {
+      const m = GLUED.exec(s)
+      assert.equal(m, null, `${key}: пропущен пробел после «${m?.[0]}» в строке: ${s.slice(0, 120)}`)
+    }
+  }
+})
+
+test('теги: уникальны, непусты и в нижнем регистре — по ним ищут модуль', () => {
+  for (const key of listDescriptorKeys()) {
+    const tags = DESCRIPTORS[key].tags || []
+    assert.ok(tags.length >= 3, `${key}: слишком мало ключевых слов для поиска`)
+    assert.equal(new Set(tags).size, tags.length, `${key}: повторяющиеся теги — ${tags.join(', ')}`)
+    for (const t of tags) {
+      assert.ok(t.trim(), `${key}: пустой тег`)
+      assert.equal(t, t.toLowerCase(), `${key}: тег «${t}» не в нижнем регистре — поиск по нему промахнётся`)
+    }
+  }
+})
+
+test('MCP-MAP: таблица покрытия совпадает с дескрипторами', async () => {
+  // Документ тоже умеет врать, и врал: в таблице у мейлинга стояло «19 полей, 8 блоков»
+  // при реальных пяти параметрах и семи блоках. Цифры вели руками, они разошлись, и
+  // читающий документ узнавал не то, что отдаёт сервер, — та же болезнь этажом выше.
+  const { readFile } = await import('node:fs/promises')
+  const md = await readFile(path.join(ROOT, 'docs/mcp/MCP-MAP.md'), 'utf8')
+
+  const rows = [...md.matchAll(/^\| \d+ \| `([\w-]+)` \|[^|]+\|[^|]+\| \*\*(\d+)\*\* \| (\d+) \| (\d+) \| v(\d+) \|$/gm)]
+  assert.equal(rows.length, listDescriptorKeys().length, 'в таблице должен быть каждый модуль и ни одного лишнего')
+
+  for (const [, key, params, fields, blocks, version] of rows) {
+    const desc = DESCRIPTORS[key]
+    assert.ok(desc, `MCP-MAP перечисляет модуль «${key}», которого нет в реестре дескрипторов`)
+    assert.equal(Number(params), desc.params.length, `MCP-MAP: у «${key}» неверное число параметров`)
+    assert.equal(Number(fields), descriptorFieldNames(desc).size, `MCP-MAP: у «${key}» неверное число полей`)
+    assert.equal(Number(blocks), desc.blocks.length, `MCP-MAP: у «${key}» неверное число блоков`)
+    assert.equal(Number(version), desc.version, `MCP-MAP: у «${key}» неверная версия схемы`)
+  }
+})
+
+test('ЯЗЫК MCP — только английский: ни одной кириллицы в том, что уезжает клиенту', async () => {
+  // Правило раздела (CLAUDE.md → «ЯЗЫК MCP»). Проверяем ВЕСЬ клиентский срез, а не одни
+  // params: русский уже приезжал из whoAmI, из блоков, из enum.label, из unit и из
+  // проверки запуска — каждый раз мимо теста, который смотрел только на params.
+  //
+  // Смешанный язык в одном ответе не косметика: модель, читающая описание поля на другом
+  // языке, чем остальная схема, начинает отвечать на нём же, а оркестратор у заказчика
+  // англоязычный. Комментарии в коде и docs/mcp/*.md — по-русски, их читают люди.
+  const CYRILLIC = /[а-яё]/i
+  // Единственное исключение: дословные цитаты строк продукта, которые модель должна
+  // узнать в тексте цели байт в байт.
+  const ALLOWED = /Первое сообщение/
+  const found = []
+  const walk = (node, path) => {
+    if (typeof node === 'string') {
+      if (CYRILLIC.test(node) && !ALLOWED.test(node)) found.push(`${path}: «${node.slice(0, 90)}»`)
+    } else if (Array.isArray(node)) node.forEach((v, i) => walk(v, `${path}[${i}]`))
+    else if (node && typeof node === 'object') for (const [k, v] of Object.entries(node)) walk(v, `${path}.${k}`)
+  }
+
+  // 1. Дескрипторы целиком — ровно то, что отдаёт describe_module.
+  for (const key of listDescriptorKeys()) walk(describeModule(key), key)
+
+  // 2. Инструменты, промпты и инструкция сервера.
+  const { TOOLS } = await import('../mcp/tools.js')
+  const { PROMPTS, getPrompt } = await import('../mcp/prompts.js')
+  const { INSTRUCTIONS, RESOURCE_TEMPLATES } = await import('../mcp/server.js')
+  walk(TOOLS, 'TOOLS')
+  walk(PROMPTS, 'PROMPTS')
+  walk(RESOURCE_TEMPLATES, 'RESOURCE_TEMPLATES')
+  walk(INSTRUCTIONS, 'INSTRUCTIONS')
+  for (const p of PROMPTS) walk(getPrompt(p.name, {}), `prompt:${p.name}`)
+
+  // 3. Тексты валидатора: и схемные, и правила запуска. Последние приходят из
+  //    `validateSettingsDetailed`, который обслуживает ещё и русскую панель, — сюда
+  //    обязан уезжать `messageEn`.
+  const { callTool } = await import('../mcp/tools.js')
+  walk(await callTool('validate_task', {
+    module: 'neuro-commenting',
+    // Имя поля намеренно латиницей: валидатор цитирует ввод дословно, и кириллица
+    // в НАШЕЙ фикстуре вернулась бы эхом и выглядела как нарушение правила.
+    settings: { accountIds: [], probability: 500, unknownFieldHere: 1 },
+  }, {}), 'validate_task:schema')
+  walk(await callTool('validate_task', {
+    module: 'neuro-commenting',
+    settings: { accountIds: ['a'], channels: ['@x'], minComments: 50, maxComments: 10 },
+  }, {}), 'validate_task:launchRule')
+
+  assert.deepEqual(found, [], `Кириллица в клиентском срезе MCP:
+  ${found.join('\n  ')}`)
+})
+
+test('единицы измерения записаны машинно-однозначно', () => {
+  // `unit: 'With'` — это русское «с» (секунды), пропущенное через машинный перевод.
+  // Таких было 22 штуки: модель читала «единица измерения — With».
+  const OK = new Set(['s', 'min', 'h', '%'])
+  for (const key of listDescriptorKeys()) {
+    const units = []
+    const walk = (n) => {
+      if (Array.isArray(n)) n.forEach(walk)
+      else if (n && typeof n === 'object') {
+        if (typeof n.unit === 'string') units.push(n.unit)
+        Object.values(n).forEach(walk)
+      }
+    }
+    walk(DESCRIPTORS[key].params || [])
+    for (const u of units) assert.ok(OK.has(u), `${key}: непонятная единица «${u}». Допустимы: ${[...OK].join(', ')}`)
+  }
 })
 
 test('describeModule отдаёт всё, что просил заказчик, одним ответом', () => {

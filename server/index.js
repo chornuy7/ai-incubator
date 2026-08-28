@@ -42,10 +42,30 @@ import { buildAccountStats, listAccountChannels, listAccountChannelMessages, lis
 import { dailySummary, dailySummaryAll } from './lib/dailyActions.js'
 import { rpsMiddleware, systemMetrics } from './lib/systemMetrics.js'
 import { setMaxConcurrent, getConcurrencyState } from './modules/workers.js'
+import { mountWellKnown } from './mcp/wellKnown.js'
+import { mountMcpDocs, MCP_DOCS_PATH, docsEnabled } from './mcp/docs.js'
 
 const app = express()
 app.use(cors())
 app.use(express.json({ limit: '5mb' }))
+
+// Битый JSON express.json() бросает ДО роутов: без этого обработчика MCP-клиент получал
+// HTML-страницу ошибки express вместо JSON-RPC. По спецификации это -32700 (Parse error),
+// и клиент обязан уметь его прочитать — а HTML он не разбирает.
+app.use((err, req, res, next) => {
+  if (!(err instanceof SyntaxError) || !('body' in err)) return next(err)
+  if (!String(req.path || '').includes('/mcp')) return next(err)
+  res.status(400).json({ jsonrpc: '2.0', id: null, error: { code: -32700, message: `Parse error: request body is not valid JSON. ${err.message}` } })
+})
+
+// Обнаружение авторизации (RFC 9728) — ДО sessionGuard: документ нужен ровно тем
+// клиентам, у которых токена ещё нет, поэтому он публичный и никаких данных не несёт.
+mountWellKnown(app)
+
+// Живая документация MCP. Тоже вне /api и тоже без ключа: страницу надо открыть, чтобы
+// ключ ввести. Сами данные она берёт закрытыми запросами, подставляя ключ из браузера.
+mountMcpDocs(app)
+
 app.use('/api', rpsMiddleware) // §10.9: считаем RPS по всем API-запросам для мониторинга нагрузки
 
 // Продакшн-замок: личность из подписанного токена, при SESSION_SECRET — вход обязателен.
@@ -2083,6 +2103,9 @@ process.on('uncaughtException', (err) => {
 
 const server = app.listen(PORT, HOST, () => {
   console.log(`API → http://${HOST}:${PORT}`)
+  // Адрес живой документации печатаем при старте: иначе о ней узнают из README,
+  // а README читают в последнюю очередь.
+  if (docsEnabled()) console.log(`MCP docs → http://${HOST === '0.0.0.0' ? 'localhost' : HOST}:${PORT}${MCP_DOCS_PATH}`)
 })
 // Занятый порт — единственная ошибка, при которой продолжать бессмысленно: обычно
 // это уже запущенный второй экземпляр. Говорим об этом человеческим языком.

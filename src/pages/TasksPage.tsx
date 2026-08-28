@@ -1,8 +1,9 @@
-import { useEffect, useMemo, useState, type ReactNode } from 'react'
+import { useEffect, useId, useMemo, useState, type ReactNode } from 'react'
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { ListChecks, RefreshCw, Square, RotateCw, Target, Activity, Gauge, Pause, Play, Loader2, ArrowLeft, Download, AlertTriangle, Clock, Hourglass } from 'lucide-react'
 import { useApp } from '@/mocks/store'
-import { PageHeader, Card, EmptyState, Badge, Select, Tip} from '@/shared/ui'
+import { PageHeader, Card, EmptyState, Badge, Select, Tip, TaskStatusTag } from '@/shared/ui'
+import { TASK_STATUS_KEYS, statusTone, statusDotFill, pendingTone } from '@/shared/config/taskStatus'
 import { HelpButton } from '@/features/neuro-commenting/moduleUi'
 import { MODULES, isCombatModule, combatConfirmText } from '@/shared/config/modules'
 import { fetchAllTasks, fetchModuleTask, stopModuleTask, restartModuleTask, pauseModuleTask, resumeModuleTask, updateModuleTaskSettings, type ModuleTask } from '@/api/modulesApi'
@@ -26,19 +27,34 @@ import { useTabParam } from '@/shared/lib/useTabParam'
 import { AccountPicker } from '@/features/account-picker/AccountPicker'
 import { delayMultiplier, useGlobalPace, perAccountShare } from '@/shared/lib/pace'
 
-const STATUS: Record<string, { label: string; tone: 'spark' | 'iris' | 'amber' | 'rose' | 'muted' }> = {
-  running: { label: 'Выполняется', tone: 'spark' },
-  queued: { label: 'В очереди', tone: 'iris' },
-  done: { label: 'Готово', tone: 'muted' },
-  stopped: { label: 'Остановлена', tone: 'amber' },
-  paused: { label: 'На паузе', tone: 'amber' },
-  error: { label: 'Ошибка', tone: 'rose' },
+// Цвет статуса — из общей палитры (`@/shared/config/taskStatus`). Бейдж, кольцо прогресса
+// и сегмент пончика берут ОДИН `base`, поэтому разойтись уже не могут: раньше «Выполняется»
+// было зелёным в бейдже и голубым в кольце, а «Готово» — серым в бейдже и зелёным в кольце.
+const STATUS_KEYS = ['', ...TASK_STATUS_KEYS]
+
+/**
+ * Тон кнопок управления задачей: старт — зелёный, пауза — янтарь, стоп — красный,
+ * перезапуск — нейтральный. `idle` — покой, `hover` — наведение, и то и другое ОДНОГО
+ * оттенка: иконка, фон и рамка. Ховер-классы навешиваются только на кликабельную кнопку —
+ * выключенная не подсвечивается вовсе, чтобы не обещать действие, которого нет.
+ */
+const CTL_TONE = {
+  start: { idle: 'text-spark-400/80', hover: 'hover:border-spark-500/30 hover:bg-spark-500/10 hover:text-spark-300' },
+  pause: { idle: 'text-amber-300/80', hover: 'hover:border-amber-500/30 hover:bg-amber-500/10 hover:text-amber-200' },
+  stop: { idle: 'text-rose-300/80', hover: 'hover:border-rose-500/30 hover:bg-rose-500/10 hover:text-rose-200' },
+  neutral: { idle: 'text-white/40', hover: 'hover:border-white/20 hover:bg-white/8 hover:text-white/80' },
+} as const
+
+/**
+ * Классы кнопки управления по её состоянию:
+ *   `on`   — кликабельна: тон + ховер того же оттенка;
+ *   `busy` — на ней крутится лоадер: тон держим (видно, какое действие идёт), ховер снят;
+ *   `off`  — неприменима по статусу или заблокирована: приглушена, без ховера.
+ */
+function ctlCls(tone: keyof typeof CTL_TONE, state: 'on' | 'busy' | 'off', extra?: string) {
+  const c = CTL_TONE[tone]
+  return cn('btn-ctl', extra, state === 'off' ? 'text-white/15' : c.idle, state === 'on' && c.hover)
 }
-// Цвета для колец/диаграммы: завершено=зелёный, активно=голубой, очередь=фиолет, пауза/стоп=янтарь, ошибка=красный.
-const STATUS_COLOR: Record<string, string> = {
-  done: '#0ec464', running: '#38bdf8', queued: '#7145ff', paused: '#f59e0b', stopped: '#f59e0b', error: '#ef4444',
-}
-const STATUS_KEYS = ['', 'running', 'queued', 'stopped', 'error', 'done']
 // Порядок сортировки/фильтров (MR-147): выполняется→в очереди→(пауза)→остановлено→ошибка→готово.
 const STATUS_RANK: Record<string, number> = {
   running: 0, queued: 1, paused: 2, stopped: 3, error: 4, done: 5,
@@ -54,6 +70,20 @@ function pct(t: ModuleTask) {
   return total > 0 ? Math.min(100, Math.round((done / total) * 100)) : 0
 }
 const isActive = (t: ModuleTask) => t.status === 'running' || t.status === 'queued'
+
+/**
+ * Показывать ли на карточке предупреждение «часть аккаунтов недоступна».
+ *
+ * На «Готово» — НЕТ. Плашка говорит «19 из 29 в спамблоке, чинится в менеджере
+ * аккаунтов», то есть даёт совет на будущее, а у завершённой задачи будущего нет:
+ * работа сделана, чинить нечего. Висела она при этом на каждой готовой задаче и
+ * занимала пол-карточки тревожным красным — шум, который приучает не читать
+ * предупреждения вообще. На «Ошибке» тоже нет: там своя плашка с причиной провала.
+ *
+ * На «Остановлена» и «На паузе» — ДА: их возобновляют с места, и там это уже не
+ * история, а прогноз — с этими аккаунтами задача не поедет.
+ */
+const showsAccountProblems = (t: ModuleTask) => t.status !== 'error' && t.status !== 'done'
 
 // MR-109 (ТЗ 06.08, TASK-001): ETA — сколько ещё бежать РАБОТАЮЩЕЙ задаче.
 //
@@ -205,21 +235,39 @@ function Ring({ value, color, size = 46, stroke = 5, pulse }: { value: number; c
 }
 
 /** Диаграмма-пончик: разбивка задач по статусам, в центре — % завершённых. */
-function Donut({ segments, size = 128, stroke = 16 }: { segments: { value: number; color: string; label: string }[]; size?: number; stroke?: number }) {
+type DonutSegment = { key: string; value: number; color: string; label: string; zebra?: boolean }
+
+function Donut({ segments, size = 128, stroke = 16 }: { segments: DonutSegment[]; size?: number; stroke?: number }) {
   const r = (size - stroke) / 2
   const c = 2 * Math.PI * r
   const total = segments.reduce((a, s) => a + s.value, 0) || 1
+  // id паттернов уникальны на документ: два пончика на одной странице иначе разделили бы
+  // один <pattern> и покрасили бы чужой сегмент.
+  const uid = useId().replace(/:/g, '')
+  const zebraId = (key: string) => `zebra-${uid}-${key}`
   let acc = 0
   return (
     <svg width={size} height={size} className="-rotate-90 shrink-0">
+      {/* «На паузе» и «Остановлена» — один янтарь (обе означают «работа встала»), и две
+          соседние дуги сливались в один блок: 2 и 11 задач читались как 13. Переходный
+          статус штрихуем — тот же приём, что у тега, поэтому чарт, легенда и карточка
+          говорят на одном языке. */}
+      <defs>
+        {segments.filter((s) => s.zebra).map((s) => (
+          <pattern key={s.key} id={zebraId(s.key)} width={10} height={10} patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+            <rect width={10} height={10} fill={s.color} opacity={0.3} />
+            <rect width={5} height={10} fill={s.color} />
+          </pattern>
+        ))}
+      </defs>
       <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke="rgb(var(--line))" strokeWidth={stroke} />
-      {segments.map((s, i) => {
+      {segments.map((s) => {
         const dash = (s.value / total) * c
         const el = (
           <circle
-            key={i}
+            key={s.key}
             cx={size / 2} cy={size / 2} r={r} fill="none"
-            stroke={s.color} strokeWidth={stroke}
+            stroke={s.zebra ? `url(#${zebraId(s.key)})` : s.color} strokeWidth={stroke}
             strokeDasharray={`${Math.max(0, dash - 2)} ${c - Math.max(0, dash - 2)}`}
             strokeDashoffset={-acc}
           />
@@ -464,7 +512,11 @@ export function TasksPage() {
   // недоступны». В обычном гриде такая пара ломает сетку: строка тянется по
   // высокой карточке, и вертикальные отступы между блоками получаются разной
   // величины. Поэтому раскладываем сами: см. packTwoColumns.
-  const cardSize = (t: ModuleTask) => (t.status === 'error' || taskProblems(t).bad > 0 ? 2 : 1)
+  // Условие ОБЯЗАНО совпадать с тем, при котором блок реально рисуется (showsAccountProblems):
+  // иначе пакер резервирует две строки под плашку, которой нет, и карточка стоит с дырой
+  // в половину высоты — так и вышло, когда предупреждение убрали с готовых задач.
+  const cardSize = (t: ModuleTask) =>
+    (t.status === 'error' || (showsAccountProblems(t) && taskProblems(t).bad > 0) ? 2 : 1)
   // Ниже брейкпоинта колонка одна — паковать нечего, идёт плоский список по порядку.
   const twoCols = useMediaQuery('(min-width: 1024px)') // lg — раскладка «Список»
   const twoColsSm = useMediaQuery('(min-width: 640px)') // sm — раскладка внутри цели
@@ -567,7 +619,10 @@ export function TasksPage() {
     const counts: Record<string, number> = {}
     for (const t of filtered) counts[t.status] = (counts[t.status] || 0) + 1
     const order = ['done', 'running', 'queued', 'paused', 'stopped', 'error']
-    const segments = order.filter((s) => counts[s]).map((s) => ({ value: counts[s], color: STATUS_COLOR[s], label: STATUS[s]?.label || s }))
+    const segments = order.filter((s) => counts[s]).map((s) => {
+      const tone = statusTone(s)
+      return { key: s, value: counts[s], color: tone.base, label: tone.label, dot: statusDotFill(tone), zebra: !!tone.zebra }
+    })
     const completion = filtered.length ? Math.round(((counts.done || 0) / filtered.length) * 100) : 0
     return { segments, completion, done: counts.done || 0 }
   }, [filtered])
@@ -650,10 +705,10 @@ export function TasksPage() {
             {dist.segments.length === 0 ? (
               <div className="text-xs text-white/40">Нет задач в фильтре</div>
             ) : (
-              <div className="grid grid-cols-2 gap-x-3 gap-y-1">
+              <div className="grid gap-y-1">
                 {dist.segments.map((s) => (
                   <div key={s.label} className="flex items-center gap-1.5 text-xs">
-                    <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ background: s.color }} />
+                    <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ background: s.dot }} />
                     <span className="truncate text-white/70">{s.label}</span>
                     <span className="ml-auto font-semibold tabular-nums text-fg">{s.value}</span>
                   </div>
@@ -702,7 +757,7 @@ export function TasksPage() {
           <Select value={fGoal} onChange={setFGoal} className="w-48" options={[{ value: '', label: 'Все цели' }, { value: 'none', label: 'Без цели' }, ...goals.map((g) => ({ value: g.id, label: g.name }))]} />
         )}
         <Select value={fModule} onChange={setFModule} className="w-48" options={[{ value: '', label: 'Все модули' }, ...modules.map((m) => ({ value: m, label: moduleTitle(m) })), ...(fModule && !modules.includes(fModule) ? [{ value: fModule, label: moduleTitle(fModule) }] : [])]} />
-        <Select value={fStatus} onChange={setFStatus} className="w-44" options={STATUS_KEYS.map((s) => ({ value: s, label: s ? STATUS[s].label : 'Все статусы' }))} />
+        <Select value={fStatus} onChange={setFStatus} className="w-44" options={STATUS_KEYS.map((s) => ({ value: s, label: s ? statusTone(s).label : 'Все статусы' }))} />
       </div>
 
       {/* Фильтр по целям — только в разрезе «По целям»: выбрать, какие цели смотреть (пусто = все). */}
@@ -793,8 +848,8 @@ export function TasksPage() {
               {/* Заголовок группы: статус и сколько задач под ним. Точка — того же
                   цвета, что кольцо прогресса у карточек этого статуса. */}
               <div className="mb-2 flex items-center gap-2">
-                <span className="h-2 w-2 shrink-0 rounded-full" style={{ background: STATUS_COLOR[b.status] || '#94a3b8' }} />
-                <span className="text-sm font-semibold text-white/75">{STATUS[b.status]?.label || b.status}</span>
+                <span className="h-2 w-2 shrink-0 rounded-full" style={{ background: statusDotFill(statusTone(b.status)) }} />
+                <span className="text-sm font-semibold text-white/75">{statusTone(b.status).label}</span>
                 <span className="text-sm tabular-nums text-white/35">({b.cells.length})</span>
               </div>
               <div className="grid gap-2 lg:grid-cols-2 lg:[grid-auto-rows:1fr]">
@@ -851,13 +906,14 @@ function CardControls({ t, busy, busyAction, pendingAction, onStop, onRestart, o
   // paused/stopped — продолжаем с места (resume); done/error — перезапуск с нуля (restart).
   const canResume = t.status === 'paused' || t.status === 'stopped'
   const startTitle = canResume ? 'Возобновить с места' : 'Запустить'
-  const cls = (active: boolean, tone: string) => cn('btn-icon h-8 w-8', active && !disabled ? tone : 'text-white/20')
   const spin = (a: 'start' | 'pause' | 'stop') => (pendingAction ? pendingAction === a : busy === t.id && busyAction === a)
+  const cls = (a: 'start' | 'pause' | 'stop', can: boolean) =>
+    ctlCls(a, spin(a) ? 'busy' : (can && !disabled ? 'on' : 'off'))
   return (
     <div className="flex shrink-0 items-center gap-1">
-      <button onClick={() => (canResume ? onResume(t) : onRestart(t))} disabled={disabled || !canStart} className={cls(canStart, 'text-spark-400 hover:bg-spark-500/12')} aria-label={startTitle} title={spin('start') ? 'Запускается…' : startTitle}>{spin('start') ? <Loader2 size={13} className="animate-spin" /> : <Play size={13} />}</button>
-      <button onClick={() => onPause(t)} disabled={disabled || !canPause} className={cls(canPause, 'text-amber-300 hover:bg-amber-500/12')} aria-label="Пауза" title={spin('pause') ? 'В процессе паузы…' : 'Пауза'}>{spin('pause') ? <Loader2 size={13} className="animate-spin" /> : <Pause size={13} />}</button>
-      <button onClick={() => onStop(t)} disabled={disabled || !canStop} className={cls(canStop, 'text-rose-300 hover:bg-rose-500/12')} aria-label="Стоп" title={spin('stop') ? 'В процессе остановки…' : 'Стоп'}>{spin('stop') ? <Loader2 size={13} className="animate-spin" /> : <Square size={13} />}</button>
+      <button onClick={() => (canResume ? onResume(t) : onRestart(t))} disabled={disabled || !canStart} className={cls('start', canStart)} aria-label={startTitle} title={spin('start') ? 'Запускается…' : startTitle}>{spin('start') ? <Loader2 size={13} className="animate-spin" /> : <Play size={13} />}</button>
+      <button onClick={() => onPause(t)} disabled={disabled || !canPause} className={cls('pause', canPause)} aria-label="Пауза" title={spin('pause') ? 'В процессе паузы…' : 'Пауза'}>{spin('pause') ? <Loader2 size={13} className="animate-spin" /> : <Pause size={13} />}</button>
+      <button onClick={() => onStop(t)} disabled={disabled || !canStop} className={cls('stop', canStop)} aria-label="Стоп" title={spin('stop') ? 'В процессе остановки…' : 'Стоп'}>{spin('stop') ? <Loader2 size={13} className="animate-spin" /> : <Square size={13} />}</button>
     </div>
   )
 }
@@ -876,12 +932,10 @@ function TaskCard({ t, goalName, busy, busyAction, pendingAction, onOpen, onStop
   const globalPace = useGlobalPace()
   // Оптимистичный статус: пока воркер реально не встал, показываем «Останавливается…» —
   // честнее, чем застывшее «Выполняется», и сразу видно, что кнопка сработала.
-  const st = pendingAction
-    ? { label: pendingAction === 'stop' ? 'Останавливается…' : 'Ставим на паузу…', tone: 'amber' as const }
-    : (STATUS[t.status] || { label: t.status, tone: 'muted' as const })
+  const st = pendingAction ? pendingTone(pendingAction) : statusTone(t.status)
   const p = pct(t)
   const running = isActive(t) || !!pendingAction
-  const ringColor = pendingAction ? STATUS_COLOR.stopped : (STATUS_COLOR[t.status] || '#94a3b8')
+  const ringColor = st.base // кольцо и тег статуса — всегда один цвет
   return (
     // Обёртка — ячейка сетки: держит координаты от пакера и `min-w-0`, без которого
     // длинные имена не обрезаются, а распирают колонку. Карточка внутри тянется на
@@ -902,7 +956,7 @@ function TaskCard({ t, goalName, busy, busyAction, pendingAction, onOpen, onStop
       <Ring value={p} color={ringColor} size={compact ? 40 : 48} pulse={running} />
       <div className="min-w-0 flex-1">
         <div className="flex flex-wrap items-center gap-2">
-          <Badge tone={st.tone}>{st.label}</Badge>
+          <TaskStatusTag tone={st} />
           <span className="truncate font-semibold text-white">{moduleTitle(t.moduleKey)}</span>
           <span className="font-mono text-[11px] text-white/30">{t.id}</span>
         </div>
@@ -936,8 +990,9 @@ function TaskCard({ t, goalName, busy, busyAction, pendingAction, onOpen, onStop
       )}
       {/* MR-146: warning-система — если аккаунты задачи отвалились, показываем второй блок
           «N из M с проблемой». Градация: боевые модули (нейродиалог/чаттинг/…) — ошибка (красный),
-          остальные (прогрев/парсинг) — предупреждение (жёлтый). На задаче «Ошибка» не дублируем. */}
-      {t.status !== 'error' && problem && problem.bad > 0 && (() => {
+          остальные (прогрев/парсинг) — предупреждение (жёлтый).
+          Кому плашка НЕ адресована — см. showsAccountProblems (готовым и упавшим задачам). */}
+      {showsAccountProblems(t) && problem && problem.bad > 0 && (() => {
         // Цвет — по ПОСЛЕДСТВИЮ, а не по типу модуля. Раньше красным красились боевые
         // модули, жёлтым остальные, и одна и та же беда («прокси не отвечает») выглядела
         // по-разному в соседних карточках. Теперь: не поедет никто — красный, часть
@@ -1211,11 +1266,11 @@ export function TaskDetailPage() {
   const t = task
   // Право на управление — по модулю задачи. Тот же критерий, что в списке.
   const canControl = !me || canControlModule(me.permissions, me.isAdmin, t.moduleKey)
-  const st = pendingAct
-    ? { label: pendingAct === 'stop' ? 'Останавливается…' : 'Ставим на паузу…', tone: 'amber' as const }
-    : (STATUS[t.status] || { label: t.status, tone: 'muted' as const })
+  const st = pendingAct ? pendingTone(pendingAct) : statusTone(t.status)
   // Заблокированы, пока задача реально не встала — не только на время запроса.
   const ctlBusy = busy || !!pendingAct
+  const pausing = pendingAct === 'pause' || busyAction === 'pause'
+  const stopping = pendingAct === 'stop' || busyAction === 'stop'
   const p = pct(t)
   const s = t.settings || {}
   const logs = (t.logs || []).slice(0, 300)
@@ -1238,10 +1293,10 @@ export function TaskDetailPage() {
       />
       <div className="space-y-4">
         <div className="flex items-center gap-4 rounded-2xl border border-line bg-elevated/40 p-4">
-          <Ring value={p} color={pendingAct ? STATUS_COLOR.stopped : (STATUS_COLOR[t.status] || '#94a3b8')} size={66} stroke={6} pulse={isActive(t) || !!pendingAct} />
+          <Ring value={p} color={st.base} size={66} stroke={6} pulse={isActive(t) || !!pendingAct} />
           <div className="min-w-0 flex-1">
             <div className="flex flex-wrap items-center gap-2">
-              <Badge tone={st.tone}>{st.label}</Badge>
+              <TaskStatusTag tone={st} />
               <span className="text-sm font-semibold text-fg">{moduleTitle(t.moduleKey)}</span>
             </div>
             {/* MR-147: «Модуль» и «Потрачено» перенесены сюда, к прогрессу. */}
@@ -1270,11 +1325,11 @@ export function TaskDetailPage() {
           </div>
           {/* Управление — только тем, у кого есть доступ к модулю задачи. */}
           <div className="flex shrink-0 gap-1">
-            {canControl && (isActive(t) || !!pendingAct) && <button onClick={doPause} disabled={ctlBusy || !isActive(t)} className="btn-icon h-9 w-9" title={pendingAct === 'pause' || busyAction === 'pause' ? 'В процессе паузы…' : 'Пауза'}>{pendingAct === 'pause' || busyAction === 'pause' ? <Loader2 size={15} className="animate-spin" /> : <Pause size={15} />}</button>}
-            {canControl && (t.status === 'paused' || t.status === 'stopped') && !pendingAct && <button onClick={doResume} disabled={ctlBusy} className="btn-icon h-9 w-9 text-spark-400" title={busyAction === 'start' ? 'Запускается…' : t.status === 'stopped' ? 'Возобновить с места остановки' : 'Продолжить'}>{busyAction === 'start' ? <Loader2 size={15} className="animate-spin" /> : <Play size={15} />}</button>}
-            {canControl && (isActive(t) || !!pendingAct) && <button onClick={doStop} disabled={ctlBusy} className="btn-icon h-9 w-9 text-rose-300" title={pendingAct === 'stop' || busyAction === 'stop' ? 'В процессе остановки…' : 'Стоп'}>{pendingAct === 'stop' || busyAction === 'stop' ? <Loader2 size={15} className="animate-spin" /> : <Square size={15} />}</button>}
+            {canControl && (isActive(t) || !!pendingAct) && <button onClick={doPause} disabled={ctlBusy || !isActive(t)} className={ctlCls('pause', pausing ? 'busy' : (!ctlBusy && isActive(t) ? 'on' : 'off'), 'h-9 w-9')} title={pausing ? 'В процессе паузы…' : 'Пауза'}>{pausing ? <Loader2 size={15} className="animate-spin" /> : <Pause size={15} />}</button>}
+            {canControl && (t.status === 'paused' || t.status === 'stopped') && !pendingAct && <button onClick={doResume} disabled={ctlBusy} className={ctlCls('start', busyAction === 'start' ? 'busy' : (ctlBusy ? 'off' : 'on'), 'h-9 w-9')} title={busyAction === 'start' ? 'Запускается…' : t.status === 'stopped' ? 'Возобновить с места остановки' : 'Продолжить'}>{busyAction === 'start' ? <Loader2 size={15} className="animate-spin" /> : <Play size={15} />}</button>}
+            {canControl && (isActive(t) || !!pendingAct) && <button onClick={doStop} disabled={ctlBusy} className={ctlCls('stop', stopping ? 'busy' : (ctlBusy ? 'off' : 'on'), 'h-9 w-9')} title={stopping ? 'В процессе остановки…' : 'Стоп'}>{stopping ? <Loader2 size={15} className="animate-spin" /> : <Square size={15} />}</button>}
             {/* §9.8: правка только на паузе — вынесена во вкладку «Настройки». */}
-            {canControl && <button onClick={doRestart} disabled={ctlBusy} className="btn-icon h-9 w-9" title="Перезапуск"><RotateCw size={16} /></button>}
+            {canControl && <button onClick={doRestart} disabled={ctlBusy} className={ctlCls('neutral', ctlBusy ? 'off' : 'on', 'h-9 w-9')} title="Перезапуск"><RotateCw size={16} /></button>}
           </div>
         </div>
 

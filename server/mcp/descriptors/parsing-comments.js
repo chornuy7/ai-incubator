@@ -6,7 +6,7 @@ export default buildParticipantsParserDescriptor({
   // ИИ не участвует: генерации нет, токены модели не тратятся (см. costModel).
   usesAi: false,
   title: 'Comment parser',
-  tags: ['comments', 'comments', 'involved'],
+  tags: ['parsing', 'audience', 'comments', 'commenters', 'engaged users', 'lead list'],
   summary: 'Gathers people who comment on channel posts—the most involved part of the audience.',
   does: [
     'passes along the last posts of the channel to a given depth',

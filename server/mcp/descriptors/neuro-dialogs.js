@@ -19,7 +19,7 @@ export default {
   usesAi: true,
   title: 'Neurodialogues',
   platform: 'telegram',
-  tags: ['PM', 'personal messages', 'dm', 'dialogues', 'dialogs', 'crm', 'leads', 'leads', 'II', 'ai'],
+  tags: ['dm', 'direct messages', 'private messages', 'dialogs', 'conversation', 'crm', 'leads', 'ai', 'inbound'],
 
   whoAmI: {
     summary: 'AI responds to incoming personal messages on behalf of managed accounts and guides the lead through the funnel to the target action.',
@@ -39,14 +39,15 @@ export default {
     ],
     requires: [
       'at least one account in a working status with a working proxy',
-      'OpenAI working key',
       'incoming messages: without them the module just waits and does nothing - this is normal',
     ],
     risks:
-      'Personal correspondence with living people. A bunch of answers in a row from one number - the fastest'
-      + 'path to PEER_FLOOD and reports, so the number of responses per visit is limited by the protection level.'
+      'Personal correspondence with living people. A bunch of answers in a row from one number - the fastest '
+      + 'path to PEER_FLOOD and reports, so the number of responses per visit is limited by the protection level. '
       + 'The spamblocked account continues to read inboxes, but does not respond.',
-    costModel: 'Charged per action according to the price list of the module; text generation is enabled. Analysis of pictures is billed separately.',
+    costModel:
+      'Charged per action according to the price list of the module; text generation is included. Analysis of pictures is billed separately.'
+      + 'AI generation runs on model access provided by the platform: the caller supplies no key, token or provider credential, and there is no field for one — it works out of the box.',
   },
 
   blocks: [
@@ -55,8 +56,8 @@ export default {
       title: 'Select accounts',
       purpose: 'Whose incoming messages the task serves.',
       howItWorks:
-        'Accounts are moving in a circle. Busy with another task is not displayed; problematic statuses'
-        + 'and daily drug limit are skipped. When the daily limit is reached, the module does NOT end,'
+        'Accounts are moving in a circle. Busy with another task is not displayed; problematic statuses '
+        + 'and daily drug limit are skipped. When the daily limit is reached, the module does NOT end, '
         + 'but is quietly idle - he is a responder, not a batch mailer.',
       api: { method: 'POST', path: '/api/modules/neuro-dialogs/tasks', fills: ['accountIds'] },
       params: ['accountIds'],
@@ -66,8 +67,8 @@ export default {
       title: 'What to answer',
       purpose: 'What dialogues does the module use?',
       howItWorks:
-        '"Unread" mode - only new incoming messages. “All” mode - including messages already read,'
-        + "where the last word belongs to the interlocutor. Doesn't reply to the same message twice:"
+        '"Unread" mode - only new incoming messages. “All” mode - including messages already read, '
+        + "where the last word belongs to the interlocutor. Doesn't reply to the same message twice: "
         + 'the answer will be repeated only when the interlocutor writes a new one.',
       api: { method: 'POST', path: '/api/modules/neuro-dialogs/tasks', fills: ['replyScope'] },
       params: ['replyScope'],
@@ -77,8 +78,8 @@ export default {
       title: 'Limits on dialogue',
       purpose: 'How many messages to write to one person and how many in total.',
       howItWorks:
-        'Or we write until the lead completes the target action (only daily limits apply),'
-        + 'or no more than a specified number of responses per lead. The total task limit is considered the same as for everyone else'
+        'Or we write until the lead completes the target action (only daily limits apply), '
+        + 'or no more than a specified number of responses per lead. The total task limit is considered the same as for everyone else '
         + 'modules - a random number from [min, max].',
       api: {
         method: 'POST',
@@ -92,7 +93,7 @@ export default {
       title: 'Operating mode',
       purpose: 'Is the task limited by the number of answers or time?',
       howItWorks:
-        'The responder module is usually set by time: it works a shift and waits for incoming messages,'
+        'The responder module is usually set by time: it works a shift and waits for incoming messages, '
         + 'and not “works through the pack and ends.”',
       api: { method: 'POST', path: '/api/modules/neuro-dialogs/tasks', fills: ['workMode', 'durationMinutes'] },
       params: ['workMode', 'durationMinutes'],
@@ -102,8 +103,8 @@ export default {
       title: "We'll put the pressure on",
       purpose: 'What to do when the dialogue is closed, and the person wrote it himself.',
       howItWorks:
-        'The boost is turned on only for INCOMING interest: the dialogue is already closed (the goal has been achieved or'
-        + 'the person refused), but he wrote again. Separate tone - sell the same thing again'
+        'The boost is turned on only for INCOMING interest: the dialogue is already closed (the goal has been achieved or '
+        + 'the person refused), but he wrote again. Separate tone - sell the same thing again '
         + 'surefire way to get blocked. The boost has its own counter and its own ceiling.',
       api: { method: 'POST', path: '/api/modules/neuro-dialogs/tasks', fills: ['followUp'] },
       params: ['followUp'],
@@ -113,9 +114,9 @@ export default {
       title: 'Prompts and generation',
       purpose: 'What the model knows about the conversation and what tone she responds in.',
       howItWorks:
-        'The system prompt is assembled in layers: your own prompt (or card) → strict rules of correspondence'
-        + '(in short, in the language of the interlocutor, do not introduce yourself again, never admit that this is AI)'
-        + '→ completion rules → lead stage → funnel stage from the goal → link from the entire goal →'
+        'The system prompt is assembled in layers: your own prompt (or card) → strict rules of correspondence '
+        + '(in short, in the language of the interlocutor, do not introduce yourself again, never admit that this is AI) '
+        + '→ completion rules → lead stage → funnel stage from the goal → link from the entire goal → '
         + 'campaign goal → dialogue instructions.',
       api: {
         method: 'POST',
@@ -129,8 +130,8 @@ export default {
       title: 'Parallelism',
       purpose: 'How many threads do accounts serve simultaneously?',
       howItWorks:
-        'Accounts are divided between threads in a circle. Each stream has its own random phase and jitter:'
-        + 'without dephasing, the streams are aligned and start knocking in Telegram synchronously, and an even'
+        'Accounts are divided between threads in a circle. Each stream has its own random phase and jitter: '
+        + 'without dephasing, the streams are aligned and start knocking in Telegram synchronously, and an even '
         + 'the machine rhythm from several accounts is the cluster, which is visible from the outside.',
       api: { method: 'POST', path: '/api/modules/neuro-dialogs/tasks', fills: ['threads'] },
       params: ['threads'],
@@ -140,7 +141,7 @@ export default {
       title: 'Account protection',
       purpose: 'Delay multiplier and how many LAN accounts are responsible for one visit.',
       howItWorks:
-        'For this module, the level of protection is determined not only by speed: it determines the size of the packet of responses'
+        'For this module, the level of protection is determined not only by speed: it determines the size of the packet of responses '
         + 'per call (2 / 4 / 6). The module has no probability - it responds to everyone who wrote.',
       api: { method: 'POST', path: '/api/modules/neuro-dialogs/tasks', fills: ['protectionLevel'] },
       params: ['protectionLevel'],
@@ -158,7 +159,7 @@ export default {
       title: 'Binding',
       purpose: 'What goal and campaign does the task relate to?',
       howItWorks:
-        'The goal gives the status classifier an understanding of what to consider as “completed”, and the prompt - the stages'
+        'The goal gives the status classifier an understanding of what to consider as “completed”, and the prompt - the stages '
         + 'funnels and link. An overdue deadline stops an already ongoing task.',
       api: { method: 'POST', path: '/api/modules/neuro-dialogs/tasks', fills: ['goalId', 'campaignId', 'deadline'] },
       params: ['goalId', 'campaignId', 'deadline'],
@@ -289,7 +290,7 @@ export default {
       effectiveWhen: { workMode: 1 },
       purpose: 'How long is the task on duty at the inbox?',
       constraints: [
-        'is treated as MAXIMUM: the actual duration is a random number from [min, durationMinutes],'
+        'is treated as MAXIMUM: the actual duration is a random number from [min, durationMinutes], '
         + 'where min sets the protection level (60 / 45 / 30 minutes)',
       ],
       examples: [240, 480],
@@ -352,15 +353,15 @@ export default {
     {
       name: 'typeWeights',
       block: 'prompts',
-      title: 'Распределение типов, %',
+      title: 'Tone distribution, %',
       type: 'array',
       items: 'number',
       default: [],
-      purpose: 'Смешивать типы сообщений в заданной пропорции, чтобы аккаунты не писали в одном тоне.',
+      purpose: 'Mix message tones in a given proportion so accounts do not all write in the same voice.',
       constraints: [
-        'индекс элемента соответствует promptIndex',
-        'если хотя бы один вес > 0, promptIndex НЕ используется — тип выбирается взвешенным жребием на каждое действие',
-        'веса нормируются автоматически, сумма 100 не обязательна',
+        'the element index corresponds to promptIndex',
+        'if at least one weight is > 0, promptIndex is NOT used — the tone is drawn by weighted lottery for every action',
+        'weights are normalised automatically; they do not have to add up to 100',
       ],
       examples: [[50, 0, 0, 30, 20, 0]],
       seeAlso: ['promptIndex'],
@@ -393,7 +394,7 @@ export default {
       purpose: "The model's own instructions instead of the built-in card.",
       constraints: [
         'a non-empty value overrides promptIndex and promptOverrides',
-        'strict rules of correspondence (do not admit that it is AI; answer briefly and in language'
+        'strict rules of correspondence (do not admit that it is AI; answer briefly and in language '
         + 'interlocutor; do not say hello again) are added ON TOP and are not disabled',
       ],
       storedAs: 'task.settings.promptText',
@@ -492,7 +493,7 @@ export default {
       type: 'object',
       purpose: 'The base intervals to which the protection and preset multipliers are applied.',
       constraints: [
-        'delays here are shorter than in other modules: they are waiting for a response in correspondence, and there is a pause of two'
+        'delays here are shorter than in other modules: they are waiting for a response in correspondence, and there is a pause of two '
         + 'minutes looks weirder than a pause of twenty seconds',
       ],
       properties: [
@@ -504,7 +505,7 @@ export default {
           minItems: 2,
           maxItems: 2,
           default: [5, 30],
-          unit: 'With',
+          unit: 's',
           purpose: 'Range [min, max] pause before sending a response.',
           constraints: ['the actual pause is random from the range × multipliers, but not less than 5 seconds'],
         },
@@ -514,7 +515,7 @@ export default {
           type: 'number',
           default: 120,
           min: 0,
-          unit: 'With',
+          unit: 's',
           purpose: 'How long to wait beyond the duration returned by Telegram.',
         },
         {

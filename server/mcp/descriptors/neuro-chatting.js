@@ -18,7 +18,7 @@ export default {
   usesAi: true,
   title: 'Neurochatting',
   platform: 'telegram',
-  tags: ['chats', 'groups', 'chats', 'groups', 'II', 'ai', 'dialogue', 'communication'],
+  tags: ['chats', 'groups', 'group chat', 'ai', 'dialogue', 'conversation', 'engagement'],
 
   whoAmI: {
     summary: 'Replies with AI messages to participants’ remarks in Telegram groups on behalf of managed accounts.',
@@ -32,18 +32,19 @@ export default {
     doesNot: [
       'does not write comments under channel posts - this is “Neurocommenting”',
       'does not write in private messages - this is “Mailing” and “Neurodialogues”',
-      'does not select messages by keywords and meaning: the module does not have content filters,'
+      'does not select messages by keywords and meaning: the module does not have content filters, '
       + 'selection occurs only by probability',
     ],
     requires: [
       'at least one account in a working status with a working proxy',
       'at least one target group',
-      'OpenAI working key: without it the task stops and does not write templates',
     ],
     risks:
-      'Real messages in live chats. The answer is off topic or too frequent messages → complaints,'
+      'Real messages in live chats. The answer is off topic or too frequent messages → complaints, '
       + 'FloodWait, spam block. Messages in groups are counted against the same daily limit as comments.',
-    costModel: 'Charged per action according to the price list of the module; text generation is included in the price of the action.',
+    costModel:
+      'Charged per action according to the price list of the module; text generation is included in the price of the action.'
+      + 'AI generation runs on model access provided by the platform: the caller supplies no key, token or provider credential, and there is no field for one — it works out of the box.',
   },
 
   blocks: [
@@ -52,7 +53,7 @@ export default {
       title: 'Select accounts',
       purpose: 'Which managed accounts perform the task.',
       howItWorks:
-        'Accounts are moving in a circle. Busy with another task is not displayed (one account = one task);'
+        'Accounts are moving in a circle. Busy with another task is not displayed (one account = one task); '
         + 'problematic statuses, fatigue, routine and daily limit are skipped and recorded in the log.',
       api: { method: 'POST', path: '/api/modules/neuro-chatting/tasks', fills: ['accountIds'] },
       params: ['accountIds'],
@@ -62,7 +63,7 @@ export default {
       title: 'Groups',
       purpose: 'In which groups the module responds to participants.',
       howItWorks:
-        'At each iteration, a group is selected randomly. Before the first action, the account enters into it.'
+        'At each iteration, a group is selected randomly. Before the first action, the account enters into it. '
         + 'The last 15 messages are read from the chat, and one is taken at random - there is no depth setting.',
       api: { method: 'POST', path: '/api/modules/neuro-chatting/tasks', fills: ['channels'] },
       params: ['channels'],
@@ -80,7 +81,7 @@ export default {
       title: 'Selection of messages',
       purpose: 'How often the module enters into conversation.',
       howItWorks:
-        'The only selection is probability: the message is selected randomly, and with a given probability'
+        'The only selection is probability: the message is selected randomly, and with a given probability '
         + 'the answer is written. The module has no keywords, no stop words, no semantics.',
       api: { method: 'POST', path: '/api/modules/neuro-chatting/tasks', fills: ['probability'] },
       params: ['probability'],
@@ -90,7 +91,7 @@ export default {
       title: 'Limits',
       purpose: 'How many messages to send in total and how many with one account.',
       howItWorks:
-        'The actual target is a random number from [min, max], determined by the task ID:'
+        'The actual target is a random number from [min, max], determined by the task ID: '
         + 'identical round numbers indicate automation.',
       api: { method: 'POST', path: '/api/modules/neuro-chatting/tasks', fills: ['maxActions', 'minActions', 'maxPerAccount', 'minPerAccount'] },
       params: ['maxActions', 'minActions', 'maxPerAccount', 'minPerAccount'],
@@ -100,8 +101,8 @@ export default {
       title: 'Prompts and generation',
       purpose: 'What tone is the answer written in?',
       howItWorks:
-        'Priority: promptText → promptOverrides[promptIndex] → built-in card promptIndex.'
-        + 'A global system prompt, a target context with a knowledge base, and an agent context are added on top.'
+        'Priority: promptText → promptOverrides[promptIndex] → built-in card promptIndex. '
+        + 'A global system prompt, a target context with a knowledge base, and an agent context are added on top. '
         + 'The last 50 texts sent are remembered so that different accounts do not write the same thing.',
       api: { method: 'POST', path: '/api/modules/neuro-chatting/tasks', fills: ['promptIndex', 'promptText', 'promptOverrides'] },
       params: ['promptIndex', 'promptText', 'promptOverrides', 'typeWeights'],
@@ -119,8 +120,8 @@ export default {
       title: 'Timings and delays',
       purpose: 'Pauses between actions and behavior during FloodWait.',
       howItWorks:
-        'On top of the specified delays, the module ALWAYS maintains a human pace: a pause to read the original'
-        + 'messages and the time to type a response according to its length. Instant response and “100 words in half a second” -'
+        'On top of the specified delays, the module ALWAYS maintains a human pace: a pause to read the original '
+        + 'messages and the time to type a response according to its length. Instant response and “100 words in half a second” - '
         + 'this is how Telegram recognizes the bot and bans similar accounts in waves. This cannot be disabled.',
       api: { method: 'POST', path: '/api/modules/neuro-chatting/tasks', fills: ['delayPreset', 'delays'] },
       params: ['delayPreset', 'delays'],
@@ -130,7 +131,7 @@ export default {
       title: 'Binding',
       purpose: 'Which goal, campaign, and agent the task belongs to.',
       howItWorks:
-        'The target and its knowledge base are mixed into the system prompt; an overdue goal stops one already in progress'
+        'The target and its knowledge base are mixed into the system prompt; an overdue goal stops one already in progress '
         + 'task. The agent sets the tone, role and prohibitions. The campaign is needed for reporting and billing.',
       api: { method: 'POST', path: '/api/modules/neuro-chatting/tasks', fills: ['goalId', 'campaignId', 'agentId', 'deadline'] },
       params: ['goalId', 'campaignId', 'agentId', 'deadline'],
@@ -195,8 +196,8 @@ export default {
       effectiveWhen: { workMode: 1 },
       purpose: 'How long does the task run in the “Timed” mode?',
       constraints: [
-        'трактуется как МАКСИМУМ: фактическая длительность — случайное число из [min, durationMinutes], '
-        + 'where min specifies the level of protection (conservative 60, balanced 45, aggressive 30 minutes)',
+        'treated as a MAXIMUM: the actual duration is a random value from [min, durationMinutes], '
+        + 'where min comes from the protection level (conservative 60, balanced 45, aggressive 30 minutes)',
       ],
       examples: [60, 240],
       seeAlso: ['workMode', 'protectionLevel'],
@@ -276,15 +277,15 @@ export default {
     {
       name: 'typeWeights',
       block: 'prompts',
-      title: 'Распределение типов, %',
+      title: 'Tone distribution, %',
       type: 'array',
       items: 'number',
       default: [],
-      purpose: 'Смешивать типы сообщений в заданной пропорции, чтобы аккаунты не писали в одном тоне.',
+      purpose: 'Mix message tones in a given proportion so accounts do not all write in the same voice.',
       constraints: [
-        'индекс элемента соответствует promptIndex',
-        'если хотя бы один вес > 0, promptIndex НЕ используется — тип выбирается взвешенным жребием на каждое действие',
-        'веса нормируются автоматически, сумма 100 не обязательна',
+        'the element index corresponds to promptIndex',
+        'if at least one weight is > 0, promptIndex is NOT used — the tone is drawn by weighted lottery for every action',
+        'weights are normalised automatically; they do not have to add up to 100',
       ],
       examples: [[50, 0, 0, 30, 20, 0]],
       seeAlso: ['promptIndex'],
@@ -392,7 +393,7 @@ export default {
           minItems: 2,
           maxItems: 2,
           default: [42, 78],
-          unit: 'With',
+          unit: 's',
           purpose: 'Range [min, max] pause before sending a response.',
           constraints: [
             'the actual pause is random from the range × multipliers, but not less than 5 seconds',
@@ -407,7 +408,7 @@ export default {
           minItems: 2,
           maxItems: 2,
           default: [50, 120],
-          unit: 'With',
+          unit: 's',
           purpose: 'Pause range [min, max] before joining a group.',
           constraints: ['hard floor 60 seconds: Telegram considers introductions harsher than other actions'],
         },
@@ -417,7 +418,7 @@ export default {
           type: 'number',
           default: 120,
           min: 0,
-          unit: 'With',
+          unit: 's',
           purpose: 'How long to wait beyond the duration returned by Telegram.',
         },
         {

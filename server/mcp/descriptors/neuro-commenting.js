@@ -20,9 +20,11 @@ export default {
   usesAi: true,
   title: 'Neurocommenting',
   platform: 'telegram',
-  // Штатного поля тегов в протоколе MCP нет — кладём в `_meta.tags` и дублируем
-  // ключевые слова в description, чтобы поиск по инструментам их находил.
-  tags: ['comments', 'comments', 'channels', 'channels', 'II', 'ai', 'involvement', 'engagement'],
+  // Штатного поля тегов в протоколе MCP нет: теги едут полем описания модуля
+  // (`describe_module`, `list_modules`, ресурс `murmex://module/…`), а ключевые слова
+  // дополнительно продублированы в description инструментов — поиск ищет по ним.
+  // Дубликаты и разный регистр запрещены: это половина поискового индекса.
+  tags: ['comments', 'commenting', 'channels', 'posts', 'ai', 'engagement', 'reach'],
 
   whoAmI: {
     summary: 'Writes AI comments under posts of public channels on behalf of managed Telegram accounts.',
@@ -40,15 +42,17 @@ export default {
     requires: [
       'at least one account in a working status with a working proxy',
       'at least one target channel',
-      'OpenAI working key: without it the task stops rather than publishing templates',
     ],
     risks:
-      'Real publications on Telegram. Too short delays and high probability → FloodWait →'
-      + 'account quarantine → spamblock. New accounts should start with conservative settings.',
+      'Real publications on Telegram. Too short delays and high probability → FloodWait → '
+      + 'account quarantine → spamblock. New accounts should start with conservative settings. '
+      + 'If the model provider fails fatally, the task stops instead of falling back to template text: '
+      + 'a hundred identical template comments from live accounts is worse than a halted task.',
     costModel:
-      'Charged per action according to the price list of the module; text generation is included in the price of the action.'
-      + 'Analysis of pictures (analyzeImages) is billed separately with the imageMultiplier multiplier and only'
-      + 'after successfully submitting a comment.',
+      'Charged per action according to the price list of the module; text generation is included in the price of the action. '
+      + 'Analysis of pictures (analyzeImages) is billed separately with the imageMultiplier multiplier and only '
+      + 'after successfully submitting a comment.'
+      + 'AI generation runs on model access provided by the platform: the caller supplies no key, token or provider credential, and there is no field for one — it works out of the box.',
   },
 
   blocks: [
@@ -57,9 +61,9 @@ export default {
       title: 'Select accounts',
       purpose: 'Which managed accounts perform the task.',
       howItWorks:
-        'Accounts move in a circle and divide the work among themselves. Account busy with another task'
-        + 'not issued (one account = one task). Accounts in quarantine, spamblock, invalid,'
-        + "frozen and requiring re-authorization are skipped and recorded in the log. If it's a full circle"
+        'Accounts move in a circle and divide the work among themselves. Account busy with another task '
+        + 'not issued (one account = one task). Accounts in quarantine, spamblock, invalid, '
+        + "frozen and requiring re-authorization are skipped and recorded in the log. If it's a full circle "
         + 'accounts turned out to be unavailable, the task is completed correctly indicating the reason.',
       api: { method: 'POST', path: '/api/modules/neuro-commenting/tasks', fills: ['accountIds'] },
       params: ['accountIds'],
@@ -69,7 +73,7 @@ export default {
       title: 'Channels',
       purpose: 'Where do we comment and what depth of the channel’s history are we considering.',
       howItWorks:
-        'At each iteration, a channel is selected randomly from the list. Before the first action, account'
+        'At each iteration, a channel is selected randomly from the list. Before the first action, account '
         + 'joins the channel and its discussion group. Targets from the blacklist are eliminated before any action is taken.',
       api: { method: 'POST', path: '/api/modules/neuro-commenting/tasks', fills: ['channels', 'postWindow'] },
       params: ['channels', 'postWindow'],
@@ -79,7 +83,7 @@ export default {
       title: 'Modes',
       purpose: 'How a post is selected for commenting and whether the task is limited by quantity or time.',
       howItWorks:
-        'The comment mode decides how many posts from the window become candidates. Post filter'
+        'The comment mode decides how many posts from the window become candidates. Post filter '
         + 'additionally cuts off based on novelty. The operating mode determines the condition for completing the task.',
       api: { method: 'POST', path: '/api/modules/neuro-commenting/tasks', fills: ['commentMode', 'workMode', 'postFilter', 'lastPostsCount', 'pickOne'] },
       params: ['commentMode', 'workMode', 'postFilter', 'lastPostsCount', 'pickOne'],
@@ -89,8 +93,8 @@ export default {
       title: 'Post filters',
       purpose: 'Screening of posts BEFORE text generation: according to words, volume, probability and semantic proximity to the goal.',
       howItWorks:
-        'Elimination order: minimum words → keywords (only in “By Keywords” mode) →'
-        + 'stop words → novelty filter → probability → semantics. Each step writes to the log the reason for the omission,'
+        'Elimination order: minimum words → keywords (only in “By Keywords” mode) → '
+        + 'stop words → novelty filter → probability → semantics. Each step writes to the log the reason for the omission, '
         + 'so that a zero result is not read as a breakdown.',
       api: {
         method: 'POST',
@@ -104,8 +108,8 @@ export default {
       title: 'Limits',
       purpose: 'How many actions to do in total and how many per account; when working by time - duration.',
       howItWorks:
-        'The actual goal of the task is a random number from the range [min, max], determined by the task ID.'
-        + 'Two tasks with the same settings will receive different goals: even round numbers indicate automation.'
+        'The actual goal of the task is a random number from the range [min, max], determined by the task ID. '
+        + 'Two tasks with the same settings will receive different goals: even round numbers indicate automation. '
         + 'Progress is counted towards this goal, not towards the maximum.',
       api: {
         method: 'POST',
@@ -119,9 +123,9 @@ export default {
       title: 'Prompts and generation',
       purpose: 'In what tone and what template is the comment written?',
       howItWorks:
-        'Priority of prompt text sources: promptText (your text) → promptOverrides[promptIndex] →'
-        + 'built-in card promptIndex. If the distribution typeWeights is specified, the type is selected as weighted'
-        + 'by lot for each comment and promptIndex is not used. The global one is always added on top'
+        'Priority of prompt text sources: promptText (your text) → promptOverrides[promptIndex] → '
+        + 'built-in card promptIndex. If the distribution typeWeights is specified, the type is selected as weighted '
+        + 'by lot for each comment and promptIndex is not used. The global one is always added on top '
         + 'system prompt, target context with knowledge base and agent context.',
       api: {
         method: 'POST',
@@ -135,7 +139,7 @@ export default {
       title: 'Account protection',
       purpose: 'Delay multiplier and upper ceiling on action probability.',
       howItWorks:
-        'The protection level multiplies all delays and limits the probability from above. He also sets the lower'
+        'The protection level multiplies all delays and limits the probability from above. He also sets the lower '
         + 'duration limit when working on time (conservative 60 minutes, balanced 45, aggressive 30).',
       api: { method: 'POST', path: '/api/modules/neuro-commenting/tasks', fills: ['aiProtection', 'protectionLevel'] },
       params: ['aiProtection', 'protectionLevel'],
@@ -145,7 +149,7 @@ export default {
       title: 'Timings and delays',
       purpose: 'Pauses between actions and behavior during FloodWait.',
       howItWorks:
-        'Total pause = random number from the range × defense level multiplier × tempo preset multiplier,'
+        'Total pause = random number from the range × defense level multiplier × tempo preset multiplier, '
         + 'but not less than 5 seconds. There are no even intervals - bots are calculated using them.',
       api: { method: 'POST', path: '/api/modules/neuro-commenting/tasks', fills: ['delayPreset', 'delays'] },
       params: ['delayPreset', 'delays'],
@@ -155,8 +159,8 @@ export default {
       title: 'Binding',
       purpose: 'Which goal, campaign, and agent the task belongs to.',
       howItWorks:
-        'The target mixes its text and knowledge base into the system prompt and turns on the semantic filter.'
-        + 'An expired goal stops an already running task, not just new starts. Campaign needed'
+        'The target mixes its text and knowledge base into the system prompt and turns on the semantic filter. '
+        + 'An expired goal stops an already running task, not just new starts. Campaign needed '
         + 'for reporting and billing. The agent sets the tone, role, prohibitions and manner of communication.',
       api: { method: 'POST', path: '/api/modules/neuro-commenting/tasks', fills: ['goalId', 'campaignId', 'agentId', 'deadline'] },
       params: ['goalId', 'campaignId', 'agentId', 'deadline'],
@@ -259,18 +263,18 @@ export default {
     {
       name: 'lastPostsCount',
       block: 'modes',
-      title: 'Сколько последних постов',
+      title: 'Number of recent posts',
       type: 'integer',
       min: 1,
       max: 50,
       default: 3,
-      purpose: 'Глубина ленты для postFilter = 3 (устаревший путь).',
+      purpose: 'Feed depth for postFilter = 3 (legacy path).',
       constraints: [
-        'интерфейс это поле БОЛЬШЕ НЕ ШЛЁТ: «последние N постов» — это postWindow, '
-        + 'иначе в форме было бы два поля про одно и то же (правка 18.08). Воркер значение понимает',
-        'работает только при postFilter = 3',
-        'значения вне 1–50 обрезаются до границ; 0 и мусор дают 3',
-        'N отсчитывается по ЛЕНТЕ канала, а не по прошедшим фильтры: иначе жёсткие ключевые слова увели бы «последние 3» вглубь истории',
+        'the UI NO LONGER sends this field: "last N posts" is postWindow, '
+        + 'otherwise the form would carry two fields for the same thing (fixed 18.08). The worker still honours the value',
+        'only works when postFilter = 3',
+        'values outside 1-50 are clamped to the bounds; 0 and garbage fall back to 3',
+        'N counts down the channel FEED, not the posts that passed the filters: otherwise strict keywords would drag "the last 3" deep into history',
       ],
       examples: [3, 5, 10],
       effectiveWhen: { field: 'postFilter', equals: 3 },
@@ -280,13 +284,13 @@ export default {
     {
       name: 'pickOne',
       block: 'modes',
-      title: 'Один случайный из подходящих',
+      title: 'One random post out of the suitable ones',
       type: 'boolean',
       default: true,
-      purpose: 'СКОЛЬКО постов из подходящих комментировать за заход: один случайный или все.',
+      purpose: 'HOW MANY of the suitable posts to comment on per pass: one at random, or all of them.',
       constraints: [
-        'если поле не задано, воркер смотрит на устаревший commentMode = 0 (там случайность была вшита)',
-        'выключено — комментируются ВСЕ подходящие посты за заход, лимиты задачи при этом действуют',
+        'when the field is unset, the worker falls back to the legacy commentMode = 0, where randomness was hard-wired',
+        'when off, ALL suitable posts are commented on in one pass; the task limits still apply',
       ],
       examples: [true, false],
       seeAlso: ['commentMode'],
@@ -459,7 +463,7 @@ export default {
       purpose: 'How long does the task run in the “Timed” mode?',
       constraints: [
         'ignored when workMode = 0',
-        'is treated as MAXIMUM: the actual duration is a random number from [min, durationMinutes],'
+        'is treated as MAXIMUM: the actual duration is a random number from [min, durationMinutes], '
         + 'where min specifies the level of protection (conservative 60, balanced 45, aggressive 30 minutes)',
       ],
       examples: [60, 180, 1440],
@@ -621,7 +625,7 @@ export default {
           minItems: 2,
           maxItems: 2,
           default: [30, 120],
-          unit: 'With',
+          unit: 's',
           purpose: 'Pause range [min, max] before publishing a comment.',
           constraints: ['the actual pause is random from the range × multipliers, but not less than 5 seconds'],
         },
@@ -633,11 +637,11 @@ export default {
           minItems: 2,
           maxItems: 2,
           default: [84, 156],
-          unit: 'With',
+          unit: 's',
           purpose: 'Range [min, max] of pause before joining a channel or discussion group.',
           constraints: [
-            'hard floor 60 seconds: Telegram counts introductions separately and more harshly than other actions,'
-            + 'it is impossible to speed them up with a preset - the aggressive settings multipliers were cut from 90–240 s to 32 s,'
+            'hard floor 60 seconds: Telegram counts introductions separately and more harshly than other actions, '
+            + 'it is impossible to speed them up with a preset - the aggressive settings multipliers were cut from 90–240 s to 32 s, '
             + 'after which the accounts went into FloodWait and quarantine',
           ],
         },
@@ -647,7 +651,7 @@ export default {
           type: 'number',
           default: 120,
           min: 0,
-          unit: 'With',
+          unit: 's',
           purpose: 'How long to wait beyond the duration returned by Telegram.',
         },
         {

@@ -20,7 +20,7 @@ export default {
   usesAi: false,
   title: 'AI Rating',
   platform: 'telegram',
-  tags: ['rating', 'rating', 'account verification', 'health', 'trust', 'diagnostics'],
+  tags: ['account check', 'health', 'trust score', 'diagnostics', 'rating', 'status'],
 
   whoAmI: {
     summary: 'Checks managed accounts and assigns each a quality rating based on profile and session status.',
@@ -33,7 +33,7 @@ export default {
     doesNot: [
       'does not perform any actions in Telegram: does not write, does not subscribe, does not watch',
       'does not work for purposes - the module does not have channels or groups',
-      'does not affect accounts busy with another task: parallel login with the same session drops both'
+      'does not affect accounts busy with another task: parallel login with the same session drops both '
       + 'tasks and looks like session hijacking to Telegram',
     ],
     requires: ['accounts with saved session; a proxy is desirable, but the check will work without it'],
@@ -47,7 +47,7 @@ export default {
       title: 'Select accounts',
       purpose: 'What accounts do we check?',
       howItWorks:
-        'Accounts are verified one by one. Those busy with another task are skipped with a warning:'
+        'Accounts are verified one by one. Those busy with another task are skipped with a warning: '
         + 'Parallel login with the same session drops both tasks and looks like hijacking for Telegram.',
       api: { method: 'POST', path: '/api/modules/ggr/tasks', fills: ['accountIds'] },
       params: ['accountIds'],
@@ -65,7 +65,7 @@ export default {
       minItems: 1,
       purpose: 'Account IDs for verification.',
       constraints: [
-        'an empty list will NOT launch: “Select at least one account.” The worker has'
+        'an empty list will NOT launch: “Select at least one account.” The worker has '
         + 'branch “empty → take all”, but it doesn’t reach it - the launch check is triggered earlier',
         'accounts busy with another task are skipped with a warning',
       ],

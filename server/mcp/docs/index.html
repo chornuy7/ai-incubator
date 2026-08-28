@@ -1,0 +1,1212 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Murmex MCP — live documentation</title>
+<style>
+:root{
+  --bg:#f7f8fa; --panel:#fff; --line:#e2e5ea; --fg:#12151a; --muted:#5d6470;
+  --accent:#2f6feb; --accent-weak:#e8f0fe;
+  --ok:#1a7f4b; --ok-weak:#e6f4ec; --warn:#9a6300; --warn-weak:#fdf3e0;
+  --danger:#c0362c; --danger-weak:#fdecea; --code:#f2f4f7;
+  --mono:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme:dark){:root{
+  --bg:#0f1216; --panel:#161a20; --line:#272d36; --fg:#e6e9ef; --muted:#98a1b0;
+  --accent:#6ea3ff; --accent-weak:#1b2537;
+  --ok:#4ec98a; --ok-weak:#14261d; --warn:#e0aa4a; --warn-weak:#2a2113;
+  --danger:#ff8177; --danger-weak:#2c1817; --code:#1b2027;
+}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.55 system-ui,-apple-system,Segoe UI,Roboto,sans-serif;overflow-x:hidden}
+a{color:var(--accent)}
+code,pre{font-family:var(--mono)}
+code{background:var(--code);padding:.1em .35em;border-radius:4px;font-size:.9em}
+/* JSON-ответы содержат строку `content[0].text` — весь результат, продублированный
+   одной строкой. Без переноса она растягивала блок на 9000px и ломала сетку.
+   `pre-wrap` сохраняет отступы JSON и переносит только то, что не влезло. */
+pre{background:var(--code);border:1px solid var(--line);border-radius:8px;padding:10px 12px;overflow:auto;margin:0;
+    font-size:12px;line-height:1.5;max-height:460px;white-space:pre-wrap;overflow-wrap:anywhere;max-width:100%}
+
+header{position:sticky;top:0;z-index:20;background:var(--panel);border-bottom:1px solid var(--line);padding:10px 16px;display:flex;gap:12px;align-items:center;flex-wrap:wrap}
+header h1{font-size:15px;margin:0;font-weight:700;letter-spacing:-.01em}
+header .sub{color:var(--muted);font-size:12px}
+.spacer{flex:1}
+input,select,textarea,button{font:inherit;color:inherit}
+input,select,textarea{background:var(--panel);border:1px solid var(--line);border-radius:7px;padding:6px 9px;width:100%}
+textarea{font-family:var(--mono);font-size:12px;resize:vertical}
+button{background:var(--accent);color:#fff;border:0;border-radius:7px;padding:6px 13px;cursor:pointer;font-weight:600;font-size:13px}
+button:hover{filter:brightness(1.08)}
+button.ghost{background:transparent;color:var(--accent);border:1px solid var(--line);font-weight:500}
+button.danger{background:var(--danger)}
+button:disabled{opacity:.5;cursor:not-allowed}
+
+.layout{display:grid;grid-template-columns:216px minmax(0,1fr);gap:0;align-items:start}
+nav{position:sticky;top:53px;max-height:calc(100vh - 53px);overflow:auto;padding:14px 8px 40px;border-right:1px solid var(--line)}
+nav a{display:block;padding:6px 10px;border-radius:7px;color:var(--muted);text-decoration:none;font-size:13px}
+nav a:hover{background:var(--code);color:var(--fg)}
+nav a.on{background:var(--accent-weak);color:var(--accent);font-weight:600}
+nav .grp{font-size:10.5px;text-transform:uppercase;letter-spacing:.07em;color:var(--muted);padding:14px 10px 4px;font-weight:700;opacity:.7}
+main{padding:22px 26px 120px;min-width:0;max-width:1120px}
+@media (max-width:820px){.layout{grid-template-columns:1fr}nav{position:static;max-height:none;border-right:0;border-bottom:1px solid var(--line);display:flex;flex-wrap:wrap;gap:2px}nav .grp{width:100%}main{padding:16px}}
+
+section{margin-bottom:38px;scroll-margin-top:68px}
+h2{font-size:19px;margin:0 0 4px;letter-spacing:-.01em}
+h3{font-size:15px;margin:20px 0 6px}
+.lead{color:var(--muted);margin:0 0 14px;max-width:76ch}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:11px;padding:14px 16px;margin-bottom:12px;min-width:0;max-width:100%}
+.card>h4{margin:0 0 2px;font-size:14.5px;display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.card .desc{color:var(--muted);font-size:13px;margin:6px 0 0;max-width:82ch}
+.mono{font-family:var(--mono)}
+
+.tag{display:inline-block;font-size:10.5px;font-weight:700;padding:2px 7px;border-radius:20px;letter-spacing:.02em;white-space:nowrap}
+.tag.ok{background:var(--ok-weak);color:var(--ok)}
+.tag.warn{background:var(--warn-weak);color:var(--warn)}
+.tag.danger{background:var(--danger-weak);color:var(--danger)}
+.tag.info{background:var(--accent-weak);color:var(--accent)}
+.tag.mute{background:var(--code);color:var(--muted)}
+
+table{border-collapse:collapse;width:100%;font-size:13px;margin:8px 0}
+th,td{text-align:left;padding:6px 9px;border-bottom:1px solid var(--line);vertical-align:top}
+th{color:var(--muted);font-weight:600;font-size:11.5px;text-transform:uppercase;letter-spacing:.04em}
+td.mono{font-family:var(--mono);font-size:12px;overflow-wrap:anywhere}
+/* Широкую таблицу прокручиваем внутри себя, а не телом страницы. */
+.scrollx{overflow-x:auto;max-width:100%}
+tbody tr:last-child td{border-bottom:0}
+
+details{border:1px solid var(--line);border-radius:8px;padding:8px 11px;margin-top:9px;background:var(--panel);min-width:0;max-width:100%}
+details>summary{cursor:pointer;font-size:12.5px;font-weight:600;color:var(--muted);user-select:none}
+details[open]>summary{margin-bottom:8px}
+
+.runner{margin-top:11px;border-top:1px dashed var(--line);padding-top:11px}
+.fields{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:9px}
+.fields>.f{min-width:0}
+.f label{display:block;font-size:11.5px;font-weight:700;margin-bottom:3px}
+.f .hint{font-size:11px;color:var(--muted);margin-top:3px;line-height:1.4}
+.f .req{color:var(--danger);font-weight:700}
+.io{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:10px;margin-top:10px}
+/* Ключевая строка: без min-width:0 элемент грида раздувается под самую длинную
+   строку содержимого и утаскивает за собой всю страницу. */
+.io>div{min-width:0}
+@media (max-width:760px){.io{grid-template-columns:1fr}}
+.io .ttl{font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px;display:flex;gap:8px;align-items:center}
+.bar{display:flex;gap:8px;align-items:center;margin-top:10px;flex-wrap:wrap}
+.note{background:var(--warn-weak);border:1px solid var(--warn);color:var(--warn);border-radius:8px;padding:9px 12px;font-size:12.5px;margin:10px 0}
+.note.danger{background:var(--danger-weak);border-color:var(--danger);color:var(--danger)}
+.note.info{background:var(--accent-weak);border-color:var(--accent);color:var(--accent)}
+.kv{display:grid;grid-template-columns:auto minmax(0,1fr);gap:3px 14px;font-size:13px}
+.kv dt{color:var(--muted)}
+.kv dd{margin:0;font-family:var(--mono);font-size:12px;word-break:break-all}
+.pill{font-family:var(--mono);font-size:11.5px;background:var(--code);border:1px solid var(--line);border-radius:6px;padding:2px 7px}
+#status{font-size:12px;color:var(--muted)}
+.err{color:var(--danger)}
+.grid2{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:12px}
+.grid2>div{min-width:0}
+@media (max-width:760px){.grid2{grid-template-columns:1fr}}
+.filter{margin:10px 0 14px}
+
+/* Свой выпадающий список для зависимых полей. Нативный <select> не позволяет развести
+   ключ и описание визуально: и то и другое приходится склеивать в одну строку опции. */
+.pk{position:relative}
+.pk-trigger{width:100%;display:flex;align-items:center;gap:9px;background:var(--panel);border:1px solid var(--line);
+  border-radius:7px;padding:6px 9px;color:var(--fg);font-weight:400;text-align:left;cursor:pointer;min-width:0}
+.pk-trigger:hover{border-color:var(--accent)}
+.pk-trigger.open{border-color:var(--accent)}
+.pk-trigger:disabled{cursor:not-allowed;opacity:.65}
+.pk-key{font-family:var(--mono);font-size:12.5px;white-space:nowrap}
+.pk-desc{color:var(--muted);font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+.pk-empty{color:var(--muted);font-size:12.5px}
+.pk-face{display:flex;align-items:baseline;gap:9px;min-width:0;overflow:hidden}
+.pk-caret{margin-left:auto;color:var(--muted);font-size:10px;flex:none}
+.pk-panel{position:absolute;z-index:30;left:0;right:0;top:calc(100% + 4px);background:var(--panel);
+  border:1px solid var(--line);border-radius:9px;box-shadow:0 12px 30px rgba(0,0,0,.3);
+  max-height:268px;overflow:auto;padding:4px;display:none}
+.pk-panel.open{display:block}
+.pk-opt{display:flex;gap:10px;align-items:baseline;padding:6px 8px;border-radius:6px;cursor:pointer}
+.pk-opt:hover,.pk-opt.active{background:var(--accent-weak)}
+.pk-opt .k{font-family:var(--mono);font-size:12.5px;color:var(--accent);white-space:nowrap;flex:none}
+.pk-opt .d{color:var(--muted);font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.pk-note{padding:8px 9px;color:var(--muted);font-size:12px}
+.pk-search{position:sticky;top:0;background:var(--panel);padding:4px 4px 6px;border-bottom:1px solid var(--line);margin-bottom:4px}
+.pk-search input{font-size:12.5px;padding:5px 8px}
+.pk-count{font-size:11px;color:var(--muted);padding:2px 9px 6px}
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Murmex MCP</h1>
+  <span class="sub" id="hdrSub">live documentation</span>
+  <div class="spacer"></div>
+  <span id="status">not connected</span>
+  <input id="key" type="password" placeholder="API key (Bearer)" style="width:230px" autocomplete="off">
+  <button id="connect">Connect</button>
+</header>
+
+<div class="layout">
+  <nav id="nav"></nav>
+  <main id="main">
+    <section id="boot">
+      <h2>Connect to see live documentation</h2>
+      <p class="lead">
+        Everything on this page is read from the running server, not written by hand — the tool list,
+        the schemas, the module descriptors and the protocol versions are whatever the server actually
+        serves right now. Paste the service key
+        (<code>MURMEX_API_KEY</code> from the server environment) above and press Connect.
+      </p>
+      <div class="note info">
+        The key is kept in this browser's <code>localStorage</code> only and is sent to this server alone.
+      </div>
+    </section>
+  </main>
+</div>
+
+<script>
+const $ = (s, r = document) => r.querySelector(s)
+const el = (t, a = {}, ...kids) => {
+  const n = document.createElement(t)
+  for (const [k, v] of Object.entries(a)) {
+    if (k === 'class') n.className = v
+    else if (k === 'html') n.innerHTML = v
+    else if (k.startsWith('on')) n.addEventListener(k.slice(2), v)
+    else if (v !== null && v !== undefined) n.setAttribute(k, v)
+  }
+  for (const c of kids.flat()) if (c !== null && c !== undefined) n.append(c.nodeType ? c : String(c))
+  return n
+}
+const j = (v) => JSON.stringify(v, null, 2)
+const esc = (s) => String(s).replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]))
+
+const S = { key: '', manifest: null, discover: null, resources: [], modules: [], caps: null, moduleCache: {}, rpcId: 0 }
+const MODERN = '2026-07-28'
+
+// ── транспорт ────────────────────────────────────────────────────────────────
+// Каждый запрос со страницы — настоящий запрос к серверу. Документация, которая
+// показывает не то, что сервер отвечает, бесполезна ровно в тот момент, когда нужна.
+
+const authHeaders = () => ({ 'content-type': 'application/json', authorization: 'Bearer ' + S.key })
+
+async function rest(path) {
+  const r = await fetch(path, { headers: authHeaders() })
+  return { status: r.status, body: await r.json().catch(() => null) }
+}
+
+/**
+ * Собрать конверт JSON-RPC.
+ *
+ * `era: 'legacy'` намеренно НЕ добавляет `_meta`: `initialize` и `ping` существуют только
+ * в старых ревизиях, и с современными метаданными сервер отвечает им METHOD_NOT_FOUND.
+ * Без этого переключателя половину методов со страницы нельзя было бы попробовать.
+ */
+function envelope(method, params = {}, era = 'modern') {
+  const body = { jsonrpc: '2.0', id: ++S.rpcId, method, params: { ...params } }
+  if (era === 'modern') {
+    body.params._meta = {
+      'io.modelcontextprotocol/protocolVersion': MODERN,
+      'io.modelcontextprotocol/clientInfo': { name: 'murmex-docs', version: '1.0.0' },
+      'io.modelcontextprotocol/clientCapabilities': {},
+    }
+  }
+  return body
+}
+
+/** HTTP-заголовки транспорта. Показываем их в панели запроса — они часть контракта. */
+function rpcHeaders(method, params, era = 'modern') {
+  const h = { ...authHeaders(), accept: 'application/json, text/event-stream' }
+  // Заголовки версии и метода — принадлежность современной эры; legacy их не шлёт,
+  // а несовпадение заголовка с телом сервер отвергает как HeaderMismatch.
+  if (era === 'modern') {
+    h['mcp-protocol-version'] = MODERN
+    h['mcp-method'] = method
+    const named = { 'tools/call': params?.name, 'resources/read': params?.uri, 'prompts/get': params?.name }
+    if (method in named && named[method]) h['mcp-name'] = named[method]
+  }
+  return h
+}
+
+/**
+ * Заголовки ДЛЯ ПОКАЗА: ключ заменён звёздочками.
+ *
+ * Панель запроса существует, чтобы её показывали и скриншотили — а вместе со скриншотом
+ * уезжал бы и сервисный ключ, открывающий весь `/api/v1`.
+ */
+const shownHeaders = (h) => ({ ...h, authorization: 'Bearer ' + (S.key ? S.key.slice(0, 12) + '…' : '') + ' (masked)' })
+
+async function rpc(method, params = {}, era = 'modern') {
+  const body = envelope(method, params, era)
+  const headers = rpcHeaders(method, body.params, era)
+  const r = await fetch('/api/v1/mcp', { method: 'POST', headers, body: JSON.stringify(body) })
+  // Уведомления получают 202 без тела — `.json()` на пустом ответе бросает. Отдаём
+  // явный маркер, иначе в панели ответа появляется голое `null` без объяснения.
+  const parsed = r.status === 202 ? { _note: '202 Accepted — notification acknowledged, no body by design' } : await r.json().catch(() => null)
+  return { status: r.status, request: body, headers, body: parsed, era }
+}
+
+/** Собрать все страницы списка: пагинация не должна прятать половину каталога. */
+async function rpcAll(method, field) {
+  const out = []
+  let cursor
+  do {
+    const r = await rpc(method, cursor ? { cursor } : {})
+    if (r.body?.error) throw new Error(r.body.error.message)
+    out.push(...(r.body.result[field] || []))
+    cursor = r.body.result.nextCursor
+  } while (cursor)
+  return out
+}
+
+// ── загрузка ─────────────────────────────────────────────────────────────────
+
+async function connect() {
+  const status = $('#status')
+  S.key = $('#key').value.trim()
+  if (!S.key) { status.innerHTML = '<span class="err">key required</span>'; return }
+  status.textContent = 'loading…'
+  try {
+    const man = await rest('/api/v1/mcp')
+    if (man.status === 401) throw new Error('401 — key rejected by the server')
+    if (man.status !== 200) throw new Error(man.status + ' — ' + (man.body?.error || 'unexpected response'))
+    S.manifest = man.body
+
+    const disc = await rpc('server/discover')
+    S.discover = disc.body?.result || null
+
+    S.resources = await rpcAll('resources/list', 'resources').catch(() => [])
+    const caps = await rest('/api/v1/capabilities')
+    S.caps = caps.body || null
+
+    localStorage.setItem('murmex.mcp.key', S.key)
+    status.innerHTML = '<span class="tag ok">connected</span>'
+    $('#hdrSub').textContent = (S.manifest.serverInfo?.title || 'MCP') + ' · v' + (S.manifest.serverInfo?.version || '?')
+    render()
+  } catch (e) {
+    status.innerHTML = '<span class="err">' + esc(e.message) + '</span>'
+  }
+}
+
+// ── рендер схем ──────────────────────────────────────────────────────────────
+
+/** Тип поля словами, включая массивы и объединения. */
+function typeOf(sc) {
+  if (!sc) return '—'
+  if (Array.isArray(sc.type)) return sc.type.join(' | ')
+  if (sc.type === 'array') return 'array<' + (sc.items?.type || 'any') + '>'
+  return sc.type || 'any'
+}
+
+/** Таблица параметров из JSON Schema — читается лучше, чем сырая схема. */
+function schemaTable(schema) {
+  const props = schema?.properties || {}
+  const names = Object.keys(props)
+  if (!names.length) return el('p', { class: 'desc' }, 'No parameters.')
+  const req = new Set(schema.required || [])
+  return el('table', {},
+    el('thead', {}, el('tr', {}, el('th', {}, 'Field'), el('th', {}, 'Type'), el('th', {}, 'Description'))),
+    el('tbody', {}, names.map((n) => {
+      const p = props[n]
+      const bits = []
+      if (p.enum) bits.push('one of: ' + p.enum.map((v) => JSON.stringify(v)).join(', '))
+      if (p.default !== undefined) bits.push('default ' + JSON.stringify(p.default))
+      if (p.minimum !== undefined) bits.push('min ' + p.minimum)
+      if (p.maximum !== undefined) bits.push('max ' + p.maximum)
+      if (p.minItems !== undefined) bits.push('minItems ' + p.minItems)
+      return el('tr', {},
+        el('td', { class: 'mono' }, n, req.has(n) ? el('span', { class: 'req' }, ' *') : null),
+        el('td', { class: 'mono' }, typeOf(p)),
+        el('td', {}, el('div', {}, p.description || '—'),
+          bits.length ? el('div', { class: 'hint', style: 'color:var(--muted);font-size:11px;margin-top:3px' }, bits.join(' · ')) : null))
+    }))
+  )
+}
+
+/** Форма ввода по схеме: одно поле на параметр, с типом и подсказкой. */
+/** Кэш описаний модулей: список блоков нужен на каждое переключение модуля. */
+async function describeModuleCached(key) {
+  if (!S.moduleCache[key]) {
+    const r = await rpc('tools/call', { name: 'describe_module', arguments: { module: key } })
+    S.moduleCache[key] = r.body?.result?.structuredContent || null
+  }
+  return S.moduleCache[key]
+}
+
+/**
+ * Поля, значения которых нельзя перечислить схемой, потому что они ЗАВИСЯТ от соседнего
+ * поля: ид блока не enum — он свой у каждого модуля, поэтому схема объявляет его строкой.
+ *
+ * Список наполняется живым запросом и перестраивается при каждой смене зависимости.
+ * Это `<select>`: произвольное значение отсюда не отправить. Проверить, как сервер
+ * отвечает на несуществующий блок, можно в консоли раздела Protocol — там параметры
+ * задаются свободным JSON.
+ */
+const DYNAMIC = {
+  'describe_block.block': {
+    dependsOn: 'module',
+    empty: 'choose a module first — block ids differ per module',
+    async options(moduleKey) {
+      const d = await describeModuleCached(moduleKey)
+      return (d?.blocks || []).map((b) => ({ value: b.id, title: b.title }))
+    },
+  },
+  'describe_capability.id': {
+    dependsOn: 'kind',
+    empty: 'choose a kind first',
+    async options(kind) {
+      if (kind === 'module') return (S.caps?.modules || []).map((m) => ({ value: m.key, title: m.title }))
+      if (kind === 'service') return (S.caps?.services || []).map((s) => ({ value: s.key, title: s.title }))
+      if (kind === 'user') {
+        const r = await rpc('tools/call', { name: 'list_capabilities', arguments: { kind: 'user' } })
+        const users = r.body?.result?.structuredContent?.users || []
+        // `me` первым: это единственное значение, работающее с любым ключом.
+        return [{ value: 'me', title: 'the user this key acts as' },
+          ...users.map((u) => ({ value: u.id, title: u.title }))]
+      }
+      return []
+    },
+  },
+}
+
+/**
+ * Выпадающий список для зависимых полей.
+ *
+ * Нативный <select> не годится по двум причинам: в нём нельзя развести ключ и описание
+ * (всё склеивается в одну строку опции) и в нём нет поиска — а модулей пятнадцать,
+ * блоков до девяти, пользователей сколько угодно.
+ *
+ * Значение держит скрытый input: остальной код формы читает поля через `.value`, и менять
+ * его из-за виджета не нужно.
+ */
+function picker(emptyLabel) {
+  const value = el('input', { type: 'hidden' })
+  const face = el('span', { class: 'pk-empty' }, emptyLabel)
+  const trigger = el('button', { type: 'button', class: 'pk-trigger' }, face, el('span', { class: 'pk-caret' }, '▼'))
+  const search = el('input', { type: 'text', placeholder: 'filter…' })
+  const searchBox = el('div', { class: 'pk-search' }, search)
+  const list = el('div', {})
+  const panel = el('div', { class: 'pk-panel' }, searchBox, list)
+  const node = el('div', { class: 'pk' }, value, trigger, panel)
+
+  let options = []
+  let active = -1
+
+  const rows = () => [...list.querySelectorAll('.pk-opt')]
+  const setFace = (opt) => {
+    face.replaceChildren()
+    if (!opt) { face.className = 'pk-empty'; face.textContent = emptyLabel; return }
+    face.className = 'pk-face'
+    face.append(el('span', { class: 'pk-key' }, opt.value),
+      opt.title ? el('span', { class: 'pk-desc' }, opt.title) : null)
+  }
+
+  const choose = (opt) => {
+    value.value = opt.value
+    setFace(opt)
+    close()
+    // Форма читает значение по событию change — эмулируем его как настоящий select.
+    value.dispatchEvent(new Event('change', { bubbles: true }))
+  }
+
+  const draw = () => {
+    const q = search.value.trim().toLowerCase()
+    const hits = options.filter((o) => !q || (o.value + ' ' + (o.title || '')).toLowerCase().includes(q))
+    active = hits.length ? 0 : -1
+    list.replaceChildren(...(hits.length
+      ? hits.map((o, i) => el('div', {
+        class: 'pk-opt' + (i === 0 ? ' active' : ''),
+        onmousedown: (e) => { e.preventDefault(); choose(o) },
+        onmouseenter: () => { rows().forEach((r) => r.classList.remove('active')); },
+      }, el('span', { class: 'k' }, o.value), o.title ? el('span', { class: 'd' }, o.title) : null))
+      : [el('div', { class: 'pk-note' }, q ? `nothing matches "${search.value.trim()}"` : 'nothing to choose from')]))
+  }
+
+  function open() {
+    if (trigger.disabled) return
+    panel.classList.add('open'); trigger.classList.add('open')
+    search.value = ''; draw(); search.focus()
+  }
+  function close() { panel.classList.remove('open'); trigger.classList.remove('open') }
+
+  trigger.addEventListener('click', () => (panel.classList.contains('open') ? close() : open()))
+  search.addEventListener('input', draw)
+  search.addEventListener('keydown', (e) => {
+    const r = rows()
+    if (e.key === 'Escape') { close(); trigger.focus(); return }
+    if (!r.length) return
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      e.preventDefault()
+      active = (active + (e.key === 'ArrowDown' ? 1 : -1) + r.length) % r.length
+      r.forEach((x, i) => x.classList.toggle('active', i === active))
+      r[active].scrollIntoView({ block: 'nearest' })
+    } else if (e.key === 'Enter') {
+      e.preventDefault()
+      r[Math.max(active, 0)]?.dispatchEvent(new MouseEvent('mousedown'))
+    }
+  })
+  // Клик мимо закрывает — иначе панель висит поверх соседних карточек.
+  document.addEventListener('mousedown', (e) => { if (!node.contains(e.target)) close() })
+
+  return {
+    node,
+    value,
+    /** Заменить список. Прежний выбор сбрасывается: он относился к другой зависимости. */
+    setOptions(list_) {
+      options = list_
+      value.value = ''
+      trigger.disabled = false
+      setFace(null)
+      face.textContent = list_.length ? `— select (${list_.length}) —` : 'nothing to choose from'
+      draw()
+    },
+    /** Показать состояние вместо списка: «сначала выбери модуль», «loading…», ошибка. */
+    setState(text, disabled = true) {
+      options = []
+      value.value = ''
+      trigger.disabled = disabled
+      setFace(null)
+      face.textContent = text
+      close()
+    },
+  }
+}
+
+function schemaForm(schema, toolName = '') {
+  const props = schema?.properties || {}
+  const req = new Set(schema.required || [])
+  const wrap = el('div', { class: 'fields' })
+  const inputs = {}
+  const dynamic = []
+  for (const [name, p] of Object.entries(props)) {
+    const dyn = DYNAMIC[`${toolName}.${name}`]
+    let input
+    let extra = null
+    if (p.enum) {
+      input = el('select', {}, el('option', { value: '' }, '—'), p.enum.map((v) => el('option', { value: JSON.stringify(v) }, String(v))))
+      if (p.default !== undefined) input.value = JSON.stringify(p.default)
+    } else if (dyn) {
+      // Значения этого поля нельзя перечислить схемой — они зависят от соседнего поля,
+      // поэтому список наполняется живым запросом при каждой смене зависимости.
+      const pk = picker(dyn.empty)
+      input = pk.value
+      extra = pk.node
+      dynamic.push({ name, dyn, pk })
+    } else if (p.type === 'boolean') {
+      input = el('select', {}, el('option', { value: '' }, '—'), el('option', { value: 'true' }, 'true'), el('option', { value: 'false' }, 'false'))
+    } else if (p.type === 'object' || p.type === 'array') {
+      input = el('textarea', { rows: p.type === 'object' ? 5 : 2, placeholder: p.type === 'object' ? '{ }' : '["a","b"]' })
+    } else if (p.type === 'integer' || p.type === 'number') {
+      input = el('input', { type: 'number', placeholder: p.default !== undefined ? String(p.default) : '' })
+    } else {
+      input = el('input', { type: 'text', placeholder: p.examples?.[0] ?? '' })
+    }
+    inputs[name] = { input, schema: p }
+    wrap.append(el('div', { class: 'f' },
+      el('label', {}, name, req.has(name) ? el('span', { class: 'req' }, ' *') : null,
+        el('span', { style: 'font-weight:400;color:var(--muted)' }, '  ' + typeOf(p))),
+      // У зависимого поля видимая часть — виджет; сам input скрыт внутри него.
+      dyn ? extra : input,
+      p.description ? el('div', { class: 'hint' }, p.description.slice(0, 190)) : null))
+  }
+
+  // Зависимые поля перестраиваем при смене того поля, от которого они зависят.
+  for (const d of dynamic) {
+    const src = inputs[d.dyn.dependsOn]?.input
+    if (!src) continue
+    const refresh = async () => {
+      const raw = src.value.trim()
+      // Значение enum-поля приезжает в JSON-виде ("module") — разворачиваем.
+      let dep = raw
+      try { dep = JSON.parse(raw) } catch { /* обычная строка */ }
+      if (!dep) { d.pk.setState(d.dyn.empty); return }
+      d.pk.setState('loading…')
+      try {
+        d.pk.setOptions(await d.dyn.options(dep))
+      } catch {
+        // Список не загрузился — говорим об этом в самом поле, а не молча пустым списком.
+        d.pk.setState('could not load the list — reload the page')
+      }
+    }
+    src.addEventListener('change', refresh)
+    src.addEventListener('input', refresh)
+    refresh()
+  }
+  /** Собрать значения: пустое поле = «не передавать», а не «передать пустое». */
+  const read = () => {
+    const out = {}
+    for (const [name, { input, schema: p }] of Object.entries(inputs)) {
+      const raw = input.value.trim()
+      if (!raw) continue
+      if (p.enum) out[name] = JSON.parse(raw)
+      else if (p.type === 'boolean') out[name] = raw === 'true'
+      else if (p.type === 'integer' || p.type === 'number') out[name] = Number(raw)
+      else if (p.type === 'object' || p.type === 'array') out[name] = JSON.parse(raw)
+      else out[name] = raw
+    }
+    return out
+  }
+  return { wrap, read, inputs }
+}
+
+/** Панель «запрос → ответ»: показываем ровно то, что ушло и что вернулось. */
+/**
+ * Показать ответ. Два режима, и это не украшение.
+ *
+ * Спецификация просит инструмент, вернувший `structuredContent`, продублировать его же
+ * сериализованной строкой в `content[0].text` — ради клиентов, которые о структурном
+ * поле не знают. Ответ из-за этого ровно вдвое больше, а в панели одно и то же читается
+ * дважды. `compact` схлопывает дубль в пометку; `raw` показывает провод как есть.
+ */
+function renderResponse(body, compact) {
+  if (!compact || !body?.result) return j(body)
+  const r = body.result
+  if (!r.structuredContent || !Array.isArray(r.content)) return j(body)
+  const shown = {
+    ...body,
+    result: {
+      ...r,
+      content: r.content.map((c) => (c.type === 'text' && c.text
+        ? { type: 'text', text: `⟨${c.text.length} chars — same payload as structuredContent, duplicated per spec; switch to raw to see it⟩` }
+        : c)),
+    },
+  }
+  return j(shown)
+}
+
+/**
+ * Положить текст в буфер обмена.
+ *
+ * `navigator.clipboard` требует защищённый контекст. localhost таковым считается, а вот
+ * страница, открытая по http с другого хоста, — нет, и без запасного пути кнопка молча
+ * ничего не делала бы. Поэтому fallback через временный textarea.
+ */
+async function copyText(text) {
+  try {
+    await navigator.clipboard.writeText(text)
+    return true
+  } catch {
+    const ta = el('textarea', { style: 'position:fixed;opacity:0;pointer-events:none' })
+    ta.value = text
+    document.body.append(ta)
+    ta.select()
+    const ok = document.execCommand?.('copy')
+    ta.remove()
+    return !!ok
+  }
+}
+
+/** Кнопка копирования в шапке блока. Текст берётся функцией — на момент нажатия. */
+function copyButton(getText, title) {
+  const b = el('button', {
+    class: 'ghost',
+    style: 'padding:1px 7px;font-size:10.5px',
+    title: title || 'Copy to clipboard',
+    onclick: async () => {
+      const ok = await copyText(getText())
+      b.textContent = ok ? 'copied' : 'failed'
+      setTimeout(() => { b.textContent = 'copy' }, 1200)
+    },
+  }, 'copy')
+  return b
+}
+
+/** Заглушка пустого блока и проверка на неё: копировать прочерк нечего. */
+const EMPTY = '—'
+const isBlank = (node) => { const t = node.textContent.trim(); return !t || t === EMPTY }
+
+function ioPanel() {
+  const reqPre = el('pre', {}, EMPTY)
+  const resPre = el('pre', {}, EMPTY)
+  const statusTag = el('span', {})
+  let last = null
+  let compact = true
+
+  const paint = () => { resPre.textContent = last === null ? EMPTY : renderResponse(last, compact) }
+  const toggle = el('button', {
+    class: 'ghost',
+    style: 'padding:1px 7px;font-size:10.5px;margin-left:auto',
+    onclick: () => { compact = !compact; toggle.textContent = compact ? 'compact' : 'raw'; paint() },
+  }, 'compact')
+
+  // Копируем ПОЛНЫЙ ответ, а не показанный: в режиме compact на экране стоит маркер
+  // ⟨…⟩ вместо данных, и вставлять его куда-либо бессмысленно.
+  const copyRes = copyButton(
+    () => (last === null ? resPre.textContent : j(last)),
+    'Copy the full response, including the part collapsed in compact view',
+  )
+  const copyReq = copyButton(() => reqPre.textContent, 'Copy the request: headers and JSON-RPC body')
+
+  /**
+   * Пока запрос не отправлен, копировать и переключать нечего: в блоке стоит прочерк.
+   * Активная кнопка, которая кладёт в буфер «—», выглядит как сработавшая — и человек
+   * узнаёт об этом уже при вставке.
+   */
+  const syncButtons = () => {
+    copyReq.disabled = isBlank(reqPre)
+    copyRes.disabled = isBlank(resPre)
+    toggle.disabled = last === null
+  }
+
+  const node = el('div', { class: 'io' },
+    el('div', {}, el('div', { class: 'ttl' }, 'Request', el('span', { style: 'margin-left:auto' }), copyReq), reqPre),
+    el('div', {}, el('div', { class: 'ttl' }, 'Response', statusTag, toggle, copyRes), resPre))
+
+  syncButtons()
+
+  return {
+    node,
+    statusTag,
+    /** Панель запроса: заголовки + тело. */
+    set request(v) { reqPre.textContent = v; syncButtons() },
+    /** Текст как есть — для сообщений об ошибках ввода и промптов. */
+    set text(v) { last = null; resPre.textContent = v; syncButtons() },
+    /** Ответ протокола: показывается по текущему режиму. */
+    setBody(body) { last = body; paint(); syncButtons() },
+  }
+}
+
+const statusTag = (code) => el('span', { class: 'tag ' + (code < 300 ? 'ok' : code < 500 ? 'warn' : 'danger') }, 'HTTP ' + code)
+
+// ── секции ───────────────────────────────────────────────────────────────────
+
+function sectionOverview() {
+  const m = S.manifest, mcp = m.mcp
+  const s = el('section', { id: 'overview' },
+    el('h2', {}, 'Overview'),
+    el('p', { class: 'lead' },
+      'This server exposes the Murmex platform to an AI orchestrator over the Model Context Protocol. '
+      + 'It runs bulk operations on managed Telegram accounts: AI comments, DMs, dialogs, reactions, views, '
+      + 'posting, channel and audience parsing, account warm-up and diagnostics.'),
+    el('div', { class: 'grid2' },
+      el('div', { class: 'card' },
+        el('h4', {}, 'Endpoint'),
+        el('dl', { class: 'kv' },
+          el('dt', {}, 'MCP'), el('dd', {}, 'POST ' + mcp.endpoint),
+          el('dt', {}, 'Resource'), el('dd', {}, mcp.resource),
+          el('dt', {}, 'Transport'), el('dd', {}, mcp.transport),
+          el('dt', {}, 'Auth'), el('dd', {}, mcp.auth.scheme),
+          el('dt', {}, 'Metadata'), el('dd', {}, mcp.auth.resourceMetadata))),
+      el('div', { class: 'card' },
+        el('h4', {}, 'Live counts'),
+        el('dl', { class: 'kv' },
+          el('dt', {}, 'Tools'), el('dd', {}, m.tools.length),
+          el('dt', {}, 'Prompts'), el('dd', {}, m.prompts.length),
+          el('dt', {}, 'Resources'), el('dd', {}, S.resources.length),
+          el('dt', {}, 'Modules'), el('dd', {}, m.coverage.described + ' described / ' + m.coverage.total),
+          el('dt', {}, 'Services'), el('dd', {}, S.caps?.services?.length ?? '—')))),
+    el('h3', {}, 'Server instructions'),
+    el('p', { class: 'lead' }, 'The text every connecting model reads before its first call. It is served by both '
+      + 'server/discover and initialize.'),
+    el('pre', {}, S.discover?.instructions || '—'))
+  return s
+}
+
+function sectionConnect() {
+  const base = location.origin
+  const cfg = j({
+    mcpServers: {
+      murmex: { type: 'http', url: base + '/api/v1/mcp', headers: { Authorization: 'Bearer ${MURMEX_API_KEY}' } },
+    },
+  })
+  const curl = 'curl -X POST ' + base + '/api/v1/mcp \\\n'
+    + '  -H "Authorization: Bearer $MURMEX_API_KEY" \\\n'
+    + '  -H "Content-Type: application/json" \\\n'
+    + '  -H "Accept: application/json, text/event-stream" \\\n'
+    + '  -H "MCP-Protocol-Version: ' + MODERN + '" \\\n'
+    + '  -H "Mcp-Method: tools/list" \\\n'
+    + "  -d '" + JSON.stringify(envelope('tools/list')) + "'"
+  return el('section', { id: 'connect' },
+    el('h2', {}, 'Connect a client'),
+    el('p', { class: 'lead' }, 'Any MCP client that speaks Streamable HTTP can connect. The key is the service key '
+      + 'from the server environment (MURMEX_API_KEY) — it is not issued from the admin panel.'),
+    el('h3', {}, 'Client configuration'),
+    el('pre', {}, cfg),
+    el('h3', {}, 'Raw curl'),
+    el('p', { class: 'lead' }, 'Note the transport headers: the protocol version and the method name are mirrored '
+      + 'from the body so intermediaries can route without parsing it. The server checks that they agree.'),
+    el('pre', {}, curl))
+}
+
+function sectionProtocol() {
+  const mcp = S.manifest.mcp
+  // Консоль строим ПЕРВОЙ: таблица методов держит на неё ссылку, чтобы кнопка Run
+  // заряжала и запускала именно её, а не открывала вторую.
+  const console_ = rawConsole()
+  const errRows = [
+    ['-32700', 'Parse error', 'Body is not valid JSON.'],
+    ['-32600', 'Invalid request', 'Not a single JSON-RPC 2.0 message. Batches are not part of the protocol.'],
+    ['-32601', 'Method not found', 'HTTP 404 in the modern era, so a client can tell a modern server from a legacy one.'],
+    ['-32602', 'Invalid params', 'Also used for "resource not found" — the old -32002 is forbidden since 2026-07-28.'],
+    ['-32603', 'Internal error', 'A genuine server fault. Tool failures are NOT reported this way.'],
+    ['-32020', 'HeaderMismatch', 'Mcp-Method / Mcp-Name / MCP-Protocol-Version disagree with the body. HTTP 400.'],
+    ['-32021', 'MissingRequiredClientCapability', 'The request needs a capability the client did not declare. HTTP 400.'],
+    ['-32022', 'UnsupportedProtocolVersion', 'data.supported lists what to retry with. HTTP 400.'],
+  ]
+  return el('section', { id: 'protocol' },
+    el('h2', {}, 'Protocol'),
+    el('p', { class: 'lead' }, 'The server is dual-era: it speaks the current handshake-less revision and the older '
+      + 'initialize-based ones on the same endpoint, so already-connected clients keep working.'),
+    el('div', { class: 'card' },
+      el('h4', {}, 'Supported versions'),
+      el('p', { class: 'desc' },
+        el('span', { class: 'tag info' }, 'modern'), ' ',
+        ...mcp.modernVersions.map((v) => el('span', { class: 'pill', style: 'margin-right:6px' }, v)),
+        el('br'), el('br'),
+        el('span', { class: 'tag mute' }, 'legacy'), ' ',
+        ...mcp.legacyVersions.map((v) => el('span', { class: 'pill', style: 'margin-right:6px' }, v)))),
+    el('table', {},
+      el('thead', {}, el('tr', {}, el('th', {}, ''), el('th', {}, 'Modern (' + mcp.modernVersions[0] + ')'), el('th', {}, 'Legacy (' + mcp.legacyVersions[0] + ' and older)'))),
+      el('tbody', {},
+        [['Opening', 'nothing required; server/discover is optional', 'initialize + notifications/initialized'],
+         ['Version', '_meta["io.modelcontextprotocol/protocolVersion"] on every request', 'once, in initialize'],
+         ['Client capabilities', '_meta["…/clientCapabilities"], required', 'once, in initialize'],
+         ['Server identity', '_meta["…/serverInfo"] in every result', 'serverInfo in the initialize result'],
+         ['Result shape', 'resultType: "complete" on every result', 'no such field'],
+         ['Error status', '400 / 404 per spec', '200 with the error in the body'],
+         ['ping', 'removed', 'works'],
+         ['Sessions, GET stream, Last-Event-ID', 'do not exist', 'never used here'],
+        ].map((r) => el('tr', {}, r.map((c, i) => el('td', i === 0 ? {} : { class: 'mono' }, c)))))),
+    el('h3', {}, 'Methods'),
+    el('p', { class: 'lead' }, 'Every method this server answers, what it is for, and which era it belongs to. '
+      + 'Run ↓ loads the call into the console at the bottom of this section and sends it — including the legacy '
+      + 'ones, which need the handshake era to work at all. forms → jumps to the section where that method has '
+      + 'ready-made forms per tool, resource or prompt.'),
+    methodsTable(console_),
+    el('h3', {}, 'Error codes'),
+    el('p', { class: 'lead' }, 'The range −32020…−32099 belongs to the specification: an implementation may not invent '
+      + 'codes there. A tool that fails for a reason the model can fix returns isError: true instead — not an error code.'),
+    el('table', {},
+      el('thead', {}, el('tr', {}, el('th', {}, 'Code'), el('th', {}, 'Name'), el('th', {}, 'Meaning'))),
+      el('tbody', {}, errRows.map((r) => el('tr', {},
+        el('td', { class: 'mono' }, r[0]), el('td', { class: 'mono' }, r[1]), el('td', {}, r[2]))))),
+    el('h3', {}, 'Console'),
+    el('p', { class: 'lead' }, 'Any method, any era, arbitrary params. The request pane shows the transport headers '
+      + 'as well as the body — they are part of the contract, and the server rejects them when they disagree.'),
+    console_.node)
+}
+
+/**
+ * Каждый метод протокола: зачем он, в какой эре живёт и чем его попробовать.
+ *
+ * Раньше здесь стояло голое перечисление через точку — по нему нельзя было ни понять,
+ * что метод делает, ни проверить его. `params` подобраны так, чтобы кнопка «Run» давала
+ * осмысленный ответ сразу, без правки полей.
+ */
+const METHODS = [
+  {
+    name: 'server/discover', era: 'modern', params: {},
+    what: 'Supported protocol versions, capabilities, server identity and the instructions text — in one call. '
+      + 'Mandatory in 2026-07-28 and the only method that works without a version in _meta: otherwise you could '
+      + 'not discover which versions exist.',
+  },
+  {
+    name: 'tools/list', era: 'modern', params: {}, goto: '#tools',
+    what: 'Every tool with its input schema, output schema and behaviour annotations. Paginated and cacheable '
+      + '(ttlMs / cacheScope). This is what a client turns into the model\'s tool set.',
+  },
+  {
+    name: 'tools/call', era: 'modern', params: { name: 'list_modules', arguments: {} }, goto: '#tools',
+    what: 'Invoke one tool. A tool that fails for a reason the model can fix answers isError: true with text — '
+      + 'not a protocol error. Unknown tool name is the opposite: that is a protocol error.',
+  },
+  {
+    name: 'resources/list', era: 'modern', params: {}, goto: '#resources',
+    what: 'The catalogue of module descriptions and per-block help. Paginated — walk nextCursor to the end or you '
+      + 'will silently see only the first page.',
+  },
+  {
+    name: 'resources/templates/list', era: 'modern', params: {}, goto: '#resources',
+    what: 'URI templates, so a client can build an address itself instead of paging through the whole catalogue.',
+  },
+  {
+    name: 'resources/read', era: 'modern', params: { uri: 'murmex://module/neuro-commenting' }, goto: '#resources',
+    what: 'Read one resource by URI. An unknown URI answers −32602 with the valid URI forms — never the −32002 '
+      + 'that earlier revisions used and this one forbids.',
+  },
+  {
+    name: 'prompts/list', era: 'modern', params: {}, goto: '#prompts',
+    what: 'The ready-made procedures and the arguments each one takes.',
+  },
+  {
+    name: 'prompts/get', era: 'modern', goto: '#prompts',
+    params: { name: 'plan_campaign', arguments: { goal: '50 warm leads from crypto channels' } },
+    what: 'One prompt with the arguments substituted, as messages a client can hand straight to the model.',
+  },
+  {
+    name: 'initialize', era: 'legacy', params: { protocolVersion: '2025-11-25', capabilities: {}, clientInfo: { name: 'murmex-docs', version: '1.0.0' } },
+    what: 'The old handshake: negotiates a version and returns capabilities, serverInfo and instructions. Sent with '
+      + 'modern _meta it answers METHOD_NOT_FOUND and points at server/discover — press Run to see exactly that.',
+  },
+  {
+    name: 'ping', era: 'legacy', params: {},
+    what: 'Liveness probe. Removed in 2026-07-28 — a modern client gets METHOD_NOT_FOUND and should use '
+      + 'server/discover instead. Still answered for older clients so they do not break.',
+  },
+  {
+    name: 'notifications/initialized', era: 'legacy', params: {}, notification: true,
+    what: 'One-way client message (also notifications/cancelled, notifications/progress). Answered with HTTP 202 '
+      + 'and no body at all — that empty response is correct, not a failure.',
+  },
+]
+
+/** Таблица методов; кнопка Run заряжает и запускает консоль ниже. */
+function methodsTable(console_) {
+  return el('table', {},
+    el('thead', {}, el('tr', {},
+      el('th', {}, 'Method'), el('th', {}, 'Era'), el('th', {}, 'What it is for'), el('th', {}, 'Try it'))),
+    el('tbody', {}, METHODS.map((m) => el('tr', {},
+      el('td', { class: 'mono' }, m.name),
+      el('td', {}, el('span', { class: 'tag ' + (m.era === 'modern' ? 'info' : 'mute') }, m.era)),
+      el('td', {}, m.what),
+      el('td', { style: 'white-space:nowrap' },
+        el('button', {
+          class: 'ghost',
+          onclick: () => console_.load(m.name, m.params, m.era, true),
+        }, 'Run ↓'),
+        // Ссылка в раздел, где у метода есть готовые формы: у tools/call это карточки
+        // инструментов, у resources и prompts — свои разделы.
+        m.goto ? el('a', { href: m.goto, style: 'margin-left:8px;font-size:12px' }, 'forms →') : null))))
+  )
+}
+
+/** Свободный вызов любого метода — то, чего не покрывают формы инструментов. */
+function rawConsole() {
+  const methodSel = el('select', {}, METHODS.map((m) => el('option', { value: m.name }, m.name)))
+  const eraSel = el('select', {},
+    el('option', { value: 'modern' }, 'modern — per-request _meta (' + MODERN + ')'),
+    el('option', { value: 'legacy' }, 'legacy — handshake era, no _meta'))
+  const paramsTa = el('textarea', { rows: 4 }, '{}')
+  const io = ioPanel()
+  const run = el('button', {}, 'Send')
+
+  const send = async () => {
+    let params
+    try { params = JSON.parse(paramsTa.value || '{}') } catch { io.text = 'params is not valid JSON'; return }
+    run.disabled = true
+    try {
+      const r = await rpc(methodSel.value, params, eraSel.value)
+      io.request = 'POST /api/v1/mcp\n' + j(shownHeaders(r.headers)) + '\n\n' + j(r.request)
+      io.setBody(r.body)
+      io.statusTag.replaceChildren(statusTag(r.status),
+        el('span', { class: 'tag ' + (r.era === 'modern' ? 'info' : 'mute') }, r.era))
+    } finally { run.disabled = false }
+  }
+  run.addEventListener('click', send)
+
+  const node = el('div', { class: 'card', id: 'console' },
+    el('div', { class: 'fields' },
+      el('div', { class: 'f' }, el('label', {}, 'method'), methodSel),
+      el('div', { class: 'f' }, el('label', {}, 'era'), eraSel,
+        el('div', { class: 'hint' }, 'legacy omits _meta and the Mcp-* headers — that is how initialize and ping are reachable at all.')),
+      el('div', { class: 'f' }, el('label', {}, 'params (JSON; _meta is added automatically in modern era)'), paramsTa)),
+    el('div', { class: 'bar' }, run),
+    io.node)
+
+  /** Зарядить консоль из таблицы методов и, по желанию, сразу выполнить. */
+  const load = (method, params, era, autorun) => {
+    methodSel.value = method
+    eraSel.value = era === 'legacy' ? 'legacy' : 'modern'
+    paramsTa.value = j(params || {})
+    node.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    if (autorun) send()
+  }
+  return { node, load }
+}
+
+function toolCard(t) {
+  const a = t.annotations || {}
+  const badges = []
+  if (a.readOnlyHint) badges.push(el('span', { class: 'tag ok' }, 'read-only'))
+  if (a.destructiveHint) badges.push(el('span', { class: 'tag danger' }, 'destructive'))
+  if (a.idempotentHint) badges.push(el('span', { class: 'tag mute' }, 'idempotent'))
+  if (a.openWorldHint) badges.push(el('span', { class: 'tag warn' }, 'open world'))
+
+  const form = schemaForm(t.inputSchema, t.name)
+  const io = ioPanel()
+  const run = el('button', { class: a.destructiveHint ? 'danger' : '' }, a.destructiveHint ? 'Run — real action' : 'Run')
+
+  run.addEventListener('click', async () => {
+    let args
+    try { args = form.read() } catch (e) { io.text = 'Invalid input: ' + e.message; return }
+    // Разрушающий инструмент публикует в Telegram и списывает деньги. Спрашиваем.
+    if (a.destructiveHint && !confirm(
+      t.name + ' performs REAL, irreversible actions: it publishes to Telegram from live accounts and debits the '
+      + 'balance. Nothing here can be undone. Run it?')) return
+    run.disabled = true
+    try {
+      const r = await rpc('tools/call', { name: t.name, arguments: args })
+      io.request = 'POST /api/v1/mcp\n' + j(shownHeaders(r.headers)) + '\n\n' + j(r.request)
+      const res = r.body?.result
+      io.setBody(r.body)
+      io.statusTag.replaceChildren(statusTag(r.status),
+        res?.isError ? el('span', { class: 'tag danger' }, 'isError') : el('span', { class: 'tag ok' }, 'ok'))
+    } finally { run.disabled = false }
+  })
+
+  return el('div', { class: 'card', id: 'tool-' + t.name },
+    el('h4', {}, el('span', { class: 'mono' }, t.name), badges),
+    el('p', { class: 'desc' }, t.description),
+    el('h3', { style: 'font-size:13px;margin:12px 0 2px' }, 'Input'),
+    schemaTable(t.inputSchema),
+    t.outputSchema ? el('details', {}, el('summary', {}, 'Output schema'), schemaTable(t.outputSchema)) : null,
+    el('details', {}, el('summary', {}, 'Raw JSON Schema'), el('pre', {}, j({ inputSchema: t.inputSchema, outputSchema: t.outputSchema }))),
+    el('div', { class: 'runner' }, form.wrap, el('div', { class: 'bar' }, run), io.node))
+}
+
+function sectionTools() {
+  const filter = el('input', { placeholder: 'filter tools…', class: 'filter' })
+  const list = el('div', {})
+  const draw = () => {
+    const q = filter.value.toLowerCase()
+    list.replaceChildren(...S.manifest.tools
+      .filter((t) => !q || (t.name + ' ' + t.description).toLowerCase().includes(q))
+      .map(toolCard))
+  }
+  filter.addEventListener('input', draw)
+  draw()
+  return el('section', { id: 'tools' },
+    el('h2', {}, 'Tools'),
+    el('p', { class: 'lead' }, 'The full tool set as the server declares it. Every tool has an input schema, an output '
+      + 'schema and behaviour annotations. Fill a form and press Run to send a real tools/call and see the exact '
+      + 'request and response.'),
+    el('div', { class: 'note danger' },
+      el('b', {}, 'create_task is marked destructive on purpose. '),
+      'It publishes to Telegram from live accounts and debits the balance, and nothing it does can be undone — '
+      + 'not even by stop_task. Always run validate_task first.'),
+    filter, list)
+}
+
+function sectionCapabilities() {
+  const rows = [
+    ['GET', '/api/v1/capabilities', 'Everything: modules + services + the key owner'],
+    ['GET', '/api/v1/capabilities/modules', 'Campaign modules only'],
+    ['GET', '/api/v1/capabilities/services', 'Platform subsystems only'],
+    ['GET', '/api/v1/capabilities/user', 'The user this key acts as'],
+    ['GET', '/api/v1/capabilities/users', 'All users (admin or service key only)'],
+  ]
+  const io = ioPanel()
+  const pathIn = el('input', { value: '/api/v1/capabilities/services' })
+  const run = el('button', {}, 'GET')
+  run.addEventListener('click', async () => {
+    run.disabled = true
+    try {
+      const r = await rest(pathIn.value.trim())
+      io.request = 'GET ' + pathIn.value.trim() + '\n' + j({ authorization: 'Bearer ***' })
+      io.setBody(r.body)
+      io.statusTag.replaceChildren(statusTag(r.status))
+    } finally { run.disabled = false }
+  })
+
+  const svc = S.caps?.services || []
+  return el('section', { id: 'capabilities' },
+    el('h2', {}, 'Capabilities'),
+    el('p', { class: 'lead' }, 'What this key may actually touch, in four slices. Every capability carries an '
+      + 'access field computed for the key owner, with the reason — allowed: false is a permission fact, not a '
+      + 'transient failure, so there is nothing to retry.'),
+    el('table', {},
+      el('thead', {}, el('tr', {}, el('th', {}, 'Method'), el('th', {}, 'Path'), el('th', {}, 'Returns'))),
+      el('tbody', {}, rows.map((r) => el('tr', {},
+        el('td', { class: 'mono' }, r[0]),
+        el('td', { class: 'mono' }, el('a', { href: '#', onclick: (e) => { e.preventDefault(); pathIn.value = r[1]; run.click() } }, r[1])),
+        el('td', {}, r[2]))))),
+    el('p', { class: 'lead' }, 'One capability of any kind: ',
+      el('code', {}, 'GET /api/v1/capabilities/{modules|services|users}/{id}'),
+      ' — use ', el('code', {}, 'me'), ' as the user id for the key owner. Over MCP the same data comes from ',
+      el('code', {}, 'list_capabilities'), ' and ', el('code', {}, 'describe_capability'), '.'),
+    el('h3', {}, 'Services on this server'),
+    el('table', {},
+      el('thead', {}, el('tr', {}, el('th', {}, 'Key'), el('th', {}, 'Section'), el('th', {}, 'Allowed'), el('th', {}, 'What it is'))),
+      el('tbody', {}, svc.map((s) => el('tr', {},
+        el('td', { class: 'mono' }, s.key),
+        el('td', { class: 'mono' }, s.section || '—'),
+        el('td', {}, el('span', { class: 'tag ' + (s.access.allowed ? 'ok' : 'mute') }, s.access.allowed ? 'yes' : 'no')),
+        el('td', {}, s.summary))))),
+    el('h3', {}, 'Try it'),
+    el('div', { class: 'card' },
+      el('div', { class: 'f' }, el('label', {}, 'path'), pathIn),
+      el('div', { class: 'bar' }, run), io.node))
+}
+
+function sectionModules() {
+  const mods = (S.caps?.modules || []).slice()
+  const sel = el('select', {}, mods.map((m) => el('option', { value: m.key }, m.key + ' — ' + m.title)))
+  const out = el('div', {})
+  const load = async () => {
+    out.replaceChildren(el('p', { class: 'lead' }, 'loading…'))
+    const r = await rpc('tools/call', { name: 'describe_module', arguments: { module: sel.value } })
+    const d = r.body?.result?.structuredContent
+    if (!d) { out.replaceChildren(el('pre', {}, j(r.body))); return }
+    out.replaceChildren(
+      el('div', { class: 'card' },
+        el('h4', {}, d.title,
+          el('span', { class: 'tag info' }, 'v' + d.version),
+          el('span', { class: 'tag mute' }, d.params.length + ' params'),
+          // Тратит ли модуль токены модели: прямой вход в оценку стоимости.
+          el('span', { class: 'tag ' + (d.usesAi ? 'warn' : 'mute') }, d.usesAi ? 'uses AI · token cost' : 'no AI · action price only')),
+        el('p', { class: 'desc' }, d.whoAmI.summary),
+        el('div', { class: 'grid2', style: 'margin-top:10px' },
+          el('div', {}, el('div', { class: 'ttl', style: 'font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase' }, 'Does'),
+            el('ul', { style: 'margin:4px 0;padding-left:18px;font-size:13px' }, d.whoAmI.does.map((x) => el('li', {}, x)))),
+          el('div', {}, el('div', { class: 'ttl', style: 'font-size:11px;font-weight:700;color:var(--danger);text-transform:uppercase' }, 'Does NOT'),
+            el('ul', { style: 'margin:4px 0;padding-left:18px;font-size:13px' }, d.whoAmI.doesNot.map((x) => el('li', {}, x))))),
+        el('p', { class: 'desc' }, el('b', {}, 'Requires: '), d.whoAmI.requires.join('; ')),
+        el('p', { class: 'desc' }, el('b', {}, 'Risks: '), d.whoAmI.risks),
+        el('p', { class: 'desc' }, el('b', {}, 'Cost: '), d.whoAmI.costModel)),
+      el('h3', {}, 'Parameters'),
+      schemaTable(d.inputSchema),
+      el('details', {}, el('summary', {}, 'Blocks (' + d.blocks.length + ')'),
+        el('table', {}, el('thead', {}, el('tr', {}, el('th', {}, 'Block'), el('th', {}, 'Fills'), el('th', {}, 'How it works'))),
+          el('tbody', {}, d.blocks.map((b) => el('tr', {},
+            el('td', { class: 'mono' }, b.id),
+            el('td', { class: 'mono' }, (b.api?.fills || []).join(', ') || '—'),
+            el('td', {}, b.howItWorks)))))),
+      d.presets.length ? el('details', {}, el('summary', {}, 'Presets (' + d.presets.length + ')'), el('pre', {}, j(d.presets))) : null,
+      d.examples.length ? el('details', {}, el('summary', {}, 'Ready-made examples (' + d.examples.length + ')'), el('pre', {}, j(d.examples))) : null,
+      el('details', {}, el('summary', {}, 'Raw descriptor JSON'), el('pre', {}, j(d))))
+  }
+  sel.addEventListener('change', load)
+  const s = el('section', { id: 'modules' },
+    el('h2', {}, 'Modules'),
+    el('p', { class: 'lead' }, 'The single source of truth for each module is its descriptor. Everything below — the '
+      + 'parameter list, the limits, the presets — is generated from it and checked against the worker code by a '
+      + 'contract test, so it cannot promise a field the module does not read.'),
+    el('div', { class: 'card' }, el('div', { class: 'f' }, el('label', {}, 'module'), sel)),
+    out)
+  load()
+  return s
+}
+
+function sectionResources() {
+  const io = ioPanel()
+  const uriIn = el('input', { value: S.resources[0]?.uri || 'murmex://module/neuro-commenting' })
+  const run = el('button', {}, 'Read')
+  run.addEventListener('click', async () => {
+    run.disabled = true
+    try {
+      const r = await rpc('resources/read', { uri: uriIn.value.trim() })
+      io.request = 'POST /api/v1/mcp\n' + j(shownHeaders(r.headers)) + '\n\n' + j(r.request)
+      io.setBody(r.body)
+      io.statusTag.replaceChildren(statusTag(r.status))
+    } finally { run.disabled = false }
+  })
+  const filter = el('input', { placeholder: 'filter ' + S.resources.length + ' resources…', class: 'filter' })
+  const list = el('tbody', {})
+  const draw = () => {
+    const q = filter.value.toLowerCase()
+    list.replaceChildren(...S.resources.filter((r) => !q || r.uri.toLowerCase().includes(q)).slice(0, 200).map((r) =>
+      el('tr', {},
+        el('td', { class: 'mono' }, el('a', { href: '#', onclick: (e) => { e.preventDefault(); uriIn.value = r.uri; run.click() } }, r.uri)),
+        el('td', {}, r.description || r.title))))
+  }
+  filter.addEventListener('input', draw)
+  draw()
+  return el('section', { id: 'resources' },
+    el('h2', {}, 'Resources'),
+    el('p', { class: 'lead' }, 'Module descriptions and per-block help, addressable as resources. The list is '
+      + 'paginated by the server; this page walks every page.'),
+    el('h3', {}, 'URI templates'),
+    el('table', {}, el('thead', {}, el('tr', {}, el('th', {}, 'Template'), el('th', {}, 'What it gives'))),
+      el('tbody', {}, (S.manifest.resourceTemplates || []).map((t) => el('tr', {},
+        el('td', { class: 'mono' }, t.uriTemplate), el('td', {}, t.description))))),
+    el('h3', {}, 'Read one'),
+    el('div', { class: 'card' }, el('div', { class: 'f' }, el('label', {}, 'uri'), uriIn), el('div', { class: 'bar' }, run), io.node),
+    el('h3', {}, 'Catalogue'),
+    filter,
+    el('table', {}, el('thead', {}, el('tr', {}, el('th', {}, 'URI'), el('th', {}, 'Description'))), list))
+}
+
+function sectionPrompts() {
+  const out = el('div', {})
+  out.replaceChildren(...S.manifest.prompts.map((p) => {
+    const schema = { properties: Object.fromEntries((p.arguments || []).map((a) => [a.name, { type: 'string', description: a.description }])),
+      required: (p.arguments || []).filter((a) => a.required).map((a) => a.name) }
+    const form = schemaForm(schema)
+    const io = ioPanel()
+    const run = el('button', {}, 'Get prompt')
+    run.addEventListener('click', async () => {
+      run.disabled = true
+      try {
+        const r = await rpc('prompts/get', { name: p.name, arguments: form.read() })
+        io.request = 'POST /api/v1/mcp\n' + j(shownHeaders(r.headers)) + '\n\n' + j(r.request)
+        const msgs = r.body?.result?.messages
+        // Промпт показываем текстом: его читает человек, а не парсер.
+        if (msgs) io.text = msgs.map((m) => '[' + m.role + ']\n' + m.content.text).join('\n\n')
+        else io.setBody(r.body)
+        io.statusTag.replaceChildren(statusTag(r.status))
+      } finally { run.disabled = false }
+    })
+    return el('div', { class: 'card' },
+      el('h4', {}, el('span', { class: 'mono' }, p.name), el('span', { class: 'tag mute' }, p.title)),
+      el('p', { class: 'desc' }, p.description),
+      el('div', { class: 'runner' }, form.wrap, el('div', { class: 'bar' }, run), io.node))
+  }))
+  return el('section', { id: 'prompts' },
+    el('h2', {}, 'Prompts'),
+    el('p', { class: 'lead' }, 'Ready-made procedures that keep a model from spending money on an invalid task. '
+      + 'Fill the arguments and press Get prompt to see the exact text a client would receive.'),
+    out)
+}
+
+function sectionAuth() {
+  return el('section', { id: 'auth' },
+    el('h2', {}, 'Authorization'),
+    el('p', { class: 'lead' }, 'Every request carries a bearer key. A rejected request answers 401 with a '
+      + 'WWW-Authenticate challenge pointing at the RFC 9728 metadata document, so a client can discover the '
+      + 'resource without being told out of band.'),
+    el('pre', {}, 'HTTP/1.1 401 Unauthorized\nWWW-Authenticate: Bearer realm="murmex", error="invalid_token",\n'
+      + '                  error_description="The API key is unknown, revoked or malformed.",\n'
+      + '                  resource_metadata="' + (S.manifest.mcp.auth.resourceMetadata) + '"'),
+    el('p', { class: 'lead' }, 'The metadata document is public — it is needed exactly by clients that do not have a '
+      + 'token yet. It does not advertise an OAuth server unless one is configured, because promising a flow that '
+      + 'does not exist costs the client a round trip and ends in a 404.'),
+    el('div', { class: 'note info' },
+      el('b', {}, 'Data use policy. '),
+      'What this endpoint returns, what you may do with it, and the obligations that follow from the fact that '
+      + 'several modules contact real people who never opted in: ',
+      el('a', { href: '/docs/mcp/policy', target: '_blank' }, '/docs/mcp/policy'),
+      '. It is the ', el('code', {}, 'resource_policy_uri'), ' of this resource and stays available even where '
+      + 'this documentation page is switched off.'),
+    el('div', { class: 'card' },
+      el('div', { class: 'bar' },
+        el('button', { class: 'ghost', onclick: async (e) => {
+          const pre = e.target.closest('.card').querySelector('pre')
+          const r = await fetch(S.manifest.mcp.auth.resourceMetadata)
+          pre.textContent = j(await r.json())
+        } }, 'Fetch metadata document')),
+      el('pre', {}, '—')))
+}
+
+// ── сборка страницы ──────────────────────────────────────────────────────────
+
+const SECTIONS = [
+  ['Start', [['overview', 'Overview', sectionOverview], ['connect', 'Connect', sectionConnect], ['auth', 'Authorization', sectionAuth]]],
+  ['Protocol', [['protocol', 'Protocol & console', sectionProtocol]]],
+  ['Surface', [['tools', 'Tools', sectionTools], ['resources', 'Resources', sectionResources], ['prompts', 'Prompts', sectionPrompts]]],
+  ['Data', [['capabilities', 'Capabilities', sectionCapabilities], ['modules', 'Modules', sectionModules]]],
+]
+
+function render() {
+  const nav = $('#nav'), main = $('#main')
+  nav.replaceChildren()
+  main.replaceChildren()
+  for (const [grp, items] of SECTIONS) {
+    nav.append(el('div', { class: 'grp' }, grp))
+    for (const [id, label, build] of items) {
+      nav.append(el('a', { href: '#' + id, 'data-id': id }, label))
+      try { main.append(build()) } catch (e) { main.append(el('section', { id }, el('h2', {}, label), el('pre', { class: 'err' }, String(e && e.stack || e)))) }
+    }
+  }
+  // Подсветка активного пункта: без неё в длинной странице теряешься.
+  const obs = new IntersectionObserver((es) => {
+    for (const e of es) if (e.isIntersecting) {
+      nav.querySelectorAll('a').forEach((a) => a.classList.toggle('on', a.dataset.id === e.target.id))
+    }
+  }, { rootMargin: '-60px 0px -70% 0px' })
+  main.querySelectorAll('section').forEach((s) => obs.observe(s))
+}
+
+$('#connect').addEventListener('click', connect)
+$('#key').addEventListener('keydown', (e) => { if (e.key === 'Enter') connect() })
+const saved = localStorage.getItem('murmex.mcp.key')
+if (saved) { $('#key').value = saved; connect() }
+</script>
+</body>
+</html>

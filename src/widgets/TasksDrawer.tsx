@@ -4,14 +4,21 @@ import { useApp } from '@/mocks/store'
 import { useUi } from '@/shared/lib/uiStore'
 import { EmptyState } from '@/shared/ui'
 import { cn } from '@/shared/lib/utils'
+import { statusTone } from '@/shared/config/taskStatus'
 import type { TaskStatus } from '@/shared/types'
 
-const STATUS_META: Record<TaskStatus, { label: string; icon: React.ReactNode; color: string }> = {
-  running: { label: 'Выполняется', icon: <Loader2 size={14} className="animate-spin" />, color: 'text-spark-300' },
-  paused: { label: 'Пауза', icon: <Pause size={14} />, color: 'text-amber-300' },
-  done: { label: 'Готово', icon: <CheckCircle2 size={14} />, color: 'text-spark-300' },
-  error: { label: 'Ошибка', icon: <AlertTriangle size={14} />, color: 'text-rose-300' },
-  queued: { label: 'В очереди', icon: <Loader2 size={14} />, color: 'text-muted' },
+/**
+ * Иконка статуса. Подпись и цвет — из общей палитры (`@/shared/config/taskStatus`), той же,
+ * что у дашборда задач: шторка висит поверх той же страницы, и держать здесь второй набор
+ * цветов уже вышло боком — «Выполняется» и «Готово» красились одним зелёным, то есть
+ * идущая задача и завершённая выглядели одинаково.
+ */
+const STATUS_ICON: Record<TaskStatus, React.ReactNode> = {
+  running: <Loader2 size={14} className="animate-spin" />,
+  paused: <Pause size={14} />,
+  done: <CheckCircle2 size={14} />,
+  error: <AlertTriangle size={14} />,
+  queued: <Loader2 size={14} />,
 }
 
 export function TasksDrawer() {
@@ -45,14 +52,14 @@ export function TasksDrawer() {
           ) : (
             <div className="space-y-3">
               {tasks.map((t) => {
-                const m = STATUS_META[t.status]
+                const tone = statusTone(t.status)
                 return (
                   <div key={t.id} className="rounded-2xl border border-line bg-elevated p-3.5">
                     <div className="flex items-start justify-between gap-2">
                       <div className="min-w-0">
                         <div className="truncate text-sm font-bold text-fg">{t.title}</div>
-                        <div className={cn('mt-0.5 flex items-center gap-1.5 text-xs font-semibold', m.color)}>
-                          {m.icon} {m.label} · {t.accountsCount} акк. · {t.logCount} логов
+                        <div className="mt-0.5 flex items-center gap-1.5 text-xs font-semibold" style={{ color: tone.text }}>
+                          {STATUS_ICON[t.status]} {tone.label} · {t.accountsCount} акк. · {t.logCount} логов
                         </div>
                       </div>
                     </div>

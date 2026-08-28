@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom'
 import { Check, ChevronDown, AlertTriangle } from 'lucide-react'
 import { cn } from '@/shared/lib/utils'
 import type { AccountStatus } from '@/shared/types'
+import { statusFill, withAlpha, type TaskStatusTone } from '@/shared/config/taskStatus'
 import { STATUS_META } from '@/mocks/store'
 
 export { Modal } from './Modal'
@@ -170,6 +171,25 @@ export function Badge({ children, tone = 'muted' }: { children: ReactNode; tone?
   return <span className={cn('inline-flex items-center gap-1 rounded-md border px-2 py-0.5 text-[11px] font-bold', tones[tone])}>{children}</span>
 }
 
+
+/* ── TaskStatusTag ── */
+/**
+ * Тег статуса задачи. Цвет берётся из единой палитры (`TASK_STATUS`), поэтому тег, кольцо
+ * прогресса и сегмент пончика на дашборде всегда одного оттенка. Цвета инлайном, а не
+ * классами: так один `base` физически задаёт и подпись, и фон, и рамку — рассинхрону
+ * («бейдж зелёный, кольцо голубое») просто неоткуда взяться.
+ */
+export function TaskStatusTag({ tone, className }: { tone: TaskStatusTone; className?: string }) {
+  return (
+    <span
+      className={cn('inline-flex items-center gap-1.5 rounded-md border px-2 py-0.5 text-[11px] font-bold', className)}
+      style={{ color: tone.text, background: statusFill(tone), borderColor: withAlpha(tone.base, 0.32) }}
+    >
+      <span className="h-1.5 w-1.5 shrink-0 rounded-full" style={{ background: tone.base }} />
+      {tone.label}
+    </span>
+  )
+}
 /* ── Avatar ── */
 export function Avatar({ name, color, size = 36 }: { name: string; color: string; size?: number }) {
   const initials = name.replace(/[@_·]/g, ' ').trim().split(/\s+/).slice(0, 2).map((w) => w[0]?.toUpperCase()).join('')

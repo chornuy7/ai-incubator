@@ -17,7 +17,7 @@ export default {
   usesAi: false,
   title: 'Autoposting',
   platform: 'telegram',
-  tags: ['posting', 'autoposting', 'publication', 'your channels', 'content'],
+  tags: ['posting', 'autoposting', 'publish', 'own channels', 'content', 'scheduling'],
 
   whoAmI: {
     summary: 'Publishes the same post to the listed channels on behalf of managed accounts.',
@@ -38,7 +38,7 @@ export default {
       'non-empty post text',
     ],
     risks:
-      'The publication is visible to all subscribers of the channel and is not automatically recalled - there is an error in the text'
+      'The publication is visible to all subscribers of the channel and is not automatically recalled - there is an error in the text '
       + 'goes on air. Without administrator rights, Telegram will return CHAT_ADMIN_REQUIRED.',
     costModel: 'Charged per action according to the price list of the module. AI tokens are not consumed - the text is set manually.',
   },
@@ -49,7 +49,7 @@ export default {
       title: 'Select accounts',
       purpose: 'On whose behalf are we publishing?',
       howItWorks:
-        'Accounts are moved in a circle across channels. The account must be a channel admin with the right'
+        'Accounts are moved in a circle across channels. The account must be a channel admin with the right '
         + 'publication, otherwise the publication in this channel will not go through.',
       api: { method: 'POST', path: '/api/modules/autoposting/tasks', fills: ['accountIds'] },
       params: ['accountIds'],
@@ -59,7 +59,7 @@ export default {
       title: 'Channels',
       purpose: 'Where do we publish?',
       howItWorks:
-        'The progress of a task is calculated based on the number of channels: how many channels, so many publications.'
+        'The progress of a task is calculated based on the number of channels: how many channels, so many publications. '
         + 'Targets from the blacklist are eliminated.',
       api: { method: 'POST', path: '/api/modules/autoposting/tasks', fills: ['channels'] },
       params: ['channels'],
@@ -201,7 +201,7 @@ export default {
           minItems: 2,
           maxItems: 2,
           default: [30, 120],
-          unit: 'With',
+          unit: 's',
           purpose: 'Range [min, max] of pause before next publication.',
           constraints: ['the actual pause is random from the range × multipliers, but not less than 5 seconds'],
         },
@@ -211,7 +211,7 @@ export default {
           type: 'number',
           default: 120,
           min: 0,
-          unit: 'With',
+          unit: 's',
           purpose: 'How long to wait beyond the duration returned by Telegram.',
         },
         {
