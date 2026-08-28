@@ -25,10 +25,13 @@
   --done:#1F7A4C;        /* green — принято */
   --stop:#A8342A;        /* отказ, блокировка */
 
+  --human:#0E6FA8;       /* голубой — человек; намеренно не жёлтый, чтобы не путался
+                            со статусом доски, который жёлтый по смыслу */
   --progress-soft:#FBF2DC;
   --done-soft:#E3F2E9;
   --stop-soft:#FBE9E7;
   --todo-soft:#E9ECF1;
+  --human-soft:#E2F0FA;
 
   --sans:"IBM Plex Sans",system-ui,-apple-system,Segoe UI,sans-serif;
   --display:"Archivo",var(--sans);
@@ -49,10 +52,13 @@
     --done:#54B888;
     --stop:#E8796C;
 
+    --human:#63B8E8;
+
     --progress-soft:#2A2213;
     --done-soft:#12271C;
     --stop-soft:#2B1815;
     --todo-soft:#1E232C;
+    --human-soft:#11242F;
   }
 }
 :root[data-theme="dark"]{
@@ -69,10 +75,13 @@
   --done:#54B888;
   --stop:#E8796C;
 
+  --human:#63B8E8;
+
   --progress-soft:#2A2213;
   --done-soft:#12271C;
   --stop-soft:#2B1815;
   --todo-soft:#1E232C;
+  --human-soft:#11242F;
 }
 
 *{box-sizing:border-box}
@@ -135,10 +144,10 @@ code{background:var(--surface-2);border:1px solid var(--line);border-radius:5px;
 /* Шаг, который делают вдвоём: половина кружка — Claude, половина — человек.
    Цвет тут уже несёт смысл (кто делает шаг), поэтому и делится он честно. */
 .step[data-owner="both"] .num{
-  background:linear-gradient(100deg,var(--todo) 0 50%,var(--progress) 50% 100%);
+  background:linear-gradient(100deg,var(--todo) 0 50%,var(--human) 50% 100%);
   border-color:transparent;color:#fff;
 }
-.step[data-owner="human"] .num{background:var(--progress);border-color:var(--progress);color:#fff}
+.step[data-owner="human"] .num{background:var(--human);border-color:var(--human);color:#fff}
 .step[data-gate="1"] .num{background:var(--done);border-color:var(--done);color:#fff}
 .step[data-gate="0"] .num{background:var(--stop);border-color:var(--stop);color:#fff}
 
@@ -153,7 +162,7 @@ code{background:var(--surface-2);border:1px solid var(--line);border-radius:5px;
   padding:2px 7px;border-radius:4px;white-space:nowrap;
 }
 .who.claude{background:var(--todo-soft);color:var(--todo)}
-.who.human{background:var(--progress-soft);color:var(--progress)}
+.who.human{background:var(--human-soft);color:var(--human)}
 .who.block{background:var(--stop-soft);color:var(--stop)}
 
 /* ── что именно должно прозвучать ──────────────────────── */
@@ -250,9 +259,9 @@ footer{
     <div class="eyebrow">Myrmex · проект MR</div>
     <h1>Регламент задач</h1>
     <p class="standfirst">
-      Как задача проходит путь от постановки до <span class="m">main</span>. Девять шагов, из
-      которых два начинаются командой человека: «тестируй» (шаг 4) и «залей и смержи» (шаг 7).
-      Сам по себе статус на доске ничего не запускает.
+      Договор между человеком и Claude о том, как ведётся задача. Он отвечает на один
+      вопрос: что Claude делает сам, а что — только по решению человека. Всё, что трудно
+      откатить, лежит по вторую сторону этой границы.
     </p>
   </header>
 
@@ -271,8 +280,9 @@ footer{
   <section class="sec">
     <h2>Цепочка</h2>
     <p>Шаги не пропускаются и не меняются местами. Цвет кружка — кто делает шаг:
-      синий — Claude, жёлтый — человек, двухцветный — делают вдвоём. Красный только
-      у нулевого: без него не начинается ничего.</p>
+      серый — Claude, голубой — человек, двухцветный — делают вдвоём. Красный один,
+      нулевой: без Jira не начинается ничего. Жёлтым и зелёным набраны статусы доски —
+      там цвет означает то же, что в Jira.</p>
 
     <div class="chain">
 
@@ -285,8 +295,22 @@ footer{
         </div>
       </div>
 
-      <div class="step" data-owner="claude">
+      <div class="step" data-owner="human">
         <div class="num">1</div>
+        <div class="body">
+          <div class="title-row"><b>Ссылка на задачу</b><span class="who human">человек</span><span class="who block">блокирует всё</span></div>
+          <p class="why">Работы без задачи не бывает. Вся цепочка держится на её статусах —
+            если задачи нет, нечему двигаться, нечего принимать и нечем подтверждать допуск.
+            Поэтому <b>Claude обязан запросить ссылку</b>, а не догадываться, к чему относится
+            просьба, и не заводить задачу за человека.</p>
+          <p class="why"><b>Дать ссылку — обязанность человека.</b> Нет задачи — её надо создать;
+            до этого момента работа не начинается и не продолжается. Отговорки «сделай пока так,
+            заведу потом» не работают: «потом» превращает всю цепочку в честное слово.</p>
+        </div>
+      </div>
+
+      <div class="step" data-owner="claude">
+        <div class="num">2</div>
         <div class="body">
           <div class="title-row"><b><span class="m">npm run sync</span></b><span class="who claude">Claude</span></div>
           <p class="why">Первое действие в любой задаче. Отстал <span class="m">main</span> — предупредить и подтянуть;
@@ -295,7 +319,7 @@ footer{
       </div>
 
       <div class="step" data-owner="claude">
-        <div class="num">2</div>
+        <div class="num">3</div>
         <div class="body">
           <div class="title-row"><b>Своя ветка <span class="m">feat/&lt;lane&gt;-&lt;имя&gt;</span></b><span class="who claude">Claude</span></div>
           <p class="why">В <span class="m">main</span> не коммитим никогда — ни «мелочь», ни «только документацию».</p>
@@ -303,7 +327,7 @@ footer{
       </div>
 
       <div class="step" data-owner="both">
-        <div class="num">3</div>
+        <div class="num">4</div>
         <div class="body">
           <div class="title-row"><b>Работа</b><span class="who claude">Claude</span><span class="who human">человек</span><span class="m" style="color:var(--progress)">In Progress</span></div>
           <p class="why">Единственный шаг, который делают вдвоём. Claude пишет код, гоняет, читает
@@ -317,7 +341,7 @@ footer{
       </div>
 
       <div class="step" data-owner="both">
-        <div class="num">4</div>
+        <div class="num">5</div>
         <div class="body">
           <div class="title-row"><b>Тесты локально</b><span class="who human">команда человека</span><span class="who claude">Claude</span><span class="m" style="color:var(--progress)">Ai Testing</span></div>
           <p class="why">Claude не переводит задачу в <span class="m">Ai Testing</span> сам. «Я дописал»
@@ -336,19 +360,19 @@ footer{
       </div>
 
       <div class="step" data-owner="claude">
-        <div class="num">5</div>
+        <div class="num">6</div>
         <div class="body">
           <div class="title-row"><b>Сигнал «готово к проверке»</b><span class="who claude">Claude</span><span class="m" style="color:var(--progress)">Human Testing</span></div>
           <p class="why">Сначала комментарий с планом проверки, потом статус. Перевода без комментария
             не бывает: иначе задача повиснет готовой на вид и немой по содержанию.</p>
-          <p class="why">Отдельной команды тут не нужно — в отличие от шага 4. Этот перевод не
+          <p class="why">Отдельной команды тут не нужно — в отличие от шага 5. Этот перевод не
             начинает новое действие, а сообщает результат уже начатого: прогон был запущен по
             команде, зелёный итог и есть повод отдать задачу человеку.</p>
         </div>
       </div>
 
       <div class="step" data-owner="human">
-        <div class="num">6</div>
+        <div class="num">7</div>
         <div class="body">
           <div class="title-row"><b>Приёмка</b><span class="who human">человек</span><span class="m" style="color:var(--done)">Done</span></div>
           <p class="why">Человек проверяет и переводит в <span class="m">Done</span> вручную.
@@ -357,7 +381,7 @@ footer{
       </div>
 
       <div class="step" data-owner="human">
-        <div class="num">7</div>
+        <div class="num">8</div>
         <div class="body">
           <div class="title-row"><b>Команда на заливку и мерж</b><span class="who human">команда человека</span></div>
           <p class="why">Статуса <span class="m">Done</span> мало, и <b>Claude не придёт спросить сам</b>:
@@ -386,7 +410,7 @@ footer{
       </div>
 
       <div class="step" data-owner="claude">
-        <div class="num">8</div>
+        <div class="num">9</div>
         <div class="body">
           <div class="title-row"><b>Заливка и мерж</b><span class="who claude">Claude</span></div>
           <p class="why">Только теперь. Разрешение на заливку не является разрешением на мерж —
@@ -398,13 +422,23 @@ footer{
   </section>
 
   <section class="sec">
-    <h2>Два гейта</h2>
+    <h2>Два стопа и допуск</h2>
 
     <div class="gate stop">
       <h3>Jira не подключена — стоп на всём</h3>
       <p>Можно только две вещи, и обе не работа над задачей: разбираться с самим подключением
         и отвечать на вопросы по существующему коду. Всё, что пишет в файлы, коммитит, заливает
         или мержит, — заблокировано.</p>
+    </div>
+
+    <div class="gate stop">
+      <h3>Задачи нет — стоп на всём</h3>
+      <p>Claude не начинает работу «просто по просьбе»: сначала ссылка на задачу в Jira.
+        Запросить её — его обязанность, дать — обязанность человека. Задачи не существует —
+        значит её надо создать, и до этого момента работа не начинается и не продолжается.</p>
+      <p>Заводить задачу за человека Claude не станет: постановка — это решение о том, что
+        вообще делается, и принимает его человек. Разрешено ровно столько же, сколько при
+        отключённой Jira: разговор и чтение кода, без единой правки.</p>
     </div>
 
     <div class="gate">
@@ -448,6 +482,13 @@ footer{
       </div>
 
       <div class="note deny">
+        <div class="note-when">задачи нет или ссылку не дали</div>
+        <p class="shout">⛔ СТОП: НЕТ ССЫЛКИ НА ЗАДАЧУ — РАБОТА НЕ НАЧАТА.</p>
+        <p class="shout">ПРИШЛИТЕ ССЫЛКУ НА ЗАДАЧУ В JIRA. ЗАДАЧИ НЕТ — СОЗДАЙТЕ ЕЁ.</p>
+        <p class="after">Без задачи нечему двигаться по статусам и нечем подтверждать допуск.</p>
+      </div>
+
+      <div class="note deny">
         <div class="note-when">Jira недоступна</div>
         <p class="shout">⛔ СТОП: JIRA НЕ ПОДКЛЮЧЕНА — РАБОТА ЗАБЛОКИРОВАНА.</p>
         <p class="shout">БЕЗ ДОСТУПА К СТАТУСАМ ГЕЙТ <span class="m">DONE</span> НЕПРОВЕРЯЕМ — ЕГО НЕЧЕМ ПОДТВЕРДИТЬ.</p>
@@ -485,6 +526,7 @@ footer{
     <h2>Чего не бывает</h2>
     <ul class="nevers">
       <li><span class="x">✕</span><span>Работы без подключённой Jira.</span></li>
+      <li><span class="x">✕</span><span>Работы без ссылки на задачу — и создания задачи за человека.</span></li>
       <li><span class="x">✕</span><span>Коммита в <span class="m">main</span>.</span></li>
       <li><span class="x">✕</span><span>Перевода в <span class="m">Ai Testing</span> без команды — «дописал» не значит «проверяй».</span></li>
       <li><span class="x">✕</span><span>Перевода в <span class="m">Human Testing</span> без комментария.</span></li>
