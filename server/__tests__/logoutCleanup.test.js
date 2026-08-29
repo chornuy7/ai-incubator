@@ -113,3 +113,14 @@ test('шапка не показывает демо-числа, пока сво�
   const store = await fs.readFile(new URL('../../src/mocks/store.ts', import.meta.url), 'utf8')
   assert.ok(/accountsLoaded: true/.test(store), 'признак должен подниматься там, где приходят НАСТОЯЩИЕ аккаунты')
 })
+
+test('плитки статусов не показывают нули, пока аккаунты не приехали', async () => {
+  // Тот же корень, что и в шапке: до ответа сервера в данных лежат демонстрационные
+  // сиды, и экран уверенно рисовал «0 Активные». Ноль — это утверждение, а мы в этот
+  // момент ещё ничего не знаем. На общем компьютере такой ноль читается как пропажа.
+  const page = await fs.readFile(new URL('../../src/pages/AccountsPage.tsx', import.meta.url), 'utf8')
+  assert.ok(/accountsLoaded/.test(page), 'страница обязана отличать «ещё не знаю» от «знаю, что ноль»')
+  for (const счётчик of ['statusCounts[st]', 'riskCounts[rk]', 'trashed.length']) {
+    assert.ok(page.includes(`число(${счётчик})`), `счётчик ${счётчик} должен рисоваться прочерком до загрузки`)
+  }
+})
