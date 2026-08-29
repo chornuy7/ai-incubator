@@ -34,7 +34,7 @@ export function signSession(userId, now = Date.now()) {
 }
 
 /**
- * Проверить токен. Возвращает { userId, exp } или null (нет секрета / кривой /
+ * Проверить токен. Возвращает { userId, exp, iat } или null (нет секрета / кривой /
  * просроченный / подпись не сошлась).
  * @param {string} token @param {number} [now]
  */
@@ -54,5 +54,7 @@ export function verifySession(token, now = Date.now()) {
   // Константное сравнение — не даём подобрать подпись по времени ответа.
   if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) return null
   if (now > exp) return null
-  return { userId, exp }
+  // Момент ВЫДАЧИ в токене не лежит, но выводится из срока: подписываем exp = выдача + TTL.
+  // Он нужен отзыву (tokenRevocation.js): токен, выданный до выхода, больше не принимаем.
+  return { userId, exp, iat: exp - SESSION_TTL_MS }
 }

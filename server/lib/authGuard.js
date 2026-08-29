@@ -12,6 +12,7 @@
  * работать как есть, но теперь на доверенной личности.
  */
 import { verifySession, authEnforced } from './session.js'
+import { touch, isRevoked } from './tokenRevocation.js'
 
 /** Достать токен сессии из запроса. API-ключи (aii_live_sk_) — не сюда. */
 function tokenFrom(req) {
@@ -48,7 +49,13 @@ function isPublic(req) {
 export function sessionGuard(req, res, next) {
   // Клиент — не доверенный источник личности: срезаем присланный id.
   delete req.headers['x-user-id']
-  const sess = verifySession(tokenFrom(req))
+  let sess = verifySession(tokenFrom(req))
+  // MR-203: подписи и срока мало — токен мог быть погашен выходом. Карта отзывов
+  // прогревается на старте (index.js) и освежается фоном, поэтому проверка бесплатна.
+  if (sess) {
+    touch()
+    if (isRevoked(sess.userId, sess.iat)) sess = null
+  }
   if (sess) req.headers['x-user-id'] = sess.userId
 
   if (!authEnforced()) return next() // дев/тесты: без секрета замок выключен
