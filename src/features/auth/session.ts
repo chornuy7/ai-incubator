@@ -30,6 +30,24 @@ export function markActivity(now = Date.now()) { try { localStorage.setItem(acti
  */
 const DEVICE_PREFS = new Set(['ai-incubator:v3', 'ai-incubator:nav-collapsed'])
 
+/**
+ * Наши пространства ключей.
+ *
+ * Одного префикса `ai-incubator:` мало, и это выяснилось на ручной проверке заказчика 29.08:
+ * после выхода в хранилище остались его цель нейродиалогов и список закрытых им уведомлений.
+ * Часть ключей пишется без общего префикса (`lowbal:` — «больше не показывать поп-ап
+ * баланса»), часть досталась от прежних версий (`neuro-dialogs:`, безымянный
+ * `notif-dismissed`): код их больше не пишет, но в браузерах живых людей они лежат до сих пор.
+ *
+ * Список перечислением, а не «стереть всё хранилище»: рядом лежат ключи браузерных
+ * расширений (`loglevel`, `__coupert_…`). Они не наши, и ломать человеку его расширения
+ * ради нашей чистоты мы не вправе.
+ */
+const OUR_PREFIXES = ['ai-incubator:', 'lowbal:', 'neuro-dialogs:']
+/** Ключи прежних версий без пространства имён — данные человека, но узнать их можно только в лицо. */
+const LEGACY_KEYS = new Set(['notif-dismissed'])
+const isOurs = (key: string) => OUR_PREFIXES.some((p) => key.startsWith(p)) || LEGACY_KEYS.has(key)
+
 /** Ключи ЧУЖОЙ зоны: выход из панели не должен выкидывать из админки, и наоборот. */
 const OTHER_ZONE_KEYS = (zone: 'panel' | 'admin') => (zone === 'panel'
   ? [ADMIN_SESSION_KEY, ADMIN_TOKEN_KEY, ADMIN_ACTIVITY_KEY]
@@ -58,7 +76,7 @@ export function clearUserTraces(userId: string | undefined, zone: 'panel' | 'adm
   const keep = new Set([...DEVICE_PREFS, ...OTHER_ZONE_KEYS(zone)])
   try {
     for (const key of Object.keys(localStorage)) {
-      if (!key.startsWith('ai-incubator:') || keep.has(key)) continue
+      if (!isOurs(key) || keep.has(key)) continue
       // Именные ключи (`…:<id>`) чистим только у того, кто уходит: на общем компьютере у
       // второго человека могут лежать свои, и стирать их мы не вправе.
       const named = /:(usr_[A-Za-z0-9_-]+|anon)$/.exec(key)

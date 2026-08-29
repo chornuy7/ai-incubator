@@ -68,3 +68,26 @@ test('чужие именные ключи на общем компьютере 
   const fn = body('export function clearUserTraces')
   assert.ok(/named\[1\] !== userId/.test(fn), 'именной ключ чужого пользователя должен пропускаться')
 })
+
+test('чистятся и наши ключи без общего префикса', () => {
+  // Ручная проверка заказчика 29.08: после выхода в хранилище остались `lowbal:hide`,
+  // `neuro-dialogs:goal` и безымянный `notif-dismissed` — цель диалогов уходящего и
+  // список закрытых им уведомлений. Чистка шла по одному префиксу `ai-incubator:`, а
+  // эти ключи писались (и пишутся) без него.
+  const fn = body('const OUR_PREFIXES')
+  assert.ok(/'lowbal:'/.test(fn), '«больше не показывать поп-ап баланса» — выбор конкретного человека')
+  assert.ok(/'neuro-dialogs:'/.test(fn), 'цель и режим нейродиалогов остались от прежних версий и лежат в живых браузерах')
+  assert.ok(/'notif-dismissed'/.test(fn), 'безымянный список закрытых уведомлений — данные прошлого человека')
+  const clear = body('export function clearUserTraces')
+  assert.ok(/isOurs\(key\)/.test(clear), 'чистка обязана идти по всем нашим пространствам, а не по одному префиксу')
+})
+
+test('чужие ключи расширений браузера не трогаем', () => {
+  // Рядом в том же хранилище лежат `loglevel` и `__coupert_perf_last_report` — это
+  // браузерные расширения человека. «Стереть всё» сломало бы ему их настройки.
+  const fn = body('const OUR_PREFIXES')
+  assert.ok(!/localStorage\.clear\(\)/.test(src), 'localStorage.clear() снёс бы и чужие ключи — так нельзя')
+  assert.ok(/startsWith\(p\)/.test(src.slice(src.indexOf('const isOurs'), src.indexOf('const isOurs') + 300)),
+    'наши пространства должны определяться списком, а не «всё, что нашли»')
+  assert.ok(fn.includes('['), 'OUR_PREFIXES — перечисление наших префиксов')
+})
