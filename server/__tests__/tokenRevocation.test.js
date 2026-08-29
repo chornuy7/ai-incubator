@@ -91,3 +91,57 @@ test('роут выхода зовёт отзыв, а не только закр
   assert.ok(body.indexOf('revokeTokensFor') < body.indexOf('clockOut'),
     'отзыв идёт первым: если упадёт clockOut, токен всё равно должен быть погашен')
 })
+
+test('выход уходит на сервер ПОКА токен ещё на месте', async () => {
+  /*
+   * Живая проверка 29.08 показала, что `POST /api/users/logout` на проде не срабатывал
+   * никогда: `logoutUser` первым вызывал clearToken(), и запрос уходил без Authorization,
+   * а /logout не входит в публичный список — гвард отвечал 401, не доходя до роута.
+   * Симптом на живой базе: 15 незакрытых смен из 18 (§8.1).
+   */
+  const fs = await import('node:fs/promises')
+  const src = await fs.readFile(new URL('../../src/api/usersApi.ts', import.meta.url), 'utf8')
+  const at = src.indexOf('export async function logoutUser')
+  assert.ok(at > 0, 'logoutUser не найден')
+  // Строки-комментарии выкидываем: в них самих упоминается clearToken(), и порядок СЛОВ
+  // не должен подменять порядок ДЕЙСТВИЙ.
+  const код = src.slice(at, at + 1400).split('\n').filter((l) => !l.trim().startsWith('//') && !l.trim().startsWith('*')).join('\n')
+  const запрос = код.indexOf("apiPost('/api/users/logout'")
+  const снятие = код.indexOf('clearToken()')
+  assert.ok(запрос > 0 && снятие > 0, 'в выходе должны быть и запрос, и снятие токена')
+  assert.ok(запрос < снятие, [
+    'Запрос выхода обязан уходить ДО снятия токена.',
+    'Иначе он летит без Authorization, гвард отвечает 401, и сервер о выходе не узнаёт:',
+    'ни отзыва токенов, ни закрытия смены рабочего времени.',
+  ].join('\n'))
+  assert.ok(/keepalive: true/.test(код), [
+    'Сразу после выхода страница перезагружается.',
+    'Без keepalive браузер отменяет запрос вместе с документом.',
+  ].join('\n'))
+})
+
+test('выход нельзя устроить чужому человеку', async () => {
+  // Роут брал userId из ТЕЛА запроса: любой вошедший мог прислать чужой id и погасить
+  // чужие сессии. Личность должна браться из подписанного токена.
+  const fs = await import('node:fs/promises')
+  const src = await fs.readFile(new URL('../usersRoutes.js', import.meta.url), 'utf8')
+  const at = src.indexOf("usersRouter.post('/logout'")
+  const body = src.slice(at, at + 900)
+  assert.ok(/req\.header\('x-user-id'\)/.test(body), 'кого гасим — из подписанного токена, а не из тела')
+  const заголовок = body.indexOf("req.header('x-user-id')")
+  const тело = body.indexOf('.userId')
+  assert.ok(заголовок < тело || тело < 0, 'тело запроса — только запасной путь для дев-режима')
+})
+
+test('выход не публичный: чужие сессии гасить нельзя без входа', async () => {
+  const fs = await import('node:fs/promises')
+  const src = await fs.readFile(new URL('../lib/authGuard.js', import.meta.url), 'utf8')
+  const at = src.indexOf('const PUBLIC = [')
+  // Режем до ЗАКРЫВАЮЩЕЙ скобки массива, а не до первой попавшейся: `]` встречается
+  // внутри самих регулярок, и срез по ней покрыл бы только первую запись списка.
+  const list = src.slice(at, src.indexOf('\n]', at))
+  assert.ok(!/logout/.test(list), [
+    'Выход обязан требовать входа.',
+    'Публичный /logout дал бы любому гасить сессии кому угодно по чужому id.',
+  ].join('\n'))
+})
