@@ -385,7 +385,13 @@ export function AppHeader() {
         {/* Plan badge */}
         <div className="hidden items-center gap-2 rounded-xl border border-line bg-elevated px-3 py-1.5 sm:flex">
           <span className="text-xs font-medium text-muted">План</span>
-          <span className="text-sm font-bold text-fg">{balance?.plan.name ?? data.plan.name}</span>
+          {/*
+            MR-235: название тарифа тоже подставлялось из демонстрационного набора, пока
+            свой баланс летит с сервера. У админа совпало («Базовая» и там, и там), поэтому
+            было незаметно — а человеку на другом тарифе шапка секунду показывала бы чужой.
+            Неизвестно — значит прочерк.
+          */}
+          <span className="text-sm font-bold text-fg">{balance?.plan.name ?? '—'}</span>
         </div>
 
         <div className="ml-auto flex items-center gap-1.5 sm:gap-2">
