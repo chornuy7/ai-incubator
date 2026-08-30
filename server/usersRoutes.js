@@ -335,6 +335,46 @@ async function ownerModules(ctx, target) {
   return Object.keys(MODULE_LABELS).filter((k) => modulesAllow(b.modules, k, b.expiresAt ?? null))
 }
 
+/**
+ * Выдать сотруднику токены или изъять их обратно (MR-225).
+ *
+ * До этого «индивидуальный лимит» ничего не выделял: сотрудник тратил из кошелька
+ * владельца, а лимит показывался ему как баланс. Пять сотрудников по 100 «влезали» в
+ * остаток владельца в 100 — и он об этом не знал. Теперь это настоящий перевод.
+ *
+ * Право проверяем строго: выдавать может ТОЛЬКО владелец этого сотрудника (или админ
+ * платформы). Иначе один клиент мог бы переводить токены из чужого кошелька — а это
+ * прямой доступ к чужим деньгам.
+ *
+ * @body {number} amount — больше нуля выдать, меньше нуля изъять.
+ */
+usersRouter.post('/:id/tokens', async (req, res) => {
+  try {
+    const actor = req.header('x-user-id')
+    if (!actor) return res.status(401).json({ ok: false, error: 'Нет сессии' })
+    const sub = await getUser(req.params.id).catch(() => null)
+    if (!sub) return res.status(404).json({ ok: false, error: 'Сотрудник не найден' })
+    const { isAdminRequest } = await import('./lib/accessGuard.js')
+    const admin = await isAdminRequest(req).catch(() => false)
+    // Владелец — тот, под кем сотрудник заведён. Админ платформы может всё, но и он
+    // переводит ИМЕННО между владельцем и его сотрудником, а не из своего кошелька.
+    const owner = String(sub.parentId || '')
+    if (!owner) return res.status(400).json({ ok: false, error: 'Это не сотрудник — переводить не с чьего баланса' })
+    if (!admin && owner !== String(actor)) return res.status(403).json({ ok: false, error: 'Выдавать токены может только владелец этого сотрудника' })
+
+    const { transferCoins } = await import('./balance.js')
+    const итог = await transferCoins({ ownerId: owner, subId: sub.id, amount: Number(req.body?.amount), actorId: actor })
+    await appendAudit({
+      action: итог.moved >= 0 ? 'tokens.grant' : 'tokens.revoke',
+      module: 'billing',
+      initiator: actor,
+      reason: `${Number(req.body?.amount) > 0 ? 'Выдано' : 'Изъято'} ${Math.abs(итог.moved)} ⚡ · сотрудник ${sub.email || sub.id}`,
+      meta: { ownerId: owner, subId: sub.id, moved: итог.moved, ownerLeft: итог.ownerLeft, subLeft: итог.subLeft },
+    }).catch(() => {})
+    res.json({ ok: true, ...итог })
+  } catch (err) { fail(res, err) }
+})
+
 usersRouter.get('/:id/access', async (req, res) => {
   try {
     const g = await accessGate(req, res)
