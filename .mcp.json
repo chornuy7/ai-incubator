@@ -1,0 +1,22 @@
+{
+  "mcpServers": {
+    "serena": {
+      "command": "serena",
+      "args": [
+        "start-mcp-server",
+        "--project",
+        ".",
+        "--transport",
+        "stdio",
+        "--enable-web-dashboard",
+        "true"
+      ]
+    },
+    "codebase-memory": {
+      "command": "npx",
+      "args": [
+        "codebase-memory-mcp"
+      ]
+    }
+  }
+}
