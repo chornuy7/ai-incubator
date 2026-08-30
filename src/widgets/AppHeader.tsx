@@ -298,8 +298,20 @@ export function AppHeader() {
    * null здесь значит «ещё не знаю» и рисуется как «—». Это честнее нуля: ноль — это
    * тоже утверждение, и на общем компьютере он читается как «деньги пропали».
    */
-  const active = accountsLoaded ? activeAccounts(data).length : null
-  const limit = balance?.plan.accountLimit ?? null
+  /*
+   * MR-235: в шапке было «98 / 50» — сколько аккаунтов есть и лимит тарифа.
+   *
+   * Лимит оказался выдумкой: accountLimit лежит в server/balance.js как число тарифа и
+   * НИГДЕ не проверяется — добавить аккаунт сверх него ничто не мешает. Поэтому 98 при
+   * лимите 50 — не ошибка подсчёта: 98 настоящие, а 50 ничего не значат. Заказчик 30.08:
+   * «нету никакого драного лимита по аккаунтам; там должно быть написано 8 из 10 —
+   * сколько работает».
+   *
+   * Показываем то, что человеку правда нужно знать: сколько его аккаунтов в строю из
+   * тех, что у него есть.
+   */
+  const всегоАккаунтов = accountsLoaded ? activeAccounts(data).length : null
+  const рабочихАккаунтов = accountsLoaded ? activeAccounts(data).filter((a) => !isBrokenAccount(a)).length : null
   const currentLang = LANGUAGES.find((l) => l.code === locale) ?? LANGUAGES[1]
 
   // R1/R2: шапка отражает залогиненного пользователя сессии (а не мок-профиль), + его роль.
@@ -387,10 +399,10 @@ export function AppHeader() {
             type="button"
             onClick={() => nav('/panel')}
             className="flex items-center gap-1.5 rounded-xl border border-line bg-elevated px-3 py-1.5 transition-colors hover:border-spark-500/40 hover:bg-elevated/70"
-            title="Открыть менеджер аккаунтов"
+            title={всегоАккаунтов == null ? 'Аккаунты ещё загружаются' : `В строю ${рабочихАккаунтов} из ${всегоАккаунтов}. Не в строю — мёртвый или отсутствующий прокси и статусы, из которых не запустить. Открыть менеджер аккаунтов`}
           >
-            <span className="text-sm font-bold text-fg">{active ?? '—'} / {limit ?? '—'}</span>
-            <span className="hidden text-xs text-muted sm:inline">акк.</span>
+            <span className="text-sm font-bold text-fg">{рабочихАккаунтов ?? '—'} / {всегоАккаунтов ?? '—'}</span>
+            <span className="hidden text-xs text-muted sm:inline">акк. в строю</span>
           </button>
 
           {/* §6.3 (NOTIFY-001): колокольчик — сколько аккаунтов отвалилось (мёртвый прокси / нерабочий статус). */}

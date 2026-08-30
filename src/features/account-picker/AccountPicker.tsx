@@ -102,7 +102,12 @@ export function AccountPicker({
   const accounts = sessionUser
     ? filterAccountsByAccess(activeAccounts(data), sessionUser.permissions, sessionUser.isAdmin, accGroups)
     : activeAccounts(data)
-  const limit = data.plan.accountLimit
+  /*
+   * MR-235: раньше здесь стояло «выбрано N из <лимит тарифа>». Лимит выдуманный —
+   * accountLimit нигде не проверяется, добавить аккаунтов сверх него ничто не мешает.
+   * Человеку важно другое: сколько аккаунтов ему вообще доступно для выбора.
+   */
+  const доступноВыбора = accounts.length
 
   const [collapsed, setCollapsed] = useState(false)
   const [query, setQuery] = useState('')
@@ -212,7 +217,7 @@ export function AccountPicker({
         <span className="grid h-9 w-9 place-items-center rounded-xl bg-spark-500/12 text-spark-400"><Users size={18} /></span>
         <span className="font-display text-base font-bold text-fg">Выбор аккаунтов</span>
         {/* MR-101 (UI-003): один счётчик в формате «2 из 50». */}
-        <span className="rounded-md bg-spark-500/12 px-2 py-0.5 text-xs font-bold text-spark-300">{selected.size} из {limit}</span>
+        <span className="rounded-md bg-spark-500/12 px-2 py-0.5 text-xs font-bold text-spark-300">{selected.size} из {доступноВыбора}</span>
         {/* MR-136: метка «обязательно» — как у блока «Группы» (без аккаунтов запуск невозможен). */}
         <span className="rounded-md bg-amber-500/15 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-amber-300" title="Без выбора аккаунтов запуск недоступен">обязательно</span>
         <ChevronDown size={18} className={cn('ml-auto text-muted transition-transform', collapsed && '-rotate-90')} />
