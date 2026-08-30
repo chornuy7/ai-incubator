@@ -33,4 +33,4 @@
 - `server/modules/` — **всего три файла**: `registry.js`, `routes.js`, `workers.js`. Это система
   модулей задач, а не свалка модулей. `workers.js` общий, его правят все.
 - `server/*.js` в корне — роуты и доменные сервисы вперемешку, плоско.
-- `src/` — слои FSD, см. `mem:frontend/core`.
+- `src/` — слои FSD, см. `mem:src/core`.

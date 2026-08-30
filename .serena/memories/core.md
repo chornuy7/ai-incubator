@@ -7,8 +7,8 @@ AI-платформа массового управления Telegram-акка�
 
 | Путь | Что |
 |---|---|
-| `src/` | фронт, React/Vite, слои FSD → `mem:frontend/core` |
-| `server/` | бэкенд, Node/Express, ESM → `mem:backend/core` |
+| `src/` | фронт, React/Vite, слои FSD → `mem:src/core` |
+| `server/` | бэкенд, Node/Express, ESM → `mem:server/core` |
 | `server/data/` | файловое хранилище: `users.json`, `accounts-meta.json`, `roles.json` |
 | `scripts/` | `sync.mjs`, миграции, генераторы |
 | `docs/CONTRACT-*.md` | контракты: state machine, lease, RBAC, логи действий и аудита |
