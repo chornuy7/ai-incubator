@@ -24,6 +24,7 @@ scripts/set-supabase-pass.mjs
 # Образец — api.config.example.json, без файла всё работает на локальном бэкенде.
 api.config.json
 
-# Serena (навигация по коду). Конфиг и заметки коммитим — они общие для команды;
-# кеш индекса у каждого свой и пересобирается на машине.
-.serena/cache/
+# Serena (навигация по коду). Коммитим project.yml и memories/ — они общие для
+# команды. Кеш и project.local.yml Serena исключает сама (.serena/.gitignore),
+# логи прогонов — здесь: они у каждого свои и растут.
+.serena/logs/
