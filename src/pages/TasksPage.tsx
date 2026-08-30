@@ -2,8 +2,8 @@ import { useEffect, useId, useMemo, useState, type ReactNode } from 'react'
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { ListChecks, RefreshCw, Square, RotateCw, Target, Activity, Gauge, Pause, Play, Loader2, ArrowLeft, Download, AlertTriangle, Clock, Hourglass } from 'lucide-react'
 import { useApp } from '@/mocks/store'
-import { PageHeader, Card, EmptyState, Badge, Select, Tip, TaskStatusTag } from '@/shared/ui'
-import { TASK_STATUS_KEYS, statusTone, statusDotFill, pendingTone } from '@/shared/config/taskStatus'
+import { PageHeader, Card, EmptyState, Badge, Select, Tip, TaskStatusTag, StatusDot } from '@/shared/ui'
+import { TASK_STATUS_KEYS, statusTone, pendingTone } from '@/shared/config/taskStatus'
 import { HelpButton } from '@/features/neuro-commenting/moduleUi'
 import { MODULES, isCombatModule, combatConfirmText } from '@/shared/config/modules'
 import { fetchAllTasks, fetchModuleTask, stopModuleTask, restartModuleTask, pauseModuleTask, resumeModuleTask, updateModuleTaskSettings, type ModuleTask } from '@/api/modulesApi'
@@ -639,7 +639,7 @@ export function TasksPage() {
     const order = ['done', 'running', 'queued', 'paused', 'stopped', 'error']
     const segments = order.filter((s) => counts[s]).map((s) => {
       const tone = statusTone(s)
-      return { key: s, value: counts[s], color: tone.base, label: tone.label, dot: statusDotFill(tone), zebra: !!tone.zebra }
+      return { key: s, value: counts[s], color: tone.base, label: tone.label, zebra: !!tone.zebra }
     })
     const completion = filtered.length ? Math.round(((counts.done || 0) / filtered.length) * 100) : 0
     return { segments, completion, done: counts.done || 0 }
@@ -726,7 +726,7 @@ export function TasksPage() {
               <div className="grid gap-y-1">
                 {dist.segments.map((s) => (
                   <div key={s.label} className="flex items-center gap-1.5 text-xs">
-                    <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ background: s.dot }} />
+                    <StatusDot tone={statusTone(s.key)} />
                     <span className="truncate text-white/70">{s.label}</span>
                     <span className="ml-auto font-semibold tabular-nums text-fg">{s.value}</span>
                   </div>
@@ -866,7 +866,7 @@ export function TasksPage() {
               {/* Заголовок группы: статус и сколько задач под ним. Точка — того же
                   цвета, что кольцо прогресса у карточек этого статуса. */}
               <div className="mb-2 flex items-center gap-2">
-                <span className="h-2 w-2 shrink-0 rounded-full" style={{ background: statusDotFill(statusTone(b.status)) }} />
+                <StatusDot tone={statusTone(b.status)} />
                 <span className="text-sm font-semibold text-white/75">{statusTone(b.status).label}</span>
                 <span className="text-sm tabular-nums text-white/35">({b.cells.length})</span>
               </div>
