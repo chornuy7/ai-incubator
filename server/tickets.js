@@ -64,6 +64,8 @@ const msg = (from, author, text, ts) => ({
 const rowToTicket = (r, messages = []) => ({
   id: r.id,
   userId: r.user_id,
+  toOwnerId: r.to_owner_id || null, // MR-257: адресат — владелец пространства или (пусто) поддержка
+
   subject: r.subject,
   category: r.category,
   status: r.status,
@@ -97,6 +99,10 @@ const msgToRow = (ticketId, m) => ({
 const ticketToRow = (t) => ({
   id: t.id,
   user_id: t.userId,
+  // MR-257: кому адресовано. Пусто — платформенной поддержке (как было), иначе — владельцу
+  // пространства. Без этого поля сотрудник физически не мог написать СВОЕМУ администратору:
+  // все обращения шли к нам, а поддержка отправляла его обратно к владельцу.
+  to_owner_id: t.toOwnerId || null,
   subject: t.subject,
   category: t.category,
   status: t.status,
@@ -188,11 +194,20 @@ export function unreadFor(ticket, side) {
   return (ticket.messages || []).filter((m) => m.from === fromOther && (m.ts || 0) > seen).length
 }
 
-export async function listTickets({ userId = '', all = false } = {}) {
+/**
+ * @param {{userId?:string, all?:boolean, ownerId?:string}} p
+ *   `ownerId` — MR-257: вернуть ещё и обращения, АДРЕСОВАННЫЕ этому владельцу. Свои
+ *   обращения человек видит по userId, а запросы своих сотрудников — по этому полю.
+ */
+export async function listTickets({ userId = '', all = false, ownerId = '' } = {}) {
   const db = sb()
   if (db) {
     let q = db.from('tickets').select('*').order('updated_at', { ascending: false })
-    if (!all) q = q.eq('user_id', userId || '—')
+    if (!all) {
+      q = ownerId
+        ? q.or(`user_id.eq.${userId || '—'},to_owner_id.eq.${ownerId}`)
+        : q.eq('user_id', userId || '—')
+    }
     const { data, error } = await q
     if (error) {
       if (isMissingTable(error)) return []
@@ -201,7 +216,9 @@ export async function listTickets({ userId = '', all = false } = {}) {
     return withMessages(db, data || [])
   }
   const tickets = await readTickets()
-  const rows = all ? tickets : tickets.filter((t) => t.userId === userId)
+  const rows = all
+    ? tickets
+    : tickets.filter((t) => t.userId === userId || (ownerId && t.toOwnerId === ownerId))
   return rows.slice().sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0))
 }
 
@@ -212,7 +229,7 @@ export async function getTicket(id) {
   return tickets.find((t) => t.id === id) || null
 }
 
-export async function createTicket({ userId = '', author = null, subject = '', category = 'tech', body = '' }) {
+export async function createTicket({ userId = '', author = null, subject = '', category = 'tech', body = '', toOwnerId = '' }) {
   const subj = String(subject || '').trim()
   if (!subj) throw new Error('Укажите тему обращения')
   const db = sb()
@@ -229,6 +246,8 @@ export async function createTicket({ userId = '', author = null, subject = '', c
   const ticket = {
     id: genId(now, taken),
     userId: userId || '—',
+    // MR-257: адресат. Сотрудник пишет владельцу, клиент платформы — поддержке.
+    toOwnerId: String(toOwnerId || '') || null,
     subject: subj,
     category: String(category || 'tech'),
     status: 'open',

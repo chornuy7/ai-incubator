@@ -1279,6 +1279,19 @@ function ticketSide(req, ctx) {
   return wantSupport && ctx.isSupport ? 'support' : 'user'
 }
 
+/**
+ * Сторона переписки для КОНКРЕТНОГО обращения (MR-257).
+ *
+ * Общая `ticketSide` отвечает на вопрос «кем человек смотрит список», а этого мало:
+ * владелец пространства одновременно и клиент для нашей поддержки (его собственные
+ * обращения — сторона «user»), и «поддержка» для своих сотрудников (их запросы адресованы
+ * ему). Одна сторона на весь список считала бы его непрочитанное дважды и не той меркой.
+ */
+function ticketSideFor(ticket, ctx, base) {
+  if (ticket?.toOwnerId && String(ticket.toOwnerId) === String(ctx.id)) return 'support'
+  return base
+}
+
 /** Сколько открытых обращений разрешено человеку с отключённым доступом. */
 const OPEN_TICKETS_WHEN_DISABLED = 3
 
@@ -1290,9 +1303,9 @@ app.get('/api/tickets', async (req, res) => {
     if (ctx.blocked && !ctx.inactive) return res.status(403).json({ ok: false, error: 'Нет доступа' })
     const { listTickets, unreadFor } = await import('./tickets.js')
     const side = ticketSide(req, ctx)
-    const rows = await listTickets({ userId: ctx.id, all: side === 'support' })
+    const rows = await listTickets({ userId: ctx.id, all: side === 'support', ownerId: ctx.id })
     const owner = await ticketOwnerResolver()
-    res.json({ ok: true, tickets: rows.map((t) => ({ ...t, ...owner(t), unread: unreadFor(t, side) })) })
+    res.json({ ok: true, tickets: rows.map((t) => ({ ...t, ...owner(t), unread: unreadFor(t, ticketSideFor(t, ctx, side)) })) })
   } catch (err) { ticketErr(res, err) }
 })
 
@@ -1304,8 +1317,8 @@ app.get('/api/tickets/unread-count', async (req, res) => {
     if (ctx.blocked && !ctx.inactive) return res.json({ ok: true, count: 0 })
     const { listTickets, unreadFor } = await import('./tickets.js')
     const side = ticketSide(req, ctx)
-    const rows = await listTickets({ userId: ctx.id, all: side === 'support' })
-    res.json({ ok: true, count: rows.reduce((n, t) => n + unreadFor(t, side), 0), side })
+    const rows = await listTickets({ userId: ctx.id, all: side === 'support', ownerId: ctx.id })
+    res.json({ ok: true, count: rows.reduce((n, t) => n + unreadFor(t, ticketSideFor(t, ctx, side)), 0), side })
   } catch (err) { ticketErr(res, err) }
 })
 
@@ -1328,7 +1341,18 @@ app.post('/api/tickets', async (req, res) => {
       }
     }
     const { subject, category, body } = req.body || {}
-    res.json({ ok: true, ticket: await createTicket({ userId: ctx.id, author: ticketAuthor(ctx), subject, category, body }) })
+    /*
+     * MR-257: обращение сотрудника адресуется ЕГО ВЛАДЕЛЬЦУ, а не нашей поддержке.
+     *
+     * Заказчик 30.08: «в поддержке тебе скажут: свяжитесь с администратором. А нахера мне
+     * этот круг?» Раньше выбора не было — все тикеты шли к нам, и запрос «дай токенов»
+     * попадал людям, которые ничего выдать не могут.
+     *
+     * Адресат берётся с СЕРВЕРА, из родителя, а не из тела запроса: иначе один клиент
+     * писал бы «в поддержку» чужому владельцу.
+     */
+    const toOwnerId = ctx.user?.parentId ? String(ctx.user.parentId) : ''
+    res.json({ ok: true, ticket: await createTicket({ userId: ctx.id, author: ticketAuthor(ctx), subject, category, body, toOwnerId }) })
   } catch (err) { res.status(400).json({ ok: false, error: err instanceof Error ? err.message : 'Ошибка' }) }
 })
 

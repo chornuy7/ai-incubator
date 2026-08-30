@@ -1,4 +1,5 @@
 import { useNavigate } from 'react-router-dom'
+import { RequestToOwnerModal } from '@/features/requests/RequestToOwner'
 import { useState, useEffect, useRef, useMemo } from 'react'
 import {
   Menu, Zap, Sun, Moon, Radar, ChevronDown, UserCog, LogOut, Wallet, Check, AlertTriangle, Package, Bell, X, Clock,
@@ -69,6 +70,8 @@ export function AppHeader() {
   }, [])
   // §6.3 (NOTIFY-001): колокольчик — сколько аккаунтов «отвалилось» (мёртвый прокси / нерабочий статус).
   const [notifOpen, setNotifOpen] = useState(false)
+  /** MR-257: запрос токенов у владельца — сотруднику больше некуда идти за ними. */
+  const [запросТокенов, setЗапросТокенов] = useState(false)
   const [accOpen, setAccOpen] = useState(false)
   // Закрытие колокольчика кликом ВНЕ него: прозрачный backdrop не срабатывал, т.к.
   // сайдбар/шапка перекрывали его по бокам. Слушаем документ по ref — надёжно.
@@ -686,6 +689,8 @@ export function AppHeader() {
         </div>
       </div>
 
+      <RequestToOwnerModal kind="tokens" open={запросТокенов} onClose={() => setЗапросТокенов(false)} />
+
       {/*
         Нулевой баланс: окно по центру вместо тоста в углу. Запуск не состоялся —
         значит человеку нужно не уведомление, а следующий шаг, и кнопка ведёт
@@ -793,6 +798,21 @@ export function AppHeader() {
                 ? (balance?.spendLimit == null ? 'общий кошелёк владельца, потолка вам не задали' : `ваш потолок — ${balance.spendLimit} ⚡`)
                 : 'тратятся за каждое действие'}
             </div>
+            {/*
+              MR-204/MR-257: на месте убранной покупки у сотрудника — запрос владельцу.
+              Раньше здесь было ПУСТО: блоки «Пополнить счёт» и «Купить токены» сотруднику
+              не показываются (он не распоряжается деньгами владельца), но и попросить их
+              было негде — приходилось идти во внешний мессенджер.
+            */}
+            {balance?.isSub && (
+              <button
+                type="button"
+                onClick={() => setЗапросТокенов(true)}
+                className="btn-soft mt-2 h-8 w-full justify-center text-xs"
+              >
+                Запросить токены у администратора
+              </button>
+            )}
           </div>
         </div>
 
