@@ -337,7 +337,11 @@ footer{
       <div class="step" data-owner="claude">
         <div class="num"><svg class="dot" viewBox="0 0 34 34" aria-hidden="true" focusable="false"><circle class="dot-bg" cx="17" cy="17" r="16"/><path class="dot-r" d="M17 1 A16 16 0 0 1 17 33 Z"/><circle class="dot-ring" cx="17" cy="17" r="16"/></svg><span class="dot-n">3</span></div>
         <div class="body">
-          <div class="title-row"><b>Своя ветка <span class="m">feat/&lt;TaskID&gt;-&lt;TaskTitle&gt;</span></b><span class="who claude">Claude</span></div>
+          <div class="title-row"><b>Своя ветка 
+<!-- GEN:branch -->
+          <span class="m">feat/&lt;TaskID&gt;-&lt;TaskTitle&gt;</span>
+<!-- /GEN:branch -->
+</b><span class="who claude">Claude</span></div>
           <p class="why">В <span class="m">main</span> не коммитим никогда — ни «мелочь», ни «только документацию».</p>
         </div>
       </div>
@@ -483,46 +487,58 @@ footer{
       нет — значит его надо добавить, а не сочинять похожий.</p>
 
     <div class="notes">
-
-      <div class="note ask">
-        <div class="note-when">Claude сделал своё, команды на тесты не было</div>
-        <p class="shout">⚠️ Я СДЕЛАЛ ТО, О ЧЁМ ПРОСИЛИ. СЧИТАТЬ РАБОТУ ЗАКОНЧЕННОЙ И ЗАПУСКАТЬ ТЕСТЫ?</p>
-        <p class="after">Готовность определяете вы: возможно, требование ещё изменится.
-          Claude сообщает, что сделал, а не объявляет задачу готовой. Статус не меняется,
-          пока не прозвучит «тестируй».</p>
-      </div>
-
-      <div class="note ask">
-        <div class="note-when">человек написал, задача в Done, команды в сообщении нет</div>
-        <p class="shout">⚠️ ЗАДАЧА &lt;KEY&gt; В <span class="m">DONE</span>. РАЗРЕШАЕШЬ ЗАЛИВКУ И МЕРЖ <span class="m">feat/…</span> → <span class="m">MAIN</span>?</p>
-        <p class="shout">НИ ЗАЛИВКА, НИ МЕРЖ НЕ БУДУТ ВЫПОЛНЕНЫ БЕЗ ЯВНОГО ПОДТВЕРЖДЕНИЯ.</p>
-      </div>
-
+<!-- GEN:notes -->
       <div class="note deny">
-        <div class="note-when">просят залить раньше времени</div>
-        <p class="shout">⛔ СТОП: ЗАЛИВКА ДО СТАТУСА <span class="m">DONE</span> НАРУШАЕТ WORKFLOW И НЕБЕЗОПАСНА.</p>
-        <p class="shout">ЗАДАЧА &lt;KEY&gt; В СТАТУСЕ <span class="m">HUMAN TESTING</span> — ЗАЛИВКА НЕ ВЫПОЛНЕНА.</p>
-        <p class="after">Что дальше: провести проверку, перевести задачу в <span class="m">Done</span> вручную, затем повторить запрос.</p>
-      </div>
-
-      <div class="note deny">
-        <div class="note-when">задачи нет или ссылку не дали</div>
-        <p class="shout">⛔ СТОП: НЕТ ССЫЛКИ НА ЗАДАЧУ — РАБОТА НЕ НАЧАТА.</p>
-        <p class="shout">ИСКАЛ В JIRA ПО ЗАПРОСУ &lt;что искал&gt; — &lt;нашлось N подходящих / ничего не нашлось&gt;.</p>
-        <p class="after">Что дальше, на выбор: прислать ссылку · взять одну из найденных · сказать «заводи», и Claude создаст задачу по черновику и покажет ключ. Без задачи нечему двигаться по статусам и нечем подтверждать допуск.</p>
-      </div>
-
-      <div class="note deny">
-        <div class="note-when">Jira недоступна</div>
+        <div class="note-when">Jira не подключена</div>
         <p class="shout">⛔ СТОП: JIRA НЕ ПОДКЛЮЧЕНА — РАБОТА ЗАБЛОКИРОВАНА.</p>
-        <p class="shout">БЕЗ ДОСТУПА К СТАТУСАМ ГЕЙТ <span class="m">DONE</span> НЕПРОВЕРЯЕМ — ЕГО НЕЧЕМ ПОДТВЕРДИТЬ.</p>
+        <p class="shout">БЕЗ ДОСТУПА К СТАТУСУ ЗАДАЧИ ГЕЙТ <span class="m">DONE</span> НЕПРОВЕРЯЕМ.</p>
+        <p class="after">Что дальше: подключить коннектор Atlassian (настройки claude.ai либо <span class="m">/mcp</span> в интерактивной сессии) и повторить запрос. До этого я не начинаю задачу.</p>
+      </div>
+
+      <div class="note deny">
+        <div class="note-when">Ссылки на задачу нет</div>
+        <p class="shout">⛔ СТОП: НЕТ ССЫЛКИ НА ЗАДАЧУ — РАБОТА НЕ НАЧАТА.</p>
+        <p class="shout">ИСКАЛ В JIRA ПО ЗАПРОСУ <span class="m">&lt;что искал&gt;</span> — <span class="m">&lt;нашлось N подходящих / ничего не нашлось&gt;</span>.</p>
+        <p class="after">Что дальше, на выбор: пришлите ссылку · возьмём одну из найденных выше · скажите «заводи», и я создам задачу по черновику ниже и покажу ключ. Без задачи нечему двигаться по статусам и нечем подтверждать допуск.</p>
       </div>
 
       <div class="note">
-        <div class="note-when">начало задачи, main отстал</div>
+        <div class="note-when"><span class="m">main</span> не подтянут</div>
         <p class="shout" style="color:var(--muted)">⚠️ MAIN НЕ ПОДТЯНУТ — РАБОТА ПОШЛА БЫ ПОВЕРХ УСТАРЕВШЕГО КОДА.</p>
         <p class="after">Выполняю <span class="m">npm run sync</span> перед началом.</p>
       </div>
+
+      <div class="note deny">
+        <div class="note-when">Работа начата в <span class="m">main</span></div>
+        <p class="shout">⛔ СТОП: ЭТО ВЕТКА <span class="m">MAIN</span>. РАБОТА В НЕЙ ЗАПРЕЩЕНА WORKFLOW.</p>
+        <p class="after">Создаю <span class="m">feat/&lt;TaskID&gt;-&lt;TaskTitle&gt;</span> и переношу изменения туда.</p>
+      </div>
+
+      <div class="note ask">
+        <div class="note-when">Своё сделано, команды на тесты нет</div>
+        <p class="shout">⚠️ Я СДЕЛАЛ ТО, О ЧЁМ ПРОСИЛИ. СЧИТАТЬ РАБОТУ ЗАКОНЧЕННОЙ И ЗАПУСКАТЬ ТЕСТЫ?</p>
+        <p class="after">Готовность определяете вы: возможно, требование ещё изменится. Статус не меняется, пока не прозвучит «тестируй».</p>
+      </div>
+
+      <div class="note deny">
+        <div class="note-when">Попытка залить до <span class="m">Done</span></div>
+        <p class="shout">⛔ СТОП: ЗАЛИВКА ДО СТАТУСА <span class="m">DONE</span> НАРУШАЕТ WORKFLOW И НЕБЕЗОПАСНА.</p>
+        <p class="shout">ЗАДАЧА <span class="m">&lt;KEY&gt;</span> В СТАТУСЕ <span class="m">&lt;текущий&gt;</span> — ЗАЛИВКА НЕ ВЫПОЛНЕНА.</p>
+        <p class="after">Что дальше: провести <span class="m">Human Testing</span>, перевести задачу в <span class="m">Done</span> вручную, затем повторить запрос.</p>
+      </div>
+
+      <div class="note deny">
+        <div class="note-when">Попытка мержить до <span class="m">Done</span></div>
+        <p class="shout">⛔ СТОП: МЕРЖ ДО СТАТУСА <span class="m">DONE</span> НАРУШАЕТ WORKFLOW.</p>
+        <p class="shout">ЗАДАЧА <span class="m">&lt;KEY&gt;</span> В СТАТУСЕ <span class="m">&lt;текущий&gt;</span> — МЕРЖ НЕ ВЫПОЛНЕН.</p>
+      </div>
+
+      <div class="note ask">
+        <div class="note-when">Задача в <span class="m">Done</span>, команды в сообщении нет</div>
+        <p class="shout">⚠️ ЗАДАЧА <span class="m">&lt;KEY&gt;</span> В <span class="m">DONE</span>. РАЗРЕШАЕШЬ ЗАЛИВКУ И МЕРЖ <span class="m">feat/&lt;KEY&gt;-&lt;название&gt;</span> → <span class="m">main</span>?</p>
+        <p class="shout">НИ ЗАЛИВКА, НИ МЕРЖ НЕ БУДУТ ВЫПОЛНЕНЫ БЕЗ ЯВНОГО ПОДТВЕРЖДЕНИЯ.</p>
+      </div>
+<!-- /GEN:notes -->
 
     </div>
   </section>
