@@ -124,3 +124,31 @@ test('о списании за продление человека уведом�
   assert.ok(/модули отключены/.test(хвост), 'и что именно из-за этого перестало работать')
   assert.ok(/sub-expired/.test(хвост), 'у уведомления об истёкшей подписке должен быть свой ключ')
 })
+
+test('токены начисляются через 30 дней после оплаты, а не по числу месяца', async () => {
+  /*
+   * Владелец 30.08: «якщо я платив 14, то нарахування і зняття коштів буде через 30 днів,
+   * а не 30 числа». До этой правки шкалы были разные: деньги уходили каждые 30 суток
+   * (expires_at + MONTH_MS), а токены приходили в то же ЧИСЛО месяца, что и покупка —
+   * отбор шёл по `billing_day == сегодняшнее число`. Между февралём и мартом эти даты
+   * расходятся, и человек получал топливо не тогда, когда платил.
+   */
+  const fs = await import('node:fs/promises')
+  const src = await fs.readFile(new URL('../tokenCredit.js', import.meta.url), 'utf8')
+  const at = src.indexOf('export async function dueForCredit')
+  const тело = src.slice(at, at + 2200)
+
+  assert.ok(!/\.eq\('billing_day', today\)/.test(тело), [
+    'Отбор по числу месяца отрезал ровно то, что просил владелец:',
+    'начисление должно идти через 30 суток после оплаты, а не 14-го числа каждого месяца.',
+  ].join('\n'))
+  assert.ok(/last_credit_at/.test(тело), 'нужен МОМЕНТ последнего начисления, а не строка месяца')
+  assert.ok(/CREDIT_PERIOD_MS/.test(тело), 'период отсчёта должен быть явным')
+  assert.ok(/CREDIT_PERIOD_MS = 30 \* 24 \* 60 \* 60 \* 1000/.test(src), 'период — те же 30 суток, что и у списания денег')
+
+  const mark = src.slice(src.indexOf('export async function markCredited'), src.indexOf('export async function markCredited') + 700)
+  assert.ok(/last_credit_at/.test(mark), 'отметка обязана сохранять момент — по нему считается следующее начисление')
+
+  const bill = await fs.readFile(new URL('../subscriptionBilling.js', import.meta.url), 'utf8')
+  assert.ok(/last_credit_at/.test(bill), 'продление тоже сдвигает точку отсчёта, иначе тик начислит второй раз')
+})

@@ -158,7 +158,7 @@ export async function renewDueSubscriptions(nowMs = Date.now(), onlyUser = '') {
     const nextExpiry = Math.max(sub.expiresAt, nowMs - RENEW_AFTER_MS) + MONTH_MS
     const iso = new Date(nextExpiry).toISOString()
     await db.from('subscriptions')
-      .update({ expires_at: iso, last_charge_month: month, last_credit_month: month, updated_at: new Date().toISOString() })
+      .update({ expires_at: iso, last_charge_month: month, last_credit_month: month, last_credit_at: new Date(nowMs).toISOString(), updated_at: new Date().toISOString() })
       .eq('id', sub.id)
     await db.from('user_subscriptions').update({ expires_at: iso, updated_at: new Date().toISOString() }).eq('user_id', sub.id)
 
