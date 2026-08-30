@@ -13,6 +13,7 @@ import { useSession } from '@/features/auth/session'
 import { usePlan } from '@/features/billing/plan'
 import { useBalance, setBalance } from '@/features/billing/balanceStore'
 import { CRITICAL } from '@/features/billing/LowBalanceBar'
+import { expiryInfo } from '@/features/billing/expiry'
 
 /**
  * Сколько токенов считается «запасом» — при таком балансе чип зелёный (MR-166, 14.08).
@@ -99,7 +100,7 @@ export function AppHeader() {
     setDismissed((prev) => {
       const bset = new Set(broken.map((a) => a.id))
       // MR-134: task:/wallet:/ticket:/awaiting-дисмиссы не трогаем — они не про аккаунты.
-      const next = new Set([...prev].filter((id) => id.startsWith('task:') || id.startsWith('wallet:') || id.startsWith('ticket:') || id === 'awaiting' || bset.has(id)))
+      const next = new Set([...prev].filter((id) => id.startsWith('task:') || id.startsWith('wallet:') || id.startsWith('ticket:') || id === 'awaiting' || id === 'sub-expired' || bset.has(id)))
       return next.size === prev.size ? prev : next
     })
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -177,12 +178,51 @@ export function AppHeader() {
     const sub = deadProxy ? 'прокси слетел (мёртвый)' : banned ? `аккаунт в бане/блоке (${a.status})` : a.noProxy ? 'без прокси — риск бана' : 'временное ограничение — ожидание'
     notifItems.push({ key: a.id, tone, title: a.name, sub, go: '/panel', ts: (a as { updatedAt?: number }).updatedAt || Date.now() })
   }
-  // MR-134: 🟢 успешное пополнение баланса — только реальные пополнения/покупки (по reason),
-  // недавние (12ч), а не любой служебный кредит/возврат, чтобы не засорять колокольчик.
+  /*
+   * Правка 30.08: списание за продление и месячные токены тоже идут в колокольчик.
+   *
+   * Здесь стояли два отсева подряд — `amount <= 0` и «пополнени/куплено/покупк» в причине.
+   * Из-за них человек не узнавал о самом важном: подписка теперь продлевается САМА и сама
+   * снимает деньги. Списание уходило со счёта молча, токены за новый месяц приходили молча,
+   * а когда денег не хватало — модули просто отключались без единого слова. Заказчик,
+   * увидев это на прогоне: «чого немає повідомлення про подовження підписки?».
+   */
+  const символ = pricing?.currency || '$'
+  const срок = expiryInfo(balance?.expiresAt)
   for (const w of wallet) {
-    if (w.amount <= 0 || (Date.now() - w.ts) >= TASK_DONE_WINDOW || dismissed.has(`wallet:${w.ts}`)) continue
-    if (!/пополнени|куплено|покупк/i.test(w.reason || '')) continue
-    notifItems.push({ key: `wallet:${w.ts}`, tone: 'green', title: 'Пополнение баланса', sub: `${w.reason} · +${Math.round(w.amount * 1000) / 1000} ⚡`, go: '/panel/user/subscription', ts: w.ts })
+    if ((Date.now() - w.ts) >= TASK_DONE_WINDOW || dismissed.has(`wallet:${w.ts}`)) continue
+    const сумма = Math.round(Math.abs(w.amount) * 1000) / 1000
+    const подпись = w.currency === 'usd' ? `${символ}${сумма}` : `${сумма} ⚡`
+    // Деньги за новый месяц. Человек должен узнать о списании от нас, а не из выписки банка.
+    if (/продлени/i.test(w.reason)) {
+      if (w.currency !== 'usd') continue // токены того же продления — отдельной строкой ниже
+      // Сумма — в ЗАГОЛОВОК: он узкий и обрезается, а число человек должен увидеть сразу.
+      notifItems.push({ key: `wallet:${w.ts}`, tone: 'yellow', title: `Списано ${подпись}`,
+        // Дату ставим, только пока подписка ЖИВА. Иначе старая строка о продлении читается
+        // как «подписка продлена · истекла 20 августа» — сама себе противоречит. Про то,
+        // что срок вышел, говорит отдельное красное уведомление ниже.
+        sub: `подписка продлена${срок.perpetual || срок.expired ? '' : ' · ' + срок.label}`, go: '/panel/user/subscription', ts: w.ts })
+      continue
+    }
+    if (/токены подписки/i.test(w.reason)) {
+      notifItems.push({ key: `wallet:${w.ts}`, tone: 'green', title: `Начислено ${подпись}`,
+        sub: 'токены подписки за новый месяц', go: '/panel/my-statistics?tab=wallet', ts: w.ts })
+      continue
+    }
+    if (w.amount > 0 && /пополнени|куплено|покупк|подарочн/i.test(w.reason)) {
+      notifItems.push({ key: `wallet:${w.ts}`, tone: 'green', title: 'Пополнение баланса',
+        sub: `${w.reason} · +${подпись}`, go: '/panel/user/subscription', ts: w.ts })
+    }
+  }
+  /*
+   * Подписка кончилась и не продлилась — почти всегда потому, что не хватило денег. Это
+   * единственное состояние, о котором молчать нельзя: модули УЖЕ отключены, и человек
+   * узнаёт об этом, наткнувшись на закрытый модуль. Строки в кошельке при неудаче нет —
+   * списания не было, — поэтому смотрим на сам срок.
+   */
+  if (срок.expired && !dismissed.has('sub-expired')) {
+    notifItems.push({ key: 'sub-expired', tone: 'red', title: 'Подписка не продлена',
+      sub: `${срок.label} · модули отключены — пополните счёт`, go: '/panel/user/subscription', ts: Date.now() })
   }
   // MR-134: 🟡 обращения в поддержку (не закрытые) — «ответ поддержки» / «ждём ответа».
   for (const tk of tickets) {
