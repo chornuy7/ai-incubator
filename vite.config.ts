@@ -57,7 +57,11 @@ export default defineConfig({
     },
   },
   server: {
-    port: 5173,
+    // 5173 по умолчанию — как в документации. Переопределяется через PORT, потому что
+    // Windows резервирует под Hyper-V/WSL целые диапазоны портов (netsh interface ipv4
+    // show excludedportrange protocol=tcp), и 5173 туда попадает: сокет не биндится
+    // вообще, а диапазоны ещё и плавают между перезагрузками.
+    port: Number(process.env.PORT) || 5173,
     host: true,
     proxy: {
       '/api': { target: apiTarget(), changeOrigin: true },

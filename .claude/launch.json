@@ -1,5 +1,6 @@
 {
   "version": "0.0.1",
+  "//": "Порты вне 5150-5249 и 5050-5149: эти диапазоны Windows резервирует под Hyper-V/WSL (проверить: netsh interface ipv4 show excludedportrange protocol=tcp), и 5173/5199 там оказались — сокет не биндится вообще. Диапазоны плавают между перезагрузками, так что при ошибке «port is reserved by the OS» смотреть netsh, а не гадать.",
   "configurations": [
     {
       "name": "ai-incubator-safe",
@@ -8,7 +9,7 @@
         "run",
         "dev:safe"
       ],
-      "port": 5173
+      "port": 5273
     },
     {
       "name": "ai-incubator",
@@ -17,7 +18,7 @@
         "run",
         "dev"
       ],
-      "port": 5173
+      "port": 5273
     },
     {
       "name": "ai-incubator-api",
@@ -35,10 +36,10 @@
         "--",
         "vite",
         "--port",
-        "5199",
+        "5299",
         "--strictPort"
       ],
-      "port": 5199
+      "port": 5299
     },
     {
       "name": "mcp-docs",
