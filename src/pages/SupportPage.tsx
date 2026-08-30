@@ -256,6 +256,17 @@ export function SupportPage() {
                     {isSupportView && (t.ownerEmail || t.ownerName) && (
                       <span className="truncate text-[11px] text-iris-300">{t.ownerEmail || t.ownerName}</span>
                     )}
+                    {/*
+                      MR-257: обращение сотрудника СВОЕМУ владельцу. Мы такие видим (и должны
+                      видеть — решение владельца 31.08), но отвечать на них вместо владельца
+                      нельзя: токены и аккаунты выдаёт он, а не мы. Метка отделяет «нам» от
+                      «не нам» до того, как поддержка начнёт печатать ответ.
+                    */}
+                    {isSupportView && t.toOwnerId && (
+                      <span className="shrink-0 rounded-md border border-amber-500/40 bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-bold text-amber-300">
+                        сотрудник → владельцу
+                      </span>
+                    )}
                   </div>
                   <div className={cn('mt-0.5 truncate', t.unread ? 'font-bold text-fg' : 'font-semibold text-fg')}>{t.subject}</div>
                   <div className="truncate text-xs text-muted">{preview(t)}</div>
