@@ -13,6 +13,12 @@
         "--enable-web-dashboard",
         "true"
       ]
+    },
+    "codebase-memory": {
+      "command": "npx",
+      "args": [
+        "codebase-memory-mcp"
+      ]
     }
   }
 }

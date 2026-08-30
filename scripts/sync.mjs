@@ -13,6 +13,8 @@
  * Лучше честно остановиться и сказать, что закоммитить.
  */
 import { execFileSync } from 'node:child_process'
+import { existsSync } from 'node:fs'
+import { join } from 'node:path'
 
 const git = (...args) => execFileSync('git', args, { encoding: 'utf8' }).trim()
 const tryGit = (...args) => { try { return git(...args) } catch { return null } }
@@ -21,19 +23,50 @@ const say = (s = '') => process.stdout.write(s + '\n')
 const MAIN = 'main'
 
 // ── 0. Инструменты навигации ────────────────────────────────────────────────
-// Serena обязательна для всех, а не «желательна»: без неё навигация по коду
+// Оба обязательны для всех, а не «желательны»: без них навигация по коду
 // скатывается к перебору грепом, и агент читает файлы целиком вместо символов.
 // Проверка стоит здесь, потому что sync — обязательный первый шаг любой задачи
-// (CLAUDE.md, гейт): не установлена — задача не начинается.
+// (CLAUDE.md, гейт): не установлено — задача не начинается.
+//
+// Роли разведены и не пересекаются: Serena отвечает на вопросы про ОДИН символ
+// (определение, ссылки, правка) через TypeScript language server;
+// codebase-memory — про СВЯЗИ и общую картину (граф, архитектура, не-TS файлы).
+const missing = []
+
 try {
   execFileSync('serena', ['--version'], { encoding: 'utf8', stdio: 'pipe' })
 } catch {
-  say('\n  ✗ Serena не установлена — навигация по коду работать не будет.\n')
-  say('    Установка (один раз на машину):\n')
-  say('        uv tool install -p 3.13 serena-agent')
-  say('        serena init\n')
-  say('    Нет uv — сначала он: https://docs.astral.sh/uv/getting-started/installation/\n')
-  say('    Serena работает локально: транспорт stdio, то есть отдельный процесс на')
+  missing.push({
+    name: 'Serena',
+    what: 'символьная навигация по TypeScript (find_symbol, ссылки, правка)',
+    how: ['uv tool install -p 3.13 serena-agent', 'serena init'],
+    note: 'Нет uv — сначала он: https://docs.astral.sh/uv/getting-started/installation/',
+  })
+}
+
+// codebase-memory-mcp приезжает как devDependency, поэтому достаточно проверить
+// бинарник в node_modules — это мгновенно, в отличие от запуска через npx.
+const cbmBin = ['codebase-memory-mcp', 'codebase-memory-mcp.cmd']
+  .some((f) => existsSync(join('node_modules', '.bin', f)))
+if (!cbmBin) {
+  missing.push({
+    name: 'codebase-memory-mcp',
+    what: 'граф кода: архитектура, связи, поиск за пределами TypeScript',
+    how: ['npm install'],
+    note: 'Он в devDependencies — обычно достаточно поставить зависимости.',
+  })
+}
+
+if (missing.length) {
+  say('')
+  for (const m of missing) {
+    say(`  ✗ ${m.name} не установлена — ${m.what}.\n`)
+    say('    Установка:\n')
+    for (const cmd of m.how) say('        ' + cmd)
+    say('')
+    if (m.note) say('    ' + m.note + '\n')
+  }
+  say('    Оба работают локально: транспорт stdio, то есть отдельные процессы на')
   say('    этой машине, без сети. Конфиг лежит в .mcp.json и подхватывается сам.\n')
   process.exit(1)
 }

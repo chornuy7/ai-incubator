@@ -1,0 +1,4 @@
+# Чужие рабочие каталоги: индексировать их нечего, а объём они дают большой.
+# .serena/cache — кеш language server Serena (~34 МБ), .serena/logs — её логи.
+.serena/
+.claude/

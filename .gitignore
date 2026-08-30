@@ -28,3 +28,8 @@ api.config.json
 # команды. Кеш и project.local.yml Serena исключает сама (.serena/.gitignore),
 # логи прогонов — здесь: они у каждого свои и растут.
 .serena/logs/
+
+# codebase-memory-mcp (граф кода). Артефакт graph.db.zst коммитим — по нему
+# команда поднимает индекс без переиндексации. Логи и локальный конфиг — нет.
+.codebase-memory/logs/
+.codebase-memory/_config.db
