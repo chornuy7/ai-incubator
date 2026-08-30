@@ -1,0 +1,17 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Write|Edit|NotebookEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node .claude/hooks/workflow-gate.mjs check",
+            "timeout": 10,
+            "statusMessage": "Проверяю гейт регламента"
+          }
+        ]
+      }
+    ]
+  }
+}
