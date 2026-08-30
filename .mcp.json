@@ -4,8 +4,6 @@
       "command": "serena",
       "args": [
         "start-mcp-server",
-        "--context",
-        "ide-assistant",
         "--project",
         ".",
         "--transport",
