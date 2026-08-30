@@ -388,6 +388,22 @@ footer{
           <p class="why">Отдельной команды тут не нужно — в отличие от шага 5. Этот перевод не
             начинает новое действие, а сообщает результат уже начатого: прогон был запущен по
             команде, зелёный итог и есть повод отдать задачу человеку.</p>
+          <div class="gate stop" style="margin-top:9px">
+            <h3>Правка после сдачи возвращает задачу в <span class="m">In Progress</span></h3>
+            <p>Тронули код, пока задача в <span class="m">Ai Testing</span> или
+              <span class="m">Human Testing</span>, — статус обязан вернуться назад. Пока доска
+              говорит «проверяй», тестировщик проверяет код, которого уже нет, и находит либо
+              чужие баги, либо свои же, уже исправленные. Оба исхода — потраченный впустую
+              проход проверки.</p>
+            <p>Правка по замечаниям — нормальный ход дела. Ненормально молчаливое расхождение
+              статуса с кодом, поэтому откат оформляется целиком: статус
+              <span class="m">In Progress</span> + <b>комментарий с причиной отката</b> — что
+              именно меняется после сдачи и почему. Без причины история задачи превращается
+              в череду необъяснённых падений, по которой через неделю не понять, что ломалось
+              и сколько раз.</p>
+            <p>Из <span class="m">Done</span> откат делать нельзя: там работа принята, и правка
+              означает либо новую задачу, либо регрессию. Это повод остановиться и спросить.</p>
+          </div>
         </div>
       </div>
 
@@ -502,22 +518,29 @@ footer{
         <p class="after">Что дальше, на выбор: пришлите ссылку · возьмём одну из найденных выше · скажите «заводи», и я создам задачу по черновику ниже и покажу ключ. Без задачи нечему двигаться по статусам и нечем подтверждать допуск.</p>
       </div>
 
-      <div class="note">
-        <div class="note-when"><span class="m">main</span> не подтянут</div>
-        <p class="shout" style="color:var(--muted)">⚠️ MAIN НЕ ПОДТЯНУТ — РАБОТА ПОШЛА БЫ ПОВЕРХ УСТАРЕВШЕГО КОДА.</p>
-        <p class="after">Выполняю <span class="m">npm run sync</span> перед началом.</p>
-      </div>
-
       <div class="note deny">
         <div class="note-when">Работа начата в <span class="m">main</span></div>
         <p class="shout">⛔ СТОП: ЭТО ВЕТКА <span class="m">MAIN</span>. РАБОТА В НЕЙ ЗАПРЕЩЕНА WORKFLOW.</p>
         <p class="after">Создаю <span class="m">feat/&lt;TaskID&gt;-&lt;TaskTitle&gt;</span> и переношу изменения туда.</p>
       </div>
 
+      <div class="note">
+        <div class="note-when"><span class="m">main</span> не подтянут</div>
+        <p class="shout" style="color:var(--muted)">⚠️ MAIN НЕ ПОДТЯНУТ — РАБОТА ПОШЛА БЫ ПОВЕРХ УСТАРЕВШЕГО КОДА.</p>
+        <p class="after">Выполняю <span class="m">npm run sync</span> перед началом.</p>
+      </div>
+
       <div class="note ask">
         <div class="note-when">Своё сделано, команды на тесты нет</div>
         <p class="shout">⚠️ Я СДЕЛАЛ ТО, О ЧЁМ ПРОСИЛИ. СЧИТАТЬ РАБОТУ ЗАКОНЧЕННОЙ И ЗАПУСКАТЬ ТЕСТЫ?</p>
         <p class="after">Готовность определяете вы: возможно, требование ещё изменится. Статус не меняется, пока не прозвучит «тестируй».</p>
+      </div>
+
+      <div class="note">
+        <div class="note-when">Правка кода, когда задача на проверке</div>
+        <p class="shout" style="color:var(--muted)">⚠️ ПРАВКА ПОСЛЕ СДАЧИ — ЗАДАЧА <span class="m">&lt;KEY&gt;</span> ВОЗВРАЩАЕТСЯ В <span class="m">IN PROGRESS</span>.</p>
+        <p class="shout" style="color:var(--muted)">ПРИЧИНА ОТКАТА: <span class="m">&lt;причина&gt;</span>.</p>
+        <p class="after">Пока статус говорит «проверяй», проверяется код, которого уже нет. Возвращаю статус и пишу причину комментарием.</p>
       </div>
 
       <div class="note deny">
@@ -581,6 +604,7 @@ footer{
       <li><span class="x">✕</span><span>Перевода в <span class="m">Ai Testing</span> без команды — «дописал» не значит «проверяй».</span></li>
       <li><span class="x">✕</span><span>Перевода в <span class="m">Human Testing</span> без комментария.</span></li>
       <li><span class="x">✕</span><span>Перевода в <span class="m">Human Testing</span> без обновлённого описания задачи.</span></li>
+      <li><span class="x">✕</span><span>Правки кода на <span class="m">Ai Testing</span> или <span class="m">Human Testing</span> без отката в <span class="m">In Progress</span> — и без указанной причины отката.</span></li>
       <li><span class="x">✕</span><span>Перевода в <span class="m">Done</span> самим Claude — это решение человека.</span></li>
       <li><span class="x">✕</span><span>Заливки или мержа до <span class="m">Done</span> — даже если попросили.</span></li>
       <li><span class="x">✕</span><span>Заливки по одному лишь статусу <span class="m">Done</span>, без команды человека.</span></li>
