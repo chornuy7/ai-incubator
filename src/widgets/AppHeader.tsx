@@ -1,10 +1,10 @@
 import { useNavigate } from 'react-router-dom'
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useMemo } from 'react'
 import {
   Menu, Zap, Sun, Moon, Radar, ChevronDown, UserCog, LogOut, Wallet, Check, AlertTriangle, Package, Bell, X, Clock,
   PanelLeftClose, PanelLeftOpen,
 } from 'lucide-react'
-import { useApp, activeAccounts, isBrokenAccount } from '@/mocks/store'
+import { useApp, activeAccounts, isBrokenAccount, STATUS_META } from '@/mocks/store'
 import { fetchAllTasks, type ModuleTask } from '@/api/modulesApi'
 import { fetchTickets, type ApiTicket } from '@/api/ticketsApi'
 import { fetchAwaitingReplies, type AwaitingReply } from '@/api/neuroDialogsApi'
@@ -69,15 +69,23 @@ export function AppHeader() {
   }, [])
   // §6.3 (NOTIFY-001): колокольчик — сколько аккаунтов «отвалилось» (мёртвый прокси / нерабочий статус).
   const [notifOpen, setNotifOpen] = useState(false)
+  const [accOpen, setAccOpen] = useState(false)
   // Закрытие колокольчика кликом ВНЕ него: прозрачный backdrop не срабатывал, т.к.
   // сайдбар/шапка перекрывали его по бокам. Слушаем документ по ref — надёжно.
   const notifRef = useRef<HTMLDivElement>(null)
+  const accRef = useRef<HTMLDivElement>(null)
   useEffect(() => {
     if (!notifOpen) return
     const onDown = (e: MouseEvent) => { if (notifRef.current && !notifRef.current.contains(e.target as Node)) setNotifOpen(false) }
     document.addEventListener('mousedown', onDown)
     return () => document.removeEventListener('mousedown', onDown)
   }, [notifOpen])
+  useEffect(() => {
+    if (!accOpen) return
+    const onDown = (e: MouseEvent) => { if (accRef.current && !accRef.current.contains(e.target as Node)) setAccOpen(false) }
+    document.addEventListener('mousedown', onDown)
+    return () => document.removeEventListener('mousedown', onDown)
+  }, [accOpen])
   const broken = activeAccounts(data).filter(isBrokenAccount)
   /*
    * §6.3 (NOTIFY-001): уведомление можно закрыть вручную. Закрытые id помним в браузере —
@@ -298,8 +306,46 @@ export function AppHeader() {
    * null здесь значит «ещё не знаю» и рисуется как «—». Это честнее нуля: ноль — это
    * тоже утверждение, и на общем компьютере он читается как «деньги пропали».
    */
-  const active = accountsLoaded ? activeAccounts(data).length : null
-  const limit = balance?.plan.accountLimit ?? null
+  /*
+   * MR-235: в шапке было «98 / 50» — сколько аккаунтов есть и лимит тарифа.
+   *
+   * Лимит оказался выдумкой: accountLimit лежит в server/balance.js как число тарифа и
+   * НИГДЕ не проверяется — добавить аккаунт сверх него ничто не мешает. Поэтому 98 при
+   * лимите 50 — не ошибка подсчёта: 98 настоящие, а 50 ничего не значат. Заказчик 30.08:
+   * «нету никакого драного лимита по аккаунтам; там должно быть написано 8 из 10 —
+   * сколько работает».
+   *
+   * Показываем то, что человеку правда нужно знать: сколько его аккаунтов в строю из
+   * тех, что у него есть.
+   */
+  const всегоАккаунтов = accountsLoaded ? activeAccounts(data).length : null
+  const рабочихАккаунтов = accountsLoaded ? activeAccounts(data).filter((a) => !isBrokenAccount(a)).length : null
+  /*
+   * Разбор «не в строю» по причинам — то, ради чего счётчик и нажимают. Заказчик 30.08:
+   * «если я туда нажму, я должен увидеть всплывающее окошко, которое мне скажет: у меня
+   * из них два аккаунта, Вася и Вова, они в спамблоке».
+   *
+   * Причина одна на аккаунт и в понятном порядке: сперва прокси (её чинят в другом
+   * разделе), потом статус. Иначе аккаунт без прокси и в спамблоке попал бы в две группы
+   * и сумма не сошлась бы с числом в шапке.
+   */
+  /*
+   * Имён показываем восемь, дальше «и ещё N». На пяти аккаунтах разницы нет, но заказчик
+   * говорил про десять тысяч: «остальные 9992 — они дохлые». Список из девяти тысяч имён
+   * читать невозможно, а число и первые несколько имён отвечают на вопрос «кто именно».
+   */
+  const неВСтрою = useMemo(() => {
+    const группы = new Map<string, string[]>()
+    for (const a of activeAccounts(data)) {
+      if (!isBrokenAccount(a)) continue
+      const причина = a.proxyOk === false ? 'Мёртвый прокси'
+        : a.noProxy === true ? 'Без прокси'
+          : (STATUS_META[a.status as keyof typeof STATUS_META]?.label || a.status)
+      if (!группы.has(причина)) группы.set(причина, [])
+      группы.get(причина)!.push(a.name || a.phone || a.id)
+    }
+    return [...группы.entries()].sort((x, y) => y[1].length - x[1].length)
+  }, [data])
   const currentLang = LANGUAGES.find((l) => l.code === locale) ?? LANGUAGES[1]
 
   // R1/R2: шапка отражает залогиненного пользователя сессии (а не мок-профиль), + его роль.
@@ -373,7 +419,13 @@ export function AppHeader() {
         {/* Plan badge */}
         <div className="hidden items-center gap-2 rounded-xl border border-line bg-elevated px-3 py-1.5 sm:flex">
           <span className="text-xs font-medium text-muted">План</span>
-          <span className="text-sm font-bold text-fg">{balance?.plan.name ?? data.plan.name}</span>
+          {/*
+            MR-235: название тарифа тоже подставлялось из демонстрационного набора, пока
+            свой баланс летит с сервера. У админа совпало («Базовая» и там, и там), поэтому
+            было незаметно — а человеку на другом тарифе шапка секунду показывала бы чужой.
+            Неизвестно — значит прочерк.
+          */}
+          <span className="text-sm font-bold text-fg">{balance?.plan.name ?? '—'}</span>
         </div>
 
         <div className="ml-auto flex items-center gap-1.5 sm:gap-2">
@@ -383,15 +435,48 @@ export function AppHeader() {
           </button>
 
           {/* Accounts limit — кликабельно, ведёт в менеджер аккаунтов (правка 12.08). */}
-          <button
-            type="button"
-            onClick={() => nav('/panel')}
-            className="flex items-center gap-1.5 rounded-xl border border-line bg-elevated px-3 py-1.5 transition-colors hover:border-spark-500/40 hover:bg-elevated/70"
-            title="Открыть менеджер аккаунтов"
-          >
-            <span className="text-sm font-bold text-fg">{active ?? '—'} / {limit ?? '—'}</span>
-            <span className="hidden text-xs text-muted sm:inline">акк.</span>
-          </button>
+          <div className="relative" ref={accRef}>
+            <button
+              type="button"
+              onClick={() => setAccOpen((v) => !v)}
+              className="flex items-center gap-1.5 rounded-xl border border-line bg-elevated px-3 py-1.5 transition-colors hover:border-spark-500/40 hover:bg-elevated/70"
+              title={всегоАккаунтов == null ? 'Аккаунты ещё загружаются' : `В строю ${рабочихАккаунтов} из ${всегоАккаунтов} — нажмите, чтобы увидеть остальные`}
+            >
+              <span className="text-sm font-bold text-fg">{рабочихАккаунтов ?? '—'} / {всегоАккаунтов ?? '—'}</span>
+              <span className="hidden text-xs text-muted sm:inline">акк. в строю</span>
+            </button>
+            {accOpen && (
+              <div className="absolute right-0 top-[calc(100%+8px)] z-50 w-80 overflow-hidden rounded-2xl border border-line bg-surface shadow-2xl shadow-black/40">
+                <div className="border-b border-line px-3 py-2.5 text-xs font-bold uppercase tracking-wide text-muted">
+                  Аккаунты · в строю {рабочихАккаунтов ?? '—'} из {всегоАккаунтов ?? '—'}
+                </div>
+                {неВСтрою.length === 0 ? (
+                  <div className="px-3 py-5 text-center text-sm text-muted">Все аккаунты в строю</div>
+                ) : (
+                  <div className="max-h-80 overflow-y-auto p-1.5">
+                    {неВСтрою.map(([причина, имена]) => (
+                      <div key={причина} className="rounded-xl px-2 py-2">
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="text-sm font-semibold text-fg">{причина}</span>
+                          <span className="shrink-0 text-xs font-bold text-rose-300">{имена.length}</span>
+                        </div>
+                        <div className="mt-0.5 text-[11px] leading-snug text-muted">
+                          {имена.slice(0, 8).join(', ')}
+                          {имена.length > 8 && <span className="text-faint"> и ещё {имена.length - 8}</span>}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                <button
+                  onClick={() => { setAccOpen(false); nav('/panel') }}
+                  className="w-full border-t border-line px-3 py-2.5 text-left text-sm font-semibold text-spark-300 transition-colors hover:bg-spark-500/10"
+                >
+                  Открыть менеджер аккаунтов
+                </button>
+              </div>
+            )}
+          </div>
 
           {/* §6.3 (NOTIFY-001): колокольчик — сколько аккаунтов отвалилось (мёртвый прокси / нерабочий статус). */}
           <div className="relative" ref={notifRef}>
