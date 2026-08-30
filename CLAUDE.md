@@ -97,16 +97,13 @@ Jira не подключена:
 | `server/lib/` | ядро: `channelLease`, `accountLocks`, `accountRunner`, `actionBilling` |
 | `server/modules/` | система модулей задач — три файла: `registry`, `routes`, `workers` |
 | `server/mcp/` | MCP-сервер и дескрипторы → скилл `mcp-descriptors` |
-| `server/data/` | локальный фолбэк хранилища (в `.gitignore`), не источник истины |
-| `supabase/` | `schema.sql` и ~50 миграций — вторая половина хранилища |
+| `server/data/` | фолбэк хранилища для тестов и локального запуска (в `.gitignore`); данные живут в общей базе |
+| `supabase/` | `schema.sql` и ~50 миграций — то самое хранилище |
 | `server/__tests__/` | ~140 тестов, перечислены поимённо в `package.json` |
 | `api-tests/` | **второй набор тестов**: Python, приватный `/api/v1` (ключ «мозгов»). `npm test` его НЕ запускает |
 | `scripts/` | `sync.mjs`, миграции, генераторы, `mcp-docs.mjs` |
 | `deploy/` | `deploy.sh`, nginx-конфиг, systemd-юнит — то, что запрещает трогать запрет 4 |
 | `docs/CONTRACT-*.md` | контракты: state machine, lease, RBAC, логи действий и аудита |
-
-**Данные живут в общей базе.** Файлы в `server/data/` — фолбэк для тестов и локального запуска,
-в `.gitignore`, источником истины не являются.
 
 ## Документация
 
