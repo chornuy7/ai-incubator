@@ -1871,6 +1871,22 @@ app.get('/api/balance', async (req, res) => {
     const { resolveWalletOwner } = await import('./users.js')
     const owner = me ? await resolveWalletOwner(me).catch(() => me) : me
     if (me && owner !== me) return res.json({ ok: true, balance: { ...balance, usd: undefined, isSub: true } })
+    /*
+     * Почему подписка не продлилась. Когда денег не хватило, списания не было — значит в
+     * кошельке пусто, и панель может сказать разве что «подписки нет». Человеку этого мало:
+     * он видит отключённые модули и не понимает, он что-то сломал или с него не смогли
+     * взять деньги. Берём ФАКТ из журнала, а не пересчитываем цену заново: в журнале
+     * записано то, что действительно произошло, с суммой и датой попытки.
+     */
+    const истекла = balance.expiresAt && Number(balance.expiresAt) <= Date.now()
+    if (me && истекла) {
+      const { readAudit } = await import('./lib/auditLog.js')
+      const [последняя] = await readAudit({ action: 'subscription.renew_failed', initiator: me, limit: 1 }).catch(() => [])
+      if (последняя) {
+        const m = последняя.meta || {}
+        return res.json({ ok: true, balance: { ...balance, renewFailed: { at: последняя.ts, cost: m.cost, short: m.short } } })
+      }
+    }
     res.json({ ok: true, balance })
   } catch (err) { res.status(500).json({ ok: false, error: err instanceof Error ? err.message : 'Ошибка' }) }
 })

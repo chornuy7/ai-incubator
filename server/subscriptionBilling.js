@@ -20,6 +20,7 @@
 import { getSupabase, supabaseEnabled } from './lib/supabase.js'
 import { effectivePrices } from './priceStore.js'
 import { creditMonth } from './tokenCredit.js'
+import { appendAudit } from './lib/auditLog.js'
 
 /** Служебные кошельки и общий набор пространства: это провижининг админа, а не оплата. */
 const SKIP = new Set(['workspace', '__default', '__workspace__'])
@@ -48,13 +49,16 @@ const ms = (v) => (v == null ? null : (typeof v === 'number' ? v : new Date(v).g
  * и в этом месяце денег ещё не списывали.
  * @returns {Promise<Array<{id:string, userId:string, modules:string[], expiresAt:number}>>}
  */
-export async function dueForRenewal(nowMs = Date.now()) {
+export async function dueForRenewal(nowMs = Date.now(), onlyUser = '') {
   if (!supabaseEnabled()) return [] // файловый режим (дев/тесты) — деньгами не двигаем
   const db = getSupabase()
   const month = creditMonth(nowMs)
 
   const { data } = await db.from('subscriptions').select('id, user_id, expires_at, last_charge_month')
   const due = (data || []).filter((r) => {
+    // MR-193: см. tokenCredit.js — ускоренный прогон обязан касаться ровно одного
+    // человека, иначе он снимет деньги у всех, у кого сегодня подходит срок.
+    if (onlyUser && r.id !== onlyUser && r.user_id !== onlyUser) return false
     if (SKIP.has(r.id) || SKIP.has(r.user_id || '')) return false
     // Бессрочная подписка — админский провижининг, продлевать нечего.
     if (!r.expires_at) return false
@@ -95,8 +99,8 @@ export async function dueForRenewal(nowMs = Date.now()) {
  *
  * @returns {Promise<{ renewed:number, charged:number, tokens:number, unpaid:number }>}
  */
-export async function renewDueSubscriptions(nowMs = Date.now()) {
-  const due = await dueForRenewal(nowMs)
+export async function renewDueSubscriptions(nowMs = Date.now(), onlyUser = '') {
+  const due = await dueForRenewal(nowMs, onlyUser)
   if (!due.length) return { renewed: 0, charged: 0, tokens: 0, unpaid: 0 }
 
   const db = getSupabase()
@@ -129,9 +133,20 @@ export async function renewDueSubscriptions(nowMs = Date.now()) {
       const usd = Number(balance?.usd) || 0
       if (usd < cost) {
         unpaid += 1
-        // Ничего не трогаем: срок остаётся в прошлом, доступ закрывается сам. Пишем в лог,
-        // потому что молчаливое закрытие доступа выглядит как поломка платформы.
+        /*
+         * Ничего не трогаем: срок остаётся в прошлом, доступ закрывается сам.
+         *
+         * И оставляем СЛЕД. Раньше здесь была только строка в консоли: она уезжает вместе
+         * с логом, и когда человек звонит «почему у меня всё отключилось», подтвердить
+         * нечем — списания не было, значит в кошельке пусто, в аудите тоже. Запись в
+         * журнале даёт поддержке ответ: когда пробовали, сколько нужно было, сколько было.
+         */
         console.warn(`[подписка] ${sub.userId}: не хватает $${(cost - usd).toFixed(2)} на продление (${shown}) — доступ закрывается`)
+        await appendAudit({
+          action: 'subscription.renew_failed', module: 'billing', initiator: sub.userId,
+          reason: `Не хватило денег на продление: нужно $${cost.toFixed(2)}, на счету $${usd.toFixed(2)}`,
+          meta: { userId: sub.userId, cost, balance: usd, short: Number((cost - usd).toFixed(2)), modules: sub.modules },
+        }).catch(() => {}) // журнал не должен ронять биллинг
         continue
       }
       await changeUsd(-cost, `Продление подписки (месяц): ${shown}`, sub.userId)
