@@ -20,6 +20,7 @@
 import { getSupabase, supabaseEnabled } from './lib/supabase.js'
 import { effectivePrices } from './priceStore.js'
 import { creditMonth } from './tokenCredit.js'
+import { appendAudit } from './lib/auditLog.js'
 
 /** Служебные кошельки и общий набор пространства: это провижининг админа, а не оплата. */
 const SKIP = new Set(['workspace', '__default', '__workspace__'])
@@ -132,9 +133,20 @@ export async function renewDueSubscriptions(nowMs = Date.now(), onlyUser = '') {
       const usd = Number(balance?.usd) || 0
       if (usd < cost) {
         unpaid += 1
-        // Ничего не трогаем: срок остаётся в прошлом, доступ закрывается сам. Пишем в лог,
-        // потому что молчаливое закрытие доступа выглядит как поломка платформы.
+        /*
+         * Ничего не трогаем: срок остаётся в прошлом, доступ закрывается сам.
+         *
+         * И оставляем СЛЕД. Раньше здесь была только строка в консоли: она уезжает вместе
+         * с логом, и когда человек звонит «почему у меня всё отключилось», подтвердить
+         * нечем — списания не было, значит в кошельке пусто, в аудите тоже. Запись в
+         * журнале даёт поддержке ответ: когда пробовали, сколько нужно было, сколько было.
+         */
         console.warn(`[подписка] ${sub.userId}: не хватает $${(cost - usd).toFixed(2)} на продление (${shown}) — доступ закрывается`)
+        await appendAudit({
+          action: 'subscription.renew_failed', module: 'billing', initiator: sub.userId,
+          reason: `Не хватило денег на продление: нужно $${cost.toFixed(2)}, на счету $${usd.toFixed(2)}`,
+          meta: { userId: sub.userId, cost, balance: usd, short: Number((cost - usd).toFixed(2)), modules: sub.modules },
+        }).catch(() => {}) // журнал не должен ронять биллинг
         continue
       }
       await changeUsd(-cost, `Продление подписки (месяц): ${shown}`, sub.userId)

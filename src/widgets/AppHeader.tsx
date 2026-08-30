@@ -222,7 +222,12 @@ export function AppHeader() {
    */
   if (срок.expired && !dismissed.has('sub-expired')) {
     notifItems.push({ key: 'sub-expired', tone: 'red', title: 'Подписка не продлена',
-      sub: `${срок.label} · модули отключены — пополните счёт`, go: '/panel/user/subscription', ts: Date.now() })
+      // Если сервер знает ПРИЧИНУ — говорим её. «Подписка не продлена» без причины
+      // человек читает как поломку платформы, а не как «на счету кончились деньги».
+      sub: balance?.renewFailed?.short
+        ? `не хватило ${символ}${balance.renewFailed.short} на продление · модули отключены — пополните счёт`
+        : `${срок.label} · модули отключены — пополните счёт`,
+      go: '/panel/user/subscription', ts: Date.now() })
   }
   // MR-134: 🟡 обращения в поддержку (не закрытые) — «ответ поддержки» / «ждём ответа».
   for (const tk of tickets) {
