@@ -111,8 +111,15 @@ export async function changeMyPassword(currentPassword: string, newPassword: str
 }
 
 export async function logoutUser(userId: string): Promise<void> {
+  // ПОРЯДОК ВАЖЕН. Раньше здесь первым стоял clearToken(), и запрос уходил на сервер уже
+  // БЕЗ Authorization: /logout не входит в публичный список, поэтому гвард отвечал 401, не
+  // доходя до роута. Выход на проде не срабатывал вообще — смены рабочего времени (§8.1)
+  // не закрывались: на живой базе 15 из 18 висели открытыми. Сначала запрос, потом токен.
+  //
+  // keepalive: сразу после выхода страница перезагружается, и обычный запрос браузер
+  // отменил бы вместе с документом. С этим флагом он доводится до конца.
+  try { await apiPost('/api/users/logout', { userId }, { keepalive: true }) } catch { /* best-effort */ }
   clearToken() // токен недействителен для нас — убираем локально в любом случае
-  try { await apiPost('/api/users/logout', { userId }) } catch { /* best-effort */ }
 }
 
 /**

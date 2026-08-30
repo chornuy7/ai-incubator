@@ -45,6 +45,14 @@ interface AppStore extends Persisted {
   mobileNavOpen: boolean
   toasts: Toast[]
   accountsLoading: boolean
+  /**
+   * MR-203: приехали ли НАСТОЯЩИЕ аккаунты с сервера.
+   *
+   * `accountsLoading` для этого не годится: он false и ДО загрузки, и ПОСЛЕ, а до
+   * загрузки в `data` лежат демонстрационные сиды. Экран, который отличает «ещё не
+   * знаю» от «знаю, что ноль», обязан смотреть сюда.
+   */
+  accountsLoaded: boolean
 
   setUserState: (s: UserState) => void
   setLocale: (l: Locale) => void
@@ -133,6 +141,7 @@ export const useApp = create<AppStore>((set, get) => {
     mobileNavOpen: false,
     toasts: [],
     accountsLoading: false,
+    accountsLoaded: false,
 
     setUserState: (s) => {
       mutate(() => ({ userState: s, data: dataFor(s) }))
@@ -176,7 +185,7 @@ export const useApp = create<AppStore>((set, get) => {
       set({ accountsLoading: true })
       try {
         const accounts = await fetchAccounts()
-        mutate((st) => ({ data: { ...st.data, accounts } }))
+        mutate((st) => ({ data: { ...st.data, accounts }, accountsLoaded: true }))
       } catch (e) {
         get().pushToast({
           type: 'error',

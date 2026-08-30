@@ -13,6 +13,7 @@ import { requesterContext } from './lib/accessGuard.js'
 import { appendAudit } from './lib/auditLog.js'
 import { clockIn, clockOut, summariesFor } from './workLog.js'
 import { signSession } from './lib/session.js'
+import { revokeTokensFor } from './lib/tokenRevocation.js'
 
 /** §4.1 (MR-29): владелец не может назначать субу админ-роль (эскалация прав). */
 function sanitizeRoleIds(roleIds) {
@@ -231,10 +232,16 @@ usersRouter.post('/me/password', async (req, res) => {
   } catch (err) { fail(res, err) }
 })
 
-/** Выход: закрыть сессию рабочего времени. */
+/** Выход: погасить прежние токены (MR-203) и закрыть сессию рабочего времени. */
 usersRouter.post('/logout', async (req, res) => {
   try {
-    const { userId } = req.body ?? {}
+    // Личность берём из ПОДПИСАННОГО токена (её ставит sessionGuard), а не из тела: иначе
+    // любой вошедший мог бы прислать чужой id и погасить чужие сессии. Тело — запасной
+    // путь для дев-режима, где замок выключен и заголовка нет.
+    const userId = req.header('x-user-id') || (req.body ?? {}).userId || ''
+    // MR-203: гасим ВСЕ прежние токены этого человека. Чистка localStorage закрывает
+    // только тот браузер, где нажали «Выйти», а токен жил бы ещё до недели где угодно.
+    if (userId) await revokeTokensFor(userId)
     const closed = userId ? await clockOut(userId) : null
     if (closed) await appendAudit({ action: 'user.logout', module: 'auth', initiator: userId, reason: 'Выход', meta: { userId, durationMs: closed.durationMs } })
     res.json({ ok: true, session: closed })
