@@ -188,11 +188,21 @@ export async function syncModuleLinks() {
       if (!bySub.has(r.user_id)) bySub.set(r.user_id, [])
       bySub.get(r.user_id).push(r.module_key)
     }
-    for (const [id, keys] of bySub) report.subscriptions += await relink('subscription_modules', 'subscription_id', id, keysOf(keys))
+    /*
+     * MR-190: проекцию subscription_modules больше не строим.
+     *
+     * Её никто не читал — ни один запрос в коде к ней не обращается. Это была вторая
+     * модель подписки рядом с user_subscriptions: 47 строк, которые молча поддерживались
+     * и однажды разошлись бы с настоящими данными. Источник правды один — user_subscriptions.
+     */
+    void bySub
 
     // ── Наборы ───────────────────────────────────────────────────────────────
-    const { data: bundles } = await db.from('bundles').select('id, modules')
-    for (const b of bundles || []) report.bundles += await relink('bundle_modules', 'bundle_id', b.id, keysOf(b.modules))
+    /*
+     * MR-190: наборы больше не перестраиваем из JSON-колонки — теперь всё наоборот.
+     * Состав читается ИЗ bundle_modules (server/bundles.js), а пишется туда при создании
+     * набора. Перестройка из JSON затирала бы источник правды копией.
+     */
 
     // ── Кампании ─────────────────────────────────────────────────────────────
     const { data: camps } = await db.from('campaigns').select('id, modules')

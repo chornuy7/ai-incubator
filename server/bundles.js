@@ -19,6 +19,26 @@ import { getSupabase, supabaseEnabled } from './lib/supabase.js'
 function sb() { return supabaseEnabled() ? getSupabase() : null }
 const rowToBundle = (r) => ({ id: r.id, name: r.name, hint: r.hint || '', modules: r.modules || [], price: Number(r.price), createdAt: r.created_at ? new Date(r.created_at).getTime() : 0 })
 
+/**
+ * Состав наборов из таблицы связей: bundle_id → ключи модулей.
+ * Пустой набор в ответе не появляется — если строк нет, вызывающий оставит JSON-состав.
+ */
+async function modulesByBundle(db, ids) {
+  const out = new Map()
+  if (!ids.length) return out
+  const { data: links, error } = await db.from('bundle_modules').select('bundle_id, module_id').in('bundle_id', ids)
+  if (error || !links?.length) return out
+  const { data: mods } = await db.from('modules').select('id, key')
+  const keyById = new Map((mods || []).map((m) => [String(m.id), m.key]))
+  for (const l of links) {
+    const key = keyById.get(String(l.module_id))
+    if (!key) continue
+    if (!out.has(l.bundle_id)) out.set(l.bundle_id, [])
+    out.get(l.bundle_id).push(key)
+  }
+  return out
+}
+
 const BUNDLES_FILE = () => process.env.BUNDLES_FILE || dataPath('bundles.json')
 
 const newId = () => `bun_${Math.random().toString(16).slice(2, 10)}`
@@ -28,7 +48,19 @@ export async function listBundles() {
   const db = sb()
   if (db) {
     const { data } = await db.from('bundles').select('*').order('created_at', { ascending: true })
-    return (data || []).map(rowToBundle)
+    const list = (data || []).map(rowToBundle)
+    /*
+     * MR-190: состав набора — из таблицы связей `bundle_modules`, а не из JSON-колонки.
+     *
+     * Одно и то же хранилось дважды: колонка `bundles.modules` и строки `bundle_modules`.
+     * Пока источников два, они однажды разъедутся, и клиент купит набор с одним составом,
+     * а получит другой. Источник правды — таблица связей.
+     *
+     * JSON остаётся запасным путём ровно до тех пор, пока колонку не снимут миграцией:
+     * между выкатом кода и миграцией у набора должен быть состав в любом случае.
+     */
+    const состав = await modulesByBundle(db, list.map((b) => b.id))
+    return list.map((b) => (состав.has(b.id) ? { ...b, modules: состав.get(b.id) } : b))
   }
   const raw = await readJson(BUNDLES_FILE(), [])
   return Array.isArray(raw) ? raw : []
@@ -70,6 +102,18 @@ export async function createBundle(input = {}) {
       price: bundle.price, created_at: new Date(bundle.createdAt).toISOString(),
     })
     if (error) throw new Error(error.message)
+    /*
+     * Связи пишем СРАЗУ, а не ждём фоновой синхронизации.
+     *
+     * Раньше строки bundle_modules появлялись только когда typesSync перестраивал их из
+     * JSON-колонки. Теперь состав читается из связей (listBundles), поэтому набор, созданный
+     * между двумя синхронизациями, выглядел бы пустым. И это же развязывает руки миграции:
+     * снять JSON-колонку можно, не сломав создание.
+     */
+    const { data: mods } = await db.from('modules').select('id, key')
+    const idByKey = new Map((mods || []).map((m) => [m.key, m.id]))
+    const links = bundle.modules.map((k) => idByKey.get(k)).filter((v) => v != null).map((module_id) => ({ bundle_id: bundle.id, module_id }))
+    if (links.length) await db.from('bundle_modules').insert(links)
     return bundle
   }
   // mutateJson, а не read+write: он сериализует запись в файл (очередь _fileChains).
@@ -85,6 +129,8 @@ export async function createBundle(input = {}) {
 export async function deleteBundle(id) {
   const db = sb()
   if (db) {
+    // Связи сносим первыми: иначе они останутся сиротами и всплывут в следующем аудите.
+    await db.from('bundle_modules').delete().eq('bundle_id', id)
     const { data } = await db.from('bundles').delete().eq('id', id).select('id')
     return !!(data && data.length)
   }
