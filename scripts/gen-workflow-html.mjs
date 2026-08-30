@@ -134,7 +134,13 @@ if (!branch) {
   process.exit(1)
 }
 
-const before = readFileSync(HTML, 'utf8')
+// Файл может лежать и с LF, и с CRLF: git на Windows подставляет CRLF при checkout, а генератор
+// пишет LF. Сравниваем и правим в LF, а записываем тем же концом строки, что был в файле. Без
+// этого --check падал бы у всей команды сразу после клона, хотя правила и страница совпадают.
+const beforeRaw = readFileSync(HTML, 'utf8')
+const eol = beforeRaw.includes('\r\n') ? '\r\n' : '\n'
+const before = beforeRaw.replace(/\r\n/g, '\n')
+
 let html = before
 html = replaceBlock(html, 'notes', templates.map(renderNote).join('\n\n'))
 html = replaceBlock(html, 'branch', `          <span class="m">${esc(branch)}</span>`)
@@ -149,6 +155,6 @@ if (check) {
   console.error('    Правила — источник, HTML — производное. Выполни:  npm run gen:workflow')
   process.exit(1)
 }
-writeFileSync(HTML, html)
+writeFileSync(HTML, eol === '\r\n' ? html.replace(/\n/g, '\r\n') : html)
 console.log(`  ✓ HTML перегенерирован: ${templates.length} шаблонов, ветка ${branch}`)
 }
