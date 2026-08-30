@@ -369,17 +369,26 @@ export function SubscriptionPage() {
                 добавленные). По одним «добавленным» строка пропадала у того, у кого всё
                 оплачено. */}
             {cost.monthlyTokens > 0 && (
-              <Tip text={`${cost.monthlyTokens.toLocaleString('ru-RU')} ⚡ токенов в месяц по подписке${added.length && due.monthlyTokens ? ` · +${due.monthlyTokens.toLocaleString('ru-RU')} ⚡ за добавленные` : ''}`}>
+              <Tip text={period === 'year'
+                ? `${cost.monthlyTokens.toLocaleString('ru-RU')} ⚡ КАЖДЫЙ месяц — ${(cost.monthlyTokens * 12).toLocaleString('ru-RU')} ⚡ за год. Сейчас придёт ${cost.monthlyTokens.toLocaleString('ru-RU')} ⚡ за первый месяц, остальные приходят помесячно.`
+                : `${cost.monthlyTokens.toLocaleString('ru-RU')} ⚡ токенов в месяц по подписке${added.length && due.monthlyTokens && cost.monthlyTokens !== due.monthlyTokens ? ` · +${due.monthlyTokens.toLocaleString('ru-RU')} ⚡ за добавленные` : ''}`}>
                 <span className="flex h-10 items-center gap-1.5 rounded-xl border border-spark-500/30 bg-spark-500/10 px-3.5 text-sm font-bold text-spark-300">
-                  {cost.monthlyTokens.toLocaleString('ru-RU')} ⚡<span className="font-semibold text-spark-300/70">в месяц</span>
-                  {added.length > 0 && due.monthlyTokens > 0 && <span className="text-xs">+{due.monthlyTokens.toLocaleString('ru-RU')}</span>}
+                  {cost.monthlyTokens.toLocaleString('ru-RU')} ⚡<span className="font-semibold text-spark-300/70">в месяц</span>{period === 'year' && <span className="text-xs font-semibold text-spark-300/70">× 12</span>}
+                  {/*
+                   * Прибавку показываем ТОЛЬКО когда есть к чему прибавлять.
+                   * У человека без подписки «всего» и «за добавленные» — одно и то же число,
+                   * и чип превращался в повтор: «100 ⚡ в месяц  +100». Читается как 200.
+                   */}
+                  {added.length > 0 && due.monthlyTokens > 0 && cost.monthlyTokens !== due.monthlyTokens && (
+                    <span className="text-xs">+{due.monthlyTokens.toLocaleString('ru-RU')}</span>
+                  )}
                 </span>
               </Tip>
             )}
 
             {/* MR-150: подарок — ОТДЕЛЬНО и жёлтым, как и просили. */}
             {cost.giftTokens > 0 && (
-              <Tip text={`+${cost.giftTokens.toLocaleString('ru-RU')} ⚡ подарочных — начисляются ОДИН раз при покупке модуля, не каждый месяц${added.length && due.giftTokens ? ` · из них +${due.giftTokens.toLocaleString('ru-RU')} ⚡ за добавленные` : ''}`}>
+              <Tip text={`+${cost.giftTokens.toLocaleString('ru-RU')} ⚡ подарочных — начисляются ОДИН раз при покупке модуля, не каждый месяц${added.length && due.giftTokens && cost.giftTokens !== due.giftTokens ? ` · из них +${due.giftTokens.toLocaleString('ru-RU')} ⚡ за добавленные` : ''}`}>
                 <span className="flex h-10 items-center gap-1.5 rounded-xl border border-amber-500/30 bg-amber-500/10 px-3.5 text-sm font-bold text-amber-300">
                   +{cost.giftTokens.toLocaleString('ru-RU')} ⚡<span className="font-semibold text-amber-300/70">разово при покупке</span>
                 </span>
