@@ -18,6 +18,9 @@ import { changeCoins } from './balance.js'
 const SKIP = new Set(['workspace', '__default', '__workspace__'])
 
 /** Строка `'YYYY-MM'` (UTC) — формат last_credit_month. */
+/** Период начисления — те же 30 суток, что и у списания денег (MONTH_MS в биллинге). */
+export const CREDIT_PERIOD_MS = 30 * 24 * 60 * 60 * 1000
+
 export function creditMonth(nowMs = Date.now()) {
   const d = new Date(nowMs)
   return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}`
@@ -28,16 +31,35 @@ export function creditMonth(nowMs = Date.now()) {
  * ещё не начислен, подписка не истекла.
  * @returns {Promise<Array<{id:string, userId:string, modules:string[]}>>}
  */
-export async function dueForCredit(nowMs = Date.now()) {
+export async function dueForCredit(nowMs = Date.now(), onlyUser = '') {
   if (!supabaseEnabled()) return [] // файловый режим (дев/тесты) — крон не работает
   const db = getSupabase()
-  const today = new Date(nowMs).getUTCDate()
   const month = creditMonth(nowMs)
+  /*
+   * Правка 30.08: начисление идёт через 30 ДНЕЙ ПОСЛЕ ОПЛАТЫ, а не по числу месяца.
+   *
+   * Раньше здесь стоял отбор `billing_day == сегодняшнее число`. Получалось две разные
+   * шкалы: деньги списываются каждые 30 суток (expires_at + MONTH_MS), а токены приходили
+   * 14-го числа каждого месяца, если человек заплатил 14-го. Между февралём и мартом эти
+   * даты расходятся, и владелец 30.08 сказал прямо: «якщо я платив 14, то нарахування і
+   * зняття коштів буде через 30 днів, а не 30 числа».
+   *
+   * Теперь обе шкалы одинаковые: отсчёт от МОМЕНТА последнего начисления.
+   */
   const { data } = await db.from('subscriptions')
-    .select('id, user_id, expires_at, billing_day, last_credit_month')
-    .eq('billing_day', today)
+    .select('id, user_id, expires_at, billing_day, last_credit_month, last_credit_at')
   const due = (data || []).filter((r) => {
-    if (r.last_credit_month === month) return false
+    // MR-193: прогон «месяц за минуту» идёт на боевой базе, где рядом живые подписки с
+    // настоящими деньгами. Фильтр сужает тик до ОДНОГО человека — без него ускоренный
+    // прогон списал бы деньги всем подряд. В обычной работе параметр пустой и ничего
+    // не меняет.
+    if (onlyUser && r.id !== onlyUser && r.user_id !== onlyUser) return false
+    // Ещё не прошло 30 суток с прошлого начисления — рано.
+    const прошлое = r.last_credit_at ? new Date(r.last_credit_at).getTime() : null
+    if (прошлое != null) { if (nowMs - прошлое < CREDIT_PERIOD_MS) return false }
+    // Отметки времени нет (старая подписка) — падаем на прежнее правило по месяцу, чтобы
+    // между выкатом и миграцией никто не получил двойное начисление.
+    else if (r.last_credit_month === month) return false
     if (SKIP.has(r.id) || SKIP.has(r.user_id || '')) return false
     if (r.expires_at && new Date(r.expires_at).getTime() <= nowMs) return false // истекла
     return true
@@ -67,7 +89,9 @@ export async function dueForCredit(nowMs = Date.now()) {
 export async function markCredited(id, month) {
   if (!supabaseEnabled()) return
   await getSupabase().from('subscriptions')
-    .update({ last_credit_month: month, updated_at: new Date().toISOString() })
+    // Пишем И момент: по нему считается следующее начисление через 30 суток. Строка месяца
+    // остаётся для совместимости со старыми подписками, у которых момента ещё нет.
+    .update({ last_credit_month: month, last_credit_at: new Date().toISOString(), updated_at: new Date().toISOString() })
     .eq('id', id)
 }
 
@@ -75,8 +99,8 @@ export async function markCredited(id, month) {
  * Начислить всем, кому сегодня положено. Безопасно вызывать многократно.
  * @returns {Promise<{ users:number, coins:number }>}
  */
-export async function creditDueTokens(nowMs = Date.now()) {
-  const due = await dueForCredit(nowMs)
+export async function creditDueTokens(nowMs = Date.now(), onlyUser = '') {
+  const due = await dueForCredit(nowMs, onlyUser)
   if (!due.length) return { users: 0, coins: 0 }
   const { tokensMap } = await effectivePrices()
   const month = creditMonth(nowMs)

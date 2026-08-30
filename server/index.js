@@ -1772,8 +1772,10 @@ app.post('/api/subscription', async (req, res) => {
         // но повод разобраться должен быть виден.
         console.error('[gift] подарочные ⚡ не начислены:', err instanceof Error ? err.message : err)
       }
-      // День оплаты — по нему крон начисляет следующие месяцы (год = 12 начислений в то же
-      // число). Этот месяц сразу помечаем начисленным, чтобы крон не задвоил.
+      // Токены за первый месяц человек получил только что, поэтому здесь ставим ТОЧКУ
+      // ОТСЧЁТА: следующее начисление — через 30 суток, а не в это же число следующего
+      // месяца (правка 30.08: «якщо я платив 14, то нарахування через 30 днів»). Момент
+      // пишет markCredited; billing_day остаётся справочным — по нему больше не решают.
       try {
         const { markCredited, creditMonth } = await import('./tokenCredit.js')
         const { supabaseEnabled, getSupabase } = await import('./lib/supabase.js')
@@ -1871,6 +1873,22 @@ app.get('/api/balance', async (req, res) => {
     const { resolveWalletOwner } = await import('./users.js')
     const owner = me ? await resolveWalletOwner(me).catch(() => me) : me
     if (me && owner !== me) return res.json({ ok: true, balance: { ...balance, usd: undefined, isSub: true } })
+    /*
+     * Почему подписка не продлилась. Когда денег не хватило, списания не было — значит в
+     * кошельке пусто, и панель может сказать разве что «подписки нет». Человеку этого мало:
+     * он видит отключённые модули и не понимает, он что-то сломал или с него не смогли
+     * взять деньги. Берём ФАКТ из журнала, а не пересчитываем цену заново: в журнале
+     * записано то, что действительно произошло, с суммой и датой попытки.
+     */
+    const истекла = balance.expiresAt && Number(balance.expiresAt) <= Date.now()
+    if (me && истекла) {
+      const { readAudit } = await import('./lib/auditLog.js')
+      const [последняя] = await readAudit({ action: 'subscription.renew_failed', initiator: me, limit: 1 }).catch(() => [])
+      if (последняя) {
+        const m = последняя.meta || {}
+        return res.json({ ok: true, balance: { ...balance, renewFailed: { at: последняя.ts, cost: m.cost, short: m.short } } })
+      }
+    }
     res.json({ ok: true, balance })
   } catch (err) { res.status(500).json({ ok: false, error: err instanceof Error ? err.message : 'Ошибка' }) }
 })

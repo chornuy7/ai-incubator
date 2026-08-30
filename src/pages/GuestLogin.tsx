@@ -51,7 +51,17 @@ export function GuestLogin() {
   // §10.2: капча на регистрации — показываем виджет только если она включена на сервере.
   const [captcha, setCaptcha] = useState<{ enabled: boolean; siteKey: string }>({ enabled: false, siteKey: '' })
   const [captchaToken, setCaptchaToken] = useState('')
-  useEffect(() => { void fetchAuthConfig().then((c) => setCaptcha(c.captcha)).catch(() => {}) }, [])
+  /*
+   * Сбой этого запроса раньше глотался молча, и именно поэтому баг 30.08 был невидим:
+   * сервер отвечал гостю 401, фронт решал, что капчи нет, виджет не рисовался, а человек
+   * получал «проверка «я не робот» не пройдена» и не имел ни одного намёка на причину.
+   * Ответа нет — говорим об этом вслух, а не делаем вид, что капчи не существует.
+   */
+  useEffect(() => {
+    void fetchAuthConfig()
+      .then((c) => setCaptcha(c.captcha))
+      .catch((e) => console.warn('[регистрация] не удалось узнать настройки капчи:', e))
+  }, [])
   const needCaptcha = isReg && captcha.enabled
 
   const submit = async (e: React.FormEvent) => {
