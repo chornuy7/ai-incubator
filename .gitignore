@@ -37,3 +37,6 @@ api.config.json
 # Индекс собирается локально примерно за минуту: npx codebase-memory-mcp cli
 # index_repository --repo-path . --mode full
 .codebase-memory/
+
+# Состояние привратника регламента: у каждого своё, к коду отношения не имеет.
+.claude/.workflow-state.json

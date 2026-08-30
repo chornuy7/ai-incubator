@@ -14,14 +14,14 @@ import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
 import { readFileSync } from 'node:fs'
 
-import { parseTemplates } from '../../scripts/gen-workflow-html.mjs'
+import { parseTemplates, GATE_HEADING } from '../../scripts/gen-workflow-html.mjs'
 
 const html = readFileSync('docs/WORKFLOW-rules.html', 'utf8')
 const claudeMd = readFileSync('CLAUDE.md', 'utf8')
 const skillMd = readFileSync('.claude/skills/task-workflow/SKILL.md', 'utf8')
 
 const templates = [
-  ...parseTemplates(claudeMd.split('### Два шаблона')[1] ?? ''),
+  ...parseTemplates(claudeMd.split(GATE_HEADING)[1] ?? ''),
   ...parseTemplates(skillMd.split('## Шаблоны остановки')[1] ?? ''),
 ]
 

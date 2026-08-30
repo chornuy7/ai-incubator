@@ -29,6 +29,10 @@ const HTML = join(ROOT, 'docs', 'WORKFLOW-rules.html')
 const CLAUDE = join(ROOT, 'CLAUDE.md')
 const SKILL = join(ROOT, '.claude', 'skills', 'task-workflow', 'SKILL.md')
 
+// Заголовок гейтовой секции в CLAUDE.md. Экспортируется, чтобы тест не держал свою копию
+// литерала: разъехавшись, они молча теряли бы часть шаблонов из проверки.
+export const GATE_HEADING = '### Шаблоны, которые срабатывают до загрузки скилла'
+
 // ── разбор шаблонов из markdown ─────────────────────────────────────────────
 // Шаблон в источнике выглядит так: строка-повод, заканчивающаяся двоеточием, пустая строка,
 // дальше цитата. Строки цитаты, обёрнутые в **…**, — это «крик» (ключевая строка заглавными),
@@ -118,9 +122,9 @@ function main() {
 const claudeMd = readFileSync(CLAUDE, 'utf8')
 const skillMd = readFileSync(SKILL, 'utf8')
 
-// Порядок как в правилах: сначала два гейтовых шаблона из CLAUDE.md, потом процедурные из скилла.
+// Порядок как в правилах: сначала гейтовые шаблоны из CLAUDE.md, потом процедурные из скилла.
 const templates = [
-  ...parseTemplates(claudeMd.split('### Два шаблона')[1] ?? ''),
+  ...parseTemplates(claudeMd.split(GATE_HEADING)[1] ?? ''),
   ...parseTemplates(skillMd.split('## Шаблоны остановки')[1] ?? ''),
 ]
 if (templates.length < 6) {
