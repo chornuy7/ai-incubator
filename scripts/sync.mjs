@@ -44,17 +44,24 @@ try {
   })
 }
 
-// codebase-memory-mcp приезжает как devDependency, поэтому достаточно проверить
-// бинарник в node_modules — это мгновенно, в отличие от запуска через npx.
-const cbmBin = ['codebase-memory-mcp', 'codebase-memory-mcp.cmd']
-  .some((f) => existsSync(join('node_modules', '.bin', f)))
-if (!cbmBin) {
-  missing.push({
-    name: 'codebase-memory-mcp',
-    what: 'граф кода: архитектура, связи, поиск за пределами TypeScript',
-    how: ['npm install'],
-    note: 'Он в devDependencies — обычно достаточно поставить зависимости.',
-  })
+// Эти двое приезжают как devDependency, поэтому достаточно проверить бинарник в
+// node_modules — это мгновенно, в отличие от запуска через npx.
+const hasBin = (name) =>
+  [name, name + '.cmd'].some((f) => existsSync(join('node_modules', '.bin', f)))
+
+const npmTools = [
+  ['codebase-memory-mcp', 'граф кода: архитектура, связи, поиск за пределами TypeScript'],
+  ['ast-grep', 'структурный поиск по форме кода'],
+]
+for (const [name, what] of npmTools) {
+  if (!hasBin(name)) {
+    missing.push({
+      name,
+      what,
+      how: ['npm install'],
+      note: 'Он в devDependencies — обычно достаточно поставить зависимости.',
+    })
+  }
 }
 
 if (missing.length) {

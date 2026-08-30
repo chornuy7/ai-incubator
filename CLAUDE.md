@@ -86,12 +86,18 @@ Jira не подключена:
 | `src/shared/`, `src/api/` | общие компоненты и клиент API |
 | `server/*.js` | роуты и доменные модули (`accountHealth`, `campaigns`, `channels`…) |
 | `server/lib/` | ядро: `channelLease`, `accountLocks`, `accountRunner`, `actionBilling` |
-| `server/modules/` | воркеры задач |
+| `server/modules/` | система модулей задач — три файла: `registry`, `routes`, `workers` |
 | `server/mcp/` | MCP-сервер и дескрипторы → скилл `mcp-descriptors` |
 | `server/data/` | файловое хранилище: `users.json`, `accounts-meta.json`, `roles.json` |
+| `supabase/` | `schema.sql` и ~50 миграций — вторая половина хранилища |
 | `server/__tests__/` | ~140 тестов, перечислены поимённо в `package.json` |
+| `api-tests/` | **второй набор тестов**: Python, приватный `/api/v1` (ключ «мозгов»). `npm test` его НЕ запускает |
 | `scripts/` | `sync.mjs`, миграции, генераторы, `mcp-docs.mjs` |
+| `deploy/` | `deploy.sh`, nginx-конфиг, systemd-юнит — то, что запрещает трогать запрет 4 |
 | `docs/CONTRACT-*.md` | контракты: state machine, lease, RBAC, логи действий и аудита |
+
+**Хранилище двойное** — файлы в `server/data/*.json` и Postgres/Supabase. Не считать, что данные
+лежат только в одном месте: смотреть по конкретному модулю.
 
 ## Документация
 
@@ -157,6 +163,10 @@ codebase-memory-mcp (граф кода, 158 языков), ast-grep (поиск 
 
 ## Память
 
-**Файловая память Claude** (`.claude/.../memory/`) — решения, договорённости и то, чего нет в коде
-и в истории git. Заметки Serena (`.serena/memories/`) — про код и лежат в репозитории; эти две
-памяти не смешиваются.
+Две памяти, и они не смешиваются:
+
+- **Файловая память Claude** — решения, договорённости и то, чего нет в коде и в истории git.
+  Лежит **вне репозитория**, в профиле пользователя
+  (`~/.claude/projects/<проект>/memory/`), поэтому у каждого своя и в PR не видна.
+- **Заметки Serena** (`.serena/memories/`) — про код и устройство проекта, **в репозитории**,
+  общие для команды, ревьюятся как обычный markdown. Корень графа — `core`.
