@@ -315,7 +315,7 @@ footer{
       <div class="step" data-owner="human" data-gate="0">
         <div class="num"><svg class="dot" viewBox="0 0 34 34" aria-hidden="true" focusable="false"><circle class="dot-bg" cx="17" cy="17" r="16"/><path class="dot-r" d="M17 1 A16 16 0 0 1 17 33 Z"/><circle class="dot-ring" cx="17" cy="17" r="16"/></svg><span class="dot-n">1</span></div>
         <div class="body">
-          <div class="title-row"><b>Ссылка на задачу</b><span class="who human">человек</span><span class="who block">блокирует всё</span></div>
+          <div class="title-row"><b>Задача: ссылка, поиск или заведение</b><span class="who human">человек</span><span class="who block">блокирует всё</span></div>
           <p class="why">Работы без задачи не бывает. Вся цепочка держится на её статусах —
             если задачи нет, нечему двигаться, нечего принимать и нечем подтверждать допуск.
             Поэтому <b>Claude обязан сначала поискать задачу в Jira</b> по сути проблемы и показать найденное — она вполне может быть уже заведена. Не нашлось или не подошло — предложит завести и покажет черновик.</p>
@@ -328,8 +328,9 @@ footer{
         <div class="num"><svg class="dot" viewBox="0 0 34 34" aria-hidden="true" focusable="false"><circle class="dot-bg" cx="17" cy="17" r="16"/><path class="dot-r" d="M17 1 A16 16 0 0 1 17 33 Z"/><circle class="dot-ring" cx="17" cy="17" r="16"/></svg><span class="dot-n">2</span></div>
         <div class="body">
           <div class="title-row"><b><span class="m">npm run sync</span></b><span class="who claude">Claude</span></div>
-          <p class="why">Первое действие после двух блокирующих шагов. Отстал <span class="m">main</span> —
-            предупредить и подтянуть; актуален — просто сказать, что проверил.</p>
+          <p class="why">Первое действие после двух блокирующих шагов. Отстал <span class="m">main</span> — предупредить и подтянуть; актуален — просто сказать, что проверил.</p>
+          <p class="why">Здесь же проверяются инструменты навигации по коду: <b>нет Serena, codebase-memory-mcp или ast-grep — команда падает с инструкцией по установке</b>, и задача не начинается. Правило держится на скрипте, а не на просьбе.</p>
+          <p class="why">Грязное дерево — тоже стоп: автостэш поверх чужой незакоммиченной работы разваливается там, где его труднее всего разобрать.</p>
         </div>
       </div>
 
@@ -379,8 +380,7 @@ footer{
         <div class="num"><svg class="dot" viewBox="0 0 34 34" aria-hidden="true" focusable="false"><circle class="dot-bg" cx="17" cy="17" r="16"/><path class="dot-r" d="M17 1 A16 16 0 0 1 17 33 Z"/><circle class="dot-ring" cx="17" cy="17" r="16"/></svg><span class="dot-n">6</span></div>
         <div class="body">
           <div class="title-row"><b>Сигнал «готово к проверке»</b><span class="who claude">Claude</span><span class="m" style="color:var(--progress)">Human Testing</span></div>
-          <p class="why">Сначала комментарий с планом проверки, потом статус. Перевода без комментария
-            не бывает: иначе задача повиснет готовой на вид и немой по содержанию.</p>
+          <p class="why">Сначала текст — комментарий с планом проверки и обновлённое описание задачи, — и только потом статус. Перевода без комментария не бывает: иначе задача повиснет готовой на вид и немой по содержанию.</p>
           <p class="why">Отдельной команды тут не нужно — в отличие от шага 5. Этот перевод не
             начинает новое действие, а сообщает результат уже начатого: прогон был запущен по
             команде, зелёный итог и есть повод отдать задачу человеку.</p>
@@ -542,16 +542,27 @@ footer{
         узнал дефект, а не гадал «так и было или нет»).</p>
       <p>Без этого ревью уходит на поиск экрана, и до самой проверки человек не доходит.</p>
     </div>
+    <div class="gate">
+      <h3>Описание задачи — тоже обновляется</h3>
+      <p>Комментарий — это событие («вот что сделано сегодня»). <b>Описание — состояние задачи</b>:
+        то, что вы прочитаете через месяц, не разбирая ленту комментариев. Поэтому вместе с
+        переводом описание приводится к тому, что реально изменилось.</p>
+      <p><b>Вашу постановку Claude не трогает</b> — она ваша. Он ведёт свой раздел
+        «Реализация» в конце описания и перезаписывает его целиком: что изменилось, ветка,
+        результат проверки, что нужно для выката. Если объём вырос или сузился — говорит об этом
+        прямо, а не оставляет расхождение на приёмку.</p>
+    </div>
   </section>
 
   <section class="sec">
     <h2>Чего не бывает</h2>
     <ul class="nevers">
       <li><span class="x">✕</span><span>Работы без подключённой Jira.</span></li>
-      <li><span class="x">✕</span><span>Работы без ссылки на задачу — и создания задачи за человека.</span></li>
+      <li><span class="x">✕</span><span>Работы без задачи — и создания задачи без вашего явного согласия.</span></li>
       <li><span class="x">✕</span><span>Коммита в <span class="m">main</span>.</span></li>
       <li><span class="x">✕</span><span>Перевода в <span class="m">Ai Testing</span> без команды — «дописал» не значит «проверяй».</span></li>
       <li><span class="x">✕</span><span>Перевода в <span class="m">Human Testing</span> без комментария.</span></li>
+      <li><span class="x">✕</span><span>Перевода в <span class="m">Human Testing</span> без обновлённого описания задачи.</span></li>
       <li><span class="x">✕</span><span>Перевода в <span class="m">Done</span> самим Claude — это решение человека.</span></li>
       <li><span class="x">✕</span><span>Заливки или мержа до <span class="m">Done</span> — даже если попросили.</span></li>
       <li><span class="x">✕</span><span>Заливки по одному лишь статусу <span class="m">Done</span>, без команды человека.</span></li>
