@@ -49,6 +49,7 @@ export function AppHeader() {
   // тянули ОДИН И ТОТ ЖЕ `/api/balance` каждые 30 c каждый — теперь все сидят на
   // общем источнике с дедупликацией (см. balanceStore). Период тот же.
   const balance = useBalance()
+  const accountsLoaded = useApp((s) => s.accountsLoaded)
   // Прайс — с сервера: копия в вебе рано или поздно разошлась бы с тем, что списывается.
   const [pricing, setPricing] = useState<Pricing | null>(null)
   useEffect(() => {
@@ -241,8 +242,19 @@ export function AppHeader() {
   const setNoSubscription = useUi((s) => s.setNoSubscription)
   const [langOpenTick, setLangOpenTick] = useState(0)
 
-  const active = activeAccounts(data).length
-  const limit = balance?.plan.accountLimit ?? data.plan.accountLimit
+  /*
+   * MR-203: до ответа сервера показываем ПРОЧЕРК, а не демонстрационные сиды.
+   *
+   * Созвон 27.08: «на экране показалось 80 ⚡, а через две секунды 200 ⚡». Заказчик
+   * прочёл это как данные предыдущего пользователя. На деле хуже: пока свой баланс и
+   * свои аккаунты ещё летят с сервера, шапка подставляла числа из демо-набора. Человек
+   * секунду видел выдуманные цифры и верил им.
+   *
+   * null здесь значит «ещё не знаю» и рисуется как «—». Это честнее нуля: ноль — это
+   * тоже утверждение, и на общем компьютере он читается как «деньги пропали».
+   */
+  const active = accountsLoaded ? activeAccounts(data).length : null
+  const limit = balance?.plan.accountLimit ?? null
   const currentLang = LANGUAGES.find((l) => l.code === locale) ?? LANGUAGES[1]
 
   // R1/R2: шапка отражает залогиненного пользователя сессии (а не мок-профиль), + его роль.
@@ -332,7 +344,7 @@ export function AppHeader() {
             className="flex items-center gap-1.5 rounded-xl border border-line bg-elevated px-3 py-1.5 transition-colors hover:border-spark-500/40 hover:bg-elevated/70"
             title="Открыть менеджер аккаунтов"
           >
-            <span className="text-sm font-bold text-fg">{active} / {limit}</span>
+            <span className="text-sm font-bold text-fg">{active ?? '—'} / {limit ?? '—'}</span>
             <span className="hidden text-xs text-muted sm:inline">акк.</span>
           </button>
 
@@ -404,13 +416,15 @@ export function AppHeader() {
               количество токенов; «токены в долларах» одним числом — бесполезно.
               Курс монеты берём из пакетов пополнения (та же формула, что на сервере). */}
           {(() => {
-            const c = balance?.coins ?? data.coins
+            // Баланс ещё не приехал — не подставляем демо-число и не поднимаем тревогу:
+            // «0 ⚡ Пополнить» на пустом месте пугает не меньше чужих цифр.
+            const c = balance?.coins ?? null
             // §11.4: деньги — ОТДЕЛЬНЫЙ остаток с сервера, а не пересчёт токенов по
             // курсу. Владелец: «баланс — это $, за них покупаем подписки и токены».
             // Пока миграция usd-кошелька не применена, поле не приходит — тогда
             // показываем только токены, а не выдуманный ноль долларов.
             const usd = typeof balance?.usd === 'number' ? balance.usd : null
-            const tokensLow = c <= CRITICAL
+            const tokensLow = c != null && c <= CRITICAL
             const usdLow = usd != null && usd <= 0
             // MR-166 (14.08): цвет чипа определяют ТОКЕНЫ, а не деньги. Раньше нулевой
             // долларовый остаток красил всё в красный при полном балансе токенов, и
@@ -419,7 +433,7 @@ export function AppHeader() {
             // подсвечиваются отдельно, но общей тревоги больше не поднимают.
             const alarm = tokensLow
             // Запас есть — чип зелёный. Порог 500 задан заказчиком на созвоне 14.08.
-            const tokensHealthy = c >= HEALTHY_COINS
+            const tokensHealthy = c != null && c >= HEALTHY_COINS
             const cur = pricing?.currency || '$'
             return (
               <button
@@ -443,7 +457,7 @@ export function AppHeader() {
                 )}
                 <span className={'flex items-center gap-1 ' + (usd != null ? 'border-l border-white/10 pl-2' : '')}>
                   <Zap size={15} className={tokensLow ? 'text-red-400' : tokensHealthy ? 'text-emerald-400' : 'text-amber-400'} fill="currentColor" />
-                  <span className={'text-sm font-bold tabular-nums ' + (tokensLow ? 'text-red-300' : tokensHealthy ? 'text-emerald-300' : 'text-amber-300')}>{fmtCoins(c)}</span>
+                  <span className={'text-sm font-bold tabular-nums ' + (tokensLow ? 'text-red-300' : tokensHealthy ? 'text-emerald-300' : 'text-amber-300')}>{c == null ? '—' : fmtCoins(c)}</span>
                 </span>
                 {alarm && <span className="text-xs font-bold text-red-300">Пополнить</span>}
               </button>
@@ -548,7 +562,7 @@ export function AppHeader() {
         <div className="mt-4 flex items-center justify-between rounded-2xl border border-amber-500/30 bg-amber-500/10 px-4 py-3">
           <span className="text-sm font-medium text-muted">Текущий баланс</span>
           <span className="flex items-center gap-1.5 font-display text-xl font-bold text-amber-300">
-            <Zap size={18} fill="currentColor" /> {fmtCoins(balance?.coins ?? 0)}
+            <Zap size={18} fill="currentColor" /> {balance ? fmtCoins(balance.coins) : '—'}
           </span>
         </div>
         <p className="mt-3 text-xs text-muted">
@@ -610,7 +624,7 @@ export function AppHeader() {
             <div className="rounded-2xl border border-spark-500/40 bg-spark-500/8 px-4 py-3.5">
               <div className="text-xs font-medium text-muted">Деньги на счету</div>
               <div className="mt-0.5 flex items-center gap-1.5 font-display text-2xl font-bold text-spark-200">
-                {curSym}{(balance?.usd ?? 0).toFixed(2)}
+                {typeof balance?.usd === 'number' ? curSym + balance.usd.toFixed(2) : '—'}
               </div>
               <div className="mt-0.5 text-[11px] text-muted">за них — подписки и токены</div>
             </div>
@@ -618,7 +632,7 @@ export function AppHeader() {
           <div className="rounded-2xl border border-amber-500/30 bg-amber-500/10 px-4 py-3.5">
             <div className="text-xs font-medium text-muted">{balance?.isSub ? 'Доступно вам (токены)' : 'Токены (топливо)'}</div>
             <div className="mt-0.5 flex items-center gap-1.5 font-display text-2xl font-bold text-amber-300">
-              <Zap size={20} fill="currentColor" /> {fmtCoins(balance?.coins ?? data.coins)}
+              <Zap size={20} fill="currentColor" /> {balance ? fmtCoins(balance.coins) : '—'}
             </div>
             <div className="mt-0.5 text-[11px] text-muted">
               {balance?.isSub

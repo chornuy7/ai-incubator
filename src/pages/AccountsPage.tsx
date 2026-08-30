@@ -263,6 +263,15 @@ export function AccountsPage() {
   const loadAccounts = useApp((s) => s.loadAccounts)
   const loadAccountBusy = useApp((s) => s.loadAccountBusy)
   const accountsLoading = useApp((s) => s.accountsLoading)
+  /*
+   * MR-203: пока НАСТОЯЩИЕ аккаунты не приехали, в плитках рисуем прочерк.
+   *
+   * Раньше в них подставлялись нули из демонстрационного набора, и первую секунду
+   * экран уверенно показывал «0 Активные» — на общем компьютере это читается как
+   * «аккаунты пропали». Ноль это утверждение; «ещё не знаю» — не ноль.
+   */
+  const accountsLoaded = useApp((s) => s.accountsLoaded)
+  const число = (n: number) => (accountsLoaded ? String(n) : '—')
   const pushToast = useApp((s) => s.pushToast)
   const sessionUser = useSession((s) => s.user)
   const setTasksOpen = useUi((s) => s.setTasksOpen)
@@ -660,7 +669,7 @@ export function AccountsPage() {
                 <span className={cn('h-2 w-2 rounded-full', m.dot)} />
               </span>
               <div className="min-w-0">
-                <div className="font-display text-xl font-bold text-fg">{statusCounts[st]}</div>
+                <div className="font-display text-xl font-bold text-fg">{число(statusCounts[st])}</div>
                 <div className="truncate text-[11px] font-semibold text-muted">{m.label}</div>
               </div>
               <span className="pointer-events-none absolute left-1/2 top-[calc(100%+6px)] z-50 w-max max-w-[220px] -translate-x-1/2 rounded-lg border border-line bg-surface px-2.5 py-1.5 text-left text-[11px] font-medium leading-snug text-fg opacity-0 shadow-xl transition-opacity group-hover/kpi:opacity-100">{STATUS_TIP[st]}</span>
@@ -685,7 +694,7 @@ export function AccountsPage() {
                 <span className={cn('h-2 w-2 rounded-full', m.dot)} />
               </span>
               <div className="min-w-0">
-                <div className="font-display text-xl font-bold text-fg">{riskCounts[rk]}</div>
+                <div className="font-display text-xl font-bold text-fg">{число(riskCounts[rk])}</div>
                 <div className="truncate text-[11px] font-semibold text-muted">{m.label}</div>
               </div>
               <span className="pointer-events-none absolute left-1/2 top-[calc(100%+6px)] z-50 w-max max-w-[220px] -translate-x-1/2 rounded-lg border border-line bg-surface px-2.5 py-1.5 text-left text-[11px] font-medium leading-snug text-fg opacity-0 shadow-xl transition-opacity group-hover/kpi:opacity-100">{m.tip}</span>
@@ -704,7 +713,7 @@ export function AccountsPage() {
             <Trash2 size={15} />
           </span>
           <div className="min-w-0">
-            <div className="font-display text-xl font-bold text-fg">{trashed.length}</div>
+            <div className="font-display text-xl font-bold text-fg">{число(trashed.length)}</div>
             <div className="truncate text-[11px] font-semibold text-muted">Корзина</div>
           </div>
           <span className="pointer-events-none absolute left-1/2 top-[calc(100%+6px)] z-50 w-max max-w-[220px] -translate-x-1/2 rounded-lg border border-line bg-surface px-2.5 py-1.5 text-left text-[11px] font-medium leading-snug text-fg opacity-0 shadow-xl transition-opacity group-hover/kpi:opacity-100">Аккаунты, отправленные в корзину. Клик — открыть/закрыть.</span>

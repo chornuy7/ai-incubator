@@ -20,6 +20,86 @@ export function activityKey(): string {
 }
 export function markActivity(now = Date.now()) { try { localStorage.setItem(activityKey(), String(now)) } catch { /* ignore */ } }
 
+/**
+ * MR-203: настройки УСТРОЙСТВА, которые выход не трогает.
+ *
+ * Заказчик просил чистить всё, связанное с предыдущим человеком. Тема, язык и свёрнутые
+ * группы меню к человеку не относятся — это настройка браузера, как громкость у плеера.
+ * Сбрасывать их на выходе значит каждый раз возвращать светлую тему тому, кто выбрал
+ * тёмную, и это не «безопасность», а раздражение.
+ */
+const DEVICE_PREFS = new Set(['ai-incubator:v3', 'ai-incubator:nav-collapsed'])
+
+/**
+ * Наши пространства ключей.
+ *
+ * Одного префикса `ai-incubator:` мало, и это выяснилось на ручной проверке заказчика 29.08:
+ * после выхода в хранилище остались его цель нейродиалогов и список закрытых им уведомлений.
+ * Часть ключей пишется без общего префикса (`lowbal:` — «больше не показывать поп-ап
+ * баланса»), часть досталась от прежних версий (`neuro-dialogs:`, безымянный
+ * `notif-dismissed`): код их больше не пишет, но в браузерах живых людей они лежат до сих пор.
+ *
+ * Список перечислением, а не «стереть всё хранилище»: рядом лежат ключи браузерных
+ * расширений (`loglevel`, `__coupert_…`). Они не наши, и ломать человеку его расширения
+ * ради нашей чистоты мы не вправе.
+ */
+const OUR_PREFIXES = ['ai-incubator:', 'lowbal:', 'neuro-dialogs:']
+/** Ключи прежних версий без пространства имён — данные человека, но узнать их можно только в лицо. */
+const LEGACY_KEYS = new Set(['notif-dismissed'])
+const isOurs = (key: string) => OUR_PREFIXES.some((p) => key.startsWith(p)) || LEGACY_KEYS.has(key)
+
+/** Ключи ЧУЖОЙ зоны: выход из панели не должен выкидывать из админки, и наоборот. */
+const OTHER_ZONE_KEYS = (zone: 'panel' | 'admin') => (zone === 'panel'
+  ? [ADMIN_SESSION_KEY, ADMIN_TOKEN_KEY, ADMIN_ACTIVITY_KEY]
+  : [PANEL_SESSION_KEY, PANEL_TOKEN_KEY, ACTIVITY_KEY])
+
+/**
+ * MR-203: стереть следы уходящего человека из браузера.
+ *
+ * Что было. Выход снимал токен своей зоны и перезагружал страницу — память приложения
+ * при этом чистилась, но всё, что переживает перезагрузку, оставалось: кэш состава
+ * подписки, закрытые уведомления, аватар, черновики вкладки, куки. На созвоне 27.08 это
+ * увидели живьём: на экране мелькнули 80 ⚡, и только через две секунды пришли настоящие
+ * 200 ⚡. Заказчик: «система должна удалить все данные, весь кэш и все абсолютно данные,
+ * связанные с предыдущим пользователем».
+ *
+ * Что делаем. Убираем ключи уходящего человека (они именные — оканчиваются на его id),
+ * ключи его зоны, всё содержимое sessionStorage (это черновики вкладки: какая задача
+ * открыта, показывали ли поп-ап баланса) и куки. Настройки устройства и ключи ЧУЖОЙ
+ * зоны не трогаем.
+ *
+ * @param userId кто уходит; без него именные ключи не вычислить — чистим только общее
+ * @param zone из какой зоны выходят
+ */
+export function clearUserTraces(userId: string | undefined, zone: 'panel' | 'admin') {
+  if (typeof window === 'undefined') return
+  const keep = new Set([...DEVICE_PREFS, ...OTHER_ZONE_KEYS(zone)])
+  try {
+    for (const key of Object.keys(localStorage)) {
+      if (!isOurs(key) || keep.has(key)) continue
+      // Именные ключи (`…:<id>`) чистим только у того, кто уходит: на общем компьютере у
+      // второго человека могут лежать свои, и стирать их мы не вправе.
+      const named = /:(usr_[A-Za-z0-9_-]+|anon)$/.exec(key)
+      if (named && userId && named[1] !== userId && named[1] !== 'anon') continue
+      localStorage.removeItem(key)
+    }
+  } catch { /* приватный режим или запрет на хранилище — выходу это мешать не должно */ }
+
+  // sessionStorage живёт только в этой вкладке и целиком относится к текущему сеансу:
+  // черновики, «уже видел поп-ап», какая задача открыта. Уходит человек — уходит всё.
+  try { sessionStorage.clear() } catch { /* ignore */ }
+
+  // Куки перезагрузка не трогает. Своей авторизации на куках у нас нет (токен в
+  // localStorage), поэтому чистим всё, что видно этому origin.
+  try {
+    for (const pair of document.cookie.split(';')) {
+      const name = pair.split('=')[0]?.trim()
+      if (!name) continue
+      document.cookie = `${name}=; expires=Thu, 01 Jan 1970 00:00:00 GMT; path=/`
+    }
+  } catch { /* ignore */ }
+}
+
 export interface SessionUser {
   id: string
   email: string
@@ -107,6 +187,9 @@ function createSessionStore(opts: { sessionKey: string; tokenKey: string; redire
       persist(null)
       try { localStorage.removeItem(opts.tokenKey) } catch { /* ignore */ } // токен ТОЛЬКО этой зоны
       if (opts.trackActivity) { try { localStorage.removeItem(opts.activityKey || ACTIVITY_KEY) } catch { /* ignore */ } }
+      // MR-203: снять токен мало — за человеком остаются кэш подписки, закрытые
+      // уведомления, аватар, черновики вкладки и куки. Перезагрузка ниже их не трогает.
+      clearUserTraces(uid, opts.tokenKey === ADMIN_TOKEN_KEY ? 'admin' : 'panel')
       set({ user: null })
       // Жёсткая перезагрузка = чистая память приложения (MR-142 баг 1: без данных прошлой
       // сессии в кэшах). Уходим на вход СВОЕЙ зоны, чужую не трогаем.
