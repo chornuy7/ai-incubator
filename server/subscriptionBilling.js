@@ -48,13 +48,16 @@ const ms = (v) => (v == null ? null : (typeof v === 'number' ? v : new Date(v).g
  * и в этом месяце денег ещё не списывали.
  * @returns {Promise<Array<{id:string, userId:string, modules:string[], expiresAt:number}>>}
  */
-export async function dueForRenewal(nowMs = Date.now()) {
+export async function dueForRenewal(nowMs = Date.now(), onlyUser = '') {
   if (!supabaseEnabled()) return [] // файловый режим (дев/тесты) — деньгами не двигаем
   const db = getSupabase()
   const month = creditMonth(nowMs)
 
   const { data } = await db.from('subscriptions').select('id, user_id, expires_at, last_charge_month')
   const due = (data || []).filter((r) => {
+    // MR-193: см. tokenCredit.js — ускоренный прогон обязан касаться ровно одного
+    // человека, иначе он снимет деньги у всех, у кого сегодня подходит срок.
+    if (onlyUser && r.id !== onlyUser && r.user_id !== onlyUser) return false
     if (SKIP.has(r.id) || SKIP.has(r.user_id || '')) return false
     // Бессрочная подписка — админский провижининг, продлевать нечего.
     if (!r.expires_at) return false
@@ -95,8 +98,8 @@ export async function dueForRenewal(nowMs = Date.now()) {
  *
  * @returns {Promise<{ renewed:number, charged:number, tokens:number, unpaid:number }>}
  */
-export async function renewDueSubscriptions(nowMs = Date.now()) {
-  const due = await dueForRenewal(nowMs)
+export async function renewDueSubscriptions(nowMs = Date.now(), onlyUser = '') {
+  const due = await dueForRenewal(nowMs, onlyUser)
   if (!due.length) return { renewed: 0, charged: 0, tokens: 0, unpaid: 0 }
 
   const db = getSupabase()

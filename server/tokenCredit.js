@@ -28,7 +28,7 @@ export function creditMonth(nowMs = Date.now()) {
  * ещё не начислен, подписка не истекла.
  * @returns {Promise<Array<{id:string, userId:string, modules:string[]}>>}
  */
-export async function dueForCredit(nowMs = Date.now()) {
+export async function dueForCredit(nowMs = Date.now(), onlyUser = '') {
   if (!supabaseEnabled()) return [] // файловый режим (дев/тесты) — крон не работает
   const db = getSupabase()
   const today = new Date(nowMs).getUTCDate()
@@ -37,6 +37,11 @@ export async function dueForCredit(nowMs = Date.now()) {
     .select('id, user_id, expires_at, billing_day, last_credit_month')
     .eq('billing_day', today)
   const due = (data || []).filter((r) => {
+    // MR-193: прогон «месяц за минуту» идёт на боевой базе, где рядом живые подписки с
+    // настоящими деньгами. Фильтр сужает тик до ОДНОГО человека — без него ускоренный
+    // прогон списал бы деньги всем подряд. В обычной работе параметр пустой и ничего
+    // не меняет.
+    if (onlyUser && r.id !== onlyUser && r.user_id !== onlyUser) return false
     if (r.last_credit_month === month) return false
     if (SKIP.has(r.id) || SKIP.has(r.user_id || '')) return false
     if (r.expires_at && new Date(r.expires_at).getTime() <= nowMs) return false // истекла
@@ -75,8 +80,8 @@ export async function markCredited(id, month) {
  * Начислить всем, кому сегодня положено. Безопасно вызывать многократно.
  * @returns {Promise<{ users:number, coins:number }>}
  */
-export async function creditDueTokens(nowMs = Date.now()) {
-  const due = await dueForCredit(nowMs)
+export async function creditDueTokens(nowMs = Date.now(), onlyUser = '') {
+  const due = await dueForCredit(nowMs, onlyUser)
   if (!due.length) return { users: 0, coins: 0 }
   const { tokensMap } = await effectivePrices()
   const month = creditMonth(nowMs)
