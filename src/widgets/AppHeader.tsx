@@ -329,6 +329,11 @@ export function AppHeader() {
    * разделе), потом статус. Иначе аккаунт без прокси и в спамблоке попал бы в две группы
    * и сумма не сошлась бы с числом в шапке.
    */
+  /*
+   * Имён показываем восемь, дальше «и ещё N». На пяти аккаунтах разницы нет, но заказчик
+   * говорил про десять тысяч: «остальные 9992 — они дохлые». Список из девяти тысяч имён
+   * читать невозможно, а число и первые несколько имён отвечают на вопрос «кто именно».
+   */
   const неВСтрою = useMemo(() => {
     const группы = new Map<string, string[]>()
     for (const a of activeAccounts(data)) {
@@ -455,7 +460,10 @@ export function AppHeader() {
                           <span className="text-sm font-semibold text-fg">{причина}</span>
                           <span className="shrink-0 text-xs font-bold text-rose-300">{имена.length}</span>
                         </div>
-                        <div className="mt-0.5 text-[11px] leading-snug text-muted">{имена.join(', ')}</div>
+                        <div className="mt-0.5 text-[11px] leading-snug text-muted">
+                          {имена.slice(0, 8).join(', ')}
+                          {имена.length > 8 && <span className="text-faint"> и ещё {имена.length - 8}</span>}
+                        </div>
                       </div>
                     ))}
                   </div>
