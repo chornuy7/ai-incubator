@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom'
 import { Check, ChevronDown, AlertTriangle } from 'lucide-react'
 import { cn } from '@/shared/lib/utils'
 import type { AccountStatus } from '@/shared/types'
-import { statusFill, withAlpha, type TaskStatusTone } from '@/shared/config/taskStatus'
+import { statusFill, statusDotFill, withAlpha, type TaskStatusTone } from '@/shared/config/taskStatus'
 import { STATUS_META } from '@/mocks/store'
 
 export { Modal } from './Modal'
@@ -190,6 +190,26 @@ export function TaskStatusTag({ tone, className }: { tone: TaskStatusTone; class
     </span>
   )
 }
+/* ── StatusDot ── */
+/**
+ * Точка статуса: легенда пончика и заголовок группы на дашборде задач. Размер, шаг полос и
+ * обводка живут здесь, а не по месту — иначе две точки на одном экране разъезжаются, как уже
+ * было (8 px в заголовке против 10 px в легенде).
+ *
+ * Обводка — ЦВЕТОМ СТАТУСА, а не фиксированным янтарём: этой же точкой рисуются «Готово» и
+ * «Выполняется», и зелёный кружок в янтарном кольце читался бы как ошибка. У сплошной точки
+ * обводка своего же цвета не видна вовсе, а у полосатой собирает штриховку в аккуратный круг —
+ * без неё полосы обрываются по краю рваным контуром.
+ */
+export function StatusDot({ tone, className }: { tone: TaskStatusTone; className?: string }) {
+  return (
+    <span
+      className={cn('shrink-0 rounded-full', className)}
+      style={{ width: 10, height: 10, background: statusDotFill(tone), border: `0.8px solid ${tone.base}` }}
+    />
+  )
+}
+
 /* ── Avatar ── */
 export function Avatar({ name, color, size = 36 }: { name: string; color: string; size?: number }) {
   const initials = name.replace(/[@_·]/g, ' ').trim().split(/\s+/).slice(0, 2).map((w) => w[0]?.toUpperCase()).join('')
