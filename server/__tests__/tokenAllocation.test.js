@@ -67,3 +67,29 @@ test('чужому сотруднику перевести нельзя', async 
   )
   await assert.rejects(() => transferCoins({ ownerId: владелец.id, subId: владелец.id, amount: 10 }), /самому себе/)
 })
+
+// ── Витрина: «выдать/изъять» вместо «лимита» ─────────────────────────────────
+test('карточка сотрудника показывает выдачу, а не лимит расхода', () => {
+  const форма = fs.readFileSync(new URL('../../src/pages/UsersPage.tsx', import.meta.url), 'utf8')
+  // Кнопки называют операцию своим именем: это перевод, а не потолок.
+  assert.match(форма, /Выдать</)
+  assert.match(форма, /Изъять</)
+  assert.match(форма, /Токены сотрудника:/)
+  // Старая кнопка «Задать лимит» ушла с экрана — иначе на нём жили бы две несовместимые
+  // модели. Упоминание в комментарии кода не считается: там объясняется, что изменилось.
+  assert.doesNotMatch(форма, /className="btn-soft h-8 px-3 text-xs disabled:opacity-40">Задать лимит/)
+  // Деньги рядом с токенами — прямая просьба владельца 30.08.
+  assert.match(форма, /const деньги = \(t: number\)/)
+  // Курс берём из пакетов пополнения, а не выдумываем.
+  assert.match(форма, /r\.packs \|\| \[\]/)
+})
+
+test('сервер отдаёт витрине собственный остаток сотрудника', () => {
+  const роуты = fs.readFileSync(new URL('../usersRoutes.js', import.meta.url), 'utf8')
+  assert.match(роуты, /own: свои/, 'в /limits есть свой остаток')
+  assert.match(роуты, /granted: выдано/, 'и сколько всего выдано')
+  // Старый адрес перевода делегирует общей логике: две арифметики денег однажды разойдутся.
+  const старый = роуты.slice(роуты.indexOf("usersRouter.post('/:id/wallet'"), роуты.indexOf("usersRouter.post('/:id/wallet'") + 1200)
+  assert.match(старый, /transferCoins/)
+  assert.doesNotMatch(старый, /changeCoins\(-move/)
+})

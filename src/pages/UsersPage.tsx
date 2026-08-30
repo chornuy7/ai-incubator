@@ -5,7 +5,7 @@ import { PageHeader, Card, EmptyState, Badge, Modal, Switch } from '@/shared/ui'
 import { confirmDialog } from '@/shared/lib/dialog'
 import {
   fetchUsers, createUser, updateUser, deleteUser, fetchWorktime, fetchUserAccess, saveUserAccess,
-  fetchSubLimits,
+  fetchSubLimits, transferTokens,
   type User, type WorkSummary, type SubLimit,
 } from '@/api/usersApi'
 import { fetchRoles, fetchRbacCatalog, accessFromRole, onRolesChanged, type Role, type Perm, type CatalogModule, type CatalogBlock } from '@/api/rolesApi'
@@ -848,179 +848,138 @@ function capLimit(raw: string, max: number | null): string {
   return String(max == null ? n : Math.min(n, max))
 }
 
+/**
+ * Кошелёк сотрудника: владелец ВЫДАЁТ токены и может изъять их обратно (MR-225).
+ *
+ * Было — «лимит расхода»: сотрудник тратил из кошелька владельца, а лимит показывался ему
+ * как баланс. Заказчик 30.08: «у меня есть пять таких Маш, каждой поставил лимит по 100.
+ * Это же 500 влезает, а у меня как у владельца может быть всего 100 токенов». Лимит ничего
+ * не выделял, и сумма лимитов ничем не ограничивалась.
+ *
+ * Стало — перевод: у владельца стало меньше, у сотрудника появилось. Отсюда и надписи:
+ * «Выдать» вместо «Задать лимит», «У сотрудника» вместо «Осталось лимита». Рядом с
+ * токенами — деньги: «токены это не просто цифра, это деньги, которые я передаю».
+ */
 function SubWalletEditor({ sub, onMode }: { sub: User; onMode: (next: User) => void }) {
   const [limit, setLimit] = useState<SubLimit | null>(null)
-  const [limitDraft, setLimitDraft] = useState('')
+  const [сумма, setСумма] = useState('')
   const [prices, setPrices] = useState<Record<string, number>>({})
-  // Свой остаток — чтобы не рисовать «лимит 1000», когда на счету 400 (вопрос владельца
-  // 27.08: «как я выдал 1000 токенов, если у меня всего 400?»).
   const [мойОстаток, setМойОстаток] = useState<number | null>(null)
+  const [курс, setКурс] = useState<number | null>(null)
   const [busy, setBusy] = useState(false)
   const [note, setNote] = useState('')
-  /*
-   * Свёрнут по умолчанию (правка 27.08: «почему оно такое большое, почему не открывать
-   * внизу, как у нас работает доступ к модулям»). Раскрытый блок с полем, тремя кнопками,
-   * расчётом действий и двумя абзацами занимал полкарточки у КАЖДОГО сотрудника — список
-   * из пяти человек переставал помещаться на экран. Теперь это такая же строка-дропдаун,
-   * как «Доступ к аккаунтам» и «Доступ к модулям» выше: главное видно сразу, остальное —
-   * по клику.
-   */
   const [open, setOpen] = useState(false)
-  /*
-   * Личный кошелёк остался ТОЛЬКО как наследство (правка 27.08). Заводить его больше
-   * нельзя, но у части сотрудников он включён с прошлых версий — им показываем возврат
-   * остатка одной кнопкой, иначе монеты застряли бы навсегда.
-   */
-  const legacyWallet = sub.balanceMode === 'individual'
 
   const load = useCallback(async () => {
     try {
       const l = (await fetchSubLimits()).find((x) => x.userId === sub.id) ?? { userId: sub.id, limit: null, spent: 0, left: null }
       setLimit(l)
-      setLimitDraft(l.limit == null ? '' : String(l.limit))
     } catch { /* кошелёк не должен ломать карточку */ }
+    try { setМойОстаток(Number((await fetchBalance()).coins) || 0) } catch { /* offline */ }
   }, [sub.id])
 
-  // Цены берём с сервера, а не константами: иначе «сколько это действий» разойдётся
-  // с тем, что спишется на самом деле, как только цену поправят в админке.
-  // Прайс нужен только раскрытой карточке (расчёт «сколько это действий»): свёрнутых на
-  // экране может быть десяток, и каждая тянула бы его зря.
-  useEffect(() => { if (open) void fetchPricing().then((r) => setPrices(r.actionsFull && Object.keys(r.actionsFull).length ? r.actionsFull : r.actions)).catch(() => {}) }, [open])
-  useEffect(() => { void fetchBalance().then((b) => setМойОстаток(Number(b.coins) || 0)).catch(() => {}) }, [])
-  useEffect(() => { if (!legacyWallet) void load() }, [load, legacyWallet])
+  useEffect(() => { void load() }, [load])
+  // Цены и курс нужны только раскрытой карточке: свёрнутых на экране может быть десяток.
+  useEffect(() => {
+    if (!open) return
+    void fetchPricing().then((r) => {
+      setPrices(r.actionsFull && Object.keys(r.actionsFull).length ? r.actionsFull : r.actions)
+      /*
+       * Курс токена в долларах берём из ПАКЕТОВ пополнения — по ним человек и покупает
+       * токены, значит это его же цена, а не выдуманная. Себестоимость сервер клиенту не
+       * отдаёт принципиально (MR-149), и правильно: владельцу нужно «сколько это денег
+       * для меня», а не наша маржа.
+       */
+      const пакет = (r.packs || []).filter((p) => p.coins > 0 && p.price > 0)
+        .sort((a, b) => (a.price / a.coins) - (b.price / b.coins))[0]
+      if (пакет) setКурс(пакет.price / пакет.coins)
+    }).catch(() => {})
+  }, [open])
 
-  const saveLimit = async (next: number | null) => {
+  const свои = limit?.own ?? null
+  const наОбщем = свои === null
+
+  const перевод = async (знак: 1 | -1) => {
+    const n = Number(сумма)
+    if (!Number.isFinite(n) || n <= 0) { setNote('Укажите количество токенов'); return }
     setBusy(true); setNote('')
     try {
-      await updateUser(sub.id, { tokenLimit: next })
-      setNote(next == null ? 'Ограничение снято' : `Лимит: ${next} ⚡`)
+      const r = await transferTokens(sub.id, знак * n)
+      setСумма('')
+      setNote(знак > 0
+        ? `Выдано ${r.moved} ⚡ · у вас осталось ${r.ownerLeft} ⚡`
+        : r.partial
+          ? `Забрали ${r.moved} ⚡ — больше у сотрудника не было, остальное он уже потратил`
+          : `Изъято ${r.moved} ⚡ · у вас ${r.ownerLeft} ⚡`)
+      // Первая выдача переводит сотрудника на свой кошелёк — карточка обязана это показать.
+      if (наОбщем && знак > 0) onMode({ ...sub, balanceMode: 'individual' })
       await load()
     } catch (e) { setNote(e instanceof Error ? e.message : 'Не вышло') }
     finally { setBusy(false) }
   }
 
-  const toShared = async () => {
-    setBusy(true); setNote('')
-    try {
-      const upd = await updateUser(sub.id, { balanceMode: 'shared' })
-      onMode(upd)
-      setNote('Остаток вернулся вам, сотрудник тратит из общего')
-      await load()
-    } catch (e) { setNote(e instanceof Error ? e.message : 'Не вышло') }
-    finally { setBusy(false) }
-  }
-
-  /*
-   * Сколько это действий (просьба владельца 27.08: «должна быть математика, сколько это
-   * действий»). Голое «500 ⚡» ничего не говорит: цена действия отличается в десять раз
-   * между комментарием и строкой парсинга. Показываем три опорные ставки — по ним видно
-   * вилку, а не одно число, из которого потолок не оценить.
-   */
-  /*
-   * Потолок ввода = что осталось у владельца ПЛЮС уже потраченное этим сотрудником.
-   * Лимит накопительный («всего за всё время»), поэтому у потратившего 800 из 1000
-   * потолок не может быть просто остатком владельца — иначе новый лимит оказался бы
-   * ниже уже израсходованного, и мы бы задним числом «отобрали» сделанную работу.
-   */
-  const потолок = мойОстаток == null ? null : Math.floor(мойОстаток + (limit?.spent ?? 0))
-
+  const деньги = (t: number) => (курс && курс > 0 ? ` ≈ $${(t * курс).toFixed(2)}` : '')
   const цена = (k: string, запас: number) => prices[k] ?? запас
-  const действий = (limit?.limit ?? 0) > 0 ? [
-    { n: Math.floor((limit!.limit as number) / цена('neuro-commenting', 0.05)), what: 'комментариев или сообщений' },
-    { n: Math.floor((limit!.limit as number) / цена('mass-react', 0.01)), what: 'реакций, просмотров, действий прогрева' },
-    { n: Math.floor((limit!.limit as number) / цена('parsing', 0.005)), what: 'строк парсинга' },
+  const действий = (свои ?? 0) > 0 ? [
+    { n: Math.floor((свои as number) / цена('neuro-commenting', 0.05)), what: 'комментариев или сообщений' },
+    { n: Math.floor((свои as number) / цена('mass-react', 0.01)), what: 'реакций, просмотров, действий прогрева' },
+    { n: Math.floor((свои as number) / цена('parsing', 0.005)), what: 'строк парсинга' },
   ] : []
   const нф = (n: number) => n.toLocaleString('ru-RU')
 
-  // Сводка в свёрнутой строке: «сколько выдано и сколько осталось» — то, ради чего сюда
-  // и заходят. Разворачивать карточку, чтобы прочитать два числа, не нужно.
-  const сводка = legacyWallet
-    ? 'отдельный кошелёк — перевести на общий'
-    : limit?.limit == null
-      ? 'без ограничения'
-      : `${limit.limit} ⚡ · осталось ${limit.left ?? 0} ⚡`
+  const сводка = наОбщем
+    ? 'общий с вашим — токены не выданы'
+    : `${свои} ⚡${деньги(свои as number)}${limit?.granted ? ` · выдано ${limit.granted} ⚡` : ''}`
 
   return (
     <div className="mt-1 w-full">
       <button onClick={() => setOpen(!open)} className="flex items-center gap-1.5 text-xs text-white/55 hover:text-white/85">
         <ChevronDown size={13} className={cn('transition-transform', open && 'rotate-180')} />
-        Лимит расхода: {сводка}
+        Токены сотрудника: {сводка}
       </button>
       {!open ? null : (
       <div className="mt-2 rounded-xl border border-line bg-elevated/40 p-3">
-      <div className="mb-2 flex flex-wrap items-center gap-2">
-        <span className="text-xs font-bold text-fg">Лимит расхода сотрудника</span>
-        <span className="ml-auto text-[11px] text-white/35">кошелёк общий с вашим</span>
-      </div>
+        <div className="mb-2 flex flex-wrap items-center gap-4 text-xs">
+          <span className="text-white/45">У сотрудника: <b className="text-fg tabular-nums">{наОбщем ? '—' : `${свои} ⚡`}</b>
+            {!наОбщем && <span className="text-white/35">{деньги(свои as number)}</span>}
+          </span>
+          {limit?.granted != null && <span className="text-white/45">Выдано всего: <b className="text-fg tabular-nums">{limit.granted} ⚡</b></span>}
+          <span className="text-white/45">Потрачено: <b className="text-fg tabular-nums">{limit?.spent ?? 0} ⚡</b></span>
+          <span className="ml-auto text-white/45">У вас: <b className="text-fg tabular-nums">{мойОстаток ?? '—'} ⚡</b></span>
+        </div>
 
-      {legacyWallet ? (
-        <>
-          <p className="mb-2 text-[11px] leading-relaxed text-amber-300/90">
-            У сотрудника включён отдельный кошелёк — так делали в старых версиях. Сейчас все работают
-            из вашего общего баланса: верните остаток, и сотруднику можно будет задать лимит.
-          </p>
-          <button type="button" disabled={busy} onClick={() => void toShared()}
-            className="btn-soft h-8 px-3 text-xs disabled:opacity-40">Вернуть остаток и перевести на общий</button>
-          {note && <span className="ml-2 text-[11px] text-muted">{note}</span>}
-        </>
-      ) : (
-        <>
-          <div className="mb-2 flex flex-wrap items-center gap-4 text-xs">
-            {/*
-              «Лимит», а не «Выдано» (правка 27.08). Слово «выдано» читалось как перевод
-              монет — отсюда и вопрос «как я выдал 1000, если у меня 400». Ничего никуда не
-              переводится: это потолок расхода из ОБЩЕГО кошелька, и он спокойно может
-              быть больше текущего остатка — просто сработает не он, а конец денег.
-            */}
-            <span className="text-white/45">Лимит: <b className="text-fg tabular-nums">{limit?.limit == null ? 'без ограничения' : `${limit.limit} ⚡`}</b></span>
-            <span className="text-white/45">Потрачено: <b className="text-fg tabular-nums">{limit?.spent ?? 0} ⚡</b></span>
-            {limit?.limit != null && (
-              <span className="text-white/45">Осталось: <b className={cn('tabular-nums', (limit.left ?? 0) > 0 ? 'text-spark-300' : 'text-rose-300')}>{limit.left ?? 0} ⚡</b></span>
-            )}
+        <div className="flex flex-wrap items-center gap-2">
+          <input
+            type="number"
+            min={0}
+            max={мойОстаток ?? undefined}
+            value={сумма}
+            onChange={(e) => setСумма(e.target.value)}
+            placeholder="токенов"
+            className="input h-8 w-28 text-sm"
+          />
+          {/* Выдать нельзя больше своего остатка — это и была главная беда старой модели. */}
+          <button type="button" disabled={busy || !мойОстаток} onClick={() => void перевод(1)}
+            className="btn-primary h-8 px-3 text-xs disabled:opacity-40">Выдать</button>
+          <button type="button" disabled={busy || наОбщем || !свои} onClick={() => void перевод(-1)}
+            className="btn-ghost h-8 px-3 text-xs disabled:opacity-40">Изъять</button>
+          {note && <span className="text-[11px] text-muted">{note}</span>}
+        </div>
+
+        <div className="mt-2 text-[11px] leading-relaxed text-white/35">
+          Выдача списывается с вашего баланса и появляется у сотрудника — это не потолок, а перевод.
+          Больше {мойОстаток ?? 0} ⚡ выдать нельзя: столько у вас есть.
+          {' '}Изъятие возвращает токены вам; если часть он уже потратил, вернётся остаток.
+        </div>
+
+        {действий.length > 0 && (
+          <div className="mt-2 rounded-lg border border-spark-500/20 bg-spark-500/8 px-2.5 py-2 text-[11px] leading-relaxed text-white/60">
+            <b className="text-fg">{свои} ⚡ — это примерно:</b>
+            {действий.map((d) => (
+              <span key={d.what} className="block">· до <b className="tabular-nums text-white/80">{нф(d.n)}</b> {d.what}</span>
+            ))}
           </div>
-          <div className="flex flex-wrap items-center gap-2">
-            <input
-              type="number"
-              min={0}
-              max={потолок ?? undefined}
-              value={limitDraft}
-              onChange={(e) => setLimitDraft(capLimit(e.target.value, потолок))}
-              placeholder={потолок == null ? 'токенов' : `до ${потолок}`}
-              className="input h-8 w-28 text-sm"
-            />
-            <button type="button" disabled={busy} onClick={() => void saveLimit(limitDraft === '' ? null : Number(limitDraft))}
-              className="btn-soft h-8 px-3 text-xs disabled:opacity-40">Задать лимит</button>
-            <button type="button" disabled={busy} onClick={() => void saveLimit(null)}
-              className="btn-ghost h-8 px-3 text-xs disabled:opacity-40">Без ограничения</button>
-            {note && <span className="text-[11px] text-muted">{note}</span>}
-          </div>
-          {/*
-            Строка про потолок: раньше здесь висело предупреждение «лимит больше баланса»,
-            но правильнее не давать ввести лишнее вовсе (27.08), чем ругаться после ввода.
-            Осталась подсказка, сколько задать можно.
-          */}
-          {потолок != null && (
-            <div className="mt-2 text-[11px] leading-relaxed text-white/35">
-              Больше <b className="text-white/60 tabular-nums">{потолок} ⚡</b> задать нельзя: на счету
-              {' '}{мойОстаток} ⚡{(limit?.spent ?? 0) > 0 && <> плюс {limit?.spent} ⚡, уже потраченные сотрудником</>}.
-            </div>
-          )}
-          {действий.length > 0 && (
-            <div className="mt-2 rounded-lg border border-spark-500/20 bg-spark-500/8 px-2.5 py-2 text-[11px] leading-relaxed text-white/60">
-              <b className="text-fg">{limit?.limit} ⚡ — это примерно:</b>
-              {действий.map((d) => (
-                <span key={d.what} className="block">· до <b className="tabular-nums text-white/80">{нф(d.n)}</b> {d.what}</span>
-              ))}
-            </div>
-          )}
-          <p className="mt-1.5 text-[11px] leading-relaxed text-white/35">
-            Токены общие с вашими — переводить нечего: сотрудник тратит из вашего кошелька, и каждое его
-            действие списывается у вас. Лимит — это потолок, а не перевод: он накопительный, «лимит 500»
-            значит «всего 500 за всё время». Когда упрётся, его задачи встанут на паузу с сохранением
-            прогресса, а ваши продолжат работать.
-          </p>
-        </>
-      )}
+        )}
       </div>
       )}
     </div>
