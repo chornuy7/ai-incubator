@@ -689,10 +689,21 @@ export function TasksPage() {
     } catch (e) { pushToast({ type: 'error', title: 'Не удалось изменить лимит', desc: e instanceof Error ? e.message : '' }) }
   }
 
+  // Подпись плитки держится в одну строку. Перенос ломал не саму плитку, а ряд: соседние
+  // тянулись до её высоты, и сетка метрик разъезжалась на узком окне.
+  //
+  // Лечится не только `truncate`: текстовый блок во флексе по умолчанию не сжимается уже
+  // своего содержимого (min-width:auto), поэтому «Активных / модулей» распирало плитку, а
+  // обрезка не срабатывала. Нужен `min-w-0` у контейнера — только тогда `truncate` получает
+  // ширину, в которую можно упереться. Иконке ставим `shrink-0`, иначе сжиматься начнёт она.
   const stat = (icon: React.ReactNode, label: string, value: React.ReactNode, tone = 'text-spark-300') => (
     <Card className="flex items-center gap-3 p-3">
-      <span className={`grid h-9 w-9 place-items-center rounded-xl bg-elevated ${tone}`}>{icon}</span>
-      <div><div className="text-lg font-bold text-fg">{value}</div><div className="text-[11px] text-white/40">{label}</div></div>
+      <span className={`grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-elevated ${tone}`}>{icon}</span>
+      <div className="min-w-0">
+        <div className="truncate text-lg font-bold text-fg">{value}</div>
+        {/* title — полный текст по наведению: подпись может быть обрезана на узком окне. */}
+        <div className="truncate text-[11px] text-white/40" title={label}>{label}</div>
+      </div>
     </Card>
   )
 
