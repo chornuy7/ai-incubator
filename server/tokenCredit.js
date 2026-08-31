@@ -110,9 +110,8 @@ export async function creditDueTokens(nowMs = Date.now(), onlyUser = '') {
   for (const { id, userId, modules } of due) {
     const tokens = modules.reduce((s, k) => s + (Number(tokensMap?.[k]) || 0), 0)
     if (tokens > 0) {
-      // Имена модулей, а не «3 модул.»: в истории должно быть видно, за что начислено.
-      const { moduleLabel } = await import('./lib/accountLocks.js')
-      // Набор называем его именем: «Всё включено», а не перечисление четырнадцати модулей.
+      // В истории должно быть видно, ЗА ЧТО начислено: имя набора, а если это своё
+      // сочетание модулей — их перечисление.
       const shown = await describeModules(modules)
       await changeCoins(tokens, `Токены подписки (месяц): ${shown}`, userId, 'grant')
       users += 1
@@ -164,7 +163,6 @@ export async function creditPendingGifts(nowMs = Date.now()) {
   }
 
   const { pendingGift, markGifted } = await import('./userGifts.js')
-  const { moduleLabel } = await import('./lib/accountLocks.js')
   let users = 0
   let coins = 0
   for (const { id, user_id: uid } of живые) {

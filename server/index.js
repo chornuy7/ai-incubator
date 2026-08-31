@@ -1707,17 +1707,14 @@ app.post('/api/subscription', async (req, res) => {
         /*
          * В журнале пишем, ЧТО куплено, а не только сколько штук. «Докупка 1 модул.»
          * не отвечает на единственный вопрос, ради которого в историю и заходят: за
-         * что списали деньги (вопрос владельца 21.08). Длинный набор сворачиваем —
-         * строка истории должна читаться, а не переноситься на три ряда.
+         * что списали деньги (вопрос владельца 21.08). Набор называем его именем
+         * («Всё включено»), а не перечислением четырнадцати модулей: человек покупал
+         * набор и в истории должен узнать свою покупку (MR-230).
          */
-        const { moduleLabel } = await import('./lib/accountLocks.js')
-        const names = (keys) => {
-          const labels = keys.map((k) => moduleLabel(k))
-          return labels.length > 3 ? `${labels.slice(0, 3).join(', ')} и ещё ${labels.length - 3}` : labels.join(', ')
-        }
+        const { describeModules } = await import('./lib/subscriptionLabel.js')
         const what = added.length && activeUntil > now
-          ? `докупка до конца подписки — ${names(added)}`
-          : `на ${months || 1} мес. — ${list === 'all' ? 'все модули' : names(list)}`
+          ? `докупка до конца подписки — ${await describeModules(added)}`
+          : `на ${months || 1} мес. — ${list === 'all' ? 'все модули' : await describeModules(list)}`
         await changeUsd(-charged, `Подписка: ${what}`, target)
       }
     }
@@ -1740,16 +1737,15 @@ app.post('/api/subscription', async (req, res) => {
     if (addedModules.length) {
       // Начисление одно на два блока ниже (месячные токены и подарок). Раньше `changeCoins`
       // объявлялся ВНУТРИ `if (creditedTokens > 0)`, а подарок вызывал его снаружи — за
-      // пределами области видимости. Падало ReferenceError прямо в пустой catch, поэтому
+      // пределами области видимости. То же и с `describeModules`: подпись нужна обоим
+      // блокам. Падало ReferenceError прямо в пустой catch, поэтому
       // подарок молча не начислялся ни разу: тесты модуля были зелёными, а живая покупка
       // подарка не давала.
       const { changeCoins } = await import('./balance.js')
+      const { describeModules } = await import('./lib/subscriptionLabel.js')
       creditedTokens = addedModules.reduce((sum, k) => sum + (Number(effPrices.tokensMap?.[k]) || 0), 0)
       if (creditedTokens > 0) {
-        // Здесь тоже имена: «за что дали 300 токенов» — тот же вопрос, что и про деньги.
-        const { moduleLabel: label } = await import('./lib/accountLocks.js')
-        // Набор называем его именем, а не перечислением модулей (MR-230).
-        const { describeModules } = await import('./lib/subscriptionLabel.js')
+        // Здесь тот же вопрос, что и про деньги: «за что дали 300 токенов» (MR-230).
         const shown = await describeModules(addedModules)
         await changeCoins(creditedTokens, `Токены подписки (первый месяц): ${shown}`, target, 'grant')
       }
@@ -1761,9 +1757,8 @@ app.post('/api/subscription', async (req, res) => {
         const { pendingGift, markGifted } = await import('./userGifts.js')
         const gift = await pendingGift(target, addedModules, effPrices.giftMap || {})
         if (gift.coins > 0) {
-          const { moduleLabel: label2 } = await import('./lib/accountLocks.js')
-          const names = gift.modules.map((k) => label2(k))
-          const shownGift = names.length > 3 ? `${names.slice(0, 3).join(', ')} и ещё ${names.length - 3}` : names.join(', ')
+          // Тот же текст пишет фоновая сверка подарков — и подпись должна быть та же.
+          const shownGift = await describeModules(gift.modules)
           await changeCoins(gift.coins, `Подарочные токены (разово): ${shownGift}`, target, 'grant')
           await markGifted(target, gift.modules, effPrices.giftMap || {})
         }
