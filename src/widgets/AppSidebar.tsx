@@ -1,7 +1,7 @@
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import { createPortal } from 'react-dom'
 import { NavLink, Link, useLocation } from 'react-router-dom'
-import { fetchTicketsUnread } from '@/api/ticketsApi'
+import { useUnread } from '@/features/support/unreadStore'
 import { X, LogOut, ChevronDown } from 'lucide-react'
 import { ROUTES, GROUP_LABELS, type RouteDef } from '@/shared/config/routes'
 import { useApp } from '@/mocks/store'
@@ -71,18 +71,8 @@ export function AppSidebar({ mobile = false }: { mobile?: boolean }) {
   // поддержки; роль «Поддержка» — новые обращения). Красный значок на пункте «Поддержка».
   // Роль «Поддержка» (без админки) смотрит сторону поддержки; остальные — свою.
   const supportSide = !!(sessionUser?.permissions?.resources?.support === 'allow' && !sessionUser?.isAdmin)
-  const [supportUnread, setSupportUnread] = useState(0)
-  useEffect(() => {
-    let alive = true
-    const tick = () => {
-      // Скрытая вкладка — не опрашиваем: значок всё равно никто не видит.
-      if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return
-      void fetchTicketsUnread(supportSide).then((n) => { if (alive) setSupportUnread(n) })
-    }
-    tick()
-    const id = setInterval(tick, 60000)
-    return () => { alive = false; clearInterval(id) }
-  }, [supportSide])
+  // Счётчик общий с виджетом поддержки: два таймера показывали разное (см. unreadStore).
+  const supportUnread = useUnread(supportSide)
 
   // Две независимые оси. РОЛЬ (§8.1) — что админ разрешил сотруднику. ПОДПИСКА
   // (§5.4) — что рабочее пространство оплатило: «купив нейрочатінг — бачить

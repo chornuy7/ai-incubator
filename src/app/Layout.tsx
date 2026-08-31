@@ -1,4 +1,5 @@
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
+import { RequestToOwnerModal } from '@/features/requests/RequestToOwner'
 import { Outlet, useLocation, Link } from 'react-router-dom'
 import { AppSidebar } from '@/widgets/AppSidebar'
 import { AppHeader } from '@/widgets/AppHeader'
@@ -20,12 +21,30 @@ import { HelpCircle, Lock } from 'lucide-react'
 
 /** Заглушка «нет доступа» — когда роль не имеет доступа к странице (в т.ч. при заходе по прямому URL). */
 function AccessDenied() {
+  const isSub = useSession((s) => s.user?.isSub)
+  const [запрос, setЗапрос] = useState(false)
   return (
     <div className="mx-auto mt-10 max-w-md rounded-2xl border border-line bg-surface p-8 text-center">
       <div className="mx-auto mb-4 grid h-14 w-14 place-items-center rounded-2xl bg-rose-500/12 text-rose-300"><Lock size={26} /></div>
       <h2 className="font-display text-lg font-bold text-fg">Нет доступа к разделу</h2>
-      <p className="mt-1.5 text-sm text-muted">Ваша роль не имеет доступа к этой странице. Обратитесь к администратору, чтобы он выдал доступ в «Роли и доступы».</p>
-      <Link to="/panel/support" className="btn-primary mt-5 inline-flex h-10">В поддержку</Link>
+      <p className="mt-1.5 text-sm text-muted">
+        {isSub
+          ? 'Этот раздел закрыт настройками вашего администратора — снять ограничение может только он.'
+          : 'Ваша роль не имеет доступа к этой странице. Обратитесь к администратору, чтобы он выдал доступ в «Роли и доступы».'}
+      </p>
+      {/*
+        MR-248: сотруднику — «Связаться с администратором», а не «В поддержку». Заказчик
+        30.08: «в поддержке тебе скажут: свяжитесь с администратором. А нахера мне этот
+        круг?» Ограничение выставил владелец пространства, и снять его может только он.
+      */}
+      {isSub ? (
+        <>
+          <button onClick={() => setЗапрос(true)} className="btn-primary mt-5 inline-flex h-10">Связаться с администратором</button>
+          <RequestToOwnerModal kind="access" open={запрос} onClose={() => setЗапрос(false)} />
+        </>
+      ) : (
+        <Link to="/panel/support" className="btn-primary mt-5 inline-flex h-10">В поддержку</Link>
+      )}
     </div>
   )
 }

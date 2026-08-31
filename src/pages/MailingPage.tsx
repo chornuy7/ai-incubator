@@ -9,7 +9,7 @@ import { AccountPicker } from '@/features/account-picker/AccountPicker'
 import { MessageComposer } from '@/features/composer/MessageComposer'
 import { useSession } from '@/features/auth/session'
 import { fetchGoals, type Goal } from '@/api/goalsApi'
-import { startModuleTask, type ModuleTaskSettings } from '@/api/modulesApi'
+import { startModuleTask, type ModuleTaskSettings, type ModulePresetSettings } from '@/api/modulesApi'
 import { fetchSettings, saveSettings } from '@/api/settingsApi'
 import { fetchLeads } from '@/api/leadsApi'
 import { confirmDialog } from '@/shared/lib/dialog'
@@ -24,7 +24,7 @@ import type { DelaysShape } from '@/features/modules/shared/TimingSection'
 import { LaunchCost, ActionPriceCalc } from '@/features/modules/shared/LaunchCost'
 import { useModuleTask } from '@/features/modules/shared/useModuleTask'
 import { PresetBar } from '@/features/modules/shared/PresetBar'
-import { SavePresetModal } from '@/features/modules/shared/SavePresetModal'
+import { SavePresetModal, presetSettings } from '@/features/modules/shared/SavePresetModal'
 
 export function MailingPage() {
   // §5.4: модуль живёт не под /panel/modules/*, поэтому гейт подписки — здесь же.
@@ -197,7 +197,7 @@ function MailingInner() {
   const handleSave = () => setPresetModalOpen(true)
 
   // Восстановить настройки из шаблона (выбор аккаунтов и получателей не трогаем).
-  const applyPreset = (s: ModuleTaskSettings) => {
+  const applyPreset = (s: ModulePresetSettings) => {
     remember(s)
     if (typeof s.maxPerAccount === 'number') setMaxPerAccount(s.maxPerAccount)
     if (typeof s.protectionLevel === 'number') setProtLevel(s.protectionLevel)
@@ -287,7 +287,7 @@ function MailingInner() {
       <div className="space-y-4">
         <TaskStartedModal task={justStarted} moduleTitle="Мейлинг" onClose={dismissJustStarted} />
         <SavePresetModal open={presetModalOpen} onClose={() => setPresetModalOpen(false)}
-          onSave={(name, color, owner) => savePreset(name, buildSettings(), color, owner)} />
+          onSave={(name, color, owner, withAccounts) => savePreset(name, presetSettings(buildSettings(), withAccounts), color, owner)} />
         {/* ТЗ 06.08 §10: выбор шаблона — вверху, до всех настроек (TPL-001). */}
         <PresetBar presets={presets} onApply={applyPreset} onSave={handleSave}
           onEdit={editPreset} onDelete={deletePreset} disabled={running} />
