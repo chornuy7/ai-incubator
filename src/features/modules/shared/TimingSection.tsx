@@ -199,7 +199,7 @@ export function TimingSection(props: TimingSectionProps) {
     if (i === CUSTOM) return
     const b = frozen.current
     if (onDuration && showDuration) onDuration(Math.max(1, Math.round(b.dur * DUR_FACTOR[i])))
-    // Лимит «Сколько сделает 1 аккаунт» НЕ масштабируется пресетом — одинаковый (базовый)
+    // Лимит «Сколько действий сделает 1 аккаунт» НЕ масштабируется пресетом — одинаковый (базовый)
     // на Мин/Рек/Макс, меняется только в Custom. (Заказчик 14.08: «всюди 10, крім кастом».)
     if (perAccount) { perAccount.onMin(b.limMin); perAccount.onMax(b.limMax) }
     // Задержки — всегда из неизменной базы: любая правка в Custom не должна их сдвигать.
@@ -231,7 +231,7 @@ export function TimingSection(props: TimingSectionProps) {
                 key={label}
                 type="button"
                 // MR-136: раскрытие «Расширенных» для Custom делает эффект по delayPreset;
-                // пресет также выставляет Длительность и лимит «Сколько сделает 1 аккаунт».
+                // пресет также выставляет Длительность и лимит «Сколько действий сделает 1 аккаунт».
                 onClick={() => {
                   // Вход в Custom из пресета: «запекаем» видимые (масштабированные ×mul)
                   // задержки в текущее состояние, чтобы числа не прыгнули (Custom = ×1).
