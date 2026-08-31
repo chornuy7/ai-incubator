@@ -1694,7 +1694,13 @@ app.post('/api/subscription', async (req, res) => {
         charged = periodCost(sum, months || 1, effPrices.annualDiscount)
         // Продление считаем от КОНЦА действующей подписки, а не от «сегодня»: иначе
         // человек, продливший заранее, терял оплаченный остаток.
-        extendTo = Math.max(now, activeUntil) + Math.round((months || 1) * 30 * 24 * 60 * 60 * 1000)
+        // Календарные месяцы, а не 30 суток на каждый: год оплаты — это ровно год, а не
+        // 360 дней (31.08). Покупка задаёт и день цикла — от него считаются все следующие.
+        const { nextCycle } = await import('./lib/billingCycle.js')
+        const старт = Math.max(now, activeUntil)
+        const деньЦикла = new Date(старт).getUTCDate()
+        extendTo = старт
+        for (let n = 0; n < (months || 1); n++) extendTo = nextCycle(extendTo, деньЦикла)
       }
 
       if (charged > 0) {

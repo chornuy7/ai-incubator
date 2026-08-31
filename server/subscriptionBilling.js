@@ -21,13 +21,12 @@ import { getSupabase, supabaseEnabled } from './lib/supabase.js'
 import { effectivePrices } from './priceStore.js'
 import { describeModules } from './lib/subscriptionLabel.js'
 import { creditMonth } from './tokenCredit.js'
+import { nextCycle, billingDayOf } from './lib/billingCycle.js'
 import { appendAudit } from './lib/auditLog.js'
 
 /** Служебные кошельки и общий набор пространства: это провижининг админа, а не оплата. */
 const SKIP = new Set(['workspace', '__default', '__workspace__'])
 
-/** Месяц в миллисекундах — тем же счётом, что и при покупке (months * 30 дней). */
-const MONTH_MS = 30 * 24 * 60 * 60 * 1000
 
 /**
  * Окно продления.
@@ -55,7 +54,7 @@ export async function dueForRenewal(nowMs = Date.now(), onlyUser = '') {
   const db = getSupabase()
   const month = creditMonth(nowMs)
 
-  const { data } = await db.from('subscriptions').select('id, user_id, expires_at, last_charge_month')
+  const { data } = await db.from('subscriptions').select('id, user_id, expires_at, last_charge_month, billing_day')
   const due = (data || []).filter((r) => {
     // MR-193: см. tokenCredit.js — ускоренный прогон обязан касаться ровно одного
     // человека, иначе он снимет деньги у всех, у кого сегодня подходит срок.
@@ -86,7 +85,7 @@ export async function dueForRenewal(nowMs = Date.now(), onlyUser = '') {
   for (const r of due) {
     const modules = byUser.get(r.id) || []
     if (!modules.length) continue
-    out.push({ id: r.id, userId: r.user_id || r.id, modules, expiresAt: ms(r.expires_at) })
+    out.push({ id: r.id, userId: r.user_id || r.id, modules, expiresAt: ms(r.expires_at), billingDay: r.billing_day })
   }
   return out
 }
@@ -155,7 +154,14 @@ export async function renewDueSubscriptions(nowMs = Date.now(), onlyUser = '') {
 
     // Срок считаем от ПРЕЖНЕГО окончания, а не от «сейчас»: иначе каждый тик, пришедший
     // с опозданием, потихоньку съедал бы у человека оплаченные дни.
-    const nextExpiry = Math.max(sub.expiresAt, nowMs - RENEW_AFTER_MS) + MONTH_MS
+    /*
+     * Календарный месяц, а не 30 суток: «раз в місяць і в той день, коли оформлена
+     * підписка» (31.08). День берём с подписки — иначе после короткого февраля дата
+     * навсегда съедет на 28 число. Отсчёт от срока, а не от «сегодня»: продлённая с
+     * опозданием подписка не должна терять день на каждом цикле.
+     */
+    const база = Math.max(sub.expiresAt, nowMs - RENEW_AFTER_MS)
+    const nextExpiry = nextCycle(база, sub.billingDay || billingDayOf(sub.expiresAt))
     const iso = new Date(nextExpiry).toISOString()
     await db.from('subscriptions')
       .update({ expires_at: iso, last_charge_month: month, last_credit_month: month, last_credit_at: new Date(nowMs).toISOString(), updated_at: new Date().toISOString() })

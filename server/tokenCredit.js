@@ -12,6 +12,7 @@
  * админа, а не оплата человека.
  */
 import { getSupabase, supabaseEnabled } from './lib/supabase.js'
+import { cycleMomentIn, billingDayOf } from './lib/billingCycle.js'
 import { effectivePrices } from './priceStore.js'
 import { describeModules } from './lib/subscriptionLabel.js'
 import { changeCoins } from './balance.js'
@@ -19,8 +20,6 @@ import { changeCoins } from './balance.js'
 const SKIP = new Set(['workspace', '__default', '__workspace__'])
 
 /** Строка `'YYYY-MM'` (UTC) — формат last_credit_month. */
-/** Период начисления — те же 30 суток, что и у списания денег (MONTH_MS в биллинге). */
-export const CREDIT_PERIOD_MS = 30 * 24 * 60 * 60 * 1000
 
 export function creditMonth(nowMs = Date.now()) {
   const d = new Date(nowMs)
@@ -37,15 +36,17 @@ export async function dueForCredit(nowMs = Date.now(), onlyUser = '') {
   const db = getSupabase()
   const month = creditMonth(nowMs)
   /*
-   * Правка 30.08: начисление идёт через 30 ДНЕЙ ПОСЛЕ ОПЛАТЫ, а не по числу месяца.
+   * Начисление идёт В ДЕНЬ ОФОРМЛЕНИЯ подписки, раз в календарный месяц.
    *
-   * Раньше здесь стоял отбор `billing_day == сегодняшнее число`. Получалось две разные
-   * шкалы: деньги списываются каждые 30 суток (expires_at + MONTH_MS), а токены приходили
-   * 14-го числа каждого месяца, если человек заплатил 14-го. Между февралём и мартом эти
-   * даты расходятся, и владелец 30.08 сказал прямо: «якщо я платив 14, то нарахування і
-   * зняття коштів буде через 30 днів, а не 30 числа».
+   * Требование владельца одно и то же в обеих формулировках: шкала привязана к дню, когда
+   * ЧЕЛОВЕК заплатил. 30.08 он отвергал жёсткое «30-е число месяца» («якщо я платив 14, то
+   * нарахування 14-го, а не 30-го»), и тогда обе шкалы перевели на 30 суток. 31.08 он
+   * уточнил механику: «раз в місяць і в той день, коли оформлена підписка. Повинно бути 12
+   * циклів». Фиксированные 30 суток дают 12 циклов за 360 дней — дата платежа сползает
+   * назад на пять дней в год, и раз в шесть лет случается тринадцатое списание.
    *
-   * Теперь обе шкалы одинаковые: отсчёт от МОМЕНТА последнего начисления.
+   * Важно, что шкала здесь ТА ЖЕ, что у денег: иначе за полгода токены и списание разъедутся
+   * на неделю, и человек будет платить в одну дату, а топливо получать в другую.
    */
   const { data } = await db.from('subscriptions')
     .select('id, user_id, expires_at, billing_day, last_credit_month, last_credit_at')
@@ -55,12 +56,15 @@ export async function dueForCredit(nowMs = Date.now(), onlyUser = '') {
     // прогон списал бы деньги всем подряд. В обычной работе параметр пустой и ничего
     // не меняет.
     if (onlyUser && r.id !== onlyUser && r.user_id !== onlyUser) return false
-    // Ещё не прошло 30 суток с прошлого начисления — рано.
-    const прошлое = r.last_credit_at ? new Date(r.last_credit_at).getTime() : null
-    if (прошлое != null) { if (nowMs - прошлое < CREDIT_PERIOD_MS) return false }
-    // Отметки времени нет (старая подписка) — падаем на прежнее правило по месяцу, чтобы
-    // между выкатом и миграцией никто не получил двойное начисление.
-    else if (r.last_credit_month === month) return false
+    // В этом календарном месяце уже начисляли — второй раз не даём. Метка месяца делает
+    // крон идемпотентным: он тикает часто, а начисление в месяце одно.
+    if (r.last_credit_month === month) return false
+    // Число месяца ещё не наступило — рано. День берём с подписки; если его там нет
+    // (старые записи), выводим из даты прошлого начисления или из срока.
+    const день = r.billing_day
+      || (r.last_credit_at ? billingDayOf(new Date(r.last_credit_at).getTime()) : null)
+      || (r.expires_at ? billingDayOf(new Date(r.expires_at).getTime()) : 1)
+    if (nowMs < cycleMomentIn(nowMs, день)) return false
     if (SKIP.has(r.id) || SKIP.has(r.user_id || '')) return false
     if (r.expires_at && new Date(r.expires_at).getTime() <= nowMs) return false // истекла
     return true
