@@ -3,6 +3,7 @@ import { Bookmark, Save } from 'lucide-react'
 import { Modal, Select } from '@/shared/ui'
 import { useSession } from '@/features/auth/session'
 import { fetchUsers, type User } from '@/api/usersApi'
+import type { ModuleTaskSettings, ModulePresetSettings } from '@/api/modulesApi'
 
 // §7: шаблон модуля = быстрый конфиг с цветовой меткой и «владельцем» (персональные — Маша/Паша).
 // Палитра меток — фиксированный набор, чтобы шаблоны визуально различались в списке.
@@ -19,10 +20,24 @@ export function presetHex(color?: string): string {
   return PRESET_COLORS.find((c) => c.key === color)?.hex ?? PRESET_COLORS[0].hex
 }
 
+/**
+ * MR-195: что из текущих настроек уходит в шаблон.
+ *
+ * Галочка снята — ключ `accountIds` убираем СОВСЕМ, а не подставляем пустой массив:
+ * применение такого шаблона не должно трогать уже выбранные аккаунты, а `[]` как раз
+ * снял бы выбор. Отсутствие ключа применение и так пропускает.
+ */
+export function presetSettings(s: ModuleTaskSettings, withAccounts: boolean): ModulePresetSettings {
+  if (withAccounts) return s
+  const rest: ModulePresetSettings = { ...s }
+  delete rest.accountIds
+  return rest
+}
+
 export function SavePresetModal({ open, onClose, onSave }: {
   open: boolean
   onClose: () => void
-  onSave: (name: string, color: string, owner: string) => void | Promise<void>
+  onSave: (name: string, color: string, owner: string, withAccounts: boolean) => void | Promise<void>
 }) {
   // §7 (MR-107 · TPL-001): владелец шаблона — выбор ТОЛЬКО среди подключённых пользователей,
   // по умолчанию текущий пользователь (а не свободный ввод имени).
@@ -31,11 +46,15 @@ export function SavePresetModal({ open, onClose, onSave }: {
   const [name, setName] = useState('')
   const [color, setColor] = useState(PRESET_COLORS[0].key)
   const [owner, setOwner] = useState('')
+  // MR-195: аккаунты — возможность, а не поведение по умолчанию (созвон 27.08:
+  // «высокая вероятность, что чаще нужны будут шаблоны без аккаунтов»). Поэтому
+  // галочка СНЯТА при каждом открытии, а не запоминается с прошлого раза.
+  const [withAccounts, setWithAccounts] = useState(false)
   const [saving, setSaving] = useState(false)
 
   useEffect(() => {
     if (!open) return
-    setName(''); setColor(PRESET_COLORS[0].key); setOwner(me?.name ?? '')
+    setName(''); setColor(PRESET_COLORS[0].key); setOwner(me?.name ?? ''); setWithAccounts(false)
     void fetchUsers().then(setUsers).catch(() => setUsers([]))
   }, [open, me])
 
@@ -50,7 +69,7 @@ export function SavePresetModal({ open, onClose, onSave }: {
     if (!name.trim() || saving) return
     setSaving(true)
     try {
-      await onSave(name.trim(), color, owner.trim())
+      await onSave(name.trim(), color, owner.trim(), withAccounts)
       onClose()
     } finally { setSaving(false) }
   }
@@ -97,6 +116,18 @@ export function SavePresetModal({ open, onClose, onSave }: {
           </button>
         ))}
       </div>
+
+      <label className="mt-4 flex cursor-pointer items-start gap-2.5 rounded-xl border border-line bg-elevated/40 p-3">
+        <input type="checkbox" checked={withAccounts} onChange={(e) => setWithAccounts(e.target.checked)} className="mt-0.5 h-4 w-4 accent-spark" />
+        <span>
+          <span className="text-sm font-semibold">Сохранить вместе с аккаунтами</span>
+          <span className="mt-0.5 block text-xs text-muted">
+            Без галочки шаблон хранит только настройки, а выбор аккаунтов при его применении
+            остаётся вашим. С галочкой аккаунты запоминаются и подставляются — те из них,
+            что к тому моменту ещё доступны.
+          </span>
+        </span>
+      </label>
 
       <label className="mb-1.5 mt-4 block text-xs font-semibold uppercase tracking-wide text-muted">Владелец <span className="normal-case text-faint">(персональный шаблон)</span></label>
       <Select value={owner} onChange={setOwner} options={ownerOptions} placeholder="Выберите пользователя" />

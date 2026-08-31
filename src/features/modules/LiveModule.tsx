@@ -16,10 +16,10 @@ import { useModuleTask } from './shared/useModuleTask'
 import {
   SectionCard, NumberField,
   ProtectionTimings, TargetsEditor, LaunchPanel, PromptCards, usePromptStore, AiGenerationNotice,
-  FolderPicker, BlacklistEditor, GlobalPromptEditor, TimingSection, SaveToFolderModal, TaskStartedModal, SavePresetModal,
+  FolderPicker, BlacklistEditor, GlobalPromptEditor, TimingSection, SaveToFolderModal, TaskStartedModal, SavePresetModal, presetSettings,
   LaunchSteps, markCurrentStep, usePresetCarry, ProtectionLevelPicker, PROTECTION_CAP, useBlockAccess, type LaunchStep,
 } from './shared'
-import type { ModuleTaskSettings } from '@/api/modulesApi'
+import type { ModuleTaskSettings, ModulePresetSettings } from '@/api/modulesApi'
 import { confirmDialog } from '@/shared/lib/dialog'
 import { LaunchCost } from './shared/LaunchCost'
 import { useGlobalPace, delayMultiplier, taskSeconds, perAccountShare, joinSeconds } from '@/shared/lib/pace'
@@ -419,7 +419,7 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
   }
 
   // Восстанавливает настройки из шаблона в форму (аккаунты не трогаем — они ситуативны).
-  const applyPreset = useCallback((s: ModuleTaskSettings) => {
+  const applyPreset = useCallback((s: ModulePresetSettings) => {
     remember(s)
     setToggles({ 0: s.commentMode ?? 0, 1: s.workMode ?? 0, 2: s.postFilter ?? 0 })
     if (s.aiProtection !== undefined) setAiProtect(s.aiProtection)
@@ -573,7 +573,7 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
       <PresetBar presets={presets} onApply={applyPreset} onSave={handleSave}
         onEdit={editPreset} onDelete={deletePreset} disabled={running} />
       <SaveToFolderModal open={folderSave !== null} onClose={() => setFolderSave(null)} targets={folderSave ?? []} />
-      <SavePresetModal open={presetModalOpen} onClose={() => setPresetModalOpen(false)} onSave={(name, color, owner) => savePreset(name, buildSettings(), color, owner)} />
+      <SavePresetModal open={presetModalOpen} onClose={() => setPresetModalOpen(false)} onSave={(name, color, owner, withAccounts) => savePreset(name, presetSettings(buildSettings(), withAccounts), color, owner)} />
       {/*
         Роль закрыла ВСЕ блоки модуля — говорим об этом вслух.
         Находка 26.08: у роли, где разрешён только блок «Результаты», страница
