@@ -6,7 +6,7 @@ import { useApp } from '@/mocks/store'
 import { AccountPicker } from '@/features/account-picker/AccountPicker'
 import { MessageComposer } from '@/features/composer/MessageComposer'
 import { useSession } from '@/features/auth/session'
-import { type ModuleTaskSettings } from '@/api/modulesApi'
+import { type ModuleTaskSettings, type ModulePresetSettings } from '@/api/modulesApi'
 import { confirmDialog } from '@/shared/lib/dialog'
 import {
   fetchAutomationRules, createAutomationRule, updateAutomationRule, deleteAutomationRule, runAutomationRuleNow,
@@ -22,7 +22,7 @@ import type { DelaysShape } from '@/features/modules/shared/TimingSection'
 import { LaunchCost, ActionPriceCalc } from '@/features/modules/shared/LaunchCost'
 import { useModuleTask } from '@/features/modules/shared/useModuleTask'
 import { PresetBar } from '@/features/modules/shared/PresetBar'
-import { SavePresetModal } from '@/features/modules/shared/SavePresetModal'
+import { SavePresetModal, presetSettings } from '@/features/modules/shared/SavePresetModal'
 
 /** Локальная дата-время в формат `datetime-local` (без сдвига в UTC, как делает toISOString). */
 function toLocalInput(ts: number): string {
@@ -199,7 +199,7 @@ function AutopostingInner() {
   const handleSave = () => setPresetModalOpen(true)
 
   // Восстановить настройки из шаблона (аккаунты не трогаем).
-  const applyPreset = (s: ModuleTaskSettings) => {
+  const applyPreset = (s: ModulePresetSettings) => {
     remember(s)
     if (Array.isArray(s.targets)) setChannelsText(s.targets.join('\n'))
     if (typeof s.promptText === 'string') setText(s.promptText)
@@ -276,7 +276,7 @@ function AutopostingInner() {
       <div className="space-y-4">
         <TaskStartedModal task={justStarted} moduleTitle="Автопостинг" onClose={dismissJustStarted} />
         <SavePresetModal open={presetModalOpen} onClose={() => setPresetModalOpen(false)}
-          onSave={(name, color, owner) => savePreset(name, settings(), color, owner)} />
+          onSave={(name, color, owner, withAccounts) => savePreset(name, presetSettings(settings(), withAccounts), color, owner)} />
         {/* ТЗ 06.08 §10: выбор шаблона — вверху, до всех настроек (TPL-001). */}
         <PresetBar presets={presets} onApply={applyPreset} onSave={handleSave}
           onEdit={editPreset} onDelete={deletePreset} disabled={running} />

@@ -168,7 +168,13 @@ export function CampaignPage() {
     catch (e) { pushToast({ type: 'error', title: 'Ошибка', desc: e instanceof Error ? e.message : '' }) }
   }
   const removeSchedule = async (s: CampaignSchedule) => {
-    if (!window.confirm('Удалить расписание кампании? Действие необратимо.')) return
+    const ok = await confirmDialog({
+      title: 'Удалить расписание кампании?',
+      message: 'Запуски по нему больше не будут создаваться. Действие необратимо.',
+      confirmLabel: 'Удалить',
+      tone: 'danger',
+    })
+    if (!ok) return
     try { await deleteSchedule(s.id); setSchedules((prev) => prev.filter((x) => x.id !== s.id)) }
     catch (e) { pushToast({ type: 'error', title: 'Ошибка', desc: e instanceof Error ? e.message : '' }) }
   }

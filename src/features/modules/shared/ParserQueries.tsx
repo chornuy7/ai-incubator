@@ -3,6 +3,7 @@ import { History, Pencil, Trash2, Check, X, Loader2, ChevronDown, EyeOff } from 
 import { fetchParserQueries, fetchParserQuery, renameParserQuery, deleteParserQuery, type ParserQuery } from '@/api/modulesApi'
 import { useApp } from '@/mocks/store'
 import { cn } from '@/shared/lib/utils'
+import { confirmDialog } from '@/shared/lib/dialog'
 
 /**
  * «Последние запросы» парсера — выпадающий список того, что уже искали.
@@ -81,7 +82,13 @@ export function ParserQueries({ moduleKey, unit = 'каналов', onOpen, onHi
   const remove = async (q: ParserQuery) => {
     // Удаление стирает и результаты: следующий такой же запрос соберётся заново и будет
     // стоить монет. Об этом честно пишем в вопросе, а не после.
-    if (!window.confirm(`Удалить «${q.name}»? Сохранённые ${q.count} строк пропадут, и такой же запрос придётся собирать заново.`)) return
+    const ok = await confirmDialog({
+      title: `Удалить запрос «${q.name}»?`,
+      message: `Сохранённые ${q.count} строк пропадут, и такой же запрос придётся собирать заново — он снова будет стоить монет.`,
+      confirmLabel: 'Удалить',
+      tone: 'danger',
+    })
+    if (!ok) return
     setBusy(q.sig)
     try {
       await deleteParserQuery(q.sig)

@@ -335,6 +335,46 @@ async function ownerModules(ctx, target) {
   return Object.keys(MODULE_LABELS).filter((k) => modulesAllow(b.modules, k, b.expiresAt ?? null))
 }
 
+/**
+ * Выдать сотруднику токены или изъять их обратно (MR-225).
+ *
+ * До этого «индивидуальный лимит» ничего не выделял: сотрудник тратил из кошелька
+ * владельца, а лимит показывался ему как баланс. Пять сотрудников по 100 «влезали» в
+ * остаток владельца в 100 — и он об этом не знал. Теперь это настоящий перевод.
+ *
+ * Право проверяем строго: выдавать может ТОЛЬКО владелец этого сотрудника (или админ
+ * платформы). Иначе один клиент мог бы переводить токены из чужого кошелька — а это
+ * прямой доступ к чужим деньгам.
+ *
+ * @body {number} amount — больше нуля выдать, меньше нуля изъять.
+ */
+usersRouter.post('/:id/tokens', async (req, res) => {
+  try {
+    const actor = req.header('x-user-id')
+    if (!actor) return res.status(401).json({ ok: false, error: 'Нет сессии' })
+    const sub = await getUser(req.params.id).catch(() => null)
+    if (!sub) return res.status(404).json({ ok: false, error: 'Сотрудник не найден' })
+    const { isAdminRequest } = await import('./lib/accessGuard.js')
+    const admin = await isAdminRequest(req).catch(() => false)
+    // Владелец — тот, под кем сотрудник заведён. Админ платформы может всё, но и он
+    // переводит ИМЕННО между владельцем и его сотрудником, а не из своего кошелька.
+    const owner = String(sub.parentId || '')
+    if (!owner) return res.status(400).json({ ok: false, error: 'Это не сотрудник — переводить не с чьего баланса' })
+    if (!admin && owner !== String(actor)) return res.status(403).json({ ok: false, error: 'Выдавать токены может только владелец этого сотрудника' })
+
+    const { transferCoins } = await import('./balance.js')
+    const итог = await transferCoins({ ownerId: owner, subId: sub.id, amount: Number(req.body?.amount), actorId: actor })
+    await appendAudit({
+      action: итог.moved >= 0 ? 'tokens.grant' : 'tokens.revoke',
+      module: 'billing',
+      initiator: actor,
+      reason: `${Number(req.body?.amount) > 0 ? 'Выдано' : 'Изъято'} ${Math.abs(итог.moved)} ⚡ · сотрудник ${sub.email || sub.id}`,
+      meta: { ownerId: owner, subId: sub.id, moved: итог.moved, ownerLeft: итог.ownerLeft, subLeft: итог.subLeft },
+    }).catch(() => {})
+    res.json({ ok: true, ...итог })
+  } catch (err) { fail(res, err) }
+})
+
 usersRouter.get('/:id/access', async (req, res) => {
   try {
     const g = await accessGate(req, res)
@@ -395,11 +435,35 @@ usersRouter.get('/limits', async (req, res) => {
     const rows = []
     for (const u of mine) {
       const l = await spendLimit(u.id)
+      /*
+       * MR-225: витрине нужен СОБСТВЕННЫЙ остаток сотрудника, а не только лимит. После
+       * перехода на выдачу токенов «лимит» перестал быть главным числом: у сотрудника с
+       * личным кошельком есть свои токены, и владелец смотрит именно на них.
+       */
+      const { getBalance, walletHistory } = await import('./balance.js')
+      const свои = u.balanceMode === 'individual' ? (await getBalance(u.id)).coins : null
+      /*
+       * «Выдано всего» считаем ВСЕГДА, а не только для личного кошелька (правка по приёмке
+       * 31.08). Владелец смотрит на эту цифру, чтобы понять, сколько он в сотрудника вложил;
+       * у того, кому ещё ничего не выдавали, ответ «0», а не пустое место — иначе строка
+       * появляется и исчезает, и кажется, что её сломали.
+       *
+       * Считаем по журналу: сумма всех начислений сотруднику. Изъятия (отрицательные) не
+       * вычитаем — вопрос именно «сколько выдал за всё время», а не «сколько сейчас у него».
+       */
+      // exact: журнал СОТРУДНИКА, а не владельца кошелька. Без этого у сотрудника на общем
+      // балансе «выдано» показывало начисления владельца — 200 токенов подписки вместо нуля.
+      const log = await walletHistory({ userId: u.id, limit: 1000, exact: true }).catch(() => [])
+      const выдано = log.filter((r) => r.currency !== 'usd' && Number(r.amount) > 0)
+        .reduce((sum, r) => Math.round((sum + Number(r.amount)) * 1000) / 1000, 0)
       rows.push({
         userId: u.id,
         limit: l.limit,
         spent: l.spent,
         left: l.left === Infinity ? null : l.left,
+        // null — сотрудник на общем балансе: своих токенов у него нет.
+        own: свои,
+        granted: выдано,
       })
     }
     res.json({ ok: true, rows })
@@ -416,7 +480,7 @@ usersRouter.get('/wallets', async (req, res) => {
     const rows = []
     for (const u of mine) {
       const { coins } = await getBalance(u.id)
-      const log = await walletHistory({ userId: u.id, limit: 1000 })
+      const log = await walletHistory({ userId: u.id, limit: 1000, exact: true })
       const granted = log
         .filter((r) => r.currency !== 'usd' && Number(r.amount) > 0)
         .reduce((sum, r) => Math.round((sum + Number(r.amount)) * 1000) / 1000, 0)
@@ -426,42 +490,29 @@ usersRouter.get('/wallets', async (req, res) => {
   } catch (err) { fail(res, err) }
 })
 
+/**
+ * Старый адрес перевода (27.08). Оставлен ради совместимости: панель могла его помнить,
+ * а поведение теперь одно на всех — общая transferCoins (MR-225). Дублировать арифметику
+ * во втором месте нельзя: два перевода с разными правилами однажды разойдутся, и разойдутся
+ * они в деньгах.
+ */
 usersRouter.post('/:id/wallet', async (req, res) => {
   try {
     const ctx = await requesterContext(req)
     if (ctx.blocked) return res.status(403).json({ ok: false, error: 'Нет прав' })
     const target = await getUser(req.params.id)
     if (!target) return res.status(404).json({ ok: false, error: 'Пользователь не найден' })
-    // Свой суб — или админ. Чужому кошельку тут делать нечего.
     if (!ctx.isAdmin && target.parentId !== ctx.id) {
       return res.status(403).json({ ok: false, error: 'Можно управлять только своими субпользователями' })
     }
-    if (target.balanceMode !== 'individual') {
-      return res.status(400).json({ ok: false, error: 'У сотрудника общий баланс с вами — переводить нечего. Переключите его на личный кошелёк.' })
-    }
-    const amount = Math.round((Number(req.body?.amount) || 0) * 1000) / 1000
-    if (!amount) return res.status(400).json({ ok: false, error: 'Укажите сумму' })
-
-    const { getBalance, changeCoins } = await import('./balance.js')
-    const from = ctx.id
-    // Забираем больше, чем у него есть, — не уводим в минус: остаток по факту.
-    const subNow = (await getBalance(target.id)).coins
-    const ownerNow = (await getBalance(from)).coins
-    const move = amount > 0 ? Math.min(amount, ownerNow) : -Math.min(Math.abs(amount), subNow)
-    if (!move) {
-      return res.status(400).json({ ok: false, error: amount > 0 ? 'На вашем балансе недостаточно монет' : 'У сотрудника нечего забирать' })
-    }
-
-    const who = target.name || target.email || target.id
-    await changeCoins(-move, move > 0 ? `Выдал сотруднику ${who}` : `Забрал у сотрудника ${who}`, from, 'grant')
-    await changeCoins(move, move > 0 ? 'Выдано владельцем' : 'Возврат владельцу', target.id, 'grant')
-
+    const { transferCoins } = await import('./balance.js')
+    const итог = await transferCoins({ ownerId: String(target.parentId || ctx.id), subId: target.id, amount: Number(req.body?.amount), actorId: ctx.id })
     await appendAudit({
       action: 'wallet.transfer', module: 'balance', initiator: ctx.id || 'operator',
-      reason: `${move > 0 ? 'Выдача' : 'Возврат'} ${Math.abs(move)} ⚡: ${who}`,
-      meta: { from, to: target.id, amount: move },
-    })
-    res.json({ ok: true, moved: move, owner: (await getBalance(from)).coins, sub: (await getBalance(target.id)).coins })
+      reason: `${итог.moved >= 0 ? 'Выдано' : 'Изъято'} ${Math.abs(итог.moved)} ⚡ · ${target.email || target.id}`,
+      meta: { subId: target.id, moved: итог.moved, ownerLeft: итог.ownerLeft, subLeft: итог.subLeft },
+    }).catch(() => {})
+    res.json({ ok: true, ...итог })
   } catch (err) { fail(res, err) }
 })
 
