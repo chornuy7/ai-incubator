@@ -523,11 +523,13 @@ function WalletRows({ rows, только }: { rows: WalletEntry[] | null; тол
                   </span>
                   {/* break-words, а не truncate: текст переносится, а не обрывается. */}
                   <span className="min-w-0 flex-1 break-words text-sm leading-snug text-fg"><Причина r={r} /></span>
-                  {/* Подписываем, ЧТО это за числа и в чём: без слова «остаток» и единицы
-                      «10111.00 → 11511.00» читается как два голых числа. */}
+                  {/* «остаток 240 → 120» читается так, будто остаток — это 240 (заказчик
+                      31.08: «остаток 240 → 120 виглядає по-дурному»). Подписываем ОБА числа:
+                      что было и что осталось — тогда стрелка не нужна вовсе. */}
                   <span className="shrink-0 text-sm font-semibold tabular-nums text-muted">
-                    <span className="mr-1 text-xs font-normal text-faint">остаток</span>
-                    {fmtBalance(r.before)} <span className="text-faint">→</span>{' '}
+                    <span className="mr-1 text-xs font-normal text-faint">было</span>
+                    {fmtBalance(r.before)}
+                    <span className="mx-1 text-xs font-normal text-faint">· осталось</span>
                     <span className={plus ? 'text-emerald-300' : 'text-rose-300'}>{fmtBalance(r.after)}</span>
                     <span className="ml-1 text-xs font-normal opacity-70">{unit}</span>
                   </span>
