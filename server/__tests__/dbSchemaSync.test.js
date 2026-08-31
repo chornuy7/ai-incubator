@@ -21,7 +21,7 @@ import fs from 'node:fs/promises'
 const STORES = [
   {
     name: 'обращения в поддержку',
-    sql: '2026-08-27-tickets.sql',
+    sql: ['2026-08-27-tickets.sql', '2026-08-31-mr257-ticket-owner.sql'],
     code: 'tickets.js',
     tables: ['tickets', 'ticket_messages'],
     // Имя второй таблицы встречается в коде как строка — колонкой оно не является.
@@ -71,13 +71,24 @@ const STORES = [
   },
 ]
 
-const readSql = (f) => fs.readFile(new URL(`../../supabase/migrations/${f}`, import.meta.url), 'utf8')
+/**
+ * Схема таблицы — это НЕ один файл: базовая миграция плюс поздние `alter table`. Колонку,
+ * добавленную отдельной миграцией (так и надо: применённый файл менять нельзя), тест иначе
+ * считал бы несуществующей и краснел на верном коде.
+ */
+const readSql = async (f) => {
+  const файлы = Array.isArray(f) ? f : [f]
+  const куски = await Promise.all(файлы.map((x) => fs.readFile(new URL(`../../supabase/migrations/${x}`, import.meta.url), 'utf8')))
+  return куски.join('\n')
+}
 const readCode = (f) => fs.readFile(new URL(`../${f}`, import.meta.url), 'utf8')
 
 /** Колонки таблицы из `create table` в миграции: имя → остаток строки с типом и флагами. */
 function columnsOf(sql, table) {
   const at = sql.indexOf(`create table if not exists ${table} (`)
   assert.ok(at > 0, `в миграции нет таблицы ${table}`)
+  // Колонки, добавленные позже отдельной миграцией, — такая же часть схемы.
+  const добавленные = [...sql.matchAll(new RegExp(String.raw`alter table (?:public\.)?${table}\s+add column if not exists ([a-z0-9_]+)`, 'gi'))].map((m) => m[1])
   const rest = sql.slice(at)
   const body = rest.slice(rest.indexOf('(') + 1, rest.indexOf('\n);'))
   const cols = new Map()
@@ -88,6 +99,7 @@ function columnsOf(sql, table) {
     if (m) cols.set(m[1], m[2])
   }
   assert.ok(cols.size, `у таблицы ${table} не разобрана ни одна колонка`)
+  for (const c of добавленные) if (!cols.has(c)) cols.set(c, 'text')
   return cols
 }
 

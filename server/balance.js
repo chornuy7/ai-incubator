@@ -691,7 +691,16 @@ export async function walletHistory(filter = {}) {
    * У сотрудника с ЛИЧНЫМ балансом resolveWalletOwner вернёт его самого — он увидит
    * только свои операции, как и раньше.
    */
-  const owner = filter.userId ? await resolveWalletOwner(filter.userId) : null
+  /*
+   * `exact` — читать журнал СТРОГО этого пользователя, без подъёма к владельцу кошелька.
+   *
+   * Нужен там, где вопрос именно про сотрудника: «сколько ему выдано». Обычный режим
+   * поднимается к владельцу (у сотрудника на общем балансе своей истории нет — она общая,
+   * как и деньги), и на этом подъёме «выдано сотруднику» превращалось в «все начисления
+   * владельца»: у владельца лежали 200 токенов подписки, и витрина показывала их как
+   * выданные сотруднику, которому не выдавали ничего (баг 31.08).
+   */
+  const owner = filter.userId ? (filter.exact ? filter.userId : await resolveWalletOwner(filter.userId)) : null
   const db = sb()
   if (db) {
     // §11.4: тянем и currency. Колонка появляется миграцией 2026-07-31 — если её ещё
@@ -793,6 +802,70 @@ export async function spendLimit(userId) {
   const mine = rows.find((r) => r.actorId === id)
   const spent = mine ? mine.spent : 0
   return { limit, spent, left: Math.round((limit - spent) * COIN_PRECISION) / COIN_PRECISION }
+}
+
+/**
+ * Перевод токенов между владельцем и его сотрудником (MR-225).
+ *
+ * Заказчик 30.08: «У меня есть пять таких Маш, каждой поставил лимит по 100. Это же 500
+ * влезает, а у меня как у владельца может быть всего 100 токенов. Токены — это не просто
+ * цифра, это деньги, которые я передаю своему пользователю».
+ *
+ * Раньше «индивидуальный лимит» ничего не выделял: сотрудник тратил из кошелька владельца,
+ * а лимит показывался ему как баланс. Сумма лимитов не была ничем ограничена, и владелец
+ * не знал, сколько у него останется. Теперь это НАСТОЯЩИЙ перевод: у владельца стало
+ * меньше, у сотрудника появилось.
+ *
+ * Первая же выдача переводит сотрудника на собственный кошелёк (`balanceMode:
+ * 'individual'`) — иначе начисление вернулось бы владельцу: `changeCoins` для общего
+ * баланса пишет в кошелёк владельца, и выдача была бы переводом самому себе.
+ *
+ * Изъятие — та же операция со знаком минус, и у неё свой крайний случай: часть выданного
+ * сотрудник мог уже потратить. Забираем сколько осталось и говорим об этом числом, а не
+ * уводим баланс в минус.
+ *
+ * @param {{ownerId: string, subId: string, amount: number, actorId?: string}} p
+ *   `amount` > 0 — выдать сотруднику, < 0 — изъять у него.
+ * @returns {Promise<{moved: number, ownerLeft: number, subLeft: number, partial: boolean}>}
+ */
+export async function transferCoins({ ownerId, subId, amount, actorId } = {}) {
+  const owner = String(ownerId || '')
+  const sub = String(subId || '')
+  const want = Math.round((Number(amount) || 0) * COIN_PRECISION) / COIN_PRECISION
+  if (!owner || !sub) throw new Error('Не указан владелец или сотрудник')
+  if (owner === sub) throw new Error('Перевод самому себе смысла не имеет')
+  if (!want) throw new Error('Укажите количество токенов')
+
+  const { getUser, updateUser } = await import('./users.js')
+  const subUser = await getUser(sub).catch(() => null)
+  if (!subUser) throw new Error('Сотрудник не найден')
+  if (String(subUser.parentId || '') !== owner) throw new Error('Это не ваш сотрудник')
+
+  if (want > 0) {
+    const { coins: ownerCoins } = await getBalance(owner)
+    if (ownerCoins < want) {
+      throw new Error(`У вас ${normCoins(ownerCoins)} ⚡ — выдать ${want} нельзя. Токены переходят сотруднику с вашего баланса.`)
+    }
+    // Порядок важен: сначала свой кошелёк, потом начисление. Иначе начисление ушло бы
+    // владельцу же — сотрудник с общим балансом кошелька не имеет.
+    if (subUser.balanceMode !== 'individual') await updateUser(sub, { balanceMode: 'individual' })
+    await changeCoins(-want, `Выдача токенов сотруднику ${subUser.name || subUser.email || sub}`, owner, 'transfer_out')
+    await changeCoins(want, `Получено от владельца`, sub, 'transfer_in')
+    const [{ coins: ownerLeft }, { coins: subLeft }] = await Promise.all([getBalance(owner), getBalance(sub)])
+    return { moved: want, ownerLeft, subLeft, partial: false }
+  }
+
+  // Изъятие: забираем не больше, чем у сотрудника осталось.
+  const { coins: subCoins } = await getBalance(sub)
+  const take = Math.min(subCoins, Math.abs(want))
+  if (take <= 0) {
+    const [{ coins: ownerLeft }] = await Promise.all([getBalance(owner)])
+    return { moved: 0, ownerLeft, subLeft: subCoins, partial: true }
+  }
+  await changeCoins(-take, 'Изъятие токенов владельцем', sub, 'transfer_out')
+  await changeCoins(take, `Возврат от сотрудника ${subUser.name || subUser.email || sub}`, owner, 'transfer_in')
+  const [{ coins: ownerLeft }, { coins: subLeft }] = await Promise.all([getBalance(owner), getBalance(sub)])
+  return { moved: take, ownerLeft, subLeft, partial: take < Math.abs(want) }
 }
 
 /** Сменить тариф. @param {string} planId */

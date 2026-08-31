@@ -2,10 +2,12 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { LifeBuoy, Plus, Send, MessageSquare, Clock, Loader2, ArrowLeft } from 'lucide-react'
 import { useApp } from '@/mocks/store'
+import { useBalance } from '@/features/billing/balanceStore'
 import { useSession } from '@/features/auth/session'
+import { refreshUnread } from '@/features/support/unreadStore'
 import { PageHeader, Card, EmptyState, Select, Badge } from '@/shared/ui'
 import { HelpButton } from '@/features/neuro-commenting/moduleUi'
-import { fetchTickets, fetchTicket, createTicket, replyTicket, type ApiTicket, type TicketStatus } from '@/api/ticketsApi'
+import { fetchTickets, fetchTicket, createTicket, replyTicket, setTicketStatus, type ApiTicket, type TicketStatus } from '@/api/ticketsApi'
 import { TicketChat, shortId } from '@/features/support/TicketChat'
 import { cn } from '@/shared/lib/utils'
 
@@ -40,11 +42,27 @@ export function SupportPage() {
   // это рабочее место, все тикеты, ответ как «Поддержка». Админ здесь — обычный клиент
   // (свои тикеты, пишет от своего имени); отвечает как поддержка из Админ-панели → «Тикеты».
   const sessionUser = useSession((s) => s.user)
+  /*
+   * Сотрудник пишет СВОЕМУ администратору, а не нам (MR-248). Возможность была, а из
+   * интерфейса не читалась: страница обещала «связь с командой Murmex», и человек не
+   * понимал, что «Новый тикет» уходит его владельцу. Заказчик 31.08: «тикети на
+   * поповнення бачу, а як мені написати повідомлення своєму адміну?»
+   */
+  /*
+   * Признак берём из БАЛАНСА, а не из сессии. Сессия зашивается при входе и дальше не
+   * меняется: после MR-225 сотрудник со своим кошельком переставал считаться сотрудником
+   * до перезахода, и панель показывала ему то одно, то другое (приёмка 31.08 — «обновил
+   * страницу и пропала кнопка»). Баланс перечитывается сам, и признак в нём всегда свежий.
+   */
+  const балансСотрудника = useBalance()
+  const яСотрудник = !!(балансСотрудника?.isSub ?? sessionUser?.isSub)
   const isSupportView = !!(sessionUser?.permissions?.resources?.support === 'allow' && !sessionUser?.isAdmin)
   const [tickets, setTickets] = useState<ApiTicket[]>([])
   const [loading, setLoading] = useState(true)
   const [filter, setFilter] = useState('all')
   const [newOpen, setNewOpen] = useState(false)
+  // Кому пишем: своему администратору (по умолчанию) или платформе.
+  const [вПоддержку, setВПоддержку] = useState(false)
   const [subject, setSubject] = useState('')
   const [category, setCategory] = useState('tech')
   const [body, setBody] = useState('')
@@ -52,6 +70,7 @@ export function SupportPage() {
   const [openTicket, setOpenTicket] = useState<ApiTicket | null>(null)
   const [reply, setReply] = useState('')
   const [replying, setReplying] = useState(false)
+  const [меняюСтатус, setМеняюСтатус] = useState(false)
   const [params, setParams] = useSearchParams()
 
   const load = useCallback(async () => {
@@ -73,6 +92,9 @@ export function SupportPage() {
         .then((fresh) => {
           setOpenTicket((cur) => (cur && cur.id === fresh.id ? fresh : cur))
           setTickets((list) => list.map((x) => x.id === fresh.id ? { ...fresh, unread: 0 } : x))
+          // Открытие отмечает прочитанным на сервере — счётчик обязан погаснуть сразу,
+          // а не через тик опроса: иначе значок висит на глазах у прочитавшего.
+          void refreshUnread()
         })
         .catch(() => { /* сеть моргнула — покажем на следующем тике */ })
     }, 5000)
@@ -93,8 +115,8 @@ export function SupportPage() {
     if (!guardNet('создание тикета')) return
     setSaving(true)
     try {
-      await createTicket({ subject: subject.trim(), category, body: body.trim() })
-      pushToast({ type: 'success', title: 'Тикет создан', desc: 'Поддержка ответит в течение 24 часов.' })
+      await createTicket({ subject: subject.trim(), category, body: body.trim(), toSupport: яСотрудник && вПоддержку })
+      pushToast({ type: 'success', title: 'Тикет создан', desc: яСотрудник && !вПоддержку ? 'Администратор ответит здесь же.' : 'Поддержка ответит в течение 24 часов.' })
       setNewOpen(false); setSubject(''); setBody(''); setCategory('tech')
       await load()
     } catch (e) { pushToast({ type: 'error', title: 'Не удалось создать', desc: e instanceof Error ? e.message : '' }) }
@@ -108,6 +130,8 @@ export function SupportPage() {
       const fresh = await fetchTicket(t.id, isSupportView)
       setOpenTicket(fresh)
       setTickets((list) => list.map((x) => x.id === fresh.id ? { ...fresh, unread: 0 } : x))
+      // И общий счётчик — тот, что в меню и на кнопке поддержки.
+      void refreshUnread()
     } catch { /* оставляем то, что есть в списке */ }
   }
 
@@ -130,11 +154,41 @@ export function SupportPage() {
       <div>
         <button onClick={() => setNewOpen(false)} className="btn-ghost mb-3 h-9"><ArrowLeft size={15} /> Назад к обращениям</button>
         <PageHeader
-          title="Новый тикет"
-          subtitle="Опишите проблему — команда ответит в течение суток"
+          title={яСотрудник ? (вПоддержку ? 'Обращение в поддержку' : 'Сообщение администратору') : 'Новый тикет'}
+          subtitle={яСотрудник ? (вПоддержку ? 'Вопрос о самой платформе — ответит команда Murmex' : 'Сообщение уйдёт вашему администратору') : 'Опишите проблему — команда ответит в течение суток'}
           icon={<LifeBuoy size={22} />}
         />
         <Card className="max-w-2xl space-y-4 p-5">
+          {/*
+            Выбор адресата — только у сотрудника: у клиента платформы он один, и лишний
+            переключатель там сбивал бы с толку. По умолчанию письмо идёт администратору:
+            доступы, аккаунты и токены выдаёт он, и гонять человека через нашу поддержку
+            значит вернуть тот самый круг. Но платформа тоже ломается, поэтому дверь к нам
+            остаётся открытой.
+          */}
+          {яСотрудник && (
+            <div>
+              <label className="label">Кому</label>
+              <div className="flex gap-2">
+                {([[false, 'Моему администратору'], [true, 'В поддержку Murmex']] as const).map(([знач, подпись]) => (
+                  <button
+                    key={String(знач)}
+                    type="button"
+                    onClick={() => setВПоддержку(знач)}
+                    className={cn('h-9 rounded-lg border px-3 text-xs font-semibold transition-colors',
+                      вПоддержку === знач ? 'border-spark-500/50 bg-spark-500/15 text-spark-200' : 'border-line text-muted hover:text-fg')}
+                  >
+                    {подпись}
+                  </button>
+                ))}
+              </div>
+              <p className="mt-1 text-[11px] text-muted">
+                {вПоддержку
+                  ? 'Вопрос о самой платформе: что-то не работает, ошибка, сбой.'
+                  : 'Доступы, аккаунты, токены и всё, что выдаёт владелец пространства.'}
+              </p>
+            </div>
+          )}
           <div>
             <label className="label">Тема</label>
             <input value={subject} onChange={(e) => setSubject(e.target.value)} className="input" placeholder="Кратко о проблеме" autoFocus />
@@ -179,6 +233,30 @@ export function SupportPage() {
           <div className="flex items-center gap-2 border-b border-line px-4 py-2.5">
             <Badge tone={meta.tone}>{meta.label}</Badge>
             <span className="text-xs text-muted">Обновлён {fmtTs(openTicket.updatedAt)}</span>
+            {/*
+              * Приёмка 31.08: обращение висело «в работе» вечно — закрыть его было некому.
+              * Кнопка у той же стороны, что отвечает: у платформенной поддержки и у
+              * владельца, которому обращение адресовано. Клиенту закрывать нечего —
+              * он и так знает, решён его вопрос или нет.
+              */}
+            {(isSupportView || (!!openTicket.toOwnerId && openTicket.toOwnerId === sessionUser?.id)) && (
+              <button
+                disabled={меняюСтатус}
+                onClick={async () => {
+                  setМеняюСтатус(true)
+                  try {
+                    const след: TicketStatus = openTicket.status === 'closed' ? 'open' : 'closed'
+                    setOpenTicket(await setTicketStatus(openTicket.id, след))
+                    await load()
+                  } catch (e) {
+                    pushToast({ type: 'error', title: 'Не удалось изменить статус', desc: e instanceof Error ? e.message : '' })
+                  } finally { setМеняюСтатус(false) }
+                }}
+                className="btn-ghost ml-auto h-8 shrink-0 text-xs"
+              >
+                {openTicket.status === 'closed' ? 'Открыть заново' : 'Закрыть обращение'}
+              </button>
+            )}
           </div>
           {/* Лента во всю доступную высоту — чат, а не окошко. */}
           <div ref={feedRef} className="h-[calc(100vh-24rem)] min-h-[280px] overflow-y-auto bg-surface/40 px-4 py-3">
@@ -209,15 +287,26 @@ export function SupportPage() {
     <div>
       <PageHeader
         title={isSupportView ? 'Поддержка · обращения' : 'Поддержка'}
-        subtitle={isSupportView ? 'Все тикеты пользователей — отвечаете как поддержка' : 'Тикеты и связь с командой Murmex'}
+        subtitle={isSupportView
+          ? 'Все тикеты пользователей — отвечаете как поддержка'
+          : яСотрудник ? 'Переписка с вашим администратором — он выдаёт доступы, аккаунты и токены' : 'Тикеты и связь с командой Murmex'}
         icon={<LifeBuoy size={22} />}
         actions={<>
           <HelpButton topic="support" className="h-10 w-10" />
           {/* Поддержка отвечает, а не создаёт тикеты — «Новый тикет»/«Telegram» ей не нужны. */}
           {!isSupportView && (
             <>
-              <button onClick={() => pushToast({ type: 'info', title: 'Открываю Telegram', desc: '@ai_incubator_support (демо).' })} className="btn-ghost h-10"><Send size={16} /> Написать в Telegram</button>
-              <button onClick={() => setNewOpen(true)} className="btn-primary h-10"><Plus size={16} /> Новый тикет</button>
+              {/*
+                Телеграм-канал — наша поддержка. Сотруднику он не нужен: его вопросы решает
+                владелец, а не мы, и лишняя дверь ведёт ровно в тот круг, от которого
+                уходили («в поддержке скажут: свяжитесь с администратором»).
+              */}
+              {!яСотрудник && (
+                <button onClick={() => pushToast({ type: 'info', title: 'Открываю Telegram', desc: '@ai_incubator_support (демо).' })} className="btn-ghost h-10"><Send size={16} /> Написать в Telegram</button>
+              )}
+              <button onClick={() => setNewOpen(true)} className="btn-primary h-10">
+                <Plus size={16} /> {яСотрудник ? 'Написать администратору' : 'Новый тикет'}
+              </button>
             </>
           )}
         </>}
@@ -235,7 +324,7 @@ export function SupportPage() {
           <EmptyState
             icon={<LifeBuoy size={26} />}
             title="У вас пока нет тикетов"
-            desc="Создайте обращение — команда поддержки ответит в течение суток."
+            desc={яСотрудник ? 'Напишите своему администратору — он ответит здесь же.' : 'Создайте обращение — команда поддержки ответит в течение суток.'}
             action={<button onClick={() => setNewOpen(true)} className="btn-primary h-10"><Plus size={16} /> Новый тикет</button>}
           />
         </Card>
@@ -255,6 +344,17 @@ export function SupportPage() {
                     {/* Поддержке важно СРАЗУ видеть, чей это тикет. */}
                     {isSupportView && (t.ownerEmail || t.ownerName) && (
                       <span className="truncate text-[11px] text-iris-300">{t.ownerEmail || t.ownerName}</span>
+                    )}
+                    {/*
+                      MR-257: обращение сотрудника СВОЕМУ владельцу. Мы такие видим (и должны
+                      видеть — решение владельца 31.08), но отвечать на них вместо владельца
+                      нельзя: токены и аккаунты выдаёт он, а не мы. Метка отделяет «нам» от
+                      «не нам» до того, как поддержка начнёт печатать ответ.
+                    */}
+                    {isSupportView && t.toOwnerId && (
+                      <span className="shrink-0 rounded-md border border-amber-500/40 bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-bold text-amber-300">
+                        сотрудник → владельцу
+                      </span>
                     )}
                   </div>
                   <div className={cn('mt-0.5 truncate', t.unread ? 'font-bold text-fg' : 'font-semibold text-fg')}>{t.subject}</div>
