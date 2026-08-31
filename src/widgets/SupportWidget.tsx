@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { useNavigate, useLocation } from 'react-router-dom'
 import { LifeBuoy, X, Plus, MessagesSquare, Send } from 'lucide-react'
 import { useUnread } from '@/features/support/unreadStore'
+import { useBalance } from '@/features/billing/balanceStore'
 import { useSession } from '@/features/auth/session'
 
 /**
@@ -20,7 +21,9 @@ export function SupportWidget() {
    * невозможно поймать взглядом — особенно на странице, где и без неё десяток значков.
    */
   const непрочитанных = useUnread(false)
-  const isSub = useSession((s) => s.user?.isSub)
+  // Из баланса, а не из сессии: сессия зашита при входе и устаревает (см. SupportPage).
+  const балансСотрудника = useBalance()
+  const isSub = !!(балансСотрудника?.isSub ?? useSession.getState().user?.isSub)
   const nav = useNavigate()
   const путь = useLocation().pathname
   const [скрыто, setСкрыто] = useState(false)

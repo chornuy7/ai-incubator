@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { LifeBuoy, Plus, Send, MessageSquare, Clock, Loader2, ArrowLeft } from 'lucide-react'
 import { useApp } from '@/mocks/store'
+import { useBalance } from '@/features/billing/balanceStore'
 import { useSession } from '@/features/auth/session'
 import { refreshUnread } from '@/features/support/unreadStore'
 import { PageHeader, Card, EmptyState, Select, Badge } from '@/shared/ui'
@@ -47,7 +48,14 @@ export function SupportPage() {
    * понимал, что «Новый тикет» уходит его владельцу. Заказчик 31.08: «тикети на
    * поповнення бачу, а як мені написати повідомлення своєму адміну?»
    */
-  const яСотрудник = !!sessionUser?.isSub
+  /*
+   * Признак берём из БАЛАНСА, а не из сессии. Сессия зашивается при входе и дальше не
+   * меняется: после MR-225 сотрудник со своим кошельком переставал считаться сотрудником
+   * до перезахода, и панель показывала ему то одно, то другое (приёмка 31.08 — «обновил
+   * страницу и пропала кнопка»). Баланс перечитывается сам, и признак в нём всегда свежий.
+   */
+  const балансСотрудника = useBalance()
+  const яСотрудник = !!(балансСотрудника?.isSub ?? sessionUser?.isSub)
   const isSupportView = !!(sessionUser?.permissions?.resources?.support === 'allow' && !sessionUser?.isAdmin)
   const [tickets, setTickets] = useState<ApiTicket[]>([])
   const [loading, setLoading] = useState(true)
