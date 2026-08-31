@@ -927,15 +927,17 @@ function SubWalletEditor({ sub, onMode }: { sub: User; onMode: (next: User) => v
   ] : []
   const нф = (n: number) => n.toLocaleString('ru-RU')
 
-  const сводка = наОбщем
-    ? 'общий с вашим — токены не выданы'
-    : `${свои} ⚡${деньги(свои as number)}${limit?.granted ? ` · выдано ${limit.granted} ⚡` : ''}`
+  /*
+   * Заголовок — просто «Токены сотрудника» (правка по приёмке 31.08). Прежний хвост
+   * «общий с вашим — токены не выданы» объяснял внутреннее устройство там, где человек
+   * ищет одно: сколько у сотрудника токенов. Числа он увидит, раскрыв строку.
+   */
 
   return (
     <div className="mt-1 w-full">
       <button onClick={() => setOpen(!open)} className="flex items-center gap-1.5 text-xs text-white/55 hover:text-white/85">
         <ChevronDown size={13} className={cn('transition-transform', open && 'rotate-180')} />
-        Токены сотрудника: {сводка}
+        Токены сотрудника
       </button>
       {!open ? null : (
       <div className="mt-2 rounded-xl border border-line bg-elevated/40 p-3">
@@ -943,7 +945,9 @@ function SubWalletEditor({ sub, onMode }: { sub: User; onMode: (next: User) => v
           <span className="text-white/45">У сотрудника: <b className="text-fg tabular-nums">{наОбщем ? '—' : `${свои} ⚡`}</b>
             {!наОбщем && <span className="text-white/35">{деньги(свои as number)}</span>}
           </span>
-          {limit?.granted != null && <span className="text-white/45">Выдано всего: <b className="text-fg tabular-nums">{limit.granted} ⚡</b></span>}
+          {/* «Выдано всего» стоит ЛЕВЕЕ «Потрачено» и видно всегда, в том числе нулём:
+              это ответ на вопрос «сколько я в него вложил», а он есть и до первой выдачи. */}
+          <span className="text-white/45">Выдано всего: <b className="text-fg tabular-nums">{limit?.granted ?? 0} ⚡</b></span>
           <span className="text-white/45">Потрачено: <b className="text-fg tabular-nums">{limit?.spent ?? 0} ⚡</b></span>
           <span className="ml-auto text-white/45">У вас: <b className="text-fg tabular-nums">{мойОстаток ?? '—'} ⚡</b></span>
         </div>

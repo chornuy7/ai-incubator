@@ -442,12 +442,18 @@ usersRouter.get('/limits', async (req, res) => {
        */
       const { getBalance, walletHistory } = await import('./balance.js')
       const свои = u.balanceMode === 'individual' ? (await getBalance(u.id)).coins : null
-      let выдано = null
-      if (свои !== null) {
-        const log = await walletHistory({ userId: u.id, limit: 1000 }).catch(() => [])
-        выдано = log.filter((r) => r.currency !== 'usd' && Number(r.amount) > 0)
-          .reduce((sum, r) => Math.round((sum + Number(r.amount)) * 1000) / 1000, 0)
-      }
+      /*
+       * «Выдано всего» считаем ВСЕГДА, а не только для личного кошелька (правка по приёмке
+       * 31.08). Владелец смотрит на эту цифру, чтобы понять, сколько он в сотрудника вложил;
+       * у того, кому ещё ничего не выдавали, ответ «0», а не пустое место — иначе строка
+       * появляется и исчезает, и кажется, что её сломали.
+       *
+       * Считаем по журналу: сумма всех начислений сотруднику. Изъятия (отрицательные) не
+       * вычитаем — вопрос именно «сколько выдал за всё время», а не «сколько сейчас у него».
+       */
+      const log = await walletHistory({ userId: u.id, limit: 1000 }).catch(() => [])
+      const выдано = log.filter((r) => r.currency !== 'usd' && Number(r.amount) > 0)
+        .reduce((sum, r) => Math.round((sum + Number(r.amount)) * 1000) / 1000, 0)
       rows.push({
         userId: u.id,
         limit: l.limit,
