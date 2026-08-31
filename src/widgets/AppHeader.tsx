@@ -335,16 +335,21 @@ export function AppHeader() {
    * читать невозможно, а число и первые несколько имён отвечают на вопрос «кто именно».
    */
   const неВСтрою = useMemo(() => {
-    const группы = new Map<string, string[]>()
+    const группы = new Map<string, { ссылка: string; имена: string[] }>()
     for (const a of activeAccounts(data)) {
       if (!isBrokenAccount(a)) continue
-      const причина = a.proxyOk === false ? 'Мёртвый прокси'
-        : a.noProxy === true ? 'Без прокси'
-          : (STATUS_META[a.status as keyof typeof STATUS_META]?.label || a.status)
-      if (!группы.has(причина)) группы.set(причина, [])
-      группы.get(причина)!.push(a.name || a.phone || a.id)
+      /*
+       * Вместе с подписью запоминаем, КУДА вести. Причины по прокси — это фильтр риска,
+       * остальные — фильтр статуса; в менеджере это два разных фильтра, и перепутать их
+       * значит открыть пустой список.
+       */
+      const [причина, ссылка] = a.proxyOk === false ? ['Мёртвый прокси', 'risk=deadProxy']
+        : a.noProxy === true ? ['Без прокси', 'risk=noProxy']
+          : [(STATUS_META[a.status as keyof typeof STATUS_META]?.label || a.status), `status=${a.status}`]
+      if (!группы.has(причина)) группы.set(причина, { ссылка, имена: [] })
+      группы.get(причина)!.имена.push(a.name || a.phone || a.id)
     }
-    return [...группы.entries()].sort((x, y) => y[1].length - x[1].length)
+    return [...группы.entries()].sort((x, y) => y[1].имена.length - x[1].имена.length)
   }, [data])
   const currentLang = LANGUAGES.find((l) => l.code === locale) ?? LANGUAGES[1]
 
@@ -454,8 +459,13 @@ export function AppHeader() {
                   <div className="px-3 py-5 text-center text-sm text-muted">Все аккаунты в строю</div>
                 ) : (
                   <div className="max-h-80 overflow-y-auto p-1.5">
-                    {неВСтрою.map(([причина, имена]) => (
-                      <div key={причина} className="rounded-xl px-2 py-2">
+                    {неВСтрою.map(([причина, { ссылка, имена }]) => (
+                      <button
+                        key={причина}
+                        onClick={() => { setAccOpen(false); nav(`/panel?${ссылка}`) }}
+                        className="w-full rounded-xl px-2 py-2 text-left transition-colors hover:bg-white/[.04]"
+                        title={`Открыть менеджер: ${причина.toLowerCase()}`}
+                      >
                         <div className="flex items-center justify-between gap-2">
                           <span className="text-sm font-semibold text-fg">{причина}</span>
                           <span className="shrink-0 text-xs font-bold text-rose-300">{имена.length}</span>
@@ -464,7 +474,7 @@ export function AppHeader() {
                           {имена.slice(0, 8).join(', ')}
                           {имена.length > 8 && <span className="text-faint"> и ещё {имена.length - 8}</span>}
                         </div>
-                      </div>
+                      </button>
                     ))}
                   </div>
                 )}
