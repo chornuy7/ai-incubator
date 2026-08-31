@@ -13,6 +13,7 @@ import { can } from '@/shared/lib/access'
 import { PageHeader, Card, Switch, Badge, Modal } from '@/shared/ui'
 import { cn, balance as fmtBalance } from '@/shared/lib/utils'
 import { useTabParam } from '@/shared/lib/useTabParam'
+import { moduleTitle } from '@/shared/config/modules'
 
 // 24 стандартных часовых пояса (целочасовые, UTC-12…UTC+11) с городом-подсказкой.
 const ALL_TIMEZONES: string[] = [
@@ -427,6 +428,43 @@ export function ProfilePage() {
  *
  * `только` — показывать лишь операции по подписке (окно на странице подписок, MR-199).
  */
+/*
+ * «… и ещё 11» — не текст, а свёрнутый список.
+ *
+ * Заказчик 31.08: «щоб не писало "и ещё 11", а я міг натиснути і там покажеться фул
+ * список». Развернуть можно только то, что сохранено: состав операции пишется колонкой
+ * `modules` (миграция 2026-08-31). У строк, записанных раньше, состава нет — они
+ * остаются свёрнутыми, и кнопки у них нет: предлагать разворот, который ничего не
+ * покажет, хуже, чем не предлагать.
+ *
+ * Свёрнутый хвост ищем по НАШЕЙ же формулировке: её пишет listModules, а не человек.
+ */
+function Причина({ r }: { r: WalletEntry }) {
+  const [развернуть, setРазвернуть] = useState(false)
+  const текст = r.reason || 'без описания'
+  const свёрнуто = / и ещё \d+$/.exec(текст)
+  const все = (r.modules || []).map(moduleTitle)
+  if (!свёрнуто || все.length <= 3) return <>{текст}</>
+
+  const первые = все.slice(0, 3).join(', ')
+  // Отрезаем перечисление по нему самому, а не по позиции хвоста: между ними стоит
+  // только запятая, но искать начало списка надёжнее по совпадению с составом.
+  const где = текст.lastIndexOf(первые)
+  const голова = где >= 0 ? текст.slice(0, где) : текст.slice(0, свёрнуто.index)
+  return (
+    <>
+      {голова}{развернуть ? все.join(', ') : первые}{' '}
+      <button
+        type="button"
+        onClick={() => setРазвернуть((v) => !v)}
+        className="rounded px-1 font-semibold text-spark-300 underline decoration-dotted underline-offset-2 hover:bg-white/[.06]"
+      >
+        {развернуть ? 'свернуть' : `и ещё ${все.length - 3}`}
+      </button>
+    </>
+  )
+}
+
 function WalletRows({ rows, только }: { rows: WalletEntry[] | null; только?: 'subscription' }) {
   const [валюта, setВалюта] = useState<'all' | 'coins' | 'usd'>('all')
   if (!rows) return <div className="text-sm text-muted">Загрузка…</div>
@@ -484,7 +522,7 @@ function WalletRows({ rows, только }: { rows: WalletEntry[] | null; тол
                     <span className="text-xs font-semibold opacity-70">{unit}</span>
                   </span>
                   {/* break-words, а не truncate: текст переносится, а не обрывается. */}
-                  <span className="min-w-0 flex-1 break-words text-sm leading-snug text-fg">{r.reason || 'без описания'}</span>
+                  <span className="min-w-0 flex-1 break-words text-sm leading-snug text-fg"><Причина r={r} /></span>
                   {/* Подписываем, ЧТО это за числа и в чём: без слова «остаток» и единицы
                       «10111.00 → 11511.00» читается как два голых числа. */}
                   <span className="shrink-0 text-sm font-semibold tabular-nums text-muted">

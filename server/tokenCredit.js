@@ -113,7 +113,7 @@ export async function creditDueTokens(nowMs = Date.now(), onlyUser = '') {
       // В истории должно быть видно, ЗА ЧТО начислено: имя набора, а если это своё
       // сочетание модулей — их перечисление.
       const shown = await describeModules(modules)
-      await changeCoins(tokens, `Токены подписки (месяц): ${shown}`, userId, 'grant')
+      await changeCoins(tokens, `Токены подписки (месяц): ${shown}`, userId, 'grant', modules)
       users += 1
       coins += tokens
     }
@@ -172,7 +172,7 @@ export async function creditPendingGifts(nowMs = Date.now()) {
     const gift = await pendingGift(owner, modules, giftMap).catch(() => ({ coins: 0, modules: [] }))
     if (gift.coins <= 0) continue
     const shown = await describeModules(gift.modules)
-    await changeCoins(gift.coins, `Подарочные токены (разово): ${shown}`, owner, 'grant')
+    await changeCoins(gift.coins, `Подарочные токены (разово): ${shown}`, owner, 'grant', gift.modules)
     await markGifted(owner, gift.modules, giftMap)
     users += 1
     coins += gift.coins

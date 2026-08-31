@@ -1712,10 +1712,17 @@ app.post('/api/subscription', async (req, res) => {
          * набор и в истории должен узнать свою покупку (MR-230).
          */
         const { describeModules } = await import('./lib/subscriptionLabel.js')
+        /*
+         * Подпись и сохранённый состав считаем из ОДНОЙ переменной. Порознь они однажды
+         * разъедутся, и в истории будет написано одно, а по клику развернётся другое —
+         * причём заметит это только клиент и только на своих деньгах.
+         */
+        const состав = added.length && activeUntil > now ? added : (list === 'all' ? [] : list)
+        const подпись = list === 'all' && !состав.length ? 'все модули' : await describeModules(состав)
         const what = added.length && activeUntil > now
-          ? `докупка до конца подписки — ${await describeModules(added)}`
-          : `на ${months || 1} мес. — ${list === 'all' ? 'все модули' : await describeModules(list)}`
-        await changeUsd(-charged, `Подписка: ${what}`, target)
+          ? `докупка до конца подписки — ${подпись}`
+          : `на ${months || 1} мес. — ${подпись}`
+        await changeUsd(-charged, `Подписка: ${what}`, target, undefined, состав)
       }
     }
     // Баг 19.08 (§2): покупка модуля ЗАТИРАЛА набор. Клиент присылал полный список,
@@ -1747,7 +1754,7 @@ app.post('/api/subscription', async (req, res) => {
       if (creditedTokens > 0) {
         // Здесь тот же вопрос, что и про деньги: «за что дали 300 токенов» (MR-230).
         const shown = await describeModules(addedModules)
-        await changeCoins(creditedTokens, `Токены подписки (первый месяц): ${shown}`, target, 'grant')
+        await changeCoins(creditedTokens, `Токены подписки (первый месяц): ${shown}`, target, 'grant', addedModules)
       }
       // MR-189: ПОДАРОЧНЫЕ ⚡ — единоразово за модуль. До этой правки они считались в
       // стоимости набора и показывались на витрине («+200 ⚡ в подарок»), но ни одна точка
@@ -1759,7 +1766,7 @@ app.post('/api/subscription', async (req, res) => {
         if (gift.coins > 0) {
           // Тот же текст пишет фоновая сверка подарков — и подпись должна быть та же.
           const shownGift = await describeModules(gift.modules)
-          await changeCoins(gift.coins, `Подарочные токены (разово): ${shownGift}`, target, 'grant')
+          await changeCoins(gift.coins, `Подарочные токены (разово): ${shownGift}`, target, 'grant', gift.modules)
           await markGifted(target, gift.modules, effPrices.giftMap || {})
         }
       } catch (err) {

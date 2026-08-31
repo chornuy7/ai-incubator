@@ -149,7 +149,7 @@ export async function renewDueSubscriptions(nowMs = Date.now(), onlyUser = '') {
         }).catch(() => {}) // журнал не должен ронять биллинг
         continue
       }
-      await changeUsd(-cost, `Продление подписки (месяц): ${shown}`, sub.userId)
+      await changeUsd(-cost, `Продление подписки (месяц): ${shown}`, sub.userId, undefined, sub.modules)
       charged += cost
     }
 
@@ -167,7 +167,7 @@ export async function renewDueSubscriptions(nowMs = Date.now(), onlyUser = '') {
     // creditDueTokens этот же месяц второй раз не начислит.
     const monthly = sub.modules.reduce((s, k) => s + (Number(tokensMap?.[k]) || 0), 0)
     if (monthly > 0) {
-      await changeCoins(monthly, `Токены подписки (месяц): ${shown}`, sub.userId, 'grant')
+      await changeCoins(monthly, `Токены подписки (месяц): ${shown}`, sub.userId, 'grant', sub.modules)
       tokens += monthly
     }
     renewed += 1
