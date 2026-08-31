@@ -107,7 +107,6 @@ export async function renewDueSubscriptions(nowMs = Date.now(), onlyUser = '') {
   const db = getSupabase()
   const { monthMap, tokensMap } = await effectivePrices()
   const { getBalance, changeUsd, changeCoins } = await import('./balance.js')
-  const { moduleLabel } = await import('./lib/accountLocks.js')
   // Цену продления считаем ТЕМ ЖЕ кодом, что и цену покупки: subscriptionCost знает про
   // скидку сетапа, про наборы, собранные админом, и про округление до целых. Простая
   // сумма по прайсу этого не знает — и человек, купивший «Парсер + Комментинг» за $20,
