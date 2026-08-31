@@ -1,4 +1,5 @@
 import { useMemo, useState, useEffect, useRef } from 'react'
+import { RequestToOwnerModal } from '@/features/requests/RequestToOwner'
 import {
   Plus, UploadCloud, Server, RefreshCw, ListChecks, Search, Filter,
   MoreHorizontal, Trash2, KeyRound, Info, Users, Undo2, Loader2, Pause,
@@ -333,6 +334,8 @@ export function AccountsPage() {
   // §4 (D1/D3): усталость общая для всех модулей — показываем в списке, кто отдыхает.
   const [activity, setActivityMap] = useState<ActivityMap>({})
   const [fatigueOpen, setFatigueOpen] = useState(false)
+  /** MR-257: запрос аккаунтов у владельца — сотрудник их не заводит сам. */
+  const [запросАккаунтов, setЗапросАккаунтов] = useState(false)
   const [unblockOpen, setUnblockOpen] = useState(false)
   // §4 (D2): фильтр по усталости — ползунок «показать усталость ≥ N%» (вместо колонки «Проект»).
   const [fatigueMin, setFatigueMin] = useState(0)
@@ -896,7 +899,16 @@ export function AccountsPage() {
                   // Сотруднику подсказка другая: заводить аккаунты не его дело, ему их выдают.
                   ? 'Аккаунты выдаёт владелец пространства — попросите открыть доступ.'
                   : 'Добавьте аккаунт по номеру или импортируйте сессии.'}
-            action={tab === 'accounts' && !query && statusFilter === 'all' && !sessionUser?.isSub ? (
+            action={tab === 'accounts' && !query && statusFilter === 'all' && sessionUser?.isSub ? (
+              /*
+                MR-226/MR-257: сотруднику — «Запросить аккаунт», а не запертая кнопка.
+                Аккаунты заводит владелец и выдаёт их; раньше на пустом экране у сотрудника
+                не было вообще ничего, и попросить их можно было только вне системы.
+              */
+              <button onClick={() => setЗапросАккаунтов(true)} className="btn-primary h-10">
+                <Plus size={16} /> Запросить аккаунт у администратора
+              </button>
+            ) : tab === 'accounts' && !query && statusFilter === 'all' && !sessionUser?.isSub ? (
               <div className="flex gap-2">
                 <button onClick={() => setImportOpen(true)} className="btn-ghost h-10"><UploadCloud size={16} /> Импорт</button>
                 <button onClick={openAdd} className="btn-primary h-10"><Plus size={16} /> Добавить аккаунт</button>
@@ -969,6 +981,7 @@ export function AccountsPage() {
         onClose={() => setAssignAcc(null)}
         onApply={(cid, lock) => { void assignToCampaign(assignAcc!.id, cid, lock) }}
       />
+      <RequestToOwnerModal kind="accounts" open={запросАккаунтов} onClose={() => setЗапросАккаунтов(false)} />
       <ChangeProxyModal acc={proxyAcc} onClose={() => setProxyAcc(null)} onSave={(id, p) => { void setAccountProxy(id, p).then(() => { pushToast({ type: 'success', title: 'Прокси обновлён' }); setProxyAcc(null) }) }} />
 
       {/* (8) Bulk move to group */}

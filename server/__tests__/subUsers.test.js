@@ -98,7 +98,7 @@ test('isBlockedByOwner + listSubs: блокировка владельца ка�
  * включается — ни созданием, ни правкой. Наследственные записи и возврат остатка по ним
  * проверяет subWallet.test.js.
  */
-test('суб тратит из кошелька владельца; личный кошелёк не включается', async () => {
+test('общий баланс тратится у владельца, личный кошелёк наполняет выдача (MR-225)', async () => {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'subusers-bal-'))
   process.env.USERS_FILE = path.join(dir, 'users.json')
   process.env.BALANCE_FILE = path.join(dir, 'balance.json')
@@ -110,12 +110,15 @@ test('суб тратит из кошелька владельца; личный
   const shared = await u.createUser({ email: 'shared@x.y', password: 'secret1', parentId: boss.id })
   const indiv = await u.createUser({ email: 'indiv@x.y', password: 'secret1', parentId: boss.id, balanceMode: 'individual', tokenLimit: 500 })
   assert.equal(shared.balanceMode, 'shared', 'по умолчанию общий баланс')
-  assert.equal(indiv.balanceMode, 'shared', 'просьба о личном кошельке игнорируется')
+  // MR-225 (30.08): личный кошелёк снова разрешён — его включает выдача токенов.
+  // Здесь он задан прямо при создании, и это допустимо.
+  assert.equal(indiv.balanceMode, 'individual', 'личный кошелёк включается, если его просят')
   assert.equal(indiv.tokenLimit, 500, 'лимит расхода при этом сохраняется — он и есть ограничение')
 
   // resolveWalletOwner: у сотрудника кошелёк владельца, у владельца — свой.
   assert.equal(await u.resolveWalletOwner(shared.id), boss.id)
-  assert.equal(await u.resolveWalletOwner(indiv.id), boss.id)
+  // У сотрудника с личным кошельком владелец кошелька — он сам: именно туда ложится выдача.
+  assert.equal(await u.resolveWalletOwner(indiv.id), indiv.id)
   assert.equal(await u.resolveWalletOwner(boss.id), boss.id)
 
   // Пополняем кошелёк владельца.
@@ -127,11 +130,19 @@ test('суб тратит из кошелька владельца; личный
   assert.equal((await bal.getBalance(boss.id)).coins, 70, 'списание суба ушло из кошелька владельца')
   assert.equal((await bal.getBalance(shared.id)).coins, 70)
 
-  // Второй сотрудник — тот же кошелёк: своего у него нет, и трата видна у владельца.
-  assert.equal((await bal.getBalance(indiv.id)).coins, 70, 'сотрудник видит кошелёк владельца')
-  await bal.changeCoins(-40, 'spend', indiv.id)
-  assert.equal((await bal.getBalance(boss.id)).coins, 30, 'списалось у владельца')
-  assert.equal((await bal.getBalance(shared.id)).coins, 30, 'и у второго сотрудника — деньги общие')
+  /*
+   * Второй сотрудник — с ЛИЧНЫМ кошельком (MR-225). Он больше не видит деньги владельца и
+   * не тратит из них: у него свой остаток, который наполняет выдача. Это и есть смысл
+   * аллокации — владелец знает, сколько отдал, и сколько у него осталось.
+   */
+  assert.equal((await bal.getBalance(indiv.id)).coins, 0, 'свой кошелёк пуст, пока владелец не выдал')
+  const выдача = await bal.transferCoins({ ownerId: boss.id, subId: indiv.id, amount: 40 })
+  assert.equal(выдача.ownerLeft, 30, 'у владельца стало меньше на выданное')
+  assert.equal((await bal.getBalance(indiv.id)).coins, 40, 'у сотрудника появились свои токены')
+  await bal.changeCoins(-25, 'spend', indiv.id)
+  assert.equal((await bal.getBalance(indiv.id)).coins, 15, 'тратит из своего кошелька')
+  assert.equal((await bal.getBalance(boss.id)).coins, 30, 'кошелёк владельца при этом не трогается')
+  assert.equal((await bal.getBalance(shared.id)).coins, 30, 'сотрудник на общем балансе видит кошелёк владельца')
 
   delete process.env.USERS_FILE
   delete process.env.BALANCE_FILE
