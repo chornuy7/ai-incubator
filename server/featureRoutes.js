@@ -180,7 +180,8 @@ featureRouter.put('/target-folders/:id', async (req, res) => {
       }
     }
     const before = (await listFolders()).find((f) => f.id === req.params.id)
-    const folder = await updateFolder(req.params.id, patch)
+    // MR-246: владельца передаём явно — по нему проверяется, не занято ли имя.
+    const folder = await updateFolder(req.params.id, patch, before?.userId)
     if (!folder) return res.status(404).json({ ok: false, error: 'Папка не найдена' })
     // §3.1: папка — база для массовой рассылки; подмена её содержимого должна оставлять след.
     await appendAudit({

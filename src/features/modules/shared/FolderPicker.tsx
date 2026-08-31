@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { FolderOpen, Save, Settings2, Trash2, Pencil, Check, X, Download, FolderPlus, ShieldCheck, Loader2 } from 'lucide-react'
+import { FolderOpen, Save, Trash2, Pencil, Check, X, FolderPlus, ShieldCheck, Loader2 } from 'lucide-react'
 import { Modal, Select, Segmented, EmptyState } from '@/shared/ui'
 import { useApp } from '@/mocks/store'
 import {
@@ -153,7 +153,6 @@ export function FolderPicker({ targets, onLoad }: {
   const pushToast = useApp((s) => s.pushToast)
   const user = useSession((s) => s.user)
   const [folders, setFolders] = useState<TargetFolder[]>([])
-  const [loadOpen, setLoadOpen] = useState(false)
   const [manageOpen, setManageOpen] = useState(false)
   const [saveOpen, setSaveOpen] = useState(false)
 
@@ -177,7 +176,7 @@ export function FolderPicker({ targets, onLoad }: {
     const fresh = allowed.filter((t) => !have.has(ntTarget(t)))
     const dupes = allowed.length - fresh.length
     onLoad(allowed)
-    setLoadOpen(false)
+    setManageOpen(false)
     const hidden = f.targets.length - allowed.length
     const tail = `${dupes > 0 ? ` · повторов ${dupes}` : ''}${hidden > 0 ? ` · скрыто ${hidden}` : ''}`
     if (fresh.length === 0 && dupes > 0) {
@@ -192,62 +191,50 @@ export function FolderPicker({ targets, onLoad }: {
       <span className="flex items-center gap-1.5 text-xs font-bold uppercase tracking-wide text-muted">
         <FolderOpen size={14} /> Группы
       </span>
-      <button type="button" onClick={() => setLoadOpen(true)} disabled={!visible.length} className="btn-primary h-9 text-xs disabled:opacity-40">
-        <Download size={14} /> Загрузить группу{visible.length ? ` (${visible.length})` : ''}
+      {/*
+        MR-246: одна кнопка вместо двух. Владелец 30.08: «Зачем нам три кнопки, которые
+        делают одно и то же? Давай сделаем управление и загрузить одной кнопочкой».
+        «Загрузить» и «Управление» открывали разные окна с одним и тем же списком групп —
+        в одном по клику грузили, в другом рядом с тем же кликом переименовывали. Теперь
+        окно одно: выбираешь группу — она загружается; можешь управлять — рядом кнопки.
+        «Сохранить в группу» осталось отдельно: это другое действие, оно пишет, а не читает.
+      */}
+      <button type="button" onClick={() => setManageOpen(true)} disabled={!visible.length && !canManage} className="btn-primary h-9 text-xs disabled:opacity-40">
+        <FolderOpen size={14} /> Выбрать группу{visible.length ? ` (${visible.length})` : ''}
       </button>
       <button type="button" onClick={saveCurrent} className="btn-ghost h-9 text-xs">
         <Save size={14} /> Сохранить в группу
       </button>
-      {canManage && (
-        <button type="button" onClick={() => setManageOpen(true)} className="btn-ghost h-9 text-xs">
-          <Settings2 size={14} /> Управление
-        </button>
-      )}
       {!visible.length && (
         <span className="text-xs text-amber-300">{folders.length ? 'Нет доступных групп — попросите админа выдать доступ' : 'Групп пока нет — сохраните список кнопкой «Сохранить в группу»'}</span>
       )}
 
-      <FolderLoadModal open={loadOpen} onClose={() => setLoadOpen(false)} folders={visible} onLoad={loadFolder} user={user} />
       <SaveToFolderModal open={saveOpen} onClose={() => setSaveOpen(false)} targets={targets} onSaved={() => void reload()} />
-      <FolderManageModal open={manageOpen} onClose={() => setManageOpen(false)} folders={folders} onChanged={reload} onLoad={onLoad} />
+      <FolderManageModal
+        open={manageOpen}
+        onClose={() => setManageOpen(false)}
+        // Видит человек ровно те группы, что и раньше в «Загрузить»; управление ниже
+        // показывается только тем, кому оно разрешено (§8.1).
+        folders={canManage ? folders : visible}
+        canManage={canManage}
+        onChanged={reload}
+        onLoad={loadFolder}
+      />
     </div>
   )
 }
 
-/** Чистый выбор группы: список доступных групп → клик загружает её каналы в группы. */
-function FolderLoadModal({ open, onClose, folders, onLoad, user }: {
-  open: boolean; onClose: () => void; folders: TargetFolder[]; onLoad: (f: TargetFolder) => void; user: SessionUser | null
-}) {
-  return (
-    <Modal open={open} onClose={onClose} title="Загрузить группу" subtitle="Выберите группу — её каналы попадут в группы" icon={<FolderOpen size={22} />} size="sm">
-      {folders.length === 0 ? (
-        <EmptyState icon={<FolderOpen size={22} />} title="Нет доступных групп" desc="Сохраните список в группу или попросите админа выдать доступ." />
-      ) : (
-        <ul className="space-y-2">
-          {folders.map((f) => {
-            const n = allowedTargets(f, user).length
-            return (
-            <li key={f.id}>
-              <button type="button" onClick={() => onLoad(f)} className="flex w-full items-center gap-3 rounded-xl border border-line bg-elevated/40 p-3 text-left transition-colors hover:border-spark-500/40">
-                <span className="grid h-9 w-9 shrink-0 place-items-center rounded-lg bg-iris-500/12 text-iris-300"><FolderOpen size={16} /></span>
-                <div className="min-w-0 flex-1">
-                  <div className="truncate font-semibold text-fg">{f.name}</div>
-                  <div className="text-xs text-muted">{n} групп / каналов{n < f.targets.length ? ` (из ${f.targets.length})` : ''}</div>
-                </div>
-                <Download size={16} className="shrink-0 text-spark-400" />
-              </button>
-            </li>
-            )
-          })}
-        </ul>
-      )}
-    </Modal>
-  )
-}
 
-function FolderManageModal({ open, onClose, folders, onChanged, onLoad }: {
+/**
+ * Одно окно и на выбор, и на управление (MR-246). Раньше их было два с одним и тем же
+ * списком: в «Загрузить» по клику грузили, в «Управлении» рядом с тем же кликом
+ * переименовывали. Кому управление не разрешено — видит только выбор.
+ */
+function FolderManageModal({ open, onClose, folders, onChanged, onLoad, canManage = true }: {
   open: boolean; onClose: () => void; folders: TargetFolder[]; onChanged: () => Promise<void>
-  onLoad: (targets: string[]) => void
+  /** Выбор группы. Папка целиком: дедуп и скрытие недоступных целей живут у родителя. */
+  onLoad: (folder: TargetFolder) => void
+  canManage?: boolean
 }) {
   const pushToast = useApp((s) => s.pushToast)
   const [editingId, setEditingId] = useState<string | null>(null)
@@ -295,9 +282,16 @@ function FolderManageModal({ open, onClose, folders, onChanged, onLoad }: {
   }
 
   return (
-    <Modal open={open} onClose={onClose} title="Группы списков групп" subtitle="Загрузка, переименование и удаление" icon={<FolderOpen size={22} />} size="lg">
+    <Modal
+      open={open}
+      onClose={onClose}
+      title="Выбрать группу"
+      subtitle={canManage ? 'Клик по названию загружает; рядом — переименование, проверка и удаление' : 'Клик по названию загружает её каналы в список'}
+      icon={<FolderOpen size={22} />}
+      size="lg"
+    >
       {folders.length === 0 ? (
-        <EmptyState icon={<FolderOpen size={22} />} title="Нет групп" desc="Сохраните текущий список групп в группу кнопкой «В группу»." />
+        <EmptyState icon={<FolderOpen size={22} />} title="Нет групп" desc="Сохраните текущий список кнопкой «Сохранить в группу»." />
       ) : (
         <ul className="space-y-2">
           {folders.map((f) => (
@@ -310,14 +304,24 @@ function FolderManageModal({ open, onClose, folders, onChanged, onLoad }: {
                 </>
               ) : (
                 <>
-                  <div className="min-w-0 flex-1">
-                    <div className="truncate font-semibold text-fg">{f.name}</div>
-                    <div className="text-xs text-muted">{f.targets.length} групп</div>
-                  </div>
-                  <button type="button" onClick={() => { onLoad(f.targets); pushToast({ type: 'success', title: 'Загружено', desc: `${f.targets.length} групп` }) }} className="btn-icon h-8 w-8" title="Загрузить в группы"><Download size={15} /></button>
-                  <button type="button" onClick={() => void validate(f)} disabled={validatingId === f.id || !f.targets.length} className="btn-icon h-8 w-8 text-spark-400 disabled:opacity-40" title="Проверить и удалить мёртвые">{validatingId === f.id ? <Loader2 size={15} className="animate-spin" /> : <ShieldCheck size={15} />}</button>
-                  <button type="button" onClick={() => { setEditingId(f.id); setDraftName(f.name) }} className="btn-icon h-8 w-8" title="Переименовать"><Pencil size={15} /></button>
-                  <button type="button" onClick={() => void remove(f)} className="btn-icon h-8 w-8 text-rose-300" title="Удалить"><Trash2 size={15} /></button>
+                  {/* Клик по всей строке грузит группу — это главное, зачем окно открывают. */}
+                  <button
+                    type="button"
+                    onClick={() => onLoad(f)}
+                    className="flex min-w-0 flex-1 items-center gap-3 text-left"
+                    title="Загрузить в список"
+                  >
+                    <span className="grid h-9 w-9 shrink-0 place-items-center rounded-lg bg-iris-500/12 text-iris-300"><FolderOpen size={16} /></span>
+                    <span className="min-w-0">
+                      <span className="block truncate font-semibold text-fg">{f.name}</span>
+                      <span className="block text-xs text-muted">{f.targets.length} групп</span>
+                    </span>
+                  </button>
+                  {canManage && <>
+                    <button type="button" onClick={() => void validate(f)} disabled={validatingId === f.id || !f.targets.length} className="btn-icon h-8 w-8 text-spark-400 disabled:opacity-40" title="Проверить и удалить мёртвые">{validatingId === f.id ? <Loader2 size={15} className="animate-spin" /> : <ShieldCheck size={15} />}</button>
+                    <button type="button" onClick={() => { setEditingId(f.id); setDraftName(f.name) }} className="btn-icon h-8 w-8" title="Переименовать"><Pencil size={15} /></button>
+                    <button type="button" onClick={() => void remove(f)} className="btn-icon h-8 w-8 text-rose-300" title="Удалить"><Trash2 size={15} /></button>
+                  </>}
                 </>
               )}
             </li>
