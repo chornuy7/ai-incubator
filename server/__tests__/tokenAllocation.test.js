@@ -136,3 +136,27 @@ test('сервер отдаёт витрине собственный остат
   assert.match(старый, /transferCoins/)
   assert.doesNotMatch(старый, /changeCoins\(-move/)
 })
+
+test('миграция снимает лимит только у переведённых на свой кошелёк', async () => {
+  /*
+   * Приёмка 31.08 началась с вопроса «было 500, стало 200 — куда делись 300?». Никуда:
+   * 500 были ПОТОЛКОМ расхода чужих денег, 200 — выданные свои. Но старое число остаётся
+   * в профиле после перевода и путает.
+   *
+   * Снимать его можно только там, где оно уже мертво. У сотрудника на ОБЩЕМ кошельке
+   * лимит живой и прямо сейчас ограничивает расход баланса владельца: снимешь — откроешь
+   * ему весь баланс, обнулишь с переводом — остановишь работу до ручной выдачи. За
+   * владельца такое не решают.
+   */
+  const fs2 = await import('node:fs/promises')
+  const sql = await fs2.readFile(new URL('../../supabase/migrations/2026-08-31-mr225-stale-token-limit.sql', import.meta.url), 'utf8')
+  const тело = sql.split(/\r?\n/).filter((s) => !s.trim().startsWith('--')).join('\n')
+
+  assert.ok(/update public\.profiles/.test(тело), 'миграция правит профили')
+  assert.ok(/set token_limit = null/.test(тело), 'снимается именно лимит')
+  assert.ok(/balance_mode = 'individual'/.test(тело), 'только у переведённых на свой кошелёк')
+  assert.ok(/parent_id is not null/.test(тело), 'только у сотрудников, не у владельцев')
+  assert.ok(!/balance_mode\s*=\s*'individual'\s*,/.test(тело), 'миграция не переводит на свой кошелёк сама')
+  assert.ok(!/coin_balance/.test(тело), 'деньги миграция не двигает — это решение владельца')
+  assert.ok(!/delete|drop/i.test(тело), 'ничего не удаляем')
+})
