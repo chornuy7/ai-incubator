@@ -1292,6 +1292,23 @@ function ticketSideFor(ticket, ctx, base) {
   return base
 }
 
+/**
+ * Кто может открыть, прочитать и ответить в КОНКРЕТНОЕ обращение (MR-257, баг приёмки 31.08).
+ *
+ * Автор — всегда, платформенная поддержка — всегда, и ВЛАДЕЛЕЦ, которому обращение
+ * адресовано. Последнего забыли: список тикетов адресованные владельцу уже показывал
+ * (там есть фильтр по `ownerId`), а проверка на отдельном обращении осталась прежней —
+ * «автор или поддержка». Получалось: сотрудник пишет владельцу, владелец видит письмо в
+ * списке, открывает, отвечает — и получает «Нет доступа к тикету». Тем же отказом
+ * заканчивалась и отметка о прочтении, поэтому красный значок не гас.
+ */
+function можноВТикет(t, ctx) {
+  if (!t) return false
+  if (ctx.isSupport) return true
+  if (String(t.userId) === String(ctx.id)) return true
+  return !!(t.toOwnerId && String(t.toOwnerId) === String(ctx.id))
+}
+
 /** Сколько открытых обращений разрешено человеку с отключённым доступом. */
 const OPEN_TICKETS_WHEN_DISABLED = 3
 
@@ -1365,8 +1382,10 @@ app.get('/api/tickets/:id', async (req, res) => {
     const { getTicket, markRead, unreadFor } = await import('./tickets.js')
     const t = await getTicket(String(req.params.id))
     if (!t) return res.status(404).json({ ok: false, error: 'Тикет не найден' })
-    if (!ctx.isSupport && t.userId !== ctx.id) return res.status(403).json({ ok: false, error: 'Нет доступа к тикету' })
-    const side = ticketSide(req, ctx)
+    if (!можноВТикет(t, ctx)) return res.status(403).json({ ok: false, error: 'Нет доступа к тикету' })
+    // Сторона считается ПО ЭТОМУ обращению: для запроса своего сотрудника владелец —
+    // отвечающая сторона, а не клиент. Иначе прочтение снимало бы не тот счётчик.
+    const side = ticketSideFor(t, ctx, ticketSide(req, ctx))
     const fresh = (await markRead(String(req.params.id), side)) || t
     const owner = await ticketOwnerResolver()
     res.json({ ok: true, ticket: { ...fresh, ...owner(fresh), unread: unreadFor(fresh, side) } })
@@ -1382,13 +1401,19 @@ app.post('/api/tickets/:id/reply', async (req, res) => {
     const { getTicket, addMessage } = await import('./tickets.js')
     const t = await getTicket(String(req.params.id))
     if (!t) return res.status(404).json({ ok: false, error: 'Тикет не найден' })
-    const asSupport = (req.body || {}).asSupport === true && ctx.isSupport
-    if (!asSupport && t.userId !== ctx.id) return res.status(403).json({ ok: false, error: 'Нет доступа к тикету' })
+    if (!можноВТикет(t, ctx)) return res.status(403).json({ ok: false, error: 'Нет доступа к тикету' })
+    // Кто отвечает, решает СЕРВЕР по самому обращению, а не флаг из тела запроса: адресат
+    // запроса сотрудника — отвечающая сторона, даже если он не наша поддержка.
+    const адресат = !!(t.toOwnerId && String(t.toOwnerId) === String(ctx.id))
+    const asSupport = адресат || ((req.body || {}).asSupport === true && ctx.isSupport)
     const ticket = await addMessage(String(req.params.id), {
       from: asSupport ? 'support' : 'user',
-      // Поддержка подписывается ролью (клиенту не нужен личный контакт оператора),
-      // клиент — своей почтой/именем.
-      author: asSupport ? { id: ctx.id, name: 'Поддержка' } : ticketAuthor(ctx),
+      /*
+       * Платформенная поддержка подписывается ролью — клиенту не нужен личный контакт
+       * оператора. А владелец отвечает своему сотруднику ОТ СЕБЯ: они друг друга знают,
+       * и подпись «Поддержка» там читалась бы как ответ из другой организации.
+       */
+      author: asSupport && !адресат ? { id: ctx.id, name: 'Поддержка' } : ticketAuthor(ctx),
       text: (req.body || {}).text,
     })
     res.json({ ok: true, ticket })
@@ -1404,8 +1429,8 @@ app.post('/api/tickets/:id/read', async (req, res) => {
     const { getTicket, markRead } = await import('./tickets.js')
     const t = await getTicket(String(req.params.id))
     if (!t) return res.status(404).json({ ok: false, error: 'Тикет не найден' })
-    if (!ctx.isSupport && t.userId !== ctx.id) return res.status(403).json({ ok: false, error: 'Нет доступа' })
-    await markRead(String(req.params.id), ticketSide(req, ctx))
+    if (!можноВТикет(t, ctx)) return res.status(403).json({ ok: false, error: 'Нет доступа' })
+    await markRead(String(req.params.id), ticketSideFor(t, ctx, ticketSide(req, ctx)))
     res.json({ ok: true })
   } catch (err) { ticketErr(res, err) }
 })

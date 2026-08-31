@@ -82,6 +82,29 @@ test('непрочитанное подписано словами, а не то
   assert.match(w, /fetchTicketsUnread/)
 })
 
+test('владелец может открыть, прочитать и ответить в обращение своего сотрудника', () => {
+  /*
+   * Баг приёмки 31.08: сотрудник написал владельцу, тот увидел письмо в списке, ответил —
+   * и получил «Нет доступа к тикету». Тем же отказом заканчивалась отметка о прочтении,
+   * поэтому красный значок не гас даже после чтения.
+   *
+   * Причина: список адресованные владельцу уже показывал, а проверка на ОТДЕЛЬНОМ
+   * обращении осталась прежней — «автор или платформенная поддержка».
+   */
+  const index = fs.readFileSync(new URL('../index.js', import.meta.url), 'utf8')
+  assert.match(index, /function можноВТикет\(t, ctx\)/)
+  assert.match(index, /return !!\(t\.toOwnerId && String\(t\.toOwnerId\) === String\(ctx\.id\)\)/)
+  // Старую проверку не должно остаться ни в одном из трёх мест: открыть, прочитать, ответить.
+  assert.doesNotMatch(index, /!ctx\.isSupport && t\.userId !== ctx\.id/)
+  // Считаем ВЫЗОВЫ, а не объявление функции: их ровно три — открыть, прочитать, ответить.
+  assert.equal((index.match(/!можноВТикет\(t, ctx\)/g) || []).length, 3, 'проверка стоит во всех трёх адресах')
+  // Сторона считается по САМОМУ обращению — иначе прочтение снимало бы не тот счётчик.
+  assert.match(index, /markRead\(String\(req\.params\.id\), ticketSideFor\(t, ctx, ticketSide\(req, ctx\)\)\)/)
+  // Владелец отвечает сотруднику ОТ СЕБЯ: подпись «Поддержка» там читалась бы как ответ
+  // из другой организации.
+  assert.match(index, /author: asSupport && !адресат \? \{ id: ctx\.id, name: 'Поддержка' \} : ticketAuthor\(ctx\)/)
+})
+
 test('адресата выбирает сервер, а не клиент', () => {
   const index = fs.readFileSync(new URL('../index.js', import.meta.url), 'utf8')
   assert.match(index, /const toOwnerId = ctx\.user\?\.parentId/, 'родитель берётся из сессии')
