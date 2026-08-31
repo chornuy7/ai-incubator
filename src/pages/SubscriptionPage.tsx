@@ -133,6 +133,23 @@ export function SubscriptionPage() {
   }
   // Готовый набор ДОБАВЛЯЕТ к оплаченному, а не заменяет его: раньше он выкидывал
   // модули, за которые уже заплатили, и сохранение стирало их из подписки.
+  /*
+   * MR-229: какой из готовых наборов человек уже купил.
+   *
+   * Заказчик 30.08: «Мне надо, чтобы я просто понял, что это моя текущая подписка. Все
+   * остальные ты должен затемнить, они должны быть ненажимаемые».
+   *
+   * Сверяем ПО СОСТАВУ, а не по тому, что нажали при покупке: подписка живёт дальше своей
+   * жизнью — модуль могли докупить, и тогда набор перестаёт быть тем самым. Тот же приём,
+   * что и в подписи операций (MR-230): состав виден всегда, а намерение — нет.
+   */
+  const отпечаток = (ks: string[]) => [...new Set(ks)].sort().join(' ')
+  const мой = useMemo(() => отпечаток([...mineSet].map(String)), [mineSet])
+  const текущийНабор = useMemo(
+    () => (мой ? (data?.setups || []).find((s) => отпечаток(s.modules) === мой)?.id ?? null : null),
+    [мой, data],
+  )
+
   const applySetup = (modules: string[]) => setPicked(new Set([...mineSet, ...modules]))
 
   const save = async () => {
@@ -252,18 +269,33 @@ export function SubscriptionPage() {
       <Card>
         <div className="mb-3 text-xs font-bold uppercase tracking-wide text-muted">Готовые наборы</div>
         <div className="grid gap-2.5 sm:grid-cols-3">
-          {data.setups.map((s) => (
+          {data.setups.map((s) => {
+            const текущий = текущийНабор === s.id
+            // Затемняем остальные ТОЛЬКО когда текущий набор вообще определён: у человека
+            // со своим сочетанием модулей «текущего» набора нет, и гасить витрину не за что.
+            const заблокирован = !!текущийНабор && !текущий
+            return (
             <button
               key={s.id}
+              disabled={заблокирован}
               onClick={() => applySetup(s.modules)}
+              title={заблокирован ? 'Это не ваша подписка — сначала отмените или измените текущую' : undefined}
               className={cn(
-                'rounded-2xl border p-4 text-left transition-all hover:-translate-y-0.5',
-                cost.setup === s.id ? 'border-spark-500/50 bg-spark-500/8' : 'border-line bg-elevated',
+                'rounded-2xl border p-4 text-left transition-all',
+                заблокирован
+                  ? 'cursor-not-allowed border-line/60 bg-elevated/40 opacity-40'
+                  : 'hover:-translate-y-0.5',
+                текущий
+                  ? 'border-emerald-500/60 bg-emerald-500/10'
+                  : cost.setup === s.id ? 'border-spark-500/50 bg-spark-500/8' : 'border-line bg-elevated',
               )}
             >
               <div className="flex items-center gap-1.5 font-display text-base font-bold text-fg">
                 <Sparkles size={15} className="text-spark-400" /> {s.name}
                 {s.custom && <span className="rounded-md bg-iris-500/15 px-1.5 py-0.5 text-[10px] font-bold text-iris-300">набор</span>}
+                {текущий && (
+                  <span className="rounded-md bg-emerald-500/20 px-1.5 py-0.5 text-[10px] font-bold text-emerald-300">Текущая подписка</span>
+                )}
               </div>
               <div className="mt-1 text-xs leading-relaxed text-muted">{s.hint}</div>
               <div className="mt-2 flex items-baseline gap-2">
@@ -293,7 +325,8 @@ export function SubscriptionPage() {
                 )
               })()}
             </button>
-          ))}
+            )
+          })}
         </div>
       </Card>
 
