@@ -1846,7 +1846,16 @@ app.post('/api/subscription/cancel', async (req, res) => {
 
     const когда = new Date().toISOString()
     const { error } = await getSupabase().from('subscriptions').update({ canceled_at: когда, updated_at: когда }).eq('id', target)
-    if (error) return res.status(500).json({ ok: false, error: error.message })
+    if (error) {
+      /*
+       * Текст базы клиенту не показываем. На проверке 31.08 человек увидел в панели
+       * «Could not find the 'canceled_at' column of 'subscriptions' in the schema cache» —
+       * это сообщение для разработчика: чужой язык, имя колонки, внутренности схемы. Оно
+       * не говорит ни что случилось, ни что делать. Подробность уходит в лог, где ей место.
+       */
+      console.error('[подписка] отмена не прошла:', error.message)
+      return res.status(500).json({ ok: false, error: 'Не удалось отменить подписку. Мы уже знаем о сбое — попробуйте позже или напишите в поддержку.' })
+    }
 
     await appendAudit({
       action: 'subscription.cancel',
@@ -1859,7 +1868,11 @@ app.post('/api/subscription/cancel', async (req, res) => {
     const { getBalance } = await import('./balance.js')
     const balance = await getBalance(target).catch(() => null)
     res.json({ ok: true, canceledAt: Date.parse(когда), balance })
-  } catch (err) { res.status(500).json({ ok: false, error: err instanceof Error ? err.message : 'Ошибка' }) }
+  } catch (err) {
+    // Та же причина: наружу — человеческий текст, в лог — настоящая ошибка.
+    console.error('[подписка] отмена упала:', err instanceof Error ? err.message : err)
+    res.status(500).json({ ok: false, error: 'Не удалось отменить подписку. Мы уже знаем о сбое — попробуйте позже или напишите в поддержку.' })
+  }
 })
 
 
