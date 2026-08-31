@@ -1,7 +1,7 @@
-import { useEffect, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useState } from 'react'
+import { useNavigate, useLocation } from 'react-router-dom'
 import { LifeBuoy, X, Plus, MessagesSquare, Send } from 'lucide-react'
-import { fetchTicketsUnread } from '@/api/ticketsApi'
+import { useUnread } from '@/features/support/unreadStore'
 import { useSession } from '@/features/auth/session'
 
 /**
@@ -19,22 +19,13 @@ export function SupportWidget() {
    * может быть и не замечу сразу. А слово я точно замечу». Точку на кружке и правда
    * невозможно поймать взглядом — особенно на странице, где и без неё десяток значков.
    */
-  const [непрочитанных, setНепрочитанных] = useState(0)
+  const непрочитанных = useUnread(false)
   const isSub = useSession((s) => s.user?.isSub)
   const nav = useNavigate()
+  const путь = useLocation().pathname
+  const [скрыто, setСкрыто] = useState(false)
   const go = (to: string) => { setOpen(false); nav(to) }
 
-  useEffect(() => {
-    let alive = true
-    const tick = async () => {
-      // Вкладка свёрнута — не дёргаем сервер: это фоновая проверка, а не работа.
-      if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return
-      try { const n = await fetchTicketsUnread(); if (alive) setНепрочитанных(n) } catch { /* offline — молча */ }
-    }
-    void tick()
-    const iv = setInterval(tick, 30000)
-    return () => { alive = false; clearInterval(iv) }
-  }, [])
 
   return (
     // bottom считаем от высоты нижней панели запуска (её публикует FloatingBar):
@@ -47,11 +38,22 @@ export function SupportWidget() {
       className="fixed z-[98] flex flex-col items-end gap-2 print:hidden"
     >
       {/*
-       * Плавающая плашка «N пропущенных сообщений» убрана (заказчик 31.08): она висела
-       * поверх поля ввода в переписке — человек шёл отвечать и упирался в неё. Непрочитанное
-       * теперь живёт там, где его и ждут: значком на самой кнопке и строкой внутри карточки,
-       * которая открывается по нажатию.
+       * Индикатор словами, а не точкой (MR-249): «если там будет точка, я может быть и не
+       * замечу сразу. А слово я точно замечу».
+       *
+       * На самой странице обращений плашку прячем: там она висела поверх поля ответа —
+       * человек шёл писать и упирался в неё (приёмка 31.08). Смысла в ней там и нет:
+       * непрочитанное уже открыто перед глазами.
        */}
+      {!open && непрочитанных > 0 && !скрыто && !путь.startsWith('/panel/support') && (
+        <div className="relative mb-1 flex items-center gap-2 rounded-xl border border-spark-500/40 bg-spark-500/12 py-1.5 pl-3 pr-2 text-xs font-semibold text-spark-200 shadow-lg shadow-black/30">
+          <button type="button" onClick={() => go('/panel/support')} className="hover:underline">
+            {непрочитанных} {непрочитанных === 1 ? 'непрочитанное сообщение' : непрочитанных < 5 ? 'непрочитанных сообщения' : 'непрочитанных сообщений'}
+          </button>
+          <button type="button" onClick={() => setСкрыто(true)} aria-label="Скрыть" className="text-spark-200/60 hover:text-spark-100"><X size={13} /></button>
+          <span className="absolute -bottom-1 right-4 h-2 w-2 rotate-45 border-b border-r border-spark-500/40 bg-spark-500/12" />
+        </div>
+      )}
 
       {open && (
         <div className="w-64 origin-bottom-right rounded-2xl border border-line bg-elevated/95 p-3 shadow-lg shadow-black/40 backdrop-blur">

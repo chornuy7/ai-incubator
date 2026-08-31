@@ -75,7 +75,21 @@ export function RequestToOwnerModal({ kind, open, onClose }: { kind: RequestKind
       {т.withAmount && (
         <div className="mb-3">
           <label className="label">Сколько нужно</label>
-          <input value={amount} onChange={(e) => setAmount(e.target.value)} className="input" placeholder={kind === 'tokens' ? 'например, 100 ⚡' : 'например, 2 аккаунта'} />
+          {/*
+            Только цифры: в поле «сколько нужно» можно было написать «вфів» (приёмка 31.08),
+            и владелец получал запрос без суммы. Режем нецифровое на вводе, а не ругаемся
+            после отправки: человеку незачем узнавать о правиле из ошибки.
+
+            inputMode="numeric" поднимает цифровую клавиатуру на телефоне; type="number"
+            не берём — он глотает ведущие нули и показывает бесполезные стрелки.
+          */}
+          <input
+            value={amount}
+            onChange={(e) => setAmount(e.target.value.replace(/[^0-9]/g, ''))}
+            inputMode="numeric"
+            className="input"
+            placeholder={kind === 'tokens' ? 'например, 100' : 'например, 2'}
+          />
         </div>
       )}
       <label className="label">Комментарий</label>

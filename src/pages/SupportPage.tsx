@@ -3,6 +3,7 @@ import { useSearchParams } from 'react-router-dom'
 import { LifeBuoy, Plus, Send, MessageSquare, Clock, Loader2, ArrowLeft } from 'lucide-react'
 import { useApp } from '@/mocks/store'
 import { useSession } from '@/features/auth/session'
+import { refreshUnread } from '@/features/support/unreadStore'
 import { PageHeader, Card, EmptyState, Select, Badge } from '@/shared/ui'
 import { HelpButton } from '@/features/neuro-commenting/moduleUi'
 import { fetchTickets, fetchTicket, createTicket, replyTicket, setTicketStatus, type ApiTicket, type TicketStatus } from '@/api/ticketsApi'
@@ -74,6 +75,9 @@ export function SupportPage() {
         .then((fresh) => {
           setOpenTicket((cur) => (cur && cur.id === fresh.id ? fresh : cur))
           setTickets((list) => list.map((x) => x.id === fresh.id ? { ...fresh, unread: 0 } : x))
+          // Открытие отмечает прочитанным на сервере — счётчик обязан погаснуть сразу,
+          // а не через тик опроса: иначе значок висит на глазах у прочитавшего.
+          void refreshUnread()
         })
         .catch(() => { /* сеть моргнула — покажем на следующем тике */ })
     }, 5000)
@@ -109,6 +113,8 @@ export function SupportPage() {
       const fresh = await fetchTicket(t.id, isSupportView)
       setOpenTicket(fresh)
       setTickets((list) => list.map((x) => x.id === fresh.id ? { ...fresh, unread: 0 } : x))
+      // И общий счётчик — тот, что в меню и на кнопке поддержки.
+      void refreshUnread()
     } catch { /* оставляем то, что есть в списке */ }
   }
 
