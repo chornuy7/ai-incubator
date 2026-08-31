@@ -54,11 +54,14 @@ export async function dueForRenewal(nowMs = Date.now(), onlyUser = '') {
   const db = getSupabase()
   const month = creditMonth(nowMs)
 
-  const { data } = await db.from('subscriptions').select('id, user_id, expires_at, last_charge_month, billing_day')
+  const { data } = await db.from('subscriptions').select('id, user_id, expires_at, last_charge_month, billing_day, canceled_at')
   const due = (data || []).filter((r) => {
     // MR-193: см. tokenCredit.js — ускоренный прогон обязан касаться ровно одного
     // человека, иначе он снимет деньги у всех, у кого сегодня подходит срок.
     if (onlyUser && r.id !== onlyUser && r.user_id !== onlyUser) return false
+    // MR-228: подписку отменили — следующего списания нет. Доступ при этом остаётся до
+    // конца оплаченного периода: он ниже по проверке expires_at, и трогать его не надо.
+    if (r.canceled_at) return false
     if (SKIP.has(r.id) || SKIP.has(r.user_id || '')) return false
     // Бессрочная подписка — админский провижининг, продлевать нечего.
     if (!r.expires_at) return false

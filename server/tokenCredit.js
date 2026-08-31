@@ -49,7 +49,7 @@ export async function dueForCredit(nowMs = Date.now(), onlyUser = '') {
    * на неделю, и человек будет платить в одну дату, а топливо получать в другую.
    */
   const { data } = await db.from('subscriptions')
-    .select('id, user_id, expires_at, billing_day, last_credit_month, last_credit_at')
+    .select('id, user_id, expires_at, billing_day, last_credit_month, last_credit_at, canceled_at')
   const due = (data || []).filter((r) => {
     // MR-193: прогон «месяц за минуту» идёт на боевой базе, где рядом живые подписки с
     // настоящими деньгами. Фильтр сужает тик до ОДНОГО человека — без него ускоренный
@@ -65,6 +65,9 @@ export async function dueForCredit(nowMs = Date.now(), onlyUser = '') {
       || (r.last_credit_at ? billingDayOf(new Date(r.last_credit_at).getTime()) : null)
       || (r.expires_at ? billingDayOf(new Date(r.expires_at).getTime()) : 1)
     if (nowMs < cycleMomentIn(nowMs, день)) return false
+    // MR-228: отменённая подписка больше не получает месячную порцию токенов — иначе
+    // платформа выдавала бы топливо за месяц, который никто не оплатил.
+    if (r.canceled_at) return false
     if (SKIP.has(r.id) || SKIP.has(r.user_id || '')) return false
     if (r.expires_at && new Date(r.expires_at).getTime() <= nowMs) return false // истекла
     return true

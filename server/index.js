@@ -1795,6 +1795,21 @@ app.post('/api/subscription', async (req, res) => {
         }
       } catch { /* начисление уже прошло — отметка не критична */ }
     }
+    /*
+     * MR-228: заплатил — значит подписка снова живая.
+     *
+     * Без этого человек, отменивший подписку и потом передумавший, оплачивал бы её
+     * впустую: деньги списались, срок сдвинулся, а следующего продления всё равно нет —
+     * отметка отмены висит. Снимаем её ЛЮБОЙ оплатой, а не только докупкой модулей:
+     * продление без изменения набора — тот же самый «я остаюсь».
+     */
+    try {
+      const { supabaseEnabled, getSupabase } = await import('./lib/supabase.js')
+      if (supabaseEnabled()) {
+        const subId = personal ? String(target || '__default') : 'workspace'
+        await getSupabase().from('subscriptions').update({ canceled_at: null }).eq('id', subId)
+      }
+    } catch { /* оплата уже прошла — снятие отметки не должно её ронять */ }
     await appendAudit({
       action: 'subscription.set',
       module: 'billing',
@@ -1806,6 +1821,60 @@ app.post('/api/subscription', async (req, res) => {
     res.json({ ok: true, balance })
   } catch (err) { res.status(500).json({ ok: false, error: err instanceof Error ? err.message : 'Ошибка' }) }
 })
+
+/**
+ * MR-228: отмена подписки. Возвратов нет — отменяется только СЛЕДУЮЩЕЕ списание.
+ *
+ * Доступ остаётся до конца оплаченного периода: человек за него заплатил. Поэтому здесь
+ * не трогается ни срок, ни состав — ставится только отметка, по которой продление и
+ * месячное начисление токенов пропускают эту подписку.
+ *
+ * Отменить можно только СВОЮ подписку (или чужую — админ): это деньги конкретного
+ * человека. Повторная отмена ничего не ломает — отметка уже стоит.
+ */
+app.post('/api/subscription/cancel', async (req, res) => {
+  try {
+    const admin = await isAdminRequest(req)
+    const себе = String(req.header('x-user-id') || '')
+    const target = admin && req.body?.userId ? String(req.body.userId) : себе
+    if (!target) return res.status(401).json({ ok: false, error: 'Не удалось определить пользователя' })
+    if (!admin && req.body?.userId && String(req.body.userId) !== себе) {
+      return res.status(403).json({ ok: false, error: 'Чужую подписку отменять нельзя' })
+    }
+    const { supabaseEnabled, getSupabase } = await import('./lib/supabase.js')
+    if (!supabaseEnabled()) return res.status(503).json({ ok: false, error: 'Отмена доступна только на общей базе' })
+
+    const когда = new Date().toISOString()
+    const { error } = await getSupabase().from('subscriptions').update({ canceled_at: когда, updated_at: когда }).eq('id', target)
+    if (error) {
+      /*
+       * Текст базы клиенту не показываем. На проверке 31.08 человек увидел в панели
+       * «Could not find the 'canceled_at' column of 'subscriptions' in the schema cache» —
+       * это сообщение для разработчика: чужой язык, имя колонки, внутренности схемы. Оно
+       * не говорит ни что случилось, ни что делать. Подробность уходит в лог, где ей место.
+       */
+      console.error('[подписка] отмена не прошла:', error.message)
+      return res.status(500).json({ ok: false, error: 'Не удалось отменить подписку. Мы уже знаем о сбое — попробуйте позже или напишите в поддержку.' })
+    }
+
+    await appendAudit({
+      action: 'subscription.cancel',
+      module: 'billing',
+      initiator: себе || 'system',
+      reason: `Отмена подписки (${target}) — доступ до конца оплаченного периода, возврата нет`,
+      meta: { userId: target },
+    }).catch(() => {})
+
+    const { getBalance } = await import('./balance.js')
+    const balance = await getBalance(target).catch(() => null)
+    res.json({ ok: true, canceledAt: Date.parse(когда), balance })
+  } catch (err) {
+    // Та же причина: наружу — человеческий текст, в лог — настоящая ошибка.
+    console.error('[подписка] отмена упала:', err instanceof Error ? err.message : err)
+    res.status(500).json({ ok: false, error: 'Не удалось отменить подписку. Мы уже знаем о сбое — попробуйте позже или напишите в поддержку.' })
+  }
+})
+
 
 /**
  * §5.1: операции по кошельку — «за что списали». Свой журнал видит каждый,
@@ -1899,6 +1968,20 @@ app.get('/api/balance', async (req, res) => {
       const { bundleName } = await import('./lib/subscriptionLabel.js')
       setName = await bundleName(balance.modules).catch(() => null)
     }
+    /*
+     * MR-228: отменена ли подписка. Панель по этому полю пишет «Подписка отменена ·
+     * доступ до …» и убирает кнопку отмены. Дату конца при отмене не двигаем — человек
+     * дорабатывает оплаченный период, поэтому одного признака мало без неё.
+     */
+    let canceledAt = null
+    try {
+      const { supabaseEnabled, getSupabase } = await import('./lib/supabase.js')
+      if (supabaseEnabled() && me) {
+        const { data } = await getSupabase().from('subscriptions').select('canceled_at').eq('id', me).maybeSingle()
+        canceledAt = data?.canceled_at ? Date.parse(data.canceled_at) : null
+      }
+    } catch { /* признак необязательный: без него панель просто не покажет отмену */ }
+
 
     const истекла = balance.expiresAt && Number(balance.expiresAt) <= Date.now()
     if (me && истекла) {
@@ -1906,10 +1989,10 @@ app.get('/api/balance', async (req, res) => {
       const [последняя] = await readAudit({ action: 'subscription.renew_failed', initiator: me, limit: 1 }).catch(() => [])
       if (последняя) {
         const m = последняя.meta || {}
-        return res.json({ ok: true, balance: { ...balance, setName, renewFailed: { at: последняя.ts, cost: m.cost, short: m.short } } })
+        return res.json({ ok: true, balance: { ...balance, setName, canceledAt, renewFailed: { at: последняя.ts, cost: m.cost, short: m.short } } })
       }
     }
-    res.json({ ok: true, balance: { ...balance, setName } })
+    res.json({ ok: true, balance: { ...balance, setName, canceledAt } })
   } catch (err) { res.status(500).json({ ok: false, error: err instanceof Error ? err.message : 'Ошибка' }) }
 })
 app.post('/api/balance', async (req, res) => {
