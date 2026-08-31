@@ -118,3 +118,62 @@ test('изменение баланса подписано и читается',
   const статистика = await код('../../src/pages/StatisticsPage.tsx')
   assert.ok(/fmtBalance\(r\.after\)/.test(статистика), 'в кошельке статистики остаток печатается тем же форматом')
 })
+
+test('набор в истории называется своим именем, а не списком модулей', async () => {
+  /*
+   * Заказчик 30.08: «ми брали підписку все включено, а чого тут так багато — можна написати
+   * "Продление подписки (месяц) Всё включено", і так само з токенами».
+   *
+   * Раньше каждая операция перечисляла модули: «Мейлинг, Нейрокомментинг, Нейрочаттинг и
+   * ещё 11». Человек покупал НАБОР и своей покупки в этой строке не узнавал.
+   */
+  const { describeModules, listModules, bundleName } = await import('../lib/subscriptionLabel.js')
+
+  /*
+   * Подкладываем свой файл наборов: без него в файловом режиме наборов нет вовсе, и
+   * проверка «нашёлся ли набор по составу» ничего не проверяет — она проходит даже если
+   * поиск вырезать целиком.
+   */
+  const os = await import('node:os')
+  const path = await import('node:path')
+  const fsp = await import('node:fs/promises')
+  const каталог = await fsp.mkdtemp(path.join(os.tmpdir(), 'bundles-'))
+  const файл = path.join(каталог, 'bundles.json')
+  await fsp.writeFile(файл, JSON.stringify([{ id: 'b1', name: 'Мой набор', modules: ['mailing', 'warming'], price: 10 }]))
+  const было = process.env.BUNDLES_FILE
+  process.env.BUNDLES_FILE = файл
+  try {
+    assert.equal(await bundleName(['warming', 'mailing']), 'Мой набор', 'состав совпал — пишем имя набора, порядок не важен')
+    assert.equal(await describeModules(['warming', 'mailing']), 'Мой набор', 'подпись операции берёт имя набора')
+    assert.equal(await bundleName(['mailing']), null, 'частичное совпадение набором не считается')
+  } finally {
+    if (было === undefined) delete process.env.BUNDLES_FILE
+    else process.env.BUNDLES_FILE = было
+    await fsp.rm(каталог, { recursive: true, force: true })
+  }
+  assert.equal(await describeModules(['mailing', 'warming']), listModules(['mailing', 'warming']),
+    'не совпало с набором — остаётся прежнее перечисление')
+  assert.equal(await describeModules([]), '', 'пустой состав не даёт подписи')
+
+  const много = ['a', 'b', 'c', 'd', 'e']
+  assert.match(listModules(много), /и ещё 2$/, 'длинный список по-прежнему сворачивается')
+})
+
+test('подпись операции считается в одном месте', async () => {
+  /*
+   * Три места пишут операции по подписке: покупка, продление, начисление токенов. Если
+   * каждое соберёт подпись по-своему, в истории у одного человека набор будет называться
+   * по-разному в соседних строках.
+   */
+  for (const f of ['../index.js', '../subscriptionBilling.js', '../tokenCredit.js']) {
+    const src = await код(f)
+    assert.ok(/describeModules\(/.test(src), `${f}: подпись должна идти через общий describeModules`)
+  }
+  const billing = await код('../subscriptionBilling.js')
+  assert.ok(!/names\.slice\(0, 3\)/.test(billing), 'своя сборка перечисления в биллинге не нужна — она в общем месте')
+
+  // Панель берёт имя набора ОТТУДА ЖЕ, с сервера, а не сверяет состав второй раз.
+  const шапка = await код('../../src/widgets/AppHeader.tsx')
+  assert.ok(/balance\?\.setName/.test(шапка), 'кошелёк показывает имя набора, посчитанное сервером')
+  assert.ok(!/listSetups|listBundles/.test(шапка), 'вторая проверка состава на клиенте однажды разъедется с серверной')
+})

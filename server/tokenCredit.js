@@ -13,6 +13,7 @@
  */
 import { getSupabase, supabaseEnabled } from './lib/supabase.js'
 import { effectivePrices } from './priceStore.js'
+import { describeModules } from './lib/subscriptionLabel.js'
 import { changeCoins } from './balance.js'
 
 const SKIP = new Set(['workspace', '__default', '__workspace__'])
@@ -111,8 +112,8 @@ export async function creditDueTokens(nowMs = Date.now(), onlyUser = '') {
     if (tokens > 0) {
       // Имена модулей, а не «3 модул.»: в истории должно быть видно, за что начислено.
       const { moduleLabel } = await import('./lib/accountLocks.js')
-      const names = modules.map((k) => moduleLabel(k))
-      const shown = names.length > 3 ? `${names.slice(0, 3).join(', ')} и ещё ${names.length - 3}` : names.join(', ')
+      // Набор называем его именем: «Всё включено», а не перечисление четырнадцати модулей.
+      const shown = await describeModules(modules)
       await changeCoins(tokens, `Токены подписки (месяц): ${shown}`, userId, 'grant')
       users += 1
       coins += tokens
@@ -172,8 +173,7 @@ export async function creditPendingGifts(nowMs = Date.now()) {
     const owner = uid || id
     const gift = await pendingGift(owner, modules, giftMap).catch(() => ({ coins: 0, modules: [] }))
     if (gift.coins <= 0) continue
-    const names = gift.modules.map((k) => moduleLabel(k))
-    const shown = names.length > 3 ? `${names.slice(0, 3).join(', ')} и ещё ${names.length - 3}` : names.join(', ')
+    const shown = await describeModules(gift.modules)
     await changeCoins(gift.coins, `Подарочные токены (разово): ${shown}`, owner, 'grant')
     await markGifted(owner, gift.modules, giftMap)
     users += 1

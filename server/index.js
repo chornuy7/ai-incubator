@@ -1748,8 +1748,9 @@ app.post('/api/subscription', async (req, res) => {
       if (creditedTokens > 0) {
         // Здесь тоже имена: «за что дали 300 токенов» — тот же вопрос, что и про деньги.
         const { moduleLabel: label } = await import('./lib/accountLocks.js')
-        const list3 = addedModules.map((k) => label(k))
-        const shown = list3.length > 3 ? `${list3.slice(0, 3).join(', ')} и ещё ${list3.length - 3}` : list3.join(', ')
+        // Набор называем его именем, а не перечислением модулей (MR-230).
+        const { describeModules } = await import('./lib/subscriptionLabel.js')
+        const shown = await describeModules(addedModules)
         await changeCoins(creditedTokens, `Токены подписки (первый месяц): ${shown}`, target, 'grant')
       }
       // MR-189: ПОДАРОЧНЫЕ ⚡ — единоразово за модуль. До этой правки они считались в
@@ -1880,16 +1881,27 @@ app.get('/api/balance', async (req, res) => {
      * взять деньги. Берём ФАКТ из журнала, а не пересчитываем цену заново: в журнале
      * записано то, что действительно произошло, с суммой и датой попытки.
      */
+    /*
+     * MR-230: как называется подписка человека. Если состав в точности совпал с готовым
+     * набором — отдаём его имя, и панель пишет «Всё включено» вместо четырнадцати плашек.
+     * Считает сервер: он же формирует подписи в истории операций, и разъехаться им нельзя.
+     */
+    let setName = null
+    if (Array.isArray(balance.modules) && balance.modules.length) {
+      const { bundleName } = await import('./lib/subscriptionLabel.js')
+      setName = await bundleName(balance.modules).catch(() => null)
+    }
+
     const истекла = balance.expiresAt && Number(balance.expiresAt) <= Date.now()
     if (me && истекла) {
       const { readAudit } = await import('./lib/auditLog.js')
       const [последняя] = await readAudit({ action: 'subscription.renew_failed', initiator: me, limit: 1 }).catch(() => [])
       if (последняя) {
         const m = последняя.meta || {}
-        return res.json({ ok: true, balance: { ...balance, renewFailed: { at: последняя.ts, cost: m.cost, short: m.short } } })
+        return res.json({ ok: true, balance: { ...balance, setName, renewFailed: { at: последняя.ts, cost: m.cost, short: m.short } } })
       }
     }
-    res.json({ ok: true, balance })
+    res.json({ ok: true, balance: { ...balance, setName } })
   } catch (err) { res.status(500).json({ ok: false, error: err instanceof Error ? err.message : 'Ошибка' }) }
 })
 app.post('/api/balance', async (req, res) => {

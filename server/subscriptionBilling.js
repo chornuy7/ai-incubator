@@ -19,6 +19,7 @@
  */
 import { getSupabase, supabaseEnabled } from './lib/supabase.js'
 import { effectivePrices } from './priceStore.js'
+import { describeModules } from './lib/subscriptionLabel.js'
 import { creditMonth } from './tokenCredit.js'
 import { appendAudit } from './lib/auditLog.js'
 
@@ -124,8 +125,8 @@ export async function renewDueSubscriptions(nowMs = Date.now(), onlyUser = '') {
 
   for (const sub of due) {
     const cost = subscriptionCost(sub.modules, bundles, monthMap, {}, setups).sum
-    const names = sub.modules.map((k) => moduleLabel(k))
-    const shown = names.length > 3 ? `${names.slice(0, 3).join(', ')} и ещё ${names.length - 3}` : names.join(', ')
+    // Набор называем его именем: человек покупал «Всё включено», а не четырнадцать модулей.
+    const shown = await describeModules(sub.modules)
 
     // Подписка без цены (все модули бесплатные) — продлеваем без списания: брать нечего.
     if (cost > 0) {
