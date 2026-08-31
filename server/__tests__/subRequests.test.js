@@ -105,6 +105,26 @@ test('владелец может открыть, прочитать и отве
   assert.match(index, /author: asSupport && !адресат \? \{ id: ctx\.id, name: 'Поддержка' \} : ticketAuthor\(ctx\)/)
 })
 
+test('сотрудник остаётся сотрудником даже со своим кошельком', () => {
+  /*
+   * Баг приёмки 31.08: у сотрудника с личным кошельком (MR-225) в панели появились деньги,
+   * «Пополнить счёт» и покупка токенов, а кнопка «Запросить токены у администратора»
+   * исчезла — вся витрина завязана на флаг isSub с сервера.
+   *
+   * Признак выводился косвенно: «есть потолок расхода» либо «кошелёк общий с владельцем».
+   * Выдача токенов отменила оба: кошелёк стал свой, потолок больше не нужен. Родитель —
+   * прямой признак и не зависит от устройства кошелька.
+   */
+  const index = fs.readFileSync(new URL('../index.js', import.meta.url), 'utf8')
+  const ручка = index.slice(index.indexOf("app.get('/api/balance'"), index.indexOf("app.get('/api/balance'") + 3000)
+  assert.match(ручка, /const сотрудник = !!профиль\?\.parentId/)
+  assert.match(ручка, /if \(сотрудник\) return res\.json\(\{ ok: true, balance: \{ \.\.\.balance, usd: undefined, isSub: true \} \}\)/)
+  // Деньги сотруднику не отдаём ни в одной из веток.
+  for (const ветка of ручка.split('return res.json').slice(1, 4)) {
+    assert.match(ветка, /usd: undefined/, 'в ветке сотрудника доллары не должны уезжать клиенту')
+  }
+})
+
 test('адресата выбирает сервер, а не клиент', () => {
   const index = fs.readFileSync(new URL('../index.js', import.meta.url), 'utf8')
   assert.match(index, /const toOwnerId = ctx\.user\?\.parentId/, 'родитель берётся из сессии')

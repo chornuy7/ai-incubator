@@ -1991,13 +1991,28 @@ app.get('/api/balance', async (req, res) => {
      * сколько действий он ещё может сделать. Поэтому `usd` не отдаём вовсе, а токены
      * показываем в пределах его потолка.
      */
+    /*
+     * Сотрудник ли это — решает РОДИТЕЛЬ, а не кошелёк (баг приёмки 31.08).
+     *
+     * Раньше признак выводился косвенно: «есть потолок расхода» либо «кошелёк общий с
+     * владельцем». После MR-225 у сотрудника появился СВОЙ кошелёк, и оба признака отпали:
+     * панель решила, что перед ней владелец, и показала ему деньги, «Пополнить счёт» и
+     * покупку токенов — то есть ровно то, чего сотруднику видеть нельзя. Заодно исчезла
+     * кнопка «Запросить токены у администратора»: она показывается по этому же флагу.
+     *
+     * Родитель — прямой признак и не зависит от того, как устроен кошелёк сегодня.
+     */
+    const { getUser, resolveWalletOwner } = await import('./users.js')
+    const профиль = me ? await getUser(me).catch(() => null) : null
+    const сотрудник = !!профиль?.parentId
     const lim = me ? await spendLimit(me).catch(() => ({ limit: null, spent: 0, left: Infinity })) : { limit: null }
     if (lim.limit !== null) {
       const left = Math.max(0, Math.min(Number(balance.coins) || 0, Number(lim.left) || 0))
       return res.json({ ok: true, balance: { ...balance, coins: left, usd: undefined, spendLimit: lim.limit, spendLeft: left, isSub: true } })
     }
-    // Сотрудник без потолка тратит наравне с владельцем — но деньги всё равно не его.
-    const { resolveWalletOwner } = await import('./users.js')
+    // Сотрудник со своим кошельком видит СВОИ токены целиком — но деньги всё равно не его.
+    if (сотрудник) return res.json({ ok: true, balance: { ...balance, usd: undefined, isSub: true } })
+    // Страховка для старых записей без родителя: кошелёк общий — значит не владелец.
     const owner = me ? await resolveWalletOwner(me).catch(() => me) : me
     if (me && owner !== me) return res.json({ ok: true, balance: { ...balance, usd: undefined, isSub: true } })
     /*
