@@ -48,15 +48,6 @@ export function SupportWidget() {
        * человек шёл писать и упирался в неё (приёмка 31.08). Смысла в ней там и нет:
        * непрочитанное уже открыто перед глазами.
        */}
-      {!open && непрочитанных > 0 && !скрыто && !путь.startsWith('/panel/support') && (
-        <div className="relative mb-1 flex items-center gap-2 rounded-xl border border-spark-500/40 bg-spark-500/12 py-1.5 pl-3 pr-2 text-xs font-semibold text-spark-200 shadow-lg shadow-black/30">
-          <button type="button" onClick={() => go('/panel/support')} className="hover:underline">
-            {непрочитанных} {непрочитанных === 1 ? 'непрочитанное сообщение' : непрочитанных < 5 ? 'непрочитанных сообщения' : 'непрочитанных сообщений'}
-          </button>
-          <button type="button" onClick={() => setСкрыто(true)} aria-label="Скрыть" className="text-spark-200/60 hover:text-spark-100"><X size={13} /></button>
-          <span className="absolute -bottom-1 right-4 h-2 w-2 rotate-45 border-b border-r border-spark-500/40 bg-spark-500/12" />
-        </div>
-      )}
 
       {open && (
         <div className="w-64 origin-bottom-right rounded-2xl border border-line bg-elevated/95 p-3 shadow-lg shadow-black/40 backdrop-blur">
@@ -85,6 +76,24 @@ export function SupportWidget() {
           </div>
         </div>
       )}
+      {/*
+        Плашка стоит СЛЕВА от кнопки, в одну строку с ней.
+        Раньше она вставала над кнопкой — ровно туда, где висит «?» Help Center (он на
+        3.75rem от низа, плашка выходила на ту же высоту), и они налезали друг на друга.
+        Сбоку места хватает, и подсказка читается как относящаяся к самой кнопке.
+
+        На странице обращений её нет вовсе: там она закрывала поле ответа, а смысла в ней
+        уже нет — письмо открыто перед глазами.
+      */}
+      <div className="flex items-center gap-2">
+        {!open && непрочитанных > 0 && !скрыто && !путь.startsWith('/panel/support') && (
+          <div className="flex items-center gap-2 rounded-xl border border-spark-500/40 bg-spark-500/12 py-1.5 pl-3 pr-2 text-xs font-semibold text-spark-200 shadow-lg shadow-black/30">
+            <button type="button" onClick={() => go('/panel/support')} className="hover:underline">
+              {непрочитанных} {непрочитанных === 1 ? 'непрочитанное сообщение' : непрочитанных < 5 ? 'непрочитанных сообщения' : 'непрочитанных сообщений'}
+            </button>
+            <button type="button" onClick={() => setСкрыто(true)} aria-label="Скрыть" className="text-spark-200/60 hover:text-spark-100"><X size={13} /></button>
+          </div>
+        )}
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
@@ -97,6 +106,7 @@ export function SupportWidget() {
           <span className="absolute -right-0.5 -top-0.5 grid h-4 min-w-4 place-items-center rounded-full bg-rose-500 px-1 text-[10px] font-bold text-white">{непрочитанных}</span>
         )}
       </button>
+      </div>
     </div>
   )
 }

@@ -284,6 +284,12 @@ test('плашка непрочитанного не висит поверх п�
   const w = await fs2.readFile(new URL('../../src/widgets/SupportWidget.tsx', import.meta.url), 'utf8')
   assert.ok(/непрочитанное сообщение/.test(w), 'индикатор словами остаётся')
   assert.ok(/путь\.startsWith\('\/panel\/support'\)/.test(w), 'на странице обращений плашку не показываем')
+  /*
+   * И не над кнопкой: там на 3.75rem от низа стоит «?» Help Center (Layout.tsx), плашка
+   * выходила ровно на его высоту и налезала. Место сбоку — в одной строке с кнопкой.
+   */
+  assert.ok(/<div className="flex items-center gap-2">/.test(w), 'плашка и кнопка стоят в одной строке')
+  assert.ok(!/absolute -bottom-1 right-4/.test(w), 'хвостик от плашки над кнопкой больше не нужен')
 })
 
 test('сотрудник может написать и владельцу, и платформе', async () => {
