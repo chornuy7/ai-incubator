@@ -51,7 +51,8 @@ export async function fetchTicket(id: string, asSupport?: boolean): Promise<ApiT
   return (await apiGet<{ ok: boolean; ticket: ApiTicket }>(`/api/tickets/${id}${asParam(asSupport)}`)).ticket
 }
 
-export async function createTicket(input: { subject: string; category?: string; body?: string }): Promise<ApiTicket> {
+/** `toSupport` — сотрудник пишет платформе, а не своему владельцу (по умолчанию владельцу). */
+export async function createTicket(input: { subject: string; category?: string; body?: string; toSupport?: boolean }): Promise<ApiTicket> {
   return (await apiPost<{ ok: boolean; ticket: ApiTicket }>('/api/tickets', input)).ticket
 }
 

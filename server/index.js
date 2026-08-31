@@ -1368,7 +1368,19 @@ app.post('/api/tickets', async (req, res) => {
      * Адресат берётся с СЕРВЕРА, из родителя, а не из тела запроса: иначе один клиент
      * писал бы «в поддержку» чужому владельцу.
      */
-    const toOwnerId = ctx.user?.parentId ? String(ctx.user.parentId) : ''
+    /*
+     * Кому: своему владельцу или всё-таки нам.
+     *
+     * По умолчанию — владельцу: с доступами, аккаунтами и токенами к нам ходить незачем.
+     * Но платформа тоже ломается, и запирать сотрудника наедине с владельцем нельзя
+     * (вопрос заказчика 31.08: «а якщо у мене проблема і потрібно в підтримку написати?»).
+     *
+     * Выбор — только между ДВУМЯ адресами: свой владелец либо платформа. Клиент по-прежнему
+     * не может назвать чужого владельца: id мы берём из родителя, а из тела запроса —
+     * только флаг «в поддержку».
+     */
+    const вПоддержку = (req.body || {}).toSupport === true
+    const toOwnerId = !вПоддержку && ctx.user?.parentId ? String(ctx.user.parentId) : ''
     res.json({ ok: true, ticket: await createTicket({ userId: ctx.id, author: ticketAuthor(ctx), subject, category, body, toOwnerId }) })
   } catch (err) { res.status(400).json({ ok: false, error: err instanceof Error ? err.message : 'Ошибка' }) }
 })
