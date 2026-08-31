@@ -1,14 +1,15 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
-import { Check, Package, Sparkles, Loader2, Lock, CalendarClock, AlertTriangle, ExternalLink } from 'lucide-react'
-import { PageHeader, Card, Tip } from '@/shared/ui'
+import { Check, Package, Sparkles, Loader2, Lock, CalendarClock, AlertTriangle, ExternalLink, XCircle, ChevronDown } from 'lucide-react'
+import { PageHeader, Card, Tip, Modal } from '@/shared/ui'
 import { FloatingBar } from '@/features/modules/shared/FloatingBar'
 import { useApp } from '@/mocks/store'
 import { usePlan } from '@/features/billing/plan'
 import { useBalance } from '@/features/billing/balanceStore'
 import { expiryInfo, daysLeftPhrase } from '@/features/billing/expiry'
-import { fetchSubscription, saveSubscription, type Subscription } from '@/api/balanceApi'
+import { fetchSubscription, saveSubscription, cancelSubscription, type Subscription } from '@/api/balanceApi'
 import { cn } from '@/shared/lib/utils'
+import { moduleTitle } from '@/shared/config/modules'
 import { WalletHistoryButton } from '@/pages/ProfilePage'
 
 /**
@@ -24,12 +25,24 @@ import { WalletHistoryButton } from '@/pages/ProfilePage'
  * кабинет не должен выглядеть как редактор. Сумму считает сервер
  * (`/api/subscription/quote`): витрина и то, что спишется, — одно число.
  */
+/** «1 модуль · 2 модуля · 5 модулей» — иначе в шапке подписки читается как машинный вывод. */
+const склонение = (n: number): string => {
+  const д = n % 10, с = n % 100
+  if (д === 1 && с !== 11) return 'модуль'
+  if (д >= 2 && д <= 4 && (с < 12 || с > 14)) return 'модуля'
+  return 'модулей'
+}
+
 export function SubscriptionPage() {
   const pushToast = useApp((s) => s.pushToast)
   const loadPlan = usePlan((s) => s.load)
   const [data, setData] = useState<Subscription | null>(null)
   const [picked, setPicked] = useState<Set<string>>(new Set())
   const [saving, setSaving] = useState(false)
+  // MR-228: отмена подписки — одно подтверждение, как просил заказчик («Вы уверены?»).
+  const [отменаОткрыта, setОтменаОткрыта] = useState(false)
+  const [отменяю, setОтменяю] = useState(false)
+  const [составВиден, setСоставВиден] = useState(false)
   const [period, setPeriod] = useState<'month' | 'year'>('month')
   // §5 (21.08): «оплачено до …». Срок лежит в балансе (`expiresAt`) — /api/subscription
   // отдаёт только СОСТАВ набора (`mine`), а без даты кабинет молчал о том, сколько
@@ -167,33 +180,72 @@ export function SubscriptionPage() {
           профиля. Три состояния: истекла (красное), кончается на неделе (жёлтое,
           с призывом продлить), обычное. Бессрочная так и подписана словом — пустая
           строка читалась бы как «данных нет». */}
-      {expKnown && mineSet.size > 0 && (
-        <Card className={cn(
-          'flex flex-wrap items-center gap-x-3 gap-y-1 p-4',
-          exp.expired ? 'border-red-500/40' : exp.soon ? 'border-amber-500/40' : '',
-        )}>
-          {exp.expired || exp.soon
-            ? <AlertTriangle size={16} className={exp.expired ? 'text-red-300' : 'text-amber-300'} />
-            : <CalendarClock size={16} className="text-muted" />}
-          <span className={cn(
-            'font-semibold',
-            exp.expired ? 'text-red-300' : exp.soon ? 'text-amber-300' : 'text-fg',
+      {expKnown && mineSet.size > 0 && (() => {
+        const отменена = !!balance?.canceledAt
+        const состав = [...mineSet].map((k) => moduleTitle(String(k)))
+        const имя = balance?.setName || (состав.length ? `${состав.length} ${склонение(состав.length)}` : '')
+        return (
+          <Card className={cn(
+            'p-4',
+            exp.expired ? 'border-red-500/40' : отменена ? 'border-amber-500/40' : exp.soon ? 'border-amber-500/40' : '',
           )}>
-            {exp.perpetual
-              ? 'Подписка бессрочная'
-              : exp.expired
-                ? `Подписка истекла ${exp.date}`
-                : `Оплачено до ${exp.date}`}
-          </span>
-          <span className="text-sm text-muted">
-            {exp.perpetual
-              ? '· срок не ограничен — продлевать не нужно'
-              : exp.expired
-                ? '· модули не запускаются, пока подписку не продлят'
-                : `· осталось ${daysLeftPhrase(exp.daysLeft)}${exp.soon ? ' — продлите, чтобы модули не остановились' : ''}`}
-          </span>
-        </Card>
-      )}
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+              {exp.expired || exp.soon || отменена
+                ? <AlertTriangle size={16} className={exp.expired ? 'text-red-300' : 'text-amber-300'} />
+                : <CalendarClock size={16} className="text-muted" />}
+              {/* ЧТО оплачено — первым: «какая подписка» человек спрашивает раньше, чем «до когда». */}
+              {имя && <span className="font-semibold text-fg">Подписка «{имя}»</span>}
+              <span className={cn(
+                'font-semibold',
+                exp.expired ? 'text-red-300' : отменена ? 'text-amber-300' : exp.soon ? 'text-amber-300' : 'text-fg',
+              )}>
+                {exp.perpetual
+                  ? 'Подписка бессрочная'
+                  : exp.expired
+                    ? `Подписка истекла ${exp.date}`
+                    : отменена
+                      ? `отменена · доступ до ${exp.date}`
+                      : `оплачено до ${exp.date}`}
+              </span>
+              <span className="text-sm text-muted">
+                {exp.perpetual
+                  ? '· срок не ограничен — продлевать не нужно'
+                  : exp.expired
+                    ? '· модули не запускаются, пока подписку не продлят'
+                    : отменена
+                      ? `· осталось ${daysLeftPhrase(exp.daysLeft)}, дальше списаний не будет`
+                      : `· осталось ${daysLeftPhrase(exp.daysLeft)}${exp.soon ? ' — продлите, чтобы модули не остановились' : ''}`}
+              </span>
+
+              {/* Кнопка справа: отмена — редкое действие, оно не должно спорить с «Оплатить». */}
+              {!exp.perpetual && !exp.expired && !отменена && (
+                <button
+                  onClick={() => setОтменаОткрыта(true)}
+                  className="btn-ghost ml-auto h-8 shrink-0 text-xs text-muted hover:text-rose-300"
+                >
+                  <XCircle size={14} /> Отменить подписку
+                </button>
+              )}
+            </div>
+
+            {/* «Что в неё входит» — списком по клику: четырнадцать названий в строку не влезают. */}
+            {состав.length > 0 && (
+              <div className="mt-2">
+                <button
+                  onClick={() => setСоставВиден((v) => !v)}
+                  className="inline-flex items-center gap-1 text-xs font-semibold text-muted hover:text-fg"
+                >
+                  <ChevronDown size={13} className={cn('transition-transform', составВиден && 'rotate-180')} />
+                  {составВиден ? 'скрыть состав' : `что входит · ${состав.length} ${склонение(состав.length)}`}
+                </button>
+                {составВиден && (
+                  <div className="mt-1.5 text-xs leading-relaxed text-muted">{состав.join(', ')}</div>
+                )}
+              </div>
+            )}
+          </Card>
+        )
+      })()}
 
       <Card>
         <div className="mb-3 text-xs font-bold uppercase tracking-wide text-muted">Готовые наборы</div>
@@ -431,6 +483,55 @@ export function SubscriptionPage() {
         показываются в меню и не запускаются. Права ролей действуют отдельно: сотрудник видит только то,
         что и оплачено, и разрешено ему администратором.
       </p>
+
+
+      {/*
+       * Одно подтверждение, как просил заказчик 30.08: «кнопка отмены... Возвратов нет».
+       * Двух ступеней здесь не нужно — отмена не уничтожает данные и обратима повторной
+       * оплатой, в отличие от удаления аккаунта.
+       */}
+      <Modal
+        open={отменаОткрыта}
+        onClose={() => setОтменаОткрыта(false)}
+        size="sm"
+        icon={<AlertTriangle size={20} className="text-amber-400" />}
+        title="Отменить подписку?"
+        footer={
+          <div className="flex justify-end gap-2">
+            <button onClick={() => setОтменаОткрыта(false)} className="btn-ghost h-9">Оставить</button>
+            <button
+              disabled={отменяю}
+              onClick={async () => {
+                setОтменяю(true)
+                try {
+                  await cancelSubscription()
+                  await loadPlan()
+                  setОтменаОткрыта(false)
+                  pushToast({
+                    type: 'success',
+                    title: 'Подписка отменена',
+                    desc: exp.date ? `Модули работают до ${exp.date}, дальше списаний не будет` : 'Списаний больше не будет',
+                  })
+                } catch (e) {
+                  pushToast({ type: 'error', title: 'Не удалось отменить', desc: e instanceof Error ? e.message : '' })
+                } finally { setОтменяю(false) }
+              }}
+              className="btn-danger h-9"
+            >
+              {отменяю ? <Loader2 size={16} className="animate-spin" /> : <XCircle size={16} />}
+              Отменить подписку
+            </button>
+          </div>
+        }
+      >
+        <p className="text-sm leading-relaxed text-muted">
+          Модули продолжат работать <b className="text-fg">до {exp.date}</b> — этот период уже оплачен.
+          После него подписка не продлится и деньги списываться перестанут.
+          <br /><br />
+          <b className="text-fg">Возврата за оплаченный период нет.</b> Передумаете — оплатите подписку
+          снова, и продления возобновятся.
+        </p>
+      </Modal>
 
     </div>
   )

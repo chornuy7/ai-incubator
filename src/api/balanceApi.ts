@@ -34,6 +34,12 @@ export interface Balance {
    * кошельке следа нет — сервер достаёт факт из журнала попыток.
    */
   renewFailed?: { at?: string; cost?: number; short?: number } | null
+  /**
+   * Когда подписку отменили (MR-228). Доступ при этом остаётся до конца оплаченного
+   * периода — отменяется только следующее списание, поэтому одного признака мало:
+   * дату конца смотрим в expiresAt, она не двигается.
+   */
+  canceledAt?: number | null
 }
 
 /** §5.1 (B2): баланс и тариф с сервера. До этого шапка показывала константу из моков. */
@@ -205,4 +211,13 @@ export async function createBundle(input: { name: string; hint?: string; modules
 
 export async function deleteBundle(id: string): Promise<void> {
   await apiDelete(`/api/bundles/${id}`)
+}
+
+/**
+ * MR-228: отменить подписку. Возврата денег нет, доступ остаётся до конца оплаченного
+ * периода — отменяется только следующее списание.
+ */
+export async function cancelSubscription(): Promise<Balance | null> {
+  const r = await apiPost<{ ok: boolean; balance: Balance | null }>('/api/subscription/cancel', {})
+  return r.balance
 }
