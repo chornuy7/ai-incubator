@@ -217,11 +217,13 @@ export function SubscriptionPage() {
                       : `· осталось ${daysLeftPhrase(exp.daysLeft)}${exp.soon ? ' — продлите, чтобы модули не остановились' : ''}`}
               </span>
 
-              {/* Кнопка справа: отмена — редкое действие, оно не должно спорить с «Оплатить». */}
+              {/* Красная СРАЗУ, а не по наведению (заказчик 31.08): разрушающее действие
+                  должно читаться как разрушающее до того, как на него навели мышь. Тот же
+                  приём, что у «Закрыть» в тикетах и «Удалить» в автопостинге. */}
               {!exp.perpetual && !exp.expired && !отменена && (
                 <button
                   onClick={() => setОтменаОткрыта(true)}
-                  className="btn-ghost ml-auto h-8 shrink-0 text-xs text-muted hover:text-rose-300"
+                  className="btn-ghost ml-auto h-8 shrink-0 text-xs text-rose-300 hover:bg-rose-500/10"
                 >
                   <XCircle size={14} /> Отменить подписку
                 </button>
