@@ -314,6 +314,10 @@ function LogTab({ log }: { log: MyStats['log'] }) {
               </button>
               {isOpen && (
                 <div className="grid grid-cols-2 gap-x-4 gap-y-2 border-t border-line/30 bg-white/[.02] px-3 py-3 text-xs sm:grid-cols-4">
+                  {/* ID первым и здесь: в свёрнутой строке он уже первый, а в раскрытой
+                      лежал последним, в правом нижнем углу — человек искал его глазами
+                      по всей карточке (заказчик 31.08). Порядок должен совпадать. */}
+                  <Field label="ID задачи" value={t.id} />
                   <Field label="Модуль" value={t.title} />
                   <Field label="Действий" value={compact(t.actions)} />
                   <Field label="Списано" value={t.spent ? `${fmtCoins(t.spent)} ⚡` : '—'} accent={t.spent ? 'text-amber-300' : undefined} />
@@ -321,7 +325,6 @@ function LogTab({ log }: { log: MyStats['log'] }) {
                   <Field label="Начато" value={fmtDt(t.at)} />
                   <Field label="Завершено" value={fmtDt(t.finishedAt)} />
                   <Field label="Статус" value={t.status} />
-                  <Field label="ID задачи" value={t.id} />
                 </div>
               )}
             </div>

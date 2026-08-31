@@ -58,3 +58,18 @@ test('ключи разделов не изменились — ссылки н�
   const блок = src.slice(src.indexOf('const TABS = ['), src.indexOf(']', src.indexOf('const TABS = [')))
   for (const key of ['dashboard', 'log', 'wallet']) assert.ok(блок.includes(`'${key}'`), `пропал раздел ${key}`)
 })
+
+test('ID задачи стоит первым и в раскрытой карточке', async () => {
+  /*
+   * В свёрнутой строке ID уже был первым, а в раскрытой лежал последним — в правом нижнем
+   * углу. Заказчик 31.08: «коли розгортаєш задачу, ID задачи теж повинне бути перше».
+   * Человек искал его глазами по всей карточке, хотя минуту назад видел в начале строки.
+   */
+  const fs2 = await import('node:fs/promises')
+  const src = await fs2.readFile(new URL('../../src/pages/StatisticsPage.tsx', import.meta.url), 'utf8')
+  const at = src.indexOf('grid grid-cols-2 gap-x-4')
+  assert.ok(at > 0, 'не нашёл сетку полей раскрытой задачи')
+  const сетка = src.slice(at, src.indexOf('</div>', at))
+  const поля = [...сетка.matchAll(/<Field label="([^"]+)"/g)].map((m) => m[1])
+  assert.equal(поля[0], 'ID задачи', `ID должен быть первым полем, а порядок такой: ${поля.join(', ')}`)
+})
