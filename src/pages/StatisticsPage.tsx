@@ -9,7 +9,7 @@ import { useMockLoading } from '@/shared/lib/hooks'
 import { PageHeader, Segmented, Tabs, Card, EmptyState, Avatar, StatusBadge, Dropdown, MenuItem, Skeleton } from '@/shared/ui'
 import { HelpButton } from '@/features/neuro-commenting/moduleUi'
 import { BarChart } from '@/shared/ui/BarChart'
-import { compact, coins as fmtCoins, cn } from '@/shared/lib/utils'
+import { compact, coins as fmtCoins, balance as fmtBalance, cn } from '@/shared/lib/utils'
 import { fetchMyStats, type MyStats } from '@/api/meApi'
 import { fetchWalletHistory, type WalletEntry } from '@/api/balanceApi'
 import { useTabParam } from '@/shared/lib/useTabParam'
@@ -376,7 +376,7 @@ function WalletTab({ coins, usd, isSub, limit }: { coins: number; usd?: number; 
                     {income ? '+' : ''}{fmtCoins(r.amount)} {cur(r)}
                   </span>
                   {!!r.reason && <span className="min-w-0 flex-1 break-words text-muted">{r.reason}</span>}
-                  <span className="text-xs tabular-nums text-faint">осталось {fmtCoins(r.after)} {cur(r)}</span>
+                  <span className="text-xs tabular-nums text-faint">осталось {fmtBalance(r.after)} {cur(r)}</span>
                   <span className="ml-auto shrink-0 tabular-nums text-faint">
                     {r.ts ? new Date(r.ts).toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : '—'}
                   </span>

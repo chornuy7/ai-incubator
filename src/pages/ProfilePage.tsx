@@ -11,7 +11,7 @@ import { deleteUser, changeMyPassword } from '@/api/usersApi'
 import { useSession } from '@/features/auth/session'
 import { can } from '@/shared/lib/access'
 import { PageHeader, Card, Switch, Badge, Modal } from '@/shared/ui'
-import { cn, coins as fmtCoins } from '@/shared/lib/utils'
+import { cn, balance as fmtBalance } from '@/shared/lib/utils'
 import { useTabParam } from '@/shared/lib/useTabParam'
 
 // 24 стандартных часовых пояса (целочасовые, UTC-12…UTC+11) с городом-подсказкой.
@@ -480,13 +480,18 @@ function WalletRows({ rows, только }: { rows: WalletEntry[] | null; тол
               <div key={r.ts + '-' + i} className="border-b border-line/40 py-2 last:border-0">
                 <div className="flex items-start gap-x-3">
                   <span className={cn('flex w-28 shrink-0 items-center gap-1 text-base font-bold tabular-nums', plus ? 'text-emerald-300' : 'text-rose-300')}>
-                    {plus ? '+' : '−'}{fmtCoins(Math.abs(r.amount))}
+                    {plus ? '+' : '−'}{fmtBalance(Math.abs(r.amount))}
                     <span className="text-xs font-semibold opacity-70">{unit}</span>
                   </span>
                   {/* break-words, а не truncate: текст переносится, а не обрывается. */}
                   <span className="min-w-0 flex-1 break-words text-sm leading-snug text-fg">{r.reason || 'без описания'}</span>
+                  {/* Подписываем, ЧТО это за числа и в чём: без слова «остаток» и единицы
+                      «10111.00 → 11511.00» читается как два голых числа. */}
                   <span className="shrink-0 text-sm font-semibold tabular-nums text-muted">
-                    {fmtCoins(r.before)} <span className="text-faint">→</span> <span className={plus ? 'text-emerald-300' : 'text-rose-300'}>{fmtCoins(r.after)}</span>
+                    <span className="mr-1 text-xs font-normal text-faint">остаток</span>
+                    {fmtBalance(r.before)} <span className="text-faint">→</span>{' '}
+                    <span className={plus ? 'text-emerald-300' : 'text-rose-300'}>{fmtBalance(r.after)}</span>
+                    <span className="ml-1 text-xs font-normal opacity-70">{unit}</span>
                   </span>
                 </div>
                 <div className="mt-1 text-xs text-faint">{new Date(r.ts).toLocaleString('ru-RU')}</div>
