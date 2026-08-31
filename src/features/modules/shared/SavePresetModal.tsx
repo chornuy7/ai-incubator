@@ -123,7 +123,7 @@ export function SavePresetModal({ open, onClose, onSave }: {
           <span className="text-sm font-semibold">Сохранить вместе с аккаунтами</span>
           {/* Поясняем только состояние ПО УМОЛЧАНИЮ. Что делает поставленная галочка,
               уже сказано её собственной подписью — повторять это второй раз незачем. */}
-          <span className="mt-0.5 block text-xs text-muted">Без неё в шаблон уходят только настройки — выбор аккаунтов он не трогает.</span>
+          <span className="mt-0.5 block text-xs text-muted">По умолчанию шаблон сохраняет только настройки; выбор аккаунтов в него не входит.</span>
         </span>
       </label>
 
