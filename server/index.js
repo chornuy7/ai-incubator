@@ -1379,6 +1379,30 @@ app.post('/api/tickets', async (req, res) => {
      * не может назвать чужого владельца: id мы берём из родителя, а из тела запроса —
      * только флаг «в поддержку».
      */
+    /*
+     * MR-247: владелец пишет сотруднику ПЕРВЫМ — вторая половина «переписки внутри
+     * системы». До этого разговор мог начать только сотрудник, а владелец лишь отвечал:
+     * сказать «зайди в модуль, я выдал токены» ему было негде (вопрос заказчика 31.08:
+     * «а як власнику субам писати?»).
+     *
+     * Обращение принадлежит СОТРУДНИКУ (userId) — оно у него в списке и читается как
+     * переписка со своим администратором. Владелец здесь отвечающая сторона: первое
+     * сообщение идёт от неё, непрочитанным считается у сотрудника.
+     *
+     * Кому можно писать — только своему. Родителя проверяем на сервере, иначе этой ручкой
+     * писали бы в чужое пространство.
+     */
+    const кому = String((req.body || {}).subUserId || '')
+    if (кому) {
+      const { getUser } = await import('./users.js')
+      const сотрудник = await getUser(кому).catch(() => null)
+      if (!сотрудник || String(сотрудник.parentId || '') !== String(ctx.id)) {
+        return res.status(403).json({ ok: false, error: 'Написать можно только своему сотруднику' })
+      }
+      return res.json({ ok: true, ticket: await createTicket({
+        userId: кому, author: ticketAuthor(ctx), subject, category, body, toOwnerId: ctx.id, from: 'support',
+      }) })
+    }
     const вПоддержку = (req.body || {}).toSupport === true
     const toOwnerId = !вПоддержку && ctx.user?.parentId ? String(ctx.user.parentId) : ''
     res.json({ ok: true, ticket: await createTicket({ userId: ctx.id, author: ticketAuthor(ctx), subject, category, body, toOwnerId }) })

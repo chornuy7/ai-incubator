@@ -229,7 +229,7 @@ export async function getTicket(id) {
   return tickets.find((t) => t.id === id) || null
 }
 
-export async function createTicket({ userId = '', author = null, subject = '', category = 'tech', body = '', toOwnerId = '' }) {
+export async function createTicket({ userId = '', author = null, subject = '', category = 'tech', body = '', toOwnerId = '', from = 'user' }) {
   const subj = String(subject || '').trim()
   if (!subj) throw new Error('Укажите тему обращения')
   const db = sb()
@@ -254,11 +254,17 @@ export async function createTicket({ userId = '', author = null, subject = '', c
     createdAt: now,
     updatedAt: now,
     messages: [],
-    // Метки «прочитано до» по сторонам. Владелец только что создал — своё считаем прочитанным.
-    reads: { user: now, support: 0 },
+    /*
+     * Метки «прочитано до» по сторонам: своё считаем прочитанным, чужое — нет.
+     *
+     * Кто начал разговор, тот и прочитал. Обычно это владелец обращения (сторона `user`),
+     * но владелец пространства может написать сотруднику ПЕРВЫМ (MR-247: «админ может
+     * писать суб-юзеру»), и тогда непрочитанное — у сотрудника, а не у него.
+     */
+    reads: from === 'support' ? { user: 0, support: now } : { user: now, support: 0 },
   }
   const text = String(body || '').trim()
-  if (text) ticket.messages.push(msg('user', { id: userId, ...(author || {}) }, text, now))
+  if (text) ticket.messages.push(msg(from, { id: from === 'support' ? (author?.id || '') : userId, ...(author || {}) }, text, now))
 
   if (db) {
     const { error } = await db.from('tickets').insert(ticketToRow(ticket))

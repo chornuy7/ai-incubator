@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { Users2, Plus, Trash2, ShieldCheck, Check, Users, Wifi, ChevronDown, ChevronRight, Search, Package } from 'lucide-react'
+import { Users2, Plus, Trash2, ShieldCheck, Check, Users, Wifi, ChevronDown, ChevronRight, Search, Package, MessageSquare } from 'lucide-react'
 import { PageHeader, Card, EmptyState, Badge, Modal, Switch } from '@/shared/ui'
 import { confirmDialog } from '@/shared/lib/dialog'
 import {
@@ -14,6 +14,7 @@ import { fetchAccountGroups, type AccountGroup } from '@/api/accountGroupsApi'
 import { fetchAccounts } from '@/api/accountsApi'
 import type { TgAccount } from '@/shared/types'
 import { useSession } from '@/features/auth/session'
+import { createTicket } from '@/api/ticketsApi'
 import { ADMIN_BYPASS_ID } from '@/shared/config/rbac'
 import { HelpButton } from '@/features/neuro-commenting/moduleUi'
 import { cn } from '@/shared/lib/utils'
@@ -416,6 +417,12 @@ function fmtDur(ms: number): string {
 
 /** Верхняя половина раздела: список сотрудников и их доступы. */
 function UsersTab() {
+  const pushToast = useApp((st) => st.pushToast)
+  // MR-247: кому пишем письмо (null — окно закрыто).
+  const [письмо, setПисьмо] = useState<{ id: string; имя: string } | null>(null)
+  const [темаПисьма, setТемаПисьма] = useState('')
+  const [текстПисьма, setТекстПисьма] = useState('')
+  const [шлю, setШлю] = useState(false)
   const sessionUser = useSession((s) => s.user)
   /*
    * Свой остаток — ПОТОЛОК для лимита сотрудника (правка 27.08: «если у него общих
@@ -700,6 +707,15 @@ function UsersTab() {
                       </span>
                     </div>
                   )}
+                  {/*
+                    MR-247: разговор может начать и владелец. Раньше он умел только
+                    ОТВЕЧАТЬ — сказать сотруднику «зайди, я выдал токены» было негде
+                    (вопрос заказчика 31.08: «а як власнику субам писати?»). Письмо ложится
+                    сотруднику в «Поддержку», как его переписка с администратором.
+                  */}
+                  <button onClick={() => setПисьмо({ id: u.id, имя: u.name || u.email || u.id })} className="btn-ghost h-9 text-xs">
+                    <MessageSquare size={14} /> Написать
+                  </button>
                   <button onClick={() => void toggleActive(u)} className="btn-ghost h-9 text-xs">{u.active ? 'Отключить' : 'Включить'}</button>
                   {!locked && (
                     <button onClick={() => void remove(u)} className="btn-icon-danger h-9 w-9" aria-label="Удалить пользователя" title="Удалить пользователя">
@@ -799,6 +815,52 @@ function UsersTab() {
           <div className="mt-1 flex justify-end gap-2">
             <button onClick={() => setOpen(false)} className="btn-ghost h-10">Отмена</button>
             <button onClick={() => void submit()} disabled={saving || !form.email || form.password.length < 6} className="btn-primary h-10 disabled:opacity-40">{saving ? 'Создание…' : 'Создать'}</button>
+          </div>
+        </div>
+      </Modal>
+      {/*
+        MR-247: письмо сотруднику. Ложится ему в «Поддержку» как переписка со своим
+        администратором — там же, где он отвечает и куда пишет сам. Отдельного «чата
+        владельца» заводить не стали: две ленты про одно и то же человек путает.
+      */}
+      <Modal
+        open={!!письмо}
+        onClose={() => setПисьмо(null)}
+        size="sm"
+        icon={<MessageSquare size={20} className="text-spark-400" />}
+        title={письмо ? `Написать: ${письмо.имя}` : 'Написать сотруднику'}
+        subtitle="Сообщение придёт ему в «Поддержку»"
+        footer={
+          <div className="flex justify-end gap-2">
+            <button onClick={() => setПисьмо(null)} className="btn-ghost h-9">Отмена</button>
+            <button
+              disabled={шлю || !темаПисьма.trim()}
+              onClick={async () => {
+                if (!письмо) return
+                setШлю(true)
+                try {
+                  await createTicket({ subject: темаПисьма.trim(), body: текстПисьма.trim(), subUserId: письмо.id })
+                  pushToast({ type: 'success', title: 'Сообщение отправлено', desc: `${письмо.имя} увидит его в «Поддержке».` })
+                  setПисьмо(null); setТемаПисьма(''); setТекстПисьма('')
+                } catch (e) {
+                  pushToast({ type: 'error', title: 'Не удалось отправить', desc: e instanceof Error ? e.message : '' })
+                } finally { setШлю(false) }
+              }}
+              className="btn-primary h-9 disabled:opacity-40"
+            >
+              Отправить
+            </button>
+          </div>
+        }
+      >
+        <div className="space-y-3">
+          <div>
+            <label className="label">Тема</label>
+            <input value={темаПисьма} onChange={(e) => setТемаПисьма(e.target.value)} className="input" placeholder="Коротко: о чём речь" autoFocus />
+          </div>
+          <div>
+            <label className="label">Сообщение</label>
+            <textarea value={текстПисьма} onChange={(e) => setТекстПисьма(e.target.value)} rows={4} className="input resize-none" placeholder="Например: выдал 200 ⚡, можешь запускать рассылку" />
           </div>
         </div>
       </Modal>

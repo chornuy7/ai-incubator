@@ -329,3 +329,26 @@ test('«я сотрудник» берётся из свежего баланс�
     assert.ok(/isSub \?\? /.test(src), `${где}: сессия — запасной вариант, а не основной`)
   }
 })
+
+test('владелец может написать сотруднику ПЕРВЫМ', async () => {
+  /*
+   * MR-247 требует переписку в ОБЕ стороны: «твой суб-юзер может писать админу, админ
+   * может писать суб-юзеру». Разговор мог начать только сотрудник — владелец лишь
+   * отвечал, и сказать «зайди, я выдал токены» ему было негде (вопрос заказчика 31.08:
+   * «а як власнику субам писати?»).
+   */
+  const fs2 = await import('node:fs/promises')
+  const src = await fs2.readFile(new URL('../index.js', import.meta.url), 'utf8')
+  const at = src.indexOf("app.post('/api/tickets'")
+  const тело = src.slice(at, src.indexOf('app.', at + 10))
+  assert.ok(/subUserId/.test(тело), 'нужен путь «владелец пишет сотруднику»')
+  assert.ok(/parentId \|\| ''\) !== String\(ctx\.id\)/.test(тело), 'писать можно только СВОЕМУ сотруднику')
+  assert.ok(/from: 'support'/.test(тело), 'владелец здесь отвечающая сторона — иначе письмо ляжет как его собственное')
+
+  const t = await fs2.readFile(new URL('../tickets.js', import.meta.url), 'utf8')
+  assert.ok(/from === 'support' \? \{ user: 0, support: now \}/.test(t),
+    'кто начал разговор, тот и прочитал: непрочитанное должно быть у сотрудника')
+
+  const стр = await fs2.readFile(new URL('../../src/pages/UsersPage.tsx', import.meta.url), 'utf8')
+  assert.ok(/Написать/.test(стр) && /subUserId: письмо\.id/.test(стр), 'в карточке сотрудника нужна кнопка «Написать»')
+})

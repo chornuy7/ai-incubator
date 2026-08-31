@@ -51,8 +51,11 @@ export async function fetchTicket(id: string, asSupport?: boolean): Promise<ApiT
   return (await apiGet<{ ok: boolean; ticket: ApiTicket }>(`/api/tickets/${id}${asParam(asSupport)}`)).ticket
 }
 
-/** `toSupport` — сотрудник пишет платформе, а не своему владельцу (по умолчанию владельцу). */
-export async function createTicket(input: { subject: string; category?: string; body?: string; toSupport?: boolean }): Promise<ApiTicket> {
+/**
+ * `toSupport` — сотрудник пишет платформе, а не своему владельцу (по умолчанию владельцу).
+ * `subUserId` — владелец пишет СВОЕМУ сотруднику первым (MR-247); родителя проверяет сервер.
+ */
+export async function createTicket(input: { subject: string; category?: string; body?: string; toSupport?: boolean; subUserId?: string }): Promise<ApiTicket> {
   return (await apiPost<{ ok: boolean; ticket: ApiTicket }>('/api/tickets', input)).ticket
 }
 
