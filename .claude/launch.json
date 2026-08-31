@@ -21,6 +21,15 @@
       "port": 5273
     },
     {
+      "name": "ai-incubator-api-safe",
+      "runtimeExecutable": "node",
+      "runtimeArgs": [
+        "scripts/dev-api-safe.mjs"
+      ],
+      "port": 3001,
+      "autoPort": false
+    },
+    {
       "name": "ai-incubator-api",
       "runtimeExecutable": "node",
       "runtimeArgs": [
