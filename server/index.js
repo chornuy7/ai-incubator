@@ -1279,6 +1279,36 @@ function ticketSide(req, ctx) {
   return wantSupport && ctx.isSupport ? 'support' : 'user'
 }
 
+/**
+ * Сторона переписки для КОНКРЕТНОГО обращения (MR-257).
+ *
+ * Общая `ticketSide` отвечает на вопрос «кем человек смотрит список», а этого мало:
+ * владелец пространства одновременно и клиент для нашей поддержки (его собственные
+ * обращения — сторона «user»), и «поддержка» для своих сотрудников (их запросы адресованы
+ * ему). Одна сторона на весь список считала бы его непрочитанное дважды и не той меркой.
+ */
+function ticketSideFor(ticket, ctx, base) {
+  if (ticket?.toOwnerId && String(ticket.toOwnerId) === String(ctx.id)) return 'support'
+  return base
+}
+
+/**
+ * Кто может открыть, прочитать и ответить в КОНКРЕТНОЕ обращение (MR-257, баг приёмки 31.08).
+ *
+ * Автор — всегда, платформенная поддержка — всегда, и ВЛАДЕЛЕЦ, которому обращение
+ * адресовано. Последнего забыли: список тикетов адресованные владельцу уже показывал
+ * (там есть фильтр по `ownerId`), а проверка на отдельном обращении осталась прежней —
+ * «автор или поддержка». Получалось: сотрудник пишет владельцу, владелец видит письмо в
+ * списке, открывает, отвечает — и получает «Нет доступа к тикету». Тем же отказом
+ * заканчивалась и отметка о прочтении, поэтому красный значок не гас.
+ */
+function можноВТикет(t, ctx) {
+  if (!t) return false
+  if (ctx.isSupport) return true
+  if (String(t.userId) === String(ctx.id)) return true
+  return !!(t.toOwnerId && String(t.toOwnerId) === String(ctx.id))
+}
+
 /** Сколько открытых обращений разрешено человеку с отключённым доступом. */
 const OPEN_TICKETS_WHEN_DISABLED = 3
 
@@ -1290,9 +1320,9 @@ app.get('/api/tickets', async (req, res) => {
     if (ctx.blocked && !ctx.inactive) return res.status(403).json({ ok: false, error: 'Нет доступа' })
     const { listTickets, unreadFor } = await import('./tickets.js')
     const side = ticketSide(req, ctx)
-    const rows = await listTickets({ userId: ctx.id, all: side === 'support' })
+    const rows = await listTickets({ userId: ctx.id, all: side === 'support', ownerId: ctx.id })
     const owner = await ticketOwnerResolver()
-    res.json({ ok: true, tickets: rows.map((t) => ({ ...t, ...owner(t), unread: unreadFor(t, side) })) })
+    res.json({ ok: true, tickets: rows.map((t) => ({ ...t, ...owner(t), unread: unreadFor(t, ticketSideFor(t, ctx, side)) })) })
   } catch (err) { ticketErr(res, err) }
 })
 
@@ -1304,8 +1334,8 @@ app.get('/api/tickets/unread-count', async (req, res) => {
     if (ctx.blocked && !ctx.inactive) return res.json({ ok: true, count: 0 })
     const { listTickets, unreadFor } = await import('./tickets.js')
     const side = ticketSide(req, ctx)
-    const rows = await listTickets({ userId: ctx.id, all: side === 'support' })
-    res.json({ ok: true, count: rows.reduce((n, t) => n + unreadFor(t, side), 0), side })
+    const rows = await listTickets({ userId: ctx.id, all: side === 'support', ownerId: ctx.id })
+    res.json({ ok: true, count: rows.reduce((n, t) => n + unreadFor(t, ticketSideFor(t, ctx, side)), 0), side })
   } catch (err) { ticketErr(res, err) }
 })
 
@@ -1328,7 +1358,54 @@ app.post('/api/tickets', async (req, res) => {
       }
     }
     const { subject, category, body } = req.body || {}
-    res.json({ ok: true, ticket: await createTicket({ userId: ctx.id, author: ticketAuthor(ctx), subject, category, body }) })
+    /*
+     * MR-257: обращение сотрудника адресуется ЕГО ВЛАДЕЛЬЦУ, а не нашей поддержке.
+     *
+     * Заказчик 30.08: «в поддержке тебе скажут: свяжитесь с администратором. А нахера мне
+     * этот круг?» Раньше выбора не было — все тикеты шли к нам, и запрос «дай токенов»
+     * попадал людям, которые ничего выдать не могут.
+     *
+     * Адресат берётся с СЕРВЕРА, из родителя, а не из тела запроса: иначе один клиент
+     * писал бы «в поддержку» чужому владельцу.
+     */
+    /*
+     * Кому: своему владельцу или всё-таки нам.
+     *
+     * По умолчанию — владельцу: с доступами, аккаунтами и токенами к нам ходить незачем.
+     * Но платформа тоже ломается, и запирать сотрудника наедине с владельцем нельзя
+     * (вопрос заказчика 31.08: «а якщо у мене проблема і потрібно в підтримку написати?»).
+     *
+     * Выбор — только между ДВУМЯ адресами: свой владелец либо платформа. Клиент по-прежнему
+     * не может назвать чужого владельца: id мы берём из родителя, а из тела запроса —
+     * только флаг «в поддержку».
+     */
+    /*
+     * MR-247: владелец пишет сотруднику ПЕРВЫМ — вторая половина «переписки внутри
+     * системы». До этого разговор мог начать только сотрудник, а владелец лишь отвечал:
+     * сказать «зайди в модуль, я выдал токены» ему было негде (вопрос заказчика 31.08:
+     * «а як власнику субам писати?»).
+     *
+     * Обращение принадлежит СОТРУДНИКУ (userId) — оно у него в списке и читается как
+     * переписка со своим администратором. Владелец здесь отвечающая сторона: первое
+     * сообщение идёт от неё, непрочитанным считается у сотрудника.
+     *
+     * Кому можно писать — только своему. Родителя проверяем на сервере, иначе этой ручкой
+     * писали бы в чужое пространство.
+     */
+    const кому = String((req.body || {}).subUserId || '')
+    if (кому) {
+      const { getUser } = await import('./users.js')
+      const сотрудник = await getUser(кому).catch(() => null)
+      if (!сотрудник || String(сотрудник.parentId || '') !== String(ctx.id)) {
+        return res.status(403).json({ ok: false, error: 'Написать можно только своему сотруднику' })
+      }
+      return res.json({ ok: true, ticket: await createTicket({
+        userId: кому, author: ticketAuthor(ctx), subject, category, body, toOwnerId: ctx.id, from: 'support',
+      }) })
+    }
+    const вПоддержку = (req.body || {}).toSupport === true
+    const toOwnerId = !вПоддержку && ctx.user?.parentId ? String(ctx.user.parentId) : ''
+    res.json({ ok: true, ticket: await createTicket({ userId: ctx.id, author: ticketAuthor(ctx), subject, category, body, toOwnerId }) })
   } catch (err) { res.status(400).json({ ok: false, error: err instanceof Error ? err.message : 'Ошибка' }) }
 })
 
@@ -1341,8 +1418,10 @@ app.get('/api/tickets/:id', async (req, res) => {
     const { getTicket, markRead, unreadFor } = await import('./tickets.js')
     const t = await getTicket(String(req.params.id))
     if (!t) return res.status(404).json({ ok: false, error: 'Тикет не найден' })
-    if (!ctx.isSupport && t.userId !== ctx.id) return res.status(403).json({ ok: false, error: 'Нет доступа к тикету' })
-    const side = ticketSide(req, ctx)
+    if (!можноВТикет(t, ctx)) return res.status(403).json({ ok: false, error: 'Нет доступа к тикету' })
+    // Сторона считается ПО ЭТОМУ обращению: для запроса своего сотрудника владелец —
+    // отвечающая сторона, а не клиент. Иначе прочтение снимало бы не тот счётчик.
+    const side = ticketSideFor(t, ctx, ticketSide(req, ctx))
     const fresh = (await markRead(String(req.params.id), side)) || t
     const owner = await ticketOwnerResolver()
     res.json({ ok: true, ticket: { ...fresh, ...owner(fresh), unread: unreadFor(fresh, side) } })
@@ -1358,13 +1437,19 @@ app.post('/api/tickets/:id/reply', async (req, res) => {
     const { getTicket, addMessage } = await import('./tickets.js')
     const t = await getTicket(String(req.params.id))
     if (!t) return res.status(404).json({ ok: false, error: 'Тикет не найден' })
-    const asSupport = (req.body || {}).asSupport === true && ctx.isSupport
-    if (!asSupport && t.userId !== ctx.id) return res.status(403).json({ ok: false, error: 'Нет доступа к тикету' })
+    if (!можноВТикет(t, ctx)) return res.status(403).json({ ok: false, error: 'Нет доступа к тикету' })
+    // Кто отвечает, решает СЕРВЕР по самому обращению, а не флаг из тела запроса: адресат
+    // запроса сотрудника — отвечающая сторона, даже если он не наша поддержка.
+    const адресат = !!(t.toOwnerId && String(t.toOwnerId) === String(ctx.id))
+    const asSupport = адресат || ((req.body || {}).asSupport === true && ctx.isSupport)
     const ticket = await addMessage(String(req.params.id), {
       from: asSupport ? 'support' : 'user',
-      // Поддержка подписывается ролью (клиенту не нужен личный контакт оператора),
-      // клиент — своей почтой/именем.
-      author: asSupport ? { id: ctx.id, name: 'Поддержка' } : ticketAuthor(ctx),
+      /*
+       * Платформенная поддержка подписывается ролью — клиенту не нужен личный контакт
+       * оператора. А владелец отвечает своему сотруднику ОТ СЕБЯ: они друг друга знают,
+       * и подпись «Поддержка» там читалась бы как ответ из другой организации.
+       */
+      author: asSupport && !адресат ? { id: ctx.id, name: 'Поддержка' } : ticketAuthor(ctx),
       text: (req.body || {}).text,
     })
     res.json({ ok: true, ticket })
@@ -1380,8 +1465,8 @@ app.post('/api/tickets/:id/read', async (req, res) => {
     const { getTicket, markRead } = await import('./tickets.js')
     const t = await getTicket(String(req.params.id))
     if (!t) return res.status(404).json({ ok: false, error: 'Тикет не найден' })
-    if (!ctx.isSupport && t.userId !== ctx.id) return res.status(403).json({ ok: false, error: 'Нет доступа' })
-    await markRead(String(req.params.id), ticketSide(req, ctx))
+    if (!можноВТикет(t, ctx)) return res.status(403).json({ ok: false, error: 'Нет доступа' })
+    await markRead(String(req.params.id), ticketSideFor(t, ctx, ticketSide(req, ctx)))
     res.json({ ok: true })
   } catch (err) { ticketErr(res, err) }
 })
@@ -1391,8 +1476,19 @@ app.post('/api/tickets/:id/status', async (req, res) => {
   try {
     const { requesterContext } = await import('./lib/accessGuard.js')
     const ctx = await requesterContext(req)
-    if (!ctx.isSupport) return res.status(403).json({ ok: false, error: 'Статусы меняет только поддержка' })
-    const { setStatus } = await import('./tickets.js')
+    /*
+     * Приёмка 31.08: обращение сотрудника висело «в работе» вечно — закрыть его было
+     * некому. Проверка стояла одна: «статусы меняет только поддержка», а владелец,
+     * которому обращение адресовано, нашей поддержкой не является.
+     *
+     * Право закрыть — у той же стороны, что отвечает: адресат запроса либо платформенная
+     * поддержка. Тем же правилом, что в /reply, чтобы не разъехалось.
+     */
+    const { getTicket, setStatus } = await import('./tickets.js')
+    const t = await getTicket(String(req.params.id))
+    if (!t) return res.status(404).json({ ok: false, error: 'Тикет не найден' })
+    const адресат = !!(t.toOwnerId && String(t.toOwnerId) === String(ctx.id))
+    if (!адресат && !ctx.isSupport) return res.status(403).json({ ok: false, error: 'Статус меняет тот, кому адресовано обращение' })
     res.json({ ok: true, ticket: await setStatus(String(req.params.id), String((req.body || {}).status)) })
   } catch (err) { res.status(400).json({ ok: false, error: err instanceof Error ? err.message : 'Ошибка' }) }
 })
@@ -1942,13 +2038,28 @@ app.get('/api/balance', async (req, res) => {
      * сколько действий он ещё может сделать. Поэтому `usd` не отдаём вовсе, а токены
      * показываем в пределах его потолка.
      */
+    /*
+     * Сотрудник ли это — решает РОДИТЕЛЬ, а не кошелёк (баг приёмки 31.08).
+     *
+     * Раньше признак выводился косвенно: «есть потолок расхода» либо «кошелёк общий с
+     * владельцем». После MR-225 у сотрудника появился СВОЙ кошелёк, и оба признака отпали:
+     * панель решила, что перед ней владелец, и показала ему деньги, «Пополнить счёт» и
+     * покупку токенов — то есть ровно то, чего сотруднику видеть нельзя. Заодно исчезла
+     * кнопка «Запросить токены у администратора»: она показывается по этому же флагу.
+     *
+     * Родитель — прямой признак и не зависит от того, как устроен кошелёк сегодня.
+     */
+    const { getUser, resolveWalletOwner } = await import('./users.js')
+    const профиль = me ? await getUser(me).catch(() => null) : null
+    const сотрудник = !!профиль?.parentId
     const lim = me ? await spendLimit(me).catch(() => ({ limit: null, spent: 0, left: Infinity })) : { limit: null }
     if (lim.limit !== null) {
       const left = Math.max(0, Math.min(Number(balance.coins) || 0, Number(lim.left) || 0))
       return res.json({ ok: true, balance: { ...balance, coins: left, usd: undefined, spendLimit: lim.limit, spendLeft: left, isSub: true } })
     }
-    // Сотрудник без потолка тратит наравне с владельцем — но деньги всё равно не его.
-    const { resolveWalletOwner } = await import('./users.js')
+    // Сотрудник со своим кошельком видит СВОИ токены целиком — но деньги всё равно не его.
+    if (сотрудник) return res.json({ ok: true, balance: { ...balance, usd: undefined, isSub: true } })
+    // Страховка для старых записей без родителя: кошелёк общий — значит не владелец.
     const owner = me ? await resolveWalletOwner(me).catch(() => me) : me
     if (me && owner !== me) return res.json({ ok: true, balance: { ...balance, usd: undefined, isSub: true } })
     /*

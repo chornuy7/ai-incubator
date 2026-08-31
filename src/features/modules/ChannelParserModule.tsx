@@ -11,11 +11,11 @@ import { AccountPicker } from '@/features/account-picker/AccountPicker'
 import { useModuleTask } from './shared/useModuleTask'
 import { SectionCard, NumberField, ProtectionTimings, DelayFields, LaunchPanel, LaunchSteps, markCurrentStep, TaskStartedModal, SchedulePanel, usePresetCarry, useBlockAccess, ParserQueries } from './shared'
 import { PresetBar } from './shared/PresetBar'
-import { SavePresetModal } from './shared/SavePresetModal'
+import { SavePresetModal, presetSettings } from './shared/SavePresetModal'
 import { cn } from '@/shared/lib/utils'
 import { ParserResultsView, qualityScore, type ParserResult } from './ParserResultsView'
 import { LaunchCost } from './shared/LaunchCost'
-import { fetchModuleTasks, fetchModuleTask, lookupParserCache, setParserWatch, suggestKeywords, type ModuleTaskSettings, type ParserCacheHit, type KeywordSuggestion } from '@/api/modulesApi'
+import { fetchModuleTasks, fetchModuleTask, lookupParserCache, setParserWatch, suggestKeywords, type ModuleTaskSettings, type ModulePresetSettings, type ParserCacheHit, type KeywordSuggestion } from '@/api/modulesApi'
 
 /** Собирает username ранее спарсенных каналов/групп из истории модуля (для дедупа между запусками). */
 async function gatherAlreadyParsed(moduleKey: string): Promise<string[]> {
@@ -265,7 +265,7 @@ function ChannelParserInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: 
   const [presetModalOpen, setPresetModalOpen] = useState(false)
   const handleSave = () => setPresetModalOpen(true)
 
-  const applyPreset = useCallback((s: ModuleTaskSettings) => {
+  const applyPreset = useCallback((s: ModulePresetSettings) => {
     remember(s)
     if (Array.isArray(s.keywords)) setKeywords(s.keywords)
     if (s.searchMode !== undefined) setMethod(s.searchMode)
@@ -331,7 +331,7 @@ function ChannelParserInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: 
     <div className="space-y-4">
       <TaskStartedModal task={justStarted} moduleTitle={cfg.title} onClose={dismissJustStarted} />
       <SavePresetModal open={presetModalOpen} onClose={() => setPresetModalOpen(false)}
-        onSave={(name, color, owner) => savePreset(name, buildSettings(), color, owner)} />
+        onSave={(name, color, owner, withAccounts) => savePreset(name, presetSettings(buildSettings(), withAccounts), color, owner)} />
       {/* ТЗ 06.08 §10: выбор шаблона — вверху, до всех настроек (TPL-001). */}
       <PresetBar presets={presets} onApply={applyPreset} onSave={handleSave}
         onEdit={editPreset} onDelete={deletePreset} disabled={running} />

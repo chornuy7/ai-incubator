@@ -12,12 +12,12 @@ import { useModuleTask } from './shared/useModuleTask'
 import { lookupParserCache, setParserWatch, type ParserCacheHit } from '@/api/modulesApi'
 import { SectionCard, NumberField, ProtectionTimings, LaunchPanel, LaunchSteps, markCurrentStep, TaskStartedModal, SchedulePanel, usePresetCarry, useBlockAccess, ParserQueries } from './shared'
 import { PresetBar } from './shared/PresetBar'
-import { SavePresetModal } from './shared/SavePresetModal'
+import { SavePresetModal, presetSettings } from './shared/SavePresetModal'
 import { cn } from '@/shared/lib/utils'
 import { downloadXls } from '@/shared/lib/exportXls'
 import { FolderPicker, SaveToFolderModal } from './shared/FolderPicker'
 import { DedupeButton } from '@/shared/ui/DedupeButton'
-import { fetchModuleTasks, fetchModuleTask, type ModuleTaskSettings } from '@/api/modulesApi'
+import { fetchModuleTasks, fetchModuleTask, type ModuleTaskSettings, type ModulePresetSettings } from '@/api/modulesApi'
 import { fetchTgstatOptions, fetchTgstatSession, fetchTgstatTargets, type TgstatOptions, type TgstatSession } from '@/api/tgstatApi'
 import { LaunchCost } from './shared/LaunchCost'
 
@@ -159,7 +159,7 @@ function Inner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: string }) {
   const handleSave = () => setPresetModalOpen(true)
 
   // Цели (targetList) не восстанавливаем — они ситуативны; переносим фильтры, лимиты и задержки.
-  const applyPreset = useCallback((s: ModuleTaskSettings) => {
+  const applyPreset = useCallback((s: ModulePresetSettings) => {
     remember(s)
     if (s.aiProtection !== undefined) setAiProtect(s.aiProtection)
     if (s.protectionLevel !== undefined) setProtLevel(s.protectionLevel)
@@ -263,7 +263,7 @@ function Inner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: string }) {
     <div className="space-y-4">
       <TaskStartedModal task={justStarted} moduleTitle={cfg.title} onClose={dismissJustStarted} />
       <SavePresetModal open={presetModalOpen} onClose={() => setPresetModalOpen(false)}
-        onSave={(name, color, owner) => savePreset(name, buildSettings(), color, owner)} />
+        onSave={(name, color, owner, withAccounts) => savePreset(name, presetSettings(buildSettings(), withAccounts), color, owner)} />
       {/* ТЗ 06.08 §10: выбор шаблона — вверху, до всех настроек (TPL-001). */}
       <PresetBar presets={presets} onApply={applyPreset} onSave={handleSave}
         onEdit={editPreset} onDelete={deletePreset} disabled={running} />

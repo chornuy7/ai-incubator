@@ -161,21 +161,36 @@ test('исчерпанный лимит ставит задачу на пауз�
   assert.equal(await coins(owner.id), 499)
 })
 
-test('личный кошелёк больше не заводится: и создание, и правка дают общий баланс', async () => {
-  // Правка 27.08: «только общий баланс, у них нету своего кошелька». Вторая касса
-  // порождала расхождение — монеты застревали у сотрудника, а владелец не понимал,
-  // почему у него списалось меньше, чем потрачено.
+test('личный кошелёк включает ВЫДАЧА токенов, а не галочка при создании', async () => {
+  /*
+   * Решение менялось дважды, и это важно помнить при чтении.
+   *
+   * 27.08 личные кошельки запретили: «только общий баланс, у них нету своего кошелька».
+   * Тогда у сотрудника был лимит расхода на кошельке владельца, и вторая касса выглядела
+   * лишней сущностью.
+   *
+   * 30.08 (MR-225) решение отменено: лимит ничего не выделял, и пять сотрудников по 100
+   * «влезали» в остаток владельца в 100. Настоящая выдача — это перевод, а перевод
+   * невозможен без своего кошелька: начисление вернулось бы владельцу же.
+   *
+   * Поэтому сейчас правило такое: сам по себе сотрудник заводится на ОБЩЕМ балансе, а
+   * личный кошелёк появляется как СЛЕДСТВИЕ первой выдачи — не выбором в форме.
+   */
   const st = `${Date.now()}e`
   const owner = await createUser({ email: `o${st}@t.io`, password: 'secret123', name: 'Владелец' })
-  const sub = await createUser({ email: `s${st}@t.io`, password: 'secret123', name: 'Ваня', parentId: owner.id, balanceMode: 'individual' })
-  assert.equal(sub.balanceMode, 'shared', 'при создании личный кошелёк не включается')
-
-  const upd = await updateUser(sub.id, { balanceMode: 'individual' })
-  assert.equal(upd.balanceMode, 'shared', 'и правкой его обратно не вернуть')
+  const sub = await createUser({ email: `s${st}@t.io`, password: 'secret123', name: 'Ваня', parentId: owner.id })
+  assert.equal(sub.balanceMode, 'shared', 'по умолчанию — общий баланс владельца')
 
   await changeCoins(60, 'старт', owner.id, 'grant')
   await changeCoins(-20, 'трата сотрудника', sub.id)
-  assert.equal(await coins(owner.id), 40, 'тратит из кошелька владельца')
+  assert.equal(await coins(owner.id), 40, 'без выдачи сотрудник тратит из кошелька владельца')
+
+  const { transferCoins } = await import('../balance.js')
+  const итог = await transferCoins({ ownerId: owner.id, subId: sub.id, amount: 15 })
+  assert.equal(итог.ownerLeft, 25, 'у владельца стало меньше ровно на выданное')
+  assert.equal(итог.subLeft, 15, 'у сотрудника появился свой остаток')
+  const после = await updateUser(sub.id, {})
+  assert.equal(после.balanceMode, 'individual', 'режим сменила сама выдача')
 })
 
 test('витрина сотрудника: денег нет, токены — в пределах потолка', async () => {

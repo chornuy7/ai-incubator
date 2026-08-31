@@ -226,16 +226,27 @@ export async function fetchAllTasks(): Promise<ModuleTask[]> {
   return data.tasks
 }
 
+/**
+ * MR-195: настройки ШАБЛОНА — не то же самое, что настройки задачи. Аккаунты в шаблоне
+ * необязательны: по умолчанию он сохраняется без них (созвон 27.08 — «чаще нужны шаблоны
+ * без аккаунтов»), и тогда ключа в настройках просто нет.
+ *
+ * Именно нет, а не пустой массив: `[]` читалось бы как «шаблон снимает выбор аккаунтов»,
+ * тогда как он его не трогает. У настроек задачи поле остаётся обязательным — на запуске
+ * аккаунты нужны всегда, и этот контракт правка не ослабляет.
+ */
+export type ModulePresetSettings = Omit<ModuleTaskSettings, 'accountIds'> & { accountIds?: string[] }
+
 export interface ModulePreset {
   id: string
   name: string
   createdAt: number
-  settings: ModuleTaskSettings
+  settings: ModulePresetSettings
   color?: string // §7: цветовая метка шаблона (ключ из PRESET_COLORS)
   owner?: string // §7: владелец персонального шаблона (Маша/Паша)
 }
 
-export async function saveModulePreset(moduleKey: string, name: string, settings: ModuleTaskSettings, color?: string, owner?: string) {
+export async function saveModulePreset(moduleKey: string, name: string, settings: ModulePresetSettings, color?: string, owner?: string) {
   return apiPost(`${base(moduleKey)}/presets`, { name, settings, color, owner })
 }
 
