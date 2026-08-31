@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { Bookmark, Pencil, Plus, X } from 'lucide-react'
-import type { ModulePreset, ModuleTaskSettings } from '@/api/modulesApi'
+import type { ModulePreset, ModulePresetSettings } from '@/api/modulesApi'
 import { presetHex } from './SavePresetModal'
 import { cn } from '@/shared/lib/utils'
 
@@ -25,7 +25,7 @@ import { cn } from '@/shared/lib/utils'
  */
 type PresetProps = {
   presets?: ModulePreset[]
-  onApply?: (settings: ModuleTaskSettings) => void
+  onApply?: (settings: ModulePresetSettings) => void
   /** Открывает модалку сохранения текущих настроек (имя, цвет, владелец). */
   onSave: () => void
   onEdit?: (p: ModulePreset) => void
@@ -115,8 +115,9 @@ export function PresetBar({ presets = [], onApply, onSave, onEdit, onDelete, dis
         </button>
       </div>
       {/* Правка 26.08: аккаунты шаблон теперь и восстанавливает, а не только сохраняет —
-          подпись обязана говорить правду, иначе она сама сбивает с толку. */}
-      <p className="mt-1.5 text-xs text-muted">Клик по шаблону — подставить сохранённые настройки вместе с выбором аккаунтов. Недоступных в подстановку не берём.</p>
+          подпись обязана говорить правду, иначе она сама сбивает с толку. MR-195: с той же
+          оговоркой — аккаунты есть только у шаблонов, сохранённых вместе с ними. */}
+      <p className="mt-1.5 text-xs text-muted">Клик по шаблону — подставить сохранённые настройки. Выбор аккаунтов подставляется, только если шаблон сохранён вместе с ними; недоступных в подстановку не берём.</p>
     </div>
   )
 }
