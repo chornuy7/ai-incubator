@@ -1694,7 +1694,13 @@ app.post('/api/subscription', async (req, res) => {
         charged = periodCost(sum, months || 1, effPrices.annualDiscount)
         // Продление считаем от КОНЦА действующей подписки, а не от «сегодня»: иначе
         // человек, продливший заранее, терял оплаченный остаток.
-        extendTo = Math.max(now, activeUntil) + Math.round((months || 1) * 30 * 24 * 60 * 60 * 1000)
+        // Календарные месяцы, а не 30 суток на каждый: год оплаты — это ровно год, а не
+        // 360 дней (31.08). Покупка задаёт и день цикла — от него считаются все следующие.
+        const { nextCycle } = await import('./lib/billingCycle.js')
+        const старт = Math.max(now, activeUntil)
+        const деньЦикла = new Date(старт).getUTCDate()
+        extendTo = старт
+        for (let n = 0; n < (months || 1); n++) extendTo = nextCycle(extendTo, деньЦикла)
       }
 
       if (charged > 0) {
@@ -1707,18 +1713,22 @@ app.post('/api/subscription', async (req, res) => {
         /*
          * В журнале пишем, ЧТО куплено, а не только сколько штук. «Докупка 1 модул.»
          * не отвечает на единственный вопрос, ради которого в историю и заходят: за
-         * что списали деньги (вопрос владельца 21.08). Длинный набор сворачиваем —
-         * строка истории должна читаться, а не переноситься на три ряда.
+         * что списали деньги (вопрос владельца 21.08). Набор называем его именем
+         * («Всё включено»), а не перечислением четырнадцати модулей: человек покупал
+         * набор и в истории должен узнать свою покупку (MR-230).
          */
-        const { moduleLabel } = await import('./lib/accountLocks.js')
-        const names = (keys) => {
-          const labels = keys.map((k) => moduleLabel(k))
-          return labels.length > 3 ? `${labels.slice(0, 3).join(', ')} и ещё ${labels.length - 3}` : labels.join(', ')
-        }
+        const { describeModules } = await import('./lib/subscriptionLabel.js')
+        /*
+         * Подпись и сохранённый состав считаем из ОДНОЙ переменной. Порознь они однажды
+         * разъедутся, и в истории будет написано одно, а по клику развернётся другое —
+         * причём заметит это только клиент и только на своих деньгах.
+         */
+        const состав = added.length && activeUntil > now ? added : (list === 'all' ? [] : list)
+        const подпись = list === 'all' && !состав.length ? 'все модули' : await describeModules(состав)
         const what = added.length && activeUntil > now
-          ? `докупка до конца подписки — ${names(added)}`
-          : `на ${months || 1} мес. — ${list === 'all' ? 'все модули' : names(list)}`
-        await changeUsd(-charged, `Подписка: ${what}`, target)
+          ? `докупка до конца подписки — ${подпись}`
+          : `на ${months || 1} мес. — ${подпись}`
+        await changeUsd(-charged, `Подписка: ${what}`, target, undefined, состав)
       }
     }
     // Баг 19.08 (§2): покупка модуля ЗАТИРАЛА набор. Клиент присылал полный список,
@@ -1740,17 +1750,17 @@ app.post('/api/subscription', async (req, res) => {
     if (addedModules.length) {
       // Начисление одно на два блока ниже (месячные токены и подарок). Раньше `changeCoins`
       // объявлялся ВНУТРИ `if (creditedTokens > 0)`, а подарок вызывал его снаружи — за
-      // пределами области видимости. Падало ReferenceError прямо в пустой catch, поэтому
+      // пределами области видимости. То же и с `describeModules`: подпись нужна обоим
+      // блокам. Падало ReferenceError прямо в пустой catch, поэтому
       // подарок молча не начислялся ни разу: тесты модуля были зелёными, а живая покупка
       // подарка не давала.
       const { changeCoins } = await import('./balance.js')
+      const { describeModules } = await import('./lib/subscriptionLabel.js')
       creditedTokens = addedModules.reduce((sum, k) => sum + (Number(effPrices.tokensMap?.[k]) || 0), 0)
       if (creditedTokens > 0) {
-        // Здесь тоже имена: «за что дали 300 токенов» — тот же вопрос, что и про деньги.
-        const { moduleLabel: label } = await import('./lib/accountLocks.js')
-        const list3 = addedModules.map((k) => label(k))
-        const shown = list3.length > 3 ? `${list3.slice(0, 3).join(', ')} и ещё ${list3.length - 3}` : list3.join(', ')
-        await changeCoins(creditedTokens, `Токены подписки (первый месяц): ${shown}`, target, 'grant')
+        // Здесь тот же вопрос, что и про деньги: «за что дали 300 токенов» (MR-230).
+        const shown = await describeModules(addedModules)
+        await changeCoins(creditedTokens, `Токены подписки (первый месяц): ${shown}`, target, 'grant', addedModules)
       }
       // MR-189: ПОДАРОЧНЫЕ ⚡ — единоразово за модуль. До этой правки они считались в
       // стоимости набора и показывались на витрине («+200 ⚡ в подарок»), но ни одна точка
@@ -1760,10 +1770,9 @@ app.post('/api/subscription', async (req, res) => {
         const { pendingGift, markGifted } = await import('./userGifts.js')
         const gift = await pendingGift(target, addedModules, effPrices.giftMap || {})
         if (gift.coins > 0) {
-          const { moduleLabel: label2 } = await import('./lib/accountLocks.js')
-          const names = gift.modules.map((k) => label2(k))
-          const shownGift = names.length > 3 ? `${names.slice(0, 3).join(', ')} и ещё ${names.length - 3}` : names.join(', ')
-          await changeCoins(gift.coins, `Подарочные токены (разово): ${shownGift}`, target, 'grant')
+          // Тот же текст пишет фоновая сверка подарков — и подпись должна быть та же.
+          const shownGift = await describeModules(gift.modules)
+          await changeCoins(gift.coins, `Подарочные токены (разово): ${shownGift}`, target, 'grant', gift.modules)
           await markGifted(target, gift.modules, effPrices.giftMap || {})
         }
       } catch (err) {
@@ -1880,16 +1889,27 @@ app.get('/api/balance', async (req, res) => {
      * взять деньги. Берём ФАКТ из журнала, а не пересчитываем цену заново: в журнале
      * записано то, что действительно произошло, с суммой и датой попытки.
      */
+    /*
+     * MR-230: как называется подписка человека. Если состав в точности совпал с готовым
+     * набором — отдаём его имя, и панель пишет «Всё включено» вместо четырнадцати плашек.
+     * Считает сервер: он же формирует подписи в истории операций, и разъехаться им нельзя.
+     */
+    let setName = null
+    if (Array.isArray(balance.modules) && balance.modules.length) {
+      const { bundleName } = await import('./lib/subscriptionLabel.js')
+      setName = await bundleName(balance.modules).catch(() => null)
+    }
+
     const истекла = balance.expiresAt && Number(balance.expiresAt) <= Date.now()
     if (me && истекла) {
       const { readAudit } = await import('./lib/auditLog.js')
       const [последняя] = await readAudit({ action: 'subscription.renew_failed', initiator: me, limit: 1 }).catch(() => [])
       if (последняя) {
         const m = последняя.meta || {}
-        return res.json({ ok: true, balance: { ...balance, renewFailed: { at: последняя.ts, cost: m.cost, short: m.short } } })
+        return res.json({ ok: true, balance: { ...balance, setName, renewFailed: { at: последняя.ts, cost: m.cost, short: m.short } } })
       }
     }
-    res.json({ ok: true, balance })
+    res.json({ ok: true, balance: { ...balance, setName } })
   } catch (err) { res.status(500).json({ ok: false, error: err instanceof Error ? err.message : 'Ошибка' }) }
 })
 app.post('/api/balance', async (req, res) => {

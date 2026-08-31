@@ -558,7 +558,7 @@ export async function usdByUser() {
  * выдачей (подарок, месячные токены подписки, ручное начисление админом). Влияет на
  * ОТЧЁТЫ, а не на баланс: §3.2 — доходом является покупка плана, а не выданные токены.
  */
-export async function changeCoins(amount, reason = '', userId, kind) {
+export async function changeCoins(amount, reason = '', userId, kind, modules) {
   const delta = Math.round((Number(amount) || 0) * COIN_PRECISION) / COIN_PRECISION
   const k = key(await resolveWalletOwner(userId)) // §4.2 (MR-30): общий баланс → кошелёк владельца
   /*
@@ -579,7 +579,7 @@ export async function changeCoins(amount, reason = '', userId, kind) {
     const before = normCoins(cur?.coins ?? 0)
     const after = normCoins(before + delta)
     await db.from('coin_balance').upsert({ user_id: k, coins: after, updated_at: new Date().toISOString() }, { onConflict: 'user_id' })
-    result = { before, after, applied: Math.round((after - before) * COIN_PRECISION) / COIN_PRECISION, reason, userId: k, actorId: actor, kind }
+    result = { before, after, applied: Math.round((after - before) * COIN_PRECISION) / COIN_PRECISION, reason, userId: k, actorId: actor, kind, modules }
     if (result.applied) await appendWalletEntry(result).catch(() => {})
     return result
   }
@@ -587,7 +587,7 @@ export async function changeCoins(amount, reason = '', userId, kind) {
     const cur = (all && all[k]) || (k === DEFAULT_USER && typeof all?.coins === 'number' ? { coins: all.coins, planId: all.planId } : {})
     const before = normCoins(cur?.coins ?? DEFAULT_STATE.coins)
     const after = normCoins(before + delta)
-    result = { before, after, applied: Math.round((after - before) * COIN_PRECISION) / COIN_PRECISION, reason, userId: k, actorId: actor, kind }
+    result = { before, after, applied: Math.round((after - before) * COIN_PRECISION) / COIN_PRECISION, reason, userId: k, actorId: actor, kind, modules }
     const next = { ...(all || {}) }
     delete next.coins; delete next.planId; delete next.updatedAt // чистим старый корневой формат
     next[k] = { ...cur, coins: after, updatedAt: Date.now() }
@@ -627,16 +627,28 @@ async function appendWalletEntry(entry) {
     // поэтому природу операции фиксируем в момент записи, а не угадываем по тексту
     // причины. Колонка добавляется миграцией 2026-08-22-wallet-kind.sql.
     const kind = entry.kind || null
-    const { error } = await db.from('wallet_log').insert({ ...withActor, currency, kind })
-    if (error && /actor_id/i.test(error.message)) {
-      const { error: eA } = await db.from('wallet_log').insert({ ...base, currency, kind })
-      if (eA) await db.from('wallet_log').insert({ ...base, currency })
-    } else if (error && /kind/i.test(error.message)) {
-      const { error: e2 } = await db.from('wallet_log').insert({ ...withActor, currency })
-      if (e2 && /currency/i.test(e2.message)) await db.from('wallet_log').insert(base)
-    } else if (error && /currency/i.test(error.message)) {
-      await db.from('wallet_log').insert(base)
+    // MR-230: состав подписки — колонкой, а не разбором текста причины. Названия модулей
+    // содержат и запятые, и тире («AIR — AI Rating»), так что любой разделитель однажды
+    // окажется внутри названия. Миграция 2026-08-31-wallet-modules.sql.
+    const modules = Array.isArray(entry.modules) && entry.modules.length ? entry.modules.map(String) : null
+
+    /*
+     * Необязательные колонки появляются миграциями, и запись НЕ должна ломаться, пока
+     * миграция не применена: потерянная строка журнала досаднее потерянного поля.
+     *
+     * Раньше здесь была лесенка вложенных if — по ветке на колонку. С четвёртой она
+     * перестала читаться, а порядок отката в ней уже разъезжался. Теперь одно правило:
+     * база пожаловалась на колонку — выбрасываем её и пробуем снова, пока не останется
+     * тот минимум, который есть в схеме с самого начала.
+     */
+    const строка = { ...withActor, currency, kind, modules }
+    for (const колонка of ['modules', 'actor_id', 'kind', 'currency']) {
+      const { error } = await db.from('wallet_log').insert(строка)
+      if (!error) return
+      if (!new RegExp(колонка, 'i').test(error.message)) break
+      delete строка[колонка]
     }
+    await db.from('wallet_log').insert(base)
     return
   }
   const fs = await import('node:fs/promises')
@@ -654,6 +666,8 @@ async function appendWalletEntry(entry) {
     after: entry.after,
     reason: String(entry.reason || ''),
     currency: entry.currency === 'usd' ? 'usd' : 'coins',
+    // Состав — только когда есть: старый формат строк не раздуваем пустым полем.
+    ...(Array.isArray(entry.modules) && entry.modules.length ? { modules: entry.modules.map(String) } : {}),
   }
   await fs.appendFile(file, JSON.stringify(row) + '\n', 'utf8')
 }
@@ -688,7 +702,9 @@ export async function walletHistory(filter = {}) {
       if (filter.since) q = q.gte('ts', new Date(Number(filter.since)).toISOString())
       return q
     }
-    let { data, error } = await build('ts, user_id, actor_id, amount, before_val, after_val, reason, currency')
+    // Состав подписки (миграция 2026-08-31) — им интерфейс разворачивает «и ещё 11».
+    let { data, error } = await build('ts, user_id, actor_id, amount, before_val, after_val, reason, currency, modules')
+    if (error && /modules/i.test(error.message || '')) ({ data, error } = await build('ts, user_id, actor_id, amount, before_val, after_val, reason, currency'))
     // Колонки актора может ещё не быть (миграция 2026-08-27) — тогда читаем без неё.
     if (error && /actor_id/i.test(error.message || '')) ({ data, error } = await build('ts, user_id, amount, before_val, after_val, reason, currency'))
     if (error && /currency/i.test(error.message || '')) ({ data } = await build('ts, user_id, amount, before_val, after_val, reason'))
@@ -697,6 +713,7 @@ export async function walletHistory(filter = {}) {
       before: r.before_val == null ? null : Number(r.before_val),
       after: r.after_val == null ? null : Number(r.after_val), reason: r.reason || '',
       currency: r.currency === 'usd' ? 'usd' : 'coins',
+      ...(Array.isArray(r.modules) && r.modules.length ? { modules: r.modules } : {}),
     }))
   }
   const fs = await import('node:fs/promises')
@@ -814,7 +831,7 @@ export async function hasCoins(cost = 0, userId) {
  * @param {'purchase'|'grant'} [kind] откуда деньги: клиент заплатил или админ выдал руками.
  * Без пометки считается оплатой — так вели себя все записи до 26.08.
  */
-export async function changeUsd(amount, reason = '', userId, kind) {
+export async function changeUsd(amount, reason = '', userId, kind, modules) {
   const delta = Math.round((Number(amount) || 0) * 100) / 100
   const k = key(await resolveWalletOwner(userId)) // §4.2 (MR-30): общий баланс → кошелёк владельца
   const db = sb()
@@ -827,7 +844,7 @@ export async function changeUsd(amount, reason = '', userId, kind) {
     // Колонка появляется миграцией 2026-07-30-usd-wallet.sql. Пока её нет — честно
     // говорим об этом, а не делаем вид, что деньги зачислены.
     if (error) throw new Error(/usd/i.test(error.message) ? 'Денежный баланс недоступен: примените миграцию 2026-07-30-usd-wallet.sql' : error.message)
-    const result = { before, after, applied: Math.round((after - before) * 100) / 100, reason, userId: k, currency: 'usd', kind: kind || null }
+    const result = { before, after, applied: Math.round((after - before) * 100) / 100, reason, userId: k, currency: 'usd', kind: kind || null, modules }
     if (result.applied) await appendWalletEntry(result).catch(() => {})
     return result
   }
@@ -836,7 +853,7 @@ export async function changeUsd(amount, reason = '', userId, kind) {
     const cur = (all && all[k]) || {}
     const before = normUsd(cur?.usd ?? 0)
     const after = normUsd(before + delta)
-    result = { before, after, applied: Math.round((after - before) * 100) / 100, reason, userId: k, currency: 'usd', kind: kind || null }
+    result = { before, after, applied: Math.round((after - before) * 100) / 100, reason, userId: k, currency: 'usd', kind: kind || null, modules }
     const next = { ...(all || {}) }
     next[k] = { ...cur, usd: after, updatedAt: Date.now() }
     return next

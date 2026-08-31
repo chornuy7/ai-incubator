@@ -212,6 +212,20 @@ export function AppHeader() {
         sub: `подписка продлена${срок.perpetual || срок.expired ? '' : ' · ' + срок.label}`, go: '/panel/user/subscription', ts: w.ts })
       continue
     }
+    /*
+     * Покупка и докупка модулей. Раньше сюда не попадала ни одна: под «продлени» она не
+     * подходит, а последняя ветка ловит только ПЛЮС на счёте. Списание за покупку уходило
+     * молча — заказчик 31.08, купив подписку: «чого увідомленія немає як було раніше».
+     *
+     * Человек только что нажал кнопку сам, но узнать сумму ему всё равно неоткуда: тост
+     * покупки суммы не называет, а колокольчик — единственное место, где операция
+     * остаётся видимой после перезагрузки страницы.
+     */
+    if (/^подписка[:\s]/i.test(w.reason) && w.currency === 'usd' && w.amount < 0) {
+      notifItems.push({ key: `wallet:${w.ts}`, tone: 'yellow', title: `Списано ${подпись}`,
+        sub: `подписка оплачена${срок.perpetual || срок.expired ? '' : ' · ' + срок.label}`, go: '/panel/user/subscription', ts: w.ts })
+      continue
+    }
     if (/токены подписки/i.test(w.reason)) {
       notifItems.push({ key: `wallet:${w.ts}`, tone: 'green', title: `Начислено ${подпись}`,
         sub: 'токены подписки за новый месяц', go: '/panel/my-statistics?tab=wallet', ts: w.ts })
@@ -801,6 +815,23 @@ export function AppHeader() {
             const mods = balance?.modules
             if (mods === 'all' || mods == null) return <div className="text-sm text-muted">Открыты <b className="text-fg">все модули</b> (набор не выбран).</div>
             if (!mods.length) return <div className="text-sm text-muted">Модули не подключены — оформите подписку за {curSym}.</div>
+            /*
+             * MR-230: купил НАБОР — пиши имя набора. Человек брал «Всё включено», а видел
+             * четырнадцать плашек с модулями и не узнавал в них свою покупку. Заказчик:
+             * «ми брали підписку все включено, а чого тут так багато».
+             *
+             * Совпадение считает СЕРВЕР (balance.setName) теми же наборами, что подписывают
+             * операции в истории. Вторая проверка состава на клиенте однажды разъехалась бы
+             * с первой, и в одном месте писалось бы «Всё включено», а в другом — список.
+             */
+            if (balance?.setName) {
+              return (
+                <div className="flex items-center gap-2">
+                  <span className="rounded-lg border border-spark-500/40 bg-spark-500/12 px-2.5 py-1 text-sm font-semibold text-spark-200">{balance.setName}</span>
+                  <span className="text-xs text-muted">{mods.length} {mods.length === 1 ? 'модуль' : mods.length < 5 ? 'модуля' : 'модулей'}</span>
+                </div>
+              )
+            }
             return (
               <div className="flex flex-wrap gap-1.5">
                 {mods.map((k) => (
