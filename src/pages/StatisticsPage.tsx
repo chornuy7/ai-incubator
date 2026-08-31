@@ -299,6 +299,7 @@ function Field({ label, value, accent }: { label: string; value: string; accent?
 const cur = (r: { currency?: 'usd' | 'coins' }) => (r.currency === 'usd' ? '$' : '⚡')
 
 function WalletTab({ coins, usd, isSub, limit }: { coins: number; usd?: number; isSub?: boolean; limit?: number | null }) {
+  const [валютаКошелька, setВалютаКошелька] = useState<'all' | 'coins' | 'usd'>('all')
   const pushToast = useApp((s) => s.pushToast)
   const [rows, setRows] = useState<WalletEntry[] | null>(null)
   useEffect(() => {
@@ -344,8 +345,29 @@ function WalletTab({ coins, usd, isSub, limit }: { coins: number; usd?: number; 
       ) : (
         <Card className="p-4">
           <div className="mb-2 text-sm font-semibold text-fg">Операции по кошельку</div>
+          {!isSub && (
+            <div className="mb-2 flex gap-1">
+              {([['all', 'Всё'], ['coins', 'Токены'], ['usd', 'Деньги']] as const).map(([k, подпись]) => (
+                <button
+                  key={k}
+                  onClick={() => setВалютаКошелька(k)}
+                  className={cn('rounded-lg px-2.5 py-1 text-xs font-semibold transition-colors',
+                    валютаКошелька === k ? 'bg-spark-500/15 text-spark-300' : 'text-muted hover:bg-white/[.04]')}
+                >
+                  {подпись}
+                </button>
+              ))}
+            </div>
+          )}
           <div className="space-y-1">
-            {(isSub ? rows.filter((r) => r.currency !== 'usd') : rows).map((r, i) => {
+            {/*
+              MR-230: фильтр по валюте — заказчик 30.08 просил его и в истории, и в
+              статистике. Сотруднику доллары не показываем вовсе, поэтому у него
+              переключателя нет: выбирать не из чего.
+            */}
+            {(isSub ? rows.filter((r) => r.currency !== 'usd') : rows)
+              .filter((r) => валютаКошелька === 'all' || (валютаКошелька === 'usd' ? r.currency === 'usd' : r.currency !== 'usd'))
+              .map((r, i) => {
               const income = r.amount >= 0
               return (
                 <div key={r.ts + '-' + i} className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5 border-b border-line/30 py-1.5 text-sm last:border-0">
@@ -353,7 +375,7 @@ function WalletTab({ coins, usd, isSub, limit }: { coins: number; usd?: number; 
                     {income ? <ArrowUpRight size={13} /> : <ArrowDownRight size={13} />}
                     {income ? '+' : ''}{fmtCoins(r.amount)} {cur(r)}
                   </span>
-                  {!!r.reason && <span className="min-w-0 flex-1 truncate text-muted">{r.reason}</span>}
+                  {!!r.reason && <span className="min-w-0 flex-1 break-words text-muted">{r.reason}</span>}
                   <span className="text-xs tabular-nums text-faint">осталось {fmtCoins(r.after)} {cur(r)}</span>
                   <span className="ml-auto shrink-0 tabular-nums text-faint">
                     {r.ts ? new Date(r.ts).toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : '—'}

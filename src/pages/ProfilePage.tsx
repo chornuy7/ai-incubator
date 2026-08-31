@@ -4,6 +4,7 @@ import {
   UserCog, Shield, Bell, Handshake, Cable, Save, Copy, History as HistoryIcon, Package, CalendarClock, AlertTriangle, Trash2 } from 'lucide-react'
 import { useApp } from '@/mocks/store'
 import { fetchWalletHistory, type Balance, type WalletEntry } from '@/api/balanceApi'
+import { isSubscriptionEntry } from '@/features/billing/walletKind'
 import { useBalance } from '@/features/billing/balanceStore'
 import { expiryInfo, daysLeftPhrase } from '@/features/billing/expiry'
 import { deleteUser, changeMyPassword } from '@/api/usersApi'
@@ -413,30 +414,87 @@ export function ProfilePage() {
  * можно было только вчитавшись в знак. Теперь плюс зелёный, минус красный, у суммы стоит
  * знак валюты, а «до → после» набрано крупнее подписи.
  */
-function WalletRows({ rows }: { rows: WalletEntry[] | null }) {
+/**
+ * Строки журнала кошелька.
+ *
+ * MR-230, две правки заказчика:
+ *
+ * 1. «Вы не должны обрезать никогда текст». Причина операции стояла в одну строку с
+ *    `truncate` — длинная («Токены подписки (месяц): Мейлинг, Нейрокомментинг и ещё 11»)
+ *    обрывалась многоточием, и за что списали, было не прочесть. Теперь переносится.
+ * 2. «До-после на первой строке, а снизу дата». Раньше всё лежало в один ряд и на узком
+ *    экране разъезжалось.
+ *
+ * `только` — показывать лишь операции по подписке (окно на странице подписок, MR-199).
+ */
+function WalletRows({ rows, только }: { rows: WalletEntry[] | null; только?: 'subscription' }) {
+  const [валюта, setВалюта] = useState<'all' | 'coins' | 'usd'>('all')
   if (!rows) return <div className="text-sm text-muted">Загрузка…</div>
-  if (!rows.length) return <div className="text-sm text-muted">Операций пока не было.</div>
+
+  const свои = только === 'subscription' ? rows.filter((r) => isSubscriptionEntry(r.reason)) : rows
+  const видимые = свои.filter((r) => {
+    if (валюта === 'all') return true
+    const деньги = (r as WalletEntry & { currency?: string }).currency === 'usd'
+    return валюта === 'usd' ? деньги : !деньги
+  })
+
+  /*
+   * Пустой список в окне подписок и в кошельке значит РАЗНОЕ. В кошельке «операций не
+   * было» — правда. В окне подписок операции могут быть, просто ни одна не про подписку
+   * (так у админа: модули выданы, а не куплены). Говорить ему «операций не было» —
+   * враньё, по которому он пойдёт искать несуществующую поломку.
+   */
+  if (!свои.length) {
+    return (
+      <div className="text-sm text-muted">
+        {только === 'subscription' ? 'Покупок подписки и модулей пока не было.' : 'Операций пока не было.'}
+      </div>
+    )
+  }
+
   return (
-    <div className="space-y-1">
-      {rows.map((r, i) => {
-        const plus = r.amount > 0
-        // Доллары приходят отдельной валютой; всё остальное — монеты платформы.
-        const money = (r as WalletEntry & { currency?: string }).currency === 'usd'
-        const unit = money ? '$' : '⚡'
-        return (
-          <div key={r.ts + '-' + i} className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-line/40 py-2 last:border-0">
-            <span className={cn('flex w-28 shrink-0 items-center gap-1 text-base font-bold tabular-nums', plus ? 'text-emerald-300' : 'text-rose-300')}>
-              {plus ? '+' : '−'}{fmtCoins(Math.abs(r.amount))}
-              <span className="text-xs font-semibold opacity-70">{unit}</span>
-            </span>
-            <span className="min-w-0 flex-1 truncate text-sm text-fg">{r.reason || 'без описания'}</span>
-            <span className="shrink-0 text-sm font-semibold tabular-nums text-muted">
-              {fmtCoins(r.before)} <span className="text-faint">→</span> <span className={plus ? 'text-emerald-300' : 'text-rose-300'}>{fmtCoins(r.after)}</span>
-            </span>
-            <span className="w-full shrink-0 text-xs text-faint sm:w-auto">{new Date(r.ts).toLocaleString('ru-RU')}</span>
-          </div>
-        )
-      })}
+    <div>
+      {/* Фильтр по валюте — заказчик 30.08: «чтобы отображались только токены либо только доллары». */}
+      <div className="mb-2 flex gap-1">
+        {([['all', 'Всё'], ['coins', 'Токены'], ['usd', 'Деньги']] as const).map(([k, подпись]) => (
+          <button
+            key={k}
+            onClick={() => setВалюта(k)}
+            className={cn('rounded-lg px-2.5 py-1 text-xs font-semibold transition-colors',
+              валюта === k ? 'bg-spark-500/15 text-spark-300' : 'text-muted hover:bg-white/[.04]')}
+          >
+            {подпись}
+          </button>
+        ))}
+      </div>
+
+      {!видимые.length ? (
+        <div className="py-3 text-sm text-muted">В этом разрезе операций нет.</div>
+      ) : (
+        <div className="space-y-1">
+          {видимые.map((r, i) => {
+            const plus = r.amount > 0
+            const money = (r as WalletEntry & { currency?: string }).currency === 'usd'
+            const unit = money ? '$' : '⚡'
+            return (
+              <div key={r.ts + '-' + i} className="border-b border-line/40 py-2 last:border-0">
+                <div className="flex items-start gap-x-3">
+                  <span className={cn('flex w-28 shrink-0 items-center gap-1 text-base font-bold tabular-nums', plus ? 'text-emerald-300' : 'text-rose-300')}>
+                    {plus ? '+' : '−'}{fmtCoins(Math.abs(r.amount))}
+                    <span className="text-xs font-semibold opacity-70">{unit}</span>
+                  </span>
+                  {/* break-words, а не truncate: текст переносится, а не обрывается. */}
+                  <span className="min-w-0 flex-1 break-words text-sm leading-snug text-fg">{r.reason || 'без описания'}</span>
+                  <span className="shrink-0 text-sm font-semibold tabular-nums text-muted">
+                    {fmtCoins(r.before)} <span className="text-faint">→</span> <span className={plus ? 'text-emerald-300' : 'text-rose-300'}>{fmtCoins(r.after)}</span>
+                  </span>
+                </div>
+                <div className="mt-1 text-xs text-faint">{new Date(r.ts).toLocaleString('ru-RU')}</div>
+              </div>
+            )
+          })}
+        </div>
+      )}
     </div>
   )
 }
@@ -496,7 +554,7 @@ export function WalletHistoryButton() {
         icon={<HistoryIcon size={22} />}
         size="lg"
       >
-        <div className="max-h-[60vh] overflow-y-auto pr-1"><WalletRows rows={rows} /></div>
+        <div className="max-h-[60vh] overflow-y-auto pr-1"><WalletRows rows={rows} только="subscription" /></div>
       </Modal>
     </>
   )
