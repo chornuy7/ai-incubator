@@ -278,8 +278,18 @@ export function AccountsPage() {
   const navigate = useNavigate() // §3: обзор аккаунта — вьюшка, а не модалка
 
   const [tab, setTab] = useTabParam<'accounts' | 'trash'>('accounts')
-  const [statusFilter, setStatusFilter] = useState<AccountStatus | 'all'>('all')
-  const [riskFilter, setRiskFilter] = useState<RiskKey | 'all'>('all')
+  /*
+   * MR-235: фильтры статуса и риска живут в АДРЕСЕ, а не в состоянии компонента.
+   *
+   * Разбор в шапке («в строю 16 из 49 · Спамблок 31») теперь кликабельный: нажал причину —
+   * открылся менеджер, уже отфильтрованный по ней. Для этого фильтр должен читаться из
+   * ссылки, иначе переход открывал бы общий список и человек искал бы те самые 31 вручную.
+   *
+   * Побочно и полезно: фильтр переживает F5 и такую ссылку можно переслать коллеге.
+   * Хук тот же, что у вкладок, и он сохраняет остальные параметры адреса.
+   */
+  const [statusFilter, setStatusFilter] = useTabParam<AccountStatus | 'all'>('all', 'status')
+  const [riskFilter, setRiskFilter] = useTabParam<RiskKey | 'all'>('all', 'risk')
   // Правка 14.08: единый источник прокси — каталог (страница «Прокси»). В менеджере в колонке
   // «Прокси» показываем НАЗВАНИЕ прокси из каталога (напр. «PL TEST 2»), а не сырой адрес.
   const [proxyNames, setProxyNames] = useState<Record<string, string>>({})

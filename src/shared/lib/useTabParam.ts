@@ -12,6 +12,9 @@ import { useSearchParams } from 'react-router-dom'
  * Пишем через `replace`, чтобы переключение вкладок не засоряло историю браузера.
  * `key` — на случай нескольких независимых переключателей на одной странице.
  */
+/** Общий буфер записей в адрес — см. пояснение внутри `set`. */
+let буфер: URLSearchParams | null = null
+
 export function useTabParam<T extends string | number>(defaultValue: T, key = 'tab'): [T, (v: T) => void] {
   const [sp, setSp] = useSearchParams()
   const raw = sp.get(key)
@@ -29,9 +32,20 @@ export function useTabParam<T extends string | number>(defaultValue: T, key = 't
 
   const set = useCallback((v: T) => {
     setSp((prev) => {
-      const next = new URLSearchParams(prev)
-      next.set(key, String(v))
-      return next
+      /*
+       * Несколько вызовов в одном обработчике должны СЛОЖИТЬСЯ, а не затереть друг друга.
+       *
+       * Обработчик плитки статуса делает три записи подряд: статус, риск, вкладка. React
+       * Router разрешает `prev` из текущего адреса, поэтому все три стартуют с одной базы
+       * и выживает последняя — фильтр молча терялся, а плитка не подсвечивалась.
+       *
+       * Копим изменения в общем буфере и сбрасываем его микрозадачей: в пределах одного
+       * обработчика записи складываются, следующий начинает с чистого адреса.
+       */
+      const база = буфер ?? new URLSearchParams(prev)
+      база.set(key, String(v))
+      if (!буфер) { буфер = база; queueMicrotask(() => { буфер = null }) }
+      return new URLSearchParams(база)
     }, { replace: true })
   }, [key, setSp])
 
