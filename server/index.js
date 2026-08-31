@@ -1440,8 +1440,19 @@ app.post('/api/tickets/:id/status', async (req, res) => {
   try {
     const { requesterContext } = await import('./lib/accessGuard.js')
     const ctx = await requesterContext(req)
-    if (!ctx.isSupport) return res.status(403).json({ ok: false, error: 'Статусы меняет только поддержка' })
-    const { setStatus } = await import('./tickets.js')
+    /*
+     * Приёмка 31.08: обращение сотрудника висело «в работе» вечно — закрыть его было
+     * некому. Проверка стояла одна: «статусы меняет только поддержка», а владелец,
+     * которому обращение адресовано, нашей поддержкой не является.
+     *
+     * Право закрыть — у той же стороны, что отвечает: адресат запроса либо платформенная
+     * поддержка. Тем же правилом, что в /reply, чтобы не разъехалось.
+     */
+    const { getTicket, setStatus } = await import('./tickets.js')
+    const t = await getTicket(String(req.params.id))
+    if (!t) return res.status(404).json({ ok: false, error: 'Тикет не найден' })
+    const адресат = !!(t.toOwnerId && String(t.toOwnerId) === String(ctx.id))
+    if (!адресат && !ctx.isSupport) return res.status(403).json({ ok: false, error: 'Статус меняет тот, кому адресовано обращение' })
     res.json({ ok: true, ticket: await setStatus(String(req.params.id), String((req.body || {}).status)) })
   } catch (err) { res.status(400).json({ ok: false, error: err instanceof Error ? err.message : 'Ошибка' }) }
 })

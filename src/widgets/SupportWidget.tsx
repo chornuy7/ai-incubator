@@ -20,7 +20,6 @@ export function SupportWidget() {
    * невозможно поймать взглядом — особенно на странице, где и без неё десяток значков.
    */
   const [непрочитанных, setНепрочитанных] = useState(0)
-  const [скрыто, setСкрыто] = useState(false)
   const isSub = useSession((s) => s.user?.isSub)
   const nav = useNavigate()
   const go = (to: string) => { setOpen(false); nav(to) }
@@ -48,19 +47,11 @@ export function SupportWidget() {
       className="fixed z-[98] flex flex-col items-end gap-2 print:hidden"
     >
       {/*
-        Подсказка слева от кружка: прямоугольник со стрелкой и текстом. Закрывается
-        крестиком — навязчивая плашка, которую нельзя убрать, раздражает сильнее точки.
-      */}
-      {!open && непрочитанных > 0 && !скрыто && (
-        <div className="relative mb-1 flex items-center gap-2 rounded-xl border border-spark-500/40 bg-spark-500/12 py-1.5 pl-3 pr-2 text-xs font-semibold text-spark-200 shadow-lg shadow-black/30">
-          <button type="button" onClick={() => go('/panel/support')} className="hover:underline">
-            {непрочитанных} {непрочитанных === 1 ? 'пропущенное сообщение' : непрочитанных < 5 ? 'пропущенных сообщения' : 'пропущенных сообщений'}
-          </button>
-          <button type="button" onClick={() => setСкрыто(true)} aria-label="Скрыть" className="text-spark-200/60 hover:text-spark-100"><X size={13} /></button>
-          {/* Стрелка на кружок — чтобы подсказка читалась как относящаяся именно к нему. */}
-          <span className="absolute -bottom-1 right-4 h-2 w-2 rotate-45 border-b border-r border-spark-500/40 bg-spark-500/12" />
-        </div>
-      )}
+       * Плавающая плашка «N пропущенных сообщений» убрана (заказчик 31.08): она висела
+       * поверх поля ввода в переписке — человек шёл отвечать и упирался в неё. Непрочитанное
+       * теперь живёт там, где его и ждут: значком на самой кнопке и строкой внутри карточки,
+       * которая открывается по нажатию.
+       */}
 
       {open && (
         <div className="w-64 origin-bottom-right rounded-2xl border border-line bg-elevated/95 p-3 shadow-lg shadow-black/40 backdrop-blur">
@@ -74,6 +65,15 @@ export function SupportWidget() {
               : 'Мы на связи. Опишите вопрос — команда ответит в течение суток.'}
           </p>
           <div className="flex flex-col gap-2">
+            {непрочитанных > 0 && (
+              <button
+                type="button"
+                onClick={() => go('/panel/support')}
+                className="flex items-center justify-center gap-1.5 rounded-lg border border-spark-500/40 bg-spark-500/12 py-1.5 text-xs font-semibold text-spark-200"
+              >
+                {непрочитанных} {непрочитанных === 1 ? 'непрочитанное сообщение' : непрочитанных < 5 ? 'непрочитанных сообщения' : 'непрочитанных сообщений'}
+              </button>
+            )}
             <button type="button" onClick={() => go('/panel/support?new=1')} className="btn-primary h-9 justify-center text-sm"><Plus size={15} /> Новый тикет</button>
             <button type="button" onClick={() => go('/panel/support')} className="btn-ghost h-9 justify-center text-sm"><MessagesSquare size={15} /> Мои обращения</button>
             <button type="button" onClick={() => go('/panel/support')} className="btn-ghost h-9 justify-center text-sm"><Send size={15} /> Написать в Telegram</button>

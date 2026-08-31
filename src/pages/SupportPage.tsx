@@ -5,7 +5,7 @@ import { useApp } from '@/mocks/store'
 import { useSession } from '@/features/auth/session'
 import { PageHeader, Card, EmptyState, Select, Badge } from '@/shared/ui'
 import { HelpButton } from '@/features/neuro-commenting/moduleUi'
-import { fetchTickets, fetchTicket, createTicket, replyTicket, type ApiTicket, type TicketStatus } from '@/api/ticketsApi'
+import { fetchTickets, fetchTicket, createTicket, replyTicket, setTicketStatus, type ApiTicket, type TicketStatus } from '@/api/ticketsApi'
 import { TicketChat, shortId } from '@/features/support/TicketChat'
 import { cn } from '@/shared/lib/utils'
 
@@ -52,6 +52,7 @@ export function SupportPage() {
   const [openTicket, setOpenTicket] = useState<ApiTicket | null>(null)
   const [reply, setReply] = useState('')
   const [replying, setReplying] = useState(false)
+  const [меняюСтатус, setМеняюСтатус] = useState(false)
   const [params, setParams] = useSearchParams()
 
   const load = useCallback(async () => {
@@ -179,6 +180,30 @@ export function SupportPage() {
           <div className="flex items-center gap-2 border-b border-line px-4 py-2.5">
             <Badge tone={meta.tone}>{meta.label}</Badge>
             <span className="text-xs text-muted">Обновлён {fmtTs(openTicket.updatedAt)}</span>
+            {/*
+              * Приёмка 31.08: обращение висело «в работе» вечно — закрыть его было некому.
+              * Кнопка у той же стороны, что отвечает: у платформенной поддержки и у
+              * владельца, которому обращение адресовано. Клиенту закрывать нечего —
+              * он и так знает, решён его вопрос или нет.
+              */}
+            {(isSupportView || (!!openTicket.toOwnerId && openTicket.toOwnerId === sessionUser?.id)) && (
+              <button
+                disabled={меняюСтатус}
+                onClick={async () => {
+                  setМеняюСтатус(true)
+                  try {
+                    const след: TicketStatus = openTicket.status === 'closed' ? 'open' : 'closed'
+                    setOpenTicket(await setTicketStatus(openTicket.id, след))
+                    await load()
+                  } catch (e) {
+                    pushToast({ type: 'error', title: 'Не удалось изменить статус', desc: e instanceof Error ? e.message : '' })
+                  } finally { setМеняюСтатус(false) }
+                }}
+                className="btn-ghost ml-auto h-8 shrink-0 text-xs"
+              >
+                {openTicket.status === 'closed' ? 'Открыть заново' : 'Закрыть обращение'}
+              </button>
+            )}
           </div>
           {/* Лента во всю доступную высоту — чат, а не окошко. */}
           <div ref={feedRef} className="h-[calc(100vh-24rem)] min-h-[280px] overflow-y-auto bg-surface/40 px-4 py-3">

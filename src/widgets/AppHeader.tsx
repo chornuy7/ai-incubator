@@ -229,6 +229,27 @@ export function AppHeader() {
         sub: `подписка оплачена${срок.perpetual || срок.expired ? '' : ' · ' + срок.label}`, go: '/panel/user/subscription', ts: w.ts })
       continue
     }
+    /*
+     * MR-225: переход токенов между владельцем и сотрудником.
+     *
+     * Приёмка 31.08: владелец выдал сотруднику 200 ⚡, и НИ ОДНА из сторон об этом не
+     * узнала — в колокольчике пусто. Это движение чужих денег в обе стороны: сотруднику
+     * важно, что топливо пришло, владельцу — что оно ушло с его баланса. Причины пишет
+     * balance.js, здесь мы их только узнаём.
+     */
+    if (/получено от владельца/i.test(w.reason)) {
+      notifItems.push({ key: `wallet:${w.ts}`, tone: 'green', title: `Начислено ${подпись}`,
+        sub: 'выдал администратор пространства', go: '/panel/my-statistics?tab=wallet', ts: w.ts })
+      continue
+    }
+    if (/выдача токенов сотруднику|изъятие токенов владельцем|возврат от сотрудника/i.test(w.reason)) {
+      // Само действие описано в причине («Выдача токенов сотруднику Маша») — её и показываем:
+      // в заголовке сумма, ниже кому и за что, иначе владелец не поймёт, о ком речь.
+      notifItems.push({ key: `wallet:${w.ts}`, tone: w.amount > 0 ? 'green' : 'yellow',
+        title: `${w.amount > 0 ? 'Возвращено' : 'Выдано'} ${подпись}`,
+        sub: w.reason, go: '/panel/users', ts: w.ts })
+      continue
+    }
     if (/токены подписки/i.test(w.reason)) {
       notifItems.push({ key: `wallet:${w.ts}`, tone: 'green', title: `Начислено ${подпись}`,
         sub: 'токены подписки за новый месяц', go: '/panel/my-statistics?tab=wallet', ts: w.ts })
@@ -258,6 +279,22 @@ export function AppHeader() {
   for (const tk of tickets) {
     if (tk.status === 'closed' || dismissed.has(`ticket:${tk.id}`)) continue
     const supReplied = tk.messages?.[tk.messages.length - 1]?.from === 'support'
+    /*
+     * Переписка с ЖИВЫМ человеком, а не с ролью (MR-257). Заказчик 31.08: «пусть будет
+     * уведомление — сообщение от Модер 1, чтобы он понимал».
+     *
+     * «Поддержка: тема» здесь читалось бы как ответ платформы, хотя пишет свой сотрудник
+     * или свой администратор. Кто именно — берём из последнего сообщения; у своих
+     * обращений имя есть всегда, у платформенных остаётся прежняя подпись.
+     */
+    const последнее = tk.messages?.[tk.messages.length - 1]
+    const свои = !!tk.toOwnerId
+    const автор = последнее?.authorName || последнее?.authorEmail || ''
+    if (свои && автор) {
+      notifItems.push({ key: `ticket:${tk.id}`, tone: 'yellow', title: `Сообщение от ${автор}`,
+        sub: tk.subject, go: '/panel/support', ts: tk.updatedAt || Date.now() })
+      continue
+    }
     notifItems.push({ key: `ticket:${tk.id}`, tone: 'yellow', title: `Поддержка: ${tk.subject}`, sub: supReplied ? 'поддержка ответила' : 'ожидается ответ поддержки', go: '/panel/support', ts: tk.updatedAt || Date.now() })
   }
   // MR-134: 🟡 пропущенные ЛС — диалоги, ждущие нашего ответа дольше таймаута.
