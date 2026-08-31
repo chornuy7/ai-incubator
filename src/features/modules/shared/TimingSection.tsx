@@ -342,8 +342,14 @@ export function TimingSection(props: TimingSectionProps) {
             </div>
 
             <div className="space-y-4 rounded-2xl border border-line bg-elevated/40 p-4">
+              {/* «для цели» здесь означало целевое ДЕЙСТВИЕ — сколько раз аккаунт
+                  прокомментирует, поставит реакцию и т. д. Но «цель» в платформе — отдельная
+                  сущность (цель кампании, `goalId`, со своей базой знаний и критерием
+                  завершения), и одно слово на два понятия путало прямо в форме запуска.
+                  Подпись приведена к словарю парного поля выше — оно называется «Всего
+                  действий», значит здесь тоже действия. */}
               {perAccount && (
-                <MinMaxField label={computedTotal ? 'Сколько сделает 1 аккаунт для цели' : 'На аккаунт'} min={perAccount.min} max={perAccount.max} onMin={(v) => editPerAccount('min', v)} onMax={(v) => editPerAccount('max', v)} />
+                <MinMaxField label={computedTotal ? 'Сколько действий сделает 1 аккаунт' : 'На аккаунт'} min={perAccount.min} max={perAccount.max} onMin={(v) => editPerAccount('min', v)} onMax={(v) => editPerAccount('max', v)} />
               )}
               {minWords && (
                 <NumberField label="Мин. слов в посте" value={minWords.value} onChange={minWords.onChange} />
