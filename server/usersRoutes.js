@@ -451,7 +451,9 @@ usersRouter.get('/limits', async (req, res) => {
        * Считаем по журналу: сумма всех начислений сотруднику. Изъятия (отрицательные) не
        * вычитаем — вопрос именно «сколько выдал за всё время», а не «сколько сейчас у него».
        */
-      const log = await walletHistory({ userId: u.id, limit: 1000 }).catch(() => [])
+      // exact: журнал СОТРУДНИКА, а не владельца кошелька. Без этого у сотрудника на общем
+      // балансе «выдано» показывало начисления владельца — 200 токенов подписки вместо нуля.
+      const log = await walletHistory({ userId: u.id, limit: 1000, exact: true }).catch(() => [])
       const выдано = log.filter((r) => r.currency !== 'usd' && Number(r.amount) > 0)
         .reduce((sum, r) => Math.round((sum + Number(r.amount)) * 1000) / 1000, 0)
       rows.push({
@@ -478,7 +480,7 @@ usersRouter.get('/wallets', async (req, res) => {
     const rows = []
     for (const u of mine) {
       const { coins } = await getBalance(u.id)
-      const log = await walletHistory({ userId: u.id, limit: 1000 })
+      const log = await walletHistory({ userId: u.id, limit: 1000, exact: true })
       const granted = log
         .filter((r) => r.currency !== 'usd' && Number(r.amount) > 0)
         .reduce((sum, r) => Math.round((sum + Number(r.amount)) * 1000) / 1000, 0)

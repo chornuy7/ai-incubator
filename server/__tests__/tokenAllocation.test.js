@@ -93,6 +93,21 @@ test('карточка сотрудника показывает выдачу, �
   assert.match(форма, /r\.packs \|\| \[\]/)
 })
 
+test('«выдано всего» считается по журналу СОТРУДНИКА, а не владельца', () => {
+  /*
+   * Баг приёмки 31.08: у сотрудника, которому не выдавали ничего, витрина показала
+   * «выдано 200 ⚡». Это были токены подписки ВЛАДЕЛЬЦА: история сотрудника на общем
+   * балансе читается по кошельку владельца (своей у него нет), и сумма начислений
+   * владельца выдавалась за выданное сотруднику.
+   */
+  const роуты = fs.readFileSync(new URL('../usersRoutes.js', import.meta.url), 'utf8')
+  const место = роуты.slice(роуты.indexOf('const свои = u.balanceMode'), роуты.indexOf('rows.push({'))
+  assert.match(место, /walletHistory\(\{ userId: u\.id, limit: 1000, exact: true \}\)/)
+  const баланс = fs.readFileSync(new URL('../balance.js', import.meta.url), 'utf8')
+  // Обычный режим по-прежнему поднимается к владельцу: своей истории у сотрудника нет.
+  assert.match(баланс, /filter\.exact \? filter\.userId : await resolveWalletOwner\(filter\.userId\)/)
+})
+
 test('сервер отдаёт витрине собственный остаток сотрудника', () => {
   const роуты = fs.readFileSync(new URL('../usersRoutes.js', import.meta.url), 'utf8')
   assert.match(роуты, /own: свои/, 'в /limits есть свой остаток')
