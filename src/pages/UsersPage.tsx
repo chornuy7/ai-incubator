@@ -920,10 +920,21 @@ function SubWalletEditor({ sub, onMode }: { sub: User; onMode: (next: User) => v
 
   const деньги = (t: number) => (курс && курс > 0 ? ` ≈ $${(t * курс).toFixed(2)}` : '')
   const цена = (k: string, запас: number) => prices[k] ?? запас
-  const действий = (свои ?? 0) > 0 ? [
-    { n: Math.floor((свои as number) / цена('neuro-commenting', 0.05)), what: 'комментариев или сообщений' },
-    { n: Math.floor((свои as number) / цена('mass-react', 0.01)), what: 'реакций, просмотров, действий прогрева' },
-    { n: Math.floor((свои as number) / цена('parsing', 0.005)), what: 'строк парсинга' },
+  /*
+   * Считаем по ВВЕДЁННОЙ сумме, пока в поле что-то есть (правка по приёмке 31.08:
+   * «при выдаче должно сразу указывать математику за 100 токенов, и при вводе мы
+   * математику пересчитываем с указанными токенами»).
+   *
+   * Решение принимают ДО нажатия: «сто токенов — это много или мало?» Отвечать на него
+   * остатком, который уже у сотрудника, — значит отвечать на другой вопрос. Поле пустое —
+   * возвращаемся к его остатку: тогда вопрос снова про «сколько у него есть».
+   */
+  const введено = Math.max(0, Number(сумма) || 0)
+  const считаемПо = введено > 0 ? введено : (свои ?? 0)
+  const действий = считаемПо > 0 ? [
+    { n: Math.floor(считаемПо / цена('neuro-commenting', 0.05)), what: 'комментариев или сообщений' },
+    { n: Math.floor(считаемПо / цена('mass-react', 0.01)), what: 'реакций, просмотров, действий прогрева' },
+    { n: Math.floor(считаемПо / цена('parsing', 0.005)), what: 'строк парсинга' },
   ] : []
   const нф = (n: number) => n.toLocaleString('ru-RU')
 
@@ -978,7 +989,9 @@ function SubWalletEditor({ sub, onMode }: { sub: User; onMode: (next: User) => v
 
         {действий.length > 0 && (
           <div className="mt-2 rounded-lg border border-spark-500/20 bg-spark-500/8 px-2.5 py-2 text-[11px] leading-relaxed text-white/60">
-            <b className="text-fg">{свои} ⚡ — это примерно:</b>
+            <b className="text-fg">{считаемПо} ⚡{деньги(считаемПо)} — это примерно:</b>
+            {/* Говорим, о каком именно числе речь: о вводимой выдаче или об остатке. */}
+            <span className="text-white/35">{введено > 0 ? ' (столько собираетесь выдать)' : ' (сейчас у сотрудника)'}</span>
             {действий.map((d) => (
               <span key={d.what} className="block">· до <b className="tabular-nums text-white/80">{нф(d.n)}</b> {d.what}</span>
             ))}
