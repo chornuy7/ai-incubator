@@ -43,6 +43,13 @@ export function StatisticsPage() {
 
 const fmtInt = (n: number) => compact(Math.round(n || 0))
 
+/** Разделы «Моей статистики». Ключи те же, что были у вкладок, — ссылки не ломаются. */
+const TABS = [
+  { key: 'dashboard', label: 'Дашборд' },
+  { key: 'log', label: 'Запуски' },
+  { key: 'wallet', label: 'Кошелёк' },
+]
+
 function MyStatistics() {
   const pushToast = useApp((s) => s.pushToast)
   const [range, setRange] = useState(2)
@@ -76,6 +83,24 @@ function MyStatistics() {
     [stats?.daily],
   )
 
+  /*
+   * MR-233: экспорт формирует файл по ОТКРЫТОМУ разделу.
+   *
+   * Владелец 30.08: «Это косяк, это баг. Он должен скачивать статистику по открытому
+   * разделу: дашборд — дашборд, запуски — запуски, кошелёк — кошелёк». Раньше кнопка
+   * всегда выгружала разбивку по модулям, в каком бы разделе человек ни стоял, — и
+   * файл молча не совпадал с тем, что на экране.
+   */
+  const [wallet, setWallet] = useState<WalletEntry[] | null>(null)
+  // История кошелька живёт здесь, а не внутри вкладки: её выгружает экспорт, и тянуть
+  // данные из дочернего компонента ради этого пришлось бы обратным вызовом.
+  useEffect(() => {
+    if (tab !== 'wallet' || wallet) return
+    fetchWalletHistory(50)
+      .then(setWallet)
+      .catch((e) => { setWallet([]); pushToast({ type: 'error', title: 'Не удалось загрузить историю кошелька', desc: e instanceof Error ? e.message : '' }) })
+  }, [tab]) // eslint-disable-line react-hooks/exhaustive-deps
+
   const exportBtn = (
     <Dropdown
       width={200}
@@ -83,7 +108,7 @@ function MyStatistics() {
     >
       {(close) => (
         <>
-          <MenuItem icon={<FileSpreadsheet size={15} />} onClick={() => { if (stats) exportMyCsv(stats, pushToast); close() }}>Скачать CSV</MenuItem>
+          <MenuItem icon={<FileSpreadsheet size={15} />} onClick={() => { if (stats) exportMyCsv(stats, tab, wallet, pushToast); close() }}>Скачать CSV</MenuItem>
           <MenuItem icon={<FileJson size={15} />} onClick={() => { pushToast({ type: 'success', title: 'Экспорт JSON', desc: 'my-stats.json (демо).' }); close() }}>Скачать JSON</MenuItem>
         </>
       )}
@@ -97,23 +122,27 @@ function MyStatistics() {
         subtitle="Моя активность и расходы"
         icon={<BarChart3 size={22} />}
         actions={<>
+          {/* MR-231: сверху остались только «Обновить» и «?». Периоды и экспорт уехали
+              вниз, в один ряд с разделами: «эти две кнопки опусти их вниз, чтобы они
+              лежали напротив „Дашборд, Запуски, Кошелёк“». */}
           <HelpButton topic="my-statistics" className="h-10 w-10" />
           <button onClick={() => void load()} className="btn-ghost h-10 w-10 px-0" disabled={loading} title="Обновить"><RefreshCw size={16} className={loading ? 'animate-spin' : ''} /></button>
-          <Segmented options={RANGES} value={range} onChange={setRange} size="sm" />
-          {exportBtn}
         </>}
       />
 
-      <Tabs
-        className="mb-5"
-        value={tab}
-        onChange={setTab}
-        tabs={[
-          { key: 'dashboard', label: 'Дашборд' },
-          { key: 'log', label: 'Запуски' },
-          { key: 'wallet', label: 'Кошелёк' },
-        ]}
-      />
+      {/* Разделы — такой же групповой кнопкой, как периоды: два ряда разной формы рядом
+          читались как разные по важности вещи, хотя это два одинаковых переключателя. */}
+      <div className="mb-5 flex flex-wrap items-center justify-between gap-2">
+        <Segmented
+          options={TABS.map((t) => t.label)}
+          value={Math.max(0, TABS.findIndex((t) => t.key === tab))}
+          onChange={(i) => setTab(TABS[i].key)}
+        />
+        <div className="flex flex-wrap items-center gap-2">
+          <Segmented options={RANGES} value={range} onChange={setRange} size="sm" />
+          {exportBtn}
+        </div>
+      </div>
 
       {loading && !stats ? (
         <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
@@ -121,7 +150,7 @@ function MyStatistics() {
           <Skeleton className="col-span-full h-72 rounded-2xl" />
         </div>
       ) : tab === 'wallet' ? (
-        <WalletTab coins={stats?.coins ?? 0} usd={stats?.usd} isSub={!!stats?.isSub} limit={stats?.spendLimit ?? null} />
+        <WalletTab coins={stats?.coins ?? 0} usd={stats?.usd} isSub={!!stats?.isSub} limit={stats?.spendLimit ?? null} rows={wallet} />
       ) : tab === 'log' ? (
         <LogTab log={stats?.log || []} />
       ) : !hasData ? (
@@ -228,6 +257,18 @@ function WhereCard({ where }: { where: MyStats['where'] }) {
  */
 function LogTab({ log }: { log: MyStats['log'] }) {
   const [open, setOpen] = useState<string | null>(null)
+  const pushToast = useApp((s) => s.pushToast)
+  /*
+   * MR-232: ID задачи — ПЕРЕД названием и копируется по клику.
+   *
+   * Владелец 30.08: «Сначала пусть будет ID, потом название. ID должно вообще сразу
+   * копироваться». По названию задачу не найти — их десятки с одинаковым «Нейрокомментинг»,
+   * — а ID это то, с чем идут в дашборд задач и в поддержку.
+   */
+  const копировать = (id: string) => {
+    void navigator.clipboard?.writeText(id)
+    pushToast({ type: 'success', title: 'ID скопирован', desc: id })
+  }
   if (!log.length) return <Card><EmptyState icon={<ListChecks size={26} />} title="Запусков за период нет" desc="Выберите другой период или запустите модуль." /></Card>
 
   const fmtDt = (ts: number) => ts ? new Date(ts).toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : '—'
@@ -252,6 +293,17 @@ function LogTab({ log }: { log: MyStats['log'] }) {
                 className="flex w-full flex-wrap items-center gap-x-2 gap-y-0.5 py-2 text-left text-sm hover:bg-white/[.02]"
               >
                 <ChevronDown size={13} className={cn('shrink-0 text-muted transition-transform', isOpen && 'rotate-180')} />
+                {/* Клик по ID не должен разворачивать строку — это отдельное действие. */}
+                <span
+                  role="button"
+                  tabIndex={0}
+                  title="Скопировать ID задачи"
+                  onClick={(e) => { e.stopPropagation(); копировать(t.id) }}
+                  onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); копировать(t.id) } }}
+                  className="shrink-0 rounded bg-white/5 px-1.5 py-0.5 font-mono text-[11px] text-muted transition-colors hover:bg-white/10 hover:text-fg"
+                >
+                  {t.id}
+                </span>
                 <span className="font-medium text-fg">{t.title}</span>
                 <StatusTag s={t.status} />
                 {!!t.errors && <span className="rounded bg-red-500/12 px-1 text-[10px] font-bold text-red-300">{t.errors} ош.</span>}
@@ -262,6 +314,10 @@ function LogTab({ log }: { log: MyStats['log'] }) {
               </button>
               {isOpen && (
                 <div className="grid grid-cols-2 gap-x-4 gap-y-2 border-t border-line/30 bg-white/[.02] px-3 py-3 text-xs sm:grid-cols-4">
+                  {/* ID первым и здесь: в свёрнутой строке он уже первый, а в раскрытой
+                      лежал последним, в правом нижнем углу — человек искал его глазами
+                      по всей карточке (заказчик 31.08). Порядок должен совпадать. */}
+                  <Field label="ID задачи" value={t.id} />
                   <Field label="Модуль" value={t.title} />
                   <Field label="Действий" value={compact(t.actions)} />
                   <Field label="Списано" value={t.spent ? `${fmtCoins(t.spent)} ⚡` : '—'} accent={t.spent ? 'text-amber-300' : undefined} />
@@ -269,7 +325,6 @@ function LogTab({ log }: { log: MyStats['log'] }) {
                   <Field label="Начато" value={fmtDt(t.at)} />
                   <Field label="Завершено" value={fmtDt(t.finishedAt)} />
                   <Field label="Статус" value={t.status} />
-                  <Field label="ID задачи" value={t.id} />
                 </div>
               )}
             </div>
@@ -298,15 +353,17 @@ function Field({ label, value, accent }: { label: string; value: string; accent?
  */
 const cur = (r: { currency?: 'usd' | 'coins' }) => (r.currency === 'usd' ? '$' : '⚡')
 
-function WalletTab({ coins, usd, isSub, limit }: { coins: number; usd?: number; isSub?: boolean; limit?: number | null }) {
+/*
+ * Слияние двух правок (31.08): фильтр по валюте — из MR-230 Николая, загрузка истории
+ * страницей — из MR-233. Историю грузит страница, потому что её же выгружает экспорт
+ * раздела «Кошелёк»; фильтр остаётся здесь, он про показ, а не про данные.
+ */
+function WalletTab({ coins, usd, isSub, limit, rows }: {
+  coins: number; usd?: number; isSub?: boolean; limit?: number | null
+  /** MR-233: историю грузит страница — её же выгружает экспорт раздела. */
+  rows: WalletEntry[] | null
+}) {
   const [валютаКошелька, setВалютаКошелька] = useState<'all' | 'coins' | 'usd'>('all')
-  const pushToast = useApp((s) => s.pushToast)
-  const [rows, setRows] = useState<WalletEntry[] | null>(null)
-  useEffect(() => {
-    fetchWalletHistory(50)
-      .then(setRows)
-      .catch((e) => { setRows([]); pushToast({ type: 'error', title: 'Не удалось загрузить историю кошелька', desc: e instanceof Error ? e.message : '' }) })
-  }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <div className="space-y-4">
@@ -390,20 +447,53 @@ function WalletTab({ coins, usd, isSub, limit }: { coins: number; usd?: number; 
   )
 }
 
-function exportMyCsv(stats: MyStats, pushToast: (t: { type: 'success'; title: string; desc?: string }) => void) {
-  const head = ['Модуль', 'Задач', 'Действий', 'Токенов', 'Монет']
-  const rows = [
-    head,
-    ...stats.where.map((w) => [w.title, w.tasks, w.actions, w.tokens, w.spent]),
-    ['ИТОГО', stats.totals.tasks, stats.totals.actions, stats.totals.tokens, stats.totals.spent],
-  ]
-  const csv = rows.map((r) => r.join(';')).join('\n')
+/**
+ * CSV по ОТКРЫТОМУ разделу (MR-233). Раздел решает и состав строк, и имя файла: файл
+ * «my-stats.csv» с разбивкой по модулям, скачанный из «Кошелька», — это и был баг.
+ */
+function exportMyCsv(
+  stats: MyStats,
+  tab: string,
+  wallet: WalletEntry[] | null,
+  pushToast: (t: { type: 'success'; title: string; desc?: string }) => void,
+) {
+  const дата = (ts: number) => (ts ? new Date(ts).toLocaleString('ru-RU') : '')
+  let rows: (string | number)[][]
+  let file: string
+  if (tab === 'log') {
+    file = 'my-tasks.csv'
+    rows = [
+      ['ID задачи', 'Модуль', 'Статус', 'Действий', 'Ошибок', 'Списано', 'Начато', 'Завершено'],
+      ...stats.log.map((t) => [t.id, t.title, t.status, t.actions, t.errors, t.spent, дата(t.at), дата(t.finishedAt)]),
+    ]
+  } else if (tab === 'wallet') {
+    file = 'my-wallet.csv'
+    rows = [
+      ['Дата', 'Операция', 'Сумма', 'Валюта', 'Остаток', 'Комментарий'],
+      // Поля кошелька те же, что рисует вкладка: время, причина, сумма, валюта, остаток.
+      ...(wallet || []).map((w) => [дата(w.ts), w.reason, w.amount, w.currency === 'usd' ? '$' : '⚡', w.after, '']),
+    ]
+    if (!wallet?.length) rows.push(['', 'операций за период нет', '', '', '', ''])
+  } else {
+    file = 'my-stats.csv'
+    rows = [
+      ['Модуль', 'Задач', 'Действий', 'Токенов', 'Монет'],
+      ...stats.where.map((w) => [w.title, w.tasks, w.actions, w.tokens, w.spent]),
+      ['ИТОГО', stats.totals.tasks, stats.totals.actions, stats.totals.tokens, stats.totals.spent],
+    ]
+  }
+  // Точку с запятой внутри значения экранируем кавычками — иначе строка «разъедется»
+  // по столбцам, а заметить это можно только открыв файл.
+  const csv = rows.map((r) => r.map((v) => {
+    const t = String(v ?? '')
+    return /[;"\n]/.test(t) ? `"${t.replace(/"/g, '""')}"` : t
+  }).join(';')).join('\n')
   const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8' })
   const url = URL.createObjectURL(blob)
   const a = document.createElement('a')
-  a.href = url; a.download = 'my-stats.csv'; a.click()
+  a.href = url; a.download = file; a.click()
   URL.revokeObjectURL(url)
-  pushToast({ type: 'success', title: 'CSV скачан', desc: 'my-stats.csv' })
+  pushToast({ type: 'success', title: 'CSV скачан', desc: file })
 }
 
 /**
