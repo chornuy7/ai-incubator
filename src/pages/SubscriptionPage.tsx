@@ -200,7 +200,14 @@ export function SubscriptionPage() {
       {expKnown && mineSet.size > 0 && (() => {
         const отменена = !!balance?.canceledAt
         const состав = [...mineSet].map((k) => moduleTitle(String(k)))
-        const имя = balance?.setName || (состав.length ? `${состав.length} ${склонение(состав.length)}` : '')
+        /*
+         * Имя набора — в кавычках, счёт модулей — нет: «Подписка «14 модулей»» выглядит
+         * так, будто набор ТАК И НАЗЫВАЕТСЯ. Кавычки уместны только вокруг настоящего имени.
+         */
+        const имяНабора = balance?.setName || null
+        const чтоОплачено = имяНабора
+          ? `Подписка «${имяНабора}»`
+          : состав.length ? `Подписка · ${состав.length} ${склонение(состав.length)}` : 'Подписка'
         return (
           <Card className={cn(
             'p-4',
@@ -211,15 +218,15 @@ export function SubscriptionPage() {
                 ? <AlertTriangle size={16} className={exp.expired ? 'text-red-300' : 'text-amber-300'} />
                 : <CalendarClock size={16} className="text-muted" />}
               {/* ЧТО оплачено — первым: «какая подписка» человек спрашивает раньше, чем «до когда». */}
-              {имя && <span className="font-semibold text-fg">Подписка «{имя}»</span>}
+              <span className="font-semibold text-fg">{чтоОплачено}</span>
               <span className={cn(
                 'font-semibold',
                 exp.expired ? 'text-red-300' : отменена ? 'text-amber-300' : exp.soon ? 'text-amber-300' : 'text-fg',
               )}>
                 {exp.perpetual
-                  ? 'Подписка бессрочная'
+                  ? 'бессрочная'
                   : exp.expired
-                    ? `Подписка истекла ${exp.date}`
+                    ? `истекла ${exp.date}`
                     : отменена
                       ? `отменена · доступ до ${exp.date}`
                       : `оплачено до ${exp.date}`}
