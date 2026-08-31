@@ -8,7 +8,7 @@ import {
   fetchSubLimits, transferTokens,
   type User, type WorkSummary, type SubLimit,
 } from '@/api/usersApi'
-import { fetchRoles, fetchRbacCatalog, accessFromRole, onRolesChanged, type Role, type Perm, type CatalogModule, type CatalogBlock } from '@/api/rolesApi'
+import { fetchRoles, fetchRbacCatalog, accessFromRole, onRolesChanged, requestNewRole, onRoleCreated, type Role, type Perm, type CatalogModule, type CatalogBlock } from '@/api/rolesApi'
 import { RolesPage, Pager, PAGE_SIZE } from '@/pages/RolesPage'
 import { fetchAccountGroups, type AccountGroup } from '@/api/accountGroupsApi'
 import { fetchAccounts } from '@/api/accountsApi'
@@ -22,7 +22,6 @@ import { cn } from '@/shared/lib/utils'
 import { fetchSpendByUser, fetchPricing, fetchBalance, type SpendByUser as SpendByUserRow } from '@/api/balanceApi'
 
 /** Якорь раздела шаблонов — он на этой же странице, ниже списка людей. */
-const TEMPLATES_ANCHOR = '#templates'
 
 /**
  * §5.4 (MR-37): владелец выдаёт субу аккаунты из своего пула — отдельно ГРУППЫ и отдельно
@@ -218,7 +217,7 @@ function ModuleAccessPicker({ catalog, value, onChange }: {
  * Шаблон НЕОБЯЗАТЕЛЕН: если их нет, вместо селекта стоит ссылка на соседнюю вкладку, но
  * доступ прекрасно выставляется тумблерами и пользователь создаётся без всякого шаблона.
  */
-function ApplyTemplate({ roles, catalog, picked, hint, onPick, className }: {
+function ApplyTemplate({ roles, catalog, picked, hint, onPick, className, onCreateRole }: {
   roles: Role[]
   catalog: AccessCatalog
   /** Выбранный шаблон — его имя видно в поле, пока набор не тронули. '' = не выбран. */
@@ -228,6 +227,8 @@ function ApplyTemplate({ roles, catalog, picked, hint, onPick, className }: {
   /** Выбрали шаблон или сняли выбор (null) — тогда набор возвращается к исходному. */
   onPick: (draft: AccessDraft | null, roleName: string) => void
   className?: string
+  /** MR-245: «создайте роль» — закрыть форму пользователя и начать создание роли. */
+  onCreateRole?: () => void
 }) {
   const [open, setOpen] = useState(false)
 
@@ -246,7 +247,15 @@ function ApplyTemplate({ roles, catalog, picked, hint, onPick, className }: {
     return (
       <div className={cn('text-[11px] text-white/40', className)}>
         Ролей пока нет — выставьте доступ тумблерами или{' '}
-        <a href={TEMPLATES_ANCHOR} className="font-semibold text-spark-300 hover:text-spark-200">создайте роль</a>,
+        {/* MR-245: не якорь, а действие. Якорь прокручивал страницу под открытой модалкой:
+            человек нажимал «создайте роль» и оставался на том же экране. */}
+        <button
+          type="button"
+          onClick={() => onCreateRole?.()}
+          className="font-semibold text-spark-300 underline-offset-2 hover:text-spark-200 hover:underline"
+        >
+          создайте роль
+        </button>,
         чтобы в следующий раз выдать тот же набор одним кликом.
       </div>
     )
@@ -454,6 +463,19 @@ function UsersTab() {
   // Каталог для формы создания берём из RBAC-каталога — он тоже урезан подпиской владельца.
   // У /api/users/:id/access каталог тот же, но его нельзя спросить без id пользователя.
   const [catalog, setCatalog] = useState<AccessCatalog>({ modules: [], blocks: [] })
+  /*
+   * MR-245: вернуться к форме, когда роль создана.
+   *
+   * Форма закрывается на «создайте роль», но её содержимое остаётся в состоянии — e-mail,
+   * имя и уже расставленные тумблеры. Как только роль создана, форма открывается обратно и
+   * новая роль сразу применена: иначе человек, вернувшись, искал бы её в списке и
+   * применял вручную — ровно та лишняя работа, из-за которой задача и заведена.
+   */
+  useEffect(() => onRoleCreated((role) => {
+    setNewAccess(accessFromRole(role, catalog.modules, catalog.blocks))
+    setAppliedTpl(role.name)
+    setOpen(true)
+  }), [catalog])
   const [saving, setSaving] = useState(false)
   // Правка 18.08: страница «Пользователи» — про СВОЮ команду. Раньше админу сюда
   // валился весь список платформы (65 юзеров, из них 59 чужих регистраций).
@@ -771,6 +793,13 @@ function UsersTab() {
               // В форме создания «до подстановки» — это пустой набор: сотрудника ещё нет,
               // сохранённому доступу взяться неоткуда.
               onPick={(next, roleName) => { setNewAccess(next ?? EMPTY_ACCESS); setAppliedTpl(roleName) }}
+              /*
+               * MR-245: форма закрывается, а раздел ролей открывает создание. Владелец
+               * 30.08: «должна не создаться [пустая роль], а закрыться эта херь и начаться
+               * создание роли». Введённые e-mail, имя и доступы остаются в состоянии —
+               * форма откроется обратно с ними, как только роль будет создана.
+               */
+              onCreateRole={() => { setOpen(false); requestNewRole() }}
               className="mb-2"
             />
             <div className="max-h-64 overflow-y-auto pr-1">

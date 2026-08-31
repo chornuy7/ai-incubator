@@ -134,6 +134,36 @@ export function onRolesChanged(cb: () => void): () => void {
   return () => { rolesListeners.delete(cb) }
 }
 
+/**
+ * MR-245: «создать роль» из формы нового пользователя.
+ *
+ * Владелец 30.08: «Когда ты в новом пользователе нажимаешь „создать роль“, создаётся новая
+ * роль. По-хорошему она должна не создаться, а закрыться эта херь и начаться создание
+ * роли». Форма пользователя и раздел ролей — два соседних компонента одной страницы,
+ * поэтому связываем их тем же маленьким сигналом, что и список шаблонов, а не общим
+ * состоянием: раздел ролей открывается ещё и сам по себе, в админке.
+ */
+const newRoleListeners = new Set<() => void>()
+const roleCreatedListeners = new Set<(role: Role) => void>()
+
+/** Попросить раздел ролей открыть создание новой роли. */
+export function requestNewRole(): void {
+  for (const cb of newRoleListeners) cb()
+}
+export function onNewRoleRequest(cb: () => void): () => void {
+  newRoleListeners.add(cb)
+  return () => { newRoleListeners.delete(cb) }
+}
+
+/** Сообщить, что роль создана — форма пользователя вернётся и подставит её. */
+export function notifyRoleCreated(role: Role): void {
+  for (const cb of roleCreatedListeners) cb(role)
+}
+export function onRoleCreated(cb: (role: Role) => void): () => void {
+  roleCreatedListeners.add(cb)
+  return () => { roleCreatedListeners.delete(cb) }
+}
+
 export function accessFromRole(
   role: Role, modules: { key: string }[], blocks: { key: string }[],
 ): { modules: Record<string, Perm>; blocks: Record<string, Perm> } {
