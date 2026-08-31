@@ -121,11 +121,9 @@ export function SavePresetModal({ open, onClose, onSave }: {
         <input type="checkbox" checked={withAccounts} onChange={(e) => setWithAccounts(e.target.checked)} className="mt-0.5 h-4 w-4 accent-spark" />
         <span>
           <span className="text-sm font-semibold">Сохранить вместе с аккаунтами</span>
-          <span className="mt-0.5 block text-xs text-muted">
-            Без галочки шаблон хранит только настройки, а выбор аккаунтов при его применении
-            остаётся вашим. С галочкой аккаунты запоминаются и подставляются — те из них,
-            что к тому моменту ещё доступны.
-          </span>
+          {/* Поясняем только состояние ПО УМОЛЧАНИЮ. Что делает поставленная галочка,
+              уже сказано её собственной подписью — повторять это второй раз незачем. */}
+          <span className="mt-0.5 block text-xs text-muted">Без неё в шаблон уходят только настройки — выбор аккаунтов он не трогает.</span>
         </span>
       </label>
 
