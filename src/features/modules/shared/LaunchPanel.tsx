@@ -6,7 +6,7 @@ import { cn } from '@/shared/lib/utils'
 
 export function LaunchPanel({
   running, starting, canStart, onStart, onSave, primaryLabel, warn, cost, stats,
-  presets, onApplyPreset, extras, steps, blockedBy = [],
+  presets, onApplyPreset, extras, steps, blockedBy = [], notify,
 }: {
   running: boolean; starting: boolean; canStart: boolean
   onStart: () => void; onStop?: () => void; onSave: () => void
@@ -30,6 +30,15 @@ export function LaunchPanel({
    * в середине, а бар висит внизу экрана поверх этого контента — та самая «двойная плашка».
    */
   extras?: React.ReactNode
+  /**
+   * MR-251: уведомления о статусе ЗАДАЧИ — здесь, у запуска, и включены по умолчанию.
+   *
+   * Владелец 30.08: «Прогрев не имеет вообще никакого отношения к уведомлениям. Они имеют
+   * отношение только к задаче. Это должно быть там, где запуск задачи, и включено по
+   * умолчанию». Раньше галочка лежала внутри «Защиты и таймингов» и внутри блока прогрева —
+   * то есть в настройках модуля, хотя относится к запускаемой задаче.
+   */
+  notify?: { on: boolean; onChange: (v: boolean) => void }
 }) {
   return (
     <>
@@ -54,6 +63,16 @@ export function LaunchPanel({
             </div>
           ))}
         </div>
+      )}
+      {/* Уведомления — последней строкой перед кнопками: это про запуск, а не про модуль. */}
+      {notify && !running && (
+        <label className="mb-3 flex cursor-pointer items-start gap-2 rounded-xl border border-line/60 bg-elevated/40 px-3 py-2.5">
+          <input type="checkbox" checked={notify.on} onChange={(e) => notify.onChange(e.target.checked)} className="mt-0.5 h-4 w-4 accent-spark-500" />
+          <span>
+            <span className="text-xs font-semibold text-fg">Уведомлять о статусе задачи</span>
+            <span className="mt-0.5 block text-[11px] text-white/45">Ошибка или пауза этой задачи попадут в колокольчик. Снимите, если уведомления по ней не нужны.</span>
+          </span>
+        </label>
       )}
       {extras}
       {/* Плавающий бар — ПОСЛЕДНИЙ элемент: его заглушка резервирует место в самом низу
