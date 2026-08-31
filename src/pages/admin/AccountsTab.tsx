@@ -12,6 +12,7 @@ import { STATUS_LABEL_RU } from './MonitoringTab'
 // В админке она разворачивается под строкой аккаунта, поэтому берём тело без модалки.
 import { AccountCardBody } from '@/features/account-manager/AccountManagementModal'
 import { useTabParam } from '@/shared/lib/useTabParam'
+import { confirmDialog } from '@/shared/lib/dialog'
 
 /**
  * §10.10: управление аккаунтами из sudo-админки — полный список ВСЕХ аккаунтов
@@ -90,12 +91,25 @@ export function AccountsTab() {
   // навсегда» — отвязывает сессию, необратимо, поэтому с подтверждением.
   const toTrash = (a: TgAccount) => act(a.id, async () => ({ ok: (await patchAccount(a.id, { inTrash: true }))?.ok !== false }), `${a.name} — в корзине`)
   const restore = (a: TgAccount) => act(a.id, async () => ({ ok: (await patchAccount(a.id, { inTrash: false }))?.ok !== false }), `${a.name} — восстановлен`)
-  const removeForever = (a: TgAccount) => {
-    if (!window.confirm(`Удалить «${a.name}» навсегда? Сессия аккаунта будет отвязана — это необратимо.`)) return
+  const removeForever = async (a: TgAccount) => {
+    const ok = await confirmDialog({
+      title: `Удалить «${a.name}» навсегда?`,
+      message: 'Сессия аккаунта будет отвязана. Действие необратимо.',
+      confirmLabel: 'Удалить навсегда',
+      tone: 'danger',
+    })
+    if (!ok) return
     void act(a.id, async () => ({ ok: (await deleteAccount(a.id))?.ok !== false }), `${a.name} — удалён навсегда`)
   }
-  const emptyTrash = () => {
-    if (!trashed.length || !window.confirm(`Очистить корзину? ${trashed.length} аккаунт(ов) будут удалены навсегда.`)) return
+  const emptyTrash = async () => {
+    if (!trashed.length) return
+    const ok = await confirmDialog({
+      title: 'Очистить корзину?',
+      message: `${trashed.length} аккаунтов будут удалены навсегда, вернуть их будет нельзя.`,
+      confirmLabel: 'Очистить',
+      tone: 'danger',
+    })
+    if (!ok) return
     void act('__trash__', async () => { await emptyTrashApi(); return { ok: true } }, 'Корзина очищена')
   }
 
