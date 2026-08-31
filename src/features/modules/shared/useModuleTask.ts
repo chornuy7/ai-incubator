@@ -12,6 +12,7 @@ import {
   deleteModulePreset,
   type ModuleTask,
   type ModuleTaskSettings,
+  type ModulePresetSettings,
   type ModulePreset,
 } from '@/api/modulesApi'
 import { persistActiveTaskId, readActiveTaskId, pickTaskIdToRestore, mapTaskStatus } from './activeTaskStorage'
@@ -158,7 +159,7 @@ export function useModuleTask(moduleKey: string) {
     }
   }, [taskId, moduleKey, syncBackgroundTask, pushToast, loadAccounts, loadAccountBusy])
 
-  const savePreset = useCallback(async (name: string, settings: ModuleTaskSettings, color?: string, owner?: string) => {
+  const savePreset = useCallback(async (name: string, settings: ModulePresetSettings, color?: string, owner?: string) => {
     await saveModulePreset(moduleKey, name, settings, color, owner)
     const p = await fetchModulePresets(moduleKey)
     setPresets(p)

@@ -1,5 +1,5 @@
 import { Play, AlertTriangle, Loader2, ArrowUpRight } from 'lucide-react'
-import type { ModuleTask, ModulePreset, ModuleTaskSettings } from '@/api/modulesApi'
+import type { ModuleTask, ModulePreset, ModulePresetSettings } from '@/api/modulesApi'
 import { FloatingBar } from './FloatingBar'
 import { PresetMenu } from './PresetBar'
 import { cn } from '@/shared/lib/utils'
@@ -23,7 +23,7 @@ export function LaunchPanel({
   cost?: React.ReactNode
   /** Шаблоны ЭТОГО модуля — для меню на кнопке «Шаблон». Список рисует `PresetBar` вверху. */
   presets?: ModulePreset[]
-  onApplyPreset?: (settings: ModuleTaskSettings) => void
+  onApplyPreset?: (settings: ModulePresetSettings) => void
   /**
    * Доп. блоки запуска (расписание, ссылка на логи). Рендерятся В ПОТОКЕ, ПЕРЕД плавающим
    * баром: сам бар обязан быть последним элементом, иначе его заглушка резервирует место

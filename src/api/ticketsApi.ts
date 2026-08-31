@@ -28,6 +28,15 @@ export interface ApiTicket {
   ownerEmail?: string
   /** Сколько непрочитанных для стороны запроса (клиент видит от поддержки и наоборот). */
   unread?: number
+  /**
+   * MR-257: кому адресовано. Пусто — нам, платформенной поддержке. Заполнено — владельцу
+   * пространства (сотрудник просит токены, аккаунт, снятое ограничение).
+   *
+   * Поддержке это видно отдельной меткой: мы читаем ВСЕ обращения, но отвечать на чужой
+   * запрос вместо владельца — значит влезть в чужие отношения и, скорее всего, пообещать
+   * то, чего не можем дать.
+   */
+  toOwnerId?: string | null
 }
 
 /** asSupport=true — сторона поддержки (все тикеты, ответ как «Поддержка»). */
@@ -42,7 +51,11 @@ export async function fetchTicket(id: string, asSupport?: boolean): Promise<ApiT
   return (await apiGet<{ ok: boolean; ticket: ApiTicket }>(`/api/tickets/${id}${asParam(asSupport)}`)).ticket
 }
 
-export async function createTicket(input: { subject: string; category?: string; body?: string }): Promise<ApiTicket> {
+/**
+ * `toSupport` — сотрудник пишет платформе, а не своему владельцу (по умолчанию владельцу).
+ * `subUserId` — владелец пишет СВОЕМУ сотруднику первым (MR-247); родителя проверяет сервер.
+ */
+export async function createTicket(input: { subject: string; category?: string; body?: string; toSupport?: boolean; subUserId?: string }): Promise<ApiTicket> {
   return (await apiPost<{ ok: boolean; ticket: ApiTicket }>('/api/tickets', input)).ticket
 }
 

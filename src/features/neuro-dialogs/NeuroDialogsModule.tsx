@@ -16,7 +16,7 @@ import { cn } from '@/shared/lib/utils'
 import { fetchInbox, type InboxDialog } from '@/api/neuroDialogsApi'
 import { useModuleTask } from '@/features/modules/shared/useModuleTask'
 import { PresetBar } from '@/features/modules/shared/PresetBar'
-import { SavePresetModal } from '@/features/modules/shared/SavePresetModal'
+import { SavePresetModal, presetSettings } from '@/features/modules/shared/SavePresetModal'
 import {
   SectionCard,
   HelpButton,
@@ -34,7 +34,7 @@ import {
   ProtectionLevelPicker,
 } from '@/features/modules/shared'
 import { PROTECTION_CAP } from '@/features/modules/shared/ProtectionLevelPicker'
-import type { ModuleTaskSettings } from '@/api/modulesApi'
+import type { ModuleTaskSettings, ModulePresetSettings } from '@/api/modulesApi'
 
 const cfg = MODULES['neuro-dialogs']!
 
@@ -135,7 +135,7 @@ export function NeuroDialogsModule() {
     ...(goalId ? { goalId } : {}), // §9: привязка диалога к цели кампании (наследует KB/этапы, лиды к цели)
   }), [carry, accountIds, aiProtect, protLevel, activePrompt, promptBodies, maxActions, minActions, maxPerAcc, minPerAcc, delayPreset, delays, aiEnabled, probability, replyAll, dialogGoal, analyzeImages, goalId, replyLimitMode, maxRepliesPerLead])
 
-  const applyPreset = useCallback((s: ModuleTaskSettings) => {
+  const applyPreset = useCallback((s: ModulePresetSettings) => {
     remember(s)
     if (s.aiProtection !== undefined) setAiProtect(s.aiProtection)
     if (s.protectionLevel !== undefined) setProtLevel(s.protectionLevel)
@@ -196,7 +196,7 @@ export function NeuroDialogsModule() {
     <div className="space-y-4">
       <TaskStartedModal task={justStarted} moduleTitle={cfg.title} onClose={dismissJustStarted} />
       <SavePresetModal open={presetModalOpen} onClose={() => setPresetModalOpen(false)}
-        onSave={(name, color, owner) => savePreset(name, buildSettings(), color, owner)} />
+        onSave={(name, color, owner, withAccounts) => savePreset(name, presetSettings(buildSettings(), withAccounts), color, owner)} />
       {/* ТЗ 06.08 §10: выбор шаблона — вверху, до всех настроек (TPL-001). */}
       <PresetBar presets={presets} onApply={applyPreset} onSave={handleSavePreset}
         onEdit={editPreset} onDelete={deletePreset} disabled={running} />

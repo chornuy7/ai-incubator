@@ -27,7 +27,27 @@ export interface User {
  * и деньги, и подписку, — а лимит ограничивает, сколько из общего кошелька им можно
  * потратить. `limit === null` — ограничения нет.
  */
-export interface SubLimit { userId: string; limit: number | null; spent: number; left: number | null }
+export interface SubLimit {
+  userId: string
+  limit: number | null
+  spent: number
+  left: number | null
+  /** MR-225: собственные токены сотрудника (null — он на общем балансе владельца). */
+  own?: number | null
+  /** Сколько всего ему выдано за всё время — по журналу кошелька. */
+  granted?: number | null
+}
+
+/**
+ * Выдать сотруднику токены или изъять их обратно (MR-225).
+ *
+ * Положительная сумма — выдать (спишется с вашего баланса), отрицательная — изъять.
+ * Изъятие возвращает не больше, чем у сотрудника осталось: `partial` говорит, что забрали
+ * меньше запрошенного, потому что часть он уже потратил.
+ */
+export async function transferTokens(userId: string, amount: number): Promise<{ moved: number; ownerLeft: number; subLeft: number; partial: boolean }> {
+  return apiPost(`/api/users/${userId}/tokens`, { amount })
+}
 export async function fetchSubLimits(): Promise<SubLimit[]> {
   const r = await apiGet<{ ok: boolean; rows: SubLimit[] }>('/api/users/limits')
   return r.rows || []

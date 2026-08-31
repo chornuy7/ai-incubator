@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from 'react'
 import { Bookmark, Pencil, Plus, X } from 'lucide-react'
-import type { ModulePreset, ModuleTaskSettings } from '@/api/modulesApi'
+import type { ModulePreset, ModulePresetSettings } from '@/api/modulesApi'
 import { presetHex } from './SavePresetModal'
 import { cn } from '@/shared/lib/utils'
+import { confirmDialog } from '@/shared/lib/dialog'
 
 /**
  * Шаблоны настроек модуля (ТЗ 06.08 §10, TPL-001).
@@ -25,7 +26,7 @@ import { cn } from '@/shared/lib/utils'
  */
 type PresetProps = {
   presets?: ModulePreset[]
-  onApply?: (settings: ModuleTaskSettings) => void
+  onApply?: (settings: ModulePresetSettings) => void
   /** Открывает модалку сохранения текущих настроек (имя, цвет, владелец). */
   onSave: () => void
   onEdit?: (p: ModulePreset) => void
@@ -100,8 +101,12 @@ export function PresetBar({ presets = [], onApply, onSave, onEdit, onDelete, dis
                   // удаляют не только у себя. Крестик стоит вплотную к самому шаблону,
                   // и одного промаха хватало, чтобы чужая настройка исчезла у всех
                   // без следа и без возможности вернуть.
-                  if (!window.confirm(`Удалить шаблон «${p.name}»? Он общий для рабочего пространства — пропадёт у всех, и собирать настройки придётся заново.`)) return
-                  onDelete(p.id)
+                  void confirmDialog({
+                    title: `Удалить шаблон «${p.name}»?`,
+                    message: 'Он общий для рабочего пространства — пропадёт у всех, и собирать настройки придётся заново.',
+                    confirmLabel: 'Удалить',
+                    tone: 'danger',
+                  }).then((ok) => { if (ok) onDelete(p.id) })
                 }} title="Удалить шаблон"
                   className="grid h-5 w-5 shrink-0 place-items-center rounded-lg text-faint hover:bg-rose-500/12 hover:text-rose-300">
                   <X size={13} />
@@ -115,8 +120,9 @@ export function PresetBar({ presets = [], onApply, onSave, onEdit, onDelete, dis
         </button>
       </div>
       {/* Правка 26.08: аккаунты шаблон теперь и восстанавливает, а не только сохраняет —
-          подпись обязана говорить правду, иначе она сама сбивает с толку. */}
-      <p className="mt-1.5 text-xs text-muted">Клик по шаблону — подставить сохранённые настройки вместе с выбором аккаунтов. Недоступных в подстановку не берём.</p>
+          подпись обязана говорить правду, иначе она сама сбивает с толку. MR-195: с той же
+          оговоркой — аккаунты есть только у шаблонов, сохранённых вместе с ними. */}
+      <p className="mt-1.5 text-xs text-muted">Клик по шаблону — подставить сохранённые настройки. Выбор аккаунтов подставляется, только если шаблон сохранён вместе с ними; недоступных в подстановку не берём.</p>
     </div>
   )
 }
