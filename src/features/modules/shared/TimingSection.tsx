@@ -199,7 +199,7 @@ export function TimingSection(props: TimingSectionProps) {
     if (i === CUSTOM) return
     const b = frozen.current
     if (onDuration && showDuration) onDuration(Math.max(1, Math.round(b.dur * DUR_FACTOR[i])))
-    // Лимит «Сколько сделает 1 аккаунт» НЕ масштабируется пресетом — одинаковый (базовый)
+    // Лимит «Сколько действий сделает 1 аккаунт» НЕ масштабируется пресетом — одинаковый (базовый)
     // на Мин/Рек/Макс, меняется только в Custom. (Заказчик 14.08: «всюди 10, крім кастом».)
     if (perAccount) { perAccount.onMin(b.limMin); perAccount.onMax(b.limMax) }
     // Задержки — всегда из неизменной базы: любая правка в Custom не должна их сдвигать.
@@ -231,7 +231,7 @@ export function TimingSection(props: TimingSectionProps) {
                 key={label}
                 type="button"
                 // MR-136: раскрытие «Расширенных» для Custom делает эффект по delayPreset;
-                // пресет также выставляет Длительность и лимит «Сколько сделает 1 аккаунт».
+                // пресет также выставляет Длительность и лимит «Сколько действий сделает 1 аккаунт».
                 onClick={() => {
                   // Вход в Custom из пресета: «запекаем» видимые (масштабированные ×mul)
                   // задержки в текущее состояние, чтобы числа не прыгнули (Custom = ×1).
@@ -342,8 +342,14 @@ export function TimingSection(props: TimingSectionProps) {
             </div>
 
             <div className="space-y-4 rounded-2xl border border-line bg-elevated/40 p-4">
+              {/* «для цели» здесь означало целевое ДЕЙСТВИЕ — сколько раз аккаунт
+                  прокомментирует, поставит реакцию и т. д. Но «цель» в платформе — отдельная
+                  сущность (цель кампании, `goalId`, со своей базой знаний и критерием
+                  завершения), и одно слово на два понятия путало прямо в форме запуска.
+                  Подпись приведена к словарю парного поля выше — оно называется «Всего
+                  действий», значит здесь тоже действия. */}
               {perAccount && (
-                <MinMaxField label={computedTotal ? 'Сколько сделает 1 аккаунт для цели' : 'На аккаунт'} min={perAccount.min} max={perAccount.max} onMin={(v) => editPerAccount('min', v)} onMax={(v) => editPerAccount('max', v)} />
+                <MinMaxField label={computedTotal ? 'Сколько действий сделает 1 аккаунт' : 'На аккаунт'} min={perAccount.min} max={perAccount.max} onMin={(v) => editPerAccount('min', v)} onMax={(v) => editPerAccount('max', v)} />
               )}
               {minWords && (
                 <NumberField label="Мин. слов в посте" value={minWords.value} onChange={minWords.onChange} />
