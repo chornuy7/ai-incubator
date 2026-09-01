@@ -496,3 +496,52 @@ test('модули кампании — источник в таблице св�
   assert.ok(code.includes(String.raw`writeModuleLinks(db, 'campaign_modules'`), 'кампания обязана писать связи сама')
   assert.ok(code.includes(String.raw`readModuleLinks(db, 'campaign_modules'`), 'и читать их же')
 })
+
+test('карточка канала: каждое поле карты имеет колонку в схеме', async () => {
+  // Мешок channels.data назывался «всё остальное», но остального там не было: 13 полей,
+  // и каждое лежало у всех 85 каналов. Опечатка в имени колонки здесь — тихая потеря
+  // данных: запись пройдёт, поле не сохранится, и узнаем мы об этом от людей.
+  const code = await readCode('channels.js')
+  const block = code.match(/const COLUMNS = \[([\s\S]*?)\n\]/)
+  assert.ok(block, 'в channels.js нет карты COLUMNS')
+  const columns = [...block[1].matchAll(/'[a-zA-Z]+',\s*'([a-z_]+)'/g)].map((m) => m[1])
+  assert.ok(columns.length > 15, `карта подозрительно короткая: ${columns.length}`)
+
+  const sql = await readSql(['2026-07-30-remaining-stores.sql', '2026-09-02-mr290-channels-columns.sql'])
+  const known = new Set([
+    ...columnsOf(sql, 'channels').keys(),
+    ...[...sql.matchAll(/alter table channels add column if not exists ([a-z_]+)/gi)].map((m) => m[1]),
+    'user_id', // приезжает owner-миграцией
+  ])
+  const missing = columns.filter((c) => !known.has(c))
+  assert.deepEqual(missing, [], `в схеме нет колонок: ${missing.join(', ')}`)
+})
+
+test('источники канала: список строками, и в мешок он не дублируется', async () => {
+  // По sources режется ДОСТУП: channelsForRequest показывает оператору только каналы,
+  // которые нашли его задачи. Канал с пустым списком источников не виден никому —
+  // значит два источника правды тут означали бы «канал то видно, то нет».
+  const flat = flatten(await readSql('2026-09-02-mr290-channels-columns.sql'))
+  assert.ok(flat.includes('create table if not exists channel_sources'), 'нет таблицы источников')
+  assert.ok(flat.includes('channel_id text not null references channels(id) on delete cascade'),
+    'источник обязан ссылаться на канал')
+
+  const code = flatten(await readCode('channels.js'))
+  assert.ok(code.includes("{ field: 'sources', table: 'channel_sources'"), 'источники должны читаться из таблицы')
+  assert.ok(code.includes("key === 'sources' || key === 'categoriesExtra'"),
+    'списки не должны попадать в мешок data даже временно — иначе два источника правды разойдутся')
+})
+
+test('источники канала намеренно без внешнего ключа на задачи', async () => {
+  // Ключ напрашивается, но задачи переезжают в базу отдельным скриптом при выкате, и до
+  // его прогона половина идентификаторов ни на что не сошлётся. Внешний ключ в этот
+  // момент выбросил бы такие строки — и каналы исчезли бы из интерфейса у владельцев.
+  // Тест держит это решение объяснённым: следующий, кто захочет «дочинить» схему,
+  // увидит причину, а не догадку.
+  const sql = await readSql('2026-09-02-mr290-channels-columns.sql')
+  const блок = sql.slice(sql.indexOf('create table if not exists channel_sources'))
+  assert.ok(!/task_id\s+text\s+not null\s+references/i.test(блок),
+    'ключ на tasks добавляется отдельной миграцией — ПОСЛЕ переезда задач в базу')
+  assert.match(sql, /Внешнего ключа на `tasks` здесь СОЗНАТЕЛЬНО НЕТ/,
+    'решение обязано быть объяснено в самой миграции')
+})
