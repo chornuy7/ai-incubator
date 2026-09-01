@@ -21,6 +21,7 @@
  */
 import { dataPath, readJson, writeJson } from './lib/jsonStore.js'
 import { getSupabase, supabaseEnabled } from './lib/supabase.js'
+import { toDbTime, fromDbTime } from './lib/dbTime.js'
 
 const ticketsFile = () => process.env.TICKETS_FILE || dataPath('tickets.json')
 function sb() { return supabaseEnabled() ? getSupabase() : null }
@@ -69,9 +70,9 @@ const rowToTicket = (r, messages = []) => ({
   subject: r.subject,
   category: r.category,
   status: r.status,
-  createdAt: Number(r.created_at) || 0,
-  updatedAt: Number(r.updated_at) || 0,
-  reads: { user: Number(r.read_user) || 0, support: Number(r.read_support) || 0 },
+  createdAt: fromDbTime(r.created_at),
+  updatedAt: fromDbTime(r.updated_at),
+  reads: { user: fromDbTime(r.read_user), support: fromDbTime(r.read_support) },
   messages,
 })
 
@@ -82,7 +83,7 @@ const rowToMsg = (m) => ({
   authorName: m.author_name || '',
   authorEmail: m.author_email || '',
   text: m.text || '',
-  ts: Number(m.ts) || 0,
+  ts: fromDbTime(m.ts),
 })
 
 const msgToRow = (ticketId, m) => ({
@@ -93,7 +94,7 @@ const msgToRow = (ticketId, m) => ({
   author_name: m.authorName || null,
   author_email: m.authorEmail || null,
   text: m.text,
-  ts: m.ts,
+  ts: toDbTime(m.ts),
 })
 
 const ticketToRow = (t) => ({
@@ -106,10 +107,10 @@ const ticketToRow = (t) => ({
   subject: t.subject,
   category: t.category,
   status: t.status,
-  created_at: t.createdAt,
-  updated_at: t.updatedAt,
-  read_user: t.reads?.user || 0,
-  read_support: t.reads?.support || 0,
+  created_at: toDbTime(t.createdAt),
+  updated_at: toDbTime(t.updatedAt),
+  read_user: toDbTime(t.reads?.user),
+  read_support: toDbTime(t.reads?.support),
 })
 
 /**

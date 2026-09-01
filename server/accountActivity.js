@@ -12,6 +12,7 @@
  */
 import { dataPath, readJson, mutateJson } from './lib/jsonStore.js'
 import { mapStore } from './lib/tableStore.js'
+import { toDbTime, fromDbTime } from './lib/dbTime.js'
 import {
   DEFAULT_FATIGUE, DEFAULT_SCHEDULE, applyAction, fatigueGate, scheduleGate, freeAt, recoveryEveryMs,
   currentFatigue, normalizeFatigueProfile, normalizeSchedule, scheduleForAccount,
@@ -29,8 +30,8 @@ const activityStore = mapStore({
   toRow: (accountId, a) => { const { fatigue, restUntil, lastActionAt, actionsTotal, ...data } = a || {}; return {
     account_id: accountId,
     fatigue: Number(fatigue) || 0,
-    rest_until: Number(restUntil) || 0,
-    last_action_at: Number(lastActionAt) || 0,
+    rest_until: toDbTime(restUntil),
+    last_action_at: toDbTime(lastActionAt),
     actions_total: Number(actionsTotal) || 0,
     data,
     updated_at: new Date().toISOString(),
@@ -38,8 +39,8 @@ const activityStore = mapStore({
   fromRow: (r) => [r.account_id, {
     ...(r.data || {}),
     fatigue: Number(r.fatigue) || 0,
-    restUntil: Number(r.rest_until) || 0,
-    lastActionAt: Number(r.last_action_at) || 0,
+    restUntil: fromDbTime(r.rest_until),
+    lastActionAt: fromDbTime(r.last_action_at),
     actionsTotal: Number(r.actions_total) || 0,
   }],
 })

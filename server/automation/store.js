@@ -12,6 +12,7 @@
 import crypto from 'crypto'
 import { dataPath, readJson, writeJson } from '../lib/jsonStore.js'
 import { getSupabase, supabaseEnabled } from '../lib/supabase.js'
+import { toDbTime, fromDbTime, fromDbTimeOrNull } from '../lib/dbTime.js'
 
 /** Путь ленивый — иначе тест, выставивший env после импорта, пишет в боевой файл. */
 const rulesFile = () => process.env.AUTOMATION_FILE || dataPath('automation/rules.json')
@@ -106,16 +107,16 @@ const fromRow = (r, accountIds = []) => ({
   settings: r.settings ?? {},
   schedule: {
     type: r.schedule_type,
-    ...(r.schedule_at != null ? { at: Number(r.schedule_at) } : {}),
+    ...(r.schedule_at != null ? { at: fromDbTime(r.schedule_at) } : {}),
     ...(r.schedule_interval_minutes != null ? { intervalMinutes: Number(r.schedule_interval_minutes) } : {}),
     ...(r.schedule_time != null ? { time: r.schedule_time } : {}),
   },
-  lastRun: r.last_run == null ? null : Number(r.last_run),
+  lastRun: fromDbTimeOrNull(r.last_run),
   lastStatus: r.last_status ?? null,
   lastTaskId: r.last_task_id ?? null,
-  nextRun: r.next_run == null ? null : Number(r.next_run),
-  createdAt: Number(r.created_at) || 0,
-  updatedAt: Number(r.updated_at) || 0,
+  nextRun: fromDbTimeOrNull(r.next_run),
+  createdAt: fromDbTime(r.created_at),
+  updatedAt: fromDbTime(r.updated_at),
 })
 
 const toRow = (rule) => ({
@@ -127,13 +128,13 @@ const toRow = (rule) => ({
   campaign_id: rule.campaignId ?? null,
   settings: rule.settings ?? {},
   schedule_type: rule.schedule?.type || 'interval',
-  schedule_at: rule.schedule?.at ?? null,
+  schedule_at: toDbTime(rule.schedule?.at),
   schedule_interval_minutes: rule.schedule?.intervalMinutes ?? null,
   schedule_time: rule.schedule?.time ?? null,
-  last_run: rule.lastRun ?? null,
+  last_run: toDbTime(rule.lastRun),
   last_status: rule.lastStatus ?? null,
   last_task_id: rule.lastTaskId ?? null,
-  next_run: rule.nextRun ?? null,
+  next_run: toDbTime(rule.nextRun),
   created_at: rule.createdAt,
   updated_at: rule.updatedAt,
 })

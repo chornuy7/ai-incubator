@@ -23,6 +23,7 @@ import fs from 'fs/promises'
 import path from 'path'
 import { dataPath, readJson, mutateJson } from './lib/jsonStore.js'
 import { getSupabase, supabaseEnabled } from './lib/supabase.js'
+import { toDbTime, fromDbTime } from './lib/dbTime.js'
 
 const LINKS_FILE = () => process.env.LINKS_FILE || dataPath('links.json')
 const HITS_FILE = () => process.env.LINK_HITS_FILE || dataPath('link-hits.jsonl')
@@ -45,7 +46,7 @@ const fromRow = (r) => ({
   campaignId: r.campaign_id ?? null,
   hits: Number(r.hits) || 0,
   uniqueHits: Number(r.unique_hits) || 0,
-  createdAt: Number(r.created_at) || 0,
+  createdAt: fromDbTime(r.created_at),
 })
 
 export async function listLinks() {
@@ -88,7 +89,7 @@ export async function createLink(input = {}) {
   if (db) {
     const { error } = await db.from('tracked_links').insert({
       id: link.id, code: link.code, user_id: link.userId, url: link.url, title: link.title,
-      goal_id: link.goalId, campaign_id: link.campaignId, hits: 0, unique_hits: 0, created_at: link.createdAt,
+      goal_id: link.goalId, campaign_id: link.campaignId, hits: 0, unique_hits: 0, created_at: toDbTime(link.createdAt),
     })
     if (error) {
       if (isMissingTable(error)) throw new Error('Счётчик переходов временно недоступен: не применена миграция базы')
@@ -138,7 +139,7 @@ export async function registerHit(code, meta = {}) {
       // уходило чтение всего журнала переходов, и с ростом кликов оно только росло.
       const { data: seen } = await db.from('link_hits').select('id').eq('code', code).eq('fp', fp).limit(1)
       const isUnique = !seen?.length
-      await db.from('link_hits').insert({ id: `hit_${crypto.randomUUID()}`, code, fp, ref, ts: now })
+      await db.from('link_hits').insert({ id: `hit_${crypto.randomUUID()}`, code, fp, ref, ts: toDbTime(now) })
       await db.from('tracked_links').update({
         hits: (link.hits || 0) + 1,
         unique_hits: (link.uniqueHits || 0) + (isUnique ? 1 : 0),

@@ -27,6 +27,7 @@ import { dataPath } from './lib/jsonStore.js'
 import { readAudit } from './lib/auditLog.js'
 import { supabaseEnabled, getSupabase, isMissingTable } from './lib/supabase.js'
 import { walletHistory } from './balance.js'
+import { toDbTime, fromDbTime } from './lib/dbTime.js'
 
 const DB_FILE = () => process.env.PAYMENTS_DB || dataPath('payments.db')
 
@@ -84,7 +85,10 @@ async function doSync() {
      */
     let ok = true
     for (let i = 0; i < rows.length && ok; i += 500) {
-      const { error } = await base.from('payments').upsert(rows.slice(i, i + 500), { onConflict: 'id' })
+      // Время конвертируем на ГРАНИЦЕ: строки витрины общие с запасным SQLite, где
+      // ts по-прежнему число.
+      const batch = rows.slice(i, i + 500).map((r) => ({ ...r, ts: toDbTime(r.ts) }))
+      const { error } = await base.from('payments').upsert(batch, { onConflict: 'id' })
       if (!error) continue
       if (!isMissingTable(error)) throw new Error(error.message)
       console.warn('[payments] таблица payments не найдена — миграция 2026-08-24 не накатана, собираю витрину в локальный SQLite')
@@ -212,13 +216,15 @@ export async function queryPayments(opts = {}) {
   const base = sb()
   if (base) {
     let sel = base.from('payments').select('*', { count: 'exact' })
-    if (from) sel = sel.gte('ts', Number(from))
-    if (to) sel = sel.lte('ts', Number(to))
+    if (from) sel = sel.gte('ts', toDbTime(from))
+    if (to) sel = sel.lte('ts', toDbTime(to))
     if (userId) sel = sel.eq('user_id', String(userId))
     if (['coins', 'plan', 'usd', 'grant', 'usd_grant'].includes(kind)) sel = sel.eq('kind', kind)
     if (q) sel = sel.or(`user_id.ilike.%${q}%,reason.ilike.%${q}%`)
     const { data, count, error } = await sel.order('ts', { ascending: false }).range(off0, off0 + lim0 - 1)
-    if (!error) return { total: Number(count) || 0, rows: data || [] }
+    // Наружу отдаём миллисекунды, как и раньше: витрина оплат и фронт считают время
+    // числом, и менять это ради формы хранения незачем.
+    if (!error) return { total: Number(count) || 0, rows: (data || []).map((r) => ({ ...r, ts: fromDbTime(r.ts) })) }
     if (!isMissingTable(error)) throw new Error(error.message)
   }
   const d = db()
@@ -247,8 +253,8 @@ export async function paymentsSummary(opts = {}) {
      * тянуть её диапазоном дёшево.
      */
     let sel = remote.from('payments').select('kind, coins, amount_fiat')
-    if (from) sel = sel.gte('ts', Number(from))
-    if (to) sel = sel.lte('ts', Number(to))
+    if (from) sel = sel.gte('ts', toDbTime(from))
+    if (to) sel = sel.lte('ts', toDbTime(to))
     const { data, error } = await sel.limit(100000)
     if (error && !isMissingTable(error)) throw new Error(error.message)
     if (!error) {

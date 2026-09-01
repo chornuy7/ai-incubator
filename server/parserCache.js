@@ -24,6 +24,7 @@ import { createHash } from 'node:crypto'
 import { DatabaseSync } from 'node:sqlite'
 import { dataPath } from './lib/jsonStore.js'
 import { supabaseEnabled, getSupabase, isMissingTable, isMissingColumn } from './lib/supabase.js'
+import { toDbTime, fromDbTime } from './lib/dbTime.js'
 
 const DB_FILE = () => process.env.PARSER_CACHE_DB || dataPath('parser-cache.db')
 
@@ -194,7 +195,10 @@ export async function saveParserResults(kind, settings, results, ownerId = null)
     // Есть строка — обновляем только состав и дату; нет — заводим вместе с планом ревизии.
     const { data: exists } = await base.from('parser_cache').select('sig').eq('sig', row.sig).maybeSingle()
     const payload = exists ? { ...row, results: list } : { ...row, results: list, ...firstPlan }
-    const { error } = await base.from('parser_cache').upsert(payload, { onConflict: 'sig' })
+    // Время — на границе с базой: тот же объект уходит и в запасной SQLite, где число.
+    const forDb = { ...payload, updated_at: toDbTime(payload.updated_at) }
+    if (payload.next_run_at !== undefined) forDb.next_run_at = toDbTime(payload.next_run_at)
+    const { error } = await base.from('parser_cache').upsert(forDb, { onConflict: 'sig' })
     if (!error) return sig
     if (!isMissingTable(error)) throw new Error(error.message)
     console.warn('[parserCache] таблица parser_cache не найдена — миграция 2026-08-24 не накатана, пишу в локальный SQLite')
@@ -225,7 +229,7 @@ export async function lookupParserResults(kind, settings) {
     if (!error || !isMissingTable(error)) {
       if (error || !data) return null
       return {
-        updatedAt: Number(data.updated_at),
+        updatedAt: fromDbTime(data.updated_at),
         count: Number(data.count),
         results: Array.isArray(data.results) ? data.results : [],
       }
@@ -309,7 +313,7 @@ export async function dueWatches(now = Date.now(), limit = 20) {
   if (base) {
     const { data, error } = await base.from('parser_cache')
       .select('sig, kind, keywords, settings, owner_id, results, period_h, next_run_at, fail_count')
-      .eq('watch', true).lte('next_run_at', now).order('next_run_at', { ascending: true }).limit(limit)
+      .eq('watch', true).lte('next_run_at', toDbTime(now)).order('next_run_at', { ascending: true }).limit(limit)
     if (!error) return (data || []).map(fromRow)
     if (!isMissingTable(error)) throw new Error(error.message)
   }
@@ -332,15 +336,15 @@ function fromRow(r) {
     ownerId: r.owner_id || null,
     results: parse(r.results, []),
     periodH: Number(r.period_h) || DEFAULT_PERIOD_H,
-    nextRunAt: Number(r.next_run_at) || 0,
-    lastRunAt: Number(r.last_run_at) || 0,
+    nextRunAt: fromDbTime(r.next_run_at),
+    lastRunAt: fromDbTime(r.last_run_at),
     lastNew: Number(r.last_new) || 0,
     lastGone: Number(r.last_gone) || 0,
     lastError: r.last_error || null,
     failCount: Number(r.fail_count) || 0,
     watch: !!r.watch,
     count: Number(r.count) || 0,
-    updatedAt: Number(r.updated_at) || 0,
+    updatedAt: fromDbTime(r.updated_at),
   }
 }
 
@@ -458,7 +462,7 @@ function queryRow(r) {
     name: String(r.title || '').trim() || shortName(r.keywords) || 'Без названия',
     query: String(r.keywords || ''),
     renamed: !!r.title,
-    updatedAt: Number(r.updated_at) || 0,
+    updatedAt: fromDbTime(r.updated_at),
     count: Number(r.count) || 0,
     watch: !!r.watch,
     ownerId: r.owner_id ? String(r.owner_id) : '',

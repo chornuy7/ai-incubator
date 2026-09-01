@@ -13,6 +13,7 @@
 import crypto from 'crypto'
 import { dataPath, readJson, writeJson } from './lib/jsonStore.js'
 import { getSupabase, supabaseEnabled } from './lib/supabase.js'
+import { toDbTime, fromDbTime, fromDbTimeOrNull } from './lib/dbTime.js'
 
 /**
  * Путь считаем ЛЕНИВО, при каждом обращении.
@@ -34,8 +35,8 @@ const isMissingTable = (error) =>
 const fromRow = (r) => ({
   id: r.id,
   userId: r.user_id,
-  start: Number(r.start_at) || 0,
-  end: r.end_at == null ? null : Number(r.end_at),
+  start: fromDbTime(r.start_at),
+  end: fromDbTimeOrNull(r.end_at),
   durationMs: Number(r.duration_ms) || 0,
 })
 
@@ -77,7 +78,7 @@ export async function clockIn(userId, now = Date.now()) {
     }
     if (data?.length) return fromRow(data[0])
     const { error: insErr } = await db.from('work_log').insert({
-      id: entry.id, user_id: userId, start_at: now, end_at: null, duration_ms: 0,
+      id: entry.id, user_id: userId, start_at: toDbTime(now), end_at: null, duration_ms: 0,
     })
     if (insErr && !isMissingTable(insErr)) throw new Error(`Не удалось отметить вход: ${insErr.message}`)
     return entry
@@ -104,7 +105,7 @@ export async function clockOut(userId, now = Date.now()) {
     if (!data?.length) return null
     const open = fromRow(data[0])
     const durationMs = Math.max(0, now - open.start)
-    const { error: updErr } = await db.from('work_log').update({ end_at: now, duration_ms: durationMs }).eq('id', open.id)
+    const { error: updErr } = await db.from('work_log').update({ end_at: toDbTime(now), duration_ms: durationMs }).eq('id', open.id)
     if (updErr && !isMissingTable(updErr)) throw new Error(`Не удалось отметить выход: ${updErr.message}`)
     return { ...open, end: now, durationMs }
   }

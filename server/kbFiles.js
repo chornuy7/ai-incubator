@@ -114,7 +114,7 @@ export async function saveKbFile(name, dataUrl) {
   const db = sb()
   if (db) {
     const { error } = await db.from('kb_files').insert({
-      id: ref, name: meta.name, mime, size_bytes: buffer.length, data: toBytea(buffer), created_at: Date.now(),
+      id: ref, name: meta.name, mime, size_bytes: buffer.length, data: toBytea(buffer), created_at: new Date().toISOString(),
     })
     if (error) {
       if (isMissingTable(error)) throw new Error('Вложения временно недоступны: не применена миграция базы')

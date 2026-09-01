@@ -11,6 +11,7 @@
 import crypto from 'crypto'
 import { dataPath, readJson, writeJson } from './lib/jsonStore.js'
 import { getSupabase, supabaseEnabled } from './lib/supabase.js'
+import { toDbTime, fromDbTime } from './lib/dbTime.js'
 
 /** Путь ленивый и с env — раньше его не было, и тесты писали в боевой файл. */
 const foldersFile = () => process.env.TARGET_FOLDERS_FILE || dataPath('target-folders.json')
@@ -53,8 +54,8 @@ const rowToFolder = (r, targets = []) => ({
   name: r.name,
   targets,
   ...(r.user_id ? { userId: r.user_id } : {}),
-  createdAt: Number(r.created_at) || 0,
-  updatedAt: Number(r.updated_at) || 0,
+  createdAt: fromDbTime(r.created_at),
+  updatedAt: fromDbTime(r.updated_at),
 })
 
 /** Записать цели папки: сначала убрать прежние, потом положить новые в их порядке. */
@@ -161,8 +162,8 @@ export async function createFolder(name, targets, userId) {
       id: folder.id,
       user_id: folder.userId || null,
       name: folder.name,
-      created_at: folder.createdAt,
-      updated_at: folder.updatedAt,
+      created_at: toDbTime(folder.createdAt),
+      updated_at: toDbTime(folder.updatedAt),
     })
     if (error) {
       if (isMissingTable(error)) throw new Error('Папки временно недоступны: не применена миграция базы')
@@ -194,7 +195,7 @@ export async function updateFolder(id, patch, userId) {
     if (!data?.length) return null
     const now = Date.now()
     const name = typeof patch?.name === 'string' && patch.name.trim() ? patch.name.trim() : data[0].name
-    const { error: updErr } = await db.from('target_folders').update({ name, updated_at: now }).eq('id', id)
+    const { error: updErr } = await db.from('target_folders').update({ name, updated_at: toDbTime(now) }).eq('id', id)
     if (updErr && !isMissingTable(updErr)) throw new Error(`Не удалось изменить папку: ${updErr.message}`)
 
     let targets
