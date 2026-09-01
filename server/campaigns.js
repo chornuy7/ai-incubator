@@ -15,7 +15,7 @@ import crypto from 'crypto'
 import { dataPath, readJson, mutateJson } from './lib/jsonStore.js'
 import { getSupabase, supabaseEnabled } from './lib/supabase.js'
 import { insertWithOwner, updateWithOwner, ownerOf } from './lib/ownerColumn.js'
-import { readModuleLinks, writeModuleLinks } from './lib/moduleIds.js'
+import { readModuleLinks, writeModuleLinks, moduleIdMaps } from './lib/moduleIds.js'
 
 function sbC() { return supabaseEnabled() ? getSupabase() : null }
 
@@ -38,11 +38,141 @@ function sbC() { return supabaseEnabled() ? getSupabase() : null }
 
 const modulesByCampaign = (db, ids) => readModuleLinks(db, 'campaign_modules', 'campaign_id', ids)
 const writeCampaignModules = (db, id, keys) => writeModuleLinks(db, 'campaign_modules', 'campaign_id', id, keys)
-const rowToCampaign = (r) => ({ id: r.id, name: r.name, goalId: r.goal_id || null, modules: r.modules || [], ...(r.data || {}), userId: ownerOf(r) || undefined, createdAt: r.created_at ? new Date(r.created_at).getTime() : 0, updatedAt: r.updated_at ? new Date(r.updated_at).getTime() : 0 })
+
+/*
+ * MR-290: закреплённые аккаунты и цели — строками, поля кампании — колонками.
+ *
+ * Закрепление аккаунта — НАСТОЯЩАЯ связь: аккаунт удалили, значит он должен уйти и из
+ * кампании. Массивом в мешке этого не происходило вовсе — оставался идентификатор,
+ * который ничего не находит, и кампания молча работала меньшим составом.
+ *
+ * Настройки модулей (`moduleSettings`, `moduleTargets`, `settings`) остаются json
+ * СОЗНАТЕЛЬНО: у каждого модуля свой набор параметров, и он меняется вместе с модулем.
+ * Разложить их по колонкам значило бы менять схему при каждой правке настроек модуля.
+ */
+const LIST_CHILDREN = [
+  { field: 'accountIds', table: 'campaign_accounts', column: 'account_id' },
+  { field: 'targets', table: 'campaign_targets', column: 'target' },
+]
+
+const CAMPAIGN_COLUMNS = [
+  ['moduleKey', 'module_key', 'text'],
+  ['status', 'status', 'text'],
+  ['pinned', 'pinned', 'bool'],
+]
+
+/** Списки кампаний разом: id кампании → значения по порядку. */
+async function listsByCampaign(db, ids) {
+  if (!ids.length) return {}
+  const out = {}
+  for (const { field, table, column } of LIST_CHILDREN) {
+    const { data, error } = await db.from(table)
+      .select(`campaign_id, ${column}, position`).in('campaign_id', ids).order('position', { ascending: true })
+    if (error) continue // таблицы нет — список останется тем, что дал мешок
+    const map = new Map()
+    for (const r of data || []) {
+      if (!map.has(r.campaign_id)) map.set(r.campaign_id, [])
+      map.get(r.campaign_id).push(r[column])
+    }
+    out[field] = map
+  }
+  return out
+}
+
+/** Кто ведёт какой модуль: id кампании → { ключ модуля: id агента }. */
+async function agentsByCampaign(db, ids) {
+  if (!ids.length) return null
+  const maps = await moduleIdMaps(db)
+  if (!maps) return null
+  const { data, error } = await db.from('campaign_module_agents').select('campaign_id, module_id, agent_id').in('campaign_id', ids)
+  if (error) return null
+  const out = new Map()
+  for (const r of data || []) {
+    const key = maps.byId.get(String(r.module_id))
+    if (!key) continue
+    if (!out.has(r.campaign_id)) out.set(r.campaign_id, {})
+    out.get(r.campaign_id)[key] = r.agent_id
+  }
+  return out
+}
+
+/** Дописать кампаниям то, что живёт в связанных таблицах. */
+async function attachChildren(db, campaigns) {
+  const ids = campaigns.map((c) => c.id)
+  const [links, lists, agents] = await Promise.all([
+    modulesByCampaign(db, ids),
+    listsByCampaign(db, ids),
+    agentsByCampaign(db, ids),
+  ])
+  for (const c of campaigns) {
+    // `null` — прочитать не удалось, остаётся значение из мешка. Пустая карта — это
+    // «связей нет», и она перекрывает: иначе снятое закрепление вернулось бы.
+    if (links) c.modules = links.get(c.id) ?? c.modules
+    for (const { field } of LIST_CHILDREN) if (lists[field]) c[field] = lists[field].get(c.id) || []
+    if (agents) c.moduleAgents = agents.get(c.id) || {}
+  }
+  return campaigns
+}
+
+/** Переписать связанные строки кампании. Списки — целиком, как и вся кампания. */
+async function writeChildren(db, c) {
+  await writeCampaignModules(db, c.id, c.modules)
+  for (const { field, table, column } of LIST_CHILDREN) {
+    const list = Array.isArray(c[field]) ? c[field] : []
+    const { error: delErr } = await db.from(table).delete().eq('campaign_id', c.id)
+    if (delErr) continue // таблицы нет — закрепления остались в мешке, он пока пишется
+    const seen = new Set()
+    const rows = []
+    list.forEach((raw, i) => {
+      const v = String(raw ?? '').trim()
+      if (!v || seen.has(v)) return
+      seen.add(v)
+      rows.push({ campaign_id: c.id, [column]: v, position: i })
+    })
+    if (!rows.length) continue
+    const { error } = await db.from(table).upsert(rows, { onConflict: `campaign_id,${column}` })
+    // Внешний ключ отказал — значит закрепляют аккаунт, которого нет. Молчать нельзя:
+    // кампания сохранилась бы с составом, отличным от показанного.
+    if (error) throw new Error(`[${table}] закрепления кампании не сохранены: ${error.message}`)
+  }
+
+  const maps = await moduleIdMaps(db)
+  if (!maps) return
+  const { error: delErr } = await db.from('campaign_module_agents').delete().eq('campaign_id', c.id)
+  if (delErr) return
+  const rows = []
+  for (const [key, agentId] of Object.entries(c.moduleAgents || {})) {
+    const moduleId = maps.byKey.get(key)
+    if (moduleId == null || !agentId) continue
+    rows.push({ campaign_id: c.id, module_id: moduleId, agent_id: String(agentId) })
+  }
+  if (!rows.length) return
+  const { error } = await db.from('campaign_module_agents').upsert(rows, { onConflict: 'campaign_id,module_id' })
+  if (error) throw new Error(`[campaign_module_agents] агенты кампании не сохранены: ${error.message}`)
+}
+
+const rowToCampaign = (r) => {
+  const c = { id: r.id, name: r.name, goalId: r.goal_id || null, modules: r.modules || [], ...(r.data || {}) }
+  for (const [key, col, kind] of CAMPAIGN_COLUMNS) {
+    if (r[col] == null || r[col] === '') continue
+    c[key] = kind === 'bool' ? r[col] !== false : String(r[col])
+  }
+  if (r.chat_enabled != null) c.chat = { ...(c.chat || {}), enabled: r.chat_enabled === true }
+  c.userId = ownerOf(r) || undefined
+  c.createdAt = r.created_at ? new Date(r.created_at).getTime() : 0
+  c.updatedAt = r.updated_at ? new Date(r.updated_at).getTime() : 0
+  return c
+}
 const campaignToRow = (c) => {
   const { id, name, goalId, modules, createdAt, updatedAt, ...data } = c
   // §11.3: владелец — в колонку (FK) и в data, чтобы работало до и после миграции.
-  return { id, name, goal_id: goalId || null, modules: modules || [], data, user_id: c.userId || null, created_at: new Date(createdAt || Date.now()).toISOString(), updated_at: new Date(updatedAt || Date.now()).toISOString() }
+  const row = { id, name, goal_id: goalId || null, modules: modules || [], data, user_id: c.userId || null, created_at: new Date(createdAt || Date.now()).toISOString(), updated_at: new Date(updatedAt || Date.now()).toISOString() }
+  for (const [key, col, kind] of CAMPAIGN_COLUMNS) {
+    const v = data[key]
+    row[col] = kind === 'bool' ? v !== false : (v == null || v === '' ? null : String(v))
+  }
+  row.chat_enabled = data.chat?.enabled === true
+  return row
 }
 
 const CAMPAIGNS_FILE = process.env.CAMPAIGNS_FILE || dataPath('campaigns.json')
@@ -231,11 +361,7 @@ export async function listCampaigns(filter = {}) {
   let all
   if (db) {
     const rows = (await db.from('campaigns').select('*').order('created_at', { ascending: false })).data || []
-    all = rows.map(rowToCampaign)
-    const links = await modulesByCampaign(db, all.map((c) => c.id))
-    // `null` — связей прочитать не удалось; тогда остаётся массив из колонки. Пустая
-    // карта — это другое: связи прочитаны, у кампании их просто нет.
-    if (links) all = all.map((c) => ({ ...c, modules: links.get(c.id) ?? c.modules }))
+    all = await attachChildren(db, rows.map(rowToCampaign))
   } else {
     all = await readJson(CAMPAIGNS_FILE, [])
   }
@@ -255,9 +381,8 @@ export async function getCampaign(id) {
   if (db) {
     const { data } = await db.from('campaigns').select('*').eq('id', id).maybeSingle()
     if (!data) return null
-    const c = rowToCampaign(data)
-    const links = await modulesByCampaign(db, [id])
-    return links ? { ...c, modules: links.get(id) ?? c.modules } : c
+    const [c] = await attachChildren(db, [rowToCampaign(data)])
+    return c
   }
   const all = await readJson(CAMPAIGNS_FILE, [])
   return all.find((c) => c.id === id) || null
@@ -302,7 +427,7 @@ export async function createCampaign(input) {
   const db = sbC()
   if (db) {
     await insertWithOwner(db, 'campaigns', campaignToRow(campaign))
-    await writeCampaignModules(db, campaign.id, campaign.modules)
+    await writeChildren(db, campaign)
     return campaign
   }
   await mutateJson(CAMPAIGNS_FILE, (all) => { all.unshift(campaign); return all }, [])
@@ -317,7 +442,7 @@ export async function updateCampaign(id, patch = {}) {
     if (!cur) return null
     const updated = applyCampaignPatch(cur, patch)
     await updateWithOwner(db, 'campaigns', campaignToRow(updated), 'id', id)
-    await writeCampaignModules(db, id, updated.modules)
+    await writeChildren(db, updated)
     return updated
   }
   let result = null

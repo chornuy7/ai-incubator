@@ -17,20 +17,51 @@ import { listStore } from './lib/tableStore.js'
 
 const agentsFile = () => process.env.AGENTS_FILE || dataPath('agents.json')
 
+/*
+ * MR-290: поля агента — колонками, а не мешком `data`.
+ *
+ * Агент — персона, от лица которой пишут модули, и все её поля перечислены в
+ * `normalizeAgent` с конкретными пределами длины. То есть структура известна заранее и
+ * целиком — ровно тот случай, когда мешок не даёт ничего, кроме потерянных типов и
+ * невозможности спросить у базы хоть что-нибудь про агентов.
+ */
+const AGENT_COLUMNS = [
+  ['toneOfVoice', 'tone_of_voice'],
+  ['restrictions', 'restrictions'],
+  ['character', 'character'],
+  ['language', 'language'],
+  ['audience', 'audience'],
+  ['completionCriteria', 'completion_criteria'],
+  ['firstMessage', 'first_message'],
+]
+
 // §10.2: агенты — сущность со своим жизненным циклом, место в БД, а не в файле.
 const agentsStore = listStore({
   table: 'agents',
   file: agentsFile,
-  toRow: (a) => { const { id, name, userId, createdAt, updatedAt, ...data } = a; return {
-    id, name: name || '', data, user_id: userId || null,
-    created_at: new Date(createdAt || Date.now()).toISOString(),
-    updated_at: new Date(updatedAt || Date.now()).toISOString(),
-  } },
-  fromRow: (r) => ({
-    ...(r.data || {}), id: r.id, name: r.name || '', userId: r.user_id || undefined,
-    createdAt: r.created_at ? new Date(r.created_at).getTime() : 0,
-    updatedAt: r.updated_at ? new Date(r.updated_at).getTime() : 0,
-  }),
+  toRow: (a) => {
+    const { id, name, userId, createdAt, updatedAt, ...data } = a
+    const row = {
+      id, name: name || '', user_id: userId || null,
+      // Мешок пока пишется тоже: до выката кода агента читает предыдущая версия.
+      data,
+      created_at: new Date(createdAt || Date.now()).toISOString(),
+      updated_at: new Date(updatedAt || Date.now()).toISOString(),
+    }
+    for (const [key, col] of AGENT_COLUMNS) row[col] = data[key] || null
+    return row
+  },
+  fromRow: (r) => {
+    const a = {
+      ...(r.data || {}), id: r.id, name: r.name || '', userId: r.user_id || undefined,
+      createdAt: r.created_at ? new Date(r.created_at).getTime() : 0,
+      updatedAt: r.updated_at ? new Date(r.updated_at).getTime() : 0,
+    }
+    // Колонка перекрывает мешок, пустая — не трогает: в промежутке между накаткой
+    // миграции и выкатом кода писала предыдущая версия, и писала она в мешок.
+    for (const [key, col] of AGENT_COLUMNS) if (r[col]) a[key] = r[col]
+    return a
+  },
 })
 
 /**

@@ -632,3 +632,47 @@ test('права роли: item_id пустая строка, а не NULL', asy
   assert.ok(flat.includes("item_id text not null default ''"), 'item_id обязан быть not null')
   assert.ok(flat.includes('primary key (role_id, scope, subject, item_id)'), 'ключ обязан включать item_id')
 })
+
+test('кампания: закрепление аккаунта — настоящая связь, а не строка в массиве', async () => {
+  // Аккаунт удаляли — закрепление оставалось: идентификатор, который ничего не находит.
+  // Кампания молча работала меньшим составом, и заметить это можно было только по числу
+  // действий.
+  const flat = flatten(await readSql('2026-09-02-mr290-remaining-bags.sql'))
+  assert.ok(flat.includes('account_id text not null references accounts_meta(id) on delete cascade'),
+    'закрепление обязано уходить вместе с аккаунтом')
+  assert.ok(flat.includes('agent_id text not null references agents(id) on delete cascade'),
+    'удалённый агент не должен оставаться закреплённым за модулем кампании')
+
+  const code = await readCode('campaigns.js')
+  assert.ok(code.includes("{ field: 'accountIds', table: 'campaign_accounts'"), 'закрепления должны читаться из таблицы')
+  assert.ok(code.includes("db.from('campaign_module_agents')"), 'агенты по модулям — тоже строками')
+})
+
+test('цели кампании намеренно без внешнего ключа на каналы', async () => {
+  // Цель задают именем (@durov), и канала может ещё не быть в базе — его приносит
+  // парсер уже во время работы. Ключ означал бы запрет на обычный сценарий.
+  const sql = await readSql('2026-09-02-mr290-remaining-bags.sql')
+  const блок = sql.slice(sql.indexOf('create table if not exists campaign_targets'))
+  assert.ok(!/target\s+text\s+not null\s+references/i.test(блок), 'ключа на channels здесь быть не должно')
+  assert.match(sql, /Внешнего ключа на `channels` тут НЕТ и быть не может/, 'решение обязано быть объяснено')
+})
+
+test('json остаётся там, где форма данных принадлежит не базе', async () => {
+  // Не всякий json — ошибка. Настройки модуля и тело отложенной кампании меняются
+  // вместе с модулем и с API; разложить их по колонкам значит менять схему при каждой
+  // правке настроек. Тест держит границу явной, чтобы её не стёрли в обе стороны.
+  const sql = await readSql('2026-09-02-mr290-remaining-bags.sql')
+  assert.match(sql, /ГДЕ JSON ОСТАЁТСЯ И ПОЧЕМУ/, 'граница обязана быть объяснена в миграции')
+  assert.match(sql, /add column if not exists body\s+jsonb/, 'тело отложенной кампании остаётся json')
+
+  const code = await readCode('campaigns.js')
+  assert.match(code, /Настройки модулей \(`moduleSettings`, `moduleTargets`, `settings`\) остаются json/,
+    'в коде должно быть написано, что эти поля оставлены json намеренно')
+})
+
+test('планировщик выбирает созревшие расписания по индексу, а не разбором json', async () => {
+  const flat = flatten(await readSql('2026-09-02-mr290-remaining-bags.sql'))
+  assert.ok(flat.includes('create index if not exists campaign_schedules_due_idx on campaign_schedules (run_at) where enabled and run_at is not null'),
+    'единственный запрос планировщика обязан идти по индексу')
+  assert.ok(flat.includes("check (repeat is null or repeat in ('none', 'daily'))"), 'повтор обязан быть ограничен')
+})
