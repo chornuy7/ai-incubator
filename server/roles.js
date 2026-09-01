@@ -34,6 +34,22 @@ function sbRoles() { return supabaseEnabled() ? getSupabase() : null }
  */
 const personalOf = (perm) => String(perm?.personalFor || '')
 
+/*
+ * `folderChannels` — единственное право, значение которого СПИСОК, а не allow/deny.
+ *
+ * Устроено оно так: `{ fld_1: ['news_ru', 'crypto'] }` — «из этой папки роли видны только
+ * эти каналы». Пустой список или отсутствие ключа означают ОБРАТНОЕ: видна вся папка
+ * (см. `folderTargetsForRole`). То есть потеря этого права не отбирает доступ, а РАСШИРЯЕТ
+ * его — роль получает папку целиком. Ошибка, которая выглядит как «всё работает».
+ *
+ * В строках список раскладывается по одной строке на канал, а папка и канал склеиваются в
+ * `item_id`. Разделителем взят символ, которого не бывает ни в идентификаторе папки
+ * (`fld_…`), ни в имени канала (буквы, цифры, подчёркивание): двоеточие или дефис однажды
+ * встретились бы внутри значения, и право распалось бы не в том месте.
+ */
+const LIST_RESOURCE = 'folderChannels'
+const LIST_SEP = '/'
+
 /** Разрез прав ↔ поле в дереве. Одна карта на оба перевода — не два списка. */
 const SCOPES = [['module', 'modules'], ['block', 'blocks'], ['section', 'sections'], ['resource', 'resources']]
 const FIELD_BY_SCOPE = new Map(SCOPES)
@@ -54,6 +70,16 @@ export function rulesToPermissions(rows) {
     const field = FIELD_BY_SCOPE.get(r.scope)
     if (!field) continue
     if (r.scope === 'resource' && r.item_id) {
+      // Каналы папки — единственное право со СПИСКОМ вместо allow/deny (см. LIST_RESOURCE).
+      if (r.subject === LIST_RESOURCE) {
+        const [folderId, ...хвост] = String(r.item_id).split(LIST_SEP)
+        const target = хвост.join(LIST_SEP)
+        if (!folderId || !target) continue
+        const bucket = p.resources[LIST_RESOURCE] && typeof p.resources[LIST_RESOURCE] === 'object' ? p.resources[LIST_RESOURCE] : {}
+        bucket[folderId] = [...(bucket[folderId] || []), target]
+        p.resources[LIST_RESOURCE] = bucket
+        continue
+      }
       const cur = p.resources[r.subject]
       const bucket = cur && typeof cur === 'object' ? cur : {}
       bucket[r.item_id] = r.effect
@@ -79,7 +105,17 @@ export function permissionsToRules(roleId, permissions) {
       }
       if (scope !== 'resource' || !v || typeof v !== 'object') continue
       for (const [itemId, iv] of Object.entries(v)) {
-        if (itemId && (iv === ALLOW || iv === DENY)) rows.push({ role_id: roleId, scope, subject, item_id: itemId, effect: iv })
+        if (!itemId) continue
+        // Список каналов папки — строка на канал. Пустой список не пишем: он и означает
+        // «вся папка», то есть отсутствие ограничения, и хранить его нечем.
+        if (subject === LIST_RESOURCE && Array.isArray(iv)) {
+          for (const цель of iv) {
+            const t = String(цель ?? '').trim()
+            if (t && !t.includes(LIST_SEP)) rows.push({ role_id: roleId, scope, subject, item_id: `${itemId}${LIST_SEP}${t}`, effect: ALLOW })
+          }
+          continue
+        }
+        if (iv === ALLOW || iv === DENY) rows.push({ role_id: roleId, scope, subject, item_id: itemId, effect: iv })
       }
     }
   }

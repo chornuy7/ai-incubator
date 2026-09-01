@@ -31,6 +31,30 @@
 alter table roles add column if not exists free_access  boolean not null default false;
 alter table roles add column if not exists personal_for text;
 
+comment on column roles.free_access is
+  'Роль работает без подписки: модули открыты, платить не нужно.';
+comment on column roles.personal_for is
+  'Роль заведена под конкретного человека и в общем списке не предлагается. NULL — обычная роль.';
+
+-- ПОРЯДОК ЗДЕСЬ ЗНАЧАЩИЙ: сначала перенос, потом зачистка, и только потом внешний ключ.
+--
+-- Соблазн поставить ключ сразу после `add column` велик — колонка пуста, ключ встаёт
+-- мгновенно. Но тогда следующий же UPDATE упирается в него на первой же роли, чей владелец
+-- удалён, и падает вся миграция: она идёт одной транзакцией, шестнадцать предыдущих файлов
+-- MR-290 уже закоммичены, деплой встаёт на середине. Повторный прогон падает так же —
+-- лечится только правкой файла на боевом сервере. Ничто в коде не снимает `personalFor`
+-- при удалении профиля (`deleteUser` роли не трогает), так что такие роли — обычное дело,
+-- а не край.
+update roles set
+  free_access  = coalesce((permissions->>'freeAccess')::boolean, free_access),
+  personal_for = coalesce(nullif(permissions->>'personalFor', ''), personal_for)
+where permissions is not null and jsonb_typeof(permissions) = 'object';
+
+-- Владелец личной роли мог быть удалён раньше, чем появился внешний ключ. Такую ссылку
+-- снимаем: иначе ключ не создастся и не применится вся миграция.
+update roles set personal_for = null
+where personal_for is not null and personal_for not in (select legacy_id from profiles where legacy_id is not null);
+
 -- Личная роль заводится под конкретного человека. `on delete set null`, а не каскад:
 -- роль может быть уже выдана, и удаление человека не должно молча снимать права у тех,
 -- кому её успели назначить. Такая же связь, как у roles.user_id рядом.
@@ -41,21 +65,6 @@ begin
       foreign key (personal_for) references profiles(legacy_id) on update cascade on delete set null;
   end if;
 end $$;
-
-comment on column roles.free_access is
-  'Роль работает без подписки: модули открыты, платить не нужно.';
-comment on column roles.personal_for is
-  'Роль заведена под конкретного человека и в общем списке не предлагается. NULL — обычная роль.';
-
-update roles set
-  free_access  = coalesce((permissions->>'freeAccess')::boolean, free_access),
-  personal_for = coalesce(nullif(permissions->>'personalFor', ''), personal_for)
-where permissions is not null and jsonb_typeof(permissions) = 'object';
-
--- Владелец личной роли мог быть удалён раньше, чем появился внешний ключ. Такую ссылку
--- снимаем: иначе ключ не создастся и не применится вся миграция.
-update roles set personal_for = null
-where personal_for is not null and personal_for not in (select legacy_id from profiles where legacy_id is not null);
 
 -- ─────────────────────────────────────────────────────────────
 -- Сама матрица
@@ -111,6 +120,25 @@ select r.id, 'resource', v.key, i.key, i.value #>> '{}'
  where jsonb_typeof(v.value) = 'object'
    and jsonb_typeof(i.value) = 'string' and i.value #>> '{}' in ('allow', 'deny')
    and i.key <> ''
+on conflict do nothing;
+
+-- Каналы папки — единственное право, значение которого СПИСОК, а не allow/deny:
+-- `{ folderChannels: { fld_1: ['news_ru', 'crypto'] } }` — «из этой папки роли видны
+-- только эти каналы». Пустой список означает ОБРАТНОЕ: видна вся папка целиком. То есть
+-- потерять такое право — не отобрать доступ, а РАСШИРИТЬ его; ошибка, которая выглядит
+-- как «всё работает». Раскладываем по строке на канал, склеивая папку и канал через `/` —
+-- символ, которого не бывает ни в `fld_…`, ни в имени канала.
+insert into role_permissions (role_id, scope, subject, item_id, effect)
+select r.id, 'resource', v.key, i.key || '/' || (цель #>> '{}'), 'allow'
+  from roles r,
+       lateral jsonb_each(coalesce(r.permissions->'resources', '{}'::jsonb)) v,
+       lateral jsonb_each(v.value) i,
+       lateral jsonb_array_elements(i.value) цель
+ where jsonb_typeof(v.value) = 'object'
+   and jsonb_typeof(i.value) = 'array'
+   and i.key <> ''
+   and nullif(цель #>> '{}', '') is not null
+   and position('/' in (цель #>> '{}')) = 0
 on conflict do nothing;
 
 alter table role_permissions enable row level security;

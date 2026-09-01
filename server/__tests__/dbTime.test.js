@@ -65,3 +65,40 @@ test('битое значение из базы читается как «нет
   assert.equal(fromDbTime('не дата'), 0)
   assert.equal(fromDbTimeOrNull('не дата'), null)
 })
+
+/**
+ * Отдельно — ПУТЬ ЗАПИСИ, а не только чтения.
+ *
+ * Конвертация в MR-290 была доведена до мапперов строк, и этого показалось достаточно.
+ * Оказалось, нет: в обращениях три патча собираются литералами мимо мапперов, и время
+ * продолжало уходить числом. Postgres читает 1787588909052 как дату и отвечает ошибкой,
+ * а `dbPatch` её пробрасывает — «отметить прочитанным», «отправить сообщение» и «сменить
+ * статус» сломались бы совсем, не только на время выката. Тестов на запись не было вовсе,
+ * поэтому прогон оставался зелёным.
+ */
+test('патч обращения: миллисекунды переводятся, готовая строка не трогается', async () => {
+  const { timesToDb } = await import('../tickets.js')
+  const МОМЕНТ = 1787588909052
+
+  const из_числа = timesToDb({ read_user: МОМЕНТ, status: 'open' })
+  assert.equal(из_числа.read_user, new Date(МОМЕНТ).toISOString(), 'число обязано стать временем')
+  assert.equal(из_числа.status, 'open', 'остальные поля патча не трогаем')
+
+  // Маппер уже отдал ISO — второй перевод превратил бы строку в NaN и стёр время.
+  const iso = new Date(МОМЕНТ).toISOString()
+  assert.equal(timesToDb({ updated_at: iso }).updated_at, iso)
+})
+
+test('патч обращения: ноль означает «не читали», а не полночь 1970 года', async () => {
+  const { timesToDb } = await import('../tickets.js')
+  assert.equal(timesToDb({ read_support: 0 }).read_support, null)
+})
+
+test('патч обращения: переводятся все колонки времени, а не одна', async () => {
+  // Пропущенная колонка — это ровно тот же отказ базы, только в другом сценарии.
+  const { timesToDb } = await import('../tickets.js')
+  const p = timesToDb({ created_at: 1, updated_at: 2, read_user: 3, read_support: 4, ts: 5 })
+  for (const [k, v] of Object.entries(p)) {
+    assert.equal(typeof v, 'string', `${k} обязана уехать строкой, а не числом`)
+  }
+})

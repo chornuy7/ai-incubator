@@ -165,11 +165,20 @@ async function readLists(db) {
 }
 
 /**
- * Переписать списки всех каналов. Стор и так работает целым списком (read-modify-write),
- * поэтому и здесь целиком: сначала снять всё, потом положить заново — иначе пришлось бы
- * сверять построчно ради того же результата.
+ * Переписать списки записываемых каналов.
+ *
+ * Снос ограничен ТЕМИ каналами, что пришли на запись, а не всей таблицей. Первая редакция
+ * сносила `channel_sources` целиком (`delete().neq('channel_id','')`) и заново наполняла
+ * из переданного списка. Пока список полный, результат тот же — но стоит вызвать запись с
+ * частью каналов, и у остальных источники исчезают. А от источников зависит ВИДИМОСТЬ:
+ * `channelsForRequest` показывает оператору только каналы, найденные его задачами, так что
+ * это не «потерялось служебное поле», а «база каналов пропала у владельцев».
+ *
+ * @returns {Promise<boolean>} false — записать не удалось; вызывающий обязан это заметить.
  */
 async function writeLists(db, all) {
+  const ids = (all || []).map((c) => c?.id).filter(Boolean)
+  if (!ids.length) return true
   for (const { field, table, column, ordered, prefix } of LISTS) {
     const rows = []
     for (const c of all || []) {
@@ -182,8 +191,12 @@ async function writeLists(db, all) {
         rows.push({ channel_id: c.id, [column]: v, ...(ordered ? { position: i } : {}) })
       })
     }
-    const { error: delErr } = await db.from(table).delete().neq('channel_id', '')
-    if (delErr) { console.warn(`[channels] не удалось очистить ${table}:`, delErr.message); return false }
+    // Снимаем только у своих каналов и пачками: `in` с тысячей значений уезжает в адрес
+    // запроса, а у него есть предел, за которым PostgREST отвечает ошибкой.
+    for (let i = 0; i < ids.length; i += 200) {
+      const { error } = await db.from(table).delete().in('channel_id', ids.slice(i, i + 200))
+      if (error) { console.warn(`[channels] не удалось очистить ${table}:`, error.message); return false }
+    }
     for (let i = 0; i < rows.length; i += 500) {
       const { error } = await db.from(table).upsert(rows.slice(i, i + 500), { onConflict: `channel_id,${column}` })
       if (error) { console.warn(`[channels] не удалось записать ${table}:`, error.message); return false }
@@ -203,7 +216,23 @@ async function readAll() {
     const lists = await readLists(db)
     if (lists) {
       for (const c of channels) {
-        for (const { field } of LISTS) c[field] = lists[field].get(c.id) || []
+        for (const { field } of LISTS) {
+          const изТаблицы = lists[field].get(c.id)
+          /*
+           * Пустой результат таблицы НЕ затирает непустой список из мешка.
+           *
+           * Пока мешок ещё пишется (переходный выпуск), у канала список есть в обоих
+           * местах, и они совпадают: их пишет одна и та же `writeAll`. А вот у канала,
+           * заведённого предыдущей версией кода в окно выката, строк в таблице нет вовсе —
+           * и «нет строк» означало бы «источников нет», то есть канал, невидимый своему
+           * владельцу. Намеренное опустошение при этом опустошает и мешок, так что откат
+           * вернёт тот же пустой список, а не воскресит снятые источники.
+           *
+           * Снимается вместе с записью в мешок — следующим выпуском.
+           */
+          if (изТаблицы?.length) c[field] = изТаблицы
+          else if (!Array.isArray(c[field])) c[field] = []
+        }
       }
     }
     return channels
@@ -227,7 +256,14 @@ async function writeAll(all) {
   if (gone.length) await db.from('channels').delete().in('id', gone)
   // Списки пишем ПОСЛЕ каналов: у дочерних таблиц внешний ключ на channels, и до
   // появления самого канала строка источника просто не вставится.
-  await writeLists(db, all)
+  //
+  // Отказ здесь НЕ проглатываем. От источников зависит видимость канала, а `console.warn`
+  // рядом с успешным ответом означает «сохранили» в интерфейсе и пустую таблицу в базе.
+  // Уходим в тот же файловый откат, что и при отказе записи самих каналов.
+  if (!await writeLists(db, all)) {
+    console.warn('[channels] списки каналов не записаны — сохраняю в файл, чтобы не потерять источники')
+    return writeJson(CHANNELS_FILE, all)
+  }
   return all
 }
 

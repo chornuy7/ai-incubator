@@ -135,3 +135,49 @@ test('роль без флага не получает его из ниотку�
   assert.equal(роль.permissions.freeAccess, undefined, 'лишний флаг в правах — это выданный доступ')
   assert.equal(роль.freeAccess, false)
 })
+
+test('ограничение по каналам папки переживает круг — иначе роль получает ВСЮ папку', () => {
+  /*
+   * folderChannels — единственное право со СПИСКОМ вместо allow/deny, и потеря его не
+   * отбирает доступ, а расширяет: пустой список означает «видна вся папка целиком»
+   * (folderTargetsForRole). То есть ошибка перевода здесь выглядит как «всё работает»,
+   * а на деле роль видит чужие каналы.
+   */
+  const исходно = {
+    modules: {}, blocks: {}, sections: {},
+    resources: { folders: { fld_1: 'allow' }, folderChannels: { fld_1: ['news_ru', 'crypto'] } },
+  }
+  const строки = permissionsToRules('role_x', исходно)
+  const каналы = строки.filter((r) => r.subject === 'folderChannels')
+  assert.equal(каналы.length, 2, 'по строке на канал')
+  assert.deepEqual(каналы.map((r) => r.item_id).sort(), ['fld_1/crypto', 'fld_1/news_ru'])
+
+  const обратно = rulesToPermissions(asRows(строки))
+  assert.deepEqual(обратно.resources.folderChannels, { fld_1: ['news_ru', 'crypto'] },
+    'список каналов обязан вернуться тем же')
+  assert.deepEqual(обратно.resources.folders, { fld_1: 'allow' }, 'и не помешать обычным правам')
+})
+
+test('пустой список каналов папки в строки не пишется — он и есть «вся папка»', () => {
+  // Хранить «ограничения нет» нечем: пустой список и отсутствие ключа значат одно и то же.
+  const строки = permissionsToRules('role_x', { resources: { folderChannels: { fld_1: [] } } })
+  assert.deepEqual(строки, [])
+})
+
+test('канал с разделителем внутри имени право не ломает', () => {
+  // Папка и канал склеиваются в один item_id. Значение, содержащее разделитель, распалось
+  // бы не в том месте и выдало бы доступ к чужому каналу — такое не пишем вовсе.
+  const строки = permissionsToRules('role_x', { resources: { folderChannels: { fld_1: ['ok_name', 'bad/name'] } } })
+  assert.deepEqual(строки.map((r) => r.item_id), ['fld_1/ok_name'])
+})
+
+test('битая строка каналов папки не роняет чтение прав', () => {
+  // Строка без канала или без папки — мусор из будущей версии схемы; пропускаем её,
+  // а не теряем все права роли целиком.
+  const p = rulesToPermissions([
+    { scope: 'resource', subject: 'folderChannels', item_id: 'fld_1', effect: 'allow' },
+    { scope: 'resource', subject: 'folderChannels', item_id: '/news', effect: 'allow' },
+    { scope: 'resource', subject: 'folderChannels', item_id: 'fld_2/ok', effect: 'allow' },
+  ])
+  assert.deepEqual(p.resources.folderChannels, { fld_2: ['ok'] })
+})

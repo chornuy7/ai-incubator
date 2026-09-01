@@ -144,9 +144,33 @@ async function dbTicket(db, id) {
   return ticket || null
 }
 
+/**
+ * Привести время в патче к виду колонки.
+ *
+ * MR-290 перевёл `created_at`/`updated_at`/`read_user`/`read_support` в timestamptz, и
+ * конвертация была доведена только до мапперов строк (`ticketToRow`, `msgToRow`). А три
+ * патча собираются ЛИТЕРАЛАМИ мимо мапперов — и продолжали класть epoch-мс числом.
+ * Postgres читает `1787588909052` как дату и отвечает ошибкой, `dbPatch` её пробрасывает:
+ * «отметить прочитанным», «отправить сообщение» и «сменить статус» перестали бы работать
+ * совсем, а не только в окно выката.
+ *
+ * Поэтому перевод живёт ЗДЕСЬ, а не у каждого вызывающего: место, где легко забыть, должно
+ * быть одно и должно чиниться само. Число — это миллисекунды, их переводим; строка уже
+ * пришла из маппера в нужном виде и остаётся как есть.
+ *
+ * @param {Record<string, any>} patch @returns {Record<string, any>}
+ */
+export function timesToDb(patch) {
+  const out = { ...(patch || {}) }
+  for (const col of ['created_at', 'updated_at', 'read_user', 'read_support', 'ts']) {
+    if (typeof out[col] === 'number') out[col] = toDbTime(out[col])
+  }
+  return out
+}
+
 /** Записать поля тикета. Ошибку «нет таблицы» глушим — как и при чтении. */
 async function dbPatch(db, id, patch) {
-  const { error } = await db.from('tickets').update(patch).eq('id', String(id))
+  const { error } = await db.from('tickets').update(timesToDb(patch)).eq('id', String(id))
   if (error && !isMissingTable(error)) throw new Error(`Не удалось сохранить обращение: ${error.message}`)
 }
 

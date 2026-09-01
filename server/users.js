@@ -512,10 +512,25 @@ export async function updateUser(id, patch = {}) {
     // profiles — источник правды: роли/имя/активность/parent (uuid) + выдачи + режим баланса.
     let parentUuid = null
     if (next.parentId) { const pp = await profileByLegacy(db, next.parentId); parentUuid = pp?.id || null }
-    // MR-290: выдачи (account_ids / account_group_ids) в профиль больше НЕ пишутся —
-    // они живут строками со ссылками. Два источника одних и тех же прав однажды
-    // разойдутся, и тогда доступ будет зависеть от того, какой из них прочитали.
-    await db.from('profiles').update({ name: next.name, active: next.active, role_ids: next.roleIds, parent_id: parentUuid, balance_mode: next.balanceMode || 'shared', token_limit: next.tokenLimit ?? null, updated_at: new Date().toISOString() }).eq('id', prof.id)
+    /*
+     * MR-290: выдачи живут строками со ссылками, но колонки ПОКА ПИШУТСЯ тоже.
+     *
+     * Сперва я их писать перестал — рассудив, что два источника одних и тех же прав
+     * однажды разойдутся. Для прав это рассуждение оказалось задом наперёд: миграции
+     * применяются ДО выката кода, и в это окно профили читает предыдущая версия — из
+     * колонок. Перестав их обновлять, мы получаем не «один источник правды», а окно, в
+     * котором снятое право продолжает действовать, а выданное не действует. Расхождение
+     * на минуты дешевле, чем доступ, живущий своей жизнью.
+     *
+     * Обе колонки сносятся следующим выпуском (supabase/next-release/), тогда же уйдёт и
+     * эта запись — она помечена там же, в шаге 2 README.
+     */
+    await db.from('profiles').update({
+      name: next.name, active: next.active, role_ids: next.roleIds, parent_id: parentUuid,
+      account_ids: next.accountIds || [], account_group_ids: next.accountGroupIds || [],
+      balance_mode: next.balanceMode || 'shared', token_limit: next.tokenLimit ?? null,
+      updated_at: new Date().toISOString(),
+    }).eq('id', prof.id)
     await writeGrants(db, next.id, { accounts: next.accountIds || [], groups: next.accountGroupIds || [], roles: next.roleIds || [] })
     // Пароль — только в auth.users.
     if (patch.password) {
