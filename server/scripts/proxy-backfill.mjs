@@ -13,7 +13,8 @@
  * запись каталога (правило уникальности host+port+логин+пароль — как в createProxy).
  */
 import { loadAllMetaRaw, setAccountMeta } from '../accountsMeta.js'
-import { listProxies, createProxy, toProxyUrl } from '../proxies.js'
+import { listProxies, createProxy, importProxies, toProxyUrl } from '../proxies.js'
+import { readJson, dataPath } from '../lib/jsonStore.js'
 import { parseProxy } from '../proxy.js'
 
 const ПРИМЕНИТЬ = process.argv.includes('--apply')
@@ -21,7 +22,30 @@ const ПРИМЕНИТЬ = process.argv.includes('--apply')
 const строка = (m) => String(m?.proxy || '').trim()
 const рабочая = (s) => s && s !== '—' && s.includes('://')
 
+/**
+ * Шаг 0: каталог из ФАЙЛА в хранилище.
+ *
+ * Найдено при проверке 01.09, до того как это ударило: на проде каталог живёт в
+ * `data/proxies.json` (97 записей), а новый код читает каталог из БД. Выложи код без этого
+ * шага — и в панели прокси стало бы НОЛЬ, хотя на диске они целы. Импортируем с
+ * сохранением id: на старые id уже ссылаются аккаунты.
+ */
+async function перенестиКаталог() {
+  const файл = process.env.PROXIES_FILE || dataPath('proxies.json')
+  const изФайла = await readJson(файл, [])
+  if (!Array.isArray(изФайла) || !изФайла.length) return { added: 0, skipped: 0, файл: 0 }
+  if (ПРИМЕНИТЬ) return { ...(await importProxies(изФайла)), файл: изФайла.length }
+  // Режим плана: считаем то же самое, но ничего не пишем.
+  const есть = await listProxies()
+  const поId = new Set(есть.map((p) => p.id))
+  const добавим = изФайла.filter((p) => p && p.host && p.port && !поId.has(p.id)).length
+  return { added: добавим, skipped: изФайла.length - добавим, файл: изФайла.length }
+}
+
 async function main() {
+  const каталогИтог = await перенестиКаталог()
+  console.log(`каталог из файла: ${каталогИтог.файл} записей → в хранилище ${ПРИМЕНИТЬ ? 'добавлено' : 'добавится'} ${каталогИтог.added}, пропущено ${каталогИтог.skipped}`)
+
   const мета = await loadAllMetaRaw()
   const каталог = await listProxies()
   const поСтроке = new Map(каталог.map((p) => [toProxyUrl(p), p]))

@@ -164,6 +164,46 @@ export async function createProxy(input) {
   return proxy
 }
 
+/**
+ * MR-262: перенести готовые записи каталога В ХРАНИЛИЩЕ, сохранив их id.
+ *
+ * Нужна ровно один раз — когда каталог переезжает из файла в базу. `createProxy` тут не
+ * годится: он выдаёт НОВЫЙ id, а на старые id уже ссылаются аккаунты — после такого
+ * переноса ссылки указывали бы в пустоту.
+ *
+ * Идемпотентна: запись с таким id или с такой же парой «адрес+логин» пропускается.
+ *
+ * @param {object[]} entries @returns {Promise<{added:number, skipped:number}>}
+ */
+export async function importProxies(entries = []) {
+  const итог = { added: 0, skipped: 0 }
+  const входные = Array.isArray(entries) ? entries.filter((e) => e && e.host && e.port) : []
+  if (!входные.length) return итог
+  await store.mutate((all) => {
+    const поId = new Set(all.map((p) => p.id))
+    const ключ = (p) => `${p.host}:${p.port}:${p.username || ''}:${p.password || ''}`
+    const поАдресу = new Set(all.map(ключ))
+    const добавить = []
+    for (const e of входные) {
+      if ((e.id && поId.has(e.id)) || поАдресу.has(ключ(e))) { итог.skipped++; continue }
+      const запись = {
+        ...normalizeProxy(e),
+        id: e.id || `px_${crypto.randomUUID().slice(0, 8)}`,
+        ...(e.ownerId ? { ownerId: e.ownerId } : {}),
+        lastCheckAt: e.lastCheckAt ?? null,
+        createdAt: e.createdAt ?? Date.now(),
+        updatedAt: Date.now(),
+      }
+      поId.add(запись.id)
+      поАдресу.add(ключ(запись))
+      добавить.push(запись)
+      итог.added++
+    }
+    return добавить.length ? [...добавить, ...all] : undefined
+  })
+  return итог
+}
+
 /** @param {string} id @param {object} patch */
 export async function updateProxy(id, patch = {}) {
   let updated = null

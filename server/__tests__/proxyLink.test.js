@@ -17,7 +17,7 @@ import path from 'node:path'
 
 process.env.PROXIES_FILE = path.join(os.tmpdir(), `mr262-proxies-${process.pid}.json`)
 
-const { createProxy, updateProxy, deleteProxy, toProxyUrl } = await import('../proxies.js')
+const { createProxy, updateProxy, deleteProxy, importProxies, listProxies, toProxyUrl } = await import('../proxies.js')
 const { withProxyStrings, proxyPatch, findByUrl } = await import('../lib/proxyLink.js')
 
 test.after(() => { try { fs.unlinkSync(process.env.PROXIES_FILE) } catch { /* нечего убирать */ } })
@@ -106,4 +106,34 @@ test('в строке таблицы аккаунта есть ссылка на
   assert.match(мета, /proxy_id: m\.proxyId \|\| null/, 'ключ должен доезжать до колонки')
   // Пересборка строки — на чтении; писать её обратно значило бы снова размножить копии.
   assert.match(мета, /return withProxyStrings\(await loadAllMetaRaw\(\)\)/)
+})
+
+test('каталог переносится из файла с СОХРАНЕНИЕМ id', async () => {
+  /*
+   * Найдено при проверке 01.09, до того как ударило: на проде каталог живёт в
+   * `data/proxies.json` (97 записей), а новый код читает его из БД. Выложи код без переноса
+   * — и в панели прокси стало бы НОЛЬ при живых записях на диске.
+   *
+   * Id сохраняются намеренно: на них уже ссылаются аккаунты. `createProxy` тут не годится
+   * — он выдаёт новый id, и ссылки указывали бы в пустоту.
+   */
+  const итог = await importProxies([
+    { id: 'px_старый', host: '10.9.9.1', port: 1080, username: 'u', password: 'p', status: 'ok' },
+    { id: 'px_второй', host: '10.9.9.2', port: 1080 },
+  ])
+  assert.equal(итог.added, 2)
+  const каталог = await listProxies()
+  assert.equal(каталог.find((p) => p.id === 'px_старый')?.host, '10.9.9.1', 'id должен остаться прежним')
+  assert.equal(каталог.find((p) => p.id === 'px_старый')?.status, 'ok', 'статус переносится, а не сбрасывается')
+
+  // Повтор ничего не дублирует — скрипт переноса запускают не один раз.
+  const второй = await importProxies([
+    { id: 'px_старый', host: '10.9.9.1', port: 1080, username: 'u', password: 'p' },
+    { id: 'px_другой_id', host: '10.9.9.2', port: 1080 }, // тот же адрес, другой id
+  ])
+  assert.equal(второй.added, 0)
+  assert.equal(второй.skipped, 2, 'вторая запись — тот же адрес, а значит тот же прокси')
+
+  // Мусор без адреса не переносим: гадать, что это было, хуже, чем пропустить.
+  assert.deepEqual(await importProxies([{ id: 'px_пусто' }]), { added: 0, skipped: 0 })
 })
