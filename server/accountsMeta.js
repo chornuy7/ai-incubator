@@ -2,15 +2,37 @@ import fs from 'fs/promises'
 import path from 'path'
 import { mutateJson } from './lib/jsonStore.js'
 import { getSupabase, supabaseEnabled } from './lib/supabase.js'
+import { decryptSecret, secretForStorage } from './lib/secretBox.js'
 import { SESSIONS_DIR } from './config.js'
 
 function sbA() { return supabaseEnabled() ? getSupabase() : null }
-// Полный объект меты живёт в data-jsonb; индексируемые колонки — для запросов
-// (админка «проблемы»: бан/flood/без прокси).
-const metaToRow = (id, m) => ({
+
+/*
+ * MR-290: облачный пароль (2FA) больше не лежит в jsonb.
+ *
+ * Он уехал в отдельную колонку `two_fa_enc` и шифруется приложением
+ * (server/lib/secretBox.js). Причина не в красоте: `loadAllMeta` читает `data` целиком,
+ * и пока пароль был внутри, каждый список аккаунтов тянул 47 паролей открытым текстом
+ * через сеть и держал их в памяти процесса — при том, что нужен из них ровно один бит
+ * «пароль есть».
+ *
+ * Поэтому наружу из меты отдаётся только `has2fa`. Сам пароль достаётся ЯВНЫМ вызовом
+ * `getAccountTwoFa(id)` — так видно в коде, кто и зачем его берёт.
+ */
+const stripSecrets = (m) => { const { twoFA: _secret, ...rest } = m || {}; return rest }
+
+/**
+ * Строка таблицы из объекта меты. Индексируемые колонки — для запросов (админка
+ * «проблемы»: бан/flood/без прокси), остальное — в data-jsonb, секрет — отдельно.
+ * @param {string} id @param {object} m
+ * @param {string|null|undefined} twoFaEnc готовый шифротекст; undefined — не трогать колонку
+ */
+const metaToRow = (id, m, twoFaEnc) => ({
   id, name: m.name || null, username: m.username || null, phone: m.phone || null,
   status: m.status || null, proxy: m.proxy || null, country: m.country || null,
-  in_trash: !!m.inTrash, data: m, updated_at: new Date(m.updatedAt || Date.now()).toISOString(),
+  in_trash: !!m.inTrash, data: stripSecrets(m),
+  ...(twoFaEnc === undefined ? {} : { two_fa_enc: twoFaEnc }),
+  updated_at: new Date(m.updatedAt || Date.now()).toISOString(),
 })
 import { buildStatusPatch, normalizeStatus, nextStatusAfterExpiry, canModuleUseAccount } from './lib/accountStatus.js'
 import { appendAudit } from './lib/auditLog.js'
@@ -60,17 +82,47 @@ const DEFAULT_META = {
 export async function loadAllMeta() {
   const db = sbA()
   if (db) {
-    const { data } = await db.from('accounts_meta').select('id, data')
+    const { data } = await db.from('accounts_meta').select('id, data, two_fa_enc')
     const out = {}
-    for (const r of data || []) out[r.id] = r.data || {}
+    for (const r of data || []) {
+      const m = stripSecrets(r.data || {})
+      // Пароль НЕ расшифровываем: списку аккаунтов нужен один бит, а не 47 паролей в
+      // памяти. Старый ключ в data учитываем, пока скрипт перешифровки не прошёл.
+      m.has2fa = !!(r.two_fa_enc || r.data?.twoFA)
+      out[r.id] = m
+    }
     return out
   }
   try {
     const raw = await fs.readFile(metaFile(), 'utf8')
-    return /** @type {Record<string, object>} */ (JSON.parse(raw))
+    const all = /** @type {Record<string, object>} */ (JSON.parse(raw))
+    // Файловый режим (тесты, локальный запуск) хранит пароль как раньше — там нет ни
+    // общей базы, ни бэкапов. Но наружу отдаём тот же признак, чтобы поведение совпадало.
+    for (const [id, m] of Object.entries(all || {})) all[id] = { ...stripSecrets(m), has2fa: !!m?.twoFA }
+    return all
   } catch {
     return {}
   }
+}
+
+/**
+ * Облачный пароль аккаунта — ЯВНЫМ вызовом и по одному.
+ *
+ * Отдельная функция, а не поле в мете: пароль нужен ровно там, где аккаунт
+ * реавторизуют, и каждый такой вызов должно быть видно в коде. Пока сессия жива, он не
+ * нужен вовсе — и не должен путешествовать вместе со списком аккаунтов.
+ * @param {string} accountId @returns {Promise<string|null>}
+ */
+export async function getAccountTwoFa(accountId) {
+  const db = sbA()
+  if (db) {
+    const { data } = await db.from('accounts_meta').select('two_fa_enc, data').eq('id', accountId).maybeSingle()
+    // До перешифровки значение может лежать ещё открытым текстом в data — decryptSecret
+    // такое возвращает как есть, поэтому обе дороги ведут в одно место.
+    return decryptSecret(data?.two_fa_enc ?? data?.data?.twoFA ?? null)
+  }
+  const all = await (async () => { try { return JSON.parse(await fs.readFile(metaFile(), 'utf8')) } catch { return {} } })()
+  return decryptSecret(all?.[accountId]?.twoFA ?? null)
 }
 
 /**
@@ -104,12 +156,24 @@ export async function getAccountMeta(accountId) {
 export async function setAccountMeta(accountId, patch) {
   const db = sbA()
   if (db) {
-    const { data: row } = await db.from('accounts_meta').select('data').eq('id', accountId).maybeSingle()
+    const { data: row } = await db.from('accounts_meta').select('data, two_fa_enc').eq('id', accountId).maybeSingle()
     const cur = row?.data || {}
-    const merged = { ...DEFAULT_META, ...cur, ...patch, updatedAt: Date.now() }
+    const merged = { ...DEFAULT_META, ...stripSecrets(cur), ...stripSecrets(patch), updatedAt: Date.now() }
     if (!merged.createdAt) merged.createdAt = Date.now()
-    await db.from('accounts_meta').upsert(metaToRow(accountId, merged), { onConflict: 'id' })
-    return merged
+    /*
+     * Секрет трогаем ТОЛЬКО когда он пришёл в patch.
+     *
+     * metaToRow собирает строку целиком, и если бы колонка попадала в неё всегда, то
+     * любое сохранение статуса затирало бы пароль пустым значением. Ровно так уже
+     * теряли пароли раньше (см. комментарий выше про read-modify-write), только тогда
+     * через файл. `undefined` означает «в запрос колонку не класть» — при upsert
+     * PostgREST не трогает то, чего в теле нет.
+     */
+    const twoFaEnc = patch && Object.hasOwn(patch, 'twoFA')
+      ? secretForStorage(patch.twoFA, true)
+      : undefined
+    await db.from('accounts_meta').upsert(metaToRow(accountId, merged, twoFaEnc), { onConflict: 'id' })
+    return { ...merged, has2fa: twoFaEnc === undefined ? !!(row?.two_fa_enc || cur.twoFA) : !!twoFaEnc }
   }
   let result = null
   await mutateJson(metaFile(), (all) => {

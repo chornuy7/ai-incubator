@@ -2438,11 +2438,27 @@ process.on('uncaughtException', (err) => {
   console.error('[fatal] необработанное исключение:', err?.stack || err)
 })
 
-const server = app.listen(PORT, HOST, () => {
+const server = app.listen(PORT, HOST, async () => {
   console.log(`API → http://${HOST}:${PORT}`)
   // Адрес живой документации печатаем при старте: иначе о ней узнают из README,
   // а README читают в последнюю очередь.
   if (docsEnabled()) console.log(`MCP docs → http://${HOST === '0.0.0.0' ? 'localhost' : HOST}:${PORT}${MCP_DOCS_PATH}`)
+  /*
+   * MR-290: ключ шифрования секретов проверяем ПРИ СТАРТЕ, а не при первой записи.
+   *
+   * Без ключа сохранение облачного пароля отказывает — и это правильно, класть его в
+   * общую базу открытым текстом нельзя. Но узнать об этом посреди импорта аккаунтов —
+   * худший момент: оператор уже выбрал архив и ждёт. Говорим сразу и один раз.
+   */
+  const { supabaseEnabled: sharedDb } = await import('./lib/supabase.js')
+  const { secretsKeyConfigured, secretsKeyId } = await import('./lib/secretBox.js')
+  if (!secretsKeyConfigured()) {
+    const where = sharedDb() ? 'ОБЩАЯ БАЗА' : 'локальное хранилище'
+    console.warn(`[secrets] SECRETS_KEY не задан (${where}). Облачные пароли аккаунтов ${sharedDb() ? 'НЕ БУДУТ СОХРАНЯТЬСЯ — импорт с паролем упадёт' : 'хранятся открытым текстом (допустимо только локально)'}.`)
+    console.warn('[secrets] Сгенерировать: node -e "console.log(require(\'crypto\').randomBytes(32).toString(\'base64\'))"')
+  } else {
+    console.log(`[secrets] ключ шифрования подключён (id ${secretsKeyId()})`)
+  }
 })
 // Занятый порт — единственная ошибка, при которой продолжать бессмысленно: обычно
 // это уже запущенный второй экземпляр. Говорим об этом человеческим языком.
