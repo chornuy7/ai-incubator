@@ -167,8 +167,10 @@ export async function importOne(item, opts = {}) {
 
   const phone = (me?.phone ? `+${String(me.phone).replace(/^\+/, '')}` : item.phone) || ''
   const accountId = newAccountId(phone || item.name || String(Date.now()))
-  await saveSession(accountId, session)
 
+  // MR-290: СНАЧАЛА мета, потом сессия. Сессия теперь строка таблицы `account_sessions`
+  // с внешним ключом на аккаунт — без строки аккаунта ей не на что ссылаться. Порядок
+  // и по смыслу правильнее: сперва появляется аккаунт, потом у него появляется доступ.
   const name = [me?.firstName, me?.lastName].filter(Boolean).join(' ') || item.name || 'Аккаунт'
   await setAccountMeta(accountId, {
     // Чей это аккаунт (правка 18.08). Без владельца он не покажется никому, кроме
@@ -191,6 +193,8 @@ export async function importOne(item, opts = {}) {
     twoFA: item.twoFA || null,
     note: `Импортирован из ${source === 'tdata' ? 'tdata' : 'файла сессии'}${source !== item.kind ? ' (tdata под паролем — завёлся из .session рядом)' : ''}`,
   })
+
+  await saveSession(accountId, session)
 
   return {
     ok: true, accountId, name, phone,

@@ -89,6 +89,22 @@ test('ключ неверной длины отвергается сразу, а
   assert.throws(() => box.secretsKeyConfigured(), /32 байта/)
 })
 
+test('строка сессии не сохраняется открытым текстом', async () => {
+  // Сессия — уже пройденная авторизация: ей не нужен ни телефон, ни код, ни облачный
+  // пароль. Лежала файлом открытым текстом, то есть копия каталога = копия всех
+  // аккаунтов. Теперь она строка таблицы и шифруется тем же ключом (MR-290).
+  const auth = await fs.readFile(new URL('../tgAuth.js', import.meta.url), 'utf8')
+  assert.ok(!/writeFile\(sessionFile\(accountId\), sessionString/.test(auth),
+    'сессия больше не пишется в файл как есть')
+  assert.match(auth, /secretForStorage\(sessionString, true\)/, 'в базу уезжает шифротекст')
+  assert.match(auth, /decryptSecret\(data\.session_enc\)/, 'из базы читается через расшифровку')
+
+  const sql = await fs.readFile(new URL('../../supabase/migrations/2026-09-01-mr290-account-sessions.sql', import.meta.url), 'utf8')
+  const flat = sql.replace(/\s+/g, ' ')
+  assert.ok(flat.includes('references accounts_meta(id) on delete cascade'),
+    'удалили аккаунт — сессия уходит с ним, иначе останется живой доступ к несуществующему аккаунту')
+})
+
 test('пароль не попадает в объект меты и в ответ API', async () => {
   // Пароль лежал в data-jsonb, а loadAllMeta читает data целиком — значит объект меты
   // носил его по всему коду, и одной строки `res.json(meta)` хватило бы, чтобы отдать
