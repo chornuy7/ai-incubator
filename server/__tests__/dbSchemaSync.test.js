@@ -676,3 +676,31 @@ test('планировщик выбирает созревшие расписа�
     'единственный запрос планировщика обязан идти по индексу')
   assert.ok(flat.includes("check (repeat is null or repeat in ('none', 'daily'))"), 'повтор обязан быть ограничен')
 })
+
+test('суточные счётчики и доверие работают через базу, а не мимо неё', async () => {
+  // Обе таблицы существовали с самого начала и были ПУСТЫ: код читал и писал файл.
+  // На потолках держится защита аккаунта от бана, а файловый инкремент — это
+  // «прочитать, увеличить, записать»: два воркера пробивают потолок незаметно.
+  const daily = await readCode('lib/dailyActions.js')
+  assert.ok(daily.includes("db.rpc('bump_daily_action'"),
+    'инкремент обязан идти одним запросом, а не чтением-записью файла')
+  assert.ok(daily.includes("db.from('daily_actions')"), 'счётчики обязаны читаться из базы')
+
+  const trust = await readCode('lib/trustCache.js')
+  assert.ok(trust.includes("db.from('trust_cache')"), 'кэш доверия обязан жить в базе')
+
+  const flat = flatten(await readSql('2026-09-02-mr290-counters-live.sql'))
+  assert.ok(flat.includes('foreign key (account_id) references accounts_meta(id) on delete cascade'),
+    'счётчики удалённого аккаунта не должны оставаться висеть')
+  assert.ok(flat.includes('check (score between 0 and 100)'), 'доверие живёт по шкале 0–100')
+})
+
+test('окно переписки читает историю из базы, а не из файлов задач', async () => {
+  // Файлы после переезда задач перестают пополняться, а функция продолжила бы работать —
+  // молча возвращая пусто. Экран сказал бы «ещё не переписывались» ровно там, где пустой
+  // диалог при живой отправке означает, что аккаунт помечен спамом.
+  const code = await readCode('lib/outbox.js')
+  assert.ok(code.includes("db.from('task_events')"), 'история обязана читаться из базы')
+  assert.ok(code.includes("eq('field', 'history')"), 'нужны именно записи истории')
+  assert.ok(code.includes('outgoingFromFiles'), 'файловый путь остаётся запасным, а не выбрасывается')
+})

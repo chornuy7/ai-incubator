@@ -13,6 +13,7 @@
 import fs from 'fs/promises'
 import path from 'path'
 import { dataPath } from './jsonStore.js'
+import { getSupabase, supabaseEnabled } from './supabase.js'
 
 /** Модули, которые пишут людям в ЛС. */
 const DM_MODULES = ['mailing', 'neuro-dialogs', 'neuro-chatting']
@@ -36,6 +37,53 @@ export function peerKey(raw) {
 export async function outgoingToPeer(peer, opts = {}) {
   const key = peerKey(peer)
   if (!key) return []
+  const fromDb = await outgoingFromDb(key, opts)
+  if (fromDb) return fromDb
+  return outgoingFromFiles(key, opts)
+}
+
+/**
+ * MR-290: история задач переехала в базу (`task_events`), и читать файлы стало нельзя.
+ *
+ * Это не косметика. Файлы после переезда перестают пополняться, а функция продолжила бы
+ * работать — молча возвращая пусто. Окно переписки сказало бы «с этим контактом ещё не
+ * переписывались» ровно там, где оно должно кричать обратное: пустой диалог при живой
+ * отправке — главный симптом того, что аккаунт помечен спамом. Худший вид поломки:
+ * экран не сломан, он уверенно врёт.
+ *
+ * @returns {Promise<object[]|null>} null — базы нет или прочитать не удалось; читайте файлы.
+ */
+async function outgoingFromDb(key, opts = {}) {
+  const db = supabaseEnabled() ? getSupabase() : null
+  if (!db) return null
+  // Отбираем сразу по модулю: писать в ЛС умеют три модуля из пятнадцати, и тянуть
+  // историю остальных ради поиска одного контакта незачем.
+  const { data, error } = await db.from('task_events')
+    .select('payload, position, task_id, tasks!inner(module_key)')
+    .eq('field', 'history')
+    .in('tasks.module_key', DM_MODULES)
+    .limit(20000)
+  if (error) return null
+  const out = []
+  for (const row of data || []) {
+    const h = row.payload
+    if (h?.status !== 'sent' || !h?.text) continue
+    if (peerKey(h.peer || h.target) !== key) continue
+    if (opts.accountId && h.accountId && h.accountId !== opts.accountId) continue
+    out.push({
+      text: h.text,
+      ts: h.ts,
+      taskId: row.task_id,
+      moduleKey: row.tasks?.module_key,
+      accountId: h.accountId,
+      accountName: h.accountName,
+    })
+  }
+  return out.sort((a, b) => String(a.ts).localeCompare(String(b.ts)))
+}
+
+/** Запасной путь: файлы задач. Остаётся для файлового бэкенда и для задач, ещё не перенесённых. */
+async function outgoingFromFiles(key, opts = {}) {
   const out = []
   for (const moduleKey of DM_MODULES) {
     const dir = dataPath(path.join('modules', moduleKey, 'tasks'))

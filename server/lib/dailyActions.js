@@ -5,6 +5,9 @@
  */
 import { dataPath, readJson, writeJson } from './jsonStore.js'
 import { DAILY_LIMITS } from './safetyLimits.js'
+import { getSupabase, supabaseEnabled } from './supabase.js'
+
+function sb() { return supabaseEnabled() ? getSupabase() : null }
 
 const FILE = process.env.DAILY_ACTIONS_FILE || dataPath('daily-actions.json')
 
@@ -29,11 +32,45 @@ export function limitReachedFrom(map, accountId, action, now = Date.now()) {
   return countFrom(map, accountId, action, now) >= cap
 }
 
-async function load() { const m = await readJson(FILE, {}); return m && typeof m === 'object' ? m : {} }
+/*
+ * MR-290: счётчики живут в базе, файл остаётся запасным путём.
+ *
+ * Таблица `daily_actions` и функция `bump_daily_action` существовали с самого начала и ни
+ * разу не вызывались — стор читал и писал файл. Это не мелочь: на потолках держится
+ * защита аккаунта от бана, а файловый инкремент — это «прочитать, увеличить, записать».
+ * Два воркера, увеличивающие счётчик одновременно, читают одно значение и пишут каждый
+ * своё: одно действие не посчитано. «Иногда считает на единицу меньше» здесь означает
+ * «иногда даёт превысить», и заметно это будет по бану, а не по логу.
+ */
+
+/**
+ * Счётчики за ДЕНЬ в прежней форме: аккаунт → { date, counts }.
+ * Форма сохранена ради чистых `countFrom`/`limitReachedFrom` — их зовут и снаружи.
+ * @param {number} [now]
+ */
+async function load(now = Date.now()) {
+  const db = sb()
+  if (db) {
+    const day = dayKey(now)
+    // Берём только сегодняшний день: вчерашние счётчики не нужны никому, а таблица
+    // растёт по дню на аккаунт и без отбора однажды поехала бы целиком.
+    const { data, error } = await db.from('daily_actions').select('account_id, action, count').eq('day', day)
+    if (!error) {
+      const map = {}
+      for (const r of data || []) {
+        if (!map[r.account_id]) map[r.account_id] = { date: day, counts: {} }
+        map[r.account_id].counts[r.action] = Number(r.count) || 0
+      }
+      return map
+    }
+  }
+  const m = await readJson(FILE, {})
+  return m && typeof m === 'object' ? m : {}
+}
 
 /** Достигнут ли суточный лимит (с чтением стораджа). */
 export async function limitReached(accountId, action, now = Date.now()) {
-  return limitReachedFrom(await load(), accountId, action, now)
+  return limitReachedFrom(await load(now), accountId, action, now)
 }
 
 /**
@@ -41,7 +78,7 @@ export async function limitReached(accountId, action, now = Date.now()) {
  * Для UI (вкладка «Здоровье»): понятно, почему аккаунт пропускается модулями.
  */
 export async function dailySummary(accountId, now = Date.now()) {
-  const map = await load()
+  const map = await load(now)
   const date = dayKey(now)
   const items = ['comments', 'dm', 'joins', 'reactions'].map((action) => {
     const used = countFrom(map, accountId, action, now)
@@ -57,7 +94,7 @@ export async function dailySummary(accountId, now = Date.now()) {
  * @returns {Promise<Record<string, {items: {action,used,cap,reached}[], anyReached: boolean}>>}
  */
 export async function dailySummaryAll(now = Date.now()) {
-  const map = await load()
+  const map = await load(now)
   const date = dayKey(now)
   const out = {}
   for (const [accountId, rec] of Object.entries(map)) {
@@ -72,13 +109,28 @@ export async function dailySummaryAll(now = Date.now()) {
   return out
 }
 
-/** Инкремент счётчика действия аккаунта на сегодня (сброс при новом дне). */
+/**
+ * Инкремент счётчика действия аккаунта на сегодня (сброс при новом дне).
+ * @returns {Promise<number|null>} новое значение счётчика; null — посчитали в файле.
+ */
 export async function incAction(accountId, action, now = Date.now()) {
-  if (!accountId || !action) return
-  const map = await load()
+  if (!accountId || !action) return null
   const key = dayKey(now)
-  let rec = map[accountId]
-  if (!rec || rec.date !== key) { rec = { date: key, counts: {} }; map[accountId] = rec }
+  const db = sb()
+  if (db) {
+    // Одним запросом, а не «прочитать-увеличить-записать»: два воркера иначе пробили бы
+    // потолок незаметно. Функция сразу возвращает НОВОЕ значение — вызывающий узнаёт,
+    // упёрся он в лимит, не делая второго запроса.
+    const { data, error } = await db.rpc('bump_daily_action', { p_account: accountId, p_day: key, p_action: action })
+    if (!error) return Number(data) || 0
+    // Аккаунта нет в базе — считать его лимит не для кого; в файл такое не дублируем.
+    if (String(error.code) === '23503') return null
+  }
+  const map = await readJson(FILE, {})
+  const all = map && typeof map === 'object' ? map : {}
+  let rec = all[accountId]
+  if (!rec || rec.date !== key) { rec = { date: key, counts: {} }; all[accountId] = rec }
   rec.counts[action] = Number(rec.counts[action] || 0) + 1
-  await writeJson(FILE, map)
+  await writeJson(FILE, all)
+  return rec.counts[action]
 }
