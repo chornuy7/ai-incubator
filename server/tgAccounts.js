@@ -57,6 +57,10 @@ function toAccountDto(accountId, meta, me, sessionOk) {
     country: meta.country || countryFromPhone(phone),
     status,
     lastSeen: formatLastSeen(meta.updatedAt || meta.createdAt),
+    // MR-290: наружу идут ОБА — ссылка (по ней панель считает занятость и назначает)
+    // и собранная строка для показа. Строку собирает сервер из каталога, поэтому в
+    // браузер больше не уезжают логины и пароли прокси.
+    proxyId: meta.proxyId || null,
     proxy: meta.proxy || '—',
     // note патчится через PATCH /accounts/:id, но в DTO его не было — заметка
     // сохранялась и пропадала. Нужна, в частности, чтобы видеть источник импорта.
@@ -235,7 +239,8 @@ export async function tgPatchAccount(accountId, patch) {
    * было негде ни в одном интерфейсе: пул всегда оставался пустым, и крон каждые 12 часов
    * писал «нет свободных сервисных аккаунтов». Поле существовало, работать им было нельзя.
    */
-  const allowed = ['role', 'project', 'country', 'status', 'proxy', 'inTrash', 'note', 'service']
+  // `proxy` (строка подключения) больше не принимается: связь задаётся ссылкой proxyId.
+  const allowed = ['role', 'project', 'country', 'status', 'proxyId', 'inTrash', 'note', 'service']
   /** @type {Record<string, unknown>} */
   const clean = {}
   for (const k of allowed) {

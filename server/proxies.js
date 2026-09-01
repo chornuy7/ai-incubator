@@ -1,16 +1,100 @@
 /**
  * Сущность «Прокси» (§3.2/3.4). Каталог прокси для привязки к аккаунтам.
  * Модель поддерживает решение заказчика (14.07): своя ферма + докупаемые (static/mobile).
- * account.proxy хранит URL-строку (её парсит server/proxy.js#parseProxy для GramJS);
- * `toProxyUrl` строит эту строку из сущности — мост между каталогом и назначением на аккаунт.
- * Хранение — JSON data/proxies.json; путь через env PROXIES_FILE (изоляция тестов).
+ * Аккаунт ссылается на прокси идентификатором (`accounts_meta.proxy_id`), а строку
+ * подключения для GramJS собирает `toProxyUrl` В МОМЕНТ КОННЕКТА. Хранить собранную
+ * строку рядом со ссылкой нельзя: так уже было, и связь потерялась — см. MR-290.
+ *
+ * Хранение — таблица `proxies`; файл `data/proxies.json` остаётся только для тестов и
+ * локального запуска (путь через env PROXIES_FILE).
  */
 import crypto from 'crypto'
 import net from 'net'
 import { SocksClient } from 'socks'
 import { dataPath, readJson, writeJson } from './lib/jsonStore.js'
+import { getSupabase, supabaseEnabled, isMissingTable } from './lib/supabase.js'
+import { decryptSecret, secretForStorage } from './lib/secretBox.js'
 
 const PROXIES_FILE = process.env.PROXIES_FILE || dataPath('proxies.json')
+
+/*
+ * MR-290 (вбирает MR-262): каталог прокси переехал в таблицу `proxies`.
+ *
+ * Таблицу завела MR-262 и залила данными (101 строка), но кода к ней не написала — стор
+ * продолжал читать и писать `server/data/proxies.json`. Файл здесь особенно вреден: в нём
+ * лежат ЛОГИНЫ И ПАРОЛИ прокси открытым текстом, и на втором инстансе каталог просто
+ * разъезжается.
+ *
+ * Два правила, которые здесь соблюдаются:
+ *
+ *   1. ПАРОЛЬ НЕ ПОКИДАЕТ СЕРВЕР. `listProxies` отдаёт `hasPassword`, а не сам пароль:
+ *      каталог уезжает в браузер, и до сих пор уезжал вместе с паролями — фронт собирал
+ *      из них URL прокси (src/api/proxiesApi.ts). Пароль нужен ровно в одном месте — при
+ *      сборке строки подключения на сервере, и для этого есть `proxyUrlById`.
+ *   2. В базе пароль лежит шифрованным (`password_enc`, тот же механизм, что у облачных
+ *      паролей и сессий). Колонка `password` остаётся до следующего релиза как запасной
+ *      путь: перешифровку делает server/scripts/encrypt-proxy-passwords.mjs.
+ */
+const TABLE = 'proxies'
+function sbP() { return supabaseEnabled() ? getSupabase() : null }
+
+const iso = (ms) => (ms ? new Date(Number(ms)).toISOString() : null)
+const msOf = (v) => (v ? new Date(v).getTime() : null)
+
+/** Доменный объект → строка таблицы. Пароль уезжает только в шифрованном виде. */
+const proxyToRow = (p) => ({
+  id: p.id,
+  label: p.label || '',
+  kind: p.kind, scheme: p.scheme, host: p.host, port: p.port,
+  username: p.username || null,
+  password_enc: secretForStorage(p.password, true),
+  country: p.country || null,
+  geo_source: p.geoSource || null,
+  rotate_url: p.rotateUrl || null,
+  status: p.status || 'unknown',
+  reason: p.reason || null,
+  note: p.note || null,
+  user_id: p.ownerId || null,
+  last_check_at: iso(p.lastCheckAt),
+  created_at: iso(p.createdAt) || new Date().toISOString(),
+  updated_at: iso(p.updatedAt) || new Date().toISOString(),
+})
+
+/**
+ * Строка таблицы → доменный объект.
+ * @param {object} r @param {boolean} withSecret отдавать ли расшифрованный пароль
+ */
+function proxyFromRow(r, withSecret) {
+  // Пока скрипт перешифровки не прошёл, значение может лежать ещё в `password`.
+  const stored = r.password_enc ?? r.password ?? null
+  return {
+    id: r.id, label: r.label || '', kind: r.kind, scheme: r.scheme,
+    host: r.host, port: r.port, username: r.username || '',
+    ...(withSecret ? { password: decryptSecret(stored) || '' } : { hasPassword: !!stored }),
+    country: r.country || '', geoSource: r.geo_source || null, rotateUrl: r.rotate_url || '',
+    status: r.status || 'unknown', reason: r.reason || '', note: r.note || '',
+    ownerId: r.user_id || undefined,
+    lastCheckAt: msOf(r.last_check_at), createdAt: msOf(r.created_at), updatedAt: msOf(r.updated_at),
+  }
+}
+
+/** Прочитать каталог. `withSecret` — только для серверных нужд (сборка URL, проверка живости). */
+async function readProxies(withSecret) {
+  const db = sbP()
+  if (!db) {
+    const arr = await readJson(PROXIES_FILE, [])
+    const list = Array.isArray(arr) ? arr : []
+    return withSecret ? list : list.map(({ password: _p, ...rest }) => ({ ...rest, hasPassword: !!_p }))
+  }
+  const { data, error } = await db.from(TABLE).select('*').order('created_at', { ascending: false })
+  if (error) {
+    if (!isMissingTable(error)) throw new Error(`[${TABLE}] чтение каталога прокси не удалось: ${error.message}`)
+    const arr = await readJson(PROXIES_FILE, [])
+    const list = Array.isArray(arr) ? arr : []
+    return withSecret ? list : list.map(({ password: _p, ...rest }) => ({ ...rest, hasPassword: !!_p }))
+  }
+  return (data || []).map((r) => proxyFromRow(r, withSecret))
+}
 
 export const PROXY_KINDS = ['static', 'mobile', 'farm'] // статический / мобильный / своя ферма
 export const PROXY_SCHEMES = ['socks5', 'http']
@@ -69,25 +153,66 @@ export function normalizeProxy(input = {}) {
   }
 }
 
+/** Каталог для интерфейса и API. БЕЗ паролей — только признак `hasPassword`. */
 export async function listProxies() {
-  const arr = await readJson(PROXIES_FILE, [])
-  return Array.isArray(arr) ? arr : []
+  return readProxies(false)
 }
+
+/** Каталог с паролями. Только для серверных нужд: сборка URL, проверка живости. */
+export async function listProxiesWithSecrets() {
+  return readProxies(true)
+}
+
+/*
+ * Короткий кэш каталога с секретами.
+ *
+ * Строку подключения теперь собирают из прокси в момент коннекта, а список аккаунтов
+ * читается на каждый чих — без кэша это был бы лишний запрос и расшифровка сотни паролей
+ * на каждое чтение меты. Живёт секунды и сбрасывается любой правкой каталога, поэтому
+ * «поменял прокси — а он старый» здесь невозможно.
+ */
+let _catalog = null
+const CATALOG_TTL = 10_000
+
+export async function proxyCatalog() {
+  if (_catalog && Date.now() - _catalog.ts < CATALOG_TTL) return _catalog.list
+  const list = await listProxiesWithSecrets()
+  _catalog = { list, ts: Date.now() }
+  return list
+}
+
+export function invalidateProxyCatalog() { _catalog = null }
 
 export async function getProxy(id) {
   return (await listProxies()).find((p) => p.id === id) || null
+}
+
+/**
+ * Строка подключения для аккаунта: собирается из строки прокси В МОМЕНТ КОННЕКТА.
+ *
+ * Собранный URL нигде не хранится — именно из-за хранения связь один раз уже потерялась:
+ * `accounts_meta.proxy` содержал строку, прокси меняли, строка оставалась прежней. Теперь
+ * источник один — `accounts_meta.proxy_id`, а URL производный.
+ * @param {string|null|undefined} proxyId @returns {Promise<string>} пустая строка — без прокси
+ */
+export async function proxyUrlById(proxyId) {
+  const id = String(proxyId || '').trim()
+  if (!id) return ''
+  const all = await listProxiesWithSecrets()
+  const p = all.find((x) => x.id === id)
+  return p ? toProxyUrl(p) : ''
+}
+
+/** Сохранить каталог целиком — только для файлового режима (тесты, локальный запуск). */
+async function writeProxiesFile(all) {
+  await writeJson(PROXIES_FILE, all)
+  invalidateProxyCatalog()
 }
 
 /** @param {object} input @throws при пустом host/port */
 export async function createProxy(input) {
   const clean = normalizeProxy(input)
   if (!clean.host || !clean.port) throw new Error('Укажите host и port')
-  const all = await listProxies()
-  // MR-169 (14.08): уникальность прокси — host+port+логин+пароль. Дубли раньше плодились
-  // и путали статистику/назначение. Проверяем ДО создания.
-  const dupe = all.find((p) => p.host === clean.host && p.port === clean.port
-    && (p.username || '') === (clean.username || '') && (p.password || '') === (clean.password || ''))
-  if (dupe) throw new Error(`Такой прокси уже есть в каталоге${dupe.label ? ` («${dupe.label}»)` : ''}`)
   const proxy = {
     id: `px_${crypto.randomUUID().slice(0, 8)}`,
     ...clean,
@@ -99,14 +224,33 @@ export async function createProxy(input) {
     createdAt: Date.now(),
     updatedAt: Date.now(),
   }
+  const db = sbP()
+  if (db) {
+    const { error } = await db.from(TABLE).insert(proxyToRow(proxy))
+    invalidateProxyCatalog()
+    if (error) {
+      // MR-169: точку входа определяют адрес, порт и логин — за этим следит уникальный
+      // индекс. Раньше проверка жила только в коде и делалась ДО вставки: между проверкой
+      // и записью помещался второй такой же запрос, и дубль всё равно появлялся.
+      if (/duplicate key|unique constraint/i.test(error.message)) {
+        throw new Error('Такой прокси уже есть в каталоге (тот же адрес, порт и логин)')
+      }
+      throw new Error(`[${TABLE}] прокси не создан: ${error.message}`)
+    }
+    return { ...proxy, password: undefined, hasPassword: !!clean.password }
+  }
+  const all = await listProxiesWithSecrets()
+  const dupe = all.find((p) => p.host === clean.host && p.port === clean.port
+    && (p.username || '') === (clean.username || ''))
+  if (dupe) throw new Error(`Такой прокси уже есть в каталоге${dupe.label ? ` («${dupe.label}»)` : ''}`)
   all.unshift(proxy)
-  await writeJson(PROXIES_FILE, all)
+  await writeProxiesFile(all)
   return proxy
 }
 
 /** @param {string} id @param {object} patch */
 export async function updateProxy(id, patch = {}) {
-  const all = await listProxies()
+  const all = await listProxiesWithSecrets()
   const i = all.findIndex((p) => p.id === id)
   if (i === -1) return null
   const clean = normalizeProxy({ ...all[i], ...patch })
@@ -114,32 +258,58 @@ export async function updateProxy(id, patch = {}) {
   const next = { ...all[i], ...clean, updatedAt: Date.now() }
   // normalizeProxy не знает про lastCheckAt — сохраняем его из патча явно (иначе теряется).
   if (patch.lastCheckAt !== undefined) next.lastCheckAt = patch.lastCheckAt
+  if (patch.ownerId !== undefined) next.ownerId = String(patch.ownerId || '').trim() || undefined
+  const db = sbP()
+  if (db) {
+    const { error } = await db.from(TABLE).update(proxyToRow(next)).eq('id', id)
+    invalidateProxyCatalog()
+    if (error) throw new Error(`[${TABLE}] прокси не обновлён: ${error.message}`)
+    return { ...next, password: undefined, hasPassword: !!next.password }
+  }
   all[i] = next
-  await writeJson(PROXIES_FILE, all)
+  await writeProxiesFile(all)
   return all[i]
 }
 
 export async function deleteProxy(id) {
-  const all = await listProxies()
+  const db = sbP()
+  if (db) {
+    // Аккаунты, у которых он был назначен, освобождаются внешним ключом
+    // (accounts_meta.proxy_id ... on delete set null) — отдельного прохода не нужно.
+    const { data, error } = await db.from(TABLE).delete().eq('id', id).select('id')
+    invalidateProxyCatalog()
+    if (error) throw new Error(`[${TABLE}] прокси не удалён: ${error.message}`)
+    return (data || []).length > 0
+  }
+  const all = await listProxiesWithSecrets()
   const next = all.filter((p) => p.id !== id)
   if (next.length === all.length) return false
-  await writeJson(PROXIES_FILE, next)
+  await writeProxiesFile(next)
   return true
 }
 
 /**
- * MR-170 (14.08): пакетное удаление за ОДНУ операцию чтение-запись.
+ * MR-170 (14.08): пакетное удаление за ОДНУ операцию.
  * Раньше UI слал N параллельных DELETE /:id — конкурентные read-modify-write одного JSON
- * теряли данные (last-write-wins), из-за чего «удалились все прокси». Теперь один проход.
+ * теряли данные (last-write-wins), из-за чего «удалились все прокси». В базе это один
+ * запрос, и проблема исчезает вместе с файлом.
  * @param {string[]} ids @returns {Promise<number>} сколько удалено
  */
 export async function deleteProxies(ids) {
-  const set = new Set((Array.isArray(ids) ? ids : []).map(String))
-  if (set.size === 0) return 0
-  const all = await listProxies()
+  const list = [...new Set((Array.isArray(ids) ? ids : []).map(String))]
+  if (!list.length) return 0
+  const db = sbP()
+  if (db) {
+    const { data, error } = await db.from(TABLE).delete().in('id', list).select('id')
+    invalidateProxyCatalog()
+    if (error) throw new Error(`[${TABLE}] прокси не удалены: ${error.message}`)
+    return (data || []).length
+  }
+  const set = new Set(list)
+  const all = await listProxiesWithSecrets()
   const next = all.filter((p) => !set.has(p.id))
   const removed = all.length - next.length
-  if (removed > 0) await writeJson(PROXIES_FILE, next)
+  if (removed > 0) await writeProxiesFile(next)
   return removed
 }
 
@@ -274,7 +444,8 @@ export async function probeProxy(p, timeoutMs = 9000) {
 
 /** Проверить один прокси и записать статус + актуальные гео/geoSource. */
 export async function checkProxyLiveness(id, timeoutMs = 9000) {
-  const p = await getProxy(id)
+  // Тоже с секретом: без пароля проба через прокси не пройдёт авторизацию.
+  const p = (await listProxiesWithSecrets()).find((x) => x.id === id) || null
   if (!p) return null
   const { status, geo, geoSource, reason } = await probeProxy(p, timeoutMs)
   return updateProxy(id, {
@@ -395,7 +566,8 @@ export async function probeProxyExitGeo(proxy = {}, timeoutMs = 9000) {
  */
 export async function checkAllProxies(onlyIds = null, timeoutMs = 9000) {
   const allow = onlyIds ? new Set(onlyIds.map(String)) : null
-  const all = (await listProxies()).filter((p) => !allow || allow.has(String(p.id)))
+  // Пробе нужен пароль — берём каталог с секретами (наружу он всё равно не уходит).
+  const all = (await listProxiesWithSecrets()).filter((p) => !allow || allow.has(String(p.id)))
   const results = []
   // Пачками: проба теперь ходит наружу через каждый прокси (секунды), и полсотни
   // подряд — это минуты. Но и все разом открывать нельзя: сотня сокетов на ровном месте.
@@ -444,34 +616,105 @@ export async function findProxyByUrl(url) {
     port = parts[1] || ''
   }
   if (!host || !port) return null
+  // Логин сравниваем, если он в строке есть: на одном host:port у продавца бывает
+  // несколько учёток, и поиск только по адресу возвращал бы первую попавшуюся.
+  let login = ''
+  try { login = decodeURIComponent(new URL(raw).username || '') } catch { /* строка не URL */ }
   const all = await listProxies()
-  return all.find((p) => String(p.host) === host && String(p.port) === String(port)) || null
+  const same = all.filter((p) => String(p.host) === host && String(p.port) === String(port))
+  if (login) return same.find((p) => String(p.username || '') === login) || null
+  return same[0] || null
 }
 
 /**
- * Пометить прокси каталога по URL аккаунта (например `dead`) — чтобы сдохший прокси
- * сразу попадал в «нерабочие», а не ждал получасовой авто-проверки.
- * @param {string} url @param {'ok'|'bad'|'dead'|'unknown'} status
+ * Найти прокси по строке подключения или завести его в каталоге. Возвращает идентификатор.
+ *
+ * Нужно там, где прокси приходит СТРОКОЙ извне: из json продавца рядом с сессией
+ * («sidecar») или из формы импорта, где оператор вписал его руками. Раньше такая строка
+ * оседала прямо в мете аккаунта, минуя каталог, — и получался прокси, которого нет в
+ * списке, но который используется. Теперь любая строка сначала становится записью
+ * каталога, а аккаунт ссылается на неё идентификатором.
+ * @param {string} url @param {string} [ownerId]
+ * @returns {Promise<string|null>} id прокси или null, если строку разобрать не удалось
+ */
+export async function ensureProxyByUrl(url, ownerId) {
+  const raw = String(url || '').trim()
+  if (!raw || raw === '—') return null
+  const found = await findProxyByUrl(raw)
+  if (found) return found.id
+  let u
+  try { u = new URL(raw) } catch { return null }
+  const port = Number(u.port)
+  if (!u.hostname || !port) return null
+  const created = await createProxy({
+    scheme: u.protocol.replace(':', ''),
+    host: u.hostname,
+    port,
+    username: decodeURIComponent(u.username || ''),
+    password: decodeURIComponent(u.password || ''),
+    ownerId,
+  })
+  return created?.id || null
+}
+
+/**
+ * Строка подключения для аккаунта. Сюда приходит уже прочитанная мета, чтобы не читать
+ * каталог по разу на аккаунт: массовые операции идут пачками по десяткам аккаунтов.
+ * @param {{proxyId?: string}} meta @param {{id:string, password?:string}[]} catalog
+ */
+export function proxyUrlFor(meta, catalog) {
+  const id = String(meta?.proxyId || '').trim()
+  if (!id) return ''
+  const p = (catalog || []).find((x) => x.id === id)
+  return p ? toProxyUrl(p) : ''
+}
+
+/**
+ * Пометить прокси (например `dead`) — чтобы сдохший сразу попадал в «нерабочие», а не
+ * ждал получасовой авто-проверки.
+ *
+ * MR-290: по идентификатору, а не по URL. Прежний `markProxyStatusByUrl` разбирал строку
+ * подключения и искал прокси по host:port — то есть при совпадении адреса мог пометить
+ * ЧУЖОЙ прокси, а при смене адреса не находил нужный вовсе.
+ * @param {string} proxyId @param {'ok'|'bad'|'dead'|'unknown'} status
+ */
+export async function markProxyStatus(proxyId, status) {
+  if (!PROXY_STATUSES.includes(status)) return null
+  const id = String(proxyId || '').trim()
+  if (!id) return null
+  const p = await getProxy(id)
+  if (!p || p.status === status) return p
+  try { return await updateProxy(id, { status, lastCheckAt: Date.now() }) } catch { return null }
+}
+
+/**
+ * УСТАРЕЛО (MR-290): поиск прокси по строке подключения.
+ *
+ * Оставлено на время переезда — вызывающие переходят на `markProxyStatus(proxyId)`.
+ * @deprecated
  */
 export async function markProxyStatusByUrl(url, status) {
-  if (!PROXY_STATUSES.includes(status)) return null
   const p = await findProxyByUrl(url)
-  if (!p || p.status === status) return p
-  try { return await updateProxy(p.id, { status, lastCheckAt: Date.now() }) } catch { return null }
+  return p ? markProxyStatus(p.id, status) : null
 }
 
 /**
  * Карта использования прокси аккаунтами (§6: «1 прокси = 1 аккаунт»).
- * @param {Record<string, {proxy?: string}>} accountsMeta карта meta по accountId
- * @returns {Record<string, string[]>} proxyUrl → [accountId] (только реально назначенные)
+ *
+ * MR-290: ключ — ИДЕНТИФИКАТОР прокси, а не собранный URL. По URL счёт был неверным по
+ * построению: строка собирается из логина и пароля, и смена пароля превращала один прокси
+ * в два разных ключа. На боевой это и случилось — у всех аккаунтов строка подключения
+ * оказалась пустой, и «занятость» показывала ноль при 55 назначенных прокси.
+ * @param {Record<string, {proxyId?: string}>} accountsMeta карта meta по accountId
+ * @returns {Record<string, string[]>} proxyId → [accountId]
  */
 export function proxyUsageMap(accountsMeta = {}) {
   /** @type {Record<string, string[]>} */
   const out = {}
   for (const [accountId, meta] of Object.entries(accountsMeta)) {
-    const url = meta?.proxy
-    if (!url || url === '—') continue
-    ;(out[url] = out[url] || []).push(accountId)
+    const id = meta?.proxyId
+    if (!id) continue
+    ;(out[id] = out[id] || []).push(accountId)
   }
   return out
 }
@@ -480,5 +723,5 @@ export function proxyUsageMap(accountsMeta = {}) {
 export function sharedProxies(accountsMeta = {}) {
   return Object.entries(proxyUsageMap(accountsMeta))
     .filter(([, ids]) => ids.length > 1)
-    .map(([url, ids]) => ({ url, accountIds: ids }))
+    .map(([proxyId, ids]) => ({ proxyId, accountIds: ids }))
 }

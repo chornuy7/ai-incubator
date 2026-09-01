@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { Server, Loader2 } from 'lucide-react'
 import { Modal, Select } from '@/shared/ui'
 import { cn } from '@/shared/lib/utils'
-import { fetchProxies, createProxy, toProxyUrl, isUsableProxy, type Proxy as ApiProxy } from '@/api/proxiesApi'
+import { fetchProxies, createProxy, isUsableProxy, type Proxy as ApiProxy } from '@/api/proxiesApi'
 import { useApp } from '@/mocks/store'
 import type { TgAccount } from '@/shared/types'
 
@@ -16,7 +16,9 @@ function formatProxyLabel(proxy: string) {
  * Вынесена из AccountsPage, чтобы переиспользовать и в карточке аккаунта (вкладка «Прокси»,
  * MR-129) без циклического импорта (AccountsPage сам импортирует карточку).
  */
-export function ChangeProxyModal({ acc, onClose, onSave }: { acc: TgAccount | null; onClose: () => void; onSave: (id: string, proxy: string) => void }) {
+// MR-290: наружу отдаём ССЫЛКУ на прокси (или null — «без прокси»), а не строку
+// подключения. Строку собирает сервер из каталога, поэтому пароли не ходят через браузер.
+export function ChangeProxyModal({ acc, onClose, onSave }: { acc: TgAccount | null; onClose: () => void; onSave: (id: string, proxyId: string | null) => void }) {
   const [useProxy, setUseProxy] = useState(true)
   const [value, setValue] = useState('')
   const [pool, setPool] = useState<ApiProxy[]>([])
@@ -30,8 +32,8 @@ export function ChangeProxyModal({ acc, onClose, onSave }: { acc: TgAccount | nu
 
   const handleSave = async () => {
     if (!acc) return
-    if (!useProxy) { onSave(acc.id, '—'); return }
-    if (fromPool) { onSave(acc.id, value.trim() || acc.proxy); return }
+    if (!useProxy) { onSave(acc.id, null); return }
+    if (fromPool) { onSave(acc.id, value.trim() || acc.proxyId || null); return }
     // «Ввести новый»: создаём прокси в каталоге (модуль «Прокси» — источник), затем назначаем.
     if (!nf.host.trim() || !nf.port.trim()) { pushToast({ type: 'error', title: 'Укажите хост и порт' }); return }
     setBusy(true)
@@ -45,7 +47,7 @@ export function ChangeProxyModal({ acc, onClose, onSave }: { acc: TgAccount | nu
         password: nf.password.trim() || undefined,
       })
       pushToast({ type: 'success', title: 'Прокси добавлен в каталог', desc: created.label || `${created.host}:${created.port}` })
-      onSave(acc.id, toProxyUrl(created))
+      onSave(acc.id, created.id)
     } catch (e) {
       pushToast({ type: 'error', title: 'Не удалось создать прокси', desc: e instanceof Error ? e.message : '' })
     } finally { setBusy(false) }
@@ -121,7 +123,9 @@ export function ChangeProxyModal({ acc, onClose, onSave }: { acc: TgAccount | nu
                   onChange={setValue}
                   placeholder="Выберите прокси"
                   options={pool.map((p) => {
-                    const auth = p.username ? `${p.username}${p.password ? ':' + p.password : ''}@` : ''
+                    // Подпись без пароля: сервер его больше не отдаёт, да он тут и не нужен —
+                    // выбор уезжает идентификатором (MR-290).
+                    const auth = p.username ? `${p.username}@` : ''
                     const url = `${p.scheme}://${auth}${p.host}:${p.port}`
                     const addr = `${p.scheme}://${p.host}:${p.port}`
                     const geo = p.country ? ` · ${p.country.toUpperCase()}` : ''

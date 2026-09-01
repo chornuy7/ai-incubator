@@ -2,7 +2,7 @@
 import { getAccountMeta, loadAllMeta, setAccountStatus, setAccountMeta } from './accountsMeta.js'
 import { loadSessionString, createClient } from './tgAuth.js'
 import { parseProxy } from './proxy.js'
-import { probeProxyProtocol, markProxyStatusByUrl, findProxyByUrl } from './proxies.js'
+import { probeProxyProtocol, markProxyStatus, findProxyByUrl } from './proxies.js'
 import { getAccountLock } from './lib/accountLocks.js'
 import { getSwitchPause } from './lib/accountBusy.js'
 import { fmtDelay } from './lib/humanDelays.js'
@@ -387,7 +387,7 @@ export async function buildAccountStats(accountId, opts = {}) {
       live = true
       proxy.working = false
       // Сдох — сразу в «нерабочие» в каталоге, не дожидаясь получасовой авто-проверки.
-      try { await markProxyStatusByUrl(meta.proxy, 'dead') } catch { /* non-fatal */ }
+      try { await markProxyStatus(meta.proxyId, 'dead') } catch { /* non-fatal */ }
     }
   }
 
@@ -408,7 +408,7 @@ export async function buildAccountStats(accountId, opts = {}) {
       live = true
       if (proxy.configured) proxy.working = true
       // Ожил — снимаем клеймо «нерабочий», если оно было.
-      try { await markProxyStatusByUrl(meta.proxy, 'ok') } catch { /* non-fatal */ }
+      try { await markProxyStatus(meta.proxyId, 'ok') } catch { /* non-fatal */ }
       if (opts.spam) {
         const sb = await checkSpamblock(client)
         proxy._spamblock = sb
@@ -432,7 +432,7 @@ export async function buildAccountStats(accountId, opts = {}) {
       if (proxy.configured && looksLikeProxyProblem(err)) {
         blocked = 'proxy_down'
         proxy.working = false
-        try { await markProxyStatusByUrl(meta.proxy, 'dead') } catch { /* non-fatal */ }
+        try { await markProxyStatus(meta.proxyId, 'dead') } catch { /* non-fatal */ }
       } else {
         sessionOk = false
         if (proxy.configured) proxy.working = false

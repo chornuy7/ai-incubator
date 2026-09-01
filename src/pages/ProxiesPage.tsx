@@ -3,8 +3,8 @@ import { Network, Plus, Trash2, Pencil, Link2, Check, Circle, Zap, Loader2, MapP
 import { PageHeader, Card, EmptyState, Badge, Select, Modal, Tip} from '@/shared/ui'
 import { HelpButton } from '@/features/neuro-commenting/moduleUi'
 import {
-  fetchProxies, createProxy, updateProxy, deleteProxy, deleteProxies, toProxyUrl, checkProxy, checkAllProxies,
-  PROXY_KIND_LABELS, type Proxy, type ProxyKind, type ProxyGeo,
+  fetchProxies, createProxy, updateProxy, deleteProxy, deleteProxies, checkProxy, checkAllProxies,
+  PROXY_KIND_LABELS, type Proxy, type ProxyInput, type ProxyKind, type ProxyGeo,
 } from '@/api/proxiesApi'
 import { fetchAccounts, patchAccount } from '@/api/accountsApi'
 import type { TgAccount } from '@/shared/types'
@@ -35,7 +35,9 @@ function statusMeta(p: Proxy) {
   return base
 }
 
-const emptyForm = (): Partial<Proxy> => ({ label: '', kind: 'static', scheme: 'socks5', host: '', port: 1080, username: '', password: '', country: '', note: '', status: 'unknown' })
+// Пароль в форме — поле только на запись: сервер его не возвращает, поэтому при
+// редактировании оно пустое, а пустое значение прокси не меняет (MR-290).
+const emptyForm = (): ProxyInput => ({ label: '', kind: 'static', scheme: 'socks5', host: '', port: 1080, username: '', password: '', country: '', note: '', status: 'unknown' })
 
 export function ProxiesPage() {
   const [proxies, setProxies] = useState<Proxy[]>([])
@@ -44,7 +46,7 @@ export function ProxiesPage() {
   const [err, setErr] = useState('')
   const [editOpen, setEditOpen] = useState(false)
   const [editing, setEditing] = useState<Proxy | null>(null)
-  const [form, setForm] = useState<Partial<Proxy>>(emptyForm())
+  const [form, setForm] = useState<ProxyInput>(emptyForm())
   const [saving, setSaving] = useState(false)
   const [assignFor, setAssignFor] = useState<Proxy | null>(null)
   const [detailProxy, setDetailProxy] = useState<Proxy | null>(null)
@@ -115,7 +117,9 @@ export function ProxiesPage() {
 
   const usedBy = useMemo(() => {
     const m: Record<string, number> = {}
-    for (const p of proxies) m[p.id] = accounts.filter((a) => a.proxy && a.proxy === toProxyUrl(p)).length
+    // MR-290: считаем по ССЫЛКЕ. Сравнение собранных строк давало ноль занятых, как
+    // только строка подключения у аккаунта пустела, — а именно это и произошло на бою.
+    for (const p of proxies) m[p.id] = accounts.filter((a) => a.proxyId === p.id).length
     return m
   }, [proxies, accounts])
 
@@ -177,7 +181,7 @@ export function ProxiesPage() {
     catch (e) { setErr(e instanceof Error ? e.message : 'Ошибка') }
   }
 
-  const set = (k: keyof Proxy, v: unknown) => setForm((f) => ({ ...f, [k]: v }))
+  const set = (k: keyof ProxyInput, v: unknown) => setForm((f) => ({ ...f, [k]: v }))
 
   return (
     <div>
@@ -446,10 +450,9 @@ function ProxyInfo({ label, children }: { label: string; children: ReactNode }) 
   )
 }
 
-/** Назначение прокси на аккаунты: чекбоксы, save → patchAccount(proxy=url). */
+/** Назначение прокси на аккаунты: чекбоксы, save → patchAccount(proxyId). */
 function AssignModal({ proxy, accounts, onClose, onDone }: { proxy: Proxy; accounts: TgAccount[]; onClose: () => void; onDone: () => void }) {
-  const url = toProxyUrl(proxy)
-  const [picked, setPicked] = useState<Set<string>>(() => new Set(accounts.filter((a) => a.proxy === url).map((a) => a.id)))
+  const [picked, setPicked] = useState<Set<string>>(() => new Set(accounts.filter((a) => a.proxyId === proxy.id).map((a) => a.id)))
   const [saving, setSaving] = useState(false)
   const active = accounts.filter((a) => !a.inTrash)
 
@@ -459,13 +462,13 @@ function AssignModal({ proxy, accounts, onClose, onDone }: { proxy: Proxy; accou
     setSaving(true)
     try {
       // назначить выбранным, снять с тех, кто был на этом прокси, но снят из выбора
-      const wasOn = new Set(accounts.filter((a) => a.proxy === url).map((a) => a.id))
+      const wasOn = new Set(accounts.filter((a) => a.proxyId === proxy.id).map((a) => a.id))
       const ops: Promise<unknown>[] = []
       for (const a of active) {
         const shouldHave = picked.has(a.id)
         const hasNow = wasOn.has(a.id)
-        if (shouldHave && !hasNow) ops.push(patchAccount(a.id, { proxy: url, initiator: 'operator' }))
-        else if (!shouldHave && hasNow) ops.push(patchAccount(a.id, { proxy: '—', initiator: 'operator' }))
+        if (shouldHave && !hasNow) ops.push(patchAccount(a.id, { proxyId: proxy.id, initiator: 'operator' }))
+        else if (!shouldHave && hasNow) ops.push(patchAccount(a.id, { proxyId: null, initiator: 'operator' }))
       }
       await Promise.all(ops)
       onDone()
@@ -479,13 +482,13 @@ function AssignModal({ proxy, accounts, onClose, onDone }: { proxy: Proxy; accou
           <div className="p-4 text-sm text-white/50">Нет аккаунтов.</div>
         ) : active.map((a) => {
           const on = picked.has(a.id)
-          const other = a.proxy && a.proxy !== url && a.proxy !== '—'
+          const other = !!a.proxyId && a.proxyId !== proxy.id
           return (
             <button key={a.id} onClick={() => toggle(a.id)} className="flex w-full items-center gap-3 border-b border-line/60 px-3 py-2 text-left last:border-0 hover:bg-elevated">
               <span className={on ? 'text-spark-400' : 'text-white/30'}>{on ? <Check size={16} /> : <Circle size={16} />}</span>
               <span className="min-w-0 flex-1">
                 <span className="block truncate text-sm text-fg">{a.name}</span>
-                <span className="truncate text-xs text-white/40">{FLAGS[a.country] || ''} {other ? 'уже на другом прокси' : a.proxy === url ? 'на этом прокси' : 'без прокси'}</span>
+                <span className="truncate text-xs text-white/40">{FLAGS[a.country] || ''} {other ? 'уже на другом прокси' : a.proxyId === proxy.id ? 'на этом прокси' : 'без прокси'}</span>
               </span>
             </button>
           )

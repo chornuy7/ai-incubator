@@ -201,6 +201,7 @@ test('мета аккаунта: каждая колонка из карты е�
     '2026-07-30-owner-and-types.sql',
     '2026-09-01-mr290-account-secrets.sql',
     '2026-09-01-mr290-accounts-meta-columns.sql',
+    '2026-09-01-mr290-proxies-rework.sql',
   ])
   const known = new Set([
     // Колонки из schema.sql — он снимок, а не миграция, поэтому перечислены здесь.
@@ -250,6 +251,34 @@ test('выдачи субу: права лежат строками со ссы�
   const code = await readCode('users.js')
   assert.ok(!/account_ids:\s/.test(code) || !/update\(\{[^}]*account_ids/.test(code),
     'выдачи в profiles.account_ids больше не пишутся')
+})
+
+test('прокси: аккаунт связан ссылкой на каталог, а не строкой подключения', async () => {
+  /*
+   * Ровно тот случай, ради которого затевалась вся задача. Связь «аккаунт ↔ прокси» была
+   * СТРОКОЙ: в accounts_meta.proxy лежал собранный URL, а сравнение шло по совпадению
+   * этой строки с URL, собранным из каталога. На боевой она потерялась целиком — у 55
+   * аккаунтов остался proxyId в json, а строка обнулилась, и все они ходили в Telegram
+   * напрямую с адреса сервера. Ни интерфейс, ни счётчик занятости этого не показывали.
+   */
+  const sql = await readSql('2026-09-01-mr290-proxies-rework.sql')
+  const flat = sql.replace(/\s+/g, ' ')
+  assert.ok(flat.includes('foreign key (proxy_id) references proxies(id) on delete set null'),
+    'связь должна быть внешним ключом: удалили прокси — аккаунт остаётся, но без прокси и это видно')
+  assert.ok(flat.includes("update accounts_meta set proxy_id = nullif(data->>'proxyId','')"),
+    'потерянная связь восстанавливается из json')
+
+  // Строку подключения больше не хранят: два источника одной связи однажды разойдутся.
+  const meta = await readCode('accountsMeta.js')
+  assert.match(meta, /\['proxyId',\s+'proxy_id',\s+'text'\]/, 'в карте колонок должна быть ссылка')
+  assert.match(meta, /delete rest\.proxy/, 'собранная строка в базу не пишется')
+
+  // Счёт занятости и пометка статуса — по идентификатору, а не по совпадению строк.
+  const px = await readCode('proxies.js')
+  assert.match(px, /const id = meta\?\.proxyId/, 'занятость считается по ссылке')
+  assert.match(px, /export async function markProxyStatus\(proxyId, status\)/,
+    'статус ставится прокси по идентификатору, а не по разбору URL')
+  assert.match(px, /hasPassword: !!stored/, 'каталог наружу отдаётся без паролей')
 })
 
 test('деньги: служебные владельцы объявлены в справочнике, а не только в коде', async () => {

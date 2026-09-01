@@ -74,7 +74,8 @@ interface AppStore extends Persisted {
   restoreAccount: (id: string) => Promise<void>
   emptyTrash: () => Promise<void>
   setAccountStatus: (id: string, status: AccountStatus) => Promise<void>
-  setAccountProxy: (id: string, proxy: string) => Promise<void>
+  /** MR-290: прокси назначается ССЫЛКОЙ на каталог; `null` — снять прокси. */
+  setAccountProxy: (id: string, proxyId: string | null) => Promise<void>
 
   addProxy: (p: Omit<Proxy, 'id' | 'usedBy' | 'status'>) => void
   removeProxy: (id: string) => void
@@ -234,14 +235,14 @@ export const useApp = create<AppStore>((set, get) => {
       await patchAccount(id, { status })
       await get().loadAccounts()
     },
-    setAccountProxy: async (id, proxy) => {
+    setAccountProxy: async (id, proxyId) => {
       if (!get().guardNet('смена прокси')) return
       /*
        * Обновляем ОДНУ карточку, а не весь парк (правка 27.08: «очень долго обновляется
        * прокси, нажимаю сохранить и прям долго обновляет»). Сервер и так возвращает
        * изменённый аккаунт — перезагружать ради него сотню остальных незачем.
        */
-      const updated = await patchAccount(id, { proxy })
+      const updated = await patchAccount(id, { proxyId })
       const acc = (updated as { account?: TgAccount })?.account
       if (acc) mutate((st) => ({ data: { ...st.data, accounts: st.data.accounts.map((a) => (a.id === id ? acc : a)) } }))
       else await get().loadAccounts() // старый ответ без тела — на всякий случай как раньше

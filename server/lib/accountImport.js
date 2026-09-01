@@ -14,6 +14,7 @@ import { toGramjsSession, ImportError } from './sessionImport.js'
 import { saveSession, newAccountId, createClient } from '../tgAuth.js'
 import { setAccountMeta, countryFromPhone, avatarColor, loadAllMeta } from '../accountsMeta.js'
 import { accountFingerprint, takenFingerprints } from './deviceFingerprint.js'
+import { ensureProxyByUrl, proxyUrlById } from '../proxies.js'
 
 /**
  * Режимы раздачи прокси.
@@ -135,7 +136,22 @@ export async function importOne(item, opts = {}) {
     }
   }
 
-  const proxy = opts.proxy || null
+  /*
+   * MR-290: аккаунт связывается с прокси ССЫЛКОЙ, а не строкой.
+   *
+   * Сюда приходит либо идентификатор из каталога (режимы «пул» и «один на всех»), либо
+   * строка подключения — из json продавца рядом с сессией или вписанная оператором.
+   * Строку сначала превращаем в запись каталога: раньше она оседала прямо в мете, и
+   * получался прокси, которого нет в списке, но который используется.
+   *
+   * Сам URL нужен здесь ровно один раз — чтобы проверить аккаунт ЧЕРЕЗ тот же прокси,
+   * на котором он потом будет работать. В базу он не попадает.
+   */
+  const assigned = opts.proxy || null
+  const proxyId = assigned
+    ? (assigned.includes('://') ? await ensureProxyByUrl(assigned, opts.ownerId) : assigned)
+    : null
+  const proxy = proxyId ? await proxyUrlById(proxyId) : null
   // Отпечаток: из json продавца, если он есть, иначе свой — но заведомо не совпадающий
   // с отпечатками уже заведённых аккаунтов, иначе они склеятся в одну пачку (§6).
   let has2faEnabled = null // null = не проверяли
@@ -176,7 +192,8 @@ export async function importOne(item, opts = {}) {
     // Чей это аккаунт (правка 18.08). Без владельца он не покажется никому, кроме
     // админа: список аккаунтов теперь режется по пространству.
     ...(opts.ownerId ? { ownerId: String(opts.ownerId) } : {}),
-    proxy: proxy || '—',
+    // Ссылка, а не строка: строка подключения собирается из каталога при чтении меты.
+    proxyId: proxyId || undefined,
     country: countryFromPhone(phone),
     status: 'active',
     inTrash: false,

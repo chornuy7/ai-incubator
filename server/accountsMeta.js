@@ -43,7 +43,11 @@ const COLUMNS = [
   ['phone',           'phone',             'text'],
   ['status',          'status',            'text'],
   ['country',         'country',           'text'],
-  ['proxy',           'proxy',             'text'],
+  // Прокси — ССЫЛКОЙ. Строка подключения (`meta.proxy`) производная: её собирают из
+  // строки каталога при чтении, а в базу она не попадает вовсе. Хранили и то, и другое —
+  // и связь потерялась: у 55 аккаунтов остался proxyId, а строка подключения обнулилась,
+  // из-за чего все они ходили в Telegram напрямую с адреса сервера (MR-290/MR-262).
+  ['proxyId',         'proxy_id',          'text'],
   ['ownerId',         'user_id',           'text'],
   ['inTrash',         'in_trash',          'flag'],
   ['createdAt',       'created_at',        'ts'],
@@ -114,12 +118,42 @@ function metaToRow(id, m, twoFaEnc) {
     row[col] = toCol(rest[json], type)
     if (!KEEP_LEGACY_JSON_KEYS) delete rest[json]
   }
-  // `has2fa` — признак, посчитанный при чтении, а не данные: в базу ему не надо.
+  // Производные значения в базу не едут: `has2fa` считается при чтении, а `proxy` —
+  // строка подключения, собранная из каталога. Записать её значит снова завести второй
+  // источник связи с прокси, который однажды разойдётся со ссылкой.
   delete rest.has2fa
+  delete rest.proxy
   row.data = rest
   row.updated_at = new Date(m.updatedAt || Date.now()).toISOString()
   if (twoFaEnc !== undefined) row.two_fa_enc = twoFaEnc
   return row
+}
+
+/**
+ * Подставить строку подключения к прокси всем, у кого есть ссылка.
+ *
+ * Делается ОДНИМ проходом по каталогу на всю выборку, а не по запросу на аккаунт. Каталог
+ * прокси кэшируется на секунды в самом proxies.js, поэтому список аккаунтов (горячий путь)
+ * не превращается в сотню обращений.
+ *
+ * Импорт динамический: proxies.js — сосед по слою, и статическая ссылка отсюда завела бы
+ * цикл, как только каталогу понадобится что-то из меты.
+ * @param {Record<string, {proxyId?: string, proxy?: string}>} metas
+ */
+async function fillProxyUrls(metas) {
+  const needs = Object.values(metas).some((m) => m?.proxyId)
+  if (!needs) return
+  try {
+    const { proxyCatalog, proxyUrlFor } = await import('./proxies.js')
+    const catalog = await proxyCatalog()
+    for (const m of Object.values(metas)) {
+      if (m?.proxyId) m.proxy = proxyUrlFor(m, catalog)
+    }
+  } catch (e) {
+    // Каталог недоступен — аккаунт лучше показать без прокси, чем не показать вовсе.
+    // Молчать при этом нельзя: подключение пойдёт напрямую, а это заметно только по банам.
+    console.warn('[proxy] каталог не прочитан, аккаунты останутся без строки подключения:', e?.message || e)
+  }
 }
 
 /** Строка таблицы → объект меты. Колонка сильнее json: она теперь источник правды. */
@@ -186,6 +220,7 @@ export async function loadAllMeta() {
     const { data } = await db.from('accounts_meta').select('*')
     const out = {}
     for (const r of data || []) out[r.id] = rowToMeta(r)
+    await fillProxyUrls(out)
     return out
   }
   try {

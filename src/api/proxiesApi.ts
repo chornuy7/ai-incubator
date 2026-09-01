@@ -16,7 +16,12 @@ export interface Proxy {
   host: string
   port: number
   username: string
-  password: string
+  /**
+   * Пароль прокси НАРУЖУ НЕ ОТДАЁТСЯ (MR-290): каталог уезжает в браузер, и до этого
+   * уезжал вместе с паролями. Здесь только признак «пароль задан»; строку подключения
+   * собирает сервер из записи каталога в момент коннекта.
+   */
+  hasPassword?: boolean
   country: string
   status: ProxyStatus
   /**
@@ -51,10 +56,16 @@ export const PROXY_KIND_LABELS: Record<ProxyKind, string> = {
   farm: 'Своя ферма',
 }
 
-/** URL-строка прокси (совместимо с account.proxy / server parseProxy). */
-export function toProxyUrl(p: Pick<Proxy, 'scheme' | 'host' | 'port' | 'username' | 'password'>): string {
+/**
+ * Подпись прокси для показа: схема, адрес и логин, БЕЗ пароля.
+ *
+ * Раньше здесь собиралась настоящая строка подключения — вместе с паролем, который для
+ * этого приходилось отдавать в браузер. Аккаунту прокси теперь назначают ссылкой (id),
+ * а строку подключения собирает сервер, поэтому клиенту нужна только подпись.
+ */
+export function proxyLabel(p: Pick<Proxy, 'scheme' | 'host' | 'port' | 'username' | 'label'>): string {
   if (!p.host || !p.port) return ''
-  const auth = p.username ? `${encodeURIComponent(p.username)}${p.password ? ':' + encodeURIComponent(p.password) : ''}@` : ''
+  const auth = p.username ? `${p.username}@` : ''
   return `${p.scheme}://${auth}${p.host}:${p.port}`
 }
 
@@ -63,12 +74,30 @@ export async function fetchProxies(): Promise<Proxy[]> {
   return data.proxies
 }
 
-export async function createProxy(input: Partial<Proxy>): Promise<Proxy> {
+/**
+ * Поля, которые КЛИЕНТ ОТПРАВЛЯЕТ. Отдельно от `Proxy` (что он получает), потому что
+ * пароль ходит только в одну сторону: задать его можно, прочитать — нет (MR-290).
+ */
+export interface ProxyInput {
+  label?: string
+  kind?: ProxyKind
+  scheme?: ProxyScheme
+  host?: string
+  port?: number
+  username?: string
+  password?: string
+  country?: string
+  note?: string
+  rotateUrl?: string
+  status?: ProxyStatus
+}
+
+export async function createProxy(input: ProxyInput): Promise<Proxy> {
   const data = await apiPost<{ proxy: Proxy }>('/api/proxies', input)
   return data.proxy
 }
 
-export async function updateProxy(id: string, patch: Partial<Proxy>): Promise<Proxy> {
+export async function updateProxy(id: string, patch: ProxyInput): Promise<Proxy> {
   const data = await apiPut<{ proxy: Proxy }>(`/api/proxies/${id}`, patch)
   return data.proxy
 }

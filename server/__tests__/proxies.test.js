@@ -49,21 +49,28 @@ test('CRUD прокси на изолированном файле', async () =>
   delete process.env.PROXIES_FILE
 })
 
-test('proxyUsageMap / sharedProxies: нарушение 1:1', async () => {
+test('proxyUsageMap / sharedProxies: считают по ССЫЛКЕ, а не по строке подключения', async () => {
+  /*
+   * MR-290. Раньше ключом была собранная строка `socks5://user:pass@host:port`, и счёт
+   * был неверным по построению: смена пароля превращала один прокси в два разных ключа,
+   * а потеря строки — в ноль занятых. На боевой случилось второе: строка подключения
+   * обнулилась у всех аккаунтов, «занят N» показывал ноль при 55 назначенных прокси.
+   */
   const { proxyUsageMap, sharedProxies } = await import('../proxies.js')
   const meta = {
-    a1: { proxy: 'socks5://1.1.1.1:1080' },
-    a2: { proxy: 'socks5://1.1.1.1:1080' }, // тот же прокси → shared
-    a3: { proxy: 'socks5://2.2.2.2:1080' },
-    a4: { proxy: '—' }, // прямое подключение — игнор
+    a1: { proxyId: 'px_one' },
+    a2: { proxyId: 'px_one' }, // тот же прокси → shared
+    a3: { proxyId: 'px_two' },
+    a4: { proxy: 'socks5://1.1.1.1:1080' }, // строка без ссылки больше не считается
     a5: {},
   }
   const usage = proxyUsageMap(meta)
-  assert.deepEqual(usage['socks5://1.1.1.1:1080'].sort(), ['a1', 'a2'])
-  assert.equal(usage['socks5://2.2.2.2:1080'].length, 1)
+  assert.deepEqual(usage.px_one.sort(), ['a1', 'a2'])
+  assert.equal(usage.px_two.length, 1)
+  assert.equal(usage['socks5://1.1.1.1:1080'], undefined, 'строка подключения ключом больше не бывает')
   const shared = sharedProxies(meta)
   assert.equal(shared.length, 1)
-  assert.equal(shared[0].url, 'socks5://1.1.1.1:1080')
+  assert.equal(shared[0].proxyId, 'px_one')
   assert.deepEqual(shared[0].accountIds.sort(), ['a1', 'a2'])
 })
 
