@@ -51,11 +51,10 @@ export async function insertWithOwner(db, table, row) {
   if (!error) return
   const reason = ownerFallbackReason(error)
   if (!reason) throw new Error(error.message)
-  const { user_id: _omit, ...rest } = row
-  void _omit
+  const { user_id: owner, ...rest } = row
   const retry = await db.from(table).insert(rest)
   if (retry.error) throw new Error(retry.error.message)
-  warnOnce(table, reason)
+  warnOrphan(table, reason, owner)
 }
 
 /** Обновление с тем же откатом. */
@@ -64,22 +63,29 @@ export async function updateWithOwner(db, table, row, matchColumn, matchValue) {
   if (!error) return
   const reason = ownerFallbackReason(error)
   if (!reason) throw new Error(error.message)
-  const { user_id: _omit, ...rest } = row
-  void _omit
+  const { user_id: owner, ...rest } = row
   const retry = await db.from(table).update(rest).eq(matchColumn, matchValue)
   if (retry.error) throw new Error(retry.error.message)
-  warnOnce(table, reason)
+  warnOrphan(table, reason, owner)
 }
 
-const warned = new Set()
-function warnOnce(table, reason) {
-  const key = `${table}:${reason}`
-  if (warned.has(key)) return
-  warned.add(key)
+/**
+ * Запись сохранена БЕЗ владельца — то есть в базе появилась сирота.
+ *
+ * Раньше об этом сообщалось `warnOnce`: одна строка на таблицу за весь запуск процесса.
+ * Ровно наоборот тому, что нужно: первая сирота попадала в лог, а следующие двести — нет,
+ * и по логу выходило, что случай единичный. Теперь пишем КАЖДЫЙ раз и называем владельца,
+ * которого не нашли, — иначе непонятно, чей профиль заводить (MR-290).
+ *
+ * Строку всё-таки сохраняем, а не роняем запрос: авто-лид не должен валить переписку.
+ * Но потеря атрибуции обязана быть видна — на неё заводят задачу, а не привыкают.
+ * @param {string} table @param {'no-column'|'no-profile'} reason @param {string|undefined} owner
+ */
+function warnOrphan(table, reason, owner) {
   if (reason === 'no-profile') {
-    console.warn(`[owner] в таблице ${table} владелец без профиля (FK profiles.legacy_id, §11.3) — запись сохранена без user_id. Заведите юзера в profiles, чтобы вернуть атрибуцию.`)
+    console.warn(`[owner] ${table}: владельца ${owner || '(пусто)'} нет в profiles.legacy_id — строка сохранена БЕЗ user_id и стала ничьей. Заведите профиль, чтобы вернуть атрибуцию.`)
   } else {
-    console.warn(`[owner] в таблице ${table} нет колонки user_id — примените supabase/migrations/2026-07-30-owner-and-types.sql (владелец пока пишется только в data)`)
+    console.warn(`[owner] ${table}: нет колонки user_id — строка сохранена без владельца. Похоже, код уехал вперёд миграций: npm run migrate`)
   }
 }
 
