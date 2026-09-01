@@ -144,3 +144,60 @@ test('карантин и невалид закрыты даже для «тол
     assert.equal(canModuleUseAccount('neuro-dialogs', s), false, s)
   }
 })
+
+test('MR-291: спамблок с истёкшим сроком возвращает аккаунт в работу', () => {
+  /*
+   * На проде 01.09 в спамблоке стояли 29 аккаунтов из 63 со сроком, кончившимся пять дней
+   * назад. Механизм был построен целиком, кроме последнего шага: срок проставлялся
+   * (`applySpamblockPolicy`), записи без срока долечивались (`backfillMissingStatusUntil`),
+   * `DEFAULT_HOLD_HOURS.spamblock` был заведён — а `isStatusExpired` отвечало `false`,
+   * потому что спамблок не входил в список временных статусов. Аккаунт не выходил НИКОГДА.
+   */
+  const истёк = { status: 'spamblock', statusUntil: Date.now() - 60_000 }
+  assert.equal(isStatusExpired(истёк), true, 'спамблок обязан быть временным статусом')
+  assert.equal(nextStatusAfterExpiry(истёк), 'active')
+
+  // Срок ещё идёт — не трогаем.
+  assert.equal(nextStatusAfterExpiry({ status: 'spamblock', statusUntil: Date.now() + 60_000 }), null)
+  // Срока нет вовсе — тоже не трогаем: его проставит backfillMissingStatusUntil.
+  assert.equal(nextStatusAfterExpiry({ status: 'spamblock' }), null)
+})
+
+test('MR-291: спамблок возвращается в active, а карантин — в прогрев', () => {
+  /*
+   * Разница намеренная. Карантин — наше наказание за поведение, там перепрогрев уместен.
+   * Спамблок ставит Telegram, и по истечении срока ограничение снял он сам.
+   *
+   * Плюс практика: `warming` в работу не пускает (NON_RUNNABLE), и возврат туда не решил бы
+   * задачу, ради которой правка, — вернуть запертые аккаунты в строй.
+   */
+  const срок = Date.now() - 1000
+  assert.equal(nextStatusAfterExpiry({ status: 'spamblock', statusUntil: срок }), 'active')
+  assert.equal(nextStatusAfterExpiry({ status: 'quarantine', statusUntil: срок }), 'warming')
+  assert.equal(isRunnable('active'), true, 'иначе аккаунт останется вне работы')
+})
+
+test('MR-291: возврат из временных статусов идёт по расписанию, а не только на старте', async () => {
+  /*
+   * Второй половиной бага было место вызова: `reconcileExpiredStatuses` звался один раз при
+   * запуске сервера. Между перезапусками истёкшие статусы не снимались вовсе — даже часовой
+   * флудвейт ждал рестарта.
+   */
+  const fs = await import('node:fs')
+  const index = fs.readFileSync(new URL('../index.js', import.meta.url), 'utf8')
+  assert.match(index, /setInterval\(runStatus, \(cron\.statusTickMin \?\? 5\) \* 60 \* 1000\)/)
+
+  // Интервал должен быть настраиваемым — как у остальных фоновых задач.
+  const cron = fs.readFileSync(new URL('../cronSettings.js', import.meta.url), 'utf8')
+  assert.match(cron, /key: 'statusTickMin'/)
+
+  /*
+   * И вызывать его можно только НИЖЕ объявления `SCHEDULERS_ON` и `cron`: выше они ещё в
+   * мёртвой зоне, а весь блок обёрнут в try/catch — то есть падение было бы молчаливым, и
+   * возврат статусов просто не работал бы. На этом я и попался, пока писал правку.
+   */
+  assert.ok(index.indexOf('const SCHEDULERS_ON') < index.indexOf('setInterval(runStatus'),
+    'планировщик статусов стоит выше SCHEDULERS_ON — упадёт в catch молча')
+  assert.ok(index.indexOf('let cron = {}') < index.indexOf('cron.statusTickMin'),
+    'планировщик статусов стоит выше настроек крона')
+})

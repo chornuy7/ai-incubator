@@ -148,14 +148,23 @@ export function buildStatusPatch(currentMeta, to, opts = {}) {
   }
 }
 
+/** Статусы со сроком: по его истечении аккаунт возвращается в работу сам. */
+const ВРЕМЕННЫЕ = new Set([STATUS.FLOODWAIT, STATUS.QUARANTINE, STATUS.SPAMBLOCK])
+
 /**
- * Истёк ли временный статус (floodwait/quarantine с statusUntil).
+ * Истёк ли временный статус (floodwait/quarantine/spamblock со `statusUntil`).
+ *
+ * MR-291: спамблока здесь не было, и это запирало аккаунт навсегда. Срок ему проставляли
+ * (`applySpamblockPolicy`), долечивали записи без срока (`backfillMissingStatusUntil`),
+ * держали в `DEFAULT_HOLD_HOURS` — а «истёк ли» отвечало `false`, потому что статус в
+ * список не входил. На проде 01.09 так стояли 29 аккаунтов из 63 со сроком, кончившимся
+ * пять дней назад.
+ *
  * @param {{ status?: string, statusUntil?: number|null }} meta
  * @param {number} [now]
  */
 export function isStatusExpired(meta, now = Date.now()) {
-  const s = normalizeStatus(meta?.status)
-  if (s !== STATUS.FLOODWAIT && s !== STATUS.QUARANTINE) return false
+  if (!ВРЕМЕННЫЕ.has(normalizeStatus(meta?.status))) return false
   return typeof meta?.statusUntil === 'number' && meta.statusUntil > 0 && now >= meta.statusUntil
 }
 
@@ -163,6 +172,7 @@ export function isStatusExpired(meta, now = Date.now()) {
  * Куда вернуть аккаунт после истечения временного статуса, или null если не пора.
  * floodwait → prevStatus (если рабочий, иначе active).
  * quarantine → warming (🔒 §6: авто-возврат по trust не определён — по таймеру не в active сразу, а на перепрогрев).
+ * spamblock → active: срок ограничения назначил Telegram, и он же его снял (MR-291).
  * @param {{ status?: string, statusUntil?: number|null, prevStatus?: string }} meta
  * @param {number} [now]
  * @returns {string|null}
@@ -175,5 +185,18 @@ export function nextStatusAfterExpiry(meta, now = Date.now()) {
     return isRunnable(back) ? back : STATUS.ACTIVE
   }
   if (s === STATUS.QUARANTINE) return STATUS.WARMING
+  /*
+   * Спамблок → active, а НЕ в прогрев (в отличие от карантина).
+   *
+   * Карантин — наше наказание за поведение, и перепрогрев там уместен. Спамблок ставит
+   * Telegram, и когда срок вышел, ограничение снято им же: держать аккаунт дальше значит
+   * наказывать второй раз за то, за что уже отсидели.
+   *
+   * Практическая причина важнее: `warming` в работу не пускает (см. NON_RUNNABLE), и
+   * возврат туда не решил бы ровно ту задачу, ради которой правка — вернуть 29 запертых
+   * аккаунтов в строй. Риск повторного ограничения лечится темпом (усталость, лимиты,
+   * распорядок), а не вечным простоем.
+   */
+  if (s === STATUS.SPAMBLOCK) return STATUS.ACTIVE
   return null
 }
