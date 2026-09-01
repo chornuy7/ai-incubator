@@ -243,7 +243,13 @@ export interface ModulePreset {
   createdAt: number
   settings: ModulePresetSettings
   color?: string // §7: цветовая метка шаблона (ключ из PRESET_COLORS)
-  owner?: string // §7: владелец персонального шаблона (Маша/Паша)
+  owner?: string // §7: владелец персонального шаблона (Маша/Паша) — ПОДПИСЬ, свободный текст
+  /**
+   * MR-196: кто завёл шаблон. Не путать с `owner` (подпись от руки) и с владельцем
+   * пространства: по последнему админа и его сотрудника не различить, оба записаны
+   * одинаково. Правит и удаляет шаблон только автор. У старых записей поля нет.
+   */
+  authorId?: string
 }
 
 export async function saveModulePreset(moduleKey: string, name: string, settings: ModulePresetSettings, color?: string, owner?: string) {

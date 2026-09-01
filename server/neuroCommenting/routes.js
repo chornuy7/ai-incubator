@@ -10,7 +10,7 @@ import {
 } from './taskStore.js'
 import { startTaskWorker, stopTaskWorker } from './worker.js'
 import { tryAcquireLocks, releaseTaskLocks } from '../lib/accountLocks.js'
-import { tasksForRequest, canTouchTask, ownedForRequest, ownerScopeForRequest } from '../lib/accessGuard.js'
+import { tasksForRequest, canTouchTask, ownedForRequest, ownerScopeForRequest, requesterContext } from '../lib/accessGuard.js'
 
 export const neuroCommentingRouter = Router()
 
@@ -128,7 +128,11 @@ neuroCommentingRouter.post('/presets', async (req, res) => {
     const all = await loadPresets()
     const mine = await ownedForRequest(req, all)
     const foreign = all.filter((p) => !mine.includes(p))
-    const preset = { id: `pr_${Date.now()}`, name: name.trim(), settings, userId: scope.ownerId || undefined, createdAt: Date.now() }
+    // MR-196: автор — конкретный человек, а не пространство: по `userId` админа и его
+    // сотрудника не различить. Пишем и здесь, иначе шаблон, заведённый через этот роут,
+    // остался бы «ничьим» и попал под правило для легаси.
+    const автор = await requesterContext(req)
+    const preset = { id: `pr_${Date.now()}`, name: name.trim(), settings, userId: scope.ownerId || undefined, authorId: автор.id || undefined, createdAt: Date.now() }
     mine.unshift(preset)
     // Потолок в 20 считаем по своим: общий файл иначе выдавливал чужие заготовки.
     await savePresets([...mine.slice(0, 20), ...foreign])

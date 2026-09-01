@@ -4,6 +4,7 @@ import type { ModulePreset, ModulePresetSettings } from '@/api/modulesApi'
 import { presetHex } from './SavePresetModal'
 import { cn } from '@/shared/lib/utils'
 import { confirmDialog } from '@/shared/lib/dialog'
+import { useSession } from '@/features/auth/session'
 
 /**
  * Шаблоны настроек модуля (ТЗ 06.08 §10, TPL-001).
@@ -36,6 +37,22 @@ type PresetProps = {
 }
 
 export function PresetBar({ presets = [], onApply, onSave, onEdit, onDelete, disabled }: PresetProps) {
+  const я = useSession((s) => s.user)
+  /*
+   * MR-196: шаблон общий для рабочего пространства — видят его все, и это правильно.
+   * Но правит и удаляет только тот, кто его создал: иначе сотрудник одним промахом
+   * сносит настройку администратора, и она пропадает у всех сразу.
+   *
+   * У шаблонов, заведённых до этой правки, автора нет. Такие достаются хозяину
+   * пространства — угадать настоящего создателя задним числом нечем, а показать
+   * кнопки всем значило бы оставить дыру. Сервер решает так же, поэтому кнопка и
+   * ответ на запрос не расходятся.
+   */
+  const мой = (p: ModulePreset) => {
+    if (!я) return true
+    if (я.isAdmin) return true
+    return p.authorId ? p.authorId === я.id : !я.isSub
+  }
   // Пока шаблонов нет — полосы вверху НЕТ (правка 18.08): она занимала бы место в шапке
   // модуля ради строки «у вас нет шаблонов». Создать первый можно из меню кнопки
   // «Шаблон» внизу — там пустое состояние уместно, оно раскрывается по клику.
@@ -88,13 +105,13 @@ export function PresetBar({ presets = [], onApply, onSave, onEdit, onDelete, dis
                   {p.owner}
                 </span>
               )}
-              {onEdit && (
+              {onEdit && мой(p) && (
                 <button type="button" onClick={(e) => { e.stopPropagation(); onEdit(p) }} title="Переименовать шаблон"
                   className="grid h-5 w-5 shrink-0 place-items-center rounded-lg text-faint hover:bg-spark-500/12 hover:text-spark-300">
                   <Pencil size={12} />
                 </button>
               )}
-              {onDelete && (
+              {onDelete && мой(p) && (
                 <button type="button" onClick={(e) => {
                   e.stopPropagation()
                   // Шаблоны — ОБЩИЙ набор рабочего пространства, а не личная папка:
