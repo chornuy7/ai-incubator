@@ -334,11 +334,31 @@ export function RolesPage({ embedded }: {
     finally { setSaving(false) }
   }
 
+  /*
+   * Встроенный раздел свёрнут (просьба владельца 21.08: «нужно по умолчанию скрыто»).
+   * Шаблон — вещь редкая: собрал набор один раз и месяцами им пользуешься, а список
+   * с редактором прав занимал экран под списком людей, ради которого сюда и заходят.
+   * Отдельная страница (sudo-админка) остаётся раскрытой: там это и есть содержимое.
+   */
+  const [openSection, setOpenSection] = useState(!embedded)
+
   // Просьба «создать роль» из формы нового пользователя (MR-245).
   useEffect(() => onNewRoleRequest(() => {
+    /*
+     * РАСКРЫТЬ раздел — иначе кнопка молчит (баг приёмки 01.09: «создайте роль почему не
+     * нажимается»).
+     *
+     * Внутри страницы людей раздел ролей свёрнут по умолчанию, а редактор живёт под
+     * этой шторкой. Форма закрывалась, роль заводилась, страница даже прокручивалась —
+     * но к свёрнутой строке заголовка, и человек видел ровно то, что было до нажатия.
+     */
+    setOpenSection(true)
     addRole()
     // Раздел ролей — внизу страницы: без прокрутки человек нажал кнопку и «ничего не произошло».
-    requestAnimationFrame(() => document.getElementById('templates')?.scrollIntoView({ behavior: 'smooth', block: 'start' }))
+    // Два кадра: сначала React дорисует раскрытый раздел, и только потом у него появится место.
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      document.getElementById('templates')?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    }))
   }), [roles]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── сеттеры прав (иммутабельно + dirty) ──
@@ -447,13 +467,6 @@ export function RolesPage({ embedded }: {
   const rolePageSafe = Math.min(rolePage, rolePages)
   const shownRoles = roles.slice((rolePageSafe - 1) * PAGE_SIZE, rolePageSafe * PAGE_SIZE)
 
-  /*
-   * Встроенный раздел свёрнут (просьба владельца 21.08: «нужно по умолчанию скрыто»).
-   * Шаблон — вещь редкая: собрал набор один раз и месяцами им пользуешься, а список
-   * с редактором прав занимал экран под списком людей, ради которого сюда и заходят.
-   * Отдельная страница (sudo-админка) остаётся раскрытой: там это и есть содержимое.
-   */
-  const [openSection, setOpenSection] = useState(!embedded)
   const shown = !embedded || openSection
 
   const title = isPlatformAdmin ? 'Роли и доступы' : 'Роли доступа'
