@@ -32,21 +32,32 @@ function sb() { return supabaseEnabled() ? getSupabase() : null }
  * Колонки profiles.account_ids / account_group_ids ещё читаются как запасной путь: на
  * момент накатки миграции на сервере работает предыдущая версия кода, и до её замены
  * данные должны быть видны с обеих сторон. Писать в них мы уже перестали.
+ *
+ * Тем же способом переехали и РОЛИ (profiles.role_ids → profile_roles). У них есть одно
+ * отличие, из-за которого таблица связей несёт `position`: порядок ролей значащий —
+ * первая считается «первичной» и подписывает карточку в админке. В массиве порядок был
+ * неявным, а множество строк без него потеряло бы это различие молча.
  */
 const GRANT_TABLES = {
   accounts: { table: 'profile_account_grants', column: 'account_id' },
   groups: { table: 'profile_group_grants', column: 'group_id' },
+  roles: { table: 'profile_roles', column: 'role_id', ordered: true },
 }
 
 /**
  * Все выдачи разом: профиль → список id. Один запрос на таблицу, а не по запросу на
  * человека — иначе список операторов на горячем пути превратился бы в N+1.
- * @param {any} db @returns {Promise<{accounts: Map<string,string[]>, groups: Map<string,string[]>} | null>}
+ * @param {any} db
+ * @returns {Promise<{accounts: Map<string,string[]>, groups: Map<string,string[]>, roles: Map<string,string[]>} | null>}
  */
 async function loadGrants(db) {
-  const out = { accounts: new Map(), groups: new Map() }
-  for (const [kind, { table, column }] of Object.entries(GRANT_TABLES)) {
-    const { data, error } = await db.from(table).select(`profile_id, ${column}`)
+  const out = { accounts: new Map(), groups: new Map(), roles: new Map() }
+  for (const [kind, { table, column, ordered }] of Object.entries(GRANT_TABLES)) {
+    let q = db.from(table).select(ordered ? `profile_id, ${column}, position` : `profile_id, ${column}`)
+    // Сортируем в базе, а не после сборки: порядок ролей значащий, и восстанавливать его
+    // из неупорядоченной выборки пришлось бы вторым проходом по каждому профилю.
+    if (ordered) q = q.order('position', { ascending: true })
+    const { data, error } = await q
     // Таблицы ещё нет — значит миграция не доехала: пусть читают колонки, как раньше.
     if (error) return isMissingTable(error) ? null : Promise.reject(new Error(`[${table}] чтение выдач не удалось: ${error.message}`))
     for (const r of data || []) {
@@ -61,19 +72,31 @@ async function loadGrants(db) {
 /**
  * Привести выдачи профиля к заданным. Пишем ТОЛЬКО свои строки: «удали всё, чего нет в
  * моём списке» по всей таблице снесло бы выдачи соседних профилей.
- * @param {any} db @param {string} profileId @param {string[]} accountIds @param {string[]} groupIds
+ *
+ * Списка, которого нет в `wanted`, функция НЕ ТРОГАЕТ: `undefined` означает «про этот вид
+ * связи ничего не сказано», и стирать по нему всё было бы худшим прочтением. Пустой
+ * массив, наоборот, означает «снять всё» — это разные вещи, и путать их нельзя.
+ * @param {any} db @param {string} profileId
+ * @param {{accounts?: string[], groups?: string[], roles?: string[]}} wanted
  */
-async function writeGrants(db, profileId, accountIds, groupIds) {
-  const wanted = { accounts: accountIds || [], groups: groupIds || [] }
-  for (const [kind, { table, column }] of Object.entries(GRANT_TABLES)) {
-    const rows = [...new Set(wanted[kind].map(String).filter(Boolean))]
+async function writeGrants(db, profileId, wanted) {
+  for (const [kind, { table, column, ordered }] of Object.entries(GRANT_TABLES)) {
+    if (wanted[kind] === undefined) continue
+    const rows = [...new Set((wanted[kind] || []).map(String).filter(Boolean))]
     if (rows.length) {
       const { error } = await db.from(table)
-        .upsert(rows.map((v) => ({ profile_id: profileId, [column]: v })), { onConflict: `profile_id,${column}` })
+        .upsert(rows.map((v, i) => ({ profile_id: profileId, [column]: v, ...(ordered ? { position: i } : {}) })), { onConflict: `profile_id,${column}` })
       if (error) {
-        if (isMissingTable(error)) continue
-        // Внешний ключ тут — не помеха, а смысл: объекта нет, значит и выдавать нечего.
-        throw new Error(`[${table}] не удалось сохранить выдачу: ${error.message}`)
+        // Отсутствие таблицы на ЗАПИСИ — не повод промолчать, в отличие от чтения, где
+        // есть запасной путь на колонки. Молчаливый пропуск здесь означал бы «права
+        // изменены» в ответе и ничего не изменённое в базе: человеку выдали доступ,
+        // интерфейс подтвердил, доступа нет. Порядок выката это исключает (миграции
+        // применяются до кода) — а раз исключает, то случившееся надо показать.
+        // Отказ внешнего ключа тут — не помеха, а смысл: объекта нет, значит и
+        // выдавать нечего.
+        throw new Error(isMissingTable(error)
+          ? `[${table}] таблицы нет — миграция не применена, а код уже новый. Выдачи НЕ сохранены.`
+          : `[${table}] не удалось сохранить выдачу: ${error.message}`)
       }
     }
     // Снятые выдачи считаем по факту, а не строим условие «not in (…)» руками: список
@@ -179,7 +202,10 @@ async function authEmailMap(db) {
  * @param {object|null} grants выдачи из таблиц связи; null — таблиц ещё нет, читаем колонки
  */
 function profileToUser(p, emailMap, legacyByUuid, grants = null) {
-  const { roleIds, roleId } = normUserRoles({ roleIds: p.role_ids })
+  // MR-290: роли — из profile_roles; колонка role_ids остаётся запасным путём на окно
+  // между накаткой миграции и выкатом кода, как и выдачи ниже.
+  const fromLinks = grants?.roles.get(p.legacy_id)
+  const { roleIds, roleId } = normUserRoles({ roleIds: fromLinks?.length ? fromLinks : p.role_ids })
   return {
     id: p.legacy_id,
     email: emailMap.get(p.id) || '',
@@ -432,6 +458,10 @@ export async function createUser(input = {}) {
     const balanceMode = normBalanceMode(input.balanceMode) // §4.2 (MR-30) — новых личных кошельков нет
     const tokenLimit = input.tokenLimit == null ? null : Math.max(0, Number(input.tokenLimit) || 0)
     await db.from('profiles').update({ legacy_id: legacyId, name, active: input.active !== false, role_ids: roleIds, parent_id: parentUuid, balance_mode: balanceMode, token_limit: tokenLimit, updated_at: new Date().toISOString() }).eq('id', authId)
+    // Роли — строками. Колонка выше пока пишется тоже: пока миграция не снесла её,
+    // предыдущая версия кода на сервере читает именно её, и новый оператор без ролей
+    // выглядел бы как оператор без прав.
+    await writeGrants(db, legacyId, { roles: roleIds })
     // §11.3 этап 4/4: dual-write в `users` снят — источник истины profiles + auth.users.
     invalidateUsersCache()
     return { id: legacyId, email, name, roleId, roleIds, active: input.active !== false, parentId, accountIds: [], accountGroupIds: [], balanceMode, tokenLimit, createdAt: now, updatedAt: now }
@@ -486,7 +516,7 @@ export async function updateUser(id, patch = {}) {
     // они живут строками со ссылками. Два источника одних и тех же прав однажды
     // разойдутся, и тогда доступ будет зависеть от того, какой из них прочитали.
     await db.from('profiles').update({ name: next.name, active: next.active, role_ids: next.roleIds, parent_id: parentUuid, balance_mode: next.balanceMode || 'shared', token_limit: next.tokenLimit ?? null, updated_at: new Date().toISOString() }).eq('id', prof.id)
-    await writeGrants(db, next.id, next.accountIds || [], next.accountGroupIds || [])
+    await writeGrants(db, next.id, { accounts: next.accountIds || [], groups: next.accountGroupIds || [], roles: next.roleIds || [] })
     // Пароль — только в auth.users.
     if (patch.password) {
       if (String(patch.password).length < 6) throw new Error('Пароль минимум 6 символов')

@@ -90,6 +90,16 @@ const readSql = async (f) => {
 }
 const readCode = (f) => fs.readFile(new URL(`../${f}`, import.meta.url), 'utf8')
 
+/**
+ * Схлопнуть пробелы и переводы строк — чтобы сверять по тексту, а не регуляркой.
+ *
+ * Проверки здесь ищут куски SQL и кода со скобками. В регулярке их пришлось бы
+ * экранировать, и ОДНА пропущенная обратная косая молча превращает проверку в «ничего не
+ * нашлось» — то есть в зелёный тест, который ничего не проверяет. Это уже случалось в
+ * этом файле дважды. Со схлопнутым текстом и `includes` экранировать нечего.
+ */
+const flatten = (s) => s.replace(/\s+/g, ' ')
+
 /** Колонки таблицы из `create table` в миграции: имя → остаток строки с типом и флагами. */
 function columnsOf(sql, table) {
   const at = sql.indexOf(`create table if not exists ${table} (`)
@@ -422,4 +432,67 @@ test('счётчик переходов: сырые адреса посетит�
   assert.ok(!cols.has('ip') && !cols.has('user_agent'), 'ради счётчика адреса посетителей держать незачем')
   const code = await readCode('linkTracker.js')
   assert.ok(/createHash\('sha256'\)/.test(code), 'отпечаток обязан быть хешем')
+})
+
+test('массивы text[]: роли и модули переехали в таблицы связей', async () => {
+  // Массив идентификаторов — это внешний ключ, который база не проверяет: роль удалили,
+  // а её id остался лежать в profiles.role_ids. Плюс невозможность спросить «кому выдана
+  // роль X» иначе, чем развернув массивы у всех профилей.
+  const sql = await readSql('2026-09-02-mr290-arrays-to-links.sql')
+  const flat = flatten(sql)
+  for (const [table, col, parent] of [
+    ['profile_roles', 'role_id', 'roles(id)'],
+    ['user_roles', 'role_id', 'roles(id)'],
+    ['wallet_log_modules', 'module_id', 'modules(id)'],
+  ]) {
+    assert.ok(flat.includes('create table if not exists ' + table), table + ': таблицы нет');
+    assert.ok(flat.includes(col + ' text not null references ' + parent) || flat.includes(col + ' bigint not null references ' + parent),
+      table + '.' + col + ': нужна ссылка на ' + parent)
+    assert.ok(new RegExp('create table if not exists ' + table + '[^;]*position').test(flat),
+      table + ': нужна колонка position — порядок в массиве был значащим')
+  }
+  // Кампании: таблица существовала как проекция, порядок в ней не хранился.
+  assert.ok(flat.includes('alter table campaign_modules add column if not exists position'),
+    'campaign_modules: порядок модулей должен храниться, а не восстанавливаться наугад')
+})
+
+test('состав подписки в журнале кошелька нельзя стереть удалением модуля', async () => {
+  // Журнал — деньги: запись обязана объяснять, за что списали, и через год. Каскад стёр
+  // бы состав подписки вместе с модулем, оставив сумму без основания. Отсюда restrict,
+  // хотя у ролей рядом стоит cascade: это не разнобой, а разные требования.
+  const flat = flatten(await readSql('2026-09-02-mr290-arrays-to-links.sql'))
+  assert.ok(flat.includes('module_id bigint not null references modules(id) on delete restrict'),
+    'состав подписки в журнале должен держать модуль, а не исчезать вместе с ним')
+})
+
+test('строка журнала кошелька и её состав пишутся одной транзакцией', async () => {
+  // Через PostgREST это два запроса, и между ними процесс может умереть — в базе
+  // останется списание без основания. Для денег половинчатая запись хуже отказа.
+  const sql = await readSql('2026-09-02-mr290-arrays-to-links.sql')
+  assert.match(sql, /create or replace function wallet_log_append/, 'нужна функция, а не два запроса из кода')
+  const тело = sql.slice(sql.indexOf('create or replace function wallet_log_append'))
+  assert.ok(тело.includes('insert into wallet_log (') && тело.includes('insert into wallet_log_modules'),
+    'обе вставки обязаны быть внутри одной функции')
+  assert.match(тело, /raise exception/, 'неизвестный модуль обязан отменять запись, а не пропускаться молча')
+
+  const code = await readCode('balance.js')
+  assert.ok(code.includes(String.raw`db.rpc('wallet_log_append'`), 'журнал должен писаться через функцию')
+})
+
+test('роли профиля читаются из связей, а порядок первой роли сохраняется', async () => {
+  // roleId пользователя — это role_ids[0], «первичная» роль: ею подписаны карточки в
+  // админке. Множество строк без position потеряло бы это различие молча.
+  const code = await readCode('users.js')
+  assert.ok(flatten(code).includes("roles: { table: 'profile_roles', column: 'role_id', ordered: true }"),
+    'роли обязаны читаться из таблицы связей')
+  assert.ok(code.includes(String.raw`order('position'`), 'порядок ролей должен приходить отсортированным из базы')
+})
+
+test('модули кампании — источник в таблице связей, а не проекция', async () => {
+  // Таблица была проекцией: писали в массив, связи догонял syncModuleLinks следом.
+  // Проекция расходится с источником при любой записи мимо неё — а мимо неё пишет весь
+  // campaigns.js.
+  const code = await readCode('campaigns.js')
+  assert.ok(code.includes(String.raw`writeModuleLinks(db, 'campaign_modules'`), 'кампания обязана писать связи сама')
+  assert.ok(code.includes(String.raw`readModuleLinks(db, 'campaign_modules'`), 'и читать их же')
 })

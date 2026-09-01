@@ -15,8 +15,29 @@ import crypto from 'crypto'
 import { dataPath, readJson, mutateJson } from './lib/jsonStore.js'
 import { getSupabase, supabaseEnabled } from './lib/supabase.js'
 import { insertWithOwner, updateWithOwner, ownerOf } from './lib/ownerColumn.js'
+import { readModuleLinks, writeModuleLinks } from './lib/moduleIds.js'
 
 function sbC() { return supabaseEnabled() ? getSupabase() : null }
+
+/*
+ * MR-290: модули кампании — строки в campaign_modules, а не массив text[] в колонке.
+ *
+ * Таблица существовала и раньше, но была ПРОЕКЦИЕЙ: писали в массив, а связи догонял
+ * `syncModuleLinks` следом. Проекция расходится с источником при любой записи мимо неё —
+ * а мимо неё пишет весь этот файл. Теперь источник здесь, и модуль, которого нет в
+ * справочнике, в кампанию просто не попадёт: откажет внешний ключ.
+ *
+ * Наружу кампания по-прежнему отдаёт `modules: string[]` — ключами. На этот формат
+ * опираются фильтры (`c.modules.includes(…)`), фронт и старые кампании; менять его
+ * заодно с формой хранения значило бы чинить две вещи одной правкой.
+ *
+ * Колонка `campaigns.modules` пока пишется тоже: миграции применяются ДО выката кода, и
+ * в промежутке кампании читает предыдущая версия — для неё пустой массив выглядел бы как
+ * «у кампании отобрали модули». Снимем колонку следующим выпуском.
+ */
+
+const modulesByCampaign = (db, ids) => readModuleLinks(db, 'campaign_modules', 'campaign_id', ids)
+const writeCampaignModules = (db, id, keys) => writeModuleLinks(db, 'campaign_modules', 'campaign_id', id, keys)
 const rowToCampaign = (r) => ({ id: r.id, name: r.name, goalId: r.goal_id || null, modules: r.modules || [], ...(r.data || {}), userId: ownerOf(r) || undefined, createdAt: r.created_at ? new Date(r.created_at).getTime() : 0, updatedAt: r.updated_at ? new Date(r.updated_at).getTime() : 0 })
 const campaignToRow = (c) => {
   const { id, name, goalId, modules, createdAt, updatedAt, ...data } = c
@@ -207,9 +228,17 @@ export function normalizeCampaign(input = {}) {
 
 export async function listCampaigns(filter = {}) {
   const db = sbC()
-  const all = db
-    ? ((await db.from('campaigns').select('*').order('created_at', { ascending: false })).data || []).map(rowToCampaign)
-    : await readJson(CAMPAIGNS_FILE, [])
+  let all
+  if (db) {
+    const rows = (await db.from('campaigns').select('*').order('created_at', { ascending: false })).data || []
+    all = rows.map(rowToCampaign)
+    const links = await modulesByCampaign(db, all.map((c) => c.id))
+    // `null` — связей прочитать не удалось; тогда остаётся массив из колонки. Пустая
+    // карта — это другое: связи прочитаны, у кампании их просто нет.
+    if (links) all = all.map((c) => ({ ...c, modules: links.get(c.id) ?? c.modules }))
+  } else {
+    all = await readJson(CAMPAIGNS_FILE, [])
+  }
   // Кампании, созданные до многомодульности, отдаём с `modules` — иначе фронту
   // пришлось бы проверять оба поля в каждом месте.
   return all
@@ -225,7 +254,10 @@ export async function getCampaign(id) {
   const db = sbC()
   if (db) {
     const { data } = await db.from('campaigns').select('*').eq('id', id).maybeSingle()
-    return data ? rowToCampaign(data) : null
+    if (!data) return null
+    const c = rowToCampaign(data)
+    const links = await modulesByCampaign(db, [id])
+    return links ? { ...c, modules: links.get(id) ?? c.modules } : c
   }
   const all = await readJson(CAMPAIGNS_FILE, [])
   return all.find((c) => c.id === id) || null
@@ -268,7 +300,11 @@ export async function createCampaign(input) {
     updatedAt: Date.now(),
   }
   const db = sbC()
-  if (db) { await insertWithOwner(db, 'campaigns', campaignToRow(campaign)); return campaign }
+  if (db) {
+    await insertWithOwner(db, 'campaigns', campaignToRow(campaign))
+    await writeCampaignModules(db, campaign.id, campaign.modules)
+    return campaign
+  }
   await mutateJson(CAMPAIGNS_FILE, (all) => { all.unshift(campaign); return all }, [])
   return campaign
 }
@@ -281,6 +317,7 @@ export async function updateCampaign(id, patch = {}) {
     if (!cur) return null
     const updated = applyCampaignPatch(cur, patch)
     await updateWithOwner(db, 'campaigns', campaignToRow(updated), 'id', id)
+    await writeCampaignModules(db, id, updated.modules)
     return updated
   }
   let result = null

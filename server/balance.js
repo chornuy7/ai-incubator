@@ -20,6 +20,7 @@
 import { dataPath, readJson, mutateJson } from './lib/jsonStore.js'
 import { getSupabase, supabaseEnabled } from './lib/supabase.js'
 import { resolveWalletOwner, resolveSubscriptionOwner } from './users.js'
+import { readModuleLinks } from './lib/moduleIds.js'
 
 /**
  * §10.2: когда DATA_BACKEND=supabase, баланс/подписки/журнал живут в БД, а не в
@@ -654,6 +655,9 @@ export async function changeCoins(amount, reason = '', userId, kind, modules) {
  */
 const WALLET_LOG = () => process.env.WALLET_LOG_FILE || dataPath('wallet-log.jsonl')
 
+/** Состав подписки для строк журнала: id записи → ключи модулей по порядку. */
+const modulesByLogEntry = (db, ids) => readModuleLinks(db, 'wallet_log_modules', 'log_id', ids)
+
 async function appendWalletEntry(entry) {
   const db = sb()
   if (db) {
@@ -688,6 +692,28 @@ async function appendWalletEntry(entry) {
      * тот минимум, который есть в схеме с самого начала.
      */
     const строка = { ...withActor, currency, kind, modules }
+
+    /*
+     * MR-290: строка журнала и состав подписки уезжают ОДНИМ вызовом (миграция
+     * 2026-09-02-mr290-arrays-to-links.sql). Через PostgREST это два запроса, и между
+     * ними процесс может умереть — в базе остаётся списание без основания. Для денег
+     * половинчатая запись хуже, чем отказ: сумма есть, объяснения нет.
+     *
+     * Функции ещё нет (миграция не доехала) — ниже прежний путь, он рабочий.
+     */
+    const { error: rpcErr } = await db.rpc('wallet_log_append', { entry: строка, module_keys: modules })
+    if (!rpcErr) return
+    if (!/function|schema cache|does not exist/i.test(rpcErr.message || '')) {
+      // Функция есть и отказала по существу — например, состав ссылается на модуль,
+      // которого нет в справочнике. Повторять то же самое обычной вставкой значило бы
+      // обойти проверку, ради которой всё и делалось.
+      // Вызывающий глушит ошибки журнала намеренно («потерянная строка досадна,
+      // потерянное списание — деньги»), поэтому отказ ещё и печатаем: иначе он
+      // растворится совсем.
+      console.warn('[wallet_log] запись журнала отклонена:', rpcErr.message)
+      throw new Error(`[wallet_log] запись журнала отклонена: ${rpcErr.message}`)
+    }
+
     for (const колонка of ['modules', 'actor_id', 'kind', 'currency']) {
       const { error } = await db.from('wallet_log').insert(строка)
       if (!error) return
@@ -758,18 +784,25 @@ export async function walletHistory(filter = {}) {
       return q
     }
     // Состав подписки (миграция 2026-08-31) — им интерфейс разворачивает «и ещё 11».
-    let { data, error } = await build('ts, user_id, actor_id, amount, before_val, after_val, reason, currency, modules')
-    if (error && /modules/i.test(error.message || '')) ({ data, error } = await build('ts, user_id, actor_id, amount, before_val, after_val, reason, currency'))
+    // id тянем всегда: по нему подбирается состав подписки из таблицы связей.
+    let { data, error } = await build('id, ts, user_id, actor_id, amount, before_val, after_val, reason, currency, modules')
+    if (error && /modules/i.test(error.message || '')) ({ data, error } = await build('id, ts, user_id, actor_id, amount, before_val, after_val, reason, currency'))
     // Колонки актора может ещё не быть (миграция 2026-08-27) — тогда читаем без неё.
-    if (error && /actor_id/i.test(error.message || '')) ({ data, error } = await build('ts, user_id, amount, before_val, after_val, reason, currency'))
-    if (error && /currency/i.test(error.message || '')) ({ data } = await build('ts, user_id, amount, before_val, after_val, reason'))
-    return (data || []).map((r) => ({
-      ts: ms(r.ts), userId: r.user_id, actorId: r.actor_id || r.user_id, amount: Number(r.amount),
-      before: r.before_val == null ? null : Number(r.before_val),
-      after: r.after_val == null ? null : Number(r.after_val), reason: r.reason || '',
-      currency: r.currency === 'usd' ? 'usd' : 'coins',
-      ...(Array.isArray(r.modules) && r.modules.length ? { modules: r.modules } : {}),
-    }))
+    if (error && /actor_id/i.test(error.message || '')) ({ data, error } = await build('id, ts, user_id, amount, before_val, after_val, reason, currency'))
+    if (error && /currency/i.test(error.message || '')) ({ data } = await build('id, ts, user_id, amount, before_val, after_val, reason'))
+    // MR-290: состав подписки — из wallet_log_modules; колонка modules остаётся
+    // запасным путём на окно между накаткой миграции и выкатом кода.
+    const составы = await modulesByLogEntry(db, (data || []).map((r) => r.id).filter((v) => v != null))
+    return (data || []).map((r) => {
+      const modules = составы?.get(String(r.id)) ?? (Array.isArray(r.modules) ? r.modules : [])
+      return {
+        ts: ms(r.ts), userId: r.user_id, actorId: r.actor_id || r.user_id, amount: Number(r.amount),
+        before: r.before_val == null ? null : Number(r.before_val),
+        after: r.after_val == null ? null : Number(r.after_val), reason: r.reason || '',
+        currency: r.currency === 'usd' ? 'usd' : 'coins',
+        ...(modules.length ? { modules } : {}),
+      }
+    })
   }
   const fs = await import('node:fs/promises')
   let raw = ''
