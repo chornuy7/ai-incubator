@@ -86,18 +86,27 @@ export function permissionsToRules(roleId, permissions) {
   return rows
 }
 
-const rowToRole = (r, rules = null) => ({
-  id: r.id,
-  name: r.name,
+export const rowToRole = (r, rules = null) => {
   // Правила прочитаны — они и есть права. Не прочитаны (миграция не доехала) — остаётся
   // дерево из колонки. Пустой набор правил у роли, которой правила читали, — это
   // «прав нет», и подменять его старым деревом нельзя: снятые права вернулись бы.
-  permissions: rules ? rulesToPermissions(rules) : (r.permissions || {}),
-  builtin: !!r.builtin,
-  userId: r.user_id || undefined,
-  personalFor: r.personal_for || personalOf(r.permissions),
-  freeAccess: r.free_access ?? undefined,
-})
+  const permissions = rules ? rulesToPermissions(rules) : (r.permissions || {})
+  const freeAccess = r.free_access ?? permissions.freeAccess ?? false
+  const personalFor = r.personal_for || personalOf(r.permissions)
+  /*
+   * `freeAccess` ВОЗВРАЩАЕТСЯ В ДЕРЕВО, хотя хранится колонкой.
+   *
+   * Его читают из прав в четырёх местах — `effectivePermissions`, маршруты модулей и
+   * дважды фронт (`user.permissions.freeAccess`). Собранное из строк дерево этого флага
+   * не содержит: правил такого разреза нет и не должно быть. Не вернув его сюда, мы
+   * получили бы ровно ту поломку, от которой вся задача и защищается: роль со свободным
+   * доступом внезапно упирается в подписку, причём молча и только на проде — в файловом
+   * режиме, где дерево читается как есть, всё бы работало.
+   */
+  if (freeAccess) permissions.freeAccess = true
+  if (personalFor) permissions.personalFor = personalFor
+  return { id: r.id, name: r.name, permissions, builtin: !!r.builtin, userId: r.user_id || undefined, personalFor, freeAccess }
+}
 
 // §11.3: user_id — кто создал роль (до применения миграции колонки нет, см. ownerColumn).
 const roleToRow = (r) => ({

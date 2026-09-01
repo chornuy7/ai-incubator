@@ -102,3 +102,36 @@ test('поэлементные права аккаунтов собираютс�
   ])
   assert.deepEqual(p.resources, { accounts: { acc_1: 'deny', acc_2: 'allow' }, folders: { fld_1: 'allow' } })
 })
+
+test('freeAccess не теряется при сборке прав из строк', async () => {
+  /*
+   * Флаг хранится колонкой, а читают его ИЗ ДЕРЕВА: effectivePermissions, маршруты
+   * модулей и дважды фронт (`user.permissions.freeAccess`). Собранное из строк дерево
+   * его не содержит — правил такого разреза нет и не должно быть. Не вернув флаг в
+   * дерево, мы получили бы ровно ту поломку, от которой защищается вся задача: роль со
+   * свободным доступом упирается в подписку, молча и только на проде — в файловом
+   * режиме, где дерево читается как есть, всё бы работало.
+   */
+  const { rowToRole } = await import('../roles.js')
+  const роль = rowToRole(
+    { id: 'role_free', name: 'Тест', free_access: true, permissions: null },
+    [{ scope: 'module', subject: 'mailing', item_id: '', effect: 'allow' }],
+  )
+  assert.equal(роль.permissions.freeAccess, true, 'читатели прав обязаны видеть флаг там же, где раньше')
+  assert.equal(роль.freeAccess, true, 'и наверху объекта тоже')
+  assert.deepEqual(роль.permissions.modules, { mailing: 'allow' }, 'права при этом собраны из строк')
+})
+
+test('личная роль остаётся личной после сборки из строк', async () => {
+  const { rowToRole } = await import('../roles.js')
+  const роль = rowToRole({ id: 'role_p', name: 'Личная', personal_for: 'usr_1', permissions: null }, [])
+  assert.equal(роль.personalFor, 'usr_1')
+  assert.equal(роль.permissions.personalFor, 'usr_1', 'метка не должна пропасть из дерева')
+})
+
+test('роль без флага не получает его из ниоткуда', async () => {
+  const { rowToRole } = await import('../roles.js')
+  const роль = rowToRole({ id: 'role_x', name: 'Обычная', free_access: false, permissions: null }, [])
+  assert.equal(роль.permissions.freeAccess, undefined, 'лишний флаг в правах — это выданный доступ')
+  assert.equal(роль.freeAccess, false)
+})
