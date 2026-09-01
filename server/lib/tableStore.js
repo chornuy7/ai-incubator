@@ -156,10 +156,17 @@ export function listStore(cfg) {
 
 /**
  * Коллекция-СЛОВАРЬ (ключ → объект) поверх таблицы с колонкой-ключом.
- * @param {{table:string, file:string|(()=>string), keyCol:string, toRow:(k:string,o:any)=>any, fromRow:(r:any)=>[string,any]}} cfg
+ *
+ * `afterRead` / `afterWrite` — для того, что не помещается в одну строку: связанные
+ * таблицы. Зовутся ТОЛЬКО в режиме базы и только после успешной основной операции —
+ * в файловом режиме связанных таблиц нет, а после неудачной записи дочерние строки
+ * относились бы к тому, чего не сохранилось. Пара к тем же хукам у `listStore`.
+ * @param {{table:string, file:string|(()=>string), keyCol:string,
+ *   toRow:(k:string,o:any)=>any, fromRow:(r:any)=>[string,any],
+ *   afterRead?:(all:any, db:any)=>Promise<void>, afterWrite?:(all:any, db:any)=>Promise<void>}} cfg
  */
 export function mapStore(cfg) {
-  const { table, file, keyCol, toRow, fromRow } = cfg
+  const { table, file, keyCol, toRow, fromRow, afterRead, afterWrite } = cfg
 
   async function readAll() {
     const db = sb()
@@ -171,6 +178,7 @@ export function mapStore(cfg) {
     }
     const out = {}
     for (const r of data || []) { const [k, v] = fromRow(r); out[k] = v }
+    if (afterRead) await afterRead(out, db)
     return out
   }
 
@@ -204,6 +212,7 @@ export function mapStore(cfg) {
         return writeJson(val(file), all)
       }
     }
+    if (afterWrite) await afterWrite(all, db)
     return all
   }
 

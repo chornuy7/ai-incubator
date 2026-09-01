@@ -23,27 +23,108 @@ const FILE = () => process.env.ACCOUNT_ACTIVITY_FILE || dataPath('account-activi
 // §10.2: усталость аккаунтов — в БД. Она общая для всех модулей и определяет, кого
 // можно брать в работу: на втором инстансе файл разъедется, и аккаунт получит двойную
 // нагрузку вместо отдыха.
+/*
+ * MR-290: режим отдыха — колонками, распорядок дня — строками.
+ *
+ * В мешке `data` лежал `profile`: три числа, которыми задан режим. И там же нашлась
+ * причина завести им колонки — одна и та же величина записана ДВУМЯ способами. У восьми
+ * аккаунтов `recoveryPerHour` (единиц в час), у пяти `recoveryEveryMs` (за сколько уходит
+ * одна единица): старая и новая форма. Приложение сводит их на чтении, но пока обе лежат
+ * рядом, любой отчёт мимо приложения посчитает неправильно, а вторую форму однажды
+ * забудут обновить. В колонке форма одна.
+ *
+ * Распорядок дня — двадцать четыре числа, то есть таблица, а не значение. В мешке ни час
+ * 25, ни вероятность 5 никто бы не отверг; в таблице отвергнет ограничение.
+ */
 const activityStore = mapStore({
   table: 'account_activity',
   file: FILE,
   keyCol: 'account_id',
-  toRow: (accountId, a) => { const { fatigue, restUntil, lastActionAt, actionsTotal, ...data } = a || {}; return {
-    account_id: accountId,
-    fatigue: Number(fatigue) || 0,
-    rest_until: toDbTime(restUntil),
-    last_action_at: toDbTime(lastActionAt),
-    actions_total: Number(actionsTotal) || 0,
-    data,
-    updated_at: new Date().toISOString(),
-  } },
-  fromRow: (r) => [r.account_id, {
-    ...(r.data || {}),
-    fatigue: Number(r.fatigue) || 0,
-    restUntil: fromDbTime(r.rest_until),
-    lastActionAt: fromDbTime(r.last_action_at),
-    actionsTotal: Number(r.actions_total) || 0,
-  }],
+  toRow: (accountId, a) => {
+    const { fatigue, restUntil, lastActionAt, actionsTotal, ...data } = a || {}
+    const p = data.profile || {}
+    return {
+      account_id: accountId,
+      fatigue: Number(fatigue) || 0,
+      rest_until: toDbTime(restUntil),
+      last_action_at: toDbTime(lastActionAt),
+      actions_total: Number(actionsTotal) || 0,
+      fatigue_threshold: p.threshold == null ? null : Number(p.threshold),
+      rest_minutes: p.restMinutes == null ? null : Number(p.restMinutes),
+      // Обе формы сводятся к одной ЗДЕСЬ. `recoveryEveryMs` разбирает и старое поле тоже.
+      recovery_every_ms: data.profile ? recoveryEveryMs(p) : null,
+      // Мешок пока пишется: миграции применяются до выката кода, и в промежутке режим
+      // читает предыдущая версия. Распорядок в мешок НЕ кладём — он живёт строками, и
+      // два места хранения одного расписания однажды разойдутся.
+      data,
+      updated_at: new Date().toISOString(),
+    }
+  },
+  fromRow: (r) => {
+    const out = {
+      ...(r.data || {}),
+      fatigue: Number(r.fatigue) || 0,
+      restUntil: fromDbTime(r.rest_until),
+      lastActionAt: fromDbTime(r.last_action_at),
+      actionsTotal: Number(r.actions_total) || 0,
+    }
+    // Колонки перекрывают мешок: как только миграция прошла, режим читается из них.
+    // Пустые колонки не трогают то, что дал мешок, — иначе в промежутке между накаткой
+    // и выкатом режим у аккаунта сбросился бы на умолчания.
+    if (r.fatigue_threshold != null || r.rest_minutes != null || r.recovery_every_ms != null) {
+      out.profile = {
+        ...(out.profile || {}),
+        ...(r.fatigue_threshold != null ? { threshold: Number(r.fatigue_threshold) } : {}),
+        ...(r.rest_minutes != null ? { restMinutes: Number(r.rest_minutes) } : {}),
+        ...(r.recovery_every_ms != null ? { recoveryEveryMs: Number(r.recovery_every_ms) } : {}),
+      }
+      // Старая форма снята: держать её рядом с новой — значит однажды разойтись.
+      delete out.profile.recoveryPerHour
+    }
+    return out
+  },
+  afterRead: readSchedules,
+  afterWrite: writeSchedules,
 })
+
+/** Распорядки всех аккаунтов разом: один запрос, а не по запросу на аккаунт. */
+async function readSchedules(all, db) {
+  const { data, error } = await db.from('account_schedules').select('account_id, hour, probability')
+  // Таблицы ещё нет — миграция не доехала; распорядок придёт из мешка, как раньше.
+  if (error) return
+  const byAccount = new Map()
+  for (const r of data || []) {
+    if (!byAccount.has(r.account_id)) byAccount.set(r.account_id, {})
+    byAccount.get(r.account_id)[Number(r.hour)] = Number(r.probability)
+  }
+  for (const [id, schedule] of byAccount) if (all[id]) all[id].schedule = schedule
+}
+
+/** Переписать распорядки. Стор работает целым словарём, поэтому и здесь целиком. */
+async function writeSchedules(all, db) {
+  const rows = []
+  for (const [accountId, state] of Object.entries(all || {})) {
+    const schedule = state?.schedule
+    if (!schedule || typeof schedule !== 'object') continue
+    for (const [hour, p] of Object.entries(schedule)) {
+      const h = Number(hour)
+      const v = Number(p)
+      // Мусор не отправляем в базу: ограничение отвергло бы всю пачку целиком, и вместе
+      // с одной кривой строкой не сохранились бы распорядки всех остальных аккаунтов.
+      if (!Number.isInteger(h) || h < 0 || h > 23 || !Number.isFinite(v) || v < 0 || v > 1) continue
+      rows.push({ account_id: accountId, hour: h, probability: v })
+    }
+  }
+  const owners = [...new Set(rows.map((r) => r.account_id))]
+  if (owners.length) {
+    const { error } = await db.from('account_schedules').delete().in('account_id', owners)
+    if (error) return // таблицы нет — молча остаёмся на мешке
+  }
+  for (let i = 0; i < rows.length; i += 500) {
+    const { error } = await db.from('account_schedules').upsert(rows.slice(i, i + 500), { onConflict: 'account_id,hour' })
+    if (error) { console.warn('[account_schedules] запись распорядка не удалась:', error.message); return }
+  }
+}
 
 /** @returns {Promise<Record<string, object>>} */
 async function loadAll() {

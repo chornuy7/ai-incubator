@@ -545,3 +545,62 @@ test('источники канала намеренно без внешнего
   assert.match(sql, /Внешнего ключа на `tasks` здесь СОЗНАТЕЛЬНО НЕТ/,
     'решение обязано быть объяснено в самой миграции')
 })
+
+test('усталость: две формы восстановления сведены к одной колонке', async () => {
+  // В боевых данных одна и та же величина записана двумя способами: у восьми аккаунтов
+  // recoveryPerHour (единиц в час), у пяти recoveryEveryMs (за сколько уходит единица).
+  // Приложение сводит их на чтении, но пока обе лежат рядом, отчёт мимо приложения
+  // посчитает неправильно, а вторую форму однажды забудут обновить.
+  const sql = await readSql('2026-09-02-mr290-json-bags.sql')
+  assert.match(sql, /recovery_every_ms bigint/, 'нужна одна колонка на обе формы')
+  assert.match(sql, /round\(3600000 \/ \(data #>> '\{profile,recoveryPerHour\}'\)::numeric\)/,
+    'старая форма обязана пересчитываться в новую, а не теряться')
+
+  const code = await readCode('accountActivity.js')
+  assert.ok(code.includes('delete out.profile.recoveryPerHour'),
+    'после чтения из колонки старая форма обязана исчезнуть — иначе две формы снова разойдутся')
+})
+
+test('распорядок дня: час и вероятность проверяет база, а не приложение', async () => {
+  // В мешке ни час 25, ни вероятность 5 никто бы не отверг.
+  const flat = flatten(await readSql('2026-09-02-mr290-json-bags.sql'))
+  assert.ok(flat.includes('hour int not null check (hour between 0 and 23)'), 'час обязан быть ограничен')
+  assert.ok(flat.includes('probability numeric not null check (probability >= 0 and probability <= 1)'),
+    'вероятность обязана быть долей, а не любым числом')
+  assert.ok(flat.includes('account_id text not null references accounts_meta(id) on delete cascade'),
+    'распорядок удалённого аккаунта не должен оставаться висеть')
+})
+
+test('цены: каталоги стали таблицами с проверками, а не тремя json-ячейками', async () => {
+  // Это ЦЕНЫ — то, по чему выставляют счета. Скидка 500%, пакет на минус сто монет и
+  // правка цены у несуществующего модуля записались бы в json молча.
+  const flat = flatten(await readSql('2026-09-02-mr290-json-bags.sql'))
+  assert.ok(flat.includes('coins numeric not null check (coins > 0)'), 'пакет на ноль монет — не пакет')
+  assert.ok(flat.includes("unit text not null check (unit in ('week', 'month', 'year'))"), 'единица периода из белого списка')
+  assert.ok(flat.includes('discount numeric not null default 0 check (discount >= 0 and discount <= 0.9)'),
+    'скидка обязана быть ограничена сверху')
+  assert.ok(flat.includes('module_id bigint primary key references modules(id) on delete cascade'),
+    'правка цены обязана ссылаться на существующий модуль')
+
+  const code = await readCode('priceStore.js')
+  assert.ok(code.includes("{ field: 'coinPacks', table: 'coin_packs'"), 'пакеты монет должны читаться из таблицы')
+  assert.ok(code.includes("{ field: 'periods', table: 'subscription_periods'"), 'периоды должны читаться из таблицы')
+})
+
+test('цель: статус и режим периода ограничены базой', async () => {
+  // Статус ограничен белым списком в коде, а в базе им мог оказаться любой текст.
+  const flat = flatten(await readSql('2026-09-02-mr290-json-bags.sql'))
+  assert.ok(flat.includes("check (status is null or status in ('active', 'paused', 'done', 'archived'))"),
+    'статус цели обязан быть ограничен')
+  assert.ok(flat.includes("check (period_mode is null or period_mode in ('all', 'from'))"),
+    'режим периода обязан быть ограничен')
+
+  const code = await readCode('goals.js')
+  const block = code.match(/const COLUMNS = \[([\s\S]*?)\n\]/)
+  assert.ok(block, 'в goals.js нет карты COLUMNS')
+  const columns = [...block[1].matchAll(/\],\s*'([a-z_]+)'/g)].map((m) => m[1])
+  const sql = await readSql('2026-09-02-mr290-json-bags.sql')
+  const known = new Set([...sql.matchAll(/alter table goals add column if not exists ([a-z_]+)/gi)].map((m) => m[1]))
+  const missing = columns.filter((c) => !known.has(c))
+  assert.deepEqual(missing, [], `в схеме нет колонок цели: ${missing.join(', ')}`)
+})
