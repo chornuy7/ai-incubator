@@ -24,45 +24,64 @@ const CLEAN = /no limits|not limited|free as a bird|good news|ограничен
 /** Аккаунт ограничен. */
 const BLOCKED = /is limited|restricted|ограничен|заблокирован|will be able|сможете писать|until/i
 /**
- * Бот просит подтвердить, что ты человек.
- *
- * Последний шаг апелляции (замерено живьём 22.08): «This is a mistake» → «Would you like
- * to submit a complaint?» → «Did you ever do any of this?» → «Please verify you are a
- * human». Это анти-бот проверка Telegram: проходить её автоматически нельзя и не нужно
- * пытаться — здесь работу заканчивает человек. Наше дело — довести диалог до этого места
- * и честно сказать оператору, что осталось.
+ * Кнопки, которые жать НЕЛЬЗЯ: «OK» просто закрывает разговор, «What is spam?» уводит
+ * в справку. Раньше при отсутствии подходящей кнопки код жал первую попавшуюся — то есть
+ * с равным успехом мог нажать «OK» и посчитать это апелляцией.
  */
-const CAPTCHA = /verify you are a human|are you a human|not a robot|подтвердите,? что вы человек|не робот/i
+const NEVER_PRESS = /^(ok|ок|what is spam\??|что такое спам\??)$/i
 
 /**
- * Проверку «я не робот» бот показывает не только текстом, но и КНОПКОЙ («I'm not a robot»,
- * «Verify you're human», а иногда URL-кнопкой на страницу капчи). Такую кнопку жать
- * НЕЛЬЗЯ — это ровно та проверка, которую заканчивает человек. Раньше кнопочная капча в
- * regex по тексту не попадала: диалог упирался в неё, ни одна ветка не срабатывала, и
- * модуль рапортовал «диалог не завершён» вместо «осталось нажать я не робот».
+ * НАСТОЯЩАЯ проверка «я не робот» — та, которую автоматически проходить нельзя.
+ *
+ * Отличается она ровно одним: она уводит ИЗ диалога — URL-кнопкой на страницу проверки
+ * или картинкой-головоломкой. Пока Telegram такого не присылал, но если пришлёт — здесь
+ * работу заканчивает человек, и это не поломка модуля.
+ *
+ * ⚠️ Слова «Please verify you are a human» сами по себе проверкой НЕ являются. Проверено
+ * живьём на боевых аккаунтах 01.09: под этим текстом приходит обычная клавиатура с
+ * единственной кнопкой «Done» — ни ссылки, ни картинки, ни головоломки:
+ *
+ *     текст:    «Please verify you are a human.»
+ *     разметка: ReplyKeyboardMarkup
+ *       КНОПКА: "Done" · KeyboardButton · data: нет · url: нет
+ *
+ * Прежний код ловил эти слова регуляркой и останавливался на ПОСЛЕДНЕЙ из четырёх кнопок
+ * того же диалога — три предыдущие («This is a mistake», «Yes», «No! Never did that!») он
+ * жал сам. То есть блокировал сам себя на пустом месте, а оператору сообщал, что осталось
+ * «пройти капчу», которой не существует.
  */
-const CAPTCHA_BTN = /not a robot|i'?m a human|verify.*human|human.*verify|я не робот|пройти проверку|подтверд\w+ что вы человек/i
-
-/** Есть ли среди кнопок сообщения проверка «я не робот». */
-function hasCaptchaButton(msg) {
+function realCaptcha(msg) {
   const rows = msg?.replyMarkup?.rows || []
   for (const row of rows) for (const b of (row.buttons || [])) {
-    if (b?.text && CAPTCHA_BTN.test(String(b.text))) return true
+    // Ссылка наружу — единственный признак, по которому мы останавливаемся.
+    if (b?.url) return true
   }
-  return false
+  // Картинка вместо текста в шаге проверки — тоже не наше дело.
+  return !!(msg?.media && /verify|human|robot|проверк|робот/i.test(String(msg?.message || '')))
+}
+
+/**
+ * Кнопка ЗАВЕРШЕНИЯ шага: в сообщении она одна, значит выбора нет и бот ждёт именно её.
+ *
+ * Правило структурное, а не по словам, — и это важно: @SpamBot отвечает на языке аккаунта.
+ * В логах прода 01.09 два аккаунта получили ответ на персидском и португальском, и разбор
+ * по английским словам не сработал вовсе. «Одна кнопка» читается одинаково на любом языке.
+ */
+function loneButton(msg) {
+  const rows = msg?.replyMarkup?.rows || []
+  const all = []
+  for (const row of rows) for (const b of (row.buttons || [])) if (b?.text) all.push(b)
+  if (all.length !== 1) return null
+  const b = all[0]
+  // «OK» закрывает разговор, а не завершает шаг — его жать по-прежнему нельзя.
+  if (NEVER_PRESS.test(String(b.text).trim())) return null
+  return b
 }
 
 /** Бот просит описать проблему словами. */
 const ASKS_TEXT = /describe|tell us|напиши|опиши|в двух словах|what happened|расскажи/i
 /** Жалоба принята. */
 const SUBMITTED = /thank you|thanks|received|submitted|has been sent|переда\w+|принят|рассмотр|спасибо|отправлен/i
-
-/**
- * Кнопки, которые жать НЕЛЬЗЯ: «OK» просто закрывает разговор, «What is spam?» уводит
- * в справку. Раньше при отсутствии подходящей кнопки код жал первую попавшуюся — то есть
- * с равным успехом мог нажать «OK» и посчитать это апелляцией.
- */
-const NEVER_PRESS = /^(ok|ок|what is spam\??|что такое спам\??)$/i
 
 /**
  * Кнопка апелляции — приоритетом, а не «первая попавшаяся».
@@ -78,7 +97,7 @@ function appealButton(msg, text = '') {
   const all = []
   for (const row of rows) for (const b of (row.buttons || [])) {
     // Кнопку «я не робот» исключаем здесь же: её жать нельзя ни при каком совпадении.
-    if (b?.text && !NEVER_PRESS.test(String(b.text).trim()) && !CAPTCHA_BTN.test(String(b.text))) all.push(b)
+    if (b?.text && !NEVER_PRESS.test(String(b.text).trim())) all.push(b)
   }
   if (!all.length) return null
   const priority = [
@@ -110,6 +129,13 @@ function appealButton(msg, text = '') {
     const no = all.find((b) => /^(no|нет|никогда)/i.test(String(b.text || '').trim()))
     if (no) return no
   }
+  /*
+   * Единственная кнопка в сообщении — это завершение шага, а не выбор. Так выглядит
+   * последний экран апелляции: «Please verify you are a human.» + «Done». Жмём её, иначе
+   * жалоба остаётся незаконченной и до модераторов не доходит (правка 01.09).
+   */
+  const одна = loneButton(msg)
+  if (одна) return одна
   return null // ничего похожего на апелляцию — вслепую не жмём
 }
 
@@ -150,9 +176,8 @@ export async function appealSpamblock(client, opts = {}) {
       // Проверку «я не робот» ловим ДО выбора кнопки — хоть текстом, хоть кнопкой. Дальше
       // идти нельзя и не нужно: это последний шаг для человека, а appealButton про капчу
       // не знает и ушёл бы в 'stalled'.
-      if (CAPTCHA.test(text) || hasCaptchaButton(msg)) {
-        return { state: 'captcha', text: cut(text), appealed }
-      }
+      // Останавливаемся только на НАСТОЯЩЕЙ проверке — той, что уводит из диалога.
+      if (realCaptcha(msg)) return { state: 'captcha', text: cut(text), appealed }
       const btn = appealButton(msg, text)
       if (btn && msg?.id) {
         await pressButton(client, bot, msg, btn)
@@ -162,7 +187,7 @@ export async function appealSpamblock(client, opts = {}) {
         text = msg?.message || ''
         if (CLEAN.test(text)) return { state: 'clean', text: cut(text), appealed: true }
         if (SUBMITTED.test(text)) return { state: 'appealed', text: cut(text), appealed: true }
-        if (CAPTCHA.test(text) || hasCaptchaButton(msg)) return { state: 'captcha', text: cut(text), appealed: true }
+        if (realCaptcha(msg)) return { state: 'captcha', text: cut(text), appealed: true }
         continue
       }
       if (ASKS_TEXT.test(text)) {
@@ -173,13 +198,13 @@ export async function appealSpamblock(client, opts = {}) {
         text = msg?.message || ''
         if (CLEAN.test(text)) return { state: 'clean', text: cut(text), appealed: true }
         if (SUBMITTED.test(text)) return { state: 'appealed', text: cut(text), appealed: true }
-        if (CAPTCHA.test(text) || hasCaptchaButton(msg)) return { state: 'captcha', text: cut(text), appealed: true }
+        if (realCaptcha(msg)) return { state: 'captcha', text: cut(text), appealed: true }
         break
       }
       break // ни кнопки, ни просьбы описать — дальше нечего делать
     }
 
-    if (CAPTCHA.test(text) || hasCaptchaButton(msg)) return { state: 'captcha', text: cut(text), appealed }
+    if (realCaptcha(msg)) return { state: 'captcha', text: cut(text), appealed }
     if (CLEAN.test(text)) return { state: 'clean', text: cut(text), appealed }
     // Мы что-то нажали, но подтверждения от бота не дождались: диалог оборвался на
     // полпути. Раньше здесь возвращалось 'appealed' — и оператор читал «жалоба подана»,

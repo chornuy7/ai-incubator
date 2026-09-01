@@ -20,7 +20,15 @@ function fakeClient(script) {
     getMessages: async () => {
       const s = at()
       const msg = { id: 1000 + step, message: s.message }
-      if (s.buttons) msg.replyMarkup = { rows: [{ buttons: s.buttons.map((b) => (b.data ? { text: b.text, data: Buffer.from(b.data) } : { text: b.text })) }] }
+      // url переносим наравне с data: по нему отличается НАСТОЯЩАЯ проверка (уводит из
+      // диалога) от обычной кнопки клавиатуры. Без него тест на неё ничего не проверял.
+      if (s.buttons) {
+        msg.replyMarkup = { rows: [{ buttons: s.buttons.map((b) => ({
+          text: b.text,
+          ...(b.data ? { data: Buffer.from(b.data) } : {}),
+          ...(b.url ? { url: b.url } : {}),
+        })) }] }
+      }
       return [msg]
     },
     disconnect: async () => {},
@@ -170,51 +178,82 @@ test('диалог из четырёх шагов доводится до при
  * нельзя; модуль обязан довести жалобу до этого места и честно передать человеку,
  * а не рапортовать «жалоба подана» и не пытаться проверку обойти.
  */
-test('капча в конце: доводим до неё и честно отдаём человеку', async () => {
+test('последний шаг «verify you are a human» — это кнопка «Done», и мы её жмём', async () => {
+  /*
+   * Прочитано живьём на боевых аккаунтах 01.09:
+   *
+   *   текст:    «Please verify you are a human.»
+   *   разметка: ReplyKeyboardMarkup
+   *     КНОПКА: "Done" · KeyboardButton · data: нет · url: нет
+   *
+   * Капчи там нет: ни ссылки, ни картинки, ни головоломки — обычная кнопка клавиатуры,
+   * такая же, как три предыдущие, которые модуль жмёт сам. Раньше слова «verify you are a
+   * human» ловились регуляркой, и модуль останавливался на ПОСЛЕДНЕЙ из четырёх кнопок —
+   * жалоба оставалась незаконченной и до модераторов не доходила.
+   */
   const нажато = []
   const c = fakeClient([
     { message: 'While the account is limited…', buttons: [{ text: 'This is a mistake' }] },
     { message: 'Would you like to submit a complaint?', buttons: [{ text: 'Yes' }, { text: 'No' }] },
     { message: 'Did you ever do any of this?', buttons: [{ text: 'No! Never did that!' }, { text: 'Well… In fact I did.' }] },
-    { message: 'Please verify you are a human.' },
+    { message: 'Please verify you are a human.', buttons: [{ text: 'Done' }] },
+    { message: 'Thank you! Your complaint has been submitted.' },
   ])
   const send = c.sendMessage
   c.sendMessage = async (peer, args) => { нажато.push(args.message); return send(peer, args) }
   const r = await appealSpamblock(c, opts)
-  assert.equal(r.state, 'captcha')
-  assert.equal(r.appealed, true, 'жалоба заполнена — просто не подтверждена человеком')
-  assert.deepEqual(нажато, ['/start', 'This is a mistake', 'Yes', 'No! Never did that!'])
+  assert.equal(r.state, 'appealed', 'жалоба должна дойти до конца, а не встать на «Done»')
+  assert.equal(r.appealed, true)
+  assert.deepEqual(нажато, ['/start', 'This is a mistake', 'Yes', 'No! Never did that!', 'Done'])
 })
 
-/**
- * Та же капча, но КНОПКОЙ, а не текстом сообщения. Прежде такой шаг проваливался в
- * 'stalled' («диалог не завершён»): regex по тексту кнопку не видел, а appealButton про
- * капчу не знает. Кнопку «я не робот» жать нельзя — доводим до неё и отдаём человеку.
- */
-test('капча кнопкой «я не робот»: не жмём её, отдаём человеку как captcha', async () => {
-  const нажато = []
-  const c = fakeClient([
-    { message: 'While the account is limited…', buttons: [{ text: 'This is a mistake' }] },
-    { message: 'Would you like to submit a complaint?', buttons: [{ text: 'Yes' }, { text: 'No' }] },
-    { message: 'One last step to submit your complaint:', buttons: [{ text: "I'm not a robot" }] },
-  ])
-  const send = c.sendMessage
-  c.sendMessage = async (peer, args) => { нажато.push(args.message); return send(peer, args) }
-  const r = await appealSpamblock(c, opts)
-  assert.equal(r.state, 'captcha', 'кнопочную капчу обязаны распознать')
-  assert.ok(!нажато.includes("I'm not a robot"), `кнопку «я не робот» жать нельзя: ${JSON.stringify(нажато)}`)
-  assert.deepEqual(нажато, ['/start', 'This is a mistake', 'Yes'])
-})
-
-test('капча кнопкой на русском («Пройти проверку») — тоже captcha, не жмём', async () => {
+test('одна кнопка = завершение шага, на любом языке', async () => {
+  /*
+   * Правило структурное, а не по словам: @SpamBot отвечает на языке аккаунта. В логах
+   * прода 01.09 два аккаунта получили ответ на персидском и португальском — разбор по
+   * английским словам не сработал вовсе. «Кнопка в сообщении одна» читается одинаково
+   * на любом языке: выбора нет, бот ждёт именно её.
+   */
   const нажато = []
   const c = fakeClient([
     { message: 'Аккаунт ограничен.', buttons: [{ text: 'Это ошибка' }] },
-    { message: 'Остался последний шаг:', buttons: [{ text: 'Пройти проверку' }] },
+    { message: 'Останній крок:', buttons: [{ text: 'Готово' }] },
+    { message: 'Дякуємо, скаргу передано модераторам.' },
   ])
   const send = c.sendMessage
   c.sendMessage = async (peer, args) => { нажато.push(args.message); return send(peer, args) }
   const r = await appealSpamblock(c, opts)
-  assert.equal(r.state, 'captcha')
-  assert.ok(!нажато.includes('Пройти проверку'), `проверку жать нельзя: ${JSON.stringify(нажато)}`)
+  assert.deepEqual(нажато, ['/start', 'Это ошибка', 'Готово'])
+  assert.equal(r.appealed, true)
+})
+
+test('НАСТОЯЩАЯ проверка — ссылка наружу: останавливаемся и зовём человека', async () => {
+  /*
+   * Единственный признак, по которому мы отступаем: кнопка уводит ИЗ диалога на страницу
+   * проверки. Такого Telegram пока не присылал, но если пришлёт — это работа человека, и
+   * автоматически её проходить мы не станем.
+   */
+  const нажато = []
+  const c = fakeClient([
+    { message: 'While the account is limited…', buttons: [{ text: 'This is a mistake' }] },
+    { message: 'One last step:', buttons: [{ text: 'Verify', url: 'https://t.me/spam_verify' }] },
+  ])
+  const send = c.sendMessage
+  c.sendMessage = async (peer, args) => { нажато.push(args.message); return send(peer, args) }
+  const r = await appealSpamblock(c, opts)
+  assert.equal(r.state, 'captcha', 'ссылку на внешнюю проверку жать нельзя')
+  assert.ok(!нажато.includes('Verify'), `по ссылке не ходим: ${JSON.stringify(нажато)}`)
+})
+
+test('«OK» остаётся под запретом даже когда кнопка одна', async () => {
+  // «OK» закрывает разговор, а не завершает шаг: нажать её и отчитаться о жалобе — враньё.
+  const нажато = []
+  const c = fakeClient([
+    { message: 'Your account is limited.', buttons: [{ text: 'OK' }] },
+  ])
+  const send = c.sendMessage
+  c.sendMessage = async (peer, args) => { нажато.push(args.message); return send(peer, args) }
+  const r = await appealSpamblock(c, opts)
+  assert.deepEqual(нажато, ['/start'], 'кроме /start ничего слать нельзя')
+  assert.equal(r.appealed, false)
 })
