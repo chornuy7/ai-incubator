@@ -63,6 +63,8 @@ Supabase Vault, но Vault хранит ключ **в той же базе** и 
 ```bash
 node --env-file=.env server/scripts/encrypt-secrets.mjs --dry
 node --env-file=.env server/scripts/encrypt-secrets.mjs
+node --env-file=.env server/scripts/encrypt-proxy-passwords.mjs --dry
+node --env-file=.env server/scripts/encrypt-proxy-passwords.mjs
 node --env-file=.env server/scripts/sessions-to-db.mjs --dry
 node --env-file=.env server/scripts/sessions-to-db.mjs
 ```
