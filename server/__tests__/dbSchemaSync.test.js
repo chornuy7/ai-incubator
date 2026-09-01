@@ -704,3 +704,42 @@ test('окно переписки читает историю из базы, а 
   assert.ok(code.includes("eq('field', 'history')"), 'нужны именно записи истории')
   assert.ok(code.includes('outgoingFromFiles'), 'файловый путь остаётся запасным, а не выбрасывается')
 })
+
+test('снос старых колонок готов и лежит там, где его не применит деплой', async () => {
+  // Порядок выката: сначала миграции, потом код. Между ними работает ПРЕДЫДУЩАЯ версия
+  // приложения — уже с новой схемой. Снести старую колонку тем же выпуском значит дать
+  // ей в это окно обращаться к колонке, которой нет; окно короткое, но в него панель
+  // управляет живыми аккаунтами.
+  const files = await fs.readdir(new URL('../../supabase/migrations/', import.meta.url))
+  const преждевременные = files.filter((f) => /drop-legacy|drop-secrets/.test(f))
+  assert.deepEqual(преждевременные, [],
+    'сносы должны лежать в supabase/next-release/, куда раннер миграций не заходит')
+
+  const drop = await fs.readFile(new URL('../../supabase/next-release/2026-09-03-mr290-drop-legacy.sql', import.meta.url), 'utf8')
+  // Каждая колонка, про которую в MR-290 написано «снимем следующим выпуском», обязана
+  // быть в списке сноса. Иначе обещание останется обещанием: мешок и колонка будут жить
+  // рядом, и однажды разойдутся.
+  for (const [table, column] of [
+    ['profiles', 'role_ids'], ['profiles', 'account_ids'], ['profiles', 'account_group_ids'],
+    ['users', 'role_ids'], ['campaigns', 'modules'], ['wallet_log', 'modules'],
+    ['channels', 'data'], ['goals', 'data'], ['account_activity', 'data'], ['agents', 'data'],
+    ['roles', 'permissions'], ['account_groups', 'account_ids'], ['accounts_meta', 'proxy'],
+    ['price_overrides', 'modules'], ['price_overrides', 'coin_packs'], ['price_overrides', 'periods'],
+  ]) {
+    assert.ok(flatten(drop).includes(`alter table ${table} drop column if exists ${column}`),
+      `${table}.${column} обещали снести, но в списке сноса её нет`)
+  }
+  // Страховка: снос не должен пройти, если перенос не состоялся.
+  assert.match(drop, /переезд не завершён, снос отменён/, 'нужна проверка перед сносом')
+})
+
+test('снос открытых секретов отделён от обычного сноса', async () => {
+  // У него условие другое: не «прошёл выпуск», а «человек запустил перенос и проверил».
+  // Облачный пароль 2FA неоткуда восстановить — снос до переноса это не откат из
+  // бэкапа, а потеря доступа к аккаунтам.
+  const sql = await fs.readFile(new URL('../../supabase/next-release/2026-09-03-mr290-drop-secrets.sql', import.meta.url), 'utf8')
+  assert.match(sql, /ещё открытым текстом и не зашифрован — сначала encrypt-secrets/, 'нужна проверка перед сносом 2FA')
+  assert.match(sql, /ещё открытым текстом — сначала encrypt-proxy-passwords/, 'нужна проверка перед сносом пароля прокси')
+  assert.ok(flatten(sql).includes('alter table proxies drop column if exists password'), 'открытый пароль прокси должен сноситься')
+  assert.ok(flatten(sql).includes("update accounts_meta set data = data - 'twoFA'"), 'открытый пароль 2FA должен сноситься')
+})
