@@ -182,7 +182,8 @@ app.patch('/api/tg/accounts/:accountId', async (req, res) => {
       const { listProxies } = await import('./proxies.js')
       const { proxyPatch, findByUrl } = await import('./lib/proxyLink.js')
       const запись = findByUrl(await listProxies().catch(() => []), patch.proxy)
-      if (запись) Object.assign(patch, proxyPatch(запись))
+      // Нашли в каталоге — храним ссылку и чистим строку: подключение соберётся из каталога.
+      if (запись) Object.assign(patch, proxyPatch(запись), { proxy: '' })
     }
     // Снятие прокси убирает и ссылку: иначе она пережила бы «без прокси».
     if (patch.proxy === '—') patch.proxyId = ''

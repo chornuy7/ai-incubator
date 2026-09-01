@@ -9,9 +9,16 @@ function sbA() { return supabaseEnabled() ? getSupabase() : null }
 // (админка «проблемы»: бан/flood/без прокси).
 const metaToRow = (id, m) => ({
   id, name: m.name || null, username: m.username || null, phone: m.phone || null,
-  status: m.status || null, proxy: m.proxy || null, country: m.country || null,
-  // MR-262: ССЫЛКА на строку каталога — источник истины. Колонка `proxy` рядом осталась
-  // производной: её читают те, кто ещё работает со строкой подключения.
+  status: m.status || null, country: m.country || null,
+  /*
+   * MR-262: у аккаунта — ССЫЛКА, и только она.
+   *
+   * Владелец 01.09: «чтобы с таблицы accounts_meta тянулись прокси с proxies, а не
+   * сохранялись прям там». Поэтому пока ссылка есть, колонка `proxy` пустая: строку
+   * подключения собирает каталог на чтении (`withProxyStrings`). Колонку не удаляем —
+   * в ней доживают аккаунты, которым прокси вписали руками, минуя каталог.
+   */
+  proxy: m.proxyId ? null : (m.proxy || null),
   proxy_id: m.proxyId || null,
   in_trash: !!m.inTrash, data: m, updated_at: new Date(m.updatedAt || Date.now()).toISOString(),
 })
@@ -115,12 +122,26 @@ export async function getAccountMeta(accountId) {
  * файл ЦЕЛИКОМ. Последний писавший затирал чужие правки — так были потеряны прокси,
  * отпечатки и облачные пароли у 37 аккаунтов.
  */
+/**
+ * MR-262: что реально ложится в хранилище.
+ *
+ * Строка подключения — ПРОИЗВОДНАЯ от каталога. Хранить её рядом со ссылкой значит снова
+ * держать копию, которая протухнет при первой же смене пароля, — ровно та болезнь, от
+ * которой уходим. Есть ключ — строки в записи нет.
+ */
+function безПроизводной(meta) {
+  if (!meta || !meta.proxyId) return meta
+  const { proxy, ...остальное } = meta
+  void proxy
+  return остальное
+}
+
 export async function setAccountMeta(accountId, patch) {
   const db = sbA()
   if (db) {
     const { data: row } = await db.from('accounts_meta').select('data').eq('id', accountId).maybeSingle()
     const cur = row?.data || {}
-    const merged = { ...DEFAULT_META, ...cur, ...patch, updatedAt: Date.now() }
+    const merged = безПроизводной({ ...DEFAULT_META, ...cur, ...patch, updatedAt: Date.now() })
     if (!merged.createdAt) merged.createdAt = Date.now()
     await db.from('accounts_meta').upsert(metaToRow(accountId, merged), { onConflict: 'id' })
     return merged
@@ -128,12 +149,12 @@ export async function setAccountMeta(accountId, patch) {
   let result = null
   await mutateJson(metaFile(), (all) => {
     const next = all && typeof all === 'object' ? all : {}
-    next[accountId] = {
+    next[accountId] = безПроизводной({
       ...DEFAULT_META,
       ...(next[accountId] || {}),
       ...patch,
       updatedAt: Date.now(),
-    }
+    })
     if (!next[accountId].createdAt) next[accountId].createdAt = Date.now()
     result = next[accountId]
     return next

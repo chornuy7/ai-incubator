@@ -22,14 +22,26 @@ const { withProxyStrings, proxyPatch, findByUrl } = await import('../lib/proxyLi
 
 test.after(() => { try { fs.unlinkSync(process.env.PROXIES_FILE) } catch { /* нечего убирать */ } })
 
-test('назначение пишет ключ, а не только строку', async () => {
+test('назначение пишет ТОЛЬКО ссылку, строку не хранит', async () => {
+  /*
+   * Владелец 01.09: «чтобы с таблицы accounts_meta тянулись прокси с proxies, а не
+   * сохранялись прям там». Строка рядом со ссылкой — это снова копия, которая протухнет
+   * при первой же смене пароля.
+   */
   const p = await createProxy({ host: '10.0.0.1', port: 1080, username: 'u', password: 'p1' })
-  const patch = proxyPatch(p)
-  assert.equal(patch.proxyId, p.id, 'ключ — источник истины')
-  assert.equal(patch.proxy, 'socks5://u:p1@10.0.0.1:1080', 'строка рядом — для читателей')
+  assert.deepEqual(proxyPatch(p), { proxyId: p.id })
 
-  // Снятие прокси убирает и ссылку: иначе она пережила бы «без прокси».
+  // Снятие прокси чистит и ссылку, и остатки строки: иначе «без прокси» показывало бы адрес.
   assert.deepEqual(proxyPatch(null), { proxyId: '', proxy: '' })
+})
+
+test('в хранилище рядом со ссылкой строки не остаётся', async () => {
+  const мета = fs.readFileSync(new URL('../accountsMeta.js', import.meta.url), 'utf8')
+  // Запись обеих веток (БД и файл) проходит через один нормализатор.
+  assert.match(мета, /function безПроизводной\(meta\)/)
+  assert.equal((мета.match(/безПроизводной\(/g) || []).length, 3, 'нормализатор нужен на ОБЕИХ ветках записи')
+  // И колонка пустеет, как только есть ссылка.
+  assert.match(мета, /proxy: m\.proxyId \? null : \(m\.proxy \|\| null\)/)
 })
 
 test('смена пароля в каталоге доходит до аккаунта сама', async () => {

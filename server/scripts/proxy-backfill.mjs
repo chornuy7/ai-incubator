@@ -20,7 +20,15 @@ import { parseProxy } from '../proxy.js'
 const ПРИМЕНИТЬ = process.argv.includes('--apply')
 
 const строка = (m) => String(m?.proxy || '').trim()
-const рабочая = (s) => s && s !== '—' && s.includes('://')
+/*
+ * Прокси бывает записан ДВУМЯ видами: `socks5://user:pass@host:port` и голым
+ * `host:port:user:pass` — второй приходит из вставки списком от продавца.
+ *
+ * Найдено на живых данных 01.09: проверка «есть ли ://» молча относила три аккаунта к
+ * «без прокси», и они остались бы со строкой навсегда. Полагаемся на `parseProxy` — он
+ * знает оба вида.
+ */
+const рабочая = (s) => Boolean(s) && s !== '—' && Boolean(parseProxy(s)?.host || parseProxy(s)?.ip)
 
 /**
  * Шаг 0: каталог из ФАЙЛА в хранилище.
@@ -49,6 +57,24 @@ async function main() {
   const мета = await loadAllMetaRaw()
   const каталог = await listProxies()
   const поСтроке = new Map(каталог.map((p) => [toProxyUrl(p), p]))
+  /*
+   * Второй способ сопоставления — по РАЗОБРАННОМУ адресу.
+   *
+   * Найдено на живых данных 01.09: три аккаунта держали прокси в виде
+   * `host:port:user:pass`, а каталог собирает строку как `socks5://user:pass@host:port`.
+   * Сравнение готовых строк их не находило, и перенос заводил ДУБЛЬ уже имеющейся записи
+   * («Mobilka 1»), после чего упирался в правило уникальности и пропускал аккаунт.
+   */
+  const ключ = (host, port, u, pw) => `${host}:${port}:${u || ''}:${pw || ''}`
+  const поАдресу = new Map(каталог.map((p) => [ключ(p.host, p.port, p.username, p.password), p]))
+  const найти = (url) => {
+    const прямо = поСтроке.get(url)
+    if (прямо) return прямо
+    const p = parseProxy(url)
+    const host = p?.host || p?.ip
+    if (!host || !p?.port) return null
+    return поАдресу.get(ключ(host, p.port, p.username || p.login, p.password)) || null
+  }
 
   const кПереносу = []
   let сСылкой = 0
@@ -63,14 +89,16 @@ async function main() {
 
   const новые = new Map() // строка → что заводим
   for (const { url } of кПереносу) {
-    if (поСтроке.has(url) || новые.has(url)) continue
+    if (найти(url) || новые.has(url)) continue
     const p = parseProxy(url)
-    if (!p?.host || !p?.port) continue // мусор в строке — разбираться руками, а не гадать
+    // Поля у разборщика свои: `ip` вместо `host`, `username`/`password` вместо login.
+    const host = p?.host || p?.ip
+    if (!host || !p?.port) continue // мусор в строке — разбираться руками, а не гадать
     новые.set(url, {
-      scheme: p.type || 'socks5',
-      host: p.host,
+      scheme: p.socksType || p.type === 'socks5' ? 'socks5' : (p.type || 'socks5'),
+      host,
       port: p.port,
-      username: p.login || '',
+      username: p.username || p.login || '',
       password: p.password || '',
       // Владельца берём с аккаунта: прокси — ресурс клиента, и общий каталог был бы утечкой.
       ownerId: мета[кПереносу.find((x) => x.url === url).id]?.ownerId || '',
@@ -104,9 +132,14 @@ async function main() {
 
   let проставлено = 0
   for (const { id, url } of кПереносу) {
-    const p = поСтроке.get(url)
+    const p = найти(url)
     if (!p) continue
-    await setAccountMeta(id, { proxyId: p.id, proxy: toProxyUrl(p) })
+    /*
+     * Пишем ТОЛЬКО ссылку и явно затираем строку: с этого момента подключение собирается
+     * из каталога. Оставь строку рядом — и она снова начнёт расходиться с каталогом при
+     * первой смене пароля, ради чего всё и затевалось.
+     */
+    await setAccountMeta(id, { proxyId: p.id, proxy: '' })
     проставлено++
   }
   console.log(`\nГотово: ссылок проставлено ${проставлено}, записей заведено ${новые.size}.`)
