@@ -135,8 +135,13 @@ const toRow = (rule) => ({
   last_status: rule.lastStatus ?? null,
   last_task_id: rule.lastTaskId ?? null,
   next_run: toDbTime(rule.nextRun),
-  created_at: rule.createdAt,
-  updated_at: rule.updatedAt,
+  // Обе колонки NOT NULL timestamptz. Рядом соседние поля времени уже переведены —
+  // эти две просто пропустили, и правило автоматизации перестало бы сохраняться совсем:
+  // число вида 1787588909052 Postgres читает как дату и отвечает ошибкой.
+  // Ноль или пусто заменяем на «сейчас»: потерять правило из-за кривой даты хуже, чем
+  // получить приблизительное время создания.
+  created_at: toDbTime(rule.createdAt) || new Date().toISOString(),
+  updated_at: toDbTime(rule.updatedAt) || new Date().toISOString(),
 })
 
 /** Записать аккаунты правила: сначала убрать прежние, потом положить новые в их порядке. */

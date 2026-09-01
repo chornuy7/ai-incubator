@@ -297,7 +297,9 @@ export async function setWatch(kind, settings, { watch = true, periodH = DEFAULT
   if (ownerId) patch.owner_id = String(ownerId)
   const base = sb()
   if (base) {
-    const { error } = await base.from('parser_cache').update(patch).eq('sig', key)
+    // Время конвертируем на ГРАНИЦЕ: этот же patch уходит в запасной SQLite, где число.
+    const { error } = await base.from('parser_cache')
+      .update({ ...patch, next_run_at: toDbTime(patch.next_run_at) }).eq('sig', key)
     if (!error) return true
     if (!isMissingTable(error)) throw new Error(error.message)
   }
@@ -371,7 +373,9 @@ export async function markWatchRun(sig, { added = 0, gone = 0, error = null, fai
   }
   const base = sb()
   if (base) {
-    const { error: e } = await base.from('parser_cache').update(patch).eq('sig', sig)
+    const { error: e } = await base.from('parser_cache')
+      .update({ ...patch, last_run_at: toDbTime(patch.last_run_at), next_run_at: toDbTime(patch.next_run_at) })
+      .eq('sig', sig)
     if (!e) return stop
     if (!isMissingTable(e)) throw new Error(e.message)
   }
