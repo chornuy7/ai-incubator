@@ -14,6 +14,7 @@ import multer from 'multer'
 import { scanFolder, listDirs } from './lib/accountScan.js'
 import { distributeProxies, pairByOrder, importOne, existingAccountKeys, isKnownByPhone } from './lib/accountImport.js'
 import { listProxies, toProxyUrl, proxyUsageMap, isUsableProxy } from './proxies.js'
+import { proxyPatch, findByUrl } from './lib/proxyLink.js'
 import { loadAllMeta, setAccountMeta, countryFromPhone } from './accountsMeta.js'
 import { appendAudit } from './lib/auditLog.js'
 import { authEnforced } from './lib/session.js'
@@ -337,9 +338,21 @@ importRouter.post('/assign-proxies', async (req, res) => {
         rows.push({ accountId: ids[i], ok: false, reason: 'нет ни одного прокси в пуле' })
         continue
       }
-      // «Без прокси» — это прочерк, а не пустая строка: так прямое подключение
-      // отображается в списке и не путается с «прокси ещё не назначали».
-      await setAccountMeta(ids[i], { proxy: mode === 'none' ? '—' : proxy })
+      /*
+       * MR-262: пишем КЛЮЧ каталога, а не только строку.
+       *
+       * Строку оставляем рядом — её читают воркеры и витрина, — но источником истины
+       * становится `proxyId`: смена пароля в каталоге теперь доходит до всех аккаунтов
+       * сама, а не остаётся в сорока копиях.
+       */
+      const запись = mode === 'none' ? null : findByUrl(all, proxy)
+      await setAccountMeta(ids[i], mode === 'none'
+        // «Без прокси» — это прочерк, а не пустая строка: так прямое подключение
+        // отображается в списке и не путается с «прокси ещё не назначали».
+        ? { proxyId: '', proxy: '—' }
+        // Нашли в каталоге — пишем ссылку и ЧИСТИМ строку. Не нашли (ручной ввод мимо
+        // каталога) — оставляем строку: иначе правка молча потеряла бы прокси.
+        : (запись ? { ...proxyPatch(запись), proxy: '' } : { proxyId: '', proxy }))
       rows.push({ accountId: ids[i], ok: true, proxy: mode === 'none' ? null : proxy })
     }
 
