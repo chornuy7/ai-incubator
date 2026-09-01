@@ -161,8 +161,17 @@ const roleToRow = (r) => ({
 async function writeRoleRules(db, role) {
   const rows = permissionsToRules(role.id, role.permissions)
   const { error: delErr } = await db.from('role_permissions').delete().eq('role_id', role.id)
-  // Таблицы ещё нет — миграция не доехала; права остались в дереве, оно пока пишется.
-  if (delErr) return
+  if (delErr) {
+    // Таблицы ещё нет — миграция не доехала; права остались в дереве, оно пока пишется.
+    if (isMissingTable(delErr)) return
+    /*
+     * Любой другой отказ молчанием не покрываем. Раньше здесь стояло просто `return`, и
+     * это означало: старые правила не сняты, новые не записаны, а наружу ушёл успех.
+     * В системе доступа «сохранили» при несохранённом — худший вид ошибки: человек видит
+     * новые права в интерфейсе и уходит, а действуют прежние.
+     */
+    throw new Error(`[role_permissions] прежние права роли не сняты: ${delErr.message}`)
+  }
   if (!rows.length) return
   const { error } = await db.from('role_permissions').upsert(rows, { onConflict: 'role_id,scope,subject,item_id' })
   if (error) throw new Error(`[role_permissions] права роли не сохранены: ${error.message}`)

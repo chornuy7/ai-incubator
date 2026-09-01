@@ -26,10 +26,20 @@ function fakeDb(opts = {}) {
       const q = {
         select() { return q },
         in(_col, ids) { q._ids = ids; return q },
-        order() {
-          calls.push({ op: 'select', table })
+        /*
+         * Фейк СОРТИРУЕТ по-настоящему, а не притворяется.
+         *
+         * Первая редакция отдавала строки как есть, а тест рядом утверждал, что порядок
+         * соблюдён, — то есть проверял собственный входной массив. Настоящая база
+         * сортирует только по `.order()`, и код, забывший его позвать, прошёл бы такой
+         * тест насквозь. Теперь фейк ведёт себя как база: не заказали сортировку —
+         * порядок случайный, и утверждение о порядке честно упадёт.
+         */
+        order(col, { ascending = true } = {}) {
+          calls.push({ op: 'select', table, order: col })
           if (errors[table]) return Promise.resolve({ data: null, error: errors[table] })
-          return Promise.resolve({ data: opts.links || [], error: null })
+          const rows = [...(opts.links || [])].sort((a, b) => (ascending ? 1 : -1) * ((a[col] ?? 0) - (b[col] ?? 0)))
+          return Promise.resolve({ data: rows, error: null })
         },
         delete() {
           return { eq(col, id) { calls.push({ op: 'delete', table, col, id }); return Promise.resolve({ error: errors['delete:' + table] || null }) } }
@@ -48,12 +58,16 @@ function fakeDb(opts = {}) {
 }
 
 test('порядок модулей задаёт position, и запрос обязан его заказывать', async () => {
+  // Строки приходят В ОБРАТНОМ порядке — как их вполне может вернуть база без сортировки.
+  // Правильный ответ получится только если код заказал `.order('position')`.
   const db = fakeDb({ links: [
-    { campaign_id: 'cmp_1', module_id: 1, position: 0 },
     { campaign_id: 'cmp_1', module_id: 2, position: 1 },
+    { campaign_id: 'cmp_1', module_id: 1, position: 0 },
   ] })
   const map = await readModuleLinks(db, 'campaign_modules', 'campaign_id', ['cmp_1'])
-  assert.deepEqual(map.get('cmp_1'), ['warming', 'parsing'])
+  assert.deepEqual(map.get('cmp_1'), ['warming', 'parsing'], 'первый модуль — тот, у кого position меньше')
+  assert.equal(db.calls.find((c) => c.op === 'select' && c.table === 'campaign_modules')?.order, 'position',
+    'сортировку обязана делать база, а не сборка на нашей стороне')
 })
 
 test('идентификатор модуля числом и строкой — один и тот же модуль', async () => {
