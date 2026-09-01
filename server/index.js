@@ -170,6 +170,22 @@ app.get('/api/tg/accounts', async (req, res) => {
 app.patch('/api/tg/accounts/:accountId', async (req, res) => {
   try {
     const patch = req.body ?? {}
+    /*
+     * MR-262: прокси меняют ССЫЛКОЙ на каталог.
+     *
+     * Витрина по-прежнему шлёт строку подключения — она её и показывает. Здесь строка
+     * превращается в ключ: аккаунт должен ссылаться на запись каталога, а не хранить её
+     * копию. Не нашли в каталоге (ручной ввод, старая запись) — оставляем строку как есть,
+     * иначе правка прокси у одного аккаунта молча упала бы.
+     */
+    if (typeof patch.proxy === 'string' && patch.proxy !== '—' && patch.proxyId === undefined) {
+      const { listProxies } = await import('./proxies.js')
+      const { proxyPatch, findByUrl } = await import('./lib/proxyLink.js')
+      const запись = findByUrl(await listProxies().catch(() => []), patch.proxy)
+      if (запись) Object.assign(patch, proxyPatch(запись))
+    }
+    // Снятие прокси убирает и ссылку: иначе она пережила бы «без прокси».
+    if (patch.proxy === '—') patch.proxyId = ''
     // Перенос между ролями/проектами — зафиксировать инициатора в аудите (§3.2/§4).
     let before = null
     if (patch.role !== undefined || patch.project !== undefined) {

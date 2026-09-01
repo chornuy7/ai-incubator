@@ -8,9 +8,66 @@
 import crypto from 'crypto'
 import net from 'net'
 import { SocksClient } from 'socks'
-import { dataPath, readJson, writeJson } from './lib/jsonStore.js'
+import { dataPath } from './lib/jsonStore.js'
+import { listStore } from './lib/tableStore.js'
 
-const PROXIES_FILE = process.env.PROXIES_FILE || dataPath('proxies.json')
+const PROXIES_FILE = () => process.env.PROXIES_FILE || dataPath('proxies.json')
+
+/**
+ * MR-262: каталог прокси живёт в БД (таблица `proxies`), а не в файле.
+ *
+ * Владелец 01.09: «мы же тысячу раз говорили, что прокси храним в БД, а не в аккаунте,
+ * отдельно». Файла как источника истины больше нет — он остаётся только там, где базы нет
+ * вовсе: тесты и локальный запуск без `DATA_BACKEND=supabase`. За это отвечает `listStore`,
+ * ему же принадлежит и сериализация записи.
+ *
+ * Путь к файлу вычисляется КАЖДЫЙ раз (функция, а не строка): тесты подменяют
+ * `PROXIES_FILE` уже после импорта модуля, и на константе они читали бы чужой каталог.
+ */
+const store = listStore({
+  table: 'proxies',
+  file: PROXIES_FILE,
+  toRow: (p) => ({
+    id: p.id,
+    label: p.label || null,
+    kind: p.kind,
+    scheme: p.scheme,
+    host: p.host,
+    port: p.port,
+    username: p.username || null,
+    password: p.password || null,
+    country: p.country || null,
+    geo_source: p.geoSource || null,
+    rotate_url: p.rotateUrl || null,
+    status: p.status,
+    reason: p.reason || null,
+    note: p.note || null,
+    user_id: p.ownerId || null,
+    last_check_at: p.lastCheckAt ?? null,
+    created_at: p.createdAt ?? null,
+    updated_at: p.updatedAt ?? null,
+  }),
+  fromRow: (r) => ({
+    id: r.id,
+    label: r.label || '',
+    kind: r.kind,
+    scheme: r.scheme,
+    host: r.host,
+    port: Number(r.port) || 0,
+    username: r.username || '',
+    password: r.password || '',
+    country: r.country || '',
+    geoSource: r.geo_source || null,
+    rotateUrl: r.rotate_url || '',
+    status: r.status,
+    reason: r.reason || '',
+    note: r.note || '',
+    ...(r.user_id ? { ownerId: r.user_id } : {}),
+    lastCheckAt: r.last_check_at ?? null,
+    createdAt: r.created_at ?? null,
+    updatedAt: r.updated_at ?? null,
+  }),
+})
 
 export const PROXY_KINDS = ['static', 'mobile', 'farm'] // статический / мобильный / своя ферма
 export const PROXY_SCHEMES = ['socks5', 'http']
@@ -70,7 +127,7 @@ export function normalizeProxy(input = {}) {
 }
 
 export async function listProxies() {
-  const arr = await readJson(PROXIES_FILE, [])
+  const arr = await store.readAll()
   return Array.isArray(arr) ? arr : []
 }
 
@@ -82,49 +139,59 @@ export async function getProxy(id) {
 export async function createProxy(input) {
   const clean = normalizeProxy(input)
   if (!clean.host || !clean.port) throw new Error('Укажите host и port')
-  const all = await listProxies()
-  // MR-169 (14.08): уникальность прокси — host+port+логин+пароль. Дубли раньше плодились
-  // и путали статистику/назначение. Проверяем ДО создания.
-  const dupe = all.find((p) => p.host === clean.host && p.port === clean.port
-    && (p.username || '') === (clean.username || '') && (p.password || '') === (clean.password || ''))
-  if (dupe) throw new Error(`Такой прокси уже есть в каталоге${dupe.label ? ` («${dupe.label}»)` : ''}`)
-  const proxy = {
-    id: `px_${crypto.randomUUID().slice(0, 8)}`,
-    ...clean,
-    // Аудит 20.08: прокси — ресурс клиента (логин/пароль!), а каталог отдавался всем.
-    // Пишем владельца пространства, чтобы на чтении отдавать только своё. normalizeProxy
-    // владельца не знает, поэтому ставим его здесь, после clean.
-    ownerId: String(input?.ownerId || '').trim() || undefined,
-    lastCheckAt: null,
-    createdAt: Date.now(),
-    updatedAt: Date.now(),
-  }
-  all.unshift(proxy)
-  await writeJson(PROXIES_FILE, all)
+  let proxy = null
+  await store.mutate((all) => {
+    // MR-169 (14.08): уникальность прокси — host+port+логин+пароль. Дубли раньше плодились
+    // и путали статистику/назначение. Проверяем ДО создания — и внутри мутатора, чтобы
+    // между проверкой и записью никто не успел вставить такой же (MR-262: то же правило
+    // теперь стоит и уникальным индексом в БД).
+    const dupe = all.find((p) => p.host === clean.host && p.port === clean.port
+      && (p.username || '') === (clean.username || '') && (p.password || '') === (clean.password || ''))
+    if (dupe) throw new Error(`Такой прокси уже есть в каталоге${dupe.label ? ` («${dupe.label}»)` : ''}`)
+    proxy = {
+      id: `px_${crypto.randomUUID().slice(0, 8)}`,
+      ...clean,
+      // Аудит 20.08: прокси — ресурс клиента (логин/пароль!), а каталог отдавался всем.
+      // Пишем владельца пространства, чтобы на чтении отдавать только своё. normalizeProxy
+      // владельца не знает, поэтому ставим его здесь, после clean.
+      ownerId: String(input?.ownerId || '').trim() || undefined,
+      lastCheckAt: null,
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    }
+    return [proxy, ...all]
+  })
   return proxy
 }
 
 /** @param {string} id @param {object} patch */
 export async function updateProxy(id, patch = {}) {
-  const all = await listProxies()
-  const i = all.findIndex((p) => p.id === id)
-  if (i === -1) return null
-  const clean = normalizeProxy({ ...all[i], ...patch })
-  if (!clean.host || !clean.port) throw new Error('Host и port обязательны')
-  const next = { ...all[i], ...clean, updatedAt: Date.now() }
-  // normalizeProxy не знает про lastCheckAt — сохраняем его из патча явно (иначе теряется).
-  if (patch.lastCheckAt !== undefined) next.lastCheckAt = patch.lastCheckAt
-  all[i] = next
-  await writeJson(PROXIES_FILE, all)
-  return all[i]
+  let updated = null
+  await store.mutate((all) => {
+    const i = all.findIndex((p) => p.id === id)
+    if (i === -1) return undefined // нечего менять — хранилище не трогаем
+    const clean = normalizeProxy({ ...all[i], ...patch })
+    if (!clean.host || !clean.port) throw new Error('Host и port обязательны')
+    const next = { ...all[i], ...clean, updatedAt: Date.now() }
+    // normalizeProxy не знает про lastCheckAt — сохраняем его из патча явно (иначе теряется).
+    if (patch.lastCheckAt !== undefined) next.lastCheckAt = patch.lastCheckAt
+    const копия = [...all]
+    копия[i] = next
+    updated = next
+    return копия
+  })
+  return updated
 }
 
 export async function deleteProxy(id) {
-  const all = await listProxies()
-  const next = all.filter((p) => p.id !== id)
-  if (next.length === all.length) return false
-  await writeJson(PROXIES_FILE, next)
-  return true
+  let removed = false
+  await store.mutate((all) => {
+    const next = all.filter((p) => p.id !== id)
+    if (next.length === all.length) return undefined
+    removed = true
+    return next
+  })
+  return removed
 }
 
 /**
@@ -136,10 +203,12 @@ export async function deleteProxy(id) {
 export async function deleteProxies(ids) {
   const set = new Set((Array.isArray(ids) ? ids : []).map(String))
   if (set.size === 0) return 0
-  const all = await listProxies()
-  const next = all.filter((p) => !set.has(p.id))
-  const removed = all.length - next.length
-  if (removed > 0) await writeJson(PROXIES_FILE, next)
+  let removed = 0
+  await store.mutate((all) => {
+    const next = all.filter((p) => !set.has(p.id))
+    removed = all.length - next.length
+    return removed > 0 ? next : undefined
+  })
   return removed
 }
 

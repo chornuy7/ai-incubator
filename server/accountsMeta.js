@@ -10,11 +10,15 @@ function sbA() { return supabaseEnabled() ? getSupabase() : null }
 const metaToRow = (id, m) => ({
   id, name: m.name || null, username: m.username || null, phone: m.phone || null,
   status: m.status || null, proxy: m.proxy || null, country: m.country || null,
+  // MR-262: ССЫЛКА на строку каталога — источник истины. Колонка `proxy` рядом осталась
+  // производной: её читают те, кто ещё работает со строкой подключения.
+  proxy_id: m.proxyId || null,
   in_trash: !!m.inTrash, data: m, updated_at: new Date(m.updatedAt || Date.now()).toISOString(),
 })
 import { buildStatusPatch, normalizeStatus, nextStatusAfterExpiry, canModuleUseAccount } from './lib/accountStatus.js'
 import { appendAudit } from './lib/auditLog.js'
 import { getTrustCache } from './lib/trustCache.js'
+import { withProxyStrings } from './lib/proxyLink.js'
 
 // Боевые модули с реальными рискованными действиями — сюда не пускаем аккаунты с trust<40
 // (§6: авто-стоп → прогрев). Прогрев/парсинг/просмотр/автопостинг в своих каналах — не гейтим.
@@ -58,6 +62,16 @@ const DEFAULT_META = {
 }
 
 export async function loadAllMeta() {
+  return withProxyStrings(await loadAllMetaRaw())
+}
+
+/**
+ * Мета КАК ЗАПИСАНА, без пересборки строки прокси.
+ *
+ * Нужна там, где мету пишут: пересобранная строка — производная, и записывать её обратно
+ * значило бы снова размножить копии по аккаунтам (MR-262).
+ */
+export async function loadAllMetaRaw() {
   const db = sbA()
   if (db) {
     const { data } = await db.from('accounts_meta').select('id, data')
