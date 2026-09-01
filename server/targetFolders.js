@@ -124,7 +124,29 @@ async function saveFolders(folders) {
  *
  * @param {string} name @param {string[]} targets @param {string} [userId] владелец пространства
  */
+/**
+ * MR-246: название группы уникально в пределах ВЛАДЕЛЬЦА.
+ *
+ * Владелец 30.08: «у нас есть папки с одинаковым названием — может, запретить?» Две группы
+ * «Крипта» в одном выпадающем списке различить нечем: человек грузит не ту и узнаёт об этом
+ * по чужим каналам в задаче. Сравниваем без регистра и лишних пробелов — «Крипта» и
+ * «крипта » для человека одно и то же имя, а значит и путаница та же.
+ *
+ * Чужие группы в счёт не идут: у разных клиентов «Крипта» может быть у каждого своя.
+ */
+const ключИмени = (n) => String(n || '').trim().toLowerCase().replace(/\s+/g, ' ')
+
+async function имяЗанято(name, userId, exceptId) {
+  const key = ключИмени(name)
+  if (!key) return false
+  const мои = (await listFolders()).filter((f) => (f.userId || '') === (String(userId || '').trim() || ''))
+  return мои.some((f) => f.id !== exceptId && ключИмени(f.name) === key)
+}
+
 export async function createFolder(name, targets, userId) {
+  if (await имяЗанято(name, userId)) {
+    throw new Error(`Группа «${String(name).trim()}» уже есть — выберите другое название`)
+  }
   const folder = {
     id: newId(),
     name: String(name || '').trim() || 'Без названия',
@@ -157,8 +179,14 @@ export async function createFolder(name, targets, userId) {
   return folder
 }
 
-/** @param {string} id @param {{ name?: string, targets?: string[] }} patch */
-export async function updateFolder(id, patch) {
+/**
+ * @param {string} id @param {{ name?: string, targets?: string[] }} patch
+ * @param {string} [userId] владелец — нужен, чтобы проверить имя на повтор (MR-246)
+ */
+export async function updateFolder(id, patch, userId) {
+  if (typeof patch?.name === 'string' && patch.name.trim() && await имяЗанято(patch.name, userId, id)) {
+    throw new Error(`Группа «${patch.name.trim()}» уже есть — выберите другое название`)
+  }
   const db = sb()
   if (db) {
     const { data, error } = await db.from('target_folders').select('*').eq('id', id).limit(1)

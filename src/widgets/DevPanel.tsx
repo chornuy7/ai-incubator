@@ -4,6 +4,7 @@ import { useApp } from '@/mocks/store'
 import { Switch } from '@/shared/ui'
 import { cn } from '@/shared/lib/utils'
 import { isDevEnv } from '@/shared/lib/env'
+import { useSession } from '@/features/auth/session'
 import type { UserState } from '@/shared/types'
 
 const SCENARIOS: { key: UserState; label: string; hint: string }[] = [
@@ -15,6 +16,7 @@ const SCENARIOS: { key: UserState; label: string; hint: string }[] = [
 
 export function DevPanel() {
   const [open, setOpen] = useState(false)
+  const sessionUser = useSession((s) => s.user)
   const userState = useApp((s) => s.userState)
   const setUserState = useApp((s) => s.setUserState)
   const netErrors = useApp((s) => s.netErrors)
@@ -22,9 +24,17 @@ export function DevPanel() {
   const resetData = useApp((s) => s.resetData)
   const pushToast = useApp((s) => s.pushToast)
 
-  // §10 (MR-51): dev-панель (переключатель моков, сбой сети) — только в окружении
-  // development. На production её не должно быть — там нет ни моков, ни метки «Dev».
-  if (!isDevEnv()) return null
+  /*
+   * §10 (MR-51): dev-панель (переключатель моков, сбой сети) — только в окружении
+   * development. На production её не должно быть — там нет ни моков, ни метки «Dev».
+   *
+   * MR-250, владелец 30.08: «Волшебную кнопку Dev выебать нахер, а то мне кажется, эта
+   * кнопка Dev висит на всех аккаунтах». На боевом домене её и не было — проверка по
+   * хосту стоит с MR-51, — но на дев-стенде она действительно висела у ВСЕХ, включая
+   * клиентов и их сотрудников. Теперь второе условие: только администратор платформы.
+   * Инструмент разработчика не должен попадаться на глаза тому, кто пришёл работать.
+   */
+  if (!isDevEnv() || !sessionUser?.isAdmin) return null
 
   return (
     <div className="fixed bottom-4 left-4 z-[90]">

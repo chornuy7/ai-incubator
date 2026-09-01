@@ -112,9 +112,14 @@ function Inner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: string }) {
 
   const { carry, remember } = usePresetCarry()
 
+  // MR-251: уведомления о статусе ЗАДАЧИ живут у запуска и включены по умолчанию
+  // (владелец 30.08: «они имеют отношение только к задаче»).
+  const [notifyStatus, setNotifyStatus] = useState(true)
+
   const buildSettings = useCallback((): ModuleTaskSettings => ({
     ...carry(), // параметры шаблона, которым нет ручки в форме (напр. delayPreset у MCP-задач)
     accountIds: [...selected],
+    notifyOnStatus: notifyStatus,
     targets: targetList,
     keywords: keywordList,
     aiProtection: aiProtect,
@@ -127,7 +132,7 @@ function Inner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: string }) {
     delayItem: fastWork ? 0 : delayItem,
     delays: { join: [fastWork ? 0 : joinMin, fastWork ? 0 : joinMax] as [number, number] },
     limit: limits.participants ?? limits.messages ?? limits.posts ?? 1000,
-  }), [carry, selected, targetList, keywordList, aiProtect, protLevel, filters, limits, activeStories, intersection, fastWork, delayChat, delayItem, joinMin, joinMax, moduleKey])
+  }), [carry, selected, targetList, keywordList, aiProtect, protLevel, filters, limits, activeStories, intersection, fastWork, delayChat, delayItem, joinMin, joinMax, moduleKey, notifyStatus])
 
   const busySelectedCount = useMemo(() => [...selected].filter((id) => accounts.some((a) => a.id === id && a.busyIn)).length, [selected, accounts])
   const canStart = selected.size > 0 && busySelectedCount === 0 && targetList.length > 0
@@ -160,6 +165,7 @@ function Inner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: string }) {
 
   // Цели (targetList) не восстанавливаем — они ситуативны; переносим фильтры, лимиты и задержки.
   const applyPreset = useCallback((s: ModulePresetSettings) => {
+    if (s.notifyOnStatus !== undefined) setNotifyStatus(s.notifyOnStatus)
     remember(s)
     if (s.aiProtection !== undefined) setAiProtect(s.aiProtection)
     if (s.protectionLevel !== undefined) setProtLevel(s.protectionLevel)
@@ -434,7 +440,7 @@ function Inner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: string }) {
 
       {showBlock('run') && (
       <SectionCard id="sec-run" icon={<Play size={18} />} title="Параметры и лимиты">
-        <LaunchPanel running={running} starting={starting} canStart={canStart} onStart={handleStart} onStop={stop} onSave={handleSave}
+        <LaunchPanel notify={{ on: notifyStatus, onChange: setNotifyStatus }} running={running} starting={starting} canStart={canStart} onStart={handleStart} onStop={stop} onSave={handleSave}
           primaryLabel={cfg.primaryAction ?? 'Начать'} stats={launchStats} task={task} warn={warn}
           steps={!running ? <LaunchSteps steps={markCurrentStep([
             { label: 'Аккаунты', done: selected.size > 0 && busySelectedCount === 0, anchor: 'sec-accounts' },

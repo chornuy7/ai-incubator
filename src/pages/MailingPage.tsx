@@ -160,11 +160,15 @@ function MailingInner() {
   const messageReady = !needOwnText || message.trim().length > 0
   const canStart = canWrite && !blockedByTrust && selected.size > 0 && numbers.length > 0
     && messageReady && pickedHot.length === 0
+  // MR-251: уведомления о статусе ЗАДАЧИ живут у запуска и включены по умолчанию
+  // (владелец 30.08: «они имеют отношение только к задаче»).
+  const [notifyStatus, setNotifyStatus] = useState(true)
 
   // Настройки задачи — единый билдер: и для запуска, и для сохранения шаблона.
   const buildSettings = (): ModuleTaskSettings => ({
     ...carry(), // параметры шаблона, которым нет ручки в форме (напр. typeWeights у MCP-задач)
     accountIds: [...selected],
+    notifyOnStatus: notifyStatus,
     targets: numbers,
     threads: chatThreads,
     promptText: needOwnText ? message.trim() : '',
@@ -198,6 +202,7 @@ function MailingInner() {
 
   // Восстановить настройки из шаблона (выбор аккаунтов и получателей не трогаем).
   const applyPreset = (s: ModulePresetSettings) => {
+    if (s.notifyOnStatus !== undefined) setNotifyStatus(s.notifyOnStatus)
     remember(s)
     if (typeof s.maxPerAccount === 'number') setMaxPerAccount(s.maxPerAccount)
     if (typeof s.protectionLevel === 'number') setProtLevel(s.protectionLevel)
@@ -536,6 +541,7 @@ function MailingInner() {
         {/* 5. Запуск: сводка в потоке + кнопки в плавающем баре внизу. */}
         <div id="sec-run" className="scroll-mt-24">
           <LaunchPanel
+              notify={{ on: notifyStatus, onChange: setNotifyStatus }}
               running={running}
               starting={starting}
               canStart={canStart}

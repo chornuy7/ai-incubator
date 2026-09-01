@@ -126,9 +126,14 @@ function AutopostingInner() {
     floodQuarantine: 3,
   }
 
+  // MR-251: уведомления о статусе ЗАДАЧИ живут у запуска и включены по умолчанию
+  // (владелец 30.08: «они имеют отношение только к задаче»).
+  const [notifyStatus, setNotifyStatus] = useState(true)
+
   const settings = (): ModuleTaskSettings => ({
     ...carry(), // параметры шаблона, которым нет ручки в форме
     accountIds: [...selected],
+    notifyOnStatus: notifyStatus,
     targets: channels,
     promptText: text.trim(),
     delays: { action: [delayMin, delayMax] as [number, number] },
@@ -200,6 +205,7 @@ function AutopostingInner() {
 
   // Восстановить настройки из шаблона (аккаунты не трогаем).
   const applyPreset = (s: ModulePresetSettings) => {
+    if (s.notifyOnStatus !== undefined) setNotifyStatus(s.notifyOnStatus)
     remember(s)
     if (Array.isArray(s.targets)) setChannelsText(s.targets.join('\n'))
     if (typeof s.promptText === 'string') setText(s.promptText)
@@ -439,6 +445,7 @@ function AutopostingInner() {
             «Запланированные посты», чтобы фиксированный бар их не перекрывал. */}
         <div id="sec-run" className="scroll-mt-24">
           <LaunchPanel
+            notify={{ on: notifyStatus, onChange: setNotifyStatus }}
             running={running}
             starting={mode === 'now' ? starting : savingRule}
             canStart={canStart}

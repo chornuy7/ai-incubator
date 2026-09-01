@@ -105,9 +105,14 @@ export function NeuroDialogsModule() {
 
   const { carry, remember } = usePresetCarry()
 
+  // MR-251: уведомления о статусе ЗАДАЧИ живут у запуска и включены по умолчанию
+  // (владелец 30.08: «они имеют отношение только к задаче»).
+  const [notifyStatus, setNotifyStatus] = useState(true)
+
   const buildSettings = useCallback((): ModuleTaskSettings => ({
     ...carry(), // параметры шаблона, которым нет ручки в форме (threads/typeWeights у MCP-задач)
     accountIds,
+    notifyOnStatus: notifyStatus,
     aiProtection: aiProtect,
     protectionLevel: protLevel,
     promptIndex: activePrompt,
@@ -133,9 +138,10 @@ export function NeuroDialogsModule() {
     replyLimitMode,
     maxRepliesPerLead: replyLimitMode === 'count' ? maxRepliesPerLead : 0,
     ...(goalId ? { goalId } : {}), // §9: привязка диалога к цели кампании (наследует KB/этапы, лиды к цели)
-  }), [carry, accountIds, aiProtect, protLevel, activePrompt, promptBodies, maxActions, minActions, maxPerAcc, minPerAcc, delayPreset, delays, aiEnabled, probability, replyAll, dialogGoal, analyzeImages, goalId, replyLimitMode, maxRepliesPerLead])
+  }), [carry, accountIds, aiProtect, protLevel, activePrompt, promptBodies, maxActions, minActions, maxPerAcc, minPerAcc, delayPreset, delays, aiEnabled, probability, replyAll, dialogGoal, analyzeImages, goalId, replyLimitMode, maxRepliesPerLead, notifyStatus])
 
   const applyPreset = useCallback((s: ModulePresetSettings) => {
+    if (s.notifyOnStatus !== undefined) setNotifyStatus(s.notifyOnStatus)
     remember(s)
     if (s.aiProtection !== undefined) setAiProtect(s.aiProtection)
     if (s.protectionLevel !== undefined) setProtLevel(s.protectionLevel)
@@ -439,6 +445,7 @@ export function NeuroDialogsModule() {
           (без обёртки-карточки: панель уходит в нижний бар, карточка осталась бы пустой). */}
       <div id="sec-run" className="scroll-mt-24">
         <LaunchPanel
+          notify={{ on: notifyStatus, onChange: setNotifyStatus }}
           running={running}
           starting={starting}
           canStart={canStart}

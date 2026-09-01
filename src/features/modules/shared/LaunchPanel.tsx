@@ -6,7 +6,7 @@ import { cn } from '@/shared/lib/utils'
 
 export function LaunchPanel({
   running, starting, canStart, onStart, onSave, primaryLabel, warn, cost, stats,
-  presets, onApplyPreset, extras, steps, blockedBy = [],
+  presets, onApplyPreset, extras, steps, blockedBy = [], notify,
 }: {
   running: boolean; starting: boolean; canStart: boolean
   onStart: () => void; onStop?: () => void; onSave: () => void
@@ -30,6 +30,15 @@ export function LaunchPanel({
    * в середине, а бар висит внизу экрана поверх этого контента — та самая «двойная плашка».
    */
   extras?: React.ReactNode
+  /**
+   * MR-251: уведомления о статусе ЗАДАЧИ — здесь, у запуска, и включены по умолчанию.
+   *
+   * Владелец 30.08: «Прогрев не имеет вообще никакого отношения к уведомлениям. Они имеют
+   * отношение только к задаче. Это должно быть там, где запуск задачи, и включено по
+   * умолчанию». Раньше галочка лежала внутри «Защиты и таймингов» и внутри блока прогрева —
+   * то есть в настройках модуля, хотя относится к запускаемой задаче.
+   */
+  notify?: { on: boolean; onChange: (v: boolean) => void }
 }) {
   return (
     <>
@@ -91,6 +100,23 @@ export function LaunchPanel({
           <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
             {running && (
               <a href="/panel/tasks" className="btn-ghost h-10 text-sm" title="Управление, прогресс и логи — в Дашборде задач"><ArrowUpRight size={15} /> В Дашборде задач</a>
+            )}
+            {/*
+              MR-251, приёмка 31.08: «знаходиться у самому низу, а не біля кнопки Начати».
+              Галочка про ЗАПУСК задачи, поэтому стоит в самой панели, рядом с «Начать»:
+              строкой в теле карточки её отделял от кнопки весь блок настроек.
+
+              Подпись короткая, объяснение — в подсказке: в один ряд с кнопками длинный
+              текст не влезает, а перенос ломает панель на узких экранах.
+            */}
+            {notify && !running && (
+              <label
+                className="flex cursor-pointer items-center gap-1.5 whitespace-nowrap text-xs text-muted hover:text-fg"
+                title="Ошибка или пауза этой задачи попадут в колокольчик. Снимите, если уведомления по ней не нужны."
+              >
+                <input type="checkbox" checked={notify.on} onChange={(e) => notify.onChange(e.target.checked)} className="h-4 w-4 accent-spark-500" />
+                Уведомлять о статусе
+              </label>
             )}
             {/* «Шаблон» = выбрать ИЛИ создать (правка 18.08). Кнопка умела только сохранять,
                 поэтому у пользователя без шаблонов выбор было негде взять. */}

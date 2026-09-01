@@ -213,9 +213,14 @@ function ChannelParserInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: 
 
   const { carry, remember } = usePresetCarry()
 
+  // MR-251: уведомления о статусе ЗАДАЧИ живут у запуска и включены по умолчанию
+  // (владелец 30.08: «они имеют отношение только к задаче»).
+  const [notifyStatus, setNotifyStatus] = useState(true)
+
   const buildSettings = useCallback((): ModuleTaskSettings => ({
     ...carry(), // параметры шаблона, которым нет ручки в форме (напр. delayPreset у MCP-задач)
     accountIds: [...selected],
+    notifyOnStatus: notifyStatus,
     keywords,
     endings,
     searchMode: method,
@@ -239,7 +244,7 @@ function ChannelParserInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: 
       floodWait: 120,
       floodQuarantine: 3,
     },
-  }), [carry, selected, keywords, endings, method, aiProtect, protLevel, limit, activity, commentFilter, minComments, minRating, minMembers, maxMembers, langDetect, intersect, fastWork, reqDelay, chDelay])
+  }), [carry, selected, keywords, endings, method, aiProtect, protLevel, limit, activity, commentFilter, minComments, minRating, minMembers, maxMembers, langDetect, intersect, fastWork, reqDelay, chDelay, notifyStatus])
 
   const busySelectedCount = useMemo(
     () => [...selected].filter((id) => accounts.some((a) => a.id === id && a.busyIn)).length,
@@ -266,6 +271,7 @@ function ChannelParserInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: 
   const handleSave = () => setPresetModalOpen(true)
 
   const applyPreset = useCallback((s: ModulePresetSettings) => {
+    if (s.notifyOnStatus !== undefined) setNotifyStatus(s.notifyOnStatus)
     remember(s)
     if (Array.isArray(s.keywords)) setKeywords(s.keywords)
     if (s.searchMode !== undefined) setMethod(s.searchMode)
@@ -652,6 +658,7 @@ function ChannelParserInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: 
       {showBlock('run') && (
       <SectionCard id="sec-run" icon={<Play size={18} />} title="Параметры и лимиты">
         <LaunchPanel
+          notify={{ on: notifyStatus, onChange: setNotifyStatus }}
           running={running}
           starting={starting}
           canStart={canStart}

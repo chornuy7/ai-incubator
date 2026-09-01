@@ -983,14 +983,8 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
           />
           )}
 
-          {/* MR-134: галочка вкл/выкл уведомлений о статусе ЭТОЙ задачи (ошибка/пауза) в колокольчике. */}
-          <label className="mt-3 flex cursor-pointer items-start gap-2 rounded-xl border border-line/60 bg-elevated/40 px-3 py-2.5">
-            <input type="checkbox" checked={notifyStatus} onChange={(e) => setNotifyStatus(e.target.checked)} className="mt-0.5 h-4 w-4 accent-spark-500" />
-            <span>
-              <span className="text-xs font-semibold text-fg">Уведомлять о статусе задачи</span>
-              <span className="mt-0.5 block text-[11px] text-white/45">Ошибка или пауза этой задачи попадут в колокольчик. Снимите, если не нужны уведомления по ней.</span>
-            </span>
-          </label>
+          {/* MR-251: галочка уведомлений переехала в панель запуска — она про задачу,
+              а не про защиту или прогрев. */}
 
           {/* Правка 14.08: дубль «Уровень прогрева» здесь убран — он рендерился и в этом блоке,
               и отдельным блоком ниже. Оставлен один отдельный блок «Уровень прогрева». */}
@@ -1131,13 +1125,8 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
           </div>
           {/* Правка 14.08: блок «Защита» у прогрева убран (дублировал уровень) — галочку
               уведомлений перенесли сюда. */}
-          <label className="mt-3 flex cursor-pointer items-start gap-2 rounded-xl border border-line/60 bg-elevated/40 px-3 py-2.5">
-            <input type="checkbox" checked={notifyStatus} onChange={(e) => setNotifyStatus(e.target.checked)} className="mt-0.5 h-4 w-4 accent-spark-500" />
-            <span>
-              <span className="text-xs font-semibold text-fg">Уведомлять о статусе задачи</span>
-              <span className="mt-0.5 block text-[11px] text-white/45">Ошибка или пауза прогрева попадут в колокольчик.</span>
-            </span>
-          </label>
+          {/* MR-251: галочка уведомлений переехала в панель запуска — она про задачу,
+              а не про защиту или прогрев. */}
         </SectionCard>
         </div>
       )}
@@ -1194,6 +1183,7 @@ function LiveModuleInner({ cfg, moduleKey }: { cfg: ModuleConfig; moduleKey: str
         // оформляется той же карточкой, как было до переноса 19.08.
         const panel = (
           <LaunchPanel
+            notify={{ on: notifyStatus, onChange: setNotifyStatus }}
             running={running}
             starting={starting}
             canStart={canStart}
