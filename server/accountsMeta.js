@@ -3,6 +3,7 @@ import path from 'path'
 import { mutateJson } from './lib/jsonStore.js'
 import { getSupabase, supabaseEnabled } from './lib/supabase.js'
 import { decryptSecret, secretForStorage } from './lib/secretBox.js'
+import { withProxyStrings } from './lib/proxyLink.js'
 import { SESSIONS_DIR } from './config.js'
 
 function sbA() { return supabaseEnabled() ? getSupabase() : null }
@@ -123,6 +124,15 @@ function metaToRow(id, m, twoFaEnc) {
   // источник связи с прокси, который однажды разойдётся со ссылкой.
   delete rest.has2fa
   delete rest.proxy
+  /*
+   * Колонка `proxy` ПУСТЕЕТ, как только есть ссылка (MR-262).
+   *
+   * Раньше здесь её просто не трогали, и прежняя строка подключения оставалась в базе
+   * навсегда. В окно выката её читает предыдущая версия — то есть показывает и использует
+   * прокси, который аккаунту уже не назначен. Колонка сносится следующим выпуском, но до
+   * тех пор обязана быть согласована со ссылкой.
+   */
+  row.proxy = m.proxyId ? null : (m.proxy || null)
   row.data = rest
   row.updated_at = new Date(m.updatedAt || Date.now()).toISOString()
   if (twoFaEnc !== undefined) row.two_fa_enc = twoFaEnc
@@ -140,20 +150,24 @@ function metaToRow(id, m, twoFaEnc) {
  * цикл, как только каталогу понадобится что-то из меты.
  * @param {Record<string, {proxyId?: string, proxy?: string}>} metas
  */
-async function fillProxyUrls(metas) {
-  const needs = Object.values(metas).some((m) => m?.proxyId)
-  if (!needs) return
-  try {
-    const { proxyCatalog, proxyUrlFor } = await import('./proxies.js')
-    const catalog = await proxyCatalog()
-    for (const m of Object.values(metas)) {
-      if (m?.proxyId) m.proxy = proxyUrlFor(m, catalog)
-    }
-  } catch (e) {
-    // Каталог недоступен — аккаунт лучше показать без прокси, чем не показать вовсе.
-    // Молчать при этом нельзя: подключение пойдёт напрямую, а это заметно только по банам.
-    console.warn('[proxy] каталог не прочитан, аккаунты останутся без строки подключения:', e?.message || e)
-  }
+/**
+ * MR-262 (вобрано в MR-290): строка подключения — ПРОИЗВОДНАЯ, и хранить её нельзя.
+ *
+ * Здесь была своя сборка строки, и в ней была ошибка: у аккаунта, чей прокси удалили из
+ * каталога, строка обнулялась — то есть аккаунт молча уходил в Telegram напрямую с адреса
+ * сервера. Заметно такое только по банам. Помощник из MR-262 в этом случае оставляет
+ * прежнюю строку и ставит признак `proxyGone`, чтобы витрина сказала об этом словами.
+ *
+ * Он же применяется в ОБОИХ режимах, а не только в базе: в файловом аккаунт со ссылкой
+ * тоже должен получать строку подключения.
+ */
+function безПроизводной(meta) {
+  // Есть ключ — строки в записи нет: копия протухнет при первой же смене пароля в
+  // каталоге, а это ровно та болезнь, от которой уходим.
+  if (!meta || !meta.proxyId) return meta
+  const { proxy, ...остальное } = meta
+  void proxy
+  return остальное
 }
 
 /** Строка таблицы → объект меты. Колонка сильнее json: она теперь источник правды. */
@@ -212,6 +226,11 @@ const DEFAULT_META = {
 }
 
 export async function loadAllMeta() {
+  return withProxyStrings(await loadAllMetaRaw())
+}
+
+/** Мета как она лежит в хранилище — без собранных строк подключения. */
+async function loadAllMetaRaw() {
   const db = sbA()
   if (db) {
     // `*` вместо `id, data`: мета теперь собирается из колонок, а не из одного jsonb.
@@ -220,7 +239,6 @@ export async function loadAllMeta() {
     const { data } = await db.from('accounts_meta').select('*')
     const out = {}
     for (const r of data || []) out[r.id] = rowToMeta(r)
-    await fillProxyUrls(out)
     return out
   }
   try {
@@ -290,7 +308,7 @@ export async function setAccountMeta(accountId, patch) {
     // потеряло бы всё, что уже переехало (статус, владельца, даты).
     const { data: row } = await db.from('accounts_meta').select('*').eq('id', accountId).maybeSingle()
     const cur = row ? rowToMeta(row) : {}
-    const merged = { ...DEFAULT_META, ...stripSecrets(cur), ...stripSecrets(patch), updatedAt: Date.now() }
+    const merged = безПроизводной({ ...DEFAULT_META, ...stripSecrets(cur), ...stripSecrets(patch), updatedAt: Date.now() })
     if (!merged.createdAt) merged.createdAt = Date.now()
     /*
      * Секрет трогаем ТОЛЬКО когда он пришёл в patch.
@@ -312,12 +330,12 @@ export async function setAccountMeta(accountId, patch) {
   let result = null
   await mutateJson(metaFile(), (all) => {
     const next = all && typeof all === 'object' ? all : {}
-    next[accountId] = {
+    next[accountId] = безПроизводной({
       ...DEFAULT_META,
       ...(next[accountId] || {}),
       ...patch,
       updatedAt: Date.now(),
-    }
+    })
     if (!next[accountId].createdAt) next[accountId].createdAt = Date.now()
     result = next[accountId]
     return next

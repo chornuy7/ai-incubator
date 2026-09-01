@@ -326,6 +326,12 @@ importRouter.post('/assign-proxies', async (req, res) => {
     if (!ids.length) return res.status(400).json({ ok: false, error: 'Выберите аккаунты' })
     if (mode === 'single' && !singleProxy) return res.status(400).json({ ok: false, error: 'Выберите прокси' })
 
+    // Владелец нужен, если прокси придётся ЗАВЕСТИ в каталоге (ручной ввод строкой):
+    // каталог — ресурс пространства, и запись без владельца видели бы все.
+    const me = req.header('x-user-id')
+    const { resolveSubscriptionOwner } = await import('./users.js')
+    const ownerId = me ? await resolveSubscriptionOwner(me) : ''
+
     const all = await listProxies()
     const chosen = proxyIds.length ? all.filter((p) => proxyIds.includes(p.id)) : all.filter(isUsableProxy)
     // Дубли разрешены — «занятые» не исключаем: один прокси можно повесить на многих.
@@ -340,14 +346,28 @@ importRouter.post('/assign-proxies', async (req, res) => {
         rows.push({ accountId: ids[i], ok: false, reason: 'нет ни одного прокси в пуле' })
         continue
       }
-      // «Без прокси» — это прочерк, а не пустая строка: так прямое подключение
-      // отображается в списке и не путается с «прокси ещё не назначали».
-      // MR-290: пишем ССЫЛКУ. `proxy` здесь — идентификатор каталога (режимы «пул» и
-      // «один на всех») либо строка, вписанная руками: строку сперва заводим в каталог,
-      // чтобы не появился прокси, которого в списке нет, а на аккаунте он есть.
-      const proxyId = mode === 'none' ? null
-        : (proxy && proxy.includes('://') ? await ensureProxyByUrl(proxy) : proxy || null)
-      await setAccountMeta(ids[i], { proxyId: proxyId || undefined })
+      /*
+       * Прокси у аккаунта — ССЫЛКА на каталог, и только она (MR-262, доработано в MR-290).
+       *
+       * MR-262 писал ссылку, если запись нашлась в каталоге, а ручной ввод мимо каталога
+       * оставлял строкой на аккаунте. Мы идём дальше и заводим такую строку в каталог:
+       * владелец 01.09 просил именно этого — «с любого места добавление идёт в БД».
+       * Иначе на аккаунте остаётся прокси, которого в списке нет, и его нельзя ни
+       * проверить, ни переназначить, ни увидеть в «кем занят».
+       *
+       * Снятие прокси делаем ЯВНО, как в MR-262: пустая ссылка плюс прочерк в строке.
+       * Раньше здесь уходило `{ proxyId: undefined }`, а это «поле не передали» —
+       * прежняя ссылка осталась бы на месте, и «без прокси» ничего бы не сняло.
+       */
+      if (mode === 'none') {
+        await setAccountMeta(ids[i], { proxyId: '', proxy: '—' })
+        rows.push({ accountId: ids[i], ok: true, proxyId: null })
+        continue
+      }
+      const proxyId = proxy && proxy.includes('://')
+        ? await ensureProxyByUrl(proxy, ownerId)
+        : (proxy || null)
+      await setAccountMeta(ids[i], { proxyId: proxyId || '' })
       rows.push({ accountId: ids[i], ok: true, proxyId })
     }
 

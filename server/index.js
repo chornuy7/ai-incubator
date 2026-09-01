@@ -170,6 +170,33 @@ app.get('/api/tg/accounts', async (req, res) => {
 app.patch('/api/tg/accounts/:accountId', async (req, res) => {
   try {
     const patch = req.body ?? {}
+    /*
+     * MR-262 (доработано в MR-290): прокси меняют ССЫЛКОЙ на каталог.
+     *
+     * Витрина по-прежнему шлёт строку подключения — она её и показывает. Здесь строка
+     * превращается в ключ: аккаунт должен ссылаться на запись каталога, а не хранить её
+     * копию.
+     *
+     * MR-262 оставлял строку как есть, если в каталоге её не нашлось. Мы вместо этого
+     * ЗАВОДИМ запись — владелец 01.09 просил именно так: «с любого места добавление идёт
+     * в БД». Иначе на аккаунте оседает прокси, которого нет в списке: его не проверить,
+     * не переназначить и не увидеть в «кем занят». Ровно так и появились 55 аккаунтов со
+     * ссылкой в никуда, из-за которых они ходили в Telegram с адреса сервера.
+     *
+     * Завести не удалось (строка не разбирается как адрес) — оставляем как было: правка
+     * прокси у одного аккаунта не должна падать целиком.
+     */
+    if (typeof patch.proxy === 'string' && patch.proxy !== '—' && patch.proxyId === undefined) {
+      const { ensureProxyByUrl } = await import('./proxies.js')
+      const { resolveSubscriptionOwner } = await import('./users.js')
+      const me = req.header('x-user-id')
+      const ownerId = me ? await resolveSubscriptionOwner(me).catch(() => '') : ''
+      const id = await ensureProxyByUrl(patch.proxy, ownerId).catch(() => null)
+      // Ссылка есть — строку чистим: подключение соберётся из каталога на чтении.
+      if (id) Object.assign(patch, { proxyId: id, proxy: '' })
+    }
+    // Снятие прокси убирает и ссылку: иначе она пережила бы «без прокси».
+    if (patch.proxy === '—') patch.proxyId = ''
     // Перенос между ролями/проектами — зафиксировать инициатора в аудите (§3.2/§4).
     let before = null
     if (patch.role !== undefined || patch.project !== undefined) {

@@ -209,6 +209,63 @@ async function writeProxiesFile(all) {
   invalidateProxyCatalog()
 }
 
+/**
+ * Перенести каталог как есть, СОХРАНИВ идентификаторы (MR-262, вобрано в MR-290).
+ *
+ * Нужна ровно один раз — когда каталог переезжает из файла в базу (скрипт
+ * `server/scripts/proxy-backfill.mjs`). `createProxy` тут не годится: он выдаёт НОВЫЙ id,
+ * а на старые id уже ссылаются аккаунты — после такого переноса ссылки указывали бы в
+ * пустоту, и полсотни аккаунтов пошли бы в Telegram напрямую с адреса сервера.
+ *
+ * Идемпотентна: запись с таким id или с такой же точкой входа пропускается. Повторный
+ * прогон переноса — обычное дело, и задваивать каталог он не должен.
+ *
+ * @param {object[]} entries @returns {Promise<{added:number, skipped:number}>}
+ */
+export async function importProxies(entries = []) {
+  const итог = { added: 0, skipped: 0 }
+  const входные = Array.isArray(entries) ? entries.filter((e) => e && e.host && e.port) : []
+  if (!входные.length) return итог
+
+  // Точка входа — адрес, порт и ЛОГИН: у одного хоста бывает несколько записей с разными
+  // логинами. Пароль в ключ не входит: сменили пароль — это та же самая точка входа.
+  const ключ = (p) => `${p.host}:${p.port}:${p.username || ''}`
+  const уже = await listProxiesWithSecrets()
+  const поId = new Set(уже.map((p) => p.id))
+  const поАдресу = new Set(уже.map(ключ))
+
+  const добавить = []
+  for (const e of входные) {
+    if ((e.id && поId.has(e.id)) || поАдресу.has(ключ(normalizeProxy(e)))) { итог.skipped++; continue }
+    const запись = {
+      ...normalizeProxy(e),
+      id: e.id || `px_${crypto.randomUUID().slice(0, 8)}`,
+      ...(e.ownerId ? { ownerId: e.ownerId } : {}),
+      lastCheckAt: e.lastCheckAt ?? null,
+      createdAt: e.createdAt ?? Date.now(),
+      updatedAt: Date.now(),
+    }
+    поId.add(запись.id)
+    поАдресу.add(ключ(запись))
+    добавить.push(запись)
+  }
+  if (!добавить.length) return итог
+
+  const db = sbP()
+  if (db) {
+    // `ignoreDuplicates` вместо обновления: перенос НЕ должен трогать то, что уже в базе.
+    // Уникальный индекс по точке входа при этом остаётся последним словом.
+    const { error } = await db.from(TABLE).upsert(добавить.map(proxyToRow), { onConflict: 'id', ignoreDuplicates: true })
+    invalidateProxyCatalog()
+    if (error) throw new Error(`[${TABLE}] перенос каталога не удался: ${error.message}`)
+    итог.added = добавить.length
+    return итог
+  }
+  await writeProxiesFile([...добавить, ...уже])
+  итог.added = добавить.length
+  return итог
+}
+
 /** @param {object} input @throws при пустом host/port */
 export async function createProxy(input) {
   const clean = normalizeProxy(input)
