@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { FolderOpen, Save, Trash2, Pencil, Check, X, FolderPlus, ShieldCheck, Loader2 } from 'lucide-react'
+import { FolderOpen, Save, Trash2, Pencil, Check, X, FolderPlus, ShieldCheck, Loader2, ListTree, Plus } from 'lucide-react'
 import { Modal, Select, Segmented, EmptyState } from '@/shared/ui'
 import { useApp } from '@/mocks/store'
 import {
@@ -7,6 +7,7 @@ import {
 } from '@/api/featuresApi'
 import { useSession, type SessionUser } from '@/features/auth/session'
 import { confirmDialog } from '@/shared/lib/dialog'
+import { cn } from '@/shared/lib/utils'
 
 const cleanTargets = (t: string[]) => [...new Set(t.map((x) => String(x || '').trim().replace(/^@/, '')).filter(Boolean))]
 
@@ -162,7 +163,20 @@ export function FolderPicker({ targets, onLoad }: {
   useEffect(() => { void reload() }, [])
 
   const visible = visibleFolders(folders, user)
-  const canManage = !user || user.isAdmin // управление группами — только админ (§8.1)
+  /*
+   * Права на группу разложены ровно так, как их проверяет сервер (`featureRoutes.js`), —
+   * иначе кнопка есть, а нажатие даёт 403.
+   *
+   * Переименование и удаление — админ платформы (§8.1, гейт стоит с 22.07). Правка СОСТАВА
+   * и проверка на мёртвые — всем, кому группа видна: дописывать цели «Сохранить в группу →
+   * В существующую» и так может любой, и убирать лишнее из того же списка он вправе.
+   *
+   * Правка заказчика 01.09: «було фул редагування папки з групами в управлінні, тепер
+   * немає». В MR-246 я закрыл под админа ВЕСЬ блок кнопок разом — вместе с проверкой,
+   * которую сервер не ограничивал. Здесь это разделено обратно.
+   */
+  const canManage = !user || user.isAdmin
+  const canEdit = true
 
   const saveCurrent = () => {
     if (!targets.length) return pushToast({ type: 'error', title: 'Нет групп для сохранения' })
@@ -217,6 +231,7 @@ export function FolderPicker({ targets, onLoad }: {
         // показывается только тем, кому оно разрешено (§8.1).
         folders={canManage ? folders : visible}
         canManage={canManage}
+        canEdit={canEdit}
         onChanged={reload}
         onLoad={loadFolder}
       />
@@ -230,16 +245,34 @@ export function FolderPicker({ targets, onLoad }: {
  * списком: в «Загрузить» по клику грузили, в «Управлении» рядом с тем же кликом
  * переименовывали. Кому управление не разрешено — видит только выбор.
  */
-function FolderManageModal({ open, onClose, folders, onChanged, onLoad, canManage = true }: {
+function FolderManageModal({ open, onClose, folders, onChanged, onLoad, canManage = true, canEdit = true }: {
   open: boolean; onClose: () => void; folders: TargetFolder[]; onChanged: () => Promise<void>
   /** Выбор группы. Папка целиком: дедуп и скрытие недоступных целей живут у родителя. */
   onLoad: (folder: TargetFolder) => void
+  /** Переименование и удаление — админ платформы (§8.1). */
   canManage?: boolean
+  /** Правка состава и проверка на мёртвые — всем, кому группа видна. */
+  canEdit?: boolean
 }) {
   const pushToast = useApp((s) => s.pushToast)
   const [editingId, setEditingId] = useState<string | null>(null)
   const [draftName, setDraftName] = useState('')
   const [validatingId, setValidatingId] = useState<string | null>(null)
+  /*
+   * Правка заказчика 01.09: «було фул редагування папки з групами в управлінні, тепер немає».
+   * Управление группой и правда сводилось к имени: загрузить, переименовать, проверить,
+   * удалить — а сам СОСТАВ можно было только пополнять («Сохранить в группу» → «В
+   * существующую»). Убрать из группы один лишний канал было нечем: только «проверить и
+   * удалить мёртвые», а живой, но ненужный канал так не выкинуть.
+   *
+   * Состав правим черновиком, а не по клику: список отправляется целиком, и правка «на
+   * лету» превратила бы каждый крестик в отдельную запись на сервер — с половиной группы,
+   * если посреди правки отвалилась сеть.
+   */
+  const [openId, setOpenId] = useState<string | null>(null)
+  const [draft, setDraft] = useState<string[]>([])
+  const [add, setAdd] = useState('')
+  const [savingId, setSavingId] = useState<string | null>(null)
 
   const validate = async (f: TargetFolder) => {
     setValidatingId(f.id)
@@ -264,6 +297,29 @@ function FolderManageModal({ open, onClose, folders, onChanged, onLoad, canManag
     }
   }
 
+  const openEditor = (f: TargetFolder) => {
+    if (openId === f.id) return setOpenId(null)
+    setOpenId(f.id); setDraft(f.targets); setAdd('')
+  }
+
+  /** Добавление: строка целиком — по запятым, пробелам и переносам, как в поле целей модуля. */
+  const addTargets = () => {
+    const next = cleanTargets([...draft, ...add.split(/[\s,;]+/)])
+    setDraft(next); setAdd('')
+  }
+
+  const saveTargets = async (f: TargetFolder) => {
+    setSavingId(f.id)
+    try {
+      await updateFolder(f.id, { targets: draft })
+      setOpenId(null)
+      await onChanged()
+      pushToast({ type: 'success', title: 'Состав сохранён', desc: `${f.name} · ${draft.length} ${plural(draft.length, 'группа', 'группы', 'групп')}` })
+    } catch (e) {
+      pushToast({ type: 'error', title: 'Ошибка сохранения', desc: e instanceof Error ? e.message : '' })
+    } finally { setSavingId(null) }
+  }
+
   const remove = async (f: TargetFolder) => {
     // Всегда спрашиваем подтверждение — удаление группы необратимо (§12).
     if (!(await confirmDialog({
@@ -286,7 +342,9 @@ function FolderManageModal({ open, onClose, folders, onChanged, onLoad, canManag
       open={open}
       onClose={onClose}
       title="Выбрать группу"
-      subtitle={canManage ? 'Клик по названию загружает; рядом — переименование, проверка и удаление' : 'Клик по названию загружает её каналы в список'}
+      subtitle={canManage
+        ? 'Клик по названию загружает; рядом — состав, проверка, переименование и удаление'
+        : 'Клик по названию загружает; рядом — состав и проверка на мёртвые'}
       icon={<FolderOpen size={22} />}
       size="lg"
     >
@@ -294,8 +352,13 @@ function FolderManageModal({ open, onClose, folders, onChanged, onLoad, canManag
         <EmptyState icon={<FolderOpen size={22} />} title="Нет групп" desc="Сохраните текущий список кнопкой «Сохранить в группу»." />
       ) : (
         <ul className="space-y-2">
-          {folders.map((f) => (
-            <li key={f.id} className="flex items-center gap-2 rounded-xl border border-line bg-elevated/40 p-3">
+          {folders.map((f) => {
+            const открыт = openId === f.id
+            // Кнопка сохранения гаснет, пока состав не тронули: нечего сохранять — нечего и жать.
+            const изменён = открыт && (draft.length !== f.targets.length || draft.some((t, i) => t !== f.targets[i]))
+            return (
+            <li key={f.id} className="rounded-xl border border-line bg-elevated/40 p-3">
+              <div className="flex items-center gap-2">
               {editingId === f.id ? (
                 <>
                   <input value={draftName} onChange={(e) => setDraftName(e.target.value)} className="input h-9 flex-1" autoFocus />
@@ -317,15 +380,72 @@ function FolderManageModal({ open, onClose, folders, onChanged, onLoad, canManag
                       <span className="block text-xs text-muted">{f.targets.length} групп</span>
                     </span>
                   </button>
-                  {canManage && <>
+                  {canEdit && <>
+                    <button type="button" onClick={() => openEditor(f)} className={cn('btn-icon h-8 w-8', открыт && 'text-spark-400')} title="Состав группы: добавить или убрать цели"><ListTree size={15} /></button>
                     <button type="button" onClick={() => void validate(f)} disabled={validatingId === f.id || !f.targets.length} className="btn-icon h-8 w-8 text-spark-400 disabled:opacity-40" title="Проверить и удалить мёртвые">{validatingId === f.id ? <Loader2 size={15} className="animate-spin" /> : <ShieldCheck size={15} />}</button>
+                  </>}
+                  {canManage && <>
                     <button type="button" onClick={() => { setEditingId(f.id); setDraftName(f.name) }} className="btn-icon h-8 w-8" title="Переименовать"><Pencil size={15} /></button>
                     <button type="button" onClick={() => void remove(f)} className="btn-icon h-8 w-8 text-rose-300" title="Удалить"><Trash2 size={15} /></button>
                   </>}
                 </>
               )}
+              </div>
+
+              {canEdit && открыт && (
+                <div className="mt-3 space-y-2 border-t border-line pt-3">
+                  <div className="flex items-center gap-2">
+                    <input
+                      value={add}
+                      onChange={(e) => setAdd(e.target.value)}
+                      onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); addTargets() } }}
+                      placeholder="Добавить цель — @канал, ссылка; можно несколько через запятую"
+                      className="input h-9 flex-1"
+                    />
+                    <button type="button" onClick={addTargets} disabled={!add.trim()} className="btn-ghost h-9 shrink-0 text-xs disabled:opacity-40">
+                      <Plus size={14} /> Добавить
+                    </button>
+                  </div>
+
+                  {draft.length === 0 ? (
+                    <p className="text-xs text-amber-300">
+                      Группа пуста. Добавьте цель: пустую группу сохранить нельзя — если она не нужна, удалите её целиком.
+                    </p>
+                  ) : (
+                    <div className="flex max-h-40 flex-wrap gap-1.5 overflow-y-auto rounded-xl border border-line bg-surface/60 p-2.5">
+                      {draft.map((t) => (
+                        <span key={t} className="inline-flex items-center gap-1 rounded-lg border border-line bg-elevated px-2 py-0.5 text-xs text-fg">
+                          {t}
+                          <button type="button" onClick={() => setDraft(draft.filter((x) => x !== t))} className="text-muted transition-colors hover:text-rose-300" title={`Убрать ${t} из группы`}>
+                            <X size={12} />
+                          </button>
+                        </span>
+                      ))}
+                    </div>
+                  )}
+
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-xs text-muted">
+                      {draft.length} {plural(draft.length, 'группа', 'группы', 'групп')}
+                      {изменён ? ` · было ${f.targets.length}` : ''}
+                    </span>
+                    <div className="flex shrink-0 gap-2">
+                      <button type="button" onClick={() => setOpenId(null)} className="btn-ghost h-9 text-xs">Отмена</button>
+                      <button
+                        type="button"
+                        onClick={() => void saveTargets(f)}
+                        disabled={savingId === f.id || !draft.length || !изменён}
+                        className="btn-primary h-9 text-xs disabled:opacity-40"
+                      >
+                        {savingId === f.id ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />} Сохранить состав
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
             </li>
-          ))}
+            )
+          })}
         </ul>
       )}
     </Modal>
