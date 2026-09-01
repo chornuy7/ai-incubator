@@ -9,7 +9,7 @@
  *   • это прямое нарушение правила «никаких локальных хранилищ, только общая база».
  *
  * ФОРМА ЗАПИСИ снаружи не изменилась: тот же массив объектов `{id, name, settings, userId,
- * createdAt, color, owner}`. Роуты и владельческий фильтр (`ownedForRequest`) работают как
+ * authorId, createdAt, color, owner}`. Роуты и владельческий фильтр (`ownedForRequest`) работают как
  * раньше — здесь поменялось только место хранения.
  *
  * Файловый режим (без DATA_BACKEND=supabase) оставлен как у остальных сторов: локальный
@@ -26,6 +26,9 @@ const fromRow = (r) => ({
   settings: r.settings ?? {},
   createdAt: Number(r.created_at) || 0,
   ...(r.user_id ? { userId: r.user_id } : {}),
+  // MR-196: автор — человек. `user_id` рядом — это пространство, у админа и его
+  // сотрудника оно одно, и различить их по нему нельзя.
+  ...(r.author_id ? { authorId: r.author_id } : {}),
   ...(r.color ? { color: r.color } : {}),
   ...(r.owner_label ? { owner: r.owner_label } : {}),
 })
@@ -35,6 +38,7 @@ const toRow = (moduleKey, p) => ({
   id: String(p.id),
   module_key: String(moduleKey),
   user_id: p.userId ? String(p.userId) : null,
+  author_id: p.authorId ? String(p.authorId) : null,
   name: String(p.name ?? ''),
   color: p.color ? String(p.color).slice(0, 20) : null,
   owner_label: p.owner ? String(p.owner).slice(0, 40) : null,
@@ -46,8 +50,29 @@ const toRow = (moduleKey, p) => ({
  * Таблицы ещё нет (миграция не накатана) — не роняем модуль.
  * Ведём себя как пустой набор: показать нечего, но страница откроется.
  */
-const isMissingTable = (error) =>
-  !!error && /module_presets|schema cache|does not exist|relation .* does not exist/i.test(String(error.message || ''))
+const isMissingTable = (error) => {
+  if (!error) return false
+  const msg = String(error.message || '')
+  const code = String(error.code || '')
+  /*
+   * Отличать отсутствующую ТАБЛИЦУ от отсутствующей КОЛОНКИ обязательно, хотя PostgREST
+   * пишет про «schema cache» в обоих случаях.
+   *
+   * Прежнее правило ловило и то и другое, а вызывающий код на «таблицы нет» молчит и идёт
+   * дальше. Поймано на MR-196: добавили колонку `author_id`, база её ещё не знала — запись
+   * шаблона провалилась, а роут ответил `ok: true`. Шаблон исчез без единого следа, и
+   * узнать об этом можно было только перечитав список.
+   *
+   * Таблицы нет — это разворачивание с нуля, и молчать там уместно: страница откроется
+   * пустой. Колонки нет — это несовпадение кода и схемы, то есть авария выкатки: о ней
+   * надо кричать, а не терять данные.
+   */
+  if (/could not find the '[^']+' column/i.test(msg) || code === 'PGRST204') return false
+  return /could not find the table/i.test(msg)
+    || /relation .* does not exist/i.test(msg)
+    || code === '42P01'
+    || code === 'PGRST205'
+}
 
 /**
  * Все шаблоны модуля (без фильтра по владельцу — фильтрует вызывающий код).
@@ -96,8 +121,33 @@ export async function saveModulePresets(moduleKey, presets, fileFallback) {
   if (delErr && !isMissingTable(delErr)) throw new Error(`Не удалось обновить шаблоны: ${delErr.message}`)
 
   if (!rows.length) return
+  await upsertPresets(db, rows)
+}
+
+/**
+ * Записать строки, пережив базу, которая ещё не знает новую колонку.
+ *
+ * Так уже сделано в журнале кошелька (`appendWalletEntry`): миграции доезжают до базы
+ * отдельно от кода, и между выкатами колонки может не быть. Ронять из-за этого сохранение
+ * нельзя — человек потеряет собранные настройки на ровном месте; но и молчать нельзя —
+ * именно молчание съело шаблон при проверке MR-196.
+ *
+ * Поэтому: не знает колонку — пишем без неё и говорим об этом в лог. Запись доезжает
+ * целой, теряется только новое поле, и ровно до тех пор, пока не накатится миграция.
+ */
+async function upsertPresets(db, rows, глубина = 0) {
   const { error } = await db.from('module_presets').upsert(rows, { onConflict: 'id' })
-  if (error && !isMissingTable(error)) throw new Error(`Не удалось сохранить шаблоны: ${error.message}`)
+  if (!error) return
+  if (isMissingTable(error)) return
+
+  const колонка = /could not find the '([^']+)' column/i.exec(String(error.message || ''))?.[1]
+  // Глубина ограничена: колонок в строке конечное число, но ошибка базы может и повторяться,
+  // а бесконечная рекурсия по чужому ответу — худший способ это заметить.
+  if (колонка && глубина < 5 && rows.some((r) => колонка in r)) {
+    console.warn(`[presets] база не знает колонку «${колонка}» — сохраняю без неё; накатите миграции`)
+    return upsertPresets(db, rows.map(({ [колонка]: _пропускаем, ...остальное }) => остальное), глубина + 1)
+  }
+  throw new Error(`Не удалось сохранить шаблоны: ${error.message}`)
 }
 
 /*

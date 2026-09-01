@@ -9,7 +9,7 @@ import { getGoal, isGoalExpired } from '../goals.js'
 import { WARMING_MODULES, canStopWarming } from '../lib/safetyLimits.js'
 import { splitAudience } from '../lib/mailingAudience.js'
 import { canEditTask, pickEditableSettings } from '../lib/taskEdit.js'
-import { isAdminRequest, tasksForRequest, canTouchTask, ownedForRequest, ownerScopeForRequest } from '../lib/accessGuard.js'
+import { isAdminRequest, tasksForRequest, canTouchTask, ownedForRequest, ownerScopeForRequest, requesterContext } from '../lib/accessGuard.js'
 
 export const modulesRouter = Router()
 
@@ -543,11 +543,24 @@ modulesRouter.post('/:moduleKey/presets', async (req, res) => {
     // двадцатой — выдавливал чужие из файла совсем.
     const filtered = mine.filter((p) => p.name !== name.trim())
     // §7: цветовая метка + подпись «чей пресет» (свободный текст, ≤40) + владелец записи.
+    /*
+     * MR-196: у записи два разных «чей».
+     *
+     * `userId` — ПРОСТРАНСТВО: по нему шаблон виден всей команде, и это правильно —
+     * заказчик подтвердил, что шаблоны общие (админ видит шаблон суба и наоборот).
+     * Но по нему же нельзя понять, кто шаблон завёл: у админа и у его сотрудника
+     * `userId` один и тот же, и проверка владения пропускала обоих. Отсюда и дыра —
+     * сотрудник переименовывал и удалял шаблон администратора обычной кнопкой.
+     *
+     * `authorId` — ЧЕЛОВЕК. Правит и удаляет только он.
+     */
+    const автор = await requesterContext(req)
     const preset = {
       id: `pr_${Date.now()}`,
       name: name.trim(),
       settings,
       userId: scope.ownerId || undefined,
+      authorId: автор.id || undefined,
       createdAt: Date.now(),
       ...(typeof color === 'string' && color ? { color: color.slice(0, 20) } : {}),
       ...(typeof owner === 'string' && owner.trim() ? { owner: owner.trim().slice(0, 40) } : {}),
@@ -556,7 +569,11 @@ modulesRouter.post('/:moduleKey/presets', async (req, res) => {
     await store.savePresets([...filtered.slice(0, 20), ...foreign])
     res.json({ ok: true, preset })
   } catch (err) {
-    res.status(400).json({ ok: false, error: err instanceof Error ? err.message : 'Ошибка' })
+    // Наружу — человеческий текст: сообщение базы («Could not find the 'author_id' column
+    // of 'module_presets' in the schema cache») человеку не говорит ни что случилось, ни
+    // что делать, зато рассказывает, как устроена наша схема. Подробность — в лог.
+    console.error('[presets] сохранение не удалось:', err)
+    res.status(400).json({ ok: false, error: 'Не удалось сохранить шаблон. Попробуйте ещё раз' })
   }
 })
 
@@ -564,11 +581,27 @@ modulesRouter.delete('/:moduleKey/presets/:id', async (req, res) => {
   try {
     const store = getModuleStore(req.params.moduleKey)
     if (!store) return res.status(404).json({ ok: false, error: 'Модуль не найден' })
+    const scope0 = await ownerScopeForRequest(req)
     const all = await store.loadPresets()
     const mine = await ownedForRequest(req, all)
     const victim = all.find((p) => p.id === req.params.id)
     if (!victim) return res.status(404).json({ ok: false, error: 'Пресет не найден' })
     if (!mine.includes(victim)) return res.status(403).json({ ok: false, error: 'Это не ваш пресет' })
+    /*
+     * MR-196: «проверку делать НА СЕРВЕРЕ, а не только прятать кнопку». Переименование
+     * на клиенте — это удаление и создание заново, поэтому один этот сторож закрывает
+     * оба действия сразу.
+     *
+     * У шаблонов, заведённых до этой правки, автора нет, и угадать его задним числом
+     * нельзя. Отдавать их «всем» — оставить ту же дыру, поэтому такие достаются
+     * хозяину пространства: он либо их и создал, либо отвечает за них. Тот же принцип,
+     * что и для записей без владельца в `ownedForRequest`.
+     */
+    const кто = await requesterContext(req)
+    const мой = victim.authorId ? String(victim.authorId) === String(кто.id) : String(scope0.ownerId) === String(кто.id)
+    if (!мой && !кто.isAdmin) {
+      return res.status(403).json({ ok: false, error: 'Чужой шаблон изменить нельзя — его создал другой сотрудник' })
+    }
     const next = all.filter((p) => p.id !== req.params.id)
     await store.savePresets(next)
     // В ответ — только свои: раньше DELETE возвращал общий список и работал как ещё одно
