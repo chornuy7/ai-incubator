@@ -170,16 +170,30 @@ const modeOf = (opts) => (opts?.mode === 'merge' ? 'merge' : 'replace')
  *  - объединение набора остаётся выше по коду (applyModules) — сюда приходит уже
  *    итоговый список.
  */
-const ALL_ROW = '*' // строка-метка «все модули»: админский провижининг ('all'), включая будущие
+/*
+ * Строка-метка «все модули» — УСТАРЕВШИЙ способ записи (MR-290).
+ *
+ * Строка user_subscriptions означает «у владельца есть модуль X». Строка со звёздочкой
+ * означала «есть все модули, включая будущие» — то есть свойство самой подписки,
+ * записанное в поле для имени модуля. Из-за неё на module_key нельзя было поставить
+ * внешний ключ на справочник модулей, а три места в коде вручную помнили про исключение.
+ *
+ * Теперь признак живёт в `subscriptions.all_modules`. Метка ещё читается: миграции
+ * применяются раньше выката кода, и в этом окне на сервере работает предыдущая версия,
+ * которая её пишет. Писать её мы уже перестали; оставшиеся строки уберёт отдельная
+ * миграция следующим релизом — вместе с внешним ключом на справочник.
+ */
+const ALL_ROW = '*'
 
 /**
  * Строки → состав подписки. Вынесено отдельно и без базы, потому что здесь три правила,
- * которые уже терялись при слияниях: метка «все модули», ОДНА дата на подписку и полный
+ * которые уже терялись при слияниях: признак «все модули», ОДНА дата на подписку и полный
  * состав вместе с истёкшим.
  * @param {{module_key:string, expires_at:string|number|null}[]} rows
+ * @param {boolean} [allModules] флаг подписки; строка-метка в rows — запасной путь
  * @returns {{modules:'all'|string[], expiresAt:number|null}}
  */
-export function rowsToModules(rows = []) {
+export function rowsToModules(rows = [], allModules = false) {
   // Дата одна на всю подписку; берём максимум — на случай, если строки разъехались.
   const expiresAt = rows.reduce((acc, r) => {
     const t = r?.expires_at ? ms(r.expires_at) : null
@@ -187,23 +201,55 @@ export function rowsToModules(rows = []) {
   }, null)
   // Истёкшие строки НЕ отбрасываем: просрочка должна выглядеть как «истекла, продлите»,
   // а не «ничего не куплено» — иначе в кабинете нечего продлевать.
-  if (rows.some((r) => r?.module_key === ALL_ROW)) return { modules: 'all', expiresAt }
+  if (allModules || rows.some((r) => r?.module_key === ALL_ROW)) return { modules: 'all', expiresAt }
   return { modules: rows.map((r) => r?.module_key).filter((k) => k && k !== ALL_ROW), expiresAt }
 }
 
-/** Прочитать состав строками. `null` — строк нет (читаем старое поле, переходный период). */
+/**
+ * Прочитать состав. `null` — сказать нечего: ни строк, ни признака «все модули».
+ *
+ * Признак читается ОТДЕЛЬНЫМ запросом к подписке, а не выводится из строк: у подписки
+ * «всё включено» своих строк состава не бывает вовсе, и по их отсутствию её не отличить
+ * от подписки, которой нет.
+ */
 async function readModuleRows(db, id) {
-  const { data, error } = await db.from('user_subscriptions').select('module_key, expires_at, updated_at').eq('user_id', id)
-  if (error || !data || !data.length) return null
+  const [rowsRes, subRes] = await Promise.all([
+    db.from('user_subscriptions').select('module_key, expires_at, updated_at').eq('user_id', id),
+    db.from('subscriptions').select('all_modules').eq('id', id).maybeSingle(),
+  ])
+  if (rowsRes.error) return null
+  // Колонки ещё нет (код уехал вперёд миграций) — работаем по строке-метке, как раньше.
+  const allModules = subRes.error ? false : subRes.data?.all_modules === true
+  const data = rowsRes.data || []
+  if (!allModules && !data.length) return null
   const touchedAt = data.reduce((acc, r) => Math.max(acc, r?.updated_at ? ms(r.updated_at) : 0), 0)
-  return { ...rowsToModules(data), touchedAt }
+  return { ...rowsToModules(data, allModules), touchedAt }
 }
 
-/** Записать ИТОГОВЫЙ состав строками: недостающие добавить, лишние убрать, дату — всем. */
+/** Записать ИТОГОВЫЙ состав: признак — на подписку, модули — строками. */
 async function writeModuleRows(db, id, list, expiresAt) {
-  const want = list === 'all' ? [ALL_ROW] : [...new Set((list || []).map(String).filter(Boolean))]
+  const all = list === 'all'
   const nowIso = new Date().toISOString()
   const expIso = iso(expiresAt)
+
+  /*
+   * Сначала признак — и обязательно с проверкой, что он КУДА-ТО записался.
+   *
+   * Две причины, по которым записать его может быть некуда: колонки ещё нет (код уехал
+   * вперёд миграций) или строки подписки ещё нет (её заводят выше по коду, и порядок
+   * когда-нибудь поменяют). В обоих случаях возвращаемся к старому способу и оставляем
+   * метку строкой. Иначе вышло бы худшее из возможного: метку стёрли, флаг записать
+   * некуда — и подписка «всё включено» молча превратилась бы в пустую.
+   *
+   * `.select('id')` здесь не для данных: без него update по несуществующей строке
+   * проходит без ошибки, и отличить «записал» от «не нашёл кого» было бы нечем.
+   */
+  const flagRes = await db.from('subscriptions').update({ all_modules: all }).eq('id', id).select('id')
+  const flagSaved = !flagRes.error && (flagRes.data || []).length > 0
+  const want = all
+    ? (flagSaved ? [] : [ALL_ROW])
+    : [...new Set((list || []).map(String).filter(Boolean))]
+
   const { data: have } = await db.from('user_subscriptions').select('module_key').eq('user_id', id)
   const gone = (have || []).map((r) => r.module_key).filter((k) => !want.includes(k))
   if (want.length) {

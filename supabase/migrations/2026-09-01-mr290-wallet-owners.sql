@@ -128,12 +128,21 @@ create index if not exists coin_balance_owner_idx       on coin_balance (user_id
 create index if not exists payments_owner_idx           on payments (user_id);
 create index if not exists token_ledger_owner_idx       on token_ledger (user_id);
 
-alter table coin_balance       add constraint coin_balance_owner_fkey       foreign key (user_id) references wallet_owners(id) on delete restrict;
-alter table wallet_log         add constraint wallet_log_owner_fkey         foreign key (user_id) references wallet_owners(id) on delete restrict;
-alter table payments           add constraint payments_owner_fkey           foreign key (user_id) references wallet_owners(id) on delete restrict;
-alter table token_ledger       add constraint token_ledger_owner_fkey       foreign key (user_id) references wallet_owners(id) on delete restrict;
-alter table subscriptions      add constraint subscriptions_owner_fkey      foreign key (user_id) references wallet_owners(id) on delete restrict;
-alter table user_subscriptions add constraint user_subscriptions_owner_fkey foreign key (user_id) references wallet_owners(id) on delete restrict;
+alter table coin_balance  add constraint coin_balance_owner_fkey  foreign key (user_id) references wallet_owners(id) on delete restrict;
+alter table wallet_log    add constraint wallet_log_owner_fkey    foreign key (user_id) references wallet_owners(id) on delete restrict;
+alter table payments      add constraint payments_owner_fkey      foreign key (user_id) references wallet_owners(id) on delete restrict;
+alter table token_ledger  add constraint token_ledger_owner_fkey  foreign key (user_id) references wallet_owners(id) on delete restrict;
+alter table subscriptions add constraint subscriptions_owner_fkey foreign key (user_id) references wallet_owners(id) on delete restrict;
+
+-- `subscriptions.id` — это тоже владелец кошелька, просто записанный первичным ключом:
+-- у личной подписки там id человека, у общей — `workspace`. Колонка `user_id` рядом
+-- дублирует его для личных и пуста для общей. Ключ ставим на ОБЕ: id обязателен и
+-- определяет, чья это подписка, user_id остаётся как есть, чтобы не трогать чтение.
+alter table subscriptions add constraint subscriptions_id_owner_fkey foreign key (id) references wallet_owners(id) on delete restrict;
+
+-- user_subscriptions СЮДА НЕ ВХОДИТ: его владелец связывается не с кошельком напрямую,
+-- а с самой подпиской (subscriptions.id) — это отношение «подписка → её модули». Ключ
+-- ставится следующей миграцией, вместе с разбором метки «все модули».
 
 comment on column payments.user_id is
   'Владелец оплаты — строка wallet_owners: человек, платформа или пространство. NULL — владельца не знали и в момент записи (две строки с прочерком, MR-290).';
