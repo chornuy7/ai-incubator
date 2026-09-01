@@ -184,6 +184,44 @@ test('обращения: переписка лежит строками, а н�
     'у сообщения должны быть своя сторона, время и автор на момент отправки')
 })
 
+test('мета аккаунта: каждая колонка из карты есть в миграции', async () => {
+  // Мета собиралась из одного jsonb, а типизированные колонки рядом не читались никем —
+  // типы стояли, но не работали. Теперь отображение объявлено списком COLUMNS в
+  // accountsMeta.js, и список обязан совпадать со схемой: колонка, которой нет в базе,
+  // даёт тихую ошибку записи — строка не сохранится, и никто не узнает (MR-290).
+  const code = await readCode('accountsMeta.js')
+  const block = code.match(/const COLUMNS = \[([\s\S]*?)\n\]/)
+  assert.ok(block, 'в accountsMeta.js нет карты COLUMNS')
+  const mapped = [...block[1].matchAll(/'[a-zA-Z]+',\s*'([a-z_]+)'/g)].map((m) => m[1])
+  assert.ok(mapped.length > 25, `карта подозрительно короткая: ${mapped.length}`)
+
+  // Колонки берутся из трёх мест: исходная таблица, владелец из owner-миграции и
+  // 25 новых. Схема таблицы — это вся её история, а не один файл.
+  const sql = await readSql([
+    '2026-07-30-owner-and-types.sql',
+    '2026-09-01-mr290-account-secrets.sql',
+    '2026-09-01-mr290-accounts-meta-columns.sql',
+  ])
+  const known = new Set([
+    // Колонки из schema.sql — он снимок, а не миграция, поэтому перечислены здесь.
+    'id', 'name', 'username', 'phone', 'status', 'proxy', 'country', 'in_trash', 'updated_at',
+    ...[...sql.matchAll(/add column if not exists ([a-z_]+)/gi)].map((m) => m[1]),
+  ])
+  const missing = mapped.filter((c) => !known.has(c))
+  assert.deepEqual(missing, [], `в схеме нет колонок: ${missing.join(', ')}`)
+})
+
+test('мета аккаунта: владелец лежит в колонке с внешним ключом, а не в json', async () => {
+  // Самый показательный случай задачи: колонка user_id со ссылкой на профиль существует
+  // с июля и была ПУСТА на всех 63 строках, пока доступ резался по data.ownerId.
+  const sql = await readSql('2026-09-01-mr290-accounts-meta-columns.sql')
+  assert.match(sql, /update accounts_meta\s+set user_id = nullif\(data->>'ownerId',''\)/,
+    'владелец должен переехать из json в колонку')
+  const code = await readCode('accountsMeta.js')
+  assert.match(code, /\['ownerId',\s+'user_id',\s+'text'\]/,
+    'карта обязана связывать ownerId с колонкой user_id — иначе колонка снова останется пустой')
+})
+
 test('выдачи субу: права лежат строками со ссылками, а не массивами text[]', async () => {
   // profiles.account_ids и account_group_ids — это ВЫДАННЫЕ ПРАВА. Массив база проверить
   // не может, и в боевых данных нашлось право на аккаунт acc_9 и группу grp_1, которых

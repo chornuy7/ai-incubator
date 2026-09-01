@@ -22,18 +22,116 @@ function sbA() { return supabaseEnabled() ? getSupabase() : null }
 const stripSecrets = (m) => { const { twoFA: _secret, ...rest } = m || {}; return rest }
 
 /**
- * Строка таблицы из объекта меты. Индексируемые колонки — для запросов (админка
- * «проблемы»: бан/flood/без прокси), остальное — в data-jsonb, секрет — отдельно.
+ * MR-290: карта «поле меты → колонка таблицы».
+ *
+ * Раньше вся мета лежала одним jsonb, а типизированные колонки рядом заполнялись «для
+ * запросов» и не читались никем: `loadAllMeta` брал только `data`. Из-за этого типы
+ * стояли, но не работали — `userId` хранился то числом, то строкой, девять моментов
+ * времени лежали числом epoch внутри json, а колонка владельца `user_id` с внешним ключом
+ * была ПУСТА на всех 63 строках, пока доступ резался по `data.ownerId`.
+ *
+ * Отображение объявлено списком, а не расписано вручную в двух функциях: две руками
+ * написанные таблицы соответствия однажды разойдутся, и поле начнёт теряться при
+ * сохранении. Тест сверяет этот список с миграцией.
+ *
+ * Типы: `text` | `ts` (в мете — epoch-мс, в базе — timestamptz) | `bool` (может быть
+ * неизвестен) | `flag` (всегда true/false) | `num`.
+ */
+const COLUMNS = [
+  ['name',            'name',              'text'],
+  ['username',        'username',          'text'],
+  ['phone',           'phone',             'text'],
+  ['status',          'status',            'text'],
+  ['country',         'country',           'text'],
+  ['proxy',           'proxy',             'text'],
+  ['ownerId',         'user_id',           'text'],
+  ['inTrash',         'in_trash',          'flag'],
+  ['createdAt',       'created_at',        'ts'],
+  ['userId',          'tg_user_id',        'text'],
+  ['role',            'role',              'text'],
+  ['project',         'project',           'text'],
+  ['note',            'note',              'text'],
+  ['avatarColor',     'avatar_color',      'text'],
+  ['service',         'is_service',        'flag'],
+  ['platform',        'is_platform',       'flag'],
+  ['statusSince',     'status_since',      'ts'],
+  ['statusUntil',     'status_until',      'ts'],
+  ['statusReason',    'status_reason',     'text'],
+  ['statusCode',      'status_code',       'text'],
+  ['statusBy',        'status_by',         'text'],
+  ['prevStatus',      'prev_status',       'text'],
+  ['statusBefore',    'status_before',     'text'],
+  ['healthCheckedAt', 'health_checked_at', 'ts'],
+  ['healthError',     'health_error',      'text'],
+  ['lastValid',       'last_valid',        'bool'],
+  ['lastValidAt',     'last_valid_at',     'ts'],
+  ['lastCheckedAt',   'last_checked_at',   'ts'],
+  ['lastCheckOk',     'last_check_ok',     'bool'],
+  ['spamblock',       'spamblock',         'text'],
+  ['spamblockAt',     'spamblock_at',      'ts'],
+  ['spamblockText',   'spamblock_text',    'text'],
+  ['ggrScore',        'ggr_score',         'num'],
+]
+
+/*
+ * Те же поля ВРЕМЕННО остаются и в jsonb.
+ *
+ * Миграции применяются до выката кода: между ними на сервере работает предыдущая версия,
+ * которая читает мету из `data`. Перестань писать туда сразу — и на эти минуты у
+ * аккаунтов пропадут статусы, имена и владельцы. Дубль снимается ОДНОЙ СТРОКОЙ здесь,
+ * следующим релизом, вместе с миграцией, вычищающей ключи из `data`.
+ */
+const KEEP_LEGACY_JSON_KEYS = true
+
+/** Значение меты → значение колонки. `null` означает «пусто», а не «не трогать». */
+function toCol(v, type) {
+  if (type === 'flag') return !!v
+  if (v === undefined || v === null || v === '') return null
+  if (type === 'ts') { const t = Number(v); return Number.isFinite(t) && t > 0 ? new Date(t).toISOString() : null }
+  if (type === 'bool') return !!v
+  if (type === 'num') { const n = Number(v); return Number.isFinite(n) ? n : null }
+  return String(v)
+}
+
+/** Значение колонки → значение меты. `undefined` означает «в колонке пусто». */
+function fromCol(v, type) {
+  if (v === undefined || v === null) return undefined
+  if (type === 'ts') { const t = new Date(v).getTime(); return Number.isFinite(t) ? t : undefined }
+  if (type === 'bool' || type === 'flag') return !!v
+  if (type === 'num') { const n = Number(v); return Number.isFinite(n) ? n : undefined }
+  return String(v)
+}
+
+/**
+ * Строка таблицы из объекта меты.
  * @param {string} id @param {object} m
  * @param {string|null|undefined} twoFaEnc готовый шифротекст; undefined — не трогать колонку
  */
-const metaToRow = (id, m, twoFaEnc) => ({
-  id, name: m.name || null, username: m.username || null, phone: m.phone || null,
-  status: m.status || null, proxy: m.proxy || null, country: m.country || null,
-  in_trash: !!m.inTrash, data: stripSecrets(m),
-  ...(twoFaEnc === undefined ? {} : { two_fa_enc: twoFaEnc }),
-  updated_at: new Date(m.updatedAt || Date.now()).toISOString(),
-})
+function metaToRow(id, m, twoFaEnc) {
+  const rest = stripSecrets({ ...m })
+  const row = { id }
+  for (const [json, col, type] of COLUMNS) {
+    row[col] = toCol(rest[json], type)
+    if (!KEEP_LEGACY_JSON_KEYS) delete rest[json]
+  }
+  // `has2fa` — признак, посчитанный при чтении, а не данные: в базу ему не надо.
+  delete rest.has2fa
+  row.data = rest
+  row.updated_at = new Date(m.updatedAt || Date.now()).toISOString()
+  if (twoFaEnc !== undefined) row.two_fa_enc = twoFaEnc
+  return row
+}
+
+/** Строка таблицы → объект меты. Колонка сильнее json: она теперь источник правды. */
+function rowToMeta(r) {
+  const m = stripSecrets({ ...(r.data || {}) })
+  for (const [json, col, type] of COLUMNS) {
+    const v = fromCol(r[col], type)
+    if (v !== undefined) m[json] = v
+  }
+  m.has2fa = !!(r.two_fa_enc || r.data?.twoFA)
+  return m
+}
 import { buildStatusPatch, normalizeStatus, nextStatusAfterExpiry, canModuleUseAccount } from './lib/accountStatus.js'
 import { appendAudit } from './lib/auditLog.js'
 import { getTrustCache } from './lib/trustCache.js'
@@ -82,15 +180,12 @@ const DEFAULT_META = {
 export async function loadAllMeta() {
   const db = sbA()
   if (db) {
-    const { data } = await db.from('accounts_meta').select('id, data, two_fa_enc')
+    // `*` вместо `id, data`: мета теперь собирается из колонок, а не из одного jsonb.
+    // Пароль при этом НЕ расшифровывается — списку нужен один бит, а не 47 паролей в
+    // памяти (см. rowToMeta: наружу идёт только has2fa).
+    const { data } = await db.from('accounts_meta').select('*')
     const out = {}
-    for (const r of data || []) {
-      const m = stripSecrets(r.data || {})
-      // Пароль НЕ расшифровываем: списку аккаунтов нужен один бит, а не 47 паролей в
-      // памяти. Старый ключ в data учитываем, пока скрипт перешифровки не прошёл.
-      m.has2fa = !!(r.two_fa_enc || r.data?.twoFA)
-      out[r.id] = m
-    }
+    for (const r of data || []) out[r.id] = rowToMeta(r)
     return out
   }
   try {
@@ -156,8 +251,10 @@ export async function getAccountMeta(accountId) {
 export async function setAccountMeta(accountId, patch) {
   const db = sbA()
   if (db) {
-    const { data: row } = await db.from('accounts_meta').select('data, two_fa_enc').eq('id', accountId).maybeSingle()
-    const cur = row?.data || {}
+    // Читаем строку ЦЕЛИКОМ: мета собрана из колонок, и слияние по одному только `data`
+    // потеряло бы всё, что уже переехало (статус, владельца, даты).
+    const { data: row } = await db.from('accounts_meta').select('*').eq('id', accountId).maybeSingle()
+    const cur = row ? rowToMeta(row) : {}
     const merged = { ...DEFAULT_META, ...stripSecrets(cur), ...stripSecrets(patch), updatedAt: Date.now() }
     if (!merged.createdAt) merged.createdAt = Date.now()
     /*
@@ -173,7 +270,9 @@ export async function setAccountMeta(accountId, patch) {
       ? secretForStorage(patch.twoFA, true)
       : undefined
     await db.from('accounts_meta').upsert(metaToRow(accountId, merged, twoFaEnc), { onConflict: 'id' })
-    return { ...merged, has2fa: twoFaEnc === undefined ? !!(row?.two_fa_enc || cur.twoFA) : !!twoFaEnc }
+    // Признак берём из уже прочитанной меты (`cur.has2fa`), а не из `cur.twoFA`: пароля в
+    // объекте меты больше нет, и обращение к нему молча вернуло бы undefined.
+    return { ...merged, has2fa: twoFaEnc === undefined ? !!cur.has2fa : !!twoFaEnc }
   }
   let result = null
   await mutateJson(metaFile(), (all) => {
