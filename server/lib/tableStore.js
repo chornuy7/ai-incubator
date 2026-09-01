@@ -72,10 +72,20 @@ function serialize(table, fn) {
 
 /**
  * Коллекция-СПИСОК поверх таблицы с текстовым `id`.
- * @param {{table:string, file:string|(()=>string), toRow:(o:any)=>any, fromRow:(r:any)=>any, order?:string}} cfg
+ *
+ * `enrich` и `afterWrite` — точки для полей, которые живут не в самой строке, а в
+ * таблице связи (состав группы аккаунтов, права суб-пользователя и т.п.). Появились в
+ * MR-290, когда jsonb-массивы поехали в нормальные таблицы: без них пришлось бы или
+ * писать связи ВНЕ сериализованной секции (гонка), или собирать состав отдельным
+ * запросом на каждом вызове (N+1). `afterWrite` вызывается ПОСЛЕ записи самих строк —
+ * иначе внешний ключ связи упёрся бы в ещё не созданного родителя.
+ *
+ * @param {{table:string, file:string|(()=>string), toRow:(o:any)=>any, fromRow:(r:any)=>any,
+ *          order?:string, enrich?:(rows:any[], db:any)=>Promise<any[]>,
+ *          afterWrite?:(rows:any[], db:any)=>Promise<void>}} cfg
  */
 export function listStore(cfg) {
-  const { table, file, toRow, fromRow, order = 'created_at' } = cfg
+  const { table, file, toRow, fromRow, order = 'created_at', enrich, afterWrite } = cfg
 
   async function readAll() {
     const db = sb()
@@ -85,7 +95,8 @@ export function listStore(cfg) {
       fileFallbackOrThrow(table, error, 'чтение')
       return readJson(val(file), [])
     }
-    return (data || []).map(fromRow)
+    const rows = (data || []).map(fromRow)
+    return enrich ? enrich(rows, db) : rows
   }
 
   /**
@@ -134,6 +145,8 @@ export function listStore(cfg) {
       const next = await fn(all)
       if (next === undefined) return all // мутатор отказался менять — не трогаем хранилище
       await writeAll(next, { prevIds })
+      const db = sb()
+      if (afterWrite && db) await afterWrite(next, db)
       return next
     })
   }

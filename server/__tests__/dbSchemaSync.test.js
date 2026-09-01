@@ -69,6 +69,13 @@ const STORES = [
     tables: ['tracked_links', 'link_hits'],
     notColumns: ['tracked_links', 'link_hits', 'schema cache'],
   },
+  {
+    name: 'состав групп аккаунтов',
+    sql: ['2026-07-30-remaining-stores.sql', '2026-07-30-owner-stores.sql', '2026-09-01-mr290-group-members.sql'],
+    code: 'accountGroups.js',
+    tables: ['account_groups', 'account_group_members'],
+    notColumns: ['account_group_members', 'account_groups', 'schema cache'],
+  },
 ]
 
 /**
@@ -175,6 +182,26 @@ test('обращения: переписка лежит строками, а н�
   const messages = columnsOf(sql, 'ticket_messages')
   assert.ok(messages.has('side') && messages.has('ts') && messages.has('author_name'),
     'у сообщения должны быть своя сторона, время и автор на момент отправки')
+})
+
+test('группы аккаунтов: состав лежит строками со ссылками, а не JSON-массивом', async () => {
+  // То же правило («JSON в базе = ошибка»), но цена выше: на группы выдаются права.
+  // Массив идентификаторов база проверить не может, поэтому в группе спокойно оставался
+  // удалённый аккаунт — право на него просто переставало действовать, молча. Теперь это
+  // таблица связи с двумя внешними ключами: несуществующий аккаунт в неё не положить,
+  // а удалённый уходит из всех групп сам (MR-290).
+  const sql = await readSql('2026-09-01-mr290-group-members.sql')
+  const cols = columnsOf(sql, 'account_group_members')
+  assert.ok(cols.has('group_id') && cols.has('account_id'), 'состав — это пара «группа + аккаунт»')
+  assert.ok(cols.has('position'), 'порядок аккаунтов в группе был свойством массива — в таблице его надо хранить явно')
+  assert.match(sql, /references account_groups\(id\)\s+on delete cascade/i, 'группа удалена — состав уходит с ней')
+  assert.match(sql, /references accounts_meta\(id\)\s+on delete cascade/i, 'аккаунт удалён — он уходит из всех групп сам')
+  assert.match(sql, /primary key \(group_id, account_id\)/i, 'один аккаунт нельзя добавить в группу дважды')
+
+  // И код больше не пишет состав в jsonb-колонку: два источника состава однажды разойдутся,
+  // и права начнут зависеть от того, какой из них прочитали.
+  const code = await readCode('accountGroups.js')
+  assert.ok(!/account_ids\s*:/.test(code), 'account_ids больше не пишется — состав живёт в account_group_members')
 })
 
 test('учёт времени: открытая смена отличима от закрытой', async () => {
