@@ -604,3 +604,31 @@ test('цель: статус и режим периода ограничены �
   const missing = columns.filter((c) => !known.has(c))
   assert.deepEqual(missing, [], `в схеме нет колонок цели: ${missing.join(', ')}`)
 })
+
+test('права роли: строками, с ограничением на значение', async () => {
+  // 555 правил в боевых данных, у каждого ровно два значения. Опечатка `alow`
+  // записывалась молча и читалась как «не allow» — право пропадало без ошибки.
+  const flat = flatten(await readSql('2026-09-02-mr290-role-permissions.sql'))
+  assert.ok(flat.includes("effect text not null check (effect in ('allow', 'deny'))"),
+    'третьего значения у права быть не должно')
+  assert.ok(flat.includes("scope text not null check (scope in ('module', 'block', 'section', 'resource'))"),
+    'разрез права обязан быть ограничен')
+  assert.ok(flat.includes('role_id text not null references roles(id) on delete cascade'),
+    'права удалённой роли не должны оставаться висеть')
+  // Ради вопроса «у кого есть доступ к этому объекту» — при разборе инцидента он нужен сразу.
+  assert.ok(flat.includes('create index if not exists role_permissions_subject_idx on role_permissions (scope, subject, item_id)'),
+    'нужен индекс по объекту права')
+
+  const code = await readCode('roles.js')
+  assert.ok(code.includes("db.from('role_permissions')"), 'права должны читаться и писаться строками')
+  assert.ok(code.includes('rules ? rulesToPermissions(rules) : (r.permissions || {})'),
+    'пустой набор правил обязан означать «прав нет», а не «читать не удалось»')
+})
+
+test('права роли: item_id пустая строка, а не NULL', async () => {
+  // item_id входит в первичный ключ, а NULL в ключе не сравнивается сам с собой —
+  // дубли правил перестали бы отсекаться, и одно и то же право легло бы дважды.
+  const flat = flatten(await readSql('2026-09-02-mr290-role-permissions.sql'))
+  assert.ok(flat.includes("item_id text not null default ''"), 'item_id обязан быть not null')
+  assert.ok(flat.includes('primary key (role_id, scope, subject, item_id)'), 'ключ обязан включать item_id')
+})
