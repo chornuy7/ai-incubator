@@ -2,7 +2,7 @@ import { useNavigate } from 'react-router-dom'
 import { RequestToOwnerModal } from '@/features/requests/RequestToOwner'
 import { useState, useEffect, useRef, useMemo } from 'react'
 import {
-  Menu, Zap, Sun, Moon, Radar, ChevronDown, UserCog, LogOut, Wallet, Check, AlertTriangle, Package, Bell, X, Clock,
+  Menu, Zap, Sun, Moon, ChevronDown, UserCog, LogOut, Wallet, Check, AlertTriangle, Package, Bell, X, Clock,
   PanelLeftClose, PanelLeftOpen,
 } from 'lucide-react'
 import { useApp, activeAccounts, isBrokenAccount, STATUS_META } from '@/mocks/store'
@@ -488,11 +488,14 @@ export function AppHeader() {
         </div>
 
         <div className="ml-auto flex items-center gap-1.5 sm:gap-2">
-          {/* Парсинг данных CTA */}
-          <button onClick={() => nav('/panel/modules/parsing')} className="btn-iris hidden h-9 px-3.5 md:inline-flex">
-            <Radar size={16} /> Парсинг данных
-          </button>
+          {/*
+            MR-260: кнопка «Парсинг данных» убрана (владелец 01.09: «парсинг данных скрыть
+            кнопку»).
 
+            Она была рекламной врезкой в рабочей шапке: вела туда же, куда пункт меню слева,
+            но занимала место рядом с числами, за которыми в шапку и приходят — аккаунты в
+            строю, токены, счёт. Раздел парсинга остался в меню, отдельным пунктом.
+          */}
           {/* Accounts limit — кликабельно, ведёт в менеджер аккаунтов (правка 12.08). */}
           <div className="relative" ref={accRef}>
             <button
