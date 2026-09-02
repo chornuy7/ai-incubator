@@ -28,6 +28,7 @@ import { accountFingerprint } from './lib/deviceFingerprint.js'
 import { getAccountLock } from './lib/accountLocks.js'
 import { getCronSync } from './cronSettings.js'
 import { accountProxyUrl } from './proxies.js'
+import { normalizeStatus } from './lib/accountStatus.js'
 
 /** Как часто перепроверять один аккаунт. */
 export const HEALTH_EVERY_MS = 12 * 60 * 60 * 1000
@@ -79,13 +80,64 @@ function dueAccounts(all, allMeta, now, max) {
 }
 
 /**
+ * MR-291: спамблок с ДЕФОЛТНЫМ сроком — переспросить у @SpamBot и решить по ответу.
+ *
+ * Возврат по таймеру работает только там, где срок назвал сам бот. Дефолтные сутки — наша
+ * догадка: проверка 02.09 показала шесть аккаунтов из шести всё ещё в блоке спустя пять
+ * дней после «истёкшего» срока. Пустить такой аккаунт в работу значит дать ему действовать
+ * под ограничением, а это ограничение продлевает.
+ *
+ * Спрашиваем ЗДЕСЬ, а не в `reconcileExpiredStatuses`: тот бежит каждые пять минут и не
+ * ходит в сеть, а здесь уже есть живое подключение, лимит на заход и свой график. Иначе
+ * 29 переспросов превратились бы во всплеск из 29 подключений разом — сам по себе
+ * кластерный признак (§4.4).
+ *
+ * @returns {Promise<boolean>} сняли ли ограничение
+ */
+async function переспроситьСпамблок(id, meta, client) {
+  if (normalizeStatus(meta?.status) !== 'spamblock') return false
+  if (meta?.statusUntilSource === 'spambot') return false // такому сроку верим, решит reconcile
+  const срок = Number(meta?.statusUntil || 0)
+  if (!срок || Date.now() < срок) return false // ещё не пора
+
+  try {
+    const { checkSpamblock } = await import('./lib/spamAppeal.js')
+    const r = await checkSpamblock(client)
+    if (r.state === 'clean') {
+      await setAccountStatus(id, 'active', {
+        code: 'SPAM_CLEARED', reason: 'Ограничение снято — подтвердил @SpamBot', initiator: 'system',
+      })
+      return true
+    }
+    if (r.state === 'blocked') {
+      /*
+       * Всё ещё в блоке. Продлеваем и — если бот НАЗВАЛ срок — запоминаем настоящий:
+       * с этого момента аккаунт вернётся сам, переспрашивать больше не придётся.
+       */
+      const настоящий = Number(r.until) > Date.now()
+      await setAccountMeta(id, {
+        statusUntil: настоящий ? Number(r.until) : Date.now() + 24 * 3600_000,
+        statusUntilSource: настоящий ? 'spambot' : 'default',
+        spamCheckedAt: Date.now(),
+      })
+      return false
+    }
+    // Ответ невнятный (чужой язык, молчание) — просто отложим до следующего захода.
+    await setAccountMeta(id, { statusUntil: Date.now() + 24 * 3600_000, spamCheckedAt: Date.now() })
+    return false
+  } catch {
+    return false // не смогли спросить — аккаунт остаётся как есть, это безопасная сторона
+  }
+}
+
+/**
  * Один проход проверки.
  * @returns {Promise<{checked:number, broken:number, skipped:number}>}
  */
 export async function accountHealthTick(opts = {}) {
   const perTick = opts.perTick ?? getCronSync().healthPerTick ?? PER_TICK
   const now = opts.now ?? Date.now()
-  const out = { checked: 0, broken: 0, skipped: 0 }
+  const out = { checked: 0, broken: 0, skipped: 0, freed: 0 }
   let all = []
   let allMeta = {}
   try {
@@ -108,6 +160,8 @@ export async function accountHealthTick(opts = {}) {
       // Жив: помечаем время проверки, статус не трогаем — он мог быть осмысленным
       // (пауза, прогрев, карантин), и «жив» это не повод его сбрасывать.
       await setAccountMeta(id, { healthCheckedAt: Date.now(), healthError: null })
+      const снят = await переспроситьСпамблок(id, meta, client)
+      if (снят) out.freed += 1
       out.checked += 1
     } catch (err) {
       const verdict = classifyHealthError(err)

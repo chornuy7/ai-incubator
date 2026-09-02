@@ -153,14 +153,32 @@ test('MR-291: спамблок с истёкшим сроком возвраща
    * `DEFAULT_HOLD_HOURS.spamblock` был заведён — а `isStatusExpired` отвечало `false`,
    * потому что спамблок не входил в список временных статусов. Аккаунт не выходил НИКОГДА.
    */
-  const истёк = { status: 'spamblock', statusUntil: Date.now() - 60_000 }
+  const истёк = { status: 'spamblock', statusUntil: Date.now() - 60_000, statusUntilSource: 'spambot' }
   assert.equal(isStatusExpired(истёк), true, 'спамблок обязан быть временным статусом')
   assert.equal(nextStatusAfterExpiry(истёк), 'active')
 
   // Срок ещё идёт — не трогаем.
-  assert.equal(nextStatusAfterExpiry({ status: 'spamblock', statusUntil: Date.now() + 60_000 }), null)
+  assert.equal(nextStatusAfterExpiry({ status: 'spamblock', statusUntil: Date.now() + 60_000, statusUntilSource: 'spambot' }), null)
   // Срока нет вовсе — тоже не трогаем: его проставит backfillMissingStatusUntil.
   assert.equal(nextStatusAfterExpiry({ status: 'spamblock' }), null)
+})
+
+test('MR-291: по ДЕФОЛТНОМУ сроку в работу не возвращаем — только по слову @SpamBot', () => {
+  /*
+   * Проверка на живых аккаунтах 02.09: шесть из шести всё ещё в блоке спустя ПЯТЬ дней
+   * после «истёкшего» срока. Потому что срок был не от бота, а нашей догадкой — дефолтные
+   * сутки, которые код подставляет, когда @SpamBot ничего не назвал.
+   *
+   * Вернуть по такой догадке значит пустить аккаунт работать под действующим ограничением,
+   * а действия под спамблоком его продлевают. Это не спасение аккаунта, а закапывание.
+   */
+  const истёк = Date.now() - 60_000
+  assert.equal(nextStatusAfterExpiry({ status: 'spamblock', statusUntil: истёк, statusUntilSource: 'default' }), null,
+    'догадка о сроке возврата в работу не даёт')
+  // Старые записи (источник не проставлен) — тоже догадка, пока не переспросим бота.
+  assert.equal(nextStatusAfterExpiry({ status: 'spamblock', statusUntil: истёк }), null)
+  // А слову бота верим.
+  assert.equal(nextStatusAfterExpiry({ status: 'spamblock', statusUntil: истёк, statusUntilSource: 'spambot' }), 'active')
 })
 
 test('MR-291: спамблок возвращается в active, а карантин — в прогрев', () => {
@@ -172,7 +190,7 @@ test('MR-291: спамблок возвращается в active, а каран
    * задачу, ради которой правка, — вернуть запертые аккаунты в строй.
    */
   const срок = Date.now() - 1000
-  assert.equal(nextStatusAfterExpiry({ status: 'spamblock', statusUntil: срок }), 'active')
+  assert.equal(nextStatusAfterExpiry({ status: 'spamblock', statusUntil: срок, statusUntilSource: 'spambot' }), 'active')
   assert.equal(nextStatusAfterExpiry({ status: 'quarantine', statusUntil: срок }), 'warming')
   assert.equal(isRunnable('active'), true, 'иначе аккаунт останется вне работы')
 })
