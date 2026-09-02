@@ -50,7 +50,33 @@ const SORTS = {
   updatedAt: 'updated_at',
   name: 'name',
   status: 'status',
+  country: 'country',
   trust: 'trust_score',
+}
+
+/*
+ * Порядки, которые собираются из нескольких колонок.
+ *
+ * ЧЕГО ЗДЕСЬ НЕТ И ПОЧЕМУ. Прежний порядок «по умолчанию» ставил занятых задачей вниз.
+ * Занятость живёт в ПАМЯТИ ПРОЦЕССА (локи), а не в базе, и отсортировать по ней страницу
+ * нельзя: база о ней не знает. Пока список грузился целиком, сортировка шла в браузере и
+ * это было незаметно; постранично так уже не выйдет. Оставлен ближайший осмысленный
+ * порядок — сначала аккаунты с прокси, потом по имени, — а «свободные» доступны отдельным
+ * фильтром «Не заняты». Правильное решение — перенести локи в базу; это отдельная задача.
+ */
+const СОСТАВНЫЕ = {
+  // «Проблемные сверху»: сортировка по статусу прокси даёт bad → dead → ok → unknown,
+  // а аккаунты без прокси (NULL) поднимаются выше всех — они и есть худший случай.
+  problems: [
+    ['proxy_status', { ascending: true, nullsFirst: true }],
+    ['name', { ascending: true }],
+  ],
+  default: [
+    ['proxy_id', { ascending: true, nullsFirst: false }],
+    ['name', { ascending: true }],
+  ],
+  newest: [['created_at', { ascending: false }]],
+  oldest: [['created_at', { ascending: true }]],
 }
 
 /** Статусы, которые панель показывает плитками. Фильтр принимает только их. */
@@ -184,6 +210,12 @@ function занятость(accountId) {
  * @param {boolean} [opts.inTrash] показывать корзину вместо рабочего списка
  * @param {string|null} [opts.ownerId] чьё пространство; null — весь парк (админ)
  * @param {string[]|null} [opts.ids] сотруднику видно только перечисленное; null — без ограничения
+ * @param {string[]} [opts.countries] коды стран; регион раскрывает клиент — карта регионов у него
+ * @param {'deadProxy'|'noProxy'|'lowTrust'} [opts.risk]
+ * @param {string} [opts.campaignId] id кампании либо 'pool' — «не в кампании»
+ * @param {string} [opts.busyModule] ключ модуля либо 'idle' — «свободные»
+ * @param {number} [opts.fatigueMin] порог усталости в процентах
+ * @param {boolean} [opts.trashAlive] в корзине скрыть невалидные и требующие входа
  * @param {{field?: string, dir?: string}} [opts.sort]
  * @returns {Promise<{items: object[], page: object, counts: object}>}
  */
@@ -195,6 +227,7 @@ export async function listAccountsPage(opts = {}) {
   const number = Math.max(1, Math.floor(Number(opts.page) || 1))
   const from = (number - 1) * size
 
+  const порядок = СОСТАВНЫЕ[opts.sort?.field]
   const колонка = SORTS[opts.sort?.field] || SORTS.createdAt
   const поВозрастанию = String(opts.sort?.dir || 'desc').toLowerCase() === 'asc'
 
@@ -211,13 +244,67 @@ export async function listAccountsPage(opts = {}) {
    */
   if (Array.isArray(opts.ids)) {
     if (!opts.ids.length) {
-      return { items: [], page: { number, size, total: 0, pages: 1 }, counts: {} }
+      return { items: [], page: { number, size, total: 0, pages: 1 }, counts: {}, facets: { countries: {} } }
     }
     q = q.in('id', opts.ids.map(String))
   }
 
+  /*
+   * Статус — ЭФФЕКТИВНЫЙ, а не колонка.
+   *
+   * Спамблок хранится отдельным полем (результат проверки @SpamBot), и аккаунт с рабочим
+   * базовым статусом показывается в списке как «Спамблок». Отфильтровать по колонке
+   * `status` значит не найти ровно тех, кого оператор видит в этой плитке. Разворачиваем
+   * то же правило в условие запроса.
+   */
   const statuses = (opts.statuses || []).map(String).filter((s) => STATUSES.has(s))
-  if (statuses.length) q = q.in('status', statuses)
+  if (statuses.length) {
+    const части = []
+    for (const s of statuses) {
+      if (s === 'spamblock') {
+        части.push('status.eq.spamblock')
+        части.push(`and(spamblock.eq.blocked,status.in.(${ПЕРЕКРЫВАЕМЫЕ.join(',')}))`)
+      } else if (ПЕРЕКРЫВАЕМЫЕ.includes(s)) {
+        // Базовый статус рабочий — значит спамблока быть не должно, иначе строка «уехала»
+        // бы в плитку «Спамблок», а здесь показалась бы вторым экземпляром.
+        части.push(`and(status.eq.${s},or(spamblock.is.null,spamblock.neq.blocked))`)
+      } else {
+        части.push(`status.eq.${s}`)
+      }
+    }
+    q = q.or(части.join(','))
+  }
+
+  // Страна. Регион («Европа», «СНГ») раскрывает клиент — карта регионов живёт у него,
+  // и дублировать её на сервере значило бы завести второй источник правды.
+  const страны = (opts.countries || []).map((c) => String(c || '').toLowerCase()).filter(Boolean)
+  if (страны.length) q = q.in('country', страны)
+
+  /*
+   * Зона риска — из тех же колонок, из которых её считает `computeAccountRisk`.
+   * Условие в запросе, а не отбор после выборки: отобранная страница иначе окажется
+   * короче запрошенной, а «всего» посчитается по нефильтрованному набору.
+   */
+  if (opts.risk === 'noProxy') q = q.is('proxy_id', null)
+  else if (opts.risk === 'deadProxy') q = q.not('proxy_id', 'is', null).in('proxy_status', ['dead', 'bad'])
+  else if (opts.risk === 'lowTrust') q = q.eq('trust_band', 'low')
+
+  // Корзина: «только живые» — то есть без невалидных и требующих повторного входа.
+  if (opts.inTrash === true && opts.trashAlive) q = q.not('status', 'in', '(invalid,reauth)')
+
+  /*
+   * Признаки, которых нет в базе: занятость (локи живут в памяти процесса), усталость и
+   * состав кампании. Разворачиваем их в перечень идентификаторов и кладём в тот же
+   * запрос — иначе они снова превратились бы в отбор после страницы.
+   */
+  const поИдентификаторам = await спискиПоПризнакам(opts)
+  if (поИдентификаторам.include) {
+    if (!поИдентификаторам.include.length) {
+      return { items: [], page: { number, size, total: 0, pages: 1 }, ...(await сводкаПарка(db, opts.ownerId)) }
+    }
+    q = q.in('id', поИдентификаторам.include)
+  }
+  if (поИдентификаторам.exclude?.length) q = q.not('id', 'in', `(${поИдентификаторам.exclude.join(',')})`)
 
   const строка = String(opts.search || '').trim()
   if (строка) {
@@ -230,7 +317,8 @@ export async function listAccountsPage(opts = {}) {
     q = q.or(`name.ilike.${образец},username.ilike.${образец},phone.ilike.${образец}`)
   }
 
-  q = q.order(колонка, { ascending: поВозрастанию, nullsFirst: false })
+  if (порядок) for (const [c, o] of порядок) q = q.order(c, o)
+  else q = q.order(колонка, { ascending: поВозрастанию, nullsFirst: false })
   // Вторым ключом — id: без него строки с одинаковым значением сортировки могут менять
   // порядок между страницами, и одна и та же запись показывается дважды или ни разу.
   q = q.order('id', { ascending: true })
@@ -250,21 +338,196 @@ export async function listAccountsPage(opts = {}) {
   return {
     items,
     page: { number, size, total, pages: Math.max(1, Math.ceil(total / size)) },
-    counts: await статусныеСчётчики(db, opts.ownerId),
+    ...(await сводкаПарка(db, opts.ownerId)),
+  }
+}
+
+/** Статусы, поверх которых спамблок перекрывает базовый (см. `эффективныйСтатус`). */
+const ПЕРЕКРЫВАЕМЫЕ = ['active', 'working', 'warming', 'pause']
+
+/**
+ * Признаки, которых нет в представлении, — в перечни идентификаторов.
+ *
+ * Занятость аккаунта задачей хранится в памяти процесса (локи), усталость — в
+ * `account_activity`, состав кампании — в `campaign_accounts`. Каждый из них читается
+ * ОДИН раз на запрос, и результат уезжает в тот же самый запрос к базе условием по `id`.
+ *
+ * @param {object} opts
+ * @returns {Promise<{include: string[]|null, exclude: string[]}>}
+ */
+async function спискиПоПризнакам(opts) {
+  /** Пересечение: каждый следующий признак только сужает набор. */
+  let include = null
+  const exclude = []
+  const сузить = (ids) => { include = include === null ? [...new Set(ids)] : include.filter((x) => ids.includes(x)) }
+
+  if (opts.busyModule) {
+    const { getAllAccountLocksDetailed } = await import('./lib/accountLocks.js')
+    const занятые = await getAllAccountLocksDetailed()
+    if (opts.busyModule === 'idle') exclude.push(...Object.keys(занятые || {}))
+    else {
+      сузить(Object.entries(занятые || {})
+        .filter(([, l]) => (l?.holders || [{ moduleKey: l?.moduleKey }]).some((h) => h.moduleKey === opts.busyModule))
+        .map(([id]) => id))
+    }
+  }
+
+  const порог = Number(opts.fatigueMin) || 0
+  if (порог > 0) {
+    const { listActivity } = await import('./accountActivity.js')
+    const все = await listActivity().catch(() => ({}))
+    сузить(Object.entries(все)
+      .filter(([, a]) => a?.threshold > 0 && Math.round((a.fatigue / a.threshold) * 100) >= порог)
+      .map(([id]) => id))
+  }
+
+  if (opts.campaignId) {
+    const { listCampaigns } = await import('./campaigns.js')
+    const кампании = await listCampaigns().catch(() => [])
+    if (opts.campaignId === 'pool') {
+      // «Свободные от кампаний» — вычитаем всех, кто хоть в одной состоит.
+      for (const c of кампании) exclude.push(...(c.accountIds || []))
+    } else {
+      const c = кампании.find((x) => x.id === opts.campaignId)
+      сузить(c?.accountIds || [])
+    }
+  }
+
+  return { include, exclude: [...new Set(exclude)] }
+}
+
+/**
+ * Сводка по всему парку: счётчики плиток и набор стран для фильтра.
+ *
+ * И то и другое считается по ВСЕМУ парку, а не по показанной странице: плитка «Спамблок»
+ * обязана показывать всех, а не тех, кто попал в текущие двадцать пять строк, и в
+ * выпадающем списке стран должны быть все страны парка, а не страны одной страницы.
+ * Раньше и то и другое считал фронт по полному списку — то есть плитки и были причиной,
+ * по которой список грузился целиком.
+ */
+async function сводкаПарка(db, ownerId) {
+  const [счётчики, срез, локи] = await Promise.all([
+    db.rpc('account_status_counts', { p_owner: ownerId ? String(ownerId) : null }),
+    (() => {
+      // Четыре колонки на весь парк — несколько килобайт. Группировки в PostgREST нет,
+      // а заводить ради этого функцию в базе дороже, чем сложить числа здесь.
+      let s = db.from(VIEW).select('id, country, proxy_id, proxy_status, trust_band').eq('in_trash', false)
+      if (ownerId) s = s.eq('owner_id', String(ownerId))
+      return s
+    })(),
+    import('./lib/accountLocks.js').then((m) => m.getAllAccountLocksDetailed()).catch(() => ({})),
+  ])
+  if (счётчики.error) throw new Error(`[account_status_counts] счётчики не прочитаны: ${счётчики.error.message}`)
+
+  const строки = срез.data || []
+  const свои = new Set(строки.map((r) => r.id))
+
+  const countries = {}
+  // Причины риска считаются по тем же правилам, что и `computeAccountRisk`: один аккаунт
+  // может попасть сразу в несколько (и прокси мёртвый, и доверие низкое).
+  const risk = { deadProxy: 0, noProxy: 0, lowTrust: 0 }
+  for (const r of строки) {
+    const c = String(r.country || '').toLowerCase()
+    if (c) countries[c] = (countries[c] || 0) + 1
+    if (!r.proxy_id) risk.noProxy += 1
+    else if (r.proxy_status === 'dead' || r.proxy_status === 'bad') risk.deadProxy += 1
+    if (r.trust_band === 'low') risk.lowTrust += 1
+  }
+
+  // Занятость — из локов в памяти процесса, запроса не требует. Чужие аккаунты
+  // отсеиваем по тому же срезу, иначе сотрудник увидел бы работу чужого пространства.
+  const modules = {}
+  for (const [id, lock] of Object.entries(локи || {})) {
+    if (!свои.has(id)) continue
+    for (const h of lock?.holders || [{ moduleKey: lock?.moduleKey, moduleLabel: lock?.moduleLabel }]) {
+      if (!h?.moduleKey) continue
+      modules[h.moduleKey] = modules[h.moduleKey] || { label: h.moduleLabel || h.moduleKey, count: 0 }
+      modules[h.moduleKey].count += 1
+    }
+  }
+
+  return {
+    counts: счётчики.data && typeof счётчики.data === 'object' ? счётчики.data : {},
+    facets: { countries, risk, modules, busyTotal: Object.keys(локи || {}).filter((id) => свои.has(id)).length },
   }
 }
 
 /**
- * Счётчики плиток — по всему парку, а не по странице.
+ * Сводка по парку БЕЗ строк списка.
  *
- * Считает база (`account_status_counts`). Раньше фронт получал весь парк и мерил длины
- * массивов у себя — то есть плитки и были той причиной, по которой список грузился
- * целиком.
+ * Нужна шапке панели: она показывает «сколько в строю из скольких» на КАЖДОЙ странице.
+ * Раньше ради этих двух чисел грузился весь парк — на «Прокси», «Статистике» и всюду,
+ * где аккаунтов нет на экране вовсе.
+ *
+ * @param {string|null} ownerId
  */
-async function статусныеСчётчики(db, ownerId) {
-  const { data, error } = await db.rpc('account_status_counts', { p_owner: ownerId ? String(ownerId) : null })
-  if (error) throw new Error(`[account_status_counts] счётчики не прочитаны: ${error.message}`)
-  return data && typeof data === 'object' ? data : {}
+export async function accountsSummary(ownerId = null) {
+  const db = supabaseEnabled() ? getSupabase() : null
+  if (!db) throw new Error('Сводка по аккаунтам доступна только с базой (DATA_BACKEND=supabase)')
+  return сводкаПарка(db, ownerId)
+}
+
+/**
+ * Кто «не в строю» — с именами и разбором по причинам.
+ *
+ * Имён отдаём немного: список нужен, чтобы ответить «кто именно», а не чтобы прочитать
+ * десять тысяч строк. Полное число по каждой причине приходит рядом.
+ *
+ * @param {string|null} ownerId @param {number} [limit] сколько имён на причину
+ */
+export async function brokenAccounts(ownerId = null, limit = 8) {
+  const db = supabaseEnabled() ? getSupabase() : null
+  if (!db) throw new Error('Сводка по аккаунтам доступна только с базой (DATA_BACKEND=supabase)')
+
+  let q = db.from(VIEW).select('id, name, phone, status, spamblock, proxy_id, proxy_status').eq('in_trash', false)
+  if (ownerId) q = q.eq('owner_id', String(ownerId))
+  const { data, error } = await q
+  if (error) throw new Error(`[${VIEW}] сводка «не в строю» не прочитана: ${error.message}`)
+
+  const группы = new Map()
+  const добавить = (причина, ссылка, r) => {
+    if (!группы.has(причина)) группы.set(причина, { reason: причина, link: ссылка, total: 0, items: [] })
+    const g = группы.get(причина)
+    g.total += 1
+    // Идентификатор нужен уведомлениям: закрытое уведомление помнится по нему.
+    if (g.items.length < limit) g.items.push({ id: r.id, name: r.name || r.phone || r.id })
+  }
+
+  for (const r of data || []) {
+    const статус = эффективныйСтатус(r)
+    // Порядок разбора тот же, что в панели: причина по прокси — это фильтр риска,
+    // остальные — фильтр статуса. Перепутать их значит открыть пустой список.
+    if (!r.proxy_id) добавить('Без прокси', 'risk=noProxy', r)
+    else if (r.proxy_status === 'dead' || r.proxy_status === 'bad') добавить('Мёртвый прокси', 'risk=deadProxy', r)
+    else if (БЕЗ_РАБОТЫ.has(статус)) добавить(статус, `status=${статус}`, r)
+  }
+  return [...группы.values()].sort((a, b) => b.total - a.total)
+}
+
+/** Статусы, при которых аккаунт работать не может. Совпадает с BROKEN_ACCOUNT_STATUS в панели. */
+const БЕЗ_РАБОТЫ = new Set(['reauth', 'invalid', 'spamblock', 'quarantine', 'frozen'])
+
+/**
+ * Сколько аккаунтов назначено каждому прокси.
+ *
+ * Считается по тому же представлению, что и список аккаунтов, — иначе каталог прокси и
+ * менеджер разойдутся в числах прямо на экране. Раньше счёт шёл по метаданным с
+ * дополнительным условием «есть файл сессии», и ради этого условия читалась строка
+ * сессии на КАЖДЫЙ аккаунт. Условие заодно и неверное: аккаунт без сессии никуда не
+ * делся, прокси у него занят, и в менеджере он теперь виден.
+ *
+ * @param {string|null} ownerId @returns {Promise<Record<string, number>>}
+ */
+export async function proxyUsage(ownerId = null) {
+  const db = supabaseEnabled() ? getSupabase() : null
+  if (!db) return {}
+  let q = db.from(VIEW).select('proxy_id').eq('in_trash', false).not('proxy_id', 'is', null)
+  if (ownerId) q = q.eq('owner_id', String(ownerId))
+  const { data, error } = await q
+  if (error) throw new Error(`[${VIEW}] занятость прокси не прочитана: ${error.message}`)
+  const out = {}
+  for (const r of data || []) out[r.proxy_id] = (out[r.proxy_id] || 0) + 1
+  return out
 }
 
 /**

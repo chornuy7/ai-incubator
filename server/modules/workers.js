@@ -157,6 +157,7 @@ async function goalExpired(settings) {
 import { filterBlacklisted, isBlacklistedSync, isBlacklistedMailingTarget } from '../targetBlacklist.js'
 import { pickReactionPost, normalizeLastPostsCount } from '../lib/reactionPick.js'
 import { accountProxyUrl } from '../proxies.js'
+import { taskErrorText } from '../lib/taskErrors.js'
 
 /** @type {Map<string, Promise<void>>} */
 const running = new Map()
@@ -882,7 +883,7 @@ export async function runNeuroCommenting(task, store) {
     await store.appendLog(task, task.status === 'error' ? 'error' : 'info', finishNote(task))
   } catch (err) {
     task.status = 'error'
-    await store.appendLog(task, 'error', err instanceof Error ? err.message : 'Ошибка')
+    await store.appendLog(task, 'error', taskErrorText(err, 'воркер'))
   }
   await store.saveTask(task)
   await finalizeAccounts(accountIds, task.id, !!task.pauseRequested)
@@ -1113,7 +1114,7 @@ export async function runNeuroChatting(task, store) {
     await store.appendLog(task, task.status === 'error' ? 'error' : 'info', finishNote(task))
   } catch (err) {
     task.status = 'error'
-    await store.appendLog(task, 'error', err instanceof Error ? err.message : 'Ошибка')
+    await store.appendLog(task, 'error', taskErrorText(err, 'воркер'))
   }
   await store.saveTask(task)
   await finalizeAccounts(accountIds, task.id, !!task.pauseRequested)
@@ -1381,7 +1382,7 @@ export async function runMassReact(task, store) {
     await store.appendLog(task, task.status === 'error' ? 'error' : 'info', finishNote(task))
   } catch (err) {
     task.status = 'error'
-    await store.appendLog(task, 'error', err instanceof Error ? err.message : 'Ошибка')
+    await store.appendLog(task, 'error', taskErrorText(err, 'воркер'))
   }
   await store.saveTask(task)
   await finalizeAccounts(accountIds, task.id, !!task.pauseRequested)
@@ -1551,7 +1552,7 @@ export async function runMassLooking(task, store) {
     await store.appendLog(task, task.status === 'error' ? 'error' : 'info', finishNote(task))
   } catch (err) {
     task.status = 'error'
-    await store.appendLog(task, 'error', err instanceof Error ? err.message : 'Ошибка')
+    await store.appendLog(task, 'error', taskErrorText(err, 'воркер'))
   }
   await store.saveTask(task)
   await finalizeAccounts(accountIds, task.id, !!task.pauseRequested)
@@ -1823,7 +1824,7 @@ export async function runWarming(task, store) {
     await store.appendLog(task, task.status === 'error' ? 'error' : 'info', finishNote(task, 'Прогрев завершён'))
   } catch (err) {
     task.status = 'error'
-    await store.appendLog(task, 'error', err instanceof Error ? err.message : 'Ошибка')
+    await store.appendLog(task, 'error', taskErrorText(err, 'воркер'))
   }
   await store.saveTask(task)
   await finalizeAccounts(accountIds, task.id, !!task.pauseRequested)
@@ -2364,7 +2365,7 @@ export async function runNeuroDialogs(task, store) {
     await store.appendLog(task, 'info', task.status === 'stopped' ? 'Остановлено' : 'Завершено')
   } catch (err) {
     task.status = 'error'
-    await store.appendLog(task, 'error', err instanceof Error ? err.message : 'Ошибка')
+    await store.appendLog(task, 'error', taskErrorText(err, 'воркер'))
   }
   await store.saveTask(task)
   await finalizeAccounts(accountIds, task.id, !!task.pauseRequested)
@@ -2445,7 +2446,7 @@ export async function runGgr(task, store) {
     await store.appendLog(task, 'info', `Проверено ${task.results.length} аккаунтов · валидных ${valid}`)
   } catch (err) {
     task.status = 'error'
-    await store.appendLog(task, 'error', err instanceof Error ? err.message : 'Ошибка')
+    await store.appendLog(task, 'error', taskErrorText(err, 'воркер'))
   }
   await store.saveTask(task)
 }
@@ -3003,7 +3004,7 @@ export async function runChannelParser(task, store, kind) {
     await store.appendLog(task, 'info', `Готово · найдено ${task.results.length} ${unitLabel}`)
   } catch (err) {
     task.status = 'error'
-    await store.appendLog(task, 'error', err instanceof Error ? err.message : 'Ошибка')
+    await store.appendLog(task, 'error', taskErrorText(err, 'воркер'))
   }
   await store.saveTask(task)
   await finalizeAccounts(accountIds, task.id, !!task.pauseRequested)
@@ -3379,7 +3380,7 @@ export async function runParticipantsParser(task, store, kind) {
     await store.appendLog(task, 'info', `Готово · обработано ${processed}/${tgs.length} групп · найдено ${task.results.length} пользователей`)
   } catch (err) {
     task.status = 'error'
-    await store.appendLog(task, 'error', err instanceof Error ? err.message : 'Ошибка')
+    await store.appendLog(task, 'error', taskErrorText(err, 'воркер'))
   }
   await store.saveTask(task)
   await finalizeAccounts(accountIds, task.id, !!task.pauseRequested)
@@ -3859,7 +3860,7 @@ export async function runMailing(task, store) {
     await store.appendLog(task, 'info', `Мейлинг завершён · отправлено ${sent} · пропущено ${skipped} (нет в Telegram)`)
   } catch (err) {
     task.status = 'error'
-    await store.appendLog(task, 'error', err instanceof Error ? err.message : 'Ошибка')
+    await store.appendLog(task, 'error', taskErrorText(err, 'воркер'))
   }
   await store.saveTask(task)
   await finalizeAccounts(accountIds, task.id, !!task.pauseRequested)
@@ -3973,7 +3974,7 @@ export async function runAutoPosting(task, store) {
     }
   } catch (err) {
     task.status = 'error'
-    await store.appendLog(task, 'error', err instanceof Error ? err.message : 'Ошибка')
+    await store.appendLog(task, 'error', taskErrorText(err, 'воркер'))
   }
   await store.saveTask(task)
   await finalizeAccounts(accountIds, task.id, !!task.pauseRequested)

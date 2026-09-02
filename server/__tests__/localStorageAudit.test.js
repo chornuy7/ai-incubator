@@ -28,6 +28,7 @@ const SRC = new URL('../../src/', import.meta.url)
  */
 const ALLOWED = {
   'features/auth/session.ts': 'токен и профиль текущей сессии — иначе вход не переживёт перезагрузку',
+  'shared/lib/liveSocket.ts': 'тот же токен сессии для живого канала: браузерный WebSocket не даёт задать заголовок',
   'features/auth/zone.ts': 'имена ключей сессии (панель/админка живут раздельно)',
   'features/auth/SessionGuard.tsx': 'чтение токена своей зоны при входе на страницу',
   'features/auth/ImpersonationBar.tsx': 'вход под клиентом: снять подменную сессию и вернуться к своей',

@@ -1,4 +1,4 @@
-import { useMemo, useState, useEffect, useRef } from 'react'
+import { useCallback, useMemo, useState, useEffect, useRef } from 'react'
 import { RequestToOwnerModal } from '@/features/requests/RequestToOwner'
 import {
   Plus, UploadCloud, Server, RefreshCw, ListChecks, Search, Filter,
@@ -8,9 +8,8 @@ import {
 import type React from 'react'
 import { createPortal } from 'react-dom'
 import { useNavigate } from 'react-router-dom'
-import { useApp, activeAccounts, trashedAccounts, STATUS_META } from '@/mocks/store'
+import { useApp, STATUS_META } from '@/mocks/store'
 import { useSession } from '@/features/auth/session'
-import { filterAccountsByAccess } from '@/shared/lib/access'
 import { useUi } from '@/shared/lib/uiStore'
 import {
   PageHeader, Avatar, StatusBadge, EmptyState, Dropdown, MenuItem, Select, Skeleton, Modal, NumberField, useTooltip,
@@ -26,12 +25,14 @@ import { AiSafetyModal } from '@/features/modules/shared'
 import { PaywallLock } from '@/features/paywall/Paywall'
 import { cn } from '@/shared/lib/utils'
 import { ROLES } from '@/shared/config/modules'
-import { countryOptionsFrom, matchesGeo } from '@/shared/config/geo'
+import { COUNTRIES, countryOptionsFrom } from '@/shared/config/geo'
 import { confirmDialog, promptDialog } from '@/shared/lib/dialog'
 import type { AccountStatus, TgAccount } from '@/shared/types'
-import { patchAccount, releaseAccountLock, setAccountStatusManual, fetchDailyAll, type DailyAllMap } from '@/api/accountsApi'
+import {
+  patchAccount, releaseAccountLock, setAccountStatusManual, fetchDailyAll, fetchAccountsPage,
+  type DailyAllMap, type AccountsQuery, type AccountsPage as ДанныеСтраницы,
+} from '@/api/accountsApi'
 import { fetchCampaigns, updateCampaign, type Campaign, type PinnedMap } from '@/api/campaignsApi'
-import { fetchAccountGroups, type AccountGroup } from '@/api/accountGroupsApi'
 import { fetchProxies, isUsableProxy, type Proxy as ApiProxy } from '@/api/proxiesApi'
 import { assignProxies, proxyCapacity } from '@/api/accountImportApi'
 import { fetchActivity, setActivity, type ActivityMap, type SchedulePercent } from '@/api/accountActivityApi'
@@ -216,33 +217,8 @@ function hasProxy(a: { proxyId?: string | null }) {
  */
 type SortKey = 'default' | 'problems' | 'name' | 'status' | 'country' | 'newest' | 'oldest'
 
-const str = (v: unknown) => String(v ?? '')
 // MR-154: «отвалившийся» аккаунт — нет прокси / прокси не отвечает / нерабочий статус.
-const PROBLEM_STATUSES = new Set(['invalid', 'reauth', 'spamblock', 'quarantine', 'frozen'])
-const isProblemAccount = (a: TgAccount) => !hasProxy(a) || a.proxyOk === false || PROBLEM_STATUSES.has(str(a.status))
 // Кириллица (0) — выше латиницы (1); пустое имя — в самый низ.
-const scriptRank = (s: string) => { const c = s.trim(); return !c ? 2 : /^[Ѐ-ӿ]/.test(c) ? 0 : 1 }
-const SORTS: Record<SortKey, (a: TgAccount, b: TgAccount) => number> = {
-  // MR-129: порядок как просил заказчик — (1) свободные/занятые, (2) по прокси-региону
-  // (одинаковый прокси/регион рядом; без прокси — в конце своей группы), (3) по алфавиту.
-  default: (a, b) =>
-    (Number(!!a.busyIn) - Number(!!b.busyIn))
-    || (Number(!hasProxy(a)) - Number(!hasProxy(b)))
-    || str(a.proxyLabel).localeCompare(str(b.proxyLabel))
-    || str(a.name || a.username).localeCompare(str(b.name || b.username), 'ru'),
-  // MR-154: проблемные сверху, затем кириллица→латиница, затем по алфавиту.
-  problems: (a, b) =>
-    (Number(isProblemAccount(b)) - Number(isProblemAccount(a)))
-    || (scriptRank(str(a.name || a.username)) - scriptRank(str(b.name || b.username)))
-    || str(a.name || a.username).localeCompare(str(b.name || b.username), 'ru'),
-  name: (a, b) => str(a.name || a.username).localeCompare(str(b.name || b.username), 'ru'),
-  status: (a, b) => str(a.status).localeCompare(str(b.status)),
-  country: (a, b) => str(a.country).localeCompare(str(b.country), 'ru'),
-  // Свежие сверху: у аккаунтов без даты ставим 0, иначе они всплывали бы наверх.
-  newest: (a, b) => (Number(b.createdAt) || 0) - (Number(a.createdAt) || 0),
-  oldest: (a, b) => (Number(a.createdAt) || 0) - (Number(b.createdAt) || 0),
-}
-
 const SORT_LABELS: { key: SortKey; label: string }[] = [
   { key: 'default', label: 'Свободные сверху' },
   { key: 'problems', label: 'Проблемные сверху' },
@@ -254,16 +230,13 @@ const SORT_LABELS: { key: SortKey; label: string }[] = [
 ]
 
 export function AccountsPage() {
-  const data = useApp((s) => s.data)
   const isNoSub = useApp((s) => s.userState === 'no-sub')
   const trashAccount = useApp((s) => s.trashAccount)
   const restoreAccount = useApp((s) => s.restoreAccount)
   const emptyTrash = useApp((s) => s.emptyTrash)
   const setAccountStatus = useApp((s) => s.setAccountStatus)
   const setAccountProxy = useApp((s) => s.setAccountProxy)
-  const loadAccounts = useApp((s) => s.loadAccounts)
   const loadAccountBusy = useApp((s) => s.loadAccountBusy)
-  const accountsLoading = useApp((s) => s.accountsLoading)
   /*
    * MR-203: пока НАСТОЯЩИЕ аккаунты не приехали, в плитках рисуем прочерк.
    *
@@ -271,8 +244,6 @@ export function AccountsPage() {
    * экран уверенно показывал «0 Активные» — на общем компьютере это читается как
    * «аккаунты пропали». Ноль это утверждение; «ещё не знаю» — не ноль.
    */
-  const accountsLoaded = useApp((s) => s.accountsLoaded)
-  const число = (n: number) => (accountsLoaded ? String(n) : '—')
   const pushToast = useApp((s) => s.pushToast)
   const sessionUser = useSession((s) => s.user)
   const setTasksOpen = useUi((s) => s.setTasksOpen)
@@ -322,9 +293,6 @@ export function AccountsPage() {
   // Фильтр «Кампания» скрыт (14.08) — оставляем 'all', сеттер не нужен.
   const [campaignFilter] = useState('all')
   const [trashAlive, setTrashAlive] = useState(false) // §2: показать только «живые» среди удалённых
-  // §12: без списка групп доступ роли «на группу» не применялся бы (был баг — фильтр не видел групп).
-  const [accGroups, setAccGroups] = useState<AccountGroup[]>([])
-  useEffect(() => { void fetchAccountGroups().then(({ groups }) => setAccGroups(groups)).catch(() => {}) }, [])
   const loadCampaigns = () => {
     void fetchCampaigns().then(({ campaigns: cs, pinned }) => { setCampaigns(cs); setPinnedMap(pinned) }).catch(() => {})
   }
@@ -350,10 +318,6 @@ export function AccountsPage() {
   // Усталость можно задать и ОДНОМУ аккаунту (не только массово): клик по ячейке усталости.
   const [fatigueOne, setFatigueOne] = useState<string | null>(null)
   /** Усталость аккаунта в процентах от порога (0, если порог не задан). */
-  const fatiguePct = (id: string) => {
-    const act = activity[id]
-    return act && act.threshold > 0 ? Math.min(100, Math.round((act.fatigue / act.threshold) * 100)) : 0
-  }
   const [assignProxyOpen, setAssignProxyOpen] = useState(false)
   useEffect(() => {
     const load = () => { void fetchActivity().then(setActivityMap).catch(() => {}) }
@@ -425,15 +389,31 @@ export function AccountsPage() {
   const [sortKey, setSortKey] = useState<SortKey>('default')
   const [proxyAcc, setProxyAcc] = useState<TgAccount | null>(null)
 
-  const loading = accountsLoading
 
-  // R4: не-админ видит в менеджере только выданные его роли аккаунты (демо/нет сессии — все).
-  const active = sessionUser
-    ? filterAccountsByAccess(activeAccounts(data), sessionUser.permissions, sessionUser.isAdmin, accGroups)
-    : activeAccounts(data)
-  const trashed = sessionUser
-    ? filterAccountsByAccess(trashedAccounts(data), sessionUser.permissions, sessionUser.isAdmin, accGroups)
-    : trashedAccounts(data)
+  /*
+   * СТРАНИЦА, А НЕ ВЕСЬ ПАРК.
+   *
+   * Здесь список брался из общего хранилища целиком, а фильтры, сортировка и разбиение на
+   * страницы делались тут же, в браузере. Пока аккаунтов полсотни, это работало; но
+   * страница показывает двадцать пять строк, а платила за все — и с ростом парка платила
+   * бы линейно. Теперь сервер отдаёт ровно ту страницу, которая показана, а фильтры и
+   * порядок уезжают в запрос к базе.
+   *
+   * Отбор по роли (filterAccountsByAccess) тоже уехал на сервер: фильтровать выданное
+   * ПОСЛЕ выборки страницы нельзя — из двадцати пяти строк осталось бы семь, а «всего»
+   * посчиталось бы по чужим аккаунтам.
+   */
+  const [страница, setСтраница] = useState<ДанныеСтраницы | null>(null)
+  const [грузится, setГрузится] = useState(true)
+  /*
+   * Аккаунты, которые оператор уже видел.
+   *
+   * Выбор чекбоксами переживает переход между страницами, а действия над выбранным (стоп,
+   * пауза, корзина) работают с объектами, а не только с идентификаторами. Строку можно
+   * выбрать только на просмотренной странице, поэтому накопленной карты достаточно —
+   * и полный список ради этого грузить не надо.
+   */
+  const [известные, setИзвестные] = useState<Map<string, TgAccount>>(new Map())
 
   // §6: сводка суточных лимитов по аккаунтам (для индикатора throttle в списке).
   const [dailyAll, setDailyAll] = useState<DailyAllMap>({})
@@ -445,66 +425,103 @@ export function AccountsPage() {
     return () => { alive = false; clearInterval(t) }
   }, [])
 
+  /*
+   * Плитки считает БАЗА и присылает вместе со страницей.
+   *
+   * Раньше они складывались из полного списка в браузере — и ровно поэтому список
+   * приходилось грузить целиком: плитка «Спамблок» обязана показывать всех, а не тех,
+   * кто попал в текущие двадцать пять строк.
+   */
   const statusCounts = useMemo(() => {
     const c: Record<AccountStatus, number> = { active: 0, working: 0, warming: 0, pause: 0, floodwait: 0, quarantine: 0, spamblock: 0, invalid: 0, frozen: 0, reauth: 0 }
-    for (const a of active) c[a.status] += 1
+    for (const [k, n] of Object.entries(страница?.counts || {})) if (k in c) c[k as AccountStatus] = Number(n) || 0
     return c
-  }, [active])
+  }, [страница])
 
-  // Правка 14.08: счётчики причин риска — отдельно (мёртвый прокси / нет прокси / низкое доверие).
-  // Один аккаунт может попасть в несколько (у него бывает и мёртвый прокси, и низкий trust).
-  const riskCounts = useMemo(() => {
-    const c: Record<RiskKey, number> = { deadProxy: 0, noProxy: 0, lowTrust: 0 }
-    for (const a of active) for (const k of RISK_ORDER) if (RISK_META[k].match(a)) c[k] += 1
-    return c
-  }, [active])
+  // Причины риска считает сервер по тем же правилам (мёртвый прокси / нет прокси / низкое доверие).
+  const riskCounts = страница?.facets.risk || { deadProxy: 0, noProxy: 0, lowTrust: 0 }
 
   // (8) Сводка по модулям: сколько аккаунтов сейчас работают в каждом модуле.
-  const moduleSummary = useMemo(() => {
-    const map = new Map<string, { label: string; count: number }>()
-    for (const a of active) {
-      if (!a.busyIn) continue
-      const cur = map.get(a.busyIn.moduleKey) || { label: a.busyIn.moduleLabel, count: 0 }
-      cur.count += 1
-      map.set(a.busyIn.moduleKey, cur)
+  const moduleSummary = useMemo(
+    () => Object.entries(страница?.facets.modules || {}).map(([key, v]) => ({ key, ...v })),
+    [страница],
+  )
+
+  /** Страна или регион → перечень кодов. Карта регионов живёт здесь, поэтому и раскрываем здесь. */
+  const страныЗапроса = (ф: string): string[] | undefined => {
+    if (!ф || ф === 'all') return undefined
+    if (!ф.startsWith('reg:')) return [ф]
+    const регион = ф.slice(4)
+    return COUNTRIES.filter((c) => c.region === регион).map((c) => c.code)
+  }
+
+  const запрос: AccountsQuery = useMemo(() => ({
+    page: page + 1,
+    pageSize,
+    search: query.trim() || undefined,
+    statuses: tab === 'accounts' && statusFilter !== 'all' ? [statusFilter] : undefined,
+    countries: страныЗапроса(countryFilter),
+    risk: tab === 'accounts' && riskFilter !== 'all' ? riskFilter : undefined,
+    campaignId: campaignFilter !== 'all' ? campaignFilter : undefined,
+    busyModule: tab === 'accounts' && moduleFilter !== 'all' ? moduleFilter : undefined,
+    fatigueMin: fatigueMin > 0 ? fatigueMin : undefined,
+    inTrash: tab === 'trash',
+    trashAlive: tab === 'trash' && trashAlive,
+    sort: { field: sortKey, dir: sortKey === 'oldest' ? 'asc' : 'desc' },
+  }), [page, pageSize, query, tab, statusFilter, countryFilter, riskFilter, campaignFilter, moduleFilter, fatigueMin, trashAlive, sortKey])
+
+  const перезагрузить = useCallback(async () => {
+    setГрузится(true)
+    try {
+      const п = await fetchAccountsPage(запрос)
+      setСтраница(п)
+      setИзвестные((было) => {
+        const m = new Map(было)
+        for (const a of п.items) m.set(a.id, a)
+        return m
+      })
+    } catch (e) {
+      pushToast({ type: 'error', title: 'Не удалось загрузить аккаунты', desc: e instanceof Error ? e.message : 'Проверьте, что API-сервер запущен' })
+    } finally {
+      setГрузится(false)
     }
-    return [...map.entries()].map(([key, v]) => ({ key, ...v }))
-  }, [active])
+  }, [запрос, pushToast])
 
-  const source = tab === 'accounts' ? active : trashed
-  const filtered = useMemo(() => {
-    const list = source.filter((a) => {
-      if (tab === 'accounts' && statusFilter !== 'all' && a.status !== statusFilter) return false
-      if (tab === 'accounts' && riskFilter !== 'all' && !RISK_META[riskFilter].match(a)) return false
-      // §2: в корзине можно отсеять «мёртвые» — оставить только валидные сессии.
-      if (tab === 'trash' && trashAlive && (a.status === 'invalid' || a.status === 'reauth')) return false
-      if (campaignFilter === 'pool' && campaignOf(a.id)) return false
-      if (campaignFilter !== 'all' && campaignFilter !== 'pool') {
-        const c = campaigns.find((x) => x.id === campaignFilter)
-        if (!c || !(c.accountIds || []).includes(a.id)) return false
-      }
-      if (!matchesGeo(a.country, countryFilter)) return false
-      if (tab === 'accounts' && moduleFilter !== 'all') {
-        if (moduleFilter === 'idle') { if (a.busyIn) return false }
-        else if (a.busyIn?.moduleKey !== moduleFilter) return false
-      }
-      if (query && !`${a.name} ${a.username} ${a.phone}`.toLowerCase().includes(query.toLowerCase())) return false
-      // §4 (D2): порог усталости — показываем только устающих ≥ N%.
-      if (fatigueMin > 0 && fatiguePct(a.id) < fatigueMin) return false
-      return true
-    })
-    // Сортируем стабильно: сравнение по ключу, при равенстве — исходный порядок,
-    // иначе строки прыгали бы между перерисовками при одинаковых значениях.
-    const cmp = SORTS[sortKey]
-    return list
-      .map((a, i) => ({ a, i }))
-      .sort((x, y) => cmp(x.a, y.a) || (x.i - y.i))
-      .map((x) => x.a)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [source, tab, statusFilter, riskFilter, campaignFilter, campaigns, pinnedMap, countryFilter, moduleFilter, query, trashAlive, sortKey, fatigueMin, activity])
+  useEffect(() => { void перезагрузить() }, [перезагрузить])
 
-  const pageCount = Math.max(1, Math.ceil(filtered.length / pageSize))
-  const pageItems = filtered.slice(page * pageSize, page * pageSize + pageSize)
+  // Смена фильтра или размера страницы возвращает на первую: иначе оператор остаётся на
+  // седьмой странице набора, в котором теперь две.
+  useEffect(() => { setPage(0) }, [tab, statusFilter, riskFilter, campaignFilter, countryFilter, moduleFilter, query, fatigueMin, trashAlive, sortKey, pageSize])
+
+  const loading = грузится
+  const pageItems = страница?.items || []
+  const pageCount = страница?.page.pages || 1
+  const всегоВНаборе = страница?.page.total || 0
+  // Корзина считается по всему парку: её плитка видна и на вкладке аккаунтов, где
+  // удалённых в наборе нет вовсе.
+  const вКорзине = Number(страница?.counts?.trash) || 0
+  /*
+   * «Ещё не знаю» и «знаю, что ноль» — разные вещи.
+   *
+   * До первого ответа сервера рисуем прочерк, а не «0 Активные»: ноль — это утверждение,
+   * а в этот момент мы ничего не утверждать не можем. На общем компьютере такой ноль
+   * читается как «аккаунты пропали». Признак загруженности теперь свой — страница
+   * приезжает отдельным запросом, а не из общего хранилища.
+   */
+  const accountsLoaded = страница !== null
+  const число = (n: number) => (accountsLoaded ? String(n) : '—')
+  /*
+   * Кого снимать со спамблока, когда ничего не выбрано, — ВЕСЬ набор, а не текущая
+   * страница. Спрашиваем у сервера в момент открытия окна: держать этот список
+   * постоянно незачем, а собирать его из показанных строк было бы враньём.
+   */
+  const [спамблокВсего, setСпамблокВсего] = useState<string[]>([])
+  useEffect(() => {
+    if (!unblockOpen) return
+    void fetchAccountsPage({ statuses: ['spamblock'], pageSize: 200 })
+      .then((п) => setСпамблокВсего(п.items.map((a) => a.id)))
+      .catch(() => {})
+  }, [unblockOpen])
 
   const allOnPageSelected = pageItems.length > 0 && pageItems.every((a) => selected.has(a.id))
   // §2: чекбокс-заголовок 3 состояния. Частичный выбор (semi) — клик снимает ВСЁ,
@@ -541,9 +558,9 @@ export function AccountsPage() {
   /** §2: аккаунт «в работе» нельзя удалять — сначала стоп (иначе уходил в корзину, не меняя статус). */
   const busySelected = useMemo(
     () => [...selected]
-      .map((id) => active.find((a) => a.id === id))
+      .map((id) => известные.get(id))
       .filter((a): a is TgAccount => !!a && (!!a.busyIn || a.status === 'working' || a.status === 'warming')),
-    [selected, active],
+    [selected, известные],
   )
 
   /** §2: восстановить выбранные из корзины (раньше — только по одному). */
@@ -578,7 +595,7 @@ export function AccountsPage() {
     void (async () => {
       const ids = [...selected]
       for (const id of ids) { try { await patchAccount(id, { status }) } catch { /* skip */ } }
-      await loadAccounts()
+      await перезагрузить()
       pushToast({ type: 'success', title, desc: `Аккаунтов: ${ids.length}` })
       setSelected(new Set())
     })()
@@ -596,7 +613,7 @@ export function AccountsPage() {
           if (r.ok) ok += 1
         } catch { /* skip */ }
       }
-      await loadAccounts()
+      await перезагрузить()
       pushToast({ type: 'success', title, desc: `Аккаунтов: ${ok} из ${ids.length}` })
       setSelected(new Set())
     })()
@@ -614,7 +631,7 @@ export function AccountsPage() {
           await patchAccount(id, { status: 'active' })
         } catch { /* skip */ }
       }
-      await loadAccounts()
+      await перезагрузить()
       await loadAccountBusy()
       pushToast({ type: 'success', title: 'Остановлено/освобождено', desc: `Снято блокировок: ${released} из ${ids.length}` })
       setSelected(new Set())
@@ -628,7 +645,7 @@ export function AccountsPage() {
     void (async () => {
       const ids = [...selected]
       for (const id of ids) { try { await patchAccount(id, { ...patch, initiator: 'operator' }) } catch { /* skip */ } }
-      await loadAccounts()
+      await перезагрузить()
       pushToast({ type: 'success', title: 'Перемещено', desc: `Профилей: ${ids.length}` })
       setMoveOpen(false)
       setSelected(new Set())
@@ -734,7 +751,7 @@ export function AccountsPage() {
             <Trash2 size={15} />
           </span>
           <div className="min-w-0">
-            <div className="font-display text-xl font-bold text-fg">{число(trashed.length)}</div>
+            <div className="font-display text-xl font-bold text-fg">{число(вКорзине)}</div>
             <div className="truncate text-[11px] font-semibold text-muted">Корзина</div>
           </div>
           <span className="pointer-events-none absolute left-1/2 top-[calc(100%+6px)] z-50 w-max max-w-[220px] -translate-x-1/2 rounded-lg border border-line bg-surface px-2.5 py-1.5 text-left text-[11px] font-medium leading-snug text-fg opacity-0 shadow-xl transition-opacity group-hover/kpi:opacity-100">Аккаунты, отправленные в корзину. Клик — открыть/закрыть.</span>
@@ -792,7 +809,7 @@ export function AccountsPage() {
               />
               {/* Правка 14.08: фильтр «Кампания» скрыт в менеджере (кампаний пока нет). */}
               <div className="mb-1 px-1 text-[11px] font-bold uppercase tracking-wide text-faint">Страна</div>
-              <Select className="mb-3" value={countryFilter} onChange={setCountryFilter} options={countryOptionsFrom(active.map((a) => a.country)).map((c) => ({ value: c.code, label: `${c.flag} ${c.label}`.trim() }))} />
+              <Select className="mb-3" value={countryFilter} onChange={setCountryFilter} options={countryOptionsFrom(Object.keys(страница?.facets.countries || {})).map((c) => ({ value: c.code, label: `${c.flag} ${c.label}`.trim() }))} />
               <div className="mb-1 px-1 text-[11px] font-bold uppercase tracking-wide text-faint">Модуль</div>
               <Select
                 value={moduleFilter}
@@ -822,15 +839,15 @@ export function AccountsPage() {
             отдельной карточкой в верхнем ряду статусов. */}
         <div className="ml-auto flex items-center gap-2">
           <IconBtn icon={<ListChecks size={17} />} label="Задачи" onClick={() => setTasksOpen(true)} />
-          <IconBtn icon={<RefreshCw size={17} />} label="Обновить список" onClick={() => { void loadAccounts(); pushToast({ type: 'info', title: 'Обновлено', desc: 'Список загружен с сервера.' }) }} />
-          {tab === 'trash' && trashed.length > 0 && (
+          <IconBtn icon={<RefreshCw size={17} />} label="Обновить список" onClick={() => { void перезагрузить(); pushToast({ type: 'info', title: 'Обновлено', desc: 'Список загружен с сервера.' }) }} />
+          {tab === 'trash' && вКорзине > 0 && (
             <button onClick={() => { void emptyTrash().then(() => pushToast({ type: 'success', title: 'Корзина очищена' })) }} className="btn-danger h-10"><Trash2 size={16} /> Очистить</button>
           )}
         </div>
       </div>
 
       {/* §2: корзина — массовое восстановление и фильтр «живых» (валидных) сессий. */}
-      {tab === 'trash' && trashed.length > 0 && (
+      {tab === 'trash' && вКорзине > 0 && (
         <div className="mb-3 flex flex-wrap items-center gap-2 rounded-xl border border-line bg-elevated/40 px-3 py-2">
           <button
             disabled={selected.size === 0}
@@ -850,8 +867,8 @@ export function AccountsPage() {
       {/* Панель управления выбранными — всегда видна на вкладке аккаунтов; серая, если ничего не выбрано */}
       {tab === 'accounts' && (() => {
         const has = selected.size > 0
-        const total = active.length
-        const spamIds = active.filter((a) => a.status === 'spamblock').map((a) => a.id)
+        const total = всегоВНаборе
+        const спамблоком = Number(страница?.counts?.spamblock) || 0
         return (
         // Правки 14.08: панель управления целиком в иконках + кастомные тултипы; счётчик «N из total».
         <div className="mb-3 flex flex-wrap items-center gap-1.5 rounded-xl border border-line bg-elevated/40 px-3 py-2">
@@ -865,11 +882,11 @@ export function AccountsPage() {
           {/* §4.5: массово задать усталость/отдых, «как живой человек». */}
           <IconBtn disabled={!has} icon={<Moon size={16} />} label="Усталость и отдых" onClick={() => setFatigueOpen(true)} />
           {/* Снятие спамблока через @SpamBot — массово, с рандомными задержками. */}
-          <IconBtn disabled={!spamIds.length} icon={<ShieldCheck size={16} />} label={`Снять спамблок${spamIds.length ? ` (${spamIds.length})` : ''}`} onClick={() => setUnblockOpen(true)} tone="border-amber-500/40 bg-amber-500/8 text-amber-300 hover:bg-amber-500/15" />
+          <IconBtn disabled={!спамблоком} icon={<ShieldCheck size={16} />} label={`Снять спамблок${спамблоком ? ` (${спамблоком})` : ''}`} onClick={() => setUnblockOpen(true)} tone="border-amber-500/40 bg-amber-500/8 text-amber-300 hover:bg-amber-500/15" />
           <IconBtn disabled={!has} icon={<Server size={16} />} label="Назначить прокси" onClick={() => setAssignProxyOpen(true)} />
           <IconBtn disabled={!has} icon={<KeyRound size={16} />} label="Реавторизация" onClick={() => { void (async () => { for (const id of selected) await setAccountStatus(id, 'reauth'); pushToast({ type: 'info', title: 'Отправлено на реавторизацию' }); setSelected(new Set()) })() }} />
           {/* «Управление» — мульти-просмотр выбранных: открываем обзор на первом, весь выбор в ?sel=. */}
-          <IconBtn disabled={!has} icon={<Eye size={16} />} label="Управление (обзор выбранных)" onClick={() => { const chosen = active.filter((a) => selected.has(a.id)); if (!chosen.length) return; navigate(`/panel/accounts/${chosen[0].id}?sel=${chosen.map((a) => a.id).join(',')}`) }} tone="border-iris-500/50 bg-iris-500/12 text-iris-200 hover:bg-iris-500/20" />
+          <IconBtn disabled={!has} icon={<Eye size={16} />} label="Управление (обзор выбранных)" onClick={() => { const chosen = [...selected]; if (!chosen.length) return; navigate(`/panel/accounts/${chosen[0]}?sel=${chosen.join(',')}`) }} tone="border-iris-500/50 bg-iris-500/12 text-iris-200 hover:bg-iris-500/20" />
           {/* «В корзину» — деструктивная, крайняя справа. */}
           <span className="ml-auto inline-flex">
             <IconBtn disabled={!has} icon={<Trash2 size={16} />} label={busySelected.length ? `В корзину — сначала остановите ${busySelected.length} в работе` : 'В корзину'} onClick={bulkTrash} tone="border-line text-fg hover:bg-elevated" />
@@ -881,7 +898,7 @@ export function AccountsPage() {
       {/* Table / content */}
       {isNoSub ? (
         <PaywallLock>
-          <AccountsTable pageItems={active.slice(0, 3)} visibleCols={visibleCols} showCol={showCol} selected={selected} toggleOne={() => {}} allOnPageSelected={false} someOnPageSelected={false} toggleAll={() => {}} tab="accounts" onDetail={() => {}} onProxy={() => {}} onTrash={() => {}} onRestore={() => {}} onReauth={() => {}} onMarkReauth={() => {}} loading={false} campaignOf={campaignOf} onAssign={() => {}} />
+          <AccountsTable pageItems={pageItems.slice(0, 3)} visibleCols={visibleCols} showCol={showCol} selected={selected} toggleOne={() => {}} allOnPageSelected={false} someOnPageSelected={false} toggleAll={() => {}} tab="accounts" onDetail={() => {}} onProxy={() => {}} onTrash={() => {}} onRestore={() => {}} onReauth={() => {}} onMarkReauth={() => {}} loading={false} campaignOf={campaignOf} onAssign={() => {}} />
         </PaywallLock>
       ) : loading ? (
         <div className="card overflow-hidden p-0">
@@ -894,7 +911,7 @@ export function AccountsPage() {
             </div>
           ))}
         </div>
-      ) : filtered.length === 0 ? (
+      ) : всегоВНаборе === 0 ? (
         <div className="card">
           <EmptyState
             icon={<Users size={26} />}
@@ -954,7 +971,7 @@ export function AccountsPage() {
           {/* Pagination */}
           <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
             <div className="flex items-center gap-2 text-sm text-muted">
-              <span>Показано {page * pageSize + 1}–{Math.min((page + 1) * pageSize, filtered.length)} из {filtered.length}</span>
+              <span>Показано {всегоВНаборе ? page * pageSize + 1 : 0}–{Math.min((page + 1) * pageSize, всегоВНаборе)} из {всегоВНаборе}</span>
               <Select
                 className="w-24"
                 value={String(pageSize)}
@@ -975,7 +992,7 @@ export function AccountsPage() {
 
       {/* Modals */}
       <AddAccountWizard open={addOpen} onClose={closeWizard} mode={wizardMode} account={reauthTarget} />
-      <ImportModal open={importOpen} onClose={() => setImportOpen(false)} onImported={() => void loadAccounts()} />
+      <ImportModal open={importOpen} onClose={() => setImportOpen(false)} onImported={() => void перезагрузить()} />
       <ProxyPoolModal open={proxyPoolOpen} onClose={() => setProxyPoolOpen(false)} />
 
       {/* Account Management (реальная статистика) */}
@@ -1005,19 +1022,21 @@ export function AccountsPage() {
       <UnblockModal
         open={unblockOpen}
         ids={(() => {
-          const sel = active.filter((a) => selected.has(a.id) && a.status === 'spamblock').map((a) => a.id)
-          return sel.length ? sel : active.filter((a) => a.status === 'spamblock').map((a) => a.id)
+          const sel = [...selected].map((id) => известные.get(id)).filter((a): a is TgAccount => !!a && a.status === 'spamblock').map((a) => a.id)
+          return sel.length ? sel : спамблокВсего
         })()}
-        names={Object.fromEntries(active.map((a) => [a.id, a.name || a.username || a.phone || a.id.slice(-6)]))}
+        // Подписи — из уже просмотренных строк: имена нужны только для показа хода работы,
+        // и ради них тянуть весь парк незачем. Кого не видели — покажется по короткому id.
+        names={Object.fromEntries([...известные.values()].map((a) => [a.id, a.name || a.username || a.phone || a.id.slice(-6)]))}
         onClose={() => setUnblockOpen(false)}
-        onFinished={() => { void loadAccounts() }}
+        onFinished={() => { void перезагрузить() }}
         pushToast={pushToast}
       />
       <AssignProxyModal
         open={assignProxyOpen}
         ids={[...selected]}
         onClose={() => setAssignProxyOpen(false)}
-        onDone={(msg) => { setAssignProxyOpen(false); setSelected(new Set()); void loadAccounts(); pushToast({ type: 'success', title: msg }) }}
+        onDone={(msg) => { setAssignProxyOpen(false); setSelected(new Set()); void перезагрузить(); pushToast({ type: 'success', title: msg }) }}
         onError={(e) => pushToast({ type: 'error', title: 'Не применилось', desc: e })}
       />
     </div>

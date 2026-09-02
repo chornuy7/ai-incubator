@@ -80,9 +80,21 @@ export function Layout() {
    */
   const needsBusy = /^\/panel(\/(accounts|modules|tasks|automation)\b|\/?$)/.test(location.pathname)
 
+  /*
+   * Полный список аккаунтов — ТОЛЬКО там, где он нужен экрану.
+   *
+   * Здесь он грузился на КАЖДОЙ странице: открываешь «Прокси» или «Статистику» — а панель
+   * тянет весь парк, потому что когда-то список был нужен всем. Шапке от него нужны два
+   * числа, и она берёт их отдельной сводкой; менеджер аккаунтов ходит постранично. Полный
+   * список остался у экранов, где он справочник: карточка аккаунта, запуск модуля,
+   * кампания, входящие, рассылка, своя статистика.
+   */
+  const needsAllAccounts = /^\/panel\/(accounts\/|modules\/|campaign|inbox|mailing|my-statistics)/.test(location.pathname)
+
   useEffect(() => {
+    if (!needsAllAccounts) return
     void loadAccounts()
-  }, [loadAccounts])
+  }, [loadAccounts, needsAllAccounts])
 
   useEffect(() => {
     if (!needsBusy) return

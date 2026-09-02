@@ -1,8 +1,7 @@
 /** CRUD-роуты сущности «Прокси» (§3.2/3.4). Монтируется в /api/proxies. */
 import { Router } from 'express'
-import { listProxies, getProxy, createProxy, updateProxy, deleteProxy, deleteProxies, checkAllProxies, sharedProxies, probeProxy, geoNote, tcpPing, proxyUsageMap, toProxyUrl } from './proxies.js'
+import { listProxies, getProxy, createProxy, updateProxy, deleteProxy, deleteProxies, checkAllProxies, sharedProxies, probeProxy, geoNote, tcpPing, toProxyUrl } from './proxies.js'
 import { loadAllMeta } from './accountsMeta.js'
-import { loadSessionString } from './tgAuth.js'
 import { parseProxyList, proxyKey, assignLabels } from './lib/proxyImport.js'
 import { appendAudit } from './lib/auditLog.js'
 
@@ -19,31 +18,72 @@ proxiesRouter.get('/', async (req, res) => {
   try {
     // Дубли разрешены: к каждому прокси добавляем счётчик `usedBy` — на скольких
     // аккаунтах он висит (раньше это считалось нарушением, теперь — норма §6-обновл.).
+    /*
+     * «Занят N аккаунтами» считает база — по тому же представлению, что и менеджер.
+     *
+     * Здесь читалась строка сессии ПО КАЖДОМУ аккаунту: шестьдесят три обращения к базе
+     * ради одного бита («есть ли сессия»), из-за чего страница открывалась две с
+     * половиной секунды. Само условие вдобавок было неверным — аккаунт без живой сессии
+     * никуда не делся, прокси у него занят, и в менеджере он теперь виден.
+     */
     const { ownedForRequest } = await import('./lib/accessGuard.js')
-    const [allProxies, meta] = await Promise.all([listProxies(), loadAllMeta()])
+    const { proxyUsage } = await import('./accountsList.js')
+    const { accountScope } = await import('./lib/accountAccess.js')
+    const scope = await accountScope(req)
+    const [allProxies, usage] = await Promise.all([
+      listProxies(),
+      proxyUsage(scope.kind === 'all' ? null : scope.ownerId).catch(() => ({})),
+    ])
     const proxies = await ownedForRequest(req, allProxies, (p) => p?.ownerId)
-    // usedBy считаем только по РЕАЛЬНЫМ аккаунтам: с сессией и не в корзине. Иначе «сиротские»
-    // meta (импорт без сессии, демо-сиды) раздували «занят N» — прокси числился занятым
-    // аккаунтами, которых нет в менеджере (там показываются только аккаунты с сессией).
-    const realMeta = {}
-    await Promise.all(Object.entries(meta).map(async ([id, m]) => {
-      if (m?.inTrash) return
-      if (await loadSessionString(id)) realMeta[id] = m
-    }))
-    const usage = proxyUsageMap(realMeta)
-    res.json({ ok: true, proxies: proxies.map((p) => ({ ...p, usedBy: usage[p.id]?.length || 0 })) })
+    res.json({ ok: true, proxies: proxies.map((p) => ({ ...p, usedBy: usage[p.id] || 0 })) })
+  } catch (err) { fail(res, err, 500) }
+})
+
+/**
+ * Каталог прокси СТРАНИЦАМИ.
+ *
+ * POST, а не GET: у запроса фильтр, поиск и постраничность — это тело, а не строка
+ * адреса. Тот же контракт, что у списка аккаунтов, чтобы страницы вели себя одинаково.
+ *
+ * Отбор по владельцу уезжает В запрос: фильтровать после выборки страницы значит показать
+ * страницу, где половина строк вычеркнута, и счётчик «всего» по чужому каталогу.
+ */
+proxiesRouter.post('/list', async (req, res) => {
+  try {
+    const { ownerScopeForRequest } = await import('./lib/accessGuard.js')
+    const scope = await ownerScopeForRequest(req)
+    if (scope.blocked) {
+      return res.json({ ok: true, items: [], page: { number: 1, size: 25, total: 0, pages: 1 }, counts: { all: 0, ok: 0, broken: 0, unknown: 0 } })
+    }
+    const b = req.body ?? {}
+    const { listProxiesPage } = await import('./proxies.js')
+    const { proxyUsage } = await import('./accountsList.js')
+    const ownerId = scope.all ? null : scope.ownerId
+    const [страница, usage] = await Promise.all([
+      listProxiesPage({ page: b.page, pageSize: b.pageSize, search: b.search, status: b.status, ownerId }),
+      proxyUsage(ownerId).catch(() => ({})),
+    ])
+    res.json({
+      ok: true,
+      ...страница,
+      items: страница.items.map((p) => ({ ...p, usedBy: usage[p.id] || 0 })),
+    })
   } catch (err) { fail(res, err, 500) }
 })
 
 // §6: прокси, назначенные >1 аккаунту. До GET /:id.
 proxiesRouter.get('/shared', async (req, res) => {
   try {
-    // Считаем только по своим аккаунтам: сводка строится из метаданных всех аккаунтов
-    // платформы и показывала, какие прокси и к скольким чужим профилям привязаны.
-    const { canSeeAccount } = await import('./lib/accessGuard.js')
+    /*
+     * Считаем только по своим аккаунтам: сводка строится из метаданных всех аккаунтов
+     * платформы и показывала, какие прокси и к скольким чужим профилям привязаны.
+     *
+     * Область видимости считается ОДИН раз. Здесь стоял `canSeeAccount` в цикле, а внутри
+     * неё — чтение пользователя, владельца подписки, всей таблицы меты, ролей и групп.
+     */
+    const { accountScope, filterAccountMap } = await import('./lib/accountAccess.js')
     const all = await loadAllMeta()
-    const mine = {}
-    for (const [id, m] of Object.entries(all)) if (await canSeeAccount(req, id)) mine[id] = m
+    const mine = await filterAccountMap(await accountScope(req), all)
     res.json({ ok: true, shared: sharedProxies(mine) })
   } catch (err) { fail(res, err, 500) }
 })

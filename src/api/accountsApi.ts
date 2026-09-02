@@ -29,18 +29,43 @@ export interface ApiAccount {
   origin: { code: string | null; params: Record<string, unknown> }
 }
 
+export interface AccountsFacets {
+  /** Сколько аккаунтов в каждой стране — чтобы в фильтре были страны ПАРКА, а не страницы. */
+  countries: Record<string, number>
+  risk: { deadProxy: number; noProxy: number; lowTrust: number }
+  modules: Record<string, { label: string; count: number }>
+  busyTotal: number
+}
+
 export interface AccountsPage {
   items: ServerAccount[]
   page: { number: number; size: number; total: number; pages: number }
+  /** Плитки над таблицей: по всему парку, а не по показанной странице. */
   counts: Record<string, number>
+  facets: AccountsFacets
 }
 
+/**
+ * Запрос страницы.
+ *
+ * Все фильтры уходят НА СЕРВЕР. Отбирать после выборки страницы нельзя: из двадцати пяти
+ * строк осталось бы семь, а «всего» посчиталось бы по нефильтрованному набору.
+ */
 export interface AccountsQuery {
   page?: number
   pageSize?: number
   search?: string
   statuses?: string[]
+  /** Коды стран. Регион («Европа») раскрывает клиент — карта регионов живёт у него. */
+  countries?: string[]
+  risk?: 'deadProxy' | 'noProxy' | 'lowTrust'
+  campaignId?: string
+  /** Ключ модуля либо 'idle' — свободные. */
+  busyModule?: string
+  fatigueMin?: number
   inTrash?: boolean
+  /** В корзине показывать только живые (без невалидных и требующих входа). */
+  trashAlive?: boolean
   sort?: { field: string; dir: 'asc' | 'desc' }
 }
 
@@ -91,25 +116,68 @@ export function toTgAccount(a: ApiAccount): ServerAccount {
  * строка адреса. Заодно поисковый запрос оператора (а это вполне может быть номер
  * телефона) перестаёт оседать в истории браузера и в логах прокси.
  */
+/** Разбор «не в строю» по причинам: сколько и кто именно (имён немного — это ответ, а не список). */
+export interface BrokenGroup { reason: string; link: string; total: number; items: { id: string; name: string }[] }
+
+/**
+ * Числа для шапки панели БЕЗ списка аккаунтов.
+ *
+ * Шапка показывает «в строю N из M» на каждой странице. Раньше ради двух чисел грузился
+ * весь парк — в том числе на «Прокси» и «Статистике», где аккаунтов нет и близко.
+ */
+export async function fetchAccountsSummary(): Promise<{ counts: Record<string, number>; facets: AccountsFacets }> {
+  const d = await apiGet<{ counts?: Record<string, number>; facets?: AccountsFacets }>('/api/tg/accounts/summary')
+  return {
+    counts: d.counts && typeof d.counts === 'object' ? d.counts : {},
+    // Грани сливаем с пустыми: недостающая ветка ответа не должна ронять шапку.
+    facets: { ...ПУСТЫЕ_ГРАНИ, ...(d.facets || {}), risk: { ...ПУСТЫЕ_ГРАНИ.risk, ...(d.facets?.risk || {}) } },
+  }
+}
+
+/** Кто «не в строю» — запрашивается по клику, а не постоянно. */
+export async function fetchBrokenAccounts(limit = 8): Promise<BrokenGroup[]> {
+  const d = await apiGet<{ groups?: BrokenGroup[] }>(`/api/tg/accounts/broken?limit=${limit}`)
+  // Приводим к ожидаемой форме здесь, в одном месте: дальше по коду данные считаются целыми.
+  return (Array.isArray(d.groups) ? d.groups : []).map((g) => ({
+    reason: String(g?.reason || ''),
+    link: String(g?.link || ''),
+    total: Number(g?.total) || 0,
+    items: Array.isArray(g?.items) ? g.items : [],
+  }))
+}
+
+const ПУСТЫЕ_ГРАНИ: AccountsFacets = { countries: {}, risk: { deadProxy: 0, noProxy: 0, lowTrust: 0 }, modules: {}, busyTotal: 0 }
+
 export async function fetchAccountsPage(query: AccountsQuery = {}): Promise<AccountsPage> {
-  const data = await apiPost<{ items: ApiAccount[]; page: AccountsPage['page']; counts: Record<string, number> }>(
+  const data = await apiPost<{ items: ApiAccount[]; page: AccountsPage['page']; counts: Record<string, number>; facets?: AccountsFacets }>(
     '/api/tg/accounts/list', query as unknown as Record<string, unknown>,
   )
-  return { items: (data.items ?? []).map(toTgAccount), page: data.page, counts: data.counts ?? {} }
+  return {
+    items: (data.items ?? []).map(toTgAccount),
+    page: data.page,
+    counts: data.counts ?? {},
+    facets: { ...ПУСТЫЕ_ГРАНИ, ...(data.facets || {}) },
+  }
 }
 
 /**
  * Весь парк — страницами под капотом.
  *
- * Оставлено для экранов, которым правда нужен полный список (выбор аккаунтов в модуле,
- * лиды). Раньше это была одна ручка «отдай всё», и она же тянула панель: двадцать секунд
- * на запрос. Теперь «всё» — это осознанный обход страниц, и видно, кто его заказывает.
+ * ЭТО НЕ ДЛЯ МЕНЕДЖЕРА АККАУНТОВ. Он ходит `fetchAccountsPage` и просит ровно ту страницу,
+ * которую показывает. Полный обход нужен экранам, где список используется как справочник
+ * целиком: выбор аккаунтов при запуске модуля, привязка лида, рельса диалогов.
+ *
+ * Размер пачки (200) — это НЕ размер страницы в интерфейсе, а шаг обхода: чем он больше,
+ * тем меньше запросов на полный список. Путать их не надо: в менеджере размер страницы
+ * задаёт оператор селектором «25 / стр».
  */
+const ШАГ_ПОЛНОГО_ОБХОДА = 200
+
 export async function fetchAccounts(): Promise<ServerAccount[]> {
   const out: ServerAccount[] = []
   let page = 1
   for (;;) {
-    const p = await fetchAccountsPage({ page, pageSize: 200 })
+    const p = await fetchAccountsPage({ page, pageSize: ШАГ_ПОЛНОГО_ОБХОДА })
     out.push(...p.items)
     if (page >= p.page.pages || !p.items.length) break
     page += 1

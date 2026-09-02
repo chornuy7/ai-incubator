@@ -1,10 +1,13 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
-import { Network, Plus, Trash2, Pencil, Link2, Check, Circle, Zap, Loader2, MapPin, Upload } from 'lucide-react'
+import { Network, Plus, Trash2, Pencil, Link2, Check, Circle, Zap, Loader2, MapPin, Upload, Search } from 'lucide-react'
 import { PageHeader, Card, EmptyState, Badge, Select, Modal, Tip} from '@/shared/ui'
 import { HelpButton } from '@/features/neuro-commenting/moduleUi'
 import {
-  fetchProxies, createProxy, updateProxy, deleteProxy, deleteProxies, checkProxy, checkAllProxies,
-  PROXY_KIND_LABELS, type Proxy, type ProxyInput, type ProxyKind, type ProxyGeo,
+  fetchProxiesPage, createProxy, updateProxy, deleteProxy, deleteProxies, checkProxy, checkAllProxies,
+  PROXY_KIND_LABELS,
+  type Proxy, type ProxyInput, type ProxyKind, type ProxyGeo, type ProxyCounts,
+  // Тип страницы назван так же, как компонент, — берём под своим именем.
+  type ProxiesPage as ДанныеСтраницы,
 } from '@/api/proxiesApi'
 import { fetchAccounts, patchAccount } from '@/api/accountsApi'
 import type { TgAccount } from '@/shared/types'
@@ -40,7 +43,25 @@ function statusMeta(p: Proxy) {
 const emptyForm = (): ProxyInput => ({ label: '', kind: 'static', scheme: 'socks5', host: '', port: 1080, username: '', password: '', country: '', note: '', status: 'unknown' })
 
 export function ProxiesPage() {
-  const [proxies, setProxies] = useState<Proxy[]>([])
+  /*
+   * СТРАНИЦА, А НЕ ВЕСЬ КАТАЛОГ.
+   *
+   * Здесь рисовались все прокси разом — на боевой базе это сто одна карточка. Теперь
+   * сервер отдаёт ту страницу, которая показана, а фильтр, поиск и счётчики групп
+   * считает база. Форма ответа та же, что у списка аккаунтов.
+   */
+  const [proxies, setProxies] = useState<(Proxy & { usedBy?: number })[]>([])
+  const [pageInfo, setPageInfo] = useState<ДанныеСтраницы['page']>({ number: 1, size: 25, total: 0, pages: 1 })
+  const [counts, setCounts] = useState<ProxyCounts>({ all: 0, ok: 0, broken: 0, unknown: 0 })
+  const [page, setPage] = useState(0)
+  const [pageSize, setPageSize] = useState(25)
+  const [query, setQuery] = useState('')
+  /** Признак «сводка уже приехала»: до неё рисуем прочерк, а не ноль. */
+  const [loaded, setLoaded] = useState(false)
+  // Рабочие / нерабочие / не проверены. «Нерабочие» — это и мёртвые, и те, что не
+  // говорят своим протоколом: и то и другое аккаунту одинаково бесполезно.
+  const [statusFilter, setStatusFilter] = useState<'all' | 'ok' | 'broken' | 'unknown'>('all')
+  /** Список аккаунтов — только для окна «Назначить», и подгружается при его открытии. */
   const [accounts, setAccounts] = useState<TgAccount[]>([])
   const [loading, setLoading] = useState(true)
   const [err, setErr] = useState('')
@@ -49,6 +70,14 @@ export function ProxiesPage() {
   const [form, setForm] = useState<ProxyInput>(emptyForm())
   const [saving, setSaving] = useState(false)
   const [assignFor, setAssignFor] = useState<Proxy | null>(null)
+  /*
+   * Список аккаунтов подгружается, КОГДА открывают «Назначить», а не при входе на
+   * страницу. Раньше он грузился всегда — ради окна, которое открывают изредка.
+   */
+  useEffect(() => {
+    if (!assignFor || accounts.length) return
+    void fetchAccounts().then(setAccounts).catch(() => {})
+  }, [assignFor, accounts.length])
   const [detailProxy, setDetailProxy] = useState<Proxy | null>(null)
   const [geoMap, setGeoMap] = useState<Record<string, ProxyGeo | null>>({})
   const [geoSrcMap, setGeoSrcMap] = useState<Record<string, 'exit' | 'gateway' | null>>({})
@@ -71,12 +100,24 @@ export function ProxiesPage() {
   async function load(opts?: { silent?: boolean }) {
     if (!opts?.silent) setLoading(true)
     try {
-      const [px, accs] = await Promise.all([fetchProxies(), fetchAccounts().catch(() => [])])
-      setProxies(px); setAccounts(accs)
+      /*
+       * Аккаунты здесь больше не грузятся.
+       *
+       * Их тянули ради двух вещей: посчитать «занято N» и наполнить окно «Назначить».
+       * Первое сервер присылает вместе со страницей, второе нужно ровно в тот момент,
+       * когда окно открывают. Открытие страницы «Прокси» стоило полного парка.
+       */
+      const п = await fetchProxiesPage({ page: page + 1, pageSize, search: query.trim() || undefined, status: statusFilter })
+      setProxies(п.items); setPageInfo(п.page); setCounts(п.counts); setLoaded(true)
     } catch (e) { if (!opts?.silent) setErr(e instanceof Error ? e.message : 'Ошибка загрузки') }
     finally { if (!opts?.silent) setLoading(false) }
   }
-  useEffect(() => { void load() }, [])
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { void load() }, [page, pageSize, statusFilter, query])
+  // Смена фильтра или поиска возвращает на первую страницу: иначе оператор остаётся на
+  // пятой странице набора, в котором теперь две.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { setPage(0) }, [statusFilter, query, pageSize])
 
   // Автообновление: статусы меняет и фоновый чекер сервера (раз в 30 мин), и ручные
   // тесты, и живая работа аккаунтов — страница обязана показывать свежее сама.
@@ -99,27 +140,16 @@ export function ProxiesPage() {
     finally { setCheckingAll(false) }
   }
 
-  // Рабочие / нерабочие / не проверены. «Нерабочие» — это и мёртвые, и те, что не
-  // говорят своим протоколом: и то и другое аккаунту одинаково бесполезно.
-  const [statusFilter, setStatusFilter] = useState<'all' | 'ok' | 'broken' | 'unknown'>('all')
-  const counts = useMemo(() => ({
-    all: proxies.length,
-    ok: proxies.filter((p) => p.status === 'ok').length,
-    broken: proxies.filter((p) => p.status === 'dead' || p.status === 'bad').length,
-    unknown: proxies.filter((p) => p.status === 'unknown').length,
-  }), [proxies])
-  const visible = useMemo(() => proxies.filter((p) => (
-    statusFilter === 'all' ? true
-      : statusFilter === 'ok' ? p.status === 'ok'
-        : statusFilter === 'broken' ? (p.status === 'dead' || p.status === 'bad')
-          : p.status === 'unknown'
-  )), [proxies, statusFilter])
+  // Счётчики групп и отбор считает база: плитка «Нерабочие» обязана показывать весь
+  // каталог, а не тех, кто попал в текущие двадцать пять строк.
+  const visible = proxies
 
   const usedBy = useMemo(() => {
     const m: Record<string, number> = {}
     // MR-290: считаем по ССЫЛКЕ. Сравнение собранных строк давало ноль занятых, как
     // только строка подключения у аккаунта пустела, — а именно это и произошло на бою.
-    for (const p of proxies) m[p.id] = accounts.filter((a) => a.proxyId === p.id).length
+    // Считает сервер: он видит все аккаунты, а страница — только те, что успела загрузить.
+    for (const p of proxies) m[p.id] = Number((p as { usedBy?: number }).usedBy) || 0
     return m
   }, [proxies, accounts])
 
@@ -189,11 +219,11 @@ export function ProxiesPage() {
         title="Прокси"
         subtitle="Каталог прокси (статические / мобильные / своя ферма) и привязка к аккаунтам."
         icon={<Network size={22} />}
-        badge={proxies.length ? `${proxies.length}` : undefined}
+        badge={counts.all ? `${counts.all}` : undefined}
         actions={(
           <div className="flex items-center gap-2">
             <HelpButton topic="proxy-policy" className="h-10 w-10" />
-            <button onClick={() => void testAll()} disabled={checkingAll || proxies.length === 0} className="btn-ghost h-10 disabled:opacity-50" title="Проверить весь каталог: нерабочие пометятся сразу">
+            <button onClick={() => void testAll()} disabled={checkingAll || counts.all === 0} className="btn-ghost h-10 disabled:opacity-50" title="Проверить весь каталог: нерабочие пометятся сразу">
               {checkingAll ? <Loader2 size={16} className="animate-spin" /> : <Zap size={16} />} Проверить все
             </button>
             <button onClick={() => setImportOpen(true)} className="btn-ghost h-10"><Upload size={16} /> Импорт списком</button>
@@ -206,7 +236,7 @@ export function ProxiesPage() {
 
       {/* Фильтр «рабочие / нерабочие» + автообновление: статус прокси живёт своей жизнью
           (фоновый чекер, работа аккаунтов), и страница обязана показывать свежее. */}
-      {proxies.length > 0 && (
+      {counts.all > 0 && (
         <div className="mb-3 flex flex-wrap items-center gap-2">
           {([
             { key: 'all', label: 'Все', n: counts.all },
@@ -234,93 +264,141 @@ export function ProxiesPage() {
         </div>
       )}
 
-      {/* Массовый выбор: «Выбрать все» относится к ТЕКУЩЕЙ выборке — так «Нерабочие» +
-          «Выбрать все» + «Удалить» чистят каталог одним движением. */}
-      {visible.length > 0 && (
-        <div className="mb-3 flex flex-wrap items-center gap-2 rounded-xl border border-line bg-elevated/40 p-2.5">
-          <label className="flex cursor-pointer items-center gap-2 text-xs font-semibold text-white/70">
-            <input type="checkbox" checked={allVisibleSelected} onChange={toggleAllVisible} className="h-4 w-4 accent-spark-500" />
-            {selected.size > 0 ? `Выбрано: ${selected.size}` : `Выбрать все (${visible.length})`}
-          </label>
-          {selected.size > 0 && (
-            <>
-              <button onClick={() => setSelected(new Set())} className="btn-ghost h-8 text-xs">Снять выбор</button>
-              <button
-                onClick={() => void removeSelected()}
-                disabled={removing}
-                className="ml-auto inline-flex h-8 items-center gap-1.5 rounded-lg border border-rose-500/30 bg-rose-500/15 px-3 text-xs font-semibold text-rose-300 transition-colors hover:bg-rose-500/25 disabled:opacity-50"
-              >
-                {removing ? <Loader2 size={13} className="animate-spin" /> : <Trash2 size={13} />} Удалить выбранные ({selected.size})
-              </button>
-            </>
-          )}
+      {/*
+        ПАНЕЛЬ УПРАВЛЕНИЯ — ПЕРЕД таблицей, постраничность — ПОД ней.
+        Тот же порядок, что в менеджере аккаунтов: поиск и действия над выбранным сверху,
+        строки в таблице, навигатор снизу. Разные раскладки на двух списках одного вида
+        заставляют искать кнопку заново на каждой странице.
+      */}
+      <div className="mb-3 flex flex-wrap items-center gap-2 rounded-xl border border-line bg-elevated/40 px-3 py-2">
+        <label className="flex cursor-pointer items-center gap-2 text-xs font-semibold text-white/70">
+          <input type="checkbox" checked={allVisibleSelected} onChange={toggleAllVisible} className="h-4 w-4 accent-spark-500" />
+          {selected.size > 0 ? `Выбрано: ${selected.size}` : `Выбрать все на странице (${visible.length})`}
+        </label>
+        <div className="relative min-w-[220px] flex-1">
+          <Search size={15} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted" />
+          <input
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Поиск по названию, хосту, заметке…"
+            className="input h-9 w-full pl-9"
+          />
         </div>
-      )}
+        {selected.size > 0 && (
+          <>
+            <button onClick={() => setSelected(new Set())} className="btn-ghost h-8 text-xs">Снять выбор</button>
+            <button
+              onClick={() => void removeSelected()}
+              disabled={removing}
+              className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-rose-500/30 bg-rose-500/15 px-3 text-xs font-semibold text-rose-300 transition-colors hover:bg-rose-500/25 disabled:opacity-50"
+            >
+              {removing ? <Loader2 size={13} className="animate-spin" /> : <Trash2 size={13} />} Удалить выбранные ({selected.size})
+            </button>
+          </>
+        )}
+      </div>
 
       {loading ? (
         <Card className="p-6 text-sm text-white/50">Загрузка…</Card>
-      ) : proxies.length === 0 ? (
+      ) : loaded && counts.all === 0 ? (
         <EmptyState icon={<Network size={26} />} title="Прокси пока нет" desc="Добавьте прокси и назначайте их аккаунтам в менеджере." />
       ) : visible.length === 0 ? (
         <Card className="p-6 text-center text-sm text-muted">
-          {statusFilter === 'broken' ? 'Нерабочих прокси нет — все живые.' : 'В этой выборке пусто.'}
+          {query ? 'По этому запросу ничего не нашлось.' : statusFilter === 'broken' ? 'Нерабочих прокси нет — все живые.' : 'В этой выборке пусто.'}
         </Card>
       ) : (
-        <div className="flex flex-col gap-2">
-          {visible.map((p) => {
-            const sm = statusMeta(p)
-            return (
-              <Card key={p.id} className={cn('flex flex-wrap items-center gap-3 p-3', selected.has(p.id) && 'border-spark-500/40 bg-spark-500/5')}>
-                <input
-                  type="checkbox"
-                  checked={selected.has(p.id)}
-                  onChange={() => toggleSel(p.id)}
-                  className="h-4 w-4 shrink-0 accent-spark-500"
-                  aria-label="Выбрать прокси"
-                />
-                <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-iris-500/12 text-iris-300"><Network size={18} /></span>
-                <div role="button" tabIndex={0} onClick={() => setDetailProxy(p)} onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setDetailProxy(p) } }} className="group min-w-0 flex-1 cursor-pointer text-left" title="Открыть детали прокси">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <span className="truncate font-semibold text-fg group-hover:text-spark-300">{p.label || `${p.host}:${p.port}`}</span>
-                    <Badge tone="iris">{PROXY_KIND_LABELS[p.kind]}</Badge>
-                    {p.country && (
-                      // Гео по шлюзу — это страна дата-центра, а не выхода: у мобильных
-                      // прокси они разные, и раздавать такой прокси «по стране» опасно.
-                      <Tip className="text-sm" text={p.geoSource === 'gateway' ? 'Страна определена по адресу сервера — приблизительно' : p.geoSource === 'exit' ? 'Страна реального выходного IP' : undefined}>
-                        {FLAGS[p.country] || p.country.toUpperCase()}
-                        {p.geoSource === 'gateway' && <span className="ml-0.5 text-[10px] text-amber-300">≈</span>}
-                      </Tip>
-                    )}
-                    {/* Сколько аккаунтов сидит на прокси, показано справа («аккаунтов: N») —
-                        второй такой же бейдж здесь только дублировал бы его.
-                        Причина «нерабочести» — в подсказке: в списке она была бы шумом. */}
-                    <Tip text={sm.hint}><Badge tone={sm.tone}>{sm.label}</Badge></Tip>
-                  </div>
-                  <div className="mt-0.5 truncate font-mono text-xs text-white/50">{p.scheme}://{p.username ? `${p.username}@` : ''}{p.host}:{p.port}</div>
-                  {geoMap[p.id] && (
-                    <div className="mt-0.5 flex items-center gap-1 truncate text-xs text-spark-300">
-                      <MapPin size={11} className="shrink-0" /> {FLAGS[geoMap[p.id]!.country] || ''} {geoMap[p.id]!.countryName}{geoMap[p.id]!.city ? `, ${geoMap[p.id]!.city}` : ''}{geoMap[p.id]!.isp ? ` · ${geoMap[p.id]!.isp}` : ''}
-                      {/* §10: «выход» было непонятно — пишем словами, что именно за гео показано. */}
-                      {geoSrcMap[p.id] === 'exit'
-                        ? <span className="shrink-0 rounded bg-spark-500/15 px-1 text-[10px] font-semibold text-spark-300" title="Это гео РЕАЛЬНОГО IP, с которого Telegram видит аккаунт: мы сходили в интернет через сам прокси и определили его выходной адрес. Именно оно важно для антифрода.">гео реального IP</span>
-                        : geoSrcMap[p.id] === 'gateway'
-                          ? <span className="shrink-0 rounded bg-amber-500/15 px-1 text-[10px] font-semibold text-amber-300" title="Выходной IP определить не удалось — показано гео адреса самого прокси-сервера (шлюза). Оно может отличаться от того, что видит Telegram.">гео сервера (примерно)</span>
-                          : null}
-                    </div>
-                  )}
-                  {geoMap[p.id] === null && testing !== p.id && <div className="mt-0.5 text-xs text-amber-300">Гео не определено (прокси мёртв или IP не резолвится)</div>}
-                </div>
-                <span className="text-xs text-white/50">аккаунтов: <b className="text-white/80">{usedBy[p.id] ?? 0}</b></span>
-                <div className="flex items-center gap-1.5">
-                  <button onClick={() => void doTest(p)} disabled={testing === p.id} className="btn-ghost h-9 text-xs disabled:opacity-50">{testing === p.id ? <Loader2 size={14} className="animate-spin" /> : <Zap size={14} />} Тест</button>
-                  <button onClick={() => setAssignFor(p)} className="btn-ghost h-9 text-xs"><Link2 size={14} /> Назначить</button>
-                  <button onClick={() => openEdit(p)} className="btn-icon h-9 w-9" aria-label="Изменить"><Pencil size={14} /></button>
-                  <button onClick={() => void remove(p)} className="btn-icon-danger h-9 w-9" aria-label="Удалить прокси" title="Удалить прокси"><Trash2 size={14} /></button>
-                </div>
-              </Card>
-            )
-          })}
+        <>
+        <div className="card overflow-hidden p-0">
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-line bg-elevated/60 text-left text-[11px] font-bold uppercase tracking-wide text-muted">
+                  <th className="w-10 px-4 py-3">
+                    <input type="checkbox" checked={allVisibleSelected} onChange={toggleAllVisible} className="h-4 w-4 rounded border-line accent-spark-500" aria-label="Выбрать все на странице" />
+                  </th>
+                  <th className="px-4 py-3">Прокси</th>
+                  <th className="px-4 py-3">Тип</th>
+                  <th className="px-4 py-3">Страна</th>
+                  <th className="px-4 py-3">Статус</th>
+                  <th className="px-4 py-3">Аккаунтов</th>
+                  <th className="px-4 py-3 text-right">Действия</th>
+                </tr>
+              </thead>
+              <tbody>
+                {visible.map((p) => {
+                  const sm = statusMeta(p)
+                  return (
+                    <tr key={p.id} className={cn('border-b border-line/50 transition-colors last:border-0 hover:bg-elevated/40', selected.has(p.id) && 'bg-spark-500/5')}>
+                      <td className="px-4 py-3">
+                        <input type="checkbox" checked={selected.has(p.id)} onChange={() => toggleSel(p.id)} className="h-4 w-4 rounded border-line accent-spark-500" aria-label="Выбрать прокси" />
+                      </td>
+                      <td className="px-4 py-3">
+                        <button type="button" onClick={() => setDetailProxy(p)} className="group min-w-0 text-left" title="Открыть детали прокси">
+                          <div className="truncate font-semibold text-fg transition-colors group-hover:text-spark-300">{p.label || `${p.host}:${p.port}`}</div>
+                          {/* Логин показываем, пароль — нет: он не нужен на экране и не уезжает с сервера. */}
+                          <div className="truncate font-mono text-xs text-muted">{p.scheme}://{p.username ? `${p.username}@` : ''}{p.host}:{p.port}</div>
+                          {geoMap[p.id] && (
+                            <div className="mt-0.5 flex items-center gap-1 truncate text-xs text-spark-300">
+                              <MapPin size={11} className="shrink-0" /> {FLAGS[geoMap[p.id]!.country] || ''} {geoMap[p.id]!.countryName}{geoMap[p.id]!.city ? `, ${geoMap[p.id]!.city}` : ''}
+                              {geoSrcMap[p.id] === 'exit'
+                                ? <span className="shrink-0 rounded bg-spark-500/15 px-1 text-[10px] font-semibold text-spark-300" title="Гео РЕАЛЬНОГО IP: запрос ушёл через сам прокси. Именно оно важно для антифрода.">гео реального IP</span>
+                                : geoSrcMap[p.id] === 'gateway'
+                                  ? <span className="shrink-0 rounded bg-amber-500/15 px-1 text-[10px] font-semibold text-amber-300" title="Выходной IP определить не удалось — показано гео самого сервера прокси.">гео сервера (примерно)</span>
+                                  : null}
+                            </div>
+                          )}
+                          {geoMap[p.id] === null && testing !== p.id && <div className="mt-0.5 text-xs text-amber-300">Гео не определено</div>}
+                        </button>
+                      </td>
+                      <td className="px-4 py-3"><Badge tone="iris">{PROXY_KIND_LABELS[p.kind]}</Badge></td>
+                      <td className="px-4 py-3">
+                        {p.country ? (
+                          // Гео по шлюзу — страна дата-центра, а не выхода: у мобильных прокси
+                          // они разные, и раздавать такой прокси «по стране» опасно.
+                          <Tip className="text-sm" text={p.geoSource === 'gateway' ? 'Страна определена по адресу сервера — приблизительно' : p.geoSource === 'exit' ? 'Страна реального выходного IP' : undefined}>
+                            {FLAGS[p.country] || p.country.toUpperCase()}
+                            {p.geoSource === 'gateway' && <span className="ml-0.5 text-[10px] text-amber-300">≈</span>}
+                          </Tip>
+                        ) : <span className="text-faint">—</span>}
+                      </td>
+                      <td className="px-4 py-3"><Tip text={sm.hint}><Badge tone={sm.tone}>{sm.label}</Badge></Tip></td>
+                      <td className="px-4 py-3 tabular-nums font-semibold text-white/80">{p.usedBy ?? 0}</td>
+                      <td className="px-4 py-3">
+                        <div className="flex items-center justify-end gap-1.5">
+                          <button onClick={() => void doTest(p)} disabled={testing === p.id} className="btn-ghost h-9 text-xs disabled:opacity-50">{testing === p.id ? <Loader2 size={14} className="animate-spin" /> : <Zap size={14} />} Тест</button>
+                          <button onClick={() => setAssignFor(p)} className="btn-ghost h-9 text-xs"><Link2 size={14} /> Назначить</button>
+                          <button onClick={() => openEdit(p)} className="btn-icon h-9 w-9" aria-label="Изменить"><Pencil size={14} /></button>
+                          <button onClick={() => void remove(p)} className="btn-icon-danger h-9 w-9" aria-label="Удалить прокси" title="Удалить прокси"><Trash2 size={14} /></button>
+                        </div>
+                      </td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
+          </div>
         </div>
+
+        {/* Навигатор — снаружи таблицы, как в менеджере аккаунтов. */}
+        <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
+          <div className="flex items-center gap-2 text-sm text-muted">
+            <span>Показано {pageInfo.total ? page * pageSize + 1 : 0}–{Math.min((page + 1) * pageSize, pageInfo.total)} из {pageInfo.total}</span>
+            <Select
+              className="w-24"
+              value={String(pageSize)}
+              onChange={(v) => { setPageSize(Number(v)); setPage(0) }}
+              options={[10, 25, 50, 100].map((n) => ({ value: String(n), label: `${n} / стр` }))}
+            />
+          </div>
+          <div className="flex items-center gap-1">
+            <button disabled={page === 0} onClick={() => setPage((x) => x - 1)} className="btn-ghost h-9 px-3 disabled:opacity-40">Назад</button>
+            {Array.from({ length: pageInfo.pages }).map((_, i) => (
+              <button key={i} onClick={() => setPage(i)} className={cn('h-9 w-9 rounded-lg text-sm font-semibold', i === page ? 'bg-spark-gradient text-[#04150c]' : 'border border-line bg-elevated text-muted hover:text-fg')}>{i + 1}</button>
+            ))}
+            <button disabled={page >= pageInfo.pages - 1} onClick={() => setPage((x) => x + 1)} className="btn-ghost h-9 px-3 disabled:opacity-40">Вперёд</button>
+          </div>
+        </div>
+        </>
       )}
 
       {/* Создание / редактирование */}

@@ -163,6 +163,93 @@ export async function listProxiesWithSecrets() {
   return readProxies(true)
 }
 
+/** Наборы статусов за подписями фильтра. «Нерабочий» — это две разные беды, а не одна. */
+const ФИЛЬТР_СТАТУСА = {
+  ok: ['ok'],
+  // dead — хост молчит; bad — отвечает, но в Telegram не пускает. Чинятся одинаково.
+  broken: ['dead', 'bad'],
+  unknown: ['unknown'],
+}
+
+/**
+ * Страница каталога прокси.
+ *
+ * Постранично — по той же причине, что и список аккаунтов: каталог растёт, а на экране
+ * два десятка строк. Фильтр, поиск и счётчики считает база; отбирать после выборки
+ * страницы нельзя — из двадцати пяти строк осталось бы семь, а «всего» посчиталось бы по
+ * нефильтрованному набору.
+ *
+ * Пароли НЕ отдаются: страница их не показывает, а строку подключения собирает воркер.
+ *
+ * @param {object} opts
+ * @param {number} [opts.page] с единицы
+ * @param {number} [opts.pageSize]
+ * @param {string} [opts.search] подпись, хост, заметка
+ * @param {'all'|'ok'|'broken'|'unknown'} [opts.status]
+ * @param {string|null} [opts.ownerId] null — весь каталог (админ)
+ */
+export async function listProxiesPage(opts = {}) {
+  const db = sbP()
+  const size = Math.min(200, Math.max(1, Math.floor(Number(opts.pageSize) || 25)))
+  const number = Math.max(1, Math.floor(Number(opts.page) || 1))
+
+  if (!db) {
+    // Файловый режим (дев, тесты): каталог маленький, режем в памяти — но форма ответа
+    // та же, чтобы страница не знала, откуда данные.
+    const все = await listProxies()
+    const свои = opts.ownerId ? все.filter((p) => String(p.userId || '') === String(opts.ownerId)) : все
+    const отобранные = отфильтровать(свои, opts)
+    return собрать(отобранные.slice((number - 1) * size, number * size), отобранные.length, свои, number, size)
+  }
+
+  let q = db.from(TABLE).select('*', { count: 'exact' })
+  if (opts.ownerId) q = q.eq('user_id', String(opts.ownerId))
+  const статусы = ФИЛЬТР_СТАТУСА[opts.status]
+  if (статусы) q = q.in('status', статусы)
+  const строка = String(opts.search || '').trim()
+  if (строка) {
+    const образец = `%${строка.replace(/[%_,()]/g, ' ')}%`
+    q = q.or(`label.ilike.${образец},host.ilike.${образец},note.ilike.${образец}`)
+  }
+  q = q.order('created_at', { ascending: false }).order('id', { ascending: true })
+  q = q.range((number - 1) * size, number * size - 1)
+
+  const { data, error, count } = await q
+  if (error) throw new Error(`[${TABLE}] каталог прокси не прочитан: ${error.message}`)
+
+  return собрать((data || []).map((r) => proxyFromRow(r, false)), Number(count || 0),
+    await статусныеЧисла(db, opts.ownerId), number, size)
+}
+
+/** Счётчики плиток фильтра — по ВСЕМУ каталогу, а не по показанной странице. */
+async function статусныеЧисла(db, ownerId) {
+  let q = db.from(TABLE).select('status')
+  if (ownerId) q = q.eq('user_id', String(ownerId))
+  const { data, error } = await q
+  if (error) throw new Error(`[${TABLE}] счётчики каталога не прочитаны: ${error.message}`)
+  return (data || []).map((r) => ({ status: r.status }))
+}
+
+function отфильтровать(список, opts) {
+  const статусы = ФИЛЬТР_СТАТУСА[opts.status]
+  const строка = String(opts.search || '').trim().toLowerCase()
+  return список.filter((p) => {
+    if (статусы && !статусы.includes(p.status)) return false
+    if (!строка) return true
+    return `${p.label} ${p.host} ${p.note}`.toLowerCase().includes(строка)
+  })
+}
+
+function собрать(items, total, весьКаталог, number, size) {
+  const counts = { all: весьКаталог.length, ok: 0, broken: 0, unknown: 0 }
+  for (const p of весьКаталог) {
+    if (p.status === 'ok') counts.ok += 1
+    else if (p.status === 'dead' || p.status === 'bad') counts.broken += 1
+    else counts.unknown += 1
+  }
+  return { items, page: { number, size, total, pages: Math.max(1, Math.ceil(total / size)) }, counts }
+}
+
 /*
  * КЭША КАТАЛОГА ЗДЕСЬ БОЛЬШЕ НЕТ — и это осознанно.
  *

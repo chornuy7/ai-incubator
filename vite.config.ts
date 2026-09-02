@@ -64,7 +64,11 @@ export default defineConfig({
     port: Number(process.env.PORT) || 5173,
     host: true,
     proxy: {
-      '/api': { target: apiTarget(), changeOrigin: true },
+      // ws: true — живой канал панели (/api/live) идёт по тому же префиксу и требует
+      // апгрейда соединения. Без этого в разработке он молча не поднимается, а панель
+      // откатывается на редкий запасной опрос — и правка «событием вместо таймера»
+      // выглядит как не сработавшая.
+      '/api': { target: apiTarget(), changeOrigin: true, ws: true },
     },
   },
   build: {

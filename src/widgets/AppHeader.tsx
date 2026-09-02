@@ -5,7 +5,15 @@ import {
   Menu, Zap, Sun, Moon, ChevronDown, UserCog, LogOut, Wallet, Check, AlertTriangle, Package, Bell, X, Clock,
   PanelLeftClose, PanelLeftOpen,
 } from 'lucide-react'
-import { useApp, activeAccounts, isBrokenAccount, STATUS_META } from '@/mocks/store'
+import { useApp, STATUS_META } from '@/mocks/store'
+import {
+  fetchAccountsSummary, fetchBrokenAccounts,
+  type AccountsFacets, type BrokenGroup,
+} from '@/api/accountsApi'
+import { onLive, liveConnected } from '@/shared/lib/liveSocket'
+
+/** Статусы, при которых аккаунт работать не может. Тот же набор, что и на сервере. */
+const НЕ_В_СТРОЮ = new Set(['reauth', 'invalid', 'spamblock', 'quarantine', 'frozen'])
 import { fetchAllTasks, type ModuleTask } from '@/api/modulesApi'
 import { fetchTickets, type ApiTicket } from '@/api/ticketsApi'
 import { fetchAwaitingReplies, type AwaitingReply } from '@/api/neuroDialogsApi'
@@ -51,7 +59,6 @@ export function AppHeader() {
   // тянули ОДИН И ТОТ ЖЕ `/api/balance` каждые 30 c каждый — теперь все сидят на
   // общем источнике с дедупликацией (см. balanceStore). Период тот же.
   const balance = useBalance()
-  const accountsLoaded = useApp((s) => s.accountsLoaded)
   // Прайс — с сервера: копия в вебе рано или поздно разошлась бы с тем, что списывается.
   const [pricing, setPricing] = useState<Pricing | null>(null)
   useEffect(() => {
@@ -89,7 +96,29 @@ export function AppHeader() {
     document.addEventListener('mousedown', onDown)
     return () => document.removeEventListener('mousedown', onDown)
   }, [accOpen])
-  const broken = activeAccounts(data).filter(isBrokenAccount)
+  /*
+   * Кто «не в строю» — ОДИН запрос вместо загрузки всего парка.
+   *
+   * Список нужен и колокольчику (уведомление на каждый отвалившийся аккаунт), и окошку
+   * под счётчиком. Раньше ради него грузился весь парк на каждой странице. Пятьдесят —
+   * потолок: уведомлений больше полусотни всё равно не читают, а число берётся из сводки.
+   */
+  const [разбор, setРазбор] = useState<BrokenGroup[]>([])
+  useEffect(() => {
+    let жив = true
+    const взять = () => { void fetchBrokenAccounts(50).then((g) => { if (жив) setРазбор(g) }).catch(() => {}) }
+    взять()
+    const t = setInterval(() => {
+      if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return
+      взять()
+    }, 60000)
+    return () => { жив = false; clearInterval(t) }
+  }, [])
+
+  const broken = useMemo(
+    () => (Array.isArray(разбор) ? разбор : []).flatMap((g) => (g?.items || []).map((x) => ({ ...x, причина: g.reason }))),
+    [разбор],
+  )
   /*
    * §6.3 (NOTIFY-001): уведомление можно закрыть вручную. Закрытые id помним в браузере —
    * это личная мелочь вида «я это уже видел», ради неё ходить в базу незачем.
@@ -136,13 +165,36 @@ export function AppHeader() {
       void fetchAwaitingReplies().then((a) => { if (alive) setAwaiting(a) }).catch(() => {})
     }
     pull()
-    // Колокольчик — фон, а не рабочий инструмент: раз в минуту достаточно, и на скрытой
-    // вкладке молчим. Раньше это были 4 запроса каждые 30с на ЛЮБОЙ странице.
+
+    /*
+     * Поддержка и кошелёк приходят СОБЫТИЕМ, а не опросом.
+     *
+     * Сервер сообщает «в обращении что-то произошло» и «кошелёк изменился» — панель по
+     * этому поводу перечитывает нужное. Опрос остаётся редким запасным заходом: канал
+     * может быть не поднят (старая версия сервера), оборваться на спящем ноутбуке или
+     * не пройти через чужой корпоративный прокси. Раз в пять минут вместо раза в минуту
+     * — этого хватает, чтобы данные не «застыли», и это в пять раз меньше запросов.
+     */
+    const отписки = [
+      onLive('support', () => {
+        void fetchTickets().then((t) => { if (alive) setTickets(t) }).catch(() => {})
+      }),
+      onLive('balance', () => {
+        void fetchWalletHistory(20).then((w) => { if (alive) setWallet(w) }).catch(() => {})
+      }),
+    ]
+
     const iv = setInterval(() => {
       if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return
+      /*
+       * Канал жив И данные уже есть — сервер сам скажет об изменении. Но если первая
+       * загрузка не удалась, канал нас не спасёт: он сообщает об изменениях, а не о том,
+       * что мы ничего не получили. Тогда продолжаем спрашивать.
+       */
+      if (liveConnected() && tickets.length && tasks.length) return
       pull()
-    }, 60000)
-    return () => { alive = false; clearInterval(iv) }
+    }, 300000)
+    return () => { alive = false; clearInterval(iv); for (const off of отписки) off() }
   }, [])
   // MR-134: колокольчик по статусу задачи — ошибка, пауза И завершение (по ТЗ 10.08).
   // «Завершена» показываем только НЕДАВНО законченные (updatedAt за 12ч), иначе старые
@@ -183,11 +235,17 @@ export function AppHeader() {
     notifItems.push({ key: `task:${t.id}`, tone, title: moduleTitle(t.moduleKey), sub, go: `/panel/tasks/${t.id}?m=${t.moduleKey}`, ts: t.updatedAt || t.createdAt || Date.now() })
   }
   for (const a of shown) {
-    const deadProxy = a.proxyOk === false
-    const banned = ['invalid', 'spamblock', 'frozen', 'reauth'].includes(a.status)
-    const tone: 'red' | 'yellow' = (deadProxy || banned) ? 'red' : 'yellow'
-    const sub = deadProxy ? 'прокси слетел (мёртвый)' : banned ? `аккаунт в бане/блоке (${a.status})` : a.noProxy ? 'без прокси — риск бана' : 'временное ограничение — ожидание'
-    notifItems.push({ key: a.id, tone, title: a.name, sub, go: '/panel', ts: (a as { updatedAt?: number }).updatedAt || Date.now() })
+    /*
+     * Причину присылает сервер — она же решает, куда вести и каким тоном показать.
+     * Раньше она выводилась здесь из полей аккаунта, ради которых грузился весь парк.
+     */
+    const проксиМёртв = a.причина === 'Мёртвый прокси'
+    const безПрокси = a.причина === 'Без прокси'
+    const tone: 'red' | 'yellow' = безПрокси ? 'yellow' : 'red'
+    const sub = проксиМёртв ? 'прокси слетел (мёртвый)'
+      : безПрокси ? 'без прокси — риск бана'
+      : 'аккаунт в бане/блоке (' + a.причина + ')'
+    notifItems.push({ key: a.id, tone, title: a.name, sub, go: '/panel', ts: Date.now() })
   }
   /*
    * Правка 30.08: списание за продление и месячные токены тоже идут в колокольчик.
@@ -372,8 +430,29 @@ export function AppHeader() {
    * Показываем то, что человеку правда нужно знать: сколько его аккаунтов в строю из
    * тех, что у него есть.
    */
-  const всегоАккаунтов = accountsLoaded ? activeAccounts(data).length : null
-  const рабочихАккаунтов = accountsLoaded ? activeAccounts(data).filter((a) => !isBrokenAccount(a)).length : null
+  /*
+   * Числа берутся ОТДЕЛЬНОЙ сводкой, а не из загруженного списка аккаунтов.
+   *
+   * Шапка видна на каждой странице, и ради этих двух чисел панель грузила весь парк —
+   * в том числе на «Прокси» и «Статистике», где аккаунтов нет и близко. Считает база.
+   */
+  const [сводка, setСводка] = useState<{ counts: Record<string, number>; facets: AccountsFacets } | null>(null)
+  useEffect(() => {
+    let жив = true
+    const взять = () => { void fetchAccountsSummary().then((s) => { if (жив) setСводка(s) }).catch(() => {}) }
+    взять()
+    const t = setInterval(() => {
+      if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return
+      взять()
+    }, 60000)
+    return () => { жив = false; clearInterval(t) }
+  }, [])
+
+  const всегоАккаунтов = сводка ? Object.entries(сводка.counts).reduce((n, [k, v]) => n + (k === 'trash' ? 0 : v), 0) : null
+  const неРаботают = сводка
+    ? Object.entries(сводка.counts).reduce((n, [k, v]) => n + (k !== 'trash' && НЕ_В_СТРОЮ.has(k) ? v : 0), 0) + сводка.facets.risk.noProxy + сводка.facets.risk.deadProxy
+    : null
+  const рабочихАккаунтов = всегоАккаунтов == null || неРаботают == null ? null : Math.max(0, всегоАккаунтов - неРаботают)
   /*
    * Разбор «не в строю» по причинам — то, ради чего счётчик и нажимают. Заказчик 30.08:
    * «если я туда нажму, я должен увидеть всплывающее окошко, которое мне скажет: у меня
@@ -388,23 +467,19 @@ export function AppHeader() {
    * говорил про десять тысяч: «остальные 9992 — они дохлые». Список из девяти тысяч имён
    * читать невозможно, а число и первые несколько имён отвечают на вопрос «кто именно».
    */
-  const неВСтрою = useMemo(() => {
-    const группы = new Map<string, { ссылка: string; имена: string[] }>()
-    for (const a of activeAccounts(data)) {
-      if (!isBrokenAccount(a)) continue
-      /*
-       * Вместе с подписью запоминаем, КУДА вести. Причины по прокси — это фильтр риска,
-       * остальные — фильтр статуса; в менеджере это два разных фильтра, и перепутать их
-       * значит открыть пустой список.
-       */
-      const [причина, ссылка] = a.proxyOk === false ? ['Мёртвый прокси', 'risk=deadProxy']
-        : a.noProxy === true ? ['Без прокси', 'risk=noProxy']
-          : [(STATUS_META[a.status as keyof typeof STATUS_META]?.label || a.status), `status=${a.status}`]
-      if (!группы.has(причина)) группы.set(причина, { ссылка, имена: [] })
-      группы.get(причина)!.имена.push(a.name || a.phone || a.id)
-    }
-    return [...группы.entries()].sort((x, y) => y[1].имена.length - x[1].имена.length)
-  }, [data])
+  /*
+   * Разбор «не в строю» по причинам — то, ради чего счётчик и нажимают.
+   *
+   * Причина у аккаунта одна и в понятном порядке: сперва прокси (её чинят в другом
+   * разделе), потом статус. Считает сервер — иначе пришлось бы держать весь парк.
+   */
+  const неВСтрою = useMemo(
+    () => (Array.isArray(разбор) ? разбор : []).map((g) => [
+      STATUS_META[g.reason as keyof typeof STATUS_META]?.label || g.reason,
+      { ссылка: g.link, имена: (g?.items || []).map((x) => x.name), всего: g.total ?? 0 },
+    ] as const),
+    [разбор],
+  )
   const currentLang = LANGUAGES.find((l) => l.code === locale) ?? LANGUAGES[1]
 
   // R1/R2: шапка отражает залогиненного пользователя сессии (а не мок-профиль), + его роль.

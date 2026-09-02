@@ -10,6 +10,7 @@ import { HelpButton } from '@/features/neuro-commenting/moduleUi'
 import { fetchTickets, fetchTicket, createTicket, replyTicket, setTicketStatus, type ApiTicket, type TicketStatus } from '@/api/ticketsApi'
 import { TicketChat, shortId } from '@/features/support/TicketChat'
 import { cn } from '@/shared/lib/utils'
+import { onLive, liveConnected } from '@/shared/lib/liveSocket'
 
 const STATUS_META: Record<TicketStatus, { label: string; tone: 'spark' | 'iris' | 'amber' | 'rose' | 'muted' }> = {
   open: { label: 'Открыт', tone: 'spark' },
@@ -83,11 +84,19 @@ export function SupportPage() {
     if (params.get('new') === '1') { setNewOpen(true); params.delete('new'); setParams(params, { replace: true }) }
   }, [params, setParams])
 
-  // Живая переписка: пока тикет открыт — подтягиваем новые сообщения, как в мессенджере.
+  /*
+   * Живая переписка: новые сообщения приходят СОБЫТИЕМ.
+   *
+   * Здесь стоял опрос раз в пять секунд на всё время, пока открыт тикет: двенадцать
+   * запросов в минуту у каждого, кто просто держит переписку открытой. Сервер знает о
+   * новом сообщении в момент его появления — он и говорит.
+   *
+   * Опрос остался запасным и редким: канал может быть не поднят или оборваться.
+   */
   const openId = openTicket?.id
   useEffect(() => {
     if (!openId) return
-    const iv = setInterval(() => {
+    const подтянуть = () => {
       void fetchTicket(openId, isSupportView)
         .then((fresh) => {
           setOpenTicket((cur) => (cur && cur.id === fresh.id ? fresh : cur))
@@ -97,8 +106,12 @@ export function SupportPage() {
           void refreshUnread()
         })
         .catch(() => { /* сеть моргнула — покажем на следующем тике */ })
-    }, 5000)
-    return () => clearInterval(iv)
+    }
+    const off = onLive('support', подтянуть)
+    // Канал сообщает о новых сообщениях; запасной заход нужен, если канала нет. Открытая
+    // переписка уже загружена, поэтому «нечего показывать» здесь не бывает.
+    const iv = setInterval(() => { if (!liveConnected()) подтянуть() }, 30000)
+    return () => { off(); clearInterval(iv) }
   }, [openId, isSupportView])
 
   // Лента прокручивается к последнему сообщению — как в любом чате.

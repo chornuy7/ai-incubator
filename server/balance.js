@@ -712,7 +712,27 @@ const WALLET_LOG = () => process.env.WALLET_LOG_FILE || dataPath('wallet-log.jso
 /** Состав подписки для строк журнала: id записи → ключи модулей по порядку. */
 const modulesByLogEntry = (db, ids) => readModuleLinks(db, 'wallet_log_modules', 'log_id', ids)
 
+/**
+ * Сказать панели, что кошелёк изменился.
+ *
+ * ОДНО место на все изменения: и монеты, и деньги, и файловый режим проходят через
+ * запись в журнал. Событие не несёт сумму — панель забирает баланс обычной ручкой, и у
+ * данных остаётся один источник с одной проверкой доступа.
+ *
+ * Уведомляем владельца кошелька И его сотрудников: кошелёк общий, и цифра в шапке у них
+ * та же самая. Список сотрудников читается только в момент изменения — событие редкое.
+ */
+async function сказатьПроКошелёк(userId) {
+  try {
+    const { notifyUsers } = await import('./lib/liveChannel.js')
+    const { listSubs } = await import('./users.js')
+    const свои = await listSubs(userId).catch(() => [])
+    notifyUsers([userId, ...свои.map((u) => u.id)], 'balance')
+  } catch { /* канал не поднят (тесты, файловый режим) — молча живём без него */ }
+}
+
 async function appendWalletEntry(entry) {
+  void сказатьПроКошелёк(entry.userId)
   const db = sb()
   if (db) {
     // §11.4: currency — 'usd' для денег, 'coins' для токенов. Колонка появляется

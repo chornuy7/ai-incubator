@@ -9,7 +9,7 @@
  * ЭТАП 4/4 (03.08): dual-write в `users` СНЯТ, вход — только через Supabase Auth.
  * Таблица `users` больше не пишется и не читается для входа; остаётся лишь как точка
  * отката до её drop (см. supabase/migrations/2026-08-03-drop-users-stage4.sql). Legacy
- * scrypt-вход (`authenticate`) вызывается только по аварийному флагу env AUTH_ALLOW_LEGACY.
+ * scrypt-вход (`authenticate`) остался только для файлового режима (дев, тесты).
  *
  * Файловый бэкенд (тесты, dev без Supabase) — БЕЗ изменений: старые users.json + scrypt.
  *
@@ -614,19 +614,15 @@ export async function deleteUser(id) {
 }
 
 /**
- * Legacy-вход по e-mail + паролю (scrypt). ПЕРЕХОДНЫЙ мостик: пароль в profiles не
- * хранится, поэтому в Supabase-режиме берём `password_hash` напрямую из таблицы users,
- * пока она не удалена. Возвращает публичного оператора или null.
+ * Вход по e-mail + паролю в ФАЙЛОВОМ режиме (дев, тесты).
+ *
+ * Таблицы `users` больше нет: операторы живут в `profiles`, пароли — в Supabase Auth.
+ * Здесь остался только локальный путь, где ни того, ни другого нет и пароль лежит рядом
+ * с оператором в JSON. В режиме базы вход идёт исключительно через Supabase Auth.
  * @param {string} email @param {string} password
  */
 export async function authenticate(email, password) {
-  const db = sb()
-  if (db) {
-    const { data: row } = await db.from('users').select('password_hash, active').eq('email', normEmail(email)).maybeSingle()
-    if (!row || row.active === false) return null
-    if (!verifyPassword(password, row.password_hash)) return null
-    return await findByEmail(email) // объект оператора берём из profiles (источник правды)
-  }
+  if (sb()) return null // с базой пароли проверяет только Supabase Auth
   const user = await findByEmail(email)
   if (!user || !user.active) return null
   if (!verifyPassword(password, user.passwordHash)) return null

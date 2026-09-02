@@ -109,7 +109,7 @@ app.get('/api/health', (_req, res) => {
  * `/api/tg/accounts/<слово>` без владельца — это не аккаунт, а коллекция (busy,
  * daily-all, empty-trash): они разбираются со своими правами сами, ниже.
  */
-const ACCOUNT_COLLECTIONS = new Set(['busy', 'daily-all', 'empty-trash', 'list'])
+const ACCOUNT_COLLECTIONS = new Set(['busy', 'daily-all', 'empty-trash', 'list', 'summary', 'broken'])
 const guardAccountParam = async (req, res, next) => {
   const id = String(req.params.accountId || '')
   if (ACCOUNT_COLLECTIONS.has(id)) return next()
@@ -194,6 +194,36 @@ async function отдатьСписок(req, res, параметры) {
   }
 }
 
+/**
+ * Сводка по парку — числа для шапки панели.
+ *
+ * Шапка показывает «в строю N из M» на каждой странице. Раньше ради этого грузился весь
+ * список аккаунтов — включая страницы, где аккаунтов нет и близко.
+ */
+app.get('/api/tg/accounts/summary', async (req, res) => {
+  try {
+    const scope = await scopeOf(req)
+    if (scope.kind === 'none') return res.json({ ok: true, counts: {}, facets: { countries: {}, risk: { deadProxy: 0, noProxy: 0, lowTrust: 0 }, modules: {}, busyTotal: 0 } })
+    const { accountsSummary } = await import('./accountsList.js')
+    res.json({ ok: true, ...(await accountsSummary(scope.kind === 'all' ? null : scope.ownerId)) })
+  } catch (err) {
+    res.status(500).json({ ok: false, error: err instanceof Error ? err.message : 'Ошибка' })
+  }
+})
+
+/** Кто «не в строю», с именами и разбором по причинам. Открывается по клику, не постоянно. */
+app.get('/api/tg/accounts/broken', async (req, res) => {
+  try {
+    const scope = await scopeOf(req)
+    if (scope.kind === 'none') return res.json({ ok: true, groups: [] })
+    const { brokenAccounts } = await import('./accountsList.js')
+    const limit = Math.min(50, Math.max(1, Number(req.query.limit) || 8))
+    res.json({ ok: true, groups: await brokenAccounts(scope.kind === 'all' ? null : scope.ownerId, limit) })
+  } catch (err) {
+    res.status(500).json({ ok: false, error: err instanceof Error ? err.message : 'Ошибка' })
+  }
+})
+
 app.post('/api/tg/accounts/list', async (req, res) => {
   const b = req.body ?? {}
   await отдатьСписок(req, res, {
@@ -201,6 +231,12 @@ app.post('/api/tg/accounts/list', async (req, res) => {
     pageSize: b.pageSize,
     search: b.search,
     statuses: Array.isArray(b.statuses) ? b.statuses : undefined,
+    countries: Array.isArray(b.countries) ? b.countries : undefined,
+    risk: b.risk || undefined,
+    campaignId: b.campaignId || undefined,
+    busyModule: b.busyModule || undefined,
+    fatigueMin: b.fatigueMin,
+    trashAlive: b.trashAlive === true,
     inTrash: b.inTrash === true,
     sort: b.sort,
   })
@@ -2522,6 +2558,14 @@ process.on('uncaughtException', (err) => {
 
 const server = app.listen(PORT, HOST, async () => {
   console.log(`API → http://${HOST}:${PORT}`)
+  /*
+   * Живой канал панели. Поднимается поверх того же сервера и слушает /api/live: сервер
+   * сам сообщает об изменении баланса и о новых сообщениях поддержки, вместо того чтобы
+   * панель спрашивала об этом по таймеру.
+   */
+  const { attachLiveChannel } = await import('./lib/liveChannel.js')
+  attachLiveChannel(server)
+  console.log(`Живой канал → ws://${HOST}:${PORT}/api/live`)
   // Адрес живой документации печатаем при старте: иначе о ней узнают из README,
   // а README читают в последнюю очередь.
   if (docsEnabled()) console.log(`MCP docs → http://${HOST === '0.0.0.0' ? 'localhost' : HOST}:${PORT}${MCP_DOCS_PATH}`)

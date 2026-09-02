@@ -85,10 +85,14 @@ function serialize(table, fn) {
  *          afterWrite?:(rows:any[], db:any)=>Promise<void>}} cfg
  */
 export function listStore(cfg) {
-  const { table, file, toRow, fromRow, order = 'created_at', enrich, afterWrite } = cfg
+  /*
+   * `sb` в настройках — шов для проверок: подставить клиент можно только так, модульный
+   * читается из окружения. Тот же приём, что в `moduleIds`. По умолчанию — обычный.
+   */
+  const { table, file, toRow, fromRow, order = 'created_at', enrich, afterWrite, sb: клиент = sb } = cfg
 
   async function readAll() {
-    const db = sb()
+    const db = клиент()
     if (!db) return readJson(val(file), [])
     const { data, error } = await db.from(table).select('*').order(order, { ascending: false })
     if (error) {
@@ -106,7 +110,7 @@ export function listStore(cfg) {
    *   поведение): так ходят прямые вызовы writeAll, которые сами прочитали коллекцию.
    */
   async function writeAll(all, opts = {}) {
-    const db = sb()
+    const db = клиент()
     if (!db) return writeJson(val(file), all)
     const rows = (all || []).map(toRow)
     if (rows.length) {
@@ -145,7 +149,7 @@ export function listStore(cfg) {
       const next = await fn(all)
       if (next === undefined) return all // мутатор отказался менять — не трогаем хранилище
       await writeAll(next, { prevIds })
-      const db = sb()
+      const db = клиент()
       if (afterWrite && db) await afterWrite(next, db)
       return next
     })
@@ -166,10 +170,10 @@ export function listStore(cfg) {
  *   afterRead?:(all:any, db:any)=>Promise<void>, afterWrite?:(all:any, db:any)=>Promise<void>}} cfg
  */
 export function mapStore(cfg) {
-  const { table, file, keyCol, toRow, fromRow, afterRead, afterWrite } = cfg
+  const { table, file, keyCol, toRow, fromRow, afterRead, afterWrite, sb: клиент = sb } = cfg
 
   async function readAll() {
-    const db = sb()
+    const db = клиент()
     if (!db) return readJson(val(file), {})
     const { data, error } = await db.from(table).select('*')
     if (error) {
@@ -177,14 +181,32 @@ export function mapStore(cfg) {
       return readJson(val(file), {})
     }
     const out = {}
-    for (const r of data || []) { const [k, v] = fromRow(r); out[k] = v }
+    for (const r of data || []) {
+      /*
+       * Контракт проверяем явно.
+       *
+       * `mapStore` ждёт от `fromRow` ПАРУ [ключ, значение], а соседний `listStore` —
+       * объект. Разница нигде не видна, и один стор действительно вернул объект: чтение
+       * падало с «fromRow is not a function or its return value is not iterable». Где
+       * ошибку ловили — молча приезжала пустая карта, где нет — падала задача, и оператор
+       * видел в дашборде именно эту строку, по которой понять ничего нельзя.
+       *
+       * Сообщение должно называть стор и ожидаемую форму, а не деталь реализации
+       * деструктуризации.
+       */
+      const пара = fromRow(r)
+      if (!Array.isArray(пара) || пара.length !== 2) {
+        throw new Error(`[${table}] fromRow обязана вернуть пару [ключ, значение] — mapStore строит карту, а не список. Если нужен список, это listStore.`)
+      }
+      out[пара[0]] = пара[1]
+    }
     if (afterRead) await afterRead(out, db)
     return out
   }
 
   /** @param {Record<string, any>} all @param {{prevKeys?: Set<string>}} [opts] см. listStore.writeAll */
   async function writeAll(all, opts = {}) {
-    const db = sb()
+    const db = клиент()
     if (!db) return writeJson(val(file), all)
     const rows = Object.entries(all || {}).map(([k, v]) => toRow(k, v))
     if (rows.length) {

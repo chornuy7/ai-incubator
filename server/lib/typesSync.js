@@ -95,9 +95,8 @@ export async function syncTypesAndModules() {
     const first = (u.roleIds || [])[0] || u.roleId || ''
     const tid = typeId.get(first)
     if (!tid) continue
-    // profiles — источник правды для чтения; users дублируем, пока таблица не удалена.
+    // profiles — единственная таблица операторов. Дубль в снесённую таблицу users убран.
     const { error } = await db.from('profiles').update({ user_type_id: tid }).eq('legacy_id', u.id)
-    await db.from('users').update({ user_type_id: tid }).eq('id', u.id).then(() => {}, () => {})
     if (!error) report.users += 1
   }
 
@@ -109,8 +108,7 @@ export async function syncTypesAndModules() {
   const orphans = (typeRows || []).filter((t) => !roleIds.has(t.name))
   for (const o of orphans) {
     const { count } = await db.from('profiles').select('id', { count: 'exact', head: true }).eq('user_type_id', o.id)
-    const { count: uc } = await db.from('users').select('id', { count: 'exact', head: true }).eq('user_type_id', o.id)
-    if (count || uc) continue // на тип кто-то ссылается — не трогаем
+    if (count) continue // на тип кто-то ссылается — не трогаем
     const { error } = await db.from('user_types').delete().eq('id', o.id)
     if (!error) report.removedTypes += 1
   }

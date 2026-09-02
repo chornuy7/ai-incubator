@@ -160,15 +160,17 @@ modulesRouter.get('/', (_req, res) => {
 // Агрегат всех задач по всем модулям (дашборд «Задачи», §3.9). До /:moduleKey/tasks.
 modulesRouter.get('/tasks', async (req, res) => {
   try {
-    const { listModuleKeys, getModuleStore } = await import('./registry.js')
+    /*
+     * Задачи ВСЕХ модулей одним запросом.
+     *
+     * Здесь стоял обход пятнадцати модулей с `listTasks` у каждого — то есть пятнадцать
+     * запросов к одному и тому же представлению `task_list`, в котором есть `module_key`.
+     * Главный запрос дашборда задач отвечал 2.5 секунды.
+     */
+    const { tasksByModule } = await import('./registry.js')
     const all = []
-    for (const key of listModuleKeys()) {
-      const store = getModuleStore(key)
-      if (!store) continue
-      try {
-        const tasks = await store.listTasks()
-        for (const t of tasks) all.push({ ...t, moduleKey: key })
-      } catch { /* skip module */ }
+    for (const [key, tasks] of await tasksByModule()) {
+      for (const t of tasks) all.push({ ...t, moduleKey: key })
     }
     all.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0))
     // Каждому — его запуски; весь дашборд видит админ и роль с правом allTasks.
